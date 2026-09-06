@@ -75,6 +75,15 @@ takes `{project, label}` and returns the key **and** a paste-ready snippet.
 the project's live key and identity mode already filled in — reach for it
 before hand-assembling a snippet.
 
+**Confirm the collector URL before pasting.** One collector can sit behind
+several hostnames — `t.kuznetsov.dev` and `t.econumo.com` proxied to the
+same instance — and which one a project uses is a per-site choice the
+server does not record. Snippets and `integration_guide` are built from the
+server-wide `PUBLIC_URL`, so an agent setting up a project must ask which
+hostname this site should load the tracker from and substitute it in the
+snippet's `src` when it differs. The SDK posts events back to the origin it
+was loaded from, so the `src` is the only place the hostname appears.
+
 Renaming and registry import/export have no MCP tool: both rewrite every
 table in one transaction, which is not something to hand to an agent. Ask
 the operator to run them.
@@ -186,7 +195,10 @@ from code.
 ```
 
 `twillingate key issue -project <alias> -label <label>` mints the key and
-prints this snippet ready to paste.
+prints this snippet ready to paste, with `src` on the server's `PUBLIC_URL`.
+Change the `src` origin to whichever hostname this site should reach the
+collector on — the SDK derives its endpoint from the script's origin, so
+nothing else needs to change.
 
 | Attribute | `init()` option | Meaning |
 | --- | --- | --- |

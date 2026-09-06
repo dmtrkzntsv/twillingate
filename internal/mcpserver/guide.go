@@ -58,8 +58,10 @@ func (h *host) integrationGuide(ctx context.Context, _ *mcp.CallToolRequest, in 
 		keyLine = "\n> This project has NO active ingest key. Call issue_ingest_key first and\n> substitute the returned key below.\n"
 	}
 
+	hostNote := "\n> The collector may answer on several hostnames (one per site is common)\n> and the URLs below use the server's default, " + base + ". Confirm with\n> the user which hostname THIS site should reach the collector on and\n> substitute it if it differs; the SDK posts to the origin it was loaded from.\n"
+
 	var b strings.Builder
-	fmt.Fprintf(&b, "# Integrating %q (%s, identity=%s)\n%s%s\n", p.Alias, in.Platform, p.Identity, baseNote, keyLine)
+	fmt.Fprintf(&b, "# Integrating %q (%s, identity=%s)\n%s%s%s\n", p.Alias, in.Platform, p.Identity, baseNote, hostNote, keyLine)
 
 	switch in.Platform {
 	case "web", "spa":
@@ -109,6 +111,6 @@ func (h *host) integrationGuide(ctx context.Context, _ *mcp.CallToolRequest, in 
 func (h *host) registerGuide(s *mcp.Server) {
 	mcp.AddTool(s, &mcp.Tool{Name: "integration_guide",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
-		Description: "Tailored integration instructions for one project and platform (web, spa, server, mobile), with the project's real ingest key, collector URL, identity-mode guidance and event examples baked in. Call after create_project; read docs://events, docs://js-sdk and docs://ingest-api for depth."},
+		Description: "Tailored integration instructions for one project and platform (web, spa, server, mobile), with the project's real ingest key, collector URL, identity-mode guidance and event examples baked in. The collector URL is the server-wide default; confirm with the user which hostname this site should use when the collector answers on several. Call after create_project; read docs://events, docs://js-sdk and docs://ingest-api for depth."},
 		h.integrationGuide)
 }
