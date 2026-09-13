@@ -105,14 +105,14 @@ Keep MCP on one hostname — OAuth and `cloudflare://` are bound to it.
 
 ```bash
 # Expect 202 and {"accepted":1,...}
-curl -i -X POST http://localhost:8080/api/events \
+curl -i -X POST http://localhost:8080/ingest/events \
   -H 'Content-Type: application/json' \
   -H 'Origin: https://myapp.com' \
   -d '{"key":"ak_…","events":[{"name":"$pageview",
        "attributes":{"$host":"myapp.com","$path":"/"}}]}'
 
 # Expect 403 — the origin is not in allowed_origins
-curl -i -X POST http://localhost:8080/api/events \
+curl -i -X POST http://localhost:8080/ingest/events \
   -H 'Content-Type: application/json' \
   -H 'Origin: https://not-allowed.com' \
   -d '{"key":"ak_…","events":[{"name":"$pageview",
@@ -367,7 +367,7 @@ the old header needs `claude mcp remove twillingate` and adding again.
 
 `API_ADDR` unset, MCP shares the ingestion listener. Put it on its own
 hostname when you can (`API_ADDR` plus a second DNS name, and `resource=`
-set to that hostname's `/mcp`): `/api/events` and the `/js/*` scripts must
+set to that hostname's `/mcp`): `/ingest/events` and the `/js/*` scripts must
 stay publicly reachable for ingestion, and a dedicated hostname keeps the
 access-control story simple.
 

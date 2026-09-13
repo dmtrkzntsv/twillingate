@@ -41,7 +41,7 @@ func TestIntegrationGuideAnonymousAndPlatforms(t *testing.T) {
 		t.Fatalf("error: %s", textOf(res))
 	}
 	out := textOf(res)
-	for _, want := range []string{"https://collector.test/api/events", "X-Analytics-Key", "UUIDv7"} {
+	for _, want := range []string{"https://collector.test/ingest/events", "X-Analytics-Key", "UUIDv7"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("server guide missing %q", want)
 		}
@@ -76,7 +76,7 @@ func TestDocsResourcesReadable(t *testing.T) {
 	// One document now covers what three resources used to: the event
 	// model, the SDK and the wire format.
 	for _, want := range []string{
-		"$screen_view", "twillingate.track", "POST /api/events",
+		"$screen_view", "twillingate.track", "POST /ingest/events",
 		"$host", "$path", "data-mask-url",
 	} {
 		if !strings.Contains(body, want) {

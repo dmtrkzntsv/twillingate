@@ -35,7 +35,7 @@ The pieces:
 
 | Command | Does |
 | --- | --- |
-| `twillingate serve -api` | Ingestion: `POST /api/events`, the SDK at `/js/twillingate.js`, `/healthz` |
+| `twillingate serve -api` | Ingestion: `POST /ingest/events`, the SDK at `/js/twillingate.js`, `/healthz` |
 | `twillingate serve -mcp` | The MCP endpoint at `/mcp` |
 | `twillingate serve` | Both, on one listener unless `API_ADDR` says otherwise |
 | `twillingate dashboards` | Renders the Evidence site from the database |
@@ -462,7 +462,7 @@ same day-long cache. Load one only if its problem is yours.
 
 ## The event model
 
-Everything goes to one endpoint, `POST /api/events`. The event **name**
+Everything goes to one endpoint, `POST /ingest/events`. The event **name**
 decides which family it lands in, and each family feeds a different surface:
 
 | name | family | feeds |
@@ -555,11 +555,12 @@ behave identically from this section alone.
 ### Endpoint
 
 ```
-POST /api/events
+POST /ingest/events
 ```
 
 The only ingest endpoint. There is no separate pageview, event or batch
-path — a single event is a batch of one.
+path — a single event is a batch of one. `/api/events` was the path before
+this release and now returns 404.
 
 ### Authentication
 

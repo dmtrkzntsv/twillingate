@@ -81,7 +81,7 @@ twillingate.reset();                            // on logout
 ```
 
 Native apps and backends skip the SDK and POST batches straight to
-`/api/events`. Details: [Instrument a website](docs/twillingate.md#instrument-a-website)
+`/ingest/events`. Details: [Instrument a website](docs/twillingate.md#instrument-a-website)
 and [The wire format](docs/twillingate.md#the-wire-format).
 
 ## Documentation
@@ -101,7 +101,7 @@ install too.
 | [Set up a project](docs/twillingate.md#set-up-a-project) | Projects, identity modes, allowed origins, retention, attribute breakdowns, ingest keys |
 | [Instrument a website](docs/twillingate.md#instrument-a-website) | twillingate.js: snippet and SDK modes, URL masking, routing modes, offline queue |
 | [The event model](docs/twillingate.md#the-event-model) | The three event families, for native apps and backends too |
-| [The wire format](docs/twillingate.md#the-wire-format) | The normative contract for `/api/events` |
+| [The wire format](docs/twillingate.md#the-wire-format) | The normative contract for `/ingest/events` |
 | [Answer questions with the data](docs/twillingate.md#answer-questions-with-the-data) | The MCP tools, the views, and the caveats needed to write correct SQL |
 | [Install](docs/deployment.md#install) | systemd and docker compose, verifying ingestion |
 | [Configure the collector](docs/deployment.md#configure-the-collector) | Every environment variable, low-resource tuning |

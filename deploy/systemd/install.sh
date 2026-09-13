@@ -178,5 +178,5 @@ Installed. Next steps:
        sudo -u $SERVICE_USER sh -ac '. /etc/twillingate/twillingate.env; twillingate project create -alias myapp'
      Then issue an ingest key (prints a ready-to-paste web snippet):
        sudo -u $SERVICE_USER sh -ac '. /etc/twillingate/twillingate.env; twillingate key issue -project myapp -label web'
-  5. Apps post to https://YOUR_DOMAIN/api/events — see docs/twillingate.md
+  5. Apps post to https://YOUR_DOMAIN/ingest/events — see docs/twillingate.md
 EOF_DONE

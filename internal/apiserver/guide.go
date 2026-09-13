@@ -86,11 +86,11 @@ func (h *host) integrationGuide(ctx context.Context, _ *mcp.CallToolRequest, in 
 		}
 	case "server":
 		fmt.Fprintf(&b, "POST product events from your backend (no origin/CORS constraints;\nnative and server clients send no Origin header):\n\n"+
-			"    curl -X POST %s/api/events \\\n      -H 'Content-Type: application/json' \\\n      -H 'X-Analytics-Key: %s' \\\n      -d '{\"events\":[{\"id\":\"<uuidv7>\",\"ts\":\"2026-08-28T10:00:00Z\",\n            \"name\":\"subscribed\",\"attributes\":{\"plan\":\"pro\",\"$user_id\":\"u_123\"}}]}'\n\n", base, key)
+			"    curl -X POST %s/ingest/events \\\n      -H 'Content-Type: application/json' \\\n      -H 'X-Analytics-Key: %s' \\\n      -d '{\"events\":[{\"id\":\"<uuidv7>\",\"ts\":\"2026-08-28T10:00:00Z\",\n            \"name\":\"subscribed\",\"attributes\":{\"plan\":\"pro\",\"$user_id\":\"u_123\"}}]}'\n\n", base, key)
 		b.WriteString("- Supply a UUIDv7 id per event: a batch retried after a timeout then\n  dedupes server-side. Omit it and a replay double-counts.\n- Batch up to 500 events per request (256 KiB body cap); rejection is\n  per event, never per batch.\n- Client ts is honoured and clamped to the raw-retention window.\n\n")
 	case "mobile":
 		fmt.Fprintf(&b, "Apps use the same HTTP API with app context as batch attributes:\n\n"+
-			"    POST %s/api/events\n    X-Analytics-Key: %s\n\n"+
+			"    POST %s/ingest/events\n    X-Analytics-Key: %s\n\n"+
 			"    {\"attributes\":{\"$install_id\":\"<stable-uuid-per-install>\",\n"+
 			"                   \"$platform\":\"ios\",\"$app_version\":\"2.4.1\",\n"+
 			"                   \"$os_version\":\"17.2\",\"$device_model\":\"iPhone15,2\"},\n"+

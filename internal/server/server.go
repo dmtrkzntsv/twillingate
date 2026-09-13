@@ -85,8 +85,8 @@ func New(cfg *config.Config, reg *manage.Registry, q Enqueuer, g geo.Provider, s
 	s := &Server{cfg: cfg, reg: reg, queue: q, geo: g, salt: salt, names: names,
 		counters: newKeyCounters(), logger: logger}
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /api/events", s.handleEvents)
-	mux.HandleFunc("OPTIONS /api/events", s.handlePreflight)
+	mux.HandleFunc("POST /ingest/events", s.handleEvents)
+	mux.HandleFunc("OPTIONS /ingest/events", s.handlePreflight)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"status":"ok"}`))

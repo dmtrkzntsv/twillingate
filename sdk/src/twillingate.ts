@@ -1,5 +1,5 @@
 /* twillingate SDK core — web, product and app analytics against the
- * collector's POST /api/events (docs/twillingate.md is the normative wire
+ * collector's POST /ingest/events (docs/twillingate.md is the normative wire
  * format). Bundled as an IIFE by build.mjs and served at /js/twillingate.js.
  *
  * Two usage modes:
@@ -449,7 +449,7 @@ export class Twillingate {
   }
 
   private send(batch: Batch, unloading: boolean): void {
-    const endpoint = this.url + "/api/events";
+    const endpoint = this.url + "/ingest/events";
     const body = JSON.stringify(batch);
     // sendBeacon with a string posts text/plain: a CORS-simple request with
     // no preflight that survives page unload. It cannot set headers, which

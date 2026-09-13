@@ -64,7 +64,7 @@ func textResource(s *mcp.Server, uri, name, desc, text string) {
 
 func (h *host) registerResources(s *mcp.Server) {
 	textResource(s, "docs://twillingate", "twillingate",
-		"Set up a project, instrument a site or app, and answer questions from the data: project and ingest-key management, the JS SDK, the normative POST /api/events wire format and event model, and the queryable views. Read before instrumenting or integrating anything.",
+		"Set up a project, instrument a site or app, and answer questions from the data: project and ingest-key management, the JS SDK, the normative POST /ingest/events wire format and event model, and the queryable views. Read before instrumenting or integrating anything.",
 		docs.Twillingate)
 	textResource(s, "docs://deployment", "deployment",
 		"Run twillingate on your own server: systemd and docker install, every environment variable, Evidence reporting, enabling and authenticating the MCP endpoint, litestream replication for a two-server topology, backup drills and disaster recovery. Read when helping an operator install or configure the collector itself.",

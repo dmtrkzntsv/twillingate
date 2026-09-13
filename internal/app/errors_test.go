@@ -195,7 +195,7 @@ func TestServeLogsIngestSummary(t *testing.T) {
 	base := "http://" + addr
 	waitHealthy(t, base)
 
-	resp, err := http.Post(base+"/api/events", "application/json",
+	resp, err := http.Post(base+"/ingest/events", "application/json",
 		strings.NewReader(`{"key":"ak_test","events":[{"name":"$pageview"}]}`))
 	if err != nil {
 		t.Fatal(err)

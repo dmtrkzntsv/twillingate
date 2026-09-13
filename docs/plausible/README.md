@@ -72,7 +72,7 @@ event, so every shimmed CTA becomes a **product event**:
 
 ```
 click → twillingate.track("signup_cloud")
-      → POST /api/events
+      → POST /ingest/events
       → product_events
       → v_product_daily / v_product_totals
       → the Product dashboard page
@@ -124,6 +124,6 @@ grep -roh 'plausible-event-[^" ]*' path/to/site | sort -u
 ```
 
 Every `plausible-event-name…` in that list should appear on the Product page
-within a flush interval of clicking it. `POST /api/events` returns the
+within a flush interval of clicking it. `POST /ingest/events` returns the
 accept/reject counts per batch, so a CTA that fires but never lands is
 visible in the response rather than only in the dashboard.

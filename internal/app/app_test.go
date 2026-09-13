@@ -127,7 +127,7 @@ func TestServeEndToEnd(t *testing.T) {
 		return resp
 	}
 	// One envelope covering all three destinations.
-	if r := post("/api/events", "https://app.com",
+	if r := post("/ingest/events", "https://app.com",
 		`{"key":"ak_test","attributes":{"$platform":"ios","$app_version":"1.0"},
 		  "events":[
 		    {"name":"$pageview","attributes":{"$host":"app.com","$path":"/pricing"}},
@@ -135,15 +135,15 @@ func TestServeEndToEnd(t *testing.T) {
 		    {"name":"signup","attributes":{"plan":"pro"}}]}`); r.StatusCode != 202 {
 		t.Fatalf("events: %d", r.StatusCode)
 	}
-	if r := post("/api/events", "",
+	if r := post("/ingest/events", "",
 		`{"key":"ak_test","events":[{"name":"signup","attributes":{"plan":"pro"}}]}`); r.StatusCode != 202 {
 		t.Fatalf("keyed event without Origin: %d", r.StatusCode)
 	}
-	if r := post("/api/events", "https://evil.com",
+	if r := post("/ingest/events", "https://evil.com",
 		`{"key":"ak_test","events":[{"name":"x"}]}`); r.StatusCode != 403 {
 		t.Fatalf("evil origin: %d", r.StatusCode)
 	}
-	if r := post("/api/events", "",
+	if r := post("/ingest/events", "",
 		`{"key":"nope","events":[{"name":"x"}]}`); r.StatusCode != 401 {
 		t.Fatalf("bad key: %d", r.StatusCode)
 	}
@@ -208,7 +208,7 @@ func TestServeRestartsOnExistingDatabase(t *testing.T) {
 		go func() { done <- Serve(ctx, testConfig(t, addr, dbPath), slog.Default(), true, false) }()
 		base := "http://" + addr
 		waitHealthy(t, base)
-		req, err := http.NewRequest("POST", base+"/api/events", strings.NewReader(body))
+		req, err := http.NewRequest("POST", base+"/ingest/events", strings.NewReader(body))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -304,7 +304,7 @@ func TestServeSharedListenerServesBothSurfaces(t *testing.T) {
 			}
 		}
 
-		if resp, err := http.Post("http://"+cfg.IngestAddr+"/api/events", "application/json",
+		if resp, err := http.Post("http://"+cfg.IngestAddr+"/ingest/events", "application/json",
 			strings.NewReader(`{"key":"ak_test","events":[{"name":"x"}]}`)); err != nil {
 			t.Fatalf("events: %v", err)
 		} else {
@@ -430,7 +430,7 @@ func TestServeNeverPersistsIPOrUserAgent(t *testing.T) {
 	base := "http://" + addr
 	waitHealthy(t, base)
 
-	req, err := http.NewRequest("POST", base+"/api/events",
+	req, err := http.NewRequest("POST", base+"/ingest/events",
 		strings.NewReader(`{"key":"ak_test","events":[{"name":"$pageview","attributes":{"$host":"app.com","$path":"/pricing"}}]}`))
 	if err != nil {
 		t.Fatal(err)

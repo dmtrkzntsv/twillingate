@@ -66,7 +66,7 @@ key="$(compose exec -T twillingate \
 ua='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36'
 # shellcheck disable=SC2016  # the $-prefixed names are JSON keys, not shell
 post_events() {
-  curl -s -o "$dir/events.out" -w '%{http_code}' -A "$ua" -X POST "http://127.0.0.1:18080/api/events" \
+  curl -s -o "$dir/events.out" -w '%{http_code}' -A "$ua" -X POST "http://127.0.0.1:18080/ingest/events" \
     -H 'Origin: http://localhost:18080' -H 'Content-Type: application/json' \
     -H "X-Analytics-Key: $key" \
     -d '{"attributes":{"$platform":"ios","$app_version":"1.0","$install_id":"install-1"},
@@ -88,7 +88,7 @@ for _ in $(seq 1 10); do
   [ "$code" = "401" ] || break
   sleep 0.5
 done
-[ "$code" = "202" ] || fail "/api/events returned $code: $(cat "$dir/events.out")"
+[ "$code" = "202" ] || fail "/ingest/events returned $code: $(cat "$dir/events.out")"
 
 echo "waiting for the first Evidence build (this takes about a minute)..."
 status=""

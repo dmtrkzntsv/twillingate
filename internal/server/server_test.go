@@ -122,7 +122,7 @@ func testServerWithIdentity(t *testing.T, mode string) (*fakeQueue, http.Handler
 // non-browser User-Agent; a Chrome UA and CF country are the defaults so
 // $pageview enrichment behaves like a real browser request.
 func post(h http.Handler, body string, headers map[string]string) *httptest.ResponseRecorder {
-	r := httptest.NewRequest("POST", "/api/events", strings.NewReader(body))
+	r := httptest.NewRequest("POST", "/ingest/events", strings.NewReader(body))
 	r.Header.Set("User-Agent", chromeUA)
 	r.Header.Set("CF-IPCountry", "DE")
 	for k, v := range headers {
@@ -471,9 +471,18 @@ func TestOldEndpointsAreGone(t *testing.T) {
 	}
 }
 
+func TestOldIngestPathIsGone(t *testing.T) {
+	_, h := testServer(t)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("POST", "/api/events", strings.NewReader(`{}`)))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("POST /api/events = %d, want 404", rec.Code)
+	}
+}
+
 func TestPreflight(t *testing.T) {
 	_, h := testServer(t)
-	r := httptest.NewRequest("OPTIONS", "/api/events", nil)
+	r := httptest.NewRequest("OPTIONS", "/ingest/events", nil)
 	r.Header.Set("Origin", testOrigin)
 	r.Header.Set("Access-Control-Request-Method", "POST")
 	w := httptest.NewRecorder()
@@ -484,7 +493,7 @@ func TestPreflight(t *testing.T) {
 	if !strings.Contains(w.Header().Get("Access-Control-Allow-Headers"), "X-Analytics-Key") {
 		t.Errorf("preflight must allow the key header: %q", w.Header().Get("Access-Control-Allow-Headers"))
 	}
-	r2 := httptest.NewRequest("OPTIONS", "/api/events", nil)
+	r2 := httptest.NewRequest("OPTIONS", "/ingest/events", nil)
 	r2.Header.Set("Origin", "https://evil.com")
 	w2 := httptest.NewRecorder()
 	h.ServeHTTP(w2, r2)
