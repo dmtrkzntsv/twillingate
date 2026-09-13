@@ -42,6 +42,7 @@ type loginServer struct {
 	accessTTL time.Duration
 	logger    *slog.Logger
 	now       func() time.Time
+	limiter   failureLimiter
 }
 
 func newLoginServer(m config.MCPConfig, logger *slog.Logger) *loginServer {
@@ -64,6 +65,8 @@ func (s *loginServer) mount(mux *http.ServeMux) {
 		&oauthex.ProtectedResourceMetadata{Resource: s.resource, AuthorizationServers: []string{s.issuer}}))
 	mux.HandleFunc("GET /.well-known/oauth-authorization-server", s.metadata)
 	mux.HandleFunc("POST /oauth/register", s.registerClient)
+	mux.HandleFunc("GET /oauth/authorize", s.authorizePage)
+	mux.HandleFunc("POST /oauth/authorize", s.authorizeSubmit)
 }
 
 // verify accepts the env token as before, or an access token this server
