@@ -55,13 +55,7 @@ func (h *host) createProject(ctx context.Context, in projectIn) (projectToolOut,
 	if err != nil {
 		return projectToolOut{}, err
 	}
-	out := projectToolOut{Alias: in.Alias, Key: key}
-	// p is nil only if the project vanished between commit and reload; the
-	// write already succeeded, so report it without snippet enrichment.
-	if p == nil {
-		return out, nil
-	}
-	out.Alias, out.Identity = p.Alias, p.Identity
+	out := projectToolOut{Alias: p.Alias, Identity: p.Identity, Key: key}
 	if key != "" {
 		out.Snippet = manage.Snippet(h.publicURL, key, p.Identity)
 		if h.publicURL == "" {

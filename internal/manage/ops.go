@@ -14,7 +14,8 @@ import (
 // Ops are the audited registry operations. Every mutation writes its
 // audit row and bumps config_version in one transaction (store layer),
 // then rebuilds the snapshot synchronously so in-process readers see it
-// immediately (spec §3.3).
+// immediately (spec §3.3); if that rebuild fails, the next read retries it
+// and the operation still reports the committed write as done.
 type Ops struct {
 	Reg *Registry
 	St  Store
@@ -36,6 +37,45 @@ func (o *Ops) rebuildFlatView(ctx context.Context) {
 	if err := o.St.RebuildFlatView(ctx, keys); err != nil {
 		o.Reg.logger.Warn("flat view rebuild failed", "error", err)
 	}
+}
+
+// afterWrite refreshes the in-process snapshot once a write has committed
+// and, when rebuildView is set, the flat view with it. A failed reload is
+// logged rather than returned: the write already happened, and reporting
+// it as failed would send the caller into a retry that collides with it.
+// The registry is marked stale so its next read reloads, and the flat view
+// waits for the next write or the daily pass. Reports whether the snapshot
+// now reflects the write.
+func (o *Ops) afterWrite(ctx context.Context, rebuildView bool) bool {
+	if err := o.Reg.Reload(ctx); err != nil {
+		o.Reg.logger.Warn("registry reload after write failed; the next read retries", "error", err)
+		o.Reg.markStale()
+		return false
+	}
+	if rebuildView {
+		o.rebuildFlatView(ctx)
+	}
+	return true
+}
+
+// written is the project a create or update just committed: the snapshot's
+// copy when the reload succeeded, otherwise one built from the validated
+// spec, keeping the archived flag the spec does not carry.
+func (o *Ops) written(ctx context.Context, spec ProjectSpec, reloaded bool) *Project {
+	if reloaded {
+		if cur := o.Reg.Snapshot(ctx).Project(spec.Alias); cur != nil {
+			return cur
+		}
+	}
+	// Read the held snapshot without polling, so the stale mark survives
+	// for the caller's next read.
+	cur := o.Reg.snap.Load().Project(spec.Alias)
+	p := &Project{Alias: spec.Alias, Name: spec.Name, Identity: spec.Identity,
+		AllowedOrigins: spec.AllowedOrigins, Retention: spec.Retention, Attributes: spec.Attributes}
+	if cur != nil {
+		p.Archived = cur.Archived
+	}
+	return p
 }
 
 type ProjectSpec struct {
@@ -169,11 +209,7 @@ func (o *Ops) create(ctx context.Context, actor string, spec ProjectSpec, write 
 		Actor: actor, Action: "project.create", Subject: spec.Alias}); err != nil {
 		return nil, err
 	}
-	if err := o.Reg.Reload(ctx); err != nil {
-		return nil, err
-	}
-	o.rebuildFlatView(ctx)
-	return o.Reg.Snapshot(ctx).Project(spec.Alias), nil
+	return o.written(ctx, spec, o.afterWrite(ctx, true)), nil
 }
 
 func (o *Ops) UpdateProject(ctx context.Context, actor string, spec ProjectSpec) (*Project, error) {
@@ -188,11 +224,7 @@ func (o *Ops) UpdateProject(ctx context.Context, actor string, spec ProjectSpec)
 		Actor: actor, Action: "project.update", Subject: spec.Alias}); err != nil {
 		return nil, err
 	}
-	if err := o.Reg.Reload(ctx); err != nil {
-		return nil, err
-	}
-	o.rebuildFlatView(ctx)
-	return o.Reg.Snapshot(ctx).Project(spec.Alias), nil
+	return o.written(ctx, spec, o.afterWrite(ctx, true)), nil
 }
 
 func (o *Ops) ArchiveProject(ctx context.Context, actor, alias string) error {
@@ -200,7 +232,8 @@ func (o *Ops) ArchiveProject(ctx context.Context, actor, alias string) error {
 		Actor: actor, Action: "project.archive", Subject: alias}); err != nil {
 		return err
 	}
-	return o.Reg.Reload(ctx)
+	o.afterWrite(ctx, false)
+	return nil
 }
 
 func (o *Ops) RestoreProject(ctx context.Context, actor, alias string) error {
@@ -208,7 +241,8 @@ func (o *Ops) RestoreProject(ctx context.Context, actor, alias string) error {
 		Actor: actor, Action: "project.restore", Subject: alias}); err != nil {
 		return err
 	}
-	return o.Reg.Reload(ctx)
+	o.afterWrite(ctx, false)
+	return nil
 }
 
 func (o *Ops) IssueIngestKey(ctx context.Context, actor, project, label string) (string, error) {
@@ -226,7 +260,8 @@ func (o *Ops) IssueIngestKey(ctx context.Context, actor, project, label string) 
 		Actor: actor, Action: "key.issue", Subject: project + "/" + label}); err != nil {
 		return "", err
 	}
-	return key, o.Reg.Reload(ctx)
+	o.afterWrite(ctx, false)
+	return key, nil
 }
 
 func (o *Ops) DisableIngestKey(ctx context.Context, actor, project, label string) error {
@@ -234,7 +269,8 @@ func (o *Ops) DisableIngestKey(ctx context.Context, actor, project, label string
 		Actor: actor, Action: "key.disable", Subject: project + "/" + label}); err != nil {
 		return err
 	}
-	return o.Reg.Reload(ctx)
+	o.afterWrite(ctx, false)
+	return nil
 }
 
 func (o *Ops) EnableIngestKey(ctx context.Context, actor, project, label string) error {
@@ -242,7 +278,8 @@ func (o *Ops) EnableIngestKey(ctx context.Context, actor, project, label string)
 		Actor: actor, Action: "key.enable", Subject: project + "/" + label}); err != nil {
 		return err
 	}
-	return o.Reg.Reload(ctx)
+	o.afterWrite(ctx, false)
+	return nil
 }
 
 // RenameProject rewrites a project's alias — its physical identity, the
@@ -262,10 +299,7 @@ func (o *Ops) RenameProject(ctx context.Context, actor, old, newAlias string) er
 		Actor: actor, Action: "project.rename", Subject: old + "->" + newAlias}); err != nil {
 		return err
 	}
-	if err := o.Reg.Reload(ctx); err != nil {
-		return err
-	}
-	o.rebuildFlatView(ctx)
+	o.afterWrite(ctx, true)
 	return nil
 }
 
@@ -277,10 +311,13 @@ func (o *Ops) DeleteProject(ctx context.Context, actor, alias string) error {
 		Actor: actor, Action: "project.delete", Subject: alias}); err != nil {
 		return err
 	}
+	// Reclaiming pages is housekeeping: the delete has committed, so a
+	// failed vacuum is logged and left to the daily pass's own vacuum.
 	if err := o.St.IncrementalVacuum(ctx); err != nil {
-		return fmt.Errorf("delete succeeded but vacuum failed: %w", err)
+		o.Reg.logger.Warn("vacuum after project delete failed", "project", alias, "error", err)
 	}
-	return o.Reg.Reload(ctx)
+	o.afterWrite(ctx, false)
+	return nil
 }
 
 // MintIngestKey mints "ak_" + 128 bits hex. Ingest keys are public by

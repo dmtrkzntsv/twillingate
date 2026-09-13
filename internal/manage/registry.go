@@ -121,6 +121,11 @@ func (r *Registry) Reload(ctx context.Context) error {
 	return nil
 }
 
+// markStale makes the next Snapshot call re-poll config_version at once
+// instead of after pollInterval: a reload that failed after a write must
+// not leave readers on the pre-write snapshot for longer than one read.
+func (r *Registry) markStale() { r.lastCheck.Store(0) }
+
 // Snapshot returns the current registry view, polling config_version at
 // most once per pollInterval to notice out-of-process writes. On poll
 // failure the previous snapshot keeps serving: a transient read error

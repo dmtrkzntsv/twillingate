@@ -205,10 +205,7 @@ func (o *Ops) Import(ctx context.Context, actor string, r io.Reader) (ImportResu
 			res.KeysAdded++
 		}
 	}
-	if err := o.Reg.Reload(ctx); err != nil {
-		return res, err
-	}
-	o.rebuildFlatView(ctx)
+	o.afterWrite(ctx, true)
 	return res, nil
 }
 
