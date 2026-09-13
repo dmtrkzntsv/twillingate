@@ -94,7 +94,7 @@ func TestSignedValuesRejected(t *testing.T) {
 const (
 	testToken      = "ar_testtoken"
 	testPassword   = "hunter2"
-	testResource   = "https://mcp.example.com/mcp"
+	testResource   = "https://mcp.example.com"
 	testIssuer     = "https://mcp.example.com"
 	claudeCallback = "https://claude.ai/api/mcp/auth_callback"
 	loopbackEntry  = "http://localhost/callback"
@@ -360,7 +360,7 @@ func TestLoginVerifier(t *testing.T) {
 			m.Token = "ar_changed"
 		}).s, access),
 		"after resource change": verify(newLoginFixture(t, func(m *config.APIConfig) {
-			m.ResourceURL = "https://other.example.com/mcp"
+			m.ResourceURL = "https://other.example.com"
 		}).s, access),
 	}
 	f.now = loginEpoch.Add(2 * time.Hour)

@@ -157,7 +157,7 @@ func TestTokenRefresh(t *testing.T) {
 	wantOAuthError(t, "access token as refresh", f.tokenRequest(refreshGrant(client, third.AccessToken)), "invalid_grant")
 	wantOAuthError(t, "another client's refresh", f.tokenRequest(refreshGrant(f.register(claudeCallback), third.RefreshToken)), "invalid_grant")
 
-	moved := newLoginFixture(t, func(m *config.APIConfig) { m.ResourceURL = "https://other.example.com/mcp" })
+	moved := newLoginFixture(t, func(m *config.APIConfig) { m.ResourceURL = "https://other.example.com" })
 	moved.now = f.now
 	wantOAuthError(t, "after resource change", moved.tokenRequest(refreshGrant(client, third.RefreshToken)), "invalid_grant")
 
@@ -174,4 +174,60 @@ func TestUsedCodesPrunesExpired(t *testing.T) {
 	if !u.claim("b", later.Add(time.Minute), later) || len(u.seen) != 1 {
 		t.Errorf("expired entries not pruned: %v", u.seen)
 	}
+}
+
+func TestResourceParameterMayNameAPathUnderTheOrigin(t *testing.T) {
+	f := newLoginFixture(t, nil)
+	for r, want := range map[string]bool{
+		"https://mcp.example.com":          true,
+		"https://mcp.example.com/":         true,
+		"https://mcp.example.com/mcp":      true,
+		"https://mcp.example.com/api":      true,
+		"https://mcp.example.com.evil.com": false,
+		"https://mcp.example.com@evil.com": false,
+		"https://mcp.example.com:8443/mcp": false,
+		"https://other.example.com/mcp":    false,
+		"http://mcp.example.com/mcp":       false,
+		"":                                 false,
+	} {
+		if got := f.s.resourceAccepted(r); got != want {
+			t.Errorf("resourceAccepted(%q) = %v, want %v", r, got, want)
+		}
+	}
+}
+
+// TestResourceUnderTheOriginGetsAnOriginToken runs the login with the
+// resource an MCP client sends, the URL it connected to, and checks the
+// token still names the origin, so the same token opens /api/.
+func TestResourceUnderTheOriginGetsAnOriginToken(t *testing.T) {
+	f := newLoginFixture(t, nil)
+	client := f.register(claudeCallback)
+	q := authorizeQuery(client, claudeCallback)
+	q.Set("resource", testResource+"/mcp")
+	loc, err := url.Parse(f.submit(f.loginForm(q), testPassword).Header().Get("Location"))
+	if err != nil || loc.Query().Get("code") == "" {
+		t.Fatalf("login with resource=%s/mcp: %v %q", testResource, err, loc)
+	}
+	grant := codeGrant(client, loc.Query().Get("code"), claudeCallback)
+	grant.Set("resource", testResource+"/mcp")
+	got := f.grant(grant)
+	var c grantClaims
+	if err := f.s.keys.parse(kindAccess, got.AccessToken, &c, f.s.now); err != nil {
+		t.Fatal(err)
+	}
+	if len(c.Audience) != 1 || c.Audience[0] != testResource {
+		t.Errorf("aud = %v, want only the origin %s", c.Audience, testResource)
+	}
+	if _, err := f.s.verify(t.Context(), got.AccessToken, nil); err != nil {
+		t.Errorf("token rejected: %v", err)
+	}
+
+	sibling := authorizeQuery(client, claudeCallback)
+	sibling.Set("resource", testResource+".evil.com/mcp")
+	if loc, _ := url.Parse(f.authorize(sibling).Header().Get("Location")); loc == nil || loc.Query().Get("error") != "invalid_target" {
+		t.Errorf("authorize with a sibling-host resource: %v, want invalid_target", loc)
+	}
+	grant = refreshGrant(client, got.RefreshToken)
+	grant.Set("resource", testResource+".evil.com")
+	wantOAuthError(t, "refresh with a sibling-host resource", f.tokenRequest(grant), "invalid_target")
 }

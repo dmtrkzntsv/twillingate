@@ -36,7 +36,7 @@ func (s *loginServer) token(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, "invalid_client", "unknown client_id")
 		return
 	}
-	if form.Has("resource") && form.Get("resource") != s.resource {
+	if form.Has("resource") && !s.resourceAccepted(form.Get("resource")) {
 		oauthError(w, "invalid_target", "resource does not name this server")
 		return
 	}

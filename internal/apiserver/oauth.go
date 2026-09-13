@@ -54,11 +54,20 @@ func newLoginServer(m config.APIConfig, logger *slog.Logger) *loginServer {
 		password:  []byte(m.Password),
 		hosts:     m.RedirectHosts,
 		resource:  m.ResourceURL,
-		issuer:    originOf(m.ResourceURL),
+		issuer:    originOf(m.ResourceURL), // equal to the resource, which config keeps an origin
 		accessTTL: accessTokenTTL,
 		logger:    logger,
 		now:       time.Now,
 	}
+}
+
+// resourceAccepted admits a client's resource parameter naming this API:
+// the origin itself or any URL under it, since MCP clients send the URL
+// they connected to (…/mcp). Tokens are still issued for the origin. The
+// "/" after the origin keeps https://host.evil.com and https://host@evil
+// from passing as https://host.
+func (s *loginServer) resourceAccepted(r string) bool {
+	return s.resource != "" && (r == s.resource || strings.HasPrefix(r, s.resource+"/"))
 }
 
 // mount adds the login server's routes (login spec §4).

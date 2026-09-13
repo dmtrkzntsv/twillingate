@@ -116,16 +116,17 @@ func wrapAuth(ctx context.Context, m config.APIConfig, next http.Handler) (http.
 	}
 }
 
+// metadataURLFor is the RFC 9728 metadata URL the 401 challenge names on
+// both /mcp and /api/. Config keeps the resource an origin with no path, so
+// inserting the well-known suffix gives the host-rooted form, and RFC 9728
+// §3.3's check that the metadata's resource is the identifier the suffix
+// went into holds.
 func metadataURLFor(resourceURL string) string {
-	// RFC 9728: the well-known path is host-rooted; the resource URL's
-	// origin carries it. Good enough for the single-origin deployments
-	// this server targets; revisit if a path-scoped resource needs the
-	// path-suffix form.
-	return originOf(resourceURL) + "/.well-known/oauth-protected-resource"
+	return resourceURL + "/.well-known/oauth-protected-resource"
 }
 
-// originOf is the scheme and host of an absolute URL: the base of the RFC
-// 9728 well-known URL and the token:// login server's issuer.
+// originOf is the scheme and host of an absolute URL: the token:// login
+// server's issuer.
 func originOf(raw string) string {
 	u, err := url.Parse(raw)
 	if err != nil {

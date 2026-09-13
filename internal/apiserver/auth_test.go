@@ -70,7 +70,7 @@ func (f *jwksFixture) sign(t *testing.T, claims jwt.MapClaims) string {
 
 func (f *jwksFixture) claims(over jwt.MapClaims) jwt.MapClaims {
 	c := jwt.MapClaims{
-		"iss": f.issuer, "aud": "https://twillingate.example.com/mcp",
+		"iss": f.issuer, "aud": "https://twillingate.example.com",
 		"sub": "user@example.com", "exp": time.Now().Add(time.Hour).Unix(),
 	}
 	for k, v := range over {
@@ -85,7 +85,7 @@ func TestOAuthVerifier(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	v := OAuthVerifier(f.issuer, "https://twillingate.example.com/mcp",
+	v := OAuthVerifier(f.issuer, "https://twillingate.example.com",
 		NewJWKSCache(url, f.server.Client()))
 
 	info, err := v(context.Background(), f.sign(t, f.claims(nil)), nil)
@@ -116,7 +116,7 @@ func TestOAuthVerifier(t *testing.T) {
 func TestOAuthVerifierRejectsHMACAndNone(t *testing.T) {
 	f := newJWKSFixture(t)
 	url, _ := DiscoverJWKSURL(context.Background(), f.issuer, f.server.Client())
-	v := OAuthVerifier(f.issuer, "https://twillingate.example.com/mcp",
+	v := OAuthVerifier(f.issuer, "https://twillingate.example.com",
 		NewJWKSCache(url, f.server.Client()))
 	// HMAC token signed with an arbitrary secret; alg allowlist must
 	// reject it before any key lookup happens.

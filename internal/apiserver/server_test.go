@@ -60,7 +60,7 @@ func TestMCPRequires401WithChallenge(t *testing.T) {
 	f := newJWKSFixture(t)
 	h := newHandlerFixture(t, map[string]string{
 		"API_AUTH_DSN": "oauth+insecure://" + strings.TrimPrefix(f.issuer, "http://") +
-			"?resource=https://twillingate.example.com/mcp"})
+			"?resource=https://twillingate.example.com"})
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest("POST", "/mcp", strings.NewReader("{}")))
 	if rec.Code != http.StatusUnauthorized {
@@ -70,9 +70,8 @@ func TestMCPRequires401WithChallenge(t *testing.T) {
 	if !strings.Contains(www, "resource_metadata") {
 		t.Errorf("WWW-Authenticate = %q; must point at the metadata URL", www)
 	}
-	// The resource URL carries a /mcp path; the challenge must be the
-	// host-rooted well-known URL (RFC 9728), not ResourceURL+"/.well-known/..."
-	// which would 404 by appending onto the /mcp path segment.
+	// The resource is the origin, so the challenge is the host-rooted
+	// well-known URL (RFC 9728) with no /mcp segment.
 	const want = "https://twillingate.example.com/.well-known/oauth-protected-resource"
 	if !strings.Contains(www, want) {
 		t.Errorf("WWW-Authenticate = %q; want resource_metadata=%q (host-rooted, no /mcp segment)", www, want)
@@ -134,14 +133,14 @@ func TestPRMServedWhenIssuerConfigured(t *testing.T) {
 	f := newJWKSFixture(t)
 	h := newHandlerFixture(t, map[string]string{
 		"API_AUTH_DSN": "oauth+insecure://" + strings.TrimPrefix(f.issuer, "http://") +
-			"?resource=https://twillingate.example.com/mcp"})
+			"?resource=https://twillingate.example.com"})
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest("GET", "/.well-known/oauth-protected-resource", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("code = %d", rec.Code)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, f.issuer) || !strings.Contains(body, "twillingate.example.com") {
+	if !strings.Contains(body, f.issuer) || !strings.Contains(body, `"resource":"https://twillingate.example.com"`) {
 		t.Errorf("metadata = %s", body)
 	}
 }
@@ -202,7 +201,7 @@ func TestMCPOAuthModePasses(t *testing.T) {
 	f := newJWKSFixture(t)
 	h := newHandlerFixture(t, map[string]string{
 		"API_AUTH_DSN": "oauth+insecure://" + strings.TrimPrefix(f.issuer, "http://") +
-			"?resource=https://twillingate.example.com/mcp",
+			"?resource=https://twillingate.example.com",
 	})
 
 	req := initReq()
@@ -317,7 +316,7 @@ func TestBuildFailsWhenOAuthIssuerUnreachable(t *testing.T) {
 	path := seedDB(t)
 	base := map[string]string{
 		"DATABASE_DSN": "sqlite://" + path,
-		"API_AUTH_DSN": "oauth+insecure://127.0.0.1:0?resource=https://twillingate.example.com/mcp",
+		"API_AUTH_DSN": "oauth+insecure://127.0.0.1:0?resource=https://twillingate.example.com",
 	}
 	cfg, err := config.FromEnv(func(k string) (string, bool) { v, ok := base[k]; return v, ok })
 	if err != nil {
@@ -342,7 +341,7 @@ func TestBuildFailsWhenOAuthIssuerUnreachable(t *testing.T) {
 }
 
 const loginDSN = "token://ar_testtoken?password=hunter2" +
-	"&redirect=https://claude.ai/api/mcp/auth_callback&resource=https://mcp.example.com/mcp"
+	"&redirect=https://claude.ai/api/mcp/auth_callback&resource=https://mcp.example.com"
 
 func TestTokenLoginRoutesFollowRedirects(t *testing.T) {
 	serve := func(h http.Handler, req *http.Request) *httptest.ResponseRecorder {
@@ -369,7 +368,7 @@ func TestTokenLoginRoutesFollowRedirects(t *testing.T) {
 		t.Errorf("login: /mcp %d WWW-Authenticate=%q, want 401 with %s", rec.Code, rec.Header().Get("WWW-Authenticate"), want)
 	}
 	passwordOnly := newHandlerFixture(t, map[string]string{
-		"API_AUTH_DSN": "token://ar_testtoken?password=hunter2&resource=https://mcp.example.com/mcp"})
+		"API_AUTH_DSN": "token://ar_testtoken?password=hunter2&resource=https://mcp.example.com"})
 	if rec := serve(passwordOnly, httptest.NewRequest("GET", "/.well-known/oauth-authorization-server", nil)); rec.Code != http.StatusOK {
 		t.Errorf("password without redirect: metadata %d, want 200 — the password turns the login on", rec.Code)
 	}
@@ -381,7 +380,7 @@ func TestTokenLoginRoutesFollowRedirects(t *testing.T) {
 }
 
 func TestIssuedAccessTokenNeedsTheLoginServer(t *testing.T) {
-	m := config.APIConfig{Token: "ar_testtoken", Password: "hunter2", ResourceURL: "https://mcp.example.com/mcp"}
+	m := config.APIConfig{Token: "ar_testtoken", Password: "hunter2", ResourceURL: "https://mcp.example.com"}
 	access := newLoginServer(m, slog.New(slog.DiscardHandler)).keys.sign(kindAccess, grantClaims{
 		RegisteredClaims: jwt.RegisteredClaims{Issuer: "https://mcp.example.com", Subject: "mcp",
 			Audience: jwt.ClaimStrings{m.ResourceURL}, ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour))}})

@@ -326,63 +326,63 @@ func TestValidateAPI(t *testing.T) {
 		{"unknown scheme", map[string]string{"API_AUTH_DSN": "basic://x"}, false},
 		{"empty token", map[string]string{"API_AUTH_DSN": "token://"}, false},
 		{"oauth ok", map[string]string{
-			"API_AUTH_DSN": "oauth://idp.example.com?resource=https://twillingate.example.com/mcp"}, true},
+			"API_AUTH_DSN": "oauth://idp.example.com?resource=https://twillingate.example.com"}, true},
 		{"oauth resource from PUBLIC_URL", map[string]string{
 			"API_AUTH_DSN": "oauth://idp.example.com",
 			"PUBLIC_URL":   "https://twillingate.example.com"}, true},
 		{"oauth no resource and no PUBLIC_URL", map[string]string{
 			"API_AUTH_DSN": "oauth://idp.example.com"}, false},
 		{"oauth empty issuer", map[string]string{
-			"API_AUTH_DSN": "oauth://?resource=https://twillingate.example.com/mcp"}, false},
+			"API_AUTH_DSN": "oauth://?resource=https://twillingate.example.com"}, false},
 		{"cloudflare removed", map[string]string{
 			"API_AUTH_DSN": "cloudflare://team.cloudflareaccess.com?aud=aud123"}, false},
 		{"token login ok", map[string]string{
-			"API_AUTH_DSN": "token://ar_x?password=pw&redirect=https://claude.ai/api/mcp/auth_callback&resource=https://mcp.example.com/mcp"}, true},
+			"API_AUTH_DSN": "token://ar_x?password=pw&redirect=https://claude.ai/api/mcp/auth_callback&resource=https://mcp.example.com"}, true},
 		{"token login resource from PUBLIC_URL", map[string]string{
 			"API_AUTH_DSN": "token://ar_x?password=pw&redirect=https://claude.ai/api/mcp/auth_callback",
 			"PUBLIC_URL":   "https://mcp.example.com"}, true},
 		{"token login one-character password", map[string]string{
-			"API_AUTH_DSN": "token://ar_x?password=a&redirect=http://localhost/callback&resource=https://mcp.example.com/mcp"}, true},
+			"API_AUTH_DSN": "token://ar_x?password=a&redirect=http://localhost/callback&resource=https://mcp.example.com"}, true},
 		{"token login http loopback redirect", map[string]string{
-			"API_AUTH_DSN": "token://ar_x?password=pw&redirect=http://127.0.0.1/callback&resource=https://mcp.example.com/mcp"}, true},
+			"API_AUTH_DSN": "token://ar_x?password=pw&redirect=http://127.0.0.1/callback&resource=https://mcp.example.com"}, true},
 		{"token login no resource and no PUBLIC_URL", map[string]string{
 			"API_AUTH_DSN": "token://ar_x?password=pw&redirect=https://claude.ai/cb"}, false},
 		{"token login no password", map[string]string{
-			"API_AUTH_DSN": "token://ar_x?redirect=https://claude.ai/cb&resource=https://mcp.example.com/mcp"}, false},
+			"API_AUTH_DSN": "token://ar_x?redirect=https://claude.ai/cb&resource=https://mcp.example.com"}, false},
 		{"token login empty password", map[string]string{
-			"API_AUTH_DSN": "token://ar_x?password=&redirect=https://claude.ai/cb&resource=https://mcp.example.com/mcp"}, false},
+			"API_AUTH_DSN": "token://ar_x?password=&redirect=https://claude.ai/cb&resource=https://mcp.example.com"}, false},
 		{"token login password only", map[string]string{
-			"API_AUTH_DSN": "token://ar_x?password=pw&resource=https://mcp.example.com/mcp"}, true},
+			"API_AUTH_DSN": "token://ar_x?password=pw&resource=https://mcp.example.com"}, true},
 		{"token resource without password", map[string]string{
-			"API_AUTH_DSN": "token://ar_x?resource=https://mcp.example.com/mcp"}, false},
+			"API_AUTH_DSN": "token://ar_x?resource=https://mcp.example.com"}, false},
 		{"token unknown parameter", map[string]string{
-			"API_AUTH_DSN": "token://ar_x?password=pw&redirects=https://claude.ai/cb&resource=https://mcp.example.com/mcp"}, false},
+			"API_AUTH_DSN": "token://ar_x?password=pw&redirects=https://claude.ai/cb&resource=https://mcp.example.com"}, false},
 		{"token malformed query", map[string]string{
 			"API_AUTH_DSN": "token://ar_x?password=%zz"}, false},
 		{"token empty token with query", map[string]string{
 			"API_AUTH_DSN": "token://?password=pw&redirect=https://claude.ai/cb"}, false},
 		{"token redirect http on public host", map[string]string{
-			"API_AUTH_DSN": "token://ar_x?password=pw&redirect=http://claude.ai/cb&resource=https://mcp.example.com/mcp"}, false},
+			"API_AUTH_DSN": "token://ar_x?password=pw&redirect=http://claude.ai/cb&resource=https://mcp.example.com"}, false},
 		{"token redirect relative", map[string]string{
-			"API_AUTH_DSN": "token://ar_x?password=pw&redirect=/callback&resource=https://mcp.example.com/mcp"}, false},
+			"API_AUTH_DSN": "token://ar_x?password=pw&redirect=/callback&resource=https://mcp.example.com"}, false},
 		{"token redirect custom scheme", map[string]string{
-			"API_AUTH_DSN": "token://ar_x?password=pw&redirect=myapp://callback&resource=https://mcp.example.com/mcp"}, false},
+			"API_AUTH_DSN": "token://ar_x?password=pw&redirect=myapp://callback&resource=https://mcp.example.com"}, false},
 		{"token redirect with fragment", map[string]string{
-			"API_AUTH_DSN": "token://ar_x?password=pw&redirect=https://claude.ai/cb%23frag&resource=https://mcp.example.com/mcp"}, false},
+			"API_AUTH_DSN": "token://ar_x?password=pw&redirect=https://claude.ai/cb%23frag&resource=https://mcp.example.com"}, false},
 		{"token redirect unparseable", map[string]string{
-			"API_AUTH_DSN": "token://ar_x?password=pw&redirect=https://%25zz/cb&resource=https://mcp.example.com/mcp"}, false},
+			"API_AUTH_DSN": "token://ar_x?password=pw&redirect=https://%25zz/cb&resource=https://mcp.example.com"}, false},
 		{"token redirect host", map[string]string{
-			"API_AUTH_DSN": "token://ar_x?password=pw&redirect=app.example.com&resource=https://mcp.example.com/mcp"}, true},
+			"API_AUTH_DSN": "token://ar_x?password=pw&redirect=app.example.com&resource=https://mcp.example.com"}, true},
 		{"token redirect IPv6 loopback host", map[string]string{
-			"API_AUTH_DSN": "token://ar_x?password=pw&redirect=[::1]&resource=https://mcp.example.com/mcp"}, true},
+			"API_AUTH_DSN": "token://ar_x?password=pw&redirect=[::1]&resource=https://mcp.example.com"}, true},
 		{"token redirect host with path", map[string]string{
-			"API_AUTH_DSN": "token://ar_x?password=pw&redirect=app.example.com/cb&resource=https://mcp.example.com/mcp"}, false},
+			"API_AUTH_DSN": "token://ar_x?password=pw&redirect=app.example.com/cb&resource=https://mcp.example.com"}, false},
 		{"token redirect host with port", map[string]string{
-			"API_AUTH_DSN": "token://ar_x?password=pw&redirect=app.example.com:8443&resource=https://mcp.example.com/mcp"}, false},
+			"API_AUTH_DSN": "token://ar_x?password=pw&redirect=app.example.com:8443&resource=https://mcp.example.com"}, false},
 		{"token redirect empty", map[string]string{
-			"API_AUTH_DSN": "token://ar_x?password=pw&redirect=&resource=https://mcp.example.com/mcp"}, false},
+			"API_AUTH_DSN": "token://ar_x?password=pw&redirect=&resource=https://mcp.example.com"}, false},
 		{"token resource http on public host", map[string]string{
-			"API_AUTH_DSN": "token://ar_x?password=pw&redirect=https://claude.ai/cb&resource=http://mcp.example.com/mcp"}, false},
+			"API_AUTH_DSN": "token://ar_x?password=pw&redirect=https://claude.ai/cb&resource=http://mcp.example.com"}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -410,7 +410,7 @@ func TestMCPAuthDSNParsing(t *testing.T) {
 	})
 	t.Run("oauth issuer keeps path, resource explicit", func(t *testing.T) {
 		cfg, err := FromEnv(mcpEnv(map[string]string{
-			"API_AUTH_DSN": "oauth://idp.example.com/tenant1?resource=https://t.example.com/mcp&audience=aud9"}))
+			"API_AUTH_DSN": "oauth://idp.example.com/tenant1?resource=https://t.example.com&audience=aud9"}))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -418,11 +418,11 @@ func TestMCPAuthDSNParsing(t *testing.T) {
 		if m.AuthMode != "oauth" || m.Issuer != "https://idp.example.com/tenant1" {
 			t.Errorf("mode = %q issuer = %q", m.AuthMode, m.Issuer)
 		}
-		if m.ResourceURL != "https://t.example.com/mcp" || m.Audience != "aud9" {
+		if m.ResourceURL != "https://t.example.com" || m.Audience != "aud9" {
 			t.Errorf("resource = %q audience = %q", m.ResourceURL, m.Audience)
 		}
 	})
-	t.Run("oauth defaults resource to PUBLIC_URL/mcp and audience to resource", func(t *testing.T) {
+	t.Run("oauth defaults resource to PUBLIC_URL and audience to resource", func(t *testing.T) {
 		cfg, err := FromEnv(mcpEnv(map[string]string{
 			"API_AUTH_DSN": "oauth://idp.example.com",
 			"PUBLIC_URL":   "https://twillingate.example.com"}))
@@ -430,7 +430,7 @@ func TestMCPAuthDSNParsing(t *testing.T) {
 			t.Fatal(err)
 		}
 		m := cfg.API
-		if m.ResourceURL != "https://twillingate.example.com/mcp" {
+		if m.ResourceURL != "https://twillingate.example.com" {
 			t.Errorf("resource = %q", m.ResourceURL)
 		}
 		if m.Audience != m.ResourceURL {
@@ -439,7 +439,7 @@ func TestMCPAuthDSNParsing(t *testing.T) {
 	})
 	t.Run("oauth+insecure issuer is http for local IdPs", func(t *testing.T) {
 		cfg, err := FromEnv(mcpEnv(map[string]string{
-			"API_AUTH_DSN": "oauth+insecure://127.0.0.1:9999?resource=https://t.example.com/mcp"}))
+			"API_AUTH_DSN": "oauth+insecure://127.0.0.1:9999?resource=https://t.example.com"}))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -476,11 +476,11 @@ func TestMCPDefaults(t *testing.T) {
 
 func TestMCPAudienceDefaultsToResource(t *testing.T) {
 	cfg, err := FromEnv(mcpEnv(map[string]string{
-		"API_AUTH_DSN": "oauth://idp.example.com?resource=https://twillingate.example.com/mcp"}))
+		"API_AUTH_DSN": "oauth://idp.example.com?resource=https://twillingate.example.com"}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.API.Audience != "https://twillingate.example.com/mcp" {
+	if cfg.API.Audience != "https://twillingate.example.com" {
 		t.Errorf("Audience = %q", cfg.API.Audience)
 	}
 }
@@ -507,8 +507,8 @@ func TestTokenLoginDSNParsing(t *testing.T) {
 	if !slices.Equal(m.RedirectHosts, want) {
 		t.Errorf("redirect hosts = %v, want %v in DSN order", m.RedirectHosts, want)
 	}
-	if m.ResourceURL != "https://mcp.example.com/mcp" {
-		t.Errorf("resource = %q, want PUBLIC_URL + /mcp", m.ResourceURL)
+	if m.ResourceURL != "https://mcp.example.com" {
+		t.Errorf("resource = %q, want PUBLIC_URL", m.ResourceURL)
 	}
 
 	plain, err := FromEnv(mcpEnv(nil))
@@ -557,5 +557,43 @@ func TestAPIDefaults(t *testing.T) {
 	}
 	if err := c.ValidateAPI(); err == nil || !strings.Contains(err.Error(), "API_AUTH_DSN") {
 		t.Errorf("ValidateAPI without DSN = %v", err)
+	}
+}
+
+func TestResourceIsTheAPIOrigin(t *testing.T) {
+	load := func(env map[string]string) (*Config, error) {
+		env["DATABASE_DSN"] = "sqlite:///tmp/x.db"
+		c, err := FromEnv(func(k string) (string, bool) { v, ok := env[k]; return v, ok })
+		if err != nil {
+			return nil, err
+		}
+		return c, c.ValidateAPI()
+	}
+	c, err := load(map[string]string{"PUBLIC_URL": "https://t.example.com/", "API_AUTH_DSN": "token://ar_x?password=pw"})
+	if err != nil || c.API.ResourceURL != "https://t.example.com" {
+		t.Errorf("token login default resource = %q, %v", c.API.ResourceURL, err)
+	}
+	c, err = load(map[string]string{"PUBLIC_URL": "https://t.example.com", "API_AUTH_DSN": "oauth://idp.example.com"})
+	if err != nil || c.API.ResourceURL != "https://t.example.com" || c.API.Audience != "https://t.example.com" {
+		t.Errorf("oauth default resource/audience = %q/%q, %v", c.API.ResourceURL, c.API.Audience, err)
+	}
+	for _, dsn := range []string{
+		"token://ar_x?password=pw&resource=https://api.example.com/mcp",
+		"oauth://idp.example.com?resource=https://api.example.com/api",
+		"token://ar_x?password=pw&resource=https://api.example.com?x=1",
+		"token://ar_x?password=pw&resource=https://user@api.example.com",
+		"oauth://idp.example.com?resource=api.example.com",
+	} {
+		if _, err := load(map[string]string{"API_AUTH_DSN": dsn}); err == nil || !strings.Contains(err.Error(), "origin") {
+			t.Errorf("%s: err = %v, want an origin-only refusal", dsn, err)
+		}
+	}
+	for _, dsn := range []string{"token://ar_x?password=pw", "oauth://idp.example.com"} {
+		if _, err := load(map[string]string{"PUBLIC_URL": "https://t.example.com/analytics", "API_AUTH_DSN": dsn}); err == nil || !strings.Contains(err.Error(), "origin") {
+			t.Errorf("%s with a PUBLIC_URL path: err = %v, want an origin-only refusal", dsn, err)
+		}
+	}
+	if c, err := load(map[string]string{"API_AUTH_DSN": "token://ar_x?password=pw&resource=https://api.example.com/"}); err != nil || c.API.ResourceURL != "https://api.example.com" {
+		t.Errorf("trailing slash origin = %q, %v", c.API.ResourceURL, err)
 	}
 }

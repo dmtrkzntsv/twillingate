@@ -139,10 +139,11 @@ type DashboardsConfig struct {
 //
 // password= on token:// turns on the browser login server, which needs a
 // resource URL. Callbacks are allowed by host: loopback, claude.ai and
-// chatgpt.com always, and each redirect= adds one more. In token and oauth modes resource
-// defaults to PUBLIC_URL + "/mcp"; the oauth issuer is https://<host>[/path]
-// and audience defaults to the resource URL. oauth+insecure produces an
-// http issuer for local IdPs and tests.
+// chatgpt.com always, and each redirect= adds one more. In token and oauth
+// modes resource defaults to PUBLIC_URL and must be an origin
+// (scheme://host[:port], no path): one identifier covers /mcp and /api/.
+// The oauth issuer is https://<host>[/path] and audience defaults to the
+// resource. oauth+insecure produces an http issuer for local IdPs and tests.
 type APIConfig struct {
 	Addr          string // API_ADDR, defaults to IngestAddr
 	DBPath        string // API_DB_PATH, defaults to DATABASE_DSN path
@@ -418,12 +419,11 @@ func (c *Config) parseAPIAuthDSN() error {
 		}
 		m.Issuer = issuerScheme + "://" + u.Host + strings.TrimSuffix(u.Path, "/")
 		q := u.Query()
-		m.ResourceURL = q.Get("resource")
-		if m.ResourceURL == "" && c.PublicURL != "" {
-			m.ResourceURL = c.PublicURL + "/mcp"
+		if m.ResourceURL, err = c.resource("oauth://", q.Get("resource")); err != nil {
+			return err
 		}
 		if m.ResourceURL == "" {
-			return fmt.Errorf("config: API_AUTH_DSN oauth:// requires ?resource=<url> or PUBLIC_URL to derive it from")
+			return fmt.Errorf("config: API_AUTH_DSN oauth:// requires ?resource=<origin> or PUBLIC_URL to derive it from")
 		}
 		m.Audience = q.Get("audience")
 		if m.Audience == "" {
@@ -449,7 +449,6 @@ func (c *Config) parseTokenLogin(query string) error {
 		}
 	}
 	m.Password = q.Get("password")
-	m.ResourceURL = q.Get("resource")
 	if m.Password == "" {
 		return fmt.Errorf("config: API_AUTH_DSN token:// redirect= and resource= need a password=, which turns the login on")
 	}
@@ -460,16 +459,51 @@ func (c *Config) parseTokenLogin(query string) error {
 		}
 		m.RedirectHosts = append(m.RedirectHosts, host)
 	}
-	if m.ResourceURL == "" && c.PublicURL != "" {
-		m.ResourceURL = c.PublicURL + "/mcp"
+	if m.ResourceURL, err = c.resource("token://", q.Get("resource")); err != nil {
+		return err
 	}
 	if m.ResourceURL == "" {
-		return fmt.Errorf("config: API_AUTH_DSN token:// password= requires resource=<url> or PUBLIC_URL to derive it from")
+		return fmt.Errorf("config: API_AUTH_DSN token:// password= requires resource=<origin> or PUBLIC_URL to derive it from")
 	}
 	if err := checkLoginURL(m.ResourceURL); err != nil {
 		return fmt.Errorf("config: API_AUTH_DSN token:// resource=%q %v", m.ResourceURL, err)
 	}
 	return nil
+}
+
+// resource resolves the API resource identifier: resource= when given,
+// else PUBLIC_URL, either way read as an origin. Empty when neither is set.
+func (c *Config) resource(scheme, given string) (string, error) {
+	switch {
+	case given != "":
+		r, err := resourceOrigin(given)
+		if err != nil {
+			return "", fmt.Errorf("config: API_AUTH_DSN %s resource=%q %v", scheme, given, err)
+		}
+		return r, nil
+	case c.PublicURL != "":
+		r, err := resourceOrigin(c.PublicURL)
+		if err != nil {
+			return "", fmt.Errorf("config: PUBLIC_URL=%q %v, or set resource= in API_AUTH_DSN", c.PublicURL, err)
+		}
+		return r, nil
+	}
+	return "", nil
+}
+
+// resourceOrigin reads a resource= value as the API origin: an absolute
+// http(s) URL with no path beyond "/", returned without the slash. One
+// identifier covers /mcp and /api/, and matches the host-rooted RFC 9728
+// metadata the API serves.
+func resourceOrigin(raw string) (string, error) {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
+		return "", fmt.Errorf("must be an absolute http(s) origin such as https://api.example.com")
+	}
+	if (u.Path != "" && u.Path != "/") || u.User != nil || u.RawQuery != "" || u.ForceQuery || strings.Contains(raw, "#") {
+		return "", fmt.Errorf("must be an origin with no path, userinfo, query or fragment, such as https://api.example.com (the API serves /mcp and /api/ under it)")
+	}
+	return u.Scheme + "://" + u.Host, nil
 }
 
 // redirectHost reads a redirect= value as the host it allows: a bare host

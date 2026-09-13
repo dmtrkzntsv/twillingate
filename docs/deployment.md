@@ -124,7 +124,7 @@ curl -i -X POST http://localhost:8080/ingest/events \
 | Variable | Meaning |
 | --- | --- |
 | `INGEST_ADDR` | Address to bind. Default `127.0.0.1:8080` (the docker image sets `0.0.0.0:8080`). |
-| `PUBLIC_URL` | The collector's public base URL (`https://twillingate.example.com`). Embed snippets, MCP integration guidance and the default MCP resource URL are built from it; unset, they carry a placeholder. With [several hostnames](#one-collector-several-hostnames), the default one. |
+| `PUBLIC_URL` | The collector's public base URL (`https://twillingate.example.com`). Embed snippets, MCP integration guidance and the default API resource (its origin) are built from it; unset, they carry a placeholder. With [several hostnames](#one-collector-several-hostnames), the default one. |
 | `DATABASE_DSN` | Store DSN. Only `sqlite://<path>` today. Required. |
 | `GEO_DSN` | Country lookup: `cloudflare://` (header), `maxmind://<license-key>`, or `none://`. |
 | `LOG_LEVEL` | `debug`, `info`, `warn`, `error`. Default `info`. |
@@ -282,7 +282,7 @@ run.
 | Parameter | Meaning |
 | --- | --- |
 | `password` | What the login page asks for. Setting it turns the login on. |
-| `resource` | The public URL of `/mcp`. Defaults to `PUBLIC_URL` + `/mcp`; set it when MCP has its own hostname. |
+| `resource` | The API origin, with no path (`resource=https://api.example.com`); one login covers `/mcp` and `/api/`. Defaults to `PUBLIC_URL`; set it when the API has its own hostname. |
 | `redirect` | An extra host clients may return to, such as `redirect=app.example.com`; repeat it once per host. Only needed for clients not covered below. |
 
 - **Hosts accepted without `redirect=`.** `localhost`, `127.0.0.1` and
@@ -330,6 +330,8 @@ to cut a device off.
 | A client unused for 30 days | That client logs in again |
 | Restart or upgrade | Nothing |
 
+Upgrading from a release whose resource was `…/mcp`: clients logged in with the password must reconnect once, as tokens issued for `…/mcp` no longer verify.
+
 ### Alternative: the token as a header
 
 A client that can send headers can skip the login and present the token
@@ -367,9 +369,9 @@ the old header needs `claude mcp remove twillingate` and adding again.
 
 `API_ADDR` unset, MCP shares the ingestion listener. Put it on its own
 hostname when you can (`API_ADDR` plus a second DNS name, and `resource=`
-set to that hostname's `/mcp`): `/ingest/events` and the `/js/*` scripts must
-stay publicly reachable for ingestion, and a dedicated hostname keeps the
-access-control story simple.
+set to that hostname's origin, such as `resource=https://api.example.com`):
+`/ingest/events` and the `/js/*` scripts must stay publicly reachable for
+ingestion, and a dedicated hostname keeps the access-control story simple.
 
 To run the surfaces as separate processes — independently restartable and
 exposable — copy `deploy/systemd/twillingate.service` to
@@ -390,14 +392,14 @@ that a two-process topology runs the idempotent daily aggregation twice.
 #### `oauth://` — your own identity provider
 
 ```bash
-API_AUTH_DSN='oauth://auth.example.com[?resource=<url>][&audience=<aud>]'
+API_AUTH_DSN='oauth://auth.example.com[?resource=<origin>][&audience=<aud>]'
 ```
 
 For when you already run or rent an IdP (Keycloak, Auth0, Authentik, …).
 The server is then a resource server only: it validates the JWTs the IdP
-issues and serves no login page. `resource` defaults to `PUBLIC_URL` +
-`/mcp`, and the expected audience to the resource URL. For a plain-http IdP
-in development, use `oauth+insecure://`.
+issues and serves no login page. `resource` defaults to `PUBLIC_URL` and
+must be an origin with no path; the expected audience defaults to it. For a
+plain-http IdP in development, use `oauth+insecure://`.
 
 The IdP must provide:
 
@@ -408,7 +410,7 @@ The IdP must provide:
    Many IdPs publish only OIDC discovery, so confirm rather than assume.
 2. **Asymmetrically signed JWT access tokens** (RS/ES/PS). HMAC, `alg=none`
    and opaque tokens are rejected.
-3. **An `aud` claim containing the resource URL** — usually by registering
+3. **An `aud` claim containing the resource origin** — usually by registering
    the MCP server as an API with that identifier. Without it, logins loop.
 4. **For claude.ai:** Dynamic Client Registration (RFC 7591), or a client
    registered by hand with its id entered in the connector.

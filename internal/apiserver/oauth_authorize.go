@@ -46,7 +46,7 @@ func (s *loginServer) authorizePage(w http.ResponseWriter, r *http.Request) {
 		fail("unsupported_response_type")
 	case q.Get("code_challenge") == "" || q.Get("code_challenge_method") != "S256":
 		fail("invalid_request")
-	case q.Has("resource") && q.Get("resource") != s.resource:
+	case q.Has("resource") && !s.resourceAccepted(q.Get("resource")):
 		fail("invalid_target")
 	default:
 		form := s.keys.sign(kindForm, formClaims{ClientID: q.Get("client_id"), ClientName: client.ClientName,

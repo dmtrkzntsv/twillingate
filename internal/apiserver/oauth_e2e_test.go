@@ -26,7 +26,8 @@ const e2eCallback = "http://localhost:43210/callback"
 // TestTokenLoginEndToEnd drives the MCP SDK's own OAuth client through
 // discovery, registration, the password page, the code exchange and
 // refreshes, on both of app's mounting paths. The DSN carries no redirect=:
-// a loopback client needs none.
+// a loopback client needs none. The resource is the origin while the client
+// connects to /mcp, and the token it ends up with also opens /api/.
 func TestTokenLoginEndToEnd(t *testing.T) {
 	// Below the oauth2 client's ten-second early-expiry margin, so every
 	// request after the login refreshes.
@@ -38,7 +39,7 @@ func TestTokenLoginEndToEnd(t *testing.T) {
 		t.Run(fmt.Sprintf("shared=%v", shared), func(t *testing.T) {
 			srv := httptest.NewUnstartedServer(nil)
 			base := "http://" + srv.Listener.Addr().String()
-			h := e2eHandler(t, "token://ar_testtoken?password=hunter2&resource="+base+"/mcp", shared)
+			h := e2eHandler(t, "token://ar_testtoken?password=hunter2&resource="+base, shared)
 			var refreshes atomic.Int32
 			srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				// ParseForm is idempotent on a request, so the handler still sees the form.
@@ -82,6 +83,26 @@ func TestTokenLoginEndToEnd(t *testing.T) {
 			}
 			if refreshes.Load() == 0 {
 				t.Error("the client never refreshed its access token")
+			}
+
+			ts, err := oauth.TokenSource(t.Context())
+			if err != nil || ts == nil {
+				t.Fatalf("token source: %v", err)
+			}
+			tok, err := ts.Token()
+			if err != nil {
+				t.Fatal(err)
+			}
+			req, _ := http.NewRequestWithContext(t.Context(), "GET", srv.URL+"/api/projects", nil)
+			req.Header.Set("Authorization", "Bearer "+tok.AccessToken)
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), "blog") {
+				t.Errorf("GET /api/projects with the MCP login's token = %d %s, want 200 listing blog", resp.StatusCode, body)
 			}
 		})
 	}
