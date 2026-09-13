@@ -132,6 +132,32 @@ func (sp *ProjectSpec) row() (store.RegistryProject, error) {
 }
 
 func (o *Ops) CreateProject(ctx context.Context, actor string, spec ProjectSpec) (*Project, error) {
+	return o.create(ctx, actor, spec, func(row store.RegistryProject, audit store.AuditEntry) error {
+		return o.St.CreateProject(ctx, row, audit)
+	})
+}
+
+// CreateProjectWithKey is CreateProject plus a first ingest key under
+// label, committed together: either both exist afterwards or neither does.
+func (o *Ops) CreateProjectWithKey(ctx context.Context, actor string, spec ProjectSpec, label string) (*Project, string, error) {
+	key, err := MintIngestKey()
+	if err != nil {
+		return nil, "", err
+	}
+	p, err := o.create(ctx, actor, spec, func(row store.RegistryProject, audit store.AuditEntry) error {
+		return o.St.CreateProjectWithKey(ctx, row,
+			store.RegistryKey{Key: key, Project: spec.Alias, Label: label}, audit,
+			store.AuditEntry{Actor: actor, Action: "key.issue", Subject: spec.Alias + "/" + label})
+	})
+	if err != nil {
+		return nil, "", err
+	}
+	return p, key, nil
+}
+
+// create validates spec, hands its row and audit entry to write, and
+// reloads the registry once the write has committed.
+func (o *Ops) create(ctx context.Context, actor string, spec ProjectSpec, write func(store.RegistryProject, store.AuditEntry) error) (*Project, error) {
 	if err := spec.validateNew(); err != nil {
 		return nil, err
 	}
@@ -139,7 +165,7 @@ func (o *Ops) CreateProject(ctx context.Context, actor string, spec ProjectSpec)
 	if err != nil {
 		return nil, err
 	}
-	if err := o.St.CreateProject(ctx, row, store.AuditEntry{
+	if err := write(row, store.AuditEntry{
 		Actor: actor, Action: "project.create", Subject: spec.Alias}); err != nil {
 		return nil, err
 	}

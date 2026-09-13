@@ -2,6 +2,7 @@ package manage
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -220,5 +221,40 @@ func TestMintersAndSnippet(t *testing.T) {
 		if !strings.Contains(snip, want) {
 			t.Errorf("snippet missing %q:\n%s", want, snip)
 		}
+	}
+}
+
+func TestCreateProjectWithKey(t *testing.T) {
+	st := testStore(t)
+	reg := New(st, defaults, discard())
+	if err := reg.Reload(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	ops := NewOps(reg, st)
+	ctx := context.Background()
+
+	p, key, err := ops.CreateProjectWithKey(ctx, "api", ProjectSpec{
+		Alias: "blog", Identity: "anonymous"}, "default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p == nil || p.Alias != "blog" || !strings.HasPrefix(key, "ak_") {
+		t.Fatalf("created %+v with key %q", p, key)
+	}
+	if got := reg.Snapshot(ctx).KeylessProjects(); len(got) != 0 {
+		t.Errorf("keyless projects after create-with-key = %v", got)
+	}
+
+	// A refused spec creates nothing.
+	if _, _, err := ops.CreateProjectWithKey(ctx, "api", ProjectSpec{
+		Alias: "Bad-Alias", Identity: "anonymous"}, "default"); !errors.Is(err, ErrInvalid) {
+		t.Errorf("bad alias err = %v, want ErrInvalid", err)
+	}
+	if _, _, err := ops.CreateProjectWithKey(ctx, "api", ProjectSpec{
+		Alias: "blog", Identity: "anonymous"}, "default"); !errors.Is(err, ErrConflict) {
+		t.Errorf("duplicate alias err = %v, want ErrConflict", err)
+	}
+	if n := len(reg.Snapshot(ctx).Projects()); n != 1 {
+		t.Errorf("projects = %d, want 1", n)
 	}
 }

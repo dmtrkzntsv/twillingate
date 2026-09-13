@@ -3,7 +3,6 @@ package apiserver
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
 )
@@ -37,34 +36,36 @@ type projectToolOut struct {
 	Note     string `json:"note,omitempty"`
 }
 
+// createProject issues the first key in the same transaction as the
+// project unless skip_key is set: a refusal leaves nothing behind, so the
+// caller can fix the input and retry without meeting a keyless leftover.
 func (h *host) createProject(ctx context.Context, in projectIn) (projectToolOut, error) {
-	p, err := h.ops.CreateProject(ctx, actorFrom(ctx), manage.ProjectSpec{
+	spec := manage.ProjectSpec{
 		Alias: in.Alias, Name: in.Name, Identity: in.Identity,
-		AllowedOrigins: in.AllowedOrigins, Attributes: in.Attributes})
+		AllowedOrigins: in.AllowedOrigins, Attributes: in.Attributes}
+	var p *manage.Project
+	var key string
+	var err error
+	if in.SkipKey {
+		p, err = h.ops.CreateProject(ctx, actorFrom(ctx), spec)
+	} else {
+		// by default the quickstart story is one round trip to paste-ready
+		p, key, err = h.ops.CreateProjectWithKey(ctx, actorFrom(ctx), spec, "default")
+	}
 	if err != nil {
 		return projectToolOut{}, err
 	}
-	out := projectToolOut{Alias: in.Alias}
-	if p != nil {
-		out.Alias = p.Alias
-		out.Identity = p.Identity
+	out := projectToolOut{Alias: in.Alias, Key: key}
+	// p is nil only if the project vanished between commit and reload; the
+	// write already succeeded, so report it without snippet enrichment.
+	if p == nil {
+		return out, nil
 	}
-	// by default the quickstart story is one round trip to paste-ready
-	if !in.SkipKey {
-		key, err := h.ops.IssueIngestKey(ctx, actorFrom(ctx), in.Alias, "default")
-		if err != nil {
-			return out, fmt.Errorf("project created but key issue failed: %w", err)
-		}
-		out.Key = key
-		// p should never be nil here (we just created it), but a
-		// concurrent delete between CreateProject and this point is not
-		// impossible; the key is already issued, so degrade to no
-		// snippet/origin enrichment rather than fail the call.
-		if p != nil {
-			out.Snippet = manage.Snippet(h.publicURL, key, p.Identity)
-			if h.publicURL == "" {
-				out.Note = "PUBLIC_URL is not configured; the snippet uses the placeholder " + manage.SnippetPlaceholderBase + " — ask the operator for the collector's public URL"
-			}
+	out.Alias, out.Identity = p.Alias, p.Identity
+	if key != "" {
+		out.Snippet = manage.Snippet(h.publicURL, key, p.Identity)
+		if h.publicURL == "" {
+			out.Note = "PUBLIC_URL is not configured; the snippet uses the placeholder " + manage.SnippetPlaceholderBase + " — ask the operator for the collector's public URL"
 		}
 	}
 	return out, nil

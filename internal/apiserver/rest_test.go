@@ -222,4 +222,15 @@ func TestRESTWritesAndRefusals(t *testing.T) {
 	if err := h.db.QueryRow(`SELECT actor FROM audit_log WHERE action='project.create' AND subject='shop'`).Scan(&actor); err != nil || actor != "api" {
 		t.Errorf("audit actor = %q, %v; want api", actor, err)
 	}
+	// The first key is issued by the create itself, not a follow-up call.
+	if err := h.db.QueryRow(`SELECT actor FROM audit_log WHERE action='key.issue' AND subject='shop/default'`).Scan(&actor); err != nil || actor != "api" {
+		t.Errorf("first-key audit actor = %q, %v; want api", actor, err)
+	}
+	// A refused create leaves no project behind: the retry is not a 409.
+	if rec := serveREST(t, r, "POST", "/api/projects", `{"alias":"Bad-Alias"}`); rec.Code != 400 {
+		t.Errorf("bad alias = %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := serveREST(t, r, "POST", "/api/projects", `{"alias":"badalias"}`); rec.Code != http.StatusCreated {
+		t.Errorf("retry after a refusal = %d %s", rec.Code, rec.Body.String())
+	}
 }

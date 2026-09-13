@@ -82,27 +82,52 @@ func ks2(ps []store.RegistryProject, ks []store.RegistryKey, err error) ([]store
 
 func (d *DB) CreateProject(ctx context.Context, p store.RegistryProject, a store.AuditEntry) error {
 	return d.tx(ctx, func(tx *sql.Tx) error {
-		id, err := uuid.NewV7()
-		if err != nil {
-			return fmt.Errorf("create project: %w", err)
-		}
-		var taken int
-		if err := tx.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM projects WHERE alias=?`, p.Alias).Scan(&taken); err != nil {
+		if err := insertProject(ctx, tx, p); err != nil {
 			return err
-		}
-		if taken > 0 {
-			return fmt.Errorf("create project: alias %q: %w", p.Alias, store.ErrConflict)
-		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO projects
-			(id, alias, name, identity, allowed_origins, retention, attributes)
-			VALUES (?,?,?,?,?,NULLIF(?,''),?)`,
-			id.String(), p.Alias, p.Name, p.Identity, p.AllowedOrigins,
-			p.Retention, p.Attributes); err != nil {
-			return fmt.Errorf("create project %q: %w", p.Alias, err)
 		}
 		return auditAndBump(ctx, tx, a)
 	})
+}
+
+// CreateProjectWithKey creates a project and its first ingest key in one
+// transaction: if the key cannot be inserted, the project is not created
+// either, so a retry does not collide with a keyless leftover.
+func (d *DB) CreateProjectWithKey(ctx context.Context, p store.RegistryProject, k store.RegistryKey, projectAudit, keyAudit store.AuditEntry) error {
+	return d.tx(ctx, func(tx *sql.Tx) error {
+		if err := insertProject(ctx, tx, p); err != nil {
+			return err
+		}
+		if err := auditAndBump(ctx, tx, projectAudit); err != nil {
+			return err
+		}
+		if err := insertKey(ctx, tx, k); err != nil {
+			return err
+		}
+		return auditAndBump(ctx, tx, keyAudit)
+	})
+}
+
+func insertProject(ctx context.Context, tx *sql.Tx, p store.RegistryProject) error {
+	id, err := uuid.NewV7()
+	if err != nil {
+		return fmt.Errorf("create project: %w", err)
+	}
+	var taken int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM projects WHERE alias=?`, p.Alias).Scan(&taken); err != nil {
+		return err
+	}
+	if taken > 0 {
+		return fmt.Errorf("create project: alias %q: %w", p.Alias, store.ErrConflict)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO projects
+		(id, alias, name, identity, allowed_origins, retention, attributes)
+		VALUES (?,?,?,?,?,NULLIF(?,''),?)`,
+		id.String(), p.Alias, p.Name, p.Identity, p.AllowedOrigins,
+		p.Retention, p.Attributes); err != nil {
+		return fmt.Errorf("create project %q: %w", p.Alias, err)
+	}
+	return nil
 }
 
 func (d *DB) UpdateProject(ctx context.Context, p store.RegistryProject, a store.AuditEntry) error {
@@ -149,22 +174,29 @@ func (d *DB) SetProjectArchived(ctx context.Context, alias string, archived bool
 
 func (d *DB) InsertIngestKey(ctx context.Context, k store.RegistryKey, a store.AuditEntry) error {
 	return d.tx(ctx, func(tx *sql.Tx) error {
-		var c int
-		if err := tx.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM ingest_keys WHERE project=? AND label=?`,
-			k.Project, k.Label).Scan(&c); err != nil {
+		if err := insertKey(ctx, tx, k); err != nil {
 			return err
-		}
-		if c > 0 {
-			return fmt.Errorf("key label %q for project %q: %w", k.Label, k.Project, store.ErrConflict)
-		}
-		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO ingest_keys (key, project, label) VALUES (?,?,?)`,
-			k.Key, k.Project, k.Label); err != nil {
-			return fmt.Errorf("issue key for %q: %w", k.Project, err)
 		}
 		return auditAndBump(ctx, tx, a)
 	})
+}
+
+func insertKey(ctx context.Context, tx *sql.Tx, k store.RegistryKey) error {
+	var c int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM ingest_keys WHERE project=? AND label=?`,
+		k.Project, k.Label).Scan(&c); err != nil {
+		return err
+	}
+	if c > 0 {
+		return fmt.Errorf("key label %q for project %q: %w", k.Label, k.Project, store.ErrConflict)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO ingest_keys (key, project, label) VALUES (?,?,?)`,
+		k.Key, k.Project, k.Label); err != nil {
+		return fmt.Errorf("issue key for %q: %w", k.Project, err)
+	}
+	return nil
 }
 
 func (d *DB) SetIngestKeyDisabled(ctx context.Context, project, label string, disabled bool, a store.AuditEntry) error {
