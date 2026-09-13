@@ -450,32 +450,49 @@ rotation needs no restart.
 An install from before the API endpoint covered both `/mcp` and `/api/`
 must:
 
-1. **Rename `MCP_*` to `API_*`** (and `LISTEN_ADDR` to `INGEST_ADDR`, from
-   the same release) in `/etc/twillingate/twillingate.env` (or `.env`),
-   matching [Configure the collector](#configure-the-collector). The
-   collector refuses to start on any old name — this is not a silent
-   fallback.
-2. **Replace `-api`/`-mcp` with `-ingest`/`-api`** in any split systemd
-   units or compose services (see [Hostnames and
-   processes](#hostnames-and-processes)): the old flags are gone.
-3. **Point native apps and hand-written ingest calls at `/ingest/events`.**
-   A site using the served SDK or the Plausible shim picks this up on its
-   own once the browser re-fetches the script. Until then, a cached old
-   script keeps posting to `/api/events`: on a split install that is a
-   plain `404`; on an install where the API shares the ingestion listener
-   it is a `401` instead, because that listener answers `/api/` first and
-   treats the stale path as an unauthenticated API request.
-4. **Reconnect clients that logged in with the password.** Tokens issued
+0. **Edit `/etc/twillingate/twillingate.env` (or the compose `.env`)
+   before upgrading, not after.** The running old binary does not re-read
+   it, and the new binary refuses to start until the old names are
+   renamed — so there is no order in which "upgrade first, edit later"
+   leaves the service running.
+1. **`-api` used to mean ingest-only; ingest is now `serve -ingest`, and
+   `-api` now means the private API (MCP and REST).** This is the change
+   most likely to bite: `install.sh` unconditionally re-renders
+   `twillingate.service` from its template, which ships `ExecStart=
+   twillingate serve` (bare, both surfaces). If you run a split install,
+   upgrading silently turns the unit that used to be ingest-only
+   (`serve -api`, old meaning) into one serving both surfaces — set its
+   `ExecStart=` to `twillingate serve -ingest` and the second unit's to
+   `twillingate serve -api` right after the upgrade, before restarting
+   either. See [Hostnames and processes](#hostnames-and-processes).
+2. **Rename `MCP_*` to `API_*`** (and `LISTEN_ADDR` to `INGEST_ADDR`, from
+   the same release) in the env file, matching [Configure the
+   collector](#configure-the-collector). The collector refuses to start
+   on any old name — this is not a silent fallback.
+3. **Reconnect clients that logged in with the password.** Tokens issued
    for the old resource (`…/mcp`) no longer verify, so each one logs in
    again; the connector URL `/mcp` itself is unchanged. Clients using the
    token as a header are unaffected.
+4. **Point native apps and hand-written ingest calls at `/ingest/events`.**
+   A site using the served SDK or the Plausible shim picks this up on its
+   own once the browser re-fetches the script — but `/js/twillingate.js`
+   is served with `Cache-Control: max-age=86400`, so a browser holding the
+   old script keeps posting to the dead `/api/events` path for up to 24h
+   after the upgrade (longer behind a CDN, which may cache it well past
+   that). Those events are lost, not queued: on a split install the post
+   gets a plain `404`; on an install where the API shares the ingestion
+   listener it is a `401` instead, because that listener answers `/api/`
+   first and treats the stale path as an unauthenticated API request.
+   Purge `/js/*` at the CDN right after upgrading to shorten the window.
 5. **Edit `API_AUTH_DSN` or `PUBLIC_URL` if either carries a path** — most
    commonly a leftover `resource=…/mcp`, or a `PUBLIC_URL` with a path and
    no `resource=` to override it. `resource` must be a bare origin, in
-   both `token://` and `oauth://` modes, and the collector refuses to
-   start otherwise. This is the one place this requirement is written
-   down; [Connect a client](#connect-a-client) points back here instead
-   of repeating it.
+   both `token://` and `oauth://` modes, and the process now refuses to
+   start on either mistake — including under a bare `serve`, which is
+   otherwise lenient about a *missing* `API_AUTH_DSN` but not about one
+   that is set and fails to parse. This is the one place this requirement
+   is written down; [Connect a client](#connect-a-client) points back
+   here instead of repeating it.
 
 ### Troubleshooting a connection
 

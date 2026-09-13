@@ -1,7 +1,7 @@
 # One private API surface: MCP and REST together — design
 
 Date: 2026-09-13
-Status: proposed
+Status: implemented
 
 ## 1. Purpose
 
@@ -268,7 +268,8 @@ One `feat!:` PR. The operator of an existing install must:
 3. Point native apps and any hand-written ingest calls at
    `/ingest/events`. Sites using the served SDK or Plausible shim pick it
    up when the script is re-fetched; a cached old script posts to
-   `/api/events` and gets 404 until then.
+   `/api/events` and gets 404 (401 where the API shares the listener)
+   until then.
 4. Reconnect MCP clients that logged in with the password: tokens carrying
    `aud=…/mcp` no longer verify. The connector URL `/mcp` is unchanged.
    Static-token clients are unaffected.

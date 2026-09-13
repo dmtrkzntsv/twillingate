@@ -560,7 +560,7 @@ POST /ingest/events
 
 The only ingest endpoint. There is no separate pageview, event or batch
 path — a single event is a batch of one. `/api/events` was the path before
-this release and now returns 404.
+this release and now returns 404 (401 where the API shares the listener).
 
 ### Authentication
 
