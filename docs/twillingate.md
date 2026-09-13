@@ -75,6 +75,11 @@ takes `{project, label}` and returns the key **and** a paste-ready snippet.
 the project's live key and identity mode already filled in — reach for it
 before hand-assembling a snippet.
 
+**Confirm the collector hostname before pasting.** A collector can answer
+on several hostnames, and snippets use the default (`PUBLIC_URL`). Ask the
+user which one this site should use and change the snippet's `src` if it
+differs — the SDK posts to the origin it was loaded from.
+
 Renaming and registry import/export have no MCP tool: both rewrite every
 table in one transaction, which is not something to hand to an agent. Ask
 the operator to run them.
@@ -186,7 +191,8 @@ from code.
 ```
 
 `twillingate key issue -project <alias> -label <label>` mints the key and
-prints this snippet ready to paste.
+prints this snippet ready to paste. Its `src` uses `PUBLIC_URL`; change
+the origin if this site uses another collector hostname.
 
 | Attribute | `init()` option | Meaning |
 | --- | --- | --- |
