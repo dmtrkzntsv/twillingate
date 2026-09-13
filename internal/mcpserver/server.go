@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/dmtrkzntsv/twillingate/internal/config"
@@ -130,12 +131,15 @@ func metadataURLFor(resourceURL string) string {
 	// origin carries it. Good enough for the single-origin deployments
 	// this server targets; revisit if a path-scoped resource needs the
 	// path-suffix form.
-	u := resourceURL
-	for i := len("https://"); i < len(u); i++ {
-		if u[i] == '/' {
-			u = u[:i]
-			break
-		}
+	return originOf(resourceURL) + "/.well-known/oauth-protected-resource"
+}
+
+// originOf is the scheme and host of an absolute URL: the base of the RFC
+// 9728 well-known URL and the token:// login server's issuer.
+func originOf(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return raw
 	}
-	return u + "/.well-known/oauth-protected-resource"
+	return u.Scheme + "://" + u.Host
 }
