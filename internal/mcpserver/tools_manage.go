@@ -224,7 +224,7 @@ func (h *host) registerManage(s *mcp.Server) {
 	write := &mcp.ToolAnnotations{DestructiveHint: &no}
 	idem := &mcp.ToolAnnotations{DestructiveHint: &no, IdempotentHint: true}
 	mcp.AddTool(s, &mcp.Tool{Name: "create_project", Annotations: write,
-		Description: "Create a project and (by default) its first ingest key; returns a paste-ready embed snippet on the server's default collector URL — confirm with the user which hostname this site should use if the collector answers on several. Set skip_key to suppress the key."},
+		Description: "Create a project and (by default) its first ingest key; returns a paste-ready embed snippet (confirm the collector hostname with the user). Set skip_key to suppress the key."},
 		h.createProject)
 	mcp.AddTool(s, &mcp.Tool{Name: "update_project", Annotations: write,
 		Description: "Update a project's name, identity mode, allowed origins and/or declared product-event attributes (breakdown keys for flat-view columns and attribute rollups). Fields you omit are left unchanged (this is a merge, not a replace) — except allowed_origins, which if provided non-empty replaces the whole list; origins cannot be cleared to empty via this tool (clear origins via `twillingate config import`, an explicit empty allowed_origins list in the document). Switching to identity=identified starts storing user ids and names as given — privacy-significant, say so to the user before doing it."},
@@ -236,7 +236,7 @@ func (h *host) registerManage(s *mcp.Server) {
 		Description: "Restore an archived project."},
 		h.restoreProject)
 	mcp.AddTool(s, &mcp.Tool{Name: "issue_ingest_key", Annotations: write,
-		Description: "Issue a new ingest key for a project. Ingest keys are public identifiers (they ship in page source); retirement is disable, not secrecy. The returned snippet uses the server's default collector URL; confirm the hostname with the user if the collector answers on several."},
+		Description: "Issue a new ingest key for a project. Ingest keys are public identifiers (they ship in page source); retirement is disable, not secrecy. Confirm the snippet's collector hostname with the user."},
 		h.issueKey)
 	mcp.AddTool(s, &mcp.Tool{Name: "disable_ingest_key", Annotations: idem,
 		Description: "Disable an ingest key by project and label; events with it are rejected within a second. Reversible."},

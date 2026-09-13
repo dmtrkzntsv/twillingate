@@ -87,12 +87,8 @@ The service binds to loopback by default, deliberately.
 
 ### One collector, several hostnames
 
-The collector never checks the `Host` header, so any number of DNS names
-can be proxied to the same port — `t.example.com` for one project,
-`t.example.org` for another, so a customer's site never references your
-own domain. Nothing is configured per hostname on the server: origins are
-checked per project (`allowed_origins`, the *customer's* site), and the SDK
-posts events to whatever origin it was loaded from.
+The collector ignores `Host`, so any number of hostnames can proxy to it
+with no server config; the SDK posts to whatever origin it was loaded from.
 
 ```
 t.example.com, t.example.org {
@@ -100,12 +96,8 @@ t.example.com, t.example.org {
 }
 ```
 
-`PUBLIC_URL` holds one of those hostnames, and every generated snippet
-carries it. Which hostname a given project should use is a per-site choice
-the server does not record, so an agent setting up tracking over MCP asks
-first and substitutes the answer into the snippet's `src` when it differs.
-Keep MCP on a single hostname regardless — the OAuth resource URL and the
-`cloudflare://` application are bound to one.
+Snippets use `PUBLIC_URL`; change the `src` for sites on another hostname.
+Keep MCP on one hostname — OAuth and `cloudflare://` are bound to it.
 
 ### Verifying ingestion
 
@@ -130,7 +122,7 @@ curl -i -X POST http://localhost:8080/api/events \
 | Variable | Meaning |
 | --- | --- |
 | `LISTEN_ADDR` | Address to bind. Default `127.0.0.1:8080` (the docker image sets `0.0.0.0:8080`). |
-| `PUBLIC_URL` | The collector's public base URL (`https://twillingate.example.com`). Embed snippets, MCP integration guidance and the default MCP resource URL are built from it; unset, they carry a placeholder. When the collector answers on several hostnames, this is the default one — see [One collector, several hostnames](#one-collector-several-hostnames). |
+| `PUBLIC_URL` | The collector's public base URL (`https://twillingate.example.com`). Embed snippets, MCP integration guidance and the default MCP resource URL are built from it; unset, they carry a placeholder. With [several hostnames](#one-collector-several-hostnames), the default one. |
 | `DATABASE_DSN` | Store DSN. Only `sqlite://<path>` today. Required. |
 | `GEO_DSN` | Country lookup: `cloudflare://` (header), `maxmind://<license-key>`, or `none://`. |
 | `LOG_LEVEL` | `debug`, `info`, `warn`, `error`. Default `info`. |
