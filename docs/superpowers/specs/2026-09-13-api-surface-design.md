@@ -194,9 +194,10 @@ two apart.
 
 ## 7. Authentication
 
-`wrapAuth` is unchanged in shape and now wraps one handler serving both
-`/mcp` and `/api/`. Every mode — the static token, login-issued tokens,
-`oauth://` JWTs — is accepted on both.
+`wrapAuth` builds one verifier per mode and returns middleware that `Build`
+applies to `/mcp` and `/api/` separately, each instance carrying that
+prefix's own metadata URL. Every mode — the static token, login-issued
+tokens, `oauth://` JWTs — is accepted on both prefixes.
 
 **The resource identifier becomes the API origin.** The default
 `resource` is `PUBLIC_URL` (was `PUBLIC_URL + "/mcp"`); `resource=` in

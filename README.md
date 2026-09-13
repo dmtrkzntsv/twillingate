@@ -11,7 +11,8 @@ this one surfaces the insights beneath your data.</em></p>
 Web, app and product analytics as one Go binary and one SQLite file —
 cookieless and anonymous by default ([details](#privacy-and-gdpr)). It holds
 about 15 MB of memory, needs no database server and no cluster, and is happy on
-a Raspberry Pi from day one. An MCP endpoint means your coding agent can set it
+a Raspberry Pi from day one. An MCP endpoint — with the same operations also
+callable as a plain REST API — means your coding agent or a script can set it
 up and answer questions about it, so the dashboards are there when you want
 them rather than being the point.
 
@@ -28,8 +29,8 @@ that is a second compose file, and skipping it costs you nothing else.
 ## Run it
 
 Tracking is one file: ingestion, the tracker script and — once `API_AUTH_DSN`
-is set, see [The MCP endpoint](docs/deployment.md#the-mcp-endpoint)
-— the MCP endpoint, all on
+is set, see [The API endpoint](docs/deployment.md#the-api-endpoint)
+— the API (MCP and REST), all on
 `:8080`:
 
 ```bash
@@ -92,7 +93,7 @@ and is what the MCP endpoint serves to agents as `docs://twillingate`, so
 the text you read and the text they read are the same bytes.
 [docs/deployment.md](docs/deployment.md) is everything needed to run
 twillingate on your own server: installing it, configuring the collector,
-Evidence reporting, the MCP endpoint, and litestream if you split across two
+Evidence reporting, the API endpoint, and litestream if you split across two
 machines. It is served as `docs://deployment`, so an agent can help with an
 install too.
 
@@ -102,11 +103,11 @@ install too.
 | [Instrument a website](docs/twillingate.md#instrument-a-website) | twillingate.js: snippet and SDK modes, URL masking, routing modes, offline queue |
 | [The event model](docs/twillingate.md#the-event-model) | The three event families, for native apps and backends too |
 | [The wire format](docs/twillingate.md#the-wire-format) | The normative contract for `/ingest/events` |
-| [Answer questions with the data](docs/twillingate.md#answer-questions-with-the-data) | The MCP tools, the views, and the caveats needed to write correct SQL |
+| [Answer questions with the data](docs/twillingate.md#answer-questions-with-the-data) | The MCP tools, the HTTP API, the views, and the caveats needed to write correct SQL |
 | [Install](docs/deployment.md#install) | systemd and docker compose, verifying ingestion |
 | [Configure the collector](docs/deployment.md#configure-the-collector) | Every environment variable, low-resource tuning |
 | [Reporting with Evidence](docs/deployment.md#reporting-with-evidence) | Dashboards, one server and two |
-| [The MCP endpoint](docs/deployment.md#the-mcp-endpoint) | The browser login, and pointing claude.ai, Desktop or Claude Code at it |
+| [The API endpoint](docs/deployment.md#the-api-endpoint) | The browser login, and pointing claude.ai, Desktop or Claude Code at it |
 | [Operate and recover](docs/deployment.md#operate-and-recover) | Upgrades, litestream replication, backup drills, disaster recovery |
 | [docs/plausible/](docs/plausible/) | The Plausible class-tagging shim |
 
@@ -149,6 +150,7 @@ consent-free claim does not hold for these projects**; gate
 
 **Both modes.** `$group_id`/`$group_name` are stored raw (a group is an
 organization, not a person). Paths are stored verbatim — strip personal
-data from URL schemes before it reaches the tracker. Enabling MCP exposes
-identified projects' stored ids to every valid token holder; complete
-erasure is `twillingate project delete`, deliberately CLI-only.
+data from URL schemes before it reaches the tracker. Enabling the API
+exposes identified projects' stored ids to every valid token holder,
+whether the caller uses MCP or the REST routes; complete erasure is
+`twillingate project delete`, deliberately CLI-only.

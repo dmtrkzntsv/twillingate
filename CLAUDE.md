@@ -111,14 +111,14 @@ Update `docs/twillingate.md` **in the same commit** as any change to:
 - the JS SDK's public API, `data-` attributes or defaults
   (`sdk/src/twillingate.ts`)
 - project fields, or the CLI/MCP surface that edits them (`internal/manage/`)
-- the MCP tools or resources offered (`internal/apiserver/` operations and
-  `resources.go`)
+- the MCP tools, REST routes or resources offered (`internal/apiserver/ops_*.go`,
+  `expose.go`, `rest.go`, `resources.go`)
 - queryable views (`internal/store/sqlite/migrations/`)
 
 Update `docs/deployment.md` in the same commit as any change to environment
 variables (`internal/config/`), the install, upgrade, replication or restore
-procedure (`deploy/`, `Makefile`), MCP auth modes or client setup
-(`internal/apiserver/auth.go`), or the Evidence dashboards
+procedure (`deploy/`, `Makefile`), API auth modes or client setup
+(`internal/apiserver/auth.go`, `oauth*.go`), or the Evidence dashboards
 (`internal/dashboards/`, `evidence/`).
 
 Update `schemaViews` in `internal/apiserver/resources.go` in the same commit
@@ -131,7 +131,8 @@ page stays separate because it documents bytes the collector serves at
 
 `docs_sync_test.go` enforces part of this — reserved keys, MCP tool names
 and environment variables, each checked in both directions against the
-source, plus the SDK's public symbols and every queryable web view. Those
+source, plus the SDK's public symbols, every queryable web view and the
+HTTP API route table. Those
 checks read the specific **table** that claims a fact, not the whole file:
 a document-wide match passes for the wrong reason when the same word
 appears in prose. The rest is on you. A `docs`-only push publishes nothing

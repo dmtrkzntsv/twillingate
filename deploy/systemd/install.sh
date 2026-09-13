@@ -141,7 +141,7 @@ fi
 
 if [ "$upgrade" -eq 1 ]; then
   # Restart only what was running: a stopped service stays stopped. The glob
-  # also catches a separate twillingate-mcp.service.
+  # also catches separate twillingate-ingest/-api units.
   running="$(systemctl list-units --type=service --state=active --no-legend --plain 'twillingate*.service' \
     | awk '{print $1}')"
   for unit in $running; do

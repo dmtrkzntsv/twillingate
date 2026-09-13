@@ -293,3 +293,44 @@ func TestDeploymentResourceServed(t *testing.T) {
 		}
 	}
 }
+
+// TestDocumentMatchesRoutes binds the HTTP API table in docs/twillingate.md
+// to the registered routes, in both directions: method, path and the tool
+// each route mirrors.
+func TestDocumentMatchesRoutes(t *testing.T) {
+	h, _ := newTestHost(t)
+	inCode := map[string]string{} // "GET /api/projects" -> tool
+	for _, s := range newTestRegistrar(t, h).specs {
+		if s.Method != "" {
+			inCode[s.Method+" "+s.Path] = s.Name
+		}
+	}
+	inCode["GET /api/schema/views"] = "schema://views"
+
+	const heading = "### HTTP API"
+	i := strings.Index(docs.Twillingate, heading)
+	if i < 0 {
+		t.Fatal("docs/twillingate.md has no '### HTTP API' section")
+	}
+	section := docs.Twillingate[i+len(heading):]
+	if j := strings.Index(section, "\n### "); j >= 0 {
+		section = section[:j]
+	}
+	row := regexp.MustCompile("^\\| `(GET|POST|PATCH)` \\| `(/api/[^`]*)` \\| `([a-z_:/]+)` \\|")
+	documented := map[string]string{}
+	for _, line := range strings.Split(section, "\n") {
+		if m := row.FindStringSubmatch(line); m != nil {
+			documented[m[1]+" "+m[2]] = m[3]
+		}
+	}
+	for route, tool := range inCode {
+		if documented[route] != tool {
+			t.Errorf("route %s (%s) is registered but the HTTP API table says %q", route, tool, documented[route])
+		}
+	}
+	for route := range documented {
+		if _, ok := inCode[route]; !ok {
+			t.Errorf("the HTTP API table lists %s, which is not registered", route)
+		}
+	}
+}
