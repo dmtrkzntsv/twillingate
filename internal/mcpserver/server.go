@@ -47,7 +47,8 @@ func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *m
 // transport, auth middleware, and (mode-dependent) the RFC 9728
 // metadata route, mounted on its own mux. Routes registered on the
 // returned mux: /mcp, /healthz, and
-// /.well-known/oauth-protected-resource in oauth mode.
+// /.well-known/oauth-protected-resource in oauth mode, and the login
+// server's routes in token mode with redirects configured.
 // The func() error closes the read DB.
 func NewHandler(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *manage.Ops, logger *slog.Logger) (http.Handler, func() error, error) {
 	protected, closeDB, err := Build(ctx, cfg, reg, ops, logger)
@@ -55,14 +56,14 @@ func NewHandler(ctx context.Context, cfg *config.Config, reg *manage.Registry, o
 		return nil, nil, err
 	}
 	mux := http.NewServeMux()
-	RegisterOn(mux, protected, cfg, true)
+	RegisterOn(mux, protected, cfg, true, logger)
 	return mux, closeDB, nil
 }
 
 // RegisterOn mounts the MCP routes on a mux. withHealthz=false when the
 // mux is shared with the ingest surface, whose /healthz already exists
 // (ServeMux panics on duplicate patterns).
-func RegisterOn(mux *http.ServeMux, protected http.Handler, cfg *config.Config, withHealthz bool) {
+func RegisterOn(mux *http.ServeMux, protected http.Handler, cfg *config.Config, withHealthz bool, logger *slog.Logger) {
 	mux.Handle("/mcp", protected)
 	if cfg.MCP.AuthMode == "oauth" {
 		meta := &oauthex.ProtectedResourceMetadata{
@@ -71,6 +72,9 @@ func RegisterOn(mux *http.ServeMux, protected http.Handler, cfg *config.Config, 
 		}
 		mux.Handle("GET /.well-known/oauth-protected-resource",
 			auth.ProtectedResourceMetadataHandler(meta))
+	}
+	if cfg.MCP.AuthMode == "token" && len(cfg.MCP.RedirectURIs) > 0 {
+		newLoginServer(cfg.MCP, logger).mount(mux)
 	}
 	if withHealthz {
 		mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -85,7 +89,14 @@ func wrapAuth(ctx context.Context, m config.MCPConfig, next http.Handler) (http.
 	switch m.AuthMode {
 	case "token":
 		opts := &auth.RequireBearerTokenOptions{AllowMissingExpiration: true}
-		return auth.RequireBearerToken(StaticVerifier(m.Token), opts)(next), nil
+		if len(m.RedirectURIs) == 0 {
+			return auth.RequireBearerToken(StaticVerifier(m.Token), opts)(next), nil
+		}
+		// Keys derive from the config alone, so this verifier accepts what
+		// the instance RegisterOn mounts issues; verifying logs nothing.
+		opts.ResourceMetadataURL = metadataURLFor(m.ResourceURL)
+		verify := newLoginServer(m, slog.New(slog.DiscardHandler)).verify
+		return auth.RequireBearerToken(verify, opts)(next), nil
 	case "oauth":
 		jwksURL, err := DiscoverJWKSURL(ctx, m.Issuer, nil)
 		if err != nil {

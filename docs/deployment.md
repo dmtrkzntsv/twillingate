@@ -129,7 +129,7 @@ curl -i -X POST http://localhost:8080/api/events \
 | `DASHBOARDS_INTERVAL` | Minimum spacing between Evidence rebuilds. Default `15m`. |
 | `DASHBOARDS_PROJECT_DIR` | Evidence project in the image. Default `/opt/evidence`. |
 | `DASHBOARDS_WORK_DIR` | Where the database snapshot is written. Default `/var/lib/dashboards`. |
-| `MCP_AUTH_DSN` | MCP authentication: `token://<token>`, `cloudflare://<team>?aud=<tag>` or `oauth://<issuer-host>`. Unset, bare `serve` skips MCP with a warning. |
+| `MCP_AUTH_DSN` | MCP authentication: `token://<token>` (add `?password=…&redirect=…` for a browser login), `cloudflare://<team>?aud=<tag>` or `oauth://<issuer-host>`. Unset, bare `serve` skips MCP with a warning. |
 | `MCP_ADDR` | Give the MCP endpoint its own listener. Defaults to `LISTEN_ADDR` (shared). |
 | `MCP_DB_PATH` | Database MCP reads for queries. Defaults to the `DATABASE_DSN` path. |
 | `MCP_QUERY_TIMEOUT` | Per-query guard on the MCP `query` tool. Default `10s`. |
@@ -227,14 +227,14 @@ every client talks to the running collector over the network.
 be set, and its scheme picks the mode:
 
 ```bash
-MCP_AUTH_DSN=token://<token>
+MCP_AUTH_DSN=token://<token>[?password=<password>&redirect=<uri>[&redirect=<uri>…][&resource=<url>]]
 MCP_AUTH_DSN=cloudflare://<team>.cloudflareaccess.com?aud=<aud-tag>
 MCP_AUTH_DSN=oauth://idp.example.com[?resource=<url>][&audience=<aud>]
 ```
 
 | Mode | Pick it when | Claude Code | Claude Desktop | claude.ai |
 | --- | --- | --- | --- | --- |
-| `token://` | One operator, no identity provider — the simplest thing that is secure | ✅ `--header` | ⚠️ needs the `mcp-remote` bridge | ❌ cannot send custom headers |
+| `token://` | One operator, no identity provider — the simplest thing that is secure | ✅ `--header` or browser login | ✅ with the browser login | ✅ with the browser login |
 | `cloudflare://` | Your domain is already on Cloudflare | ✅ browser login | ✅ custom connector | ✅ custom connector |
 | `oauth://` | You run or rent an IdP (Keycloak, Auth0, Authentik, …) | ✅ browser login | ✅ custom connector | ✅ if the IdP does Dynamic Client Registration |
 
@@ -276,7 +276,7 @@ and `DATABASE_DSN` (what the aggregation pass writes) deliberately: either
 keep `DATABASE_DSN` on a database this process is meant to own, or accept
 that a two-process topology runs the idempotent daily aggregation twice.
 
-### `token://` — a single static token
+### `token://` — a static token, with an optional browser login
 
 ```bash
 twillingate keygen -mcp        # prints: MCP_AUTH_DSN=token://ar_…
@@ -308,10 +308,68 @@ time:
 }
 ```
 
-For Claude Desktop, the connector UI cannot attach an `Authorization`
-header, so a static token needs a local stdio-to-HTTP bridge and Node
+#### Browser login for Claude Desktop and claude.ai
+
+Neither can attach an `Authorization` header. Add a password and the
+redirect URIs you allow, and the binary serves its own OAuth login: the
+client registers itself, your browser shows one page asking for the
+password, and the client is connected. The token never goes near a
+browser, and the header above keeps working.
+
+```bash
+MCP_AUTH_DSN=token://ar_…?password=<password>&redirect=https://claude.ai/api/mcp/auth_callback&redirect=http://localhost/callback
+```
+
+| Parameter | Meaning |
+| --- | --- |
+| `redirect` | A redirect URI clients may use; repeat it once per URI. Any `redirect` turns the login on. |
+| `password` | What the login page asks for. Required with `redirect`. |
+| `resource` | The public URL of `/mcp`. Defaults to `PUBLIC_URL` + `/mcp`; set it when MCP has its own hostname. |
+
+- **Matching.** Scheme, host, path and query must equal an entry exactly.
+  For `localhost`, `127.0.0.1` and `[::1]` the port is ignored, because
+  Claude Code and Desktop pick a new port for each login; `localhost` and
+  `127.0.0.1` still count as different hosts. Any other host needs `https`.
+- **Finding a client's callback.** If a login stops at "The redirect URI
+  is not in the MCP_AUTH_DSN allowlist", the page and the
+  `mcp login: redirect rejected` log line show the URI the client used. Add
+  it as another `redirect=` and restart.
+- **Encoding.** The parameters are a query string: in the password write
+  `&` as `%26`, `#` as `%23`, `%` as `%25`, `;` as `%3B` and `+` as `%2B`.
+  An unencoded `+` becomes a space. In a Docker Compose `.env`, also write
+  `$` as `$$`.
+- **Guessing.** Five wrong passwords in a minute lock the page for everyone
+  until the minute ends; connected clients are unaffected. No minimum length
+  is enforced, so a short password is only as strong as that rate allows.
+- **Hand-picked tokens.** `keygen -mcp` mints `ar_` plus hex. A token you
+  choose yourself must not contain `?`, which now starts the parameters.
+
+Claude Desktop and claude.ai: Settings → Connectors → **Add custom
+connector**, endpoint `https://twillingate.example.com/mcp`, OAuth client ID
+and secret left empty. Claude Code: add the server without a header, run
+`/mcp`, choose *Authenticate*.
+
+A client you use stays logged in: access tokens last an hour and refresh
+silently, and every refresh extends the login by 30 days. Nothing about
+logins is stored, so there is no per-client revocation — change the password
+to cut a device off.
+
+| Change | Effect |
+| --- | --- |
+| New token or new password | Every client logs in again |
+| New `resource` URL | Every client logs in again |
+| Every `redirect` removed | The login is off and issued tokens stop working |
+| Redirect list edited | Connected clients keep working; new logins follow the list |
+| A client unused for 30 days | That client logs in again |
+| Restart or upgrade | Nothing |
+
+#### Claude Desktop without the browser login
+
+A local stdio-to-HTTP bridge can attach the header instead, with Node
 installed. Edit `~/Library/Application Support/Claude/claude_desktop_config.json`
-(macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
+(macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows), then quit
+Claude Desktop completely — closing the window leaves it in the tray, and
+the config is only read at startup:
 
 ```json
 {
@@ -325,11 +383,8 @@ installed. Edit `~/Library/Application Support/Claude/claude_desktop_config.json
 }
 ```
 
-Then quit Claude Desktop completely — closing the window leaves it in the
-tray, and the config is only read at startup. Note the token sits in plain
-text and `mcp-remote` is third-party code in the path of an admin
-credential. If that is not acceptable, put the MCP hostname behind
-Cloudflare Access and use the connector instead.
+The token then sits in plain text, and `mcp-remote` is third-party code in
+the path of an admin credential; the browser login avoids both.
 
 ### `cloudflare://` — Access managed OAuth
 
@@ -406,11 +461,12 @@ to once a minute.
 
 ```bash
 curl -si https://twillingate.example.com/mcp -X POST | head -3
-# → HTTP/1.1 401; in oauth mode the WWW-Authenticate header names the
-#   discovery document
+# → HTTP/1.1 401; in oauth mode and in token mode with redirect= the
+#   WWW-Authenticate header names the discovery document
 
 curl -s https://twillingate.example.com/.well-known/oauth-protected-resource
-# → oauth mode: JSON naming your issuer; cloudflare and token modes: 404
+# → oauth mode and token mode with redirect=: JSON naming the issuer;
+#   cloudflare mode and plain token mode: 404
 
 curl -s https://twillingate.example.com/healthz
 # → {"status":"ok"} — health stays unauthenticated in every mode
@@ -437,6 +493,14 @@ inherits, which on macOS is not your shell's; an absolute path to `npx` in
 
 **Login loops in `oauth://` mode.** The IdP is probably issuing tokens
 without the expected `aud`.
+
+**Login page: redirect URI not allowed.** The page shows the URI the client
+used; add it to `MCP_AUTH_DSN` as another `redirect=` and restart.
+
+**Login page: password not recognised, though it is right.** A `+`, `&`,
+`#`, `%` or `;` in the password must be percent-encoded in the DSN (see the
+`token://` section). **Too many attempts** means five wrong passwords this
+minute; wait for the next one.
 
 **Stale OAuth state.** `mcp-remote` caches under `~/.mcp-auth`; delete it to
 force a fresh login.

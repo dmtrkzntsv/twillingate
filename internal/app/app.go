@@ -162,7 +162,7 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, api, mc
 			mcpClose = closeDB
 			mux := http.NewServeMux()
 			mux.Handle("/", ingestHandler) // ingest keeps its own /healthz and /js/*
-			mcpserver.RegisterOn(mux, protected, cfg, false)
+			mcpserver.RegisterOn(mux, protected, cfg, false, logger)
 			surfaces = append(surfaces, httpSurface{cfg.Listen, mux})
 		} else {
 			mcpHandler, closeDB, err := mcpserver.NewHandler(ctx, cfg, reg, ops, logger)
