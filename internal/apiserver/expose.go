@@ -23,7 +23,7 @@ type spec struct {
 // the parity and docs tests enumerate.
 type registrar struct {
 	mcp    *mcp.Server
-	rest   *http.ServeMux // nil until Task 6 mounts routes
+	rest   *http.ServeMux // nil registers MCP tools only
 	logger *slog.Logger
 	specs  []spec
 }
@@ -56,10 +56,4 @@ func expose[In, Out any](r *registrar, s spec, fn func(context.Context, In) (Out
 	if s.Method != "" && r.rest != nil {
 		r.rest.HandleFunc(s.Method+" "+s.Path, restHandler(r, s, fn))
 	}
-}
-
-// restHandler is a placeholder so the package compiles; Task 6 replaces
-// it with the real adapter in rest.go.
-func restHandler[In, Out any](r *registrar, s spec, fn func(context.Context, In) (Out, error)) http.HandlerFunc {
-	return func(w http.ResponseWriter, _ *http.Request) { http.NotFound(w, nil) }
 }

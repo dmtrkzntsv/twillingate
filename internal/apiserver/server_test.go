@@ -79,6 +79,29 @@ func TestMCPRequires401WithChallenge(t *testing.T) {
 	}
 }
 
+func TestAPIRequiresAuth(t *testing.T) {
+	h := newHandlerFixture(t, nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/api/projects", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("no token: %d", rec.Code)
+	}
+	req := httptest.NewRequest("GET", "/api/projects", nil)
+	req.Header.Set("Authorization", "Bearer ar_testtoken")
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"projects"`) {
+		t.Fatalf("static token on /api/projects: %d %s", rec.Code, rec.Body.String())
+	}
+	req = httptest.NewRequest("GET", "/api/nope", nil)
+	req.Header.Set("Authorization", "Bearer ar_testtoken")
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), `"not_found"`) {
+		t.Fatalf("unknown API route: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestMCPTokenAuthPasses(t *testing.T) {
 	h := newHandlerFixture(t, nil)
 	req := httptest.NewRequest("POST", "/mcp", strings.NewReader(

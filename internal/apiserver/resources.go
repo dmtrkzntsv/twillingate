@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 
 	"github.com/dmtrkzntsv/twillingate/docs"
 
@@ -98,5 +99,17 @@ func (h *host) registerResources(s *mcp.Server) {
 		}
 		return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{
 			URI: "schema://projects", MIMEType: "application/json", Text: string(b)}}}, nil
+	})
+}
+
+// registerSchemaRoute serves schema://views over REST: POST /api/query
+// callers need the same column reference MCP clients read.
+func registerSchemaRoute(r *registrar) {
+	if r.rest == nil {
+		return
+	}
+	r.rest.HandleFunc("GET /api/schema/views", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		fmt.Fprint(w, schemaViews)
 	})
 }

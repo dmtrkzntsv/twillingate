@@ -326,4 +326,6 @@ func (h *host) register(r *registrar) {
 	expose(r, spec{Name: "integration_guide", Annotations: ro, // MCP only
 		Description: "Tailored integration instructions for one project and platform (web, spa, server, mobile), with the project's real ingest key, collector URL, identity-mode guidance and event examples baked in. Confirm the collector hostname with the user. Call after create_project; read docs://events, docs://js-sdk and docs://ingest-api for depth."},
 		h.integrationGuide)
+
+	registerSchemaRoute(r)
 }
