@@ -94,6 +94,21 @@ func TestExplicitAPIWithoutConfigFails(t *testing.T) {
 	}
 }
 
+// Bare serve is lenient about a missing API_AUTH_DSN, but a DSN that is set
+// and fails to parse is a mistake, not an absence: it must still exit 1,
+// even without -api naming the surface explicitly.
+func TestBareServeFailsOnInvalidAPIAuthDSN(t *testing.T) {
+	withDB(t)
+	t.Setenv("API_AUTH_DSN", "token://x?password=p&resource=https://h.example.com/mcp")
+	var out bytes.Buffer
+	if code := run([]string{"serve"}, &out); code != 1 {
+		t.Fatalf("bare serve with an invalid API_AUTH_DSN: exit %d, want 1: %s", code, out.String())
+	}
+	if !strings.Contains(out.String(), "API_AUTH_DSN") {
+		t.Errorf("error must name the bad variable: %s", out.String())
+	}
+}
+
 // The old -mcp flag is gone; serve must reject it as unknown rather than
 // silently accepting it as a no-op.
 func TestServeRejectsRemovedMCPFlag(t *testing.T) {

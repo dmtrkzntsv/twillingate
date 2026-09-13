@@ -45,7 +45,13 @@ func cmdServe(args []string, stdout io.Writer) int {
 	logger := app.NewLogger(cfg.Log)
 	if runAPI {
 		if err := cfg.ValidateAPI(); err != nil {
-			if !lenient {
+			// Bare `serve` is only lenient about a *missing* API_AUTH_DSN
+			// (no config offered, so silently skipping the API is the
+			// friendly default). A DSN that is set but fails to parse is a
+			// mistake, not an absence, and must fail the process even in
+			// bare mode — otherwise a typo'd resource= or an old-shaped
+			// DSN would silently boot without the API surface at all.
+			if !lenient || cfg.API.AuthDSN != "" {
 				fmt.Fprintln(stdout, err)
 				return 1
 			}
