@@ -1,4 +1,4 @@
-package mcpserver
+package apiserver
 
 import (
 	"context"
@@ -106,7 +106,7 @@ func wrapAuth(ctx context.Context, m config.MCPConfig, next http.Handler) (http.
 			ResourceMetadataURL: metadataURLFor(m.ResourceURL),
 		})(next), nil
 	default:
-		return nil, fmt.Errorf("mcpserver: unknown auth mode %q", m.AuthMode)
+		return nil, fmt.Errorf("apiserver: unknown auth mode %q", m.AuthMode)
 	}
 }
 

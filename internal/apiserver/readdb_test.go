@@ -1,4 +1,4 @@
-package mcpserver
+package apiserver
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 )
 
 // seedDB migrates a fresh database and returns its path. Every
-// mcpserver test builds on this.
+// apiserver test builds on this.
 func seedDB(t *testing.T) string {
 	t.Helper()
 	path := t.TempDir() + "/read.db"

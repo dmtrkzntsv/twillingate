@@ -1,4 +1,4 @@
-package mcpserver
+package apiserver
 
 // Drift tripwires: docs/twillingate.md is the single normative document and
 // the only prose the MCP endpoint serves, so its load-bearing facts are

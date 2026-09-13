@@ -1,4 +1,4 @@
-package mcpserver
+package apiserver
 
 import (
 	"context"
@@ -55,20 +55,20 @@ func DiscoverJWKSURL(ctx context.Context, issuer string, client *http.Client) (s
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("mcpserver: issuer metadata: %w", err)
+		return "", fmt.Errorf("apiserver: issuer metadata: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("mcpserver: issuer metadata: HTTP %d", resp.StatusCode)
+		return "", fmt.Errorf("apiserver: issuer metadata: HTTP %d", resp.StatusCode)
 	}
 	var meta struct {
 		JWKSURI string `json:"jwks_uri"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&meta); err != nil {
-		return "", fmt.Errorf("mcpserver: issuer metadata: %w", err)
+		return "", fmt.Errorf("apiserver: issuer metadata: %w", err)
 	}
 	if meta.JWKSURI == "" {
-		return "", fmt.Errorf("mcpserver: issuer metadata has no jwks_uri")
+		return "", fmt.Errorf("apiserver: issuer metadata has no jwks_uri")
 	}
 	return meta.JWKSURI, nil
 }

@@ -17,7 +17,7 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/identity"
 	"github.com/dmtrkzntsv/twillingate/internal/jobs"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
-	"github.com/dmtrkzntsv/twillingate/internal/mcpserver"
+	"github.com/dmtrkzntsv/twillingate/internal/apiserver"
 	"github.com/dmtrkzntsv/twillingate/internal/pipeline"
 	"github.com/dmtrkzntsv/twillingate/internal/server"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
@@ -154,7 +154,7 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, api, mc
 	if mcpOn {
 		ops := manage.NewOps(reg, st)
 		if api && cfg.MCP.Addr == cfg.Listen {
-			protected, closeDB, err := mcpserver.Build(ctx, cfg, reg, ops, logger)
+			protected, closeDB, err := apiserver.Build(ctx, cfg, reg, ops, logger)
 			if err != nil {
 				stopBackground()
 				return err
@@ -162,10 +162,10 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, api, mc
 			mcpClose = closeDB
 			mux := http.NewServeMux()
 			mux.Handle("/", ingestHandler) // ingest keeps its own /healthz and /js/*
-			mcpserver.RegisterOn(mux, protected, cfg, false, logger)
+			apiserver.RegisterOn(mux, protected, cfg, false, logger)
 			surfaces = append(surfaces, httpSurface{cfg.Listen, mux})
 		} else {
-			mcpHandler, closeDB, err := mcpserver.NewHandler(ctx, cfg, reg, ops, logger)
+			mcpHandler, closeDB, err := apiserver.NewHandler(ctx, cfg, reg, ops, logger)
 			if err != nil {
 				stopBackground()
 				return err

@@ -1,8 +1,9 @@
-// Package mcpserver implements the MCP endpoint (endpoint spec): an
-// authenticated, read-only query surface plus the management tools.
+// Package apiserver implements the private API (endpoint spec): an
+// authenticated, read-only query surface plus the management tools,
+// serving both MCP and REST over the same operations.
 // It never logs request bodies or bearer tokens; submitted SQL is
 // logged at debug only.
-package mcpserver
+package apiserver
 
 import (
 	"context"
@@ -23,7 +24,7 @@ func OpenReadDB(path string) (*sql.DB, error) {
 		"&_pragma=busy_timeout(5000)"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
-		return nil, fmt.Errorf("mcpserver: open %s: %w", path, err)
+		return nil, fmt.Errorf("apiserver: open %s: %w", path, err)
 	}
 	db.SetMaxOpenConns(4)
 	return db, nil
