@@ -45,7 +45,10 @@ jobs:
             go-${{ hashFiles('go.sum') }}-
             go-
       - run: make check
-      - run: make dist
+      # VERSION explicitly: the Makefile default is `git describe`, and the
+      # tag does not exist yet, so the binaries would report the previous
+      # tag plus a commit suffix (v26.913.30-1-gd76e64b in v26.913.31).
+      - run: make dist VERSION=${{ steps.tag.outputs.tag }}
       # The tag has to exist on the remote before the release points at it.
       - name: tag
         run: |
