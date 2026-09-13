@@ -90,7 +90,7 @@ func TestAuthorizePageRendersForm(t *testing.T) {
 	}
 
 	// With no allowlist at all, a loopback client still logs in.
-	bare := newLoginFixture(t, func(m *config.MCPConfig) { m.RedirectURIs = nil })
+	bare := newLoginFixture(t, nil)
 	codex := "http://127.0.0.1:1455/callback/abc123"
 	if rec := bare.authorize(authorizeQuery(bare.register(codex), codex)); rec.Code != http.StatusOK {
 		t.Errorf("loopback without allowlist: %d %s", rec.Code, rec.Body)
@@ -106,10 +106,10 @@ func TestAuthorizePageRendersForm(t *testing.T) {
 
 func TestAuthorizeUntrustedRedirectShowsErrorPage(t *testing.T) {
 	const appCallback = "https://app.example.com/cb"
-	f := newLoginFixture(t, func(m *config.MCPConfig) { m.RedirectURIs = []string{appCallback} })
+	f := newLoginFixture(t, func(m *config.MCPConfig) { m.RedirectHosts = []string{"app.example.com"} })
 	app := f.register(appCallback)
 	// Same token and password, so the same keys, but the entry is gone.
-	shrunk := newLoginFixture(t, func(m *config.MCPConfig) { m.RedirectURIs = nil })
+	shrunk := newLoginFixture(t, nil)
 
 	cases := map[string]struct {
 		f        *loginFixture
@@ -169,7 +169,7 @@ func TestAuthorizeRequestErrorsRedirectBack(t *testing.T) {
 
 func TestAuthorizeSubmit(t *testing.T) {
 	f := newLoginFixture(t, func(m *config.MCPConfig) {
-		m.RedirectURIs = append(m.RedirectURIs, "https://app.example.com/cb?tenant=1")
+		m.RedirectHosts = []string{"app.example.com"}
 	})
 	client := f.register(claudeCallback)
 	request := f.loginForm(authorizeQuery(client, claudeCallback))

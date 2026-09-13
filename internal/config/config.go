@@ -134,28 +134,28 @@ type DashboardsConfig struct {
 // the single MCP_AUTH_DSN; parsing fans it out into the mode-specific
 // fields the verifiers consume:
 //
-//	token://<token>[?password=<pw>&redirect=<uri>[&redirect=<uri>…][&resource=<url>]]
+//	token://<token>[?password=<pw>[&redirect=<host>…][&resource=<url>]]
 //	oauth://<issuer-host>[/path][?resource=<url>][&audience=<aud>]
 //
 // password= on token:// turns on the browser login server, which needs a
-// resource URL; redirect= allowlists the https callbacks of web clients
-// (loopback callbacks are always accepted). In token and oauth modes resource
+// resource URL. Callbacks are allowed by host: loopback, claude.ai and
+// chatgpt.com always, and each redirect= adds one more. In token and oauth modes resource
 // defaults to PUBLIC_URL + "/mcp"; the oauth issuer is https://<host>[/path]
 // and audience defaults to the resource URL. oauth+insecure produces an
 // http issuer for local IdPs and tests.
 type MCPConfig struct {
-	Addr         string // MCP_ADDR, defaults to Listen
-	DBPath       string // MCP_DB_PATH, defaults to DATABASE_DSN path
-	AuthDSN      string // MCP_AUTH_DSN, verbatim
-	AuthMode     string // "oauth" | "token", from the DSN scheme
-	ResourceURL  string
-	Issuer       string
-	Audience     string
-	Token        string
-	RedirectURIs []string      // token:// redirect=, web client callbacks allowed besides loopback
-	Password     string        // token:// password=; set, it turns on the login server
-	QueryTimeout time.Duration // MCP_QUERY_TIMEOUT, default 10s
-	QueryMaxRows int           // MCP_QUERY_MAX_ROWS, default 1000
+	Addr          string // MCP_ADDR, defaults to Listen
+	DBPath        string // MCP_DB_PATH, defaults to DATABASE_DSN path
+	AuthDSN       string // MCP_AUTH_DSN, verbatim
+	AuthMode      string // "oauth" | "token", from the DSN scheme
+	ResourceURL   string
+	Issuer        string
+	Audience      string
+	Token         string
+	RedirectHosts []string      // token:// redirect=, callback hosts beyond loopback, claude.ai and chatgpt.com
+	Password      string        // token:// password=; set, it turns on the login server
+	QueryTimeout  time.Duration // MCP_QUERY_TIMEOUT, default 10s
+	QueryMaxRows  int           // MCP_QUERY_MAX_ROWS, default 1000
 
 	// authErr holds the DSN parse failure until ValidateMCP reports it:
 	// bare `serve` must stay lenient (warn and skip MCP), so FromEnv
@@ -422,16 +422,17 @@ func (c *Config) parseTokenLogin(query string) error {
 			return fmt.Errorf("config: MCP_AUTH_DSN token:// has unknown parameter %q (redirect, password or resource)", k)
 		}
 	}
-	m.RedirectURIs = q["redirect"]
 	m.Password = q.Get("password")
 	m.ResourceURL = q.Get("resource")
 	if m.Password == "" {
 		return fmt.Errorf("config: MCP_AUTH_DSN token:// redirect= and resource= need a password=, which turns the login on")
 	}
-	for _, r := range m.RedirectURIs {
-		if err := checkLoginURL(r); err != nil {
+	for _, r := range q["redirect"] {
+		host, err := redirectHost(r)
+		if err != nil {
 			return fmt.Errorf("config: MCP_AUTH_DSN token:// redirect=%q %v", r, err)
 		}
+		m.RedirectHosts = append(m.RedirectHosts, host)
 	}
 	if m.ResourceURL == "" && c.PublicURL != "" {
 		m.ResourceURL = c.PublicURL + "/mcp"
@@ -443,6 +444,24 @@ func (c *Config) parseTokenLogin(query string) error {
 		return fmt.Errorf("config: MCP_AUTH_DSN token:// resource=%q %v", m.ResourceURL, err)
 	}
 	return nil
+}
+
+// redirectHost reads a redirect= value as the host it allows: a bare host
+// (app.example.com, 127.0.0.1, [::1]) or, for DSNs written against exact
+// callbacks, a full URL whose host is taken.
+func redirectHost(raw string) (string, error) {
+	if strings.Contains(raw, "://") {
+		if err := checkLoginURL(raw); err != nil {
+			return "", err
+		}
+		u, _ := url.Parse(raw)
+		return strings.ToLower(u.Hostname()), nil
+	}
+	u, err := url.Parse("https://" + raw)
+	if raw == "" || err != nil || u.Host != raw || u.Port() != "" {
+		return "", fmt.Errorf("must be a host such as app.example.com, without scheme, port or path")
+	}
+	return strings.ToLower(u.Hostname()), nil
 }
 
 // checkLoginURL admits an absolute http(s) URL with no fragment, and plain

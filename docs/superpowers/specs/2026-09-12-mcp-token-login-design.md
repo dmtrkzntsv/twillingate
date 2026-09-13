@@ -43,7 +43,7 @@ and `cloudflare://` are unchanged.
 ## 3. Configuration
 
 ```bash
-MCP_AUTH_DSN=token://<token>?password=<password>[&redirect=<uri>…][&resource=<url>]
+MCP_AUTH_DSN=token://<token>?password=<password>[&redirect=<host>…][&resource=<url>]
 ```
 
 No new environment variable. `parseMCPAuthDSN`'s `token` case cuts the DSN
@@ -53,7 +53,7 @@ after is parsed with `url.ParseQuery`.
 | Parameter | Meaning |
 | --- | --- |
 | `password` | The secret typed on the login page. Setting it enables the login server. |
-| `redirect` | Repeatable. One extra allowed redirect URI per occurrence, beyond the defaults of §5.1. |
+| `redirect` | Repeatable. One extra allowed callback host per occurrence, beyond the defaults of §5.1. A full URL counts as its host. |
 | `resource` | Public URL of `/mcp`. Defaults to `PUBLIC_URL` + `/mcp`. |
 
 `MCPConfig` gains `RedirectURIs []string` and `Password string`;
@@ -66,8 +66,9 @@ before: header token only, no new routes.
   typos such as `redirects=`);
 - `redirect` or `resource` without `password` (an empty `password=` counts
   as missing);
-- a redirect URI that does not parse, is not absolute, carries a fragment,
-  or uses `http` on a host other than `localhost`, `127.0.0.1` or `[::1]`;
+- a `redirect` that is neither a bare host (no scheme, port or path) nor a
+  URL that parses, is absolute, has no fragment, and uses `http` only on
+  `localhost`, `127.0.0.1` or `[::1]`;
 - no `resource` and no `PUBLIC_URL` to derive it from;
 - a resource URL that is not absolute, or is `http` on a non-loopback host.
 
@@ -144,33 +145,31 @@ stored.
 
 ### 5.1 Redirect matching
 
-Accepted without any `redirect=` entry (amended 2026-09-13, so native
-clients such as Codex, whose callback path carries a per-server id, need no
-configuration):
+Amended 2026-09-13: callbacks are allowed **by host**, not by exact URI, so
+supporting a client means naming its domain rather than tracking its
+callback path (Codex's carries a per-server id).
 
-- any loopback URI — `http` or `https` on `localhost`, `127.0.0.1` or
-  `[::1]`, any port and path, no fragment or userinfo — because the code can
-  only reach the machine the browser runs on;
-- the built-in web connectors `https://claude.ai/api/mcp/auth_callback` and
-  `https://chatgpt.com/connector_platform_oauth_redirect`.
+A candidate is accepted when it parses, carries no fragment or userinfo,
+and its lowercase hostname is:
 
-Accepting any URI is ruled out: an attacker could register a client with
-their own callback, send the operator a genuine login link, and receive a
-code for tokens as powerful as the env token.
+- `localhost`, `127.0.0.1` or `::1`, over `http` or `https` — a code sent
+  there only reaches the machine the browser runs on (RFC 8252's native-app
+  model);
+- `claude.ai` or `chatgpt.com`, over `https` (built in);
+- a host listed as `redirect=`, over `https`.
 
-Any other candidate must match an allowlist entry, which it does when, after
-parsing both:
+Port and path are the client's choice. Hosts match exactly, so `claude.ai`
+does not admit `foo.claude.ai`. Accepting any host is ruled out: an attacker
+could register a client with their own callback, send the operator a genuine
+login link, and receive a code for tokens as powerful as the env token. The
+cost of host-level trust is that any path on an allowed host can receive a
+code, so an open redirect on `claude.ai` or `chatgpt.com` would matter; PKCE
+still keeps a stolen code useless without the client's verifier.
 
-- scheme, lowercase hostname, path and raw query are equal byte for byte
-  (no normalisation: `""` and `/` differ);
-- for `localhost`, `127.0.0.1` and `[::1]` the port is ignored on both sides
-  (RFC 8252 §7.3); for other hosts the port must be equal;
-- `localhost`, `127.0.0.1` and `[::1]` are distinct hosts;
-- the candidate carries no fragment.
-
-The same function runs at registration and at `GET /oauth/authorize`. At
-`POST /oauth/token` the `redirect_uri` must equal the code's byte for byte
-(RFC 6749 §4.1.3).
+At `GET /oauth/authorize` the `redirect_uri` must also match one the client
+registered: scheme, host, path and query exactly, with the port ignored on
+loopback hosts (RFC 8252 §7.3). At `POST /oauth/token` it must equal the
+code's byte for byte (RFC 6749 §4.1.3).
 
 ## 6. The login page — `/oauth/authorize`
 
@@ -328,7 +327,7 @@ again; each refresh extends its refresh token by 30 days.
 | --- | --- |
 | Token or password changed | All invalid immediately (new keys) |
 | `resource` URL changed | All invalid (`aud` on access and refresh tokens) |
-| Every `redirect` removed | All invalid (login server and `/oauth/token` gone; step 2 of §8 off) |
+| `password` removed | All invalid (login server and `/oauth/token` gone; step 2 of §8 off) |
 | Redirect list edited | Existing tokens and refreshes keep working; registration and login follow the new list |
 | Refresh token unused for 30 days | That client logs in again |
 | Restart or redeploy | Nothing; a login in progress at that moment fails once and is retried |

@@ -37,7 +37,7 @@ type loginServer struct {
 	keys      loginKeys
 	static    auth.TokenVerifier // the env token, still accepted on /mcp
 	password  []byte
-	redirects []string // MCP_AUTH_DSN callbacks beyond loopback and builtinRedirects
+	hosts     []string // callback hosts from MCP_AUTH_DSN, beyond the built-in ones
 	resource  string
 	issuer    string
 	accessTTL time.Duration
@@ -52,7 +52,7 @@ func newLoginServer(m config.MCPConfig, logger *slog.Logger) *loginServer {
 		keys:      deriveLoginKeys(m.Token, m.Password),
 		static:    StaticVerifier(m.Token),
 		password:  []byte(m.Password),
-		redirects: m.RedirectURIs,
+		hosts:     m.RedirectHosts,
 		resource:  m.ResourceURL,
 		issuer:    originOf(m.ResourceURL),
 		accessTTL: accessTokenTTL,
@@ -146,9 +146,9 @@ func (s *loginServer) registerClient(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, u := range req.RedirectURIs {
-		if !redirectAllowed(s.redirects, u) {
+		if !redirectAllowed(s.hosts, u) {
 			s.logger.Warn("mcp login: registration redirect rejected", "redirect_uri", u)
-			oauthError(w, "invalid_redirect_uri", "redirect URI not in the MCP_AUTH_DSN allowlist: "+u)
+			oauthError(w, "invalid_redirect_uri", "redirect URI host not allowed (add it to MCP_AUTH_DSN as redirect=<host>): "+u)
 			return
 		}
 	}
@@ -205,23 +205,29 @@ func redirectMatches(allowed, candidate string) bool {
 		a.User.String() == c.User.String()
 }
 
-// builtinRedirects are the web connectors' callbacks, accepted without an
-// MCP_AUTH_DSN entry.
-var builtinRedirects = []string{
-	"https://claude.ai/api/mcp/auth_callback",
-	"https://chatgpt.com/connector_platform_oauth_redirect",
-}
+// builtinRedirectHosts are the web connectors, accepted without an
+// MCP_AUTH_DSN entry. Loopback hosts are accepted too.
+var builtinRedirectHosts = []string{"claude.ai", "chatgpt.com"}
 
-// redirectAllowed admits any loopback callback — the code can only reach
-// the machine the browser runs on, RFC 8252's native-app model — the
-// built-in web connectors, and otherwise only an allowlist entry.
-func redirectAllowed(allowlist []string, candidate string) bool {
+// redirectAllowed admits a callback by host, leaving port and path to the
+// client: any loopback address over http or https — the code can only reach
+// the machine the browser runs on, RFC 8252's native-app model — and over
+// https a built-in web connector or a host listed in MCP_AUTH_DSN. Hosts
+// match exactly, so claude.ai does not admit its subdomains.
+func redirectAllowed(hosts []string, candidate string) bool {
 	u, err := url.Parse(candidate)
-	if err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.User == nil &&
-		!strings.Contains(candidate, "#") && isLoopbackHost(strings.ToLower(u.Hostname())) {
-		return true
+	if err != nil || u.User != nil || strings.Contains(candidate, "#") {
+		return false
 	}
-	return matchesAny(builtinRedirects, candidate) || matchesAny(allowlist, candidate)
+	host := strings.ToLower(u.Hostname())
+	switch {
+	case host == "":
+		return false
+	case isLoopbackHost(host):
+		return u.Scheme == "http" || u.Scheme == "https"
+	default:
+		return u.Scheme == "https" && (slices.Contains(builtinRedirectHosts, host) || slices.Contains(hosts, host))
+	}
 }
 
 func matchesAny(allowed []string, candidate string) bool {

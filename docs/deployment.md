@@ -269,18 +269,16 @@ run.
 | --- | --- |
 | `password` | What the login page asks for. Setting it turns the login on. |
 | `resource` | The public URL of `/mcp`. Defaults to `PUBLIC_URL` + `/mcp`; set it when MCP has its own hostname. |
-| `redirect` | An extra callback URI a client may return to; repeat it once per URI. Only needed for clients not listed below. |
+| `redirect` | An extra host clients may return to, such as `redirect=app.example.com`; repeat it once per host. Only needed for clients not covered below. |
 
-- **Callbacks accepted without `redirect=`.** Any loopback address —
-  `localhost`, `127.0.0.1` or `[::1]`, any port and path — because a code
-  sent there only reaches the machine the browser runs on; that covers
-  Claude Code, Claude Desktop and Codex. And the two web connectors:
-  `https://claude.ai/api/mcp/auth_callback` and
-  `https://chatgpt.com/connector_platform_oauth_redirect`.
-- **Anything else is refused** until it is added as `redirect=`, matched
-  exactly (scheme, host, port, path and query; `https` only). Accepting any
-  URI would let anyone register a client that sends your login to their own
-  site.
+- **Hosts accepted without `redirect=`.** `localhost`, `127.0.0.1` and
+  `[::1]` over `http` or `https`, because a code sent there only reaches the
+  machine the browser runs on — that covers Claude Code, Claude Desktop and
+  Codex. And `claude.ai` and `chatgpt.com` over `https`. Any port and path.
+- **Any other host is refused** until it is added as `redirect=<host>`; it
+  then works over `https` with any port and path. Hosts match exactly:
+  `claude.ai` does not admit `foo.claude.ai`. Accepting any host would let
+  anyone register a client that sends your login to their own site.
 - **Encoding.** The parameters are a query string: in the password write
   `&` as `%26`, `#` as `%23`, `%` as `%25`, `;` as `%3B` and `+` as `%2B`.
   An unencoded `+` becomes a space.
@@ -300,9 +298,9 @@ run.
   then `/mcp` → *Authenticate*. **Codex:** add the URL as an MCP server and
   choose *Authenticate*.
 - **Any other MCP client** connects to the same URL. If its login stops at
-  "The redirect URI is not in the MCP_AUTH_DSN allowlist", the page and the
-  `mcp login: redirect rejected` log line show the URI it used: add it as
-  `redirect=` and restart.
+  "The redirect URI's host is not allowed", the page and the
+  `mcp login: redirect rejected` log line show the URI it used: add its host
+  as `redirect=<host>` and restart.
 
 A client you use stays logged in: access tokens last an hour and refresh
 silently, and every refresh extends the login by 30 days. Nothing about
@@ -416,9 +414,9 @@ the password is the problem.
 **Connects but no tools.** Wrong path — the endpoint is `/mcp`, not the bare
 hostname.
 
-**Login page: redirect URI not allowed.** The client is not one of the
-built-in callbacks. The page shows the URI it used; add it to
-`MCP_AUTH_DSN` as `redirect=` and restart.
+**Login page: redirect URI's host not allowed.** The client returns to a
+host that is not built in. The page shows the URI it used; add its host to
+`MCP_AUTH_DSN` as `redirect=<host>` and restart.
 
 **Login page: password not recognised, though it is right.** A `+`, `&`,
 `#`, `%` or `;` in the password must be percent-encoded in the DSN.

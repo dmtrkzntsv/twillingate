@@ -371,6 +371,16 @@ func TestValidateMCP(t *testing.T) {
 			"MCP_AUTH_DSN": "token://ar_x?password=pw&redirect=https://claude.ai/cb%23frag&resource=https://mcp.example.com/mcp"}, false},
 		{"token redirect unparseable", map[string]string{
 			"MCP_AUTH_DSN": "token://ar_x?password=pw&redirect=https://%25zz/cb&resource=https://mcp.example.com/mcp"}, false},
+		{"token redirect host", map[string]string{
+			"MCP_AUTH_DSN": "token://ar_x?password=pw&redirect=app.example.com&resource=https://mcp.example.com/mcp"}, true},
+		{"token redirect IPv6 loopback host", map[string]string{
+			"MCP_AUTH_DSN": "token://ar_x?password=pw&redirect=[::1]&resource=https://mcp.example.com/mcp"}, true},
+		{"token redirect host with path", map[string]string{
+			"MCP_AUTH_DSN": "token://ar_x?password=pw&redirect=app.example.com/cb&resource=https://mcp.example.com/mcp"}, false},
+		{"token redirect host with port", map[string]string{
+			"MCP_AUTH_DSN": "token://ar_x?password=pw&redirect=app.example.com:8443&resource=https://mcp.example.com/mcp"}, false},
+		{"token redirect empty", map[string]string{
+			"MCP_AUTH_DSN": "token://ar_x?password=pw&redirect=&resource=https://mcp.example.com/mcp"}, false},
 		{"token resource http on public host", map[string]string{
 			"MCP_AUTH_DSN": "token://ar_x?password=pw&redirect=https://claude.ai/cb&resource=http://mcp.example.com/mcp"}, false},
 	}
@@ -477,7 +487,7 @@ func TestMCPAudienceDefaultsToResource(t *testing.T) {
 
 func TestTokenLoginDSNParsing(t *testing.T) {
 	cfg, err := FromEnv(mcpEnv(map[string]string{
-		"MCP_AUTH_DSN": "token://ar_x?redirect=https://claude.ai/api/mcp/auth_callback&password=a%2Bb%26c&redirect=http://localhost/callback",
+		"MCP_AUTH_DSN": "token://ar_x?redirect=https://claude.ai/api/mcp/auth_callback&password=a%2Bb%26c&redirect=App.Example.com",
 		"PUBLIC_URL":   "https://mcp.example.com"}))
 	if err != nil {
 		t.Fatal(err)
@@ -492,9 +502,10 @@ func TestTokenLoginDSNParsing(t *testing.T) {
 	if m.Password != "a+b&c" {
 		t.Errorf("password = %q, want percent-decoded %q", m.Password, "a+b&c")
 	}
-	want := []string{"https://claude.ai/api/mcp/auth_callback", "http://localhost/callback"}
-	if !slices.Equal(m.RedirectURIs, want) {
-		t.Errorf("redirects = %v, want %v in DSN order", m.RedirectURIs, want)
+	// A full URL counts as its host, so DSNs written for exact callbacks keep working.
+	want := []string{"claude.ai", "app.example.com"}
+	if !slices.Equal(m.RedirectHosts, want) {
+		t.Errorf("redirect hosts = %v, want %v in DSN order", m.RedirectHosts, want)
 	}
 	if m.ResourceURL != "https://mcp.example.com/mcp" {
 		t.Errorf("resource = %q, want PUBLIC_URL + /mcp", m.ResourceURL)
@@ -504,7 +515,7 @@ func TestTokenLoginDSNParsing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(plain.MCP.RedirectURIs) != 0 || plain.MCP.Password != "" || plain.MCP.ResourceURL != "" {
+	if len(plain.MCP.RedirectHosts) != 0 || plain.MCP.Password != "" || plain.MCP.ResourceURL != "" {
 		t.Errorf("plain token:// grew login settings: %+v", plain.MCP)
 	}
 	if !m.LoginEnabled() || plain.MCP.LoginEnabled() {

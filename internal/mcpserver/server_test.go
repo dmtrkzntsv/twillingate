@@ -358,8 +358,7 @@ func TestTokenLoginRoutesFollowRedirects(t *testing.T) {
 }
 
 func TestIssuedAccessTokenNeedsTheLoginServer(t *testing.T) {
-	m := config.MCPConfig{Token: "ar_testtoken", Password: "hunter2",
-		RedirectURIs: []string{"https://claude.ai/api/mcp/auth_callback"}, ResourceURL: "https://mcp.example.com/mcp"}
+	m := config.MCPConfig{Token: "ar_testtoken", Password: "hunter2", ResourceURL: "https://mcp.example.com/mcp"}
 	access := newLoginServer(m, slog.New(slog.DiscardHandler)).keys.sign(kindAccess, grantClaims{
 		RegisteredClaims: jwt.RegisteredClaims{Issuer: "https://mcp.example.com", Subject: "mcp",
 			Audience: jwt.ClaimStrings{m.ResourceURL}, ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour))}})
