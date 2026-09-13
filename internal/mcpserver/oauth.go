@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -43,6 +44,7 @@ type loginServer struct {
 	logger    *slog.Logger
 	now       func() time.Time
 	limiter   failureLimiter
+	used      usedCodes
 }
 
 func newLoginServer(m config.MCPConfig, logger *slog.Logger) *loginServer {
@@ -67,6 +69,7 @@ func (s *loginServer) mount(mux *http.ServeMux) {
 	mux.HandleFunc("POST /oauth/register", s.registerClient)
 	mux.HandleFunc("GET /oauth/authorize", s.authorizePage)
 	mux.HandleFunc("POST /oauth/authorize", s.authorizeSubmit)
+	mux.HandleFunc("POST /oauth/token", s.token)
 }
 
 // verify accepts the env token as before, or an access token this server
@@ -170,8 +173,9 @@ func (s *loginServer) registerClient(w http.ResponseWriter, r *http.Request) {
 		name = string(runes[:64])
 	}
 	now := s.now()
+	// The jti keeps two identical registrations in the same second apart.
 	id := s.keys.sign(kindClient, clientClaims{RedirectURIs: req.RedirectURIs, ClientName: name,
-		RegisteredClaims: jwt.RegisteredClaims{IssuedAt: jwt.NewNumericDate(now)}})
+		RegisteredClaims: jwt.RegisteredClaims{IssuedAt: jwt.NewNumericDate(now), ID: rand.Text()}})
 	writeJSON(w, http.StatusCreated, registrationResponse{
 		ClientID:                id,
 		ClientIDIssuedAt:        now.Unix(),
