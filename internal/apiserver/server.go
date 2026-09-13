@@ -116,7 +116,7 @@ func wrapAuth(ctx context.Context, m config.APIConfig) (func(metadataURL string,
 	case "oauth":
 		jwksURL, err := DiscoverJWKSURL(ctx, m.Issuer, nil)
 		if err != nil {
-			return nil, fmt.Errorf("mcp oauth mode: %w (is the API_AUTH_DSN issuer correct and reachable?)", err)
+			return nil, fmt.Errorf("api oauth mode: %w (is the API_AUTH_DSN issuer correct and reachable?)", err)
 		}
 		verify = OAuthVerifier(m.Issuer, oauthAudiences(m), NewJWKSCache(jwksURL, nil))
 	default:

@@ -97,6 +97,45 @@ func TestSupersededDocsResourcesRemoved(t *testing.T) {
 	}
 }
 
+// Nothing the guide tool prints, nor its own MCP description, may point a
+// client at one of the three superseded docs:// URIs (removed above): they
+// would be dead links to a resource that no longer resolves.
+func TestIntegrationGuideDoesNotReferenceStaleDocsURIs(t *testing.T) {
+	_, cs := newTestHost(t)
+	res := callTool(t, cs, "integration_guide", map[string]any{
+		"project": "docs", "platform": "mobile"})
+	if res.IsError {
+		t.Fatalf("error: %s", textOf(res))
+	}
+	out := textOf(res)
+
+	tools, err := cs.ListTools(context.Background(), &mcp.ListToolsParams{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var desc string
+	for _, tool := range tools.Tools {
+		if tool.Name == "integration_guide" {
+			desc = tool.Description
+		}
+	}
+
+	for _, dead := range []string{"docs://events", "docs://js-sdk", "docs://ingest-api"} {
+		if strings.Contains(out, dead) {
+			t.Errorf("guide output references removed resource %s: %s", dead, out)
+		}
+		if strings.Contains(desc, dead) {
+			t.Errorf("integration_guide description references removed resource %s: %s", dead, desc)
+		}
+	}
+	if !strings.Contains(out, "docs://twillingate") {
+		t.Errorf("guide output should point at docs://twillingate: %s", out)
+	}
+	if !strings.Contains(desc, "docs://twillingate") {
+		t.Errorf("integration_guide description should point at docs://twillingate: %s", desc)
+	}
+}
+
 func TestUpdateProjectSetsAttributes(t *testing.T) {
 	h, cs := newTestHost(t)
 	res := callTool(t, cs, "update_project", map[string]any{

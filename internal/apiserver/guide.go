@@ -95,7 +95,7 @@ func (h *host) integrationGuide(ctx context.Context, in guideIn) (guideOut, erro
 			"                   \"$os_version\":\"17.2\",\"$device_model\":\"iPhone15,2\"},\n"+
 			"     \"events\":[{\"id\":\"<uuidv7>\",\"ts\":\"<event-time-utc>\",\n"+
 			"                \"name\":\"$screen_view\",\"attributes\":{\"$screen\":\"/settings\"}}]}\n\n", base, key)
-		b.WriteString("- $install_id: generate once per install, store locally, send on every\n  batch. Under anonymous identity it is salted and rotated daily.\n- Send $screen_view per screen; custom names for product events.\n- Queue offline, replay with original ts and stable UUIDv7 ids —\n  docs://ingest-api has a worked offline-queue design.\n\n")
+		b.WriteString("- $install_id: generate once per install, store locally, send on every\n  batch. Under anonymous identity it is salted and rotated daily.\n- Send $screen_view per screen; custom names for product events.\n- Queue offline, replay with original ts and stable UUIDv7 ids —\n  docs://twillingate (Worked offline queue) has a worked offline-queue design.\n\n")
 	}
 
 	if len(p.Attributes) > 0 {
@@ -103,6 +103,6 @@ func (h *host) integrationGuide(ctx context.Context, in guideIn) (guideOut, erro
 	} else {
 		b.WriteString("No product attributes declared: events are counted per day, but no\nattribute breakdowns are exposed — call update_project with e.g.\n{\"attributes\":[\"plan\"]} to declare which keys to break down.\n")
 	}
-	b.WriteString("\nDeeper reference: docs://events (semantics), docs://js-sdk (snippet API),\ndocs://ingest-api (wire format, batching, retries, offline replay).\n")
+	b.WriteString("\nDeeper reference: docs://twillingate — The event model (semantics),\nInstrument a website (snippet API), The wire format (batching, retries,\noffline replay).\n")
 	return guideOut{Markdown: b.String()}, nil
 }
