@@ -135,25 +135,21 @@ type DashboardsConfig struct {
 // fields the verifiers consume:
 //
 //	token://<token>[?password=<pw>&redirect=<uri>[&redirect=<uri>…][&resource=<url>]]
-//	cloudflare://<team>.cloudflareaccess.com?aud=<application AUD tag>
 //	oauth://<issuer-host>[/path][?resource=<url>][&audience=<aud>]
 //
 // Any redirect= on token:// turns on the browser login server, which
 // requires password= and a resource URL. In token and oauth modes resource
 // defaults to PUBLIC_URL + "/mcp"; the oauth issuer is https://<host>[/path]
-// and audience defaults to the resource URL. The +insecure scheme variants
-// (oauth+insecure, cloudflare+insecure) produce an http issuer for local
-// IdPs and tests.
+// and audience defaults to the resource URL. oauth+insecure produces an
+// http issuer for local IdPs and tests.
 type MCPConfig struct {
 	Addr         string // MCP_ADDR, defaults to Listen
 	DBPath       string // MCP_DB_PATH, defaults to DATABASE_DSN path
 	AuthDSN      string // MCP_AUTH_DSN, verbatim
-	AuthMode     string // "oauth" | "cloudflare" | "token", from the DSN scheme
+	AuthMode     string // "oauth" | "token", from the DSN scheme
 	ResourceURL  string
 	Issuer       string
 	Audience     string
-	CFTeamDomain string
-	CFAud        string
 	Token        string
 	RedirectURIs []string      // token:// redirect=; any turns on the login server
 	Password     string        // token:// password=, the login page's secret
@@ -365,7 +361,7 @@ func (c *Config) parseMCPAuthDSN() error {
 	m := &c.MCP
 	scheme, rest, ok := strings.Cut(m.AuthDSN, "://")
 	if !ok {
-		return fmt.Errorf("config: invalid MCP_AUTH_DSN %q (token://<token>, cloudflare://<team>?aud=<tag> or oauth://<issuer-host>)", m.AuthDSN)
+		return fmt.Errorf("config: invalid MCP_AUTH_DSN %q (token://<token> or oauth://<issuer-host>)", m.AuthDSN)
 	}
 	switch scheme {
 	case "token":
@@ -379,25 +375,6 @@ func (c *Config) parseMCPAuthDSN() error {
 		}
 		if hasQuery {
 			return c.parseTokenLogin(query)
-		}
-	case "cloudflare", "cloudflare+insecure":
-		u, err := url.Parse(m.AuthDSN)
-		if err != nil {
-			return fmt.Errorf("config: invalid MCP_AUTH_DSN: %v", err)
-		}
-		m.AuthMode = "cloudflare"
-		m.CFTeamDomain = u.Host
-		if scheme == "cloudflare+insecure" {
-			// A scheme-carrying team domain is used as-is by the
-			// verifier; this keeps local IdPs and tests on http.
-			m.CFTeamDomain = "http://" + u.Host
-		}
-		m.CFAud = u.Query().Get("aud")
-		if u.Host == "" {
-			return fmt.Errorf("config: MCP_AUTH_DSN cloudflare:// requires a team domain (cloudflare://<team>.cloudflareaccess.com?aud=<tag>)")
-		}
-		if m.CFAud == "" {
-			return fmt.Errorf("config: MCP_AUTH_DSN cloudflare:// requires ?aud=<application AUD tag>")
 		}
 	case "oauth", "oauth+insecure":
 		u, err := url.Parse(m.AuthDSN)
@@ -426,7 +403,7 @@ func (c *Config) parseMCPAuthDSN() error {
 			m.Audience = m.ResourceURL
 		}
 	default:
-		return fmt.Errorf("config: unknown MCP_AUTH_DSN scheme %q (token, cloudflare or oauth)", scheme)
+		return fmt.Errorf("config: unknown MCP_AUTH_DSN scheme %q (token or oauth)", scheme)
 	}
 	return nil
 }
@@ -494,7 +471,7 @@ func checkLoginURL(raw string) error {
 func (c *Config) ValidateMCP() error {
 	m := c.MCP
 	if m.AuthDSN == "" {
-		return fmt.Errorf("config: -mcp requires MCP_AUTH_DSN (token://<token>, cloudflare://<team>?aud=<tag> or oauth://<issuer-host>)")
+		return fmt.Errorf("config: -mcp requires MCP_AUTH_DSN (token://<token> or oauth://<issuer-host>)")
 	}
 	return m.authErr
 }

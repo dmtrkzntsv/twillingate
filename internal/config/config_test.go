@@ -334,12 +334,8 @@ func TestValidateMCP(t *testing.T) {
 			"MCP_AUTH_DSN": "oauth://idp.example.com"}, false},
 		{"oauth empty issuer", map[string]string{
 			"MCP_AUTH_DSN": "oauth://?resource=https://twillingate.example.com/mcp"}, false},
-		{"cloudflare ok", map[string]string{
-			"MCP_AUTH_DSN": "cloudflare://team.cloudflareaccess.com?aud=aud123"}, true},
-		{"cloudflare missing aud", map[string]string{
-			"MCP_AUTH_DSN": "cloudflare://team.cloudflareaccess.com"}, false},
-		{"cloudflare missing team", map[string]string{
-			"MCP_AUTH_DSN": "cloudflare://?aud=aud123"}, false},
+		{"cloudflare removed", map[string]string{
+			"MCP_AUTH_DSN": "cloudflare://team.cloudflareaccess.com?aud=aud123"}, false},
 		{"token login ok", map[string]string{
 			"MCP_AUTH_DSN": "token://ar_x?password=pw&redirect=https://claude.ai/api/mcp/auth_callback&resource=https://mcp.example.com/mcp"}, true},
 		{"token login resource from PUBLIC_URL", map[string]string{
@@ -439,27 +435,6 @@ func TestMCPAuthDSNParsing(t *testing.T) {
 		}
 		if cfg.MCP.AuthMode != "oauth" || cfg.MCP.Issuer != "http://127.0.0.1:9999" {
 			t.Errorf("mode = %q issuer = %q", cfg.MCP.AuthMode, cfg.MCP.Issuer)
-		}
-	})
-	t.Run("cloudflare", func(t *testing.T) {
-		cfg, err := FromEnv(mcpEnv(map[string]string{
-			"MCP_AUTH_DSN": "cloudflare://team.cloudflareaccess.com?aud=aud123"}))
-		if err != nil {
-			t.Fatal(err)
-		}
-		m := cfg.MCP
-		if m.AuthMode != "cloudflare" || m.CFTeamDomain != "team.cloudflareaccess.com" || m.CFAud != "aud123" {
-			t.Errorf("mode = %q team = %q aud = %q", m.AuthMode, m.CFTeamDomain, m.CFAud)
-		}
-	})
-	t.Run("cloudflare+insecure team domain carries http scheme", func(t *testing.T) {
-		cfg, err := FromEnv(mcpEnv(map[string]string{
-			"MCP_AUTH_DSN": "cloudflare+insecure://127.0.0.1:9999?aud=aud123"}))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if cfg.MCP.CFTeamDomain != "http://127.0.0.1:9999" {
-			t.Errorf("team = %q", cfg.MCP.CFTeamDomain)
 		}
 	})
 	t.Run("malformed DSN does not fail FromEnv, only ValidateMCP", func(t *testing.T) {

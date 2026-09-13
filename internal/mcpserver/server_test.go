@@ -227,45 +227,6 @@ func TestMCPOAuthModePasses(t *testing.T) {
 	}
 }
 
-// TestMCPCloudflareModePasses exercises cloudflare mode through the
-// assembled handler: a valid Cf-Access-Jwt-Assertion passes, a missing
-// one is rejected with no WWW-Authenticate (Access owns the edge
-// challenge, not the origin), and the PRM route is never mounted.
-func TestMCPCloudflareModePasses(t *testing.T) {
-	f := newJWKSFixture(t)
-	h := newHandlerFixture(t, map[string]string{
-		"MCP_AUTH_DSN": "cloudflare+insecure://" + strings.TrimPrefix(f.issuer, "http://") +
-			"?aud=aud-tag-1",
-	})
-
-	assertion := f.sign(t, jwt.MapClaims{
-		"iss": f.issuer, "aud": "aud-tag-1", "sub": "user@example.com",
-		"exp": time.Now().Add(time.Hour).Unix(),
-	})
-	req := initReq()
-	req.Header.Set("Cf-Access-Jwt-Assertion", assertion)
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("code = %d body = %s", rec.Code, rec.Body.String())
-	}
-
-	rec2 := httptest.NewRecorder()
-	h.ServeHTTP(rec2, httptest.NewRequest("POST", "/mcp", strings.NewReader("{}")))
-	if rec2.Code != http.StatusUnauthorized {
-		t.Fatalf("code = %d", rec2.Code)
-	}
-	if www := rec2.Header().Get("WWW-Authenticate"); www != "" {
-		t.Errorf("WWW-Authenticate = %q; cloudflare mode must not challenge from the origin", www)
-	}
-
-	rec3 := httptest.NewRecorder()
-	h.ServeHTTP(rec3, httptest.NewRequest("GET", "/.well-known/oauth-protected-resource", nil))
-	if rec3.Code != http.StatusNotFound {
-		t.Fatalf("code = %d; cloudflare mode must never mount the PRM route", rec3.Code)
-	}
-}
-
 func TestHealthzUnauthenticated(t *testing.T) {
 	h := newHandlerFixture(t, nil)
 	rec := httptest.NewRecorder()

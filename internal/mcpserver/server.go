@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"strings"
 
 	"github.com/dmtrkzntsv/twillingate/internal/config"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
@@ -106,32 +105,6 @@ func wrapAuth(ctx context.Context, m config.MCPConfig, next http.Handler) (http.
 		return auth.RequireBearerToken(v, &auth.RequireBearerTokenOptions{
 			ResourceMetadataURL: metadataURLFor(m.ResourceURL),
 		})(next), nil
-	case "cloudflare":
-		// Access owns discovery and the 401 challenge at the edge; the
-		// origin's only job is validating the assertion header. A thin
-		// middleware instead of RequireBearerToken so a request whose
-		// Authorization header Access did not populate is still judged
-		// by the assertion alone (endpoint spec §5.2).
-		//
-		// CFTeamDomain is normally a bare team domain and gets an
-		// "https://" prefix here; scheme-tolerant like CloudflareVerifier
-		// itself so a caller (or test) that already has a full issuer URL
-		// isn't double-prefixed into a malformed one.
-		certsHost := m.CFTeamDomain
-		if !strings.HasPrefix(certsHost, "http://") && !strings.HasPrefix(certsHost, "https://") {
-			certsHost = "https://" + certsHost
-		}
-		cache := NewJWKSCache(certsHost+"/cdn-cgi/access/certs", nil)
-		v := CloudflareVerifier(m.CFTeamDomain, m.CFAud, cache)
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			info, err := v(r.Context(), "", r)
-			if err != nil {
-				http.Error(w, "unauthorized", http.StatusUnauthorized)
-				return
-			}
-			_ = info
-			next.ServeHTTP(w, r)
-		}), nil
 	default:
 		return nil, fmt.Errorf("mcpserver: unknown auth mode %q", m.AuthMode)
 	}

@@ -177,7 +177,7 @@ func (c *JWKSCache) keyfunc(t *jwt.Token) (any, error) {
 	return c.Key(kid)
 }
 
-// verifyJWT is the shared body of the oauth and cloudflare verifiers.
+// verifyJWT validates an IdP-issued JWT for the oauth verifier.
 func verifyJWT(raw, issuer, audience string, cache *JWKSCache) (*auth.TokenInfo, error) {
 	tok, err := jwt.Parse(raw, cache.keyfunc,
 		jwt.WithValidMethods(allowedAlgs),
@@ -206,33 +206,5 @@ func verifyJWT(raw, issuer, audience string, cache *JWKSCache) (*auth.TokenInfo,
 func OAuthVerifier(issuer, audience string, cache *JWKSCache) auth.TokenVerifier {
 	return func(_ context.Context, token string, _ *http.Request) (*auth.TokenInfo, error) {
 		return verifyJWT(token, issuer, audience, cache)
-	}
-}
-
-// CloudflareVerifier implements the cloudflare:// auth mode (endpoint spec
-// §5.2): under Access managed OAuth the bearer is opaque and validated
-// at the edge; the origin validates the resolved identity JWT in
-// Cf-Access-Jwt-Assertion. This is also what closes the
-// direct-to-origin bypass — no valid assertion, no access.
-//
-// teamDomain is normally a bare Cloudflare Access team domain
-// (e.g. "myteam.cloudflareaccess.com"), which is prefixed with
-// "https://" to form the issuer. Tests (and any caller that already
-// has a full issuer URL, e.g. an httptest server) may pass a value
-// that already carries a scheme; it is used as-is.
-func CloudflareVerifier(teamDomain, aud string, cache *JWKSCache) auth.TokenVerifier {
-	issuer := teamDomain
-	if !strings.HasPrefix(issuer, "http://") && !strings.HasPrefix(issuer, "https://") {
-		issuer = "https://" + issuer
-	}
-	return func(_ context.Context, _ string, req *http.Request) (*auth.TokenInfo, error) {
-		if req == nil {
-			return nil, auth.ErrInvalidToken
-		}
-		assertion := req.Header.Get("Cf-Access-Jwt-Assertion")
-		if assertion == "" {
-			return nil, fmt.Errorf("%w: no Cf-Access-Jwt-Assertion header", auth.ErrInvalidToken)
-		}
-		return verifyJWT(assertion, issuer, aud, cache)
 	}
 }
