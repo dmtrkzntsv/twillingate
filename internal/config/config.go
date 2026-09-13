@@ -130,8 +130,8 @@ type DashboardsConfig struct {
 	WorkDir    string
 }
 
-// MCPConfig carries the -mcp surface settings. Authentication comes from
-// the single MCP_AUTH_DSN; parsing fans it out into the mode-specific
+// APIConfig carries the -api surface settings. Authentication comes from
+// the single API_AUTH_DSN; parsing fans it out into the mode-specific
 // fields the verifiers consume:
 //
 //	token://<token>[?password=<pw>[&redirect=<host>…][&resource=<url>]]
@@ -143,10 +143,10 @@ type DashboardsConfig struct {
 // defaults to PUBLIC_URL + "/mcp"; the oauth issuer is https://<host>[/path]
 // and audience defaults to the resource URL. oauth+insecure produces an
 // http issuer for local IdPs and tests.
-type MCPConfig struct {
-	Addr          string // MCP_ADDR, defaults to Listen
-	DBPath        string // MCP_DB_PATH, defaults to DATABASE_DSN path
-	AuthDSN       string // MCP_AUTH_DSN, verbatim
+type APIConfig struct {
+	Addr          string // API_ADDR, defaults to IngestAddr
+	DBPath        string // API_DB_PATH, defaults to DATABASE_DSN path
+	AuthDSN       string // API_AUTH_DSN, verbatim
 	AuthMode      string // "oauth" | "token", from the DSN scheme
 	ResourceURL   string
 	Issuer        string
@@ -154,17 +154,17 @@ type MCPConfig struct {
 	Token         string
 	RedirectHosts []string      // token:// redirect=, callback hosts beyond loopback, claude.ai and chatgpt.com
 	Password      string        // token:// password=; set, it turns on the login server
-	QueryTimeout  time.Duration // MCP_QUERY_TIMEOUT, default 10s
-	QueryMaxRows  int           // MCP_QUERY_MAX_ROWS, default 1000
+	QueryTimeout  time.Duration // API_QUERY_TIMEOUT, default 10s
+	QueryMaxRows  int           // API_QUERY_MAX_ROWS, default 1000
 
-	// authErr holds the DSN parse failure until ValidateMCP reports it:
-	// bare `serve` must stay lenient (warn and skip MCP), so FromEnv
+	// authErr holds the DSN parse failure until ValidateAPI reports it:
+	// bare `serve` must stay lenient (warn and skip the API), so FromEnv
 	// cannot fail on a broken auth DSN.
 	authErr error
 }
 
 type Config struct {
-	Listen                string
+	IngestAddr            string
 	Database              string
 	Geo                   string
 	PublicURL             string
@@ -173,7 +173,7 @@ type Config struct {
 	Retention             Retention
 	ProductAttributesTopN int
 	Dashboards            DashboardsConfig
-	MCP                   MCPConfig
+	API                   APIConfig
 }
 
 // Load builds the configuration from the process environment.
@@ -243,11 +243,14 @@ func FromEnvDashboards(lookup func(string) (string, bool)) (*Config, error) {
 }
 
 func parse(lookup func(string) (string, bool), dashboards bool) (*Config, error) {
+	if err := refuseRenamed(lookup); err != nil {
+		return nil, err
+	}
 	e := &env{lookup: lookup}
 	c := &Config{
-		Listen:   e.str("LISTEN_ADDR", "127.0.0.1:8080"),
-		Database: e.str("DATABASE_DSN", ""),
-		Geo:      e.str("GEO_DSN", "cloudflare://"),
+		IngestAddr: e.str("INGEST_ADDR", "127.0.0.1:8080"),
+		Database:   e.str("DATABASE_DSN", ""),
+		Geo:        e.str("GEO_DSN", "cloudflare://"),
 		// The collector's public base URL (https://twillingate.example.com).
 		// Embed snippets and MCP integration guidance are built from it;
 		// unset, they carry a placeholder and tell the model to ask.
@@ -288,15 +291,15 @@ func parse(lookup func(string) (string, bool), dashboards bool) (*Config, error)
 			WorkDir:    e.str("DASHBOARDS_WORK_DIR", "/var/lib/dashboards"),
 		},
 	}
-	c.MCP = MCPConfig{
-		Addr:         e.str("MCP_ADDR", c.Listen),
-		DBPath:       e.str("MCP_DB_PATH", strings.TrimPrefix(c.Database, "sqlite://")),
-		AuthDSN:      e.str("MCP_AUTH_DSN", ""),
-		QueryTimeout: e.dur("MCP_QUERY_TIMEOUT", 10*time.Second),
-		QueryMaxRows: e.num("MCP_QUERY_MAX_ROWS", 1000),
+	c.API = APIConfig{
+		Addr:         e.str("API_ADDR", c.IngestAddr),
+		DBPath:       e.str("API_DB_PATH", strings.TrimPrefix(c.Database, "sqlite://")),
+		AuthDSN:      e.str("API_AUTH_DSN", ""),
+		QueryTimeout: e.dur("API_QUERY_TIMEOUT", 10*time.Second),
+		QueryMaxRows: e.num("API_QUERY_MAX_ROWS", 1000),
 	}
-	if c.MCP.AuthDSN != "" {
-		c.MCP.authErr = c.parseMCPAuthDSN()
+	if c.API.AuthDSN != "" {
+		c.API.authErr = c.parseAPIAuthDSN()
 	}
 	if e.err != nil {
 		return nil, e.err
@@ -314,6 +317,29 @@ func parse(lookup func(string) (string, bool), dashboards bool) (*Config, error)
 		return nil, err
 	}
 	return c, nil
+}
+
+// renamed maps each variable this release retired to its replacement. A
+// set old name refuses the boot: bare `serve` is lenient about API auth,
+// so an unrenamed MCP_AUTH_DSN would otherwise switch the API off silently.
+var renamed = []struct{ old, repl string }{
+	{"LISTEN_ADDR", "INGEST_ADDR"},
+	{"MCP_ADDR", "API_ADDR"},
+	{"MCP_AUTH_DSN", "API_AUTH_DSN"},
+	{"MCP_DB_PATH", "API_DB_PATH"},
+	{"MCP_QUERY_TIMEOUT", "API_QUERY_TIMEOUT"},
+	{"MCP_QUERY_MAX_ROWS", "API_QUERY_MAX_ROWS"},
+}
+
+// refuseRenamed treats an empty value as unset, as env.str does, so a
+// leftover `MCP_ADDR=` line does not block the boot.
+func refuseRenamed(lookup func(string) (string, bool)) error {
+	for _, r := range renamed {
+		if v, ok := lookup(r.old); ok && v != "" {
+			return fmt.Errorf("config: %s was renamed to %s", r.old, r.repl)
+		}
+	}
+	return nil
 }
 
 // ParseProjects reads a projects.json: a bare JSON array of projects.
@@ -355,14 +381,14 @@ func (c *Config) MaxEventAge() time.Duration {
 	return time.Duration(c.Retention.App.RawDays) * 24 * time.Hour
 }
 
-// parseMCPAuthDSN fans MCP_AUTH_DSN out into the mode-specific MCPConfig
+// parseAPIAuthDSN fans API_AUTH_DSN out into the mode-specific APIConfig
 // fields. Called from parse once the rest of the config (PUBLIC_URL for
 // the oauth resource default) is known.
-func (c *Config) parseMCPAuthDSN() error {
-	m := &c.MCP
+func (c *Config) parseAPIAuthDSN() error {
+	m := &c.API
 	scheme, rest, ok := strings.Cut(m.AuthDSN, "://")
 	if !ok {
-		return fmt.Errorf("config: invalid MCP_AUTH_DSN %q (token://<token> or oauth://<issuer-host>)", m.AuthDSN)
+		return fmt.Errorf("config: invalid API_AUTH_DSN %q (token://<token> or oauth://<issuer-host>)", m.AuthDSN)
 	}
 	switch scheme {
 	case "token":
@@ -372,7 +398,7 @@ func (c *Config) parseMCPAuthDSN() error {
 		m.AuthMode = "token"
 		m.Token = token
 		if m.Token == "" {
-			return fmt.Errorf("config: MCP_AUTH_DSN token:// requires a token (mint with `twillingate keygen -mcp`)")
+			return fmt.Errorf("config: API_AUTH_DSN token:// requires a token (mint with `twillingate keygen -api`)")
 		}
 		if hasQuery {
 			return c.parseTokenLogin(query)
@@ -380,10 +406,10 @@ func (c *Config) parseMCPAuthDSN() error {
 	case "oauth", "oauth+insecure":
 		u, err := url.Parse(m.AuthDSN)
 		if err != nil {
-			return fmt.Errorf("config: invalid MCP_AUTH_DSN: %v", err)
+			return fmt.Errorf("config: invalid API_AUTH_DSN: %v", err)
 		}
 		if u.Host == "" {
-			return fmt.Errorf("config: MCP_AUTH_DSN oauth:// requires an issuer host (oauth://idp.example.com)")
+			return fmt.Errorf("config: API_AUTH_DSN oauth:// requires an issuer host (oauth://idp.example.com)")
 		}
 		m.AuthMode = "oauth"
 		issuerScheme := "https"
@@ -397,14 +423,14 @@ func (c *Config) parseMCPAuthDSN() error {
 			m.ResourceURL = c.PublicURL + "/mcp"
 		}
 		if m.ResourceURL == "" {
-			return fmt.Errorf("config: MCP_AUTH_DSN oauth:// requires ?resource=<url> or PUBLIC_URL to derive it from")
+			return fmt.Errorf("config: API_AUTH_DSN oauth:// requires ?resource=<url> or PUBLIC_URL to derive it from")
 		}
 		m.Audience = q.Get("audience")
 		if m.Audience == "" {
 			m.Audience = m.ResourceURL
 		}
 	default:
-		return fmt.Errorf("config: unknown MCP_AUTH_DSN scheme %q (token or oauth)", scheme)
+		return fmt.Errorf("config: unknown API_AUTH_DSN scheme %q (token or oauth)", scheme)
 	}
 	return nil
 }
@@ -412,25 +438,25 @@ func (c *Config) parseMCPAuthDSN() error {
 // parseTokenLogin reads the token:// query that turns on the browser login
 // server: password=, repeated redirect= and resource=.
 func (c *Config) parseTokenLogin(query string) error {
-	m := &c.MCP
+	m := &c.API
 	q, err := url.ParseQuery(query)
 	if err != nil {
-		return fmt.Errorf("config: invalid MCP_AUTH_DSN token:// query: %v", err)
+		return fmt.Errorf("config: invalid API_AUTH_DSN token:// query: %v", err)
 	}
 	for k := range q {
 		if k != "redirect" && k != "password" && k != "resource" {
-			return fmt.Errorf("config: MCP_AUTH_DSN token:// has unknown parameter %q (redirect, password or resource)", k)
+			return fmt.Errorf("config: API_AUTH_DSN token:// has unknown parameter %q (redirect, password or resource)", k)
 		}
 	}
 	m.Password = q.Get("password")
 	m.ResourceURL = q.Get("resource")
 	if m.Password == "" {
-		return fmt.Errorf("config: MCP_AUTH_DSN token:// redirect= and resource= need a password=, which turns the login on")
+		return fmt.Errorf("config: API_AUTH_DSN token:// redirect= and resource= need a password=, which turns the login on")
 	}
 	for _, r := range q["redirect"] {
 		host, err := redirectHost(r)
 		if err != nil {
-			return fmt.Errorf("config: MCP_AUTH_DSN token:// redirect=%q %v", r, err)
+			return fmt.Errorf("config: API_AUTH_DSN token:// redirect=%q %v", r, err)
 		}
 		m.RedirectHosts = append(m.RedirectHosts, host)
 	}
@@ -438,10 +464,10 @@ func (c *Config) parseTokenLogin(query string) error {
 		m.ResourceURL = c.PublicURL + "/mcp"
 	}
 	if m.ResourceURL == "" {
-		return fmt.Errorf("config: MCP_AUTH_DSN token:// password= requires resource=<url> or PUBLIC_URL to derive it from")
+		return fmt.Errorf("config: API_AUTH_DSN token:// password= requires resource=<url> or PUBLIC_URL to derive it from")
 	}
 	if err := checkLoginURL(m.ResourceURL); err != nil {
-		return fmt.Errorf("config: MCP_AUTH_DSN token:// resource=%q %v", m.ResourceURL, err)
+		return fmt.Errorf("config: API_AUTH_DSN token:// resource=%q %v", m.ResourceURL, err)
 	}
 	return nil
 }
@@ -484,14 +510,14 @@ func checkLoginURL(raw string) error {
 }
 
 // LoginEnabled reports whether token:// runs the browser login server.
-func (m MCPConfig) LoginEnabled() bool { return m.AuthMode == "token" && m.Password != "" }
+func (m APIConfig) LoginEnabled() bool { return m.AuthMode == "token" && m.Password != "" }
 
-// ValidateMCP fail-fasts the -mcp surface (endpoint spec §4): there is no
+// ValidateAPI fail-fasts the -api surface (endpoint spec §4): there is no
 // unauthenticated mode and no way to reach one by omission.
-func (c *Config) ValidateMCP() error {
-	m := c.MCP
+func (c *Config) ValidateAPI() error {
+	m := c.API
 	if m.AuthDSN == "" {
-		return fmt.Errorf("config: -mcp requires MCP_AUTH_DSN (token://<token> or oauth://<issuer-host>)")
+		return fmt.Errorf("config: -api requires API_AUTH_DSN (token://<token> or oauth://<issuer-host>)")
 	}
 	return m.authErr
 }

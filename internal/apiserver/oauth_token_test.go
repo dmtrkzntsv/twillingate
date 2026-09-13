@@ -157,7 +157,7 @@ func TestTokenRefresh(t *testing.T) {
 	wantOAuthError(t, "access token as refresh", f.tokenRequest(refreshGrant(client, third.AccessToken)), "invalid_grant")
 	wantOAuthError(t, "another client's refresh", f.tokenRequest(refreshGrant(f.register(claudeCallback), third.RefreshToken)), "invalid_grant")
 
-	moved := newLoginFixture(t, func(m *config.MCPConfig) { m.ResourceURL = "https://other.example.com/mcp" })
+	moved := newLoginFixture(t, func(m *config.APIConfig) { m.ResourceURL = "https://other.example.com/mcp" })
 	moved.now = f.now
 	wantOAuthError(t, "after resource change", moved.tokenRequest(refreshGrant(client, third.RefreshToken)), "invalid_grant")
 

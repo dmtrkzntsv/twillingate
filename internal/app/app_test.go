@@ -74,7 +74,7 @@ func testConfig(t *testing.T, addr, dbPath string) *config.Config {
 		manage.ProjectSpec{Alias: "app", Name: "App", AllowedOrigins: []string{"https://app.com"}},
 		"ak_test", "web")
 	return configtest.Load(t, map[string]string{
-		"LISTEN_ADDR":             addr,
+		"INGEST_ADDR":             addr,
 		"DATABASE_DSN":            "sqlite://" + dbPath,
 		"BUFFER_FLUSH_MAX_EVENTS": "2",
 		"BUFFER_FLUSH_INTERVAL":   "50ms",
@@ -259,21 +259,21 @@ func mcpTestConfig(t *testing.T, addr, dbPath, mcpAddr string) *config.Config {
 		manage.ProjectSpec{Alias: "app", Name: "App", AllowedOrigins: []string{"https://app.com"}},
 		"ak_test", "web")
 	vars := map[string]string{
-		"LISTEN_ADDR":             addr,
+		"INGEST_ADDR":             addr,
 		"DATABASE_DSN":            "sqlite://" + dbPath,
 		"BUFFER_FLUSH_MAX_EVENTS": "2",
 		"BUFFER_FLUSH_INTERVAL":   "50ms",
 		"BUFFER_CAPACITY":         "100",
-		"MCP_AUTH_DSN":            "token://ar_apptest",
+		"API_AUTH_DSN":            "token://ar_apptest",
 	}
 	if mcpAddr != "" {
-		vars["MCP_ADDR"] = mcpAddr
+		vars["API_ADDR"] = mcpAddr
 	}
 	return configtest.Load(t, vars)
 }
 
 // Spec §3.2/Task 21: -api and -mcp together share one listener when
-// MCP_ADDR equals LISTEN_ADDR, and use two listeners otherwise. Both
+// API_ADDR equals INGEST_ADDR, and use two listeners otherwise. Both
 // arrangements must serve both surfaces correctly and shut down cleanly.
 func TestServeSharedListenerServesBothSurfaces(t *testing.T) {
 	run := func(t *testing.T, cfg *config.Config) {
@@ -281,7 +281,7 @@ func TestServeSharedListenerServesBothSurfaces(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		done := make(chan error, 1)
 		go func() { done <- Serve(ctx, cfg, slog.Default(), true, true) }()
-		waitHealthy(t, "http://"+cfg.Listen)
+		waitHealthy(t, "http://"+cfg.IngestAddr)
 
 		t.Cleanup(func() {
 			cancel()
@@ -295,22 +295,22 @@ func TestServeSharedListenerServesBothSurfaces(t *testing.T) {
 			}
 		})
 
-		if resp, err := http.Get("http://" + cfg.Listen + "/healthz"); err != nil {
+		if resp, err := http.Get("http://" + cfg.IngestAddr + "/healthz"); err != nil {
 			t.Fatalf("healthz: %v", err)
 		} else {
 			resp.Body.Close()
 			if resp.StatusCode != 200 {
-				t.Errorf("healthz on %s = %d, want 200", cfg.Listen, resp.StatusCode)
+				t.Errorf("healthz on %s = %d, want 200", cfg.IngestAddr, resp.StatusCode)
 			}
 		}
 
-		if resp, err := http.Post("http://"+cfg.Listen+"/api/events", "application/json",
+		if resp, err := http.Post("http://"+cfg.IngestAddr+"/api/events", "application/json",
 			strings.NewReader(`{"key":"ak_test","events":[{"name":"x"}]}`)); err != nil {
 			t.Fatalf("events: %v", err)
 		} else {
 			resp.Body.Close()
 			if resp.StatusCode == 404 {
-				t.Errorf("events on %s = 404, want the ingest surface to answer", cfg.Listen)
+				t.Errorf("events on %s = 404, want the ingest surface to answer", cfg.IngestAddr)
 			}
 		}
 
@@ -323,22 +323,22 @@ func TestServeSharedListenerServesBothSurfaces(t *testing.T) {
 			return resp
 		}
 
-		if cfg.MCP.Addr == cfg.Listen {
-			resp := postMCP(cfg.Listen)
+		if cfg.API.Addr == cfg.IngestAddr {
+			resp := postMCP(cfg.IngestAddr)
 			resp.Body.Close()
 			if resp.StatusCode != 401 {
 				t.Errorf("POST /mcp (shared, no token) = %d, want 401", resp.StatusCode)
 			}
 		} else {
-			resp := postMCP(cfg.Listen)
+			resp := postMCP(cfg.IngestAddr)
 			resp.Body.Close()
 			if resp.StatusCode != 404 {
-				t.Errorf("POST /mcp on ingest port %s = %d, want 404", cfg.Listen, resp.StatusCode)
+				t.Errorf("POST /mcp on ingest port %s = %d, want 404", cfg.IngestAddr, resp.StatusCode)
 			}
-			resp = postMCP(cfg.MCP.Addr)
+			resp = postMCP(cfg.API.Addr)
 			resp.Body.Close()
 			if resp.StatusCode != 401 {
-				t.Errorf("POST /mcp on MCP port %s (no token) = %d, want 401", cfg.MCP.Addr, resp.StatusCode)
+				t.Errorf("POST /mcp on MCP port %s (no token) = %d, want 401", cfg.API.Addr, resp.StatusCode)
 			}
 		}
 	}
@@ -494,7 +494,7 @@ func runServeAndCollectLogs(t *testing.T, cfg *config.Config) string {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- Serve(ctx, cfg, logger, true, false) }()
-	waitHealthy(t, "http://"+cfg.Listen)
+	waitHealthy(t, "http://"+cfg.IngestAddr)
 	cancel()
 	select {
 	case err := <-done:

@@ -46,7 +46,7 @@ func TestServeFailsOnGeoProviderError(t *testing.T) {
 		manage.ProjectSpec{Alias: "app", Name: "App", AllowedOrigins: []string{"https://app.com"}},
 		"ak_test", "web")
 	cfg := configtest.Load(t, map[string]string{
-		"LISTEN_ADDR":  freePort(t),
+		"INGEST_ADDR":  freePort(t),
 		"DATABASE_DSN": "sqlite://" + dbPath,
 		"GEO_DSN":      "unsupported-provider://x",
 	})
@@ -61,7 +61,7 @@ func TestServeFailsOnGeoProviderError(t *testing.T) {
 func TestServeWarnsWhenNoProjectsConfigured(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "empty.db")
 	cfg := configtest.Load(t, map[string]string{
-		"LISTEN_ADDR":  freePort(t),
+		"INGEST_ADDR":  freePort(t),
 		"DATABASE_DSN": "sqlite://" + dbPath,
 	})
 	logs := runServeAndCollectLogs(t, cfg)
@@ -95,7 +95,7 @@ func TestServeWarnsAboutKeylessProjects(t *testing.T) {
 	st.Close()
 
 	cfg := configtest.Load(t, map[string]string{
-		"LISTEN_ADDR":  freePort(t),
+		"INGEST_ADDR":  freePort(t),
 		"DATABASE_DSN": "sqlite://" + dbPath,
 	})
 	logs := runServeAndCollectLogs(t, cfg)
@@ -121,7 +121,7 @@ func TestServeFailsOnMigrateError(t *testing.T) {
 	raw.Close()
 
 	cfg := configtest.Load(t, map[string]string{
-		"LISTEN_ADDR":  freePort(t),
+		"INGEST_ADDR":  freePort(t),
 		"DATABASE_DSN": "sqlite://" + dbPath,
 	})
 	if err := Serve(context.Background(), cfg, slog.Default(), true, false); err == nil {
@@ -138,10 +138,10 @@ func TestServeFailsOnMCPHandlerError(t *testing.T) {
 		manage.ProjectSpec{Alias: "app", Name: "App", AllowedOrigins: []string{"https://app.com"}},
 		"ak_test", "web")
 	cfg := configtest.Load(t, map[string]string{
-		"LISTEN_ADDR":  freePort(t),
+		"INGEST_ADDR":  freePort(t),
 		"DATABASE_DSN": "sqlite://" + dbPath,
 		// nothing listens on port 1: fails fast
-		"MCP_AUTH_DSN": "oauth+insecure://127.0.0.1:1?resource=https://mcp.example.com",
+		"API_AUTH_DSN": "oauth+insecure://127.0.0.1:1?resource=https://mcp.example.com",
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -161,10 +161,10 @@ func TestServeFailsOnMCPBuildErrorSharedListener(t *testing.T) {
 		"ak_test", "web")
 	addr := freePort(t)
 	cfg := configtest.Load(t, map[string]string{
-		"LISTEN_ADDR":  addr,
+		"INGEST_ADDR":  addr,
 		"DATABASE_DSN": "sqlite://" + dbPath,
-		"MCP_ADDR":     addr, // same as LISTEN_ADDR: shared-listener path
-		"MCP_AUTH_DSN": "oauth+insecure://127.0.0.1:1?resource=https://mcp.example.com",
+		"API_ADDR":     addr, // same as INGEST_ADDR: shared-listener path
+		"API_AUTH_DSN": "oauth+insecure://127.0.0.1:1?resource=https://mcp.example.com",
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()

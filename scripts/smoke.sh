@@ -28,7 +28,7 @@ export DATABASE_DSN="sqlite://$dir/smoke.db"
 key=$(./twillingate key issue -project dev -label smoke | grep -o 'ak_[0-9a-f]*' | head -1)
 [ -n "$key" ] || fail "key issue failed"
 
-env LISTEN_ADDR="127.0.0.1:$port" \
+env INGEST_ADDR="127.0.0.1:$port" \
     GEO_DSN="none://" \
     LOG_LEVEL=debug LOG_FORMAT=text \
     BUFFER_FLUSH_INTERVAL=200ms \

@@ -27,7 +27,7 @@ that is a second compose file, and skipping it costs you nothing else.
 
 ## Run it
 
-Tracking is one file: ingestion, the tracker script and — once `MCP_AUTH_DSN`
+Tracking is one file: ingestion, the tracker script and — once `API_AUTH_DSN`
 is set, see [The MCP endpoint](docs/deployment.md#the-mcp-endpoint)
 — the MCP endpoint, all on
 `:8080`:

@@ -106,7 +106,7 @@ func TestAuthorizePageRendersForm(t *testing.T) {
 
 func TestAuthorizeUntrustedRedirectShowsErrorPage(t *testing.T) {
 	const appCallback = "https://app.example.com/cb"
-	f := newLoginFixture(t, func(m *config.MCPConfig) { m.RedirectHosts = []string{"app.example.com"} })
+	f := newLoginFixture(t, func(m *config.APIConfig) { m.RedirectHosts = []string{"app.example.com"} })
 	app := f.register(appCallback)
 	// Same token and password, so the same keys, but the entry is gone.
 	shrunk := newLoginFixture(t, nil)
@@ -168,7 +168,7 @@ func TestAuthorizeRequestErrorsRedirectBack(t *testing.T) {
 }
 
 func TestAuthorizeSubmit(t *testing.T) {
-	f := newLoginFixture(t, func(m *config.MCPConfig) {
+	f := newLoginFixture(t, func(m *config.APIConfig) {
 		m.RedirectHosts = []string{"app.example.com"}
 	})
 	client := f.register(claudeCallback)

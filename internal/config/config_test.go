@@ -23,8 +23,8 @@ func TestDefaultsApplied(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Listen != "127.0.0.1:8080" {
-		t.Errorf("Listen = %q", c.Listen)
+	if c.IngestAddr != "127.0.0.1:8080" {
+		t.Errorf("IngestAddr = %q", c.IngestAddr)
 	}
 	if c.Geo != "cloudflare://" {
 		t.Errorf("Geo = %q", c.Geo)
@@ -53,7 +53,7 @@ func TestDefaultsApplied(t *testing.T) {
 func TestEnvOverrides(t *testing.T) {
 	c, err := load(t, map[string]string{
 		"DATABASE_DSN":                     "sqlite:///tmp/a.db",
-		"LISTEN_ADDR":                      "0.0.0.0:9999",
+		"INGEST_ADDR":                      "0.0.0.0:9999",
 		"GEO_DSN":                          "none://",
 		"LOG_LEVEL":                        "debug",
 		"LOG_FORMAT":                       "text",
@@ -73,8 +73,8 @@ func TestEnvOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Listen != "0.0.0.0:9999" || c.Geo != "none://" {
-		t.Errorf("Listen/Geo = %q/%q", c.Listen, c.Geo)
+	if c.IngestAddr != "0.0.0.0:9999" || c.Geo != "none://" {
+		t.Errorf("IngestAddr/Geo = %q/%q", c.IngestAddr, c.Geo)
 	}
 	if c.Log.Level != "debug" || c.Log.Format != "text" || c.Log.File != "/tmp/a.log" {
 		t.Errorf("Log = %+v", c.Log)
@@ -302,7 +302,7 @@ func TestLoadDoesNotRequireProjectsFile(t *testing.T) {
 func mcpEnv(over map[string]string) func(string) (string, bool) {
 	base := map[string]string{
 		"DATABASE_DSN": "sqlite:///tmp/x.db",
-		"MCP_AUTH_DSN": "token://ar_x",
+		"API_AUTH_DSN": "token://ar_x",
 	}
 	for k, v := range over {
 		if v == "" {
@@ -314,75 +314,75 @@ func mcpEnv(over map[string]string) func(string) (string, bool) {
 	return func(k string) (string, bool) { v, ok := base[k]; return v, ok }
 }
 
-func TestValidateMCP(t *testing.T) {
+func TestValidateAPI(t *testing.T) {
 	cases := []struct {
 		name string
 		over map[string]string
 		ok   bool
 	}{
 		{"token ok", nil, true},
-		{"no dsn", map[string]string{"MCP_AUTH_DSN": ""}, false},
-		{"not a dsn", map[string]string{"MCP_AUTH_DSN": "token"}, false},
-		{"unknown scheme", map[string]string{"MCP_AUTH_DSN": "basic://x"}, false},
-		{"empty token", map[string]string{"MCP_AUTH_DSN": "token://"}, false},
+		{"no dsn", map[string]string{"API_AUTH_DSN": ""}, false},
+		{"not a dsn", map[string]string{"API_AUTH_DSN": "token"}, false},
+		{"unknown scheme", map[string]string{"API_AUTH_DSN": "basic://x"}, false},
+		{"empty token", map[string]string{"API_AUTH_DSN": "token://"}, false},
 		{"oauth ok", map[string]string{
-			"MCP_AUTH_DSN": "oauth://idp.example.com?resource=https://twillingate.example.com/mcp"}, true},
+			"API_AUTH_DSN": "oauth://idp.example.com?resource=https://twillingate.example.com/mcp"}, true},
 		{"oauth resource from PUBLIC_URL", map[string]string{
-			"MCP_AUTH_DSN": "oauth://idp.example.com",
+			"API_AUTH_DSN": "oauth://idp.example.com",
 			"PUBLIC_URL":   "https://twillingate.example.com"}, true},
 		{"oauth no resource and no PUBLIC_URL", map[string]string{
-			"MCP_AUTH_DSN": "oauth://idp.example.com"}, false},
+			"API_AUTH_DSN": "oauth://idp.example.com"}, false},
 		{"oauth empty issuer", map[string]string{
-			"MCP_AUTH_DSN": "oauth://?resource=https://twillingate.example.com/mcp"}, false},
+			"API_AUTH_DSN": "oauth://?resource=https://twillingate.example.com/mcp"}, false},
 		{"cloudflare removed", map[string]string{
-			"MCP_AUTH_DSN": "cloudflare://team.cloudflareaccess.com?aud=aud123"}, false},
+			"API_AUTH_DSN": "cloudflare://team.cloudflareaccess.com?aud=aud123"}, false},
 		{"token login ok", map[string]string{
-			"MCP_AUTH_DSN": "token://ar_x?password=pw&redirect=https://claude.ai/api/mcp/auth_callback&resource=https://mcp.example.com/mcp"}, true},
+			"API_AUTH_DSN": "token://ar_x?password=pw&redirect=https://claude.ai/api/mcp/auth_callback&resource=https://mcp.example.com/mcp"}, true},
 		{"token login resource from PUBLIC_URL", map[string]string{
-			"MCP_AUTH_DSN": "token://ar_x?password=pw&redirect=https://claude.ai/api/mcp/auth_callback",
+			"API_AUTH_DSN": "token://ar_x?password=pw&redirect=https://claude.ai/api/mcp/auth_callback",
 			"PUBLIC_URL":   "https://mcp.example.com"}, true},
 		{"token login one-character password", map[string]string{
-			"MCP_AUTH_DSN": "token://ar_x?password=a&redirect=http://localhost/callback&resource=https://mcp.example.com/mcp"}, true},
+			"API_AUTH_DSN": "token://ar_x?password=a&redirect=http://localhost/callback&resource=https://mcp.example.com/mcp"}, true},
 		{"token login http loopback redirect", map[string]string{
-			"MCP_AUTH_DSN": "token://ar_x?password=pw&redirect=http://127.0.0.1/callback&resource=https://mcp.example.com/mcp"}, true},
+			"API_AUTH_DSN": "token://ar_x?password=pw&redirect=http://127.0.0.1/callback&resource=https://mcp.example.com/mcp"}, true},
 		{"token login no resource and no PUBLIC_URL", map[string]string{
-			"MCP_AUTH_DSN": "token://ar_x?password=pw&redirect=https://claude.ai/cb"}, false},
+			"API_AUTH_DSN": "token://ar_x?password=pw&redirect=https://claude.ai/cb"}, false},
 		{"token login no password", map[string]string{
-			"MCP_AUTH_DSN": "token://ar_x?redirect=https://claude.ai/cb&resource=https://mcp.example.com/mcp"}, false},
+			"API_AUTH_DSN": "token://ar_x?redirect=https://claude.ai/cb&resource=https://mcp.example.com/mcp"}, false},
 		{"token login empty password", map[string]string{
-			"MCP_AUTH_DSN": "token://ar_x?password=&redirect=https://claude.ai/cb&resource=https://mcp.example.com/mcp"}, false},
+			"API_AUTH_DSN": "token://ar_x?password=&redirect=https://claude.ai/cb&resource=https://mcp.example.com/mcp"}, false},
 		{"token login password only", map[string]string{
-			"MCP_AUTH_DSN": "token://ar_x?password=pw&resource=https://mcp.example.com/mcp"}, true},
+			"API_AUTH_DSN": "token://ar_x?password=pw&resource=https://mcp.example.com/mcp"}, true},
 		{"token resource without password", map[string]string{
-			"MCP_AUTH_DSN": "token://ar_x?resource=https://mcp.example.com/mcp"}, false},
+			"API_AUTH_DSN": "token://ar_x?resource=https://mcp.example.com/mcp"}, false},
 		{"token unknown parameter", map[string]string{
-			"MCP_AUTH_DSN": "token://ar_x?password=pw&redirects=https://claude.ai/cb&resource=https://mcp.example.com/mcp"}, false},
+			"API_AUTH_DSN": "token://ar_x?password=pw&redirects=https://claude.ai/cb&resource=https://mcp.example.com/mcp"}, false},
 		{"token malformed query", map[string]string{
-			"MCP_AUTH_DSN": "token://ar_x?password=%zz"}, false},
+			"API_AUTH_DSN": "token://ar_x?password=%zz"}, false},
 		{"token empty token with query", map[string]string{
-			"MCP_AUTH_DSN": "token://?password=pw&redirect=https://claude.ai/cb"}, false},
+			"API_AUTH_DSN": "token://?password=pw&redirect=https://claude.ai/cb"}, false},
 		{"token redirect http on public host", map[string]string{
-			"MCP_AUTH_DSN": "token://ar_x?password=pw&redirect=http://claude.ai/cb&resource=https://mcp.example.com/mcp"}, false},
+			"API_AUTH_DSN": "token://ar_x?password=pw&redirect=http://claude.ai/cb&resource=https://mcp.example.com/mcp"}, false},
 		{"token redirect relative", map[string]string{
-			"MCP_AUTH_DSN": "token://ar_x?password=pw&redirect=/callback&resource=https://mcp.example.com/mcp"}, false},
+			"API_AUTH_DSN": "token://ar_x?password=pw&redirect=/callback&resource=https://mcp.example.com/mcp"}, false},
 		{"token redirect custom scheme", map[string]string{
-			"MCP_AUTH_DSN": "token://ar_x?password=pw&redirect=myapp://callback&resource=https://mcp.example.com/mcp"}, false},
+			"API_AUTH_DSN": "token://ar_x?password=pw&redirect=myapp://callback&resource=https://mcp.example.com/mcp"}, false},
 		{"token redirect with fragment", map[string]string{
-			"MCP_AUTH_DSN": "token://ar_x?password=pw&redirect=https://claude.ai/cb%23frag&resource=https://mcp.example.com/mcp"}, false},
+			"API_AUTH_DSN": "token://ar_x?password=pw&redirect=https://claude.ai/cb%23frag&resource=https://mcp.example.com/mcp"}, false},
 		{"token redirect unparseable", map[string]string{
-			"MCP_AUTH_DSN": "token://ar_x?password=pw&redirect=https://%25zz/cb&resource=https://mcp.example.com/mcp"}, false},
+			"API_AUTH_DSN": "token://ar_x?password=pw&redirect=https://%25zz/cb&resource=https://mcp.example.com/mcp"}, false},
 		{"token redirect host", map[string]string{
-			"MCP_AUTH_DSN": "token://ar_x?password=pw&redirect=app.example.com&resource=https://mcp.example.com/mcp"}, true},
+			"API_AUTH_DSN": "token://ar_x?password=pw&redirect=app.example.com&resource=https://mcp.example.com/mcp"}, true},
 		{"token redirect IPv6 loopback host", map[string]string{
-			"MCP_AUTH_DSN": "token://ar_x?password=pw&redirect=[::1]&resource=https://mcp.example.com/mcp"}, true},
+			"API_AUTH_DSN": "token://ar_x?password=pw&redirect=[::1]&resource=https://mcp.example.com/mcp"}, true},
 		{"token redirect host with path", map[string]string{
-			"MCP_AUTH_DSN": "token://ar_x?password=pw&redirect=app.example.com/cb&resource=https://mcp.example.com/mcp"}, false},
+			"API_AUTH_DSN": "token://ar_x?password=pw&redirect=app.example.com/cb&resource=https://mcp.example.com/mcp"}, false},
 		{"token redirect host with port", map[string]string{
-			"MCP_AUTH_DSN": "token://ar_x?password=pw&redirect=app.example.com:8443&resource=https://mcp.example.com/mcp"}, false},
+			"API_AUTH_DSN": "token://ar_x?password=pw&redirect=app.example.com:8443&resource=https://mcp.example.com/mcp"}, false},
 		{"token redirect empty", map[string]string{
-			"MCP_AUTH_DSN": "token://ar_x?password=pw&redirect=&resource=https://mcp.example.com/mcp"}, false},
+			"API_AUTH_DSN": "token://ar_x?password=pw&redirect=&resource=https://mcp.example.com/mcp"}, false},
 		{"token resource http on public host", map[string]string{
-			"MCP_AUTH_DSN": "token://ar_x?password=pw&redirect=https://claude.ai/cb&resource=http://mcp.example.com/mcp"}, false},
+			"API_AUTH_DSN": "token://ar_x?password=pw&redirect=https://claude.ai/cb&resource=http://mcp.example.com/mcp"}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -390,9 +390,9 @@ func TestValidateMCP(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			err = cfg.ValidateMCP()
+			err = cfg.ValidateAPI()
 			if (err == nil) != tc.ok {
-				t.Fatalf("ValidateMCP = %v, want ok=%v", err, tc.ok)
+				t.Fatalf("ValidateAPI = %v, want ok=%v", err, tc.ok)
 			}
 		})
 	}
@@ -404,17 +404,17 @@ func TestMCPAuthDSNParsing(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if cfg.MCP.AuthMode != "token" || cfg.MCP.Token != "ar_x" {
-			t.Errorf("mode = %q token = %q", cfg.MCP.AuthMode, cfg.MCP.Token)
+		if cfg.API.AuthMode != "token" || cfg.API.Token != "ar_x" {
+			t.Errorf("mode = %q token = %q", cfg.API.AuthMode, cfg.API.Token)
 		}
 	})
 	t.Run("oauth issuer keeps path, resource explicit", func(t *testing.T) {
 		cfg, err := FromEnv(mcpEnv(map[string]string{
-			"MCP_AUTH_DSN": "oauth://idp.example.com/tenant1?resource=https://t.example.com/mcp&audience=aud9"}))
+			"API_AUTH_DSN": "oauth://idp.example.com/tenant1?resource=https://t.example.com/mcp&audience=aud9"}))
 		if err != nil {
 			t.Fatal(err)
 		}
-		m := cfg.MCP
+		m := cfg.API
 		if m.AuthMode != "oauth" || m.Issuer != "https://idp.example.com/tenant1" {
 			t.Errorf("mode = %q issuer = %q", m.AuthMode, m.Issuer)
 		}
@@ -424,12 +424,12 @@ func TestMCPAuthDSNParsing(t *testing.T) {
 	})
 	t.Run("oauth defaults resource to PUBLIC_URL/mcp and audience to resource", func(t *testing.T) {
 		cfg, err := FromEnv(mcpEnv(map[string]string{
-			"MCP_AUTH_DSN": "oauth://idp.example.com",
+			"API_AUTH_DSN": "oauth://idp.example.com",
 			"PUBLIC_URL":   "https://twillingate.example.com"}))
 		if err != nil {
 			t.Fatal(err)
 		}
-		m := cfg.MCP
+		m := cfg.API
 		if m.ResourceURL != "https://twillingate.example.com/mcp" {
 			t.Errorf("resource = %q", m.ResourceURL)
 		}
@@ -439,21 +439,21 @@ func TestMCPAuthDSNParsing(t *testing.T) {
 	})
 	t.Run("oauth+insecure issuer is http for local IdPs", func(t *testing.T) {
 		cfg, err := FromEnv(mcpEnv(map[string]string{
-			"MCP_AUTH_DSN": "oauth+insecure://127.0.0.1:9999?resource=https://t.example.com/mcp"}))
+			"API_AUTH_DSN": "oauth+insecure://127.0.0.1:9999?resource=https://t.example.com/mcp"}))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if cfg.MCP.AuthMode != "oauth" || cfg.MCP.Issuer != "http://127.0.0.1:9999" {
-			t.Errorf("mode = %q issuer = %q", cfg.MCP.AuthMode, cfg.MCP.Issuer)
+		if cfg.API.AuthMode != "oauth" || cfg.API.Issuer != "http://127.0.0.1:9999" {
+			t.Errorf("mode = %q issuer = %q", cfg.API.AuthMode, cfg.API.Issuer)
 		}
 	})
-	t.Run("malformed DSN does not fail FromEnv, only ValidateMCP", func(t *testing.T) {
-		cfg, err := FromEnv(mcpEnv(map[string]string{"MCP_AUTH_DSN": "basic://x"}))
+	t.Run("malformed DSN does not fail FromEnv, only ValidateAPI", func(t *testing.T) {
+		cfg, err := FromEnv(mcpEnv(map[string]string{"API_AUTH_DSN": "basic://x"}))
 		if err != nil {
 			t.Fatalf("FromEnv must stay lenient for bare `serve`: %v", err)
 		}
-		if err := cfg.ValidateMCP(); err == nil {
-			t.Error("ValidateMCP accepted an unknown scheme")
+		if err := cfg.ValidateAPI(); err == nil {
+			t.Error("ValidateAPI accepted an unknown scheme")
 		}
 	})
 }
@@ -463,39 +463,39 @@ func TestMCPDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.MCP.Addr != cfg.Listen {
-		t.Errorf("Addr = %q, want Listen %q", cfg.MCP.Addr, cfg.Listen)
+	if cfg.API.Addr != cfg.IngestAddr {
+		t.Errorf("Addr = %q, want Listen %q", cfg.API.Addr, cfg.IngestAddr)
 	}
-	if cfg.MCP.DBPath != "/tmp/x.db" {
-		t.Errorf("DBPath = %q", cfg.MCP.DBPath)
+	if cfg.API.DBPath != "/tmp/x.db" {
+		t.Errorf("DBPath = %q", cfg.API.DBPath)
 	}
-	if cfg.MCP.QueryTimeout != 10*time.Second || cfg.MCP.QueryMaxRows != 1000 {
-		t.Errorf("guards = %v %d", cfg.MCP.QueryTimeout, cfg.MCP.QueryMaxRows)
+	if cfg.API.QueryTimeout != 10*time.Second || cfg.API.QueryMaxRows != 1000 {
+		t.Errorf("guards = %v %d", cfg.API.QueryTimeout, cfg.API.QueryMaxRows)
 	}
 }
 
 func TestMCPAudienceDefaultsToResource(t *testing.T) {
 	cfg, err := FromEnv(mcpEnv(map[string]string{
-		"MCP_AUTH_DSN": "oauth://idp.example.com?resource=https://twillingate.example.com/mcp"}))
+		"API_AUTH_DSN": "oauth://idp.example.com?resource=https://twillingate.example.com/mcp"}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.MCP.Audience != "https://twillingate.example.com/mcp" {
-		t.Errorf("Audience = %q", cfg.MCP.Audience)
+	if cfg.API.Audience != "https://twillingate.example.com/mcp" {
+		t.Errorf("Audience = %q", cfg.API.Audience)
 	}
 }
 
 func TestTokenLoginDSNParsing(t *testing.T) {
 	cfg, err := FromEnv(mcpEnv(map[string]string{
-		"MCP_AUTH_DSN": "token://ar_x?redirect=https://claude.ai/api/mcp/auth_callback&password=a%2Bb%26c&redirect=App.Example.com",
+		"API_AUTH_DSN": "token://ar_x?redirect=https://claude.ai/api/mcp/auth_callback&password=a%2Bb%26c&redirect=App.Example.com",
 		"PUBLIC_URL":   "https://mcp.example.com"}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := cfg.ValidateMCP(); err != nil {
+	if err := cfg.ValidateAPI(); err != nil {
 		t.Fatal(err)
 	}
-	m := cfg.MCP
+	m := cfg.API
 	if m.AuthMode != "token" || m.Token != "ar_x" {
 		t.Errorf("mode = %q token = %q; the query must not leak into the token", m.AuthMode, m.Token)
 	}
@@ -515,14 +515,47 @@ func TestTokenLoginDSNParsing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(plain.MCP.RedirectHosts) != 0 || plain.MCP.Password != "" || plain.MCP.ResourceURL != "" {
-		t.Errorf("plain token:// grew login settings: %+v", plain.MCP)
+	if len(plain.API.RedirectHosts) != 0 || plain.API.Password != "" || plain.API.ResourceURL != "" {
+		t.Errorf("plain token:// grew login settings: %+v", plain.API)
 	}
-	if !m.LoginEnabled() || plain.MCP.LoginEnabled() {
-		t.Errorf("LoginEnabled: with password %v, plain %v; want true, false", m.LoginEnabled(), plain.MCP.LoginEnabled())
+	if !m.LoginEnabled() || plain.API.LoginEnabled() {
+		t.Errorf("LoginEnabled: with password %v, plain %v; want true, false", m.LoginEnabled(), plain.API.LoginEnabled())
 	}
-	oauth := MCPConfig{AuthMode: "oauth", Password: "ignored"}
+	oauth := APIConfig{AuthMode: "oauth", Password: "ignored"}
 	if oauth.LoginEnabled() {
 		t.Error("LoginEnabled true outside token mode")
+	}
+}
+
+func TestRenamedVariablesRefuse(t *testing.T) {
+	for old, repl := range map[string]string{
+		"LISTEN_ADDR":        "INGEST_ADDR",
+		"MCP_ADDR":           "API_ADDR",
+		"MCP_AUTH_DSN":       "API_AUTH_DSN",
+		"MCP_DB_PATH":        "API_DB_PATH",
+		"MCP_QUERY_TIMEOUT":  "API_QUERY_TIMEOUT",
+		"MCP_QUERY_MAX_ROWS": "API_QUERY_MAX_ROWS",
+	} {
+		env := map[string]string{"DATABASE_DSN": "sqlite:///tmp/x.db", old: "x"}
+		_, err := FromEnv(func(k string) (string, bool) { v, ok := env[k]; return v, ok })
+		want := "config: " + old + " was renamed to " + repl
+		if err == nil || err.Error() != want {
+			t.Errorf("%s set: err = %v, want %q", old, err, want)
+		}
+	}
+}
+
+func TestAPIDefaults(t *testing.T) {
+	env := map[string]string{"DATABASE_DSN": "sqlite:///tmp/x.db", "INGEST_ADDR": "127.0.0.1:9"}
+	c, err := FromEnv(func(k string) (string, bool) { v, ok := env[k]; return v, ok })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.IngestAddr != "127.0.0.1:9" || c.API.Addr != "127.0.0.1:9" || c.API.DBPath != "/tmp/x.db" ||
+		c.API.QueryTimeout != 10*time.Second || c.API.QueryMaxRows != 1000 {
+		t.Errorf("defaults = %+v / %+v", c.IngestAddr, c.API)
+	}
+	if err := c.ValidateAPI(); err == nil || !strings.Contains(err.Error(), "API_AUTH_DSN") {
+		t.Errorf("ValidateAPI without DSN = %v", err)
 	}
 }

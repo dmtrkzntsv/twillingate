@@ -1,4 +1,4 @@
-# Tracking: ingestion, the tracker script and — once MCP_AUTH_DSN is set in
+# Tracking: ingestion, the tracker script and — once API_AUTH_DSN is set in
 # `.env` — the MCP endpoint, all on :8080. See docs/twillingate.md.
 #
 # Dashboards are docker-compose.evidence.yml. To run both, put this in `.env`:

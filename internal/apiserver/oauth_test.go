@@ -110,9 +110,9 @@ type loginFixture struct {
 	logs *strings.Builder
 }
 
-func newLoginFixture(t *testing.T, over func(*config.MCPConfig)) *loginFixture {
+func newLoginFixture(t *testing.T, over func(*config.APIConfig)) *loginFixture {
 	t.Helper()
-	m := config.MCPConfig{AuthMode: "token", Token: testToken, Password: testPassword, ResourceURL: testResource}
+	m := config.APIConfig{AuthMode: "token", Token: testToken, Password: testPassword, ResourceURL: testResource}
 	if over != nil {
 		over(&m)
 	}
@@ -353,13 +353,13 @@ func TestLoginVerifier(t *testing.T) {
 	rejected := map[string]error{
 		"refresh token as access": verify(f.s, f.mint(kindRefresh, time.Hour)),
 		"wrong token":             verify(f.s, "ar_wrong"),
-		"after password change": verify(newLoginFixture(t, func(m *config.MCPConfig) {
+		"after password change": verify(newLoginFixture(t, func(m *config.APIConfig) {
 			m.Password = "changed"
 		}).s, access),
-		"after token change": verify(newLoginFixture(t, func(m *config.MCPConfig) {
+		"after token change": verify(newLoginFixture(t, func(m *config.APIConfig) {
 			m.Token = "ar_changed"
 		}).s, access),
-		"after resource change": verify(newLoginFixture(t, func(m *config.MCPConfig) {
+		"after resource change": verify(newLoginFixture(t, func(m *config.APIConfig) {
 			m.ResourceURL = "https://other.example.com/mcp"
 		}).s, access),
 	}

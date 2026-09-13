@@ -45,7 +45,7 @@ func cmdServe(args []string, stdout io.Writer) int {
 	}
 	logger := app.NewLogger(cfg.Log)
 	if runMCP {
-		if err := cfg.ValidateMCP(); err != nil {
+		if err := cfg.ValidateAPI(); err != nil {
 			if !lenient {
 				fmt.Fprintln(stdout, err)
 				return 1
@@ -55,11 +55,11 @@ func cmdServe(args []string, stdout io.Writer) int {
 		}
 	}
 	// Per operator request: a surface without its own port is worth a
-	// warning, never a failure. MCP_ADDR unset means MCP rides the
+	// warning, never a failure. API_ADDR unset means the API rides the
 	// ingestion listener — a supported topology, flagged so a shared
 	// port is never a surprise.
-	if runAPI && runMCP && cfg.MCP.Addr == cfg.Listen {
-		logger.Warn("MCP_ADDR not set; MCP endpoint shares the ingestion listener", "addr", cfg.Listen)
+	if runAPI && runMCP && cfg.API.Addr == cfg.IngestAddr {
+		logger.Warn("API_ADDR not set; API shares the ingestion listener", "addr", cfg.IngestAddr)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

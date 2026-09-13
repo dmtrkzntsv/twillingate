@@ -36,7 +36,7 @@ none of it.
 
 ### docker compose
 
-Tracking: ingestion, the SDK, and `/mcp` once `MCP_AUTH_DSN` is set. The
+Tracking: ingestion, the SDK, and `/mcp` once `API_AUTH_DSN` is set. The
 dashboards are a second compose file, added under [Reporting with
 Evidence](#reporting-with-evidence):
 
@@ -123,7 +123,7 @@ curl -i -X POST http://localhost:8080/api/events \
 
 | Variable | Meaning |
 | --- | --- |
-| `LISTEN_ADDR` | Address to bind. Default `127.0.0.1:8080` (the docker image sets `0.0.0.0:8080`). |
+| `INGEST_ADDR` | Address to bind. Default `127.0.0.1:8080` (the docker image sets `0.0.0.0:8080`). |
 | `PUBLIC_URL` | The collector's public base URL (`https://twillingate.example.com`). Embed snippets, MCP integration guidance and the default MCP resource URL are built from it; unset, they carry a placeholder. With [several hostnames](#one-collector-several-hostnames), the default one. |
 | `DATABASE_DSN` | Store DSN. Only `sqlite://<path>` today. Required. |
 | `GEO_DSN` | Country lookup: `cloudflare://` (header), `maxmind://<license-key>`, or `none://`. |
@@ -145,11 +145,11 @@ curl -i -X POST http://localhost:8080/api/events \
 | `DASHBOARDS_INTERVAL` | Minimum spacing between Evidence rebuilds. Default `15m`. |
 | `DASHBOARDS_PROJECT_DIR` | Evidence project in the image. Default `/opt/evidence`. |
 | `DASHBOARDS_WORK_DIR` | Where the database snapshot is written. Default `/var/lib/dashboards`. |
-| `MCP_AUTH_DSN` | MCP authentication: `token://<token>?password=…` for the built-in browser login (see [The MCP endpoint](#the-mcp-endpoint)), or `oauth://<issuer-host>` for your own identity provider. Unset, bare `serve` skips MCP with a warning. |
-| `MCP_ADDR` | Give the MCP endpoint its own listener. Defaults to `LISTEN_ADDR` (shared). |
-| `MCP_DB_PATH` | Database MCP reads for queries. Defaults to the `DATABASE_DSN` path. |
-| `MCP_QUERY_TIMEOUT` | Per-query guard on the MCP `query` tool. Default `10s`. |
-| `MCP_QUERY_MAX_ROWS` | Row cap on the MCP `query` tool. Default 1000. |
+| `API_AUTH_DSN` | MCP authentication: `token://<token>?password=…` for the built-in browser login (see [The MCP endpoint](#the-mcp-endpoint)), or `oauth://<issuer-host>` for your own identity provider. Unset, bare `serve` skips MCP with a warning. |
+| `API_ADDR` | Give the API (MCP and REST) its own listener. Defaults to `INGEST_ADDR` (shared). |
+| `API_DB_PATH` | Database MCP reads for queries. Defaults to the `DATABASE_DSN` path. |
+| `API_QUERY_TIMEOUT` | Per-query guard on reads and the `query` operation. Default `10s`. |
+| `API_QUERY_MAX_ROWS` | Row cap on the MCP `query` tool. Default 1000. |
 
 Litestream credentials (`LITESTREAM_ACCESS_KEY_ID`,
 `LITESTREAM_SECRET_ACCESS_KEY`, `R2_BUCKET`, `R2_ENDPOINT`) live in the same
@@ -254,15 +254,15 @@ run.
 1. Mint the token:
 
    ```bash
-   sudo -u twillingate sh -ac '. /etc/twillingate/twillingate.env; twillingate keygen -mcp'
-   # prints: MCP_AUTH_DSN=token://ar_…
+   sudo -u twillingate sh -ac '. /etc/twillingate/twillingate.env; twillingate keygen -api'
+   # prints: API_AUTH_DSN=token://ar_…
    ```
 
 2. Set it in `/etc/twillingate/twillingate.env` (compose: `.env`) with a
    password, **in single quotes**:
 
    ```bash
-   MCP_AUTH_DSN='token://ar_…?password=<password>'
+   API_AUTH_DSN='token://ar_…?password=<password>'
    ```
 
    The quotes matter: the CLI commands in this runbook load the file with
@@ -299,7 +299,7 @@ run.
 - **Guessing.** Five wrong passwords in a minute lock the page for everyone
   until the minute ends; connected clients are unaffected. No minimum length
   is enforced, so a short password is only as strong as that rate allows.
-- **Hand-picked tokens.** `keygen -mcp` mints `ar_` plus hex. A token you
+- **Hand-picked tokens.** `keygen -api` mints `ar_` plus hex. A token you
   choose yourself must not contain `?`, which starts the parameters.
 
 ### Connect a client
@@ -334,7 +334,7 @@ to cut a device off.
 
 A client that can send headers can skip the login and present the token
 itself — useful for scripts and headless Claude Code. It works whether or
-not a password is set; a bare `MCP_AUTH_DSN='token://ar_…'` turns the login
+not a password is set; a bare `API_AUTH_DSN='token://ar_…'` turns the login
 off and leaves only this.
 
 ```bash
@@ -365,8 +365,8 @@ the old header needs `claude mcp remove twillingate` and adding again.
 
 ### Hostnames and processes
 
-`MCP_ADDR` unset, MCP shares the ingestion listener. Put it on its own
-hostname when you can (`MCP_ADDR` plus a second DNS name, and `resource=`
+`API_ADDR` unset, MCP shares the ingestion listener. Put it on its own
+hostname when you can (`API_ADDR` plus a second DNS name, and `resource=`
 set to that hostname's `/mcp`): `/api/events` and the `/js/*` scripts must
 stay publicly reachable for ingestion, and a dedicated hostname keeps the
 access-control story simple.
@@ -380,7 +380,7 @@ change the original unit's to `twillingate serve -api`.
 **A `serve -mcp`-only process still runs the daily aggregation pass against
 `DATABASE_DSN`** — `-mcp` only makes the HTTP listener conditional, not the
 background jobs. Point a `-mcp`-only unit at a litestream replica and it
-will write to that replica on every pass. Set `MCP_DB_PATH` (what MCP reads)
+will write to that replica on every pass. Set `API_DB_PATH` (what MCP reads)
 and `DATABASE_DSN` (what the aggregation pass writes) deliberately: either
 keep `DATABASE_DSN` on a database this process is meant to own, or accept
 that a two-process topology runs the idempotent daily aggregation twice.
@@ -390,7 +390,7 @@ that a two-process topology runs the idempotent daily aggregation twice.
 #### `oauth://` — your own identity provider
 
 ```bash
-MCP_AUTH_DSN='oauth://auth.example.com[?resource=<url>][&audience=<aud>]'
+API_AUTH_DSN='oauth://auth.example.com[?resource=<url>][&audience=<aud>]'
 ```
 
 For when you already run or rent an IdP (Keycloak, Auth0, Authentik, …).
@@ -430,7 +430,7 @@ hostname.
 
 **Login page: redirect URI's host not allowed.** The client returns to a
 host that is not built in. The page shows the URI it used; add its host to
-`MCP_AUTH_DSN` as `redirect=<host>` and restart.
+`API_AUTH_DSN` as `redirect=<host>` and restart.
 
 **Login page: password not recognised, though it is right.** A `+`, `&`,
 `#`, `%` or `;` in the password must be percent-encoded in the DSN.

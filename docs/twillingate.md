@@ -37,7 +37,7 @@ The pieces:
 | --- | --- |
 | `twillingate serve -api` | Ingestion: `POST /api/events`, the SDK at `/js/twillingate.js`, `/healthz` |
 | `twillingate serve -mcp` | The MCP endpoint at `/mcp` |
-| `twillingate serve` | Both, on one listener unless `MCP_ADDR` says otherwise |
+| `twillingate serve` | Both, on one listener unless `API_ADDR` says otherwise |
 | `twillingate dashboards` | Renders the Evidence site from the database |
 | `twillingate project`, `key`, `config` | Registry management |
 | `twillingate migrate` | Applies schema migrations and exits |
@@ -810,8 +810,8 @@ in [deployment.md](deployment.md#the-mcp-endpoint).
 ### Writing SQL against the views
 
 The `query` tool takes read-only SQL against the views below. It is
-row-capped (`MCP_QUERY_MAX_ROWS`, default 1000) and time-limited
-(`MCP_QUERY_TIMEOUT`, default `10s`).
+row-capped (`API_QUERY_MAX_ROWS`, default 1000) and time-limited
+(`API_QUERY_TIMEOUT`, default `10s`).
 
 **Read `schema://views` for the authoritative column list.** It is kept in
 step with the migrations and carries the caveats that cannot be inferred

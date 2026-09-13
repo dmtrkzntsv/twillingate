@@ -153,7 +153,7 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, api, mc
 	var mcpClose func() error
 	if mcpOn {
 		ops := manage.NewOps(reg, st)
-		if api && cfg.MCP.Addr == cfg.Listen {
+		if api && cfg.API.Addr == cfg.IngestAddr {
 			protected, closeDB, err := apiserver.Build(ctx, cfg, reg, ops, logger)
 			if err != nil {
 				stopBackground()
@@ -163,7 +163,7 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, api, mc
 			mux := http.NewServeMux()
 			mux.Handle("/", ingestHandler) // ingest keeps its own /healthz and /js/*
 			apiserver.RegisterOn(mux, protected, cfg, false, logger)
-			surfaces = append(surfaces, httpSurface{cfg.Listen, mux})
+			surfaces = append(surfaces, httpSurface{cfg.IngestAddr, mux})
 		} else {
 			mcpHandler, closeDB, err := apiserver.NewHandler(ctx, cfg, reg, ops, logger)
 			if err != nil {
@@ -172,12 +172,12 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, api, mc
 			}
 			mcpClose = closeDB
 			if api {
-				surfaces = append(surfaces, httpSurface{cfg.Listen, ingestHandler})
+				surfaces = append(surfaces, httpSurface{cfg.IngestAddr, ingestHandler})
 			}
-			surfaces = append(surfaces, httpSurface{cfg.MCP.Addr, mcpHandler})
+			surfaces = append(surfaces, httpSurface{cfg.API.Addr, mcpHandler})
 		}
 	} else {
-		surfaces = append(surfaces, httpSurface{cfg.Listen, ingestHandler})
+		surfaces = append(surfaces, httpSurface{cfg.IngestAddr, ingestHandler})
 	}
 	if mcpClose != nil {
 		defer mcpClose()

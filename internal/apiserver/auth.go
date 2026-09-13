@@ -29,7 +29,7 @@ var allowedAlgs = []string{
 }
 
 // StaticVerifier implements the token:// auth mode: constant-time compare
-// against the single static token from MCP_AUTH_DSN. The middleware wrapping it must allow
+// against the single static token from API_AUTH_DSN. The middleware wrapping it must allow
 // missing expiration (a static token has no exp).
 func StaticVerifier(token string) auth.TokenVerifier {
 	want := []byte(token)

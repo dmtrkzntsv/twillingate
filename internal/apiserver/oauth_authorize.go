@@ -68,7 +68,7 @@ func (s *loginServer) trustedRedirect(w http.ResponseWriter, clientID, redirectU
 	case !matchesAny(c.RedirectURIs, redirectURI):
 		reason = "The redirect URI is not registered for this client."
 	case !redirectAllowed(s.hosts, redirectURI):
-		reason = "The redirect URI's host is not allowed. Add it to MCP_AUTH_DSN as redirect=<host>."
+		reason = "The redirect URI's host is not allowed. Add it to API_AUTH_DSN as redirect=<host>."
 	default:
 		return &c, true
 	}

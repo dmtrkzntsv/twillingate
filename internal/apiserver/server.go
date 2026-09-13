@@ -21,12 +21,12 @@ import (
 // shared-mux case calls it directly to mount alongside /mcp on the
 // ingest surface's mux via RegisterOn.
 func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *manage.Ops, logger *slog.Logger) (http.Handler, func() error, error) {
-	db, err := OpenReadDB(cfg.MCP.DBPath)
+	db, err := OpenReadDB(cfg.API.DBPath)
 	if err != nil {
 		return nil, nil, err
 	}
 	h := &host{db: db, reg: reg, ops: ops,
-		timeout: cfg.MCP.QueryTimeout, maxRows: cfg.MCP.QueryMaxRows,
+		timeout: cfg.API.QueryTimeout, maxRows: cfg.API.QueryMaxRows,
 		publicURL: cfg.PublicURL, logger: logger}
 	srv := mcp.NewServer(&mcp.Implementation{Name: "twillingate", Version: "1.0.0"}, nil)
 	h.register(srv)
@@ -34,7 +34,7 @@ func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *m
 	streamable := mcp.NewStreamableHTTPHandler(
 		func(*http.Request) *mcp.Server { return srv }, nil)
 
-	protected, err := wrapAuth(ctx, cfg.MCP, streamable)
+	protected, err := wrapAuth(ctx, cfg.API, streamable)
 	if err != nil {
 		db.Close()
 		return nil, nil, err
@@ -64,16 +64,16 @@ func NewHandler(ctx context.Context, cfg *config.Config, reg *manage.Registry, o
 // (ServeMux panics on duplicate patterns).
 func RegisterOn(mux *http.ServeMux, protected http.Handler, cfg *config.Config, withHealthz bool, logger *slog.Logger) {
 	mux.Handle("/mcp", protected)
-	if cfg.MCP.AuthMode == "oauth" {
+	if cfg.API.AuthMode == "oauth" {
 		meta := &oauthex.ProtectedResourceMetadata{
-			Resource:             cfg.MCP.ResourceURL,
-			AuthorizationServers: []string{cfg.MCP.Issuer},
+			Resource:             cfg.API.ResourceURL,
+			AuthorizationServers: []string{cfg.API.Issuer},
 		}
 		mux.Handle("GET /.well-known/oauth-protected-resource",
 			auth.ProtectedResourceMetadataHandler(meta))
 	}
-	if cfg.MCP.LoginEnabled() {
-		newLoginServer(cfg.MCP, logger).mount(mux)
+	if cfg.API.LoginEnabled() {
+		newLoginServer(cfg.API, logger).mount(mux)
 	}
 	if withHealthz {
 		mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -84,7 +84,7 @@ func RegisterOn(mux *http.ServeMux, protected http.Handler, cfg *config.Config, 
 }
 
 // wrapAuth builds the mode's verifier and middleware (endpoint spec §5.2).
-func wrapAuth(ctx context.Context, m config.MCPConfig, next http.Handler) (http.Handler, error) {
+func wrapAuth(ctx context.Context, m config.APIConfig, next http.Handler) (http.Handler, error) {
 	switch m.AuthMode {
 	case "token":
 		opts := &auth.RequireBearerTokenOptions{AllowMissingExpiration: true}
@@ -99,7 +99,7 @@ func wrapAuth(ctx context.Context, m config.MCPConfig, next http.Handler) (http.
 	case "oauth":
 		jwksURL, err := DiscoverJWKSURL(ctx, m.Issuer, nil)
 		if err != nil {
-			return nil, fmt.Errorf("mcp oauth mode: %w (is the MCP_AUTH_DSN issuer correct and reachable?)", err)
+			return nil, fmt.Errorf("mcp oauth mode: %w (is the API_AUTH_DSN issuer correct and reachable?)", err)
 		}
 		v := OAuthVerifier(m.Issuer, m.Audience, NewJWKSCache(jwksURL, nil))
 		return auth.RequireBearerToken(v, &auth.RequireBearerTokenOptions{

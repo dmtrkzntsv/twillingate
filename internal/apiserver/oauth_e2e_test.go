@@ -120,12 +120,12 @@ func browserLogin(base, password string) auth.AuthorizationCodeFetcher {
 // NewHandler, or shared via Build and RegisterOn beside an ingest stand-in.
 func e2eHandler(t *testing.T, dsn string, shared bool) http.Handler {
 	t.Helper()
-	env := map[string]string{"DATABASE_DSN": "sqlite://" + seedDB(t), "MCP_AUTH_DSN": dsn}
+	env := map[string]string{"DATABASE_DSN": "sqlite://" + seedDB(t), "API_AUTH_DSN": dsn}
 	cfg, err := config.FromEnv(func(k string) (string, bool) { v, ok := env[k]; return v, ok })
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := cfg.ValidateMCP(); err != nil {
+	if err := cfg.ValidateAPI(); err != nil {
 		t.Fatal(err)
 	}
 	st, err := store.Open(cfg.Database)

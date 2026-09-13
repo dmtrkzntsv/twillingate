@@ -48,16 +48,16 @@ func TestKeyIssueListDisableEnable(t *testing.T) {
 	}
 }
 
-func TestKeygenMCP(t *testing.T) {
+func TestKeygenAPI(t *testing.T) {
 	var out bytes.Buffer
-	if code := run([]string{"keygen", "-mcp"}, &out); code != 0 {
+	if code := run([]string{"keygen", "-api"}, &out); code != 0 {
 		t.Fatalf("exit %d", code)
 	}
-	if !regexp.MustCompile(`MCP_AUTH_DSN=token://ar_[0-9a-f]{64}`).MatchString(out.String()) {
+	if !regexp.MustCompile(`API_AUTH_DSN=token://ar_[0-9a-f]{64}`).MatchString(out.String()) {
 		t.Fatalf("output: %s", out.String())
 	}
 	if strings.Contains(out.String(), "ingest_keys") {
-		t.Fatal("-mcp must not print the JSON block")
+		t.Fatal("-api must not print the JSON block")
 	}
 }
 
