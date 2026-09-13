@@ -137,8 +137,9 @@ type DashboardsConfig struct {
 //	token://<token>[?password=<pw>&redirect=<uri>[&redirect=<uri>…][&resource=<url>]]
 //	oauth://<issuer-host>[/path][?resource=<url>][&audience=<aud>]
 //
-// Any redirect= on token:// turns on the browser login server, which
-// requires password= and a resource URL. In token and oauth modes resource
+// password= on token:// turns on the browser login server, which needs a
+// resource URL; redirect= allowlists the https callbacks of web clients
+// (loopback callbacks are always accepted). In token and oauth modes resource
 // defaults to PUBLIC_URL + "/mcp"; the oauth issuer is https://<host>[/path]
 // and audience defaults to the resource URL. oauth+insecure produces an
 // http issuer for local IdPs and tests.
@@ -151,8 +152,8 @@ type MCPConfig struct {
 	Issuer       string
 	Audience     string
 	Token        string
-	RedirectURIs []string      // token:// redirect=; any turns on the login server
-	Password     string        // token:// password=, the login page's secret
+	RedirectURIs []string      // token:// redirect=, web client callbacks allowed besides loopback
+	Password     string        // token:// password=; set, it turns on the login server
 	QueryTimeout time.Duration // MCP_QUERY_TIMEOUT, default 10s
 	QueryMaxRows int           // MCP_QUERY_MAX_ROWS, default 1000
 
@@ -409,7 +410,7 @@ func (c *Config) parseMCPAuthDSN() error {
 }
 
 // parseTokenLogin reads the token:// query that turns on the browser login
-// server: repeated redirect=, password= and resource=.
+// server: password=, repeated redirect= and resource=.
 func (c *Config) parseTokenLogin(query string) error {
 	m := &c.MCP
 	q, err := url.ParseQuery(query)
@@ -424,11 +425,8 @@ func (c *Config) parseTokenLogin(query string) error {
 	m.RedirectURIs = q["redirect"]
 	m.Password = q.Get("password")
 	m.ResourceURL = q.Get("resource")
-	if len(m.RedirectURIs) == 0 {
-		return fmt.Errorf("config: MCP_AUTH_DSN token:// password= and resource= only apply with at least one redirect=")
-	}
 	if m.Password == "" {
-		return fmt.Errorf("config: MCP_AUTH_DSN token:// redirect= requires a password=")
+		return fmt.Errorf("config: MCP_AUTH_DSN token:// redirect= and resource= need a password=, which turns the login on")
 	}
 	for _, r := range m.RedirectURIs {
 		if err := checkLoginURL(r); err != nil {
@@ -439,7 +437,7 @@ func (c *Config) parseTokenLogin(query string) error {
 		m.ResourceURL = c.PublicURL + "/mcp"
 	}
 	if m.ResourceURL == "" {
-		return fmt.Errorf("config: MCP_AUTH_DSN token:// redirect= requires resource=<url> or PUBLIC_URL to derive it from")
+		return fmt.Errorf("config: MCP_AUTH_DSN token:// password= requires resource=<url> or PUBLIC_URL to derive it from")
 	}
 	if err := checkLoginURL(m.ResourceURL); err != nil {
 		return fmt.Errorf("config: MCP_AUTH_DSN token:// resource=%q %v", m.ResourceURL, err)
@@ -465,6 +463,9 @@ func checkLoginURL(raw string) error {
 	}
 	return nil
 }
+
+// LoginEnabled reports whether token:// runs the browser login server.
+func (m MCPConfig) LoginEnabled() bool { return m.AuthMode == "token" && m.Password != "" }
 
 // ValidateMCP fail-fasts the -mcp surface (endpoint spec §4): there is no
 // unauthenticated mode and no way to reach one by omission.

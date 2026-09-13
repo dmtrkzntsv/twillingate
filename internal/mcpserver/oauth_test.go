@@ -192,6 +192,38 @@ func TestRedirectMatches(t *testing.T) {
 	}
 }
 
+func TestRedirectAllowed(t *testing.T) {
+	allowlist := []string{"https://app.example.com/cb"}
+	cases := []struct {
+		candidate string
+		want      bool
+	}{
+		// Loopback needs no entry: the code can only reach this machine.
+		{"http://127.0.0.1:53124/callback/abc123", true},
+		{"http://localhost:8080/any/path?x=1", true},
+		{"http://[::1]:9/cb", true},
+		{"https://localhost/cb", true},
+		{"http://127.0.0.1:53124/cb#frag", false},
+		{"http://evil@127.0.0.1/cb", false},
+		{"http://127.0.0.1.evil.com/cb", false},
+		{"myapp://127.0.0.1/cb", false},
+		// The web connectors are built in.
+		{claudeCallback, true},
+		{"https://chatgpt.com/connector_platform_oauth_redirect", true},
+		{"http://claude.ai/api/mcp/auth_callback", false},
+		{"https://chatgpt.com/other", false},
+		// Everything else must be on the allowlist.
+		{"https://app.example.com/cb", true},
+		{"https://evil.example/cb", false},
+		{"%zz", false},
+	}
+	for _, tc := range cases {
+		if got := redirectAllowed(allowlist, tc.candidate); got != tc.want {
+			t.Errorf("redirectAllowed(%q) = %v, want %v", tc.candidate, got, tc.want)
+		}
+	}
+}
+
 func TestLoginMetadata(t *testing.T) {
 	f := newLoginFixture(t, nil)
 	rec := f.serve(httptest.NewRequest("GET", "/.well-known/oauth-authorization-server", nil))
@@ -284,6 +316,14 @@ func TestRegisterClient(t *testing.T) {
 	}
 	if !strings.Contains(f.logs.String(), "https://evil.example/cb") {
 		t.Error("rejected registration redirect not logged")
+	}
+
+	// Loopback clients and the built-in web connectors register without
+	// any allowlist entry.
+	bare := newLoginFixture(t, func(m *config.MCPConfig) { m.RedirectURIs = nil })
+	if id := bare.register("http://127.0.0.1:1455/callback/abc123", claudeCallback,
+		"https://chatgpt.com/connector_platform_oauth_redirect"); id == "" {
+		t.Error("default registration returned no client_id")
 	}
 }
 

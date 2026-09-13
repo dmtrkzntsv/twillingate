@@ -351,9 +351,9 @@ func TestValidateMCP(t *testing.T) {
 			"MCP_AUTH_DSN": "token://ar_x?redirect=https://claude.ai/cb&resource=https://mcp.example.com/mcp"}, false},
 		{"token login empty password", map[string]string{
 			"MCP_AUTH_DSN": "token://ar_x?password=&redirect=https://claude.ai/cb&resource=https://mcp.example.com/mcp"}, false},
-		{"token password without redirect", map[string]string{
-			"MCP_AUTH_DSN": "token://ar_x?password=pw"}, false},
-		{"token resource without redirect", map[string]string{
+		{"token login password only", map[string]string{
+			"MCP_AUTH_DSN": "token://ar_x?password=pw&resource=https://mcp.example.com/mcp"}, true},
+		{"token resource without password", map[string]string{
 			"MCP_AUTH_DSN": "token://ar_x?resource=https://mcp.example.com/mcp"}, false},
 		{"token unknown parameter", map[string]string{
 			"MCP_AUTH_DSN": "token://ar_x?password=pw&redirects=https://claude.ai/cb&resource=https://mcp.example.com/mcp"}, false},
@@ -506,5 +506,12 @@ func TestTokenLoginDSNParsing(t *testing.T) {
 	}
 	if len(plain.MCP.RedirectURIs) != 0 || plain.MCP.Password != "" || plain.MCP.ResourceURL != "" {
 		t.Errorf("plain token:// grew login settings: %+v", plain.MCP)
+	}
+	if !m.LoginEnabled() || plain.MCP.LoginEnabled() {
+		t.Errorf("LoginEnabled: with password %v, plain %v; want true, false", m.LoginEnabled(), plain.MCP.LoginEnabled())
+	}
+	oauth := MCPConfig{AuthMode: "oauth", Password: "ignored"}
+	if oauth.LoginEnabled() {
+		t.Error("LoginEnabled true outside token mode")
 	}
 }

@@ -131,7 +131,7 @@ curl -i -X POST http://localhost:8080/api/events \
 | `DASHBOARDS_INTERVAL` | Minimum spacing between Evidence rebuilds. Default `15m`. |
 | `DASHBOARDS_PROJECT_DIR` | Evidence project in the image. Default `/opt/evidence`. |
 | `DASHBOARDS_WORK_DIR` | Where the database snapshot is written. Default `/var/lib/dashboards`. |
-| `MCP_AUTH_DSN` | MCP authentication: `token://<token>?password=…&redirect=…` for the built-in browser login (see [The MCP endpoint](#the-mcp-endpoint)), or `oauth://<issuer-host>` for your own identity provider. Unset, bare `serve` skips MCP with a warning. |
+| `MCP_AUTH_DSN` | MCP authentication: `token://<token>?password=…` for the built-in browser login (see [The MCP endpoint](#the-mcp-endpoint)), or `oauth://<issuer-host>` for your own identity provider. Unset, bare `serve` skips MCP with a warning. |
 | `MCP_ADDR` | Give the MCP endpoint its own listener. Defaults to `LISTEN_ADDR` (shared). |
 | `MCP_DB_PATH` | Database MCP reads for queries. Defaults to the `DATABASE_DSN` path. |
 | `MCP_QUERY_TIMEOUT` | Per-query guard on the MCP `query` tool. Default `10s`. |
@@ -232,10 +232,10 @@ every client talks to the running collector over the network.
 
 ### Set it up
 
-The binary runs its own login: give it a token, a password and the redirect
-URIs clients may return to, and claude.ai, Claude Desktop and Claude Code
-connect through a browser page that asks for the password. There is no
-identity provider to run.
+The binary runs its own login: give it a token and a password, and
+claude.ai, ChatGPT, Claude Desktop, Claude Code and Codex connect through a
+browser page that asks for the password. There is no identity provider to
+run.
 
 1. Mint the token:
 
@@ -245,10 +245,10 @@ identity provider to run.
    ```
 
 2. Set it in `/etc/twillingate/twillingate.env` (compose: `.env`) with a
-   password and the redirect URIs, **in single quotes**:
+   password, **in single quotes**:
 
    ```bash
-   MCP_AUTH_DSN='token://ar_…?password=<password>&redirect=https://claude.ai/api/mcp/auth_callback&redirect=http://localhost/callback'
+   MCP_AUTH_DSN='token://ar_…?password=<password>'
    ```
 
    The quotes matter: the CLI commands in this runbook load the file with
@@ -267,14 +267,20 @@ identity provider to run.
 
 | Parameter | Meaning |
 | --- | --- |
-| `password` | What the login page asks for. |
-| `redirect` | A redirect URI clients may use; repeat it once per URI. |
+| `password` | What the login page asks for. Setting it turns the login on. |
 | `resource` | The public URL of `/mcp`. Defaults to `PUBLIC_URL` + `/mcp`; set it when MCP has its own hostname. |
+| `redirect` | An extra callback URI a client may return to; repeat it once per URI. Only needed for clients not listed below. |
 
-- **Matching.** Scheme, host, path and query must equal an entry exactly.
-  For `localhost`, `127.0.0.1` and `[::1]` the port is ignored, because
-  Claude Code and Desktop pick a new port for each login; `localhost` and
-  `127.0.0.1` still count as different hosts. Any other host needs `https`.
+- **Callbacks accepted without `redirect=`.** Any loopback address —
+  `localhost`, `127.0.0.1` or `[::1]`, any port and path — because a code
+  sent there only reaches the machine the browser runs on; that covers
+  Claude Code, Claude Desktop and Codex. And the two web connectors:
+  `https://claude.ai/api/mcp/auth_callback` and
+  `https://chatgpt.com/connector_platform_oauth_redirect`.
+- **Anything else is refused** until it is added as `redirect=`, matched
+  exactly (scheme, host, port, path and query; `https` only). Accepting any
+  URI would let anyone register a client that sends your login to their own
+  site.
 - **Encoding.** The parameters are a query string: in the password write
   `&` as `%26`, `#` as `%23`, `%` as `%25`, `;` as `%3B` and `+` as `%2B`.
   An unencoded `+` becomes a space.
@@ -289,12 +295,14 @@ identity provider to run.
 - **claude.ai and Claude Desktop:** Settings → Connectors → **Add custom
   connector**, URL `https://twillingate.example.com/mcp`, OAuth client ID and
   secret left empty. The browser opens the login page; enter the password.
+- **ChatGPT:** add a connector with the same URL and OAuth authentication.
 - **Claude Code:** `claude mcp add --transport http twillingate https://twillingate.example.com/mcp`,
-  then `/mcp` → *Authenticate*.
+  then `/mcp` → *Authenticate*. **Codex:** add the URL as an MCP server and
+  choose *Authenticate*.
 - **Any other MCP client** connects to the same URL. If its login stops at
   "The redirect URI is not in the MCP_AUTH_DSN allowlist", the page and the
   `mcp login: redirect rejected` log line show the URI it used: add it as
-  another `redirect=` and restart.
+  `redirect=` and restart.
 
 A client you use stays logged in: access tokens last an hour and refresh
 silently, and every refresh extends the login by 30 days. Nothing about
@@ -305,8 +313,8 @@ to cut a device off.
 | --- | --- |
 | New token or new password | Every client logs in again |
 | New `resource` URL | Every client logs in again |
-| Every `redirect` removed | The login is off and issued tokens stop working |
-| Redirect list edited | Connected clients keep working; new logins follow the list |
+| `password` removed | The login is off and issued tokens stop working |
+| `redirect` list edited | Connected clients keep working; new logins follow the list |
 | A client unused for 30 days | That client logs in again |
 | Restart or upgrade | Nothing |
 
@@ -314,8 +322,8 @@ to cut a device off.
 
 A client that can send headers can skip the login and present the token
 itself — useful for scripts and headless Claude Code. It works whether or
-not the login parameters are set; a bare `MCP_AUTH_DSN='token://ar_…'` turns
-the login off and leaves only this.
+not a password is set; a bare `MCP_AUTH_DSN='token://ar_…'` turns the login
+off and leaves only this.
 
 ```bash
 claude mcp add --transport http twillingate https://twillingate.example.com/mcp \
@@ -408,8 +416,9 @@ the password is the problem.
 **Connects but no tools.** Wrong path — the endpoint is `/mcp`, not the bare
 hostname.
 
-**Login page: redirect URI not allowed.** The page shows the URI the client
-used; add it to `MCP_AUTH_DSN` as another `redirect=` and restart.
+**Login page: redirect URI not allowed.** The client is not one of the
+built-in callbacks. The page shows the URI it used; add it to
+`MCP_AUTH_DSN` as `redirect=` and restart.
 
 **Login page: password not recognised, though it is right.** A `+`, `&`,
 `#`, `%` or `;` in the password must be percent-encoded in the DSN.

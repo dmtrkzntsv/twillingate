@@ -67,7 +67,7 @@ func (s *loginServer) trustedRedirect(w http.ResponseWriter, clientID, redirectU
 		reason = "Unknown client. Remove the connector and add it again."
 	case !matchesAny(c.RedirectURIs, redirectURI):
 		reason = "The redirect URI is not registered for this client."
-	case !matchesAny(s.redirects, redirectURI):
+	case !redirectAllowed(s.redirects, redirectURI):
 		reason = "The redirect URI is not in the MCP_AUTH_DSN allowlist."
 	default:
 		return &c, true

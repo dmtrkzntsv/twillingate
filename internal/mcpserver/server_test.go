@@ -345,6 +345,11 @@ func TestTokenLoginRoutesFollowRedirects(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized || !strings.Contains(rec.Header().Get("WWW-Authenticate"), want) {
 		t.Errorf("login: /mcp %d WWW-Authenticate=%q, want 401 with %s", rec.Code, rec.Header().Get("WWW-Authenticate"), want)
 	}
+	passwordOnly := newHandlerFixture(t, map[string]string{
+		"MCP_AUTH_DSN": "token://ar_testtoken?password=hunter2&resource=https://mcp.example.com/mcp"})
+	if rec := serve(passwordOnly, httptest.NewRequest("GET", "/.well-known/oauth-authorization-server", nil)); rec.Code != http.StatusOK {
+		t.Errorf("password without redirect: metadata %d, want 200 — the password turns the login on", rec.Code)
+	}
 	req := initReq()
 	req.Header.Set("Authorization", "Bearer ar_testtoken")
 	if rec := serve(login, req); rec.Code != http.StatusOK {
@@ -363,8 +368,8 @@ func TestIssuedAccessTokenNeedsTheLoginServer(t *testing.T) {
 		h    http.Handler
 		want int
 	}{
-		"login on":               {newHandlerFixture(t, map[string]string{"MCP_AUTH_DSN": loginDSN}), http.StatusOK},
-		"every redirect removed": {newHandlerFixture(t, nil), http.StatusUnauthorized},
+		"login on":  {newHandlerFixture(t, map[string]string{"MCP_AUTH_DSN": loginDSN}), http.StatusOK},
+		"login off": {newHandlerFixture(t, nil), http.StatusUnauthorized},
 	} {
 		req := initReq()
 		req.Header.Set("Authorization", "Bearer "+access)

@@ -43,7 +43,7 @@ and `cloudflare://` are unchanged.
 ## 3. Configuration
 
 ```bash
-MCP_AUTH_DSN=token://<token>?password=<password>&redirect=<uri>[&redirect=<uri>…][&resource=<url>]
+MCP_AUTH_DSN=token://<token>?password=<password>[&redirect=<uri>…][&resource=<url>]
 ```
 
 No new environment variable. `parseMCPAuthDSN`'s `token` case cuts the DSN
@@ -52,8 +52,8 @@ after is parsed with `url.ParseQuery`.
 
 | Parameter | Meaning |
 | --- | --- |
-| `redirect` | Repeatable. One allowed redirect URI per occurrence. Any `redirect` enables the login server. |
-| `password` | The secret typed on the login page. Required when any `redirect` is set. |
+| `password` | The secret typed on the login page. Setting it enables the login server. |
+| `redirect` | Repeatable. One extra allowed redirect URI per occurrence, beyond the defaults of §5.1. |
 | `resource` | Public URL of `/mcp`. Defaults to `PUBLIC_URL` + `/mcp`. |
 
 `MCPConfig` gains `RedirectURIs []string` and `Password string`;
@@ -64,8 +64,8 @@ before: header token only, no new routes.
 
 - a query that `url.ParseQuery` rejects, or an unknown parameter (catches
   typos such as `redirects=`);
-- `password` or `resource` without any `redirect`;
-- `redirect` without `password` (an empty `password=` counts as missing);
+- `redirect` or `resource` without `password` (an empty `password=` counts
+  as missing);
 - a redirect URI that does not parse, is not absolute, carries a fragment,
   or uses `http` on a host other than `localhost`, `127.0.0.1` or `[::1]`;
 - no `resource` and no `PUBLIC_URL` to derive it from;
@@ -144,7 +144,22 @@ stored.
 
 ### 5.1 Redirect matching
 
-A candidate URI matches an allowlist entry when, after parsing both:
+Accepted without any `redirect=` entry (amended 2026-09-13, so native
+clients such as Codex, whose callback path carries a per-server id, need no
+configuration):
+
+- any loopback URI — `http` or `https` on `localhost`, `127.0.0.1` or
+  `[::1]`, any port and path, no fragment or userinfo — because the code can
+  only reach the machine the browser runs on;
+- the built-in web connectors `https://claude.ai/api/mcp/auth_callback` and
+  `https://chatgpt.com/connector_platform_oauth_redirect`.
+
+Accepting any URI is ruled out: an attacker could register a client with
+their own callback, send the operator a genuine login link, and receive a
+code for tokens as powerful as the env token.
+
+Any other candidate must match an allowlist entry, which it does when, after
+parsing both:
 
 - scheme, lowercase hostname, path and raw query are equal byte for byte
   (no normalisation: `""` and `/` differ);

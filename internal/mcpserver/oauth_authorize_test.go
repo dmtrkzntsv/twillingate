@@ -89,6 +89,13 @@ func TestAuthorizePageRendersForm(t *testing.T) {
 		t.Errorf("loopback port change: %d %s", rec.Code, rec.Body)
 	}
 
+	// With no allowlist at all, a loopback client still logs in.
+	bare := newLoginFixture(t, func(m *config.MCPConfig) { m.RedirectURIs = nil })
+	codex := "http://127.0.0.1:1455/callback/abc123"
+	if rec := bare.authorize(authorizeQuery(bare.register(codex), codex)); rec.Code != http.StatusOK {
+		t.Errorf("loopback without allowlist: %d %s", rec.Code, rec.Body)
+	}
+
 	// resource is optional.
 	q := authorizeQuery(f.register(claudeCallback), claudeCallback)
 	q.Del("resource")
@@ -98,20 +105,21 @@ func TestAuthorizePageRendersForm(t *testing.T) {
 }
 
 func TestAuthorizeUntrustedRedirectShowsErrorPage(t *testing.T) {
-	f := newLoginFixture(t, nil)
-	claude := f.register(claudeCallback)
-	// Same token and password, so the same keys, but a shrunken allowlist.
-	shrunk := newLoginFixture(t, func(m *config.MCPConfig) { m.RedirectURIs = []string{loopbackEntry} })
+	const appCallback = "https://app.example.com/cb"
+	f := newLoginFixture(t, func(m *config.MCPConfig) { m.RedirectURIs = []string{appCallback} })
+	app := f.register(appCallback)
+	// Same token and password, so the same keys, but the entry is gone.
+	shrunk := newLoginFixture(t, func(m *config.MCPConfig) { m.RedirectURIs = nil })
 
 	cases := map[string]struct {
 		f        *loginFixture
 		client   string
 		redirect string
 	}{
-		"unknown client":              {f, "garbage", claudeCallback},
-		"redirect not registered":     {f, claude, "http://localhost:4000/callback"},
-		"redirect missing":            {f, claude, ""},
-		"redirect left the allowlist": {shrunk, claude, claudeCallback},
+		"unknown client":              {f, "garbage", appCallback},
+		"redirect not registered":     {f, app, "http://localhost:4000/callback"},
+		"redirect missing":            {f, app, ""},
+		"redirect left the allowlist": {shrunk, app, appCallback},
 	}
 	for name, tc := range cases {
 		rec := tc.f.authorize(authorizeQuery(tc.client, tc.redirect))
@@ -126,7 +134,7 @@ func TestAuthorizeUntrustedRedirectShowsErrorPage(t *testing.T) {
 			t.Errorf("%s: error page offers the password form", name)
 		}
 	}
-	if !strings.Contains(shrunk.logs.String(), "redirect rejected") || !strings.Contains(shrunk.logs.String(), claudeCallback) {
+	if !strings.Contains(shrunk.logs.String(), "redirect rejected") || !strings.Contains(shrunk.logs.String(), appCallback) {
 		t.Errorf("rejection not logged with the redirect: %s", shrunk.logs)
 	}
 }
