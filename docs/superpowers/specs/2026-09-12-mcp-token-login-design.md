@@ -65,8 +65,7 @@ before: header token only, no new routes.
 - a query that `url.ParseQuery` rejects, or an unknown parameter (catches
   typos such as `redirects=`);
 - `password` or `resource` without any `redirect`;
-- `redirect` without `password`;
-- a password shorter than 12 characters (counted in runes);
+- `redirect` without `password` (an empty `password=` counts as missing);
 - a redirect URI that does not parse, is not absolute, carries a fragment,
   or uses `http` on a host other than `localhost`, `127.0.0.1` or `[::1]`;
 - no `resource` and no `PUBLIC_URL` to derive it from;
@@ -344,7 +343,7 @@ Never logged: the password, the token, codes, access or refresh tokens, the
 | Open redirect via `/oauth/authorize` | Never redirects to a URI that fails §5.1 |
 | Forged consent POST | Requires the password; the signed `request` value prevents parameter tampering between page and submit |
 | Clickjacking | `X-Frame-Options: DENY`, `frame-ancestors 'none'` |
-| Password guessing | 12-character minimum; five failures per minute globally (~7,200/day) |
+| Password guessing | Five failures per minute globally (~7,200/day). Length is the operator's choice: no minimum is enforced, and a short password is only as strong as that rate allows |
 | Host header injection into discovery documents | Issuer and endpoints come from configuration |
 | One signed value substituted for another | Separate HKDF key per kind; HS256 only |
 | Leaked access token | Useful for at most one hour |
