@@ -41,7 +41,7 @@ type rangeIn struct {
 // the valid aliases instead of just refusing.
 func (h *host) checkRange(ctx context.Context, in rangeIn) error {
 	if !dayRe.MatchString(in.From) || !dayRe.MatchString(in.To) {
-		return fmt.Errorf("from and to must be YYYY-MM-DD, got %q and %q", in.From, in.To)
+		return invalidf("from and to must be YYYY-MM-DD, got %q and %q", in.From, in.To)
 	}
 	if h.reg.Snapshot(ctx).Project(in.Project) == nil {
 		return h.unknownProjectErr(ctx, in.Project)
@@ -61,7 +61,7 @@ func (h *host) unknownProjectErr(ctx context.Context, alias string) error {
 		aliases = append(aliases, p.Alias)
 	}
 	sort.Strings(aliases)
-	return fmt.Errorf("unknown project %q; valid aliases: %s", alias, strings.Join(aliases, ", "))
+	return notFoundf("unknown project %q; valid aliases: %s", alias, strings.Join(aliases, ", "))
 }
 
 type tableOut struct {
@@ -75,7 +75,7 @@ func (h *host) table(ctx context.Context, q string, args ...any) (tableOut, erro
 	cols, rows, truncated, err := queryRows(ctx, h.db, h.timeout, h.maxRows, q, args...)
 	if err != nil {
 		if ctx.Err() != nil || strings.Contains(err.Error(), "context deadline") {
-			return tableOut{}, fmt.Errorf("query exceeded %s; narrow the date range", h.timeout)
+			return tableOut{}, invalidf("query exceeded %s; narrow the date range", h.timeout)
 		}
 		return tableOut{}, err
 	}
@@ -192,7 +192,7 @@ func (h *host) webBreakdown(ctx context.Context, _ *mcp.CallToolRequest, in brea
 	}
 	dim, ok := webDimensions[in.Dimension]
 	if !ok {
-		return nil, tableOut{}, fmt.Errorf("unknown dimension %q; valid: %s",
+		return nil, tableOut{}, invalidf("unknown dimension %q; valid: %s",
 			in.Dimension, dimensionKeys(webDimensions))
 	}
 	limit := in.Limit
@@ -241,7 +241,7 @@ func (h *host) appBreakdown(ctx context.Context, _ *mcp.CallToolRequest, in brea
 	}
 	dim, ok := appDimensions[in.Dimension]
 	if !ok {
-		return nil, tableOut{}, fmt.Errorf("unknown dimension %q; valid: %s",
+		return nil, tableOut{}, invalidf("unknown dimension %q; valid: %s",
 			in.Dimension, dimensionKeys(appDimensions))
 	}
 	limit := in.Limit

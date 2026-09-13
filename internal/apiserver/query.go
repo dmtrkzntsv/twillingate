@@ -24,11 +24,11 @@ type queryIn struct {
 // error besides — belt and braces, verified by TestQueryToolBlocksWrites.
 func (h *host) runQuery(ctx context.Context, _ *mcp.CallToolRequest, in queryIn) (*mcp.CallToolResult, tableOut, error) {
 	if strings.TrimSpace(in.SQL) == "" {
-		return nil, tableOut{}, fmt.Errorf("sql must not be empty")
+		return nil, tableOut{}, invalidf("sql must not be empty")
 	}
 	upper := strings.ToUpper(in.SQL)
 	if strings.Contains(upper, "ATTACH") {
-		return nil, tableOut{}, fmt.Errorf("ATTACH is not allowed")
+		return nil, tableOut{}, invalidf("ATTACH is not allowed")
 	}
 	h.logger.Debug("mcp query", "sql", in.SQL) // debug only, never info (spec §8)
 	wrapped := fmt.Sprintf("SELECT * FROM (%s\n) LIMIT %d",
@@ -36,9 +36,9 @@ func (h *host) runQuery(ctx context.Context, _ *mcp.CallToolRequest, in queryIn)
 	cols, rows, _, err := queryRows(ctx, h.db, h.timeout, h.maxRows, wrapped)
 	if err != nil {
 		if ctx.Err() != nil || strings.Contains(err.Error(), "context deadline") {
-			return nil, tableOut{}, fmt.Errorf("query exceeded %s; narrow the date range or query agg_* tables directly", h.timeout)
+			return nil, tableOut{}, invalidf("query exceeded %s; narrow the date range or query agg_* tables directly", h.timeout)
 		}
-		return nil, tableOut{}, fmt.Errorf("SQL error (the query runs wrapped as a subquery; only single SELECT/WITH statements parse): %v", err)
+		return nil, tableOut{}, invalidf("SQL error (the query runs wrapped as a subquery; only single SELECT/WITH statements parse): %v", err)
 	}
 	out := tableOut{Columns: cols, Rows: rows}
 	if len(rows) == h.maxRows {

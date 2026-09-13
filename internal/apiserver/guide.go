@@ -27,7 +27,7 @@ var guidePlatforms = map[string]bool{"web": true, "spa": true, "server": true, "
 
 func (h *host) integrationGuide(ctx context.Context, _ *mcp.CallToolRequest, in guideIn) (*mcp.CallToolResult, guideOut, error) {
 	if !guidePlatforms[in.Platform] {
-		return nil, guideOut{}, fmt.Errorf("unknown platform %q; valid: mobile, server, spa, web", in.Platform)
+		return nil, guideOut{}, invalidf("unknown platform %q; valid: mobile, server, spa, web", in.Platform)
 	}
 	s := h.reg.Snapshot(ctx)
 	p := s.Project(in.Project)

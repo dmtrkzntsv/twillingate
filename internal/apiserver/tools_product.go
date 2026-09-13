@@ -2,7 +2,6 @@ package apiserver
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -84,14 +83,14 @@ func (h *host) retention(ctx context.Context, _ *mcp.CallToolRequest, in retenti
 		return nil, retentionOut{}, err
 	}
 	if in.Surface != "web" && in.Surface != "app" {
-		return nil, retentionOut{}, fmt.Errorf("surface must be web or app, got %q", in.Surface)
+		return nil, retentionOut{}, invalidf("surface must be web or app, got %q", in.Surface)
 	}
 	p := h.reg.Snapshot(ctx).Project(in.Project)
 	if p == nil {
 		return nil, retentionOut{}, h.unknownProjectErr(ctx, in.Project)
 	}
 	if p.Identity != "identified" {
-		return nil, retentionOut{}, fmt.Errorf(
+		return nil, retentionOut{}, invalidf(
 			"project %q is anonymous: retention is undefined because visitor ids rotate daily; it requires the project setting identity=identified (a privacy-significant change — see the README's GDPR section)", in.Project)
 	}
 	tbl, err := h.table(ctx, `SELECT cohort_day, day_offset, actors, cohort_size
@@ -125,7 +124,7 @@ func (h *host) identities(ctx context.Context, _ *mcp.CallToolRequest, in identi
 		return nil, tableOut{}, err
 	}
 	if in.Kind != "user" && in.Kind != "group" {
-		return nil, tableOut{}, fmt.Errorf("kind must be user or group, got %q", in.Kind)
+		return nil, tableOut{}, invalidf("kind must be user or group, got %q", in.Kind)
 	}
 	limit := in.Limit
 	if limit <= 0 {
