@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"regexp"
 	"sort"
 	"strings"
@@ -106,7 +107,7 @@ type listProjectsOut struct {
 	Projects []projectOut `json:"projects"`
 }
 
-func (h *host) listProjects(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, listProjectsOut, error) {
+func (h *host) listProjects(ctx context.Context, _ struct{}) (listProjectsOut, error) {
 	var out listProjectsOut
 	for _, p := range h.reg.Snapshot(ctx).Projects() {
 		po := projectOut{
@@ -125,7 +126,7 @@ func (h *host) listProjects(ctx context.Context, _ *mcp.CallToolRequest, _ struc
 			_, rows, _, err := queryRows(ctx, h.db, h.timeout, 1,
 				`SELECT COALESCE(MIN(day),''), COALESCE(MAX(day),'') FROM `+probe.view+` WHERE project=?`, p.Alias)
 			if err != nil {
-				return nil, out, err
+				return out, err
 			}
 			if len(rows) == 1 {
 				*probe.first, *probe.last = rows[0][0], rows[0][1]
@@ -133,21 +134,21 @@ func (h *host) listProjects(ctx context.Context, _ *mcp.CallToolRequest, _ struc
 		}
 		out.Projects = append(out.Projects, po)
 	}
-	return nil, out, nil
+	return out, nil
 }
 
 // ---- web_overview ----
 
-func (h *host) webOverview(ctx context.Context, _ *mcp.CallToolRequest, in rangeIn) (*mcp.CallToolResult, tableOut, error) {
+func (h *host) webOverview(ctx context.Context, in rangeIn) (tableOut, error) {
 	if err := h.checkRange(ctx, in); err != nil {
-		return nil, tableOut{}, err
+		return tableOut{}, err
 	}
 	out, err := h.table(ctx, `SELECT day, visitors, pageviews, sessions, bounces, duration_sec,
 		ROUND(CAST(bounces AS REAL)/MAX(sessions,1), 3) AS bounce_rate,
 		CAST(duration_sec/MAX(sessions,1) AS INTEGER) AS avg_session_sec
 		FROM v_web_daily WHERE project=? AND day BETWEEN ? AND ? ORDER BY day`,
 		in.Project, in.From, in.To)
-	return nil, out, err
+	return out, err
 }
 
 // ---- web_breakdown ----
@@ -186,13 +187,13 @@ func dimensionKeys(m map[string]struct{ view, col string }) string {
 	return strings.Join(keys, ", ")
 }
 
-func (h *host) webBreakdown(ctx context.Context, _ *mcp.CallToolRequest, in breakdownIn) (*mcp.CallToolResult, tableOut, error) {
+func (h *host) webBreakdown(ctx context.Context, in breakdownIn) (tableOut, error) {
 	if err := h.checkRange(ctx, in.rangeIn); err != nil {
-		return nil, tableOut{}, err
+		return tableOut{}, err
 	}
 	dim, ok := webDimensions[in.Dimension]
 	if !ok {
-		return nil, tableOut{}, invalidf("unknown dimension %q; valid: %s",
+		return tableOut{}, invalidf("unknown dimension %q; valid: %s",
 			in.Dimension, dimensionKeys(webDimensions))
 	}
 	limit := in.Limit
@@ -205,14 +206,14 @@ func (h *host) webBreakdown(ctx context.Context, _ *mcp.CallToolRequest, in brea
 			FROM v_web_utm WHERE project=? AND day BETWEEN ? AND ?
 			GROUP BY utm_source, utm_medium, utm_campaign
 			ORDER BY visitors DESC LIMIT ?`, in.Project, in.From, in.To, limit)
-		return nil, out, err
+		return out, err
 	}
 	out, err := h.table(ctx, `SELECT `+dim.col+` AS value,
 		SUM(visitors) AS visitors, SUM(pageviews) AS pageviews
 		FROM `+dim.view+` WHERE project=? AND day BETWEEN ? AND ?
 		GROUP BY `+dim.col+` ORDER BY visitors DESC LIMIT ?`,
 		in.Project, in.From, in.To, limit)
-	return nil, out, err
+	return out, err
 }
 
 // ---- app_overview / app_breakdown ----
@@ -225,23 +226,23 @@ var appDimensions = map[string]struct{ view, col string }{
 	"countries": {"v_app_countries", "country"},
 }
 
-func (h *host) appOverview(ctx context.Context, _ *mcp.CallToolRequest, in rangeIn) (*mcp.CallToolResult, tableOut, error) {
+func (h *host) appOverview(ctx context.Context, in rangeIn) (tableOut, error) {
 	if err := h.checkRange(ctx, in); err != nil {
-		return nil, tableOut{}, err
+		return tableOut{}, err
 	}
 	out, err := h.table(ctx, `SELECT day, actives, views, sessions, duration_sec
 		FROM v_app_daily WHERE project=? AND day BETWEEN ? AND ? ORDER BY day`,
 		in.Project, in.From, in.To)
-	return nil, out, err
+	return out, err
 }
 
-func (h *host) appBreakdown(ctx context.Context, _ *mcp.CallToolRequest, in breakdownIn) (*mcp.CallToolResult, tableOut, error) {
+func (h *host) appBreakdown(ctx context.Context, in breakdownIn) (tableOut, error) {
 	if err := h.checkRange(ctx, in.rangeIn); err != nil {
-		return nil, tableOut{}, err
+		return tableOut{}, err
 	}
 	dim, ok := appDimensions[in.Dimension]
 	if !ok {
-		return nil, tableOut{}, invalidf("unknown dimension %q; valid: %s",
+		return tableOut{}, invalidf("unknown dimension %q; valid: %s",
 			in.Dimension, dimensionKeys(appDimensions))
 	}
 	limit := in.Limit
@@ -253,30 +254,76 @@ func (h *host) appBreakdown(ctx context.Context, _ *mcp.CallToolRequest, in brea
 		FROM `+dim.view+` WHERE project=? AND day BETWEEN ? AND ?
 		GROUP BY `+dim.col+` ORDER BY actives DESC LIMIT ?`,
 		in.Project, in.From, in.To, limit)
-	return nil, out, err
+	return out, err
 }
 
-// register adds every tool to the server. Read tools carry
-// ReadOnlyHint; management tools (tools_manage.go) do not.
-func (h *host) register(s *mcp.Server) {
+// register exposes every operation once, for MCP and (where a route is
+// declared) REST. Read operations carry ReadOnlyHint; management
+// operations (ops_manage.go) do not.
+func (h *host) register(r *registrar) {
 	ro := &mcp.ToolAnnotations{ReadOnlyHint: true}
-	mcp.AddTool(s, &mcp.Tool{Name: "list_projects", Annotations: ro,
+	no := false // DestructiveHint is *bool in the SDK; nothing here destroys
+	write := &mcp.ToolAnnotations{DestructiveHint: &no}
+	idem := &mcp.ToolAnnotations{DestructiveHint: &no, IdempotentHint: true}
+	const p = "/api/projects/{project}"
+
+	expose(r, spec{Name: "list_projects", Annotations: ro, Method: "GET", Path: "/api/projects",
 		Description: "List projects with identity mode and data coverage. Call this first: every other tool takes a project alias from here. Projects with identity=identified support retention and identities; anonymous ones cannot (their visitor ids rotate daily)."},
 		h.listProjects)
-	mcp.AddTool(s, &mcp.Tool{Name: "web_overview", Annotations: ro,
+	expose(r, spec{Name: "web_overview", Annotations: ro, Method: "GET", Path: p + "/web/overview",
 		Description: "Daily web traffic for one project: visitors, pageviews, sessions, bounces, duration, with derived bounce_rate and avg_session_sec. Data includes yesterday and today (live)."},
 		h.webOverview)
-	mcp.AddTool(s, &mcp.Tool{Name: "web_breakdown", Annotations: ro,
+	expose(r, spec{Name: "web_breakdown", Annotations: ro, Method: "GET", Path: p + "/web/breakdown",
 		Description: "Top pages, hosts, referrers, countries, devices, browsers, os or utm for one project over a date range."},
 		h.webBreakdown)
-	mcp.AddTool(s, &mcp.Tool{Name: "app_overview", Annotations: ro,
+	expose(r, spec{Name: "app_overview", Annotations: ro, Method: "GET", Path: p + "/app/overview",
 		Description: "Daily app usage for one project: active users, screen views, sessions, duration."},
 		h.appOverview)
-	mcp.AddTool(s, &mcp.Tool{Name: "app_breakdown", Annotations: ro,
+	expose(r, spec{Name: "app_breakdown", Annotations: ro, Method: "GET", Path: p + "/app/breakdown",
 		Description: "Top screens, versions, os, devices or countries for one project's app traffic."},
 		h.appBreakdown)
-	h.registerProduct(s)
-	h.registerQuery(s)
-	h.registerManage(s)
-	h.registerGuide(s)
+	expose(r, spec{Name: "product_events", Annotations: ro, Method: "GET", Path: p + "/product/events",
+		Description: "Product events per day: count and unique users per event name, plus daily totals. Unconditional — no attribute declaration is required to see it."},
+		h.productEvents)
+	expose(r, spec{Name: "product_attributes", Annotations: ro, Method: "GET", Path: p + "/product/attributes",
+		Description: "Attribute breakdowns for product events. The system dimensions $platform and $app_version are always included; a custom key only appears once the project declares it in attributes (see update_project)."},
+		h.productAttributes)
+	expose(r, spec{Name: "retention", Annotations: ro, Method: "GET", Path: p + "/retention",
+		Description: "D1/D7/D30-style cohort curves for identified projects. Returns aggregated_through: cohorts after it are absent (refreshed 03:00 UTC), not zero. Anonymous projects have no retention by design."},
+		h.retention)
+	expose(r, spec{Name: "identities", Annotations: ro, Method: "GET", Path: p + "/identities",
+		Description: "Per-user or per-group activity with display names. This surfaces personal data on identified projects."},
+		h.identities)
+	expose(r, spec{Name: "query", Annotations: ro, Method: "POST", Path: "/api/query",
+		Description: "Escape hatch: run one read-only SELECT/WITH against the v_* views and agg_* tables. Read schema://views first for columns and caveats. Row-capped and time-limited; the connection is read-only at the driver level."},
+		h.runQuery)
+
+	expose(r, spec{Name: "create_project", Annotations: write, Method: "POST", Path: "/api/projects", Status: http.StatusCreated,
+		Description: "Create a project and (by default) its first ingest key; returns a paste-ready embed snippet (confirm the collector hostname with the user). Set skip_key to suppress the key."},
+		h.createProject)
+	expose(r, spec{Name: "update_project", Annotations: write, Method: "PATCH", Path: "/api/projects/{alias}",
+		Description: "Update a project's name, identity mode, allowed origins and/or declared product-event attributes (breakdown keys for flat-view columns and attribute rollups). Fields you omit are left unchanged (this is a merge, not a replace) — except allowed_origins, which if provided non-empty replaces the whole list; origins cannot be cleared to empty via this tool (clear origins via `twillingate config import`, an explicit empty allowed_origins list in the document). Switching to identity=identified starts storing user ids and names as given — privacy-significant, say so to the user before doing it."},
+		h.updateProject)
+	expose(r, spec{Name: "archive_project", Annotations: idem, Method: "POST", Path: "/api/projects/{alias}/archive",
+		Description: "Archive a project: ingestion stops, data and dashboards keep working, fully reversible with restore_project. There is no delete over the API — deletion requires the CLI."},
+		h.archiveProject)
+	expose(r, spec{Name: "restore_project", Annotations: idem, Method: "POST", Path: "/api/projects/{alias}/restore",
+		Description: "Restore an archived project."},
+		h.restoreProject)
+	expose(r, spec{Name: "list_ingest_keys", Annotations: ro, Method: "GET", Path: "/api/keys",
+		Description: "List ingest keys with their state, including disabled ones."},
+		h.listKeys)
+	expose(r, spec{Name: "issue_ingest_key", Annotations: write, Method: "POST", Path: p + "/keys", Status: http.StatusCreated,
+		Description: "Issue a new ingest key for a project. Ingest keys are public identifiers (they ship in page source); retirement is disable, not secrecy. Confirm the snippet's collector hostname with the user."},
+		h.issueKey)
+	expose(r, spec{Name: "disable_ingest_key", Annotations: idem, Method: "POST", Path: p + "/keys/{label}/disable",
+		Description: "Disable an ingest key by project and label; events with it are rejected within a second. Reversible."},
+		h.disableKey)
+	expose(r, spec{Name: "enable_ingest_key", Annotations: idem, Method: "POST", Path: p + "/keys/{label}/enable",
+		Description: "Re-enable a disabled ingest key."},
+		h.enableKey)
+
+	expose(r, spec{Name: "integration_guide", Annotations: ro, // MCP only
+		Description: "Tailored integration instructions for one project and platform (web, spa, server, mobile), with the project's real ingest key, collector URL, identity-mode guidance and event examples baked in. Confirm the collector hostname with the user. Call after create_project; read docs://events, docs://js-sdk and docs://ingest-api for depth."},
+		h.integrationGuide)
 }

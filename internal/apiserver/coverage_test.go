@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// ---- tools_read.go: table() and checkRange() branches not reached via
+// ---- ops_read.go: table() and checkRange() branches not reached via
 // the happy-path *Overview/*Breakdown tests ----
 
 func TestTableTruncatesErrorsAndTimesOut(t *testing.T) {
@@ -61,7 +61,7 @@ func TestCheckRangeRejectsBadDateFormat(t *testing.T) {
 	}
 }
 
-// ---- tools_manage.go: error branches and the skip_key path ----
+// ---- ops_manage.go: error branches and the skip_key path ----
 
 func TestCreateProjectSkipKey(t *testing.T) {
 	_, cs := newTestHost(t)
@@ -172,7 +172,7 @@ func TestListKeysPropagatesStoreError(t *testing.T) {
 	}
 }
 
-// ---- tools_product.go: kind/surface validation and the event filter ----
+// ---- ops_product.go: kind/surface validation and the event filter ----
 
 func TestIdentitiesRejectsBadKind(t *testing.T) {
 	_, cs := newTestHost(t)

@@ -29,7 +29,8 @@ func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *m
 		timeout: cfg.API.QueryTimeout, maxRows: cfg.API.QueryMaxRows,
 		publicURL: cfg.PublicURL, logger: logger}
 	srv := mcp.NewServer(&mcp.Implementation{Name: "twillingate", Version: "1.0.0"}, nil)
-	h.register(srv)
+	r := &registrar{mcp: srv, logger: logger}
+	h.register(r)
 	h.registerResources(srv)
 	streamable := mcp.NewStreamableHTTPHandler(
 		func(*http.Request) *mcp.Server { return srv }, nil)

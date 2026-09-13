@@ -6,7 +6,6 @@ import (
 	"fmt"
 
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // Management tools (managed-config spec §5). One authorization tier: the
@@ -38,12 +37,12 @@ type projectToolOut struct {
 	Note     string `json:"note,omitempty"`
 }
 
-func (h *host) createProject(ctx context.Context, _ *mcp.CallToolRequest, in projectIn) (*mcp.CallToolResult, projectToolOut, error) {
-	p, err := h.ops.CreateProject(ctx, "mcp", manage.ProjectSpec{
+func (h *host) createProject(ctx context.Context, in projectIn) (projectToolOut, error) {
+	p, err := h.ops.CreateProject(ctx, actorFrom(ctx), manage.ProjectSpec{
 		Alias: in.Alias, Name: in.Name, Identity: in.Identity,
 		AllowedOrigins: in.AllowedOrigins, Attributes: in.Attributes})
 	if err != nil {
-		return nil, projectToolOut{}, err
+		return projectToolOut{}, err
 	}
 	out := projectToolOut{Alias: in.Alias}
 	if p != nil {
@@ -52,9 +51,9 @@ func (h *host) createProject(ctx context.Context, _ *mcp.CallToolRequest, in pro
 	}
 	// by default the quickstart story is one round trip to paste-ready
 	if !in.SkipKey {
-		key, err := h.ops.IssueIngestKey(ctx, "mcp", in.Alias, "default")
+		key, err := h.ops.IssueIngestKey(ctx, actorFrom(ctx), in.Alias, "default")
 		if err != nil {
-			return nil, out, fmt.Errorf("project created but key issue failed: %w", err)
+			return out, fmt.Errorf("project created but key issue failed: %w", err)
 		}
 		out.Key = key
 		// p should never be nil here (we just created it), but a
@@ -68,7 +67,7 @@ func (h *host) createProject(ctx context.Context, _ *mcp.CallToolRequest, in pro
 			}
 		}
 	}
-	return nil, out, nil
+	return out, nil
 }
 
 // updateProject merges rather than replaces (binding ruling, Task 9):
@@ -83,10 +82,10 @@ func (h *host) createProject(ctx context.Context, _ *mcp.CallToolRequest, in pro
 // provided" from "explicitly empty" once decoded into a nil-or-empty
 // slice via omitempty), so there is no way to clear origins to empty
 // through this tool — see the tool description.
-func (h *host) updateProject(ctx context.Context, _ *mcp.CallToolRequest, in projectIn) (*mcp.CallToolResult, projectToolOut, error) {
+func (h *host) updateProject(ctx context.Context, in projectIn) (projectToolOut, error) {
 	cur := h.reg.Snapshot(ctx).Project(in.Alias)
 	if cur == nil {
-		return nil, projectToolOut{}, h.unknownProjectErr(ctx, in.Alias)
+		return projectToolOut{}, h.unknownProjectErr(ctx, in.Alias)
 	}
 	spec := manage.ProjectSpec{
 		Alias:          in.Alias,
@@ -108,11 +107,11 @@ func (h *host) updateProject(ctx context.Context, _ *mcp.CallToolRequest, in pro
 	if len(in.AllowedOrigins) > 0 {
 		spec.AllowedOrigins = in.AllowedOrigins
 	}
-	p, err := h.ops.UpdateProject(ctx, "mcp", spec)
+	p, err := h.ops.UpdateProject(ctx, actorFrom(ctx), spec)
 	if err != nil {
-		return nil, projectToolOut{}, h.projectErr(ctx, in.Alias, err)
+		return projectToolOut{}, h.projectErr(ctx, in.Alias, err)
 	}
-	return nil, projectToolOut{Alias: p.Alias, Identity: p.Identity}, nil
+	return projectToolOut{Alias: p.Alias, Identity: p.Identity}, nil
 }
 
 // projectErr rewrites a not-found refusal into the recoverable form
@@ -133,18 +132,18 @@ type okOut struct {
 	Status string `json:"status"`
 }
 
-func (h *host) archiveProject(ctx context.Context, _ *mcp.CallToolRequest, in aliasIn) (*mcp.CallToolResult, okOut, error) {
-	if err := h.ops.ArchiveProject(ctx, "mcp", in.Alias); err != nil {
-		return nil, okOut{}, h.projectErr(ctx, in.Alias, err)
+func (h *host) archiveProject(ctx context.Context, in aliasIn) (okOut, error) {
+	if err := h.ops.ArchiveProject(ctx, actorFrom(ctx), in.Alias); err != nil {
+		return okOut{}, h.projectErr(ctx, in.Alias, err)
 	}
-	return nil, okOut{Status: "archived; ingestion rejected, data kept, reversible with restore_project"}, nil
+	return okOut{Status: "archived; ingestion rejected, data kept, reversible with restore_project"}, nil
 }
 
-func (h *host) restoreProject(ctx context.Context, _ *mcp.CallToolRequest, in aliasIn) (*mcp.CallToolResult, okOut, error) {
-	if err := h.ops.RestoreProject(ctx, "mcp", in.Alias); err != nil {
-		return nil, okOut{}, err
+func (h *host) restoreProject(ctx context.Context, in aliasIn) (okOut, error) {
+	if err := h.ops.RestoreProject(ctx, actorFrom(ctx), in.Alias); err != nil {
+		return okOut{}, err
 	}
-	return nil, okOut{Status: "restored"}, nil
+	return okOut{Status: "restored"}, nil
 }
 
 type keyIn struct {
@@ -158,10 +157,10 @@ type keyOut struct {
 	Note    string `json:"note,omitempty"`
 }
 
-func (h *host) issueKey(ctx context.Context, _ *mcp.CallToolRequest, in keyIn) (*mcp.CallToolResult, keyOut, error) {
-	key, err := h.ops.IssueIngestKey(ctx, "mcp", in.Project, in.Label)
+func (h *host) issueKey(ctx context.Context, in keyIn) (keyOut, error) {
+	key, err := h.ops.IssueIngestKey(ctx, actorFrom(ctx), in.Project, in.Label)
 	if err != nil {
-		return nil, keyOut{}, h.projectErr(ctx, in.Project, err)
+		return keyOut{}, h.projectErr(ctx, in.Project, err)
 	}
 	out := keyOut{Key: key, Status: "issued"}
 	// Project should still exist (the key issue above would have failed
@@ -173,21 +172,21 @@ func (h *host) issueKey(ctx context.Context, _ *mcp.CallToolRequest, in keyIn) (
 			out.Note = "PUBLIC_URL is not configured; the snippet uses the placeholder " + manage.SnippetPlaceholderBase + " — ask the operator for the collector's public URL"
 		}
 	}
-	return nil, out, nil
+	return out, nil
 }
 
-func (h *host) disableKey(ctx context.Context, _ *mcp.CallToolRequest, in keyIn) (*mcp.CallToolResult, okOut, error) {
-	if err := h.ops.DisableIngestKey(ctx, "mcp", in.Project, in.Label); err != nil {
-		return nil, okOut{}, err
+func (h *host) disableKey(ctx context.Context, in keyIn) (okOut, error) {
+	if err := h.ops.DisableIngestKey(ctx, actorFrom(ctx), in.Project, in.Label); err != nil {
+		return okOut{}, err
 	}
-	return nil, okOut{Status: "disabled; reversible with enable_ingest_key"}, nil
+	return okOut{Status: "disabled; reversible with enable_ingest_key"}, nil
 }
 
-func (h *host) enableKey(ctx context.Context, _ *mcp.CallToolRequest, in keyIn) (*mcp.CallToolResult, okOut, error) {
-	if err := h.ops.EnableIngestKey(ctx, "mcp", in.Project, in.Label); err != nil {
-		return nil, okOut{}, err
+func (h *host) enableKey(ctx context.Context, in keyIn) (okOut, error) {
+	if err := h.ops.EnableIngestKey(ctx, actorFrom(ctx), in.Project, in.Label); err != nil {
+		return okOut{}, err
 	}
-	return nil, okOut{Status: "enabled"}, nil
+	return okOut{Status: "enabled"}, nil
 }
 
 type listKeysIn struct {
@@ -200,10 +199,10 @@ type keyRow struct {
 	Project, Label, Key, State string
 }
 
-func (h *host) listKeys(ctx context.Context, _ *mcp.CallToolRequest, in listKeysIn) (*mcp.CallToolResult, listKeysOut, error) {
+func (h *host) listKeys(ctx context.Context, in listKeysIn) (listKeysOut, error) {
 	_, ks, err := h.ops.St.LoadRegistry(ctx)
 	if err != nil {
-		return nil, listKeysOut{}, err
+		return listKeysOut{}, err
 	}
 	var out listKeysOut
 	for _, k := range ks {
@@ -216,36 +215,5 @@ func (h *host) listKeys(ctx context.Context, _ *mcp.CallToolRequest, in listKeys
 		}
 		out.Keys = append(out.Keys, keyRow{k.Project, k.Label, k.Key, state})
 	}
-	return nil, out, nil
-}
-
-func (h *host) registerManage(s *mcp.Server) {
-	no := false // DestructiveHint is *bool in the SDK; nothing here destroys
-	write := &mcp.ToolAnnotations{DestructiveHint: &no}
-	idem := &mcp.ToolAnnotations{DestructiveHint: &no, IdempotentHint: true}
-	mcp.AddTool(s, &mcp.Tool{Name: "create_project", Annotations: write,
-		Description: "Create a project and (by default) its first ingest key; returns a paste-ready embed snippet (confirm the collector hostname with the user). Set skip_key to suppress the key."},
-		h.createProject)
-	mcp.AddTool(s, &mcp.Tool{Name: "update_project", Annotations: write,
-		Description: "Update a project's name, identity mode, allowed origins and/or declared product-event attributes (breakdown keys for flat-view columns and attribute rollups). Fields you omit are left unchanged (this is a merge, not a replace) — except allowed_origins, which if provided non-empty replaces the whole list; origins cannot be cleared to empty via this tool (clear origins via `twillingate config import`, an explicit empty allowed_origins list in the document). Switching to identity=identified starts storing user ids and names as given — privacy-significant, say so to the user before doing it."},
-		h.updateProject)
-	mcp.AddTool(s, &mcp.Tool{Name: "archive_project", Annotations: idem,
-		Description: "Archive a project: ingestion stops, data and dashboards keep working, fully reversible with restore_project. There is no delete over MCP — deletion requires the CLI."},
-		h.archiveProject)
-	mcp.AddTool(s, &mcp.Tool{Name: "restore_project", Annotations: idem,
-		Description: "Restore an archived project."},
-		h.restoreProject)
-	mcp.AddTool(s, &mcp.Tool{Name: "issue_ingest_key", Annotations: write,
-		Description: "Issue a new ingest key for a project. Ingest keys are public identifiers (they ship in page source); retirement is disable, not secrecy. Confirm the snippet's collector hostname with the user."},
-		h.issueKey)
-	mcp.AddTool(s, &mcp.Tool{Name: "disable_ingest_key", Annotations: idem,
-		Description: "Disable an ingest key by project and label; events with it are rejected within a second. Reversible."},
-		h.disableKey)
-	mcp.AddTool(s, &mcp.Tool{Name: "enable_ingest_key", Annotations: idem,
-		Description: "Re-enable a disabled ingest key."},
-		h.enableKey)
-	mcp.AddTool(s, &mcp.Tool{Name: "list_ingest_keys",
-		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
-		Description: "List ingest keys with their state, including disabled ones."},
-		h.listKeys)
+	return out, nil
 }

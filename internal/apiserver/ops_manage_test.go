@@ -31,6 +31,24 @@ func TestCreateProjectToolReturnsSnippet(t *testing.T) {
 	}
 }
 
+// TestMCPWriteRecordsActor: a management call over MCP is audited as
+// actor "mcp", taken from the context the MCP edge sets.
+func TestMCPWriteRecordsActor(t *testing.T) {
+	h, cs := newTestHost(t)
+	if res := callTool(t, cs, "create_project", map[string]any{
+		"alias": "audited", "name": "Audited", "skip_key": true}); res.IsError {
+		t.Fatalf("create: %s", textOf(res))
+	}
+	var actor string
+	if err := h.db.QueryRowContext(context.Background(),
+		"SELECT actor FROM audit_log WHERE action='project.create' AND subject=?", "audited").Scan(&actor); err != nil {
+		t.Fatal(err)
+	}
+	if actor != "mcp" {
+		t.Errorf("audit actor = %q, want mcp", actor)
+	}
+}
+
 func TestArchiveRestoreTools(t *testing.T) {
 	_, cs := newTestHost(t)
 	if res := callTool(t, cs, "archive_project", map[string]any{"alias": "docs"}); res.IsError {

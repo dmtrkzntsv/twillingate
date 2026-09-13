@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"io"
 	"log/slog"
+	"net/http"
 	"testing"
 	"time"
 
@@ -108,7 +109,7 @@ func newTestHost(t *testing.T) (*host, *mcp.ClientSession) {
 		timeout:   5 * time.Second, maxRows: 1000, logger: logger}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "analytics", Version: "test"}, nil)
-	h.register(srv)
+	h.register(&registrar{mcp: srv, logger: logger})
 	h.registerResources(srv)
 	ct, stEnd := mcp.NewInMemoryTransports()
 	if _, err := srv.Connect(ctx, stEnd, nil); err != nil {
@@ -120,6 +121,19 @@ func newTestHost(t *testing.T) (*host, *mcp.ClientSession) {
 	}
 	t.Cleanup(func() { cs.Close() })
 	return h, cs
+}
+
+// newTestRegistrar registers h's operations on a fresh MCP server and REST
+// mux, the way Build does, so tests can inspect specs and hit routes.
+func newTestRegistrar(t *testing.T, h *host) *registrar {
+	t.Helper()
+	r := &registrar{
+		mcp:    mcp.NewServer(&mcp.Implementation{Name: "twillingate", Version: "test"}, nil),
+		rest:   http.NewServeMux(),
+		logger: slog.New(slog.DiscardHandler),
+	}
+	h.register(r)
+	return r
 }
 
 // rawExec reaches the underlying *sql.DB of the sqlite store for seeding.

@@ -156,18 +156,10 @@ func TestDocumentCoversEveryWebDimension(t *testing.T) {
 // the tools actually registered. A tool nobody documents is one an agent
 // never reaches for; a documented tool that does not exist is a failed call.
 func TestDocumentNamesEveryTool(t *testing.T) {
+	h, _ := newTestHost(t)
 	registered := map[string]bool{}
-	for _, f := range []string{
-		"tools_read.go", "tools_product.go", "tools_manage.go",
-		"query.go", "guide.go",
-	} {
-		src := readSource(t, f)
-		for _, m := range regexp.MustCompile(`mcp\.Tool\{Name:\s*"([a-z_]+)"`).FindAllStringSubmatch(src, -1) {
-			registered[m[1]] = true
-		}
-	}
-	if len(registered) < 15 {
-		t.Fatalf("extracted only %d tools — extraction regexp broken?", len(registered))
+	for _, s := range newTestRegistrar(t, h).specs {
+		registered[s.Name] = true
 	}
 	// Scoped to the tool tables and the "Managing" list, not the whole
 	// document: `identities` is also a table name in the views prose, so a

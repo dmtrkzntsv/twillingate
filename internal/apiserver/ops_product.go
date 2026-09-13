@@ -2,8 +2,6 @@ package apiserver
 
 import (
 	"context"
-
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 type productEventsIn struct {
@@ -21,41 +19,41 @@ type productEventsOut struct {
 	Totals tableOut `json:"totals"`
 }
 
-func (h *host) productEvents(ctx context.Context, _ *mcp.CallToolRequest, in productEventsIn) (*mcp.CallToolResult, productEventsOut, error) {
+func (h *host) productEvents(ctx context.Context, in productEventsIn) (productEventsOut, error) {
 	if err := h.checkRange(ctx, in.rangeIn); err != nil {
-		return nil, productEventsOut{}, err
+		return productEventsOut{}, err
 	}
 	if in.Event != "" {
 		events, err := h.table(ctx, `SELECT day, event_name, count, unique_users
 			FROM v_product_daily WHERE project=? AND day BETWEEN ? AND ? AND event_name=?
 			ORDER BY day`, in.Project, in.From, in.To, in.Event)
 		if err != nil {
-			return nil, productEventsOut{}, err
+			return productEventsOut{}, err
 		}
-		return nil, productEventsOut{Events: events}, nil
+		return productEventsOut{Events: events}, nil
 	}
 	events, err := h.table(ctx, `SELECT day, event_name, count, unique_users
 		FROM v_product_daily WHERE project=? AND day BETWEEN ? AND ?
 		ORDER BY day, count DESC`, in.Project, in.From, in.To)
 	if err != nil {
-		return nil, productEventsOut{}, err
+		return productEventsOut{}, err
 	}
 	totals, err := h.table(ctx, `SELECT day, total_events, active_users
 		FROM v_product_totals WHERE project=? AND day BETWEEN ? AND ? ORDER BY day`,
 		in.Project, in.From, in.To)
 	if err != nil {
-		return nil, productEventsOut{}, err
+		return productEventsOut{}, err
 	}
-	return nil, productEventsOut{Events: events, Totals: totals}, nil
+	return productEventsOut{Events: events, Totals: totals}, nil
 }
 
-func (h *host) productAttributes(ctx context.Context, _ *mcp.CallToolRequest, in productEventsIn) (*mcp.CallToolResult, tableOut, error) {
+func (h *host) productAttributes(ctx context.Context, in productEventsIn) (tableOut, error) {
 	if err := h.checkRange(ctx, in.rangeIn); err != nil {
-		return nil, tableOut{}, err
+		return tableOut{}, err
 	}
 	p := h.reg.Snapshot(ctx).Project(in.Project)
 	if p == nil {
-		return nil, tableOut{}, h.unknownProjectErr(ctx, in.Project)
+		return tableOut{}, h.unknownProjectErr(ctx, in.Project)
 	}
 	q := `SELECT day, event_name, attr_key, attr_value, count, unique_users
 		FROM v_product_attrs WHERE project=? AND day BETWEEN ? AND ?`
@@ -65,7 +63,7 @@ func (h *host) productAttributes(ctx context.Context, _ *mcp.CallToolRequest, in
 		args = append(args, in.Event)
 	}
 	out, err := h.table(ctx, q+` ORDER BY day, count DESC`, args...)
-	return nil, out, err
+	return out, err
 }
 
 type retentionIn struct {
@@ -78,26 +76,26 @@ type retentionOut struct {
 	AggregatedThrough string `json:"aggregated_through"`
 }
 
-func (h *host) retention(ctx context.Context, _ *mcp.CallToolRequest, in retentionIn) (*mcp.CallToolResult, retentionOut, error) {
+func (h *host) retention(ctx context.Context, in retentionIn) (retentionOut, error) {
 	if err := h.checkRange(ctx, in.rangeIn); err != nil {
-		return nil, retentionOut{}, err
+		return retentionOut{}, err
 	}
 	if in.Surface != "web" && in.Surface != "app" {
-		return nil, retentionOut{}, invalidf("surface must be web or app, got %q", in.Surface)
+		return retentionOut{}, invalidf("surface must be web or app, got %q", in.Surface)
 	}
 	p := h.reg.Snapshot(ctx).Project(in.Project)
 	if p == nil {
-		return nil, retentionOut{}, h.unknownProjectErr(ctx, in.Project)
+		return retentionOut{}, h.unknownProjectErr(ctx, in.Project)
 	}
 	if p.Identity != "identified" {
-		return nil, retentionOut{}, invalidf(
+		return retentionOut{}, invalidf(
 			"project %q is anonymous: retention is undefined because visitor ids rotate daily; it requires the project setting identity=identified (a privacy-significant change — see the README's GDPR section)", in.Project)
 	}
 	tbl, err := h.table(ctx, `SELECT cohort_day, day_offset, actors, cohort_size
 		FROM v_retention WHERE project=? AND surface=? AND cohort_day BETWEEN ? AND ?
 		ORDER BY cohort_day, day_offset`, in.Project, in.Surface, in.From, in.To)
 	if err != nil {
-		return nil, retentionOut{}, err
+		return retentionOut{}, err
 	}
 	out := retentionOut{tableOut: tbl}
 	// v_retention has no live half: report how fresh it is so recent
@@ -110,7 +108,7 @@ func (h *host) retention(ctx context.Context, _ *mcp.CallToolRequest, in retenti
 	if out.Note == "" {
 		out.Note = "retention refreshes at the 03:00 UTC daily pass; cohorts after aggregated_through are absent, not zero"
 	}
-	return nil, out, nil
+	return out, nil
 }
 
 type identitiesIn struct {
@@ -119,12 +117,12 @@ type identitiesIn struct {
 	Limit int    `json:"limit,omitempty" jsonschema:"top-N by activity, default 50"`
 }
 
-func (h *host) identities(ctx context.Context, _ *mcp.CallToolRequest, in identitiesIn) (*mcp.CallToolResult, tableOut, error) {
+func (h *host) identities(ctx context.Context, in identitiesIn) (tableOut, error) {
 	if err := h.checkRange(ctx, in.rangeIn); err != nil {
-		return nil, tableOut{}, err
+		return tableOut{}, err
 	}
 	if in.Kind != "user" && in.Kind != "group" {
-		return nil, tableOut{}, invalidf("kind must be user or group, got %q", in.Kind)
+		return tableOut{}, invalidf("kind must be user or group, got %q", in.Kind)
 	}
 	limit := in.Limit
 	if limit <= 0 {
@@ -138,21 +136,5 @@ func (h *host) identities(ctx context.Context, _ *mcp.CallToolRequest, in identi
 		GROUP BY d.id, i.name
 		ORDER BY hits+views+events DESC LIMIT ?`,
 		in.Project, in.Kind, in.From, in.To, limit)
-	return nil, out, err
-}
-
-func (h *host) registerProduct(s *mcp.Server) {
-	ro := &mcp.ToolAnnotations{ReadOnlyHint: true}
-	mcp.AddTool(s, &mcp.Tool{Name: "product_events", Annotations: ro,
-		Description: "Product events per day: count and unique users per event name, plus daily totals. Unconditional — no attribute declaration is required to see it."},
-		h.productEvents)
-	mcp.AddTool(s, &mcp.Tool{Name: "product_attributes", Annotations: ro,
-		Description: "Attribute breakdowns for product events. The system dimensions $platform and $app_version are always included; a custom key only appears once the project declares it in attributes (see update_project)."},
-		h.productAttributes)
-	mcp.AddTool(s, &mcp.Tool{Name: "retention", Annotations: ro,
-		Description: "D1/D7/D30-style cohort curves for identified projects. Returns aggregated_through: cohorts after it are absent (refreshed 03:00 UTC), not zero. Anonymous projects have no retention by design."},
-		h.retention)
-	mcp.AddTool(s, &mcp.Tool{Name: "identities", Annotations: ro,
-		Description: "Per-user or per-group activity with display names. This surfaces personal data on identified projects."},
-		h.identities)
+	return out, err
 }

@@ -7,7 +7,6 @@ import (
 
 	"github.com/dmtrkzntsv/twillingate/internal/config"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // integration_guide stitches the project's live registry state (keys,
@@ -25,14 +24,14 @@ type guideOut struct {
 
 var guidePlatforms = map[string]bool{"web": true, "spa": true, "server": true, "mobile": true}
 
-func (h *host) integrationGuide(ctx context.Context, _ *mcp.CallToolRequest, in guideIn) (*mcp.CallToolResult, guideOut, error) {
+func (h *host) integrationGuide(ctx context.Context, in guideIn) (guideOut, error) {
 	if !guidePlatforms[in.Platform] {
-		return nil, guideOut{}, invalidf("unknown platform %q; valid: mobile, server, spa, web", in.Platform)
+		return guideOut{}, invalidf("unknown platform %q; valid: mobile, server, spa, web", in.Platform)
 	}
 	s := h.reg.Snapshot(ctx)
 	p := s.Project(in.Project)
 	if p == nil {
-		return nil, guideOut{}, h.unknownProjectErr(ctx, in.Project)
+		return guideOut{}, h.unknownProjectErr(ctx, in.Project)
 	}
 
 	base := h.publicURL
@@ -105,12 +104,5 @@ func (h *host) integrationGuide(ctx context.Context, _ *mcp.CallToolRequest, in 
 		b.WriteString("No product attributes declared: events are counted per day, but no\nattribute breakdowns are exposed — call update_project with e.g.\n{\"attributes\":[\"plan\"]} to declare which keys to break down.\n")
 	}
 	b.WriteString("\nDeeper reference: docs://events (semantics), docs://js-sdk (snippet API),\ndocs://ingest-api (wire format, batching, retries, offline replay).\n")
-	return nil, guideOut{Markdown: b.String()}, nil
-}
-
-func (h *host) registerGuide(s *mcp.Server) {
-	mcp.AddTool(s, &mcp.Tool{Name: "integration_guide",
-		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
-		Description: "Tailored integration instructions for one project and platform (web, spa, server, mobile), with the project's real ingest key, collector URL, identity-mode guidance and event examples baked in. Confirm the collector hostname with the user. Call after create_project; read docs://events, docs://js-sdk and docs://ingest-api for depth."},
-		h.integrationGuide)
+	return guideOut{Markdown: b.String()}, nil
 }
