@@ -111,6 +111,9 @@ Authorization server metadata:
 }
 ```
 
+Served from a local struct: `oauthex.AuthServerMeta` has no `omitempty` on
+`jwks_uri` and would emit an empty one.
+
 None of these paths collide with the ingest routes (`/`, `/api/events`,
 `/js/*`, `/healthz`); `ServeMux` prefers the more specific patterns.
 
@@ -150,8 +153,9 @@ A candidate URI matches an allowlist entry when, after parsing both:
 - `localhost`, `127.0.0.1` and `[::1]` are distinct hosts;
 - the candidate carries no fragment.
 
-The same function runs at registration, at `GET /oauth/authorize`, and at
-`POST /oauth/token`.
+The same function runs at registration and at `GET /oauth/authorize`. At
+`POST /oauth/token` the `redirect_uri` must equal the code's byte for byte
+(RFC 6749 §4.1.3).
 
 ## 6. The login page — `/oauth/authorize`
 
@@ -262,8 +266,9 @@ kind  ∈ {client, form, code, access, refresh}
 Length prefixes keep distinct `(token, password)` pairs from producing the
 same bytes. The keys depend on nothing but the configuration, so restarts,
 redeploys and a second process computing them independently all agree.
-`wrapAuth` and `RegisterOn` each derive them from `cfg`; no new parameters
-cross the `app` boundary.
+`wrapAuth` and `RegisterOn` each derive them from `cfg`. `RegisterOn` takes
+the logger the login server needs, one new argument at `app`'s shared-mux
+call.
 
 **Format.** Compact JWS via `golang-jwt`, parsed with
 `jwt.WithValidMethods([]string{"HS256"})`; `none` and every other algorithm
@@ -274,13 +279,17 @@ whose asymmetric-only allowlist stays as it is.
 
 | Kind | Claims | Lifetime |
 | --- | --- | --- |
-| `client` | `redirect_uris`, `client_name`, `iat` | none |
-| `form` | `client_id`, `redirect_uri`, `code_challenge`, `state`, `exp` | 10 min |
+| `client` | `redirect_uris`, `client_name`, `iat`, `jti` | none |
+| `form` | `client_id`, `client_name`, `redirect_uri`, `code_challenge`, `state`, `exp` | 10 min |
 | `code` | `client_id`, `redirect_uri`, `code_challenge`, `jti`, `exp` | 60 s, single use |
 | `access` | `iss`, `aud` (resource URL), `sub: "mcp"`, `client_id`, `iat`, `exp`, `jti` | 1 h |
 | `refresh` | `aud` (resource URL), `client_id`, `iat`, `exp`, `jti` | 30 days |
 
-`jti` is 16 random bytes, base64url. No clock leeway: one server, one clock.
+`jti` is `crypto/rand.Text()`: 26 base32 characters, 130 bits. On a
+`client_id` it keeps two identical registrations in the same second from
+yielding the same identifier. `client_name` rides in the form value so the
+page can be shown again after a wrong password. No clock leeway: one
+server, one clock.
 
 **Verifying `/mcp`.** The `token` verifier:
 
@@ -362,14 +371,16 @@ Accepted residual risks:
 
 ## 13. Code layout
 
-No new package, dependency or environment variable; `internal/app` is
-unchanged.
+No new package, dependency or environment variable; `internal/app` passes
+`logger` to `RegisterOn`.
 
 | File | Change |
 | --- | --- |
 | `internal/config/config.go` | §3 parsing and validation; `MCPConfig.RedirectURIs`, `MCPConfig.Password`; doc comment and error strings list the new DSN form |
 | `internal/mcpserver/oauth_keys.go` | HKDF derivation; sign and verify per kind |
-| `internal/mcpserver/oauth.go` | Metadata, register, authorize, token handlers; redirect matching; used-code set; limiter |
+| `internal/mcpserver/oauth.go` | Metadata, registration, redirect matching, the `/mcp` verifier |
+| `internal/mcpserver/oauth_authorize.go` | Login page GET and POST; failure limiter |
+| `internal/mcpserver/oauth_token.go` | Token endpoint; used-code set; PKCE check |
 | `internal/mcpserver/oauth_page.html` | Login and error page, embedded |
 | `internal/mcpserver/server.go` | `RegisterOn` mounts §4 routes; `wrapAuth`'s `token` case uses §8 |
 
