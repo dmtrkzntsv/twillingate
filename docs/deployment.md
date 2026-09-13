@@ -88,14 +88,14 @@ The service binds to loopback by default, deliberately.
 ### One collector, several hostnames
 
 The collector never checks the `Host` header, so any number of DNS names
-can be proxied to the same port — `t.kuznetsov.dev` for one project,
-`t.econumo.com` for another, so a customer's site never references your
+can be proxied to the same port — `t.example.com` for one project,
+`t.example.org` for another, so a customer's site never references your
 own domain. Nothing is configured per hostname on the server: origins are
 checked per project (`allowed_origins`, the *customer's* site), and the SDK
 posts events to whatever origin it was loaded from.
 
 ```
-t.kuznetsov.dev, t.econumo.com {
+t.example.com, t.example.org {
     reverse_proxy 127.0.0.1:8080
 }
 ```

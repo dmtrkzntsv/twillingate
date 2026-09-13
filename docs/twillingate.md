@@ -76,7 +76,7 @@ the project's live key and identity mode already filled in — reach for it
 before hand-assembling a snippet.
 
 **Confirm the collector URL before pasting.** One collector can sit behind
-several hostnames — `t.kuznetsov.dev` and `t.econumo.com` proxied to the
+several hostnames — `t.example.com` and `t.example.org` proxied to the
 same instance — and which one a project uses is a per-site choice the
 server does not record. Snippets and `integration_guide` are built from the
 server-wide `PUBLIC_URL`, so an agent setting up a project must ask which
