@@ -25,7 +25,12 @@ ARG TARGETOS
 ARG TARGETARCH
 ARG TARGETVARIANT
 # GOARM takes the bare number ("7"), TARGETVARIANT the tag form ("v7").
-RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} GOARM=${TARGETVARIANT#v} \
+# `COPY . .` changes on every commit, so this layer never comes from the layer
+# cache; the build cache mount is what makes it incremental. One mount serves
+# every target arch (the cache is keyed by GOARCH and safe to share), and
+# release.yml carries it between runs, since a CI builder starts empty.
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} GOARM=${TARGETVARIANT#v} \
     go build -trimpath -ldflags "-s -w -X github.com/dmtrkzntsv/twillingate/internal/version.Version=${VERSION}" \
     -o /out/twillingate ./cmd/twillingate
 

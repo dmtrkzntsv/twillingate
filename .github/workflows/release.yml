@@ -45,7 +45,10 @@ jobs:
             go-${{ hashFiles('go.sum') }}-
             go-
       - run: make check
-      - run: make dist
+      # VERSION explicitly: the Makefile default is `git describe`, and the
+      # tag does not exist yet, so the binaries would report the previous
+      # tag plus a commit suffix (v26.913.30-1-gd76e64b in v26.913.31).
+      - run: make dist VERSION=${{ steps.tag.outputs.tag }}
       # The tag has to exist on the remote before the release points at it.
       - name: tag
         run: |
@@ -72,7 +75,28 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
+      - id: buildx
+        uses: docker/setup-buildx-action@v3
+      # The gha layer cache below skips everything up to `COPY . .`, but the
+      # go build after it reruns on every commit, and from a cold compiler
+      # cache it cost ~60s. The Dockerfile mounts /root/.cache/go-build; this
+      # pair restores that mount from the previous release before the build
+      # and saves it back afterwards (post steps run in reverse, so the dance
+      # extracts before actions/cache uploads). Not the release job's Go
+      # cache: setup-go and golang:1.25-alpine resolve different patch
+      # toolchains, so none of its entries would match. Keyed on the sha like
+      # the Go caches, so every release saves and restores the newest.
+      - id: go-build-cache
+        uses: actions/cache@v4
+        with:
+          path: docker-go-build
+          key: docker-go-build-${{ github.sha }}
+          restore-keys: docker-go-build-
+      - uses: reproducible-containers/buildkit-cache-dance@5422eac04292c961a382e0f584ea0f03ad9da723 # v3.4.0
+        with:
+          builder: ${{ steps.buildx.outputs.name }}
+          cache-map: '{"docker-go-build": "/root/.cache/go-build"}'
+          skip-extraction: ${{ steps.go-build-cache.outputs.cache-hit }}
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -101,7 +125,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
+      - id: buildx
+        uses: docker/setup-buildx-action@v3
+      # Restore-only: amd64 and arm64 are a subset of the arches the
+      # twillingate job compiles, so its cache (from the previous release,
+      # as the two run in parallel) covers this build and one saved copy
+      # per release is enough.
+      - uses: actions/cache/restore@v4
+        with:
+          path: docker-go-build
+          key: docker-go-build-${{ github.sha }}
+          restore-keys: docker-go-build-
+      - uses: reproducible-containers/buildkit-cache-dance@5422eac04292c961a382e0f584ea0f03ad9da723 # v3.4.0
+        with:
+          builder: ${{ steps.buildx.outputs.name }}
+          cache-map: '{"docker-go-build": "/root/.cache/go-build"}'
+          skip-extraction: true
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
