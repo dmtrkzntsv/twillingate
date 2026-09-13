@@ -83,8 +83,15 @@ func (s *Server) Counters() *keyCounters { return s.counters }
 
 func New(cfg *config.Config, reg *manage.Registry, q Enqueuer, g geo.Provider, salt Salt, names NameStore, logger *slog.Logger) *Server {
 	s := &Server{cfg: cfg, reg: reg, queue: q, geo: g, salt: salt, names: names,
-		counters: newKeyCounters(), logger: logger}
-	mux := http.NewServeMux()
+		counters: newKeyCounters(), logger: logger, mux: http.NewServeMux()}
+	s.Mount(s.mux)
+	return s
+}
+
+// Mount registers the ingest surface's routes on mux: its own when the
+// surface has a listener to itself, the shared one beside the API
+// otherwise.
+func (s *Server) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("POST /ingest/events", s.handleEvents)
 	mux.HandleFunc("OPTIONS /ingest/events", s.handlePreflight)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -92,8 +99,6 @@ func New(cfg *config.Config, reg *manage.Registry, q Enqueuer, g geo.Provider, s
 		w.Write([]byte(`{"status":"ok"}`))
 	})
 	s.registerScript(mux)
-	s.mux = mux
-	return s
 }
 
 // originAllowed reports whether the request origin is allowed for the

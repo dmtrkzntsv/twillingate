@@ -195,7 +195,9 @@ func e2eHandler(t *testing.T, dsn string, shared bool) http.Handler {
 	}
 	t.Cleanup(func() { closeDB() })
 	mux := http.NewServeMux()
-	mux.Handle("/", http.NotFoundHandler()) // the ingest surface's catch-all
+	// Stand-in for the ingest surface's own /healthz, which RegisterOn
+	// omits (withHealthz=false) when the mux is shared.
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	RegisterOn(mux, protected, cfg, false, logger)
 	return mux
 }

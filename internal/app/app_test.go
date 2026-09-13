@@ -249,11 +249,11 @@ func TestServeRestartsOnExistingDatabase(t *testing.T) {
 	}
 }
 
-// mcpTestConfig is testConfig plus the MCP surface's env: token auth mode
+// apiTestConfig is testConfig plus the API surface's env: token auth mode
 // so a request with no bearer token is a deterministic 401, and (when
-// mcpAddr is non-empty) a second listener address for the split-listener
+// apiAddr is non-empty) a second listener address for the split-listener
 // sub-run.
-func mcpTestConfig(t *testing.T, addr, dbPath, mcpAddr string) *config.Config {
+func apiTestConfig(t *testing.T, addr, dbPath, apiAddr string) *config.Config {
 	t.Helper()
 	seedProject(t, dbPath,
 		manage.ProjectSpec{Alias: "app", Name: "App", AllowedOrigins: []string{"https://app.com"}},
@@ -266,13 +266,13 @@ func mcpTestConfig(t *testing.T, addr, dbPath, mcpAddr string) *config.Config {
 		"BUFFER_CAPACITY":         "100",
 		"API_AUTH_DSN":            "token://ar_apptest",
 	}
-	if mcpAddr != "" {
-		vars["API_ADDR"] = mcpAddr
+	if apiAddr != "" {
+		vars["API_ADDR"] = apiAddr
 	}
 	return configtest.Load(t, vars)
 }
 
-// Spec §3.2/Task 21: -api and -mcp together share one listener when
+// Spec §3.2/Task 21: -ingest and -api together share one listener when
 // API_ADDR equals INGEST_ADDR, and use two listeners otherwise. Both
 // arrangements must serve both surfaces correctly and shut down cleanly.
 func TestServeSharedListenerServesBothSurfaces(t *testing.T) {
@@ -314,31 +314,31 @@ func TestServeSharedListenerServesBothSurfaces(t *testing.T) {
 			}
 		}
 
-		postMCP := func(addr string) *http.Response {
+		getAPI := func(addr string) *http.Response {
 			t.Helper()
-			resp, err := http.Post("http://"+addr+"/mcp", "application/json", strings.NewReader(`{}`))
+			resp, err := http.Get("http://" + addr + "/api/projects")
 			if err != nil {
-				t.Fatalf("mcp post to %s: %v", addr, err)
+				t.Fatalf("GET /api/projects on %s: %v", addr, err)
 			}
 			return resp
 		}
 
 		if cfg.API.Addr == cfg.IngestAddr {
-			resp := postMCP(cfg.IngestAddr)
+			resp := getAPI(cfg.IngestAddr)
 			resp.Body.Close()
 			if resp.StatusCode != 401 {
-				t.Errorf("POST /mcp (shared, no token) = %d, want 401", resp.StatusCode)
+				t.Errorf("GET /api/projects (shared, no token) = %d, want 401", resp.StatusCode)
 			}
 		} else {
-			resp := postMCP(cfg.IngestAddr)
+			resp := getAPI(cfg.IngestAddr)
 			resp.Body.Close()
 			if resp.StatusCode != 404 {
-				t.Errorf("POST /mcp on ingest port %s = %d, want 404", cfg.IngestAddr, resp.StatusCode)
+				t.Errorf("GET /api/projects on ingest port %s = %d, want 404", cfg.IngestAddr, resp.StatusCode)
 			}
-			resp = postMCP(cfg.API.Addr)
+			resp = getAPI(cfg.API.Addr)
 			resp.Body.Close()
 			if resp.StatusCode != 401 {
-				t.Errorf("POST /mcp on MCP port %s (no token) = %d, want 401", cfg.API.Addr, resp.StatusCode)
+				t.Errorf("GET /api/projects on API port %s (no token) = %d, want 401", cfg.API.Addr, resp.StatusCode)
 			}
 		}
 	}
@@ -346,15 +346,15 @@ func TestServeSharedListenerServesBothSurfaces(t *testing.T) {
 	t.Run("shared listener", func(t *testing.T) {
 		dbPath := filepath.Join(t.TempDir(), "shared.db")
 		addr := freePort(t)
-		cfg := mcpTestConfig(t, addr, dbPath, "")
+		cfg := apiTestConfig(t, addr, dbPath, "")
 		run(t, cfg)
 	})
 
 	t.Run("separate listeners", func(t *testing.T) {
 		dbPath := filepath.Join(t.TempDir(), "split.db")
 		addr := freePort(t)
-		mcpAddr := freePort(t)
-		cfg := mcpTestConfig(t, addr, dbPath, mcpAddr)
+		apiAddr := freePort(t)
+		cfg := apiTestConfig(t, addr, dbPath, apiAddr)
 		run(t, cfg)
 	})
 }

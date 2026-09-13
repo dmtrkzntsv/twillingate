@@ -129,9 +129,9 @@ func TestServeFailsOnMigrateError(t *testing.T) {
 	}
 }
 
-// An MCP auth mode that fails eagerly (oauth against an unreachable issuer)
-// must fail Serve's boot on the standalone-listener path (api=false,
-// mcpOn=true always goes through apiserver.NewHandler).
+// An API auth mode that fails eagerly (oauth against an unreachable issuer)
+// must fail Serve's boot on the standalone-listener path (ingest=false,
+// api=true always goes through apiserver.NewHandler).
 func TestServeFailsOnMCPHandlerError(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "mcp-err.db")
 	seedProject(t, dbPath,
@@ -151,9 +151,9 @@ func TestServeFailsOnMCPHandlerError(t *testing.T) {
 	}
 }
 
-// Same failure, but on the shared-listener path (api=true with MCP sharing
-// the ingest address), which goes through apiserver.Build directly instead
-// of NewHandler.
+// Same failure, but on the shared-listener path (ingest=true with the API
+// sharing the ingest address), which goes through apiserver.Build directly
+// instead of NewHandler.
 func TestServeFailsOnMCPBuildErrorSharedListener(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "mcp-shared-err.db")
 	seedProject(t, dbPath,
