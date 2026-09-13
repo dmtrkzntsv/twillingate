@@ -81,11 +81,13 @@ func (s *loginServer) refresh(w http.ResponseWriter, form url.Values) {
 
 // issue answers with a fresh access and refresh token pair; issuing a new
 // refresh token on every refresh is what makes the 30 days count from last use.
+// aud names the origin and origin/mcp, the two resources the metadata
+// documents advertise; verification requires the origin.
 func (s *loginServer) issue(w http.ResponseWriter, clientID string) {
 	now := s.now()
 	grant := func(ttl time.Duration) grantClaims {
 		return grantClaims{ClientID: clientID, RegisteredClaims: jwt.RegisteredClaims{
-			Audience:  jwt.ClaimStrings{s.resource},
+			Audience:  jwt.ClaimStrings{s.resource, s.resource + mcpPath},
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
 			ID:        rand.Text(),

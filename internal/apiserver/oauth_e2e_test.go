@@ -8,7 +8,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -27,7 +29,8 @@ const e2eCallback = "http://localhost:43210/callback"
 // discovery, registration, the password page, the code exchange and
 // refreshes, on both of app's mounting paths. The DSN carries no redirect=:
 // a loopback client needs none. The resource is the origin while the client
-// connects to /mcp, and the token it ends up with also opens /api/.
+// connects to /mcp: the SDK must find its metadata on the first fetch, the
+// one the challenge names, and the token it ends up with also opens /api/.
 func TestTokenLoginEndToEnd(t *testing.T) {
 	// Below the oauth2 client's ten-second early-expiry margin, so every
 	// request after the login refreshes.
@@ -41,11 +44,21 @@ func TestTokenLoginEndToEnd(t *testing.T) {
 			base := "http://" + srv.Listener.Addr().String()
 			h := e2eHandler(t, "token://ar_testtoken?password=hunter2&resource="+base, shared)
 			var refreshes atomic.Int32
+			var mu sync.Mutex
+			var prmFetches, resources []string
 			srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				// ParseForm is idempotent on a request, so the handler still sees the form.
 				if r.URL.Path == "/oauth/token" && r.ParseForm() == nil && r.PostForm.Get("grant_type") == "refresh_token" {
 					refreshes.Add(1)
 				}
+				mu.Lock()
+				if strings.HasPrefix(r.URL.Path, "/.well-known/oauth-protected-resource") {
+					prmFetches = append(prmFetches, r.URL.Path)
+				}
+				if r.URL.Path == "/oauth/authorize" && r.Method == "GET" {
+					resources = append(resources, r.URL.Query().Get("resource"))
+				}
+				mu.Unlock()
 				h.ServeHTTP(w, r)
 			})
 			srv.Start()
@@ -84,6 +97,14 @@ func TestTokenLoginEndToEnd(t *testing.T) {
 			if refreshes.Load() == 0 {
 				t.Error("the client never refreshed its access token")
 			}
+			mu.Lock()
+			if !slices.Equal(prmFetches, []string{"/.well-known/oauth-protected-resource/mcp"}) {
+				t.Errorf("metadata fetched = %v, want only the /mcp document the challenge names (no fallback)", prmFetches)
+			}
+			if !slices.Equal(resources, []string{base + "/mcp"}) {
+				t.Errorf("authorize resource = %v, want [%s/mcp]", resources, base)
+			}
+			mu.Unlock()
 
 			ts, err := oauth.TokenSource(t.Context())
 			if err != nil || ts == nil {

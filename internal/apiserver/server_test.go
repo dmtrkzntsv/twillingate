@@ -2,6 +2,7 @@ package apiserver
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -70,11 +71,11 @@ func TestMCPRequires401WithChallenge(t *testing.T) {
 	if !strings.Contains(www, "resource_metadata") {
 		t.Errorf("WWW-Authenticate = %q; must point at the metadata URL", www)
 	}
-	// The resource is the origin, so the challenge is the host-rooted
-	// well-known URL (RFC 9728) with no /mcp segment.
-	const want = "https://twillingate.example.com/.well-known/oauth-protected-resource"
+	// /mcp names the metadata whose resource is origin/mcp (RFC 9728 §3.1
+	// suffix form), which is what a strict client matches against.
+	const want = `resource_metadata="https://twillingate.example.com/.well-known/oauth-protected-resource/mcp"`
 	if !strings.Contains(www, want) {
-		t.Errorf("WWW-Authenticate = %q; want resource_metadata=%q (host-rooted, no /mcp segment)", www, want)
+		t.Errorf("WWW-Authenticate = %q; want %s", www, want)
 	}
 }
 
@@ -232,8 +233,8 @@ func TestMCPOAuthModePasses(t *testing.T) {
 				t.Fatalf("code = %d", rec.Code)
 			}
 			www := rec.Header().Get("WWW-Authenticate")
-			want := "https://twillingate.example.com/.well-known/oauth-protected-resource"
-			if !strings.Contains(www, "resource_metadata") || !strings.Contains(www, want) {
+			want := `resource_metadata="https://twillingate.example.com/.well-known/oauth-protected-resource/mcp"`
+			if !strings.Contains(www, want) {
 				t.Errorf("WWW-Authenticate = %q; want absolute metadata URL %q", www, want)
 			}
 		})
@@ -301,7 +302,7 @@ func TestRegisterOnWithoutHealthzOmitsRoute(t *testing.T) {
 // that validation is ever bypassed or a mode is added to one but not the
 // other.
 func TestWrapAuthUnknownMode(t *testing.T) {
-	_, err := wrapAuth(context.Background(), config.APIConfig{AuthMode: "bogus"}, nil)
+	_, err := wrapAuth(context.Background(), config.APIConfig{AuthMode: "bogus"})
 	if err == nil {
 		t.Fatal("unknown auth mode accepted")
 	}
@@ -363,7 +364,7 @@ func TestTokenLoginRoutesFollowRedirects(t *testing.T) {
 		t.Errorf("login: metadata %d, want 200", rec.Code)
 	}
 	rec := serve(login, httptest.NewRequest("POST", "/mcp", strings.NewReader("{}")))
-	const want = `resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource"`
+	const want = `resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp"`
 	if rec.Code != http.StatusUnauthorized || !strings.Contains(rec.Header().Get("WWW-Authenticate"), want) {
 		t.Errorf("login: /mcp %d WWW-Authenticate=%q, want 401 with %s", rec.Code, rec.Header().Get("WWW-Authenticate"), want)
 	}
@@ -398,6 +399,85 @@ func TestIssuedAccessTokenNeedsTheLoginServer(t *testing.T) {
 		tc.h.ServeHTTP(rec, req)
 		if rec.Code != tc.want {
 			t.Errorf("%s: %d, want %d", name, rec.Code, tc.want)
+		}
+	}
+}
+
+// TestEachPrefixChallengesWithItsOwnMetadata: a strict MCP client checks
+// that the challenge's metadata names the URL it connected to, so /mcp
+// points at the /mcp-suffixed document and /api/ at the origin's.
+func TestEachPrefixChallengesWithItsOwnMetadata(t *testing.T) {
+	const origin = "https://twillingate.example.com"
+	f := newJWKSFixture(t)
+	modes := map[string]struct {
+		dsn, issuer string
+	}{
+		"oauth": {"oauth+insecure://" + strings.TrimPrefix(f.issuer, "http://") + "?resource=" + origin, f.issuer},
+		"login": {"token://ar_testtoken?password=hunter2&resource=" + origin, origin},
+	}
+	for mode, m := range modes {
+		h := newHandlerFixture(t, map[string]string{"API_AUTH_DSN": m.dsn})
+		for _, tc := range []struct{ method, path, meta, resource string }{
+			{"POST", "/mcp", "/.well-known/oauth-protected-resource/mcp", origin + "/mcp"},
+			{"GET", "/api/projects", "/.well-known/oauth-protected-resource", origin},
+		} {
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest(tc.method, tc.path, strings.NewReader("{}")))
+			want := `resource_metadata="` + origin + tc.meta + `"`
+			if www := rec.Header().Get("WWW-Authenticate"); rec.Code != http.StatusUnauthorized || !strings.Contains(www, want) {
+				t.Errorf("%s %s: %d WWW-Authenticate=%q, want 401 with %s", mode, tc.path, rec.Code, www, want)
+			}
+			rec = httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest("GET", tc.meta, nil))
+			var prm struct {
+				Resource             string   `json:"resource"`
+				AuthorizationServers []string `json:"authorization_servers"`
+			}
+			if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &prm) != nil ||
+				prm.Resource != tc.resource || len(prm.AuthorizationServers) != 1 || prm.AuthorizationServers[0] != m.issuer {
+				t.Errorf("%s GET %s: %d %s, want resource %s and issuer %s", mode, tc.meta, rec.Code, rec.Body, tc.resource, m.issuer)
+			}
+		}
+	}
+
+	plain := newHandlerFixture(t, nil)
+	for _, meta := range []string{"/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp"} {
+		rec := httptest.NewRecorder()
+		plain.ServeHTTP(rec, httptest.NewRequest("GET", meta, nil))
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("plain token:// GET %s = %d, want 404", meta, rec.Code)
+		}
+	}
+}
+
+// TestOAuthAudienceDefaultsToOriginOrMCP: an IdP mints aud from the
+// resource the client asked for, which is the origin or origin/mcp; an
+// explicit audience= admits only itself.
+func TestOAuthAudienceDefaultsToOriginOrMCP(t *testing.T) {
+	const origin = "https://twillingate.example.com"
+	f := newJWKSFixture(t)
+	dsn := "oauth+insecure://" + strings.TrimPrefix(f.issuer, "http://") + "?resource=" + origin
+	for name, tc := range map[string]struct {
+		dsn  string
+		aud  string
+		want int
+	}{
+		"default, aud origin":             {dsn, origin, http.StatusOK},
+		"default, aud origin/mcp":         {dsn, origin + "/mcp", http.StatusOK},
+		"default, aud origin/api":         {dsn, origin + "/api", http.StatusUnauthorized},
+		"default, aud elsewhere":          {dsn, "https://other.example.com/mcp", http.StatusUnauthorized},
+		"explicit origin, aud origin":     {dsn + "&audience=" + origin, origin, http.StatusOK},
+		"explicit origin, aud origin/mcp": {dsn + "&audience=" + origin, origin + "/mcp", http.StatusUnauthorized},
+		"explicit aud9, aud aud9":         {dsn + "&audience=aud9", "aud9", http.StatusOK},
+		"explicit aud9, aud origin":       {dsn + "&audience=aud9", origin, http.StatusUnauthorized},
+	} {
+		h := newHandlerFixture(t, map[string]string{"API_AUTH_DSN": tc.dsn})
+		req := httptest.NewRequest("GET", "/api/projects", nil)
+		req.Header.Set("Authorization", "Bearer "+f.sign(t, f.claims(jwt.MapClaims{"aud": tc.aud})))
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != tc.want {
+			t.Errorf("%s: GET /api/projects = %d %s, want %d", name, rec.Code, rec.Body, tc.want)
 		}
 	}
 }

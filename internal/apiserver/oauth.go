@@ -14,7 +14,6 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/config"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/modelcontextprotocol/go-sdk/auth"
-	"github.com/modelcontextprotocol/go-sdk/oauthex"
 )
 
 // The token:// login server: a minimal OAuth 2.1 authorization server whose
@@ -63,17 +62,16 @@ func newLoginServer(m config.APIConfig, logger *slog.Logger) *loginServer {
 
 // resourceAccepted admits a client's resource parameter naming this API:
 // the origin itself or any URL under it, since MCP clients send the URL
-// they connected to (…/mcp). Tokens are still issued for the origin. The
-// "/" after the origin keeps https://host.evil.com and https://host@evil
-// from passing as https://host.
+// they connected to (…/mcp). Tokens are issued for the same audience
+// either way. The "/" after the origin keeps https://host.evil.com and
+// https://host@evil from passing as https://host.
 func (s *loginServer) resourceAccepted(r string) bool {
 	return s.resource != "" && (r == s.resource || strings.HasPrefix(r, s.resource+"/"))
 }
 
 // mount adds the login server's routes (login spec §4).
 func (s *loginServer) mount(mux *http.ServeMux) {
-	mux.Handle("GET /.well-known/oauth-protected-resource", auth.ProtectedResourceMetadataHandler(
-		&oauthex.ProtectedResourceMetadata{Resource: s.resource, AuthorizationServers: []string{s.issuer}}))
+	mountResourceMetadata(mux, s.resource, s.issuer)
 	mux.HandleFunc("GET /.well-known/oauth-authorization-server", s.metadata)
 	mux.HandleFunc("POST /oauth/register", s.registerClient)
 	mux.HandleFunc("GET /oauth/authorize", s.authorizePage)

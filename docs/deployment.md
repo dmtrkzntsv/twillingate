@@ -273,7 +273,7 @@ run.
    ```bash
    sudo systemctl restart twillingate        # compose: docker compose up -d
    curl -si -X POST https://twillingate.example.com/mcp | grep -i www-authenticate
-   # → WWW-Authenticate: Bearer resource_metadata="https://twillingate.example.com/.well-known/oauth-protected-resource"
+   # → WWW-Authenticate: Bearer resource_metadata="https://twillingate.example.com/.well-known/oauth-protected-resource/mcp"
    ```
 
    A `404` means MCP is off: `journalctl -u twillingate | grep 'MCP endpoint disabled'`
@@ -282,7 +282,7 @@ run.
 | Parameter | Meaning |
 | --- | --- |
 | `password` | What the login page asks for. Setting it turns the login on. |
-| `resource` | The API origin, with no path (`resource=https://api.example.com`); one login covers `/mcp` and `/api/`. Defaults to `PUBLIC_URL`; set it when the API has its own hostname. |
+| `resource` | The API origin, with no path (`resource=https://api.example.com`); one login covers `/mcp` and `/api/`. Defaults to `PUBLIC_URL`; set it when the API has its own hostname. MCP clients read `/.well-known/oauth-protected-resource/mcp`, which names `<origin>/mcp`; `/api/` clients read `/.well-known/oauth-protected-resource`, which names the origin. |
 | `redirect` | An extra host clients may return to, such as `redirect=app.example.com`; repeat it once per host. Only needed for clients not covered below. |
 
 - **Hosts accepted without `redirect=`.** `localhost`, `127.0.0.1` and
@@ -330,7 +330,7 @@ to cut a device off.
 | A client unused for 30 days | That client logs in again |
 | Restart or upgrade | Nothing |
 
-Upgrading from a release whose resource was `…/mcp`: clients logged in with the password must reconnect once, as tokens issued for `…/mcp` no longer verify.
+Upgrading from a release whose resource was `…/mcp`: clients logged in with the password must reconnect once, as tokens issued for `…/mcp` no longer verify. Edit the DSN too if it has `resource=…/mcp`, or if `PUBLIC_URL` has a path and no `resource=` is set: both now refuse to start, as `resource` must be an origin.
 
 ### Alternative: the token as a header
 
@@ -398,8 +398,10 @@ API_AUTH_DSN='oauth://auth.example.com[?resource=<origin>][&audience=<aud>]'
 For when you already run or rent an IdP (Keycloak, Auth0, Authentik, …).
 The server is then a resource server only: it validates the JWTs the IdP
 issues and serves no login page. `resource` defaults to `PUBLIC_URL` and
-must be an origin with no path; the expected audience defaults to it. For a
-plain-http IdP in development, use `oauth+insecure://`.
+must be an origin with no path. Without `audience=`, a token's `aud` may be
+the origin or `<origin>/mcp`, whichever resource the client asked for; with
+`audience=`, only that value passes. For a plain-http IdP in development,
+use `oauth+insecure://`.
 
 The IdP must provide:
 
@@ -410,8 +412,10 @@ The IdP must provide:
    Many IdPs publish only OIDC discovery, so confirm rather than assume.
 2. **Asymmetrically signed JWT access tokens** (RS/ES/PS). HMAC, `alg=none`
    and opaque tokens are rejected.
-3. **An `aud` claim containing the resource origin** — usually by registering
-   the MCP server as an API with that identifier. Without it, logins loop.
+3. **An `aud` claim containing the resource origin or `<origin>/mcp`** —
+   usually by registering the server as an API with that identifier, and
+   allowing both if the IdP checks the requested resource. Or set
+   `audience=` to the one value the IdP issues. Without it, logins loop.
 4. **For claude.ai:** Dynamic Client Registration (RFC 7591), or a client
    registered by hand with its id entered in the connector.
 
@@ -440,7 +444,7 @@ host that is not built in. The page shows the URI it used; add its host to
 next one.
 
 **Login loops in `oauth://` mode.** The IdP is issuing tokens without the
-expected `aud`.
+expected `aud`: the origin or `<origin>/mcp`, or the `audience=` value.
 
 ---
 

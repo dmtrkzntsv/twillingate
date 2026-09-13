@@ -158,6 +158,10 @@ type APIConfig struct {
 	QueryTimeout  time.Duration // API_QUERY_TIMEOUT, default 10s
 	QueryMaxRows  int           // API_QUERY_MAX_ROWS, default 1000
 
+	// audienceGiven records an explicit oauth audience=, which the verifier
+	// accepts alone; the default admits the resource and resource/mcp.
+	audienceGiven bool
+
 	// authErr holds the DSN parse failure until ValidateAPI reports it:
 	// bare `serve` must stay lenient (warn and skip the API), so FromEnv
 	// cannot fail on a broken auth DSN.
@@ -426,6 +430,7 @@ func (c *Config) parseAPIAuthDSN() error {
 			return fmt.Errorf("config: API_AUTH_DSN oauth:// requires ?resource=<origin> or PUBLIC_URL to derive it from")
 		}
 		m.Audience = q.Get("audience")
+		m.audienceGiven = m.Audience != ""
 		if m.Audience == "" {
 			m.Audience = m.ResourceURL
 		}
@@ -542,6 +547,10 @@ func checkLoginURL(raw string) error {
 	}
 	return nil
 }
+
+// AudienceGiven reports whether oauth:// named its audience= explicitly
+// rather than defaulting it to the resource.
+func (m APIConfig) AudienceGiven() bool { return m.audienceGiven }
 
 // LoginEnabled reports whether token:// runs the browser login server.
 func (m APIConfig) LoginEnabled() bool { return m.AuthMode == "token" && m.Password != "" }

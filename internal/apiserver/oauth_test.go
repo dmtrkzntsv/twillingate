@@ -261,10 +261,15 @@ func TestLoginMetadata(t *testing.T) {
 		t.Error("metadata carries jwks_uri; there are no public keys to publish")
 	}
 
-	rec = f.serve(httptest.NewRequest("GET", "/.well-known/oauth-protected-resource", nil))
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"resource":"`+testResource+`"`) ||
-		!strings.Contains(rec.Body.String(), testIssuer) {
-		t.Errorf("PRM = %d %s", rec.Code, rec.Body)
+	for path, resource := range map[string]string{
+		"/.well-known/oauth-protected-resource":     testResource,
+		"/.well-known/oauth-protected-resource/mcp": testResource + "/mcp",
+	} {
+		rec = f.serve(httptest.NewRequest("GET", path, nil))
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"resource":"`+resource+`"`) ||
+			!strings.Contains(rec.Body.String(), testIssuer) {
+			t.Errorf("PRM %s = %d %s", path, rec.Code, rec.Body)
+		}
 	}
 }
 

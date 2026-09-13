@@ -178,11 +178,15 @@ func (c *JWKSCache) keyfunc(t *jwt.Token) (any, error) {
 }
 
 // verifyJWT validates an IdP-issued JWT for the oauth verifier.
-func verifyJWT(raw, issuer, audience string, cache *JWKSCache) (*auth.TokenInfo, error) {
+func verifyJWT(raw, issuer string, audiences []string, cache *JWKSCache) (*auth.TokenInfo, error) {
+	if len(audiences) == 0 {
+		// jwt.WithAudience with no values skips the aud check entirely.
+		return nil, fmt.Errorf("%w: no audience configured", auth.ErrInvalidToken)
+	}
 	tok, err := jwt.Parse(raw, cache.keyfunc,
 		jwt.WithValidMethods(allowedAlgs),
 		jwt.WithIssuer(issuer),
-		jwt.WithAudience(audience),
+		jwt.WithAudience(audiences...), // any one of them
 		jwt.WithExpirationRequired(),
 	)
 	if err != nil {
@@ -202,9 +206,9 @@ func verifyJWT(raw, issuer, audience string, cache *JWKSCache) (*auth.TokenInfo,
 }
 
 // OAuthVerifier implements the oauth:// auth mode: the bearer token itself
-// is a JWT from the external IdP.
-func OAuthVerifier(issuer, audience string, cache *JWKSCache) auth.TokenVerifier {
+// is a JWT from the external IdP, whose aud must contain one of audiences.
+func OAuthVerifier(issuer string, audiences []string, cache *JWKSCache) auth.TokenVerifier {
 	return func(_ context.Context, token string, _ *http.Request) (*auth.TokenInfo, error) {
-		return verifyJWT(token, issuer, audience, cache)
+		return verifyJWT(token, issuer, audiences, cache)
 	}
 }

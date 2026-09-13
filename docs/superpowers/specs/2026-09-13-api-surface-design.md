@@ -201,33 +201,50 @@ two apart.
 **The resource identifier becomes the API origin.** The default
 `resource` is `PUBLIC_URL` (was `PUBLIC_URL + "/mcp"`); `resource=` in
 `API_AUTH_DSN` overrides it and must be an origin with no path (config
-rejects a path). This also makes the host-rooted
-`/.well-known/oauth-protected-resource` conform to RFC 9728 §3.3, which
-requires the metadata's `resource` to be the identifier the well-known
-suffix was inserted into — the origin.
+rejects a path).
 
-- `oauth://`: audience defaults to the origin resource.
+**Each prefix has its own protected-resource metadata.** In oauth mode and
+in token-login mode (password set) two RFC 9728 documents are served, with
+the same `authorization_servers`:
+
+- `/.well-known/oauth-protected-resource` names `resource` = the origin,
+  for `/api/`.
+- `/.well-known/oauth-protected-resource/mcp` names `resource` =
+  origin + `/mcp`: the RFC 9728 §3.1 suffix form for the URL MCP clients
+  connect to, so the §3.3 check (the document's `resource` is the
+  identifier the well-known suffix was inserted into) holds for both.
+
+Plain `token://` without a password serves neither. `Build` auth-wraps the
+MCP handler and the REST mux separately, with one verifier per mode, so
+each prefix's 401 names its own document: `/mcp` →
+`resource_metadata="<origin>/.well-known/oauth-protected-resource/mcp"`,
+`/api/…` → `resource_metadata="<origin>/.well-known/oauth-protected-resource"`.
+
+- `oauth://`: without `audience=`, a JWT's `aud` must contain the origin
+  or origin/mcp, since an IdP mints `aud` from the resource the client
+  asked for. An explicit `audience=` is the only accepted value.
 - `token://` login server: a client's `resource` parameter (authorize and
   token requests) is accepted when it equals the origin or is a URL under
-  it (`https://host/mcp`, `https://host/api`), since MCP clients send the
-  URL they connected to. Tokens are always issued with `aud` = the origin,
-  and verification checks that audience.
-- `WWW-Authenticate` on 401 points at the same metadata URL for both
-  `/mcp` and `/api/`.
+  it (`https://host/mcp`, `https://host/api`). Access and refresh tokens are
+  issued with `aud` = [origin, origin/mcp], and verification requires the
+  origin. One token works on both prefixes.
 
 When the API runs on its own hostname (`API_ADDR` plus a second DNS name),
 `resource=https://api.example.com` names it, as today.
 
-**Risk.** This assumes MCP clients accept protected-resource metadata
-whose `resource` is the origin of the URL they connected to rather than
-the URL itself. The MCP authorization spec allows either as the canonical
-server URI, and the go-sdk client test in `oauth_e2e_test.go` covers the
-SDK, but claude.ai's behaviour can only be confirmed against a deployed
-instance. Verification step before merge: run the branch on a staging
-hostname and complete the claude.ai connector login. If claude.ai rejects
-it, fall back to path-scoped metadata (`/.well-known/oauth-protected-resource/mcp`
-naming `…/mcp` for MCP, and the origin for `/api/`) with the login server
-issuing `aud` = [origin, origin/mcp].
+**Why two documents (go-sdk evidence).** go-sdk v1.7.0
+(`auth/authorization_code.go`, `getProtectedResourceMetadata`) fetches the
+challenge's `resource_metadata` URL first and requires the document's
+`resource` to equal the URL it connected to (`…/mcp`). With a single
+origin document, that check failed. The SDK then tried
+`/.well-known/oauth-protected-resource/mcp` (404), and only succeeded on
+its last fallback, the root document checked against the origin. The
+end-to-end test recorded the fetches as `[root, /mcp, root]`. A client as
+strict as the first step, and claude.ai may be one, would not have
+connected. With per-prefix documents the SDK succeeds on its first fetch
+and sends `resource=<origin>/mcp`. `oauth_e2e_test.go` asserts that the
+`/mcp` document is the only one fetched. Confirming claude.ai against a
+deployed instance remains a pre-merge check.
 
 ## 8. Wiring (`internal/app`, `cmd/twillingate`)
 
@@ -254,6 +271,9 @@ One `feat!:` PR. The operator of an existing install must:
 4. Reconnect MCP clients that logged in with the password: tokens carrying
    `aud=…/mcp` no longer verify. The connector URL `/mcp` is unchanged.
    Static-token clients are unaffected.
+5. Edit `API_AUTH_DSN` if it sets `resource=…/mcp`, or set `resource=` if
+   `PUBLIC_URL` has a path: `resource` must be an origin, and config
+   refuses to start otherwise.
 
 ## 10. Documentation
 

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -196,10 +197,10 @@ func TestResourceParameterMayNameAPathUnderTheOrigin(t *testing.T) {
 	}
 }
 
-// TestResourceUnderTheOriginGetsAnOriginToken runs the login with the
+// TestResourceUnderTheOriginGetsTheAPIAudience runs the login with the
 // resource an MCP client sends, the URL it connected to, and checks the
-// token still names the origin, so the same token opens /api/.
-func TestResourceUnderTheOriginGetsAnOriginToken(t *testing.T) {
+// tokens name both the origin and origin/mcp, so the same token opens /api/.
+func TestResourceUnderTheOriginGetsTheAPIAudience(t *testing.T) {
 	f := newLoginFixture(t, nil)
 	client := f.register(claudeCallback)
 	q := authorizeQuery(client, claudeCallback)
@@ -211,12 +212,14 @@ func TestResourceUnderTheOriginGetsAnOriginToken(t *testing.T) {
 	grant := codeGrant(client, loc.Query().Get("code"), claudeCallback)
 	grant.Set("resource", testResource+"/mcp")
 	got := f.grant(grant)
-	var c grantClaims
-	if err := f.s.keys.parse(kindAccess, got.AccessToken, &c, f.s.now); err != nil {
-		t.Fatal(err)
-	}
-	if len(c.Audience) != 1 || c.Audience[0] != testResource {
-		t.Errorf("aud = %v, want only the origin %s", c.Audience, testResource)
+	for kind, raw := range map[kind]string{kindAccess: got.AccessToken, kindRefresh: got.RefreshToken} {
+		var c grantClaims
+		if err := f.s.keys.parse(kind, raw, &c, f.s.now); err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(c.Audience, []string{testResource, testResource + "/mcp"}) {
+			t.Errorf("%v aud = %v, want [%s %s/mcp]", kind, c.Audience, testResource, testResource)
+		}
 	}
 	if _, err := f.s.verify(t.Context(), got.AccessToken, nil); err != nil {
 		t.Errorf("token rejected: %v", err)

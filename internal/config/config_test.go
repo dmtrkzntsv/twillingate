@@ -597,3 +597,19 @@ func TestResourceIsTheAPIOrigin(t *testing.T) {
 		t.Errorf("trailing slash origin = %q, %v", c.API.ResourceURL, err)
 	}
 }
+
+func TestAudienceGivenOnlyWhenExplicit(t *testing.T) {
+	for dsn, want := range map[string]bool{
+		"oauth://idp.example.com?resource=https://t.example.com":                                false,
+		"oauth://idp.example.com?resource=https://t.example.com&audience=https://t.example.com": true,
+		"token://ar_x?password=pw&resource=https://t.example.com":                               false,
+	} {
+		cfg, err := FromEnv(mcpEnv(map[string]string{"API_AUTH_DSN": dsn}))
+		if err != nil || cfg.ValidateAPI() != nil {
+			t.Fatalf("%s: %v %v", dsn, err, cfg.ValidateAPI())
+		}
+		if got := cfg.API.AudienceGiven(); got != want {
+			t.Errorf("%s: AudienceGiven = %v, want %v", dsn, got, want)
+		}
+	}
+}
