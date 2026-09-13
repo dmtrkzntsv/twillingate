@@ -30,12 +30,12 @@ func restHandler[In, Out any](r *registrar, s spec, fn func(context.Context, In)
 	return func(w http.ResponseWriter, req *http.Request) {
 		var in In
 		if err := decodeRequest(req, &in); err != nil {
-			writeError(w, r.logger, err)
+			writeError(w, r.logger, req, err)
 			return
 		}
 		out, err := fn(withActor(req.Context(), "api"), in)
 		if err != nil {
-			writeError(w, r.logger, err)
+			writeError(w, r.logger, req, err)
 			return
 		}
 		writeJSON(w, status, out)
@@ -155,8 +155,10 @@ type apiError struct {
 }
 
 // writeError maps a refusal to its status by errors.Is. Untyped errors are
-// logged and answered generically: their text may carry internals.
-func writeError(w http.ResponseWriter, logger *slog.Logger, err error) {
+// logged (with the request that triggered them, so a 500 in journalctl
+// names a method and path rather than just an error string) and answered
+// generically: their text may carry internals.
+func writeError(w http.ResponseWriter, logger *slog.Logger, req *http.Request, err error) {
 	status, code, msg := http.StatusInternalServerError, "internal", "internal error"
 	switch {
 	case errors.Is(err, manage.ErrInvalid):
@@ -166,7 +168,7 @@ func writeError(w http.ResponseWriter, logger *slog.Logger, err error) {
 	case errors.Is(err, manage.ErrConflict):
 		status, code, msg = http.StatusConflict, "conflict", err.Error()
 	default:
-		logger.Error("api request failed", "error", err)
+		logger.Error("api request failed", "method", req.Method, "path", req.URL.Path, "error", err)
 	}
 	writeJSON(w, status, map[string]apiError{"error": {Code: code, Message: msg}})
 }

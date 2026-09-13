@@ -102,12 +102,22 @@ func TestWriteErrorMapping(t *testing.T) {
 		{errors.New("disk on fire"), 500, "internal"},
 	} {
 		rec := httptest.NewRecorder()
-		writeError(rec, slog.New(slog.DiscardHandler), c.err)
+		req := httptest.NewRequest("GET", "/api/projects/blog/web/overview", nil)
+		var logs strings.Builder
+		logger := slog.New(slog.NewTextHandler(&logs, nil))
+		writeError(rec, logger, req, c.err)
 		if rec.Code != c.status || errorCode(t, rec) != c.code {
 			t.Errorf("%v → %d %s, want %d %s", c.err, rec.Code, rec.Body.String(), c.status, c.code)
 		}
 		if c.code == "internal" && strings.Contains(rec.Body.String(), "disk on fire") {
 			t.Errorf("internal error text leaked: %s", rec.Body.String())
+		}
+		if c.code == "internal" {
+			if !strings.Contains(logs.String(), "method=GET") || !strings.Contains(logs.String(), "path=/api/projects/blog/web/overview") {
+				t.Errorf("internal error log = %q, want method and path", logs.String())
+			}
+		} else if logs.Len() != 0 {
+			t.Errorf("typed refusal %v must not log: %q", c.err, logs.String())
 		}
 	}
 }
