@@ -499,7 +499,10 @@ func (c *Config) resource(scheme, given string) (string, error) {
 // resourceOrigin reads a resource= value as the API origin: an absolute
 // http(s) URL with no path beyond "/", returned without the slash. One
 // identifier covers /mcp and /api/, and matches the host-rooted RFC 9728
-// metadata the API serves.
+// metadata the API serves. The host is lowercased and a default port (443
+// for https, 80 for http) is dropped, so resource=https://API.example.com:443
+// names the same origin a client actually connects to (case-insensitive,
+// port-implicit) rather than comparing as a distinct string.
 func resourceOrigin(raw string) (string, error) {
 	u, err := url.Parse(raw)
 	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
@@ -508,7 +511,14 @@ func resourceOrigin(raw string) (string, error) {
 	if (u.Path != "" && u.Path != "/") || u.User != nil || u.RawQuery != "" || u.ForceQuery || strings.Contains(raw, "#") {
 		return "", fmt.Errorf("must be an origin with no path, userinfo, query or fragment, such as https://api.example.com (the API serves /mcp and /api/ under it)")
 	}
-	return u.Scheme + "://" + u.Host, nil
+	host := strings.ToLower(u.Hostname())
+	if strings.Contains(host, ":") { // IPv6; Hostname() strips the brackets Host carried
+		host = "[" + host + "]"
+	}
+	if port := u.Port(); port != "" && !((u.Scheme == "https" && port == "443") || (u.Scheme == "http" && port == "80")) {
+		host += ":" + port
+	}
+	return u.Scheme + "://" + host, nil
 }
 
 // redirectHost reads a redirect= value as the host it allows: a bare host

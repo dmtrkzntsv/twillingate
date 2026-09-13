@@ -596,6 +596,19 @@ func TestResourceIsTheAPIOrigin(t *testing.T) {
 	if c, err := load(map[string]string{"API_AUTH_DSN": "token://ar_x?password=pw&resource=https://api.example.com/"}); err != nil || c.API.ResourceURL != "https://api.example.com" {
 		t.Errorf("trailing slash origin = %q, %v", c.API.ResourceURL, err)
 	}
+	// The resource must name the same origin a client actually connects
+	// to: uppercase host and an explicit default port are just spellings
+	// of the same origin, not a different one.
+	if c, err := load(map[string]string{"API_AUTH_DSN": "token://ar_x?password=pw&resource=https://API.example.com:443"}); err != nil || c.API.ResourceURL != "https://api.example.com" {
+		t.Errorf("uppercase host + default port origin = %q, %v, want https://api.example.com", c.API.ResourceURL, err)
+	}
+	if c, err := load(map[string]string{"API_AUTH_DSN": "oauth://idp.example.com?resource=http://api.example.com:80"}); err != nil || c.API.ResourceURL != "http://api.example.com" {
+		t.Errorf("http default port origin = %q, %v, want http://api.example.com", c.API.ResourceURL, err)
+	}
+	// A non-default port must survive: it is part of the origin.
+	if c, err := load(map[string]string{"API_AUTH_DSN": "token://ar_x?password=pw&resource=https://api.example.com:8443"}); err != nil || c.API.ResourceURL != "https://api.example.com:8443" {
+		t.Errorf("non-default port origin = %q, %v, want https://api.example.com:8443", c.API.ResourceURL, err)
+	}
 }
 
 func TestAudienceGivenOnlyWhenExplicit(t *testing.T) {
