@@ -134,14 +134,16 @@ type DashboardsConfig struct {
 // the single MCP_AUTH_DSN; parsing fans it out into the mode-specific
 // fields the verifiers consume:
 //
-//	token://<token>
+//	token://<token>[?password=<pw>&redirect=<uri>[&redirect=<uri>…][&resource=<url>]]
 //	cloudflare://<team>.cloudflareaccess.com?aud=<application AUD tag>
 //	oauth://<issuer-host>[/path][?resource=<url>][&audience=<aud>]
 //
-// The oauth issuer is https://<host>[/path]; resource defaults to
-// PUBLIC_URL + "/mcp", audience to the resource URL. The +insecure scheme
-// variants (oauth+insecure, cloudflare+insecure) produce an http issuer
-// for local IdPs and tests.
+// Any redirect= on token:// turns on the browser login server, which
+// requires password= and a resource URL. In token and oauth modes resource
+// defaults to PUBLIC_URL + "/mcp"; the oauth issuer is https://<host>[/path]
+// and audience defaults to the resource URL. The +insecure scheme variants
+// (oauth+insecure, cloudflare+insecure) produce an http issuer for local
+// IdPs and tests.
 type MCPConfig struct {
 	Addr         string // MCP_ADDR, defaults to Listen
 	DBPath       string // MCP_DB_PATH, defaults to DATABASE_DSN path
@@ -153,6 +155,8 @@ type MCPConfig struct {
 	CFTeamDomain string
 	CFAud        string
 	Token        string
+	RedirectURIs []string      // token:// redirect=; any turns on the login server
+	Password     string        // token:// password=, the login page's secret
 	QueryTimeout time.Duration // MCP_QUERY_TIMEOUT, default 10s
 	QueryMaxRows int           // MCP_QUERY_MAX_ROWS, default 1000
 
@@ -366,10 +370,15 @@ func (c *Config) parseMCPAuthDSN() error {
 	switch scheme {
 	case "token":
 		// Not URL-parsed: the token is opaque and must survive verbatim.
+		// Everything after the first '?' configures the login server.
+		token, query, hasQuery := strings.Cut(rest, "?")
 		m.AuthMode = "token"
-		m.Token = rest
+		m.Token = token
 		if m.Token == "" {
 			return fmt.Errorf("config: MCP_AUTH_DSN token:// requires a token (mint with `twillingate keygen -mcp`)")
+		}
+		if hasQuery {
+			return c.parseTokenLogin(query)
 		}
 	case "cloudflare", "cloudflare+insecure":
 		u, err := url.Parse(m.AuthDSN)
@@ -418,6 +427,64 @@ func (c *Config) parseMCPAuthDSN() error {
 		}
 	default:
 		return fmt.Errorf("config: unknown MCP_AUTH_DSN scheme %q (token, cloudflare or oauth)", scheme)
+	}
+	return nil
+}
+
+// parseTokenLogin reads the token:// query that turns on the browser login
+// server: repeated redirect=, password= and resource=.
+func (c *Config) parseTokenLogin(query string) error {
+	m := &c.MCP
+	q, err := url.ParseQuery(query)
+	if err != nil {
+		return fmt.Errorf("config: invalid MCP_AUTH_DSN token:// query: %v", err)
+	}
+	for k := range q {
+		if k != "redirect" && k != "password" && k != "resource" {
+			return fmt.Errorf("config: MCP_AUTH_DSN token:// has unknown parameter %q (redirect, password or resource)", k)
+		}
+	}
+	m.RedirectURIs = q["redirect"]
+	m.Password = q.Get("password")
+	m.ResourceURL = q.Get("resource")
+	if len(m.RedirectURIs) == 0 {
+		return fmt.Errorf("config: MCP_AUTH_DSN token:// password= and resource= only apply with at least one redirect=")
+	}
+	if m.Password == "" {
+		return fmt.Errorf("config: MCP_AUTH_DSN token:// redirect= requires a password=")
+	}
+	for _, r := range m.RedirectURIs {
+		if err := checkLoginURL(r); err != nil {
+			return fmt.Errorf("config: MCP_AUTH_DSN token:// redirect=%q %v", r, err)
+		}
+	}
+	if m.ResourceURL == "" && c.PublicURL != "" {
+		m.ResourceURL = c.PublicURL + "/mcp"
+	}
+	if m.ResourceURL == "" {
+		return fmt.Errorf("config: MCP_AUTH_DSN token:// redirect= requires resource=<url> or PUBLIC_URL to derive it from")
+	}
+	if err := checkLoginURL(m.ResourceURL); err != nil {
+		return fmt.Errorf("config: MCP_AUTH_DSN token:// resource=%q %v", m.ResourceURL, err)
+	}
+	return nil
+}
+
+// checkLoginURL admits an absolute http(s) URL with no fragment, and plain
+// http only on a loopback host.
+func checkLoginURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("does not parse: %v", err)
+	}
+	if u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
+		return fmt.Errorf("must be an absolute http(s) URL")
+	}
+	if strings.Contains(raw, "#") {
+		return fmt.Errorf("must not carry a fragment")
+	}
+	if h := u.Hostname(); u.Scheme == "http" && h != "localhost" && h != "127.0.0.1" && h != "::1" {
+		return fmt.Errorf("may only use http on localhost, 127.0.0.1 or [::1]")
 	}
 	return nil
 }

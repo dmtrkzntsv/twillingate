@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Connect to twillingate</title>
+<style>
+body { font-family: system-ui, sans-serif; max-width: 26rem; margin: 4rem auto; padding: 0 1rem; color: #1a1a1a; }
+h1 { font-size: 1.25rem; }
+.error { color: #b00020; }
+label, input, button { display: block; width: 100%; box-sizing: border-box; font: inherit; }
+input, button { margin-top: .5rem; padding: .5rem; }
+code { word-break: break-all; }
+</style>
+</head>
+<body>
+<h1>Connect to twillingate</h1>
+{{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+{{if .RejectedRedirect}}<p>Rejected redirect URI: <code>{{.RejectedRedirect}}</code></p>{{end}}
+{{if .Request}}
+<p><strong>{{or .ClientName "An MCP client"}}</strong> is asking for access and will return you to <strong>{{.RedirectHost}}</strong>.</p>
+<form method="post" action="/oauth/authorize">
+<input type="hidden" name="request" value="{{.Request}}">
+<label for="password">Password</label>
+<input id="password" name="password" type="password" autocomplete="current-password" autofocus required>
+<button type="submit">Connect</button>
+</form>
+{{end}}
+</body>
+</html>

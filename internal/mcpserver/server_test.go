@@ -304,7 +304,7 @@ func TestRegisterOnWithoutHealthzOmitsRoute(t *testing.T) {
 	t.Cleanup(func() { closeDB() })
 
 	mux := http.NewServeMux()
-	RegisterOn(mux, protected, cfg, false)
+	RegisterOn(mux, protected, cfg, false, logger)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest("GET", "/healthz", nil))
 	if rec.Code != http.StatusNotFound {
@@ -354,5 +354,63 @@ func TestBuildFailsWhenOAuthIssuerUnreachable(t *testing.T) {
 	}
 	if _, _, err := Build(context.Background(), cfg, reg, manage.NewOps(reg, st), logger); err == nil {
 		t.Fatal("Build succeeded against an unreachable oauth issuer")
+	}
+}
+
+const loginDSN = "token://ar_testtoken?password=hunter2" +
+	"&redirect=https://claude.ai/api/mcp/auth_callback&resource=https://mcp.example.com/mcp"
+
+func TestTokenLoginRoutesFollowRedirects(t *testing.T) {
+	serve := func(h http.Handler, req *http.Request) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+
+	plain := newHandlerFixture(t, nil)
+	if rec := serve(plain, httptest.NewRequest("GET", "/.well-known/oauth-authorization-server", nil)); rec.Code != http.StatusNotFound {
+		t.Errorf("plain token://: metadata %d, want 404", rec.Code)
+	}
+	if rec := serve(plain, httptest.NewRequest("POST", "/mcp", strings.NewReader("{}"))); rec.Header().Get("WWW-Authenticate") != "" {
+		t.Errorf("plain token:// grew a challenge: %q", rec.Header().Get("WWW-Authenticate"))
+	}
+
+	login := newHandlerFixture(t, map[string]string{"MCP_AUTH_DSN": loginDSN})
+	if rec := serve(login, httptest.NewRequest("GET", "/.well-known/oauth-authorization-server", nil)); rec.Code != http.StatusOK {
+		t.Errorf("login: metadata %d, want 200", rec.Code)
+	}
+	rec := serve(login, httptest.NewRequest("POST", "/mcp", strings.NewReader("{}")))
+	const want = `resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource"`
+	if rec.Code != http.StatusUnauthorized || !strings.Contains(rec.Header().Get("WWW-Authenticate"), want) {
+		t.Errorf("login: /mcp %d WWW-Authenticate=%q, want 401 with %s", rec.Code, rec.Header().Get("WWW-Authenticate"), want)
+	}
+	req := initReq()
+	req.Header.Set("Authorization", "Bearer ar_testtoken")
+	if rec := serve(login, req); rec.Code != http.StatusOK {
+		t.Errorf("login: header token %d, want 200 — it must keep working", rec.Code)
+	}
+}
+
+func TestIssuedAccessTokenNeedsTheLoginServer(t *testing.T) {
+	m := config.MCPConfig{Token: "ar_testtoken", Password: "hunter2",
+		RedirectURIs: []string{"https://claude.ai/api/mcp/auth_callback"}, ResourceURL: "https://mcp.example.com/mcp"}
+	access := newLoginServer(m, slog.New(slog.DiscardHandler)).keys.sign(kindAccess, grantClaims{
+		RegisteredClaims: jwt.RegisteredClaims{Issuer: "https://mcp.example.com", Subject: "mcp",
+			Audience: jwt.ClaimStrings{m.ResourceURL}, ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour))}})
+
+	for name, tc := range map[string]struct {
+		h    http.Handler
+		want int
+	}{
+		"login on":               {newHandlerFixture(t, map[string]string{"MCP_AUTH_DSN": loginDSN}), http.StatusOK},
+		"every redirect removed": {newHandlerFixture(t, nil), http.StatusUnauthorized},
+	} {
+		req := initReq()
+		req.Header.Set("Authorization", "Bearer "+access)
+		rec := httptest.NewRecorder()
+		tc.h.ServeHTTP(rec, req)
+		if rec.Code != tc.want {
+			t.Errorf("%s: %d, want %d", name, rec.Code, tc.want)
+		}
 	}
 }
