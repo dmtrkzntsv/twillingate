@@ -39,6 +39,58 @@ func (s *syncLogBuffer) String() string {
 	return s.buf.String()
 }
 
+// `serve -api` used to mean ingest-only; now it means the private API. The
+// "serving" boot line names which surface(s) each listener carries, so a
+// role swap between two systemd units (one now stuck on the old meaning of
+// -api) is visible in journalctl rather than only inferred from the port.
+func TestServeLogsSurfacesPerListener(t *testing.T) {
+	t.Run("shared listener", func(t *testing.T) {
+		dbPath := filepath.Join(t.TempDir(), "surfaces-shared.db")
+		addr := freePort(t)
+		cfg := apiTestConfig(t, addr, dbPath, "")
+
+		buf := &syncLogBuffer{}
+		logger := slog.New(slog.NewTextHandler(buf, nil))
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan error, 1)
+		go func() { done <- Serve(ctx, cfg, logger, true, true) }()
+		waitHealthy(t, "http://"+addr)
+		cancel()
+		if err := <-done; err != nil {
+			t.Fatalf("serve: %v", err)
+		}
+
+		if !strings.Contains(buf.String(), `surfaces=ingest,api`) {
+			t.Errorf("log output = %q, want surfaces=ingest,api for the shared listener", buf.String())
+		}
+	})
+
+	t.Run("separate listeners", func(t *testing.T) {
+		dbPath := filepath.Join(t.TempDir(), "surfaces-split.db")
+		addr := freePort(t)
+		apiAddr := freePort(t)
+		cfg := apiTestConfig(t, addr, dbPath, apiAddr)
+
+		buf := &syncLogBuffer{}
+		logger := slog.New(slog.NewTextHandler(buf, nil))
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan error, 1)
+		go func() { done <- Serve(ctx, cfg, logger, true, true) }()
+		waitHealthy(t, "http://"+addr)
+		cancel()
+		if err := <-done; err != nil {
+			t.Fatalf("serve: %v", err)
+		}
+
+		if !strings.Contains(buf.String(), `addr=`+addr+` surfaces=ingest`) {
+			t.Errorf("log output = %q, want surfaces=ingest for the ingest listener", buf.String())
+		}
+		if !strings.Contains(buf.String(), `addr=`+apiAddr+` surfaces=api`) {
+			t.Errorf("log output = %q, want surfaces=api for the API listener", buf.String())
+		}
+	})
+}
+
 // A bad GEO_DSN must surface as a boot error rather than a silent fallback.
 func TestServeFailsOnGeoProviderError(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "geo-err.db")

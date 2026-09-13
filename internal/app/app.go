@@ -52,10 +52,14 @@ func NewLogger(cfg config.LogConfig) *slog.Logger {
 // httpSurface pairs a listen address with the handler serving it, so
 // Serve can start/shut down an arbitrary number of listeners (one for the
 // shared -ingest/-api case, up to two when the surfaces use different
-// addresses) with the same loop.
+// addresses) with the same loop. label names which surface(s) the listener
+// carries ("ingest", "api" or "ingest,api"), logged at boot so a role swap
+// between two units (e.g. `-api` used to mean ingest-only) is visible in
+// journalctl rather than only inferred from the port.
 type httpSurface struct {
 	addr    string
 	handler http.Handler
+	label   string
 }
 
 // Serve runs the requested surfaces (ingest: events and the SDK, api: MCP
@@ -162,7 +166,7 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, ingest,
 		mux := http.NewServeMux()
 		ingestHandler.Mount(mux)
 		apiserver.RegisterOn(mux, protected, cfg, false, logger)
-		surfaces = append(surfaces, httpSurface{cfg.IngestAddr, mux})
+		surfaces = append(surfaces, httpSurface{cfg.IngestAddr, mux, "ingest,api"})
 	case api:
 		h, closeDB, err := apiserver.NewHandler(ctx, cfg, reg, manage.NewOps(reg, st), logger)
 		if err != nil {
@@ -171,11 +175,11 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, ingest,
 		}
 		apiClose = closeDB
 		if ingest {
-			surfaces = append(surfaces, httpSurface{cfg.IngestAddr, ingestHandler})
+			surfaces = append(surfaces, httpSurface{cfg.IngestAddr, ingestHandler, "ingest"})
 		}
-		surfaces = append(surfaces, httpSurface{cfg.API.Addr, h})
+		surfaces = append(surfaces, httpSurface{cfg.API.Addr, h, "api"})
 	default:
-		surfaces = append(surfaces, httpSurface{cfg.IngestAddr, ingestHandler})
+		surfaces = append(surfaces, httpSurface{cfg.IngestAddr, ingestHandler, "ingest"})
 	}
 	if apiClose != nil {
 		defer apiClose()
@@ -206,7 +210,7 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, ingest,
 		}
 		srvs[i] = sv
 		go func(sv *http.Server) { errCh <- sv.ListenAndServe() }(sv)
-		logger.Info("serving", "addr", s.addr, "projects", len(reg.Snapshot(ctx).Projects()))
+		logger.Info("serving", "addr", s.addr, "surfaces", s.label, "projects", len(reg.Snapshot(ctx).Projects()))
 	}
 
 	remaining := len(srvs)

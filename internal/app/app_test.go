@@ -323,11 +323,26 @@ func TestServeSharedListenerServesBothSurfaces(t *testing.T) {
 			return resp
 		}
 
+		postMCP := func(addr string) *http.Response {
+			t.Helper()
+			resp, err := http.Post("http://"+addr+"/mcp", "application/json", strings.NewReader(`{}`))
+			if err != nil {
+				t.Fatalf("POST /mcp on %s: %v", addr, err)
+			}
+			return resp
+		}
+
 		if cfg.API.Addr == cfg.IngestAddr {
 			resp := getAPI(cfg.IngestAddr)
 			resp.Body.Close()
 			if resp.StatusCode != 401 {
 				t.Errorf("GET /api/projects (shared, no token) = %d, want 401", resp.StatusCode)
+			}
+
+			resp = postMCP(cfg.IngestAddr)
+			resp.Body.Close()
+			if resp.StatusCode != 401 {
+				t.Errorf("POST /mcp (shared, no token) = %d, want 401", resp.StatusCode)
 			}
 		} else {
 			resp := getAPI(cfg.IngestAddr)
@@ -339,6 +354,17 @@ func TestServeSharedListenerServesBothSurfaces(t *testing.T) {
 			resp.Body.Close()
 			if resp.StatusCode != 401 {
 				t.Errorf("GET /api/projects on API port %s (no token) = %d, want 401", cfg.API.Addr, resp.StatusCode)
+			}
+
+			resp = postMCP(cfg.IngestAddr)
+			resp.Body.Close()
+			if resp.StatusCode != 404 {
+				t.Errorf("POST /mcp on ingest port %s = %d, want 404", cfg.IngestAddr, resp.StatusCode)
+			}
+			resp = postMCP(cfg.API.Addr)
+			resp.Body.Close()
+			if resp.StatusCode != 401 {
+				t.Errorf("POST /mcp on API port %s (no token) = %d, want 401", cfg.API.Addr, resp.StatusCode)
 			}
 		}
 	}
