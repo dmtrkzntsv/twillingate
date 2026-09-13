@@ -3,8 +3,18 @@
 # Debian container with the repo mounted read-only at /src.
 set -euo pipefail
 
-# The container has no systemd; stub systemctl so enable/daemon-reload succeed.
-printf '#!/bin/sh\necho "systemctl $*"\n' > /usr/local/bin/systemctl
+# The container has no systemd; stub systemctl so enable/daemon-reload
+# succeed. Calls are logged; /tmp/running makes twillingate.service look
+# active to list-units, and /tmp/healthy makes is-active succeed.
+cat > /usr/local/bin/systemctl <<'STUB'
+#!/bin/sh
+echo "systemctl $*" >> /tmp/systemctl.log
+case "$1" in
+  list-units) [ -f /tmp/running ] && echo "twillingate.service loaded active running twillingate" ;;
+  is-active) [ -f /tmp/healthy ] || exit 3 ;;
+esac
+exit 0
+STUB
 chmod +x /usr/local/bin/systemctl
 mkdir -p /etc/logrotate.d
 
@@ -49,5 +59,32 @@ echo 'DATABASE_DSN=sqlite:///edited.db' > /etc/twillingate/twillingate.env
 /tmp/deploy/systemd/install.sh --yes > /dev/null
 grep -q edited /etc/twillingate/twillingate.env \
   && echo "ok: rerun preserves config"
+
+# Every run from here on is an upgrade. It keeps the account the unit runs
+# as, even without --user, and a stopped service stays stopped.
+useradd --system --user-group analytics
+sed -i 's/^User=.*/User=analytics/' /etc/systemd/system/twillingate.service
+: > /tmp/systemctl.log
+/tmp/deploy/systemd/install.sh > /dev/null
+grep -q '^User=analytics$' /etc/systemd/system/twillingate.service \
+  && echo "ok: upgrade keeps the service account"
+! grep -q restart /tmp/systemctl.log \
+  && echo "ok: upgrade leaves a stopped service stopped"
+
+# A running service is restarted and reported.
+touch /tmp/running /tmp/healthy
+: > /tmp/systemctl.log
+out="$(/tmp/deploy/systemd/install.sh)"
+grep -q 'systemctl restart twillingate.service' /tmp/systemctl.log \
+  && echo "ok: upgrade restarts the running service"
+echo "$out" | grep -q '^Updated: ' && echo "$out" | grep -q '^Restarted twillingate.service$' \
+  && echo "ok: upgrade reports the update and the restart"
+
+# A service that does not come back fails the upgrade.
+rm /tmp/healthy
+if /tmp/deploy/systemd/install.sh > /dev/null 2>&1; then
+  echo "FAIL: upgrade succeeded although the service did not come back"; exit 1
+fi
+echo "ok: upgrade fails when the restarted service is down"
 
 echo "INSTALL TEST OK"

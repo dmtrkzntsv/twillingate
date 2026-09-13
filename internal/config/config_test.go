@@ -334,12 +334,8 @@ func TestValidateMCP(t *testing.T) {
 			"MCP_AUTH_DSN": "oauth://idp.example.com"}, false},
 		{"oauth empty issuer", map[string]string{
 			"MCP_AUTH_DSN": "oauth://?resource=https://twillingate.example.com/mcp"}, false},
-		{"cloudflare ok", map[string]string{
-			"MCP_AUTH_DSN": "cloudflare://team.cloudflareaccess.com?aud=aud123"}, true},
-		{"cloudflare missing aud", map[string]string{
-			"MCP_AUTH_DSN": "cloudflare://team.cloudflareaccess.com"}, false},
-		{"cloudflare missing team", map[string]string{
-			"MCP_AUTH_DSN": "cloudflare://?aud=aud123"}, false},
+		{"cloudflare removed", map[string]string{
+			"MCP_AUTH_DSN": "cloudflare://team.cloudflareaccess.com?aud=aud123"}, false},
 		{"token login ok", map[string]string{
 			"MCP_AUTH_DSN": "token://ar_x?password=pw&redirect=https://claude.ai/api/mcp/auth_callback&resource=https://mcp.example.com/mcp"}, true},
 		{"token login resource from PUBLIC_URL", map[string]string{
@@ -355,9 +351,9 @@ func TestValidateMCP(t *testing.T) {
 			"MCP_AUTH_DSN": "token://ar_x?redirect=https://claude.ai/cb&resource=https://mcp.example.com/mcp"}, false},
 		{"token login empty password", map[string]string{
 			"MCP_AUTH_DSN": "token://ar_x?password=&redirect=https://claude.ai/cb&resource=https://mcp.example.com/mcp"}, false},
-		{"token password without redirect", map[string]string{
-			"MCP_AUTH_DSN": "token://ar_x?password=pw"}, false},
-		{"token resource without redirect", map[string]string{
+		{"token login password only", map[string]string{
+			"MCP_AUTH_DSN": "token://ar_x?password=pw&resource=https://mcp.example.com/mcp"}, true},
+		{"token resource without password", map[string]string{
 			"MCP_AUTH_DSN": "token://ar_x?resource=https://mcp.example.com/mcp"}, false},
 		{"token unknown parameter", map[string]string{
 			"MCP_AUTH_DSN": "token://ar_x?password=pw&redirects=https://claude.ai/cb&resource=https://mcp.example.com/mcp"}, false},
@@ -375,6 +371,16 @@ func TestValidateMCP(t *testing.T) {
 			"MCP_AUTH_DSN": "token://ar_x?password=pw&redirect=https://claude.ai/cb%23frag&resource=https://mcp.example.com/mcp"}, false},
 		{"token redirect unparseable", map[string]string{
 			"MCP_AUTH_DSN": "token://ar_x?password=pw&redirect=https://%25zz/cb&resource=https://mcp.example.com/mcp"}, false},
+		{"token redirect host", map[string]string{
+			"MCP_AUTH_DSN": "token://ar_x?password=pw&redirect=app.example.com&resource=https://mcp.example.com/mcp"}, true},
+		{"token redirect IPv6 loopback host", map[string]string{
+			"MCP_AUTH_DSN": "token://ar_x?password=pw&redirect=[::1]&resource=https://mcp.example.com/mcp"}, true},
+		{"token redirect host with path", map[string]string{
+			"MCP_AUTH_DSN": "token://ar_x?password=pw&redirect=app.example.com/cb&resource=https://mcp.example.com/mcp"}, false},
+		{"token redirect host with port", map[string]string{
+			"MCP_AUTH_DSN": "token://ar_x?password=pw&redirect=app.example.com:8443&resource=https://mcp.example.com/mcp"}, false},
+		{"token redirect empty", map[string]string{
+			"MCP_AUTH_DSN": "token://ar_x?password=pw&redirect=&resource=https://mcp.example.com/mcp"}, false},
 		{"token resource http on public host", map[string]string{
 			"MCP_AUTH_DSN": "token://ar_x?password=pw&redirect=https://claude.ai/cb&resource=http://mcp.example.com/mcp"}, false},
 	}
@@ -441,27 +447,6 @@ func TestMCPAuthDSNParsing(t *testing.T) {
 			t.Errorf("mode = %q issuer = %q", cfg.MCP.AuthMode, cfg.MCP.Issuer)
 		}
 	})
-	t.Run("cloudflare", func(t *testing.T) {
-		cfg, err := FromEnv(mcpEnv(map[string]string{
-			"MCP_AUTH_DSN": "cloudflare://team.cloudflareaccess.com?aud=aud123"}))
-		if err != nil {
-			t.Fatal(err)
-		}
-		m := cfg.MCP
-		if m.AuthMode != "cloudflare" || m.CFTeamDomain != "team.cloudflareaccess.com" || m.CFAud != "aud123" {
-			t.Errorf("mode = %q team = %q aud = %q", m.AuthMode, m.CFTeamDomain, m.CFAud)
-		}
-	})
-	t.Run("cloudflare+insecure team domain carries http scheme", func(t *testing.T) {
-		cfg, err := FromEnv(mcpEnv(map[string]string{
-			"MCP_AUTH_DSN": "cloudflare+insecure://127.0.0.1:9999?aud=aud123"}))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if cfg.MCP.CFTeamDomain != "http://127.0.0.1:9999" {
-			t.Errorf("team = %q", cfg.MCP.CFTeamDomain)
-		}
-	})
 	t.Run("malformed DSN does not fail FromEnv, only ValidateMCP", func(t *testing.T) {
 		cfg, err := FromEnv(mcpEnv(map[string]string{"MCP_AUTH_DSN": "basic://x"}))
 		if err != nil {
@@ -502,7 +487,7 @@ func TestMCPAudienceDefaultsToResource(t *testing.T) {
 
 func TestTokenLoginDSNParsing(t *testing.T) {
 	cfg, err := FromEnv(mcpEnv(map[string]string{
-		"MCP_AUTH_DSN": "token://ar_x?redirect=https://claude.ai/api/mcp/auth_callback&password=a%2Bb%26c&redirect=http://localhost/callback",
+		"MCP_AUTH_DSN": "token://ar_x?redirect=https://claude.ai/api/mcp/auth_callback&password=a%2Bb%26c&redirect=App.Example.com",
 		"PUBLIC_URL":   "https://mcp.example.com"}))
 	if err != nil {
 		t.Fatal(err)
@@ -517,9 +502,10 @@ func TestTokenLoginDSNParsing(t *testing.T) {
 	if m.Password != "a+b&c" {
 		t.Errorf("password = %q, want percent-decoded %q", m.Password, "a+b&c")
 	}
-	want := []string{"https://claude.ai/api/mcp/auth_callback", "http://localhost/callback"}
-	if !slices.Equal(m.RedirectURIs, want) {
-		t.Errorf("redirects = %v, want %v in DSN order", m.RedirectURIs, want)
+	// A full URL counts as its host, so DSNs written for exact callbacks keep working.
+	want := []string{"claude.ai", "app.example.com"}
+	if !slices.Equal(m.RedirectHosts, want) {
+		t.Errorf("redirect hosts = %v, want %v in DSN order", m.RedirectHosts, want)
 	}
 	if m.ResourceURL != "https://mcp.example.com/mcp" {
 		t.Errorf("resource = %q, want PUBLIC_URL + /mcp", m.ResourceURL)
@@ -529,7 +515,14 @@ func TestTokenLoginDSNParsing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(plain.MCP.RedirectURIs) != 0 || plain.MCP.Password != "" || plain.MCP.ResourceURL != "" {
+	if len(plain.MCP.RedirectHosts) != 0 || plain.MCP.Password != "" || plain.MCP.ResourceURL != "" {
 		t.Errorf("plain token:// grew login settings: %+v", plain.MCP)
+	}
+	if !m.LoginEnabled() || plain.MCP.LoginEnabled() {
+		t.Errorf("LoginEnabled: with password %v, plain %v; want true, false", m.LoginEnabled(), plain.MCP.LoginEnabled())
+	}
+	oauth := MCPConfig{AuthMode: "oauth", Password: "ignored"}
+	if oauth.LoginEnabled() {
+		t.Error("LoginEnabled true outside token mode")
 	}
 }

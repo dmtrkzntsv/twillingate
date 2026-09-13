@@ -7,6 +7,10 @@
 # Straight from GitHub — downloads the latest release for this machine:
 #   curl -fsSL https://raw.githubusercontent.com/dmtrkzntsv/twillingate/main/deploy/systemd/install.sh | sudo bash
 #   curl -fsSL ...install.sh | sudo bash -s -- --yes --version v26.825.1
+#
+# Re-running it upgrades: the binary and units are replaced, twillingate.env
+# is left alone, the service account is read back from the installed unit,
+# and every twillingate unit that was running is restarted and checked.
 set -euo pipefail
 
 REPO="dmtrkzntsv/twillingate"
@@ -72,6 +76,17 @@ else
   [ -x "$bin" ] || die "release tarball did not contain the twillingate binary"
 fi
 
+installed_unit=/etc/systemd/system/twillingate.service
+upgrade=0
+if [ -f "$installed_unit" ]; then
+  upgrade=1
+  # An upgrade keeps the account the service already runs as.
+  if [ -z "$SERVICE_USER" ]; then
+    SERVICE_USER="$(sed -n 's/^User=//p' "$installed_unit" | head -n 1)"
+  fi
+fi
+previous="$(/usr/local/bin/twillingate version 2>/dev/null || true)"
+
 if [ -z "$SERVICE_USER" ]; then
   if [ "$ASSUME_YES" -eq 1 ] || ! [ -r /dev/tty ]; then
     SERVICE_USER=twillingate
@@ -122,6 +137,35 @@ else
   echo "NOTE: litestream binary not found; install it (https://litestream.io/install/)."
   echo "  If it does not land at $litestream_bin, fix ExecStart= in"
   echo "  /etc/systemd/system/litestream.service, then: systemctl enable --now litestream"
+fi
+
+if [ "$upgrade" -eq 1 ]; then
+  # Restart only what was running: a stopped service stays stopped. The glob
+  # also catches a separate twillingate-mcp.service.
+  running="$(systemctl list-units --type=service --state=active --no-legend --plain 'twillingate*.service' \
+    | awk '{print $1}')"
+  for unit in $running; do
+    systemctl restart "$unit"
+  done
+  current="$(/usr/local/bin/twillingate version 2>/dev/null || true)"
+  echo
+  echo "Updated: ${previous:-unknown} -> ${current:-unknown}"
+  if [ -z "$running" ]; then
+    echo "twillingate is not running, so nothing was restarted: systemctl start twillingate"
+    exit 0
+  fi
+  # A bad config makes serve exit within moments of starting.
+  sleep 3
+  failed=0
+  for unit in $running; do
+    if systemctl is-active --quiet "$unit"; then
+      echo "Restarted $unit"
+    else
+      echo "$unit did not come back up: journalctl -u $unit -n 50" >&2
+      failed=1
+    fi
+  done
+  exit "$failed"
 fi
 
 cat <<EOF_DONE

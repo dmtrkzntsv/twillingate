@@ -227,45 +227,6 @@ func TestMCPOAuthModePasses(t *testing.T) {
 	}
 }
 
-// TestMCPCloudflareModePasses exercises cloudflare mode through the
-// assembled handler: a valid Cf-Access-Jwt-Assertion passes, a missing
-// one is rejected with no WWW-Authenticate (Access owns the edge
-// challenge, not the origin), and the PRM route is never mounted.
-func TestMCPCloudflareModePasses(t *testing.T) {
-	f := newJWKSFixture(t)
-	h := newHandlerFixture(t, map[string]string{
-		"MCP_AUTH_DSN": "cloudflare+insecure://" + strings.TrimPrefix(f.issuer, "http://") +
-			"?aud=aud-tag-1",
-	})
-
-	assertion := f.sign(t, jwt.MapClaims{
-		"iss": f.issuer, "aud": "aud-tag-1", "sub": "user@example.com",
-		"exp": time.Now().Add(time.Hour).Unix(),
-	})
-	req := initReq()
-	req.Header.Set("Cf-Access-Jwt-Assertion", assertion)
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("code = %d body = %s", rec.Code, rec.Body.String())
-	}
-
-	rec2 := httptest.NewRecorder()
-	h.ServeHTTP(rec2, httptest.NewRequest("POST", "/mcp", strings.NewReader("{}")))
-	if rec2.Code != http.StatusUnauthorized {
-		t.Fatalf("code = %d", rec2.Code)
-	}
-	if www := rec2.Header().Get("WWW-Authenticate"); www != "" {
-		t.Errorf("WWW-Authenticate = %q; cloudflare mode must not challenge from the origin", www)
-	}
-
-	rec3 := httptest.NewRecorder()
-	h.ServeHTTP(rec3, httptest.NewRequest("GET", "/.well-known/oauth-protected-resource", nil))
-	if rec3.Code != http.StatusNotFound {
-		t.Fatalf("code = %d; cloudflare mode must never mount the PRM route", rec3.Code)
-	}
-}
-
 func TestHealthzUnauthenticated(t *testing.T) {
 	h := newHandlerFixture(t, nil)
 	rec := httptest.NewRecorder()
@@ -384,6 +345,11 @@ func TestTokenLoginRoutesFollowRedirects(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized || !strings.Contains(rec.Header().Get("WWW-Authenticate"), want) {
 		t.Errorf("login: /mcp %d WWW-Authenticate=%q, want 401 with %s", rec.Code, rec.Header().Get("WWW-Authenticate"), want)
 	}
+	passwordOnly := newHandlerFixture(t, map[string]string{
+		"MCP_AUTH_DSN": "token://ar_testtoken?password=hunter2&resource=https://mcp.example.com/mcp"})
+	if rec := serve(passwordOnly, httptest.NewRequest("GET", "/.well-known/oauth-authorization-server", nil)); rec.Code != http.StatusOK {
+		t.Errorf("password without redirect: metadata %d, want 200 — the password turns the login on", rec.Code)
+	}
 	req := initReq()
 	req.Header.Set("Authorization", "Bearer ar_testtoken")
 	if rec := serve(login, req); rec.Code != http.StatusOK {
@@ -392,8 +358,7 @@ func TestTokenLoginRoutesFollowRedirects(t *testing.T) {
 }
 
 func TestIssuedAccessTokenNeedsTheLoginServer(t *testing.T) {
-	m := config.MCPConfig{Token: "ar_testtoken", Password: "hunter2",
-		RedirectURIs: []string{"https://claude.ai/api/mcp/auth_callback"}, ResourceURL: "https://mcp.example.com/mcp"}
+	m := config.MCPConfig{Token: "ar_testtoken", Password: "hunter2", ResourceURL: "https://mcp.example.com/mcp"}
 	access := newLoginServer(m, slog.New(slog.DiscardHandler)).keys.sign(kindAccess, grantClaims{
 		RegisteredClaims: jwt.RegisteredClaims{Issuer: "https://mcp.example.com", Subject: "mcp",
 			Audience: jwt.ClaimStrings{m.ResourceURL}, ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour))}})
@@ -402,8 +367,8 @@ func TestIssuedAccessTokenNeedsTheLoginServer(t *testing.T) {
 		h    http.Handler
 		want int
 	}{
-		"login on":               {newHandlerFixture(t, map[string]string{"MCP_AUTH_DSN": loginDSN}), http.StatusOK},
-		"every redirect removed": {newHandlerFixture(t, nil), http.StatusUnauthorized},
+		"login on":  {newHandlerFixture(t, map[string]string{"MCP_AUTH_DSN": loginDSN}), http.StatusOK},
+		"login off": {newHandlerFixture(t, nil), http.StatusUnauthorized},
 	} {
 		req := initReq()
 		req.Header.Set("Authorization", "Bearer "+access)

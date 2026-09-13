@@ -51,10 +51,6 @@ func newJWKSFixture(t *testing.T) *jwksFixture {
 		}}})
 	}
 	mux.HandleFunc("/jwks", jwksHandler)
-	// Same keys under Cloudflare Access's real JWKS path, so a fixture
-	// can double as a cloudflare team domain in cloudflare-mode tests
-	// without a second key set to keep in sync.
-	mux.HandleFunc("/cdn-cgi/access/certs", jwksHandler)
 	f.server = httptest.NewServer(mux)
 	f.issuer = f.server.URL
 	t.Cleanup(f.server.Close)
@@ -171,39 +167,6 @@ func TestStaticVerifier(t *testing.T) {
 		if _, err := v(context.Background(), bad, nil); err == nil {
 			t.Errorf("%q accepted", bad)
 		}
-	}
-}
-
-func TestCloudflareVerifier(t *testing.T) {
-	f := newJWKSFixture(t)
-	cache := NewJWKSCache(f.issuer+"/jwks", f.server.Client())
-	v := CloudflareVerifier(f.issuer, "aud-tag-1", cache)
-
-	tok := f.sign(t, jwt.MapClaims{
-		"iss": f.issuer, "aud": "aud-tag-1", "sub": "user@example.com",
-		"exp": time.Now().Add(time.Hour).Unix(),
-	})
-	req := httptest.NewRequest("POST", "/mcp", nil)
-	req.Header.Set("Cf-Access-Jwt-Assertion", tok)
-	// the opaque bearer is ignored entirely
-	info, err := v(context.Background(), "oauth:opaque-ignored", req)
-	if err != nil {
-		t.Fatalf("valid assertion rejected: %v", err)
-	}
-	if info.UserID != "user@example.com" {
-		t.Errorf("UserID = %q", info.UserID)
-	}
-	// missing header
-	if _, err := v(context.Background(), "x", httptest.NewRequest("POST", "/mcp", nil)); err == nil {
-		t.Fatal("missing assertion accepted")
-	}
-	// wrong aud tag
-	wrong := f.sign(t, jwt.MapClaims{"iss": f.issuer, "aud": "other-tag",
-		"sub": "u", "exp": time.Now().Add(time.Hour).Unix()})
-	req2 := httptest.NewRequest("POST", "/mcp", nil)
-	req2.Header.Set("Cf-Access-Jwt-Assertion", wrong)
-	if _, err := v(context.Background(), "x", req2); err == nil {
-		t.Fatal("wrong aud accepted")
 	}
 }
 
@@ -375,37 +338,5 @@ func TestJWKSCacheFetchMalformedJSON(t *testing.T) {
 	cache := NewJWKSCache(server.URL, server.Client())
 	if _, err := cache.Key("k1"); err == nil {
 		t.Fatal("malformed JWKS body accepted")
-	}
-}
-
-// TestCloudflareVerifierPrependsScheme proves a bare team domain (no
-// "http(s)://" prefix, the normal operator-facing form) is compared
-// against the token's iss with an "https://" prefix added — not left bare,
-// which would never match a real token's iss claim.
-func TestCloudflareVerifierPrependsScheme(t *testing.T) {
-	f := newJWKSFixture(t)
-	// f.issuer is an httptest URL like "http://127.0.0.1:PORT"; strip the
-	// scheme to get a bare "domain" the way an operator would configure
-	// the team domain, and sign a token whose iss has "https://" added
-	// back exactly the way CloudflareVerifier is documented to do it.
-	bareDomain := strings.TrimPrefix(f.issuer, "http://")
-	cache := NewJWKSCache(f.issuer+"/cdn-cgi/access/certs", f.server.Client())
-	v := CloudflareVerifier(bareDomain, "aud-tag-1", cache)
-
-	tok := f.sign(t, jwt.MapClaims{
-		"iss": "https://" + bareDomain, "aud": "aud-tag-1", "sub": "u",
-		"exp": time.Now().Add(time.Hour).Unix(),
-	})
-	req := httptest.NewRequest("POST", "/mcp", nil)
-	req.Header.Set("Cf-Access-Jwt-Assertion", tok)
-	if _, err := v(context.Background(), "ignored", req); err != nil {
-		t.Fatalf("bare team domain was not prefixed to match iss: %v", err)
-	}
-}
-
-func TestCloudflareVerifierRejectsNilRequest(t *testing.T) {
-	v := CloudflareVerifier("team.cloudflareaccess.com", "aud", NewJWKSCache("http://example.invalid/jwks", nil))
-	if _, err := v(context.Background(), "x", nil); err == nil {
-		t.Fatal("nil request accepted")
 	}
 }

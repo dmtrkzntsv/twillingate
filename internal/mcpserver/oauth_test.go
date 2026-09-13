@@ -112,8 +112,7 @@ type loginFixture struct {
 
 func newLoginFixture(t *testing.T, over func(*config.MCPConfig)) *loginFixture {
 	t.Helper()
-	m := config.MCPConfig{AuthMode: "token", Token: testToken, Password: testPassword,
-		RedirectURIs: []string{claudeCallback, loopbackEntry}, ResourceURL: testResource}
+	m := config.MCPConfig{AuthMode: "token", Token: testToken, Password: testPassword, ResourceURL: testResource}
 	if over != nil {
 		over(&m)
 	}
@@ -188,6 +187,45 @@ func TestRedirectMatches(t *testing.T) {
 	for _, tc := range cases {
 		if got := redirectMatches(tc.allowed, tc.candidate); got != tc.want {
 			t.Errorf("redirectMatches(%q, %q) = %v, want %v", tc.allowed, tc.candidate, got, tc.want)
+		}
+	}
+}
+
+func TestRedirectAllowed(t *testing.T) {
+	hosts := []string{"app.example.com"}
+	cases := []struct {
+		candidate string
+		want      bool
+	}{
+		// Loopback needs no entry: the code can only reach this machine.
+		{"http://127.0.0.1:53124/callback/abc123", true},
+		{"http://localhost:8080/any/path?x=1", true},
+		{"http://[::1]:9/cb", true},
+		{"https://localhost/cb", true},
+		{"myapp://127.0.0.1/cb", false},
+		{"http://127.0.0.1.evil.com/cb", false},
+		// The web connectors are built in, any path, https only, no subdomains.
+		{claudeCallback, true},
+		{"https://claude.ai/some/other/callback", true},
+		{"https://chatgpt.com/connector_platform_oauth_redirect", true},
+		{"https://CHATGPT.com/elsewhere", true},
+		{"http://claude.ai/api/mcp/auth_callback", false},
+		{"https://foo.claude.ai/cb", false},
+		{"https://claude.ai.evil.com/cb", false},
+		// Configured hosts, likewise.
+		{"https://app.example.com/cb?tenant=1", true},
+		{"https://app.example.com:8443/cb", true},
+		{"http://app.example.com/cb", false},
+		{"https://evil.example/cb", false},
+		// Never: fragments, userinfo, garbage.
+		{"https://claude.ai/cb#f", false},
+		{"https://evil@claude.ai/cb", false},
+		{"/relative/cb", false},
+		{"%zz", false},
+	}
+	for _, tc := range cases {
+		if got := redirectAllowed(hosts, tc.candidate); got != tc.want {
+			t.Errorf("redirectAllowed(%q) = %v, want %v", tc.candidate, got, tc.want)
 		}
 	}
 }
@@ -284,6 +322,14 @@ func TestRegisterClient(t *testing.T) {
 	}
 	if !strings.Contains(f.logs.String(), "https://evil.example/cb") {
 		t.Error("rejected registration redirect not logged")
+	}
+
+	// Loopback clients and the built-in web connectors register without
+	// any allowlist entry.
+	bare := newLoginFixture(t, nil)
+	if id := bare.register("http://127.0.0.1:1455/callback/abc123", claudeCallback,
+		"https://chatgpt.com/connector_platform_oauth_redirect"); id == "" {
+		t.Error("default registration returned no client_id")
 	}
 }
 

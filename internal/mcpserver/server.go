@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"strings"
 
 	"github.com/dmtrkzntsv/twillingate/internal/config"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
@@ -48,7 +47,7 @@ func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *m
 // metadata route, mounted on its own mux. Routes registered on the
 // returned mux: /mcp, /healthz, and
 // /.well-known/oauth-protected-resource in oauth mode, and the login
-// server's routes in token mode with redirects configured.
+// server's routes in token mode with a password configured.
 // The func() error closes the read DB.
 func NewHandler(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *manage.Ops, logger *slog.Logger) (http.Handler, func() error, error) {
 	protected, closeDB, err := Build(ctx, cfg, reg, ops, logger)
@@ -73,7 +72,7 @@ func RegisterOn(mux *http.ServeMux, protected http.Handler, cfg *config.Config, 
 		mux.Handle("GET /.well-known/oauth-protected-resource",
 			auth.ProtectedResourceMetadataHandler(meta))
 	}
-	if cfg.MCP.AuthMode == "token" && len(cfg.MCP.RedirectURIs) > 0 {
+	if cfg.MCP.LoginEnabled() {
 		newLoginServer(cfg.MCP, logger).mount(mux)
 	}
 	if withHealthz {
@@ -89,7 +88,7 @@ func wrapAuth(ctx context.Context, m config.MCPConfig, next http.Handler) (http.
 	switch m.AuthMode {
 	case "token":
 		opts := &auth.RequireBearerTokenOptions{AllowMissingExpiration: true}
-		if len(m.RedirectURIs) == 0 {
+		if !m.LoginEnabled() {
 			return auth.RequireBearerToken(StaticVerifier(m.Token), opts)(next), nil
 		}
 		// Keys derive from the config alone, so this verifier accepts what
@@ -106,32 +105,6 @@ func wrapAuth(ctx context.Context, m config.MCPConfig, next http.Handler) (http.
 		return auth.RequireBearerToken(v, &auth.RequireBearerTokenOptions{
 			ResourceMetadataURL: metadataURLFor(m.ResourceURL),
 		})(next), nil
-	case "cloudflare":
-		// Access owns discovery and the 401 challenge at the edge; the
-		// origin's only job is validating the assertion header. A thin
-		// middleware instead of RequireBearerToken so a request whose
-		// Authorization header Access did not populate is still judged
-		// by the assertion alone (endpoint spec §5.2).
-		//
-		// CFTeamDomain is normally a bare team domain and gets an
-		// "https://" prefix here; scheme-tolerant like CloudflareVerifier
-		// itself so a caller (or test) that already has a full issuer URL
-		// isn't double-prefixed into a malformed one.
-		certsHost := m.CFTeamDomain
-		if !strings.HasPrefix(certsHost, "http://") && !strings.HasPrefix(certsHost, "https://") {
-			certsHost = "https://" + certsHost
-		}
-		cache := NewJWKSCache(certsHost+"/cdn-cgi/access/certs", nil)
-		v := CloudflareVerifier(m.CFTeamDomain, m.CFAud, cache)
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			info, err := v(r.Context(), "", r)
-			if err != nil {
-				http.Error(w, "unauthorized", http.StatusUnauthorized)
-				return
-			}
-			_ = info
-			next.ServeHTTP(w, r)
-		}), nil
 	default:
 		return nil, fmt.Errorf("mcpserver: unknown auth mode %q", m.AuthMode)
 	}

@@ -68,8 +68,10 @@ The installer creates a system account, installs the binary to
 `/usr/local/bin/twillingate`, creates `/var/lib/twillingate` (0750, owned by
 the service account), installs an example `twillingate.env` loaded by both
 units via `EnvironmentFile=`, renders the systemd units with the chosen user,
-and enables them. It never overwrites an existing `twillingate.env`, so
-re-running it to deploy a new binary is safe.
+and enables them. Re-running the same command upgrades: it replaces the
+binary and units, keeps `twillingate.env` and the service account, restarts
+every `twillingate` unit that was running, and exits non-zero if one does not
+come back up. A stopped service stays stopped.
 
 Then edit the file it flagged and create your first project — projects live
 in the database, not in a shipped file:
@@ -129,7 +131,7 @@ curl -i -X POST http://localhost:8080/api/events \
 | `DASHBOARDS_INTERVAL` | Minimum spacing between Evidence rebuilds. Default `15m`. |
 | `DASHBOARDS_PROJECT_DIR` | Evidence project in the image. Default `/opt/evidence`. |
 | `DASHBOARDS_WORK_DIR` | Where the database snapshot is written. Default `/var/lib/dashboards`. |
-| `MCP_AUTH_DSN` | MCP authentication: `token://<token>` (add `?password=…&redirect=…` for a browser login), `cloudflare://<team>?aud=<tag>` or `oauth://<issuer-host>`. Unset, bare `serve` skips MCP with a warning. |
+| `MCP_AUTH_DSN` | MCP authentication: `token://<token>?password=…` for the built-in browser login (see [The MCP endpoint](#the-mcp-endpoint)), or `oauth://<issuer-host>` for your own identity provider. Unset, bare `serve` skips MCP with a warning. |
 | `MCP_ADDR` | Give the MCP endpoint its own listener. Defaults to `LISTEN_ADDR` (shared). |
 | `MCP_DB_PATH` | Database MCP reads for queries. Defaults to the `DATABASE_DSN` path. |
 | `MCP_QUERY_TIMEOUT` | Per-query guard on the MCP `query` tool. Default `10s`. |
@@ -223,67 +225,103 @@ quietly rebuilt from an empty database.
 `https://twillingate.example.com/mcp`. There is no stdio server to install:
 every client talks to the running collector over the network.
 
-`twillingate serve -mcp` refuses to run unauthenticated. `MCP_AUTH_DSN` must
-be set, and its scheme picks the mode:
-
-```bash
-MCP_AUTH_DSN=token://<token>[?password=<password>&redirect=<uri>[&redirect=<uri>…][&resource=<url>]]
-MCP_AUTH_DSN=cloudflare://<team>.cloudflareaccess.com?aud=<aud-tag>
-MCP_AUTH_DSN=oauth://idp.example.com[?resource=<url>][&audience=<aud>]
-```
-
-| Mode | Pick it when | Claude Code | Claude Desktop | claude.ai |
-| --- | --- | --- | --- | --- |
-| `token://` | One operator, no identity provider — the simplest thing that is secure | ✅ `--header` or browser login | ✅ with the browser login | ✅ with the browser login |
-| `cloudflare://` | Your domain is already on Cloudflare | ✅ browser login | ✅ custom connector | ✅ custom connector |
-| `oauth://` | You run or rent an IdP (Keycloak, Auth0, Authentik, …) | ✅ browser login | ✅ custom connector | ✅ if the IdP does Dynamic Client Registration |
-
 > **A connected session reads every non-archived project — including
 > personal data on `identified` projects — and can use the management
-> tools.** There is no per-project scoping. The credential, or the IdP
-> behind it, is the whole of the access control. Treat it as an admin
-> credential.
+> tools.** There is no per-project scoping. The token and the password are
+> the whole of the access control. Treat both as admin credentials.
 
-Put the MCP surface on its own hostname when you can (`MCP_ADDR` plus a
-second DNS name): `/api/events` and the `/js/*` scripts must stay publicly
-reachable for ingestion, and a dedicated hostname keeps the access-control
-story simple.
+### Set it up
 
-### Enabling MCP on an installed host
+The binary runs its own login: give it a token and a password, and
+claude.ai, ChatGPT, Claude Desktop, Claude Code and Codex connect through a
+browser page that asks for the password. There is no identity provider to
+run.
 
-The installer's unit runs bare `serve`, which starts MCP the moment its auth
-is configured — until then it logs `MCP endpoint disabled` at boot. Enabling
-it is one edit:
+1. Mint the token:
 
-```bash
-sudo -u twillingate sh -ac '. /etc/twillingate/twillingate.env; twillingate keygen -mcp'
-sudo vi /etc/twillingate/twillingate.env    # set MCP_AUTH_DSN
-sudo systemctl restart twillingate
-```
+   ```bash
+   sudo -u twillingate sh -ac '. /etc/twillingate/twillingate.env; twillingate keygen -mcp'
+   # prints: MCP_AUTH_DSN=token://ar_…
+   ```
 
-Set `MCP_ADDR` to give MCP its own port; unset, it shares the ingestion
-listener. To run the surfaces as separate processes — independently
-restartable and exposable — copy `deploy/systemd/twillingate.service` to
-`twillingate-mcp.service`, change its `ExecStart=` to `twillingate serve
--mcp` (explicitly requesting `-mcp` makes missing auth a hard error), and
-change the original unit's to `twillingate serve -api`.
+2. Set it in `/etc/twillingate/twillingate.env` (compose: `.env`) with a
+   password, **in single quotes**:
 
-**A `serve -mcp`-only process still runs the daily aggregation pass against
-`DATABASE_DSN`** — `-mcp` only makes the HTTP listener conditional, not the
-background jobs. Point a `-mcp`-only unit at a litestream replica and it
-will write to that replica on every pass. Set `MCP_DB_PATH` (what MCP reads)
-and `DATABASE_DSN` (what the aggregation pass writes) deliberately: either
-keep `DATABASE_DSN` on a database this process is meant to own, or accept
-that a two-process topology runs the idempotent daily aggregation twice.
+   ```bash
+   MCP_AUTH_DSN='token://ar_…?password=<password>'
+   ```
 
-### `token://` — a static token, with an optional browser login
+   The quotes matter: the CLI commands in this runbook load the file with
+   `sh`, where an unquoted `&` cuts the value short.
 
-```bash
-twillingate keygen -mcp        # prints: MCP_AUTH_DSN=token://ar_…
-```
+3. Restart and check that `/mcp` asks for a login:
 
-The token is a true secret — unlike ingest keys it reads every project and
-authorizes the management tools. Rotate by minting a new one and restarting.
+   ```bash
+   sudo systemctl restart twillingate        # compose: docker compose up -d
+   curl -si -X POST https://twillingate.example.com/mcp | grep -i www-authenticate
+   # → WWW-Authenticate: Bearer resource_metadata="https://twillingate.example.com/.well-known/oauth-protected-resource"
+   ```
+
+   A `404` means MCP is off: `journalctl -u twillingate | grep 'MCP endpoint disabled'`
+   gives the reason, usually a DSN that does not parse.
+
+| Parameter | Meaning |
+| --- | --- |
+| `password` | What the login page asks for. Setting it turns the login on. |
+| `resource` | The public URL of `/mcp`. Defaults to `PUBLIC_URL` + `/mcp`; set it when MCP has its own hostname. |
+| `redirect` | An extra host clients may return to, such as `redirect=app.example.com`; repeat it once per host. Only needed for clients not covered below. |
+
+- **Hosts accepted without `redirect=`.** `localhost`, `127.0.0.1` and
+  `[::1]` over `http` or `https`, because a code sent there only reaches the
+  machine the browser runs on — that covers Claude Code, Claude Desktop and
+  Codex. And `claude.ai` and `chatgpt.com` over `https`. Any port and path.
+- **Any other host is refused** until it is added as `redirect=<host>`; it
+  then works over `https` with any port and path. Hosts match exactly:
+  `claude.ai` does not admit `foo.claude.ai`. Accepting any host would let
+  anyone register a client that sends your login to their own site.
+- **Encoding.** The parameters are a query string: in the password write
+  `&` as `%26`, `#` as `%23`, `%` as `%25`, `;` as `%3B` and `+` as `%2B`.
+  An unencoded `+` becomes a space.
+- **Guessing.** Five wrong passwords in a minute lock the page for everyone
+  until the minute ends; connected clients are unaffected. No minimum length
+  is enforced, so a short password is only as strong as that rate allows.
+- **Hand-picked tokens.** `keygen -mcp` mints `ar_` plus hex. A token you
+  choose yourself must not contain `?`, which starts the parameters.
+
+### Connect a client
+
+- **claude.ai and Claude Desktop:** Settings → Connectors → **Add custom
+  connector**, URL `https://twillingate.example.com/mcp`, OAuth client ID and
+  secret left empty. The browser opens the login page; enter the password.
+- **ChatGPT:** add a connector with the same URL and OAuth authentication.
+- **Claude Code:** `claude mcp add --transport http twillingate https://twillingate.example.com/mcp`,
+  then `/mcp` → *Authenticate*. **Codex:** add the URL as an MCP server and
+  choose *Authenticate*.
+- **Any other MCP client** connects to the same URL. If its login stops at
+  "The redirect URI's host is not allowed", the page and the
+  `mcp login: redirect rejected` log line show the URI it used: add its host
+  as `redirect=<host>` and restart.
+
+A client you use stays logged in: access tokens last an hour and refresh
+silently, and every refresh extends the login by 30 days. Nothing about
+logins is stored, so there is no per-client revocation — change the password
+to cut a device off.
+
+| Change | Effect |
+| --- | --- |
+| New token or new password | Every client logs in again |
+| New `resource` URL | Every client logs in again |
+| `password` removed | The login is off and issued tokens stop working |
+| `redirect` list edited | Connected clients keep working; new logins follow the list |
+| A client unused for 30 days | That client logs in again |
+| Restart or upgrade | Nothing |
+
+### Alternative: the token as a header
+
+A client that can send headers can skip the login and present the token
+itself — useful for scripts and headless Claude Code. It works whether or
+not a password is set; a bare `MCP_AUTH_DSN='token://ar_…'` turns the login
+off and leaves only this.
 
 ```bash
 claude mcp add --transport http twillingate https://twillingate.example.com/mcp \
@@ -308,206 +346,85 @@ time:
 }
 ```
 
-#### Browser login for Claude Desktop and claude.ai
+Rotate by minting a new token, setting it and restarting; a client holding
+the old header needs `claude mcp remove twillingate` and adding again.
 
-Neither can attach an `Authorization` header. Add a password and the
-redirect URIs you allow, and the binary serves its own OAuth login: the
-client registers itself, your browser shows one page asking for the
-password, and the client is connected. The token never goes near a
-browser, and the header above keeps working.
+### Hostnames and processes
 
-```bash
-MCP_AUTH_DSN=token://ar_…?password=<password>&redirect=https://claude.ai/api/mcp/auth_callback&redirect=http://localhost/callback
-```
+`MCP_ADDR` unset, MCP shares the ingestion listener. Put it on its own
+hostname when you can (`MCP_ADDR` plus a second DNS name, and `resource=`
+set to that hostname's `/mcp`): `/api/events` and the `/js/*` scripts must
+stay publicly reachable for ingestion, and a dedicated hostname keeps the
+access-control story simple.
 
-| Parameter | Meaning |
-| --- | --- |
-| `redirect` | A redirect URI clients may use; repeat it once per URI. Any `redirect` turns the login on. |
-| `password` | What the login page asks for. Required with `redirect`. |
-| `resource` | The public URL of `/mcp`. Defaults to `PUBLIC_URL` + `/mcp`; set it when MCP has its own hostname. |
+To run the surfaces as separate processes — independently restartable and
+exposable — copy `deploy/systemd/twillingate.service` to
+`twillingate-mcp.service`, change its `ExecStart=` to `twillingate serve
+-mcp` (explicitly requesting `-mcp` makes missing auth a hard error), and
+change the original unit's to `twillingate serve -api`.
 
-- **Matching.** Scheme, host, path and query must equal an entry exactly.
-  For `localhost`, `127.0.0.1` and `[::1]` the port is ignored, because
-  Claude Code and Desktop pick a new port for each login; `localhost` and
-  `127.0.0.1` still count as different hosts. Any other host needs `https`.
-- **Finding a client's callback.** If a login stops at "The redirect URI
-  is not in the MCP_AUTH_DSN allowlist", the page and the
-  `mcp login: redirect rejected` log line show the URI the client used. Add
-  it as another `redirect=` and restart.
-- **Encoding.** The parameters are a query string: in the password write
-  `&` as `%26`, `#` as `%23`, `%` as `%25`, `;` as `%3B` and `+` as `%2B`.
-  An unencoded `+` becomes a space. In a Docker Compose `.env`, also write
-  `$` as `$$`.
-- **Guessing.** Five wrong passwords in a minute lock the page for everyone
-  until the minute ends; connected clients are unaffected. No minimum length
-  is enforced, so a short password is only as strong as that rate allows.
-- **Hand-picked tokens.** `keygen -mcp` mints `ar_` plus hex. A token you
-  choose yourself must not contain `?`, which now starts the parameters.
+**A `serve -mcp`-only process still runs the daily aggregation pass against
+`DATABASE_DSN`** — `-mcp` only makes the HTTP listener conditional, not the
+background jobs. Point a `-mcp`-only unit at a litestream replica and it
+will write to that replica on every pass. Set `MCP_DB_PATH` (what MCP reads)
+and `DATABASE_DSN` (what the aggregation pass writes) deliberately: either
+keep `DATABASE_DSN` on a database this process is meant to own, or accept
+that a two-process topology runs the idempotent daily aggregation twice.
 
-Claude Desktop and claude.ai: Settings → Connectors → **Add custom
-connector**, endpoint `https://twillingate.example.com/mcp`, OAuth client ID
-and secret left empty. Claude Code: add the server without a header, run
-`/mcp`, choose *Authenticate*.
+### Other auth modes
 
-A client you use stays logged in: access tokens last an hour and refresh
-silently, and every refresh extends the login by 30 days. Nothing about
-logins is stored, so there is no per-client revocation — change the password
-to cut a device off.
-
-| Change | Effect |
-| --- | --- |
-| New token or new password | Every client logs in again |
-| New `resource` URL | Every client logs in again |
-| Every `redirect` removed | The login is off and issued tokens stop working |
-| Redirect list edited | Connected clients keep working; new logins follow the list |
-| A client unused for 30 days | That client logs in again |
-| Restart or upgrade | Nothing |
-
-#### Claude Desktop without the browser login
-
-A local stdio-to-HTTP bridge can attach the header instead, with Node
-installed. Edit `~/Library/Application Support/Claude/claude_desktop_config.json`
-(macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows), then quit
-Claude Desktop completely — closing the window leaves it in the tray, and
-the config is only read at startup:
-
-```json
-{
-  "mcpServers": {
-    "twillingate": {
-      "command": "npx",
-      "args": ["-y", "mcp-remote", "https://twillingate.example.com/mcp",
-               "--header", "Authorization: Bearer ar_…"]
-    }
-  }
-}
-```
-
-The token then sits in plain text, and `mcp-remote` is third-party code in
-the path of an admin credential; the browser login avoids both.
-
-### `cloudflare://` — Access managed OAuth
-
-Cloudflare Access acts as the OAuth authorization server: it serves the
-discovery documents at the edge, runs the browser login against your chosen
-identity source, and supports Dynamic Client Registration — which is what
-lets claude.ai connect with zero client setup. Your only identity
-infrastructure is the Cloudflare account.
-
-1. **Route the MCP hostname through Cloudflare** — orange-cloud DNS or a
-   `cloudflared` tunnel to the machine running `serve -mcp`.
-2. **Create the Access application**: Zero Trust → Access controls →
-   Applications → add a **self-hosted** application for the MCP hostname (or
-   hostname + path). Scope it so the ingest endpoints are NOT behind it —
-   `/api/events` must stay reachable without an Access session.
-3. **Add an Allow policy** — your email via Google/GitHub login, a one-time
-   PIN, or any configured IdP. This is your user store.
-4. **Enable Managed OAuth** in the application's Advanced settings, and
-   enable Dynamic Client Registration (allow-any, or list your client's
-   callback in `allowed_uris`). It is opt-in for self-hosted applications.
-5. **Copy the application's AUD tag** from the application overview.
-6. Set `MCP_AUTH_DSN=cloudflare://yourteam.cloudflareaccess.com?aud=<tag>`.
-
-The token a client holds under managed OAuth is opaque and validated at the
-edge. What reaches the origin is the resolved identity as a JWT in the
-`Cf-Access-Jwt-Assertion` header; the server validates it against the team's
-public keys with the AUD tag as the audience. A request that reaches the
-listener without having passed Access carries no valid assertion and is
-rejected — an exposed origin port does not bypass Access. In this mode the
-binary serves no discovery document and sends no challenge header; the edge
-owns both.
-
-Claude Code: add the server without a header, run `/mcp`, choose
-*Authenticate*. Claude Desktop and claude.ai: Settings → Connectors → **Add
-custom connector**, endpoint `https://twillingate.example.com/mcp`.
-
-### `oauth://` — any standards-compliant IdP
-
-The server is an OAuth 2.1 **resource server** only: it validates the JWTs
-your IdP issues, and never sees a password or runs a login page.
-
-The RFC 9728 resource URL defaults to `PUBLIC_URL` + `/mcp` (or pass
-`?resource=https://…/mcp`); the expected token audience defaults to that
-resource URL (`&audience=…` to override). For a local or plain-http IdP —
-development only — use `oauth+insecure://`.
-
-What the IdP must provide, verified before pointing the server at it:
-
-1. **RFC 8414 metadata** at
-   `<issuer>/.well-known/oauth-authorization-server` containing a
-   `jwks_uri`. The server fetches this once at startup and refuses to boot
-   if it is missing:
-
-   ```bash
-   curl -s https://auth.example.com/.well-known/oauth-authorization-server | jq .jwks_uri
-   ```
-
-   Many IdPs publish only OIDC discovery; most current Keycloak, Auth0 and
-   Authentik releases serve the RFC 8414 path too, but confirm rather than
-   assume.
-2. **Asymmetrically signed access tokens** (RS/ES/PS). HMAC and `alg=none`
-   are rejected. If your IdP issues opaque access tokens by default,
-   configure it to issue JWTs for this audience.
-3. **The audience claim**: tokens must carry `aud` containing the resource
-   URL. In most IdPs this means registering the MCP server as an
-   API/resource with that identifier and having clients request it.
-4. **For claude.ai**: Dynamic Client Registration (RFC 7591), or manually
-   register the client and configure its id in the connector.
-
-Key rotation is handled: an unknown `kid` triggers a JWKS refetch, throttled
-to once a minute.
-
-### Verifying any mode
+#### `oauth://` — your own identity provider
 
 ```bash
-curl -si https://twillingate.example.com/mcp -X POST | head -3
-# → HTTP/1.1 401; in oauth mode and in token mode with redirect= the
-#   WWW-Authenticate header names the discovery document
-
-curl -s https://twillingate.example.com/.well-known/oauth-protected-resource
-# → oauth mode and token mode with redirect=: JSON naming the issuer;
-#   cloudflare mode and plain token mode: 404
-
-curl -s https://twillingate.example.com/healthz
-# → {"status":"ok"} — health stays unauthenticated in every mode
-
-claude mcp list          # → twillingate: … - ✓ Connected
+MCP_AUTH_DSN='oauth://auth.example.com[?resource=<url>][&audience=<aud>]'
 ```
 
-Anything that speaks streamable HTTP MCP (Cursor, Zed, VS Code, custom SDK
-clients) connects to the same URL.
+For when you already run or rent an IdP (Keycloak, Auth0, Authentik, …).
+The server is then a resource server only: it validates the JWTs the IdP
+issues and serves no login page. `resource` defaults to `PUBLIC_URL` +
+`/mcp`, and the expected audience to the resource URL. For a plain-http IdP
+in development, use `oauth+insecure://`.
+
+The IdP must provide:
+
+1. **RFC 8414 metadata** at `<issuer>/.well-known/oauth-authorization-server`
+   with a `jwks_uri`. The server fetches it at startup and refuses to boot
+   without it — check with
+   `curl -s https://auth.example.com/.well-known/oauth-authorization-server | jq .jwks_uri`.
+   Many IdPs publish only OIDC discovery, so confirm rather than assume.
+2. **Asymmetrically signed JWT access tokens** (RS/ES/PS). HMAC, `alg=none`
+   and opaque tokens are rejected.
+3. **An `aud` claim containing the resource URL** — usually by registering
+   the MCP server as an API with that identifier. Without it, logins loop.
+4. **For claude.ai:** Dynamic Client Registration (RFC 7591), or a client
+   registered by hand with its id entered in the connector.
+
+An unknown `kid` triggers a JWKS refetch, throttled to once a minute, so key
+rotation needs no restart.
 
 ### Troubleshooting a connection
 
-**`401` on connect.** Check the endpoint directly with the curl commands
-above. If curl gets a `401` too, the problem is the server or the
-credential, not the client.
+**`404` on `/mcp`.** MCP is off. `journalctl -u twillingate | grep 'MCP endpoint disabled'`
+names the reason.
+
+**`401` on connect.** Run the curl from "Set it up". If curl gets a `401`
+with the `resource_metadata` challenge, the server is fine and the client or
+the password is the problem.
 
 **Connects but no tools.** Wrong path — the endpoint is `/mcp`, not the bare
 hostname.
 
-**Desktop shows nothing after editing the config.** JSON syntax error, or
-the app was never fully quit. Node also has to be on the `PATH` the GUI app
-inherits, which on macOS is not your shell's; an absolute path to `npx` in
-`"command"` settles it.
-
-**Login loops in `oauth://` mode.** The IdP is probably issuing tokens
-without the expected `aud`.
-
-**Login page: redirect URI not allowed.** The page shows the URI the client
-used; add it to `MCP_AUTH_DSN` as another `redirect=` and restart.
+**Login page: redirect URI's host not allowed.** The client returns to a
+host that is not built in. The page shows the URI it used; add its host to
+`MCP_AUTH_DSN` as `redirect=<host>` and restart.
 
 **Login page: password not recognised, though it is right.** A `+`, `&`,
-`#`, `%` or `;` in the password must be percent-encoded in the DSN (see the
-`token://` section). **Too many attempts** means five wrong passwords this
-minute; wait for the next one.
+`#`, `%` or `;` in the password must be percent-encoded in the DSN.
+**Too many attempts** means five wrong passwords this minute; wait for the
+next one.
 
-**Stale OAuth state.** `mcp-remote` caches under `~/.mcp-auth`; delete it to
-force a fresh login.
-
-**Token rotated but still rejected.** `claude mcp remove twillingate` and
-add it again — the old header is cached in the config, not re-read from your
-shell.
+**Login loops in `oauth://` mode.** The IdP is issuing tokens without the
+expected `aud`.
 
 ---
 
@@ -519,7 +436,7 @@ shell.
 | --- | --- |
 | Logs | `journalctl -u twillingate -f` |
 | Restart | `systemctl restart twillingate` |
-| Upgrade (systemd) | `curl -fsSL …/install.sh \| sudo bash -s -- --yes && sudo systemctl restart twillingate` |
+| Upgrade (systemd) | `curl -fsSL …/install.sh \| sudo bash` — restarts the running service and reports the old and new version |
 | Upgrade (compose) | `docker compose pull && docker compose up -d`. Never `down -v`: the database lives in the named volume. Pin with `TWILLINGATE_VERSION=v26.825.1` in `.env`. |
 | Apply migrations only | `twillingate migrate` |
 | Export the registry | `twillingate config export > registry.json` |

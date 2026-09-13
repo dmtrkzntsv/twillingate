@@ -25,7 +25,8 @@ const e2eCallback = "http://localhost:43210/callback"
 
 // TestTokenLoginEndToEnd drives the MCP SDK's own OAuth client through
 // discovery, registration, the password page, the code exchange and
-// refreshes, on both of app's mounting paths.
+// refreshes, on both of app's mounting paths. The DSN carries no redirect=:
+// a loopback client needs none.
 func TestTokenLoginEndToEnd(t *testing.T) {
 	// Below the oauth2 client's ten-second early-expiry margin, so every
 	// request after the login refreshes.
@@ -37,7 +38,7 @@ func TestTokenLoginEndToEnd(t *testing.T) {
 		t.Run(fmt.Sprintf("shared=%v", shared), func(t *testing.T) {
 			srv := httptest.NewUnstartedServer(nil)
 			base := "http://" + srv.Listener.Addr().String()
-			h := e2eHandler(t, "token://ar_testtoken?password=hunter2&redirect=http://localhost/callback&resource="+base+"/mcp", shared)
+			h := e2eHandler(t, "token://ar_testtoken?password=hunter2&resource="+base+"/mcp", shared)
 			var refreshes atomic.Int32
 			srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				// ParseForm is idempotent on a request, so the handler still sees the form.

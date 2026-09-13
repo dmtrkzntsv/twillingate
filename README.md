@@ -106,7 +106,7 @@ install too.
 | [Install](docs/deployment.md#install) | systemd and docker compose, verifying ingestion |
 | [Configure the collector](docs/deployment.md#configure-the-collector) | Every environment variable, low-resource tuning |
 | [Reporting with Evidence](docs/deployment.md#reporting-with-evidence) | Dashboards, one server and two |
-| [The MCP endpoint](docs/deployment.md#the-mcp-endpoint) | Auth modes, and pointing Claude Code, Desktop or claude.ai at it |
+| [The MCP endpoint](docs/deployment.md#the-mcp-endpoint) | The browser login, and pointing claude.ai, Desktop or Claude Code at it |
 | [Operate and recover](docs/deployment.md#operate-and-recover) | Upgrades, litestream replication, backup drills, disaster recovery |
 | [docs/plausible/](docs/plausible/) | The Plausible class-tagging shim |
 
