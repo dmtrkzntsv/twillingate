@@ -68,8 +68,10 @@ The installer creates a system account, installs the binary to
 `/usr/local/bin/twillingate`, creates `/var/lib/twillingate` (0750, owned by
 the service account), installs an example `twillingate.env` loaded by both
 units via `EnvironmentFile=`, renders the systemd units with the chosen user,
-and enables them. It never overwrites an existing `twillingate.env`, so
-re-running it to deploy a new binary is safe.
+and enables them. Re-running the same command upgrades: it replaces the
+binary and units, keeps `twillingate.env` and the service account, restarts
+every `twillingate` unit that was running, and exits non-zero if one does not
+come back up. A stopped service stays stopped.
 
 Then edit the file it flagged and create your first project — projects live
 in the database, not in a shipped file:
@@ -519,7 +521,7 @@ shell.
 | --- | --- |
 | Logs | `journalctl -u twillingate -f` |
 | Restart | `systemctl restart twillingate` |
-| Upgrade (systemd) | `curl -fsSL …/install.sh \| sudo bash -s -- --yes && sudo systemctl restart twillingate` |
+| Upgrade (systemd) | `curl -fsSL …/install.sh \| sudo bash` — restarts the running service and reports the old and new version |
 | Upgrade (compose) | `docker compose pull && docker compose up -d`. Never `down -v`: the database lives in the named volume. Pin with `TWILLINGATE_VERSION=v26.825.1` in `.env`. |
 | Apply migrations only | `twillingate migrate` |
 | Export the registry | `twillingate config export > registry.json` |
