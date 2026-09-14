@@ -39,17 +39,20 @@ func (o *Ops) rebuildFlatView(ctx context.Context) {
 	}
 }
 
-// afterWrite refreshes the in-process snapshot once a write has committed
-// and, when rebuildView is set, the flat view with it. A failed reload is
-// logged rather than returned: the write already happened, and reporting
-// it as failed would send the caller into a retry that collides with it.
-// The registry is marked stale so its next read reloads, and the flat view
-// waits for the next write or the daily pass. Reports whether the snapshot
-// now reflects the write.
-func (o *Ops) afterWrite(ctx context.Context, rebuildView bool) bool {
+// afterWrite refreshes the in-process snapshot once a write touching the
+// given projects has committed and, when rebuildView is set, the flat view
+// with it. A failed reload is logged rather than returned: the write
+// already happened, and reporting it as failed would send the caller into
+// a retry that collides with it. Instead those projects are withheld —
+// their keys authorize nothing — until the next read reloads, so a revoked
+// key or archived project never keeps ingesting on a stale snapshot. The
+// flat view waits for the next write or the daily pass. Reports whether
+// the snapshot now reflects the write.
+func (o *Ops) afterWrite(ctx context.Context, rebuildView bool, aliases ...string) bool {
 	if err := o.Reg.Reload(ctx); err != nil {
-		o.Reg.logger.Warn("registry reload after write failed; the next read retries", "error", err)
-		o.Reg.markStale()
+		o.Reg.logger.Warn("registry reload after write failed; refusing the affected projects' events until the next read reloads",
+			"projects", aliases, "error", err)
+		o.Reg.withhold(aliases...)
 		return false
 	}
 	if rebuildView {
@@ -67,7 +70,7 @@ func (o *Ops) written(ctx context.Context, spec ProjectSpec, reloaded bool) *Pro
 			return cur
 		}
 	}
-	// Read the held snapshot without polling, so the stale mark survives
+	// Read the held snapshot without polling, so the pending reload is left
 	// for the caller's next read.
 	cur := o.Reg.snap.Load().Project(spec.Alias)
 	p := &Project{Alias: spec.Alias, Name: spec.Name, Identity: spec.Identity,
@@ -209,7 +212,7 @@ func (o *Ops) create(ctx context.Context, actor string, spec ProjectSpec, write 
 		Actor: actor, Action: "project.create", Subject: spec.Alias}); err != nil {
 		return nil, err
 	}
-	return o.written(ctx, spec, o.afterWrite(ctx, true)), nil
+	return o.written(ctx, spec, o.afterWrite(ctx, true, spec.Alias)), nil
 }
 
 func (o *Ops) UpdateProject(ctx context.Context, actor string, spec ProjectSpec) (*Project, error) {
@@ -224,7 +227,7 @@ func (o *Ops) UpdateProject(ctx context.Context, actor string, spec ProjectSpec)
 		Actor: actor, Action: "project.update", Subject: spec.Alias}); err != nil {
 		return nil, err
 	}
-	return o.written(ctx, spec, o.afterWrite(ctx, true)), nil
+	return o.written(ctx, spec, o.afterWrite(ctx, true, spec.Alias)), nil
 }
 
 func (o *Ops) ArchiveProject(ctx context.Context, actor, alias string) error {
@@ -232,7 +235,7 @@ func (o *Ops) ArchiveProject(ctx context.Context, actor, alias string) error {
 		Actor: actor, Action: "project.archive", Subject: alias}); err != nil {
 		return err
 	}
-	o.afterWrite(ctx, false)
+	o.afterWrite(ctx, false, alias)
 	return nil
 }
 
@@ -241,7 +244,7 @@ func (o *Ops) RestoreProject(ctx context.Context, actor, alias string) error {
 		Actor: actor, Action: "project.restore", Subject: alias}); err != nil {
 		return err
 	}
-	o.afterWrite(ctx, false)
+	o.afterWrite(ctx, false, alias)
 	return nil
 }
 
@@ -260,7 +263,7 @@ func (o *Ops) IssueIngestKey(ctx context.Context, actor, project, label string) 
 		Actor: actor, Action: "key.issue", Subject: project + "/" + label}); err != nil {
 		return "", err
 	}
-	o.afterWrite(ctx, false)
+	o.afterWrite(ctx, false, project)
 	return key, nil
 }
 
@@ -269,7 +272,7 @@ func (o *Ops) DisableIngestKey(ctx context.Context, actor, project, label string
 		Actor: actor, Action: "key.disable", Subject: project + "/" + label}); err != nil {
 		return err
 	}
-	o.afterWrite(ctx, false)
+	o.afterWrite(ctx, false, project)
 	return nil
 }
 
@@ -278,7 +281,7 @@ func (o *Ops) EnableIngestKey(ctx context.Context, actor, project, label string)
 		Actor: actor, Action: "key.enable", Subject: project + "/" + label}); err != nil {
 		return err
 	}
-	o.afterWrite(ctx, false)
+	o.afterWrite(ctx, false, project)
 	return nil
 }
 
@@ -299,7 +302,7 @@ func (o *Ops) RenameProject(ctx context.Context, actor, old, newAlias string) er
 		Actor: actor, Action: "project.rename", Subject: old + "->" + newAlias}); err != nil {
 		return err
 	}
-	o.afterWrite(ctx, true)
+	o.afterWrite(ctx, true, old, newAlias)
 	return nil
 }
 
@@ -316,7 +319,7 @@ func (o *Ops) DeleteProject(ctx context.Context, actor, alias string) error {
 	if err := o.St.IncrementalVacuum(ctx); err != nil {
 		o.Reg.logger.Warn("vacuum after project delete failed", "project", alias, "error", err)
 	}
-	o.afterWrite(ctx, false)
+	o.afterWrite(ctx, false, alias)
 	return nil
 }
 

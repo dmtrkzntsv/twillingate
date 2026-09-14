@@ -205,7 +205,11 @@ func (o *Ops) Import(ctx context.Context, actor string, r io.Reader) (ImportResu
 			res.KeysAdded++
 		}
 	}
-	o.afterWrite(ctx, true)
+	aliases := make([]string, len(projects))
+	for i, ep := range projects {
+		aliases[i] = ep.Alias
+	}
+	o.afterWrite(ctx, true, aliases...)
 	return res, nil
 }
 

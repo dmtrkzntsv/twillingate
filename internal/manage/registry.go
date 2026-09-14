@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -51,10 +52,18 @@ type Registry struct {
 	defaults config.Retention
 	logger   *slog.Logger
 
+	// publish serializes storing snap and version as a pair, so a reload
+	// and a withhold cannot interleave into a snapshot and version that
+	// disagree.
+	publish   sync.Mutex
 	snap      atomic.Pointer[Snapshot]
 	version   atomic.Int64
 	lastCheck atomic.Int64 // UnixNano of the last version poll
 }
+
+// unknownVersion is never a real config_version, so a poll that compares
+// against it always reloads.
+const unknownVersion = -1
 
 func New(st Store, defaults config.Retention, logger *slog.Logger) *Registry {
 	r := &Registry{st: st, defaults: defaults, logger: logger}
@@ -115,16 +124,40 @@ func (r *Registry) Reload(ctx context.Context) error {
 		}
 		s.keys = append(s.keys, keyOwner{key: k.Key, project: p, label: k.Label})
 	}
+	r.publish.Lock()
 	r.snap.Store(s)
 	r.version.Store(v)
+	r.publish.Unlock()
 	r.lastCheck.Store(time.Now().UnixNano())
 	return nil
 }
 
-// markStale makes the next Snapshot call re-poll config_version at once
-// instead of after pollInterval: a reload that failed after a write must
-// not leave readers on the pre-write snapshot for longer than one read.
-func (r *Registry) markStale() { r.lastCheck.Store(0) }
+// withhold swaps in a copy of the held snapshot that authorizes no key of
+// the given projects. It is the fail-closed half of a reload that failed
+// after a committed write: the held snapshot may still grant what the
+// write revoked (a disabled key, an archived or deleted project, a switch
+// to anonymous identity), so those projects' events are refused until a
+// reload succeeds. The version is forgotten so the next poll reloads even
+// if the snapshot underneath was already current.
+func (r *Registry) withhold(aliases ...string) {
+	drop := make(map[string]bool, len(aliases))
+	for _, a := range aliases {
+		drop[a] = true
+	}
+	r.publish.Lock()
+	defer r.publish.Unlock()
+	cur := r.snap.Load()
+	s := *cur
+	s.keys = make([]keyOwner, 0, len(cur.keys))
+	for _, k := range cur.keys {
+		if !drop[k.project.Alias] {
+			s.keys = append(s.keys, k)
+		}
+	}
+	r.snap.Store(&s)
+	r.version.Store(unknownVersion)
+	r.lastCheck.Store(0)
+}
 
 // Snapshot returns the current registry view, polling config_version at
 // most once per pollInterval to notice out-of-process writes. On poll
