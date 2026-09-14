@@ -497,15 +497,7 @@ must:
    for the old resource (`…/mcp`) no longer verify, so each one logs in
    again; the connector URL `/mcp` itself is unchanged. Clients using the
    token as a header are unaffected.
-4. **Move native apps and hand-written ingest calls to `/ingest/events`
-   when convenient.** `POST /api/events` is still accepted as an alias on
-   the ingest listener, on every topology, so nothing breaks at upgrade:
-   apps that ship the old path keep working, and a browser holding a cached
-   copy of the old script keeps delivering events. The served SDK and the
-   Plausible shim switch to `/ingest/events` on their own once the script
-   is re-fetched. When the API has its own hostname, keep `/api/events`
-   routed to the ingest listener, not the API one.
-5. **Edit `API_AUTH_DSN` or `PUBLIC_URL` if either carries a path** — most
+4. **Edit `API_AUTH_DSN` or `PUBLIC_URL` if either carries a path** — most
    commonly a leftover `resource=…/mcp`, or a `PUBLIC_URL` with a path and
    no `resource=` to override it. `resource` must be a bare origin, in
    both `token://` and `oauth://` modes, and the process now refuses to
