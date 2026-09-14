@@ -332,6 +332,23 @@ func TestServeSharedListenerServesBothSurfaces(t *testing.T) {
 			return resp
 		}
 
+		// The legacy ingest path sits under /api/ but belongs to ingest on
+		// any topology: a shared listener must route it past the API's auth.
+		// A preflight tells the two apart — ingest answers 204, auth 401.
+		legacy, err := http.NewRequest("OPTIONS", "http://"+cfg.IngestAddr+"/api/events", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		legacy.Header.Set("Origin", "https://app.com")
+		if resp, err := http.DefaultClient.Do(legacy); err != nil {
+			t.Fatalf("OPTIONS /api/events: %v", err)
+		} else {
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusNoContent {
+				t.Errorf("OPTIONS /api/events on %s = %d, want 204 from the ingest surface", cfg.IngestAddr, resp.StatusCode)
+			}
+		}
+
 		if cfg.API.Addr == cfg.IngestAddr {
 			resp := getAPI(cfg.IngestAddr)
 			resp.Body.Close()

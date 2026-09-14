@@ -559,8 +559,10 @@ POST /ingest/events
 ```
 
 The only ingest endpoint. There is no separate pageview, event or batch
-path — a single event is a batch of one. `/api/events` was the path before
-this release and now returns 404 (401 where the API shares the listener).
+path — a single event is a batch of one. `POST /api/events`, the path before
+the API took `/api/`, is still accepted as an alias with identical behaviour,
+so apps and cached scripts built against it keep working; write new
+integrations against `/ingest/events`.
 
 ### Authentication
 

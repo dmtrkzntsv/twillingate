@@ -497,17 +497,14 @@ must:
    for the old resource (`…/mcp`) no longer verify, so each one logs in
    again; the connector URL `/mcp` itself is unchanged. Clients using the
    token as a header are unaffected.
-4. **Point native apps and hand-written ingest calls at `/ingest/events`.**
-   A site using the served SDK or the Plausible shim picks this up on its
-   own once the browser re-fetches the script — but `/js/twillingate.js`
-   is served with `Cache-Control: max-age=86400`, so a browser holding the
-   old script keeps posting to the dead `/api/events` path for up to 24h
-   after the upgrade (longer behind a CDN, which may cache it well past
-   that). Those events are lost, not queued: on a split install the post
-   gets a plain `404`; on an install where the API shares the ingestion
-   listener it is a `401` instead, because that listener answers `/api/`
-   first and treats the stale path as an unauthenticated API request.
-   Purge `/js/*` at the CDN right after upgrading to shorten the window.
+4. **Move native apps and hand-written ingest calls to `/ingest/events`
+   when convenient.** `POST /api/events` is still accepted as an alias on
+   the ingest listener, on every topology, so nothing breaks at upgrade:
+   apps that ship the old path keep working, and a browser holding a cached
+   copy of the old script keeps delivering events. The served SDK and the
+   Plausible shim switch to `/ingest/events` on their own once the script
+   is re-fetched. When the API has its own hostname, keep `/api/events`
+   routed to the ingest listener, not the API one.
 5. **Edit `API_AUTH_DSN` or `PUBLIC_URL` if either carries a path** — most
    commonly a leftover `resource=…/mcp`, or a `PUBLIC_URL` with a path and
    no `resource=` to override it. `resource` must be a bare origin, in
