@@ -572,6 +572,31 @@ function scriptOrigin(): string | null {
 }
 
 /**
+ * Whether this copy of the bundle should stand down and leave the instance
+ * already at window.twillingate in place. A page that gets the tag twice (a
+ * theme and a tag manager both adding it) would otherwise run two instances
+ * sending every pageview under one key, with the second replacing the
+ * global the page's own calls go to.
+ *
+ * A tag naming a different key still takes over: two projects on one page
+ * need separate storage, which a guard cannot give them.
+ */
+export function supersededBy(existing: unknown, script: HTMLScriptElement | null): boolean {
+  if (!existing || typeof (existing as Twillingate).init !== "function") return false;
+  // Read structurally: a copy from another release is a different class.
+  const loadedKey = (existing as { key?: unknown }).key;
+  const key = script?.getAttribute("data-key");
+  if (!key || key === loadedKey) {
+    console.warn("twillingate: twillingate.js loaded twice; keeping the first copy, remove the duplicate <script> tag");
+    return true;
+  }
+  if (loadedKey) {
+    console.warn(`twillingate: a second twillingate.js replaced window.twillingate (${loadedKey} -> ${key})`);
+  }
+  return false;
+}
+
+/**
  * Snippet-mode entry: init from the loading <script>'s data attributes.
  * Without data-key the SDK stays dormant until twillingate.init is called.
  */

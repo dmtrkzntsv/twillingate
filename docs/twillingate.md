@@ -210,6 +210,12 @@ The reverse does not hold: `url`, `platform`, `appVersion`, `installId` and
 Pageviews are automatic, including on `history.pushState` and `popstate`, so
 single-page apps need no extra code.
 
+Include the tag once. If a second copy loads with the same `data-key`, or
+with none, it leaves the first instance in place and logs a console warning,
+so the page isn't counted twice. A second copy with a *different* key
+replaces `window.twillingate`. Both instances keep sending, and they share
+the same localStorage, so two projects on one page are not supported.
+
 **Migrating from Plausible?** The collector also serves
 `/js/plausible-shim.js`, an optional second tag that fires events from
 Plausible's `plausible-event-*` CSS classes. A site whose CTAs are already

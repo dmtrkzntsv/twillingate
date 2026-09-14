@@ -1,7 +1,7 @@
 // Core SDK behaviour: init modes, payload shape, batching, transport and
 // failure handling. Identity and pageview behaviour live in identity.test.ts.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { Twillingate, autoInit } from "./twillingate";
+import { Twillingate, autoInit, supersededBy } from "./twillingate";
 import twillingateSource from "./twillingate.ts?raw";
 
 const URL_BASE = "https://collector.example.com";
@@ -284,6 +284,43 @@ describe("snippet auto-init", () => {
     autoInit(t, scriptTag({ "data-key": "ak_snippet", "data-auto": "off" }));
     await drain();
     expect(sent).toHaveLength(0);
+  });
+
+  describe("loaded twice", () => {
+    function loaded(key: string): Twillingate {
+      const t = new Twillingate();
+      autoInit(t, scriptTag({ "data-key": key }));
+      return t;
+    }
+
+    it("defers to the first copy when the second tag has the same key", () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      expect(supersededBy(loaded("ak_same"), scriptTag({ "data-key": "ak_same" }))).toBe(true);
+      expect(warn.mock.calls.flat().join(" ")).toContain("loaded twice");
+    });
+
+    it("defers to the first copy when the second tag has no key", () => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      expect(supersededBy(loaded("ak_first"), scriptTag({}))).toBe(true);
+      expect(supersededBy(new Twillingate(), scriptTag({}))).toBe(true);
+    });
+
+    it("lets a tag with a different key take over, with a warning", () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      expect(supersededBy(loaded("ak_a"), scriptTag({ "data-key": "ak_b" }))).toBe(false);
+      expect(warn.mock.calls.flat().join(" ")).toContain("ak_a -> ak_b");
+    });
+
+    it("lets a keyed tag replace a dormant copy silently", () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      expect(supersededBy(new Twillingate(), scriptTag({ "data-key": "ak_b" }))).toBe(false);
+      expect(warn).not.toHaveBeenCalled();
+    });
+
+    it("installs normally when nothing twillingate-shaped is on the page", () => {
+      expect(supersededBy(undefined, scriptTag({ "data-key": "ak_b" }))).toBe(false);
+      expect(supersededBy(document.createElement("div"), scriptTag({}))).toBe(false);
+    });
   });
 
   it("stays dormant without data-key", async () => {
