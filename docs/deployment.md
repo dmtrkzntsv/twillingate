@@ -67,8 +67,9 @@ its SHA256 before installing. CI publishes a release on every push to `main`.
 The installer creates a system account, installs the binary to
 `/usr/local/bin/twillingate`, creates `/var/lib/twillingate` (0750, owned by
 the service account), installs an example `twillingate.env` loaded by both
-units via `EnvironmentFile=`, renders the systemd units with the chosen user,
-and enables them. Re-running the same command upgrades: it replaces the
+units via `EnvironmentFile=`, renders the systemd units with the chosen user
+(plus the `twillingate@.service` template for a [split
+install](#hostnames-and-processes)), and enables them. Re-running the same command upgrades: it replaces the
 binary and units, keeps `twillingate.env` and the service account, restarts
 every `twillingate` unit that was running, and exits non-zero if one does not
 come back up. A stopped service stays stopped.
@@ -396,11 +397,22 @@ publicly — keep `/mcp` and `/api/` off the public hostname if nothing
 outside your network needs them.
 
 To run the surfaces as separate processes — independently restartable and
-exposable — copy `deploy/systemd/twillingate.service` to
-`twillingate-ingest.service` and `twillingate-api.service`, and change their
-`ExecStart=` to `twillingate serve -ingest` and `twillingate serve -api`
-respectively (naming a flag explicitly makes that surface's misconfiguration
-a hard error, rather than the lenient warn-and-skip of a bare `serve`).
+exposable — use the `twillingate@.service` template the installer renders
+next to the main unit. Its instances run `twillingate serve -ingest` and
+`twillingate serve -api` (naming a flag explicitly makes that surface's
+misconfiguration a hard error, rather than the lenient warn-and-skip of a
+bare `serve`):
+
+```bash
+sudo systemctl disable --now twillingate
+sudo systemctl enable --now twillingate@ingest twillingate@api
+```
+
+Nothing to hand-edit, so nothing for an upgrade to overwrite: the installer
+re-renders the template with the main unit, restarts whichever instances
+were running, and leaves `twillingate.service` disabled while an instance
+is enabled — enabling both would bind the same listeners at the next boot.
+To go back to one process, reverse the two commands.
 
 **An API-only process still runs the daily aggregation pass against
 `DATABASE_DSN`** — `-api` only makes the HTTP listener conditional, not the
@@ -456,15 +468,27 @@ must:
    renamed — so there is no order in which "upgrade first, edit later"
    leaves the service running.
 1. **`-api` used to mean ingest-only; ingest is now `serve -ingest`, and
-   `-api` now means the private API (MCP and REST).** This is the change
-   most likely to bite: `install.sh` unconditionally re-renders
-   `twillingate.service` from its template, which ships `ExecStart=
-   twillingate serve` (bare, both surfaces). If you run a split install,
-   upgrading silently turns the unit that used to be ingest-only
-   (`serve -api`, old meaning) into one serving both surfaces — set its
-   `ExecStart=` to `twillingate serve -ingest` and the second unit's to
-   `twillingate serve -api` right after the upgrade, before restarting
-   either. See [Hostnames and processes](#hostnames-and-processes).
+   `-api` now means the private API (MCP and REST).** A single-process
+   install (bare `serve`) needs nothing here. A split install from before
+   this release — `twillingate.service` edited to `serve -api` plus a
+   hand-made `twillingate-mcp.service` — cannot be fixed after the
+   installer runs, because the installer restarts every running
+   `twillingate*` unit before it returns: the old `-mcp` unit fails on the
+   removed flag and the re-rendered main unit serves both surfaces. Stop
+   both first, so the installer has nothing to restart, then move to the
+   `twillingate@` instances ([Hostnames and
+   processes](#hostnames-and-processes)):
+
+   ```bash
+   sudo systemctl disable --now twillingate twillingate-mcp
+   sudo rm /etc/systemd/system/twillingate-mcp.service
+   # rename the variables (step 0), then run the installer as usual
+   sudo systemctl disable twillingate    # the installer re-enabled it
+   sudo systemctl enable --now twillingate@ingest twillingate@api
+   ```
+
+   From then on an upgrade needs no hand edits: it restarts the running
+   instances and leaves the bare unit disabled.
 2. **Rename `MCP_*` to `API_*`** (and `LISTEN_ADDR` to `INGEST_ADDR`, from
    the same release) in the env file, matching [Configure the
    collector](#configure-the-collector). The collector refuses to start
