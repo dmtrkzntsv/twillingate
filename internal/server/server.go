@@ -94,6 +94,12 @@ func New(cfg *config.Config, reg *manage.Registry, q Enqueuer, g geo.Provider, s
 func (s *Server) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("POST /ingest/events", s.handleEvents)
 	mux.HandleFunc("OPTIONS /ingest/events", s.handlePreflight)
+	// /api/events is where events went before the API surface took /api/.
+	// Native apps ship it compiled in and browsers keep cached SDKs posting
+	// there, so it stays an alias. On a shared listener these patterns are
+	// more specific than the API's /api/ prefix, so they never reach its auth.
+	mux.HandleFunc("POST /api/events", s.handleEvents)
+	mux.HandleFunc("OPTIONS /api/events", s.handlePreflight)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"status":"ok"}`))

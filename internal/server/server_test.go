@@ -488,12 +488,27 @@ func TestOldEndpointsAreGone(t *testing.T) {
 	}
 }
 
-func TestOldIngestPathIsGone(t *testing.T) {
-	_, h := testServer(t)
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest("POST", "/api/events", strings.NewReader(`{}`)))
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("POST /api/events = %d, want 404", rec.Code)
+// TestLegacyIngestPathIsAnAlias: /api/events, the path before the API
+// surface took /api/, still ingests and answers preflights exactly like
+// /ingest/events, so cached SDKs and shipped native apps keep working.
+func TestLegacyIngestPathIsAnAlias(t *testing.T) {
+	q, h := testServer(t)
+	r := httptest.NewRequest("POST", "/api/events",
+		strings.NewReader(`{"events":[{"name":"subscribed"}]}`))
+	r.Header.Set("X-Analytics-Key", testKey)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusAccepted || len(q.events) != 1 || q.events[0].EventName != "subscribed" {
+		t.Fatalf("POST /api/events = %d %s, queued %+v", w.Code, w.Body.String(), q.events)
+	}
+
+	pre := httptest.NewRequest("OPTIONS", "/api/events", nil)
+	pre.Header.Set("Origin", testOrigin)
+	pre.Header.Set("Access-Control-Request-Method", "POST")
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, pre)
+	if w.Code != http.StatusNoContent || w.Header().Get("Access-Control-Allow-Origin") != testOrigin {
+		t.Fatalf("OPTIONS /api/events = %d %v", w.Code, w.Header())
 	}
 }
 
