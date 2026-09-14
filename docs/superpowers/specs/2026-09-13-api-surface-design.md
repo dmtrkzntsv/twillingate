@@ -139,12 +139,12 @@ still says nothing a client should match on.
 
 ## 6. Package layout
 
-`internal/mcpserver` is renamed `internal/apiserver`; it stays the single
+`internal/mcpserver` is renamed `internal/api`; it stays the single
 rank-2 surface (archtest rank table and CLAUDE.md layout updated; commit
-scope `apiserver` replaces `mcpserver`).
+scope `api` replaces `mcpserver`).
 
 ```
-internal/apiserver/
+internal/api/
   server.go      Build / Mount: read DB, host, MCP server, REST mux, auth wrap, login routes
   expose.go      spec type, expose[In, Out], MCP adapter, REST adapter, error mapping
   ops_read.go    list_projects, web_*, app_*           (was tools_read.go)
@@ -251,7 +251,7 @@ deployed instance remains a pre-merge check.
 
 `app.Serve(ctx, cfg, logger, ingest, api bool)`. Shared listener: one mux,
 `server.Mount(mux)` registers the ingest routes and `/healthz`,
-`apiserver.Mount(mux, withHealthz=false)` the API routes. Separate
+`api.Mount(mux, withHealthz=false)` the API routes. Separate
 listeners: each surface mounts on its own mux with its own `/healthz`.
 Shutdown order is unchanged. `cmd/twillingate/serve.go` parses `-ingest`
 and `-api`, keeps the lenient bare-serve rule, and warns when `API_ADDR`
@@ -286,8 +286,8 @@ One `feat!:` PR. The operator of an existing install must:
   "The MCP endpoint" becomes "The API endpoint" covering both transports,
   hostname/process split, `resource=` as an origin, the upgrade steps of §9.
 - `docs/plausible/README.md`: new ingest path.
-- `CLAUDE.md`: layout (`apiserver`), commit scopes, the doc-trigger list
-  (`internal/apiserver/ops_*.go`, `expose.go`).
+- `CLAUDE.md`: layout (`api`), commit scopes, the doc-trigger list
+  (`internal/api/ops_*.go`, `expose.go`).
 - `deploy/`: compose comments, `install.sh` comment about
   `twillingate-mcp.service`.
 
@@ -317,4 +317,4 @@ One `feat!:` PR. The operator of an existing install must:
   env var check picks up the `API_*`/`INGEST_ADDR` names; ingest path.
 - **Ingest:** existing tests move to `/ingest/events`; `/api/events`
   returns 404; SDK tests updated.
-- `make check` green (archtest with `internal/apiserver` in the rank table).
+- `make check` green (archtest with `internal/api` in the rank table).

@@ -258,7 +258,7 @@ func TestWriteEmptyBatchIsNoOp(t *testing.T) {
 }
 
 // ExecForTest is a thin pass-through exported for other packages' test
-// seeding (internal/apiserver's seed helper is the real caller — see
+// seeding (internal/api's seed helper is the real caller — see
 // seed_test.go there); a cross-package call does not register in this
 // package's own coverage profile, so it needs a direct exercise here too,
 // success and error path both.

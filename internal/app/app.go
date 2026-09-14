@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dmtrkzntsv/twillingate/internal/apiserver"
+	"github.com/dmtrkzntsv/twillingate/internal/api"
 	"github.com/dmtrkzntsv/twillingate/internal/config"
 	"github.com/dmtrkzntsv/twillingate/internal/geo"
 	"github.com/dmtrkzntsv/twillingate/internal/identity"
@@ -76,7 +76,7 @@ type httpSurface struct {
 // arrive, then the ingest summary logger, then the jobs runner stops, and
 // only then is the pipeline cancelled — its cancellation is what triggers
 // the final flush, so it must come last or buffered events would be lost.
-func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, ingest, api bool) error {
+func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runIngest, runAPI bool) error {
 	st, err := store.Open(cfg.Database)
 	if err != nil {
 		return err
@@ -144,7 +144,7 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, ingest,
 	}
 
 	var ingestHandler *server.Server
-	if ingest {
+	if runIngest {
 		ingestHandler = server.New(cfg, reg, buf, geoProvider, salter, st, logger)
 	}
 
@@ -156,8 +156,8 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, ingest,
 	var surfaces []httpSurface
 	var apiClose func() error
 	switch {
-	case api && ingest && cfg.API.Addr == cfg.IngestAddr:
-		protected, closeDB, err := apiserver.Build(ctx, cfg, reg, manage.NewOps(reg, st), logger)
+	case runAPI && runIngest && cfg.API.Addr == cfg.IngestAddr:
+		protected, closeDB, err := api.Build(ctx, cfg, reg, manage.NewOps(reg, st), logger)
 		if err != nil {
 			stopBackground()
 			return err
@@ -165,16 +165,16 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, ingest,
 		apiClose = closeDB
 		mux := http.NewServeMux()
 		ingestHandler.Mount(mux)
-		apiserver.RegisterOn(mux, protected, cfg, false, logger)
+		api.RegisterOn(mux, protected, cfg, false, logger)
 		surfaces = append(surfaces, httpSurface{cfg.IngestAddr, mux, "ingest,api"})
-	case api:
-		h, closeDB, err := apiserver.NewHandler(ctx, cfg, reg, manage.NewOps(reg, st), logger)
+	case runAPI:
+		h, closeDB, err := api.NewHandler(ctx, cfg, reg, manage.NewOps(reg, st), logger)
 		if err != nil {
 			stopBackground()
 			return err
 		}
 		apiClose = closeDB
-		if ingest {
+		if runIngest {
 			surfaces = append(surfaces, httpSurface{cfg.IngestAddr, ingestHandler, "ingest"})
 		}
 		surfaces = append(surfaces, httpSurface{cfg.API.Addr, h, "api"})
@@ -187,7 +187,7 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, ingest,
 
 	summaryDone := make(chan struct{})
 	stopSummary := func() {}
-	if ingest {
+	if runIngest {
 		var sumCtx context.Context
 		sumCtx, stopSummary = context.WithCancel(context.Background())
 		// ingestSummaryInterval is read here, synchronously, rather than
