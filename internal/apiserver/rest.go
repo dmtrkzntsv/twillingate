@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"reflect"
 	"sort"
 	"strconv"
@@ -49,12 +50,21 @@ func restHandler[In, Out any](r *registrar, s spec, fn func(context.Context, In)
 func decodeRequest(req *http.Request, dst any) error {
 	fields := jsonFields(reflect.ValueOf(dst).Elem())
 	if req.Method == http.MethodGet || req.Method == http.MethodHead {
-		for name, vals := range req.URL.Query() {
+		// url.ParseQuery, not URL.Query: Query drops pairs it cannot parse,
+		// which would silently remove a filter and answer unfiltered.
+		query, err := url.ParseQuery(req.URL.RawQuery)
+		if err != nil {
+			return invalidf("malformed query string: %v", err)
+		}
+		for name, vals := range query {
 			f, ok := fields[name]
 			if !ok {
 				return invalidf("unknown query parameter %q; valid: %s", name, fieldNames(fields))
 			}
-			if err := setField(f, name, vals[len(vals)-1]); err != nil {
+			if len(vals) > 1 {
+				return invalidf("query parameter %q given %d times; give it once", name, len(vals))
+			}
+			if err := setField(f, name, vals[0]); err != nil {
 				return err
 			}
 		}

@@ -126,7 +126,7 @@ application/json`:
 | `errors.Is(err, manage.ErrNotFound)` | 404 | `not_found` |
 | `errors.Is(err, manage.ErrConflict)` | 409 | `conflict` |
 | missing or bad bearer token | 401 | from the SDK's bearer middleware, with `WWW-Authenticate` |
-| undecodable body, unknown query parameter, unknown body field | 400 | `invalid` |
+| undecodable body or query string, unknown or repeated query parameter, unknown body field | 400 | `invalid` |
 | anything else | 500 | `internal`; message is generic, the error is logged |
 
 The messages written for a model to recover from ("unknown project "x";

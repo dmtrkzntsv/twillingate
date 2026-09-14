@@ -63,10 +63,26 @@ func TestDecodeRequestRefusals(t *testing.T) {
 		{"body too large", httptest.NewRequest("POST", "/x", strings.NewReader(`{"name":"`+strings.Repeat("a", maxAPIBody)+`"}`)), &projectIn{}},
 		{"bad bool", httptest.NewRequest("GET", "/x?skip_key=maybe", nil), &projectIn{}},
 		{"slice from the URL", httptest.NewRequest("GET", "/x?allowed_origins=a", nil), &projectIn{}},
+		// url.Values drops pairs it cannot parse, which would silently
+		// remove a filter instead of refusing the request.
+		{"malformed escape", httptest.NewRequest("GET", "/x?from=2026-08-20&event=signup%ZZ", nil), &productEventsIn{}},
+		{"semicolon in a value", httptest.NewRequest("GET", "/x?from=2026-08-20&event=sign;up", nil), &productEventsIn{}},
+		{"repeated parameter", httptest.NewRequest("GET", "/x?event=signup&event=login", nil), &productEventsIn{}},
 	} {
 		if err := decodeRequest(c.req, c.dst); !errors.Is(err, manage.ErrInvalid) {
 			t.Errorf("%s: err = %v, want ErrInvalid", c.name, err)
 		}
+	}
+}
+
+// TestRESTRefusesMalformedFilter: a filter that does not parse is a 400,
+// never an unfiltered 200 that looks like a real answer.
+func TestRESTRefusesMalformedFilter(t *testing.T) {
+	h, _ := newTestHost(t)
+	r := newTestRegistrar(t, h)
+	rec := serveREST(t, r, "GET", "/api/projects/blog/product/events?from=2026-08-20&to=2026-08-21&event=signup%ZZ", "")
+	if rec.Code != http.StatusBadRequest || errorCode(t, rec) != "invalid" {
+		t.Errorf("malformed filter = %d %s, want 400 invalid", rec.Code, rec.Body.String())
 	}
 }
 

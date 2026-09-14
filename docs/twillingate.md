@@ -847,6 +847,8 @@ Errors are `{"error":{"code":"…","message":"…"}}`: `invalid` is 400,
 `not_found` is 404, `conflict` is 409, anything else is `internal` at 500.
 A missing or bad token is 401. An unknown query parameter or an unknown
 field in a JSON body is also 400 — the same strictness as a malformed one.
+So is a query string that does not parse (a bad `%` escape, a bare `;`)
+or a parameter given twice: a filter is never dropped silently.
 
 ### Writing SQL against the views
 
