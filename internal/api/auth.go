@@ -1,0 +1,214 @@
+package api
+
+import (
+	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rsa"
+	"crypto/subtle"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"math/big"
+	"net/http"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/modelcontextprotocol/go-sdk/auth"
+)
+
+// allowedAlgs is the asymmetric allowlist (endpoint spec §5.2): never
+// `none`, never HMAC — a JWKS public key must not be usable as an HMAC
+// secret.
+var allowedAlgs = []string{
+	"RS256", "RS384", "RS512",
+	"ES256", "ES384", "ES512",
+	"PS256", "PS384", "PS512",
+}
+
+// StaticVerifier implements the token:// auth mode: constant-time compare
+// against the single static token from API_AUTH_DSN. The middleware wrapping it must allow
+// missing expiration (a static token has no exp).
+func StaticVerifier(token string) auth.TokenVerifier {
+	want := []byte(token)
+	return func(_ context.Context, got string, _ *http.Request) (*auth.TokenInfo, error) {
+		if subtle.ConstantTimeCompare(want, []byte(got)) != 1 {
+			return nil, auth.ErrInvalidToken
+		}
+		return &auth.TokenInfo{UserID: "mcp"}, nil
+	}
+}
+
+// DiscoverJWKSURL resolves the issuer's RFC 8414 metadata to its
+// jwks_uri. Called once at startup so a typo'd issuer fails the boot,
+// not the first request.
+func DiscoverJWKSURL(ctx context.Context, issuer string, client *http.Client) (string, error) {
+	if client == nil {
+		client = &http.Client{Timeout: 10 * time.Second}
+	}
+	req, err := http.NewRequestWithContext(ctx, "GET",
+		issuer+"/.well-known/oauth-authorization-server", nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("api: issuer metadata: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("api: issuer metadata: HTTP %d", resp.StatusCode)
+	}
+	var meta struct {
+		JWKSURI string `json:"jwks_uri"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&meta); err != nil {
+		return "", fmt.Errorf("api: issuer metadata: %w", err)
+	}
+	if meta.JWKSURI == "" {
+		return "", fmt.Errorf("api: issuer metadata has no jwks_uri")
+	}
+	return meta.JWKSURI, nil
+}
+
+// JWKSCache fetches and caches an issuer's keys, refetching when an
+// unknown kid appears (key rotation) but at most once per minRefetch.
+type JWKSCache struct {
+	url    string
+	client *http.Client
+
+	mu         sync.Mutex
+	keys       map[string]any // kid -> *rsa.PublicKey | *ecdsa.PublicKey
+	lastFetch  time.Time
+	minRefetch time.Duration
+}
+
+func NewJWKSCache(jwksURL string, client *http.Client) *JWKSCache {
+	if client == nil {
+		client = &http.Client{Timeout: 10 * time.Second}
+	}
+	return &JWKSCache{url: jwksURL, client: client, minRefetch: time.Minute}
+}
+
+func (c *JWKSCache) Key(kid string) (any, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if k, ok := c.keys[kid]; ok {
+		return k, nil
+	}
+	if time.Since(c.lastFetch) < c.minRefetch {
+		return nil, fmt.Errorf("unknown key id %q", kid)
+	}
+	if err := c.fetchLocked(); err != nil {
+		return nil, err
+	}
+	if k, ok := c.keys[kid]; ok {
+		return k, nil
+	}
+	return nil, fmt.Errorf("unknown key id %q", kid)
+}
+
+func (c *JWKSCache) fetchLocked() error {
+	resp, err := c.client.Get(c.url)
+	if err != nil {
+		return fmt.Errorf("jwks fetch: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("jwks fetch: HTTP %d", resp.StatusCode)
+	}
+	var doc struct {
+		Keys []struct {
+			Kty, Kid, Crv, N, E, X, Y string
+		} `json:"keys"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&doc); err != nil {
+		return fmt.Errorf("jwks parse: %w", err)
+	}
+	keys := map[string]any{}
+	for _, k := range doc.Keys {
+		switch k.Kty {
+		case "RSA":
+			n, err := base64.RawURLEncoding.DecodeString(k.N)
+			if err != nil {
+				continue
+			}
+			e, err := base64.RawURLEncoding.DecodeString(k.E)
+			if err != nil {
+				continue
+			}
+			keys[k.Kid] = &rsa.PublicKey{
+				N: new(big.Int).SetBytes(n),
+				E: int(new(big.Int).SetBytes(e).Int64()),
+			}
+		case "EC":
+			var curve elliptic.Curve
+			switch k.Crv {
+			case "P-256":
+				curve = elliptic.P256()
+			case "P-384":
+				curve = elliptic.P384()
+			case "P-521":
+				curve = elliptic.P521()
+			default:
+				continue
+			}
+			x, err := base64.RawURLEncoding.DecodeString(k.X)
+			if err != nil {
+				continue
+			}
+			y, err := base64.RawURLEncoding.DecodeString(k.Y)
+			if err != nil {
+				continue
+			}
+			keys[k.Kid] = &ecdsa.PublicKey{Curve: curve,
+				X: new(big.Int).SetBytes(x), Y: new(big.Int).SetBytes(y)}
+		}
+	}
+	c.keys = keys
+	c.lastFetch = time.Now()
+	return nil
+}
+
+func (c *JWKSCache) keyfunc(t *jwt.Token) (any, error) {
+	kid, _ := t.Header["kid"].(string)
+	return c.Key(kid)
+}
+
+// verifyJWT validates an IdP-issued JWT for the oauth verifier.
+func verifyJWT(raw, issuer string, audiences []string, cache *JWKSCache) (*auth.TokenInfo, error) {
+	if len(audiences) == 0 {
+		// jwt.WithAudience with no values skips the aud check entirely.
+		return nil, fmt.Errorf("%w: no audience configured", auth.ErrInvalidToken)
+	}
+	tok, err := jwt.Parse(raw, cache.keyfunc,
+		jwt.WithValidMethods(allowedAlgs),
+		jwt.WithIssuer(issuer),
+		jwt.WithAudience(audiences...), // any one of them
+		jwt.WithExpirationRequired(),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", auth.ErrInvalidToken, err)
+	}
+	claims, _ := tok.Claims.(jwt.MapClaims)
+	sub, _ := claims.GetSubject()
+	exp, _ := claims.GetExpirationTime()
+	info := &auth.TokenInfo{UserID: sub}
+	if exp != nil {
+		info.Expiration = exp.Time
+	}
+	if scope, ok := claims["scope"].(string); ok && scope != "" {
+		info.Scopes = strings.Fields(scope)
+	}
+	return info, nil
+}
+
+// OAuthVerifier implements the oauth:// auth mode: the bearer token itself
+// is a JWT from the external IdP, whose aud must contain one of audiences.
+func OAuthVerifier(issuer string, audiences []string, cache *JWKSCache) auth.TokenVerifier {
+	return func(_ context.Context, token string, _ *http.Request) (*auth.TokenInfo, error) {
+		return verifyJWT(token, issuer, audiences, cache)
+	}
+}

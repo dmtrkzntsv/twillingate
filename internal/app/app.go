@@ -12,12 +12,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dmtrkzntsv/twillingate/internal/api"
 	"github.com/dmtrkzntsv/twillingate/internal/config"
 	"github.com/dmtrkzntsv/twillingate/internal/geo"
 	"github.com/dmtrkzntsv/twillingate/internal/identity"
 	"github.com/dmtrkzntsv/twillingate/internal/jobs"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
-	"github.com/dmtrkzntsv/twillingate/internal/mcpserver"
 	"github.com/dmtrkzntsv/twillingate/internal/pipeline"
 	"github.com/dmtrkzntsv/twillingate/internal/server"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
@@ -51,28 +51,32 @@ func NewLogger(cfg config.LogConfig) *slog.Logger {
 
 // httpSurface pairs a listen address with the handler serving it, so
 // Serve can start/shut down an arbitrary number of listeners (one for the
-// shared -api/-mcp case, up to two when the surfaces use different
-// addresses) with the same loop.
+// shared -ingest/-api case, up to two when the surfaces use different
+// addresses) with the same loop. label names which surface(s) the listener
+// carries ("ingest", "api" or "ingest,api"), logged at boot so a role swap
+// between two units (e.g. `-api` used to mean ingest-only) is visible in
+// journalctl rather than only inferred from the port.
 type httpSurface struct {
 	addr    string
 	handler http.Handler
+	label   string
 }
 
-// Serve runs the requested surfaces (api: ingestion, mcpOn: the MCP
-// endpoint) until ctx is cancelled or a listener fails. At least one of
-// api/mcpOn must be true; the caller (cmd/twillingate) enforces that as a
+// Serve runs the requested surfaces (ingest: events and the SDK, api: MCP
+// and REST) until ctx is cancelled or a listener fails. At least one of
+// ingest/api must be true; the caller (cmd/twillingate) enforces that as a
 // usage error before reaching here.
 //
 // Store/registry/geo/pipeline/jobs setup runs regardless of which surfaces
-// are requested: jobs and pipeline are harmless when only MCP runs, and
-// the MCP surface itself needs store+registry. Only the HTTP listeners and
+// are requested: jobs and pipeline are harmless when only the API runs, and
+// the API surface itself needs store+registry. Only the HTTP listeners and
 // the ingest-summary goroutine are conditional.
 //
 // Shutdown order matters: HTTP drains first so no new events/requests
 // arrive, then the ingest summary logger, then the jobs runner stops, and
 // only then is the pipeline cancelled — its cancellation is what triggers
 // the final flush, so it must come last or buffered events would be lost.
-func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, api, mcpOn bool) error {
+func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runIngest, runAPI bool) error {
 	st, err := store.Open(cfg.Database)
 	if err != nil {
 		return err
@@ -95,7 +99,7 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, api, mc
 		return err
 	}
 	if len(reg.Snapshot(ctx).Projects()) == 0 {
-		logger.Warn("no projects configured; create one with `twillingate project create` or an MCP management tool")
+		logger.Warn("no projects configured; create one with `twillingate project create` or an API management operation")
 	}
 	warnLegacyProjectsFile(cfg, logger)
 
@@ -140,52 +144,50 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, api, mc
 	}
 
 	var ingestHandler *server.Server
-	if api {
+	if runIngest {
 		ingestHandler = server.New(cfg, reg, buf, geoProvider, salter, st, logger)
 	}
 
-	// Assemble the HTTP surface(s). When both -api and -mcp target the
-	// same address, they share one listener/mux (Build, not NewHandler,
-	// so the /mcp route mounts alongside the ingest routes without a
-	// double /healthz registration); otherwise the MCP endpoint gets its
-	// own standalone mux via NewHandler.
+	// Assemble the HTTP surface(s). When both -ingest and -api target the
+	// same address, they share one listener/mux, each registering its own
+	// patterns (Build, not NewHandler, so /mcp and /api/ mount alongside
+	// the ingest routes without a double /healthz registration); otherwise
+	// each surface gets a listener of its own.
 	var surfaces []httpSurface
-	var mcpClose func() error
-	if mcpOn {
-		ops := manage.NewOps(reg, st)
-		if api && cfg.MCP.Addr == cfg.Listen {
-			protected, closeDB, err := mcpserver.Build(ctx, cfg, reg, ops, logger)
-			if err != nil {
-				stopBackground()
-				return err
-			}
-			mcpClose = closeDB
-			mux := http.NewServeMux()
-			mux.Handle("/", ingestHandler) // ingest keeps its own /healthz and /js/*
-			mcpserver.RegisterOn(mux, protected, cfg, false, logger)
-			surfaces = append(surfaces, httpSurface{cfg.Listen, mux})
-		} else {
-			mcpHandler, closeDB, err := mcpserver.NewHandler(ctx, cfg, reg, ops, logger)
-			if err != nil {
-				stopBackground()
-				return err
-			}
-			mcpClose = closeDB
-			if api {
-				surfaces = append(surfaces, httpSurface{cfg.Listen, ingestHandler})
-			}
-			surfaces = append(surfaces, httpSurface{cfg.MCP.Addr, mcpHandler})
+	var apiClose func() error
+	switch {
+	case runAPI && runIngest && cfg.API.Addr == cfg.IngestAddr:
+		protected, closeDB, err := api.Build(ctx, cfg, reg, manage.NewOps(reg, st), logger)
+		if err != nil {
+			stopBackground()
+			return err
 		}
-	} else {
-		surfaces = append(surfaces, httpSurface{cfg.Listen, ingestHandler})
+		apiClose = closeDB
+		mux := http.NewServeMux()
+		ingestHandler.Mount(mux)
+		api.RegisterOn(mux, protected, cfg, false, logger)
+		surfaces = append(surfaces, httpSurface{cfg.IngestAddr, mux, "ingest,api"})
+	case runAPI:
+		h, closeDB, err := api.NewHandler(ctx, cfg, reg, manage.NewOps(reg, st), logger)
+		if err != nil {
+			stopBackground()
+			return err
+		}
+		apiClose = closeDB
+		if runIngest {
+			surfaces = append(surfaces, httpSurface{cfg.IngestAddr, ingestHandler, "ingest"})
+		}
+		surfaces = append(surfaces, httpSurface{cfg.API.Addr, h, "api"})
+	default:
+		surfaces = append(surfaces, httpSurface{cfg.IngestAddr, ingestHandler, "ingest"})
 	}
-	if mcpClose != nil {
-		defer mcpClose()
+	if apiClose != nil {
+		defer apiClose()
 	}
 
 	summaryDone := make(chan struct{})
 	stopSummary := func() {}
-	if api {
+	if runIngest {
 		var sumCtx context.Context
 		sumCtx, stopSummary = context.WithCancel(context.Background())
 		// ingestSummaryInterval is read here, synchronously, rather than
@@ -208,7 +210,7 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, api, mc
 		}
 		srvs[i] = sv
 		go func(sv *http.Server) { errCh <- sv.ListenAndServe() }(sv)
-		logger.Info("serving", "addr", s.addr, "projects", len(reg.Snapshot(ctx).Projects()))
+		logger.Info("serving", "addr", s.addr, "surfaces", s.label, "projects", len(reg.Snapshot(ctx).Projects()))
 	}
 
 	remaining := len(srvs)

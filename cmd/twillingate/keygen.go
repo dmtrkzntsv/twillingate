@@ -24,20 +24,20 @@ func runKeygen(args []string, stdout io.Writer) int {
 	fs := flag.NewFlagSet("keygen", flag.ContinueOnError)
 	fs.SetOutput(stdout)
 	n := fs.Int("n", 1, "number of keys to generate")
-	mcp := fs.Bool("mcp", false, "mint the MCP access token instead")
+	api := fs.Bool("api", false, "mint the API access token instead")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 
-	if *mcp {
-		tok, err := manage.MintMCPToken()
+	if *api {
+		tok, err := manage.MintAPIToken()
 		if err != nil {
 			fmt.Fprintf(stdout, "keygen: entropy: %v\n", err)
 			return 1
 		}
 		fmt.Fprintln(stdout, "Add to twillingate.env:")
 		fmt.Fprintln(stdout)
-		fmt.Fprintf(stdout, "  MCP_AUTH_DSN=token://%s\n", tok)
+		fmt.Fprintf(stdout, "  API_AUTH_DSN=token://%s\n", tok)
 		return 0
 	}
 

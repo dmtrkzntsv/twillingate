@@ -106,6 +106,15 @@ func newTestRegistry(t *testing.T, cfg *config.Config, projects []manage.Project
 
 func testServerWithIdentity(t *testing.T, mode string) (*fakeQueue, http.Handler) {
 	t.Helper()
+	q, s := newServerWithIdentity(t, mode)
+	return q, s
+}
+
+// newServerWithIdentity builds a *Server the same way testServerWithIdentity
+// does, but returns the concrete type so a test that needs to call a
+// Server-only method (like Mount) does not have to type-assert.
+func newServerWithIdentity(t *testing.T, mode string) (*fakeQueue, *Server) {
+	t.Helper()
 	cfg := configtest.Load(t, nil)
 	reg := newTestRegistry(t, cfg,
 		[]manage.ProjectSpec{{
@@ -118,11 +127,19 @@ func testServerWithIdentity(t *testing.T, mode string) (*fakeQueue, http.Handler
 	return q, New(cfg, reg, q, g, fixedSalt{}, q, slog.Default())
 }
 
+// newTestServer is newServerWithIdentity for a test that only needs the
+// server, in the default anonymous identity mode.
+func newTestServer(t *testing.T) *Server {
+	t.Helper()
+	_, s := newServerWithIdentity(t, "anonymous")
+	return s
+}
+
 // post sends one envelope. headers may set Origin, X-Analytics-Key or a
 // non-browser User-Agent; a Chrome UA and CF country are the defaults so
 // $pageview enrichment behaves like a real browser request.
 func post(h http.Handler, body string, headers map[string]string) *httptest.ResponseRecorder {
-	r := httptest.NewRequest("POST", "/api/events", strings.NewReader(body))
+	r := httptest.NewRequest("POST", "/ingest/events", strings.NewReader(body))
 	r.Header.Set("User-Agent", chromeUA)
 	r.Header.Set("CF-IPCountry", "DE")
 	for k, v := range headers {
@@ -471,9 +488,18 @@ func TestOldEndpointsAreGone(t *testing.T) {
 	}
 }
 
+func TestOldIngestPathIsGone(t *testing.T) {
+	_, h := testServer(t)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("POST", "/api/events", strings.NewReader(`{}`)))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("POST /api/events = %d, want 404", rec.Code)
+	}
+}
+
 func TestPreflight(t *testing.T) {
 	_, h := testServer(t)
-	r := httptest.NewRequest("OPTIONS", "/api/events", nil)
+	r := httptest.NewRequest("OPTIONS", "/ingest/events", nil)
 	r.Header.Set("Origin", testOrigin)
 	r.Header.Set("Access-Control-Request-Method", "POST")
 	w := httptest.NewRecorder()
@@ -484,7 +510,7 @@ func TestPreflight(t *testing.T) {
 	if !strings.Contains(w.Header().Get("Access-Control-Allow-Headers"), "X-Analytics-Key") {
 		t.Errorf("preflight must allow the key header: %q", w.Header().Get("Access-Control-Allow-Headers"))
 	}
-	r2 := httptest.NewRequest("OPTIONS", "/api/events", nil)
+	r2 := httptest.NewRequest("OPTIONS", "/ingest/events", nil)
 	r2.Header.Set("Origin", "https://evil.com")
 	w2 := httptest.NewRecorder()
 	h.ServeHTTP(w2, r2)
@@ -500,6 +526,23 @@ func TestHealthz(t *testing.T) {
 	h.ServeHTTP(w, r)
 	if w.Code != 200 {
 		t.Fatalf("healthz = %d", w.Code)
+	}
+}
+
+// TestMountOnSharedMux verifies Mount registers the ingest surface's routes
+// on a mux it doesn't own, alongside another surface's routes, without
+// swallowing unmatched paths (no catch-all at "/").
+func TestMountOnSharedMux(t *testing.T) {
+	s := newTestServer(t)
+	mux := http.NewServeMux()
+	s.Mount(mux)
+	mux.HandleFunc("GET /api/projects", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(299) })
+	for target, want := range map[string]int{"/healthz": 200, "/js/twillingate.js": 200, "/api/projects": 299, "/nope": 404} {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest("GET", target, nil))
+		if rec.Code != want {
+			t.Errorf("GET %s = %d, want %d", target, rec.Code, want)
+		}
 	}
 }
 

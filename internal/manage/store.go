@@ -15,6 +15,7 @@ type Store interface {
 	LoadRegistry(ctx context.Context) ([]store.RegistryProject, []store.RegistryKey, error)
 	ConfigVersion(ctx context.Context) (int64, error)
 	CreateProject(ctx context.Context, p store.RegistryProject, a store.AuditEntry) error
+	CreateProjectWithKey(ctx context.Context, p store.RegistryProject, k store.RegistryKey, projectAudit, keyAudit store.AuditEntry) error
 	UpdateProject(ctx context.Context, p store.RegistryProject, a store.AuditEntry) error
 	SetProjectArchived(ctx context.Context, alias string, archived bool, a store.AuditEntry) error
 	InsertIngestKey(ctx context.Context, k store.RegistryKey, a store.AuditEntry) error

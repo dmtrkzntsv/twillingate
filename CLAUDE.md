@@ -10,7 +10,7 @@ import points up or sideways:
 cmd/twillingate/ ....... subcommand dispatch and flag parsing; the only importer of internal/app
 internal/app/ .......... composition root: opens the store, wires the surfaces, owns shutdown order
 internal/server/ ....... ingest HTTP API, plus the JS SDK and docs it serves
-internal/mcpserver/ .... MCP endpoint: read tools over the views, management tools over manage
+internal/api/ .......... private API: MCP endpoint and REST routes over the same operations, one auth
 internal/jobs/ ......... daily pass: salt rotation, aggregation, prune, flat-view rebuild
 internal/pipeline/ ..... write buffer between ingest and the store
 internal/dashboards/ ... Evidence build and snapshot for the reporting image
@@ -29,7 +29,7 @@ deploy/ ................ installer, systemd units, compose files, litestream con
 ```
 
 The rule, top to bottom: `app` imports the surfaces; the surfaces
-(`server`, `mcpserver`, `jobs`, `pipeline`, `dashboards`) import `manage`
+(`server`, `api`, `jobs`, `pipeline`, `dashboards`) import `manage`
 and the leaves but never each other; `manage` imports only leaves; leaves
 (`store` and below) import only leaves. A surface that needs another
 surface's behaviour takes an interface and `app` passes the
@@ -60,7 +60,7 @@ omitted from the notes entirely — so anything a user should read about on the
 release page needs one of the three published types.
 
 The scope is the package or area the change lands in, matching the tree:
-`store`, `server`, `jobs`, `config`, `mcpserver`, `manage`, `pipeline`, `geo`,
+`store`, `server`, `jobs`, `config`, `api`, `manage`, `pipeline`, `geo`,
 `dashboards`, `sdk`, `cmd`, `deploy`, `ci`. Omit it when a change is genuinely
 repo-wide.
 
@@ -70,7 +70,7 @@ Breaking changes take a `!` before the colon (`feat(store)!: ...`), or a
 Subject in the imperative, lower case, no trailing period:
 
 ```
-feat(mcpserver): expose retention cohorts as a tool
+feat(api): expose retention cohorts as a tool
 fix(jobs): stop the daily pass double-counting identities
 ci: do not cut a release for prose-only commits
 ```
@@ -111,17 +111,17 @@ Update `docs/twillingate.md` **in the same commit** as any change to:
 - the JS SDK's public API, `data-` attributes or defaults
   (`sdk/src/twillingate.ts`)
 - project fields, or the CLI/MCP surface that edits them (`internal/manage/`)
-- the MCP tools or resources offered (`internal/mcpserver/tools_*.go`,
-  `resources.go`)
+- the MCP tools, REST routes or resources offered (`internal/api/ops_*.go`,
+  `expose.go`, `rest.go`, `resources.go`)
 - queryable views (`internal/store/sqlite/migrations/`)
 
 Update `docs/deployment.md` in the same commit as any change to environment
 variables (`internal/config/`), the install, upgrade, replication or restore
-procedure (`deploy/`, `Makefile`), MCP auth modes or client setup
-(`internal/mcpserver/auth.go`), or the Evidence dashboards
+procedure (`deploy/`, `Makefile`), API auth modes or client setup
+(`internal/api/auth.go`, `oauth*.go`), or the Evidence dashboards
 (`internal/dashboards/`, `evidence/`).
 
-Update `schemaViews` in `internal/mcpserver/resources.go` in the same commit
+Update `schemaViews` in `internal/api/resources.go` in the same commit
 as any migration that adds or changes a queryable view.
 
 Those two plus `docs/plausible/README.md` are the whole of `docs/` — the
@@ -131,7 +131,8 @@ page stays separate because it documents bytes the collector serves at
 
 `docs_sync_test.go` enforces part of this — reserved keys, MCP tool names
 and environment variables, each checked in both directions against the
-source, plus the SDK's public symbols and every queryable web view. Those
+source, plus the SDK's public symbols, every queryable web view and the
+HTTP API route table. Those
 checks read the specific **table** that claims a fact, not the whole file:
 a document-wide match passes for the wrong reason when the same word
 appears in prose. The rest is on you. A `docs`-only push publishes nothing

@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"strings"
 	"testing"
@@ -759,4 +760,60 @@ func parseVersion(name string, version *int) (string, error) {
 		}
 	}
 	return "", nil
+}
+
+// TestCreateProjectWithKeyIsAtomic: the project and its first key commit
+// together or not at all, so a failed key never leaves a keyless project
+// behind for the caller to trip over on retry.
+func TestCreateProjectWithKeyIsAtomic(t *testing.T) {
+	d := openRegistryDB(t)
+	ctx := context.Background()
+	project := func(alias string) store.RegistryProject {
+		return store.RegistryProject{Alias: alias, Name: alias, Identity: "anonymous", AllowedOrigins: "[]"}
+	}
+	audits := func(alias string) (store.AuditEntry, store.AuditEntry) {
+		return store.AuditEntry{Actor: "api", Action: "project.create", Subject: alias},
+			store.AuditEntry{Actor: "api", Action: "key.issue", Subject: alias + "/default"}
+	}
+
+	pa, ka := audits("blog")
+	if err := d.CreateProjectWithKey(ctx, project("blog"),
+		store.RegistryKey{Key: "ak_one", Project: "blog", Label: "default"}, pa, ka); err != nil {
+		t.Fatal(err)
+	}
+	ps, ks, err := d.LoadRegistry(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ps) != 1 || len(ks) != 1 || ks[0].Key != "ak_one" || ks[0].Project != "blog" {
+		t.Fatalf("registry = %+v / %+v", ps, ks)
+	}
+	var audited int
+	if err := d.db.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE actor='api'
+		AND action IN ('project.create','key.issue')`).Scan(&audited); err != nil || audited != 2 {
+		t.Fatalf("audit rows = %d, %v; want 2", audited, err)
+	}
+
+	// A key that cannot be inserted (its value is already taken) must take
+	// the new project down with it.
+	v0, _ := d.ConfigVersion(ctx)
+	pa, ka = audits("shop")
+	if err := d.CreateProjectWithKey(ctx, project("shop"),
+		store.RegistryKey{Key: "ak_one", Project: "shop", Label: "default"}, pa, ka); err == nil {
+		t.Fatal("duplicate key value accepted")
+	}
+	ps, _, _ = d.LoadRegistry(ctx)
+	if len(ps) != 1 {
+		t.Errorf("projects after failed create = %+v, want only blog", ps)
+	}
+	if v1, _ := d.ConfigVersion(ctx); v1 != v0 {
+		t.Errorf("config_version moved %d → %d on a rolled-back create", v0, v1)
+	}
+
+	// An alias that is taken is still a conflict.
+	pa, ka = audits("blog")
+	if err := d.CreateProjectWithKey(ctx, project("blog"),
+		store.RegistryKey{Key: "ak_two", Project: "blog", Label: "default"}, pa, ka); !errors.Is(err, store.ErrConflict) {
+		t.Errorf("duplicate alias err = %v, want ErrConflict", err)
+	}
 }

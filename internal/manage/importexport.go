@@ -205,10 +205,11 @@ func (o *Ops) Import(ctx context.Context, actor string, r io.Reader) (ImportResu
 			res.KeysAdded++
 		}
 	}
-	if err := o.Reg.Reload(ctx); err != nil {
-		return res, err
+	aliases := make([]string, len(projects))
+	for i, ep := range projects {
+		aliases[i] = ep.Alias
 	}
-	o.rebuildFlatView(ctx)
+	o.afterWrite(ctx, true, aliases...)
 	return res, nil
 }
 

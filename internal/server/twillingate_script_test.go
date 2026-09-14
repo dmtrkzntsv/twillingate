@@ -46,7 +46,7 @@ func TestTwillingateSDKServed(t *testing.T) {
 		"sendBeacon",          // unload transport
 		"pushState",           // SPA tracking
 		"webdriver",           // automation filter
-		"/api/events",         // the only endpoint
+		"/ingest/events",      // the only endpoint
 		"$pageview",           // web analytics
 		"$screen_view",        // app analytics
 		"$install_id",         // app/identity batch attribute

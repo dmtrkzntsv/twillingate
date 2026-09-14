@@ -14,7 +14,7 @@ import (
 
 // rawExec reaches the underlying *sql.DB of the sqlite store for tests
 // that need to write rows the exported API cannot produce (malformed JSON
-// in a registry column, in particular). Mirrors internal/mcpserver's
+// in a registry column, in particular). Mirrors internal/api's
 // seed_test.go helper of the same shape.
 func rawExec(t *testing.T, st store.Store, q string, args ...any) {
 	t.Helper()

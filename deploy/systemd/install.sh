@@ -129,8 +129,23 @@ for unit in twillingate litestream; do
       "$root/deploy/systemd/$unit.service" \
     > "/etc/systemd/system/$unit.service"
 done
+# A split install runs one surface per instance: twillingate@ingest and
+# twillingate@api. The template is the main unit with the surface flag
+# added, so the two can never drift apart, and it is re-rendered on every
+# upgrade like the main unit.
+sed -e 's|^Description=.*|& (%i surface)|' \
+    -e 's|^ExecStart=/usr/local/bin/twillingate serve$|& -%i|' \
+    /etc/systemd/system/twillingate.service > /etc/systemd/system/twillingate@.service
+grep -qx 'ExecStart=/usr/local/bin/twillingate serve -%i' /etc/systemd/system/twillingate@.service \
+  || die "twillingate.service has an unexpected ExecStart=; cannot render twillingate@.service"
 systemctl daemon-reload
-systemctl enable twillingate.service
+if systemctl is-enabled --quiet twillingate@ingest.service \
+  || systemctl is-enabled --quiet twillingate@api.service; then
+  # Enabling the bare unit too would bind the same listeners at next boot.
+  echo "Split install (twillingate@ingest, twillingate@api): leaving twillingate.service disabled"
+else
+  systemctl enable twillingate.service
+fi
 if command -v litestream >/dev/null 2>&1; then
   systemctl enable litestream.service
 else
@@ -141,7 +156,7 @@ fi
 
 if [ "$upgrade" -eq 1 ]; then
   # Restart only what was running: a stopped service stays stopped. The glob
-  # also catches a separate twillingate-mcp.service.
+  # also catches the twillingate@ingest and twillingate@api instances.
   running="$(systemctl list-units --type=service --state=active --no-legend --plain 'twillingate*.service' \
     | awk '{print $1}')"
   for unit in $running; do
@@ -178,5 +193,5 @@ Installed. Next steps:
        sudo -u $SERVICE_USER sh -ac '. /etc/twillingate/twillingate.env; twillingate project create -alias myapp'
      Then issue an ingest key (prints a ready-to-paste web snippet):
        sudo -u $SERVICE_USER sh -ac '. /etc/twillingate/twillingate.env; twillingate key issue -project myapp -label web'
-  5. Apps post to https://YOUR_DOMAIN/api/events — see docs/twillingate.md
+  5. Apps post to https://YOUR_DOMAIN/ingest/events — see docs/twillingate.md
 EOF_DONE

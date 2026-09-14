@@ -5,7 +5,7 @@ app sending data, and answer questions from what comes back. The MCP
 endpoint serves this file verbatim as `docs://twillingate`.
 
 Installing twillingate on a server, configuring the collector itself,
-standing up Evidence reporting, enabling the MCP endpoint and replicating
+standing up Evidence reporting, enabling the API endpoint and replicating
 the database are the operator's job, in [deployment.md](deployment.md).
 
 - [What twillingate is](#what-twillingate-is)
@@ -22,8 +22,8 @@ the database are the operator's job, in [deployment.md](deployment.md).
 One Go binary and one SQLite file. It collects three kinds of analytics
 through a single endpoint — web pageviews, native app screen views, and
 custom product events — rolls them up nightly, and exposes the result three
-ways: Evidence dashboards, a read-only SQL surface, and an MCP endpoint an
-AI agent can query in plain language.
+ways: Evidence dashboards, a read-only SQL surface, and the API (MCP or
+HTTP) an AI agent can query in plain language.
 
 It is cookieless by default. An `anonymous` project never writes to a
 visitor's device and salts every identifier with a key that rotates at
@@ -35,9 +35,9 @@ The pieces:
 
 | Command | Does |
 | --- | --- |
-| `twillingate serve -api` | Ingestion: `POST /api/events`, the SDK at `/js/twillingate.js`, `/healthz` |
-| `twillingate serve -mcp` | The MCP endpoint at `/mcp` |
-| `twillingate serve` | Both, on one listener unless `MCP_ADDR` says otherwise |
+| `twillingate serve -ingest` | Ingestion: `POST /ingest/events`, the SDK at `/js/twillingate.js`, `/healthz` |
+| `twillingate serve -api` | The API endpoint: MCP at `/mcp`, REST at `/api/` |
+| `twillingate serve` | Both, on one listener unless `API_ADDR` says otherwise |
 | `twillingate dashboards` | Renders the Evidence site from the database |
 | `twillingate project`, `key`, `config` | Registry management |
 | `twillingate migrate` | Applies schema migrations and exits |
@@ -50,8 +50,8 @@ see [Configure the collector](deployment.md#configure-the-collector).
 ## Set up a project
 
 Projects live in the database — a registry table, not a file — and are
-managed either through the CLI or, over MCP, through the management tools.
-Every operation has both forms:
+managed either through the CLI or, over the API (MCP or HTTP), through the
+management tools. Every operation has both forms:
 
 | Operation | CLI | MCP tool |
 | --- | --- | --- |
@@ -462,7 +462,7 @@ same day-long cache. Load one only if its problem is yours.
 
 ## The event model
 
-Everything goes to one endpoint, `POST /api/events`. The event **name**
+Everything goes to one endpoint, `POST /ingest/events`. The event **name**
 decides which family it lands in, and each family feeds a different surface:
 
 | name | family | feeds |
@@ -555,11 +555,12 @@ behave identically from this section alone.
 ### Endpoint
 
 ```
-POST /api/events
+POST /ingest/events
 ```
 
 The only ingest endpoint. There is no separate pageview, event or batch
-path — a single event is a batch of one.
+path — a single event is a batch of one. `/api/events` was the path before
+this release and now returns 404 (401 where the API shares the listener).
 
 ### Authentication
 
@@ -805,13 +806,55 @@ country", "which hosts is this project collecting from", "which screens do
 people hit before they subscribe", "issue a key for the marketing site".
 
 Enabling the endpoint, choosing an auth mode and pointing a client at it are
-in [deployment.md](deployment.md#the-mcp-endpoint).
+in [deployment.md](deployment.md#the-api-endpoint).
+
+### HTTP API
+
+Every tool above except `integration_guide` is also a REST route under
+`/api/`, guarded by the same bearer token (`Authorization: Bearer …`) as
+MCP. Send and receive JSON. `integration_guide` and the `docs://` resources
+are MCP-only — there is no REST equivalent.
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  "https://t.example.com/api/projects/blog/web/overview?from=2026-09-01&to=2026-09-13"
+```
+
+| Method | Path | Mirrors | Input |
+|---|---|---|---|
+| `GET` | `/api/projects` | `list_projects` | — |
+| `POST` | `/api/projects` | `create_project` | body: `alias`, `name`, `identity`, `allowed_origins`, `attributes`, `skip_key` → 201 |
+| `PATCH` | `/api/projects/{alias}` | `update_project` | body: fields to change (merge) |
+| `POST` | `/api/projects/{alias}/archive` | `archive_project` | — |
+| `POST` | `/api/projects/{alias}/restore` | `restore_project` | — |
+| `GET` | `/api/keys` | `list_ingest_keys` | query: `project` |
+| `POST` | `/api/projects/{project}/keys` | `issue_ingest_key` | body: `label` → 201 |
+| `POST` | `/api/projects/{project}/keys/{label}/disable` | `disable_ingest_key` | — |
+| `POST` | `/api/projects/{project}/keys/{label}/enable` | `enable_ingest_key` | — |
+| `GET` | `/api/projects/{project}/web/overview` | `web_overview` | query: `from`, `to` |
+| `GET` | `/api/projects/{project}/web/breakdown` | `web_breakdown` | query: `from`, `to`, `dimension`, `limit` |
+| `GET` | `/api/projects/{project}/app/overview` | `app_overview` | query: `from`, `to` |
+| `GET` | `/api/projects/{project}/app/breakdown` | `app_breakdown` | query: `from`, `to`, `dimension`, `limit` |
+| `GET` | `/api/projects/{project}/product/events` | `product_events` | query: `from`, `to`, `event` |
+| `GET` | `/api/projects/{project}/product/attributes` | `product_attributes` | query: `from`, `to`, `event` |
+| `GET` | `/api/projects/{project}/retention` | `retention` | query: `from`, `to`, `surface` |
+| `GET` | `/api/projects/{project}/identities` | `identities` | query: `from`, `to`, `kind`, `limit` |
+| `POST` | `/api/query` | `query` | body: `sql` |
+| `GET` | `/api/schema/views` | `schema://views` | — (text/plain) |
+
+Success is the tool's output as JSON, at 200 (201 where noted above).
+Errors are `{"error":{"code":"…","message":"…"}}`: `invalid` is 400,
+`not_found` is 404, `conflict` is 409, anything else is `internal` at 500.
+A missing or bad token is 401. An unknown query parameter or an unknown
+field in a JSON body is also 400 — the same strictness as a malformed one.
+So is a query string that does not parse (a bad `%` escape, a bare `;`)
+or a parameter given twice: a filter is never dropped silently.
 
 ### Writing SQL against the views
 
 The `query` tool takes read-only SQL against the views below. It is
-row-capped (`MCP_QUERY_MAX_ROWS`, default 1000) and time-limited
-(`MCP_QUERY_TIMEOUT`, default `10s`).
+row-capped (`API_QUERY_MAX_ROWS`, default 1000) and time-limited
+(`API_QUERY_TIMEOUT`, default `10s`).
 
 **Read `schema://views` for the authoritative column list.** It is kept in
 step with the migrations and carries the caveats that cannot be inferred

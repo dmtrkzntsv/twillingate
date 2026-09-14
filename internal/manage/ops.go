@@ -14,7 +14,8 @@ import (
 // Ops are the audited registry operations. Every mutation writes its
 // audit row and bumps config_version in one transaction (store layer),
 // then rebuilds the snapshot synchronously so in-process readers see it
-// immediately (spec §3.3).
+// immediately (spec §3.3); if that rebuild fails, the next read retries it
+// and the operation still reports the committed write as done.
 type Ops struct {
 	Reg *Registry
 	St  Store
@@ -36,6 +37,48 @@ func (o *Ops) rebuildFlatView(ctx context.Context) {
 	if err := o.St.RebuildFlatView(ctx, keys); err != nil {
 		o.Reg.logger.Warn("flat view rebuild failed", "error", err)
 	}
+}
+
+// afterWrite refreshes the in-process snapshot once a write touching the
+// given projects has committed and, when rebuildView is set, the flat view
+// with it. A failed reload is logged rather than returned: the write
+// already happened, and reporting it as failed would send the caller into
+// a retry that collides with it. Instead those projects are withheld —
+// their keys authorize nothing — until the next read reloads, so a revoked
+// key or archived project never keeps ingesting on a stale snapshot. The
+// flat view waits for the next write or the daily pass. Reports whether
+// the snapshot now reflects the write.
+func (o *Ops) afterWrite(ctx context.Context, rebuildView bool, aliases ...string) bool {
+	if err := o.Reg.Reload(ctx); err != nil {
+		o.Reg.logger.Warn("registry reload after write failed; refusing the affected projects' events until the next read reloads",
+			"projects", aliases, "error", err)
+		o.Reg.withhold(aliases...)
+		return false
+	}
+	if rebuildView {
+		o.rebuildFlatView(ctx)
+	}
+	return true
+}
+
+// written is the project a create or update just committed: the snapshot's
+// copy when the reload succeeded, otherwise one built from the validated
+// spec, keeping the archived flag the spec does not carry.
+func (o *Ops) written(ctx context.Context, spec ProjectSpec, reloaded bool) *Project {
+	if reloaded {
+		if cur := o.Reg.Snapshot(ctx).Project(spec.Alias); cur != nil {
+			return cur
+		}
+	}
+	// Read the held snapshot without polling, so the pending reload is left
+	// for the caller's next read.
+	cur := o.Reg.snap.Load().Project(spec.Alias)
+	p := &Project{Alias: spec.Alias, Name: spec.Name, Identity: spec.Identity,
+		AllowedOrigins: spec.AllowedOrigins, Retention: spec.Retention, Attributes: spec.Attributes}
+	if cur != nil {
+		p.Archived = cur.Archived
+	}
+	return p
 }
 
 type ProjectSpec struct {
@@ -132,6 +175,32 @@ func (sp *ProjectSpec) row() (store.RegistryProject, error) {
 }
 
 func (o *Ops) CreateProject(ctx context.Context, actor string, spec ProjectSpec) (*Project, error) {
+	return o.create(ctx, actor, spec, func(row store.RegistryProject, audit store.AuditEntry) error {
+		return o.St.CreateProject(ctx, row, audit)
+	})
+}
+
+// CreateProjectWithKey is CreateProject plus a first ingest key under
+// label, committed together: either both exist afterwards or neither does.
+func (o *Ops) CreateProjectWithKey(ctx context.Context, actor string, spec ProjectSpec, label string) (*Project, string, error) {
+	key, err := MintIngestKey()
+	if err != nil {
+		return nil, "", err
+	}
+	p, err := o.create(ctx, actor, spec, func(row store.RegistryProject, audit store.AuditEntry) error {
+		return o.St.CreateProjectWithKey(ctx, row,
+			store.RegistryKey{Key: key, Project: spec.Alias, Label: label}, audit,
+			store.AuditEntry{Actor: actor, Action: "key.issue", Subject: spec.Alias + "/" + label})
+	})
+	if err != nil {
+		return nil, "", err
+	}
+	return p, key, nil
+}
+
+// create validates spec, hands its row and audit entry to write, and
+// reloads the registry once the write has committed.
+func (o *Ops) create(ctx context.Context, actor string, spec ProjectSpec, write func(store.RegistryProject, store.AuditEntry) error) (*Project, error) {
 	if err := spec.validateNew(); err != nil {
 		return nil, err
 	}
@@ -139,15 +208,11 @@ func (o *Ops) CreateProject(ctx context.Context, actor string, spec ProjectSpec)
 	if err != nil {
 		return nil, err
 	}
-	if err := o.St.CreateProject(ctx, row, store.AuditEntry{
+	if err := write(row, store.AuditEntry{
 		Actor: actor, Action: "project.create", Subject: spec.Alias}); err != nil {
 		return nil, err
 	}
-	if err := o.Reg.Reload(ctx); err != nil {
-		return nil, err
-	}
-	o.rebuildFlatView(ctx)
-	return o.Reg.Snapshot(ctx).Project(spec.Alias), nil
+	return o.written(ctx, spec, o.afterWrite(ctx, true, spec.Alias)), nil
 }
 
 func (o *Ops) UpdateProject(ctx context.Context, actor string, spec ProjectSpec) (*Project, error) {
@@ -162,11 +227,7 @@ func (o *Ops) UpdateProject(ctx context.Context, actor string, spec ProjectSpec)
 		Actor: actor, Action: "project.update", Subject: spec.Alias}); err != nil {
 		return nil, err
 	}
-	if err := o.Reg.Reload(ctx); err != nil {
-		return nil, err
-	}
-	o.rebuildFlatView(ctx)
-	return o.Reg.Snapshot(ctx).Project(spec.Alias), nil
+	return o.written(ctx, spec, o.afterWrite(ctx, true, spec.Alias)), nil
 }
 
 func (o *Ops) ArchiveProject(ctx context.Context, actor, alias string) error {
@@ -174,7 +235,8 @@ func (o *Ops) ArchiveProject(ctx context.Context, actor, alias string) error {
 		Actor: actor, Action: "project.archive", Subject: alias}); err != nil {
 		return err
 	}
-	return o.Reg.Reload(ctx)
+	o.afterWrite(ctx, false, alias)
+	return nil
 }
 
 func (o *Ops) RestoreProject(ctx context.Context, actor, alias string) error {
@@ -182,7 +244,8 @@ func (o *Ops) RestoreProject(ctx context.Context, actor, alias string) error {
 		Actor: actor, Action: "project.restore", Subject: alias}); err != nil {
 		return err
 	}
-	return o.Reg.Reload(ctx)
+	o.afterWrite(ctx, false, alias)
+	return nil
 }
 
 func (o *Ops) IssueIngestKey(ctx context.Context, actor, project, label string) (string, error) {
@@ -200,7 +263,8 @@ func (o *Ops) IssueIngestKey(ctx context.Context, actor, project, label string) 
 		Actor: actor, Action: "key.issue", Subject: project + "/" + label}); err != nil {
 		return "", err
 	}
-	return key, o.Reg.Reload(ctx)
+	o.afterWrite(ctx, false, project)
+	return key, nil
 }
 
 func (o *Ops) DisableIngestKey(ctx context.Context, actor, project, label string) error {
@@ -208,7 +272,8 @@ func (o *Ops) DisableIngestKey(ctx context.Context, actor, project, label string
 		Actor: actor, Action: "key.disable", Subject: project + "/" + label}); err != nil {
 		return err
 	}
-	return o.Reg.Reload(ctx)
+	o.afterWrite(ctx, false, project)
+	return nil
 }
 
 func (o *Ops) EnableIngestKey(ctx context.Context, actor, project, label string) error {
@@ -216,7 +281,8 @@ func (o *Ops) EnableIngestKey(ctx context.Context, actor, project, label string)
 		Actor: actor, Action: "key.enable", Subject: project + "/" + label}); err != nil {
 		return err
 	}
-	return o.Reg.Reload(ctx)
+	o.afterWrite(ctx, false, project)
+	return nil
 }
 
 // RenameProject rewrites a project's alias — its physical identity, the
@@ -236,10 +302,7 @@ func (o *Ops) RenameProject(ctx context.Context, actor, old, newAlias string) er
 		Actor: actor, Action: "project.rename", Subject: old + "->" + newAlias}); err != nil {
 		return err
 	}
-	if err := o.Reg.Reload(ctx); err != nil {
-		return err
-	}
-	o.rebuildFlatView(ctx)
+	o.afterWrite(ctx, true, old, newAlias)
 	return nil
 }
 
@@ -251,19 +314,22 @@ func (o *Ops) DeleteProject(ctx context.Context, actor, alias string) error {
 		Actor: actor, Action: "project.delete", Subject: alias}); err != nil {
 		return err
 	}
+	// Reclaiming pages is housekeeping: the delete has committed, so a
+	// failed vacuum is logged and left to the daily pass's own vacuum.
 	if err := o.St.IncrementalVacuum(ctx); err != nil {
-		return fmt.Errorf("delete succeeded but vacuum failed: %w", err)
+		o.Reg.logger.Warn("vacuum after project delete failed", "project", alias, "error", err)
 	}
-	return o.Reg.Reload(ctx)
+	o.afterWrite(ctx, false, alias)
+	return nil
 }
 
 // MintIngestKey mints "ak_" + 128 bits hex. Ingest keys are public by
 // design (they ship in page source); 128 bits makes guessing infeasible.
 func MintIngestKey() (string, error) { return mint("ak_", 16) }
 
-// MintMCPToken mints "ar_" + 256 bits hex. Unlike ingest keys this is a
+// MintAPIToken mints "ar_" + 256 bits hex. Unlike ingest keys this is a
 // true secret: it reads every project and authorizes management.
-func MintMCPToken() (string, error) { return mint("ar_", 32) }
+func MintAPIToken() (string, error) { return mint("ar_", 32) }
 
 func mint(prefix string, n int) (string, error) {
 	buf := make([]byte, n)
@@ -280,7 +346,7 @@ const SnippetPlaceholderBase = "https://twillingate.example.com"
 
 // Snippet renders the paste-ready embed tag returned by create_project,
 // issue_ingest_key and `twillingate key issue`. base is the COLLECTOR's
-// public URL (twillingate.js and /api/events live there) — never the
+// public URL (twillingate.js and /ingest/events live there) — never the
 // customer's site origin.
 func Snippet(base, key, identity string) string {
 	if base == "" {

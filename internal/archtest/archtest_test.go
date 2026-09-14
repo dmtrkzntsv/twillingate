@@ -1,6 +1,6 @@
 // Package archtest pins the package graph described in CLAUDE.md
 // ("Layout"): leaves import only leaves, manage sits above the leaves,
-// the surfaces (server, mcpserver, jobs, pipeline, dashboards) import
+// the surfaces (server, api, jobs, pipeline, dashboards) import
 // leaves and manage but never each other, and internal/app is the only
 // package that wires the surfaces together. cmd/ is unconstrained.
 //
@@ -38,7 +38,7 @@ var rank = map[string]int{
 	"internal/pipeline":          2,
 	"internal/jobs":              2,
 	"internal/server":            2,
-	"internal/mcpserver":         2,
+	"internal/api":               2,
 	"internal/dashboards":        2,
 	"internal/app":               3,
 }
@@ -86,8 +86,8 @@ func TestRuleRejectsUpwardAndSidewaysImports(t *testing.T) {
 		want  string
 	}{
 		"surface imports surface": {
-			graph: map[string][]string{"internal/jobs": {"internal/mcpserver"}},
-			want:  "internal/jobs imports internal/mcpserver",
+			graph: map[string][]string{"internal/jobs": {"internal/api"}},
+			want:  "internal/jobs imports internal/api",
 		},
 		"leaf imports manage": {
 			graph: map[string][]string{"internal/store": {"internal/manage"}},
@@ -112,7 +112,7 @@ func TestRuleRejectsUpwardAndSidewaysImports(t *testing.T) {
 		"internal/store/sqlite": {"internal/store"},
 		"internal/manage":       {"internal/config", "internal/store"},
 		"internal/jobs":         {"internal/civil", "internal/manage", "internal/store"},
-		"internal/app":          {"internal/server", "internal/mcpserver", "internal/jobs"},
+		"internal/app":          {"internal/server", "internal/api", "internal/jobs"},
 		"cmd/twillingate":       {"internal/app", "internal/store/sqlite"},
 	}
 	if got := violations(ok); len(got) != 0 {

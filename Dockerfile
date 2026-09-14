@@ -57,9 +57,9 @@ RUN mkdir -p /var/lib/twillingate && chown twillingate:twillingate /var/lib/twil
 VOLUME ["/var/lib/twillingate"]
 USER twillingate
 # Container defaults; override per-deployment via compose env_file/environment.
-# LISTEN_ADDR binds all interfaces here (unlike the bare-metal loopback
+# INGEST_ADDR binds all interfaces here (unlike the bare-metal loopback
 # default) because published ports reach the container's own IP, not lo.
-ENV LISTEN_ADDR=0.0.0.0:8080 \
+ENV INGEST_ADDR=0.0.0.0:8080 \
     DATABASE_DSN=sqlite:///var/lib/twillingate/twillingate.db
 ENTRYPOINT ["/usr/local/bin/twillingate"]
 CMD ["serve"]

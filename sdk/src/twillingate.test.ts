@@ -72,12 +72,12 @@ describe("init", () => {
 });
 
 describe("payload shape", () => {
-  it("posts the documented envelope to /api/events", async () => {
+  it("posts the documented envelope to /ingest/events", async () => {
     const t = tg();
     t.track("signup", { plan: "pro" });
     await drain();
     expect(sent).toHaveLength(1);
-    expect(sent[0].url).toBe(URL_BASE + "/api/events");
+    expect(sent[0].url).toBe(URL_BASE + "/ingest/events");
     const { body } = sent[0];
     expect(body.key).toBe("ak_test");
     expect(body.events).toHaveLength(1);
@@ -146,7 +146,7 @@ describe("batching", () => {
     window.dispatchEvent(new Event("pagehide"));
     expect(beacon).toHaveBeenCalledOnce();
     const [url, body] = beacon.mock.calls[0];
-    expect(url).toBe(URL_BASE + "/api/events");
+    expect(url).toBe(URL_BASE + "/ingest/events");
     expect(JSON.parse(body).events[0].name).toBe("bye");
     expect(sent).toHaveLength(0); // beacon took it, fetch did not
   });
@@ -272,7 +272,7 @@ describe("snippet auto-init", () => {
     t.flush();
     await drain();
     expect(sent).toHaveLength(1);
-    expect(sent[0].url).toBe(URL_BASE + "/api/events");
+    expect(sent[0].url).toBe(URL_BASE + "/ingest/events");
     expect(sent[0].body.key).toBe("ak_snippet");
     expect(sent[0].body.events[0].name).toBe("$pageview");
     const attrs = sent[0].body.events[0].attributes as Record<string, unknown>;

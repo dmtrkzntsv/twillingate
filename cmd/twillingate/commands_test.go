@@ -40,7 +40,7 @@ func TestMigrateSubcommand(t *testing.T) {
 // with defaults. serve needs a surface flag to get past the usage check and
 // reach config loading at all.
 func TestSubcommandsRejectBadConfig(t *testing.T) {
-	argsFor := map[string][]string{"serve": {"serve", "-api"}, "migrate": {"migrate"}}
+	argsFor := map[string][]string{"serve": {"serve", "-ingest"}, "migrate": {"migrate"}}
 	for _, cmd := range []string{"serve", "migrate"} {
 		t.Run(cmd+" missing DATABASE_DSN", func(t *testing.T) {
 			t.Setenv("DATABASE_DSN", "")
@@ -63,8 +63,8 @@ func TestSubcommandsRejectBadConfig(t *testing.T) {
 
 func TestResolveSurfaces(t *testing.T) {
 	cases := []struct {
-		api, mcp                bool
-		runAPI, runMCP, lenient bool
+		ingest, api                bool
+		runIngest, runAPI, lenient bool
 	}{
 		{false, false, true, true, true}, // bare serve: both, lenient
 		{true, false, true, false, false},
@@ -72,25 +72,50 @@ func TestResolveSurfaces(t *testing.T) {
 		{true, true, true, true, false}, // explicit both: strict
 	}
 	for _, c := range cases {
-		a, m, l := resolveSurfaces(c.api, c.mcp)
-		if a != c.runAPI || m != c.runMCP || l != c.lenient {
+		i, a, l := resolveSurfaces(c.ingest, c.api)
+		if i != c.runIngest || a != c.runAPI || l != c.lenient {
 			t.Errorf("resolveSurfaces(%v,%v) = %v,%v,%v; want %v,%v,%v",
-				c.api, c.mcp, a, m, l, c.runAPI, c.runMCP, c.lenient)
+				c.ingest, c.api, i, a, l, c.runIngest, c.runAPI, c.lenient)
 		}
 	}
 }
 
-// Explicitly requesting -mcp without auth config stays a hard error;
+// Explicitly requesting -api without auth config stays a hard error;
 // bare serve degrades to a warning instead (exercised end to end by
-// scripts/smoke.sh, which boots bare `serve` with no MCP config).
-func TestExplicitMCPWithoutConfigFails(t *testing.T) {
+// scripts/smoke.sh, which boots bare `serve` with no API config).
+func TestExplicitAPIWithoutConfigFails(t *testing.T) {
 	withDB(t)
 	var out bytes.Buffer
-	if code := run([]string{"serve", "-mcp"}, &out); code != 1 {
-		t.Fatalf("serve -mcp without MCP_AUTH_DSN: exit %d, want 1: %s", code, out.String())
+	if code := run([]string{"serve", "-api"}, &out); code != 1 {
+		t.Fatalf("serve -api without API_AUTH_DSN: exit %d, want 1: %s", code, out.String())
 	}
-	if !strings.Contains(out.String(), "MCP_AUTH_DSN") {
+	if !strings.Contains(out.String(), "API_AUTH_DSN") {
 		t.Errorf("error must name the missing variable: %s", out.String())
+	}
+}
+
+// Bare serve is lenient about a missing API_AUTH_DSN, but a DSN that is set
+// and fails to parse is a mistake, not an absence: it must still exit 1,
+// even without -api naming the surface explicitly.
+func TestBareServeFailsOnInvalidAPIAuthDSN(t *testing.T) {
+	withDB(t)
+	t.Setenv("API_AUTH_DSN", "token://x?password=p&resource=https://h.example.com/mcp")
+	var out bytes.Buffer
+	if code := run([]string{"serve"}, &out); code != 1 {
+		t.Fatalf("bare serve with an invalid API_AUTH_DSN: exit %d, want 1: %s", code, out.String())
+	}
+	if !strings.Contains(out.String(), "API_AUTH_DSN") {
+		t.Errorf("error must name the bad variable: %s", out.String())
+	}
+}
+
+// The old -mcp flag is gone; serve must reject it as unknown rather than
+// silently accepting it as a no-op.
+func TestServeRejectsRemovedMCPFlag(t *testing.T) {
+	withDB(t)
+	var out bytes.Buffer
+	if code := run([]string{"serve", "-mcp"}, &out); code != 2 {
+		t.Fatalf("serve -mcp: exit %d, want 2 (unknown flag): %s", code, out.String())
 	}
 }
 

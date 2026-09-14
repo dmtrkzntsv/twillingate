@@ -28,7 +28,7 @@ export DATABASE_DSN="sqlite://$dir/smoke.db"
 key=$(./twillingate key issue -project dev -label smoke | grep -o 'ak_[0-9a-f]*' | head -1)
 [ -n "$key" ] || fail "key issue failed"
 
-env LISTEN_ADDR="127.0.0.1:$port" \
+env INGEST_ADDR="127.0.0.1:$port" \
     GEO_DSN="none://" \
     LOG_LEVEL=debug LOG_FORMAT=text \
     BUFFER_FLUSH_INTERVAL=200ms \
@@ -48,7 +48,7 @@ echo "ok: /healthz"
 # filter never touches the app or custom halves.
 ua='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36'
 # shellcheck disable=SC2016  # the $-prefixed names are JSON keys, not shell
-code=$(curl -s -o "$dir/events.out" -w '%{http_code}' -A "$ua" -X POST "$base/api/events" \
+code=$(curl -s -o "$dir/events.out" -w '%{http_code}' -A "$ua" -X POST "$base/ingest/events" \
   -H 'Origin: http://localhost' -H 'Content-Type: application/json' \
   -H "X-Analytics-Key: $key" \
   -d '{"attributes":{"$platform":"ios","$app_version":"1.0","$install_id":"install-1"},
@@ -56,32 +56,32 @@ code=$(curl -s -o "$dir/events.out" -w '%{http_code}' -A "$ua" -X POST "$base/ap
          {"name":"$pageview","attributes":{"$host":"localhost","$path":"/pricing","$referrer":"https://news.ycombinator.com/"}},
          {"name":"$screen_view","attributes":{"$screen":"/settings"}},
          {"name":"signup","attributes":{"plan":"pro"}}]}')
-[ "$code" = 202 ] || fail "/api/events returned $code: $(cat "$dir/events.out")"
+[ "$code" = 202 ] || fail "/ingest/events returned $code: $(cat "$dir/events.out")"
 grep -q '"accepted":3' "$dir/events.out" || fail "expected 3 accepted, got: $(cat "$dir/events.out")"
-echo "ok: /api/events accepted 3 events"
+echo "ok: /ingest/events accepted 3 events"
 
 # An unknown key is the only auth outcome: 401, never a silent drop.
-code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$base/api/events" \
+code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$base/ingest/events" \
   -H 'Content-Type: application/json' -H 'X-Analytics-Key: ak_wrong' \
   -d '{"events":[{"name":"x"}]}')
-[ "$code" = 401 ] || fail "/api/events returned $code for a bad key, want 401"
-echo "ok: /api/events rejects an unknown key (401)"
+[ "$code" = 401 ] || fail "/ingest/events returned $code for a bad key, want 401"
+echo "ok: /ingest/events rejects an unknown key (401)"
 
 # Origin, when present, must match: the browser-abuse deterrent still holds.
-code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$base/api/events" \
+code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$base/ingest/events" \
   -H 'Origin: http://evil.example' -H 'Content-Type: application/json' \
   -H "X-Analytics-Key: $key" -d '{"events":[{"name":"x"}]}')
-[ "$code" = 403 ] || fail "/api/events returned $code for a bad Origin, want 403"
-echo "ok: /api/events rejects a disallowed Origin (403)"
+[ "$code" = 403 ] || fail "/ingest/events returned $code for a bad Origin, want 403"
+echo "ok: /ingest/events rejects a disallowed Origin (403)"
 
 # A retried batch must dedupe on the client-supplied id.
 for _ in 1 2; do
-  code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$base/api/events" \
+  code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$base/ingest/events" \
     -H 'Content-Type: application/json' -H "X-Analytics-Key: $key" \
     -d '{"events":[{"id":"018f1e5a-0000-7000-8000-000000000001","name":"replayed"}]}')
   [ "$code" = 202 ] || fail "replay returned $code"
 done
-echo "ok: /api/events accepts a replayed batch"
+echo "ok: /ingest/events accepts a replayed batch"
 
 # -o /dev/null rather than piping to head: closing the pipe early makes curl
 # fail with EPIPE once the snippet grows past one buffer.

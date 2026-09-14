@@ -27,7 +27,7 @@ none of it.
 - [Install](#install)
 - [Configure the collector](#configure-the-collector)
 - [Reporting with Evidence](#reporting-with-evidence)
-- [The MCP endpoint](#the-mcp-endpoint)
+- [The API endpoint](#the-api-endpoint)
 - [Operate and recover](#operate-and-recover) — including litestream for the two-server topology
 
 ---
@@ -36,9 +36,9 @@ none of it.
 
 ### docker compose
 
-Tracking: ingestion, the SDK, and `/mcp` once `MCP_AUTH_DSN` is set. The
-dashboards are a second compose file, added under [Reporting with
-Evidence](#reporting-with-evidence):
+Tracking: ingestion, the SDK, and — once `API_AUTH_DSN` is set — the API
+(MCP and REST). The dashboards are a second compose file, added under
+[Reporting with Evidence](#reporting-with-evidence):
 
 ```bash
 mkdir twillingate && cd twillingate
@@ -67,8 +67,9 @@ its SHA256 before installing. CI publishes a release on every push to `main`.
 The installer creates a system account, installs the binary to
 `/usr/local/bin/twillingate`, creates `/var/lib/twillingate` (0750, owned by
 the service account), installs an example `twillingate.env` loaded by both
-units via `EnvironmentFile=`, renders the systemd units with the chosen user,
-and enables them. Re-running the same command upgrades: it replaces the
+units via `EnvironmentFile=`, renders the systemd units with the chosen user
+(plus the `twillingate@.service` template for a [split
+install](#hostnames-and-processes)), and enables them. Re-running the same command upgrades: it replaces the
 binary and units, keeps `twillingate.env` and the service account, restarts
 every `twillingate` unit that was running, and exits non-zero if one does not
 come back up. A stopped service stays stopped.
@@ -99,20 +100,20 @@ t.example.com, t.example.org {
 ```
 
 Snippets use `PUBLIC_URL`; change the `src` for sites on another hostname.
-Keep MCP on one hostname — OAuth and `cloudflare://` are bound to it.
+Keep the API on one hostname — OAuth and `cloudflare://` are bound to it.
 
 ### Verifying ingestion
 
 ```bash
 # Expect 202 and {"accepted":1,...}
-curl -i -X POST http://localhost:8080/api/events \
+curl -i -X POST http://localhost:8080/ingest/events \
   -H 'Content-Type: application/json' \
   -H 'Origin: https://myapp.com' \
   -d '{"key":"ak_…","events":[{"name":"$pageview",
        "attributes":{"$host":"myapp.com","$path":"/"}}]}'
 
 # Expect 403 — the origin is not in allowed_origins
-curl -i -X POST http://localhost:8080/api/events \
+curl -i -X POST http://localhost:8080/ingest/events \
   -H 'Content-Type: application/json' \
   -H 'Origin: https://not-allowed.com' \
   -d '{"key":"ak_…","events":[{"name":"$pageview",
@@ -123,8 +124,8 @@ curl -i -X POST http://localhost:8080/api/events \
 
 | Variable | Meaning |
 | --- | --- |
-| `LISTEN_ADDR` | Address to bind. Default `127.0.0.1:8080` (the docker image sets `0.0.0.0:8080`). |
-| `PUBLIC_URL` | The collector's public base URL (`https://twillingate.example.com`). Embed snippets, MCP integration guidance and the default MCP resource URL are built from it; unset, they carry a placeholder. With [several hostnames](#one-collector-several-hostnames), the default one. |
+| `INGEST_ADDR` | Address to bind. Default `127.0.0.1:8080` (the docker image sets `0.0.0.0:8080`). |
+| `PUBLIC_URL` | The collector's public base URL (`https://twillingate.example.com`). Embed snippets, MCP integration guidance and the default API resource (its origin) are built from it; unset, they carry a placeholder. With [several hostnames](#one-collector-several-hostnames), the default one. |
 | `DATABASE_DSN` | Store DSN. Only `sqlite://<path>` today. Required. |
 | `GEO_DSN` | Country lookup: `cloudflare://` (header), `maxmind://<license-key>`, or `none://`. |
 | `LOG_LEVEL` | `debug`, `info`, `warn`, `error`. Default `info`. |
@@ -145,11 +146,11 @@ curl -i -X POST http://localhost:8080/api/events \
 | `DASHBOARDS_INTERVAL` | Minimum spacing between Evidence rebuilds. Default `15m`. |
 | `DASHBOARDS_PROJECT_DIR` | Evidence project in the image. Default `/opt/evidence`. |
 | `DASHBOARDS_WORK_DIR` | Where the database snapshot is written. Default `/var/lib/dashboards`. |
-| `MCP_AUTH_DSN` | MCP authentication: `token://<token>?password=…` for the built-in browser login (see [The MCP endpoint](#the-mcp-endpoint)), or `oauth://<issuer-host>` for your own identity provider. Unset, bare `serve` skips MCP with a warning. |
-| `MCP_ADDR` | Give the MCP endpoint its own listener. Defaults to `LISTEN_ADDR` (shared). |
-| `MCP_DB_PATH` | Database MCP reads for queries. Defaults to the `DATABASE_DSN` path. |
-| `MCP_QUERY_TIMEOUT` | Per-query guard on the MCP `query` tool. Default `10s`. |
-| `MCP_QUERY_MAX_ROWS` | Row cap on the MCP `query` tool. Default 1000. |
+| `API_AUTH_DSN` | Authentication for the API endpoint (MCP and REST): `token://<token>?password=…` for the built-in browser login (see [The API endpoint](#the-api-endpoint)), or `oauth://<issuer-host>` for your own identity provider. Unset, bare `serve` skips the API with a warning. |
+| `API_ADDR` | Give the API (MCP and REST) its own listener. Defaults to `INGEST_ADDR` (shared). |
+| `API_DB_PATH` | Database the API reads for queries. Defaults to the `DATABASE_DSN` path. |
+| `API_QUERY_TIMEOUT` | Per-query guard on reads and the `query` operation. Default `10s`. |
+| `API_QUERY_MAX_ROWS` | Row cap on the `query` operation. Default 1000. |
 
 Litestream credentials (`LITESTREAM_ACCESS_KEY_ID`,
 `LITESTREAM_SECRET_ACCESS_KEY`, `R2_BUCKET`, `R2_ENDPOINT`) live in the same
@@ -233,11 +234,14 @@ before it renames, so that lands as `restored file is not a twillingate
 database` with the previous replica untouched, rather than as dashboards
 quietly rebuilt from an empty database.
 
-## The MCP endpoint
+## The API endpoint
 
-`serve` exposes one MCP endpoint — streamable HTTP at
-`https://twillingate.example.com/mcp`. There is no stdio server to install:
-every client talks to the running collector over the network.
+`serve -api` exposes one listener path that answers both transports:
+streamable HTTP MCP at `https://twillingate.example.com/mcp` and REST under
+`https://twillingate.example.com/api/`. There is no stdio server to
+install: every client talks to the running collector over the network. One
+`API_AUTH_DSN` protects both — set it up once here and it covers whichever
+transport a client uses.
 
 > **A connected session reads every non-archived project — including
 > personal data on `identified` projects — and can use the management
@@ -254,15 +258,15 @@ run.
 1. Mint the token:
 
    ```bash
-   sudo -u twillingate sh -ac '. /etc/twillingate/twillingate.env; twillingate keygen -mcp'
-   # prints: MCP_AUTH_DSN=token://ar_…
+   sudo -u twillingate sh -ac '. /etc/twillingate/twillingate.env; twillingate keygen -api'
+   # prints: API_AUTH_DSN=token://ar_…
    ```
 
 2. Set it in `/etc/twillingate/twillingate.env` (compose: `.env`) with a
    password, **in single quotes**:
 
    ```bash
-   MCP_AUTH_DSN='token://ar_…?password=<password>'
+   API_AUTH_DSN='token://ar_…?password=<password>'
    ```
 
    The quotes matter: the CLI commands in this runbook load the file with
@@ -273,16 +277,16 @@ run.
    ```bash
    sudo systemctl restart twillingate        # compose: docker compose up -d
    curl -si -X POST https://twillingate.example.com/mcp | grep -i www-authenticate
-   # → WWW-Authenticate: Bearer resource_metadata="https://twillingate.example.com/.well-known/oauth-protected-resource"
+   # → WWW-Authenticate: Bearer resource_metadata="https://twillingate.example.com/.well-known/oauth-protected-resource/mcp"
    ```
 
-   A `404` means MCP is off: `journalctl -u twillingate | grep 'MCP endpoint disabled'`
+   A `404` means the API is off: `journalctl -u twillingate | grep 'API disabled'`
    gives the reason, usually a DSN that does not parse.
 
 | Parameter | Meaning |
 | --- | --- |
 | `password` | What the login page asks for. Setting it turns the login on. |
-| `resource` | The public URL of `/mcp`. Defaults to `PUBLIC_URL` + `/mcp`; set it when MCP has its own hostname. |
+| `resource` | The API origin, with no path (`resource=https://api.example.com`); one login covers `/mcp` and `/api/`. Defaults to `PUBLIC_URL`; set it when the API has its own hostname. MCP clients read `/.well-known/oauth-protected-resource/mcp`, which names `<origin>/mcp`; `/api/` clients read `/.well-known/oauth-protected-resource`, which names the origin. |
 | `redirect` | An extra host clients may return to, such as `redirect=app.example.com`; repeat it once per host. Only needed for clients not covered below. |
 
 - **Hosts accepted without `redirect=`.** `localhost`, `127.0.0.1` and
@@ -299,7 +303,7 @@ run.
 - **Guessing.** Five wrong passwords in a minute lock the page for everyone
   until the minute ends; connected clients are unaffected. No minimum length
   is enforced, so a short password is only as strong as that rate allows.
-- **Hand-picked tokens.** `keygen -mcp` mints `ar_` plus hex. A token you
+- **Hand-picked tokens.** `keygen -api` mints `ar_` plus hex. A token you
   choose yourself must not contain `?`, which starts the parameters.
 
 ### Connect a client
@@ -330,11 +334,28 @@ to cut a device off.
 | A client unused for 30 days | That client logs in again |
 | Restart or upgrade | Nothing |
 
+**Use the HTTP API.** Scripts and anything else that is not an MCP client
+hit the same operations as REST routes under `/api/`, with the same bearer
+token:
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  "https://twillingate.example.com/api/projects/blog/web/overview?from=2026-09-01&to=2026-09-13"
+```
+
+Every route, its inputs and its error shape are in
+[twillingate.md#http-api](twillingate.md#http-api).
+
+Upgrading from a release before the API endpoint covered both transports?
+See [Upgrading from MCP_* and serve
+-mcp](#upgrading-from-mcp_-and-serve--mcp) — it covers the `resource=…/mcp`
+case too.
+
 ### Alternative: the token as a header
 
 A client that can send headers can skip the login and present the token
 itself — useful for scripts and headless Claude Code. It works whether or
-not a password is set; a bare `MCP_AUTH_DSN='token://ar_…'` turns the login
+not a password is set; a bare `API_AUTH_DSN='token://ar_…'` turns the login
 off and leaves only this.
 
 ```bash
@@ -365,22 +386,38 @@ the old header needs `claude mcp remove twillingate` and adding again.
 
 ### Hostnames and processes
 
-`MCP_ADDR` unset, MCP shares the ingestion listener. Put it on its own
-hostname when you can (`MCP_ADDR` plus a second DNS name, and `resource=`
-set to that hostname's `/mcp`): `/api/events` and the `/js/*` scripts must
-stay publicly reachable for ingestion, and a dedicated hostname keeps the
-access-control story simple.
+`API_ADDR` gives the API its own listener; unset, it shares the ingestion
+one. Put it on its own hostname when you can (`API_ADDR` plus a second DNS
+name, and `resource=` set to that hostname's origin, such as
+`resource=https://api.example.com`): `/ingest/events` and the `/js/*`
+scripts must stay publicly reachable for ingestion, and a dedicated
+hostname keeps the access-control story simple. A reverse proxy in front of
+a split install only needs to expose `/ingest/`, `/js/` and `/healthz`
+publicly — keep `/mcp` and `/api/` off the public hostname if nothing
+outside your network needs them.
 
 To run the surfaces as separate processes — independently restartable and
-exposable — copy `deploy/systemd/twillingate.service` to
-`twillingate-mcp.service`, change its `ExecStart=` to `twillingate serve
--mcp` (explicitly requesting `-mcp` makes missing auth a hard error), and
-change the original unit's to `twillingate serve -api`.
+exposable — use the `twillingate@.service` template the installer renders
+next to the main unit. Its instances run `twillingate serve -ingest` and
+`twillingate serve -api` (naming a flag explicitly makes that surface's
+misconfiguration a hard error, rather than the lenient warn-and-skip of a
+bare `serve`):
 
-**A `serve -mcp`-only process still runs the daily aggregation pass against
-`DATABASE_DSN`** — `-mcp` only makes the HTTP listener conditional, not the
-background jobs. Point a `-mcp`-only unit at a litestream replica and it
-will write to that replica on every pass. Set `MCP_DB_PATH` (what MCP reads)
+```bash
+sudo systemctl disable --now twillingate
+sudo systemctl enable --now twillingate@ingest twillingate@api
+```
+
+Nothing to hand-edit, so nothing for an upgrade to overwrite: the installer
+re-renders the template with the main unit, restarts whichever instances
+were running, and leaves `twillingate.service` disabled while an instance
+is enabled — enabling both would bind the same listeners at the next boot.
+To go back to one process, reverse the two commands.
+
+**An API-only process still runs the daily aggregation pass against
+`DATABASE_DSN`** — `-api` only makes the HTTP listener conditional, not the
+background jobs. Point an API-only unit at a litestream replica and it will
+write to that replica on every pass. Set `API_DB_PATH` (what the API reads)
 and `DATABASE_DSN` (what the aggregation pass writes) deliberately: either
 keep `DATABASE_DSN` on a database this process is meant to own, or accept
 that a two-process topology runs the idempotent daily aggregation twice.
@@ -390,14 +427,16 @@ that a two-process topology runs the idempotent daily aggregation twice.
 #### `oauth://` — your own identity provider
 
 ```bash
-MCP_AUTH_DSN='oauth://auth.example.com[?resource=<url>][&audience=<aud>]'
+API_AUTH_DSN='oauth://auth.example.com[?resource=<origin>][&audience=<aud>]'
 ```
 
 For when you already run or rent an IdP (Keycloak, Auth0, Authentik, …).
 The server is then a resource server only: it validates the JWTs the IdP
-issues and serves no login page. `resource` defaults to `PUBLIC_URL` +
-`/mcp`, and the expected audience to the resource URL. For a plain-http IdP
-in development, use `oauth+insecure://`.
+issues and serves no login page. `resource` defaults to `PUBLIC_URL` and
+must be an origin with no path. Without `audience=`, a token's `aud` may be
+the origin or `<origin>/mcp`, whichever resource the client asked for; with
+`audience=`, only that value passes. For a plain-http IdP in development,
+use `oauth+insecure://`.
 
 The IdP must provide:
 
@@ -408,17 +447,80 @@ The IdP must provide:
    Many IdPs publish only OIDC discovery, so confirm rather than assume.
 2. **Asymmetrically signed JWT access tokens** (RS/ES/PS). HMAC, `alg=none`
    and opaque tokens are rejected.
-3. **An `aud` claim containing the resource URL** — usually by registering
-   the MCP server as an API with that identifier. Without it, logins loop.
+3. **An `aud` claim containing the resource origin or `<origin>/mcp`** —
+   usually by registering the server as an API with that identifier, and
+   allowing both if the IdP checks the requested resource. Or set
+   `audience=` to the one value the IdP issues. Without it, logins loop.
 4. **For claude.ai:** Dynamic Client Registration (RFC 7591), or a client
    registered by hand with its id entered in the connector.
 
 An unknown `kid` triggers a JWKS refetch, throttled to once a minute, so key
 rotation needs no restart.
 
+### Upgrading from MCP_* and serve -mcp
+
+An install from before the API endpoint covered both `/mcp` and `/api/`
+must:
+
+0. **Edit `/etc/twillingate/twillingate.env` (or the compose `.env`)
+   before upgrading, not after.** The running old binary does not re-read
+   it, and the new binary refuses to start until the old names are
+   renamed — so there is no order in which "upgrade first, edit later"
+   leaves the service running.
+1. **`-api` used to mean ingest-only; ingest is now `serve -ingest`, and
+   `-api` now means the private API (MCP and REST).** A single-process
+   install (bare `serve`) needs nothing here. A split install from before
+   this release — `twillingate.service` edited to `serve -api` plus a
+   hand-made `twillingate-mcp.service` — cannot be fixed after the
+   installer runs, because the installer restarts every running
+   `twillingate*` unit before it returns: the old `-mcp` unit fails on the
+   removed flag and the re-rendered main unit serves both surfaces. Stop
+   both first, so the installer has nothing to restart, then move to the
+   `twillingate@` instances ([Hostnames and
+   processes](#hostnames-and-processes)):
+
+   ```bash
+   sudo systemctl disable --now twillingate twillingate-mcp
+   sudo rm /etc/systemd/system/twillingate-mcp.service
+   # rename the variables (step 0), then run the installer as usual
+   sudo systemctl disable twillingate    # the installer re-enabled it
+   sudo systemctl enable --now twillingate@ingest twillingate@api
+   ```
+
+   From then on an upgrade needs no hand edits: it restarts the running
+   instances and leaves the bare unit disabled.
+2. **Rename `MCP_*` to `API_*`** (and `LISTEN_ADDR` to `INGEST_ADDR`, from
+   the same release) in the env file, matching [Configure the
+   collector](#configure-the-collector). The collector refuses to start
+   on any old name — this is not a silent fallback.
+3. **Reconnect clients that logged in with the password.** Tokens issued
+   for the old resource (`…/mcp`) no longer verify, so each one logs in
+   again; the connector URL `/mcp` itself is unchanged. Clients using the
+   token as a header are unaffected.
+4. **Point native apps and hand-written ingest calls at `/ingest/events`.**
+   A site using the served SDK or the Plausible shim picks this up on its
+   own once the browser re-fetches the script — but `/js/twillingate.js`
+   is served with `Cache-Control: max-age=86400`, so a browser holding the
+   old script keeps posting to the dead `/api/events` path for up to 24h
+   after the upgrade (longer behind a CDN, which may cache it well past
+   that). Those events are lost, not queued: on a split install the post
+   gets a plain `404`; on an install where the API shares the ingestion
+   listener it is a `401` instead, because that listener answers `/api/`
+   first and treats the stale path as an unauthenticated API request.
+   Purge `/js/*` at the CDN right after upgrading to shorten the window.
+5. **Edit `API_AUTH_DSN` or `PUBLIC_URL` if either carries a path** — most
+   commonly a leftover `resource=…/mcp`, or a `PUBLIC_URL` with a path and
+   no `resource=` to override it. `resource` must be a bare origin, in
+   both `token://` and `oauth://` modes, and the process now refuses to
+   start on either mistake — including under a bare `serve`, which is
+   otherwise lenient about a *missing* `API_AUTH_DSN` but not about one
+   that is set and fails to parse. This is the one place this requirement
+   is written down; [Connect a client](#connect-a-client) points back
+   here instead of repeating it.
+
 ### Troubleshooting a connection
 
-**`404` on `/mcp`.** MCP is off. `journalctl -u twillingate | grep 'MCP endpoint disabled'`
+**`404` on `/mcp` or `/api/`.** The API is off. `journalctl -u twillingate | grep 'API disabled'`
 names the reason.
 
 **`401` on connect.** Run the curl from "Set it up". If curl gets a `401`
@@ -430,7 +532,7 @@ hostname.
 
 **Login page: redirect URI's host not allowed.** The client returns to a
 host that is not built in. The page shows the URI it used; add its host to
-`MCP_AUTH_DSN` as `redirect=<host>` and restart.
+`API_AUTH_DSN` as `redirect=<host>` and restart.
 
 **Login page: password not recognised, though it is right.** A `+`, `&`,
 `#`, `%` or `;` in the password must be percent-encoded in the DSN.
@@ -438,7 +540,7 @@ host that is not built in. The page shows the URI it used; add its host to
 next one.
 
 **Login loops in `oauth://` mode.** The IdP is issuing tokens without the
-expected `aud`.
+expected `aud`: the origin or `<origin>/mcp`, or the `audience=` value.
 
 ---
 

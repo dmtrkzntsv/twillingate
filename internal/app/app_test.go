@@ -74,7 +74,7 @@ func testConfig(t *testing.T, addr, dbPath string) *config.Config {
 		manage.ProjectSpec{Alias: "app", Name: "App", AllowedOrigins: []string{"https://app.com"}},
 		"ak_test", "web")
 	return configtest.Load(t, map[string]string{
-		"LISTEN_ADDR":             addr,
+		"INGEST_ADDR":             addr,
 		"DATABASE_DSN":            "sqlite://" + dbPath,
 		"BUFFER_FLUSH_MAX_EVENTS": "2",
 		"BUFFER_FLUSH_INTERVAL":   "50ms",
@@ -127,7 +127,7 @@ func TestServeEndToEnd(t *testing.T) {
 		return resp
 	}
 	// One envelope covering all three destinations.
-	if r := post("/api/events", "https://app.com",
+	if r := post("/ingest/events", "https://app.com",
 		`{"key":"ak_test","attributes":{"$platform":"ios","$app_version":"1.0"},
 		  "events":[
 		    {"name":"$pageview","attributes":{"$host":"app.com","$path":"/pricing"}},
@@ -135,15 +135,15 @@ func TestServeEndToEnd(t *testing.T) {
 		    {"name":"signup","attributes":{"plan":"pro"}}]}`); r.StatusCode != 202 {
 		t.Fatalf("events: %d", r.StatusCode)
 	}
-	if r := post("/api/events", "",
+	if r := post("/ingest/events", "",
 		`{"key":"ak_test","events":[{"name":"signup","attributes":{"plan":"pro"}}]}`); r.StatusCode != 202 {
 		t.Fatalf("keyed event without Origin: %d", r.StatusCode)
 	}
-	if r := post("/api/events", "https://evil.com",
+	if r := post("/ingest/events", "https://evil.com",
 		`{"key":"ak_test","events":[{"name":"x"}]}`); r.StatusCode != 403 {
 		t.Fatalf("evil origin: %d", r.StatusCode)
 	}
-	if r := post("/api/events", "",
+	if r := post("/ingest/events", "",
 		`{"key":"nope","events":[{"name":"x"}]}`); r.StatusCode != 401 {
 		t.Fatalf("bad key: %d", r.StatusCode)
 	}
@@ -208,7 +208,7 @@ func TestServeRestartsOnExistingDatabase(t *testing.T) {
 		go func() { done <- Serve(ctx, testConfig(t, addr, dbPath), slog.Default(), true, false) }()
 		base := "http://" + addr
 		waitHealthy(t, base)
-		req, err := http.NewRequest("POST", base+"/api/events", strings.NewReader(body))
+		req, err := http.NewRequest("POST", base+"/ingest/events", strings.NewReader(body))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -249,31 +249,31 @@ func TestServeRestartsOnExistingDatabase(t *testing.T) {
 	}
 }
 
-// mcpTestConfig is testConfig plus the MCP surface's env: token auth mode
+// apiTestConfig is testConfig plus the API surface's env: token auth mode
 // so a request with no bearer token is a deterministic 401, and (when
-// mcpAddr is non-empty) a second listener address for the split-listener
+// apiAddr is non-empty) a second listener address for the split-listener
 // sub-run.
-func mcpTestConfig(t *testing.T, addr, dbPath, mcpAddr string) *config.Config {
+func apiTestConfig(t *testing.T, addr, dbPath, apiAddr string) *config.Config {
 	t.Helper()
 	seedProject(t, dbPath,
 		manage.ProjectSpec{Alias: "app", Name: "App", AllowedOrigins: []string{"https://app.com"}},
 		"ak_test", "web")
 	vars := map[string]string{
-		"LISTEN_ADDR":             addr,
+		"INGEST_ADDR":             addr,
 		"DATABASE_DSN":            "sqlite://" + dbPath,
 		"BUFFER_FLUSH_MAX_EVENTS": "2",
 		"BUFFER_FLUSH_INTERVAL":   "50ms",
 		"BUFFER_CAPACITY":         "100",
-		"MCP_AUTH_DSN":            "token://ar_apptest",
+		"API_AUTH_DSN":            "token://ar_apptest",
 	}
-	if mcpAddr != "" {
-		vars["MCP_ADDR"] = mcpAddr
+	if apiAddr != "" {
+		vars["API_ADDR"] = apiAddr
 	}
 	return configtest.Load(t, vars)
 }
 
-// Spec §3.2/Task 21: -api and -mcp together share one listener when
-// MCP_ADDR equals LISTEN_ADDR, and use two listeners otherwise. Both
+// Spec §3.2/Task 21: -ingest and -api together share one listener when
+// API_ADDR equals INGEST_ADDR, and use two listeners otherwise. Both
 // arrangements must serve both surfaces correctly and shut down cleanly.
 func TestServeSharedListenerServesBothSurfaces(t *testing.T) {
 	run := func(t *testing.T, cfg *config.Config) {
@@ -281,7 +281,7 @@ func TestServeSharedListenerServesBothSurfaces(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		done := make(chan error, 1)
 		go func() { done <- Serve(ctx, cfg, slog.Default(), true, true) }()
-		waitHealthy(t, "http://"+cfg.Listen)
+		waitHealthy(t, "http://"+cfg.IngestAddr)
 
 		t.Cleanup(func() {
 			cancel()
@@ -295,50 +295,76 @@ func TestServeSharedListenerServesBothSurfaces(t *testing.T) {
 			}
 		})
 
-		if resp, err := http.Get("http://" + cfg.Listen + "/healthz"); err != nil {
+		if resp, err := http.Get("http://" + cfg.IngestAddr + "/healthz"); err != nil {
 			t.Fatalf("healthz: %v", err)
 		} else {
 			resp.Body.Close()
 			if resp.StatusCode != 200 {
-				t.Errorf("healthz on %s = %d, want 200", cfg.Listen, resp.StatusCode)
+				t.Errorf("healthz on %s = %d, want 200", cfg.IngestAddr, resp.StatusCode)
 			}
 		}
 
-		if resp, err := http.Post("http://"+cfg.Listen+"/api/events", "application/json",
+		if resp, err := http.Post("http://"+cfg.IngestAddr+"/ingest/events", "application/json",
 			strings.NewReader(`{"key":"ak_test","events":[{"name":"x"}]}`)); err != nil {
 			t.Fatalf("events: %v", err)
 		} else {
 			resp.Body.Close()
 			if resp.StatusCode == 404 {
-				t.Errorf("events on %s = 404, want the ingest surface to answer", cfg.Listen)
+				t.Errorf("events on %s = 404, want the ingest surface to answer", cfg.IngestAddr)
 			}
+		}
+
+		getAPI := func(addr string) *http.Response {
+			t.Helper()
+			resp, err := http.Get("http://" + addr + "/api/projects")
+			if err != nil {
+				t.Fatalf("GET /api/projects on %s: %v", addr, err)
+			}
+			return resp
 		}
 
 		postMCP := func(addr string) *http.Response {
 			t.Helper()
 			resp, err := http.Post("http://"+addr+"/mcp", "application/json", strings.NewReader(`{}`))
 			if err != nil {
-				t.Fatalf("mcp post to %s: %v", addr, err)
+				t.Fatalf("POST /mcp on %s: %v", addr, err)
 			}
 			return resp
 		}
 
-		if cfg.MCP.Addr == cfg.Listen {
-			resp := postMCP(cfg.Listen)
+		if cfg.API.Addr == cfg.IngestAddr {
+			resp := getAPI(cfg.IngestAddr)
+			resp.Body.Close()
+			if resp.StatusCode != 401 {
+				t.Errorf("GET /api/projects (shared, no token) = %d, want 401", resp.StatusCode)
+			}
+
+			resp = postMCP(cfg.IngestAddr)
 			resp.Body.Close()
 			if resp.StatusCode != 401 {
 				t.Errorf("POST /mcp (shared, no token) = %d, want 401", resp.StatusCode)
 			}
 		} else {
-			resp := postMCP(cfg.Listen)
+			resp := getAPI(cfg.IngestAddr)
 			resp.Body.Close()
 			if resp.StatusCode != 404 {
-				t.Errorf("POST /mcp on ingest port %s = %d, want 404", cfg.Listen, resp.StatusCode)
+				t.Errorf("GET /api/projects on ingest port %s = %d, want 404", cfg.IngestAddr, resp.StatusCode)
 			}
-			resp = postMCP(cfg.MCP.Addr)
+			resp = getAPI(cfg.API.Addr)
 			resp.Body.Close()
 			if resp.StatusCode != 401 {
-				t.Errorf("POST /mcp on MCP port %s (no token) = %d, want 401", cfg.MCP.Addr, resp.StatusCode)
+				t.Errorf("GET /api/projects on API port %s (no token) = %d, want 401", cfg.API.Addr, resp.StatusCode)
+			}
+
+			resp = postMCP(cfg.IngestAddr)
+			resp.Body.Close()
+			if resp.StatusCode != 404 {
+				t.Errorf("POST /mcp on ingest port %s = %d, want 404", cfg.IngestAddr, resp.StatusCode)
+			}
+			resp = postMCP(cfg.API.Addr)
+			resp.Body.Close()
+			if resp.StatusCode != 401 {
+				t.Errorf("POST /mcp on API port %s (no token) = %d, want 401", cfg.API.Addr, resp.StatusCode)
 			}
 		}
 	}
@@ -346,15 +372,15 @@ func TestServeSharedListenerServesBothSurfaces(t *testing.T) {
 	t.Run("shared listener", func(t *testing.T) {
 		dbPath := filepath.Join(t.TempDir(), "shared.db")
 		addr := freePort(t)
-		cfg := mcpTestConfig(t, addr, dbPath, "")
+		cfg := apiTestConfig(t, addr, dbPath, "")
 		run(t, cfg)
 	})
 
 	t.Run("separate listeners", func(t *testing.T) {
 		dbPath := filepath.Join(t.TempDir(), "split.db")
 		addr := freePort(t)
-		mcpAddr := freePort(t)
-		cfg := mcpTestConfig(t, addr, dbPath, mcpAddr)
+		apiAddr := freePort(t)
+		cfg := apiTestConfig(t, addr, dbPath, apiAddr)
 		run(t, cfg)
 	})
 }
@@ -430,7 +456,7 @@ func TestServeNeverPersistsIPOrUserAgent(t *testing.T) {
 	base := "http://" + addr
 	waitHealthy(t, base)
 
-	req, err := http.NewRequest("POST", base+"/api/events",
+	req, err := http.NewRequest("POST", base+"/ingest/events",
 		strings.NewReader(`{"key":"ak_test","events":[{"name":"$pageview","attributes":{"$host":"app.com","$path":"/pricing"}}]}`))
 	if err != nil {
 		t.Fatal(err)
@@ -494,7 +520,7 @@ func runServeAndCollectLogs(t *testing.T, cfg *config.Config) string {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- Serve(ctx, cfg, logger, true, false) }()
-	waitHealthy(t, "http://"+cfg.Listen)
+	waitHealthy(t, "http://"+cfg.IngestAddr)
 	cancel()
 	select {
 	case err := <-done:

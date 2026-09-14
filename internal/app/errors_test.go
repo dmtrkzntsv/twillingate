@@ -39,6 +39,58 @@ func (s *syncLogBuffer) String() string {
 	return s.buf.String()
 }
 
+// `serve -api` used to mean ingest-only; now it means the private API. The
+// "serving" boot line names which surface(s) each listener carries, so a
+// role swap between two systemd units (one now stuck on the old meaning of
+// -api) is visible in journalctl rather than only inferred from the port.
+func TestServeLogsSurfacesPerListener(t *testing.T) {
+	t.Run("shared listener", func(t *testing.T) {
+		dbPath := filepath.Join(t.TempDir(), "surfaces-shared.db")
+		addr := freePort(t)
+		cfg := apiTestConfig(t, addr, dbPath, "")
+
+		buf := &syncLogBuffer{}
+		logger := slog.New(slog.NewTextHandler(buf, nil))
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan error, 1)
+		go func() { done <- Serve(ctx, cfg, logger, true, true) }()
+		waitHealthy(t, "http://"+addr)
+		cancel()
+		if err := <-done; err != nil {
+			t.Fatalf("serve: %v", err)
+		}
+
+		if !strings.Contains(buf.String(), `surfaces=ingest,api`) {
+			t.Errorf("log output = %q, want surfaces=ingest,api for the shared listener", buf.String())
+		}
+	})
+
+	t.Run("separate listeners", func(t *testing.T) {
+		dbPath := filepath.Join(t.TempDir(), "surfaces-split.db")
+		addr := freePort(t)
+		apiAddr := freePort(t)
+		cfg := apiTestConfig(t, addr, dbPath, apiAddr)
+
+		buf := &syncLogBuffer{}
+		logger := slog.New(slog.NewTextHandler(buf, nil))
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan error, 1)
+		go func() { done <- Serve(ctx, cfg, logger, true, true) }()
+		waitHealthy(t, "http://"+addr)
+		cancel()
+		if err := <-done; err != nil {
+			t.Fatalf("serve: %v", err)
+		}
+
+		if !strings.Contains(buf.String(), `addr=`+addr+` surfaces=ingest`) {
+			t.Errorf("log output = %q, want surfaces=ingest for the ingest listener", buf.String())
+		}
+		if !strings.Contains(buf.String(), `addr=`+apiAddr+` surfaces=api`) {
+			t.Errorf("log output = %q, want surfaces=api for the API listener", buf.String())
+		}
+	})
+}
+
 // A bad GEO_DSN must surface as a boot error rather than a silent fallback.
 func TestServeFailsOnGeoProviderError(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "geo-err.db")
@@ -46,7 +98,7 @@ func TestServeFailsOnGeoProviderError(t *testing.T) {
 		manage.ProjectSpec{Alias: "app", Name: "App", AllowedOrigins: []string{"https://app.com"}},
 		"ak_test", "web")
 	cfg := configtest.Load(t, map[string]string{
-		"LISTEN_ADDR":  freePort(t),
+		"INGEST_ADDR":  freePort(t),
 		"DATABASE_DSN": "sqlite://" + dbPath,
 		"GEO_DSN":      "unsupported-provider://x",
 	})
@@ -61,7 +113,7 @@ func TestServeFailsOnGeoProviderError(t *testing.T) {
 func TestServeWarnsWhenNoProjectsConfigured(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "empty.db")
 	cfg := configtest.Load(t, map[string]string{
-		"LISTEN_ADDR":  freePort(t),
+		"INGEST_ADDR":  freePort(t),
 		"DATABASE_DSN": "sqlite://" + dbPath,
 	})
 	logs := runServeAndCollectLogs(t, cfg)
@@ -95,7 +147,7 @@ func TestServeWarnsAboutKeylessProjects(t *testing.T) {
 	st.Close()
 
 	cfg := configtest.Load(t, map[string]string{
-		"LISTEN_ADDR":  freePort(t),
+		"INGEST_ADDR":  freePort(t),
 		"DATABASE_DSN": "sqlite://" + dbPath,
 	})
 	logs := runServeAndCollectLogs(t, cfg)
@@ -121,7 +173,7 @@ func TestServeFailsOnMigrateError(t *testing.T) {
 	raw.Close()
 
 	cfg := configtest.Load(t, map[string]string{
-		"LISTEN_ADDR":  freePort(t),
+		"INGEST_ADDR":  freePort(t),
 		"DATABASE_DSN": "sqlite://" + dbPath,
 	})
 	if err := Serve(context.Background(), cfg, slog.Default(), true, false); err == nil {
@@ -129,19 +181,19 @@ func TestServeFailsOnMigrateError(t *testing.T) {
 	}
 }
 
-// An MCP auth mode that fails eagerly (oauth against an unreachable issuer)
-// must fail Serve's boot on the standalone-listener path (api=false,
-// mcpOn=true always goes through mcpserver.NewHandler).
+// An API auth mode that fails eagerly (oauth against an unreachable issuer)
+// must fail Serve's boot on the standalone-listener path (ingest=false,
+// api=true always goes through api.NewHandler).
 func TestServeFailsOnMCPHandlerError(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "mcp-err.db")
 	seedProject(t, dbPath,
 		manage.ProjectSpec{Alias: "app", Name: "App", AllowedOrigins: []string{"https://app.com"}},
 		"ak_test", "web")
 	cfg := configtest.Load(t, map[string]string{
-		"LISTEN_ADDR":  freePort(t),
+		"INGEST_ADDR":  freePort(t),
 		"DATABASE_DSN": "sqlite://" + dbPath,
 		// nothing listens on port 1: fails fast
-		"MCP_AUTH_DSN": "oauth+insecure://127.0.0.1:1?resource=https://mcp.example.com",
+		"API_AUTH_DSN": "oauth+insecure://127.0.0.1:1?resource=https://mcp.example.com",
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -151,9 +203,9 @@ func TestServeFailsOnMCPHandlerError(t *testing.T) {
 	}
 }
 
-// Same failure, but on the shared-listener path (api=true with MCP sharing
-// the ingest address), which goes through mcpserver.Build directly instead
-// of NewHandler.
+// Same failure, but on the shared-listener path (ingest=true with the API
+// sharing the ingest address), which goes through api.Build directly
+// instead of NewHandler.
 func TestServeFailsOnMCPBuildErrorSharedListener(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "mcp-shared-err.db")
 	seedProject(t, dbPath,
@@ -161,10 +213,10 @@ func TestServeFailsOnMCPBuildErrorSharedListener(t *testing.T) {
 		"ak_test", "web")
 	addr := freePort(t)
 	cfg := configtest.Load(t, map[string]string{
-		"LISTEN_ADDR":  addr,
+		"INGEST_ADDR":  addr,
 		"DATABASE_DSN": "sqlite://" + dbPath,
-		"MCP_ADDR":     addr, // same as LISTEN_ADDR: shared-listener path
-		"MCP_AUTH_DSN": "oauth+insecure://127.0.0.1:1?resource=https://mcp.example.com",
+		"API_ADDR":     addr, // same as INGEST_ADDR: shared-listener path
+		"API_AUTH_DSN": "oauth+insecure://127.0.0.1:1?resource=https://mcp.example.com",
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -195,7 +247,7 @@ func TestServeLogsIngestSummary(t *testing.T) {
 	base := "http://" + addr
 	waitHealthy(t, base)
 
-	resp, err := http.Post(base+"/api/events", "application/json",
+	resp, err := http.Post(base+"/ingest/events", "application/json",
 		strings.NewReader(`{"key":"ak_test","events":[{"name":"$pageview"}]}`))
 	if err != nil {
 		t.Fatal(err)

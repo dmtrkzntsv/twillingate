@@ -5,13 +5,24 @@ set -euo pipefail
 
 # The container has no systemd; stub systemctl so enable/daemon-reload
 # succeed. Calls are logged; /tmp/running makes twillingate.service look
-# active to list-units, and /tmp/healthy makes is-active succeed.
+# active to list-units, /tmp/healthy makes is-active succeed, and /tmp/split
+# stands for a split install: the twillingate@ingest and @api instances are
+# enabled and, with /tmp/running, active instead of the bare unit.
 cat > /usr/local/bin/systemctl <<'STUB'
 #!/bin/sh
 echo "systemctl $*" >> /tmp/systemctl.log
 case "$1" in
-  list-units) [ -f /tmp/running ] && echo "twillingate.service loaded active running twillingate" ;;
+  list-units)
+    [ -f /tmp/running ] || exit 0
+    if [ -f /tmp/split ]; then
+      echo "twillingate@api.service loaded active running twillingate api"
+      echo "twillingate@ingest.service loaded active running twillingate ingest"
+    else
+      echo "twillingate.service loaded active running twillingate"
+    fi ;;
   is-active) [ -f /tmp/healthy ] || exit 3 ;;
+  is-enabled)
+    case "$*" in *twillingate@*) [ -f /tmp/split ] || exit 1 ;; esac ;;
 esac
 exit 0
 STUB
@@ -24,6 +35,7 @@ cp -r /src/deploy /tmp/deploy
 cp /src/twillingate /src/.env.example /tmp/
 
 /tmp/deploy/systemd/install.sh --yes
+fresh_log="$(cat /tmp/systemctl.log)"
 
 echo "--- assertions"
 test -x /usr/local/bin/twillingate       && echo "ok: binary installed"
@@ -34,6 +46,16 @@ d="$(stat -c '%a %U' /var/lib/twillingate)"
 [ "$d" = "750 twillingate" ]             && echo "ok: data dir 0750 twillingate"
 grep -q 'User=twillingate' /etc/systemd/system/twillingate.service \
                                        && echo "ok: twillingate.service templated"
+# fail marks an assertion that must stop the run; the `cmd && echo ok`
+# lines above only report, since set -e ignores a failure inside &&.
+fail() { echo "FAIL: $*"; exit 1; }
+grep -q 'User=twillingate' /etc/systemd/system/twillingate@.service \
+  && grep -qx 'ExecStart=/usr/local/bin/twillingate serve -%i' /etc/systemd/system/twillingate@.service \
+  || fail "twillingate@.service not templated for split surfaces"
+echo "ok: twillingate@.service templated for split surfaces"
+echo "$fresh_log" | grep -q 'systemctl enable twillingate.service' \
+  || fail "fresh install did not enable twillingate.service"
+echo "ok: fresh install enables twillingate.service"
 grep -q 'User=twillingate' /etc/systemd/system/litestream.service \
                                        && echo "ok: litestream.service templated"
 [ "$(stat -c '%a' /etc/twillingate/twillingate.env)" = 640 ] \
@@ -86,5 +108,23 @@ if /tmp/deploy/systemd/install.sh > /dev/null 2>&1; then
   echo "FAIL: upgrade succeeded although the service did not come back"; exit 1
 fi
 echo "ok: upgrade fails when the restarted service is down"
+
+# A split install runs twillingate@ingest and twillingate@api. An upgrade
+# must restart both and must not re-enable the bare unit, which would bind
+# the same listeners at the next boot.
+touch /tmp/split /tmp/healthy
+: > /tmp/systemctl.log
+out="$(/tmp/deploy/systemd/install.sh)"
+if grep -q 'systemctl enable twillingate.service' /tmp/systemctl.log; then
+  fail "split upgrade re-enabled twillingate.service"
+fi
+echo "ok: split upgrade leaves twillingate.service disabled"
+grep -q 'systemctl restart twillingate@ingest.service' /tmp/systemctl.log \
+  && grep -q 'systemctl restart twillingate@api.service' /tmp/systemctl.log \
+  || fail "split upgrade did not restart both surfaces"
+echo "ok: split upgrade restarts both surfaces"
+grep -qx 'User=analytics' /etc/systemd/system/twillingate@.service \
+  || fail "split template lost the service account"
+echo "ok: split template keeps the service account"
 
 echo "INSTALL TEST OK"
