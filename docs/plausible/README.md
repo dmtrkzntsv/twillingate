@@ -67,7 +67,7 @@ is dropped server-side, so failing at the source beats losing it in transit.
 
 ## 3. Where the events land
 
-Any name that is not `$pageview` or `$screen_view` is stored as a custom
+Any name that is not `$page_view` or `$screen_view` is stored as a custom
 event, so every shimmed CTA becomes a **product event**:
 
 ```
