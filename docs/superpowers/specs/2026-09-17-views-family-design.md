@@ -40,7 +40,7 @@ analytics" as a lens over it rather than a separate store.
 - Person merging on `identify` (joining an anonymous history to a user).
 - OS version parsed from the User-Agent (frozen by modern browsers; the
   parsed value would be a constant).
-- Screen height, physical screen size.
+- Viewport height.
 - Changing product-event aggregation or the declared-attributes mechanism.
 
 ## 3. Decisions
@@ -56,7 +56,7 @@ analytics" as a lens over it rather than a separate store.
 | Dimension cap | 500 values per day per dimension, trailing key collapses into `(other)` — the app rule applied everywhere, including paths (new for web) |
 | Retention population | `actor_kind` ∈ {`user`,`install`,`connection`} recorded at ingest on views and product events; only `user` and `install` actors are cohorted |
 | Raw window | One: `RETENTION_VIEWS_RAW_DAYS` (default 30); the event-age clamp derives from it |
-| New dimensions | `viewport_width` (raw integer, bucketed in SQL), `browser_version` (parsed major), `locale` now sent by the browser SDK |
+| New dimensions | `viewport_width` (raw integer, bucketed in SQL), `display_width` + `display_height` (raw integers, reported as one `WxH` resolution), `browser_version` (parsed major), `locale` now sent by the browser SDK |
 | Migration | 009 folds both old families into the new tables in one transaction and drops the old ones; irreversible |
 | Delivery | One branch, one `feat!` commit; migration, tools, docs and dashboards land together |
 
@@ -82,8 +82,12 @@ attribute keys are all `snake_case` (`$page_view`, `$screen_view`,
   Absent → defaults from the event name. Invalid (fails the pattern) →
   warning `invalid $kind %q, using %q` and the default is used, so a typo
   cannot create a dimension.
-- **`$viewport_width`** (new reserved key). Integer pixels. Non-integer or
-  ≤ 0 → warning, stored as 0 (absent).
+- **`$viewport_width`** (new reserved key). Integer pixels of the area
+  the client rendered into. Non-integer or ≤ 0 → warning, stored as 0
+  (absent).
+- **`$display_width`**, **`$display_height`** (new reserved keys). Integer
+  pixels of the physical display. Same parsing. Named `display` rather
+  than `screen` because `$screen` is the screen *name*.
 - **`$screen`** is now an alias for `$path` on any view: a `$screen_view`
   without `$path` takes its location from `$screen`. A view with neither
   is rejected `view requires $path or $screen`, replacing the two
@@ -102,7 +106,7 @@ Reserved attribute keys after the change (groups as documented):
 | Group | Keys |
 |---|---|
 | Identity | `$install_id` `$user_id` `$user_name` `$group_id` `$group_name` `$session_id` |
-| Environment | `$kind` `$os` `$os_version` `$app_version` `$device_model` `$locale` `$viewport_width` |
+| Environment | `$kind` `$os` `$os_version` `$app_version` `$device_model` `$locale` `$viewport_width` `$display_width` `$display_height` |
 | Location | `$host` `$path` `$screen` `$utm_source` `$utm_medium` `$utm_campaign` `$referrer` |
 
 The `App` group in the reserved-keys table is gone; `$screen` moves to
@@ -134,7 +138,8 @@ the name is not one of the two view names, else view. The view path:
    can still carry a referrer.
 5. Declared keys override: `$os` (normalised) → `os`; `$os_version`,
    `$device_model`, `$locale`, `$app_version` stored as sent;
-   `$viewport_width` parsed. A declared `$os` on a web row replaces
+   `$viewport_width`, `$display_width`, `$display_height` parsed. A
+   declared `$os` on a web row replaces
    the parsed OS; a parsed browser on a non-web row never happens because
    step 4 skipped the parse.
 6. Enqueue `store.View`.
@@ -182,6 +187,8 @@ CREATE TABLE views (
     device_model    TEXT NOT NULL DEFAULT '',
     locale          TEXT NOT NULL DEFAULT '',
     viewport_width  INTEGER NOT NULL DEFAULT 0, -- 0 = absent
+    display_width   INTEGER NOT NULL DEFAULT 0,
+    display_height  INTEGER NOT NULL DEFAULT 0,
     country         TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX idx_views_project_ts ON views(project, ts);
@@ -219,11 +226,16 @@ agg_views_browsers  (project, day, browser, browser_version, visitors, views)
 agg_views_app_versions (project, day, os, app_version, visitors, views)
 agg_views_devices   (project, day, device, device_model, visitors, views)
 agg_views_viewports (project, day, viewport, visitors, views)
+agg_views_displays  (project, day, display, visitors, views)
 ```
 
 Row filters: `utm` keeps rows where any of the three is non-empty (as
 today); `app_versions` keeps rows with `app_version <> ''`; `viewports` keeps
-rows with `viewport_width > 0`; `hosts` keeps the empty host as a real
+rows with `viewport_width > 0`; `displays` keeps rows with both
+`display_width > 0` and `display_height > 0`, keyed by the resolution
+string `display_width || 'x' || display_height` (`1920x1080`) — real
+resolutions are a naturally small set, and the 500 cap bounds the rest;
+`hosts` keeps the empty host as a real
 bucket (migration-008 history plus every non-web row). Everything else
 groups every row, empty string included.
 
@@ -286,8 +298,8 @@ that. `v_identity_daily` has two arms (views, product events) instead of
 three. `v_retention` exposes `actor_kind` instead of `surface`.
 
 `views_test.go` gains `TestStitchViewsInvariantViewsDaily` (per kind) and
-`TestStitchViewsInvariantAllViewsDimensions` covering all ten dimension
-views, including hosts, which the old web list omitted.
+`TestStitchViewsInvariantAllViewsDimensions` covering all eleven
+dimension views, including hosts, which the old web list omitted.
 
 ## 9. Retention
 
@@ -333,7 +345,8 @@ take a Litestream snapshot first.
 1. Create `views` and its indexes (§6.1). Copy:
    - `web_hits` → `kind='web'`, `actor_kind = CASE WHEN user_id<>'' THEN
      'user' ELSE 'connection' END`, `browser_version=''`, `os_version=''`,
-     `device_model=''`, `locale=''`, `viewport_width=0`, `app_version=''`.
+     `device_model=''`, `locale=''`, `viewport_width=0`, `display_width=0`,
+     `display_height=0`, `app_version=''`.
    - `app_views` → `kind='app'`, `actor_kind = CASE WHEN user_id<>'' THEN
      'user' ELSE 'install' END`, `path=screen`, `os=` platform normalised
      via a `CASE` mirroring `enrich.NormalizeOS`, `device=''`, `browser=''`,
@@ -353,7 +366,7 @@ take a Litestream snapshot first.
    - `app_versions` ← `agg_app_versions` (`platform→os, app_version`).
    - `devices` ← `agg_web_devices` (`device, ''`) ∪ `agg_app_devices`
      (`'', device_model`).
-   - `viewports` starts empty.
+   - `viewports` and `displays` start empty.
    Sums are exact for `views` and exact for `visitors` where the two
    families were disjoint populations (they were: different actor ids).
 3. `actors`: rebuild with `actor_kind = CASE surface WHEN 'app' THEN
@@ -386,7 +399,7 @@ tools" and `docs_sync_test.go` checks the word):
 | Tool | Parameters | Returns |
 |---|---|---|
 | `views_overview` | `project`, `from`, `to`, `kind` (optional) | Per day: `visitors, views, sessions, bounces, duration_sec, bounce_rate, avg_session_sec`. With `kind` absent rows are summed across kinds per day |
-| `views_breakdown` | `project`, `from`, `to`, `dimension`, `limit` (20) | `dimension` ∈ `kinds, paths, hosts, referrers, utm, countries, os, browsers, app_versions, devices, viewports`. Two-key dimensions return both key columns; `kinds` reads `v_views_daily` |
+| `views_breakdown` | `project`, `from`, `to`, `dimension`, `limit` (20) | `dimension` ∈ `kinds, paths, hosts, referrers, utm, countries, os, browsers, app_versions, devices, viewports, displays`. Two-key dimensions return both key columns; `kinds` reads `v_views_daily` |
 | `retention` | …, `actor` (`user`|`install`) | unchanged shape |
 | `identities` | unchanged | `views`, `events` (no `hits`) |
 | `list_projects` | — | `first_view_day`, `last_view_day` replace the four web/app dates |
@@ -397,7 +410,7 @@ advertising the web enum for `app_breakdown` today.
 
 REST: `GET /api/projects/{project}/views/overview` and
 `…/views/breakdown`; the `web/*` and `app/*` routes are removed (404).
-`schema://views` lists the eleven `v_views_*` views, `v_identity_daily`,
+`schema://views` lists the twelve `v_views_*` views, `v_identity_daily`,
 `v_retention (actor_kind: 'user'|'install')`, `v_product_*`,
 `identities`. `guide.go`'s mobile branch keeps its payload; the web/spa
 branch mentions `data-kind` for Electron/Tauri.
@@ -408,13 +421,13 @@ branch mentions `data-kind` for Electron/Tauri.
   `pages/app/[project].md`: BigValues (visitors, views, bounce rate, avg
   session), a kind split area chart, paths / hosts / referrers /
   campaigns, an audience block (countries, OS, browsers, devices,
-  viewports), and version adoption (empty for a pure website; the
+  viewports, displays), and version adoption (empty for a pure website; the
   component hides when the source is empty).
 - `pages/views/[project]/page.md` is the per-path drill-down, moved.
 - `pages/retention/[project].md` takes `actor` instead of `surface`.
 - Users and groups pages show `views` and `events`.
 - `index.md` links `views` instead of `web` and `app`.
-- Sources: eleven `v_views_*.sql` passthroughs with the empty-database
+- Sources: twelve `v_views_*.sql` passthroughs with the empty-database
   sentinel; the fifteen `v_web_*`/`v_app_*` files are deleted.
   `prerender_test.go` walks `pages/`, so the route list updates itself.
 
@@ -432,12 +445,14 @@ branch mentions `data-kind` for Electron/Tauri.
   `page()`), and no `$host`, `$referrer` or `$utm_*`. With `web` it
   emits `$page_view` exactly as today.
 - Every `$page_view` / `$screen_view` carries `$viewport_width =
-  window.innerWidth` at emission time.
+  window.innerWidth` at emission time, and `$display_width` /
+  `$display_height` from `window.screen.width` / `.height`.
 - Every batch carries `$locale = navigator.language` when available.
 - `page()`, `screen()`, `track()` and the rest of the public API are
   unchanged; `docs_sync_test.go`'s symbol list gains `data-kind`,
-  `data-os`, `data-app-version`, `$kind`, `$os`, `$viewport_width` and
-  drops `$pageview` for `$page_view`.
+  `data-os`, `data-app-version`, `$kind`, `$os`, `$viewport_width`,
+  `$display_width`, `$display_height` and drops `$pageview` for
+  `$page_view`.
 
 ## 15. Documentation (same commit)
 
@@ -477,7 +492,7 @@ branch mentions `data-kind` for Electron/Tauri.
 - Ingest: kind default and validation; screen→path; reject without
   location; bot filter on `web` only; no parse on non-web; declared
   override of parsed OS; OS normalisation; both aliases accepted
-  silently; viewport parsing;
+  silently; viewport and display parsing;
   `actor_kind` for each identity shape; product events carry
   `actor_kind`.
 - Enrich: browser major version for each browser the parser knows;
@@ -492,7 +507,8 @@ branch mentions `data-kind` for Electron/Tauri.
   `TestDocumentCoversEveryWebDimension` becomes `…EveryViewsDimension`).
 - SDK: `data-kind="app"` emits `$screen_view` on navigation with the
   masked path and nothing else; `data-os`/`data-app-version`
-  reach the batch; `$viewport_width` and `$locale` present.
+  reach the batch; `$viewport_width`, `$display_width`,
+  `$display_height` and `$locale` present.
 - Dashboards: prerender test over the new page set.
 
 ## 17. Upgrade consequences (release notes)
