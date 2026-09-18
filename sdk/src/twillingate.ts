@@ -4,11 +4,10 @@
  *
  * Two usage modes:
  *  - snippet: <script defer src=".../js/twillingate.js" data-key="ak_…">
- *    auto-inits from data attributes with automatic pageviews, a superset
- *    with automatic pageviews;
+ *    auto-inits from data attributes with automatic page views;
  *  - SDK-only: load the file without data-key (or bundle this module) and
- *    call twillingate.init({...}) yourself — web, product and app events
- *    entirely from code.
+ *    call twillingate.init({...}) yourself — a superset that emits views
+ *    and product events entirely from code.
  *
  * The identity model matches the legacy snippet: data-identity only
  * authorizes writing to localStorage; the server salts anonymous projects

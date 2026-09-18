@@ -209,9 +209,11 @@ SELECT project, day,
 FROM agg_app_versions GROUP BY project, day, 3, app_version;
 
 INSERT INTO agg_views_devices (project, day, device, device_model, visitors, views)
-SELECT project, day, device, '', visitors, pageviews FROM agg_web_devices;
-INSERT INTO agg_views_devices (project, day, device, device_model, visitors, views)
-SELECT project, day, '', device_model, actives, views FROM agg_app_devices;
+SELECT project, day, device, device_model, SUM(visitors), SUM(views) FROM (
+  SELECT project, day, device, '' AS device_model, visitors, pageviews AS views FROM agg_web_devices
+  UNION ALL
+  SELECT project, day, '' AS device, device_model, actives, views FROM agg_app_devices
+) GROUP BY project, day, device, device_model;
 
 -- ===== retention: surface -> actor_kind =====
 CREATE TABLE actors_new (
