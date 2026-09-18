@@ -102,6 +102,7 @@ type resolved struct {
 	UTMCampaign                    string
 	displayWidthRaw                string
 	displayHeightRaw               string
+	platformRaw                    string
 	Custom                         map[string]string
 }
 
@@ -109,7 +110,8 @@ type resolved struct {
 // Location attributes are stored verbatim: the client owns normalization
 // (masking, routing mode), so the server does no URL parsing at all. That
 // is what lets a site report /account/[id]/edit without the raw path ever
-// leaving the browser. $screen populates its own column.
+// leaving the browser. $screen is a fallback for path, resolved in
+// handleEvents when $path is absent.
 var reservedKeys = map[string]func(*resolved, string){
 	"$install_id":     func(r *resolved, v string) { r.InstallID = v },
 	"$user_id":        func(r *resolved, v string) { r.UserID = v },
@@ -119,7 +121,7 @@ var reservedKeys = map[string]func(*resolved, string){
 	"$session_id":     func(r *resolved, v string) { r.SessionID = v },
 	"$kind":           func(r *resolved, v string) { r.Kind = v },
 	"$os":             func(r *resolved, v string) { r.OS = v },
-	"$platform":       func(r *resolved, v string) { r.OS = v }, // alias, see aliasKeys in docs_sync_test
+	"$platform":       func(r *resolved, v string) { r.platformRaw = v }, // alias, see aliasKeys in docs_sync_test
 	"$app_version":    func(r *resolved, v string) { r.AppVersion = v },
 	"$os_version":     func(r *resolved, v string) { r.OSVersion = v },
 	"$device_model":   func(r *resolved, v string) { r.DeviceModel = v },
@@ -175,6 +177,12 @@ func resolveAttributes(m map[string]any) (resolved, []string) {
 			continue
 		}
 		r.Custom[k] = truncate(stringify(v), maxAttrValue)
+	}
+	// The canonical key wins over its alias when a payload carries both:
+	// resolved here, once, so every caller sees a single OS regardless of
+	// the randomised map iteration order above.
+	if r.OS == "" {
+		r.OS = r.platformRaw
 	}
 	return r, unknown
 }

@@ -99,6 +99,22 @@ func TestResolveAttributesPlatformIsAnOSAlias(t *testing.T) {
 	}
 }
 
+// The canonical $os key must always beat its $platform alias, regardless of
+// the randomised order resolveAttributes iterates the merged map in. Run it
+// enough times that a coin-flip bug would show up.
+func TestResolveAttributesCanonicalOSBeatsAlias(t *testing.T) {
+	for i := 0; i < 50; i++ {
+		r, _ := resolveAttributes(map[string]any{"$os": "android", "$platform": "ios"})
+		if r.OS != "android" {
+			t.Fatalf("iteration %d: OS = %q, want the canonical $os value android", i, r.OS)
+		}
+	}
+	r, _ := resolveAttributes(map[string]any{"$platform": "ios"})
+	if r.OS != "ios" {
+		t.Errorf("OS = %q, want the alias value ios when $os is absent", r.OS)
+	}
+}
+
 func TestResolveAttributesReportsUnknownReservedKeys(t *testing.T) {
 	r, unknown := resolveAttributes(map[string]any{"$app_ver": "2.4.1", "plan": "pro"})
 

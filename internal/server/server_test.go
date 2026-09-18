@@ -307,13 +307,18 @@ func TestBotFilterAppliesToWebKindOnly(t *testing.T) {
 
 func TestViewRequiresALocation(t *testing.T) {
 	q, h := testServer(t)
-	w := post(h, envelopeOf(`{"name":"$page_view"},{"name":"$screen_view","attributes":{"$path":"/via-path"}}`), nil)
+	w := post(h, envelopeOf(`{"name":"$page_view"},
+		{"name":"$screen_view","attributes":{"$path":"/via-path"}},
+		{"name":"$page_view","attributes":{"$screen":"/via-screen"}}`), nil)
 	res := decodeResult(t, w)
 	if res.Rejected != 1 || len(res.Errors) != 1 || res.Errors[0].Reason != "view requires $path or $screen" {
 		t.Errorf("result = %+v", res)
 	}
-	if len(q.views) != 1 || q.views[0].Path != "/via-path" || q.views[0].Kind != "app" {
+	if len(q.views) != 2 || q.views[0].Path != "/via-path" || q.views[0].Kind != "app" {
 		t.Errorf("views = %+v ($path is accepted on a screen view)", q.views)
+	}
+	if q.views[1].Path != "/via-screen" || q.views[1].Kind != "web" {
+		t.Errorf("views = %+v ($screen is accepted on a page view)", q.views)
 	}
 }
 
@@ -407,7 +412,7 @@ func TestPerEventRejectionLeavesBatchIntact(t *testing.T) {
 		t.Fatalf("status = %d, want 202 even with rejects", w.Code)
 	}
 	res := decodeResult(t, w)
-	// missing name; $pageview without $path; $screen_view without $screen; bad id
+	// missing name; two views each rejected with "view requires $path or $screen"; bad id
 	if res.Accepted != 2 || res.Rejected != 4 || len(res.Errors) != 4 {
 		t.Errorf("result = %+v", res)
 	}
