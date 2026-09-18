@@ -65,8 +65,8 @@ BEGIN SELECT RAISE(ABORT, 'blocked'); END`); err != nil {
 		t.Fatal(err)
 	}
 	err := db.AggregateViewDay(ctx, "app", day("2026-08-10"))
-	if err == nil || !strings.Contains(err.Error(), "blocked") {
-		t.Errorf("err = %v, want mention of the blocking trigger", err)
+	if err == nil || !strings.Contains(err.Error(), "prune raw views") {
+		t.Errorf("err = %v, want mention of prune raw views", err)
 	}
 }
 

@@ -99,7 +99,7 @@ func (d *DB) rollupProduct(ctx context.Context, tx *sql.Tx, project string, day 
 			}
 		}
 	}
-	// System dimensions: platform and app_version are typed columns
+	// System dimensions: os and app_version are typed columns
 	// written on every event, not declared custom keys, so they roll up
 	// unconditionally under $-prefixed attr_keys. $ is a safe namespace:
 	// resolveAttributes routes every $-prefixed input to a typed field

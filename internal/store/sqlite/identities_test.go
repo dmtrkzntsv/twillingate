@@ -3,7 +3,6 @@ package sqlite
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
@@ -11,7 +10,7 @@ import (
 func TestAggregateIdentityDayCountsUsersAndGroups(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	tstamp := time.Date(2026, 8, 23, 10, 0, 0, 0, time.UTC)
+	tstamp := at(10, 0)
 	d := day("2026-08-10")
 
 	if err := db.WriteViews(ctx, []store.View{
@@ -66,7 +65,7 @@ func TestAggregateIdentityDayCountsUsersAndGroups(t *testing.T) {
 func TestAggregateIdentityDayIsIdempotent(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	tstamp := time.Date(2026, 8, 23, 10, 0, 0, 0, time.UTC)
+	tstamp := at(10, 0)
 
 	if err := db.WriteViews(ctx, []store.View{
 		{ID: "1", Project: "p", TS: tstamp, ReceivedAt: tstamp, ActorID: "a",
@@ -92,7 +91,7 @@ func TestAggregateIdentityDayIsIdempotent(t *testing.T) {
 func TestAggregateIdentityDayUpdatesLastSeen(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	tstamp := time.Date(2026, 8, 23, 10, 0, 0, 0, time.UTC)
+	tstamp := at(10, 0)
 	d := day("2026-08-10")
 
 	if err := db.UpsertIdentities(ctx, []store.Identity{
@@ -124,7 +123,7 @@ func TestAggregateIdentityDayUpdatesLastSeen(t *testing.T) {
 func TestIdentityDailyViewReadsAggregates(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	tstamp := time.Date(2026, 8, 23, 10, 0, 0, 0, time.UTC)
+	tstamp := at(10, 0)
 
 	if err := db.WriteViews(ctx, []store.View{
 		{ID: "1", Project: "p", TS: tstamp, ReceivedAt: tstamp, ActorID: "a",

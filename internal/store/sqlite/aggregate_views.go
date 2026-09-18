@@ -155,9 +155,11 @@ FROM spans s GROUP BY s.kind`, named...); err != nil {
 				return fmt.Errorf("%s: %w", dim.table, err)
 			}
 		}
-		_, err := tx.ExecContext(ctx,
-			`DELETE FROM views WHERE project=? AND ts>=? AND ts<?`, project, from, to)
-		return err
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM views WHERE project=? AND ts>=? AND ts<?`, project, from, to); err != nil {
+			return fmt.Errorf("prune raw views: %w", err)
+		}
+		return nil
 	})
 }
 
