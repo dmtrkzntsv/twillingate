@@ -26,18 +26,16 @@ type Rotator interface {
 // store can change without touching this package.
 type Store interface {
 	ProjectAliases(ctx context.Context) ([]string, error)
-	WebDaysBefore(ctx context.Context, project string, before civil.Date) ([]civil.Date, error)
+	ViewDaysBefore(ctx context.Context, project string, before civil.Date) ([]civil.Date, error)
 	ProductDaysBefore(ctx context.Context, project string, before civil.Date) ([]civil.Date, error)
-	AppDaysBefore(ctx context.Context, project string, before civil.Date) ([]civil.Date, error)
-	AggregateWebDay(ctx context.Context, project string, day civil.Date) error
+	AggregateViewDay(ctx context.Context, project string, day civil.Date) error
 	AggregateProductDay(ctx context.Context, project string, day civil.Date, attrs []string, topN int) error
-	AggregateAppDay(ctx context.Context, project string, day civil.Date) error
 	UpsertActors(ctx context.Context, project string, day civil.Date) error
 	AggregateRetentionDay(ctx context.Context, project string, day civil.Date) error
 	PruneActors(ctx context.Context, project string, before civil.Date) error
 	AggregateIdentityDay(ctx context.Context, project string, day civil.Date) error
 	PruneIdentities(ctx context.Context, project string, before civil.Date) error
-	PruneAggregates(ctx context.Context, project string, webBefore, productBefore, appBefore civil.Date) error
+	PruneAggregates(ctx context.Context, project string, viewsBefore, productBefore civil.Date) error
 	RebuildFlatView(ctx context.Context, keys []string) error
 	IncrementalVacuum(ctx context.Context) error
 }
@@ -88,13 +86,12 @@ func (r *Runner) RunDailyPass(ctx context.Context) error {
 	for _, id := range ids {
 		ret := snap.RetentionFor(id)
 
-		// Cohorts, actors and identity rollups read raw rows across all
-		// three classes and never delete them, so they run over every day
-		// still present -- not just the aged-out ones. Two reasons: a
-		// web-only project has no app_views to drive them from, and
-		// restricting them to aged-out days would leave the users, groups
-		// and retention pages a whole raw window stale. Every write is
-		// keyed and recomputed, so re-running a day is safe.
+		// Cohorts, actors and identity rollups read raw rows across both
+		// raw tables and never delete them, so they run over every day
+		// still present -- not just the aged-out ones. Restricting them to
+		// aged-out days would leave the users, groups and retention pages a
+		// whole raw window stale. Every write is keyed and recomputed, so
+		// re-running a day is safe.
 		identityDays, err := r.allRawDays(ctx, id, today.AddDays(1))
 		if err != nil {
 			return err
@@ -118,13 +115,13 @@ func (r *Runner) RunDailyPass(ctx context.Context) error {
 			}
 		}
 
-		days, err := r.store.WebDaysBefore(ctx, id, today.AddDays(-ret.Web.RawDays))
+		days, err := r.store.ViewDaysBefore(ctx, id, today.AddDays(-ret.Views.RawDays))
 		if err != nil {
 			return err
 		}
 		for _, day := range days {
-			if err := r.store.AggregateWebDay(ctx, id, day); err != nil {
-				r.logger.Error("aggregate web failed", "project", id, "day", day.String(), "error", err)
+			if err := r.store.AggregateViewDay(ctx, id, day); err != nil {
+				r.logger.Error("aggregate views failed", "project", id, "day", day.String(), "error", err)
 			}
 		}
 
@@ -139,26 +136,15 @@ func (r *Runner) RunDailyPass(ctx context.Context) error {
 			}
 		}
 
-		appDays, err := r.store.AppDaysBefore(ctx, id, today.AddDays(-ret.App.RawDays))
-		if err != nil {
-			return err
-		}
-		for _, day := range appDays {
-			if err := r.store.AggregateAppDay(ctx, id, day); err != nil {
-				r.logger.Error("aggregate app failed", "project", id, "day", day.String(), "error", err)
-			}
-		}
-
 		if err := r.store.PruneAggregates(ctx, id,
-			today.AddDays(-ret.Web.AggregateDays),
-			today.AddDays(-ret.Product.AggregateDays),
-			today.AddDays(-ret.App.AggregateDays)); err != nil {
+			today.AddDays(-ret.Views.AggregateDays),
+			today.AddDays(-ret.Product.AggregateDays)); err != nil {
 			r.logger.Error("prune failed", "project", id, "error", err)
 		}
-		if err := r.store.PruneActors(ctx, id, today.AddDays(-ret.App.AggregateDays)); err != nil {
+		if err := r.store.PruneActors(ctx, id, today.AddDays(-ret.Views.AggregateDays)); err != nil {
 			r.logger.Error("prune actors failed", "project", id, "error", err)
 		}
-		if err := r.store.PruneIdentities(ctx, id, today.AddDays(-ret.App.AggregateDays)); err != nil {
+		if err := r.store.PruneIdentities(ctx, id, today.AddDays(-ret.Views.AggregateDays)); err != nil {
 			r.logger.Error("prune identities failed", "project", id, "error", err)
 		}
 	}
@@ -172,13 +158,13 @@ func (r *Runner) RunDailyPass(ctx context.Context) error {
 	return nil
 }
 
-// allRawDays merges the days present in all three raw tables, deduplicated
+// allRawDays merges the days present in both raw tables, deduplicated
 // and sorted, so a project is covered whatever mix of surfaces it uses.
 func (r *Runner) allRawDays(ctx context.Context, project string, before civil.Date) ([]civil.Date, error) {
 	seen := map[string]bool{}
 	var out []civil.Date
 	for _, fn := range []func(context.Context, string, civil.Date) ([]civil.Date, error){
-		r.store.WebDaysBefore, r.store.ProductDaysBefore, r.store.AppDaysBefore,
+		r.store.ViewDaysBefore, r.store.ProductDaysBefore,
 	} {
 		days, err := fn(ctx, project, before)
 		if err != nil {
