@@ -57,29 +57,41 @@ group by event_name order by total desc
 
 ## Events
 
-<Grid cols=2>
-    <LineChart data={events} x=day y=count series=event_name title="Events by name" yFmt=num0 />
-    <BarChart data={event_summary} x=event_name y=total swapXY=true title="Event volume" yFmt=num0 />
-</Grid>
+<LineChart data={events} x=day y=count series=event_name title="Events by name" yFmt=num0 />
 
-<DataTable data={event_summary} rows=10>
+<DataTable data={event_summary} rows=10 search=true>
     <Column id=event_name title="Event" />
     <Column id=total title="Total" fmt=num0 contentType=colorscale />
     <Column id=peak_daily_uniques title="Peak daily uniques" fmt=num0 />
 </DataTable>
 
 ```sql attr_breakdowns
-select day, event_name, attr_key, attr_value, count, unique_users
+-- Summed across events: a value's count is how often it appeared on any
+-- event that day. unique_users is per event and cannot be summed -- one
+-- person firing two events would count twice -- so the largest single-event
+-- figure is shown, a floor on the true number.
+select attr_key, day, attr_value, sum(count) as count, max(unique_users) as min_users
 from twillingate.v_product_attrs
 where project = '${params.project}'
   and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range.value} - 1) day, '%Y-%m-%d')
                and strftime((now() at time zone 'UTC')::date, '%Y-%m-%d')
-order by day
+group by attr_key, day, attr_value
+order by attr_key, day desc, count desc
 ```
 
 {#if attr_breakdowns.length > 0}
 
 ## Attribute breakdowns
-<DataTable data={attr_breakdowns} rows=20 groupBy=attr_key />
+
+Each attribute's values per day, across all events. Users is the largest
+count from any single event, so the true number of people is at least that.
+
+<DataTable data={attr_breakdowns} rows=20 groupBy=attr_key groupsOpen=false search=true>
+    <Column id=attr_key title="Attribute" />
+    <Column id=day title="Day" />
+    <Column id=attr_value title="Value" />
+    <Column id=count title="Count" fmt=num0 contentType=colorscale />
+    <Column id=min_users title="Users (at least)" fmt=num0 />
+</DataTable>
 
 {/if}

@@ -6,9 +6,11 @@ select identity from twillingate.projects where alias = '${params.project}'
 
 {#if retention_mode[0].identity === 'identified'}
 
-Web and app curves are kept apart: a browser visitor id and an app
-`install_id` are different actors even for the same person, and blending their
-curves would describe neither population.
+Each actor is cohorted on one surface, fixed on its first day: **app** if it
+sent a screen view, else **web** if it sent a pageview, else **product** (seen
+through custom events alone). A browser visitor id and an app `install_id` are
+different actors even for the same person, so blending the curves would
+describe no population.
 
 ```sql retention_curve
 select surface, day_offset,
@@ -71,7 +73,7 @@ order by cohort_day desc, surface, day_offset
 Retention is undefined in **anonymous** identity mode: `actor_id` rotates at
 midnight, so every cohort would contain only its own first day.
 
-Run `twillingate project update -alias {params.project} -identity identified`
+Run <code class="markdown">twillingate project update -alias {params.project} -identity identified</code>
 (or the `update_project` MCP tool) to enable cohorts. Note that identified
 mode stores a persistent `localStorage` id on the web, which is
 terminal-equipment storage under ePrivacy — the same legal category as a
