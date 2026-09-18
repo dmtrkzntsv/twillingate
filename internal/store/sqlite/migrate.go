@@ -4,6 +4,7 @@ import (
 	"context"
 	"embed"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -13,6 +14,13 @@ import (
 var migrationFS embed.FS
 
 func (d *DB) Migrate(ctx context.Context) error {
+	return d.migrateThrough(ctx, math.MaxInt)
+}
+
+// migrateThrough applies every pending migration whose version is <=
+// maxVersion. Migrate uses no ceiling; tests use one to build a database
+// at an older schema and exercise the next migration against it.
+func (d *DB) migrateThrough(ctx context.Context, maxVersion int) error {
 	if _, err := d.db.ExecContext(ctx,
 		`CREATE TABLE IF NOT EXISTS schema_migrations (
 		   version INTEGER PRIMARY KEY,
@@ -38,7 +46,7 @@ func (d *DB) Migrate(ctx context.Context) error {
 			`SELECT COUNT(*) FROM schema_migrations WHERE version=?`, version).Scan(&done); err != nil {
 			return err
 		}
-		if done > 0 {
+		if done > 0 || version > maxVersion {
 			continue
 		}
 		body, err := migrationFS.ReadFile("migrations/" + name)
