@@ -8,40 +8,33 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/civil"
 )
 
-// Surfaces recorded on actors. A web visitor id and an app install_id are
-// different actors even for the same human, and web retention curves sit far
-// below app curves, so blending them would describe neither population.
-const (
-	surfaceWeb = "web"
-	surfaceApp = "app"
-)
+// actorSources lists the raw tables an actor can appear in. Both carry
+// actor_kind since 009, so the source table no longer implies anything
+// about the population; only the kind does.
+var actorSources = []string{"views", "product_events"}
 
-// actorSources lists the raw tables an actor can appear in, with the surface
-// each one attributes to.
-var actorSources = []struct{ table, surface string }{
-	{"app_views", surfaceApp},
-	{"web_hits", surfaceWeb},
-	{"product_events", surfaceWeb},
-}
+// cohortKinds are the actor kinds stable enough to cohort. A connection
+// hash rotates with the salt (and a pre-009 product row carries ''), so
+// recording those only ever produced an offset-0 row.
+const cohortKinds = `('user', 'install')`
 
-// UpsertActors records first/last seen for every actor active on the given
-// day, across all three raw tables. Must run before AggregateRetentionDay for
+// UpsertActors records first/last seen for every user- or install-identified
+// actor active on the given day. Must run before AggregateRetentionDay for
 // the same day, and before that day's raw rows are deleted.
 func (d *DB) UpsertActors(ctx context.Context, project string, day civil.Date) error {
 	return d.tx(ctx, func(tx *sql.Tx) error {
-		for _, src := range actorSources {
+		for _, table := range actorSources {
 			q := fmt.Sprintf(`
-INSERT INTO actors (project, actor_id, surface, first_seen_day, last_seen_day)
-SELECT ?, actor_id, ?, ?, ?
-FROM %s WHERE project=? AND substr(ts,1,10)=? AND actor_id <> ''
-GROUP BY actor_id
+INSERT INTO actors (project, actor_id, actor_kind, first_seen_day, last_seen_day)
+SELECT ?, actor_id, actor_kind, ?, ?
+FROM %s WHERE project=? AND substr(ts,1,10)=? AND actor_id <> '' AND actor_kind IN %s
+GROUP BY actor_id, actor_kind
 ON CONFLICT(project, actor_id) DO UPDATE SET
   first_seen_day = MIN(actors.first_seen_day, excluded.first_seen_day),
-  last_seen_day  = MAX(actors.last_seen_day,  excluded.last_seen_day)`, src.table)
+  last_seen_day  = MAX(actors.last_seen_day,  excluded.last_seen_day)`, table, cohortKinds)
 			if _, err := tx.ExecContext(ctx, q,
-				project, src.surface, day.String(), day.String(),
-				project, day.String()); err != nil {
-				return fmt.Errorf("upsert actors from %s: %w", src.table, err)
+				project, day.String(), day.String(), project, day.String()); err != nil {
+				return fmt.Errorf("upsert actors from %s: %w", table, err)
 			}
 		}
 		return nil
@@ -62,21 +55,19 @@ ON CONFLICT(project, actor_id) DO UPDATE SET
 func (d *DB) AggregateRetentionDay(ctx context.Context, project string, day civil.Date) error {
 	return d.tx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `
-INSERT OR REPLACE INTO agg_retention (project, surface, cohort_day, day_offset, actors)
+INSERT OR REPLACE INTO agg_retention (project, actor_kind, cohort_day, day_offset, actors)
 WITH active AS (
-  SELECT DISTINCT actor_id FROM app_views      WHERE project=? AND substr(ts,1,10)=? AND actor_id <> ''
-  UNION
-  SELECT DISTINCT actor_id FROM web_hits       WHERE project=? AND substr(ts,1,10)=? AND actor_id <> ''
+  SELECT DISTINCT actor_id FROM views         WHERE project=? AND substr(ts,1,10)=? AND actor_id <> ''
   UNION
   SELECT DISTINCT actor_id FROM product_events WHERE project=? AND substr(ts,1,10)=? AND actor_id <> ''
 )
-SELECT a.project, a.surface, a.first_seen_day,
+SELECT a.project, a.actor_kind, a.first_seen_day,
        CAST(julianday(?) - julianday(a.first_seen_day) AS INTEGER),
        COUNT(DISTINCT a.actor_id)
 FROM actors a JOIN active ON active.actor_id = a.actor_id
 WHERE a.project=?
-GROUP BY a.project, a.surface, a.first_seen_day`,
-			project, day.String(), project, day.String(), project, day.String(),
+GROUP BY a.project, a.actor_kind, a.first_seen_day`,
+			project, day.String(), project, day.String(),
 			day.String(), project); err != nil {
 			return fmt.Errorf("agg_retention: %w", err)
 		}

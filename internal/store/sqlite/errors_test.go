@@ -159,11 +159,11 @@ func TestUpsertActorsFailsOnMissingActorsTable(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	// actorSources iterates app_views first, so that is the table named in
-	// the error regardless of which raw table actually holds data.
+	// actorSources iterates views first, so that is the table named in the
+	// error regardless of which raw table actually holds data.
 	err := db.UpsertActors(ctx, "p", day("2026-08-10"))
-	if err == nil || !strings.Contains(err.Error(), "upsert actors from app_views") {
-		t.Errorf("err = %v, want mention of upsert actors from app_views", err)
+	if err == nil || !strings.Contains(err.Error(), "upsert actors from views") {
+		t.Errorf("err = %v, want mention of upsert actors from views", err)
 	}
 }
 

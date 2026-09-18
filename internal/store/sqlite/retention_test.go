@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"reflect"
 	"testing"
 	"time"
 
@@ -35,24 +36,25 @@ func TestUpsertActorsTracksFirstAndLastSeen(t *testing.T) {
 		t.Fatalf("upsert day 8: %v", err)
 	}
 
-	var first, last, surface string
+	var first, last, actorKind string
 	if err := db.db.QueryRowContext(ctx,
-		`SELECT first_seen_day, last_seen_day, surface FROM actors WHERE project='p' AND actor_id='a'`).
-		Scan(&first, &last, &surface); err != nil {
+		`SELECT first_seen_day, last_seen_day, actor_kind FROM actors WHERE project='p' AND actor_id='a'`).
+		Scan(&first, &last, &actorKind); err != nil {
 		t.Fatalf("read actor: %v", err)
 	}
-	if first != "2026-08-01" || last != "2026-08-08" || surface != surfaceApp {
-		t.Errorf("actor = %q %q %q; want 2026-08-01 2026-08-08 app", first, last, surface)
+	if first != "2026-08-01" || last != "2026-08-08" || actorKind != store.ActorInstall {
+		t.Errorf("actor = %q %q %q; want 2026-08-01 2026-08-08 install", first, last, actorKind)
 	}
 }
 
-func TestUpsertActorsRecordsWebSurface(t *testing.T) {
+func TestUpsertActorsRecordsUserActorKind(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	ts := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
 
 	if err := db.WriteViews(ctx, []store.View{
-		{ID: "1", Project: "p", TS: ts, ReceivedAt: ts, Kind: "web", ActorID: "w", ActorKind: store.ActorConnection, Path: "/"},
+		{ID: "1", Project: "p", TS: ts, ReceivedAt: ts, Kind: "web", ActorID: "w",
+			ActorKind: store.ActorUser, UserID: "u1", Path: "/"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -60,13 +62,48 @@ func TestUpsertActorsRecordsWebSurface(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var surface string
+	var actorKind string
 	if err := db.db.QueryRowContext(ctx,
-		`SELECT surface FROM actors WHERE project='p' AND actor_id='w'`).Scan(&surface); err != nil {
+		`SELECT actor_kind FROM actors WHERE project='p' AND actor_id='w'`).Scan(&actorKind); err != nil {
 		t.Fatal(err)
 	}
-	if surface != surfaceWeb {
-		t.Errorf("surface = %q, want web", surface)
+	if actorKind != store.ActorUser {
+		t.Errorf("actor_kind = %q, want user", actorKind)
+	}
+}
+
+func TestUpsertActorsSkipsConnectionActors(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	seedViews(t, db,
+		store.View{ID: "1", TS: at(10, 0), ActorID: "hash-1", ActorKind: store.ActorConnection, Path: "/"},
+		store.View{ID: "2", TS: at(10, 0), ActorID: "u1", ActorKind: store.ActorUser, UserID: "u1", Path: "/"},
+		store.View{ID: "3", TS: at(10, 0), ActorID: "i1", ActorKind: store.ActorInstall, Path: "/", Kind: "app"},
+	)
+	if err := db.WriteProductEvents(ctx, []store.ProductEvent{
+		{ID: "4", Project: "app", EventName: "x", TS: at(10, 0), ReceivedAt: at(10, 0), ActorID: "legacy", ActorKind: ""},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpsertActors(ctx, "app", day("2026-08-10")); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := db.db.Query(`SELECT actor_id, actor_kind FROM actors WHERE project='app' ORDER BY actor_id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	got := map[string]string{}
+	for rows.Next() {
+		var id, kind string
+		if err := rows.Scan(&id, &kind); err != nil {
+			t.Fatal(err)
+		}
+		got[id] = kind
+	}
+	want := map[string]string{"u1": "user", "i1": "install"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("actors = %v, want %v (connection and legacy '' actors are never cohorted)", got, want)
 	}
 }
 
@@ -123,12 +160,12 @@ func TestAggregateRetentionDayComputesOffsets(t *testing.T) {
 
 	var d0, d7 int
 	if err := db.db.QueryRowContext(ctx,
-		`SELECT actors FROM agg_retention WHERE project='p' AND surface='app'
+		`SELECT actors FROM agg_retention WHERE project='p' AND actor_kind='install'
 		   AND cohort_day='2026-08-01' AND day_offset=0`).Scan(&d0); err != nil {
 		t.Fatalf("offset 0: %v", err)
 	}
 	if err := db.db.QueryRowContext(ctx,
-		`SELECT actors FROM agg_retention WHERE project='p' AND surface='app'
+		`SELECT actors FROM agg_retention WHERE project='p' AND actor_kind='install'
 		   AND cohort_day='2026-08-01' AND day_offset=7`).Scan(&d7); err != nil {
 		t.Fatalf("offset 7: %v", err)
 	}
@@ -165,14 +202,15 @@ func TestRetentionViewExposesCohortSize(t *testing.T) {
 	}
 
 	var actors, size int
+	var actorKind string
 	if err := db.db.QueryRowContext(ctx,
-		`SELECT actors, cohort_size FROM v_retention
+		`SELECT actors, cohort_size, actor_kind FROM v_retention
 		 WHERE project='p' AND cohort_day='2026-08-01' AND day_offset=1`).
-		Scan(&actors, &size); err != nil {
+		Scan(&actors, &size, &actorKind); err != nil {
 		t.Fatalf("v_retention: %v", err)
 	}
-	if actors != 1 || size != 2 {
-		t.Errorf("v_retention d1 = actors %d of %d; want 1 of 2", actors, size)
+	if actors != 1 || size != 2 || actorKind != store.ActorInstall {
+		t.Errorf("v_retention d1 = actors %d of %d kind %q; want 1 of 2 install", actors, size, actorKind)
 	}
 }
 

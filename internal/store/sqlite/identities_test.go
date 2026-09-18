@@ -38,16 +38,17 @@ func TestAggregateIdentityDayCountsUsersAndGroups(t *testing.T) {
 		t.Fatalf("aggregate: %v", err)
 	}
 
-	var actors, users, hits, views, events int
+	var actors, users, views, events int
 	if err := db.db.QueryRowContext(ctx,
-		`SELECT actors, users, hits, views, events FROM agg_identity_daily
+		`SELECT actors, users, views, events FROM agg_identity_daily
 		 WHERE project='p' AND day=? AND kind='group' AND id='org9'`, d.String()).
-		Scan(&actors, &users, &hits, &views, &events); err != nil {
+		Scan(&actors, &users, &views, &events); err != nil {
 		t.Fatalf("read group row: %v", err)
 	}
-	if actors != 2 || users != 2 || hits != 1 || views != 2 || events != 1 {
-		t.Errorf("group row = actors %d users %d hits %d views %d events %d; want 2 2 1 2 1",
-			actors, users, hits, views, events)
+	// views is what was hits (the web row) plus views (the two app rows): 3.
+	if actors != 2 || users != 2 || views != 3 || events != 1 {
+		t.Errorf("group row = actors %d users %d views %d events %d; want 2 2 3 1",
+			actors, users, views, events)
 	}
 
 	if err := db.db.QueryRowContext(ctx,
@@ -56,8 +57,9 @@ func TestAggregateIdentityDayCountsUsersAndGroups(t *testing.T) {
 		Scan(&actors, &users, &views, &events); err != nil {
 		t.Fatalf("read user row: %v", err)
 	}
-	if actors != 1 || users != 1 || views != 1 || events != 1 {
-		t.Errorf("user row = actors %d users %d views %d events %d; want 1 1 1 1",
+	// views counts both the app view and the web view of u1 (actor a): 2.
+	if actors != 1 || users != 1 || views != 2 || events != 1 {
+		t.Errorf("user row = actors %d users %d views %d events %d; want 1 1 2 1",
 			actors, users, views, events)
 	}
 }
