@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"reflect"
 	"testing"
 	"time"
@@ -297,5 +298,85 @@ func TestPruneActorsEvictsStale(t *testing.T) {
 	}
 	if actors != 1 || cohorts != 0 {
 		t.Errorf("after prune: actors=%d cohorts=%d; want 1 and 0", actors, cohorts)
+	}
+}
+
+func TestUpsertActorsPromotesInstallToUser(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	d10 := time.Date(2026, 8, 10, 10, 0, 0, 0, time.UTC)
+	d11 := time.Date(2026, 8, 11, 10, 0, 0, 0, time.UTC)
+
+	// x is seen as both install and user on the same day, within the one
+	// UpsertActors call: two rows for the same actor_id resolve through
+	// ON CONFLICT within a single statement.
+	// y is install-only on day 1, then logs in as a user on day 2 (a
+	// separate UpsertActors call, and hence a separate conflict).
+	// z is install-only throughout: the control that must never be promoted.
+	if err := db.WriteViews(ctx, []store.View{
+		{ID: "1", Project: "p", TS: d10, ReceivedAt: d10, Kind: "app",
+			ActorID: "x", ActorKind: store.ActorInstall, Path: "/x"},
+		{ID: "2", Project: "p", TS: d10, ReceivedAt: d10, Kind: "app",
+			ActorID: "x", UserID: "x", ActorKind: store.ActorUser, Path: "/x"},
+		{ID: "3", Project: "p", TS: d10, ReceivedAt: d10, Kind: "app",
+			ActorID: "y", ActorKind: store.ActorInstall, Path: "/x"},
+		{ID: "4", Project: "p", TS: d10, ReceivedAt: d10, Kind: "app",
+			ActorID: "z", ActorKind: store.ActorInstall, Path: "/x"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpsertActors(ctx, "p", onDay(2026, 8, 10)); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := db.WriteViews(ctx, []store.View{
+		{ID: "5", Project: "p", TS: d11, ReceivedAt: d11, Kind: "app",
+			ActorID: "y", UserID: "y", ActorKind: store.ActorUser, Path: "/x"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpsertActors(ctx, "p", onDay(2026, 8, 11)); err != nil {
+		t.Fatal(err)
+	}
+
+	kindOf := func(actorID string) (kind, first string) {
+		t.Helper()
+		if err := db.db.QueryRowContext(ctx,
+			`SELECT actor_kind, first_seen_day FROM actors WHERE project='p' AND actor_id=?`, actorID).
+			Scan(&kind, &first); err != nil {
+			t.Fatalf("read actor %s: %v", actorID, err)
+		}
+		return kind, first
+	}
+
+	if kind, first := kindOf("x"); kind != store.ActorUser || first != "2026-08-10" {
+		t.Errorf("x = %q %q; want user 2026-08-10", kind, first)
+	}
+	if kind, first := kindOf("y"); kind != store.ActorUser || first != "2026-08-10" {
+		t.Errorf("y = %q %q; want user 2026-08-10", kind, first)
+	}
+	if kind, _ := kindOf("z"); kind != store.ActorInstall {
+		t.Errorf("z = %q, want install (never seen as a user)", kind)
+	}
+
+	if err := db.AggregateRetentionDay(ctx, "p", onDay(2026, 8, 11)); err != nil {
+		t.Fatal(err)
+	}
+	var userActors int
+	if err := db.db.QueryRowContext(ctx,
+		`SELECT actors FROM agg_retention WHERE project='p' AND actor_kind='user'
+		   AND cohort_day='2026-08-10' AND day_offset=1`).Scan(&userActors); err != nil {
+		t.Fatalf("user cohort: %v", err)
+	}
+	if userActors != 1 {
+		t.Errorf("user cohort d1 actors = %d, want 1 (y)", userActors)
+	}
+	var installActors int
+	err := db.db.QueryRowContext(ctx,
+		`SELECT actors FROM agg_retention WHERE project='p' AND actor_kind='install'
+		   AND cohort_day='2026-08-10' AND day_offset=1`).Scan(&installActors)
+	if err != sql.ErrNoRows {
+		t.Errorf("install cohort d1 = actors %d err %v; want no row: y was promoted to user before this aggregation ran",
+			installActors, err)
 	}
 }

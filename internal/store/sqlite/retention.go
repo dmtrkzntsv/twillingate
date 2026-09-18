@@ -19,8 +19,12 @@ var actorSources = []string{"views", "product_events"}
 const cohortKinds = `('user', 'install')`
 
 // UpsertActors records first/last seen for every user- or install-identified
-// actor active on the given day. Must run before AggregateRetentionDay for
-// the same day, and before that day's raw rows are deleted.
+// actor active on the given day. On conflict, a user identification always
+// wins over an install one — once a human is known as a user that is the
+// truer, stable description of the same literal actor_id (e.g. an install id
+// later reused as the login $user_id) — otherwise the incoming kind applies.
+// Must run before AggregateRetentionDay for the same day, and before that
+// day's raw rows are deleted.
 func (d *DB) UpsertActors(ctx context.Context, project string, day civil.Date) error {
 	return d.tx(ctx, func(tx *sql.Tx) error {
 		for _, table := range actorSources {
@@ -30,6 +34,8 @@ SELECT ?, actor_id, actor_kind, ?, ?
 FROM %s WHERE project=? AND substr(ts,1,10)=? AND actor_id <> '' AND actor_kind IN %s
 GROUP BY actor_id, actor_kind
 ON CONFLICT(project, actor_id) DO UPDATE SET
+  actor_kind     = CASE WHEN actors.actor_kind = 'user' OR excluded.actor_kind = 'user'
+                        THEN 'user' ELSE excluded.actor_kind END,
   first_seen_day = MIN(actors.first_seen_day, excluded.first_seen_day),
   last_seen_day  = MAX(actors.last_seen_day,  excluded.last_seen_day)`, table, cohortKinds)
 			if _, err := tx.ExecContext(ctx, q,
