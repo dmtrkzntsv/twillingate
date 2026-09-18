@@ -292,9 +292,8 @@ func (s *Snapshot) RetentionFor(alias string) config.Retention {
 			dst.AggregateDays = *o.AggregateDays
 		}
 	}
-	apply(&r.Web, p.Retention.Web)
+	apply(&r.Views, p.Retention.Views)
 	apply(&r.Product, p.Retention.Product)
-	apply(&r.App, p.Retention.App)
 	return r
 }
 

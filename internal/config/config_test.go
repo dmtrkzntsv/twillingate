@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"slices"
 	"strings"
 	"testing"
@@ -35,8 +36,8 @@ func TestDefaultsApplied(t *testing.T) {
 	if c.Buffer.FlushMaxEvents != 1000 || c.Buffer.FlushInterval != 5*time.Second || c.Buffer.Capacity != 10000 {
 		t.Errorf("Buffer = %+v", c.Buffer)
 	}
-	if c.Retention.Web.RawDays != 7 || c.Retention.Product.RawDays != 30 ||
-		c.Retention.Web.AggregateDays != 365 || c.Retention.Product.AggregateDays != 365 {
+	if c.Retention.Views.RawDays != 30 || c.Retention.Product.RawDays != 30 ||
+		c.Retention.Views.AggregateDays != 365 || c.Retention.Product.AggregateDays != 365 {
 		t.Errorf("Retention = %+v", c.Retention)
 	}
 	if c.ProductAttributesTopN != 50 {
@@ -61,8 +62,8 @@ func TestEnvOverrides(t *testing.T) {
 		"BUFFER_FLUSH_MAX_EVENTS":          "5",
 		"BUFFER_FLUSH_INTERVAL":            "250ms",
 		"BUFFER_CAPACITY":                  "42",
-		"RETENTION_WEB_RAW_DAYS":           "3",
-		"RETENTION_WEB_AGGREGATE_DAYS":     "30",
+		"RETENTION_VIEWS_RAW_DAYS":         "3",
+		"RETENTION_VIEWS_AGGREGATE_DAYS":   "30",
 		"RETENTION_PRODUCT_RAW_DAYS":       "10",
 		"RETENTION_PRODUCT_AGGREGATE_DAYS": "60",
 		"DASHBOARDS_ADDR":                  "127.0.0.1:4000",
@@ -82,7 +83,7 @@ func TestEnvOverrides(t *testing.T) {
 	if c.Buffer.FlushMaxEvents != 5 || c.Buffer.FlushInterval != 250*time.Millisecond || c.Buffer.Capacity != 42 {
 		t.Errorf("Buffer = %+v", c.Buffer)
 	}
-	if c.Retention.Web.RawDays != 3 || c.Retention.Web.AggregateDays != 30 ||
+	if c.Retention.Views.RawDays != 3 || c.Retention.Views.AggregateDays != 30 ||
 		c.Retention.Product.RawDays != 10 || c.Retention.Product.AggregateDays != 60 {
 		t.Errorf("Retention = %+v", c.Retention)
 	}
@@ -103,7 +104,7 @@ func TestValidationErrors(t *testing.T) {
 	cases := map[string]map[string]string{
 		"no database":       {"DATABASE_DSN": ""},
 		"bad geo scheme":    base(map[string]string{"GEO_DSN": "???"}),
-		"negative raw_days": base(map[string]string{"RETENTION_WEB_RAW_DAYS": "-1"}),
+		"negative raw_days": base(map[string]string{"RETENTION_VIEWS_RAW_DAYS": "-1"}),
 		"bad integer":       base(map[string]string{"BUFFER_CAPACITY": "many"}),
 		"invalid duration":  base(map[string]string{"BUFFER_FLUSH_INTERVAL": "fast"}),
 	}
@@ -252,37 +253,66 @@ func TestDeclaredAttributesNilWhenNeitherPresent(t *testing.T) {
 	}
 }
 
-func TestAppRetentionDefaultsAndMaxEventAge(t *testing.T) {
+func TestViewsRetentionDefaultsAndMaxEventAge(t *testing.T) {
 	c, err := load(t, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Retention.App.RawDays != 30 || c.Retention.App.AggregateDays != 365 {
-		t.Fatalf("app retention = %+v", c.Retention.App)
+	if c.Retention.Views.RawDays != 30 || c.Retention.Views.AggregateDays != 365 {
+		t.Fatalf("views retention = %+v", c.Retention.Views)
 	}
 	if want := 30 * 24 * time.Hour; c.MaxEventAge() != want {
 		t.Errorf("MaxEventAge() = %v, want %v", c.MaxEventAge(), want)
 	}
 }
 
-func TestAppRetentionFromEnv(t *testing.T) {
+func TestViewsRetentionFromEnv(t *testing.T) {
 	c, err := load(t, map[string]string{
-		"RETENTION_APP_RAW_DAYS":       "14",
-		"RETENTION_APP_AGGREGATE_DAYS": "90",
+		"RETENTION_VIEWS_RAW_DAYS":       "14",
+		"RETENTION_VIEWS_AGGREGATE_DAYS": "90",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Retention.App.RawDays != 14 || c.Retention.App.AggregateDays != 90 {
-		t.Errorf("app retention = %+v", c.Retention.App)
+	if c.Retention.Views.RawDays != 14 || c.Retention.Views.AggregateDays != 90 {
+		t.Errorf("views retention = %+v", c.Retention.Views)
+	}
+	if want := 14 * 24 * time.Hour; c.MaxEventAge() != want {
+		t.Errorf("MaxEventAge() = %v, want %v", c.MaxEventAge(), want)
 	}
 }
 
-func TestRejectsNegativeAppRetention(t *testing.T) {
-	if _, err := load(t, map[string]string{"RETENTION_APP_RAW_DAYS": "-1"}); err == nil {
-		t.Fatal("want error for negative app retention")
+func TestRejectsNegativeViewsRetention(t *testing.T) {
+	if _, err := load(t, map[string]string{"RETENTION_VIEWS_RAW_DAYS": "-1"}); err == nil {
+		t.Fatal("want error for negative views retention")
 	}
 }
+
+func TestRetentionOverrideDecodesLegacyKeys(t *testing.T) {
+	var o RetentionOverride
+	if err := json.Unmarshal([]byte(`{"web":{"raw_days":3},"app":{"raw_days":9,"aggregate_days":30}}`), &o); err != nil {
+		t.Fatal(err)
+	}
+	if o.Views == nil || o.Views.RawDays == nil || *o.Views.RawDays != 9 {
+		t.Fatalf("legacy web/app should decode into views with the larger raw window, got %+v", o.Views)
+	}
+	if o.Views.AggregateDays == nil || *o.Views.AggregateDays != 30 {
+		t.Errorf("aggregate_days = %v", o.Views.AggregateDays)
+	}
+	var v RetentionOverride
+	if err := json.Unmarshal([]byte(`{"views":{"raw_days":5},"web":{"raw_days":99}}`), &v); err != nil {
+		t.Fatal(err)
+	}
+	if *v.Views.RawDays != 5 {
+		t.Errorf("an explicit views key must win over legacy keys, got %d", *v.Views.RawDays)
+	}
+	out, _ := json.Marshal(RetentionOverride{Views: &RetentionClassOverride{RawDays: intp(7)}})
+	if string(out) != `{"views":{"raw_days":7,"aggregate_days":null},"product":null}` {
+		t.Errorf("marshal = %s (legacy keys must never be written back)", out)
+	}
+}
+
+func intp(n int) *int { return &n }
 
 func TestLoadDoesNotRequireProjectsFile(t *testing.T) {
 	cfg, err := FromEnv(func(k string) (string, bool) {
@@ -529,12 +559,16 @@ func TestTokenLoginDSNParsing(t *testing.T) {
 
 func TestRenamedVariablesRefuse(t *testing.T) {
 	for old, repl := range map[string]string{
-		"LISTEN_ADDR":        "INGEST_ADDR",
-		"MCP_ADDR":           "API_ADDR",
-		"MCP_AUTH_DSN":       "API_AUTH_DSN",
-		"MCP_DB_PATH":        "API_DB_PATH",
-		"MCP_QUERY_TIMEOUT":  "API_QUERY_TIMEOUT",
-		"MCP_QUERY_MAX_ROWS": "API_QUERY_MAX_ROWS",
+		"LISTEN_ADDR":                  "INGEST_ADDR",
+		"MCP_ADDR":                     "API_ADDR",
+		"MCP_AUTH_DSN":                 "API_AUTH_DSN",
+		"MCP_DB_PATH":                  "API_DB_PATH",
+		"MCP_QUERY_TIMEOUT":            "API_QUERY_TIMEOUT",
+		"MCP_QUERY_MAX_ROWS":           "API_QUERY_MAX_ROWS",
+		"RETENTION_WEB_RAW_DAYS":       "RETENTION_VIEWS_RAW_DAYS",
+		"RETENTION_WEB_AGGREGATE_DAYS": "RETENTION_VIEWS_AGGREGATE_DAYS",
+		"RETENTION_APP_RAW_DAYS":       "RETENTION_VIEWS_RAW_DAYS",
+		"RETENTION_APP_AGGREGATE_DAYS": "RETENTION_VIEWS_AGGREGATE_DAYS",
 	} {
 		env := map[string]string{"DATABASE_DSN": "sqlite:///tmp/x.db", old: "x"}
 		_, err := FromEnv(func(k string) (string, bool) { v, ok := env[k]; return v, ok })

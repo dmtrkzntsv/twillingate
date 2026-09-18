@@ -43,9 +43,8 @@ type RetentionClass struct {
 }
 
 type Retention struct {
-	Web     RetentionClass `json:"web"`
+	Views   RetentionClass `json:"views"`
 	Product RetentionClass `json:"product"`
-	App     RetentionClass `json:"app"`
 }
 
 type RetentionClassOverride struct {
@@ -54,9 +53,51 @@ type RetentionClassOverride struct {
 }
 
 type RetentionOverride struct {
-	Web     *RetentionClassOverride `json:"web"`
+	Views   *RetentionClassOverride `json:"views"`
 	Product *RetentionClassOverride `json:"product"`
-	App     *RetentionClassOverride `json:"app"`
+}
+
+// UnmarshalJSON accepts the pre-views keys `web` and `app` and folds them
+// into Views (the larger of each field wins), so a per-project override
+// stored before the merge keeps working. An explicit `views` key wins
+// outright. Marshal never writes the legacy keys back.
+func (o *RetentionOverride) UnmarshalJSON(b []byte) error {
+	var raw struct {
+		Views   *RetentionClassOverride `json:"views"`
+		Product *RetentionClassOverride `json:"product"`
+		Web     *RetentionClassOverride `json:"web"`
+		App     *RetentionClassOverride `json:"app"`
+	}
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	o.Product = raw.Product
+	o.Views = raw.Views
+	if o.Views == nil && (raw.Web != nil || raw.App != nil) {
+		o.Views = &RetentionClassOverride{}
+		max := func(a, b *int) *int {
+			switch {
+			case a == nil:
+				return b
+			case b == nil:
+				return a
+			case *a >= *b:
+				return a
+			default:
+				return b
+			}
+		}
+		var web, app RetentionClassOverride
+		if raw.Web != nil {
+			web = *raw.Web
+		}
+		if raw.App != nil {
+			app = *raw.App
+		}
+		o.Views.RawDays = max(web.RawDays, app.RawDays)
+		o.Views.AggregateDays = max(web.AggregateDays, app.AggregateDays)
+	}
+	return nil
 }
 
 // LegacyAggregation is the pre-2026-08 product_aggregation block: an
@@ -271,17 +312,13 @@ func parse(lookup func(string) (string, bool), dashboards bool) (*Config, error)
 			Capacity:       e.num("BUFFER_CAPACITY", 10000),
 		},
 		Retention: Retention{
-			Web: RetentionClass{
-				RawDays:       e.num("RETENTION_WEB_RAW_DAYS", 7),
-				AggregateDays: e.num("RETENTION_WEB_AGGREGATE_DAYS", 365),
+			Views: RetentionClass{
+				RawDays:       e.num("RETENTION_VIEWS_RAW_DAYS", 30),
+				AggregateDays: e.num("RETENTION_VIEWS_AGGREGATE_DAYS", 365),
 			},
 			Product: RetentionClass{
 				RawDays:       e.num("RETENTION_PRODUCT_RAW_DAYS", 30),
 				AggregateDays: e.num("RETENTION_PRODUCT_AGGREGATE_DAYS", 365),
-			},
-			App: RetentionClass{
-				RawDays:       e.num("RETENTION_APP_RAW_DAYS", 30),
-				AggregateDays: e.num("RETENTION_APP_AGGREGATE_DAYS", 365),
 			},
 		},
 		// Distinct client-supplied *values* per declared attribute key are
@@ -334,6 +371,10 @@ var renamed = []struct{ old, repl string }{
 	{"MCP_DB_PATH", "API_DB_PATH"},
 	{"MCP_QUERY_TIMEOUT", "API_QUERY_TIMEOUT"},
 	{"MCP_QUERY_MAX_ROWS", "API_QUERY_MAX_ROWS"},
+	{"RETENTION_WEB_RAW_DAYS", "RETENTION_VIEWS_RAW_DAYS"},
+	{"RETENTION_WEB_AGGREGATE_DAYS", "RETENTION_VIEWS_AGGREGATE_DAYS"},
+	{"RETENTION_APP_RAW_DAYS", "RETENTION_VIEWS_RAW_DAYS"},
+	{"RETENTION_APP_AGGREGATE_DAYS", "RETENTION_VIEWS_AGGREGATE_DAYS"},
 }
 
 // refuseRenamed treats an empty value as unset, as env.str does, so a
@@ -371,7 +412,7 @@ func (c *Config) validate() error {
 		}
 	}
 	// Validate global retention (negative values only)
-	for _, rc := range []RetentionClass{c.Retention.Web, c.Retention.Product, c.Retention.App} {
+	for _, rc := range []RetentionClass{c.Retention.Views, c.Retention.Product} {
 		if rc.RawDays < 0 || rc.AggregateDays < 0 {
 			return fmt.Errorf("config: retention days must not be negative: %+v", rc)
 		}
@@ -379,11 +420,11 @@ func (c *Config) validate() error {
 	return nil
 }
 
-// MaxEventAge is derived from the app raw window rather than separately
+// MaxEventAge is derived from the views raw window rather than separately
 // configurable: the two must agree or a clamped timestamp could land in an
 // already-aggregated day.
 func (c *Config) MaxEventAge() time.Duration {
-	return time.Duration(c.Retention.App.RawDays) * 24 * time.Hour
+	return time.Duration(c.Retention.Views.RawDays) * 24 * time.Hour
 }
 
 // parseAPIAuthDSN fans API_AUTH_DSN out into the mode-specific APIConfig
