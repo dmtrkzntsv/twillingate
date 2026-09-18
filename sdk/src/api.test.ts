@@ -142,7 +142,7 @@ describe("page() overloads", () => {
     t.flush();
     await drain();
     const ev = lastEvent();
-    expect(ev.name).toBe("$pageview");
+    expect(ev.name).toBe("$page_view");
     expect((ev.attributes as Record<string, unknown>).$path).toBe("/settings");
     expect((ev.attributes as Record<string, unknown>).$host).toBe("example.com");
   });

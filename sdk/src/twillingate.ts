@@ -1,4 +1,4 @@
-/* twillingate SDK core — web, product and app analytics against the
+/* twillingate SDK core — views and product analytics against the
  * collector's POST /ingest/events (docs/twillingate.md is the normative wire
  * format). Bundled as an IIFE by build.mjs and served at /js/twillingate.js.
  *
@@ -30,8 +30,18 @@ export interface InitOptions {
   identity?: "anonymous" | "identified";
   user?: string;
   group?: string;
-  /** App analytics batch context ($platform / $app_version / $install_id). */
+  /**
+   * What this client is: "web" (default), "app", "cli", or any short
+   * lower-case token. Anything but "web" makes automatic tracking emit
+   * $screen_view with the route path as the screen, and tells the server
+   * to trust the declared environment instead of the User-Agent.
+   */
+  kind?: string;
+  /** Declared OS ($os), for a client that knows better than its User-Agent. */
+  os?: string;
+  /** @deprecated use os */
   platform?: string;
+  /** Version of this client application ($app_version). */
   appVersion?: string;
   installId?: string;
   /**
@@ -162,7 +172,8 @@ export class Twillingate {
   private groupName: string | null = null;
   private defaultAttrs: Record<string, unknown> = {};
   private pageListeners: PageListener[] = [];
-  private platform: string | null = null;
+  private kind = "web";
+  private os: string | null = null;
   private appVersion: string | null = null;
   private installId: string | null = null;
   private flushInterval = 1000;
@@ -197,7 +208,8 @@ export class Twillingate {
     this.userName = this.identified ? ls(USER_NAME) : null;
     this.groupId = opts.group ? String(opts.group) : migrated(GROUP);
     this.groupName = ls(GROUP_NAME);
-    this.platform = opts.platform || null;
+    this.kind = opts.kind && /^[a-z][a-z0-9_]{0,15}$/.test(opts.kind) ? opts.kind : "web";
+    this.os = opts.os || opts.platform || null;
     this.appVersion = opts.appVersion || null;
     this.installId = opts.installId || null;
     if (opts.flushInterval !== undefined) this.flushInterval = opts.flushInterval;
@@ -231,7 +243,8 @@ export class Twillingate {
   }
 
   /**
-   * $pageview, deduped against the previous path. Overloads:
+   * $page_view (or $screen_view for a non-web kind), deduped against the
+   * previous path. Overloads:
    *
    *   page()                  — record the current page
    *   page("/settings")       — record an explicit path
@@ -318,13 +331,20 @@ export class Twillingate {
       return;
     }
     this.firstPageviewSent = true;
-    this.emit("$pageview", attributes);
+    if (this.kind === "web") {
+      this.emit("$page_view", { ...attributes, ...displaySize() });
+      return;
+    }
+    // A non-web kind is an app: the route is the screen, and the page
+    // context (host, referrer, campaign) does not apply.
+    const { $host: _h, $referrer: _r, $utm_source: _s, $utm_medium: _m, $utm_campaign: _c, $path, ...rest } = attributes;
+    this.emit("$screen_view", { $screen: $path, ...rest, ...displaySize() });
   }
 
   /** App analytics $screen_view. */
   screen(name: string, attrs?: Record<string, unknown>): void {
     if (!this.ok() || !name) return;
-    this.emit("$screen_view", { $screen: String(name), ...attrs });
+    this.emit("$screen_view", { $screen: String(name), ...displaySize(), ...attrs });
   }
 
   /** Opt-in product event. */
@@ -443,8 +463,10 @@ export class Twillingate {
     if (this.groupName) a.$group_name = this.groupName;
     const v = this.visitorId();
     if (v) a.$install_id = v;
-    if (this.platform) a.$platform = this.platform;
+    a.$kind = this.kind;
+    if (this.os) a.$os = this.os;
     if (this.appVersion) a.$app_version = this.appVersion;
+    if (typeof navigator !== "undefined" && navigator.language) a.$locale = navigator.language;
     return a;
   }
 
@@ -534,6 +556,12 @@ function utmFrom(href: string): Record<string, string> {
   return out;
 }
 
+/** Physical display size in pixels, when the runtime exposes one. */
+function displaySize(): Record<string, number> {
+  if (typeof screen === "undefined" || !screen.width || !screen.height) return {};
+  return { $display_width: screen.width, $display_height: screen.height };
+}
+
 /**
  * Split a URL into the host and path that get stored. The query is always
  * dropped; the hash is kept only in hash-routing mode, where it IS the
@@ -619,5 +647,8 @@ export function autoInit(tg: Twillingate, script: HTMLScriptElement | null): voi
     autoPageviews: script.getAttribute("data-auto") !== "off",
     maskUrl: script.getAttribute("data-mask-url") || undefined,
     routing: script.getAttribute("data-routing") === "hash" ? "hash" : "history",
+    kind: script.getAttribute("data-kind") || undefined,
+    os: script.getAttribute("data-os") || undefined,
+    appVersion: script.getAttribute("data-app-version") || undefined,
   });
 }
