@@ -540,6 +540,13 @@ The actor an event is attributed to resolves as `$user_id` → `$install_id` →
 a server-side hash of the connection. In `anonymous` mode the result is
 hashed with a daily-rotating salt, so nothing links across days.
 
+Send `$install_id` only if it survives a page load or app restart. An id
+minted per load (a client that keeps nothing on the device) makes every load
+a new actor that never returns: it inflates active counts and drags
+retention toward zero. Leave it out instead — the connection hash then
+gives one actor per device per day — and read retention from the signed-in
+`users` columns, which follow `$user_id`.
+
 `$group_id` stays raw in both modes: it identifies an organization, not a
 natural person, and hashing it would make dashboards unreadable for no real
 privacy gain. If your groups are single-person, treat them as personal data.
@@ -792,7 +799,7 @@ already apply the caveats below.
 | `app_breakdown` | `dimension`, `limit` | One of `screens`, `versions`, `os`, `devices`, `countries` |
 | `product_events` | `event` (optional filter) | Count and unique users per event name, plus daily totals |
 | `product_attributes` | `event`, `key` | Value breakdowns for a declared attribute. `$platform` and `$app_version` are always available; a custom key only appears once the project declares it |
-| `retention` | `surface` (`web` or `app`) | Cohort curves, plus `aggregated_through` — cohorts after that day are **absent, not zero** |
+| `retention` | `surface` (`web`, `app` or `product`) | Cohort curves for everyone (`actors`, `cohort_size`) and for signed-in users (`users`, `user_cohort_size`), plus `aggregated_through` — cohorts after that day are **absent, not zero** |
 | `identities` | `kind` (`user` or `group`), `limit` | Per-user or per-group activity with display names. **Surfaces personal data on identified projects** |
 | `query` | `sql` | A single read-only `SELECT`/`WITH` against the views. Row-capped and time-limited |
 
@@ -872,7 +879,15 @@ from the DDL. The three that matter most:
 3. **`v_retention` has no live half.** It refreshes at the 03:00 UTC daily
    pass; cohort days after that are ABSENT, not zero. It is populated only
    for projects with `identity=identified`, because anonymous visitor ids
-   rotate daily and cohorts are undefined.
+   rotate daily and cohorts are undefined. Each actor belongs to one
+   `surface`, fixed on its first day: `app` if it sent a screen view, else
+   `web` if it sent a pageview, else `product` (seen through custom events
+   alone — a product-only project has only this curve). `users` and
+   `user_cohort_size` count the signed-in subset: actors that sent a
+   `user_id`. A visitor who never signs in is recognised on return only if
+   the client keeps a stable `$install_id`, so on a client that mints one per
+   page load, read retention from the `users` columns. They are null for
+   cohorts counted before signed-in users were tracked; skip those.
 
 Every view carries a `project` column — always filter on it.
 

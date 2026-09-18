@@ -301,6 +301,39 @@ func TestStitchViewIdentityDailyCoversRawDays(t *testing.T) {
 	}
 }
 
+// The daily pass rolls identity days up while their product and web rows are
+// still raw -- it runs over every raw day, not only aged-out ones -- so the
+// view must not add the live half on top of a day that is already rolled up.
+func TestStitchViewIdentityDailyDoesNotDoubleCountRetainedRawDays(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	ts := time.Date(2026, 8, 23, 10, 0, 0, 0, time.UTC)
+
+	if err := db.WriteProductEvents(ctx, []store.ProductEvent{
+		{ID: "1", Project: "p", EventName: "e", TS: ts, ReceivedAt: ts,
+			ActorID: "a", UserID: "u1", GroupID: "org9", Attributes: map[string]string{}},
+		{ID: "2", Project: "p", EventName: "e", TS: ts, ReceivedAt: ts,
+			ActorID: "a", UserID: "u1", GroupID: "org9", Attributes: map[string]string{}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AggregateIdentityDay(ctx, "p", appDay()); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, kind := range []string{"user", "group"} {
+		var rows, events int
+		if err := db.db.QueryRowContext(ctx,
+			`SELECT COUNT(*), COALESCE(SUM(events),0) FROM v_identity_daily
+			 WHERE project='p' AND kind=?`, kind).Scan(&rows, &events); err != nil {
+			t.Fatal(err)
+		}
+		if rows != 1 || events != 2 {
+			t.Errorf("%s: rows %d events %d; want 1 row of 2 events", kind, rows, events)
+		}
+	}
+}
+
 // seedDeclaredProject registers a project row with a declared attribute
 // list. v_product_attrs' live half reads projects.attributes, so the row
 // must exist or the declared half of the view is empty.

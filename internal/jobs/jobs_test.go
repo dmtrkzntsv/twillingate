@@ -483,7 +483,7 @@ func TestRunDailyPassPrunesActorsAndIdentities(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(
-		`INSERT INTO actors VALUES ('app','stale','app','2020-01-01','2020-01-01')`); err != nil {
+		`INSERT INTO actors (project, actor_id, surface, first_seen_day, last_seen_day) VALUES ('app','stale','app','2020-01-01','2020-01-01')`); err != nil {
 		t.Fatal(err)
 	}
 
@@ -551,5 +551,35 @@ func TestRunDailyPassComputesCohortsForRecentDays(t *testing.T) {
 	// The raw row itself must survive: it is inside the retention window.
 	if n := count(t, db, `SELECT COUNT(*) FROM app_views`); n != 1 {
 		t.Errorf("raw app_views = %d; an in-window day must not be aggregated away", n)
+	}
+}
+
+// Today is still arriving, so rolling it up at 03:00 would freeze a partial
+// day into agg_identity_daily, which v_identity_daily prefers over raw. It
+// is left to the view's live half; yesterday, complete by now, is rolled up.
+func TestRunDailyPassLeavesTodaysIdentityActivityLive(t *testing.T) {
+	st, r, db := setupApp(t, identifiedProjectSpecs)
+	ctx := context.Background()
+	for i, ts := range []string{"2026-08-21T10:00:00Z", "2026-08-22T01:00:00Z"} {
+		at := mustTime(ts)
+		if err := st.WriteAppViews(ctx, []store.AppView{
+			{ID: "t" + string(rune('a'+i)), Project: "app", TS: at, ReceivedAt: at,
+				ActorID: "a", UserID: "u1", Screen: "/home", Platform: "ios"},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := r.RunDailyPass(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n := count(t, db, `SELECT COUNT(*) FROM agg_identity_daily WHERE day='2026-08-22'`); n != 0 {
+		t.Errorf("today's identity rows aggregated = %d, want 0", n)
+	}
+	if n := count(t, db, `SELECT COUNT(*) FROM agg_identity_daily WHERE day='2026-08-21'`); n != 1 {
+		t.Errorf("yesterday's identity rows aggregated = %d, want 1", n)
+	}
+	// Retention still covers today: it has no live half to fall back on.
+	if n := count(t, db, `SELECT COUNT(*) FROM agg_retention WHERE cohort_day='2026-08-21' AND day_offset=1`); n != 1 {
+		t.Errorf("retention rows owned by today = %d, want 1", n)
 	}
 }

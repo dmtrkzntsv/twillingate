@@ -113,6 +113,13 @@ func (r *Runner) RunDailyPass(ctx context.Context) error {
 					r.logger.Error("aggregate retention failed", "project", id, "day", day.String(), "error", err)
 				}
 			}
+			// Today is still arriving. v_identity_daily prefers an
+			// aggregated day over its raw rows, so rolling today up would
+			// freeze whatever had landed by 03:00; the view's live half
+			// serves it instead.
+			if day == today {
+				continue
+			}
 			if err := r.store.AggregateIdentityDay(ctx, id, day); err != nil {
 				r.logger.Error("aggregate identity failed", "project", id, "day", day.String(), "error", err)
 			}

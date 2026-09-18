@@ -2,6 +2,8 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
+	"strings"
 	"testing"
 	"time"
 
@@ -67,6 +69,183 @@ func TestUpsertActorsRecordsWebSurface(t *testing.T) {
 	}
 	if surface != surfaceWeb {
 		t.Errorf("surface = %q, want web", surface)
+	}
+}
+
+func eventAt(id, actor string, t time.Time) store.ProductEvent {
+	return store.ProductEvent{ID: id, Project: "p", EventName: "e", TS: t, ReceivedAt: t,
+		ActorID: actor, Attributes: map[string]string{}}
+}
+
+// An actor known only through custom events is neither a web visitor nor an
+// app install, so labelling it "web" misdescribes a product-only project.
+func TestUpsertActorsRecordsProductSurface(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	ts := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
+
+	if err := db.WriteProductEvents(ctx, []store.ProductEvent{eventAt("1", "e", ts)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpsertActors(ctx, "p", onDay(2026, 8, 1)); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AggregateRetentionDay(ctx, "p", onDay(2026, 8, 1)); err != nil {
+		t.Fatal(err)
+	}
+
+	var surface string
+	if err := db.db.QueryRowContext(ctx,
+		`SELECT surface FROM agg_retention WHERE project='p' AND cohort_day='2026-08-01'`).
+		Scan(&surface); err != nil {
+		t.Fatal(err)
+	}
+	if surface != surfaceProduct {
+		t.Errorf("surface = %q, want product", surface)
+	}
+}
+
+// A web visitor who also fires custom events the same day is a web actor:
+// the SDK sends both under one visitor id.
+func TestUpsertActorsPrefersWebOverProductOnTheSameDay(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	ts := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
+
+	if err := db.WriteProductEvents(ctx, []store.ProductEvent{eventAt("1", "w", ts)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.WriteWebHits(ctx, []store.WebHit{
+		{ID: "2", Project: "p", TS: ts, ReceivedAt: ts, ActorID: "w", Path: "/"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpsertActors(ctx, "p", onDay(2026, 8, 1)); err != nil {
+		t.Fatal(err)
+	}
+	var surface string
+	if err := db.db.QueryRowContext(ctx,
+		`SELECT surface FROM actors WHERE project='p' AND actor_id='w'`).Scan(&surface); err != nil {
+		t.Fatal(err)
+	}
+	if surface != surfaceWeb {
+		t.Errorf("surface = %q, want web", surface)
+	}
+}
+
+// Migration 009 relabels actors that were filed under web only because
+// product_events used to map there, and recomputes the cohorts they sit in.
+// Re-running its body against seeded rows exercises the backfill, which a
+// fresh test database would otherwise skip over empty tables.
+func TestMigration009RelabelsProductOnlyActors(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	d1 := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
+	d2 := time.Date(2026, 8, 2, 10, 0, 0, 0, time.UTC)
+
+	if err := db.WriteProductEvents(ctx, []store.ProductEvent{
+		eventAt("1", "e1", d1), eventAt("2", "e2", d1), eventAt("3", "w", d1),
+		eventAt("4", "e1", d2),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.WriteWebHits(ctx, []store.WebHit{
+		{ID: "5", Project: "p", TS: d1, ReceivedAt: d1, ActorID: "w", Path: "/"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// "pw" fired a product event on 07-25 that is still raw, but web raw
+	// rows age out sooner (7 days against product's 30 by default) and 07-25
+	// has been rolled up into agg_web_daily: a missing web hit proves
+	// nothing there, so pw must stay web.
+	if err := db.WriteProductEvents(ctx, []store.ProductEvent{
+		eventAt("6", "pw", time.Date(2026, 7, 25, 10, 0, 0, 0, time.UTC)),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// The pre-009 state: every non-app actor is web, cohorts to match. An
+	// actor whose raw rows are gone ("old") must keep its label -- there is
+	// nothing left to prove it was product-only. The web row at offset 4 is
+	// w returning on 08-05, whose raw rows are gone: it cannot be rebuilt,
+	// so it must survive untouched.
+	if _, err := db.db.ExecContext(ctx, `
+INSERT INTO actors (project, actor_id, surface, first_seen_day, last_seen_day) VALUES
+  ('p','e1','web','2026-08-01','2026-08-02'),
+  ('p','e2','web','2026-08-01','2026-08-01'),
+  ('p','w','web','2026-08-01','2026-08-05'),
+  ('p','old','web','2026-07-01','2026-07-01'),
+  ('p','pw','web','2026-07-25','2026-07-25');
+INSERT INTO agg_web_daily (project, day, visitors, pageviews, sessions, bounces, duration_sec)
+VALUES ('p','2026-07-25',1,1,1,1,0);
+INSERT INTO agg_retention (project, surface, cohort_day, day_offset, actors) VALUES
+  ('p','web','2026-08-01',0,3),
+  ('p','web','2026-08-01',1,1),
+  ('p','web','2026-08-01',4,1),
+  ('p','web','2026-07-25',0,1),
+  ('p','web','2026-07-01',0,1);`); err != nil {
+		t.Fatal(err)
+	}
+
+	body, err := migrationFS.ReadFile("migrations/009_product_surface.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.db.ExecContext(ctx, string(body)); err != nil {
+		t.Fatalf("migration 009: %v", err)
+	}
+
+	got := map[string]string{}
+	rows, err := db.db.QueryContext(ctx, `SELECT actor_id, surface FROM actors`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var a, s string
+		if err := rows.Scan(&a, &s); err != nil {
+			t.Fatal(err)
+		}
+		got[a] = s
+	}
+	rows.Close()
+	want := map[string]string{"e1": "product", "e2": "product", "w": "web", "old": "web", "pw": "web"}
+	for a, s := range want {
+		if got[a] != s {
+			t.Errorf("actor %s surface = %q, want %q", a, got[a], s)
+		}
+	}
+
+	cohorts := map[string]int{}
+	rows, err = db.db.QueryContext(ctx,
+		`SELECT surface || ' ' || cohort_day || ' ' || day_offset, actors FROM agg_retention`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var k string
+		var n int
+		if err := rows.Scan(&k, &n); err != nil {
+			t.Fatal(err)
+		}
+		cohorts[k] = n
+	}
+	rows.Close()
+	// Only the moved actors' activity moves: web 08-01 offset 1 was e1 alone
+	// and disappears, offset 4 is untouched.
+	wantCohorts := map[string]int{
+		"product 2026-08-01 0": 2,
+		"product 2026-08-01 1": 1,
+		"web 2026-08-01 0":     1,
+		"web 2026-08-01 4":     1,
+		"web 2026-07-25 0":     1,
+		"web 2026-07-01 0":     1,
+	}
+	if len(cohorts) != len(wantCohorts) {
+		t.Errorf("agg_retention = %v, want %v", cohorts, wantCohorts)
+	}
+	for k, n := range wantCohorts {
+		if cohorts[k] != n {
+			t.Errorf("agg_retention[%s] = %d, want %d (all: %v)", k, cohorts[k], n, cohorts)
+		}
 	}
 }
 
@@ -201,6 +380,120 @@ func TestAggregateRetentionDayIsIdempotent(t *testing.T) {
 	}
 	if n != 1 || actors != 1 {
 		t.Errorf("rows=%d actors=%d after replay; want 1 and 1", n, actors)
+	}
+}
+
+// A visitor who never signs in cannot be recognised on return unless the
+// client keeps a stable install id, so blending them into the curve buries
+// the signed-in users' retention. Cohorts carry the signed-in count apart.
+func TestAggregateRetentionDayCountsSignedInUsersApart(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	d1 := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
+	d2 := time.Date(2026, 8, 2, 10, 0, 0, 0, time.UTC)
+
+	signedIn := func(id string, t time.Time) store.ProductEvent {
+		e := eventAt(id, "u1", t)
+		e.UserID = "u1"
+		return e
+	}
+	if err := db.WriteProductEvents(ctx, []store.ProductEvent{
+		signedIn("1", d1), eventAt("2", "anon", d1),
+		signedIn("3", d2), eventAt("4", "anon", d2),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, day := range []civil.Date{onDay(2026, 8, 1), onDay(2026, 8, 2)} {
+		if err := db.UpsertActors(ctx, "p", day); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.AggregateRetentionDay(ctx, "p", day); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var isUser int
+	if err := db.db.QueryRowContext(ctx,
+		`SELECT is_user FROM actors WHERE project='p' AND actor_id='u1'`).Scan(&isUser); err != nil {
+		t.Fatal(err)
+	}
+	if isUser != 1 {
+		t.Errorf("u1 is_user = %d, want 1", isUser)
+	}
+	var actors, users, size, userSize int
+	if err := db.db.QueryRowContext(ctx,
+		`SELECT actors, users, cohort_size, user_cohort_size FROM v_retention
+		 WHERE project='p' AND cohort_day='2026-08-01' AND day_offset=1`).
+		Scan(&actors, &users, &size, &userSize); err != nil {
+		t.Fatal(err)
+	}
+	if actors != 2 || users != 1 || size != 2 || userSize != 1 {
+		t.Errorf("d1 = actors %d/%d users %d/%d; want 2/2 and 1/1", actors, size, users, userSize)
+	}
+}
+
+// Migration 011 marks existing actors as signed-in users from whatever still
+// proves it: raw rows carrying a user_id, or the per-user identity rollup
+// that outlives them. The ALTERs are stripped so the body re-runs against
+// seeded rows.
+func TestMigration011MarksSignedInActors(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	ts := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
+
+	e := eventAt("1", "raw-user", ts)
+	e.UserID = "raw-user"
+	if err := db.WriteProductEvents(ctx, []store.ProductEvent{e, eventAt("2", "anon", ts)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.db.ExecContext(ctx, `
+INSERT INTO actors (project, actor_id, surface, first_seen_day, last_seen_day) VALUES
+  ('p','raw-user','product','2026-08-01','2026-08-01'),
+  ('p','rolled-up','product','2026-06-01','2026-06-01'),
+  ('p','anon','product','2026-08-01','2026-08-01');
+INSERT INTO agg_identity_daily (project, day, kind, id, actors, users, hits, views, events)
+VALUES ('p','2026-06-01','user','rolled-up',1,1,0,0,3);
+INSERT INTO agg_retention (project, surface, cohort_day, day_offset, actors)
+VALUES ('p','product','2026-06-01',0,1);`); err != nil {
+		t.Fatal(err)
+	}
+
+	body, err := migrationFS.ReadFile("migrations/011_retention_users.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stmts []string
+	for _, line := range strings.Split(string(body), "\n") {
+		if !strings.HasPrefix(line, "ALTER TABLE") {
+			stmts = append(stmts, line)
+		}
+	}
+	if _, err := db.db.ExecContext(ctx, strings.Join(stmts, "\n")); err != nil {
+		t.Fatalf("migration 011: %v", err)
+	}
+
+	// A cohort row written before users existed does not know its users:
+	// NULL, so readers can skip it, where 0 would read as "nobody signed in"
+	// and let a later recomputed offset put users over a zero denominator.
+	var userCohortSize sql.NullInt64
+	if err := db.db.QueryRowContext(ctx,
+		`SELECT user_cohort_size FROM v_retention WHERE project='p' AND cohort_day='2026-06-01'`).
+		Scan(&userCohortSize); err != nil {
+		t.Fatal(err)
+	}
+	if userCohortSize.Valid {
+		t.Errorf("user_cohort_size = %d for a cohort predating the users count, want NULL", userCohortSize.Int64)
+	}
+
+	for actor, want := range map[string]int{"raw-user": 1, "rolled-up": 1, "anon": 0} {
+		var got int
+		if err := db.db.QueryRowContext(ctx,
+			`SELECT is_user FROM actors WHERE project='p' AND actor_id=?`, actor).Scan(&got); err != nil {
+			t.Fatal(err)
+		}
+		if got != want {
+			t.Errorf("%s is_user = %d, want %d", actor, got, want)
+		}
 	}
 }
 

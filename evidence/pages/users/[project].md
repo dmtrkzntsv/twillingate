@@ -14,54 +14,94 @@ select identity from twillingate.projects where alias = '${params.project}'
     <DropdownOption value="180" valueLabel="Last 180 days" />
 </Dropdown>
 
-```sql users_daily
-select day, count(distinct id) as active_users, sum(hits + views + events) as actions
+```sql users_first
+-- First day each user appears in the retained history. "New" below means new
+-- to that history: someone returning after it has aged out counts as new.
+select id, min(day) as first_day
 from twillingate.v_identity_daily
 where project = '${params.project}' and kind = 'user' and id != ''
-  and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range.value} - 1) day, '%Y-%m-%d')
-               and strftime((now() at time zone 'UTC')::date, '%Y-%m-%d')
-group by day order by day
+group by id
+```
+
+```sql users_daily
+select d.day,
+       count(distinct case when d.day = f.first_day then d.id end) as new_users,
+       count(distinct case when d.day > f.first_day then d.id end) as returning_users
+from twillingate.v_identity_daily d
+join ${users_first} f on f.id = d.id
+where d.project = '${params.project}' and d.kind = 'user' and d.id != ''
+  and d.day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range.value} - 1) day, '%Y-%m-%d')
+                and strftime((now() at time zone 'UTC')::date, '%Y-%m-%d')
+group by d.day order by d.day
 ```
 
 ```sql users_totals
-select count(distinct id) as users, sum(hits + views + events) as actions,
-       case when count(distinct id) > 0
-            then sum(hits + views + events) * 1.0 / count(distinct id) else 0 end as per_user
-from twillingate.v_identity_daily
-where project = '${params.project}' and kind = 'user' and id != ''
-  and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range.value} - 1) day, '%Y-%m-%d')
-               and strftime((now() at time zone 'UTC')::date, '%Y-%m-%d')
+select count(distinct d.id) as users,
+       count(distinct case when f.first_day = d.day then d.id end) as new_users,
+       sum(d.hits + d.views + d.events) as actions,
+       case when count(distinct d.id) > 0
+            then sum(d.hits + d.views + d.events) * 1.0 / count(distinct d.id) else 0 end as per_user
+from twillingate.v_identity_daily d
+join ${users_first} f on f.id = d.id
+where d.project = '${params.project}' and d.kind = 'user' and d.id != ''
+  and d.day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range.value} - 1) day, '%Y-%m-%d')
+                and strftime((now() at time zone 'UTC')::date, '%Y-%m-%d')
 ```
 
 ```sql users_top
 select coalesce(i.name, d.id) as name,
+       sum(d.events) as events,
+       sum(d.hits) as pageviews,
+       sum(d.views) as screen_views,
        sum(d.hits + d.views + d.events) as actions,
        count(distinct d.day) as active_days,
+       min(f.first_day) as first_seen,
        max(d.day) as last_seen
 from twillingate.v_identity_daily d
+join ${users_first} f on f.id = d.id
 left join twillingate.identities i
   on i.project = d.project and i.kind = 'user' and i.id = d.id
 where d.project = '${params.project}' and d.kind = 'user' and d.id != ''
   and d.day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range.value} - 1) day, '%Y-%m-%d')
                 and strftime((now() at time zone 'UTC')::date, '%Y-%m-%d')
 group by d.id, i.name
-order by actions desc limit 50
+order by actions desc limit 100
 ```
 
-<Grid cols=3>
-    <BigValue data={users_totals} value=users fmt=num0 title="Users" />
+```sql users_surfaces
+-- Which kinds of activity this project sends. The per-kind columns only
+-- earn their place when there is more than one to tell apart.
+select sum(hits) > 0 as has_pageviews, sum(views) > 0 as has_screen_views,
+       sum(events) > 0 as has_events,
+       (sum(hits) > 0)::int + (sum(views) > 0)::int + (sum(events) > 0)::int as kinds
+from twillingate.v_identity_daily
+where project = '${params.project}' and kind = 'user' and id != ''
+```
+
+<Grid cols=4>
+    <BigValue data={users_totals} value=users fmt=num0 title="Active users" />
+    <BigValue data={users_totals} value=new_users fmt=num0 title="New users" />
     <BigValue data={users_totals} value=actions fmt=num0 title="Actions" />
     <BigValue data={users_totals} value=per_user fmt=num1 title="Actions per user" />
 </Grid>
 
-<LineChart data={users_daily} x=day y=active_users title="Active users" yFmt=num0 />
+<BarChart data={users_daily} x=day y={['new_users', 'returning_users']} title="Daily active users, new and returning" yFmt=num0 />
 
 ## Most active users
+
+Actions add up every pageview, screen view and custom event the user sent.
+Names appear once a client sends `$user_name`.
 
 <DataTable data={users_top} rows=15 search=true>
     <Column id=name title="User" />
     <Column id=actions title="Actions" fmt=num0 contentType=colorscale />
+    {#if users_surfaces[0].kinds > 1}
+        {#if users_surfaces[0].has_events}<Column id=events title="Events" fmt=num0 />{/if}
+        {#if users_surfaces[0].has_pageviews}<Column id=pageviews title="Pageviews" fmt=num0 />{/if}
+        {#if users_surfaces[0].has_screen_views}<Column id=screen_views title="Screen views" fmt=num0 />{/if}
+    {/if}
     <Column id=active_days title="Active days" fmt=num0 />
+    <Column id=first_seen title="First seen" />
     <Column id=last_seen title="Last seen" />
 </DataTable>
 
@@ -71,7 +111,7 @@ This project runs in **anonymous** identity mode: `user_id` is a hash that
 rotates at midnight, so a per-user report would be a list of hashes that means
 nothing tomorrow.
 
-Run `twillingate project update -alias {params.project} -identity identified`
+Run <code class="markdown">twillingate project update -alias {params.project} -identity identified</code>
 (or the `update_project` MCP tool) to enable per-user reporting. Note that
 identified mode stores a persistent `localStorage` id on the web, which is
 terminal-equipment storage under ePrivacy — the same legal category as a

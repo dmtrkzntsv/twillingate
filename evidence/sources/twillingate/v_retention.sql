@@ -3,8 +3,13 @@
 -- object" and fails the whole source build -- taking every other query on the
 -- page down with it. A fresh install has no traffic yet, so emit a sentinel
 -- row when the view is empty; pages filter it out via their project clause.
-select project, surface, cohort_day, day_offset, actors, cohort_size
+--
+-- users and user_cohort_size are NULL for cohort rows counted before
+-- signed-in users were tracked. They ship as -1 instead: the connector infers
+-- a column's type from its values, and "unknown" must stay apart from 0.
+select project, surface, cohort_day, day_offset, actors, cohort_size,
+       coalesce(users, -1) as users, coalesce(user_cohort_size, -1) as user_cohort_size
 from v_retention
 union all
-select '', '', '1970-01-01', 0, 0, 0
+select '', '', '1970-01-01', 0, 0, 0, 0, 0
 where not exists (select 1 from v_retention)

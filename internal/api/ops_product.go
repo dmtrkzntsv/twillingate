@@ -68,7 +68,7 @@ func (h *host) productAttributes(ctx context.Context, in productEventsIn) (table
 
 type retentionIn struct {
 	rangeIn
-	Surface string `json:"surface" jsonschema:"web or app; the two populations are cohorted separately"`
+	Surface string `json:"surface" jsonschema:"web, app or product (actors first seen through custom events alone); each population is cohorted separately"`
 }
 
 type retentionOut struct {
@@ -80,8 +80,8 @@ func (h *host) retention(ctx context.Context, in retentionIn) (retentionOut, err
 	if err := h.checkRange(ctx, in.rangeIn); err != nil {
 		return retentionOut{}, err
 	}
-	if in.Surface != "web" && in.Surface != "app" {
-		return retentionOut{}, invalidf("surface must be web or app, got %q", in.Surface)
+	if in.Surface != "web" && in.Surface != "app" && in.Surface != "product" {
+		return retentionOut{}, invalidf("surface must be web, app or product, got %q", in.Surface)
 	}
 	p := h.reg.Snapshot(ctx).Project(in.Project)
 	if p == nil {
@@ -91,7 +91,7 @@ func (h *host) retention(ctx context.Context, in retentionIn) (retentionOut, err
 		return retentionOut{}, invalidf(
 			"project %q is anonymous: retention is undefined because visitor ids rotate daily; it requires the project setting identity=identified (a privacy-significant change — see the README's GDPR section)", in.Project)
 	}
-	tbl, err := h.table(ctx, `SELECT cohort_day, day_offset, actors, cohort_size
+	tbl, err := h.table(ctx, `SELECT cohort_day, day_offset, actors, cohort_size, users, user_cohort_size
 		FROM v_retention WHERE project=? AND surface=? AND cohort_day BETWEEN ? AND ?
 		ORDER BY cohort_day, day_offset`, in.Project, in.Surface, in.From, in.To)
 	if err != nil {

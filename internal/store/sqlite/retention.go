@@ -11,33 +11,41 @@ import (
 // Surfaces recorded on actors. A web visitor id and an app install_id are
 // different actors even for the same human, and web retention curves sit far
 // below app curves, so blending them would describe neither population.
+// product is an actor first seen through custom events alone -- a
+// product-only project, or a backend sending events -- which is neither.
 const (
-	surfaceWeb = "web"
-	surfaceApp = "app"
+	surfaceWeb     = "web"
+	surfaceApp     = "app"
+	surfaceProduct = "product"
 )
 
 // actorSources lists the raw tables an actor can appear in, with the surface
-// each one attributes to.
+// each one attributes to. Order is precedence: an actor's surface is fixed by
+// the first insert, so one seen in web_hits and product_events on its first
+// day is a web actor that also fires events. Migration 009 relies on this
+// order to relabel history.
 var actorSources = []struct{ table, surface string }{
 	{"app_views", surfaceApp},
 	{"web_hits", surfaceWeb},
-	{"product_events", surfaceWeb},
+	{"product_events", surfaceProduct},
 }
 
 // UpsertActors records first/last seen for every actor active on the given
-// day, across all three raw tables. Must run before AggregateRetentionDay for
+// day, across all three raw tables, and whether it is a signed-in user: on an
+// identified project the actor is the user_id whenever one is sent. Must run before AggregateRetentionDay for
 // the same day, and before that day's raw rows are deleted.
 func (d *DB) UpsertActors(ctx context.Context, project string, day civil.Date) error {
 	return d.tx(ctx, func(tx *sql.Tx) error {
 		for _, src := range actorSources {
 			q := fmt.Sprintf(`
-INSERT INTO actors (project, actor_id, surface, first_seen_day, last_seen_day)
-SELECT ?, actor_id, ?, ?, ?
+INSERT INTO actors (project, actor_id, surface, first_seen_day, last_seen_day, is_user)
+SELECT ?, actor_id, ?, ?, ?, MAX(user_id <> '')
 FROM %s WHERE project=? AND substr(ts,1,10)=? AND actor_id <> ''
 GROUP BY actor_id
 ON CONFLICT(project, actor_id) DO UPDATE SET
   first_seen_day = MIN(actors.first_seen_day, excluded.first_seen_day),
-  last_seen_day  = MAX(actors.last_seen_day,  excluded.last_seen_day)`, src.table)
+  last_seen_day  = MAX(actors.last_seen_day,  excluded.last_seen_day),
+  is_user        = MAX(actors.is_user,        excluded.is_user)`, src.table)
 			if _, err := tx.ExecContext(ctx, q,
 				project, src.surface, day.String(), day.String(),
 				project, day.String()); err != nil {
@@ -59,10 +67,14 @@ ON CONFLICT(project, actor_id) DO UPDATE SET
 // Callers skip anonymous projects: actor_id rotates at midnight there, so
 // first_seen_day would always equal D and every cohort would hold nothing but
 // offset 0. Retention is genuinely undefined under daily rotation.
+//
+// users counts the signed-in subset apart: a visitor who never signs in is
+// recognised on return only if the client keeps a stable install id, so on
+// a client that does not, every page load is an actor that never returns.
 func (d *DB) AggregateRetentionDay(ctx context.Context, project string, day civil.Date) error {
 	return d.tx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `
-INSERT OR REPLACE INTO agg_retention (project, surface, cohort_day, day_offset, actors)
+INSERT OR REPLACE INTO agg_retention (project, surface, cohort_day, day_offset, actors, users)
 WITH active AS (
   SELECT DISTINCT actor_id FROM app_views      WHERE project=? AND substr(ts,1,10)=? AND actor_id <> ''
   UNION
@@ -72,7 +84,8 @@ WITH active AS (
 )
 SELECT a.project, a.surface, a.first_seen_day,
        CAST(julianday(?) - julianday(a.first_seen_day) AS INTEGER),
-       COUNT(DISTINCT a.actor_id)
+       COUNT(DISTINCT a.actor_id),
+       COUNT(DISTINCT CASE WHEN a.is_user = 1 THEN a.actor_id END)
 FROM actors a JOIN active ON active.actor_id = a.actor_id
 WHERE a.project=?
 GROUP BY a.project, a.surface, a.first_seen_day`,
