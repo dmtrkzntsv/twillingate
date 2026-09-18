@@ -11,17 +11,23 @@ import (
 // Surfaces recorded on actors. A web visitor id and an app install_id are
 // different actors even for the same human, and web retention curves sit far
 // below app curves, so blending them would describe neither population.
+// product is an actor first seen through custom events alone -- a
+// product-only project, or a backend sending events -- which is neither.
 const (
-	surfaceWeb = "web"
-	surfaceApp = "app"
+	surfaceWeb     = "web"
+	surfaceApp     = "app"
+	surfaceProduct = "product"
 )
 
 // actorSources lists the raw tables an actor can appear in, with the surface
-// each one attributes to.
+// each one attributes to. Order is precedence: an actor's surface is fixed by
+// the first insert, so one seen in web_hits and product_events on its first
+// day is a web actor that also fires events. Migration 009 relies on this
+// order to relabel history.
 var actorSources = []struct{ table, surface string }{
 	{"app_views", surfaceApp},
 	{"web_hits", surfaceWeb},
-	{"product_events", surfaceWeb},
+	{"product_events", surfaceProduct},
 }
 
 // UpsertActors records first/last seen for every actor active on the given

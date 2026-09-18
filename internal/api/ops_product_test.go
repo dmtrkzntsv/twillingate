@@ -73,6 +73,21 @@ func TestRetentionReturnsCurveAndAggregatedThrough(t *testing.T) {
 	}
 }
 
+// Actors seen only through custom events are their own population; a
+// product-only project has no web or app curve to ask for.
+func TestRetentionAcceptsProductSurface(t *testing.T) {
+	_, cs := newTestHost(t)
+	res := callTool(t, cs, "retention", map[string]any{
+		"project": "blog", "surface": "product", "from": "2026-07-01", "to": "2026-08-31"})
+	if res.IsError {
+		t.Fatalf("error: %s", textOf(res))
+	}
+	out := textOf(res)
+	if !strings.Contains(out, "2026-08-02") || strings.Contains(out, "2026-08-01") {
+		t.Errorf("product curve must hold only the product cohort: %s", out)
+	}
+}
+
 func TestRetentionOnAnonymousProjectExplains(t *testing.T) {
 	_, cs := newTestHost(t)
 	res := callTool(t, cs, "retention", map[string]any{

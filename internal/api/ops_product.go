@@ -68,7 +68,7 @@ func (h *host) productAttributes(ctx context.Context, in productEventsIn) (table
 
 type retentionIn struct {
 	rangeIn
-	Surface string `json:"surface" jsonschema:"web or app; the two populations are cohorted separately"`
+	Surface string `json:"surface" jsonschema:"web, app or product (actors first seen through custom events alone); each population is cohorted separately"`
 }
 
 type retentionOut struct {
@@ -80,8 +80,8 @@ func (h *host) retention(ctx context.Context, in retentionIn) (retentionOut, err
 	if err := h.checkRange(ctx, in.rangeIn); err != nil {
 		return retentionOut{}, err
 	}
-	if in.Surface != "web" && in.Surface != "app" {
-		return retentionOut{}, invalidf("surface must be web or app, got %q", in.Surface)
+	if in.Surface != "web" && in.Surface != "app" && in.Surface != "product" {
+		return retentionOut{}, invalidf("surface must be web, app or product, got %q", in.Surface)
 	}
 	p := h.reg.Snapshot(ctx).Project(in.Project)
 	if p == nil {

@@ -66,7 +66,8 @@ func newTestHost(t *testing.T) (*host, *mcp.ClientSession) {
 	seed(`INSERT INTO agg_product_totals (project, day, total_events, active_users)
 	      VALUES ('blog','2026-08-20',5,4)`)
 	seed(`INSERT INTO agg_retention (project, surface, cohort_day, day_offset, actors)
-	      VALUES ('blog','web','2026-08-01',0,10), ('blog','web','2026-08-01',7,4)`)
+	      VALUES ('blog','web','2026-08-01',0,10), ('blog','web','2026-08-01',7,4),
+	             ('blog','product','2026-08-02',0,3)`)
 	seed(`INSERT INTO agg_identity_daily (project, day, kind, id, actors, users, hits, views, events)
 	      VALUES ('blog','2026-08-20','user','u1',1,1,5,0,2)`)
 	seed(`INSERT INTO identities (project, kind, id, name) VALUES ('blog','user','u1','Jane Doe')`)

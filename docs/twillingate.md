@@ -792,7 +792,7 @@ already apply the caveats below.
 | `app_breakdown` | `dimension`, `limit` | One of `screens`, `versions`, `os`, `devices`, `countries` |
 | `product_events` | `event` (optional filter) | Count and unique users per event name, plus daily totals |
 | `product_attributes` | `event`, `key` | Value breakdowns for a declared attribute. `$platform` and `$app_version` are always available; a custom key only appears once the project declares it |
-| `retention` | `surface` (`web` or `app`) | Cohort curves, plus `aggregated_through` — cohorts after that day are **absent, not zero** |
+| `retention` | `surface` (`web`, `app` or `product`) | Cohort curves, plus `aggregated_through` — cohorts after that day are **absent, not zero** |
 | `identities` | `kind` (`user` or `group`), `limit` | Per-user or per-group activity with display names. **Surfaces personal data on identified projects** |
 | `query` | `sql` | A single read-only `SELECT`/`WITH` against the views. Row-capped and time-limited |
 
@@ -872,7 +872,10 @@ from the DDL. The three that matter most:
 3. **`v_retention` has no live half.** It refreshes at the 03:00 UTC daily
    pass; cohort days after that are ABSENT, not zero. It is populated only
    for projects with `identity=identified`, because anonymous visitor ids
-   rotate daily and cohorts are undefined.
+   rotate daily and cohorts are undefined. Each actor belongs to one
+   `surface`, fixed on its first day: `app` if it sent a screen view, else
+   `web` if it sent a pageview, else `product` (seen through custom events
+   alone — a product-only project has only this curve).
 
 Every view carries a `project` column — always filter on it.
 
