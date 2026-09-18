@@ -483,7 +483,7 @@ func TestRunDailyPassPrunesActorsAndIdentities(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(
-		`INSERT INTO actors VALUES ('app','stale','app','2020-01-01','2020-01-01')`); err != nil {
+		`INSERT INTO actors (project, actor_id, surface, first_seen_day, last_seen_day) VALUES ('app','stale','app','2020-01-01','2020-01-01')`); err != nil {
 		t.Fatal(err)
 	}
 

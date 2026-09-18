@@ -45,7 +45,7 @@ Views (all carry a 'project' column — always filter on it):
   v_app_devices(project, day, device_model, actives, views)
   v_app_countries(project, day, country, actives, views)
   v_identity_daily(project, day, kind, id, actors, users, hits, views, events)  -- kind: 'user'|'group'
-  v_retention(project, surface, cohort_day, day_offset, actors, cohort_size)    -- surface: 'web'|'app'|'product'
+  v_retention(project, surface, cohort_day, day_offset, actors, cohort_size, users, user_cohort_size)  -- surface: 'web'|'app'|'product'; users: the signed-in subset
   v_product_attrs(project, day, event_name, attr_key, attr_value, count, unique_users)
   identities(project, kind, id, name)  -- display names, joinable to v_identity_daily
 

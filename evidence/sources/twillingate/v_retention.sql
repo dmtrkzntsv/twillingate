@@ -3,8 +3,9 @@
 -- object" and fails the whole source build -- taking every other query on the
 -- page down with it. A fresh install has no traffic yet, so emit a sentinel
 -- row when the view is empty; pages filter it out via their project clause.
-select project, surface, cohort_day, day_offset, actors, cohort_size
+select project, surface, cohort_day, day_offset, actors, cohort_size,
+       users, user_cohort_size
 from v_retention
 union all
-select '', '', '1970-01-01', 0, 0, 0
+select '', '', '1970-01-01', 0, 0, 0, 0, 0
 where not exists (select 1 from v_retention)

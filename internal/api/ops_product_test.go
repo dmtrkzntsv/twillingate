@@ -66,7 +66,7 @@ func TestRetentionReturnsCurveAndAggregatedThrough(t *testing.T) {
 		t.Fatalf("error: %s", textOf(res))
 	}
 	out := textOf(res)
-	for _, want := range []string{"2026-08-01", "cohort_size", "aggregated_through"} {
+	for _, want := range []string{"2026-08-01", "cohort_size", "user_cohort_size", "aggregated_through"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q: %s", want, out)
 		}

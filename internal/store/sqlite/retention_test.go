@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -358,6 +359,105 @@ func TestAggregateRetentionDayIsIdempotent(t *testing.T) {
 	}
 	if n != 1 || actors != 1 {
 		t.Errorf("rows=%d actors=%d after replay; want 1 and 1", n, actors)
+	}
+}
+
+// A visitor who never signs in cannot be recognised on return unless the
+// client keeps a stable install id, so blending them into the curve buries
+// the signed-in users' retention. Cohorts carry the signed-in count apart.
+func TestAggregateRetentionDayCountsSignedInUsersApart(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	d1 := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
+	d2 := time.Date(2026, 8, 2, 10, 0, 0, 0, time.UTC)
+
+	signedIn := func(id string, t time.Time) store.ProductEvent {
+		e := eventAt(id, "u1", t)
+		e.UserID = "u1"
+		return e
+	}
+	if err := db.WriteProductEvents(ctx, []store.ProductEvent{
+		signedIn("1", d1), eventAt("2", "anon", d1),
+		signedIn("3", d2), eventAt("4", "anon", d2),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, day := range []civil.Date{onDay(2026, 8, 1), onDay(2026, 8, 2)} {
+		if err := db.UpsertActors(ctx, "p", day); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.AggregateRetentionDay(ctx, "p", day); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var isUser int
+	if err := db.db.QueryRowContext(ctx,
+		`SELECT is_user FROM actors WHERE project='p' AND actor_id='u1'`).Scan(&isUser); err != nil {
+		t.Fatal(err)
+	}
+	if isUser != 1 {
+		t.Errorf("u1 is_user = %d, want 1", isUser)
+	}
+	var actors, users, size, userSize int
+	if err := db.db.QueryRowContext(ctx,
+		`SELECT actors, users, cohort_size, user_cohort_size FROM v_retention
+		 WHERE project='p' AND cohort_day='2026-08-01' AND day_offset=1`).
+		Scan(&actors, &users, &size, &userSize); err != nil {
+		t.Fatal(err)
+	}
+	if actors != 2 || users != 1 || size != 2 || userSize != 1 {
+		t.Errorf("d1 = actors %d/%d users %d/%d; want 2/2 and 1/1", actors, size, users, userSize)
+	}
+}
+
+// Migration 011 marks existing actors as signed-in users from whatever still
+// proves it: raw rows carrying a user_id, or the per-user identity rollup
+// that outlives them. The ALTERs are stripped so the body re-runs against
+// seeded rows.
+func TestMigration011MarksSignedInActors(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	ts := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
+
+	e := eventAt("1", "raw-user", ts)
+	e.UserID = "raw-user"
+	if err := db.WriteProductEvents(ctx, []store.ProductEvent{e, eventAt("2", "anon", ts)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.db.ExecContext(ctx, `
+INSERT INTO actors (project, actor_id, surface, first_seen_day, last_seen_day) VALUES
+  ('p','raw-user','product','2026-08-01','2026-08-01'),
+  ('p','rolled-up','product','2026-06-01','2026-06-01'),
+  ('p','anon','product','2026-08-01','2026-08-01');
+INSERT INTO agg_identity_daily (project, day, kind, id, actors, users, hits, views, events)
+VALUES ('p','2026-06-01','user','rolled-up',1,1,0,0,3);`); err != nil {
+		t.Fatal(err)
+	}
+
+	body, err := migrationFS.ReadFile("migrations/011_retention_users.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stmts []string
+	for _, line := range strings.Split(string(body), "\n") {
+		if !strings.HasPrefix(line, "ALTER TABLE") {
+			stmts = append(stmts, line)
+		}
+	}
+	if _, err := db.db.ExecContext(ctx, strings.Join(stmts, "\n")); err != nil {
+		t.Fatalf("migration 011: %v", err)
+	}
+
+	for actor, want := range map[string]int{"raw-user": 1, "rolled-up": 1, "anon": 0} {
+		var got int
+		if err := db.db.QueryRowContext(ctx,
+			`SELECT is_user FROM actors WHERE project='p' AND actor_id=?`, actor).Scan(&got); err != nil {
+			t.Fatal(err)
+		}
+		if got != want {
+			t.Errorf("%s is_user = %d, want %d", actor, got, want)
+		}
 	}
 }
 

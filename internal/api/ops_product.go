@@ -91,7 +91,7 @@ func (h *host) retention(ctx context.Context, in retentionIn) (retentionOut, err
 		return retentionOut{}, invalidf(
 			"project %q is anonymous: retention is undefined because visitor ids rotate daily; it requires the project setting identity=identified (a privacy-significant change — see the README's GDPR section)", in.Project)
 	}
-	tbl, err := h.table(ctx, `SELECT cohort_day, day_offset, actors, cohort_size
+	tbl, err := h.table(ctx, `SELECT cohort_day, day_offset, actors, cohort_size, users, user_cohort_size
 		FROM v_retention WHERE project=? AND surface=? AND cohort_day BETWEEN ? AND ?
 		ORDER BY cohort_day, day_offset`, in.Project, in.Surface, in.From, in.To)
 	if err != nil {
