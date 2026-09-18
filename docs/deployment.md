@@ -109,14 +109,14 @@ Keep the API on one hostname — OAuth and `cloudflare://` are bound to it.
 curl -i -X POST http://localhost:8080/ingest/events \
   -H 'Content-Type: application/json' \
   -H 'Origin: https://myapp.com' \
-  -d '{"key":"ak_…","events":[{"name":"$pageview",
+  -d '{"key":"ak_…","events":[{"name":"$page_view",
        "attributes":{"$host":"myapp.com","$path":"/"}}]}'
 
 # Expect 403 — the origin is not in allowed_origins
 curl -i -X POST http://localhost:8080/ingest/events \
   -H 'Content-Type: application/json' \
   -H 'Origin: https://not-allowed.com' \
-  -d '{"key":"ak_…","events":[{"name":"$pageview",
+  -d '{"key":"ak_…","events":[{"name":"$page_view",
        "attributes":{"$host":"myapp.com","$path":"/"}}]}'
 ```
 
@@ -169,7 +169,10 @@ the boot with the replacement named.
   downloads and holds a database in memory.
 - Lower `RETENTION_VIEWS_RAW_DAYS` (for example `7`): raw view rows are
   the largest table, and the window only buys late-arrival tolerance for
-  offline clients — events older than it are clamped, not lost.
+  offline clients — events older than it are clamped, not lost. The live
+  halves of the `v_views_*` views scan the whole raw window on every
+  query, so a shorter window also makes breakdowns and the dashboard
+  faster.
 
 Maintenance is bounded on purpose: aggregation and pruning run once a day at
 03:00 UTC, and free pages are reclaimed with incremental vacuum rather than a
@@ -345,7 +348,7 @@ token:
 
 ```bash
 curl -H "Authorization: Bearer $TOKEN" \
-  "https://twillingate.example.com/api/projects/blog/web/overview?from=2026-09-01&to=2026-09-13"
+  "https://twillingate.example.com/api/projects/blog/views/overview?from=2026-09-01&to=2026-09-13"
 ```
 
 Every route, its inputs and its error shape are in
@@ -651,7 +654,7 @@ litestream restore -config /etc/litestream.yml -o /tmp/check.db \
 # It must be a valid database, not just a file that exists:
 sqlite3 /tmp/check.db 'PRAGMA quick_check;'          # expect: ok
 sqlite3 /tmp/check.db 'SELECT COUNT(*) FROM projects;'
-sqlite3 /tmp/check.db "SELECT MAX(day) FROM v_web_daily;"
+sqlite3 /tmp/check.db "SELECT MAX(day) FROM v_views_daily;"
 rm /tmp/check.db
 ```
 
