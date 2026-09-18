@@ -420,9 +420,11 @@ func (c *Config) validate() error {
 	return nil
 }
 
-// MaxEventAge is derived from the views raw window rather than separately
-// configurable: the two must agree or a clamped timestamp could land in an
-// already-aggregated day.
+// MaxEventAge is derived from the global views raw window rather than
+// separately configurable: the two must agree or a clamped timestamp could
+// land in an already-aggregated day. This is the default; ingest clamps
+// against the project's own window (which may override this global one),
+// not this value.
 func (c *Config) MaxEventAge() time.Duration {
 	return time.Duration(c.Retention.Views.RawDays) * 24 * time.Hour
 }

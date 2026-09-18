@@ -453,6 +453,64 @@ func TestClientTimestampIsUsedAndClamped(t *testing.T) {
 	}
 }
 
+// intPtr is a test helper for building a *int override, mirroring the
+// pattern used across internal/config and internal/jobs tests.
+func intPtr(n int) *int { return &n }
+
+// TestEventAgeClampUsesProjectRetention verifies the fix for the per-project
+// clamp: a project with a Views.RawDays override below the global default
+// must clamp against its own window, not the global one, or a clock-skewed
+// late event can land on a day whose raw rows this project already
+// aggregated and deleted.
+func TestEventAgeClampUsesProjectRetention(t *testing.T) {
+	cfg := configtest.Load(t, nil)
+	reg := newTestRegistry(t, cfg,
+		[]manage.ProjectSpec{
+			{Alias: "clamped", Name: "Clamped", AllowedOrigins: []string{testOrigin},
+				Retention: &config.RetentionOverride{Views: &config.RetentionClassOverride{RawDays: intPtr(3)}}},
+			{Alias: "normal", Name: "Normal", AllowedOrigins: []string{testOrigin}},
+		},
+		map[string][2]string{"clamped": {"ak_clamped", "web"}, "normal": {"ak_normal", "web"}})
+	g, _ := geo.New("cloudflare://", t.TempDir(), slog.Default())
+	q := &fakeQueue{}
+	h := New(cfg, reg, q, g, fixedSalt{}, q, slog.Default())
+
+	oldTS := time.Now().UTC().AddDate(0, 0, -10).Format(time.RFC3339)
+
+	// The overridden project: a 10-day-old event must clamp to its 3-day
+	// window, not the 30-day global default.
+	w := post(h, `{"key":"ak_clamped","events":[{"name":"$page_view","ts":"`+oldTS+`","attributes":{"$path":"/x"}}]}`, nil)
+	res := decodeResult(t, w)
+	if len(res.Warnings) != 1 || !strings.Contains(res.Warnings[0].Reason, "clamped") {
+		t.Fatalf("warnings = %+v, want a clamp warning", res.Warnings)
+	}
+	if len(q.views) != 1 {
+		t.Fatalf("views = %+v", q.views)
+	}
+	age := time.Since(q.views[0].TS)
+	if age < 3*24*time.Hour || age > 3*24*time.Hour+time.Minute {
+		t.Errorf("clamped view age = %v, want ~3 days (the project's own window)", age)
+	}
+
+	// Control: a project with no override keeps the global 30-day default,
+	// so a 10-day-old timestamp is within range and passes through as-is.
+	w = post(h, `{"key":"ak_normal","events":[{"name":"$page_view","ts":"`+oldTS+`","attributes":{"$path":"/x"}}]}`, nil)
+	res = decodeResult(t, w)
+	if len(res.Warnings) != 0 {
+		t.Fatalf("warnings = %+v, want none: 10 days is within the 30-day default", res.Warnings)
+	}
+	if len(q.views) != 2 {
+		t.Fatalf("views = %+v", q.views)
+	}
+	got, err := time.Parse(time.RFC3339, oldTS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !q.views[1].TS.Equal(got) {
+		t.Errorf("unclamped ts = %v, want the client value %v", q.views[1].TS, got)
+	}
+}
+
 func TestOversizedBatchIsRejected(t *testing.T) {
 	_, h := testServer(t)
 	var b strings.Builder

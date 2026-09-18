@@ -46,7 +46,8 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	if key == "" {
 		key = env.Key
 	}
-	p, label, ok := s.reg.Snapshot(r.Context()).ProjectByKey(key)
+	snap := s.reg.Snapshot(r.Context())
+	p, label, ok := snap.ProjectByKey(key)
 	if !ok {
 		// One auth outcome. Because the key resolves the project, there is
 		// no unknown-project case to keep indistinguishable from a bad key.
@@ -80,7 +81,11 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	// the web kind only. Applying it to app traffic would drop every client
 	// whose HTTP library sends a non-browser User-Agent.
 	botUA := enrich.IsBot(ua)
-	maxAge := s.cfg.MaxEventAge()
+	// Clamp to this project's own views raw window, not the global default:
+	// the daily pass aggregates and deletes raw rows per project using
+	// snap.RetentionFor(alias), so a clamp derived from the global window
+	// could still land a late event on a day this project already deleted.
+	maxAge := time.Duration(snap.RetentionFor(p.Alias).Views.RawDays) * 24 * time.Hour
 
 	var res ingestResult
 	var names []store.Identity
