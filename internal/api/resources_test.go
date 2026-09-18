@@ -17,7 +17,7 @@ func TestSchemaResources(t *testing.T) {
 	}
 	text := res.Contents[0].Text
 	for _, want := range []string{
-		"v_web_daily", "v_retention", "YYYY-MM-DD",
+		"v_views_daily", "v_retention", "YYYY-MM-DD",
 		"03:00 UTC", "identified", "includes yesterday",
 	} {
 		if !strings.Contains(text, want) {

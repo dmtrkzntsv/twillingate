@@ -61,7 +61,7 @@ func TestProductAttributesReturnsRows(t *testing.T) {
 func TestRetentionReturnsCurveAndAggregatedThrough(t *testing.T) {
 	_, cs := newTestHost(t)
 	res := callTool(t, cs, "retention", map[string]any{
-		"project": "blog", "surface": "web", "from": "2026-07-01", "to": "2026-08-31"})
+		"project": "blog", "actor": "user", "from": "2026-07-01", "to": "2026-08-31"})
 	if res.IsError {
 		t.Fatalf("error: %s", textOf(res))
 	}
@@ -76,12 +76,24 @@ func TestRetentionReturnsCurveAndAggregatedThrough(t *testing.T) {
 func TestRetentionOnAnonymousProjectExplains(t *testing.T) {
 	_, cs := newTestHost(t)
 	res := callTool(t, cs, "retention", map[string]any{
-		"project": "docs", "surface": "web", "from": "2026-07-01", "to": "2026-08-31"})
+		"project": "docs", "actor": "user", "from": "2026-07-01", "to": "2026-08-31"})
 	if !res.IsError {
 		t.Fatal("anonymous project retention did not error")
 	}
 	if out := textOf(res); !strings.Contains(out, "identified") {
 		t.Errorf("error must explain the identity requirement: %s", out)
+	}
+}
+
+func TestRetentionRejectsUnknownActor(t *testing.T) {
+	_, cs := newTestHost(t)
+	res := callTool(t, cs, "retention", map[string]any{
+		"project": "blog", "actor": "app", "from": "2026-07-01", "to": "2026-08-31"})
+	if !res.IsError {
+		t.Fatal("unknown actor did not error")
+	}
+	if out := textOf(res); !strings.Contains(out, "user or install") {
+		t.Errorf("error must explain the valid actors: %s", out)
 	}
 }
 
@@ -95,5 +107,11 @@ func TestIdentities(t *testing.T) {
 	out := textOf(res)
 	if !strings.Contains(out, "u1") || !strings.Contains(out, "Jane Doe") {
 		t.Errorf("identities missing id or name: %s", out)
+	}
+	if !strings.Contains(out, "views") || !strings.Contains(out, "events") {
+		t.Errorf("identities missing views/events columns: %s", out)
+	}
+	if strings.Contains(out, "hits") {
+		t.Errorf("identities must not carry the retired hits column: %s", out)
 	}
 }

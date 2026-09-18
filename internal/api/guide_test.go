@@ -23,7 +23,7 @@ func TestIntegrationGuideWebUsesCollectorURLAndIdentity(t *testing.T) {
 	if strings.Contains(out, "blog.example.com/js/twillingate.js") {
 		t.Error("snippet points at the customer origin (the old bug)")
 	}
-	for _, want := range []string{"IDENTIFIED", "consent", "twillingate.reset"} {
+	for _, want := range []string{"IDENTIFIED", "consent", "twillingate.reset", "data-kind"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("identified-mode guidance missing %q", want)
 		}

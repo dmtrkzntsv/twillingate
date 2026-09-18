@@ -37,7 +37,7 @@ func TestEveryToolChoosesATransport(t *testing.T) {
 		}
 		seen[key] = s.Name
 	}
-	if len(r.specs) != 19 {
-		t.Errorf("registered %d tools, want 19", len(r.specs))
+	if len(r.specs) != 17 {
+		t.Errorf("registered %d tools, want 17", len(r.specs))
 	}
 }
