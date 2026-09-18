@@ -15,7 +15,7 @@ select identity from twillingate.projects where alias = '${params.project}'
 </Dropdown>
 
 ```sql users_daily
-select day, count(distinct id) as active_users, sum(hits + views + events) as actions
+select day, count(distinct id) as active_users, sum(views + events) as actions
 from twillingate.v_identity_daily
 where project = '${params.project}' and kind = 'user' and id != ''
   and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range.value} - 1) day, '%Y-%m-%d')
@@ -24,9 +24,9 @@ group by day order by day
 ```
 
 ```sql users_totals
-select count(distinct id) as users, sum(hits + views + events) as actions,
+select count(distinct id) as users, sum(views + events) as actions,
        case when count(distinct id) > 0
-            then sum(hits + views + events) * 1.0 / count(distinct id) else 0 end as per_user
+            then sum(views + events) * 1.0 / count(distinct id) else 0 end as per_user
 from twillingate.v_identity_daily
 where project = '${params.project}' and kind = 'user' and id != ''
   and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range.value} - 1) day, '%Y-%m-%d')
@@ -35,7 +35,7 @@ where project = '${params.project}' and kind = 'user' and id != ''
 
 ```sql users_top
 select coalesce(i.name, d.id) as name,
-       sum(d.hits + d.views + d.events) as actions,
+       sum(d.views + d.events) as actions,
        count(distinct d.day) as active_days,
        max(d.day) as last_seen
 from twillingate.v_identity_daily d

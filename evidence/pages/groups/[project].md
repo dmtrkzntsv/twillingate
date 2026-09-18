@@ -22,7 +22,7 @@ group by day order by day
 ```
 
 ```sql groups_totals
-select count(distinct id) as groups, sum(hits + views + events) as actions
+select count(distinct id) as groups, sum(views + events) as actions
 from twillingate.v_identity_daily
 where project = '${params.project}' and kind = 'group' and id != ''
   and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range.value} - 1) day, '%Y-%m-%d')
@@ -32,7 +32,7 @@ where project = '${params.project}' and kind = 'group' and id != ''
 ```sql groups_top
 select coalesce(i.name, d.id) as name,
        max(d.users) as users,
-       sum(d.hits + d.views + d.events) as actions,
+       sum(d.views + d.events) as actions,
        count(distinct d.day) as active_days,
        max(d.day) as last_seen
 from twillingate.v_identity_daily d

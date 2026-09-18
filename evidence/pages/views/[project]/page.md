@@ -1,6 +1,6 @@
 # {browser ? $page.url.searchParams.get('path') : null}
 
-[← back to {params.project}](/web/{params.project})
+[← back to {params.project}](/views/{params.project})
 
 <Dropdown name=range title="Date range" defaultValue="30">
     <DropdownOption value="1" valueLabel="Last 1 day" />
@@ -24,8 +24,8 @@
 -->
 
 ```sql page_daily
-select day, visitors, pageviews
-from twillingate.v_web_pages
+select day, visitors, views
+from twillingate.v_views_paths
 where project = '${params.project}'
   and path = '${browser ? ($page.url.searchParams.get('path') ?? '').replaceAll("'", "''") : ''}'
   and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range.value} - 1) day, '%Y-%m-%d')
@@ -34,9 +34,9 @@ order by day
 ```
 
 ```sql page_totals
-select sum(visitors) as visitors, sum(pageviews) as pageviews,
-       case when sum(visitors) > 0 then sum(pageviews) * 1.0 / sum(visitors) else 0 end as views_per_visitor
-from twillingate.v_web_pages
+select sum(visitors) as visitors, sum(views) as views,
+       case when sum(visitors) > 0 then sum(views) * 1.0 / sum(visitors) else 0 end as views_per_visitor
+from twillingate.v_views_paths
 where project = '${params.project}'
   and path = '${browser ? ($page.url.searchParams.get('path') ?? '').replaceAll("'", "''") : ''}'
   and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range.value} - 1) day, '%Y-%m-%d')
@@ -45,14 +45,14 @@ where project = '${params.project}'
 
 <Grid cols=3>
     <BigValue data={page_totals} value=visitors fmt=num0 title="Visitors" />
-    <BigValue data={page_totals} value=pageviews fmt=num0 title="Pageviews" />
+    <BigValue data={page_totals} value=views fmt=num0 title="Views" />
     <BigValue data={page_totals} value=views_per_visitor fmt=num1 title="Views per visitor" />
 </Grid>
 
-<LineChart data={page_daily} x=day y={["visitors","pageviews"]} title="Traffic to this page" yFmt=num0 />
+<LineChart data={page_daily} x=day y={["visitors","views"]} title="Traffic to this page" yFmt=num0 />
 
 <DataTable data={page_daily} rows=15>
     <Column id=day title="Day" />
     <Column id=visitors title="Visitors" fmt=num0 contentType=colorscale />
-    <Column id=pageviews title="Pageviews" fmt=num0 />
+    <Column id=views title="Views" fmt=num0 />
 </DataTable>
