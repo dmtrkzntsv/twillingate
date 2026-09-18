@@ -7,7 +7,7 @@ Supersedes the family split introduced by `2026-08-23-app-analytics-design.md`.
 ## 1. Purpose
 
 Twillingate stores three event families: web (`$pageview` → `web_hits`),
-app (`$screen_view` → `app_views`) and product (everything else). Web and
+app (`$screenview` → `app_views`) and product (everything else). Web and
 app are the same thing built twice: a view stream with an actor, a
 session, a location and environment dimensions, feeding the same overview,
 breakdown and retention questions. The differences are which columns are
@@ -19,7 +19,7 @@ name, which is the wrong axis (an Electron app is a web page *and* an app).
 
 After this change there are two families:
 
-- **views** — `$pageview` and `$screen_view`, one table, one aggregator,
+- **views** — `$pageview` and `$screenview`, one table, one aggregator,
   one set of views, one Evidence page, two tools. The client declares a
   free-form `kind` (`web`, `app`, `cli`, …); only `web` has server-side
   meaning.
@@ -48,10 +48,9 @@ analytics" as a lens over it rather than a separate store.
 | Decision | Choice |
 |---|---|
 | Family name | `views` — tables `views`, `agg_views_*`; stitch views `v_views_*`; tools `views_overview`, `views_breakdown`; env `RETENTION_VIEWS_*` |
-| Kind | Free-form string per row, from `$kind`; defaults from the event name (`$pageview`→`web`, `$screen_view`→`app`); validated `^[a-z][a-z0-9_]{0,15}$` |
-| Wire names | Both `$pageview` and `$screen_view` stay accepted; neither selects a table any more |
-| Environment source | `web` rows are parsed from the User-Agent and bot-filtered; every other kind is taken as declared. Declared keys override parsed values on any kind |
-| Platform | `$platform` stays the wire key; it is the OS. Stored in `os`, normalised to the parser's vocabulary |
+| Kind | Free-form string per row, from `$kind`; defaults from the event name (`$pageview`→`web`, `$screenview`→`app`); validated `^[a-z][a-z0-9_]{0,15}$` |
+| Wire names | `$pageview` and `$screenview` (renamed from `$screen_view`, which stays a silent alias); neither selects a table any more |
+| OS | `$os` replaces `$platform` as the wire key (`$platform` stays a silent alias). It is the OS, stored in `os`, normalised to the parser's vocabulary. Product events follow: column `platform`→`os`, rollup key `$platform`→`$os` |
 | Sessions | The app rule: client `$session_id` authoritative, else a >30 min gap per actor. Bounce = session with one view |
 | Dimension cap | 500 values per day per dimension, trailing key collapses into `(other)` — the app rule applied everywhere, including paths (new for web) |
 | Retention population | `actor_kind` ∈ {`user`,`install`,`connection`} recorded at ingest on views and product events; only `user` and `install` actors are cohorted |
@@ -62,16 +61,22 @@ analytics" as a lens over it rather than a separate store.
 
 ## 4. Wire format
 
-`POST /ingest/events` is unchanged in shape. Two additions and one
-reinterpretation:
+`POST /ingest/events` is unchanged in shape. Two additions, two renames
+and one reinterpretation. Names are consistent: event names are one
+word (`$pageview`, `$screenview`), attribute keys are `snake_case`, and a
+key is named for the column it lands in.
 
+- **`$screenview`** replaces `$screen_view` as the app view event name.
+  `$screen_view` is accepted as a silent alias and not documented.
+- **`$os`** replaces `$platform` for the declared operating system.
+  `$platform` is accepted as a silent alias and not documented.
 - **`$kind`** (new reserved key). Free-form, usually a batch attribute.
   Absent → defaults from the event name. Invalid (fails the pattern) →
   warning `invalid $kind %q, using %q` and the default is used, so a typo
   cannot create a dimension.
 - **`$viewport_width`** (new reserved key). Integer pixels. Non-integer or
   ≤ 0 → warning, stored as 0 (absent).
-- **`$screen`** is now an alias for `$path` on any view: a `$screen_view`
+- **`$screen`** is now an alias for `$path` on any view: a `$screenview`
   without `$path` takes its location from `$screen`. A view with neither
   is rejected `view requires $path or $screen`, replacing the two
   per-name messages.
@@ -81,7 +86,7 @@ Reserved event names table becomes:
 | name | family | default kind | location key |
 |---|---|---|---|
 | `$pageview` | views | `web` | `$path` |
-| `$screen_view` | views | `app` | `$screen` (or `$path`) |
+| `$screenview` | views | `app` | `$screen` (or `$path`) |
 | anything else | product | — | — |
 
 Reserved attribute keys after the change (groups as documented):
@@ -89,12 +94,14 @@ Reserved attribute keys after the change (groups as documented):
 | Group | Keys |
 |---|---|
 | Identity | `$install_id` `$user_id` `$user_name` `$group_id` `$group_name` `$session_id` |
-| Environment | `$kind` `$platform` `$app_version` `$os_version` `$device_model` `$locale` `$viewport_width` |
+| Environment | `$kind` `$os` `$os_version` `$app_version` `$device_model` `$locale` `$viewport_width` |
 | Location | `$host` `$path` `$screen` `$utm_source` `$utm_medium` `$utm_campaign` `$referrer` |
 
 The `App` group in the reserved-keys table is gone; `$screen` moves to
-Location. `docs_sync_test.go` reads that table, so the doc and
-`ingest.go` change together.
+Location. `docs_sync_test.go` reads that table and requires every key in
+it to appear in `ingest.go` and vice versa; the two aliases are excluded
+from that check by an explicit `aliasKeys` list in the test, the way
+`removedKeys` already excludes `$url`.
 
 ## 5. Ingest rules
 
@@ -117,18 +124,19 @@ the name is not one of the two view names, else view. The view path:
    Otherwise no parsing, no filtering, and `$referrer` is stored through
    `CleanReferrer` with an empty host (face value), so an app deep link
    can still carry a referrer.
-5. Declared keys override: `$platform` (normalised) → `os`; `$os_version`,
+5. Declared keys override: `$os` (normalised) → `os`; `$os_version`,
    `$device_model`, `$locale`, `$app_version` stored as sent;
-   `$viewport_width` parsed. A declared `$platform` on a web row replaces
+   `$viewport_width` parsed. A declared `$os` on a web row replaces
    the parsed OS; a parsed browser on a non-web row never happens because
    step 4 skipped the parse.
 6. Enqueue `store.View`.
 
-Platform normalisation (`enrich.PlatformOS`): `ios`→`iOS`,
+OS normalisation (`enrich.NormalizeOS`): `ios`→`iOS`,
 `android`→`Android`, `macos`→`macOS`, `windows`→`Windows`,
 `linux`→`Linux`, `chromeos`→`ChromeOS`; case-insensitive on input; any
-other value is stored as sent. `$platform` on product events keeps its
-existing column and rollup untouched.
+other value is stored as sent. Product events store the same normalised
+value in their `os` column (renamed from `platform`), and the product
+rollup's system dimension key becomes `$os`.
 
 Bot filtering keyed on kind means a `web` row from a non-browser client is
 filtered exactly as today, and an `app` or `cli` row is never filtered
@@ -180,8 +188,10 @@ labels are `views` and `product_events`.
 ### 6.2 `product_events`
 
 Gains `actor_kind TEXT NOT NULL DEFAULT ''`. Existing rows stay `''`,
-which the actor upsert treats like `connection` (skipped). Nothing else
-changes.
+which the actor upsert treats like `connection` (skipped). The `platform`
+column is renamed `os`, and `agg_product_attrs` rows with
+`attr_key='$platform'` are rewritten to `'$os'` (§11). The rollup itself
+is unchanged.
 
 ### 6.3 Aggregates
 
@@ -318,7 +328,7 @@ take a Litestream snapshot first.
      `device_model=''`, `locale=''`, `viewport_width=0`, `app_version=''`.
    - `app_views` → `kind='app'`, `actor_kind = CASE WHEN user_id<>'' THEN
      'user' ELSE 'install' END`, `path=screen`, `os=` platform normalised
-     via a `CASE` mirroring `enrich.PlatformOS`, `device=''`, `browser=''`,
+     via a `CASE` mirroring `enrich.NormalizeOS`, `device=''`, `browser=''`,
      `host=''`.
 2. Create the aggregate tables (§6.3) and fold:
    - `agg_views_daily` ← `agg_web_daily` as `web`
@@ -344,7 +354,11 @@ take a Litestream snapshot first.
    noise they already had; the contract page dates the boundary.
 4. `agg_identity_daily`: rebuild with `views = hits + views`.
 5. `ALTER TABLE product_events ADD COLUMN actor_kind TEXT NOT NULL
-   DEFAULT ''`.
+   DEFAULT ''`; `ALTER TABLE product_events RENAME COLUMN platform TO os`
+   (values normalised in place with the same `CASE`);
+   `UPDATE agg_product_attrs SET attr_key='$os' WHERE attr_key='$platform'`
+   with the values normalised the same way, summing on collision (`ios`
+   and `iOS` rows for one event and day become one).
 6. Drop `web_hits`, `app_views`, every `agg_web_*`, every `agg_app_*`.
    Drop every `v_*` and recreate all of them (§8), product views
    included, matching the 003/004 precedent.
@@ -401,20 +415,21 @@ branch mentions `data-kind` for Electron/Tauri.
 | Addition | Init option | Tag attribute | Default |
 |---|---|---|---|
 | kind | `kind` | `data-kind` | `web` |
-| platform | `platform` (exists) | `data-platform` | none |
+| OS | `os` (renamed from `platform`, which stays as a deprecated alias) | `data-os` | none |
 | app version | `appVersion` (exists) | `data-app-version` | none |
 
 - `$kind` is a batch attribute, always sent.
-- With `kind !== "web"` the auto-tracker emits `$screen_view` with
+- With `kind !== "web"` the auto-tracker emits `$screenview` with
   `$screen` = the masked route path (same routing/masking rules as
   `page()`), and no `$host`, `$referrer` or `$utm_*`. With `web` it
   emits `$pageview` exactly as today.
-- Every `$pageview` / `$screen_view` carries `$viewport_width =
+- Every `$pageview` / `$screenview` carries `$viewport_width =
   window.innerWidth` at emission time.
 - Every batch carries `$locale = navigator.language` when available.
 - `page()`, `screen()`, `track()` and the rest of the public API are
   unchanged; `docs_sync_test.go`'s symbol list gains `data-kind`,
-  `data-platform`, `data-app-version`, `$kind`, `$viewport_width`.
+  `data-os`, `data-app-version`, `$kind`, `$os`, `$viewport_width` and
+  drops `$screen_view` for `$screenview`.
 
 ## 15. Documentation (same commit)
 
@@ -426,6 +441,10 @@ branch mentions `data-kind` for Electron/Tauri.
 - Reserved event names and reserved attribute keys tables per §4.
 - Tools table, "seventeen tools", HTTP API route table, the queryable
   views paragraph (`v_views_*`), the SDK attribute table and defaults.
+  The `product_attributes` row says `$os` and `$app_version` are always
+  available; the attribute-breakdowns section says the same.
+- Every `$screen_view` and `$platform` in the page becomes `$screenview`
+  and `$os`; the aliases are not documented.
 - A dated "Changed in this release" note: tool names, routes, view names,
   env vars, the retention parameter, capped paths, the app-days-have-zero-
   bounces boundary, and the empty device-class/model boundary.
@@ -447,11 +466,12 @@ branch mentions `data-kind` for Electron/Tauri.
   registry coverage tests pick up the new tables.
 - Ingest: kind default and validation; screen→path; reject without
   location; bot filter on `web` only; no parse on non-web; declared
-  override of parsed OS; platform normalisation; viewport parsing;
+  override of parsed OS; OS normalisation; both aliases accepted
+  silently; viewport parsing;
   `actor_kind` for each identity shape; product events carry
   `actor_kind`.
 - Enrich: browser major version for each browser the parser knows;
-  `PlatformOS`.
+  `NormalizeOS`.
 - Jobs: daily pass with the two families; retention skips connection
   actors; prune cutoffs.
 - Config: new variables, old names refused, `MaxEventAge`, legacy override
@@ -460,8 +480,8 @@ branch mentions `data-kind` for Electron/Tauri.
   every dimension; `retention` `actor`; REST parity; docs sync (tools,
   routes, env vars, reserved keys, SDK symbols, views dimensions —
   `TestDocumentCoversEveryWebDimension` becomes `…EveryViewsDimension`).
-- SDK: `data-kind="app"` emits `$screen_view` on navigation with the
-  masked path and nothing else; `data-platform`/`data-app-version`
+- SDK: `data-kind="app"` emits `$screenview` on navigation with the
+  masked path and nothing else; `data-os`/`data-app-version`
   reach the batch; `$viewport_width` and `$locale` present.
 - Dashboards: prerender test over the new page set.
 
@@ -478,11 +498,14 @@ Breaking:
   change columns.
 - `RETENTION_WEB_*` and `RETENTION_APP_*` refuse the boot; set
   `RETENTION_VIEWS_*`.
+- `product_attributes` with `key: "$platform"` becomes `key: "$os"`;
+  `v_product_attrs` rows carry `$os`.
 - Migration 009 is irreversible; snapshot first.
 
-Not breaking: the ingest wire format, deployed SDK tags, ingest keys,
-project aliases, per-project retention overrides (legacy keys still
-decode).
+Not breaking: the ingest wire format (`$screen_view` and `$platform`
+are still accepted as aliases of `$screenview` and `$os`), deployed SDK
+tags, ingest keys, project aliases, per-project retention overrides
+(legacy keys still decode).
 
 Behaviour changes worth a line: paths are capped at 500 per day; web
 raw rows are kept 30 days by default; app breakdowns no longer jump at
