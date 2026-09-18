@@ -33,8 +33,7 @@ func newID() string {
 }
 
 // handleEvents is the only ingest endpoint. It demultiplexes by event name:
-// $pageview to web_hits, $screen_view to app_views, everything else to
-// product_events.
+// views to the views table, everything else to product_events.
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	var env envelope
 	if !decode(w, r, &env) {
@@ -77,9 +76,9 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	received := time.Now().UTC()
 	ip, ua := clientIP(r), r.Header.Get("User-Agent")
 	country := s.geo.Country(r, ip)
-	// Bot filtering is a web concern and applies to $pageview only. Applying
-	// it to app traffic would drop every client whose HTTP library sends a
-	// non-browser User-Agent.
+	// Bot filtering is a web concern, keyed on kind, not name: it applies to
+	// the web kind only. Applying it to app traffic would drop every client
+	// whose HTTP library sends a non-browser User-Agent.
 	botUA := enrich.IsBot(ua)
 	maxAge := s.cfg.MaxEventAge()
 
@@ -105,67 +104,80 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			res.warn(i, "timestamp out of range, clamped")
 		}
 
-		actor, user, group := resolveIdentity(p, rv, salt, ip, ua)
+		actor, actorKind, user, group := resolveIdentity(p, rv, salt, ip, ua)
 		names = append(names, identityNames(p, rv)...)
 
-		switch ev.Name {
-		case namePageview:
-			if rv.Path == "" {
-				res.reject(i, "$pageview requires $path")
-				continue
-			}
-			if botUA {
-				// Accepted and silently ignored: the client did nothing
-				// wrong, so it must not retry.
-				res.Accepted++
-				continue
-			}
-			// An empty host leaves nothing to compare against, so
-			// CleanReferrer cannot detect a self-referral and takes the
-			// referrer at face value.
-			source := enrich.CleanReferrer(rv.Referrer, rv.Host)
-			device, browser, osName := enrich.ParseUserAgent(ua)
-			s.queue.EnqueueHit(store.WebHit{
-				ID: id, Project: p.Alias, TS: ts, ReceivedAt: received,
-				ActorID: actor, UserID: user, GroupID: group,
-				Host: rv.Host, Path: rv.Path, ReferrerSource: source,
-				UTMSource: rv.UTMSource, UTMMedium: rv.UTMMedium,
-				UTMCampaign: rv.UTMCampaign,
-				Country:     country, Device: device, Browser: browser, OS: osName,
-			})
-			res.Accepted++
-
-		case nameScreenView:
-			if rv.Screen == "" {
-				res.reject(i, "$screen_view requires $screen")
-				continue
-			}
-			s.queue.EnqueueAppView(store.AppView{
-				ID: id, Project: p.Alias, TS: ts, ReceivedAt: received,
-				ActorID: actor, UserID: user, GroupID: group, SessionID: rv.SessionID,
-				Screen:      rv.Screen,
-				Platform:    rv.Platform,
-				AppVersion:  rv.AppVersion,
-				OSVersion:   rv.OSVersion,
-				DeviceModel: rv.DeviceModel,
-				Locale:      rv.Locale,
-				Country:     country,
-			})
-			res.Accepted++
-
-		default:
+		defaultKind, isView := viewName(ev.Name)
+		if !isView {
 			if strings.HasPrefix(ev.Name, "$") {
 				res.warn(i, "unknown reserved name %s, stored as a custom event", ev.Name)
 			}
 			s.queue.EnqueueEvent(store.ProductEvent{
 				ID: id, Project: p.Alias, EventName: ev.Name,
 				TS: ts, ReceivedAt: received,
-				ActorID: actor, UserID: user, GroupID: group,
-				Platform: rv.Platform, AppVersion: rv.AppVersion,
+				ActorID: actor, ActorKind: actorKind, UserID: user, GroupID: group,
+				OS: enrich.NormalizeOS(rv.OS), AppVersion: rv.AppVersion,
 				Attributes: rv.Custom,
 			})
 			res.Accepted++
+			continue
 		}
+
+		kind := defaultKind
+		if rv.Kind != "" {
+			if kindPattern.MatchString(rv.Kind) {
+				kind = rv.Kind
+			} else {
+				res.warn(i, "invalid $kind %q, using %q", rv.Kind, defaultKind)
+			}
+		}
+		path := rv.Path
+		if path == "" {
+			path = rv.Screen
+		}
+		if path == "" {
+			res.reject(i, "view requires $path or $screen")
+			continue
+		}
+		v := store.View{
+			ID: id, Project: p.Alias, TS: ts, ReceivedAt: received, Kind: kind,
+			ActorID: actor, ActorKind: actorKind, UserID: user, GroupID: group, SessionID: rv.SessionID,
+			Host: rv.Host, Path: path,
+			UTMSource: rv.UTMSource, UTMMedium: rv.UTMMedium, UTMCampaign: rv.UTMCampaign,
+			OSVersion: rv.OSVersion, AppVersion: rv.AppVersion,
+			DeviceModel: rv.DeviceModel, Locale: rv.Locale, Country: country,
+		}
+		// Only web rows are enriched from the connection: the User-Agent
+		// names the browser, OS and device class, and a crawler is dropped.
+		// Every other kind declares its own environment and is never
+		// filtered, whatever HTTP library it uses.
+		if kind == "web" {
+			if botUA {
+				// Accepted and silently ignored: the client did nothing
+				// wrong, so it must not retry.
+				res.Accepted++
+				continue
+			}
+			v.Device, v.Browser, v.BrowserVersion, v.OS = enrich.ParseUserAgent(ua)
+			v.ReferrerSource = enrich.CleanReferrer(rv.Referrer, rv.Host)
+		} else {
+			// No host to compare against, so a referrer is taken at face
+			// value — a deep link can still carry one.
+			v.ReferrerSource = enrich.CleanReferrer(rv.Referrer, "")
+		}
+		// Declared environment overrides whatever was parsed.
+		if rv.OS != "" {
+			v.OS = enrich.NormalizeOS(rv.OS)
+		}
+		var bad bool
+		if v.DisplayWidth, bad = parseDisplay(rv.displayWidthRaw); bad {
+			res.warn(i, "$display_width %q is not a positive integer, ignored", rv.displayWidthRaw)
+		}
+		if v.DisplayHeight, bad = parseDisplay(rv.displayHeightRaw); bad {
+			res.warn(i, "$display_height %q is not a positive integer, ignored", rv.displayHeightRaw)
+		}
+		s.queue.EnqueueView(v)
+		res.Accepted++
 	}
 
 	if names = dedupeIdentities(names, p.Alias); len(names) > 0 {
@@ -184,15 +196,22 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 
 // resolveIdentity applies the project's identity mode. anonymous salts and
 // rotates whatever identifier the client supplied; identified stores it as
-// given.
+// given. actorKind records how the actor id was derived (user, install or
+// connection) regardless of identity mode, so cohorts can be built on it
+// later.
 //
 // group_id stays raw in both modes: it identifies an organization, not a
 // natural person, and hashing it would make dashboards unreadable for no
 // real privacy gain.
-func resolveIdentity(p *manage.Project, rv resolved, salt, ip, ua string) (actor, user, group string) {
+func resolveIdentity(p *manage.Project, rv resolved, salt, ip, ua string) (actor, actorKind, user, group string) {
 	raw := rv.UserID
+	actorKind = store.ActorUser
 	if raw == "" {
 		raw = rv.InstallID
+		actorKind = store.ActorInstall
+	}
+	if raw == "" {
+		actorKind = store.ActorConnection
 	}
 	if p.Identity == config.IdentityIdentified {
 		actor = raw
@@ -201,7 +220,7 @@ func resolveIdentity(p *manage.Project, rv resolved, salt, ip, ua string) (actor
 			// rather than dropping the event.
 			actor = identity.VisitorHash(salt, ip, ua, p.Alias)
 		}
-		return actor, rv.UserID, rv.GroupID
+		return actor, actorKind, rv.UserID, rv.GroupID
 	}
 	if raw == "" {
 		actor = identity.VisitorHash(salt, ip, ua, p.Alias)
@@ -211,7 +230,7 @@ func resolveIdentity(p *manage.Project, rv resolved, salt, ip, ua string) (actor
 	if rv.UserID != "" {
 		user = identity.ActorHash(salt, rv.UserID, p.Alias)
 	}
-	return actor, user, rv.GroupID
+	return actor, actorKind, user, rv.GroupID
 }
 
 // identityNames collects display names to upsert.

@@ -8,13 +8,13 @@ import (
 )
 
 func TestMergeAttributesEventOverridesBatch(t *testing.T) {
-	batch := map[string]any{"$platform": "ios", "$app_version": "2.4.1", "team": "core"}
+	batch := map[string]any{"$os": "ios", "$app_version": "2.4.1", "team": "core"}
 	event := map[string]any{"$app_version": "2.5.0", "plan": "pro"}
 
 	got := mergeAttributes(batch, event)
 
 	want := map[string]string{
-		"$platform": "ios", "$app_version": "2.5.0", "team": "core", "plan": "pro",
+		"$os": "ios", "$app_version": "2.5.0", "team": "core", "plan": "pro",
 	}
 	for k, v := range want {
 		if got[k] != v {
@@ -27,10 +27,10 @@ func TestMergeAttributesEventOverridesBatch(t *testing.T) {
 }
 
 func TestMergeAttributesDoesNotMutateInputs(t *testing.T) {
-	batch := map[string]any{"$platform": "ios"}
-	event := map[string]any{"$platform": "android"}
+	batch := map[string]any{"$os": "ios"}
+	event := map[string]any{"$os": "android"}
 	mergeAttributes(batch, event)
-	if batch["$platform"] != "ios" || event["$platform"] != "android" {
+	if batch["$os"] != "ios" || event["$os"] != "android" {
 		t.Errorf("inputs mutated: batch=%v event=%v", batch, event)
 	}
 }
@@ -48,9 +48,10 @@ func TestResolveAttributesSplitsReservedFromCustom(t *testing.T) {
 	r, unknown := resolveAttributes(map[string]any{
 		"$install_id": "018f", "$user_id": "u1", "$user_name": "Ada",
 		"$group_id": "org9", "$group_name": "Acme", "$session_id": "s1",
-		"$platform": "ios", "$app_version": "2.4.1", "$os_version": "17.2",
+		"$kind": "web", "$os": "ios", "$app_version": "2.4.1", "$os_version": "17.2",
 		"$device_model": "iPhone15,2", "$locale": "en-US",
 		"$host": "x", "$path": "/y", "$referrer": "https://z", "$screen": "/settings",
+		"$display_width": float64(1920), "$display_height": float64(1080),
 		"plan": "pro", "count": float64(3), "ok": true, "nothing": nil,
 	})
 
@@ -63,7 +64,7 @@ func TestResolveAttributesSplitsReservedFromCustom(t *testing.T) {
 	if r.GroupID != "org9" || r.GroupName != "Acme" || r.SessionID != "s1" {
 		t.Errorf("group/session = %+v", r)
 	}
-	if r.Platform != "ios" || r.AppVersion != "2.4.1" || r.OSVersion != "17.2" {
+	if r.Kind != "web" || r.OS != "ios" || r.AppVersion != "2.4.1" || r.OSVersion != "17.2" {
 		t.Errorf("environment = %+v", r)
 	}
 	if r.DeviceModel != "iPhone15,2" || r.Locale != "en-US" {
@@ -72,13 +73,29 @@ func TestResolveAttributesSplitsReservedFromCustom(t *testing.T) {
 	if r.Host != "x" || r.Path != "/y" || r.Referrer != "https://z" || r.Screen != "/settings" {
 		t.Errorf("payload = %+v", r)
 	}
+	if r.displayWidthRaw != "1920" || r.displayHeightRaw != "1080" {
+		t.Errorf("display = %+v", r)
+	}
 	// float64(3) must not render as "3.000000"; bool and nil round-trip.
 	if r.Custom["plan"] != "pro" || r.Custom["count"] != "3" ||
 		r.Custom["ok"] != "true" || r.Custom["nothing"] != "" {
 		t.Errorf("custom = %v", r.Custom)
 	}
-	if _, ok := r.Custom["$platform"]; ok {
+	if _, ok := r.Custom["$os"]; ok {
 		t.Error("reserved key leaked into custom attributes")
+	}
+}
+
+// $platform is the pre-views alias for $os: both resolve into the same
+// field so a client that has not switched to the new key still enriches
+// correctly.
+func TestResolveAttributesPlatformIsAnOSAlias(t *testing.T) {
+	r, unknown := resolveAttributes(map[string]any{"$platform": "android"})
+	if len(unknown) != 0 {
+		t.Errorf("unknown = %v, want none", unknown)
+	}
+	if r.OS != "android" {
+		t.Errorf("OS = %q, want the $platform value", r.OS)
 	}
 }
 
