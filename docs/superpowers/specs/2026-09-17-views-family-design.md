@@ -6,8 +6,8 @@ Supersedes the family split introduced by `2026-08-23-app-analytics-design.md`.
 
 ## 1. Purpose
 
-Twillingate stores three event families: web (`$pageview` → `web_hits`),
-app (`$screenview` → `app_views`) and product (everything else). Web and
+Twillingate stores three event families: web (`$page_view` → `web_hits`),
+app (`$screen_view` → `app_views`) and product (everything else). Web and
 app are the same thing built twice: a view stream with an actor, a
 session, a location and environment dimensions, feeding the same overview,
 breakdown and retention questions. The differences are which columns are
@@ -19,7 +19,7 @@ name, which is the wrong axis (an Electron app is a web page *and* an app).
 
 After this change there are two families:
 
-- **views** — `$pageview` and `$screenview`, one table, one aggregator,
+- **views** — `$page_view` and `$screen_view`, one table, one aggregator,
   one set of views, one Evidence page, two tools. The client declares a
   free-form `kind` (`web`, `app`, `cli`, …); only `web` has server-side
   meaning.
@@ -48,8 +48,8 @@ analytics" as a lens over it rather than a separate store.
 | Decision | Choice |
 |---|---|
 | Family name | `views` — tables `views`, `agg_views_*`; stitch views `v_views_*`; tools `views_overview`, `views_breakdown`; env `RETENTION_VIEWS_*` |
-| Kind | Free-form string per row, from `$kind`; defaults from the event name (`$pageview`→`web`, `$screenview`→`app`); validated `^[a-z][a-z0-9_]{0,15}$` |
-| Wire names | `$pageview` and `$screenview` (renamed from `$screen_view`, which stays a silent alias); neither selects a table any more |
+| Kind | Free-form string per row, from `$kind`; defaults from the event name (`$page_view`→`web`, `$screen_view`→`app`); validated `^[a-z][a-z0-9_]{0,15}$` |
+| Wire names | `$page_view` (renamed from `$pageview`, which stays a silent alias because every deployed tag sends it) and `$screen_view`; neither selects a table any more |
 | OS | `$os` replaces `$platform` as the wire key (`$platform` stays a silent alias). It is the OS, stored in `os`, normalised to the parser's vocabulary. Product events follow: column `platform`→`os`, rollup key `$platform`→`$os` |
 | Client version | `$client_version` replaces `$app_version` (`$app_version` stays a silent alias): it is the version of whatever client sent the event, regardless of kind. Column `client_version` on views and product events; rollup key `$client_version`; dimension `client_versions` |
 | Sessions | The app rule: client `$session_id` authoritative, else a >30 min gap per actor. Bounce = session with one view |
@@ -63,12 +63,15 @@ analytics" as a lens over it rather than a separate store.
 ## 4. Wire format
 
 `POST /ingest/events` is unchanged in shape. Two additions, three renames
-and one reinterpretation. Names are consistent: event names are one
-word (`$pageview`, `$screenview`), attribute keys are `snake_case`, and a
-key is named for the column it lands in.
+and one reinterpretation. Names are consistent: event names and
+attribute keys are all `snake_case` (`$page_view`, `$screen_view`,
+`$client_version`), and a key is named for the column it lands in.
 
-- **`$screenview`** replaces `$screen_view` as the app view event name.
-  `$screen_view` is accepted as a silent alias and not documented.
+- **`$page_view`** replaces `$pageview` as the web view event name.
+  `$pageview` is accepted as a silent alias and not documented. This
+  alias is the one that matters: every deployed tag and any cached copy
+  of the SDK send it, and the SDK is served by the collector so it
+  upgrades with the server but not before.
 - **`$os`** replaces `$platform` for the declared operating system.
   `$platform` is accepted as a silent alias and not documented.
 - **`$client_version`** replaces `$app_version`. It is the version of the
@@ -81,7 +84,7 @@ key is named for the column it lands in.
   cannot create a dimension.
 - **`$viewport_width`** (new reserved key). Integer pixels. Non-integer or
   ≤ 0 → warning, stored as 0 (absent).
-- **`$screen`** is now an alias for `$path` on any view: a `$screenview`
+- **`$screen`** is now an alias for `$path` on any view: a `$screen_view`
   without `$path` takes its location from `$screen`. A view with neither
   is rejected `view requires $path or $screen`, replacing the two
   per-name messages.
@@ -90,8 +93,8 @@ Reserved event names table becomes:
 
 | name | family | default kind | location key |
 |---|---|---|---|
-| `$pageview` | views | `web` | `$path` |
-| `$screenview` | views | `app` | `$screen` (or `$path`) |
+| `$page_view` | views | `web` | `$path` |
+| `$screen_view` | views | `app` | `$screen` (or `$path`) |
 | anything else | product | — | — |
 
 Reserved attribute keys after the change (groups as documented):
@@ -429,17 +432,17 @@ branch mentions `data-kind` for Electron/Tauri.
 | client version | `clientVersion` (renamed from `appVersion`, which stays as a deprecated alias) | `data-client-version` | none |
 
 - `$kind` is a batch attribute, always sent.
-- With `kind !== "web"` the auto-tracker emits `$screenview` with
+- With `kind !== "web"` the auto-tracker emits `$screen_view` with
   `$screen` = the masked route path (same routing/masking rules as
   `page()`), and no `$host`, `$referrer` or `$utm_*`. With `web` it
-  emits `$pageview` exactly as today.
-- Every `$pageview` / `$screenview` carries `$viewport_width =
+  emits `$page_view` exactly as today.
+- Every `$page_view` / `$screen_view` carries `$viewport_width =
   window.innerWidth` at emission time.
 - Every batch carries `$locale = navigator.language` when available.
 - `page()`, `screen()`, `track()` and the rest of the public API are
   unchanged; `docs_sync_test.go`'s symbol list gains `data-kind`,
   `data-os`, `data-client-version`, `$kind`, `$os`, `$viewport_width` and
-  drops `$screen_view` for `$screenview`.
+  drops `$pageview` for `$page_view`.
 
 ## 15. Documentation (same commit)
 
@@ -453,9 +456,11 @@ branch mentions `data-kind` for Electron/Tauri.
   views paragraph (`v_views_*`), the SDK attribute table and defaults.
   The `product_attributes` row says `$os` and `$client_version` are always
   available; the attribute-breakdowns section says the same.
-- Every `$screen_view`, `$platform` and `$app_version` in the page
-  becomes `$screenview`, `$os` and `$client_version`; the aliases are
-  not documented.
+- Every `$pageview`, `$platform` and `$app_version` in the page
+  becomes `$page_view`, `$os` and `$client_version`; the aliases are
+  not documented. `docs/plausible/README.md` mentions the two view names
+  in prose and follows; the shim itself only forwards custom events
+  through the SDK's `track`, so its bytes do not change.
 - A dated "Changed in this release" note: tool names, routes, view names,
   env vars, the retention parameter, capped paths, the app-days-have-zero-
   bounces boundary, and the empty device-class/model boundary.
@@ -491,7 +496,7 @@ branch mentions `data-kind` for Electron/Tauri.
   every dimension; `retention` `actor`; REST parity; docs sync (tools,
   routes, env vars, reserved keys, SDK symbols, views dimensions —
   `TestDocumentCoversEveryWebDimension` becomes `…EveryViewsDimension`).
-- SDK: `data-kind="app"` emits `$screenview` on navigation with the
+- SDK: `data-kind="app"` emits `$screen_view` on navigation with the
   masked path and nothing else; `data-os`/`data-client-version`
   reach the batch; `$viewport_width` and `$locale` present.
 - Dashboards: prerender test over the new page set.
@@ -513,8 +518,8 @@ Breaking:
   becomes `"$os"` / `"$client_version"`; `v_product_attrs` rows follow.
 - Migration 009 is irreversible; snapshot first.
 
-Not breaking: the ingest wire format (`$screen_view`, `$platform` and
-`$app_version` are still accepted as aliases of `$screenview`, `$os` and
+Not breaking: the ingest wire format (`$pageview`, `$platform` and
+`$app_version` are still accepted as aliases of `$page_view`, `$os` and
 `$client_version`), deployed SDK tags, ingest keys, project aliases,
 per-project retention overrides (legacy keys still decode).
 
