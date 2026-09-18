@@ -18,14 +18,14 @@ import (
 func TestDaysBefore(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	hits := []store.WebHit{
-		{ID: "1", Project: "app", TS: ts("2026-08-10T10:00:00Z"), ActorID: "v1", Path: "/"},
-		{ID: "2", Project: "app", TS: ts("2026-08-10T11:00:00Z"), ActorID: "v2", Path: "/"},
-		{ID: "3", Project: "app", TS: ts("2026-08-11T10:00:00Z"), ActorID: "v1", Path: "/"},
-		{ID: "4", Project: "app", TS: ts("2026-08-20T10:00:00Z"), ActorID: "v1", Path: "/"},
-		{ID: "5", Project: "other", TS: ts("2026-08-10T10:00:00Z"), ActorID: "v1", Path: "/"},
+	views := []store.View{
+		{ID: "1", Project: "app", Kind: "web", ActorKind: store.ActorConnection, TS: ts("2026-08-10T10:00:00Z"), ActorID: "v1", Path: "/"},
+		{ID: "2", Project: "app", Kind: "web", ActorKind: store.ActorConnection, TS: ts("2026-08-10T11:00:00Z"), ActorID: "v2", Path: "/"},
+		{ID: "3", Project: "app", Kind: "web", ActorKind: store.ActorConnection, TS: ts("2026-08-11T10:00:00Z"), ActorID: "v1", Path: "/"},
+		{ID: "4", Project: "app", Kind: "web", ActorKind: store.ActorConnection, TS: ts("2026-08-20T10:00:00Z"), ActorID: "v1", Path: "/"},
+		{ID: "5", Project: "other", Kind: "web", ActorKind: store.ActorConnection, TS: ts("2026-08-10T10:00:00Z"), ActorID: "v1", Path: "/"},
 	}
-	if err := db.WriteWebHits(ctx, hits); err != nil {
+	if err := db.WriteViews(ctx, views); err != nil {
 		t.Fatal(err)
 	}
 	events := []store.ProductEvent{
@@ -44,13 +44,13 @@ func TestDaysBefore(t *testing.T) {
 		}
 		return out
 	}
-	web, err := db.WebDaysBefore(ctx, "app", day("2026-08-15"))
+	viewDays, err := db.ViewDaysBefore(ctx, "app", day("2026-08-15"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Distinct, sorted, project-scoped, and excluding the day on/after cutoff.
-	if got := str(web); len(got) != 2 || got[0] != "2026-08-10" || got[1] != "2026-08-11" {
-		t.Errorf("WebDaysBefore = %v, want [2026-08-10 2026-08-11]", got)
+	if got := str(viewDays); len(got) != 2 || got[0] != "2026-08-10" || got[1] != "2026-08-11" {
+		t.Errorf("ViewDaysBefore = %v, want [2026-08-10 2026-08-11]", got)
 	}
 	product, err := db.ProductDaysBefore(ctx, "app", day("2026-08-15"))
 	if err != nil {
@@ -75,11 +75,12 @@ func TestDaysBeforeRejectsCorruptTimestamp(t *testing.T) {
 	// Must sort before the cutoff so the WHERE clause admits it, yet be an
 	// impossible calendar date so civil.Parse rejects it.
 	if _, err := db.db.Exec(
-		`INSERT INTO web_hits (id, project, ts, actor_id, path) VALUES ('x','app','2026-02-30T00:00:00Z','v','/')`,
+		`INSERT INTO views (id, project, ts, received_at, kind, actor_id, actor_kind, path)
+		 VALUES ('x','app','2026-02-30T00:00:00Z','2026-02-30T00:00:00Z','web','v','connection','/')`,
 	); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.WebDaysBefore(context.Background(), "app", day("2026-08-15")); err == nil {
+	if _, err := db.ViewDaysBefore(context.Background(), "app", day("2026-08-15")); err == nil {
 		t.Fatal("want error for unparseable ts, got nil")
 	}
 }
@@ -92,7 +93,7 @@ func TestTxRollsBackOnError(t *testing.T) {
 	boom := errors.New("boom")
 	err := db.tx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO agg_web_daily VALUES ('app','2026-08-10',1,1,1,0,0)`); err != nil {
+			`INSERT INTO agg_views_daily VALUES ('app','2026-08-10','web',1,1,1,0,0)`); err != nil {
 			return err
 		}
 		return boom
@@ -101,7 +102,7 @@ func TestTxRollsBackOnError(t *testing.T) {
 		t.Fatalf("err = %v, want boom", err)
 	}
 	var n int
-	if err := db.db.QueryRow(`SELECT COUNT(*) FROM agg_web_daily`).Scan(&n); err != nil {
+	if err := db.db.QueryRow(`SELECT COUNT(*) FROM agg_views_daily`).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	if n != 0 {
@@ -126,13 +127,14 @@ func TestOperationsOnClosedDB(t *testing.T) {
 
 	for name, op := range map[string]func() error{
 		"PruneAggregates": func() error {
-			return db.PruneAggregates(ctx, "app", day("2026-01-01"), day("2026-01-01"), day("2026-01-01"))
+			return db.PruneAggregates(ctx, "app", day("2026-01-01"), day("2026-01-01"))
 		},
 		"IncrementalVacuum": func() error { return db.IncrementalVacuum(ctx) },
-		"AggregateWebDay":   func() error { return db.AggregateWebDay(ctx, "app", day("2026-01-01")) },
+		"AggregateViewDay":  func() error { return db.AggregateViewDay(ctx, "app", day("2026-01-01")) },
 		"Migrate":           func() error { return db.Migrate(ctx) },
-		"WriteWebHits": func() error {
-			return db.WriteWebHits(ctx, []store.WebHit{{ID: "1", Project: "app", TS: ts("2026-08-10T10:00:00Z"), ActorID: "v", Path: "/"}})
+		"WriteViews": func() error {
+			return db.WriteViews(ctx, []store.View{{ID: "1", Project: "app", Kind: "web",
+				ActorKind: store.ActorConnection, TS: ts("2026-08-10T10:00:00Z"), ActorID: "v", Path: "/"}})
 		},
 		"WriteProductEvents": func() error {
 			return db.WriteProductEvents(ctx, []store.ProductEvent{{ID: "e", Project: "app", EventName: "n", ActorID: "u", TS: ts("2026-08-10T10:00:00Z")}})
@@ -141,8 +143,8 @@ func TestOperationsOnClosedDB(t *testing.T) {
 			return db.CreateProject(ctx, store.RegistryProject{Alias: "app", Name: "App", Identity: "anonymous", AllowedOrigins: "[]"},
 				store.AuditEntry{Actor: "test", Action: "project.create"})
 		},
-		"SetMeta":       func() error { return db.SetMeta(ctx, "k", "v") },
-		"WebDaysBefore": func() error { _, err := db.WebDaysBefore(ctx, "app", day("2026-01-01")); return err },
+		"SetMeta":        func() error { return db.SetMeta(ctx, "k", "v") },
+		"ViewDaysBefore": func() error { _, err := db.ViewDaysBefore(ctx, "app", day("2026-01-01")); return err },
 		"ProjectAliases": func() error {
 			_, err := db.ProjectAliases(ctx)
 			return err
@@ -207,7 +209,7 @@ func TestPruneAggregatesReportsFailingTable(t *testing.T) {
 	if _, err := db.db.ExecContext(ctx, `DROP TABLE agg_product_attrs`); err != nil {
 		t.Fatal(err)
 	}
-	err := db.PruneAggregates(ctx, "app", day("2026-01-01"), day("2026-01-01"), day("2026-01-01"))
+	err := db.PruneAggregates(ctx, "app", day("2026-01-01"), day("2026-01-01"))
 	if err == nil {
 		t.Fatal("want error when a target table is missing, got nil")
 	}
@@ -246,8 +248,8 @@ func TestOpenRelativeDSN(t *testing.T) {
 func TestWriteEmptyBatchIsNoOp(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	if err := db.WriteWebHits(ctx, nil); err != nil {
-		t.Errorf("WriteWebHits(nil) = %v", err)
+	if err := db.WriteViews(ctx, nil); err != nil {
+		t.Errorf("WriteViews(nil) = %v", err)
 	}
 	if err := db.WriteProductEvents(ctx, nil); err != nil {
 		t.Errorf("WriteProductEvents(nil) = %v", err)
@@ -280,14 +282,14 @@ func TestExecForTest(t *testing.T) {
 	}
 }
 
-func TestPruneAggregatesReportsFailingWebTable(t *testing.T) {
+func TestPruneAggregatesReportsFailingViewsTable(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	if _, err := db.db.ExecContext(ctx, `DROP TABLE agg_web_utm`); err != nil {
+	if _, err := db.db.ExecContext(ctx, `DROP TABLE agg_views_utm`); err != nil {
 		t.Fatal(err)
 	}
-	err := db.PruneAggregates(ctx, "app", day("2026-01-01"), day("2026-01-01"), day("2026-01-01"))
-	if err == nil || !strings.Contains(err.Error(), "agg_web_utm") {
-		t.Errorf("error %v does not name the failing web table", err)
+	err := db.PruneAggregates(ctx, "app", day("2026-01-01"), day("2026-01-01"))
+	if err == nil || !strings.Contains(err.Error(), "agg_views_utm") {
+		t.Errorf("error %v does not name the failing views table", err)
 	}
 }

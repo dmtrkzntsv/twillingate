@@ -14,67 +14,59 @@ import (
 
 // The invariant that makes Evidence dashboards boundary-free (spec §8.1):
 // v_* views must return IDENTICAL numbers before and after aggregation.
-func TestStitchViewsInvariantWeb(t *testing.T) {
+func TestStitchViewsInvariantDaily(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	seedWebDay(t, db) // raw only
+	seedViewDay(t, db) // raw only
 
-	read := func() (v, pv, s, b, d int) {
-		t.Helper()
-		err := db.db.QueryRow(`SELECT visitors, pageviews, sessions, bounces, duration_sec
-			FROM v_web_daily WHERE project='app' AND day='2026-08-10'`).Scan(&v, &pv, &s, &b, &d)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return
+	read := func(kind string) dailyRow { return readDaily(t, db, "v_views_daily", kind) }
+	webBefore, appBefore := read("web"), read("app")
+	if webBefore != (dailyRow{2, 4, 3, 2, 600}) || appBefore != (dailyRow{2, 3, 2, 1, 300}) {
+		t.Fatalf("live v_views_daily web=%+v app=%+v; fixture expectations wrong", webBefore, appBefore)
 	}
-	v1, pv1, s1, b1, d1 := read()
-	// Sanity: the view must actually see the seeded day, or the comparison
-	// below would be vacuous.
-	if v1 != 2 || pv1 != 4 || s1 != 3 || b1 != 2 || d1 != 600 {
-		t.Fatalf("live v_web_daily = (%d %d %d %d %d), want (2 4 3 2 600)", v1, pv1, s1, b1, d1)
-	}
-	if err := db.AggregateWebDay(ctx, "app", day("2026-08-10")); err != nil {
+	if err := db.AggregateViewDay(ctx, "app", day("2026-08-10")); err != nil {
 		t.Fatal(err)
 	}
-	v2, pv2, s2, b2, d2 := read()
-	if v1 != v2 || pv1 != pv2 || s1 != s2 || b1 != b2 || d1 != d2 {
-		t.Fatalf("stitch mismatch: before (%d %d %d %d %d) after (%d %d %d %d %d)",
-			v1, pv1, s1, b1, d1, v2, pv2, s2, b2, d2)
+	if got := read("web"); got != webBefore {
+		t.Errorf("web stitch mismatch: before %+v after %+v", webBefore, got)
 	}
-	var pages int
-	if err := db.db.QueryRow(`SELECT pageviews FROM v_web_pages
-		WHERE project='app' AND day='2026-08-10' AND path='/a'`).Scan(&pages); err != nil {
-		t.Fatal(err)
-	}
-	if pages != 3 {
-		t.Fatalf("v_web_pages /a = %d", pages)
+	if got := read("app"); got != appBefore {
+		t.Errorf("app stitch mismatch: before %+v after %+v", appBefore, got)
 	}
 }
 
-// Every dimension view must hold the invariant, not just the daily rollup —
-// a mismatch between a view's live SQL and its aggregation SQL would make one
-// dimension jump the moment aggregation runs.
-func TestStitchViewsInvariantAllWebDimensions(t *testing.T) {
+// Every dimension view must hold the invariant, including the cap and the
+// "(other)" tail, or one dimension jumps the moment aggregation runs.
+func TestStitchViewsInvariantAllViewsDimensions(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	seedWebDay(t, db)
+	seedViewDay(t, db)
+	// Push one dimension past the cap so the other bucket is exercised on
+	// both sides of the boundary.
+	var extra []store.View
+	for i := 0; i < topNDimension+5; i++ {
+		extra = append(extra, store.View{ID: fmt.Sprintf("x-%d", i), TS: at(13, 0).Add(time.Duration(i) * time.Second),
+			ActorID: "v3", Path: fmt.Sprintf("/x/%d", i), OS: "Linux", Browser: "Firefox", BrowserVersion: "127", Device: "desktop"})
+	}
+	seedViews(t, db, extra...)
 
 	type dim struct{ view, key string }
 	dims := []dim{
-		{"v_web_pages", "path"},
-		{"v_web_referrers", "source"},
-		{"v_web_countries", "country"},
-		{"v_web_devices", "device"},
-		{"v_web_browsers", "browser"},
-		{"v_web_os", "os"},
-		{"v_web_utm", "utm_source || '|' || utm_medium || '|' || utm_campaign"},
+		{"v_views_paths", "path"},
+		{"v_views_hosts", "host"},
+		{"v_views_referrers", "source"},
+		{"v_views_utm", "utm_source || '|' || utm_medium || '|' || utm_campaign"},
+		{"v_views_countries", "country"},
+		{"v_views_os", "os || '|' || os_version"},
+		{"v_views_browsers", "browser || '|' || browser_version"},
+		{"v_views_app_versions", "os || '|' || app_version"},
+		{"v_views_devices", "device || '|' || device_model"},
+		{"v_views_displays", "display"},
 	}
 	snapshot := func(d dim) map[string][2]int {
 		t.Helper()
 		rows, err := db.db.Query(fmt.Sprintf(
-			`SELECT %s, visitors, pageviews FROM %s WHERE project='app' AND day='2026-08-10'`,
-			d.key, d.view))
+			`SELECT %s, visitors, views FROM %s WHERE project='app' AND day='2026-08-10'`, d.key, d.view))
 		if err != nil {
 			t.Fatalf("%s: %v", d.view, err)
 		}
@@ -93,7 +85,6 @@ func TestStitchViewsInvariantAllWebDimensions(t *testing.T) {
 		}
 		return out
 	}
-
 	before := map[string]map[string][2]int{}
 	for _, d := range dims {
 		before[d.view] = snapshot(d)
@@ -101,33 +92,30 @@ func TestStitchViewsInvariantAllWebDimensions(t *testing.T) {
 			t.Fatalf("%s returned no live rows; invariant check would be vacuous", d.view)
 		}
 	}
-	if err := db.AggregateWebDay(ctx, "app", day("2026-08-10")); err != nil {
+	if _, ok := before["v_views_paths"]["(other)"]; !ok {
+		t.Fatal("paths fixture did not exceed the cap; the other-bucket parity is untested")
+	}
+	if err := db.AggregateViewDay(ctx, "app", day("2026-08-10")); err != nil {
 		t.Fatal(err)
 	}
 	for _, d := range dims {
 		after := snapshot(d)
-		if len(after) != len(before[d.view]) {
-			t.Errorf("%s: %d rows before, %d after", d.view, len(before[d.view]), len(after))
-			continue
-		}
-		for k, wantVals := range before[d.view] {
-			if after[k] != wantVals {
-				t.Errorf("%s[%q]: before %v, after %v", d.view, k, wantVals, after[k])
-			}
+		if !reflect.DeepEqual(after, before[d.view]) {
+			t.Errorf("%s: before %v, after %v", d.view, before[d.view], after)
 		}
 	}
 }
 
-// Hits carrying no UTM parameters must not create an all-empty UTM row on
+// Views carrying no UTM parameters must not create an all-empty UTM row on
 // either side of the boundary.
 func TestStitchViewUTMExcludesEmpty(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	seedWebDay(t, db)
+	seedViewDay(t, db)
 	count := func() int {
 		t.Helper()
 		var n int
-		if err := db.db.QueryRow(`SELECT COUNT(*) FROM v_web_utm
+		if err := db.db.QueryRow(`SELECT COUNT(*) FROM v_views_utm
 			WHERE project='app' AND day='2026-08-10'`).Scan(&n); err != nil {
 			t.Fatal(err)
 		}
@@ -135,13 +123,13 @@ func TestStitchViewUTMExcludesEmpty(t *testing.T) {
 	}
 	// Only visitor v2 carries UTM tags in the fixture.
 	if n := count(); n != 1 {
-		t.Fatalf("live v_web_utm rows = %d, want 1", n)
+		t.Fatalf("live v_views_utm rows = %d, want 1", n)
 	}
-	if err := db.AggregateWebDay(ctx, "app", day("2026-08-10")); err != nil {
+	if err := db.AggregateViewDay(ctx, "app", day("2026-08-10")); err != nil {
 		t.Fatal(err)
 	}
 	if n := count(); n != 1 {
-		t.Fatalf("aggregated v_web_utm rows = %d, want 1", n)
+		t.Fatalf("aggregated v_views_utm rows = %d, want 1", n)
 	}
 }
 
@@ -210,17 +198,18 @@ func TestStitchViewProductTotalsIsTrueDAU(t *testing.T) {
 func TestStitchViewsMixedAggregatedAndRawDays(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	seedWebDay(t, db) // 2026-08-10
-	if err := db.WriteWebHits(ctx, []store.WebHit{
-		{ID: "9", Project: "app", TS: ts("2026-08-11T10:00:00Z"), ActorID: "v9", Path: "/a"},
+	seedViewDay(t, db) // 2026-08-10
+	if err := db.WriteViews(ctx, []store.View{
+		{ID: "9", Project: "app", TS: ts("2026-08-11T10:00:00Z"), Kind: "web",
+			ActorKind: store.ActorConnection, ActorID: "v9", Path: "/a"},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AggregateWebDay(ctx, "app", day("2026-08-10")); err != nil {
+	if err := db.AggregateViewDay(ctx, "app", day("2026-08-10")); err != nil {
 		t.Fatal(err)
 	}
-	rows, err := db.db.Query(`SELECT day, pageviews FROM v_web_daily
-		WHERE project='app' ORDER BY day`)
+	rows, err := db.db.Query(`SELECT day, views FROM v_views_daily
+		WHERE project='app' AND kind='web' ORDER BY day`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -241,7 +230,7 @@ func TestStitchViewsMixedAggregatedAndRawDays(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(got) != 2 || got["2026-08-10"] != 4 || got["2026-08-11"] != 1 {
-		t.Fatalf("v_web_daily = %v, want {2026-08-10:4 2026-08-11:1}", got)
+		t.Fatalf("v_views_daily = %v, want {2026-08-10:4 2026-08-11:1}", got)
 	}
 }
 
@@ -251,13 +240,13 @@ func TestStitchViewsMixedAggregatedAndRawDays(t *testing.T) {
 func TestStitchViewIdentityDailyCoversRawDays(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	ts := time.Date(2026, 8, 23, 10, 0, 0, 0, time.UTC)
+	tsV := time.Date(2026, 8, 23, 10, 0, 0, 0, time.UTC)
 
-	if err := db.WriteAppViews(ctx, []store.AppView{
-		{ID: "1", Project: "p", TS: ts, ReceivedAt: ts, ActorID: "a",
-			UserID: "u1", GroupID: "org9", Screen: "/x"},
-		{ID: "2", Project: "p", TS: ts, ReceivedAt: ts, ActorID: "b",
-			UserID: "u2", GroupID: "org9", Screen: "/x"},
+	if err := db.WriteViews(ctx, []store.View{
+		{ID: "1", Project: "p", TS: tsV, ReceivedAt: tsV, Kind: "app", ActorKind: store.ActorInstall, ActorID: "a",
+			UserID: "u1", GroupID: "org9", Path: "/x"},
+		{ID: "2", Project: "p", TS: tsV, ReceivedAt: tsV, Kind: "app", ActorKind: store.ActorInstall, ActorID: "b",
+			UserID: "u2", GroupID: "org9", Path: "/x"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -275,10 +264,10 @@ func TestStitchViewIdentityDailyCoversRawDays(t *testing.T) {
 
 	// After aggregation the same figures must come from the aggregate half,
 	// with no double counting from the raw rows the pass deletes.
-	if err := db.AggregateIdentityDay(ctx, "p", appDay()); err != nil {
+	if err := db.AggregateIdentityDay(ctx, "p", day("2026-08-23")); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AggregateAppDay(ctx, "p", appDay()); err != nil {
+	if err := db.AggregateViewDay(ctx, "p", day("2026-08-23")); err != nil {
 		t.Fatal(err)
 	}
 	var rows int
@@ -371,7 +360,7 @@ func seedAttrDay(t *testing.T, db *DB, project string) {
 				ID: fmt.Sprintf("e%04d", id), Project: project, EventName: "signup",
 				ActorID: fmt.Sprintf("a%d", (i+n)%4), TS: ts("2026-08-01T10:00:00Z"),
 				Attributes: map[string]string{"plan": fmt.Sprintf("p%02d", i)},
-				Platform:   []string{"ios", "android"}[i%2],
+				OS:         []string{"ios", "android"}[i%2],
 				AppVersion: []string{"1.0", "2.0", "3.0"}[i%3],
 			})
 		}
@@ -380,7 +369,7 @@ func seedAttrDay(t *testing.T, db *DB, project string) {
 	evs = append(evs, store.ProductEvent{
 		ID: "ping1", Project: project, EventName: "ping", ActorID: "a9",
 		TS: ts("2026-08-01T11:00:00Z"), Attributes: map[string]string{"plan": "pro"},
-		Platform: "web", AppVersion: "1.0",
+		OS: "web", AppVersion: "1.0",
 	})
 	if err := db.WriteProductEvents(context.Background(), evs); err != nil {
 		t.Fatal(err)
@@ -462,14 +451,14 @@ func TestProductAttrsViewSystemDimensionsWithoutDeclaredKeys(t *testing.T) {
 	var sys, custom int
 	for _, r := range before {
 		switch r.Key {
-		case "$platform", "$app_version":
+		case "$os", "$app_version":
 			sys++
 		default:
 			custom++
 		}
 	}
 	if sys == 0 {
-		t.Fatal("no $platform/$app_version rows for an undeclared project")
+		t.Fatal("no $os/$app_version rows for an undeclared project")
 	}
 	if custom != 0 {
 		t.Fatalf("%d rows for undeclared custom keys; only system dimensions were expected", custom)

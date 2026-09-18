@@ -28,12 +28,12 @@ type View struct {
 
 // ProductEvent represents a custom event from any surface.
 type ProductEvent struct {
-	ID, Project, EventName   string
-	TS, ReceivedAt           time.Time
-	ActorID, ActorKind       string
-	UserID, GroupID          string
-	OS, AppVersion           string
-	Attributes               map[string]string
+	ID, Project, EventName string
+	TS, ReceivedAt         time.Time
+	ActorID, ActorKind     string
+	UserID, GroupID        string
+	OS, AppVersion         string
+	Attributes             map[string]string
 }
 
 // Actor kinds: how an actor id was derived. Only user and install actors
