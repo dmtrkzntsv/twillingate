@@ -481,7 +481,14 @@ same day-long cache. Load one only if its problem is yours.
 > `RETENTION_VIEWS_*`. Paths are now capped at 500 per day like every
 > other dimension. Rows before the merge carry an empty device class on
 > app days, an empty device model and browser version on web days, and
-> zero bounces on app days.
+> zero bounces on app days. `list_projects` now reports `first_view_day`
+> and `last_view_day` in place of the four web/app dates. `identities` no
+> longer returns a `hits` column — `views` covers both web and app
+> activity. The dashboard URLs `/web/{project}` and `/app/{project}` are
+> now `/views/{project}`. One-time, on upgrade the `$platform` breakdown
+> values `ios` and `iOS` (and other differently-cased platform names)
+> merge into one `$os` row whose unique-users figure is the sum of the
+> two, so it may over-count an actor who was seen under both spellings.
 
 Everything goes to one endpoint, `POST /ingest/events`. The event **name**
 decides which family it lands in:
