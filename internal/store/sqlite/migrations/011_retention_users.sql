@@ -4,15 +4,19 @@
 -- still actors, but unless the client keeps a stable $install_id they can
 -- never be recognised on return -- each page load is a new actor that never
 -- comes back, and a curve blending them in buries the users' retention.
+--
+-- agg_retention.users is nullable on purpose: NULL is "not known". Rows
+-- written before this migration cannot be recounted once their day has left
+-- raw, and a 0 there would read as "nobody signed in" -- then a later offset
+-- the pass does recompute would put users over a zero denominator and read
+-- above 100%. Every row the pass writes from now on carries a number.
 ALTER TABLE actors ADD COLUMN is_user INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE agg_retention ADD COLUMN users INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE agg_retention ADD COLUMN users INTEGER;
 
 -- Mark existing actors from whatever still proves it: raw rows carrying a
 -- user_id, or the per-user identity rollup, which outlives them. The
 -- users counts in agg_retention are filled by the daily pass, which
 -- recomputes every raw day and runs at boot, right after this migration.
--- Cohorts owned by days already pruned from raw keep users = 0, so their
--- user_cohort_size is 0 and readers skip them rather than read 0%.
 UPDATE actors SET is_user = 1
 WHERE EXISTS (
     SELECT 1 FROM agg_identity_daily g
@@ -30,7 +34,8 @@ WHERE EXISTS (
 DROP VIEW v_retention;
 
 -- user_cohort_size mirrors cohort_size: the offset-0 row's users, exposed
--- so a signed-in rate computes in one query.
+-- so a signed-in rate computes in one query. NULL when that row predates
+-- the users count; skip such cohorts for signed-in rates.
 CREATE VIEW v_retention AS
 SELECT r.project, r.surface, r.cohort_day, r.day_offset, r.actors,
        c.actors AS cohort_size, r.users, c.users AS user_cohort_size

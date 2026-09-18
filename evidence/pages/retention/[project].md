@@ -16,17 +16,23 @@ describe no population.
 -- A cohort with nobody back on day k has no row at offset k, so pooling
 -- only the rows that exist would drop it from the denominator and read
 -- high. Build the full cohort x offset grid instead, keeping the offsets a
--- cohort has actually reached. The latest aggregated day is left out: the
--- 03:00 pass computes it from the first three hours only.
--- user_retention is null, not 0, where no cohort holds a signed-in user.
+-- cohort has actually reached.
+--
+-- "Reached" is measured against the clock, not the data: the latest day with
+-- any activity is not the latest day processed, and cutting there would drop
+-- complete days nobody came back on. Today is partial, and so is yesterday
+-- until the 03:00 UTC pass recounts it, hence the three-hour lag.
+--
+-- users is -1 where the row predates signed-in tracking. Such a cohort is
+-- left out of the signed-in sums entirely -- numerator and denominator --
+-- or a recounted later offset would sit over an unknown cohort size.
+-- user_retention is null, not 0, where no cohort has a known signed-in size.
 with rows as (
   select surface, cohort_day::date as cohort_day, day_offset::int as day_offset,
-         actors, cohort_size,
-         users, user_cohort_size
+         actors, cohort_size, users, user_cohort_size
   from twillingate.v_retention
   where project = '${params.project}'
 ),
-through as (select max(cohort_day + day_offset) as last_day from rows),
 cohorts as (
   select surface, cohort_day, cohort_size, user_cohort_size from rows where day_offset = 0
 ),
@@ -34,11 +40,13 @@ grid as (
   select c.*, o.day_offset
   from cohorts c
   cross join (select unnest(range(0, 31))::int as day_offset) o
-  where c.cohort_day + o.day_offset < (select last_day from through)
+  where c.cohort_day + o.day_offset < ((now() at time zone 'UTC') - interval 3 hour)::date
 ),
 filled as (
-  select g.surface, g.day_offset, g.cohort_size, g.user_cohort_size,
-         coalesce(r.actors, 0) as actors, coalesce(r.users, 0) as users
+  select g.surface, g.day_offset, g.cohort_size,
+         coalesce(r.actors, 0) as actors,
+         g.user_cohort_size >= 0 and coalesce(r.users, 0) >= 0 as users_known,
+         g.user_cohort_size, coalesce(r.users, 0) as users
   from grid g
   left join rows r
     on r.surface = g.surface and r.cohort_day = g.cohort_day and r.day_offset = g.day_offset
@@ -47,9 +55,11 @@ select surface, day_offset,
        sum(actors) as actors, sum(cohort_size) as cohort_size,
        case when sum(cohort_size) > 0
             then sum(actors) * 1.0 / sum(cohort_size) else 0 end as retention,
-       sum(users) as users, sum(user_cohort_size) as user_cohort_size,
-       case when sum(user_cohort_size) > 0
-            then sum(users) * 1.0 / sum(user_cohort_size) end as user_retention
+       sum(case when users_known then users end) as users,
+       sum(case when users_known then user_cohort_size end) as user_cohort_size,
+       case when sum(case when users_known then user_cohort_size end) > 0
+            then sum(case when users_known then users end) * 1.0
+                 / sum(case when users_known then user_cohort_size end) end as user_retention
 from filled
 group by surface, day_offset
 order by surface, day_offset
@@ -81,8 +91,10 @@ select * from ${retention_milestones} where users_cohorted > 0
 ```sql retention_cohorts
 select surface, cohort_day, day_offset, cohort_size, actors,
        case when cohort_size > 0 then actors * 1.0 / cohort_size else 0 end as retention,
-       user_cohort_size, users,
-       case when user_cohort_size > 0 then users * 1.0 / user_cohort_size end as user_retention
+       case when user_cohort_size >= 0 then user_cohort_size end as user_cohort_size,
+       case when users >= 0 then users end as users,
+       case when user_cohort_size > 0 and users >= 0
+            then users * 1.0 / user_cohort_size end as user_retention
 from twillingate.v_retention
 where project = '${params.project}' and day_offset between 0 and 30
 order by cohort_day desc, surface, day_offset

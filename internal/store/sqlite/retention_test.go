@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"strings"
 	"testing"
 	"time"
@@ -153,18 +154,34 @@ func TestMigration009RelabelsProductOnlyActors(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	// "pw" fired a product event on 07-25 that is still raw, but web raw
+	// rows age out sooner (7 days against product's 30 by default) and 07-25
+	// has been rolled up into agg_web_daily: a missing web hit proves
+	// nothing there, so pw must stay web.
+	if err := db.WriteProductEvents(ctx, []store.ProductEvent{
+		eventAt("6", "pw", time.Date(2026, 7, 25, 10, 0, 0, 0, time.UTC)),
+	}); err != nil {
+		t.Fatal(err)
+	}
 	// The pre-009 state: every non-app actor is web, cohorts to match. An
 	// actor whose raw rows are gone ("old") must keep its label -- there is
-	// nothing left to prove it was product-only.
+	// nothing left to prove it was product-only. The web row at offset 4 is
+	// w returning on 08-05, whose raw rows are gone: it cannot be rebuilt,
+	// so it must survive untouched.
 	if _, err := db.db.ExecContext(ctx, `
 INSERT INTO actors (project, actor_id, surface, first_seen_day, last_seen_day) VALUES
   ('p','e1','web','2026-08-01','2026-08-02'),
   ('p','e2','web','2026-08-01','2026-08-01'),
-  ('p','w','web','2026-08-01','2026-08-01'),
-  ('p','old','web','2026-07-01','2026-07-01');
+  ('p','w','web','2026-08-01','2026-08-05'),
+  ('p','old','web','2026-07-01','2026-07-01'),
+  ('p','pw','web','2026-07-25','2026-07-25');
+INSERT INTO agg_web_daily (project, day, visitors, pageviews, sessions, bounces, duration_sec)
+VALUES ('p','2026-07-25',1,1,1,1,0);
 INSERT INTO agg_retention (project, surface, cohort_day, day_offset, actors) VALUES
   ('p','web','2026-08-01',0,3),
   ('p','web','2026-08-01',1,1),
+  ('p','web','2026-08-01',4,1),
+  ('p','web','2026-07-25',0,1),
   ('p','web','2026-07-01',0,1);`); err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +207,7 @@ INSERT INTO agg_retention (project, surface, cohort_day, day_offset, actors) VAL
 		got[a] = s
 	}
 	rows.Close()
-	want := map[string]string{"e1": "product", "e2": "product", "w": "web", "old": "web"}
+	want := map[string]string{"e1": "product", "e2": "product", "w": "web", "old": "web", "pw": "web"}
 	for a, s := range want {
 		if got[a] != s {
 			t.Errorf("actor %s surface = %q, want %q", a, got[a], s)
@@ -212,10 +229,14 @@ INSERT INTO agg_retention (project, surface, cohort_day, day_offset, actors) VAL
 		cohorts[k] = n
 	}
 	rows.Close()
+	// Only the moved actors' activity moves: web 08-01 offset 1 was e1 alone
+	// and disappears, offset 4 is untouched.
 	wantCohorts := map[string]int{
 		"product 2026-08-01 0": 2,
 		"product 2026-08-01 1": 1,
 		"web 2026-08-01 0":     1,
+		"web 2026-08-01 4":     1,
+		"web 2026-07-25 0":     1,
 		"web 2026-07-01 0":     1,
 	}
 	if len(cohorts) != len(wantCohorts) {
@@ -431,7 +452,9 @@ INSERT INTO actors (project, actor_id, surface, first_seen_day, last_seen_day) V
   ('p','rolled-up','product','2026-06-01','2026-06-01'),
   ('p','anon','product','2026-08-01','2026-08-01');
 INSERT INTO agg_identity_daily (project, day, kind, id, actors, users, hits, views, events)
-VALUES ('p','2026-06-01','user','rolled-up',1,1,0,0,3);`); err != nil {
+VALUES ('p','2026-06-01','user','rolled-up',1,1,0,0,3);
+INSERT INTO agg_retention (project, surface, cohort_day, day_offset, actors)
+VALUES ('p','product','2026-06-01',0,1);`); err != nil {
 		t.Fatal(err)
 	}
 
@@ -447,6 +470,19 @@ VALUES ('p','2026-06-01','user','rolled-up',1,1,0,0,3);`); err != nil {
 	}
 	if _, err := db.db.ExecContext(ctx, strings.Join(stmts, "\n")); err != nil {
 		t.Fatalf("migration 011: %v", err)
+	}
+
+	// A cohort row written before users existed does not know its users:
+	// NULL, so readers can skip it, where 0 would read as "nobody signed in"
+	// and let a later recomputed offset put users over a zero denominator.
+	var userCohortSize sql.NullInt64
+	if err := db.db.QueryRowContext(ctx,
+		`SELECT user_cohort_size FROM v_retention WHERE project='p' AND cohort_day='2026-06-01'`).
+		Scan(&userCohortSize); err != nil {
+		t.Fatal(err)
+	}
+	if userCohortSize.Valid {
+		t.Errorf("user_cohort_size = %d for a cohort predating the users count, want NULL", userCohortSize.Int64)
 	}
 
 	for actor, want := range map[string]int{"raw-user": 1, "rolled-up": 1, "anon": 0} {

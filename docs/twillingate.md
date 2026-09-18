@@ -886,7 +886,8 @@ from the DDL. The three that matter most:
    `user_cohort_size` count the signed-in subset: actors that sent a
    `user_id`. A visitor who never signs in is recognised on return only if
    the client keeps a stable `$install_id`, so on a client that mints one per
-   page load, read retention from the `users` columns.
+   page load, read retention from the `users` columns. They are null for
+   cohorts counted before signed-in users were tracked; skip those.
 
 Every view carries a `project` column — always filter on it.
 
