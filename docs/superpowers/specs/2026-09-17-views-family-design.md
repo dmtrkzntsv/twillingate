@@ -51,6 +51,7 @@ analytics" as a lens over it rather than a separate store.
 | Kind | Free-form string per row, from `$kind`; defaults from the event name (`$pageview`→`web`, `$screenview`→`app`); validated `^[a-z][a-z0-9_]{0,15}$` |
 | Wire names | `$pageview` and `$screenview` (renamed from `$screen_view`, which stays a silent alias); neither selects a table any more |
 | OS | `$os` replaces `$platform` as the wire key (`$platform` stays a silent alias). It is the OS, stored in `os`, normalised to the parser's vocabulary. Product events follow: column `platform`→`os`, rollup key `$platform`→`$os` |
+| Client version | `$client_version` replaces `$app_version` (`$app_version` stays a silent alias): it is the version of whatever client sent the event, regardless of kind. Column `client_version` on views and product events; rollup key `$client_version`; dimension `client_versions` |
 | Sessions | The app rule: client `$session_id` authoritative, else a >30 min gap per actor. Bounce = session with one view |
 | Dimension cap | 500 values per day per dimension, trailing key collapses into `(other)` — the app rule applied everywhere, including paths (new for web) |
 | Retention population | `actor_kind` ∈ {`user`,`install`,`connection`} recorded at ingest on views and product events; only `user` and `install` actors are cohorted |
@@ -61,7 +62,7 @@ analytics" as a lens over it rather than a separate store.
 
 ## 4. Wire format
 
-`POST /ingest/events` is unchanged in shape. Two additions, two renames
+`POST /ingest/events` is unchanged in shape. Two additions, three renames
 and one reinterpretation. Names are consistent: event names are one
 word (`$pageview`, `$screenview`), attribute keys are `snake_case`, and a
 key is named for the column it lands in.
@@ -70,6 +71,10 @@ key is named for the column it lands in.
   `$screen_view` is accepted as a silent alias and not documented.
 - **`$os`** replaces `$platform` for the declared operating system.
   `$platform` is accepted as a silent alias and not documented.
+- **`$client_version`** replaces `$app_version`. It is the version of the
+  client that sent the event — a site build, an app release, a CLI
+  version — and is not tied to `kind: app`. `$app_version` is accepted
+  as a silent alias and not documented.
 - **`$kind`** (new reserved key). Free-form, usually a batch attribute.
   Absent → defaults from the event name. Invalid (fails the pattern) →
   warning `invalid $kind %q, using %q` and the default is used, so a typo
@@ -94,12 +99,12 @@ Reserved attribute keys after the change (groups as documented):
 | Group | Keys |
 |---|---|
 | Identity | `$install_id` `$user_id` `$user_name` `$group_id` `$group_name` `$session_id` |
-| Environment | `$kind` `$os` `$os_version` `$app_version` `$device_model` `$locale` `$viewport_width` |
+| Environment | `$kind` `$os` `$os_version` `$client_version` `$device_model` `$locale` `$viewport_width` |
 | Location | `$host` `$path` `$screen` `$utm_source` `$utm_medium` `$utm_campaign` `$referrer` |
 
 The `App` group in the reserved-keys table is gone; `$screen` moves to
 Location. `docs_sync_test.go` reads that table and requires every key in
-it to appear in `ingest.go` and vice versa; the two aliases are excluded
+it to appear in `ingest.go` and vice versa; the three aliases are excluded
 from that check by an explicit `aliasKeys` list in the test, the way
 `removedKeys` already excludes `$url`.
 
@@ -125,7 +130,7 @@ the name is not one of the two view names, else view. The view path:
    `CleanReferrer` with an empty host (face value), so an app deep link
    can still carry a referrer.
 5. Declared keys override: `$os` (normalised) → `os`; `$os_version`,
-   `$device_model`, `$locale`, `$app_version` stored as sent;
+   `$device_model`, `$locale`, `$client_version` stored as sent;
    `$viewport_width` parsed. A declared `$os` on a web row replaces
    the parsed OS; a parsed browser on a non-web row never happens because
    step 4 skipped the parse.
@@ -135,8 +140,9 @@ OS normalisation (`enrich.NormalizeOS`): `ios`→`iOS`,
 `android`→`Android`, `macos`→`macOS`, `windows`→`Windows`,
 `linux`→`Linux`, `chromeos`→`ChromeOS`; case-insensitive on input; any
 other value is stored as sent. Product events store the same normalised
-value in their `os` column (renamed from `platform`), and the product
-rollup's system dimension key becomes `$os`.
+value in their `os` column (renamed from `platform`) and the client
+version in `client_version` (renamed from `app_version`); the product
+rollup's system dimension keys become `$os` and `$client_version`.
 
 Bot filtering keyed on kind means a `web` row from a non-browser client is
 filtered exactly as today, and an `app` or `cli` row is never filtered
@@ -169,7 +175,7 @@ CREATE TABLE views (
     os_version      TEXT NOT NULL DEFAULT '',
     browser         TEXT NOT NULL DEFAULT '',
     browser_version TEXT NOT NULL DEFAULT '',
-    app_version     TEXT NOT NULL DEFAULT '',
+    client_version  TEXT NOT NULL DEFAULT '',
     device          TEXT NOT NULL DEFAULT '',   -- desktop | mobile | tablet | ''
     device_model    TEXT NOT NULL DEFAULT '',
     locale          TEXT NOT NULL DEFAULT '',
@@ -189,8 +195,9 @@ labels are `views` and `product_events`.
 
 Gains `actor_kind TEXT NOT NULL DEFAULT ''`. Existing rows stay `''`,
 which the actor upsert treats like `connection` (skipped). The `platform`
-column is renamed `os`, and `agg_product_attrs` rows with
-`attr_key='$platform'` are rewritten to `'$os'` (§11). The rollup itself
+and `app_version` columns are renamed `os` and `client_version`, and
+`agg_product_attrs` rows with `attr_key` `'$platform'` / `'$app_version'`
+are rewritten to `'$os'` / `'$client_version'` (§11). The rollup itself
 is unchanged.
 
 ### 6.3 Aggregates
@@ -208,13 +215,13 @@ agg_views_utm       (project, day, utm_source, utm_medium, utm_campaign, visitor
 agg_views_countries (project, day, country, visitors, views)
 agg_views_os        (project, day, os, os_version, visitors, views)
 agg_views_browsers  (project, day, browser, browser_version, visitors, views)
-agg_views_versions  (project, day, os, app_version, visitors, views)
+agg_views_client_versions (project, day, os, client_version, visitors, views)
 agg_views_devices   (project, day, device, device_model, visitors, views)
 agg_views_viewports (project, day, viewport, visitors, views)
 ```
 
 Row filters: `utm` keeps rows where any of the three is non-empty (as
-today); `versions` keeps rows with `app_version <> ''`; `viewports` keeps
+today); `client_versions` keeps rows with `client_version <> ''`; `viewports` keeps
 rows with `viewport_width > 0`; `hosts` keeps the empty host as a real
 bucket (migration-008 history plus every non-web row). Everything else
 groups every row, empty string included.
@@ -325,7 +332,7 @@ take a Litestream snapshot first.
 1. Create `views` and its indexes (§6.1). Copy:
    - `web_hits` → `kind='web'`, `actor_kind = CASE WHEN user_id<>'' THEN
      'user' ELSE 'connection' END`, `browser_version=''`, `os_version=''`,
-     `device_model=''`, `locale=''`, `viewport_width=0`, `app_version=''`.
+     `device_model=''`, `locale=''`, `viewport_width=0`, `client_version=''`.
    - `app_views` → `kind='app'`, `actor_kind = CASE WHEN user_id<>'' THEN
      'user' ELSE 'install' END`, `path=screen`, `os=` platform normalised
      via a `CASE` mirroring `enrich.NormalizeOS`, `device=''`, `browser=''`,
@@ -342,7 +349,7 @@ take a Litestream snapshot first.
    - `countries` ← both, summed.
    - `os` ← `agg_web_os` (`os, ''`) ∪ `agg_app_os` (`platform→os,
      os_version`), summed.
-   - `versions` ← `agg_app_versions` (`platform→os, app_version`).
+   - `client_versions` ← `agg_app_versions` (`platform→os, app_version→client_version`).
    - `devices` ← `agg_web_devices` (`device, ''`) ∪ `agg_app_devices`
      (`'', device_model`).
    - `viewports` starts empty.
@@ -355,10 +362,13 @@ take a Litestream snapshot first.
 4. `agg_identity_daily`: rebuild with `views = hits + views`.
 5. `ALTER TABLE product_events ADD COLUMN actor_kind TEXT NOT NULL
    DEFAULT ''`; `ALTER TABLE product_events RENAME COLUMN platform TO os`
-   (values normalised in place with the same `CASE`);
+   (values normalised in place with the same `CASE`) and
+   `RENAME COLUMN app_version TO client_version`;
    `UPDATE agg_product_attrs SET attr_key='$os' WHERE attr_key='$platform'`
    with the values normalised the same way, summing on collision (`ios`
-   and `iOS` rows for one event and day become one).
+   and `iOS` rows for one event and day become one), and
+   `UPDATE agg_product_attrs SET attr_key='$client_version' WHERE
+   attr_key='$app_version'`.
 6. Drop `web_hits`, `app_views`, every `agg_web_*`, every `agg_app_*`.
    Drop every `v_*` and recreate all of them (§8), product views
    included, matching the 003/004 precedent.
@@ -378,7 +388,7 @@ tools" and `docs_sync_test.go` checks the word):
 | Tool | Parameters | Returns |
 |---|---|---|
 | `views_overview` | `project`, `from`, `to`, `kind` (optional) | Per day: `visitors, views, sessions, bounces, duration_sec, bounce_rate, avg_session_sec`. With `kind` absent rows are summed across kinds per day |
-| `views_breakdown` | `project`, `from`, `to`, `dimension`, `limit` (20) | `dimension` ∈ `kinds, paths, hosts, referrers, utm, countries, os, browsers, versions, devices, viewports`. Two-key dimensions return both key columns; `kinds` reads `v_views_daily` |
+| `views_breakdown` | `project`, `from`, `to`, `dimension`, `limit` (20) | `dimension` ∈ `kinds, paths, hosts, referrers, utm, countries, os, browsers, client_versions, devices, viewports`. Two-key dimensions return both key columns; `kinds` reads `v_views_daily` |
 | `retention` | …, `actor` (`user`|`install`) | unchanged shape |
 | `identities` | unchanged | `views`, `events` (no `hits`) |
 | `list_projects` | — | `first_view_day`, `last_view_day` replace the four web/app dates |
@@ -416,7 +426,7 @@ branch mentions `data-kind` for Electron/Tauri.
 |---|---|---|---|
 | kind | `kind` | `data-kind` | `web` |
 | OS | `os` (renamed from `platform`, which stays as a deprecated alias) | `data-os` | none |
-| app version | `appVersion` (exists) | `data-app-version` | none |
+| client version | `clientVersion` (renamed from `appVersion`, which stays as a deprecated alias) | `data-client-version` | none |
 
 - `$kind` is a batch attribute, always sent.
 - With `kind !== "web"` the auto-tracker emits `$screenview` with
@@ -428,7 +438,7 @@ branch mentions `data-kind` for Electron/Tauri.
 - Every batch carries `$locale = navigator.language` when available.
 - `page()`, `screen()`, `track()` and the rest of the public API are
   unchanged; `docs_sync_test.go`'s symbol list gains `data-kind`,
-  `data-os`, `data-app-version`, `$kind`, `$os`, `$viewport_width` and
+  `data-os`, `data-client-version`, `$kind`, `$os`, `$viewport_width` and
   drops `$screen_view` for `$screenview`.
 
 ## 15. Documentation (same commit)
@@ -441,10 +451,11 @@ branch mentions `data-kind` for Electron/Tauri.
 - Reserved event names and reserved attribute keys tables per §4.
 - Tools table, "seventeen tools", HTTP API route table, the queryable
   views paragraph (`v_views_*`), the SDK attribute table and defaults.
-  The `product_attributes` row says `$os` and `$app_version` are always
+  The `product_attributes` row says `$os` and `$client_version` are always
   available; the attribute-breakdowns section says the same.
-- Every `$screen_view` and `$platform` in the page becomes `$screenview`
-  and `$os`; the aliases are not documented.
+- Every `$screen_view`, `$platform` and `$app_version` in the page
+  becomes `$screenview`, `$os` and `$client_version`; the aliases are
+  not documented.
 - A dated "Changed in this release" note: tool names, routes, view names,
   env vars, the retention parameter, capped paths, the app-days-have-zero-
   bounces boundary, and the empty device-class/model boundary.
@@ -481,7 +492,7 @@ branch mentions `data-kind` for Electron/Tauri.
   routes, env vars, reserved keys, SDK symbols, views dimensions —
   `TestDocumentCoversEveryWebDimension` becomes `…EveryViewsDimension`).
 - SDK: `data-kind="app"` emits `$screenview` on navigation with the
-  masked path and nothing else; `data-os`/`data-app-version`
+  masked path and nothing else; `data-os`/`data-client-version`
   reach the batch; `$viewport_width` and `$locale` present.
 - Dashboards: prerender test over the new page set.
 
@@ -498,14 +509,14 @@ Breaking:
   change columns.
 - `RETENTION_WEB_*` and `RETENTION_APP_*` refuse the boot; set
   `RETENTION_VIEWS_*`.
-- `product_attributes` with `key: "$platform"` becomes `key: "$os"`;
-  `v_product_attrs` rows carry `$os`.
+- `product_attributes` with `key: "$platform"` / `"$app_version"`
+  becomes `"$os"` / `"$client_version"`; `v_product_attrs` rows follow.
 - Migration 009 is irreversible; snapshot first.
 
-Not breaking: the ingest wire format (`$screen_view` and `$platform`
-are still accepted as aliases of `$screenview` and `$os`), deployed SDK
-tags, ingest keys, project aliases, per-project retention overrides
-(legacy keys still decode).
+Not breaking: the ingest wire format (`$screen_view`, `$platform` and
+`$app_version` are still accepted as aliases of `$screenview`, `$os` and
+`$client_version`), deployed SDK tags, ingest keys, project aliases,
+per-project retention overrides (legacy keys still decode).
 
 Behaviour changes worth a line: paths are capped at 500 per day; web
 raw rows are kept 30 days by default; app breakdowns no longer jump at
