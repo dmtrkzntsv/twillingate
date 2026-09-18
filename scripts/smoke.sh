@@ -44,16 +44,16 @@ curl -fs "$base/healthz" > /dev/null || fail "server never became healthy"
 echo "ok: /healthz"
 
 # A browser User-Agent is required: curl's default UA is classified as a bot,
-# so the $pageview half would be accepted (202) but never stored. The bot
+# so the $page_view half would be accepted (202) but never stored. The bot
 # filter never touches the app or custom halves.
 ua='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36'
 # shellcheck disable=SC2016  # the $-prefixed names are JSON keys, not shell
 code=$(curl -s -o "$dir/events.out" -w '%{http_code}' -A "$ua" -X POST "$base/ingest/events" \
   -H 'Origin: http://localhost' -H 'Content-Type: application/json' \
   -H "X-Analytics-Key: $key" \
-  -d '{"attributes":{"$platform":"ios","$app_version":"1.0","$install_id":"install-1"},
+  -d '{"attributes":{"$os":"ios","$app_version":"1.0","$install_id":"install-1"},
        "events":[
-         {"name":"$pageview","attributes":{"$host":"localhost","$path":"/pricing","$referrer":"https://news.ycombinator.com/"}},
+         {"name":"$page_view","attributes":{"$host":"localhost","$path":"/pricing","$referrer":"https://news.ycombinator.com/"}},
          {"name":"$screen_view","attributes":{"$screen":"/settings"}},
          {"name":"signup","attributes":{"plan":"pro"}}]}')
 [ "$code" = 202 ] || fail "/ingest/events returned $code: $(cat "$dir/events.out")"
@@ -96,7 +96,8 @@ pid=""
 
 counts="$(go run ./scripts/smokecheck "$dir/smoke.db")" || fail "could not read database"
 echo "rows: $counts"
+# views=2: one $page_view (kind=web) plus one $screen_view (kind=app).
 # product=2: the "signup" event plus one surviving copy of the replayed one.
-[ "$counts" = "web=1 app=1 product=2" ] || fail "expected web=1 app=1 product=2, got: $counts"
+[ "$counts" = "views=2 product=2" ] || fail "expected views=2 product=2, got: $counts"
 
 echo "SMOKE OK"

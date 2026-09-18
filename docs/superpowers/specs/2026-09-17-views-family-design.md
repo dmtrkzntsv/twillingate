@@ -1,7 +1,7 @@
 # One views family: merge web and app analytics — design
 
 Date: 2026-09-17
-Status: approved 2026-09-18, implementation pending
+Status: implemented
 Supersedes the family split introduced by `2026-08-23-app-analytics-design.md`.
 
 ## 1. Purpose
