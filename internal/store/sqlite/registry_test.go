@@ -455,21 +455,19 @@ func TestDeleteProjectDataCascades(t *testing.T) {
 		t.Fatal(err)
 	}
 	// one row in a raw table and one in an aggregate table
-	if _, err := d.db.Exec(`INSERT INTO web_hits (id, project, ts, received_at, actor_id, path,
-		referrer_source, utm_source, utm_medium, utm_campaign, country, device, browser, os,
-		user_id, group_id)
-		VALUES ('h1','blog','2026-08-01T10:00:00Z','2026-08-01T10:00:00Z','a','/x','','','','','','','','','','')`); err != nil {
+	if _, err := d.db.Exec(`INSERT INTO views (id, project, ts, received_at, kind, actor_id, actor_kind, path)
+		VALUES ('h1','blog','2026-08-01T10:00:00Z','2026-08-01T10:00:00Z','web','a','connection','/x')`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.db.Exec(`INSERT INTO agg_web_daily (project, day, visitors, pageviews,
-		sessions, bounces, duration_sec) VALUES ('blog','2026-07-01',1,1,1,0,0)`); err != nil {
+	if _, err := d.db.Exec(`INSERT INTO agg_views_daily (project, day, kind, visitors, views,
+		sessions, bounces, duration_sec) VALUES ('blog','2026-07-01','web',1,1,1,0,0)`); err != nil {
 		t.Fatal(err)
 	}
 	if err := d.DeleteProjectData(ctx, "blog", store.AuditEntry{
 		Actor: "cli", Action: "project.delete", Subject: "blog"}); err != nil {
 		t.Fatal(err)
 	}
-	for _, table := range []string{"projects", "ingest_keys", "web_hits", "agg_web_daily"} {
+	for _, table := range []string{"projects", "ingest_keys", "views", "agg_views_daily"} {
 		var c int
 		if err := d.db.QueryRow(
 			`SELECT COUNT(*) FROM ` + table + ` WHERE ` + projectCol(table) + `='blog'`).Scan(&c); err != nil {
@@ -514,12 +512,20 @@ func TestRenameProjectMovesEveryTable(t *testing.T) {
 		t.Fatal(err)
 	}
 	seedProductEvent(t, db, "blog", "signup", "2026-08-01T10:00:00Z", nil, "", "")
+	if _, err := db.db.Exec(`INSERT INTO views (id, project, ts, received_at, kind, actor_id, actor_kind, path)
+		VALUES ('v1','blog','2026-08-01T10:00:00Z','2026-08-01T10:00:00Z','web','a','connection','/x')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.db.Exec(`INSERT INTO agg_views_daily (project, day, kind, visitors, views,
+		sessions, bounces, duration_sec) VALUES ('blog','2026-08-01','web',1,1,1,0,0)`); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := db.RenameProject(ctx, "blog", "journal", store.AuditEntry{
 		Actor: "test", Action: "project.rename", Subject: "blog->journal"}); err != nil {
 		t.Fatal(err)
 	}
-	for _, table := range []string{"product_events", "ingest_keys"} {
+	for _, table := range []string{"product_events", "ingest_keys", "views", "agg_views_daily"} {
 		var n int
 		if err := db.db.QueryRow(
 			`SELECT COUNT(*) FROM ` + table + ` WHERE project='blog'`).Scan(&n); err != nil {
@@ -544,6 +550,21 @@ func TestRenameProjectMovesEveryTable(t *testing.T) {
 	}
 	if events != 1 {
 		t.Fatalf("product_events under journal = %d, want 1", events)
+	}
+	var views, aggViews int
+	if err := db.db.QueryRow(
+		`SELECT COUNT(*) FROM views WHERE project='journal'`).Scan(&views); err != nil {
+		t.Fatal(err)
+	}
+	if views != 1 {
+		t.Fatalf("views under journal = %d, want 1", views)
+	}
+	if err := db.db.QueryRow(
+		`SELECT COUNT(*) FROM agg_views_daily WHERE project='journal'`).Scan(&aggViews); err != nil {
+		t.Fatal(err)
+	}
+	if aggViews != 1 {
+		t.Fatalf("agg_views_daily under journal = %d, want 1", aggViews)
 	}
 	// the registry row itself must have moved, not just the data tables
 	var c int

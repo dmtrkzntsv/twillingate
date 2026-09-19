@@ -16,16 +16,16 @@ func TestPruneAggregates(t *testing.T) {
 	}
 	// Seed one old + one new row per representative table. agg_product_totals
 	// is included because it is the only product table without event_name.
-	exec(`INSERT INTO agg_web_daily VALUES ('app','2025-01-01',1,1,1,0,0), ('app','2026-08-01',2,2,2,0,0)`)
-	exec(`INSERT INTO agg_web_pages VALUES ('app','2025-01-01','/',1,1), ('app','2026-08-01','/',2,2)`)
-	exec(`INSERT INTO agg_web_utm VALUES ('app','2025-01-01','s','m','c',1,1), ('app','2026-08-01','s','m','c',2,2)`)
+	exec(`INSERT INTO agg_views_daily VALUES ('app','2025-01-01','web',1,1,1,0,0), ('app','2026-08-01','web',2,2,2,0,0)`)
+	exec(`INSERT INTO agg_views_paths VALUES ('app','2025-01-01','/',1,1), ('app','2026-08-01','/',2,2)`)
+	exec(`INSERT INTO agg_views_utm VALUES ('app','2025-01-01','s','m','c',1,1), ('app','2026-08-01','s','m','c',2,2)`)
 	exec(`INSERT INTO agg_product_daily VALUES ('app','2025-06-01','e',1,1), ('app','2026-08-01','e',2,2)`)
 	exec(`INSERT INTO agg_product_totals VALUES ('app','2025-06-01',1,1), ('app','2026-08-01',2,2)`)
 	exec(`INSERT INTO agg_product_attrs VALUES ('app','2025-06-01','e','k','v',1,1), ('app','2026-08-01','e','k','v',2,2)`)
 	// Different project must be untouched.
-	exec(`INSERT INTO agg_web_daily VALUES ('other','2025-01-01',9,9,9,0,0)`)
+	exec(`INSERT INTO agg_views_daily VALUES ('other','2025-01-01','web',9,9,9,0,0)`)
 
-	if err := db.PruneAggregates(ctx, "app", day("2026-01-01"), day("2026-01-01"), day("2026-01-01")); err != nil {
+	if err := db.PruneAggregates(ctx, "app", day("2026-01-01"), day("2026-01-01")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -38,42 +38,42 @@ func TestPruneAggregates(t *testing.T) {
 		return n
 	}
 	for _, tbl := range []string{
-		"agg_web_daily", "agg_web_pages", "agg_web_utm",
+		"agg_views_daily", "agg_views_paths", "agg_views_utm",
 		"agg_product_daily", "agg_product_totals", "agg_product_attrs",
 	} {
 		if n := count(tbl, "app"); n != 1 {
 			t.Errorf("%s: %d rows for app, want 1 (old pruned, new kept)", tbl, n)
 		}
 	}
-	if n := count("agg_web_daily", "other"); n != 1 {
+	if n := count("agg_views_daily", "other"); n != 1 {
 		t.Error("other project must be untouched")
 	}
 }
 
-// Web and product retention are configured independently, so a cutoff that
-// prunes one must not prune the other.
+// Views and product retention are configured independently, so a cutoff
+// that prunes one must not prune the other.
 func TestPruneAggregatesIndependentCutoffs(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	if _, err := db.db.Exec(`INSERT INTO agg_web_daily VALUES ('app','2026-03-01',1,1,1,0,0)`); err != nil {
+	if _, err := db.db.Exec(`INSERT INTO agg_views_daily VALUES ('app','2026-03-01','web',1,1,1,0,0)`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.db.Exec(`INSERT INTO agg_product_daily VALUES ('app','2026-03-01','e',1,1)`); err != nil {
 		t.Fatal(err)
 	}
-	// Prune web through 2026-06-01 but keep product back to 2026-01-01.
-	if err := db.PruneAggregates(ctx, "app", day("2026-06-01"), day("2026-01-01"), day("2026-01-01")); err != nil {
+	// Prune views through 2026-06-01 but keep product back to 2026-01-01.
+	if err := db.PruneAggregates(ctx, "app", day("2026-06-01"), day("2026-01-01")); err != nil {
 		t.Fatal(err)
 	}
-	var web, product int
-	if err := db.db.QueryRow(`SELECT COUNT(*) FROM agg_web_daily`).Scan(&web); err != nil {
+	var views, product int
+	if err := db.db.QueryRow(`SELECT COUNT(*) FROM agg_views_daily`).Scan(&views); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.db.QueryRow(`SELECT COUNT(*) FROM agg_product_daily`).Scan(&product); err != nil {
 		t.Fatal(err)
 	}
-	if web != 0 {
-		t.Errorf("agg_web_daily: %d rows, want 0 (before web cutoff)", web)
+	if views != 0 {
+		t.Errorf("agg_views_daily: %d rows, want 0 (before views cutoff)", views)
 	}
 	if product != 1 {
 		t.Errorf("agg_product_daily: %d rows, want 1 (after product cutoff)", product)
@@ -91,9 +91,8 @@ func TestPruneAggregatesCoversAllAggTables(t *testing.T) {
 	}
 	defer rows.Close()
 	pruned := map[string]bool{}
-	all := append([]string{}, webAggTables...)
+	all := append([]string{}, viewsAggTables...)
 	all = append(all, productAggTables...)
-	all = append(all, appAggTables...)
 	all = append(all, identityAggTables...)
 	// agg_retention is pruned by PruneActors alongside the actors rows it
 	// derives from, not by PruneAggregates.

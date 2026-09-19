@@ -22,25 +22,19 @@ import (
 
 type fakeQueue struct {
 	mu         sync.Mutex
-	hits       []store.WebHit
+	views      []store.View
 	events     []store.ProductEvent
-	views      []store.AppView
 	identities []store.Identity
 }
 
-func (f *fakeQueue) EnqueueHit(h store.WebHit) {
+func (f *fakeQueue) EnqueueView(v store.View) {
 	f.mu.Lock()
-	f.hits = append(f.hits, h)
+	f.views = append(f.views, v)
 	f.mu.Unlock()
 }
 func (f *fakeQueue) EnqueueEvent(e store.ProductEvent) {
 	f.mu.Lock()
 	f.events = append(f.events, e)
-	f.mu.Unlock()
-}
-func (f *fakeQueue) EnqueueAppView(v store.AppView) {
-	f.mu.Lock()
-	f.views = append(f.views, v)
 	f.mu.Unlock()
 }
 
@@ -137,7 +131,7 @@ func newTestServer(t *testing.T) *Server {
 
 // post sends one envelope. headers may set Origin, X-Analytics-Key or a
 // non-browser User-Agent; a Chrome UA and CF country are the defaults so
-// $pageview enrichment behaves like a real browser request.
+// web-kind enrichment behaves like a real browser request.
 func post(h http.Handler, body string, headers map[string]string) *httptest.ResponseRecorder {
 	r := httptest.NewRequest("POST", "/ingest/events", strings.NewReader(body))
 	r.Header.Set("User-Agent", chromeUA)
@@ -210,11 +204,11 @@ func TestHeaderKeyBeatsBodyKey(t *testing.T) {
 
 // --- routing ---
 
-func TestRoutesPageviewScreenViewAndCustom(t *testing.T) {
+func TestRoutesViewsAndCustom(t *testing.T) {
 	q, h := testServer(t)
-	body := `{"key":"` + testKey + `","attributes":{"$platform":"ios","$app_version":"2.4.1"},
+	body := `{"key":"` + testKey + `","attributes":{"$os":"ios","$app_version":"2.4.1"},
 	  "events":[
-	    {"name":"$pageview","attributes":{"$host":"app.com","$path":"/pricing","$utm_source":"hn"}},
+	    {"name":"$page_view","attributes":{"$host":"app.com","$path":"/pricing","$utm_source":"hn","$display_width":1920,"$display_height":1080,"$locale":"de-DE"}},
 	    {"name":"$screen_view","attributes":{"$screen":"/settings","$os_version":"17.2","$device_model":"iPhone15,2","$locale":"en-US","$session_id":"s1"}},
 	    {"name":"subscribed","attributes":{"plan":"pro"}}
 	  ]}`
@@ -225,24 +219,141 @@ func TestRoutesPageviewScreenViewAndCustom(t *testing.T) {
 	if res := decodeResult(t, w); res.Accepted != 3 || res.Rejected != 0 {
 		t.Errorf("result = %+v", res)
 	}
-	if len(q.hits) != 1 || q.hits[0].Host != "app.com" ||
-		q.hits[0].Path != "/pricing" || q.hits[0].UTMSource != "hn" {
-		t.Errorf("hits = %+v", q.hits)
+	if len(q.views) != 2 {
+		t.Fatalf("views = %+v", q.views)
 	}
-	if q.hits[0].Country != "DE" || q.hits[0].Browser != "Chrome" {
-		t.Errorf("hit enrichment = %+v", q.hits[0])
+	web, app := q.views[0], q.views[1]
+	if web.Kind != "web" || web.Host != "app.com" || web.Path != "/pricing" || web.UTMSource != "hn" ||
+		web.Country != "DE" || web.Browser != "Chrome" || web.BrowserVersion != "126" || web.Device != "desktop" ||
+		web.DisplayWidth != 1920 || web.DisplayHeight != 1080 || web.Locale != "de-DE" {
+		t.Errorf("web view = %+v", web)
 	}
+	// a declared $os overrides the parsed one, on any kind
+	if web.OS != "iOS" {
+		t.Errorf("web os = %q, want the declared iOS to beat the parsed Windows", web.OS)
+	}
+	if app.Kind != "app" || app.Path != "/settings" || app.OS != "iOS" || app.OSVersion != "17.2" ||
+		app.AppVersion != "2.4.1" || app.DeviceModel != "iPhone15,2" || app.Locale != "en-US" ||
+		app.SessionID != "s1" || app.Country != "DE" || app.Browser != "" || app.Device != "" {
+		t.Errorf("app view = %+v", app)
+	}
+	if len(q.events) != 1 || q.events[0].OS != "iOS" || q.events[0].AppVersion != "2.4.1" {
+		t.Errorf("events = %+v", q.events)
+	}
+}
+
+func TestLegacyNamesAreSilentAliases(t *testing.T) {
+	q, h := testServer(t)
+	w := post(h, envelopeOf(`{"name":"$pageview","attributes":{"$host":"app.com","$path":"/x","$platform":"linux"}}`), nil)
+	res := decodeResult(t, w)
+	if res.Accepted != 1 || len(res.Warnings) != 0 {
+		t.Errorf("aliases must be accepted without a warning: %+v", res)
+	}
+	if len(q.views) != 1 || q.views[0].Kind != "web" || q.views[0].OS != "Linux" {
+		t.Errorf("views = %+v", q.views)
+	}
+}
+
+func TestKindDeclaredValidatedAndDefaulted(t *testing.T) {
+	q, h := testServer(t)
+	body := `{"key":"` + testKey + `","attributes":{"$kind":"cli"},
+	  "events":[
+	    {"name":"$screen_view","attributes":{"$screen":"deploy"}},
+	    {"name":"$page_view","attributes":{"$path":"/","$kind":"Bad Kind!"}},
+	    {"name":"$page_view","attributes":{"$path":"/","$kind":""}}
+	  ]}`
+	// A crawler User-Agent: web-kind rows are filtered, the cli row is not.
+	w := post(h, body, map[string]string{"User-Agent": "Googlebot/2.1"})
+	res := decodeResult(t, w)
+	if res.Accepted != 3 {
+		t.Fatalf("result = %+v", res)
+	}
+	if len(res.Warnings) != 1 || !strings.Contains(res.Warnings[0].Reason, `invalid $kind "Bad Kind!", using "web"`) {
+		t.Errorf("warnings = %+v", res.Warnings)
+	}
+	// The invalid kind and the empty kind both fall back to the name's
+	// default, web, and a crawler User-Agent on a web row is a bot:
+	// accepted, never stored. Only the cli view reaches the queue.
 	if len(q.views) != 1 {
 		t.Fatalf("views = %+v", q.views)
 	}
-	v := q.views[0]
-	if v.Screen != "/settings" || v.AppVersion != "2.4.1" || v.Platform != "ios" ||
-		v.OSVersion != "17.2" || v.DeviceModel != "iPhone15,2" || v.Locale != "en-US" ||
-		v.SessionID != "s1" || v.Country != "DE" {
-		t.Errorf("view = %+v", v)
+	if q.views[0].Kind != "cli" || q.views[0].Path != "deploy" || q.views[0].Browser != "" {
+		t.Errorf("cli view = %+v (non-web kinds are never parsed or filtered)", q.views[0])
 	}
-	if len(q.events) != 1 || q.events[0].Platform != "ios" || q.events[0].AppVersion != "2.4.1" {
-		t.Errorf("events = %+v", q.events)
+}
+
+func TestBotFilterAppliesToWebKindOnly(t *testing.T) {
+	q, h := testServer(t)
+	body := envelopeOf(`{"name":"$page_view","attributes":{"$host":"app.com","$path":"/x"}},
+		{"name":"$screen_view","attributes":{"$screen":"/s"}},
+		{"name":"$page_view","attributes":{"$path":"/y","$kind":"app"}},
+		{"name":"custom"}`)
+	w := post(h, body, map[string]string{"User-Agent": "Googlebot/2.1"})
+	if len(q.views) != 2 {
+		t.Errorf("only web-kind rows are bot-filtered, got %+v", q.views)
+	}
+	for _, v := range q.views {
+		if v.Kind == "web" {
+			t.Errorf("web view survived the bot filter: %+v", v)
+		}
+	}
+	if len(q.events) != 1 {
+		t.Errorf("bot filter must not touch custom events: %+v", q.events)
+	}
+	if res := decodeResult(t, w); res.Accepted != 4 || res.Rejected != 0 {
+		t.Errorf("result = %+v", res)
+	}
+}
+
+func TestViewRequiresALocation(t *testing.T) {
+	q, h := testServer(t)
+	w := post(h, envelopeOf(`{"name":"$page_view"},
+		{"name":"$screen_view","attributes":{"$path":"/via-path"}},
+		{"name":"$page_view","attributes":{"$screen":"/via-screen"}}`), nil)
+	res := decodeResult(t, w)
+	if res.Rejected != 1 || len(res.Errors) != 1 || res.Errors[0].Reason != "view requires $path or $screen" {
+		t.Errorf("result = %+v", res)
+	}
+	if len(q.views) != 2 || q.views[0].Path != "/via-path" || q.views[0].Kind != "app" {
+		t.Errorf("views = %+v ($path is accepted on a screen view)", q.views)
+	}
+	if q.views[1].Path != "/via-screen" || q.views[1].Kind != "web" {
+		t.Errorf("views = %+v ($screen is accepted on a page view)", q.views)
+	}
+}
+
+func TestDisplaySizeParsing(t *testing.T) {
+	q, h := testServer(t)
+	w := post(h, envelopeOf(`{"name":"$page_view","attributes":{"$path":"/","$display_width":"1440","$display_height":-5}},
+		{"name":"$page_view","attributes":{"$path":"/b","$display_width":"wide"}}`), nil)
+	res := decodeResult(t, w)
+	if res.Accepted != 2 || len(res.Warnings) != 2 {
+		t.Errorf("result = %+v (want one warning per unusable value)", res)
+	}
+	if q.views[0].DisplayWidth != 1440 || q.views[0].DisplayHeight != 0 || q.views[1].DisplayWidth != 0 {
+		t.Errorf("views = %+v", q.views)
+	}
+}
+
+func TestActorKindRecorded(t *testing.T) {
+	q, h := testServerWithIdentity(t, "identified")
+	body := `{"key":"` + testKey + `","events":[
+	    {"name":"$page_view","attributes":{"$path":"/","$user_id":"u1","$install_id":"i1"}},
+	    {"name":"$page_view","attributes":{"$path":"/","$install_id":"i1"}},
+	    {"name":"$page_view","attributes":{"$path":"/"}},
+	    {"name":"x","attributes":{"$install_id":"i1"}}]}`
+	post(h, body, nil)
+	if len(q.views) != 3 || len(q.events) != 1 {
+		t.Fatalf("views=%d events=%d", len(q.views), len(q.events))
+	}
+	want := []string{store.ActorUser, store.ActorInstall, store.ActorConnection}
+	for i, v := range q.views {
+		if v.ActorKind != want[i] {
+			t.Errorf("view %d actor_kind = %q, want %q", i, v.ActorKind, want[i])
+		}
+	}
+	if q.events[0].ActorKind != store.ActorInstall {
+		t.Errorf("event actor_kind = %q", q.events[0].ActorKind)
 	}
 }
 
@@ -301,7 +412,7 @@ func TestPerEventRejectionLeavesBatchIntact(t *testing.T) {
 		t.Fatalf("status = %d, want 202 even with rejects", w.Code)
 	}
 	res := decodeResult(t, w)
-	// missing name; $pageview without $path; $screen_view without $screen; bad id
+	// missing name; two views each rejected with "view requires $path or $screen"; bad id
 	if res.Accepted != 2 || res.Rejected != 4 || len(res.Errors) != 4 {
 		t.Errorf("result = %+v", res)
 	}
@@ -339,6 +450,64 @@ func TestClientTimestampIsUsedAndClamped(t *testing.T) {
 	// Clamped, not dropped, and never older than the app raw window.
 	if q.events[1].TS.Before(q.events[1].ReceivedAt.Add(-31 * 24 * time.Hour)) {
 		t.Errorf("clamped ts = %v, older than the raw window", q.events[1].TS)
+	}
+}
+
+// intPtr is a test helper for building a *int override, mirroring the
+// pattern used across internal/config and internal/jobs tests.
+func intPtr(n int) *int { return &n }
+
+// TestEventAgeClampUsesProjectRetention verifies the fix for the per-project
+// clamp: a project with a Views.RawDays override below the global default
+// must clamp against its own window, not the global one, or a clock-skewed
+// late event can land on a day whose raw rows this project already
+// aggregated and deleted.
+func TestEventAgeClampUsesProjectRetention(t *testing.T) {
+	cfg := configtest.Load(t, nil)
+	reg := newTestRegistry(t, cfg,
+		[]manage.ProjectSpec{
+			{Alias: "clamped", Name: "Clamped", AllowedOrigins: []string{testOrigin},
+				Retention: &config.RetentionOverride{Views: &config.RetentionClassOverride{RawDays: intPtr(3)}}},
+			{Alias: "normal", Name: "Normal", AllowedOrigins: []string{testOrigin}},
+		},
+		map[string][2]string{"clamped": {"ak_clamped", "web"}, "normal": {"ak_normal", "web"}})
+	g, _ := geo.New("cloudflare://", t.TempDir(), slog.Default())
+	q := &fakeQueue{}
+	h := New(cfg, reg, q, g, fixedSalt{}, q, slog.Default())
+
+	oldTS := time.Now().UTC().AddDate(0, 0, -10).Format(time.RFC3339)
+
+	// The overridden project: a 10-day-old event must clamp to its 3-day
+	// window, not the 30-day global default.
+	w := post(h, `{"key":"ak_clamped","events":[{"name":"$page_view","ts":"`+oldTS+`","attributes":{"$path":"/x"}}]}`, nil)
+	res := decodeResult(t, w)
+	if len(res.Warnings) != 1 || !strings.Contains(res.Warnings[0].Reason, "clamped") {
+		t.Fatalf("warnings = %+v, want a clamp warning", res.Warnings)
+	}
+	if len(q.views) != 1 {
+		t.Fatalf("views = %+v", q.views)
+	}
+	age := time.Since(q.views[0].TS)
+	if age < 3*24*time.Hour || age > 3*24*time.Hour+time.Minute {
+		t.Errorf("clamped view age = %v, want ~3 days (the project's own window)", age)
+	}
+
+	// Control: a project with no override keeps the global 30-day default,
+	// so a 10-day-old timestamp is within range and passes through as-is.
+	w = post(h, `{"key":"ak_normal","events":[{"name":"$page_view","ts":"`+oldTS+`","attributes":{"$path":"/x"}}]}`, nil)
+	res = decodeResult(t, w)
+	if len(res.Warnings) != 0 {
+		t.Fatalf("warnings = %+v, want none: 10 days is within the 30-day default", res.Warnings)
+	}
+	if len(q.views) != 2 {
+		t.Fatalf("views = %+v", q.views)
+	}
+	got, err := time.Parse(time.RFC3339, oldTS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !q.views[1].TS.Equal(got) {
+		t.Errorf("unclamped ts = %v, want the client value %v", q.views[1].TS, got)
 	}
 }
 
@@ -450,27 +619,6 @@ func TestBatchNamesAreDedupedAcrossEvents(t *testing.T) {
 	  "events":[{"name":"a"},{"name":"b"},{"name":"c"}]}`, nil)
 	if len(q.identities) != 2 {
 		t.Errorf("identities = %+v; want one user and one group, not one pair per event", q.identities)
-	}
-}
-
-// --- bot filtering ---
-
-func TestBotFilterAppliesOnlyToPageviews(t *testing.T) {
-	q, h := testServer(t)
-	body := envelopeOf(`{"name":"$pageview","attributes":{"$host":"app.com","$path":"/x"}},
-		{"name":"$screen_view","attributes":{"$screen":"/s"}},
-		{"name":"custom"}`)
-	w := post(h, body, map[string]string{"User-Agent": "Googlebot/2.1"})
-
-	if len(q.hits) != 0 {
-		t.Errorf("bot pageview should be dropped, got %+v", q.hits)
-	}
-	if len(q.views) != 1 || len(q.events) != 1 {
-		t.Errorf("bot filter must not touch app or custom events: views=%+v events=%+v", q.views, q.events)
-	}
-	// Dropped bot hits count as accepted: the client did nothing wrong.
-	if res := decodeResult(t, w); res.Accepted != 3 || res.Rejected != 0 {
-		t.Errorf("result = %+v", res)
 	}
 }
 

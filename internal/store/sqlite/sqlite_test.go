@@ -66,9 +66,9 @@ func TestMigrateIsIdempotent(t *testing.T) {
 func TestSchemaTablesExist(t *testing.T) {
 	db := newTestDB(t)
 	for _, table := range []string{
-		"meta", "projects", "web_hits", "product_events",
-		"agg_web_daily", "agg_web_pages", "agg_web_referrers", "agg_web_countries",
-		"agg_web_devices", "agg_web_browsers", "agg_web_os", "agg_web_utm",
+		"meta", "projects", "views", "product_events",
+		"agg_views_daily", "agg_views_paths", "agg_views_referrers", "agg_views_countries",
+		"agg_views_devices", "agg_views_browsers", "agg_views_os", "agg_views_utm",
 		"agg_product_daily", "agg_product_totals", "agg_product_attrs",
 	} {
 		var name string
@@ -106,9 +106,7 @@ func TestMigration003Schema(t *testing.T) {
 	ctx := context.Background()
 
 	for _, table := range []string{
-		"app_views", "agg_app_daily", "agg_app_screens", "agg_app_versions",
-		"agg_app_os", "agg_app_devices", "agg_app_countries",
-		"actors", "agg_retention", "identities", "agg_identity_daily",
+		"views", "actors", "agg_retention", "identities", "agg_identity_daily",
 	} {
 		var n int
 		if err := db.db.QueryRowContext(ctx,
@@ -121,10 +119,9 @@ func TestMigration003Schema(t *testing.T) {
 	}
 
 	for _, c := range []struct{ table, column string }{
-		{"web_hits", "actor_id"}, {"web_hits", "user_id"},
-		{"web_hits", "group_id"}, {"web_hits", "received_at"},
+		{"views", "kind"}, {"views", "actor_kind"}, {"views", "display_width"},
 		{"product_events", "actor_id"}, {"product_events", "user_id"},
-		{"product_events", "group_id"}, {"product_events", "platform"},
+		{"product_events", "group_id"}, {"product_events", "actor_kind"}, {"product_events", "os"},
 		{"product_events", "app_version"}, {"product_events", "received_at"},
 		{"projects", "identity"},
 	} {
@@ -132,18 +129,20 @@ func TestMigration003Schema(t *testing.T) {
 			t.Errorf("%s.%s missing", c.table, c.column)
 		}
 	}
-	if hasColumn(t, db, "web_hits", "visitor_hash") {
-		t.Error("web_hits.visitor_hash should have been renamed to actor_id")
+	if hasColumn(t, db, "product_events", "platform") {
+		t.Error("product_events.platform should have been renamed to os")
 	}
 }
 
-func TestMigration004Views(t *testing.T) {
+func TestMigrationViews(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	for _, view := range []string{
-		"v_web_daily", "v_product_daily",
-		"v_app_daily", "v_app_screens", "v_app_versions", "v_app_os",
-		"v_app_devices", "v_app_countries", "v_identity_daily", "v_retention",
+		"v_views_daily", "v_views_paths", "v_views_hosts", "v_views_referrers", "v_views_utm",
+		"v_views_countries", "v_views_os", "v_views_browsers", "v_views_app_versions",
+		"v_views_devices", "v_views_displays",
+		"v_product_daily", "v_product_totals", "v_product_attrs",
+		"v_identity_daily", "v_retention",
 	} {
 		var n int
 		if err := db.db.QueryRowContext(ctx,

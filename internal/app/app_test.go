@@ -128,9 +128,9 @@ func TestServeEndToEnd(t *testing.T) {
 	}
 	// One envelope covering all three destinations.
 	if r := post("/ingest/events", "https://app.com",
-		`{"key":"ak_test","attributes":{"$platform":"ios","$app_version":"1.0"},
+		`{"key":"ak_test","attributes":{"$os":"ios","$app_version":"1.0"},
 		  "events":[
-		    {"name":"$pageview","attributes":{"$host":"app.com","$path":"/pricing"}},
+		    {"name":"$page_view","attributes":{"$host":"app.com","$path":"/pricing"}},
 		    {"name":"$screen_view","attributes":{"$screen":"/settings"}},
 		    {"name":"signup","attributes":{"plan":"pro"}}]}`); r.StatusCode != 202 {
 		t.Fatalf("events: %d", r.StatusCode)
@@ -175,9 +175,9 @@ func TestServeEndToEnd(t *testing.T) {
 	}
 	defer st.Close()
 	bg := context.Background()
-	days, err := st.WebDaysBefore(bg, "app", mustDay("2100-01-01"))
+	days, err := st.ViewDaysBefore(bg, "app", mustDay("2100-01-01"))
 	if err != nil || len(days) != 1 {
-		t.Fatalf("web hit not persisted: %v %v", days, err)
+		t.Fatalf("view not persisted: %v %v", days, err)
 	}
 	pdays, err := st.ProductDaysBefore(bg, "app", mustDay("2100-01-01"))
 	if err != nil || len(pdays) != 1 {
@@ -240,7 +240,7 @@ func TestServeRestartsOnExistingDatabase(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	days, err := st.WebDaysBefore(bg, "app", mustDay("2100-01-01"))
+	days, err := st.ViewDaysBefore(bg, "app", mustDay("2100-01-01"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -521,7 +521,7 @@ func TestServeNeverPersistsIPOrUserAgent(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	days, err := st.WebDaysBefore(context.Background(), "app", mustDay("2100-01-01"))
+	days, err := st.ViewDaysBefore(context.Background(), "app", mustDay("2100-01-01"))
 	if err != nil || len(days) != 1 {
 		t.Fatalf("hit not persisted: %v %v", days, err)
 	}

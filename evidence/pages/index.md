@@ -17,7 +17,7 @@ where archived = 1 and alias != ''
 
 {#each active_projects as p}
 
-- **{p.name}** ({p.identity}) — [web](/web/{p.alias}) · [app](/app/{p.alias}) · [product](/product/{p.alias}) · [users](/users/{p.alias}) · [groups](/groups/{p.alias}) · [retention](/retention/{p.alias})
+- **{p.name}** ({p.identity}) — [views](/views/{p.alias}) · [product](/product/{p.alias}) · [users](/users/{p.alias}) · [groups](/groups/{p.alias}) · [retention](/retention/{p.alias})
 
 {/each}
 

@@ -12,29 +12,31 @@ import (
 
 const tsFormat = "2006-01-02T15:04:05Z"
 
-func (d *DB) WriteWebHits(ctx context.Context, hits []store.WebHit) error {
-	if len(hits) == 0 {
+func (d *DB) WriteViews(ctx context.Context, views []store.View) error {
+	if len(views) == 0 {
 		return nil
 	}
 	return d.tx(ctx, func(tx *sql.Tx) error {
 		// INSERT OR IGNORE: with client-supplied UUIDv7 ids, a batch
 		// retried after a timeout that actually succeeded is a no-op.
-		stmt, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO web_hits
-			(id, project, ts, received_at, actor_id, user_id, group_id,
+		stmt, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO views
+			(id, project, ts, received_at, kind, actor_id, actor_kind, user_id, group_id, session_id,
 			 host, path, referrer_source, utm_source, utm_medium, utm_campaign,
-			 country, device, browser, os)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+			 os, os_version, browser, browser_version, app_version,
+			 device, device_model, locale, display_width, display_height, country)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
 		if err != nil {
 			return err
 		}
 		defer stmt.Close()
-		for _, h := range hits {
-			if _, err := stmt.ExecContext(ctx, h.ID, h.Project,
-				h.TS.UTC().Format(tsFormat), h.ReceivedAt.UTC().Format(tsFormat),
-				h.ActorID, h.UserID, h.GroupID,
-				h.Host, h.Path, h.ReferrerSource, h.UTMSource, h.UTMMedium, h.UTMCampaign,
-				h.Country, h.Device, h.Browser, h.OS); err != nil {
-				return fmt.Errorf("web hit %s: %w", h.ID, err)
+		for _, v := range views {
+			if _, err := stmt.ExecContext(ctx, v.ID, v.Project,
+				v.TS.UTC().Format(tsFormat), v.ReceivedAt.UTC().Format(tsFormat),
+				v.Kind, v.ActorID, v.ActorKind, v.UserID, v.GroupID, v.SessionID,
+				v.Host, v.Path, v.ReferrerSource, v.UTMSource, v.UTMMedium, v.UTMCampaign,
+				v.OS, v.OSVersion, v.Browser, v.BrowserVersion, v.AppVersion,
+				v.Device, v.DeviceModel, v.Locale, v.DisplayWidth, v.DisplayHeight, v.Country); err != nil {
+				return fmt.Errorf("view %s: %w", v.ID, err)
 			}
 		}
 		return nil
@@ -47,9 +49,9 @@ func (d *DB) WriteProductEvents(ctx context.Context, evs []store.ProductEvent) e
 	}
 	return d.tx(ctx, func(tx *sql.Tx) error {
 		stmt, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO product_events
-			(id, project, event_name, ts, received_at, actor_id, user_id, group_id,
-			 platform, app_version, attributes)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
+			(id, project, event_name, ts, received_at, actor_id, actor_kind, user_id, group_id,
+			 os, app_version, attributes)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
 		if err != nil {
 			return err
 		}
@@ -65,35 +67,9 @@ func (d *DB) WriteProductEvents(ctx context.Context, evs []store.ProductEvent) e
 			}
 			if _, err := stmt.ExecContext(ctx, e.ID, e.Project, e.EventName,
 				e.TS.UTC().Format(tsFormat), e.ReceivedAt.UTC().Format(tsFormat),
-				e.ActorID, e.UserID, e.GroupID, e.Platform, e.AppVersion,
+				e.ActorID, e.ActorKind, e.UserID, e.GroupID, e.OS, e.AppVersion,
 				string(blob)); err != nil {
 				return fmt.Errorf("event %s: %w", e.ID, err)
-			}
-		}
-		return nil
-	})
-}
-
-func (d *DB) WriteAppViews(ctx context.Context, views []store.AppView) error {
-	if len(views) == 0 {
-		return nil
-	}
-	return d.tx(ctx, func(tx *sql.Tx) error {
-		stmt, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO app_views
-			(id, project, ts, received_at, actor_id, user_id, group_id, session_id,
-			 screen, platform, app_version, os_version, device_model, locale, country)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-		if err != nil {
-			return err
-		}
-		defer stmt.Close()
-		for _, v := range views {
-			if _, err := stmt.ExecContext(ctx, v.ID, v.Project,
-				v.TS.UTC().Format(tsFormat), v.ReceivedAt.UTC().Format(tsFormat),
-				v.ActorID, v.UserID, v.GroupID, v.SessionID,
-				v.Screen, v.Platform, v.AppVersion, v.OSVersion,
-				v.DeviceModel, v.Locale, v.Country); err != nil {
-				return fmt.Errorf("app view %s: %w", v.ID, err)
 			}
 		}
 		return nil

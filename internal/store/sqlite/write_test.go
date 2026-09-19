@@ -16,25 +16,25 @@ func ts(s string) time.Time {
 	return t
 }
 
-func TestWriteWebHitsRoundTrip(t *testing.T) {
+func TestWriteViewsRoundTrip(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	hits := []store.WebHit{{
+	views := []store.View{{
 		ID: "h1", Project: "app", TS: ts("2026-08-22T10:00:00Z"),
-		ActorID: "v1", Path: "/x", ReferrerSource: "google",
+		Kind: "web", ActorID: "v1", ActorKind: store.ActorConnection, Path: "/x", ReferrerSource: "google",
 		UTMSource: "hn", Country: "DE", Device: "desktop", Browser: "Firefox", OS: "Linux",
 	}}
-	if err := db.WriteWebHits(ctx, hits); err != nil {
+	if err := db.WriteViews(ctx, views); err != nil {
 		t.Fatal(err)
 	}
 	var path, tsCol string
-	if err := db.db.QueryRow(`SELECT path, ts FROM web_hits WHERE id='h1'`).Scan(&path, &tsCol); err != nil {
+	if err := db.db.QueryRow(`SELECT path, ts FROM views WHERE id='h1'`).Scan(&path, &tsCol); err != nil {
 		t.Fatal(err)
 	}
 	if path != "/x" || tsCol != "2026-08-22T10:00:00Z" {
 		t.Fatalf("got %q %q", path, tsCol)
 	}
-	if err := db.WriteWebHits(ctx, nil); err != nil {
+	if err := db.WriteViews(ctx, nil); err != nil {
 		t.Fatal("empty batch must be a no-op")
 	}
 }
@@ -110,36 +110,36 @@ func TestMetaRoundTrip(t *testing.T) {
 
 // --- app views, identities, idempotent writes ---
 
-func TestWriteAppViewsRoundTrip(t *testing.T) {
+func TestWriteViewsAppRoundTrip(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	ts := time.Date(2026, 8, 23, 10, 0, 0, 0, time.UTC)
+	tsV := time.Date(2026, 8, 23, 10, 0, 0, 0, time.UTC)
 
-	in := []store.AppView{{
-		ID: "018f-a", Project: "p", TS: ts, ReceivedAt: ts,
-		ActorID: "act1", UserID: "u1", GroupID: "org9", SessionID: "s1",
-		Screen: "/settings", Platform: "ios", AppVersion: "2.4.1",
+	in := []store.View{{
+		ID: "018f-a", Project: "p", TS: tsV, ReceivedAt: tsV,
+		Kind: "app", ActorID: "act1", ActorKind: store.ActorInstall, UserID: "u1", GroupID: "org9", SessionID: "s1",
+		Path: "/settings", OS: "iOS", AppVersion: "2.4.1",
 		OSVersion: "17.2", DeviceModel: "iPhone15,2", Locale: "en-US", Country: "DE",
 	}}
-	if err := db.WriteAppViews(ctx, in); err != nil {
+	if err := db.WriteViews(ctx, in); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 
-	var screen, platform, group, session, locale string
+	var path, osCol, group, session, locale string
 	if err := db.db.QueryRowContext(ctx,
-		`SELECT screen, platform, group_id, session_id, locale FROM app_views WHERE id=?`, "018f-a").
-		Scan(&screen, &platform, &group, &session, &locale); err != nil {
+		`SELECT path, os, group_id, session_id, locale FROM views WHERE id=?`, "018f-a").
+		Scan(&path, &osCol, &group, &session, &locale); err != nil {
 		t.Fatalf("read back: %v", err)
 	}
-	if screen != "/settings" || platform != "ios" || group != "org9" ||
+	if path != "/settings" || osCol != "iOS" || group != "org9" ||
 		session != "s1" || locale != "en-US" {
-		t.Errorf("got %q %q %q %q %q", screen, platform, group, session, locale)
+		t.Errorf("got %q %q %q %q %q", path, osCol, group, session, locale)
 	}
 }
 
-func TestWriteAppViewsEmptyIsNoop(t *testing.T) {
+func TestWriteViewsAppEmptyIsNoop(t *testing.T) {
 	db := newTestDB(t)
-	if err := db.WriteAppViews(context.Background(), nil); err != nil {
+	if err := db.WriteViews(context.Background(), nil); err != nil {
 		t.Fatalf("empty write: %v", err)
 	}
 }
@@ -147,69 +147,74 @@ func TestWriteAppViewsEmptyIsNoop(t *testing.T) {
 func TestWritesAreIdempotentOnID(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	ts := time.Now().UTC()
+	tsV := time.Now().UTC()
 
-	view := store.AppView{ID: "dup", Project: "p", TS: ts, ReceivedAt: ts,
-		ActorID: "a", Screen: "/x"}
-	hit := store.WebHit{ID: "duph", Project: "p", TS: ts, ReceivedAt: ts,
-		ActorID: "a", Path: "/x"}
+	appView := store.View{ID: "dup", Project: "p", TS: tsV, ReceivedAt: tsV,
+		Kind: "app", ActorID: "a", ActorKind: store.ActorInstall, Path: "/x"}
+	webView := store.View{ID: "duph", Project: "p", TS: tsV, ReceivedAt: tsV,
+		Kind: "web", ActorID: "a", ActorKind: store.ActorConnection, Path: "/x"}
 	ev := store.ProductEvent{ID: "dupe", Project: "p", EventName: "n",
-		TS: ts, ReceivedAt: ts, ActorID: "a"}
+		TS: tsV, ReceivedAt: tsV, ActorID: "a"}
 
 	for i := 0; i < 2; i++ {
-		if err := db.WriteAppViews(ctx, []store.AppView{view}); err != nil {
+		if err := db.WriteViews(ctx, []store.View{appView}); err != nil {
 			t.Fatalf("app write %d: %v", i, err)
 		}
-		if err := db.WriteWebHits(ctx, []store.WebHit{hit}); err != nil {
-			t.Fatalf("hit write %d: %v", i, err)
+		if err := db.WriteViews(ctx, []store.View{webView}); err != nil {
+			t.Fatalf("web write %d: %v", i, err)
 		}
 		if err := db.WriteProductEvents(ctx, []store.ProductEvent{ev}); err != nil {
 			t.Fatalf("event write %d: %v", i, err)
 		}
 	}
 
-	for _, table := range []string{"app_views", "web_hits", "product_events"} {
-		var n int
-		if err := db.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+table).Scan(&n); err != nil {
-			t.Fatal(err)
-		}
-		if n != 1 {
-			t.Errorf("%s has %d rows after replay, want 1", table, n)
-		}
+	var n int
+	if err := db.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM views`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Errorf("views has %d rows after replay, want 2 (one app, one web id)", n)
+	}
+	if err := db.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM product_events`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Errorf("product_events has %d rows after replay, want 1", n)
 	}
 }
 
 func TestWriteCarriesIdentityAndAppContext(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	ts := time.Now().UTC()
+	tsV := time.Now().UTC()
 
-	if err := db.WriteWebHits(ctx, []store.WebHit{{ID: "h", Project: "p", TS: ts,
-		ReceivedAt: ts, ActorID: "a", UserID: "u1", GroupID: "org9", Path: "/x"}}); err != nil {
+	if err := db.WriteViews(ctx, []store.View{{ID: "h", Project: "p", TS: tsV,
+		ReceivedAt: tsV, Kind: "web", ActorID: "a", ActorKind: store.ActorConnection,
+		UserID: "u1", GroupID: "org9", Path: "/x"}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.WriteProductEvents(ctx, []store.ProductEvent{{ID: "e", Project: "p",
-		EventName: "n", TS: ts, ReceivedAt: ts, ActorID: "a", UserID: "u1",
-		GroupID: "org9", Platform: "ios", AppVersion: "2.4.1"}}); err != nil {
+		EventName: "n", TS: tsV, ReceivedAt: tsV, ActorID: "a", UserID: "u1",
+		GroupID: "org9", OS: "iOS", AppVersion: "2.4.1"}}); err != nil {
 		t.Fatal(err)
 	}
 
 	var hu, hg string
 	if err := db.db.QueryRowContext(ctx,
-		`SELECT user_id, group_id FROM web_hits WHERE id='h'`).Scan(&hu, &hg); err != nil {
+		`SELECT user_id, group_id FROM views WHERE id='h'`).Scan(&hu, &hg); err != nil {
 		t.Fatal(err)
 	}
 	if hu != "u1" || hg != "org9" {
-		t.Errorf("web hit identity = %q %q", hu, hg)
+		t.Errorf("view identity = %q %q", hu, hg)
 	}
 
-	var plat, ver string
+	var osCol, ver string
 	if err := db.db.QueryRowContext(ctx,
-		`SELECT platform, app_version FROM product_events WHERE id='e'`).Scan(&plat, &ver); err != nil {
+		`SELECT os, app_version FROM product_events WHERE id='e'`).Scan(&osCol, &ver); err != nil {
 		t.Fatal(err)
 	}
-	if plat != "ios" || ver != "2.4.1" {
-		t.Errorf("event context = %q %q", plat, ver)
+	if osCol != "iOS" || ver != "2.4.1" {
+		t.Errorf("event context = %q %q", osCol, ver)
 	}
 }
 
@@ -253,19 +258,19 @@ func TestUpsertIdentitiesEmptyIsNoop(t *testing.T) {
 	}
 }
 
-func TestWriteWebHitsStoresHost(t *testing.T) {
+func TestWriteViewsStoresHost(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	hits := []store.WebHit{{
+	views := []store.View{{
 		ID: "h1", Project: "app", TS: ts("2026-08-10T10:00:00Z"),
-		ActorID: "v1", Host: "shop.example.com", Path: "/pricing",
+		Kind: "web", ActorID: "v1", ActorKind: store.ActorConnection, Host: "shop.example.com", Path: "/pricing",
 	}}
-	if err := db.WriteWebHits(ctx, hits); err != nil {
+	if err := db.WriteViews(ctx, views); err != nil {
 		t.Fatal(err)
 	}
 	var host string
 	if err := db.db.QueryRow(
-		`SELECT host FROM web_hits WHERE id='h1'`).Scan(&host); err != nil {
+		`SELECT host FROM views WHERE id='h1'`).Scan(&host); err != nil {
 		t.Fatal(err)
 	}
 	if host != "shop.example.com" {
@@ -273,20 +278,20 @@ func TestWriteWebHitsStoresHost(t *testing.T) {
 	}
 }
 
-// A hit written without a host must read back as the empty string, not
+// A view written without a host must read back as the empty string, not
 // NULL: every consumer scans into a string and the column is NOT NULL.
-func TestWriteWebHitsHostDefaultsEmpty(t *testing.T) {
+func TestWriteViewsHostDefaultsEmpty(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	if err := db.WriteWebHits(ctx, []store.WebHit{{
+	if err := db.WriteViews(ctx, []store.View{{
 		ID: "h2", Project: "app", TS: ts("2026-08-10T10:00:00Z"),
-		ActorID: "v1", Path: "/pricing",
+		Kind: "web", ActorID: "v1", ActorKind: store.ActorConnection, Path: "/pricing",
 	}}); err != nil {
 		t.Fatal(err)
 	}
 	var host string
 	if err := db.db.QueryRow(
-		`SELECT host FROM web_hits WHERE id='h2'`).Scan(&host); err != nil {
+		`SELECT host FROM views WHERE id='h2'`).Scan(&host); err != nil {
 		t.Fatal(err)
 	}
 	if host != "" {

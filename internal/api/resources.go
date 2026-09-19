@@ -24,28 +24,26 @@ Facts you cannot infer from the DDL:
    daily pass; cohort days after that are ABSENT, not zero. It is populated
    only for projects with identity=identified (anonymous visitor ids rotate
    daily, so cohorts are undefined). Check list_projects for identity.
+4. Every dimension is capped at 500 values per day; the rest sit in one
+   '(other)' row per day whose visitors are distinct actors, not a sum.
 
 Views (all carry a 'project' column — always filter on it):
 
-  v_web_daily(project, day, visitors, pageviews, sessions, bounces, duration_sec)
-  v_web_pages(project, day, path, visitors, pageviews)
-  v_web_hosts(project, day, host, visitors, pageviews)
-  v_web_referrers(project, day, source, visitors, pageviews)
-  v_web_countries(project, day, country, visitors, pageviews)
-  v_web_devices(project, day, device, visitors, pageviews)
-  v_web_browsers(project, day, browser, visitors, pageviews)
-  v_web_os(project, day, os, visitors, pageviews)
-  v_web_utm(project, day, utm_source, utm_medium, utm_campaign, visitors, pageviews)
+  v_views_daily(project, day, kind, visitors, views, sessions, bounces, duration_sec)  -- kind: 'web'|'app'|'cli'|…
+  v_views_paths(project, day, path, visitors, views)
+  v_views_hosts(project, day, host, visitors, views)
+  v_views_referrers(project, day, source, visitors, views)
+  v_views_utm(project, day, utm_source, utm_medium, utm_campaign, visitors, views)
+  v_views_countries(project, day, country, visitors, views)
+  v_views_os(project, day, os, os_version, visitors, views)
+  v_views_browsers(project, day, browser, browser_version, visitors, views)
+  v_views_app_versions(project, day, os, app_version, visitors, views)
+  v_views_devices(project, day, device, device_model, visitors, views)
+  v_views_displays(project, day, display, visitors, views)  -- display: 'WxH', e.g. '1920x1080'
   v_product_daily(project, day, event_name, count, unique_users)
   v_product_totals(project, day, total_events, active_users)
-  v_app_daily(project, day, actives, views, sessions, duration_sec)
-  v_app_screens(project, day, screen, actives, views)
-  v_app_versions(project, day, platform, app_version, actives, views)
-  v_app_os(project, day, platform, os_version, actives, views)
-  v_app_devices(project, day, device_model, actives, views)
-  v_app_countries(project, day, country, actives, views)
-  v_identity_daily(project, day, kind, id, actors, users, hits, views, events)  -- kind: 'user'|'group'
-  v_retention(project, surface, cohort_day, day_offset, actors, cohort_size, users, user_cohort_size)  -- surface: 'web'|'app'|'product'; users: the signed-in subset, NULL where not counted
+  v_identity_daily(project, day, kind, id, actors, users, views, events)  -- kind: 'user'|'group'
+  v_retention(project, actor_kind, cohort_day, day_offset, actors, cohort_size)  -- actor_kind: 'user'|'install'
   v_product_attrs(project, day, event_name, attr_key, attr_value, count, unique_users)
   identities(project, kind, id, name)  -- display names, joinable to v_identity_daily
 

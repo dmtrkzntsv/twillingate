@@ -109,14 +109,14 @@ Keep the API on one hostname — OAuth and `cloudflare://` are bound to it.
 curl -i -X POST http://localhost:8080/ingest/events \
   -H 'Content-Type: application/json' \
   -H 'Origin: https://myapp.com' \
-  -d '{"key":"ak_…","events":[{"name":"$pageview",
+  -d '{"key":"ak_…","events":[{"name":"$page_view",
        "attributes":{"$host":"myapp.com","$path":"/"}}]}'
 
 # Expect 403 — the origin is not in allowed_origins
 curl -i -X POST http://localhost:8080/ingest/events \
   -H 'Content-Type: application/json' \
   -H 'Origin: https://not-allowed.com' \
-  -d '{"key":"ak_…","events":[{"name":"$pageview",
+  -d '{"key":"ak_…","events":[{"name":"$page_view",
        "attributes":{"$host":"myapp.com","$path":"/"}}]}'
 ```
 
@@ -134,13 +134,11 @@ curl -i -X POST http://localhost:8080/ingest/events \
 | `BUFFER_FLUSH_MAX_EVENTS` | Flush once this many events are buffered. Default 1000. |
 | `BUFFER_FLUSH_INTERVAL` | Flush at least this often. Default `5s`. |
 | `BUFFER_CAPACITY` | Bounded queue size; excess is dropped rather than growing memory. Default 10000. |
-| `RETENTION_WEB_RAW_DAYS` | Days raw hits are kept before rollup. Default 7. |
-| `RETENTION_WEB_AGGREGATE_DAYS` | Days aggregates are kept. Default 365. |
+| `RETENTION_VIEWS_RAW_DAYS` | Days raw page and screen views are kept before rollup. Also the oldest client timestamp accepted: older events are clamped to this edge. Default 30. |
+| `RETENTION_VIEWS_AGGREGATE_DAYS` | Days view aggregates (and actors, cohorts, identities) are kept. Default 365. |
 | `RETENTION_PRODUCT_RAW_DAYS` | Days raw product events are kept before rollup. Default 30. |
 | `RETENTION_PRODUCT_AGGREGATE_DAYS` | Days product aggregates are kept. Default 365. |
 | `PRODUCT_ATTRIBUTES_TOP_N` | Distinct attribute values kept per (project, day, event, key) before the rest collapse into `(other)`. Default 50. |
-| `RETENTION_APP_RAW_DAYS` | Days raw app events are kept before rollup. Default 30. |
-| `RETENTION_APP_AGGREGATE_DAYS` | Days app aggregates are kept. Default 365. |
 | `DASHBOARDS_DB_PATH` | Database `dashboards` renders. Defaults to the `DATABASE_DSN` path. |
 | `DASHBOARDS_ADDR` | Address the dashboards bind. Default `0.0.0.0:3000`. |
 | `DASHBOARDS_INTERVAL` | Minimum spacing between Evidence rebuilds. Default `15m`. |
@@ -157,6 +155,10 @@ Litestream credentials (`LITESTREAM_ACCESS_KEY_ID`,
 `twillingate.env`, so secrets never sit in a JSON file. Nothing in the
 collector reads them.
 
+`RETENTION_WEB_*` and `RETENTION_APP_*` were replaced by `RETENTION_VIEWS_*`
+when web and app analytics merged into one family; a set old name refuses
+the boot with the replacement named.
+
 ### Raspberry Pi and low-resource hosts
 
 - Raise `BUFFER_FLUSH_INTERVAL` (for example `30s`) to trade latency for
@@ -165,6 +167,12 @@ collector reads them.
 - Set `GOMEMLIMIT` (the systemd unit and compose files ship `128MiB`).
 - Keep `GEO_DSN` on `cloudflare://` or `none://`; the MaxMind provider
   downloads and holds a database in memory.
+- Lower `RETENTION_VIEWS_RAW_DAYS` (for example `7`): raw view rows are
+  the largest table, and the window only buys late-arrival tolerance for
+  offline clients — events older than it are clamped, not lost. The live
+  halves of the `v_views_*` views scan the whole raw window on every
+  query, so a shorter window also makes breakdowns and the dashboard
+  faster.
 
 Maintenance is bounded on purpose: aggregation and pruning run once a day at
 03:00 UTC, and free pages are reclaimed with incremental vacuum rather than a
@@ -340,7 +348,7 @@ token:
 
 ```bash
 curl -H "Authorization: Bearer $TOKEN" \
-  "https://twillingate.example.com/api/projects/blog/web/overview?from=2026-09-01&to=2026-09-13"
+  "https://twillingate.example.com/api/projects/blog/views/overview?from=2026-09-01&to=2026-09-13"
 ```
 
 Every route, its inputs and its error shape are in
@@ -544,6 +552,7 @@ expected `aud`: the origin or `<origin>/mcp`, or the `audience=` value.
 | Upgrade (systemd) | `curl -fsSL …/install.sh \| sudo bash` — restarts the running service and reports the old and new version |
 | Upgrade (compose) | `docker compose pull && docker compose up -d`. Never `down -v`: the database lives in the named volume. Pin with `TWILLINGATE_VERSION=v26.825.1` in `.env`. |
 | Apply migrations only | `twillingate migrate` |
+| Upgrade across a schema change | Take a Litestream snapshot first (`litestream snapshots …`, or copy the db file while the service is stopped): migrations such as 012 (web and app folded into one views family) are irreversible |
 | Export the registry | `twillingate config export > registry.json` |
 | Import the registry | `twillingate config import registry.json` — also accepts a pre-upgrade `projects.json`; never archives or deletes anything absent from the file |
 | Database size | `du -h /var/lib/twillingate/twillingate.db` |
@@ -645,7 +654,7 @@ litestream restore -config /etc/litestream.yml -o /tmp/check.db \
 # It must be a valid database, not just a file that exists:
 sqlite3 /tmp/check.db 'PRAGMA quick_check;'          # expect: ok
 sqlite3 /tmp/check.db 'SELECT COUNT(*) FROM projects;'
-sqlite3 /tmp/check.db "SELECT MAX(day) FROM v_web_daily;"
+sqlite3 /tmp/check.db "SELECT MAX(day) FROM v_views_daily;"
 rm /tmp/check.db
 ```
 

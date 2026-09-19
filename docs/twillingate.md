@@ -19,11 +19,11 @@ the database are the operator's job, in [deployment.md](deployment.md).
 
 ## What twillingate is
 
-One Go binary and one SQLite file. It collects three kinds of analytics
-through a single endpoint — web pageviews, native app screen views, and
-custom product events — rolls them up nightly, and exposes the result three
-ways: Evidence dashboards, a read-only SQL surface, and the API (MCP or
-HTTP) an AI agent can query in plain language.
+One Go binary and one SQLite file. It collects two kinds of analytics
+through a single endpoint — views (page views from websites, screen views
+from apps and CLIs) and custom product events — rolls them up nightly, and
+exposes the result three ways: Evidence dashboards, a read-only SQL
+surface, and the API (MCP or HTTP) an AI agent can query in plain language.
 
 It is cookieless by default. An `anonymous` project never writes to a
 visitor's device and salts every identifier with a key that rotates at
@@ -155,10 +155,9 @@ unique-user count is recomputed from raw rather than summed. A client
 sending the literal string `(other)` collides with that bucket and loses its
 own count — avoid that value.
 
-`$platform` and `$app_version` roll up automatically without being declared.
-Do not add them to `attributes`: `$`-prefixed keys are reserved and never
-reach the custom attribute blob, so `"attributes": ["$platform"]` extracts
-nothing.
+`$os` and `$app_version` roll up automatically without being declared. Do
+not add them to `attributes`: `$`-prefixed keys are reserved and never reach
+the custom attribute blob, so `"attributes": ["$os"]` extracts nothing.
 
 ### Ingest keys
 
@@ -202,12 +201,15 @@ the origin if this site uses another collector hostname.
 | `data-auto="off"` | `autoPageviews` | Disable automatic pageviews; drive them with `twillingate.page()`. |
 | `data-mask-url` | `maskUrl` | Rewrite the URL before it is sent. See [Masking](#masking-urls). |
 | `data-routing` | `routing` | `history` (default) or `hash`. See [Hash routing](#hash-routing). |
+| `data-kind` | `kind` | What this client is: `web` (default), `app`, `cli`, or any short lower-case token. Anything but `web` switches automatic tracking from `$page_view` to `$screen_view` (the route path becomes the screen) and tells the server to trust the declared environment instead of parsing the User-Agent. |
+| `data-os` | `os` | The operating system, for a client that knows better than its User-Agent (`macos` under Electron). Normalised server-side to `iOS`, `Android`, `macOS`, `Windows`, `Linux`, `ChromeOS`. |
+| `data-app-version` | `appVersion` | The version of the client application — a site build, an app release, a CLI version. |
 
 **Every `data-*` attribute has an `init()` equivalent**, enforced by a test.
-The reverse does not hold: `url`, `platform`, `appVersion`, `installId` and
-`flushInterval` are code-only, because an attribute can only carry a string.
+The reverse does not hold: `url`, `installId` and `flushInterval` are
+code-only, because an attribute can only carry a string.
 
-Pageviews are automatic, including on `history.pushState` and `popstate`, so
+Views are automatic, including on `history.pushState` and `popstate`, so
 single-page apps need no extra code.
 
 Include the tag once. If a second copy loads with the same `data-key`, or
@@ -245,8 +247,9 @@ twillingate.init({
   autoPageviews: true,         // default false in explicit init
   maskUrl: "uuid",
   routing: "history",
-  // app analytics context, sent as batch attributes:
-  platform: "web",             // → $platform
+  // client context, sent as batch attributes:
+  kind: "web",                 // → $kind ("app" for Electron/Tauri, "cli", …)
+  os: "macos",                 // → $os
   appVersion: "2.4.1",         // → $app_version
   installId: "018f…",          // → $install_id (stable per install)
   user: "u_123",               // optional page-render identity
@@ -257,10 +260,10 @@ twillingate.init({
 ### Runtime API
 
 ```js
-twillingate.page();                            // $pageview for the current page
-twillingate.page("/settings");                 // $pageview for an explicit path
+twillingate.page();                            // $page_view for the current page
+twillingate.page("/settings");                 // $page_view for an explicit path
 twillingate.page((p) => ({ ab: "b" }));        // register a pageview listener
-twillingate.screen("/settings");               // app $screen_view
+twillingate.screen("/settings");               // $screen_view (any kind)
 twillingate.track("signup", { plan: "pro" });  // opt-in product event
 twillingate.attrs({ tier: "beta" });           // default attributes on every event
 twillingate.identify("user-123", "Ada");       // $user_id + optional $user_name
@@ -285,8 +288,9 @@ twillingate.util.maskIds(path);                // helpers, see Masking
 - `reset()` — **required on logout.** Without it the next person on a shared
   browser inherits the previous user's identity. Clears user, group, names
   and the visitor id.
-- `screen(name, attrs?)` — app analytics; pair with `platform`, `appVersion`
-  and `installId` in `init` so actives, versions and screens aggregate.
+- `screen(name, attrs?)` — an explicit `$screen_view`. With `kind` set to
+  anything but `web` the automatic tracker already sends one per navigation,
+  so this is for screens that are not routes.
 
 ### Masking URLs
 
@@ -469,57 +473,53 @@ same day-long cache. Load one only if its problem is yours.
 ## The event model
 
 Everything goes to one endpoint, `POST /ingest/events`. The event **name**
-decides which family it lands in, and each family feeds a different surface:
+decides which family it lands in:
 
-| name | family | feeds |
-| --- | --- | --- |
-| `$pageview` | web | web dashboards (visitors, pages, hosts, referrers, countries, devices, UTM) and the `web_*` MCP tools |
-| `$screen_view` | app | app dashboards (actives, screens, versions) and the `app_*` MCP tools |
-| anything else | product | `product_events`, `product_attributes` |
+| name | family | default `$kind` | feeds |
+| --- | --- | --- | --- |
+| `$page_view` | views | `web` | the views dashboard, `views_overview`, `views_breakdown`, retention |
+| `$screen_view` | views | `app` | same |
+| anything else | product | — | `product_events`, `product_attributes` |
 
 The `$` prefix is reserved for the system. An unrecognized `$` **name** is
 stored as an ordinary custom event with a warning (forward compatibility);
 an unrecognized `$` **attribute key** is dropped, with a warning in the
 response body.
 
-### Web (`$pageview`)
+### Views (`$page_view`, `$screen_view`)
 
-Usually automatic: the SDK sends pageviews on load and on SPA navigations
-(`pushState`, `popstate`, and `hashchange` in hash-routing mode). Send one
-manually only from a non-browser client rendering web-like content.
+A view is one page or screen shown to someone. Both names store the same
+row; the name only sets the default **kind** — `web` for `$page_view`,
+`app` for `$screen_view`. `$kind` overrides it with any token matching
+`^[a-z][a-z0-9_]{0,15}$` (`web`, `app`, `cli`, …), usually as a batch
+attribute; an invalid value is warned about and the default is used.
 
-A pageview carries its location already split — `$path` (**required**) and
-`$host` — stored verbatim. Campaign parameters travel explicitly as
-`$utm_source`, `$utm_medium` and `$utm_campaign`. `$referrer` is reduced to
-a source name, and suppressed as a self-referral when its host matches
-`$host`; with no `$host` there is nothing to compare against, so the
-referrer is taken at face value.
+**Only `web` has server-side meaning.** A web view is enriched from its
+connection: IP for country, User-Agent for browser, browser version, OS
+and device class, and bot filtering. Every other kind is taken as declared,
+never parsed and never filtered, so a CLI or an Electron app is never
+dropped as a crawler or misclassified as desktop Chrome.
 
-`$path` may contain a `#` (hash routing) or a `?` (opt-in query routing).
+Declared environment keys — `$os`, `$os_version`, `$app_version`,
+`$device_model`, `$locale`, `$display_width`, `$display_height` — are
+stored on any kind and override the parsed value. `$os` is normalised to
+`iOS`, `Android`, `macOS`, `Windows`, `Linux`, `ChromeOS`; anything else is
+stored as sent. `$app_version` is the version of whatever client sent the
+event, whatever its kind.
 
-A pageview is enriched from the connection that carried it: client IP for
-country, User-Agent for browser and OS, `Origin` for the allowlist. **A
-backend must not relay pageviews on behalf of other people** — every one
-would be attributed to the backend's IP and User-Agent. The server cannot
-detect this; it is a contract you keep.
+Location arrives already split: `$path` (or its alias `$screen`) is
+**required**, `$host` is optional, both stored verbatim; `$path` may
+contain a `#` (hash routing) or a `?` (opt-in query routing). Campaign
+parameters travel as `$utm_source`, `$utm_medium` and `$utm_campaign`.
+`$referrer` is reduced to a source name and, on web views, dropped as a
+self-referral when its host matches `$host`.
 
-Bot filtering applies to `$pageview` only, on the connection's User-Agent.
-It never touches app or custom events, so an app whose HTTP library sends a
-non-browser User-Agent is never dropped as a crawler.
-
-### App (`$screen_view`)
-
-Sent by native and desktop apps over the HTTP API. Context travels as
-reserved attributes: `$install_id` (the app-install identifier — under
-anonymous identity it is salted and rotated daily, more accurate than IP
-hashing), `$screen`, `$session_id` (optional; without it sessions are
-inferred from 30-minute gaps), `$platform`, `$app_version`, `$os_version`,
-`$device_model`, `$locale`.
-
-No User-Agent parsing ever happens for apps — they declare their own
-context, which is why an Electron app is not misclassified as desktop
-Chrome. `$platform` should be one of `ios`, `android`, `macos`, `windows`,
-`linux`.
+A client `$session_id` is authoritative; without one, a gap over 30 minutes
+per actor starts a new session. A bounce is a single-view session, so
+expect high bounce rates on app kinds. Country comes from the connection on
+every kind; IP and User-Agent are never stored. **A backend must not relay
+web views for other people** — they would all carry the backend's IP and
+User-Agent.
 
 ### Product (everything else)
 
@@ -540,12 +540,17 @@ The actor an event is attributed to resolves as `$user_id` → `$install_id` →
 a server-side hash of the connection. In `anonymous` mode the result is
 hashed with a daily-rotating salt, so nothing links across days.
 
+How the actor was identified is recorded alongside it (`user`, `install` or
+`connection`) and is what retention cohorts on: a connection hash rotates
+with the salt and can never appear in a later cohort, so only user- and
+install-identified actors are tracked.
+
 Send `$install_id` only if it survives a page load or app restart. An id
 minted per load (a client that keeps nothing on the device) makes every load
 a new actor that never returns: it inflates active counts and drags
 retention toward zero. Leave it out instead — the connection hash then
-gives one actor per device per day — and read retention from the signed-in
-`users` columns, which follow `$user_id`.
+gives one actor per device per day — and read retention from the `user`
+cohort, which follows `$user_id`.
 
 `$group_id` stays raw in both modes: it identifies an organization, not a
 natural person, and hashing it would make dashboards unreadable for no real
@@ -603,15 +608,16 @@ integration deserves a real error, and the response leaks nothing.
     "$group_id": "org_9",
     "$group_name": "Acme Corp",
     "$session_id": "018f1e5b-…",
-    "$platform": "ios",
+    "$kind": "app", "$os": "ios",
     "$app_version": "2.4.1",
     "$os_version": "17.2",
     "$device_model": "iPhone15,2",
-    "$locale": "en-US"
+    "$locale": "en-US",
+    "$display_width": 1179, "$display_height": 2556
   },
   "events": [
     { "id": "018f1e5c-…", "ts": "2026-08-30T10:00:00Z",
-      "name": "$pageview",
+      "name": "$page_view",
       "attributes": { "$host": "shop.example.com", "$path": "/account/[id]/edit",
                       "$utm_source": "newsletter",
                       "$referrer": "https://news.ycombinator.com/" } },
@@ -640,11 +646,11 @@ flushing. It also lets a client stamp an ordinary attribute
 
 ### Reserved event names
 
-| `name` | Stored as | Requires |
-| --- | --- | --- |
-| `$pageview` | web pageview | `$path` |
-| `$screen_view` | app screen view | `$screen` |
-| anything else | custom event | `name` |
+| `name` | Stored as | Default `$kind` | Requires |
+| --- | --- | --- | --- |
+| `$page_view` | view | `web` | `$path` (or `$screen`) |
+| `$screen_view` | view | `app` | `$screen` (or `$path`) |
+| anything else | custom event | — | `name` |
 
 An **unrecognized `$` name is stored as an ordinary custom event** with a
 warning, never rejected. Clients update on app-store timelines while the
@@ -659,9 +665,8 @@ matters.
 | Group | Keys |
 | --- | --- |
 | Identity | `$install_id` `$user_id` `$user_name` `$group_id` `$group_name` `$session_id` |
-| Environment | `$platform` `$app_version` `$os_version` `$device_model` `$locale` |
-| Location | `$host` `$path` `$utm_source` `$utm_medium` `$utm_campaign` `$referrer` |
-| App | `$screen` |
+| Environment | `$kind` `$os` `$os_version` `$app_version` `$device_model` `$locale` `$display_width` `$display_height` |
+| Location | `$host` `$path` `$screen` `$utm_source` `$utm_medium` `$utm_campaign` `$referrer` |
 
 An **unrecognized `$` key is dropped** with a warning. It is not stored as
 an ordinary attribute: keeping it would add a column to the flattened event
@@ -687,7 +692,7 @@ The server clamps `ts` to `[received − max_event_age, received + 5 minutes]`
 and records the server clock separately. Out-of-range values are **clamped
 and counted, never dropped**, so a device with a broken clock still
 contributes. `max_event_age` equals the deployment's
-`RETENTION_APP_RAW_DAYS` (30 days by default), which guarantees a clamped
+`RETENTION_VIEWS_RAW_DAYS` (30 days by default), which guarantees a clamped
 event can never target a day that has already been rolled up.
 
 **`id`** is a client-generated UUID (v7 recommended, so ids sort by time).
@@ -701,7 +706,7 @@ succeeded is a no-op. **Omit `id` and a replayed batch double-counts.**
 202 {
   "accepted": 2,
   "rejected": 1,
-  "errors":   [ { "index": 3, "reason": "$pageview requires $path" } ],
+  "errors":   [ { "index": 3, "reason": "view requires $path or $screen" } ],
   "warnings": [ { "index": 1, "reason": "unknown reserved key $app_ver, ignored" } ]
 }
 ```
@@ -784,7 +789,7 @@ request CORS-simple.
 
 ## Answer questions with the data
 
-A connected session gets nineteen tools. Reach for a purpose-built one
+A connected session gets seventeen tools. Reach for a purpose-built one
 before `query` — they are cheaper, they cannot be malformed, and they
 already apply the caveats below.
 
@@ -793,13 +798,11 @@ already apply the caveats below.
 | Tool | Extra parameters | Returns |
 | --- | --- | --- |
 | `list_projects` | none | Every non-archived project, its alias and identity mode. Call this first — every other tool needs an alias |
-| `web_overview` | — | Visitors, pageviews, sessions, bounces, average session length per day |
-| `web_breakdown` | `dimension`, `limit` (default 20) | Top rows for one of `pages`, `hosts`, `referrers`, `countries`, `devices`, `browsers`, `os`, `utm` |
-| `app_overview` | — | Actives, views, sessions, duration per day |
-| `app_breakdown` | `dimension`, `limit` | One of `screens`, `versions`, `os`, `devices`, `countries` |
+| `views_overview` | `kind` (optional) | Visitors, views, sessions, bounces, average session length per day, summed across kinds unless `kind` filters one |
+| `views_breakdown` | `dimension`, `limit` (default 20) | Top rows for one of `kinds`, `paths`, `hosts`, `referrers`, `utm`, `countries`, `os`, `browsers`, `app_versions`, `devices`, `displays`. Two-key dimensions return both columns |
 | `product_events` | `event` (optional filter) | Count and unique users per event name, plus daily totals |
-| `product_attributes` | `event`, `key` | Value breakdowns for a declared attribute. `$platform` and `$app_version` are always available; a custom key only appears once the project declares it |
-| `retention` | `surface` (`web`, `app` or `product`) | Cohort curves for everyone (`actors`, `cohort_size`) and for signed-in users (`users`, `user_cohort_size`), plus `aggregated_through` — cohorts after that day are **absent, not zero** |
+| `product_attributes` | `event`, `key` | Value breakdowns for a declared attribute. `$os` and `$app_version` are always available; a custom key only appears once the project declares it |
+| `retention` | `actor` (`user` or `install`) | Cohort curves, plus `aggregated_through` — cohorts after that day are **absent, not zero** |
 | `identities` | `kind` (`user` or `group`), `limit` | Per-user or per-group activity with display names. **Surfaces personal data on identified projects** |
 | `query` | `sql` | A single read-only `SELECT`/`WITH` against the views. Row-capped and time-limited |
 
@@ -829,7 +832,7 @@ are MCP-only — there is no REST equivalent.
 
 ```bash
 curl -H "Authorization: Bearer $TOKEN" \
-  "https://t.example.com/api/projects/blog/web/overview?from=2026-09-01&to=2026-09-13"
+  "https://t.example.com/api/projects/blog/views/overview?from=2026-09-01&to=2026-09-13"
 ```
 
 | Method | Path | Mirrors | Input |
@@ -843,13 +846,11 @@ curl -H "Authorization: Bearer $TOKEN" \
 | `POST` | `/api/projects/{project}/keys` | `issue_ingest_key` | body: `label` → 201 |
 | `POST` | `/api/projects/{project}/keys/{label}/disable` | `disable_ingest_key` | — |
 | `POST` | `/api/projects/{project}/keys/{label}/enable` | `enable_ingest_key` | — |
-| `GET` | `/api/projects/{project}/web/overview` | `web_overview` | query: `from`, `to` |
-| `GET` | `/api/projects/{project}/web/breakdown` | `web_breakdown` | query: `from`, `to`, `dimension`, `limit` |
-| `GET` | `/api/projects/{project}/app/overview` | `app_overview` | query: `from`, `to` |
-| `GET` | `/api/projects/{project}/app/breakdown` | `app_breakdown` | query: `from`, `to`, `dimension`, `limit` |
+| `GET` | `/api/projects/{project}/views/overview` | `views_overview` | query: `from`, `to`, `kind` |
+| `GET` | `/api/projects/{project}/views/breakdown` | `views_breakdown` | query: `from`, `to`, `dimension`, `limit` |
 | `GET` | `/api/projects/{project}/product/events` | `product_events` | query: `from`, `to`, `event` |
 | `GET` | `/api/projects/{project}/product/attributes` | `product_attributes` | query: `from`, `to`, `event` |
-| `GET` | `/api/projects/{project}/retention` | `retention` | query: `from`, `to`, `surface` |
+| `GET` | `/api/projects/{project}/retention` | `retention` | query: `from`, `to`, `actor` |
 | `GET` | `/api/projects/{project}/identities` | `identities` | query: `from`, `to`, `kind`, `limit` |
 | `POST` | `/api/query` | `query` | body: `sql` |
 | `GET` | `/api/schema/views` | `schema://views` | — (text/plain) |
@@ -879,26 +880,23 @@ from the DDL. The three that matter most:
 3. **`v_retention` has no live half.** It refreshes at the 03:00 UTC daily
    pass; cohort days after that are ABSENT, not zero. It is populated only
    for projects with `identity=identified`, because anonymous visitor ids
-   rotate daily and cohorts are undefined. Each actor belongs to one
-   `surface`, fixed on its first day: `app` if it sent a screen view, else
-   `web` if it sent a pageview, else `product` (seen through custom events
-   alone — a product-only project has only this curve). `users` and
-   `user_cohort_size` count the signed-in subset: actors that sent a
-   `user_id`. A visitor who never signs in is recognised on return only if
-   the client keeps a stable `$install_id`, so on a client that mints one per
-   page load, read retention from the `users` columns. They are null for
-   cohorts counted before signed-in users were tracked; skip those.
+   rotate daily and cohorts are undefined. Each actor is cohorted by how it
+   was identified, `user` (sent a `$user_id`) or `install` (a stable
+   `$install_id`); a connection-hash actor cannot be recognised on return and
+   is not cohorted. On a client that mints an install id per page load, the
+   `install` curve reads near zero — read the `user` curve.
 
 Every view carries a `project` column — always filter on it.
 
-The web views are `v_web_daily`, `v_web_pages`, `v_web_hosts`,
-`v_web_referrers`, `v_web_countries`, `v_web_devices`, `v_web_browsers`,
-`v_web_os` and `v_web_utm`. App traffic has `v_app_daily`, `v_app_screens`,
-`v_app_versions`, `v_app_os`, `v_app_devices` and `v_app_countries`. Product
-events have `v_product_daily`, `v_product_totals` and `v_product_attrs`,
-plus a per-project `v_events_flat` with one column per declared attribute.
-`v_identity_daily` and `identities` join user and group activity to display
-names.
+The views family is `v_views_daily` (per kind), `v_views_paths`,
+`v_views_hosts`, `v_views_referrers`, `v_views_utm`, `v_views_countries`,
+`v_views_os`, `v_views_browsers`, `v_views_app_versions`, `v_views_devices`
+and `v_views_displays`. Every dimension is capped at 500 values per day;
+the tail is one `(other)` row whose visitors are distinct actors, not a sum.
+Product events have `v_product_daily`, `v_product_totals` and
+`v_product_attrs`, plus a per-project `v_events_flat` with one column per
+declared attribute. `v_identity_daily` and `identities` join user and group
+activity to display names; `v_retention` is keyed by `actor_kind`.
 
 Cost note: the views' live halves sessionize raw rows with window functions,
 and a `WHERE` on `day` may not prune that work. Narrow ranges and the `agg_*`

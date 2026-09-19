@@ -67,11 +67,11 @@ func (f *faultyStore) ProjectAliases(ctx context.Context) ([]string, error) {
 	return f.Store.ProjectAliases(ctx)
 }
 
-func (f *faultyStore) WebDaysBefore(ctx context.Context, project string, before civil.Date) ([]civil.Date, error) {
-	if f.shouldFail("WebDaysBefore") {
+func (f *faultyStore) ViewDaysBefore(ctx context.Context, project string, before civil.Date) ([]civil.Date, error) {
+	if f.shouldFail("ViewDaysBefore") {
 		return nil, errBoom
 	}
-	return f.Store.WebDaysBefore(ctx, project, before)
+	return f.Store.ViewDaysBefore(ctx, project, before)
 }
 
 func (f *faultyStore) ProductDaysBefore(ctx context.Context, project string, before civil.Date) ([]civil.Date, error) {
@@ -79,13 +79,6 @@ func (f *faultyStore) ProductDaysBefore(ctx context.Context, project string, bef
 		return nil, errBoom
 	}
 	return f.Store.ProductDaysBefore(ctx, project, before)
-}
-
-func (f *faultyStore) AppDaysBefore(ctx context.Context, project string, before civil.Date) ([]civil.Date, error) {
-	if f.shouldFail("AppDaysBefore") {
-		return nil, errBoom
-	}
-	return f.Store.AppDaysBefore(ctx, project, before)
 }
 
 func (f *faultyStore) UpsertActors(ctx context.Context, project string, day civil.Date) error {
@@ -109,11 +102,11 @@ func (f *faultyStore) AggregateIdentityDay(ctx context.Context, project string, 
 	return f.Store.AggregateIdentityDay(ctx, project, day)
 }
 
-func (f *faultyStore) AggregateWebDay(ctx context.Context, project string, day civil.Date) error {
-	if f.shouldFail("AggregateWebDay") {
+func (f *faultyStore) AggregateViewDay(ctx context.Context, project string, day civil.Date) error {
+	if f.shouldFail("AggregateViewDay") {
 		return errBoom
 	}
-	return f.Store.AggregateWebDay(ctx, project, day)
+	return f.Store.AggregateViewDay(ctx, project, day)
 }
 
 func (f *faultyStore) AggregateProductDay(ctx context.Context, project string, day civil.Date, attrs []string, topN int) error {
@@ -123,18 +116,11 @@ func (f *faultyStore) AggregateProductDay(ctx context.Context, project string, d
 	return f.Store.AggregateProductDay(ctx, project, day, attrs, topN)
 }
 
-func (f *faultyStore) AggregateAppDay(ctx context.Context, project string, day civil.Date) error {
-	if f.shouldFail("AggregateAppDay") {
-		return errBoom
-	}
-	return f.Store.AggregateAppDay(ctx, project, day)
-}
-
-func (f *faultyStore) PruneAggregates(ctx context.Context, project string, webBefore, productBefore, appBefore civil.Date) error {
+func (f *faultyStore) PruneAggregates(ctx context.Context, project string, viewsBefore, productBefore civil.Date) error {
 	if f.shouldFail("PruneAggregates") {
 		return errBoom
 	}
-	return f.Store.PruneAggregates(ctx, project, webBefore, productBefore, appBefore)
+	return f.Store.PruneAggregates(ctx, project, viewsBefore, productBefore)
 }
 
 func (f *faultyStore) PruneActors(ctx context.Context, project string, before civil.Date) error {
@@ -195,20 +181,20 @@ func TestRunDailyPassFailsWhenProjectAliasesErrors(t *testing.T) {
 	}
 }
 
-func TestRunDailyPassFailsWhenAllRawDaysWebQueryErrors(t *testing.T) {
+func TestRunDailyPassFailsWhenAllRawDaysViewsQueryErrors(t *testing.T) {
 	_, fst, r, _ := setupFaulty(t, jobsVars, jobsProjectSpecs)
-	fst.failing("WebDaysBefore")
+	fst.failing("ViewDaysBefore")
 	if err := r.RunDailyPass(context.Background()); !errors.Is(err, errBoom) {
 		t.Fatalf("RunDailyPass = %v, want errBoom", err)
 	}
 }
 
-func TestRunDailyPassFailsWhenWebRawWindowQueryErrors(t *testing.T) {
+func TestRunDailyPassFailsWhenViewsRawWindowQueryErrors(t *testing.T) {
 	_, fst, r, _ := setupFaulty(t, jobsVars, jobsProjectSpecs)
-	// allRawDays makes the first WebDaysBefore call; let that one succeed so
+	// allRawDays makes the first ViewDaysBefore call; let that one succeed so
 	// the pass reaches the direct raw-window call further down, and fail
 	// that one instead.
-	fst.failingAfter("WebDaysBefore", 1)
+	fst.failingAfter("ViewDaysBefore", 1)
 	if err := r.RunDailyPass(context.Background()); !errors.Is(err, errBoom) {
 		t.Fatalf("RunDailyPass = %v, want errBoom", err)
 	}
@@ -217,14 +203,6 @@ func TestRunDailyPassFailsWhenWebRawWindowQueryErrors(t *testing.T) {
 func TestRunDailyPassFailsWhenProductRawWindowQueryErrors(t *testing.T) {
 	_, fst, r, _ := setupFaulty(t, jobsVars, jobsProjectSpecs)
 	fst.failingAfter("ProductDaysBefore", 1)
-	if err := r.RunDailyPass(context.Background()); !errors.Is(err, errBoom) {
-		t.Fatalf("RunDailyPass = %v, want errBoom", err)
-	}
-}
-
-func TestRunDailyPassFailsWhenAppRawWindowQueryErrors(t *testing.T) {
-	_, fst, r, _ := setupFaulty(t, jobsVars, jobsProjectSpecs)
-	fst.failingAfter("AppDaysBefore", 1)
 	if err := r.RunDailyPass(context.Background()); !errors.Is(err, errBoom) {
 		t.Fatalf("RunDailyPass = %v, want errBoom", err)
 	}
@@ -239,8 +217,9 @@ var identifiedJobsSpecs = []manage.ProjectSpec{
 func TestRunDailyPassLogsUpsertActorsFailure(t *testing.T) {
 	st, fst, r, buf := setupFaulty(t, jobsVars, identifiedJobsSpecs)
 	ctx := context.Background()
-	if err := st.WriteWebHits(ctx, []store.WebHit{
-		{ID: "1", Project: "app", TS: mustTime("2026-08-20T10:00:00Z"), ActorID: "v", Path: "/"}}); err != nil {
+	ts := mustTime("2026-08-20T10:00:00Z")
+	if err := st.WriteViews(ctx, []store.View{
+		{ID: "1", Project: "app", TS: ts, ReceivedAt: ts, Kind: "web", ActorID: "v", ActorKind: store.ActorConnection, Path: "/"}}); err != nil {
 		t.Fatal(err)
 	}
 	fst.failing("UpsertActors")
@@ -255,8 +234,9 @@ func TestRunDailyPassLogsUpsertActorsFailure(t *testing.T) {
 func TestRunDailyPassLogsAggregateRetentionDayFailure(t *testing.T) {
 	st, fst, r, buf := setupFaulty(t, jobsVars, identifiedJobsSpecs)
 	ctx := context.Background()
-	if err := st.WriteWebHits(ctx, []store.WebHit{
-		{ID: "1", Project: "app", TS: mustTime("2026-08-20T10:00:00Z"), ActorID: "v", Path: "/"}}); err != nil {
+	ts := mustTime("2026-08-20T10:00:00Z")
+	if err := st.WriteViews(ctx, []store.View{
+		{ID: "1", Project: "app", TS: ts, ReceivedAt: ts, Kind: "web", ActorID: "v", ActorKind: store.ActorConnection, Path: "/"}}); err != nil {
 		t.Fatal(err)
 	}
 	fst.failing("AggregateRetentionDay")
@@ -271,8 +251,9 @@ func TestRunDailyPassLogsAggregateRetentionDayFailure(t *testing.T) {
 func TestRunDailyPassLogsAggregateIdentityDayFailure(t *testing.T) {
 	st, fst, r, buf := setupFaulty(t, jobsVars, jobsProjectSpecs)
 	ctx := context.Background()
-	if err := st.WriteWebHits(ctx, []store.WebHit{
-		{ID: "1", Project: "app", TS: mustTime("2026-08-20T10:00:00Z"), ActorID: "v", Path: "/"}}); err != nil {
+	ts := mustTime("2026-08-20T10:00:00Z")
+	if err := st.WriteViews(ctx, []store.View{
+		{ID: "1", Project: "app", TS: ts, ReceivedAt: ts, Kind: "web", ActorID: "v", ActorKind: store.ActorConnection, Path: "/"}}); err != nil {
 		t.Fatal(err)
 	}
 	fst.failing("AggregateIdentityDay")
@@ -284,29 +265,30 @@ func TestRunDailyPassLogsAggregateIdentityDayFailure(t *testing.T) {
 	}
 }
 
-func TestRunDailyPassLogsAggregateWebDayFailure(t *testing.T) {
+func TestRunDailyPassLogsAggregateViewDayFailure(t *testing.T) {
 	st, fst, r, buf := setupFaulty(t, jobsVars, jobsProjectSpecs)
 	ctx := context.Background()
-	if err := st.WriteWebHits(ctx, []store.WebHit{
-		{ID: "1", Project: "app", TS: mustTime("2026-08-10T10:00:00Z"), ActorID: "v", Path: "/"}}); err != nil {
+	ts := mustTime("2026-08-10T10:00:00Z")
+	if err := st.WriteViews(ctx, []store.View{
+		{ID: "1", Project: "app", TS: ts, ReceivedAt: ts, Kind: "web", ActorID: "v", ActorKind: store.ActorConnection, Path: "/"}}); err != nil {
 		t.Fatal(err)
 	}
-	fst.failing("AggregateWebDay")
+	fst.failing("AggregateViewDay")
 	if err := r.RunDailyPass(ctx); err != nil {
 		t.Fatalf("RunDailyPass = %v, want nil", err)
 	}
-	if !logged(buf, "aggregate web failed") {
-		t.Errorf("log output = %q, want mention of aggregate web failed", buf.String())
+	if !logged(buf, "aggregate views failed") {
+		t.Errorf("log output = %q, want mention of aggregate views failed", buf.String())
 	}
 	// The raw row must survive: the failed aggregation must not have
-	// deleted it (AggregateWebDay itself is what would delete it, and it
+	// deleted it (AggregateViewDay itself is what would delete it, and it
 	// never got to run for real).
-	left, err := st.WebDaysBefore(ctx, "app", mustDay("2026-08-22"))
+	left, err := st.ViewDaysBefore(ctx, "app", mustDay("2026-08-22"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(left) != 1 {
-		t.Errorf("raw web days left = %v, want the failed day to survive", left)
+		t.Errorf("raw view days left = %v, want the failed day to survive", left)
 	}
 }
 
@@ -323,23 +305,6 @@ func TestRunDailyPassLogsAggregateProductDayFailure(t *testing.T) {
 	}
 	if !logged(buf, "aggregate product failed") {
 		t.Errorf("log output = %q, want mention of aggregate product failed", buf.String())
-	}
-}
-
-func TestRunDailyPassLogsAggregateAppDayFailure(t *testing.T) {
-	st, fst, r, buf := setupFaulty(t, appVars, jobsProjectSpecs)
-	ctx := context.Background()
-	if err := st.WriteAppViews(ctx, []store.AppView{
-		{ID: "1", Project: "app", TS: mustTime("2026-08-10T10:00:00Z"), ReceivedAt: mustTime("2026-08-10T10:00:00Z"),
-			ActorID: "a", Screen: "/home"}}); err != nil {
-		t.Fatal(err)
-	}
-	fst.failing("AggregateAppDay")
-	if err := r.RunDailyPass(ctx); err != nil {
-		t.Fatalf("RunDailyPass = %v, want nil", err)
-	}
-	if !logged(buf, "aggregate app failed") {
-		t.Errorf("log output = %q, want mention of aggregate app failed", buf.String())
 	}
 }
 

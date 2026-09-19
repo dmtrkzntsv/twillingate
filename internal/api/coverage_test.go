@@ -17,7 +17,7 @@ func TestTableTruncatesErrorsAndTimesOut(t *testing.T) {
 	// truncation: three rows for blog (2026-08-20, -21 aggregated plus the
 	// live hit on -26), capped to 1.
 	h.maxRows = 1
-	out, err := h.table(ctx, `SELECT day FROM v_web_daily WHERE project=? AND day BETWEEN ? AND ?`,
+	out, err := h.table(ctx, `SELECT day FROM v_views_daily WHERE project=? AND day BETWEEN ? AND ?`,
 		"blog", "2026-08-01", "2026-08-31")
 	if err != nil {
 		t.Fatalf("truncation case: %v", err)
@@ -28,7 +28,7 @@ func TestTableTruncatesErrorsAndTimesOut(t *testing.T) {
 	h.maxRows = 1000
 
 	// plain SQL error, not a timeout: must not carry the "exceeded" wording.
-	_, err = h.table(ctx, `SELECT no_such_column FROM v_web_daily WHERE project=?`, "blog")
+	_, err = h.table(ctx, `SELECT no_such_column FROM v_views_daily WHERE project=?`, "blog")
 	if err == nil {
 		t.Fatal("bad column did not error")
 	}
@@ -54,7 +54,7 @@ func TestCheckRangeRejectsBadDateFormat(t *testing.T) {
 		{"project": "blog", "from": "not-a-date", "to": "2026-08-31"},
 		{"project": "blog", "from": "2026-08-01", "to": "8/31/2026"},
 	} {
-		res := callTool(t, cs, "web_overview", bad)
+		res := callTool(t, cs, "views_overview", bad)
 		if !res.IsError {
 			t.Errorf("bad range %v accepted", bad)
 		}
@@ -196,12 +196,12 @@ func TestIdentitiesGroupKind(t *testing.T) {
 	}
 }
 
-func TestRetentionRejectsBadSurface(t *testing.T) {
+func TestRetentionRejectsBadActor(t *testing.T) {
 	_, cs := newTestHost(t)
 	res := callTool(t, cs, "retention", map[string]any{
-		"project": "blog", "surface": "mobile", "from": "2026-07-01", "to": "2026-08-31"})
+		"project": "blog", "actor": "mobile", "from": "2026-07-01", "to": "2026-08-31"})
 	if !res.IsError {
-		t.Fatal("bad surface accepted")
+		t.Fatal("bad actor accepted")
 	}
 }
 

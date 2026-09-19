@@ -83,15 +83,17 @@ PLANS = [("free", 60), ("pro", 30), ("team", 10)]
 # superseding another rather than a flat stack.
 SCREENS = [("/dashboard", 30), ("/settings", 18), ("/reports", 16), ("/inbox", 14),
            ("/billing", 12), ("/onboarding", 10)]
-PLATFORMS = [("ios", 55), ("android", 45)]
+BROWSER_VERSIONS = ["126", "127", "128"]
+DISPLAYS = [(1920, 1080), (1440, 900), (390, 844), (2560, 1440), (360, 800)]
+PLATFORMS = [("iOS", 55), ("Android", 45)]
 DEVICE_MODELS = {
-    "ios": [("iPhone15,2", 34), ("iPhone14,5", 26), ("iPhone13,3", 20), ("iPad13,1", 12),
+    "iOS": [("iPhone15,2", 34), ("iPhone14,5", 26), ("iPhone13,3", 20), ("iPad13,1", 12),
             ("iPhone12,1", 8)],
-    "android": [("Pixel 8", 30), ("SM-S918B", 26), ("Pixel 7a", 20), ("SM-A546B", 14),
+    "Android": [("Pixel 8", 30), ("SM-S918B", 26), ("Pixel 7a", 20), ("SM-A546B", 14),
                 ("moto g84", 10)],
 }
-OS_VERSIONS = {"ios": [("17.2", 55), ("16.6", 30), ("18.0", 15)],
-               "android": [("14", 50), ("13", 35), ("15", 15)]}
+OS_VERSIONS = {"iOS": [("17.2", 55), ("16.6", 30), ("18.0", 15)],
+               "Android": [("14", 50), ("13", 35), ("15", 15)]}
 LOCALES = [("en-US", 44), ("en-GB", 14), ("de-DE", 12), ("fr-FR", 10), ("pt-BR", 8),
            ("es-ES", 7), ("sv-SE", 5)]
 # (version, days before today it started shipping)
@@ -122,7 +124,7 @@ def actor_for(alias, day, n, identified):
 
 
 def seed(cur, alias, profile, today, identified):
-    for table in ("web_hits", "product_events", "app_views", "actors", "identities"):
+    for table in ("views", "product_events", "actors", "identities"):
         cur.execute(f"DELETE FROM {table} WHERE project = ?", (alias,))
 
     hits = 0
@@ -147,13 +149,16 @@ def seed(cur, alias, profile, today, identified):
                 ts = datetime.datetime.combine(day, datetime.time()) + datetime.timedelta(
                     seconds=start + p * random.randint(20, 600))
                 cur.execute(
-                    "INSERT INTO web_hits (id, project, ts, received_at, actor_id, user_id,"
-                    " group_id, path, referrer_source, country, device, browser, os,"
-                    " utm_source, utm_medium, utm_campaign)"
-                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "INSERT INTO views (id, project, ts, received_at, kind, actor_id, actor_kind,"
+                    " user_id, group_id, path, referrer_source, country, device, browser,"
+                    " browser_version, os, utm_source, utm_medium, utm_campaign, display_width, display_height)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (str(uuid.uuid4()), alias, ts.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                     ts.strftime("%Y-%m-%dT%H:%M:%SZ"), vh, "", "",
-                     pick(profile["pages"]), ref, country, device, browser, osname, us, um, uc))
+                     ts.strftime("%Y-%m-%dT%H:%M:%SZ"), "web", vh,
+                     "install" if identified else "connection", "", "",
+                     pick(profile["pages"]), ref, country, device, browser,
+                     random.choice(BROWSER_VERSIONS),
+                     osname, us, um, uc, *random.choice(DISPLAYS)))
                 hits += 1
 
     events = 0
@@ -169,19 +174,20 @@ def seed(cur, alias, profile, today, identified):
                     user = f"user-{alias}-{n}" if identified else ""
                     cur.execute(
                         "INSERT INTO product_events (id, project, ts, received_at, event_name,"
-                        " actor_id, user_id, group_id, platform, app_version, attributes)"
-                        " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                        " actor_id, actor_kind, user_id, group_id, os, app_version, attributes)"
+                        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                         (str(uuid.uuid4()), alias, ts.strftime("%Y-%m-%dT%H:%M:%SZ"),
                          ts.strftime("%Y-%m-%dT%H:%M:%SZ"), name,
-                         actor_for(alias, day, n, identified), user,
+                         actor_for(alias, day, n, identified),
+                         "user" if identified else "connection", user,
                          GROUPS[n % len(GROUPS)][0] if identified else "",
                          "", "", json.dumps({"plan": pick(PLANS)})))
                     events += 1
 
-    views = seed_app(cur, alias, profile, today, identified) if profile.get("app") else 0
+    views = hits + (seed_app(cur, alias, profile, today, identified) if profile.get("app") else 0)
     if identified:
         seed_identities(cur, alias)
-    return hits, events, views
+    return views, events
 
 
 def seed_app(cur, alias, profile, today, identified):
@@ -210,11 +216,12 @@ def seed_app(cur, alias, profile, today, identified):
                 ts = datetime.datetime.combine(day, datetime.time()) + datetime.timedelta(
                     seconds=start + s * random.randint(15, 240))
                 cur.execute(
-                    "INSERT INTO app_views (id, project, ts, received_at, actor_id, user_id,"
-                    " group_id, session_id, screen, platform, app_version, os_version,"
-                    " device_model, locale, country) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "INSERT INTO views (id, project, ts, received_at, kind, actor_id, actor_kind, user_id,"
+                    " group_id, session_id, path, os, app_version, os_version,"
+                    " device_model, locale, country) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (str(uuid.uuid4()), alias, ts.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                     ts.strftime("%Y-%m-%dT%H:%M:%SZ"), actor,
+                     ts.strftime("%Y-%m-%dT%H:%M:%SZ"), "app", actor,
+                     "user" if identified else "install",
                      f"user-{alias}-{n}" if identified else "",
                      GROUPS[n % len(GROUPS)][0] if identified else "",
                      session, pick(SCREENS), platform, version,
@@ -248,7 +255,7 @@ def main():
     if unknown:
         sys.exit(f"no traffic profile for {', '.join(unknown)}; add one to PROFILES")
 
-    # web_hits.ts is UTC and the dashboards window on SQLite's date('now'),
+    # views.ts is UTC and the dashboards window on SQLite's date('now'),
     # which is also UTC -- anchor the seeded range to the same clock so the
     # narrowest range (last 1 day) lands on a day that has rows.
     today = datetime.datetime.now(datetime.timezone.utc).date()
@@ -257,10 +264,9 @@ def main():
     con = sqlite3.connect(db)
     cur = con.cursor()
     for alias in aliases:
-        hits, events, views = seed(cur, alias, PROFILES[alias], today, identified[alias])
+        views, events = seed(cur, alias, PROFILES[alias], today, identified[alias])
         mode = "identified" if identified[alias] else "anonymous"
-        print(f"  {alias:<10} web_hits={hits:<7} product_events={events:<6}"
-              f" app_views={views:<7} ({mode})")
+        print(f"  {alias:<10} views={views:<7} product_events={events:<6} ({mode})")
     con.commit()
     con.close()
 

@@ -16,46 +16,68 @@ import (
 // assertion checks the error text names the failing operation, not just that
 // an error came back.
 
-// --- aggregate_app.go ---
+// --- aggregate_views.go ---
 
-func TestAggregateAppDayFailsOnMissingDailyTable(t *testing.T) {
+func TestAggregateViewDayFailsOnCountQuery(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	seedViews(t, db, store.AppView{ID: "1", TS: at(10, 0), ActorID: "a", Screen: "/x"})
-	if _, err := db.db.ExecContext(ctx, `DROP TABLE agg_app_daily`); err != nil {
+	if _, err := db.db.ExecContext(ctx, `DROP TABLE views`); err != nil {
 		t.Fatal(err)
 	}
-	err := db.AggregateAppDay(ctx, "p", appDay())
-	if err == nil || !strings.Contains(err.Error(), "agg_app_daily") {
-		t.Errorf("err = %v, want mention of agg_app_daily", err)
+	if err := db.AggregateViewDay(ctx, "app", day("2026-08-10")); err == nil {
+		t.Error("want error counting a missing views table")
 	}
 }
 
-func TestAggregateAppDayFailsOnMissingDimensionTable(t *testing.T) {
+func TestAggregateViewDayFailsOnMissingDailyTable(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	seedViews(t, db, store.AppView{ID: "1", TS: at(10, 0), ActorID: "a", Screen: "/x", Country: "DE"})
-	if _, err := db.db.ExecContext(ctx, `DROP TABLE agg_app_countries`); err != nil {
+	seedViews(t, db, store.View{ID: "1", TS: at(10, 0), ActorID: "a", Path: "/x"})
+	if _, err := db.db.ExecContext(ctx, `DROP TABLE agg_views_daily`); err != nil {
 		t.Fatal(err)
 	}
-	err := db.AggregateAppDay(ctx, "p", appDay())
-	if err == nil || !strings.Contains(err.Error(), "agg_app_countries") {
-		t.Errorf("err = %v, want mention of agg_app_countries", err)
+	err := db.AggregateViewDay(ctx, "app", day("2026-08-10"))
+	if err == nil || !strings.Contains(err.Error(), "agg_views_daily") {
+		t.Errorf("err = %v, want mention of agg_views_daily", err)
 	}
 }
 
-func TestAggregateAppDayFailsWhenRawDeleteBlocked(t *testing.T) {
+func TestAggregateViewDayFailsOnMissingDimensionTable(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	seedViews(t, db, store.AppView{ID: "1", TS: at(10, 0), ActorID: "a", Screen: "/x"})
+	seedViews(t, db, store.View{ID: "1", TS: at(10, 0), ActorID: "a", Path: "/x", Country: "DE"})
+	if _, err := db.db.ExecContext(ctx, `DROP TABLE agg_views_paths`); err != nil {
+		t.Fatal(err)
+	}
+	err := db.AggregateViewDay(ctx, "app", day("2026-08-10"))
+	if err == nil || !strings.Contains(err.Error(), "agg_views_paths") {
+		t.Errorf("err = %v, want mention of agg_views_paths", err)
+	}
+}
+
+func TestAggregateViewDayFailsWhenRawDeleteBlocked(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	seedViews(t, db, store.View{ID: "1", TS: at(10, 0), ActorID: "a", Path: "/x"})
 	if _, err := db.db.ExecContext(ctx, `
-CREATE TRIGGER block_app_delete BEFORE DELETE ON app_views
+CREATE TRIGGER block_view_delete BEFORE DELETE ON views
 BEGIN SELECT RAISE(ABORT, 'blocked'); END`); err != nil {
 		t.Fatal(err)
 	}
-	err := db.AggregateAppDay(ctx, "p", appDay())
-	if err == nil || !strings.Contains(err.Error(), "prune raw app_views") {
-		t.Errorf("err = %v, want mention of prune raw app_views", err)
+	err := db.AggregateViewDay(ctx, "app", day("2026-08-10"))
+	if err == nil || !strings.Contains(err.Error(), "prune raw views") {
+		t.Errorf("err = %v, want mention of prune raw views", err)
+	}
+}
+
+func TestViewDaysBeforeFailsOnMissingTable(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	if _, err := db.db.ExecContext(ctx, `DROP TABLE views`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ViewDaysBefore(ctx, "app", day("2026-08-10")); err == nil {
+		t.Error("want error querying days from a missing table")
 	}
 }
 
@@ -65,15 +87,16 @@ func TestAggregateIdentityDayFailsOnMissingAggTable(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	tstamp := at(10, 0)
-	if err := db.WriteAppViews(ctx, []store.AppView{
-		{ID: "1", Project: "p", TS: tstamp, ReceivedAt: tstamp, ActorID: "a", UserID: "u1", Screen: "/x"},
+	if err := db.WriteViews(ctx, []store.View{
+		{ID: "1", Project: "p", TS: tstamp, ReceivedAt: tstamp, Kind: "app",
+			ActorKind: store.ActorInstall, ActorID: "a", UserID: "u1", Path: "/x"},
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.db.ExecContext(ctx, `DROP TABLE agg_identity_daily`); err != nil {
 		t.Fatal(err)
 	}
-	err := db.AggregateIdentityDay(ctx, "p", appDay())
+	err := db.AggregateIdentityDay(ctx, "p", day("2026-08-10"))
 	if err == nil || !strings.Contains(err.Error(), "agg_identity_daily") {
 		t.Errorf("err = %v, want mention of agg_identity_daily", err)
 	}
@@ -83,15 +106,16 @@ func TestAggregateIdentityDayFailsUpdatingLastSeen(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	tstamp := at(10, 0)
-	if err := db.WriteAppViews(ctx, []store.AppView{
-		{ID: "1", Project: "p", TS: tstamp, ReceivedAt: tstamp, ActorID: "a", UserID: "u1", Screen: "/x"},
+	if err := db.WriteViews(ctx, []store.View{
+		{ID: "1", Project: "p", TS: tstamp, ReceivedAt: tstamp, Kind: "app",
+			ActorKind: store.ActorInstall, ActorID: "a", UserID: "u1", Path: "/x"},
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.db.ExecContext(ctx, `DROP TABLE identities`); err != nil {
 		t.Fatal(err)
 	}
-	err := db.AggregateIdentityDay(ctx, "p", appDay())
+	err := db.AggregateIdentityDay(ctx, "p", day("2026-08-10"))
 	if err == nil || !strings.Contains(err.Error(), "identities last_seen") {
 		t.Errorf("err = %v, want mention of identities last_seen", err)
 	}
@@ -129,16 +153,17 @@ func TestUpsertActorsFailsOnMissingActorsTable(t *testing.T) {
 	if _, err := db.db.ExecContext(ctx, `DROP TABLE actors`); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.WriteWebHits(ctx, []store.WebHit{
-		{ID: "1", Project: "p", TS: ts("2026-08-10T10:00:00Z"), ActorID: "v1", Path: "/"},
+	if err := db.WriteViews(ctx, []store.View{
+		{ID: "1", Project: "p", TS: ts("2026-08-10T10:00:00Z"), Kind: "web",
+			ActorKind: store.ActorConnection, ActorID: "v1", Path: "/"},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	// actorSources iterates app_views first, so that is the table named in
-	// the error regardless of which raw table actually holds data.
+	// actorSources iterates views first, so that is the table named in the
+	// error regardless of which raw table actually holds data.
 	err := db.UpsertActors(ctx, "p", day("2026-08-10"))
-	if err == nil || !strings.Contains(err.Error(), "upsert actors from app_views") {
-		t.Errorf("err = %v, want mention of upsert actors from app_views", err)
+	if err == nil || !strings.Contains(err.Error(), "upsert actors from views") {
+		t.Errorf("err = %v, want mention of upsert actors from views", err)
 	}
 }
 
@@ -175,64 +200,6 @@ func TestPruneActorsFailsOnMissingRetentionTable(t *testing.T) {
 	err := db.PruneActors(ctx, "p", onDay(2026, 1, 1))
 	if err == nil || !strings.Contains(err.Error(), "prune agg_retention") {
 		t.Errorf("err = %v, want mention of prune agg_retention", err)
-	}
-}
-
-// --- aggregate_web.go ---
-
-func TestAggregateWebDayFailsOnCountQuery(t *testing.T) {
-	db := newTestDB(t)
-	ctx := context.Background()
-	if _, err := db.db.ExecContext(ctx, `DROP TABLE web_hits`); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.AggregateWebDay(ctx, "p", day("2026-08-10")); err == nil {
-		t.Error("want error counting a missing web_hits table")
-	}
-}
-
-func TestAggregateWebDayFailsOnMissingDailyTable(t *testing.T) {
-	db := newTestDB(t)
-	ctx := context.Background()
-	if err := db.WriteWebHits(ctx, []store.WebHit{
-		{ID: "1", Project: "p", TS: ts("2026-08-10T10:00:00Z"), ActorID: "v1", Path: "/"},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.db.ExecContext(ctx, `DROP TABLE agg_web_daily`); err != nil {
-		t.Fatal(err)
-	}
-	err := db.AggregateWebDay(ctx, "p", day("2026-08-10"))
-	if err == nil || !strings.Contains(err.Error(), "agg_web_daily") {
-		t.Errorf("err = %v, want mention of agg_web_daily", err)
-	}
-}
-
-func TestAggregateWebDayFailsOnMissingDimensionTable(t *testing.T) {
-	db := newTestDB(t)
-	ctx := context.Background()
-	if err := db.WriteWebHits(ctx, []store.WebHit{
-		{ID: "1", Project: "p", TS: ts("2026-08-10T10:00:00Z"), ActorID: "v1", Path: "/"},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.db.ExecContext(ctx, `DROP TABLE agg_web_pages`); err != nil {
-		t.Fatal(err)
-	}
-	err := db.AggregateWebDay(ctx, "p", day("2026-08-10"))
-	if err == nil || !strings.Contains(err.Error(), "agg_web_pages") {
-		t.Errorf("err = %v, want mention of agg_web_pages", err)
-	}
-}
-
-func TestWebDaysBeforeFailsOnMissingTable(t *testing.T) {
-	db := newTestDB(t)
-	ctx := context.Background()
-	if _, err := db.db.ExecContext(ctx, `DROP TABLE web_hits`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.WebDaysBefore(ctx, "p", day("2026-08-10")); err == nil {
-		t.Error("want error querying days from a missing table")
 	}
 }
 
@@ -543,12 +510,12 @@ func TestDeleteProjectDataFailsOnMissingChildTable(t *testing.T) {
 	if err := db.CreateProject(ctx, p, store.AuditEntry{Actor: "cli", Action: "project.create", Subject: "blog"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.db.ExecContext(ctx, `DROP TABLE web_hits`); err != nil {
+	if _, err := db.db.ExecContext(ctx, `DROP TABLE views`); err != nil {
 		t.Fatal(err)
 	}
 	err := db.DeleteProjectData(ctx, "blog", store.AuditEntry{Actor: "cli", Action: "project.delete", Subject: "blog"})
-	if err == nil || !strings.Contains(err.Error(), "delete web_hits") {
-		t.Errorf("err = %v, want mention of delete web_hits", err)
+	if err == nil || !strings.Contains(err.Error(), "delete views") {
+		t.Errorf("err = %v, want mention of delete views", err)
 	}
 }
 
@@ -573,30 +540,32 @@ func TestOpenAtFailsOnReadonlyFile(t *testing.T) {
 
 // --- write.go ---
 
-func TestWriteWebHitsFailsOnMissingTable(t *testing.T) {
+func TestWriteViewsFailsOnMissingTable(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	if _, err := db.db.ExecContext(ctx, `DROP TABLE web_hits`); err != nil {
+	if _, err := db.db.ExecContext(ctx, `DROP TABLE views`); err != nil {
 		t.Fatal(err)
 	}
-	err := db.WriteWebHits(ctx, []store.WebHit{{ID: "1", Project: "p", TS: ts("2026-08-10T10:00:00Z"), ActorID: "v", Path: "/"}})
+	err := db.WriteViews(ctx, []store.View{{ID: "1", Project: "p", Kind: "web",
+		ActorKind: store.ActorConnection, TS: ts("2026-08-10T10:00:00Z"), ActorID: "v", Path: "/"}})
 	if err == nil {
 		t.Error("want error preparing an insert against a missing table")
 	}
 }
 
-func TestWriteWebHitsFailsOnBlockedRow(t *testing.T) {
+func TestWriteViewsFailsOnBlockedRow(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	if _, err := db.db.ExecContext(ctx, `
-CREATE TRIGGER block_web_hit BEFORE INSERT ON web_hits
+CREATE TRIGGER block_view BEFORE INSERT ON views
 WHEN NEW.id = 'blocked'
 BEGIN SELECT RAISE(ABORT, 'blocked by trigger'); END`); err != nil {
 		t.Fatal(err)
 	}
-	err := db.WriteWebHits(ctx, []store.WebHit{{ID: "blocked", Project: "p", TS: ts("2026-08-10T10:00:00Z"), ActorID: "v", Path: "/"}})
-	if err == nil || !strings.Contains(err.Error(), "web hit blocked") {
-		t.Errorf("err = %v, want mention of web hit blocked", err)
+	err := db.WriteViews(ctx, []store.View{{ID: "blocked", Project: "p", Kind: "web",
+		ActorKind: store.ActorConnection, TS: ts("2026-08-10T10:00:00Z"), ActorID: "v", Path: "/"}})
+	if err == nil || !strings.Contains(err.Error(), "view blocked") {
+		t.Errorf("err = %v, want mention of view blocked", err)
 	}
 }
 
@@ -626,33 +595,6 @@ BEGIN SELECT RAISE(ABORT, 'blocked by trigger'); END`); err != nil {
 		{ID: "blocked", Project: "p", EventName: "signup", ActorID: "u", TS: ts("2026-08-10T10:00:00Z")}})
 	if err == nil || !strings.Contains(err.Error(), "event blocked") {
 		t.Errorf("err = %v, want mention of event blocked", err)
-	}
-}
-
-func TestWriteAppViewsFailsOnMissingTable(t *testing.T) {
-	db := newTestDB(t)
-	ctx := context.Background()
-	if _, err := db.db.ExecContext(ctx, `DROP TABLE app_views`); err != nil {
-		t.Fatal(err)
-	}
-	err := db.WriteAppViews(ctx, []store.AppView{{ID: "1", Project: "p", TS: at(10, 0), ActorID: "a", Screen: "/x"}})
-	if err == nil {
-		t.Error("want error preparing an insert against a missing table")
-	}
-}
-
-func TestWriteAppViewsFailsOnBlockedRow(t *testing.T) {
-	db := newTestDB(t)
-	ctx := context.Background()
-	if _, err := db.db.ExecContext(ctx, `
-CREATE TRIGGER block_view BEFORE INSERT ON app_views
-WHEN NEW.id = 'blocked'
-BEGIN SELECT RAISE(ABORT, 'blocked by trigger'); END`); err != nil {
-		t.Fatal(err)
-	}
-	err := db.WriteAppViews(ctx, []store.AppView{{ID: "blocked", Project: "p", TS: at(10, 0), ActorID: "a", Screen: "/x"}})
-	if err == nil || !strings.Contains(err.Error(), "app view blocked") {
-		t.Errorf("err = %v, want mention of app view blocked", err)
 	}
 }
 

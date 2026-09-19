@@ -15,16 +15,14 @@ import (
 )
 
 type Sink interface {
-	WriteWebHits(ctx context.Context, hits []store.WebHit) error
+	WriteViews(ctx context.Context, views []store.View) error
 	WriteProductEvents(ctx context.Context, evs []store.ProductEvent) error
-	WriteAppViews(ctx context.Context, views []store.AppView) error
 }
 
-// item carries exactly one of hit/event/view.
+// item carries exactly one of view/event.
 type item struct {
-	hit   *store.WebHit
+	view  *store.View
 	event *store.ProductEvent
-	view  *store.AppView
 }
 
 var retryDelays = []time.Duration{time.Second, 5 * time.Second, 25 * time.Second}
@@ -41,9 +39,8 @@ func New(cfg config.BufferConfig, sink Sink, logger *slog.Logger) *Buffer {
 	return &Buffer{cfg: cfg, sink: sink, logger: logger, ch: make(chan item, cfg.Capacity)}
 }
 
-func (b *Buffer) EnqueueHit(h store.WebHit)         { b.enqueue(item{hit: &h}) }
+func (b *Buffer) EnqueueView(v store.View)          { b.enqueue(item{view: &v}) }
 func (b *Buffer) EnqueueEvent(e store.ProductEvent) { b.enqueue(item{event: &e}) }
-func (b *Buffer) EnqueueAppView(v store.AppView)    { b.enqueue(item{view: &v}) }
 func (b *Buffer) Dropped() uint64                   { return b.dropped.Load() }
 
 func (b *Buffer) enqueue(it item) {
@@ -65,34 +62,27 @@ func (b *Buffer) enqueue(it item) {
 func (b *Buffer) Run(ctx context.Context) {
 	ticker := time.NewTicker(b.cfg.FlushInterval)
 	defer ticker.Stop()
-	var hits []store.WebHit
+	var views []store.View
 	var events []store.ProductEvent
-	var views []store.AppView
 	// One dispatch used by both the steady-state receive and the shutdown
 	// drain, so a new item kind cannot be handled in one and missed in the
 	// other.
 	take := func(it item) {
 		switch {
-		case it.hit != nil:
-			hits = append(hits, *it.hit)
-		case it.event != nil:
-			events = append(events, *it.event)
 		case it.view != nil:
 			views = append(views, *it.view)
+		case it.event != nil:
+			events = append(events, *it.event)
 		}
 	}
 	flush := func(ctx context.Context) {
-		if len(hits) > 0 {
-			b.write(ctx, func(c context.Context) error { return b.sink.WriteWebHits(c, hits) }, len(hits), "web_hits")
-			hits = nil
+		if len(views) > 0 {
+			b.write(ctx, func(c context.Context) error { return b.sink.WriteViews(c, views) }, len(views), "views")
+			views = nil
 		}
 		if len(events) > 0 {
 			b.write(ctx, func(c context.Context) error { return b.sink.WriteProductEvents(c, events) }, len(events), "product_events")
 			events = nil
-		}
-		if len(views) > 0 {
-			b.write(ctx, func(c context.Context) error { return b.sink.WriteAppViews(c, views) }, len(views), "app_views")
-			views = nil
 		}
 	}
 	for {
@@ -112,7 +102,7 @@ func (b *Buffer) Run(ctx context.Context) {
 			return
 		case it := <-b.ch:
 			take(it)
-			if len(hits)+len(events)+len(views) >= b.cfg.FlushMaxEvents {
+			if len(views)+len(events) >= b.cfg.FlushMaxEvents {
 				flush(ctx)
 			}
 		case <-ticker.C:

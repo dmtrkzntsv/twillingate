@@ -17,9 +17,8 @@ import (
 )
 
 var testRetention = config.Retention{
-	Web:     config.RetentionClass{RawDays: 7, AggregateDays: 365},
+	Views:   config.RetentionClass{RawDays: 30, AggregateDays: 365},
 	Product: config.RetentionClass{RawDays: 30, AggregateDays: 365},
-	App:     config.RetentionClass{RawDays: 30, AggregateDays: 365},
 }
 
 // newTestHost seeds two projects (blog: identified, docs: anonymous),
@@ -50,43 +49,41 @@ func newTestHost(t *testing.T) (*host, *mcp.ClientSession) {
 			t.Fatal(err)
 		}
 	}
-	seed(`INSERT INTO agg_web_daily (project, day, visitors, pageviews, sessions, bounces, duration_sec)
-	      VALUES ('blog','2026-08-20',10,25,12,3,600), ('blog','2026-08-21',12,30,14,4,720)`)
-	seed(`INSERT INTO agg_web_pages (project, day, path, visitors, pageviews)
-	      VALUES ('blog','2026-08-20','/post-1',8,15), ('blog','2026-08-20','/post-2',4,10)`)
-	seed(`INSERT INTO agg_web_hosts (project, day, host, visitors, pageviews)
+	seed(`INSERT INTO agg_views_daily (project, day, kind, visitors, views, sessions, bounces, duration_sec)
+	      VALUES ('blog','2026-08-20','web',10,25,12,3,600), ('blog','2026-08-21','web',12,30,14,4,720),
+	             ('blog','2026-08-20','app',6,20,8,0,480)`)
+	seed(`INSERT INTO agg_views_paths (project, day, path, visitors, views)
+	      VALUES ('blog','2026-08-20','/post-1',8,15), ('blog','2026-08-20','/post-2',4,10), ('blog','2026-08-20','/settings',5,12)`)
+	seed(`INSERT INTO agg_views_hosts (project, day, host, visitors, views)
 	      VALUES ('blog','2026-08-20','blog.example.com',9,20), ('blog','2026-08-20','shop.example.com',3,5)`)
-	seed(`INSERT INTO agg_web_utm (project, day, utm_source, utm_medium, utm_campaign, visitors, pageviews)
+	seed(`INSERT INTO agg_views_utm (project, day, utm_source, utm_medium, utm_campaign, visitors, views)
 	      VALUES ('blog','2026-08-20','newsletter','email','august',6,9)`)
-	seed(`INSERT INTO web_hits (id, project, ts, received_at, actor_id, path, referrer_source,
-	      utm_source, utm_medium, utm_campaign, country, device, browser, os, user_id, group_id)
-	      VALUES ('h1','blog','2026-08-26T10:00:00Z','2026-08-26T10:00:00Z','a1','/live','','','','','','','','','u1','')`)
+	seed(`INSERT INTO agg_views_os (project, day, os, os_version, visitors, views)
+	      VALUES ('blog','2026-08-20','iOS','17.4',5,12), ('blog','2026-08-20','Windows','',7,13)`)
+	seed(`INSERT INTO agg_views_browsers (project, day, browser, browser_version, visitors, views)
+	      VALUES ('blog','2026-08-20','Chrome','126',7,13)`)
+	seed(`INSERT INTO agg_views_app_versions (project, day, os, app_version, visitors, views)
+	      VALUES ('blog','2026-08-20','iOS','2.4.1',5,12)`)
+	seed(`INSERT INTO agg_views_devices (project, day, device, device_model, visitors, views)
+	      VALUES ('blog','2026-08-20','desktop','',7,13), ('blog','2026-08-20','','iPhone15,3',5,12)`)
+	seed(`INSERT INTO agg_views_countries (project, day, country, visitors, views)
+	      VALUES ('blog','2026-08-20','US',12,25)`)
+	seed(`INSERT INTO agg_views_displays (project, day, display, visitors, views)
+	      VALUES ('blog','2026-08-20','1920x1080',6,11)`)
+	seed(`INSERT INTO views (id, project, ts, received_at, kind, actor_id, actor_kind, user_id, path)
+	      VALUES ('h1','blog','2026-08-26T10:00:00Z','2026-08-26T10:00:00Z','web','a1','user','u1','/live')`)
 	seed(`INSERT INTO agg_product_daily (project, day, event_name, count, unique_users)
 	      VALUES ('blog','2026-08-20','signup',5,4)`)
 	seed(`INSERT INTO agg_product_totals (project, day, total_events, active_users)
 	      VALUES ('blog','2026-08-20',5,4)`)
-	seed(`INSERT INTO agg_retention (project, surface, cohort_day, day_offset, actors, users)
-	      VALUES ('blog','web','2026-08-01',0,10,6), ('blog','web','2026-08-01',7,4,3),
-	             ('blog','product','2026-08-02',0,3,0)`)
-	seed(`INSERT INTO agg_identity_daily (project, day, kind, id, actors, users, hits, views, events)
-	      VALUES ('blog','2026-08-20','user','u1',1,1,5,0,2)`)
+	seed(`INSERT INTO agg_retention (project, actor_kind, cohort_day, day_offset, actors)
+	      VALUES ('blog','user','2026-08-01',0,10), ('blog','user','2026-08-01',7,4)`)
+	seed(`INSERT INTO agg_identity_daily (project, day, kind, id, actors, users, views, events)
+	      VALUES ('blog','2026-08-20','user','u1',1,1,5,2)`)
 	seed(`INSERT INTO identities (project, kind, id, name) VALUES ('blog','user','u1','Jane Doe')`)
-	seed(`INSERT INTO agg_identity_daily (project, day, kind, id, actors, users, hits, views, events)
-	      VALUES ('blog','2026-08-20','group','g1',1,0,5,0,2)`)
+	seed(`INSERT INTO agg_identity_daily (project, day, kind, id, actors, users, views, events)
+	      VALUES ('blog','2026-08-20','group','g1',1,0,5,2)`)
 	seed(`INSERT INTO identities (project, kind, id, name) VALUES ('blog','group','g1','Acme Inc')`)
-	// app data, for app_overview / app_breakdown
-	seed(`INSERT INTO agg_app_daily (project, day, actives, views, sessions, duration_sec)
-	      VALUES ('blog','2026-08-20',6,20,8,480), ('blog','2026-08-21',7,22,9,540)`)
-	seed(`INSERT INTO agg_app_screens (project, day, screen, actives, views)
-	      VALUES ('blog','2026-08-20','/settings',5,12), ('blog','2026-08-20','/home',3,8)`)
-	seed(`INSERT INTO agg_app_versions (project, day, platform, app_version, actives, views)
-	      VALUES ('blog','2026-08-20','ios','2.4.1',5,12)`)
-	seed(`INSERT INTO agg_app_os (project, day, platform, os_version, actives, views)
-	      VALUES ('blog','2026-08-20','ios','17.4',5,12)`)
-	seed(`INSERT INTO agg_app_devices (project, day, device_model, actives, views)
-	      VALUES ('blog','2026-08-20','iPhone15,3',5,12)`)
-	seed(`INSERT INTO agg_app_countries (project, day, country, actives, views)
-	      VALUES ('blog','2026-08-20','US',5,12)`)
 	// attributes declared for blog only: docs stays at the default (no
 	// attributes declared), which TestProductAttributesReturnsEmptyForUndeclared
 	// depends on. Rollups are unconditional now (no enabled flag).

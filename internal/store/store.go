@@ -9,39 +9,40 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/civil"
 )
 
-// WebHit represents a single web pageview ($pageview).
-type WebHit struct {
-	ID, Project                       string
-	TS, ReceivedAt                    time.Time
-	ActorID, UserID, GroupID          string
-	Host, Path, ReferrerSource        string
-	UTMSource, UTMMedium, UTMCampaign string
-	Country, Device, Browser, OS      string
+// View is one page or screen view of any kind ($page_view, $screen_view).
+// Kind is the client-declared surface ("web", "app", "cli", …); only "web"
+// rows are enriched from the User-Agent. ActorKind records how the actor
+// was identified and is what retention cohorts on.
+type View struct {
+	ID, Project                                    string
+	TS, ReceivedAt                                 time.Time
+	Kind                                           string
+	ActorID, ActorKind, UserID, GroupID, SessionID string
+	Host, Path, ReferrerSource                     string
+	UTMSource, UTMMedium, UTMCampaign              string
+	OS, OSVersion, Browser, BrowserVersion         string
+	AppVersion, Device, DeviceModel, Locale        string
+	DisplayWidth, DisplayHeight                    int
+	Country                                        string
 }
 
 // ProductEvent represents a custom event from any surface.
 type ProductEvent struct {
-	ID, Project, EventName   string
-	TS, ReceivedAt           time.Time
-	ActorID, UserID, GroupID string
-	Platform, AppVersion     string
-	Attributes               map[string]string
+	ID, Project, EventName string
+	TS, ReceivedAt         time.Time
+	ActorID, ActorKind     string
+	UserID, GroupID        string
+	OS, AppVersion         string
+	Attributes             map[string]string
 }
 
-// AppView represents a single app screen view ($screen_view). Note what is
-// absent: no browser, no device class, no referrer, no utm — and no
-// User-Agent parsing anywhere. Apps declare their context, which is why the
-// Electron-reports-as-Chrome and OkHttp-reports-as-desktop problems do not
-// arise here rather than being patched around.
-type AppView struct {
-	ID, Project                         string
-	TS, ReceivedAt                      time.Time
-	ActorID, UserID, GroupID, SessionID string
-	Screen                              string
-	Platform, AppVersion                string
-	OSVersion, DeviceModel, Locale      string
-	Country                             string
-}
+// Actor kinds: how an actor id was derived. Only user and install actors
+// are stable enough to cohort; a connection hash rotates with the salt.
+const (
+	ActorUser       = "user"
+	ActorInstall    = "install"
+	ActorConnection = "connection"
+)
 
 // Identity is a display name for a user or group. Names live in their own
 // table rather than on event rows: a name repeated on every row could never
@@ -79,22 +80,19 @@ type AuditEntry struct {
 // Store defines the interface for analytics data storage.
 type Store interface {
 	Migrate(ctx context.Context) error
-	WriteWebHits(ctx context.Context, hits []WebHit) error
+	WriteViews(ctx context.Context, views []View) error
 	WriteProductEvents(ctx context.Context, evs []ProductEvent) error
-	WriteAppViews(ctx context.Context, views []AppView) error
 	UpsertIdentities(ctx context.Context, ids []Identity) error
-	WebDaysBefore(ctx context.Context, project string, before civil.Date) ([]civil.Date, error)
+	ViewDaysBefore(ctx context.Context, project string, before civil.Date) ([]civil.Date, error)
 	ProductDaysBefore(ctx context.Context, project string, before civil.Date) ([]civil.Date, error)
-	AggregateWebDay(ctx context.Context, project string, day civil.Date) error
+	AggregateViewDay(ctx context.Context, project string, day civil.Date) error
 	AggregateProductDay(ctx context.Context, project string, day civil.Date, attrs []string, topN int) error
-	AppDaysBefore(ctx context.Context, project string, before civil.Date) ([]civil.Date, error)
-	AggregateAppDay(ctx context.Context, project string, day civil.Date) error
 	UpsertActors(ctx context.Context, project string, day civil.Date) error
 	AggregateRetentionDay(ctx context.Context, project string, day civil.Date) error
 	PruneActors(ctx context.Context, project string, before civil.Date) error
 	AggregateIdentityDay(ctx context.Context, project string, day civil.Date) error
 	PruneIdentities(ctx context.Context, project string, before civil.Date) error
-	PruneAggregates(ctx context.Context, project string, webBefore, productBefore, appBefore civil.Date) error
+	PruneAggregates(ctx context.Context, project string, viewsBefore, productBefore civil.Date) error
 	IncrementalVacuum(ctx context.Context) error
 	ProjectAliases(ctx context.Context) ([]string, error) // all rows incl. archived
 	RebuildFlatView(ctx context.Context, keys []string) error

@@ -35,9 +35,9 @@ group by d.day order by d.day
 ```sql groups_totals
 select count(distinct d.id) as groups,
        count(distinct case when f.first_day = d.day then d.id end) as new_groups,
-       sum(d.hits + d.views + d.events) as actions,
+       sum(d.views + d.events) as actions,
        case when count(distinct d.id) > 0
-            then sum(d.hits + d.views + d.events) * 1.0 / count(distinct d.id) else 0 end as per_group
+            then sum(d.views + d.events) * 1.0 / count(distinct d.id) else 0 end as per_group
 from twillingate.v_identity_daily d
 join ${groups_first} f on f.id = d.id
 where d.project = '${params.project}' and d.kind = 'group' and d.id != ''
@@ -49,7 +49,7 @@ where d.project = '${params.project}' and d.kind = 'group' and d.id != ''
 -- users is distinct per day, so the range figure is the busiest day's:
 -- the same person on two days cannot be told apart from two people.
 select coalesce(i.name, d.id) as name,
-       sum(d.hits + d.views + d.events) as actions,
+       sum(d.views + d.events) as actions,
        max(d.users) as peak_users,
        count(distinct d.day) as active_days,
        min(f.first_day) as first_seen,

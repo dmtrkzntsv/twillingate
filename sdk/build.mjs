@@ -15,7 +15,7 @@ await build({
   minify: true,
   legalComments: "none",
   banner: {
-    js: "/* twillingate.js __TWILLINGATE_VERSION__ — web, product and app analytics SDK.\n * Source: sdk/ in https://github.com/dmtrkzntsv/twillingate */",
+    js: "/* twillingate.js __TWILLINGATE_VERSION__ — views and product analytics SDK.\n * Source: sdk/ in https://github.com/dmtrkzntsv/twillingate */",
   },
   outfile: "../internal/server/twillingate.js",
 });
