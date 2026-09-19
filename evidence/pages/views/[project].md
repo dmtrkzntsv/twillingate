@@ -1,12 +1,12 @@
 # {params.project} — Views
 
-<Dropdown name=range title="Date range" defaultValue="30">
-    <DropdownOption value="1" valueLabel="Last 1 day" />
-    <DropdownOption value="7" valueLabel="Last 7 days" />
-    <DropdownOption value="30" valueLabel="Last 30 days" />
-    <DropdownOption value="90" valueLabel="Last 90 days" />
-    <DropdownOption value="180" valueLabel="Last 180 days" />
-</Dropdown>
+<ButtonGroup name=range title="Date range" defaultValue="30">
+    <ButtonGroupItem value="1" valueLabel="Last 1 day" />
+    <ButtonGroupItem value="7" valueLabel="Last 7 days" />
+    <ButtonGroupItem value="30" valueLabel="Last 30 days" />
+    <ButtonGroupItem value="90" valueLabel="Last 90 days" />
+    <ButtonGroupItem value="180" valueLabel="Last 180 days" />
+</ButtonGroup>
 
 ```sql daily
 select day, sum(visitors) as visitors, sum(views) as views, sum(sessions) as sessions,
@@ -14,7 +14,7 @@ select day, sum(visitors) as visitors, sum(views) as views, sum(sessions) as ses
        case when sum(sessions) > 0 then sum(duration_sec) * 1.0 / sum(sessions) else 0 end as avg_session_sec
 from twillingate.v_views_daily
 where project = '${params.project}'
-  and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range.value} - 1) day, '%Y-%m-%d')
+  and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range} - 1) day, '%Y-%m-%d')
                and strftime((now() at time zone 'UTC')::date, '%Y-%m-%d')
 group by day order by day
 ```
@@ -25,7 +25,7 @@ select sum(visitors) as visitors, sum(views) as views, sum(sessions) as sessions
        case when sum(sessions) > 0 then sum(duration_sec) * 1.0 / sum(sessions) else 0 end as avg_session_sec
 from twillingate.v_views_daily
 where project = '${params.project}'
-  and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range.value} - 1) day, '%Y-%m-%d')
+  and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range} - 1) day, '%Y-%m-%d')
                and strftime((now() at time zone 'UTC')::date, '%Y-%m-%d')
 ```
 
@@ -33,7 +33,7 @@ where project = '${params.project}'
 select day, kind, visitors
 from twillingate.v_views_daily
 where project = '${params.project}'
-  and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range.value} - 1) day, '%Y-%m-%d')
+  and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range} - 1) day, '%Y-%m-%d')
                and strftime((now() at time zone 'UTC')::date, '%Y-%m-%d')
 order by day, kind
 ```
@@ -57,7 +57,7 @@ select path, sum(visitors) as visitors, sum(views) as views,
        '/views/${params.project}/page?path=' || path as detail_url
 from twillingate.v_views_paths
 where project = '${params.project}'
-  and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range.value} - 1) day, '%Y-%m-%d')
+  and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range} - 1) day, '%Y-%m-%d')
                and strftime((now() at time zone 'UTC')::date, '%Y-%m-%d')
 group by path order by views desc limit 20
 ```
@@ -66,7 +66,7 @@ group by path order by views desc limit 20
 select source, sum(visitors) as visitors, sum(views) as views
 from twillingate.v_views_referrers
 where project = '${params.project}'
-  and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range.value} - 1) day, '%Y-%m-%d')
+  and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range} - 1) day, '%Y-%m-%d')
                and strftime((now() at time zone 'UTC')::date, '%Y-%m-%d')
   and source != ''
 group by source order by visitors desc limit 20
@@ -76,7 +76,7 @@ group by source order by visitors desc limit 20
 select host, sum(visitors) as visitors, sum(views) as views
 from twillingate.v_views_hosts
 where project = '${params.project}'
-  and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range.value} - 1) day, '%Y-%m-%d')
+  and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range} - 1) day, '%Y-%m-%d')
                and strftime((now() at time zone 'UTC')::date, '%Y-%m-%d')
   and host != ''
 group by host order by views desc limit 20
@@ -105,7 +105,7 @@ group by host order by views desc limit 20
 select utm_source, utm_medium, utm_campaign, sum(visitors) as visitors, sum(views) as views
 from twillingate.v_views_utm
 where project = '${params.project}'
-  and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range.value} - 1) day, '%Y-%m-%d')
+  and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range} - 1) day, '%Y-%m-%d')
                and strftime((now() at time zone 'UTC')::date, '%Y-%m-%d')
   and utm_source != ''
 group by utm_source, utm_medium, utm_campaign order by visitors desc limit 20
@@ -124,7 +124,7 @@ group by utm_source, utm_medium, utm_campaign order by visitors desc limit 20
 ```sql countries
 select country, sum(visitors) as visitors from twillingate.v_views_countries
 where project = '${params.project}'
-  and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range.value} - 1) day, '%Y-%m-%d')
+  and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range} - 1) day, '%Y-%m-%d')
                and strftime((now() at time zone 'UTC')::date, '%Y-%m-%d')
   and country != ''
 group by country order by visitors desc limit 20
@@ -134,7 +134,7 @@ group by country order by visitors desc limit 20
 select case when os_version != '' then os || ' ' || os_version else os end as os, sum(visitors) as visitors
 from twillingate.v_views_os
 where project = '${params.project}'
-  and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range.value} - 1) day, '%Y-%m-%d')
+  and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range} - 1) day, '%Y-%m-%d')
                and strftime((now() at time zone 'UTC')::date, '%Y-%m-%d')
   and os != ''
 group by 1 order by visitors desc limit 15
@@ -144,7 +144,7 @@ group by 1 order by visitors desc limit 15
 select case when browser_version != '' then browser || ' ' || browser_version else browser end as browser, sum(visitors) as visitors
 from twillingate.v_views_browsers
 where project = '${params.project}'
-  and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range.value} - 1) day, '%Y-%m-%d')
+  and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range} - 1) day, '%Y-%m-%d')
                and strftime((now() at time zone 'UTC')::date, '%Y-%m-%d')
   and browser != ''
 group by 1 order by visitors desc limit 15
@@ -154,7 +154,7 @@ group by 1 order by visitors desc limit 15
 select case when device_model != '' then device_model else device end as device, sum(visitors) as visitors
 from twillingate.v_views_devices
 where project = '${params.project}'
-  and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range.value} - 1) day, '%Y-%m-%d')
+  and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range} - 1) day, '%Y-%m-%d')
                and strftime((now() at time zone 'UTC')::date, '%Y-%m-%d')
   and (device != '' or device_model != '')
 group by 1 order by visitors desc limit 15
@@ -163,7 +163,7 @@ group by 1 order by visitors desc limit 15
 ```sql displays
 select display, sum(visitors) as visitors from twillingate.v_views_displays
 where project = '${params.project}'
-  and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range.value} - 1) day, '%Y-%m-%d')
+  and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range} - 1) day, '%Y-%m-%d')
                and strftime((now() at time zone 'UTC')::date, '%Y-%m-%d')
   and display != ''
 group by display order by visitors desc limit 15
@@ -187,7 +187,7 @@ group by display order by visitors desc limit 15
 select day, os || ' ' || app_version as version, visitors
 from twillingate.v_views_app_versions
 where project = '${params.project}'
-  and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range.value} - 1) day, '%Y-%m-%d')
+  and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range} - 1) day, '%Y-%m-%d')
                and strftime((now() at time zone 'UTC')::date, '%Y-%m-%d')
   and app_version != ''
 order by day, version

@@ -6,13 +6,13 @@ select identity from twillingate.projects where alias = '${params.project}'
 
 {#if users_mode[0].identity === 'identified'}
 
-<Dropdown name=range title="Date range" defaultValue="30">
-    <DropdownOption value="1" valueLabel="Last 1 day" />
-    <DropdownOption value="7" valueLabel="Last 7 days" />
-    <DropdownOption value="30" valueLabel="Last 30 days" />
-    <DropdownOption value="90" valueLabel="Last 90 days" />
-    <DropdownOption value="180" valueLabel="Last 180 days" />
-</Dropdown>
+<ButtonGroup name=range title="Date range" defaultValue="30">
+    <ButtonGroupItem value="1" valueLabel="Last 1 day" />
+    <ButtonGroupItem value="7" valueLabel="Last 7 days" />
+    <ButtonGroupItem value="30" valueLabel="Last 30 days" />
+    <ButtonGroupItem value="90" valueLabel="Last 90 days" />
+    <ButtonGroupItem value="180" valueLabel="Last 180 days" />
+</ButtonGroup>
 
 ```sql users_first
 -- First day each user appears in the retained history. "New" below means new
@@ -30,7 +30,7 @@ select d.day,
 from twillingate.v_identity_daily d
 join ${users_first} f on f.id = d.id
 where d.project = '${params.project}' and d.kind = 'user' and d.id != ''
-  and d.day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range.value} - 1) day, '%Y-%m-%d')
+  and d.day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range} - 1) day, '%Y-%m-%d')
                 and strftime((now() at time zone 'UTC')::date, '%Y-%m-%d')
 group by d.day order by d.day
 ```
@@ -44,7 +44,7 @@ select count(distinct d.id) as users,
 from twillingate.v_identity_daily d
 join ${users_first} f on f.id = d.id
 where d.project = '${params.project}' and d.kind = 'user' and d.id != ''
-  and d.day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range.value} - 1) day, '%Y-%m-%d')
+  and d.day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range} - 1) day, '%Y-%m-%d')
                 and strftime((now() at time zone 'UTC')::date, '%Y-%m-%d')
 ```
 
@@ -61,7 +61,7 @@ join ${users_first} f on f.id = d.id
 left join twillingate.identities i
   on i.project = d.project and i.kind = 'user' and i.id = d.id
 where d.project = '${params.project}' and d.kind = 'user' and d.id != ''
-  and d.day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range.value} - 1) day, '%Y-%m-%d')
+  and d.day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range} - 1) day, '%Y-%m-%d')
                 and strftime((now() at time zone 'UTC')::date, '%Y-%m-%d')
 group by d.id, i.name
 order by actions desc limit 100
