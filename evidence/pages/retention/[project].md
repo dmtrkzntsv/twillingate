@@ -14,8 +14,8 @@ select identity from twillingate.projects where alias = '${params.project}'
 </Dropdown>
 
 The window selects cohorts by first day: actors first seen inside it, followed
-for their first 30 days. A young cohort contributes only the offsets it has
-reached, so a 30-day window shows D30 for its oldest cohort alone.
+for their first 45 days. A young cohort contributes only the offsets it has
+reached, so D45 needs cohorts at least 45 days old.
 
 Cohorts are kept apart by how the actor was identified: **user** (the client
 sent a `$user_id`) and **install** (a stable `$install_id`) describe different
@@ -46,7 +46,7 @@ cohorts as (
 grid as (
   select c.*, o.day_offset
   from cohorts c
-  cross join (select unnest(range(0, 31))::int as day_offset) o
+  cross join (select unnest(range(0, 46))::int as day_offset) o
   where c.cohort_day + o.day_offset < ((now() at time zone 'UTC') - interval 3 hour)::date
 ),
 filled as (
@@ -68,11 +68,11 @@ order by actor_kind, day_offset
 
 ```sql retention_milestones
 select actor_kind,
-       max(case when day_offset = 1 then retention end) as d1,
        max(case when day_offset = 7 then retention end) as d7,
-       max(case when day_offset = 30 then retention end) as d30
+       max(case when day_offset = 30 then retention end) as d30,
+       max(case when day_offset = 45 then retention end) as d45
 from ${retention_curve}
-where day_offset in (1, 7, 30)
+where day_offset in (7, 30, 45)
 group by actor_kind
 order by actor_kind
 ```
@@ -97,7 +97,7 @@ select * from ${retention_milestones} where actor_kind = 'install'
 select actor_kind, cohort_day, day_offset, cohort_size, actors,
        case when cohort_size > 0 then actors * 1.0 / cohort_size else 0 end as retention
 from twillingate.v_retention
-where project = '${params.project}' and day_offset between 0 and 30
+where project = '${params.project}' and day_offset between 0 and 45
   and cohort_day >= strftime((now() at time zone 'UTC')::date - interval (${inputs.range.value} - 1) day, '%Y-%m-%d')
 order by cohort_day desc, actor_kind, day_offset
 ```
@@ -110,9 +110,9 @@ Actors the client named with a `$user_id` — the people you can recognise
 whenever they come back, on any device.
 
 <DataTable data={user_milestones} rows=5 title="Milestones">
-    <Column id=d1 title="D1" fmt=pct1 />
     <Column id=d7 title="D7" fmt=pct1 />
     <Column id=d30 title="D30" fmt=pct1 />
+    <Column id=d45 title="D45" fmt=pct1 />
 </DataTable>
 
 <LineChart data={user_curve} x=day_offset y=retention yFmt=pct1
@@ -129,9 +129,9 @@ page load or app restart to mean anything: a client that mints one per page
 load makes each visit a new actor, and this curve reads near zero.
 
 <DataTable data={install_milestones} rows=5 title="Milestones">
-    <Column id=d1 title="D1" fmt=pct1 />
     <Column id=d7 title="D7" fmt=pct1 />
     <Column id=d30 title="D30" fmt=pct1 />
+    <Column id=d45 title="D45" fmt=pct1 />
 </DataTable>
 
 <LineChart data={install_curve} x=day_offset y=retention yFmt=pct1
