@@ -409,6 +409,74 @@ func TestStitchViewIdentityDailyDoesNotDoubleCountRetainedRawDays(t *testing.T) 
 	}
 }
 
+// AggregateIdentityDay keeps the top topNDimension ids per kind and day, so
+// the live half must rank and cut the same way or a busy project's figures
+// jump when the day rolls up.
+func TestStitchViewIdentityDailyCapsLikeTheAggregate(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	ts := time.Date(2026, 8, 23, 10, 0, 0, 0, time.UTC)
+
+	n := topNDimension + 5
+	var views []store.View
+	var events []store.ProductEvent
+	for i := 0; i < n; i++ {
+		u, g := fmt.Sprintf("u%03d", i), fmt.Sprintf("g%03d", i)
+		views = append(views, store.View{ID: fmt.Sprintf("v%d", i), Project: "p", TS: ts, ReceivedAt: ts,
+			Kind: "web", ActorKind: store.ActorUser, ActorID: u, UserID: u, GroupID: g, Path: "/"})
+		// The last ids sort after the cut by id alone; an extra product
+		// event ranks them first, so only a count-ordered cap keeps them.
+		if i >= n-5 {
+			events = append(events, store.ProductEvent{ID: fmt.Sprintf("e%d", i), Project: "p", EventName: "clicked",
+				TS: ts, ReceivedAt: ts, ActorID: u, ActorKind: store.ActorUser, UserID: u, GroupID: g})
+		}
+	}
+	if err := db.WriteViews(ctx, views); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.WriteProductEvents(ctx, events); err != nil {
+		t.Fatal(err)
+	}
+
+	snapshot := func() map[string][4]int {
+		t.Helper()
+		rows, err := db.db.QueryContext(ctx,
+			`SELECT kind, id, actors, users, views, events FROM v_identity_daily WHERE project='p'`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		out := map[string][4]int{}
+		for rows.Next() {
+			var kind, id string
+			var r [4]int
+			if err := rows.Scan(&kind, &id, &r[0], &r[1], &r[2], &r[3]); err != nil {
+				t.Fatal(err)
+			}
+			out[kind+"|"+id] = r
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+
+	live := snapshot()
+	if err := db.AggregateIdentityDay(ctx, "p", day("2026-08-23")); err != nil {
+		t.Fatal(err)
+	}
+	agg := snapshot()
+	if len(agg) != 2*topNDimension {
+		t.Fatalf("aggregate kept %d rows, want %d; the fixture does not exercise the cap", len(agg), 2*topNDimension)
+	}
+	if _, ok := agg[fmt.Sprintf("user|u%03d", n-1)]; !ok {
+		t.Fatal("aggregate dropped a boosted user; the fixture does not exercise the ranking")
+	}
+	if !reflect.DeepEqual(live, agg) {
+		t.Errorf("live half has %d rows, aggregate %d; they must match across the boundary", len(live), len(agg))
+	}
+}
+
 // seedDeclaredProject registers a project row with a declared attribute
 // list. v_product_attrs' live half reads projects.attributes, so the row
 // must exist or the declared half of the view is empty.

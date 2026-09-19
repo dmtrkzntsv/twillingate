@@ -26,6 +26,8 @@ Facts you cannot infer from the DDL:
    daily, so cohorts are undefined). Check list_projects for identity.
 4. Every dimension is capped at 500 values per day; the rest sit in one
    '(other)' row per day whose visitors are distinct actors, not a sum.
+   v_identity_daily keeps the busiest 500 ids per kind per day and drops
+   the rest: there is no '(other)' row, so do not sum it for totals.
 
 Views (all carry a 'project' column — always filter on it):
 

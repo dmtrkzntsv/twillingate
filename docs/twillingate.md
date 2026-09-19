@@ -898,7 +898,9 @@ the tail is one `(other)` row whose visitors are distinct actors, not a sum.
 Product events have `v_product_daily`, `v_product_totals` and
 `v_product_attrs`, plus a per-project `v_events_flat` with one column per
 declared attribute. `v_identity_daily` and `identities` join user and group
-activity to display names; `v_retention` is keyed by `actor_kind`.
+activity to display names; `v_identity_daily` keeps the busiest 500 users
+and 500 groups per day and drops the rest, with no `(other)` row, so do not
+sum it for totals. `v_retention` is keyed by `actor_kind`.
 
 Cost note: the views' live halves sessionize raw rows with window functions,
 and a `WHERE` on `day` may not prune that work. Narrow ranges and the `agg_*`
