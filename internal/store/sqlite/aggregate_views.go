@@ -65,7 +65,7 @@ func (d *DB) daysBefore(ctx context.Context, table, project string, before civil
 const viewSessionsCTE = `
 WITH src AS (
   SELECT kind, actor_id, session_id, CAST(strftime('%s', ts) AS INTEGER) AS t
-  FROM views WHERE project = :p AND ts >= :from AND ts < :to
+  FROM views WHERE project = :p AND day = :day
 ),
 kinds AS (
   SELECT kind, ROW_NUMBER() OVER (ORDER BY COUNT(*) DESC, kind) AS rn FROM src GROUP BY kind
@@ -126,18 +126,17 @@ var viewDimensions = []viewDimension{
 // raw rows, in one transaction. Idempotent: every write is INSERT OR
 // REPLACE keyed on (project, day, ...), recomputed wholly from raw rows.
 func (d *DB) AggregateViewDay(ctx context.Context, project string, day civil.Date) error {
-	from, to := dayRange(day)
 	return d.tx(ctx, func(tx *sql.Tx) error {
 		var n int
 		if err := tx.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM views WHERE project=? AND ts>=? AND ts<?`,
-			project, from, to).Scan(&n); err != nil {
+			`SELECT COUNT(*) FROM views WHERE project=? AND day=?`,
+			project, day.String()).Scan(&n); err != nil {
 			return err
 		}
 		if n == 0 {
 			return nil // already aggregated (or empty day): no-op keeps idempotency
 		}
-		named := []any{sql.Named("p", project), sql.Named("from", from), sql.Named("to", to), sql.Named("day", day.String())}
+		named := []any{sql.Named("p", project), sql.Named("day", day.String())}
 		if _, err := tx.ExecContext(ctx, viewSessionsCTE+`
 INSERT OR REPLACE INTO agg_views_daily
   (project, day, kind, visitors, views, sessions, bounces, duration_sec)
@@ -156,7 +155,7 @@ FROM spans s GROUP BY s.kind`, named...); err != nil {
 			}
 		}
 		if _, err := tx.ExecContext(ctx,
-			`DELETE FROM views WHERE project=? AND ts>=? AND ts<?`, project, from, to); err != nil {
+			`DELETE FROM views WHERE project=? AND day=?`, project, day.String()); err != nil {
 			return fmt.Errorf("prune raw views: %w", err)
 		}
 		return nil
@@ -189,7 +188,7 @@ func (dim viewDimension) aggregateSQL() string {
 INSERT OR REPLACE INTO %s (project, day, %s, visitors, views)
 WITH src AS (
   SELECT %s, actor_id FROM views
-  WHERE project = :p AND ts >= :from AND ts < :to %s
+  WHERE project = :p AND day = :day %s
 ),
 ranked AS (
   SELECT %s, ROW_NUMBER() OVER (ORDER BY COUNT(*) DESC, %s) AS rn FROM src GROUP BY %s

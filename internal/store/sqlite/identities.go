@@ -32,7 +32,7 @@ INSERT OR REPLACE INTO agg_identity_daily
 	(project, day, kind, id, actors, users, views, events)
 WITH src AS (
   SELECT %[1]s AS id, actor_id, user_id, 1 AS is_view, 0 AS is_event
-  FROM views          WHERE project=? AND substr(ts,1,10)=? AND %[1]s <> ''
+  FROM views          WHERE project=? AND day=? AND %[1]s <> ''
   UNION ALL
   SELECT %[1]s, actor_id, user_id, 0, 1
   FROM product_events WHERE project=? AND substr(ts,1,10)=? AND %[1]s <> ''

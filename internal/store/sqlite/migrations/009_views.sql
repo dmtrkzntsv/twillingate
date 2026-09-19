@@ -32,6 +32,14 @@ CREATE TABLE views (
     id              TEXT PRIMARY KEY,
     project         TEXT NOT NULL,
     ts              TEXT NOT NULL,
+    -- The live halves and the aggregator key on this, not on substr(ts,1,10):
+    -- an expression alias never qualifies for index use, so the day range a
+    -- caller applies to a stitch view could never reach the raw scan behind
+    -- it. A real, indexed column lets the raw-row scan that drives each live
+    -- half (COUNT(DISTINCT actor_id), session detection) search by day
+    -- instead of scanning the whole table -- see the comment on
+    -- idx_views_project_day below for the one access this does not fix.
+    day             TEXT GENERATED ALWAYS AS (substr(ts,1,10)) STORED,
     received_at     TEXT NOT NULL,
     kind            TEXT NOT NULL,
     actor_id        TEXT NOT NULL,
@@ -57,9 +65,20 @@ CREATE TABLE views (
     display_height  INTEGER NOT NULL DEFAULT 0,
     country         TEXT NOT NULL DEFAULT ''
 );
-CREATE INDEX idx_views_project_ts ON views(project, ts);
-CREATE INDEX idx_views_actor      ON views(project, actor_id, ts);
-CREATE INDEX idx_views_session    ON views(project, session_id, ts);
+CREATE INDEX idx_views_project_ts  ON views(project, ts);
+CREATE INDEX idx_views_actor       ON views(project, actor_id, ts);
+CREATE INDEX idx_views_session     ON views(project, session_id, ts);
+-- Every v_views_* live half ranks values with a window function joined to
+-- raw rows (r.day = v.day below), then unions that with its agg_views_*
+-- half. The raw-row side ("v") now searches this index by day range, but
+-- the ranking side ("r"/"k") still scans it unbounded: SQLite does not push
+-- a WHERE term through a UNION ALL into a window-function arm, and the
+-- agg-vs-live UNION ALL is this whole views family's shape, not something
+-- a query rewrite inside one arm can get around (verified against three
+-- formulations, including one with no join at all -- see the day-index
+-- report). aggregate_views.go's own queries (no UNION ALL) get the full
+-- benefit: project AND day both search this index.
+CREATE INDEX idx_views_project_day ON views(project, day);
 
 -- Old raw rows: web rows were identified by user id or the connection
 -- hash; app rows by user id or install id. Declared platform tokens fold
@@ -304,29 +323,29 @@ FROM (
   -- visitors and views per bucketed kind
   SELECT b.project, b.day, b.kind, COUNT(DISTINCT b.actor_id) AS visitors, COUNT(*) AS views
   FROM (
-    SELECT v.project, substr(v.ts,1,10) AS day,
+    SELECT v.project, v.day,
            CASE WHEN k.rn <= 500 THEN v.kind ELSE '(other)' END AS kind, v.actor_id
     FROM views v
     JOIN (
-      SELECT project, substr(ts,1,10) AS day, kind,
-             ROW_NUMBER() OVER (PARTITION BY project, substr(ts,1,10) ORDER BY COUNT(*) DESC, kind) AS rn
-      FROM views GROUP BY project, substr(ts,1,10), kind
-    ) k ON k.project = v.project AND k.day = substr(v.ts,1,10) AND k.kind = v.kind
+      SELECT project, day, kind,
+             ROW_NUMBER() OVER (PARTITION BY project, day ORDER BY COUNT(*) DESC, kind) AS rn
+      FROM views GROUP BY project, day, kind
+    ) k ON k.project = v.project AND k.day = v.day AND k.kind = v.kind
   ) b
   GROUP BY b.project, b.day, b.kind
 ) c
 JOIN (
   -- sessions, bounces and duration per bucketed kind
   WITH src AS (
-    SELECT v.project, substr(v.ts,1,10) AS day,
+    SELECT v.project, v.day,
            CASE WHEN k.rn <= 500 THEN v.kind ELSE '(other)' END AS kind,
            v.actor_id, v.session_id, CAST(strftime('%s', v.ts) AS INTEGER) AS t
     FROM views v
     JOIN (
-      SELECT project, substr(ts,1,10) AS day, kind,
-             ROW_NUMBER() OVER (PARTITION BY project, substr(ts,1,10) ORDER BY COUNT(*) DESC, kind) AS rn
-      FROM views GROUP BY project, substr(ts,1,10), kind
-    ) k ON k.project = v.project AND k.day = substr(v.ts,1,10) AND k.kind = v.kind
+      SELECT project, day, kind,
+             ROW_NUMBER() OVER (PARTITION BY project, day ORDER BY COUNT(*) DESC, kind) AS rn
+      FROM views GROUP BY project, day, kind
+    ) k ON k.project = v.project AND k.day = v.day AND k.kind = v.kind
   ),
   marked AS (
     SELECT project, day, kind, actor_id, session_id, t,
@@ -358,13 +377,13 @@ UNION ALL
 SELECT project, day, CASE WHEN rn <= 500 THEN path ELSE '(other)' END,
        COUNT(DISTINCT actor_id), COUNT(*)
 FROM (
-  SELECT v.project, substr(v.ts,1,10) AS day, v.path, v.actor_id, r.rn
+  SELECT v.project, v.day, v.path, v.actor_id, r.rn
   FROM views v
   JOIN (
-    SELECT project, substr(ts,1,10) AS day, path,
-           ROW_NUMBER() OVER (PARTITION BY project, substr(ts,1,10) ORDER BY COUNT(*) DESC, path) AS rn
-    FROM views GROUP BY project, substr(ts,1,10), path
-  ) r ON r.project = v.project AND r.day = substr(v.ts,1,10) AND r.path = v.path
+    SELECT project, day, path,
+           ROW_NUMBER() OVER (PARTITION BY project, day ORDER BY COUNT(*) DESC, path) AS rn
+    FROM views GROUP BY project, day, path
+  ) r ON r.project = v.project AND r.day = v.day AND r.path = v.path
 )
 GROUP BY project, day, CASE WHEN rn <= 500 THEN path ELSE '(other)' END;
 
@@ -374,13 +393,13 @@ UNION ALL
 SELECT project, day, CASE WHEN rn <= 500 THEN host ELSE '(other)' END,
        COUNT(DISTINCT actor_id), COUNT(*)
 FROM (
-  SELECT v.project, substr(v.ts,1,10) AS day, v.host, v.actor_id, r.rn
+  SELECT v.project, v.day, v.host, v.actor_id, r.rn
   FROM views v
   JOIN (
-    SELECT project, substr(ts,1,10) AS day, host,
-           ROW_NUMBER() OVER (PARTITION BY project, substr(ts,1,10) ORDER BY COUNT(*) DESC, host) AS rn
-    FROM views GROUP BY project, substr(ts,1,10), host
-  ) r ON r.project = v.project AND r.day = substr(v.ts,1,10) AND r.host = v.host
+    SELECT project, day, host,
+           ROW_NUMBER() OVER (PARTITION BY project, day ORDER BY COUNT(*) DESC, host) AS rn
+    FROM views GROUP BY project, day, host
+  ) r ON r.project = v.project AND r.day = v.day AND r.host = v.host
 )
 GROUP BY project, day, CASE WHEN rn <= 500 THEN host ELSE '(other)' END;
 
@@ -390,13 +409,13 @@ UNION ALL
 SELECT project, day, CASE WHEN rn <= 500 THEN source ELSE '(other)' END,
        COUNT(DISTINCT actor_id), COUNT(*)
 FROM (
-  SELECT v.project, substr(v.ts,1,10) AS day, v.referrer_source AS source, v.actor_id, r.rn
+  SELECT v.project, v.day, v.referrer_source AS source, v.actor_id, r.rn
   FROM views v
   JOIN (
-    SELECT project, substr(ts,1,10) AS day, referrer_source AS source,
-           ROW_NUMBER() OVER (PARTITION BY project, substr(ts,1,10) ORDER BY COUNT(*) DESC, referrer_source) AS rn
-    FROM views GROUP BY project, substr(ts,1,10), referrer_source
-  ) r ON r.project = v.project AND r.day = substr(v.ts,1,10) AND r.source = v.referrer_source
+    SELECT project, day, referrer_source AS source,
+           ROW_NUMBER() OVER (PARTITION BY project, day ORDER BY COUNT(*) DESC, referrer_source) AS rn
+    FROM views GROUP BY project, day, referrer_source
+  ) r ON r.project = v.project AND r.day = v.day AND r.source = v.referrer_source
 )
 GROUP BY project, day, CASE WHEN rn <= 500 THEN source ELSE '(other)' END;
 
@@ -406,13 +425,13 @@ UNION ALL
 SELECT project, day, CASE WHEN rn <= 500 THEN country ELSE '(other)' END,
        COUNT(DISTINCT actor_id), COUNT(*)
 FROM (
-  SELECT v.project, substr(v.ts,1,10) AS day, v.country, v.actor_id, r.rn
+  SELECT v.project, v.day, v.country, v.actor_id, r.rn
   FROM views v
   JOIN (
-    SELECT project, substr(ts,1,10) AS day, country,
-           ROW_NUMBER() OVER (PARTITION BY project, substr(ts,1,10) ORDER BY COUNT(*) DESC, country) AS rn
-    FROM views GROUP BY project, substr(ts,1,10), country
-  ) r ON r.project = v.project AND r.day = substr(v.ts,1,10) AND r.country = v.country
+    SELECT project, day, country,
+           ROW_NUMBER() OVER (PARTITION BY project, day ORDER BY COUNT(*) DESC, country) AS rn
+    FROM views GROUP BY project, day, country
+  ) r ON r.project = v.project AND r.day = v.day AND r.country = v.country
 )
 GROUP BY project, day, CASE WHEN rn <= 500 THEN country ELSE '(other)' END;
 
@@ -422,14 +441,14 @@ UNION ALL
 SELECT project, day, CASE WHEN rn <= 500 THEN display ELSE '(other)' END,
        COUNT(DISTINCT actor_id), COUNT(*)
 FROM (
-  SELECT v.project, substr(v.ts,1,10) AS day, v.display_width || 'x' || v.display_height AS display, v.actor_id, r.rn
+  SELECT v.project, v.day, v.display_width || 'x' || v.display_height AS display, v.actor_id, r.rn
   FROM views v
   JOIN (
-    SELECT project, substr(ts,1,10) AS day, display_width || 'x' || display_height AS display,
-           ROW_NUMBER() OVER (PARTITION BY project, substr(ts,1,10) ORDER BY COUNT(*) DESC, display_width || 'x' || display_height) AS rn
+    SELECT project, day, display_width || 'x' || display_height AS display,
+           ROW_NUMBER() OVER (PARTITION BY project, day ORDER BY COUNT(*) DESC, display_width || 'x' || display_height) AS rn
     FROM views WHERE display_width > 0 AND display_height > 0
-    GROUP BY project, substr(ts,1,10), display_width || 'x' || display_height
-  ) r ON r.project = v.project AND r.day = substr(v.ts,1,10) AND r.display = v.display_width || 'x' || v.display_height
+    GROUP BY project, day, display_width || 'x' || display_height
+  ) r ON r.project = v.project AND r.day = v.day AND r.display = v.display_width || 'x' || v.display_height
   WHERE v.display_width > 0 AND v.display_height > 0
 )
 GROUP BY project, day, CASE WHEN rn <= 500 THEN display ELSE '(other)' END;
@@ -440,13 +459,13 @@ UNION ALL
 SELECT project, day, os, CASE WHEN rn <= 500 THEN os_version ELSE '(other)' END,
        COUNT(DISTINCT actor_id), COUNT(*)
 FROM (
-  SELECT v.project, substr(v.ts,1,10) AS day, v.os, v.os_version, v.actor_id, r.rn
+  SELECT v.project, v.day, v.os, v.os_version, v.actor_id, r.rn
   FROM views v
   JOIN (
-    SELECT project, substr(ts,1,10) AS day, os, os_version,
-           ROW_NUMBER() OVER (PARTITION BY project, substr(ts,1,10) ORDER BY COUNT(*) DESC, os, os_version) AS rn
-    FROM views GROUP BY project, substr(ts,1,10), os, os_version
-  ) r ON r.project = v.project AND r.day = substr(v.ts,1,10) AND r.os = v.os AND r.os_version = v.os_version
+    SELECT project, day, os, os_version,
+           ROW_NUMBER() OVER (PARTITION BY project, day ORDER BY COUNT(*) DESC, os, os_version) AS rn
+    FROM views GROUP BY project, day, os, os_version
+  ) r ON r.project = v.project AND r.day = v.day AND r.os = v.os AND r.os_version = v.os_version
 )
 GROUP BY project, day, os, CASE WHEN rn <= 500 THEN os_version ELSE '(other)' END;
 
@@ -456,13 +475,13 @@ UNION ALL
 SELECT project, day, browser, CASE WHEN rn <= 500 THEN browser_version ELSE '(other)' END,
        COUNT(DISTINCT actor_id), COUNT(*)
 FROM (
-  SELECT v.project, substr(v.ts,1,10) AS day, v.browser, v.browser_version, v.actor_id, r.rn
+  SELECT v.project, v.day, v.browser, v.browser_version, v.actor_id, r.rn
   FROM views v
   JOIN (
-    SELECT project, substr(ts,1,10) AS day, browser, browser_version,
-           ROW_NUMBER() OVER (PARTITION BY project, substr(ts,1,10) ORDER BY COUNT(*) DESC, browser, browser_version) AS rn
-    FROM views GROUP BY project, substr(ts,1,10), browser, browser_version
-  ) r ON r.project = v.project AND r.day = substr(v.ts,1,10) AND r.browser = v.browser AND r.browser_version = v.browser_version
+    SELECT project, day, browser, browser_version,
+           ROW_NUMBER() OVER (PARTITION BY project, day ORDER BY COUNT(*) DESC, browser, browser_version) AS rn
+    FROM views GROUP BY project, day, browser, browser_version
+  ) r ON r.project = v.project AND r.day = v.day AND r.browser = v.browser AND r.browser_version = v.browser_version
 )
 GROUP BY project, day, browser, CASE WHEN rn <= 500 THEN browser_version ELSE '(other)' END;
 
@@ -472,13 +491,13 @@ UNION ALL
 SELECT project, day, os, CASE WHEN rn <= 500 THEN app_version ELSE '(other)' END,
        COUNT(DISTINCT actor_id), COUNT(*)
 FROM (
-  SELECT v.project, substr(v.ts,1,10) AS day, v.os, v.app_version, v.actor_id, r.rn
+  SELECT v.project, v.day, v.os, v.app_version, v.actor_id, r.rn
   FROM views v
   JOIN (
-    SELECT project, substr(ts,1,10) AS day, os, app_version,
-           ROW_NUMBER() OVER (PARTITION BY project, substr(ts,1,10) ORDER BY COUNT(*) DESC, os, app_version) AS rn
-    FROM views WHERE app_version <> '' GROUP BY project, substr(ts,1,10), os, app_version
-  ) r ON r.project = v.project AND r.day = substr(v.ts,1,10) AND r.os = v.os AND r.app_version = v.app_version
+    SELECT project, day, os, app_version,
+           ROW_NUMBER() OVER (PARTITION BY project, day ORDER BY COUNT(*) DESC, os, app_version) AS rn
+    FROM views WHERE app_version <> '' GROUP BY project, day, os, app_version
+  ) r ON r.project = v.project AND r.day = v.day AND r.os = v.os AND r.app_version = v.app_version
   WHERE v.app_version <> ''
 )
 GROUP BY project, day, os, CASE WHEN rn <= 500 THEN app_version ELSE '(other)' END;
@@ -489,13 +508,13 @@ UNION ALL
 SELECT project, day, device, CASE WHEN rn <= 500 THEN device_model ELSE '(other)' END,
        COUNT(DISTINCT actor_id), COUNT(*)
 FROM (
-  SELECT v.project, substr(v.ts,1,10) AS day, v.device, v.device_model, v.actor_id, r.rn
+  SELECT v.project, v.day, v.device, v.device_model, v.actor_id, r.rn
   FROM views v
   JOIN (
-    SELECT project, substr(ts,1,10) AS day, device, device_model,
-           ROW_NUMBER() OVER (PARTITION BY project, substr(ts,1,10) ORDER BY COUNT(*) DESC, device, device_model) AS rn
-    FROM views GROUP BY project, substr(ts,1,10), device, device_model
-  ) r ON r.project = v.project AND r.day = substr(v.ts,1,10) AND r.device = v.device AND r.device_model = v.device_model
+    SELECT project, day, device, device_model,
+           ROW_NUMBER() OVER (PARTITION BY project, day ORDER BY COUNT(*) DESC, device, device_model) AS rn
+    FROM views GROUP BY project, day, device, device_model
+  ) r ON r.project = v.project AND r.day = v.day AND r.device = v.device AND r.device_model = v.device_model
 )
 GROUP BY project, day, device, CASE WHEN rn <= 500 THEN device_model ELSE '(other)' END;
 
@@ -505,14 +524,14 @@ UNION ALL
 SELECT project, day, utm_source, utm_medium, CASE WHEN rn <= 500 THEN utm_campaign ELSE '(other)' END,
        COUNT(DISTINCT actor_id), COUNT(*)
 FROM (
-  SELECT v.project, substr(v.ts,1,10) AS day, v.utm_source, v.utm_medium, v.utm_campaign, v.actor_id, r.rn
+  SELECT v.project, v.day, v.utm_source, v.utm_medium, v.utm_campaign, v.actor_id, r.rn
   FROM views v
   JOIN (
-    SELECT project, substr(ts,1,10) AS day, utm_source, utm_medium, utm_campaign,
-           ROW_NUMBER() OVER (PARTITION BY project, substr(ts,1,10) ORDER BY COUNT(*) DESC, utm_source, utm_medium, utm_campaign) AS rn
+    SELECT project, day, utm_source, utm_medium, utm_campaign,
+           ROW_NUMBER() OVER (PARTITION BY project, day ORDER BY COUNT(*) DESC, utm_source, utm_medium, utm_campaign) AS rn
     FROM views WHERE NOT (utm_source='' AND utm_medium='' AND utm_campaign='')
-    GROUP BY project, substr(ts,1,10), utm_source, utm_medium, utm_campaign
-  ) r ON r.project = v.project AND r.day = substr(v.ts,1,10)
+    GROUP BY project, day, utm_source, utm_medium, utm_campaign
+  ) r ON r.project = v.project AND r.day = v.day
      AND r.utm_source = v.utm_source AND r.utm_medium = v.utm_medium AND r.utm_campaign = v.utm_campaign
   WHERE NOT (v.utm_source='' AND v.utm_medium='' AND v.utm_campaign='')
 )
@@ -596,14 +615,14 @@ SELECT project, day, kind, id,
        CASE WHEN kind = 'user' THEN 1 ELSE COUNT(DISTINCT NULLIF(user_id, '')) END,
        SUM(is_view), SUM(is_event)
 FROM (
-  SELECT project, substr(ts,1,10) AS day, 'user' AS kind, user_id AS id,
+  SELECT project, day, 'user' AS kind, user_id AS id,
          actor_id, user_id, 1 AS is_view, 0 AS is_event
   FROM views WHERE user_id <> ''
   UNION ALL
   SELECT project, substr(ts,1,10), 'user', user_id, actor_id, user_id, 0, 1
   FROM product_events WHERE user_id <> ''
   UNION ALL
-  SELECT project, substr(ts,1,10), 'group', group_id, actor_id, user_id, 1, 0
+  SELECT project, day, 'group', group_id, actor_id, user_id, 1, 0
   FROM views WHERE group_id <> ''
   UNION ALL
   SELECT project, substr(ts,1,10), 'group', group_id, actor_id, user_id, 0, 1

@@ -5,12 +5,96 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/civil"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
+
+// TestViewsLiveHalvesUseTheDayIndex is the physical-plan regression for the
+// day-index perf change. It asserts two things for the live halves of
+// v_views_paths and v_views_daily:
+//
+//  1. Nothing in the plan touches idx_views_project_ts any more -- before
+//     the day column existed, that was the only index available, and every
+//     access via it either ignored the day range entirely or (for the raw
+//     row scan feeding COUNT(DISTINCT actor_id)/session detection) applied
+//     only the project filter.
+//  2. At least one access is a SEARCH on idx_views_project_day carrying an
+//     actual day bound (">", "<" or "="), not just "(project=?)". That is
+//     the raw-row scan driving each live half (the one EXPLAIN labels "v"),
+//     and it is the dominant cost on a large raw table: BenchmarkViewsPathsLiveHalf
+//     and BenchmarkViewsDailyLiveHalf in bench_test.go show the wall-clock
+//     effect (~13%/~32% faster on 150k rows -- see the day-index report).
+//
+// It deliberately does NOT assert "no SCAN views at all". One SCAN survives
+// in every dimension view and in v_views_daily: the ranking subquery that
+// computes each day's top-500 cap (aliased "r"/"k" in 009_views.sql) is
+// joined to raw rows, and separately verified (see the day-index report)
+// to remain an un-day-bounded index scan under every formulation tried --
+// including one with no join at all, using COUNT(*) OVER/DENSE_RANK()
+// directly on `views`. The common factor is that this subquery is always
+// the second arm of the view's `agg_* UNION ALL live-computation`
+// structure (009_views.sql's own design, not something introduced here):
+// SQLite's push-down-into-window-function-subquery optimization does not
+// operate across a UNION ALL arm, so a WHERE term on the compound view
+// never reaches a window function computed inside one of its arms, no
+// matter how directly that arm's columns trace back to `views`. Removing
+// that residual scan would mean giving up the aggregate/live UNION ALL
+// shape these views are built on -- out of scope for this change.
+func TestViewsLiveHalvesUseTheDayIndex(t *testing.T) {
+	db := newTestDB(t)
+	seedViewDay(t, db) // project "app", day 2026-08-10
+
+	queries := map[string]string{
+		"paths": `SELECT path, SUM(visitors), SUM(views) FROM v_views_paths
+			WHERE project = ? AND day BETWEEN ? AND ? GROUP BY path`,
+		"daily": `SELECT kind, SUM(visitors), SUM(views) FROM v_views_daily
+			WHERE project = ? AND day BETWEEN ? AND ? GROUP BY kind`,
+	}
+
+	for name, q := range queries {
+		t.Run(name, func(t *testing.T) {
+			rows, err := db.db.Query("EXPLAIN QUERY PLAN "+q, "app", "2026-08-01", "2026-08-10")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer rows.Close()
+			var details []string
+			for rows.Next() {
+				var id, parent, notUsed int
+				var detail string
+				if err := rows.Scan(&id, &parent, &notUsed, &detail); err != nil {
+					t.Fatal(err)
+				}
+				details = append(details, detail)
+			}
+			if err := rows.Err(); err != nil {
+				t.Fatal(err)
+			}
+			sawDayBoundSearch := false
+			for _, d := range details {
+				if strings.Contains(d, "idx_views_project_ts") {
+					t.Errorf("%s: plan still uses idx_views_project_ts, the day-oblivious index", name)
+				}
+				if strings.Contains(d, "SEARCH v USING INDEX idx_views_project_day") &&
+					(strings.Contains(d, "day>") || strings.Contains(d, "day<") || strings.Contains(d, "day=")) {
+					sawDayBoundSearch = true
+				}
+			}
+			if !sawDayBoundSearch {
+				t.Errorf("%s: no access searches idx_views_project_day bounded by day", name)
+			}
+			if t.Failed() {
+				for _, d := range details {
+					t.Logf("plan: %s", d)
+				}
+			}
+		})
+	}
+}
 
 // The invariant that makes Evidence dashboards boundary-free (spec §8.1):
 // v_* views must return IDENTICAL numbers before and after aggregation.

@@ -28,16 +28,20 @@ const cohortKinds = `('user', 'install')`
 func (d *DB) UpsertActors(ctx context.Context, project string, day civil.Date) error {
 	return d.tx(ctx, func(tx *sql.Tx) error {
 		for _, table := range actorSources {
+			dayExpr := "substr(ts,1,10)"
+			if table == "views" {
+				dayExpr = "day"
+			}
 			q := fmt.Sprintf(`
 INSERT INTO actors (project, actor_id, actor_kind, first_seen_day, last_seen_day)
 SELECT ?, actor_id, actor_kind, ?, ?
-FROM %s WHERE project=? AND substr(ts,1,10)=? AND actor_id <> '' AND actor_kind IN %s
+FROM %[1]s WHERE project=? AND %[3]s=? AND actor_id <> '' AND actor_kind IN %[2]s
 GROUP BY actor_id, actor_kind
 ON CONFLICT(project, actor_id) DO UPDATE SET
   actor_kind     = CASE WHEN actors.actor_kind = 'user' OR excluded.actor_kind = 'user'
                         THEN 'user' ELSE excluded.actor_kind END,
   first_seen_day = MIN(actors.first_seen_day, excluded.first_seen_day),
-  last_seen_day  = MAX(actors.last_seen_day,  excluded.last_seen_day)`, table, cohortKinds)
+  last_seen_day  = MAX(actors.last_seen_day,  excluded.last_seen_day)`, table, cohortKinds, dayExpr)
 			if _, err := tx.ExecContext(ctx, q,
 				project, day.String(), day.String(), project, day.String()); err != nil {
 				return fmt.Errorf("upsert actors from %s: %w", table, err)
@@ -63,7 +67,7 @@ func (d *DB) AggregateRetentionDay(ctx context.Context, project string, day civi
 		if _, err := tx.ExecContext(ctx, `
 INSERT OR REPLACE INTO agg_retention (project, actor_kind, cohort_day, day_offset, actors)
 WITH active AS (
-  SELECT DISTINCT actor_id FROM views         WHERE project=? AND substr(ts,1,10)=? AND actor_id <> ''
+  SELECT DISTINCT actor_id FROM views         WHERE project=? AND day=? AND actor_id <> ''
   UNION
   SELECT DISTINCT actor_id FROM product_events WHERE project=? AND substr(ts,1,10)=? AND actor_id <> ''
 )
