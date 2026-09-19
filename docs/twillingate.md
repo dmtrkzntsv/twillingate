@@ -472,24 +472,6 @@ same day-long cache. Load one only if its problem is yours.
 
 ## The event model
 
-> **Changed 2026-09 — one views family.** Web and app analytics merged.
-> `$pageview` is now `$page_view` (the old spelling is still accepted);
-> `$platform` is now `$os` (likewise). Tools `web_*`/`app_*` became
-> `views_*`, routes `/web/*` and `/app/*` became `/views/*`, views
-> `v_web_*`/`v_app_*` became `v_views_*`, `retention` takes `actor`
-> instead of `surface`, and `RETENTION_WEB_*`/`RETENTION_APP_*` became
-> `RETENTION_VIEWS_*`. Paths are now capped at 500 per day like every
-> other dimension. Rows before the merge carry an empty device class on
-> app days, an empty device model and browser version on web days, and
-> zero bounces on app days. `list_projects` now reports `first_view_day`
-> and `last_view_day` in place of the four web/app dates. `identities` no
-> longer returns a `hits` column — `views` covers both web and app
-> activity. The dashboard URLs `/web/{project}` and `/app/{project}` are
-> now `/views/{project}`. One-time, on upgrade the `$platform` breakdown
-> values `ios` and `iOS` (and other differently-cased platform names)
-> merge into one `$os` row whose unique-users figure is the sum of the
-> two, so it may over-count an actor who was seen under both spellings.
-
 Everything goes to one endpoint, `POST /ingest/events`. The event **name**
 decides which family it lands in:
 
@@ -506,48 +488,38 @@ response body.
 
 ### Views (`$page_view`, `$screen_view`)
 
-A view is one page or screen shown to someone. The two names are the same
-row; the name only sets the default **kind**. `$kind` is a short lower-case
-token the client declares for itself — `web`, `app`, `cli`, or anything
-matching `^[a-z][a-z0-9_]{0,15}$` — usually as a batch attribute. An
-invalid value is warned about and replaced by the name's default, so a
-typo can never mint a dimension.
+A view is one page or screen shown to someone. Both names store the same
+row; the name only sets the default **kind** — `web` for `$page_view`,
+`app` for `$screen_view`. `$kind` overrides it with any token matching
+`^[a-z][a-z0-9_]{0,15}$` (`web`, `app`, `cli`, …), usually as a batch
+attribute; an invalid value is warned about and the default is used.
 
-**Only `web` has server-side meaning.** A web view is enriched from the
-connection that carried it: client IP for country, User-Agent for browser,
-browser version, OS and device class, `Origin` for the allowlist, and bot
-filtering on the User-Agent. Every other kind is taken as declared — never
-parsed, never filtered — so an app or CLI whose HTTP library sends a
-non-browser User-Agent is never dropped as a crawler, and an Electron app
-is never misclassified as desktop Chrome.
+**Only `web` has server-side meaning.** A web view is enriched from its
+connection: IP for country, User-Agent for browser, browser version, OS
+and device class, and bot filtering. Every other kind is taken as declared,
+never parsed and never filtered, so a CLI or an Electron app is never
+dropped as a crawler or misclassified as desktop Chrome.
 
-Declared environment keys are stored on any kind and override the parsed
-value where both exist: `$os` (normalised to `iOS`, `Android`, `macOS`,
-`Windows`, `Linux`, `ChromeOS`; anything else stored as sent),
-`$os_version`, `$app_version`, `$device_model`, `$locale`,
-`$display_width` and `$display_height` (integer pixels of the physical
-display). `$app_version` is the version of whatever client sent the event —
-a site build, an app release, a CLI version — and is not tied to
-`kind: app`.
+Declared environment keys — `$os`, `$os_version`, `$app_version`,
+`$device_model`, `$locale`, `$display_width`, `$display_height` — are
+stored on any kind and override the parsed value. `$os` is normalised to
+`iOS`, `Android`, `macOS`, `Windows`, `Linux`, `ChromeOS`; anything else is
+stored as sent. `$app_version` is the version of whatever client sent the
+event, whatever its kind.
 
-A view carries its location already split — `$path` (or `$screen`, an
-alias) **required**, and `$host` — stored verbatim. Campaign parameters
-travel explicitly as `$utm_source`, `$utm_medium` and `$utm_campaign`.
-`$referrer` is reduced to a source name; on a web view it is suppressed as a
-self-referral when its host matches `$host`, on any other kind it is taken
-at face value (a deep link can carry one).
+Location arrives already split: `$path` (or its alias `$screen`) is
+**required**, `$host` is optional, both stored verbatim; `$path` may
+contain a `#` (hash routing) or a `?` (opt-in query routing). Campaign
+parameters travel as `$utm_source`, `$utm_medium` and `$utm_campaign`.
+`$referrer` is reduced to a source name and, on web views, dropped as a
+self-referral when its host matches `$host`.
 
-`$path` may contain a `#` (hash routing) or a `?` (opt-in query routing).
-
-Sessions: a client `$session_id` is authoritative (an app knows its own
-foreground/background transitions); without one, a gap over 30 minutes per
-actor starts a new session. A bounce is a session with one view. Expect a
-high bounce rate on app kinds, where a single-screen session is normal use.
-
-Country comes from the connection on every kind; the client IP and
-User-Agent are never stored. **A backend must not relay web views on behalf
-of other people** — every one would be attributed to the backend's IP and
-User-Agent. The server cannot detect this; it is a contract you keep.
+A client `$session_id` is authoritative; without one, a gap over 30 minutes
+per actor starts a new session. A bounce is a single-view session, so
+expect high bounce rates on app kinds. Country comes from the connection on
+every kind; IP and User-Agent are never stored. **A backend must not relay
+web views for other people** — they would all carry the backend's IP and
+User-Agent.
 
 ### Product (everything else)
 
