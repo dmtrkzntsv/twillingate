@@ -6,9 +6,9 @@ select identity from twillingate.projects where alias = '${params.project}'
 
 {#if retention_mode[0].identity === 'identified'}
 
-<ButtonGroup name=range title="Cohorts from" defaultValue="90">
+<ButtonGroup name=range title="Cohorts from">
     <ButtonGroupItem value="30" valueLabel="Last 30 days" />
-    <ButtonGroupItem value="90" valueLabel="Last 90 days" />
+    <ButtonGroupItem value="90" valueLabel="Last 90 days" default />
     <ButtonGroupItem value="180" valueLabel="Last 180 days" />
     <ButtonGroupItem value="365" valueLabel="Last 365 days" />
 </ButtonGroup>

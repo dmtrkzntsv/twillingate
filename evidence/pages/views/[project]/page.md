@@ -2,9 +2,9 @@
 
 [← back to {params.project}](/views/{params.project})
 
-<ButtonGroup name=range title="Date range" defaultValue="30">
+<ButtonGroup name=range title="Date range">
     <ButtonGroupItem value="1" valueLabel="Last 1 day" />
-    <ButtonGroupItem value="7" valueLabel="Last 7 days" />
+    <ButtonGroupItem value="7" valueLabel="Last 7 days" default />
     <ButtonGroupItem value="30" valueLabel="Last 30 days" />
     <ButtonGroupItem value="90" valueLabel="Last 90 days" />
     <ButtonGroupItem value="180" valueLabel="Last 180 days" />
@@ -21,13 +21,19 @@
   which `evidence dev` never shows, because dev does not prerender. The
   prerendered file is a shell; Evidence resolves these queries in the browser
   via DuckDB, so the real path arrives with the first client render.
+
+  The prerender branch names an input nobody sets rather than a literal. With
+  the range defaulted, a literal would let the query resolve at build time
+  for path '', and Evidence seeds the browser's first run with that result:
+  the default range would show nothing until another one was clicked. An
+  unset input keeps the query unresolved at build time, so nothing ships.
 -->
 
 ```sql page_daily
 select day, visitors, views
 from twillingate.v_views_paths
 where project = '${params.project}'
-  and path = '${browser ? ($page.url.searchParams.get('path') ?? '').replaceAll("'", "''") : ''}'
+  and path = '${browser ? ($page.url.searchParams.get('path') ?? '').replaceAll("'", "''") : inputs.unset_while_prerendering}'
   and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range} - 1) day, '%Y-%m-%d')
                and strftime((now() at time zone 'UTC')::date, '%Y-%m-%d')
 order by day
@@ -38,7 +44,7 @@ select sum(visitors) as visitors, sum(views) as views,
        case when sum(visitors) > 0 then sum(views) * 1.0 / sum(visitors) else 0 end as views_per_visitor
 from twillingate.v_views_paths
 where project = '${params.project}'
-  and path = '${browser ? ($page.url.searchParams.get('path') ?? '').replaceAll("'", "''") : ''}'
+  and path = '${browser ? ($page.url.searchParams.get('path') ?? '').replaceAll("'", "''") : inputs.unset_while_prerendering}'
   and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range} - 1) day, '%Y-%m-%d')
                and strftime((now() at time zone 'UTC')::date, '%Y-%m-%d')
 ```
