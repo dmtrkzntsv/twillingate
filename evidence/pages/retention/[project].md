@@ -6,6 +6,17 @@ select identity from twillingate.projects where alias = '${params.project}'
 
 {#if retention_mode[0].identity === 'identified'}
 
+<Dropdown name=range title="Cohorts from" defaultValue="90">
+    <DropdownOption value="30" valueLabel="Last 30 days" />
+    <DropdownOption value="90" valueLabel="Last 90 days" />
+    <DropdownOption value="180" valueLabel="Last 180 days" />
+    <DropdownOption value="365" valueLabel="Last 365 days" />
+</Dropdown>
+
+The window selects cohorts by first day: actors first seen inside it, followed
+for their first 30 days. A young cohort contributes only the offsets it has
+reached, so a 30-day window shows D30 for its oldest cohort alone.
+
 Cohorts are kept apart by how the actor was identified: **user** (the client
 sent a `$user_id`) and **install** (a stable `$install_id`) describe different
 populations, and blending their curves would describe neither. An actor known
@@ -27,6 +38,7 @@ with rows as (
          actors, cohort_size
   from twillingate.v_retention
   where project = '${params.project}'
+    and cohort_day::date >= (now() at time zone 'UTC')::date - interval (${inputs.range.value} - 1) day
 ),
 cohorts as (
   select actor_kind, cohort_day, cohort_size from rows where day_offset = 0
@@ -86,6 +98,7 @@ select actor_kind, cohort_day, day_offset, cohort_size, actors,
        case when cohort_size > 0 then actors * 1.0 / cohort_size else 0 end as retention
 from twillingate.v_retention
 where project = '${params.project}' and day_offset between 0 and 30
+  and cohort_day >= strftime((now() at time zone 'UTC')::date - interval (${inputs.range.value} - 1) day, '%Y-%m-%d')
 order by cohort_day desc, actor_kind, day_offset
 ```
 
