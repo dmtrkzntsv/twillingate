@@ -71,6 +71,7 @@ func (h *host) integrationGuide(ctx context.Context, in guideIn) (guideOut, erro
 			b.WriteString(", including SPA route changes (pushState/popstate are hooked) — no router integration needed")
 		}
 		b.WriteString(". The snippet is silent on localhost, so test on a real or staged domain.\n\n")
+		b.WriteString("An Electron or Tauri app loading the same tag adds data-kind=\"app\" and data-os / data-app-version so its views are declared rather than parsed from the User-Agent.\n\n")
 		fmt.Fprintf(&b, "Product events from the page:\n\n    twillingate.track(\"signup\", { plan: \"pro\" });\n\n")
 		if p.Identity == config.IdentityIdentified {
 			b.WriteString("This project is IDENTIFIED: the snippet persists a visitor id in\nlocalStorage (consent-relevant, ePrivacy — same category as a cookie).\nGate the tag on consent, call twillingate.identify(userId, userName)\n(and twillingate.group(groupId)) after login and twillingate.reset() on\nlogout.\n\n")
@@ -91,7 +92,7 @@ func (h *host) integrationGuide(ctx context.Context, in guideIn) (guideOut, erro
 		fmt.Fprintf(&b, "Apps use the same HTTP API with app context as batch attributes:\n\n"+
 			"    POST %s/ingest/events\n    X-Analytics-Key: %s\n\n"+
 			"    {\"attributes\":{\"$install_id\":\"<stable-uuid-per-install>\",\n"+
-			"                   \"$platform\":\"ios\",\"$app_version\":\"2.4.1\",\n"+
+			"                   \"$os\":\"ios\",\"$app_version\":\"2.4.1\",\n"+
 			"                   \"$os_version\":\"17.2\",\"$device_model\":\"iPhone15,2\"},\n"+
 			"     \"events\":[{\"id\":\"<uuidv7>\",\"ts\":\"<event-time-utc>\",\n"+
 			"                \"name\":\"$screen_view\",\"attributes\":{\"$screen\":\"/settings\"}}]}\n\n", base, key)

@@ -3,8 +3,8 @@
 -- object" and fails the whole source build -- taking every other query on the
 -- page down with it. A fresh install has no traffic yet, so emit a sentinel
 -- row when the view is empty; pages filter it out via their project clause.
-select project, day, device_model, actives, views
-from v_app_devices
+select project, day, source, visitors, views
+from v_views_referrers
 union all
 select '', '1970-01-01', '', 0, 0
-where not exists (select 1 from v_app_devices)
+where not exists (select 1 from v_views_referrers)

@@ -3,7 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
-	"strings"
+	"reflect"
 	"testing"
 	"time"
 
@@ -13,9 +13,9 @@ import (
 
 func onDay(y int, m time.Month, d int) civil.Date { return civil.Date{Year: y, Month: m, Day: d} }
 
-func viewAt(id, actor string, t time.Time) store.AppView {
-	return store.AppView{ID: id, Project: "p", TS: t, ReceivedAt: t,
-		ActorID: actor, Screen: "/x", Platform: "ios"}
+func viewAt(id, actor string, t time.Time) store.View {
+	return store.View{ID: id, Project: "p", TS: t, ReceivedAt: t,
+		Kind: "app", ActorID: actor, ActorKind: store.ActorInstall, Path: "/x", OS: "iOS"}
 }
 
 func TestUpsertActorsTracksFirstAndLastSeen(t *testing.T) {
@@ -24,37 +24,38 @@ func TestUpsertActorsTracksFirstAndLastSeen(t *testing.T) {
 	d1 := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
 	d2 := time.Date(2026, 8, 8, 10, 0, 0, 0, time.UTC)
 
-	if err := db.WriteAppViews(ctx, []store.AppView{viewAt("1", "a", d1)}); err != nil {
+	if err := db.WriteViews(ctx, []store.View{viewAt("1", "a", d1)}); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.UpsertActors(ctx, "p", onDay(2026, 8, 1)); err != nil {
 		t.Fatalf("upsert day 1: %v", err)
 	}
-	if err := db.WriteAppViews(ctx, []store.AppView{viewAt("2", "a", d2)}); err != nil {
+	if err := db.WriteViews(ctx, []store.View{viewAt("2", "a", d2)}); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.UpsertActors(ctx, "p", onDay(2026, 8, 8)); err != nil {
 		t.Fatalf("upsert day 8: %v", err)
 	}
 
-	var first, last, surface string
+	var first, last, actorKind string
 	if err := db.db.QueryRowContext(ctx,
-		`SELECT first_seen_day, last_seen_day, surface FROM actors WHERE project='p' AND actor_id='a'`).
-		Scan(&first, &last, &surface); err != nil {
+		`SELECT first_seen_day, last_seen_day, actor_kind FROM actors WHERE project='p' AND actor_id='a'`).
+		Scan(&first, &last, &actorKind); err != nil {
 		t.Fatalf("read actor: %v", err)
 	}
-	if first != "2026-08-01" || last != "2026-08-08" || surface != surfaceApp {
-		t.Errorf("actor = %q %q %q; want 2026-08-01 2026-08-08 app", first, last, surface)
+	if first != "2026-08-01" || last != "2026-08-08" || actorKind != store.ActorInstall {
+		t.Errorf("actor = %q %q %q; want 2026-08-01 2026-08-08 install", first, last, actorKind)
 	}
 }
 
-func TestUpsertActorsRecordsWebSurface(t *testing.T) {
+func TestUpsertActorsRecordsUserActorKind(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	ts := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
 
-	if err := db.WriteWebHits(ctx, []store.WebHit{
-		{ID: "1", Project: "p", TS: ts, ReceivedAt: ts, ActorID: "w", Path: "/"},
+	if err := db.WriteViews(ctx, []store.View{
+		{ID: "1", Project: "p", TS: ts, ReceivedAt: ts, Kind: "web", ActorID: "w",
+			ActorKind: store.ActorUser, UserID: "u1", Path: "/"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -62,190 +63,48 @@ func TestUpsertActorsRecordsWebSurface(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var surface string
+	var actorKind string
 	if err := db.db.QueryRowContext(ctx,
-		`SELECT surface FROM actors WHERE project='p' AND actor_id='w'`).Scan(&surface); err != nil {
+		`SELECT actor_kind FROM actors WHERE project='p' AND actor_id='w'`).Scan(&actorKind); err != nil {
 		t.Fatal(err)
 	}
-	if surface != surfaceWeb {
-		t.Errorf("surface = %q, want web", surface)
+	if actorKind != store.ActorUser {
+		t.Errorf("actor_kind = %q, want user", actorKind)
 	}
 }
 
-func eventAt(id, actor string, t time.Time) store.ProductEvent {
-	return store.ProductEvent{ID: id, Project: "p", EventName: "e", TS: t, ReceivedAt: t,
-		ActorID: actor, Attributes: map[string]string{}}
-}
-
-// An actor known only through custom events is neither a web visitor nor an
-// app install, so labelling it "web" misdescribes a product-only project.
-func TestUpsertActorsRecordsProductSurface(t *testing.T) {
+func TestUpsertActorsSkipsConnectionActors(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	ts := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
-
-	if err := db.WriteProductEvents(ctx, []store.ProductEvent{eventAt("1", "e", ts)}); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.UpsertActors(ctx, "p", onDay(2026, 8, 1)); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.AggregateRetentionDay(ctx, "p", onDay(2026, 8, 1)); err != nil {
-		t.Fatal(err)
-	}
-
-	var surface string
-	if err := db.db.QueryRowContext(ctx,
-		`SELECT surface FROM agg_retention WHERE project='p' AND cohort_day='2026-08-01'`).
-		Scan(&surface); err != nil {
-		t.Fatal(err)
-	}
-	if surface != surfaceProduct {
-		t.Errorf("surface = %q, want product", surface)
-	}
-}
-
-// A web visitor who also fires custom events the same day is a web actor:
-// the SDK sends both under one visitor id.
-func TestUpsertActorsPrefersWebOverProductOnTheSameDay(t *testing.T) {
-	db := newTestDB(t)
-	ctx := context.Background()
-	ts := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
-
-	if err := db.WriteProductEvents(ctx, []store.ProductEvent{eventAt("1", "w", ts)}); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.WriteWebHits(ctx, []store.WebHit{
-		{ID: "2", Project: "p", TS: ts, ReceivedAt: ts, ActorID: "w", Path: "/"},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.UpsertActors(ctx, "p", onDay(2026, 8, 1)); err != nil {
-		t.Fatal(err)
-	}
-	var surface string
-	if err := db.db.QueryRowContext(ctx,
-		`SELECT surface FROM actors WHERE project='p' AND actor_id='w'`).Scan(&surface); err != nil {
-		t.Fatal(err)
-	}
-	if surface != surfaceWeb {
-		t.Errorf("surface = %q, want web", surface)
-	}
-}
-
-// Migration 009 relabels actors that were filed under web only because
-// product_events used to map there, and recomputes the cohorts they sit in.
-// Re-running its body against seeded rows exercises the backfill, which a
-// fresh test database would otherwise skip over empty tables.
-func TestMigration009RelabelsProductOnlyActors(t *testing.T) {
-	db := newTestDB(t)
-	ctx := context.Background()
-	d1 := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
-	d2 := time.Date(2026, 8, 2, 10, 0, 0, 0, time.UTC)
-
+	seedViews(t, db,
+		store.View{ID: "1", TS: at(10, 0), ActorID: "hash-1", ActorKind: store.ActorConnection, Path: "/"},
+		store.View{ID: "2", TS: at(10, 0), ActorID: "u1", ActorKind: store.ActorUser, UserID: "u1", Path: "/"},
+		store.View{ID: "3", TS: at(10, 0), ActorID: "i1", ActorKind: store.ActorInstall, Path: "/", Kind: "app"},
+	)
 	if err := db.WriteProductEvents(ctx, []store.ProductEvent{
-		eventAt("1", "e1", d1), eventAt("2", "e2", d1), eventAt("3", "w", d1),
-		eventAt("4", "e1", d2),
+		{ID: "4", Project: "app", EventName: "x", TS: at(10, 0), ReceivedAt: at(10, 0), ActorID: "legacy", ActorKind: ""},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.WriteWebHits(ctx, []store.WebHit{
-		{ID: "5", Project: "p", TS: d1, ReceivedAt: d1, ActorID: "w", Path: "/"},
-	}); err != nil {
+	if err := db.UpsertActors(ctx, "app", day("2026-08-10")); err != nil {
 		t.Fatal(err)
 	}
-	// "pw" fired a product event on 07-25 that is still raw, but web raw
-	// rows age out sooner (7 days against product's 30 by default) and 07-25
-	// has been rolled up into agg_web_daily: a missing web hit proves
-	// nothing there, so pw must stay web.
-	if err := db.WriteProductEvents(ctx, []store.ProductEvent{
-		eventAt("6", "pw", time.Date(2026, 7, 25, 10, 0, 0, 0, time.UTC)),
-	}); err != nil {
-		t.Fatal(err)
-	}
-	// The pre-009 state: every non-app actor is web, cohorts to match. An
-	// actor whose raw rows are gone ("old") must keep its label -- there is
-	// nothing left to prove it was product-only. The web row at offset 4 is
-	// w returning on 08-05, whose raw rows are gone: it cannot be rebuilt,
-	// so it must survive untouched.
-	if _, err := db.db.ExecContext(ctx, `
-INSERT INTO actors (project, actor_id, surface, first_seen_day, last_seen_day) VALUES
-  ('p','e1','web','2026-08-01','2026-08-02'),
-  ('p','e2','web','2026-08-01','2026-08-01'),
-  ('p','w','web','2026-08-01','2026-08-05'),
-  ('p','old','web','2026-07-01','2026-07-01'),
-  ('p','pw','web','2026-07-25','2026-07-25');
-INSERT INTO agg_web_daily (project, day, visitors, pageviews, sessions, bounces, duration_sec)
-VALUES ('p','2026-07-25',1,1,1,1,0);
-INSERT INTO agg_retention (project, surface, cohort_day, day_offset, actors) VALUES
-  ('p','web','2026-08-01',0,3),
-  ('p','web','2026-08-01',1,1),
-  ('p','web','2026-08-01',4,1),
-  ('p','web','2026-07-25',0,1),
-  ('p','web','2026-07-01',0,1);`); err != nil {
-		t.Fatal(err)
-	}
-
-	body, err := migrationFS.ReadFile("migrations/009_product_surface.sql")
+	rows, err := db.db.Query(`SELECT actor_id, actor_kind FROM actors WHERE project='app' ORDER BY actor_id`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.db.ExecContext(ctx, string(body)); err != nil {
-		t.Fatalf("migration 009: %v", err)
-	}
-
+	defer rows.Close()
 	got := map[string]string{}
-	rows, err := db.db.QueryContext(ctx, `SELECT actor_id, surface FROM actors`)
-	if err != nil {
-		t.Fatal(err)
-	}
 	for rows.Next() {
-		var a, s string
-		if err := rows.Scan(&a, &s); err != nil {
+		var id, kind string
+		if err := rows.Scan(&id, &kind); err != nil {
 			t.Fatal(err)
 		}
-		got[a] = s
+		got[id] = kind
 	}
-	rows.Close()
-	want := map[string]string{"e1": "product", "e2": "product", "w": "web", "old": "web", "pw": "web"}
-	for a, s := range want {
-		if got[a] != s {
-			t.Errorf("actor %s surface = %q, want %q", a, got[a], s)
-		}
-	}
-
-	cohorts := map[string]int{}
-	rows, err = db.db.QueryContext(ctx,
-		`SELECT surface || ' ' || cohort_day || ' ' || day_offset, actors FROM agg_retention`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for rows.Next() {
-		var k string
-		var n int
-		if err := rows.Scan(&k, &n); err != nil {
-			t.Fatal(err)
-		}
-		cohorts[k] = n
-	}
-	rows.Close()
-	// Only the moved actors' activity moves: web 08-01 offset 1 was e1 alone
-	// and disappears, offset 4 is untouched.
-	wantCohorts := map[string]int{
-		"product 2026-08-01 0": 2,
-		"product 2026-08-01 1": 1,
-		"web 2026-08-01 0":     1,
-		"web 2026-08-01 4":     1,
-		"web 2026-07-25 0":     1,
-		"web 2026-07-01 0":     1,
-	}
-	if len(cohorts) != len(wantCohorts) {
-		t.Errorf("agg_retention = %v, want %v", cohorts, wantCohorts)
-	}
-	for k, n := range wantCohorts {
-		if cohorts[k] != n {
-			t.Errorf("agg_retention[%s] = %d, want %d (all: %v)", k, cohorts[k], n, cohorts)
-		}
+	want := map[string]string{"u1": "user", "i1": "install"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("actors = %v, want %v (connection and legacy '' actors are never cohorted)", got, want)
 	}
 }
 
@@ -254,8 +113,8 @@ func TestUpsertActorsIgnoresEmptyActor(t *testing.T) {
 	ctx := context.Background()
 	ts := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
 
-	if err := db.WriteAppViews(ctx, []store.AppView{
-		{ID: "1", Project: "p", TS: ts, ReceivedAt: ts, ActorID: "", Screen: "/x"},
+	if err := db.WriteViews(ctx, []store.View{
+		{ID: "1", Project: "p", TS: ts, ReceivedAt: ts, Kind: "app", ActorID: "", ActorKind: store.ActorInstall, Path: "/x"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -278,7 +137,7 @@ func TestAggregateRetentionDayComputesOffsets(t *testing.T) {
 	later := time.Date(2026, 8, 8, 10, 0, 0, 0, time.UTC)
 
 	// Two actors on day 0; one returns on day 7.
-	if err := db.WriteAppViews(ctx, []store.AppView{
+	if err := db.WriteViews(ctx, []store.View{
 		viewAt("1", "a", cohort), viewAt("2", "b", cohort),
 	}); err != nil {
 		t.Fatal(err)
@@ -290,7 +149,7 @@ func TestAggregateRetentionDayComputesOffsets(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := db.WriteAppViews(ctx, []store.AppView{viewAt("3", "a", later)}); err != nil {
+	if err := db.WriteViews(ctx, []store.View{viewAt("3", "a", later)}); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.UpsertActors(ctx, "p", onDay(2026, 8, 8)); err != nil {
@@ -302,12 +161,12 @@ func TestAggregateRetentionDayComputesOffsets(t *testing.T) {
 
 	var d0, d7 int
 	if err := db.db.QueryRowContext(ctx,
-		`SELECT actors FROM agg_retention WHERE project='p' AND surface='app'
+		`SELECT actors FROM agg_retention WHERE project='p' AND actor_kind='install'
 		   AND cohort_day='2026-08-01' AND day_offset=0`).Scan(&d0); err != nil {
 		t.Fatalf("offset 0: %v", err)
 	}
 	if err := db.db.QueryRowContext(ctx,
-		`SELECT actors FROM agg_retention WHERE project='p' AND surface='app'
+		`SELECT actors FROM agg_retention WHERE project='p' AND actor_kind='install'
 		   AND cohort_day='2026-08-01' AND day_offset=7`).Scan(&d7); err != nil {
 		t.Fatalf("offset 7: %v", err)
 	}
@@ -322,7 +181,7 @@ func TestRetentionViewExposesCohortSize(t *testing.T) {
 	cohort := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
 	later := time.Date(2026, 8, 2, 10, 0, 0, 0, time.UTC)
 
-	if err := db.WriteAppViews(ctx, []store.AppView{
+	if err := db.WriteViews(ctx, []store.View{
 		viewAt("1", "a", cohort), viewAt("2", "b", cohort),
 	}); err != nil {
 		t.Fatal(err)
@@ -333,7 +192,7 @@ func TestRetentionViewExposesCohortSize(t *testing.T) {
 	if err := db.AggregateRetentionDay(ctx, "p", onDay(2026, 8, 1)); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.WriteAppViews(ctx, []store.AppView{viewAt("3", "a", later)}); err != nil {
+	if err := db.WriteViews(ctx, []store.View{viewAt("3", "a", later)}); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.UpsertActors(ctx, "p", onDay(2026, 8, 2)); err != nil {
@@ -344,14 +203,15 @@ func TestRetentionViewExposesCohortSize(t *testing.T) {
 	}
 
 	var actors, size int
+	var actorKind string
 	if err := db.db.QueryRowContext(ctx,
-		`SELECT actors, cohort_size FROM v_retention
+		`SELECT actors, cohort_size, actor_kind FROM v_retention
 		 WHERE project='p' AND cohort_day='2026-08-01' AND day_offset=1`).
-		Scan(&actors, &size); err != nil {
+		Scan(&actors, &size, &actorKind); err != nil {
 		t.Fatalf("v_retention: %v", err)
 	}
-	if actors != 1 || size != 2 {
-		t.Errorf("v_retention d1 = actors %d of %d; want 1 of 2", actors, size)
+	if actors != 1 || size != 2 || actorKind != store.ActorInstall {
+		t.Errorf("v_retention d1 = actors %d of %d kind %q; want 1 of 2 install", actors, size, actorKind)
 	}
 }
 
@@ -360,7 +220,7 @@ func TestAggregateRetentionDayIsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	cohort := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
 
-	if err := db.WriteAppViews(ctx, []store.AppView{viewAt("1", "a", cohort)}); err != nil {
+	if err := db.WriteViews(ctx, []store.View{viewAt("1", "a", cohort)}); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.UpsertActors(ctx, "p", onDay(2026, 8, 1)); err != nil {
@@ -383,126 +243,12 @@ func TestAggregateRetentionDayIsIdempotent(t *testing.T) {
 	}
 }
 
-// A visitor who never signs in cannot be recognised on return unless the
-// client keeps a stable install id, so blending them into the curve buries
-// the signed-in users' retention. Cohorts carry the signed-in count apart.
-func TestAggregateRetentionDayCountsSignedInUsersApart(t *testing.T) {
-	db := newTestDB(t)
-	ctx := context.Background()
-	d1 := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
-	d2 := time.Date(2026, 8, 2, 10, 0, 0, 0, time.UTC)
-
-	signedIn := func(id string, t time.Time) store.ProductEvent {
-		e := eventAt(id, "u1", t)
-		e.UserID = "u1"
-		return e
-	}
-	if err := db.WriteProductEvents(ctx, []store.ProductEvent{
-		signedIn("1", d1), eventAt("2", "anon", d1),
-		signedIn("3", d2), eventAt("4", "anon", d2),
-	}); err != nil {
-		t.Fatal(err)
-	}
-	for _, day := range []civil.Date{onDay(2026, 8, 1), onDay(2026, 8, 2)} {
-		if err := db.UpsertActors(ctx, "p", day); err != nil {
-			t.Fatal(err)
-		}
-		if err := db.AggregateRetentionDay(ctx, "p", day); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	var isUser int
-	if err := db.db.QueryRowContext(ctx,
-		`SELECT is_user FROM actors WHERE project='p' AND actor_id='u1'`).Scan(&isUser); err != nil {
-		t.Fatal(err)
-	}
-	if isUser != 1 {
-		t.Errorf("u1 is_user = %d, want 1", isUser)
-	}
-	var actors, users, size, userSize int
-	if err := db.db.QueryRowContext(ctx,
-		`SELECT actors, users, cohort_size, user_cohort_size FROM v_retention
-		 WHERE project='p' AND cohort_day='2026-08-01' AND day_offset=1`).
-		Scan(&actors, &users, &size, &userSize); err != nil {
-		t.Fatal(err)
-	}
-	if actors != 2 || users != 1 || size != 2 || userSize != 1 {
-		t.Errorf("d1 = actors %d/%d users %d/%d; want 2/2 and 1/1", actors, size, users, userSize)
-	}
-}
-
-// Migration 011 marks existing actors as signed-in users from whatever still
-// proves it: raw rows carrying a user_id, or the per-user identity rollup
-// that outlives them. The ALTERs are stripped so the body re-runs against
-// seeded rows.
-func TestMigration011MarksSignedInActors(t *testing.T) {
-	db := newTestDB(t)
-	ctx := context.Background()
-	ts := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
-
-	e := eventAt("1", "raw-user", ts)
-	e.UserID = "raw-user"
-	if err := db.WriteProductEvents(ctx, []store.ProductEvent{e, eventAt("2", "anon", ts)}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.db.ExecContext(ctx, `
-INSERT INTO actors (project, actor_id, surface, first_seen_day, last_seen_day) VALUES
-  ('p','raw-user','product','2026-08-01','2026-08-01'),
-  ('p','rolled-up','product','2026-06-01','2026-06-01'),
-  ('p','anon','product','2026-08-01','2026-08-01');
-INSERT INTO agg_identity_daily (project, day, kind, id, actors, users, hits, views, events)
-VALUES ('p','2026-06-01','user','rolled-up',1,1,0,0,3);
-INSERT INTO agg_retention (project, surface, cohort_day, day_offset, actors)
-VALUES ('p','product','2026-06-01',0,1);`); err != nil {
-		t.Fatal(err)
-	}
-
-	body, err := migrationFS.ReadFile("migrations/011_retention_users.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var stmts []string
-	for _, line := range strings.Split(string(body), "\n") {
-		if !strings.HasPrefix(line, "ALTER TABLE") {
-			stmts = append(stmts, line)
-		}
-	}
-	if _, err := db.db.ExecContext(ctx, strings.Join(stmts, "\n")); err != nil {
-		t.Fatalf("migration 011: %v", err)
-	}
-
-	// A cohort row written before users existed does not know its users:
-	// NULL, so readers can skip it, where 0 would read as "nobody signed in"
-	// and let a later recomputed offset put users over a zero denominator.
-	var userCohortSize sql.NullInt64
-	if err := db.db.QueryRowContext(ctx,
-		`SELECT user_cohort_size FROM v_retention WHERE project='p' AND cohort_day='2026-06-01'`).
-		Scan(&userCohortSize); err != nil {
-		t.Fatal(err)
-	}
-	if userCohortSize.Valid {
-		t.Errorf("user_cohort_size = %d for a cohort predating the users count, want NULL", userCohortSize.Int64)
-	}
-
-	for actor, want := range map[string]int{"raw-user": 1, "rolled-up": 1, "anon": 0} {
-		var got int
-		if err := db.db.QueryRowContext(ctx,
-			`SELECT is_user FROM actors WHERE project='p' AND actor_id=?`, actor).Scan(&got); err != nil {
-			t.Fatal(err)
-		}
-		if got != want {
-			t.Errorf("%s is_user = %d, want %d", actor, got, want)
-		}
-	}
-}
-
 func TestUpsertActorsIsIdempotent(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	ts := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
 
-	if err := db.WriteAppViews(ctx, []store.AppView{viewAt("1", "a", ts)}); err != nil {
+	if err := db.WriteViews(ctx, []store.View{viewAt("1", "a", ts)}); err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i < 2; i++ {
@@ -525,7 +271,7 @@ func TestPruneActorsEvictsStale(t *testing.T) {
 	old := time.Date(2025, 1, 1, 10, 0, 0, 0, time.UTC)
 	recent := time.Date(2026, 8, 20, 10, 0, 0, 0, time.UTC)
 
-	if err := db.WriteAppViews(ctx, []store.AppView{
+	if err := db.WriteViews(ctx, []store.View{
 		viewAt("1", "stale", old), viewAt("2", "fresh", recent),
 	}); err != nil {
 		t.Fatal(err)
@@ -552,5 +298,85 @@ func TestPruneActorsEvictsStale(t *testing.T) {
 	}
 	if actors != 1 || cohorts != 0 {
 		t.Errorf("after prune: actors=%d cohorts=%d; want 1 and 0", actors, cohorts)
+	}
+}
+
+func TestUpsertActorsPromotesInstallToUser(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	d10 := time.Date(2026, 8, 10, 10, 0, 0, 0, time.UTC)
+	d11 := time.Date(2026, 8, 11, 10, 0, 0, 0, time.UTC)
+
+	// x is seen as both install and user on the same day, within the one
+	// UpsertActors call: two rows for the same actor_id resolve through
+	// ON CONFLICT within a single statement.
+	// y is install-only on day 1, then logs in as a user on day 2 (a
+	// separate UpsertActors call, and hence a separate conflict).
+	// z is install-only throughout: the control that must never be promoted.
+	if err := db.WriteViews(ctx, []store.View{
+		{ID: "1", Project: "p", TS: d10, ReceivedAt: d10, Kind: "app",
+			ActorID: "x", ActorKind: store.ActorInstall, Path: "/x"},
+		{ID: "2", Project: "p", TS: d10, ReceivedAt: d10, Kind: "app",
+			ActorID: "x", UserID: "x", ActorKind: store.ActorUser, Path: "/x"},
+		{ID: "3", Project: "p", TS: d10, ReceivedAt: d10, Kind: "app",
+			ActorID: "y", ActorKind: store.ActorInstall, Path: "/x"},
+		{ID: "4", Project: "p", TS: d10, ReceivedAt: d10, Kind: "app",
+			ActorID: "z", ActorKind: store.ActorInstall, Path: "/x"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpsertActors(ctx, "p", onDay(2026, 8, 10)); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := db.WriteViews(ctx, []store.View{
+		{ID: "5", Project: "p", TS: d11, ReceivedAt: d11, Kind: "app",
+			ActorID: "y", UserID: "y", ActorKind: store.ActorUser, Path: "/x"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpsertActors(ctx, "p", onDay(2026, 8, 11)); err != nil {
+		t.Fatal(err)
+	}
+
+	kindOf := func(actorID string) (kind, first string) {
+		t.Helper()
+		if err := db.db.QueryRowContext(ctx,
+			`SELECT actor_kind, first_seen_day FROM actors WHERE project='p' AND actor_id=?`, actorID).
+			Scan(&kind, &first); err != nil {
+			t.Fatalf("read actor %s: %v", actorID, err)
+		}
+		return kind, first
+	}
+
+	if kind, first := kindOf("x"); kind != store.ActorUser || first != "2026-08-10" {
+		t.Errorf("x = %q %q; want user 2026-08-10", kind, first)
+	}
+	if kind, first := kindOf("y"); kind != store.ActorUser || first != "2026-08-10" {
+		t.Errorf("y = %q %q; want user 2026-08-10", kind, first)
+	}
+	if kind, _ := kindOf("z"); kind != store.ActorInstall {
+		t.Errorf("z = %q, want install (never seen as a user)", kind)
+	}
+
+	if err := db.AggregateRetentionDay(ctx, "p", onDay(2026, 8, 11)); err != nil {
+		t.Fatal(err)
+	}
+	var userActors int
+	if err := db.db.QueryRowContext(ctx,
+		`SELECT actors FROM agg_retention WHERE project='p' AND actor_kind='user'
+		   AND cohort_day='2026-08-10' AND day_offset=1`).Scan(&userActors); err != nil {
+		t.Fatalf("user cohort: %v", err)
+	}
+	if userActors != 1 {
+		t.Errorf("user cohort d1 actors = %d, want 1 (y)", userActors)
+	}
+	var installActors int
+	err := db.db.QueryRowContext(ctx,
+		`SELECT actors FROM agg_retention WHERE project='p' AND actor_kind='install'
+		   AND cohort_day='2026-08-10' AND day_offset=1`).Scan(&installActors)
+	if err != sql.ErrNoRows {
+		t.Errorf("install cohort d1 = actors %d err %v; want no row: y was promoted to user before this aggregation ran",
+			installActors, err)
 	}
 }

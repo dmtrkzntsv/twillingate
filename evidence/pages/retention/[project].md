@@ -6,11 +6,22 @@ select identity from twillingate.projects where alias = '${params.project}'
 
 {#if retention_mode[0].identity === 'identified'}
 
-Each actor is cohorted on one surface, fixed on its first day: **app** if it
-sent a screen view, else **web** if it sent a pageview, else **product** (seen
-through custom events alone). A browser visitor id and an app `install_id` are
-different actors even for the same person, so blending the curves would
-describe no population.
+<ButtonGroup name=range title="Cohorts from" defaultValue="90">
+    <ButtonGroupItem value="30" valueLabel="Last 30 days" />
+    <ButtonGroupItem value="90" valueLabel="Last 90 days" />
+    <ButtonGroupItem value="180" valueLabel="Last 180 days" />
+    <ButtonGroupItem value="365" valueLabel="Last 365 days" />
+</ButtonGroup>
+
+The window selects cohorts by first day: actors first seen inside it, followed
+for their first 45 days. A young cohort contributes only the offsets it has
+reached, so D45 needs cohorts at least 45 days old.
+
+Cohorts are kept apart by how the actor was identified: **user** (the client
+sent a `$user_id`) and **install** (a stable `$install_id`) describe different
+populations, and blending their curves would describe neither. An actor known
+only by its connection hash is not cohorted at all — that hash rotates with
+the salt, so it can never appear in a later cohort.
 
 ```sql retention_curve
 -- A cohort with nobody back on day k has no row at offset k, so pooling
@@ -22,137 +33,121 @@ describe no population.
 -- any activity is not the latest day processed, and cutting there would drop
 -- complete days nobody came back on. Today is partial, and so is yesterday
 -- until the 03:00 UTC pass recounts it, hence the three-hour lag.
---
--- users is -1 where the row predates signed-in tracking. Such a cohort is
--- left out of the signed-in sums entirely -- numerator and denominator --
--- or a recounted later offset would sit over an unknown cohort size.
--- user_retention is null, not 0, where no cohort has a known signed-in size.
 with rows as (
-  select surface, cohort_day::date as cohort_day, day_offset::int as day_offset,
-         actors, cohort_size, users, user_cohort_size
+  select actor_kind, cohort_day::date as cohort_day, day_offset::int as day_offset,
+         actors, cohort_size
   from twillingate.v_retention
   where project = '${params.project}'
+    and cohort_day::date >= (now() at time zone 'UTC')::date - interval (${inputs.range} - 1) day
 ),
 cohorts as (
-  select surface, cohort_day, cohort_size, user_cohort_size from rows where day_offset = 0
+  select actor_kind, cohort_day, cohort_size from rows where day_offset = 0
 ),
 grid as (
   select c.*, o.day_offset
   from cohorts c
-  cross join (select unnest(range(0, 31))::int as day_offset) o
+  cross join (select unnest(range(0, 46))::int as day_offset) o
   where c.cohort_day + o.day_offset < ((now() at time zone 'UTC') - interval 3 hour)::date
 ),
 filled as (
-  select g.surface, g.day_offset, g.cohort_size,
-         coalesce(r.actors, 0) as actors,
-         g.user_cohort_size >= 0 and coalesce(r.users, 0) >= 0 as users_known,
-         g.user_cohort_size, coalesce(r.users, 0) as users
+  select g.actor_kind, g.day_offset, g.cohort_size,
+         coalesce(r.actors, 0) as actors
   from grid g
   left join rows r
-    on r.surface = g.surface and r.cohort_day = g.cohort_day and r.day_offset = g.day_offset
+    on r.actor_kind = g.actor_kind and r.cohort_day = g.cohort_day
+   and r.day_offset = g.day_offset
 )
-select surface, day_offset,
+select actor_kind, day_offset,
        sum(actors) as actors, sum(cohort_size) as cohort_size,
        case when sum(cohort_size) > 0
-            then sum(actors) * 1.0 / sum(cohort_size) else 0 end as retention,
-       sum(case when users_known then users end) as users,
-       sum(case when users_known then user_cohort_size end) as user_cohort_size,
-       case when sum(case when users_known then user_cohort_size end) > 0
-            then sum(case when users_known then users end) * 1.0
-                 / sum(case when users_known then user_cohort_size end) end as user_retention
+            then sum(actors) * 1.0 / sum(cohort_size) else 0 end as retention
 from filled
-group by surface, day_offset
-order by surface, day_offset
-```
-
-```sql user_curve
-select * from ${retention_curve} where user_retention is not null
+group by actor_kind, day_offset
+order by actor_kind, day_offset
 ```
 
 ```sql retention_milestones
-select surface,
-       max(case when day_offset = 1 then retention end) as d1,
+select actor_kind,
        max(case when day_offset = 7 then retention end) as d7,
        max(case when day_offset = 30 then retention end) as d30,
-       max(case when day_offset = 1 then user_retention end) as user_d1,
-       max(case when day_offset = 7 then user_retention end) as user_d7,
-       max(case when day_offset = 30 then user_retention end) as user_d30,
-       max(case when day_offset = 0 then user_cohort_size end) as users_cohorted
+       max(case when day_offset = 45 then retention end) as d45
 from ${retention_curve}
-where day_offset in (0, 1, 7, 30)
-group by surface
-order by surface
+where day_offset in (7, 30, 45)
+group by actor_kind
+order by actor_kind
+```
+
+```sql user_curve
+select * from ${retention_curve} where actor_kind = 'user'
 ```
 
 ```sql user_milestones
-select * from ${retention_milestones} where users_cohorted > 0
+select * from ${retention_milestones} where actor_kind = 'user'
+```
+
+```sql install_curve
+select * from ${retention_curve} where actor_kind = 'install'
+```
+
+```sql install_milestones
+select * from ${retention_milestones} where actor_kind = 'install'
 ```
 
 ```sql retention_cohorts
-select surface, cohort_day, day_offset, cohort_size, actors,
-       case when cohort_size > 0 then actors * 1.0 / cohort_size else 0 end as retention,
-       case when user_cohort_size >= 0 then user_cohort_size end as user_cohort_size,
-       case when users >= 0 then users end as users,
-       case when user_cohort_size > 0 and users >= 0
-            then users * 1.0 / user_cohort_size end as user_retention
+select actor_kind, cohort_day, day_offset, cohort_size, actors,
+       case when cohort_size > 0 then actors * 1.0 / cohort_size else 0 end as retention
 from twillingate.v_retention
-where project = '${params.project}' and day_offset between 0 and 30
-order by cohort_day desc, surface, day_offset
+where project = '${params.project}' and day_offset between 0 and 45
+  and cohort_day >= strftime((now() at time zone 'UTC')::date - interval (${inputs.range} - 1) day, '%Y-%m-%d')
+order by cohort_day desc, actor_kind, day_offset
 ```
 
 {#if user_curve.length > 0}
 
 ## Signed-in users
 
-Actors that sent a `user_id` — the people you can recognise when they come
-back. Visitors who never signed in are left out here; they are under
-Everyone below.
+Actors the client named with a `$user_id` — the people you can recognise
+whenever they come back, on any device.
 
 <DataTable data={user_milestones} rows=5 title="Milestones">
-    <Column id=surface title="Surface" />
-    <Column id=user_d1 title="D1" fmt=pct1 />
-    <Column id=user_d7 title="D7" fmt=pct1 />
-    <Column id=user_d30 title="D30" fmt=pct1 />
+    <Column id=d7 title="D7" fmt=pct1 />
+    <Column id=d30 title="D30" fmt=pct1 />
+    <Column id=d45 title="D45" fmt=pct1 />
 </DataTable>
 
-<LineChart data={user_curve} x=day_offset y=user_retention series=surface yFmt=pct1
+<LineChart data={user_curve} x=day_offset y=retention yFmt=pct1
   title="Signed-in retention by day offset" />
 
 {/if}
 
-## Everyone
+{#if install_curve.length > 0}
 
-Every actor, signed in or not. A visitor who never signs in is recognised on
-return only if the client keeps a stable `$install_id`; a client that mints
-one per page load makes each visit a new actor, and this curve reads near
-zero.
+## Stable installs
 
-<DataTable data={retention_milestones} rows=5 title="Milestones">
-    <Column id=surface title="Surface" />
-    <Column id=d1 title="D1" fmt=pct1 />
+Actors known by an `$install_id` and never signed in. The id has to survive a
+page load or app restart to mean anything: a client that mints one per page
+load makes each visit a new actor, and this curve reads near zero.
+
+<DataTable data={install_milestones} rows=5 title="Milestones">
     <Column id=d7 title="D7" fmt=pct1 />
     <Column id=d30 title="D30" fmt=pct1 />
+    <Column id=d45 title="D45" fmt=pct1 />
 </DataTable>
 
-<LineChart data={retention_curve} x=day_offset y=retention series=surface yFmt=pct1
-  title="Retention by day offset" />
+<LineChart data={install_curve} x=day_offset y=retention yFmt=pct1
+  title="Install retention by day offset" />
+
+{/if}
 
 ## Cohorts
 
-Users, Users back and User rate are the signed-in subset of each cohort.
-
 <DataTable data={retention_cohorts} rows=20 search=true>
     <Column id=cohort_day title="Cohort" />
-    <Column id=surface title="Surface" />
+    <Column id=actor_kind title="Identified by" />
     <Column id=day_offset title="Day" fmt=num0 />
     <Column id=cohort_size title="Size" fmt=num0 />
     <Column id=actors title="Returned" fmt=num0 />
     <Column id=retention title="Retention" fmt=pct1 contentType=colorscale />
-    {#if user_curve.length > 0}
-        <Column id=user_cohort_size title="Users" fmt=num0 />
-        <Column id=users title="Users back" fmt=num0 />
-        <Column id=user_retention title="User rate" fmt=pct1 contentType=colorscale />
-    {/if}
 </DataTable>
 
 {:else}

@@ -3,7 +3,6 @@ package sqlite
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
@@ -11,14 +10,14 @@ import (
 func TestAggregateIdentityDayCountsUsersAndGroups(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	tstamp := time.Date(2026, 8, 23, 10, 0, 0, 0, time.UTC)
-	d := appDay()
+	tstamp := at(10, 0)
+	d := day("2026-08-10")
 
-	if err := db.WriteAppViews(ctx, []store.AppView{
+	if err := db.WriteViews(ctx, []store.View{
 		{ID: "1", Project: "p", TS: tstamp, ReceivedAt: tstamp, ActorID: "a",
-			UserID: "u1", GroupID: "org9", Screen: "/x"},
+			UserID: "u1", GroupID: "org9", Kind: "app", ActorKind: store.ActorInstall, Path: "/x"},
 		{ID: "2", Project: "p", TS: tstamp, ReceivedAt: tstamp, ActorID: "b",
-			UserID: "u2", GroupID: "org9", Screen: "/x"},
+			UserID: "u2", GroupID: "org9", Kind: "app", ActorKind: store.ActorInstall, Path: "/x"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -28,8 +27,8 @@ func TestAggregateIdentityDayCountsUsersAndGroups(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.WriteWebHits(ctx, []store.WebHit{
-		{ID: "4", Project: "p", TS: tstamp, ReceivedAt: tstamp, ActorID: "a",
+	if err := db.WriteViews(ctx, []store.View{
+		{ID: "4", Project: "p", TS: tstamp, ReceivedAt: tstamp, Kind: "web", ActorKind: store.ActorConnection, ActorID: "a",
 			UserID: "u1", GroupID: "org9", Path: "/"},
 	}); err != nil {
 		t.Fatal(err)
@@ -39,16 +38,17 @@ func TestAggregateIdentityDayCountsUsersAndGroups(t *testing.T) {
 		t.Fatalf("aggregate: %v", err)
 	}
 
-	var actors, users, hits, views, events int
+	var actors, users, views, events int
 	if err := db.db.QueryRowContext(ctx,
-		`SELECT actors, users, hits, views, events FROM agg_identity_daily
+		`SELECT actors, users, views, events FROM agg_identity_daily
 		 WHERE project='p' AND day=? AND kind='group' AND id='org9'`, d.String()).
-		Scan(&actors, &users, &hits, &views, &events); err != nil {
+		Scan(&actors, &users, &views, &events); err != nil {
 		t.Fatalf("read group row: %v", err)
 	}
-	if actors != 2 || users != 2 || hits != 1 || views != 2 || events != 1 {
-		t.Errorf("group row = actors %d users %d hits %d views %d events %d; want 2 2 1 2 1",
-			actors, users, hits, views, events)
+	// views is what was hits (the web row) plus views (the two app rows): 3.
+	if actors != 2 || users != 2 || views != 3 || events != 1 {
+		t.Errorf("group row = actors %d users %d views %d events %d; want 2 2 3 1",
+			actors, users, views, events)
 	}
 
 	if err := db.db.QueryRowContext(ctx,
@@ -57,8 +57,9 @@ func TestAggregateIdentityDayCountsUsersAndGroups(t *testing.T) {
 		Scan(&actors, &users, &views, &events); err != nil {
 		t.Fatalf("read user row: %v", err)
 	}
-	if actors != 1 || users != 1 || views != 1 || events != 1 {
-		t.Errorf("user row = actors %d users %d views %d events %d; want 1 1 1 1",
+	// views counts both the app view and the web view of u1 (actor a): 2.
+	if actors != 1 || users != 1 || views != 2 || events != 1 {
+		t.Errorf("user row = actors %d users %d views %d events %d; want 1 1 2 1",
 			actors, users, views, events)
 	}
 }
@@ -66,16 +67,16 @@ func TestAggregateIdentityDayCountsUsersAndGroups(t *testing.T) {
 func TestAggregateIdentityDayIsIdempotent(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	tstamp := time.Date(2026, 8, 23, 10, 0, 0, 0, time.UTC)
+	tstamp := at(10, 0)
 
-	if err := db.WriteAppViews(ctx, []store.AppView{
+	if err := db.WriteViews(ctx, []store.View{
 		{ID: "1", Project: "p", TS: tstamp, ReceivedAt: tstamp, ActorID: "a",
-			UserID: "u1", Screen: "/x"},
+			UserID: "u1", Kind: "app", ActorKind: store.ActorInstall, Path: "/x"},
 	}); err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i < 2; i++ {
-		if err := db.AggregateIdentityDay(ctx, "p", appDay()); err != nil {
+		if err := db.AggregateIdentityDay(ctx, "p", day("2026-08-10")); err != nil {
 			t.Fatalf("run %d: %v", i, err)
 		}
 	}
@@ -92,17 +93,17 @@ func TestAggregateIdentityDayIsIdempotent(t *testing.T) {
 func TestAggregateIdentityDayUpdatesLastSeen(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	tstamp := time.Date(2026, 8, 23, 10, 0, 0, 0, time.UTC)
-	d := appDay()
+	tstamp := at(10, 0)
+	d := day("2026-08-10")
 
 	if err := db.UpsertIdentities(ctx, []store.Identity{
 		{Project: "p", Kind: store.KindUser, ID: "u1", Name: "Ada"},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.WriteAppViews(ctx, []store.AppView{
+	if err := db.WriteViews(ctx, []store.View{
 		{ID: "1", Project: "p", TS: tstamp, ReceivedAt: tstamp, ActorID: "a",
-			UserID: "u1", Screen: "/x"},
+			UserID: "u1", Kind: "app", ActorKind: store.ActorInstall, Path: "/x"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -124,21 +125,21 @@ func TestAggregateIdentityDayUpdatesLastSeen(t *testing.T) {
 func TestIdentityDailyViewReadsAggregates(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	tstamp := time.Date(2026, 8, 23, 10, 0, 0, 0, time.UTC)
+	tstamp := at(10, 0)
 
-	if err := db.WriteAppViews(ctx, []store.AppView{
+	if err := db.WriteViews(ctx, []store.View{
 		{ID: "1", Project: "p", TS: tstamp, ReceivedAt: tstamp, ActorID: "a",
-			GroupID: "org9", Screen: "/x"},
+			GroupID: "org9", Kind: "app", ActorKind: store.ActorInstall, Path: "/x"},
 	}); err != nil {
 		t.Fatal(err)
 	}
 	// The view unions the aggregate table with a live computation over raw
 	// rows, so the raw day must be consumed before counting or the same day
-	// legitimately appears twice. AggregateAppDay is what deletes it.
-	if err := db.AggregateIdentityDay(ctx, "p", appDay()); err != nil {
+	// legitimately appears twice. AggregateViewDay is what deletes it.
+	if err := db.AggregateIdentityDay(ctx, "p", day("2026-08-10")); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AggregateAppDay(ctx, "p", appDay()); err != nil {
+	if err := db.AggregateViewDay(ctx, "p", day("2026-08-10")); err != nil {
 		t.Fatal(err)
 	}
 	var n int
@@ -170,7 +171,7 @@ func TestPruneIdentitiesEvictsStale(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := db.db.ExecContext(ctx,
-		`INSERT INTO agg_identity_daily VALUES ('p','2024-01-01','user','old',1,1,0,1,0)`); err != nil {
+		`INSERT INTO agg_identity_daily VALUES ('p','2024-01-01','user','old',1,1,1,0)`); err != nil {
 		t.Fatal(err)
 	}
 

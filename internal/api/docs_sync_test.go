@@ -59,6 +59,12 @@ func readSource(t *testing.T, path string) string {
 // point: a stale client sending $url needs to find out why it is rejected.
 var removedKeys = map[string]bool{"$url": true}
 
+// aliasKeys are reserved keys that are deliberately aliases for a
+// canonical key ($platform -> $os) rather than distinct concepts; the
+// document need not list them alongside the canonical key in the
+// "exists in ingest.go but missing from the doc" direction.
+var aliasKeys = map[string]bool{"$platform": true}
+
 // TestDocumentMatchesReservedKeys extracts the reservedKeys map from
 // ingest.go and requires two-way agreement with docs/twillingate.md. An
 // undocumented key is a contract an agent cannot discover; a documented key
@@ -74,6 +80,9 @@ func TestDocumentMatchesReservedKeys(t *testing.T) {
 		t.Fatalf("extracted only %d reserved keys from ingest.go — extraction regexp broken?", len(inCode))
 	}
 	for k := range inCode {
+		if aliasKeys[k] {
+			continue
+		}
 		if !strings.Contains(docs.Twillingate, k) {
 			t.Errorf("reserved key %s exists in ingest.go but is missing from docs/twillingate.md", k)
 		}
@@ -88,7 +97,7 @@ func TestDocumentMatchesReservedKeys(t *testing.T) {
 		}
 		t.Errorf("the reserved-key table lists %s, which ingest.go does not define", k)
 	}
-	for _, name := range []string{"$pageview", "$screen_view"} {
+	for _, name := range []string{"$page_view", "$screen_view"} {
 		if !strings.Contains(src, `"`+name+`"`) {
 			t.Errorf("event name %s documented but not found in ingest.go", name)
 		}
@@ -116,10 +125,12 @@ func TestDocumentMatchesSDK(t *testing.T) {
 	for _, symbol := range []string{
 		"data-key", "data-identity", "data-user", "data-group", "data-auto",
 		"data-mask-url", "data-routing",
+		"data-kind", "data-os", "data-app-version",
 		"init", "page", "screen", "track", "attrs", "identify", "group", "reset", "flush",
 		"twillingate_ignore", "analytics_ignore",
 		"pushState", "popstate", "hashchange",
-		"$pageview", "$screen_view", "$install_id",
+		"$page_view", "$screen_view", "$install_id", "$kind", "$os",
+		"$display_width", "$display_height",
 	} {
 		if !strings.Contains(src, symbol) {
 			t.Errorf("docs/twillingate.md documents %q but the SDK source does not contain it", symbol)
@@ -139,10 +150,10 @@ func TestDocumentMatchesSDK(t *testing.T) {
 	}
 }
 
-// TestDocumentCoversEveryWebDimension keeps the query guidance honest: a new
-// breakdown dimension that nobody documents is one an agent never uses.
-func TestDocumentCoversEveryWebDimension(t *testing.T) {
-	for _, d := range webDimensions {
+// TestDocumentCoversEveryViewsDimension keeps the query guidance honest: a
+// new breakdown dimension that nobody documents is one an agent never uses.
+func TestDocumentCoversEveryViewsDimension(t *testing.T) {
+	for _, d := range viewsDimensions {
 		if !strings.Contains(docs.Twillingate, d.view) {
 			t.Errorf("view %s is queryable but not named in docs/twillingate.md", d.view)
 		}

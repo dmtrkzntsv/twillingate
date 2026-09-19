@@ -1,18 +1,18 @@
 # {params.project} — Product
 
-<Dropdown name=range title="Date range" defaultValue="7">
-    <DropdownOption value="1" valueLabel="Last 1 day" />
-    <DropdownOption value="7" valueLabel="Last 7 days" />
-    <DropdownOption value="30" valueLabel="Last 30 days" />
-    <DropdownOption value="90" valueLabel="Last 90 days" />
-    <DropdownOption value="180" valueLabel="Last 180 days" />
-</Dropdown>
+<ButtonGroup name=range title="Date range" defaultValue="7">
+    <ButtonGroupItem value="1" valueLabel="Last 1 day" />
+    <ButtonGroupItem value="7" valueLabel="Last 7 days" />
+    <ButtonGroupItem value="30" valueLabel="Last 30 days" />
+    <ButtonGroupItem value="90" valueLabel="Last 90 days" />
+    <ButtonGroupItem value="180" valueLabel="Last 180 days" />
+</ButtonGroup>
 
 ```sql totals
 select day, total_events, active_users
 from twillingate.v_product_totals
 where project = '${params.project}'
-  and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range.value} - 1) day, '%Y-%m-%d')
+  and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range} - 1) day, '%Y-%m-%d')
                and strftime((now() at time zone 'UTC')::date, '%Y-%m-%d')
 order by day
 ```
@@ -22,7 +22,7 @@ select sum(total_events) as total_events, max(active_users) as peak_dau,
        avg(active_users) as avg_dau
 from twillingate.v_product_totals
 where project = '${params.project}'
-  and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range.value} - 1) day, '%Y-%m-%d')
+  and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range} - 1) day, '%Y-%m-%d')
                and strftime((now() at time zone 'UTC')::date, '%Y-%m-%d')
 ```
 
@@ -41,7 +41,7 @@ where project = '${params.project}'
 select day, event_name, count, unique_users
 from twillingate.v_product_daily
 where project = '${params.project}'
-  and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range.value} - 1) day, '%Y-%m-%d')
+  and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range} - 1) day, '%Y-%m-%d')
                and strftime((now() at time zone 'UTC')::date, '%Y-%m-%d')
 order by day
 ```
@@ -50,7 +50,7 @@ order by day
 select event_name, sum(count) as total, max(unique_users) as peak_daily_uniques
 from twillingate.v_product_daily
 where project = '${params.project}'
-  and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range.value} - 1) day, '%Y-%m-%d')
+  and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range} - 1) day, '%Y-%m-%d')
                and strftime((now() at time zone 'UTC')::date, '%Y-%m-%d')
 group by event_name order by total desc
 ```
@@ -73,7 +73,7 @@ group by event_name order by total desc
 select attr_key, day, attr_value, sum(count) as count, max(unique_users) as min_users
 from twillingate.v_product_attrs
 where project = '${params.project}'
-  and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range.value} - 1) day, '%Y-%m-%d')
+  and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range} - 1) day, '%Y-%m-%d')
                and strftime((now() at time zone 'UTC')::date, '%Y-%m-%d')
 group by attr_key, day, attr_value
 order by attr_key, day desc, count desc

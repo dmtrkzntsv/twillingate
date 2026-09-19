@@ -17,7 +17,7 @@ order by name
 
 {#each archived_projects as p}
 
-- **{p.name}** — [web](/web/{p.alias}) · [app](/app/{p.alias}) · [product](/product/{p.alias})
+- **{p.name}** — [views](/views/{p.alias}) · [product](/product/{p.alias})
 
 {/each}
 

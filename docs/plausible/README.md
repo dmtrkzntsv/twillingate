@@ -67,7 +67,7 @@ is dropped server-side, so failing at the source beats losing it in transit.
 
 ## 3. Where the events land
 
-Any name that is not `$pageview` or `$screen_view` is stored as a custom
+Any name that is not `$page_view` or `$screen_view` is stored as a custom
 event, so every shimmed CTA becomes a **product event**:
 
 ```
@@ -93,7 +93,7 @@ that rotates daily. `unique_users` on a single day is sound; the same person
 clicking a CTA on Monday and converting on Tuesday counts as two actors, so
 a multi-day funnel needs identified mode.
 
-**No page context.** Product events keep `platform`, `app_version` and
+**No page context.** Product events keep `os`, `app_version` and
 attributes. Path, referrer, country, device and browser are enriched only on
 the pageview path, and a `$url` attached to a custom event is accepted but
 discarded. A site-wide CTA would otherwise be indistinguishable from page to

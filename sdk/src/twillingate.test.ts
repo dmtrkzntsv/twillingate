@@ -31,6 +31,11 @@ async function drain(): Promise<void> {
   await vi.waitFor(() => {});
 }
 
+// hookHistory() monkey-patches the shared history object with no unhook;
+// restoring it after each test stops an earlier test's Twillingate instance
+// from firing a ghost pageview when a later test calls pushState directly.
+const nativePushState = history.pushState;
+
 beforeEach(() => {
   vi.useFakeTimers();
   sent = [];
@@ -42,6 +47,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
+  history.pushState = nativePushState;
 });
 
 describe("init", () => {
@@ -89,17 +95,24 @@ describe("payload shape", () => {
   });
 
   it("carries app context as batch attributes", async () => {
-    const t = tg({ platform: "web", appVersion: "2.4.1", installId: "018f-install" });
+    const t = tg({ os: "web", appVersion: "2.4.1", installId: "018f-install" });
     t.screen("/settings");
     await drain();
     const { attributes, events } = sent[0].body;
     expect(attributes).toMatchObject({
-      $platform: "web",
+      $os: "web",
       $app_version: "2.4.1",
       $install_id: "018f-install",
     });
     expect(events[0].name).toBe("$screen_view");
     expect(events[0].attributes).toEqual({ $screen: "/settings" });
+  });
+
+  it("accepts the deprecated platform alias for os", async () => {
+    const t = tg({ platform: "ios" });
+    t.track("probe");
+    await drain();
+    expect(sent[0].body.attributes.$os).toBe("ios");
   });
 
   it("screen() merges extra attributes and requires a name", async () => {
@@ -109,6 +122,22 @@ describe("payload shape", () => {
     await drain();
     expect(sent).toHaveLength(1);
     expect(sent[0].body.events[0].attributes).toEqual({ $screen: "/home", a: 1 });
+  });
+
+  it("stamps display size on views and locale on every batch", async () => {
+    Object.defineProperty(window, "screen", { value: { width: 1920, height: 1080 }, configurable: true });
+    Object.defineProperty(navigator, "language", { value: "de-DE", configurable: true });
+    const t = tg();
+    t.page("/x");
+    t.track("probe");
+    t.flush();
+    await drain();
+    const [view, probe] = sent[0].body.events;
+    const va = view.attributes as Record<string, unknown>;
+    expect(va.$display_width).toBe(1920);
+    expect(va.$display_height).toBe(1080);
+    expect((probe.attributes as Record<string, unknown>).$display_width).toBeUndefined();
+    expect(sent[0].body.attributes.$locale).toBe("de-DE");
   });
 });
 
@@ -274,7 +303,7 @@ describe("snippet auto-init", () => {
     expect(sent).toHaveLength(1);
     expect(sent[0].url).toBe(URL_BASE + "/ingest/events");
     expect(sent[0].body.key).toBe("ak_snippet");
-    expect(sent[0].body.events[0].name).toBe("$pageview");
+    expect(sent[0].body.events[0].name).toBe("$page_view");
     const attrs = sent[0].body.events[0].attributes as Record<string, unknown>;
     expect(attrs.$host).toBe("example.com");
   });
@@ -337,6 +366,43 @@ describe("snippet auto-init", () => {
     await drain();
     expect(sent[0].body.attributes).toMatchObject({ $user_id: "u_1", $group_id: "org_9" });
   });
+
+  it("sends $kind web by default and $page_view on load", async () => {
+    const t = new Twillingate();
+    autoInit(t, scriptTag({ "data-key": "ak_snippet" }));
+    t.flush();
+    await drain();
+    expect(sent[0].body.attributes.$kind).toBe("web");
+    expect(sent[0].body.events[0].name).toBe("$page_view");
+  });
+
+  it("data-kind switches automatic tracking to $screen_view with the route path", async () => {
+    history.replaceState(null, "", "/settings/profile?tab=1");
+    const t = new Twillingate();
+    autoInit(t, scriptTag({ "data-key": "ak_snippet", "data-kind": "app", "data-os": "macos", "data-app-version": "2.4.1" }));
+    t.flush();
+    await drain();
+    const attrs = sent[0].body.attributes;
+    expect(attrs.$kind).toBe("app");
+    expect(attrs.$os).toBe("macos");
+    expect(attrs.$app_version).toBe("2.4.1");
+    const ev = sent[0].body.events[0];
+    expect(ev.name).toBe("$screen_view");
+    const ea = ev.attributes as Record<string, unknown>;
+    expect(ea.$screen).toBe("/settings/profile");
+    expect(ea.$host).toBeUndefined();
+    expect(ea.$referrer).toBeUndefined();
+  });
+
+  it("app kind tracks pushState navigations as screen views", async () => {
+    const t = new Twillingate();
+    autoInit(t, scriptTag({ "data-key": "ak_snippet", "data-kind": "app" }));
+    history.pushState(null, "", "/two");
+    t.flush();
+    await drain();
+    const names = sent.flatMap((s) => s.body.events.map((e) => e.name));
+    expect(names).toEqual(["$screen_view", "$screen_view"]);
+  });
 });
 
 describe("script tag and init parity", () => {
@@ -352,6 +418,7 @@ describe("script tag and init parity", () => {
     const optionFor: Record<string, string> = {
       key: "key", identity: "identity", user: "user", group: "group",
       auto: "autoPageviews", "mask-url": "maskUrl", routing: "routing",
+      kind: "kind", os: "os", "app-version": "appVersion",
     };
     expect(attrs.length).toBeGreaterThan(0);
     for (const a of attrs) {

@@ -13,9 +13,8 @@ import (
 )
 
 var defaults = config.Retention{
-	Web:     config.RetentionClass{RawDays: 7, AggregateDays: 365},
+	Views:   config.RetentionClass{RawDays: 30, AggregateDays: 365},
 	Product: config.RetentionClass{RawDays: 30, AggregateDays: 365},
-	App:     config.RetentionClass{RawDays: 30, AggregateDays: 365},
 }
 
 func discard() *slog.Logger {
@@ -75,7 +74,7 @@ func TestSnapshotLookups(t *testing.T) {
 		t.Fatal("wrong origin allowed")
 	}
 	r := s.RetentionFor("blog")
-	if r.Web.RawDays != 90 || r.Web.AggregateDays != 365 || r.Product.RawDays != 30 {
+	if r.Views.RawDays != 90 || r.Views.AggregateDays != 365 || r.Product.RawDays != 30 {
 		t.Fatalf("RetentionFor merged wrong: %+v", r)
 	}
 	// Unknown alias falls back to defaults, matching the archived-project

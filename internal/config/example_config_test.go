@@ -44,7 +44,7 @@ func TestExamplesLoad(t *testing.T) {
 	if cfg.Dashboards.Interval.Minutes() != 15 {
 		t.Errorf("dashboards interval = %v", cfg.Dashboards.Interval)
 	}
-	if cfg.Retention.Product.RawDays != 30 || cfg.Retention.Web.RawDays != 7 {
+	if cfg.Retention.Product.RawDays != 30 || cfg.Retention.Views.RawDays != 30 {
 		t.Errorf("retention = %+v", cfg.Retention)
 	}
 }

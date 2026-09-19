@@ -69,9 +69,9 @@ post_events() {
   curl -s -o "$dir/events.out" -w '%{http_code}' -A "$ua" -X POST "http://127.0.0.1:18080/ingest/events" \
     -H 'Origin: http://localhost:18080' -H 'Content-Type: application/json' \
     -H "X-Analytics-Key: $key" \
-    -d '{"attributes":{"$platform":"ios","$app_version":"1.0","$install_id":"install-1"},
+    -d '{"attributes":{"$os":"ios","$app_version":"1.0","$install_id":"install-1"},
          "events":[
-           {"name":"$pageview","attributes":{"$host":"localhost","$path":"/pricing"}},
+           {"name":"$page_view","attributes":{"$host":"localhost","$path":"/pricing"}},
            {"name":"$screen_view","attributes":{"$screen":"/settings"}},
            {"name":"signup","attributes":{"plan":"pro"}}]}'
 }

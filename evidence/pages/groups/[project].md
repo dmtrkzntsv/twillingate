@@ -4,13 +4,13 @@ Groups work in both identity modes. `group_id` identifies an organization
 rather than a natural person, so it is stored as given even when user
 identifiers are salted.
 
-<Dropdown name=range title="Date range" defaultValue="30">
-    <DropdownOption value="1" valueLabel="Last 1 day" />
-    <DropdownOption value="7" valueLabel="Last 7 days" />
-    <DropdownOption value="30" valueLabel="Last 30 days" />
-    <DropdownOption value="90" valueLabel="Last 90 days" />
-    <DropdownOption value="180" valueLabel="Last 180 days" />
-</Dropdown>
+<ButtonGroup name=range title="Date range" defaultValue="30">
+    <ButtonGroupItem value="1" valueLabel="Last 1 day" />
+    <ButtonGroupItem value="7" valueLabel="Last 7 days" />
+    <ButtonGroupItem value="30" valueLabel="Last 30 days" />
+    <ButtonGroupItem value="90" valueLabel="Last 90 days" />
+    <ButtonGroupItem value="180" valueLabel="Last 180 days" />
+</ButtonGroup>
 
 ```sql groups_first
 -- First day each group appears in the retained history.
@@ -27,7 +27,7 @@ select d.day,
 from twillingate.v_identity_daily d
 join ${groups_first} f on f.id = d.id
 where d.project = '${params.project}' and d.kind = 'group' and d.id != ''
-  and d.day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range.value} - 1) day, '%Y-%m-%d')
+  and d.day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range} - 1) day, '%Y-%m-%d')
                 and strftime((now() at time zone 'UTC')::date, '%Y-%m-%d')
 group by d.day order by d.day
 ```
@@ -35,13 +35,13 @@ group by d.day order by d.day
 ```sql groups_totals
 select count(distinct d.id) as groups,
        count(distinct case when f.first_day = d.day then d.id end) as new_groups,
-       sum(d.hits + d.views + d.events) as actions,
+       sum(d.views + d.events) as actions,
        case when count(distinct d.id) > 0
-            then sum(d.hits + d.views + d.events) * 1.0 / count(distinct d.id) else 0 end as per_group
+            then sum(d.views + d.events) * 1.0 / count(distinct d.id) else 0 end as per_group
 from twillingate.v_identity_daily d
 join ${groups_first} f on f.id = d.id
 where d.project = '${params.project}' and d.kind = 'group' and d.id != ''
-  and d.day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range.value} - 1) day, '%Y-%m-%d')
+  and d.day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range} - 1) day, '%Y-%m-%d')
                 and strftime((now() at time zone 'UTC')::date, '%Y-%m-%d')
 ```
 
@@ -49,7 +49,7 @@ where d.project = '${params.project}' and d.kind = 'group' and d.id != ''
 -- users is distinct per day, so the range figure is the busiest day's:
 -- the same person on two days cannot be told apart from two people.
 select coalesce(i.name, d.id) as name,
-       sum(d.hits + d.views + d.events) as actions,
+       sum(d.views + d.events) as actions,
        max(d.users) as peak_users,
        count(distinct d.day) as active_days,
        min(f.first_day) as first_seen,
@@ -59,7 +59,7 @@ join ${groups_first} f on f.id = d.id
 left join twillingate.identities i
   on i.project = d.project and i.kind = 'group' and i.id = d.id
 where d.project = '${params.project}' and d.kind = 'group' and d.id != ''
-  and d.day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range.value} - 1) day, '%Y-%m-%d')
+  and d.day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range} - 1) day, '%Y-%m-%d')
                 and strftime((now() at time zone 'UTC')::date, '%Y-%m-%d')
 group by d.id, i.name
 order by actions desc limit 100

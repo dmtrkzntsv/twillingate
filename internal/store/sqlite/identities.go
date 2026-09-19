@@ -22,39 +22,36 @@ var identityKinds = []struct{ kind, column string }{
 // users counts distinct users active in a group that day; for kind='user' it
 // is always 1, since the row already is one user.
 //
-// Must run before AggregateAppDay for the same day, which deletes the raw
-// rows this reads.
+// Must run before AggregateViewDay and AggregateProductDay for the same day,
+// which delete the raw rows this reads.
 func (d *DB) AggregateIdentityDay(ctx context.Context, project string, day civil.Date) error {
 	return d.tx(ctx, func(tx *sql.Tx) error {
 		for _, k := range identityKinds {
 			q := fmt.Sprintf(`
 INSERT OR REPLACE INTO agg_identity_daily
-	(project, day, kind, id, actors, users, hits, views, events)
+	(project, day, kind, id, actors, users, views, events)
 WITH src AS (
-  SELECT %[1]s AS id, actor_id, user_id, 1 AS is_hit, 0 AS is_view, 0 AS is_event
-  FROM web_hits       WHERE project=? AND substr(ts,1,10)=? AND %[1]s <> ''
+  SELECT %[1]s AS id, actor_id, user_id, 1 AS is_view, 0 AS is_event
+  FROM views          WHERE project=? AND day=? AND %[1]s <> ''
   UNION ALL
-  SELECT %[1]s, actor_id, user_id, 0, 1, 0
-  FROM app_views      WHERE project=? AND substr(ts,1,10)=? AND %[1]s <> ''
-  UNION ALL
-  SELECT %[1]s, actor_id, user_id, 0, 0, 1
+  SELECT %[1]s, actor_id, user_id, 0, 1
   FROM product_events WHERE project=? AND substr(ts,1,10)=? AND %[1]s <> ''
 ),
 ranked AS (
   SELECT id,
          COUNT(DISTINCT actor_id) AS actors,
          COUNT(DISTINCT NULLIF(user_id, '')) AS users,
-         SUM(is_hit) AS hits, SUM(is_view) AS views, SUM(is_event) AS events,
+         SUM(is_view) AS views, SUM(is_event) AS events,
          ROW_NUMBER() OVER (ORDER BY COUNT(*) DESC, id) AS rn
   FROM src GROUP BY id
 )
 SELECT ?, ?, ?, id, actors,
        CASE WHEN ? = 'user' THEN 1 ELSE users END,
-       hits, views, events
+       views, events
 FROM ranked WHERE rn <= %[2]d`, k.column, topNDimension)
 
 			if _, err := tx.ExecContext(ctx, q,
-				project, day.String(), project, day.String(), project, day.String(),
+				project, day.String(), project, day.String(),
 				project, day.String(), k.kind, k.kind); err != nil {
 				return fmt.Errorf("agg_identity_daily %s: %w", k.kind, err)
 			}

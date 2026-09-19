@@ -97,13 +97,13 @@ func TestUpdateProjectAppliesRetentionAndAttributes(t *testing.T) {
 	rawDays := 90
 	p, err := ops.UpdateProject(ctx, "cli", ProjectSpec{
 		Alias: "blog", Name: "b", Identity: "identified",
-		Retention:  &config.RetentionOverride{Web: &config.RetentionClassOverride{RawDays: &rawDays}},
+		Retention:  &config.RetentionOverride{Views: &config.RetentionClassOverride{RawDays: &rawDays}},
 		Attributes: []string{"plan"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Identity != "identified" || p.Retention == nil || p.Retention.Web == nil || *p.Retention.Web.RawDays != 90 {
+	if p.Identity != "identified" || p.Retention == nil || p.Retention.Views == nil || *p.Retention.Views.RawDays != 90 {
 		t.Fatalf("updated project = %+v", p)
 	}
 	if len(p.Attributes) != 1 || p.Attributes[0] != "plan" {
@@ -191,7 +191,7 @@ func TestRowMarshalsOriginsRetentionAttributes(t *testing.T) {
 	rawDays := 5
 	sp2 := &ProjectSpec{Alias: "b", Name: "b", Identity: "identified",
 		AllowedOrigins: []string{"https://b.example.com"},
-		Retention:      &config.RetentionOverride{Web: &config.RetentionClassOverride{RawDays: &rawDays}},
+		Retention:      &config.RetentionOverride{Views: &config.RetentionClassOverride{RawDays: &rawDays}},
 		Attributes:     []string{"plan", "tier"}}
 	row2, err := sp2.row()
 	if err != nil {
@@ -416,7 +416,7 @@ func TestExportIncludesRetentionAndAttributes(t *testing.T) {
 	rawDays := 90
 	if _, err := ops.CreateProject(ctx, "cli", ProjectSpec{
 		Alias: "blog", Name: "blog", Identity: "identified",
-		Retention:  &config.RetentionOverride{Web: &config.RetentionClassOverride{RawDays: &rawDays}},
+		Retention:  &config.RetentionOverride{Views: &config.RetentionClassOverride{RawDays: &rawDays}},
 		Attributes: []string{"plan"},
 	}); err != nil {
 		t.Fatal(err)
@@ -433,7 +433,7 @@ func TestExportIncludesRetentionAndAttributes(t *testing.T) {
 		t.Fatalf("doc.Projects = %+v", doc.Projects)
 	}
 	ep := doc.Projects[0]
-	if ep.Retention == nil || ep.Retention.Web == nil || *ep.Retention.Web.RawDays != 90 {
+	if ep.Retention == nil || ep.Retention.Views == nil || *ep.Retention.Views.RawDays != 90 {
 		t.Fatalf("exported retention = %+v", ep.Retention)
 	}
 	if len(ep.Attributes) != 1 || ep.Attributes[0] != "plan" {

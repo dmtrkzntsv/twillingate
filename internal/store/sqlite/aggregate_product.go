@@ -99,7 +99,7 @@ func (d *DB) rollupProduct(ctx context.Context, tx *sql.Tx, project string, day 
 			}
 		}
 	}
-	// System dimensions: platform and app_version are typed columns
+	// System dimensions: os and app_version are typed columns
 	// written on every event, not declared custom keys, so they roll up
 	// unconditionally under $-prefixed attr_keys. $ is a safe namespace:
 	// resolveAttributes routes every $-prefixed input to a typed field
@@ -125,11 +125,12 @@ func (d *DB) rollupProduct(ctx context.Context, tx *sql.Tx, project string, day 
 }
 
 // systemDims maps a product_events column to the attr_key it rolls up
-// under. The $ prefix is safe as a namespace because resolveAttributes
-// routes every $-prefixed input to a typed field, so a custom key can
-// never collide with one of these.
+// under. os and app_version are typed columns written on every event, not
+// declared custom keys. The $ prefix is safe as a namespace because
+// resolveAttributes routes every $-prefixed input to a typed field, so a
+// custom key can never collide with one of these.
 var systemDims = []struct{ column, key string }{
-	{"platform", "$platform"},
+	{"os", "$os"},
 	{"app_version", "$app_version"},
 }
 

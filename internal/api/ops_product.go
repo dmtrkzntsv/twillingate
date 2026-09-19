@@ -68,7 +68,7 @@ func (h *host) productAttributes(ctx context.Context, in productEventsIn) (table
 
 type retentionIn struct {
 	rangeIn
-	Surface string `json:"surface" jsonschema:"web, app or product (actors first seen through custom events alone); each population is cohorted separately"`
+	Actor string `json:"actor" jsonschema:"user or install: cohorts are kept apart by how the actor was identified"`
 }
 
 type retentionOut struct {
@@ -80,8 +80,8 @@ func (h *host) retention(ctx context.Context, in retentionIn) (retentionOut, err
 	if err := h.checkRange(ctx, in.rangeIn); err != nil {
 		return retentionOut{}, err
 	}
-	if in.Surface != "web" && in.Surface != "app" && in.Surface != "product" {
-		return retentionOut{}, invalidf("surface must be web, app or product, got %q", in.Surface)
+	if in.Actor != "user" && in.Actor != "install" {
+		return retentionOut{}, invalidf("actor must be user or install, got %q", in.Actor)
 	}
 	p := h.reg.Snapshot(ctx).Project(in.Project)
 	if p == nil {
@@ -91,9 +91,9 @@ func (h *host) retention(ctx context.Context, in retentionIn) (retentionOut, err
 		return retentionOut{}, invalidf(
 			"project %q is anonymous: retention is undefined because visitor ids rotate daily; it requires the project setting identity=identified (a privacy-significant change — see the README's GDPR section)", in.Project)
 	}
-	tbl, err := h.table(ctx, `SELECT cohort_day, day_offset, actors, cohort_size, users, user_cohort_size
-		FROM v_retention WHERE project=? AND surface=? AND cohort_day BETWEEN ? AND ?
-		ORDER BY cohort_day, day_offset`, in.Project, in.Surface, in.From, in.To)
+	tbl, err := h.table(ctx, `SELECT cohort_day, day_offset, actors, cohort_size
+		FROM v_retention WHERE project=? AND actor_kind=? AND cohort_day BETWEEN ? AND ?
+		ORDER BY cohort_day, day_offset`, in.Project, in.Actor, in.From, in.To)
 	if err != nil {
 		return retentionOut{}, err
 	}
@@ -129,12 +129,12 @@ func (h *host) identities(ctx context.Context, in identitiesIn) (tableOut, error
 		limit = 50
 	}
 	out, err := h.table(ctx, `SELECT d.id, COALESCE(i.name,'') AS name,
-		SUM(d.actors) AS actors, SUM(d.users) AS users, SUM(d.hits) AS hits, SUM(d.views) AS views, SUM(d.events) AS events
+		SUM(d.actors) AS actors, SUM(d.users) AS users, SUM(d.views) AS views, SUM(d.events) AS events
 		FROM v_identity_daily d
 		LEFT JOIN identities i ON i.project=d.project AND i.kind=d.kind AND i.id=d.id
 		WHERE d.project=? AND d.kind=? AND d.day BETWEEN ? AND ?
 		GROUP BY d.id, i.name
-		ORDER BY hits+views+events DESC LIMIT ?`,
+		ORDER BY views+events DESC LIMIT ?`,
 		in.Project, in.Kind, in.From, in.To, limit)
 	return out, err
 }

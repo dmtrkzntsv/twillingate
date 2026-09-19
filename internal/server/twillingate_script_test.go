@@ -47,7 +47,7 @@ func TestTwillingateSDKServed(t *testing.T) {
 		"pushState",           // SPA tracking
 		"webdriver",           // automation filter
 		"/ingest/events",      // the only endpoint
-		"$pageview",           // web analytics
+		"$page_view",          // web analytics
 		"$screen_view",        // app analytics
 		"$install_id",         // app/identity batch attribute
 	} {

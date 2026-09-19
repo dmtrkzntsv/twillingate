@@ -155,13 +155,13 @@ describe("group()", () => {
 });
 
 describe("pageviews", () => {
-  it("page() emits $pageview with host, path and referrer", async () => {
+  it("page() emits $page_view with host, path and referrer", async () => {
     const t = tg();
     t.page();
     t.flush();
     await drain();
     const ev = sent[0].body.events[0];
-    expect(ev.name).toBe("$pageview");
+    expect(ev.name).toBe("$page_view");
     expect((ev.attributes as Record<string, unknown>).$host).toBe("example.com");
   });
 
@@ -182,7 +182,7 @@ describe("pageviews", () => {
     t.flush();
     await drain();
     const names = sent.flatMap((s) => s.body.events.map((e) => e.name));
-    expect(names.filter((n) => n === "$pageview")).toHaveLength(3); // initial + 2 pushes
+    expect(names.filter((n) => n === "$page_view")).toHaveLength(3); // initial + 2 pushes
     const paths = sent.flatMap((s) => s.body.events.map((e) => (e.attributes as Record<string, string>).$path));
     expect(paths[paths.length - 1]).toBe("/third");
   });

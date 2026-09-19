@@ -2,6 +2,7 @@ package server
 
 import (
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -17,16 +18,34 @@ const (
 	futureSkew     = 5 * time.Minute
 )
 
-// Reserved event names. The namespace is open but reserved: `$` belongs to
-// the server, but an unrecognized `$` name is stored as an ordinary custom
-// event rather than rejected. Rejecting would mean a client shipping a
-// future reserved name against a not-yet-upgraded server receives a 4xx,
-// which clients treat as a poison batch to drop — permanent data loss in
-// exactly the window forward compatibility matters.
+// Reserved event names. Both are views; the name only supplies the default
+// kind. $pageview is the pre-views spelling every deployed tag still sends,
+// accepted silently and never documented. The namespace is open but
+// reserved: `$` belongs to the server, but an unrecognized `$` name is
+// stored as an ordinary custom event rather than rejected. Rejecting would
+// mean a client shipping a future reserved name against a not-yet-upgraded
+// server receives a 4xx, which clients treat as a poison batch to drop —
+// permanent data loss in exactly the window forward compatibility matters.
 const (
-	namePageview   = "$pageview"
+	namePageView   = "$page_view"
 	nameScreenView = "$screen_view"
+	aliasPageview  = "$pageview"
 )
+
+// kindPattern bounds a client-declared $kind so a typo cannot mint a
+// dimension value; an invalid kind falls back to the name's default.
+var kindPattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,15}$`)
+
+// viewName reports whether name is a view and its default kind.
+func viewName(name string) (kind string, ok bool) {
+	switch name {
+	case namePageView, aliasPageview:
+		return "web", true
+	case nameScreenView:
+		return "app", true
+	}
+	return "", false
+}
 
 type envelope struct {
 	Key        string         `json:"key"`
@@ -76,11 +95,14 @@ func (res *ingestResult) warn(i int, format string, a ...any) {
 type resolved struct {
 	InstallID, UserID, UserName    string
 	GroupID, GroupName, SessionID  string
-	Platform, AppVersion           string
+	Kind, OS, AppVersion           string
 	OSVersion, DeviceModel, Locale string
 	Host, Path, Referrer, Screen   string
 	UTMSource, UTMMedium           string
 	UTMCampaign                    string
+	displayWidthRaw                string
+	displayHeightRaw               string
+	platformRaw                    string
 	Custom                         map[string]string
 }
 
@@ -88,26 +110,31 @@ type resolved struct {
 // Location attributes are stored verbatim: the client owns normalization
 // (masking, routing mode), so the server does no URL parsing at all. That
 // is what lets a site report /account/[id]/edit without the raw path ever
-// leaving the browser. $screen populates its own column.
+// leaving the browser. $screen is a fallback for path, resolved in
+// handleEvents when $path is absent.
 var reservedKeys = map[string]func(*resolved, string){
-	"$install_id":   func(r *resolved, v string) { r.InstallID = v },
-	"$user_id":      func(r *resolved, v string) { r.UserID = v },
-	"$user_name":    func(r *resolved, v string) { r.UserName = v },
-	"$group_id":     func(r *resolved, v string) { r.GroupID = v },
-	"$group_name":   func(r *resolved, v string) { r.GroupName = v },
-	"$session_id":   func(r *resolved, v string) { r.SessionID = v },
-	"$platform":     func(r *resolved, v string) { r.Platform = v },
-	"$app_version":  func(r *resolved, v string) { r.AppVersion = v },
-	"$os_version":   func(r *resolved, v string) { r.OSVersion = v },
-	"$device_model": func(r *resolved, v string) { r.DeviceModel = v },
-	"$locale":       func(r *resolved, v string) { r.Locale = v },
-	"$host":         func(r *resolved, v string) { r.Host = v },
-	"$path":         func(r *resolved, v string) { r.Path = v },
-	"$utm_source":   func(r *resolved, v string) { r.UTMSource = v },
-	"$utm_medium":   func(r *resolved, v string) { r.UTMMedium = v },
-	"$utm_campaign": func(r *resolved, v string) { r.UTMCampaign = v },
-	"$referrer":     func(r *resolved, v string) { r.Referrer = v },
-	"$screen":       func(r *resolved, v string) { r.Screen = v },
+	"$install_id":     func(r *resolved, v string) { r.InstallID = v },
+	"$user_id":        func(r *resolved, v string) { r.UserID = v },
+	"$user_name":      func(r *resolved, v string) { r.UserName = v },
+	"$group_id":       func(r *resolved, v string) { r.GroupID = v },
+	"$group_name":     func(r *resolved, v string) { r.GroupName = v },
+	"$session_id":     func(r *resolved, v string) { r.SessionID = v },
+	"$kind":           func(r *resolved, v string) { r.Kind = v },
+	"$os":             func(r *resolved, v string) { r.OS = v },
+	"$platform":       func(r *resolved, v string) { r.platformRaw = v }, // alias, see aliasKeys in docs_sync_test
+	"$app_version":    func(r *resolved, v string) { r.AppVersion = v },
+	"$os_version":     func(r *resolved, v string) { r.OSVersion = v },
+	"$device_model":   func(r *resolved, v string) { r.DeviceModel = v },
+	"$locale":         func(r *resolved, v string) { r.Locale = v },
+	"$host":           func(r *resolved, v string) { r.Host = v },
+	"$path":           func(r *resolved, v string) { r.Path = v },
+	"$utm_source":     func(r *resolved, v string) { r.UTMSource = v },
+	"$utm_medium":     func(r *resolved, v string) { r.UTMMedium = v },
+	"$utm_campaign":   func(r *resolved, v string) { r.UTMCampaign = v },
+	"$referrer":       func(r *resolved, v string) { r.Referrer = v },
+	"$screen":         func(r *resolved, v string) { r.Screen = v },
+	"$display_width":  func(r *resolved, v string) { r.displayWidthRaw = v },
+	"$display_height": func(r *resolved, v string) { r.displayHeightRaw = v },
 }
 
 // mergeAttributes layers per-event attributes over batch defaults, key by
@@ -151,6 +178,12 @@ func resolveAttributes(m map[string]any) (resolved, []string) {
 		}
 		r.Custom[k] = truncate(stringify(v), maxAttrValue)
 	}
+	// The canonical key wins over its alias when a payload carries both:
+	// resolved here, once, so every caller sees a single OS regardless of
+	// the randomised map iteration order above.
+	if r.OS == "" {
+		r.OS = r.platformRaw
+	}
 	return r, unknown
 }
 
@@ -172,6 +205,20 @@ func stringify(v any) string {
 	}
 }
 
+// parseDisplay turns a raw pixel string into an int, reporting whether the
+// value was present but unusable (non-integer or <= 0) so the caller can
+// warn. Absent → 0, no warning.
+func parseDisplay(raw string) (int, bool) {
+	if raw == "" {
+		return 0, false
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || n <= 0 {
+		return 0, true
+	}
+	return n, false
+}
+
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
@@ -181,9 +228,10 @@ func truncate(s string, n int) string {
 
 // clampTS bounds a client timestamp to [received-maxAge, received+skew].
 // Out-of-range values are clamped and counted, never dropped: a device with
-// a broken clock still contributes. The lower bound is tied to the app raw
-// window, which is what guarantees a clamped event can never target a day
-// that has already been aggregated and had its raw rows deleted.
+// a broken clock still contributes. The lower bound is tied to the project's
+// views raw window, which is what guarantees a clamped event can never
+// target a day that has already been aggregated and had its raw rows
+// deleted.
 func clampTS(client, received time.Time, maxAge time.Duration) (time.Time, bool) {
 	if client.IsZero() {
 		return received, false

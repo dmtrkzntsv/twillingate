@@ -160,13 +160,11 @@ func TestRESTMatchesMCP(t *testing.T) {
 		args         map[string]any
 	}{
 		{"list_projects", "/api/projects", map[string]any{}},
-		{"web_overview", "/api/projects/blog/web/overview?" + rng, args},
-		{"web_breakdown", "/api/projects/blog/web/breakdown?dimension=pages&" + rng, with(map[string]any{"dimension": "pages"})},
-		{"app_overview", "/api/projects/blog/app/overview?" + rng, args},
-		{"app_breakdown", "/api/projects/blog/app/breakdown?dimension=screens&" + rng, with(map[string]any{"dimension": "screens"})},
+		{"views_overview", "/api/projects/blog/views/overview?" + rng, args},
+		{"views_breakdown", "/api/projects/blog/views/breakdown?dimension=paths&" + rng, with(map[string]any{"dimension": "paths"})},
+		{"retention", "/api/projects/blog/retention?actor=user&" + rng, with(map[string]any{"actor": "user"})},
 		{"product_events", "/api/projects/blog/product/events?" + rng, args},
 		{"product_attributes", "/api/projects/blog/product/attributes?" + rng, args},
-		{"retention", "/api/projects/blog/retention?surface=web&" + rng, with(map[string]any{"surface": "web"})},
 		{"identities", "/api/projects/blog/identities?kind=user&" + rng, with(map[string]any{"kind": "user"})},
 		{"list_ingest_keys", "/api/keys", map[string]any{}},
 	} {
@@ -213,20 +211,20 @@ func TestRESTWritesAndRefusals(t *testing.T) {
 	if rec := serveREST(t, r, "POST", "/api/projects/shop/archive", ""); rec.Code != 200 {
 		t.Errorf("archive = %d %s", rec.Code, rec.Body.String())
 	}
-	rec = serveREST(t, r, "GET", "/api/projects/nope/web/overview?from=2026-08-20&to=2026-08-21", "")
+	rec = serveREST(t, r, "GET", "/api/projects/nope/views/overview?from=2026-08-20&to=2026-08-21", "")
 	if rec.Code != 404 || !strings.Contains(rec.Body.String(), "valid aliases") {
 		t.Errorf("unknown project = %d %s", rec.Code, rec.Body.String())
 	}
-	if rec := serveREST(t, r, "GET", "/api/projects/blog/web/overview?from=2026-08-20&to=2026-08-21&colour=red", ""); rec.Code != 400 {
+	if rec := serveREST(t, r, "GET", "/api/projects/blog/views/overview?from=2026-08-20&to=2026-08-21&colour=red", ""); rec.Code != 400 {
 		t.Errorf("unknown parameter = %d", rec.Code)
 	}
-	if rec := serveREST(t, r, "POST", "/api/query", `{"sql":"SELECT day, visitors FROM v_web_daily WHERE project='blog'"}`); rec.Code != 200 {
+	if rec := serveREST(t, r, "POST", "/api/query", `{"sql":"SELECT day, visitors FROM v_views_daily WHERE project='blog'"}`); rec.Code != 200 {
 		t.Errorf("query = %d %s", rec.Code, rec.Body.String())
 	}
 	if rec := serveREST(t, r, "POST", "/api/query", `{"sql":"ATTACH 'x' AS y"}`); rec.Code != 400 {
 		t.Errorf("attach = %d", rec.Code)
 	}
-	if rec := serveREST(t, r, "GET", "/api/schema/views", ""); rec.Code != 200 || !strings.Contains(rec.Body.String(), "v_web_daily") ||
+	if rec := serveREST(t, r, "GET", "/api/schema/views", ""); rec.Code != 200 || !strings.Contains(rec.Body.String(), "v_views_daily") ||
 		!strings.HasPrefix(rec.Header().Get("Content-Type"), "text/plain") {
 		t.Errorf("schema/views = %d %q", rec.Code, rec.Header().Get("Content-Type"))
 	}
