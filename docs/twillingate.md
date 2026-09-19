@@ -884,7 +884,9 @@ from the DDL. The three that matter most:
    was identified, `user` (sent a `$user_id`) or `install` (a stable
    `$install_id`); a connection-hash actor cannot be recognised on return and
    is not cohorted. On a client that mints an install id per page load, the
-   `install` curve reads near zero — read the `user` curve.
+   `install` curve reads near zero — read the `user` curve. Cohorts
+   counted before signed-in tracking began (before migration 011) have no
+   `user` rows; they sit wholly under `install`.
 
 Every view carries a `project` column — always filter on it.
 

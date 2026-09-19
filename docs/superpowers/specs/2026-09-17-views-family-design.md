@@ -369,10 +369,12 @@ added the `product` surface, `010_identity_daily_disjoint` made
    nothing about how it was identified. `agg_retention` folds across
    surfaces, grouping by `(project, cohort_day, day_offset)`: a `user` row
    holding `SUM(users)` where `SUM(COALESCE(users,0)) > 0`, and an `install`
-   row holding `SUM(actors - COALESCE(users,0))` where that is > 0. 011
-   leaves `users` NULL for rows counted before signed-in tracking, so such
-   a row goes wholly under `install`; that dates the boundary, and the
-   contract page says so.
+   row holding `SUM(actors - COALESCE(users,0))` where that is > 0. A
+   cohort's split is only meaningful when its own `(project, surface,
+   cohort_day)` offset-0 row knows `users`; if that offset-0 row is NULL,
+   every offset of that cohort is treated as NULL and folds wholly under
+   `install`, even an offset the daily pass later recomputed with a known
+   count.
 4. `agg_identity_daily`: rebuild with `views = hits + views`. 010 already
    deleted the partial rows the old pass wrote for today, and the pass no
    longer writes them, so nothing is repeated here.

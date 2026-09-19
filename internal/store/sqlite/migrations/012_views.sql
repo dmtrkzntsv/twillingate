@@ -266,19 +266,37 @@ CREATE TABLE agg_retention_new (
 -- predates signed-in tracking). Under actor_kind the population axis is how
 -- the actor was identified, so the surfaces of one (cohort_day, day_offset)
 -- collapse into at most two rows: the signed-in share under user, the rest
--- under install. A NULL users cannot be split, so such a row goes wholly
--- under install -- that dates the boundary, and cohorts counted before
--- signed-in tracking sit under install whatever they held.
+-- under install. A cohort's signed-in split is only meaningful when its
+-- offset-0 row knows users: the daily pass can recompute a later offset
+-- without ever revisiting offset 0, so a cohort can show a known users count
+-- at a later offset with no offset-0 user row to match it, and v_retention's
+-- join to offset 0 would then drop it from both curves. So for every
+-- (project, surface, cohort_day) whose offset-0 users is NULL, every offset
+-- of that cohort is treated as NULL too and folds wholly into install,
+-- however much of it this row would otherwise have split out.
+CREATE TEMP TABLE retention_known AS
+SELECT project, surface, cohort_day FROM agg_retention
+WHERE day_offset = 0 AND users IS NOT NULL;
+
+CREATE TEMP TABLE retention_effective AS
+SELECT r.project, r.surface, r.cohort_day, r.day_offset, r.actors,
+       CASE WHEN k.project IS NOT NULL THEN r.users ELSE NULL END AS users_eff
+FROM agg_retention r
+LEFT JOIN retention_known k
+  ON k.project = r.project AND k.surface = r.surface AND k.cohort_day = r.cohort_day;
+
 INSERT INTO agg_retention_new (project, actor_kind, cohort_day, day_offset, actors)
-SELECT project, 'user', cohort_day, day_offset, SUM(COALESCE(users, 0))
-FROM agg_retention
+SELECT project, 'user', cohort_day, day_offset, SUM(COALESCE(users_eff, 0))
+FROM retention_effective
 GROUP BY project, cohort_day, day_offset
-HAVING SUM(COALESCE(users, 0)) > 0;
+HAVING SUM(COALESCE(users_eff, 0)) > 0;
 INSERT INTO agg_retention_new (project, actor_kind, cohort_day, day_offset, actors)
-SELECT project, 'install', cohort_day, day_offset, SUM(actors - COALESCE(users, 0))
-FROM agg_retention
+SELECT project, 'install', cohort_day, day_offset, SUM(actors - COALESCE(users_eff, 0))
+FROM retention_effective
 GROUP BY project, cohort_day, day_offset
-HAVING SUM(actors - COALESCE(users, 0)) > 0;
+HAVING SUM(actors - COALESCE(users_eff, 0)) > 0;
+DROP TABLE retention_effective;
+DROP TABLE retention_known;
 DROP TABLE agg_retention;
 ALTER TABLE agg_retention_new RENAME TO agg_retention;
 

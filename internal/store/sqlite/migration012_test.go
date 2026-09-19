@@ -67,7 +67,10 @@ func TestMigration012Folds(t *testing.T) {
 	exec(`INSERT INTO agg_retention (project, surface, cohort_day, day_offset, actors, users) VALUES
 	      ('p','web','2026-08-01',0,10,6), ('p','web','2026-08-01',7,4,3),
 	      ('p','product','2026-08-02',0,3,NULL),
-	      ('p','app','2026-08-03',0,5,2)`)
+	      ('p','app','2026-08-03',0,5,2),
+	      ('p','web','2026-07-20',0,8,NULL), ('p','web','2026-07-20',3,5,2),
+	      ('p','app','2026-08-01',0,5,5),
+	      ('p','app','2026-08-05',0,3,3)`)
 	exec(`INSERT INTO agg_identity_daily VALUES ('p','2026-09-01','user','u1',1,1,5,3,2)`)
 	exec(`INSERT INTO agg_product_attrs VALUES ('p','2026-09-01','signup','$platform','ios',3,3),
 	                                           ('p','2026-09-01','signup','$platform','iOS',2,2),
@@ -181,10 +184,11 @@ func TestMigration012Folds(t *testing.T) {
 		t.Errorf("h1 actor_kind = %q, want install: an anonymous web actor is not a user", s)
 	}
 	// The web cohort splits along users: 6 of 10 back on day 0, 3 of 4 on
-	// day 7, the remainder under install.
+	// day 7, the remainder under install. The app cohort added below on the
+	// same cohort_day knows its own offset-0 users and adds its 5 in.
 	row(`SELECT actors FROM agg_retention WHERE actor_kind='user' AND cohort_day='2026-08-01' AND day_offset=0`, &a)
-	if a != 6 {
-		t.Errorf("user cohort offset 0 = %d, want 6", a)
+	if a != 11 {
+		t.Errorf("user cohort offset 0 = %d, want 11 (6 web + 5 app)", a)
 	}
 	row(`SELECT actors FROM agg_retention WHERE actor_kind='user' AND cohort_day='2026-08-01' AND day_offset=7`, &a)
 	if a != 3 {
@@ -192,7 +196,7 @@ func TestMigration012Folds(t *testing.T) {
 	}
 	row(`SELECT actors FROM agg_retention WHERE actor_kind='install' AND cohort_day='2026-08-01' AND day_offset=0`, &a)
 	if a != 4 {
-		t.Errorf("install cohort offset 0 = %d, want 4", a)
+		t.Errorf("install cohort offset 0 = %d, want 4 (the app cohort below is 5-5, adds nothing)", a)
 	}
 	row(`SELECT actors FROM agg_retention WHERE actor_kind='install' AND cohort_day='2026-08-01' AND day_offset=7`, &a)
 	if a != 1 {
@@ -216,6 +220,30 @@ func TestMigration012Folds(t *testing.T) {
 	row(`SELECT actors FROM agg_retention WHERE actor_kind='install' AND cohort_day='2026-08-03'`, &a)
 	if a != 3 {
 		t.Errorf("app install cohort = %d, want 3", a)
+	}
+	// A cohort whose offset-0 row doesn't know users can't be split at any
+	// offset, even one where a later row does know users: it folds wholly
+	// under install, offset by offset.
+	row(`SELECT COUNT(*) FROM agg_retention WHERE actor_kind='user' AND cohort_day='2026-07-20'`, &a)
+	if a != 0 {
+		t.Errorf("straddling cohort left %d user rows, want 0", a)
+	}
+	row(`SELECT actors FROM agg_retention WHERE actor_kind='install' AND cohort_day='2026-07-20' AND day_offset=0`, &a)
+	if a != 8 {
+		t.Errorf("straddling cohort install offset 0 = %d, want 8", a)
+	}
+	row(`SELECT actors FROM agg_retention WHERE actor_kind='install' AND cohort_day='2026-07-20' AND day_offset=3`, &a)
+	if a != 5 {
+		t.Errorf("straddling cohort install offset 3 = %d, want 5", a)
+	}
+	// A cohort with no unsigned-in remainder produces no install row at all.
+	row(`SELECT actors FROM agg_retention WHERE actor_kind='user' AND cohort_day='2026-08-05'`, &a)
+	if a != 3 {
+		t.Errorf("all-signed-in cohort user = %d, want 3", a)
+	}
+	row(`SELECT COUNT(*) FROM agg_retention WHERE actor_kind='install' AND cohort_day='2026-08-05'`, &a)
+	if a != 0 {
+		t.Errorf("all-signed-in cohort left %d install rows, want 0", a)
 	}
 	row(`SELECT views, events FROM agg_identity_daily WHERE id='u1'`, &a, &b)
 	if a != 8 || b != 2 {
