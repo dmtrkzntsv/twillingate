@@ -7,11 +7,10 @@ where archived = 0 and alias != ''
 order by name
 ```
 
-```sql archived_projects
-select alias, name
+```sql archived_count
+select count(*) as n
 from twillingate.projects
 where archived = 1 and alias != ''
-order by name
 ```
 
 ## Projects
@@ -22,14 +21,8 @@ order by name
 
 {/each}
 
-{#if archived_projects.length > 0}
+{#if archived_count[0].n > 0}
 
-### Archived
-
-{#each archived_projects as p}
-
-- **{p.name}** — [web](/web/{p.alias}) · [app](/app/{p.alias}) · [product](/product/{p.alias})
-
-{/each}
+[Archived projects ({archived_count[0].n})](/archived)
 
 {/if}
