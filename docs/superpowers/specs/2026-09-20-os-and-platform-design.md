@@ -65,8 +65,9 @@ enrichment and is deliberately coarse. It stays exactly as it is.
 `other` means there is an OS and it is outside the vocabulary; `unknown`
 means there is no OS information at all. Collapsing them would make a
 server-relayed event indistinguishable from a genuine FreeBSD, and `unknown`
-is precisely the value that makes undeclared traffic measurable — see the
-plausible shim below.
+is precisely the value that makes undeclared traffic measurable: a backend
+relay or a custom client that declares no OS becomes visible in a breakdown
+instead of silently inflating a real bucket.
 
 The cut: an OS earns a value when it is a distinct product target — something
 a team would ship, test or drop support for separately — and is either
@@ -517,18 +518,20 @@ The fold is non-destructive for raw rows — the original name is copied into
 `os_name` first — but aggregate history has no such column, so its
 out-of-vocabulary tail is the part that cannot be reconstructed.
 
-## Open item: the plausible shim
+## The plausible shim needs no change
 
-`/js/plausible-shim.js` is served verbatim from `docs.PlausibleShim` and bound
-to those exact bytes by `internal/server/script_test.go`. It does not send
-`$os`, so once the server stops parsing User-Agents **every shim-tagged site
-records `unknown` for OS**. That at least makes the loss visible in a
-breakdown rather than silent, which is an argument for `unknown` existing at
-all.
+Recorded because it looks like a problem and is not. `/js/plausible-shim.js`
+is served verbatim from `docs.PlausibleShim` and bound to those exact bytes by
+`internal/server/script_test.go`, and it sends no `$os` — which suggests
+shim-tagged sites would record `unknown` once the server stops parsing
+User-Agents.
 
-Options: add the same detection to the shim (it is server-served, so it
-self-upgrades like the SDK), or accept the loss. This needs a decision before
-implementation — it is a documented contract with a test holding it in place.
+They will not. The shim is **not a tracker**: it is a class-based tagging
+helper that calls `tg.track(...)` on `window.twillingate`, and it is loaded
+*after* the tracking snippet. It never builds a batch, so its events carry
+whatever `batchAttributes()` supplies — including detected `$os`. The
+collector serves exactly one tracker, `/js/twillingate.js`, so a shim-tagged
+site picks up detection with the server upgrade like any other snippet site.
 
 ## Out of scope
 
