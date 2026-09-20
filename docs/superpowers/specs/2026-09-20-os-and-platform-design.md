@@ -46,9 +46,7 @@ enrichment and is deliberately coarse. It stays exactly as it is.
 
 ```
 // desktop
-'windows' | 'macos' | 'linux' | 'chromeos'
-// BSD
-| 'freebsd' | 'openbsd' | 'netbsd'
+'windows' | 'macos' | 'linux' | 'bsd' | 'chromeos'
 // mobile / tablet
 | 'ios' | 'ipados' | 'android' | 'fireos' | 'harmonyos' | 'kaios'
 // TV, wearable, XR
@@ -73,11 +71,16 @@ not OSes (`ubuntu` is `linux`), and dead platforms are not worth a value
 (`windows_phone`, `blackberry`). `other` remains the floor, so nothing is ever
 lost by the list being incomplete.
 
-Five of these are **declare-only** — no browser reaches them, or none reports
+The BSDs share one value rather than three. Merging them into `linux` was
+considered and rejected: it would make `linux` mean "Linux or BSD", and
+nothing downstream could separate them again. One `bsd` keeps the number
+honest at a third of the vocabulary cost, which matters because OpenBSD and
+NetBSD are close to undetectable in a browser anyway.
+
+Three values are **declare-only** — no browser reaches them, or none reports
 distinguishably: `watchos`, `visionos` (Vision Pro's Safari reports as a Mac),
-`openbsd` and `netbsd` in practice, and `harmonyos` on devices that ship an
-Android-compatible User-Agent. They exist so a native client has a correct
-value to send.
+and `harmonyos` on devices that ship an Android-compatible User-Agent. They
+exist so a native client has a correct value to send.
 
 **`ipados` splits from `ios`.** It is a genuinely separate target, but note the
 consequence: iPad traffic that previously counted as `ios` now counts
@@ -315,8 +318,8 @@ generic, so the checks run most-specific first and return on the first hit.
    without sniffing. It runs *after* the specific checks because it reports a
    Fire tablet as `Android`.
 6. **Generic UA fallback**: `Android` → `android`; `Windows` → `windows`;
-   `Mac OS X`/`Macintosh` → `macos`; `FreeBSD` → `freebsd`;
-   `OpenBSD` → `openbsd`; `NetBSD` → `netbsd`; `X11`/`Linux` → `linux`.
+   `Mac OS X`/`Macintosh` → `macos`;
+   `FreeBSD`/`OpenBSD`/`NetBSD`/`DragonFly` → `bsd`; `X11`/`Linux` → `linux`.
 7. Otherwise `other` — a browser is running on *something*, so `other` is the
    right floor for detection. `unknown` is never produced by the SDK; it only
    appears when no `$os` reaches the server at all.
@@ -360,8 +363,8 @@ TDD throughout.
 - `internal/api`: the `platforms` dimension and the rekeyed `app_versions`.
 - SDK: a table-driven case per vocabulary value with a real User-Agent
   string, plus the orderings that a naive implementation gets wrong — Fire OS
-  not reported as `android`, Android not as `linux`, iPadOS desktop mode not
-  as `macos`, and `userAgentData` not overriding a specific UA hit. Also
+  not reported as `android`, Android not as `linux`, BSD not as `linux`,
+  iPadOS desktop mode not as `macos`, and `userAgentData` not overriding a specific UA hit. Also
   `other` as the floor, and an explicit `os` option beating detection.
 
 ## Breaking changes and rollout
