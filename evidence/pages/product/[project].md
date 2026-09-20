@@ -37,6 +37,52 @@ where project = '${params.project}'
     <LineChart data={totals} x=day y=total_events title="Events per day" yFmt=num0 />
 </Grid>
 
+```sql app_versions
+-- $app_version rolls up unconditionally, so this needs no declared
+-- attribute. Summed across event names: a day's count is how many product
+-- events that version fired, whatever they were.
+select day, attr_value as app_version, sum(count) as count
+from twillingate.v_product_attrs
+where project = '${params.project}'
+  and attr_key = '$app_version'
+  and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range} - 1) day, '%Y-%m-%d')
+               and strftime((now() at time zone 'UTC')::date, '%Y-%m-%d')
+group by day, attr_value
+order by day, count desc
+```
+
+```sql app_version_summary
+-- unique_users is per event and cannot be summed -- one person firing two
+-- events would count twice -- so the largest single-event figure is shown,
+-- a floor on the true number.
+select attr_value as app_version, sum(count) as total,
+       max(unique_users) as min_users
+from twillingate.v_product_attrs
+where project = '${params.project}'
+  and attr_key = '$app_version'
+  and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range} - 1) day, '%Y-%m-%d')
+               and strftime((now() at time zone 'UTC')::date, '%Y-%m-%d')
+group by attr_value
+order by total desc
+```
+
+{#if app_versions.length > 0}
+
+## App version
+
+Which build the events came from, day by day — a rollout landing shows as one
+band taking over, and the versions that never update are the ones that stay.
+
+<AreaChart data={app_versions} x=day y=count series=app_version title="Events by app version" yFmt=num0 />
+
+<DataTable data={app_version_summary} rows=8 search=true>
+    <Column id=app_version title="Version" />
+    <Column id=total title="Events" fmt=num0 contentType=colorscale />
+    <Column id=min_users title="Users (at least)" fmt=num0 />
+</DataTable>
+
+{/if}
+
 ```sql events
 select day, event_name, count, unique_users
 from twillingate.v_product_daily
