@@ -302,6 +302,30 @@ update, which for native apps is an app-store timeline.
 `v_views_app_versions` and `v_product_attrs` are dropped and recreated — the
 first for the rekey, the second to gain a `$platform` arm.
 
+## Interaction with the existing OS aggregate
+
+`os_version` already **is** part of the OS rollup: `agg_views_os` is keyed
+`(project, day, os, os_version)`, `v_views_os` returns both columns, and
+`aggregate_views.go` declares it as `keys: {"os", "os_version"}`. No change is
+needed there — but populating `os_version` for web traffic for the first time
+has two consequences.
+
+**Cardinality is already handled, by design.** `viewDimension` collapses the
+tail of its *last* key into `(other)` while a leading key stays intact, so a
+collapsed row still says which OS it belongs to. `agg_views_os` therefore goes
+from roughly one row per OS today — every web row has `os_version=''` — to one
+row per OS-and-version, which is exactly the shape `agg_views_browsers`
+already carries. No new risk, but it is a real growth in that table and worth
+expecting.
+
+**`other` and `(other)` are different things in adjacent columns.** `other` is
+a vocabulary value of `os`, meaning a real OS outside the list. `(other)` is
+the aggregator's cardinality-cap sentinel, and it can only ever appear in
+`os_version`, because the cap never applies to a leading key. The parentheses
+are the only thing distinguishing them, so neither should be "tidied" into the
+other later. The same holds for `platform`: it has no `other` value, so
+`(other)` in that column is unambiguously the cap.
+
 ## Reporting
 
 | Touchpoint | Change |
