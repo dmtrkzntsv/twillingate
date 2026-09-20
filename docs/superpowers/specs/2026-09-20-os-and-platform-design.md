@@ -39,6 +39,10 @@ enrichment and is deliberately coarse. It stays exactly as it is.
    `agg_views_app_versions` rekeys from `(os, app_version)` to
    `(platform, app_version)`.
 7. `$platform` lands on product events too, alongside `$os`.
+8. A new free-form **`$os_name`** preserves the OS's full self-reported name
+   with version, so closing the vocabulary stops being lossy.
+9. The SDK detects **`$os_version`** as well, using high-entropy hints where
+   they are available.
 
 ## Wire contract
 
@@ -120,6 +124,34 @@ built SDK, embedded and served at `/js/twillingate.js`, so every snippet-mode
 site picks up detection the moment the server upgrades. Only bundled/npm
 consumers lag, and they pin a version deliberately.
 
+### `$os_name` — free-form, verbatim
+
+The full name as the client reports it, **including the version**:
+`"macOS 14.2"`, `"Windows 11"`, `"FreeBSD 14.1"`. Stored verbatim, truncated
+at `maxAttrValue` like any other attribute.
+
+It exists because closing `$os` makes `other` a bucket with no label. With
+`os_name`, `other` stays investigable — you can see what is actually in it and
+decide whether something in there deserves its own vocabulary value.
+
+**It is deliberately not part of any aggregate key.** `$os` and `$os_version`
+remain the structured, queryable pair; `os_name` is a forensic and display
+field on the raw row and `v_events_flat`. That is what keeps its unbounded
+cardinality harmless.
+
+Two consequences of that choice, both accepted:
+
+- It is **not carried into aggregates**, so it disappears when raw rows roll
+  up. Investigating `other` is something you do on recent data, before the
+  retention window closes.
+- It is **views-only**. `product_events` does not get the column: its OS
+  surfaces through `product_attributes`, where a free-form key would blow up
+  the attribute cardinality the `top_n` cap exists to bound.
+
+Unlike `$os` and `$platform` it is **empty when absent**, not `unknown`. It is
+not a breakdown dimension, so there is nothing to filter and a sentinel would
+just be noise in a display string.
+
 ### `$platform` — open, bounded, lower-cased
 
 Trim, **lower-case**, then validate against `^[a-z][a-z0-9_]{0,15}$` — the
@@ -149,6 +181,7 @@ otherwise in scope.
 ```sql
 ALTER TABLE views          ADD COLUMN platform TEXT NOT NULL DEFAULT 'unknown';
 ALTER TABLE product_events ADD COLUMN platform TEXT NOT NULL DEFAULT 'unknown';
+ALTER TABLE views          ADD COLUMN os_name  TEXT NOT NULL DEFAULT '';
 ```
 
 The default does the whole `product_events` backfill on its own, and gives
@@ -181,8 +214,20 @@ going forward.
 
 ### 3. OS fold — raw rows
 
-`views.os` and `product_events.os` are lower-cased; `''` becomes `unknown`,
-and anything else outside the vocabulary becomes `other`.
+**First**, every `views` row whose `os` is outside the vocabulary copies that
+value into `os_name`:
+
+```sql
+UPDATE views SET os_name = os WHERE lower(os) NOT IN (<vocabulary>) AND os <> '';
+```
+
+**Then** `views.os` and `product_events.os` are lower-cased; `''` becomes
+`unknown`, and anything else outside the vocabulary becomes `other`.
+
+This ordering is what makes the fold **non-destructive for raw rows**: the
+name that `other` would have erased is preserved beside it. Aggregate history
+has no such column, so the fold's losses there stand — which is a further
+reason it is left unfolded.
 
 ### 4. OS fold — aggregate history
 
@@ -266,9 +311,9 @@ first for the rekey, the second to gain a `$platform` arm.
 | `internal/store/sqlite/aggregate_product.go` | add `{"platform", "$platform"}` |
 | `internal/api/ops_read.go` | `"platforms": {"v_views_platforms", []string{"platform"}}`; `app_versions` keys; dimension enum and tool description |
 | `internal/api/resources.go` | `schemaViews` gains `v_views_platforms`; `v_views_app_versions` line rekeyed |
-| `internal/store/store.go` | `View.Platform`, `ProductEvent.Platform` |
+| `internal/store/store.go` | `View.Platform`, `View.OSName`, `ProductEvent.Platform` |
 | `internal/store/sqlite` | insert and scan for both tables |
-| `internal/server/ingest.go` | `$platform` → `r.Platform`; `platformRaw` and the alias fold deleted; lower-case + pattern validation |
+| `internal/server/ingest.go` | `$platform` → `r.Platform`; `$os_name` → `r.OSName`; `platformRaw` and the alias fold deleted; lower-case + pattern validation |
 | `internal/server/handlers.go` | carry `Platform`; stop taking `os` from `ParseUserAgent` |
 | `internal/enrich/ua.go` | `NormalizeOS` becomes the validator; `ParseUserAgent` loses its OS switch and return value |
 
@@ -280,13 +325,16 @@ system dimension beside `$os` and `$app_version`.
 ### Options
 
 - `os?: string` — an **override** for detection.
+- `osVersion?: string`, `osName?: string` — overrides for the two new
+  detected values, with `data-os-version` and `data-os-name`.
 - `platform?: string` — stops being `@deprecated use os` and becomes the real
   platform option, defaulting to `"web"`. `sdk/src/twillingate.ts:211`
   (`this.os = opts.os || opts.platform || null`) is deleted.
 - `data-platform` joins `data-os` in the snippet reader.
 
-`batchAttributes` sends `$platform` and `$os` on every batch; both always
-resolve to a value.
+`batchAttributes` sends `$platform` and `$os` on every batch — both always
+resolve to a value — plus `$os_version` and `$os_name` when detection or an
+override produced them.
 
 ### OS detection
 
@@ -327,6 +375,33 @@ generic, so the checks run most-specific first and return on the first hit.
 `watchos` and `visionos` are never returned by detection; they are reachable
 only through the explicit `os` option.
 
+### `$os_version` and `$os_name` detection
+
+`$os_version` has always been **declare-only** — `ParseUserAgent` returns
+`browserVersion` but never an OS version, and `handlers.go:152` takes it
+straight from the declared attribute. Every web view in the database has
+`os_version = ''` today. This is the first chance to populate it.
+
+Synchronous parse from the User-Agent: `CPU iPhone OS 17_2` → `17.2`;
+`Android 14` → `14`; `Windows NT 10.0` → `10`; `Mac OS X 10_15_7` → `10.15.7`.
+
+Two of those are knowingly wrong. **Windows 10 and 11 are indistinguishable in
+a User-Agent** — both report `Windows NT 10.0` — and Safari freezes macOS at
+`10_15_7`. Both are recoverable only through
+`navigator.userAgentData.getHighEntropyValues(['platformVersion'])`, which is
+async.
+
+**That async call is affordable here.** `batchAttributes()` is computed in
+`flush()`, not at `emit()`, and the default `flushInterval` is 1000ms — so a
+promise kicked off once at init resolves well before the first batch is built,
+with no added latency. On Chromium a `platformVersion` major of 13 or greater
+means Windows 11; 1–12 means Windows 10.
+
+It is a Chromium-only path, so the synchronous parse stays as the fallback and
+both branches are tested. `os_name` is composed from the resolved name and
+version (`macOS 14.2`, `Windows 11`), falling back to the raw UA-derived name
+when high-entropy values are unavailable.
+
 ## Documentation
 
 Same commit, per CLAUDE.md:
@@ -338,7 +413,7 @@ Same commit, per CLAUDE.md:
   public API and `data-` attributes.
 - `internal/api/resources.go` `schemaViews`.
 - `docs_sync_test.go`: the `aliasKeys` entry for `$platform` is removed,
-  `$platform` is checked in both directions as a real key, and
+  `$platform` and `$os_name` are checked in both directions as real keys, and
   `v_views_platforms` joins the queryable-view check.
 
 ## Testing
@@ -361,7 +436,11 @@ TDD throughout.
   including the `(other)` cap.
 - `aggregate_views_test.go`: both dimension changes.
 - `internal/api`: the `platforms` dimension and the rekeyed `app_versions`.
-- SDK: a table-driven case per vocabulary value with a real User-Agent
+- SDK: `$os_version` parsed per OS family, the high-entropy branch resolving
+  Windows 11 and true macOS versions, the synchronous fallback when
+  `userAgentData` is absent, and that a batch flushed after the promise
+  resolves carries the corrected value. Plus a table-driven case per
+  vocabulary value with a real User-Agent
   string, plus the orderings that a naive implementation gets wrong — Fire OS
   not reported as `android`, Android not as `linux`, BSD not as `linux`,
   iPadOS desktop mode not as `macos`, and `userAgentData` not overriding a specific UA hit. Also
@@ -385,8 +464,10 @@ TDD throughout.
 
 Commit as `feat(server)!` / `feat(store)!`.
 
-Prod (`prod-us-3`, systemd) needs a DB copy before the upgrade, same as 012:
-the OS fold is not reversible.
+Prod (`prod-us-3`, systemd) needs a DB copy before the upgrade, same as 012.
+The fold is non-destructive for raw rows — the original name is copied into
+`os_name` first — but aggregate history has no such column, so its
+out-of-vocabulary tail is the part that cannot be reconstructed.
 
 ## Open item: the plausible shim
 
