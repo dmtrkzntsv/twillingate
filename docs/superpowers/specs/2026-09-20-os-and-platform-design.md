@@ -271,7 +271,8 @@ from raw, so anything not yet rolled up is self-correcting.
 
 ### 5. `agg_views_platforms`
 
-Modelled on `agg_views_countries` — a single-key dimension.
+Modelled on `agg_views_countries`, the existing single-key dimension. That
+table is a shape to copy, not a thing to change.
 
 ```sql
 CREATE TABLE agg_views_platforms (
@@ -320,10 +321,19 @@ update, which for native apps is an app-store timeline.
 
 ### 7. Views rebuilt
 
-`v_views_platforms` is created (the aggregate ∪ live shape of
-`v_views_countries`, including the 500-value `(other)` cap).
-`v_views_app_versions` and `v_product_attrs` are dropped and recreated — the
-first for the rekey, the second to gain a `$platform` arm.
+Exactly three views are touched, and no other view is dropped or recreated.
+Unlike 012, which had to rebuild all of them because `RENAME COLUMN` would
+otherwise leave stale definitions behind, this migration only adds columns.
+
+- **`v_views_platforms`** — created. It copies the aggregate ∪ live shape of
+  `v_views_countries`, the existing single-key dimension, including the
+  500-value `(other)` cap. `v_views_countries` itself is not modified; it is
+  the template, not a target.
+- **`v_views_app_versions`** — dropped and recreated for the rekey.
+- **`v_product_attrs`** — dropped and recreated to gain a `$platform` arm.
+
+`v_views_os` is deliberately absent from that list: `os_version` is already
+one of its keys, so populating it needs no schema change at all.
 
 ## Interaction with the existing OS aggregate
 
