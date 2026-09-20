@@ -99,6 +99,28 @@ dashes (`"Chrome OS"` → `chromeos`, which is what
 Anything present but unrecognised stores `other`; anything absent or empty
 stores `unknown`.
 
+An unrecognised value is never a rejection. The event is accepted, exactly as
+an unrecognised `$` event name or an invalid `$kind` is: a client shipping
+against a server that has not learned a value yet must not receive a `4xx`,
+which the retry rules classify as a poison batch to drop.
+
+Two rules make that fold safe rather than silent:
+
+- **It warns.** `res.warn` records `$os "iOS 17" is not a known value, stored
+  as other`, so the mistake surfaces in the response body during integration
+  instead of becoming a quiet `other` months later. It does *not* warn when
+  the client sent `other` deliberately — that is a legitimate value.
+- **It preserves the original.** When `$os` is unrecognised and `$os_name` was
+  not sent, the raw value is copied into `os_name`. This mirrors what the
+  migration does for existing rows; without it, `other` would be
+  investigable for history and mute for everything arriving afterwards. An
+  explicit `$os_name` always wins.
+
+A value that is well-formed but *semantically* wrong — `"windows"` declared
+from an iPhone — is stored as declared. The server no longer has a
+User-Agent to contradict it, which is the accepted cost of moving detection
+to the client.
+
 `enrich.NormalizeOS` becomes that validator. Its current contract is the
 opposite ("the vocabulary is a convenience, not an allowlist"), and its
 comment flips with it.
@@ -450,7 +472,9 @@ TDD throughout.
 - `internal/server`: `$platform` lower-cased and pattern-checked, invalid
   warns and stores `unknown`, `$platform` no longer fills `os`; a batch with
   no `$os` stores `unknown` and one with an unrecognised `$os` stores
-  `other`.
+  `other`, warns, and copies the raw value into `os_name` — but does not warn
+  when the client sent `other` itself, and does not overwrite an explicit
+  `$os_name`.
 - `internal/store/sqlite/migration014_test.go`: the views backfill per kind,
   the raw fold, aggregate history lower-cased and `''`-relabelled but not
   folded, the
