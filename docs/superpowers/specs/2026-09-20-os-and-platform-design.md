@@ -28,14 +28,17 @@ enrichment and is deliberately coarse. It stays exactly as it is.
 1. `$platform` becomes an independent reserved key with its own column.
    `$kind` is untouched.
 2. **Clean break.** `$platform` never fills `os`.
-3. **`$os` closes to a lower-case vocabulary and is never empty**;
-   `$platform` stays open, lower-cased, bounded by `$kind`'s pattern.
-4. **OS detection moves to the JS SDK. The server only validates.** The
+3. **`$os` closes to a lower-case vocabulary**; `$platform` stays open,
+   lower-cased, bounded by `$kind`'s pattern.
+4. **Neither column is ever empty.** Both fall back to `unknown`, and `$os`
+   additionally distinguishes `other` — a real OS outside the vocabulary —
+   from `unknown`, meaning no OS information at all.
+5. **OS detection moves to the JS SDK. The server only validates.** The
    User-Agent is no longer a source of OS.
-5. Platform gets its own aggregate, view and breakdown dimension, and
+6. Platform gets its own aggregate, view and breakdown dimension, and
    `agg_views_app_versions` rekeys from `(os, app_version)` to
    `(platform, app_version)`.
-6. `$platform` lands on product events too, alongside `$os`.
+7. `$platform` lands on product events too, alongside `$os`.
 
 ## Wire contract
 
@@ -52,9 +55,16 @@ enrichment and is deliberately coarse. It stays exactly as it is.
 | 'tvos' | 'watchos' | 'visionos' | 'tizen' | 'webos'
 // console
 | 'playstation' | 'xbox' | 'nintendo'
-// floor
-| 'other'
+// floors
+| 'other' | 'unknown'
 ```
+
+**`other` and `unknown` are different answers and must stay that way.**
+`other` means there is an OS and it is outside the vocabulary; `unknown`
+means there is no OS information at all. Collapsing them would make a
+server-relayed event indistinguishable from a genuine FreeBSD, and `unknown`
+is precisely the value that makes undeclared traffic measurable — see the
+plausible shim below.
 
 The cut: an OS earns a value when it is a distinct product target — something
 a team would ship, test or drop support for separately — and is either
@@ -79,16 +89,17 @@ gone.
 Server-side this is **validation only**. Trim, lower-case, strip spaces and
 dashes (`"Chrome OS"` → `chromeos`, which is what
 `navigator.userAgentData.platform` returns), then match the vocabulary.
-Anything else — including an absent `$os` — stores `other`.
+Anything present but unrecognised stores `other`; anything absent or empty
+stores `unknown`.
 
 `enrich.NormalizeOS` becomes that validator. Its current contract is the
 opposite ("the vocabulary is a convenience, not an allowlist"), and its
 comment flips with it.
 
-**`other` therefore means two things** — "a real OS outside the list" and "no
-information at all" — and nothing downstream can tell them apart. That is the
-accepted cost of never being empty. It is what a server-relayed product event
-and a `cli` client that declares nothing will record.
+An **absent** `$os` stores `unknown`, not `other`. A modern SDK always sends a
+value, so `unknown` in the data means "this traffic is not declaring OS" — a
+live measurement rather than a silent gap, and a value the breakdown API can
+filter on directly instead of reasoning about empty strings.
 
 ### `$os` detection leaves the server
 
@@ -110,13 +121,15 @@ consumers lag, and they pin a version deliberately.
 
 Trim, **lower-case**, then validate against `^[a-z][a-z0-9_]{0,15}$` — the
 same shape as `kindPattern`, applied after case folding so a client sending
-`iOS` records `ios` rather than being dropped. A value that still fails is
-warned about and left **empty**.
+`iOS` records `ios` rather than being dropped.
 
-Platform is empty when undeclared, while `$os` falls back to `other`. The
-asymmetry is deliberate: `other` is a defined member of a closed vocabulary,
-whereas in an open one it would be indistinguishable from a real value a
-client chose.
+An absent `$platform`, or one that fails the pattern, stores **`unknown`** —
+the same floor as `$os`, warned about in the invalid case. Platform has no
+`other`: in an open vocabulary every well-formed token is already accepted, so
+the only failure left is "no usable value", which is what `unknown` says.
+
+A client could send `unknown` itself. That is harmless — it means the same
+thing.
 
 No server-side list. `docs/twillingate.md` names a conventional set — `web`,
 `ios`, `android`, `macos`, `windows`, `linux` — without enforcing it, so
@@ -131,9 +144,12 @@ otherwise in scope.
 012 is already applied on prod, so this is a new migration.
 
 ```sql
-ALTER TABLE views          ADD COLUMN platform TEXT NOT NULL DEFAULT '';
-ALTER TABLE product_events ADD COLUMN platform TEXT NOT NULL DEFAULT '';
+ALTER TABLE views          ADD COLUMN platform TEXT NOT NULL DEFAULT 'unknown';
+ALTER TABLE product_events ADD COLUMN platform TEXT NOT NULL DEFAULT 'unknown';
 ```
+
+The default does the whole `product_events` backfill on its own, and gives
+`views` a correct value for every row the steps below do not touch.
 
 ### Statement order
 
@@ -150,36 +166,37 @@ electron. **Nothing after this migration ever derives platform from os.**
 
 - `kind='web'` → `'web'`.
 - `kind='app'` → `lower(os)`, which inverts 012's fold exactly.
-- Any other kind → `''`.
-- A derived value that does not match the platform pattern → `''`. It is
-  genuinely unknown for that row, and `other` has no meaning in an open
-  vocabulary.
+- Any other kind → `unknown` (the column default; no statement needed).
+- A derived value that does not match the platform pattern → `unknown`.
 
 ### 2. `product_events` backfill — none
 
 Deliberate. `product_events` has no `kind` column, so `lower(os)` would label
-a web SDK's custom events `macos` rather than `web`. Empty is honest; the
-dimension fills going forward.
+a web SDK's custom events `macos` rather than `web`. Every row keeps the
+column default of `unknown`, which is the honest answer; the dimension fills
+going forward.
 
 ### 3. OS fold — raw rows
 
-`views.os` and `product_events.os` are lower-cased, and anything outside the
-vocabulary — including `''` — becomes `other`.
+`views.os` and `product_events.os` are lower-cased; `''` becomes `unknown`,
+and anything else outside the vocabulary becomes `other`.
 
 ### 4. OS fold — aggregate history
 
-`agg_views_os` and `agg_product_attrs`' `$os` rows are **lower-cased only**.
-Out-of-vocabulary values and `''` survive there.
+`agg_views_os` and `agg_product_attrs`' `$os` rows are lower-cased, and `''`
+is relabelled to `unknown`. Out-of-vocabulary values are **left alone**.
 
-Folding them would merge rows and `SUM` their `visitors`, producing
-distinct-visitor counts that were never measured. So the closed, never-empty
-guarantee holds **for raw rows and for every aggregate built after 014** —
-days aggregated before it can still show `''` or a long tail. That is real
-data; the daily pass rebuilds from raw, so it is self-correcting for
-everything that has not yet rolled up.
+The split is about what can be done without inventing counts. Lower-casing is
+injective over the canonical vocabulary and `'' → unknown` is a pure relabel
+onto a value that did not previously exist — both merge nothing and change no
+count. Folding the out-of-vocabulary tail into `other` would merge rows and
+`SUM` their `visitors`, producing distinct-visitor counts that were never
+measured, so it is not done.
 
-Lower-casing is injective over the canonical vocabulary, so this step merges
-nothing in practice.
+The **never-empty** guarantee therefore holds everywhere, including aggregate
+history. Only the **closed-vocabulary** guarantee is partial: days aggregated
+before 014 can still show a tail of unlisted OS names. The daily pass rebuilds
+from raw, so anything not yet rolled up is self-correcting.
 
 ### 5. `agg_views_platforms`
 
@@ -193,14 +210,21 @@ CREATE TABLE agg_views_platforms (
 ) WITHOUT ROWID;
 ```
 
-Seeded from `agg_views_daily WHERE kind='web'` → `platform='web'`. That table
-is keyed `(project, day, kind)` and carries `visitors` and `views`, so the
-seed is exact.
+Seeded from `agg_views_daily`, which is keyed `(project, day, kind)` and
+carries `visitors` and `views`:
 
-App days aggregated before the split get **no** platform row. `agg_views_os`
-is keyed `(os, os_version)`, so a per-platform visitor count would mean
-summing across `os_version` and double-counting. A missing row beats a wrong
-one.
+- `kind='web'` → `platform='web'`. Exact.
+- every other kind → `platform='unknown'`.
+
+`agg_views_os` cannot help here — it is keyed `(os, os_version)`, so a
+per-platform count would mean summing across `os_version` and double-counting.
+
+Seeding `unknown` rather than omitting the row keeps the platform breakdown's
+totals consistent with the daily totals, and `unknown` states plainly what is
+true of those days. `views` stays exact because views are additive. `visitors`
+can overcount in one case only: a project running **two or more non-web kinds**
+on the same pre-014 day, whose separate rows collapse into one `unknown` row.
+Bounded to that row, on those days.
 
 ### 6. `agg_views_app_versions` rekey
 
@@ -208,18 +232,18 @@ From `(project, day, os, app_version)` to `(project, day, platform,
 app_version)`, matching the key's own stated rationale: `2.4.1` means
 unrelated things across the iOS and Android builds of one product.
 
-Rebuilt with `platform = lower(os)`, or `other` when that does not match the
+Rebuilt with `platform = lower(os)`, or `unknown` when that does not match the
 platform pattern. For rows whose `os` is canonical — effectively all of them —
 this is value-preserving and merges nothing. The exception is the tail:
 aggregate history is deliberately not OS-folded, so if two out-of-vocabulary
 values coexist for one `(project, day, app_version)` their rows merge into one
-`other` row whose `visitors` is a sum that can overcount. Accepted only
+`unknown` row whose `visitors` is a sum that can overcount. Accepted only
 because the alternative is dropping app-version history for those projects.
 
 **Known transitional cost.** The aggregator rebuilds this table daily from raw
-`views.platform`, which is `''` for any client that has not shipped
+`views.platform`, which is `unknown` for any client that has not shipped
 `$platform`. Those rows collapse from `(ios, 2.4.1)` and `(android, 2.4.1)`
-into `('', 2.4.1)`. Counts stay correct — aggregation recomputes
+into `(unknown, 2.4.1)`. Counts stay correct — aggregation recomputes
 `COUNT(DISTINCT actor_id)` from raw — but the split is lost until clients
 update, which for native apps is an app-store timeline.
 
@@ -293,7 +317,9 @@ generic, so the checks run most-specific first and return on the first hit.
 6. **Generic UA fallback**: `Android` → `android`; `Windows` → `windows`;
    `Mac OS X`/`Macintosh` → `macos`; `FreeBSD` → `freebsd`;
    `OpenBSD` → `openbsd`; `NetBSD` → `netbsd`; `X11`/`Linux` → `linux`.
-7. Otherwise `other`.
+7. Otherwise `other` — a browser is running on *something*, so `other` is the
+   right floor for detection. `unknown` is never produced by the SDK; it only
+   appears when no `$os` reaches the server at all.
 
 `watchos` and `visionos` are never returned by detection; they are reachable
 only through the explicit `os` option.
@@ -316,13 +342,16 @@ Same commit, per CLAUDE.md:
 
 TDD throughout.
 
-- `internal/enrich`: the validator — canonical, spaced `Chrome OS`, unknown →
-  `other`, empty → `other`; `ParseUserAgent` no longer returns an OS.
+- `internal/enrich`: the validator — canonical, spaced `Chrome OS`,
+  unrecognised → `other`, empty → `unknown` (the two floors must not be
+  conflated); `ParseUserAgent` no longer returns an OS.
 - `internal/server`: `$platform` lower-cased and pattern-checked, invalid
-  warns and leaves it empty, `$platform` no longer fills `os`; a batch with no
-  `$os` stores `other`.
+  warns and stores `unknown`, `$platform` no longer fills `os`; a batch with
+  no `$os` stores `unknown` and one with an unrecognised `$os` stores
+  `other`.
 - `internal/store/sqlite/migration014_test.go`: the views backfill per kind,
-  the raw fold, aggregate history lower-cased but not folded, the
+  the raw fold, aggregate history lower-cased and `''`-relabelled but not
+  folded, the
   `agg_views_platforms` seed, and the `agg_views_app_versions` rekey asserting
   no row merged and no count changed.
 - `views_test.go`: `v_views_platforms` across the aggregate ∪ live boundary,
@@ -343,12 +372,13 @@ TDD throughout.
    until they ship an update.
 2. **`$os` closes and lower-cases.** Every stored value changes case, so any
    Evidence SQL or saved query comparing `os = 'iOS'` silently returns
-   nothing. A project declaring an unlisted OS starts recording `other`.
+   nothing. A project declaring an unlisted OS starts recording `other`, and
+   rows that were empty become `unknown`.
 3. **`v_views_app_versions` rekeys.** Saved SQL selecting its `os` column
    breaks.
 4. **The server stops deriving OS from the User-Agent.** Any ingest path that
    is not the current JS SDK — a backend relay, a custom client — records
-   `other` unless it declares `$os`.
+   `unknown` unless it declares `$os`.
 
 Commit as `feat(server)!` / `feat(store)!`.
 
@@ -360,7 +390,9 @@ the OS fold is not reversible.
 `/js/plausible-shim.js` is served verbatim from `docs.PlausibleShim` and bound
 to those exact bytes by `internal/server/script_test.go`. It does not send
 `$os`, so once the server stops parsing User-Agents **every shim-tagged site
-records `other` for OS**.
+records `unknown` for OS**. That at least makes the loss visible in a
+breakdown rather than silent, which is an argument for `unknown` existing at
+all.
 
 Options: add the same detection to the shim (it is server-served, so it
 self-upgrades like the SDK), or accept the loss. This needs a decision before
