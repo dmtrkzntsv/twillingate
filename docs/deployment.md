@@ -61,8 +61,9 @@ sudo ./deploy/systemd/install.sh          # --user NAME to skip the prompt, --ye
 ```
 
 The curl form detects the architecture, downloads the matching tarball from
-the latest GitHub release (`--version vYY.MMDD.{build}` to pin) and verifies
-its SHA256 before installing. CI publishes a release on every push to `main`.
+the latest GitHub release (`--version v0.9.2` to pin) and verifies its SHA256
+before installing. Releases are cut by hand, so `latest` is the newest
+released version and not the newest commit on `main`.
 
 The installer creates a system account, installs the binary to
 `/usr/local/bin/twillingate`, creates `/var/lib/twillingate` (0750, owned by
@@ -550,7 +551,7 @@ expected `aud`: the origin or `<origin>/mcp`, or the `audience=` value.
 | Logs | `journalctl -u twillingate -f` |
 | Restart | `systemctl restart twillingate` |
 | Upgrade (systemd) | `curl -fsSL …/install.sh \| sudo bash` — restarts the running service and reports the old and new version |
-| Upgrade (compose) | `docker compose pull && docker compose up -d`. Never `down -v`: the database lives in the named volume. Pin with `TWILLINGATE_VERSION=v26.825.1` in `.env`. |
+| Upgrade (compose) | `docker compose pull && docker compose up -d`. Never `down -v`: the database lives in the named volume. Pin with `TWILLINGATE_VERSION=v0.9.2` in `.env`. |
 | Apply migrations only | `twillingate migrate` |
 | Upgrade across a schema change | Take a Litestream snapshot first (`litestream snapshots …`, or copy the db file while the service is stopped): migrations such as 012 (web and app folded into one views family) are irreversible |
 | Export the registry | `twillingate config export > registry.json` |

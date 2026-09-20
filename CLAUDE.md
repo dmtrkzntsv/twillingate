@@ -77,15 +77,21 @@ ci: do not cut a release for prose-only commits
 
 ## Releases
 
-Pushing to `main` cuts a release: the workflow tags `vYY.MMDD.{build}`, runs
-`make check`, builds the tarballs and hands off to `npx changelogithub`, which
-creates the GitHub release, groups the notes by commit type and uploads the
-artifacts. Container images publish from a separate job.
+Releases are cut by hand: run the `release` workflow from the Actions tab, or
+`gh workflow run release.yml`. It tags, runs `make check`, builds the tarballs
+and hands off to `npx changelogithub`, which creates the GitHub release,
+groups the notes by commit type and uploads the artifacts. Container images
+publish from a separate job.
+
+Versions are semver and the project is pre-1.0, so the minor carries breaking
+changes and the major stays at zero until someone decides otherwise. The
+workflow takes one optional `version` input: leave it blank for the next
+patch, or type a version (`0.10.0`, `1.0.0`) for anything larger.
 
 Two consequences worth remembering:
 
-- A push touching only `docs/**` or `**.md` is excluded via `paths-ignore` and
-  publishes nothing. A push that mixes prose with code still releases.
+- Pushing to `main` publishes nothing. A commit waits until someone dispatches
+  the workflow, so several of them can ship under one version.
 - Release notes are only as good as the commit subjects, and they are not
   hand-edited afterwards.
 
@@ -135,5 +141,5 @@ source, plus the SDK's public symbols, every queryable web view and the
 HTTP API route table. Those
 checks read the specific **table** that claims a fact, not the whole file:
 a document-wide match passes for the wrong reason when the same word
-appears in prose. The rest is on you. A `docs`-only push publishes nothing
-(`paths-ignore`), so a same-commit update costs no extra release.
+appears in prose. The rest is on you. No push publishes anything on its own,
+so a same-commit update costs no extra release.

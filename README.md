@@ -125,9 +125,9 @@ cd sdk && npm ci && npm test   # the twillingate.js SDK suite
 
 The SDK bundle is committed (`internal/server/twillingate.js`); after
 editing `sdk/src/`, run `npm run build` there and commit the result — CI
-fails on drift. Every push to `main` cuts a release tagged
-`vYY.MMDD.{build}`. Commit messages follow Conventional Commits and become
-the release notes.
+fails on drift. Releases are cut by hand from the `release` workflow and tagged with semver;
+the project is pre-1.0, so breaking changes bump the minor. Commit messages
+follow Conventional Commits and become the release notes.
 
 ## Privacy and GDPR
 

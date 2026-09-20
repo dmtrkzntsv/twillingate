@@ -1,14 +1,13 @@
 name: release
 on:
-  push:
-    branches: [main]
-    # A prose-only commit ships no artifact, so it must not burn a version
-    # number, a release tag or a QEMU image build. A push that mixes docs
-    # with code does not match these patterns exhaustively and still
-    # releases, so nothing shippable can slip through unreleased.
-    paths-ignore:
-      - 'docs/**'
-      - '**.md'
+  # By hand, so a version number is spent when someone decides to ship and
+  # never as a side effect of a push. Several commits can land under one.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release, e.g. 0.9.2 or v0.9.2. Blank bumps the patch.'
+        required: false
+        type: string
 permissions:
   contents: write
   packages: write
@@ -27,14 +26,35 @@ jobs:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
       - id: tag
-        # vYY.MMDD.{build}: UTC date with the month unpadded (v26.825.N,
-        # v26.105.N); the run number makes the tag unique by construction.
-        run: echo "tag=v$(date -u +%-y.%-m%d).${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+        # Blank input takes the next patch; a minor or a major is typed out at
+        # dispatch. Below 1.0 the minor carries the breaking signal, so that is
+        # a judgement someone makes about the release rather than a rule read
+        # off the commit log.
+        #
+        # INPUT through env and never ${{ }} inside the script: it is free text
+        # a human types, and interpolating it would run it as shell.
+        env:
+          INPUT: ${{ inputs.version }}
+        run: |
+          if [ -n "$INPUT" ]; then
+            next="v${INPUT#v}"
+          else
+            last=$(git tag --sort=-v:refname | head -n1)
+            next=$(echo "${last:-v0.0.0}" | awk -F. '{print $1"."$2"."$3+1}')
+          fi
+          # The run number no longer makes the tag unique by construction, and
+          # a typo would otherwise reach the release page. Check both.
+          echo "$next" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$' ||
+            { echo "::error::malformed version: $next"; exit 1; }
+          if git rev-parse -q --verify "refs/tags/$next" >/dev/null; then
+            echo "::error::$next already exists"; exit 1
+          fi
+          echo "tag=$next" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-go@v5
         with: { go-version-file: go.mod, cache: false }
-      # Same cache as ci.yml, and the only job that saves it for main: ci's
-      # test job skips pushes, so each release seeds the next one (and the
-      # next pull request) from this commit's build cache.
+      # Same cache as ci.yml, restored by prefix. Releases are dispatched by
+      # hand and so are far rarer than pushes; ci's test job runs on every
+      # push to main and is what keeps a recent entry there to restore from.
       - uses: actions/cache@v4
         with:
           path: |
