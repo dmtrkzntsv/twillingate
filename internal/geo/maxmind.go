@@ -166,11 +166,15 @@ func (m *maxmind) refreshLoop(key string, interval time.Duration) {
 				continue
 			}
 			if r, err := maxminddb.Open(m.path); err == nil {
+				// Swap and close under the write lock. Country holds
+				// the read lock for the whole of its lookup, so the
+				// close here cannot unmap the database out from under
+				// a lookup still reading it.
 				m.mu.Lock()
 				old := m.reader
 				m.reader = r
-				m.mu.Unlock()
 				old.Close()
+				m.mu.Unlock()
 			}
 		}
 	}
@@ -186,10 +190,12 @@ func (m *maxmind) Country(_ *http.Request, ip string) string {
 			ISOCode string `maxminddb:"iso_code"`
 		} `maxminddb:"country"`
 	}
+	// The read lock is held across the lookup, not just the load of the
+	// reader: refreshLoop closes the reader it replaces, and a close
+	// unmaps the database.
 	m.mu.RLock()
-	r := m.reader
-	m.mu.RUnlock()
-	if err := r.Lookup(addr).Decode(&rec); err != nil {
+	defer m.mu.RUnlock()
+	if err := m.reader.Lookup(addr).Decode(&rec); err != nil {
 		return ""
 	}
 	return rec.Country.ISOCode
@@ -197,8 +203,11 @@ func (m *maxmind) Country(_ *http.Request, ip string) string {
 
 func (m *maxmind) Close() error {
 	m.cancel()
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	// The write lock, not the read lock: closing mutates the reader, and
+	// two read-lock holders do not exclude each other, so a concurrent
+	// Country could be mid-lookup on the reader being closed.
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.reader != nil {
 		return m.reader.Close()
 	}
