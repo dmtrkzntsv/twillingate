@@ -6,7 +6,7 @@
 #
 # Straight from GitHub — downloads the latest release for this machine:
 #   curl -fsSL https://raw.githubusercontent.com/dmtrkzntsv/twillingate/main/deploy/systemd/install.sh | sudo bash
-#   curl -fsSL ...install.sh | sudo bash -s -- --yes --version v26.825.1
+#   curl -fsSL ...install.sh | sudo bash -s -- --yes --version v0.9.2
 #
 # Re-running it upgrades: the binary and units are replaced, twillingate.env
 # is left alone, the service account is read back from the installed unit,

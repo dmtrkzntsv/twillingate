@@ -3,13 +3,10 @@ on:
   push: { branches: [main] }
   pull_request:
 jobs:
-  # Pull requests only: a push to main triggers release.yml, which runs
-  # make check on the same commit before tagging, so a second run here would
-  # prove nothing. The accepted gap: a docs-only push to main matches
-  # release.yml's paths-ignore too, so it lands with no Go check and a
-  # docs_sync_test.go failure would surface on the next release run instead.
+  # Every pull request and every push to main. Releases are dispatched by
+  # hand, so this is the only thing that checks a commit once it lands, and
+  # the only job that saves a build cache keyed on a main commit.
   test:
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
