@@ -226,6 +226,23 @@ func TestEnsureFreshFallsBackToStaleDBWhenRefreshFails(t *testing.T) {
 
 // --- refreshLoop, driven by shrinking the package-level ticker interval ---
 
+// closeAndWait closes p and blocks until its refreshLoop goroutine has
+// returned. Close on its own only cancels: it is fire-and-forget, so a test
+// that shrank refreshInterval must join here before its deferred restore of
+// the downloadDB/refreshInterval package vars writes them out from under a
+// goroutine still reading them.
+func closeAndWait(t *testing.T, p Provider) {
+	t.Helper()
+	if err := p.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-p.(*maxmind).stopped:
+	case <-time.After(2 * time.Second):
+		t.Fatal("refreshLoop did not stop after Close")
+	}
+}
+
 // TestRefreshLoopLogsFailureAndKeepsServing drives refreshLoop's own
 // "weekly refresh failed" branch. That branch only fires when ensureFresh
 // returns a genuine (non-nil) error, which per ensureFresh only happens
@@ -256,8 +273,6 @@ func TestRefreshLoopLogsFailureAndKeepsServing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mm := p.(*maxmind)
-
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
 	}
@@ -276,17 +291,7 @@ func TestRefreshLoopLogsFailureAndKeepsServing(t *testing.T) {
 	if got := p.Country(r, "2.125.160.216"); got != "GB" {
 		t.Errorf("lookup after a failed refresh = %q, want GB", got)
 	}
-	if err := p.Close(); err != nil {
-		t.Fatal(err)
-	}
-	// Wait for the background goroutine to actually stop reading the
-	// downloadDB/refreshInterval package vars before this test's defers
-	// restore them out from under it.
-	select {
-	case <-mm.stopped:
-	case <-time.After(2 * time.Second):
-		t.Fatal("refreshLoop did not stop after Close")
-	}
+	closeAndWait(t, p)
 }
 
 // TestRefreshLoopReloadsReaderOnSuccess drives the reopen-and-swap branch
@@ -305,8 +310,6 @@ func TestRefreshLoopReloadsReaderOnSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer p.Close()
-
 	// Let several ticks elapse so the reopen-and-swap branch runs a few
 	// times, then confirm lookups still work off the reloaded reader.
 	time.Sleep(50 * time.Millisecond)
@@ -314,6 +317,7 @@ func TestRefreshLoopReloadsReaderOnSuccess(t *testing.T) {
 	if got := p.Country(r, "2.125.160.216"); got != "GB" {
 		t.Errorf("lookup after reload ticks = %q, want GB", got)
 	}
+	closeAndWait(t, p)
 }
 
 // Close on a maxmind whose reader was never assigned (reachable in-package
