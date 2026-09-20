@@ -49,6 +49,7 @@ overrides (whose only edit path was import).
 | Retention | Global only (`RETENTION_*`). The `projects.retention` column and every per-project override path are removed |
 | Clearing origins | `project update -clear-origins`; on `update_project`, an explicit `"allowed_origins": []` clears and an omitted field keeps |
 | Existing ids | Assigned by the migration in `created_at` order, alias breaking ties, starting at 1 |
+| Raw product table | Renamed `product_events` → `events`, taken while 014 rebuilds it anyway. The product *family* keeps its prefix: `agg_product_*`, `v_product_*` and the `product_events` / `product_attributes` tools are unchanged |
 
 ## 4. Schema — migration 014
 
@@ -107,7 +108,7 @@ x`, recreate indexes), the pattern 012 uses for `actors`.
    ROWID` and key shape, with `project TEXT NOT NULL` replaced by
    `project_id INTEGER NOT NULL` in the same position:
 
-   - raw: `views`, `product_events`
+   - raw: `views`, `product_events` (rebuilt under its new name, `events`)
    - aggregates: `agg_views_daily`, `agg_views_paths`, `agg_views_hosts`,
      `agg_views_referrers`, `agg_views_utm`, `agg_views_countries`,
      `agg_views_displays`, `agg_views_os`, `agg_views_browsers`,
@@ -137,6 +138,29 @@ x`, recreate indexes), the pattern 012 uses for `actors`.
 
 Rows keep a reference, not a label. Renaming a project touches one row,
 and a query that needs the name joins `projects`. No view carries the name.
+
+### 4.3 Renaming `product_events` to `events`
+
+014 rebuilds the table regardless, so the rename is the name on
+`CREATE TABLE … _new` and costs nothing extra. Scope is the raw table
+only:
+
+- renamed: the table, and `FROM product_events` wherever it is read —
+  `aggregate_product.go`, `aggregate_views.go`, `retention.go`,
+  `identities.go`, `flatview.go`, `write.go`, `registry.go`,
+  `internal/pipeline`, `internal/server/handlers.go`,
+  `internal/api/ops_product.go`, `ops_read.go`, `scripts/smokecheck`
+- unchanged: `agg_product_daily`, `agg_product_totals`,
+  `agg_product_attrs`, `v_product_daily`, `v_product_totals`,
+  `v_product_attrs`, the `product_events` and `product_attributes` tools,
+  and `RETENTION_PRODUCT_*`. Those name the product family, not the table
+- its indexes are already called `idx_events_project_name_ts` and
+  `idx_events_project_user_ts`, and now match
+- `v_events_flat` reads `FROM events`, which its name finally matches
+
+The name says what the rows are, but only these rows: views are events
+too and live in `views`. If the two raw tables are ever merged into one
+stream keyed by `kind`, that merged table inherits this name.
 
 ## 5. Identity hashes
 
@@ -294,13 +318,16 @@ Same commit, per CLAUDE.md:
   - the project fields table: `id` replaces `alias`, and `retention` is gone
   - every CLI and tool example: `-id`, `-project-id`, `project_id`
   - the tool table and the REST route table
-  - the queryable-views section: `project_id`
+  - the queryable-views section: `project_id`. The three `product_events`
+    mentions there are the tool, not the table, and stay
   - the origins paragraph: `-clear-origins` replaces the export/import advice
   - the `config export`/`import` paragraphs and the per-project retention example are deleted
 - `docs/deployment.md`
   - the two `config` rows in the operations table are deleted
   - a new upgrade note gives the pre-upgrade checks (§9), the backup step, the hash seam, and states
     that retention is global only
+- `docs/plausible/README.md` names the raw table twice (the routing
+  diagram and `product_events.attributes`); both become `events`.
 - `docs_sync_test` enforces the tool names, the route table and the
   views. Its fixtures move to `project_id`.
 
@@ -339,6 +366,7 @@ Agents and scripts that stored aliases need the new ids from
 
 - **Migration test**, next to `migration012_test.go`:
   - build a database at 013 with two projects, rows in every rebuilt table, keys and an override
+  - `events` holds what `product_events` held, row for row
   - migrate to 014, then assert:
     - ids follow `created_at`
     - every row count is unchanged and every row is on the right id
@@ -370,3 +398,4 @@ with a `BREAKING CHANGE:` footer listing:
 - the removed `config` subcommand and `project rename`
 - global-only retention
 - the one-day hash seam
+- `product_events` renamed to `events`, which changes saved SQL
