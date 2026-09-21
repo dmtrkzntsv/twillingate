@@ -3,6 +3,25 @@
 Status: proposed
 Date: 2026-09-20
 
+## Sequencing
+
+Last of three specs that land in order, and the only one with no migration:
+
+1. `2026-09-19-project-ids-design.md` — `014_project_ids.sql`
+2. `2026-09-20-os-and-platform-design.md` — `015_platform.sql`
+3. **this spec** — SDK and docs only
+
+It is written against what those two leave behind: projects are addressed
+by integer id, the raw product table is `events`, and the SDK already
+detects OS on the client. §4 depends on all three.
+
+The SDK work rebases onto the os/platform spec's. Both edit
+`sdk/src/twillingate.ts`, and both regenerate the committed bundle
+`internal/server/twillingate.js` — which is built output, so it is rebuilt
+with `npm run build` and never merged by hand. The bundle assertions in
+`internal/server/twillingate_script_test.go` are trimmed by that spec too;
+check what is left before removing the `analytics_*` and `webdriver` lines.
+
 ## Goal
 
 Econumo should drive its product analytics through the JS SDK,
@@ -18,7 +37,7 @@ format as it changes.
 
 Econumo runs two projects and can only use the SDK for one of them today:
 
-- `app.econumo.com` (anonymous) takes web views. The tag is injected by
+- the web project (anonymous) takes web views. The tag is injected by
   liltag, a tag manager.
 - `econumo` (identified) takes product events and a custom `page_view`
   event, from the cloud and from self-hosted instances. It posts to the
@@ -225,7 +244,8 @@ Both projects stay as they are. Two tags, two globals, two projects:
 
 | | web analytics | product analytics |
 | --- | --- | --- |
-| Project | `app.econumo.com`, anonymous | `econumo`, identified |
+| Project | the web project, anonymous | the product project, identified |
+| Addressed by | `project_id`, from `list_projects` | `project_id`, from `list_projects` |
 | Loaded by | liltag | the app |
 | Global | `window.twillingate` | `window.et` via `data-instance` |
 | Pageviews | automatic, full acquisition data | programmatic `et.page(...)` |
@@ -237,10 +257,45 @@ the user id it already hashes, then `et.page(path, {...})` per route change
 and `et.track(name, attrs)` for actions. Signed-out visitors send no user
 id, so the server attributes them to the daily-rotating connection hash.
 
-Browser, OS, device class and country are derived on the server from the
+Browser, device class and country are derived on the server from the
 User-Agent and IP of the ingest request and then discarded, for `web`-kind
-events. The product tag therefore keeps the default `kind: "web"` and
-declares no `$os`. This applies to self-hosted users' connections too.
+events. The product tag therefore keeps the default `kind: "web"`. This
+applies to self-hosted users' connections too.
+
+OS is no longer among them, and does not have to be declared either — see
+below.
+
+### 4.1 OS detection is inherited, not configured
+
+The os/platform spec moves OS detection off the User-Agent and into the
+SDK. This instance gets it for nothing, in both directions that matter
+here: `batchAttributes()` is computed once per flush and applied to every
+event in the batch, so `$os`, `$os_version`, `$os_name` and `$platform`
+ride along on everything the instance emits — `et.track(...)` product
+events and `et.page(...)` / `$page_view` views alike. Econumo declares
+none of them and configures nothing. A self-hosted browser is detected the
+same way a cloud one is, which is the part the server could no longer do.
+
+What is *stored* differs by table, and the asymmetry is deliberate:
+
+| key | `views` | `events` |
+| --- | --- | --- |
+| `$os` | column | column |
+| `$platform` | column | column, added by 015 |
+| `$os_version` | column | not stored |
+| `$os_name` | column | not stored |
+
+A key with no destination on the product side is dropped rather than kept
+as an ordinary attribute, because `resolveAttributes` splits the whole `$`
+namespace into typed fields and `handlers.go:125` stores only `rv.Custom`.
+Nothing reserved reaches `events.attributes`. That is what keeps a
+free-form `$os_name` out of `agg_product_attrs` and away from the `top_n`
+cap, and it means the tag can send all four keys on every batch without
+either configuring per-event attributes or risking attribute cardinality.
+
+So the product project gains `$os` and `$platform` as breakdown dimensions
+through `product_attributes`, and the `$page_view` rows gain the full set
+through the views family. Neither needs a line of Econumo code.
 
 Self-hosted sends `$page_view` as well, with `$host` hashed and `$referrer`
 suppressed per call, and with clean paths so no campaign data is collected.
@@ -259,24 +314,38 @@ is more work than turning it on now.
 Done by hand in SQL, with the service stopped and a backup taken. No CLI
 operation is added for it.
 
-`econumo`'s data starts on 2026-09-07, which is inside the raw window, so
-`agg_product_daily` and `agg_product_attrs` hold nothing for those days —
-product aggregation only runs for days older than the raw window
-(`internal/jobs/jobs.go:134`). Verify that before running anything.
+The product project's data starts on 2026-09-07. That was inside the raw
+window when this was written, so `agg_product_daily` and `agg_product_attrs`
+held nothing for those days — product aggregation only runs for days older
+than the raw window (`internal/jobs/jobs.go:134`).
+
+**That claim decays, and this spec lands third.** By then those days may
+have rolled up, in which case deleting the raw rows leaves aggregated
+`page_view` counts behind with no source. Re-check it immediately before
+running anything:
+
+```sql
+SELECT COUNT(*) FROM agg_product_daily WHERE project_id = :id;
+SELECT COUNT(*) FROM agg_product_attrs WHERE project_id = :id;
+```
+
+A non-zero count means the deletes below are not sufficient on their own
+and the matching aggregate rows have to go with them.
 
 Identity and retention rollups are different: they run over every raw day on
 each pass. `agg_identity_daily` is written with `INSERT OR REPLACE` keyed by
-`(project, day, kind, id)` (`internal/store/sqlite/identities.go:31`), and
+`(project_id, day, kind, id)` (`internal/store/sqlite/identities.go:31`), and
 `actors` upserts `first_seen_day` with `MIN` (`retention.go:40`). Neither
 removes a row that no longer has source data, so deleting raw rows alone
 would leave stale identity and cohort rows behind. They have to be deleted
 and rebuilt:
 
 ```sql
-DELETE FROM product_events     WHERE project='econumo' AND event_name='page_view';
-DELETE FROM agg_identity_daily WHERE project='econumo';
-DELETE FROM agg_retention      WHERE project='econumo';
-DELETE FROM actors             WHERE project='econumo';
+-- :id is the product project's integer id, from list_projects.
+DELETE FROM events             WHERE project_id = :id AND event_name='page_view';
+DELETE FROM agg_identity_daily WHERE project_id = :id;
+DELETE FROM agg_retention      WHERE project_id = :id;
+DELETE FROM actors             WHERE project_id = :id;
 ```
 
 The next daily pass recomputes all three from the remaining raw rows.
