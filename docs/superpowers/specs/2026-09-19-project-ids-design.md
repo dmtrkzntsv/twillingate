@@ -3,6 +3,24 @@
 Date: 2026-09-19
 Status: draft
 
+## Sequencing
+
+This is the first of three specs that land in order, and it owns migration
+`014`:
+
+1. **this spec** — `014_project_ids.sql`
+2. `2026-09-20-os-and-platform-design.md` — `015_platform.sql`
+3. `2026-09-20-sdk-consent-and-instances-design.md` — no migration
+
+It goes first because it is the widest and the most mechanical. Every later
+spec is then written against `project_id` and `events` from the start, and
+neither has to be rewritten for a rename that was always going to happen.
+
+Nothing here depends on the other two, and §4.1's table list is complete as
+written: `agg_views_platforms` does not exist yet, and the `platform` and
+`os_name` columns arrive in 015, on tables this migration has already
+rebuilt.
+
 ## 1. Purpose
 
 A project has three identifiers today: a UUIDv7 `projects.id` that is
