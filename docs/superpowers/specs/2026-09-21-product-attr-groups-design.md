@@ -190,13 +190,13 @@ yet rolled up.
 
 ## Private API
 
-`productAttributes` (`internal/api/ops_product.go:58`) adds `unique_groups`
+`productAttributes` (`internal/api/ops_product.go:50`) adds `unique_groups`
 to its `SELECT`. It returns a generic `tableOut`, so the column flows through
 to both the `product_attributes` MCP tool and the REST route without a type
 change. The addition is backwards compatible: a client reading by column name
 is unaffected, and one reading positionally gets the new column last.
 
-`schemaViews` (`internal/api/resources.go:49`) is updated in the same commit,
+`schemaViews` (`internal/api/resources.go:16`) is updated in the same commit,
 per CLAUDE.md:
 
 ```
