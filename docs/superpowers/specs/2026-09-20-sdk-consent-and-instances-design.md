@@ -195,12 +195,48 @@ localStorage must now set `data-consent="true"`, and the legacy keys above
 are gone. Econumo has no SDK-based identified clients, so nothing in this
 deployment breaks. Commit as `feat(sdk)!:` with a release note.
 
-### 2. `data-instance` for a second tag on one page
+### 2. Named instances, for a second tag on one page
 
-`data-instance="et"` registers the instance at `window.et` and leaves
+The name does two separate jobs, and which ones apply depends on how the
+SDK was loaded:
+
+| | registers a global | prefixes storage keys |
+| --- | --- | --- |
+| `data-instance="et"` | yes, `window.et` | yes |
+| `instance: "et"` in `init()` | no | yes |
+
+**`data-instance="et"`** registers the instance at `window.et` and leaves
 `window.twillingate` alone. It works with or without `data-key`, so a tag
 can auto-init from its attributes or load dormant for `et.init({...})` in
 code. Without the attribute, behaviour is exactly as today.
+
+**`instance?: string` in `InitOptions`** is the same name for a bundled
+consumer, which has no tag to carry an attribute. It registers nothing —
+the caller already holds the reference — and exists purely so two
+npm-loaded instances stop sharing storage. Without it they would both
+write `twillingate_visitor` and `twillingate_queue`, and the second to
+`identify()` would overwrite the first's user on a page neither of them
+knows is shared.
+
+Three rules keep the name from being a footgun:
+
+- **The attribute wins.** A tag that declared `data-instance` is already
+  registered and already reading prefixed keys by the time `init()` runs,
+  so an `instance` option that disagrees is ignored with a console warning.
+  Renaming an instance after records exist would strand them under the old
+  prefix, which is a silent data loss and not worth supporting.
+- **The name is validated** against `^[a-z][a-z0-9_]{0,15}$`, the same
+  shape as `$kind`. It becomes both a property name on `globalThis` and a
+  storage-key prefix, so it has to be an identifier; an invalid name is
+  refused with a warning and the instance keeps the default.
+- **It never clobbers a foreign global.** If `globalThis[name]` already
+  holds something that is not a Twillingate instance, the SDK warns and
+  skips registration rather than overwriting it — `data-instance="location"`
+  should cost a warning, not the page. Twillingate-on-Twillingate is the
+  existing `supersededBy` path and is unchanged.
+
+The default name is `twillingate`, which is what keeps the current global
+and the current `twillingate_*` keys exactly as they are.
 
 - The duplicate-tag guard looks at `window[name]` instead of
   `window.twillingate`, so a doubled liltag tag still stands down and
@@ -406,6 +442,12 @@ Vitest, in `sdk/src/`:
 - `reset()` clears the queue with and without consent.
 - `data-instance` registers the named global, leaves `window.twillingate`
   untouched, and prefixes its storage keys.
+- `instance` in `init()` prefixes storage keys and registers no global; two
+  instances constructed in code with different names do not share a visitor
+  id or a queue, and share one with no names.
+- `data-instance` beats a conflicting `instance` option, with a warning; an
+  invalid name falls back to the default; and a name already held by a
+  foreign global is not overwritten.
 - Existing tests covering the `analytics_*` migration are deleted rather
   than adapted (7 references in `sdk/src/identity.test.ts`, 2 in
   `twillingate.test.ts`), as is the `navigator.webdriver` case
@@ -420,7 +462,9 @@ Vitest, in `sdk/src/`:
 Docs, in the same commit as the code (required by CLAUDE.md):
 
 - `docs/twillingate.md`: the `consent` option, `data-consent` and the
-  `consent()` call, `data-instance`, the null-drops-an-attribute rule, and the
+  `consent()` call, `data-instance` and the matching `instance` option
+  (`TestDocumentMatchesSDK` checks every documented SDK symbol, so both
+  forms have to be real), the null-drops-an-attribute rule, and the
   privacy behaviour section, which currently states that identified
   projects persist a visitor id unconditionally and that the legacy keys are
   migrated (`docs/twillingate.md:455`).
