@@ -562,37 +562,72 @@ every batch — all four always resolve to a value — plus `$os_version`,
 `$os_name` and `$browser_version` when detection or an override produced
 them.
 
-### Detection is public API
+### Detection is public API, and takes its signals as an argument
 
-Three methods on the instance, so an application can read what the SDK
-would send without waiting for a batch or re-implementing any of it:
+Three functions, exported from the package and mirrored as methods on the
+instance so a snippet-mode caller reaches them through the global
+(`twillingate.detectOS()`, or `et.detectOS()` under `data-instance`). The
+methods delegate; there is one implementation.
 
 ```ts
-detectOS():      { os: string; osVersion: string; osName: string }
-detectBrowser(): { browser: string; browserVersion: string }
-detectDevice():  { device: string }
+export interface ClientSignals {
+  userAgent?: string;        // navigator.userAgent
+  platform?: string;         // navigator.platform — "MacIntel" is load-bearing
+  maxTouchPoints?: number;   // navigator.maxTouchPoints
+  brave?: boolean;           // whether navigator.brave is defined
+  brands?: { brand: string; version: string }[];  // userAgentData.brands
+  uaPlatform?: string;       // userAgentData.platform
+  mobile?: boolean;          // userAgentData.mobile
+  platformVersion?: string;  // resolved getHighEntropyValues(["platformVersion"])
+}
+
+export function detectOS(s?: ClientSignals):
+  { os: string; osVersion: string; osName: string };
+export function detectBrowser(s?: ClientSignals):
+  { browser: string; browserVersion: string };
+export function detectDevice(s?: ClientSignals):
+  { device: string };
 ```
 
-Each returns the **effective** value — the override if one was set,
-otherwise detection — so what they return is exactly what the next batch
-carries. With named instances they are per-instance, `et.detectOS()`.
+Omit the argument and every field is read from the ambient `navigator`.
+Supply one and **only what you supplied is consulted** — a missing field
+stays missing rather than being backfilled from the real browser, so a test
+cannot pass by accident because jsdom happened to supply the value.
 
-**All three are views onto one internal resolve, run once at init.** This
-is not a tidiness point: OS and device class share their signals almost
-entirely (`iPad`, `maxTouchPoints`, the console and TV markers), and three
-independent passes would eventually disagree — reporting `os: ipados` with
-`device: desktop`, which is not a state that exists.
+**The parameter is a flat list of signals, not a stand-in `navigator`.**
+That is the whole point of the shape: it is exactly the set of inputs
+detection is permitted to read, so the interface doubles as the record of
+what the SDK touches on the device, and the privacy surface can be reviewed
+by reading one type. A mock navigator would leave that open-ended, and
+would let an implementation quietly start reading something new.
 
-One caveat to document: they are **synchronous**, and `$os_version` on
-Chromium improves when the high-entropy promise resolves shortly after
-init. `detectOS()` called immediately returns the User-Agent answer, and
-the same call a tick later returns the corrected one. Batches are
-unaffected — `batchAttributes()` runs in `flush()`, after the promise has
-settled.
+**These are pure detection, not "what will be sent."** An explicit `os`,
+`browser` or `device` option overrides detection when a batch is built, and
+`detect*` deliberately ignores it: `detectBrowser({ userAgent })` has to
+answer for *that* User-Agent, or it is useless for the debugging case it
+exists for. What the next batch carries is the option when one is set and
+this otherwise — the caller set the option, so they already know which.
+
+**All three are views onto one internal resolve.** This is not a tidiness
+point: OS and device class share their signals almost entirely (`iPad`,
+`maxTouchPoints`, the console and TV markers), and three independent passes
+would eventually disagree — reporting `os: ipados` with `device: desktop`,
+which is not a state that exists.
+
+**Signals are pre-resolved, which is what keeps these synchronous.**
+`brave` is the *presence* of `navigator.brave`, not the result of its
+`isBrave()`; `platformVersion` is the resolved value, not the promise. Both
+of the underlying APIs are async, and neither can be awaited inside a
+synchronous detect. The ambient path reads presence directly and takes
+`platformVersion` from the promise the instance kicked off at init, so
+`detectOS()` called immediately after init returns the User-Agent answer
+and the same call a tick later returns the corrected one. Batches are
+unaffected — `batchAttributes()` runs in `flush()`, after it has settled.
+A test supplies both fields directly and never fakes a promise.
 
 Because `TestDocumentMatchesSDK` checks every documented SDK symbol against
-the source, these three must appear in both `docs/twillingate.md` and
-`sdk/src/twillingate.ts`.
+the source, `detectOS`, `detectBrowser`, `detectDevice` and `ClientSignals`
+must appear in both `docs/twillingate.md` and `sdk/src/twillingate.ts`.
 
 ### OS detection
 
@@ -666,9 +701,11 @@ Same principle as OS: most specific first, return on the first hit,
 because every Chromium UA contains `Chrome` and every Chrome UA contains
 `Safari`.
 
-1. **`navigator.brave?.isBrave()`** → `brave`. First, because Brave's
+1. **`navigator.brave` is defined** → `brave`. First, because Brave's
    User-Agent is deliberately identical to Chrome's and nothing later in
-   this list can recover it.
+   this list can recover it. Note it is the *presence* of the property,
+   not `isBrave()`, which returns a Promise and so cannot be consulted
+   synchronously. Presence is sufficient: no other browser defines it.
 2. **`navigator.userAgentData.brands`** (Chromium ≥90) — match `Microsoft
    Edge`, `Opera`, `Samsung Internet`, `Vivaldi`, then `Google Chrome` /
    `Chromium`. This is the API built for the question, and it survives
@@ -761,17 +798,22 @@ TDD throughout.
   not reported as `android`, Android not as `linux`, BSD not as `linux`,
   iPadOS desktop mode not as `macos`, and `userAgentData` not overriding a specific UA hit. Also
   `other` as the floor, and an explicit `os` option beating detection.
-- SDK detection API: `detectOS`, `detectBrowser` and `detectDevice` return
-  what the next batch carries; each option overrides its detected value;
-  and OS and device stay consistent — an iPadOS desktop-mode User-Agent
-  gives `ipados` with `tablet`, never `macos` with `desktop`.
+- SDK detection API: every detection case is driven through a
+  `ClientSignals` literal rather than by mutating `navigator`, so the table
+  is the test and no case depends on what jsdom happens to provide. A
+  supplied signals object is used verbatim — a field left out is absent,
+  not read from the ambient browser. `detect*` ignores the matching option,
+  while a batch built with that option set carries the option: the two
+  answers differ on purpose and both are asserted. OS and device stay
+  consistent — iPadOS desktop-mode signals give `ipados` with `tablet`,
+  never `macos` with `desktop`.
 - SDK browser detection: a table-driven case per vocabulary value with a
   real User-Agent, plus the orderings a naive implementation gets wrong —
-  Brave not reported as `chrome` (the `navigator.brave` stub), Edge not as
-  `chrome`, Chrome not as `safari`, Samsung Internet not as `chrome`, and
-  `brands` losing to nothing because it runs before the UA fallback but
-  after `navigator.brave`. Safari's version read from `Version/` and not
-  from `Safari/`.
+  Brave not reported as `chrome` (`{ brave: true }` beside a verbatim
+  Chrome User-Agent, which is the whole case), Edge not as `chrome`, Chrome
+  not as `safari`, Samsung Internet not as `chrome`, and `brands` losing to
+  nothing because it runs before the UA fallback but after `brave`.
+  Safari's version read from `Version/` and not from `Safari/`.
 - SDK device detection: the three legacy classes; a Quest User-Agent giving
   `xr` and not `mobile`, with `$os` still `android`; a PlayStation giving
   `other` rather than falling through to `desktop`; and
