@@ -304,14 +304,26 @@ already growing that table's row count on its own.
 ### `$device` — closed, lower-case, never empty
 
 ```
-'desktop' | 'mobile' | 'tablet' | 'tv' | 'console' | 'watch' | 'xr'
+'desktop' | 'mobile' | 'tablet' | 'wearable' | 'xr'
 | 'other' | 'unknown'
 ```
 
-The first three are what the parser emits. The rest mirror the groupings
-`$os` already has — a `playstation` row whose device class says `desktop`
-is simply wrong, and today it says exactly that. `watch` and `xr` are
-declare-only for the same reason `watchos` and `visionos` are.
+The first three are what the parser emits. The cut for the rest is one
+test: **a device value earns its place only when `$os` cannot imply it.**
+
+- `wearable` and `xr` pass. Wear OS reports as `android` and Quest reports
+  as `android`, so both are facts no other column carries.
+- `tv` and `console` fail. `tizen`, `webos`, `tvos` and
+  `playstation`/`xbox`/`nintendo` already name them, and a second column
+  repeating it buys nothing.
+- A purpose-shaped value like `iot` fails twice over: it is not a form
+  factor — the others all describe screen size and how the thing is held —
+  and nothing detects it, so it would mean "miscellaneous", which is what
+  `other` means already.
+
+`other` therefore carries consoles, TVs and embedded clients, with `$os`
+naming the specific one. That is still a correction: today a PlayStation
+reports `device = desktop`, because `desktop` is the parser's default.
 
 `$device_model` is unchanged: it has always been declarable and stays free
 text beside `$device`.
@@ -674,20 +686,27 @@ because every Chromium UA contains `Chrome` and every Chrome UA contains
 
 Shares the OS pass, and resolves in this order:
 
-1. Console and TV markers, the same ones that produced the OS value:
-   `Xbox`/`PlayStation`/`Nintendo` → `console`;
-   `AppleTV`/`tvOS`/`Web0S`/`webOS`/`Tizen` → `tv`.
-2. `iPad`, `Tablet`, or the iPadOS desktop-mode signal
+1. `OculusBrowser` or `Quest` → `xr`. First, and the reason `xr` is a value
+   at all: the OS pass reports these as `android`, so nothing downstream
+   could recover it.
+2. Console, TV and embedded markers — `Xbox`, `PlayStation`, `Nintendo`,
+   `AppleTV`, `tvOS`, `Web0S`, `webOS`, `Tizen` → **`other`**. They get no
+   value of their own because `$os` already names each one, but they must
+   not fall through to the default, which is what makes a PlayStation a
+   `desktop` today.
+3. `iPad`, `Tablet`, or the iPadOS desktop-mode signal
    (`navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1`) →
    `tablet`. That is the same test that yields `ipados`, which is what
    keeps the two answers consistent.
-3. `navigator.userAgentData.mobile === true` → `mobile`. It is a boolean
+4. `navigator.userAgentData.mobile === true` → `mobile`. It is a boolean
    and does not separate tablets, so it runs after the tablet tests.
-4. `Mobile` or `iPhone` in the UA → `mobile`.
-5. Otherwise `desktop`.
+5. `Mobile` or `iPhone` in the UA → `mobile`.
+6. Otherwise `desktop`.
 
-`watch` and `xr` are never returned; they are reachable only through the
-`device` option, matching `watchos` and `visionos`.
+`wearable` is never returned by detection — watchOS has no browser and Wear
+OS carries no reliable marker — so it is declare-only, like `watchos` on
+`$os`. `xr` is the opposite: detectable, and detection is the only way to
+get it, since a Quest browser is a web client that declares nothing.
 
 ## Documentation
 
@@ -753,9 +772,11 @@ TDD throughout.
   `brands` losing to nothing because it runs before the UA fallback but
   after `navigator.brave`. Safari's version read from `Version/` and not
   from `Safari/`.
-- SDK device detection: the three legacy classes, `console` and `tv` from
-  the same markers that set the OS, and `userAgentData.mobile` not
-  overriding a tablet hit.
+- SDK device detection: the three legacy classes; a Quest User-Agent giving
+  `xr` and not `mobile`, with `$os` still `android`; a PlayStation giving
+  `other` rather than falling through to `desktop`; and
+  `userAgentData.mobile` not overriding a tablet hit. `wearable` is
+  reachable only through the `device` option.
 
 ## Breaking changes and rollout
 
