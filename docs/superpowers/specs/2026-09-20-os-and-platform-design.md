@@ -1,6 +1,6 @@
 # The client declares its environment: `$os`, `$platform`, `$browser`, `$device`
 
-(The file keeps its `os-and-platform` name; the other two specs and the
+(The file keeps its `os-and-platform` name; the other three specs and the
 sequencing note link to it.)
 
 Status: proposed
@@ -8,7 +8,7 @@ Date: 2026-09-20
 
 ## Sequencing
 
-Second of three specs that land in order. It is written against the schema
+Second of four specs that land in order. It is written against the schema
 `2026-09-19-project-ids-design.md` leaves behind, so it assumes
 `project_id INTEGER` on every table and the raw product table renamed to
 `events`, and it owns migration `015`:
@@ -16,11 +16,17 @@ Second of three specs that land in order. It is written against the schema
 1. `2026-09-19-project-ids-design.md` — `014_project_ids.sql`
 2. **this spec** — `015_environment.sql`
 3. `2026-09-20-sdk-consent-and-instances-design.md` — no migration
+4. `2026-09-21-product-attr-groups-design.md` — `016_product_attr_groups.sql`
 
-That third spec inherits this one's SDK work: `batchAttributes()` is
+The third spec inherits this one's SDK work: `batchAttributes()` is
 computed per flush and applied to every event in the batch, so detection
 here reaches programmatic product events and views alike, with no
 configuration on its side.
+
+The fourth recreates `v_product_attrs` once more, threading `group_id`
+through every arm — including the `$platform` arm this spec adds. It goes
+after this one so the view is rebuilt twice in sequence rather than merged
+by hand; nothing else in it touches this spec's tables.
 
 ## Problem
 
@@ -172,9 +178,11 @@ opposite ("the vocabulary is a convenience, not an allowlist"), and its
 comment flips with it.
 
 An **absent** `$os` stores `unknown`, not `other`. A modern SDK always sends a
-value, so `unknown` in the data means "this traffic is not declaring OS" — a
-live measurement rather than a silent gap, and a value the breakdown API can
-filter on directly instead of reasoning about empty strings.
+value, so `unknown` in the data means "this traffic is not declaring OS" —
+a backend relay, a custom client, or the SDK itself in a runtime with no
+browser to read (see the detection floor below) — a live measurement rather
+than a silent gap, and a value the breakdown API can filter on directly
+instead of reasoning about empty strings.
 
 ### Detection leaves the server entirely
 
@@ -194,9 +202,9 @@ per dimension:
 
 - **iPadOS 13+ in desktop mode** sends `Macintosh; Intel Mac OS X` and is
   separable only by `maxTouchPoints`.
-- **Brave** ships an unmodified Chrome User-Agent on purpose. Only
-  `navigator.brave.isBrave()` answers, so a server parse cannot ever count
-  Brave, and silently folds it into Chrome.
+- **Brave** ships an unmodified Chrome User-Agent on purpose. Only the
+  presence of `navigator.brave` answers, so a server parse cannot ever
+  count Brave, and silently folds it into Chrome.
 
 A note on what `kind` gating meant. Enrichment ran only for `kind='web'`
 (`handlers.go:159`), so app and CLI rows have carried an empty `browser`
@@ -243,9 +251,11 @@ Two consequences of that choice, both accepted:
   every `$` key into a typed field, and `handlers.go:125` stores only
   `rv.Custom`, so nothing reserved can reach `events.attributes`.
   `$os_version` is dropped the same way and for the same reason — `events`
-  has had no `os_version` column since 001. An SDK that sends all four keys
-  on every batch is thus correct and cheap: the product side keeps `$os` and
-  `$platform`, which are columns, and silently discards the other two.
+  has had no `os_version` column since 001. An SDK that sends every
+  environment key on every batch is thus correct and cheap: the product
+  side keeps `$os` and `$platform`, which are columns, and silently
+  discards `$os_version`, `$os_name`, `$browser`, `$browser_version` and
+  `$device`.
 
 Unlike `$os` and `$platform` it is **empty when absent**, not `unknown`. It is
 not a breakdown dimension, so there is nothing to filter and a sentinel would
@@ -330,7 +340,8 @@ text beside `$device`.
 
 ## Storage — migration `015_environment.sql`
 
-013 and 014 are already applied on prod, so this is 015.
+013 is the last migration on `main` and 014 belongs to the project-ids
+spec, so this is 015.
 
 ```sql
 ALTER TABLE views          ADD COLUMN platform TEXT NOT NULL DEFAULT 'unknown';
@@ -403,7 +414,7 @@ measured, so it is not done.
 
 The **never-empty** guarantee therefore holds everywhere, including aggregate
 history. Only the **closed-vocabulary** guarantee is partial: days aggregated
-before 014 can still show a tail of unlisted OS names. The daily pass rebuilds
+before 015 can still show a tail of unlisted OS names. The daily pass rebuilds
 from raw, so anything not yet rolled up is self-correcting.
 
 ### 5. Browser and device fold — loss-free
@@ -454,7 +465,7 @@ Seeding `unknown` rather than omitting the row keeps the platform breakdown's
 totals consistent with the daily totals, and `unknown` states plainly what is
 true of those days. `views` stays exact because views are additive. `visitors`
 can overcount in one case only: a project running **two or more non-web kinds**
-on the same pre-014 day, whose separate rows collapse into one `unknown` row.
+on the same pre-015 day, whose separate rows collapse into one `unknown` row.
 Bounded to that row, on those days.
 
 ### 7. `agg_views_app_versions` rekey
@@ -553,14 +564,25 @@ detection.**
 - `browser?: string`, `browserVersion?: string`, `device?: string` — with
   `data-browser`, `data-browser-version`, `data-device`.
 - `platform?: string` — stops being `@deprecated use os` and becomes the real
-  platform option, defaulting to `"web"`. `sdk/src/twillingate.ts:211`
+  platform option. `sdk/src/twillingate.ts:211`
   (`this.os = opts.os || opts.platform || null`) is deleted.
 - `data-platform` joins `data-os` in the snippet reader.
 
-`batchAttributes` sends `$platform`, `$os`, `$browser` and `$device` on
-every batch — all four always resolve to a value — plus `$os_version`,
-`$os_name` and `$browser_version` when detection or an override produced
-them.
+**`platform` defaults to `"web"` only while `kind` is `web`.** A client
+that declares any other kind is a wrapper — Electron, Capacitor, a CLI —
+and the SDK cannot tell which, so it sends no `$platform` and the server
+records `unknown`, the value that exists to make undeclared traffic
+visible. Guessing `web` there would be a silent wrong answer in exactly
+the population that set `kind` to be told apart from the web. Such a
+client sets `platform` beside `kind`, and the docs say so in the same row.
+This mirrors the migration's backfill, which maps `kind='web'` to `web`
+and nothing else. Platform is the one environment value with no
+`detect*` function: it is declared or defaulted, never detected.
+
+`batchAttributes` sends `$os`, `$browser` and `$device` on every batch —
+all three always resolve to a value — plus `$platform` under the rule
+above, and `$os_version`, `$os_name` and `$browser_version` when detection
+or an override produced them.
 
 ### Detection is public API, and takes its signals as an argument
 
@@ -632,9 +654,11 @@ must appear in both `docs/twillingate.md` and `sdk/src/twillingate.ts`.
 ### OS detection
 
 Detection is now load-bearing — it is the only source of OS. Resolution order:
-explicit `os` option → detection → `other`.
+explicit `os` option → detection, whose own floors are steps 7 and 8 below.
 
-Synchronous and cheap — no `getHighEntropyValues()`, which is async.
+Synchronous and cheap. The one async input, `getHighEntropyValues()`, is
+never awaited here: the instance starts it once at init and detection reads
+whatever has resolved, as the signals section above describes.
 
 **Order is the whole design here.** Most of these User-Agents are supersets of
 a more generic one: Fire OS contains `Android`, every Android UA contains
@@ -661,9 +685,15 @@ generic, so the checks run most-specific first and return on the first hit.
 6. **Generic UA fallback**: `Android` → `android`; `Windows` → `windows`;
    `Mac OS X`/`Macintosh` → `macos`;
    `FreeBSD`/`OpenBSD`/`NetBSD`/`DragonFly` → `bsd`; `X11`/`Linux` → `linux`.
-7. Otherwise `other` — a browser is running on *something*, so `other` is the
-   right floor for detection. `unknown` is never produced by the SDK; it only
-   appears when no `$os` reaches the server at all.
+7. Otherwise `other` — a User-Agent was present and named nothing on the
+   list, so there is an OS and it is outside the vocabulary.
+8. **No User-Agent at all** — no `navigator`, or a `ClientSignals` carrying
+   neither `userAgent` nor `uaPlatform` — is `unknown`. There is nothing to
+   detect, and `other` would claim there was. This is the server's own
+   two-floor distinction applied one step earlier, and it is what lets
+   `detectOS({})` in a test answer honestly. In a browser it is
+   unreachable, so `unknown` from the SDK means a non-browser runtime that
+   declared nothing.
 
 `watchos` and `visionos` are never returned by detection; they are reachable
 only through the explicit `os` option.
@@ -716,8 +746,9 @@ because every Chromium UA contains `Chrome` and every Chrome UA contains
    `Chrome/`, then `Safari/`. The marker is also where the version starts,
    except Safari, which carries its under `Version/` — `Safari/` is the
    WebKit build number.
-4. Otherwise `other`. A browser is running, so `other` is the right floor;
-   the SDK never produces `unknown`.
+4. Otherwise `other` — a User-Agent was present and matched no marker.
+   With neither a User-Agent nor `brands`, `unknown`, on the same terms as
+   `$os`.
 
 ### Device detection
 
@@ -738,7 +769,8 @@ Shares the OS pass, and resolves in this order:
 4. `navigator.userAgentData.mobile === true` → `mobile`. It is a boolean
    and does not separate tablets, so it runs after the tablet tests.
 5. `Mobile` or `iPhone` in the UA → `mobile`.
-6. Otherwise `desktop`.
+6. Otherwise `desktop` when a User-Agent was present, and `unknown` when
+   there was none, on the same terms as `$os`.
 
 `wearable` is never returned by detection — watchOS has no browser and Wear
 OS carries no reliable marker — so it is declare-only, like `watchos` on
@@ -796,8 +828,12 @@ TDD throughout.
   vocabulary value with a real User-Agent
   string, plus the orderings that a naive implementation gets wrong — Fire OS
   not reported as `android`, Android not as `linux`, BSD not as `linux`,
-  iPadOS desktop mode not as `macos`, and `userAgentData` not overriding a specific UA hit. Also
-  `other` as the floor, and an explicit `os` option beating detection.
+  iPadOS desktop mode not as `macos`, and `userAgentData` not overriding a
+  specific UA hit. Also `other` as the floor for an unrecognised
+  User-Agent, `unknown` for an empty `ClientSignals`, and an explicit `os`
+  option beating detection. `$platform` is `web` in a batch built with the
+  default kind and absent from one built with `kind: "app"` and no
+  `platform` option.
 - SDK detection API: every detection case is driven through a
   `ClientSignals` literal rather than by mutating `navigator`, so the table
   is the test and no case depends on what jsdom happens to provide. A
