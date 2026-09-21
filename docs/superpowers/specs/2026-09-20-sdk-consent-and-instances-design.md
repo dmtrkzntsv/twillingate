@@ -8,12 +8,13 @@ Date: 2026-09-20
 Last of three specs that land in order, and the only one with no migration:
 
 1. `2026-09-19-project-ids-design.md` — `014_project_ids.sql`
-2. `2026-09-20-os-and-platform-design.md` — `015_platform.sql`
+2. `2026-09-20-os-and-platform-design.md` — `015_environment.sql`
 3. **this spec** — SDK and docs only
 
 It is written against what those two leave behind: projects are addressed
 by integer id, the raw product table is `events`, and the SDK already
-detects OS on the client. §4 depends on all three.
+detects OS, browser and device class on the client. §4 depends on all
+three.
 
 The SDK work rebases onto the os/platform spec's. Both edit
 `sdk/src/twillingate.ts`, and both regenerate the committed bundle
@@ -257,24 +258,31 @@ the user id it already hashes, then `et.page(path, {...})` per route change
 and `et.track(name, attrs)` for actions. Signed-out visitors send no user
 id, so the server attributes them to the daily-rotating connection hash.
 
-Browser, device class and country are derived on the server from the
-User-Agent and IP of the ingest request and then discarded, for `web`-kind
-events. The product tag therefore keeps the default `kind: "web"`. This
-applies to self-hosted users' connections too.
+Country is derived on the server from the IP of the ingest request and then
+discarded, for `web`-kind events, and the User-Agent is read to drop bots.
+Nothing else comes off the connection any more. The product tag keeps the
+default `kind: "web"` for the bot drop and the country lookup. This applies
+to self-hosted users' connections too.
 
-OS is no longer among them, and does not have to be declared either — see
-below.
+Everything else about the client — OS, browser, device class — now arrives
+declared, and Econumo declares none of it by hand. See below.
 
 ### 4.1 OS detection is inherited, not configured
 
-The os/platform spec moves OS detection off the User-Agent and into the
-SDK. This instance gets it for nothing, in both directions that matter
-here: `batchAttributes()` is computed once per flush and applied to every
-event in the batch, so `$os`, `$os_version`, `$os_name` and `$platform`
-ride along on everything the instance emits — `et.track(...)` product
-events and `et.page(...)` / `$page_view` views alike. Econumo declares
-none of them and configures nothing. A self-hosted browser is detected the
-same way a cloud one is, which is the part the server could no longer do.
+The os/platform spec moves OS, browser and device-class detection off the
+User-Agent and into the SDK. This instance gets all of it for nothing, in
+both directions that matter here: `batchAttributes()` is computed once per
+flush and applied to every event in the batch, so `$os`, `$os_version`,
+`$os_name`, `$platform`, `$browser`, `$browser_version` and `$device` ride
+along on everything the instance emits — `et.track(...)` product events and
+`et.page(...)` / `$page_view` views alike. Econumo declares none of them
+and configures nothing. A self-hosted browser is detected the same way a
+cloud one is, which is the part the server could no longer do.
+
+If Econumo ever wants to read those values itself — to branch on the
+platform, or to log them — the same spec exposes `et.detectOS()`,
+`et.detectBrowser()` and `et.detectDevice()`, each returning exactly what
+the next batch will carry.
 
 What is *stored* differs by table, and the asymmetry is deliberate:
 
@@ -284,6 +292,9 @@ What is *stored* differs by table, and the asymmetry is deliberate:
 | `$platform` | column | column, added by 015 |
 | `$os_version` | column | not stored |
 | `$os_name` | column | not stored |
+| `$browser` | column | not stored |
+| `$browser_version` | column | not stored |
+| `$device` | column | not stored |
 
 A key with no destination on the product side is dropped rather than kept
 as an ordinary attribute, because `resolveAttributes` splits the whole `$`
@@ -294,8 +305,14 @@ cap, and it means the tag can send all four keys on every batch without
 either configuring per-event attributes or risking attribute cardinality.
 
 So the product project gains `$os` and `$platform` as breakdown dimensions
-through `product_attributes`, and the `$page_view` rows gain the full set
-through the views family. Neither needs a line of Econumo code.
+through `product_attributes` — the two the product table has columns for —
+and the `$page_view` rows gain the full set through the views family.
+Neither needs a line of Econumo code.
+
+That asymmetry is worth expecting rather than debugging: browser and device
+class are answerable for Econumo's pageviews and not for its product
+events, because `events` has no column for them. Questions about browser
+mix belong to the views family.
 
 Self-hosted sends `$page_view` as well, with `$host` hashed and `$referrer`
 suppressed per call, and with clean paths so no campaign data is collected.
