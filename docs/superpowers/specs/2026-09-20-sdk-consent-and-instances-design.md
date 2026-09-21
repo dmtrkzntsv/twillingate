@@ -5,23 +5,26 @@ Date: 2026-09-20
 
 ## Sequencing
 
-Last of three specs that land in order, and the only one with no migration:
+Third of four specs that land in order, and the only one with no migration:
 
 1. `2026-09-19-project-ids-design.md` — `014_project_ids.sql`
 2. `2026-09-20-os-and-platform-design.md` — `015_environment.sql`
 3. **this spec** — SDK and docs only
+4. `2026-09-21-product-attr-groups-design.md` — `016_product_attr_groups.sql`
 
-It is written against what those two leave behind: projects are addressed
-by integer id, the raw product table is `events`, and the SDK already
-detects OS, browser and device class on the client. §4 depends on all
-three.
+It is written against what the first two leave behind: projects are
+addressed by integer id, the raw product table is `events`, and the SDK
+already detects OS, browser and device class on the client. §4 depends on
+all three. The fourth spec does not depend on this one and shares no files
+with it.
 
 The SDK work rebases onto the os/platform spec's. Both edit
 `sdk/src/twillingate.ts`, and both regenerate the committed bundle
 `internal/server/twillingate.js` — which is built output, so it is rebuilt
-with `npm run build` and never merged by hand. The bundle assertions in
-`internal/server/twillingate_script_test.go` are trimmed by that spec too;
-check what is left before removing the `analytics_*` and `webdriver` lines.
+with `npm run build` and never merged by hand. The os/platform spec leaves
+`internal/server/twillingate_script_test.go` alone — none of its markers
+names an environment key — so the three assertions removed below are the
+only change either spec makes to that file.
 
 ## Goal
 
@@ -270,6 +273,14 @@ the caller passes. To suppress it per call, **an attribute whose value is
 neither the real host nor the referrer. The rule is general and applies to
 any attribute, reserved or custom.
 
+It applies to the event's own attributes — what `page()`, `screen()` and
+`track()` are given, plus what `attrs()` merged under them. Batch
+attributes are out of its reach: `$os`, `$browser` and the rest come from
+detection or from `init` options, and the server layers an event's
+attributes over the batch's key by key, so an event that merely omits
+`$browser` still carries the batch's value. Changing one of those means
+setting the matching `init` option, which every detected value has.
+
 This matters beyond tidiness. The server drops a referrer as a self-referral
 only when its host matches `$host`. Once `$host` is rewritten to a hashed
 value, that check stops matching and the operator's real domain would land
@@ -295,10 +306,13 @@ and `et.track(name, attrs)` for actions. Signed-out visitors send no user
 id, so the server attributes them to the daily-rotating connection hash.
 
 Country is derived on the server from the IP of the ingest request and then
-discarded, for `web`-kind events, and the User-Agent is read to drop bots.
-Nothing else comes off the connection any more. The product tag keeps the
-default `kind: "web"` for the bot drop and the country lookup. This applies
-to self-hosted users' connections too.
+discarded. It is looked up for every kind (`s.geo.Country` sits above the
+per-event loop in `handlers.go`) and lands only on views, since `events`
+has no country column. The User-Agent is read to drop bots, and that check
+is the one thing gated on `kind == "web"`. Nothing else comes off the
+connection any more. The product tag keeps the default `kind: "web"` so its
+`$page_view` rows get the bot drop. This applies to self-hosted users'
+connections too.
 
 Everything else about the client — OS, browser, device class — now arrives
 declared, and Econumo declares none of it by hand. See below.
@@ -316,9 +330,13 @@ and configures nothing. A self-hosted browser is detected the same way a
 cloud one is, which is the part the server could no longer do.
 
 If Econumo ever wants to read those values itself — to branch on the
-platform, or to log them — the same spec exposes `et.detectOS()`,
-`et.detectBrowser()` and `et.detectDevice()`, each returning exactly what
-the next batch will carry.
+OS, or to log them — the same spec exposes `et.detectOS()`,
+`et.detectBrowser()` and `et.detectDevice()`. They are pure detection: an
+`os`, `browser` or `device` option set in `init` overrides them in the
+batch but not in their return value, so a caller that set an option
+already knows the answer, and one that did not gets what the batch will
+carry. `$platform` is never detected — it is `web` by default for a `web`
+kind and declared otherwise — so there is no `detectPlatform()`.
 
 What is *stored* differs by table, and the asymmetry is deliberate:
 
@@ -337,7 +355,7 @@ as an ordinary attribute, because `resolveAttributes` splits the whole `$`
 namespace into typed fields and `handlers.go:125` stores only `rv.Custom`.
 Nothing reserved reaches `events.attributes`. That is what keeps a
 free-form `$os_name` out of `agg_product_attrs` and away from the `top_n`
-cap, and it means the tag can send all four keys on every batch without
+cap, and it means the tag can send all seven keys on every batch without
 either configuring per-event attributes or risking attribute cardinality.
 
 So the product project gains `$os` and `$platform` as breakdown dimensions
@@ -403,6 +421,62 @@ DELETE FROM actors             WHERE project_id = :id;
 
 The next daily pass recomputes all three from the remaining raw rows.
 
+## The SDK surface once both SDK specs have landed
+
+Recorded in one place because the two specs add to it separately, and
+because "simple but flexible" is a property of the whole. The shape is:
+**everything is detected or defaulted, every detected value has one flat
+override, and every override has one `data-` attribute of the same name.**
+A tag carrying only `data-key` gets all of it.
+
+```ts
+interface InitOptions {
+  key: string;                          // required
+  url?: string;                         // defaults to the script's origin
+
+  // who
+  identity?: "anonymous" | "identified";
+  user?: string;
+  group?: string;
+  installId?: string;
+
+  // where records may live, and which instance owns them — this spec
+  consent?: boolean | string | (() => unknown);  // default false
+  instance?: string;                    // default "twillingate"
+
+  // what the client is — the os/platform spec; an option beats detection
+  kind?: string;                        // default "web"
+  platform?: string;                    // "web" for a web kind, else unset
+  os?: string;       osVersion?: string;      osName?: string;
+  browser?: string;  browserVersion?: string;
+  device?: string;
+  appVersion?: string;
+
+  // page tracking
+  autoPageviews?: boolean;              // snippet true, init() false
+  maskUrl?: MaskSpec;
+  routing?: "history" | "hash";
+  flushInterval?: number;               // ms, default 1000
+}
+```
+
+Methods on an instance: `init`, `page`, `screen`, `track`, `attrs`,
+`identify`, `group`, `reset`, `flush`, `consent`, `detectOS`,
+`detectBrowser`, `detectDevice`, and the `util` helpers. Package exports
+add the three `detect*` functions, `ClientSignals`, `supersededBy` and
+`autoInit`.
+
+Two things are deliberately not there:
+
+- **No nested `environment: {...}` object.** Options stay flat because the
+  `data-` attributes are flat and `TestDocumentMatchesSDK` holds the two
+  lists to each other; a second shape would be a second thing to learn.
+- **No `signals` option on `init`.** The instance always detects from the
+  ambient browser. `ClientSignals` is an argument to the `detect*`
+  functions, for tests and debugging; a runtime with no `navigator`
+  declares what it is through the options above and otherwise reports
+  `unknown`.
+
 ## Alternatives rejected
 
 - **A third identity mode** (`consent` / `hybrid`), where the server keeps
@@ -423,7 +497,9 @@ The next daily pass recomputes all three from the remaining raw rows.
 
 ## Testing
 
-Everything lands in `sdk/` and `docs/`. No Go code changes.
+Everything lands in `sdk/` and `docs/`. No Go production code changes;
+the one Go file touched is the bundle test below, which loses three
+assertions.
 
 Vitest, in `sdk/src/`:
 
