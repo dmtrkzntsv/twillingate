@@ -3,6 +3,22 @@
 Status: proposed
 Date: 2026-09-20
 
+## Sequencing
+
+Second of three specs that land in order. It is written against the schema
+`2026-09-19-project-ids-design.md` leaves behind, so it assumes
+`project_id INTEGER` on every table and the raw product table renamed to
+`events`, and it owns migration `015`:
+
+1. `2026-09-19-project-ids-design.md` — `014_project_ids.sql`
+2. **this spec** — `015_platform.sql`
+3. `2026-09-20-sdk-consent-and-instances-design.md` — no migration
+
+That third spec inherits this one's SDK work: `batchAttributes()` is
+computed per flush and applied to every event in the batch, so detection
+here reaches programmatic product events and views alike, with no
+configuration on its side.
+
 ## Problem
 
 `$platform` is currently a deprecated alias for `$os` (`internal/server/ingest.go:120`),
@@ -159,17 +175,30 @@ decide whether something in there deserves its own vocabulary value.
 
 **It is deliberately not part of any aggregate key.** `$os` and `$os_version`
 remain the structured, queryable pair; `os_name` is a forensic and display
-field on the raw row and `v_events_flat`. That is what keeps its unbounded
-cardinality harmless.
+field on the raw row, reachable through `query`. That is what keeps its
+unbounded cardinality harmless. It is **not** on `v_events_flat`:
+`RebuildFlatView` builds that view `FROM events`
+(`internal/store/sqlite/flatview.go:82`), the product table, which by the
+rule below has no `os_name` column.
 
 Two consequences of that choice, both accepted:
 
 - It is **not carried into aggregates**, so it disappears when raw rows roll
   up. Investigating `other` is something you do on recent data, before the
   retention window closes.
-- It is **views-only**. `product_events` does not get the column: its OS
-  surfaces through `product_attributes`, where a free-form key would blow up
-  the attribute cardinality the `top_n` cap exists to bound.
+- It is **views-only**. `events` does not get the column: its OS surfaces
+  through `product_attributes`, where a free-form key would blow up the
+  attribute cardinality the `top_n` cap exists to bound.
+
+  A `$os_name` arriving on a product-event batch is therefore **resolved and
+  dropped**, not stored as an ordinary attribute. That is already how the
+  reserved namespace works and needs no new rule: `resolveAttributes` splits
+  every `$` key into a typed field, and `handlers.go:125` stores only
+  `rv.Custom`, so nothing reserved can reach `events.attributes`.
+  `$os_version` is dropped the same way and for the same reason — `events`
+  has had no `os_version` column since 001. An SDK that sends all four keys
+  on every batch is thus correct and cheap: the product side keeps `$os` and
+  `$platform`, which are columns, and silently discards the other two.
 
 Unlike `$os` and `$platform` it is **empty when absent**, not `unknown`. It is
 not a breakdown dimension, so there is nothing to filter and a sentinel would
@@ -197,17 +226,23 @@ Note the asymmetry with `$kind`, which validates without case folding. Left
 alone deliberately: it is a separate behavioural change to a key not
 otherwise in scope.
 
-## Storage — migration `014_platform.sql`
+## Storage — migration `015_platform.sql`
 
-012 is already applied on prod, so this is a new migration.
+013 and 014 are already applied on prod, so this is 015.
 
 ```sql
 ALTER TABLE views          ADD COLUMN platform TEXT NOT NULL DEFAULT 'unknown';
-ALTER TABLE product_events ADD COLUMN platform TEXT NOT NULL DEFAULT 'unknown';
+ALTER TABLE events         ADD COLUMN platform TEXT NOT NULL DEFAULT 'unknown';
 ALTER TABLE views          ADD COLUMN os_name  TEXT NOT NULL DEFAULT '';
 ```
 
-The default does the whole `product_events` backfill on its own, and gives
+`events.platform` is a new column that reuses an old name. 003 added a
+`platform` column to `product_events` and 012 renamed it to `os` — that
+rename is exactly the conflation this spec undoes. The column arriving here
+is the second dimension, not the one 012 took away, and it starts empty for
+every existing row.
+
+The default does the whole `events` backfill on its own, and gives
 `views` a correct value for every row the steps below do not touch.
 
 ### Statement order
@@ -228,9 +263,9 @@ electron. **Nothing after this migration ever derives platform from os.**
 - Any other kind → `unknown` (the column default; no statement needed).
 - A derived value that does not match the platform pattern → `unknown`.
 
-### 2. `product_events` backfill — none
+### 2. `events` backfill — none
 
-Deliberate. `product_events` has no `kind` column, so `lower(os)` would label
+Deliberate. `events` has no `kind` column, so `lower(os)` would label
 a web SDK's custom events `macos` rather than `web`. Every row keeps the
 column default of `unknown`, which is the honest answer; the dimension fills
 going forward.
@@ -244,7 +279,7 @@ value into `os_name`:
 UPDATE views SET os_name = os WHERE lower(os) NOT IN (<vocabulary>) AND os <> '';
 ```
 
-**Then** `views.os` and `product_events.os` are lower-cased; `''` becomes
+**Then** `views.os` and `events.os` are lower-cased; `''` becomes
 `unknown`, and anything else outside the vocabulary becomes `other`.
 
 This ordering is what makes the fold **non-destructive for raw rows**: the
@@ -276,13 +311,13 @@ table is a shape to copy, not a thing to change.
 
 ```sql
 CREATE TABLE agg_views_platforms (
-    project TEXT NOT NULL, day TEXT NOT NULL, platform TEXT NOT NULL,
+    project_id INTEGER NOT NULL, day TEXT NOT NULL, platform TEXT NOT NULL,
     visitors INTEGER NOT NULL, views INTEGER NOT NULL,
-    PRIMARY KEY (project, day, platform)
+    PRIMARY KEY (project_id, day, platform)
 ) WITHOUT ROWID;
 ```
 
-Seeded from `agg_views_daily`, which is keyed `(project, day, kind)` and
+Seeded from `agg_views_daily`, which is keyed `(project_id, day, kind)` and
 carries `visitors` and `views`:
 
 - `kind='web'` → `platform='web'`. Exact.
@@ -300,7 +335,7 @@ Bounded to that row, on those days.
 
 ### 6. `agg_views_app_versions` rekey
 
-From `(project, day, os, app_version)` to `(project, day, platform,
+From `(project_id, day, os, app_version)` to `(project_id, day, platform,
 app_version)`, matching the key's own stated rationale: `2.4.1` means
 unrelated things across the iOS and Android builds of one product.
 
@@ -308,7 +343,7 @@ Rebuilt with `platform = lower(os)`, or `unknown` when that does not match the
 platform pattern. For rows whose `os` is canonical — effectively all of them —
 this is value-preserving and merges nothing. The exception is the tail:
 aggregate history is deliberately not OS-folded, so if two out-of-vocabulary
-values coexist for one `(project, day, app_version)` their rows merge into one
+values coexist for one `(project_id, day, app_version)` their rows merge into one
 `unknown` row whose `visitors` is a sum that can overcount. Accepted only
 because the alternative is dropping app-version history for those projects.
 
@@ -322,8 +357,8 @@ update, which for native apps is an app-store timeline.
 ### 7. Views rebuilt
 
 Exactly three views are touched, and no other view is dropped or recreated.
-Unlike 012, which had to rebuild all of them because `RENAME COLUMN` would
-otherwise leave stale definitions behind, this migration only adds columns.
+Unlike 012 and 014, which had to rebuild all of them, this migration only
+adds columns.
 
 - **`v_views_platforms`** — created. It copies the aggregate ∪ live shape of
   `v_views_countries`, the existing single-key dimension, including the
@@ -338,7 +373,7 @@ one of its keys, so populating it needs no schema change at all.
 ## Interaction with the existing OS aggregate
 
 `os_version` already **is** part of the OS rollup: `agg_views_os` is keyed
-`(project, day, os, os_version)`, `v_views_os` returns both columns, and
+`(project_id, day, os, os_version)`, `v_views_os` returns both columns, and
 `aggregate_views.go` declares it as `keys: {"os", "os_version"}`. No change is
 needed there — but populating `os_version` for web traffic for the first time
 has two consequences.
@@ -486,7 +521,7 @@ TDD throughout.
   `other`, warns, and copies the raw value into `os_name` — but does not warn
   when the client sent `other` itself, and does not overwrite an explicit
   `$os_name`.
-- `internal/store/sqlite/migration014_test.go`: the views backfill per kind,
+- `internal/store/sqlite/migration015_test.go`: the views backfill per kind,
   the raw fold, aggregate history lower-cased and `''`-relabelled but not
   folded, the
   `agg_views_platforms` seed, and the `agg_views_app_versions` rekey asserting
@@ -523,7 +558,8 @@ TDD throughout.
 
 Commit as `feat(server)!` / `feat(store)!`.
 
-Prod (`prod-us-3`, systemd) needs a DB copy before the upgrade, same as 012.
+Prod (`prod-us-3`, systemd) needs a DB copy before the upgrade, same as 012
+and 014.
 The fold is non-destructive for raw rows — the original name is copied into
 `os_name` first — but aggregate history has no such column, so its
 out-of-vocabulary tail is the part that cannot be reconstructed.
