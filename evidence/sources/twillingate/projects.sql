@@ -1,6 +1,7 @@
 -- Empty-database guard: see the note in v_views_daily.sql. A brand-new install
 -- has no projects row until the first config sync, and a zero-row result here
--- fails the source build. index.md filters the sentinel out on alias != ''.
+-- fails the source build. index.md filters the sentinel out on `id != 0`,
+-- an id AUTOINCREMENT never issues.
 --
 -- identity drives the users and retention pages, which are only meaningful
 -- for identified projects; the sentinel carries the default so those pages
@@ -13,8 +14,8 @@
 -- `archived_at is null` false for every project and files them all under
 -- Archived. Deciding it in SQLite, where the null is still a null, is the fix;
 -- see the type-inference note in identities.sql for the sibling trap.
-select alias, name, identity,
+select id, name, identity,
        case when archived_at is null then 0 else 1 end as archived
 from projects
 union all
-select '', '', 'anonymous', 0 where not exists (select 1 from projects)
+select 0, '', 'anonymous', 0 where not exists (select 1 from projects)

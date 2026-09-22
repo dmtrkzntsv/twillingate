@@ -73,8 +73,8 @@ test -f /etc/logrotate.d/twillingate     && echo "ok: logrotate installed"
 # `sh -ac` (allexport), exactly like the hint install.sh prints, matters
 # here — a plain `. file` only sets shell variables, it does not export
 # them, so DATABASE_DSN would never reach the twillingate process.
-out="$(su -s /bin/sh twillingate -c "sh -ac '. /etc/twillingate/twillingate.env; /usr/local/bin/twillingate project create -alias myapp'")"
-echo "$out" | grep -q '"myapp" created' && echo "ok: project create via installer hint works"
+out="$(su -s /bin/sh twillingate -c "sh -ac '. /etc/twillingate/twillingate.env; /usr/local/bin/twillingate project create -name myapp'")"
+echo "$out" | grep -q 'project 1 ("myapp") created' && echo "ok: project create via installer hint works"
 
 # Re-running must not clobber an edited config file.
 echo 'DATABASE_DSN=sqlite:///edited.db' > /etc/twillingate/twillingate.env

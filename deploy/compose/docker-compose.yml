@@ -5,8 +5,9 @@
 #   COMPOSE_FILE=docker-compose.yml:docker-compose.evidence.yml
 #
 # Once it is up, create a project and issue a key:
-#   docker compose exec twillingate twillingate project create -alias myapp
-#   docker compose exec twillingate twillingate key issue -project myapp -label web
+#   docker compose exec twillingate twillingate project create -name myapp
+#   docker compose exec twillingate twillingate key issue -project-id 1 -label web
+# (the first project on a fresh install is id 1; `project list` shows the rest)
 services:
   twillingate:
     image: ghcr.io/dmtrkzntsv/twillingate:${TWILLINGATE_VERSION:-latest}

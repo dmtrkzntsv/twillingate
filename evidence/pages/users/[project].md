@@ -1,7 +1,11 @@
-# {params.project} — Users
+# {project_name[0].name} — Users
+
+```sql project_name
+select name from twillingate.projects where id = '${params.project}'
+```
 
 ```sql users_mode
-select identity from twillingate.projects where alias = '${params.project}'
+select identity from twillingate.projects where id = '${params.project}'
 ```
 
 {#if users_mode[0].identity === 'identified'}
@@ -19,7 +23,7 @@ select identity from twillingate.projects where alias = '${params.project}'
 -- to that history: someone returning after it has aged out counts as new.
 select id, min(day) as first_day
 from twillingate.v_identity_daily
-where project = '${params.project}' and kind = 'user' and id != ''
+where project_id = '${params.project}' and kind = 'user' and id != ''
 group by id
 ```
 
@@ -29,7 +33,7 @@ select d.day,
        count(distinct case when d.day > f.first_day then d.id end) as returning_users
 from twillingate.v_identity_daily d
 join ${users_first} f on f.id = d.id
-where d.project = '${params.project}' and d.kind = 'user' and d.id != ''
+where d.project_id = '${params.project}' and d.kind = 'user' and d.id != ''
   and d.day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range} - 1) day, '%Y-%m-%d')
                 and strftime((now() at time zone 'UTC')::date, '%Y-%m-%d')
 group by d.day order by d.day
@@ -43,7 +47,7 @@ select count(distinct d.id) as users,
             then sum(d.views + d.events) * 1.0 / count(distinct d.id) else 0 end as per_user
 from twillingate.v_identity_daily d
 join ${users_first} f on f.id = d.id
-where d.project = '${params.project}' and d.kind = 'user' and d.id != ''
+where d.project_id = '${params.project}' and d.kind = 'user' and d.id != ''
   and d.day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range} - 1) day, '%Y-%m-%d')
                 and strftime((now() at time zone 'UTC')::date, '%Y-%m-%d')
 ```
@@ -59,8 +63,8 @@ select coalesce(i.name, d.id) as name,
 from twillingate.v_identity_daily d
 join ${users_first} f on f.id = d.id
 left join twillingate.identities i
-  on i.project = d.project and i.kind = 'user' and i.id = d.id
-where d.project = '${params.project}' and d.kind = 'user' and d.id != ''
+  on i.project_id = d.project_id and i.kind = 'user' and i.id = d.id
+where d.project_id = '${params.project}' and d.kind = 'user' and d.id != ''
   and d.day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range} - 1) day, '%Y-%m-%d')
                 and strftime((now() at time zone 'UTC')::date, '%Y-%m-%d')
 group by d.id, i.name
@@ -73,7 +77,7 @@ order by actions desc limit 100
 select sum(views) > 0 as has_views, sum(events) > 0 as has_events,
        (sum(views) > 0)::int + (sum(events) > 0)::int as kinds
 from twillingate.v_identity_daily
-where project = '${params.project}' and kind = 'user' and id != ''
+where project_id = '${params.project}' and kind = 'user' and id != ''
 ```
 
 <Grid cols=4>
@@ -108,7 +112,7 @@ This project runs in **anonymous** identity mode: `user_id` is a hash that
 rotates at midnight, so a per-user report would be a list of hashes that means
 nothing tomorrow.
 
-Run <code class="markdown">twillingate project update -alias {params.project} -identity identified</code>
+Run <code class="markdown">twillingate project update -id {params.project} -identity identified</code>
 (or the `update_project` MCP tool) to enable per-user reporting. Note that
 identified mode stores a persistent `localStorage` id on the web, which is
 terminal-equipment storage under ePrivacy — the same legal category as a

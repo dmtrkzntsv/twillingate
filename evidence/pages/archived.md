@@ -5,9 +5,9 @@ sidebar_link: false
 # Archived projects
 
 ```sql archived_projects
-select alias, name
+select id, name
 from twillingate.projects
-where archived = 1 and alias != ''
+where archived = 1 and id != 0
 order by name
 ```
 
@@ -17,7 +17,7 @@ order by name
 
 {#each archived_projects as p}
 
-- **{p.name}** — [views](/views/{p.alias}) · [product](/product/{p.alias})
+- **{p.name}** — [views](/views/{p.id}) · [product](/product/{p.id})
 
 {/each}
 

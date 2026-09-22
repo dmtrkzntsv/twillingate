@@ -59,70 +59,19 @@ BUFFER_FLUSH_INTERVAL=1s
 endef
 export LOCAL_ENV
 
-# Several projects so the dashboards show a realistic project list; each alias
-# has a matching traffic profile in scripts/seed-demo.py. Every project needs
-# an ingest key or the service refuses to start; `dev` and `app` run in
-# identified mode so the users, groups and retention pages have data.
-define LOCAL_PROJECTS
-[
-  {
-    "alias": "dev",
-    "name": "Local Dev",
-    "identity": "identified",
-    "ingest_keys": [{ "key": "ak_dev00000000000000000000000000", "label": "local" }],
-    "allowed_origins": ["http://localhost:8080", "http://localhost:5173", "http://localhost:3000"]
-  },
-  {
-    "alias": "marketing",
-    "name": "Marketing Site",
-    "ingest_keys": [{ "key": "ak_marketing000000000000000000", "label": "web" }],
-    "allowed_origins": ["http://localhost:8080", "https://example.com"]
-  },
-  {
-    "alias": "docs",
-    "name": "Docs Portal",
-    "ingest_keys": [{ "key": "ak_docs0000000000000000000000", "label": "web" }],
-    "allowed_origins": ["http://localhost:8080", "https://docs.example.com"]
-  },
-  {
-    "alias": "app",
-    "name": "SaaS App",
-    "identity": "identified",
-    "ingest_keys": [
-      { "key": "ak_app00000000000000000000000", "label": "web" },
-      { "key": "ak_appios00000000000000000000", "label": "ios" }
-    ],
-    "allowed_origins": ["http://localhost:8080", "https://app.example.com"]
-  },
-  {
-    "alias": "legacy",
-    "name": "Legacy Blog",
-    "ingest_keys": [{ "key": "ak_legacy00000000000000000000", "label": "web" }],
-    "allowed_origins": ["http://localhost:8080"]
-  }
-]
-endef
-export LOCAL_PROJECTS
-
 local/.env:
 	@mkdir -p local
 	@printf '%s\n' "$$LOCAL_ENV" > $@
 	@echo "wrote $@"
 
-local/projects.json:
-	@mkdir -p local
-	@printf '%s\n' "$$LOCAL_PROJECTS" > $@
-	@echo "wrote $@"
-
 # The binary reads plain env vars; the launcher loads the env file (same
 # division of labour as systemd's EnvironmentFile= in production). Projects
-# live in the database now, not a file: make sure a `dev` project exists
-# (idempotent — a second run just fails quietly on the duplicate alias, hence
-# the 2>/dev/null). Issue a key for it with `./twillingate key issue -project
-# dev -label local`.
+# live in the database; make sure one exists, since names are not unique
+# and a blind create would add another each run. Issue a key for it with
+# `./twillingate key issue -project-id 1 -label local`.
 run: build local/.env
 	set -a; . ./local/.env; set +a; \
-	./$(BIN) project create -alias dev 2>/dev/null || true; \
+	./$(BIN) project list | grep -q . || ./$(BIN) project create -name dev; \
 	./$(BIN) serve
 
 smoke: build
@@ -143,13 +92,15 @@ test-restore:
 	./scripts/test-restore.sh
 
 # Fills local/twillingate.db with 180 days of believable traffic so the dashboards
-# have something to plot, one profile per project in local/projects.json. Needs
-# the server to have started once so those projects are registered. Re-running
-# replaces the seeded rows rather than stacking another copy on top.
-seed-demo: local/.env local/projects.json build
-	@DATABASE_DSN="sqlite://$(PWD)/local/twillingate.db" \
-	 PROJECTS_FILE="$(PWD)/local/projects.json" ./$(BIN) migrate
-	python3 scripts/seed-demo.py local/twillingate.db local/projects.json
+# have something to plot. Projects come from the database, one profile per
+# project name in scripts/seed-demo.py (dev, marketing, docs, app, legacy):
+# create them first with `./twillingate project create -name <name>`, in
+# identified mode where the users, groups and retention pages should have
+# data. Re-running replaces the seeded rows rather than stacking another
+# copy on top.
+seed-demo: local/.env build
+	@DATABASE_DSN="sqlite://$(PWD)/local/twillingate.db" ./$(BIN) migrate
+	python3 scripts/seed-demo.py local/twillingate.db
 	@echo
 	@echo "Cohorts are computed by the daily pass; run 'make run' once to"
 	@echo "trigger the boot catch-up so the retention page has data."

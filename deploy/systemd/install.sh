@@ -190,8 +190,9 @@ Installed. Next steps:
   2. systemctl start twillingate   (and litestream once installed)
   3. Put Cloudflare/Caddy/nginx in front of 127.0.0.1:8080 for TLS
   4. Create your first project:
-       sudo -u $SERVICE_USER sh -ac '. /etc/twillingate/twillingate.env; twillingate project create -alias myapp'
+       sudo -u $SERVICE_USER sh -ac '. /etc/twillingate/twillingate.env; twillingate project create -name myapp'
      Then issue an ingest key (prints a ready-to-paste web snippet):
-       sudo -u $SERVICE_USER sh -ac '. /etc/twillingate/twillingate.env; twillingate key issue -project myapp -label web'
+       sudo -u $SERVICE_USER sh -ac '. /etc/twillingate/twillingate.env; twillingate key issue -project-id 1 -label web'
+     (the first project on a fresh install is id 1; `project list` shows the rest)
   5. Apps post to https://YOUR_DOMAIN/ingest/events — see docs/twillingate.md
 EOF_DONE

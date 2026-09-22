@@ -1,6 +1,10 @@
 # {browser ? $page.url.searchParams.get('path') : null}
 
-[← back to {params.project}](/views/{params.project})
+```sql project_name
+select name from twillingate.projects where id = '${params.project}'
+```
+
+[← back to {project_name[0].name}](/views/{params.project})
 
 <ButtonGroup name=range title="Date range">
     <ButtonGroupItem value="1" valueLabel="Last 1 day" />
@@ -32,7 +36,7 @@
 ```sql page_daily
 select day, visitors, views
 from twillingate.v_views_paths
-where project = '${params.project}'
+where project_id = '${params.project}'
   and path = '${browser ? ($page.url.searchParams.get('path') ?? '').replaceAll("'", "''") : inputs.unset_while_prerendering}'
   and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range} - 1) day, '%Y-%m-%d')
                and strftime((now() at time zone 'UTC')::date, '%Y-%m-%d')
@@ -43,7 +47,7 @@ order by day
 select sum(visitors) as visitors, sum(views) as views,
        case when sum(visitors) > 0 then sum(views) * 1.0 / sum(visitors) else 0 end as views_per_visitor
 from twillingate.v_views_paths
-where project = '${params.project}'
+where project_id = '${params.project}'
   and path = '${browser ? ($page.url.searchParams.get('path') ?? '').replaceAll("'", "''") : inputs.unset_while_prerendering}'
   and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range} - 1) day, '%Y-%m-%d')
                and strftime((now() at time zone 'UTC')::date, '%Y-%m-%d')

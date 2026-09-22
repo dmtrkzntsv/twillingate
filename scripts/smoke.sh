@@ -21,11 +21,12 @@ export DATABASE_DSN="sqlite://$dir/smoke.db"
 
 # Project configuration is registry-first now: create the project and issue
 # an ingest key via the CLI (against the same DATABASE_DSN) before the
-# server ever boots, instead of writing a local projects.json.
-./twillingate project create -alias dev -name "Smoke" -identity anonymous \
+# server ever boots, instead of writing a local projects.json. A fresh
+# database's first project is id 1.
+./twillingate project create -name "Smoke" -identity anonymous \
     -origin "http://localhost" \
   || fail "project create failed"
-key=$(./twillingate key issue -project dev -label smoke | grep -o 'ak_[0-9a-f]*' | head -1)
+key=$(./twillingate key issue -project-id 1 -label smoke | grep -o 'ak_[0-9a-f]*' | head -1)
 [ -n "$key" ] || fail "key issue failed"
 
 env INGEST_ADDR="127.0.0.1:$port" \
@@ -97,7 +98,7 @@ pid=""
 counts="$(go run ./scripts/smokecheck "$dir/smoke.db")" || fail "could not read database"
 echo "rows: $counts"
 # views=2: one $page_view (kind=web) plus one $screen_view (kind=app).
-# product=2: the "signup" event plus one surviving copy of the replayed one.
-[ "$counts" = "views=2 product=2" ] || fail "expected views=2 product=2, got: $counts"
+# events=2: the "signup" event plus one surviving copy of the replayed one.
+[ "$counts" = "views=2 events=2" ] || fail "expected views=2 events=2, got: $counts"
 
 echo "SMOKE OK"

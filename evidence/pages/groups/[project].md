@@ -1,4 +1,8 @@
-# {params.project} — Groups
+# {project_name[0].name} — Groups
+
+```sql project_name
+select name from twillingate.projects where id = '${params.project}'
+```
 
 Groups work in both identity modes. `group_id` identifies an organization
 rather than a natural person, so it is stored as given even when user
@@ -16,7 +20,7 @@ identifiers are salted.
 -- First day each group appears in the retained history.
 select id, min(day) as first_day
 from twillingate.v_identity_daily
-where project = '${params.project}' and kind = 'group' and id != ''
+where project_id = '${params.project}' and kind = 'group' and id != ''
 group by id
 ```
 
@@ -26,7 +30,7 @@ select d.day,
        count(distinct case when d.day > f.first_day then d.id end) as returning_groups
 from twillingate.v_identity_daily d
 join ${groups_first} f on f.id = d.id
-where d.project = '${params.project}' and d.kind = 'group' and d.id != ''
+where d.project_id = '${params.project}' and d.kind = 'group' and d.id != ''
   and d.day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range} - 1) day, '%Y-%m-%d')
                 and strftime((now() at time zone 'UTC')::date, '%Y-%m-%d')
 group by d.day order by d.day
@@ -40,7 +44,7 @@ select count(distinct d.id) as groups,
             then sum(d.views + d.events) * 1.0 / count(distinct d.id) else 0 end as per_group
 from twillingate.v_identity_daily d
 join ${groups_first} f on f.id = d.id
-where d.project = '${params.project}' and d.kind = 'group' and d.id != ''
+where d.project_id = '${params.project}' and d.kind = 'group' and d.id != ''
   and d.day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range} - 1) day, '%Y-%m-%d')
                 and strftime((now() at time zone 'UTC')::date, '%Y-%m-%d')
 ```
@@ -57,8 +61,8 @@ select coalesce(i.name, d.id) as name,
 from twillingate.v_identity_daily d
 join ${groups_first} f on f.id = d.id
 left join twillingate.identities i
-  on i.project = d.project and i.kind = 'group' and i.id = d.id
-where d.project = '${params.project}' and d.kind = 'group' and d.id != ''
+  on i.project_id = d.project_id and i.kind = 'group' and i.id = d.id
+where d.project_id = '${params.project}' and d.kind = 'group' and d.id != ''
   and d.day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range} - 1) day, '%Y-%m-%d')
                 and strftime((now() at time zone 'UTC')::date, '%Y-%m-%d')
 group by d.id, i.name
