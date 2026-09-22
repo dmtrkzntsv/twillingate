@@ -312,10 +312,11 @@ detection reads (`userAgent`, `platform`, `maxTouchPoints`, `brave`,
 supplied consults **only** what it contains, so
 `twillingate.detectBrowser({ userAgent })` answers for that User-Agent and
 nothing else. The type is the whole record of what detection reads from
-the device; the rest of the SDK reads only `screen` (display size),
-`navigator.language`, `document.referrer`, `navigator.webdriver` and its
-own `localStorage` keys. These are pure detection: an `os`, `browser` or `device` option
-passed to `init()` overrides what a batch carries but does not change
+the device; beyond detection the SDK reads `screen` (display size),
+`navigator.language`, `document.referrer`, `navigator.webdriver`, the
+page's `location` and visibility state, and its own `localStorage` keys.
+These are pure detection: an `os`, `browser` or `device` option passed
+to `init()` overrides what a batch carries but does not change
 what `detect*` returns.
 
 Detection returns `other` for a User-Agent that names nothing on the
@@ -544,7 +545,9 @@ self-referral when its host matches `$host`.
 A client `$session_id` is authoritative; without one, a gap over 30 minutes
 per actor starts a new session. A bounce is a single-view session, so
 expect high bounce rates on app kinds. Country comes from the connection on
-every kind; IP and User-Agent are never stored. **A backend must not relay
+every kind; the IP and the User-Agent header are never stored (the only
+User-Agent text that is kept is the `$os_name` a client declares). **A
+backend must not relay
 web views for other people** — they would all carry the backend's IP (one
 country for everyone) and its User-Agent, which the crawler filter drops
 when it is curl or a HTTP library.
