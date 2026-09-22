@@ -73,12 +73,12 @@ event, so every shimmed CTA becomes a **product event**:
 ```
 click → twillingate.track("signup_cloud")
       → POST /ingest/events
-      → product_events
+      → events
       → v_product_daily / v_product_totals
       → the Product dashboard page
 ```
 
-Class props are stored in `product_events.attributes` and broken down per
+Class props are stored in `events.attributes` and broken down per
 key and value by `v_product_attrs` — but only for the keys the project
 declares in `attributes`. Undeclared props are still stored and still
 queryable through the raw `attributes` column, just not broken down for the

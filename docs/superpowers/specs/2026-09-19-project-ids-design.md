@@ -1,7 +1,7 @@
 # Integer project ids: remove the project alias — design
 
 Date: 2026-09-19
-Status: draft
+Status: implemented
 
 ## Sequencing
 
