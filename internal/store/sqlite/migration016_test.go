@@ -35,7 +35,7 @@ func TestMigration016LeavesHistoryUnmeasured(t *testing.T) {
 			t.Fatalf("%s: %v", q, err)
 		}
 	}
-	if err := db.Migrate(ctx); err != nil {
+	if err := db.migrateThrough(ctx, 16); err != nil {
 		t.Fatalf("migration 016: %v", err)
 	}
 	if !hasColumn(t, db, "agg_product_attrs", "unique_groups") {

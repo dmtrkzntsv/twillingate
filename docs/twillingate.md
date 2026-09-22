@@ -140,12 +140,10 @@ unbounded-cardinality key like a URL or session id would make the aggregate
 grow as fast as the raw data it summarises, defeating retention.
 `PRODUCT_ATTRIBUTES_TOP_N` (default 50, set
 [server-side](deployment.md#configure-the-collector)) guards that globally:
-only the top N
-values per key are kept and the rest collapse into one `(other)` row whose
-unique-user and unique-group counts are recomputed from raw rather than
-summed. A client
-sending the literal string `(other)` collides with that bucket and loses its
-own count — avoid that value.
+only the top N values per key are kept and the rest collapse into one
+`(other)` row whose unique-user and unique-group counts are recomputed from
+raw rather than summed. A client sending the literal string `(other)` collides
+with that bucket and loses its own count — avoid that value.
 
 `$platform`, `$os` and `$app_version` roll up automatically without being
 declared. Do not add them to `attributes`: `$`-prefixed keys are reserved

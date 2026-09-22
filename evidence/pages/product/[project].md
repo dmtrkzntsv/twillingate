@@ -79,6 +79,9 @@ order by total desc
 
 Which build the events came from, day by day — a rollout landing shows as one
 band taking over, and the versions that never update are the ones that stay.
+Users and Groups are the largest counts from any single event, so the true
+numbers are at least those; Groups is empty for days rolled up before the
+collector measured groups.
 
 <AreaChart data={app_versions} x=day y=count series=app_version title="Events by app version" yFmt=num0 />
 

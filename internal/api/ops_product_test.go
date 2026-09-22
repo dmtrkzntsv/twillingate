@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -48,10 +49,55 @@ func TestProductAttributesReturnsRows(t *testing.T) {
 	if !strings.Contains(out, "plan") || !strings.Contains(out, "pro") {
 		t.Errorf("missing attribute row: %s", out)
 	}
-	// unique_groups flows through as the last column; a NULL (a day rolled
-	// up before 016) is an empty cell, not an error.
-	if !strings.Contains(out, "unique_groups") || !strings.Contains(out, "team") {
-		t.Errorf("missing unique_groups column or the measured row: %s", out)
+	// unique_groups flows through as the last column. A NULL cell (the
+	// "pro" row, rolled up before 016) decodes to the empty string; a
+	// measured cell (the "team" row, seeded with 2) decodes to its
+	// integer. Decode the table rather than substring-matching so a NULL
+	// rendered as "0", "<nil>" or "null" would fail this test.
+	var table struct {
+		Columns []string   `json:"columns"`
+		Rows    [][]string `json:"rows"`
+	}
+	if err := json.Unmarshal([]byte(out), &table); err != nil {
+		t.Fatalf("decode table: %v\n%s", err, out)
+	}
+	groupsIdx := -1
+	for i, c := range table.Columns {
+		if c == "unique_groups" {
+			groupsIdx = i
+			break
+		}
+	}
+	if groupsIdx == -1 {
+		t.Fatalf("missing unique_groups column: %s", out)
+	}
+	attrValueIdx := -1
+	for i, c := range table.Columns {
+		if c == "attr_value" {
+			attrValueIdx = i
+			break
+		}
+	}
+	if attrValueIdx == -1 {
+		t.Fatalf("missing attr_value column: %s", out)
+	}
+	var sawPro, sawTeam bool
+	for _, row := range table.Rows {
+		switch row[attrValueIdx] {
+		case "pro":
+			sawPro = true
+			if got := row[groupsIdx]; got != "" {
+				t.Errorf("pro row (pre-016, unmeasured) unique_groups = %q, want empty", got)
+			}
+		case "team":
+			sawTeam = true
+			if got := row[groupsIdx]; got != "2" {
+				t.Errorf("team row unique_groups = %q, want %q", got, "2")
+			}
+		}
+	}
+	if !sawPro || !sawTeam {
+		t.Fatalf("missing pro or team row: %s", out)
 	}
 	// event filter branch
 	res = callTool(t, cs, "product_attributes", map[string]any{
