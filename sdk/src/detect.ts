@@ -3,7 +3,7 @@
  * Pure functions over a flat list of signals. Supply a ClientSignals and
  * only its fields are consulted — a field left out is absent, never read
  * from the real browser — so a test is a table of literals and the type
- * is the complete record of what the SDK reads off the device. Omit the
+ * is the complete record of what detection reads off the device. Omit the
  * argument and every field comes from the ambient navigator.
  *
  * The three detect* functions are views onto one resolve: OS and device
@@ -216,6 +216,10 @@ function resolve(s: ClientSignals): OSInfo & BrowserInfo & DeviceInfo {
   let osName = OS_NAMES[os] || "";
   if (os === "bsd") osName = (/(FreeBSD|OpenBSD|NetBSD|DragonFly)/.exec(ua) || ["", "BSD"])[1];
   if (osName && osVersion) osName += " " + osVersion;
+  // other means a User-Agent named something this table does not know:
+  // keep it verbatim (the server truncates) so the bucket stays
+  // investigable. unknown has nothing to report and keeps osName empty.
+  if (os === "other") osName = ua;
 
   // Browser: brave (navigator.brave presence) first, because its
   // User-Agent is deliberately Chrome's and nothing later can recover it;

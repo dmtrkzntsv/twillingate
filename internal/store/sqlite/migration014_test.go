@@ -66,7 +66,9 @@ var rebuilt014 = map[string]int{
 func TestMigration014AssignsIdsAndRekeys(t *testing.T) {
 	db := seed013(t)
 	ctx := context.Background()
-	if err := db.Migrate(ctx); err != nil {
+	// Stop at 014: this test asserts the shape 014 leaves behind, so a
+	// later migration must not be able to change what it sees.
+	if err := db.migrateThrough(ctx, 14); err != nil {
 		t.Fatalf("migration 014: %v", err)
 	}
 	row := func(q string, dst ...any) {
@@ -141,12 +143,11 @@ func TestMigration014AssignsIdsAndRekeys(t *testing.T) {
 	if n != 0 {
 		t.Error("idx_ingest_keys_project survived; UNIQUE (project_id, label) replaces it")
 	}
-	// every view is back and readable on project_id. Migrate runs the
-	// whole chain, so the count is the schema's current total: 16 at 014
-	// plus v_views_platforms from 015.
+	// every view is back and readable on project_id: 16 of them at 014.
+	// 015 adds v_views_platforms, asserted in migration015_test.go.
 	row(`SELECT COUNT(*) FROM sqlite_master WHERE type='view'`, &n)
-	if n != 17 {
-		t.Errorf("%d views, want 17", n)
+	if n != 16 {
+		t.Errorf("%d views, want 16", n)
 	}
 	row(`SELECT COUNT(*) FROM v_product_attrs WHERE project_id=1 AND attr_key='plan'`, &n)
 	if n != 2 {

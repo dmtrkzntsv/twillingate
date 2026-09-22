@@ -106,7 +106,7 @@ describe("detectOS", () => {
   });
 
   it("is other for an unrecognised User-Agent and unknown for none", () => {
-    expect(detectOS({ userAgent: UA.unknownThing })).toEqual({ os: "other", osVersion: "", osName: "" });
+    expect(detectOS({ userAgent: UA.unknownThing })).toEqual({ os: "other", osVersion: "", osName: UA.unknownThing });
     expect(detectOS({})).toEqual({ os: "unknown", osVersion: "", osName: "" });
     expect(detectOS({ userAgent: "" })).toEqual({ os: "unknown", osVersion: "", osName: "" });
   });

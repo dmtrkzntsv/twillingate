@@ -51,7 +51,8 @@ func TestIntegrationGuideAnonymousAndPlatforms(t *testing.T) {
 	}
 	res = callTool(t, cs, "integration_guide", map[string]any{
 		"project_id": 2, "platform": "mobile"})
-	if out := textOf(res); !strings.Contains(out, "$install_id") || !strings.Contains(out, "$screen_view") {
+	if out := textOf(res); !strings.Contains(out, "$install_id") || !strings.Contains(out, "$screen_view") ||
+		!strings.Contains(out, "$platform") {
 		t.Errorf("mobile guide missing app context: %s", out)
 	}
 	// bad platform lists the valid ones

@@ -18,7 +18,7 @@
 import { resolveMask, type MaskSpec } from "./mask";
 import { maskIds, withQuery } from "./util";
 import {
-  ambientSignals, detectAll, detectBrowser as detectBrowserFrom, detectDevice as detectDeviceFrom,
+  detectAll, detectBrowser as detectBrowserFrom, detectDevice as detectDeviceFrom,
   detectOS as detectOSFrom, primePlatformVersion, type BrowserInfo, type ClientSignals, type DeviceInfo, type OSInfo,
 } from "./detect";
 
@@ -455,15 +455,15 @@ export class Twillingate {
    * option.
    */
   detectOS(signals?: ClientSignals): OSInfo {
-    return detectOSFrom(signals || ambientSignals());
+    return detectOSFrom(signals);
   }
 
   detectBrowser(signals?: ClientSignals): BrowserInfo {
-    return detectBrowserFrom(signals || ambientSignals());
+    return detectBrowserFrom(signals);
   }
 
   detectDevice(signals?: ClientSignals): DeviceInfo {
-    return detectDeviceFrom(signals || ambientSignals());
+    return detectDeviceFrom(signals);
   }
 
   private ok(): boolean {

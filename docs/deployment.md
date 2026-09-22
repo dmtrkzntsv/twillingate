@@ -620,10 +620,18 @@ Before upgrading, run these against the live database:
 -- 1. Two spellings of one OS on one aggregate key. Any hit aborts
 --    migration 015 (lower-casing them would collide) and leaves the
 --    database at 014. Merge or delete the duplicate by hand first.
+--    Scoped to the vocabulary (the same list as check 2): a case variant
+--    of an OS outside it does not abort, it just stays as it is.
 SELECT project_id, day, lower(os), os_version, COUNT(*) FROM agg_views_os
+WHERE lower(os) IN (
+  'windows','macos','linux','bsd','chromeos','ios','ipados','android','fireos','harmonyos','kaios',
+  'tvos','watchos','visionos','tizen','webos','playstation','xbox','nintendo','other','unknown')
 GROUP BY 1, 2, 3, 4 HAVING COUNT(*) > 1;
 SELECT project_id, day, event_name, lower(attr_value), COUNT(*) FROM agg_product_attrs
-WHERE attr_key = '$os' GROUP BY 1, 2, 3, 4 HAVING COUNT(*) > 1;
+WHERE attr_key = '$os' AND lower(attr_value) IN (
+  'windows','macos','linux','bsd','chromeos','ios','ipados','android','fireos','harmonyos','kaios',
+  'tvos','watchos','visionos','tizen','webos','playstation','xbox','nintendo','other','unknown')
+GROUP BY 1, 2, 3, 4 HAVING COUNT(*) > 1;
 
 -- 1b. Two spellings of one OS under one app version. These do NOT abort:
 --    the app-versions rekey sums their visitors into one row, which can
@@ -637,6 +645,8 @@ GROUP BY 1, 2, 3, 4 HAVING COUNT(*) > 1;
 SELECT project_id, day, os_version FROM agg_views_os WHERE os = ''
 INTERSECT
 SELECT project_id, day, os_version FROM agg_views_os WHERE os = 'unknown';
+--    agg_product_attrs needs no ''-vs-unknown check: the $os rollup has
+--    never written an empty value.
 
 -- 2. OS values outside the vocabulary. Raw rows fold to 'other' and keep
 --    the original in os_name; aggregate history keeps these spellings as
@@ -669,6 +679,11 @@ What changes on the day:
 - iPad traffic moves from `ios` to `ipados`, Brave from `chrome` to
   `brave`, and consoles and TVs from `desktop` to `other`, so those
   series step on the upgrade day.
+- **Rows that were empty are `unknown` now**, so app and CLI traffic
+  appears as an `unknown` bar in the Browsers and Operating-systems
+  dashboard charts, and `product_attributes` for `$os` gains an `unknown`
+  bucket over re-aggregated history — correct by design, and visible on
+  upgrade day.
 - `agg_views_app_versions` history is rekeyed by `platform = lower(os)`,
   which is value-preserving; going forward, versions from clients that
   do not yet send `$platform` roll up under `unknown` until they update.

@@ -408,8 +408,8 @@ func TestPlatformIsValidatedIndependentlyOfOS(t *testing.T) {
 }
 
 // Browser and device close on the same terms as os. Both are views-only:
-// a product event resolves and drops them without a warning about the
-// drop, but an unrecognised value still warns.
+// on a product event an unrecognised $browser or $device is dropped
+// without any warning at all — only $os and $platform warn there.
 func TestBrowserAndDeviceAreValidated(t *testing.T) {
 	q, h := testServer(t)
 	body := envelopeOf(`{"name":"$page_view","attributes":{"$path":"/","$browser":"Samsung Internet","$browser_version":"25","$device":"Tablet"}},
@@ -426,6 +426,9 @@ func TestBrowserAndDeviceAreValidated(t *testing.T) {
 	}
 	want := []struct{ browser, version, device string }{
 		{"samsung_internet", "25", "tablet"}, {"other", "", "other"}, {"other", "", "other"},
+	}
+	if len(q.views) != 3 {
+		t.Fatalf("views = %+v", q.views)
 	}
 	for i, w := range want {
 		v := q.views[i]

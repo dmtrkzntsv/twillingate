@@ -162,15 +162,19 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		if osName == "" && !osKnown {
 			osName = rv.OS
 		}
+		// Hoisted out of the literal below so the warning order is
+		// explicit: $os, $platform, then $browser and $device.
+		browser := res.declared(i, "$browser", rv.Browser, enrich.NormalizeBrowser)
+		device := res.declared(i, "$device", rv.Device, enrich.NormalizeDevice)
 		v := store.View{
 			ID: id, ProjectID: p.ID, TS: ts, ReceivedAt: received, Kind: kind,
 			ActorID: actor, ActorKind: actorKind, UserID: user, GroupID: group, SessionID: rv.SessionID,
 			Host: rv.Host, Path: path,
 			UTMSource: rv.UTMSource, UTMMedium: rv.UTMMedium, UTMCampaign: rv.UTMCampaign,
 			Platform: platform, OS: osv, OSVersion: rv.OSVersion, OSName: osName,
-			Browser:        res.declared(i, "$browser", rv.Browser, enrich.NormalizeBrowser),
+			Browser:        browser,
 			BrowserVersion: rv.BrowserVersion,
-			Device:         res.declared(i, "$device", rv.Device, enrich.NormalizeDevice),
+			Device:         device,
 			AppVersion:     rv.AppVersion, DeviceModel: rv.DeviceModel, Locale: rv.Locale, Country: country,
 		}
 		// Bot filtering is the one thing still read off the User-Agent,
