@@ -196,15 +196,25 @@ describe("storage under consent", () => {
     window.dispatchEvent(new Event("pagehide"));
     expect(beacon).toHaveBeenCalledOnce();
 
-    // Grant consent: a further failure mirrors to storage, and the beacon
-    // retiring it from pending must retire it from the stored queue too.
+    // Grant consent: a further failure mirrors to storage. The beacon
+    // retires the batch from the in-memory pending queue, but sendBeacon
+    // returning true only means the browser accepted the payload, not that
+    // it was delivered — offline it is dropped — so the stored copy must
+    // survive.
     t.consent(true);
     fetchImpl = failFetch;
     t.track("third");
     await drain();
     window.dispatchEvent(new Event("pagehide"));
     expect(beacon).toHaveBeenCalledTimes(2);
-    expect(localStorage.getItem("twillingate_queue")).toBeNull();
+    const stored = JSON.parse(localStorage.getItem("twillingate_queue")!);
+    expect(stored).toHaveLength(1);
+    expect(stored[0].events[0].name).toBe("third");
+
+    // pending was retired by the first beacon, so a second pagehide must
+    // not re-beacon it.
+    window.dispatchEvent(new Event("pagehide"));
+    expect(beacon).toHaveBeenCalledTimes(2);
   });
 
   it("replay merges the stored queue with pending when a write silently failed", async () => {
@@ -269,6 +279,18 @@ describe("storage under consent", () => {
     const visitor = localStorage.getItem("twillingate_visitor");
     expect(visitor).toMatch(/^[0-9a-f-]{36}$/);
     expect(attrs.$install_id).toBe(visitor);
+  });
+
+  it("consent(true) persists a user and group the instance already holds", () => {
+    const t = tg({ identity: "identified" });
+    t.identify("u_pre", "Ada");
+    t.group("org_pre");
+    expect(localStorage.length).toBe(0);
+
+    t.consent(true);
+    expect(localStorage.getItem("twillingate_user")).toBe("u_pre");
+    expect(localStorage.getItem("twillingate_user_name")).toBe("Ada");
+    expect(localStorage.getItem("twillingate_group")).toBe("org_pre");
   });
 
   it("consent(false) deletes every key the instance owns and leaves the opt-out alone", () => {

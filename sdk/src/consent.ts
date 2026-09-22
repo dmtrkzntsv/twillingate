@@ -8,7 +8,7 @@ export type ConsentSpec = boolean | string | (() => unknown);
 
 /**
  * Resolve a consent spec to a function the SDK calls at every storage
- * decision. Literals become constants. A name is looked up on globalThis
+ * decision. Literals become constants. A name is looked up on window
  * at each call, never at resolve time, so a variable a consent manager
  * flips after page load is picked up live; a function is called each time
  * and its result coerced to a boolean.
@@ -44,7 +44,7 @@ export function resolveConsent(spec: ConsentSpec | undefined | null): () => bool
 
   const name = spec;
   return () => {
-    const v = (globalThis as Record<string, unknown>)[name];
+    const v = (window as unknown as Record<string, unknown>)[name];
     if (v === undefined) return fail(`consent names nothing on window: ${name}`);
     if (typeof v === "function") return call(v as () => unknown, `consent function ${name}`);
     return Boolean(v);

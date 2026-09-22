@@ -353,6 +353,14 @@ describe("failure handling and the offline queue", () => {
     await drain();
     expect(sent).toHaveLength(1);
   });
+
+  it("survives a stored queue holding unbatch-shaped elements", async () => {
+    localStorage.setItem("twillingate_queue", JSON.stringify([null, {}, { events: [] }]));
+    const t = tg({ consent: true });
+    t.track("fine");
+    await drain();
+    expect(sent).toHaveLength(1);
+  });
 });
 
 describe("snippet auto-init", () => {

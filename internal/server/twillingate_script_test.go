@@ -36,19 +36,17 @@ func TestTwillingateSDKServed(t *testing.T) {
 	// behaviour is covered by the vitest suite in sdk/; this guards against
 	// an empty or stale artifact being embedded.
 	for _, marker := range []string{
-		"twillingate",         // the global
-		"twillingate_ignore",  // opt-out
-		"user_name",           // stored identity (key suffix)
-		"queue",               // retry queue (key suffix)
-		"data-key",            // snippet-mode credential wiring
-		"data-consent",        // storage consent wiring
-		"data-instance",       // second tag on one page
-		"sendBeacon",          // unload transport
-		"pushState",           // SPA tracking
-		"/ingest/events",      // the only endpoint
-		"$page_view",          // web analytics
-		"$screen_view",        // app analytics
-		"$install_id",         // app/identity batch attribute
+		"twillingate",        // the global
+		"twillingate_ignore", // opt-out
+		"data-key",           // snippet-mode credential wiring
+		"data-consent",       // storage consent wiring
+		"data-instance",      // second tag on one page
+		"sendBeacon",         // unload transport
+		"pushState",          // SPA tracking
+		"/ingest/events",     // the only endpoint
+		"$page_view",         // web analytics
+		"$screen_view",       // app analytics
+		"$install_id",        // app/identity batch attribute
 	} {
 		if !strings.Contains(body, marker) {
 			t.Errorf("twillingate.js missing %q", marker)

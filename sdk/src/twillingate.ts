@@ -145,6 +145,16 @@ interface Batch {
   events: Event[];
 }
 
+// Guards a batch read back from localStorage: mergeBatches and replay()
+// dereference events[0].id unconditionally, and a stored value can be
+// anything a previous, corrupt, or foreign write left behind ([null],
+// [{}], ...). Only the shape actually dereferenced is checked.
+function isBatch(x: unknown): x is Batch {
+  if (!x || typeof x !== "object") return false;
+  const events = (x as { events?: unknown }).events;
+  return Array.isArray(events) && events.length > 0 && typeof (events[0] as { id?: unknown })?.id === "string";
+}
+
 // Union of a stored queue and the in-memory one, deduped by each batch's
 // first event id (every batch has at least one event). Neither side is
 // assumed complete: a write can fail silently (lsSet swallows quota and
@@ -153,7 +163,10 @@ interface Batch {
 // the other one has that it does not.
 function mergeBatches(stored: Batch[], pending: Batch[]): Batch[] {
   const known = new Set(stored.map((b) => b.events[0].id));
-  return [...stored, ...pending.filter((b) => !known.has(b.events[0].id))];
+  const merged = [...stored, ...pending.filter((b) => !known.has(b.events[0].id))];
+  // The union of two already-bounded queues can exceed the bound: keep the
+  // grant transition and replay() to the same documented cap as store().
+  return merged.length > MAX_STORED_BATCHES ? merged.slice(merged.length - MAX_STORED_BATCHES) : merged;
 }
 
 // Storage keys are prefixed with the instance name (default "twillingate")
@@ -530,13 +543,17 @@ export class Twillingate {
     }
     // Unloading is the last chance for batches whose delivery failed: try
     // each once more through sendBeacon. A batch the beacon accepts is
-    // retired from pending (and, with consent, from storage); one it does
-    // not accept stays for the next retry — visibilitychange fires this on
-    // every tab switch, not only on the final pagehide, so an unbounded
-    // re-beacon of the same accepted batches would otherwise follow.
+    // retired from pending, so an unbounded re-beacon of it does not follow
+    // on every later tab switch (visibilitychange fires this on each one,
+    // not only the final pagehide); one it does not accept stays for the
+    // next retry. The stored copy is deliberately left alone: sendBeacon
+    // returning true only means the browser accepted the payload, not that
+    // it was delivered — offline it is dropped — so the stored batch is
+    // what brings the record back on the next load. The server dedupes by
+    // event id, so replaying an already-delivered batch is free; dropping
+    // the stored copy on a beacon that never lands is not.
     if (unloading) {
       this.pending = this.pending.filter((batch) => !this.send(batch, true));
-      this.saveQueue();
     }
   }
 
@@ -683,6 +700,15 @@ export class Twillingate {
         // Merge rather than overwrite: another tab may already have
         // queued its own batches under this key.
         if (this.pending.length) lsSet(this.k.queue, JSON.stringify(mergeBatches(this.storedBatches(), this.pending)));
+        // An identified instance may already hold a user/group from an
+        // identify()/group() call made before consent arrived; persist it
+        // now rather than waiting for the next call. lastConsent is already
+        // set above, so this nested mayStore() sees no transition and does
+        // not recurse. Guarded by `ready`: init()'s own first decision
+        // point runs before opts.user/opts.group or a stored value have
+        // been loaded into these fields, so saving here would overwrite
+        // storage with nulls before init() gets a chance to read it back.
+        if (this.ready) this.saveIdentity();
       } else {
         this.wipe();
       }
@@ -722,8 +748,8 @@ export class Twillingate {
     const raw = ls(this.k.queue);
     if (!raw) return [];
     try {
-      const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed : [];
+      const parsed: unknown = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed.filter(isBatch) : [];
     } catch {
       return [];
     }

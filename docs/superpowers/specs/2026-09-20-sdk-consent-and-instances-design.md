@@ -560,6 +560,7 @@ Implementation note (2026-09-22): jsdom is configured to serve
 readable; the guard's removal is covered by the `navigator.webdriver` test
 and by the deleted code. Snippet bootstrap moved out of `entry.ts` into an
 exported `bootstrap()` so the `data-instance` registration rules could be
-tested. On the grant transition only the retry queue is written and the
-visitor id starts persisting; a user set by `identify()` before consent is
-persisted on the next `identify()`/`group()` call, not retroactively.
+tested. The grant transition also persists the identity the instance
+already holds — a user or group set via `init()` options or
+`identify()`/`group()` before consent arrived — rather than waiting for
+the next call.

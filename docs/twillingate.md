@@ -25,11 +25,12 @@ from apps and CLIs) and custom product events — rolls them up nightly, and
 exposes the result three ways: Evidence dashboards, a read-only SQL
 surface, and the API (MCP or HTTP) an AI agent can query in plain language.
 
-It is cookieless by default. An `anonymous` project never writes an
-identifier to a visitor's device and salts every identifier with a key that
-rotates at midnight, so nothing links across days. Raw IP addresses and User-Agent
-strings are never stored: the IP becomes a country at ingest, the
-User-Agent is checked for crawlers, and both are discarded.
+It is cookieless by default. An `anonymous` project writes nothing to a
+visitor's device unless the tag declares consent, and even then only its
+retry queue — never an identifier. Every identifier is salted with a key
+that rotates at midnight, so nothing links across days. Raw IP addresses
+and User-Agent strings are never stored: the IP becomes a country at
+ingest, the User-Agent is checked for crawlers, and both are discarded.
 
 The pieces:
 
@@ -193,7 +194,7 @@ the origin if this site uses another collector hostname.
 | `data-routing` | `routing` | `history` (default) or `hash`. See [Hash routing](#hash-routing). |
 | `data-kind` | `kind` | What this client is: `web` (default), `app`, `cli`, or any short lower-case token. Anything but `web` switches automatic tracking from `$page_view` to `$screen_view` (the route path becomes the screen) and exempts the client from the server's crawler filter, which applies to `web` only. |
 | `data-consent` | `consent` | May this instance keep anything on the device. `false` (default): nothing is read from or written to localStorage. `true`, or the name of a global variable or function a consent manager maintains, unlocks it. See [Consent and storage](#consent-and-storage). |
-| `data-instance` | `instance` | Name for a second tag on the same page: registers `window.<name>` instead of `window.twillingate` and prefixes this instance's storage keys. See [Two tags on one page](#two-tags-on-one-page). |
+| `data-instance` | `instance` | Name for a second tag or bundled consumer on the same page. As an attribute it registers `window.<name>` and prefixes this instance's storage keys; as the `instance` option it only prefixes the keys — no global is registered. See [Two tags on one page](#two-tags-on-one-page). |
 
 **Every `data-*` attribute has an `init()` equivalent**, enforced by a test.
 The reverse does not hold: `url`, `installId`, `flushInterval` and the
@@ -338,9 +339,9 @@ no consent with a console warning. The value is consulted at every storage
 decision, never cached at `init()`, so a consent manager that answers after
 page load needs no extra call. When it flips to true, anything waiting in
 the memory retry queue is written to localStorage and an identified
-instance starts persisting a visitor id; when it flips to false, every key
-this instance owns is deleted and records go back to memory. Events already
-sent stay as they were sent.
+instance starts persisting a visitor id, and the user and group it already
+holds; when it flips to false, every key this instance owns is deleted and
+records go back to memory. Events already sent stay as they were sent.
 
 `consent(true)` / `consent(false)` pins a value over whatever the tag
 declared; `consent(null)` hands control back; `consent()` returns the
@@ -380,6 +381,11 @@ npm-loaded instances stop sharing a visitor id and a queue. Three rules:
 The default name is `twillingate`, which keeps the current global and the
 current `twillingate_*` keys. `twillingate_ignore` stays global and
 unprefixed: opting out is a decision about the person, not one tag.
+
+Two instances that share a name but disagree on consent wipe each other's
+storage — a consent-less read deletes the keys for that name, including
+what the consenting one just wrote — which is one more reason a second tag
+on the page needs its own `data-instance`.
 
 ### Detection
 
