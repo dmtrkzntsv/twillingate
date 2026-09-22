@@ -1,7 +1,7 @@
 // Package manage owns the project registry (managed-config spec §3–§4):
 // an immutable snapshot behind an atomic pointer for the ingest hot path,
-// and the audited operations that mutate it. MCP tools, CLI subcommands
-// and the importer are thin frontends over this package.
+// and the audited operations that mutate it. MCP tools and CLI subcommands
+// are thin frontends over this package.
 package manage
 
 import (
@@ -15,16 +15,14 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/dmtrkzntsv/twillingate/internal/config"
 )
 
 type Project struct {
-	Alias, Name, Identity string
-	AllowedOrigins        []string
-	Retention             *config.RetentionOverride
-	Attributes            []string
-	Archived              bool
+	ID             int64
+	Name, Identity string
+	AllowedOrigins []string
+	Attributes     []string
+	Archived       bool
 }
 
 type keyOwner struct {
@@ -36,11 +34,10 @@ type keyOwner struct {
 // Snapshot is an immutable view of the registry. Readers pay one atomic
 // load; every mutation builds a fresh one.
 type Snapshot struct {
-	byAlias  map[string]*Project
-	ordered  []*Project
-	keys     []keyOwner // active keys of non-archived projects only
-	origins  map[string]originSet
-	defaults config.Retention
+	byID    map[int64]*Project
+	ordered []*Project // ascending id
+	keys    []keyOwner // active keys of non-archived projects only
+	origins map[int64]originSet
 }
 
 // pollInterval bounds how often the hot path re-reads config_version to
@@ -48,9 +45,8 @@ type Snapshot struct {
 const pollInterval = time.Second
 
 type Registry struct {
-	st       Store
-	defaults config.Retention
-	logger   *slog.Logger
+	st     Store
+	logger *slog.Logger
 
 	// publish serializes storing snap and version as a pair, so a reload
 	// and a withhold cannot interleave into a snapshot and version that
@@ -65,9 +61,9 @@ type Registry struct {
 // against it always reloads.
 const unknownVersion = -1
 
-func New(st Store, defaults config.Retention, logger *slog.Logger) *Registry {
-	r := &Registry{st: st, defaults: defaults, logger: logger}
-	r.snap.Store(&Snapshot{byAlias: map[string]*Project{}, origins: map[string]originSet{}, defaults: defaults})
+func New(st Store, logger *slog.Logger) *Registry {
+	r := &Registry{st: st, logger: logger}
+	r.snap.Store(&Snapshot{byID: map[int64]*Project{}, origins: map[int64]originSet{}})
 	return r
 }
 
@@ -83,29 +79,22 @@ func (r *Registry) Reload(ctx context.Context) error {
 		return fmt.Errorf("manage: config version: %w", err)
 	}
 	s := &Snapshot{
-		byAlias:  make(map[string]*Project, len(ps)),
-		origins:  make(map[string]originSet, len(ps)),
-		defaults: r.defaults,
+		byID:    make(map[int64]*Project, len(ps)),
+		origins: make(map[int64]originSet, len(ps)),
 	}
 	for _, rp := range ps {
-		p := &Project{Alias: rp.Alias, Name: rp.Name, Identity: rp.Identity, Archived: rp.Archived}
+		p := &Project{ID: rp.ID, Name: rp.Name, Identity: rp.Identity, Archived: rp.Archived}
 		if rp.AllowedOrigins != "" {
 			if err := json.Unmarshal([]byte(rp.AllowedOrigins), &p.AllowedOrigins); err != nil {
-				return fmt.Errorf("manage: project %q allowed_origins: %w", rp.Alias, err)
-			}
-		}
-		if rp.Retention != "" {
-			p.Retention = new(config.RetentionOverride)
-			if err := json.Unmarshal([]byte(rp.Retention), p.Retention); err != nil {
-				return fmt.Errorf("manage: project %q retention: %w", rp.Alias, err)
+				return fmt.Errorf("manage: project %d allowed_origins: %w", rp.ID, err)
 			}
 		}
 		if rp.Attributes != "" {
 			if err := json.Unmarshal([]byte(rp.Attributes), &p.Attributes); err != nil {
-				return fmt.Errorf("manage: project %q attributes: %w", rp.Alias, err)
+				return fmt.Errorf("manage: project %d attributes: %w", rp.ID, err)
 			}
 		}
-		s.byAlias[p.Alias] = p
+		s.byID[p.ID] = p
 		s.ordered = append(s.ordered, p)
 		set := originSet{exact: map[string]bool{}}
 		for _, o := range p.AllowedOrigins {
@@ -115,10 +104,10 @@ func (r *Registry) Reload(ctx context.Context) error {
 			}
 			set.exact[o] = true
 		}
-		s.origins[p.Alias] = set
+		s.origins[p.ID] = set
 	}
 	for _, k := range ks {
-		p := s.byAlias[k.Project]
+		p := s.byID[k.ProjectID]
 		if p == nil || p.Archived || k.Disabled {
 			continue // archived projects reject events (001_init.sql comment)
 		}
@@ -139,10 +128,10 @@ func (r *Registry) Reload(ctx context.Context) error {
 // to anonymous identity), so those projects' events are refused until a
 // reload succeeds. The version is forgotten so the next poll reloads even
 // if the snapshot underneath was already current.
-func (r *Registry) withhold(aliases ...string) {
-	drop := make(map[string]bool, len(aliases))
-	for _, a := range aliases {
-		drop[a] = true
+func (r *Registry) withhold(ids ...int64) {
+	drop := make(map[int64]bool, len(ids))
+	for _, id := range ids {
+		drop[id] = true
 	}
 	r.publish.Lock()
 	defer r.publish.Unlock()
@@ -150,7 +139,7 @@ func (r *Registry) withhold(aliases ...string) {
 	s := *cur
 	s.keys = make([]keyOwner, 0, len(cur.keys))
 	for _, k := range cur.keys {
-		if !drop[k.project.Alias] {
+		if !drop[k.project.ID] {
 			s.keys = append(s.keys, k)
 		}
 	}
@@ -235,7 +224,7 @@ func trimSlash(o string) string {
 	return o
 }
 
-func (s *Snapshot) Project(alias string) *Project { return s.byAlias[alias] }
+func (s *Snapshot) Project(id int64) *Project { return s.byID[id] }
 
 func (s *Snapshot) Projects() []*Project { return s.ordered }
 
@@ -258,8 +247,8 @@ func (s *Snapshot) ProjectByKey(key string) (*Project, string, bool) {
 	return s.keys[match].project, s.keys[match].label, true
 }
 
-func (s *Snapshot) OriginAllowed(alias, origin string) bool {
-	set, ok := s.origins[alias]
+func (s *Snapshot) OriginAllowed(id int64, origin string) bool {
+	set, ok := s.origins[id]
 	return ok && set.match(trimSlash(origin))
 }
 
@@ -273,50 +262,26 @@ func (s *Snapshot) AnyOriginAllowed(origin string) bool {
 	return false
 }
 
-// RetentionFor merges the project's override over the global defaults,
-// byte-for-byte the same semantics as the old config.RetentionFor.
-func (s *Snapshot) RetentionFor(alias string) config.Retention {
-	r := s.defaults
-	p := s.byAlias[alias]
-	if p == nil || p.Retention == nil {
-		return r
-	}
-	apply := func(dst *config.RetentionClass, o *config.RetentionClassOverride) {
-		if o == nil {
-			return
-		}
-		if o.RawDays != nil {
-			dst.RawDays = *o.RawDays
-		}
-		if o.AggregateDays != nil {
-			dst.AggregateDays = *o.AggregateDays
-		}
-	}
-	apply(&r.Views, p.Retention.Views)
-	apply(&r.Product, p.Retention.Product)
-	return r
-}
-
 // KeylessProjects lists active projects with no active key: a legitimate
 // retired state, so callers warn rather than fail.
-func (s *Snapshot) KeylessProjects() []string {
-	withKey := map[string]bool{}
+func (s *Snapshot) KeylessProjects() []*Project {
+	withKey := map[int64]bool{}
 	for _, k := range s.keys {
-		withKey[k.project.Alias] = true
+		withKey[k.project.ID] = true
 	}
-	var out []string
+	var out []*Project
 	for _, p := range s.ordered {
-		if !p.Archived && !withKey[p.Alias] {
-			out = append(out, p.Alias)
+		if !p.Archived && !withKey[p.ID] {
+			out = append(out, p)
 		}
 	}
 	return out
 }
 
-// AttributesFor returns the project's declared attribute keys. Unknown
-// aliases return nil, matching the archived-project fallback.
-func (s *Snapshot) AttributesFor(alias string) []string {
-	p := s.byAlias[alias]
+// AttributesFor returns the project's declared attribute keys. Unknown ids
+// return nil, matching the archived-project fallback.
+func (s *Snapshot) AttributesFor(id int64) []string {
+	p := s.byID[id]
 	if p == nil {
 		return nil
 	}

@@ -9,37 +9,37 @@ import (
 
 func TestOpsRefusalsAreTyped(t *testing.T) {
 	st := testStore(t)
-	reg := New(st, defaults, discard())
+	reg := New(st, discard())
 	ctx := context.Background()
 	if err := reg.Reload(ctx); err != nil {
 		t.Fatal(err)
 	}
 	ops := NewOps(reg, st)
-	if _, err := ops.CreateProject(ctx, "cli", ProjectSpec{Alias: "blog"}); err != nil {
+	blog, err := ops.CreateProject(ctx, "cli", ProjectSpec{Name: "blog"})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ops.IssueIngestKey(ctx, "cli", "blog", "web"); err != nil {
+	if _, err := ops.IssueIngestKey(ctx, "cli", blog.ID, "web"); err != nil {
 		t.Fatal(err)
 	}
 
 	invalid := map[string]error{
-		"empty alias": func() error {
+		"empty name": func() error {
 			_, err := ops.CreateProject(ctx, "cli", ProjectSpec{})
 			return err
 		}(),
 		"bad identity": func() error {
-			_, err := ops.CreateProject(ctx, "cli", ProjectSpec{Alias: "x", Identity: "pseudonymous"})
+			_, err := ops.CreateProject(ctx, "cli", ProjectSpec{Name: "x", Identity: "pseudonymous"})
 			return err
 		}(),
 		"empty origin": func() error {
-			_, err := ops.CreateProject(ctx, "cli", ProjectSpec{Alias: "x", AllowedOrigins: []string{""}})
+			_, err := ops.CreateProject(ctx, "cli", ProjectSpec{Name: "x", AllowedOrigins: []string{""}})
 			return err
 		}(),
-		"alias charset": func() error {
-			_, err := ops.CreateProject(ctx, "cli", ProjectSpec{Alias: "My App"})
+		"update to bad identity": func() error {
+			_, err := ops.UpdateProject(ctx, "cli", ProjectSpec{ID: blog.ID, Identity: "pseudonymous"})
 			return err
 		}(),
-		"rename to bad alias": ops.RenameProject(ctx, "cli", "blog", "My_App"),
 	}
 	for name, err := range invalid {
 		if !errors.Is(err, ErrInvalid) {
@@ -53,17 +53,16 @@ func TestOpsRefusalsAreTyped(t *testing.T) {
 
 	notFound := map[string]error{
 		"issue key for unknown project": func() error {
-			_, err := ops.IssueIngestKey(ctx, "cli", "ghost", "web")
+			_, err := ops.IssueIngestKey(ctx, "cli", 404, "web")
 			return err
 		}(),
 		"update unknown project": func() error {
-			_, err := ops.UpdateProject(ctx, "cli", ProjectSpec{Alias: "ghost"})
+			_, err := ops.UpdateProject(ctx, "cli", ProjectSpec{ID: 404})
 			return err
 		}(),
-		"archive unknown project": ops.ArchiveProject(ctx, "cli", "ghost"),
-		"disable unknown key":     ops.DisableIngestKey(ctx, "cli", "blog", "ghost"),
-		"delete unknown project":  ops.DeleteProject(ctx, "cli", "ghost"),
-		"rename unknown project":  ops.RenameProject(ctx, "cli", "ghost", "journal"),
+		"archive unknown project": ops.ArchiveProject(ctx, "cli", 404),
+		"disable unknown key":     ops.DisableIngestKey(ctx, "cli", blog.ID, "ghost"),
+		"delete unknown project":  ops.DeleteProject(ctx, "cli", 404),
 	}
 	for name, err := range notFound {
 		if !errors.Is(err, ErrNotFound) {
@@ -71,19 +70,9 @@ func TestOpsRefusalsAreTyped(t *testing.T) {
 		}
 	}
 
-	conflict := map[string]error{
-		"create taken alias": func() error {
-			_, err := ops.CreateProject(ctx, "cli", ProjectSpec{Alias: "blog"})
-			return err
-		}(),
-		"issue taken label": func() error {
-			_, err := ops.IssueIngestKey(ctx, "cli", "blog", "web")
-			return err
-		}(),
-	}
-	for name, err := range conflict {
-		if !errors.Is(err, ErrConflict) {
-			t.Errorf("%s: err = %v, want errors.Is(err, ErrConflict)", name, err)
-		}
+	// Names are not unique, so the only conflict left is a key label
+	// already taken for that project.
+	if _, err := ops.IssueIngestKey(ctx, "cli", blog.ID, "web"); !errors.Is(err, ErrConflict) {
+		t.Errorf("issue taken label: err = %v, want errors.Is(err, ErrConflict)", err)
 	}
 }

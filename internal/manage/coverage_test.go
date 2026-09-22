@@ -1,10 +1,8 @@
 package manage
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
-	"encoding/json"
 	"strings"
 	"testing"
 
@@ -29,88 +27,88 @@ func rawExec(t *testing.T, st store.Store, q string, args ...any) {
 
 func TestArchiveAndRestoreProjectRoundTrip(t *testing.T) {
 	st := testStore(t)
-	reg := New(st, defaults, discard())
+	reg := New(st, discard())
 	ctx := context.Background()
 	reg.Reload(ctx)
 	ops := NewOps(reg, st)
-	if _, err := ops.CreateProject(ctx, "cli", ProjectSpec{Alias: "blog", Name: "b", Identity: "anonymous"}); err != nil {
+	p, err := ops.CreateProject(ctx, "cli", ProjectSpec{Name: "b", Identity: "anonymous"})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ops.ArchiveProject(ctx, "cli", "blog"); err != nil {
+	if err := ops.ArchiveProject(ctx, "cli", p.ID); err != nil {
 		t.Fatal(err)
 	}
-	if p := reg.Snapshot(ctx).Project("blog"); p == nil || !p.Archived {
-		t.Fatalf("after archive, Project = %+v", p)
+	if got := reg.Snapshot(ctx).Project(p.ID); got == nil || !got.Archived {
+		t.Fatalf("after archive, Project = %+v", got)
 	}
-	if err := ops.RestoreProject(ctx, "cli", "blog"); err != nil {
+	if err := ops.RestoreProject(ctx, "cli", p.ID); err != nil {
 		t.Fatal(err)
 	}
-	if p := reg.Snapshot(ctx).Project("blog"); p == nil || p.Archived {
-		t.Fatalf("after restore, Project = %+v", p)
+	if got := reg.Snapshot(ctx).Project(p.ID); got == nil || got.Archived {
+		t.Fatalf("after restore, Project = %+v", got)
 	}
 }
 
 func TestDeleteProjectRemovesEverything(t *testing.T) {
 	st := testStore(t)
-	reg := New(st, defaults, discard())
+	reg := New(st, discard())
 	ctx := context.Background()
 	reg.Reload(ctx)
 	ops := NewOps(reg, st)
-	if _, err := ops.CreateProject(ctx, "cli", ProjectSpec{Alias: "blog", Name: "b", Identity: "anonymous"}); err != nil {
+	p, err := ops.CreateProject(ctx, "cli", ProjectSpec{Name: "b", Identity: "anonymous"})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ops.IssueIngestKey(ctx, "cli", "blog", "web"); err != nil {
+	if _, err := ops.IssueIngestKey(ctx, "cli", p.ID, "web"); err != nil {
 		t.Fatal(err)
 	}
-	if err := ops.DeleteProject(ctx, "cli", "blog"); err != nil {
+	if err := ops.DeleteProject(ctx, "cli", p.ID); err != nil {
 		t.Fatal(err)
 	}
-	if p := reg.Snapshot(ctx).Project("blog"); p != nil {
-		t.Fatalf("deleted project still present: %+v", p)
+	if got := reg.Snapshot(ctx).Project(p.ID); got != nil {
+		t.Fatalf("deleted project still present: %+v", got)
 	}
-	// deleting an unknown alias is an error, not a silent no-op.
-	if err := ops.DeleteProject(ctx, "cli", "no-such-project"); err == nil {
-		t.Fatal("delete of unknown alias = nil, want error")
+	// deleting an unknown id is an error, not a silent no-op.
+	if err := ops.DeleteProject(ctx, "cli", 404); err == nil {
+		t.Fatal("delete of unknown id = nil, want error")
 	}
 }
 
 func TestIssueIngestKeyUnknownProject(t *testing.T) {
 	st := testStore(t)
-	reg := New(st, defaults, discard())
+	reg := New(st, discard())
 	ctx := context.Background()
 	reg.Reload(ctx)
 	ops := NewOps(reg, st)
-	if _, err := ops.IssueIngestKey(ctx, "cli", "no-such-project", "web"); err == nil {
+	if _, err := ops.IssueIngestKey(ctx, "cli", 404, "web"); err == nil {
 		t.Fatal("want error for unknown project")
 	}
 }
 
-func TestUpdateProjectAppliesRetentionAndAttributes(t *testing.T) {
+func TestUpdateProjectAppliesIdentityAndAttributes(t *testing.T) {
 	st := testStore(t)
-	reg := New(st, defaults, discard())
+	reg := New(st, discard())
 	ctx := context.Background()
 	reg.Reload(ctx)
 	ops := NewOps(reg, st)
-	if _, err := ops.CreateProject(ctx, "cli", ProjectSpec{Alias: "blog", Name: "b", Identity: "anonymous"}); err != nil {
+	p, err := ops.CreateProject(ctx, "cli", ProjectSpec{Name: "b", Identity: "anonymous"})
+	if err != nil {
 		t.Fatal(err)
 	}
-	rawDays := 90
-	p, err := ops.UpdateProject(ctx, "cli", ProjectSpec{
-		Alias: "blog", Name: "b", Identity: "identified",
-		Retention:  &config.RetentionOverride{Views: &config.RetentionClassOverride{RawDays: &rawDays}},
-		Attributes: []string{"plan"},
+	u, err := ops.UpdateProject(ctx, "cli", ProjectSpec{
+		ID: p.ID, Identity: "identified", Attributes: []string{"plan"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Identity != "identified" || p.Retention == nil || p.Retention.Views == nil || *p.Retention.Views.RawDays != 90 {
-		t.Fatalf("updated project = %+v", p)
+	if u.Identity != "identified" || u.Name != "b" {
+		t.Fatalf("updated project = %+v", u)
 	}
-	if len(p.Attributes) != 1 || p.Attributes[0] != "plan" {
-		t.Fatalf("attributes not applied: %+v", p.Attributes)
+	if len(u.Attributes) != 1 || u.Attributes[0] != "plan" {
+		t.Fatalf("attributes not applied: %+v", u.Attributes)
 	}
 	// invalid identity is rejected before it reaches the store
-	if _, err := ops.UpdateProject(ctx, "cli", ProjectSpec{Alias: "blog", Identity: "sometimes"}); err == nil {
+	if _, err := ops.UpdateProject(ctx, "cli", ProjectSpec{ID: p.ID, Identity: "sometimes"}); err == nil {
 		t.Fatal("want validation error for bad identity")
 	}
 }
@@ -120,38 +118,40 @@ func TestUpdateProjectAppliesRetentionAndAttributes(t *testing.T) {
 // way internal/store/sqlite's own TestOperationsOnClosedDB does.
 func TestOpsPropagateStoreErrorsOnClosedDB(t *testing.T) {
 	st := testStore(t)
-	reg := New(st, defaults, discard())
+	reg := New(st, discard())
 	ctx := context.Background()
 	reg.Reload(ctx)
 	ops := NewOps(reg, st)
-	if _, err := ops.CreateProject(ctx, "cli", ProjectSpec{Alias: "blog", Name: "b", Identity: "anonymous"}); err != nil {
+	p, err := ops.CreateProject(ctx, "cli", ProjectSpec{Name: "b", Identity: "anonymous"})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ops.IssueIngestKey(ctx, "cli", "blog", "web"); err != nil {
+	if _, err := ops.IssueIngestKey(ctx, "cli", p.ID, "web"); err != nil {
 		t.Fatal(err)
 	}
-	// snapshot already has "blog" cached; closing st only breaks writes
-	// and the LoadRegistry/ConfigVersion calls Reload makes afterwards.
+	// snapshot already has the project cached; closing st only breaks
+	// writes and the LoadRegistry/ConfigVersion calls Reload makes
+	// afterwards.
 	if err := st.Close(); err != nil {
 		t.Fatal(err)
 	}
 
 	for name, op := range map[string]func() error{
 		"CreateProject": func() error {
-			_, err := ops.CreateProject(ctx, "cli", ProjectSpec{Alias: "other", Name: "o", Identity: "anonymous"})
+			_, err := ops.CreateProject(ctx, "cli", ProjectSpec{Name: "o", Identity: "anonymous"})
 			return err
 		},
 		"UpdateProject": func() error {
-			_, err := ops.UpdateProject(ctx, "cli", ProjectSpec{Alias: "blog", Name: "b", Identity: "anonymous"})
+			_, err := ops.UpdateProject(ctx, "cli", ProjectSpec{ID: p.ID, Name: "b", Identity: "anonymous"})
 			return err
 		},
-		"ArchiveProject":   func() error { return ops.ArchiveProject(ctx, "cli", "blog") },
-		"RestoreProject":   func() error { return ops.RestoreProject(ctx, "cli", "blog") },
-		"DisableIngestKey": func() error { return ops.DisableIngestKey(ctx, "cli", "blog", "web") },
-		"EnableIngestKey":  func() error { return ops.EnableIngestKey(ctx, "cli", "blog", "web") },
-		"DeleteProject":    func() error { return ops.DeleteProject(ctx, "cli", "blog") },
+		"ArchiveProject":   func() error { return ops.ArchiveProject(ctx, "cli", p.ID) },
+		"RestoreProject":   func() error { return ops.RestoreProject(ctx, "cli", p.ID) },
+		"DisableIngestKey": func() error { return ops.DisableIngestKey(ctx, "cli", p.ID, "web") },
+		"EnableIngestKey":  func() error { return ops.EnableIngestKey(ctx, "cli", p.ID, "web") },
+		"DeleteProject":    func() error { return ops.DeleteProject(ctx, "cli", p.ID) },
 		"IssueIngestKey": func() error {
-			_, err := ops.IssueIngestKey(ctx, "cli", "blog", "ios")
+			_, err := ops.IssueIngestKey(ctx, "cli", p.ID, "ios")
 			return err
 		},
 	} {
@@ -163,45 +163,47 @@ func TestOpsPropagateStoreErrorsOnClosedDB(t *testing.T) {
 
 // ---- ops.go: ProjectSpec.validate / .row, unexported but same package ----
 
-func TestValidateDefaultsNameAndIdentity(t *testing.T) {
-	sp := &ProjectSpec{Alias: "blog"}
+func TestValidateDefaultsIdentity(t *testing.T) {
+	sp := &ProjectSpec{Name: "blog"}
 	if err := sp.validate(); err != nil {
 		t.Fatal(err)
-	}
-	if sp.Name != "blog" {
-		t.Errorf("Name = %q, want default to alias", sp.Name)
 	}
 	if sp.Identity != config.IdentityAnonymous {
 		t.Errorf("Identity = %q, want default anonymous", sp.Identity)
 	}
+	// A name is required and whitespace does not count.
+	for _, name := range []string{"", "   ", "\t\n"} {
+		sp := &ProjectSpec{Name: name}
+		if err := sp.validate(); err == nil {
+			t.Errorf("validate(Name: %q) = nil, want ErrInvalid", name)
+		}
+	}
 }
 
-func TestRowMarshalsOriginsRetentionAttributes(t *testing.T) {
-	// nil origins/attributes -> "[]", no retention
-	sp := &ProjectSpec{Alias: "a", Name: "a", Identity: "anonymous"}
+func TestRowMarshalsOriginsAndAttributes(t *testing.T) {
+	// nil origins/attributes -> "[]"
+	sp := &ProjectSpec{Name: "a", Identity: "anonymous"}
 	row, err := sp.row()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if row.AllowedOrigins != "[]" || row.Retention != "" || row.Attributes != "[]" {
+	if row.AllowedOrigins != "[]" || row.Attributes != "[]" {
 		t.Fatalf("row = %+v", row)
 	}
 
-	// non-nil origins, retention and attributes all set
-	rawDays := 5
-	sp2 := &ProjectSpec{Alias: "b", Name: "b", Identity: "identified",
+	// non-nil origins and attributes set, id carried through
+	sp2 := &ProjectSpec{ID: 7, Name: "b", Identity: "identified",
 		AllowedOrigins: []string{"https://b.example.com"},
-		Retention:      &config.RetentionOverride{Views: &config.RetentionClassOverride{RawDays: &rawDays}},
 		Attributes:     []string{"plan", "tier"}}
 	row2, err := sp2.row()
 	if err != nil {
 		t.Fatal(err)
 	}
+	if row2.ID != 7 {
+		t.Errorf("ID = %d, want 7", row2.ID)
+	}
 	if row2.AllowedOrigins != `["https://b.example.com"]` {
 		t.Errorf("AllowedOrigins = %q", row2.AllowedOrigins)
-	}
-	if !strings.Contains(row2.Retention, `"raw_days":5`) {
-		t.Errorf("Retention = %q", row2.Retention)
 	}
 	if row2.Attributes != `["plan","tier"]` {
 		t.Errorf("Attributes = %q", row2.Attributes)
@@ -220,26 +222,28 @@ func TestSnippetDefaultsOriginWhenEmpty(t *testing.T) {
 func TestProjectsAnyOriginAllowedAndAttributesFor(t *testing.T) {
 	st := testStore(t)
 	ctx := context.Background()
-	if err := st.CreateProject(ctx, store.RegistryProject{
-		Alias: "blog", Name: "blog", Identity: "anonymous",
+	blog, err := st.CreateProject(ctx, store.RegistryProject{
+		Name: "blog", Identity: "anonymous",
 		AllowedOrigins: `["https://blog.example.com/"]`, // trailing slash on this side
 		Attributes:     `["plan"]`,
-	}, store.AuditEntry{Actor: "test", Action: "project.create", Subject: "blog"}); err != nil {
+	}, store.AuditEntry{Actor: "test", Action: "project.create"})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.CreateProject(ctx, store.RegistryProject{
-		Alias: "docs", Name: "docs", Identity: "anonymous", AllowedOrigins: "[]",
-	}, store.AuditEntry{Actor: "test", Action: "project.create", Subject: "docs"}); err != nil {
+	docs, err := st.CreateProject(ctx, store.RegistryProject{
+		Name: "docs", Identity: "anonymous", AllowedOrigins: "[]",
+	}, store.AuditEntry{Actor: "test", Action: "project.create"})
+	if err != nil {
 		t.Fatal(err)
 	}
-	reg := New(st, defaults, discard())
+	reg := New(st, discard())
 	if err := reg.Reload(ctx); err != nil {
 		t.Fatal(err)
 	}
 	s := reg.Snapshot(ctx)
 
-	if got := s.Projects(); len(got) != 2 {
-		t.Fatalf("Projects() = %d entries, want 2", len(got))
+	if got := s.Projects(); len(got) != 2 || got[0].ID != blog || got[1].ID != docs {
+		t.Fatalf("Projects() = %+v, want blog then docs by ascending id", got)
 	}
 
 	// origin allowed without the trailing slash the caller sends, matching
@@ -251,21 +255,21 @@ func TestProjectsAnyOriginAllowedAndAttributesFor(t *testing.T) {
 		t.Error("AnyOriginAllowed matched an origin nobody allows")
 	}
 
-	attrs := s.AttributesFor("blog")
+	attrs := s.AttributesFor(blog)
 	if len(attrs) != 1 || attrs[0] != "plan" {
 		t.Fatalf("AttributesFor(blog) = %+v", attrs)
 	}
-	if got := s.AttributesFor("docs"); len(got) != 0 {
+	if got := s.AttributesFor(docs); len(got) != 0 {
 		t.Fatalf("AttributesFor(docs) = %+v, want empty (no attributes declared)", got)
 	}
-	if got := s.AttributesFor("ghost"); len(got) != 0 {
-		t.Fatalf("AttributesFor(ghost) = %+v, want nil (unknown alias)", got)
+	if got := s.AttributesFor(404); len(got) != 0 {
+		t.Fatalf("AttributesFor(404) = %+v, want nil (unknown id)", got)
 	}
 }
 
 func TestReloadPropagatesStoreErrors(t *testing.T) {
 	st := testStore(t)
-	reg := New(st, defaults, discard())
+	reg := New(st, discard())
 	if err := st.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -280,14 +284,14 @@ func TestReloadPropagatesStoreErrors(t *testing.T) {
 // ingestion). This exercises the log-and-continue branch in Snapshot.
 func TestSnapshotPollErrorKeepsServingPreviousSnapshot(t *testing.T) {
 	st := testStore(t)
-	seedProject(t, st, "blog")
-	reg := New(st, defaults, discard())
+	id := seedProject(t, st, "blog")
+	reg := New(st, discard())
 	ctx := context.Background()
 	if err := reg.Reload(ctx); err != nil {
 		t.Fatal(err)
 	}
 	before := reg.Snapshot(ctx)
-	if before.Project("blog") == nil {
+	if before.Project(id) == nil {
 		t.Fatal("setup: blog missing before closing the store")
 	}
 
@@ -297,200 +301,31 @@ func TestSnapshotPollErrorKeepsServingPreviousSnapshot(t *testing.T) {
 	// force the next Snapshot call past the poll interval
 	reg.lastCheck.Store(0)
 	after := reg.Snapshot(ctx)
-	if after.Project("blog") == nil {
+	if after.Project(id) == nil {
 		t.Fatal("poll error dropped the previous snapshot instead of keeping it")
-	}
-}
-
-// ---- importexport.go: error paths and the less-common branches ----
-
-func TestImportRejectsUnsupportedVersion(t *testing.T) {
-	st := testStore(t)
-	reg := New(st, defaults, discard())
-	ctx := context.Background()
-	reg.Reload(ctx)
-	ops := NewOps(reg, st)
-	_, err := ops.Import(ctx, "cli", strings.NewReader(`{"version":2,"projects":[]}`))
-	if err == nil || !strings.Contains(err.Error(), "unsupported version") {
-		t.Fatalf("err = %v, want unsupported version", err)
-	}
-}
-
-func TestImportRejectsMalformedJSON(t *testing.T) {
-	st := testStore(t)
-	reg := New(st, defaults, discard())
-	ctx := context.Background()
-	reg.Reload(ctx)
-	ops := NewOps(reg, st)
-	if _, err := ops.Import(ctx, "cli", strings.NewReader(`{"version":1,"unknown_field":true}`)); err == nil {
-		t.Fatal("want error for an unknown field (DisallowUnknownFields)")
-	}
-}
-
-func TestImportRejectsMalformedLegacyJSON(t *testing.T) {
-	st := testStore(t)
-	reg := New(st, defaults, discard())
-	ctx := context.Background()
-	reg.Reload(ctx)
-	ops := NewOps(reg, st)
-	if _, err := ops.Import(ctx, "cli", strings.NewReader(`[{"alias": `)); err == nil {
-		t.Fatal("want error for truncated legacy array")
-	}
-}
-
-func TestImportEmptyDocumentIsAnError(t *testing.T) {
-	st := testStore(t)
-	reg := New(st, defaults, discard())
-	ctx := context.Background()
-	reg.Reload(ctx)
-	ops := NewOps(reg, st)
-	if _, err := ops.Import(ctx, "cli", strings.NewReader("")); err == nil {
-		t.Fatal("want error for an empty document")
-	}
-	if _, err := ops.Import(ctx, "cli", strings.NewReader("   \n\t ")); err == nil {
-		t.Fatal("want error for a whitespace-only document")
-	}
-}
-
-func TestImportSkipsExistingKeysAndAppliesDisabled(t *testing.T) {
-	st := testStore(t)
-	reg := New(st, defaults, discard())
-	ctx := context.Background()
-	reg.Reload(ctx)
-	ops := NewOps(reg, st)
-
-	doc := `{"version":1,"projects":[{"alias":"blog","name":"blog","identity":"anonymous",
-	  "allowed_origins":[],
-	  "ingest_keys":[{"key":"ak_1","label":"web"},{"key":"ak_2","label":"ios","disabled":true}]}]}`
-	res, err := ops.Import(ctx, "cli", strings.NewReader(doc))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.Created != 1 || res.KeysAdded != 2 {
-		t.Fatalf("first import result = %+v", res)
-	}
-	if _, _, ok := reg.Snapshot(ctx).ProjectByKey("ak_1"); !ok {
-		t.Fatal("ak_1 should resolve (not disabled)")
-	}
-	if _, _, ok := reg.Snapshot(ctx).ProjectByKey("ak_2"); ok {
-		t.Fatal("ak_2 was imported with disabled:true and must not resolve")
-	}
-
-	// re-importing the same document must not re-add either key
-	res2, err := ops.Import(ctx, "cli", strings.NewReader(doc))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res2.KeysAdded != 0 {
-		t.Fatalf("re-import added %d keys, want 0 (existing keys are left alone)", res2.KeysAdded)
-	}
-}
-
-func TestImportRestoresAnArchivedProjectWhenDocumentSaysSo(t *testing.T) {
-	st := testStore(t)
-	reg := New(st, defaults, discard())
-	ctx := context.Background()
-	reg.Reload(ctx)
-	ops := NewOps(reg, st)
-	if _, err := ops.CreateProject(ctx, "cli", ProjectSpec{Alias: "blog", Name: "blog", Identity: "anonymous"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := ops.ArchiveProject(ctx, "cli", "blog"); err != nil {
-		t.Fatal(err)
-	}
-	doc := `{"version":1,"projects":[{"alias":"blog","name":"blog","identity":"anonymous","allowed_origins":[],"archived":false,"ingest_keys":[]}]}`
-	if _, err := ops.Import(ctx, "cli", strings.NewReader(doc)); err != nil {
-		t.Fatal(err)
-	}
-	if p := reg.Snapshot(ctx).Project("blog"); p == nil || p.Archived {
-		t.Fatalf("blog = %+v, want restored (archived:false in the document)", p)
-	}
-}
-
-func TestExportIncludesRetentionAndAttributes(t *testing.T) {
-	st := testStore(t)
-	reg := New(st, defaults, discard())
-	ctx := context.Background()
-	reg.Reload(ctx)
-	ops := NewOps(reg, st)
-	rawDays := 90
-	if _, err := ops.CreateProject(ctx, "cli", ProjectSpec{
-		Alias: "blog", Name: "blog", Identity: "identified",
-		Retention:  &config.RetentionOverride{Views: &config.RetentionClassOverride{RawDays: &rawDays}},
-		Attributes: []string{"plan"},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	var buf bytes.Buffer
-	if err := ops.Export(ctx, &buf); err != nil {
-		t.Fatal(err)
-	}
-	var doc exportDoc
-	if err := json.Unmarshal(buf.Bytes(), &doc); err != nil {
-		t.Fatal(err)
-	}
-	if len(doc.Projects) != 1 {
-		t.Fatalf("doc.Projects = %+v", doc.Projects)
-	}
-	ep := doc.Projects[0]
-	if ep.Retention == nil || ep.Retention.Views == nil || *ep.Retention.Views.RawDays != 90 {
-		t.Fatalf("exported retention = %+v", ep.Retention)
-	}
-	if len(ep.Attributes) != 1 || ep.Attributes[0] != "plan" {
-		t.Fatalf("exported attributes = %+v", ep.Attributes)
-	}
-	if strings.Contains(buf.String(), "product_aggregation") {
-		t.Errorf("export must not carry the legacy product_aggregation field: %s", buf.String())
-	}
-}
-
-func TestExportPropagatesStoreErrors(t *testing.T) {
-	st := testStore(t)
-	reg := New(st, defaults, discard())
-	ctx := context.Background()
-	reg.Reload(ctx)
-	ops := NewOps(reg, st)
-	if err := st.Close(); err != nil {
-		t.Fatal(err)
-	}
-	var buf bytes.Buffer
-	if err := ops.Export(ctx, &buf); err == nil {
-		t.Fatal("Export on a closed store returned nil, want error")
 	}
 }
 
 // A malformed JSON blob in a registry column (which the exported API can
 // never write, but a hand-edited database or a future bug could produce)
-// must surface as an error from both Reload and Export rather than a
-// panic or a silently empty field.
-func TestReloadAndExportRejectCorruptRegistryJSON(t *testing.T) {
-	for _, tc := range []struct {
-		name   string
-		column string
-	}{
-		{"allowed_origins", "allowed_origins"},
-		{"retention", "retention"},
-		{"attributes", "attributes"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
+// must surface as an error from Reload rather than a panic or a silently
+// empty field.
+func TestReloadRejectsCorruptRegistryJSON(t *testing.T) {
+	for _, column := range []string{"allowed_origins", "attributes"} {
+		t.Run(column, func(t *testing.T) {
 			st := testStore(t)
 			ctx := context.Background()
-			if err := st.CreateProject(ctx, store.RegistryProject{
-				Alias: "blog", Name: "blog", Identity: "anonymous", AllowedOrigins: "[]",
-			}, store.AuditEntry{Actor: "test", Action: "project.create", Subject: "blog"}); err != nil {
+			id, err := st.CreateProject(ctx, store.RegistryProject{
+				Name: "blog", Identity: "anonymous", AllowedOrigins: "[]",
+			}, store.AuditEntry{Actor: "test", Action: "project.create"})
+			if err != nil {
 				t.Fatal(err)
 			}
-			rawExec(t, st, `UPDATE projects SET `+tc.column+` = 'not json' WHERE alias = 'blog'`)
+			rawExec(t, st, `UPDATE projects SET `+column+` = 'not json' WHERE id = ?`, id)
 
-			reg := New(st, defaults, discard())
+			reg := New(st, discard())
 			if err := reg.Reload(ctx); err == nil {
 				t.Error("Reload did not reject corrupt JSON")
-			}
-
-			ops := NewOps(reg, st)
-			var buf bytes.Buffer
-			if err := ops.Export(ctx, &buf); err == nil {
-				t.Error("Export did not reject corrupt JSON")
 			}
 		})
 	}
