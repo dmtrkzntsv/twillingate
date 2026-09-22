@@ -20,14 +20,14 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-func intPtr(n int) *int { return &n }
-
 var jobsProjectSpecs = []manage.ProjectSpec{
-	{Alias: "app", Name: "App", AllowedOrigins: []string{"https://a.com"},
+	{Name: "App", AllowedOrigins: []string{"https://a.com"},
 		Attributes: []string{"plan"}},
 }
 
-// jobsVars pins the retention windows the assertions below rely on.
+// jobsVars pins the retention windows the assertions below rely on: a
+// 7-day raw window puts the fixed 2026-08-10 fixture day outside it relative
+// to the fake now of 2026-08-22.
 var jobsVars = map[string]string{
 	"RETENTION_VIEWS_RAW_DAYS": "7", "RETENTION_VIEWS_AGGREGATE_DAYS": "365",
 	"RETENTION_PRODUCT_RAW_DAYS": "7", "RETENTION_PRODUCT_AGGREGATE_DAYS": "365",
@@ -81,7 +81,7 @@ func openStore(t *testing.T) store.Store {
 func newRegistry(t *testing.T, st store.Store, cfg *config.Config, specs []manage.ProjectSpec) *manage.Registry {
 	t.Helper()
 	ctx := context.Background()
-	reg := manage.New(st, cfg.Retention, slog.Default())
+	reg := manage.New(st, slog.Default())
 	if err := reg.Reload(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -118,39 +118,39 @@ func TestRunDailyPassAggregatesOldDays(t *testing.T) {
 	ctx := context.Background()
 	// Old day (beyond the 7-day raw window relative to fake now 2026-08-22).
 	if err := st.WriteViews(ctx, []store.View{
-		{ID: "1", Project: "app", TS: mustTime("2026-08-10T10:00:00Z"), ReceivedAt: mustTime("2026-08-10T10:00:00Z"),
+		{ID: "1", ProjectID: 1, TS: mustTime("2026-08-10T10:00:00Z"), ReceivedAt: mustTime("2026-08-10T10:00:00Z"),
 			Kind: "web", ActorID: "v", ActorKind: store.ActorConnection, Path: "/"}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.WriteProductEvents(ctx, []store.ProductEvent{
-		{ID: "2", Project: "app", EventName: "e", UserID: "u", TS: mustTime("2026-08-10T10:00:00Z"),
+		{ID: "2", ProjectID: 1, EventName: "e", UserID: "u", TS: mustTime("2026-08-10T10:00:00Z"),
 			Attributes: map[string]string{"plan": "pro"}}}); err != nil {
 		t.Fatal(err)
 	}
 	// Recent day (inside the window) must survive as raw.
 	if err := st.WriteViews(ctx, []store.View{
-		{ID: "3", Project: "app", TS: mustTime("2026-08-21T10:00:00Z"), ReceivedAt: mustTime("2026-08-21T10:00:00Z"),
+		{ID: "3", ProjectID: 1, TS: mustTime("2026-08-21T10:00:00Z"), ReceivedAt: mustTime("2026-08-21T10:00:00Z"),
 			Kind: "web", ActorID: "v", ActorKind: store.ActorConnection, Path: "/"}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := r.RunDailyPass(ctx); err != nil {
 		t.Fatal(err)
 	}
-	oldWeb, err := st.ViewDaysBefore(ctx, "app", mustDay("2026-08-20"))
+	oldWeb, err := st.ViewDaysBefore(ctx, 1, mustDay("2026-08-20"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(oldWeb) != 0 {
 		t.Fatalf("old web raw must be gone: %v", oldWeb)
 	}
-	recent, err := st.ViewDaysBefore(ctx, "app", mustDay("2026-08-23"))
+	recent, err := st.ViewDaysBefore(ctx, 1, mustDay("2026-08-23"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(recent) != 1 {
 		t.Fatalf("recent raw must survive: %v", recent)
 	}
-	oldProd, err := st.ProductDaysBefore(ctx, "app", mustDay("2026-08-20"))
+	oldProd, err := st.ProductDaysBefore(ctx, 1, mustDay("2026-08-20"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +173,7 @@ func TestRunDailyPassRebuildsFlatView(t *testing.T) {
 	ctx := context.Background()
 	// Inside the raw window, so it survives to be discovered.
 	if err := st.WriteProductEvents(ctx, []store.ProductEvent{
-		{ID: "1", Project: "app", EventName: "e", UserID: "u", TS: mustTime("2026-08-21T10:00:00Z"),
+		{ID: "1", ProjectID: 1, EventName: "e", UserID: "u", TS: mustTime("2026-08-21T10:00:00Z"),
 			Attributes: map[string]string{"plan": "pro"}}}); err != nil {
 		t.Fatal(err)
 	}
@@ -197,27 +197,27 @@ func TestRunDailyPassRebuildsFlatView(t *testing.T) {
 }
 
 // A project that has been archived in the registry must still be
-// maintained, using global retention: it is still a registry row, so
-// store.ProjectAliases (all rows, including archived) still returns it.
+// maintained: it is still a registry row, so store.ProjectIDs (all rows,
+// including archived) still returns it.
 func TestRunDailyPassCoversArchivedProjects(t *testing.T) {
 	st, reg, r := setup(t, jobsVars, jobsProjectSpecs)
 	ctx := context.Background()
 	ops := manage.NewOps(reg, st)
-	if _, err := ops.CreateProject(ctx, "test", manage.ProjectSpec{Alias: "gone", Name: "Gone"}); err != nil {
+	if _, err := ops.CreateProject(ctx, "test", manage.ProjectSpec{Name: "Gone"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := ops.ArchiveProject(ctx, "test", "gone"); err != nil {
+	if err := ops.ArchiveProject(ctx, "test", 2); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.WriteViews(ctx, []store.View{
-		{ID: "1", Project: "gone", TS: mustTime("2026-08-10T10:00:00Z"), ReceivedAt: mustTime("2026-08-10T10:00:00Z"),
+		{ID: "1", ProjectID: 2, TS: mustTime("2026-08-10T10:00:00Z"), ReceivedAt: mustTime("2026-08-10T10:00:00Z"),
 			Kind: "web", ActorID: "v", ActorKind: store.ActorConnection, Path: "/"}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := r.RunDailyPass(ctx); err != nil {
 		t.Fatal(err)
 	}
-	left, err := st.ViewDaysBefore(ctx, "gone", mustDay("2026-08-20"))
+	left, err := st.ViewDaysBefore(ctx, 2, mustDay("2026-08-20"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,40 +226,64 @@ func TestRunDailyPassCoversArchivedProjects(t *testing.T) {
 	}
 }
 
-// A per-project retention override must win over the global window.
-func TestRunDailyPassHonoursProjectRetention(t *testing.T) {
-	specs := []manage.ProjectSpec{
-		{Alias: "app", Name: "App", AllowedOrigins: []string{"https://a.com"}},
-		{Alias: "keep", Name: "Keep", AllowedOrigins: []string{"https://b.com"},
-			Retention: &config.RetentionOverride{Views: &config.RetentionClassOverride{RawDays: intPtr(90)}}},
-	}
-	st, _, r := setup(t, jobsVars, specs)
+// TestPruneUsesGlobalWindowsForEveryProject: retention is global, so two
+// projects with the same aged-out data lose it on the same pass.
+func TestPruneUsesGlobalWindowsForEveryProject(t *testing.T) {
+	_, _, r := setup(t, jobsVars, []manage.ProjectSpec{
+		{Name: "App", AllowedOrigins: []string{"https://a.com"}},
+		{Name: "Shop", AllowedOrigins: []string{"https://s.com"}},
+	})
 	ctx := context.Background()
-	ts := mustTime("2026-08-10T10:00:00Z")
-	hits := []store.View{
-		{ID: "1", Project: "app", TS: ts, ReceivedAt: ts, Kind: "web", ActorID: "v", ActorKind: store.ActorConnection, Path: "/"},
-		{ID: "2", Project: "keep", TS: ts, ReceivedAt: ts, Kind: "web", ActorID: "v", ActorKind: store.ActorConnection, Path: "/"},
-	}
-	if err := st.WriteViews(ctx, hits); err != nil {
-		t.Fatal(err)
+	for _, id := range []int64{1, 2} {
+		if _, err := rawExec(t, `INSERT INTO agg_views_daily (project_id, day, kind, visitors, views, sessions, bounces, duration_sec)
+			VALUES (?, '2024-01-01', 'web', 1, 1, 1, 0, 0), (?, '2026-08-20', 'web', 1, 1, 1, 0, 0)`, id, id); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := r.RunDailyPass(ctx); err != nil {
 		t.Fatal(err)
 	}
-	appLeft, err := st.ViewDaysBefore(ctx, "app", mustDay("2026-08-22"))
+	for _, id := range []int64{1, 2} {
+		days := queryDays(t, `SELECT day FROM agg_views_daily WHERE project_id=? ORDER BY day`, id)
+		if len(days) != 1 || days[0] != "2026-08-20" {
+			t.Errorf("project %d kept %v, want only 2026-08-20 (365-day aggregate window)", id, days)
+		}
+	}
+}
+
+// rawExec runs one statement against the store's file through a second
+// connection, for seeding rows the Store interface has no writer for.
+func rawExec(t *testing.T, q string, args ...any) (sql.Result, error) {
+	t.Helper()
+	db, err := sql.Open("sqlite", "file:"+os.Getenv("JOBS_TEST_DB"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(appLeft) != 0 {
-		t.Fatalf("app raw should be aggregated under the 7-day window: %v", appLeft)
-	}
-	keepLeft, err := st.ViewDaysBefore(ctx, "keep", mustDay("2026-08-22"))
+	defer db.Close()
+	return db.Exec(q, args...)
+}
+
+func queryDays(t *testing.T, q string, args ...any) []string {
+	t.Helper()
+	db, err := sql.Open("sqlite", "file:"+os.Getenv("JOBS_TEST_DB")+"?mode=ro")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(keepLeft) != 1 {
-		t.Fatalf("keep raw should survive its 90-day window: %v", keepLeft)
+	defer db.Close()
+	rows, err := db.Query(q, args...)
+	if err != nil {
+		t.Fatal(err)
 	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var d string
+		if err := rows.Scan(&d); err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, d)
+	}
+	return out
 }
 
 // The scheduler must fire salt rotation at 00:00 and the daily pass at 03:00,
@@ -345,23 +369,16 @@ func TestRunBootCatchUpAndCancel(t *testing.T) {
 // --- app class, cohorts and identities ---
 
 var identifiedProjectSpecs = []manage.ProjectSpec{
-	{Alias: "app", Name: "App", Identity: "identified", AllowedOrigins: []string{"https://a.com"}},
+	{Name: "App", Identity: "identified", AllowedOrigins: []string{"https://a.com"}},
 }
 
 var anonymousProjectSpecs = []manage.ProjectSpec{
-	{Alias: "app", Name: "App", Identity: "anonymous", AllowedOrigins: []string{"https://a.com"}},
-}
-
-// appVars uses a 7-day views raw window so the fixed 2026-08-10 fixture day
-// is already outside it relative to the fake now of 2026-08-22.
-var appVars = map[string]string{
-	"RETENTION_VIEWS_RAW_DAYS": "7", "RETENTION_VIEWS_AGGREGATE_DAYS": "365",
-	"RETENTION_PRODUCT_RAW_DAYS": "7", "RETENTION_PRODUCT_AGGREGATE_DAYS": "365",
+	{Name: "App", Identity: "anonymous", AllowedOrigins: []string{"https://a.com"}},
 }
 
 func setupApp(t *testing.T, specs []manage.ProjectSpec) (store.Store, *Runner, *sql.DB) {
 	t.Helper()
-	cfg := configtest.Load(t, appVars)
+	cfg := configtest.Load(t, jobsVars)
 	st, path := openStoreAt(t)
 	reg := newRegistry(t, st, cfg, specs)
 	now := func() time.Time { return time.Date(2026, 8, 22, 4, 0, 0, 0, time.UTC) }
@@ -379,7 +396,7 @@ func seedAppDay(t *testing.T, st store.Store, actors ...string) {
 	for i, a := range actors {
 		ts := mustTime("2026-08-10T10:00:00Z")
 		views = append(views, store.View{
-			ID: "v" + a + string(rune('a'+i)), Project: "app",
+			ID: "v" + a + string(rune('a'+i)), ProjectID: 1,
 			TS: ts, ReceivedAt: ts,
 			Kind: "app", ActorID: a, ActorKind: store.ActorUser,
 			UserID: "u-" + a, GroupID: "org9",
@@ -409,13 +426,13 @@ func TestRunDailyPassAggregatesAppDays(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if n := count(t, db, `SELECT COUNT(*) FROM agg_views_daily WHERE project='app' AND kind='app'`); n != 1 {
+	if n := count(t, db, `SELECT COUNT(*) FROM agg_views_daily WHERE project_id=1 AND kind='app'`); n != 1 {
 		t.Errorf("agg_views_daily rows = %d, want 1", n)
 	}
 	if n := count(t, db, `SELECT visitors FROM agg_views_daily WHERE kind='app'`); n != 2 {
 		t.Errorf("visitors = %d, want 2", n)
 	}
-	if n := count(t, db, `SELECT COUNT(*) FROM views WHERE project='app'`); n != 0 {
+	if n := count(t, db, `SELECT COUNT(*) FROM views WHERE project_id=1`); n != 0 {
 		t.Errorf("raw views left = %d, want 0", n)
 	}
 	if n := count(t, db, `SELECT COUNT(*) FROM actors`); n != 2 {
@@ -479,7 +496,7 @@ func TestRunDailyPassPrunesActorsAndIdentities(t *testing.T) {
 	ctx := context.Background()
 
 	if err := st.UpsertIdentities(ctx, []store.Identity{
-		{Project: "app", Kind: store.KindUser, ID: "old", Name: "Gone"},
+		{ProjectID: 1, Kind: store.KindUser, ID: "old", Name: "Gone"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -487,7 +504,7 @@ func TestRunDailyPassPrunesActorsAndIdentities(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(
-		`INSERT INTO actors VALUES ('app','stale','install','2020-01-01','2020-01-01')`); err != nil {
+		`INSERT INTO actors VALUES (1,'stale','install','2020-01-01','2020-01-01')`); err != nil {
 		t.Fatal(err)
 	}
 
@@ -511,7 +528,7 @@ func TestRunDailyPassCoversWebOnlyProjectsForCohorts(t *testing.T) {
 	ts := mustTime("2026-08-10T10:00:00Z")
 
 	if err := st.WriteViews(ctx, []store.View{
-		{ID: "w1", Project: "app", TS: ts, ReceivedAt: ts, Kind: "web", ActorID: "a", ActorKind: store.ActorUser,
+		{ID: "w1", ProjectID: 1, TS: ts, ReceivedAt: ts, Kind: "web", ActorID: "a", ActorKind: store.ActorUser,
 			UserID: "u1", GroupID: "org9", Path: "/"},
 	}); err != nil {
 		t.Fatal(err)
@@ -537,11 +554,11 @@ func TestRunDailyPassComputesCohortsForRecentDays(t *testing.T) {
 	st, r, db := setupApp(t, identifiedProjectSpecs)
 	ctx := context.Background()
 	// Two days before the fake now of 2026-08-22, well inside the 7-day
-	// app raw window used by appVars.
+	// app raw window used by jobsVars.
 	recent := mustTime("2026-08-20T10:00:00Z")
 
 	if err := st.WriteViews(ctx, []store.View{
-		{ID: "r1", Project: "app", TS: recent, ReceivedAt: recent, Kind: "app", ActorID: "a", ActorKind: store.ActorUser,
+		{ID: "r1", ProjectID: 1, TS: recent, ReceivedAt: recent, Kind: "app", ActorID: "a", ActorKind: store.ActorUser,
 			UserID: "u1", Path: "/home", OS: "iOS"},
 	}); err != nil {
 		t.Fatal(err)
@@ -553,7 +570,7 @@ func TestRunDailyPassComputesCohortsForRecentDays(t *testing.T) {
 		t.Errorf("cohort rows for an in-window day = %d, want 1", n)
 	}
 	// The raw row itself must survive: it is inside the retention window.
-	if n := count(t, db, `SELECT COUNT(*) FROM views WHERE project='app'`); n != 1 {
+	if n := count(t, db, `SELECT COUNT(*) FROM views WHERE project_id=1`); n != 1 {
 		t.Errorf("raw views = %d; an in-window day must not be aggregated away", n)
 	}
 }
@@ -566,8 +583,8 @@ func TestDailyPassRollsUpEveryKindPastTheWindow(t *testing.T) {
 	ctx := context.Background()
 	old := mustTime("2026-08-10T10:00:00Z") // 12 days before the fixed clock; window is 7
 	if err := st.WriteViews(ctx, []store.View{
-		{ID: "w", Project: "app", TS: old, ReceivedAt: old, Kind: "web", ActorID: "h", ActorKind: store.ActorConnection, Path: "/"},
-		{ID: "a", Project: "app", TS: old, ReceivedAt: old, Kind: "app", ActorID: "i", ActorKind: store.ActorInstall, Path: "/home"},
+		{ID: "w", ProjectID: 1, TS: old, ReceivedAt: old, Kind: "web", ActorID: "h", ActorKind: store.ActorConnection, Path: "/"},
+		{ID: "a", ProjectID: 1, TS: old, ReceivedAt: old, Kind: "app", ActorID: "i", ActorKind: store.ActorInstall, Path: "/home"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -580,14 +597,14 @@ func TestDailyPassRollsUpEveryKindPastTheWindow(t *testing.T) {
 	}
 	defer db.Close()
 	var kinds int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM agg_views_daily WHERE project='app' AND day='2026-08-10'`).Scan(&kinds); err != nil {
+	if err := db.QueryRow(`SELECT COUNT(*) FROM agg_views_daily WHERE project_id=1 AND day='2026-08-10'`).Scan(&kinds); err != nil {
 		t.Fatal(err)
 	}
 	if kinds != 2 {
 		t.Errorf("agg_views_daily rows = %d, want one per kind", kinds)
 	}
 	var raw int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM views WHERE project='app'`).Scan(&raw); err != nil {
+	if err := db.QueryRow(`SELECT COUNT(*) FROM views WHERE project_id=1`).Scan(&raw); err != nil {
 		t.Fatal(err)
 	}
 	if raw != 0 {
@@ -604,7 +621,7 @@ func TestRunDailyPassLeavesTodaysIdentityActivityLive(t *testing.T) {
 	for i, ts := range []string{"2026-08-21T10:00:00Z", "2026-08-22T01:00:00Z"} {
 		at := mustTime(ts)
 		if err := st.WriteViews(ctx, []store.View{
-			{ID: "t" + string(rune('a'+i)), Project: "app", TS: at, ReceivedAt: at,
+			{ID: "t" + string(rune('a'+i)), ProjectID: 1, TS: at, ReceivedAt: at,
 				Kind: "app", ActorID: "a", ActorKind: store.ActorUser, UserID: "u1",
 				Path: "/home", OS: "iOS"},
 		}); err != nil {

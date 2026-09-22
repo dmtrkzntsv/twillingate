@@ -25,17 +25,17 @@ type Rotator interface {
 // reclaim pages. Declared here so the ingest and registry halves of the
 // store can change without touching this package.
 type Store interface {
-	ProjectAliases(ctx context.Context) ([]string, error)
-	ViewDaysBefore(ctx context.Context, project string, before civil.Date) ([]civil.Date, error)
-	ProductDaysBefore(ctx context.Context, project string, before civil.Date) ([]civil.Date, error)
-	AggregateViewDay(ctx context.Context, project string, day civil.Date) error
-	AggregateProductDay(ctx context.Context, project string, day civil.Date, attrs []string, topN int) error
-	UpsertActors(ctx context.Context, project string, day civil.Date) error
-	AggregateRetentionDay(ctx context.Context, project string, day civil.Date) error
-	PruneActors(ctx context.Context, project string, before civil.Date) error
-	AggregateIdentityDay(ctx context.Context, project string, day civil.Date) error
-	PruneIdentities(ctx context.Context, project string, before civil.Date) error
-	PruneAggregates(ctx context.Context, project string, viewsBefore, productBefore civil.Date) error
+	ProjectIDs(ctx context.Context) ([]int64, error)
+	ViewDaysBefore(ctx context.Context, projectID int64, before civil.Date) ([]civil.Date, error)
+	ProductDaysBefore(ctx context.Context, projectID int64, before civil.Date) ([]civil.Date, error)
+	AggregateViewDay(ctx context.Context, projectID int64, day civil.Date) error
+	AggregateProductDay(ctx context.Context, projectID int64, day civil.Date, attrs []string, topN int) error
+	UpsertActors(ctx context.Context, projectID int64, day civil.Date) error
+	AggregateRetentionDay(ctx context.Context, projectID int64, day civil.Date) error
+	PruneActors(ctx context.Context, projectID int64, before civil.Date) error
+	AggregateIdentityDay(ctx context.Context, projectID int64, day civil.Date) error
+	PruneIdentities(ctx context.Context, projectID int64, before civil.Date) error
+	PruneAggregates(ctx context.Context, projectID int64, viewsBefore, productBefore civil.Date) error
 	RebuildFlatView(ctx context.Context, keys []string) error
 	IncrementalVacuum(ctx context.Context) error
 }
@@ -73,19 +73,15 @@ func New(st Store, cfg *config.Config, reg *manage.Registry, salt Rotator, logge
 // enumerate work at all are treated as fatal to the pass.
 func (r *Runner) RunDailyPass(ctx context.Context) error {
 	today := civil.Today(r.now())
-	ids, err := r.store.ProjectAliases(ctx)
+	ids, err := r.store.ProjectIDs(ctx)
 	if err != nil {
 		return err
 	}
-	// The registry is the sole source of project config now, so
-	// store.ProjectAliases (all rows, including archived) is the complete
-	// list -- no config-side union needed. An archived project keeps its
-	// retention overrides (it is still a registry row), where the old
-	// config-absence fallback silently reverted it to global defaults.
+	// Retention is global: the same windows apply to every project, and
+	// store.ProjectIDs (all rows, including archived) is the complete list.
+	ret := r.cfg.Retention
 	snap := r.reg.Snapshot(ctx)
 	for _, id := range ids {
-		ret := snap.RetentionFor(id)
-
 		// Cohorts, actors and identity rollups read raw rows across both
 		// raw tables and never delete them, so they run over every day
 		// still present -- not just the aged-out ones. Restricting them to
@@ -167,13 +163,13 @@ func (r *Runner) RunDailyPass(ctx context.Context) error {
 
 // allRawDays merges the days present in both raw tables, deduplicated
 // and sorted, so a project is covered whatever mix of surfaces it uses.
-func (r *Runner) allRawDays(ctx context.Context, project string, before civil.Date) ([]civil.Date, error) {
+func (r *Runner) allRawDays(ctx context.Context, projectID int64, before civil.Date) ([]civil.Date, error) {
 	seen := map[string]bool{}
 	var out []civil.Date
-	for _, fn := range []func(context.Context, string, civil.Date) ([]civil.Date, error){
+	for _, fn := range []func(context.Context, int64, civil.Date) ([]civil.Date, error){
 		r.store.ViewDaysBefore, r.store.ProductDaysBefore,
 	} {
-		days, err := fn(ctx, project, before)
+		days, err := fn(ctx, projectID, before)
 		if err != nil {
 			return nil, err
 		}
