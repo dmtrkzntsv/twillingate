@@ -9,13 +9,15 @@
  *    call twillingate.init({...}) yourself — a superset that emits views
  *    and product events entirely from code.
  *
- * The identity model matches the legacy snippet: data-identity only
- * authorizes writing to localStorage; the server salts anonymous projects
- * no matter what the client claims, so a misconfigured client fails safe.
+ * Nothing is kept on the device unless the tag declares consent
+ * (data-consent); with it, data-identity decides whether identity persists.
+ * The server salts anonymous projects no matter what the client claims, so
+ * a misconfigured client fails safe.
  */
 
 // Substituted by the collector at serve time with its build version.
 import { resolveMask, type MaskSpec } from "./mask";
+import { resolveConsent, type ConsentSpec } from "./consent";
 import { maskIds, withQuery } from "./util";
 import {
   detectAll, detectBrowser as detectBrowserFrom, detectDevice as detectDeviceFrom,
@@ -32,10 +34,17 @@ export interface InitOptions {
   key: string;
   /** Collector base URL. Defaults to the origin the script was loaded from. */
   url?: string;
-  /** Mirrors the project's identity mode; gates all localStorage writes. */
+  /** Mirrors the project's identity mode. With consent it decides whether the visitor id, user and group persist; without consent nothing does. The server enforces the real mode. */
   identity?: "anonymous" | "identified";
   user?: string;
   group?: string;
+  /**
+   * May this instance keep anything on the device. Default false: records
+   * live in memory and nothing is read from or written to localStorage.
+   * true, or a function or global name a consent manager maintains,
+   * unlocks it; consulted at every storage decision, never cached.
+   */
+  consent?: ConsentSpec;
   /**
    * What this client is: "web" (default), "app", "cli", or any short
    * lower-case token. Anything but "web" makes automatic tracking emit
@@ -126,15 +135,19 @@ interface Batch {
   events: Event[];
 }
 
-// Persisted under the twillingate_* names; the analytics_* fallbacks keep
-// identified-mode visitors from earlier releases continuous.
-const VISITOR = "twillingate_visitor";
-const USER = "twillingate_user";
-const USER_NAME = "twillingate_user_name";
-const GROUP = "twillingate_group";
-const GROUP_NAME = "twillingate_group_name";
-const QUEUE = "twillingate_queue";
-const LEGACY = { [VISITOR]: "analytics_visitor", [USER]: "analytics_user", [GROUP]: "analytics_group" };
+// Storage keys are prefixed with the instance name (default "twillingate")
+// so two instances on one page do not share a visitor id or a queue. The
+// opt-out is the one unprefixed key: it is about the person, not one tag.
+const DEFAULT_INSTANCE = "twillingate";
+const IGNORE = "twillingate_ignore";
+const SUFFIXES = ["visitor", "user", "user_name", "group", "group_name", "queue"] as const;
+type Keys = Record<(typeof SUFFIXES)[number], string>;
+
+function keysFor(instance: string): Keys {
+  const k = {} as Keys;
+  for (const s of SUFFIXES) k[s] = `${instance}_${s}`;
+  return k;
+}
 
 const MAX_BATCH = 500; // server cap per docs/twillingate.md
 const FLUSH_AT = 20; // flush early once this many events queue up
@@ -165,22 +178,12 @@ function uuid(): string {
   });
 }
 
+// The only thing the SDK decides on its own is the person's opt-out.
+// Whether analytics should run at all (a developer's localhost, a test
+// browser) belongs to the product, which can skip init() on a condition
+// it knows.
 function ignored(): boolean {
-  if (ls("twillingate_ignore") === "true" || ls("analytics_ignore") === "true") return true;
-  if (/^localhost$|^127(\.\d+){3}$|^\[::1\]$/.test(location.hostname)) return true;
-  if (location.protocol === "file:") return true;
-  if (navigator.webdriver) return true;
-  return false;
-}
-
-// One-time migration from the storage keys earlier releases wrote.
-// Returning visitors still arrive holding them.
-function migrated(name: keyof typeof LEGACY): string | null {
-  const v = ls(name);
-  if (v !== null) return v;
-  const legacy = ls(LEGACY[name]);
-  if (legacy !== null) lsSet(name, legacy);
-  return legacy;
+  return ls(IGNORE) === "true";
 }
 
 export class Twillingate {
@@ -199,6 +202,15 @@ export class Twillingate {
   private appVersion: string | null = null;
   private installId: string | null = null;
   private flushInterval = 1000;
+  private k: Keys = keysFor(DEFAULT_INSTANCE);
+  private consentSpec: () => boolean = () => false;
+  private consentPin: boolean | null = null;
+  // null until the first decision point: the first false read wipes keys
+  // an earlier session may have left behind.
+  private lastConsent: boolean | null = null;
+  // Failed batches waiting for a retry. Lives in memory; mirrored to
+  // storage only while consent reads true.
+  private pending: Batch[] = [];
 
   private queue: Event[] = [];
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
@@ -226,10 +238,12 @@ export class Twillingate {
       return;
     }
     this.identified = opts.identity === "identified";
-    this.userId = opts.user ? String(opts.user) : this.identified ? migrated(USER) : null;
-    this.userName = this.identified ? ls(USER_NAME) : null;
-    this.groupId = opts.group ? String(opts.group) : migrated(GROUP);
-    this.groupName = ls(GROUP_NAME);
+    this.consentSpec = resolveConsent(opts.consent);
+    const stored = this.identified && this.mayStore();
+    this.userId = opts.user ? String(opts.user) : stored ? ls(this.k.user) : null;
+    this.userName = stored ? ls(this.k.user_name) : null;
+    this.groupId = opts.group ? String(opts.group) : stored ? ls(this.k.group) : null;
+    this.groupName = stored ? ls(this.k.group_name) : null;
     this.kind = opts.kind && /^[a-z][a-z0-9_]{0,15}$/.test(opts.kind) ? opts.kind : "web";
     this.platform = opts.platform || (this.kind === "web" ? "web" : null);
     this.env = {
@@ -248,9 +262,9 @@ export class Twillingate {
     this.routing = opts.routing === "hash" ? "hash" : "history";
     this.ready = true;
 
-    this.replayStored();
+    this.replay();
     if (typeof addEventListener === "function") {
-      addEventListener("online", () => this.replayStored());
+      addEventListener("online", () => this.replay());
       // pagehide covers navigations and tab closes; visibilitychange the
       // mobile cases where pagehide never fires. Both drain via sendBeacon.
       addEventListener("pagehide", () => this.flush(true));
@@ -396,42 +410,36 @@ export class Twillingate {
 
   /**
    * Set the user ($user_id) and optional display name ($user_name).
-   * Persisted for identified projects, so every later event — this page
-   * and future loads — carries the identity. Events already sent stay
-   * unattributed: no retroactive stitching. The name is only stored
+   * Persisted for identified projects with consent, so every later event —
+   * this page and future loads — carries the identity. Events already sent
+   * stay unattributed: no retroactive stitching. The name is only stored
    * server-side for identified projects; anonymous ones ignore it.
    */
   identify(user: string, name?: string): void {
     this.userId = user ? String(user) : null;
     this.userName = name ? String(name) : null;
-    if (this.identified) {
-      lsSet(USER, this.userId);
-      lsSet(USER_NAME, this.userName);
-    }
+    this.saveIdentity();
   }
 
   /** Set the group ($group_id) and optional display name ($group_name). */
   group(id: string, name?: string): void {
     this.groupId = id ? String(id) : null;
     this.groupName = name ? String(name) : null;
-    lsSet(GROUP, this.groupId);
-    lsSet(GROUP_NAME, this.groupName);
+    this.saveIdentity();
   }
 
   /**
    * Required on logout: without it the next person on a shared browser
-   * inherits the previous user's identity.
+   * inherits the previous user's identity. Also drops the retry queue in
+   * every mode — a queued batch carries the $user_id it was built with.
    */
   reset(): void {
     this.userId = null;
     this.userName = null;
     this.groupId = null;
     this.groupName = null;
-    lsSet(USER, null);
-    lsSet(USER_NAME, null);
-    lsSet(GROUP, null);
-    lsSet(GROUP_NAME, null);
-    lsSet(VISITOR, null);
+    this.pending = [];
+    if (this.mayStore()) this.wipe();
   }
 
   /** Force-send everything queued. */
@@ -444,6 +452,23 @@ export class Twillingate {
       const events = this.queue.splice(0, MAX_BATCH);
       this.send({ key: this.key, attributes: this.batchAttributes(), events }, unloading);
     }
+    // Unloading is the last chance for batches whose delivery failed: try
+    // each once more through sendBeacon. They stay in pending (and, with
+    // consent, in storage) so a hidden tab that comes back can retry; a
+    // replay of an already-delivered batch dedupes on the server by id.
+    if (unloading) for (const batch of this.pending) this.send(batch, true);
+  }
+
+  /**
+   * Pin storage consent (true/false) over whatever the tag declared, hand
+   * control back to the declared value (null), or read the effective value
+   * (no argument). Granting writes the pending retry queue to storage and,
+   * for an identified instance, starts persisting a visitor id; withdrawing
+   * deletes every key this instance owns.
+   */
+  consent(granted?: boolean | null): boolean {
+    if (granted !== undefined) this.consentPin = granted === null ? null : Boolean(granted);
+    return this.mayStore();
   }
 
   /**
@@ -492,14 +517,14 @@ export class Twillingate {
   // Identity precedence: a caller-supplied id, else the stored visitor id,
   // else nothing — the server then falls back to its rotating hash. The
   // persistent visitor id is terminal-equipment storage under ePrivacy, so
-  // it is only ever written for identified projects.
+  // it is only ever written for identified projects, and only with consent.
   private visitorId(): string | null {
     if (this.installId) return this.installId;
-    if (!this.identified) return null;
-    let v = migrated(VISITOR);
+    if (!this.identified || !this.mayStore()) return null;
+    let v = ls(this.k.visitor);
     if (!v) {
       v = uuid();
-      lsSet(VISITOR, v);
+      lsSet(this.k.visitor, v);
     }
     return v;
   }
@@ -551,19 +576,54 @@ export class Twillingate {
       .catch(() => this.store(batch));
   }
 
-  // Offline queue: failed batches persist verbatim — each with the
-  // attributes it was built with — and replay on the next load or when the
-  // browser comes back online. Events carry ids and client timestamps, so
-  // the server dedupes replays and keeps the original times.
+  // The decision point every read and write goes through. Consent is
+  // consulted here, never cached, so a consent manager that answers after
+  // page load is picked up at the next decision. A change of answer is a
+  // transition: granted moves the pending queue onto the device; withdrawn
+  // deletes everything this instance wrote.
+  private mayStore(): boolean {
+    const now = this.consentPin !== null ? this.consentPin : this.consentSpec();
+    if (now !== this.lastConsent) {
+      this.lastConsent = now;
+      if (now) {
+        if (this.pending.length) lsSet(this.k.queue, JSON.stringify(this.pending));
+      } else {
+        this.wipe();
+      }
+    }
+    return now;
+  }
+
+  private wipe(): void {
+    for (const s of SUFFIXES) lsSet(this.k[s], null);
+  }
+
+  private saveIdentity(): void {
+    if (!this.identified || !this.mayStore()) return;
+    lsSet(this.k.user, this.userId);
+    lsSet(this.k.user_name, this.userName);
+    lsSet(this.k.group, this.groupId);
+    lsSet(this.k.group_name, this.groupName);
+  }
+
+  // Retry queue: failed batches keep the attributes they were built with
+  // and replay on `online`, on unload, and (with consent) on the next load.
+  // Events carry ids and client timestamps, so the server dedupes replays
+  // and keeps the original times.
   private store(batch: Batch): void {
-    const stored = this.storedBatches();
-    stored.push(batch);
-    while (stored.length > MAX_STORED_BATCHES) stored.shift();
-    lsSet(QUEUE, JSON.stringify(stored));
+    if (this.pending.includes(batch)) return; // an unload retry that failed again
+    this.pending.push(batch);
+    while (this.pending.length > MAX_STORED_BATCHES) this.pending.shift();
+    this.saveQueue();
+  }
+
+  private saveQueue(): void {
+    if (!this.mayStore()) return;
+    lsSet(this.k.queue, this.pending.length ? JSON.stringify(this.pending) : null);
   }
 
   private storedBatches(): Batch[] {
-    const raw = ls(QUEUE);
+    const raw = ls(this.k.queue);
     if (!raw) return [];
     try {
       const parsed = JSON.parse(raw);
@@ -573,11 +633,13 @@ export class Twillingate {
     }
   }
 
-  private replayStored(): void {
-    const stored = this.storedBatches();
-    if (stored.length === 0) return;
-    lsSet(QUEUE, null); // a batch that fails again re-stores itself
-    for (const batch of stored) this.send(batch, false);
+  // With consent the stored copy is authoritative: it holds everything
+  // pending was mirrored into, plus what another tab may have written.
+  private replay(): void {
+    const batches = this.mayStore() ? this.storedBatches() : this.pending;
+    this.pending = [];
+    this.saveQueue();
+    for (const batch of batches) this.send(batch, false); // a failure re-stores itself
   }
 
   private hookHistory(): void {
@@ -707,6 +769,7 @@ export function autoInit(tg: Twillingate, script: HTMLScriptElement | null): voi
     identity: script.getAttribute("data-identity") === "identified" ? "identified" : "anonymous",
     user: script.getAttribute("data-user") || undefined,
     group: script.getAttribute("data-group") || undefined,
+    consent: script.getAttribute("data-consent") || undefined,
     autoPageviews: script.getAttribute("data-auto") !== "off",
     maskUrl: script.getAttribute("data-mask-url") || undefined,
     routing: script.getAttribute("data-routing") === "hash" ? "hash" : "history",

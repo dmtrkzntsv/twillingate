@@ -92,7 +92,7 @@ describe("identify and group with display names", () => {
   });
 
   it("group(id, name) sends and persists $group_id and $group_name", async () => {
-    const t = tg();
+    const t = tg({ identity: "identified", consent: true });
     t.group("org-9", "Acme Corp");
     t.track("probe");
     t.flush();
@@ -107,12 +107,12 @@ describe("identify and group with display names", () => {
     anon.identify("u_1", "Plain Name");
     expect(localStorage.getItem("twillingate_user_name")).toBeNull();
 
-    const t = tg({ identity: "identified" });
+    const t = tg({ identity: "identified", consent: true });
     t.identify("u_1", "Ada");
     expect(localStorage.getItem("twillingate_user_name")).toBe("Ada");
 
     sent = [];
-    const next = tg({ identity: "identified" }); // next page load
+    const next = tg({ identity: "identified", consent: true }); // next page load
     next.track("probe");
     next.flush();
     await drain();

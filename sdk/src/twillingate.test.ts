@@ -141,10 +141,9 @@ describe("payload shape", () => {
 describe("environment", () => {
   const CHROME_WIN = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
 
-  // Replace the whole navigator: the ignore rules read webdriver, the
-  // batch reads language, send reads sendBeacon, detection reads the rest.
+  // Replace the whole navigator: the batch reads language, send reads sendBeacon, detection reads the rest.
   function stubNavigator(extra: Record<string, unknown>): void {
-    vi.stubGlobal("navigator", { language: "en-US", webdriver: false, userAgent: CHROME_WIN, platform: "Win32", maxTouchPoints: 0, ...extra });
+    vi.stubGlobal("navigator", { language: "en-US", userAgent: CHROME_WIN, platform: "Win32", maxTouchPoints: 0, ...extra });
   }
 
   afterEach(() => resetPlatformVersion());
@@ -259,7 +258,7 @@ describe("batching", () => {
 
   it("uses sendBeacon when the page unloads", () => {
     const beacon = vi.fn().mockReturnValue(true);
-    vi.stubGlobal("navigator", { ...navigator, sendBeacon: beacon, webdriver: false });
+    vi.stubGlobal("navigator", { ...navigator, sendBeacon: beacon });
     const t = tg({ flushInterval: 60_000 });
     t.track("bye");
     window.dispatchEvent(new Event("pagehide"));
@@ -272,7 +271,7 @@ describe("batching", () => {
 
   it("drains on visibilitychange to hidden", () => {
     const beacon = vi.fn().mockReturnValue(true);
-    vi.stubGlobal("navigator", { ...navigator, sendBeacon: beacon, webdriver: false });
+    vi.stubGlobal("navigator", { ...navigator, sendBeacon: beacon });
     const t = tg({ flushInterval: 60_000 });
     t.track("away");
     Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
@@ -284,7 +283,7 @@ describe("batching", () => {
 describe("failure handling and the offline queue", () => {
   it("persists the batch when fetch rejects, and replays it on `online`", async () => {
     fetchImpl = () => Promise.reject(new TypeError("network down"));
-    const t = tg();
+    const t = tg({ consent: true });
     t.track("offline-event");
     await drain();
     expect(sent).toHaveLength(0);
@@ -307,7 +306,7 @@ describe("failure handling and the offline queue", () => {
       "twillingate_queue",
       JSON.stringify([{ key: "ak_test", attributes: {}, events: [{ id: "x", ts: "t", name: "old", attributes: {} }] }]),
     );
-    tg();
+    tg({ consent: true });
     await drain();
     expect(sent).toHaveLength(1);
     expect(sent[0].body.events[0].name).toBe("old");
@@ -318,7 +317,7 @@ describe("failure handling and the offline queue", () => {
       sent.push({ url: String(url), body: JSON.parse(init.body) });
       return Promise.resolve({ status: 503 });
     };
-    const t = tg();
+    const t = tg({ consent: true });
     t.track("transient");
     await drain();
     expect(JSON.parse(localStorage.getItem("twillingate_queue")!)).toHaveLength(1);
@@ -335,7 +334,7 @@ describe("failure handling and the offline queue", () => {
 
   it("bounds the offline queue at 50 batches, oldest dropped first", async () => {
     fetchImpl = () => Promise.reject(new TypeError("down"));
-    const t = tg();
+    const t = tg({ consent: true });
     for (let i = 0; i < 55; i++) {
       t.track(`e${i}`);
       t.flush();
@@ -349,31 +348,10 @@ describe("failure handling and the offline queue", () => {
 
   it("survives a corrupt stored queue", async () => {
     localStorage.setItem("twillingate_queue", "{not json");
-    const t = tg();
+    const t = tg({ consent: true });
     t.track("fine");
     await drain();
     expect(sent).toHaveLength(1);
-  });
-});
-
-describe("ignore rules", () => {
-  it("honours twillingate_ignore and the legacy analytics_ignore", async () => {
-    const t = tg();
-    localStorage.setItem("twillingate_ignore", "true");
-    t.track("nope");
-    localStorage.removeItem("twillingate_ignore");
-    localStorage.setItem("analytics_ignore", "true");
-    t.track("nope2");
-    await drain();
-    expect(sent).toHaveLength(0);
-  });
-
-  it("stays silent under automated browsers", async () => {
-    vi.stubGlobal("navigator", { ...navigator, webdriver: true });
-    const t = tg();
-    t.track("robot");
-    await drain();
-    expect(sent).toHaveLength(0);
   });
 });
 
@@ -529,7 +507,7 @@ describe("script tag and init parity", () => {
     const optionFor: Record<string, string> = {
       key: "key", identity: "identity", user: "user", group: "group",
       auto: "autoPageviews", "mask-url": "maskUrl", routing: "routing",
-      kind: "kind",
+      kind: "kind", consent: "consent",
     };
     expect(attrs.length).toBeGreaterThan(0);
     for (const a of attrs) {
