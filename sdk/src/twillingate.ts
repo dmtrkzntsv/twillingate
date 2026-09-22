@@ -34,7 +34,11 @@ export interface InitOptions {
   key: string;
   /** Collector base URL. Defaults to the origin the script was loaded from. */
   url?: string;
-  /** Mirrors the project's identity mode. With consent it decides whether the visitor id, user and group persist; without consent nothing does. The server enforces the real mode. */
+  /**
+   * Mirrors the project's identity mode. With consent it decides whether
+   * the visitor id, user and group persist; without consent nothing does.
+   * The server enforces the real mode.
+   */
   identity?: "anonymous" | "identified";
   user?: string;
   group?: string;
@@ -133,6 +137,17 @@ interface Batch {
   key: string;
   attributes: Record<string, unknown>;
   events: Event[];
+}
+
+// Union of a stored queue and the in-memory one, deduped by each batch's
+// first event id (every batch has at least one event). Neither side is
+// assumed complete: a write can fail silently (lsSet swallows quota and
+// partitioned-storage errors) and another tab can append its own batches,
+// so the merge keeps whichever copy already has each batch and adds what
+// the other one has that it does not.
+function mergeBatches(stored: Batch[], pending: Batch[]): Batch[] {
+  const known = new Set(stored.map((b) => b.events[0].id));
+  return [...stored, ...pending.filter((b) => !known.has(b.events[0].id))];
 }
 
 // Storage keys are prefixed with the instance name (default "twillingate")
@@ -453,10 +468,15 @@ export class Twillingate {
       this.send({ key: this.key, attributes: this.batchAttributes(), events }, unloading);
     }
     // Unloading is the last chance for batches whose delivery failed: try
-    // each once more through sendBeacon. They stay in pending (and, with
-    // consent, in storage) so a hidden tab that comes back can retry; a
-    // replay of an already-delivered batch dedupes on the server by id.
-    if (unloading) for (const batch of this.pending) this.send(batch, true);
+    // each once more through sendBeacon. A batch the beacon accepts is
+    // retired from pending (and, with consent, from storage); one it does
+    // not accept stays for the next retry — visibilitychange fires this on
+    // every tab switch, not only on the final pagehide, so an unbounded
+    // re-beacon of the same accepted batches would otherwise follow.
+    if (unloading) {
+      this.pending = this.pending.filter((batch) => !this.send(batch, true));
+      this.saveQueue();
+    }
   }
 
   /**
@@ -464,7 +484,9 @@ export class Twillingate {
    * control back to the declared value (null), or read the effective value
    * (no argument). Granting writes the pending retry queue to storage and,
    * for an identified instance, starts persisting a visitor id; withdrawing
-   * deletes every key this instance owns.
+   * deletes every key this instance owns. Every call, including a bare
+   * read, is itself a decision point and may run that grant/withdraw
+   * transition.
    */
   consent(granted?: boolean | null): boolean {
     if (granted !== undefined) this.consentPin = granted === null ? null : Boolean(granted);
@@ -558,14 +580,16 @@ export class Twillingate {
     return a;
   }
 
-  private send(batch: Batch, unloading: boolean): void {
+  // Returns whether sendBeacon accepted the batch, so a caller retiring a
+  // beaconed batch from pending (flush(true)) knows which ones landed.
+  private send(batch: Batch, unloading: boolean): boolean {
     const endpoint = this.url + "/ingest/events";
     const body = JSON.stringify(batch);
     // sendBeacon with a string posts text/plain: a CORS-simple request with
     // no preflight that survives page unload. It cannot set headers, which
     // is why the key travels in the body.
     if (unloading && typeof navigator.sendBeacon === "function" && navigator.sendBeacon(endpoint, body)) {
-      return;
+      return true;
     }
     fetch(endpoint, { method: "POST", body, keepalive: true })
       .then((res) => {
@@ -574,6 +598,7 @@ export class Twillingate {
         if (res.status >= 500) this.store(batch);
       })
       .catch(() => this.store(batch));
+    return false;
   }
 
   // The decision point every read and write goes through. Consent is
@@ -586,7 +611,9 @@ export class Twillingate {
     if (now !== this.lastConsent) {
       this.lastConsent = now;
       if (now) {
-        if (this.pending.length) lsSet(this.k.queue, JSON.stringify(this.pending));
+        // Merge rather than overwrite: another tab may already have
+        // queued its own batches under this key.
+        if (this.pending.length) lsSet(this.k.queue, JSON.stringify(mergeBatches(this.storedBatches(), this.pending)));
       } else {
         this.wipe();
       }
@@ -633,10 +660,13 @@ export class Twillingate {
     }
   }
 
-  // With consent the stored copy is authoritative: it holds everything
-  // pending was mirrored into, plus what another tab may have written.
+  // With consent, replay the union of the stored copy and pending, deduped
+  // by first event id: pending can hold a batch the store write silently
+  // dropped (quota, a partitioned context), and the stored copy can hold a
+  // batch only another tab knows about. Without consent nothing was ever
+  // written, so pending alone is the whole queue.
   private replay(): void {
-    const batches = this.mayStore() ? this.storedBatches() : this.pending;
+    const batches = this.mayStore() ? mergeBatches(this.storedBatches(), this.pending) : this.pending;
     this.pending = [];
     this.saveQueue();
     for (const batch of batches) this.send(batch, false); // a failure re-stores itself

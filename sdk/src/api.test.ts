@@ -91,7 +91,7 @@ describe("identify and group with display names", () => {
     expect(sent[0].body.attributes).toMatchObject({ $user_id: "user-123", $user_name: "Ada Lovelace" });
   });
 
-  it("group(id, name) sends and persists $group_id and $group_name", async () => {
+  it("group(id, name) sends $group_id and $group_name, and persists them for an identified instance with consent", async () => {
     const t = tg({ identity: "identified", consent: true });
     t.group("org-9", "Acme Corp");
     t.track("probe");

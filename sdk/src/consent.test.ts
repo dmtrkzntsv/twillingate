@@ -189,6 +189,44 @@ describe("storage under consent", () => {
     window.dispatchEvent(new Event("pagehide"));
     expect(beacon).toHaveBeenCalledOnce();
     expect(JSON.parse(beacon.mock.calls[0][1]).events[0].name).toBe("second");
+
+    // The beacon-accepted batch is retired from pending: a second pagehide
+    // (visibilitychange to hidden fires flush(true) on every tab switch,
+    // not only the final unload) must not re-beacon it.
+    window.dispatchEvent(new Event("pagehide"));
+    expect(beacon).toHaveBeenCalledOnce();
+
+    // Grant consent: a further failure mirrors to storage, and the beacon
+    // retiring it from pending must retire it from the stored queue too.
+    t.consent(true);
+    fetchImpl = failFetch;
+    t.track("third");
+    await drain();
+    window.dispatchEvent(new Event("pagehide"));
+    expect(beacon).toHaveBeenCalledTimes(2);
+    expect(localStorage.getItem("twillingate_queue")).toBeNull();
+  });
+
+  it("replay merges the stored queue with pending when a write silently failed", async () => {
+    // A store() write can fail without throwing (lsSet swallows quota and
+    // partitioned-storage errors): the batch then lives only in pending.
+    // Replay must not lose it just because storage came back empty.
+    fetchImpl = failFetch;
+    const t = tg({ consent: true });
+    const setItem = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("quota");
+    });
+    t.track("unwritable");
+    t.flush();
+    await drain();
+    setItem.mockRestore();
+    expect(localStorage.getItem("twillingate_queue")).toBeNull(); // the write silently failed
+
+    fetchImpl = okFetch;
+    window.dispatchEvent(new Event("online"));
+    await drain();
+    expect(sent).toHaveLength(1);
+    expect(sent[0].body.events[0].name).toBe("unwritable");
   });
 
   it("bounds the memory retry queue at 50 batches, oldest dropped first", async () => {
@@ -196,7 +234,7 @@ describe("storage under consent", () => {
     // `online` listener still attached to this shared jsdom window (it
     // never unregisters, by design -- see the retry test above, whose
     // instance intentionally keeps a failed batch in memory past the end
-    // of that test) and would otherwise add its own reply to `sent`.
+    // of that test) and would otherwise add its own replay to `sent`.
     fetchImpl = failFetch;
     const t = tg({ key: "ak_bounds" });
     for (let i = 0; i < 55; i++) {
@@ -275,7 +313,11 @@ describe("storage under consent", () => {
       sent = [];
       localStorage.clear();
       fetchImpl = failFetch;
-      const t = tg({ identity: "identified", consent });
+      // A distinct key: an earlier test's dead instance can still hold a
+      // batch in memory (pending survives localStorage.clear()) and reacts
+      // to the same `online` dispatch; filtering by key keeps this
+      // assertion about this test's own instance only.
+      const t = tg({ identity: "identified", consent, key: `ak_reset_${consent}` });
       t.track("stale");
       t.flush();
       await drain();
@@ -284,7 +326,8 @@ describe("storage under consent", () => {
       fetchImpl = okFetch;
       window.dispatchEvent(new Event("online"));
       await drain();
-      expect(sent, String(consent)).toHaveLength(0);
+      const mine = sent.filter((s) => s.body.key === `ak_reset_${consent}`);
+      expect(mine, String(consent)).toHaveLength(0);
     }
   });
 

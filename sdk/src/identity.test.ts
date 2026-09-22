@@ -1,4 +1,5 @@
-// Identity lifecycle: anonymous vs identified storage semantics under consent, identify/group/reset, and pageviews.
+// Identity lifecycle: anonymous vs identified storage semantics under
+// consent, identify/group/reset, and pageviews.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Twillingate } from "./twillingate";
 
