@@ -688,6 +688,32 @@ What changes on the day:
   which is value-preserving; going forward, versions from clients that
   do not yet send `$platform` roll up under `unknown` until they update.
 
+### Upgrading to group counts (migration 016)
+
+`agg_product_attrs` gains a nullable `unique_groups` — the distinct groups
+behind each attribute value — and `v_product_attrs`, the
+`product_attributes` tool and the product dashboard's two breakdown tables
+carry it. There is nothing to check first: the migration is one `ALTER` and
+one view, no value is rewritten, and it runs in well under a second.
+
+What changes on the day:
+
+- **Days rolled up before the upgrade stay unmeasured.** Aggregation
+  deletes a day's raw rows in the same transaction that writes its rollup,
+  so there is nothing left to count groups from. Those rows hold NULL, not
+  0, and stay that way: `product_attributes` returns an empty cell and the
+  dashboard's "Groups (at least)" column is blank for any range that has no
+  measured day. `0` only ever means measured, none.
+- Days still within `RETENTION_PRODUCT_RAW_DAYS` at upgrade time are
+  measured by the live half at once and keep the figure when they roll up.
+- Saved SQL that reads `v_product_attrs` by position gets the new column
+  last; by name, nothing changes. A `SUM()` or `MAX()` over it skips the
+  NULLs; do not `COALESCE` them to 0.
+
+There is no down migration. An older binary still runs against the upgraded
+file — it writes the seven columns it knows and leaves `unique_groups`
+NULL — but a day it rolls up is then unmeasured for good.
+
 ### Replication with litestream
 
 The application does not replicate anything. `serve` writes a SQLite file

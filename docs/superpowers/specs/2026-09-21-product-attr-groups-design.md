@@ -1,6 +1,7 @@
 # Groups in the product attribute breakdown
 
-Status: proposed
+Status: implemented (2026-09-22)
+Implementation: docs/superpowers/plans/2026-09-22-product-attr-groups.md; the PR is feat: without ! (additive migration, trailing column, an older binary's insert still succeeds).
 Date: 2026-09-21
 
 ## Sequencing

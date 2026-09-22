@@ -56,11 +56,14 @@ order by day, count desc
 ```
 
 ```sql app_version_summary
--- unique_users is per event and cannot be summed -- one person firing two
--- events would count twice -- so the largest single-event figure is shown,
--- a floor on the true number.
+-- unique_users and unique_groups are per event and cannot be summed -- one
+-- person or one group firing two events would count twice -- so the largest
+-- single-event figure is shown, a floor on the true number. unique_groups
+-- is NULL for days rolled up before the collector measured it; max() skips
+-- those, so a range with no measured day shows an empty cell, not 0.
 select attr_value as app_version, sum(count) as total,
-       max(unique_users) as min_users
+       max(unique_users) as min_users,
+       max(unique_groups) as min_groups
 from twillingate.v_product_attrs
 where project_id = '${params.project}'
   and attr_key = '$app_version'
@@ -83,6 +86,7 @@ band taking over, and the versions that never update are the ones that stay.
     <Column id=app_version title="Version" />
     <Column id=total title="Events" fmt=num0 contentType=colorscale />
     <Column id=min_users title="Users (at least)" fmt=num0 />
+    <Column id=min_groups title="Groups (at least)" fmt=num0 />
 </DataTable>
 
 {/if}
@@ -117,10 +121,14 @@ group by event_name order by total desc
 
 ```sql attr_breakdowns
 -- Summed across events: a value's count is how often it appeared on any
--- event that day. unique_users is per event and cannot be summed -- one
--- person firing two events would count twice -- so the largest single-event
--- figure is shown, a floor on the true number.
-select attr_key, day, attr_value, sum(count) as count, max(unique_users) as min_users
+-- event that day. unique_users and unique_groups are per event and cannot
+-- be summed -- one person or one group firing two events would count twice
+-- -- so the largest single-event figure is shown, a floor on the true
+-- number. unique_groups is NULL for days rolled up before the collector
+-- measured it; max() skips those, so such a day shows an empty cell, not 0.
+select attr_key, day, attr_value, sum(count) as count,
+       max(unique_users) as min_users,
+       max(unique_groups) as min_groups
 from twillingate.v_product_attrs
 where project_id = '${params.project}'
   and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range} - 1) day, '%Y-%m-%d')
@@ -133,8 +141,10 @@ order by attr_key, day desc, count desc
 
 ## Attribute breakdowns
 
-Each attribute's values per day, across all events. Users is the largest
-count from any single event, so the true number of people is at least that.
+Each attribute's values per day, across all events. Users and Groups are the
+largest counts from any single event, so the true numbers are at least
+those. Groups is empty for days the collector rolled up before it measured
+groups — unknown, not zero.
 
 <DataTable data={attr_breakdowns} rows=20 groupBy=attr_key groupsOpen=false search=true>
     <Column id=attr_key title="Attribute" />
@@ -142,6 +152,7 @@ count from any single event, so the true number of people is at least that.
     <Column id=attr_value title="Value" />
     <Column id=count title="Count" fmt=num0 contentType=colorscale />
     <Column id=min_users title="Users (at least)" fmt=num0 />
+    <Column id=min_groups title="Groups (at least)" fmt=num0 />
 </DataTable>
 
 {/if}
