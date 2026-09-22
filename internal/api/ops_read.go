@@ -164,9 +164,10 @@ var viewsDimensions = map[string]viewsDimension{
 	"referrers":    {"v_views_referrers", []string{"source"}},
 	"utm":          {"v_views_utm", []string{"utm_source", "utm_medium", "utm_campaign"}},
 	"countries":    {"v_views_countries", []string{"country"}},
+	"platforms":    {"v_views_platforms", []string{"platform"}},
 	"os":           {"v_views_os", []string{"os", "os_version"}},
 	"browsers":     {"v_views_browsers", []string{"browser", "browser_version"}},
-	"app_versions": {"v_views_app_versions", []string{"os", "app_version"}},
+	"app_versions": {"v_views_app_versions", []string{"platform", "app_version"}},
 	"devices":      {"v_views_devices", []string{"device", "device_model"}},
 	"displays":     {"v_views_displays", []string{"display"}},
 }
@@ -183,7 +184,7 @@ func dimensionNames() string {
 
 type breakdownIn struct {
 	rangeIn
-	Dimension string `json:"dimension" jsonschema:"one of: app_versions, browsers, countries, devices, displays, hosts, kinds, os, paths, referrers, utm"`
+	Dimension string `json:"dimension" jsonschema:"one of: app_versions, browsers, countries, devices, displays, hosts, kinds, os, paths, platforms, referrers, utm"`
 	Limit     int    `json:"limit,omitempty" jsonschema:"top-N rows, default 20"`
 }
 
@@ -225,13 +226,13 @@ func (h *host) register(r *registrar) {
 		Description: "Daily views for one project: visitors, views, sessions, bounces, duration, with derived bounce_rate and avg_session_sec. Sums every kind (web, app, cli, …) unless kind is given. Includes yesterday and today (live)."},
 		h.viewsOverview)
 	expose(r, spec{Name: "views_breakdown", Annotations: ro, Method: "GET", Path: p + "/views/breakdown",
-		Description: "Top values for one dimension of a project's views over a date range: kinds, paths, hosts, referrers, utm, countries, os, browsers, app_versions, devices or displays. Two-key dimensions (os, browsers, app_versions, devices) return both columns."},
+		Description: "Top values for one dimension of a project's views over a date range: kinds, paths, hosts, referrers, utm, countries, platforms, os, browsers, app_versions, devices or displays. Two-key dimensions (os, browsers, app_versions, devices) return both columns. os, browser and device values are lower-case closed vocabularies with other (outside the list) and unknown (not declared) as distinct floors; platform is the surface (web, ios, electron, …) and never empty."},
 		h.viewsBreakdown)
 	expose(r, spec{Name: "product_events", Annotations: ro, Method: "GET", Path: p + "/product/events",
 		Description: "Product events per day: count and unique users per event name, plus daily totals. Unconditional — no attribute declaration is required to see it."},
 		h.productEvents)
 	expose(r, spec{Name: "product_attributes", Annotations: ro, Method: "GET", Path: p + "/product/attributes",
-		Description: "Attribute breakdowns for product events. The system dimensions $os and $app_version are always included; a custom key only appears once the project declares it in attributes (see update_project)."},
+		Description: "Attribute breakdowns for product events. The system dimensions $platform, $os and $app_version are always included; a custom key only appears once the project declares it in attributes (see update_project)."},
 		h.productAttributes)
 	expose(r, spec{Name: "retention", Annotations: ro, Method: "GET", Path: p + "/retention",
 		Description: "D1/D7/D30-style cohort curves for identified projects. Cohorted by how the actor was identified: actor=user or actor=install. Returns aggregated_through: cohorts after it are absent (refreshed 03:00 UTC), not zero. Anonymous projects have no retention by design."},

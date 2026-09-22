@@ -144,9 +144,10 @@ unique-user count is recomputed from raw rather than summed. A client
 sending the literal string `(other)` collides with that bucket and loses its
 own count — avoid that value.
 
-`$os` and `$app_version` roll up automatically without being declared. Do
-not add them to `attributes`: `$`-prefixed keys are reserved and never reach
-the custom attribute blob, so `"attributes": ["$os"]` extracts nothing.
+`$platform`, `$os` and `$app_version` roll up automatically without being
+declared. Do not add them to `attributes`: `$`-prefixed keys are reserved
+and never reach the custom attribute blob, so `"attributes": ["$os"]`
+extracts nothing.
 
 ### Ingest keys
 
@@ -527,9 +528,10 @@ adjacent but coarser and stays as it is.
 | `$browser` | `chrome` `safari` `firefox` `edge` `opera` `samsung_internet` `brave` `vivaldi` `duckduckgo` `yandex` `other` `unknown` | `unknown` | `other`, with a warning |
 | `$device` | `desktop` `mobile` `tablet` `wearable` `xr` `other` `unknown` | `unknown` | `other`, with a warning |
 
-Validation trims, lower-cases and folds spaces and dashes (`Chrome OS` →
-`chromeos`, `Samsung Internet` → `samsung_internet`), so case is
-forgiven; nothing is ever rejected, because a client shipping a value
+Validation of `$os`, `$browser` and `$device` trims, lower-cases and folds
+spaces and dashes (`Chrome OS` → `chromeos`, `Samsung Internet` →
+`samsung_internet`), so case is forgiven; nothing is ever rejected,
+because a client shipping a value
 this server has not learned yet must not receive a `4xx`. **`other` and
 `unknown` are different answers**: `other` means there is a value and it
 is outside the list, `unknown` means no information at all — which is
@@ -833,9 +835,9 @@ already apply the caveats below.
 | --- | --- | --- |
 | `list_projects` | none | Every project with its `project_id`, name, identity mode and data coverage. Call this first — every other tool needs a `project_id` |
 | `views_overview` | `kind` (optional) | Visitors, views, sessions, bounces, average session length per day, summed across kinds unless `kind` filters one |
-| `views_breakdown` | `dimension`, `limit` (default 20) | Top rows for one of `kinds`, `paths`, `hosts`, `referrers`, `utm`, `countries`, `os`, `browsers`, `app_versions`, `devices`, `displays`. Two-key dimensions return both columns |
+| `views_breakdown` | `dimension`, `limit` (default 20) | Top rows for one of `kinds`, `paths`, `hosts`, `referrers`, `utm`, `countries`, `platforms`, `os`, `browsers`, `app_versions`, `devices`, `displays`. Two-key dimensions return both columns |
 | `product_events` | `event` (optional filter) | Count and unique users per event name, plus daily totals |
-| `product_attributes` | `event`, `key` | Value breakdowns for a declared attribute. `$os` and `$app_version` are always available; a custom key only appears once the project declares it |
+| `product_attributes` | `event`, `key` | Value breakdowns for a declared attribute. `$platform`, `$os` and `$app_version` are always available; a custom key only appears once the project declares it |
 | `retention` | `actor` (`user` or `install`) | Cohort curves, plus `aggregated_through` — cohorts after that day are **absent, not zero** |
 | `identities` | `kind` (`user` or `group`), `limit` | Per-user or per-group activity with display names. **Surfaces personal data on identified projects** |
 | `query` | `sql` | A single read-only `SELECT`/`WITH` against the views. Row-capped and time-limited |
@@ -927,9 +929,14 @@ are the ones `list_projects` returns.
 
 The views family is `v_views_daily` (per kind), `v_views_paths`,
 `v_views_hosts`, `v_views_referrers`, `v_views_utm`, `v_views_countries`,
-`v_views_os`, `v_views_browsers`, `v_views_app_versions`, `v_views_devices`
-and `v_views_displays`. Every dimension is capped at 500 values per day;
-the tail is one `(other)` row whose visitors are distinct actors, not a sum.
+`v_views_platforms`, `v_views_os`, `v_views_browsers`,
+`v_views_app_versions` (keyed by `platform` and `app_version`),
+`v_views_devices` and `v_views_displays`. Every dimension is capped at 500
+values per day; the tail is one `(other)` row whose visitors are distinct
+actors, not a sum. `os`, `browser` and `device` are lower-case closed
+vocabularies (see [Declaring the environment](#declaring-the-environment))
+in which `other` and `(other)` are different things: `other` is a real
+value outside the list, `(other)` is the cap.
 Product events have `v_product_daily`, `v_product_totals` and
 `v_product_attrs`, plus `v_events_flat`, which reads the `events` table
 with one column per declared attribute. `v_identity_daily` and `identities` join user and group
