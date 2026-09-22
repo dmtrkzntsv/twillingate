@@ -649,7 +649,7 @@ func TestProductAttrsViewSystemDimensionsWithoutDeclaredKeys(t *testing.T) {
 		}
 	}
 	if sys == 0 {
-		t.Fatal("no $os/$app_version rows for an undeclared project")
+		t.Fatal("no $os/$platform/$app_version rows for an undeclared project")
 	}
 	if custom != 0 {
 		t.Fatalf("%d rows for undeclared custom keys; only system dimensions were expected", custom)

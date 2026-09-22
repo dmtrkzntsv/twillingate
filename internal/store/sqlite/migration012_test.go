@@ -106,6 +106,15 @@ func TestMigration012Folds(t *testing.T) {
 	if s != "iOS|" {
 		t.Errorf("e1 = %q (os normalised, actor_kind empty for old rows)", s)
 	}
+	// The rename itself, asserted at 013 so later migrations cannot mask it:
+	// 015 adds a new, unrelated platform column (the surface, not the OS) to
+	// the table 014 renames to events.
+	if !hasColumn(t, db, "product_events", "os") {
+		t.Error("product_events.os missing; 012 renames platform to os")
+	}
+	if hasColumn(t, db, "product_events", "platform") {
+		t.Error("product_events.platform survived 012's rename to os")
+	}
 
 	// daily: one row per kind; app bounces are zero
 	row(`SELECT visitors, views, sessions, bounces, duration_sec FROM agg_views_daily WHERE day='2026-09-01' AND kind='web'`, &a, &b, &c, &d2, &e)

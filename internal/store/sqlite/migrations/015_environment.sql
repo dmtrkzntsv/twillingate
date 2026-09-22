@@ -111,8 +111,14 @@ GROUP BY project_id, day, CASE WHEN kind = 'web' THEN 'web' ELSE 'unknown' END;
 
 -- 7. agg_views_app_versions rekey: (os, app_version) -> (platform,
 --    app_version), platform = lower(os), or unknown outside the platform
---    pattern. Value-preserving for canonical os; only values outside the
---    pattern merge, and only into unknown.
+--    pattern. Canonical os values are value-preserving. Two rows do merge,
+--    and this GROUP BY sums them rather than aborting as 4 does: two
+--    spellings of one token on one (project_id, day, app_version) -- an app
+--    that sent $os iPadOS in one release and ipados in the next, which
+--    NormalizeOS stored verbatim -- collapse into one row whose visitors is
+--    a sum, and so can overcount an actor counted in both; values outside
+--    the pattern collapse into unknown the same way. docs/deployment.md
+--    lists the pre-upgrade check that finds such rows first.
 CREATE TABLE agg_views_app_versions_new (
     project_id INTEGER NOT NULL, day TEXT NOT NULL, platform TEXT NOT NULL, app_version TEXT NOT NULL,
     visitors INTEGER NOT NULL, views INTEGER NOT NULL,
