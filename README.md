@@ -133,7 +133,9 @@ follow Conventional Commits and become the release notes.
 
 The posture depends on the project's `identity` mode.
 
-**`anonymous` (default).** No cookies and no `localStorage` writes, so no
+**`anonymous` (default).** No cookies. Nothing is kept on the visitor's
+device unless the tag declares consent (`data-consent`), and even then the
+SDK writes only its failed-batch retry queue, never an identifier — so no
 consent banner is required for pageview tracking on its own. Identifiers are
 salted with a key that rotates every 24 hours; the previous value is
 overwritten, which makes linking across days impossible rather than just
@@ -142,11 +144,14 @@ asserts this by scanning the database file and log output). Query strings are
 stripped to a UTM allowlist, referrers reduced to a source name, bots dropped
 at ingestion.
 
-**`identified`.** Identifiers you supply are stored **as given**, and the
-SDK writes a persistent `localStorage` visitor id — terminal-equipment
-storage under ePrivacy, the same legal category as a cookie. **The
-consent-free claim does not hold for these projects**; gate
-`data-identity="identified"` on consent.
+**`identified`.** Identifiers you supply are stored **as given**. The SDK
+persists a visitor id, user and group in `localStorage` — terminal-equipment
+storage under ePrivacy, the same legal category as a cookie — **only when
+the tag declares consent** (`data-consent="true"`, or the name of a global
+the consent manager maintains); without it nothing is written and a
+signed-out visitor falls back to the daily connection hash, so no banner is
+required by default. See [docs/twillingate.md](docs/twillingate.md)
+"Consent and storage" for the full behaviour.
 
 **Both modes.** `$group_id`/`$group_name` are stored raw (a group is an
 organization, not a person). Paths are stored verbatim — strip personal

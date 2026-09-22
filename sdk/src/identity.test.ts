@@ -1,5 +1,5 @@
-// Identity lifecycle: anonymous vs identified storage semantics, migration
-// from the legacy analytics_* keys, identify/group/reset, and pageviews.
+// Identity lifecycle: anonymous vs identified storage semantics under
+// consent, identify/group/reset, and pageviews.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Twillingate } from "./twillingate";
 
@@ -60,16 +60,13 @@ describe("anonymous mode", () => {
     t.group("org_9");
     const attrs = await lastAttributes(t);
     expect(attrs).toMatchObject({ $user_id: "u_42", $user_name: "Ada", $group_id: "org_9" });
-    expect(localStorage.getItem("twillingate_user")).toBeNull();
-    expect(localStorage.getItem("twillingate_user_name")).toBeNull();
-    // group is org-level, not personal: persisted in both modes
-    expect(localStorage.getItem("twillingate_group")).toBe("org_9");
+    expect(localStorage.length).toBe(0);
   });
 });
 
 describe("identified mode", () => {
   it("mints and persists a visitor id sent as $install_id", async () => {
-    const t = tg({ identity: "identified" });
+    const t = tg({ identity: "identified", consent: true });
     const attrs = await lastAttributes(t);
     const visitor = localStorage.getItem("twillingate_visitor");
     expect(visitor).toMatch(/^[0-9a-f-]{36}$/);
@@ -77,20 +74,20 @@ describe("identified mode", () => {
 
     // a second instance (next page load) reuses the same visitor
     sent = [];
-    const t2 = tg({ identity: "identified" });
+    const t2 = tg({ identity: "identified", consent: true });
     const attrs2 = await lastAttributes(t2);
     expect(attrs2.$install_id).toBe(visitor);
   });
 
   it("an explicit installId wins over the stored visitor id", async () => {
     localStorage.setItem("twillingate_visitor", "stored-visitor");
-    const t = tg({ identity: "identified", installId: "device-7" });
+    const t = tg({ identity: "identified", consent: true, installId: "device-7" });
     const attrs = await lastAttributes(t);
     expect(attrs.$install_id).toBe("device-7");
   });
 
   it("identify() persists the user; reset() clears user, group and visitor", async () => {
-    const t = tg({ identity: "identified" });
+    const t = tg({ identity: "identified", consent: true });
     t.identify("u_1");
     t.group("org_1");
     expect(localStorage.getItem("twillingate_user")).toBe("u_1");
@@ -107,50 +104,33 @@ describe("identified mode", () => {
 
   it("restores a persisted user on the next load", async () => {
     localStorage.setItem("twillingate_user", "u_returning");
-    const t = tg({ identity: "identified" });
+    const t = tg({ identity: "identified", consent: true });
     const attrs = await lastAttributes(t);
     expect(attrs.$user_id).toBe("u_returning");
   });
 
   it("an init-supplied user wins over the stored one", async () => {
     localStorage.setItem("twillingate_user", "u_old");
-    const t = tg({ identity: "identified", user: "u_new" });
+    const t = tg({ identity: "identified", consent: true, user: "u_new" });
     const attrs = await lastAttributes(t);
     expect(attrs.$user_id).toBe("u_new");
   });
 });
 
-describe("migration from the legacy storage keys", () => {
-  it("adopts analytics_visitor / analytics_user / analytics_group", async () => {
-    localStorage.setItem("analytics_visitor", "legacy-visitor");
-    localStorage.setItem("analytics_user", "legacy-user");
-    localStorage.setItem("analytics_group", "legacy-group");
-    const t = tg({ identity: "identified" });
-    const attrs = await lastAttributes(t);
-    expect(attrs.$install_id).toBe("legacy-visitor");
-    expect(attrs.$user_id).toBe("legacy-user");
-    expect(attrs.$group_id).toBe("legacy-group");
-    // copied, not moved: an older client may still be running elsewhere
-    expect(localStorage.getItem("analytics_visitor")).toBe("legacy-visitor");
-    expect(localStorage.getItem("twillingate_visitor")).toBe("legacy-visitor");
-  });
-
-  it("prefers an existing twillingate_* value over the legacy one", async () => {
-    localStorage.setItem("analytics_user", "legacy");
-    localStorage.setItem("twillingate_user", "current");
-    const t = tg({ identity: "identified" });
-    const attrs = await lastAttributes(t);
-    expect(attrs.$user_id).toBe("current");
-  });
-});
-
 describe("group()", () => {
-  it("sets and persists the group at runtime", async () => {
-    const t = tg();
+  it("persists the group for an identified instance with consent", async () => {
+    const t = tg({ identity: "identified", consent: true });
     t.group("org_77");
     const attrs = await lastAttributes(t);
     expect(attrs.$group_id).toBe("org_77");
     expect(localStorage.getItem("twillingate_group")).toBe("org_77");
+  });
+
+  it("carries the group for the session only in anonymous mode, consent or not", async () => {
+    const t = tg({ consent: true });
+    t.group("org_77");
+    expect((await lastAttributes(t)).$group_id).toBe("org_77");
+    expect(localStorage.getItem("twillingate_group")).toBeNull();
   });
 });
 

@@ -117,11 +117,11 @@ func TestDocumentMatchesSDK(t *testing.T) {
 	src := readSource(t, "../../sdk/src/twillingate.ts")
 	for _, symbol := range []string{
 		"data-key", "data-identity", "data-user", "data-group", "data-auto",
-		"data-mask-url", "data-routing",
+		"data-mask-url", "data-routing", "data-consent", "data-instance",
 		"data-kind",
-		"init", "page", "screen", "track", "attrs", "identify", "group", "reset", "flush",
+		"init", "page", "screen", "track", "attrs", "identify", "group", "reset", "flush", "consent", "instance",
 		"detectOS", "detectBrowser", "detectDevice", "ClientSignals",
-		"twillingate_ignore", "analytics_ignore",
+		"twillingate_ignore",
 		"pushState", "popstate", "hashchange",
 		"$page_view", "$screen_view", "$install_id", "$kind", "$platform", "$os", "$os_name",
 		"$browser", "$browser_version", "$device",

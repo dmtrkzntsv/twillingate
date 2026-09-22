@@ -1,6 +1,7 @@
-// Bundle entry: expose the SDK as window.twillingate and auto-init in
-// snippet mode (a data-key on the loading <script> tag).
-import { Twillingate, autoInit, supersededBy, VERSION } from "./twillingate";
+// Bundle entry: register the SDK on window (twillingate, or the name in
+// data-instance) and auto-init in snippet mode (a data-key on the loading
+// <script> tag).
+import { Twillingate, bootstrap } from "./twillingate";
 
 declare global {
   interface Window {
@@ -8,11 +9,4 @@ declare global {
   }
 }
 
-const script = document.currentScript as HTMLScriptElement | null;
-
-if (!supersededBy(window.twillingate, script)) {
-  const tg = new Twillingate();
-  (tg as Twillingate & { VERSION: string }).VERSION = VERSION;
-  window.twillingate = tg as Twillingate & { VERSION: string };
-  autoInit(tg, script);
-}
+bootstrap(document.currentScript as HTMLScriptElement | null);

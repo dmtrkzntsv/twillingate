@@ -5,8 +5,7 @@ export default defineConfig({
     globals: true,
     environment: "jsdom",
     environmentOptions: {
-      // Not localhost: the SDK's ignore rules would otherwise drop every
-      // event in every test.
+      // A real hostname, so $host assertions read example.com.
       jsdom: { url: "https://example.com/start" },
     },
   },
