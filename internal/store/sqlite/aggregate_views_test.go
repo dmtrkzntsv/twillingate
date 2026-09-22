@@ -46,37 +46,42 @@ func seedViews(t *testing.T, db *DB, views ...store.View) {
 //
 //	web v1: 10:00 /a, 10:10 /b          -> 1 session, 2 views, dur 600
 //	web v1: 12:00 /a                    -> gap > 30 min: 2nd session, bounce
-//	web v2: 11:00 /a (DE, mobile, Chrome 126, Android, google, hn/social/launch,
+//	web v2: 11:00 /a (DE, mobile, chrome 126, android, google, hn/social/launch,
 //	        display 390x844)            -> 1 session, bounce
-//	app  i1: 10:00 /home s1, 10:05 /settings s1 (iOS 17.2, 2.4.1, iPhone15,2, DE)
+//	app  i1: 10:00 /home s1, 10:05 /settings s1 (ios 17.2, 2.4.1, iPhone15,2, DE)
 //	                                    -> 1 client session, 2 views, dur 300
-//	app  i2: 11:00 /home s2 (Android 14, 2.4.1, Pixel 8, FR)
+//	app  i2: 11:00 /home s2 (android 14, 2.4.1, Pixel 8, FR)
 //	                                    -> 1 session, bounce
 //
 // web totals: visitors 2, views 4, sessions 3, bounces 2, duration 600.
 // app totals: visitors 2, views 3, sessions 2, bounces 1, duration 300.
+//
+// Values speak the closed vocabularies 015 introduced: platform is web on
+// a web row and the os on an app row, and a column the client never set
+// is unknown, not empty.
 func seedViewDay(t *testing.T, db *DB) {
 	t.Helper()
 	web := func(id, actor, path string, ts time.Time) store.View {
-		return store.View{ID: id, TS: ts, ActorID: actor, Kind: "web",
+		return store.View{ID: id, TS: ts, ActorID: actor, Kind: "web", Platform: "web",
 			Host: "shop.example.com", Path: path, Country: "US",
-			Device: "desktop", Browser: "Firefox", BrowserVersion: "127", OS: "Linux"}
+			Device: "desktop", Browser: "firefox", BrowserVersion: "127", OS: "linux"}
 	}
 	v2 := web("4", "v2", "/a", at(11, 0))
-	v2.Country, v2.Device, v2.Browser, v2.BrowserVersion, v2.OS = "DE", "mobile", "Chrome", "126", "Android"
+	v2.Country, v2.Device, v2.Browser, v2.BrowserVersion, v2.OS = "DE", "mobile", "chrome", "126", "android"
 	v2.ReferrerSource = "google"
 	v2.UTMSource, v2.UTMMedium, v2.UTMCampaign = "hn", "social", "launch"
 	v2.DisplayWidth, v2.DisplayHeight = 390, 844
 	app := func(id, actor, path, session, os, osv, model, country string, ts time.Time) store.View {
 		return store.View{ID: id, TS: ts, ActorID: actor, ActorKind: store.ActorInstall, Kind: "app",
-			SessionID: session, Path: path, OS: os, OSVersion: osv, AppVersion: "2.4.1",
+			Platform: os, SessionID: session, Path: path, OS: os, OSVersion: osv, AppVersion: "2.4.1",
+			Device: "unknown", Browser: "unknown",
 			DeviceModel: model, Locale: "en-US", Country: country}
 	}
 	seedViews(t, db,
 		web("1", "v1", "/a", at(10, 0)), web("2", "v1", "/b", at(10, 10)), web("3", "v1", "/a", at(12, 0)), v2,
-		app("5", "i1", "/home", "s1", "iOS", "17.2", "iPhone15,2", "DE", at(10, 0)),
-		app("6", "i1", "/settings", "s1", "iOS", "17.2", "iPhone15,2", "DE", at(10, 5)),
-		app("7", "i2", "/home", "s2", "Android", "14", "Pixel 8", "FR", at(11, 0)),
+		app("5", "i1", "/home", "s1", "ios", "17.2", "iPhone15,2", "DE", at(10, 0)),
+		app("6", "i1", "/settings", "s1", "ios", "17.2", "iPhone15,2", "DE", at(10, 5)),
+		app("7", "i2", "/home", "s2", "android", "14", "Pixel 8", "FR", at(11, 0)),
 	)
 }
 
@@ -140,11 +145,14 @@ func TestAggregateViewDayDimensions(t *testing.T) {
 	check(`SELECT visitors, views FROM agg_views_referrers`+w+`source=?`, []any{"google"}, 1, 1)
 	check(`SELECT visitors, views FROM agg_views_utm`+w+`utm_source=?`, []any{"hn"}, 1, 1)
 	check(`SELECT visitors, views FROM agg_views_countries`+w+`country=?`, []any{"DE"}, 2, 3)
-	check(`SELECT visitors, views FROM agg_views_os`+w+`os=? AND os_version=?`, []any{"iOS", "17.2"}, 1, 2)
-	check(`SELECT visitors, views FROM agg_views_os`+w+`os=? AND os_version=?`, []any{"Linux", ""}, 1, 3)
-	check(`SELECT visitors, views FROM agg_views_browsers`+w+`browser=? AND browser_version=?`, []any{"Chrome", "126"}, 1, 1)
-	check(`SELECT visitors, views FROM agg_views_app_versions`+w+`os=? AND app_version=?`, []any{"iOS", "2.4.1"}, 1, 2)
-	check(`SELECT visitors, views FROM agg_views_devices`+w+`device=? AND device_model=?`, []any{"", "Pixel 8"}, 1, 1)
+	check(`SELECT visitors, views FROM agg_views_platforms`+w+`platform=?`, []any{"web"}, 2, 4)
+	check(`SELECT visitors, views FROM agg_views_platforms`+w+`platform=?`, []any{"ios"}, 1, 2)
+	check(`SELECT visitors, views FROM agg_views_os`+w+`os=? AND os_version=?`, []any{"ios", "17.2"}, 1, 2)
+	check(`SELECT visitors, views FROM agg_views_os`+w+`os=? AND os_version=?`, []any{"linux", ""}, 1, 3)
+	check(`SELECT visitors, views FROM agg_views_browsers`+w+`browser=? AND browser_version=?`, []any{"chrome", "126"}, 1, 1)
+	check(`SELECT visitors, views FROM agg_views_app_versions`+w+`platform=? AND app_version=?`, []any{"ios", "2.4.1"}, 1, 2)
+	check(`SELECT visitors, views FROM agg_views_app_versions`+w+`platform=? AND app_version=?`, []any{"android", "2.4.1"}, 1, 1)
+	check(`SELECT visitors, views FROM agg_views_devices`+w+`device=? AND device_model=?`, []any{"unknown", "Pixel 8"}, 1, 1)
 	check(`SELECT visitors, views FROM agg_views_devices`+w+`device=? AND device_model=?`, []any{"desktop", ""}, 1, 3)
 	check(`SELECT visitors, views FROM agg_views_displays`+w+`display=?`, []any{"390x844"}, 1, 1)
 	var n int
@@ -178,12 +186,12 @@ func TestAggregateViewDayCapsDimensions(t *testing.T) {
 		// two actors see every collapsed path, so a summed count would say 20
 		for _, actor := range []string{"a", "b"} {
 			views = append(views, store.View{ID: fmt.Sprintf("%s-%d", actor, i), TS: at(9, 0).Add(time.Duration(i) * time.Second),
-				ActorID: actor, Path: fmt.Sprintf("/p/%04d", i), OS: "Linux", OSVersion: fmt.Sprintf("%d", i)})
+				ActorID: actor, Path: fmt.Sprintf("/p/%04d", i), OS: "linux", OSVersion: fmt.Sprintf("%d", i)})
 		}
 	}
 	// One popular path stays out of the tail.
 	for i := 0; i < 5; i++ {
-		views = append(views, store.View{ID: fmt.Sprintf("hot-%d", i), TS: at(10, 0), ActorID: "c", Path: "/hot", OS: "Linux", OSVersion: "0"})
+		views = append(views, store.View{ID: fmt.Sprintf("hot-%d", i), TS: at(10, 0), ActorID: "c", Path: "/hot", OS: "linux", OSVersion: "0"})
 	}
 	seedViews(t, db, views...)
 	if err := db.AggregateViewDay(ctx, 1, day("2026-08-10")); err != nil {
@@ -203,7 +211,7 @@ func TestAggregateViewDayCapsDimensions(t *testing.T) {
 		t.Errorf("(other) = (%d,%d), want (2,22): 11 collapsed paths x 2 actors, 2 distinct actors", otherV, otherP)
 	}
 	// Two-key dimension: the leading key stays intact, only os_version collapses.
-	if err := db.db.QueryRow(`SELECT COUNT(*) FROM agg_views_os WHERE project_id=1 AND os='Linux' AND os_version='(other)'`).Scan(&rows); err != nil {
+	if err := db.db.QueryRow(`SELECT COUNT(*) FROM agg_views_os WHERE project_id=1 AND os='linux' AND os_version='(other)'`).Scan(&rows); err != nil {
 		t.Fatal(err)
 	}
 	if rows != 1 {

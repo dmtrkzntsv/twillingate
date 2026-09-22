@@ -13,6 +13,13 @@ import (
 // Kind is the client-declared surface ("web", "app", "cli", …); only "web"
 // rows are enriched from the User-Agent. ActorKind records how the actor
 // was identified and is what retention cohorts on.
+//
+// Platform is the surface the product is used through (web, ios, electron,
+// …); OS is the operating system it runs on. They coincide for a native
+// app and diverge everywhere else. Both are never empty in the database --
+// the server stores unknown for an undeclared value -- and OSName is the
+// free-form name the client reported, kept beside an OS of other so the
+// bucket stays investigable.
 type View struct {
 	ID                                             string
 	ProjectID                                      int64
@@ -21,13 +28,16 @@ type View struct {
 	ActorID, ActorKind, UserID, GroupID, SessionID string
 	Host, Path, ReferrerSource                     string
 	UTMSource, UTMMedium, UTMCampaign              string
-	OS, OSVersion, Browser, BrowserVersion         string
+	Platform, OS, OSVersion, OSName                string
+	Browser, BrowserVersion                        string
 	AppVersion, Device, DeviceModel, Locale        string
 	DisplayWidth, DisplayHeight                    int
 	Country                                        string
 }
 
-// ProductEvent represents a custom event from any surface.
+// ProductEvent represents a custom event from any surface. Platform and OS
+// are the two environment columns a product event carries; every other
+// declared environment key is resolved and dropped at ingest.
 type ProductEvent struct {
 	ID                 string
 	ProjectID          int64
@@ -35,7 +45,8 @@ type ProductEvent struct {
 	TS, ReceivedAt     time.Time
 	ActorID, ActorKind string
 	UserID, GroupID    string
-	OS, AppVersion     string
+	Platform, OS       string
+	AppVersion         string
 	Attributes         map[string]string
 }
 
@@ -51,7 +62,7 @@ const (
 // table rather than on event rows: a name repeated on every row could never
 // be updated, and names change.
 type Identity struct {
-	ProjectID     int64
+	ProjectID      int64
 	Kind, ID, Name string
 }
 

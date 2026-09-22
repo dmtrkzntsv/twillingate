@@ -22,7 +22,7 @@ func TestWriteViewsRoundTrip(t *testing.T) {
 	views := []store.View{{
 		ID: "h1", ProjectID: 1, TS: ts("2026-08-22T10:00:00Z"),
 		Kind: "web", ActorID: "v1", ActorKind: store.ActorConnection, Path: "/x", ReferrerSource: "google",
-		UTMSource: "hn", Country: "DE", Device: "desktop", Browser: "Firefox", OS: "Linux",
+		UTMSource: "hn", Country: "DE", Device: "desktop", Browser: "firefox", OS: "linux",
 	}}
 	if err := db.WriteViews(ctx, views); err != nil {
 		t.Fatal(err)
@@ -121,22 +121,22 @@ func TestWriteViewsAppRoundTrip(t *testing.T) {
 	in := []store.View{{
 		ID: "018f-a", ProjectID: 1, TS: tsV, ReceivedAt: tsV,
 		Kind: "app", ActorID: "act1", ActorKind: store.ActorInstall, UserID: "u1", GroupID: "org9", SessionID: "s1",
-		Path: "/settings", OS: "iOS", AppVersion: "2.4.1",
+		Path: "/settings", Platform: "ios", OS: "ios", OSName: "iOS 17.2", AppVersion: "2.4.1",
 		OSVersion: "17.2", DeviceModel: "iPhone15,2", Locale: "en-US", Country: "DE",
 	}}
 	if err := db.WriteViews(ctx, in); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 
-	var path, osCol, group, session, locale string
+	var path, osCol, platform, osName, group, session, locale string
 	if err := db.db.QueryRowContext(ctx,
-		`SELECT path, os, group_id, session_id, locale FROM views WHERE id=?`, "018f-a").
-		Scan(&path, &osCol, &group, &session, &locale); err != nil {
+		`SELECT path, os, platform, os_name, group_id, session_id, locale FROM views WHERE id=?`, "018f-a").
+		Scan(&path, &osCol, &platform, &osName, &group, &session, &locale); err != nil {
 		t.Fatalf("read back: %v", err)
 	}
-	if path != "/settings" || osCol != "iOS" || group != "org9" ||
+	if path != "/settings" || osCol != "ios" || platform != "ios" || osName != "iOS 17.2" || group != "org9" ||
 		session != "s1" || locale != "en-US" {
-		t.Errorf("got %q %q %q %q %q", path, osCol, group, session, locale)
+		t.Errorf("got %q %q %q %q %q %q %q", path, osCol, platform, osName, group, session, locale)
 	}
 }
 
@@ -198,7 +198,7 @@ func TestWriteCarriesIdentityAndAppContext(t *testing.T) {
 	}
 	if err := db.WriteProductEvents(ctx, []store.ProductEvent{{ID: "e", ProjectID: 1,
 		EventName: "n", TS: tsV, ReceivedAt: tsV, ActorID: "a", UserID: "u1",
-		GroupID: "org9", OS: "iOS", AppVersion: "2.4.1"}}); err != nil {
+		GroupID: "org9", Platform: "electron", OS: "macos", AppVersion: "2.4.1"}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -211,13 +211,13 @@ func TestWriteCarriesIdentityAndAppContext(t *testing.T) {
 		t.Errorf("view identity = %q %q", hu, hg)
 	}
 
-	var osCol, ver string
+	var osCol, platform, ver string
 	if err := db.db.QueryRowContext(ctx,
-		`SELECT os, app_version FROM events WHERE id='e'`).Scan(&osCol, &ver); err != nil {
+		`SELECT os, platform, app_version FROM events WHERE id='e'`).Scan(&osCol, &platform, &ver); err != nil {
 		t.Fatal(err)
 	}
-	if osCol != "iOS" || ver != "2.4.1" {
-		t.Errorf("event context = %q %q", osCol, ver)
+	if osCol != "macos" || platform != "electron" || ver != "2.4.1" {
+		t.Errorf("event context = %q %q %q", osCol, platform, ver)
 	}
 }
 

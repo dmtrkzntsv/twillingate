@@ -281,3 +281,26 @@ func TestRollupSystemDimensionsSurviveRawDeletion(t *testing.T) {
 		t.Fatalf("system dimension rows = %d, want 2", n)
 	}
 }
+
+// $platform rolls up beside $os and $app_version without being declared.
+func TestRollupWritesPlatformSystemDimension(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	if err := db.WriteProductEvents(ctx, []store.ProductEvent{{
+		ID: uuid.NewString(), ProjectID: 1, EventName: "signup", ActorID: "u1",
+		TS: ts("2026-08-01T10:00:00Z"), Platform: "electron", OS: "macos", AppVersion: "1.2.0",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AggregateProductDay(ctx, 1, civil.DateOf(ts("2026-08-01T00:00:00Z")), nil, 50); err != nil {
+		t.Fatal(err)
+	}
+	var v string
+	if err := db.db.QueryRow(`SELECT attr_value FROM agg_product_attrs
+		WHERE project_id=1 AND attr_key='$platform'`).Scan(&v); err != nil {
+		t.Fatal(err)
+	}
+	if v != "electron" {
+		t.Fatalf("$platform = %q, want electron", v)
+	}
+}

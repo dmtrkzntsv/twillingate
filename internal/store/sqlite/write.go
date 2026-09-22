@@ -22,9 +22,9 @@ func (d *DB) WriteViews(ctx context.Context, views []store.View) error {
 		stmt, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO views
 			(id, project_id, ts, received_at, kind, actor_id, actor_kind, user_id, group_id, session_id,
 			 host, path, referrer_source, utm_source, utm_medium, utm_campaign,
-			 os, os_version, browser, browser_version, app_version,
+			 platform, os, os_version, os_name, browser, browser_version, app_version,
 			 device, device_model, locale, display_width, display_height, country)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
 		if err != nil {
 			return err
 		}
@@ -34,7 +34,7 @@ func (d *DB) WriteViews(ctx context.Context, views []store.View) error {
 				v.TS.UTC().Format(tsFormat), v.ReceivedAt.UTC().Format(tsFormat),
 				v.Kind, v.ActorID, v.ActorKind, v.UserID, v.GroupID, v.SessionID,
 				v.Host, v.Path, v.ReferrerSource, v.UTMSource, v.UTMMedium, v.UTMCampaign,
-				v.OS, v.OSVersion, v.Browser, v.BrowserVersion, v.AppVersion,
+				v.Platform, v.OS, v.OSVersion, v.OSName, v.Browser, v.BrowserVersion, v.AppVersion,
 				v.Device, v.DeviceModel, v.Locale, v.DisplayWidth, v.DisplayHeight, v.Country); err != nil {
 				return fmt.Errorf("view %s: %w", v.ID, err)
 			}
@@ -50,8 +50,8 @@ func (d *DB) WriteProductEvents(ctx context.Context, evs []store.ProductEvent) e
 	return d.tx(ctx, func(tx *sql.Tx) error {
 		stmt, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO events
 			(id, project_id, event_name, ts, received_at, actor_id, actor_kind, user_id, group_id,
-			 os, app_version, attributes)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+			 platform, os, app_version, attributes)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`)
 		if err != nil {
 			return err
 		}
@@ -67,7 +67,7 @@ func (d *DB) WriteProductEvents(ctx context.Context, evs []store.ProductEvent) e
 			}
 			if _, err := stmt.ExecContext(ctx, e.ID, e.ProjectID, e.EventName,
 				e.TS.UTC().Format(tsFormat), e.ReceivedAt.UTC().Format(tsFormat),
-				e.ActorID, e.ActorKind, e.UserID, e.GroupID, e.OS, e.AppVersion,
+				e.ActorID, e.ActorKind, e.UserID, e.GroupID, e.Platform, e.OS, e.AppVersion,
 				string(blob)); err != nil {
 				return fmt.Errorf("event %s: %w", e.ID, err)
 			}

@@ -141,10 +141,12 @@ func TestMigration014AssignsIdsAndRekeys(t *testing.T) {
 	if n != 0 {
 		t.Error("idx_ingest_keys_project survived; UNIQUE (project_id, label) replaces it")
 	}
-	// every view is back and readable on project_id
+	// every view is back and readable on project_id. Migrate runs the
+	// whole chain, so the count is the schema's current total: 16 at 014
+	// plus v_views_platforms from 015.
 	row(`SELECT COUNT(*) FROM sqlite_master WHERE type='view'`, &n)
-	if n != 16 {
-		t.Errorf("%d views, want 16", n)
+	if n != 17 {
+		t.Errorf("%d views, want 17", n)
 	}
 	row(`SELECT COUNT(*) FROM v_product_attrs WHERE project_id=1 AND attr_key='plan'`, &n)
 	if n != 2 {
