@@ -27,8 +27,8 @@ func seed014(t *testing.T) *DB {
 		 ('e2',2,'signup','i2','2026-09-10T11:00:00Z',''),
 		 ('e3',2,'signup','i3','2026-09-10T11:00:00Z','Haiku')`,
 		`INSERT INTO agg_views_daily VALUES (1,'2026-09-01','web',10,25,12,3,600), (2,'2026-09-01','app',6,20,8,0,480), (2,'2026-09-01','cli',2,4,2,0,0)`,
-		`INSERT INTO agg_views_os VALUES (1,'2026-09-01','iOS','17.4',3,6), (1,'2026-09-01','','',2,2), (1,'2026-09-01','Haiku','',1,1)`,
-		`INSERT INTO agg_views_browsers VALUES (1,'2026-09-01','Chrome','126',7,14), (1,'2026-09-01','Samsung Internet','25',1,1), (1,'2026-09-01','','',2,2)`,
+		`INSERT INTO agg_views_os VALUES (1,'2026-09-01','iOS','17.4',3,6), (1,'2026-09-01','','',2,2), (1,'2026-09-01','Haiku','',1,1), (1,'2026-09-01','Mac OS','',1,1)`,
+		`INSERT INTO agg_views_browsers VALUES (1,'2026-09-01','Chrome','126',7,14), (1,'2026-09-01','Samsung Internet','25',1,1), (1,'2026-09-01','','',2,2), (1,'2026-09-01','Netscape','4',1,1)`,
 		`INSERT INTO agg_views_devices VALUES (1,'2026-09-01','desktop','',7,13), (1,'2026-09-01','','iPhone15,3',5,12)`,
 		`INSERT INTO agg_views_app_versions VALUES
 		 (2,'2026-09-01','iOS','2.4.1',5,12), (2,'2026-09-01','Android','2.4.1',4,9),
@@ -102,6 +102,14 @@ func TestMigration015FoldsAndBackfills(t *testing.T) {
 	if n != 1 {
 		t.Errorf("agg_views_os Haiku rows = %d, want 1 (left unfolded)", n)
 	}
+	// A spelling the validator would canonicalise by more than case --
+	// NormalizeOS folds "Mac OS" to macos -- is left alone too: the
+	// pre-upgrade check groups by lower(os), so anything wider than
+	// lower-casing could collide on a key the operator was told was clean.
+	row(`SELECT COUNT(*) FROM agg_views_os WHERE os='Mac OS'`, &n)
+	if n != 1 {
+		t.Errorf("agg_views_os 'Mac OS' rows = %d, want 1 (only case changes are folded)", n)
+	}
 	row(`SELECT COUNT(*) FROM agg_views_os WHERE os IN ('iOS','','other')`, &n)
 	if n != 0 {
 		t.Errorf("agg_views_os still has %d unfolded or over-folded rows", n)
@@ -133,7 +141,8 @@ func TestMigration015FoldsAndBackfills(t *testing.T) {
 		{`SELECT visitors FROM agg_views_browsers WHERE browser='unknown' AND browser_version=''`, 2},
 		{`SELECT visitors FROM agg_views_devices WHERE device='desktop' AND device_model=''`, 7},
 		{`SELECT visitors FROM agg_views_devices WHERE device='unknown' AND device_model='iPhone15,3'`, 5},
-		{`SELECT COUNT(*) FROM agg_views_browsers`, 3},
+		{`SELECT COUNT(*) FROM agg_views_browsers WHERE browser='Netscape'`, 1},
+		{`SELECT COUNT(*) FROM agg_views_browsers`, 4},
 		{`SELECT COUNT(*) FROM agg_views_devices`, 2},
 	} {
 		row(c.q, &n)

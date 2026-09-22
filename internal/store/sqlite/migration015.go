@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 
 	"github.com/dmtrkzntsv/twillingate/internal/enrich"
 )
@@ -22,7 +23,25 @@ const (
 	// folding two values onto one key would SUM actors that may be the
 	// same person. The tail stays unfolded instead.
 	foldKeep
+	// foldCaseOnly is foldKeep with the spec's safety argument for the OS
+	// aggregates made literal: the only rewrites are a pure case change
+	// and the '' -> unknown relabel. docs/deployment.md pre-check 1 finds
+	// the rows that would collide by grouping on lower(os), so the fold
+	// must never merge more than lower-casing would -- NormalizeOS also
+	// folds spaces and dashes, and "Mac OS" landing on a "macOS" row is a
+	// collision the pre-check reported as clean.
+	foldCaseOnly
 )
+
+// caseOnly reports whether rewriting raw to folded is nothing more than
+// lower-casing it. The empty value is the one other allowed rewrite:
+// unknown did not exist before, so relabelling it merges nothing.
+func caseOnly(raw, folded string) bool {
+	if raw == "" {
+		return true
+	}
+	return raw == strings.TrimSpace(raw) && folded == strings.ToLower(raw)
+}
 
 // fold is one column rewrite: every distinct value of table.column
 // (optionally restricted by where) goes through normalize, and the result
@@ -48,7 +67,10 @@ func (f fold) dest() string {
 
 // foldValues applies one fold with a single UPDATE per distinct value, so
 // a column with three spellings costs three statements rather than a scan
-// of the table in Go.
+// of the table in Go. The two phases are not only cheap but necessary: a
+// transaction holds one connection, and no write may run on it while the
+// SELECT's cursor is open, so the distinct values are buffered and
+// rows.Close() precedes the first UPDATE.
 func foldValues(ctx context.Context, tx *sql.Tx, f fold) error {
 	query := fmt.Sprintf(`SELECT DISTINCT %s FROM %s`, f.column, f.table)
 	if f.where != "" {
@@ -74,10 +96,16 @@ func foldValues(ctx context.Context, tx *sql.Tx, f fold) error {
 
 	for _, raw := range values {
 		folded, known := f.normalize(raw)
-		if f.mode == foldKeep && !known {
+		if f.mode != foldToOther && !known {
 			continue
 		}
-		if f.target == "" && folded == raw && (known || f.keepName == "") {
+		if f.mode == foldCaseOnly && !caseOnly(raw, folded) {
+			continue
+		}
+		// A fold with a target always writes: the destination column
+		// holds its default, not raw. In place, an unchanged value is
+		// already what the fold would store.
+		if f.target == "" && folded == raw {
 			continue
 		}
 		set := f.dest() + ` = ?`
@@ -125,8 +153,10 @@ func foldEnvironment(ctx context.Context, tx *sql.Tx) error {
 		//    between two spellings of one canonical value fails the
 		//    UPDATE's primary key and aborts the migration;
 		//    docs/deployment.md lists the query that finds them first.
-		{table: "agg_views_os", column: "os", normalize: enrich.NormalizeOS, mode: foldKeep},
-		{table: "agg_product_attrs", column: "attr_value", where: `attr_key = '$os'`, normalize: enrich.NormalizeOS, mode: foldKeep},
+		//    foldCaseOnly keeps the fold to exactly what that pre-check
+		//    checked for: a case change, nothing wider.
+		{table: "agg_views_os", column: "os", normalize: enrich.NormalizeOS, mode: foldCaseOnly},
+		{table: "agg_product_attrs", column: "attr_value", where: `attr_key = '$os'`, normalize: enrich.NormalizeOS, mode: foldCaseOnly},
 
 		// 5. Browser and device folds: loss-free. No client could write
 		//    these columns before 015, so every value came from the old
@@ -197,7 +227,8 @@ func rekeyAppVersions(ctx context.Context, tx *sql.Tx) error {
 			`INSERT INTO agg_views_app_versions (project_id, day, platform, app_version, visitors, views)
 			 VALUES (?, ?, ?, ?, ?, ?)`,
 			k.projectID, k.day, k.platform, k.appVersion, t.visitors, t.views); err != nil {
-			return fmt.Errorf("rekey agg_views_app_versions %q: %w", k.platform, err)
+			return fmt.Errorf("rekey agg_views_app_versions (%d, %q, %q, %q): %w",
+				k.projectID, k.day, k.platform, k.appVersion, err)
 		}
 	}
 	if _, err := tx.ExecContext(ctx, `DROP TABLE agg_views_app_versions_old`); err != nil {
