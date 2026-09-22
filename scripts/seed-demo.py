@@ -74,8 +74,10 @@ PROFILES = {
 COUNTRIES = [("US", 30), ("GB", 12), ("DE", 11), ("FR", 8), ("CA", 8),
              ("NL", 6), ("IN", 9), ("AU", 6), ("SE", 5), ("BR", 5)]
 DEVICES = [("desktop", 60), ("mobile", 33), ("tablet", 7)]
-BROWSERS = [("Chrome", 48), ("Safari", 26), ("Firefox", 13), ("Edge", 9), ("Other", 4)]
-OSES = [("macOS", 32), ("Windows", 30), ("iOS", 18), ("Android", 13), ("Linux", 7)]
+# Vocabulary values, as a client declares them: lower-case, exactly the
+# tokens internal/enrich/ua.go closes on.
+BROWSERS = [("chrome", 48), ("safari", 26), ("firefox", 13), ("edge", 9), ("other", 4)]
+OSES = [("macos", 32), ("windows", 30), ("ios", 18), ("android", 13), ("linux", 7)]
 UTMS = [(("", "", ""), 62), (("twitter", "social", "launch"), 14),
         (("newsletter", "email", "weekly"), 10),
         (("producthunt", "referral", "launch"), 8), (("google", "cpc", "brand"), 6)]
@@ -88,15 +90,15 @@ SCREENS = [("/dashboard", 30), ("/settings", 18), ("/reports", 16), ("/inbox", 1
            ("/billing", 12), ("/onboarding", 10)]
 BROWSER_VERSIONS = ["126", "127", "128"]
 DISPLAYS = [(1920, 1080), (1440, 900), (390, 844), (2560, 1440), (360, 800)]
-PLATFORMS = [("iOS", 55), ("Android", 45)]
+PLATFORMS = [("ios", 55), ("android", 45)]
 DEVICE_MODELS = {
-    "iOS": [("iPhone15,2", 34), ("iPhone14,5", 26), ("iPhone13,3", 20), ("iPad13,1", 12),
+    "ios": [("iPhone15,2", 34), ("iPhone14,5", 26), ("iPhone13,3", 20), ("iPad13,1", 12),
             ("iPhone12,1", 8)],
-    "Android": [("Pixel 8", 30), ("SM-S918B", 26), ("Pixel 7a", 20), ("SM-A546B", 14),
+    "android": [("Pixel 8", 30), ("SM-S918B", 26), ("Pixel 7a", 20), ("SM-A546B", 14),
                 ("moto g84", 10)],
 }
-OS_VERSIONS = {"iOS": [("17.2", 55), ("16.6", 30), ("18.0", 15)],
-               "Android": [("14", 50), ("13", 35), ("15", 15)]}
+OS_VERSIONS = {"ios": [("17.2", 55), ("16.6", 30), ("18.0", 15)],
+               "android": [("14", 50), ("13", 35), ("15", 15)]}
 LOCALES = [("en-US", 44), ("en-GB", 14), ("de-DE", 12), ("fr-FR", 10), ("pt-BR", 8),
            ("es-ES", 7), ("sv-SE", 5)]
 # (version, days before today it started shipping)
@@ -154,14 +156,15 @@ def seed(cur, pid, name, profile, today, identified):
                 cur.execute(
                     "INSERT INTO views (id, project_id, ts, received_at, kind, actor_id, actor_kind,"
                     " user_id, group_id, path, referrer_source, country, device, browser,"
-                    " browser_version, os, utm_source, utm_medium, utm_campaign, display_width, display_height)"
-                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    " browser_version, platform, os, utm_source, utm_medium, utm_campaign,"
+                    " display_width, display_height)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (str(uuid.uuid4()), pid, ts.strftime("%Y-%m-%dT%H:%M:%SZ"),
                      ts.strftime("%Y-%m-%dT%H:%M:%SZ"), "web", vh,
                      "install" if identified else "connection", "", "",
                      pick(profile["pages"]), ref, country, device, browser,
                      random.choice(BROWSER_VERSIONS),
-                     osname, us, um, uc, *random.choice(DISPLAYS)))
+                     "web", osname, us, um, uc, *random.choice(DISPLAYS)))
                 hits += 1
 
     events = 0
@@ -175,16 +178,19 @@ def seed(cur, pid, name, profile, today, identified):
                         seconds=random.randint(0, 86399))
                     n = random.randint(1, 400)
                     user = f"user-{name}-{n}" if identified else ""
+                    # This is the only event loop and it sits beside the web
+                    # views above, so every product event is web-originated:
+                    # platform web, and an OS drawn from the same web mix.
                     cur.execute(
                         "INSERT INTO events (id, project_id, ts, received_at, event_name,"
-                        " actor_id, actor_kind, user_id, group_id, os, app_version, attributes)"
-                        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                        " actor_id, actor_kind, user_id, group_id, platform, os, app_version,"
+                        " attributes) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                         (str(uuid.uuid4()), pid, ts.strftime("%Y-%m-%dT%H:%M:%SZ"),
                          ts.strftime("%Y-%m-%dT%H:%M:%SZ"), event_name,
                          actor_for(name, day, n, identified),
                          "user" if identified else "connection", user,
                          GROUPS[n % len(GROUPS)][0] if identified else "",
-                         "", "", json.dumps({"plan": pick(PLANS)})))
+                         "web", pick(OSES), "", json.dumps({"plan": pick(PLANS)})))
                     events += 1
 
     views = hits + (seed_app(cur, pid, name, profile, today, identified) if profile.get("app") else 0)
@@ -194,7 +200,13 @@ def seed(cur, pid, name, profile, today, identified):
 
 
 def seed_app(cur, pid, name, profile, today, identified):
-    """Screen views across two platforms, with versions rolling out over time."""
+    """Screen views across two platforms, with versions rolling out over time.
+
+    A native app's platform and OS are the same token (ios, android), which
+    is what the app-versions dashboard keys on. Browser and device are
+    unknown: a native client declares neither, and unknown -- not '' -- is
+    what the server records for an undeclared value.
+    """
     views = 0
     for back in range(DAYS - 1, -1, -1):
         day = today - datetime.timedelta(days=back)
@@ -220,15 +232,17 @@ def seed_app(cur, pid, name, profile, today, identified):
                     seconds=start + s * random.randint(15, 240))
                 cur.execute(
                     "INSERT INTO views (id, project_id, ts, received_at, kind, actor_id, actor_kind, user_id,"
-                    " group_id, session_id, path, os, app_version, os_version,"
-                    " device_model, locale, country) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    " group_id, session_id, path, platform, os, app_version, os_version,"
+                    " browser, device, device_model, locale, country)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (str(uuid.uuid4()), pid, ts.strftime("%Y-%m-%dT%H:%M:%SZ"),
                      ts.strftime("%Y-%m-%dT%H:%M:%SZ"), "app", actor,
                      "user" if identified else "install",
                      f"user-{name}-{n}" if identified else "",
                      GROUPS[n % len(GROUPS)][0] if identified else "",
-                     session, pick(SCREENS), platform, version,
-                     pick(OS_VERSIONS[platform]), pick(DEVICE_MODELS[platform]),
+                     session, pick(SCREENS), platform, platform, version,
+                     pick(OS_VERSIONS[platform]), "unknown", "unknown",
+                     pick(DEVICE_MODELS[platform]),
                      pick(LOCALES), pick(COUNTRIES)))
                 views += 1
     return views

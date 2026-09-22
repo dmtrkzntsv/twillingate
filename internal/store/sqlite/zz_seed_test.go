@@ -52,7 +52,7 @@ func TestSeedEvidenceFixture(t *testing.T) {
 				Path:           []string{"/", "/pricing", "/docs"}[i%3],
 				ReferrerSource: []string{"google", "", "hn"}[i%3],
 				Country:        []string{"US", "DE", "FR"}[i%3], Device: []string{"desktop", "mobile"}[i%2],
-				Browser: "Chrome", OS: "Linux",
+				Browser: "chrome", OS: "linux",
 				UTMSource: []string{"hn", "", ""}[i%3], UTMMedium: []string{"social", "", ""}[i%3],
 				UTMCampaign: []string{"launch", "", ""}[i%3],
 			})

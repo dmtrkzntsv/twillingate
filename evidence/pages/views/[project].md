@@ -188,7 +188,7 @@ group by display order by visitors desc limit 15
 <BarChart data={displays} x=display y=visitors swapXY=true title="Display resolutions" yFmt=num0 />
 
 ```sql app_versions
-select day, os || ' ' || app_version as version, visitors
+select day, platform || ' ' || app_version as version, visitors
 from twillingate.v_views_app_versions
 where project_id = '${params.project}'
   and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range} - 1) day, '%Y-%m-%d')

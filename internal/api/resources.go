@@ -37,16 +37,17 @@ Views (all carry a 'project_id' column — always filter on it; ids come from li
   v_views_referrers(project_id, day, source, visitors, views)
   v_views_utm(project_id, day, utm_source, utm_medium, utm_campaign, visitors, views)
   v_views_countries(project_id, day, country, visitors, views)
-  v_views_os(project_id, day, os, os_version, visitors, views)
-  v_views_browsers(project_id, day, browser, browser_version, visitors, views)
-  v_views_app_versions(project_id, day, os, app_version, visitors, views)
-  v_views_devices(project_id, day, device, device_model, visitors, views)
+  v_views_platforms(project_id, day, platform, visitors, views)  -- platform: 'web'|'ios'|'android'|'electron'|…|'unknown', never empty
+  v_views_os(project_id, day, os, os_version, visitors, views)  -- os: lower-case closed vocabulary ('windows','macos','ios',…) plus 'other' (outside the list) and 'unknown' (not declared)
+  v_views_browsers(project_id, day, browser, browser_version, visitors, views)  -- browser: 'chrome'|'safari'|'firefox'|'edge'|'opera'|'samsung_internet'|'brave'|'vivaldi'|'duckduckgo'|'yandex'|'other'|'unknown'
+  v_views_app_versions(project_id, day, platform, app_version, visitors, views)  -- keyed by platform: 2.4.1 means different things per build
+  v_views_devices(project_id, day, device, device_model, visitors, views)  -- device: 'desktop'|'mobile'|'tablet'|'wearable'|'xr'|'other'|'unknown'
   v_views_displays(project_id, day, display, visitors, views)  -- display: 'WxH', e.g. '1920x1080'
   v_product_daily(project_id, day, event_name, count, unique_users)
   v_product_totals(project_id, day, total_events, active_users)
   v_identity_daily(project_id, day, kind, id, actors, users, views, events)  -- kind: 'user'|'group'
   v_retention(project_id, actor_kind, cohort_day, day_offset, actors, cohort_size)  -- actor_kind: 'user'|'install'
-  v_product_attrs(project_id, day, event_name, attr_key, attr_value, count, unique_users)
+  v_product_attrs(project_id, day, event_name, attr_key, attr_value, count, unique_users)  -- attr_key '$platform', '$os', '$app_version' always present
   identities(project_id, kind, id, name)  -- display names, joinable to v_identity_daily
 
 Cost note: the views' live halves sessionize raw rows with window

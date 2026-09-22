@@ -1,9 +1,15 @@
-// Package enrich derives coarse device/browser/os classes and cleans
-// referrers/URLs at ingest. Only substring matching on the hot path
-// (spec §12a) — order of checks matters and is documented inline.
+// Package enrich keeps the two things the server still derives from a
+// request — whether the User-Agent belongs to a bot, and a referrer's
+// source — and validates the environment a client declares about itself.
+// The User-Agent is no longer a source of OS, browser or device class:
+// the client detects those (sdk/src/detect.ts) and the server only checks
+// a declared value against a closed vocabulary.
 package enrich
 
-import "strings"
+import (
+	"regexp"
+	"strings"
+)
 
 var botMarkers = []string{
 	"bot", "crawler", "spider", "crawling", "headless", "lighthouse",
@@ -23,94 +29,91 @@ func IsBot(ua string) bool {
 	return false
 }
 
-// ParseUserAgent derives coarse device class, browser name, browser major
-// version and OS name. Only substring matching; order matters (see inline).
-func ParseUserAgent(ua string) (device, browser, browserVersion, os string) {
-	// OS first — some browser checks depend on it.
-	switch {
-	case strings.Contains(ua, "CrOS"):
-		os = "ChromeOS"
-	case strings.Contains(ua, "Windows"):
-		os = "Windows"
-	case strings.Contains(ua, "iPhone"), strings.Contains(ua, "iPad"):
-		os = "iOS"
-	case strings.Contains(ua, "Android"):
-		os = "Android"
-	case strings.Contains(ua, "Mac OS X"):
-		os = "macOS"
-	case strings.Contains(ua, "Linux"):
-		os = "Linux"
+// Vocabularies. A value earns a place when it is a distinct product target
+// — something a team would ship, test or drop support for separately —
+// and is either detectable from a browser or declarable by a native
+// client. Each list ends with the two floors, which must stay distinct:
+// other means a real value outside the list, unknown means no information
+// at all. Collapsing them would make a server-relayed event
+// indistinguishable from a genuine FreeBSD.
+var (
+	OSValues = []string{
+		"windows", "macos", "linux", "bsd", "chromeos",
+		"ios", "ipados", "android", "fireos", "harmonyos", "kaios",
+		"tvos", "watchos", "visionos", "tizen", "webos",
+		"playstation", "xbox", "nintendo",
+		"other", "unknown",
 	}
-	// Browser: check derivatives before their bases (Edge/Samsung before
-	// Chrome, Chrome before Safari — every Chrome UA contains "Safari").
-	// The marker that named the browser is also where its version starts.
-	var marker string
-	switch {
-	case strings.Contains(ua, "Edg/"):
-		browser, marker = "Edge", "Edg/"
-	case strings.Contains(ua, "Edge/"):
-		browser, marker = "Edge", "Edge/"
-	case strings.Contains(ua, "SamsungBrowser/"):
-		browser, marker = "Samsung Internet", "SamsungBrowser/"
-	case strings.Contains(ua, "OPR/"):
-		browser, marker = "Opera", "OPR/"
-	case strings.Contains(ua, "Opera/"):
-		browser, marker = "Opera", "Opera/"
-	case strings.Contains(ua, "Firefox/"):
-		browser, marker = "Firefox", "Firefox/"
-	case strings.Contains(ua, "Chrome/"):
-		browser, marker = "Chrome", "Chrome/"
-	case strings.Contains(ua, "CriOS/"):
-		browser, marker = "Chrome", "CriOS/"
-	case strings.Contains(ua, "Safari/"):
-		// Safari carries its version under Version/, not Safari/ (that is
-		// the WebKit build number).
-		browser, marker = "Safari", "Version/"
+	BrowserValues = []string{
+		"chrome", "safari", "firefox", "edge", "opera", "samsung_internet",
+		"brave", "vivaldi", "duckduckgo", "yandex",
+		"other", "unknown",
 	}
-	browserVersion = majorAfter(ua, marker)
-	switch {
-	case strings.Contains(ua, "iPad"), strings.Contains(ua, "Tablet"):
-		device = "tablet"
-	case strings.Contains(ua, "Mobile"), strings.Contains(ua, "iPhone"):
-		device = "mobile"
-	default:
-		device = "desktop"
+	DeviceValues = []string{
+		"desktop", "mobile", "tablet", "wearable", "xr",
+		"other", "unknown",
 	}
-	return device, browser, browserVersion, os
+)
+
+var (
+	osSet      = set(OSValues)
+	browserSet = set(BrowserValues)
+	deviceSet  = set(DeviceValues)
+)
+
+func set(values []string) map[string]bool {
+	m := make(map[string]bool, len(values))
+	for _, v := range values {
+		m[v] = true
+	}
+	return m
 }
 
-// majorAfter returns the run of digits that follows marker, or "" when the
-// marker is absent or not followed by a digit.
-func majorAfter(ua, marker string) string {
-	if marker == "" {
-		return ""
+// NormalizeOS validates a declared $os against OSValues. Absent stores
+// unknown; present but unrecognised stores other and reports ok=false so
+// the caller can warn and preserve the raw value in os_name. A client
+// sending other itself is recognised (ok=true): that is a legitimate
+// value, not a mistake to warn about.
+func NormalizeOS(v string) (string, bool) { return closed(v, osSet, "") }
+
+// NormalizeBrowser is NormalizeOS for $browser. Spaces and dashes fold to
+// underscores so "Samsung Internet" is samsung_internet.
+func NormalizeBrowser(v string) (string, bool) { return closed(v, browserSet, "_") }
+
+// NormalizeDevice is NormalizeOS for $device.
+func NormalizeDevice(v string) (string, bool) { return closed(v, deviceSet, "") }
+
+// platformPattern bounds a declared $platform to the same shape as $kind.
+var platformPattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,15}$`)
+
+// NormalizePlatform validates a declared $platform: trim, lower-case, then
+// the same shape as $kind. The vocabulary is open, so every well-formed
+// token is accepted as sent; the only failure is "no usable value", which
+// unknown says. Absent is unknown too, and is not a mistake to warn about.
+func NormalizePlatform(v string) (string, bool) {
+	v = strings.ToLower(strings.TrimSpace(v))
+	if v == "" {
+		return "unknown", true
 	}
-	i := strings.Index(ua, marker)
-	if i < 0 {
-		return ""
+	if platformPattern.MatchString(v) {
+		return v, true
 	}
-	rest := ua[i+len(marker):]
-	end := 0
-	for end < len(rest) && rest[end] >= '0' && rest[end] <= '9' {
-		end++
-	}
-	return rest[:end]
+	return "unknown", false
 }
 
-// osNames maps the lower-cased tokens apps declare in $os to the names the
-// parser produces, so a declared "ios" and a parsed iPhone land in one row.
-var osNames = map[string]string{
-	"ios": "iOS", "android": "Android", "macos": "macOS",
-	"windows": "Windows", "linux": "Linux", "chromeos": "ChromeOS",
-}
-
-// NormalizeOS folds a declared OS token into the parser's vocabulary. An
-// unknown value is stored as sent: the vocabulary is a convenience, not an
-// allowlist.
-func NormalizeOS(v string) string {
+// closed trims, lower-cases, replaces spaces and dashes with sep ("Chrome
+// OS" → chromeos, "Samsung Internet" → samsung_internet), then matches
+// vocab. It never rejects: an unrecognised value is stored as other so a
+// client shipping a value this server has not learned yet is not handed
+// a 4xx, which the retry rules classify as a poison batch to drop.
+func closed(v string, vocab map[string]bool, sep string) (string, bool) {
 	v = strings.TrimSpace(v)
-	if name, ok := osNames[strings.ToLower(v)]; ok {
-		return name
+	if v == "" {
+		return "unknown", true
 	}
-	return v
+	folded := strings.NewReplacer(" ", sep, "-", sep).Replace(strings.ToLower(v))
+	if vocab[folded] {
+		return folded, true
+	}
+	return "other", false
 }

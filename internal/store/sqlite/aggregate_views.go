@@ -114,9 +114,13 @@ var viewDimensions = []viewDimension{
 	{table: "agg_views_utm", keys: []string{"utm_source", "utm_medium", "utm_campaign"},
 		where: "AND NOT (utm_source='' AND utm_medium='' AND utm_campaign='')"},
 	{table: "agg_views_countries", keys: []string{"country"}},
+	{table: "agg_views_platforms", keys: []string{"platform"}},
 	{table: "agg_views_os", keys: []string{"os", "os_version"}},
 	{table: "agg_views_browsers", keys: []string{"browser", "browser_version"}},
-	{table: "agg_views_app_versions", keys: []string{"os", "app_version"}, where: "AND app_version <> ''"},
+	// Keyed on platform, not os: 2.4.1 means unrelated things across the
+	// iOS and Android builds of one product, and a web build has no os
+	// of its own to key on.
+	{table: "agg_views_app_versions", keys: []string{"platform", "app_version"}, where: "AND app_version <> ''"},
 	{table: "agg_views_devices", keys: []string{"device", "device_model"}},
 	{table: "agg_views_displays", keys: []string{"display"}, exprs: []string{displaySQL},
 		where: "AND display_width > 0 AND display_height > 0"},

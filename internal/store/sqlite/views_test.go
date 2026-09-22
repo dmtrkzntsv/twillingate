@@ -130,7 +130,7 @@ func TestStitchViewsInvariantAllViewsDimensions(t *testing.T) {
 	var extra []store.View
 	for i := 0; i < topNDimension+5; i++ {
 		extra = append(extra, store.View{ID: fmt.Sprintf("x-%d", i), TS: at(13, 0).Add(time.Duration(i) * time.Second),
-			ActorID: "v3", Path: fmt.Sprintf("/x/%d", i), OS: "Linux", Browser: "Firefox", BrowserVersion: "127", Device: "desktop"})
+			ActorID: "v3", Path: fmt.Sprintf("/x/%d", i), Platform: "web", OS: "linux", Browser: "firefox", BrowserVersion: "127", Device: "desktop"})
 	}
 	seedViews(t, db, extra...)
 
@@ -141,9 +141,10 @@ func TestStitchViewsInvariantAllViewsDimensions(t *testing.T) {
 		{"v_views_referrers", "source"},
 		{"v_views_utm", "utm_source || '|' || utm_medium || '|' || utm_campaign"},
 		{"v_views_countries", "country"},
+		{"v_views_platforms", "platform"},
 		{"v_views_os", "os || '|' || os_version"},
 		{"v_views_browsers", "browser || '|' || browser_version"},
-		{"v_views_app_versions", "os || '|' || app_version"},
+		{"v_views_app_versions", "platform || '|' || app_version"},
 		{"v_views_devices", "device || '|' || device_model"},
 		{"v_views_displays", "display"},
 	}
@@ -641,14 +642,14 @@ func TestProductAttrsViewSystemDimensionsWithoutDeclaredKeys(t *testing.T) {
 	var sys, custom int
 	for _, r := range before {
 		switch r.Key {
-		case "$os", "$app_version":
+		case "$os", "$platform", "$app_version":
 			sys++
 		default:
 			custom++
 		}
 	}
 	if sys == 0 {
-		t.Fatal("no $os/$app_version rows for an undeclared project")
+		t.Fatal("no $os/$platform/$app_version rows for an undeclared project")
 	}
 	if custom != 0 {
 		t.Fatalf("%d rows for undeclared custom keys; only system dimensions were expected", custom)
@@ -771,5 +772,51 @@ func TestProductAttrsViewClampsBadMetaCap(t *testing.T) {
 					tc.meta, before, after)
 			}
 		})
+	}
+}
+
+// v_views_platforms must agree with agg_views_platforms across the
+// aggregate ∪ live boundary, including the (other) cap on a day with more
+// than 500 distinct platforms — the shape it copies from countries.
+func TestStitchViewPlatformsAcrossBoundaryWithCap(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	seedViewDay(t, db)
+	var extra []store.View
+	for i := 0; i < topNDimension+5; i++ {
+		extra = append(extra, store.View{ID: fmt.Sprintf("p-%d", i), TS: at(13, 0).Add(time.Duration(i) * time.Second),
+			ActorID: "v3", Path: "/x", Platform: fmt.Sprintf("p%d", i), OS: "linux", Browser: "firefox", Device: "desktop"})
+	}
+	seedViews(t, db, extra...)
+	snapshot := func() map[string][2]int {
+		t.Helper()
+		rows, err := db.db.Query(`SELECT platform, visitors, views FROM v_views_platforms WHERE project_id=1 AND day='2026-08-10'`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		out := map[string][2]int{}
+		for rows.Next() {
+			var k string
+			var v, pv int
+			if err := rows.Scan(&k, &v, &pv); err != nil {
+				t.Fatal(err)
+			}
+			out[k] = [2]int{v, pv}
+		}
+		return out
+	}
+	before := snapshot()
+	if before["web"] != [2]int{2, 4} || before["ios"] != [2]int{1, 2} || before["android"] != [2]int{1, 1} {
+		t.Fatalf("live half = %v", before)
+	}
+	if _, ok := before[otherBucket]; !ok {
+		t.Fatal("platform fixture did not exceed the cap")
+	}
+	if err := db.AggregateViewDay(ctx, 1, day("2026-08-10")); err != nil {
+		t.Fatal(err)
+	}
+	if after := snapshot(); !reflect.DeepEqual(after, before) {
+		t.Errorf("v_views_platforms changed across the boundary:\nbefore %v\nafter  %v", before, after)
 	}
 }

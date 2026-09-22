@@ -113,6 +113,16 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		actor, actorKind, user, group := resolveIdentity(p, rv, salt, ip, ua, hashKey)
 		names = append(names, identityNames(p, rv)...)
 
+		// The environment is declared, validated and never parsed: the
+		// User-Agent is read for nothing but the bot check below. $os and
+		// $platform land on views and product events alike; the rest are
+		// views-only and are resolved and dropped on a product event.
+		osv, osKnown := enrich.NormalizeOS(rv.OS)
+		if !osKnown {
+			res.warn(i, "$os %q is not a known value, stored as other", rv.OS)
+		}
+		platform := res.declared(i, "$platform", rv.Platform, enrich.NormalizePlatform)
+
 		defaultKind, isView := viewName(ev.Name)
 		if !isView {
 			if strings.HasPrefix(ev.Name, "$") {
@@ -122,7 +132,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 				ID: id, ProjectID: p.ID, EventName: ev.Name,
 				TS: ts, ReceivedAt: received,
 				ActorID: actor, ActorKind: actorKind, UserID: user, GroupID: group,
-				OS: enrich.NormalizeOS(rv.OS), AppVersion: rv.AppVersion,
+				Platform: platform, OS: osv, AppVersion: rv.AppVersion,
 				Attributes: rv.Custom,
 			})
 			res.Accepted++
@@ -145,18 +155,31 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			res.reject(i, "view requires $path or $screen")
 			continue
 		}
+		// An unrecognised $os becomes other; the name it would erase is
+		// kept in os_name so the bucket stays investigable. An explicit
+		// $os_name always wins.
+		osName := rv.OSName
+		if osName == "" && !osKnown {
+			osName = rv.OS
+		}
+		// Hoisted out of the literal below so the warning order is
+		// explicit: $os, $platform, then $browser and $device.
+		browser := res.declared(i, "$browser", rv.Browser, enrich.NormalizeBrowser)
+		device := res.declared(i, "$device", rv.Device, enrich.NormalizeDevice)
 		v := store.View{
 			ID: id, ProjectID: p.ID, TS: ts, ReceivedAt: received, Kind: kind,
 			ActorID: actor, ActorKind: actorKind, UserID: user, GroupID: group, SessionID: rv.SessionID,
 			Host: rv.Host, Path: path,
 			UTMSource: rv.UTMSource, UTMMedium: rv.UTMMedium, UTMCampaign: rv.UTMCampaign,
-			OSVersion: rv.OSVersion, AppVersion: rv.AppVersion,
-			DeviceModel: rv.DeviceModel, Locale: rv.Locale, Country: country,
+			Platform: platform, OS: osv, OSVersion: rv.OSVersion, OSName: osName,
+			Browser:        browser,
+			BrowserVersion: rv.BrowserVersion,
+			Device:         device,
+			AppVersion:     rv.AppVersion, DeviceModel: rv.DeviceModel, Locale: rv.Locale, Country: country,
 		}
-		// Only web rows are enriched from the connection: the User-Agent
-		// names the browser, OS and device class, and a crawler is dropped.
-		// Every other kind declares its own environment and is never
-		// filtered, whatever HTTP library it uses.
+		// Bot filtering is the one thing still read off the User-Agent,
+		// and it applies to web rows only: any other kind declares what
+		// it is and is never filtered, whatever HTTP library it uses.
 		if kind == "web" {
 			if botUA {
 				// Accepted and silently ignored: the client did nothing
@@ -164,16 +187,11 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 				res.Accepted++
 				continue
 			}
-			v.Device, v.Browser, v.BrowserVersion, v.OS = enrich.ParseUserAgent(ua)
 			v.ReferrerSource = enrich.CleanReferrer(rv.Referrer, rv.Host)
 		} else {
 			// No host to compare against, so a referrer is taken at face
 			// value — a deep link can still carry one.
 			v.ReferrerSource = enrich.CleanReferrer(rv.Referrer, "")
-		}
-		// Declared environment overrides whatever was parsed.
-		if rv.OS != "" {
-			v.OS = enrich.NormalizeOS(rv.OS)
 		}
 		var bad bool
 		if v.DisplayWidth, bad = parseDisplay(rv.displayWidthRaw); bad {

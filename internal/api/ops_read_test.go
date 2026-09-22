@@ -101,7 +101,7 @@ func TestViewsBreakdownEveryDimension(t *testing.T) {
 	_, cs := newTestHost(t)
 	want := map[string]string{
 		"kinds": "web", "paths": "/post-1", "hosts": "blog.example.com", "utm": "newsletter",
-		"countries": "US", "os": "17.4", "browsers": "126", "app_versions": "2.4.1",
+		"countries": "US", "platforms": "web", "os": "ios", "browsers": "126", "app_versions": "2.4.1",
 		"devices": "iPhone15,3", "displays": "1920x1080",
 	}
 	for dim, needle := range want {

@@ -129,8 +129,11 @@ func TestMigration003Schema(t *testing.T) {
 			t.Errorf("%s.%s missing", c.table, c.column)
 		}
 	}
-	if hasColumn(t, db, "events", "platform") {
-		t.Error("events.platform should have been renamed to os")
+	// 012 renamed the old events.platform (an OS by another name) to os;
+	// 015 reintroduced platform as a distinct column meaning the surface.
+	// Both must be present, and os must not have been lost to the rename.
+	if !hasColumn(t, db, "events", "platform") {
+		t.Error("events.platform missing; 015 adds it beside os")
 	}
 }
 
@@ -139,7 +142,8 @@ func TestMigrationViews(t *testing.T) {
 	ctx := context.Background()
 	for _, view := range []string{
 		"v_views_daily", "v_views_paths", "v_views_hosts", "v_views_referrers", "v_views_utm",
-		"v_views_countries", "v_views_os", "v_views_browsers", "v_views_app_versions",
+		"v_views_countries", "v_views_platforms", "v_views_os", "v_views_browsers",
+		"v_views_app_versions",
 		"v_views_devices", "v_views_displays",
 		"v_product_daily", "v_product_totals", "v_product_attrs",
 		"v_identity_daily", "v_retention",

@@ -26,7 +26,7 @@ func TestIntegrationGuideWebUsesCollectorURLAndIdentity(t *testing.T) {
 	if strings.Contains(out, "blog.example.com/js/twillingate.js") {
 		t.Error("snippet points at the customer origin (the old bug)")
 	}
-	for _, want := range []string{"IDENTIFIED", "consent", "twillingate.reset", "data-kind"} {
+	for _, want := range []string{"IDENTIFIED", "consent", "twillingate.reset", "keyed by the build rather than counted as web"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("identified-mode guidance missing %q", want)
 		}
@@ -51,7 +51,8 @@ func TestIntegrationGuideAnonymousAndPlatforms(t *testing.T) {
 	}
 	res = callTool(t, cs, "integration_guide", map[string]any{
 		"project_id": 2, "platform": "mobile"})
-	if out := textOf(res); !strings.Contains(out, "$install_id") || !strings.Contains(out, "$screen_view") {
+	if out := textOf(res); !strings.Contains(out, "$install_id") || !strings.Contains(out, "$screen_view") ||
+		!strings.Contains(out, "$platform") {
 		t.Errorf("mobile guide missing app context: %s", out)
 	}
 	// bad platform lists the valid ones

@@ -9,10 +9,12 @@ import (
 	"context"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/dmtrkzntsv/twillingate/docs"
+	"github.com/dmtrkzntsv/twillingate/internal/enrich"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -59,12 +61,6 @@ func readSource(t *testing.T, path string) string {
 // point: a stale client sending $url needs to find out why it is rejected.
 var removedKeys = map[string]bool{"$url": true}
 
-// aliasKeys are reserved keys that are deliberately aliases for a
-// canonical key ($platform -> $os) rather than distinct concepts; the
-// document need not list them alongside the canonical key in the
-// "exists in ingest.go but missing from the doc" direction.
-var aliasKeys = map[string]bool{"$platform": true}
-
 // TestDocumentMatchesReservedKeys extracts the reservedKeys map from
 // ingest.go and requires two-way agreement with docs/twillingate.md. An
 // undocumented key is a contract an agent cannot discover; a documented key
@@ -80,9 +76,6 @@ func TestDocumentMatchesReservedKeys(t *testing.T) {
 		t.Fatalf("extracted only %d reserved keys from ingest.go — extraction regexp broken?", len(inCode))
 	}
 	for k := range inCode {
-		if aliasKeys[k] {
-			continue
-		}
 		if !strings.Contains(docs.Twillingate, k) {
 			t.Errorf("reserved key %s exists in ingest.go but is missing from docs/twillingate.md", k)
 		}
@@ -125,12 +118,14 @@ func TestDocumentMatchesSDK(t *testing.T) {
 	for _, symbol := range []string{
 		"data-key", "data-identity", "data-user", "data-group", "data-auto",
 		"data-mask-url", "data-routing",
-		"data-kind", "data-os", "data-app-version",
+		"data-kind",
 		"init", "page", "screen", "track", "attrs", "identify", "group", "reset", "flush",
+		"detectOS", "detectBrowser", "detectDevice", "ClientSignals",
 		"twillingate_ignore", "analytics_ignore",
 		"pushState", "popstate", "hashchange",
-		"$page_view", "$screen_view", "$install_id", "$kind", "$os",
-		"$display_width", "$display_height",
+		"$page_view", "$screen_view", "$install_id", "$kind", "$platform", "$os", "$os_name",
+		"$browser", "$browser_version", "$device",
+		"$os_version", "$display_width", "$display_height",
 	} {
 		if !strings.Contains(src, symbol) {
 			t.Errorf("docs/twillingate.md documents %q but the SDK source does not contain it", symbol)
@@ -344,4 +339,93 @@ func TestDocumentMatchesRoutes(t *testing.T) {
 			t.Errorf("the HTTP API table lists %s, which is not registered", route)
 		}
 	}
+}
+
+// TestDocumentMatchesVocabularies binds the two prose copies of the closed
+// vocabularies to enrich's own lists. Both documents spell every value out
+// — the environment table in docs/twillingate.md and the migration-015
+// pre-check query in docs/deployment.md — so a value added to or dropped
+// from enrich leaves a document telling clients the wrong thing. Order is
+// compared too: the lists read as a ranking, and a silent reshuffle is the
+// kind of drift nobody notices.
+func TestDocumentMatchesVocabularies(t *testing.T) {
+	for _, c := range []struct {
+		key  string
+		want []string
+	}{
+		{"$os", enrich.OSValues},
+		{"$browser", enrich.BrowserValues},
+		{"$device", enrich.DeviceValues},
+	} {
+		got := documentedVocabulary(t, c.key)
+		if !slices.Equal(got, c.want) {
+			t.Errorf("the environment table's %s values are\n%v\nenrich has\n%v", c.key, got, c.want)
+		}
+	}
+	if got := precheckOSVocabulary(t); !slices.Equal(got, enrich.OSValues) {
+		t.Errorf("the migration-015 pre-check query lists\n%v\nenrich.OSValues is\n%v", got, enrich.OSValues)
+	}
+}
+
+// documentedVocabulary reads the Values cell of one row of the environment
+// table: the row whose first cell is the given key, inside "### Declaring
+// the environment". Scoped to the row, not the section, because the prose
+// around it names individual values too.
+func documentedVocabulary(t *testing.T, key string) []string {
+	t.Helper()
+	section := docSection(t, docs.Twillingate, "### Declaring the environment")
+	tick := regexp.MustCompile("`([a-z_]+)`")
+	for _, line := range strings.Split(section, "\n") {
+		cells := strings.Split(line, "|")
+		if len(cells) < 4 || strings.TrimSpace(cells[1]) != "`"+key+"`" {
+			continue
+		}
+		var values []string
+		for _, m := range tick.FindAllStringSubmatch(cells[2], -1) {
+			values = append(values, m[1])
+		}
+		return values
+	}
+	t.Fatalf("the environment table in docs/twillingate.md has no %s row", key)
+	return nil
+}
+
+// precheckOSVocabulary reads the quoted list out of the NOT IN (…) of the
+// migration-015 pre-check query: the copy an operator pastes into sqlite3
+// before upgrading, which has to name exactly the values the migration
+// treats as known.
+func precheckOSVocabulary(t *testing.T) []string {
+	t.Helper()
+	section := docSection(t, docs.Deployment,
+		"### Upgrading to the declared environment (migration 015)")
+	i := strings.Index(section, "NOT IN (")
+	if i < 0 {
+		t.Fatal("the migration-015 section has no `NOT IN (` pre-check query")
+	}
+	rest := section[i+len("NOT IN ("):]
+	j := strings.Index(rest, ")")
+	if j < 0 {
+		t.Fatal("the migration-015 pre-check query's NOT IN ( is never closed")
+	}
+	var values []string
+	for _, m := range regexp.MustCompile(`'([a-z_]+)'`).FindAllStringSubmatch(rest[:j], -1) {
+		values = append(values, m[1])
+	}
+	return values
+}
+
+// docSection returns the text under a heading, up to the next one at the
+// same level.
+func docSection(t *testing.T, doc, heading string) string {
+	t.Helper()
+	i := strings.Index(doc, heading)
+	if i < 0 {
+		t.Fatalf("no %q section", heading)
+	}
+	section := doc[i+len(heading):]
+	level := strings.Repeat("#", len(heading)-len(strings.TrimLeft(heading, "#")))
+	if j := strings.Index(section, "\n"+level+" "); j >= 0 {
+		section = section[:j]
+	}
+	return section
 }

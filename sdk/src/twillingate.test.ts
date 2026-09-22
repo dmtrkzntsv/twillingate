@@ -2,6 +2,7 @@
 // failure handling. Identity and pageview behaviour live in identity.test.ts.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Twillingate, autoInit, supersededBy } from "./twillingate";
+import { resetPlatformVersion } from "./detect";
 import twillingateSource from "./twillingate.ts?raw";
 
 const URL_BASE = "https://collector.example.com";
@@ -95,24 +96,20 @@ describe("payload shape", () => {
   });
 
   it("carries app context as batch attributes", async () => {
-    const t = tg({ os: "web", appVersion: "2.4.1", installId: "018f-install" });
+    const t = tg({ kind: "app", platform: "ios", os: "ios", osVersion: "17.2", appVersion: "2.4.1", installId: "018f-install" });
     t.screen("/settings");
     await drain();
     const { attributes, events } = sent[0].body;
     expect(attributes).toMatchObject({
-      $os: "web",
+      $kind: "app",
+      $platform: "ios",
+      $os: "ios",
+      $os_version: "17.2",
       $app_version: "2.4.1",
       $install_id: "018f-install",
     });
     expect(events[0].name).toBe("$screen_view");
     expect(events[0].attributes).toEqual({ $screen: "/settings" });
-  });
-
-  it("accepts the deprecated platform alias for os", async () => {
-    const t = tg({ platform: "ios" });
-    t.track("probe");
-    await drain();
-    expect(sent[0].body.attributes.$os).toBe("ios");
   });
 
   it("screen() merges extra attributes and requires a name", async () => {
@@ -138,6 +135,99 @@ describe("payload shape", () => {
     expect(va.$display_height).toBe(1080);
     expect((probe.attributes as Record<string, unknown>).$display_width).toBeUndefined();
     expect(sent[0].body.attributes.$locale).toBe("de-DE");
+  });
+});
+
+describe("environment", () => {
+  const CHROME_WIN = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
+
+  // Replace the whole navigator: the ignore rules read webdriver, the
+  // batch reads language, send reads sendBeacon, detection reads the rest.
+  function stubNavigator(extra: Record<string, unknown>): void {
+    vi.stubGlobal("navigator", { language: "en-US", webdriver: false, userAgent: CHROME_WIN, platform: "Win32", maxTouchPoints: 0, ...extra });
+  }
+
+  afterEach(() => resetPlatformVersion());
+
+  it("sends the detected os, browser and device on every batch", async () => {
+    stubNavigator({});
+    const t = tg();
+    t.track("probe");
+    await drain();
+    expect(sent[0].body.attributes).toMatchObject({
+      $platform: "web", $os: "windows", $os_version: "10", $os_name: "Windows 10",
+      $browser: "chrome", $browser_version: "126", $device: "desktop",
+    });
+  });
+
+  it("defaults $platform to web only while kind is web", async () => {
+    stubNavigator({});
+    const web = tg();
+    web.track("a");
+    await drain();
+    expect(sent[0].body.attributes.$platform).toBe("web");
+
+    sent = [];
+    const app = tg({ kind: "app" });
+    app.track("b");
+    await drain();
+    expect(sent[0].body.attributes).not.toHaveProperty("$platform");
+    expect(sent[0].body.attributes.$os).toBe("windows"); // detection still runs on any kind
+
+    sent = [];
+    const electron = tg({ kind: "app", platform: "electron" });
+    electron.track("c");
+    await drain();
+    expect(sent[0].body.attributes.$platform).toBe("electron");
+  });
+
+  it("lets an explicit option beat detection, while detect* still answers for the signals", async () => {
+    stubNavigator({});
+    const t = tg({ os: "linux", browser: "firefox", device: "tablet" });
+    t.track("probe");
+    await drain();
+    expect(sent[0].body.attributes).toMatchObject({ $os: "linux", $browser: "firefox", $device: "tablet" });
+    // Pure detection ignores the option: it has to answer for THIS
+    // User-Agent, or it is useless for the debugging case it exists for.
+    expect(t.detectOS().os).toBe("windows");
+    expect(t.detectBrowser().browser).toBe("chrome");
+    expect(t.detectDevice().device).toBe("desktop");
+  });
+
+  it("consults only a supplied ClientSignals, never the ambient navigator", () => {
+    stubNavigator({});
+    const t = tg();
+    expect(t.detectOS({ userAgent: "Mozilla/5.0 (X11; Linux x86_64; rv:127.0) Gecko/20100101 Firefox/127.0" }).os).toBe("linux");
+    expect(t.detectOS({}).os).toBe("unknown");
+  });
+
+  it("carries the high-entropy platformVersion once it has resolved", async () => {
+    stubNavigator({
+      userAgentData: {
+        brands: [{ brand: "Google Chrome", version: "126.0.0.0" }, { brand: "Chromium", version: "126.0.0.0" }],
+        platform: "Windows", mobile: false,
+        getHighEntropyValues: () => Promise.resolve({ platformVersion: "15.0.0" }),
+      },
+    });
+    const t = tg({ flushInterval: 50 });
+    // Immediately after init the promise has not settled: the User-Agent answer stands.
+    expect(t.detectOS().osVersion).toBe("10");
+    t.track("probe");
+    await drain();
+    expect(sent[0].body.attributes).toMatchObject({ $os: "windows", $os_version: "11", $os_name: "Windows 11", $browser: "chrome" });
+    expect(t.detectOS().osVersion).toBe("11");
+  });
+
+  it("sends unknown values honestly when there is no browser to read", async () => {
+    // A runtime with no User-Agent at all — the case a bundled SDK meets
+    // in a worker or a test harness — must say unknown, not other.
+    stubNavigator({ userAgent: "", platform: undefined });
+    const t = tg();
+    t.track("probe");
+    await drain();
+    expect(sent[0].body.attributes).toMatchObject({ $os: "unknown", $browser: "unknown", $device: "unknown" });
+    expect(sent[0].body.attributes).not.toHaveProperty("$os_version");
+    expect(sent[0].body.attributes).not.toHaveProperty("$os_name");
   });
 });
 
@@ -379,19 +469,40 @@ describe("snippet auto-init", () => {
   it("data-kind switches automatic tracking to $screen_view with the route path", async () => {
     history.replaceState(null, "", "/settings/profile?tab=1");
     const t = new Twillingate();
-    autoInit(t, scriptTag({ "data-key": "ak_snippet", "data-kind": "app", "data-os": "macos", "data-app-version": "2.4.1" }));
+    autoInit(t, scriptTag({ "data-key": "ak_snippet", "data-kind": "app" }));
     t.flush();
     await drain();
     const attrs = sent[0].body.attributes;
     expect(attrs.$kind).toBe("app");
-    expect(attrs.$os).toBe("macos");
-    expect(attrs.$app_version).toBe("2.4.1");
     const ev = sent[0].body.events[0];
     expect(ev.name).toBe("$screen_view");
     const ea = ev.attributes as Record<string, unknown>;
     expect(ea.$screen).toBe("/settings/profile");
     expect(ea.$host).toBeUndefined();
     expect(ea.$referrer).toBeUndefined();
+  });
+
+  it("ignores environment data attributes; overrides are init() options", async () => {
+    const s = scriptTag({
+      // "wearable" is reachable only through the init() override, never
+      // through detection, so seeing anything else proves the attribute
+      // was ignored rather than coincidentally matching a detected value.
+      "data-key": "ak_snip", "data-auto": "off", "data-kind": "app", "data-platform": "electron",
+      "data-os": "macos", "data-device": "wearable", "data-app-version": "9.9.9",
+    });
+    const t = new Twillingate();
+    autoInit(t, s);
+    t.track("probe");
+    await drain();
+    const attrs = sent[0].body.attributes;
+    expect(attrs.$kind).toBe("app");
+    // platform was never passed to init(), and $platform only defaults for kind "web"
+    expect(attrs).not.toHaveProperty("$platform");
+    // appVersion is code-only; the attribute is never read
+    expect(attrs).not.toHaveProperty("$app_version");
+    // os/device are still detected by the SDK; the attributes did not override them
+    expect(attrs.$os).not.toBe("macos");
+    expect(attrs.$device).not.toBe("wearable");
   });
 
   it("app kind tracks pushState navigations as screen views", async () => {
@@ -418,7 +529,7 @@ describe("script tag and init parity", () => {
     const optionFor: Record<string, string> = {
       key: "key", identity: "identity", user: "user", group: "group",
       auto: "autoPageviews", "mask-url": "maskUrl", routing: "routing",
-      kind: "kind", os: "os", "app-version": "appVersion",
+      kind: "kind",
     };
     expect(attrs.length).toBeGreaterThan(0);
     for (const a of attrs) {

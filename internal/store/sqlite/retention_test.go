@@ -15,7 +15,7 @@ func onDay(y int, m time.Month, d int) civil.Date { return civil.Date{Year: y, M
 
 func viewAt(id, actor string, t time.Time) store.View {
 	return store.View{ID: id, ProjectID: 1, TS: t, ReceivedAt: t,
-		Kind: "app", ActorID: actor, ActorKind: store.ActorInstall, Path: "/x", OS: "iOS"}
+		Kind: "app", ActorID: actor, ActorKind: store.ActorInstall, Path: "/x", OS: "ios"}
 }
 
 func TestUpsertActorsTracksFirstAndLastSeen(t *testing.T) {

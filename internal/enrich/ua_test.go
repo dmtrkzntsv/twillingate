@@ -1,50 +1,116 @@
 package enrich
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
-func TestParseUserAgent(t *testing.T) {
-	cases := []struct{ ua, device, browser, version, os string }{
-		{"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-			"desktop", "Chrome", "126", "Windows"},
-		{"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
-			"desktop", "Safari", "17", "macOS"},
-		{"Mozilla/5.0 (X11; Linux x86_64; rv:127.0) Gecko/20100101 Firefox/127.0",
-			"desktop", "Firefox", "127", "Linux"},
-		{"Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1",
-			"mobile", "Safari", "17", "iOS"},
-		{"Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36",
-			"mobile", "Chrome", "126", "Android"},
-		{"Mozilla/5.0 (iPad; CPU OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1",
-			"tablet", "Safari", "17", "iOS"},
-		{"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Edg/126.0.0.0",
-			"desktop", "Edge", "126", "Windows"},
-		{"Mozilla/5.0 (Linux; Android 13; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/25.0 Chrome/121.0.0.0 Mobile Safari/537.36",
-			"mobile", "Samsung Internet", "25", "Android"},
-		{"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 OPR/112.0.0.0",
-			"desktop", "Opera", "112", "Linux"},
-		{"Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/126.0.6478.54 Mobile/15E148 Safari/604.1",
-			"mobile", "Chrome", "126", "iOS"},
-		{"Mozilla/5.0 (X11; CrOS x86_64 14541.0.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-			"desktop", "Chrome", "126", "ChromeOS"},
-		{"weird thing", "desktop", "", "", ""},
+func TestNormalizeOS(t *testing.T) {
+	cases := map[string]struct {
+		want string
+		ok   bool
+	}{
+		"ios": {"ios", true}, "iOS": {"ios", true}, " macOS ": {"macos", true},
+		"Chrome OS": {"chromeos", true}, "chrome-os": {"chromeos", true},
+		"HarmonyOS": {"harmonyos", true}, "PlayStation": {"playstation", true},
+		"other":   {"other", true},   // sent deliberately: legitimate, never warned
+		"unknown": {"unknown", true}, // same
+		"":        {"unknown", true}, // absent: nothing to validate
+		"   ":     {"unknown", true},
+		"haiku":   {"other", false}, // present but outside the vocabulary
+		"iOS 17":  {"other", false},
+		"ubuntu":  {"other", false}, // distributions are not OSes
 	}
-	for _, c := range cases {
-		d, b, v, o := ParseUserAgent(c.ua)
-		if d != c.device || b != c.browser || v != c.version || o != c.os {
-			t.Errorf("%q => (%s,%s,%s,%s), want (%s,%s,%s,%s)", c.ua, d, b, v, o, c.device, c.browser, c.version, c.os)
+	for in, c := range cases {
+		got, ok := NormalizeOS(in)
+		if got != c.want || ok != c.ok {
+			t.Errorf("NormalizeOS(%q) = (%q, %v), want (%q, %v)", in, got, ok, c.want, c.ok)
 		}
 	}
 }
 
-func TestNormalizeOS(t *testing.T) {
-	cases := map[string]string{
-		"ios": "iOS", "IOS": "iOS", "android": "Android", "macos": "macOS", "MacOS": "macOS",
-		"windows": "Windows", "linux": "Linux", "chromeos": "ChromeOS",
-		"iOS": "iOS", "": "", "haiku": "haiku", " ios ": "iOS",
+func TestNormalizeBrowser(t *testing.T) {
+	cases := map[string]struct {
+		want string
+		ok   bool
+	}{
+		"Chrome": {"chrome", true}, "safari": {"safari", true}, "Edge": {"edge", true},
+		"Samsung Internet": {"samsung_internet", true}, "samsung-internet": {"samsung_internet", true},
+		"brave": {"brave", true}, "DuckDuckGo": {"duckduckgo", true},
+		"other": {"other", true}, "": {"unknown", true},
+		"netscape": {"other", false}, "Chrome 126": {"other", false},
 	}
-	for in, want := range cases {
-		if got := NormalizeOS(in); got != want {
-			t.Errorf("NormalizeOS(%q) = %q, want %q", in, got, want)
+	for in, c := range cases {
+		got, ok := NormalizeBrowser(in)
+		if got != c.want || ok != c.ok {
+			t.Errorf("NormalizeBrowser(%q) = (%q, %v), want (%q, %v)", in, got, ok, c.want, c.ok)
+		}
+	}
+}
+
+func TestNormalizeDevice(t *testing.T) {
+	cases := map[string]struct {
+		want string
+		ok   bool
+	}{
+		"desktop": {"desktop", true}, "Mobile": {"mobile", true}, "tablet": {"tablet", true},
+		"wearable": {"wearable", true}, "XR": {"xr", true},
+		"other": {"other", true}, "": {"unknown", true},
+		"phablet": {"other", false}, "tv": {"other", false},
+	}
+	for in, c := range cases {
+		got, ok := NormalizeDevice(in)
+		if got != c.want || ok != c.ok {
+			t.Errorf("NormalizeDevice(%q) = (%q, %v), want (%q, %v)", in, got, ok, c.want, c.ok)
+		}
+	}
+}
+
+// $platform is open but bounded: the same shape as $kind, applied after
+// lower-casing so a client sending iOS records ios rather than being
+// dropped. There is no other: every well-formed token is a value, so the
+// only failure is "no usable value", which unknown says.
+func TestNormalizePlatform(t *testing.T) {
+	cases := map[string]struct {
+		want string
+		ok   bool
+	}{
+		"web": {"web", true}, "iOS": {"ios", true}, " Electron ": {"electron", true},
+		"quest_2": {"quest_2", true}, "unknown": {"unknown", true},
+		"":              {"unknown", true},
+		"Bad Platform!": {"unknown", false}, "9lives": {"unknown", false},
+		"averyveryverylongplatformname": {"unknown", false},
+	}
+	for in, c := range cases {
+		got, ok := NormalizePlatform(in)
+		if got != c.want || ok != c.ok {
+			t.Errorf("NormalizePlatform(%q) = (%q, %v), want (%q, %v)", in, got, ok, c.want, c.ok)
+		}
+	}
+}
+
+// Every vocabulary is lower-case, closed under its own validator, and ends
+// with the two floors — other and unknown are different answers and both
+// must be sendable.
+func TestVocabulariesAreLowerCaseAndClosed(t *testing.T) {
+	for name, tc := range map[string]struct {
+		values    []string
+		normalize func(string) (string, bool)
+	}{
+		"os":      {OSValues, NormalizeOS},
+		"browser": {BrowserValues, NormalizeBrowser},
+		"device":  {DeviceValues, NormalizeDevice},
+	} {
+		if n := len(tc.values); n < 2 || tc.values[n-2] != "other" || tc.values[n-1] != "unknown" {
+			t.Errorf("%s: vocabulary must end with other, unknown: %v", name, tc.values)
+		}
+		for _, v := range tc.values {
+			if v != strings.ToLower(v) || strings.ContainsAny(v, " -") {
+				t.Errorf("%s: %q is not a lower-case token", name, v)
+			}
+			if got, ok := tc.normalize(v); got != v || !ok {
+				t.Errorf("%s: %q does not round-trip: (%q, %v)", name, v, got, ok)
+			}
 		}
 	}
 }

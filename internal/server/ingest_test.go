@@ -49,6 +49,8 @@ func TestResolveAttributesSplitsReservedFromCustom(t *testing.T) {
 		"$install_id": "018f", "$user_id": "u1", "$user_name": "Ada",
 		"$group_id": "org9", "$group_name": "Acme", "$session_id": "s1",
 		"$kind": "web", "$os": "ios", "$app_version": "2.4.1", "$os_version": "17.2",
+		"$platform": "iOS", "$os_name": "iOS 17.2", "$browser": "Safari",
+		"$browser_version": "17", "$device": "mobile",
 		"$device_model": "iPhone15,2", "$locale": "en-US",
 		"$host": "x", "$path": "/y", "$referrer": "https://z", "$screen": "/settings",
 		"$display_width": float64(1920), "$display_height": float64(1080),
@@ -67,6 +69,9 @@ func TestResolveAttributesSplitsReservedFromCustom(t *testing.T) {
 	if r.Kind != "web" || r.OS != "ios" || r.AppVersion != "2.4.1" || r.OSVersion != "17.2" {
 		t.Errorf("environment = %+v", r)
 	}
+	if r.Platform != "iOS" || r.OSName != "iOS 17.2" || r.Browser != "Safari" || r.BrowserVersion != "17" || r.Device != "mobile" {
+		t.Errorf("declared environment = %+v", r)
+	}
 	if r.DeviceModel != "iPhone15,2" || r.Locale != "en-US" {
 		t.Errorf("device = %+v", r)
 	}
@@ -83,35 +88,6 @@ func TestResolveAttributesSplitsReservedFromCustom(t *testing.T) {
 	}
 	if _, ok := r.Custom["$os"]; ok {
 		t.Error("reserved key leaked into custom attributes")
-	}
-}
-
-// $platform is the pre-views alias for $os: both resolve into the same
-// field so a client that has not switched to the new key still enriches
-// correctly.
-func TestResolveAttributesPlatformIsAnOSAlias(t *testing.T) {
-	r, unknown := resolveAttributes(map[string]any{"$platform": "android"})
-	if len(unknown) != 0 {
-		t.Errorf("unknown = %v, want none", unknown)
-	}
-	if r.OS != "android" {
-		t.Errorf("OS = %q, want the $platform value", r.OS)
-	}
-}
-
-// The canonical $os key must always beat its $platform alias, regardless of
-// the randomised order resolveAttributes iterates the merged map in. Run it
-// enough times that a coin-flip bug would show up.
-func TestResolveAttributesCanonicalOSBeatsAlias(t *testing.T) {
-	for i := 0; i < 50; i++ {
-		r, _ := resolveAttributes(map[string]any{"$os": "android", "$platform": "ios"})
-		if r.OS != "android" {
-			t.Fatalf("iteration %d: OS = %q, want the canonical $os value android", i, r.OS)
-		}
-	}
-	r, _ := resolveAttributes(map[string]any{"$platform": "ios"})
-	if r.OS != "ios" {
-		t.Errorf("OS = %q, want the alias value ios when $os is absent", r.OS)
 	}
 }
 
