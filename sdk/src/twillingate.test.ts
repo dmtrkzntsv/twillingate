@@ -507,7 +507,7 @@ describe("script tag and init parity", () => {
     const optionFor: Record<string, string> = {
       key: "key", identity: "identity", user: "user", group: "group",
       auto: "autoPageviews", "mask-url": "maskUrl", routing: "routing",
-      kind: "kind", consent: "consent",
+      kind: "kind", consent: "consent", instance: "instance",
     };
     expect(attrs.length).toBeGreaterThan(0);
     for (const a of attrs) {

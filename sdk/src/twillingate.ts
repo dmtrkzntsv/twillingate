@@ -50,6 +50,12 @@ export interface InitOptions {
    */
   consent?: ConsentSpec;
   /**
+   * Storage-key prefix for a bundled consumer that shares a page with
+   * another instance. Registers no global. A tag that declared
+   * data-instance ignores a disagreeing value here.
+   */
+  instance?: string;
+  /**
    * What this client is: "web" (default), "app", "cli", or any short
    * lower-case token. Anything but "web" makes automatic tracking emit
    * $screen_view with the route path as the screen, and exempts the
@@ -164,6 +170,24 @@ function keysFor(instance: string): Keys {
   return k;
 }
 
+const INSTANCE_RE = /^[a-z][a-z0-9_]{0,15}$/;
+
+/**
+ * Validate an instance name. It becomes a property on window and a
+ * storage-key prefix, so it has to be an identifier (the same shape as
+ * $kind). An invalid name is refused with a warning and the default kept.
+ */
+export function instanceName(name: string | null | undefined): string {
+  if (name === null || name === undefined || name === "") return DEFAULT_INSTANCE;
+  if (INSTANCE_RE.test(name)) return name;
+  console.warn(`twillingate: instance name ${JSON.stringify(name)} is not an identifier; using "${DEFAULT_INSTANCE}"`);
+  return DEFAULT_INSTANCE;
+}
+
+function isInstance(x: unknown): x is Twillingate {
+  return !!x && typeof (x as Twillingate).init === "function";
+}
+
 const MAX_BATCH = 500; // server cap per docs/twillingate.md
 const FLUSH_AT = 20; // flush early once this many events queue up
 const MAX_STORED_BATCHES = 50; // offline queue bound: oldest dropped first
@@ -241,6 +265,23 @@ export class Twillingate {
   readonly util = { maskIds, withQuery };
   private ready = false;
 
+  private instance = DEFAULT_INSTANCE;
+  // True when the name came from data-instance: the tag is registered
+  // under it and already reading prefixed keys, so init() cannot rename.
+  private declared = false;
+
+  constructor(instance?: string) {
+    if (instance !== undefined) {
+      this.declared = true;
+      this.useInstance(instance);
+    }
+  }
+
+  private useInstance(name: string): void {
+    this.instance = name;
+    this.k = keysFor(name);
+  }
+
   init(opts: InitOptions): void {
     if (!opts || !opts.key) {
       console.warn("twillingate: init requires a key");
@@ -251,6 +292,15 @@ export class Twillingate {
     if (!this.url) {
       console.warn("twillingate: init requires a url when not loaded via <script>");
       return;
+    }
+    if (opts.instance !== undefined) {
+      if (this.declared) {
+        if (opts.instance !== this.instance) {
+          console.warn(`twillingate: data-instance="${this.instance}" is already set; ignoring instance "${opts.instance}"`);
+        }
+      } else {
+        this.useInstance(instanceName(opts.instance));
+      }
     }
     this.identified = opts.identity === "identified";
     this.consentSpec = resolveConsent(opts.consent);
@@ -756,7 +806,7 @@ function scriptOrigin(): string | null {
 
 /**
  * Whether this copy of the bundle should stand down and leave the instance
- * already at window.twillingate in place. A page that gets the tag twice (a
+ * already at window[name] in place. A page that gets the tag twice (a
  * theme and a tag manager both adding it) would otherwise run two instances
  * sending every pageview under one key, with the second replacing the
  * global the page's own calls go to.
@@ -764,17 +814,17 @@ function scriptOrigin(): string | null {
  * A tag naming a different key still takes over: two projects on one page
  * need separate storage, which a guard cannot give them.
  */
-export function supersededBy(existing: unknown, script: HTMLScriptElement | null): boolean {
-  if (!existing || typeof (existing as Twillingate).init !== "function") return false;
+export function supersededBy(existing: unknown, script: HTMLScriptElement | null, name = DEFAULT_INSTANCE): boolean {
+  if (!isInstance(existing)) return false;
   // Read structurally: a copy from another release is a different class.
-  const loadedKey = (existing as { key?: unknown }).key;
+  const loadedKey = (existing as unknown as { key?: unknown }).key;
   const key = script?.getAttribute("data-key");
   if (!key || key === loadedKey) {
     console.warn("twillingate: twillingate.js loaded twice; keeping the first copy, remove the duplicate <script> tag");
     return true;
   }
   if (loadedKey) {
-    console.warn(`twillingate: a second twillingate.js replaced window.twillingate (${loadedKey} -> ${key})`);
+    console.warn(`twillingate: a second twillingate.js replaced window.${name} (${loadedKey} -> ${key})`);
   }
   return false;
 }
@@ -805,4 +855,30 @@ export function autoInit(tg: Twillingate, script: HTMLScriptElement | null): voi
     routing: script.getAttribute("data-routing") === "hash" ? "hash" : "history",
     kind: script.getAttribute("data-kind") || undefined,
   });
+}
+
+/**
+ * Snippet-mode bootstrap, called once by the bundle entry. Picks the
+ * instance name from data-instance, stands down for a duplicate of the
+ * same tag, registers the global and auto-inits. Returns the instance, or
+ * null when this copy stood down. The global is registered only when the
+ * name is free or holds an earlier Twillingate (the take-over path);
+ * anything else stays untouched — data-instance="location" should cost a
+ * warning, not the page.
+ */
+export function bootstrap(script: HTMLScriptElement | null): Twillingate | null {
+  const attr = script ? script.getAttribute("data-instance") : null;
+  const name = attr === null ? DEFAULT_INSTANCE : instanceName(attr);
+  const g = globalThis as Record<string, unknown>;
+  const existing = g[name];
+  if (supersededBy(existing, script, name)) return null;
+  const tg = new Twillingate(attr === null ? undefined : name);
+  (tg as Twillingate & { VERSION: string }).VERSION = VERSION;
+  if (existing === undefined || existing === null || isInstance(existing)) {
+    g[name] = tg;
+  } else {
+    console.warn(`twillingate: window.${name} is already taken by something else; the instance is not registered there`);
+  }
+  autoInit(tg, script);
+  return tg;
 }
