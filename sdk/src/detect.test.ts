@@ -32,6 +32,10 @@ const UA = {
   webos: "Mozilla/5.0 (Web0S; Linux/SmartTV) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.79 Safari/537.36 WebAppManager",
   appletv: "AppleTV11,1/11.1",
   unknownThing: "SomeNewRuntime/1.0",
+  edgeIos: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 EdgiOS/121.0.2277.107 Mobile/15E148 Safari/604.1",
+  operaTouch: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 OPT/4.4.0 Mobile/15E148 Safari/604.1",
+  edgeAndroid: "Mozilla/5.0 (Linux; Android 10; HD1913) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36 EdgA/126.0.0.0",
+  duckduckgoDesktop: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Safari/605.1.15 Ddg/16.0",
 };
 
 describe("detectOS", () => {
@@ -86,6 +90,10 @@ describe("detectOS", () => {
     expect(detectOS({ userAgent: UA.safariMac, platformVersion: "14.2.1" })).toMatchObject({ osVersion: "14.2.1", osName: "macOS 14.2.1" });
   });
 
+  it("falls back to the User-Agent parse when platformVersion is not a version", () => {
+    expect(detectOS({ userAgent: UA.safariMac, platformVersion: "not-a-version" }).osVersion).toBe("10.15.7");
+  });
+
   it("falls back to the synchronous parse without platformVersion", () => {
     expect(detectOS({ userAgent: UA.chromeWin })).toMatchObject({ osVersion: "10", osName: "Windows 10" });
     expect(detectOS({ userAgent: UA.safariMac }).osName).toBe("macOS 10.15.7");
@@ -123,6 +131,10 @@ describe("detectBrowser", () => {
     ["vivaldi", { userAgent: UA.vivaldi }, "vivaldi", "6"],
     ["yandex", { userAgent: UA.yandex }, "yandex", "24"],
     ["duckduckgo", { userAgent: UA.duckduckgo }, "duckduckgo", "5"],
+    ["edge on iOS", { userAgent: UA.edgeIos }, "edge", "121"],
+    ["opera touch on iOS", { userAgent: UA.operaTouch }, "opera", "4"],
+    ["edge on Android", { userAgent: UA.edgeAndroid }, "edge", "126"],
+    ["duckduckgo on desktop", { userAgent: UA.duckduckgoDesktop }, "duckduckgo", "16"],
   ];
   it.each(table)("%s", (_name, signals, browser, browserVersion) => {
     expect(detectBrowser(signals)).toEqual({ browser, browserVersion });
@@ -144,6 +156,40 @@ describe("detectBrowser", () => {
     expect(detectBrowser({ userAgent: UA.chromeWin, brands })).toEqual({ browser: "edge", browserVersion: "126" });
     expect(detectBrowser({ userAgent: UA.chromeWin, brands, brave: true }).browser).toBe("brave");
     expect(detectBrowser({ brands: [{ brand: "Google Chrome", version: "126.0.0.0" }] })).toEqual({ browser: "chrome", browserVersion: "126" });
+  });
+
+  it("does not let a generic Chromium/Google Chrome brand mask a more specific brand or UA marker", () => {
+    // brands carries both a generic entry and the fork's own brand; the
+    // fork's brand must win, not the generic one, regardless of order.
+    const yandexBrands = [
+      { brand: "Not/A)Brand", version: "99" },
+      { brand: "Chromium", version: "124.0.0.0" },
+      { brand: "YaBrowser", version: "24.6.0.0" },
+    ];
+    expect(detectBrowser({ userAgent: UA.yandex, brands: yandexBrands })).toEqual({ browser: "yandex", browserVersion: "24" });
+
+    // brands names only the generic Chromium ancestor; the UA marker
+    // (DuckDuckGo/) must still be consulted rather than stopping at chrome.
+    expect(detectBrowser({ userAgent: UA.duckduckgo, brands: [{ brand: "Chromium", version: "126.0.0.0" }] })).toEqual({
+      browser: "duckduckgo",
+      browserVersion: "5",
+    });
+
+    // Brave via brands alone (navigator.brave absent/false): "Brave" is a
+    // specific brand and must be read before the generic Chromium entry.
+    expect(
+      detectBrowser({
+        brave: false,
+        brands: [
+          { brand: "Brave", version: "1.66.115" },
+          { brand: "Chromium", version: "126.0.0.0" },
+        ],
+      }).browser,
+    ).toBe("brave");
+
+    // A reduced UA (no userAgent) with only the generic Chromium brand
+    // still resolves to chrome as the last-resort fallback.
+    expect(detectBrowser({ brands: [{ brand: "Chromium", version: "126.0.0.0" }] })).toEqual({ browser: "chrome", browserVersion: "126" });
   });
 
   it("takes Safari's version from Version/, not Safari/", () => {

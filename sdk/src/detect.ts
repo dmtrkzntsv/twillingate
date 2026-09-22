@@ -142,21 +142,39 @@ const UA_PLATFORMS: Record<string, string> = {
 };
 
 // User-Agent markers, derivatives before bases: every Chromium UA contains
-// Chrome and every Chrome UA contains Safari. The marker is also where the
-// version starts, except Safari, whose version follows Version/ (Safari/
-// is the WebKit build number).
+// Chrome and every Chrome UA contains Safari. Each family also carries a
+// platform-specific token (EdgA/EdgiOS beside Edg, OPT beside OPR, Ddg
+// beside DuckDuckGo) that must be listed too or that platform's UA falls
+// through to the base it's built on. The marker is also where the version
+// starts, except Safari, whose version follows Version/ (Safari/ is the
+// WebKit build number).
 const UA_BROWSERS: [marker: string, browser: string, versionMarker?: string][] = [
-  ["Edg/", "edge"], ["Edge/", "edge"], ["SamsungBrowser/", "samsung_internet"],
-  ["OPR/", "opera"], ["Opera/", "opera"], ["Vivaldi/", "vivaldi"], ["YaBrowser/", "yandex"],
-  ["DuckDuckGo/", "duckduckgo"], ["Firefox/", "firefox"], ["FxiOS/", "firefox"],
+  ["Edg/", "edge"], ["EdgA/", "edge"], ["EdgiOS/", "edge"], ["Edge/", "edge"],
+  ["SamsungBrowser/", "samsung_internet"],
+  ["OPR/", "opera"], ["OPT/", "opera"], ["Opera/", "opera"],
+  ["Vivaldi/", "vivaldi"], ["YaBrowser/", "yandex"],
+  ["DuckDuckGo/", "duckduckgo"], ["Ddg/", "duckduckgo"],
+  ["Firefox/", "firefox"], ["FxiOS/", "firefox"],
   ["CriOS/", "chrome"], ["Chrome/", "chrome"], ["Safari/", "safari", "Version/"],
 ];
 
-// userAgentData.brands, most specific first. Google Chrome and Chromium
-// both mean chrome; "Not A Brand" entries match nothing.
+// userAgentData.brands, specific derivatives only. Checked before the UA
+// markers so a brands-only signal (a reduced UA) still resolves correctly;
+// "Not A Brand" entries match nothing here.
 const BRANDS: [brand: string, browser: string][] = [
-  ["Microsoft Edge", "edge"], ["Opera", "opera"], ["Samsung Internet", "samsung_internet"],
-  ["Vivaldi", "vivaldi"], ["Google Chrome", "chrome"], ["Chromium", "chrome"],
+  ["Brave", "brave"], ["Microsoft Edge", "edge"], ["Opera", "opera"],
+  ["Samsung Internet", "samsung_internet"], ["Vivaldi", "vivaldi"],
+  ["Yandex", "yandex"], ["YaBrowser", "yandex"], ["DuckDuckGo", "duckduckgo"],
+];
+
+// Generic brands: Google Chrome and Chromium both mean chrome, but only as
+// a last resort. A fork this table doesn't know by brand (Yandex, DuckDuckGo
+// on Android, a future one) still names itself in the User-Agent, so the UA
+// markers above get first refusal; a reduced UA with no other marker still
+// carries Chrome/, so chrome is reached either way and nothing is lost by
+// running this pass last.
+const GENERIC_BRANDS: [brand: string, browser: string][] = [
+  ["Google Chrome", "chrome"], ["Chromium", "chrome"],
 ];
 
 const NT: Record<string, string> = { "10.0": "10", "6.3": "8.1", "6.2": "8", "6.1": "7", "6.0": "Vista", "5.1": "XP" };
@@ -199,22 +217,27 @@ function resolve(s: ClientSignals): OSInfo & BrowserInfo & DeviceInfo {
   if (os === "bsd") osName = (/(FreeBSD|OpenBSD|NetBSD|DragonFly)/.exec(ua) || ["", "BSD"])[1];
   if (osName && osVersion) osName += " " + osVersion;
 
-  // Browser: brave first, because its User-Agent is deliberately Chrome's
-  // and nothing later can recover it; then brands, the API built for the
-  // question, which survives User-Agent reduction; then the markers.
+  // Browser: brave (navigator.brave presence) first, because its
+  // User-Agent is deliberately Chrome's and nothing later can recover it;
+  // then the specific brands, which survive User-Agent reduction; then the
+  // UA markers; then the generic Chrome/Chromium brands as a last resort
+  // (see the comment on GENERIC_BRANDS for why those run last, not first).
   let browser = "";
   let browserVersion = "";
-  if (s.brave) browser = "brave";
-  if (!browser && s.brands) {
-    for (const [brand, name] of BRANDS) {
+  const matchBrands = (table: readonly (readonly [string, string])[]): boolean => {
+    if (!s.brands) return false;
+    for (const [brand, name] of table) {
       const b = s.brands.find((x) => x.brand === brand);
       if (b) {
         browser = name;
         browserVersion = major(b.version);
-        break;
+        return true;
       }
     }
-  }
+    return false;
+  };
+  if (s.brave) browser = "brave";
+  if (!browser) matchBrands(BRANDS);
   if (!browser) {
     for (const [marker, name, versionMarker] of UA_BROWSERS) {
       if (has(marker)) {
@@ -224,7 +247,8 @@ function resolve(s: ClientSignals): OSInfo & BrowserInfo & DeviceInfo {
       }
     }
   }
-  if (!browser) browser = ua || (s.brands && s.brands.length) ? "other" : "unknown";
+  if (!browser) matchBrands(GENERIC_BRANDS);
+  if (!browser) browser = (ua || (s.brands && s.brands.length)) ? "other" : "unknown";
   if (browser === "brave" && !browserVersion) browserVersion = majorAfter(ua, "Chrome/");
 
   // Device: shares the OS pass. xr first, because the OS pass reports a
@@ -267,7 +291,10 @@ function versionOf(os: string, ua: string, platformVersion?: string): string {
       return NT[nt] || nt;
     }
     case "macos":
-      return platformVersion || m(/Mac OS X (\d+[_.]\d+(?:[_.]\d+)?)/);
+      // platformVersion is trusted only when it looks like a version;
+      // an unparseable value falls back to the User-Agent's own digits.
+      if (platformVersion && /^\d+(\.\d+)*$/.test(platformVersion)) return platformVersion;
+      return m(/Mac OS X (\d+[_.]\d+(?:[_.]\d+)?)/);
     case "chromeos":
       return m(/CrOS \S+ (\d+(?:\.\d+)*)/);
     default:
