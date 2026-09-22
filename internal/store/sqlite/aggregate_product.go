@@ -145,23 +145,30 @@ var systemDims = []struct{ column, key string }{
 // named must supply :p, :day, :from, :to, :event, :key, :n, and whatever
 // expr/present reference
 // (:path for the JSON case).
+//
+// Both statements also write unique_groups, the distinct non-empty
+// group_id among the same rows, so a day rolled up after 016 carries an
+// integer -- 0 when no row had a group -- and only pre-016 history is
+// NULL.
 func (d *DB) rollupAttrValue(ctx context.Context, tx *sql.Tx, expr, present string, named []any) error {
-	// Top-N values by count.
+	// Top-N values by count. Ranking is by count alone; groups ride along.
 	if _, err := tx.ExecContext(ctx, `
 		WITH counted AS (
-		  SELECT `+expr+` AS v, COUNT(*) AS c, COUNT(DISTINCT actor_id) AS u
+		  SELECT `+expr+` AS v, COUNT(*) AS c, COUNT(DISTINCT actor_id) AS u,
+		         COUNT(DISTINCT NULLIF(group_id,'')) AS g
 		  FROM events
 		  WHERE project_id=:p AND ts>=:from AND ts<:to AND event_name=:event
 		    AND `+present+`
 		  GROUP BY v
 		),
-		ranked AS (SELECT v, c, u, ROW_NUMBER() OVER (ORDER BY c DESC, v) AS rn FROM counted)
+		ranked AS (SELECT v, c, u, g, ROW_NUMBER() OVER (ORDER BY c DESC, v) AS rn FROM counted)
 		INSERT OR REPLACE INTO agg_product_attrs
-		  (project_id, day, event_name, attr_key, attr_value, count, unique_users)
-		SELECT :p, :day, :event, :key, v, c, u FROM ranked WHERE rn <= :n`, named...); err != nil {
+		  (project_id, day, event_name, attr_key, attr_value, count, unique_users, unique_groups)
+		SELECT :p, :day, :event, :key, v, c, u, g FROM ranked WHERE rn <= :n`, named...); err != nil {
 		return err
 	}
-	// Tail -> "(other)" with correct distinct users, computed from raw.
+	// Tail -> "(other)" with correct distinct users and groups, computed
+	// from raw rather than summed across the tail's values.
 	_, err := tx.ExecContext(ctx, `
 		WITH counted AS (
 		  SELECT `+expr+` AS v, COUNT(*) AS c
@@ -173,8 +180,9 @@ func (d *DB) rollupAttrValue(ctx context.Context, tx *sql.Tx, expr, present stri
 		ranked AS (SELECT v, ROW_NUMBER() OVER (ORDER BY c DESC, v) AS rn FROM counted),
 		keep AS (SELECT v FROM ranked WHERE rn <= :n)
 		INSERT OR REPLACE INTO agg_product_attrs
-		  (project_id, day, event_name, attr_key, attr_value, count, unique_users)
-		SELECT :p, :day, :event, :key, '(other)', COUNT(*), COUNT(DISTINCT actor_id)
+		  (project_id, day, event_name, attr_key, attr_value, count, unique_users, unique_groups)
+		SELECT :p, :day, :event, :key, '(other)', COUNT(*), COUNT(DISTINCT actor_id),
+		       COUNT(DISTINCT NULLIF(group_id,''))
 		FROM events
 		WHERE project_id=:p AND ts>=:from AND ts<:to AND event_name=:event
 		  AND `+present+`

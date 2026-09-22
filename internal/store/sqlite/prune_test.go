@@ -21,7 +21,8 @@ func TestPruneAggregates(t *testing.T) {
 	exec(`INSERT INTO agg_views_utm VALUES (1,'2025-01-01','s','m','c',1,1), (1,'2026-08-01','s','m','c',2,2)`)
 	exec(`INSERT INTO agg_product_daily VALUES (1,'2025-06-01','e',1,1), (1,'2026-08-01','e',2,2)`)
 	exec(`INSERT INTO agg_product_totals VALUES (1,'2025-06-01',1,1), (1,'2026-08-01',2,2)`)
-	exec(`INSERT INTO agg_product_attrs VALUES (1,'2025-06-01','e','k','v',1,1), (1,'2026-08-01','e','k','v',2,2)`)
+	exec(`INSERT INTO agg_product_attrs (project_id, day, event_name, attr_key, attr_value, count, unique_users)
+		VALUES (1,'2025-06-01','e','k','v',1,1), (1,'2026-08-01','e','k','v',2,2)`)
 	// Different project must be untouched.
 	exec(`INSERT INTO agg_views_daily VALUES (2,'2025-01-01','web',9,9,9,0,0)`)
 
