@@ -231,7 +231,7 @@ func TestHeaderKeyBeatsBodyKey(t *testing.T) {
 
 func TestRoutesViewsAndCustom(t *testing.T) {
 	q, h := testServer(t)
-	body := `{"key":"` + testKey + `","attributes":{"$os":"ios","$app_version":"2.4.1"},
+	body := `{"key":"` + testKey + `","attributes":{"$platform":"iOS","$os":"ios","$app_version":"2.4.1"},
 	  "events":[
 	    {"name":"$page_view","attributes":{"$host":"app.com","$path":"/pricing","$utm_source":"hn","$display_width":1920,"$display_height":1080,"$locale":"de-DE"}},
 	    {"name":"$screen_view","attributes":{"$screen":"/settings","$os_version":"17.2","$device_model":"iPhone15,2","$locale":"en-US","$session_id":"s1"}},
@@ -249,33 +249,33 @@ func TestRoutesViewsAndCustom(t *testing.T) {
 	}
 	web, app := q.views[0], q.views[1]
 	if web.Kind != "web" || web.Host != "app.com" || web.Path != "/pricing" || web.UTMSource != "hn" ||
-		web.Country != "DE" || web.Browser != "Chrome" || web.BrowserVersion != "126" || web.Device != "desktop" ||
-		web.DisplayWidth != 1920 || web.DisplayHeight != 1080 || web.Locale != "de-DE" {
+		web.Country != "DE" || web.DisplayWidth != 1920 || web.DisplayHeight != 1080 || web.Locale != "de-DE" {
 		t.Errorf("web view = %+v", web)
 	}
-	// a declared $os overrides the parsed one, on any kind
-	if web.OS != "iOS" {
-		t.Errorf("web os = %q, want the declared iOS to beat the parsed Windows", web.OS)
+	// The environment is declared, lower-cased and never parsed: a Chrome
+	// User-Agent on this request names nothing.
+	if web.Platform != "ios" || web.OS != "ios" || web.Browser != "unknown" || web.BrowserVersion != "" || web.Device != "unknown" {
+		t.Errorf("web environment = platform %q os %q browser %q/%q device %q", web.Platform, web.OS, web.Browser, web.BrowserVersion, web.Device)
 	}
-	if app.Kind != "app" || app.Path != "/settings" || app.OS != "iOS" || app.OSVersion != "17.2" ||
+	if app.Kind != "app" || app.Path != "/settings" || app.Platform != "ios" || app.OS != "ios" || app.OSVersion != "17.2" ||
 		app.AppVersion != "2.4.1" || app.DeviceModel != "iPhone15,2" || app.Locale != "en-US" ||
-		app.SessionID != "s1" || app.Country != "DE" || app.Browser != "" || app.Device != "" {
+		app.SessionID != "s1" || app.Country != "DE" || app.Browser != "unknown" || app.Device != "unknown" {
 		t.Errorf("app view = %+v", app)
 	}
-	if len(q.events) != 1 || q.events[0].OS != "iOS" || q.events[0].AppVersion != "2.4.1" {
+	if len(q.events) != 1 || q.events[0].Platform != "ios" || q.events[0].OS != "ios" || q.events[0].AppVersion != "2.4.1" {
 		t.Errorf("events = %+v", q.events)
 	}
 }
 
-func TestLegacyNamesAreSilentAliases(t *testing.T) {
+func TestPageviewNameIsASilentAlias(t *testing.T) {
 	q, h := testServer(t)
 	w := post(h, envelopeOf(`{"name":"$pageview","attributes":{"$host":"app.com","$path":"/x","$platform":"linux"}}`), nil)
 	res := decodeResult(t, w)
 	if res.Accepted != 1 || len(res.Warnings) != 0 {
 		t.Errorf("aliases must be accepted without a warning: %+v", res)
 	}
-	if len(q.views) != 1 || q.views[0].Kind != "web" || q.views[0].OS != "Linux" {
-		t.Errorf("views = %+v", q.views)
+	if len(q.views) != 1 || q.views[0].Kind != "web" || q.views[0].Platform != "linux" || q.views[0].OS != "unknown" {
+		t.Errorf("views = %+v ($platform must land on platform and never fill os)", q.views)
 	}
 }
 
@@ -302,8 +302,139 @@ func TestKindDeclaredValidatedAndDefaulted(t *testing.T) {
 	if len(q.views) != 1 {
 		t.Fatalf("views = %+v", q.views)
 	}
-	if q.views[0].Kind != "cli" || q.views[0].Path != "deploy" || q.views[0].Browser != "" {
-		t.Errorf("cli view = %+v (non-web kinds are never parsed or filtered)", q.views[0])
+	if q.views[0].Kind != "cli" || q.views[0].Path != "deploy" || q.views[0].Browser != "unknown" {
+		t.Errorf("cli view = %+v (non-web kinds are never filtered; nothing is parsed on any kind)", q.views[0])
+	}
+}
+
+// A web batch that declares nothing stores unknown for os, browser and
+// device: the server no longer derives any of them from the User-Agent.
+// The one thing it still reads the User-Agent for is the crawler drop.
+func TestEnvironmentIsDeclaredNotParsed(t *testing.T) {
+	q, h := testServer(t)
+	w := post(h, envelopeOf(`{"name":"$page_view","attributes":{"$host":"app.com","$path":"/x"}}`), nil)
+	if res := decodeResult(t, w); res.Accepted != 1 || len(res.Warnings) != 0 {
+		t.Fatalf("result = %+v (an absent value is not a mistake to warn about)", res)
+	}
+	if len(q.views) != 1 {
+		t.Fatalf("views = %+v", q.views)
+	}
+	v := q.views[0]
+	if v.Platform != "unknown" || v.OS != "unknown" || v.OSName != "" || v.Browser != "unknown" || v.BrowserVersion != "" || v.Device != "unknown" {
+		t.Errorf("undeclared environment = %+v, want unknown everywhere and an empty os_name", v)
+	}
+
+	q, h = testServer(t)
+	post(h, envelopeOf(`{"name":"$page_view","attributes":{"$host":"app.com","$path":"/x"}}`),
+		map[string]string{"User-Agent": "Googlebot/2.1"})
+	if len(q.views) != 0 {
+		t.Errorf("a crawler User-Agent must still drop a web view: %+v", q.views)
+	}
+}
+
+// $os closes to a lower-case vocabulary. Present but unrecognised is other
+// with a warning and the raw value preserved in os_name; a deliberate
+// other is not warned about; an explicit $os_name always wins.
+func TestOSIsValidatedAndTheNamePreserved(t *testing.T) {
+	q, h := testServer(t)
+	body := envelopeOf(`{"name":"$page_view","attributes":{"$path":"/","$os":"Chrome OS"}},
+		{"name":"$page_view","attributes":{"$path":"/","$os":"Haiku R1"}},
+		{"name":"$page_view","attributes":{"$path":"/","$os":"Haiku R1","$os_name":"Haiku R1 beta 5"}},
+		{"name":"$page_view","attributes":{"$path":"/","$os":"other"}},
+		{"name":"$page_view","attributes":{"$path":"/","$os":"macos","$os_name":"macOS 14.2"}},
+		{"name":"signup","attributes":{"$os":"Haiku R1","$os_name":"dropped on product events"}}`)
+	res := decodeResult(t, post(h, body, nil))
+	if res.Accepted != 6 || res.Rejected != 0 {
+		t.Fatalf("result = %+v", res)
+	}
+	if len(res.Warnings) != 3 {
+		t.Fatalf("warnings = %+v, want one per unrecognised $os and none for a deliberate other", res.Warnings)
+	}
+	if res.Warnings[0].Index != 1 || res.Warnings[0].Reason != `$os "Haiku R1" is not a known value, stored as other` {
+		t.Errorf("warning = %+v", res.Warnings[0])
+	}
+	if res.Warnings[1].Index != 2 || res.Warnings[2].Index != 5 {
+		t.Errorf("warnings = %+v", res.Warnings)
+	}
+	want := []struct{ os, name string }{
+		{"chromeos", ""}, {"other", "Haiku R1"}, {"other", "Haiku R1 beta 5"}, {"other", ""}, {"macos", "macOS 14.2"},
+	}
+	if len(q.views) != len(want) {
+		t.Fatalf("views = %+v", q.views)
+	}
+	for i, w := range want {
+		if q.views[i].OS != w.os || q.views[i].OSName != w.name {
+			t.Errorf("view %d os = (%q, %q), want (%q, %q)", i, q.views[i].OS, q.views[i].OSName, w.os, w.name)
+		}
+	}
+	if len(q.events) != 1 || q.events[0].OS != "other" {
+		t.Errorf("product event os = %+v, want other", q.events)
+	}
+	if _, leaked := q.events[0].Attributes["$os_name"]; leaked {
+		t.Error("$os_name reached the product event's attributes")
+	}
+}
+
+// $platform is lower-cased and pattern-checked, never fills os, lands on
+// product events too, and an invalid value warns and stores unknown.
+func TestPlatformIsValidatedIndependentlyOfOS(t *testing.T) {
+	q, h := testServer(t)
+	body := envelopeOf(`{"name":"$page_view","attributes":{"$path":"/","$platform":"Electron","$os":"macos"}},
+		{"name":"$page_view","attributes":{"$path":"/","$platform":"Not A Platform!"}},
+		{"name":"$page_view","attributes":{"$path":"/","$platform":"ios"}},
+		{"name":"signup","attributes":{"$platform":"iOS"}}`)
+	res := decodeResult(t, post(h, body, nil))
+	if res.Accepted != 4 || len(res.Warnings) != 1 {
+		t.Fatalf("result = %+v", res)
+	}
+	if res.Warnings[0].Index != 1 || res.Warnings[0].Reason != `$platform "Not A Platform!" is not a known value, stored as unknown` {
+		t.Errorf("warning = %+v", res.Warnings[0])
+	}
+	if len(q.views) != 3 {
+		t.Fatalf("views = %+v", q.views)
+	}
+	if q.views[0].Platform != "electron" || q.views[0].OS != "macos" {
+		t.Errorf("view 0 = platform %q os %q", q.views[0].Platform, q.views[0].OS)
+	}
+	if q.views[1].Platform != "unknown" || q.views[1].OS != "unknown" {
+		t.Errorf("view 1 = platform %q os %q, want unknown for both", q.views[1].Platform, q.views[1].OS)
+	}
+	if q.views[2].Platform != "ios" || q.views[2].OS != "unknown" {
+		t.Errorf("view 2 = platform %q os %q: $platform must never fill os", q.views[2].Platform, q.views[2].OS)
+	}
+	if len(q.events) != 1 || q.events[0].Platform != "ios" {
+		t.Errorf("product event = %+v, want platform ios", q.events)
+	}
+}
+
+// Browser and device close on the same terms as os. Both are views-only:
+// a product event resolves and drops them without a warning about the
+// drop, but an unrecognised value still warns.
+func TestBrowserAndDeviceAreValidated(t *testing.T) {
+	q, h := testServer(t)
+	body := envelopeOf(`{"name":"$page_view","attributes":{"$path":"/","$browser":"Samsung Internet","$browser_version":"25","$device":"Tablet"}},
+		{"name":"$page_view","attributes":{"$path":"/","$browser":"netscape","$device":"phablet"}},
+		{"name":"$page_view","attributes":{"$path":"/","$browser":"other","$device":"other"}},
+		{"name":"signup","attributes":{"$browser":"safari","$device":"mobile"}}`)
+	res := decodeResult(t, post(h, body, nil))
+	if res.Accepted != 4 || len(res.Warnings) != 2 {
+		t.Fatalf("result = %+v", res)
+	}
+	if res.Warnings[0].Reason != `$browser "netscape" is not a known value, stored as other` ||
+		res.Warnings[1].Reason != `$device "phablet" is not a known value, stored as other` {
+		t.Errorf("warnings = %+v", res.Warnings)
+	}
+	want := []struct{ browser, version, device string }{
+		{"samsung_internet", "25", "tablet"}, {"other", "", "other"}, {"other", "", "other"},
+	}
+	for i, w := range want {
+		v := q.views[i]
+		if v.Browser != w.browser || v.BrowserVersion != w.version || v.Device != w.device {
+			t.Errorf("view %d = %q/%q %q, want %+v", i, v.Browser, v.BrowserVersion, v.Device, w)
+		}
+	}
+	if len(q.events) != 1 || len(q.events[0].Attributes) != 0 {
+		t.Errorf("product event attributes = %+v, want the reserved keys dropped", q.events)
 	}
 }
 

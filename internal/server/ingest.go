@@ -91,19 +91,21 @@ func (res *ingestResult) warn(i int, format string, a ...any) {
 }
 
 // resolved is the reserved half of an event's attributes split into typed
-// fields, plus whatever ordinary attributes remain.
+// fields, plus whatever ordinary attributes remain. Environment fields
+// hold what the client sent; the handler validates them.
 type resolved struct {
-	InstallID, UserID, UserName    string
-	GroupID, GroupName, SessionID  string
-	Kind, OS, AppVersion           string
-	OSVersion, DeviceModel, Locale string
-	Host, Path, Referrer, Screen   string
-	UTMSource, UTMMedium           string
-	UTMCampaign                    string
-	displayWidthRaw                string
-	displayHeightRaw               string
-	platformRaw                    string
-	Custom                         map[string]string
+	InstallID, UserID, UserName   string
+	GroupID, GroupName, SessionID string
+	Kind, Platform, OS, OSVersion string
+	OSName, AppVersion            string
+	Browser, BrowserVersion       string
+	Device, DeviceModel, Locale   string
+	Host, Path, Referrer, Screen  string
+	UTMSource, UTMMedium          string
+	UTMCampaign                   string
+	displayWidthRaw               string
+	displayHeightRaw              string
+	Custom                        map[string]string
 }
 
 // reservedKeys maps every system-defined attribute key to its destination.
@@ -111,30 +113,36 @@ type resolved struct {
 // (masking, routing mode), so the server does no URL parsing at all. That
 // is what lets a site report /account/[id]/edit without the raw path ever
 // leaving the browser. $screen is a fallback for path, resolved in
-// handleEvents when $path is absent.
+// handleEvents when $path is absent. The environment keys are declared by
+// the client and only validated here; the User-Agent is never a source
+// for any of them.
 var reservedKeys = map[string]func(*resolved, string){
-	"$install_id":     func(r *resolved, v string) { r.InstallID = v },
-	"$user_id":        func(r *resolved, v string) { r.UserID = v },
-	"$user_name":      func(r *resolved, v string) { r.UserName = v },
-	"$group_id":       func(r *resolved, v string) { r.GroupID = v },
-	"$group_name":     func(r *resolved, v string) { r.GroupName = v },
-	"$session_id":     func(r *resolved, v string) { r.SessionID = v },
-	"$kind":           func(r *resolved, v string) { r.Kind = v },
-	"$os":             func(r *resolved, v string) { r.OS = v },
-	"$platform":       func(r *resolved, v string) { r.platformRaw = v }, // alias, see aliasKeys in docs_sync_test
-	"$app_version":    func(r *resolved, v string) { r.AppVersion = v },
-	"$os_version":     func(r *resolved, v string) { r.OSVersion = v },
-	"$device_model":   func(r *resolved, v string) { r.DeviceModel = v },
-	"$locale":         func(r *resolved, v string) { r.Locale = v },
-	"$host":           func(r *resolved, v string) { r.Host = v },
-	"$path":           func(r *resolved, v string) { r.Path = v },
-	"$utm_source":     func(r *resolved, v string) { r.UTMSource = v },
-	"$utm_medium":     func(r *resolved, v string) { r.UTMMedium = v },
-	"$utm_campaign":   func(r *resolved, v string) { r.UTMCampaign = v },
-	"$referrer":       func(r *resolved, v string) { r.Referrer = v },
-	"$screen":         func(r *resolved, v string) { r.Screen = v },
-	"$display_width":  func(r *resolved, v string) { r.displayWidthRaw = v },
-	"$display_height": func(r *resolved, v string) { r.displayHeightRaw = v },
+	"$install_id":      func(r *resolved, v string) { r.InstallID = v },
+	"$user_id":         func(r *resolved, v string) { r.UserID = v },
+	"$user_name":       func(r *resolved, v string) { r.UserName = v },
+	"$group_id":        func(r *resolved, v string) { r.GroupID = v },
+	"$group_name":      func(r *resolved, v string) { r.GroupName = v },
+	"$session_id":      func(r *resolved, v string) { r.SessionID = v },
+	"$kind":            func(r *resolved, v string) { r.Kind = v },
+	"$platform":        func(r *resolved, v string) { r.Platform = v },
+	"$os":              func(r *resolved, v string) { r.OS = v },
+	"$os_version":      func(r *resolved, v string) { r.OSVersion = v },
+	"$os_name":         func(r *resolved, v string) { r.OSName = v },
+	"$browser":         func(r *resolved, v string) { r.Browser = v },
+	"$browser_version": func(r *resolved, v string) { r.BrowserVersion = v },
+	"$device":          func(r *resolved, v string) { r.Device = v },
+	"$app_version":     func(r *resolved, v string) { r.AppVersion = v },
+	"$device_model":    func(r *resolved, v string) { r.DeviceModel = v },
+	"$locale":          func(r *resolved, v string) { r.Locale = v },
+	"$host":            func(r *resolved, v string) { r.Host = v },
+	"$path":            func(r *resolved, v string) { r.Path = v },
+	"$utm_source":      func(r *resolved, v string) { r.UTMSource = v },
+	"$utm_medium":      func(r *resolved, v string) { r.UTMMedium = v },
+	"$utm_campaign":    func(r *resolved, v string) { r.UTMCampaign = v },
+	"$referrer":        func(r *resolved, v string) { r.Referrer = v },
+	"$screen":          func(r *resolved, v string) { r.Screen = v },
+	"$display_width":   func(r *resolved, v string) { r.displayWidthRaw = v },
+	"$display_height":  func(r *resolved, v string) { r.displayHeightRaw = v },
 }
 
 // mergeAttributes layers per-event attributes over batch defaults, key by
@@ -178,12 +186,6 @@ func resolveAttributes(m map[string]any) (resolved, []string) {
 		}
 		r.Custom[k] = truncate(stringify(v), maxAttrValue)
 	}
-	// The canonical key wins over its alias when a payload carries both:
-	// resolved here, once, so every caller sees a single OS regardless of
-	// the randomised map iteration order above.
-	if r.OS == "" {
-		r.OS = r.platformRaw
-	}
 	return r, unknown
 }
 
@@ -217,6 +219,34 @@ func parseDisplay(raw string) (int, bool) {
 		return 0, true
 	}
 	return n, false
+}
+
+// normalizePlatform validates a declared $platform: trim, lower-case, then
+// the same shape as $kind. The vocabulary is open, so every well-formed
+// token is accepted as sent; the only failure is "no usable value", which
+// unknown says. Absent is unknown too, and is not a mistake to warn about.
+func normalizePlatform(v string) (string, bool) {
+	v = strings.ToLower(strings.TrimSpace(v))
+	if v == "" {
+		return "unknown", true
+	}
+	if kindPattern.MatchString(v) {
+		return v, true
+	}
+	return "unknown", false
+}
+
+// declared runs one environment validator and warns when the value was
+// present but unrecognised, so the mistake surfaces in the response body
+// during integration instead of becoming a quiet other months later. A
+// deliberate other or unknown is recognised by every validator, so a
+// client that means it is never warned.
+func (res *ingestResult) declared(i int, key, raw string, normalize func(string) (string, bool)) string {
+	v, ok := normalize(raw)
+	if !ok {
+		res.warn(i, "%s %q is not a known value, stored as %s", key, raw, v)
+	}
+	return v
 }
 
 func truncate(s string, n int) string {

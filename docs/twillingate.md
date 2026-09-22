@@ -28,8 +28,8 @@ surface, and the API (MCP or HTTP) an AI agent can query in plain language.
 It is cookieless by default. An `anonymous` project never writes to a
 visitor's device and salts every identifier with a key that rotates at
 midnight, so nothing links across days. Raw IP addresses and User-Agent
-strings are never stored — they are enriched into a country and a browser
-name at ingest and discarded.
+strings are never stored: the IP becomes a country at ingest, the
+User-Agent is checked for crawlers, and both are discarded.
 
 The pieces:
 
@@ -190,8 +190,8 @@ the origin if this site uses another collector hostname.
 | `data-auto="off"` | `autoPageviews` | Disable automatic pageviews; drive them with `twillingate.page()`. |
 | `data-mask-url` | `maskUrl` | Rewrite the URL before it is sent. See [Masking](#masking-urls). |
 | `data-routing` | `routing` | `history` (default) or `hash`. See [Hash routing](#hash-routing). |
-| `data-kind` | `kind` | What this client is: `web` (default), `app`, `cli`, or any short lower-case token. Anything but `web` switches automatic tracking from `$page_view` to `$screen_view` (the route path becomes the screen) and tells the server to trust the declared environment instead of parsing the User-Agent. |
-| `data-os` | `os` | The operating system, for a client that knows better than its User-Agent (`macos` under Electron). Normalised server-side to `iOS`, `Android`, `macOS`, `Windows`, `Linux`, `ChromeOS`. |
+| `data-kind` | `kind` | What this client is: `web` (default), `app`, `cli`, or any short lower-case token. Anything but `web` switches automatic tracking from `$page_view` to `$screen_view` (the route path becomes the screen) and exempts the client from the server's crawler filter, which applies to `web` only. |
+| `data-os` | `os` | Override the detected operating system (`$os`). See [Declaring the environment](#declaring-the-environment). |
 | `data-app-version` | `appVersion` | The version of the client application — a site build, an app release, a CLI version. |
 
 **Every `data-*` attribute has an `init()` equivalent**, enforced by a test.
@@ -483,18 +483,12 @@ row; the name only sets the default **kind** — `web` for `$page_view`,
 `^[a-z][a-z0-9_]{0,15}$` (`web`, `app`, `cli`, …), usually as a batch
 attribute; an invalid value is warned about and the default is used.
 
-**Only `web` has server-side meaning.** A web view is enriched from its
-connection: IP for country, User-Agent for browser, browser version, OS
-and device class, and bot filtering. Every other kind is taken as declared,
-never parsed and never filtered, so a CLI or an Electron app is never
-dropped as a crawler or misclassified as desktop Chrome.
-
-Declared environment keys — `$os`, `$os_version`, `$app_version`,
-`$device_model`, `$locale`, `$display_width`, `$display_height` — are
-stored on any kind and override the parsed value. `$os` is normalised to
-`iOS`, `Android`, `macOS`, `Windows`, `Linux`, `ChromeOS`; anything else is
-stored as sent. `$app_version` is the version of whatever client sent the
-event, whatever its kind.
+**Only `web` has server-side meaning, and only in two ways.** A web view
+is enriched from its connection for one thing — the country, from the
+IP — and filtered for one thing — a crawler User-Agent is dropped. Every
+other kind is never filtered, so a CLI or an Electron app is never dropped
+as a crawler whatever HTTP library it uses. Nothing else is derived from
+the User-Agent on any kind.
 
 Location arrives already split: `$path` (or its alias `$screen`) is
 **required**, `$host` is optional, both stored verbatim; `$path` may
@@ -509,6 +503,54 @@ expect high bounce rates on app kinds. Country comes from the connection on
 every kind; IP and User-Agent are never stored. **A backend must not relay
 web views for other people** — they would all carry the backend's IP and
 User-Agent.
+
+### Declaring the environment
+
+**The client declares its environment; the server validates and never
+parses.** `$platform`, `$os`, `$os_version`, `$os_name`, `$browser`,
+`$browser_version`, `$device`, `$device_model`, `$app_version`, `$locale`,
+`$display_width` and `$display_height` are stored on any kind exactly as
+declared. The JS SDK detects and sends them on every batch (see
+[Detection](#detection)); any other client — a backend relay, a native
+app, a custom SDK — sends them itself or records `unknown`.
+
+`$platform` is the surface the product is used through and `$os` the
+operating system it runs on. They coincide for a native app and diverge
+everywhere else: Safari on an iPhone is `platform=web, os=ios`; an
+Electron build on a Mac is `platform=electron, os=macos`. `$kind` is
+adjacent but coarser and stays as it is.
+
+| Key | Values | Absent | Unrecognised |
+| --- | --- | --- | --- |
+| `$platform` | Open. Trimmed, lower-cased, then `^[a-z][a-z0-9_]{0,15}$`. Conventionally `web`, `ios`, `android`, `macos`, `windows`, `linux`, `electron`, … | `unknown` | `unknown`, with a warning |
+| `$os` | `windows` `macos` `linux` `bsd` `chromeos` `ios` `ipados` `android` `fireos` `harmonyos` `kaios` `tvos` `watchos` `visionos` `tizen` `webos` `playstation` `xbox` `nintendo` `other` `unknown` | `unknown` | `other`, with a warning; the raw value is kept in `os_name` |
+| `$browser` | `chrome` `safari` `firefox` `edge` `opera` `samsung_internet` `brave` `vivaldi` `duckduckgo` `yandex` `other` `unknown` | `unknown` | `other`, with a warning |
+| `$device` | `desktop` `mobile` `tablet` `wearable` `xr` `other` `unknown` | `unknown` | `other`, with a warning |
+
+Validation trims, lower-cases and folds spaces and dashes (`Chrome OS` →
+`chromeos`, `Samsung Internet` → `samsung_internet`), so case is
+forgiven; nothing is ever rejected, because a client shipping a value
+this server has not learned yet must not receive a `4xx`. **`other` and
+`unknown` are different answers**: `other` means there is a value and it
+is outside the list, `unknown` means no information at all — which is
+what makes undeclared traffic visible in a breakdown instead of silently
+inflating a real bucket. A client may send either deliberately, and
+neither is warned about.
+
+`$os_name` is the OS's full self-reported name with version — `macOS 14.2`,
+`Windows 11`, `FreeBSD 14.1` — stored verbatim on views, empty when
+absent, never aggregated and never a breakdown dimension. It exists so an
+`$os` of `other` stays investigable through `query` while the raw rows
+last. `$os_version` and `$browser_version` are free text; the SDK sends
+the major browser version and the OS version it can determine. `$device`
+is the form factor; consoles and TVs are `other` there because `$os`
+already names them. `$device_model` is free text beside it.
+
+Product events keep `$platform` and `$os` as columns and resolve and drop
+the rest (`$os_version`, `$os_name`, `$browser`, `$browser_version`,
+`$device`), so an SDK that sends every environment key on every batch is
+correct and cheap. `$app_version` is the version of whatever client sent
+the event, whatever its kind.
 
 ### Product (everything else)
 
@@ -597,7 +639,9 @@ integration deserves a real error, and the response leaks nothing.
     "$group_id": "org_9",
     "$group_name": "Acme Corp",
     "$session_id": "018f1e5b-…",
-    "$kind": "app", "$os": "ios",
+    "$kind": "app", "$platform": "ios", "$os": "ios",
+    "$os_name": "iOS 17.2", "$browser": "safari", "$browser_version": "17",
+    "$device": "mobile",
     "$app_version": "2.4.1",
     "$os_version": "17.2",
     "$device_model": "iPhone15,2",
@@ -654,7 +698,7 @@ matters.
 | Group | Keys |
 | --- | --- |
 | Identity | `$install_id` `$user_id` `$user_name` `$group_id` `$group_name` `$session_id` |
-| Environment | `$kind` `$os` `$os_version` `$app_version` `$device_model` `$locale` `$display_width` `$display_height` |
+| Environment | `$kind` `$platform` `$os` `$os_version` `$os_name` `$browser` `$browser_version` `$device` `$device_model` `$app_version` `$locale` `$display_width` `$display_height` |
 | Location | `$host` `$path` `$screen` `$utm_source` `$utm_medium` `$utm_campaign` `$referrer` |
 
 An **unrecognized `$` key is dropped** with a warning. It is not stored as
@@ -663,8 +707,9 @@ view for what is almost always a typo.
 
 Location attributes are stored **verbatim**. The server does no URL parsing,
 no normalization, no case folding — the client owns normalization. The
-client IP and User-Agent are never stored; they are enriched into a country,
-device, browser and OS name and discarded.
+client IP and User-Agent are never stored: the IP is enriched into a
+country, the User-Agent is read only to drop crawlers, and both are
+discarded.
 
 > **Removed in 2.0.** `$url` is no longer a reserved key. A client sending
 > it gets a warning that it was ignored *and* a rejection naming `$path`.

@@ -59,12 +59,6 @@ func readSource(t *testing.T, path string) string {
 // point: a stale client sending $url needs to find out why it is rejected.
 var removedKeys = map[string]bool{"$url": true}
 
-// aliasKeys are reserved keys that are deliberately aliases for a
-// canonical key ($platform -> $os) rather than distinct concepts; the
-// document need not list them alongside the canonical key in the
-// "exists in ingest.go but missing from the doc" direction.
-var aliasKeys = map[string]bool{"$platform": true}
-
 // TestDocumentMatchesReservedKeys extracts the reservedKeys map from
 // ingest.go and requires two-way agreement with docs/twillingate.md. An
 // undocumented key is a contract an agent cannot discover; a documented key
@@ -80,9 +74,6 @@ func TestDocumentMatchesReservedKeys(t *testing.T) {
 		t.Fatalf("extracted only %d reserved keys from ingest.go — extraction regexp broken?", len(inCode))
 	}
 	for k := range inCode {
-		if aliasKeys[k] {
-			continue
-		}
 		if !strings.Contains(docs.Twillingate, k) {
 			t.Errorf("reserved key %s exists in ingest.go but is missing from docs/twillingate.md", k)
 		}
