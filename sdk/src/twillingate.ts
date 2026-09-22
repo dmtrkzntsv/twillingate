@@ -17,6 +17,13 @@
 // Substituted by the collector at serve time with its build version.
 import { resolveMask, type MaskSpec } from "./mask";
 import { maskIds, withQuery } from "./util";
+import {
+  ambientSignals, detectAll, detectBrowser as detectBrowserFrom, detectDevice as detectDeviceFrom,
+  detectOS as detectOSFrom, primePlatformVersion, type BrowserInfo, type ClientSignals, type DeviceInfo, type OSInfo,
+} from "./detect";
+
+export { detectOS, detectBrowser, detectDevice } from "./detect";
+export type { ClientSignals, OSInfo, BrowserInfo, DeviceInfo } from "./detect";
 
 export const VERSION = "__TWILLINGATE_VERSION__";
 
@@ -32,14 +39,29 @@ export interface InitOptions {
   /**
    * What this client is: "web" (default), "app", "cli", or any short
    * lower-case token. Anything but "web" makes automatic tracking emit
-   * $screen_view with the route path as the screen, and tells the server
-   * to trust the declared environment instead of the User-Agent.
+   * $screen_view with the route path as the screen, and exempts the
+   * client from the server's crawler filter, which applies to web only.
    */
   kind?: string;
-  /** Declared OS ($os), for a client that knows better than its User-Agent. */
-  os?: string;
-  /** @deprecated use os */
+  /**
+   * The surface the product is used through ($platform): "web", "ios",
+   * "android", "electron", … Defaults to "web" while kind is "web". Any
+   * other kind is a wrapper the SDK cannot identify, so it sends no
+   * $platform and the server records unknown — set it beside kind.
+   */
   platform?: string;
+  /**
+   * Overrides for detection. Every detected value has one, and an
+   * explicit option always beats detection. os, browser and device are
+   * closed lower-case vocabularies (docs/twillingate.md); osName is the
+   * full self-reported name with version.
+   */
+  os?: string;
+  osVersion?: string;
+  osName?: string;
+  browser?: string;
+  browserVersion?: string;
+  device?: string;
   /** Version of this client application ($app_version). */
   appVersion?: string;
   installId?: string;
@@ -172,7 +194,8 @@ export class Twillingate {
   private defaultAttrs: Record<string, unknown> = {};
   private pageListeners: PageListener[] = [];
   private kind = "web";
-  private os: string | null = null;
+  private platform: string | null = null;
+  private env: Partial<OSInfo & BrowserInfo & DeviceInfo> = {};
   private appVersion: string | null = null;
   private installId: string | null = null;
   private flushInterval = 1000;
@@ -208,7 +231,14 @@ export class Twillingate {
     this.groupId = opts.group ? String(opts.group) : migrated(GROUP);
     this.groupName = ls(GROUP_NAME);
     this.kind = opts.kind && /^[a-z][a-z0-9_]{0,15}$/.test(opts.kind) ? opts.kind : "web";
-    this.os = opts.os || opts.platform || null;
+    this.platform = opts.platform || (this.kind === "web" ? "web" : null);
+    this.env = {
+      os: opts.os || undefined, osVersion: opts.osVersion || undefined, osName: opts.osName || undefined,
+      browser: opts.browser || undefined, browserVersion: opts.browserVersion || undefined,
+      device: opts.device || undefined,
+    };
+    // The one async detection input; read at flush time, not awaited.
+    primePlatformVersion();
     this.appVersion = opts.appVersion || null;
     this.installId = opts.installId || null;
     if (opts.flushInterval !== undefined) this.flushInterval = opts.flushInterval;
@@ -416,6 +446,26 @@ export class Twillingate {
     }
   }
 
+  /**
+   * Pure detection, exposed so a page can see what the SDK would send:
+   * twillingate.detectOS() in the console. Omit the argument to read the
+   * ambient navigator; pass a ClientSignals to answer for exactly those
+   * signals and nothing else. Overrides given to init() are deliberately
+   * ignored here — this answers for the signals, the batch carries the
+   * option.
+   */
+  detectOS(signals?: ClientSignals): OSInfo {
+    return detectOSFrom(signals || ambientSignals());
+  }
+
+  detectBrowser(signals?: ClientSignals): BrowserInfo {
+    return detectBrowserFrom(signals || ambientSignals());
+  }
+
+  detectDevice(signals?: ClientSignals): DeviceInfo {
+    return detectDeviceFrom(signals || ambientSignals());
+  }
+
   private ok(): boolean {
     if (!this.ready) {
       console.warn("twillingate: not initialised; call twillingate.init first");
@@ -463,7 +513,21 @@ export class Twillingate {
     const v = this.visitorId();
     if (v) a.$install_id = v;
     a.$kind = this.kind;
-    if (this.os) a.$os = this.os;
+    // Detection runs per flush: an explicit option beats it, and the
+    // three always-resolved values are sent on every batch so the server
+    // can tell "declared unknown" from "sent nothing".
+    const d = detectAll();
+    const e = this.env;
+    if (this.platform) a.$platform = this.platform;
+    a.$os = e.os || d.os;
+    const osVersion = e.osVersion || d.osVersion;
+    if (osVersion) a.$os_version = osVersion;
+    const osName = e.osName || d.osName;
+    if (osName) a.$os_name = osName;
+    a.$browser = e.browser || d.browser;
+    const browserVersion = e.browserVersion || d.browserVersion;
+    if (browserVersion) a.$browser_version = browserVersion;
+    a.$device = e.device || d.device;
     if (this.appVersion) a.$app_version = this.appVersion;
     if (typeof navigator !== "undefined" && navigator.language) a.$locale = navigator.language;
     return a;
@@ -647,7 +711,13 @@ export function autoInit(tg: Twillingate, script: HTMLScriptElement | null): voi
     maskUrl: script.getAttribute("data-mask-url") || undefined,
     routing: script.getAttribute("data-routing") === "hash" ? "hash" : "history",
     kind: script.getAttribute("data-kind") || undefined,
+    platform: script.getAttribute("data-platform") || undefined,
     os: script.getAttribute("data-os") || undefined,
+    osVersion: script.getAttribute("data-os-version") || undefined,
+    osName: script.getAttribute("data-os-name") || undefined,
+    browser: script.getAttribute("data-browser") || undefined,
+    browserVersion: script.getAttribute("data-browser-version") || undefined,
+    device: script.getAttribute("data-device") || undefined,
     appVersion: script.getAttribute("data-app-version") || undefined,
   });
 }

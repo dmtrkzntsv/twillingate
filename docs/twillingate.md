@@ -192,7 +192,10 @@ the origin if this site uses another collector hostname.
 | `data-mask-url` | `maskUrl` | Rewrite the URL before it is sent. See [Masking](#masking-urls). |
 | `data-routing` | `routing` | `history` (default) or `hash`. See [Hash routing](#hash-routing). |
 | `data-kind` | `kind` | What this client is: `web` (default), `app`, `cli`, or any short lower-case token. Anything but `web` switches automatic tracking from `$page_view` to `$screen_view` (the route path becomes the screen) and exempts the client from the server's crawler filter, which applies to `web` only. |
-| `data-os` | `os` | Override the detected operating system (`$os`). See [Declaring the environment](#declaring-the-environment). |
+| `data-platform` | `platform` | The surface the product is used through (`$platform`): `web`, `ios`, `android`, `electron`, … Defaults to `web` only while `kind` is `web`; any other kind is a wrapper the SDK cannot name, so set it beside `data-kind` or the server records `unknown`. |
+| `data-os`, `data-os-version`, `data-os-name` | `os`, `osVersion`, `osName` | Override the detected operating system (`$os`, `$os_version`, `$os_name`). See [Detection](#detection); an explicit value always beats detection. |
+| `data-browser`, `data-browser-version` | `browser`, `browserVersion` | Override the detected browser (`$browser`, `$browser_version`). |
+| `data-device` | `device` | Override the detected form factor (`$device`). `wearable` is reachable only this way. |
 | `data-app-version` | `appVersion` | The version of the client application — a site build, an app release, a CLI version. |
 
 **Every `data-*` attribute has an `init()` equivalent**, enforced by a test.
@@ -238,8 +241,9 @@ twillingate.init({
   maskUrl: "uuid",
   routing: "history",
   // client context, sent as batch attributes:
-  kind: "web",                 // → $kind ("app" for Electron/Tauri, "cli", …)
-  os: "macos",                 // → $os
+  kind: "app",                 // → $kind ("app" for Electron/Tauri, "cli", …)
+  platform: "electron",        // → $platform; defaults to "web" only for kind "web"
+  os: "macos",                 // → $os, overriding detection (usually unnecessary)
   appVersion: "2.4.1",         // → $app_version
   installId: "018f…",          // → $install_id (stable per install)
   user: "u_123",               // optional page-render identity
@@ -281,6 +285,42 @@ twillingate.util.maskIds(path);                // helpers, see Masking
 - `screen(name, attrs?)` — an explicit `$screen_view`. With `kind` set to
   anything but `web` the automatic tracker already sends one per navigation,
   so this is for screens that are not routes.
+
+### Detection
+
+The SDK detects the operating system, browser and form factor on the
+client and sends them on every batch — `$os`, `$browser` and `$device`
+always, `$os_version`, `$os_name` and `$browser_version` when it can
+determine them — because two things a User-Agent cannot tell are exactly
+the ones worth knowing: iPadOS in desktop mode (separable only by
+`maxTouchPoints`) and Brave (identical to Chrome except for
+`navigator.brave`). Windows 11 and true macOS versions come from
+`navigator.userAgentData.getHighEntropyValues`, started at `init()` and
+read at flush time, so the first batch already carries them on Chromium.
+
+Detection is public API, so a page can see what will be sent:
+
+```js
+twillingate.detectOS();       // { os: "ipados", osVersion: "17.2", osName: "iPadOS 17.2" }
+twillingate.detectBrowser();  // { browser: "brave", browserVersion: "126" }
+twillingate.detectDevice();   // { device: "tablet" }
+```
+
+Each takes an optional `ClientSignals` — a flat list of the only inputs
+detection reads (`userAgent`, `platform`, `maxTouchPoints`, `brave`,
+`brands`, `uaPlatform`, `mobile`, `platformVersion`) — and when one is
+supplied consults **only** what it contains, so
+`twillingate.detectBrowser({ userAgent })` answers for that User-Agent and
+nothing else. The type is the whole record of what the SDK touches on the
+device. These are pure detection: an `os`, `browser` or `device` option
+passed to `init()` overrides what a batch carries but does not change
+what `detect*` returns.
+
+Detection returns `other` for a User-Agent that names nothing on the
+list and `unknown` when there is no User-Agent at all — a non-browser
+runtime — and never returns the declare-only values `watchos`,
+`visionos` and `wearable`. `$platform` is never detected: it is the
+option, or `web` while `kind` is `web`, or absent.
 
 ### Masking URLs
 

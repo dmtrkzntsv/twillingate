@@ -2,6 +2,7 @@
 // failure handling. Identity and pageview behaviour live in identity.test.ts.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Twillingate, autoInit, supersededBy } from "./twillingate";
+import { resetPlatformVersion } from "./detect";
 import twillingateSource from "./twillingate.ts?raw";
 
 const URL_BASE = "https://collector.example.com";
@@ -95,24 +96,20 @@ describe("payload shape", () => {
   });
 
   it("carries app context as batch attributes", async () => {
-    const t = tg({ os: "web", appVersion: "2.4.1", installId: "018f-install" });
+    const t = tg({ kind: "app", platform: "ios", os: "ios", osVersion: "17.2", appVersion: "2.4.1", installId: "018f-install" });
     t.screen("/settings");
     await drain();
     const { attributes, events } = sent[0].body;
     expect(attributes).toMatchObject({
-      $os: "web",
+      $kind: "app",
+      $platform: "ios",
+      $os: "ios",
+      $os_version: "17.2",
       $app_version: "2.4.1",
       $install_id: "018f-install",
     });
     expect(events[0].name).toBe("$screen_view");
     expect(events[0].attributes).toEqual({ $screen: "/settings" });
-  });
-
-  it("accepts the deprecated platform alias for os", async () => {
-    const t = tg({ platform: "ios" });
-    t.track("probe");
-    await drain();
-    expect(sent[0].body.attributes.$os).toBe("ios");
   });
 
   it("screen() merges extra attributes and requires a name", async () => {
@@ -138,6 +135,99 @@ describe("payload shape", () => {
     expect(va.$display_height).toBe(1080);
     expect((probe.attributes as Record<string, unknown>).$display_width).toBeUndefined();
     expect(sent[0].body.attributes.$locale).toBe("de-DE");
+  });
+});
+
+describe("environment", () => {
+  const CHROME_WIN = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
+
+  // Replace the whole navigator: the ignore rules read webdriver, the
+  // batch reads language, send reads sendBeacon, detection reads the rest.
+  function stubNavigator(extra: Record<string, unknown>): void {
+    vi.stubGlobal("navigator", { language: "en-US", webdriver: false, userAgent: CHROME_WIN, platform: "Win32", maxTouchPoints: 0, ...extra });
+  }
+
+  afterEach(() => resetPlatformVersion());
+
+  it("sends the detected os, browser and device on every batch", async () => {
+    stubNavigator({});
+    const t = tg();
+    t.track("probe");
+    await drain();
+    expect(sent[0].body.attributes).toMatchObject({
+      $platform: "web", $os: "windows", $os_version: "10", $os_name: "Windows 10",
+      $browser: "chrome", $browser_version: "126", $device: "desktop",
+    });
+  });
+
+  it("defaults $platform to web only while kind is web", async () => {
+    stubNavigator({});
+    const web = tg();
+    web.track("a");
+    await drain();
+    expect(sent[0].body.attributes.$platform).toBe("web");
+
+    sent = [];
+    const app = tg({ kind: "app" });
+    app.track("b");
+    await drain();
+    expect(sent[0].body.attributes).not.toHaveProperty("$platform");
+    expect(sent[0].body.attributes.$os).toBe("windows"); // detection still runs on any kind
+
+    sent = [];
+    const electron = tg({ kind: "app", platform: "electron" });
+    electron.track("c");
+    await drain();
+    expect(sent[0].body.attributes.$platform).toBe("electron");
+  });
+
+  it("lets an explicit option beat detection, while detect* still answers for the signals", async () => {
+    stubNavigator({});
+    const t = tg({ os: "linux", browser: "firefox", device: "tablet" });
+    t.track("probe");
+    await drain();
+    expect(sent[0].body.attributes).toMatchObject({ $os: "linux", $browser: "firefox", $device: "tablet" });
+    // Pure detection ignores the option: it has to answer for THIS
+    // User-Agent, or it is useless for the debugging case it exists for.
+    expect(t.detectOS().os).toBe("windows");
+    expect(t.detectBrowser().browser).toBe("chrome");
+    expect(t.detectDevice().device).toBe("desktop");
+  });
+
+  it("consults only a supplied ClientSignals, never the ambient navigator", () => {
+    stubNavigator({});
+    const t = tg();
+    expect(t.detectOS({ userAgent: "Mozilla/5.0 (X11; Linux x86_64; rv:127.0) Gecko/20100101 Firefox/127.0" }).os).toBe("linux");
+    expect(t.detectOS({}).os).toBe("unknown");
+  });
+
+  it("carries the high-entropy platformVersion once it has resolved", async () => {
+    stubNavigator({
+      userAgentData: {
+        brands: [{ brand: "Google Chrome", version: "126.0.0.0" }, { brand: "Chromium", version: "126.0.0.0" }],
+        platform: "Windows", mobile: false,
+        getHighEntropyValues: () => Promise.resolve({ platformVersion: "15.0.0" }),
+      },
+    });
+    const t = tg({ flushInterval: 50 });
+    // Immediately after init the promise has not settled: the User-Agent answer stands.
+    expect(t.detectOS().osVersion).toBe("10");
+    t.track("probe");
+    await drain();
+    expect(sent[0].body.attributes).toMatchObject({ $os: "windows", $os_version: "11", $os_name: "Windows 11", $browser: "chrome" });
+    expect(t.detectOS().osVersion).toBe("11");
+  });
+
+  it("sends unknown values honestly when there is no browser to read", async () => {
+    // A runtime with no User-Agent at all — the case a bundled SDK meets
+    // in a worker or a test harness — must say unknown, not other.
+    stubNavigator({ userAgent: "", platform: undefined });
+    const t = tg();
+    t.track("probe");
+    await drain();
+    expect(sent[0].body.attributes).toMatchObject({ $os: "unknown", $browser: "unknown", $device: "unknown" });
+    expect(sent[0].body.attributes).not.toHaveProperty("$os_version");
+    expect(sent[0].body.attributes).not.toHaveProperty("$os_name");
   });
 });
 
@@ -394,6 +484,22 @@ describe("snippet auto-init", () => {
     expect(ea.$referrer).toBeUndefined();
   });
 
+  it("reads every environment data attribute", async () => {
+    const s = scriptTag({
+      "data-key": "ak_snip", "data-auto": "off", "data-kind": "app", "data-platform": "electron",
+      "data-os": "macos", "data-os-version": "14.2", "data-os-name": "macOS 14.2",
+      "data-browser": "chrome", "data-browser-version": "126", "data-device": "desktop",
+    });
+    const t = new Twillingate();
+    autoInit(t, s);
+    t.track("probe");
+    await drain();
+    expect(sent[0].body.attributes).toMatchObject({
+      $kind: "app", $platform: "electron", $os: "macos", $os_version: "14.2", $os_name: "macOS 14.2",
+      $browser: "chrome", $browser_version: "126", $device: "desktop",
+    });
+  });
+
   it("app kind tracks pushState navigations as screen views", async () => {
     const t = new Twillingate();
     autoInit(t, scriptTag({ "data-key": "ak_snippet", "data-kind": "app" }));
@@ -418,7 +524,9 @@ describe("script tag and init parity", () => {
     const optionFor: Record<string, string> = {
       key: "key", identity: "identity", user: "user", group: "group",
       auto: "autoPageviews", "mask-url": "maskUrl", routing: "routing",
-      kind: "kind", os: "os", "app-version": "appVersion",
+      kind: "kind", platform: "platform", os: "os", "os-version": "osVersion", "os-name": "osName",
+      browser: "browser", "browser-version": "browserVersion", device: "device",
+      "app-version": "appVersion",
     };
     expect(attrs.length).toBeGreaterThan(0);
     for (const a of attrs) {

@@ -116,11 +116,14 @@ func TestDocumentMatchesSDK(t *testing.T) {
 	for _, symbol := range []string{
 		"data-key", "data-identity", "data-user", "data-group", "data-auto",
 		"data-mask-url", "data-routing",
-		"data-kind", "data-os", "data-app-version",
+		"data-kind", "data-platform", "data-os", "data-os-version", "data-os-name",
+		"data-browser", "data-browser-version", "data-device", "data-app-version",
 		"init", "page", "screen", "track", "attrs", "identify", "group", "reset", "flush",
+		"detectOS", "detectBrowser", "detectDevice", "ClientSignals",
 		"twillingate_ignore", "analytics_ignore",
 		"pushState", "popstate", "hashchange",
-		"$page_view", "$screen_view", "$install_id", "$kind", "$os",
+		"$page_view", "$screen_view", "$install_id", "$kind", "$platform", "$os", "$os_name",
+		"$browser", "$browser_version", "$device",
 		"$display_width", "$display_height",
 	} {
 		if !strings.Contains(src, symbol) {
