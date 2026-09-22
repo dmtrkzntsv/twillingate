@@ -44,8 +44,14 @@ func TestProductAttributesReturnsRows(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("error: %s", textOf(res))
 	}
-	if out := textOf(res); !strings.Contains(out, "plan") || !strings.Contains(out, "pro") {
+	out := textOf(res)
+	if !strings.Contains(out, "plan") || !strings.Contains(out, "pro") {
 		t.Errorf("missing attribute row: %s", out)
+	}
+	// unique_groups flows through as the last column; a NULL (a day rolled
+	// up before 016) is an empty cell, not an error.
+	if !strings.Contains(out, "unique_groups") || !strings.Contains(out, "team") {
+		t.Errorf("missing unique_groups column or the measured row: %s", out)
 	}
 	// event filter branch
 	res = callTool(t, cs, "product_attributes", map[string]any{

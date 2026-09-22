@@ -232,7 +232,7 @@ func (h *host) register(r *registrar) {
 		Description: "Product events per day: count and unique users per event name, plus daily totals. Unconditional — no attribute declaration is required to see it."},
 		h.productEvents)
 	expose(r, spec{Name: "product_attributes", Annotations: ro, Method: "GET", Path: p + "/product/attributes",
-		Description: "Attribute breakdowns for product events. The system dimensions $platform, $os and $app_version are always included; a custom key only appears once the project declares it in attributes (see update_project)."},
+		Description: "Attribute breakdowns for product events: count, unique users and unique groups per value, per event, per day. unique_groups is empty for days rolled up before it was measured and 0 when it was measured and no group was involved. The system dimensions $platform, $os and $app_version are always included; a custom key only appears once the project declares it in attributes (see update_project)."},
 		h.productAttributes)
 	expose(r, spec{Name: "retention", Annotations: ro, Method: "GET", Path: p + "/retention",
 		Description: "D1/D7/D30-style cohort curves for identified projects. Cohorted by how the actor was identified: actor=user or actor=install. Returns aggregated_through: cohorts after it are absent (refreshed 03:00 UTC), not zero. Anonymous projects have no retention by design."},

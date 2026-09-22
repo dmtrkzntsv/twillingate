@@ -125,8 +125,9 @@ twillingate project update -id 1 -attr plan -attr tier
 
 `-attr` is repeatable and, like `-origin`, replaces the whole list when
 supplied. Declaring a key drives two things: its own `attr_*` column in
-`v_events_flat`, and a value breakdown (counts and unique users per distinct
-value, per event, per day) in `agg_product_attrs` / `v_product_attrs`.
+`v_events_flat`, and a value breakdown (counts, unique users and unique
+groups per distinct value, per event, per day) in `agg_product_attrs` /
+`v_product_attrs`.
 
 Everything sent is still stored regardless. An undeclared key has no
 dedicated column but stays reachable via `json_extract(attributes,
@@ -141,7 +142,8 @@ grow as fast as the raw data it summarises, defeating retention.
 [server-side](deployment.md#configure-the-collector)) guards that globally:
 only the top N
 values per key are kept and the rest collapse into one `(other)` row whose
-unique-user count is recomputed from raw rather than summed. A client
+unique-user and unique-group counts are recomputed from raw rather than
+summed. A client
 sending the literal string `(other)` collides with that bucket and loses its
 own count — avoid that value.
 
@@ -990,7 +992,7 @@ already apply the caveats below.
 | `views_overview` | `kind` (optional) | Visitors, views, sessions, bounces, average session length per day, summed across kinds unless `kind` filters one |
 | `views_breakdown` | `dimension`, `limit` (default 20) | Top rows for one of `kinds`, `paths`, `hosts`, `referrers`, `utm`, `countries`, `platforms`, `os`, `browsers`, `app_versions`, `devices`, `displays`. Two-key dimensions return both columns |
 | `product_events` | `event` (optional filter) | Count and unique users per event name, plus daily totals |
-| `product_attributes` | `event`, `key` | Value breakdowns for a declared attribute. `$platform`, `$os` and `$app_version` are always available; a custom key only appears once the project declares it |
+| `product_attributes` | `event`, `key` | Count, unique users and unique groups per value of a declared attribute. `$platform`, `$os` and `$app_version` are always available; a custom key only appears once the project declares it. `unique_groups` is empty for days rolled up before it was measured and `0` when it was measured and no group was involved |
 | `retention` | `actor` (`user` or `install`) | Cohort curves, plus `aggregated_through` — cohorts after that day are **absent, not zero** |
 | `identities` | `kind` (`user` or `group`), `limit` | Per-user or per-group activity with display names. **Surfaces personal data on identified projects** |
 | `query` | `sql` | A single read-only `SELECT`/`WITH` against the views. Row-capped and time-limited |
@@ -1091,7 +1093,9 @@ vocabularies (see [Declaring the environment](#declaring-the-environment))
 in which `other` and `(other)` are different things: `other` is a real
 value outside the list, `(other)` is the cap.
 Product events have `v_product_daily`, `v_product_totals` and
-`v_product_attrs`, plus `v_events_flat`, which reads the `events` table
+`v_product_attrs` (whose `unique_groups` is NULL, not zero, for days rolled
+up before it was measured — `MAX()` skips it, `SUM()` would too, a `COALESCE`
+to 0 would lie), plus `v_events_flat`, which reads the `events` table
 with one column per declared attribute. `v_identity_daily` and `identities` join user and group
 activity to display names; `v_identity_daily` keeps the busiest 500 users
 and 500 groups per day and drops the rest, with no `(other)` row, so do not
