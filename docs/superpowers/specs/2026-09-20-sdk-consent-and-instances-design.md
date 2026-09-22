@@ -1,6 +1,6 @@
 # SDK consent, storage and multiple instances
 
-Status: proposed
+Status: implemented (2026-09-22)
 Date: 2026-09-20
 
 ## Sequencing
@@ -554,3 +554,12 @@ Docs, in the same commit as the code (required by CLAUDE.md):
   in `sdk/src/twillingate.ts`.
 - Rebuild the bundle: `npm run build` in `sdk/` writes the committed
   `internal/server/twillingate.js`.
+
+Implementation note (2026-09-22): jsdom is configured to serve
+`https://example.com` (sdk/vitest.config.ts) so `$host` assertions stay
+readable; the guard's removal is covered by the `navigator.webdriver` test
+and by the deleted code. Snippet bootstrap moved out of `entry.ts` into an
+exported `bootstrap()` so the `data-instance` registration rules could be
+tested. On the grant transition only the retry queue is written and the
+visitor id starts persisting; a user set by `identify()` before consent is
+persisted on the next `identify()`/`group()` call, not retroactively.

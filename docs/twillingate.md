@@ -186,12 +186,14 @@ the origin if this site uses another collector hostname.
 | Attribute | `init()` option | Meaning |
 | --- | --- | --- |
 | `data-key` | `key` | The project's ingest key. Required; public by design. |
-| `data-identity` | `identity` | `anonymous` (default) or `identified`. Mirrors the project's server-side mode; the server enforces the real one regardless. `identified` additionally authorizes persisting a visitor id in localStorage — consent-relevant under ePrivacy, the same category as a cookie. |
+| `data-identity` | `identity` | `anonymous` (default) or `identified`. Mirrors the project's server-side mode; the server enforces the real one regardless. With [consent](#consent-and-storage), `identified` persists the visitor id, user and group in localStorage; without it nothing persists in either mode. |
 | `data-user`, `data-group` | `user`, `group` | Set when the page is rendered already knowing who is looking at it. |
 | `data-auto="off"` | `autoPageviews` | Disable automatic pageviews; drive them with `twillingate.page()`. |
 | `data-mask-url` | `maskUrl` | Rewrite the URL before it is sent. See [Masking](#masking-urls). |
 | `data-routing` | `routing` | `history` (default) or `hash`. See [Hash routing](#hash-routing). |
 | `data-kind` | `kind` | What this client is: `web` (default), `app`, `cli`, or any short lower-case token. Anything but `web` switches automatic tracking from `$page_view` to `$screen_view` (the route path becomes the screen) and exempts the client from the server's crawler filter, which applies to `web` only. |
+| `data-consent` | `consent` | May this instance keep anything on the device. `false` (default): nothing is read from or written to localStorage. `true`, or the name of a global variable or function a consent manager maintains, unlocks it. See [Consent and storage](#consent-and-storage). |
+| `data-instance` | `instance` | Name for a second tag on the same page: registers `window.<name>` instead of `window.twillingate` and prefixes this instance's storage keys. See [Two tags on one page](#two-tags-on-one-page). |
 
 **Every `data-*` attribute has an `init()` equivalent**, enforced by a test.
 The reverse does not hold: `url`, `installId`, `flushInterval` and the
@@ -203,11 +205,12 @@ Electron or Tauri that needs `platform` calls `init()` from code.
 Views are automatic, including on `history.pushState` and `popstate`, so
 single-page apps need no extra code.
 
-Include the tag once. If a second copy loads with the same `data-key`, or
+Include each tag once. If a second copy loads with the same `data-key`, or
 with none, it leaves the first instance in place and logs a console warning,
 so the page isn't counted twice. A second copy with a *different* key
-replaces `window.twillingate`. Both instances keep sending, and they share
-the same localStorage, so two projects on one page are not supported.
+replaces `window.twillingate` with a warning; two projects on one page give
+the second tag a `data-instance` instead — see
+[Two tags on one page](#two-tags-on-one-page).
 
 **Migrating from Plausible?** The collector also serves
 `/js/plausible-shim.js`, an optional second tag that fires events from
@@ -235,6 +238,8 @@ twillingate.init({
   url: "https://twillingate.example.com",  // defaults to the script's origin
   key: "ak_9f3c…",
   identity: "anonymous",       // or "identified"
+  consent: false,              // default; true, or a global's name, unlocks localStorage
+  instance: "et",              // storage-key prefix when another instance shares the page
   autoPageviews: true,         // default false in explicit init
   maskUrl: "uuid",
   routing: "history",
@@ -261,6 +266,7 @@ twillingate.attrs({ tier: "beta" });           // default attributes on every ev
 twillingate.identify("user-123", "Ada");       // $user_id + optional $user_name
 twillingate.group("org-9", "Acme Corp");       // $group_id + optional $group_name
 twillingate.reset();                           // on logout — see below
+twillingate.consent(true);                     // pin storage consent; false withdraws, null hands back, none reads
 twillingate.flush();                           // force-send the queue
 twillingate.util.maskIds(path);                // helpers, see Masking
 ```
@@ -271,18 +277,105 @@ twillingate.util.maskIds(path);                // helpers, see Masking
 - `page(arg?, attrs?)` — no argument records the current page; a string
   records that path; an object is extra attributes for the current page.
   Passing a **function** registers a pageview listener instead.
+- An attribute whose value is `null` or `undefined` is dropped before the
+  event is sent — the way to suppress a value the SDK derives on its own,
+  such as `$referrer`, for one call:
+  `twillingate.page("/budget", { $host: "selfhosted_ab12", $referrer: null })`
+  sends neither the real host nor the referrer. The rule applies to the
+  event's own attributes, including `attrs()` defaults; batch attributes
+  (`$os`, `$browser`, …) come from detection or `init()` options and are
+  changed there.
+- `consent(granted?)` — `true`/`false` pins storage consent over what the
+  tag declared, `null` hands control back to it, no argument returns the
+  effective value. See [Consent and storage](#consent-and-storage).
 - `identify(user, name?)` — sets `$user_id` and the optional `$user_name`,
-  persisted for `identified` projects so every later event carries the
-  identity. Events already sent stay unattributed: there is no retroactive
-  stitching. Anonymous projects ignore the name server-side.
-- `group(id, name?)` — sets `$group_id`/`$group_name`; always persisted (a
-  group is an organization, not a person).
+  persisted for `identified` projects with consent so every later event
+  carries the identity. Events already sent stay unattributed: there is no
+  retroactive stitching. Anonymous projects ignore the name server-side.
+- `group(id, name?)` — sets `$group_id`/`$group_name`; persisted with
+  consent for `identified` projects.
 - `reset()` — **required on logout.** Without it the next person on a shared
-  browser inherits the previous user's identity. Clears user, group, names
-  and the visitor id.
+  browser inherits the previous user's identity. Clears user, group, names,
+  the visitor id and the retry queue.
 - `screen(name, attrs?)` — an explicit `$screen_view`. With `kind` set to
   anything but `web` the automatic tracker already sends one per navigation,
   so this is for screens that are not routes.
+
+### Consent and storage
+
+`consent` answers one question: may this instance keep anything on the
+device. It defaults to `false` in every identity mode. Without it, records
+live in memory: nothing is read from or written to localStorage, apart from
+the `twillingate_ignore` opt-out the person set themselves. Identity comes
+from the host application on each load, through `user` and `group` in
+`init()` or `identify()`, and a failed batch is retried from memory — again
+when the browser fires `online`, and once more through `sendBeacon` on
+`pagehide` — and lost if the tab closes while delivery keeps failing.
+Retries stay safe because every event carries an id the server dedupes.
+
+With consent, an `identified` instance persists the visitor id, user and
+group in localStorage and any instance persists the retry queue so it
+survives a reload. An `anonymous` instance never persists a visitor id (the
+server salts it daily, so it would buy nothing); there, consent only
+unlocks the queue.
+
+The SDK is not a consent manager: it does not ask, record proof or remember
+the answer. The tag declares what the site holds for this person:
+
+| `data-consent` / `consent` | Meaning |
+| --- | --- |
+| absent, `""`, `false`, `"false"` | no consent — the default |
+| `true`, `"true"` | consent given |
+| a function, or a string naming one on `window` | called whenever consent is consulted; the return value is coerced to a boolean |
+| a string naming a non-function global | read whenever consent is consulted, so a variable the consent manager flips is picked up live |
+
+A name that resolves to nothing, or a function that throws, fails closed to
+no consent with a console warning. The value is consulted at every storage
+decision, never cached at `init()`, so a consent manager that answers after
+page load needs no extra call. When it flips to true, anything waiting in
+the memory retry queue is written to localStorage and an identified
+instance starts persisting a visitor id; when it flips to false, every key
+this instance owns is deleted and records go back to memory. Events already
+sent stay as they were sent.
+
+`consent(true)` / `consent(false)` pins a value over whatever the tag
+declared; `consent(null)` hands control back; `consent()` returns the
+effective value. Passing the answer to `init()` (or naming a global that
+holds it) is what lets the entry pageview carry the stored identity, which a
+later call cannot do.
+
+### Two tags on one page
+
+`data-instance="et"` registers the tag at `window.et`, leaves
+`window.twillingate` alone and prefixes its storage keys (`et_visitor`,
+`et_user`, `et_user_name`, `et_group`, `et_group_name`, `et_queue`). It
+works with or without `data-key`, so the tag can auto-init from its
+attributes or load dormant for `et.init({...})` in code. Each instance
+hooks `history.pushState` on its own and the patches chain, so both fire,
+each into its own project.
+
+```html
+<script defer src="https://twillingate.example.com/js/twillingate.js"
+        data-key="ak_web…"></script>
+<script defer src="https://twillingate.example.com/js/twillingate.js"
+        data-key="ak_app…" data-instance="et" data-auto="off"></script>
+```
+
+`instance: "et"` in `init()` is the same name for a bundled consumer, which
+has no tag: it prefixes storage keys and registers nothing, so two
+npm-loaded instances stop sharing a visitor id and a queue. Three rules:
+
+- the attribute wins — a tag that declared `data-instance` ignores an
+  `instance` option that disagrees, with a warning;
+- the name must match `^[a-z][a-z0-9_]{0,15}$`, the same shape as `$kind`;
+  an invalid name is refused with a warning and the default kept;
+- a global already holding something that is not a Twillingate instance is
+  never overwritten (`data-instance="location"` costs a warning, not the
+  page).
+
+The default name is `twillingate`, which keeps the current global and the
+current `twillingate_*` keys. `twillingate_ignore` stays global and
+unprefixed: opting out is a decision about the person, not one tag.
 
 ### Detection
 
@@ -311,8 +404,8 @@ supplied consults **only** what it contains, so
 `twillingate.detectBrowser({ userAgent })` answers for that User-Agent and
 nothing else. The type is the whole record of what detection reads from
 the device; beyond detection the SDK reads `screen` (display size),
-`navigator.language`, `document.referrer`, `navigator.webdriver`, the
-page's `location` and visibility state, and its own `localStorage` keys.
+`navigator.language`, `document.referrer`, the page's `location` and
+visibility state, and its own `localStorage` keys.
 These are pure detection: an `os`, `browser` or `device` option passed
 to `init()` overrides what a batch carries but does not change
 what `detect*` returns.
@@ -474,22 +567,27 @@ events accumulate, on `flush()`, and on page unload (`pagehide` /
 because beacons cannot set headers). Every event carries a UUID and a client
 timestamp.
 
-A batch that fails to send (network down, 5xx) persists to a bounded
-localStorage queue (`twillingate_queue`, 50 batches) and replays on the next
-load or when the browser fires `online`. Replays dedupe server-side by event
-id and keep their original timestamps. A 4xx response (bad key, bad payload)
-drops the batch instead — resending it forever helps nobody.
+A batch that fails to send (network down, 5xx) is kept for retry — in
+memory, or with [consent](#consent-and-storage) in a bounded localStorage
+queue (`twillingate_queue`, or `<instance>_queue`, 50 batches) — and
+replays when the browser fires `online`, once more through `sendBeacon` on
+unload, and from storage on the next load. Replays dedupe server-side by
+event id and keep their original timestamps. A 4xx response (bad key, bad
+payload) drops the batch instead — resending it forever helps nobody.
 
 ### Privacy behaviour
 
-- Anonymous projects: no cookies, no localStorage writes.
-- Identified projects: a visitor id persists in `twillingate_visitor`;
-  identity written by the removed legacy snippet (`analytics_visitor` /
-  `analytics_user` / `analytics_group`) is migrated automatically — copied,
-  not moved, so returning visitors keep their identity.
-- The SDK is silent on localhost, `file://` URLs and automated browsers.
-- Opt a device out: `localStorage.twillingate_ignore = "true"` (the legacy
-  `analytics_ignore` is honoured too).
+- Nothing is written to the device unless the tag declares
+  [consent](#consent-and-storage); anonymous projects never persist a
+  visitor id even with it.
+- Identified projects with consent: a visitor id persists in
+  `twillingate_visitor` (or `<instance>_visitor`) together with the user and
+  group.
+- The SDK does not decide where analytics runs: a `localhost` page, a
+  `file://` URL and an automated browser are tracked like any other, so
+  keeping development traffic out of a project is the site's job — skip
+  `init()` on a condition it knows.
+- Opt a device out: `localStorage.twillingate_ignore = "true"`.
 
 ### Helpers
 

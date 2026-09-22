@@ -70,11 +70,11 @@ func (h *host) integrationGuide(ctx context.Context, in guideIn) (guideOut, erro
 		if in.Platform == "spa" {
 			b.WriteString(", including SPA route changes (pushState/popstate are hooked) — no router integration needed")
 		}
-		b.WriteString(". The snippet is silent on localhost, so test on a real or staged domain.\n\n")
+		b.WriteString(". Nothing is filtered on the client: a localhost page reports too, so keep development traffic out by not loading the tag there.\n\n")
 		b.WriteString("An Electron or Tauri app loads the same file without data-key and calls twillingate.init({ key, kind: \"app\", platform: \"electron\", appVersion }) from code, so its views are keyed by the build rather than counted as web; the OS, browser and device are detected by the SDK on every kind.\n\n")
 		fmt.Fprintf(&b, "Product events from the page:\n\n    twillingate.track(\"signup\", { plan: \"pro\" });\n\n")
 		if p.Identity == config.IdentityIdentified {
-			b.WriteString("This project is IDENTIFIED: the snippet persists a visitor id in\nlocalStorage (consent-relevant, ePrivacy — same category as a cookie).\nGate the tag on consent, call twillingate.identify(userId, userName)\n(and twillingate.group(groupId)) after login and twillingate.reset() on\nlogout.\n\n")
+			b.WriteString("This project is IDENTIFIED: the tag stores nothing on the device unless it\ndeclares consent (data-consent=\"true\", or the name of a global the site's\nconsent manager maintains); without it the visitor id is not persisted and\nsigned-out visitors fall back to the daily-rotating connection hash. Call\ntwillingate.identify(userId, userName) (and twillingate.group(groupId))\nafter login and twillingate.reset() on logout.\n\n")
 		} else {
 			b.WriteString("This project is ANONYMOUS: no cookies, no localStorage, no consent\nbanner needed for pageviews alone; $user_name is ignored and retention\ncurves are unavailable by design.\n\n")
 		}
