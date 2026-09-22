@@ -598,12 +598,15 @@ func TestMissingIDIsGenerated(t *testing.T) {
 
 func TestClientTimestampIsUsedAndClamped(t *testing.T) {
 	q, h := testServer(t)
-	post(h, envelopeOf(`{"name":"recent","ts":"2026-08-23T10:00:00Z"},
+	// Relative to now: a fixed date would age out of the raw window and
+	// turn this into a time bomb.
+	recent := time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Second)
+	post(h, envelopeOf(`{"name":"recent","ts":"`+recent.Format(time.RFC3339)+`"},
 		{"name":"ancient","ts":"2001-01-01T00:00:00Z"}`), nil)
 	if len(q.events) != 2 {
 		t.Fatalf("events = %+v", q.events)
 	}
-	if !q.events[0].TS.Equal(time.Date(2026, 8, 23, 10, 0, 0, 0, time.UTC)) {
+	if !q.events[0].TS.Equal(recent) {
 		t.Errorf("in-range ts = %v, want the client value", q.events[0].TS)
 	}
 	// Clamped, not dropped, and never older than the global views raw
