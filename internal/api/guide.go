@@ -76,7 +76,7 @@ func (h *host) integrationGuide(ctx context.Context, in guideIn) (guideOut, erro
 		if p.Identity == config.IdentityIdentified {
 			b.WriteString("This project is IDENTIFIED: the tag stores nothing on the device unless it\ndeclares consent (data-consent=\"true\", or the name of a global the site's\nconsent manager maintains); without it the visitor id is not persisted and\nsigned-out visitors fall back to the daily-rotating connection hash. Call\ntwillingate.identify(userId, userName) (and twillingate.group(groupId))\nafter login and twillingate.reset() on logout.\n\n")
 		} else {
-			b.WriteString("This project is ANONYMOUS: no cookies, no localStorage, no consent\nbanner needed for pageviews alone; $user_name is ignored and retention\ncurves are unavailable by design.\n\n")
+			b.WriteString("This project is ANONYMOUS: no cookies, nothing kept on the device unless\nthe tag declares consent (then only the retry queue), no consent banner\nneeded for pageviews alone; $user_name is ignored and retention curves are\nunavailable by design.\n\n")
 		}
 		origins := p.AllowedOrigins
 		if len(origins) == 0 {

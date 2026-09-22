@@ -25,9 +25,9 @@ from apps and CLIs) and custom product events — rolls them up nightly, and
 exposes the result three ways: Evidence dashboards, a read-only SQL
 surface, and the API (MCP or HTTP) an AI agent can query in plain language.
 
-It is cookieless by default. An `anonymous` project never writes to a
-visitor's device and salts every identifier with a key that rotates at
-midnight, so nothing links across days. Raw IP addresses and User-Agent
+It is cookieless by default. An `anonymous` project never writes an
+identifier to a visitor's device and salts every identifier with a key that
+rotates at midnight, so nothing links across days. Raw IP addresses and User-Agent
 strings are never stored: the IP becomes a country at ingest, the
 User-Agent is checked for crawlers, and both are discarded.
 
@@ -208,9 +208,9 @@ single-page apps need no extra code.
 Include each tag once. If a second copy loads with the same `data-key`, or
 with none, it leaves the first instance in place and logs a console warning,
 so the page isn't counted twice. A second copy with a *different* key
-replaces `window.twillingate` with a warning; two projects on one page give
-the second tag a `data-instance` instead — see
-[Two tags on one page](#two-tags-on-one-page).
+replaces `window.twillingate` (with a warning when the first copy had a key
+of its own); two projects on one page give the second tag a `data-instance`
+instead — see [Two tags on one page](#two-tags-on-one-page).
 
 **Migrating from Plausible?** The collector also serves
 `/js/plausible-shim.js`, an optional second tag that fires events from
@@ -306,12 +306,16 @@ twillingate.util.maskIds(path);                // helpers, see Masking
 `consent` answers one question: may this instance keep anything on the
 device. It defaults to `false` in every identity mode. Without it, records
 live in memory: nothing is read from or written to localStorage, apart from
-the `twillingate_ignore` opt-out the person set themselves. Identity comes
-from the host application on each load, through `user` and `group` in
+the `twillingate_ignore` opt-out the person set themselves. Reading no
+consent also deletes anything an earlier session stored under this
+instance's keys, so an `identified` site that upgrades without adding
+`data-consent` loses its stored visitor ids on the first load. Identity
+comes from the host application on each load, through `user` and `group` in
 `init()` or `identify()`, and a failed batch is retried from memory — again
-when the browser fires `online`, and once more through `sendBeacon` on
-`pagehide` — and lost if the tab closes while delivery keeps failing.
-Retries stay safe because every event carries an id the server dedupes.
+when the browser fires `online`, and once more through `sendBeacon` when the
+page is hidden or unloaded — and lost if the tab closes while delivery keeps
+failing. Retries stay safe because every event carries an id the server
+dedupes.
 
 With consent, an `identified` instance persists the visitor id, user and
 group in localStorage and any instance persists the retry queue so it
@@ -577,7 +581,7 @@ payload) drops the batch instead — resending it forever helps nobody.
 
 ### Privacy behaviour
 
-- Nothing is written to the device unless the tag declares
+- Nothing is kept on the device unless the tag declares
   [consent](#consent-and-storage); anonymous projects never persist a
   visitor id even with it.
 - Identified projects with consent: a visitor id persists in
