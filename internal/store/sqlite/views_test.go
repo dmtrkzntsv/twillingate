@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"reflect"
@@ -501,9 +502,12 @@ func seedDeclaredProject(t *testing.T, db *DB, attrs []string) int64 {
 }
 
 // attrRow mirrors one v_product_attrs row for before/after comparison.
+// Groups is NULL only for a day rolled up before migration 016; the live
+// half always measures, so every row read here must be Valid.
 type attrRow struct {
 	Event, Key, Value string
 	Count, Uniques    int
+	Groups            sql.NullInt64
 }
 
 // readAttrs drains every v_product_attrs row for one project/day into a
@@ -512,7 +516,7 @@ type attrRow struct {
 // next query would deadlock.
 func readAttrs(t *testing.T, db *DB, projectID int64, day string) []attrRow {
 	t.Helper()
-	rows, err := db.db.Query(`SELECT event_name, attr_key, attr_value, count, unique_users
+	rows, err := db.db.Query(`SELECT event_name, attr_key, attr_value, count, unique_users, unique_groups
 		FROM v_product_attrs WHERE project_id=? AND day=?
 		ORDER BY event_name, attr_key, attr_value`, projectID, day)
 	if err != nil {
@@ -521,7 +525,7 @@ func readAttrs(t *testing.T, db *DB, projectID int64, day string) []attrRow {
 	var out []attrRow
 	for rows.Next() {
 		var r attrRow
-		if err := rows.Scan(&r.Event, &r.Key, &r.Value, &r.Count, &r.Uniques); err != nil {
+		if err := rows.Scan(&r.Event, &r.Key, &r.Value, &r.Count, &r.Uniques, &r.Groups); err != nil {
 			rows.Close()
 			t.Fatal(err)
 		}
@@ -539,9 +543,13 @@ func readAttrs(t *testing.T, db *DB, projectID int64, day string) []attrRow {
 // exercised. Counts vary (1..3) so the ranking is not a pure alphabetical
 // tiebreak, and the four actors repeat across values so the tail's
 // unique_users is strictly less than the sum of its per-value uniques --
-// the exact case a summed "(other)" row would get wrong.
+// the exact case a summed "(other)" row would get wrong. Groups cycle
+// through "", g1 and g2 by (i/3+n)%3, so the tail (the count-1 values
+// p30..p57, i.e. i/3 in 10..19) holds empties as well as both groups:
+// its distinct non-empty groups are 2 while its per-value sum is 7.
 func seedAttrDay(t *testing.T, db *DB, projectID int64) {
 	t.Helper()
+	groups := []string{"", "g1", "g2"}
 	var evs []store.ProductEvent
 	id := 0
 	for i := 0; i < 60; i++ {
@@ -549,7 +557,8 @@ func seedAttrDay(t *testing.T, db *DB, projectID int64) {
 			id++
 			evs = append(evs, store.ProductEvent{
 				ID: fmt.Sprintf("e%04d", id), ProjectID: projectID, EventName: "signup",
-				ActorID: fmt.Sprintf("a%d", (i+n)%4), TS: ts("2026-08-01T10:00:00Z"),
+				ActorID: fmt.Sprintf("a%d", (i+n)%4), GroupID: groups[(i/3+n)%3],
+				TS:         ts("2026-08-01T10:00:00Z"),
 				Attributes: map[string]string{"plan": fmt.Sprintf("p%02d", i)},
 				OS:         []string{"ios", "android"}[i%2],
 				AppVersion: []string{"1.0", "2.0", "3.0"}[i%3],
@@ -558,7 +567,7 @@ func seedAttrDay(t *testing.T, db *DB, projectID int64) {
 	}
 	// A second event name, so the per-event partitioning is exercised too.
 	evs = append(evs, store.ProductEvent{
-		ID: "ping1", ProjectID: projectID, EventName: "ping", ActorID: "a9",
+		ID: "ping1", ProjectID: projectID, EventName: "ping", ActorID: "a9", GroupID: "g1",
 		TS: ts("2026-08-01T11:00:00Z"), Attributes: map[string]string{"plan": "pro"},
 		OS: "web", AppVersion: "1.0",
 	})
@@ -598,6 +607,14 @@ func TestProductAttrsViewInvariant(t *testing.T) {
 	if other == 0 {
 		t.Fatal("no (other) row: the tail path is untested")
 	}
+	// The live half must always measure: NULL is reserved for days rolled
+	// up before 016, and a NULL here would make the before/after
+	// comparison agree for the wrong reason once the rollup writes NULL too.
+	for _, r := range before {
+		if !r.Groups.Valid {
+			t.Fatalf("live row %s/%s=%s has NULL unique_groups; the live half must always measure", r.Event, r.Key, r.Value)
+		}
+	}
 
 	if err := db.AggregateProductDay(ctx, id,
 		civil.DateOf(ts("2026-08-01T00:00:00Z")), []string{"plan"}, 50); err != nil {
@@ -609,23 +626,31 @@ func TestProductAttrsViewInvariant(t *testing.T) {
 	}
 }
 
-// The "(other)" row's unique_users must be a fresh COUNT(DISTINCT actor_id)
-// over the tail, not a sum of the per-value uniques: an actor appearing
-// under several tail values would otherwise be counted once per value.
+// The "(other)" row's unique_users and unique_groups must be fresh
+// COUNT(DISTINCT ...) over the tail, not a sum of the per-value figures: an
+// actor or a group appearing under several tail values would otherwise be
+// counted once per value.
 func TestProductAttrsViewOtherRecomputesUniques(t *testing.T) {
 	db := newTestDB(t)
 	id := seedDeclaredProject(t, db, []string{"plan"})
 	seedAttrDay(t, db, id)
 	var count, uniques int
-	if err := db.db.QueryRow(`SELECT count, unique_users FROM v_product_attrs
+	var groups sql.NullInt64
+	if err := db.db.QueryRow(`SELECT count, unique_users, unique_groups FROM v_product_attrs
 		WHERE project_id=? AND day='2026-08-01' AND event_name='signup'
-		  AND attr_key='plan' AND attr_value='(other)'`, id).Scan(&count, &uniques); err != nil {
+		  AND attr_key='plan' AND attr_value='(other)'`, id).Scan(&count, &uniques, &groups); err != nil {
 		t.Fatal(err)
 	}
 	if uniques >= count {
 		t.Fatalf("(other) = count %d uniques %d; the fixture repeats actors across "+
 			"tail values, so uniques must be strictly smaller than a summed count",
 			count, uniques)
+	}
+	// The tail is the ten count-1 values p30..p57 (i/3 in 10..19): groups
+	// g1, g2 and "" in rotation, so the distinct non-empty count is 2
+	// while a per-value sum would be 7.
+	if !groups.Valid || groups.Int64 != 2 {
+		t.Fatalf("(other) unique_groups = %+v, want 2 (distinct across the tail, not summed)", groups)
 	}
 }
 

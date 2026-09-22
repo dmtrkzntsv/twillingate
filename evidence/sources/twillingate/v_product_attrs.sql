@@ -3,8 +3,8 @@
 -- object" and fails the whole source build -- taking every other query on the
 -- page down with it. A fresh install has no traffic yet, so emit a sentinel
 -- row when the view is empty; pages filter it out via their project_id clause.
-select project_id, day, event_name, attr_key, attr_value, count, unique_users
+select project_id, day, event_name, attr_key, attr_value, count, unique_users, unique_groups
 from v_product_attrs
 union all
-select 0, '1970-01-01', '', '', '', 0, 0
+select 0, '1970-01-01', '', '', '', 0, 0, 0
 where not exists (select 1 from v_product_attrs)

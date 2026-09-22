@@ -46,7 +46,7 @@ func seed014(t *testing.T) *DB {
 func TestMigration015FoldsAndBackfills(t *testing.T) {
 	db := seed014(t)
 	ctx := context.Background()
-	if err := db.Migrate(ctx); err != nil {
+	if err := db.migrateThrough(ctx, 15); err != nil {
 		t.Fatalf("migration 015: %v", err)
 	}
 	row := func(q string, dst ...any) {

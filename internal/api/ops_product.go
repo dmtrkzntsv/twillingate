@@ -55,7 +55,7 @@ func (h *host) productAttributes(ctx context.Context, in productEventsIn) (table
 	if p == nil {
 		return tableOut{}, h.unknownProjectErr(ctx, in.ProjectID)
 	}
-	q := `SELECT day, event_name, attr_key, attr_value, count, unique_users
+	q := `SELECT day, event_name, attr_key, attr_value, count, unique_users, unique_groups
 		FROM v_product_attrs WHERE project_id=? AND day BETWEEN ? AND ?`
 	args := []any{in.ProjectID, in.From, in.To}
 	if in.Event != "" {

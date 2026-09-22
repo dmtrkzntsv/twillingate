@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"testing"
 
@@ -302,5 +303,98 @@ func TestRollupWritesPlatformSystemDimension(t *testing.T) {
 	}
 	if v != "electron" {
 		t.Fatalf("$platform = %q, want electron", v)
+	}
+}
+
+// Zero is a measurement: a day whose events carry no group at all rolls up
+// to unique_groups = 0, never NULL. NULL is reserved for days rolled up
+// before migration 016, and the whole nullable decision rests on the two
+// never being confused.
+func TestAggregateProductGroupsZeroIsMeasured(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	seedProductDay(t, db) // no event carries a group_id
+	if err := db.AggregateProductDay(ctx, 1, day("2026-08-10"), []string{"plan"}, 50); err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []string{"free", "pro"} {
+		g := groupsOf(t, db, `SELECT unique_groups FROM agg_product_attrs
+			WHERE event_name='subscribed' AND attr_key='plan' AND attr_value=?`, value)
+		if !g.Valid || g.Int64 != 0 {
+			t.Fatalf("plan=%s: unique_groups = %+v, want 0 (measured, none)", value, g)
+		}
+	}
+}
+
+// Distinctness: many events from one group count as one group, and the
+// same group under two event names counts once per event row -- which is
+// why the Evidence page takes max(unique_groups) rather than a sum.
+func TestAggregateProductGroupsAreDistinctPerEvent(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	at := func(m int) string { return fmt.Sprintf("2026-08-10T10:%02d:00Z", m) }
+	pro := map[string]string{"plan": "pro"}
+	if err := db.WriteProductEvents(ctx, []store.ProductEvent{
+		{ID: "g1", ProjectID: 1, EventName: "signup", ActorID: "u1", GroupID: "acme", TS: ts(at(0)), Attributes: pro},
+		{ID: "g2", ProjectID: 1, EventName: "signup", ActorID: "u2", GroupID: "acme", TS: ts(at(1)), Attributes: pro},
+		{ID: "g3", ProjectID: 1, EventName: "signup", ActorID: "u3", GroupID: "acme", TS: ts(at(2)), Attributes: pro},
+		{ID: "g4", ProjectID: 1, EventName: "signup", ActorID: "u4", GroupID: "globex", TS: ts(at(3)), Attributes: pro},
+		{ID: "g5", ProjectID: 1, EventName: "renew", ActorID: "u1", GroupID: "acme", TS: ts(at(4)), Attributes: pro},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AggregateProductDay(ctx, 1, day("2026-08-10"), []string{"plan"}, 50); err != nil {
+		t.Fatal(err)
+	}
+	for event, want := range map[string]int64{"signup": 2, "renew": 1} {
+		g := groupsOf(t, db, `SELECT unique_groups FROM agg_product_attrs
+			WHERE event_name=? AND attr_key='plan' AND attr_value='pro'`, event)
+		if !g.Valid || g.Int64 != want {
+			t.Fatalf("%s/plan=pro: unique_groups = %+v, want %d", event, g, want)
+		}
+	}
+	// acme appears under both events: the per-event figures sum to 3
+	// while only two groups exist, so a reader must not add them up.
+}
+
+// The tail: with topN forced low, "(other)" carries the distinct group
+// count across the whole tail, computed from raw. Overlapping groups make
+// that strictly less than the sum of the tail's own per-value counts.
+func TestAggregateProductGroupsInTail(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	var evs []store.ProductEvent
+	id := 0
+	add := func(user, group, val string) {
+		id++
+		evs = append(evs, store.ProductEvent{ID: fmt.Sprintf("t%d", id), ProjectID: 1,
+			EventName: "clicked", ActorID: user, GroupID: group, TS: ts("2026-08-10T10:00:00Z"),
+			Attributes: map[string]string{"button": val}})
+	}
+	add("u1", "acme", "v0") // v0 x3 is the one kept value
+	add("u2", "globex", "v0")
+	add("u3", "", "v0")
+	add("u1", "acme", "v1") // the tail: acme twice, globex once, one with no group
+	add("u2", "acme", "v2")
+	add("u3", "globex", "v3")
+	add("u4", "", "v4")
+	if err := db.WriteProductEvents(ctx, evs); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AggregateProductDay(ctx, 1, day("2026-08-10"), []string{"button"}, 1); err != nil {
+		t.Fatal(err)
+	}
+	if g := groupsOf(t, db, `SELECT unique_groups FROM agg_product_attrs
+		WHERE attr_key='button' AND attr_value='v0'`); !g.Valid || g.Int64 != 2 {
+		t.Fatalf("v0: unique_groups = %+v, want 2 (the empty group does not count)", g)
+	}
+	var count int
+	var groups sql.NullInt64
+	if err := db.db.QueryRow(`SELECT count, unique_groups FROM agg_product_attrs
+		WHERE attr_key='button' AND attr_value='(other)'`).Scan(&count, &groups); err != nil {
+		t.Fatal(err)
+	}
+	if count != 4 || !groups.Valid || groups.Int64 != 2 {
+		t.Fatalf("(other): count=%d unique_groups=%+v, want 4 and 2 (acme, globex; a summed tail would say 3)", count, groups)
 	}
 }

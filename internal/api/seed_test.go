@@ -87,8 +87,11 @@ func newTestHost(t *testing.T) (*host, *mcp.ClientSession) {
 	// depends on. Rollups are unconditional now (no enabled flag).
 	seed(`UPDATE projects SET attributes = '["plan"]' WHERE id=1`)
 	seed(`UPDATE projects SET allowed_origins = '["https://blog.example.com"]' WHERE id=1`)
-	seed(`INSERT INTO agg_product_attrs (project_id, day, event_name, attr_key, attr_value, count, unique_users)
-	      VALUES (1,'2026-08-20','signup','plan','pro',3,3)`)
+	// One row rolled up before migration 016 (unique_groups NULL, "not
+	// measured") and one after, so the tool is seen to carry both.
+	seed(`INSERT INTO agg_product_attrs (project_id, day, event_name, attr_key, attr_value, count, unique_users, unique_groups)
+	      VALUES (1,'2026-08-20','signup','plan','pro',3,3,NULL),
+	             (1,'2026-08-21','signup','plan','team',2,2,2)`)
 
 	db, err := OpenReadDB(path)
 	if err != nil {
