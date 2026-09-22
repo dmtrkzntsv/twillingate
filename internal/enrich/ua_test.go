@@ -66,6 +66,29 @@ func TestNormalizeDevice(t *testing.T) {
 	}
 }
 
+// $platform is open but bounded: the same shape as $kind, applied after
+// lower-casing so a client sending iOS records ios rather than being
+// dropped. There is no other: every well-formed token is a value, so the
+// only failure is "no usable value", which unknown says.
+func TestNormalizePlatform(t *testing.T) {
+	cases := map[string]struct {
+		want string
+		ok   bool
+	}{
+		"web": {"web", true}, "iOS": {"ios", true}, " Electron ": {"electron", true},
+		"quest_2": {"quest_2", true}, "unknown": {"unknown", true},
+		"":              {"unknown", true},
+		"Bad Platform!": {"unknown", false}, "9lives": {"unknown", false},
+		"averyveryverylongplatformname": {"unknown", false},
+	}
+	for in, c := range cases {
+		got, ok := NormalizePlatform(in)
+		if got != c.want || ok != c.ok {
+			t.Errorf("NormalizePlatform(%q) = (%q, %v), want (%q, %v)", in, got, ok, c.want, c.ok)
+		}
+	}
+}
+
 // Every vocabulary is lower-case, closed under its own validator, and ends
 // with the two floors — other and unknown are different answers and both
 // must be sendable.

@@ -121,7 +121,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		if !osKnown {
 			res.warn(i, "$os %q is not a known value, stored as other", rv.OS)
 		}
-		platform := res.declared(i, "$platform", rv.Platform, normalizePlatform)
+		platform := res.declared(i, "$platform", rv.Platform, enrich.NormalizePlatform)
 
 		defaultKind, isView := viewName(ev.Name)
 		if !isView {

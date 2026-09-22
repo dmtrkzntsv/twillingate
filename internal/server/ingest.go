@@ -221,21 +221,6 @@ func parseDisplay(raw string) (int, bool) {
 	return n, false
 }
 
-// normalizePlatform validates a declared $platform: trim, lower-case, then
-// the same shape as $kind. The vocabulary is open, so every well-formed
-// token is accepted as sent; the only failure is "no usable value", which
-// unknown says. Absent is unknown too, and is not a mistake to warn about.
-func normalizePlatform(v string) (string, bool) {
-	v = strings.ToLower(strings.TrimSpace(v))
-	if v == "" {
-		return "unknown", true
-	}
-	if kindPattern.MatchString(v) {
-		return v, true
-	}
-	return "unknown", false
-}
-
 // declared runs one environment validator and warns when the value was
 // present but unrecognised, so the mistake surfaces in the response body
 // during integration instead of becoming a quiet other months later. A

@@ -303,6 +303,8 @@ git commit -m "feat(enrich)!: validate declared os, browser and device against c
 
 ### Task 2: Migration 015, the store types, the aggregator and every store test
 
+> Revised 2026-09-22: the value folds moved out of the SQL into a Go data step (`internal/store/sqlite/migration015.go`) that runs through `internal/enrich` in the same transaction; the SQL file changes only structure. See Task 9.
+
 Implements spec "Storage — migration 015" (statements 1–8), "Reporting" rows for `internal/store/*`, and "Interaction with the existing OS aggregate". After Step 3 the migration exists but the aggregator still writes `os` into the rekeyed `agg_views_app_versions`, so several store tests fail until Step 8. Verify only what each step names; the whole package runs at Step 12.
 
 **Files:**

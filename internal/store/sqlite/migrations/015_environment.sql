@@ -1,19 +1,27 @@
 -- 015: the client declares its environment.
 -- Spec: docs/superpowers/specs/2026-09-20-os-and-platform-design.md
 --
--- Adds platform (views, events) and os_name (views), closes os, browser
--- and device to lower-case vocabularies, gives platform its own aggregate
--- and view, and rekeys agg_views_app_versions from (os, app_version) to
--- (platform, app_version). Statements are numbered as in the spec and the
--- order is load-bearing: the platform backfill (1) reads views.os and
--- must run before the OS fold (3) rewrites it. This is the only time
--- platform is ever derived from os -- 012 folded app_views.platform into
--- os, and this inverts that fold. From here on os is a genuine OS and
--- says nothing about platform (macos could be web or electron).
+-- Adds platform (views, events) and os_name (views), gives platform its
+-- own aggregate and view, and rekeys agg_views_app_versions from
+-- (os, app_version) to (platform, app_version).
+--
+-- This file changes structure only. Every value fold -- closing os,
+-- browser and device to the lower-case vocabularies, backfilling an app
+-- row's platform, and copying the app_versions history onto its new key
+-- -- runs in Go (internal/store/sqlite/migration015.go) through the
+-- validators in internal/enrich, in this same transaction and right
+-- after the last statement below, so a vocabulary is defined once and the
+-- database carries no copy of it. Statements are numbered as in the spec
+-- and the order is load-bearing: the platform backfill (1) reads views.os
+-- and must run before the OS fold (3) rewrites it. That backfill is the
+-- only time platform is ever derived from os -- 012 folded
+-- app_views.platform into os, and the data step inverts that fold. From
+-- here on os is a genuine OS and says nothing about platform (macos could
+-- be web or electron).
 --
 -- Irreversible. The OS fold copies the original name into os_name for
 -- raw rows, but aggregate history has no such column, so its
--- out-of-vocabulary tail is left unfolded rather than merged (4).
+-- out-of-vocabulary tail is left unfolded rather than merged.
 
 -- Only these views are touched. They are dropped first so the
 -- app_versions rebuild below can rename its table: with a view still
@@ -25,73 +33,15 @@ ALTER TABLE views  ADD COLUMN platform TEXT NOT NULL DEFAULT 'unknown';
 ALTER TABLE events ADD COLUMN platform TEXT NOT NULL DEFAULT 'unknown';
 ALTER TABLE views  ADD COLUMN os_name  TEXT NOT NULL DEFAULT '';
 
--- 1. views platform backfill, faithful: web is web; app inverts 012's
---    fold; every other kind keeps the default. A derived token outside
---    ^[a-z][a-z0-9_]{0,15}$ is unknown.
+-- 1. views platform backfill, structural half: a web view is web by
+--    definition, so no value is derived here. App rows are backfilled by
+--    the data step (it inverts 012's fold of app_views.platform into os);
+--    every other kind keeps the column default, unknown.
 UPDATE views SET platform = 'web' WHERE kind = 'web';
-UPDATE views SET platform = lower(os)
-WHERE kind = 'app'
-  AND lower(os) GLOB '[a-z]*'
-  AND lower(os) NOT GLOB '*[^a-z0-9_]*'
-  AND length(os) <= 16;
 
--- 2. events platform backfill: none. events has no kind column, so
---    lower(os) would label a web SDK's custom events macos rather than
---    web. Every row keeps the column default, unknown.
-
--- 3. OS fold, raw rows. The original is preserved first, so other stays
---    investigable; then lower-case, '' -> unknown, unlisted -> other.
-UPDATE views SET os_name = os
-WHERE os <> '' AND lower(os) NOT IN (
-  'windows','macos','linux','bsd','chromeos','ios','ipados','android','fireos','harmonyos','kaios',
-  'tvos','watchos','visionos','tizen','webos','playstation','xbox','nintendo','other','unknown');
-UPDATE views SET os = CASE
-  WHEN os = '' THEN 'unknown'
-  WHEN lower(os) IN (
-    'windows','macos','linux','bsd','chromeos','ios','ipados','android','fireos','harmonyos','kaios',
-    'tvos','watchos','visionos','tizen','webos','playstation','xbox','nintendo','other','unknown')
-    THEN lower(os)
-  ELSE 'other' END;
-UPDATE events SET os = CASE
-  WHEN os = '' THEN 'unknown'
-  WHEN lower(os) IN (
-    'windows','macos','linux','bsd','chromeos','ios','ipados','android','fireos','harmonyos','kaios',
-    'tvos','watchos','visionos','tizen','webos','playstation','xbox','nintendo','other','unknown')
-    THEN lower(os)
-  ELSE 'other' END;
-
--- 4. OS fold, aggregate history: only what merges nothing. Canonical
---    values are lower-cased (injective over the vocabulary) and '' is
---    relabelled to unknown (a value that did not exist before). An
---    unlisted value is left exactly as it was: folding it into other
---    would SUM visitors that were counted as distinct actors. Two
---    spellings of one canonical value on one key would collide here and
---    abort the migration; docs/deployment.md lists the query that finds
---    them beforehand.
-UPDATE agg_views_os SET os = CASE WHEN os = '' THEN 'unknown' ELSE lower(os) END
-WHERE os = '' OR lower(os) IN (
-  'windows','macos','linux','bsd','chromeos','ios','ipados','android','fireos','harmonyos','kaios',
-  'tvos','watchos','visionos','tizen','webos','playstation','xbox','nintendo','other','unknown');
-UPDATE agg_product_attrs SET attr_value = CASE WHEN attr_value = '' THEN 'unknown' ELSE lower(attr_value) END
-WHERE attr_key = '$os' AND (attr_value = '' OR lower(attr_value) IN (
-  'windows','macos','linux','bsd','chromeos','ios','ipados','android','fireos','harmonyos','kaios',
-  'tvos','watchos','visionos','tizen','webos','playstation','xbox','nintendo','other','unknown'));
-
--- 5. Browser and device fold: loss-free. No client could write these
---    columns before 015, so every value came from ParseUserAgent -- six
---    browser names, three device classes, or '' -- and all nine are in
---    the new vocabularies. The fold is injective and merges nothing. The
---    '' rows are the app and cli rows kind gating never enriched.
-UPDATE views SET browser = CASE
-  WHEN browser = '' THEN 'unknown'
-  WHEN browser = 'Samsung Internet' THEN 'samsung_internet'
-  ELSE lower(browser) END;
-UPDATE views SET device = CASE WHEN device = '' THEN 'unknown' ELSE lower(device) END;
-UPDATE agg_views_browsers SET browser = CASE
-  WHEN browser = '' THEN 'unknown'
-  WHEN browser = 'Samsung Internet' THEN 'samsung_internet'
-  ELSE lower(browser) END;
-UPDATE agg_views_devices SET device = CASE WHEN device = '' THEN 'unknown' ELSE lower(device) END;
+-- 2. events platform backfill: none. events has no kind column, so os
+--    would label a web SDK's custom events macos rather than web. Every
+--    row keeps the column default, unknown.
 
 -- 6. agg_views_platforms, modelled on agg_views_countries and seeded from
 --    agg_views_daily: web is exact; every other kind becomes unknown, so
@@ -109,30 +59,18 @@ SELECT project_id, day, CASE WHEN kind = 'web' THEN 'web' ELSE 'unknown' END,
 FROM agg_views_daily
 GROUP BY project_id, day, CASE WHEN kind = 'web' THEN 'web' ELSE 'unknown' END;
 
--- 7. agg_views_app_versions rekey: (os, app_version) -> (platform,
---    app_version), platform = lower(os), or unknown outside the platform
---    pattern. Canonical os values are value-preserving. Two rows do merge,
---    and this GROUP BY sums them rather than aborting as 4 does: two
---    spellings of one token on one (project_id, day, app_version) -- an app
---    that sent $os iPadOS in one release and ipados in the next, which
---    NormalizeOS stored verbatim -- collapse into one row whose visitors is
---    a sum, and so can overcount an actor counted in both; values outside
---    the pattern collapse into unknown the same way. docs/deployment.md
---    lists the pre-upgrade check that finds such rows first.
-CREATE TABLE agg_views_app_versions_new (
+-- 7. agg_views_app_versions rekey, structural half: (os, app_version) ->
+--    (platform, app_version). The old table is set aside under _old and
+--    the new one is created empty; the data step copies the rows through
+--    the platform validator and drops _old. Renaming before the views are
+--    created is what keeps them pointing at the new table, so no view
+--    ever dangles.
+ALTER TABLE agg_views_app_versions RENAME TO agg_views_app_versions_old;
+CREATE TABLE agg_views_app_versions (
     project_id INTEGER NOT NULL, day TEXT NOT NULL, platform TEXT NOT NULL, app_version TEXT NOT NULL,
     visitors INTEGER NOT NULL, views INTEGER NOT NULL,
     PRIMARY KEY (project_id, day, platform, app_version)
 ) WITHOUT ROWID;
-INSERT INTO agg_views_app_versions_new (project_id, day, platform, app_version, visitors, views)
-SELECT project_id, day,
-       CASE WHEN lower(os) GLOB '[a-z]*' AND lower(os) NOT GLOB '*[^a-z0-9_]*' AND length(os) <= 16
-            THEN lower(os) ELSE 'unknown' END,
-       app_version, SUM(visitors), SUM(views)
-FROM agg_views_app_versions
-GROUP BY 1, 2, 3, 4;
-DROP TABLE agg_views_app_versions;
-ALTER TABLE agg_views_app_versions_new RENAME TO agg_views_app_versions;
 
 -- 8. Views. v_views_platforms copies the v_views_countries shape (the
 --    single-key dimension, including the 500-value cap); v_views_countries

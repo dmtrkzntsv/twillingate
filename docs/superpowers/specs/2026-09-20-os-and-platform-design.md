@@ -340,6 +340,8 @@ text beside `$device`.
 
 ## Storage — migration `015_environment.sql`
 
+> Implementation note (2026-09-22): statements 1 (app rows), 3, 4, 5 and 7 run in Go (`internal/store/sqlite/migration015.go`) through the `internal/enrich` validators, in the same transaction and in this order, so the vocabulary is defined once and the database carries no copy. The SQL file holds the DDL, the web backfill, the platforms seed and the views.
+
 013 is the last migration on `main` and 014 belongs to the project-ids
 spec, so this is 015.
 

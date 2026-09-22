@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"embed"
 	"fmt"
 	"math"
@@ -12,6 +13,15 @@ import (
 
 //go:embed migrations/*.sql
 var migrationFS embed.FS
+
+// dataSteps are the parts of a migration that must not be SQL: value
+// folds that run through the same validators the server applies at
+// ingest, so a vocabulary is defined once (internal/enrich) and the
+// database never carries a copy. A step runs after its version's SQL, in
+// the same transaction, and an error rolls the whole migration back.
+var dataSteps = map[int]func(context.Context, *sql.Tx) error{
+	15: foldEnvironment,
+}
 
 func (d *DB) Migrate(ctx context.Context) error {
 	return d.migrateThrough(ctx, math.MaxInt)
@@ -60,6 +70,12 @@ func (d *DB) migrateThrough(ctx context.Context, maxVersion int) error {
 		if _, err := tx.ExecContext(ctx, string(body)); err != nil {
 			tx.Rollback()
 			return fmt.Errorf("sqlite: migration %s: %w", name, err)
+		}
+		if step, ok := dataSteps[version]; ok {
+			if err := step(ctx, tx); err != nil {
+				tx.Rollback()
+				return fmt.Errorf("sqlite: migration %s data step: %w", name, err)
+			}
 		}
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO schema_migrations (version) VALUES (?)`, version); err != nil {

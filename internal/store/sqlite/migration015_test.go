@@ -174,6 +174,10 @@ func TestMigration015FoldsAndBackfills(t *testing.T) {
 	if n != 4 {
 		t.Errorf("agg_views_app_versions rows = %d, want 4", n)
 	}
+	row(`SELECT COUNT(*) FROM sqlite_master WHERE name='agg_views_app_versions_old'`, &n)
+	if n != 0 {
+		t.Errorf("the rekey left %d agg_views_app_versions_old objects behind", n)
+	}
 	// 8. views: platforms created, app_versions rekeyed, product attrs
 	//    gains $platform. The live halves see the folded raw rows.
 	row(`SELECT visitors, views FROM v_views_platforms WHERE project_id=1 AND day='2026-09-10' AND platform='web'`, &n, &m)

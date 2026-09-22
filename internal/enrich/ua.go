@@ -6,7 +6,10 @@
 // a declared value against a closed vocabulary.
 package enrich
 
-import "strings"
+import (
+	"regexp"
+	"strings"
+)
 
 var botMarkers = []string{
 	"bot", "crawler", "spider", "crawling", "headless", "lighthouse",
@@ -79,6 +82,24 @@ func NormalizeBrowser(v string) (string, bool) { return closed(v, browserSet, "_
 
 // NormalizeDevice is NormalizeOS for $device.
 func NormalizeDevice(v string) (string, bool) { return closed(v, deviceSet, "") }
+
+// platformPattern bounds a declared $platform to the same shape as $kind.
+var platformPattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,15}$`)
+
+// NormalizePlatform validates a declared $platform: trim, lower-case, then
+// the same shape as $kind. The vocabulary is open, so every well-formed
+// token is accepted as sent; the only failure is "no usable value", which
+// unknown says. Absent is unknown too, and is not a mistake to warn about.
+func NormalizePlatform(v string) (string, bool) {
+	v = strings.ToLower(strings.TrimSpace(v))
+	if v == "" {
+		return "unknown", true
+	}
+	if platformPattern.MatchString(v) {
+		return v, true
+	}
+	return "unknown", false
+}
 
 // closed trims, lower-cases, replaces spaces and dashes with sep ("Chrome
 // OS" → chromeos, "Samsung Internet" → samsung_internet), then matches
