@@ -18,8 +18,8 @@ function okFetch(_url: string, init: { body: string }): Promise<{ status: number
   return Promise.resolve({ status: 202 });
 }
 
-function tg(opts: Partial<Parameters<Twillingate["init"]>[0]> = {}, instance?: string): Twillingate {
-  const t = new Twillingate(instance);
+function tg(opts: Partial<Parameters<Twillingate["init"]>[0]> = {}): Twillingate {
+  const t = new Twillingate();
   t.init({ key: "ak_test", url: URL_BASE, flushInterval: 0, ...opts });
   return t;
 }
@@ -125,12 +125,20 @@ describe("data-instance", () => {
     expect(warn.mock.calls.flat().join(" ")).toContain("other");
   });
 
-  it("refuses an invalid name and keeps the default", () => {
+  it("refuses an invalid name and keeps the default", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const t = bootstrap(scriptTag({ "data-key": "ak_web", "data-instance": "Not-Valid", "data-auto": "off" }));
     expect(g.twillingate).toBe(t);
     expect(g["Not-Valid"]).toBeUndefined();
     expect(warn).toHaveBeenCalled();
+
+    // The unusable attribute did not "declare" a name: an undeclared
+    // instance still honours a later init({ instance }), with no warning.
+    warn.mockClear();
+    t!.init({ key: "ak_web", url: URL_BASE, flushInterval: 0, identity: "identified", consent: true, instance: "et" });
+    const attrs = await lastAttributes(t!);
+    expect(localStorage.getItem("et_visitor")).toBe(attrs.$install_id);
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it("never overwrites a foreign global", async () => {
@@ -141,6 +149,36 @@ describe("data-instance", () => {
     expect(warn.mock.calls.flat().join(" ")).toContain("et");
     // The tag still tracks; it is just not reachable through the global.
     expect((await lastAttributes(et!)).$kind).toBe("web");
+  });
+
+  it("never overwrites a foreign global that merely duck-types init() (no VERSION marker)", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const foreign = { init() {} };
+    g.et = foreign;
+    const withKey = bootstrap(scriptTag({ "data-key": "ak_et", "data-instance": "et", "data-auto": "off" }));
+    expect(g.et).toBe(foreign);
+    expect(warn.mock.calls.flat().join(" ")).toContain("et");
+    expect(withKey).not.toBeNull();
+    expect((await lastAttributes(withKey!)).$kind).toBe("web");
+
+    g.et = foreign;
+    const withoutKey = bootstrap(scriptTag({ "data-instance": "et" }));
+    expect(g.et).toBe(foreign);
+    expect(withoutKey).not.toBeNull();
+    withoutKey!.init({ key: "ak_code", url: URL_BASE, flushInterval: 0 });
+    expect((await lastAttributes(withoutKey!)).$kind).toBe("web");
+  });
+
+  it("a named tag can be taken over by a different key, with a warning naming the global", async () => {
+    const first = bootstrap(scriptTag({ "data-key": "ak_a", "data-instance": "et", "data-auto": "off" }));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const second = bootstrap(scriptTag({ "data-key": "ak_b", "data-instance": "et", "data-auto": "off" }));
+    expect(second).not.toBeNull();
+    expect(second).not.toBe(first);
+    expect(g.et).toBe(second);
+    const warned = warn.mock.calls.flat().join(" ");
+    expect(warned).toContain("window.et");
+    expect(warned).toContain("ak_a -> ak_b");
   });
 
   it("stands down for a duplicate of the same named tag, not for the default tag beside it", () => {

@@ -184,8 +184,19 @@ export function instanceName(name: string | null | undefined): string {
   return DEFAULT_INSTANCE;
 }
 
+// Two ways to recognize "this is a twillingate instance": same-bundle
+// identity (instanceof, what a test constructing Twillingate directly
+// produces) or the cross-release marker every shipped bundle stamps on the
+// global (VERSION, a string) alongside init(). init() alone is not enough —
+// plenty of unrelated globals (Segment's analytics.js among them) expose an
+// init() method, and duck-typing on that would let bootstrap either
+// overwrite a foreign global or, worse, treat it as a loaded copy of this
+// SDK and refuse to run at all.
 function isInstance(x: unknown): x is Twillingate {
-  return !!x && typeof (x as Twillingate).init === "function";
+  return (
+    x instanceof Twillingate ||
+    (!!x && typeof (x as Twillingate).init === "function" && typeof (x as { VERSION?: unknown }).VERSION === "string")
+  );
 }
 
 const MAX_BATCH = 500; // server cap per docs/twillingate.md
@@ -273,7 +284,7 @@ export class Twillingate {
   constructor(instance?: string) {
     if (instance !== undefined) {
       this.declared = true;
-      this.useInstance(instance);
+      this.useInstance(instanceName(instance));
     }
   }
 
@@ -869,10 +880,15 @@ export function autoInit(tg: Twillingate, script: HTMLScriptElement | null): voi
 export function bootstrap(script: HTMLScriptElement | null): Twillingate | null {
   const attr = script ? script.getAttribute("data-instance") : null;
   const name = attr === null ? DEFAULT_INSTANCE : instanceName(attr);
-  const g = globalThis as Record<string, unknown>;
+  const g = window as unknown as Record<string, unknown>;
   const existing = g[name];
   if (supersededBy(existing, script, name)) return null;
-  const tg = new Twillingate(attr === null ? undefined : name);
+  // An unusable attribute already fell back to the default inside
+  // instanceName above; pass undefined rather than the resolved name so
+  // the constructor does not mark this instance "declared" against a name
+  // it never actually got from the tag, and a later init({ instance })
+  // can still take effect.
+  const tg = new Twillingate(name === DEFAULT_INSTANCE ? undefined : name);
   (tg as Twillingate & { VERSION: string }).VERSION = VERSION;
   if (existing === undefined || existing === null || isInstance(existing)) {
     g[name] = tg;
