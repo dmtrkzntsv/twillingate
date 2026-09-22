@@ -553,7 +553,7 @@ expected `aud`: the origin or `<origin>/mcp`, or the `audience=` value.
 | Upgrade (systemd) | `curl -fsSL …/install.sh \| sudo bash` — restarts the running service and reports the old and new version |
 | Upgrade (compose) | `docker compose pull && docker compose up -d`. Never `down -v`: the database lives in the named volume. Pin with `TWILLINGATE_VERSION=v0.9.2` in `.env`. |
 | Apply migrations only | `twillingate migrate` |
-| Upgrade across a schema change | Take a Litestream snapshot first (`litestream snapshots …`, or copy the db file while the service is stopped): migrations such as 012 (web and app folded into one views family) and 014 (integer project ids) are irreversible |
+| Upgrade across a schema change | Take a Litestream snapshot first (`litestream snapshots …`, or copy the db file while the service is stopped): migrations such as 012 (web and app folded into one views family), 014 (integer project ids) and 015 (declared environment) are irreversible |
 | Database size | `du -h /var/lib/twillingate/twillingate.db` |
 | Replication status | `journalctl -u litestream --since -1h`, or `docker compose logs litestream` |
 | Dashboard rebuilds | `docker compose logs dashboards` — one `dashboards: rebuilt` line per successful build |
@@ -606,6 +606,72 @@ Two things change on the day: retention is global from now on
 instead of the alias, so an anonymous visitor seen before and after the
 upgrade counts twice in that day's uniques and a session spanning it
 splits. The salt rotates at midnight anyway, so the seam is one day.
+
+### Upgrading to the declared environment (migration 015)
+
+From this migration the client declares its operating system, browser
+and device class and the server only validates them, against closed
+lower-case vocabularies; the User-Agent is read for nothing but the
+crawler drop. `platform` becomes its own column, aggregate and breakdown
+dimension, and `v_views_app_versions` is keyed by it instead of `os`.
+Before upgrading, run these against the live database:
+
+```sql
+-- 1. Two spellings of one OS on one aggregate key. Any hit aborts
+--    migration 015 (lower-casing them would collide) and leaves the
+--    database at 014. Merge or delete the duplicate by hand first.
+SELECT project_id, day, lower(os), os_version, COUNT(*) FROM agg_views_os
+GROUP BY 1, 2, 3, 4 HAVING COUNT(*) > 1;
+SELECT project_id, day, event_name, lower(attr_value), COUNT(*) FROM agg_product_attrs
+WHERE attr_key = '$os' GROUP BY 1, 2, 3, 4 HAVING COUNT(*) > 1;
+
+-- 1b. Two spellings of one OS under one app version. These do NOT abort:
+--    the app-versions rekey sums their visitors into one row, which can
+--    overcount. Merge or delete the duplicate first if that matters.
+SELECT project_id, day, lower(os), app_version, COUNT(*) FROM agg_views_app_versions
+GROUP BY 1, 2, 3, 4 HAVING COUNT(*) > 1;
+
+-- 1c. An empty os beside a literal 'unknown' on one key. The migration
+--    relabels '' to 'unknown', so these collide and abort like case
+--    variants do.
+SELECT project_id, day, os_version FROM agg_views_os WHERE os = ''
+INTERSECT
+SELECT project_id, day, os_version FROM agg_views_os WHERE os = 'unknown';
+
+-- 2. OS values outside the vocabulary. Raw rows fold to 'other' and keep
+--    the original in os_name; aggregate history keeps these spellings as
+--    they are, so decide now whether any deserves a client-side fix.
+SELECT os, COUNT(*) FROM views WHERE lower(os) NOT IN (
+  'windows','macos','linux','bsd','chromeos','ios','ipados','android','fireos','harmonyos','kaios',
+  'tvos','watchos','visionos','tizen','webos','playstation','xbox','nintendo','other','unknown')
+GROUP BY os;
+```
+
+Then stop the service, copy the database (or take a Litestream snapshot),
+run the installer, and check `journalctl` for migration 015.
+
+What changes on the day:
+
+- **Every stored `os`, `browser` and `device` value is lower-case**
+  (`ios`, `chrome`, `samsung_internet`), rows that were empty are
+  `unknown`, and `v_views_app_versions` has a `platform` column where
+  `os` was. Saved SQL and dashboards comparing against `'iOS'` or
+  `'Chrome'`, or selecting `os` from the app-versions view, return
+  nothing until rewritten.
+- **Clients that are not the served JS SDK** — a backend relay, a native
+  app, a custom SDK — record `unknown` for OS, browser and device until
+  they declare `$os`, `$browser` and `$device` (and `$platform`). Snippet
+  sites pick up detection with the upgrade because the collector serves
+  the SDK; bundled or npm consumers when they update.
+- **Deployed app clients that sent `$platform` as an alias for `$os`**
+  lose their OS dimension until they ship an update that sends both; their
+  platform dimension starts working at once.
+- iPad traffic moves from `ios` to `ipados`, Brave from `chrome` to
+  `brave`, and consoles and TVs from `desktop` to `other`, so those
+  series step on the upgrade day.
+- `agg_views_app_versions` history is rekeyed by `platform = lower(os)`,
+  which is value-preserving; going forward, versions from clients that
+  do not yet send `$platform` roll up under `unknown` until they update.
 
 ### Replication with litestream
 
