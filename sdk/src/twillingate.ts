@@ -583,7 +583,15 @@ export class Twillingate {
   }
 
   private emit(name: string, attributes: Record<string, unknown>): void {
-    attributes = { ...this.defaultAttrs, ...attributes };
+    // A null or undefined value drops the key: the way to suppress a value
+    // the SDK derives on its own ($referrer) for one call. Applies to the
+    // event's attributes and attrs() defaults; batch attributes are
+    // untouched and the server layers the event over them key by key.
+    const merged: Record<string, unknown> = { ...this.defaultAttrs, ...attributes };
+    attributes = {};
+    for (const key of Object.keys(merged)) {
+      if (merged[key] !== null && merged[key] !== undefined) attributes[key] = merged[key];
+    }
     this.queue.push({ id: uuid(), ts: new Date().toISOString(), name, attributes });
     if (this.queue.length >= FLUSH_AT) {
       this.flush();

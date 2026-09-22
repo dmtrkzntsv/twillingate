@@ -204,3 +204,34 @@ describe("page() overloads", () => {
     expect(seen).toContain("/second");
   });
 });
+
+describe("null drops an attribute", () => {
+  it("omits null and undefined values, keeps 0 and empty strings", async () => {
+    const t = tg();
+    t.track("e", { a: null, b: undefined, c: 0, d: "" });
+    t.flush();
+    await drain();
+    expect(lastEvent().attributes).toEqual({ c: 0, d: "" });
+  });
+
+  it("suppresses a derived pageview attribute for one call, while $host overrides reach the wire", async () => {
+    Object.defineProperty(document, "referrer", { value: "https://news.example.org/", configurable: true });
+    const t = tg();
+    t.page("/budget", { $host: "selfhosted_ab12", $referrer: null });
+    t.flush();
+    await drain();
+    const attrs = lastEvent().attributes as Record<string, unknown>;
+    expect(attrs.$host).toBe("selfhosted_ab12");
+    expect(attrs.$path).toBe("/budget");
+    expect(attrs).not.toHaveProperty("$referrer");
+  });
+
+  it("lets an event null out an attrs() default", async () => {
+    const t = tg();
+    t.attrs({ region: "eu", tier: "beta" });
+    t.track("e", { region: null });
+    t.flush();
+    await drain();
+    expect(lastEvent().attributes).toEqual({ tier: "beta" });
+  });
+});
