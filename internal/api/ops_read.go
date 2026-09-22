@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dmtrkzntsv/twillingate/internal/config"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -32,37 +31,35 @@ type host struct {
 var dayRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 
 type rangeIn struct {
-	Project string `json:"project" jsonschema:"project alias; call list_projects first"`
-	From    string `json:"from" jsonschema:"start day inclusive, YYYY-MM-DD"`
-	To      string `json:"to" jsonschema:"end day inclusive, YYYY-MM-DD"`
+	ProjectID int64  `json:"project_id" jsonschema:"project id; call list_projects first"`
+	From      string `json:"from" jsonschema:"start day inclusive, YYYY-MM-DD"`
+	To        string `json:"to" jsonschema:"end day inclusive, YYYY-MM-DD"`
 }
 
 // checkRange validates the shared inputs. Error text is written for a
 // model to recover from (endpoint spec §10): an unknown project lists
-// the valid aliases instead of just refusing.
+// the valid ids and names instead of just refusing.
 func (h *host) checkRange(ctx context.Context, in rangeIn) error {
 	if !dayRe.MatchString(in.From) || !dayRe.MatchString(in.To) {
 		return invalidf("from and to must be YYYY-MM-DD, got %q and %q", in.From, in.To)
 	}
-	if h.reg.Snapshot(ctx).Project(in.Project) == nil {
-		return h.unknownProjectErr(ctx, in.Project)
+	if h.reg.Snapshot(ctx).Project(in.ProjectID) == nil {
+		return h.unknownProjectErr(ctx, in.ProjectID)
 	}
 	return nil
 }
 
-// unknownProjectErr lists the valid aliases so a model can recover
-// (endpoint spec §10). Shared by checkRange and by tools that re-fetch
-// the project after checkRange has already validated it, in case the
-// registry reloaded in between (a nil project would otherwise panic on
-// field access).
-func (h *host) unknownProjectErr(ctx context.Context, alias string) error {
-	s := h.reg.Snapshot(ctx)
-	var aliases []string
-	for _, p := range s.Projects() {
-		aliases = append(aliases, p.Alias)
+// unknownProjectErr lists the valid ids with their names so a model can
+// recover (endpoint spec §10) without a second list_projects call. Shared
+// by checkRange and by tools that re-fetch the project after checkRange
+// has already validated it, in case the registry reloaded in between (a
+// nil project would otherwise panic on field access).
+func (h *host) unknownProjectErr(ctx context.Context, id int64) error {
+	var choices []string
+	for _, p := range h.reg.Snapshot(ctx).Projects() {
+		choices = append(choices, fmt.Sprintf("%d (%s)", p.ID, p.Name))
 	}
-	sort.Strings(aliases)
-	return notFoundf("unknown project %q; valid aliases: %s", alias, strings.Join(aliases, ", "))
+	return notFoundf("unknown project %d; valid projects: %s", id, strings.Join(choices, ", "))
 }
 
 type tableOut struct {
@@ -90,15 +87,14 @@ func (h *host) table(ctx context.Context, q string, args ...any) (tableOut, erro
 // ---- list_projects ----
 
 type projectOut struct {
-	Alias          string                    `json:"alias"`
-	Name           string                    `json:"name"`
-	Identity       string                    `json:"identity"`
-	Archived       bool                      `json:"archived,omitempty"`
-	FirstViewDay   string                    `json:"first_view_day,omitempty"`
-	LastViewDay    string                    `json:"last_view_day,omitempty"`
-	AllowedOrigins []string                  `json:"allowed_origins"`
-	Retention      *config.RetentionOverride `json:"retention,omitempty"`
-	Attributes     []string                  `json:"attributes,omitempty"`
+	ProjectID      int64    `json:"project_id"`
+	Name           string   `json:"name"`
+	Identity       string   `json:"identity"`
+	Archived       bool     `json:"archived,omitempty"`
+	FirstViewDay   string   `json:"first_view_day,omitempty"`
+	LastViewDay    string   `json:"last_view_day,omitempty"`
+	AllowedOrigins []string `json:"allowed_origins"`
+	Attributes     []string `json:"attributes,omitempty"`
 }
 
 type listProjectsOut struct {
@@ -109,12 +105,12 @@ func (h *host) listProjects(ctx context.Context, _ struct{}) (listProjectsOut, e
 	var out listProjectsOut
 	for _, p := range h.reg.Snapshot(ctx).Projects() {
 		po := projectOut{
-			Alias: p.Alias, Name: p.Name, Identity: p.Identity, Archived: p.Archived,
-			AllowedOrigins: p.AllowedOrigins, Retention: p.Retention, Attributes: p.Attributes,
+			ProjectID: p.ID, Name: p.Name, Identity: p.Identity, Archived: p.Archived,
+			AllowedOrigins: p.AllowedOrigins, Attributes: p.Attributes,
 		}
 		// coverage probe: cheap MIN/MAX over the stitch view
 		_, rows, _, err := queryRows(ctx, h.db, h.timeout, 1,
-			`SELECT COALESCE(MIN(day),''), COALESCE(MAX(day),'') FROM v_views_daily WHERE project=?`, p.Alias)
+			`SELECT COALESCE(MIN(day),''), COALESCE(MAX(day),'') FROM v_views_daily WHERE project_id=?`, p.ID)
 		if err != nil {
 			return out, err
 		}
@@ -141,8 +137,8 @@ func (h *host) viewsOverview(ctx context.Context, in overviewIn) (tableOut, erro
 		SUM(bounces) AS bounces, SUM(duration_sec) AS duration_sec,
 		ROUND(CAST(SUM(bounces) AS REAL)/MAX(SUM(sessions),1), 3) AS bounce_rate,
 		CAST(SUM(duration_sec)/MAX(SUM(sessions),1) AS INTEGER) AS avg_session_sec
-		FROM v_views_daily WHERE project=? AND day BETWEEN ? AND ?`
-	args := []any{in.Project, in.From, in.To}
+		FROM v_views_daily WHERE project_id=? AND day BETWEEN ? AND ?`
+	args := []any{in.ProjectID, in.From, in.To}
 	if in.Kind != "" {
 		q += ` AND kind=?`
 		args = append(args, in.Kind)
@@ -206,9 +202,9 @@ func (h *host) viewsBreakdown(ctx context.Context, in breakdownIn) (tableOut, er
 	cols := strings.Join(dim.cols, ", ")
 	out, err := h.table(ctx, `SELECT `+cols+`,
 		SUM(visitors) AS visitors, SUM(views) AS views
-		FROM `+dim.view+` WHERE project=? AND day BETWEEN ? AND ?
+		FROM `+dim.view+` WHERE project_id=? AND day BETWEEN ? AND ?
 		GROUP BY `+cols+` ORDER BY visitors DESC LIMIT ?`,
-		in.Project, in.From, in.To, limit)
+		in.ProjectID, in.From, in.To, limit)
 	return out, err
 }
 
@@ -220,10 +216,10 @@ func (h *host) register(r *registrar) {
 	no := false // DestructiveHint is *bool in the SDK; nothing here destroys
 	write := &mcp.ToolAnnotations{DestructiveHint: &no}
 	idem := &mcp.ToolAnnotations{DestructiveHint: &no, IdempotentHint: true}
-	const p = "/api/projects/{project}"
+	const p = "/api/projects/{project_id}"
 
 	expose(r, spec{Name: "list_projects", Annotations: ro, Method: "GET", Path: "/api/projects",
-		Description: "List projects with identity mode and data coverage. Call this first: every other tool takes a project alias from here. Projects with identity=identified support retention and identities; anonymous ones cannot (their visitor ids rotate daily)."},
+		Description: "List projects with id, name, identity mode and data coverage. Call this first: every other tool takes a project_id from here. Projects with identity=identified support retention and identities; anonymous ones cannot (their visitor ids rotate daily)."},
 		h.listProjects)
 	expose(r, spec{Name: "views_overview", Annotations: ro, Method: "GET", Path: p + "/views/overview",
 		Description: "Daily views for one project: visitors, views, sessions, bounces, duration, with derived bounce_rate and avg_session_sec. Sums every kind (web, app, cli, …) unless kind is given. Includes yesterday and today (live)."},
@@ -250,13 +246,13 @@ func (h *host) register(r *registrar) {
 	expose(r, spec{Name: "create_project", Annotations: write, Method: "POST", Path: "/api/projects", Status: http.StatusCreated,
 		Description: "Create a project and (by default) its first ingest key; returns a paste-ready embed snippet (confirm the collector hostname with the user). Set skip_key to suppress the key."},
 		h.createProject)
-	expose(r, spec{Name: "update_project", Annotations: write, Method: "PATCH", Path: "/api/projects/{alias}",
-		Description: "Update a project's name, identity mode, allowed origins and/or declared product-event attributes (breakdown keys for flat-view columns and attribute rollups). Fields you omit are left unchanged (this is a merge, not a replace) — except allowed_origins, which if provided non-empty replaces the whole list; origins cannot be cleared to empty via this tool (clear origins via `twillingate config import`, an explicit empty allowed_origins list in the document). Switching to identity=identified starts storing user ids and names as given — privacy-significant, say so to the user before doing it."},
+	expose(r, spec{Name: "update_project", Annotations: write, Method: "PATCH", Path: "/api/projects/{project_id}",
+		Description: "Update a project's name, identity mode, allowed origins and/or declared product-event attributes (breakdown keys for flat-view columns and attribute rollups). Fields you omit are left unchanged; allowed_origins and attributes replace the whole list when given, and an explicit empty allowed_origins clears it. Switching to identity=identified starts storing user ids and names as given — privacy-significant, say so to the user before doing it."},
 		h.updateProject)
-	expose(r, spec{Name: "archive_project", Annotations: idem, Method: "POST", Path: "/api/projects/{alias}/archive",
+	expose(r, spec{Name: "archive_project", Annotations: idem, Method: "POST", Path: "/api/projects/{project_id}/archive",
 		Description: "Archive a project: ingestion stops, data and dashboards keep working, fully reversible with restore_project. There is no delete over the API — deletion requires the CLI."},
 		h.archiveProject)
-	expose(r, spec{Name: "restore_project", Annotations: idem, Method: "POST", Path: "/api/projects/{alias}/restore",
+	expose(r, spec{Name: "restore_project", Annotations: idem, Method: "POST", Path: "/api/projects/{project_id}/restore",
 		Description: "Restore an archived project."},
 		h.restoreProject)
 	expose(r, spec{Name: "list_ingest_keys", Annotations: ro, Method: "GET", Path: "/api/keys",

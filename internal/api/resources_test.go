@@ -29,7 +29,7 @@ func TestSchemaResources(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(pres.Contents[0].Text, "blog") {
-		t.Errorf("schema://projects missing project: %s", pres.Contents[0].Text)
+	if text := pres.Contents[0].Text; !strings.Contains(text, "blog") || !strings.Contains(text, `"project_id": 1`) {
+		t.Errorf("schema://projects missing project or its id: %s", text)
 	}
 }

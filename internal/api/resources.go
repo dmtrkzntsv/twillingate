@@ -29,25 +29,25 @@ Facts you cannot infer from the DDL:
    v_identity_daily keeps the busiest 500 ids per kind per day and drops
    the rest: there is no '(other)' row, so do not sum it for totals.
 
-Views (all carry a 'project' column — always filter on it):
+Views (all carry a 'project_id' column — always filter on it; ids come from list_projects):
 
-  v_views_daily(project, day, kind, visitors, views, sessions, bounces, duration_sec)  -- kind: 'web'|'app'|'cli'|…
-  v_views_paths(project, day, path, visitors, views)
-  v_views_hosts(project, day, host, visitors, views)
-  v_views_referrers(project, day, source, visitors, views)
-  v_views_utm(project, day, utm_source, utm_medium, utm_campaign, visitors, views)
-  v_views_countries(project, day, country, visitors, views)
-  v_views_os(project, day, os, os_version, visitors, views)
-  v_views_browsers(project, day, browser, browser_version, visitors, views)
-  v_views_app_versions(project, day, os, app_version, visitors, views)
-  v_views_devices(project, day, device, device_model, visitors, views)
-  v_views_displays(project, day, display, visitors, views)  -- display: 'WxH', e.g. '1920x1080'
-  v_product_daily(project, day, event_name, count, unique_users)
-  v_product_totals(project, day, total_events, active_users)
-  v_identity_daily(project, day, kind, id, actors, users, views, events)  -- kind: 'user'|'group'
-  v_retention(project, actor_kind, cohort_day, day_offset, actors, cohort_size)  -- actor_kind: 'user'|'install'
-  v_product_attrs(project, day, event_name, attr_key, attr_value, count, unique_users)
-  identities(project, kind, id, name)  -- display names, joinable to v_identity_daily
+  v_views_daily(project_id, day, kind, visitors, views, sessions, bounces, duration_sec)  -- kind: 'web'|'app'|'cli'|…
+  v_views_paths(project_id, day, path, visitors, views)
+  v_views_hosts(project_id, day, host, visitors, views)
+  v_views_referrers(project_id, day, source, visitors, views)
+  v_views_utm(project_id, day, utm_source, utm_medium, utm_campaign, visitors, views)
+  v_views_countries(project_id, day, country, visitors, views)
+  v_views_os(project_id, day, os, os_version, visitors, views)
+  v_views_browsers(project_id, day, browser, browser_version, visitors, views)
+  v_views_app_versions(project_id, day, os, app_version, visitors, views)
+  v_views_devices(project_id, day, device, device_model, visitors, views)
+  v_views_displays(project_id, day, display, visitors, views)  -- display: 'WxH', e.g. '1920x1080'
+  v_product_daily(project_id, day, event_name, count, unique_users)
+  v_product_totals(project_id, day, total_events, active_users)
+  v_identity_daily(project_id, day, kind, id, actors, users, views, events)  -- kind: 'user'|'group'
+  v_retention(project_id, actor_kind, cohort_day, day_offset, actors, cohort_size)  -- actor_kind: 'user'|'install'
+  v_product_attrs(project_id, day, event_name, attr_key, attr_value, count, unique_users)
+  identities(project_id, kind, id, name)  -- display names, joinable to v_identity_daily
 
 Cost note: the views' live halves sessionize raw rows with window
 functions; a WHERE on day may not prune that work. Narrow ranges and the
@@ -85,13 +85,14 @@ func (h *host) registerResources(s *mcp.Server) {
 		MIMEType:    "application/json",
 	}, func(ctx context.Context, _ *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
 		type pj struct {
-			Alias, Name, Identity string
-			Archived              bool     `json:",omitempty"`
-			AllowedOrigins        []string `json:"allowed_origins"`
+			ProjectID      int64 `json:"project_id"`
+			Name, Identity string
+			Archived       bool     `json:",omitempty"`
+			AllowedOrigins []string `json:"allowed_origins"`
 		}
 		var out []pj
 		for _, p := range h.reg.Snapshot(ctx).Projects() {
-			out = append(out, pj{p.Alias, p.Name, p.Identity, p.Archived, p.AllowedOrigins})
+			out = append(out, pj{p.ID, p.Name, p.Identity, p.Archived, p.AllowedOrigins})
 		}
 		b, err := json.MarshalIndent(out, "", "  ")
 		if err != nil {

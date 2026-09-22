@@ -8,7 +8,7 @@ import (
 func TestQueryToolSelects(t *testing.T) {
 	_, cs := newTestHost(t)
 	res := callTool(t, cs, "query", map[string]any{
-		"sql": "SELECT project, day, visitors FROM v_views_daily WHERE project='blog' ORDER BY day"})
+		"sql": "SELECT project_id, day, visitors FROM v_views_daily WHERE project_id=1 ORDER BY day"})
 	if res.IsError {
 		t.Fatalf("error: %s", textOf(res))
 	}

@@ -8,7 +8,7 @@ import (
 func TestProductEvents(t *testing.T) {
 	_, cs := newTestHost(t)
 	res := callTool(t, cs, "product_events", map[string]any{
-		"project": "blog", "from": "2026-08-01", "to": "2026-08-31"})
+		"project_id": 1, "from": "2026-08-01", "to": "2026-08-31"})
 	if res.IsError {
 		t.Fatalf("error: %s", textOf(res))
 	}
@@ -28,7 +28,7 @@ func TestProductEvents(t *testing.T) {
 func TestProductAttributesReturnsEmptyForUndeclaredProject(t *testing.T) {
 	_, cs := newTestHost(t)
 	res := callTool(t, cs, "product_attributes", map[string]any{
-		"project": "docs", "from": "2026-08-01", "to": "2026-08-31"})
+		"project_id": 2, "from": "2026-08-01", "to": "2026-08-31"})
 	if res.IsError {
 		t.Fatalf("error: %s", textOf(res))
 	}
@@ -40,7 +40,7 @@ func TestProductAttributesReturnsEmptyForUndeclaredProject(t *testing.T) {
 func TestProductAttributesReturnsRows(t *testing.T) {
 	_, cs := newTestHost(t)
 	res := callTool(t, cs, "product_attributes", map[string]any{
-		"project": "blog", "from": "2026-08-01", "to": "2026-08-31"})
+		"project_id": 1, "from": "2026-08-01", "to": "2026-08-31"})
 	if res.IsError {
 		t.Fatalf("error: %s", textOf(res))
 	}
@@ -49,7 +49,7 @@ func TestProductAttributesReturnsRows(t *testing.T) {
 	}
 	// event filter branch
 	res = callTool(t, cs, "product_attributes", map[string]any{
-		"project": "blog", "from": "2026-08-01", "to": "2026-08-31", "event": "signup"})
+		"project_id": 1, "from": "2026-08-01", "to": "2026-08-31", "event": "signup"})
 	if res.IsError {
 		t.Fatalf("error with event filter: %s", textOf(res))
 	}
@@ -61,7 +61,7 @@ func TestProductAttributesReturnsRows(t *testing.T) {
 func TestRetentionReturnsCurveAndAggregatedThrough(t *testing.T) {
 	_, cs := newTestHost(t)
 	res := callTool(t, cs, "retention", map[string]any{
-		"project": "blog", "actor": "user", "from": "2026-07-01", "to": "2026-08-31"})
+		"project_id": 1, "actor": "user", "from": "2026-07-01", "to": "2026-08-31"})
 	if res.IsError {
 		t.Fatalf("error: %s", textOf(res))
 	}
@@ -76,7 +76,7 @@ func TestRetentionReturnsCurveAndAggregatedThrough(t *testing.T) {
 func TestRetentionOnAnonymousProjectExplains(t *testing.T) {
 	_, cs := newTestHost(t)
 	res := callTool(t, cs, "retention", map[string]any{
-		"project": "docs", "actor": "user", "from": "2026-07-01", "to": "2026-08-31"})
+		"project_id": 2, "actor": "user", "from": "2026-07-01", "to": "2026-08-31"})
 	if !res.IsError {
 		t.Fatal("anonymous project retention did not error")
 	}
@@ -88,7 +88,7 @@ func TestRetentionOnAnonymousProjectExplains(t *testing.T) {
 func TestRetentionRejectsUnknownActor(t *testing.T) {
 	_, cs := newTestHost(t)
 	res := callTool(t, cs, "retention", map[string]any{
-		"project": "blog", "actor": "app", "from": "2026-07-01", "to": "2026-08-31"})
+		"project_id": 1, "actor": "app", "from": "2026-07-01", "to": "2026-08-31"})
 	if !res.IsError {
 		t.Fatal("unknown actor did not error")
 	}
@@ -100,7 +100,7 @@ func TestRetentionRejectsUnknownActor(t *testing.T) {
 func TestIdentities(t *testing.T) {
 	_, cs := newTestHost(t)
 	res := callTool(t, cs, "identities", map[string]any{
-		"project": "blog", "kind": "user", "from": "2026-08-01", "to": "2026-08-31"})
+		"project_id": 1, "kind": "user", "from": "2026-08-01", "to": "2026-08-31"})
 	if res.IsError {
 		t.Fatalf("error: %s", textOf(res))
 	}

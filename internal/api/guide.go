@@ -14,8 +14,8 @@ import (
 // the static docs, so a model can integrate a site or app in one read.
 
 type guideIn struct {
-	Project  string `json:"project" jsonschema:"project alias; call list_projects first"`
-	Platform string `json:"platform" jsonschema:"one of: web (script tag), spa (single-page app), server (backend HTTP API), mobile (native app HTTP API)"`
+	ProjectID int64  `json:"project_id" jsonschema:"project id; call list_projects first"`
+	Platform  string `json:"platform" jsonschema:"one of: web (script tag), spa (single-page app), server (backend HTTP API), mobile (native app HTTP API)"`
 }
 
 type guideOut struct {
@@ -29,9 +29,9 @@ func (h *host) integrationGuide(ctx context.Context, in guideIn) (guideOut, erro
 		return guideOut{}, invalidf("unknown platform %q; valid: mobile, server, spa, web", in.Platform)
 	}
 	s := h.reg.Snapshot(ctx)
-	p := s.Project(in.Project)
+	p := s.Project(in.ProjectID)
 	if p == nil {
-		return guideOut{}, h.unknownProjectErr(ctx, in.Project)
+		return guideOut{}, h.unknownProjectErr(ctx, in.ProjectID)
 	}
 
 	base := h.publicURL
@@ -45,7 +45,7 @@ func (h *host) integrationGuide(ctx context.Context, in guideIn) (guideOut, erro
 	key := ""
 	if _, ks, err := h.ops.St.LoadRegistry(ctx); err == nil {
 		for _, k := range ks {
-			if k.Project == p.Alias && !k.Disabled {
+			if k.ProjectID == p.ID && !k.Disabled {
 				key = k.Key
 				break
 			}
@@ -60,7 +60,7 @@ func (h *host) integrationGuide(ctx context.Context, in guideIn) (guideOut, erro
 	hostNote := "\n> URLs below use the default collector hostname, " + base + ". Ask the user\n> which hostname this site should use and substitute it if it differs.\n"
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "# Integrating %q (%s, identity=%s)\n%s%s%s\n", p.Alias, in.Platform, p.Identity, baseNote, hostNote, keyLine)
+	fmt.Fprintf(&b, "# Integrating %s (project %d; %s, identity=%s)\n%s%s%s\n", p.Name, p.ID, in.Platform, p.Identity, baseNote, hostNote, keyLine)
 
 	switch in.Platform {
 	case "web", "spa":
@@ -78,7 +78,7 @@ func (h *host) integrationGuide(ctx context.Context, in guideIn) (guideOut, erro
 		} else {
 			b.WriteString("This project is ANONYMOUS: no cookies, no localStorage, no consent\nbanner needed for pageviews alone; $user_name is ignored and retention\ncurves are unavailable by design.\n\n")
 		}
-		origins := s.Project(p.Alias).AllowedOrigins
+		origins := p.AllowedOrigins
 		if len(origins) == 0 {
 			b.WriteString("WARNING: this project has NO allowed_origins — browser requests send an\nOrigin header and will be rejected. Add the site's origin with\nupdate_project before deploying the snippet.\n\n")
 		} else {

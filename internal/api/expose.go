@@ -15,7 +15,7 @@ type spec struct {
 	Description string
 	Annotations *mcp.ToolAnnotations
 	Method      string // HTTP method; "" = MCP only
-	Path        string // ServeMux pattern path, e.g. "/api/projects/{project}/web/overview"
+	Path        string // ServeMux pattern path, e.g. "/api/projects/{project_id}/views/overview"
 	Status      int    // REST success status; 0 = 200
 }
 

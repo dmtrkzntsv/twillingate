@@ -25,22 +25,22 @@ func (h *host) productEvents(ctx context.Context, in productEventsIn) (productEv
 	}
 	if in.Event != "" {
 		events, err := h.table(ctx, `SELECT day, event_name, count, unique_users
-			FROM v_product_daily WHERE project=? AND day BETWEEN ? AND ? AND event_name=?
-			ORDER BY day`, in.Project, in.From, in.To, in.Event)
+			FROM v_product_daily WHERE project_id=? AND day BETWEEN ? AND ? AND event_name=?
+			ORDER BY day`, in.ProjectID, in.From, in.To, in.Event)
 		if err != nil {
 			return productEventsOut{}, err
 		}
 		return productEventsOut{Events: events}, nil
 	}
 	events, err := h.table(ctx, `SELECT day, event_name, count, unique_users
-		FROM v_product_daily WHERE project=? AND day BETWEEN ? AND ?
-		ORDER BY day, count DESC`, in.Project, in.From, in.To)
+		FROM v_product_daily WHERE project_id=? AND day BETWEEN ? AND ?
+		ORDER BY day, count DESC`, in.ProjectID, in.From, in.To)
 	if err != nil {
 		return productEventsOut{}, err
 	}
 	totals, err := h.table(ctx, `SELECT day, total_events, active_users
-		FROM v_product_totals WHERE project=? AND day BETWEEN ? AND ? ORDER BY day`,
-		in.Project, in.From, in.To)
+		FROM v_product_totals WHERE project_id=? AND day BETWEEN ? AND ? ORDER BY day`,
+		in.ProjectID, in.From, in.To)
 	if err != nil {
 		return productEventsOut{}, err
 	}
@@ -51,13 +51,13 @@ func (h *host) productAttributes(ctx context.Context, in productEventsIn) (table
 	if err := h.checkRange(ctx, in.rangeIn); err != nil {
 		return tableOut{}, err
 	}
-	p := h.reg.Snapshot(ctx).Project(in.Project)
+	p := h.reg.Snapshot(ctx).Project(in.ProjectID)
 	if p == nil {
-		return tableOut{}, h.unknownProjectErr(ctx, in.Project)
+		return tableOut{}, h.unknownProjectErr(ctx, in.ProjectID)
 	}
 	q := `SELECT day, event_name, attr_key, attr_value, count, unique_users
-		FROM v_product_attrs WHERE project=? AND day BETWEEN ? AND ?`
-	args := []any{in.Project, in.From, in.To}
+		FROM v_product_attrs WHERE project_id=? AND day BETWEEN ? AND ?`
+	args := []any{in.ProjectID, in.From, in.To}
 	if in.Event != "" {
 		q += ` AND event_name=?`
 		args = append(args, in.Event)
@@ -83,17 +83,17 @@ func (h *host) retention(ctx context.Context, in retentionIn) (retentionOut, err
 	if in.Actor != "user" && in.Actor != "install" {
 		return retentionOut{}, invalidf("actor must be user or install, got %q", in.Actor)
 	}
-	p := h.reg.Snapshot(ctx).Project(in.Project)
+	p := h.reg.Snapshot(ctx).Project(in.ProjectID)
 	if p == nil {
-		return retentionOut{}, h.unknownProjectErr(ctx, in.Project)
+		return retentionOut{}, h.unknownProjectErr(ctx, in.ProjectID)
 	}
 	if p.Identity != "identified" {
 		return retentionOut{}, invalidf(
-			"project %q is anonymous: retention is undefined because visitor ids rotate daily; it requires the project setting identity=identified (a privacy-significant change — see the README's GDPR section)", in.Project)
+			"project %d is anonymous: retention is undefined because visitor ids rotate daily; it requires the project setting identity=identified (a privacy-significant change — see the README's GDPR section)", in.ProjectID)
 	}
 	tbl, err := h.table(ctx, `SELECT cohort_day, day_offset, actors, cohort_size
-		FROM v_retention WHERE project=? AND actor_kind=? AND cohort_day BETWEEN ? AND ?
-		ORDER BY cohort_day, day_offset`, in.Project, in.Actor, in.From, in.To)
+		FROM v_retention WHERE project_id=? AND actor_kind=? AND cohort_day BETWEEN ? AND ?
+		ORDER BY cohort_day, day_offset`, in.ProjectID, in.Actor, in.From, in.To)
 	if err != nil {
 		return retentionOut{}, err
 	}
@@ -101,7 +101,7 @@ func (h *host) retention(ctx context.Context, in retentionIn) (retentionOut, err
 	// v_retention has no live half: report how fresh it is so recent
 	// cohorts are read as "not yet aggregated", never as zero.
 	_, rows, _, err := queryRows(ctx, h.db, h.timeout, 1,
-		`SELECT COALESCE(MAX(cohort_day),'') FROM agg_retention WHERE project=?`, in.Project)
+		`SELECT COALESCE(MAX(cohort_day),'') FROM agg_retention WHERE project_id=?`, in.ProjectID)
 	if err == nil && len(rows) == 1 {
 		out.AggregatedThrough = rows[0][0]
 	}
@@ -131,10 +131,10 @@ func (h *host) identities(ctx context.Context, in identitiesIn) (tableOut, error
 	out, err := h.table(ctx, `SELECT d.id, COALESCE(i.name,'') AS name,
 		SUM(d.actors) AS actors, SUM(d.users) AS users, SUM(d.views) AS views, SUM(d.events) AS events
 		FROM v_identity_daily d
-		LEFT JOIN identities i ON i.project=d.project AND i.kind=d.kind AND i.id=d.id
-		WHERE d.project=? AND d.kind=? AND d.day BETWEEN ? AND ?
+		LEFT JOIN identities i ON i.project_id=d.project_id AND i.kind=d.kind AND i.id=d.id
+		WHERE d.project_id=? AND d.kind=? AND d.day BETWEEN ? AND ?
 		GROUP BY d.id, i.name
 		ORDER BY views+events DESC LIMIT ?`,
-		in.Project, in.Kind, in.From, in.To, limit)
+		in.ProjectID, in.Kind, in.From, in.To, limit)
 	return out, err
 }

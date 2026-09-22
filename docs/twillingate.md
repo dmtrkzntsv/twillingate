@@ -66,11 +66,14 @@ management tools. Every operation has both forms:
 | Export / import the registry | `twillingate config export` / `import` | **none — CLI only** |
 | Get paste-ready setup | — | `integration_guide` |
 
-`create_project` and `update_project` take the project fields below as
-`{alias, name, identity, allowed_origins, attributes}`; `create_project`
-also takes `skip_key: true` to *not* issue a first key. `issue_ingest_key`
-takes `{project, label}` and returns the key **and** a paste-ready snippet.
-`integration_guide` takes `{project, platform}` where platform is `web`,
+`create_project` takes the project fields below as `{name, identity,
+allowed_origins, attributes}` (`name` required) and returns the new
+`project_id`; `update_project` takes `{project_id, …}` and merges — an
+omitted field keeps its value, `allowed_origins: []` clears the list.
+`create_project` also takes `skip_key: true` to *not* issue a first key.
+`issue_ingest_key` takes `{project_id, label}` and returns the key **and**
+a paste-ready snippet. `integration_guide` takes `{project_id, platform}`
+where platform is `web`,
 `spa`, `server` or `mobile`, and returns the whole setup as markdown with
 the project's live key and identity mode already filled in — reach for it
 before hand-assembling a snippet.
@@ -793,11 +796,11 @@ A connected session gets seventeen tools. Reach for a purpose-built one
 before `query` — they are cheaper, they cannot be malformed, and they
 already apply the caveats below.
 
-**Reading (all take `project`, `from`, `to` as `YYYY-MM-DD` unless noted):**
+**Reading (all take `project_id`, `from`, `to` as `YYYY-MM-DD` unless noted):**
 
 | Tool | Extra parameters | Returns |
 | --- | --- | --- |
-| `list_projects` | none | Every non-archived project, its alias and identity mode. Call this first — every other tool needs an alias |
+| `list_projects` | none | Every project with its `project_id`, name, identity mode and data coverage. Call this first — every other tool needs a `project_id` |
 | `views_overview` | `kind` (optional) | Visitors, views, sessions, bounces, average session length per day, summed across kinds unless `kind` filters one |
 | `views_breakdown` | `dimension`, `limit` (default 20) | Top rows for one of `kinds`, `paths`, `hosts`, `referrers`, `utm`, `countries`, `os`, `browsers`, `app_versions`, `devices`, `displays`. Two-key dimensions return both columns |
 | `product_events` | `event` (optional filter) | Count and unique users per event name, plus daily totals |
@@ -832,26 +835,26 @@ are MCP-only — there is no REST equivalent.
 
 ```bash
 curl -H "Authorization: Bearer $TOKEN" \
-  "https://t.example.com/api/projects/blog/views/overview?from=2026-09-01&to=2026-09-13"
+  "https://t.example.com/api/projects/1/views/overview?from=2026-09-01&to=2026-09-13"
 ```
 
 | Method | Path | Mirrors | Input |
 |---|---|---|---|
 | `GET` | `/api/projects` | `list_projects` | — |
-| `POST` | `/api/projects` | `create_project` | body: `alias`, `name`, `identity`, `allowed_origins`, `attributes`, `skip_key` → 201 |
-| `PATCH` | `/api/projects/{alias}` | `update_project` | body: fields to change (merge) |
-| `POST` | `/api/projects/{alias}/archive` | `archive_project` | — |
-| `POST` | `/api/projects/{alias}/restore` | `restore_project` | — |
-| `GET` | `/api/keys` | `list_ingest_keys` | query: `project` |
-| `POST` | `/api/projects/{project}/keys` | `issue_ingest_key` | body: `label` → 201 |
-| `POST` | `/api/projects/{project}/keys/{label}/disable` | `disable_ingest_key` | — |
-| `POST` | `/api/projects/{project}/keys/{label}/enable` | `enable_ingest_key` | — |
-| `GET` | `/api/projects/{project}/views/overview` | `views_overview` | query: `from`, `to`, `kind` |
-| `GET` | `/api/projects/{project}/views/breakdown` | `views_breakdown` | query: `from`, `to`, `dimension`, `limit` |
-| `GET` | `/api/projects/{project}/product/events` | `product_events` | query: `from`, `to`, `event` |
-| `GET` | `/api/projects/{project}/product/attributes` | `product_attributes` | query: `from`, `to`, `event` |
-| `GET` | `/api/projects/{project}/retention` | `retention` | query: `from`, `to`, `actor` |
-| `GET` | `/api/projects/{project}/identities` | `identities` | query: `from`, `to`, `kind`, `limit` |
+| `POST` | `/api/projects` | `create_project` | body: `name`, `identity`, `allowed_origins`, `attributes`, `skip_key` → 201 |
+| `PATCH` | `/api/projects/{project_id}` | `update_project` | body: fields to change (merge); `allowed_origins: []` clears |
+| `POST` | `/api/projects/{project_id}/archive` | `archive_project` | — |
+| `POST` | `/api/projects/{project_id}/restore` | `restore_project` | — |
+| `GET` | `/api/keys` | `list_ingest_keys` | query: `project_id` |
+| `POST` | `/api/projects/{project_id}/keys` | `issue_ingest_key` | body: `label` → 201 |
+| `POST` | `/api/projects/{project_id}/keys/{label}/disable` | `disable_ingest_key` | — |
+| `POST` | `/api/projects/{project_id}/keys/{label}/enable` | `enable_ingest_key` | — |
+| `GET` | `/api/projects/{project_id}/views/overview` | `views_overview` | query: `from`, `to`, `kind` |
+| `GET` | `/api/projects/{project_id}/views/breakdown` | `views_breakdown` | query: `from`, `to`, `dimension`, `limit` |
+| `GET` | `/api/projects/{project_id}/product/events` | `product_events` | query: `from`, `to`, `event` |
+| `GET` | `/api/projects/{project_id}/product/attributes` | `product_attributes` | query: `from`, `to`, `event` |
+| `GET` | `/api/projects/{project_id}/retention` | `retention` | query: `from`, `to`, `actor` |
+| `GET` | `/api/projects/{project_id}/identities` | `identities` | query: `from`, `to`, `kind`, `limit` |
 | `POST` | `/api/query` | `query` | body: `sql` |
 | `GET` | `/api/schema/views` | `schema://views` | — (text/plain) |
 
@@ -888,7 +891,8 @@ from the DDL. The three that matter most:
    counted before signed-in tracking began (before migration 011) have no
    `user` rows; they sit wholly under `install`.
 
-Every view carries a `project` column — always filter on it.
+Every view carries a `project_id` column — always filter on it; the ids
+are the ones `list_projects` returns.
 
 The views family is `v_views_daily` (per kind), `v_views_paths`,
 `v_views_hosts`, `v_views_referrers`, `v_views_utm`, `v_views_countries`,
