@@ -12,11 +12,11 @@ import (
 
 // seedProductEvent writes one product event. os and appVersion are the
 // typed system columns; attrs is the custom JSON blob.
-func seedProductEvent(t *testing.T, db *DB, project, event, at string,
+func seedProductEvent(t *testing.T, db *DB, projectID int64, event, at string,
 	attrs map[string]string, os, appVersion string) {
 	t.Helper()
 	if err := db.WriteProductEvents(context.Background(), []store.ProductEvent{{
-		ID: uuid.NewString(), Project: project, EventName: event,
+		ID: uuid.NewString(), ProjectID: projectID, EventName: event,
 		ActorID: "u1", TS: ts(at), Attributes: attrs,
 		OS: os, AppVersion: appVersion,
 	}}); err != nil {
@@ -24,20 +24,20 @@ func seedProductEvent(t *testing.T, db *DB, project, event, at string,
 	}
 }
 
-// seedProductDay: project "app", day 2026-08-10:
+// seedProductDay: project 1, day 2026-08-10:
 //
 //	subscribed: u1 plan=pro source=ads; u2 plan=free source=ads; u2 plan=free (no source)
 //	ping:       u1 (no attrs)
 func seedProductDay(t *testing.T, db *DB) {
 	t.Helper()
 	evs := []store.ProductEvent{
-		{ID: "p1", Project: "app", EventName: "subscribed", ActorID: "u1", TS: ts("2026-08-10T10:00:00Z"),
+		{ID: "p1", ProjectID: 1, EventName: "subscribed", ActorID: "u1", TS: ts("2026-08-10T10:00:00Z"),
 			Attributes: map[string]string{"plan": "pro", "source": "ads"}},
-		{ID: "p2", Project: "app", EventName: "subscribed", ActorID: "u2", TS: ts("2026-08-10T11:00:00Z"),
+		{ID: "p2", ProjectID: 1, EventName: "subscribed", ActorID: "u2", TS: ts("2026-08-10T11:00:00Z"),
 			Attributes: map[string]string{"plan": "free", "source": "ads"}},
-		{ID: "p3", Project: "app", EventName: "subscribed", ActorID: "u2", TS: ts("2026-08-10T12:00:00Z"),
+		{ID: "p3", ProjectID: 1, EventName: "subscribed", ActorID: "u2", TS: ts("2026-08-10T12:00:00Z"),
 			Attributes: map[string]string{"plan": "free"}},
-		{ID: "p4", Project: "app", EventName: "ping", ActorID: "u1", TS: ts("2026-08-10T13:00:00Z")},
+		{ID: "p4", ProjectID: 1, EventName: "ping", ActorID: "u1", TS: ts("2026-08-10T13:00:00Z")},
 	}
 	if err := db.WriteProductEvents(context.Background(), evs); err != nil {
 		t.Fatal(err)
@@ -53,11 +53,11 @@ func TestAggregateProductRunsWithNoDeclaredAttributes(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	seedProductDay(t, db)
-	if err := db.AggregateProductDay(ctx, "app", day("2026-08-10"), nil, 50); err != nil {
+	if err := db.AggregateProductDay(ctx, 1, day("2026-08-10"), nil, 50); err != nil {
 		t.Fatal(err)
 	}
 	var n int
-	db.db.QueryRow(`SELECT COUNT(*) FROM product_events`).Scan(&n)
+	db.db.QueryRow(`SELECT COUNT(*) FROM events`).Scan(&n)
 	if n != 0 {
 		t.Fatalf("raw remaining %d", n)
 	}
@@ -76,19 +76,19 @@ func TestAggregateProductDeclaredAttributes(t *testing.T) {
 	ctx := context.Background()
 	seedProductDay(t, db)
 	attrs := []string{"plan", "source"}
-	if err := db.AggregateProductDay(ctx, "app", day("2026-08-10"), attrs, 50); err != nil {
+	if err := db.AggregateProductDay(ctx, 1, day("2026-08-10"), attrs, 50); err != nil {
 		t.Fatal(err)
 	}
 	var count, uniq int
 	if err := db.db.QueryRow(`SELECT count, unique_users FROM agg_product_daily
-		WHERE project='app' AND day='2026-08-10' AND event_name='subscribed'`).Scan(&count, &uniq); err != nil {
+		WHERE project_id=1 AND day='2026-08-10' AND event_name='subscribed'`).Scan(&count, &uniq); err != nil {
 		t.Fatal(err)
 	}
 	if count != 3 || uniq != 2 {
 		t.Fatalf("subscribed: c=%d u=%d", count, uniq)
 	}
 	if err := db.db.QueryRow(`SELECT total_events, active_users FROM agg_product_totals
-		WHERE project='app' AND day='2026-08-10'`).Scan(&count, &uniq); err != nil {
+		WHERE project_id=1 AND day='2026-08-10'`).Scan(&count, &uniq); err != nil {
 		t.Fatal(err)
 	}
 	if count != 4 || uniq != 2 {
@@ -96,7 +96,7 @@ func TestAggregateProductDeclaredAttributes(t *testing.T) {
 	}
 	// plan breakdown for subscribed
 	if err := db.db.QueryRow(`SELECT count, unique_users FROM agg_product_attrs
-		WHERE project='app' AND day='2026-08-10' AND event_name='subscribed'
+		WHERE project_id=1 AND day='2026-08-10' AND event_name='subscribed'
 		AND attr_key='plan' AND attr_value='free'`).Scan(&count, &uniq); err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +115,7 @@ func TestAggregateProductDeclaredAttributes(t *testing.T) {
 	if count != 2 {
 		t.Fatalf("source=ads count=%d", count)
 	}
-	db.db.QueryRow(`SELECT COUNT(*) FROM product_events`).Scan(&n)
+	db.db.QueryRow(`SELECT COUNT(*) FROM events`).Scan(&n)
 	if n != 0 {
 		t.Fatal("raw must be deleted after rollup")
 	}
@@ -129,7 +129,7 @@ func TestAggregateProductTopNCollapsesTail(t *testing.T) {
 	id := 0
 	add := func(user, val string) {
 		id++
-		evs = append(evs, store.ProductEvent{ID: fmt.Sprintf("e%d", id), Project: "app",
+		evs = append(evs, store.ProductEvent{ID: fmt.Sprintf("e%d", id), ProjectID: 1,
 			EventName: "clicked", ActorID: user, TS: ts("2026-08-10T10:00:00Z"),
 			Attributes: map[string]string{"button": val}})
 	}
@@ -144,7 +144,7 @@ func TestAggregateProductTopNCollapsesTail(t *testing.T) {
 	if err := db.WriteProductEvents(ctx, evs); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AggregateProductDay(ctx, "app", day("2026-08-10"), []string{"button"}, 2); err != nil {
+	if err := db.AggregateProductDay(ctx, 1, day("2026-08-10"), []string{"button"}, 2); err != nil {
 		t.Fatal(err)
 	}
 	var n int
@@ -171,8 +171,8 @@ func TestAggregateProductIdempotent(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	must(db.AggregateProductDay(ctx, "app", day("2026-08-10"), nil, 50))
-	must(db.AggregateProductDay(ctx, "app", day("2026-08-10"), nil, 50)) // no raw left: no-op
+	must(db.AggregateProductDay(ctx, 1, day("2026-08-10"), nil, 50))
+	must(db.AggregateProductDay(ctx, 1, day("2026-08-10"), nil, 50)) // no raw left: no-op
 	var c int
 	db.db.QueryRow(`SELECT count FROM agg_product_daily WHERE event_name='subscribed'`).Scan(&c)
 	if c != 3 {
@@ -193,7 +193,7 @@ func TestAggregateProductClampsNonPositiveTopN(t *testing.T) {
 			db := newTestDB(t)
 			ctx := context.Background()
 			seedProductDay(t, db) // subscribed: plan in {pro, free} -- 2 distinct values
-			if err := db.AggregateProductDay(ctx, "app", day("2026-08-10"), []string{"plan"}, topN); err != nil {
+			if err := db.AggregateProductDay(ctx, 1, day("2026-08-10"), []string{"plan"}, topN); err != nil {
 				t.Fatal(err)
 			}
 			var other int
@@ -215,15 +215,15 @@ func TestAggregateProductClampsNonPositiveTopN(t *testing.T) {
 func TestRollupWritesSystemDimensions(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	seedProductEvent(t, db, "blog", "signup", "2026-08-01T10:00:00Z",
+	seedProductEvent(t, db, 1, "signup", "2026-08-01T10:00:00Z",
 		map[string]string{}, "ios", "1.2.0") // os, app_version columns
-	if err := db.AggregateProductDay(ctx, "blog",
+	if err := db.AggregateProductDay(ctx, 1,
 		civil.DateOf(ts("2026-08-01T00:00:00Z")), nil, 50); err != nil {
 		t.Fatal(err)
 	}
 	var v string
 	if err := db.db.QueryRow(`SELECT attr_value FROM agg_product_attrs
-		WHERE project='blog' AND attr_key='$os'`).Scan(&v); err != nil {
+		WHERE project_id=1 AND attr_key='$os'`).Scan(&v); err != nil {
 		t.Fatal(err)
 	}
 	if v != "ios" {
@@ -238,19 +238,19 @@ func TestRollupWritesSystemDimensions(t *testing.T) {
 func TestRollupSystemDimensionsDoNotCollideWithCustomKeys(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	seedProductEvent(t, db, "blog", "signup", "2026-08-01T10:00:00Z",
+	seedProductEvent(t, db, 1, "signup", "2026-08-01T10:00:00Z",
 		map[string]string{"platform": "custom-value"}, "ios", "1.2.0")
-	if err := db.AggregateProductDay(ctx, "blog",
+	if err := db.AggregateProductDay(ctx, 1,
 		civil.DateOf(ts("2026-08-01T00:00:00Z")), []string{"platform"}, 50); err != nil {
 		t.Fatal(err)
 	}
 	var sysVal, customVal string
 	if err := db.db.QueryRow(`SELECT attr_value FROM agg_product_attrs
-		WHERE project='blog' AND attr_key='$os'`).Scan(&sysVal); err != nil {
+		WHERE project_id=1 AND attr_key='$os'`).Scan(&sysVal); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.db.QueryRow(`SELECT attr_value FROM agg_product_attrs
-		WHERE project='blog' AND attr_key='platform'`).Scan(&customVal); err != nil {
+		WHERE project_id=1 AND attr_key='platform'`).Scan(&customVal); err != nil {
 		t.Fatal(err)
 	}
 	if sysVal != "ios" || customVal != "custom-value" {
@@ -264,14 +264,14 @@ func TestRollupSystemDimensionsDoNotCollideWithCustomKeys(t *testing.T) {
 func TestRollupSystemDimensionsSurviveRawDeletion(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	seedProductEvent(t, db, "blog", "signup", "2026-08-01T10:00:00Z",
+	seedProductEvent(t, db, 1, "signup", "2026-08-01T10:00:00Z",
 		map[string]string{}, "android", "3.0.0")
-	if err := db.AggregateProductDay(ctx, "blog",
+	if err := db.AggregateProductDay(ctx, 1,
 		civil.DateOf(ts("2026-08-01T00:00:00Z")), nil, 50); err != nil {
 		t.Fatal(err)
 	}
 	var n int
-	db.db.QueryRow(`SELECT COUNT(*) FROM product_events`).Scan(&n)
+	db.db.QueryRow(`SELECT COUNT(*) FROM events`).Scan(&n)
 	if n != 0 {
 		t.Fatalf("raw remaining %d", n)
 	}

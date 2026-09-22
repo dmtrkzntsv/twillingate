@@ -11,7 +11,7 @@ import (
 // actorSources lists the raw tables an actor can appear in. Both carry
 // actor_kind since 012, so the source table no longer implies anything
 // about the population; only the kind does.
-var actorSources = []string{"views", "product_events"}
+var actorSources = []string{"views", "events"}
 
 // cohortKinds are the actor kinds stable enough to cohort. A connection
 // hash rotates with the salt (and a pre-012 product row carries ''), so
@@ -25,7 +25,7 @@ const cohortKinds = `('user', 'install')`
 // later reused as the login $user_id) — otherwise the incoming kind applies.
 // Must run before AggregateRetentionDay for the same day, and before that
 // day's raw rows are deleted.
-func (d *DB) UpsertActors(ctx context.Context, project string, day civil.Date) error {
+func (d *DB) UpsertActors(ctx context.Context, projectID int64, day civil.Date) error {
 	return d.tx(ctx, func(tx *sql.Tx) error {
 		for _, table := range actorSources {
 			dayExpr := "substr(ts,1,10)"
@@ -33,17 +33,17 @@ func (d *DB) UpsertActors(ctx context.Context, project string, day civil.Date) e
 				dayExpr = "day"
 			}
 			q := fmt.Sprintf(`
-INSERT INTO actors (project, actor_id, actor_kind, first_seen_day, last_seen_day)
+INSERT INTO actors (project_id, actor_id, actor_kind, first_seen_day, last_seen_day)
 SELECT ?, actor_id, actor_kind, ?, ?
-FROM %[1]s WHERE project=? AND %[3]s=? AND actor_id <> '' AND actor_kind IN %[2]s
+FROM %[1]s WHERE project_id=? AND %[3]s=? AND actor_id <> '' AND actor_kind IN %[2]s
 GROUP BY actor_id, actor_kind
-ON CONFLICT(project, actor_id) DO UPDATE SET
+ON CONFLICT(project_id, actor_id) DO UPDATE SET
   actor_kind     = CASE WHEN actors.actor_kind = 'user' OR excluded.actor_kind = 'user'
                         THEN 'user' ELSE excluded.actor_kind END,
   first_seen_day = MIN(actors.first_seen_day, excluded.first_seen_day),
   last_seen_day  = MAX(actors.last_seen_day,  excluded.last_seen_day)`, table, cohortKinds, dayExpr)
 			if _, err := tx.ExecContext(ctx, q,
-				project, day.String(), day.String(), project, day.String()); err != nil {
+				projectID, day.String(), day.String(), projectID, day.String()); err != nil {
 				return fmt.Errorf("upsert actors from %s: %w", table, err)
 			}
 		}
@@ -62,23 +62,23 @@ ON CONFLICT(project, actor_id) DO UPDATE SET
 // Callers skip anonymous projects: actor_id rotates at midnight there, so
 // first_seen_day would always equal D and every cohort would hold nothing but
 // offset 0. Retention is genuinely undefined under daily rotation.
-func (d *DB) AggregateRetentionDay(ctx context.Context, project string, day civil.Date) error {
+func (d *DB) AggregateRetentionDay(ctx context.Context, projectID int64, day civil.Date) error {
 	return d.tx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `
-INSERT OR REPLACE INTO agg_retention (project, actor_kind, cohort_day, day_offset, actors)
+INSERT OR REPLACE INTO agg_retention (project_id, actor_kind, cohort_day, day_offset, actors)
 WITH active AS (
-  SELECT DISTINCT actor_id FROM views         WHERE project=? AND day=? AND actor_id <> ''
+  SELECT DISTINCT actor_id FROM views         WHERE project_id=? AND day=? AND actor_id <> ''
   UNION
-  SELECT DISTINCT actor_id FROM product_events WHERE project=? AND substr(ts,1,10)=? AND actor_id <> ''
+  SELECT DISTINCT actor_id FROM events WHERE project_id=? AND substr(ts,1,10)=? AND actor_id <> ''
 )
-SELECT a.project, a.actor_kind, a.first_seen_day,
+SELECT a.project_id, a.actor_kind, a.first_seen_day,
        CAST(julianday(?) - julianday(a.first_seen_day) AS INTEGER),
        COUNT(DISTINCT a.actor_id)
 FROM actors a JOIN active ON active.actor_id = a.actor_id
-WHERE a.project=?
-GROUP BY a.project, a.actor_kind, a.first_seen_day`,
-			project, day.String(), project, day.String(),
-			day.String(), project); err != nil {
+WHERE a.project_id=?
+GROUP BY a.project_id, a.actor_kind, a.first_seen_day`,
+			projectID, day.String(), projectID, day.String(),
+			day.String(), projectID); err != nil {
 			return fmt.Errorf("agg_retention: %w", err)
 		}
 		return nil
@@ -93,16 +93,16 @@ GROUP BY a.project, a.actor_kind, a.first_seen_day`,
 //
 // The trade is that someone returning after the window counts as a new actor,
 // so cohort figures are approximate at the long tail.
-func (d *DB) PruneActors(ctx context.Context, project string, before civil.Date) error {
+func (d *DB) PruneActors(ctx context.Context, projectID int64, before civil.Date) error {
 	return d.tx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx,
-			`DELETE FROM actors WHERE project=? AND last_seen_day < ?`,
-			project, before.String()); err != nil {
+			`DELETE FROM actors WHERE project_id=? AND last_seen_day < ?`,
+			projectID, before.String()); err != nil {
 			return fmt.Errorf("prune actors: %w", err)
 		}
 		if _, err := tx.ExecContext(ctx,
-			`DELETE FROM agg_retention WHERE project=? AND cohort_day < ?`,
-			project, before.String()); err != nil {
+			`DELETE FROM agg_retention WHERE project_id=? AND cohort_day < ?`,
+			projectID, before.String()); err != nil {
 			return fmt.Errorf("prune agg_retention: %w", err)
 		}
 		return nil

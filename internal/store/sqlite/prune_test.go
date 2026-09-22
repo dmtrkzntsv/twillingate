@@ -16,23 +16,23 @@ func TestPruneAggregates(t *testing.T) {
 	}
 	// Seed one old + one new row per representative table. agg_product_totals
 	// is included because it is the only product table without event_name.
-	exec(`INSERT INTO agg_views_daily VALUES ('app','2025-01-01','web',1,1,1,0,0), ('app','2026-08-01','web',2,2,2,0,0)`)
-	exec(`INSERT INTO agg_views_paths VALUES ('app','2025-01-01','/',1,1), ('app','2026-08-01','/',2,2)`)
-	exec(`INSERT INTO agg_views_utm VALUES ('app','2025-01-01','s','m','c',1,1), ('app','2026-08-01','s','m','c',2,2)`)
-	exec(`INSERT INTO agg_product_daily VALUES ('app','2025-06-01','e',1,1), ('app','2026-08-01','e',2,2)`)
-	exec(`INSERT INTO agg_product_totals VALUES ('app','2025-06-01',1,1), ('app','2026-08-01',2,2)`)
-	exec(`INSERT INTO agg_product_attrs VALUES ('app','2025-06-01','e','k','v',1,1), ('app','2026-08-01','e','k','v',2,2)`)
+	exec(`INSERT INTO agg_views_daily VALUES (1,'2025-01-01','web',1,1,1,0,0), (1,'2026-08-01','web',2,2,2,0,0)`)
+	exec(`INSERT INTO agg_views_paths VALUES (1,'2025-01-01','/',1,1), (1,'2026-08-01','/',2,2)`)
+	exec(`INSERT INTO agg_views_utm VALUES (1,'2025-01-01','s','m','c',1,1), (1,'2026-08-01','s','m','c',2,2)`)
+	exec(`INSERT INTO agg_product_daily VALUES (1,'2025-06-01','e',1,1), (1,'2026-08-01','e',2,2)`)
+	exec(`INSERT INTO agg_product_totals VALUES (1,'2025-06-01',1,1), (1,'2026-08-01',2,2)`)
+	exec(`INSERT INTO agg_product_attrs VALUES (1,'2025-06-01','e','k','v',1,1), (1,'2026-08-01','e','k','v',2,2)`)
 	// Different project must be untouched.
-	exec(`INSERT INTO agg_views_daily VALUES ('other','2025-01-01','web',9,9,9,0,0)`)
+	exec(`INSERT INTO agg_views_daily VALUES (2,'2025-01-01','web',9,9,9,0,0)`)
 
-	if err := db.PruneAggregates(ctx, "app", day("2026-01-01"), day("2026-01-01")); err != nil {
+	if err := db.PruneAggregates(ctx, 1, day("2026-01-01"), day("2026-01-01")); err != nil {
 		t.Fatal(err)
 	}
 
-	count := func(tbl, project string) int {
+	count := func(tbl string, projectID int64) int {
 		t.Helper()
 		var n int
-		if err := db.db.QueryRow(`SELECT COUNT(*) FROM `+tbl+` WHERE project=?`, project).Scan(&n); err != nil {
+		if err := db.db.QueryRow(`SELECT COUNT(*) FROM `+tbl+` WHERE project_id=?`, projectID).Scan(&n); err != nil {
 			t.Fatal(err)
 		}
 		return n
@@ -41,11 +41,11 @@ func TestPruneAggregates(t *testing.T) {
 		"agg_views_daily", "agg_views_paths", "agg_views_utm",
 		"agg_product_daily", "agg_product_totals", "agg_product_attrs",
 	} {
-		if n := count(tbl, "app"); n != 1 {
-			t.Errorf("%s: %d rows for app, want 1 (old pruned, new kept)", tbl, n)
+		if n := count(tbl, 1); n != 1 {
+			t.Errorf("%s: %d rows for project 1, want 1 (old pruned, new kept)", tbl, n)
 		}
 	}
-	if n := count("agg_views_daily", "other"); n != 1 {
+	if n := count("agg_views_daily", 2); n != 1 {
 		t.Error("other project must be untouched")
 	}
 }
@@ -55,14 +55,14 @@ func TestPruneAggregates(t *testing.T) {
 func TestPruneAggregatesIndependentCutoffs(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	if _, err := db.db.Exec(`INSERT INTO agg_views_daily VALUES ('app','2026-03-01','web',1,1,1,0,0)`); err != nil {
+	if _, err := db.db.Exec(`INSERT INTO agg_views_daily VALUES (1,'2026-03-01','web',1,1,1,0,0)`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.db.Exec(`INSERT INTO agg_product_daily VALUES ('app','2026-03-01','e',1,1)`); err != nil {
+	if _, err := db.db.Exec(`INSERT INTO agg_product_daily VALUES (1,'2026-03-01','e',1,1)`); err != nil {
 		t.Fatal(err)
 	}
 	// Prune views through 2026-06-01 but keep product back to 2026-01-01.
-	if err := db.PruneAggregates(ctx, "app", day("2026-06-01"), day("2026-01-01")); err != nil {
+	if err := db.PruneAggregates(ctx, 1, day("2026-06-01"), day("2026-01-01")); err != nil {
 		t.Fatal(err)
 	}
 	var views, product int

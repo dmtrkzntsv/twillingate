@@ -14,7 +14,7 @@ import (
 func onDay(y int, m time.Month, d int) civil.Date { return civil.Date{Year: y, Month: m, Day: d} }
 
 func viewAt(id, actor string, t time.Time) store.View {
-	return store.View{ID: id, Project: "p", TS: t, ReceivedAt: t,
+	return store.View{ID: id, ProjectID: 1, TS: t, ReceivedAt: t,
 		Kind: "app", ActorID: actor, ActorKind: store.ActorInstall, Path: "/x", OS: "iOS"}
 }
 
@@ -27,19 +27,19 @@ func TestUpsertActorsTracksFirstAndLastSeen(t *testing.T) {
 	if err := db.WriteViews(ctx, []store.View{viewAt("1", "a", d1)}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.UpsertActors(ctx, "p", onDay(2026, 8, 1)); err != nil {
+	if err := db.UpsertActors(ctx, 1, onDay(2026, 8, 1)); err != nil {
 		t.Fatalf("upsert day 1: %v", err)
 	}
 	if err := db.WriteViews(ctx, []store.View{viewAt("2", "a", d2)}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.UpsertActors(ctx, "p", onDay(2026, 8, 8)); err != nil {
+	if err := db.UpsertActors(ctx, 1, onDay(2026, 8, 8)); err != nil {
 		t.Fatalf("upsert day 8: %v", err)
 	}
 
 	var first, last, actorKind string
 	if err := db.db.QueryRowContext(ctx,
-		`SELECT first_seen_day, last_seen_day, actor_kind FROM actors WHERE project='p' AND actor_id='a'`).
+		`SELECT first_seen_day, last_seen_day, actor_kind FROM actors WHERE project_id=1 AND actor_id='a'`).
 		Scan(&first, &last, &actorKind); err != nil {
 		t.Fatalf("read actor: %v", err)
 	}
@@ -54,18 +54,18 @@ func TestUpsertActorsRecordsUserActorKind(t *testing.T) {
 	ts := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
 
 	if err := db.WriteViews(ctx, []store.View{
-		{ID: "1", Project: "p", TS: ts, ReceivedAt: ts, Kind: "web", ActorID: "w",
+		{ID: "1", ProjectID: 1, TS: ts, ReceivedAt: ts, Kind: "web", ActorID: "w",
 			ActorKind: store.ActorUser, UserID: "u1", Path: "/"},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.UpsertActors(ctx, "p", onDay(2026, 8, 1)); err != nil {
+	if err := db.UpsertActors(ctx, 1, onDay(2026, 8, 1)); err != nil {
 		t.Fatal(err)
 	}
 
 	var actorKind string
 	if err := db.db.QueryRowContext(ctx,
-		`SELECT actor_kind FROM actors WHERE project='p' AND actor_id='w'`).Scan(&actorKind); err != nil {
+		`SELECT actor_kind FROM actors WHERE project_id=1 AND actor_id='w'`).Scan(&actorKind); err != nil {
 		t.Fatal(err)
 	}
 	if actorKind != store.ActorUser {
@@ -82,14 +82,14 @@ func TestUpsertActorsSkipsConnectionActors(t *testing.T) {
 		store.View{ID: "3", TS: at(10, 0), ActorID: "i1", ActorKind: store.ActorInstall, Path: "/", Kind: "app"},
 	)
 	if err := db.WriteProductEvents(ctx, []store.ProductEvent{
-		{ID: "4", Project: "app", EventName: "x", TS: at(10, 0), ReceivedAt: at(10, 0), ActorID: "legacy", ActorKind: ""},
+		{ID: "4", ProjectID: 1, EventName: "x", TS: at(10, 0), ReceivedAt: at(10, 0), ActorID: "legacy", ActorKind: ""},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.UpsertActors(ctx, "app", day("2026-08-10")); err != nil {
+	if err := db.UpsertActors(ctx, 1, day("2026-08-10")); err != nil {
 		t.Fatal(err)
 	}
-	rows, err := db.db.Query(`SELECT actor_id, actor_kind FROM actors WHERE project='app' ORDER BY actor_id`)
+	rows, err := db.db.Query(`SELECT actor_id, actor_kind FROM actors WHERE project_id=1 ORDER BY actor_id`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,11 +114,11 @@ func TestUpsertActorsIgnoresEmptyActor(t *testing.T) {
 	ts := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
 
 	if err := db.WriteViews(ctx, []store.View{
-		{ID: "1", Project: "p", TS: ts, ReceivedAt: ts, Kind: "app", ActorID: "", ActorKind: store.ActorInstall, Path: "/x"},
+		{ID: "1", ProjectID: 1, TS: ts, ReceivedAt: ts, Kind: "app", ActorID: "", ActorKind: store.ActorInstall, Path: "/x"},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.UpsertActors(ctx, "p", onDay(2026, 8, 1)); err != nil {
+	if err := db.UpsertActors(ctx, 1, onDay(2026, 8, 1)); err != nil {
 		t.Fatal(err)
 	}
 	var n int
@@ -142,31 +142,31 @@ func TestAggregateRetentionDayComputesOffsets(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.UpsertActors(ctx, "p", onDay(2026, 8, 1)); err != nil {
+	if err := db.UpsertActors(ctx, 1, onDay(2026, 8, 1)); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AggregateRetentionDay(ctx, "p", onDay(2026, 8, 1)); err != nil {
+	if err := db.AggregateRetentionDay(ctx, 1, onDay(2026, 8, 1)); err != nil {
 		t.Fatal(err)
 	}
 
 	if err := db.WriteViews(ctx, []store.View{viewAt("3", "a", later)}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.UpsertActors(ctx, "p", onDay(2026, 8, 8)); err != nil {
+	if err := db.UpsertActors(ctx, 1, onDay(2026, 8, 8)); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AggregateRetentionDay(ctx, "p", onDay(2026, 8, 8)); err != nil {
+	if err := db.AggregateRetentionDay(ctx, 1, onDay(2026, 8, 8)); err != nil {
 		t.Fatal(err)
 	}
 
 	var d0, d7 int
 	if err := db.db.QueryRowContext(ctx,
-		`SELECT actors FROM agg_retention WHERE project='p' AND actor_kind='install'
+		`SELECT actors FROM agg_retention WHERE project_id=1 AND actor_kind='install'
 		   AND cohort_day='2026-08-01' AND day_offset=0`).Scan(&d0); err != nil {
 		t.Fatalf("offset 0: %v", err)
 	}
 	if err := db.db.QueryRowContext(ctx,
-		`SELECT actors FROM agg_retention WHERE project='p' AND actor_kind='install'
+		`SELECT actors FROM agg_retention WHERE project_id=1 AND actor_kind='install'
 		   AND cohort_day='2026-08-01' AND day_offset=7`).Scan(&d7); err != nil {
 		t.Fatalf("offset 7: %v", err)
 	}
@@ -186,19 +186,19 @@ func TestRetentionViewExposesCohortSize(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.UpsertActors(ctx, "p", onDay(2026, 8, 1)); err != nil {
+	if err := db.UpsertActors(ctx, 1, onDay(2026, 8, 1)); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AggregateRetentionDay(ctx, "p", onDay(2026, 8, 1)); err != nil {
+	if err := db.AggregateRetentionDay(ctx, 1, onDay(2026, 8, 1)); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.WriteViews(ctx, []store.View{viewAt("3", "a", later)}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.UpsertActors(ctx, "p", onDay(2026, 8, 2)); err != nil {
+	if err := db.UpsertActors(ctx, 1, onDay(2026, 8, 2)); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AggregateRetentionDay(ctx, "p", onDay(2026, 8, 2)); err != nil {
+	if err := db.AggregateRetentionDay(ctx, 1, onDay(2026, 8, 2)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -206,7 +206,7 @@ func TestRetentionViewExposesCohortSize(t *testing.T) {
 	var actorKind string
 	if err := db.db.QueryRowContext(ctx,
 		`SELECT actors, cohort_size, actor_kind FROM v_retention
-		 WHERE project='p' AND cohort_day='2026-08-01' AND day_offset=1`).
+		 WHERE project_id=1 AND cohort_day='2026-08-01' AND day_offset=1`).
 		Scan(&actors, &size, &actorKind); err != nil {
 		t.Fatalf("v_retention: %v", err)
 	}
@@ -223,18 +223,18 @@ func TestAggregateRetentionDayIsIdempotent(t *testing.T) {
 	if err := db.WriteViews(ctx, []store.View{viewAt("1", "a", cohort)}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.UpsertActors(ctx, "p", onDay(2026, 8, 1)); err != nil {
+	if err := db.UpsertActors(ctx, 1, onDay(2026, 8, 1)); err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i < 2; i++ {
-		if err := db.AggregateRetentionDay(ctx, "p", onDay(2026, 8, 1)); err != nil {
+		if err := db.AggregateRetentionDay(ctx, 1, onDay(2026, 8, 1)); err != nil {
 			t.Fatalf("run %d: %v", i, err)
 		}
 	}
 
 	var n, actors int
 	if err := db.db.QueryRowContext(ctx,
-		`SELECT COUNT(*), COALESCE(MAX(actors),0) FROM agg_retention WHERE project='p'`).
+		`SELECT COUNT(*), COALESCE(MAX(actors),0) FROM agg_retention WHERE project_id=1`).
 		Scan(&n, &actors); err != nil {
 		t.Fatal(err)
 	}
@@ -252,7 +252,7 @@ func TestUpsertActorsIsIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := 0; i < 2; i++ {
-		if err := db.UpsertActors(ctx, "p", onDay(2026, 8, 1)); err != nil {
+		if err := db.UpsertActors(ctx, 1, onDay(2026, 8, 1)); err != nil {
 			t.Fatalf("run %d: %v", i, err)
 		}
 	}
@@ -276,16 +276,16 @@ func TestPruneActorsEvictsStale(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.UpsertActors(ctx, "p", onDay(2025, 1, 1)); err != nil {
+	if err := db.UpsertActors(ctx, 1, onDay(2025, 1, 1)); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.UpsertActors(ctx, "p", onDay(2026, 8, 20)); err != nil {
+	if err := db.UpsertActors(ctx, 1, onDay(2026, 8, 20)); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AggregateRetentionDay(ctx, "p", onDay(2025, 1, 1)); err != nil {
+	if err := db.AggregateRetentionDay(ctx, 1, onDay(2025, 1, 1)); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.PruneActors(ctx, "p", onDay(2026, 1, 1)); err != nil {
+	if err := db.PruneActors(ctx, 1, onDay(2026, 1, 1)); err != nil {
 		t.Fatalf("prune: %v", err)
 	}
 
@@ -314,35 +314,35 @@ func TestUpsertActorsPromotesInstallToUser(t *testing.T) {
 	// separate UpsertActors call, and hence a separate conflict).
 	// z is install-only throughout: the control that must never be promoted.
 	if err := db.WriteViews(ctx, []store.View{
-		{ID: "1", Project: "p", TS: d10, ReceivedAt: d10, Kind: "app",
+		{ID: "1", ProjectID: 1, TS: d10, ReceivedAt: d10, Kind: "app",
 			ActorID: "x", ActorKind: store.ActorInstall, Path: "/x"},
-		{ID: "2", Project: "p", TS: d10, ReceivedAt: d10, Kind: "app",
+		{ID: "2", ProjectID: 1, TS: d10, ReceivedAt: d10, Kind: "app",
 			ActorID: "x", UserID: "x", ActorKind: store.ActorUser, Path: "/x"},
-		{ID: "3", Project: "p", TS: d10, ReceivedAt: d10, Kind: "app",
+		{ID: "3", ProjectID: 1, TS: d10, ReceivedAt: d10, Kind: "app",
 			ActorID: "y", ActorKind: store.ActorInstall, Path: "/x"},
-		{ID: "4", Project: "p", TS: d10, ReceivedAt: d10, Kind: "app",
+		{ID: "4", ProjectID: 1, TS: d10, ReceivedAt: d10, Kind: "app",
 			ActorID: "z", ActorKind: store.ActorInstall, Path: "/x"},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.UpsertActors(ctx, "p", onDay(2026, 8, 10)); err != nil {
+	if err := db.UpsertActors(ctx, 1, onDay(2026, 8, 10)); err != nil {
 		t.Fatal(err)
 	}
 
 	if err := db.WriteViews(ctx, []store.View{
-		{ID: "5", Project: "p", TS: d11, ReceivedAt: d11, Kind: "app",
+		{ID: "5", ProjectID: 1, TS: d11, ReceivedAt: d11, Kind: "app",
 			ActorID: "y", UserID: "y", ActorKind: store.ActorUser, Path: "/x"},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.UpsertActors(ctx, "p", onDay(2026, 8, 11)); err != nil {
+	if err := db.UpsertActors(ctx, 1, onDay(2026, 8, 11)); err != nil {
 		t.Fatal(err)
 	}
 
 	kindOf := func(actorID string) (kind, first string) {
 		t.Helper()
 		if err := db.db.QueryRowContext(ctx,
-			`SELECT actor_kind, first_seen_day FROM actors WHERE project='p' AND actor_id=?`, actorID).
+			`SELECT actor_kind, first_seen_day FROM actors WHERE project_id=1 AND actor_id=?`, actorID).
 			Scan(&kind, &first); err != nil {
 			t.Fatalf("read actor %s: %v", actorID, err)
 		}
@@ -359,12 +359,12 @@ func TestUpsertActorsPromotesInstallToUser(t *testing.T) {
 		t.Errorf("z = %q, want install (never seen as a user)", kind)
 	}
 
-	if err := db.AggregateRetentionDay(ctx, "p", onDay(2026, 8, 11)); err != nil {
+	if err := db.AggregateRetentionDay(ctx, 1, onDay(2026, 8, 11)); err != nil {
 		t.Fatal(err)
 	}
 	var userActors int
 	if err := db.db.QueryRowContext(ctx,
-		`SELECT actors FROM agg_retention WHERE project='p' AND actor_kind='user'
+		`SELECT actors FROM agg_retention WHERE project_id=1 AND actor_kind='user'
 		   AND cohort_day='2026-08-10' AND day_offset=1`).Scan(&userActors); err != nil {
 		t.Fatalf("user cohort: %v", err)
 	}
@@ -373,7 +373,7 @@ func TestUpsertActorsPromotesInstallToUser(t *testing.T) {
 	}
 	var installActors int
 	err := db.db.QueryRowContext(ctx,
-		`SELECT actors FROM agg_retention WHERE project='p' AND actor_kind='install'
+		`SELECT actors FROM agg_retention WHERE project_id=1 AND actor_kind='install'
 		   AND cohort_day='2026-08-10' AND day_offset=1`).Scan(&installActors)
 	if err != sql.ErrNoRows {
 		t.Errorf("install cohort d1 = actors %d err %v; want no row: y was promoted to user before this aggregation ran",

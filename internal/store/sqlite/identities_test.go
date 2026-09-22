@@ -14,34 +14,34 @@ func TestAggregateIdentityDayCountsUsersAndGroups(t *testing.T) {
 	d := day("2026-08-10")
 
 	if err := db.WriteViews(ctx, []store.View{
-		{ID: "1", Project: "p", TS: tstamp, ReceivedAt: tstamp, ActorID: "a",
+		{ID: "1", ProjectID: 1, TS: tstamp, ReceivedAt: tstamp, ActorID: "a",
 			UserID: "u1", GroupID: "org9", Kind: "app", ActorKind: store.ActorInstall, Path: "/x"},
-		{ID: "2", Project: "p", TS: tstamp, ReceivedAt: tstamp, ActorID: "b",
+		{ID: "2", ProjectID: 1, TS: tstamp, ReceivedAt: tstamp, ActorID: "b",
 			UserID: "u2", GroupID: "org9", Kind: "app", ActorKind: store.ActorInstall, Path: "/x"},
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.WriteProductEvents(ctx, []store.ProductEvent{
-		{ID: "3", Project: "p", EventName: "subscribed", TS: tstamp, ReceivedAt: tstamp,
+		{ID: "3", ProjectID: 1, EventName: "subscribed", TS: tstamp, ReceivedAt: tstamp,
 			ActorID: "a", UserID: "u1", GroupID: "org9"},
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.WriteViews(ctx, []store.View{
-		{ID: "4", Project: "p", TS: tstamp, ReceivedAt: tstamp, Kind: "web", ActorKind: store.ActorConnection, ActorID: "a",
+		{ID: "4", ProjectID: 1, TS: tstamp, ReceivedAt: tstamp, Kind: "web", ActorKind: store.ActorConnection, ActorID: "a",
 			UserID: "u1", GroupID: "org9", Path: "/"},
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := db.AggregateIdentityDay(ctx, "p", d); err != nil {
+	if err := db.AggregateIdentityDay(ctx, 1, d); err != nil {
 		t.Fatalf("aggregate: %v", err)
 	}
 
 	var actors, users, views, events int
 	if err := db.db.QueryRowContext(ctx,
 		`SELECT actors, users, views, events FROM agg_identity_daily
-		 WHERE project='p' AND day=? AND kind='group' AND id='org9'`, d.String()).
+		 WHERE project_id=1 AND day=? AND kind='group' AND id='org9'`, d.String()).
 		Scan(&actors, &users, &views, &events); err != nil {
 		t.Fatalf("read group row: %v", err)
 	}
@@ -53,7 +53,7 @@ func TestAggregateIdentityDayCountsUsersAndGroups(t *testing.T) {
 
 	if err := db.db.QueryRowContext(ctx,
 		`SELECT actors, users, views, events FROM agg_identity_daily
-		 WHERE project='p' AND day=? AND kind='user' AND id='u1'`, d.String()).
+		 WHERE project_id=1 AND day=? AND kind='user' AND id='u1'`, d.String()).
 		Scan(&actors, &users, &views, &events); err != nil {
 		t.Fatalf("read user row: %v", err)
 	}
@@ -70,13 +70,13 @@ func TestAggregateIdentityDayIsIdempotent(t *testing.T) {
 	tstamp := at(10, 0)
 
 	if err := db.WriteViews(ctx, []store.View{
-		{ID: "1", Project: "p", TS: tstamp, ReceivedAt: tstamp, ActorID: "a",
+		{ID: "1", ProjectID: 1, TS: tstamp, ReceivedAt: tstamp, ActorID: "a",
 			UserID: "u1", Kind: "app", ActorKind: store.ActorInstall, Path: "/x"},
 	}); err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i < 2; i++ {
-		if err := db.AggregateIdentityDay(ctx, "p", day("2026-08-10")); err != nil {
+		if err := db.AggregateIdentityDay(ctx, 1, day("2026-08-10")); err != nil {
 			t.Fatalf("run %d: %v", i, err)
 		}
 	}
@@ -97,23 +97,23 @@ func TestAggregateIdentityDayUpdatesLastSeen(t *testing.T) {
 	d := day("2026-08-10")
 
 	if err := db.UpsertIdentities(ctx, []store.Identity{
-		{Project: "p", Kind: store.KindUser, ID: "u1", Name: "Ada"},
+		{ProjectID: 1, Kind: store.KindUser, ID: "u1", Name: "Ada"},
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.WriteViews(ctx, []store.View{
-		{ID: "1", Project: "p", TS: tstamp, ReceivedAt: tstamp, ActorID: "a",
+		{ID: "1", ProjectID: 1, TS: tstamp, ReceivedAt: tstamp, ActorID: "a",
 			UserID: "u1", Kind: "app", ActorKind: store.ActorInstall, Path: "/x"},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AggregateIdentityDay(ctx, "p", d); err != nil {
+	if err := db.AggregateIdentityDay(ctx, 1, d); err != nil {
 		t.Fatal(err)
 	}
 
 	var last string
 	if err := db.db.QueryRowContext(ctx,
-		`SELECT last_seen_day FROM identities WHERE project='p' AND kind='user' AND id='u1'`).
+		`SELECT last_seen_day FROM identities WHERE project_id=1 AND kind='user' AND id='u1'`).
 		Scan(&last); err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +128,7 @@ func TestIdentityDailyViewReadsAggregates(t *testing.T) {
 	tstamp := at(10, 0)
 
 	if err := db.WriteViews(ctx, []store.View{
-		{ID: "1", Project: "p", TS: tstamp, ReceivedAt: tstamp, ActorID: "a",
+		{ID: "1", ProjectID: 1, TS: tstamp, ReceivedAt: tstamp, ActorID: "a",
 			GroupID: "org9", Kind: "app", ActorKind: store.ActorInstall, Path: "/x"},
 	}); err != nil {
 		t.Fatal(err)
@@ -136,15 +136,15 @@ func TestIdentityDailyViewReadsAggregates(t *testing.T) {
 	// The view unions the aggregate table with a live computation over raw
 	// rows, so the raw day must be consumed before counting or the same day
 	// legitimately appears twice. AggregateViewDay is what deletes it.
-	if err := db.AggregateIdentityDay(ctx, "p", day("2026-08-10")); err != nil {
+	if err := db.AggregateIdentityDay(ctx, 1, day("2026-08-10")); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AggregateViewDay(ctx, "p", day("2026-08-10")); err != nil {
+	if err := db.AggregateViewDay(ctx, 1, day("2026-08-10")); err != nil {
 		t.Fatal(err)
 	}
 	var n int
 	if err := db.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM v_identity_daily WHERE project='p' AND kind='group'`).Scan(&n); err != nil {
+		`SELECT COUNT(*) FROM v_identity_daily WHERE project_id=1 AND kind='group'`).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	if n != 1 {
@@ -157,8 +157,8 @@ func TestPruneIdentitiesEvictsStale(t *testing.T) {
 	ctx := context.Background()
 
 	if err := db.UpsertIdentities(ctx, []store.Identity{
-		{Project: "p", Kind: store.KindUser, ID: "old", Name: "Gone"},
-		{Project: "p", Kind: store.KindUser, ID: "new", Name: "Here"},
+		{ProjectID: 1, Kind: store.KindUser, ID: "old", Name: "Gone"},
+		{ProjectID: 1, Kind: store.KindUser, ID: "new", Name: "Here"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -171,11 +171,11 @@ func TestPruneIdentitiesEvictsStale(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := db.db.ExecContext(ctx,
-		`INSERT INTO agg_identity_daily VALUES ('p','2024-01-01','user','old',1,1,1,0)`); err != nil {
+		`INSERT INTO agg_identity_daily VALUES (1,'2024-01-01','user','old',1,1,1,0)`); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := db.PruneIdentities(ctx, "p", onDay(2026, 1, 1)); err != nil {
+	if err := db.PruneIdentities(ctx, 1, onDay(2026, 1, 1)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -198,11 +198,11 @@ func TestPruneIdentitiesKeepsNeverSeenNames(t *testing.T) {
 	// last_seen_day is '' until the first daily pass; such a row must not be
 	// evicted before it has ever had the chance to be counted.
 	if err := db.UpsertIdentities(ctx, []store.Identity{
-		{Project: "p", Kind: store.KindGroup, ID: "org9", Name: "Acme"},
+		{ProjectID: 1, Kind: store.KindGroup, ID: "org9", Name: "Acme"},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.PruneIdentities(ctx, "p", onDay(2026, 8, 23)); err != nil {
+	if err := db.PruneIdentities(ctx, 1, onDay(2026, 8, 23)); err != nil {
 		t.Fatal(err)
 	}
 	var n int

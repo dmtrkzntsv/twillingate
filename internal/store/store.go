@@ -14,7 +14,8 @@ import (
 // rows are enriched from the User-Agent. ActorKind records how the actor
 // was identified and is what retention cohorts on.
 type View struct {
-	ID, Project                                    string
+	ID                                             string
+	ProjectID                                      int64
 	TS, ReceivedAt                                 time.Time
 	Kind                                           string
 	ActorID, ActorKind, UserID, GroupID, SessionID string
@@ -28,12 +29,14 @@ type View struct {
 
 // ProductEvent represents a custom event from any surface.
 type ProductEvent struct {
-	ID, Project, EventName string
-	TS, ReceivedAt         time.Time
-	ActorID, ActorKind     string
-	UserID, GroupID        string
-	OS, AppVersion         string
-	Attributes             map[string]string
+	ID                 string
+	ProjectID          int64
+	EventName          string
+	TS, ReceivedAt     time.Time
+	ActorID, ActorKind string
+	UserID, GroupID    string
+	OS, AppVersion     string
+	Attributes         map[string]string
 }
 
 // Actor kinds: how an actor id was derived. Only user and install actors
@@ -48,7 +51,8 @@ const (
 // table rather than on event rows: a name repeated on every row could never
 // be updated, and names change.
 type Identity struct {
-	Project, Kind, ID, Name string
+	ProjectID     int64
+	Kind, ID, Name string
 }
 
 // Identity kinds.
@@ -59,17 +63,19 @@ const (
 
 // RegistryProject represents a project configuration from the registry.
 type RegistryProject struct {
-	Alias, Name, Identity string
-	AllowedOrigins        string // JSON array, "[]" if none
-	Retention             string // JSON object or ""
-	Attributes            string // JSON array, "[]" if none declared
-	Archived              bool
+	ID             int64 // 0 on create; assigned by the store
+	Name, Identity string
+	AllowedOrigins string // JSON array, "[]" if none
+	Attributes     string // JSON array, "[]" if none declared
+	Archived       bool
 }
 
 // RegistryKey represents an API key in the registry.
 type RegistryKey struct {
-	Key, Project, Label string
-	Disabled            bool
+	Key       string
+	ProjectID int64
+	Label     string
+	Disabled  bool
 }
 
 // AuditEntry represents a single audit log entry.
@@ -83,31 +89,33 @@ type Store interface {
 	WriteViews(ctx context.Context, views []View) error
 	WriteProductEvents(ctx context.Context, evs []ProductEvent) error
 	UpsertIdentities(ctx context.Context, ids []Identity) error
-	ViewDaysBefore(ctx context.Context, project string, before civil.Date) ([]civil.Date, error)
-	ProductDaysBefore(ctx context.Context, project string, before civil.Date) ([]civil.Date, error)
-	AggregateViewDay(ctx context.Context, project string, day civil.Date) error
-	AggregateProductDay(ctx context.Context, project string, day civil.Date, attrs []string, topN int) error
-	UpsertActors(ctx context.Context, project string, day civil.Date) error
-	AggregateRetentionDay(ctx context.Context, project string, day civil.Date) error
-	PruneActors(ctx context.Context, project string, before civil.Date) error
-	AggregateIdentityDay(ctx context.Context, project string, day civil.Date) error
-	PruneIdentities(ctx context.Context, project string, before civil.Date) error
-	PruneAggregates(ctx context.Context, project string, viewsBefore, productBefore civil.Date) error
+	ViewDaysBefore(ctx context.Context, projectID int64, before civil.Date) ([]civil.Date, error)
+	ProductDaysBefore(ctx context.Context, projectID int64, before civil.Date) ([]civil.Date, error)
+	AggregateViewDay(ctx context.Context, projectID int64, day civil.Date) error
+	AggregateProductDay(ctx context.Context, projectID int64, day civil.Date, attrs []string, topN int) error
+	UpsertActors(ctx context.Context, projectID int64, day civil.Date) error
+	AggregateRetentionDay(ctx context.Context, projectID int64, day civil.Date) error
+	PruneActors(ctx context.Context, projectID int64, before civil.Date) error
+	AggregateIdentityDay(ctx context.Context, projectID int64, day civil.Date) error
+	PruneIdentities(ctx context.Context, projectID int64, before civil.Date) error
+	PruneAggregates(ctx context.Context, projectID int64, viewsBefore, productBefore civil.Date) error
 	IncrementalVacuum(ctx context.Context) error
-	ProjectAliases(ctx context.Context) ([]string, error) // all rows incl. archived
+	ProjectIDs(ctx context.Context) ([]int64, error) // all rows incl. archived, ascending
 	RebuildFlatView(ctx context.Context, keys []string) error
 	GetMeta(ctx context.Context, key string) (string, error) // "" if absent
 	SetMeta(ctx context.Context, key, value string) error
 	LoadRegistry(ctx context.Context) ([]RegistryProject, []RegistryKey, error)
 	ConfigVersion(ctx context.Context) (int64, error)
-	CreateProject(ctx context.Context, p RegistryProject, a AuditEntry) error
-	CreateProjectWithKey(ctx context.Context, p RegistryProject, k RegistryKey, projectAudit, keyAudit AuditEntry) error
-	UpdateProject(ctx context.Context, p RegistryProject, a AuditEntry) error
-	SetProjectArchived(ctx context.Context, alias string, archived bool, a AuditEntry) error
+	// CreateProject and CreateProjectWithKey return the id SQLite assigned.
+	// The store fills the audit subjects itself (the id, and id/label),
+	// because the caller cannot know the id before the insert.
+	CreateProject(ctx context.Context, p RegistryProject, a AuditEntry) (int64, error)
+	CreateProjectWithKey(ctx context.Context, p RegistryProject, k RegistryKey, projectAudit, keyAudit AuditEntry) (int64, error)
+	UpdateProject(ctx context.Context, p RegistryProject, a AuditEntry) error // p.ID selects the row
+	SetProjectArchived(ctx context.Context, id int64, archived bool, a AuditEntry) error
 	InsertIngestKey(ctx context.Context, k RegistryKey, a AuditEntry) error
-	SetIngestKeyDisabled(ctx context.Context, project, label string, disabled bool, a AuditEntry) error
-	DeleteProjectData(ctx context.Context, alias string, a AuditEntry) error
-	RenameProject(ctx context.Context, old, new string, a AuditEntry) error
+	SetIngestKeyDisabled(ctx context.Context, projectID int64, label string, disabled bool, a AuditEntry) error
+	DeleteProjectData(ctx context.Context, id int64, a AuditEntry) error
 	Close() error
 }
 

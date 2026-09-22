@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"sort"
-	"strings"
 	"testing"
 
 	"github.com/dmtrkzntsv/twillingate/internal/store"
@@ -32,17 +31,17 @@ func TestCreateProjectWritesAuditAndBumpsVersion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := store.RegistryProject{Alias: "blog", Name: "My blog",
+	p := store.RegistryProject{Name: "My blog",
 		Identity: "anonymous", AllowedOrigins: `["https://blog.example.com"]`}
-	if err := d.CreateProject(ctx, p, store.AuditEntry{
-		Actor: "cli", Action: "project.create", Subject: "blog"}); err != nil {
+	id, err := d.CreateProject(ctx, p, store.AuditEntry{Actor: "cli", Action: "project.create"})
+	if err != nil {
 		t.Fatal(err)
 	}
 	ps, _, err := d.LoadRegistry(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(ps) != 1 || ps[0].Alias != "blog" || ps[0].Identity != "anonymous" {
+	if len(ps) != 1 || ps[0].ID != id || ps[0].Name != "My blog" || ps[0].Identity != "anonymous" {
 		t.Fatalf("LoadRegistry = %+v", ps)
 	}
 	v1, _ := d.ConfigVersion(ctx)
@@ -51,7 +50,7 @@ func TestCreateProjectWritesAuditAndBumpsVersion(t *testing.T) {
 	}
 	var actor, action string
 	if err := d.db.QueryRow(
-		`SELECT actor, action FROM audit_log WHERE subject='blog'`).
+		`SELECT actor, action FROM audit_log WHERE action='project.create'`).
 		Scan(&actor, &action); err != nil {
 		t.Fatal(err)
 	}
@@ -60,34 +59,22 @@ func TestCreateProjectWritesAuditAndBumpsVersion(t *testing.T) {
 	}
 }
 
-func TestCreateProjectDuplicateAliasFails(t *testing.T) {
-	d := openRegistryDB(t)
-	ctx := context.Background()
-	p := store.RegistryProject{Alias: "blog", Name: "a", Identity: "anonymous", AllowedOrigins: "[]"}
-	if err := d.CreateProject(ctx, p, store.AuditEntry{Actor: "cli", Action: "project.create", Subject: "blog"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := d.CreateProject(ctx, p, store.AuditEntry{Actor: "cli", Action: "project.create", Subject: "blog"}); err == nil {
-		t.Fatal("duplicate alias did not fail")
-	}
-}
-
 func TestUpdateProjectAppliesFieldsAndAudits(t *testing.T) {
 	d := openRegistryDB(t)
 	ctx := context.Background()
-	p := store.RegistryProject{Alias: "blog", Name: "My blog",
+	p := store.RegistryProject{Name: "My blog",
 		Identity: "anonymous", AllowedOrigins: `["https://blog.example.com"]`}
-	if err := d.CreateProject(ctx, p, store.AuditEntry{
-		Actor: "cli", Action: "project.create", Subject: "blog"}); err != nil {
+	id, err := d.CreateProject(ctx, p, store.AuditEntry{Actor: "cli", Action: "project.create"})
+	if err != nil {
 		t.Fatal(err)
 	}
 	v0, _ := d.ConfigVersion(ctx)
 
-	updated := store.RegistryProject{Alias: "blog", Name: "Renamed blog",
+	updated := store.RegistryProject{ID: id, Name: "Renamed blog",
 		Identity: "identified", AllowedOrigins: `["https://blog.example.com","https://www.blog.example.com"]`,
-		Retention: `{"web":{"raw_days":90}}`, Attributes: `["plan"]`}
+		Attributes: `["plan"]`}
 	if err := d.UpdateProject(ctx, updated, store.AuditEntry{
-		Actor: "cli", Action: "project.update", Subject: "blog"}); err != nil {
+		Actor: "cli", Action: "project.update", Subject: "1"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -100,8 +87,7 @@ func TestUpdateProjectAppliesFieldsAndAudits(t *testing.T) {
 	}
 	got := ps[0]
 	if got.Name != "Renamed blog" || got.Identity != "identified" ||
-		got.AllowedOrigins != updated.AllowedOrigins ||
-		got.Retention != updated.Retention || got.Attributes != updated.Attributes {
+		got.AllowedOrigins != updated.AllowedOrigins || got.Attributes != updated.Attributes {
 		t.Fatalf("LoadRegistry after update = %+v", got)
 	}
 
@@ -111,7 +97,7 @@ func TestUpdateProjectAppliesFieldsAndAudits(t *testing.T) {
 	}
 	var actor, action string
 	if err := d.db.QueryRow(
-		`SELECT actor, action FROM audit_log WHERE subject='blog' AND action='project.update'`).
+		`SELECT actor, action FROM audit_log WHERE subject='1' AND action='project.update'`).
 		Scan(&actor, &action); err != nil {
 		t.Fatal(err)
 	}
@@ -120,28 +106,29 @@ func TestUpdateProjectAppliesFieldsAndAudits(t *testing.T) {
 	}
 }
 
-func TestUpdateProjectUnknownAliasFails(t *testing.T) {
+func TestUpdateProjectUnknownIDFails(t *testing.T) {
 	d := openRegistryDB(t)
 	ctx := context.Background()
-	p := store.RegistryProject{Alias: "ghost", Name: "n", Identity: "anonymous", AllowedOrigins: "[]"}
-	err := d.UpdateProject(ctx, p, store.AuditEntry{Actor: "cli", Action: "project.update", Subject: "ghost"})
+	p := store.RegistryProject{ID: 7, Name: "n", Identity: "anonymous", AllowedOrigins: "[]"}
+	err := d.UpdateProject(ctx, p, store.AuditEntry{Actor: "cli", Action: "project.update", Subject: "7"})
 	if err == nil {
-		t.Fatal("update of an unknown alias did not fail")
+		t.Fatal("update of an unknown id did not fail")
 	}
 }
 
 func TestIngestKeyLifecycle(t *testing.T) {
 	d := openRegistryDB(t)
 	ctx := context.Background()
-	p := store.RegistryProject{Alias: "blog", Name: "a", Identity: "anonymous", AllowedOrigins: "[]"}
-	if err := d.CreateProject(ctx, p, store.AuditEntry{Actor: "cli", Action: "project.create", Subject: "blog"}); err != nil {
+	p := store.RegistryProject{Name: "a", Identity: "anonymous", AllowedOrigins: "[]"}
+	id, err := d.CreateProject(ctx, p, store.AuditEntry{Actor: "cli", Action: "project.create"})
+	if err != nil {
 		t.Fatal(err)
 	}
-	k := store.RegistryKey{Key: "ak_test1", Project: "blog", Label: "web"}
+	k := store.RegistryKey{Key: "ak_test1", ProjectID: id, Label: "web"}
 	if err := d.InsertIngestKey(ctx, k, store.AuditEntry{Actor: "cli", Action: "key.issue", Subject: "web"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.SetIngestKeyDisabled(ctx, "blog", "web", true, store.AuditEntry{Actor: "cli", Action: "key.disable", Subject: "web"}); err != nil {
+	if err := d.SetIngestKeyDisabled(ctx, id, "web", true, store.AuditEntry{Actor: "cli", Action: "key.disable", Subject: "web"}); err != nil {
 		t.Fatal(err)
 	}
 	_, ks, err := d.LoadRegistry(ctx)
@@ -151,7 +138,7 @@ func TestIngestKeyLifecycle(t *testing.T) {
 	if len(ks) != 1 || !ks[0].Disabled {
 		t.Fatalf("keys = %+v, want one disabled", ks)
 	}
-	if err := d.SetIngestKeyDisabled(ctx, "blog", "web", false, store.AuditEntry{Actor: "cli", Action: "key.enable", Subject: "web"}); err != nil {
+	if err := d.SetIngestKeyDisabled(ctx, id, "web", false, store.AuditEntry{Actor: "cli", Action: "key.enable", Subject: "web"}); err != nil {
 		t.Fatal(err)
 	}
 	_, ks, _ = d.LoadRegistry(ctx)
@@ -159,7 +146,7 @@ func TestIngestKeyLifecycle(t *testing.T) {
 		t.Fatal("key still disabled after enable")
 	}
 	// Unknown project+label is an error, not a silent no-op.
-	if err := d.SetIngestKeyDisabled(ctx, "blog", "nope", true, store.AuditEntry{Actor: "cli", Action: "key.disable", Subject: "nope"}); err == nil {
+	if err := d.SetIngestKeyDisabled(ctx, id, "nope", true, store.AuditEntry{Actor: "cli", Action: "key.disable", Subject: "nope"}); err == nil {
 		t.Fatal("unknown label did not fail")
 	}
 }
@@ -167,18 +154,19 @@ func TestIngestKeyLifecycle(t *testing.T) {
 func TestArchiveRestoreProject(t *testing.T) {
 	d := openRegistryDB(t)
 	ctx := context.Background()
-	p := store.RegistryProject{Alias: "blog", Name: "a", Identity: "anonymous", AllowedOrigins: "[]"}
-	if err := d.CreateProject(ctx, p, store.AuditEntry{Actor: "cli", Action: "project.create", Subject: "blog"}); err != nil {
+	p := store.RegistryProject{Name: "a", Identity: "anonymous", AllowedOrigins: "[]"}
+	id, err := d.CreateProject(ctx, p, store.AuditEntry{Actor: "cli", Action: "project.create"})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := d.SetProjectArchived(ctx, "blog", true, store.AuditEntry{Actor: "mcp", Action: "project.archive", Subject: "blog"}); err != nil {
+	if err := d.SetProjectArchived(ctx, id, true, store.AuditEntry{Actor: "mcp", Action: "project.archive", Subject: "1"}); err != nil {
 		t.Fatal(err)
 	}
 	ps, _, _ := d.LoadRegistry(ctx)
 	if !ps[0].Archived {
 		t.Fatal("not archived")
 	}
-	if err := d.SetProjectArchived(ctx, "blog", false, store.AuditEntry{Actor: "mcp", Action: "project.restore", Subject: "blog"}); err != nil {
+	if err := d.SetProjectArchived(ctx, id, false, store.AuditEntry{Actor: "mcp", Action: "project.restore", Subject: "1"}); err != nil {
 		t.Fatal(err)
 	}
 	ps, _, _ = d.LoadRegistry(ctx)
@@ -191,19 +179,20 @@ func TestSetProjectArchivedErrors(t *testing.T) {
 	d := openRegistryDB(t)
 	ctx := context.Background()
 
-	// Archiving unknown alias should fail.
-	if err := d.SetProjectArchived(ctx, "ghost", true, store.AuditEntry{Actor: "cli", Action: "project.archive", Subject: "ghost"}); err == nil {
-		t.Fatal("archiving unknown alias did not fail")
+	// Archiving an unknown id should fail.
+	if err := d.SetProjectArchived(ctx, 7, true, store.AuditEntry{Actor: "cli", Action: "project.archive", Subject: "7"}); err == nil {
+		t.Fatal("archiving unknown id did not fail")
 	}
 
 	// Create a project but don't archive it.
-	p := store.RegistryProject{Alias: "blog", Name: "a", Identity: "anonymous", AllowedOrigins: "[]"}
-	if err := d.CreateProject(ctx, p, store.AuditEntry{Actor: "cli", Action: "project.create", Subject: "blog"}); err != nil {
+	p := store.RegistryProject{Name: "a", Identity: "anonymous", AllowedOrigins: "[]"}
+	id, err := d.CreateProject(ctx, p, store.AuditEntry{Actor: "cli", Action: "project.create"})
+	if err != nil {
 		t.Fatal(err)
 	}
 
 	// Restore (archive=false) of non-archived project should be a no-op (nil error).
-	if err := d.SetProjectArchived(ctx, "blog", false, store.AuditEntry{Actor: "mcp", Action: "project.restore", Subject: "blog"}); err != nil {
+	if err := d.SetProjectArchived(ctx, id, false, store.AuditEntry{Actor: "mcp", Action: "project.restore", Subject: "1"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -246,7 +235,7 @@ func TestMigrationUpgradeFrom004(t *testing.T) {
 	// Verify the new columns exist with defaults.
 	var identity, allowedOrigins string
 	if err := d.db.QueryRowContext(ctx,
-		`SELECT identity, allowed_origins FROM projects WHERE alias='old_project'`).
+		`SELECT identity, allowed_origins FROM projects WHERE name='Old Project'`).
 		Scan(&identity, &allowedOrigins); err != nil {
 		t.Fatal(err)
 	}
@@ -266,8 +255,8 @@ func TestProjectsAttributesDefaultsToEmptyArray(t *testing.T) {
 	db := newTestDB(t) // existing helper; applies all migrations
 	ctx := context.Background()
 	if _, err := db.ExecForTest(
-		`INSERT INTO projects (id, alias, name, identity, allowed_origins)
-		 VALUES ('i1','blog','Blog','anonymous','[]')`); err != nil {
+		`INSERT INTO projects (name, identity, allowed_origins)
+		 VALUES ('Blog','anonymous','[]')`); err != nil {
 		t.Fatal(err)
 	}
 	ps, _, err := db.LoadRegistry(ctx)
@@ -318,7 +307,7 @@ func TestMigrationBackfillsAttributesFromLegacyMap(t *testing.T) {
 
 	var attrs string
 	if err := d.db.QueryRowContext(ctx,
-		`SELECT attributes FROM projects WHERE alias='blog'`).Scan(&attrs); err != nil {
+		`SELECT attributes FROM projects WHERE name='Blog'`).Scan(&attrs); err != nil {
 		t.Fatal(err)
 	}
 	if attrs != `["plan","tier"]` {
@@ -364,7 +353,7 @@ func TestMigrationBackfillSkipsMalformedProductAggregation(t *testing.T) {
 
 			var attrs string
 			if err := d.db.QueryRowContext(ctx,
-				`SELECT attributes FROM projects WHERE alias='blog'`).Scan(&attrs); err != nil {
+				`SELECT attributes FROM projects WHERE name='Blog'`).Scan(&attrs); err != nil {
 				t.Fatal(err)
 			}
 			if attrs != "[]" {
@@ -446,31 +435,32 @@ func applyMigrationsUpTo(ctx context.Context, d *DB, maxVersion int) error {
 func TestDeleteProjectDataCascades(t *testing.T) {
 	d := openRegistryDB(t)
 	ctx := context.Background()
-	p := store.RegistryProject{Alias: "blog", Name: "a", Identity: "anonymous", AllowedOrigins: "[]"}
-	if err := d.CreateProject(ctx, p, store.AuditEntry{Actor: "cli", Action: "project.create", Subject: "blog"}); err != nil {
+	p := store.RegistryProject{Name: "a", Identity: "anonymous", AllowedOrigins: "[]"}
+	id, err := d.CreateProject(ctx, p, store.AuditEntry{Actor: "cli", Action: "project.create"})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := d.InsertIngestKey(ctx, store.RegistryKey{Key: "ak_d", Project: "blog", Label: "web"},
-		store.AuditEntry{Actor: "cli", Action: "key.issue", Subject: "web"}); err != nil {
+	if err := d.InsertIngestKey(ctx, store.RegistryKey{Key: "ak_d", ProjectID: id, Label: "web"},
+		store.AuditEntry{Actor: "cli", Action: "key.issue", Subject: "1/web"}); err != nil {
 		t.Fatal(err)
 	}
 	// one row in a raw table and one in an aggregate table
-	if _, err := d.db.Exec(`INSERT INTO views (id, project, ts, received_at, kind, actor_id, actor_kind, path)
-		VALUES ('h1','blog','2026-08-01T10:00:00Z','2026-08-01T10:00:00Z','web','a','connection','/x')`); err != nil {
+	if _, err := d.db.Exec(`INSERT INTO views (id, project_id, ts, received_at, kind, actor_id, actor_kind, path)
+		VALUES ('h1',?,'2026-08-01T10:00:00Z','2026-08-01T10:00:00Z','web','a','connection','/x')`, id); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.db.Exec(`INSERT INTO agg_views_daily (project, day, kind, visitors, views,
-		sessions, bounces, duration_sec) VALUES ('blog','2026-07-01','web',1,1,1,0,0)`); err != nil {
+	if _, err := d.db.Exec(`INSERT INTO agg_views_daily (project_id, day, kind, visitors, views,
+		sessions, bounces, duration_sec) VALUES (?,'2026-07-01','web',1,1,1,0,0)`, id); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.DeleteProjectData(ctx, "blog", store.AuditEntry{
-		Actor: "cli", Action: "project.delete", Subject: "blog"}); err != nil {
+	if err := d.DeleteProjectData(ctx, id, store.AuditEntry{
+		Actor: "cli", Action: "project.delete", Subject: "1"}); err != nil {
 		t.Fatal(err)
 	}
 	for _, table := range []string{"projects", "ingest_keys", "views", "agg_views_daily"} {
 		var c int
 		if err := d.db.QueryRow(
-			`SELECT COUNT(*) FROM ` + table + ` WHERE ` + projectCol(table) + `='blog'`).Scan(&c); err != nil {
+			`SELECT COUNT(*) FROM `+table+` WHERE `+projectCol(table)+`=?`, id).Scan(&c); err != nil {
 			t.Fatal(err)
 		}
 		if c != 0 {
@@ -489,213 +479,16 @@ func TestDeleteProjectDataCascades(t *testing.T) {
 
 func projectCol(table string) string {
 	if table == "projects" {
-		return "alias"
+		return "id"
 	}
-	return "project"
-}
-
-// TestRenameProjectMovesEveryTable is the core rename contract: the
-// registry row and every table in projectTables move to the new alias in
-// one transaction. ingest_keys is one of those tables, so a rename must
-// not orphan the keys a deployed site is already sending data with — that
-// is the difference between a usable rename and a data-loss trap.
-func TestRenameProjectMovesEveryTable(t *testing.T) {
-	db := newTestDB(t)
-	ctx := context.Background()
-	p := store.RegistryProject{Alias: "blog", Name: "Blog", Identity: "anonymous", AllowedOrigins: "[]"}
-	if err := db.CreateProject(ctx, p, store.AuditEntry{
-		Actor: "test", Action: "project.create", Subject: "blog"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.InsertIngestKey(ctx, store.RegistryKey{Key: "ak_blog", Project: "blog", Label: "web"},
-		store.AuditEntry{Actor: "test", Action: "key.issue", Subject: "web"}); err != nil {
-		t.Fatal(err)
-	}
-	seedProductEvent(t, db, "blog", "signup", "2026-08-01T10:00:00Z", nil, "", "")
-	if _, err := db.db.Exec(`INSERT INTO views (id, project, ts, received_at, kind, actor_id, actor_kind, path)
-		VALUES ('v1','blog','2026-08-01T10:00:00Z','2026-08-01T10:00:00Z','web','a','connection','/x')`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.db.Exec(`INSERT INTO agg_views_daily (project, day, kind, visitors, views,
-		sessions, bounces, duration_sec) VALUES ('blog','2026-08-01','web',1,1,1,0,0)`); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := db.RenameProject(ctx, "blog", "journal", store.AuditEntry{
-		Actor: "test", Action: "project.rename", Subject: "blog->journal"}); err != nil {
-		t.Fatal(err)
-	}
-	for _, table := range []string{"product_events", "ingest_keys", "views", "agg_views_daily"} {
-		var n int
-		if err := db.db.QueryRow(
-			`SELECT COUNT(*) FROM ` + table + ` WHERE project='blog'`).Scan(&n); err != nil {
-			t.Fatal(err)
-		}
-		if n != 0 {
-			t.Errorf("%s still has %d rows under the old alias", table, n)
-		}
-	}
-	var keys int
-	if err := db.db.QueryRow(
-		`SELECT COUNT(*) FROM ingest_keys WHERE project='journal'`).Scan(&keys); err != nil {
-		t.Fatal(err)
-	}
-	if keys == 0 {
-		t.Fatal("ingest keys did not follow the rename; deployed clients would break")
-	}
-	var events int
-	if err := db.db.QueryRow(
-		`SELECT COUNT(*) FROM product_events WHERE project='journal'`).Scan(&events); err != nil {
-		t.Fatal(err)
-	}
-	if events != 1 {
-		t.Fatalf("product_events under journal = %d, want 1", events)
-	}
-	var views, aggViews int
-	if err := db.db.QueryRow(
-		`SELECT COUNT(*) FROM views WHERE project='journal'`).Scan(&views); err != nil {
-		t.Fatal(err)
-	}
-	if views != 1 {
-		t.Fatalf("views under journal = %d, want 1", views)
-	}
-	if err := db.db.QueryRow(
-		`SELECT COUNT(*) FROM agg_views_daily WHERE project='journal'`).Scan(&aggViews); err != nil {
-		t.Fatal(err)
-	}
-	if aggViews != 1 {
-		t.Fatalf("agg_views_daily under journal = %d, want 1", aggViews)
-	}
-	// the registry row itself must have moved, not just the data tables
-	var c int
-	if err := db.db.QueryRow(`SELECT COUNT(*) FROM projects WHERE alias='blog'`).Scan(&c); err != nil {
-		t.Fatal(err)
-	}
-	if c != 0 {
-		t.Fatal("old alias still present in projects")
-	}
-	if err := db.db.QueryRow(`SELECT COUNT(*) FROM projects WHERE alias='journal'`).Scan(&c); err != nil {
-		t.Fatal(err)
-	}
-	if c != 1 {
-		t.Fatal("new alias not present in projects")
-	}
-}
-
-func TestRenameProjectRejectsExistingTarget(t *testing.T) {
-	db := newTestDB(t)
-	ctx := context.Background()
-	for _, alias := range []string{"blog", "journal"} {
-		if err := db.CreateProject(ctx, store.RegistryProject{
-			Alias: alias, Name: alias, Identity: "anonymous", AllowedOrigins: "[]"},
-			store.AuditEntry{Actor: "test", Action: "project.create", Subject: alias}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := db.RenameProject(ctx, "blog", "journal", store.AuditEntry{
-		Actor: "test", Action: "project.rename", Subject: "blog->journal"}); err == nil {
-		t.Fatal("rename onto an already-taken alias did not fail")
-	}
-}
-
-func TestRenameProjectUnknownSource(t *testing.T) {
-	db := newTestDB(t)
-	ctx := context.Background()
-	if err := db.RenameProject(ctx, "ghost", "journal", store.AuditEntry{
-		Actor: "test", Action: "project.rename", Subject: "ghost->journal"}); err == nil {
-		t.Fatal("rename of an unknown source alias did not fail")
-	}
-}
-
-// TestRenameProjectRejectedTargetLeavesSourceUntouched guards against the
-// worst failure mode for this command: a half-applied rename that leaves
-// rows stranded under an alias with no registry row. It seeds a source
-// project with data and ingest keys, attempts a rename onto an alias that
-// is already taken, and asserts nothing moved and config_version did not
-// bump — the whole attempt must be a no-op.
-func TestRenameProjectRejectedTargetLeavesSourceUntouched(t *testing.T) {
-	db := newTestDB(t)
-	ctx := context.Background()
-	for _, alias := range []string{"blog", "journal"} {
-		if err := db.CreateProject(ctx, store.RegistryProject{
-			Alias: alias, Name: alias, Identity: "anonymous", AllowedOrigins: "[]"},
-			store.AuditEntry{Actor: "test", Action: "project.create", Subject: alias}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := db.InsertIngestKey(ctx, store.RegistryKey{Key: "ak_blog", Project: "blog", Label: "web"},
-		store.AuditEntry{Actor: "test", Action: "key.issue", Subject: "web"}); err != nil {
-		t.Fatal(err)
-	}
-	seedProductEvent(t, db, "blog", "signup", "2026-08-01T10:00:00Z", nil, "", "")
-	v0, err := db.ConfigVersion(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if err := db.RenameProject(ctx, "blog", "journal", store.AuditEntry{
-		Actor: "test", Action: "project.rename", Subject: "blog->journal"}); err == nil {
-		t.Fatal("rename onto an already-taken alias did not fail")
-	}
-
-	var alias string
-	if err := db.db.QueryRow(`SELECT alias FROM projects WHERE alias='blog'`).Scan(&alias); err != nil {
-		t.Fatalf("source project row disappeared after a rejected rename: %v", err)
-	}
-	var pe int
-	if err := db.db.QueryRow(`SELECT COUNT(*) FROM product_events WHERE project='blog'`).Scan(&pe); err != nil {
-		t.Fatal(err)
-	}
-	if pe != 1 {
-		t.Errorf("product_events under blog = %d, want 1 (untouched)", pe)
-	}
-	var ik int
-	if err := db.db.QueryRow(`SELECT COUNT(*) FROM ingest_keys WHERE project='blog'`).Scan(&ik); err != nil {
-		t.Fatal(err)
-	}
-	if ik != 1 {
-		t.Errorf("ingest_keys under blog = %d, want 1 (untouched)", ik)
-	}
-	v1, err := db.ConfigVersion(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if v1 != v0 {
-		t.Errorf("config_version changed on a rejected rename: %d -> %d", v0, v1)
-	}
-}
-
-// TestRenameProjectSameAliasIsRejectedWithItsOwnMessage pins the error an
-// operator sees when re-running a rename they already completed (or
-// mistyping -to as -alias's value). Reusing the "already exists" message
-// here would read as a collision with some other project, when in fact
-// nothing is wrong except the no-op; give it a distinct message.
-func TestRenameProjectSameAliasIsRejectedWithItsOwnMessage(t *testing.T) {
-	db := newTestDB(t)
-	ctx := context.Background()
-	if err := db.CreateProject(ctx, store.RegistryProject{
-		Alias: "blog", Name: "blog", Identity: "anonymous", AllowedOrigins: "[]"},
-		store.AuditEntry{Actor: "test", Action: "project.create", Subject: "blog"}); err != nil {
-		t.Fatal(err)
-	}
-	err := db.RenameProject(ctx, "blog", "blog", store.AuditEntry{
-		Actor: "test", Action: "project.rename", Subject: "blog->blog"})
-	if err == nil {
-		t.Fatal("renaming a project to its own alias did not fail")
-	}
-	if !strings.Contains(err.Error(), "already named") {
-		t.Errorf("error = %q, want a distinct message about already having that name, not a collision-with-another-project message", err.Error())
-	}
-	if strings.Contains(err.Error(), "already exists") {
-		t.Errorf("error = %q, reused the taken-alias wording; an operator would read this as colliding with a DIFFERENT project", err.Error())
-	}
+	return "project_id"
 }
 
 // TestProjectTablesMatchesSchema keeps the projectTables comment's claim
 // honest: it independently enumerates every table in the live schema that
-// carries a `project` column (via sqlite_master + pragma_table_info) and
+// carries a `project_id` column (via sqlite_master + pragma_table_info) and
 // asserts the set is exactly projectTables, in both directions. A missing
-// entry silently orphans rows on DeleteProjectData and RenameProject; a
+// entry silently orphans rows on DeleteProjectData; a
 // stale entry (a dropped or renamed table still listed) is dead weight
 // that hides the day a real gap opens up. Either defect fails loudly here
 // with the offending table names, rather than staying invisible until
@@ -730,7 +523,7 @@ func TestProjectTablesMatchesSchema(t *testing.T) {
 
 	actual := map[string]bool{}
 	for _, name := range tables {
-		if hasColumn(t, db, name, "project") {
+		if hasColumn(t, db, name, "project_id") {
 			actual[name] = true
 		}
 	}
@@ -741,7 +534,7 @@ func TestProjectTablesMatchesSchema(t *testing.T) {
 	}
 
 	var missing, stale []string
-	// missing: schema says this table has a project column, but
+	// missing: schema says this table has a project_id column, but
 	// projectTables does not list it.
 	for table := range actual {
 		if !expected[table] {
@@ -749,7 +542,7 @@ func TestProjectTablesMatchesSchema(t *testing.T) {
 		}
 	}
 	// stale: projectTables lists this table, but the schema says it does
-	// not (or no longer) have a project column.
+	// not (or no longer) have a project_id column.
 	for table := range expected {
 		if !actual[table] {
 			stale = append(stale, table)
@@ -760,8 +553,8 @@ func TestProjectTablesMatchesSchema(t *testing.T) {
 
 	if len(missing) > 0 || len(stale) > 0 {
 		t.Fatalf("projectTables (internal/store/sqlite/registry.go) is out of sync with the schema.\n"+
-			"missing from projectTables (have a project column, not listed — DeleteProjectData/RenameProject will orphan their rows): %v\n"+
-			"stale in projectTables (listed but table dropped or no longer has a project column): %v",
+			"missing from projectTables (have a project_id column, not listed — DeleteProjectData will orphan their rows): %v\n"+
+			"stale in projectTables (listed but table dropped or no longer has a project_id column): %v",
 			missing, stale)
 	}
 }
@@ -789,38 +582,40 @@ func parseVersion(name string, version *int) (string, error) {
 func TestCreateProjectWithKeyIsAtomic(t *testing.T) {
 	d := openRegistryDB(t)
 	ctx := context.Background()
-	project := func(alias string) store.RegistryProject {
-		return store.RegistryProject{Alias: alias, Name: alias, Identity: "anonymous", AllowedOrigins: "[]"}
+	project := func(name string) store.RegistryProject {
+		return store.RegistryProject{Name: name, Identity: "anonymous", AllowedOrigins: "[]"}
 	}
-	audits := func(alias string) (store.AuditEntry, store.AuditEntry) {
-		return store.AuditEntry{Actor: "api", Action: "project.create", Subject: alias},
-			store.AuditEntry{Actor: "api", Action: "key.issue", Subject: alias + "/default"}
-	}
+	// Subjects are left empty: the store fills them from the assigned id.
+	pa := store.AuditEntry{Actor: "api", Action: "project.create"}
+	ka := store.AuditEntry{Actor: "api", Action: "key.issue"}
 
-	pa, ka := audits("blog")
-	if err := d.CreateProjectWithKey(ctx, project("blog"),
-		store.RegistryKey{Key: "ak_one", Project: "blog", Label: "default"}, pa, ka); err != nil {
+	id, err := d.CreateProjectWithKey(ctx, project("blog"),
+		store.RegistryKey{Key: "ak_one", Label: "default"}, pa, ka)
+	if err != nil {
 		t.Fatal(err)
 	}
 	ps, ks, err := d.LoadRegistry(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(ps) != 1 || len(ks) != 1 || ks[0].Key != "ak_one" || ks[0].Project != "blog" {
+	if len(ps) != 1 || ps[0].ID != id || len(ks) != 1 || ks[0].Key != "ak_one" || ks[0].ProjectID != id {
 		t.Fatalf("registry = %+v / %+v", ps, ks)
 	}
-	var audited int
-	if err := d.db.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE actor='api'
-		AND action IN ('project.create','key.issue')`).Scan(&audited); err != nil || audited != 2 {
-		t.Fatalf("audit rows = %d, %v; want 2", audited, err)
+	var subjects string
+	if err := d.db.QueryRow(`SELECT group_concat(subject, ',') FROM (SELECT subject FROM audit_log
+		WHERE actor='api' AND action IN ('project.create','key.issue') ORDER BY rowid)`).Scan(&subjects); err != nil {
+		t.Fatal(err)
+	}
+	if subjects != "1,1/default" {
+		t.Fatalf("audit subjects = %q, want the id and id/label", subjects)
 	}
 
 	// A key that cannot be inserted (its value is already taken) must take
-	// the new project down with it.
+	// the new project down with it, and the id it would have used is not
+	// reissued to the next successful create.
 	v0, _ := d.ConfigVersion(ctx)
-	pa, ka = audits("shop")
-	if err := d.CreateProjectWithKey(ctx, project("shop"),
-		store.RegistryKey{Key: "ak_one", Project: "shop", Label: "default"}, pa, ka); err == nil {
+	if _, err := d.CreateProjectWithKey(ctx, project("shop"),
+		store.RegistryKey{Key: "ak_one", Label: "default"}, pa, ka); err == nil {
 		t.Fatal("duplicate key value accepted")
 	}
 	ps, _, _ = d.LoadRegistry(ctx)
@@ -830,11 +625,70 @@ func TestCreateProjectWithKeyIsAtomic(t *testing.T) {
 	if v1, _ := d.ConfigVersion(ctx); v1 != v0 {
 		t.Errorf("config_version moved %d → %d on a rolled-back create", v0, v1)
 	}
+}
 
-	// An alias that is taken is still a conflict.
-	pa, ka = audits("blog")
-	if err := d.CreateProjectWithKey(ctx, project("blog"),
-		store.RegistryKey{Key: "ak_two", Project: "blog", Label: "default"}, pa, ka); !errors.Is(err, store.ErrConflict) {
-		t.Errorf("duplicate alias err = %v, want ErrConflict", err)
+func TestInsertProjectReturnsIncreasingIds(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	audit := store.AuditEntry{Actor: "test", Action: "project.create"}
+	first, err := db.CreateProject(ctx, store.RegistryProject{Name: "Blog", Identity: "anonymous", AllowedOrigins: "[]", Attributes: "[]"}, audit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := db.CreateProject(ctx, store.RegistryProject{Name: "Blog", Identity: "anonymous", AllowedOrigins: "[]", Attributes: "[]"}, audit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != 1 || second != 2 {
+		t.Fatalf("ids = %d, %d; want 1, 2 (names need not be unique)", first, second)
+	}
+	var subject string
+	if err := db.db.QueryRowContext(ctx, `SELECT subject FROM audit_log WHERE action='project.create' ORDER BY rowid DESC LIMIT 1`).Scan(&subject); err != nil {
+		t.Fatal(err)
+	}
+	if subject != "2" {
+		t.Fatalf("audit subject = %q, want the new id", subject)
+	}
+}
+
+func TestInsertKeyConflictIsTyped(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	id, err := db.CreateProject(ctx, store.RegistryProject{Name: "Blog", Identity: "anonymous", AllowedOrigins: "[]", Attributes: "[]"},
+		store.AuditEntry{Actor: "test", Action: "project.create"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	audit := store.AuditEntry{Actor: "test", Action: "key.issue"}
+	if err := db.InsertIngestKey(ctx, store.RegistryKey{Key: "ak_1", ProjectID: id, Label: "web"}, audit); err != nil {
+		t.Fatal(err)
+	}
+	err = db.InsertIngestKey(ctx, store.RegistryKey{Key: "ak_2", ProjectID: id, Label: "web"}, audit)
+	if !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("duplicate label err = %v, want ErrConflict from UNIQUE (project_id, label)", err)
+	}
+	// Same label on another project is fine.
+	other, _ := db.CreateProject(ctx, store.RegistryProject{Name: "Shop", Identity: "anonymous", AllowedOrigins: "[]", Attributes: "[]"},
+		store.AuditEntry{Actor: "test", Action: "project.create"})
+	if err := db.InsertIngestKey(ctx, store.RegistryKey{Key: "ak_3", ProjectID: other, Label: "web"}, audit); err != nil {
+		t.Fatalf("same label on another project: %v", err)
+	}
+}
+
+func TestProjectIDsAscending(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	for _, n := range []string{"c", "a", "b"} {
+		if _, err := db.CreateProject(ctx, store.RegistryProject{Name: n, Identity: "anonymous", AllowedOrigins: "[]", Attributes: "[]"},
+			store.AuditEntry{Actor: "test", Action: "project.create"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ids, err := db.ProjectIDs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 3 || ids[0] != 1 || ids[1] != 2 || ids[2] != 3 {
+		t.Fatalf("ids = %v, want [1 2 3]", ids)
 	}
 }

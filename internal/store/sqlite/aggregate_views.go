@@ -25,18 +25,18 @@ func dayRange(day civil.Date) (string, string) {
 	return day.String() + "T00:00:00Z", day.AddDays(1).String() + "T00:00:00Z"
 }
 
-func (d *DB) ViewDaysBefore(ctx context.Context, project string, before civil.Date) ([]civil.Date, error) {
-	return d.daysBefore(ctx, "views", project, before)
+func (d *DB) ViewDaysBefore(ctx context.Context, projectID int64, before civil.Date) ([]civil.Date, error) {
+	return d.daysBefore(ctx, "views", projectID, before)
 }
 
-func (d *DB) ProductDaysBefore(ctx context.Context, project string, before civil.Date) ([]civil.Date, error) {
-	return d.daysBefore(ctx, "product_events", project, before)
+func (d *DB) ProductDaysBefore(ctx context.Context, projectID int64, before civil.Date) ([]civil.Date, error) {
+	return d.daysBefore(ctx, "events", projectID, before)
 }
 
-func (d *DB) daysBefore(ctx context.Context, table, project string, before civil.Date) ([]civil.Date, error) {
+func (d *DB) daysBefore(ctx context.Context, table string, projectID int64, before civil.Date) ([]civil.Date, error) {
 	rows, err := d.db.QueryContext(ctx,
-		fmt.Sprintf(`SELECT DISTINCT substr(ts,1,10) FROM %s WHERE project=? AND ts < ? ORDER BY 1`, table),
-		project, before.String()+"T00:00:00Z")
+		fmt.Sprintf(`SELECT DISTINCT substr(ts,1,10) FROM %s WHERE project_id=? AND ts < ? ORDER BY 1`, table),
+		projectID, before.String()+"T00:00:00Z")
 	if err != nil {
 		return nil, err
 	}
@@ -61,11 +61,11 @@ func (d *DB) daysBefore(ctx context.Context, table, project string, before civil
 // client-declared session_id is authoritative (the app knows its own
 // foreground/background transitions); otherwise a gap over 30 minutes per
 // actor splits sessions. The live half of v_views_daily (012_views.sql)
-// mirrors this per (project, day); views_test.go enforces the parity.
+// mirrors this per (project_id, day); views_test.go enforces the parity.
 const viewSessionsCTE = `
 WITH src AS (
   SELECT kind, actor_id, session_id, CAST(strftime('%s', ts) AS INTEGER) AS t
-  FROM views WHERE project = :p AND day = :day
+  FROM views WHERE project_id = :p AND day = :day
 ),
 kinds AS (
   SELECT kind, ROW_NUMBER() OVER (ORDER BY COUNT(*) DESC, kind) AS rn FROM src GROUP BY kind
@@ -124,22 +124,22 @@ var viewDimensions = []viewDimension{
 
 // AggregateViewDay rolls one day of views into agg_views_* and deletes the
 // raw rows, in one transaction. Idempotent: every write is INSERT OR
-// REPLACE keyed on (project, day, ...), recomputed wholly from raw rows.
-func (d *DB) AggregateViewDay(ctx context.Context, project string, day civil.Date) error {
+// REPLACE keyed on (project_id, day, ...), recomputed wholly from raw rows.
+func (d *DB) AggregateViewDay(ctx context.Context, projectID int64, day civil.Date) error {
 	return d.tx(ctx, func(tx *sql.Tx) error {
 		var n int
 		if err := tx.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM views WHERE project=? AND day=?`,
-			project, day.String()).Scan(&n); err != nil {
+			`SELECT COUNT(*) FROM views WHERE project_id=? AND day=?`,
+			projectID, day.String()).Scan(&n); err != nil {
 			return err
 		}
 		if n == 0 {
 			return nil // already aggregated (or empty day): no-op keeps idempotency
 		}
-		named := []any{sql.Named("p", project), sql.Named("day", day.String())}
+		named := []any{sql.Named("p", projectID), sql.Named("day", day.String())}
 		if _, err := tx.ExecContext(ctx, viewSessionsCTE+`
 INSERT OR REPLACE INTO agg_views_daily
-  (project, day, kind, visitors, views, sessions, bounces, duration_sec)
+  (project_id, day, kind, visitors, views, sessions, bounces, duration_sec)
 SELECT :p, :day, s.kind,
   (SELECT COUNT(DISTINCT actor_id) FROM bucketed b WHERE b.kind = s.kind),
   (SELECT COUNT(*) FROM bucketed b WHERE b.kind = s.kind),
@@ -155,7 +155,7 @@ FROM spans s GROUP BY s.kind`, named...); err != nil {
 			}
 		}
 		if _, err := tx.ExecContext(ctx,
-			`DELETE FROM views WHERE project=? AND day=?`, project, day.String()); err != nil {
+			`DELETE FROM views WHERE project_id=? AND day=?`, projectID, day.String()); err != nil {
 			return fmt.Errorf("prune raw views: %w", err)
 		}
 		return nil
@@ -185,10 +185,10 @@ func (dim viewDimension) aggregateSQL() string {
 	cols := strings.Join(dim.keys, ", ")
 	group := strings.Join(append(append([]string{}, lead...), bucket), ", ")
 	return fmt.Sprintf(`
-INSERT OR REPLACE INTO %s (project, day, %s, visitors, views)
+INSERT OR REPLACE INTO %s (project_id, day, %s, visitors, views)
 WITH src AS (
   SELECT %s, actor_id FROM views
-  WHERE project = :p AND day = :day %s
+  WHERE project_id = :p AND day = :day %s
 ),
 ranked AS (
   SELECT %s, ROW_NUMBER() OVER (ORDER BY COUNT(*) DESC, %s) AS rn FROM src GROUP BY %s

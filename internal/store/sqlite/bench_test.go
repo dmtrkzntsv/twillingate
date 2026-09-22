@@ -15,7 +15,7 @@ import (
 // v_views_* live halves have to scan the whole window on every query —
 // exactly the cost the low-resource retention guidance in
 // docs/deployment.md is about.
-const benchProject = "bench"
+const benchProject int64 = 1
 
 // seedBenchViews writes 30 days x 5,000 views (150,000 rows) for
 // benchProject in batches of 5,000 (one WriteViews call per day), spread
@@ -37,7 +37,7 @@ func seedBenchViews(b *testing.B, db *DB) {
 			ts := dayStart.Add(time.Duration(i) * (24 * time.Hour / perDay))
 			batch[i] = store.View{
 				ID:         fmt.Sprintf("bench-%02d-%05d", d, i),
-				Project:    benchProject,
+				ProjectID:  benchProject,
 				TS:         ts,
 				ReceivedAt: ts,
 				Kind:       "web",
@@ -78,7 +78,7 @@ func BenchmarkViewsPathsLiveHalf(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		rows, err := db.db.QueryContext(ctx, `
 			SELECT path, SUM(visitors), SUM(views) FROM v_views_paths
-			WHERE project = ? AND day BETWEEN ? AND ?
+			WHERE project_id = ? AND day BETWEEN ? AND ?
 			GROUP BY path ORDER BY 2 DESC LIMIT 20`,
 			benchProject, "2026-08-01", "2026-08-07")
 		if err != nil {
@@ -118,7 +118,7 @@ func BenchmarkViewsDailyLiveHalf(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		rows, err := db.db.QueryContext(ctx, `
 			SELECT kind, SUM(visitors), SUM(views) FROM v_views_daily
-			WHERE project = ? AND day BETWEEN ? AND ?
+			WHERE project_id = ? AND day BETWEEN ? AND ?
 			GROUP BY kind ORDER BY 2 DESC LIMIT 20`,
 			benchProject, "2026-08-01", "2026-08-07")
 		if err != nil {
