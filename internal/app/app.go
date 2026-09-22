@@ -94,14 +94,13 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 		return err
 	}
 
-	reg := manage.New(st, cfg.Retention, logger)
+	reg := manage.New(st, logger)
 	if err := reg.Reload(ctx); err != nil {
 		return err
 	}
 	if len(reg.Snapshot(ctx).Projects()) == 0 {
 		logger.Warn("no projects configured; create one with `twillingate project create` or an API management operation")
 	}
-	warnLegacyProjectsFile(cfg, logger)
 
 	// Seed the flat view so it exists before the first daily pass.
 	if err := st.RebuildFlatView(ctx, reg.Snapshot(ctx).DeclaredAttributeKeys()); err != nil {
@@ -125,8 +124,8 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 
 	// A project with no active ingest key can receive nothing. That is a
 	// legitimate retired state, so warn rather than refuse to start.
-	for _, alias := range reg.Snapshot(ctx).KeylessProjects() {
-		logger.Warn("project has no active ingest keys and can receive nothing", "project", alias)
+	for _, p := range reg.Snapshot(ctx).KeylessProjects() {
+		logger.Warn("project has no active ingest keys and can receive nothing", "project_id", p.ID, "name", p.Name)
 	}
 
 	runner := jobs.New(st, cfg, reg, salter, logger, time.Now)
@@ -248,23 +247,6 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 // the data dir (GeoLite2 DB lives next to the database).
 func databasePath(dsn string) string {
 	return strings.TrimPrefix(dsn, "sqlite://")
-}
-
-// warnLegacyProjectsFile warns once at boot when a pre-upgrade PROJECTS_FILE
-// (or the installer's default projects.json path) is still present: the
-// registry is now the sole source of project config, so the file is no
-// longer read and needs a one-time `twillingate config import`. cfg is
-// unused today but kept in the signature so a future per-install override
-// does not need to change every call site; split out from Serve so the
-// warning is unit-testable without booting a full server.
-func warnLegacyProjectsFile(cfg *config.Config, logger *slog.Logger) {
-	if legacy := os.Getenv("PROJECTS_FILE"); legacy != "" {
-		logger.Warn("PROJECTS_FILE is no longer read; import it once with `twillingate config import`", "file", legacy)
-		return
-	}
-	if _, err := os.Stat("/etc/analytics/projects.json"); err == nil {
-		logger.Warn("projects.json found but no longer read; import it once with `twillingate config import /etc/analytics/projects.json`")
-	}
 }
 
 // ingestSummaryInterval is how often logIngestSummary drains the counters.

@@ -11,12 +11,12 @@ func TestKeyIssueListDisableEnable(t *testing.T) {
 	withDB(t)
 	var out bytes.Buffer
 	var code int
-	code = run([]string{"project", "create", "-alias", "blog"}, &out)
+	code = run([]string{"project", "create", "-name", "blog"}, &out)
 	if code != 0 {
 		t.Fatalf("create: %s", out.String())
 	}
 	out.Reset()
-	code = run([]string{"key", "issue", "-project", "blog", "-label", "web"}, &out)
+	code = run([]string{"key", "issue", "-project-id", "1", "-label", "web"}, &out)
 	if code != 0 {
 		t.Fatalf("issue: exit %d: %s", code, out.String())
 	}
@@ -27,22 +27,22 @@ func TestKeyIssueListDisableEnable(t *testing.T) {
 		t.Fatalf("no snippet in output: %s", out.String())
 	}
 	out.Reset()
-	code = run([]string{"key", "list", "-project", "blog"}, &out)
-	if code != 0 || !strings.Contains(out.String(), "web") {
+	code = run([]string{"key", "list", "-project-id", "1"}, &out)
+	if code != 0 || !strings.HasPrefix(out.String(), "1\tweb\tak_") {
 		t.Fatalf("list: %s", out.String())
 	}
 	out.Reset()
-	code = run([]string{"key", "disable", "-project", "blog", "-label", "web"}, &out)
+	code = run([]string{"key", "disable", "-project-id", "1", "-label", "web"}, &out)
 	if code != 0 {
 		t.Fatalf("disable: %s", out.String())
 	}
 	out.Reset()
-	code = run([]string{"key", "list", "-project", "blog"}, &out)
+	code = run([]string{"key", "list", "-project-id", "1"}, &out)
 	if !strings.Contains(out.String(), "disabled") {
 		t.Fatalf("list after disable: %s", out.String())
 	}
 	out.Reset()
-	code = run([]string{"key", "enable", "-project", "blog", "-label", "web"}, &out)
+	code = run([]string{"key", "enable", "-project-id", "1", "-label", "web"}, &out)
 	if code != 0 {
 		t.Fatalf("enable: %s", out.String())
 	}

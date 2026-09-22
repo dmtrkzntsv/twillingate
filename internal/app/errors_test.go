@@ -95,7 +95,7 @@ func TestServeLogsSurfacesPerListener(t *testing.T) {
 func TestServeFailsOnGeoProviderError(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "geo-err.db")
 	seedProject(t, dbPath,
-		manage.ProjectSpec{Alias: "app", Name: "App", AllowedOrigins: []string{"https://app.com"}},
+		manage.ProjectSpec{Name: "App", AllowedOrigins: []string{"https://app.com"}},
 		"ak_test", "web")
 	cfg := configtest.Load(t, map[string]string{
 		"INGEST_ADDR":  freePort(t),
@@ -135,13 +135,13 @@ func TestServeWarnsAboutKeylessProjects(t *testing.T) {
 	if err := st.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
-	reg := manage.New(st, configtest.Load(t, nil).Retention, slog.Default())
+	reg := manage.New(st, slog.Default())
 	if err := reg.Reload(ctx); err != nil {
 		t.Fatal(err)
 	}
 	ops := manage.NewOps(reg, st)
 	if _, err := ops.CreateProject(ctx, "test", manage.ProjectSpec{
-		Alias: "nokey", Name: "No Key", AllowedOrigins: []string{"https://nokey.example"}}); err != nil {
+		Name: "No Key", AllowedOrigins: []string{"https://nokey.example"}}); err != nil {
 		t.Fatal(err)
 	}
 	st.Close()
@@ -151,8 +151,8 @@ func TestServeWarnsAboutKeylessProjects(t *testing.T) {
 		"DATABASE_DSN": "sqlite://" + dbPath,
 	})
 	logs := runServeAndCollectLogs(t, cfg)
-	if !strings.Contains(logs, "no active ingest keys") || !strings.Contains(logs, "nokey") {
-		t.Errorf("logs = %q, want a warning naming the keyless project", logs)
+	if !strings.Contains(logs, "no active ingest keys") || !strings.Contains(logs, "project_id=1") || !strings.Contains(logs, "No Key") {
+		t.Errorf("logs = %q, want a warning naming the keyless project by id and name", logs)
 	}
 }
 
@@ -187,7 +187,7 @@ func TestServeFailsOnMigrateError(t *testing.T) {
 func TestServeFailsOnMCPHandlerError(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "mcp-err.db")
 	seedProject(t, dbPath,
-		manage.ProjectSpec{Alias: "app", Name: "App", AllowedOrigins: []string{"https://app.com"}},
+		manage.ProjectSpec{Name: "App", AllowedOrigins: []string{"https://app.com"}},
 		"ak_test", "web")
 	cfg := configtest.Load(t, map[string]string{
 		"INGEST_ADDR":  freePort(t),
@@ -209,7 +209,7 @@ func TestServeFailsOnMCPHandlerError(t *testing.T) {
 func TestServeFailsOnMCPBuildErrorSharedListener(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "mcp-shared-err.db")
 	seedProject(t, dbPath,
-		manage.ProjectSpec{Alias: "app", Name: "App", AllowedOrigins: []string{"https://app.com"}},
+		manage.ProjectSpec{Name: "App", AllowedOrigins: []string{"https://app.com"}},
 		"ak_test", "web")
 	addr := freePort(t)
 	cfg := configtest.Load(t, map[string]string{

@@ -32,21 +32,25 @@ func cmdKey(args []string, stdout io.Writer) int {
 	sub, subArgs := rest[0], rest[1:]
 	sf := flag.NewFlagSet("key "+sub, flag.ContinueOnError)
 	sf.SetOutput(stdout)
-	project := sf.String("project", "", "project alias (required)")
+	projectID := sf.Int64("project-id", 0, "project id (required except for list)")
 	label := sf.String("label", "", "key label")
 	if err := sf.Parse(subArgs); err != nil {
 		return 2
 	}
+	if sub != "list" && *projectID == 0 {
+		fmt.Fprintf(stdout, "usage: twillingate key %s -project-id <id> -label <label>\n", sub)
+		return 2
+	}
 	switch sub {
 	case "issue":
-		key, err := ops.IssueIngestKey(ctx, "cli", *project, *label)
+		key, err := ops.IssueIngestKey(ctx, "cli", *projectID, *label)
 		if err != nil {
 			fmt.Fprintln(stdout, err)
 			return 1
 		}
-		p := ops.Reg.Snapshot(ctx).Project(*project)
+		p := ops.Reg.Snapshot(ctx).Project(*projectID)
 		if p == nil {
-			fmt.Fprintf(stdout, "issued %s (label %q) but project %q vanished before the snippet could be built; run `twillingate key list` to confirm\n", key, *label, *project)
+			fmt.Fprintf(stdout, "issued %s (label %q) but project %d vanished before the snippet could be built; run `twillingate key list` to confirm\n", key, *label, *projectID)
 			return 1
 		}
 		fmt.Fprintf(stdout, "issued %s (label %q)\n\nWeb snippet:\n\n%s\n",
@@ -56,36 +60,34 @@ func cmdKey(args []string, stdout io.Writer) int {
 		}
 		return 0
 	case "list":
-		// list reads the raw rows so disabled keys are visible; the
-		// snapshot deliberately drops them.
 		_, ks, err := ops.St.LoadRegistry(ctx)
 		if err != nil {
 			fmt.Fprintln(stdout, err)
 			return 1
 		}
 		for _, k := range ks {
-			if *project != "" && k.Project != *project {
+			if *projectID != 0 && k.ProjectID != *projectID {
 				continue
 			}
 			state := "active"
 			if k.Disabled {
 				state = "disabled"
 			}
-			fmt.Fprintf(stdout, "%s\t%s\t%s\t%s\n", k.Project, k.Label, k.Key, state)
+			fmt.Fprintf(stdout, "%d\t%s\t%s\t%s\n", k.ProjectID, k.Label, k.Key, state)
 		}
 		return 0
 	case "disable", "enable":
 		var err error
 		if sub == "disable" {
-			err = ops.DisableIngestKey(ctx, "cli", *project, *label)
+			err = ops.DisableIngestKey(ctx, "cli", *projectID, *label)
 		} else {
-			err = ops.EnableIngestKey(ctx, "cli", *project, *label)
+			err = ops.EnableIngestKey(ctx, "cli", *projectID, *label)
 		}
 		if err != nil {
 			fmt.Fprintln(stdout, err)
 			return 1
 		}
-		fmt.Fprintf(stdout, "key %s/%s %sd\n", *project, *label, sub)
+		fmt.Fprintf(stdout, "key %d/%s %sd\n", *projectID, *label, sub)
 		return 0
 	default:
 		fmt.Fprintf(stdout, "unknown subcommand %q\nusage: twillingate key <issue|list|disable|enable> [flags]\n", sub)

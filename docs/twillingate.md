@@ -59,11 +59,9 @@ management tools. Every operation has both forms:
 | Change one | `twillingate project update` | `update_project` |
 | List them | `twillingate project list` | `list_projects` |
 | Archive / restore | `twillingate project archive` / `restore` | `archive_project` / `restore_project` |
-| Rename | `twillingate project rename` | **none — CLI only** |
 | Issue an ingest key | `twillingate key issue` | `issue_ingest_key` |
 | List keys | `twillingate key list` | `list_ingest_keys` |
 | Disable / enable a key | `twillingate key disable` / `enable` | `disable_ingest_key` / `enable_ingest_key` |
-| Export / import the registry | `twillingate config export` / `import` | **none — CLI only** |
 | Get paste-ready setup | — | `integration_guide` |
 
 `create_project` takes the project fields below as `{name, identity,
@@ -83,57 +81,45 @@ on several hostnames, and snippets use the default (`PUBLIC_URL`). Ask the
 user which one this site should use and change the snippet's `src` if it
 differs — the SDK posts to the origin it was loaded from.
 
-Renaming and registry import/export have no MCP tool: both rewrite every
-table in one transaction, which is not something to hand to an agent. Ask
-the operator to run them.
+There is no rename: the id is the key and the name is free text, so
+`project update -name` is a rename. There is no delete over the API
+either — deletion needs the CLI.
 
 The CLI forms:
 
 ```bash
-twillingate project create -alias myapp -name "My App" -identity anonymous \
+twillingate project create -name "My App" -identity anonymous \
   -origin https://myapp.com -attr plan -attr tier
-twillingate project list
-twillingate project update -alias myapp -origin https://myapp.com -origin https://www.myapp.com
-twillingate project rename -alias oldname -to newname   # data and ingest keys follow
-twillingate project archive -alias myapp                # reversible: `project restore`
-twillingate key issue -project myapp -label web
-twillingate key list -project myapp
-twillingate key disable -project myapp -label ios-2025
+twillingate project list                                 # id  identity  name
+twillingate project update -id 1 -origin https://myapp.com -origin https://www.myapp.com
+twillingate project update -id 1 -clear-origins
+twillingate project archive -id 1                        # reversible: `project restore`
+twillingate key issue -project-id 1 -label web
+twillingate key list -project-id 1
+twillingate key disable -project-id 1 -label ios-2025
 ```
 
 `project update` (and the `update_project` MCP tool) merge rather than
-replace: a field you omit keeps its current value. `-origin` is the
-exception — supplying it at all replaces the whole origins list. Neither can
-clear origins to an empty list (empty is treated as "not supplied"); to do
-that, edit the origins to `[]` in a `config export` dump and `config import`
-it back.
+replace: a field you omit keeps its current value. `-origin` and `-attr`
+are the exception — supplying either replaces the whole list.
+`-clear-origins` (or `allowed_origins: []` over the API) empties the
+origins.
 
 | Key | Meaning |
 | --- | --- |
-| `alias` | Internal key: the `project` column on every stored row and the dashboard label. Never transmitted. New aliases must match `^[a-z0-9]+$` — `blog`, `blog2`, `2048` are fine; `my_app` and `shop-uk` are not. Immutable once created; change one with `twillingate project rename`, which rewrites the `project` column across every table in one transaction. Ingest keys follow the rename, so deployed clients keep working. An alias created before this rule keeps working. |
-| `name` | Display name. |
+| `project_id` | Integer key assigned on create, never reissued after a delete. The `project_id` column on every stored row, the argument of every tool, route and CLI command, and the segment of every dashboard URL. Never transmitted by clients. |
+| `name` | Display name. Required; free text, need not be unique; change it with `project update -name`. |
 | `identity` | `anonymous` (default) or `identified`. |
 | `ingest_keys` | One or more `{key, label, disabled}` credentials. Required. |
 | `allowed_origins` | Origins allowed to post for this project. `*` is a wildcard — `https://*.example.com` covers every subdomain, a bare `*` allows any origin. Add `tauri://localhost` or `app://.` for Electron/Tauri. |
-| `retention` | Per-project override of any retention window. |
 | `attributes` | Custom product-event attribute keys to break down. |
-
-`retention` is not a CLI flag — set it through `twillingate config export`
-(dumps every project as JSON) and `twillingate config import FILE` (upserts
-from that JSON, or from a pre-upgrade `projects.json`, detecting the legacy
-bare-array format automatically). Import never archives or deletes anything
-absent from the file, so a partial edit is safe. Overrides are field-level:
-
-```json
-"retention": { "web": { "raw_days": 90 } }
-```
 
 ### Attribute breakdowns
 
 A project declares which product-event attribute keys are worth reporting on:
 
 ```bash
-twillingate project update -alias myapp -attr plan -attr tier
+twillingate project update -id 1 -attr plan -attr tier
 ```
 
 `-attr` is repeatable and, like `-origin`, replaces the whole list when
@@ -192,7 +178,7 @@ from code.
         data-identity="anonymous"></script>
 ```
 
-`twillingate key issue -project <alias> -label <label>` mints the key and
+`twillingate key issue -project-id <id> -label <label>` mints the key and
 prints this snippet ready to paste. Its `src` uses `PUBLIC_URL`; change
 the origin if this site uses another collector hostname.
 
@@ -900,8 +886,8 @@ The views family is `v_views_daily` (per kind), `v_views_paths`,
 and `v_views_displays`. Every dimension is capped at 500 values per day;
 the tail is one `(other)` row whose visitors are distinct actors, not a sum.
 Product events have `v_product_daily`, `v_product_totals` and
-`v_product_attrs`, plus a per-project `v_events_flat` with one column per
-declared attribute. `v_identity_daily` and `identities` join user and group
+`v_product_attrs`, plus `v_events_flat`, which reads the `events` table
+with one column per declared attribute. `v_identity_daily` and `identities` join user and group
 activity to display names; `v_identity_daily` keeps the busiest 500 users
 and 500 groups per day and drops the rest, with no `(other)` row, so do not
 sum it for totals. `v_retention` is keyed by `actor_kind`.

@@ -38,8 +38,9 @@ func mustDay(s string) civil.Date { d, _ := civil.Parse(s); return d }
 
 // seedProject writes a project and ingest key straight into the registry
 // (bypassing HTTP/CLI) before Serve boots, since the running server only
-// ever reads projects from the database now. A no-op if the alias already
-// exists, so a restart test can call it again against the same file.
+// ever reads projects from the database now. A no-op if any project already
+// exists (names are not keys), so a restart test can call it again against
+// the same file.
 func seedProject(t *testing.T, dbPath string, spec manage.ProjectSpec, key, keyLabel string) {
 	t.Helper()
 	st, err := store.Open("sqlite://" + dbPath)
@@ -51,18 +52,19 @@ func seedProject(t *testing.T, dbPath string, spec manage.ProjectSpec, key, keyL
 	if err := st.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
-	reg := manage.New(st, config.Retention{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	reg := manage.New(st, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err := reg.Reload(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if reg.Snapshot(ctx).Project(spec.Alias) != nil {
+	if len(reg.Snapshot(ctx).Projects()) > 0 {
 		return
 	}
 	ops := manage.NewOps(reg, st)
-	if _, err := ops.CreateProject(ctx, "test", spec); err != nil {
+	p, err := ops.CreateProject(ctx, "test", spec)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.InsertIngestKey(ctx, store.RegistryKey{Key: key, Project: spec.Alias, Label: keyLabel},
+	if err := st.InsertIngestKey(ctx, store.RegistryKey{Key: key, ProjectID: p.ID, Label: keyLabel},
 		store.AuditEntry{Actor: "test", Action: "key.issue", Subject: keyLabel}); err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +73,7 @@ func seedProject(t *testing.T, dbPath string, spec manage.ProjectSpec, key, keyL
 func testConfig(t *testing.T, addr, dbPath string) *config.Config {
 	t.Helper()
 	seedProject(t, dbPath,
-		manage.ProjectSpec{Alias: "app", Name: "App", AllowedOrigins: []string{"https://app.com"}},
+		manage.ProjectSpec{Name: "App", AllowedOrigins: []string{"https://app.com"}},
 		"ak_test", "web")
 	return configtest.Load(t, map[string]string{
 		"INGEST_ADDR":             addr,
@@ -175,22 +177,22 @@ func TestServeEndToEnd(t *testing.T) {
 	}
 	defer st.Close()
 	bg := context.Background()
-	days, err := st.ViewDaysBefore(bg, "app", mustDay("2100-01-01"))
+	days, err := st.ViewDaysBefore(bg, 1, mustDay("2100-01-01"))
 	if err != nil || len(days) != 1 {
 		t.Fatalf("view not persisted: %v %v", days, err)
 	}
-	pdays, err := st.ProductDaysBefore(bg, "app", mustDay("2100-01-01"))
+	pdays, err := st.ProductDaysBefore(bg, 1, mustDay("2100-01-01"))
 	if err != nil || len(pdays) != 1 {
 		t.Fatalf("event not persisted: %v %v", pdays, err)
 	}
 	// The seeded project must still be there after a full boot/shutdown
 	// cycle: Serve reads it, never rewrites the registry.
-	aliases, err := st.ProjectAliases(bg)
+	ids, err := st.ProjectIDs(bg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(aliases) != 1 || aliases[0] != "app" {
-		t.Fatalf("aliases = %v, want [app]", aliases)
+	if len(ids) != 1 || ids[0] != 1 {
+		t.Fatalf("ids = %v, want [1]", ids)
 	}
 }
 
@@ -240,7 +242,7 @@ func TestServeRestartsOnExistingDatabase(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	days, err := st.ViewDaysBefore(bg, "app", mustDay("2100-01-01"))
+	days, err := st.ViewDaysBefore(bg, 1, mustDay("2100-01-01"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -256,7 +258,7 @@ func TestServeRestartsOnExistingDatabase(t *testing.T) {
 func apiTestConfig(t *testing.T, addr, dbPath, apiAddr string) *config.Config {
 	t.Helper()
 	seedProject(t, dbPath,
-		manage.ProjectSpec{Alias: "app", Name: "App", AllowedOrigins: []string{"https://app.com"}},
+		manage.ProjectSpec{Name: "App", AllowedOrigins: []string{"https://app.com"}},
 		"ak_test", "web")
 	vars := map[string]string{
 		"INGEST_ADDR":             addr,
@@ -521,7 +523,7 @@ func TestServeNeverPersistsIPOrUserAgent(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	days, err := st.ViewDaysBefore(context.Background(), "app", mustDay("2100-01-01"))
+	days, err := st.ViewDaysBefore(context.Background(), 1, mustDay("2100-01-01"))
 	if err != nil || len(days) != 1 {
 		t.Fatalf("hit not persisted: %v %v", days, err)
 	}
@@ -548,36 +550,4 @@ func runServeAndCollectLogs(t *testing.T, cfg *config.Config) string {
 		t.Fatal("serve did not shut down")
 	}
 	return logs.String()
-}
-
-// Spec §12: a pre-upgrade PROJECTS_FILE is no longer read on boot, but an
-// operator who still has one set must be told to run the one-time import
-// rather than have it silently ignored.
-func TestServeWarnsAboutLegacyProjectsFile(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "legacy.db")
-	cfg := testConfig(t, freePort(t), dbPath)
-
-	legacy := filepath.Join(t.TempDir(), "projects.json")
-	if err := os.WriteFile(legacy, []byte("[]"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PROJECTS_FILE", legacy)
-
-	logs := runServeAndCollectLogs(t, cfg)
-	if !strings.Contains(logs, "twillingate config import") {
-		t.Errorf("logs = %q, want a warning naming `twillingate config import`", logs)
-	}
-}
-
-// Without PROJECTS_FILE set (and no /etc/analytics/projects.json, which is
-// absent in CI) boot must stay quiet: nothing to import.
-func TestServeDoesNotWarnWithoutLegacyProjectsFile(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "nolegacy.db")
-	cfg := testConfig(t, freePort(t), dbPath)
-	t.Setenv("PROJECTS_FILE", "")
-
-	logs := runServeAndCollectLogs(t, cfg)
-	if strings.Contains(logs, "twillingate config import") {
-		t.Errorf("logs = %q, want no legacy-file warning", logs)
-	}
 }

@@ -76,7 +76,7 @@ func openOps(stdout io.Writer, envFile string) (*manage.Ops, *config.Config, fun
 		fmt.Fprintln(stdout, err)
 		return nil, nil, nil, 1
 	}
-	reg := manage.New(st, cfg.Retention, app.NewLogger(cfg.Log))
+	reg := manage.New(st, app.NewLogger(cfg.Log))
 	if err := reg.Reload(ctx); err != nil {
 		st.Close()
 		fmt.Fprintln(stdout, err)
@@ -84,6 +84,8 @@ func openOps(stdout io.Writer, envFile string) (*manage.Ops, *config.Config, fun
 	}
 	return manage.NewOps(reg, st), cfg, func() { st.Close() }, 0
 }
+
+const projectUsage = "usage: twillingate project <create|update|list|archive|restore|delete> [flags]"
 
 func cmdProject(args []string, stdout io.Writer) int {
 	fs := flag.NewFlagSet("project", flag.ContinueOnError)
@@ -94,7 +96,14 @@ func cmdProject(args []string, stdout io.Writer) int {
 	}
 	rest := fs.Args()
 	if len(rest) == 0 {
-		fmt.Fprintln(stdout, "usage: twillingate project <create|update|list|archive|restore|rename|delete> [flags]")
+		fmt.Fprintln(stdout, projectUsage)
+		return 2
+	}
+	sub, subArgs := rest[0], rest[1:]
+	switch sub {
+	case "create", "update", "list", "archive", "restore", "delete":
+	default:
+		fmt.Fprintf(stdout, "unknown subcommand %q\n%s\n", sub, projectUsage)
 		return 2
 	}
 	ops, _, closeStore, code := openOps(stdout, *envFile)
@@ -103,145 +112,121 @@ func cmdProject(args []string, stdout io.Writer) int {
 	}
 	defer closeStore()
 	ctx := context.Background()
-	sub, subArgs := rest[0], rest[1:]
 	switch sub {
-	case "create", "update":
-		sf := flag.NewFlagSet("project "+sub, flag.ContinueOnError)
+	case "create":
+		sf := flag.NewFlagSet("project create", flag.ContinueOnError)
 		sf.SetOutput(stdout)
-		alias := sf.String("alias", "", "project alias (required)")
-		name := sf.String("name", "", "display name (defaults to alias)")
+		name := sf.String("name", "", "display name (required)")
 		identity := sf.String("identity", "anonymous", "anonymous|identified")
-		var origins multiFlag
+		var origins, attrs multiFlag
 		sf.Var(&origins, "origin", "allowed origin, `*` wildcards accepted (repeatable)")
-		var attrs multiFlag
 		sf.Var(&attrs, "attr", "attribute key to break down (repeatable)")
 		if err := sf.Parse(subArgs); err != nil {
 			return 2
 		}
-
-		spec := manage.ProjectSpec{Alias: *alias}
-
-		if sub == "create" {
-			// For create, use the provided flags or defaults
-			spec.Name = *name
-			spec.Identity = *identity
-			spec.AllowedOrigins = origins
-			spec.Attributes = attrs
-		} else {
-			// For update, start from current values and overlay only explicitly-set flags
-			snap := ops.Reg.Snapshot(ctx)
-			current := snap.Project(*alias)
-			if current == nil {
-				fmt.Fprintf(stdout, "no project %q; aliases are immutable — use `project rename` to change one, or `project create` to make a new one\n", *alias)
-				return 1
-			}
-			// Start from current values
-			spec.Name = current.Name
-			spec.Identity = current.Identity
-			spec.AllowedOrigins = current.AllowedOrigins
-			spec.Retention = current.Retention
-			spec.Attributes = current.Attributes
-
-			// Overlay explicitly-set flags using sf.Visit
-			sf.Visit(func(f *flag.Flag) {
-				switch f.Name {
-				case "name":
-					spec.Name = *name
-				case "identity":
-					spec.Identity = *identity
-				case "origin":
-					// If -origin was passed at all, replace the whole list
-					spec.AllowedOrigins = origins
-				case "attr":
-					// If -attr was passed at all, replace the whole list
-					spec.Attributes = attrs
-				}
-			})
+		if *name == "" {
+			fmt.Fprintln(stdout, "usage: twillingate project create -name <name> [-identity anonymous|identified] [-origin ...] [-attr ...]")
+			return 2
 		}
-
-		var p *manage.Project
-		var err error
-		if sub == "create" {
-			p, err = ops.CreateProject(ctx, "cli", spec)
-		} else {
-			p, err = ops.UpdateProject(ctx, "cli", spec)
-		}
+		p, err := ops.CreateProject(ctx, "cli", manage.ProjectSpec{
+			Name: *name, Identity: *identity, AllowedOrigins: origins, Attributes: attrs})
 		if err != nil {
 			fmt.Fprintln(stdout, err)
 			return 1
 		}
-		fmt.Fprintf(stdout, "project %q %sd\n", p.Alias, sub)
-		fmt.Fprintln(stdout, "next: twillingate key issue -project", p.Alias, "-label web")
+		fmt.Fprintf(stdout, "project %d (%q) created\n", p.ID, p.Name)
+		fmt.Fprintf(stdout, "next: twillingate key issue -project-id %d -label web\n", p.ID)
+		return 0
+	case "update":
+		sf := flag.NewFlagSet("project update", flag.ContinueOnError)
+		sf.SetOutput(stdout)
+		id := sf.Int64("id", 0, "project id (required)")
+		name := sf.String("name", "", "new display name")
+		identity := sf.String("identity", "", "anonymous|identified")
+		var origins, attrs multiFlag
+		sf.Var(&origins, "origin", "allowed origin, replaces the whole list (repeatable)")
+		clearOrigins := sf.Bool("clear-origins", false, "remove every allowed origin")
+		sf.Var(&attrs, "attr", "attribute key to break down, replaces the whole list (repeatable)")
+		if err := sf.Parse(subArgs); err != nil {
+			return 2
+		}
+		if *id == 0 {
+			fmt.Fprintln(stdout, "usage: twillingate project update -id <id> [-name ...] [-identity ...] [-origin ... | -clear-origins] [-attr ...]")
+			return 2
+		}
+		if *clearOrigins && len(origins) > 0 {
+			fmt.Fprintln(stdout, "use -origin or -clear-origins, not both")
+			return 2
+		}
+		// A flag left out is nil and keeps the current list; -clear-origins
+		// sends an empty non-nil list, which clears it.
+		spec := manage.ProjectSpec{ID: *id, Name: *name, Identity: *identity,
+			AllowedOrigins: origins, Attributes: attrs}
+		if *clearOrigins {
+			spec.AllowedOrigins = []string{}
+		}
+		p, err := ops.UpdateProject(ctx, "cli", spec)
+		if err != nil {
+			fmt.Fprintln(stdout, err)
+			return 1
+		}
+		fmt.Fprintf(stdout, "project %d (%q) updated\n", p.ID, p.Name)
 		return 0
 	case "list":
-		s := ops.Reg.Snapshot(ctx)
-		for _, p := range s.Projects() {
+		for _, p := range ops.Reg.Snapshot(ctx).Projects() {
 			state := ""
 			if p.Archived {
-				state = "  (archived)"
+				state = "\t(archived)"
 			}
-			fmt.Fprintf(stdout, "%s\t%s\t%s%s\n", p.Alias, p.Identity, p.Name, state)
+			fmt.Fprintf(stdout, "%d\t%s\t%s%s\n", p.ID, p.Identity, p.Name, state)
 		}
 		return 0
 	case "archive", "restore":
 		sf := flag.NewFlagSet("project "+sub, flag.ContinueOnError)
 		sf.SetOutput(stdout)
-		alias := sf.String("alias", "", "project alias (required)")
+		id := sf.Int64("id", 0, "project id (required)")
 		if err := sf.Parse(subArgs); err != nil {
+			return 2
+		}
+		if *id == 0 {
+			fmt.Fprintf(stdout, "usage: twillingate project %s -id <id>\n", sub)
 			return 2
 		}
 		var err error
 		if sub == "archive" {
-			err = ops.ArchiveProject(ctx, "cli", *alias)
+			err = ops.ArchiveProject(ctx, "cli", *id)
 		} else {
-			err = ops.RestoreProject(ctx, "cli", *alias)
+			err = ops.RestoreProject(ctx, "cli", *id)
 		}
 		if err != nil {
 			fmt.Fprintln(stdout, err)
 			return 1
 		}
-		fmt.Fprintf(stdout, "project %q %sd\n", *alias, sub)
+		fmt.Fprintf(stdout, "project %d %sd\n", *id, sub)
 		return 0
-	case "rename":
-		sf := flag.NewFlagSet("project rename", flag.ContinueOnError)
-		sf.SetOutput(stdout)
-		alias := sf.String("alias", "", "current project alias (required)")
-		to := sf.String("to", "", "new project alias (required)")
-		if err := sf.Parse(subArgs); err != nil {
-			return 2
-		}
-		if *alias == "" || *to == "" {
-			fmt.Fprintln(stdout, "usage: twillingate project rename -alias <old> -to <new>")
-			return 2
-		}
-		if err := ops.RenameProject(ctx, "cli", *alias, *to); err != nil {
-			fmt.Fprintln(stdout, err)
-			return 1
-		}
-		fmt.Fprintf(stdout, "project %q renamed to %q\n", *alias, *to)
-		return 0
-	case "delete":
+	default: // delete
 		sf := flag.NewFlagSet("project delete", flag.ContinueOnError)
 		sf.SetOutput(stdout)
-		alias := sf.String("alias", "", "project alias (required)")
+		id := sf.Int64("id", 0, "project id (required)")
 		force := sf.Bool("force", false, "skip confirmation")
 		if err := sf.Parse(subArgs); err != nil {
 			return 2
 		}
+		if *id == 0 {
+			fmt.Fprintln(stdout, "usage: twillingate project delete -id <id> [-force]")
+			return 2
+		}
 		if !*force {
-			fmt.Fprintf(stdout, "This permanently deletes project %q and ALL its data.\n", *alias)
+			fmt.Fprintf(stdout, "This permanently deletes project %d and ALL its data.\n", *id)
 			fmt.Fprintln(stdout, "Re-run with -force to confirm.")
 			return 1
 		}
-		if err := ops.DeleteProject(ctx, "cli", *alias); err != nil {
+		if err := ops.DeleteProject(ctx, "cli", *id); err != nil {
 			fmt.Fprintln(stdout, err)
 			return 1
 		}
-		fmt.Fprintf(stdout, "project %q deleted\n", *alias)
+		fmt.Fprintf(stdout, "project %d deleted\n", *id)
 		return 0
-	default:
-		fmt.Fprintf(stdout, "unknown subcommand %q\nusage: twillingate project <create|update|list|archive|restore|rename|delete> [flags]\n", sub)
-		return 2
 	}
 }
 
