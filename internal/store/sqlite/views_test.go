@@ -46,18 +46,18 @@ import (
 // shape these views are built on -- out of scope for this change.
 func TestViewsLiveHalvesUseTheDayIndex(t *testing.T) {
 	db := newTestDB(t)
-	seedViewDay(t, db) // project "app", day 2026-08-10
+	seedViewDay(t, db) // project 1, day 2026-08-10
 
 	queries := map[string]string{
 		"paths": `SELECT path, SUM(visitors), SUM(views) FROM v_views_paths
-			WHERE project = ? AND day BETWEEN ? AND ? GROUP BY path`,
+			WHERE project_id = ? AND day BETWEEN ? AND ? GROUP BY path`,
 		"daily": `SELECT kind, SUM(visitors), SUM(views) FROM v_views_daily
-			WHERE project = ? AND day BETWEEN ? AND ? GROUP BY kind`,
+			WHERE project_id = ? AND day BETWEEN ? AND ? GROUP BY kind`,
 	}
 
 	for name, q := range queries {
 		t.Run(name, func(t *testing.T) {
-			rows, err := db.db.Query("EXPLAIN QUERY PLAN "+q, "app", "2026-08-01", "2026-08-10")
+			rows, err := db.db.Query("EXPLAIN QUERY PLAN "+q, 1, "2026-08-01", "2026-08-10")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -108,7 +108,7 @@ func TestStitchViewsInvariantDaily(t *testing.T) {
 	if webBefore != (dailyRow{2, 4, 3, 2, 600}) || appBefore != (dailyRow{2, 3, 2, 1, 300}) {
 		t.Fatalf("live v_views_daily web=%+v app=%+v; fixture expectations wrong", webBefore, appBefore)
 	}
-	if err := db.AggregateViewDay(ctx, "app", day("2026-08-10")); err != nil {
+	if err := db.AggregateViewDay(ctx, 1, day("2026-08-10")); err != nil {
 		t.Fatal(err)
 	}
 	if got := read("web"); got != webBefore {
@@ -150,7 +150,7 @@ func TestStitchViewsInvariantAllViewsDimensions(t *testing.T) {
 	snapshot := func(d dim) map[string][2]int {
 		t.Helper()
 		rows, err := db.db.Query(fmt.Sprintf(
-			`SELECT %s, visitors, views FROM %s WHERE project='app' AND day='2026-08-10'`, d.key, d.view))
+			`SELECT %s, visitors, views FROM %s WHERE project_id=1 AND day='2026-08-10'`, d.key, d.view))
 		if err != nil {
 			t.Fatalf("%s: %v", d.view, err)
 		}
@@ -179,7 +179,7 @@ func TestStitchViewsInvariantAllViewsDimensions(t *testing.T) {
 	if _, ok := before["v_views_paths"]["(other)"]; !ok {
 		t.Fatal("paths fixture did not exceed the cap; the other-bucket parity is untested")
 	}
-	if err := db.AggregateViewDay(ctx, "app", day("2026-08-10")); err != nil {
+	if err := db.AggregateViewDay(ctx, 1, day("2026-08-10")); err != nil {
 		t.Fatal(err)
 	}
 	for _, d := range dims {
@@ -200,7 +200,7 @@ func TestStitchViewUTMExcludesEmpty(t *testing.T) {
 		t.Helper()
 		var n int
 		if err := db.db.QueryRow(`SELECT COUNT(*) FROM v_views_utm
-			WHERE project='app' AND day='2026-08-10'`).Scan(&n); err != nil {
+			WHERE project_id=1 AND day='2026-08-10'`).Scan(&n); err != nil {
 			t.Fatal(err)
 		}
 		return n
@@ -209,7 +209,7 @@ func TestStitchViewUTMExcludesEmpty(t *testing.T) {
 	if n := count(); n != 1 {
 		t.Fatalf("live v_views_utm rows = %d, want 1", n)
 	}
-	if err := db.AggregateViewDay(ctx, "app", day("2026-08-10")); err != nil {
+	if err := db.AggregateViewDay(ctx, 1, day("2026-08-10")); err != nil {
 		t.Fatal(err)
 	}
 	if n := count(); n != 1 {
@@ -224,7 +224,7 @@ func TestStitchViewsInvariantProduct(t *testing.T) {
 	read := func() (c, u int) {
 		t.Helper()
 		err := db.db.QueryRow(`SELECT count, unique_users FROM v_product_daily
-			WHERE project='app' AND day='2026-08-10' AND event_name='subscribed'`).Scan(&c, &u)
+			WHERE project_id=1 AND day='2026-08-10' AND event_name='subscribed'`).Scan(&c, &u)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -234,7 +234,7 @@ func TestStitchViewsInvariantProduct(t *testing.T) {
 	if c1 != 3 || u1 != 2 {
 		t.Fatalf("live v_product_daily subscribed = (%d,%d), want (3,2)", c1, u1)
 	}
-	if err := db.AggregateProductDay(ctx, "app", day("2026-08-10"), nil, 50); err != nil {
+	if err := db.AggregateProductDay(ctx, 1, day("2026-08-10"), nil, 50); err != nil {
 		t.Fatal(err)
 	}
 	c2, u2 := read()
@@ -243,7 +243,7 @@ func TestStitchViewsInvariantProduct(t *testing.T) {
 	}
 	var dau int
 	if err := db.db.QueryRow(`SELECT active_users FROM v_product_totals
-		WHERE project='app' AND day='2026-08-10'`).Scan(&dau); err != nil {
+		WHERE project_id=1 AND day='2026-08-10'`).Scan(&dau); err != nil {
 		t.Fatal(err)
 	}
 	if dau != 2 {
@@ -260,7 +260,7 @@ func TestStitchViewProductTotalsIsTrueDAU(t *testing.T) {
 	read := func() (events, users int) {
 		t.Helper()
 		if err := db.db.QueryRow(`SELECT total_events, active_users FROM v_product_totals
-			WHERE project='app' AND day='2026-08-10'`).Scan(&events, &users); err != nil {
+			WHERE project_id=1 AND day='2026-08-10'`).Scan(&events, &users); err != nil {
 			t.Fatal(err)
 		}
 		return
@@ -269,7 +269,7 @@ func TestStitchViewProductTotalsIsTrueDAU(t *testing.T) {
 	if e1 != 4 || u1 != 2 {
 		t.Fatalf("live v_product_totals = (%d,%d), want (4,2)", e1, u1)
 	}
-	if err := db.AggregateProductDay(ctx, "app", day("2026-08-10"), nil, 50); err != nil {
+	if err := db.AggregateProductDay(ctx, 1, day("2026-08-10"), nil, 50); err != nil {
 		t.Fatal(err)
 	}
 	if e2, u2 := read(); e1 != e2 || u1 != u2 {
@@ -284,16 +284,16 @@ func TestStitchViewsMixedAggregatedAndRawDays(t *testing.T) {
 	ctx := context.Background()
 	seedViewDay(t, db) // 2026-08-10
 	if err := db.WriteViews(ctx, []store.View{
-		{ID: "9", Project: "app", TS: ts("2026-08-11T10:00:00Z"), Kind: "web",
+		{ID: "9", ProjectID: 1, TS: ts("2026-08-11T10:00:00Z"), Kind: "web",
 			ActorKind: store.ActorConnection, ActorID: "v9", Path: "/a"},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AggregateViewDay(ctx, "app", day("2026-08-10")); err != nil {
+	if err := db.AggregateViewDay(ctx, 1, day("2026-08-10")); err != nil {
 		t.Fatal(err)
 	}
 	rows, err := db.db.Query(`SELECT day, views FROM v_views_daily
-		WHERE project='app' AND kind='web' ORDER BY day`)
+		WHERE project_id=1 AND kind='web' ORDER BY day`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -327,9 +327,9 @@ func TestStitchViewIdentityDailyCoversRawDays(t *testing.T) {
 	tsV := time.Date(2026, 8, 23, 10, 0, 0, 0, time.UTC)
 
 	if err := db.WriteViews(ctx, []store.View{
-		{ID: "1", Project: "p", TS: tsV, ReceivedAt: tsV, Kind: "app", ActorKind: store.ActorInstall, ActorID: "a",
+		{ID: "1", ProjectID: 1, TS: tsV, ReceivedAt: tsV, Kind: "app", ActorKind: store.ActorInstall, ActorID: "a",
 			UserID: "u1", GroupID: "org9", Path: "/x"},
-		{ID: "2", Project: "p", TS: tsV, ReceivedAt: tsV, Kind: "app", ActorKind: store.ActorInstall, ActorID: "b",
+		{ID: "2", ProjectID: 1, TS: tsV, ReceivedAt: tsV, Kind: "app", ActorKind: store.ActorInstall, ActorID: "b",
 			UserID: "u2", GroupID: "org9", Path: "/x"},
 	}); err != nil {
 		t.Fatal(err)
@@ -338,7 +338,7 @@ func TestStitchViewIdentityDailyCoversRawDays(t *testing.T) {
 	var actors, users, views int
 	if err := db.db.QueryRowContext(ctx,
 		`SELECT actors, users, views FROM v_identity_daily
-		 WHERE project='p' AND kind='group' AND id='org9'`).
+		 WHERE project_id=1 AND kind='group' AND id='org9'`).
 		Scan(&actors, &users, &views); err != nil {
 		t.Fatalf("group row before aggregation: %v", err)
 	}
@@ -348,15 +348,15 @@ func TestStitchViewIdentityDailyCoversRawDays(t *testing.T) {
 
 	// After aggregation the same figures must come from the aggregate half,
 	// with no double counting from the raw rows the pass deletes.
-	if err := db.AggregateIdentityDay(ctx, "p", day("2026-08-23")); err != nil {
+	if err := db.AggregateIdentityDay(ctx, 1, day("2026-08-23")); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AggregateViewDay(ctx, "p", day("2026-08-23")); err != nil {
+	if err := db.AggregateViewDay(ctx, 1, day("2026-08-23")); err != nil {
 		t.Fatal(err)
 	}
 	var rows int
 	if err := db.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM v_identity_daily WHERE project='p' AND kind='group' AND id='org9'`).
+		`SELECT COUNT(*) FROM v_identity_daily WHERE project_id=1 AND kind='group' AND id='org9'`).
 		Scan(&rows); err != nil {
 		t.Fatal(err)
 	}
@@ -365,7 +365,7 @@ func TestStitchViewIdentityDailyCoversRawDays(t *testing.T) {
 	}
 	if err := db.db.QueryRowContext(ctx,
 		`SELECT actors, users, views FROM v_identity_daily
-		 WHERE project='p' AND kind='group' AND id='org9'`).
+		 WHERE project_id=1 AND kind='group' AND id='org9'`).
 		Scan(&actors, &users, &views); err != nil {
 		t.Fatal(err)
 	}
@@ -383,16 +383,16 @@ func TestStitchViewIdentityDailyDoesNotDoubleCountRetainedRawDays(t *testing.T) 
 	ts := time.Date(2026, 8, 23, 10, 0, 0, 0, time.UTC)
 
 	if err := db.WriteViews(ctx, []store.View{
-		{ID: "1", Project: "p", TS: ts, ReceivedAt: ts, Kind: "web",
+		{ID: "1", ProjectID: 1, TS: ts, ReceivedAt: ts, Kind: "web",
 			ActorKind: store.ActorUser, ActorID: "a", UserID: "u1", GroupID: "org9", Path: "/x"},
-		{ID: "2", Project: "p", TS: ts, ReceivedAt: ts, Kind: "web",
+		{ID: "2", ProjectID: 1, TS: ts, ReceivedAt: ts, Kind: "web",
 			ActorKind: store.ActorUser, ActorID: "a", UserID: "u1", GroupID: "org9", Path: "/y"},
 	}); err != nil {
 		t.Fatal(err)
 	}
 	// AggregateIdentityDay does not delete raw rows; only AggregateViewDay
 	// does, and the pass rolls identity up long before that.
-	if err := db.AggregateIdentityDay(ctx, "p", day("2026-08-23")); err != nil {
+	if err := db.AggregateIdentityDay(ctx, 1, day("2026-08-23")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -400,7 +400,7 @@ func TestStitchViewIdentityDailyDoesNotDoubleCountRetainedRawDays(t *testing.T) 
 		var rows, views int
 		if err := db.db.QueryRowContext(ctx,
 			`SELECT COUNT(*), COALESCE(SUM(views),0) FROM v_identity_daily
-			 WHERE project='p' AND kind=?`, kind).Scan(&rows, &views); err != nil {
+			 WHERE project_id=1 AND kind=?`, kind).Scan(&rows, &views); err != nil {
 			t.Fatal(err)
 		}
 		if rows != 1 || views != 2 {
@@ -422,12 +422,12 @@ func TestStitchViewIdentityDailyCapsLikeTheAggregate(t *testing.T) {
 	var events []store.ProductEvent
 	for i := 0; i < n; i++ {
 		u, g := fmt.Sprintf("u%03d", i), fmt.Sprintf("g%03d", i)
-		views = append(views, store.View{ID: fmt.Sprintf("v%d", i), Project: "p", TS: ts, ReceivedAt: ts,
+		views = append(views, store.View{ID: fmt.Sprintf("v%d", i), ProjectID: 1, TS: ts, ReceivedAt: ts,
 			Kind: "web", ActorKind: store.ActorUser, ActorID: u, UserID: u, GroupID: g, Path: "/"})
 		// The last ids sort after the cut by id alone; an extra product
 		// event ranks them first, so only a count-ordered cap keeps them.
 		if i >= n-5 {
-			events = append(events, store.ProductEvent{ID: fmt.Sprintf("e%d", i), Project: "p", EventName: "clicked",
+			events = append(events, store.ProductEvent{ID: fmt.Sprintf("e%d", i), ProjectID: 1, EventName: "clicked",
 				TS: ts, ReceivedAt: ts, ActorID: u, ActorKind: store.ActorUser, UserID: u, GroupID: g})
 		}
 	}
@@ -441,7 +441,7 @@ func TestStitchViewIdentityDailyCapsLikeTheAggregate(t *testing.T) {
 	snapshot := func() map[string][4]int {
 		t.Helper()
 		rows, err := db.db.QueryContext(ctx,
-			`SELECT kind, id, actors, users, views, events FROM v_identity_daily WHERE project='p'`)
+			`SELECT kind, id, actors, users, views, events FROM v_identity_daily WHERE project_id=1`)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -462,7 +462,7 @@ func TestStitchViewIdentityDailyCapsLikeTheAggregate(t *testing.T) {
 	}
 
 	live := snapshot()
-	if err := db.AggregateIdentityDay(ctx, "p", day("2026-08-23")); err != nil {
+	if err := db.AggregateIdentityDay(ctx, 1, day("2026-08-23")); err != nil {
 		t.Fatal(err)
 	}
 	agg := snapshot()
@@ -478,9 +478,10 @@ func TestStitchViewIdentityDailyCapsLikeTheAggregate(t *testing.T) {
 }
 
 // seedDeclaredProject registers a project row with a declared attribute
-// list. v_product_attrs' live half reads projects.attributes, so the row
-// must exist or the declared half of the view is empty.
-func seedDeclaredProject(t *testing.T, db *DB, alias string, attrs []string) {
+// list and returns its id. v_product_attrs' live half reads
+// projects.attributes by project_id, so the row must exist or the declared
+// half of the view is empty.
+func seedDeclaredProject(t *testing.T, db *DB, attrs []string) int64 {
 	t.Helper()
 	if attrs == nil {
 		attrs = []string{}
@@ -489,11 +490,13 @@ func seedDeclaredProject(t *testing.T, db *DB, alias string, attrs []string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.db.Exec(
-		`INSERT INTO projects (id, alias, name, attributes) VALUES (?,?,?,?)`,
-		alias, alias, alias, string(b)); err != nil {
+	id, err := db.CreateProject(context.Background(), store.RegistryProject{
+		Name: "Blog", Identity: "anonymous", AllowedOrigins: "[]", Attributes: string(b)},
+		store.AuditEntry{Actor: "test", Action: "project.create"})
+	if err != nil {
 		t.Fatal(err)
 	}
+	return id
 }
 
 // attrRow mirrors one v_product_attrs row for before/after comparison.
@@ -506,11 +509,11 @@ type attrRow struct {
 // slice. It fully drains and closes the cursor before returning: the pool
 // is SetMaxOpenConns(1), so holding rows open while the caller issues the
 // next query would deadlock.
-func readAttrs(t *testing.T, db *DB, project, day string) []attrRow {
+func readAttrs(t *testing.T, db *DB, projectID int64, day string) []attrRow {
 	t.Helper()
 	rows, err := db.db.Query(`SELECT event_name, attr_key, attr_value, count, unique_users
-		FROM v_product_attrs WHERE project=? AND day=?
-		ORDER BY event_name, attr_key, attr_value`, project, day)
+		FROM v_product_attrs WHERE project_id=? AND day=?
+		ORDER BY event_name, attr_key, attr_value`, projectID, day)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -536,7 +539,7 @@ func readAttrs(t *testing.T, db *DB, project, day string) []attrRow {
 // tiebreak, and the four actors repeat across values so the tail's
 // unique_users is strictly less than the sum of its per-value uniques --
 // the exact case a summed "(other)" row would get wrong.
-func seedAttrDay(t *testing.T, db *DB, project string) {
+func seedAttrDay(t *testing.T, db *DB, projectID int64) {
 	t.Helper()
 	var evs []store.ProductEvent
 	id := 0
@@ -544,7 +547,7 @@ func seedAttrDay(t *testing.T, db *DB, project string) {
 		for n := 0; n <= i%3; n++ {
 			id++
 			evs = append(evs, store.ProductEvent{
-				ID: fmt.Sprintf("e%04d", id), Project: project, EventName: "signup",
+				ID: fmt.Sprintf("e%04d", id), ProjectID: projectID, EventName: "signup",
 				ActorID: fmt.Sprintf("a%d", (i+n)%4), TS: ts("2026-08-01T10:00:00Z"),
 				Attributes: map[string]string{"plan": fmt.Sprintf("p%02d", i)},
 				OS:         []string{"ios", "android"}[i%2],
@@ -554,7 +557,7 @@ func seedAttrDay(t *testing.T, db *DB, project string) {
 	}
 	// A second event name, so the per-event partitioning is exercised too.
 	evs = append(evs, store.ProductEvent{
-		ID: "ping1", Project: project, EventName: "ping", ActorID: "a9",
+		ID: "ping1", ProjectID: projectID, EventName: "ping", ActorID: "a9",
 		TS: ts("2026-08-01T11:00:00Z"), Attributes: map[string]string{"plan": "pro"},
 		OS: "web", AppVersion: "1.0",
 	})
@@ -570,10 +573,10 @@ func seedAttrDay(t *testing.T, db *DB, project string) {
 func TestProductAttrsViewInvariant(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	seedDeclaredProject(t, db, "blog", []string{"plan"})
-	seedAttrDay(t, db, "blog")
+	id := seedDeclaredProject(t, db, []string{"plan"})
+	seedAttrDay(t, db, id)
 
-	before := readAttrs(t, db, "blog", "2026-08-01")
+	before := readAttrs(t, db, id, "2026-08-01")
 	if len(before) == 0 {
 		t.Fatal("live v_product_attrs returned no rows; the comparison would be vacuous")
 	}
@@ -595,11 +598,11 @@ func TestProductAttrsViewInvariant(t *testing.T) {
 		t.Fatal("no (other) row: the tail path is untested")
 	}
 
-	if err := db.AggregateProductDay(ctx, "blog",
+	if err := db.AggregateProductDay(ctx, id,
 		civil.DateOf(ts("2026-08-01T00:00:00Z")), []string{"plan"}, 50); err != nil {
 		t.Fatal(err)
 	}
-	after := readAttrs(t, db, "blog", "2026-08-01")
+	after := readAttrs(t, db, id, "2026-08-01")
 	if !reflect.DeepEqual(before, after) {
 		t.Fatalf("view changed when the day aggregated:\nbefore %v\nafter  %v", before, after)
 	}
@@ -610,12 +613,12 @@ func TestProductAttrsViewInvariant(t *testing.T) {
 // under several tail values would otherwise be counted once per value.
 func TestProductAttrsViewOtherRecomputesUniques(t *testing.T) {
 	db := newTestDB(t)
-	seedDeclaredProject(t, db, "blog", []string{"plan"})
-	seedAttrDay(t, db, "blog")
+	id := seedDeclaredProject(t, db, []string{"plan"})
+	seedAttrDay(t, db, id)
 	var count, uniques int
 	if err := db.db.QueryRow(`SELECT count, unique_users FROM v_product_attrs
-		WHERE project='blog' AND day='2026-08-01' AND event_name='signup'
-		  AND attr_key='plan' AND attr_value='(other)'`).Scan(&count, &uniques); err != nil {
+		WHERE project_id=? AND day='2026-08-01' AND event_name='signup'
+		  AND attr_key='plan' AND attr_value='(other)'`, id).Scan(&count, &uniques); err != nil {
 		t.Fatal(err)
 	}
 	if uniques >= count {
@@ -631,10 +634,10 @@ func TestProductAttrsViewOtherRecomputesUniques(t *testing.T) {
 func TestProductAttrsViewSystemDimensionsWithoutDeclaredKeys(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	seedDeclaredProject(t, db, "blog", nil)
-	seedAttrDay(t, db, "blog")
+	id := seedDeclaredProject(t, db, nil)
+	seedAttrDay(t, db, id)
 
-	before := readAttrs(t, db, "blog", "2026-08-01")
+	before := readAttrs(t, db, id, "2026-08-01")
 	var sys, custom int
 	for _, r := range before {
 		switch r.Key {
@@ -650,11 +653,11 @@ func TestProductAttrsViewSystemDimensionsWithoutDeclaredKeys(t *testing.T) {
 	if custom != 0 {
 		t.Fatalf("%d rows for undeclared custom keys; only system dimensions were expected", custom)
 	}
-	if err := db.AggregateProductDay(ctx, "blog",
+	if err := db.AggregateProductDay(ctx, id,
 		civil.DateOf(ts("2026-08-01T00:00:00Z")), nil, 50); err != nil {
 		t.Fatal(err)
 	}
-	if after := readAttrs(t, db, "blog", "2026-08-01"); !reflect.DeepEqual(before, after) {
+	if after := readAttrs(t, db, id, "2026-08-01"); !reflect.DeepEqual(before, after) {
 		t.Fatalf("system dimensions changed when the day aggregated:\nbefore %v\nafter  %v",
 			before, after)
 	}
@@ -669,9 +672,9 @@ func TestProductAttrsViewHonoursMetaCap(t *testing.T) {
 	if err := db.SetMeta(ctx, "product_attributes_top_n", "3"); err != nil {
 		t.Fatal(err)
 	}
-	seedDeclaredProject(t, db, "blog", []string{"plan"})
-	seedAttrDay(t, db, "blog")
-	before := readAttrs(t, db, "blog", "2026-08-01")
+	id := seedDeclaredProject(t, db, []string{"plan"})
+	seedAttrDay(t, db, id)
+	before := readAttrs(t, db, id, "2026-08-01")
 	var plans int
 	for _, r := range before {
 		if r.Event == "signup" && r.Key == "plan" {
@@ -681,11 +684,11 @@ func TestProductAttrsViewHonoursMetaCap(t *testing.T) {
 	if plans != 4 {
 		t.Fatalf("live signup/plan rows = %d, want 4 (3 capped + one (other))", plans)
 	}
-	if err := db.AggregateProductDay(ctx, "blog",
+	if err := db.AggregateProductDay(ctx, id,
 		civil.DateOf(ts("2026-08-01T00:00:00Z")), []string{"plan"}, 3); err != nil {
 		t.Fatal(err)
 	}
-	if after := readAttrs(t, db, "blog", "2026-08-01"); !reflect.DeepEqual(before, after) {
+	if after := readAttrs(t, db, id, "2026-08-01"); !reflect.DeepEqual(before, after) {
 		t.Fatalf("capped view changed when the day aggregated:\nbefore %v\nafter  %v",
 			before, after)
 	}
@@ -696,8 +699,8 @@ func TestProductAttrsViewHonoursMetaCap(t *testing.T) {
 // would make every invariant assertion above pass vacuously.
 func TestProductAttrsViewDefaultsCapWhenMetaMissing(t *testing.T) {
 	db := newTestDB(t)
-	seedDeclaredProject(t, db, "blog", []string{"plan"})
-	seedAttrDay(t, db, "blog")
+	id := seedDeclaredProject(t, db, []string{"plan"})
+	seedAttrDay(t, db, id)
 	var n int
 	if err := db.db.QueryRow(`SELECT COUNT(*) FROM meta
 		WHERE key='product_attributes_top_n'`).Scan(&n); err != nil {
@@ -707,8 +710,8 @@ func TestProductAttrsViewDefaultsCapWhenMetaMissing(t *testing.T) {
 		t.Fatalf("fixture unexpectedly has a cap row (%d)", n)
 	}
 	if err := db.db.QueryRow(`SELECT COUNT(*) FROM v_product_attrs
-		WHERE project='blog' AND day='2026-08-01' AND event_name='signup'
-		  AND attr_key='plan'`).Scan(&n); err != nil {
+		WHERE project_id=? AND day='2026-08-01' AND event_name='signup'
+		  AND attr_key='plan'`, id).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	if n != defaultAttrsTopN+1 {
@@ -742,10 +745,10 @@ func TestProductAttrsViewClampsBadMetaCap(t *testing.T) {
 			if err := db.SetMeta(ctx, "product_attributes_top_n", tc.meta); err != nil {
 				t.Fatal(err)
 			}
-			seedDeclaredProject(t, db, "blog", []string{"plan"})
-			seedAttrDay(t, db, "blog")
+			id := seedDeclaredProject(t, db, []string{"plan"})
+			seedAttrDay(t, db, id)
 
-			before := readAttrs(t, db, "blog", "2026-08-01")
+			before := readAttrs(t, db, id, "2026-08-01")
 			var plans int
 			for _, r := range before {
 				if r.Event == "signup" && r.Key == "plan" {
@@ -759,11 +762,11 @@ func TestProductAttrsViewClampsBadMetaCap(t *testing.T) {
 					"(the cap must clamp to defaultAttrsTopN, not collapse to (other))",
 					tc.meta, plans, defaultAttrsTopN+1)
 			}
-			if err := db.AggregateProductDay(ctx, "blog",
+			if err := db.AggregateProductDay(ctx, id,
 				civil.DateOf(ts("2026-08-01T00:00:00Z")), []string{"plan"}, tc.goTopN); err != nil {
 				t.Fatal(err)
 			}
-			if after := readAttrs(t, db, "blog", "2026-08-01"); !reflect.DeepEqual(before, after) {
+			if after := readAttrs(t, db, id, "2026-08-01"); !reflect.DeepEqual(before, after) {
 				t.Fatalf("view changed when the day aggregated with meta=%q:\nbefore %v\nafter  %v",
 					tc.meta, before, after)
 			}

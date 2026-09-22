@@ -30,5 +30,5 @@ func main() {
 		}
 		return n
 	}
-	fmt.Printf("views=%d product=%d\n", count("views"), count("product_events"))
+	fmt.Printf("views=%d events=%d\n", count("views"), count("events"))
 }

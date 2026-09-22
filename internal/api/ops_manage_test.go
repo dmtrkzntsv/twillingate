@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -12,8 +13,7 @@ import (
 func TestCreateProjectToolReturnsSnippet(t *testing.T) {
 	_, cs := newTestHost(t)
 	res := callTool(t, cs, "create_project", map[string]any{
-		"alias": "shop", "name": "My shop",
-		"allowed_origins": []string{"https://shop.example.com"}})
+		"name": "My shop", "allowed_origins": []string{"https://shop.example.com"}})
 	if res.IsError {
 		t.Fatalf("error: %s", textOf(res))
 	}
@@ -23,9 +23,9 @@ func TestCreateProjectToolReturnsSnippet(t *testing.T) {
 			t.Errorf("missing %q: %s", want, out)
 		}
 	}
-	// create_project with issue_key=true mints a first key; verify the
-	// key resolves in the registry
-	list := callTool(t, cs, "list_ingest_keys", map[string]any{"project": "shop"})
+	// create_project without skip_key mints a first key; verify the key
+	// is listed under the id the create returned
+	list := callTool(t, cs, "list_ingest_keys", map[string]any{"project_id": projectIDOf(t, res)})
 	if !strings.Contains(textOf(list), "default") {
 		t.Errorf("no default key listed: %s", textOf(list))
 	}
@@ -35,13 +35,14 @@ func TestCreateProjectToolReturnsSnippet(t *testing.T) {
 // actor "mcp", taken from the context the MCP edge sets.
 func TestMCPWriteRecordsActor(t *testing.T) {
 	h, cs := newTestHost(t)
-	if res := callTool(t, cs, "create_project", map[string]any{
-		"alias": "audited", "name": "Audited", "skip_key": true}); res.IsError {
+	res := callTool(t, cs, "create_project", map[string]any{"name": "Audited", "skip_key": true})
+	if res.IsError {
 		t.Fatalf("create: %s", textOf(res))
 	}
 	var actor string
 	if err := h.db.QueryRowContext(context.Background(),
-		"SELECT actor FROM audit_log WHERE action='project.create' AND subject=?", "audited").Scan(&actor); err != nil {
+		"SELECT actor FROM audit_log WHERE action='project.create' AND subject=?",
+		strconv.FormatInt(projectIDOf(t, res), 10)).Scan(&actor); err != nil {
 		t.Fatal(err)
 	}
 	if actor != "mcp" {
@@ -51,14 +52,14 @@ func TestMCPWriteRecordsActor(t *testing.T) {
 
 func TestArchiveRestoreTools(t *testing.T) {
 	_, cs := newTestHost(t)
-	if res := callTool(t, cs, "archive_project", map[string]any{"alias": "docs"}); res.IsError {
+	if res := callTool(t, cs, "archive_project", map[string]any{"project_id": 2}); res.IsError {
 		t.Fatalf("archive: %s", textOf(res))
 	}
 	res := callTool(t, cs, "list_projects", nil)
 	if !strings.Contains(textOf(res), "archived") {
 		t.Errorf("archive not visible: %s", textOf(res))
 	}
-	if res := callTool(t, cs, "restore_project", map[string]any{"alias": "docs"}); res.IsError {
+	if res := callTool(t, cs, "restore_project", map[string]any{"project_id": 2}); res.IsError {
 		t.Fatalf("restore: %s", textOf(res))
 	}
 }
@@ -66,16 +67,16 @@ func TestArchiveRestoreTools(t *testing.T) {
 func TestKeyToolsLifecycle(t *testing.T) {
 	_, cs := newTestHost(t)
 	res := callTool(t, cs, "issue_ingest_key", map[string]any{
-		"project": "blog", "label": "ios"})
+		"project_id": 1, "label": "ios"})
 	if res.IsError {
 		t.Fatalf("issue: %s", textOf(res))
 	}
 	if res := callTool(t, cs, "disable_ingest_key", map[string]any{
-		"project": "blog", "label": "ios"}); res.IsError {
+		"project_id": 1, "label": "ios"}); res.IsError {
 		t.Fatalf("disable: %s", textOf(res))
 	}
 	if res := callTool(t, cs, "enable_ingest_key", map[string]any{
-		"project": "blog", "label": "ios"}); res.IsError {
+		"project_id": 1, "label": "ios"}); res.IsError {
 		t.Fatalf("enable: %s", textOf(res))
 	}
 }
@@ -138,28 +139,26 @@ func TestManagementToolsAnnotatedNonReadOnly(t *testing.T) {
 	}
 }
 
-// TestUpdateProjectMerges is the binding ruling from Task 9: Ops.UpdateProject
-// is full-replace, but the MCP tool must merge — fields the caller omits
-// must be preserved from the current project, not zeroed out. Origins are
-// the one exception (replaced wholesale when provided, never partially
-// merged), which is why they cannot be cleared through this tool.
+// TestUpdateProjectMerges: update_project merges — fields the caller
+// omits are preserved from the current project, not zeroed out. Lists are
+// replaced wholesale when provided, never merged element-wise.
 func TestUpdateProjectMerges(t *testing.T) {
 	h, cs := newTestHost(t)
 	ctx := context.Background()
 	// blog is seeded identified with empty allowed_origins; give it an
 	// origin first so we can prove it survives a name-only update.
 	if res := callTool(t, cs, "update_project", map[string]any{
-		"alias": "blog", "allowed_origins": []string{"https://blog.example.com"}}); res.IsError {
+		"project_id": 1, "allowed_origins": []string{"https://blog.example.com"}}); res.IsError {
 		t.Fatalf("seed origin: %s", textOf(res))
 	}
 	res := callTool(t, cs, "update_project", map[string]any{
-		"alias": "blog", "name": "Blog Renamed"})
+		"project_id": 1, "name": "Blog Renamed"})
 	if res.IsError {
 		t.Fatalf("update: %s", textOf(res))
 	}
 	// list_projects doesn't surface origins, so check the registry
-	// directly: alias+name-only update must not wipe allowed_origins.
-	p := h.reg.Snapshot(ctx).Project("blog")
+	// directly: a name-only update must not wipe allowed_origins.
+	p := h.reg.Snapshot(ctx).Project(1)
 	if p == nil {
 		t.Fatalf("blog vanished from registry")
 	}
@@ -168,17 +167,19 @@ func TestUpdateProjectMerges(t *testing.T) {
 	}
 	list := callTool(t, cs, "list_projects", nil)
 	out := textOf(list)
+	type row struct {
+		ProjectID      int64 `json:"project_id"`
+		Name, Identity string
+	}
 	var parsed struct {
-		Projects []struct {
-			Alias, Name, Identity string
-		} `json:"projects"`
+		Projects []row `json:"projects"`
 	}
 	if err := json.Unmarshal([]byte(out), &parsed); err != nil {
 		t.Fatalf("decode list_projects: %v\n%s", err, out)
 	}
-	var blog *struct{ Alias, Name, Identity string }
+	var blog *row
 	for i := range parsed.Projects {
-		if parsed.Projects[i].Alias == "blog" {
+		if parsed.Projects[i].ProjectID == 1 {
 			blog = &parsed.Projects[i]
 		}
 	}
@@ -188,7 +189,7 @@ func TestUpdateProjectMerges(t *testing.T) {
 	// list_projects also lists "docs" (seeded anonymous); asserting on
 	// the decoded blog entry specifically proves this was a merge, not a
 	// blind overwrite that would have reset identity to its zero value
-	// (anonymous) and name to "" -> "blog".
+	// (anonymous) and name to "".
 	if blog.Identity != "identified" {
 		t.Errorf("blog identity not preserved by merge, got %q", blog.Identity)
 	}
@@ -197,31 +198,26 @@ func TestUpdateProjectMerges(t *testing.T) {
 	}
 }
 
-// TestUpdateProjectEmptyOriginsPreservesExisting is the High-severity fix:
-// an explicit `allowed_origins: []` must not wipe existing origins. JSON
-// decoding gives an empty-but-non-nil slice here, so the merge guard must
-// check len(...) > 0, not != nil — otherwise a caller passing an empty
-// array (rather than omitting the field) silently clears origins, which
-// directly contradicts the tool description's claim that this tool
-// cannot clear origins.
-func TestUpdateProjectEmptyOriginsPreservesExisting(t *testing.T) {
+// TestUpdateProjectEmptyOriginsClears: an explicit [] clears the list and
+// an omitted field keeps it — JSON can tell the two apart, and the tool
+// passes that distinction through.
+func TestUpdateProjectEmptyOriginsClears(t *testing.T) {
 	h, cs := newTestHost(t)
-	ctx := context.Background()
 	if res := callTool(t, cs, "update_project", map[string]any{
-		"alias": "blog", "allowed_origins": []string{"https://blog.example.com"}}); res.IsError {
-		t.Fatalf("seed origin: %s", textOf(res))
+		"project_id": 1, "allowed_origins": []string{"https://blog.example.com"}}); res.IsError {
+		t.Fatal(textOf(res))
 	}
-	res := callTool(t, cs, "update_project", map[string]any{
-		"alias": "blog", "allowed_origins": []string{}})
-	if res.IsError {
-		t.Fatalf("update: %s", textOf(res))
+	if res := callTool(t, cs, "update_project", map[string]any{"project_id": 1, "name": "Blog"}); res.IsError {
+		t.Fatal(textOf(res))
 	}
-	p := h.reg.Snapshot(ctx).Project("blog")
-	if p == nil {
-		t.Fatalf("blog vanished from registry")
+	if p := h.reg.Snapshot(context.Background()).Project(1); len(p.AllowedOrigins) != 1 {
+		t.Fatalf("omitted allowed_origins changed the list: %v", p.AllowedOrigins)
 	}
-	if len(p.AllowedOrigins) != 1 || p.AllowedOrigins[0] != "https://blog.example.com" {
-		t.Errorf("explicit empty allowed_origins wiped existing origins, got %v", p.AllowedOrigins)
+	if res := callTool(t, cs, "update_project", map[string]any{"project_id": 1, "allowed_origins": []string{}}); res.IsError {
+		t.Fatal(textOf(res))
+	}
+	if p := h.reg.Snapshot(context.Background()).Project(1); len(p.AllowedOrigins) != 0 {
+		t.Fatalf("explicit [] did not clear: %v", p.AllowedOrigins)
 	}
 }
 
@@ -231,11 +227,11 @@ func TestCreateProjectSetsAttributes(t *testing.T) {
 	h, cs := newTestHost(t)
 	ctx := context.Background()
 	res := callTool(t, cs, "create_project", map[string]any{
-		"alias": "shop", "attributes": []string{"plan", "tier"}})
+		"name": "shop", "attributes": []string{"plan", "tier"}})
 	if res.IsError {
 		t.Fatalf("create: %s", textOf(res))
 	}
-	p := h.reg.Snapshot(ctx).Project("shop")
+	p := h.reg.Snapshot(ctx).Project(projectIDOf(t, res))
 	if p == nil {
 		t.Fatalf("shop missing from registry")
 	}
@@ -252,16 +248,16 @@ func TestUpdateProjectAttributesMergeSemantics(t *testing.T) {
 	h, cs := newTestHost(t)
 	ctx := context.Background()
 	if res := callTool(t, cs, "update_project", map[string]any{
-		"alias": "blog", "attributes": []string{"plan", "tier"}}); res.IsError {
+		"project_id": 1, "attributes": []string{"plan", "tier"}}); res.IsError {
 		t.Fatalf("seed attributes: %s", textOf(res))
 	}
 
 	// name-only update must not wipe attributes
 	if res := callTool(t, cs, "update_project", map[string]any{
-		"alias": "blog", "name": "Blog Renamed"}); res.IsError {
+		"project_id": 1, "name": "Blog Renamed"}); res.IsError {
 		t.Fatalf("update: %s", textOf(res))
 	}
-	p := h.reg.Snapshot(ctx).Project("blog")
+	p := h.reg.Snapshot(ctx).Project(1)
 	if p == nil {
 		t.Fatalf("blog vanished from registry")
 	}
@@ -271,10 +267,10 @@ func TestUpdateProjectAttributesMergeSemantics(t *testing.T) {
 
 	// supplying attributes replaces the whole list
 	if res := callTool(t, cs, "update_project", map[string]any{
-		"alias": "blog", "attributes": []string{"solo"}}); res.IsError {
+		"project_id": 1, "attributes": []string{"solo"}}); res.IsError {
 		t.Fatalf("update attributes: %s", textOf(res))
 	}
-	p = h.reg.Snapshot(ctx).Project("blog")
+	p = h.reg.Snapshot(ctx).Project(1)
 	if p == nil {
 		t.Fatalf("blog vanished from registry")
 	}
@@ -283,16 +279,16 @@ func TestUpdateProjectAttributesMergeSemantics(t *testing.T) {
 	}
 }
 
-// TestUpdateProjectUnknownAlias checks the tool names the bad alias
-// rather than surfacing a nil-pointer or an opaque error.
-func TestUpdateProjectUnknownAlias(t *testing.T) {
+// TestUpdateProjectUnknownId checks the tool names the bad id and lists
+// the valid ones rather than surfacing a nil-pointer or an opaque error.
+func TestUpdateProjectUnknownId(t *testing.T) {
 	_, cs := newTestHost(t)
 	res := callTool(t, cs, "update_project", map[string]any{
-		"alias": "nope", "name": "x"})
+		"project_id": 42, "name": "x"})
 	if !res.IsError {
-		t.Fatalf("expected error for unknown alias")
+		t.Fatalf("expected error for unknown id")
 	}
-	if !strings.Contains(textOf(res), "nope") {
-		t.Errorf("error does not name the alias: %s", textOf(res))
+	if msg := textOf(res); !strings.Contains(msg, "unknown project 42; valid projects: 1 (blog), 2 (docs)") {
+		t.Errorf("error does not name the id and the valid ones: %s", msg)
 	}
 }

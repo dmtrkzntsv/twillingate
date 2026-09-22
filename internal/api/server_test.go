@@ -20,7 +20,7 @@ import (
 
 func newHandlerFixture(t *testing.T, over map[string]string) http.Handler {
 	t.Helper()
-	path := seedDB(t) // from readdb_test.go: migrated DB with project 'blog'
+	path := seedDB(t) // from readdb_test.go: migrated DB with project 1 (My blog)
 	base := map[string]string{
 		"DATABASE_DSN": "sqlite://" + path,
 		"API_AUTH_DSN": "token://ar_testtoken",
@@ -45,7 +45,7 @@ func newHandlerFixture(t *testing.T, over map[string]string) http.Handler {
 	}
 	t.Cleanup(func() { st.Close() })
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	reg := manage.New(st, cfg.Retention, logger)
+	reg := manage.New(st, logger)
 	if err := reg.Reload(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +164,7 @@ func TestTokenNeverLoggedAtInfo(t *testing.T) {
 	cfg, _ := config.FromEnv(func(k string) (string, bool) { v, ok := base[k]; return v, ok })
 	st, _ := store.Open(cfg.Database)
 	defer st.Close()
-	reg := manage.New(st, cfg.Retention, logger)
+	reg := manage.New(st, logger)
 	reg.Reload(context.Background())
 	h, closeDB, err := NewHandler(context.Background(), cfg, reg, manage.NewOps(reg, st), logger)
 	if err != nil {
@@ -277,7 +277,7 @@ func TestRegisterOnWithoutHealthzOmitsRoute(t *testing.T) {
 	}
 	t.Cleanup(func() { st.Close() })
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	reg := manage.New(st, cfg.Retention, logger)
+	reg := manage.New(st, logger)
 	if err := reg.Reload(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -332,7 +332,7 @@ func TestBuildFailsWhenOAuthIssuerUnreachable(t *testing.T) {
 	}
 	t.Cleanup(func() { st.Close() })
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	reg := manage.New(st, cfg.Retention, logger)
+	reg := manage.New(st, logger)
 	if err := reg.Reload(context.Background()); err != nil {
 		t.Fatal(err)
 	}

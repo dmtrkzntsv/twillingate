@@ -27,13 +27,13 @@ var identityAggTables = []string{"agg_identity_daily"}
 
 // PruneAggregates drops aggregate rows older than the per-family retention
 // cutoffs for one project, atomically across tables.
-func (d *DB) PruneAggregates(ctx context.Context, project string, viewsBefore, productBefore civil.Date) error {
+func (d *DB) PruneAggregates(ctx context.Context, projectID int64, viewsBefore, productBefore civil.Date) error {
 	return d.tx(ctx, func(tx *sql.Tx) error {
 		del := func(tables []string, before civil.Date) error {
 			for _, tbl := range tables {
 				if _, err := tx.ExecContext(ctx,
-					fmt.Sprintf(`DELETE FROM %s WHERE project=? AND day < ?`, tbl),
-					project, before.String()); err != nil {
+					fmt.Sprintf(`DELETE FROM %s WHERE project_id=? AND day < ?`, tbl),
+					projectID, before.String()); err != nil {
 					return fmt.Errorf("prune %s: %w", tbl, err)
 				}
 			}

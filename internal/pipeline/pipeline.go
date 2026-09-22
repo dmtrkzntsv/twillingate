@@ -81,7 +81,7 @@ func (b *Buffer) Run(ctx context.Context) {
 			views = nil
 		}
 		if len(events) > 0 {
-			b.write(ctx, func(c context.Context) error { return b.sink.WriteProductEvents(c, events) }, len(events), "product_events")
+			b.write(ctx, func(c context.Context) error { return b.sink.WriteProductEvents(c, events) }, len(events), "events")
 			events = nil
 		}
 	}

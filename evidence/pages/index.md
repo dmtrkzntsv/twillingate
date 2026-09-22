@@ -1,23 +1,23 @@
 # Twillingate
 
 ```sql active_projects
-select alias, name, identity
+select id, name, identity
 from twillingate.projects
-where archived = 0 and alias != ''
+where archived = 0 and id != 0
 order by name
 ```
 
 ```sql archived_count
 select count(*) as n
 from twillingate.projects
-where archived = 1 and alias != ''
+where archived = 1 and id != 0
 ```
 
 ## Projects
 
 {#each active_projects as p}
 
-- **{p.name}** ({p.identity}) — [views](/views/{p.alias}) · [product](/product/{p.alias}) · [users](/users/{p.alias}) · [groups](/groups/{p.alias}) · [retention](/retention/{p.alias})
+- **{p.name}** ({p.identity}) — [views](/views/{p.id}) · [product](/product/{p.id}) · [users](/users/{p.id}) · [groups](/groups/{p.id}) · [retention](/retention/{p.id})
 
 {/each}
 

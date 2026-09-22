@@ -13,7 +13,7 @@ func TestListProjects(t *testing.T) {
 		t.Fatalf("error: %s", textOf(res))
 	}
 	out := textOf(res)
-	for _, want := range []string{"blog", "identified", "docs", "anonymous", "https://blog.example.com"} {
+	for _, want := range []string{`"project_id":1`, "blog", "identified", `"project_id":2`, "docs", "anonymous", "https://blog.example.com"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in %s", want, out)
 		}
@@ -23,7 +23,7 @@ func TestListProjects(t *testing.T) {
 func TestViewsOverviewStitchesAggregatedAndLive(t *testing.T) {
 	_, cs := newTestHost(t)
 	res := callTool(t, cs, "views_overview", map[string]any{
-		"project": "blog", "from": "2026-08-01", "to": "2026-08-31"})
+		"project_id": 1, "from": "2026-08-01", "to": "2026-08-31"})
 	if res.IsError {
 		t.Fatalf("error: %s", textOf(res))
 	}
@@ -42,7 +42,7 @@ func TestViewsOverviewStitchesAggregatedAndLive(t *testing.T) {
 func TestViewsOverviewSumsKindsUnlessFiltered(t *testing.T) {
 	_, cs := newTestHost(t)
 	res := callTool(t, cs, "views_overview", map[string]any{
-		"project": "blog", "from": "2026-08-20", "to": "2026-08-20"})
+		"project_id": 1, "from": "2026-08-20", "to": "2026-08-20"})
 	if res.IsError {
 		t.Fatalf("error: %s", textOf(res))
 	}
@@ -51,7 +51,7 @@ func TestViewsOverviewSumsKindsUnlessFiltered(t *testing.T) {
 		t.Errorf("unfiltered overview should sum kinds: %s", out)
 	}
 	res = callTool(t, cs, "views_overview", map[string]any{
-		"project": "blog", "from": "2026-08-20", "to": "2026-08-20", "kind": "app"})
+		"project_id": 1, "from": "2026-08-20", "to": "2026-08-20", "kind": "app"})
 	if out := textOf(res); !strings.Contains(out, `"6"`) || strings.Contains(out, `"16"`) {
 		t.Errorf("kind filter not applied: %s", out)
 	}
@@ -60,7 +60,7 @@ func TestViewsOverviewSumsKindsUnlessFiltered(t *testing.T) {
 func TestViewsBreakdownLimit(t *testing.T) {
 	_, cs := newTestHost(t)
 	res := callTool(t, cs, "views_breakdown", map[string]any{
-		"project": "blog", "from": "2026-08-01", "to": "2026-08-31",
+		"project_id": 1, "from": "2026-08-01", "to": "2026-08-31",
 		"dimension": "paths", "limit": 1})
 	if res.IsError {
 		t.Fatalf("error: %s", textOf(res))
@@ -74,7 +74,7 @@ func TestViewsBreakdownLimit(t *testing.T) {
 	}
 	// invalid dimension is a tool error listing the valid ones
 	res = callTool(t, cs, "views_breakdown", map[string]any{
-		"project": "blog", "from": "2026-08-01", "to": "2026-08-31",
+		"project_id": 1, "from": "2026-08-01", "to": "2026-08-31",
 		"dimension": "sandwiches"})
 	if !res.IsError || !strings.Contains(textOf(res), "paths") {
 		t.Errorf("bad dimension: %v %s", res.IsError, textOf(res))
@@ -84,7 +84,7 @@ func TestViewsBreakdownLimit(t *testing.T) {
 func TestViewsBreakdownUTMDimension(t *testing.T) {
 	_, cs := newTestHost(t)
 	res := callTool(t, cs, "views_breakdown", map[string]any{
-		"project": "blog", "from": "2026-08-01", "to": "2026-08-31",
+		"project_id": 1, "from": "2026-08-01", "to": "2026-08-31",
 		"dimension": "utm"})
 	if res.IsError {
 		t.Fatalf("error: %s", textOf(res))
@@ -106,7 +106,7 @@ func TestViewsBreakdownEveryDimension(t *testing.T) {
 	}
 	for dim, needle := range want {
 		res := callTool(t, cs, "views_breakdown", map[string]any{
-			"project": "blog", "from": "2026-08-01", "to": "2026-08-31", "dimension": dim})
+			"project_id": 1, "from": "2026-08-01", "to": "2026-08-31", "dimension": dim})
 		if res.IsError {
 			t.Errorf("%s: %s", dim, textOf(res))
 			continue
@@ -116,12 +116,12 @@ func TestViewsBreakdownEveryDimension(t *testing.T) {
 		}
 	}
 	res := callTool(t, cs, "views_breakdown", map[string]any{
-		"project": "blog", "from": "2026-08-01", "to": "2026-08-31", "dimension": "referrers"})
+		"project_id": 1, "from": "2026-08-01", "to": "2026-08-31", "dimension": "referrers"})
 	if res.IsError {
 		t.Errorf("referrers with no rows must not error: %s", textOf(res))
 	}
 	res = callTool(t, cs, "views_breakdown", map[string]any{
-		"project": "blog", "from": "2026-08-01", "to": "2026-08-31", "dimension": "sandwiches"})
+		"project_id": 1, "from": "2026-08-01", "to": "2026-08-31", "dimension": "sandwiches"})
 	if !res.IsError || !strings.Contains(textOf(res), "app_versions") {
 		t.Errorf("invalid dimension should list the valid ones: %v %s", res.IsError, textOf(res))
 	}
@@ -134,15 +134,15 @@ func TestBreakdownEnumMatchesDimensions(t *testing.T) {
 	}
 }
 
-func TestUnknownProjectListsAliases(t *testing.T) {
+func TestUnknownProjectErrorListsIdsAndNames(t *testing.T) {
 	_, cs := newTestHost(t)
 	res := callTool(t, cs, "views_overview", map[string]any{
-		"project": "nope", "from": "2026-08-01", "to": "2026-08-31"})
+		"project_id": 7, "from": "2026-08-01", "to": "2026-08-31"})
 	if !res.IsError {
-		t.Fatal("unknown project did not error")
+		t.Fatal("unknown project accepted")
 	}
-	if out := textOf(res); !strings.Contains(out, "blog") || !strings.Contains(out, "docs") {
-		t.Errorf("error must list valid aliases: %s", out)
+	if msg := textOf(res); !strings.Contains(msg, "unknown project 7; valid projects: 1 (blog), 2 (docs)") {
+		t.Fatalf("error = %q, want the id (name) list", msg)
 	}
 }
 
@@ -151,7 +151,7 @@ func TestUnknownProjectListsAliases(t *testing.T) {
 func TestViewsBreakdownHostsDimension(t *testing.T) {
 	_, cs := newTestHost(t)
 	res := callTool(t, cs, "views_breakdown", map[string]any{
-		"project": "blog", "from": "2026-08-01", "to": "2026-08-31",
+		"project_id": 1, "from": "2026-08-01", "to": "2026-08-31",
 		"dimension": "hosts"})
 	if res.IsError {
 		t.Fatalf("error: %s", textOf(res))

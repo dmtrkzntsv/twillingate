@@ -1,18 +1,14 @@
 // Package config loads infra settings from the process environment
 // (12-factor; systemd/compose/make load the env *file*, the process reads
-// real env vars). It no longer reads any file: the project list lives in
-// the registry (internal/manage), seeded once via `twillingate config
-// import` from the legacy projects.json format.
-// stdlib only: encoding/json + net/url for DSN scheme checks.
+// real env vars). It reads no file: the project list lives in the
+// registry (internal/manage).
+// stdlib only: net/url for DSN scheme checks.
 package config
 
 import (
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/url"
 	"os"
-	"sort"
 	"strings"
 	"time"
 )
@@ -45,120 +41,6 @@ type RetentionClass struct {
 type Retention struct {
 	Views   RetentionClass `json:"views"`
 	Product RetentionClass `json:"product"`
-}
-
-type RetentionClassOverride struct {
-	RawDays       *int `json:"raw_days"`
-	AggregateDays *int `json:"aggregate_days"`
-}
-
-type RetentionOverride struct {
-	Views   *RetentionClassOverride `json:"views"`
-	Product *RetentionClassOverride `json:"product"`
-}
-
-// UnmarshalJSON accepts the pre-views keys `web` and `app` and folds them
-// into Views (the larger of each field wins), so a per-project override
-// stored before the merge keeps working. An explicit `views` key wins
-// outright. Marshal never writes the legacy keys back.
-func (o *RetentionOverride) UnmarshalJSON(b []byte) error {
-	var raw struct {
-		Views   *RetentionClassOverride `json:"views"`
-		Product *RetentionClassOverride `json:"product"`
-		Web     *RetentionClassOverride `json:"web"`
-		App     *RetentionClassOverride `json:"app"`
-	}
-	if err := json.Unmarshal(b, &raw); err != nil {
-		return err
-	}
-	o.Product = raw.Product
-	o.Views = raw.Views
-	if o.Views == nil && (raw.Web != nil || raw.App != nil) {
-		o.Views = &RetentionClassOverride{}
-		max := func(a, b *int) *int {
-			switch {
-			case a == nil:
-				return b
-			case b == nil:
-				return a
-			case *a >= *b:
-				return a
-			default:
-				return b
-			}
-		}
-		var web, app RetentionClassOverride
-		if raw.Web != nil {
-			web = *raw.Web
-		}
-		if raw.App != nil {
-			app = *raw.App
-		}
-		o.Views.RawDays = max(web.RawDays, app.RawDays)
-		o.Views.AggregateDays = max(web.AggregateDays, app.AggregateDays)
-	}
-	return nil
-}
-
-// LegacyAggregation is the pre-2026-08 product_aggregation block: an
-// event-keyed map of attribute keys, an opt-in flag and a per-project
-// top_n. `attributes` replaced it with one flat declared list (enabled is
-// gone — rollups always run now; top_n is the global
-// PRODUCT_ATTRIBUTES_TOP_N setting), but `config import` still accepts
-// this shape so an unmodified pre-upgrade projects.json keeps working.
-type LegacyAggregation struct {
-	Enabled    bool                `json:"enabled"`
-	Attributes map[string][]string `json:"attributes"`
-	TopN       int                 `json:"top_n"`
-}
-
-// IngestKey is one client credential. Multiple keys per project let a
-// website, an iOS app and a desktop app be retired independently. Disabled
-// rather than deleted: retirement is reversible during a botched rollout
-// without regenerating and redistributing.
-//
-// Legacy projects.json format, used only by `twillingate config import`.
-type IngestKey struct {
-	Key      string `json:"key"`
-	Label    string `json:"label"`
-	Disabled bool   `json:"disabled"`
-}
-
-// Project is the legacy projects.json format, used only by `twillingate
-// config import` to seed the registry (internal/manage) from a pre-upgrade
-// install. The running server never reads this type from a file.
-type Project struct {
-	Alias          string             `json:"alias"`
-	Name           string             `json:"name"`
-	Identity       string             `json:"identity"`
-	IngestKeys     []IngestKey        `json:"ingest_keys"`
-	AllowedOrigins []string           `json:"allowed_origins"`
-	Retention      *RetentionOverride `json:"retention"`
-	Attributes     []string           `json:"attributes"`
-	// LegacyAggregation is the pre-2026-08 product_aggregation block.
-	// Import still accepts it and folds its event-keyed map into a flat
-	// list, so an unmodified pre-upgrade projects.json still imports.
-	LegacyAggregation *LegacyAggregation `json:"product_aggregation"`
-}
-
-// DeclaredAttributes returns the declared keys, folding the legacy
-// event-keyed map into a sorted DISTINCT union when only it is present.
-func (p *Project) DeclaredAttributes() []string {
-	if len(p.Attributes) > 0 || p.LegacyAggregation == nil {
-		return p.Attributes
-	}
-	seen := map[string]bool{}
-	var out []string
-	for _, keys := range p.LegacyAggregation.Attributes {
-		for _, k := range keys {
-			if !seen[k] {
-				seen[k] = true
-				out = append(out, k)
-			}
-		}
-	}
-	sort.Strings(out)
-	return out
 }
 
 // DashboardsConfig configures `twillingate dashboards`: which database to
@@ -388,19 +270,6 @@ func refuseRenamed(lookup func(string) (string, bool)) error {
 	return nil
 }
 
-// ParseProjects reads a projects.json: a bare JSON array of projects.
-//
-// Legacy projects.json format, used only by `twillingate config import`.
-func ParseProjects(r io.Reader) ([]Project, error) {
-	var ps []Project
-	dec := json.NewDecoder(r)
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&ps); err != nil {
-		return nil, fmt.Errorf("projects: %w", err)
-	}
-	return ps, nil
-}
-
 func (c *Config) validate() error {
 	if c.Database == "" {
 		return fmt.Errorf("config: DATABASE_DSN is required")
@@ -420,11 +289,10 @@ func (c *Config) validate() error {
 	return nil
 }
 
-// MaxEventAge is derived from the global views raw window rather than
-// separately configurable: the two must agree or a clamped timestamp could
-// land in an already-aggregated day. This is the default; ingest clamps
-// against the project's own window (which may override this global one),
-// not this value.
+// MaxEventAge is derived from the views raw window rather than separately
+// configurable: the two must agree or a clamped timestamp could land in
+// an already-aggregated day. Retention is global, so ingest clamps against
+// exactly this value.
 func (c *Config) MaxEventAge() time.Duration {
 	return time.Duration(c.Retention.Views.RawDays) * 24 * time.Hour
 }

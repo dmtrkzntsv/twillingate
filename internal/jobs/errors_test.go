@@ -60,81 +60,81 @@ func (f *faultyStore) shouldFail(name string) bool {
 	return false
 }
 
-func (f *faultyStore) ProjectAliases(ctx context.Context) ([]string, error) {
-	if f.shouldFail("ProjectAliases") {
+func (f *faultyStore) ProjectIDs(ctx context.Context) ([]int64, error) {
+	if f.shouldFail("ProjectIDs") {
 		return nil, errBoom
 	}
-	return f.Store.ProjectAliases(ctx)
+	return f.Store.ProjectIDs(ctx)
 }
 
-func (f *faultyStore) ViewDaysBefore(ctx context.Context, project string, before civil.Date) ([]civil.Date, error) {
+func (f *faultyStore) ViewDaysBefore(ctx context.Context, projectID int64, before civil.Date) ([]civil.Date, error) {
 	if f.shouldFail("ViewDaysBefore") {
 		return nil, errBoom
 	}
-	return f.Store.ViewDaysBefore(ctx, project, before)
+	return f.Store.ViewDaysBefore(ctx, projectID, before)
 }
 
-func (f *faultyStore) ProductDaysBefore(ctx context.Context, project string, before civil.Date) ([]civil.Date, error) {
+func (f *faultyStore) ProductDaysBefore(ctx context.Context, projectID int64, before civil.Date) ([]civil.Date, error) {
 	if f.shouldFail("ProductDaysBefore") {
 		return nil, errBoom
 	}
-	return f.Store.ProductDaysBefore(ctx, project, before)
+	return f.Store.ProductDaysBefore(ctx, projectID, before)
 }
 
-func (f *faultyStore) UpsertActors(ctx context.Context, project string, day civil.Date) error {
+func (f *faultyStore) UpsertActors(ctx context.Context, projectID int64, day civil.Date) error {
 	if f.shouldFail("UpsertActors") {
 		return errBoom
 	}
-	return f.Store.UpsertActors(ctx, project, day)
+	return f.Store.UpsertActors(ctx, projectID, day)
 }
 
-func (f *faultyStore) AggregateRetentionDay(ctx context.Context, project string, day civil.Date) error {
+func (f *faultyStore) AggregateRetentionDay(ctx context.Context, projectID int64, day civil.Date) error {
 	if f.shouldFail("AggregateRetentionDay") {
 		return errBoom
 	}
-	return f.Store.AggregateRetentionDay(ctx, project, day)
+	return f.Store.AggregateRetentionDay(ctx, projectID, day)
 }
 
-func (f *faultyStore) AggregateIdentityDay(ctx context.Context, project string, day civil.Date) error {
+func (f *faultyStore) AggregateIdentityDay(ctx context.Context, projectID int64, day civil.Date) error {
 	if f.shouldFail("AggregateIdentityDay") {
 		return errBoom
 	}
-	return f.Store.AggregateIdentityDay(ctx, project, day)
+	return f.Store.AggregateIdentityDay(ctx, projectID, day)
 }
 
-func (f *faultyStore) AggregateViewDay(ctx context.Context, project string, day civil.Date) error {
+func (f *faultyStore) AggregateViewDay(ctx context.Context, projectID int64, day civil.Date) error {
 	if f.shouldFail("AggregateViewDay") {
 		return errBoom
 	}
-	return f.Store.AggregateViewDay(ctx, project, day)
+	return f.Store.AggregateViewDay(ctx, projectID, day)
 }
 
-func (f *faultyStore) AggregateProductDay(ctx context.Context, project string, day civil.Date, attrs []string, topN int) error {
+func (f *faultyStore) AggregateProductDay(ctx context.Context, projectID int64, day civil.Date, attrs []string, topN int) error {
 	if f.shouldFail("AggregateProductDay") {
 		return errBoom
 	}
-	return f.Store.AggregateProductDay(ctx, project, day, attrs, topN)
+	return f.Store.AggregateProductDay(ctx, projectID, day, attrs, topN)
 }
 
-func (f *faultyStore) PruneAggregates(ctx context.Context, project string, viewsBefore, productBefore civil.Date) error {
+func (f *faultyStore) PruneAggregates(ctx context.Context, projectID int64, viewsBefore, productBefore civil.Date) error {
 	if f.shouldFail("PruneAggregates") {
 		return errBoom
 	}
-	return f.Store.PruneAggregates(ctx, project, viewsBefore, productBefore)
+	return f.Store.PruneAggregates(ctx, projectID, viewsBefore, productBefore)
 }
 
-func (f *faultyStore) PruneActors(ctx context.Context, project string, before civil.Date) error {
+func (f *faultyStore) PruneActors(ctx context.Context, projectID int64, before civil.Date) error {
 	if f.shouldFail("PruneActors") {
 		return errBoom
 	}
-	return f.Store.PruneActors(ctx, project, before)
+	return f.Store.PruneActors(ctx, projectID, before)
 }
 
-func (f *faultyStore) PruneIdentities(ctx context.Context, project string, before civil.Date) error {
+func (f *faultyStore) PruneIdentities(ctx context.Context, projectID int64, before civil.Date) error {
 	if f.shouldFail("PruneIdentities") {
 		return errBoom
 	}
-	return f.Store.PruneIdentities(ctx, project, before)
+	return f.Store.PruneIdentities(ctx, projectID, before)
 }
 
 func (f *faultyStore) RebuildFlatView(ctx context.Context, keys []string) error {
@@ -173,9 +173,9 @@ func logged(buf *bytes.Buffer, substr string) bool {
 
 // --- fatal: failure to enumerate work at all stops the pass ---
 
-func TestRunDailyPassFailsWhenProjectAliasesErrors(t *testing.T) {
+func TestRunDailyPassFailsWhenProjectIDsErrors(t *testing.T) {
 	_, fst, r, _ := setupFaulty(t, jobsVars, jobsProjectSpecs)
-	fst.failing("ProjectAliases")
+	fst.failing("ProjectIDs")
 	if err := r.RunDailyPass(context.Background()); !errors.Is(err, errBoom) {
 		t.Fatalf("RunDailyPass = %v, want errBoom", err)
 	}
@@ -211,7 +211,7 @@ func TestRunDailyPassFailsWhenProductRawWindowQueryErrors(t *testing.T) {
 // --- per-project soft failures: logged, pass continues, RunDailyPass returns nil ---
 
 var identifiedJobsSpecs = []manage.ProjectSpec{
-	{Alias: "app", Name: "App", Identity: config.IdentityIdentified, AllowedOrigins: []string{"https://a.com"}},
+	{Name: "App", Identity: config.IdentityIdentified, AllowedOrigins: []string{"https://a.com"}},
 }
 
 func TestRunDailyPassLogsUpsertActorsFailure(t *testing.T) {
@@ -219,7 +219,7 @@ func TestRunDailyPassLogsUpsertActorsFailure(t *testing.T) {
 	ctx := context.Background()
 	ts := mustTime("2026-08-20T10:00:00Z")
 	if err := st.WriteViews(ctx, []store.View{
-		{ID: "1", Project: "app", TS: ts, ReceivedAt: ts, Kind: "web", ActorID: "v", ActorKind: store.ActorConnection, Path: "/"}}); err != nil {
+		{ID: "1", ProjectID: 1, TS: ts, ReceivedAt: ts, Kind: "web", ActorID: "v", ActorKind: store.ActorConnection, Path: "/"}}); err != nil {
 		t.Fatal(err)
 	}
 	fst.failing("UpsertActors")
@@ -236,7 +236,7 @@ func TestRunDailyPassLogsAggregateRetentionDayFailure(t *testing.T) {
 	ctx := context.Background()
 	ts := mustTime("2026-08-20T10:00:00Z")
 	if err := st.WriteViews(ctx, []store.View{
-		{ID: "1", Project: "app", TS: ts, ReceivedAt: ts, Kind: "web", ActorID: "v", ActorKind: store.ActorConnection, Path: "/"}}); err != nil {
+		{ID: "1", ProjectID: 1, TS: ts, ReceivedAt: ts, Kind: "web", ActorID: "v", ActorKind: store.ActorConnection, Path: "/"}}); err != nil {
 		t.Fatal(err)
 	}
 	fst.failing("AggregateRetentionDay")
@@ -253,7 +253,7 @@ func TestRunDailyPassLogsAggregateIdentityDayFailure(t *testing.T) {
 	ctx := context.Background()
 	ts := mustTime("2026-08-20T10:00:00Z")
 	if err := st.WriteViews(ctx, []store.View{
-		{ID: "1", Project: "app", TS: ts, ReceivedAt: ts, Kind: "web", ActorID: "v", ActorKind: store.ActorConnection, Path: "/"}}); err != nil {
+		{ID: "1", ProjectID: 1, TS: ts, ReceivedAt: ts, Kind: "web", ActorID: "v", ActorKind: store.ActorConnection, Path: "/"}}); err != nil {
 		t.Fatal(err)
 	}
 	fst.failing("AggregateIdentityDay")
@@ -270,7 +270,7 @@ func TestRunDailyPassLogsAggregateViewDayFailure(t *testing.T) {
 	ctx := context.Background()
 	ts := mustTime("2026-08-10T10:00:00Z")
 	if err := st.WriteViews(ctx, []store.View{
-		{ID: "1", Project: "app", TS: ts, ReceivedAt: ts, Kind: "web", ActorID: "v", ActorKind: store.ActorConnection, Path: "/"}}); err != nil {
+		{ID: "1", ProjectID: 1, TS: ts, ReceivedAt: ts, Kind: "web", ActorID: "v", ActorKind: store.ActorConnection, Path: "/"}}); err != nil {
 		t.Fatal(err)
 	}
 	fst.failing("AggregateViewDay")
@@ -283,7 +283,7 @@ func TestRunDailyPassLogsAggregateViewDayFailure(t *testing.T) {
 	// The raw row must survive: the failed aggregation must not have
 	// deleted it (AggregateViewDay itself is what would delete it, and it
 	// never got to run for real).
-	left, err := st.ViewDaysBefore(ctx, "app", mustDay("2026-08-22"))
+	left, err := st.ViewDaysBefore(ctx, 1, mustDay("2026-08-22"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -296,7 +296,7 @@ func TestRunDailyPassLogsAggregateProductDayFailure(t *testing.T) {
 	st, fst, r, buf := setupFaulty(t, jobsVars, jobsProjectSpecs)
 	ctx := context.Background()
 	if err := st.WriteProductEvents(ctx, []store.ProductEvent{
-		{ID: "1", Project: "app", EventName: "e", ActorID: "u", TS: mustTime("2026-08-10T10:00:00Z")}}); err != nil {
+		{ID: "1", ProjectID: 1, EventName: "e", ActorID: "u", TS: mustTime("2026-08-10T10:00:00Z")}}); err != nil {
 		t.Fatal(err)
 	}
 	fst.failing("AggregateProductDay")
@@ -396,7 +396,7 @@ func TestRunScheduledLogsDailyPassFailure(t *testing.T) {
 	st, _ := openStoreAt(t)
 	reg := newRegistry(t, st, cfg, jobsProjectSpecs)
 	fst := newFaultyStore(st)
-	fst.failing("ProjectAliases")
+	fst.failing("ProjectIDs")
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf, nil))
 	now := func() time.Time { return time.Date(2026, 8, 22, 3, 0, 0, 0, time.UTC) }
@@ -438,7 +438,7 @@ func TestRunLogsBootCatchUpFailure(t *testing.T) {
 	st, _ := openStoreAt(t)
 	reg := newRegistry(t, st, cfg, jobsProjectSpecs)
 	fst := newFaultyStore(st)
-	fst.failing("ProjectAliases")
+	fst.failing("ProjectIDs")
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf, nil))
 	now := func() time.Time { return time.Date(2026, 8, 22, 4, 0, 0, 0, time.UTC) }

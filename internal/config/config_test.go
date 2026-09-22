@@ -1,7 +1,6 @@
 package config
 
 import (
-	"encoding/json"
 	"slices"
 	"strings"
 	"testing"
@@ -179,80 +178,6 @@ func TestDashboardsReportsBadDurations(t *testing.T) {
 	}
 }
 
-// --- legacy projects.json format (used only by `twillingate config import`) ---
-
-func TestParseProjectsIngestKeys(t *testing.T) {
-	ps, err := ParseProjects(strings.NewReader(`[
-	  {"alias":"a","name":"A","identity":"identified",
-	   "ingest_keys":[{"key":"ak_1","label":"web"},{"key":"ak_2","label":"ios","disabled":true}]}
-	]`))
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	if len(ps) != 1 || len(ps[0].IngestKeys) != 2 {
-		t.Fatalf("got %+v", ps)
-	}
-	if ps[0].Identity != "identified" {
-		t.Errorf("identity = %q", ps[0].Identity)
-	}
-	if !ps[0].IngestKeys[1].Disabled {
-		t.Error("second key should be disabled")
-	}
-}
-
-func TestParseProjectsRejectsUnknownFields(t *testing.T) {
-	if _, err := ParseProjects(strings.NewReader(`[{"alias":"a","name":"A","allowed_origin":["https://a.com"]}]`)); err == nil {
-		t.Fatal("want error for unknown field allowed_origin")
-	}
-}
-
-func TestParseProjectsRejectsNonArray(t *testing.T) {
-	if _, err := ParseProjects(strings.NewReader(`{"projects":[]}`)); err == nil {
-		t.Fatal("want error when the top level is not an array")
-	}
-}
-
-// TestParseProjectsAcceptsLegacyProductAggregation asserts an unmodified
-// pre-upgrade projects.json — including the enabled and top_n fields the
-// new shape drops — still parses under DisallowUnknownFields.
-func TestParseProjectsAcceptsLegacyProductAggregation(t *testing.T) {
-	ps, err := ParseProjects(strings.NewReader(`[
-	  {"alias":"a","name":"A","identity":"anonymous",
-	   "product_aggregation":{"enabled":true,"attributes":{"*":["plan"],"subscribed":["tier","plan"]},"top_n":25}}
-	]`))
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	if len(ps) != 1 || ps[0].LegacyAggregation == nil {
-		t.Fatalf("got %+v", ps)
-	}
-	if got := ps[0].DeclaredAttributes(); len(got) != 2 || got[0] != "plan" || got[1] != "tier" {
-		t.Fatalf("DeclaredAttributes() = %v, want [plan tier] (sorted DISTINCT union)", got)
-	}
-}
-
-// TestDeclaredAttributesPrefersExplicitOverLegacy: when both the new
-// attributes field and the legacy product_aggregation block are present,
-// attributes wins.
-func TestDeclaredAttributesPrefersExplicitOverLegacy(t *testing.T) {
-	p := Project{
-		Attributes:        []string{"source"},
-		LegacyAggregation: &LegacyAggregation{Attributes: map[string][]string{"*": {"plan"}}},
-	}
-	if got := p.DeclaredAttributes(); len(got) != 1 || got[0] != "source" {
-		t.Fatalf("DeclaredAttributes() = %v, want [source]", got)
-	}
-}
-
-// TestDeclaredAttributesNilWhenNeitherPresent: no attributes, no legacy
-// block -> nil, not a spurious empty slice.
-func TestDeclaredAttributesNilWhenNeitherPresent(t *testing.T) {
-	p := Project{}
-	if got := p.DeclaredAttributes(); len(got) != 0 {
-		t.Fatalf("DeclaredAttributes() = %v, want empty", got)
-	}
-}
-
 func TestViewsRetentionDefaultsAndMaxEventAge(t *testing.T) {
 	c, err := load(t, nil)
 	if err != nil {
@@ -287,32 +212,6 @@ func TestRejectsNegativeViewsRetention(t *testing.T) {
 		t.Fatal("want error for negative views retention")
 	}
 }
-
-func TestRetentionOverrideDecodesLegacyKeys(t *testing.T) {
-	var o RetentionOverride
-	if err := json.Unmarshal([]byte(`{"web":{"raw_days":3},"app":{"raw_days":9,"aggregate_days":30}}`), &o); err != nil {
-		t.Fatal(err)
-	}
-	if o.Views == nil || o.Views.RawDays == nil || *o.Views.RawDays != 9 {
-		t.Fatalf("legacy web/app should decode into views with the larger raw window, got %+v", o.Views)
-	}
-	if o.Views.AggregateDays == nil || *o.Views.AggregateDays != 30 {
-		t.Errorf("aggregate_days = %v", o.Views.AggregateDays)
-	}
-	var v RetentionOverride
-	if err := json.Unmarshal([]byte(`{"views":{"raw_days":5},"web":{"raw_days":99}}`), &v); err != nil {
-		t.Fatal(err)
-	}
-	if *v.Views.RawDays != 5 {
-		t.Errorf("an explicit views key must win over legacy keys, got %d", *v.Views.RawDays)
-	}
-	out, _ := json.Marshal(RetentionOverride{Views: &RetentionClassOverride{RawDays: intp(7)}})
-	if string(out) != `{"views":{"raw_days":7,"aggregate_days":null},"product":null}` {
-		t.Errorf("marshal = %s (legacy keys must never be written back)", out)
-	}
-}
-
-func intp(n int) *int { return &n }
 
 func TestLoadDoesNotRequireProjectsFile(t *testing.T) {
 	cfg, err := FromEnv(func(k string) (string, bool) {

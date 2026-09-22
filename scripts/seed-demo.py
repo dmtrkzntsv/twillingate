@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Seed a local database with demo traffic for every configured project.
+"""Seed a local database with demo traffic for every project in the database.
 
 For dashboard development only -- writes straight to SQLite, bypassing the
 HTTP API. Deterministic (fixed seed), with per-project traffic profiles, a
@@ -16,13 +16,15 @@ identities, which is what makes the users, groups and retention pages
 meaningful -- under anonymous mode those ids would rotate daily and the pages
 render their explanatory branch instead.
 
-    python3 scripts/seed-demo.py local/twillingate.db [local/projects.json]
+    python3 scripts/seed-demo.py local/twillingate.db
+
+Projects are read from the projects table; each needs a traffic profile in
+PROFILES, keyed by project name.
 """
 
 import datetime
 import hashlib
 import json
-import pathlib
 import random
 import sqlite3
 import sys
@@ -30,9 +32,10 @@ import uuid
 
 DAYS = 180
 
-# Per-project shape: starting daily visitors, growth per day, and the content
-# mix. Each profile reads differently on the dashboard -- a launch-driven
-# marketing site, steady docs traffic, a small app, and a decaying blog.
+# Per-project shape, keyed by project name: starting daily visitors, growth
+# per day, and the content mix. Each profile reads differently on the
+# dashboard -- a launch-driven marketing site, steady docs traffic, a small
+# app, and a decaying blog.
 PROFILES = {
     "dev": {
         "base": 18, "growth": 0.45, "product": True, "app": 12,
@@ -111,7 +114,7 @@ def pick(weighted):
     return random.choices([v for v, _ in weighted], weights=[w for _, w in weighted], k=1)[0]
 
 
-def actor_for(alias, day, n, identified):
+def actor_for(name, day, n, identified):
     """A stable id in identified mode, a per-day hash otherwise.
 
     This mirrors what the server does: anonymous projects salt the identifier
@@ -119,13 +122,13 @@ def actor_for(alias, day, n, identified):
     days and cohorts are undefined for them.
     """
     if identified:
-        return f"install-{alias}-{n}"
-    return hashlib.sha256(f"{alias}-{day}-{n}".encode()).hexdigest()[:16]
+        return f"install-{name}-{n}"
+    return hashlib.sha256(f"{name}-{day}-{n}".encode()).hexdigest()[:16]
 
 
-def seed(cur, alias, profile, today, identified):
-    for table in ("views", "product_events", "actors", "identities"):
-        cur.execute(f"DELETE FROM {table} WHERE project = ?", (alias,))
+def seed(cur, pid, name, profile, today, identified):
+    for table in ("views", "events", "actors", "identities"):
+        cur.execute(f"DELETE FROM {table} WHERE project_id = ?", (pid,))
 
     hits = 0
     for back in range(DAYS - 1, -1, -1):
@@ -137,7 +140,7 @@ def seed(cur, alias, profile, today, identified):
         visitors = max(2, int(random.gauss(base, base * 0.16)))
 
         for v in range(visitors):
-            vh = actor_for(alias, day, v, identified)
+            vh = actor_for(name, day, v, identified)
             device = pick(DEVICES)
             country = pick(COUNTRIES)
             browser = pick(BROWSERS)
@@ -149,11 +152,11 @@ def seed(cur, alias, profile, today, identified):
                 ts = datetime.datetime.combine(day, datetime.time()) + datetime.timedelta(
                     seconds=start + p * random.randint(20, 600))
                 cur.execute(
-                    "INSERT INTO views (id, project, ts, received_at, kind, actor_id, actor_kind,"
+                    "INSERT INTO views (id, project_id, ts, received_at, kind, actor_id, actor_kind,"
                     " user_id, group_id, path, referrer_source, country, device, browser,"
                     " browser_version, os, utm_source, utm_medium, utm_campaign, display_width, display_height)"
                     " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                    (str(uuid.uuid4()), alias, ts.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    (str(uuid.uuid4()), pid, ts.strftime("%Y-%m-%dT%H:%M:%SZ"),
                      ts.strftime("%Y-%m-%dT%H:%M:%SZ"), "web", vh,
                      "install" if identified else "connection", "", "",
                      pick(profile["pages"]), ref, country, device, browser,
@@ -166,31 +169,31 @@ def seed(cur, alias, profile, today, identified):
         for back in range(DAYS - 1, -1, -1):
             day = today - datetime.timedelta(days=back)
             scale = 1 + (DAYS - 1 - back) / 120
-            for name, weight in EVENTS:
+            for event_name, weight in EVENTS:
                 for _ in range(max(0, int(random.gauss(weight * scale * 0.5, weight * 0.3)))):
                     ts = datetime.datetime.combine(day, datetime.time()) + datetime.timedelta(
                         seconds=random.randint(0, 86399))
                     n = random.randint(1, 400)
-                    user = f"user-{alias}-{n}" if identified else ""
+                    user = f"user-{name}-{n}" if identified else ""
                     cur.execute(
-                        "INSERT INTO product_events (id, project, ts, received_at, event_name,"
+                        "INSERT INTO events (id, project_id, ts, received_at, event_name,"
                         " actor_id, actor_kind, user_id, group_id, os, app_version, attributes)"
                         " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-                        (str(uuid.uuid4()), alias, ts.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                         ts.strftime("%Y-%m-%dT%H:%M:%SZ"), name,
-                         actor_for(alias, day, n, identified),
+                        (str(uuid.uuid4()), pid, ts.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                         ts.strftime("%Y-%m-%dT%H:%M:%SZ"), event_name,
+                         actor_for(name, day, n, identified),
                          "user" if identified else "connection", user,
                          GROUPS[n % len(GROUPS)][0] if identified else "",
                          "", "", json.dumps({"plan": pick(PLANS)})))
                     events += 1
 
-    views = hits + (seed_app(cur, alias, profile, today, identified) if profile.get("app") else 0)
+    views = hits + (seed_app(cur, pid, name, profile, today, identified) if profile.get("app") else 0)
     if identified:
-        seed_identities(cur, alias)
+        seed_identities(cur, pid, name)
     return views, events
 
 
-def seed_app(cur, alias, profile, today, identified):
+def seed_app(cur, pid, name, profile, today, identified):
     """Screen views across two platforms, with versions rolling out over time."""
     views = 0
     for back in range(DAYS - 1, -1, -1):
@@ -207,7 +210,7 @@ def seed_app(cur, alias, profile, today, identified):
         weights = [(v, max(1, 40 - (d - back))) for v, d in live]
 
         for n in range(max(2, int(random.gauss(base, base * 0.14)))):
-            actor = actor_for(alias, day, n, identified)
+            actor = actor_for(name, day, n, identified)
             platform = pick(PLATFORMS)
             version = pick(weights)
             session = str(uuid.uuid4())
@@ -216,13 +219,13 @@ def seed_app(cur, alias, profile, today, identified):
                 ts = datetime.datetime.combine(day, datetime.time()) + datetime.timedelta(
                     seconds=start + s * random.randint(15, 240))
                 cur.execute(
-                    "INSERT INTO views (id, project, ts, received_at, kind, actor_id, actor_kind, user_id,"
+                    "INSERT INTO views (id, project_id, ts, received_at, kind, actor_id, actor_kind, user_id,"
                     " group_id, session_id, path, os, app_version, os_version,"
                     " device_model, locale, country) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                    (str(uuid.uuid4()), alias, ts.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    (str(uuid.uuid4()), pid, ts.strftime("%Y-%m-%dT%H:%M:%SZ"),
                      ts.strftime("%Y-%m-%dT%H:%M:%SZ"), "app", actor,
                      "user" if identified else "install",
-                     f"user-{alias}-{n}" if identified else "",
+                     f"user-{name}-{n}" if identified else "",
                      GROUPS[n % len(GROUPS)][0] if identified else "",
                      session, pick(SCREENS), platform, version,
                      pick(OS_VERSIONS[platform]), pick(DEVICE_MODELS[platform]),
@@ -231,29 +234,27 @@ def seed_app(cur, alias, profile, today, identified):
     return views
 
 
-def seed_identities(cur, alias):
+def seed_identities(cur, pid, name):
     """Display names for the users and groups the seeded rows reference."""
     for gid, gname in GROUPS:
-        cur.execute("INSERT OR REPLACE INTO identities (project, kind, id, name,"
+        cur.execute("INSERT OR REPLACE INTO identities (project_id, kind, id, name,"
                     " last_seen_day, updated_at) VALUES (?,?,?,?,?,datetime('now'))",
-                    (alias, "group", gid, gname, ""))
+                    (pid, "group", gid, gname, ""))
     for n in range(1, 401):
-        name = f"{FIRST_NAMES[n % len(FIRST_NAMES)]} {LAST_NAMES[(n // 7) % len(LAST_NAMES)]}"
-        cur.execute("INSERT OR REPLACE INTO identities (project, kind, id, name,"
+        display = f"{FIRST_NAMES[n % len(FIRST_NAMES)]} {LAST_NAMES[(n // 7) % len(LAST_NAMES)]}"
+        cur.execute("INSERT OR REPLACE INTO identities (project_id, kind, id, name,"
                     " last_seen_day, updated_at) VALUES (?,?,?,?,?,datetime('now'))",
-                    (alias, "user", f"user-{alias}-{n}", name, ""))
+                    (pid, "user", f"user-{name}-{n}", display, ""))
 
 
 def main():
     db = sys.argv[1]
-    projects_file = sys.argv[2] if len(sys.argv) > 2 else "local/projects.json"
-
-    projects = json.loads(pathlib.Path(projects_file).read_text())
-    aliases = [p["alias"] for p in projects]
-    identified = {p["alias"]: p.get("identity", "anonymous") == "identified" for p in projects}
-    unknown = [a for a in aliases if a not in PROFILES]
+    con = sqlite3.connect(db)
+    cur = con.cursor()
+    projects = cur.execute("select id, name, identity from projects order by id").fetchall()
+    unknown = [name for _, name, _ in projects if name not in PROFILES]
     if unknown:
-        sys.exit(f"no traffic profile for {', '.join(unknown)}; add one to PROFILES")
+        sys.exit(f"no traffic profile for {', '.join(unknown)}; add one to PROFILES (keyed by project name)")
 
     # views.ts is UTC and the dashboards window on SQLite's date('now'),
     # which is also UTC -- anchor the seeded range to the same clock so the
@@ -261,12 +262,9 @@ def main():
     today = datetime.datetime.now(datetime.timezone.utc).date()
 
     random.seed(1337)
-    con = sqlite3.connect(db)
-    cur = con.cursor()
-    for alias in aliases:
-        views, events = seed(cur, alias, PROFILES[alias], today, identified[alias])
-        mode = "identified" if identified[alias] else "anonymous"
-        print(f"  {alias:<10} views={views:<7} product_events={events:<6} ({mode})")
+    for pid, name, identity in projects:
+        views, events = seed(cur, pid, name, PROFILES[name], today, identity == "identified")
+        print(f"  {pid:<3} {name:<10} views={views:<7} events={events:<6} ({identity})")
     con.commit()
     con.close()
 

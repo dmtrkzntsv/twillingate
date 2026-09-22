@@ -1,4 +1,8 @@
-# {params.project} — Product
+# {project_name[0].name} — Product
+
+```sql project_name
+select name from twillingate.projects where id = '${params.project}'
+```
 
 <ButtonGroup name=range title="Date range">
     <ButtonGroupItem value="1" valueLabel="Last 1 day" />
@@ -11,7 +15,7 @@
 ```sql totals
 select day, total_events, active_users
 from twillingate.v_product_totals
-where project = '${params.project}'
+where project_id = '${params.project}'
   and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range} - 1) day, '%Y-%m-%d')
                and strftime((now() at time zone 'UTC')::date, '%Y-%m-%d')
 order by day
@@ -21,7 +25,7 @@ order by day
 select sum(total_events) as total_events, max(active_users) as peak_dau,
        avg(active_users) as avg_dau
 from twillingate.v_product_totals
-where project = '${params.project}'
+where project_id = '${params.project}'
   and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range} - 1) day, '%Y-%m-%d')
                and strftime((now() at time zone 'UTC')::date, '%Y-%m-%d')
 ```
@@ -43,7 +47,7 @@ where project = '${params.project}'
 -- events that version fired, whatever they were.
 select day, attr_value as app_version, sum(count) as count
 from twillingate.v_product_attrs
-where project = '${params.project}'
+where project_id = '${params.project}'
   and attr_key = '$app_version'
   and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range} - 1) day, '%Y-%m-%d')
                and strftime((now() at time zone 'UTC')::date, '%Y-%m-%d')
@@ -58,7 +62,7 @@ order by day, count desc
 select attr_value as app_version, sum(count) as total,
        max(unique_users) as min_users
 from twillingate.v_product_attrs
-where project = '${params.project}'
+where project_id = '${params.project}'
   and attr_key = '$app_version'
   and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range} - 1) day, '%Y-%m-%d')
                and strftime((now() at time zone 'UTC')::date, '%Y-%m-%d')
@@ -86,7 +90,7 @@ band taking over, and the versions that never update are the ones that stay.
 ```sql events
 select day, event_name, count, unique_users
 from twillingate.v_product_daily
-where project = '${params.project}'
+where project_id = '${params.project}'
   and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range} - 1) day, '%Y-%m-%d')
                and strftime((now() at time zone 'UTC')::date, '%Y-%m-%d')
 order by day
@@ -95,7 +99,7 @@ order by day
 ```sql event_summary
 select event_name, sum(count) as total, max(unique_users) as peak_daily_uniques
 from twillingate.v_product_daily
-where project = '${params.project}'
+where project_id = '${params.project}'
   and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range} - 1) day, '%Y-%m-%d')
                and strftime((now() at time zone 'UTC')::date, '%Y-%m-%d')
 group by event_name order by total desc
@@ -118,7 +122,7 @@ group by event_name order by total desc
 -- figure is shown, a floor on the true number.
 select attr_key, day, attr_value, sum(count) as count, max(unique_users) as min_users
 from twillingate.v_product_attrs
-where project = '${params.project}'
+where project_id = '${params.project}'
   and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range} - 1) day, '%Y-%m-%d')
                and strftime((now() at time zone 'UTC')::date, '%Y-%m-%d')
 group by attr_key, day, attr_value

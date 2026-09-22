@@ -20,15 +20,15 @@ func day(s string) civil.Date {
 
 func at(h, m int) time.Time { return time.Date(2026, 8, 10, h, m, 0, 0, time.UTC) }
 
-// seedViews writes views into project "app" with defaults filled in.
+// seedViews writes views into project 1 with defaults filled in.
 func seedViews(t *testing.T, db *DB, views ...store.View) {
 	t.Helper()
 	for i := range views {
 		if views[i].ReceivedAt.IsZero() {
 			views[i].ReceivedAt = views[i].TS
 		}
-		if views[i].Project == "" {
-			views[i].Project = "app"
+		if views[i].ProjectID == 0 {
+			views[i].ProjectID = 1
 		}
 		if views[i].Kind == "" {
 			views[i].Kind = "web"
@@ -42,7 +42,7 @@ func seedViews(t *testing.T, db *DB, views ...store.View) {
 	}
 }
 
-// seedViewDay is the deterministic fixture for 2026-08-10, project "app":
+// seedViewDay is the deterministic fixture for 2026-08-10, project 1:
 //
 //	web v1: 10:00 /a, 10:10 /b          -> 1 session, 2 views, dur 600
 //	web v1: 12:00 /a                    -> gap > 30 min: 2nd session, bounce
@@ -86,7 +86,7 @@ func readDaily(t *testing.T, db *DB, table, kind string) dailyRow {
 	t.Helper()
 	var r dailyRow
 	err := db.db.QueryRow(fmt.Sprintf(`SELECT visitors, views, sessions, bounces, duration_sec
-		FROM %s WHERE project='app' AND day='2026-08-10' AND kind=?`, table), kind).
+		FROM %s WHERE project_id=1 AND day='2026-08-10' AND kind=?`, table), kind).
 		Scan(&r.visitors, &r.views, &r.sessions, &r.bounces, &r.dur)
 	if err != nil {
 		t.Fatalf("%s/%s: %v", table, kind, err)
@@ -98,7 +98,7 @@ func TestAggregateViewDayPerKind(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	seedViewDay(t, db)
-	if err := db.AggregateViewDay(ctx, "app", day("2026-08-10")); err != nil {
+	if err := db.AggregateViewDay(ctx, 1, day("2026-08-10")); err != nil {
 		t.Fatal(err)
 	}
 	if got, want := readDaily(t, db, "agg_views_daily", "web"), (dailyRow{2, 4, 3, 2, 600}); got != want {
@@ -108,7 +108,7 @@ func TestAggregateViewDayPerKind(t *testing.T) {
 		t.Errorf("app = %+v, want %+v", got, want)
 	}
 	var raw int
-	if err := db.db.QueryRow(`SELECT COUNT(*) FROM views WHERE project='app'`).Scan(&raw); err != nil {
+	if err := db.db.QueryRow(`SELECT COUNT(*) FROM views WHERE project_id=1`).Scan(&raw); err != nil {
 		t.Fatal(err)
 	}
 	if raw != 0 {
@@ -120,7 +120,7 @@ func TestAggregateViewDayDimensions(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	seedViewDay(t, db)
-	if err := db.AggregateViewDay(ctx, "app", day("2026-08-10")); err != nil {
+	if err := db.AggregateViewDay(ctx, 1, day("2026-08-10")); err != nil {
 		t.Fatal(err)
 	}
 	check := func(q string, args []any, wantV, wantP int) {
@@ -133,7 +133,7 @@ func TestAggregateViewDayDimensions(t *testing.T) {
 			t.Errorf("%s %v = (%d,%d), want (%d,%d)", q, args, v, p, wantV, wantP)
 		}
 	}
-	const w = ` WHERE project='app' AND day='2026-08-10' AND `
+	const w = ` WHERE project_id=1 AND day='2026-08-10' AND `
 	check(`SELECT visitors, views FROM agg_views_paths`+w+`path=?`, []any{"/a"}, 2, 3)
 	check(`SELECT visitors, views FROM agg_views_paths`+w+`path=?`, []any{"/home"}, 2, 2)
 	check(`SELECT visitors, views FROM agg_views_hosts`+w+`host=?`, []any{""}, 2, 3)
@@ -186,24 +186,24 @@ func TestAggregateViewDayCapsDimensions(t *testing.T) {
 		views = append(views, store.View{ID: fmt.Sprintf("hot-%d", i), TS: at(10, 0), ActorID: "c", Path: "/hot", OS: "Linux", OSVersion: "0"})
 	}
 	seedViews(t, db, views...)
-	if err := db.AggregateViewDay(ctx, "app", day("2026-08-10")); err != nil {
+	if err := db.AggregateViewDay(ctx, 1, day("2026-08-10")); err != nil {
 		t.Fatal(err)
 	}
 	var rows, otherV, otherP int
-	if err := db.db.QueryRow(`SELECT COUNT(*) FROM agg_views_paths WHERE project='app'`).Scan(&rows); err != nil {
+	if err := db.db.QueryRow(`SELECT COUNT(*) FROM agg_views_paths WHERE project_id=1`).Scan(&rows); err != nil {
 		t.Fatal(err)
 	}
 	if rows != topNDimension+1 {
 		t.Errorf("paths rows = %d, want %d (top-N plus the other bucket)", rows, topNDimension+1)
 	}
-	if err := db.db.QueryRow(`SELECT visitors, views FROM agg_views_paths WHERE project='app' AND path='(other)'`).Scan(&otherV, &otherP); err != nil {
+	if err := db.db.QueryRow(`SELECT visitors, views FROM agg_views_paths WHERE project_id=1 AND path='(other)'`).Scan(&otherV, &otherP); err != nil {
 		t.Fatal(err)
 	}
 	if otherV != 2 || otherP != 22 {
 		t.Errorf("(other) = (%d,%d), want (2,22): 11 collapsed paths x 2 actors, 2 distinct actors", otherV, otherP)
 	}
 	// Two-key dimension: the leading key stays intact, only os_version collapses.
-	if err := db.db.QueryRow(`SELECT COUNT(*) FROM agg_views_os WHERE project='app' AND os='Linux' AND os_version='(other)'`).Scan(&rows); err != nil {
+	if err := db.db.QueryRow(`SELECT COUNT(*) FROM agg_views_os WHERE project_id=1 AND os='Linux' AND os_version='(other)'`).Scan(&rows); err != nil {
 		t.Fatal(err)
 	}
 	if rows != 1 {
@@ -216,14 +216,14 @@ func TestAggregateViewDayIsIdempotentAndSkipsEmptyDay(t *testing.T) {
 	ctx := context.Background()
 	seedViewDay(t, db)
 	for i := 0; i < 2; i++ {
-		if err := db.AggregateViewDay(ctx, "app", day("2026-08-10")); err != nil {
+		if err := db.AggregateViewDay(ctx, 1, day("2026-08-10")); err != nil {
 			t.Fatal(err)
 		}
 	}
 	if got, want := readDaily(t, db, "agg_views_daily", "web"), (dailyRow{2, 4, 3, 2, 600}); got != want {
 		t.Errorf("after re-run web = %+v, want %+v", got, want)
 	}
-	if err := db.AggregateViewDay(ctx, "app", day("2026-08-11")); err != nil {
+	if err := db.AggregateViewDay(ctx, 1, day("2026-08-11")); err != nil {
 		t.Fatalf("empty day must be a no-op: %v", err)
 	}
 	var n int
@@ -242,7 +242,7 @@ func TestViewDaysBefore(t *testing.T) {
 		store.View{ID: "2", TS: time.Date(2026, 8, 3, 10, 0, 0, 0, time.UTC), ActorID: "a", Path: "/"},
 		store.View{ID: "3", TS: time.Date(2026, 8, 9, 10, 0, 0, 0, time.UTC), ActorID: "a", Path: "/"},
 	)
-	days, err := db.ViewDaysBefore(context.Background(), "app", day("2026-08-05"))
+	days, err := db.ViewDaysBefore(context.Background(), 1, day("2026-08-05"))
 	if err != nil {
 		t.Fatal(err)
 	}

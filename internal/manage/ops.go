@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/dmtrkzntsv/twillingate/internal/config"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
@@ -24,14 +26,14 @@ type Ops struct {
 func NewOps(reg *Registry, st Store) *Ops { return &Ops{Reg: reg, St: st} }
 
 // rebuildFlatView refreshes v_events_flat from the registry's CURRENT
-// snapshot, so a config edit (a new/changed attribute list, or — for a
-// later caller — a renamed project) reaches BI tools immediately rather
-// than waiting for the next daily pass. Callers must Reg.Reload first.
+// snapshot, so a config edit (a new or changed attribute list) reaches BI
+// tools immediately rather than waiting for the next daily pass. Callers
+// must Reg.Reload first.
 //
 // Errors are logged, not returned: a view rebuild is a side effect of the
 // operation, not the thing the caller asked for, so it must never fail
-// project creation/update/import over a rebuild hiccup — the nightly pass
-// is the repair net.
+// project creation or update over a rebuild hiccup — the nightly pass is
+// the repair net.
 func (o *Ops) rebuildFlatView(ctx context.Context) {
 	keys := o.Reg.Snapshot(ctx).DeclaredAttributeKeys()
 	if err := o.St.RebuildFlatView(ctx, keys); err != nil {
@@ -48,11 +50,11 @@ func (o *Ops) rebuildFlatView(ctx context.Context) {
 // key or archived project never keeps ingesting on a stale snapshot. The
 // flat view waits for the next write or the daily pass. Reports whether
 // the snapshot now reflects the write.
-func (o *Ops) afterWrite(ctx context.Context, rebuildView bool, aliases ...string) bool {
+func (o *Ops) afterWrite(ctx context.Context, rebuildView bool, ids ...int64) bool {
 	if err := o.Reg.Reload(ctx); err != nil {
 		o.Reg.logger.Warn("registry reload after write failed; refusing the affected projects' events until the next read reloads",
-			"projects", aliases, "error", err)
-		o.Reg.withhold(aliases...)
+			"projects", ids, "error", err)
+		o.Reg.withhold(ids...)
 		return false
 	}
 	if rebuildView {
@@ -62,38 +64,44 @@ func (o *Ops) afterWrite(ctx context.Context, rebuildView bool, aliases ...strin
 }
 
 // written is the project a create or update just committed: the snapshot's
-// copy when the reload succeeded, otherwise one built from the validated
-// spec, keeping the archived flag the spec does not carry.
+// copy when the reload succeeded, otherwise one built from the merged spec,
+// keeping the archived flag the spec does not carry.
 func (o *Ops) written(ctx context.Context, spec ProjectSpec, reloaded bool) *Project {
 	if reloaded {
-		if cur := o.Reg.Snapshot(ctx).Project(spec.Alias); cur != nil {
+		if cur := o.Reg.Snapshot(ctx).Project(spec.ID); cur != nil {
 			return cur
 		}
 	}
 	// Read the held snapshot without polling, so the pending reload is left
 	// for the caller's next read.
-	cur := o.Reg.snap.Load().Project(spec.Alias)
-	p := &Project{Alias: spec.Alias, Name: spec.Name, Identity: spec.Identity,
-		AllowedOrigins: spec.AllowedOrigins, Retention: spec.Retention, Attributes: spec.Attributes}
+	cur := o.Reg.snap.Load().Project(spec.ID)
+	p := &Project{ID: spec.ID, Name: spec.Name, Identity: spec.Identity,
+		AllowedOrigins: spec.AllowedOrigins, Attributes: spec.Attributes}
 	if cur != nil {
 		p.Archived = cur.Archived
 	}
 	return p
 }
 
+// ProjectSpec is the caller's view of a project. On create, Name is
+// required and ID is ignored. On update, ID selects the row and every
+// other field merges: an empty Name or Identity keeps the current value,
+// a nil slice keeps the current list, a non-nil slice replaces it — so an
+// empty non-nil AllowedOrigins clears the origins. JSON `[]` decodes to a
+// non-nil empty slice and an omitted field to nil, which is what lets the
+// API express both without a second field.
 type ProjectSpec struct {
-	Alias, Name, Identity string
-	AllowedOrigins        []string
-	Retention             *config.RetentionOverride
-	Attributes            []string
+	ID             int64
+	Name, Identity string
+	AllowedOrigins []string
+	Attributes     []string
 }
 
+// validate checks a complete spec: the one a caller built for create, or
+// the merged one UpdateProject built over the current row.
 func (sp *ProjectSpec) validate() error {
-	if sp.Alias == "" {
-		return fmt.Errorf("%w: alias must not be empty", ErrInvalid)
-	}
-	if sp.Name == "" {
-		sp.Name = sp.Alias
+	if strings.TrimSpace(sp.Name) == "" {
+		return fmt.Errorf("%w: name must not be empty", ErrInvalid)
 	}
 	if sp.Identity == "" {
 		sp.Identity = config.IdentityAnonymous
@@ -112,40 +120,6 @@ func (sp *ProjectSpec) validate() error {
 	return nil
 }
 
-// validateNew applies validate's shared rules plus the alias charset
-// check. It is the entry point for any operation that proposes a new
-// alias — CreateProject and (Task 5) project rename. UpdateProject
-// deliberately keeps calling validate: there the alias selects a row that
-// already exists rather than proposing a new name, so a legacy alias that
-// predates this rule (e.g. "my_app") must remain editable. Without that
-// exception, an operator holding such a row could never fix it via
-// `config export | config import`, since import re-runs through this same
-// path.
-func (sp *ProjectSpec) validateNew() error {
-	if err := sp.validate(); err != nil {
-		return err
-	}
-	if !validAlias(sp.Alias) {
-		return fmt.Errorf("%w: alias %q must match ^[a-z0-9]+$", ErrInvalid, sp.Alias)
-	}
-	return nil
-}
-
-// validAlias is ^[a-z0-9]+$. The alias is the project column on every
-// stored row and the dashboard label, so it is kept to one predictable
-// shape; it is never spliced into SQL.
-func validAlias(s string) bool {
-	if s == "" {
-		return false
-	}
-	for _, r := range s {
-		if (r < 'a' || r > 'z') && (r < '0' || r > '9') {
-			return false
-		}
-	}
-	return true
-}
-
 func (sp *ProjectSpec) row() (store.RegistryProject, error) {
 	origins, err := json.Marshal(sp.AllowedOrigins)
 	if sp.AllowedOrigins == nil {
@@ -154,28 +128,19 @@ func (sp *ProjectSpec) row() (store.RegistryProject, error) {
 	if err != nil {
 		return store.RegistryProject{}, err
 	}
-	row := store.RegistryProject{Alias: sp.Alias, Name: sp.Name,
-		Identity: sp.Identity, AllowedOrigins: string(origins)}
-	if sp.Retention != nil {
-		b, err := json.Marshal(sp.Retention)
-		if err != nil {
-			return row, err
-		}
-		row.Retention = string(b)
-	}
 	attrs, err := json.Marshal(sp.Attributes)
 	if sp.Attributes == nil {
 		attrs, err = []byte("[]"), nil
 	}
 	if err != nil {
-		return row, err
+		return store.RegistryProject{}, err
 	}
-	row.Attributes = string(attrs)
-	return row, nil
+	return store.RegistryProject{ID: sp.ID, Name: sp.Name, Identity: sp.Identity,
+		AllowedOrigins: string(origins), Attributes: string(attrs)}, nil
 }
 
 func (o *Ops) CreateProject(ctx context.Context, actor string, spec ProjectSpec) (*Project, error) {
-	return o.create(ctx, actor, spec, func(row store.RegistryProject, audit store.AuditEntry) error {
+	return o.create(ctx, actor, spec, func(row store.RegistryProject, audit store.AuditEntry) (int64, error) {
 		return o.St.CreateProject(ctx, row, audit)
 	})
 }
@@ -187,10 +152,10 @@ func (o *Ops) CreateProjectWithKey(ctx context.Context, actor string, spec Proje
 	if err != nil {
 		return nil, "", err
 	}
-	p, err := o.create(ctx, actor, spec, func(row store.RegistryProject, audit store.AuditEntry) error {
+	p, err := o.create(ctx, actor, spec, func(row store.RegistryProject, audit store.AuditEntry) (int64, error) {
 		return o.St.CreateProjectWithKey(ctx, row,
-			store.RegistryKey{Key: key, Project: spec.Alias, Label: label}, audit,
-			store.AuditEntry{Actor: actor, Action: "key.issue", Subject: spec.Alias + "/" + label})
+			store.RegistryKey{Key: key, Label: label}, audit,
+			store.AuditEntry{Actor: actor, Action: "key.issue"})
 	})
 	if err != nil {
 		return nil, "", err
@@ -199,23 +164,44 @@ func (o *Ops) CreateProjectWithKey(ctx context.Context, actor string, spec Proje
 }
 
 // create validates spec, hands its row and audit entry to write, and
-// reloads the registry once the write has committed.
-func (o *Ops) create(ctx context.Context, actor string, spec ProjectSpec, write func(store.RegistryProject, store.AuditEntry) error) (*Project, error) {
-	if err := spec.validateNew(); err != nil {
+// reloads the registry once the write has committed. The store fills the
+// audit subject with the id it assigns.
+func (o *Ops) create(ctx context.Context, actor string, spec ProjectSpec, write func(store.RegistryProject, store.AuditEntry) (int64, error)) (*Project, error) {
+	spec.ID = 0
+	if err := spec.validate(); err != nil {
 		return nil, err
 	}
 	row, err := spec.row()
 	if err != nil {
 		return nil, err
 	}
-	if err := write(row, store.AuditEntry{
-		Actor: actor, Action: "project.create", Subject: spec.Alias}); err != nil {
+	id, err := write(row, store.AuditEntry{Actor: actor, Action: "project.create"})
+	if err != nil {
 		return nil, err
 	}
-	return o.written(ctx, spec, o.afterWrite(ctx, true, spec.Alias)), nil
+	spec.ID = id
+	return o.written(ctx, spec, o.afterWrite(ctx, true, id)), nil
 }
 
+// UpdateProject merges spec over the current row (see ProjectSpec) and
+// writes the result whole.
 func (o *Ops) UpdateProject(ctx context.Context, actor string, spec ProjectSpec) (*Project, error) {
+	cur := o.Reg.Snapshot(ctx).Project(spec.ID)
+	if cur == nil {
+		return nil, fmt.Errorf("update project: unknown id %d: %w", spec.ID, ErrNotFound)
+	}
+	if spec.Name == "" {
+		spec.Name = cur.Name
+	}
+	if spec.Identity == "" {
+		spec.Identity = cur.Identity
+	}
+	if spec.AllowedOrigins == nil {
+		spec.AllowedOrigins = cur.AllowedOrigins
+	}
+	if spec.Attributes == nil {
+		spec.Attributes = cur.Attributes
+	}
 	if err := spec.validate(); err != nil {
 		return nil, err
 	}
@@ -224,102 +210,83 @@ func (o *Ops) UpdateProject(ctx context.Context, actor string, spec ProjectSpec)
 		return nil, err
 	}
 	if err := o.St.UpdateProject(ctx, row, store.AuditEntry{
-		Actor: actor, Action: "project.update", Subject: spec.Alias}); err != nil {
+		Actor: actor, Action: "project.update", Subject: idSubject(spec.ID)}); err != nil {
 		return nil, err
 	}
-	return o.written(ctx, spec, o.afterWrite(ctx, true, spec.Alias)), nil
+	return o.written(ctx, spec, o.afterWrite(ctx, true, spec.ID)), nil
 }
 
-func (o *Ops) ArchiveProject(ctx context.Context, actor, alias string) error {
-	if err := o.St.SetProjectArchived(ctx, alias, true, store.AuditEntry{
-		Actor: actor, Action: "project.archive", Subject: alias}); err != nil {
+func idSubject(id int64) string { return strconv.FormatInt(id, 10) }
+
+func keySubject(id int64, label string) string { return strconv.FormatInt(id, 10) + "/" + label }
+
+func (o *Ops) ArchiveProject(ctx context.Context, actor string, id int64) error {
+	if err := o.St.SetProjectArchived(ctx, id, true, store.AuditEntry{
+		Actor: actor, Action: "project.archive", Subject: idSubject(id)}); err != nil {
 		return err
 	}
-	o.afterWrite(ctx, false, alias)
+	o.afterWrite(ctx, false, id)
 	return nil
 }
 
-func (o *Ops) RestoreProject(ctx context.Context, actor, alias string) error {
-	if err := o.St.SetProjectArchived(ctx, alias, false, store.AuditEntry{
-		Actor: actor, Action: "project.restore", Subject: alias}); err != nil {
+func (o *Ops) RestoreProject(ctx context.Context, actor string, id int64) error {
+	if err := o.St.SetProjectArchived(ctx, id, false, store.AuditEntry{
+		Actor: actor, Action: "project.restore", Subject: idSubject(id)}); err != nil {
 		return err
 	}
-	o.afterWrite(ctx, false, alias)
+	o.afterWrite(ctx, false, id)
 	return nil
 }
 
-func (o *Ops) IssueIngestKey(ctx context.Context, actor, project, label string) (string, error) {
-	s := o.Reg.Snapshot(ctx)
-	p := s.Project(project)
-	if p == nil {
-		return "", fmt.Errorf("unknown project %q: %w", project, ErrNotFound)
+func (o *Ops) IssueIngestKey(ctx context.Context, actor string, projectID int64, label string) (string, error) {
+	if o.Reg.Snapshot(ctx).Project(projectID) == nil {
+		return "", fmt.Errorf("unknown project %d: %w", projectID, ErrNotFound)
 	}
 	key, err := MintIngestKey()
 	if err != nil {
 		return "", err
 	}
 	if err := o.St.InsertIngestKey(ctx, store.RegistryKey{
-		Key: key, Project: project, Label: label}, store.AuditEntry{
-		Actor: actor, Action: "key.issue", Subject: project + "/" + label}); err != nil {
+		Key: key, ProjectID: projectID, Label: label}, store.AuditEntry{
+		Actor: actor, Action: "key.issue", Subject: keySubject(projectID, label)}); err != nil {
 		return "", err
 	}
-	o.afterWrite(ctx, false, project)
+	o.afterWrite(ctx, false, projectID)
 	return key, nil
 }
 
-func (o *Ops) DisableIngestKey(ctx context.Context, actor, project, label string) error {
-	if err := o.St.SetIngestKeyDisabled(ctx, project, label, true, store.AuditEntry{
-		Actor: actor, Action: "key.disable", Subject: project + "/" + label}); err != nil {
+func (o *Ops) DisableIngestKey(ctx context.Context, actor string, projectID int64, label string) error {
+	if err := o.St.SetIngestKeyDisabled(ctx, projectID, label, true, store.AuditEntry{
+		Actor: actor, Action: "key.disable", Subject: keySubject(projectID, label)}); err != nil {
 		return err
 	}
-	o.afterWrite(ctx, false, project)
+	o.afterWrite(ctx, false, projectID)
 	return nil
 }
 
-func (o *Ops) EnableIngestKey(ctx context.Context, actor, project, label string) error {
-	if err := o.St.SetIngestKeyDisabled(ctx, project, label, false, store.AuditEntry{
-		Actor: actor, Action: "key.enable", Subject: project + "/" + label}); err != nil {
+func (o *Ops) EnableIngestKey(ctx context.Context, actor string, projectID int64, label string) error {
+	if err := o.St.SetIngestKeyDisabled(ctx, projectID, label, false, store.AuditEntry{
+		Actor: actor, Action: "key.enable", Subject: keySubject(projectID, label)}); err != nil {
 		return err
 	}
-	o.afterWrite(ctx, false, project)
-	return nil
-}
-
-// RenameProject rewrites a project's alias — its physical identity, the
-// `project` column on every keyed table plus the projects row and its
-// ingest keys — leaving every row and key intact under the new alias.
-// validateNew runs against the PROPOSED alias (a throwaway spec carrying
-// just it), matching CreateProject's rule: a rename is choosing a new
-// alias, not editing an existing row, so the charset check applies here
-// too. CLI only, like DeleteProject (spec §7.3): it rewrites every table
-// keyed by the project, which does not belong on the agent-facing surface.
-func (o *Ops) RenameProject(ctx context.Context, actor, old, newAlias string) error {
-	spec := ProjectSpec{Alias: newAlias}
-	if err := spec.validateNew(); err != nil {
-		return err
-	}
-	if err := o.St.RenameProject(ctx, old, newAlias, store.AuditEntry{
-		Actor: actor, Action: "project.rename", Subject: old + "->" + newAlias}); err != nil {
-		return err
-	}
-	o.afterWrite(ctx, true, old, newAlias)
+	o.afterWrite(ctx, false, projectID)
 	return nil
 }
 
 // DeleteProject is exposed by the CLI only — never as an MCP tool
 // (spec §7.3: irreversible operations require a shell). Reclaims pages
 // afterwards; the tx cannot (single connection).
-func (o *Ops) DeleteProject(ctx context.Context, actor, alias string) error {
-	if err := o.St.DeleteProjectData(ctx, alias, store.AuditEntry{
-		Actor: actor, Action: "project.delete", Subject: alias}); err != nil {
+func (o *Ops) DeleteProject(ctx context.Context, actor string, id int64) error {
+	if err := o.St.DeleteProjectData(ctx, id, store.AuditEntry{
+		Actor: actor, Action: "project.delete", Subject: idSubject(id)}); err != nil {
 		return err
 	}
 	// Reclaiming pages is housekeeping: the delete has committed, so a
 	// failed vacuum is logged and left to the daily pass's own vacuum.
 	if err := o.St.IncrementalVacuum(ctx); err != nil {
-		o.Reg.logger.Warn("vacuum after project delete failed", "project", alias, "error", err)
+		o.Reg.logger.Warn("vacuum after project delete failed", "project_id", id, "error", err)
 	}
-	o.afterWrite(ctx, false, alias)
+	o.afterWrite(ctx, false, id)
 	return nil
 }
 

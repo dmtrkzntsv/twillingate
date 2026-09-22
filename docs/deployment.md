@@ -44,8 +44,8 @@ Tracking: ingestion, the SDK, and — once `API_AUTH_DSN` is set — the API
 mkdir twillingate && cd twillingate
 curl -fsSLO https://raw.githubusercontent.com/dmtrkzntsv/twillingate/main/deploy/compose/docker-compose.yml
 docker compose up -d
-docker compose exec twillingate twillingate project create -alias myapp
-docker compose exec twillingate twillingate key issue -project myapp -label web
+docker compose exec twillingate twillingate project create -name myapp
+docker compose exec twillingate twillingate key issue -project-id 1 -label web
 ```
 
 ### systemd on a VPS
@@ -80,8 +80,8 @@ in the database, not in a shipped file:
 
 ```bash
 sudo vi /etc/twillingate/twillingate.env
-sudo -u twillingate sh -ac '. /etc/twillingate/twillingate.env; twillingate project create -alias myapp'
-sudo -u twillingate sh -ac '. /etc/twillingate/twillingate.env; twillingate key issue -project myapp -label web'
+sudo -u twillingate sh -ac '. /etc/twillingate/twillingate.env; twillingate project create -name myapp'
+sudo -u twillingate sh -ac '. /etc/twillingate/twillingate.env; twillingate key issue -project-id 1 -label web'
 sudo systemctl start twillingate
 curl -s localhost:8080/healthz            # → {"status":"ok"}
 ```
@@ -553,9 +553,7 @@ expected `aud`: the origin or `<origin>/mcp`, or the `audience=` value.
 | Upgrade (systemd) | `curl -fsSL …/install.sh \| sudo bash` — restarts the running service and reports the old and new version |
 | Upgrade (compose) | `docker compose pull && docker compose up -d`. Never `down -v`: the database lives in the named volume. Pin with `TWILLINGATE_VERSION=v0.9.2` in `.env`. |
 | Apply migrations only | `twillingate migrate` |
-| Upgrade across a schema change | Take a Litestream snapshot first (`litestream snapshots …`, or copy the db file while the service is stopped): migrations such as 012 (web and app folded into one views family) are irreversible |
-| Export the registry | `twillingate config export > registry.json` |
-| Import the registry | `twillingate config import registry.json` — also accepts a pre-upgrade `projects.json`; never archives or deletes anything absent from the file |
+| Upgrade across a schema change | Take a Litestream snapshot first (`litestream snapshots …`, or copy the db file while the service is stopped): migrations such as 012 (web and app folded into one views family) and 014 (integer project ids) are irreversible |
 | Database size | `du -h /var/lib/twillingate/twillingate.db` |
 | Replication status | `journalctl -u litestream --since -1h`, or `docker compose logs litestream` |
 | Dashboard rebuilds | `docker compose logs dashboards` — one `dashboards: rebuilt` line per successful build |
@@ -573,6 +571,41 @@ downtime across those times does not skip a day.
 
 File logging (`LOG_FILE`) is optional and off by default; if enabled,
 install `deploy/logrotate/twillingate` into `/etc/logrotate.d/`.
+
+### Upgrading to integer project ids (migration 014)
+
+Projects are keyed by an integer id from this migration on; the alias is
+gone, and so are `config import`/`export` and per-project retention.
+Before upgrading, run these against the live database — each hit is
+something the migration refuses or the first daily pass will prune:
+
+```sql
+-- 1. Per-project retention overrides. Anything returned is data the first
+--    daily pass after the upgrade will prune to the global window. Raise
+--    the matching RETENTION_* variable first if that data must be kept.
+SELECT alias, retention FROM projects WHERE retention IS NOT NULL;
+
+-- 2. Rows whose project has no registry row. Any hit aborts migration 014.
+--    Repeat for every table that has a project column.
+SELECT DISTINCT project FROM views
+WHERE project NOT IN (SELECT alias FROM projects);
+
+-- 3. Duplicate key labels. Any hit aborts migration 014.
+SELECT project, label, COUNT(*) FROM ingest_keys
+GROUP BY project, label HAVING COUNT(*) > 1;
+```
+
+Then stop the service, copy the database (or take a Litestream
+snapshot), run the installer, and check `journalctl` for migration 014.
+`list_projects` (or `twillingate project list`) shows the new ids: they
+follow creation order, starting at 1. Agents and scripts that stored
+aliases need those ids.
+
+Two things change on the day: retention is global from now on
+(`RETENTION_*`), and anonymous actor hashes are computed from the id
+instead of the alias, so an anonymous visitor seen before and after the
+upgrade counts twice in that day's uniques and a session spanning it
+splits. The salt rotates at midnight anyway, so the seam is one day.
 
 ### Replication with litestream
 

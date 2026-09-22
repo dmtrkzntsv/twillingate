@@ -12,11 +12,14 @@ func TestIntegrationGuideWebUsesCollectorURLAndIdentity(t *testing.T) {
 	_, cs := newTestHost(t)
 	// blog is identified and (fixture) has an allowed origin but no key yet
 	res := callTool(t, cs, "integration_guide", map[string]any{
-		"project": "blog", "platform": "web"})
+		"project_id": 1, "platform": "web"})
 	if res.IsError {
 		t.Fatalf("error: %s", textOf(res))
 	}
 	out := textOf(res)
+	if !strings.Contains(out, "# Integrating blog (project 1; web, identity=identified)") {
+		t.Errorf("heading must name the project by name and id: %s", out)
+	}
 	if !strings.Contains(out, "https://collector.test/js/twillingate.js") {
 		t.Errorf("snippet must point at the collector, got: %s", out)
 	}
@@ -36,7 +39,7 @@ func TestIntegrationGuideWebUsesCollectorURLAndIdentity(t *testing.T) {
 func TestIntegrationGuideAnonymousAndPlatforms(t *testing.T) {
 	_, cs := newTestHost(t)
 	res := callTool(t, cs, "integration_guide", map[string]any{
-		"project": "docs", "platform": "server"})
+		"project_id": 2, "platform": "server"})
 	if res.IsError {
 		t.Fatalf("error: %s", textOf(res))
 	}
@@ -47,19 +50,19 @@ func TestIntegrationGuideAnonymousAndPlatforms(t *testing.T) {
 		}
 	}
 	res = callTool(t, cs, "integration_guide", map[string]any{
-		"project": "docs", "platform": "mobile"})
+		"project_id": 2, "platform": "mobile"})
 	if out := textOf(res); !strings.Contains(out, "$install_id") || !strings.Contains(out, "$screen_view") {
 		t.Errorf("mobile guide missing app context: %s", out)
 	}
 	// bad platform lists the valid ones
 	res = callTool(t, cs, "integration_guide", map[string]any{
-		"project": "docs", "platform": "fax"})
+		"project_id": 2, "platform": "fax"})
 	if !res.IsError || !strings.Contains(textOf(res), "web") {
 		t.Errorf("bad platform: %v %s", res.IsError, textOf(res))
 	}
 	// no-attributes-declared pointer
 	res = callTool(t, cs, "integration_guide", map[string]any{
-		"project": "docs", "platform": "web"})
+		"project_id": 2, "platform": "web"})
 	if out := textOf(res); !strings.Contains(out, "No product attributes declared") {
 		t.Errorf("no-attributes-declared guidance missing: %s", out)
 	}
@@ -103,7 +106,7 @@ func TestSupersededDocsResourcesRemoved(t *testing.T) {
 func TestIntegrationGuideDoesNotReferenceStaleDocsURIs(t *testing.T) {
 	_, cs := newTestHost(t)
 	res := callTool(t, cs, "integration_guide", map[string]any{
-		"project": "docs", "platform": "mobile"})
+		"project_id": 2, "platform": "mobile"})
 	if res.IsError {
 		t.Fatalf("error: %s", textOf(res))
 	}
@@ -139,21 +142,21 @@ func TestIntegrationGuideDoesNotReferenceStaleDocsURIs(t *testing.T) {
 func TestUpdateProjectSetsAttributes(t *testing.T) {
 	h, cs := newTestHost(t)
 	res := callTool(t, cs, "update_project", map[string]any{
-		"alias": "blog", "attributes": []string{"plan", "tier"},
+		"project_id": 1, "attributes": []string{"plan", "tier"},
 	})
 	if res.IsError {
 		t.Fatalf("error: %s", textOf(res))
 	}
-	p := h.reg.Snapshot(context.Background()).Project("blog")
+	p := h.reg.Snapshot(context.Background()).Project(1)
 	if len(p.Attributes) != 2 || p.Attributes[0] != "plan" || p.Attributes[1] != "tier" {
 		t.Fatalf("attributes not set: %+v", p.Attributes)
 	}
 	// omitted on a later update -> preserved
 	if res := callTool(t, cs, "update_project", map[string]any{
-		"alias": "blog", "name": "renamed"}); res.IsError {
+		"project_id": 1, "name": "renamed"}); res.IsError {
 		t.Fatalf("rename: %s", textOf(res))
 	}
-	p = h.reg.Snapshot(context.Background()).Project("blog")
+	p = h.reg.Snapshot(context.Background()).Project(1)
 	if len(p.Attributes) != 2 {
 		t.Fatal("attributes lost on unrelated update")
 	}

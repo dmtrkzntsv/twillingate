@@ -76,7 +76,7 @@ func TestMigration012Folds(t *testing.T) {
 	                                           ('p','2026-09-01','signup','$platform','iOS',2,2),
 	                                           ('p','2026-09-01','signup','$app_version','2.4.1',5,5)`)
 
-	if err := db.Migrate(ctx); err != nil {
+	if err := db.migrateThrough(ctx, 13); err != nil {
 		t.Fatalf("migration 012: %v", err)
 	}
 

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -33,7 +34,7 @@ func newID() string {
 }
 
 // handleEvents is the only ingest endpoint. It demultiplexes by event name:
-// views to the views table, everything else to product_events.
+// views to the views table, everything else to events.
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	var env envelope
 	if !decode(w, r, &env) {
@@ -54,11 +55,12 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	hashKey := strconv.FormatInt(p.ID, 10)
 	// Origin only deters browser-based abuse, since a scripted client can
 	// spoof or omit it — which is exactly the case worth keeping. Native
 	// apps send none and are unaffected; Electron and Tauri renderers add
 	// their scheme to allowed_origins.
-	if origin := r.Header.Get("Origin"); origin != "" && !s.originAllowed(w, r, p.Alias) {
+	if origin := r.Header.Get("Origin"); origin != "" && !s.originAllowed(w, r, p.ID) {
 		http.Error(w, "origin not allowed", http.StatusForbidden)
 		return
 	}
@@ -81,11 +83,10 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	// the web kind only. Applying it to app traffic would drop every client
 	// whose HTTP library sends a non-browser User-Agent.
 	botUA := enrich.IsBot(ua)
-	// Clamp to this project's own views raw window, not the global default:
-	// the daily pass aggregates and deletes raw rows per project using
-	// snap.RetentionFor(alias), so a clamp derived from the global window
-	// could still land a late event on a day this project already deleted.
-	maxAge := time.Duration(snap.RetentionFor(p.Alias).Views.RawDays) * 24 * time.Hour
+	// Retention is global, so the clamp is the configured raw window: a
+	// clamped event can never target a day the daily pass already
+	// aggregated and deleted.
+	maxAge := s.cfg.MaxEventAge()
 
 	var res ingestResult
 	var names []store.Identity
@@ -109,7 +110,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			res.warn(i, "timestamp out of range, clamped")
 		}
 
-		actor, actorKind, user, group := resolveIdentity(p, rv, salt, ip, ua)
+		actor, actorKind, user, group := resolveIdentity(p, rv, salt, ip, ua, hashKey)
 		names = append(names, identityNames(p, rv)...)
 
 		defaultKind, isView := viewName(ev.Name)
@@ -118,7 +119,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 				res.warn(i, "unknown reserved name %s, stored as a custom event", ev.Name)
 			}
 			s.queue.EnqueueEvent(store.ProductEvent{
-				ID: id, Project: p.Alias, EventName: ev.Name,
+				ID: id, ProjectID: p.ID, EventName: ev.Name,
 				TS: ts, ReceivedAt: received,
 				ActorID: actor, ActorKind: actorKind, UserID: user, GroupID: group,
 				OS: enrich.NormalizeOS(rv.OS), AppVersion: rv.AppVersion,
@@ -145,7 +146,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		v := store.View{
-			ID: id, Project: p.Alias, TS: ts, ReceivedAt: received, Kind: kind,
+			ID: id, ProjectID: p.ID, TS: ts, ReceivedAt: received, Kind: kind,
 			ActorID: actor, ActorKind: actorKind, UserID: user, GroupID: group, SessionID: rv.SessionID,
 			Host: rv.Host, Path: path,
 			UTMSource: rv.UTMSource, UTMMedium: rv.UTMMedium, UTMCampaign: rv.UTMCampaign,
@@ -185,7 +186,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		res.Accepted++
 	}
 
-	if names = dedupeIdentities(names, p.Alias); len(names) > 0 {
+	if names = dedupeIdentities(names, p.ID); len(names) > 0 {
 		if err := s.names.UpsertIdentities(r.Context(), names); err != nil {
 			s.logger.Error("identity upsert failed", "error", err)
 		}
@@ -208,7 +209,10 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 // group_id stays raw in both modes: it identifies an organization, not a
 // natural person, and hashing it would make dashboards unreadable for no
 // real privacy gain.
-func resolveIdentity(p *manage.Project, rv resolved, salt, ip, ua string) (actor, actorKind, user, group string) {
+//
+// hashKey is the project id as a decimal string — the id never changes, so
+// a project's hash input never changes.
+func resolveIdentity(p *manage.Project, rv resolved, salt, ip, ua, hashKey string) (actor, actorKind, user, group string) {
 	raw := rv.UserID
 	actorKind = store.ActorUser
 	if raw == "" {
@@ -223,17 +227,17 @@ func resolveIdentity(p *manage.Project, rv resolved, salt, ip, ua string) (actor
 		if actor == "" {
 			// No client identifier at all: fall back to the rotating hash
 			// rather than dropping the event.
-			actor = identity.VisitorHash(salt, ip, ua, p.Alias)
+			actor = identity.VisitorHash(salt, ip, ua, hashKey)
 		}
 		return actor, actorKind, rv.UserID, rv.GroupID
 	}
 	if raw == "" {
-		actor = identity.VisitorHash(salt, ip, ua, p.Alias)
+		actor = identity.VisitorHash(salt, ip, ua, hashKey)
 	} else {
-		actor = identity.ActorHash(salt, raw, p.Alias)
+		actor = identity.ActorHash(salt, raw, hashKey)
 	}
 	if rv.UserID != "" {
-		user = identity.ActorHash(salt, rv.UserID, p.Alias)
+		user = identity.ActorHash(salt, rv.UserID, hashKey)
 	}
 	return actor, actorKind, user, rv.GroupID
 }
@@ -257,7 +261,7 @@ func identityNames(p *manage.Project, rv resolved) []store.Identity {
 
 // dedupeIdentities collapses the repeats a batch-level name produces across
 // every event, and stamps the project.
-func dedupeIdentities(in []store.Identity, project string) []store.Identity {
+func dedupeIdentities(in []store.Identity, projectID int64) []store.Identity {
 	if len(in) == 0 {
 		return nil
 	}
@@ -269,7 +273,7 @@ func dedupeIdentities(in []store.Identity, project string) []store.Identity {
 			continue
 		}
 		seen[k] = true
-		i.Project = project
+		i.ProjectID = projectID
 		out = append(out, i)
 	}
 	return out

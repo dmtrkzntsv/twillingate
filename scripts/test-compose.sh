@@ -52,13 +52,14 @@ for _ in $(seq 1 30); do
 done
 
 # Projects live in the database now: seed one through the CLI inside the
-# running container instead of mounting a projects.json.
+# running container instead of mounting a projects.json. A fresh database's
+# first project is id 1.
 echo "creating project via the CLI..."
 compose exec -T twillingate \
-  /usr/local/bin/twillingate project create -alias dev -name Dev -origin "http://localhost:18080" \
+  /usr/local/bin/twillingate project create -name Dev -origin "http://localhost:18080" \
   || fail "project create failed"
 key="$(compose exec -T twillingate \
-  /usr/local/bin/twillingate key issue -project dev -label web | grep -o 'ak_[0-9a-f]*' | head -1)"
+  /usr/local/bin/twillingate key issue -project-id 1 -label web | grep -o 'ak_[0-9a-f]*' | head -1)"
 [ -n "$key" ] || fail "key issue failed"
 
 # curl's default User-Agent is classified as a bot and the pageview would be
@@ -103,7 +104,7 @@ curl -fsS "http://127.0.0.1:13000/" | grep -q "<title>" || fail "index is not a 
 
 # Every templated route, including the drill-down that only prerenders when
 # its query-string read is guarded for the prerender pass.
-for page in /web/dev/ /app/dev/ /product/dev/ /users/dev/ /groups/dev/ /retention/dev/ /web/dev/page/; do
+for page in /views/1/ /product/1/ /users/1/ /groups/1/ /retention/1/ /views/1/page/; do
   code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:13000$page")"
   [ "$code" = "200" ] || fail "$page returned $code"
 done

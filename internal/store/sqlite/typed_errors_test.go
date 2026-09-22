@@ -9,28 +9,29 @@ import (
 )
 
 // Every registry write that rejects a call because of what the caller
-// named — a missing alias or key, a taken alias or label — must be
-// classifiable with errors.Is, so the MCP and CLI edges can map it
-// without matching message text.
+// named — a missing id or key, a label already taken on that project —
+// must be classifiable with errors.Is, so the MCP and CLI edges can map
+// it without matching message text.
 func TestRegistryWritesReturnTypedOutcomes(t *testing.T) {
 	d := openRegistryDB(t)
 	ctx := context.Background()
 	audit := store.AuditEntry{Actor: "test", Action: "test", Subject: "test"}
-	blog := store.RegistryProject{Alias: "blog", Name: "blog", Identity: "anonymous", AllowedOrigins: "[]", Attributes: "[]"}
-	if err := d.CreateProject(ctx, blog, audit); err != nil {
+	blog := store.RegistryProject{Name: "blog", Identity: "anonymous", AllowedOrigins: "[]", Attributes: "[]"}
+	id, err := d.CreateProject(ctx, blog, audit)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := d.InsertIngestKey(ctx, store.RegistryKey{Key: "ak_1", Project: "blog", Label: "web"}, audit); err != nil {
+	if err := d.InsertIngestKey(ctx, store.RegistryKey{Key: "ak_1", ProjectID: id, Label: "web"}, audit); err != nil {
 		t.Fatal(err)
 	}
+	const ghost int64 = 7 // never assigned
 
 	notFound := map[string]error{
-		"update unknown alias":   d.UpdateProject(ctx, store.RegistryProject{Alias: "ghost", AllowedOrigins: "[]", Attributes: "[]"}, audit),
-		"archive unknown alias":  d.SetProjectArchived(ctx, "ghost", true, audit),
-		"disable unknown key":    d.SetIngestKeyDisabled(ctx, "blog", "ghost", true, audit),
-		"disable key of unknown": d.SetIngestKeyDisabled(ctx, "ghost", "web", true, audit),
-		"delete unknown alias":   d.DeleteProjectData(ctx, "ghost", audit),
-		"rename unknown alias":   d.RenameProject(ctx, "ghost", "journal", audit),
+		"update unknown id":      d.UpdateProject(ctx, store.RegistryProject{ID: ghost, AllowedOrigins: "[]", Attributes: "[]"}, audit),
+		"archive unknown id":     d.SetProjectArchived(ctx, ghost, true, audit),
+		"disable unknown key":    d.SetIngestKeyDisabled(ctx, id, "ghost", true, audit),
+		"disable key of unknown": d.SetIngestKeyDisabled(ctx, ghost, "web", true, audit),
+		"delete unknown id":      d.DeleteProjectData(ctx, ghost, audit),
 	}
 	for name, err := range notFound {
 		if !errors.Is(err, store.ErrNotFound) {
@@ -38,29 +39,14 @@ func TestRegistryWritesReturnTypedOutcomes(t *testing.T) {
 		}
 	}
 
-	conflict := map[string]error{
-		"create taken alias": d.CreateProject(ctx, blog, audit),
-		"issue taken label":  d.InsertIngestKey(ctx, store.RegistryKey{Key: "ak_2", Project: "blog", Label: "web"}, audit),
-		"rename onto taken alias": func() error {
-			other := blog
-			other.Alias = "journal"
-			if err := d.CreateProject(ctx, other, audit); err != nil {
-				t.Fatal(err)
-			}
-			return d.RenameProject(ctx, "blog", "journal", audit)
-		}(),
-	}
-	for name, err := range conflict {
-		if !errors.Is(err, store.ErrConflict) {
-			t.Errorf("%s: err = %v, want errors.Is(err, store.ErrConflict)", name, err)
-		}
+	err = d.InsertIngestKey(ctx, store.RegistryKey{Key: "ak_2", ProjectID: id, Label: "web"}, audit)
+	if !errors.Is(err, store.ErrConflict) {
+		t.Errorf("issue taken label: err = %v, want errors.Is(err, store.ErrConflict)", err)
 	}
 
-	// A rename to the alias the project already has is neither outcome:
-	// nothing is missing and nothing collides. It keeps its own message
-	// (see TestRenameProjectSameAliasIsRejectedWithItsOwnMessage).
-	err := d.RenameProject(ctx, "blog", "blog", audit)
-	if err == nil || errors.Is(err, store.ErrConflict) || errors.Is(err, store.ErrNotFound) {
-		t.Errorf("rename to own alias: err = %v, want a plain error", err)
+	// A repeated name is not a conflict: the id is the identity and the
+	// name is a label, so nothing collides.
+	if _, err := d.CreateProject(ctx, blog, audit); err != nil {
+		t.Errorf("create with a repeated name: err = %v, want nil", err)
 	}
 }

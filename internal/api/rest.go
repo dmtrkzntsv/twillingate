@@ -147,6 +147,12 @@ func setField(f reflect.Value, name, raw string) error {
 			return invalidf("%s must be an integer, got %q", name, raw)
 		}
 		f.SetInt(int64(n))
+	case reflect.Int64:
+		n, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			return invalidf("%s must be an integer, got %q", name, raw)
+		}
+		f.SetInt(n)
 	case reflect.Bool:
 		b, err := strconv.ParseBool(raw)
 		if err != nil {

@@ -21,9 +21,9 @@ func seedDB(t *testing.T) string {
 	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.CreateProject(context.Background(), store.RegistryProject{
-		Alias: "blog", Name: "My blog", Identity: "identified", AllowedOrigins: "[]"},
-		store.AuditEntry{Actor: "test", Action: "project.create", Subject: "blog"}); err != nil {
+	if _, err := st.CreateProject(context.Background(), store.RegistryProject{
+		Name: "My blog", Identity: "identified", AllowedOrigins: "[]", Attributes: "[]"},
+		store.AuditEntry{Actor: "test", Action: "project.create"}); err != nil {
 		t.Fatal(err)
 	}
 	st.Close()

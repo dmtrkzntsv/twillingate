@@ -59,18 +59,19 @@ management tools. Every operation has both forms:
 | Change one | `twillingate project update` | `update_project` |
 | List them | `twillingate project list` | `list_projects` |
 | Archive / restore | `twillingate project archive` / `restore` | `archive_project` / `restore_project` |
-| Rename | `twillingate project rename` | **none — CLI only** |
 | Issue an ingest key | `twillingate key issue` | `issue_ingest_key` |
 | List keys | `twillingate key list` | `list_ingest_keys` |
 | Disable / enable a key | `twillingate key disable` / `enable` | `disable_ingest_key` / `enable_ingest_key` |
-| Export / import the registry | `twillingate config export` / `import` | **none — CLI only** |
 | Get paste-ready setup | — | `integration_guide` |
 
-`create_project` and `update_project` take the project fields below as
-`{alias, name, identity, allowed_origins, attributes}`; `create_project`
-also takes `skip_key: true` to *not* issue a first key. `issue_ingest_key`
-takes `{project, label}` and returns the key **and** a paste-ready snippet.
-`integration_guide` takes `{project, platform}` where platform is `web`,
+`create_project` takes the project fields below as `{name, identity,
+allowed_origins, attributes}` (`name` required) and returns the new
+`project_id`; `update_project` takes `{project_id, …}` and merges — an
+omitted field keeps its value, `allowed_origins: []` clears the list.
+`create_project` also takes `skip_key: true` to *not* issue a first key.
+`issue_ingest_key` takes `{project_id, label}` and returns the key **and**
+a paste-ready snippet. `integration_guide` takes `{project_id, platform}`
+where platform is `web`,
 `spa`, `server` or `mobile`, and returns the whole setup as markdown with
 the project's live key and identity mode already filled in — reach for it
 before hand-assembling a snippet.
@@ -80,57 +81,45 @@ on several hostnames, and snippets use the default (`PUBLIC_URL`). Ask the
 user which one this site should use and change the snippet's `src` if it
 differs — the SDK posts to the origin it was loaded from.
 
-Renaming and registry import/export have no MCP tool: both rewrite every
-table in one transaction, which is not something to hand to an agent. Ask
-the operator to run them.
+There is no rename: the id is the key and the name is free text, so
+`project update -name` is a rename. There is no delete over the API
+either — deletion needs the CLI.
 
 The CLI forms:
 
 ```bash
-twillingate project create -alias myapp -name "My App" -identity anonymous \
+twillingate project create -name "My App" -identity anonymous \
   -origin https://myapp.com -attr plan -attr tier
-twillingate project list
-twillingate project update -alias myapp -origin https://myapp.com -origin https://www.myapp.com
-twillingate project rename -alias oldname -to newname   # data and ingest keys follow
-twillingate project archive -alias myapp                # reversible: `project restore`
-twillingate key issue -project myapp -label web
-twillingate key list -project myapp
-twillingate key disable -project myapp -label ios-2025
+twillingate project list                                 # id  identity  name
+twillingate project update -id 1 -origin https://myapp.com -origin https://www.myapp.com
+twillingate project update -id 1 -clear-origins
+twillingate project archive -id 1                        # reversible: `project restore`
+twillingate key issue -project-id 1 -label web
+twillingate key list -project-id 1
+twillingate key disable -project-id 1 -label ios-2025
 ```
 
 `project update` (and the `update_project` MCP tool) merge rather than
-replace: a field you omit keeps its current value. `-origin` is the
-exception — supplying it at all replaces the whole origins list. Neither can
-clear origins to an empty list (empty is treated as "not supplied"); to do
-that, edit the origins to `[]` in a `config export` dump and `config import`
-it back.
+replace: a field you omit keeps its current value. `-origin` and `-attr`
+are the exception — supplying either replaces the whole list.
+`-clear-origins` (or `allowed_origins: []` over the API) empties the
+origins.
 
 | Key | Meaning |
 | --- | --- |
-| `alias` | Internal key: the `project` column on every stored row and the dashboard label. Never transmitted. New aliases must match `^[a-z0-9]+$` — `blog`, `blog2`, `2048` are fine; `my_app` and `shop-uk` are not. Immutable once created; change one with `twillingate project rename`, which rewrites the `project` column across every table in one transaction. Ingest keys follow the rename, so deployed clients keep working. An alias created before this rule keeps working. |
-| `name` | Display name. |
+| `project_id` | Integer key assigned on create, never reissued after a delete. The `project_id` column on every stored row, the argument of every tool, route and CLI command, and the segment of every dashboard URL. Never transmitted by clients. |
+| `name` | Display name. Required; free text, need not be unique; change it with `project update -name`. |
 | `identity` | `anonymous` (default) or `identified`. |
 | `ingest_keys` | One or more `{key, label, disabled}` credentials. Required. |
 | `allowed_origins` | Origins allowed to post for this project. `*` is a wildcard — `https://*.example.com` covers every subdomain, a bare `*` allows any origin. Add `tauri://localhost` or `app://.` for Electron/Tauri. |
-| `retention` | Per-project override of any retention window. |
 | `attributes` | Custom product-event attribute keys to break down. |
-
-`retention` is not a CLI flag — set it through `twillingate config export`
-(dumps every project as JSON) and `twillingate config import FILE` (upserts
-from that JSON, or from a pre-upgrade `projects.json`, detecting the legacy
-bare-array format automatically). Import never archives or deletes anything
-absent from the file, so a partial edit is safe. Overrides are field-level:
-
-```json
-"retention": { "web": { "raw_days": 90 } }
-```
 
 ### Attribute breakdowns
 
 A project declares which product-event attribute keys are worth reporting on:
 
 ```bash
-twillingate project update -alias myapp -attr plan -attr tier
+twillingate project update -id 1 -attr plan -attr tier
 ```
 
 `-attr` is repeatable and, like `-origin`, replaces the whole list when
@@ -189,7 +178,7 @@ from code.
         data-identity="anonymous"></script>
 ```
 
-`twillingate key issue -project <alias> -label <label>` mints the key and
+`twillingate key issue -project-id <id> -label <label>` mints the key and
 prints this snippet ready to paste. Its `src` uses `PUBLIC_URL`; change
 the origin if this site uses another collector hostname.
 
@@ -793,11 +782,11 @@ A connected session gets seventeen tools. Reach for a purpose-built one
 before `query` — they are cheaper, they cannot be malformed, and they
 already apply the caveats below.
 
-**Reading (all take `project`, `from`, `to` as `YYYY-MM-DD` unless noted):**
+**Reading (all take `project_id`, `from`, `to` as `YYYY-MM-DD` unless noted):**
 
 | Tool | Extra parameters | Returns |
 | --- | --- | --- |
-| `list_projects` | none | Every non-archived project, its alias and identity mode. Call this first — every other tool needs an alias |
+| `list_projects` | none | Every project with its `project_id`, name, identity mode and data coverage. Call this first — every other tool needs a `project_id` |
 | `views_overview` | `kind` (optional) | Visitors, views, sessions, bounces, average session length per day, summed across kinds unless `kind` filters one |
 | `views_breakdown` | `dimension`, `limit` (default 20) | Top rows for one of `kinds`, `paths`, `hosts`, `referrers`, `utm`, `countries`, `os`, `browsers`, `app_versions`, `devices`, `displays`. Two-key dimensions return both columns |
 | `product_events` | `event` (optional filter) | Count and unique users per event name, plus daily totals |
@@ -832,26 +821,26 @@ are MCP-only — there is no REST equivalent.
 
 ```bash
 curl -H "Authorization: Bearer $TOKEN" \
-  "https://t.example.com/api/projects/blog/views/overview?from=2026-09-01&to=2026-09-13"
+  "https://t.example.com/api/projects/1/views/overview?from=2026-09-01&to=2026-09-13"
 ```
 
 | Method | Path | Mirrors | Input |
 |---|---|---|---|
 | `GET` | `/api/projects` | `list_projects` | — |
-| `POST` | `/api/projects` | `create_project` | body: `alias`, `name`, `identity`, `allowed_origins`, `attributes`, `skip_key` → 201 |
-| `PATCH` | `/api/projects/{alias}` | `update_project` | body: fields to change (merge) |
-| `POST` | `/api/projects/{alias}/archive` | `archive_project` | — |
-| `POST` | `/api/projects/{alias}/restore` | `restore_project` | — |
-| `GET` | `/api/keys` | `list_ingest_keys` | query: `project` |
-| `POST` | `/api/projects/{project}/keys` | `issue_ingest_key` | body: `label` → 201 |
-| `POST` | `/api/projects/{project}/keys/{label}/disable` | `disable_ingest_key` | — |
-| `POST` | `/api/projects/{project}/keys/{label}/enable` | `enable_ingest_key` | — |
-| `GET` | `/api/projects/{project}/views/overview` | `views_overview` | query: `from`, `to`, `kind` |
-| `GET` | `/api/projects/{project}/views/breakdown` | `views_breakdown` | query: `from`, `to`, `dimension`, `limit` |
-| `GET` | `/api/projects/{project}/product/events` | `product_events` | query: `from`, `to`, `event` |
-| `GET` | `/api/projects/{project}/product/attributes` | `product_attributes` | query: `from`, `to`, `event` |
-| `GET` | `/api/projects/{project}/retention` | `retention` | query: `from`, `to`, `actor` |
-| `GET` | `/api/projects/{project}/identities` | `identities` | query: `from`, `to`, `kind`, `limit` |
+| `POST` | `/api/projects` | `create_project` | body: `name`, `identity`, `allowed_origins`, `attributes`, `skip_key` → 201 |
+| `PATCH` | `/api/projects/{project_id}` | `update_project` | body: fields to change (merge); `allowed_origins: []` clears |
+| `POST` | `/api/projects/{project_id}/archive` | `archive_project` | — |
+| `POST` | `/api/projects/{project_id}/restore` | `restore_project` | — |
+| `GET` | `/api/keys` | `list_ingest_keys` | query: `project_id` |
+| `POST` | `/api/projects/{project_id}/keys` | `issue_ingest_key` | body: `label` → 201 |
+| `POST` | `/api/projects/{project_id}/keys/{label}/disable` | `disable_ingest_key` | — |
+| `POST` | `/api/projects/{project_id}/keys/{label}/enable` | `enable_ingest_key` | — |
+| `GET` | `/api/projects/{project_id}/views/overview` | `views_overview` | query: `from`, `to`, `kind` |
+| `GET` | `/api/projects/{project_id}/views/breakdown` | `views_breakdown` | query: `from`, `to`, `dimension`, `limit` |
+| `GET` | `/api/projects/{project_id}/product/events` | `product_events` | query: `from`, `to`, `event` |
+| `GET` | `/api/projects/{project_id}/product/attributes` | `product_attributes` | query: `from`, `to`, `event` |
+| `GET` | `/api/projects/{project_id}/retention` | `retention` | query: `from`, `to`, `actor` |
+| `GET` | `/api/projects/{project_id}/identities` | `identities` | query: `from`, `to`, `kind`, `limit` |
 | `POST` | `/api/query` | `query` | body: `sql` |
 | `GET` | `/api/schema/views` | `schema://views` | — (text/plain) |
 
@@ -888,7 +877,8 @@ from the DDL. The three that matter most:
    counted before signed-in tracking began (before migration 011) have no
    `user` rows; they sit wholly under `install`.
 
-Every view carries a `project` column — always filter on it.
+Every view carries a `project_id` column — always filter on it; the ids
+are the ones `list_projects` returns.
 
 The views family is `v_views_daily` (per kind), `v_views_paths`,
 `v_views_hosts`, `v_views_referrers`, `v_views_utm`, `v_views_countries`,
@@ -896,8 +886,8 @@ The views family is `v_views_daily` (per kind), `v_views_paths`,
 and `v_views_displays`. Every dimension is capped at 500 values per day;
 the tail is one `(other)` row whose visitors are distinct actors, not a sum.
 Product events have `v_product_daily`, `v_product_totals` and
-`v_product_attrs`, plus a per-project `v_events_flat` with one column per
-declared attribute. `v_identity_daily` and `identities` join user and group
+`v_product_attrs`, plus `v_events_flat`, which reads the `events` table
+with one column per declared attribute. `v_identity_daily` and `identities` join user and group
 activity to display names; `v_identity_daily` keeps the busiest 500 users
 and 500 groups per day and drops the rest, with no `(other)` row, so do not
 sum it for totals. `v_retention` is keyed by `actor_kind`.

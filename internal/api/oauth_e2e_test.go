@@ -176,7 +176,7 @@ func e2eHandler(t *testing.T, dsn string, shared bool) http.Handler {
 	}
 	t.Cleanup(func() { st.Close() })
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	reg := manage.New(st, cfg.Retention, logger)
+	reg := manage.New(st, logger)
 	if err := reg.Reload(context.Background()); err != nil {
 		t.Fatal(err)
 	}

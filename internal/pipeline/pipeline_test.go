@@ -213,8 +213,8 @@ func TestFlushesViewsBySize(t *testing.T) {
 	done := make(chan struct{})
 	go func() { b.Run(ctx); close(done) }()
 
-	b.EnqueueView(store.View{ID: "1", Project: "p", Path: "/a"})
-	b.EnqueueView(store.View{ID: "2", Project: "p", Path: "/b"})
+	b.EnqueueView(store.View{ID: "1", ProjectID: 1, Path: "/a"})
+	b.EnqueueView(store.View{ID: "2", ProjectID: 1, Path: "/b"})
 
 	deadline := time.Now().Add(2 * time.Second)
 	for sink.viewCount() < 2 && time.Now().Before(deadline) {
@@ -235,7 +235,7 @@ func TestShutdownDrainsViews(t *testing.T) {
 	done := make(chan struct{})
 	go func() { b.Run(ctx); close(done) }()
 
-	b.EnqueueView(store.View{ID: "1", Project: "p", Path: "/a"})
+	b.EnqueueView(store.View{ID: "1", ProjectID: 1, Path: "/a"})
 	time.Sleep(20 * time.Millisecond)
 	cancel()
 	<-done
@@ -255,8 +255,8 @@ func TestFlushSizeCountsAllKinds(t *testing.T) {
 	done := make(chan struct{})
 	go func() { b.Run(ctx); close(done) }()
 
-	b.EnqueueView(store.View{ID: "v", Project: "p", Path: "/a"})
-	b.EnqueueEvent(store.ProductEvent{ID: "e", Project: "p", EventName: "n"})
+	b.EnqueueView(store.View{ID: "v", ProjectID: 1, Path: "/a"})
+	b.EnqueueEvent(store.ProductEvent{ID: "e", ProjectID: 1, EventName: "n"})
 
 	deadline := time.Now().Add(2 * time.Second)
 	for sink.viewCount() < 1 && time.Now().Before(deadline) {

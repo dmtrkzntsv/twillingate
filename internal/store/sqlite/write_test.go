@@ -20,7 +20,7 @@ func TestWriteViewsRoundTrip(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	views := []store.View{{
-		ID: "h1", Project: "app", TS: ts("2026-08-22T10:00:00Z"),
+		ID: "h1", ProjectID: 1, TS: ts("2026-08-22T10:00:00Z"),
 		Kind: "web", ActorID: "v1", ActorKind: store.ActorConnection, Path: "/x", ReferrerSource: "google",
 		UTMSource: "hn", Country: "DE", Device: "desktop", Browser: "Firefox", OS: "Linux",
 	}}
@@ -43,22 +43,22 @@ func TestWriteProductEventsAttributesJSON(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	err := db.WriteProductEvents(ctx, []store.ProductEvent{
-		{ID: "e1", Project: "app", EventName: "sub", UserID: "u1",
+		{ID: "e1", ProjectID: 1, EventName: "sub", UserID: "u1",
 			TS: ts("2026-08-22T10:00:00Z"), Attributes: map[string]string{"plan": "pro"}},
-		{ID: "e2", Project: "app", EventName: "sub", UserID: "u2",
+		{ID: "e2", ProjectID: 1, EventName: "sub", UserID: "u2",
 			TS: ts("2026-08-22T10:01:00Z")}, // nil attributes
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	var attrs string
-	if err := db.db.QueryRow(`SELECT attributes->>'plan' FROM product_events WHERE id='e1'`).Scan(&attrs); err != nil {
+	if err := db.db.QueryRow(`SELECT attributes->>'plan' FROM events WHERE id='e1'`).Scan(&attrs); err != nil {
 		t.Fatal(err)
 	}
 	if attrs != "pro" {
 		t.Fatalf("attrs = %q", attrs)
 	}
-	if err := db.db.QueryRow(`SELECT attributes FROM product_events WHERE id='e2'`).Scan(&attrs); err != nil {
+	if err := db.db.QueryRow(`SELECT attributes FROM events WHERE id='e2'`).Scan(&attrs); err != nil {
 		t.Fatal(err)
 	}
 	if attrs != "{}" {
@@ -66,28 +66,31 @@ func TestWriteProductEventsAttributesJSON(t *testing.T) {
 	}
 }
 
-// ProjectAliases returns every registry row including archived ones: the
+// ProjectIDs returns every registry row including archived ones: the
 // daily pass (internal/jobs) relies on this to keep maintaining a project
 // after it is archived, using global retention.
-func TestProjectAliasesIncludesArchived(t *testing.T) {
+func TestProjectIDsIncludesArchived(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	must := func(err error) {
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
 	audit := store.AuditEntry{Actor: "test", Action: "project.create"}
-	must(db.CreateProject(ctx, store.RegistryProject{Alias: "a", Name: "A", Identity: "anonymous", AllowedOrigins: "[]"}, audit))
-	must(db.CreateProject(ctx, store.RegistryProject{Alias: "b", Name: "B", Identity: "anonymous", AllowedOrigins: "[]"}, audit))
-	must(db.SetProjectArchived(ctx, "b", true, store.AuditEntry{Actor: "test", Action: "project.archive"}))
-
-	ids, err := db.ProjectAliases(ctx)
+	a, err := db.CreateProject(ctx, store.RegistryProject{Name: "A", Identity: "anonymous", AllowedOrigins: "[]"}, audit)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(ids) != 2 || ids[0] != "a" || ids[1] != "b" {
-		t.Fatalf("ProjectAliases = %v, want [a b] (archived rows included)", ids)
+	b, err := db.CreateProject(ctx, store.RegistryProject{Name: "B", Identity: "anonymous", AllowedOrigins: "[]"}, audit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetProjectArchived(ctx, b, true, store.AuditEntry{Actor: "test", Action: "project.archive"}); err != nil {
+		t.Fatal(err)
+	}
+
+	ids, err := db.ProjectIDs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 2 || ids[0] != a || ids[1] != b {
+		t.Fatalf("ProjectIDs = %v, want [%d %d] (archived rows included)", ids, a, b)
 	}
 }
 
@@ -116,7 +119,7 @@ func TestWriteViewsAppRoundTrip(t *testing.T) {
 	tsV := time.Date(2026, 8, 23, 10, 0, 0, 0, time.UTC)
 
 	in := []store.View{{
-		ID: "018f-a", Project: "p", TS: tsV, ReceivedAt: tsV,
+		ID: "018f-a", ProjectID: 1, TS: tsV, ReceivedAt: tsV,
 		Kind: "app", ActorID: "act1", ActorKind: store.ActorInstall, UserID: "u1", GroupID: "org9", SessionID: "s1",
 		Path: "/settings", OS: "iOS", AppVersion: "2.4.1",
 		OSVersion: "17.2", DeviceModel: "iPhone15,2", Locale: "en-US", Country: "DE",
@@ -149,11 +152,11 @@ func TestWritesAreIdempotentOnID(t *testing.T) {
 	ctx := context.Background()
 	tsV := time.Now().UTC()
 
-	appView := store.View{ID: "dup", Project: "p", TS: tsV, ReceivedAt: tsV,
+	appView := store.View{ID: "dup", ProjectID: 1, TS: tsV, ReceivedAt: tsV,
 		Kind: "app", ActorID: "a", ActorKind: store.ActorInstall, Path: "/x"}
-	webView := store.View{ID: "duph", Project: "p", TS: tsV, ReceivedAt: tsV,
+	webView := store.View{ID: "duph", ProjectID: 1, TS: tsV, ReceivedAt: tsV,
 		Kind: "web", ActorID: "a", ActorKind: store.ActorConnection, Path: "/x"}
-	ev := store.ProductEvent{ID: "dupe", Project: "p", EventName: "n",
+	ev := store.ProductEvent{ID: "dupe", ProjectID: 1, EventName: "n",
 		TS: tsV, ReceivedAt: tsV, ActorID: "a"}
 
 	for i := 0; i < 2; i++ {
@@ -175,11 +178,11 @@ func TestWritesAreIdempotentOnID(t *testing.T) {
 	if n != 2 {
 		t.Errorf("views has %d rows after replay, want 2 (one app, one web id)", n)
 	}
-	if err := db.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM product_events`).Scan(&n); err != nil {
+	if err := db.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM events`).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	if n != 1 {
-		t.Errorf("product_events has %d rows after replay, want 1", n)
+		t.Errorf("events has %d rows after replay, want 1", n)
 	}
 }
 
@@ -188,12 +191,12 @@ func TestWriteCarriesIdentityAndAppContext(t *testing.T) {
 	ctx := context.Background()
 	tsV := time.Now().UTC()
 
-	if err := db.WriteViews(ctx, []store.View{{ID: "h", Project: "p", TS: tsV,
+	if err := db.WriteViews(ctx, []store.View{{ID: "h", ProjectID: 1, TS: tsV,
 		ReceivedAt: tsV, Kind: "web", ActorID: "a", ActorKind: store.ActorConnection,
 		UserID: "u1", GroupID: "org9", Path: "/x"}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.WriteProductEvents(ctx, []store.ProductEvent{{ID: "e", Project: "p",
+	if err := db.WriteProductEvents(ctx, []store.ProductEvent{{ID: "e", ProjectID: 1,
 		EventName: "n", TS: tsV, ReceivedAt: tsV, ActorID: "a", UserID: "u1",
 		GroupID: "org9", OS: "iOS", AppVersion: "2.4.1"}}); err != nil {
 		t.Fatal(err)
@@ -210,7 +213,7 @@ func TestWriteCarriesIdentityAndAppContext(t *testing.T) {
 
 	var osCol, ver string
 	if err := db.db.QueryRowContext(ctx,
-		`SELECT os, app_version FROM product_events WHERE id='e'`).Scan(&osCol, &ver); err != nil {
+		`SELECT os, app_version FROM events WHERE id='e'`).Scan(&osCol, &ver); err != nil {
 		t.Fatal(err)
 	}
 	if osCol != "iOS" || ver != "2.4.1" {
@@ -223,15 +226,15 @@ func TestUpsertIdentitiesLatestNameWins(t *testing.T) {
 	ctx := context.Background()
 
 	if err := db.UpsertIdentities(ctx, []store.Identity{
-		{Project: "p", Kind: store.KindUser, ID: "u1", Name: "Ada"},
+		{ProjectID: 1, Kind: store.KindUser, ID: "u1", Name: "Ada"},
 	}); err != nil {
 		t.Fatalf("first upsert: %v", err)
 	}
 	if err := db.UpsertIdentities(ctx, []store.Identity{
-		{Project: "p", Kind: store.KindUser, ID: "u1", Name: "Ada Lovelace"},
-		{Project: "p", Kind: store.KindGroup, ID: "org9", Name: "Acme"},
-		{Project: "p", Kind: store.KindUser, ID: "", Name: "skipped"},
-		{Project: "p", Kind: store.KindUser, ID: "u2", Name: ""},
+		{ProjectID: 1, Kind: store.KindUser, ID: "u1", Name: "Ada Lovelace"},
+		{ProjectID: 1, Kind: store.KindGroup, ID: "org9", Name: "Acme"},
+		{ProjectID: 1, Kind: store.KindUser, ID: "", Name: "skipped"},
+		{ProjectID: 1, Kind: store.KindUser, ID: "u2", Name: ""},
 	}); err != nil {
 		t.Fatalf("second upsert: %v", err)
 	}
@@ -242,7 +245,7 @@ func TestUpsertIdentitiesLatestNameWins(t *testing.T) {
 	}
 	var name string
 	if err := db.db.QueryRowContext(ctx,
-		`SELECT name FROM identities WHERE project='p' AND kind='user' AND id='u1'`).
+		`SELECT name FROM identities WHERE project_id=1 AND kind='user' AND id='u1'`).
 		Scan(&name); err != nil {
 		t.Fatal(err)
 	}
@@ -262,7 +265,7 @@ func TestWriteViewsStoresHost(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	views := []store.View{{
-		ID: "h1", Project: "app", TS: ts("2026-08-10T10:00:00Z"),
+		ID: "h1", ProjectID: 1, TS: ts("2026-08-10T10:00:00Z"),
 		Kind: "web", ActorID: "v1", ActorKind: store.ActorConnection, Host: "shop.example.com", Path: "/pricing",
 	}}
 	if err := db.WriteViews(ctx, views); err != nil {
@@ -284,7 +287,7 @@ func TestWriteViewsHostDefaultsEmpty(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	if err := db.WriteViews(ctx, []store.View{{
-		ID: "h2", Project: "app", TS: ts("2026-08-10T10:00:00Z"),
+		ID: "h2", ProjectID: 1, TS: ts("2026-08-10T10:00:00Z"),
 		Kind: "web", ActorID: "v1", ActorKind: store.ActorConnection, Path: "/pricing",
 	}}); err != nil {
 		t.Fatal(err)

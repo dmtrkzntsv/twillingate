@@ -8,9 +8,10 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/dmtrkzntsv/twillingate/internal/store"
-	"github.com/google/uuid"
 )
 
 func auditAndBump(ctx context.Context, tx *sql.Tx, a store.AuditEntry) error {
@@ -36,9 +37,8 @@ func (d *DB) ConfigVersion(ctx context.Context) (int64, error) {
 }
 
 func (d *DB) LoadRegistry(ctx context.Context) ([]store.RegistryProject, []store.RegistryKey, error) {
-	rows, err := d.db.QueryContext(ctx, `SELECT alias, name, identity,
-		allowed_origins, COALESCE(retention,''), attributes,
-		archived_at IS NOT NULL FROM projects ORDER BY alias`)
+	rows, err := d.db.QueryContext(ctx, `SELECT id, name, identity,
+		allowed_origins, attributes, archived_at IS NOT NULL FROM projects ORDER BY id`)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -46,8 +46,8 @@ func (d *DB) LoadRegistry(ctx context.Context) ([]store.RegistryProject, []store
 	var ps []store.RegistryProject
 	for rows.Next() {
 		var p store.RegistryProject
-		if err := rows.Scan(&p.Alias, &p.Name, &p.Identity,
-			&p.AllowedOrigins, &p.Retention, &p.Attributes, &p.Archived); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Identity,
+			&p.AllowedOrigins, &p.Attributes, &p.Archived); err != nil {
 			return nil, nil, err
 		}
 		ps = append(ps, p)
@@ -55,8 +55,8 @@ func (d *DB) LoadRegistry(ctx context.Context) ([]store.RegistryProject, []store
 	if err := rows.Err(); err != nil {
 		return nil, nil, err
 	}
-	krows, err := d.db.QueryContext(ctx, `SELECT key, project, label,
-		disabled_at IS NOT NULL FROM ingest_keys ORDER BY project, label`)
+	krows, err := d.db.QueryContext(ctx, `SELECT key, project_id, label,
+		disabled_at IS NOT NULL FROM ingest_keys ORDER BY project_id, label`)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -64,7 +64,7 @@ func (d *DB) LoadRegistry(ctx context.Context) ([]store.RegistryProject, []store
 	var ks []store.RegistryKey
 	for krows.Next() {
 		var k store.RegistryKey
-		if err := krows.Scan(&k.Key, &k.Project, &k.Label, &k.Disabled); err != nil {
+		if err := krows.Scan(&k.Key, &k.ProjectID, &k.Label, &k.Disabled); err != nil {
 			return nil, nil, err
 		}
 		ks = append(ks, k)
@@ -80,92 +80,96 @@ func ks2(ps []store.RegistryProject, ks []store.RegistryKey, err error) ([]store
 	return ps, ks, nil
 }
 
-func (d *DB) CreateProject(ctx context.Context, p store.RegistryProject, a store.AuditEntry) error {
-	return d.tx(ctx, func(tx *sql.Tx) error {
-		if err := insertProject(ctx, tx, p); err != nil {
+// CreateProject lets SQLite assign the id and returns it. The audit subject
+// is the new id, written here because only the store knows it.
+func (d *DB) CreateProject(ctx context.Context, p store.RegistryProject, a store.AuditEntry) (int64, error) {
+	var id int64
+	err := d.tx(ctx, func(tx *sql.Tx) error {
+		var err error
+		if id, err = insertProject(ctx, tx, p); err != nil {
 			return err
 		}
+		a.Subject = strconv.FormatInt(id, 10)
 		return auditAndBump(ctx, tx, a)
 	})
+	return id, err
 }
 
 // CreateProjectWithKey creates a project and its first ingest key in one
 // transaction: if the key cannot be inserted, the project is not created
-// either, so a retry does not collide with a keyless leftover.
-func (d *DB) CreateProjectWithKey(ctx context.Context, p store.RegistryProject, k store.RegistryKey, projectAudit, keyAudit store.AuditEntry) error {
-	return d.tx(ctx, func(tx *sql.Tx) error {
-		if err := insertProject(ctx, tx, p); err != nil {
+// either, so a retry does not collide with a keyless leftover. k.ProjectID
+// and both audit subjects are filled from the id SQLite assigns.
+func (d *DB) CreateProjectWithKey(ctx context.Context, p store.RegistryProject, k store.RegistryKey, projectAudit, keyAudit store.AuditEntry) (int64, error) {
+	var id int64
+	err := d.tx(ctx, func(tx *sql.Tx) error {
+		var err error
+		if id, err = insertProject(ctx, tx, p); err != nil {
 			return err
 		}
+		projectAudit.Subject = strconv.FormatInt(id, 10)
 		if err := auditAndBump(ctx, tx, projectAudit); err != nil {
 			return err
 		}
+		k.ProjectID = id
 		if err := insertKey(ctx, tx, k); err != nil {
 			return err
 		}
+		keyAudit.Subject = keySubject(id, k.Label)
 		return auditAndBump(ctx, tx, keyAudit)
 	})
+	return id, err
 }
 
-func insertProject(ctx context.Context, tx *sql.Tx, p store.RegistryProject) error {
-	id, err := uuid.NewV7()
+// keySubject is the audit_log subject for a key: "<project id>/<label>".
+func keySubject(projectID int64, label string) string {
+	return strconv.FormatInt(projectID, 10) + "/" + label
+}
+
+func insertProject(ctx context.Context, tx *sql.Tx, p store.RegistryProject) (int64, error) {
+	res, err := tx.ExecContext(ctx, `INSERT INTO projects
+		(name, identity, allowed_origins, attributes) VALUES (?,?,?,?)`,
+		p.Name, p.Identity, p.AllowedOrigins, p.Attributes)
 	if err != nil {
-		return fmt.Errorf("create project: %w", err)
+		return 0, fmt.Errorf("create project %q: %w", p.Name, err)
 	}
-	var taken int
-	if err := tx.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM projects WHERE alias=?`, p.Alias).Scan(&taken); err != nil {
-		return err
-	}
-	if taken > 0 {
-		return fmt.Errorf("create project: alias %q: %w", p.Alias, store.ErrConflict)
-	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO projects
-		(id, alias, name, identity, allowed_origins, retention, attributes)
-		VALUES (?,?,?,?,?,NULLIF(?,''),?)`,
-		id.String(), p.Alias, p.Name, p.Identity, p.AllowedOrigins,
-		p.Retention, p.Attributes); err != nil {
-		return fmt.Errorf("create project %q: %w", p.Alias, err)
-	}
-	return nil
+	return res.LastInsertId()
 }
 
 func (d *DB) UpdateProject(ctx context.Context, p store.RegistryProject, a store.AuditEntry) error {
 	return d.tx(ctx, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx, `UPDATE projects SET name=?, identity=?,
-			allowed_origins=?, retention=NULLIF(?,''), attributes=?
-			WHERE alias=?`,
-			p.Name, p.Identity, p.AllowedOrigins, p.Retention, p.Attributes, p.Alias)
+			allowed_origins=?, attributes=? WHERE id=?`,
+			p.Name, p.Identity, p.AllowedOrigins, p.Attributes, p.ID)
 		if err != nil {
 			return err
 		}
 		if n, _ := res.RowsAffected(); n == 0 {
-			return fmt.Errorf("update project: unknown alias %q: %w", p.Alias, store.ErrNotFound)
+			return fmt.Errorf("update project: unknown id %d: %w", p.ID, store.ErrNotFound)
 		}
 		return auditAndBump(ctx, tx, a)
 	})
 }
 
-func (d *DB) SetProjectArchived(ctx context.Context, alias string, archived bool, a store.AuditEntry) error {
+func (d *DB) SetProjectArchived(ctx context.Context, id int64, archived bool, a store.AuditEntry) error {
 	return d.tx(ctx, func(tx *sql.Tx) error {
-		q := `UPDATE projects SET archived_at=datetime('now') WHERE alias=? AND archived_at IS NULL`
+		q := `UPDATE projects SET archived_at=datetime('now') WHERE id=? AND archived_at IS NULL`
 		if !archived {
-			q = `UPDATE projects SET archived_at=NULL WHERE alias=?`
+			q = `UPDATE projects SET archived_at=NULL WHERE id=?`
 		}
-		res, err := tx.ExecContext(ctx, q, alias)
+		res, err := tx.ExecContext(ctx, q, id)
 		if err != nil {
 			return err
 		}
 		if n, _ := res.RowsAffected(); n == 0 && archived {
 			// restore of a non-archived project is a no-op, archive of an
-			// unknown alias is an error; check existence to distinguish.
+			// unknown id is an error; check existence to distinguish.
 			var c int
 			if err := tx.QueryRowContext(ctx,
-				`SELECT COUNT(*) FROM projects WHERE alias=?`, alias).Scan(&c); err != nil {
+				`SELECT COUNT(*) FROM projects WHERE id=?`, id).Scan(&c); err != nil {
 				return err
 			}
 			if c == 0 {
-				return fmt.Errorf("archive: unknown alias %q: %w", alias, store.ErrNotFound)
+				return fmt.Errorf("archive: unknown id %d: %w", id, store.ErrNotFound)
 			}
 		}
 		return auditAndBump(ctx, tx, a)
@@ -181,49 +185,46 @@ func (d *DB) InsertIngestKey(ctx context.Context, k store.RegistryKey, a store.A
 	})
 }
 
+// insertKey relies on UNIQUE (project_id, label): the constraint error is
+// mapped to store.ErrConflict rather than pre-checked with a count.
 func insertKey(ctx context.Context, tx *sql.Tx, k store.RegistryKey) error {
-	var c int
-	if err := tx.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM ingest_keys WHERE project=? AND label=?`,
-		k.Project, k.Label).Scan(&c); err != nil {
-		return err
+	_, err := tx.ExecContext(ctx,
+		`INSERT INTO ingest_keys (key, project_id, label) VALUES (?,?,?)`,
+		k.Key, k.ProjectID, k.Label)
+	if err == nil {
+		return nil
 	}
-	if c > 0 {
-		return fmt.Errorf("key label %q for project %q: %w", k.Label, k.Project, store.ErrConflict)
+	if strings.Contains(err.Error(), "UNIQUE constraint failed: ingest_keys.project_id, ingest_keys.label") {
+		return fmt.Errorf("key label %q for project %d: %w", k.Label, k.ProjectID, store.ErrConflict)
 	}
-	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO ingest_keys (key, project, label) VALUES (?,?,?)`,
-		k.Key, k.Project, k.Label); err != nil {
-		return fmt.Errorf("issue key for %q: %w", k.Project, err)
-	}
-	return nil
+	return fmt.Errorf("issue key for project %d: %w", k.ProjectID, err)
 }
 
-func (d *DB) SetIngestKeyDisabled(ctx context.Context, project, label string, disabled bool, a store.AuditEntry) error {
+func (d *DB) SetIngestKeyDisabled(ctx context.Context, projectID int64, label string, disabled bool, a store.AuditEntry) error {
 	return d.tx(ctx, func(tx *sql.Tx) error {
-		q := `UPDATE ingest_keys SET disabled_at=datetime('now') WHERE project=? AND label=?`
+		q := `UPDATE ingest_keys SET disabled_at=datetime('now') WHERE project_id=? AND label=?`
 		if !disabled {
-			q = `UPDATE ingest_keys SET disabled_at=NULL WHERE project=? AND label=?`
+			q = `UPDATE ingest_keys SET disabled_at=NULL WHERE project_id=? AND label=?`
 		}
-		res, err := tx.ExecContext(ctx, q, project, label)
+		res, err := tx.ExecContext(ctx, q, projectID, label)
 		if err != nil {
 			return err
 		}
 		if n, _ := res.RowsAffected(); n == 0 {
-			return fmt.Errorf("key %s/%s: %w", project, label, store.ErrNotFound)
+			return fmt.Errorf("key %s: %w", keySubject(projectID, label), store.ErrNotFound)
 		}
 		return auditAndBump(ctx, tx, a)
 	})
 }
 
-// projectTables is every table carrying a per-project `project` column.
+// projectTables is every table carrying a per-project `project_id` column.
 // Kept in one place so a future migration adding a table has one list to
 // extend; TestProjectTablesMatchesSchema (registry_test.go) cross-checks
 // this list against the live schema (sqlite_master + pragma_table_info) in
 // both directions, so a forgotten addition or a stale entry fails loudly
-// instead of silently orphaning rows on DeleteProjectData or RenameProject.
+// instead of silently orphaning rows on DeleteProjectData.
 var projectTables = []string{
-	"views", "product_events",
+	"views", "events",
 	"agg_views_daily", "agg_views_paths", "agg_views_hosts", "agg_views_referrers",
 	"agg_views_utm", "agg_views_countries", "agg_views_os", "agg_views_browsers",
 	"agg_views_app_versions", "agg_views_devices", "agg_views_displays",
@@ -233,69 +234,24 @@ var projectTables = []string{
 }
 
 // DeleteProjectData hard-deletes the project and every row keyed by its
-// alias, in one transaction (spec §7.3). The audit row is written in the
+// id, in one transaction (spec §7.3). The audit row is written in the
 // same transaction and survives — audit_log has no project column.
 // Page reclamation is the caller's job (IncrementalVacuum), because a
-// vacuum inside the tx would deadlock the single connection.
-func (d *DB) DeleteProjectData(ctx context.Context, alias string, a store.AuditEntry) error {
+// vacuum inside the tx would deadlock the single connection. The id is
+// never reissued (AUTOINCREMENT), so a stale reference to it stays dead.
+func (d *DB) DeleteProjectData(ctx context.Context, id int64, a store.AuditEntry) error {
 	return d.tx(ctx, func(tx *sql.Tx) error {
-		res, err := tx.ExecContext(ctx, `DELETE FROM projects WHERE alias=?`, alias)
+		res, err := tx.ExecContext(ctx, `DELETE FROM projects WHERE id=?`, id)
 		if err != nil {
 			return err
 		}
 		if n, _ := res.RowsAffected(); n == 0 {
-			return fmt.Errorf("delete: unknown alias %q: %w", alias, store.ErrNotFound)
+			return fmt.Errorf("delete: unknown id %d: %w", id, store.ErrNotFound)
 		}
 		for _, table := range projectTables {
 			if _, err := tx.ExecContext(ctx,
-				`DELETE FROM `+table+` WHERE project=?`, alias); err != nil {
+				`DELETE FROM `+table+` WHERE project_id=?`, id); err != nil {
 				return fmt.Errorf("delete %s: %w", table, err)
-			}
-		}
-		return auditAndBump(ctx, tx, a)
-	})
-}
-
-// RenameProject rewrites the alias on the registry row and the `project`
-// column on every table in projectTables, in one transaction. ingest_keys
-// is one of those tables, so keys follow the rename and deployed clients
-// keep working without redeploying — that is what makes this command
-// usable rather than a data-loss trap. The already-taken check on the new
-// alias runs before any write. The unknown-source check is not a separate
-// pre-check: it is the RowsAffected()==0 result of the UPDATE projects
-// statement itself, and an error at that point aborts the transaction —
-// so either way a rejected rename leaves the source alias and all its rows
-// completely untouched, just via rollback rather than avoidance for the
-// unknown-source case.
-//
-// PRAGMA foreign_keys is never enabled in this codebase, so the
-// `REFERENCES projects(alias)` clause on ingest_keys does not constrain
-// statement order; projects is updated first regardless, to match the
-// design doc.
-func (d *DB) RenameProject(ctx context.Context, old, new string, a store.AuditEntry) error {
-	return d.tx(ctx, func(tx *sql.Tx) error {
-		if old == new {
-			return fmt.Errorf("rename: project %q is already named %q", old, new)
-		}
-		var taken int
-		if err := tx.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM projects WHERE alias=?`, new).Scan(&taken); err != nil {
-			return err
-		}
-		if taken > 0 {
-			return fmt.Errorf("rename: alias %q: %w", new, store.ErrConflict)
-		}
-		res, err := tx.ExecContext(ctx, `UPDATE projects SET alias=? WHERE alias=?`, new, old)
-		if err != nil {
-			return err
-		}
-		if n, _ := res.RowsAffected(); n == 0 {
-			return fmt.Errorf("rename: unknown alias %q: %w", old, store.ErrNotFound)
-		}
-		for _, table := range projectTables {
-			if _, err := tx.ExecContext(ctx,
-				`UPDATE `+table+` SET project=? WHERE project=?`, new, old); err != nil {
-				return fmt.Errorf("rename %s: %w", table, err)
 			}
 		}
 		return auditAndBump(ctx, tx, a)

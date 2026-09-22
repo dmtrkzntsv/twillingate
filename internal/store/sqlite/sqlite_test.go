@@ -66,7 +66,7 @@ func TestMigrateIsIdempotent(t *testing.T) {
 func TestSchemaTablesExist(t *testing.T) {
 	db := newTestDB(t)
 	for _, table := range []string{
-		"meta", "projects", "views", "product_events",
+		"meta", "projects", "views", "events",
 		"agg_views_daily", "agg_views_paths", "agg_views_referrers", "agg_views_countries",
 		"agg_views_devices", "agg_views_browsers", "agg_views_os", "agg_views_utm",
 		"agg_product_daily", "agg_product_totals", "agg_product_attrs",
@@ -120,17 +120,17 @@ func TestMigration003Schema(t *testing.T) {
 
 	for _, c := range []struct{ table, column string }{
 		{"views", "kind"}, {"views", "actor_kind"}, {"views", "display_width"},
-		{"product_events", "actor_id"}, {"product_events", "user_id"},
-		{"product_events", "group_id"}, {"product_events", "actor_kind"}, {"product_events", "os"},
-		{"product_events", "app_version"}, {"product_events", "received_at"},
+		{"events", "actor_id"}, {"events", "user_id"},
+		{"events", "group_id"}, {"events", "actor_kind"}, {"events", "os"},
+		{"events", "app_version"}, {"events", "received_at"},
 		{"projects", "identity"},
 	} {
 		if !hasColumn(t, db, c.table, c.column) {
 			t.Errorf("%s.%s missing", c.table, c.column)
 		}
 	}
-	if hasColumn(t, db, "product_events", "platform") {
-		t.Error("product_events.platform should have been renamed to os")
+	if hasColumn(t, db, "events", "platform") {
+		t.Error("events.platform should have been renamed to os")
 	}
 }
 

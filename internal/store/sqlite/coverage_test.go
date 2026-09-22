@@ -19,19 +19,19 @@ func TestDaysBefore(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	views := []store.View{
-		{ID: "1", Project: "app", Kind: "web", ActorKind: store.ActorConnection, TS: ts("2026-08-10T10:00:00Z"), ActorID: "v1", Path: "/"},
-		{ID: "2", Project: "app", Kind: "web", ActorKind: store.ActorConnection, TS: ts("2026-08-10T11:00:00Z"), ActorID: "v2", Path: "/"},
-		{ID: "3", Project: "app", Kind: "web", ActorKind: store.ActorConnection, TS: ts("2026-08-11T10:00:00Z"), ActorID: "v1", Path: "/"},
-		{ID: "4", Project: "app", Kind: "web", ActorKind: store.ActorConnection, TS: ts("2026-08-20T10:00:00Z"), ActorID: "v1", Path: "/"},
-		{ID: "5", Project: "other", Kind: "web", ActorKind: store.ActorConnection, TS: ts("2026-08-10T10:00:00Z"), ActorID: "v1", Path: "/"},
+		{ID: "1", ProjectID: 1, Kind: "web", ActorKind: store.ActorConnection, TS: ts("2026-08-10T10:00:00Z"), ActorID: "v1", Path: "/"},
+		{ID: "2", ProjectID: 1, Kind: "web", ActorKind: store.ActorConnection, TS: ts("2026-08-10T11:00:00Z"), ActorID: "v2", Path: "/"},
+		{ID: "3", ProjectID: 1, Kind: "web", ActorKind: store.ActorConnection, TS: ts("2026-08-11T10:00:00Z"), ActorID: "v1", Path: "/"},
+		{ID: "4", ProjectID: 1, Kind: "web", ActorKind: store.ActorConnection, TS: ts("2026-08-20T10:00:00Z"), ActorID: "v1", Path: "/"},
+		{ID: "5", ProjectID: 2, Kind: "web", ActorKind: store.ActorConnection, TS: ts("2026-08-10T10:00:00Z"), ActorID: "v1", Path: "/"},
 	}
 	if err := db.WriteViews(ctx, views); err != nil {
 		t.Fatal(err)
 	}
 	events := []store.ProductEvent{
-		{ID: "e1", Project: "app", EventName: "signup", ActorID: "u1", TS: ts("2026-08-12T10:00:00Z")},
-		{ID: "e2", Project: "app", EventName: "signup", ActorID: "u2", TS: ts("2026-08-12T11:00:00Z")},
-		{ID: "e3", Project: "app", EventName: "signup", ActorID: "u1", TS: ts("2026-08-20T10:00:00Z")},
+		{ID: "e1", ProjectID: 1, EventName: "signup", ActorID: "u1", TS: ts("2026-08-12T10:00:00Z")},
+		{ID: "e2", ProjectID: 1, EventName: "signup", ActorID: "u2", TS: ts("2026-08-12T11:00:00Z")},
+		{ID: "e3", ProjectID: 1, EventName: "signup", ActorID: "u1", TS: ts("2026-08-20T10:00:00Z")},
 	}
 	if err := db.WriteProductEvents(ctx, events); err != nil {
 		t.Fatal(err)
@@ -44,7 +44,7 @@ func TestDaysBefore(t *testing.T) {
 		}
 		return out
 	}
-	viewDays, err := db.ViewDaysBefore(ctx, "app", day("2026-08-15"))
+	viewDays, err := db.ViewDaysBefore(ctx, 1, day("2026-08-15"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,14 +52,14 @@ func TestDaysBefore(t *testing.T) {
 	if got := str(viewDays); len(got) != 2 || got[0] != "2026-08-10" || got[1] != "2026-08-11" {
 		t.Errorf("ViewDaysBefore = %v, want [2026-08-10 2026-08-11]", got)
 	}
-	product, err := db.ProductDaysBefore(ctx, "app", day("2026-08-15"))
+	product, err := db.ProductDaysBefore(ctx, 1, day("2026-08-15"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := str(product); len(got) != 1 || got[0] != "2026-08-12" {
 		t.Errorf("ProductDaysBefore = %v, want [2026-08-12]", got)
 	}
-	none, err := db.ProductDaysBefore(ctx, "missing", day("2026-08-15"))
+	none, err := db.ProductDaysBefore(ctx, 99, day("2026-08-15"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,12 +75,12 @@ func TestDaysBeforeRejectsCorruptTimestamp(t *testing.T) {
 	// Must sort before the cutoff so the WHERE clause admits it, yet be an
 	// impossible calendar date so civil.Parse rejects it.
 	if _, err := db.db.Exec(
-		`INSERT INTO views (id, project, ts, received_at, kind, actor_id, actor_kind, path)
-		 VALUES ('x','app','2026-02-30T00:00:00Z','2026-02-30T00:00:00Z','web','v','connection','/')`,
+		`INSERT INTO views (id, project_id, ts, received_at, kind, actor_id, actor_kind, path)
+		 VALUES ('x',1,'2026-02-30T00:00:00Z','2026-02-30T00:00:00Z','web','v','connection','/')`,
 	); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.ViewDaysBefore(context.Background(), "app", day("2026-08-15")); err == nil {
+	if _, err := db.ViewDaysBefore(context.Background(), 1, day("2026-08-15")); err == nil {
 		t.Fatal("want error for unparseable ts, got nil")
 	}
 }
@@ -93,7 +93,7 @@ func TestTxRollsBackOnError(t *testing.T) {
 	boom := errors.New("boom")
 	err := db.tx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO agg_views_daily VALUES ('app','2026-08-10','web',1,1,1,0,0)`); err != nil {
+			`INSERT INTO agg_views_daily VALUES (1,'2026-08-10','web',1,1,1,0,0)`); err != nil {
 			return err
 		}
 		return boom
@@ -127,26 +127,27 @@ func TestOperationsOnClosedDB(t *testing.T) {
 
 	for name, op := range map[string]func() error{
 		"PruneAggregates": func() error {
-			return db.PruneAggregates(ctx, "app", day("2026-01-01"), day("2026-01-01"))
+			return db.PruneAggregates(ctx, 1, day("2026-01-01"), day("2026-01-01"))
 		},
 		"IncrementalVacuum": func() error { return db.IncrementalVacuum(ctx) },
-		"AggregateViewDay":  func() error { return db.AggregateViewDay(ctx, "app", day("2026-01-01")) },
+		"AggregateViewDay":  func() error { return db.AggregateViewDay(ctx, 1, day("2026-01-01")) },
 		"Migrate":           func() error { return db.Migrate(ctx) },
 		"WriteViews": func() error {
-			return db.WriteViews(ctx, []store.View{{ID: "1", Project: "app", Kind: "web",
+			return db.WriteViews(ctx, []store.View{{ID: "1", ProjectID: 1, Kind: "web",
 				ActorKind: store.ActorConnection, TS: ts("2026-08-10T10:00:00Z"), ActorID: "v", Path: "/"}})
 		},
 		"WriteProductEvents": func() error {
-			return db.WriteProductEvents(ctx, []store.ProductEvent{{ID: "e", Project: "app", EventName: "n", ActorID: "u", TS: ts("2026-08-10T10:00:00Z")}})
+			return db.WriteProductEvents(ctx, []store.ProductEvent{{ID: "e", ProjectID: 1, EventName: "n", ActorID: "u", TS: ts("2026-08-10T10:00:00Z")}})
 		},
 		"CreateProject": func() error {
-			return db.CreateProject(ctx, store.RegistryProject{Alias: "app", Name: "App", Identity: "anonymous", AllowedOrigins: "[]"},
+			_, err := db.CreateProject(ctx, store.RegistryProject{Name: "App", Identity: "anonymous", AllowedOrigins: "[]"},
 				store.AuditEntry{Actor: "test", Action: "project.create"})
+			return err
 		},
 		"SetMeta":        func() error { return db.SetMeta(ctx, "k", "v") },
-		"ViewDaysBefore": func() error { _, err := db.ViewDaysBefore(ctx, "app", day("2026-01-01")); return err },
-		"ProjectAliases": func() error {
-			_, err := db.ProjectAliases(ctx)
+		"ViewDaysBefore": func() error { _, err := db.ViewDaysBefore(ctx, 1, day("2026-01-01")); return err },
+		"ProjectIDs": func() error {
+			_, err := db.ProjectIDs(ctx)
 			return err
 		},
 		"GetMeta": func() error { _, err := db.GetMeta(ctx, "k"); return err },
@@ -209,7 +210,7 @@ func TestPruneAggregatesReportsFailingTable(t *testing.T) {
 	if _, err := db.db.ExecContext(ctx, `DROP TABLE agg_product_attrs`); err != nil {
 		t.Fatal(err)
 	}
-	err := db.PruneAggregates(ctx, "app", day("2026-01-01"), day("2026-01-01"))
+	err := db.PruneAggregates(ctx, 1, day("2026-01-01"), day("2026-01-01"))
 	if err == nil {
 		t.Fatal("want error when a target table is missing, got nil")
 	}
@@ -288,7 +289,7 @@ func TestPruneAggregatesReportsFailingViewsTable(t *testing.T) {
 	if _, err := db.db.ExecContext(ctx, `DROP TABLE agg_views_utm`); err != nil {
 		t.Fatal(err)
 	}
-	err := db.PruneAggregates(ctx, "app", day("2026-01-01"), day("2026-01-01"))
+	err := db.PruneAggregates(ctx, 1, day("2026-01-01"), day("2026-01-01"))
 	if err == nil || !strings.Contains(err.Error(), "agg_views_utm") {
 		t.Errorf("error %v does not name the failing views table", err)
 	}

@@ -14,7 +14,7 @@ import (
 // gets no attr_ column) stays reachable via json_extract — the view is
 // never a downgrade from the base table. Every attribute column carries an
 // attr_ prefix, so none can collide with these.
-var flatViewBaseColumns = []string{"id", "project", "event_name", "actor_id", "ts", "attributes"}
+var flatViewBaseColumns = []string{"id", "project_id", "event_name", "actor_id", "ts", "attributes"}
 
 // sanitizeAlias strips everything outside [A-Za-z0-9_] from an attribute key.
 // The result is always safe to splice into DDL unquoted once prefixed, which
@@ -79,7 +79,7 @@ func (d *DB) RebuildFlatView(ctx context.Context, keys []string) error {
 		pathLit := strings.ReplaceAll(path, `'`, `''`)
 		exprs = append(exprs, fmt.Sprintf(`json_extract(attributes, '%s') AS %s`, pathLit, alias))
 	}
-	stmt := fmt.Sprintf(`CREATE VIEW v_events_flat AS SELECT %s FROM product_events`,
+	stmt := fmt.Sprintf(`CREATE VIEW v_events_flat AS SELECT %s FROM events`,
 		strings.Join(exprs, ", "))
 
 	if current, err := d.flatViewDefinition(ctx); err == nil && current == stmt {

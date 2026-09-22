@@ -26,8 +26,8 @@ func TestOperationRefusalsAreTyped(t *testing.T) {
 		err  error
 		kind error
 	}{
-		"bad day":         {h.checkRange(ctx, rangeIn{Project: "blog", From: "yesterday", To: "2026-08-21"}), manage.ErrInvalid},
-		"unknown project": {h.checkRange(ctx, rangeIn{Project: "nope", From: "2026-08-20", To: "2026-08-21"}), manage.ErrNotFound},
+		"bad day":         {h.checkRange(ctx, rangeIn{ProjectID: 1, From: "yesterday", To: "2026-08-21"}), manage.ErrInvalid},
+		"unknown project": {h.checkRange(ctx, rangeIn{ProjectID: 42, From: "2026-08-20", To: "2026-08-21"}), manage.ErrNotFound},
 	}
 	for name, c := range cases {
 		if !errors.Is(c.err, c.kind) {

@@ -3,27 +3,23 @@ package api
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
 	"testing"
 	"time"
 
-	"github.com/dmtrkzntsv/twillingate/internal/config"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 	_ "github.com/dmtrkzntsv/twillingate/internal/store/sqlite"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-var testRetention = config.Retention{
-	Views:   config.RetentionClass{RawDays: 30, AggregateDays: 365},
-	Product: config.RetentionClass{RawDays: 30, AggregateDays: 365},
-}
-
-// newTestHost seeds two projects (blog: identified, docs: anonymous),
-// two days of web aggregates and one raw hit, and returns a connected
-// in-memory MCP client session against the assembled tool host.
+// newTestHost seeds two projects in a fixed order — blog (id 1,
+// identified) then docs (id 2, anonymous) — two days of web aggregates and
+// one raw hit, and returns a connected in-memory MCP client session
+// against the assembled tool host. A project a test creates on top is id 3.
 func newTestHost(t *testing.T) (*host, *mcp.ClientSession) {
 	t.Helper()
 	path := t.TempDir() + "/mcp.db"
@@ -36,10 +32,10 @@ func newTestHost(t *testing.T) (*host, *mcp.ClientSession) {
 	if err := st.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
-	for alias, identity := range map[string]string{"blog": "identified", "docs": "anonymous"} {
-		if err := st.CreateProject(ctx, store.RegistryProject{
-			Alias: alias, Name: alias, Identity: identity, AllowedOrigins: "[]"},
-			store.AuditEntry{Actor: "test", Action: "project.create", Subject: alias}); err != nil {
+	for _, p := range []struct{ name, identity string }{{"blog", "identified"}, {"docs", "anonymous"}} {
+		if _, err := st.CreateProject(ctx, store.RegistryProject{
+			Name: p.name, Identity: p.identity, AllowedOrigins: "[]", Attributes: "[]"},
+			store.AuditEntry{Actor: "test", Action: "project.create"}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -49,48 +45,48 @@ func newTestHost(t *testing.T) (*host, *mcp.ClientSession) {
 			t.Fatal(err)
 		}
 	}
-	seed(`INSERT INTO agg_views_daily (project, day, kind, visitors, views, sessions, bounces, duration_sec)
-	      VALUES ('blog','2026-08-20','web',10,25,12,3,600), ('blog','2026-08-21','web',12,30,14,4,720),
-	             ('blog','2026-08-20','app',6,20,8,0,480)`)
-	seed(`INSERT INTO agg_views_paths (project, day, path, visitors, views)
-	      VALUES ('blog','2026-08-20','/post-1',8,15), ('blog','2026-08-20','/post-2',4,10), ('blog','2026-08-20','/settings',5,12)`)
-	seed(`INSERT INTO agg_views_hosts (project, day, host, visitors, views)
-	      VALUES ('blog','2026-08-20','blog.example.com',9,20), ('blog','2026-08-20','shop.example.com',3,5)`)
-	seed(`INSERT INTO agg_views_utm (project, day, utm_source, utm_medium, utm_campaign, visitors, views)
-	      VALUES ('blog','2026-08-20','newsletter','email','august',6,9)`)
-	seed(`INSERT INTO agg_views_os (project, day, os, os_version, visitors, views)
-	      VALUES ('blog','2026-08-20','iOS','17.4',5,12), ('blog','2026-08-20','Windows','',7,13)`)
-	seed(`INSERT INTO agg_views_browsers (project, day, browser, browser_version, visitors, views)
-	      VALUES ('blog','2026-08-20','Chrome','126',7,13)`)
-	seed(`INSERT INTO agg_views_app_versions (project, day, os, app_version, visitors, views)
-	      VALUES ('blog','2026-08-20','iOS','2.4.1',5,12)`)
-	seed(`INSERT INTO agg_views_devices (project, day, device, device_model, visitors, views)
-	      VALUES ('blog','2026-08-20','desktop','',7,13), ('blog','2026-08-20','','iPhone15,3',5,12)`)
-	seed(`INSERT INTO agg_views_countries (project, day, country, visitors, views)
-	      VALUES ('blog','2026-08-20','US',12,25)`)
-	seed(`INSERT INTO agg_views_displays (project, day, display, visitors, views)
-	      VALUES ('blog','2026-08-20','1920x1080',6,11)`)
-	seed(`INSERT INTO views (id, project, ts, received_at, kind, actor_id, actor_kind, user_id, path)
-	      VALUES ('h1','blog','2026-08-26T10:00:00Z','2026-08-26T10:00:00Z','web','a1','user','u1','/live')`)
-	seed(`INSERT INTO agg_product_daily (project, day, event_name, count, unique_users)
-	      VALUES ('blog','2026-08-20','signup',5,4)`)
-	seed(`INSERT INTO agg_product_totals (project, day, total_events, active_users)
-	      VALUES ('blog','2026-08-20',5,4)`)
-	seed(`INSERT INTO agg_retention (project, actor_kind, cohort_day, day_offset, actors)
-	      VALUES ('blog','user','2026-08-01',0,10), ('blog','user','2026-08-01',7,4)`)
-	seed(`INSERT INTO agg_identity_daily (project, day, kind, id, actors, users, views, events)
-	      VALUES ('blog','2026-08-20','user','u1',1,1,5,2)`)
-	seed(`INSERT INTO identities (project, kind, id, name) VALUES ('blog','user','u1','Jane Doe')`)
-	seed(`INSERT INTO agg_identity_daily (project, day, kind, id, actors, users, views, events)
-	      VALUES ('blog','2026-08-20','group','g1',1,0,5,2)`)
-	seed(`INSERT INTO identities (project, kind, id, name) VALUES ('blog','group','g1','Acme Inc')`)
+	seed(`INSERT INTO agg_views_daily (project_id, day, kind, visitors, views, sessions, bounces, duration_sec)
+	      VALUES (1,'2026-08-20','web',10,25,12,3,600), (1,'2026-08-21','web',12,30,14,4,720),
+	             (1,'2026-08-20','app',6,20,8,0,480)`)
+	seed(`INSERT INTO agg_views_paths (project_id, day, path, visitors, views)
+	      VALUES (1,'2026-08-20','/post-1',8,15), (1,'2026-08-20','/post-2',4,10), (1,'2026-08-20','/settings',5,12)`)
+	seed(`INSERT INTO agg_views_hosts (project_id, day, host, visitors, views)
+	      VALUES (1,'2026-08-20','blog.example.com',9,20), (1,'2026-08-20','shop.example.com',3,5)`)
+	seed(`INSERT INTO agg_views_utm (project_id, day, utm_source, utm_medium, utm_campaign, visitors, views)
+	      VALUES (1,'2026-08-20','newsletter','email','august',6,9)`)
+	seed(`INSERT INTO agg_views_os (project_id, day, os, os_version, visitors, views)
+	      VALUES (1,'2026-08-20','iOS','17.4',5,12), (1,'2026-08-20','Windows','',7,13)`)
+	seed(`INSERT INTO agg_views_browsers (project_id, day, browser, browser_version, visitors, views)
+	      VALUES (1,'2026-08-20','Chrome','126',7,13)`)
+	seed(`INSERT INTO agg_views_app_versions (project_id, day, os, app_version, visitors, views)
+	      VALUES (1,'2026-08-20','iOS','2.4.1',5,12)`)
+	seed(`INSERT INTO agg_views_devices (project_id, day, device, device_model, visitors, views)
+	      VALUES (1,'2026-08-20','desktop','',7,13), (1,'2026-08-20','','iPhone15,3',5,12)`)
+	seed(`INSERT INTO agg_views_countries (project_id, day, country, visitors, views)
+	      VALUES (1,'2026-08-20','US',12,25)`)
+	seed(`INSERT INTO agg_views_displays (project_id, day, display, visitors, views)
+	      VALUES (1,'2026-08-20','1920x1080',6,11)`)
+	seed(`INSERT INTO views (id, project_id, ts, received_at, kind, actor_id, actor_kind, user_id, path)
+	      VALUES ('h1',1,'2026-08-26T10:00:00Z','2026-08-26T10:00:00Z','web','a1','user','u1','/live')`)
+	seed(`INSERT INTO agg_product_daily (project_id, day, event_name, count, unique_users)
+	      VALUES (1,'2026-08-20','signup',5,4)`)
+	seed(`INSERT INTO agg_product_totals (project_id, day, total_events, active_users)
+	      VALUES (1,'2026-08-20',5,4)`)
+	seed(`INSERT INTO agg_retention (project_id, actor_kind, cohort_day, day_offset, actors)
+	      VALUES (1,'user','2026-08-01',0,10), (1,'user','2026-08-01',7,4)`)
+	seed(`INSERT INTO agg_identity_daily (project_id, day, kind, id, actors, users, views, events)
+	      VALUES (1,'2026-08-20','user','u1',1,1,5,2)`)
+	seed(`INSERT INTO identities (project_id, kind, id, name) VALUES (1,'user','u1','Jane Doe')`)
+	seed(`INSERT INTO agg_identity_daily (project_id, day, kind, id, actors, users, views, events)
+	      VALUES (1,'2026-08-20','group','g1',1,0,5,2)`)
+	seed(`INSERT INTO identities (project_id, kind, id, name) VALUES (1,'group','g1','Acme Inc')`)
 	// attributes declared for blog only: docs stays at the default (no
 	// attributes declared), which TestProductAttributesReturnsEmptyForUndeclared
 	// depends on. Rollups are unconditional now (no enabled flag).
-	seed(`UPDATE projects SET attributes = '["plan"]' WHERE alias='blog'`)
-	seed(`UPDATE projects SET allowed_origins = '["https://blog.example.com"]' WHERE alias='blog'`)
-	seed(`INSERT INTO agg_product_attrs (project, day, event_name, attr_key, attr_value, count, unique_users)
-	      VALUES ('blog','2026-08-20','signup','plan','pro',3,3)`)
+	seed(`UPDATE projects SET attributes = '["plan"]' WHERE id=1`)
+	seed(`UPDATE projects SET allowed_origins = '["https://blog.example.com"]' WHERE id=1`)
+	seed(`INSERT INTO agg_product_attrs (project_id, day, event_name, attr_key, attr_value, count, unique_users)
+	      VALUES (1,'2026-08-20','signup','plan','pro',3,3)`)
 
 	db, err := OpenReadDB(path)
 	if err != nil {
@@ -98,7 +94,7 @@ func newTestHost(t *testing.T) (*host, *mcp.ClientSession) {
 	}
 	t.Cleanup(func() { db.Close() })
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	reg := manage.New(st, testRetention, logger)
+	reg := manage.New(st, logger)
 	if err := reg.Reload(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -162,4 +158,17 @@ func textOf(res *mcp.CallToolResult) string {
 		}
 	}
 	return out
+}
+
+// projectIDOf reads the project_id a create_project call returned, so a
+// test can address the project it just made (the fixture's own are 1 and 2).
+func projectIDOf(t *testing.T, res *mcp.CallToolResult) int64 {
+	t.Helper()
+	var out struct {
+		ProjectID int64 `json:"project_id"`
+	}
+	if err := json.Unmarshal([]byte(textOf(res)), &out); err != nil || out.ProjectID == 0 {
+		t.Fatalf("create_project returned no project_id: %v %s", err, textOf(res))
+	}
+	return out.ProjectID
 }

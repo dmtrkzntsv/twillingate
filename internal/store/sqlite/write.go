@@ -20,7 +20,7 @@ func (d *DB) WriteViews(ctx context.Context, views []store.View) error {
 		// INSERT OR IGNORE: with client-supplied UUIDv7 ids, a batch
 		// retried after a timeout that actually succeeded is a no-op.
 		stmt, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO views
-			(id, project, ts, received_at, kind, actor_id, actor_kind, user_id, group_id, session_id,
+			(id, project_id, ts, received_at, kind, actor_id, actor_kind, user_id, group_id, session_id,
 			 host, path, referrer_source, utm_source, utm_medium, utm_campaign,
 			 os, os_version, browser, browser_version, app_version,
 			 device, device_model, locale, display_width, display_height, country)
@@ -30,7 +30,7 @@ func (d *DB) WriteViews(ctx context.Context, views []store.View) error {
 		}
 		defer stmt.Close()
 		for _, v := range views {
-			if _, err := stmt.ExecContext(ctx, v.ID, v.Project,
+			if _, err := stmt.ExecContext(ctx, v.ID, v.ProjectID,
 				v.TS.UTC().Format(tsFormat), v.ReceivedAt.UTC().Format(tsFormat),
 				v.Kind, v.ActorID, v.ActorKind, v.UserID, v.GroupID, v.SessionID,
 				v.Host, v.Path, v.ReferrerSource, v.UTMSource, v.UTMMedium, v.UTMCampaign,
@@ -48,8 +48,8 @@ func (d *DB) WriteProductEvents(ctx context.Context, evs []store.ProductEvent) e
 		return nil
 	}
 	return d.tx(ctx, func(tx *sql.Tx) error {
-		stmt, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO product_events
-			(id, project, event_name, ts, received_at, actor_id, actor_kind, user_id, group_id,
+		stmt, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO events
+			(id, project_id, event_name, ts, received_at, actor_id, actor_kind, user_id, group_id,
 			 os, app_version, attributes)
 			VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
 		if err != nil {
@@ -65,7 +65,7 @@ func (d *DB) WriteProductEvents(ctx context.Context, evs []store.ProductEvent) e
 			if err != nil {
 				return fmt.Errorf("event %s attributes: %w", e.ID, err)
 			}
-			if _, err := stmt.ExecContext(ctx, e.ID, e.Project, e.EventName,
+			if _, err := stmt.ExecContext(ctx, e.ID, e.ProjectID, e.EventName,
 				e.TS.UTC().Format(tsFormat), e.ReceivedAt.UTC().Format(tsFormat),
 				e.ActorID, e.ActorKind, e.UserID, e.GroupID, e.OS, e.AppVersion,
 				string(blob)); err != nil {
@@ -84,9 +84,9 @@ func (d *DB) UpsertIdentities(ctx context.Context, ids []store.Identity) error {
 	}
 	return d.tx(ctx, func(tx *sql.Tx) error {
 		stmt, err := tx.PrepareContext(ctx, `INSERT INTO identities
-			(project, kind, id, name, updated_at)
+			(project_id, kind, id, name, updated_at)
 			VALUES (?,?,?,?,datetime('now'))
-			ON CONFLICT(project, kind, id) DO UPDATE SET
+			ON CONFLICT(project_id, kind, id) DO UPDATE SET
 			  name=excluded.name, updated_at=excluded.updated_at`)
 		if err != nil {
 			return err
@@ -96,7 +96,7 @@ func (d *DB) UpsertIdentities(ctx context.Context, ids []store.Identity) error {
 			if i.ID == "" || i.Name == "" {
 				continue
 			}
-			if _, err := stmt.ExecContext(ctx, i.Project, i.Kind, i.ID, i.Name); err != nil {
+			if _, err := stmt.ExecContext(ctx, i.ProjectID, i.Kind, i.ID, i.Name); err != nil {
 				return fmt.Errorf("identity %s/%s: %w", i.Kind, i.ID, err)
 			}
 		}
@@ -104,15 +104,15 @@ func (d *DB) UpsertIdentities(ctx context.Context, ids []store.Identity) error {
 	})
 }
 
-func (d *DB) ProjectAliases(ctx context.Context) ([]string, error) {
-	rows, err := d.db.QueryContext(ctx, `SELECT alias FROM projects ORDER BY alias`)
+func (d *DB) ProjectIDs(ctx context.Context) ([]int64, error) {
+	rows, err := d.db.QueryContext(ctx, `SELECT id FROM projects ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []string
+	var out []int64
 	for rows.Next() {
-		var id string
+		var id int64
 		if err := rows.Scan(&id); err != nil {
 			return nil, err
 		}

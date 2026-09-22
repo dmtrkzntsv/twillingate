@@ -13,7 +13,7 @@ import (
 func TestFlatViewOnlyDeclaredKeys(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	seedProductEvent(t, db, "blog", "signup", "2026-08-01T10:00:00Z",
+	seedProductEvent(t, db, 1, "signup", "2026-08-01T10:00:00Z",
 		map[string]string{"plan": "pro", "undeclared": "x"}, "", "")
 	if err := db.RebuildFlatView(ctx, []string{"plan"}); err != nil {
 		t.Fatal(err)
@@ -60,7 +60,7 @@ func TestRebuildFlatViewIsNoOpWhenUnchanged(t *testing.T) {
 func TestRebuildFlatViewDetectsRenameBehindAnUnchangedAlias(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	seedProductEvent(t, db, "app", "e", "2026-08-10T10:00:00Z",
+	seedProductEvent(t, db, 1, "e", "2026-08-10T10:00:00Z",
 		map[string]string{"plan": "pro", "plan!": "stale"}, "", "")
 	if err := db.RebuildFlatView(ctx, []string{"plan!"}); err != nil {
 		t.Fatal(err)
@@ -81,7 +81,7 @@ func TestRebuildFlatView(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	evs := []store.ProductEvent{
-		{ID: "1", Project: "app", EventName: "e", ActorID: "u1", TS: ts("2026-08-10T10:00:00Z"),
+		{ID: "1", ProjectID: 1, EventName: "e", ActorID: "u1", TS: ts("2026-08-10T10:00:00Z"),
 			Attributes: map[string]string{"plan": "pro"}},
 	}
 	if err := db.WriteProductEvents(ctx, evs); err != nil {
@@ -90,17 +90,18 @@ func TestRebuildFlatView(t *testing.T) {
 	if err := db.RebuildFlatView(ctx, []string{"plan"}); err != nil {
 		t.Fatal(err)
 	}
-	var id, project, event, user, tsCol, plan string
+	var id, event, user, tsCol, plan string
+	var project int64
 	if err := db.db.QueryRow(
-		`SELECT id, project, event_name, actor_id, ts, attr_plan FROM v_events_flat WHERE id='1'`).
+		`SELECT id, project_id, event_name, actor_id, ts, attr_plan FROM v_events_flat WHERE id='1'`).
 		Scan(&id, &project, &event, &user, &tsCol, &plan); err != nil {
 		t.Fatal(err)
 	}
 	if plan != "pro" {
 		t.Fatalf("attr_plan = %q", plan)
 	}
-	if project != "app" || event != "e" || user != "u1" || tsCol != "2026-08-10T10:00:00Z" {
-		t.Fatalf("base columns wrong: %q %q %q %q", project, event, user, tsCol)
+	if project != 1 || event != "e" || user != "u1" || tsCol != "2026-08-10T10:00:00Z" {
+		t.Fatalf("base columns wrong: %d %q %q %q", project, event, user, tsCol)
 	}
 
 	// Rebuild with more keys replaces the view.
@@ -135,7 +136,7 @@ func TestRebuildFlatViewHostileKeys(t *testing.T) {
 	// sanitizeAlias stays the defence in depth between a fat-fingered
 	// config and broken DDL, so these must keep passing unchanged.
 	hostile := []string{
-		`x"; DROP TABLE product_events; --`,
+		`x"; DROP TABLE events; --`,
 		"weird key!",
 		"weird-key.", // collides with "weird key!" after sanitizing
 		"1starts_with_digit",
@@ -144,9 +145,9 @@ func TestRebuildFlatViewHostileKeys(t *testing.T) {
 	if err := db.RebuildFlatView(ctx, hostile); err != nil {
 		t.Fatal(err)
 	}
-	// product_events must still exist (no injection).
+	// events must still exist (no injection).
 	var n int
-	if err := db.db.QueryRow(`SELECT COUNT(*) FROM product_events`).Scan(&n); err != nil {
+	if err := db.db.QueryRow(`SELECT COUNT(*) FROM events`).Scan(&n); err != nil {
 		t.Fatalf("table gone — injection succeeded: %v", err)
 	}
 	cols := viewColumns(t, db, "v_events_flat")
@@ -156,7 +157,7 @@ func TestRebuildFlatViewHostileKeys(t *testing.T) {
 	if !cols["attr_1starts_with_digit"] {
 		t.Errorf("digit-leading key not prefixed into a valid identifier: %v", cols)
 	}
-	// 5 base columns (id, project, event_name, actor_id, ts) + attributes + 4 attrs (漢字 skipped).
+	// 5 base columns (id, project_id, event_name, actor_id, ts) + attributes + 4 attrs (漢字 skipped).
 	if len(cols) != 6+4 {
 		t.Errorf("cols = %v, want 6 base + 4 attrs (漢字 skipped)", cols)
 	}
@@ -168,7 +169,7 @@ func TestRebuildFlatViewQuotedKeys(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	if err := db.WriteProductEvents(ctx, []store.ProductEvent{
-		{ID: "1", Project: "app", EventName: "e", ActorID: "u", TS: ts("2026-08-10T10:00:00Z"),
+		{ID: "1", ProjectID: 1, EventName: "e", ActorID: "u", TS: ts("2026-08-10T10:00:00Z"),
 			Attributes: map[string]string{"it's": "apostrophe", `say"hi`: "doublequote"}},
 	}); err != nil {
 		t.Fatal(err)
@@ -210,7 +211,7 @@ func TestRebuildFlatViewDeterministicOrder(t *testing.T) {
 			t.Fatalf("column order not deterministic: %v vs %v", first, second)
 		}
 	}
-	want := []string{"id", "project", "event_name", "actor_id", "ts", "attributes",
+	want := []string{"id", "project_id", "event_name", "actor_id", "ts", "attributes",
 		"attr_alpha", "attr_mu", "attr_zeta"}
 	for i := range want {
 		if first[i] != want[i] {

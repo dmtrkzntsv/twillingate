@@ -108,12 +108,12 @@ func (s *Server) Mount(mux *http.ServeMux) {
 
 // originAllowed reports whether the request origin is allowed for the
 // project and emits CORS headers when it is.
-func (s *Server) originAllowed(w http.ResponseWriter, r *http.Request, project string) bool {
+func (s *Server) originAllowed(w http.ResponseWriter, r *http.Request, projectID int64) bool {
 	origin := r.Header.Get("Origin")
 	if origin == "" {
 		return false
 	}
-	if !s.reg.Snapshot(r.Context()).OriginAllowed(project, origin) {
+	if !s.reg.Snapshot(r.Context()).OriginAllowed(projectID, origin) {
 		return false
 	}
 	h := w.Header()

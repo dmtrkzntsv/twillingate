@@ -10,7 +10,7 @@
 // in the browser via DuckDB WASM, so it is absent from the built HTML with
 // data and without. Either way the build fails with "marked as prerenderable,
 // but were not prerendered". Listing the routes explicitly is the supported
-// fix, so we read the project aliases straight out of the twillingate
+// fix, so we read the project ids straight out of the twillingate
 // database at build time.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -19,7 +19,9 @@ import { DatabaseSync } from 'node:sqlite';
 // Prerendering needs at least one entry per templated route. When no project
 // exists yet (a stack that has never ingested anything) this stand-in keeps
 // the build green; the index links only real projects, so it stays unreachable.
-const PLACEHOLDER = '__no_projects__';
+// id 0 is never issued, so the placeholder page queries nothing and the string
+// still casts to the integer key.
+const PLACEHOLDER = '0';
 
 function projectRoot() {
 	// Evidence invokes this from inside .evidence/template.
@@ -42,7 +44,7 @@ function databaseFile() {
 	return path.resolve(sourceDir, filename);
 }
 
-function projectAliases() {
+function projectIds() {
 	const file = databaseFile();
 	if (!fs.existsSync(file)) {
 		console.warn(`svelte.config.js: ${file} not found; prerendering no project pages`);
@@ -51,9 +53,9 @@ function projectAliases() {
 	const db = new DatabaseSync(file, { readOnly: true });
 	try {
 		return db
-			.prepare('select alias from projects order by alias')
+			.prepare('select id from projects order by id')
 			.all()
-			.map((row) => row.alias);
+			.map((row) => String(row.id));
 	} finally {
 		db.close();
 	}
@@ -92,20 +94,20 @@ function templatedRoutes() {
 }
 
 function prerenderEntries() {
-	let aliases = [];
+	let ids = [];
 	try {
-		aliases = projectAliases();
+		ids = projectIds();
 	} catch (err) {
-		console.warn(`svelte.config.js: could not read project aliases (${err.message})`);
+		console.warn(`svelte.config.js: could not read project ids (${err.message})`);
 	}
-	if (aliases.length === 0) aliases = [PLACEHOLDER];
+	if (ids.length === 0) ids = [PLACEHOLDER];
 	const templated = templatedRoutes();
 	// '*' covers every route that takes no parameter. The templated ones need
 	// at least one entry each, or the build fails with "marked as
 	// prerenderable, but were not prerendered".
 	return [
 		'*',
-		...aliases.flatMap((a) => templated.map((r) => r.replaceAll('[project]', a)))
+		...ids.flatMap((id) => templated.map((r) => r.replaceAll('[project]', id)))
 	];
 }
 

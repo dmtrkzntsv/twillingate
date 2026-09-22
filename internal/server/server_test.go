@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dmtrkzntsv/twillingate/internal/config"
 	"github.com/dmtrkzntsv/twillingate/internal/config/configtest"
 	"github.com/dmtrkzntsv/twillingate/internal/geo"
+	"github.com/dmtrkzntsv/twillingate/internal/identity"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 	_ "github.com/dmtrkzntsv/twillingate/internal/store/sqlite"
@@ -62,9 +62,10 @@ func testServer(t *testing.T) (*fakeQueue, http.Handler) {
 	return testServerWithIdentity(t, "anonymous")
 }
 
-// newTestRegistry seeds a temp-DB registry with the given projects.
-// Replaces the old inline cfg.Projects construction.
-func newTestRegistry(t *testing.T, cfg *config.Config, projects []manage.ProjectSpec, keys map[string][2]string) *manage.Registry {
+// newTestRegistry seeds a temp-DB registry with the given projects, in
+// order, so the first spec is project 1. keys maps a project's index in
+// specs to {key, label}.
+func newTestRegistry(t *testing.T, projects []manage.ProjectSpec, keys map[int][2]string) *manage.Registry {
 	t.Helper()
 	st, err := store.Open("sqlite://" + t.TempDir() + "/reg.db")
 	if err != nil {
@@ -75,19 +76,22 @@ func newTestRegistry(t *testing.T, cfg *config.Config, projects []manage.Project
 	if err := st.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
-	reg := manage.New(st, cfg.Retention, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	reg := manage.New(st, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err := reg.Reload(ctx); err != nil {
 		t.Fatal(err)
 	}
 	ops := manage.NewOps(reg, st)
+	var ids []int64
 	for _, spec := range projects {
-		if _, err := ops.CreateProject(ctx, "test", spec); err != nil {
+		p, err := ops.CreateProject(ctx, "test", spec)
+		if err != nil {
 			t.Fatal(err)
 		}
+		ids = append(ids, p.ID)
 	}
-	for project, kl := range keys { // project -> {key, label}
+	for i, kl := range keys {
 		if err := st.InsertIngestKey(ctx, store.RegistryKey{
-			Key: kl[0], Project: project, Label: kl[1]},
+			Key: kl[0], ProjectID: ids[i], Label: kl[1]},
 			store.AuditEntry{Actor: "test", Action: "key.issue", Subject: kl[1]}); err != nil {
 			t.Fatal(err)
 		}
@@ -110,12 +114,12 @@ func testServerWithIdentity(t *testing.T, mode string) (*fakeQueue, http.Handler
 func newServerWithIdentity(t *testing.T, mode string) (*fakeQueue, *Server) {
 	t.Helper()
 	cfg := configtest.Load(t, nil)
-	reg := newTestRegistry(t, cfg,
+	reg := newTestRegistry(t,
 		[]manage.ProjectSpec{{
-			Alias: "app", Name: "App", Identity: mode,
+			Name: "App", Identity: mode,
 			AllowedOrigins: []string{testOrigin},
 		}},
-		map[string][2]string{"app": {testKey, "web"}})
+		map[int][2]string{0: {testKey, "web"}})
 	g, _ := geo.New("cloudflare://", t.TempDir(), slog.Default())
 	q := &fakeQueue{}
 	return q, New(cfg, reg, q, g, fixedSalt{}, q, slog.Default())
@@ -188,8 +192,29 @@ func TestAcceptsKeyFromHeader(t *testing.T) {
 	if q.events[0].Attributes["plan"] != "pro" {
 		t.Errorf("attributes = %v", q.events[0].Attributes)
 	}
-	if q.events[0].Project != "app" {
-		t.Errorf("project = %q; the key must resolve it", q.events[0].Project)
+	if q.events[0].ProjectID != 1 {
+		t.Errorf("project = %d; the key must resolve it", q.events[0].ProjectID)
+	}
+}
+
+// TestHashInputIsTheProjectId pins the salt seam: an anonymous actor is
+// hashed with the id as a decimal string, never a name, so renaming a
+// project cannot change its hashes.
+func TestHashInputIsTheProjectId(t *testing.T) {
+	q, h := testServer(t)
+	rec := post(h, `{"events":[{"name":"$page_view","attributes":{"$path":"/"}}]}`,
+		map[string]string{"Origin": testOrigin, "X-Analytics-Key": testKey})
+	if rec.Code != 202 {
+		t.Fatalf("code = %d: %s", rec.Code, rec.Body.String())
+	}
+	if len(q.views) != 1 {
+		t.Fatalf("views = %d, want 1", len(q.views))
+	}
+	// httptest.NewRequest sets RemoteAddr to 192.0.2.1:1234 and post adds
+	// no forwarding header, so clientIP resolves to 192.0.2.1.
+	want := identity.VisitorHash("test-salt", "192.0.2.1", chromeUA, "1")
+	if q.views[0].ProjectID != 1 || q.views[0].ActorID != want {
+		t.Fatalf("view = project %d actor %q, want project 1 actor %q", q.views[0].ProjectID, q.views[0].ActorID, want)
 	}
 }
 
@@ -447,62 +472,59 @@ func TestClientTimestampIsUsedAndClamped(t *testing.T) {
 	if !q.events[0].TS.Equal(time.Date(2026, 8, 23, 10, 0, 0, 0, time.UTC)) {
 		t.Errorf("in-range ts = %v, want the client value", q.events[0].TS)
 	}
-	// Clamped, not dropped, and never older than the app raw window.
+	// Clamped, not dropped, and never older than the global views raw
+	// window (30 days by default).
 	if q.events[1].TS.Before(q.events[1].ReceivedAt.Add(-31 * 24 * time.Hour)) {
 		t.Errorf("clamped ts = %v, older than the raw window", q.events[1].TS)
 	}
 }
 
-// intPtr is a test helper for building a *int override, mirroring the
-// pattern used across internal/config and internal/jobs tests.
-func intPtr(n int) *int { return &n }
-
-// TestEventAgeClampUsesProjectRetention verifies the fix for the per-project
-// clamp: a project with a Views.RawDays override below the global default
-// must clamp against its own window, not the global one, or a clock-skewed
-// late event can land on a day whose raw rows this project already
-// aggregated and deleted.
-func TestEventAgeClampUsesProjectRetention(t *testing.T) {
-	cfg := configtest.Load(t, nil)
-	reg := newTestRegistry(t, cfg,
+// TestEventAgeClampUsesGlobalRawWindow verifies the clamp follows the
+// configured views raw window rather than a hard-coded default: retention
+// is global, so an operator who shortens RETENTION_VIEWS_RAW_DAYS must
+// also shorten how far back a clock-skewed late event can land, or it
+// could target a day the daily pass already aggregated and deleted.
+func TestEventAgeClampUsesGlobalRawWindow(t *testing.T) {
+	cfg := configtest.Load(t, map[string]string{"RETENTION_VIEWS_RAW_DAYS": "3"})
+	reg := newTestRegistry(t,
 		[]manage.ProjectSpec{
-			{Alias: "clamped", Name: "Clamped", AllowedOrigins: []string{testOrigin},
-				Retention: &config.RetentionOverride{Views: &config.RetentionClassOverride{RawDays: intPtr(3)}}},
-			{Alias: "normal", Name: "Normal", AllowedOrigins: []string{testOrigin}},
+			{Name: "Clamped", AllowedOrigins: []string{testOrigin}},
+			{Name: "Normal", AllowedOrigins: []string{testOrigin}},
 		},
-		map[string][2]string{"clamped": {"ak_clamped", "web"}, "normal": {"ak_normal", "web"}})
+		map[int][2]string{0: {"ak_clamped", "web"}, 1: {"ak_normal", "web"}})
 	g, _ := geo.New("cloudflare://", t.TempDir(), slog.Default())
 	q := &fakeQueue{}
 	h := New(cfg, reg, q, g, fixedSalt{}, q, slog.Default())
 
 	oldTS := time.Now().UTC().AddDate(0, 0, -10).Format(time.RFC3339)
+	recentTS := time.Now().UTC().AddDate(0, 0, -1).Format(time.RFC3339)
 
-	// The overridden project: a 10-day-old event must clamp to its 3-day
-	// window, not the 30-day global default.
+	// A 10-day-old event must clamp to the 3-day window, not the 30-day
+	// default.
 	w := post(h, `{"key":"ak_clamped","events":[{"name":"$page_view","ts":"`+oldTS+`","attributes":{"$path":"/x"}}]}`, nil)
 	res := decodeResult(t, w)
 	if len(res.Warnings) != 1 || !strings.Contains(res.Warnings[0].Reason, "clamped") {
 		t.Fatalf("warnings = %+v, want a clamp warning", res.Warnings)
 	}
-	if len(q.views) != 1 {
+	if len(q.views) != 1 || q.views[0].ProjectID != 1 {
 		t.Fatalf("views = %+v", q.views)
 	}
 	age := time.Since(q.views[0].TS)
 	if age < 3*24*time.Hour || age > 3*24*time.Hour+time.Minute {
-		t.Errorf("clamped view age = %v, want ~3 days (the project's own window)", age)
+		t.Errorf("clamped view age = %v, want ~3 days (the configured raw window)", age)
 	}
 
-	// Control: a project with no override keeps the global 30-day default,
-	// so a 10-day-old timestamp is within range and passes through as-is.
-	w = post(h, `{"key":"ak_normal","events":[{"name":"$page_view","ts":"`+oldTS+`","attributes":{"$path":"/x"}}]}`, nil)
+	// Control: the window applies to every project alike, and a timestamp
+	// inside it passes through as-is.
+	w = post(h, `{"key":"ak_normal","events":[{"name":"$page_view","ts":"`+recentTS+`","attributes":{"$path":"/x"}}]}`, nil)
 	res = decodeResult(t, w)
 	if len(res.Warnings) != 0 {
-		t.Fatalf("warnings = %+v, want none: 10 days is within the 30-day default", res.Warnings)
+		t.Fatalf("warnings = %+v, want none: 1 day is within the 3-day window", res.Warnings)
 	}
-	if len(q.views) != 2 {
+	if len(q.views) != 2 || q.views[1].ProjectID != 2 {
 		t.Fatalf("views = %+v", q.views)
 	}
-	got, err := time.Parse(time.RFC3339, oldTS)
+	got, err := time.Parse(time.RFC3339, recentTS)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -594,7 +616,7 @@ func TestIdentifiedModeStoresRawIdentifiers(t *testing.T) {
 		t.Errorf("view identity = actor %q user %q; want raw u1", v.ActorID, v.UserID)
 	}
 	if len(q.identities) != 1 || q.identities[0].Name != "Ada" ||
-		q.identities[0].Kind != store.KindUser || q.identities[0].Project != "app" {
+		q.identities[0].Kind != store.KindUser || q.identities[0].ProjectID != 1 {
 		t.Errorf("identities = %+v", q.identities)
 	}
 }

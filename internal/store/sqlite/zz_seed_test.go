@@ -28,10 +28,15 @@ func TestSeedEvidenceFixture(t *testing.T) {
 		t.Fatal(err)
 	}
 	audit := store.AuditEntry{Actor: "seed", Action: "project.create"}
-	for _, alias := range []string{"app", "blog"} {
-		if err := db.CreateProject(ctx, store.RegistryProject{
-			Alias: alias, Name: alias, Identity: "anonymous", AllowedOrigins: "[]"}, audit); err != nil {
+	var appID int64
+	for i, name := range []string{"app", "blog"} {
+		id, err := db.CreateProject(ctx, store.RegistryProject{
+			Name: name, Identity: "anonymous", AllowedOrigins: "[]"}, audit)
+		if err != nil {
 			t.Fatal(err)
+		}
+		if i == 0 {
+			appID = id
 		}
 	}
 	var views []store.View
@@ -42,7 +47,7 @@ func TestSeedEvidenceFixture(t *testing.T) {
 		for i := 0; i < 5; i++ {
 			tsV := day.Add(time.Duration(i) * time.Hour)
 			views = append(views, store.View{
-				ID: fmt.Sprintf("h%d-%d", d, i), Project: "app", Kind: "web", TS: tsV,
+				ID: fmt.Sprintf("h%d-%d", d, i), ProjectID: appID, Kind: "web", TS: tsV,
 				ActorID: fmt.Sprintf("v%d", i%3), ActorKind: store.ActorConnection,
 				Path:           []string{"/", "/pricing", "/docs"}[i%3],
 				ReferrerSource: []string{"google", "", "hn"}[i%3],
@@ -52,7 +57,7 @@ func TestSeedEvidenceFixture(t *testing.T) {
 				UTMCampaign: []string{"launch", "", ""}[i%3],
 			})
 			evs = append(evs, store.ProductEvent{
-				ID: fmt.Sprintf("e%d-%d", d, i), Project: "app",
+				ID: fmt.Sprintf("e%d-%d", d, i), ProjectID: appID,
 				EventName: []string{"signup", "subscribed"}[i%2],
 				ActorID:   fmt.Sprintf("u%d", i%3), TS: tsV,
 				Attributes: map[string]string{"plan": []string{"pro", "free"}[i%2]},
@@ -68,10 +73,10 @@ func TestSeedEvidenceFixture(t *testing.T) {
 	// Aggregate the oldest days so both sides of the stitch views have rows.
 	for d := 0; d < 4; d++ {
 		day := civilOf(base.AddDate(0, 0, d))
-		if err := db.AggregateViewDay(ctx, "app", day); err != nil {
+		if err := db.AggregateViewDay(ctx, appID, day); err != nil {
 			t.Fatal(err)
 		}
-		if err := db.AggregateProductDay(ctx, "app", day, []string{"plan"}, 10); err != nil {
+		if err := db.AggregateProductDay(ctx, appID, day, []string{"plan"}, 10); err != nil {
 			t.Fatal(err)
 		}
 	}

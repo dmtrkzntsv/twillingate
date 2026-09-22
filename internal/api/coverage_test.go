@@ -17,8 +17,8 @@ func TestTableTruncatesErrorsAndTimesOut(t *testing.T) {
 	// truncation: three rows for blog (2026-08-20, -21 aggregated plus the
 	// live hit on -26), capped to 1.
 	h.maxRows = 1
-	out, err := h.table(ctx, `SELECT day FROM v_views_daily WHERE project=? AND day BETWEEN ? AND ?`,
-		"blog", "2026-08-01", "2026-08-31")
+	out, err := h.table(ctx, `SELECT day FROM v_views_daily WHERE project_id=? AND day BETWEEN ? AND ?`,
+		int64(1), "2026-08-01", "2026-08-31")
 	if err != nil {
 		t.Fatalf("truncation case: %v", err)
 	}
@@ -28,7 +28,7 @@ func TestTableTruncatesErrorsAndTimesOut(t *testing.T) {
 	h.maxRows = 1000
 
 	// plain SQL error, not a timeout: must not carry the "exceeded" wording.
-	_, err = h.table(ctx, `SELECT no_such_column FROM v_views_daily WHERE project=?`, "blog")
+	_, err = h.table(ctx, `SELECT no_such_column FROM v_views_daily WHERE project_id=?`, int64(1))
 	if err == nil {
 		t.Fatal("bad column did not error")
 	}
@@ -51,8 +51,8 @@ func TestTableTruncatesErrorsAndTimesOut(t *testing.T) {
 func TestCheckRangeRejectsBadDateFormat(t *testing.T) {
 	_, cs := newTestHost(t)
 	for _, bad := range []map[string]any{
-		{"project": "blog", "from": "not-a-date", "to": "2026-08-31"},
-		{"project": "blog", "from": "2026-08-01", "to": "8/31/2026"},
+		{"project_id": 1, "from": "not-a-date", "to": "2026-08-31"},
+		{"project_id": 1, "from": "2026-08-01", "to": "8/31/2026"},
 	} {
 		res := callTool(t, cs, "views_overview", bad)
 		if !res.IsError {
@@ -66,7 +66,7 @@ func TestCheckRangeRejectsBadDateFormat(t *testing.T) {
 func TestCreateProjectSkipKey(t *testing.T) {
 	_, cs := newTestHost(t)
 	res := callTool(t, cs, "create_project", map[string]any{
-		"alias": "nokey", "name": "No Key", "skip_key": true})
+		"name": "No Key", "skip_key": true})
 	if res.IsError {
 		t.Fatalf("error: %s", textOf(res))
 	}
@@ -74,7 +74,7 @@ func TestCreateProjectSkipKey(t *testing.T) {
 	if strings.Contains(out, `"key"`) || strings.Contains(out, "script.js") {
 		t.Errorf("skip_key:true still returned a key/snippet: %s", out)
 	}
-	list := callTool(t, cs, "list_ingest_keys", map[string]any{"project": "nokey"})
+	list := callTool(t, cs, "list_ingest_keys", map[string]any{"project_id": projectIDOf(t, res)})
 	if strings.Contains(textOf(list), "default") {
 		t.Errorf("skip_key:true still issued a key: %s", textOf(list))
 	}
@@ -83,57 +83,57 @@ func TestCreateProjectSkipKey(t *testing.T) {
 func TestCreateProjectToolValidationError(t *testing.T) {
 	_, cs := newTestHost(t)
 	res := callTool(t, cs, "create_project", map[string]any{
-		"alias": "bad", "identity": "sometimes"})
+		"name": "bad", "identity": "sometimes"})
 	if !res.IsError {
 		t.Fatal("invalid identity accepted")
 	}
 }
 
-// Project-scoped tools answer an unknown alias with the valid ones listed
+// Project-scoped tools answer an unknown id with the valid ones listed
 // (the recoverable form a model can act on), whichever layer noticed the
 // miss: archive learns it from the store, issue_ingest_key from manage.
-func TestArchiveToolUnknownAlias(t *testing.T) {
+func TestArchiveToolUnknownId(t *testing.T) {
 	_, cs := newTestHost(t)
-	res := callTool(t, cs, "archive_project", map[string]any{"alias": "ghost"})
+	res := callTool(t, cs, "archive_project", map[string]any{"project_id": 99})
 	if !res.IsError {
-		t.Fatal("archive of unknown alias accepted")
+		t.Fatal("archive of unknown id accepted")
 	}
-	if msg := textOf(res); !strings.Contains(msg, "valid aliases: blog") {
-		t.Errorf("error = %q, want the valid aliases listed", msg)
+	if msg := textOf(res); !strings.Contains(msg, "unknown project 99; valid projects: 1 (blog), 2 (docs)") {
+		t.Errorf("error = %q, want the valid ids and names listed", msg)
 	}
 }
 
-// restore of an unknown alias is a deliberate no-op at the store layer
+// restore of an unknown id is a deliberate no-op at the store layer
 // (distinguishing "already restored" from "never existed" would need an
 // extra existence check the archive path already pays for); the tool
 // must therefore succeed rather than error.
-func TestRestoreToolUnknownAliasIsANoOp(t *testing.T) {
+func TestRestoreToolUnknownIdIsANoOp(t *testing.T) {
 	_, cs := newTestHost(t)
-	if res := callTool(t, cs, "restore_project", map[string]any{"alias": "ghost"}); res.IsError {
-		t.Fatalf("restore of unknown alias errored: %s", textOf(res))
+	if res := callTool(t, cs, "restore_project", map[string]any{"project_id": 99}); res.IsError {
+		t.Fatalf("restore of unknown id errored: %s", textOf(res))
 	}
 }
 
 func TestIssueKeyToolUnknownProject(t *testing.T) {
 	_, cs := newTestHost(t)
 	res := callTool(t, cs, "issue_ingest_key", map[string]any{
-		"project": "ghost", "label": "web"})
+		"project_id": 99, "label": "web"})
 	if !res.IsError {
 		t.Fatal("issue_ingest_key for unknown project accepted")
 	}
-	if msg := textOf(res); !strings.Contains(msg, "valid aliases: blog") {
-		t.Errorf("error = %q, want the valid aliases listed", msg)
+	if msg := textOf(res); !strings.Contains(msg, "unknown project 99; valid projects: 1 (blog), 2 (docs)") {
+		t.Errorf("error = %q, want the valid ids and names listed", msg)
 	}
 }
 
 func TestDisableEnableKeyToolsUnknownKey(t *testing.T) {
 	_, cs := newTestHost(t)
 	if res := callTool(t, cs, "disable_ingest_key", map[string]any{
-		"project": "blog", "label": "ghost"}); !res.IsError {
+		"project_id": 1, "label": "ghost"}); !res.IsError {
 		t.Fatal("disable of unknown key accepted")
 	}
 	if res := callTool(t, cs, "enable_ingest_key", map[string]any{
-		"project": "blog", "label": "ghost"}); !res.IsError {
+		"project_id": 1, "label": "ghost"}); !res.IsError {
 		t.Fatal("enable of unknown key accepted")
 	}
 }
@@ -141,21 +141,21 @@ func TestDisableEnableKeyToolsUnknownKey(t *testing.T) {
 func TestListKeysFilterAndUnfiltered(t *testing.T) {
 	_, cs := newTestHost(t)
 	if res := callTool(t, cs, "issue_ingest_key", map[string]any{
-		"project": "blog", "label": "web"}); res.IsError {
+		"project_id": 1, "label": "web"}); res.IsError {
 		t.Fatalf("seed key: %s", textOf(res))
 	}
 	if res := callTool(t, cs, "issue_ingest_key", map[string]any{
-		"project": "docs", "label": "web"}); res.IsError {
+		"project_id": 2, "label": "web"}); res.IsError {
 		t.Fatalf("seed key: %s", textOf(res))
 	}
 
-	filtered := textOf(callTool(t, cs, "list_ingest_keys", map[string]any{"project": "blog"}))
-	if !strings.Contains(filtered, "blog") || strings.Contains(filtered, "docs") {
+	filtered := textOf(callTool(t, cs, "list_ingest_keys", map[string]any{"project_id": 1}))
+	if !strings.Contains(filtered, `"project_id":1`) || strings.Contains(filtered, `"project_id":2`) {
 		t.Errorf("project filter not applied: %s", filtered)
 	}
 
 	all := textOf(callTool(t, cs, "list_ingest_keys", nil))
-	if !strings.Contains(all, "blog") || !strings.Contains(all, "docs") {
+	if !strings.Contains(all, `"project_id":1`) || !strings.Contains(all, `"project_id":2`) {
 		t.Errorf("unfiltered list missing a project: %s", all)
 	}
 }
@@ -177,7 +177,7 @@ func TestListKeysPropagatesStoreError(t *testing.T) {
 func TestIdentitiesRejectsBadKind(t *testing.T) {
 	_, cs := newTestHost(t)
 	res := callTool(t, cs, "identities", map[string]any{
-		"project": "blog", "kind": "robot", "from": "2026-08-01", "to": "2026-08-31"})
+		"project_id": 1, "kind": "robot", "from": "2026-08-01", "to": "2026-08-31"})
 	if !res.IsError {
 		t.Fatal("bad kind accepted")
 	}
@@ -186,7 +186,7 @@ func TestIdentitiesRejectsBadKind(t *testing.T) {
 func TestIdentitiesGroupKind(t *testing.T) {
 	_, cs := newTestHost(t)
 	res := callTool(t, cs, "identities", map[string]any{
-		"project": "blog", "kind": "group", "from": "2026-08-01", "to": "2026-08-31"})
+		"project_id": 1, "kind": "group", "from": "2026-08-01", "to": "2026-08-31"})
 	if res.IsError {
 		t.Fatalf("error: %s", textOf(res))
 	}
@@ -199,7 +199,7 @@ func TestIdentitiesGroupKind(t *testing.T) {
 func TestRetentionRejectsBadActor(t *testing.T) {
 	_, cs := newTestHost(t)
 	res := callTool(t, cs, "retention", map[string]any{
-		"project": "blog", "actor": "mobile", "from": "2026-07-01", "to": "2026-08-31"})
+		"project_id": 1, "actor": "mobile", "from": "2026-07-01", "to": "2026-08-31"})
 	if !res.IsError {
 		t.Fatal("bad actor accepted")
 	}
@@ -208,7 +208,7 @@ func TestRetentionRejectsBadActor(t *testing.T) {
 func TestProductEventsFiltersByEventName(t *testing.T) {
 	_, cs := newTestHost(t)
 	res := callTool(t, cs, "product_events", map[string]any{
-		"project": "blog", "from": "2026-08-01", "to": "2026-08-31", "event": "signup"})
+		"project_id": 1, "from": "2026-08-01", "to": "2026-08-31", "event": "signup"})
 	if res.IsError {
 		t.Fatalf("error: %s", textOf(res))
 	}
@@ -217,7 +217,7 @@ func TestProductEventsFiltersByEventName(t *testing.T) {
 	}
 	// a name with no matching rows must succeed with an empty table, not error
 	res = callTool(t, cs, "product_events", map[string]any{
-		"project": "blog", "from": "2026-08-01", "to": "2026-08-31", "event": "no-such-event"})
+		"project_id": 1, "from": "2026-08-01", "to": "2026-08-31", "event": "no-such-event"})
 	if res.IsError {
 		t.Fatalf("unmatched event name errored: %s", textOf(res))
 	}

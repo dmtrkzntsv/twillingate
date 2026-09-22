@@ -1,7 +1,11 @@
-# {params.project} — Retention
+# {project_name[0].name} — Retention
+
+```sql project_name
+select name from twillingate.projects where id = '${params.project}'
+```
 
 ```sql retention_mode
-select identity from twillingate.projects where alias = '${params.project}'
+select identity from twillingate.projects where id = '${params.project}'
 ```
 
 {#if retention_mode[0].identity === 'identified'}
@@ -37,7 +41,7 @@ with rows as (
   select actor_kind, cohort_day::date as cohort_day, day_offset::int as day_offset,
          actors, cohort_size
   from twillingate.v_retention
-  where project = '${params.project}'
+  where project_id = '${params.project}'
     and cohort_day::date >= (now() at time zone 'UTC')::date - interval (${inputs.range} - 1) day
 ),
 cohorts as (
@@ -97,7 +101,7 @@ select * from ${retention_milestones} where actor_kind = 'install'
 select actor_kind, cohort_day, day_offset, cohort_size, actors,
        case when cohort_size > 0 then actors * 1.0 / cohort_size else 0 end as retention
 from twillingate.v_retention
-where project = '${params.project}' and day_offset between 0 and 45
+where project_id = '${params.project}' and day_offset between 0 and 45
   and cohort_day >= strftime((now() at time zone 'UTC')::date - interval (${inputs.range} - 1) day, '%Y-%m-%d')
 order by cohort_day desc, actor_kind, day_offset
 ```
@@ -155,7 +159,7 @@ load makes each visit a new actor, and this curve reads near zero.
 Retention is undefined in **anonymous** identity mode: `actor_id` rotates at
 midnight, so every cohort would contain only its own first day.
 
-Run <code class="markdown">twillingate project update -alias {params.project} -identity identified</code>
+Run <code class="markdown">twillingate project update -id {params.project} -identity identified</code>
 (or the `update_project` MCP tool) to enable cohorts. Note that identified
 mode stores a persistent `localStorage` id on the web, which is
 terminal-equipment storage under ePrivacy — the same legal category as a
