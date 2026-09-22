@@ -3,7 +3,7 @@
 (The file keeps its `os-and-platform` name; the other three specs and the
 sequencing note link to it.)
 
-Status: proposed
+Status: implemented (2026-09-21)
 Date: 2026-09-20
 
 ## Sequencing
