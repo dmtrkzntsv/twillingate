@@ -192,15 +192,13 @@ the origin if this site uses another collector hostname.
 | `data-mask-url` | `maskUrl` | Rewrite the URL before it is sent. See [Masking](#masking-urls). |
 | `data-routing` | `routing` | `history` (default) or `hash`. See [Hash routing](#hash-routing). |
 | `data-kind` | `kind` | What this client is: `web` (default), `app`, `cli`, or any short lower-case token. Anything but `web` switches automatic tracking from `$page_view` to `$screen_view` (the route path becomes the screen) and exempts the client from the server's crawler filter, which applies to `web` only. |
-| `data-platform` | `platform` | The surface the product is used through (`$platform`): `web`, `ios`, `android`, `electron`, … Defaults to `web` only while `kind` is `web`; any other kind is a wrapper the SDK cannot name, so set it beside `data-kind` or the server records `unknown`. |
-| `data-os`, `data-os-version`, `data-os-name` | `os`, `osVersion`, `osName` | Override the detected operating system (`$os`, `$os_version`, `$os_name`). See [Detection](#detection); an explicit value always beats detection. |
-| `data-browser`, `data-browser-version` | `browser`, `browserVersion` | Override the detected browser (`$browser`, `$browser_version`). |
-| `data-device` | `device` | Override the detected form factor (`$device`). `wearable` is reachable only this way. |
-| `data-app-version` | `appVersion` | The version of the client application — a site build, an app release, a CLI version. |
 
 **Every `data-*` attribute has an `init()` equivalent**, enforced by a test.
-The reverse does not hold: `url`, `installId` and `flushInterval` are
-code-only, because an attribute can only carry a string.
+The reverse does not hold: `url`, `installId`, `flushInterval` and the
+environment overrides (`platform`, `os`, `osVersion`, `osName`, `browser`,
+`browserVersion`, `device`, `appVersion`) are code-only. A snippet-mode site
+is a web page, so detection already answers for it; a wrapper such as
+Electron or Tauri that needs `platform` calls `init()` from code.
 
 Views are automatic, including on `history.pushState` and `popstate`, so
 single-page apps need no extra code.

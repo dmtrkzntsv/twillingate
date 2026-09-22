@@ -71,7 +71,7 @@ func (h *host) integrationGuide(ctx context.Context, in guideIn) (guideOut, erro
 			b.WriteString(", including SPA route changes (pushState/popstate are hooked) — no router integration needed")
 		}
 		b.WriteString(". The snippet is silent on localhost, so test on a real or staged domain.\n\n")
-		b.WriteString("An Electron or Tauri app loading the same tag adds data-kind=\"app\", data-platform=\"electron\" and data-app-version, so its views are keyed by the build rather than counted as web; the OS, browser and device are detected by the SDK on every kind.\n\n")
+		b.WriteString("An Electron or Tauri app loads the same file without data-key and calls twillingate.init({ key, kind: \"app\", platform: \"electron\", appVersion }) from code, so its views are keyed by the build rather than counted as web; the OS, browser and device are detected by the SDK on every kind.\n\n")
 		fmt.Fprintf(&b, "Product events from the page:\n\n    twillingate.track(\"signup\", { plan: \"pro\" });\n\n")
 		if p.Identity == config.IdentityIdentified {
 			b.WriteString("This project is IDENTIFIED: the snippet persists a visitor id in\nlocalStorage (consent-relevant, ePrivacy — same category as a cookie).\nGate the tag on consent, call twillingate.identify(userId, userName)\n(and twillingate.group(groupId)) after login and twillingate.reset() on\nlogout.\n\n")

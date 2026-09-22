@@ -711,13 +711,5 @@ export function autoInit(tg: Twillingate, script: HTMLScriptElement | null): voi
     maskUrl: script.getAttribute("data-mask-url") || undefined,
     routing: script.getAttribute("data-routing") === "hash" ? "hash" : "history",
     kind: script.getAttribute("data-kind") || undefined,
-    platform: script.getAttribute("data-platform") || undefined,
-    os: script.getAttribute("data-os") || undefined,
-    osVersion: script.getAttribute("data-os-version") || undefined,
-    osName: script.getAttribute("data-os-name") || undefined,
-    browser: script.getAttribute("data-browser") || undefined,
-    browserVersion: script.getAttribute("data-browser-version") || undefined,
-    device: script.getAttribute("data-device") || undefined,
-    appVersion: script.getAttribute("data-app-version") || undefined,
   });
 }

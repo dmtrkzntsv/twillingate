@@ -118,8 +118,7 @@ func TestDocumentMatchesSDK(t *testing.T) {
 	for _, symbol := range []string{
 		"data-key", "data-identity", "data-user", "data-group", "data-auto",
 		"data-mask-url", "data-routing",
-		"data-kind", "data-platform", "data-os", "data-os-version", "data-os-name",
-		"data-browser", "data-browser-version", "data-device", "data-app-version",
+		"data-kind",
 		"init", "page", "screen", "track", "attrs", "identify", "group", "reset", "flush",
 		"detectOS", "detectBrowser", "detectDevice", "ClientSignals",
 		"twillingate_ignore", "analytics_ignore",

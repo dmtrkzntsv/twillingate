@@ -469,13 +469,11 @@ describe("snippet auto-init", () => {
   it("data-kind switches automatic tracking to $screen_view with the route path", async () => {
     history.replaceState(null, "", "/settings/profile?tab=1");
     const t = new Twillingate();
-    autoInit(t, scriptTag({ "data-key": "ak_snippet", "data-kind": "app", "data-os": "macos", "data-app-version": "2.4.1" }));
+    autoInit(t, scriptTag({ "data-key": "ak_snippet", "data-kind": "app" }));
     t.flush();
     await drain();
     const attrs = sent[0].body.attributes;
     expect(attrs.$kind).toBe("app");
-    expect(attrs.$os).toBe("macos");
-    expect(attrs.$app_version).toBe("2.4.1");
     const ev = sent[0].body.events[0];
     expect(ev.name).toBe("$screen_view");
     const ea = ev.attributes as Record<string, unknown>;
@@ -484,20 +482,27 @@ describe("snippet auto-init", () => {
     expect(ea.$referrer).toBeUndefined();
   });
 
-  it("reads every environment data attribute", async () => {
+  it("ignores environment data attributes; overrides are init() options", async () => {
     const s = scriptTag({
+      // "wearable" is reachable only through the init() override, never
+      // through detection, so seeing anything else proves the attribute
+      // was ignored rather than coincidentally matching a detected value.
       "data-key": "ak_snip", "data-auto": "off", "data-kind": "app", "data-platform": "electron",
-      "data-os": "macos", "data-os-version": "14.2", "data-os-name": "macOS 14.2",
-      "data-browser": "chrome", "data-browser-version": "126", "data-device": "desktop",
+      "data-os": "macos", "data-device": "wearable", "data-app-version": "9.9.9",
     });
     const t = new Twillingate();
     autoInit(t, s);
     t.track("probe");
     await drain();
-    expect(sent[0].body.attributes).toMatchObject({
-      $kind: "app", $platform: "electron", $os: "macos", $os_version: "14.2", $os_name: "macOS 14.2",
-      $browser: "chrome", $browser_version: "126", $device: "desktop",
-    });
+    const attrs = sent[0].body.attributes;
+    expect(attrs.$kind).toBe("app");
+    // platform was never passed to init(), and $platform only defaults for kind "web"
+    expect(attrs).not.toHaveProperty("$platform");
+    // appVersion is code-only; the attribute is never read
+    expect(attrs).not.toHaveProperty("$app_version");
+    // os/device are still detected by the SDK; the attributes did not override them
+    expect(attrs.$os).not.toBe("macos");
+    expect(attrs.$device).not.toBe("wearable");
   });
 
   it("app kind tracks pushState navigations as screen views", async () => {
@@ -524,9 +529,7 @@ describe("script tag and init parity", () => {
     const optionFor: Record<string, string> = {
       key: "key", identity: "identity", user: "user", group: "group",
       auto: "autoPageviews", "mask-url": "maskUrl", routing: "routing",
-      kind: "kind", platform: "platform", os: "os", "os-version": "osVersion", "os-name": "osName",
-      browser: "browser", "browser-version": "browserVersion", device: "device",
-      "app-version": "appVersion",
+      kind: "kind",
     };
     expect(attrs.length).toBeGreaterThan(0);
     for (const a of attrs) {
