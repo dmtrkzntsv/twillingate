@@ -84,9 +84,13 @@ func testConfig(t *testing.T, addr, dbPath string) *config.Config {
 	})
 }
 
+// waitHealthy polls /healthz until the server answers. Boot on a fresh
+// database runs every migration first, which takes about 3 s under the
+// race detector on a fast machine and more on a loaded CI runner, so the
+// deadline is generous: it bounds a hung boot, not a slow one.
 func waitHealthy(t *testing.T, base string) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		if resp, err := http.Get(base + "/healthz"); err == nil {
 			resp.Body.Close()
