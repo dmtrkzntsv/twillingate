@@ -21,7 +21,7 @@ export class TwillingateGlobal extends Twillingate {
    * the default instance returned.
    */
   create(name: string, opts?: InitOptions): Twillingate {
-    if (name === DEFAULT_INSTANCE) {
+    if (name === DEFAULT_INSTANCE || name === "") {
       console.warn(`twillingate: create() needs a name other than "${DEFAULT_INSTANCE}"; that instance is the global itself`);
       return this;
     }
@@ -46,6 +46,17 @@ export class TwillingateGlobal extends Twillingate {
   /** Registered names, for diagnostics. */
   instances(): string[] {
     return Array.from(this.registry.keys());
+  }
+
+  /**
+   * Store an already-built instance under name, if the name is free.
+   * Internal: bootstrap uses this to carry a superseded copy's named
+   * instances over to the copy that replaces it, without re-running
+   * init() or validation beyond skipping the default name.
+   */
+  adopt(name: string, instance: Twillingate): void {
+    if (name === DEFAULT_INSTANCE || this.registry.has(name)) return;
+    this.registry.set(name, instance);
   }
 }
 
@@ -113,7 +124,21 @@ export function bootstrap(script: HTMLScriptElement | null): Twillingate | null 
   if (isSDK(existing)) {
     if (name !== DEFAULT_INSTANCE) return existing.create(name, tagOptions(script) ?? undefined);
     if (supersededBy(existing, script)) return null;
-    // A different key takes over the default instance below.
+    // A different key takes over the default instance: carry the old
+    // global's named instances across structurally (a copy from another
+    // release still hands over what it can), then retire the old default
+    // so it stops sending under the superseded key.
+    const tg = new TwillingateGlobal();
+    if (typeof existing.instances === "function" && typeof existing.get === "function") {
+      for (const n of existing.instances()) {
+        const instance = existing.get(n);
+        if (instance) tg.adopt(n, instance);
+      }
+    }
+    if (typeof existing.retire === "function") existing.retire();
+    g.twillingate = tg;
+    autoInit(tg, script);
+    return tg;
   } else if (existing !== undefined && existing !== null) {
     console.warn("twillingate: window.twillingate is already taken by something else; this tag's instance is not registered there");
     const tg = new TwillingateGlobal();

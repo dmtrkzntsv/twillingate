@@ -122,7 +122,7 @@ describe("snippet auto-init", () => {
 
     it("lets a keyed tag replace a dormant copy silently", () => {
       const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-      expect(supersededBy(new Twillingate(), scriptTag({ "data-key": "ak_b" }))).toBe(false);
+      expect(supersededBy(new TwillingateGlobal(), scriptTag({ "data-key": "ak_b" }))).toBe(false);
       expect(warn).not.toHaveBeenCalled();
     });
 

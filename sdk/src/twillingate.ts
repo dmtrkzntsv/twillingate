@@ -231,6 +231,7 @@ export class Twillingate implements Subscriber {
   private held: Array<() => void> = [];
   private heldWarned = false;
   private warnedAnonymous = false;
+  private retired = false;
 
   /** Path-shaping helpers, for use inside an onPage listener. */
   readonly util = { maskIds, withQuery };
@@ -564,6 +565,17 @@ export class Twillingate implements Subscriber {
     if (this.ready && this.taggedEvents) this.track(name, { path });
   }
 
+  /**
+   * Stop this instance for good: it leaves its runtime and produces no
+   * more events. Called by bootstrap on a default instance a later tag
+   * with a different key has taken over. Internal; not part of the
+   * documented API.
+   */
+  retire(): void {
+    runtime.unsubscribe(this);
+    this.retired = true;
+  }
+
   // ---- internals ----
 
   private label(): string {
@@ -600,7 +612,7 @@ export class Twillingate implements Subscriber {
   // Whether an event may be produced now: initialised, and neither the
   // person's opt-out flag nor the site's optOut callback says no.
   private live(): boolean {
-    return this.ready && !readFlag(IGNORE_FLAG) && !this.optOutSpec();
+    return this.ready && !this.retired && !readFlag(IGNORE_FLAG) && !this.optOutSpec();
   }
 
   // The last layer: onEvent listeners, then null drops a key.

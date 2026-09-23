@@ -207,13 +207,27 @@ describe("bootstrap", () => {
     expect((g.twillingate as TwillingateGlobal).instances()).toEqual(["et"]);
   });
 
-  it("a different key takes over the default instance, with a warning", () => {
+  it("a different key takes over the default instance, with a warning", async () => {
     const first = bootstrap(scriptTag({ "data-key": "ak_a", "data-auto": "off" }));
+    (first as TwillingateGlobal).create("et", { key: "ak_et", flushInterval: 0, autoPageviews: false });
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const second = bootstrap(scriptTag({ "data-key": "ak_b", "data-auto": "off" }));
     expect(second).not.toBe(first);
     expect(g.twillingate).toBe(second);
     expect(warn.mock.calls.flat().join(" ")).toContain("ak_a -> ak_b");
+    // the old default's registry carries over to the new one...
+    expect((second as TwillingateGlobal).get("et")).toBe((first as TwillingateGlobal).get("et"));
+    expect((second as TwillingateGlobal).instances()).toEqual(["et"]);
+    expect(runtime.subscribers()).toBe(2); // the new default plus et
+    // ...and the old default is retired: it produces nothing more under ak_a
+    history.pushState(null, "", "/after");
+    (first as Twillingate).flush();
+    (second as Twillingate).flush();
+    await drain();
+    (first as Twillingate).track("dead");
+    (first as Twillingate).flush();
+    await drain();
+    expect(sent.some((s) => s.body.key === "ak_a")).toBe(false);
   });
 
   it("never overwrites a foreign global, and still tracks unregistered", async () => {
