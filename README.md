@@ -9,7 +9,8 @@ the Canadian town where tourists come to watch icebergs —
 this one surfaces the insights beneath your data.</em></p>
 
 Web, app and product analytics as one Go binary and one SQLite file —
-cookieless and anonymous by default ([details](#privacy-and-gdpr)). It holds
+cookieless, and the served SDK sends nothing identifying by default
+([details](#privacy-and-gdpr)). It holds
 about 15 MB of memory, needs no database server and no cluster, and is happy on
 a Raspberry Pi from day one. An MCP endpoint — with the same operations also
 callable as a plain REST API — means your coding agent or a script can set it
@@ -66,8 +67,7 @@ events. Each file ships the litestream service it needs, commented out.
 
 ```html
 <script defer src="https://twillingate.example.com/js/twillingate.js"
-        data-key="ak_9f3c…"
-        data-identity="anonymous"></script>
+        data-key="ak_9f3c…"></script>
 ```
 
 Pageviews are automatic, SPAs included. The same file is a full SDK for
@@ -76,7 +76,7 @@ web, product and app analytics from code:
 ```js
 twillingate.track("signup", { plan: "pro" });   // product event
 twillingate.screen("/settings");                // app screen view
-twillingate.identify("user-123", "Ada");        // identified projects
+twillingate.identify("user-123", "Ada");        // on an identified tag
 twillingate.group("org-9", "Acme Corp");
 twillingate.reset();                            // on logout
 ```
@@ -99,7 +99,7 @@ install too.
 
 | Section | Covers |
 | --- | --- |
-| [Set up a project](docs/twillingate.md#set-up-a-project) | Projects, identity modes, allowed origins, retention, attribute breakdowns, ingest keys |
+| [Set up a project](docs/twillingate.md#set-up-a-project) | Projects, allowed origins, retention, attribute breakdowns, ingest keys |
 | [Instrument a website](docs/twillingate.md#instrument-a-website) | twillingate.js: snippet and code modes, masking, routing, consent and storage |
 | [The event model](docs/twillingate.md#the-event-model) | The three event families, for native apps and backends too |
 | [The wire format](docs/twillingate.md#the-wire-format) | The normative contract for `/ingest/events` |
