@@ -3,7 +3,7 @@
 // attribute from silently doing nothing in bundled apps.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Twillingate, type InitOptions } from "./twillingate";
-import { autoInit, supersededBy } from "./factory";
+import { TwillingateGlobal, autoInit, supersededBy } from "./factory";
 import { runtime } from "./runtime";
 import twillingateSource from "./twillingate.ts?raw";
 import factorySource from "./factory.ts?raw";
@@ -93,8 +93,11 @@ describe("snippet auto-init", () => {
   });
 
   describe("loaded twice", () => {
+    // A previously-loaded copy is always a TwillingateGlobal (window.twillingate
+    // is never a bare Twillingate) -- isSDK() keys off create()/VERSION, which
+    // only the global exposes.
     function loaded(key: string): Twillingate {
-      const t = new Twillingate();
+      const t = new TwillingateGlobal();
       autoInit(t, scriptTag({ "data-key": key }));
       return t;
     }
@@ -108,7 +111,7 @@ describe("snippet auto-init", () => {
     it("defers to the first copy when the second tag has no key", () => {
       vi.spyOn(console, "warn").mockImplementation(() => {});
       expect(supersededBy(loaded("ak_first"), scriptTag({}))).toBe(true);
-      expect(supersededBy(new Twillingate(), scriptTag({}))).toBe(true);
+      expect(supersededBy(new TwillingateGlobal(), scriptTag({}))).toBe(true);
     });
 
     it("lets a tag with a different key take over, with a warning", () => {
