@@ -6,7 +6,8 @@ Date: 2026-09-22
 ## Sequencing
 
 First of two specs. This one changes the SDK, the served bundle and the
-contract page, and nothing on the server. The second removes the project's
+contract page; the only server change is one more serve-time substitution
+in the bundle (§8). The second removes the project's
 server-side identity mode and makes the collector store what it is sent:
 
 1. **this spec** — SDK and docs only
@@ -55,8 +56,8 @@ in markup.
 
 ## What does not change
 
-The wire format, every reserved attribute, the server, the project
-registry, the `Snippet()` output and the integration guide's tag. Storage
+The wire format, every reserved attribute, the ingest handlers, the
+project registry, the `Snippet()` output and the integration guide's tag. Storage
 keys keep their names (`twillingate_*` for the default instance,
 `<name>_*` for the rest) and `twillingate_ignore` stays global. Consent
 keeps its meaning and its default. Detection, masking, routing modes, the
@@ -284,6 +285,17 @@ for Plausible-class markup.
 - `init()` and `create()` return the instance.
 - `flush()` loses its public `unloading` parameter; the unload path calls
   a private method.
+- **The collector's origin is baked into the served file.** The bundle
+  carries a second placeholder, `__TWILLINGATE_URL__`, beside the version
+  one. `registerScript` replaces it, per request, with the origin the file
+  was requested from — scheme from the proxy's forwarded header or the
+  connection, host from the `Host` header — so a collector that answers on
+  several hostnames serves each site a copy that posts back to the
+  hostname the site used. The SDK no longer reads `document.currentScript`
+  for the origin, which was null for module scripts and some loaders. A
+  bundled build has the placeholder unsubstituted and must pass `url`;
+  `init()` without it warns and stays dormant, as today. `url` is thereby
+  the one option that exists only for bundlers.
 - `user`, `group` and `installId` leave the options. Identity is set
   through `identify(user, name?)`, `group(id, name?)` and the new
   `installId(id?)` setter, before or after `init()`; the entry pageview
@@ -412,13 +424,13 @@ except the loader example.
 **Three ways to get the object.** All three yield the same API.
 
 1. *The tag, dormant.* Load the file without `data-key` and use
-   `window.twillingate` after it has executed. `url` defaults to the
-   script's origin.
+   `window.twillingate` after it has executed. The served file already
+   knows its collector (§8), so nothing is configured but the key.
 2. *Inject the script from code.* The same file, appended by the
    application when it decides analytics should run — after a consent
-   check, after login, or only in production. A dynamically inserted
-   classic script still sets `document.currentScript`, so the origin
-   default and every attribute work exactly as for a pasted tag.
+   check, after login, or only in production. The served file carries
+   the collector's origin, so an injected script needs nothing a pasted
+   tag would not, and every attribute works the same way.
 
    ```js
    function loadTwillingate(src) {
@@ -445,8 +457,8 @@ except the loader example.
    gives the same object without registering a global. Bundling and a
    tag on the same page means two bundle copies, each with its own
    runtime and hooks; when a tag is on the page, prefer reaching the
-   global. `url` is required here, since there is no script to read an
-   origin from.
+   global. `url` is required here: only the served file carries the
+   collector's origin.
 
 **Options.** `init(opts)` on any instance, `create(name, opts)` for a
 named one.
@@ -454,7 +466,7 @@ named one.
 ```ts
 interface InitOptions {
   key: string;                                  // required
-  url?: string;                                 // default: the loading script's origin
+  url?: string;                                 // bundled builds only; the served file carries it
   identity?: "anonymous" | "identified";        // default "anonymous"; decides what is SENT (§3)
   consent?: boolean | string | (() => unknown); // default false; a name is read on window live
   storage?: "localStorage" | "sessionStorage" | "memory" | "cookie" | StorageDriver;
@@ -628,6 +640,9 @@ SDK suite (vitest), one `describe` each:
   listener set feeding two instances, the off switch on one of them,
   nothing but the name read;
 - `autoPageviews` default in code; `init()` returning the instance;
+- the origin: a bundle with the placeholder substituted posts there with
+  no `url`; one with it unsubstituted warns and stays dormant without
+  `url`, and posts to `url` with it;
 - the existing "explicit option beats detection" test is deleted and the
   "ignores environment data attributes" test no longer passes overrides;
   a batch from a runtime with no User-Agent still carries `unknown`.
@@ -639,7 +654,10 @@ Go:
   `taggedEvents`, `twillingate_debug` and lose `data-user` and
   `data-group`;
 - `internal/server/twillingate_script_test.go` markers gain
-  `twillingate_debug` and `data-twillingate-event`;
+  `twillingate_debug` and `data-twillingate-event`; a new test serves the
+  file under two `Host` values and asserts each copy carries its own
+  origin and no `__TWILLINGATE_URL__`; a forwarded `https` scheme is
+  honoured;
 - the SDK's tag-to-option parity test gets one named exception,
   `data-instance`, which maps to `create()`'s name.
 
