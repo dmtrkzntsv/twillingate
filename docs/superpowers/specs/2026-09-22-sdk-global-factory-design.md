@@ -231,7 +231,7 @@ Consent stays the gate: without it no driver is touched, with it the
 driver holds the keys. A driver that throws counts as unavailable, exactly
 as localStorage does today. There is no attribute: a tag keeps
 localStorage, and a site that wants another driver calls `init()` from
-code, the same rule `url` and `flushInterval` follow. The docs show a six-line custom driver for a cookie on a shared parent domain,
+code, the same rule `flushInterval` follows. The docs show a six-line custom driver for a cookie on a shared parent domain,
 which is the one thing the built-in cookie driver does not do.
 
 `twillingate_ignore` stays in localStorage regardless of driver: opting out
