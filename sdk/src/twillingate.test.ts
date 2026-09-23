@@ -1,9 +1,14 @@
 // Core SDK behaviour: init modes, payload shape, batching, transport and
 // failure handling. Identity and pageview behaviour live in identity.test.ts.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { Twillingate, autoInit, supersededBy } from "./twillingate";
+import { Twillingate, type InitOptions } from "./twillingate";
 import { resetPlatformVersion } from "./detect";
-import twillingateSource from "./twillingate.ts?raw";
+import { runtime } from "./runtime";
+
+vi.mock("./origin", () => ({
+  ORIGIN: "https://collector.example.com",
+  collectorOrigin: () => "https://collector.example.com",
+}));
 
 const URL_BASE = "https://collector.example.com";
 
@@ -20,9 +25,9 @@ function okFetch(url: string, init: { body: string }): Promise<{ status: number 
   return Promise.resolve({ status: 202 });
 }
 
-function tg(opts: Partial<Parameters<Twillingate["init"]>[0]> = {}): Twillingate {
+function tg(opts: Partial<InitOptions> = {}): Twillingate {
   const t = new Twillingate();
-  t.init({ key: "ak_test", url: URL_BASE, flushInterval: 0, ...opts });
+  t.init({ key: "ak_test", flushInterval: 0, autoPageviews: false, ...opts });
   return t;
 }
 
@@ -32,12 +37,8 @@ async function drain(): Promise<void> {
   await vi.waitFor(() => {});
 }
 
-// hookHistory() monkey-patches the shared history object with no unhook;
-// restoring it after each test stops an earlier test's Twillingate instance
-// from firing a ghost pageview when a later test calls pushState directly.
-const nativePushState = history.pushState;
-
 beforeEach(() => {
+  runtime.reset();
   vi.useFakeTimers();
   sent = [];
   fetchImpl = okFetch;
@@ -48,7 +49,6 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
-  history.pushState = nativePushState;
 });
 
 describe("init", () => {
@@ -61,20 +61,24 @@ describe("init", () => {
     expect(sent).toHaveLength(0);
   });
 
-  it("warns when no url is available outside snippet mode", () => {
+  it("holds calls made before init and runs them after", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const t = new Twillingate();
-    t.init({ key: "ak_test" }); // no url, no loading <script>
-    t.track("x");
-    expect(warn.mock.calls.flat().join(" ")).toContain("url");
+    t.track("early");
+    expect(warn).not.toHaveBeenCalled();
     expect(sent).toHaveLength(0);
+    t.init({ key: "ak_test", flushInterval: 0, autoPageviews: false });
+    t.flush();
+    await drain();
+    expect(sent[0].body.events[0].name).toBe("early");
   });
 
-  it("tracks nothing before init", () => {
+  it("init() returns the instance and a second init() warns and is ignored", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    new Twillingate().track("x");
-    expect(warn).toHaveBeenCalled();
-    expect(sent).toHaveLength(0);
+    const t = new Twillingate();
+    expect(t.init({ key: "ak_test", flushInterval: 0, autoPageviews: false })).toBe(t);
+    t.init({ key: "ak_other", flushInterval: 0 });
+    expect(warn.mock.calls.flat().join(" ")).toContain("already initialised");
   });
 });
 
@@ -96,18 +100,18 @@ describe("payload shape", () => {
   });
 
   it("carries app context as batch attributes", async () => {
-    const t = tg({ kind: "app", platform: "ios", os: "ios", osVersion: "17.2", appVersion: "2.4.1", installId: "018f-install" });
+    const t = tg({ identity: "identified", kind: "app", platform: "ios", appVersion: "2.4.1" });
+    t.installId("018f-install");
     t.screen("/settings");
     await drain();
     const { attributes, events } = sent[0].body;
     expect(attributes).toMatchObject({
       $kind: "app",
       $platform: "ios",
-      $os: "ios",
-      $os_version: "17.2",
       $app_version: "2.4.1",
       $install_id: "018f-install",
     });
+    expect(typeof attributes.$os).toBe("string");
     expect(events[0].name).toBe("$screen_view");
     expect(events[0].attributes).toEqual({ $screen: "/settings" });
   });
@@ -178,19 +182,6 @@ describe("environment", () => {
     electron.track("c");
     await drain();
     expect(sent[0].body.attributes.$platform).toBe("electron");
-  });
-
-  it("lets an explicit option beat detection, while detect* still answers for the signals", async () => {
-    stubNavigator({});
-    const t = tg({ os: "linux", browser: "firefox", device: "tablet" });
-    t.track("probe");
-    await drain();
-    expect(sent[0].body.attributes).toMatchObject({ $os: "linux", $browser: "firefox", $device: "tablet" });
-    // Pure detection ignores the option: it has to answer for THIS
-    // User-Agent, or it is useless for the debugging case it exists for.
-    expect(t.detectOS().os).toBe("windows");
-    expect(t.detectBrowser().browser).toBe("chrome");
-    expect(t.detectDevice().device).toBe("desktop");
   });
 
   it("consults only a supplied ClientSignals, never the ambient navigator", () => {
@@ -360,210 +351,5 @@ describe("failure handling and the offline queue", () => {
     t.track("fine");
     await drain();
     expect(sent).toHaveLength(1);
-  });
-});
-
-describe("snippet auto-init", () => {
-  function scriptTag(attrs: Record<string, string>): HTMLScriptElement {
-    const s = document.createElement("script");
-    s.src = URL_BASE + "/js/twillingate.js";
-    for (const [k, v] of Object.entries(attrs)) s.setAttribute(k, v);
-    return s;
-  }
-
-  it("inits from data attributes and fires an automatic pageview", async () => {
-    const t = new Twillingate();
-    autoInit(t, scriptTag({ "data-key": "ak_snippet" }));
-    t.flush();
-    await drain();
-    expect(sent).toHaveLength(1);
-    expect(sent[0].url).toBe(URL_BASE + "/ingest/events");
-    expect(sent[0].body.key).toBe("ak_snippet");
-    expect(sent[0].body.events[0].name).toBe("$page_view");
-    const attrs = sent[0].body.events[0].attributes as Record<string, unknown>;
-    expect(attrs.$host).toBe("example.com");
-  });
-
-  it("data-auto=off suppresses automatic pageviews", async () => {
-    const t = new Twillingate();
-    autoInit(t, scriptTag({ "data-key": "ak_snippet", "data-auto": "off" }));
-    await drain();
-    expect(sent).toHaveLength(0);
-  });
-
-  describe("loaded twice", () => {
-    function loaded(key: string): Twillingate {
-      const t = new Twillingate();
-      autoInit(t, scriptTag({ "data-key": key }));
-      return t;
-    }
-
-    it("defers to the first copy when the second tag has the same key", () => {
-      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-      expect(supersededBy(loaded("ak_same"), scriptTag({ "data-key": "ak_same" }))).toBe(true);
-      expect(warn.mock.calls.flat().join(" ")).toContain("loaded twice");
-    });
-
-    it("defers to the first copy when the second tag has no key", () => {
-      vi.spyOn(console, "warn").mockImplementation(() => {});
-      expect(supersededBy(loaded("ak_first"), scriptTag({}))).toBe(true);
-      expect(supersededBy(new Twillingate(), scriptTag({}))).toBe(true);
-    });
-
-    it("lets a tag with a different key take over, with a warning", () => {
-      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-      expect(supersededBy(loaded("ak_a"), scriptTag({ "data-key": "ak_b" }))).toBe(false);
-      expect(warn.mock.calls.flat().join(" ")).toContain("ak_a -> ak_b");
-    });
-
-    it("lets a keyed tag replace a dormant copy silently", () => {
-      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-      expect(supersededBy(new Twillingate(), scriptTag({ "data-key": "ak_b" }))).toBe(false);
-      expect(warn).not.toHaveBeenCalled();
-    });
-
-    it("installs normally when nothing twillingate-shaped is on the page", () => {
-      expect(supersededBy(undefined, scriptTag({ "data-key": "ak_b" }))).toBe(false);
-      expect(supersededBy(document.createElement("div"), scriptTag({}))).toBe(false);
-    });
-  });
-
-  it("stays dormant without data-key", async () => {
-    const t = new Twillingate();
-    autoInit(t, scriptTag({}));
-    await drain();
-    expect(sent).toHaveLength(0);
-  });
-
-  it("carries data-user and data-group into batch attributes", async () => {
-    const t = new Twillingate();
-    autoInit(t, scriptTag({ "data-key": "ak_s", "data-user": "u_1", "data-group": "org_9" }));
-    t.flush();
-    await drain();
-    expect(sent[0].body.attributes).toMatchObject({ $user_id: "u_1", $group_id: "org_9" });
-  });
-
-  it("sends $kind web by default and $page_view on load", async () => {
-    const t = new Twillingate();
-    autoInit(t, scriptTag({ "data-key": "ak_snippet" }));
-    t.flush();
-    await drain();
-    expect(sent[0].body.attributes.$kind).toBe("web");
-    expect(sent[0].body.events[0].name).toBe("$page_view");
-  });
-
-  it("data-kind switches automatic tracking to $screen_view with the route path", async () => {
-    history.replaceState(null, "", "/settings/profile?tab=1");
-    const t = new Twillingate();
-    autoInit(t, scriptTag({ "data-key": "ak_snippet", "data-kind": "app" }));
-    t.flush();
-    await drain();
-    const attrs = sent[0].body.attributes;
-    expect(attrs.$kind).toBe("app");
-    const ev = sent[0].body.events[0];
-    expect(ev.name).toBe("$screen_view");
-    const ea = ev.attributes as Record<string, unknown>;
-    expect(ea.$screen).toBe("/settings/profile");
-    expect(ea.$host).toBeUndefined();
-    expect(ea.$referrer).toBeUndefined();
-  });
-
-  it("ignores environment data attributes; overrides are init() options", async () => {
-    const s = scriptTag({
-      // "wearable" is reachable only through the init() override, never
-      // through detection, so seeing anything else proves the attribute
-      // was ignored rather than coincidentally matching a detected value.
-      "data-key": "ak_snip", "data-auto": "off", "data-kind": "app", "data-platform": "electron",
-      "data-os": "macos", "data-device": "wearable", "data-app-version": "9.9.9",
-    });
-    const t = new Twillingate();
-    autoInit(t, s);
-    t.track("probe");
-    await drain();
-    const attrs = sent[0].body.attributes;
-    expect(attrs.$kind).toBe("app");
-    // platform was never passed to init(), and $platform only defaults for kind "web"
-    expect(attrs).not.toHaveProperty("$platform");
-    // appVersion is code-only; the attribute is never read
-    expect(attrs).not.toHaveProperty("$app_version");
-    // os/device are still detected by the SDK; the attributes did not override them
-    expect(attrs.$os).not.toBe("macos");
-    expect(attrs.$device).not.toBe("wearable");
-  });
-
-  it("app kind tracks pushState navigations as screen views", async () => {
-    const t = new Twillingate();
-    autoInit(t, scriptTag({ "data-key": "ak_snippet", "data-kind": "app" }));
-    history.pushState(null, "", "/two");
-    t.flush();
-    await drain();
-    const names = sent.flatMap((s) => s.body.events.map((e) => e.name));
-    expect(names).toEqual(["$screen_view", "$screen_view"]);
-  });
-});
-
-describe("script tag and init parity", () => {
-  // Every data-* attribute must have an InitOptions field. A new attribute
-  // added without one would silently do nothing in bundled apps.
-  it("maps every data attribute to an InitOptions field", () => {
-    const src = twillingateSource;
-    // exec loop rather than matchAll: the tsconfig lib is pinned at ES2019
-    // for the shipped bundle's browser target.
-    const attrs: string[] = [];
-    const re = /getAttribute\("data-([a-z-]+)"\)/g;
-    for (let m = re.exec(src); m !== null; m = re.exec(src)) attrs.push(m[1]);
-    const optionFor: Record<string, string> = {
-      key: "key", identity: "identity", user: "user", group: "group",
-      auto: "autoPageviews", "mask-url": "maskUrl", routing: "routing",
-      kind: "kind", consent: "consent", instance: "instance",
-    };
-    expect(attrs.length).toBeGreaterThan(0);
-    for (const a of attrs) {
-      const opt = optionFor[a];
-      expect(opt, `data-${a} has no InitOptions field`).toBeDefined();
-      // Required (key: string) or optional (maskUrl?: MaskSpec) both count.
-      const declared = new RegExp(`^\\s+${opt}\\??:`, "m");
-      expect(declared.test(src), `InitOptions declares no ${opt}`).toBe(true);
-    }
-  });
-
-  it("reads data-mask-url and data-routing", async () => {
-    document.body.innerHTML = "";
-    const s = document.createElement("script");
-    s.src = URL_BASE + "/js/twillingate.js";
-    s.setAttribute("data-key", "ak_test");
-    s.setAttribute("data-mask-url", "uuid");
-    s.setAttribute("data-routing", "hash");
-    document.body.appendChild(s);
-    history.replaceState(null, "", "/app/#/u/3f8a91c2-4b7e-4d1a-9f2c-8e6b5a0d7c31");
-
-    const t = new Twillingate();
-    autoInit(t, s);
-    t.flush();
-    await drain();
-    const mine = sent.flatMap((x) => x.body.events);
-    expect((mine[0].attributes as Record<string, string>).$path).toBe("/app/#/u/[id]");
-  });
-
-  it("exposes the helpers under twillingate.util", () => {
-    const t = new Twillingate();
-    expect(typeof t.util.maskIds).toBe("function");
-    expect(typeof t.util.withQuery).toBe("function");
-  });
-
-  // The entry pageview is synchronous, so a listener registered after
-  // init cannot affect it. That is a warning, not a silent miss -- and
-  // data-mask-url, resolved during init, is the mechanism that does cover
-  // the entry page.
-  it("warns when a listener is registered after the first pageview", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    history.replaceState(null, "", "/account/88");
-    const t = tg({ key: "ak_late", autoPageviews: true });
-    t.page(({ path }) => ({ $path: path.replace(/\/\d+$/, "/[id]") }));
-    t.flush();
-    await drain();
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("after the first pageview"));
-    const mine = sent.filter((x) => x.body.key === "ak_late").flatMap((x) => x.body.events);
-    expect((mine[0].attributes as Record<string, string>).$path).toBe("/account/88");
   });
 });

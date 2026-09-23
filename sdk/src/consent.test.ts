@@ -3,7 +3,13 @@
 // are in the second describe block, added in Task 2.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resolveConsent } from "./consent";
-import { Twillingate, autoInit } from "./twillingate";
+import { Twillingate, type InitOptions } from "./twillingate";
+import { runtime } from "./runtime";
+
+vi.mock("./origin", () => ({
+  ORIGIN: "https://collector.example.com",
+  collectorOrigin: () => "https://collector.example.com",
+}));
 
 const g = globalThis as Record<string, unknown>;
 
@@ -78,8 +84,6 @@ describe("resolveConsent", () => {
   });
 });
 
-const URL_BASE = "https://collector.example.com";
-
 interface Sent {
   body: { key: string; attributes: Record<string, unknown>; events: Array<Record<string, unknown>> };
 }
@@ -94,9 +98,9 @@ function okFetch(_url: string, init: { body: string }): Promise<{ status: number
 
 const failFetch = (): Promise<{ status: number }> => Promise.reject(new TypeError("network down"));
 
-function tg(opts: Partial<Parameters<Twillingate["init"]>[0]> = {}): Twillingate {
+function tg(opts: Partial<InitOptions> = {}): Twillingate {
   const t = new Twillingate();
-  t.init({ key: "ak_test", url: URL_BASE, flushInterval: 0, ...opts });
+  t.init({ key: "ak_test", flushInterval: 0, autoPageviews: false, ...opts });
   return t;
 }
 
@@ -112,17 +116,11 @@ async function lastAttributes(t: Twillingate): Promise<Record<string, unknown>> 
   return sent[sent.length - 1].body.attributes;
 }
 
-function scriptTag(attrs: Record<string, string>): HTMLScriptElement {
-  const s = document.createElement("script");
-  s.src = URL_BASE + "/js/twillingate.js";
-  for (const [k, v] of Object.entries(attrs)) s.setAttribute(k, v);
-  return s;
-}
-
 const OWNED = ["visitor", "user", "user_name", "group", "group_name", "queue"].map((s) => `twillingate_${s}`);
 
 describe("storage under consent", () => {
   beforeEach(() => {
+    runtime.reset();
     vi.useFakeTimers();
     sent = [];
     fetchImpl = okFetch;
@@ -143,7 +141,10 @@ describe("storage under consent", () => {
       t.flush();
       await drain();
       fetchImpl = okFetch;
-      t.identify("u_1", "Ada");
+      // identify() is inert on an anonymous instance (with a warning); an
+      // anonymous instance has no identity to write, so only set one when
+      // this iteration is identified. group() applies in every mode.
+      if (identity === "identified") t.identify("u_1", "Ada");
       t.group("org_1", "Acme");
       await lastAttributes(t);
       t.reset();
@@ -158,11 +159,13 @@ describe("storage under consent", () => {
     expect(localStorage.getItem("twillingate_visitor")).toBeNull();
   });
 
-  it("without consent, identity still comes from init and identify() for the session", async () => {
-    const t = tg({ identity: "identified", user: "u_init", group: "org_init" });
-    expect(await lastAttributes(t)).toMatchObject({ $user_id: "u_init", $group_id: "org_init" });
-    t.identify("u_later", "Ada");
-    expect(await lastAttributes(t)).toMatchObject({ $user_id: "u_later", $user_name: "Ada" });
+  it("without consent, identity still comes from identify() for the session", async () => {
+    const t = new Twillingate();
+    t.identify("u_1");
+    t.group("org_1");
+    t.init({ key: "ak_test", flushInterval: 0, autoPageviews: false, identity: "identified" });
+    const attrs = await lastAttributes(t);
+    expect(attrs).toMatchObject({ $user_id: "u_1", $group_id: "org_1" });
     expect(localStorage.length).toBe(0);
   });
 
@@ -310,6 +313,20 @@ describe("storage under consent", () => {
     for (const k of OWNED) expect(localStorage.getItem(k), k).toBeNull();
   });
 
+  it("a bare consent() read before init() does not wipe storage init() will use", async () => {
+    // Before init(), consentSpec defaults to "no consent": a bare read
+    // must report that without running the wipe transition against it,
+    // or a stored identity would be gone before init() ever gets a say.
+    localStorage.setItem("twillingate_visitor", "v_pre");
+    localStorage.setItem("twillingate_user", "u_pre");
+    const t = new Twillingate();
+    t.consent();
+    t.init({ key: "ak_test", identity: "identified", consent: true, flushInterval: 0, autoPageviews: false });
+    const attrs = await lastAttributes(t);
+    expect(attrs.$user_id).toBe("u_pre");
+    expect(attrs.$install_id).toBe("v_pre");
+  });
+
   it("a declared function is consulted at each decision; a pin overrides it; null hands back", async () => {
     let granted = false;
     const t = tg({ identity: "identified", consent: () => granted });
@@ -365,28 +382,20 @@ describe("storage under consent", () => {
     expect(localStorage.getItem("twillingate_group")).toBeNull();
   });
 
-  it("data-consent resolves a literal, a global variable and a global function", async () => {
-    g.consentFlag = true;
-    g.consentFn = () => true;
-    for (const value of ["true", "consentFlag", "consentFn"]) {
-      localStorage.clear();
-      sent = [];
-      const t = new Twillingate();
-      autoInit(t, scriptTag({ "data-key": "ak_s", "data-identity": "identified", "data-consent": value, "data-auto": "off" }));
-      const attrs = await lastAttributes(t);
-      expect(attrs.$install_id, value).toBe(localStorage.getItem("twillingate_visitor"));
-      expect(localStorage.getItem("twillingate_visitor"), value).not.toBeNull();
+  it("cookie driver persists a visitor id in a cookie and keeps the retry queue out of it", async () => {
+    for (const c of document.cookie.split(";")) {
+      const k = c.split("=")[0].trim();
+      if (k) document.cookie = `${k}=; path=/; max-age=0`;
     }
-  });
-
-  it("data-consent naming nothing fails closed with a warning", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const t = new Twillingate();
-    autoInit(t, scriptTag({ "data-key": "ak_s", "data-identity": "identified", "data-consent": "noSuchThing", "data-auto": "off" }));
+    const t = tg({ identity: "identified", consent: true, storage: "cookie" });
     const attrs = await lastAttributes(t);
-    expect(attrs.$install_id).toBeUndefined();
-    expect(localStorage.length).toBe(0);
-    expect(warn.mock.calls.flat().join(" ")).toContain("noSuchThing");
+    expect(document.cookie).toContain(`twillingate_visitor=${attrs.$install_id}`);
+
+    fetchImpl = failFetch;
+    t.track("y");
+    t.flush();
+    await drain();
+    expect(document.cookie).not.toContain("twillingate_queue");
   });
 
   it("tracks on a page an automated browser drives", async () => {

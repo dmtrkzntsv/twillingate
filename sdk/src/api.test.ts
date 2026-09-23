@@ -1,9 +1,13 @@
 // The v2 API surface: attrs defaults, identify/group with display
 // names, and the page() overloads (current page / explicit path / listener).
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { Twillingate } from "./twillingate";
+import { Twillingate, type InitOptions } from "./twillingate";
+import { runtime } from "./runtime";
 
-const URL_BASE = "https://collector.example.com";
+vi.mock("./origin", () => ({
+  ORIGIN: "https://collector.example.com",
+  collectorOrigin: () => "https://collector.example.com",
+}));
 
 interface Sent {
   body: { key: string; attributes: Record<string, unknown>; events: Array<Record<string, unknown>> };
@@ -11,9 +15,9 @@ interface Sent {
 
 let sent: Sent[];
 
-function tg(opts: Partial<Parameters<Twillingate["init"]>[0]> = {}): Twillingate {
+function tg(opts: Partial<InitOptions> = {}): Twillingate {
   const t = new Twillingate();
-  t.init({ key: "ak_test", url: URL_BASE, flushInterval: 0, ...opts });
+  t.init({ key: "ak_test", flushInterval: 0, autoPageviews: false, ...opts });
   return t;
 }
 
@@ -28,6 +32,7 @@ function lastEvent(): Record<string, unknown> {
 }
 
 beforeEach(() => {
+  runtime.reset();
   vi.useFakeTimers();
   sent = [];
   vi.stubGlobal("fetch", (_url: string, init: { body: string }) => {
@@ -83,7 +88,7 @@ describe("attrs", () => {
 
 describe("identify and group with display names", () => {
   it("identify(user, name) sends $user_id and $user_name", async () => {
-    const t = tg();
+    const t = tg({ identity: "identified" });
     t.identify("user-123", "Ada Lovelace");
     t.track("probe");
     t.flush();
@@ -102,16 +107,24 @@ describe("identify and group with display names", () => {
     expect(localStorage.getItem("twillingate_group_name")).toBe("Acme Corp");
   });
 
-  it("persists the user name only for identified projects, and restores it", async () => {
+  it("an anonymous instance never carries a user name; an identified one persists and restores it", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const anon = tg();
     anon.identify("u_1", "Plain Name");
+    anon.track("probe");
+    anon.flush();
+    await drain();
+    expect(sent[0].body.attributes).not.toHaveProperty("$user_id");
+    expect(sent[0].body.attributes).not.toHaveProperty("$user_name");
+    expect(localStorage.getItem("twillingate_user")).toBeNull();
     expect(localStorage.getItem("twillingate_user_name")).toBeNull();
+    expect(warn).toHaveBeenCalledTimes(1);
 
+    sent = [];
     const t = tg({ identity: "identified", consent: true });
     t.identify("u_1", "Ada");
     expect(localStorage.getItem("twillingate_user_name")).toBe("Ada");
 
-    sent = [];
     const next = tg({ identity: "identified", consent: true }); // next page load
     next.track("probe");
     next.flush();
@@ -170,7 +183,7 @@ describe("page() overloads", () => {
   it("page(listener) registers a pageview listener that can enrich attributes", async () => {
     const t = tg();
     const seen: string[] = [];
-    t.page((p) => {
+    t.onPage((p) => {
       seen.push(p.path);
       return { enriched: true };
     });
@@ -183,7 +196,7 @@ describe("page() overloads", () => {
 
   it("a listener returning false cancels the pageview", async () => {
     const t = tg();
-    t.page((p) => (p.path === "/private" ? false : undefined));
+    t.onPage((p) => (p.path === "/private" ? false : undefined));
     t.page("/private");
     t.page("/public");
     t.flush();
@@ -195,13 +208,49 @@ describe("page() overloads", () => {
   it("listeners fire for automatic SPA pageviews too", async () => {
     const seen: string[] = [];
     const t = tg({ autoPageviews: true });
-    t.page((p) => {
+    t.onPage((p) => {
       seen.push(p.path);
     });
     history.pushState(null, "", "/second");
     t.flush();
     await drain();
     expect(seen).toContain("/second");
+  });
+
+  it("page(fn) still registers a listener, with a deprecation warning", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const t = tg();
+    t.page(() => ({ legacy: true }));
+    expect(warn.mock.calls.flat().join(" ")).toContain("deprecated");
+    t.page("/a");
+    t.flush();
+    await drain();
+    expect((lastEvent().attributes as Record<string, unknown>).legacy).toBe(true);
+  });
+});
+
+describe("precedence: derived < attrs() defaults < call < listeners", () => {
+  it("an attrs() default overrides a derived pageview value, and null drops it", async () => {
+    Object.defineProperty(document, "referrer", { value: "https://news.example.org/", configurable: true });
+    const t = tg();
+    t.attrs({ $host: "selfhosted_ab12", $referrer: null });
+    t.page("/budget");
+    t.flush();
+    await drain();
+    const attrs = lastEvent().attributes as Record<string, unknown>;
+    expect(attrs.$host).toBe("selfhosted_ab12");
+    expect(attrs).not.toHaveProperty("$referrer");
+    expect(attrs.$path).toBe("/budget");
+  });
+
+  it("the call's attributes beat the defaults, and a listener beats the call", async () => {
+    const t = tg();
+    t.attrs({ tier: "beta", region: "eu" });
+    t.onEvent(() => ({ region: "us" }));
+    t.track("e", { tier: "pro" });
+    t.flush();
+    await drain();
+    expect(lastEvent().attributes).toEqual({ tier: "pro", region: "us" });
   });
 });
 

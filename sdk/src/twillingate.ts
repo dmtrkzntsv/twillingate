@@ -1,23 +1,28 @@
-/* twillingate SDK core — views and product analytics against the
- * collector's POST /ingest/events (docs/twillingate.md is the normative wire
- * format). Bundled as an IIFE by build.mjs and served at /js/twillingate.js.
+/* twillingate SDK core — one instance of the tracker.
  *
- * Two usage modes:
- *  - snippet: <script defer src=".../js/twillingate.js" data-key="ak_…">
- *    auto-inits from data attributes with automatic page views;
- *  - SDK-only: load the file without data-key (or bundle this module) and
- *    call twillingate.init({...}) yourself — a superset that emits views
- *    and product events entirely from code.
+ * The bundle registers one object at window.twillingate (factory.ts): the
+ * default instance plus a registry of named ones. This file is the
+ * instance. It posts to the collector's POST /ingest/events
+ * (docs/twillingate.md is the normative wire format).
  *
- * Nothing is kept on the device unless the tag declares consent
- * (data-consent); with it, data-identity decides whether identity persists.
- * The server salts anonymous projects no matter what the client claims, so
- * a misconfigured client fails safe.
+ * Three rules shape it:
+ *  - every call is legal before init(): configuration takes effect at
+ *    once, event-producing calls are held and run after init(), entry
+ *    pageview first;
+ *  - the identity mode decides what is SENT: an anonymous instance never
+ *    sends $user_id, $user_name or $install_id;
+ *  - attributes layer as derived < attrs() defaults < the call's own <
+ *    listener returns, and null drops a key at the end.
+ *
+ * Nothing is kept on the device unless the instance declares consent;
+ * with it, the storage driver holds the instance's keys.
  */
 
-// Substituted by the collector at serve time with its build version.
 import { resolveMask, type MaskSpec } from "./mask";
 import { resolveConsent, type ConsentSpec } from "./consent";
+import { collectorOrigin } from "./origin";
+import { DEBUG_FLAG, IGNORE_FLAG, readFlag, resolveStorage, writeFlag, type StorageDriver, type StorageSpec } from "./storage";
+import { runtime, type NavigationSource, type Subscriber } from "./runtime";
 import { maskIds, withQuery } from "./util";
 import {
   detectAll, detectBrowser as detectBrowserFrom, detectDevice as detectDeviceFrom,
@@ -26,97 +31,59 @@ import {
 
 export { detectOS, detectBrowser, detectDevice } from "./detect";
 export type { ClientSignals, OSInfo, BrowserInfo, DeviceInfo } from "./detect";
+export type { StorageDriver, StorageSpec } from "./storage";
 
+// Substituted by the collector at serve time with its build version.
 export const VERSION = "__TWILLINGATE_VERSION__";
 
 export interface InitOptions {
-  /** Ingest key (ak_…). Required. */
+  /** Ingest key (ak_…). Required. The collector's origin is in the served file. */
   key: string;
-  /** Collector base URL. Defaults to the origin the script was loaded from. */
-  url?: string;
   /**
-   * Mirrors the project's identity mode. With consent it decides whether
-   * the visitor id, user and group persist; without consent nothing does.
-   * The server enforces the real mode.
+   * anonymous (default) or identified. Decides what the instance SENDS:
+   * anonymous never sends $user_id, $user_name or $install_id and
+   * identify()/installId() are inert; identified sends them and, with
+   * consent, persists the visitor id, user and group.
    */
   identity?: "anonymous" | "identified";
-  user?: string;
-  group?: string;
   /**
-   * May this instance keep anything on the device. Default false: records
-   * live in memory and nothing is read from or written to localStorage.
-   * true, or a function or global name a consent manager maintains,
-   * unlocks it; consulted at every storage decision, never cached.
+   * May this instance keep anything on the device. Default false. true,
+   * or a function or global name a consent manager maintains, unlocks the
+   * storage driver; consulted at every storage decision, never cached.
    */
   consent?: ConsentSpec;
-  /**
-   * Storage-key prefix for a bundled consumer that shares a page with
-   * another instance. Registers no global. A tag that declared
-   * data-instance ignores a disagreeing value here.
-   */
-  instance?: string;
+  /** Where keys live with consent: localStorage (default), sessionStorage, memory, cookie, or a driver. */
+  storage?: StorageSpec;
   /**
    * What this client is: "web" (default), "app", "cli", or any short
    * lower-case token. Anything but "web" makes automatic tracking emit
-   * $screen_view with the route path as the screen, and exempts the
-   * client from the server's crawler filter, which applies to web only.
+   * $screen_view with the route path as the screen.
    */
   kind?: string;
-  /**
-   * The surface the product is used through ($platform): "web", "ios",
-   * "android", "electron", … Defaults to "web" while kind is "web". Any
-   * other kind is a wrapper the SDK cannot identify, so it sends no
-   * $platform and the server records unknown — set it beside kind.
-   */
+  /** The surface the product is used through ($platform). Defaults to "web" while kind is "web". */
   platform?: string;
-  /**
-   * Overrides for detection. Every detected value has one, and an
-   * explicit option always beats detection. os, browser and device are
-   * closed lower-case vocabularies (docs/twillingate.md); osName is the
-   * full self-reported name with version.
-   */
-  os?: string;
-  osVersion?: string;
-  osName?: string;
-  browser?: string;
-  browserVersion?: string;
-  device?: string;
   /** Version of this client application ($app_version). */
   appVersion?: string;
-  installId?: string;
-  /**
-   * Automatic pageviews incl. pushState/popstate. Snippet mode defaults to
-   * true; explicit init() defaults to false — turning it on is a deliberate
-   * choice when instrumenting a SPA through the API.
-   */
+  /** Automatic pageviews incl. pushState/popstate. Default true. */
   autoPageviews?: boolean;
-  /**
-   * Rewrite the URL before it is split into $host and $path. Accepts the
-   * same strings as data-mask-url ("uuid", "uuid,numeric", "/re/flags", or
-   * a global function name) plus a RegExp or a function directly.
-   *
-   * A mask that cannot be resolved, throws, or returns a non-string DROPS
-   * pageviews. Shipping the raw path would defeat the point of masking.
-   */
+  /** Track elements carrying data-twillingate-event. Default true. */
+  taggedEvents?: boolean;
+  /** Rewrite the URL before it is split into $host and $path. Fails closed. */
   maskUrl?: MaskSpec;
-  /**
-   * "history" (default) or "hash". In hash mode $path is pathname + hash
-   * and hashchange emits a pageview; in history mode a hash change is an
-   * in-page anchor and is ignored.
-   */
+  /** "history" (default) or "hash". */
   routing?: "history" | "hash";
-  /** Milliseconds events wait in the queue before a flush. */
+  /** Milliseconds events wait in the queue before a flush. Default 1000. */
   flushInterval?: number;
+  /** true, or a function consulted at every event; OR-ed with the twillingate_ignore flag. */
+  optOut?: boolean | (() => unknown);
+  /** Log every event and send to the console; OR-ed with the twillingate_debug flag. */
+  debug?: boolean;
 }
 
 /**
  * What a page listener sees for each pageview, automatic or manual.
- *
  * host and path are THREADED: each listener receives the previous
- * listener's output, so rules split across several page() calls compose
- * instead of clobbering each other. url is the post-mask URL -- handing
- * over the raw href would let a mask scrub a parameter and then leak it
- * straight back through a listener.
+ * listener's output. url is the post-mask URL.
  */
 export interface PageviewInfo {
   url: string;
@@ -126,11 +93,16 @@ export interface PageviewInfo {
   attributes: Record<string, unknown>;
 }
 
-/**
- * Registered via page(fn). Return an object to merge extra attributes into
- * the pageview, false to cancel it, anything else to just observe.
- */
+/** Return an object to merge attributes, false to cancel, anything else to observe. */
 export type PageListener = (page: PageviewInfo) => Record<string, unknown> | false | void;
+
+/** What an event listener sees for every event, after onPage for a pageview. */
+export interface EventInfo {
+  name: string;
+  attributes: Record<string, unknown>;
+}
+
+export type EventListener = (event: EventInfo) => Record<string, unknown> | false | void;
 
 interface Event {
   id: string;
@@ -145,35 +117,21 @@ interface Batch {
   events: Event[];
 }
 
-// Guards a batch read back from localStorage: mergeBatches and replay()
-// dereference events[0].id unconditionally, and a stored value can be
-// anything a previous, corrupt, or foreign write left behind ([null],
-// [{}], ...). Only the shape actually dereferenced is checked.
 function isBatch(x: unknown): x is Batch {
   if (!x || typeof x !== "object") return false;
   const events = (x as { events?: unknown }).events;
   return Array.isArray(events) && events.length > 0 && typeof (events[0] as { id?: unknown })?.id === "string";
 }
 
-// Union of a stored queue and the in-memory one, deduped by each batch's
-// first event id (every batch has at least one event). Neither side is
-// assumed complete: a write can fail silently (lsSet swallows quota and
-// partitioned-storage errors) and another tab can append its own batches,
-// so the merge keeps whichever copy already has each batch and adds what
-// the other one has that it does not.
 function mergeBatches(stored: Batch[], pending: Batch[]): Batch[] {
   const known = new Set(stored.map((b) => b.events[0].id));
   const merged = [...stored, ...pending.filter((b) => !known.has(b.events[0].id))];
-  // The union of two already-bounded queues can exceed the bound: keep the
-  // grant transition and replay() to the same documented cap as store().
   return merged.length > MAX_STORED_BATCHES ? merged.slice(merged.length - MAX_STORED_BATCHES) : merged;
 }
 
-// Storage keys are prefixed with the instance name (default "twillingate")
-// so two instances on one page do not share a visitor id or a queue. The
-// opt-out is the one unprefixed key: it is about the person, not one tag.
-const DEFAULT_INSTANCE = "twillingate";
-const IGNORE = "twillingate_ignore";
+// Storage keys are prefixed with the instance name so two instances on
+// one page do not share a visitor id or a queue.
+export const DEFAULT_INSTANCE = "twillingate";
 const SUFFIXES = ["visitor", "user", "user_name", "group", "group_name", "queue"] as const;
 type Keys = Record<(typeof SUFFIXES)[number], string>;
 
@@ -186,9 +144,9 @@ function keysFor(instance: string): Keys {
 const INSTANCE_RE = /^[a-z][a-z0-9_]{0,15}$/;
 
 /**
- * Validate an instance name. It becomes a property on window and a
- * storage-key prefix, so it has to be an identifier (the same shape as
- * $kind). An invalid name is refused with a warning and the default kept.
+ * Validate an instance name: a registry key and a storage-key prefix, so
+ * it has to be an identifier. An invalid name is refused with a warning
+ * and the default returned.
  */
 export function instanceName(name: string | null | undefined): string {
   if (name === null || name === undefined || name === "") return DEFAULT_INSTANCE;
@@ -197,41 +155,10 @@ export function instanceName(name: string | null | undefined): string {
   return DEFAULT_INSTANCE;
 }
 
-// Two ways to recognize "this is a twillingate instance": same-bundle
-// identity (instanceof, what a test constructing Twillingate directly
-// produces) or the cross-release marker every shipped bundle stamps on the
-// global (VERSION, a string) alongside init(). init() alone is not enough —
-// plenty of unrelated globals (Segment's analytics.js among them) expose an
-// init() method, and duck-typing on that would let bootstrap either
-// overwrite a foreign global or, worse, treat it as a loaded copy of this
-// SDK and refuse to run at all.
-function isInstance(x: unknown): x is Twillingate {
-  return (
-    x instanceof Twillingate ||
-    (!!x && typeof (x as Twillingate).init === "function" && typeof (x as { VERSION?: unknown }).VERSION === "string")
-  );
-}
-
 const MAX_BATCH = 500; // server cap per docs/twillingate.md
 const FLUSH_AT = 20; // flush early once this many events queue up
 const MAX_STORED_BATCHES = 50; // offline queue bound: oldest dropped first
-
-function ls(name: string): string | null {
-  try {
-    return localStorage.getItem(name);
-  } catch {
-    return null;
-  }
-}
-
-function lsSet(name: string, value: string | null): void {
-  try {
-    if (value === null) localStorage.removeItem(name);
-    else localStorage.setItem(name, value);
-  } catch {
-    /* storage unavailable: identity simply does not persist */
-  }
-}
+const MAX_HELD = MAX_BATCH; // calls held before init(): oldest dropped first
 
 function uuid(): string {
   if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
@@ -241,15 +168,27 @@ function uuid(): string {
   });
 }
 
-// The only thing the SDK decides on its own is the person's opt-out.
-// Whether analytics should run at all (a developer's localhost, a test
-// browser) belongs to the product, which can skip init() on a condition
-// it knows.
-function ignored(): boolean {
-  return ls(IGNORE) === "true";
+// The optOut option, resolved once: true is always out, a function is
+// asked at every event and a throw counts as opted out (fail closed).
+function resolveOptOut(spec: boolean | (() => unknown) | undefined): () => boolean {
+  if (spec === true) return () => true;
+  if (typeof spec !== "function") return () => false;
+  let warned = false;
+  return () => {
+    try {
+      return Boolean(spec());
+    } catch (e) {
+      if (!warned) {
+        warned = true;
+        console.warn("twillingate: the optOut function threw, treating as opted out", e);
+      }
+      return true;
+    }
+  };
 }
 
-export class Twillingate {
+export class Twillingate implements Subscriber {
+  readonly name: string;
   private key = "";
   private url = "";
   private identified = false;
@@ -257,147 +196,133 @@ export class Twillingate {
   private userName: string | null = null;
   private groupId: string | null = null;
   private groupName: string | null = null;
+  private declaredInstallId: string | null = null;
   private defaultAttrs: Record<string, unknown> = {};
   private pageListeners: PageListener[] = [];
+  private eventListeners: EventListener[] = [];
   private kind = "web";
   private platform: string | null = null;
-  private env: Partial<OSInfo & BrowserInfo & DeviceInfo> = {};
   private appVersion: string | null = null;
-  private installId: string | null = null;
   private flushInterval = 1000;
-  private k: Keys = keysFor(DEFAULT_INSTANCE);
+  private k: Keys;
+  private driver: StorageDriver = resolveStorage(undefined);
   private consentSpec: () => boolean = () => false;
   private consentPin: boolean | null = null;
   // null until the first decision point: the first false read wipes keys
   // an earlier session may have left behind.
   private lastConsent: boolean | null = null;
-  // Failed batches waiting for a retry. Lives in memory; mirrored to
-  // storage only while consent reads true.
+  private optOutSpec: () => boolean = () => false;
+  private debugOpt = false;
+  // Failed batches waiting for a retry. Lives in memory; mirrored to the
+  // driver only while consent reads true.
   private pending: Batch[] = [];
-
   private queue: Event[] = [];
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
   private lastPage: string | null = null;
-  private hooked = false;
-  // undefined = no mask configured; null = one was configured and could
-  // not be resolved, which drops pageviews (fail closed).
+  // undefined = no mask configured; null = configured and unresolvable,
+  // which drops pageviews (fail closed).
   private mask: ((href: string) => string) | null | undefined;
   private routing: "history" | "hash" = "history";
   private firstPageviewSent = false;
-
-  /** Path-shaping helpers, for use inside a page() listener. */
-  readonly util = { maskIds, withQuery };
   private ready = false;
+  private autoPageviews = true;
+  private taggedEvents = true;
+  // Event-producing calls made before init(), run in order after it.
+  private held: Array<() => void> = [];
+  private heldWarned = false;
+  private warnedAnonymous = false;
+  private retired = false;
 
-  private instance = DEFAULT_INSTANCE;
-  // True when the name came from data-instance: the tag is registered
-  // under it and already reading prefixed keys, so init() cannot rename.
-  private declared = false;
+  /** Path-shaping helpers, for use inside an onPage listener. */
+  readonly util = { maskIds, withQuery };
 
-  constructor(instance?: string) {
-    if (instance !== undefined) {
-      this.declared = true;
-      this.useInstance(instanceName(instance));
-    }
-  }
-
-  private useInstance(name: string): void {
-    this.instance = name;
+  constructor(name: string = DEFAULT_INSTANCE) {
+    this.name = name;
     this.k = keysFor(name);
   }
 
-  init(opts: InitOptions): void {
+  init(opts: InitOptions): this {
+    if (this.ready) {
+      console.warn(`twillingate: ${this.label()} is already initialised; ignoring init()`);
+      return this;
+    }
     if (!opts || !opts.key) {
       console.warn("twillingate: init requires a key");
-      return;
+      return this;
+    }
+    const origin = collectorOrigin();
+    if (!origin) {
+      console.warn("twillingate: this build carries no collector origin; load twillingate.js from your collector");
+      return this;
     }
     this.key = opts.key;
-    this.url = (opts.url || scriptOrigin() || "").replace(/\/$/, "");
-    if (!this.url) {
-      console.warn("twillingate: init requires a url when not loaded via <script>");
-      return;
-    }
-    if (opts.instance !== undefined) {
-      if (this.declared) {
-        if (opts.instance !== this.instance) {
-          console.warn(`twillingate: data-instance="${this.instance}" is already set; ignoring instance "${opts.instance}"`);
-        }
-      } else {
-        this.useInstance(instanceName(opts.instance));
-      }
-    }
+    this.url = origin;
     this.identified = opts.identity === "identified";
     this.consentSpec = resolveConsent(opts.consent);
-    const stored = this.identified && this.mayStore();
-    this.userId = opts.user ? String(opts.user) : stored ? ls(this.k.user) : null;
-    this.userName = stored ? ls(this.k.user_name) : null;
-    this.groupId = opts.group ? String(opts.group) : stored ? ls(this.k.group) : null;
-    this.groupName = stored ? ls(this.k.group_name) : null;
-    this.kind = opts.kind && /^[a-z][a-z0-9_]{0,15}$/.test(opts.kind) ? opts.kind : "web";
+    this.driver = resolveStorage(opts.storage);
+    this.optOutSpec = resolveOptOut(opts.optOut);
+    this.debugOpt = opts.debug === true;
+    if (!this.identified && (this.userId !== null || this.userName !== null || this.declaredInstallId !== null)) {
+      // Identity was set before init() decided the mode: an anonymous
+      // instance sends none of it.
+      this.userId = this.userName = this.declaredInstallId = null;
+      this.warnAnonymous("identify() / installId()");
+    }
+    // Identity set before init() stands; storage fills only what is unset.
+    if (this.identified && this.mayStore()) {
+      if (this.userId === null) {
+        this.userId = this.driver.get(this.k.user);
+        this.userName = this.driver.get(this.k.user_name);
+      }
+      if (this.groupId === null) {
+        this.groupId = this.driver.get(this.k.group);
+        this.groupName = this.driver.get(this.k.group_name);
+      }
+    }
+    this.kind = opts.kind && INSTANCE_RE.test(opts.kind) ? opts.kind : "web";
     this.platform = opts.platform || (this.kind === "web" ? "web" : null);
-    this.env = {
-      os: opts.os || undefined, osVersion: opts.osVersion || undefined, osName: opts.osName || undefined,
-      browser: opts.browser || undefined, browserVersion: opts.browserVersion || undefined,
-      device: opts.device || undefined,
-    };
     // The one async detection input; read at flush time, not awaited.
     primePlatformVersion();
     this.appVersion = opts.appVersion || null;
-    this.installId = opts.installId || null;
     if (opts.flushInterval !== undefined) this.flushInterval = opts.flushInterval;
     // Resolved before any pageview can fire, so data-mask-url covers the
     // entry page -- the one most likely to carry an identifier.
     this.mask = resolveMask(opts.maskUrl);
     this.routing = opts.routing === "hash" ? "hash" : "history";
+    this.autoPageviews = opts.autoPageviews !== false;
+    this.taggedEvents = opts.taggedEvents !== false;
     this.ready = true;
-
+    this.log("init", { key: this.key, identity: this.identified ? "identified" : "anonymous", kind: this.kind });
+    // Persist what identify()/group() set before init(), now that the
+    // mode and the driver are known.
+    this.saveIdentity();
     this.replay();
-    if (typeof addEventListener === "function") {
-      addEventListener("online", () => this.replay());
-      // pagehide covers navigations and tab closes; visibilitychange the
-      // mobile cases where pagehide never fires. Both drain via sendBeacon.
-      addEventListener("pagehide", () => this.flush(true));
-      document.addEventListener("visibilitychange", () => {
-        if (document.visibilityState === "hidden") this.flush(true);
-      });
-    }
-    if (opts.autoPageviews) {
-      this.hookHistory();
-      // Synchronous, deliberately. Deferring this by a tick would let a
-      // listener registered from an inline module still affect it, but an
-      // app that navigates during hydration would then have the entry
-      // pageview fire AFTER its pushState -- reporting the wrong location
-      // and deduping against it. Masking the entry page is data-mask-url's
-      // job (resolved above, before this line); a listener registered too
-      // late gets a warning from page() instead.
+    runtime.subscribe(this);
+    if (this.autoPageviews && typeof location !== "undefined" && typeof history !== "undefined") {
+      // Synchronous, deliberately: an app that navigates during hydration
+      // must see the entry pageview fire BEFORE its pushState.
       this.page();
     }
+    const held = this.held;
+    this.held = [];
+    for (const call of held) call();
+    return this;
   }
 
   /**
    * $page_view (or $screen_view for a non-web kind), deduped against the
-   * previous path. Overloads:
-   *
-   *   page()                  — record the current page
-   *   page("/settings")       — record an explicit path
-   *   page({section: "docs"}) — current page with extra attributes
-   *   page(fn)                — register a PageListener called for every
-   *                             pageview (automatic ones included); it can
-   *                             enrich attributes or cancel the event
+   * previous path. page() records the current page; page("/settings") an
+   * explicit path; page({section: "docs"}) the current page with extra
+   * attributes. page(fn) is deprecated: use onPage(fn).
    */
   page(arg?: string | Record<string, unknown> | PageListener | null, attrs?: Record<string, unknown>): void {
     if (typeof arg === "function") {
-      if (this.firstPageviewSent) {
-        console.warn(
-          "twillingate: page() listener registered after the first pageview; " +
-            "it will not apply to that one. Register it from an inline " +
-            '<script type="module"> placed after the tag.',
-        );
-      }
-      this.pageListeners.push(arg);
+      console.warn("twillingate: page(fn) is deprecated and will be removed; use onPage(fn)");
+      this.onPage(arg);
       return;
     }
-    if (!this.ok()) return;
+    if (!this.ready) return this.hold(() => this.page(arg, attrs));
+    if (!this.live()) return;
 
     let href: string;
     // The dedup key is always the RAW location. Keying on the masked path
@@ -413,9 +338,7 @@ export class Twillingate {
     } else {
       if (arg && typeof arg === "object") attrs = { ...arg, ...attrs };
       href = location.href;
-      rawKey =
-        location.pathname + location.search +
-        (this.routing === "hash" ? location.hash : "");
+      rawKey = location.pathname + location.search + (this.routing === "hash" ? location.hash : "");
     }
     if (rawKey === this.lastPage) return;
     this.lastPage = rawKey;
@@ -445,12 +368,23 @@ export class Twillingate {
       return;
     }
     let { host, path } = split;
+    const referrer = typeof document !== "undefined" ? document.referrer : "";
 
+    // derived < attrs() defaults < the call's own attributes
     let attributes: Record<string, unknown> = {
-      $host: host, $path: path, $referrer: document.referrer, ...utm, ...attrs,
+      $host: host, $path: path, $referrer: referrer, ...utm, ...displaySize(),
+      ...this.defaultAttrs, ...attrs,
     };
+    if (typeof attributes.$host === "string") host = attributes.$host;
+    if (typeof attributes.$path === "string") path = attributes.$path;
     for (const listener of this.pageListeners) {
-      const r = listener({ url: masked, host, path, referrer: document.referrer, attributes });
+      let r: ReturnType<PageListener>;
+      try {
+        r = listener({ url: masked, host, path, referrer, attributes });
+      } catch (e) {
+        console.warn("twillingate: an onPage listener threw, dropping pageview", e);
+        return;
+      }
       if (r === false) return;
       if (r && typeof r === "object") {
         attributes = { ...attributes, ...r };
@@ -464,30 +398,49 @@ export class Twillingate {
     }
     this.firstPageviewSent = true;
     if (this.kind === "web") {
-      this.emit("$page_view", { ...attributes, ...displaySize() });
+      this.emit("$page_view", attributes);
       return;
     }
     // A non-web kind is an app: the route is the screen, and the page
     // context (host, referrer, campaign) does not apply.
     const { $host: _h, $referrer: _r, $utm_source: _s, $utm_medium: _m, $utm_campaign: _c, $path, ...rest } = attributes;
-    this.emit("$screen_view", { $screen: $path, ...rest, ...displaySize() });
+    this.emit("$screen_view", { $screen: $path, ...rest });
+  }
+
+  /** Register a pageview listener; runs for every pageview, automatic ones included. */
+  onPage(fn: PageListener): void {
+    if (this.firstPageviewSent) {
+      console.warn(
+        "twillingate: onPage listener registered after the first pageview; it will not apply to that one. " +
+          "Use data-mask-url for the entry page, or register from code before init().",
+      );
+    }
+    this.pageListeners.push(fn);
+  }
+
+  /** Register a listener for every event; runs after onPage for a pageview. */
+  onEvent(fn: EventListener): void {
+    this.eventListeners.push(fn);
   }
 
   /** App analytics $screen_view. */
   screen(name: string, attrs?: Record<string, unknown>): void {
-    if (!this.ok() || !name) return;
-    this.emit("$screen_view", { $screen: String(name), ...displaySize(), ...attrs });
+    if (!this.ready) return this.hold(() => this.screen(name, attrs));
+    if (!this.live() || !name) return;
+    this.emit("$screen_view", { ...displaySize(), ...this.defaultAttrs, $screen: String(name), ...attrs });
   }
 
   /** Opt-in product event. */
   track(name: string, attrs?: Record<string, unknown>): void {
-    if (!this.ok() || !name) return;
-    this.emit(String(name), attrs || {});
+    if (!this.ready) return this.hold(() => this.track(name, attrs));
+    if (!this.live() || !name) return;
+    this.emit(String(name), { ...this.defaultAttrs, ...attrs });
   }
 
   /**
-   * Default attributes merged under every event's own (event attributes
-   * win). Successive calls merge; attrs(null) clears them all.
+   * Default attributes under every event: they override values the SDK
+   * derives and are overridden by the call's own. Successive calls merge;
+   * attrs(null) clears them all.
    */
   attrs(attrs: Record<string, unknown> | null): void {
     if (attrs === null) {
@@ -499,22 +452,39 @@ export class Twillingate {
 
   /**
    * Set the user ($user_id) and optional display name ($user_name).
-   * Persisted for identified projects with consent, so every later event —
-   * this page and future loads — carries the identity. Events already sent
-   * stay unattributed: no retroactive stitching. The name is only stored
-   * server-side for identified projects; anonymous ones ignore it.
+   * Persisted for an identified instance with consent. Inert on an
+   * anonymous instance. Events already sent stay unattributed.
    */
   identify(user: string, name?: string): void {
+    if (this.ready && !this.identified) return this.warnAnonymous("identify()");
     this.userId = user ? String(user) : null;
     this.userName = name ? String(name) : null;
     this.saveIdentity();
   }
 
-  /** Set the group ($group_id) and optional display name ($group_name). */
+  /** Set the group ($group_id) and optional display name ($group_name). Every mode. */
   group(id: string, name?: string): void {
     this.groupId = id ? String(id) : null;
     this.groupName = name ? String(name) : null;
     this.saveIdentity();
+  }
+
+  /**
+   * With an argument, set the stable per-install id an app supplies as
+   * $install_id; without one, read what would be sent: the declared id,
+   * else the persisted visitor id, else null. Inert on an anonymous
+   * instance.
+   */
+  installId(id?: string | null): string | null {
+    if (id !== undefined) {
+      if (this.ready && !this.identified) {
+        this.warnAnonymous("installId()");
+        return null;
+      }
+      this.declaredInstallId = id ? String(id) : null;
+    }
+    if (this.declaredInstallId) return this.declaredInstallId;
+    return this.identified && this.mayStore() ? this.driver.get(this.k.visitor) : null;
   }
 
   /**
@@ -532,39 +502,14 @@ export class Twillingate {
   }
 
   /** Force-send everything queued. */
-  flush(unloading = false): void {
-    if (this.flushTimer !== null) {
-      clearTimeout(this.flushTimer);
-      this.flushTimer = null;
-    }
-    while (this.queue.length > 0) {
-      const events = this.queue.splice(0, MAX_BATCH);
-      this.send({ key: this.key, attributes: this.batchAttributes(), events }, unloading);
-    }
-    // Unloading is the last chance for batches whose delivery failed: try
-    // each once more through sendBeacon. A batch the beacon accepts is
-    // retired from pending, so an unbounded re-beacon of it does not follow
-    // on every later tab switch (visibilitychange fires this on each one,
-    // not only the final pagehide); one it does not accept stays for the
-    // next retry. The stored copy is deliberately left alone: sendBeacon
-    // returning true only means the browser accepted the payload, not that
-    // it was delivered — offline it is dropped — so the stored batch is
-    // what brings the record back on the next load. The server dedupes by
-    // event id, so replaying an already-delivered batch is free; dropping
-    // the stored copy on a beacon that never lands is not.
-    if (unloading) {
-      this.pending = this.pending.filter((batch) => !this.send(batch, true));
-    }
+  flush(): void {
+    if (!this.ready) return this.hold(() => this.flush());
+    this.drain(false);
   }
 
   /**
    * Pin storage consent (true/false) over whatever the tag declared, hand
-   * control back to the declared value (null), or read the effective value
-   * (no argument). Granting writes the pending retry queue to storage and,
-   * for an identified instance, starts persisting a visitor id; withdrawing
-   * deletes every key this instance owns. Every call, including a bare
-   * read, is itself a decision point and may run that grant/withdraw
-   * transition.
+   * control back (null), or read the effective value (no argument).
    */
   consent(granted?: boolean | null): boolean {
     if (granted !== undefined) this.consentPin = granted === null ? null : Boolean(granted);
@@ -572,13 +517,21 @@ export class Twillingate {
   }
 
   /**
-   * Pure detection, exposed so a page can see what the SDK would send:
-   * twillingate.detectOS() in the console. Omit the argument to read the
-   * ambient navigator; pass a ClientSignals to answer for exactly those
-   * signals and nothing else. Overrides given to init() are deliberately
-   * ignored here — this answers for the signals, the batch carries the
-   * option.
+   * With a boolean, write or clear the twillingate_ignore flag; returns
+   * the effective state, the optOut callback included.
    */
+  optOut(flag?: boolean): boolean {
+    if (flag !== undefined) writeFlag(IGNORE_FLAG, Boolean(flag));
+    return readFlag(IGNORE_FLAG) || this.optOutSpec();
+  }
+
+  /** With a boolean, write or clear the twillingate_debug flag; returns the effective state. */
+  debug(flag?: boolean): boolean {
+    if (flag !== undefined) writeFlag(DEBUG_FLAG, Boolean(flag));
+    return this.debugging();
+  }
+
+  /** Pure detection, exposed so a page can see what the SDK would send. */
   detectOS(signals?: ClientSignals): OSInfo {
     return detectOSFrom(signals);
   }
@@ -591,124 +544,204 @@ export class Twillingate {
     return detectDeviceFrom(signals);
   }
 
-  private ok(): boolean {
-    if (!this.ready) {
-      console.warn("twillingate: not initialised; call twillingate.init first");
-      return false;
-    }
-    return !ignored();
+  // ---- runtime subscriber: the instance decides, the runtime subscribes ----
+
+  onNavigate(source: NavigationSource): void {
+    if (!this.ready || !this.autoPageviews) return;
+    // In history mode a hash change is an in-page anchor jump, not a route.
+    if (source === "hash" && this.routing !== "hash") return;
+    this.page();
   }
 
-  private emit(name: string, attributes: Record<string, unknown>): void {
-    // A null or undefined value drops the key: the way to suppress a value
-    // the SDK derives on its own ($referrer) for one call. Applies to the
-    // event's attributes and attrs() defaults; batch attributes are
-    // untouched and the server layers the event over them key by key.
-    const merged: Record<string, unknown> = { ...this.defaultAttrs, ...attributes };
-    attributes = {};
+  onOnline(): void {
+    if (this.ready) this.replay();
+  }
+
+  onUnload(): void {
+    if (this.ready) this.drain(true);
+  }
+
+  onTagged(name: string, path: string): void {
+    if (this.ready && this.taggedEvents) this.track(name, { path });
+  }
+
+  /**
+   * Stop this instance for good: it leaves its runtime and produces no
+   * more events. Called by bootstrap on a default instance a later tag
+   * with a different key has taken over. Internal; not part of the
+   * documented API.
+   */
+  retire(): void {
+    // A dormant copy was never subscribed and an app may still hold a
+    // reference to it (e.g. a keyed tag took over before this one's own
+    // init() ran); it must stay usable rather than being retired sight
+    // unseen.
+    if (!this.ready) return;
+    runtime.unsubscribe(this);
+    this.retired = true;
+  }
+
+  // ---- internals ----
+
+  private label(): string {
+    return this.name === DEFAULT_INSTANCE ? "twillingate" : `twillingate:${this.name}`;
+  }
+
+  private debugging(): boolean {
+    return this.debugOpt || readFlag(DEBUG_FLAG);
+  }
+
+  private log(msg: string, data?: unknown): void {
+    if (!this.debugging()) return;
+    if (data === undefined) console.log(`[${this.label()}] ${msg}`);
+    else console.log(`[${this.label()}] ${msg}`, data);
+  }
+
+  private warnAnonymous(what: string): void {
+    if (this.warnedAnonymous) return;
+    this.warnedAnonymous = true;
+    console.warn(`twillingate: ${what} does nothing on an anonymous instance; set identity: "identified" to send ids`);
+  }
+
+  private hold(call: () => void): void {
+    if (this.held.length >= MAX_HELD) {
+      this.held.shift();
+      if (!this.heldWarned) {
+        this.heldWarned = true;
+        console.warn(`twillingate: ${this.label()} has ${MAX_HELD} calls waiting for init(); dropping the oldest`);
+      }
+    }
+    this.held.push(call);
+  }
+
+  // Whether an event may be produced now: initialised, and neither the
+  // person's opt-out flag nor the site's optOut callback says no.
+  private live(): boolean {
+    return this.ready && !this.retired && !readFlag(IGNORE_FLAG) && !this.optOutSpec();
+  }
+
+  // The last layer: onEvent listeners, then null drops a key.
+  private emit(name: string, merged: Record<string, unknown>): void {
+    for (const listener of this.eventListeners) {
+      let r: ReturnType<EventListener>;
+      try {
+        r = listener({ name, attributes: merged });
+      } catch (e) {
+        console.warn(`twillingate: an onEvent listener threw, dropping ${name}`, e);
+        return;
+      }
+      if (r === false) return;
+      if (r && typeof r === "object") merged = { ...merged, ...r };
+    }
+    const attributes: Record<string, unknown> = {};
     for (const key of Object.keys(merged)) {
       if (merged[key] !== null && merged[key] !== undefined) attributes[key] = merged[key];
     }
+    this.log(name, attributes);
     this.queue.push({ id: uuid(), ts: new Date().toISOString(), name, attributes });
     if (this.queue.length >= FLUSH_AT) {
-      this.flush();
+      this.drain(false);
       return;
     }
     if (this.flushTimer === null) {
       this.flushTimer = setTimeout(() => {
         this.flushTimer = null;
-        this.flush();
+        this.drain(false);
       }, this.flushInterval);
     }
   }
 
-  // Identity precedence: a caller-supplied id, else the stored visitor id,
-  // else nothing — the server then falls back to its rotating hash. The
-  // persistent visitor id is terminal-equipment storage under ePrivacy, so
-  // it is only ever written for identified projects, and only with consent.
+  private drain(unloading: boolean): void {
+    if (this.flushTimer !== null) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+    }
+    while (this.queue.length > 0) {
+      const events = this.queue.splice(0, MAX_BATCH);
+      this.send({ key: this.key, attributes: this.batchAttributes(), events }, unloading);
+    }
+    // Unloading is the last chance for batches whose delivery failed: try
+    // each once more through sendBeacon. A batch the beacon accepts is
+    // retired from pending; the stored copy stays until a replay lands it.
+    if (unloading) {
+      this.pending = this.pending.filter((batch) => !this.send(batch, true));
+    }
+  }
+
+  // Identity precedence: the declared install id, else the stored visitor
+  // id (identified, with consent), else nothing — the server then falls
+  // back to its rotating connection hash.
   private visitorId(): string | null {
-    if (this.installId) return this.installId;
+    if (this.declaredInstallId) return this.declaredInstallId;
     if (!this.identified || !this.mayStore()) return null;
-    let v = ls(this.k.visitor);
+    let v = this.driver.get(this.k.visitor);
     if (!v) {
       v = uuid();
-      lsSet(this.k.visitor, v);
+      this.driver.set(this.k.visitor, v);
     }
     return v;
   }
 
   private batchAttributes(): Record<string, unknown> {
     const a: Record<string, unknown> = {};
-    if (this.userId) a.$user_id = this.userId;
-    if (this.userName) a.$user_name = this.userName;
+    if (this.identified) {
+      if (this.userId) a.$user_id = this.userId;
+      if (this.userName) a.$user_name = this.userName;
+      const v = this.visitorId();
+      if (v) a.$install_id = v;
+    }
     if (this.groupId) a.$group_id = this.groupId;
     if (this.groupName) a.$group_name = this.groupName;
-    const v = this.visitorId();
-    if (v) a.$install_id = v;
     a.$kind = this.kind;
-    // Detection runs per flush: an explicit option beats it, and the
-    // three always-resolved values are sent on every batch so the server
-    // can tell "declared unknown" from "sent nothing".
-    const d = detectAll();
-    const e = this.env;
     if (this.platform) a.$platform = this.platform;
-    a.$os = e.os || d.os;
-    const osVersion = e.osVersion || d.osVersion;
-    if (osVersion) a.$os_version = osVersion;
-    const osName = e.osName || d.osName;
-    if (osName) a.$os_name = osName;
-    a.$browser = e.browser || d.browser;
-    const browserVersion = e.browserVersion || d.browserVersion;
-    if (browserVersion) a.$browser_version = browserVersion;
-    a.$device = e.device || d.device;
+    // Detection runs per flush and is the only source of the environment.
+    const d = detectAll();
+    a.$os = d.os;
+    if (d.osVersion) a.$os_version = d.osVersion;
+    if (d.osName) a.$os_name = d.osName;
+    a.$browser = d.browser;
+    if (d.browserVersion) a.$browser_version = d.browserVersion;
+    a.$device = d.device;
     if (this.appVersion) a.$app_version = this.appVersion;
     if (typeof navigator !== "undefined" && navigator.language) a.$locale = navigator.language;
     return a;
   }
 
-  // Returns whether sendBeacon accepted the batch, so a caller retiring a
-  // beaconed batch from pending (flush(true)) knows which ones landed.
+  // Returns whether sendBeacon accepted the batch.
   private send(batch: Batch, unloading: boolean): boolean {
     const endpoint = this.url + "/ingest/events";
     const body = JSON.stringify(batch);
-    // sendBeacon with a string posts text/plain: a CORS-simple request with
-    // no preflight that survives page unload. It cannot set headers, which
-    // is why the key travels in the body.
-    if (unloading && typeof navigator.sendBeacon === "function" && navigator.sendBeacon(endpoint, body)) {
+    if (unloading && typeof navigator !== "undefined" && typeof navigator.sendBeacon === "function" && navigator.sendBeacon(endpoint, body)) {
+      this.log(`beaconed ${batch.events.length} event(s)`);
       return true;
     }
     fetch(endpoint, { method: "POST", body, keepalive: true })
       .then((res) => {
-        // 5xx is transient — keep the batch for replay. 4xx is permanent
-        // (bad key, bad payload): dropping beats resending it forever.
+        this.log(`sent ${batch.events.length} event(s) → ${res.status}`);
+        // 5xx is transient — keep the batch for replay. 4xx is permanent.
         if (res.status >= 500) this.store(batch);
       })
-      .catch(() => this.store(batch));
+      .catch((e) => {
+        this.log(`send failed, keeping ${batch.events.length} event(s) for retry`, e);
+        this.store(batch);
+      });
     return false;
   }
 
   // The decision point every read and write goes through. Consent is
-  // consulted here, never cached, so a consent manager that answers after
-  // page load is picked up at the next decision. A change of answer is a
-  // transition: granted moves the pending queue onto the device; withdrawn
-  // deletes everything this instance wrote.
+  // consulted here, never cached. A change of answer is a transition:
+  // granted moves the pending queue onto the driver; withdrawn deletes
+  // everything this instance wrote. Before init() there is no configured
+  // driver yet (this.driver is still the default), so a bare read (e.g.
+  // consent() called ahead of init()) reports the effective value without
+  // running the transition against it.
   private mayStore(): boolean {
     const now = this.consentPin !== null ? this.consentPin : this.consentSpec();
-    if (now !== this.lastConsent) {
+    if (this.ready && now !== this.lastConsent) {
       this.lastConsent = now;
       if (now) {
-        // Merge rather than overwrite: another tab may already have
-        // queued its own batches under this key.
-        if (this.pending.length) lsSet(this.k.queue, JSON.stringify(mergeBatches(this.storedBatches(), this.pending)));
-        // An identified instance may already hold a user/group from an
-        // identify()/group() call made before consent arrived; persist it
-        // now rather than waiting for the next call. lastConsent is already
-        // set above, so this nested mayStore() sees no transition and does
-        // not recurse. Guarded by `ready`: init()'s own first decision
-        // point runs before opts.user/opts.group or a stored value have
-        // been loaded into these fields, so saving here would overwrite
-        // storage with nulls before init() gets a chance to read it back.
-        if (this.ready) this.saveIdentity();
+        if (this.pending.length) this.driver.set(this.k.queue, JSON.stringify(mergeBatches(this.storedBatches(), this.pending)));
+        this.saveIdentity();
       } else {
         this.wipe();
       }
@@ -717,21 +750,18 @@ export class Twillingate {
   }
 
   private wipe(): void {
-    for (const s of SUFFIXES) lsSet(this.k[s], null);
+    for (const s of SUFFIXES) this.driver.remove(this.k[s]);
   }
 
   private saveIdentity(): void {
     if (!this.identified || !this.mayStore()) return;
-    lsSet(this.k.user, this.userId);
-    lsSet(this.k.user_name, this.userName);
-    lsSet(this.k.group, this.groupId);
-    lsSet(this.k.group_name, this.groupName);
+    const put = (key: string, value: string | null) => (value === null ? this.driver.remove(key) : this.driver.set(key, value));
+    put(this.k.user, this.userId);
+    put(this.k.user_name, this.userName);
+    put(this.k.group, this.groupId);
+    put(this.k.group_name, this.groupName);
   }
 
-  // Retry queue: failed batches keep the attributes they were built with
-  // and replay on `online`, on unload, and (with consent) on the next load.
-  // Events carry ids and client timestamps, so the server dedupes replays
-  // and keeps the original times.
   private store(batch: Batch): void {
     if (this.pending.includes(batch)) return; // an unload retry that failed again
     this.pending.push(batch);
@@ -741,11 +771,12 @@ export class Twillingate {
 
   private saveQueue(): void {
     if (!this.mayStore()) return;
-    lsSet(this.k.queue, this.pending.length ? JSON.stringify(this.pending) : null);
+    if (this.pending.length) this.driver.set(this.k.queue, JSON.stringify(this.pending));
+    else this.driver.remove(this.k.queue);
   }
 
   private storedBatches(): Batch[] {
-    const raw = ls(this.k.queue);
+    const raw = this.driver.get(this.k.queue);
     if (!raw) return [];
     try {
       const parsed: unknown = JSON.parse(raw);
@@ -755,34 +786,11 @@ export class Twillingate {
     }
   }
 
-  // With consent, replay the union of the stored copy and pending, deduped
-  // by first event id: pending can hold a batch the store write silently
-  // dropped (quota, a partitioned context), and the stored copy can hold a
-  // batch only another tab knows about. Without consent nothing was ever
-  // written, so pending alone is the whole queue.
   private replay(): void {
     const batches = this.mayStore() ? mergeBatches(this.storedBatches(), this.pending) : this.pending;
     this.pending = [];
     this.saveQueue();
     for (const batch of batches) this.send(batch, false); // a failure re-stores itself
-  }
-
-  private hookHistory(): void {
-    if (this.hooked || typeof history === "undefined") return;
-    this.hooked = true;
-    const pushState = history.pushState;
-    // eslint-style rebind: arrow keeps `this` on the SDK instance.
-    history.pushState = (...args: Parameters<History["pushState"]>) => {
-      pushState.apply(history, args);
-      this.page();
-    };
-    addEventListener("popstate", () => this.page());
-    // Hash mode only. In history mode a hash change is an in-page anchor
-    // jump (#pricing), and treating those as pageviews would flood the
-    // pages breakdown with duplicates of one route.
-    if (this.routing === "hash") {
-      addEventListener("hashchange", () => this.page());
-    }
   }
 }
 
@@ -815,14 +823,9 @@ function displaySize(): Record<string, number> {
 /**
  * Split a URL into the host and path that get stored. The query is always
  * dropped; the hash is kept only in hash-routing mode, where it IS the
- * route. The "#" is retained so the client route /app/#/settings stays
- * distinguishable from the server route /app/settings, and the pathname
- * prefix is kept so two hash apps mounted at different paths stay apart.
+ * route.
  */
-function splitLocation(
-  href: string,
-  routing: "history" | "hash",
-): { host: string; path: string } | null {
+function splitLocation(href: string, routing: "history" | "hash"): { host: string; path: string } | null {
   let u: URL;
   try {
     u = new URL(href, location.href);
@@ -831,104 +834,7 @@ function splitLocation(
   }
   let path = u.pathname || "/";
   if (routing === "hash" && u.hash) {
-    // Strip a hash-internal query: $path carries none by default, in
-    // either mode.
     path += "#" + u.hash.slice(1).split("?")[0];
   }
   return { host: u.hostname, path };
-}
-
-function scriptOrigin(): string | null {
-  if (typeof document === "undefined") return null;
-  const script = document.currentScript as HTMLScriptElement | null;
-  if (!script || !script.src) return null;
-  try {
-    return new URL(script.src).origin;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Whether this copy of the bundle should stand down and leave the instance
- * already at window[name] in place. A page that gets the tag twice (a
- * theme and a tag manager both adding it) would otherwise run two instances
- * sending every pageview under one key, with the second replacing the
- * global the page's own calls go to.
- *
- * A tag naming a different key still takes over: two projects on one page
- * need separate storage, which a guard cannot give them.
- */
-export function supersededBy(existing: unknown, script: HTMLScriptElement | null, name = DEFAULT_INSTANCE): boolean {
-  if (!isInstance(existing)) return false;
-  // Read structurally: a copy from another release is a different class.
-  const loadedKey = (existing as unknown as { key?: unknown }).key;
-  const key = script?.getAttribute("data-key");
-  if (!key || key === loadedKey) {
-    console.warn("twillingate: twillingate.js loaded twice; keeping the first copy, remove the duplicate <script> tag");
-    return true;
-  }
-  if (loadedKey) {
-    console.warn(`twillingate: a second twillingate.js replaced window.${name} (${loadedKey} -> ${key})`);
-  }
-  return false;
-}
-
-/**
- * Snippet-mode entry: init from the loading <script>'s data attributes.
- * Without data-key the SDK stays dormant until twillingate.init is called.
- */
-export function autoInit(tg: Twillingate, script: HTMLScriptElement | null): void {
-  if (!script) return;
-  const key = script.getAttribute("data-key");
-  if (!key) return;
-  let url: string | null = null;
-  try {
-    url = script.src ? new URL(script.src).origin : null;
-  } catch {
-    url = null;
-  }
-  tg.init({
-    key,
-    url: url || undefined,
-    identity: script.getAttribute("data-identity") === "identified" ? "identified" : "anonymous",
-    user: script.getAttribute("data-user") || undefined,
-    group: script.getAttribute("data-group") || undefined,
-    consent: script.getAttribute("data-consent") || undefined,
-    autoPageviews: script.getAttribute("data-auto") !== "off",
-    maskUrl: script.getAttribute("data-mask-url") || undefined,
-    routing: script.getAttribute("data-routing") === "hash" ? "hash" : "history",
-    kind: script.getAttribute("data-kind") || undefined,
-  });
-}
-
-/**
- * Snippet-mode bootstrap, called once by the bundle entry. Picks the
- * instance name from data-instance, stands down for a duplicate of the
- * same tag, registers the global and auto-inits. Returns the instance, or
- * null when this copy stood down. The global is registered only when the
- * name is free or holds an earlier Twillingate (the take-over path);
- * anything else stays untouched — data-instance="location" should cost a
- * warning, not the page.
- */
-export function bootstrap(script: HTMLScriptElement | null): Twillingate | null {
-  const attr = script ? script.getAttribute("data-instance") : null;
-  const name = attr === null ? DEFAULT_INSTANCE : instanceName(attr);
-  const g = window as unknown as Record<string, unknown>;
-  const existing = g[name];
-  if (supersededBy(existing, script, name)) return null;
-  // An unusable attribute already fell back to the default inside
-  // instanceName above; pass undefined rather than the resolved name so
-  // the constructor does not mark this instance "declared" against a name
-  // it never actually got from the tag, and a later init({ instance })
-  // can still take effect.
-  const tg = new Twillingate(name === DEFAULT_INSTANCE ? undefined : name);
-  (tg as Twillingate & { VERSION: string }).VERSION = VERSION;
-  if (existing === undefined || existing === null || isInstance(existing)) {
-    g[name] = tg;
-  } else {
-    console.warn(`twillingate: window.${name} is already taken by something else; the instance is not registered there`);
-  }
-  autoInit(tg, script);
-  return tg;
 }
