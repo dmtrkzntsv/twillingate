@@ -570,8 +570,7 @@ localStorage.twillingate_debug = "true";   // or twillingate.debug(true)
   `twillingate.get(name)`"; the `data-user`/`data-group` row is removed;
   no new rows; the parity sentence names the one exception,
   `data-instance`, which maps to `create()`'s name, and the code-only
-  list grows by `user`, `group`, `storage`, `taggedEvents`, `optOut` and
-  `debug`;
+  list grows by `storage`, `taggedEvents`, `optOut` and `debug`;
 - the SDK-only example: no `instance`, `user`, `group` or `installId`,
   `autoPageviews` on by default, `debug`, `storage`, `optOut`,
   `taggedEvents`;
