@@ -114,14 +114,15 @@ func TestDocumentMatchesReservedKeys(t *testing.T) {
 // source (sdk/src/twillingate.ts — the shipped bundle is compiled from it
 // and separately drift-checked in CI).
 func TestDocumentMatchesSDK(t *testing.T) {
-	src := readSource(t, "../../sdk/src/twillingate.ts")
+	src := readSource(t, "../../sdk/src/twillingate.ts") + readSource(t, "../../sdk/src/factory.ts") + readSource(t, "../../sdk/src/runtime.ts")
 	for _, symbol := range []string{
-		"data-key", "data-identity", "data-user", "data-group", "data-auto",
+		"data-key", "data-identity", "data-auto",
 		"data-mask-url", "data-routing", "data-consent", "data-instance",
 		"data-kind",
-		"init", "page", "screen", "track", "attrs", "identify", "group", "reset", "flush", "consent", "instance",
+		"init", "page", "onPage", "onEvent", "screen", "track", "attrs", "identify", "group", "installId",
+		"reset", "flush", "consent", "optOut", "debug", "create", "get", "storage", "taggedEvents",
 		"detectOS", "detectBrowser", "detectDevice", "ClientSignals",
-		"twillingate_ignore",
+		"twillingate_ignore", "twillingate_debug",
 		"pushState", "popstate", "hashchange",
 		"$page_view", "$screen_view", "$install_id", "$kind", "$platform", "$os", "$os_name",
 		"$browser", "$browser_version", "$device",
@@ -132,6 +133,11 @@ func TestDocumentMatchesSDK(t *testing.T) {
 		}
 		if !strings.Contains(docs.Twillingate, symbol) {
 			t.Errorf("%q missing from docs/twillingate.md", symbol)
+		}
+	}
+	for _, gone := range []string{"data-user", "data-group", "data-debug", "data-storage"} {
+		if strings.Contains(src, `getAttribute("`+gone+`")`) {
+			t.Errorf("the SDK still reads %s, which the spec removed", gone)
 		}
 	}
 	// util is the documented namespace for the path helpers.

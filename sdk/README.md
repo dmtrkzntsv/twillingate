@@ -14,6 +14,13 @@ npm run build      # rewrites ../internal/server/twillingate.js — commit it
 CI rebuilds the bundle and fails on any diff against the committed file, so
 every source change must ship with a fresh `npm run build`.
 
+The committed bundle carries two placeholders: `__TWILLINGATE_VERSION__`,
+substituted once at startup with the build version, and
+`__TWILLINGATE_URL__`, substituted per request with the origin the file
+was requested from. The served file is the only way to load the SDK;
+bundling `src/twillingate.ts` leaves the origin placeholder in place and
+the SDK stays dormant. Tests mock `src/origin.ts` to supply an origin.
+
 The user-facing API reference and the wire format the SDK speaks both live
 in [docs/twillingate.md](../docs/twillingate.md).
 This bundle is the only client the collector serves.
