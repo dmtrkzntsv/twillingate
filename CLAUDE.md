@@ -30,26 +30,34 @@ deploy/              installer, systemd units, compose files, litestream config,
 `app` imports the surfaces (`server`, `api`, `jobs`, `pipeline`, `dashboards`);
 surfaces import `manage` and the leaves, never each other; `manage` and the
 leaves import only leaves. A surface that needs another's behaviour takes an
-interface that `app` satisfies. Each consumer declares the slice of the store
-it uses (`jobs.Store`, `manage.Store`) rather than `store.Store`. A new package
-goes into the rank table in `internal/archtest/archtest_test.go`.
+interface and `app` passes the implementation (`server.Enqueuer` is
+`pipeline.Buffer`). Each consumer declares the slice of the store it uses
+(`jobs.Store`, `manage.Store`) rather than `store.Store`. A new package goes
+into the rank table in `internal/archtest/archtest_test.go`.
 
 Refusals are typed (`manage.ErrNotFound`, `manage.ErrConflict`,
-`manage.ErrInvalid`) and matched with `errors.Is`; message text is for humans.
+`manage.ErrInvalid`; the first two are the store's own values) and matched
+with `errors.Is`; message text is for humans, never for matching.
 
 ## Commits and releases
 
 [Conventional Commits](https://www.conventionalcommits.org/):
 `<type>(<scope>): <subject>`, imperative, lower case, no trailing period.
 The release notes are generated from the log, so the subject is the changelog
-entry. Only `feat`, `fix` and `perf` appear in the notes; `!` before the colon
-(or a `BREAKING CHANGE:` footer) marks a breaking change. Scopes match the
-tree: `store`, `server`, `jobs`, `config`, `api`, `manage`, `pipeline`, `geo`,
-`dashboards`, `sdk`, `cmd`, `deploy`, `ci`; omit for repo-wide changes.
+entry. Only `feat`, `fix` and `perf` appear in the notes; `docs`, `refactor`,
+`test`, `build`, `ci`, `chore` and `style` are valid and expected but never
+appear in the notes, so anything a user should read about needs one of the
+three published types. `!` before the colon (or a `BREAKING CHANGE:` footer)
+marks a breaking change. Scopes match the tree: `store`, `server`, `jobs`,
+`config`, `api`, `manage`, `pipeline`, `geo`, `dashboards`, `sdk`, `cmd`,
+`deploy`, `ci`; omit for repo-wide changes.
 
 Releases are cut by hand with `gh workflow run release.yml` (optional `version`
 input; blank means next patch). Pushing to `main` publishes nothing. Pre-1.0:
-breaking changes bump the minor.
+breaking changes bump the minor. The workflow tags, runs `make check`, builds
+the tarballs and hands off to `npx changelogithub`; container images publish
+from a separate job; several commits can ship under one version; notes are
+not hand-edited.
 
 ## Checks
 
@@ -64,8 +72,10 @@ fails.
 Two pages, both served over MCP, both the contract rather than a summary:
 `docs/twillingate.md` (`docs://twillingate`) for using twillingate, and
 `docs/deployment.md` (`docs://deployment`) for running it. `docs/` holds those
-two plus `docs/plausible/README.md`; do not add files there. Per-migration
-upgrade runbooks live in `deploy/UPGRADES.md`.
+two plus `docs/plausible/README.md`, which stays separate because it
+documents bytes the collector serves at `/js/plausible-shim.js` and a test
+binds it to them; do not add files there. Per-migration upgrade runbooks live
+in `deploy/UPGRADES.md`.
 
 Update in the **same commit** as the change:
 

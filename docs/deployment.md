@@ -44,8 +44,10 @@ account, `/usr/local/bin/twillingate`, `/var/lib/twillingate` (0750, owned
 by it), an example `twillingate.env` loaded via `EnvironmentFile=`, the
 units, and the `twillingate@.service` template for a [split
 install](#hostnames-and-processes). Re-running it upgrades: env file and
-account kept, running units restarted, non-zero exit if one stays down. Then
-edit the file it flagged and create your first project:
+account kept, running units restarted, non-zero exit if one stays down.
+Re-running the installer upgrades and restarts the units that were running;
+a stopped service stays stopped. Then edit the file it flagged and create
+your first project:
 
 ```bash
 sudo vi /etc/twillingate/twillingate.env
@@ -133,7 +135,8 @@ compose it is `docker-compose.evidence.yml`, on port 3000, which answers
 `503` for about a minute until the first build finishes. It rebuilds within
 a minute of the database changing (size and modification time), no closer
 together than `DASHBOARDS_INTERVAL` (default `15m`), snapshotting the
-database into `DASHBOARDS_WORK_DIR` each time.
+database into `DASHBOARDS_WORK_DIR` each time — the host needs room for one
+more copy.
 
 A rebuild that cannot read its data does not publish: a database that is not
 a twillingate one stops at `not a twillingate database`, a source Evidence
@@ -157,7 +160,9 @@ alone (`docker compose -f docker-compose.evidence.yml up -d`) with
 `/data/twillingate.db`, the shared-volume case. Restore the replica from the
 compose file's commented `restore` service or host cron, never both. To move
 an existing single server here, stand up the VPS on the same bucket, stop
-the old writer, then point the reader's restore at the VPS's database path.
+the old writer, then point the reader's restore at the VPS's database path:
+`REPLICA_PATH` and `DASHBOARDS_DB_PATH` must both read `/data/replica.db`,
+and the tracking snippet's `src` repoints at the VPS hostname.
 
 `restore.sh` verifies into a temporary file, renames only on success, and
 counts the applied migrations, because litestream does not fail an *empty*
@@ -184,18 +189,23 @@ client talks to the running collector over the network — and one
 The binary runs its own login — no identity provider to run — and every
 client connects through a browser page that asks for a password.
 
-```bash
-# 1. Mint the token. It prints: API_AUTH_DSN=token://ar_…
-sudo -u twillingate sh -ac '. /etc/twillingate/twillingate.env; twillingate keygen -api'
-# 2. Put it in /etc/twillingate/twillingate.env (compose: .env) with a
-#    password, IN SINGLE QUOTES — these commands load the file with sh,
-#    where an unquoted & cuts the value short:
-#    API_AUTH_DSN='token://ar_…?password=<password>'
-# 3. Restart, then check that /mcp asks for a login.
-sudo systemctl restart twillingate        # compose: docker compose up -d
-curl -si -X POST https://twillingate.example.com/mcp | grep -i www-authenticate
-# → WWW-Authenticate: Bearer resource_metadata="https://twillingate.example.com/.well-known/oauth-protected-resource/mcp"
-```
+1. Mint the token — `keygen -api` mints it as `ar_` plus hex. It prints
+   `API_AUTH_DSN=token://ar_…`:
+   ```bash
+   sudo -u twillingate sh -ac '. /etc/twillingate/twillingate.env; twillingate keygen -api'
+   ```
+2. Set it in `/etc/twillingate/twillingate.env` (compose: `.env`), in single
+   quotes — these commands load the file with `sh`, where an unquoted `&`
+   cuts the value short:
+   ```
+   API_AUTH_DSN='token://ar_…?password=<password>'
+   ```
+3. Restart, then check that `/mcp` asks for a login:
+   ```bash
+   sudo systemctl restart twillingate        # compose: docker compose up -d
+   curl -si -X POST https://twillingate.example.com/mcp | grep -i www-authenticate
+   # → WWW-Authenticate: Bearer resource_metadata="https://twillingate.example.com/.well-known/oauth-protected-resource/mcp"
+   ```
 
 | Parameter | Meaning |
 | --- | --- |
@@ -206,9 +216,9 @@ curl -si -X POST https://twillingate.example.com/mcp | grep -i www-authenticate
 Accepted without `redirect=`, at any port and path: `localhost`,
 `127.0.0.1` and `[::1]` over `http` or `https`, plus `claude.ai` and
 `chatgpt.com` over `https`. Any other host is refused until added as
-`redirect=<host>`, then works over `https` only, matched exactly
-(`claude.ai` does not admit `foo.claude.ai`). A self-chosen token must not
-contain `?`.
+`redirect=<host>`, then works over `https`, at any port and path, matched
+exactly (`claude.ai` does not admit `foo.claude.ai`) — once the list is
+edited, new logins follow it. A self-chosen token must not contain `?`.
 
 ### Connect a client
 
@@ -223,16 +233,25 @@ contain `?`.
   `redirect=<host>`.
 
 Access tokens last an hour and refresh silently, each refresh extending the
-login by 30 days; a client unused for longer logs in again. Logins are not
-stored, so there is no per-client revocation: a new token, password or
-`resource` logs every client in again, a removed `password` voids issued
-tokens, and an edited `redirect` list, a restart or an upgrade leave
-connected clients alone. Anything that is not an MCP client hits the same
-operations as REST routes with the same token — `curl -H "Authorization:
-Bearer $TOKEN" https://twillingate.example.com/api/projects/blog/views/overview?from=…&to=…`
-— all of them documented in
-[twillingate.md#http-api](twillingate.md#http-api).
+login by 30 days. Logins are not stored, so there is no per-client
+revocation:
 
+| Change | Effect |
+| --- | --- |
+| new token or password | every client logs in again |
+| new `resource` | every client logs in again |
+| `password` removed | issued tokens are voided |
+| `redirect` edited | new logins follow the new list; connected clients are unaffected |
+| client unused 30 days | it logs in again |
+| restart or upgrade | connected clients are unaffected |
+
+Anything that is not an MCP client hits the same operations as REST routes
+with the same token, all of them documented in
+[twillingate.md#http-api](twillingate.md#http-api):
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  https://twillingate.example.com/api/projects/1/views/overview?from=…&to=…
+```
 A client that can send headers can present the token itself instead of
 logging in; a bare `API_AUTH_DSN='token://ar_…'` turns the login off and
 leaves only this.
@@ -263,14 +282,17 @@ sudo systemctl disable --now twillingate
 sudo systemctl enable --now twillingate@ingest twillingate@api
 ```
 
-An upgrade restarts whichever instances were running and leaves the bare
-`twillingate.service` disabled while one is enabled; reverse to go back.
+Disable the bare unit first: enabling both `twillingate.service` and an
+instance binds the same listeners at the next boot. An upgrade restarts
+running instances and leaves the bare unit disabled; reverse to go back.
 
 > **An API-only process still runs the daily aggregation pass against
 > `DATABASE_DSN`** — `-api` only makes the HTTP listener conditional, not
 > the background jobs. Set `API_DB_PATH` (what the API reads) and
 > `DATABASE_DSN` (what the pass writes) deliberately: aimed at a litestream
-> replica, an API-only unit writes to that replica on every pass.
+> replica, an API-only unit writes to that replica on every pass — or
+> accept that a two-process topology runs the idempotent daily aggregation
+> twice.
 
 ### Other auth modes
 
@@ -299,7 +321,7 @@ defaults to `PUBLIC_URL` and must be an origin with no path;
 
 | Symptom | Cause and fix |
 | --- | --- |
-| `404` on `/mcp` or `/api/` | The API is off. `journalctl -u twillingate \| grep 'API disabled'` names the reason. |
+| `404` on `/mcp` or `/api/` | The API is off — usually a DSN that does not parse. `journalctl -u twillingate \| grep 'API disabled'` names the reason. |
 | `401` on connect | Run the curl from [Set it up](#set-it-up). A `401` carrying the `resource_metadata` challenge means the server is fine: the client or the password is the problem. |
 | Connects but no tools | Wrong path: the endpoint is `/mcp`, not the bare hostname. |
 | Login page: redirect URI's host not allowed | The client returns to a host that is not built in. The page shows the URI; add its host as `redirect=<host>` and restart. |
@@ -317,7 +339,7 @@ defaults to `PUBLIC_URL` and must be an origin with no path;
 | Upgrade (systemd) | `curl -fsSL …/install.sh \| sudo bash` — restarts the running service and reports the old and new version |
 | Upgrade (compose) | `docker compose pull && docker compose up -d`. Never `down -v`: the database lives in the named volume. Pin with `TWILLINGATE_VERSION=v0.9.2` in `.env`. |
 | Apply migrations only | `twillingate migrate` |
-| Upgrade across a schema change | Snapshot first (`litestream snapshots …`, or copy the file while the service is stopped): migrations are irreversible. Pre-checks and what changes on the day: [deploy/UPGRADES.md](../deploy/UPGRADES.md) |
+| Upgrade across a schema change | Snapshot first (`litestream snapshots …`, or copy the file while the service is stopped): migrations 012, 014, 015 and 016 are irreversible. Pre-checks and what changes on the day: <https://github.com/dmtrkzntsv/twillingate/blob/main/deploy/UPGRADES.md> (not served over MCP; open it in the repository) |
 | Database size | `du -h /var/lib/twillingate/twillingate.db` |
 | Replication status | `journalctl -u litestream --since -1h`, or `docker compose logs litestream` |
 | Dashboard rebuilds | `docker compose logs dashboards` — one `dashboards: rebuilt` line per successful build |
@@ -376,7 +398,10 @@ On the writer: for docker, uncomment the `litestream` service, copy
 `litestream.yml` next to the compose files and put the four variables in
 `.env`. For systemd, `install.sh` installs `litestream.service` and
 `/etc/litestream.yml` but not the binary — take that from
-<https://litestream.io/install/>, then enable the unit.
+<https://litestream.io/install/>, then enable the unit:
+```bash
+sudo systemctl enable --now litestream
+```
 
 ### Backup restore drill — do this monthly
 

@@ -106,7 +106,8 @@ recomputed from raw, so **a client sending the literal `(other)` loses its own
 count**. Never declare an unbounded key such as a URL or session id. `$platform`,
 `$os` and `$app_version` roll up automatically and must not be declared:
 `$`-prefixed keys never reach the custom blob, so `"attributes": ["$os"]`
-extracts nothing.
+extracts nothing. Rollups run whether or not a project declares attributes;
+declaring only adds the per-value breakdown and the `attr_*` columns.
 
 ### Ingest keys
 
@@ -114,7 +115,8 @@ A project needs at least one key, and the key identifies the project — no
 payload carries a project field. Keys are **public by design**: they ship in
 binaries and page source, so their job is revocation, not secrecy. To retire
 one, add the replacement, ship clients, watch the old label fall to zero in the
-per-minute `ingest summary` log line, then disable it.
+per-minute `ingest summary` log line, then disable it. Disabling is reversible;
+deleting the entry is the eventual cleanup.
 
 ---
 
@@ -149,7 +151,10 @@ whichever hostname loaded it.
 | `data-instance` | `create(name)` | Register this tag's instance as `twillingate.get(name)` instead of as the default instance. See [Two projects on one page](#two-projects-on-one-page). |
 
 Every `data-*` has an `init()` equivalent except `data-instance`, which maps to
-`create()`'s name; the reverse does not hold. Views are automatic, including on
+`create()`'s name; the reverse does not hold — `flushInterval`, `platform`,
+`appVersion`, `storage`, `taggedEvents`, `optOut` and `debug` are code-only
+options with no `data-*` form, and identity is set from code (`identify`,
+`group`, `installId`), never in markup. Views are automatic, including on
 `history.pushState` and `popstate`; elements carrying `data-twillingate-event`
 are tracked on click or submit. Include each tag once: a duplicate with the same
 `data-key` or with none is ignored with a warning, one with a different key
@@ -281,6 +286,8 @@ A name resolving to nothing, or a function that throws, fails closed with a
 console warning. Consent is consulted at every storage decision, never cached:
 flipping to true writes the waiting memory queue to storage and starts
 persisting identity, flipping to false deletes every key the instance owns.
+
+**Where keys live** is the `storage` option:
 
 | `storage` | Meaning |
 | --- | --- |
@@ -459,20 +466,24 @@ stored as an ordinary custom event with a warning; an unrecognized `$`
 A view is one page or screen shown to someone, and both names store the same
 row. `$kind` overrides the default kind with any token matching
 `^[a-z][a-z0-9_]{0,15}$`, usually as a batch attribute; an invalid value warns
-and the default is used. **Only `web` has server-side meaning**: a web view is
-enriched with a country from the IP and filtered for a crawler User-Agent, while
-no other kind is filtered and nothing else is derived from the User-Agent.
-`$path` (or its alias `$screen`) is **required** and `$host` optional, both
-stored verbatim, and `$path` may contain a `#` (hash routing) or a `?` (query
-routing). Campaign parameters are `$utm_source`, `$utm_medium` and
-`$utm_campaign`; `$referrer` is reduced to a source name and dropped on web
-views as a self-referral when its host matches `$host`. A client `$session_id`
-is authoritative, otherwise a gap over 30 minutes per actor starts a session,
-and a bounce is a single-view session — expect high bounce rates on app kinds.
-The IP and User-Agent header are never stored; the only User-Agent text kept is
-the `$os_name` a client declares. **A backend must not relay web views for other
-people**: they would all carry the backend's IP (one country for everyone) and
-its User-Agent, which the crawler filter drops for curl or an HTTP library.
+and the default is used. Every view, of any kind, is enriched with a country
+derived from the connection's IP; only `web` has further server-side
+meaning — a web view is also filtered for a crawler User-Agent, while no
+other kind is filtered. `$path` (or its alias `$screen`) is **required** and
+`$host` optional, both stored verbatim, and `$path` may contain a `#` (hash
+routing) or a `?` (query routing). Campaign parameters are `$utm_source`,
+`$utm_medium` and `$utm_campaign`; `$referrer` is reduced to a source name
+and dropped on web views as a self-referral when its host matches `$host`. A
+client `$session_id` is authoritative, otherwise a gap over 30 minutes per
+actor starts a session, and a bounce is a single-view session — expect high
+bounce rates on app kinds.
+
+The IP and the User-Agent are never stored, on any kind: the IP becomes the
+country, the User-Agent is checked for a crawler and discarded — the only
+User-Agent text kept is the `$os_name` a client declares. **A backend must
+not relay web views for other people**: they would all carry the backend's
+IP (one country for everyone) and its User-Agent, which the crawler filter
+drops for curl or an HTTP library.
 
 ### Declaring the environment
 
@@ -495,15 +506,25 @@ os=macos` — while `$kind` is adjacent but coarser. Validation of `$os`,
 `$browser` and `$device` trims, lower-cases and folds spaces and dashes
 (`Chrome OS` → `chromeos`, `Samsung Internet` → `samsung_internet`) and never
 rejects; **`other` and `unknown` are different answers**, `other` being a value
-outside the list and `unknown` no information at all, either sendable
-deliberately. `$os_name` is the OS's full self-reported name with version
-(`macOS 14.2`, `Windows 11`), stored verbatim on views, never aggregated and
-never a breakdown dimension, so an `$os` of `other` stays investigable through
-`query`; `$os_version`, `$browser_version` and `$device_model` are free text,
-and `$device` is the form factor, with consoles and TVs as `other` because `$os`
-already names them. Product events keep `$platform` and `$os` as columns and
-resolve and drop the rest, so an SDK that sends every environment key on every
-batch is correct and cheap.
+outside the list and `unknown` no information at all — both are in the closed
+vocabulary themselves, so a client sending either literally is a recognised
+value and draws no warning, unlike an unrecognised string, which folds to
+`other` with one.
+
+`$os_name` is the OS's full self-reported name with version (`macOS 14.2`,
+`Windows 11`), stored verbatim on views, never aggregated and never a
+breakdown dimension, so an `$os` of `other` stays investigable through
+`query`; it is empty when absent rather than defaulted. `$os_version`,
+`$browser_version` and `$device_model` are free text, and `$device` is the
+form factor, with consoles and TVs as `other` because `$os` already names
+them. The JS SDK sends the major browser version and the OS version it can
+determine (see [Detection](#detection)); what it cannot determine stays absent.
+
+`$app_version` is the version of whatever client sent the event, on any
+kind — a web build as readily as a native app's. Product events keep
+`$platform` and `$os` as columns and resolve and drop the rest
+(`$os_version`, `$os_name`, `$browser`, `$browser_version`, `$device`), so an
+SDK that sends every environment key on every batch is correct and cheap.
 
 ### Product (everything else)
 
@@ -758,8 +779,11 @@ given twice are all 400: a filter is never dropped silently.
 
 ### Writing SQL against the views
 
-Read-only SQL against the views below, row-capped (`API_QUERY_MAX_ROWS`,
-default 1000) and time-limited (`API_QUERY_TIMEOUT`, default `10s`).
+The `query` tool takes read-only SQL against the views below; it is
+row-capped (`API_QUERY_MAX_ROWS`, default 1000) and time-limited
+(`API_QUERY_TIMEOUT`, default `10s`). Read `schema://views` for the
+authoritative column list; it is kept in step with the migrations and
+carries the caveats the DDL cannot express. Three matter most:
 
 1. `day` columns are TEXT `'YYYY-MM-DD'` (UTC). Compare and `BETWEEN` as
    strings.
@@ -774,14 +798,15 @@ default 1000) and time-limited (`API_QUERY_TIMEOUT`, default `10s`).
    the `user` curve. Cohorts counted before migration 011 have no `user` rows
    and sit wholly under `install`.
 
-Every view carries a `project_id` column — always filter on it. The views family
+Every view carries a `project_id` column — always filter on it; the ids are
+the ones `list_projects` returns. The views family
 is `v_views_daily` (per kind), `v_views_paths`, `v_views_hosts`,
 `v_views_referrers`, `v_views_utm`, `v_views_countries`, `v_views_platforms`,
 `v_views_os`, `v_views_browsers`, `v_views_app_versions` (keyed by `platform`
 and `app_version`), `v_views_devices` and `v_views_displays`; each dimension is
 capped at 500 values per day and the tail is one `(other)` row whose visitors
-are distinct actors, not a sum. `os`, `browser` and `device` are closed
-vocabularies (see [Declaring the
+are distinct actors, not a sum. `os`, `browser` and `device` are lower-case
+closed vocabularies (see [Declaring the
 environment](#declaring-the-environment)) where `other` is a real value outside
 the list and `(other)` is the cap. Product events have `v_product_daily`,
 `v_product_totals` and `v_product_attrs` (whose `unique_groups` is NULL, not
