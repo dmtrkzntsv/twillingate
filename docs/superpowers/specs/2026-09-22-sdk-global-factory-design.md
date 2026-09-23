@@ -107,9 +107,8 @@ The bundle entry decides what to do from what it finds at
 `twillingate.get("et").init(opts)` later. The `instance` option is removed
 from `init()`; the name is `create()`'s first argument.
 
-A bundled consumer imports the same object from `sdk/src/twillingate.ts`,
-so the API is identical whether code reaches it through `window` or an
-import.
+The served file is the only way to get the SDK; code reaches the object
+through `window`, whether the file was pasted as a tag or injected (§11).
 
 ### 1a. Browser hooks are installed once and fanned out
 
@@ -292,10 +291,12 @@ for Plausible-class markup.
   connection, host from the `Host` header — so a collector that answers on
   several hostnames serves each site a copy that posts back to the
   hostname the site used. The SDK no longer reads `document.currentScript`
-  for the origin, which was null for module scripts and some loaders. A
-  bundled build has the placeholder unsubstituted and must pass `url`;
-  `init()` without it warns and stays dormant, as today. `url` is thereby
-  the one option that exists only for bundlers.
+  for the origin, which was null for module scripts and some loaders.
+  **The `url` option is removed** with it: the served file is the only
+  supported way to load the SDK, and a build whose placeholder was never
+  substituted — someone bundling `sdk/src/twillingate.ts` — warns
+  "this build carries no collector origin; load twillingate.js from your
+  collector" and stays dormant.
 - `user`, `group` and `installId` leave the options. Identity is set
   through `identify(user, name?)`, `group(id, name?)` and the new
   `installId(id?)` setter, before or after `init()`; the entry pageview
@@ -367,7 +368,7 @@ Everything the tag does, in one place. Nothing here is new; it is §1, §1a,
 | `data-consent` | `consent` | Unchanged. |
 | `data-instance` | `create(name)` | **Now:** register this tag's instance as `twillingate.get(name)`. No `window.<name>`. The one attribute without an `init()` field. |
 
-Code-only, deliberately: `url`, `flushInterval`, `platform`,
+Code-only, deliberately: `flushInterval`, `platform`,
 `appVersion`, `storage`, `taggedEvents`, `optOut`, `debug`. Identity is a
 fact the application knows, so it is set from code through `identify()`,
 `group()` and `installId()`, never pasted into markup and never an
@@ -421,7 +422,8 @@ and send of every instance (`debug(true)` writes it).
 Everything the SDK offers to code, in one place. Nothing here is new
 except the loader example.
 
-**Three ways to get the object.** All three yield the same API.
+**Two ways to get the object.** Both yield the same API, both come from
+the collector.
 
 1. *The tag, dormant.* Load the file without `data-key` and use
    `window.twillingate` after it has executed. The served file already
@@ -453,20 +455,17 @@ except the loader example.
    blocked, `onerror` fires and the page has no `window.twillingate`; a
    caller that wants to keep calling regardless guards with
    `window.twillingate?.track(...)`.
-3. *Bundle the module.* `import twillingate from "…/sdk/src/twillingate"`
-   gives the same object without registering a global. Bundling and a
-   tag on the same page means two bundle copies, each with its own
-   runtime and hooks; when a tag is on the page, prefer reaching the
-   global. `url` is required here: only the served file carries the
-   collector's origin.
+
+Bundling `sdk/src/twillingate.ts` into an application is not supported:
+only the served file knows its collector, and a bundled copy warns and
+stays dormant.
 
 **Options.** `init(opts)` on any instance, `create(name, opts)` for a
 named one.
 
 ```ts
 interface InitOptions {
-  key: string;                                  // required
-  url?: string;                                 // bundled builds only; the served file carries it
+  key: string;                                  // required; the collector's origin is in the file
   identity?: "anonymous" | "identified";        // default "anonymous"; decides what is SENT (§3)
   consent?: boolean | string | (() => unknown); // default false; a name is read on window live
   storage?: "localStorage" | "sessionStorage" | "memory" | "cookie" | StorageDriver;
@@ -583,9 +582,10 @@ localStorage.twillingate_debug = "true";   // or twillingate.debug(true)
   no new rows; the parity sentence names the one exception,
   `data-instance`, which maps to `create()`'s name, and the code-only
   list grows by `storage`, `taggedEvents`, `optOut` and `debug`;
-- the SDK-only example: no `instance`, `user`, `group` or `installId`,
-  `autoPageviews` on by default, `debug`, `storage`, `optOut`,
-  `taggedEvents`;
+- "SDK-only mode" loses "or bundle `sdk/src/twillingate.ts`": it means
+  loading the file without `data-key`, or injecting it; the example loses
+  `url`, `instance`, `user`, `group` and `installId`, and gains `debug`,
+  `storage`, `optOut`, `taggedEvents` with `autoPageviews` on by default;
 - the runtime API list: `onPage`, `onEvent`, `create`, `get`, `optOut`,
   `debug`, `installId`, `init` returning the instance, the precedence
   rule, and "set identity before `init()` for the entry pageview";
@@ -640,9 +640,10 @@ SDK suite (vitest), one `describe` each:
   listener set feeding two instances, the off switch on one of them,
   nothing but the name read;
 - `autoPageviews` default in code; `init()` returning the instance;
-- the origin: a bundle with the placeholder substituted posts there with
-  no `url`; one with it unsubstituted warns and stays dormant without
-  `url`, and posts to `url` with it;
+- the origin: a bundle with the placeholder substituted posts there; one
+  with it unsubstituted warns and stays dormant. The vitest suite sets
+  the origin through the one module that holds the placeholder
+  (`sdk/src/origin.ts`, mocked per test file), since no option can;
 - the existing "explicit option beats detection" test is deleted and the
   "ignores environment data attributes" test no longer passes overrides;
   a batch from a runtime with no User-Agent still carries `unknown`.
@@ -667,6 +668,9 @@ Commit as `feat(sdk)!`. The release note lists:
 
 - `window.<name>` globals from `data-instance` are gone; use
   `twillingate.get(name)`;
+- the `url` option is gone and bundling the module is unsupported; load
+  `twillingate.js` from the collector, which bakes its origin into the
+  file;
 - `data-user`, `data-group` and the `user`, `group` and `installId`
   options are gone; set identity with `identify()`, `group()` and
   `installId()`, before `init()` when it must be on the first event;
@@ -692,7 +696,8 @@ Commit as `feat(sdk)!`. The release note lists:
 - Per-element attribute values on tagged elements
   (`data-twillingate-<attr>`). Declined; the event carries its name and
   `path`.
-- Publishing an npm package, framework components, renaming `data-auto`,
+- Publishing an npm package (bundling is unsupported, so an npm build
+  would need its own origin story), framework components, renaming `data-auto`,
   cookies on a shared parent domain as a built-in, Do Not Track, click
   autocapture, pageleave and scroll depth (server columns), promise
   returning calls, client-side rate limiting.
