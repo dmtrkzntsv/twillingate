@@ -107,16 +107,24 @@ describe("identify and group with display names", () => {
     expect(localStorage.getItem("twillingate_group_name")).toBe("Acme Corp");
   });
 
-  it("persists the user name only for identified projects, and restores it", async () => {
+  it("an anonymous instance never carries a user name; an identified one persists and restores it", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const anon = tg();
     anon.identify("u_1", "Plain Name");
+    anon.track("probe");
+    anon.flush();
+    await drain();
+    expect(sent[0].body.attributes).not.toHaveProperty("$user_id");
+    expect(sent[0].body.attributes).not.toHaveProperty("$user_name");
+    expect(localStorage.getItem("twillingate_user")).toBeNull();
     expect(localStorage.getItem("twillingate_user_name")).toBeNull();
+    expect(warn).toHaveBeenCalledTimes(1);
 
+    sent = [];
     const t = tg({ identity: "identified", consent: true });
     t.identify("u_1", "Ada");
     expect(localStorage.getItem("twillingate_user_name")).toBe("Ada");
 
-    sent = [];
     const next = tg({ identity: "identified", consent: true }); // next page load
     next.track("probe");
     next.flush();

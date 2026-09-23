@@ -141,7 +141,10 @@ describe("storage under consent", () => {
       t.flush();
       await drain();
       fetchImpl = okFetch;
-      t.identify("u_1", "Ada");
+      // identify() is inert on an anonymous instance (with a warning); an
+      // anonymous instance has no identity to write, so only set one when
+      // this iteration is identified. group() applies in every mode.
+      if (identity === "identified") t.identify("u_1", "Ada");
       t.group("org_1", "Acme");
       await lastAttributes(t);
       t.reset();
