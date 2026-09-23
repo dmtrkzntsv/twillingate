@@ -61,8 +61,9 @@ keys keep their names (`twillingate_*` for the default instance,
 `<name>_*` for the rest) and `twillingate_ignore` stays global. Consent
 keeps its meaning and its default. Detection, masking, routing modes, the
 retry queue and its bounds, batching and `sendBeacon` on unload are
-untouched. The Plausible shim needs nothing: it calls
-`window.twillingate.track`, which still exists.
+untouched, and detection remains the only source of the environment a
+batch carries (see §8 for the overrides that go). The Plausible shim needs
+nothing: it calls `window.twillingate.track`, which still exists.
 
 ## Design
 
@@ -283,6 +284,14 @@ for Plausible-class markup.
 - `init()` and `create()` return the instance.
 - `flush()` loses its public `unloading` parameter; the unload path calls
   a private method.
+- The six detection overrides — `os`, `osVersion`, `osName`, `browser`,
+  `browserVersion`, `device` — are removed. `$os`, `$browser`, `$device`
+  and their versions come from detection alone; a non-browser runtime
+  records `unknown`, which is the value that exists to make undeclared
+  traffic visible. The declare-only values `watchos`, `visionos` and
+  `wearable` stay in the server's vocabulary for clients that post to the
+  ingest API themselves, and become unreachable from this SDK. `kind`,
+  `platform` and `appVersion` stay: they are facts detection cannot know.
 
 ### 9. How Econumo is wired afterwards
 
@@ -338,7 +347,7 @@ Everything the tag does, in one place. Nothing here is new; it is §1, §1a,
 | `data-instance` | `create(name)` | **Now:** register this tag's instance as `twillingate.get(name)`. No `window.<name>`. The one attribute without an `init()` field. |
 
 Code-only, deliberately: `url`, `user`, `group`, `installId`,
-`flushInterval`, the environment overrides, `storage`, `taggedEvents`,
+`flushInterval`, `platform`, `appVersion`, `storage`, `taggedEvents`,
 `optOut`, `debug`. Identity is a fact the application knows, so it is set
 from code — `user` and `group` in `init()` or `create()`, or `identify()`
 and `group()` after login — never pasted into markup. A tag keeps
@@ -445,8 +454,6 @@ interface InitOptions {
                                                 // default "localStorage"; used only with consent
   kind?: string;                                // default "web"
   platform?: string;                            // default "web" while kind is "web"
-  os?: string; osVersion?: string; osName?: string;
-  browser?: string; browserVersion?: string; device?: string;
   appVersion?: string;
   installId?: string;                           // ignored, with a warning, on an anonymous instance
   autoPageviews?: boolean;                      // default true
@@ -571,7 +578,11 @@ localStorage.twillingate_debug = "true";   // or twillingate.debug(true)
 - a "Tagged elements" subsection;
 - "Identity": one sentence saying the tag's mode decides what is sent; the
   server table stays until the second spec;
-- "Privacy behaviour": `optOut()` and `twillingate_debug`.
+- "Privacy behaviour": `optOut()` and `twillingate_debug`;
+- "Detection" and the SDK-only example lose every mention of an `os`,
+  `browser` or `device` option overriding detection, and the null-drop
+  paragraph's "batch attributes come from detection or `init()` options"
+  becomes "from detection".
 
 `README.md`'s SDK example gains nothing it does not already show; its
 GDPR section is the second spec's job. `sdk/README.md` is unchanged.
@@ -606,7 +617,10 @@ SDK suite (vitest), one `describe` each:
 - tagged elements: click, middle click, submit, ancestor, `path`, one
   listener set feeding two instances, the off switch on one of them,
   nothing but the name read;
-- `autoPageviews` default in code; `init()` returning the instance.
+- `autoPageviews` default in code; `init()` returning the instance;
+- the existing "explicit option beats detection" test is deleted and the
+  "ignores environment data attributes" test no longer passes overrides;
+  a batch from a runtime with no User-Agent still carries `unknown`.
 
 Go:
 
@@ -630,6 +644,8 @@ Commit as `feat(sdk)!`. The release note lists:
 - an anonymous instance no longer sends `$user_id`, `$user_name` or
   `$install_id`, and `identify()` is inert on it;
 - `autoPageviews` is on by default in `init()`;
+- the `os`, `osVersion`, `osName`, `browser`, `browserVersion` and `device`
+  options are gone; the environment is detected, never declared;
 - `attrs()` defaults now override SDK-derived values;
 - `page(fn)` is deprecated in favour of `onPage(fn)` and will be removed;
 - tagged elements are on by default: markup carrying
