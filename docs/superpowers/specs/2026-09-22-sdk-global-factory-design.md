@@ -145,14 +145,15 @@ and it already costs a warning.
 
 An instance accepts every call from the moment it exists. Configuration
 takes effect immediately: `onPage`, `onEvent`, `attrs`, `identify`,
-`group`, `consent`, `debug`, `optOut`. Calls that produce events — `page`,
+`group`, `installId`, `consent`, `debug`, `optOut`. Calls that produce events — `page`,
 `screen`, `track`, `flush` — are held in order and run right after
 `init()` completes. When automatic pageviews are on, the entry pageview
 fires first, then the held calls in the order they were made.
 
-Identity precedence at `init()`: an explicit `user` or `group` option wins
-over an earlier `identify()` or `group()`; otherwise the earlier call
-stands; only when neither is set does a stored value load.
+Identity set before `init()` — through `identify()`, `group()` or
+`installId()` — stands; a stored value loads only for what was not set.
+This is what puts the user on the entry pageview of a programmatic
+instance, and it is why `init()` carries no identity options of its own.
 
 The hold is capped at the batch size (500); past that the oldest call is
 dropped and one warning is logged, so a page that never initialises cannot
@@ -171,9 +172,8 @@ to cover the entry page. That advice stays in the docs unchanged.
 it stores:
 
 - `anonymous`: the instance never sends `$user_id`, `$user_name` or
-  `$install_id`. `identify()` warns once and does nothing; an `installId`
-  option is ignored with a warning; no visitor id is ever minted, with or
-  without consent. `group()` works and `$group_id`/`$group_name` are sent,
+  `$install_id`. `identify()` and `installId()` warn once and do nothing;
+  no visitor id is ever minted, with or without consent. `group()` works and `$group_id`/`$group_name` are sent,
   since a group names an organisation. Consent unlocks only the retry
   queue.
 - `identified`: sends the ids it holds. With consent it persists the
@@ -284,6 +284,14 @@ for Plausible-class markup.
 - `init()` and `create()` return the instance.
 - `flush()` loses its public `unloading` parameter; the unload path calls
   a private method.
+- `user`, `group` and `installId` leave the options. Identity is set
+  through `identify(user, name?)`, `group(id, name?)` and the new
+  `installId(id?)` setter, before or after `init()`; the entry pageview
+  of a programmatic instance carries whatever was set before `init()`
+  (§2). `installId(id?)` mirrors `consent()`: with an argument it sets the
+  stable per-install id an app supplies as `$install_id`, without one it
+  returns what would be sent — the declared id, else the persisted visitor
+  id, else `null`.
 - The six detection overrides — `os`, `osVersion`, `osName`, `browser`,
   `browserVersion`, `device` — are removed. `$os`, `$browser`, `$device`
   and their versions come from detection alone; a non-browser runtime
@@ -303,13 +311,14 @@ second instance from it; no second tag, no second global.
 ```
 
 ```js
-const et = twillingate.create("econumo", {
+const et = twillingate.create("econumo");   // dormant until init()
+et.identify(userHash);                       // known at render time: set before init()
+et.group(workspaceId);                       // so the first event already carries both
+et.init({
   key: "ak_econumo…",
   identity: "identified",   // sends $user_id / $group_id; nothing persists without consent
   autoPageviews: false,     // views come from the router below
   taggedEvents: false,      // markup CTAs belong to the web tag
-  user: userHash,           // or et.identify(userHash) after login
-  group: workspaceId,
 });
 et.attrs({ $host: "selfhosted_ab12", $referrer: null });   // self-hosted: hashed host, no referrer
 router.afterEach((to) => et.page(to.path));                 // no campaign parameters: explicit path
@@ -346,11 +355,11 @@ Everything the tag does, in one place. Nothing here is new; it is §1, §1a,
 | `data-consent` | `consent` | Unchanged. |
 | `data-instance` | `create(name)` | **Now:** register this tag's instance as `twillingate.get(name)`. No `window.<name>`. The one attribute without an `init()` field. |
 
-Code-only, deliberately: `url`, `user`, `group`, `installId`,
-`flushInterval`, `platform`, `appVersion`, `storage`, `taggedEvents`,
-`optOut`, `debug`. Identity is a fact the application knows, so it is set
-from code — `user` and `group` in `init()` or `create()`, or `identify()`
-and `group()` after login — never pasted into markup. A tag keeps
+Code-only, deliberately: `url`, `flushInterval`, `platform`,
+`appVersion`, `storage`, `taggedEvents`, `optOut`, `debug`. Identity is a
+fact the application knows, so it is set from code through `identify()`,
+`group()` and `installId()`, never pasted into markup and never an
+option. A tag keeps
 localStorage, always has tagged events on, and is debugged and opted
 out through the two localStorage flags below.
 
@@ -447,15 +456,12 @@ interface InitOptions {
   key: string;                                  // required
   url?: string;                                 // default: the loading script's origin
   identity?: "anonymous" | "identified";        // default "anonymous"; decides what is SENT (§3)
-  user?: string;                                // identity known at init; else identify() later
-  group?: string;
   consent?: boolean | string | (() => unknown); // default false; a name is read on window live
   storage?: "localStorage" | "sessionStorage" | "memory" | "cookie" | StorageDriver;
                                                 // default "localStorage"; used only with consent
   kind?: string;                                // default "web"
   platform?: string;                            // default "web" while kind is "web"
   appVersion?: string;
-  installId?: string;                           // ignored, with a warning, on an anonymous instance
   autoPageviews?: boolean;                      // default true
   taggedEvents?: boolean;                       // default true
   maskUrl?: MaskSpec;                           // resolved before the entry pageview
@@ -484,6 +490,7 @@ interface StorageDriver {
 | `attrs(defaults)` · `attrs(null)` | — | Default attributes under every event; merge on repeat, `null` clears. They override derived values (§4). |
 | `identify(user, name?)` | — | `$user_id`, `$user_name`. Inert on an anonymous instance. |
 | `group(id, name?)` | — | `$group_id`, `$group_name`. Every mode. |
+| `installId(id?)` | string \| null | Set the stable per-install id an app supplies as `$install_id`; no argument reads what would be sent. Inert on an anonymous instance. |
 | `reset()` | — | Logout: clears user, group, visitor id and the retry queue. |
 | `flush()` | — | Send the queue now. *Held.* |
 | `consent(granted?)` | boolean | Pin, hand back (`null`), or read effective consent. |
@@ -565,10 +572,12 @@ localStorage.twillingate_debug = "true";   // or twillingate.debug(true)
   `data-instance`, which maps to `create()`'s name, and the code-only
   list grows by `user`, `group`, `storage`, `taggedEvents`, `optOut` and
   `debug`;
-- the SDK-only example: no `instance`, `autoPageviews` on by default,
-  `debug`, `storage`, `optOut`, `taggedEvents`;
+- the SDK-only example: no `instance`, `user`, `group` or `installId`,
+  `autoPageviews` on by default, `debug`, `storage`, `optOut`,
+  `taggedEvents`;
 - the runtime API list: `onPage`, `onEvent`, `create`, `get`, `optOut`,
-  `debug`, `init` returning the instance, the precedence rule;
+  `debug`, `installId`, `init` returning the instance, the precedence
+  rule, and "set identity before `init()` for the entry pageview";
 - "Consent and storage": an anonymous instance sends no identifier at all;
   the drivers table; the custom cookie-driver example;
 - "Two tags on one page" rewritten around `create` and `get`, and the
@@ -602,7 +611,9 @@ SDK suite (vitest), one `describe` each:
   `online` replaying each queue; unload flushing each queue; hooks
   installed lazily on the first registration and never twice;
 - holding before `init()`: order preserved, entry pageview first, cap and
-  warning, identity precedence against `init` options and storage;
+  warning, identity set before `init()` on the entry pageview and beating
+  a stored value;
+- `installId(id?)`: set, read, inert on anonymous, sent as `$install_id`;
 - anonymous sends no `$user_id`, `$user_name` or `$install_id`,
   `identify()` inert with one warning, `installId` ignored, groups still
   sent; identified persists with consent;
@@ -625,8 +636,9 @@ SDK suite (vitest), one `describe` each:
 Go:
 
 - `internal/api/docs_sync_test.go` SDK symbols gain `onPage`, `onEvent`,
-  `create`, `get`, `optOut`, `debug`, `storage`, `taggedEvents`,
-  `twillingate_debug` and lose `data-user` and `data-group`;
+  `create`, `get`, `optOut`, `debug`, `installId`, `storage`,
+  `taggedEvents`, `twillingate_debug` and lose `data-user` and
+  `data-group`;
 - `internal/server/twillingate_script_test.go` markers gain
   `twillingate_debug` and `data-twillingate-event`;
 - the SDK's tag-to-option parity test gets one named exception,
@@ -638,8 +650,9 @@ Commit as `feat(sdk)!`. The release note lists:
 
 - `window.<name>` globals from `data-instance` are gone; use
   `twillingate.get(name)`;
-- `data-user` and `data-group` are gone; set identity from code with the
-  `user` and `group` options or `identify()` and `group()`;
+- `data-user`, `data-group` and the `user`, `group` and `installId`
+  options are gone; set identity with `identify()`, `group()` and
+  `installId()`, before `init()` when it must be on the first event;
 - the `instance` option is gone; use `twillingate.create(name, opts)`;
 - an anonymous instance no longer sends `$user_id`, `$user_name` or
   `$install_id`, and `identify()` is inert on it;
