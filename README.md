@@ -100,7 +100,7 @@ install too.
 | Section | Covers |
 | --- | --- |
 | [Set up a project](docs/twillingate.md#set-up-a-project) | Projects, identity modes, allowed origins, retention, attribute breakdowns, ingest keys |
-| [Instrument a website](docs/twillingate.md#instrument-a-website) | twillingate.js: snippet and SDK modes, URL masking, routing modes, offline queue |
+| [Instrument a website](docs/twillingate.md#instrument-a-website) | twillingate.js: snippet and code modes, masking, routing, consent and storage |
 | [The event model](docs/twillingate.md#the-event-model) | The three event families, for native apps and backends too |
 | [The wire format](docs/twillingate.md#the-wire-format) | The normative contract for `/ingest/events` |
 | [Answer questions with the data](docs/twillingate.md#answer-questions-with-the-data) | The MCP tools, the HTTP API, the views, and the caveats needed to write correct SQL |
@@ -108,7 +108,7 @@ install too.
 | [Configure the collector](docs/deployment.md#configure-the-collector) | Every environment variable, low-resource tuning |
 | [Reporting with Evidence](docs/deployment.md#reporting-with-evidence) | Dashboards, one server and two |
 | [The API endpoint](docs/deployment.md#the-api-endpoint) | The browser login, and pointing claude.ai, Desktop or Claude Code at it |
-| [Operate and recover](docs/deployment.md#operate-and-recover) | Upgrades, litestream replication, backup drills, disaster recovery |
+| [Operate and recover](docs/deployment.md#operate-and-recover) | Upgrades, litestream replication, backup drills, disaster recovery, schema upgrades in deploy/UPGRADES.md |
 | [docs/plausible/](docs/plausible/) | The Plausible class-tagging shim |
 
 ## Development

@@ -99,7 +99,7 @@ func (h *host) integrationGuide(ctx context.Context, in guideIn) (guideOut, erro
 			"     \"events\":[{\"id\":\"<uuidv7>\",\"ts\":\"<event-time-utc>\",\n"+
 			"                \"name\":\"$screen_view\",\"attributes\":{\"$screen\":\"/settings\"}}]}\n\n", base, key)
 		b.WriteString("- $platform: the build/surface the app is used through (ios, android,\n  …); app versions are keyed by it, so an app that omits it rolls up\n  under unknown.\n" +
-			"- $install_id: generate once per install, store locally, send on every\n  batch. Under anonymous identity it is salted and rotated daily.\n- Send $screen_view per screen; custom names for product events.\n- Queue offline, replay with original ts and stable UUIDv7 ids —\n  docs://twillingate (Worked offline queue) has a worked offline-queue design.\n\n")
+			"- $install_id: generate once per install, store locally, send on every\n  batch. Under anonymous identity it is salted and rotated daily.\n- Send $screen_view per screen; custom names for product events.\n- Queue offline, replay with original ts and stable UUIDv7 ids —\n  docs://twillingate (Transport, Responses and retry) states the retry rules.\n\n")
 	}
 
 	if len(p.Attributes) > 0 {
