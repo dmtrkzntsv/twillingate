@@ -107,8 +107,38 @@ from `init()`; the name is `create()`'s first argument.
 
 A bundled consumer imports the same object from `sdk/src/twillingate.ts`,
 so the API is identical whether code reaches it through `window` or an
-import. Each instance still hooks `history.pushState` on its own and the
-patches still chain.
+import.
+
+### 1a. Browser hooks are installed once and fanned out
+
+Today every instance patches `history.pushState` itself and the patches
+chain, and every instance adds its own `popstate`, `hashchange`, `online`,
+`pagehide` and `visibilitychange` listeners. With a registry there is one
+owner for all of that: the bundle's runtime, reached through the global.
+
+The runtime installs each browser hook once, lazily, the first time an
+instance is registered, and dispatches to every instance it knows about:
+
+| Browser event | Dispatched as | What each instance decides for itself |
+| --- | --- | --- |
+| `pushState` (patched once), `popstate`, `hashchange` | navigation | `autoPageviews` off ignores it; `routing: "history"` ignores `hashchange`; dedup against its own last page; its own mask, `onPage` and `onEvent` listeners, `kind` (`$page_view` or `$screen_view`) |
+| `online` | back online | replay its own retry queue |
+| `pagehide`, `visibilitychange` to hidden | unloading | flush its own queue through `sendBeacon` |
+| click, `auxclick`, `submit` in the capture phase | tagged element | `taggedEvents` off ignores it; otherwise `track(name, { path })` through its own listeners |
+
+The instance keeps the decision, the runtime keeps the subscription. Two
+projects on one page therefore see one `pushState` patch, not two, and a
+page with the web tag and Econumo's product instance gets one navigation
+event handed to both, each applying its own configuration: the web
+instance emits an automatic `$page_view` with full acquisition data, the
+product instance has `autoPageviews: false` and does nothing.
+
+Ownership follows the bundle copy, not the global. A second tag whose copy
+hands its attributes to the first copy's `create()` gets an instance that
+belongs to the first copy's runtime. An instance that could not be
+registered because the global is foreign belongs to its own copy's
+runtime, which installs its own hooks; that is the one case with two sets,
+and it already costs a warning.
 
 ### 2. Every call is legal before `init()`
 
@@ -230,16 +260,18 @@ outcome, prefixed with the instance name (`[twillingate]`,
 ### 7. Tagged elements and tag-level defaults
 
 Any element with `data-twillingate-event="signup"` tracks that event on
-the default instance: on click with the main or middle button, or, for a
-`<form>`, on submit. The nearest tagged ancestor of the click target
-wins. `path` is always added as an attribute — a nav CTA would fire
+every registered instance that has tagged events on: on click with the
+main or middle button, or, for a `<form>`, on submit. The runtime listens
+once (§1a) and each instance filters. The nearest tagged ancestor of the
+click target wins. `path` is always added as an attribute — a nav CTA would fire
 identically from every page otherwise, the same reasoning the Plausible
 shim records. No other per-element attribute is read: the event carries
 its name and `path`, nothing more. The listeners
 run in the capture phase so a handler that stops propagation cannot eat
-the event. On by default; `taggedEvents: false` or
-`data-tagged-events="off"` turns the listeners off. The Plausible shim
-stays for Plausible-class markup.
+the event. On by default for every instance, the same rule as
+`autoPageviews`; `taggedEvents: false` or `data-tagged-events="off"` opts
+an instance out, which a programmatic product instance such as Econumo's
+will normally do. The Plausible shim stays for Plausible-class markup.
 
 `data-attr-<key>="value"` on the tag sets default attributes at auto-init,
 the same as `attrs({ key: "value" })`; the `init()` equivalent is an
@@ -268,6 +300,7 @@ const et = twillingate.create("econumo", {
   key: "ak_econumo…",
   identity: "identified",   // sends $user_id / $group_id; nothing persists without consent
   autoPageviews: false,     // views come from the router below
+  taggedEvents: false,      // markup CTAs belong to the web tag
   user: userHash,           // or et.identify(userHash) after login
   group: workspaceId,
 });
@@ -294,7 +327,9 @@ is passed, so campaign parameters are never read; that already holds.
   `debug`, `init` returning the instance, the precedence rule;
 - "Consent and storage": an anonymous instance sends no identifier at all;
   the drivers table; the custom cookie-driver example;
-- "Two tags on one page" rewritten around `create` and `get`;
+- "Two tags on one page" rewritten around `create` and `get`, and the
+  sentence about chained `pushState` patches replaced by the one-hook
+  rule;
 - "Listeners": `onPage` and `onEvent`, the fail-closed rule;
 - a "Tagged elements" subsection;
 - "Identity": one sentence saying the tag's mode decides what is sent; the
@@ -313,6 +348,11 @@ SDK suite (vitest), one `describe` each:
 - the entry's three decisions; a `data-instance` tag landing in the
   registry; a second bundle copy joining the first's registry; the
   duplicate rule still standing down;
+- the runtime: `history.pushState` patched once with two instances
+  registered; one navigation reaching both, one with `autoPageviews` off
+  emitting nothing; `hashchange` reaching only the hash-routed instance;
+  `online` replaying each queue; unload flushing each queue; hooks
+  installed lazily on the first registration and never twice;
 - holding before `init()`: order preserved, entry pageview first, cap and
   warning, identity precedence against `init` options and storage;
 - anonymous sends no `$user_id`, `$user_name` or `$install_id`,
@@ -326,8 +366,9 @@ SDK suite (vitest), one `describe` each:
 - opt-out: the flag, a callback, the method's return value;
 - `debug` output, the runtime toggle writing `twillingate_debug`, and the
   flag set by hand before load;
-- tagged elements: click, middle click, submit, ancestor, `path`, off
-  switch, nothing but the name read;
+- tagged elements: click, middle click, submit, ancestor, `path`, one
+  listener set feeding two instances, the off switch on one of them,
+  nothing but the name read;
 - `data-attr-*` and the `attrs` option;
 - `autoPageviews` default in code; `init()` returning the instance.
 
