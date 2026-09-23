@@ -350,7 +350,7 @@ func TestDocumentMatchesRoutes(t *testing.T) {
 // TestDocumentMatchesVocabularies binds the two prose copies of the closed
 // vocabularies to enrich's own lists. Both documents spell every value out
 // — the environment table in docs/twillingate.md and the migration-015
-// pre-check query in docs/deployment.md — so a value added to or dropped
+// pre-check query in deploy/UPGRADES.md — so a value added to or dropped
 // from enrich leaves a document telling clients the wrong thing. Order is
 // compared too: the lists read as a ranking, and a silent reshuffle is the
 // kind of drift nobody notices.
@@ -399,10 +399,12 @@ func documentedVocabulary(t *testing.T, key string) []string {
 // precheckOSVocabulary reads the quoted list out of the NOT IN (…) of the
 // migration-015 pre-check query: the copy an operator pastes into sqlite3
 // before upgrading, which has to name exactly the values the migration
-// treats as known.
+// treats as known. It lives in deploy/UPGRADES.md, where the one-time
+// schema runbooks moved out of docs/deployment.md, so it is read from disk
+// rather than from the embedded document.
 func precheckOSVocabulary(t *testing.T) []string {
 	t.Helper()
-	section := docSection(t, docs.Deployment,
+	section := docSection(t, readSource(t, "../../deploy/UPGRADES.md"),
 		"### Upgrading to the declared environment (migration 015)")
 	i := strings.Index(section, "NOT IN (")
 	if i < 0 {
