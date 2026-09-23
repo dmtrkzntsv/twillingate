@@ -1,6 +1,6 @@
 # One global, a factory, and a friendlier SDK
 
-Status: approved (2026-09-22)
+Status: implemented (2026-09-22)
 Implementation: docs/superpowers/plans/2026-09-22-sdk-global-factory.md
 Date: 2026-09-22
 
