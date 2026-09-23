@@ -311,6 +311,78 @@ et.reset();                                                 // on logout
 An explicit path is resolved against the page URL but carries only what
 is passed, so campaign parameters are never read; that already holds.
 
+### 10. Tag installation, consolidated
+
+Everything the tag does, in one place. Nothing here is new; it is §1, §1a,
+§3 and §7 read from the tag's side.
+
+**The snippet** is unchanged and stays one `<script>` element:
+
+```html
+<script defer src="https://twillingate.example.com/js/twillingate.js"
+        data-key="ak_9f3c…" data-identity="anonymous"></script>
+```
+
+**Attributes.** No row is added and none removed; two change meaning.
+
+| Attribute | `init()` option | Meaning after this spec |
+| --- | --- | --- |
+| `data-key` | `key` | Required to auto-init. Without it the tag loads dormant for `init()` from code. |
+| `data-identity` | `identity` | `anonymous` (default) or `identified`. **Now the enforcement point:** anonymous never sends `$user_id`, `$user_name` or `$install_id`; identified sends them and, with consent, persists visitor id, user and group. |
+| `data-user`, `data-group` | `user`, `group` | Identity known when the page is rendered. |
+| `data-auto="off"` | `autoPageviews` | Disable automatic pageviews. Both default on. |
+| `data-mask-url` | `maskUrl` | Unchanged. |
+| `data-routing` | `routing` | Unchanged. |
+| `data-kind` | `kind` | Unchanged. |
+| `data-consent` | `consent` | Unchanged. |
+| `data-instance` | `create(name)` | **Now:** register this tag's instance as `twillingate.get(name)`. No `window.<name>`. The one attribute without an `init()` field. |
+
+Code-only, deliberately: `url`, `installId`, `flushInterval`, the
+environment overrides, `storage`, `taggedEvents`, `optOut`, `debug`. A tag
+keeps localStorage, always has tagged events on, and is debugged and opted
+out through the two localStorage flags below.
+
+**What happens when the tag executes.** The script is `defer`, so it runs
+after the document is parsed, in document order with other deferred
+scripts.
+
+1. Look at `window.twillingate`.
+   - Nothing there: register the global (default instance plus factory).
+   - A live SDK from an earlier tag: do not build a second global. With
+     `data-instance`, call the existing `create(name, attributes)` and
+     stop. Without it, same key or no key stands down with a warning; a
+     different key takes over the default instance with a warning.
+   - Something foreign: warn, leave it, run this tag's instance
+     unregistered.
+2. Registering the first instance installs the runtime's browser hooks
+   once: the `pushState` patch, `popstate`, `hashchange`, `online`,
+   `pagehide`, `visibilitychange`, and the capture-phase click, `auxclick`
+   and `submit` listeners for tagged elements. Later instances subscribe;
+   nothing is installed twice.
+3. With `data-key`, `init()` runs from the attributes. Automatic
+   pageviews are on unless `data-auto="off"`, so the entry pageview is
+   emitted synchronously here, after the mask is resolved. Calls the
+   page made on the instance before this point (a dormant `data-instance`
+   tag initialised later from code) run now, entry pageview first.
+4. From here the instance receives every navigation, online, unload and
+   tagged-element event through the runtime and applies its own settings.
+
+**Two tags.** The second tag's copy of the bundle finds the first's global
+and hands over: with `data-instance="et"` its attributes become
+`twillingate.create("et", …)` in the first copy's registry; without it the
+duplicate rule applies. One set of browser hooks serves both.
+
+**Inline code and the tag.** There is no pre-load stub. Code that calls
+`twillingate` must run after the tag has executed: an inline
+`<script type="module">` placed after the tag, or any code after
+`DOMContentLoaded`. A page listener that must cover the entry pageview
+uses `data-mask-url`, which is resolved before it fires.
+
+**Person-level flags**, both in localStorage, both unprefixed, both read
+live: `twillingate_ignore = "true"` opts the device out of every instance
+(`optOut(true)` writes it); `twillingate_debug = "true"` logs every event
+and send of every instance (`debug(true)` writes it).
+
 ## Documentation
 
 `docs/twillingate.md`, in the same commit as the SDK, per CLAUDE.md:
