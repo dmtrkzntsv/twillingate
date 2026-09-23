@@ -111,6 +111,16 @@ describe("registry", () => {
     expect(g.twillingate).toBeUndefined();
   });
 
+  it("refuses an empty name with its own message, distinct from the default-name refusal", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const tg = new TwillingateGlobal();
+    expect(tg.create("", { key: "ak_x" })).toBe(tg);
+    expect(warn).toHaveBeenCalledTimes(1);
+    const msg = warn.mock.calls[0][0] as string;
+    expect(msg).toContain("needs a name");
+    expect(msg).not.toContain("other than");
+  });
+
   it("two instances share neither a visitor id nor a queue", async () => {
     const tg = new TwillingateGlobal();
     const a = tg.create("alpha", { key: "ak_a", flushInterval: 0, autoPageviews: false, identity: "identified", consent: true });
@@ -228,6 +238,21 @@ describe("bootstrap", () => {
     (first as Twillingate).flush();
     await drain();
     expect(sent.some((s) => s.body.key === "ak_a")).toBe(false);
+  });
+
+  it("a keyed tag takes over silently from a dormant default; the old copy still works if inited from code", async () => {
+    const first = bootstrap(scriptTag({}))! as Twillingate; // no data-key: stays dormant
+    const second = bootstrap(scriptTag({ "data-key": "ak_b", "data-auto": "off" }));
+    expect(second).not.toBe(first);
+    expect(g.twillingate).toBe(second);
+    // The handover calls retire() on the superseded default. The old copy
+    // was never live, so that must no-op rather than permanently muting a
+    // reference the app still holds -- init() from code must still work.
+    first.init({ key: "ak_dormant", flushInterval: 0, autoPageviews: false });
+    first.track("still-works");
+    first.flush();
+    await drain();
+    expect(sent.some((s) => s.body.key === "ak_dormant" && s.body.events.some((e) => e.name === "still-works"))).toBe(true);
   });
 
   it("never overwrites a foreign global, and still tracks unregistered", async () => {

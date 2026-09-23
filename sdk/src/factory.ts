@@ -21,7 +21,11 @@ export class TwillingateGlobal extends Twillingate {
    * the default instance returned.
    */
   create(name: string, opts?: InitOptions): Twillingate {
-    if (name === DEFAULT_INSTANCE || name === "") {
+    if (name === "") {
+      console.warn("twillingate: create() needs a name");
+      return this;
+    }
+    if (name === DEFAULT_INSTANCE) {
       console.warn(`twillingate: create() needs a name other than "${DEFAULT_INSTANCE}"; that instance is the global itself`);
       return this;
     }

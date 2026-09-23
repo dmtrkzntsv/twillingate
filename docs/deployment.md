@@ -91,14 +91,25 @@ The service binds to loopback by default, deliberately.
 
 ### One collector, several hostnames
 
-The collector ignores `Host`, so any number of hostnames can proxy to it
-with no server config; the SDK posts to whatever origin it was loaded from.
+Any number of hostnames can proxy to the collector. The served
+`/js/twillingate.js` is rendered per request: the collector bakes in the
+origin the file was requested from, read from the `Host` header and the
+scheme the proxy forwards, so a site on `t.example.org` gets a copy that
+posts back to `t.example.org`.
 
 ```
 t.example.com, t.example.org {
     reverse_proxy 127.0.0.1:8080
 }
 ```
+
+The proxy must pass `Host` through and set `X-Forwarded-Proto` (Caddy and
+cloudflared do; nginx needs `proxy_set_header Host $host;` and
+`proxy_set_header X-Forwarded-Proto $scheme;`). Without a forwarded scheme
+the collector falls back to the scheme of `PUBLIC_URL`, so a
+single-hostname install with `PUBLIC_URL=https://…` works unconfigured. A
+`Host` that is not a plain hostname (with an optional port) leaves the
+file without an origin and the SDK stays dormant with a console warning.
 
 Snippets use `PUBLIC_URL`; change the `src` for sites on another hostname.
 Keep the API on one hostname — OAuth and `cloudflare://` are bound to it.

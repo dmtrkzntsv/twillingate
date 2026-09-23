@@ -313,6 +313,20 @@ describe("storage under consent", () => {
     for (const k of OWNED) expect(localStorage.getItem(k), k).toBeNull();
   });
 
+  it("a bare consent() read before init() does not wipe storage init() will use", async () => {
+    // Before init(), consentSpec defaults to "no consent": a bare read
+    // must report that without running the wipe transition against it,
+    // or a stored identity would be gone before init() ever gets a say.
+    localStorage.setItem("twillingate_visitor", "v_pre");
+    localStorage.setItem("twillingate_user", "u_pre");
+    const t = new Twillingate();
+    t.consent();
+    t.init({ key: "ak_test", identity: "identified", consent: true, flushInterval: 0, autoPageviews: false });
+    const attrs = await lastAttributes(t);
+    expect(attrs.$user_id).toBe("u_pre");
+    expect(attrs.$install_id).toBe("v_pre");
+  });
+
   it("a declared function is consulted at each decision; a pin overrides it; null hands back", async () => {
     let granted = false;
     const t = tg({ identity: "identified", consent: () => granted });
@@ -366,6 +380,22 @@ describe("storage under consent", () => {
     expect(JSON.parse(localStorage.getItem("twillingate_queue")!)).toHaveLength(1);
     expect(localStorage.getItem("twillingate_visitor")).toBeNull();
     expect(localStorage.getItem("twillingate_group")).toBeNull();
+  });
+
+  it("cookie driver persists a visitor id in a cookie and keeps the retry queue out of it", async () => {
+    for (const c of document.cookie.split(";")) {
+      const k = c.split("=")[0].trim();
+      if (k) document.cookie = `${k}=; path=/; max-age=0`;
+    }
+    const t = tg({ identity: "identified", consent: true, storage: "cookie" });
+    const attrs = await lastAttributes(t);
+    expect(document.cookie).toContain(`twillingate_visitor=${attrs.$install_id}`);
+
+    fetchImpl = failFetch;
+    t.track("y");
+    t.flush();
+    await drain();
+    expect(document.cookie).not.toContain("twillingate_queue");
   });
 
   it("tracks on a page an automated browser drives", async () => {

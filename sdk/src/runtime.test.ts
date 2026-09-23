@@ -82,7 +82,7 @@ describe("runtime", () => {
   it("tagged elements: click on the element or a descendant, main and middle button, nearest ancestor wins", () => {
     document.body.innerHTML =
       '<div data-twillingate-event="outer"><button id="b" data-twillingate-event="signup"><span id="s">Go</span></button></div>' +
-      '<a id="plain">no tag</a>';
+      '<span id="plain">no tag</span>';
     const a = sub();
     runtime.subscribe(a);
     document.getElementById("s")!.dispatchEvent(new MouseEvent("click", { bubbles: true, button: 0 }));

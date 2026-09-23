@@ -1,12 +1,33 @@
 package server
 
 import (
+	"io"
+	"log/slog"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/dmtrkzntsv/twillingate/internal/config/configtest"
+	"github.com/dmtrkzntsv/twillingate/internal/geo"
+	"github.com/dmtrkzntsv/twillingate/internal/manage"
 	"github.com/dmtrkzntsv/twillingate/internal/version"
 )
+
+// serverWithPublicURL builds a *Server like newServerWithIdentity, but with
+// PUBLIC_URL set, so a test can exercise the scheme fallback that reads it.
+func serverWithPublicURL(t *testing.T, publicURL string) *Server {
+	t.Helper()
+	cfg := configtest.Load(t, map[string]string{"PUBLIC_URL": publicURL})
+	reg := newTestRegistry(t,
+		[]manage.ProjectSpec{{
+			Name: "App", Identity: "anonymous",
+			AllowedOrigins: []string{testOrigin},
+		}},
+		map[int][2]string{0: {testKey, "web"}})
+	g, _ := geo.New("cloudflare://", t.TempDir(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	q := &fakeQueue{}
+	return New(cfg, reg, q, g, fixedSalt{}, q, slog.New(slog.NewTextHandler(io.Discard, nil)))
+}
 
 func TestTwillingateSDKServed(t *testing.T) {
 	_, h := testServer(t)
@@ -90,6 +111,17 @@ func TestTwillingateSDKCarriesRequestOrigin(t *testing.T) {
 			t.Errorf("host %q: placeholder left in the served bundle", tc.host)
 		}
 	}
+	// Without a forwarded scheme and without TLS, the scheme falls back to
+	// the one PUBLIC_URL is configured with.
+	fallbackServer := serverWithPublicURL(t, "https://t.example.com")
+	r := httptest.NewRequest("GET", "/js/twillingate.js", nil)
+	r.Host = "t.example.com"
+	w := httptest.NewRecorder()
+	fallbackServer.ServeHTTP(w, r)
+	if fbBody := w.Body.String(); !strings.Contains(fbBody, `"https://t.example.com"`) {
+		t.Errorf("PUBLIC_URL fallback: served bundle does not carry %q", `"https://t.example.com"`)
+	}
+
 	// A host that cannot be an origin is not written into the script.
 	body := serve(`evil"host`, "https")
 	if strings.Contains(body, `evil"host`) {

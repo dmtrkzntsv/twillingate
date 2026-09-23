@@ -572,6 +572,11 @@ export class Twillingate implements Subscriber {
    * documented API.
    */
   retire(): void {
+    // A dormant copy was never subscribed and an app may still hold a
+    // reference to it (e.g. a keyed tag took over before this one's own
+    // init() ran); it must stay usable rather than being retired sight
+    // unseen.
+    if (!this.ready) return;
     runtime.unsubscribe(this);
     this.retired = true;
   }
@@ -726,17 +731,17 @@ export class Twillingate implements Subscriber {
   // The decision point every read and write goes through. Consent is
   // consulted here, never cached. A change of answer is a transition:
   // granted moves the pending queue onto the driver; withdrawn deletes
-  // everything this instance wrote.
+  // everything this instance wrote. Before init() there is no configured
+  // driver yet (this.driver is still the default), so a bare read (e.g.
+  // consent() called ahead of init()) reports the effective value without
+  // running the transition against it.
   private mayStore(): boolean {
     const now = this.consentPin !== null ? this.consentPin : this.consentSpec();
-    if (now !== this.lastConsent) {
+    if (this.ready && now !== this.lastConsent) {
       this.lastConsent = now;
       if (now) {
         if (this.pending.length) this.driver.set(this.k.queue, JSON.stringify(mergeBatches(this.storedBatches(), this.pending)));
-        // Guarded by `ready`: init()'s own first decision point runs
-        // before stored values are loaded, so saving here would overwrite
-        // storage with nulls before init() reads it back.
-        if (this.ready) this.saveIdentity();
+        this.saveIdentity();
       } else {
         this.wipe();
       }

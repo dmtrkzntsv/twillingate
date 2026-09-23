@@ -4,6 +4,7 @@ import (
 	"bytes"
 	_ "embed"
 	"net/http"
+	"net/url"
 	"regexp"
 
 	"github.com/dmtrkzntsv/twillingate/docs"
@@ -24,8 +25,10 @@ var sdkScript []byte
 // bundle that keeps the origin placeholder (someone bundled the module)
 // warns and stays dormant in the browser. The forwarded scheme is
 // trusted the same way clientIP trusts X-Forwarded-For: a reverse proxy
-// in front of the collector is assumed to set it. Vary keeps a shared
-// cache that forwards a client-supplied X-Forwarded-Proto unchanged from
+// in front of the collector is assumed to set it. Absent a forwarded
+// scheme, a TLS connection settles it; absent that too, the scheme falls
+// back to PUBLIC_URL's, then to plain http. Vary keeps a shared cache
+// that forwards a client-supplied X-Forwarded-Proto unchanged from
 // serving one scheme's copy for another.
 const (
 	sdkVersionPlaceholder = "__TWILLINGATE_VERSION__"
@@ -38,17 +41,26 @@ const (
 var originHost = regexp.MustCompile(`^[A-Za-z0-9.-]+(:[0-9]+)?$`)
 
 // requestOrigin is the scheme and host the client used to fetch the
-// script: the proxy's forwarded scheme when there is one, else the
-// connection's, and the Host header.
-func requestOrigin(r *http.Request) string {
+// script. The host is the Host header; the scheme is the proxy's
+// forwarded scheme when it is exactly "http" or "https", else "https"
+// when the connection itself is TLS, else the scheme of the configured
+// PUBLIC_URL when that parses and has one, else "http". The PUBLIC_URL
+// fallback covers a single-hostname install sitting behind a proxy that
+// does not forward the scheme.
+func (s *Server) requestOrigin(r *http.Request) string {
 	if !originHost.MatchString(r.Host) {
 		return ""
 	}
 	scheme := r.Header.Get("X-Forwarded-Proto")
-	if scheme != "https" && scheme != "http" {
+	switch {
+	case scheme == "https" || scheme == "http":
+		// use as-is
+	case r.TLS != nil:
+		scheme = "https"
+	default:
 		scheme = "http"
-		if r.TLS != nil {
-			scheme = "https"
+		if u, err := url.Parse(s.cfg.PublicURL); err == nil && u.Scheme != "" {
+			scheme = u.Scheme
 		}
 	}
 	return scheme + "://" + r.Host
@@ -66,7 +78,7 @@ func (s *Server) registerScript(mux *http.ServeMux) {
 		headers(w)
 		w.Header().Set("Vary", "X-Forwarded-Proto")
 		body := versioned
-		if origin := requestOrigin(r); origin != "" {
+		if origin := s.requestOrigin(r); origin != "" {
 			body = bytes.ReplaceAll(versioned, []byte(sdkOriginPlaceholder), []byte(origin))
 		}
 		w.Write(body)

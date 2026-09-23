@@ -349,7 +349,7 @@ opts?)` builds a second instance whose storage keys are prefixed with the
 name (`et_visitor`, `et_user`, `et_queue`, …), registers it and, with
 options, initialises it; `get(name)` finds it from any later script;
 `get()` is the default. A name already in the registry returns the
-existing instance with a warning; the name must match
+existing instance, with a warning when options are passed; the name must match
 `^[a-z][a-z0-9_]{0,15}$`. No `window.<name>` is ever created.
 
 ```js
