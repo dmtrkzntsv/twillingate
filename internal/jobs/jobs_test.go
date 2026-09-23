@@ -368,12 +368,8 @@ func TestRunBootCatchUpAndCancel(t *testing.T) {
 
 // --- app class, cohorts and identities ---
 
-var identifiedProjectSpecs = []manage.ProjectSpec{
-	{Name: "App", Identity: "identified", AllowedOrigins: []string{"https://a.com"}},
-}
-
-var anonymousProjectSpecs = []manage.ProjectSpec{
-	{Name: "App", Identity: "anonymous", AllowedOrigins: []string{"https://a.com"}},
+var appProjectSpecs = []manage.ProjectSpec{
+	{Name: "App", AllowedOrigins: []string{"https://a.com"}},
 }
 
 func setupApp(t *testing.T, specs []manage.ProjectSpec) (store.Store, *Runner, *sql.DB) {
@@ -418,7 +414,7 @@ func count(t *testing.T, db *sql.DB, query string) int {
 }
 
 func TestRunDailyPassAggregatesAppDays(t *testing.T) {
-	st, r, db := setupApp(t, identifiedProjectSpecs)
+	st, r, db := setupApp(t, appProjectSpecs)
 	ctx := context.Background()
 	seedAppDay(t, st, "a", "b")
 
@@ -449,32 +445,41 @@ func TestRunDailyPassAggregatesAppDays(t *testing.T) {
 	}
 }
 
-func TestRunDailyPassSkipsCohortsForAnonymousProjects(t *testing.T) {
-	st, r, db := setupApp(t, anonymousProjectSpecs)
+// A project whose clients send no ids has connection-hash actors only.
+// UpsertActors keeps user and install kinds, so it gets no actors and no
+// cohorts, while rollups and identity aggregates still run.
+func TestRunDailyPassBuildsNoActorsWithoutIds(t *testing.T) {
+	st, r, db := setupApp(t, appProjectSpecs)
 	ctx := context.Background()
-	seedAppDay(t, st, "a")
+	ts := mustTime("2026-08-10T10:00:00Z")
+	if err := st.WriteViews(ctx, []store.View{{
+		ID: "vconn", ProjectID: 1, TS: ts, ReceivedAt: ts,
+		Kind: "app", ActorID: "hash1", ActorKind: store.ActorConnection,
+		GroupID: "org9", Path: "/home", OS: "iOS", AppVersion: "2.4.1",
+	}}); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := r.RunDailyPass(ctx); err != nil {
 		t.Fatal(err)
 	}
 
 	if n := count(t, db, `SELECT COUNT(*) FROM actors`); n != 0 {
-		t.Errorf("actors = %d; retention is undefined under daily rotation", n)
+		t.Errorf("actors = %d; a connection-hash actor is never cohorted", n)
 	}
 	if n := count(t, db, `SELECT COUNT(*) FROM agg_retention`); n != 0 {
 		t.Errorf("agg_retention rows = %d, want 0", n)
 	}
-	// Identity aggregates and app rollups still run: only cohorts are skipped.
 	if n := count(t, db, `SELECT COUNT(*) FROM agg_views_daily WHERE kind='app'`); n != 1 {
 		t.Errorf("agg_views_daily rows = %d, want 1", n)
 	}
-	if n := count(t, db, `SELECT COUNT(*) FROM agg_identity_daily`); n == 0 {
-		t.Error("identity aggregates must still run for anonymous projects")
+	if n := count(t, db, `SELECT COUNT(*) FROM agg_identity_daily WHERE kind='group'`); n != 1 {
+		t.Errorf("group aggregate rows = %d, want 1", n)
 	}
 }
 
 func TestRunDailyPassIsIdempotentAcrossAppSteps(t *testing.T) {
-	st, r, db := setupApp(t, identifiedProjectSpecs)
+	st, r, db := setupApp(t, appProjectSpecs)
 	ctx := context.Background()
 	seedAppDay(t, st, "a", "b")
 
@@ -492,7 +497,7 @@ func TestRunDailyPassIsIdempotentAcrossAppSteps(t *testing.T) {
 }
 
 func TestRunDailyPassPrunesActorsAndIdentities(t *testing.T) {
-	st, r, db := setupApp(t, identifiedProjectSpecs)
+	st, r, db := setupApp(t, appProjectSpecs)
 	ctx := context.Background()
 
 	if err := st.UpsertIdentities(ctx, []store.Identity{
@@ -523,7 +528,7 @@ func TestRunDailyPassPrunesActorsAndIdentities(t *testing.T) {
 // they used to be driven off app rows alone, which meant a project with no
 // app never got either.
 func TestRunDailyPassCoversWebOnlyProjectsForCohorts(t *testing.T) {
-	st, r, db := setupApp(t, identifiedProjectSpecs)
+	st, r, db := setupApp(t, appProjectSpecs)
 	ctx := context.Background()
 	ts := mustTime("2026-08-10T10:00:00Z")
 
@@ -551,7 +556,7 @@ func TestRunDailyPassCoversWebOnlyProjectsForCohorts(t *testing.T) {
 // deleting them, so they cover days still inside the window too — otherwise
 // the retention page would be a whole window stale.
 func TestRunDailyPassComputesCohortsForRecentDays(t *testing.T) {
-	st, r, db := setupApp(t, identifiedProjectSpecs)
+	st, r, db := setupApp(t, appProjectSpecs)
 	ctx := context.Background()
 	// Two days before the fake now of 2026-08-22, well inside the 7-day
 	// app raw window used by jobsVars.
@@ -616,7 +621,7 @@ func TestDailyPassRollsUpEveryKindPastTheWindow(t *testing.T) {
 // day into agg_identity_daily, which v_identity_daily prefers over raw. It
 // is left to the view's live half; yesterday, complete by now, is rolled up.
 func TestRunDailyPassLeavesTodaysIdentityActivityLive(t *testing.T) {
-	st, r, db := setupApp(t, identifiedProjectSpecs)
+	st, r, db := setupApp(t, appProjectSpecs)
 	ctx := context.Background()
 	for i, ts := range []string{"2026-08-21T10:00:00Z", "2026-08-22T01:00:00Z"} {
 		at := mustTime(ts)

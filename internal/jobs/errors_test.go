@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/civil"
-	"github.com/dmtrkzntsv/twillingate/internal/config"
 	"github.com/dmtrkzntsv/twillingate/internal/config/configtest"
 	"github.com/dmtrkzntsv/twillingate/internal/identity"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
@@ -211,7 +210,7 @@ func TestRunDailyPassFailsWhenProductRawWindowQueryErrors(t *testing.T) {
 // --- per-project soft failures: logged, pass continues, RunDailyPass returns nil ---
 
 var identifiedJobsSpecs = []manage.ProjectSpec{
-	{Name: "App", Identity: config.IdentityIdentified, AllowedOrigins: []string{"https://a.com"}},
+	{Name: "App", AllowedOrigins: []string{"https://a.com"}},
 }
 
 func TestRunDailyPassLogsUpsertActorsFailure(t *testing.T) {
