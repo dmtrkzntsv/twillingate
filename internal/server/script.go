@@ -22,7 +22,11 @@ var sdkScript []byte
 // requested from, so a collector answering on several hostnames serves
 // each site a copy that posts back to the hostname that site used. A
 // bundle that keeps the origin placeholder (someone bundled the module)
-// warns and stays dormant in the browser.
+// warns and stays dormant in the browser. The forwarded scheme is
+// trusted the same way clientIP trusts X-Forwarded-For: a reverse proxy
+// in front of the collector is assumed to set it. Vary keeps a shared
+// cache that forwards a client-supplied X-Forwarded-Proto unchanged from
+// serving one scheme's copy for another.
 const (
 	sdkVersionPlaceholder = "__TWILLINGATE_VERSION__"
 	sdkOriginPlaceholder  = "__TWILLINGATE_URL__"
@@ -60,15 +64,16 @@ func (s *Server) registerScript(mux *http.ServeMux) {
 		[]byte(sdkVersionPlaceholder), []byte(version.Version))
 	mux.HandleFunc("GET /js/twillingate.js", func(w http.ResponseWriter, r *http.Request) {
 		headers(w)
+		w.Header().Set("Vary", "X-Forwarded-Proto")
 		body := versioned
 		if origin := requestOrigin(r); origin != "" {
 			body = bytes.ReplaceAll(versioned, []byte(sdkOriginPlaceholder), []byte(origin))
 		}
 		w.Write(body)
 	})
-	// Helpers are served from the same table so a site loads them rather
-	// than copying them into its own static assets. plausible-shim.js is
-	// embedded from docs/, where the README documenting it lives.
+	// plausible-shim.js is embedded from docs/, where the README documenting
+	// it lives, so the hosted copy and the documented one are the same
+	// bytes.
 	mux.HandleFunc("GET /js/plausible-shim.js", func(w http.ResponseWriter, _ *http.Request) {
 		headers(w)
 		w.Write(docs.PlausibleShim)

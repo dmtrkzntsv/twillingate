@@ -22,6 +22,9 @@ func TestTwillingateSDKServed(t *testing.T) {
 	if cc := w.Header().Get("Cache-Control"); !strings.Contains(cc, "max-age") {
 		t.Errorf("cache-control = %q", cc)
 	}
+	if vary := w.Header().Get("Vary"); !strings.Contains(vary, "X-Forwarded-Proto") {
+		t.Errorf("vary = %q, want it to contain X-Forwarded-Proto", vary)
+	}
 	body := w.Body.String()
 	// The committed bundle carries __TWILLINGATE_VERSION__; the served copy
 	// must have it substituted with the build version everywhere (banner
