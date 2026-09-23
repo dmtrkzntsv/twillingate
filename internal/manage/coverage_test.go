@@ -211,7 +211,7 @@ func TestRowMarshalsOriginsAndAttributes(t *testing.T) {
 }
 
 func TestSnippetDefaultsOriginWhenEmpty(t *testing.T) {
-	snip := Snippet("", "ak_x", "anonymous")
+	snip := Snippet("", "ak_x")
 	if !strings.Contains(snip, "https://twillingate.example.com/js/twillingate.js") {
 		t.Errorf("Snippet with empty origin did not fall back to the placeholder host: %s", snip)
 	}

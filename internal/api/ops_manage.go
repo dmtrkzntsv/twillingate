@@ -15,7 +15,6 @@ import (
 
 type createProjectIn struct {
 	Name           string   `json:"name" jsonschema:"display name (required); need not be unique"`
-	Identity       string   `json:"identity,omitempty" jsonschema:"anonymous (default) or identified. identified stores user ids and names as given — a privacy-significant setting; see the GDPR docs"`
 	AllowedOrigins []string `json:"allowed_origins,omitempty" jsonschema:"origins allowed to post events. * is a wildcard: https://*.example.com covers every subdomain, a bare * allows any origin"`
 	// Attributes declares which product-event attribute keys are broken
 	// down (v_events_flat columns, agg_product_attrs rollups). Rollups
@@ -29,14 +28,12 @@ type createProjectIn struct {
 type updateProjectIn struct {
 	ProjectID      int64    `json:"project_id" jsonschema:"project id; call list_projects first"`
 	Name           string   `json:"name,omitempty" jsonschema:"new display name; omit to keep"`
-	Identity       string   `json:"identity,omitempty" jsonschema:"anonymous or identified. identified stores user ids and names as given — a privacy-significant setting; see the GDPR docs; omit to keep"`
 	AllowedOrigins []string `json:"allowed_origins,omitempty" jsonschema:"replaces the whole list; an explicit [] clears it; omit to keep"`
 	Attributes     []string `json:"attributes,omitempty" jsonschema:"replaces the whole list; omit to keep"`
 }
 
 type projectToolOut struct {
 	ProjectID int64  `json:"project_id"`
-	Identity  string `json:"identity"`
 	Key       string `json:"key,omitempty"`
 	Snippet   string `json:"snippet,omitempty"`
 	Note      string `json:"note,omitempty"`
@@ -46,7 +43,7 @@ type projectToolOut struct {
 // project unless skip_key is set: a refusal leaves nothing behind, so the
 // caller can fix the input and retry without meeting a keyless leftover.
 func (h *host) createProject(ctx context.Context, in createProjectIn) (projectToolOut, error) {
-	spec := manage.ProjectSpec{Name: in.Name, Identity: in.Identity,
+	spec := manage.ProjectSpec{Name: in.Name,
 		AllowedOrigins: in.AllowedOrigins, Attributes: in.Attributes}
 	var p *manage.Project
 	var key string
@@ -60,9 +57,9 @@ func (h *host) createProject(ctx context.Context, in createProjectIn) (projectTo
 	if err != nil {
 		return projectToolOut{}, err
 	}
-	out := projectToolOut{ProjectID: p.ID, Identity: p.Identity, Key: key}
+	out := projectToolOut{ProjectID: p.ID, Key: key}
 	if key != "" {
-		out.Snippet = manage.Snippet(h.publicURL, key, p.Identity)
+		out.Snippet = manage.Snippet(h.publicURL, key)
 		if h.publicURL == "" {
 			out.Note = "PUBLIC_URL is not configured; the snippet uses the placeholder " + manage.SnippetPlaceholderBase + " — ask the operator for the collector's public URL"
 		}
@@ -76,12 +73,12 @@ func (h *host) createProject(ctx context.Context, in createProjectIn) (projectTo
 // and non-nil), which is what lets the tool clear a list at all.
 func (h *host) updateProject(ctx context.Context, in updateProjectIn) (projectToolOut, error) {
 	p, err := h.ops.UpdateProject(ctx, actorFrom(ctx), manage.ProjectSpec{
-		ID: in.ProjectID, Name: in.Name, Identity: in.Identity,
+		ID: in.ProjectID, Name: in.Name,
 		AllowedOrigins: in.AllowedOrigins, Attributes: in.Attributes})
 	if err != nil {
 		return projectToolOut{}, h.projectErr(ctx, in.ProjectID, err)
 	}
-	return projectToolOut{ProjectID: p.ID, Identity: p.Identity}, nil
+	return projectToolOut{ProjectID: p.ID}, nil
 }
 
 // projectErr rewrites a not-found refusal into the recoverable form
@@ -138,7 +135,7 @@ func (h *host) issueKey(ctx context.Context, in keyIn) (keyOut, error) {
 	// otherwise), but guard the lookup anyway: don't fail an
 	// already-issued key just because enrichment can't find the project.
 	if p := h.reg.Snapshot(ctx).Project(in.ProjectID); p != nil {
-		out.Snippet = manage.Snippet(h.publicURL, key, p.Identity)
+		out.Snippet = manage.Snippet(h.publicURL, key)
 		if h.publicURL == "" {
 			out.Note = "PUBLIC_URL is not configured; the snippet uses the placeholder " + manage.SnippetPlaceholderBase + " — ask the operator for the collector's public URL"
 		}

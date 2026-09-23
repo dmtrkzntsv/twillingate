@@ -314,12 +314,12 @@ const SnippetPlaceholderBase = "https://twillingate.example.com"
 // Snippet renders the paste-ready embed tag returned by create_project,
 // issue_ingest_key and `twillingate key issue`. base is the COLLECTOR's
 // public URL (twillingate.js and /ingest/events live there) — never the
-// customer's site origin.
-func Snippet(base, key, identity string) string {
+// customer's site origin. The tag is anonymous by default; a signed-in app
+// adds data-identity="identified" itself (docs/twillingate.md, Identity).
+func Snippet(base, key string) string {
 	if base == "" {
 		base = SnippetPlaceholderBase
 	}
 	return fmt.Sprintf(`<script defer src="%s/js/twillingate.js"
-        data-key=%q
-        data-identity=%q></script>`, base, key, identity)
+        data-key=%q></script>`, base, key)
 }

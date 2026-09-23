@@ -171,11 +171,14 @@ func TestMintersAndSnippet(t *testing.T) {
 	if !strings.HasPrefix(tok, "ar_") || len(tok) != 3+64 {
 		t.Fatalf("token = %q", tok)
 	}
-	snip := Snippet("https://blog.example.com", "ak_x", "anonymous")
-	for _, want := range []string{"twillingate.js", `data-key="ak_x"`, `data-identity="anonymous"`} {
+	snip := Snippet("https://blog.example.com", "ak_x")
+	for _, want := range []string{"twillingate.js", `data-key="ak_x"`} {
 		if !strings.Contains(snip, want) {
 			t.Errorf("snippet missing %q:\n%s", want, snip)
 		}
+	}
+	if strings.Contains(snip, "data-identity") {
+		t.Error("snippet must not print data-identity")
 	}
 }
 

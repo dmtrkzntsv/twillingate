@@ -18,7 +18,7 @@ func TestSchemaResources(t *testing.T) {
 	text := res.Contents[0].Text
 	for _, want := range []string{
 		"v_views_daily", "v_retention", "YYYY-MM-DD",
-		"03:00 UTC", "identified", "includes yesterday",
+		"03:00 UTC", "$user_id", "includes yesterday",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("schema://views missing %q", want)
@@ -31,5 +31,8 @@ func TestSchemaResources(t *testing.T) {
 	}
 	if text := pres.Contents[0].Text; !strings.Contains(text, "blog") || !strings.Contains(text, `"project_id": 1`) {
 		t.Errorf("schema://projects missing project or its id: %s", text)
+	}
+	if strings.Contains(pres.Contents[0].Text, "Identity") || strings.Contains(pres.Contents[0].Text, "identity") {
+		t.Errorf("schema://projects still lists identity: %s", pres.Contents[0].Text)
 	}
 }
