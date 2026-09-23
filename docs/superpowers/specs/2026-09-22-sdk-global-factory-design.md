@@ -228,8 +228,9 @@ Masking already fails closed; listeners now do too.
 
 Consent stays the gate: without it no driver is touched, with it the
 driver holds the keys. A driver that throws counts as unavailable, exactly
-as localStorage does today. `data-storage` carries the four names. The
-docs show a six-line custom driver for a cookie on a shared parent domain,
+as localStorage does today. There is no attribute: a tag keeps
+localStorage, and a site that wants another driver calls `init()` from
+code, the same rule `url` and `flushInterval` follow. The docs show a six-line custom driver for a cookie on a shared parent domain,
 which is the one thing the built-in cookie driver does not do.
 
 `twillingate_ignore` stays in localStorage regardless of driver: opting out
@@ -257,7 +258,7 @@ effective state. Logging prints each emitted event and each send with its
 outcome, prefixed with the instance name (`[twillingate]`,
 `[twillingate:et]`), and never changes what is sent.
 
-### 7. Tagged elements and tag-level defaults
+### 7. Tagged elements
 
 Any element with `data-twillingate-event="signup"` tracks that event on
 every registered instance that has tagged events on: on click with the
@@ -269,13 +270,10 @@ shim records. No other per-element attribute is read: the event carries
 its name and `path`, nothing more. The listeners
 run in the capture phase so a handler that stops propagation cannot eat
 the event. On by default for every instance, the same rule as
-`autoPageviews`; `taggedEvents: false` or `data-tagged-events="off"` opts
-an instance out, which a programmatic product instance such as Econumo's
-will normally do. The Plausible shim stays for Plausible-class markup.
-
-`data-attr-<key>="value"` on the tag sets default attributes at auto-init,
-the same as `attrs({ key: "value" })`; the `init()` equivalent is an
-`attrs` option.
+`autoPageviews`; `taggedEvents: false` opts an instance out, which a
+programmatic product instance such as Econumo's will normally do. There is
+no attribute for it: a tag always has them on. The Plausible shim stays
+for Plausible-class markup.
 
 ### 8. The rest of the option review
 
@@ -318,11 +316,11 @@ is passed, so campaign parameters are never read; that already holds.
 `docs/twillingate.md`, in the same commit as the SDK, per CLAUDE.md:
 
 - the snippet table: `data-instance` now means "register under
-  `twillingate.get(name)`"; new rows `data-storage`, `data-tagged-events`,
-  `data-attr-<key>`; the parity sentence names the
-  one exception, `data-instance`, which maps to `create()`'s name;
+  `twillingate.get(name)`"; no new rows; the parity sentence names the
+  one exception, `data-instance`, which maps to `create()`'s name, and the
+  code-only list grows by `storage`, `taggedEvents`, `optOut` and `debug`;
 - the SDK-only example: no `instance`, `autoPageviews` on by default,
-  `debug`, `storage`, `optOut`, `attrs`;
+  `debug`, `storage`, `optOut`, `taggedEvents`;
 - the runtime API list: `onPage`, `onEvent`, `create`, `get`, `optOut`,
   `debug`, `init` returning the instance, the precedence rule;
 - "Consent and storage": an anonymous instance sends no identifier at all;
@@ -362,26 +360,24 @@ SDK suite (vitest), one `describe` each:
 - `onEvent` on a product event and a pageview; `onPage` deprecation
   through `page(fn)`; a throwing listener drops the event;
 - drivers: each built-in, a custom one, a throwing one, cookie skipping
-  the queue, `data-storage`;
+  the queue;
 - opt-out: the flag, a callback, the method's return value;
 - `debug` output, the runtime toggle writing `twillingate_debug`, and the
   flag set by hand before load;
 - tagged elements: click, middle click, submit, ancestor, `path`, one
   listener set feeding two instances, the off switch on one of them,
   nothing but the name read;
-- `data-attr-*` and the `attrs` option;
 - `autoPageviews` default in code; `init()` returning the instance.
 
 Go:
 
 - `internal/api/docs_sync_test.go` SDK symbols gain `onPage`, `onEvent`,
-  `create`, `get`, `optOut`, `debug`, `storage`, `twillingate_debug`,
-  `data-storage`, `data-tagged-events`, `data-attr-`;
+  `create`, `get`, `optOut`, `debug`, `storage`, `taggedEvents`,
+  `twillingate_debug`;
 - `internal/server/twillingate_script_test.go` markers gain
   `twillingate_debug` and `data-twillingate-event`;
-- the SDK's tag-to-option parity test gets two named exceptions:
-  `data-instance` (maps to `create()`'s name) and the `data-attr-`
-  prefix (maps to `attrs`).
+- the SDK's tag-to-option parity test gets one named exception,
+  `data-instance`, which maps to `create()`'s name.
 
 ## Breaking changes
 
