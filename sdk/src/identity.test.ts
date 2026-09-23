@@ -1,9 +1,13 @@
 // Identity lifecycle: anonymous vs identified storage semantics under
 // consent, identify/group/reset, and pageviews.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { Twillingate } from "./twillingate";
+import { Twillingate, type InitOptions } from "./twillingate";
+import { runtime } from "./runtime";
 
-const URL_BASE = "https://collector.example.com";
+vi.mock("./origin", () => ({
+  ORIGIN: "https://collector.example.com",
+  collectorOrigin: () => "https://collector.example.com",
+}));
 
 interface Sent {
   body: { key: string; attributes: Record<string, unknown>; events: Array<Record<string, unknown>> };
@@ -11,9 +15,9 @@ interface Sent {
 
 let sent: Sent[];
 
-function tg(opts: Partial<Parameters<Twillingate["init"]>[0]> = {}): Twillingate {
+function tg(opts: Partial<InitOptions> = {}): Twillingate {
   const t = new Twillingate();
-  t.init({ key: "ak_test", url: URL_BASE, flushInterval: 0, ...opts });
+  t.init({ key: "ak_test", flushInterval: 0, autoPageviews: false, ...opts });
   return t;
 }
 
@@ -30,6 +34,7 @@ async function lastAttributes(t: Twillingate): Promise<Record<string, unknown>> 
 }
 
 beforeEach(() => {
+  runtime.reset();
   vi.useFakeTimers();
   sent = [];
   vi.stubGlobal("fetch", (_url: string, init: { body: string }) => {
@@ -54,13 +59,30 @@ describe("anonymous mode", () => {
     expect(localStorage.length).toBe(0);
   });
 
-  it("identify() carries the user for the session but does not persist it", async () => {
-    const t = tg();
+  it("identify() and installId() are inert, with one warning; group() still sends", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const t = tg({ consent: true });
     t.identify("u_42", "Ada");
-    t.group("org_9");
+    t.installId("device-7");
+    t.group("org_9", "Acme");
     const attrs = await lastAttributes(t);
-    expect(attrs).toMatchObject({ $user_id: "u_42", $user_name: "Ada", $group_id: "org_9" });
-    expect(localStorage.length).toBe(0);
+    expect(attrs).not.toHaveProperty("$user_id");
+    expect(attrs).not.toHaveProperty("$user_name");
+    expect(attrs).not.toHaveProperty("$install_id");
+    expect(attrs).toMatchObject({ $group_id: "org_9", $group_name: "Acme" });
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(t.installId()).toBeNull();
+    expect(localStorage.getItem("twillingate_visitor")).toBeNull();
+  });
+
+  it("identity set before init() is discarded when init() turns out anonymous", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const t = new Twillingate();
+    t.identify("u_early");
+    t.init({ key: "ak_test", flushInterval: 0, autoPageviews: false });
+    const attrs = await lastAttributes(t);
+    expect(attrs).not.toHaveProperty("$user_id");
+    expect(warn).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -79,9 +101,12 @@ describe("identified mode", () => {
     expect(attrs2.$install_id).toBe(visitor);
   });
 
-  it("an explicit installId wins over the stored visitor id", async () => {
+  it("installId(id) wins over the stored visitor id, and installId() reads what is sent", async () => {
     localStorage.setItem("twillingate_visitor", "stored-visitor");
-    const t = tg({ identity: "identified", consent: true, installId: "device-7" });
+    const t = tg({ identity: "identified", consent: true });
+    expect(t.installId()).toBe("stored-visitor");
+    t.installId("device-7");
+    expect(t.installId()).toBe("device-7");
     const attrs = await lastAttributes(t);
     expect(attrs.$install_id).toBe("device-7");
   });
@@ -109,11 +134,17 @@ describe("identified mode", () => {
     expect(attrs.$user_id).toBe("u_returning");
   });
 
-  it("an init-supplied user wins over the stored one", async () => {
+  it("identify() before init() wins over the stored user and lands on the first event", async () => {
     localStorage.setItem("twillingate_user", "u_old");
-    const t = tg({ identity: "identified", consent: true, user: "u_new" });
-    const attrs = await lastAttributes(t);
-    expect(attrs.$user_id).toBe("u_new");
+    const t = new Twillingate();
+    t.identify("u_new", "New");
+    t.init({ key: "ak_test", flushInterval: 0, identity: "identified", consent: true, autoPageviews: true });
+    t.flush();
+    await drain();
+    expect(sent[0].body.attributes.$user_id).toBe("u_new");
+    expect(sent[0].body.events[0].name).toBe("$page_view");
+    expect(localStorage.getItem("twillingate_user")).toBe("u_new");
+    expect(localStorage.getItem("twillingate_user_name")).toBe("New");
   });
 });
 
@@ -135,6 +166,14 @@ describe("group()", () => {
 });
 
 describe("pageviews", () => {
+  it("automatic pageviews are on by default in code", async () => {
+    const t = new Twillingate();
+    t.init({ key: "ak_test", flushInterval: 0 });
+    t.flush();
+    await drain();
+    expect(sent[0].body.events[0].name).toBe("$page_view");
+  });
+
   it("page() emits $page_view with host, path and referrer", async () => {
     const t = tg();
     t.page();
@@ -221,8 +260,8 @@ describe("location attributes", () => {
   it("threads host and path through the listener chain", async () => {
     history.replaceState(null, "", "/account/88/orders/12");
     const t = tg();
-    t.page(({ path }) => ({ $path: path.replace(/^\/account\/[^/]+/, "/account/[id]") }));
-    t.page(({ path }) => ({ $path: path.replace(/\/orders\/\d+/, "/orders/[id]") }));
+    t.onPage(({ path }) => ({ $path: path.replace(/^\/account\/[^/]+/, "/account/[id]") }));
+    t.onPage(({ path }) => ({ $path: path.replace(/\/orders\/\d+/, "/orders/[id]") }));
     t.page();
     t.flush();
     await drain();
@@ -234,7 +273,7 @@ describe("location attributes", () => {
     history.replaceState(null, "", "/u/3f8a91c2-4b7e-4d1a-9f2c-8e6b5a0d7c31");
     const seen: string[] = [];
     const t = tg({ maskUrl: "uuid" });
-    t.page(({ url }) => {
+    t.onPage(({ url }) => {
       seen.push(url);
     });
     t.page();

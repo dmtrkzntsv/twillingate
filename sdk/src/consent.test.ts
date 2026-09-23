@@ -3,7 +3,13 @@
 // are in the second describe block, added in Task 2.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resolveConsent } from "./consent";
-import { Twillingate, autoInit } from "./twillingate";
+import { Twillingate, type InitOptions } from "./twillingate";
+import { runtime } from "./runtime";
+
+vi.mock("./origin", () => ({
+  ORIGIN: "https://collector.example.com",
+  collectorOrigin: () => "https://collector.example.com",
+}));
 
 const g = globalThis as Record<string, unknown>;
 
@@ -78,8 +84,6 @@ describe("resolveConsent", () => {
   });
 });
 
-const URL_BASE = "https://collector.example.com";
-
 interface Sent {
   body: { key: string; attributes: Record<string, unknown>; events: Array<Record<string, unknown>> };
 }
@@ -94,9 +98,9 @@ function okFetch(_url: string, init: { body: string }): Promise<{ status: number
 
 const failFetch = (): Promise<{ status: number }> => Promise.reject(new TypeError("network down"));
 
-function tg(opts: Partial<Parameters<Twillingate["init"]>[0]> = {}): Twillingate {
+function tg(opts: Partial<InitOptions> = {}): Twillingate {
   const t = new Twillingate();
-  t.init({ key: "ak_test", url: URL_BASE, flushInterval: 0, ...opts });
+  t.init({ key: "ak_test", flushInterval: 0, autoPageviews: false, ...opts });
   return t;
 }
 
@@ -112,17 +116,11 @@ async function lastAttributes(t: Twillingate): Promise<Record<string, unknown>> 
   return sent[sent.length - 1].body.attributes;
 }
 
-function scriptTag(attrs: Record<string, string>): HTMLScriptElement {
-  const s = document.createElement("script");
-  s.src = URL_BASE + "/js/twillingate.js";
-  for (const [k, v] of Object.entries(attrs)) s.setAttribute(k, v);
-  return s;
-}
-
 const OWNED = ["visitor", "user", "user_name", "group", "group_name", "queue"].map((s) => `twillingate_${s}`);
 
 describe("storage under consent", () => {
   beforeEach(() => {
+    runtime.reset();
     vi.useFakeTimers();
     sent = [];
     fetchImpl = okFetch;
@@ -158,11 +156,13 @@ describe("storage under consent", () => {
     expect(localStorage.getItem("twillingate_visitor")).toBeNull();
   });
 
-  it("without consent, identity still comes from init and identify() for the session", async () => {
-    const t = tg({ identity: "identified", user: "u_init", group: "org_init" });
-    expect(await lastAttributes(t)).toMatchObject({ $user_id: "u_init", $group_id: "org_init" });
-    t.identify("u_later", "Ada");
-    expect(await lastAttributes(t)).toMatchObject({ $user_id: "u_later", $user_name: "Ada" });
+  it("without consent, identity still comes from identify() for the session", async () => {
+    const t = new Twillingate();
+    t.identify("u_1");
+    t.group("org_1");
+    t.init({ key: "ak_test", flushInterval: 0, autoPageviews: false, identity: "identified" });
+    const attrs = await lastAttributes(t);
+    expect(attrs).toMatchObject({ $user_id: "u_1", $group_id: "org_1" });
     expect(localStorage.length).toBe(0);
   });
 
@@ -363,30 +363,6 @@ describe("storage under consent", () => {
     expect(JSON.parse(localStorage.getItem("twillingate_queue")!)).toHaveLength(1);
     expect(localStorage.getItem("twillingate_visitor")).toBeNull();
     expect(localStorage.getItem("twillingate_group")).toBeNull();
-  });
-
-  it("data-consent resolves a literal, a global variable and a global function", async () => {
-    g.consentFlag = true;
-    g.consentFn = () => true;
-    for (const value of ["true", "consentFlag", "consentFn"]) {
-      localStorage.clear();
-      sent = [];
-      const t = new Twillingate();
-      autoInit(t, scriptTag({ "data-key": "ak_s", "data-identity": "identified", "data-consent": value, "data-auto": "off" }));
-      const attrs = await lastAttributes(t);
-      expect(attrs.$install_id, value).toBe(localStorage.getItem("twillingate_visitor"));
-      expect(localStorage.getItem("twillingate_visitor"), value).not.toBeNull();
-    }
-  });
-
-  it("data-consent naming nothing fails closed with a warning", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const t = new Twillingate();
-    autoInit(t, scriptTag({ "data-key": "ak_s", "data-identity": "identified", "data-consent": "noSuchThing", "data-auto": "off" }));
-    const attrs = await lastAttributes(t);
-    expect(attrs.$install_id).toBeUndefined();
-    expect(localStorage.length).toBe(0);
-    expect(warn.mock.calls.flat().join(" ")).toContain("noSuchThing");
   });
 
   it("tracks on a page an automated browser drives", async () => {
