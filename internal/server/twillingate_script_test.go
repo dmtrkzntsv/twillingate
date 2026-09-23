@@ -13,14 +13,14 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/version"
 )
 
-// serverWithPublicURL builds a *Server like newServerWithIdentity, but with
+// serverWithPublicURL builds a *Server like newServerWithLogger, but with
 // PUBLIC_URL set, so a test can exercise the scheme fallback that reads it.
 func serverWithPublicURL(t *testing.T, publicURL string) *Server {
 	t.Helper()
 	cfg := configtest.Load(t, map[string]string{"PUBLIC_URL": publicURL})
 	reg := newTestRegistry(t,
 		[]manage.ProjectSpec{{
-			Name: "App", Identity: "anonymous",
+			Name:           "App",
 			AllowedOrigins: []string{testOrigin},
 		}},
 		map[int][2]string{0: {testKey, "web"}})

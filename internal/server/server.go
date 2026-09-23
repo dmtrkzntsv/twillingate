@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -71,14 +72,28 @@ type Server struct {
 	salt     Salt
 	names    NameStore
 	counters *keyCounters
-	logger   *slog.Logger
-	mux      *http.ServeMux
+	// idsSeen holds "<project id>/<actor kind>" for every project and kind
+	// that has sent an id since the process started. Nothing on the server
+	// decides whether ids are stored, so this is how an operator sees that
+	// they are: one Info line per project per kind per process.
+	idsSeen sync.Map
+	logger  *slog.Logger
+	mux     *http.ServeMux
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.mux.ServeHTTP(w, r) }
 
 // Counters exposes ingest counters for the periodic summary log.
 func (s *Server) Counters() *keyCounters { return s.counters }
+
+// noteIDs logs "project receives ids" the first time a batch for the
+// project resolves an actor of kind (user or install) in this process.
+func (s *Server) noteIDs(projectID int64, kind string) {
+	key := strconv.FormatInt(projectID, 10) + "/" + kind
+	if _, loaded := s.idsSeen.LoadOrStore(key, struct{}{}); !loaded {
+		s.logger.Info("project receives ids", "project", projectID, "kind", kind)
+	}
+}
 
 func New(cfg *config.Config, reg *manage.Registry, q Enqueuer, g geo.Provider, salt Salt, names NameStore, logger *slog.Logger) *Server {
 	s := &Server{cfg: cfg, reg: reg, queue: q, geo: g, salt: salt, names: names,
