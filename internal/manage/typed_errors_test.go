@@ -32,6 +32,10 @@ func TestOpsRefusalsAreTyped(t *testing.T) {
 			_, err := ops.CreateProject(ctx, "cli", ProjectSpec{Name: "x", AllowedOrigins: []string{""}})
 			return err
 		}(),
+		"update to an empty origin": func() error {
+			_, err := ops.UpdateProject(ctx, "cli", ProjectSpec{ID: blog.ID, AllowedOrigins: []string{""}})
+			return err
+		}(),
 	}
 	for name, err := range invalid {
 		if !errors.Is(err, ErrInvalid) {

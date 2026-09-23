@@ -94,10 +94,10 @@ test-restore:
 # Fills local/twillingate.db with 180 days of believable traffic so the dashboards
 # have something to plot. Projects come from the database, one profile per
 # project name in scripts/seed-demo.py (dev, marketing, docs, app, legacy):
-# create them first with `./twillingate project create -name <name>`, in
-# identified mode where the users, groups and retention pages should have
-# data. Re-running replaces the seeded rows rather than stacking another
-# copy on top.
+# create them first with `./twillingate project create -name <name>`; whether
+# a profile sends ids (and so fills the users, groups and retention pages) is
+# its `ids` key in the script. Re-running replaces the seeded rows rather than
+# stacking another copy on top.
 seed-demo: local/.env build
 	@DATABASE_DSN="sqlite://$(PWD)/local/twillingate.db" ./$(BIN) migrate
 	python3 scripts/seed-demo.py local/twillingate.db

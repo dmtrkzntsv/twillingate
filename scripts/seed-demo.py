@@ -11,10 +11,10 @@ rather than stacking another copy on top.
 
 Projects with an "app" profile also get screen views across two platforms and
 three app versions, so the version-adoption chart has a rollout to show.
-Projects in identified mode get stable actor ids plus user and group
-identities, which is what makes the users, groups and retention pages
-meaningful -- under anonymous mode those ids would rotate daily and the pages
-render their explanatory branch instead.
+Projects whose profile sends ids ("ids": True) get stable actor ids plus
+user and group identities, which is what makes the users, groups and
+retention pages meaningful, the others get a per-day connection hash, as a
+site with an anonymous tag would.
 
     python3 scripts/seed-demo.py local/twillingate.db
 
@@ -38,33 +38,33 @@ DAYS = 180
 # app, and a decaying blog.
 PROFILES = {
     "dev": {
-        "base": 18, "growth": 0.45, "product": True, "app": 12,
+        "base": 18, "growth": 0.45, "product": True, "app": 12, "ids": True,
         "pages": [("/", 30), ("/pricing", 18), ("/docs", 15), ("/docs/quickstart", 10),
                   ("/blog/launch", 9), ("/blog/why-privacy", 7), ("/about", 6), ("/changelog", 5)],
         "refs": [("", 30), ("google", 25), ("hackernews", 15), ("reddit", 10),
                  ("twitter", 8), ("producthunt", 7), ("github", 5)],
     },
     "marketing": {
-        "base": 120, "growth": 2.4, "product": False,
+        "base": 120, "growth": 2.4, "product": False, "ids": False,
         "pages": [("/", 40), ("/pricing", 22), ("/features", 14), ("/customers", 9),
                   ("/blog/launch-week", 8), ("/contact", 7)],
         "refs": [("google", 34), ("", 20), ("twitter", 14), ("producthunt", 12),
                  ("linkedin", 10), ("hackernews", 10)],
     },
     "docs": {
-        "base": 260, "growth": 1.1, "product": False,
+        "base": 260, "growth": 1.1, "product": False, "ids": False,
         "pages": [("/getting-started", 26), ("/api/reference", 22), ("/guides/install", 16),
                   ("/guides/deploy", 12), ("/faq", 10), ("/api/webhooks", 8), ("/changelog", 6)],
         "refs": [("google", 46), ("", 24), ("github", 16), ("stackoverflow", 8), ("reddit", 6)],
     },
     "app": {
-        "base": 40, "growth": 1.6, "product": True, "app": 55,
+        "base": 40, "growth": 1.6, "product": True, "app": 55, "ids": True,
         "pages": [("/dashboard", 34), ("/settings", 16), ("/reports", 15), ("/billing", 12),
                   ("/team", 12), ("/integrations", 11)],
         "refs": [("", 62), ("google", 18), ("email", 12), ("slack", 8)],
     },
     "legacy": {
-        "base": 90, "growth": -0.32, "product": False,
+        "base": 90, "growth": -0.32, "product": False, "ids": False,
         "pages": [("/2019/hello-world", 28), ("/2020/lessons", 22), ("/2021/roadmap", 18),
                   ("/archive", 17), ("/about", 15)],
         "refs": [("google", 52), ("", 26), ("twitter", 12), ("reddit", 10)],
@@ -116,19 +116,19 @@ def pick(weighted):
     return random.choices([v for v, _ in weighted], weights=[w for _, w in weighted], k=1)[0]
 
 
-def actor_for(name, day, n, identified):
-    """A stable id in identified mode, a per-day hash otherwise.
+def actor_for(name, day, n, sends_ids):
+    """A stable id when the client sends one, a per-day hash otherwise.
 
-    This mirrors what the server does: anonymous projects salt the identifier
-    with a key that rotates at midnight, so an actor cannot be followed across
-    days and cohorts are undefined for them.
+    This mirrors the server: an actor that arrives without an id is a hash
+    of the connection under a key that rotates at midnight, so it cannot be
+    followed across days and is never cohorted.
     """
-    if identified:
+    if sends_ids:
         return f"install-{name}-{n}"
     return hashlib.sha256(f"{name}-{day}-{n}".encode()).hexdigest()[:16]
 
 
-def seed(cur, pid, name, profile, today, identified):
+def seed(cur, pid, name, profile, today, sends_ids):
     for table in ("views", "events", "actors", "identities"):
         cur.execute(f"DELETE FROM {table} WHERE project_id = ?", (pid,))
 
@@ -142,7 +142,7 @@ def seed(cur, pid, name, profile, today, identified):
         visitors = max(2, int(random.gauss(base, base * 0.16)))
 
         for v in range(visitors):
-            vh = actor_for(name, day, v, identified)
+            vh = actor_for(name, day, v, sends_ids)
             device = pick(DEVICES)
             country = pick(COUNTRIES)
             browser = pick(BROWSERS)
@@ -161,7 +161,7 @@ def seed(cur, pid, name, profile, today, identified):
                     " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (str(uuid.uuid4()), pid, ts.strftime("%Y-%m-%dT%H:%M:%SZ"),
                      ts.strftime("%Y-%m-%dT%H:%M:%SZ"), "web", vh,
-                     "install" if identified else "connection", "", "",
+                     "install" if sends_ids else "connection", "", "",
                      pick(profile["pages"]), ref, country, device, browser,
                      random.choice(BROWSER_VERSIONS),
                      "web", osname, us, um, uc, *random.choice(DISPLAYS)))
@@ -177,7 +177,7 @@ def seed(cur, pid, name, profile, today, identified):
                     ts = datetime.datetime.combine(day, datetime.time()) + datetime.timedelta(
                         seconds=random.randint(0, 86399))
                     n = random.randint(1, 400)
-                    user = f"user-{name}-{n}" if identified else ""
+                    user = f"user-{name}-{n}" if sends_ids else ""
                     # This is the only event loop and it sits beside the web
                     # views above, so every product event is web-originated:
                     # platform web, and an OS drawn from the same web mix.
@@ -187,19 +187,19 @@ def seed(cur, pid, name, profile, today, identified):
                         " attributes) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                         (str(uuid.uuid4()), pid, ts.strftime("%Y-%m-%dT%H:%M:%SZ"),
                          ts.strftime("%Y-%m-%dT%H:%M:%SZ"), event_name,
-                         actor_for(name, day, n, identified),
-                         "user" if identified else "connection", user,
-                         GROUPS[n % len(GROUPS)][0] if identified else "",
+                         actor_for(name, day, n, sends_ids),
+                         "user" if sends_ids else "connection", user,
+                         GROUPS[n % len(GROUPS)][0] if sends_ids else "",
                          "web", pick(OSES), "", json.dumps({"plan": pick(PLANS)})))
                     events += 1
 
-    views = hits + (seed_app(cur, pid, name, profile, today, identified) if profile.get("app") else 0)
-    if identified:
+    views = hits + (seed_app(cur, pid, name, profile, today, sends_ids) if profile.get("app") else 0)
+    if sends_ids:
         seed_identities(cur, pid, name)
     return views, events
 
 
-def seed_app(cur, pid, name, profile, today, identified):
+def seed_app(cur, pid, name, profile, today, sends_ids):
     """Screen views across two platforms, with versions rolling out over time.
 
     A native app's platform and OS are the same token (ios, android), which
@@ -222,7 +222,7 @@ def seed_app(cur, pid, name, profile, today, identified):
         weights = [(v, max(1, 40 - (d - back))) for v, d in live]
 
         for n in range(max(2, int(random.gauss(base, base * 0.14)))):
-            actor = actor_for(name, day, n, identified)
+            actor = actor_for(name, day, n, sends_ids)
             platform = pick(PLATFORMS)
             version = pick(weights)
             session = str(uuid.uuid4())
@@ -237,9 +237,9 @@ def seed_app(cur, pid, name, profile, today, identified):
                     " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (str(uuid.uuid4()), pid, ts.strftime("%Y-%m-%dT%H:%M:%SZ"),
                      ts.strftime("%Y-%m-%dT%H:%M:%SZ"), "app", actor,
-                     "user" if identified else "install",
-                     f"user-{name}-{n}" if identified else "",
-                     GROUPS[n % len(GROUPS)][0] if identified else "",
+                     "user" if sends_ids else "install",
+                     f"user-{name}-{n}" if sends_ids else "",
+                     GROUPS[n % len(GROUPS)][0] if sends_ids else "",
                      session, pick(SCREENS), platform, platform, version,
                      pick(OS_VERSIONS[platform]), "unknown", "unknown",
                      pick(DEVICE_MODELS[platform]),
@@ -265,8 +265,8 @@ def main():
     db = sys.argv[1]
     con = sqlite3.connect(db)
     cur = con.cursor()
-    projects = cur.execute("select id, name, identity from projects order by id").fetchall()
-    unknown = [name for _, name, _ in projects if name not in PROFILES]
+    projects = cur.execute("select id, name from projects order by id").fetchall()
+    unknown = [name for _, name in projects if name not in PROFILES]
     if unknown:
         sys.exit(f"no traffic profile for {', '.join(unknown)}; add one to PROFILES (keyed by project name)")
 
@@ -276,9 +276,10 @@ def main():
     today = datetime.datetime.now(datetime.timezone.utc).date()
 
     random.seed(1337)
-    for pid, name, identity in projects:
-        views, events = seed(cur, pid, name, PROFILES[name], today, identity == "identified")
-        print(f"  {pid:<3} {name:<10} views={views:<7} events={events:<6} ({identity})")
+    for pid, name in projects:
+        views, events = seed(cur, pid, name, PROFILES[name], today, PROFILES[name]["ids"])
+        print(f"  {pid:<3} {name:<10} views={views:<7} events={events:<6} "
+              f"({'ids' if PROFILES[name]['ids'] else 'no ids'})")
     con.commit()
     con.close()
 
