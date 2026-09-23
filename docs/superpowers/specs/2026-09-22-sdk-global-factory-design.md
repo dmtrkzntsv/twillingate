@@ -386,6 +386,168 @@ live: `twillingate_ignore = "true"` opts the device out of every instance
 (`optOut(true)` writes it); `twillingate_debug = "true"` logs every event
 and send of every instance (`debug(true)` writes it).
 
+### 11. Use from code, consolidated
+
+Everything the SDK offers to code, in one place. Nothing here is new
+except the loader example.
+
+**Three ways to get the object.** All three yield the same API.
+
+1. *The tag, dormant.* Load the file without `data-key` and use
+   `window.twillingate` after it has executed. `url` defaults to the
+   script's origin.
+2. *Inject the script from code.* The same file, appended by the
+   application when it decides analytics should run — after a consent
+   check, after login, or only in production. A dynamically inserted
+   classic script still sets `document.currentScript`, so the origin
+   default and every attribute work exactly as for a pasted tag.
+
+   ```js
+   function loadTwillingate(src) {
+     return new Promise((resolve, reject) => {
+       const s = document.createElement("script");
+       s.src = src;                       // no data-key: loads dormant
+       s.onload = () => resolve(window.twillingate);
+       s.onerror = () => reject(new Error("twillingate.js failed to load"));
+       document.head.appendChild(s);
+     });
+   }
+
+   const tg = await loadTwillingate("https://twillingate.example.com/js/twillingate.js");
+   tg.init({ key: "ak_web…", consent: () => cmp.hasConsent("analytics") });
+   ```
+
+   Setting `s.dataset.key = "ak_web…"` before appending makes the injected
+   script auto-init on load instead, exactly as a pasted tag would, and
+   any other `data-*` attribute can be set the same way. If the script is
+   blocked, `onerror` fires and the page has no `window.twillingate`; a
+   caller that wants to keep calling regardless guards with
+   `window.twillingate?.track(...)`.
+3. *Bundle the module.* `import twillingate from "…/sdk/src/twillingate"`
+   gives the same object without registering a global. Bundling and a
+   tag on the same page means two bundle copies, each with its own
+   runtime and hooks; when a tag is on the page, prefer reaching the
+   global. `url` is required here, since there is no script to read an
+   origin from.
+
+**Options.** `init(opts)` on any instance, `create(name, opts)` for a
+named one.
+
+```ts
+interface InitOptions {
+  key: string;                                  // required
+  url?: string;                                 // default: the loading script's origin
+  identity?: "anonymous" | "identified";        // default "anonymous"; decides what is SENT (§3)
+  user?: string;                                // identity known at init; else identify() later
+  group?: string;
+  consent?: boolean | string | (() => unknown); // default false; a name is read on window live
+  storage?: "localStorage" | "sessionStorage" | "memory" | "cookie" | StorageDriver;
+                                                // default "localStorage"; used only with consent
+  kind?: string;                                // default "web"
+  platform?: string;                            // default "web" while kind is "web"
+  os?: string; osVersion?: string; osName?: string;
+  browser?: string; browserVersion?: string; device?: string;
+  appVersion?: string;
+  installId?: string;                           // ignored, with a warning, on an anonymous instance
+  autoPageviews?: boolean;                      // default true
+  taggedEvents?: boolean;                       // default true
+  maskUrl?: MaskSpec;                           // resolved before the entry pageview
+  routing?: "history" | "hash";                 // default "history"
+  flushInterval?: number;                       // default 1000 ms
+  optOut?: boolean | (() => unknown);           // OR-ed with the twillingate_ignore flag
+  debug?: boolean;                              // OR-ed with the twillingate_debug flag
+}
+
+interface StorageDriver {
+  get(key: string): string | null;
+  set(key: string, value: string): void;
+  remove(key: string): void;
+}
+```
+
+**Methods on every instance.** Every one may be called before `init()`
+(§2). Those marked *held* run after `init()`, in order.
+
+| Call | Returns | Meaning |
+| --- | --- | --- |
+| `init(opts)` | the instance | Configure and start. A second call warns and is ignored. |
+| `page()` · `page(path, attrs?)` · `page(attrs)` | — | `$page_view` (or `$screen_view` for a non-web `kind`). *Held.* An explicit path carries no campaign parameters. |
+| `screen(name, attrs?)` | — | Explicit `$screen_view`. *Held.* |
+| `track(name, attrs?)` | — | Product event. *Held.* |
+| `attrs(defaults)` · `attrs(null)` | — | Default attributes under every event; merge on repeat, `null` clears. They override derived values (§4). |
+| `identify(user, name?)` | — | `$user_id`, `$user_name`. Inert on an anonymous instance. |
+| `group(id, name?)` | — | `$group_id`, `$group_name`. Every mode. |
+| `reset()` | — | Logout: clears user, group, visitor id and the retry queue. |
+| `flush()` | — | Send the queue now. *Held.* |
+| `consent(granted?)` | boolean | Pin, hand back (`null`), or read effective consent. |
+| `optOut(flag?)` | boolean | Write or clear `twillingate_ignore`; returns the effective state, callback included. |
+| `debug(flag?)` | boolean | Write or clear `twillingate_debug`; returns the effective state. |
+| `onPage(fn)` | — | Pageview listener: threaded `host`/`path`, return attributes, `false` cancels. Replaces `page(fn)`. |
+| `onEvent(fn)` | — | Every event: `{ name, attributes }` in, attributes or `false` out. |
+| `detectOS(s?)` · `detectBrowser(s?)` · `detectDevice(s?)` | info | Pure detection, unchanged. |
+| `util.maskIds` · `util.withQuery` | string | Path helpers, unchanged. |
+
+**On the global only:** `create(name, opts?)`, `get(name?)`, `VERSION`.
+
+**Listener contracts.**
+
+```ts
+type PageListener  = (p: { url: string; host: string; path: string; referrer: string;
+                           attributes: Record<string, unknown> }) =>
+                     Record<string, unknown> | false | void;
+type EventListener = (e: { name: string; attributes: Record<string, unknown> }) =>
+                     Record<string, unknown> | false | void;
+```
+
+Order for a pageview: derived values, `attrs()` defaults, the call's
+attributes, then `onPage` listeners, then `onEvent` listeners; `null`
+drops a key at the end; a throwing listener drops the event with a
+warning.
+
+**Worked examples.**
+
+*A consent manager and a shared-domain cookie:*
+
+```js
+const cookies = {
+  get: (k) => document.cookie.match(new RegExp("(?:^|; )" + k + "=([^;]*)"))?.[1] ?? null,
+  set: (k, v) => { document.cookie = `${k}=${v}; domain=.example.com; path=/; max-age=31536000; SameSite=Lax; Secure`; },
+  remove: (k) => { document.cookie = `${k}=; domain=.example.com; path=/; max-age=0`; },
+};
+twillingate.init({
+  key: "ak_web…",
+  identity: "identified",
+  consent: () => cmp.hasConsent("analytics"),   // read at every decision, never cached
+  storage: cookies,                             // visitor id, user, group; the queue stays in memory
+});
+```
+
+*Keeping development traffic out, from code:*
+
+```js
+twillingate.init({ key: "ak_web…", optOut: () => location.hostname === "localhost" });
+```
+
+*Shaping every event of one instance:*
+
+```js
+const et = twillingate.create("econumo", { key: "ak_econumo…", identity: "identified",
+                                           autoPageviews: false, taggedEvents: false });
+et.attrs({ $host: "selfhosted_ab12", $referrer: null });   // defaults beat derived values
+et.onEvent(({ name, attributes }) => name.startsWith("debug_") ? false : { app: "econumo" });
+et.onPage(({ path }) => ({ $path: path.replace(/\/budgets\/\d+/, "/budgets/[id]") }));
+router.afterEach((to) => et.page(to.path));
+```
+
+*Verifying from the console, on any page:*
+
+```js
+localStorage.twillingate_debug = "true";   // or twillingate.debug(true)
+// [twillingate] $page_view { $host: "shop.example.com", $path: "/account/[id]" }
+// [twillingate] sent 1 event → 202
+// [twillingate:econumo] budget_created { currency: "EUR", app: "econumo" }
+```
+
 ## Documentation
 
 `docs/twillingate.md`, in the same commit as the SDK, per CLAUDE.md:
