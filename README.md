@@ -131,31 +131,28 @@ follow Conventional Commits and become the release notes.
 
 ## Privacy and GDPR
 
-The posture depends on the project's `identity` mode.
+**What the collector stores.** What it is sent. The served SDK's `anonymous`
+default sends nothing identifying: no cookies, nothing on the device unless
+the tag declares consent (`data-consent`), and then only its failed-batch
+retry queue — no consent banner is needed for pageview tracking on its own.
+A tag with `data-identity="identified"` sends `$user_id`, `$user_name` and
+`$install_id`, and they are stored as given; `$group_id`/`$group_name` are
+stored raw in every case (a group is an organization, not a person). A
+visitor who sends no id is a hash of the connection under a key that rotates
+every 24 hours; the previous key is overwritten, so linking across days is
+impossible rather than prohibited. IPs and full User-Agents are never stored
+or logged (a test scans the database file and the log output). Query strings
+are stripped to a UTM allowlist, referrers reduced to a source name, bots
+dropped at ingestion. Paths are stored verbatim — strip personal data from
+URL schemes before it reaches the tracker.
 
-**`anonymous` (default).** No cookies. Nothing is kept on the visitor's
-device unless the tag declares consent (`data-consent`), and even then the
-SDK writes only its failed-batch retry queue, never an identifier — so no
-consent banner is required for pageview tracking on its own. Identifiers are
-salted with a key that rotates every 24 hours; the previous value is
-overwritten, which makes linking across days impossible rather than just
-prohibited. IPs and full User-Agents are never stored or logged (a test
-asserts this by scanning the database file and log output). Query strings are
-stripped to a UTM allowlist, referrers reduced to a source name, bots dropped
-at ingestion.
+**What the SDK keeps on the device.** Nothing without consent. With consent
+(`data-consent="true"`, or the name of a global the consent manager
+maintains) it persists the retry queue and, on an identified tag, the
+visitor id, user and group in `localStorage` — terminal-equipment storage
+under ePrivacy, the same legal category as a cookie. See
+[docs/twillingate.md](docs/twillingate.md) "Consent and storage".
 
-**`identified`.** Identifiers you supply are stored **as given**. The SDK
-persists a visitor id, user and group in `localStorage` — terminal-equipment
-storage under ePrivacy, the same legal category as a cookie — **only when
-the tag declares consent** (`data-consent="true"`, or the name of a global
-the consent manager maintains); without it nothing is written and a
-signed-out visitor falls back to the daily connection hash, so no banner is
-required by default. See [docs/twillingate.md](docs/twillingate.md)
-"Consent and storage" for the full behaviour.
-
-**Both modes.** `$group_id`/`$group_name` are stored raw (a group is an
-organization, not a person). Paths are stored verbatim — strip personal
-data from URL schemes before it reaches the tracker. Enabling the API
-exposes identified projects' stored ids to every valid token holder,
-whether the caller uses MCP or the REST routes; complete erasure is
+**Access and erasure.** Enabling the API exposes every stored id to every
+valid token holder, over MCP and the REST routes alike; complete erasure is
 `twillingate project delete`, deliberately CLI-only.

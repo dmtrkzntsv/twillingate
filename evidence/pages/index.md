@@ -1,7 +1,7 @@
 # Twillingate
 
 ```sql active_projects
-select id, name, identity
+select id, name
 from twillingate.projects
 where archived = 0 and id != 0
 order by name
@@ -17,7 +17,7 @@ where archived = 1 and id != 0
 
 {#each active_projects as p}
 
-- **{p.name}** ({p.identity}) — [views](/views/{p.id}) · [product](/product/{p.id}) · [users](/users/{p.id}) · [groups](/groups/{p.id}) · [retention](/retention/{p.id})
+- **{p.name}** — [views](/views/{p.id}) · [product](/product/{p.id}) · [users](/users/{p.id}) · [groups](/groups/{p.id}) · [retention](/retention/{p.id})
 
 {/each}
 

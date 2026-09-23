@@ -4,11 +4,9 @@
 select name from twillingate.projects where id = '${params.project}'
 ```
 
-```sql retention_mode
-select identity from twillingate.projects where id = '${params.project}'
-```
-
-{#if retention_mode[0].identity === 'identified'}
+Cohorts exist for actors identified by a `$user_id` or a stable
+`$install_id`. A project whose clients send neither has none: the tables
+below stay empty until they do.
 
 <ButtonGroup name=range title="Cohorts from">
     <ButtonGroupItem value="30" valueLabel="Last 30 days" />
@@ -153,16 +151,3 @@ load makes each visit a new actor, and this curve reads near zero.
     <Column id=actors title="Returned" fmt=num0 />
     <Column id=retention title="Retention" fmt=pct1 contentType=colorscale />
 </DataTable>
-
-{:else}
-
-Retention is undefined in **anonymous** identity mode: `actor_id` rotates at
-midnight, so every cohort would contain only its own first day.
-
-Run <code class="markdown">twillingate project update -id {params.project} -identity identified</code>
-(or the `update_project` MCP tool) to enable cohorts. Note that identified
-mode stores a persistent `localStorage` id on the web, which is
-terminal-equipment storage under ePrivacy — the same legal category as a
-cookie.
-
-{/if}

@@ -4,11 +4,10 @@
 select name from twillingate.projects where id = '${params.project}'
 ```
 
-```sql users_mode
-select identity from twillingate.projects where id = '${params.project}'
-```
-
-{#if users_mode[0].identity === 'identified'}
+Per-user rows appear once this project's clients send a `$user_id`: a tag
+with `data-identity="identified"` after `identify()`, or a backend that posts
+one. A project whose clients send none has nothing here; group reporting
+does not need ids, see [Groups](/groups/{params.project}).
 
 <ButtonGroup name=range title="Date range">
     <ButtonGroupItem value="1" valueLabel="Last 1 day" />
@@ -105,19 +104,3 @@ a client sends `$user_name`.
     <Column id=first_seen title="First seen" />
     <Column id=last_seen title="Last seen" />
 </DataTable>
-
-{:else}
-
-This project runs in **anonymous** identity mode: `user_id` is a hash that
-rotates at midnight, so a per-user report would be a list of hashes that means
-nothing tomorrow.
-
-Run <code class="markdown">twillingate project update -id {params.project} -identity identified</code>
-(or the `update_project` MCP tool) to enable per-user reporting. Note that
-identified mode stores a persistent `localStorage` id on the web, which is
-terminal-equipment storage under ePrivacy — the same legal category as a
-cookie.
-
-Group reporting works in both modes: see [Groups](/groups/{params.project}).
-
-{/if}

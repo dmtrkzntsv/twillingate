@@ -22,12 +22,14 @@ operator's job, in [deployment.md](deployment.md).
 One Go binary, one SQLite file. It collects views (page views from websites,
 screen views from apps and CLIs) and custom product events through one endpoint,
 rolls them up nightly, and exposes the result as Evidence dashboards, a
-read-only SQL surface, and an API (MCP or HTTP). It is cookieless by default: an
-`anonymous` project writes nothing to a visitor's device unless the tag declares
-consent, and then only its retry queue, never an identifier. Identifiers are
-salted with a key that rotates at midnight. IP addresses and User-Agent strings
-are never stored — the IP becomes a country at ingest, the User-Agent is checked
-for crawlers, and both are then discarded.
+read-only SQL surface, and an API (MCP or HTTP). It is cookieless by default:
+the served SDK's `anonymous` default writes nothing to a visitor's device
+unless the tag declares consent, and then only its retry queue, never an
+identifier. The collector stores the identifiers it is sent; a visitor who
+sends none is a hash of the connection under a key that rotates at midnight.
+IP addresses and User-Agent strings are never stored — the IP becomes a
+country at ingest, the User-Agent is checked for crawlers, and both are then
+discarded.
 
 | Command | Does |
 | --- | --- |
@@ -50,14 +52,14 @@ Projects live in a registry table, managed through the CLI or, over the API
 
 | Operation | CLI | MCP tool | Tool arguments |
 | --- | --- | --- | --- |
-| Create a project | `twillingate project create` | `create_project` | `{name, identity, allowed_origins, attributes}`; `name` required; `skip_key: true` issues no first key; returns the new `project_id` |
+| Create a project | `twillingate project create` | `create_project` | `{name, allowed_origins, attributes}`; `name` required; `skip_key: true` issues no first key; returns the new `project_id` |
 | Change one | `twillingate project update` | `update_project` | `{project_id, …}`; merges, so an omitted field keeps its value and `allowed_origins: []` clears the list |
 | List them | `twillingate project list` | `list_projects` | none |
 | Archive / restore | `twillingate project archive` / `restore` | `archive_project` / `restore_project` | `{project_id}` |
 | Issue an ingest key | `twillingate key issue` | `issue_ingest_key` | `{project_id, label}`; returns the key **and** a paste-ready snippet |
 | List keys | `twillingate key list` | `list_ingest_keys` | `{project_id}` |
 | Disable / enable a key | `twillingate key disable` / `enable` | `disable_ingest_key` / `enable_ingest_key` | `{project_id, label}` |
-| Get paste-ready setup | — | `integration_guide` | `{project_id, platform}` where platform is `web`, `spa`, `server` or `mobile`; returns the whole setup as markdown with the live key and identity mode filled in. Reach for it before hand-assembling a snippet |
+| Get paste-ready setup | — | `integration_guide` | `{project_id, platform}` where platform is `web`, `spa`, `server` or `mobile`; returns the whole setup as markdown with the live key filled in. Reach for it before hand-assembling a snippet |
 
 **Confirm the collector hostname before pasting.** Snippets use `PUBLIC_URL`,
 but a collector can answer on several hostnames; ask which one this site uses
@@ -66,9 +68,9 @@ There is no rename (`project update -name` is one) and no delete over the API �
 deletion needs the CLI.
 
 ```bash
-twillingate project create -name "My App" -identity anonymous \
+twillingate project create -name "My App" \
   -origin https://myapp.com -attr plan -attr tier
-twillingate project list                                 # id  identity  name
+twillingate project list                                 # id  name
 twillingate project update -id 1 -origin https://myapp.com -origin https://www.myapp.com
 twillingate project update -id 1 -clear-origins
 twillingate project archive -id 1                        # reversible: `project restore`
@@ -84,7 +86,6 @@ twillingate key disable -project-id 1 -label ios-2025
 | --- | --- |
 | `project_id` | Integer key assigned on create, never reissued after a delete. The `project_id` column on every stored row, the argument of every tool, route and CLI command, and the segment of every dashboard URL. Never transmitted by clients. |
 | `name` | Display name. Required; free text, need not be unique; change it with `project update -name`. |
-| `identity` | `anonymous` (default) or `identified`. |
 | `ingest_keys` | One or more `{key, label, disabled}` credentials. Required. |
 | `allowed_origins` | Origins allowed to post for this project. `*` is a wildcard — `https://*.example.com` covers every subdomain, a bare `*` allows any origin. Add `tauri://localhost` or `app://.` for Electron/Tauri. |
 | `attributes` | Custom product-event attribute keys to break down. |
@@ -131,8 +132,7 @@ inject the same tag from code; bundling the module is not supported.
 
 ```html
 <script defer src="https://twillingate.example.com/js/twillingate.js"
-        data-key="ak_9f3c…"
-        data-identity="anonymous"></script>
+        data-key="ak_9f3c…"></script>
 ```
 
 `twillingate key issue -project-id <id> -label <label>` prints this snippet
@@ -538,10 +538,11 @@ twillingate.track("signup", { plan: "pro" });
 
 ### Identity
 
-| Mode | `$user_id`, `$install_id` | `$group_id` | `$user_name` |
-| --- | --- | --- | --- |
-| `anonymous` (default) | salted hash, salt rotates at 00:00 UTC | stored raw | **ignored** |
-| `identified` | stored as given | stored raw | stored |
+| The tag says | `$user_id`, `$install_id`, `$user_name` | `$group_id`, `$group_name` |
+| --- | --- | --- |
+| `anonymous` (default) | never sent | sent, stored raw |
+| `identified` | sent, stored as given | sent, stored raw |
+| a client posting by hand | stored as given, whatever it sends | stored raw |
 
 The actor resolves as `$user_id` → `$install_id` → a server-side hash of the
 connection; how it was identified is recorded alongside it (`user`, `install` or
@@ -550,12 +551,14 @@ install-identified actors are tracked. Send `$install_id` only if it survives a
 page load or app restart: an id minted per load makes every load a new actor
 that never returns, inflating active counts and dragging retention toward zero,
 so leave it out — the connection hash then gives one actor per device per day —
-and read retention from the `user` cohort. `$group_id` stays raw in both modes
-because it identifies an organization, not a natural person; single-person
-groups are personal data. **The server is always the enforcement point** — a
-client cannot opt a project into storing raw identifiers — and the JS SDK adds a
-client-side gate, so an `anonymous` instance never sends `$user_id`,
-`$user_name` or `$install_id`, whatever the project's mode.
+and read retention from the `user` cohort. `$group_id` is stored raw because it
+identifies an organization, not a natural person; single-person groups are
+personal data. `$user_name` is kept only beside a `$user_id`. **The collector
+stores what it is sent.** What reaches it is decided by the tag's
+`data-identity` (or `identity` in code), so a project's privacy posture is the
+posture of its clients. The collector logs `project receives ids` the first
+time a project sends a `$user_id` or `$install_id` (once per kind per process),
+which is how to confirm a marketing site's tag sends nothing.
 
 ---
 
@@ -719,13 +722,13 @@ caveats below. All the reading tools take `project_id`, `from` and `to` as
 
 | Tool | Extra parameters | Returns |
 | --- | --- | --- |
-| `list_projects` | none | Every project with its `project_id`, name, identity mode and data coverage. Call this first — every other tool needs a `project_id` |
+| `list_projects` | none | Every project with its `project_id`, name and data coverage. Call this first — every other tool needs a `project_id` |
 | `views_overview` | `kind` (optional) | Visitors, views, sessions, bounces, average session length per day, summed across kinds unless `kind` filters one |
 | `views_breakdown` | `dimension`, `limit` (default 20) | Top rows for one of `kinds`, `paths`, `hosts`, `referrers`, `utm`, `countries`, `platforms`, `os`, `browsers`, `app_versions`, `devices`, `displays`. Two-key dimensions return both columns |
 | `product_events` | `event` (optional filter) | Count and unique users per event name, plus daily totals |
 | `product_attributes` | `event`, `key` | Count, unique users and unique groups per value of a declared attribute. `$platform`, `$os` and `$app_version` are always available; a custom key only appears once the project declares it. `unique_groups` is empty for days rolled up before it was measured and `0` when it was measured and no group was involved |
-| `retention` | `actor` (`user` or `install`) | Cohort curves, plus `aggregated_through` — cohorts after that day are **absent, not zero** |
-| `identities` | `kind` (`user` or `group`), `limit` | Per-user or per-group activity with display names. **Surfaces personal data on identified projects** |
+| `retention` | `actor` (`user` or `install`) | Cohort curves, plus `aggregated_through` — cohorts after that day are **absent, not zero**. Empty for a project whose clients send neither `$user_id` nor `$install_id` |
+| `identities` | `kind` (`user` or `group`), `limit` | Per-user or per-group activity with display names. **Surfaces personal data on projects whose clients send ids** |
 | `query` | `sql` | A single read-only `SELECT`/`WITH` against the views. Row-capped and time-limited |
 
 **Managing** — `create_project`, `update_project`, `archive_project`,
@@ -753,7 +756,7 @@ curl -H "Authorization: Bearer $TOKEN" \
 | Method | Path | Mirrors | Input |
 |---|---|---|---|
 | `GET` | `/api/projects` | `list_projects` | — |
-| `POST` | `/api/projects` | `create_project` | body: `name`, `identity`, `allowed_origins`, `attributes`, `skip_key` → 201 |
+| `POST` | `/api/projects` | `create_project` | body: `name`, `allowed_origins`, `attributes`, `skip_key` → 201 |
 | `PATCH` | `/api/projects/{project_id}` | `update_project` | body: fields to change (merge); `allowed_origins: []` clears |
 | `POST` | `/api/projects/{project_id}/archive` | `archive_project` | — |
 | `POST` | `/api/projects/{project_id}/restore` | `restore_project` | — |
@@ -790,8 +793,9 @@ carries the caveats the DDL cannot express. Three matter most:
 2. Every `v_*` view includes yesterday and today: each stitches aggregated
    history (`agg_*` tables) to a live half computed from raw rows.
 3. **`v_retention` has no live half.** It refreshes at the 03:00 UTC daily pass;
-   cohort days after that are ABSENT, not zero. It is populated only for
-   projects with `identity=identified`. Each actor is cohorted by how it was
+   cohort days after that are ABSENT, not zero. It holds cohorts only for
+   actors identified by `$user_id` or `$install_id`; a project whose clients
+   send neither has none. Each actor is cohorted by how it was
    identified, `user` (sent a `$user_id`) or `install` (a stable
    `$install_id`); a connection-hash actor is not cohorted. On a client that
    mints an install id per page load the `install` curve reads near zero — read

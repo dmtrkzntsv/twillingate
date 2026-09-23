@@ -88,10 +88,11 @@ dashboard.
 
 ## 4. What does not carry over
 
-**Per-day uniques only.** In anonymous mode the actor id is a salted hash
-that rotates daily. `unique_users` on a single day is sound; the same person
-clicking a CTA on Monday and converting on Tuesday counts as two actors, so
-a multi-day funnel needs identified mode.
+**Per-day uniques only.** The shim sends no identifiers, so the actor id is a
+hash of the connection that rotates daily. `unique_users` on a single day is
+sound; the same person clicking a CTA on Monday and converting on Tuesday
+counts as two actors, so a multi-day funnel needs a client that sends a
+`$user_id`.
 
 **No page context.** Product events keep `os`, `app_version` and
 attributes. Path, referrer, country, device and browser are enriched only on
