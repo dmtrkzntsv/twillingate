@@ -74,6 +74,16 @@ What the mode gates today, by function:
 5. **The API stays strict.** A `create_project` or `update_project` call
    that still sends `identity` gets the same 400 an unknown field gets
    today. The release note says so.
+6. **Visibility replaces the gate.** Nothing on the server decides whether
+   ids are stored, but the operator can see that they are: `list_projects`
+   reports the last day each project received a user or install id, and
+   the collector logs once, per process and project, when the first one
+   arrives. An accidental `identify()` on a marketing site becomes visible
+   instead of silent. Considered and declined: an opt-in per-project lock
+   (`store_ids=false`) that would keep hashing for projects wanting a
+   provable "no identifiers" claim — the point of this spec is zero
+   server-side identity configuration, and a lock would be a setting to
+   explain, default or not.
 
 ## Design
 
@@ -121,6 +131,23 @@ project argument disappears from both functions; the call site in
 `handleEvents` no longer needs the project for identity at all (it still
 needs it for the crawler filter's `kind == "web"` and for the key lookup).
 
+### Visibility
+
+- `list_projects` (`ops_read.go`) gains `ids_last_seen`: `YYYY-MM-DD` or
+  `""`, from `SELECT COALESCE(MAX(last_seen_day),'') FROM actors WHERE
+  project_id=?`, which the existing `(project_id, last_seen_day)` index
+  answers cheaply and which now covers every project (decision 2). The
+  actors table is built by the daily pass, so the value lags up to a day;
+  the tool description says "the last day it received a user or install
+  id (through yesterday)". The REST route returns the same field.
+- The collector logs `project receives ids` with `project` and `kind`
+  (`user` or `install`) the first time a batch for that project resolves
+  an actor of that kind since the process started — a `sync.Map` on
+  `Server`, checked beside the existing `counters.record` call in
+  `handleEvents`. One line per project per kind per process, `Info`
+  level, so a restart repeats it once and an operator reading the log
+  after adding a tag sees it.
+
 ### Daily pass
 
 `jobs.go` drops the `identified` gate: `UpsertActors` and
@@ -134,11 +161,12 @@ a project whose events carry no ids gets no actors (the upsert's
 - `ops_manage.go`: `identity` leaves `createIn`, `updateIn` and
   `projectToolOut`; the `update_project` description loses "Switching to
   identity=identified …"; `create_project`'s loses "privacy-significant".
-- `ops_read.go`: the project row loses `Identity`; `list_projects`'s
-  description becomes "List projects with id, name and data coverage. Call
-  this first: every other tool takes a project_id from here."; the
-  `identities` description says it surfaces personal data on projects
-  whose clients send ids.
+- `ops_read.go`: the project row loses `Identity` and gains
+  `ids_last_seen`; `list_projects`'s description becomes "List projects
+  with id, name, data coverage and the last day each received a user or
+  install id (through yesterday). Call this first: every other tool takes
+  a project_id from here."; the `identities` description says it surfaces
+  personal data on projects whose clients send ids.
 - `ops_product.go`: the retention refusal is deleted.
 - `resources.go`: `pj` loses `Identity`; `schema://projects` describes
   the remaining fields; the `schemaViews` comment for `v_retention` says
@@ -193,6 +221,9 @@ a project whose events carry no ids gets no actors (the upsert's
   project's privacy posture is the posture of its clients."
 - The `identities` tool row: "Surfaces personal data on projects whose
   clients send ids."
+- The `list_projects` tool row names `ids_last_seen` and what it means; a
+  sentence under "Identity" tells the reader that is where to look to
+  confirm a marketing site's tag sends nothing.
 - "Writing SQL": `v_retention` "is populated only for projects with
   `identity=identified`" becomes "holds cohorts only for actors identified
   by `$user_id` or `$install_id`; a project whose clients send neither has
@@ -236,10 +267,14 @@ migration.
   connection hash; `$user_name` is stored with a `$user_id` and dropped
   without one.
 - `identity`: `ActorHash` tests deleted.
+- `server`: the first batch carrying `$user_id` for a project logs
+  `project receives ids` once; a second batch does not; a batch with only
+  `$install_id` logs once with `kind=install`.
 - `jobs`: actors and retention built for every project; a project with no
   ids yields no actors.
-- `api`: `retention` on a project with no identified actors returns an
-  empty table, not an error; `create_project` with `identity` → 400;
+- `api`: `list_projects` reports `ids_last_seen` from a seeded actors row
+  and `""` for a project with none; `retention` on a project with no
+  identified actors returns an empty table, not an error; `create_project` with `identity` → 400;
   `list_projects` rows have no `identity`; `Snippet` output has no
   `data-identity`; guide text names `data-identity="identified"` and
   `optOut`.
@@ -260,14 +295,14 @@ migration.
 - The printed snippet has no `data-identity`; a signed-in app adds
   `data-identity="identified"` itself.
 - `retention` works for every project and is empty where no ids were
-  received.
+  received; `list_projects` gains `ids_last_seen`.
 - Migration 017 is irreversible; the previous binary does not start
   against the upgraded file. Upgrade at least a day after the #48 release.
 
 ## Out of scope
 
-- A per-project "never store ids" switch (decided against in #48's
-  brainstorm).
+- A per-project "never store ids" switch (decided against twice: in #48's
+  brainstorm and again for this spec, in favour of visibility only).
 - Retention for connection-hash actors.
 - Renaming `unique_users` (it counts actors).
 - Backfilling or re-linking ids hashed under the old anonymous mode.
