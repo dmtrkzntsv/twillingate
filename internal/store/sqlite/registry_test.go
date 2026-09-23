@@ -32,7 +32,7 @@ func TestCreateProjectWritesAuditAndBumpsVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := store.RegistryProject{Name: "My blog",
-		Identity: "anonymous", AllowedOrigins: `["https://blog.example.com"]`}
+		AllowedOrigins: `["https://blog.example.com"]`}
 	id, err := d.CreateProject(ctx, p, store.AuditEntry{Actor: "cli", Action: "project.create"})
 	if err != nil {
 		t.Fatal(err)
@@ -41,7 +41,7 @@ func TestCreateProjectWritesAuditAndBumpsVersion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(ps) != 1 || ps[0].ID != id || ps[0].Name != "My blog" || ps[0].Identity != "anonymous" {
+	if len(ps) != 1 || ps[0].ID != id || ps[0].Name != "My blog" {
 		t.Fatalf("LoadRegistry = %+v", ps)
 	}
 	v1, _ := d.ConfigVersion(ctx)
@@ -63,7 +63,7 @@ func TestUpdateProjectAppliesFieldsAndAudits(t *testing.T) {
 	d := openRegistryDB(t)
 	ctx := context.Background()
 	p := store.RegistryProject{Name: "My blog",
-		Identity: "anonymous", AllowedOrigins: `["https://blog.example.com"]`}
+		AllowedOrigins: `["https://blog.example.com"]`}
 	id, err := d.CreateProject(ctx, p, store.AuditEntry{Actor: "cli", Action: "project.create"})
 	if err != nil {
 		t.Fatal(err)
@@ -71,8 +71,8 @@ func TestUpdateProjectAppliesFieldsAndAudits(t *testing.T) {
 	v0, _ := d.ConfigVersion(ctx)
 
 	updated := store.RegistryProject{ID: id, Name: "Renamed blog",
-		Identity: "identified", AllowedOrigins: `["https://blog.example.com","https://www.blog.example.com"]`,
-		Attributes: `["plan"]`}
+		AllowedOrigins: `["https://blog.example.com","https://www.blog.example.com"]`,
+		Attributes:     `["plan"]`}
 	if err := d.UpdateProject(ctx, updated, store.AuditEntry{
 		Actor: "cli", Action: "project.update", Subject: "1"}); err != nil {
 		t.Fatal(err)
@@ -86,7 +86,7 @@ func TestUpdateProjectAppliesFieldsAndAudits(t *testing.T) {
 		t.Fatalf("LoadRegistry = %+v", ps)
 	}
 	got := ps[0]
-	if got.Name != "Renamed blog" || got.Identity != "identified" ||
+	if got.Name != "Renamed blog" ||
 		got.AllowedOrigins != updated.AllowedOrigins || got.Attributes != updated.Attributes {
 		t.Fatalf("LoadRegistry after update = %+v", got)
 	}
@@ -109,7 +109,7 @@ func TestUpdateProjectAppliesFieldsAndAudits(t *testing.T) {
 func TestUpdateProjectUnknownIDFails(t *testing.T) {
 	d := openRegistryDB(t)
 	ctx := context.Background()
-	p := store.RegistryProject{ID: 7, Name: "n", Identity: "anonymous", AllowedOrigins: "[]"}
+	p := store.RegistryProject{ID: 7, Name: "n", AllowedOrigins: "[]"}
 	err := d.UpdateProject(ctx, p, store.AuditEntry{Actor: "cli", Action: "project.update", Subject: "7"})
 	if err == nil {
 		t.Fatal("update of an unknown id did not fail")
@@ -119,7 +119,7 @@ func TestUpdateProjectUnknownIDFails(t *testing.T) {
 func TestIngestKeyLifecycle(t *testing.T) {
 	d := openRegistryDB(t)
 	ctx := context.Background()
-	p := store.RegistryProject{Name: "a", Identity: "anonymous", AllowedOrigins: "[]"}
+	p := store.RegistryProject{Name: "a", AllowedOrigins: "[]"}
 	id, err := d.CreateProject(ctx, p, store.AuditEntry{Actor: "cli", Action: "project.create"})
 	if err != nil {
 		t.Fatal(err)
@@ -154,7 +154,7 @@ func TestIngestKeyLifecycle(t *testing.T) {
 func TestArchiveRestoreProject(t *testing.T) {
 	d := openRegistryDB(t)
 	ctx := context.Background()
-	p := store.RegistryProject{Name: "a", Identity: "anonymous", AllowedOrigins: "[]"}
+	p := store.RegistryProject{Name: "a", AllowedOrigins: "[]"}
 	id, err := d.CreateProject(ctx, p, store.AuditEntry{Actor: "cli", Action: "project.create"})
 	if err != nil {
 		t.Fatal(err)
@@ -185,7 +185,7 @@ func TestSetProjectArchivedErrors(t *testing.T) {
 	}
 
 	// Create a project but don't archive it.
-	p := store.RegistryProject{Name: "a", Identity: "anonymous", AllowedOrigins: "[]"}
+	p := store.RegistryProject{Name: "a", AllowedOrigins: "[]"}
 	id, err := d.CreateProject(ctx, p, store.AuditEntry{Actor: "cli", Action: "project.create"})
 	if err != nil {
 		t.Fatal(err)
@@ -232,17 +232,14 @@ func TestMigrationUpgradeFrom004(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Verify the new columns exist with defaults.
-	var identity, allowedOrigins string
+	// Verify the new column exists with its default.
+	var allowedOrigins string
 	if err := d.db.QueryRowContext(ctx,
-		`SELECT identity, allowed_origins FROM projects WHERE name='Old Project'`).
-		Scan(&identity, &allowedOrigins); err != nil {
+		`SELECT allowed_origins FROM projects WHERE name='Old Project'`).
+		Scan(&allowedOrigins); err != nil {
 		t.Fatal(err)
 	}
 
-	if identity != "anonymous" {
-		t.Errorf("identity = %q, want 'anonymous'", identity)
-	}
 	if allowedOrigins != "[]" {
 		t.Errorf("allowed_origins = %q, want '[]'", allowedOrigins)
 	}
@@ -255,8 +252,8 @@ func TestProjectsAttributesDefaultsToEmptyArray(t *testing.T) {
 	db := newTestDB(t) // existing helper; applies all migrations
 	ctx := context.Background()
 	if _, err := db.ExecForTest(
-		`INSERT INTO projects (name, identity, allowed_origins)
-		 VALUES ('Blog','anonymous','[]')`); err != nil {
+		`INSERT INTO projects (name, allowed_origins)
+		 VALUES ('Blog','[]')`); err != nil {
 		t.Fatal(err)
 	}
 	ps, _, err := db.LoadRegistry(ctx)
@@ -435,7 +432,7 @@ func applyMigrationsUpTo(ctx context.Context, d *DB, maxVersion int) error {
 func TestDeleteProjectDataCascades(t *testing.T) {
 	d := openRegistryDB(t)
 	ctx := context.Background()
-	p := store.RegistryProject{Name: "a", Identity: "anonymous", AllowedOrigins: "[]"}
+	p := store.RegistryProject{Name: "a", AllowedOrigins: "[]"}
 	id, err := d.CreateProject(ctx, p, store.AuditEntry{Actor: "cli", Action: "project.create"})
 	if err != nil {
 		t.Fatal(err)
@@ -583,7 +580,7 @@ func TestCreateProjectWithKeyIsAtomic(t *testing.T) {
 	d := openRegistryDB(t)
 	ctx := context.Background()
 	project := func(name string) store.RegistryProject {
-		return store.RegistryProject{Name: name, Identity: "anonymous", AllowedOrigins: "[]"}
+		return store.RegistryProject{Name: name, AllowedOrigins: "[]"}
 	}
 	// Subjects are left empty: the store fills them from the assigned id.
 	pa := store.AuditEntry{Actor: "api", Action: "project.create"}
@@ -631,11 +628,11 @@ func TestInsertProjectReturnsIncreasingIds(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	audit := store.AuditEntry{Actor: "test", Action: "project.create"}
-	first, err := db.CreateProject(ctx, store.RegistryProject{Name: "Blog", Identity: "anonymous", AllowedOrigins: "[]", Attributes: "[]"}, audit)
+	first, err := db.CreateProject(ctx, store.RegistryProject{Name: "Blog", AllowedOrigins: "[]", Attributes: "[]"}, audit)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := db.CreateProject(ctx, store.RegistryProject{Name: "Blog", Identity: "anonymous", AllowedOrigins: "[]", Attributes: "[]"}, audit)
+	second, err := db.CreateProject(ctx, store.RegistryProject{Name: "Blog", AllowedOrigins: "[]", Attributes: "[]"}, audit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -654,7 +651,7 @@ func TestInsertProjectReturnsIncreasingIds(t *testing.T) {
 func TestInsertKeyConflictIsTyped(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	id, err := db.CreateProject(ctx, store.RegistryProject{Name: "Blog", Identity: "anonymous", AllowedOrigins: "[]", Attributes: "[]"},
+	id, err := db.CreateProject(ctx, store.RegistryProject{Name: "Blog", AllowedOrigins: "[]", Attributes: "[]"},
 		store.AuditEntry{Actor: "test", Action: "project.create"})
 	if err != nil {
 		t.Fatal(err)
@@ -668,7 +665,7 @@ func TestInsertKeyConflictIsTyped(t *testing.T) {
 		t.Fatalf("duplicate label err = %v, want ErrConflict from UNIQUE (project_id, label)", err)
 	}
 	// Same label on another project is fine.
-	other, _ := db.CreateProject(ctx, store.RegistryProject{Name: "Shop", Identity: "anonymous", AllowedOrigins: "[]", Attributes: "[]"},
+	other, _ := db.CreateProject(ctx, store.RegistryProject{Name: "Shop", AllowedOrigins: "[]", Attributes: "[]"},
 		store.AuditEntry{Actor: "test", Action: "project.create"})
 	if err := db.InsertIngestKey(ctx, store.RegistryKey{Key: "ak_3", ProjectID: other, Label: "web"}, audit); err != nil {
 		t.Fatalf("same label on another project: %v", err)
@@ -679,7 +676,7 @@ func TestProjectIDsAscending(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	for _, n := range []string{"c", "a", "b"} {
-		if _, err := db.CreateProject(ctx, store.RegistryProject{Name: n, Identity: "anonymous", AllowedOrigins: "[]", Attributes: "[]"},
+		if _, err := db.CreateProject(ctx, store.RegistryProject{Name: n, AllowedOrigins: "[]", Attributes: "[]"},
 			store.AuditEntry{Actor: "test", Action: "project.create"}); err != nil {
 			t.Fatal(err)
 		}

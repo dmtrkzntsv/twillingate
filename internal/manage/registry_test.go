@@ -28,14 +28,14 @@ func testStore(t *testing.T) store.Store {
 	return st
 }
 
-// seedProject creates an identified project called name with one active
-// key "ak_<name>" under the label "web", directly through the store, and
+// seedProject creates a project called name with one active key
+// "ak_<name>" under the label "web", directly through the store, and
 // returns the id the store assigned.
 func seedProject(t *testing.T, st store.Store, name string) int64 {
 	t.Helper()
 	ctx := context.Background()
 	id, err := st.CreateProject(ctx, store.RegistryProject{
-		Name: name, Identity: "identified",
+		Name:           name,
 		AllowedOrigins: `["https://` + name + `.example.com"]`,
 	}, store.AuditEntry{Actor: "test", Action: "project.create"})
 	if err != nil {
@@ -71,7 +71,7 @@ func TestSnapshotLookups(t *testing.T) {
 	if s.OriginAllowed(id, "https://evil.example.com") {
 		t.Fatal("wrong origin allowed")
 	}
-	if p := s.Project(id); p == nil || p.Identity != "identified" {
+	if p := s.Project(id); p == nil || p.Name != "blog" {
 		t.Fatalf("Project = %+v", p)
 	}
 }
@@ -125,13 +125,13 @@ func TestKeylessProjects(t *testing.T) {
 	ctx := context.Background()
 	seedProject(t, st, "blog") // has an active key
 	retired, err := st.CreateProject(ctx, store.RegistryProject{
-		Name: "retired", Identity: "anonymous", AllowedOrigins: "[]",
+		Name: "retired", AllowedOrigins: "[]",
 	}, store.AuditEntry{Actor: "test", Action: "project.create"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	gone, err := st.CreateProject(ctx, store.RegistryProject{
-		Name: "gone", Identity: "anonymous", AllowedOrigins: "[]",
+		Name: "gone", AllowedOrigins: "[]",
 	}, store.AuditEntry{Actor: "test", Action: "project.create"})
 	if err != nil {
 		t.Fatal(err)
@@ -181,7 +181,7 @@ func TestSnapshotWildcardOrigins(t *testing.T) {
 	st := testStore(t)
 	ctx := context.Background()
 	id, err := st.CreateProject(ctx, store.RegistryProject{
-		Name: "blog", Identity: "anonymous",
+		Name:           "blog",
 		AllowedOrigins: `["https://*.example.com/", "https://fixed.test"]`,
 	}, store.AuditEntry{Actor: "test", Action: "project.create"})
 	if err != nil {

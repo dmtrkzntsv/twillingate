@@ -17,7 +17,7 @@ func TestCreateProjectValidatesAndReloads(t *testing.T) {
 	ctx := context.Background()
 
 	p, err := ops.CreateProject(ctx, "cli", ProjectSpec{
-		Name: "My blog", Identity: "anonymous",
+		Name:           "My blog",
 		AllowedOrigins: []string{"https://blog.example.com"}})
 	if err != nil {
 		t.Fatal(err)
@@ -32,7 +32,6 @@ func TestCreateProjectValidatesAndReloads(t *testing.T) {
 	// validation
 	for _, bad := range []ProjectSpec{
 		{Name: ""},
-		{Name: "x", Identity: "sometimes"},
 		{Name: "x", AllowedOrigins: []string{""}},
 	} {
 		if _, err := ops.CreateProject(ctx, "cli", bad); err == nil {
@@ -49,7 +48,7 @@ func TestCreateRequiresName(t *testing.T) {
 		t.Fatal(err)
 	}
 	ops := NewOps(reg, st)
-	_, err := ops.CreateProject(ctx, "test", ProjectSpec{Identity: "anonymous"})
+	_, err := ops.CreateProject(ctx, "test", ProjectSpec{})
 	if !errors.Is(err, ErrInvalid) {
 		t.Fatalf("create without a name: err = %v, want ErrInvalid", err)
 	}
@@ -57,8 +56,8 @@ func TestCreateRequiresName(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.ID != 1 || p.Name != "My App" || p.Identity != "anonymous" {
-		t.Fatalf("created = %+v, want id 1, the name, and the anonymous default", p)
+	if p.ID != 1 || p.Name != "My App" {
+		t.Fatalf("created = %+v, want id 1 and the name", p)
 	}
 	// Names are not unique: a second project with the same name gets id 2.
 	q, err := ops.CreateProject(ctx, "test", ProjectSpec{Name: "My App"})
@@ -75,17 +74,17 @@ func TestUpdateMergesAndClearsOriginsOnlyWhenAsked(t *testing.T) {
 		t.Fatal(err)
 	}
 	ops := NewOps(reg, st)
-	p, err := ops.CreateProject(ctx, "test", ProjectSpec{Name: "Blog", Identity: "identified",
+	p, err := ops.CreateProject(ctx, "test", ProjectSpec{Name: "Blog",
 		AllowedOrigins: []string{"https://blog.example.com"}, Attributes: []string{"plan"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A name-only update keeps identity, origins and attributes.
+	// A name-only update keeps origins and attributes.
 	u, err := ops.UpdateProject(ctx, "test", ProjectSpec{ID: p.ID, Name: "Renamed"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if u.Name != "Renamed" || u.Identity != "identified" || len(u.AllowedOrigins) != 1 || len(u.Attributes) != 1 {
+	if u.Name != "Renamed" || len(u.AllowedOrigins) != 1 || len(u.Attributes) != 1 {
 		t.Fatalf("name-only update changed more than the name: %+v", u)
 	}
 	// A non-nil empty origins list clears; nil keeps.
@@ -130,7 +129,7 @@ func TestIssueKeyMintsAndResolves(t *testing.T) {
 	ctx := context.Background()
 	reg.Reload(ctx)
 	ops := NewOps(reg, st)
-	p, err := ops.CreateProject(ctx, "cli", ProjectSpec{Name: "b", Identity: "anonymous"})
+	p, err := ops.CreateProject(ctx, "cli", ProjectSpec{Name: "b"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +191,7 @@ func TestCreateProjectWithKey(t *testing.T) {
 	ctx := context.Background()
 
 	p, key, err := ops.CreateProjectWithKey(ctx, "api", ProjectSpec{
-		Name: "Blog", Identity: "anonymous"}, "default")
+		Name: "Blog"}, "default")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,8 +203,7 @@ func TestCreateProjectWithKey(t *testing.T) {
 	}
 
 	// A refused spec creates nothing.
-	if _, _, err := ops.CreateProjectWithKey(ctx, "api", ProjectSpec{
-		Identity: "anonymous"}, "default"); !errors.Is(err, ErrInvalid) {
+	if _, _, err := ops.CreateProjectWithKey(ctx, "api", ProjectSpec{}, "default"); !errors.Is(err, ErrInvalid) {
 		t.Errorf("missing name err = %v, want ErrInvalid", err)
 	}
 	if n := len(reg.Snapshot(ctx).Projects()); n != 1 {

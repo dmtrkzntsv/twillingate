@@ -31,7 +31,7 @@ func TestSeedEvidenceFixture(t *testing.T) {
 	var appID int64
 	for i, name := range []string{"app", "blog"} {
 		id, err := db.CreateProject(ctx, store.RegistryProject{
-			Name: name, Identity: "anonymous", AllowedOrigins: "[]"}, audit)
+			Name: name, AllowedOrigins: "[]"}, audit)
 		if err != nil {
 			t.Fatal(err)
 		}

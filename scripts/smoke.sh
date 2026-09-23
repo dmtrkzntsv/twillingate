@@ -23,7 +23,7 @@ export DATABASE_DSN="sqlite://$dir/smoke.db"
 # an ingest key via the CLI (against the same DATABASE_DSN) before the
 # server ever boots, instead of writing a local projects.json. A fresh
 # database's first project is id 1.
-./twillingate project create -name "Smoke" -identity anonymous \
+./twillingate project create -name "Smoke" \
     -origin "http://localhost" \
   || fail "project create failed"
 key=$(./twillingate key issue -project-id 1 -label smoke | grep -o 'ak_[0-9a-f]*' | head -1)

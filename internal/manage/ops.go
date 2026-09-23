@@ -9,7 +9,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/dmtrkzntsv/twillingate/internal/config"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
@@ -75,7 +74,7 @@ func (o *Ops) written(ctx context.Context, spec ProjectSpec, reloaded bool) *Pro
 	// Read the held snapshot without polling, so the pending reload is left
 	// for the caller's next read.
 	cur := o.Reg.snap.Load().Project(spec.ID)
-	p := &Project{ID: spec.ID, Name: spec.Name, Identity: spec.Identity,
+	p := &Project{ID: spec.ID, Name: spec.Name,
 		AllowedOrigins: spec.AllowedOrigins, Attributes: spec.Attributes}
 	if cur != nil {
 		p.Archived = cur.Archived
@@ -85,14 +84,14 @@ func (o *Ops) written(ctx context.Context, spec ProjectSpec, reloaded bool) *Pro
 
 // ProjectSpec is the caller's view of a project. On create, Name is
 // required and ID is ignored. On update, ID selects the row and every
-// other field merges: an empty Name or Identity keeps the current value,
-// a nil slice keeps the current list, a non-nil slice replaces it — so an
-// empty non-nil AllowedOrigins clears the origins. JSON `[]` decodes to a
+// other field merges: an empty Name keeps the current value, a nil slice
+// keeps the current list, a non-nil slice replaces it — so an empty
+// non-nil AllowedOrigins clears the origins. JSON `[]` decodes to a
 // non-nil empty slice and an omitted field to nil, which is what lets the
 // API express both without a second field.
 type ProjectSpec struct {
 	ID             int64
-	Name, Identity string
+	Name           string
 	AllowedOrigins []string
 	Attributes     []string
 }
@@ -102,15 +101,6 @@ type ProjectSpec struct {
 func (sp *ProjectSpec) validate() error {
 	if strings.TrimSpace(sp.Name) == "" {
 		return fmt.Errorf("%w: name must not be empty", ErrInvalid)
-	}
-	if sp.Identity == "" {
-		sp.Identity = config.IdentityAnonymous
-	}
-	switch sp.Identity {
-	case config.IdentityAnonymous, config.IdentityIdentified:
-	default:
-		return fmt.Errorf("%w: identity must be %q or %q, got %q", ErrInvalid,
-			config.IdentityAnonymous, config.IdentityIdentified, sp.Identity)
 	}
 	for _, o := range sp.AllowedOrigins {
 		if o == "" {
@@ -135,7 +125,7 @@ func (sp *ProjectSpec) row() (store.RegistryProject, error) {
 	if err != nil {
 		return store.RegistryProject{}, err
 	}
-	return store.RegistryProject{ID: sp.ID, Name: sp.Name, Identity: sp.Identity,
+	return store.RegistryProject{ID: sp.ID, Name: sp.Name,
 		AllowedOrigins: string(origins), Attributes: string(attrs)}, nil
 }
 
@@ -192,9 +182,6 @@ func (o *Ops) UpdateProject(ctx context.Context, actor string, spec ProjectSpec)
 	}
 	if spec.Name == "" {
 		spec.Name = cur.Name
-	}
-	if spec.Identity == "" {
-		spec.Identity = cur.Identity
 	}
 	if spec.AllowedOrigins == nil {
 		spec.AllowedOrigins = cur.AllowedOrigins

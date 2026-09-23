@@ -73,11 +73,11 @@ func TestProjectIDsIncludesArchived(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	audit := store.AuditEntry{Actor: "test", Action: "project.create"}
-	a, err := db.CreateProject(ctx, store.RegistryProject{Name: "A", Identity: "anonymous", AllowedOrigins: "[]"}, audit)
+	a, err := db.CreateProject(ctx, store.RegistryProject{Name: "A", AllowedOrigins: "[]"}, audit)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := db.CreateProject(ctx, store.RegistryProject{Name: "B", Identity: "anonymous", AllowedOrigins: "[]"}, audit)
+	b, err := db.CreateProject(ctx, store.RegistryProject{Name: "B", AllowedOrigins: "[]"}, audit)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -140,7 +140,7 @@ func TestOperationsOnClosedDB(t *testing.T) {
 			return db.WriteProductEvents(ctx, []store.ProductEvent{{ID: "e", ProjectID: 1, EventName: "n", ActorID: "u", TS: ts("2026-08-10T10:00:00Z")}})
 		},
 		"CreateProject": func() error {
-			_, err := db.CreateProject(ctx, store.RegistryProject{Name: "App", Identity: "anonymous", AllowedOrigins: "[]"},
+			_, err := db.CreateProject(ctx, store.RegistryProject{Name: "App", AllowedOrigins: "[]"},
 				store.AuditEntry{Actor: "test", Action: "project.create"})
 			return err
 		},

@@ -493,7 +493,7 @@ func seedDeclaredProject(t *testing.T, db *DB, attrs []string) int64 {
 		t.Fatal(err)
 	}
 	id, err := db.CreateProject(context.Background(), store.RegistryProject{
-		Name: "Blog", Identity: "anonymous", AllowedOrigins: "[]", Attributes: string(b)},
+		Name: "Blog", AllowedOrigins: "[]", Attributes: string(b)},
 		store.AuditEntry{Actor: "test", Action: "project.create"})
 	if err != nil {
 		t.Fatal(err)

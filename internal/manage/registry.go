@@ -19,7 +19,7 @@ import (
 
 type Project struct {
 	ID             int64
-	Name, Identity string
+	Name           string
 	AllowedOrigins []string
 	Attributes     []string
 	Archived       bool
@@ -83,7 +83,7 @@ func (r *Registry) Reload(ctx context.Context) error {
 		origins: make(map[int64]originSet, len(ps)),
 	}
 	for _, rp := range ps {
-		p := &Project{ID: rp.ID, Name: rp.Name, Identity: rp.Identity, Archived: rp.Archived}
+		p := &Project{ID: rp.ID, Name: rp.Name, Archived: rp.Archived}
 		if rp.AllowedOrigins != "" {
 			if err := json.Unmarshal([]byte(rp.AllowedOrigins), &p.AllowedOrigins); err != nil {
 				return fmt.Errorf("manage: project %d allowed_origins: %w", rp.ID, err)
@@ -124,10 +124,10 @@ func (r *Registry) Reload(ctx context.Context) error {
 // withhold swaps in a copy of the held snapshot that authorizes no key of
 // the given projects. It is the fail-closed half of a reload that failed
 // after a committed write: the held snapshot may still grant what the
-// write revoked (a disabled key, an archived or deleted project, a switch
-// to anonymous identity), so those projects' events are refused until a
-// reload succeeds. The version is forgotten so the next poll reloads even
-// if the snapshot underneath was already current.
+// write revoked (a disabled key, an archived or deleted project), so
+// those projects' events are refused until a reload succeeds. The version
+// is forgotten so the next poll reloads even if the snapshot underneath
+// was already current.
 func (r *Registry) withhold(ids ...int64) {
 	drop := make(map[int64]bool, len(ids))
 	for _, id := range ids {

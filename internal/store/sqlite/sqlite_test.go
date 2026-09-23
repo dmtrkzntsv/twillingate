@@ -123,7 +123,6 @@ func TestMigration003Schema(t *testing.T) {
 		{"events", "actor_id"}, {"events", "user_id"},
 		{"events", "group_id"}, {"events", "actor_kind"}, {"events", "os"},
 		{"events", "app_version"}, {"events", "received_at"},
-		{"projects", "identity"},
 	} {
 		if !hasColumn(t, db, c.table, c.column) {
 			t.Errorf("%s.%s missing", c.table, c.column)
