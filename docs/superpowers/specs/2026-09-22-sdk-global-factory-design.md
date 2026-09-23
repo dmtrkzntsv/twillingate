@@ -323,13 +323,13 @@ Everything the tag does, in one place. Nothing here is new; it is §1, §1a,
         data-key="ak_9f3c…" data-identity="anonymous"></script>
 ```
 
-**Attributes.** No row is added and none removed; two change meaning.
+**Attributes.** No row is added, two are removed (`data-user`,
+`data-group`), two change meaning.
 
 | Attribute | `init()` option | Meaning after this spec |
 | --- | --- | --- |
 | `data-key` | `key` | Required to auto-init. Without it the tag loads dormant for `init()` from code. |
 | `data-identity` | `identity` | `anonymous` (default) or `identified`. **Now the enforcement point:** anonymous never sends `$user_id`, `$user_name` or `$install_id`; identified sends them and, with consent, persists visitor id, user and group. |
-| `data-user`, `data-group` | `user`, `group` | Identity known when the page is rendered. |
 | `data-auto="off"` | `autoPageviews` | Disable automatic pageviews. Both default on. |
 | `data-mask-url` | `maskUrl` | Unchanged. |
 | `data-routing` | `routing` | Unchanged. |
@@ -337,9 +337,12 @@ Everything the tag does, in one place. Nothing here is new; it is §1, §1a,
 | `data-consent` | `consent` | Unchanged. |
 | `data-instance` | `create(name)` | **Now:** register this tag's instance as `twillingate.get(name)`. No `window.<name>`. The one attribute without an `init()` field. |
 
-Code-only, deliberately: `url`, `installId`, `flushInterval`, the
-environment overrides, `storage`, `taggedEvents`, `optOut`, `debug`. A tag
-keeps localStorage, always has tagged events on, and is debugged and opted
+Code-only, deliberately: `url`, `user`, `group`, `installId`,
+`flushInterval`, the environment overrides, `storage`, `taggedEvents`,
+`optOut`, `debug`. Identity is a fact the application knows, so it is set
+from code — `user` and `group` in `init()` or `create()`, or `identify()`
+and `group()` after login — never pasted into markup. A tag keeps
+localStorage, always has tagged events on, and is debugged and opted
 out through the two localStorage flags below.
 
 **What happens when the tag executes.** The script is `defer`, so it runs
@@ -388,9 +391,11 @@ and send of every instance (`debug(true)` writes it).
 `docs/twillingate.md`, in the same commit as the SDK, per CLAUDE.md:
 
 - the snippet table: `data-instance` now means "register under
-  `twillingate.get(name)`"; no new rows; the parity sentence names the
-  one exception, `data-instance`, which maps to `create()`'s name, and the
-  code-only list grows by `storage`, `taggedEvents`, `optOut` and `debug`;
+  `twillingate.get(name)`"; the `data-user`/`data-group` row is removed;
+  no new rows; the parity sentence names the one exception,
+  `data-instance`, which maps to `create()`'s name, and the code-only
+  list grows by `user`, `group`, `storage`, `taggedEvents`, `optOut` and
+  `debug`;
 - the SDK-only example: no `instance`, `autoPageviews` on by default,
   `debug`, `storage`, `optOut`, `taggedEvents`;
 - the runtime API list: `onPage`, `onEvent`, `create`, `get`, `optOut`,
@@ -445,7 +450,7 @@ Go:
 
 - `internal/api/docs_sync_test.go` SDK symbols gain `onPage`, `onEvent`,
   `create`, `get`, `optOut`, `debug`, `storage`, `taggedEvents`,
-  `twillingate_debug`;
+  `twillingate_debug` and lose `data-user` and `data-group`;
 - `internal/server/twillingate_script_test.go` markers gain
   `twillingate_debug` and `data-twillingate-event`;
 - the SDK's tag-to-option parity test gets one named exception,
@@ -457,6 +462,8 @@ Commit as `feat(sdk)!`. The release note lists:
 
 - `window.<name>` globals from `data-instance` are gone; use
   `twillingate.get(name)`;
+- `data-user` and `data-group` are gone; set identity from code with the
+  `user` and `group` options or `identify()` and `group()`;
 - the `instance` option is gone; use `twillingate.create(name, opts)`;
 - an anonymous instance no longer sends `$user_id`, `$user_name` or
   `$install_id`, and `identify()` is inert on it;
