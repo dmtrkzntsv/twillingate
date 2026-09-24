@@ -237,10 +237,10 @@ func TestHeaderKeyBeatsBodyKey(t *testing.T) {
 
 func TestRoutesViewsAndCustom(t *testing.T) {
 	q, h := testServer(t)
-	body := `{"key":"` + testKey + `","attributes":{"$platform":"iOS","$os":"ios","$app_version":"2.4.1"},
+	body := `{"key":"` + testKey + `","attributes":{"$platform":"iOS","$os":"ios","$app_version":"2.4.1","$app_locale":"fr"},
 	  "events":[
-	    {"name":"$page_view","attributes":{"$host":"app.com","$path":"/pricing","$utm_source":"hn","$display_width":1920,"$display_height":1080,"$locale":"de-DE"}},
-	    {"name":"$screen_view","attributes":{"$screen":"/settings","$os_version":"17.2","$device_model":"iPhone15,2","$locale":"en-US","$session_id":"s1"}},
+	    {"name":"$page_view","attributes":{"$host":"app.com","$path":"/pricing","$utm_source":"hn","$display_width":1920,"$display_height":1080,"$browser_locale":"de-DE"}},
+	    {"name":"$screen_view","attributes":{"$screen":"/settings","$os_version":"17.2","$device_model":"iPhone15,2","$browser_locale":"en-US","$session_id":"s1"}},
 	    {"name":"subscribed","attributes":{"plan":"pro"}}
 	  ]}`
 	w := post(h, body, map[string]string{"Origin": testOrigin})
@@ -255,7 +255,7 @@ func TestRoutesViewsAndCustom(t *testing.T) {
 	}
 	web, app := q.views[0], q.views[1]
 	if web.Kind != "web" || web.Host != "app.com" || web.Path != "/pricing" || web.UTMSource != "hn" ||
-		web.Country != "DE" || web.DisplayWidth != 1920 || web.DisplayHeight != 1080 || web.Locale != "de-DE" {
+		web.Country != "DE" || web.DisplayWidth != 1920 || web.DisplayHeight != 1080 || web.BrowserLocale != "de-DE" || web.AppLocale != "fr" {
 		t.Errorf("web view = %+v", web)
 	}
 	// The environment is declared, lower-cased and never parsed: a Chrome
@@ -264,11 +264,11 @@ func TestRoutesViewsAndCustom(t *testing.T) {
 		t.Errorf("web environment = platform %q os %q browser %q/%q device %q", web.Platform, web.OS, web.Browser, web.BrowserVersion, web.Device)
 	}
 	if app.Kind != "app" || app.Path != "/settings" || app.Platform != "ios" || app.OS != "ios" || app.OSVersion != "17.2" ||
-		app.AppVersion != "2.4.1" || app.DeviceModel != "iPhone15,2" || app.Locale != "en-US" ||
+		app.AppVersion != "2.4.1" || app.DeviceModel != "iPhone15,2" || app.BrowserLocale != "en-US" || app.AppLocale != "fr" ||
 		app.SessionID != "s1" || app.Country != "DE" || app.Browser != "unknown" || app.Device != "unknown" {
 		t.Errorf("app view = %+v", app)
 	}
-	if len(q.events) != 1 || q.events[0].Platform != "ios" || q.events[0].OS != "ios" || q.events[0].AppVersion != "2.4.1" {
+	if len(q.events) != 1 || q.events[0].Platform != "ios" || q.events[0].OS != "ios" || q.events[0].AppVersion != "2.4.1" || q.events[0].AppLocale != "fr" {
 		t.Errorf("events = %+v", q.events)
 	}
 }

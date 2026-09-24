@@ -123,21 +123,21 @@ func TestWriteViewsAppRoundTrip(t *testing.T) {
 		ID: "018f-a", ProjectID: 1, TS: tsV, ReceivedAt: tsV,
 		Kind: "app", ActorID: "act1", ActorKind: store.ActorInstall, UserID: "u1", GroupID: "org9", SessionID: "s1",
 		Path: "/settings", Platform: "ios", OS: "ios", OSName: "iOS 17.2", AppVersion: "2.4.1",
-		OSVersion: "17.2", DeviceModel: "iPhone15,2", Locale: "en-US", Country: "DE",
+		OSVersion: "17.2", DeviceModel: "iPhone15,2", BrowserLocale: "en-US", AppLocale: "de", Country: "DE",
 	}}
 	if err := db.WriteViews(ctx, in); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 
-	var path, osCol, platform, osName, group, session, locale string
+	var path, osCol, platform, osName, group, session, locale, appLocale string
 	if err := db.db.QueryRowContext(ctx,
-		`SELECT path, os, platform, os_name, group_id, session_id, locale FROM views WHERE id=?`, "018f-a").
-		Scan(&path, &osCol, &platform, &osName, &group, &session, &locale); err != nil {
+		`SELECT path, os, platform, os_name, group_id, session_id, browser_locale, app_locale FROM views WHERE id=?`, "018f-a").
+		Scan(&path, &osCol, &platform, &osName, &group, &session, &locale, &appLocale); err != nil {
 		t.Fatalf("read back: %v", err)
 	}
 	if path != "/settings" || osCol != "ios" || platform != "ios" || osName != "iOS 17.2" || group != "org9" ||
-		session != "s1" || locale != "en-US" {
-		t.Errorf("got %q %q %q %q %q %q %q", path, osCol, platform, osName, group, session, locale)
+		session != "s1" || locale != "en-US" || appLocale != "de" {
+		t.Errorf("got %q %q %q %q %q %q %q %q", path, osCol, platform, osName, group, session, locale, appLocale)
 	}
 }
 

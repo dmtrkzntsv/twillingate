@@ -71,11 +71,12 @@ func seedViewDay(t *testing.T, db *DB) {
 	v2.ReferrerSource = "google"
 	v2.UTMSource, v2.UTMMedium, v2.UTMCampaign = "hn", "social", "launch"
 	v2.DisplayWidth, v2.DisplayHeight = 390, 844
+	v2.BrowserLocale, v2.AppLocale = "de-DE", "en"
 	app := func(id, actor, path, session, os, osv, model, country string, ts time.Time) store.View {
 		return store.View{ID: id, TS: ts, ActorID: actor, ActorKind: store.ActorInstall, Kind: "app",
 			Platform: os, SessionID: session, Path: path, OS: os, OSVersion: osv, AppVersion: "2.4.1",
 			Device: "unknown", Browser: "unknown",
-			DeviceModel: model, Locale: "en-US", Country: country}
+			DeviceModel: model, BrowserLocale: "en-US", AppLocale: "en", Country: country}
 	}
 	seedViews(t, db,
 		web("1", "v1", "/a", at(10, 0)), web("2", "v1", "/b", at(10, 10)), web("3", "v1", "/a", at(12, 0)), v2,

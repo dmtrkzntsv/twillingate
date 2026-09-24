@@ -106,6 +106,7 @@ func TestViewsBreakdownEveryDimension(t *testing.T) {
 		"kinds": "web", "paths": "/post-1", "hosts": "blog.example.com", "utm": "newsletter",
 		"countries": "US", "platforms": "web", "os": "ios", "browsers": "126", "app_versions": "2.4.1",
 		"devices": "iPhone15,3", "displays": "1920x1080", "consent": "given",
+		"locales": "de-DE",
 	}
 	for dim, needle := range want {
 		res := callTool(t, cs, "views_breakdown", map[string]any{

@@ -65,6 +65,11 @@ func TestMigration016LeavesHistoryUnmeasured(t *testing.T) {
 	if g := groupsOf(t, db, live); !g.Valid || g.Int64 != 1 {
 		t.Fatalf("live unique_groups = %+v, want 1", g)
 	}
+	// The rollup is today's code, which names every column the latest
+	// schema has; the 016 behaviour under test survives later migrations.
+	if err := db.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
 	if err := db.AggregateProductDay(ctx, 1, day("2026-09-10"), []string{"plan"}, 50); err != nil {
 		t.Fatal(err)
 	}

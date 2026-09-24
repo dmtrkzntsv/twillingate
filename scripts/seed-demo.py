@@ -228,6 +228,10 @@ def seed_app(cur, pid, name, profile, today, sends_ids):
             platform = pick(PLATFORMS)
             version = pick(weights)
             session = str(uuid.uuid4())
+            # The app is translated into the device language's family, or
+            # falls back to English when it is not.
+            browser_locale = pick(LOCALES)
+            app_locale = browser_locale[:2] if random.random() < 0.7 else "en"
             start = random.randint(6, 22) * 3600 + random.randint(0, 3599)
             for s in range(random.randint(1, 6)):
                 ts = datetime.datetime.combine(day, datetime.time()) + datetime.timedelta(
@@ -235,8 +239,8 @@ def seed_app(cur, pid, name, profile, today, sends_ids):
                 cur.execute(
                     "INSERT INTO views (id, project_id, ts, received_at, kind, actor_id, actor_kind, user_id,"
                     " group_id, session_id, path, platform, os, app_version, os_version,"
-                    " browser, device, device_model, locale, country, consent)"
-                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    " browser, device, device_model, browser_locale, app_locale, country, consent)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (str(uuid.uuid4()), pid, ts.strftime("%Y-%m-%dT%H:%M:%SZ"),
                      ts.strftime("%Y-%m-%dT%H:%M:%SZ"), "app", actor,
                      "user" if sends_ids else "connection",
@@ -245,7 +249,7 @@ def seed_app(cur, pid, name, profile, today, sends_ids):
                      session, pick(SCREENS), platform, platform, version,
                      pick(OS_VERSIONS[platform]), "unknown", "unknown",
                      pick(DEVICE_MODELS[platform]),
-                     pick(LOCALES), pick(COUNTRIES),
+                     browser_locale, app_locale, pick(COUNTRIES),
                      1 if sends_ids else random.choice([0, 1])))
                 views += 1
     return views

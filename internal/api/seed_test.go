@@ -68,6 +68,8 @@ func newTestHost(t *testing.T) (*host, *mcp.ClientSession) {
 	      VALUES (1,'2026-08-20','US',12,25)`)
 	seed(`INSERT INTO agg_views_displays (project_id, day, display, visitors, views)
 	      VALUES (1,'2026-08-20','1920x1080',6,11)`)
+	seed(`INSERT INTO agg_views_locales (project_id, day, browser_locale, app_locale, visitors, views)
+	      VALUES (1,'2026-08-20','de-DE','en',2,4)`)
 	seed(`INSERT INTO agg_views_consent (project_id, day, consent, visitors, views)
 	      VALUES (1,'2026-08-20','given',3,6)`)
 	seed(`INSERT INTO views (id, project_id, ts, received_at, kind, actor_id, actor_kind, user_id, path, consent)

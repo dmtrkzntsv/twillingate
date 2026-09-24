@@ -51,7 +51,7 @@ func TestResolveAttributesSplitsReservedFromCustom(t *testing.T) {
 		"$kind": "web", "$os": "ios", "$app_version": "2.4.1", "$os_version": "17.2",
 		"$platform": "iOS", "$os_name": "iOS 17.2", "$browser": "Safari",
 		"$browser_version": "17", "$device": "mobile",
-		"$device_model": "iPhone15,2", "$locale": "en-US",
+		"$device_model": "iPhone15,2", "$browser_locale": "en-US", "$app_locale": "de",
 		"$host": "x", "$path": "/y", "$referrer": "https://z", "$screen": "/settings",
 		"$display_width": float64(1920), "$display_height": float64(1080),
 		"plan": "pro", "count": float64(3), "ok": true, "nothing": nil,
@@ -72,7 +72,7 @@ func TestResolveAttributesSplitsReservedFromCustom(t *testing.T) {
 	if r.Platform != "iOS" || r.OSName != "iOS 17.2" || r.Browser != "Safari" || r.BrowserVersion != "17" || r.Device != "mobile" {
 		t.Errorf("declared environment = %+v", r)
 	}
-	if r.DeviceModel != "iPhone15,2" || r.Locale != "en-US" {
+	if r.DeviceModel != "iPhone15,2" || r.BrowserLocale != "en-US" || r.AppLocale != "de" {
 		t.Errorf("device = %+v", r)
 	}
 	if r.Host != "x" || r.Path != "/y" || r.Referrer != "https://z" || r.Screen != "/settings" {
@@ -210,6 +210,18 @@ func TestResolveAttributesRejectsURL(t *testing.T) {
 	}
 	if len(r.Custom) != 0 {
 		t.Errorf("custom = %v, want empty", r.Custom)
+	}
+}
+
+// $locale became $browser_locale. The old key gets no alias: it warns as an
+// unknown reserved key like $url, so a stale client sees why.
+func TestResolveAttributesRejectsLocale(t *testing.T) {
+	r, unknown := resolveAttributes(map[string]any{"$locale": "en-US"})
+	if len(unknown) != 1 || unknown[0] != "$locale" {
+		t.Errorf("unknown = %v, want [$locale]", unknown)
+	}
+	if r.BrowserLocale != "" || len(r.Custom) != 0 {
+		t.Errorf("resolved = %+v, want nothing stored", r)
 	}
 }
 

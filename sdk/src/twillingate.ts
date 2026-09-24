@@ -64,6 +64,8 @@ export interface InitOptions {
   platform?: string;
   /** Version of this client application ($app_version). */
   appVersion?: string;
+  /** Language this client application is shown in ($app_locale), e.g. "de". Not detected. */
+  appLocale?: string;
   /** Automatic pageviews incl. pushState/popstate. Default true. */
   autoPageviews?: boolean;
   /** Track elements carrying data-twillingate-event. Default true. */
@@ -203,6 +205,7 @@ export class Twillingate implements Subscriber {
   private kind = "web";
   private platform: string | null = null;
   private appVersion: string | null = null;
+  private appLocale: string | null = null;
   private flushInterval = 10000;
   private k: Keys;
   private driver: StorageDriver = resolveStorage(undefined);
@@ -284,6 +287,7 @@ export class Twillingate implements Subscriber {
     // The one async detection input; read at flush time, not awaited.
     primePlatformVersion();
     this.appVersion = opts.appVersion || null;
+    this.appLocale = opts.appLocale || null;
     if (opts.flushInterval !== undefined) this.flushInterval = opts.flushInterval;
     // Resolved before any pageview can fire, so data-mask-url covers the
     // entry page -- the one most likely to carry an identifier.
@@ -707,7 +711,8 @@ export class Twillingate implements Subscriber {
     if (d.browserVersion) a.$browser_version = d.browserVersion;
     a.$device = d.device;
     if (this.appVersion) a.$app_version = this.appVersion;
-    if (typeof navigator !== "undefined" && navigator.language) a.$locale = navigator.language;
+    if (this.appLocale) a.$app_locale = this.appLocale;
+    if (typeof navigator !== "undefined" && navigator.language) a.$browser_locale = navigator.language;
     return a;
   }
 

@@ -148,7 +148,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 				ID: id, ProjectID: p.ID, EventName: ev.Name,
 				TS: ts, ReceivedAt: received,
 				ActorID: actor, ActorKind: actorKind, UserID: user, GroupID: group,
-				Platform: platform, OS: osv, AppVersion: rv.AppVersion,
+				Platform: platform, OS: osv, AppVersion: rv.AppVersion, AppLocale: rv.AppLocale,
 				Consent:    consent,
 				Attributes: rv.Custom,
 			})
@@ -193,7 +193,8 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			Browser:        browser,
 			BrowserVersion: rv.BrowserVersion,
 			Device:         device,
-			AppVersion:     rv.AppVersion, DeviceModel: rv.DeviceModel, Locale: rv.Locale, Country: country,
+			AppVersion:     rv.AppVersion, AppLocale: rv.AppLocale, BrowserLocale: rv.BrowserLocale,
+			DeviceModel: rv.DeviceModel, Country: country,
 			Consent: consent,
 		}
 		// Bot filtering is the one thing still read off the User-Agent,
