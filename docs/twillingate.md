@@ -557,7 +557,7 @@ personal data. `$user_name` is kept only beside a `$user_id`. **The collector
 stores what it is sent.** What reaches it is decided by the tag's
 `data-identity` (or `identity` in code), so a project's privacy posture is the
 posture of its clients. The collector logs `project receives ids` the first
-time a project receives a `$user_id` or `$install_id` (once per kind per process),
+time a project stores a `$user_id` or `$install_id` (once per kind per process),
 which is how to confirm a marketing site's tag sends nothing.
 
 ---

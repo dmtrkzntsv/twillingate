@@ -784,6 +784,12 @@ func TestUserNameNeedsAUserId(t *testing.T) {
 
 func TestFirstIdsAreLoggedOncePerKind(t *testing.T) {
 	_, s, buf := newLoggingServer(t)
+	// A rejected view carries $user_id but stores nothing, so it must not
+	// trip the log: the first store, not the first sighting, is what counts.
+	post(s, `{"key":"`+testKey+`","attributes":{"$user_id":"u1"},"events":[{"name":"$page_view"}]}`, nil)
+	if buf.Len() != 0 {
+		t.Fatalf("rejected batch logged something: %s", buf.String())
+	}
 	userBatch := `{"key":"` + testKey + `","attributes":{"$user_id":"u1"},"events":[{"name":"a"}]}`
 	post(s, userBatch, nil)
 	post(s, userBatch, nil)
@@ -801,6 +807,31 @@ func TestFirstIdsAreLoggedOncePerKind(t *testing.T) {
 	}
 	if strings.Contains(out, "kind=connection") {
 		t.Errorf("a connection-hash actor must not be logged as an id:\n%s", out)
+	}
+}
+
+// A name arrives only beside a row that is stored: a rejected view and a
+// bot-filtered view carry no identity into the identities table.
+func TestNamesFollowStoredRowsOnly(t *testing.T) {
+	q, h := testServer(t)
+	// no $path and no $screen: the view is rejected
+	post(h, `{"key":"`+testKey+`","attributes":{"$user_id":"u1","$user_name":"Ada"},
+	  "events":[{"name":"$page_view"}]}`, nil)
+	if len(q.views) != 0 || len(q.identities) != 0 {
+		t.Fatalf("rejected view stored views=%d identities=%+v", len(q.views), q.identities)
+	}
+	// a crawler: accepted and silently dropped, names included
+	post(h, `{"key":"`+testKey+`","attributes":{"$user_id":"u1","$user_name":"Ada"},
+	  "events":[{"name":"$page_view","attributes":{"$path":"/"}}]}`,
+		map[string]string{"User-Agent": "Googlebot/2.1 (+http://www.google.com/bot.html)"})
+	if len(q.views) != 0 || len(q.identities) != 0 {
+		t.Fatalf("bot view stored views=%d identities=%+v", len(q.views), q.identities)
+	}
+	// a stored view carries the name
+	post(h, `{"key":"`+testKey+`","attributes":{"$user_id":"u1","$user_name":"Ada"},
+	  "events":[{"name":"$page_view","attributes":{"$path":"/"}}]}`, nil)
+	if len(q.views) != 1 || len(q.identities) != 1 || q.identities[0].Name != "Ada" {
+		t.Fatalf("stored view: views=%d identities=%+v", len(q.views), q.identities)
 	}
 }
 

@@ -28,7 +28,7 @@ func TestIntegrationGuideWebUsesCollectorURL(t *testing.T) {
 	}
 	// out is the tool's JSON envelope, so the markdown's own quotes come
 	// back JSON-escaped (\") — match that, not a bare ".
-	for _, want := range []string{`data-identity=\"identified\"`, "twillingate.identify", "twillingate.reset", "optOut", "keyed by the build rather than counted as web"} {
+	for _, want := range []string{`data-identity=\"identified\"`, "twillingate.identify", "twillingate.reset", "optOut", "twillingate_ignore", "without data-key", "keyed by the build rather than counted as web"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("guidance missing %q", want)
 		}

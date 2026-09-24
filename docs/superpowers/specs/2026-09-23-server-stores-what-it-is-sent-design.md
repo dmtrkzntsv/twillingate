@@ -90,11 +90,20 @@ What the mode gates today, by function:
 ### Storage — migration `017_drop_identity.sql`
 
 ```sql
+UPDATE views SET user_id = ''
+WHERE user_id <> ''
+  AND project_id IN (SELECT id FROM projects WHERE identity = 'anonymous');
+UPDATE events SET user_id = ''
+WHERE user_id <> ''
+  AND project_id IN (SELECT id FROM projects WHERE identity = 'anonymous');
 UPDATE views SET actor_kind = 'connection'
 WHERE actor_kind IN ('user', 'install')
   AND project_id IN (SELECT id FROM projects WHERE identity = 'anonymous');
 UPDATE events SET actor_kind = 'connection'
 WHERE actor_kind IN ('user', 'install')
+  AND project_id IN (SELECT id FROM projects WHERE identity = 'anonymous');
+DELETE FROM agg_identity_daily
+WHERE kind = 'user'
   AND project_id IN (SELECT id FROM projects WHERE identity = 'anonymous');
 ALTER TABLE projects DROP COLUMN identity;
 ```
@@ -107,9 +116,15 @@ in review: raw rows an anonymous project received with a `$user_id` or
 and with the daily-pass gate gone each day's hashes would become a cohort
 that never returns for the whole raw window. The migration re-kinds them
 to `connection`, which is what a daily-rotating hash is, while the column
-still exists; nothing else about the rows changes. It is SQL rather than a
-`dataSteps` entry because steps run after their version's SQL, when the
-column is gone. `store.RegistryProject`,
+still exists; nothing else about the rows changes. A second review finding:
+those same rows still carried the hashed `user_id` and had per-day `user`
+rows in `agg_identity_daily`, so the ungated users page and `identities`
+tool would list rotating hashes as people until they expired. The
+migration also clears the hashed `user_id` on those rows and deletes their
+`agg_identity_daily` rows of kind `user`; `group` rows are untouched, since
+groups were always stored raw. It is SQL rather than a `dataSteps` entry
+because steps run after their version's SQL, when the column is gone.
+`store.RegistryProject`,
 `manage.Project`, `manage.ProjectSpec` and the registry's `SELECT`,
 `INSERT` and `UPDATE` lose the field; `config.IdentityAnonymous` and
 `config.IdentityIdentified` are deleted.

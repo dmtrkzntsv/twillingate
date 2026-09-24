@@ -151,8 +151,9 @@ NULL — but a day it rolls up is then unmeasured for good.
 The project's identity mode is gone. The collector stores `$user_id`,
 `$user_name` and `$install_id` exactly as a client sends them, for every
 project; what is sent is decided by the tag (`data-identity`, anonymous by
-default) or by whatever a hand-written client posts. The migration is one
-`ALTER TABLE … DROP COLUMN`; no value is rewritten.
+default) or by whatever a hand-written client posts. The migration cleans
+up what the old anonymous mode hid before dropping the column with
+`ALTER TABLE … DROP COLUMN`; see below for exactly what it rewrites.
 
 **Upgrade at least a day after the release that carries the SDK factory
 (#48) has been on this collector.** The served SDK is cached for a day; a
@@ -176,12 +177,15 @@ What changes on the day:
 - Ids hashed before the upgrade stay hashed and never link to ids received
   after it. Raw rows an `anonymous` project received with a `$user_id` or
   `$install_id` are re-kinded to `connection` by the migration, so the
-  daily pass does not turn those rotating hashes into cohorts; nothing else
-  is rewritten and there is nothing to backfill.
+  daily pass does not turn those rotating hashes into cohorts; those same
+  rows have their hashed `user_id` cleared, and their per-day `user` rows
+  in `agg_identity_daily` are deleted, so the users page and the
+  `identities` tool never list an old rotating hash as a person. Group
+  rows and everything else stay; there is nothing to backfill.
 - The collector logs `project receives ids` (with the project id and the
   kind, `user` or `install`) once per project and kind per process, the
-  first time a batch carries one. Watch for it after the upgrade on a
-  project that should send none.
+  first time a stored view or event carries one. Watch for it after the
+  upgrade on a project that should send none.
 
 There is no down migration. The previous binary reads a column that no
 longer exists and refuses to start against the upgraded file.

@@ -89,6 +89,20 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	var res ingestResult
 	var names []store.Identity
 	var sawUser, sawInstall bool
+	// noteRow records an id kind seen and any display name carried by a row
+	// that is actually stored — called once beside each Enqueue call below,
+	// never for a row that is rejected or bot-filtered, so a batch that
+	// stores nothing leaves no trace in the identities table or the
+	// "project receives ids" log.
+	noteRow := func(actorKind string, rv resolved) {
+		switch actorKind {
+		case store.ActorUser:
+			sawUser = true
+		case store.ActorInstall:
+			sawInstall = true
+		}
+		names = append(names, identityNames(rv)...)
+	}
 	for i, ev := range env.Events {
 		rv, unknown := resolveAttributes(mergeAttributes(env.Attributes, ev.Attributes))
 		for _, k := range unknown {
@@ -110,13 +124,6 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		}
 
 		actor, actorKind, user, group := resolveIdentity(rv, salt, ip, ua, hashKey)
-		switch actorKind {
-		case store.ActorUser:
-			sawUser = true
-		case store.ActorInstall:
-			sawInstall = true
-		}
-		names = append(names, identityNames(rv)...)
 
 		// The environment is declared, validated and never parsed: the
 		// User-Agent is read for nothing but the bot check below. $os and
@@ -140,6 +147,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 				Platform: platform, OS: osv, AppVersion: rv.AppVersion,
 				Attributes: rv.Custom,
 			})
+			noteRow(actorKind, rv)
 			res.Accepted++
 			continue
 		}
@@ -206,6 +214,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			res.warn(i, "$display_height %q is not a positive integer, ignored", rv.displayHeightRaw)
 		}
 		s.queue.EnqueueView(v)
+		noteRow(actorKind, rv)
 		res.Accepted++
 	}
 

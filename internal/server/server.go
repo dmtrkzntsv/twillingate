@@ -86,7 +86,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.mux.Serve
 // Counters exposes ingest counters for the periodic summary log.
 func (s *Server) Counters() *keyCounters { return s.counters }
 
-// noteIDs logs "project receives ids" the first time a batch for the
+// noteIDs logs "project receives ids" the first time a stored row for the
 // project resolves an actor of kind (user or install) in this process.
 func (s *Server) noteIDs(projectID int64, kind string) {
 	key := strconv.FormatInt(projectID, 10) + "/" + kind
