@@ -4,6 +4,8 @@
 select name from twillingate.projects where id = '${params.project}'
 ```
 
+<ReportNav project={params.project} current="views" />
+
 <ButtonGroup name=range title="Date range">
     <ButtonGroupItem value="1" valueLabel="Last 1 day" />
     <ButtonGroupItem value="7" valueLabel="Last 7 days" default />

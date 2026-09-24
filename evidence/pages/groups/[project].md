@@ -4,6 +4,8 @@
 select name from twillingate.projects where id = '${params.project}'
 ```
 
+<ReportNav project={params.project} current="groups" />
+
 Groups need no user ids. `group_id` identifies an organization rather than a
 natural person and is stored as sent, so this page fills for any client that
 sends `$group_id`.

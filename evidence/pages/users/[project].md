@@ -4,6 +4,8 @@
 select name from twillingate.projects where id = '${params.project}'
 ```
 
+<ReportNav project={params.project} current="users" />
+
 Per-user rows appear once this project's clients send a `$user_id`: a tag
 with `data-identity="identified"` after `identify()`, or a backend that posts
 one. A project whose clients send none has nothing here; group reporting
