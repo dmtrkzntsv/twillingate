@@ -1,6 +1,6 @@
 # The server stores what it is sent
 
-Status: draft
+Status: implemented
 Date: 2026-09-23
 
 ## Sequencing
@@ -90,16 +90,26 @@ What the mode gates today, by function:
 ### Storage — migration `017_drop_identity.sql`
 
 ```sql
--- The project's identity mode is gone: the collector stores what a client
--- sends, and the served SDK's identity mode decides what is sent
--- (docs/twillingate.md, Identity). Data already stored is untouched: ids
--- hashed under the old anonymous mode stay hashed, and cannot be linked
--- to anything the client sends from now on.
+UPDATE views SET actor_kind = 'connection'
+WHERE actor_kind IN ('user', 'install')
+  AND project_id IN (SELECT id FROM projects WHERE identity = 'anonymous');
+UPDATE events SET actor_kind = 'connection'
+WHERE actor_kind IN ('user', 'install')
+  AND project_id IN (SELECT id FROM projects WHERE identity = 'anonymous');
 ALTER TABLE projects DROP COLUMN identity;
 ```
 
 SQLite 3.35 supports `DROP COLUMN`; modernc.org/sqlite v1.57 ships a newer
-engine. No `dataSteps` entry, no value rewrite. `store.RegistryProject`,
+engine. Ids hashed under the old anonymous mode stay hashed and cannot be
+linked to anything the client sends from now on. One value rewrite, found
+in review: raw rows an anonymous project received with a `$user_id` or
+`$install_id` carry `actor_kind` user/install over a daily-rotating hash,
+and with the daily-pass gate gone each day's hashes would become a cohort
+that never returns for the whole raw window. The migration re-kinds them
+to `connection`, which is what a daily-rotating hash is, while the column
+still exists; nothing else about the rows changes. It is SQL rather than a
+`dataSteps` entry because steps run after their version's SQL, when the
+column is gone. `store.RegistryProject`,
 `manage.Project`, `manage.ProjectSpec` and the registry's `SELECT`,
 `INSERT` and `UPDATE` lose the field; `config.IdentityAnonymous` and
 `config.IdentityIdentified` are deleted.
