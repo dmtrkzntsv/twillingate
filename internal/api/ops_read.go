@@ -169,6 +169,7 @@ var viewsDimensions = map[string]viewsDimension{
 	"app_versions": {"v_views_app_versions", []string{"platform", "app_version"}},
 	"devices":      {"v_views_devices", []string{"device", "device_model"}},
 	"displays":     {"v_views_displays", []string{"display"}},
+	"consent":      {"v_views_consent", []string{"consent"}},
 }
 
 // dimensionNames lists the enum, sorted, for the schema text and errors.
@@ -183,7 +184,7 @@ func dimensionNames() string {
 
 type breakdownIn struct {
 	rangeIn
-	Dimension string `json:"dimension" jsonschema:"one of: app_versions, browsers, countries, devices, displays, hosts, kinds, os, paths, platforms, referrers, utm"`
+	Dimension string `json:"dimension" jsonschema:"one of: app_versions, browsers, consent, countries, devices, displays, hosts, kinds, os, paths, platforms, referrers, utm"`
 	Limit     int    `json:"limit,omitempty" jsonschema:"top-N rows, default 20"`
 }
 
@@ -225,7 +226,7 @@ func (h *host) register(r *registrar) {
 		Description: "Daily views for one project: visitors, views, sessions, bounces, duration, with derived bounce_rate and avg_session_sec. Sums every kind (web, app, cli, …) unless kind is given. Includes yesterday and today (live)."},
 		h.viewsOverview)
 	expose(r, spec{Name: "views_breakdown", Annotations: ro, Method: "GET", Path: p + "/views/breakdown",
-		Description: "Top values for one dimension of a project's views over a date range: kinds, paths, hosts, referrers, utm, countries, platforms, os, browsers, app_versions, devices or displays. Two-key dimensions (os, browsers, app_versions, devices) return both columns. os, browser and device values are lower-case closed vocabularies with other (outside the list) and unknown (not declared) as distinct floors; platform is the surface (web, ios, electron, …) and never empty."},
+		Description: "Top values for one dimension of a project's views over a date range: kinds, paths, hosts, referrers, utm, countries, platforms, os, browsers, app_versions, devices, displays or consent. Two-key dimensions (os, browsers, app_versions, devices) return both columns. os, browser and device values are lower-case closed vocabularies with other (outside the list) and unknown (not declared) as distinct floors; platform is the surface (web, ios, electron, …) and never empty. consent is given, none or unknown (sent without $consent, or stored before it existed)."},
 		h.viewsBreakdown)
 	expose(r, spec{Name: "product_events", Annotations: ro, Method: "GET", Path: p + "/product/events",
 		Description: "Product events per day: count and unique users per event name, plus daily totals. Unconditional — no attribute declaration is required to see it."},
