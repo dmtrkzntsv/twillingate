@@ -47,36 +47,53 @@ tables that have drifted apart:
 
 1. **One raw table, `events`, holds views and product events.** Migration
    020 rebuilds `events` with every column `views` has, plus `event_name`,
-   `attributes` and an `is_view` flag, copies both raw tables in, and drops
+   `attributes` and a `family` column, copies both raw tables in, and drops
    `views`.
    - **Column set:** the union of the two tables today. Each column keeps
      the type and default it has on `views`.
-   - **`is_view`** (0/1) is written by ingest, from the same `viewName()`
-     that routes today. The database holds no list of view names.
+   - **`family`** is `views` or `product`, the prefix of everything the
+     row feeds (`v_views_*` / `v_product_*`, `agg_views_*` /
+     `agg_product_*`, `views_overview` / `product_events`). A text column
+     rather than a 0/1 flag, so a raw row says what it is and a third
+     family later needs no new column (chosen). Ingest writes it, from the
+     same `viewName()` that routes today; the database holds no list of
+     families or view names.
    - **`day`** is a stored generated column, as on `views` today.
 2. **What moves.** Raw tables only hold days not yet rolled up (30 days by
    default), so the copy is about a month of rows, not history.
    - Copied views get `event_name` `$page_view` for kind `web` and
      `$screen_view` otherwise, and `attributes` `'{}'`. The original name
      was never stored, and `viewName()` pairs them the same way.
-   - Copied product events get `is_view = 0`, and empty environment and
+   - Copied views get `family` `views`; copied product events get
+     `product`, and empty environment and
      location columns: they never kept those values.
 3. **Only the raw table merges; the two families stay.**
    - Every `agg_views_*` and `agg_product_*` table, every `v_*` view name
      and column, and every tool keeps its meaning and numbers.
-   - The views family reads `is_view = 1`. The product family
+   - The views family reads `family = 'views'`. The product family
      (`product_events`, `product_attributes`, `v_product_*`) reads
-     `is_view = 0` (chosen: views do not count as product events).
+     `family = 'product'` (chosen: views do not count as product events).
    - Identity and retention read both, as they read both tables today.
-   - `v_events_flat` holds both, with `is_view` among its base columns.
+   - `v_events_flat` holds both, with `family` among its base columns.
+   - **Code never reads `events` directly.** Two internal views,
+     `raw_views` (`WHERE family = 'views'`) and `raw_product`
+     (`WHERE family = 'product'`), are the only read path for Go code and
+     for every `v_*` definition. The table itself is only written to,
+     deleted from and read by these two views. Views outnumber product
+     events by about 20:1, so a product query that forgot the filter
+     would silently count every pageview; with no unfiltered read path,
+     there is no filter to forget. SQLite flattens a simple filtering view
+     into the outer query, so the indexes still apply; the query-plan
+     test checks that. `raw_views` and `raw_product` are not `v_*` names,
+     so the `query` tool never exposes them.
 4. **Indexes**, sized to what the two families filter on:
-   - `(project_id, is_view, day)` serves every live half, replacing
+   - `(project_id, family, day)` serves every live half, replacing
      `idx_views_project_day`;
    - `(project_id, event_name, ts)`, `(project_id, actor_id, ts)` and
      `(project_id, session_id, ts)` carry over from the two tables.
 5. **Raw retention and aggregation keep their two settings.**
-   - `AggregateViewDay` rolls up and deletes the day's `is_view = 1` rows;
-     `AggregateProductDay` does the same for the `is_view = 0` rows.
+   - `AggregateViewDay` rolls up and deletes the day's `views` rows;
+     `AggregateProductDay` does the same for the `product` rows.
    - `RETENTION_VIEWS_RAW_DAYS` and `RETENTION_PRODUCT_RAW_DAYS` apply by
      flag.
    - Sessionization runs over view rows only, as it does now.
@@ -175,24 +192,36 @@ tables that have drifted apart:
 
 ## Migration 020
 
-1. Create `events_new` with the full column set and `is_view`.
+1. Create `events_new` with the full column set and `family`.
 2. `INSERT` the rows of `views`, then the rows of `events`, as decision 2
    says.
 3. Drop both tables, rename `events_new` to `events`, and create the
    indexes.
-4. Recreate every view that read either table (`v_views_*`,
+4. Create `raw_views` and `raw_product`.
+5. Recreate every view that read either table (`v_views_*`,
    `v_identity_daily`, `v_product_daily`, `v_product_totals`,
-   `v_product_attrs`) against `events` with its flag. The SQL is otherwise
-   today's.
-5. `v_events_flat` is rebuilt by Go at boot, as today, from the new base
+   `v_product_attrs`) against `raw_views` or `raw_product` (identity reads
+   both). The SQL is otherwise today's.
+6. `v_events_flat` is rebuilt by Go at boot, as today, from the new base
    columns.
-6. `v_product_attrs` also gains the four new system arms. Its declared arm
+7. `v_product_attrs` also gains the four new system arms. Its declared arm
    resolves a `$` key to its column through a `CASE` on `attr_key` rather
    than `json_extract`. `systemDims` and the declared-key rollup take the
    same mapping, so the live half and the rollup cannot drift.
 
 The migration runs in one transaction, like every migration. There is no
 down migration.
+
+## Stopping rule
+
+The merge must not slow the live halves down. Suppose the bench (see
+Tests) shows the views live halves or the `v_product_attrs` live half
+noticeably slower than on two tables, and index changes do not win it
+back. Then the implementation falls back to two raw tables with identical
+columns, built from one Go column list and one row builder. That fallback
+keeps every other decision in this spec (storage of every key, SDK,
+nulls, `autoAttributes`, product attributes) unchanged. The PR says which
+way it went and shows the numbers.
 
 ## Docs
 
@@ -213,7 +242,7 @@ down migration.
     nothing until now: it either starts working or is refused on the next
     edit;
   - `v_events_flat` now returns view rows, so saved SQL over it adds
-    `WHERE is_view = 0` to keep today's answer;
+    `WHERE family = 'product'` to keep today's answer;
   - pages on the cached old SDK send no location on events for up to a
     day;
   - raw rows grow; the migration copies the raw window, seconds on a
@@ -225,9 +254,13 @@ down migration.
   views and events across raw and rolled-up days, snapshot every `v_*`
   view, migrate through 20, and require every snapshot unchanged (except
   `v_events_flat`, which is checked for the added view rows). Also check
-  that copied rows carry the derived `event_name` and `is_view`.
+  that copied rows carry the derived `event_name` and `family`.
 - **Query plans:** `TestViewsLiveHalvesUseTheDayIndex` moves to the new
-  index, and the product live halves get the same check.
+  index through `raw_views`, and the product live halves get the same check
+  through `raw_product`.
+- **No unfiltered reads:** a test scans the Go sources and every `v_*`
+  definition in `sqlite_schema` and fails on any read of `events` outside
+  `raw_views` and `raw_product`.
 - **Ingest:**
   - a product event keeps each reserved key, with the same normalisation
     and warnings as a view;
