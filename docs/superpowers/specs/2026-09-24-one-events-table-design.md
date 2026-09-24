@@ -95,8 +95,15 @@ tables that have drifted apart:
      `product_events` range for one name. It replaces
      `(project_id, event_name, ts)`: no query orders or ranges events by
      timestamp within a name;
-   - `(project_id, actor_id, ts)` and `(project_id, session_id, ts)` carry
-     over from the two tables.
+   - Nothing else. The old actor and session indexes
+     (`idx_views_actor`, `idx_views_session`, `idx_events_project_user_ts`)
+     and `idx_views_project_ts` are not carried over. No collector query
+     uses them: sessions, identities, retention and every rollup read by
+     project and day. Their only user is an ad-hoc `query` for one actor in
+     `v_events_flat`, which then reads the project's raw window instead.
+     Every insert, most of them views, would pay for them. Add an actor
+     index back with the first feature that looks rows up by actor, such as
+     a user timeline.
    - **All raw SQL filters on `day`**, never on `ts` ranges or
      `substr(ts,1,10)`. Today the product rollup ranges on `ts`, and
      identities and retention compare `substr(ts,1,10)`, which no index can
