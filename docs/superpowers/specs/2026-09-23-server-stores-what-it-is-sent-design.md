@@ -197,8 +197,11 @@ a project whose events carry no ids gets no actors (the upsert's
   userName)` and `group(groupId)` after login and `reset()` on logout; ids
   are then stored as sent. Nothing is kept on the device unless the tag
   declares consent." The "keep development traffic out by not loading the
-  tag" sentence becomes "keep development traffic out with
-  `init({ optOut: () => location.hostname === "localhost" })`".
+  tag" sentence becomes: set `localStorage.twillingate_ignore = "true"` in
+  the development browser, or load the tag without `data-key` and call
+  `twillingate.init({ key, optOut: () => location.hostname === "localhost" })`
+  from code (a `data-key` tag initialises at load, and a later `init()` is
+  ignored; found in review).
 
 ### Registry, snippet and CLI
 
