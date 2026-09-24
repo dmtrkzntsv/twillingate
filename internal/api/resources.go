@@ -43,6 +43,7 @@ Views (all carry a 'project_id' column — always filter on it; ids come from li
   v_views_app_versions(project_id, day, platform, app_version, visitors, views)  -- keyed by platform: 2.4.1 means different things per build
   v_views_devices(project_id, day, device, device_model, visitors, views)  -- device: 'desktop'|'mobile'|'tablet'|'wearable'|'xr'|'other'|'unknown'
   v_views_displays(project_id, day, display, visitors, views)  -- display: 'WxH', e.g. '1920x1080'
+  v_views_consent(project_id, day, consent, visitors, views)  -- consent: 'given'|'none'|'unknown'; unknown is every row stored before migration 018 or sent without $consent
   v_product_daily(project_id, day, event_name, count, unique_users)
   v_product_totals(project_id, day, total_events, active_users)
   v_identity_daily(project_id, day, kind, id, actors, users, views, events)  -- kind: 'user'|'group'

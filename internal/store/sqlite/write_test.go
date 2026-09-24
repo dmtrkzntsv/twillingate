@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 	"time"
 
@@ -299,5 +300,62 @@ func TestWriteViewsHostDefaultsEmpty(t *testing.T) {
 	}
 	if host != "" {
 		t.Errorf("host = %q, want empty", host)
+	}
+}
+
+// consentOf reads a row's consent: Valid=false is NULL (unknown).
+func consentOf(t *testing.T, db *DB, table, id string) sql.NullInt64 {
+	t.Helper()
+	var c sql.NullInt64
+	if err := db.db.QueryRow(`SELECT consent FROM `+table+` WHERE id=?`, id).Scan(&c); err != nil {
+		t.Fatalf("%s %s: %v", table, id, err)
+	}
+	return c
+}
+
+func TestWriteStoresConsent(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	if err := db.WriteViews(ctx, []store.View{
+		{ID: "g", ProjectID: 1, TS: ts("2026-08-10T10:00:00Z"), Kind: "web", ActorID: "a", Path: "/", Consent: store.ConsentGiven},
+		{ID: "n", ProjectID: 1, TS: ts("2026-08-10T10:00:00Z"), Kind: "web", ActorID: "a", Path: "/", Consent: store.ConsentNone},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.WriteProductEvents(ctx, []store.ProductEvent{
+		{ID: "e", ProjectID: 1, EventName: "x", TS: ts("2026-08-10T10:00:00Z"), ActorID: "a", Consent: store.ConsentNone},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if c := consentOf(t, db, "views", "g"); !c.Valid || c.Int64 != 1 {
+		t.Errorf("given view consent = %+v, want 1", c)
+	}
+	if c := consentOf(t, db, "views", "n"); !c.Valid || c.Int64 != 0 {
+		t.Errorf("none view consent = %+v, want 0", c)
+	}
+	if c := consentOf(t, db, "events", "e"); !c.Valid || c.Int64 != 0 {
+		t.Errorf("none event consent = %+v, want 0", c)
+	}
+}
+
+// A row built without Consent must not claim a refusal: the zero value is
+// unknown, stored as NULL.
+func TestWriteLeavesConsentUnknownByDefault(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	if err := db.WriteViews(ctx, []store.View{
+		{ID: "v", ProjectID: 1, TS: ts("2026-08-10T10:00:00Z"), Kind: "web", ActorID: "a", Path: "/"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.WriteProductEvents(ctx, []store.ProductEvent{
+		{ID: "e", ProjectID: 1, EventName: "x", TS: ts("2026-08-10T10:00:00Z"), ActorID: "a"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range [][2]string{{"views", "v"}, {"events", "e"}} {
+		if c := consentOf(t, db, r[0], r[1]); c.Valid {
+			t.Errorf("%s consent = %d, want NULL", r[0], c.Int64)
+		}
 	}
 }

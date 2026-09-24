@@ -21,6 +21,11 @@ const otherBucket = "(other)"
 // aggregator and the live half of v_views_displays so the two cannot drift.
 const displaySQL = `display_width || 'x' || display_height`
 
+// consentSQL maps the raw consent flag onto the breakdown value, one
+// expression shared by the aggregator and the live half of v_views_consent
+// (018_consent.sql) so the two cannot drift.
+const consentSQL = `CASE consent WHEN 1 THEN 'given' WHEN 0 THEN 'none' ELSE 'unknown' END`
+
 func dayRange(day civil.Date) (string, string) {
 	return day.String() + "T00:00:00Z", day.AddDays(1).String() + "T00:00:00Z"
 }
@@ -124,6 +129,7 @@ var viewDimensions = []viewDimension{
 	{table: "agg_views_devices", keys: []string{"device", "device_model"}},
 	{table: "agg_views_displays", keys: []string{"display"}, exprs: []string{displaySQL},
 		where: "AND display_width > 0 AND display_height > 0"},
+	{table: "agg_views_consent", keys: []string{"consent"}, exprs: []string{consentSQL}},
 }
 
 // AggregateViewDay rolls one day of views into agg_views_* and deletes the

@@ -807,7 +807,9 @@ the ones `list_projects` returns. The views family
 is `v_views_daily` (per kind), `v_views_paths`, `v_views_hosts`,
 `v_views_referrers`, `v_views_utm`, `v_views_countries`, `v_views_platforms`,
 `v_views_os`, `v_views_browsers`, `v_views_app_versions` (keyed by `platform`
-and `app_version`), `v_views_devices` and `v_views_displays`; each dimension is
+and `app_version`), `v_views_devices`, `v_views_displays` and `v_views_consent`
+(`given`, `none` or `unknown`, where `unknown` is every view stored before
+migration 018 or sent without `$consent`); each dimension is
 capped at 500 values per day and the tail is one `(other)` row whose visitors
 are distinct actors, not a sum. `os`, `browser` and `device` are lower-case
 closed vocabularies (see [Declaring the
@@ -816,7 +818,8 @@ the list and `(other)` is the cap. Product events have `v_product_daily`,
 `v_product_totals` and `v_product_attrs` (whose `unique_groups` is NULL, not
 zero, for days rolled up before it was measured — `MAX()` skips it, `SUM()`
 would too, a `COALESCE` to 0 would lie), plus `v_events_flat`, the `events`
-table with one column per declared attribute. `v_identity_daily` and
+table (with its `consent` column, 1, 0 or NULL) and one column per declared
+attribute. `v_identity_daily` and
 `identities` join user and group activity to display names; `v_identity_daily`
 keeps the busiest 500 users and 500 groups per day and drops the rest with no
 `(other)` row, so do not sum it for totals. `v_retention` is keyed by
