@@ -524,7 +524,7 @@ func TestRunDailyPassPrunesActorsAndIdentities(t *testing.T) {
 	}
 }
 
-// A web-only identified project must still get cohorts and identity rollups:
+// A web-only project whose views carry a $user_id must still get cohorts and identity rollups:
 // they used to be driven off app rows alone, which meant a project with no
 // app never got either.
 func TestRunDailyPassCoversWebOnlyProjectsForCohorts(t *testing.T) {

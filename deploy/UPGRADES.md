@@ -174,7 +174,10 @@ What changes on the day:
 - Retention appears for any project whose clients send `$user_id` or
   `$install_id`, and is empty for the rest.
 - Ids hashed before the upgrade stay hashed and never link to ids received
-  after it. There is nothing to backfill.
+  after it. Raw rows an `anonymous` project received with a `$user_id` or
+  `$install_id` are re-kinded to `connection` by the migration, so the
+  daily pass does not turn those rotating hashes into cohorts; nothing else
+  is rewritten and there is nothing to backfill.
 - The collector logs `project receives ids` (with the project id and the
   kind, `user` or `install`) once per project and kind per process, the
   first time a batch carries one. Watch for it after the upgrade on a

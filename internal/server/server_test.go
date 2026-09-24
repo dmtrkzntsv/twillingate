@@ -108,18 +108,17 @@ func newTestRegistry(t *testing.T, projects []manage.ProjectSpec, keys map[int][
 // slog.Default(). newLoggingServer is the same with a captured log.
 func newServer(t *testing.T) (*fakeQueue, *Server) {
 	t.Helper()
-	q, s, _ := newServerWithLogger(t, slog.Default())
-	return q, s
+	return newServerWithLogger(t, slog.Default())
 }
 
 func newLoggingServer(t *testing.T) (*fakeQueue, *Server, *bytes.Buffer) {
 	t.Helper()
 	var buf bytes.Buffer
-	q, s, _ := newServerWithLogger(t, slog.New(slog.NewTextHandler(&buf, nil)))
+	q, s := newServerWithLogger(t, slog.New(slog.NewTextHandler(&buf, nil)))
 	return q, s, &buf
 }
 
-func newServerWithLogger(t *testing.T, logger *slog.Logger) (*fakeQueue, *Server, *manage.Registry) {
+func newServerWithLogger(t *testing.T, logger *slog.Logger) (*fakeQueue, *Server) {
 	t.Helper()
 	cfg := configtest.Load(t, nil)
 	reg := newTestRegistry(t,
@@ -130,7 +129,7 @@ func newServerWithLogger(t *testing.T, logger *slog.Logger) (*fakeQueue, *Server
 		map[int][2]string{0: {testKey, "web"}})
 	g, _ := geo.New("cloudflare://", t.TempDir(), slog.Default())
 	q := &fakeQueue{}
-	return q, New(cfg, reg, q, g, fixedSalt{}, q, logger), reg
+	return q, New(cfg, reg, q, g, fixedSalt{}, q, logger)
 }
 
 // newTestServer is newServer for a test that only needs the server.

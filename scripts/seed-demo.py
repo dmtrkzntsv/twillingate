@@ -237,7 +237,7 @@ def seed_app(cur, pid, name, profile, today, sends_ids):
                     " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (str(uuid.uuid4()), pid, ts.strftime("%Y-%m-%dT%H:%M:%SZ"),
                      ts.strftime("%Y-%m-%dT%H:%M:%SZ"), "app", actor,
-                     "user" if sends_ids else "install",
+                     "user" if sends_ids else "connection",
                      f"user-{name}-{n}" if sends_ids else "",
                      GROUPS[n % len(GROUPS)][0] if sends_ids else "",
                      session, pick(SCREENS), platform, platform, version,

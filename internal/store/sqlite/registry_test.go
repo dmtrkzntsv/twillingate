@@ -227,8 +227,8 @@ func TestMigrationUpgradeFrom004(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Now run the full migrate to apply 005.
-	if err := d.Migrate(ctx); err != nil {
+	// Apply through 005, the migration that adds allowed_origins.
+	if err := d.migrateThrough(ctx, 5); err != nil {
 		t.Fatal(err)
 	}
 
