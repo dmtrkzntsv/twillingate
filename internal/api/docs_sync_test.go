@@ -125,7 +125,7 @@ func TestDocumentMatchesSDK(t *testing.T) {
 		"twillingate_ignore", "twillingate_debug",
 		"pushState", "popstate", "hashchange",
 		"$page_view", "$screen_view", "$install_id", "$kind", "$platform", "$os", "$os_name",
-		"$browser", "$browser_version", "$device",
+		"$browser", "$browser_version", "$device", "$consent",
 		"$os_version", "$display_width", "$display_height",
 	} {
 		if !strings.Contains(src, symbol) {

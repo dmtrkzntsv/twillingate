@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
 // Wire limits.
@@ -105,6 +107,7 @@ type resolved struct {
 	UTMCampaign                   string
 	displayWidthRaw               string
 	displayHeightRaw              string
+	consentRaw                    string
 	Custom                        map[string]string
 }
 
@@ -123,6 +126,7 @@ var reservedKeys = map[string]func(*resolved, string){
 	"$group_id":        func(r *resolved, v string) { r.GroupID = v },
 	"$group_name":      func(r *resolved, v string) { r.GroupName = v },
 	"$session_id":      func(r *resolved, v string) { r.SessionID = v },
+	"$consent":         func(r *resolved, v string) { r.consentRaw = v },
 	"$kind":            func(r *resolved, v string) { r.Kind = v },
 	"$platform":        func(r *resolved, v string) { r.Platform = v },
 	"$os":              func(r *resolved, v string) { r.OS = v },
@@ -219,6 +223,23 @@ func parseDisplay(raw string) (int, bool) {
 		return 0, true
 	}
 	return n, false
+}
+
+// parseConsent reads a declared $consent, trimmed and case-folded. Absent
+// (or null, or "") is unknown and not a mistake; a value outside the
+// accepted spellings is unknown too, and bad reports it so the handler
+// warns. Never a rejection: a client sending a value this server does not
+// know must not be handed a 4xx, which the retry rules treat as poison.
+func parseConsent(raw string) (c store.Consent, bad bool) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "":
+		return store.ConsentUnknown, false
+	case "1", "true":
+		return store.ConsentGiven, false
+	case "0", "false":
+		return store.ConsentNone, false
+	}
+	return store.ConsentUnknown, true
 }
 
 // declared runs one environment validator and warns when the value was

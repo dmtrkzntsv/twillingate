@@ -1,0 +1,10 @@
+-- Empty-database guard: the sqlite connector infers column types from the
+-- first row, so a zero-row result throws "Cannot convert undefined or null to
+-- object" and fails the whole source build -- taking every other query on the
+-- page down with it. A fresh install has no traffic yet, so emit a sentinel
+-- row when the view is empty; pages filter it out via their project_id clause.
+select project_id, day, consent, visitors, views
+from v_views_consent
+union all
+select 0, '1970-01-01', '', 0, 0
+where not exists (select 1 from v_views_consent)

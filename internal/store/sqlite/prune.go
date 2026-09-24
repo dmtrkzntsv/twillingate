@@ -16,6 +16,7 @@ var viewsAggTables = []string{
 	"agg_views_daily", "agg_views_paths", "agg_views_hosts", "agg_views_referrers",
 	"agg_views_utm", "agg_views_countries", "agg_views_platforms", "agg_views_os",
 	"agg_views_browsers", "agg_views_app_versions", "agg_views_devices", "agg_views_displays",
+	"agg_views_consent",
 }
 
 var productAggTables = []string{"agg_product_daily", "agg_product_totals", "agg_product_attrs"}

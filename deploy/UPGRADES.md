@@ -196,3 +196,26 @@ What changes on the day:
 
 There is no down migration. The previous binary reads a column that no
 longer exists and refuses to start against the upgraded file.
+
+### Upgrading to the consent flag (migration 018)
+
+Views and product events gain a `consent` column: `1` when the client said
+it had consent to keep anything on the device, `0` when it said it had
+not, NULL when it said nothing. A `consent` views breakdown
+(`v_views_consent`, `views_breakdown` with `dimension: "consent"`) reads it
+as `given`, `none` and `unknown`.
+
+Nothing to check first on a single-binary install; the migration adds
+columns and a table and rewrites no rows. On a two-server setup, upgrade the
+writer first: a dashboards image newer than its replica cannot read
+`v_views_consent` until the replica carries migration 018, so it keeps
+serving the previous build, or answers 503 on a fresh start, until then.
+
+What changes on the day:
+
+- Every existing view and event reads `unknown`: there is no record to
+  backfill from, and `none` would claim a refusal nobody recorded. Rolled-up
+  days get one `unknown` row carrying the day's totals.
+- The `unknown` share shrinks as pages pick up the new SDK, which sends
+  `$consent` on every batch (the served SDK is cached for a day).
+- A hand-built client sends `$consent` itself or stays `unknown`.

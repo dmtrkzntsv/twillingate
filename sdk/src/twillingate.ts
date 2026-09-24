@@ -693,6 +693,10 @@ export class Twillingate implements Subscriber {
     if (this.groupId) a.$group_id = this.groupId;
     if (this.groupName) a.$group_name = this.groupName;
     a.$kind = this.kind;
+    // The answer the storage code acts on, read at flush time, so the
+    // server can tell consented rows from the rest. Sent in both identity
+    // modes: an anonymous instance's retry queue is still gated on it.
+    a.$consent = this.mayStore() ? 1 : 0;
     if (this.platform) a.$platform = this.platform;
     // Detection runs per flush and is the only source of the environment.
     const d = detectAll();

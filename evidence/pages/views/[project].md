@@ -187,6 +187,43 @@ group by display order by visitors desc limit 15
 
 <BarChart data={displays} x=display y=visitors swapXY=true title="Display resolutions" yFmt=num0 />
 
+```sql consent
+select consent, sum(visitors) as visitors, sum(views) as views
+from twillingate.v_views_consent
+where project_id = '${params.project}'
+  and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range} - 1) day, '%Y-%m-%d')
+               and strftime((now() at time zone 'UTC')::date, '%Y-%m-%d')
+group by consent order by visitors desc
+```
+
+```sql consent_rate
+select case when sum(case when consent in ('given', 'none') then visitors else 0 end) > 0
+            then sum(case when consent = 'given' then visitors else 0 end) * 1.0
+                 / sum(case when consent in ('given', 'none') then visitors else 0 end)
+       end as rate
+from twillingate.v_views_consent
+where project_id = '${params.project}'
+  and day between strftime((now() at time zone 'UTC')::date - interval (${inputs.range} - 1) day, '%Y-%m-%d')
+               and strftime((now() at time zone 'UTC')::date, '%Y-%m-%d')
+```
+
+## Consent
+
+Whether the client could keep anything on the device when it sent the view.
+`unknown` is every view sent without `$consent`, including all history before
+the flag existed; the rate leaves it out. `none` includes views sent before
+the visitor answered a consent prompt (e.g. the first page view while a
+banner is still up), so read the rate as a trend, not as an acceptance rate.
+
+<Grid cols=2>
+    <BigValue data={consent_rate} value=rate fmt=pct1 title="Share with consent in force (given / (given + none))" />
+    <DataTable data={consent} rows=3>
+        <Column id=consent />
+        <Column id=visitors fmt=num0 />
+        <Column id=views fmt=num0 />
+    </DataTable>
+</Grid>
+
 ```sql app_versions
 select day, platform || ' ' || app_version as version, visitors
 from twillingate.v_views_app_versions

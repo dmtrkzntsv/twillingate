@@ -55,6 +55,7 @@ func TestSeedEvidenceFixture(t *testing.T) {
 				Browser: "chrome", OS: "linux",
 				UTMSource: []string{"hn", "", ""}[i%3], UTMMedium: []string{"social", "", ""}[i%3],
 				UTMCampaign: []string{"launch", "", ""}[i%3],
+				Consent:     []store.Consent{store.ConsentGiven, store.ConsentNone, store.ConsentUnknown}[i%3],
 			})
 			evs = append(evs, store.ProductEvent{
 				ID: fmt.Sprintf("e%d-%d", d, i), ProjectID: appID,

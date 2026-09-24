@@ -2,23 +2,92 @@ package sqlite
 
 import (
 	"context"
+	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
+// TestMain runs the package's tests, then removes the template database's
+// temp dir (see templateDB) once every test in the binary has finished
+// with it.
+func TestMain(m *testing.M) {
+	code := m.Run()
+	if templateDir != "" {
+		os.RemoveAll(templateDir)
+	}
+	os.Exit(code)
+}
+
+var (
+	templateOnce sync.Once
+	templateDir  string
+	templatePath string
+)
+
+// templateDB migrates a database to the current schema version once per
+// test binary and returns its path. Under -race, running every migration
+// per test (~3s each here, unraced ~0.1s, ~185 tests in the package) blows
+// past go test's 10-minute default timeout; newTestDB copies this file
+// instead of migrating one from scratch for every test.
+func templateDB(t *testing.T) string {
+	t.Helper()
+	templateOnce.Do(func() {
+		dir, err := os.MkdirTemp("", "twillingate-sqlite-template-")
+		if err != nil {
+			t.Fatal(err)
+		}
+		templateDir = dir
+		path := filepath.Join(dir, "template.db")
+		db, err := openAt(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := db.Migrate(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		// Close checkpoints the WAL into the main file (verified by hand:
+		// no -wal/-shm sidecar survives it), so copyFile below only ever
+		// needs the one file.
+		if err := db.Close(); err != nil {
+			t.Fatal(err)
+		}
+		templatePath = path
+	})
+	if templatePath == "" {
+		t.Fatal("template database was not built")
+	}
+	return templatePath
+}
+
 func newTestDB(t *testing.T) *DB {
 	t.Helper()
-	db, err := openAt(filepath.Join(t.TempDir(), "test.db"))
+	dst := filepath.Join(t.TempDir(), "test.db")
+	copyFile(t, templateDB(t), dst)
+	db, err := openAt(dst)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
+	// A no-op at the version the template already carries; kept so this
+	// test path still matches how production opens an existing database.
 	if err := db.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	return db
+}
+
+func copyFile(t *testing.T, src, dst string) {
+	t.Helper()
+	data, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dst, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestOpenViaRegistry(t *testing.T) {
@@ -143,7 +212,7 @@ func TestMigrationViews(t *testing.T) {
 		"v_views_daily", "v_views_paths", "v_views_hosts", "v_views_referrers", "v_views_utm",
 		"v_views_countries", "v_views_platforms", "v_views_os", "v_views_browsers",
 		"v_views_app_versions",
-		"v_views_devices", "v_views_displays",
+		"v_views_devices", "v_views_displays", "v_views_consent",
 		"v_product_daily", "v_product_totals", "v_product_attrs",
 		"v_identity_daily", "v_retention",
 	} {

@@ -157,14 +157,15 @@ def seed(cur, pid, name, profile, today, sends_ids):
                     "INSERT INTO views (id, project_id, ts, received_at, kind, actor_id, actor_kind,"
                     " user_id, group_id, path, referrer_source, country, device, browser,"
                     " browser_version, platform, os, utm_source, utm_medium, utm_campaign,"
-                    " display_width, display_height)"
-                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    " display_width, display_height, consent)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (str(uuid.uuid4()), pid, ts.strftime("%Y-%m-%dT%H:%M:%SZ"),
                      ts.strftime("%Y-%m-%dT%H:%M:%SZ"), "web", vh,
                      "install" if sends_ids else "connection", "", "",
                      pick(profile["pages"]), ref, country, device, browser,
                      random.choice(BROWSER_VERSIONS),
-                     "web", osname, us, um, uc, *random.choice(DISPLAYS)))
+                     "web", osname, us, um, uc, *random.choice(DISPLAYS),
+                     1 if sends_ids else random.choice([0, 0, 1])))
                 hits += 1
 
     events = 0
@@ -184,13 +185,14 @@ def seed(cur, pid, name, profile, today, sends_ids):
                     cur.execute(
                         "INSERT INTO events (id, project_id, ts, received_at, event_name,"
                         " actor_id, actor_kind, user_id, group_id, platform, os, app_version,"
-                        " attributes) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        " attributes, consent) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                         (str(uuid.uuid4()), pid, ts.strftime("%Y-%m-%dT%H:%M:%SZ"),
                          ts.strftime("%Y-%m-%dT%H:%M:%SZ"), event_name,
                          actor_for(name, day, n, sends_ids),
                          "user" if sends_ids else "connection", user,
                          GROUPS[n % len(GROUPS)][0] if sends_ids else "",
-                         "web", pick(OSES), "", json.dumps({"plan": pick(PLANS)})))
+                         "web", pick(OSES), "", json.dumps({"plan": pick(PLANS)}),
+                         1 if sends_ids else random.choice([0, 0, 1])))
                     events += 1
 
     views = hits + (seed_app(cur, pid, name, profile, today, sends_ids) if profile.get("app") else 0)
@@ -233,8 +235,8 @@ def seed_app(cur, pid, name, profile, today, sends_ids):
                 cur.execute(
                     "INSERT INTO views (id, project_id, ts, received_at, kind, actor_id, actor_kind, user_id,"
                     " group_id, session_id, path, platform, os, app_version, os_version,"
-                    " browser, device, device_model, locale, country)"
-                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    " browser, device, device_model, locale, country, consent)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (str(uuid.uuid4()), pid, ts.strftime("%Y-%m-%dT%H:%M:%SZ"),
                      ts.strftime("%Y-%m-%dT%H:%M:%SZ"), "app", actor,
                      "user" if sends_ids else "connection",
@@ -243,7 +245,8 @@ def seed_app(cur, pid, name, profile, today, sends_ids):
                      session, pick(SCREENS), platform, platform, version,
                      pick(OS_VERSIONS[platform]), "unknown", "unknown",
                      pick(DEVICE_MODELS[platform]),
-                     pick(LOCALES), pick(COUNTRIES)))
+                     pick(LOCALES), pick(COUNTRIES),
+                     1 if sends_ids else random.choice([0, 1])))
                 views += 1
     return views
 

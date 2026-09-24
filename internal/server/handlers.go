@@ -134,6 +134,10 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			res.warn(i, "$os %q is not a known value, stored as other", rv.OS)
 		}
 		platform := res.declared(i, "$platform", rv.Platform, enrich.NormalizePlatform)
+		consent, badConsent := parseConsent(rv.consentRaw)
+		if badConsent {
+			res.warn(i, "unknown $consent value %q, ignored", rv.consentRaw)
+		}
 
 		defaultKind, isView := viewName(ev.Name)
 		if !isView {
@@ -145,6 +149,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 				TS: ts, ReceivedAt: received,
 				ActorID: actor, ActorKind: actorKind, UserID: user, GroupID: group,
 				Platform: platform, OS: osv, AppVersion: rv.AppVersion,
+				Consent:    consent,
 				Attributes: rv.Custom,
 			})
 			noteRow(actorKind, rv)
@@ -189,6 +194,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			BrowserVersion: rv.BrowserVersion,
 			Device:         device,
 			AppVersion:     rv.AppVersion, DeviceModel: rv.DeviceModel, Locale: rv.Locale, Country: country,
+			Consent: consent,
 		}
 		// Bot filtering is the one thing still read off the User-Agent,
 		// and it applies to web rows only: any other kind declares what

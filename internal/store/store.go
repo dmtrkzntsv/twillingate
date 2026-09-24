@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql/driver"
 	"fmt"
 	"net/url"
 	"time"
@@ -33,6 +34,7 @@ type View struct {
 	AppVersion, Device, DeviceModel, Locale        string
 	DisplayWidth, DisplayHeight                    int
 	Country                                        string
+	Consent                                        Consent
 }
 
 // ProductEvent represents a custom event from any surface. Platform and OS
@@ -48,6 +50,29 @@ type ProductEvent struct {
 	Platform, OS       string
 	AppVersion         string
 	Attributes         map[string]string
+	Consent            Consent
+}
+
+// Consent is the client's answer, when it sent the row, to "may anything
+// be kept on this device" ($consent). The zero value is ConsentUnknown,
+// so a row built without it never claims an answer nobody recorded.
+type Consent int8
+
+const (
+	ConsentUnknown Consent = iota // stored as NULL
+	ConsentGiven                  // stored as 1
+	ConsentNone                   // stored as 0
+)
+
+// Value implements driver.Valuer: unknown is NULL, the answers 1 and 0.
+func (c Consent) Value() (driver.Value, error) {
+	switch c {
+	case ConsentGiven:
+		return int64(1), nil
+	case ConsentNone:
+		return int64(0), nil
+	}
+	return nil, nil
 }
 
 // Actor kinds: how an actor id was derived. Only user and install actors

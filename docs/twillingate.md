@@ -287,6 +287,11 @@ console warning. Consent is consulted at every storage decision, never cached:
 flipping to true writes the waiting memory queue to storage and starts
 persisting identity, flipping to false deletes every key the instance owns.
 
+Every batch carries `$consent` — `1` or `0`, the answer in force when it was
+sent — in both identity modes, so the `consent` breakdown (`given`, `none`,
+`unknown`) shows how many visitors consented; `none` also catches a view sent
+before the visitor answered, so read it as a trend, not an acceptance rate.
+
 **Where keys live** is the `storage` option:
 
 | `storage` | Meaning |
@@ -592,6 +597,7 @@ transport that survives page unload. An unknown key gets a plain `401`.
   "attributes": {                // batch-level defaults, all optional
     "$install_id": "018f1e5a-…", "$user_id": "u_123", "$user_name": "Ada Lovelace",
     "$group_id": "org_9", "$group_name": "Acme Corp", "$session_id": "018f1e5b-…",
+    "$consent": 1,
     "$kind": "app", "$platform": "ios", "$os": "ios", "$os_version": "17.2",
     "$os_name": "iOS 17.2", "$browser": "safari", "$browser_version": "17",
     "$device": "mobile", "$device_model": "iPhone15,2", "$app_version": "2.4.1",
@@ -635,9 +641,15 @@ batch to drop.
 
 | Group | Keys |
 | --- | --- |
-| Identity | `$install_id` `$user_id` `$user_name` `$group_id` `$group_name` `$session_id` |
+| Identity | `$install_id` `$user_id` `$user_name` `$group_id` `$group_name` `$session_id` `$consent` |
 | Environment | `$kind` `$platform` `$os` `$os_version` `$os_name` `$browser` `$browser_version` `$device` `$device_model` `$app_version` `$locale` `$display_width` `$display_height` |
 | Location | `$host` `$path` `$screen` `$utm_source` `$utm_medium` `$utm_campaign` `$referrer` |
+
+`$consent` is whether the client had consent to keep anything on the device
+when it sent the event: `1` (or `true`) given, `0` (or `false`) not given, as a
+number, boolean or string in any case. Absent, `null` or `""` mean unknown
+(and a per-event `null` overrides a batch value to unknown, as the merge rule
+implies). Any other value is stored as unknown with a warning, never rejected.
 
 An **unrecognized `$` key is dropped** with a warning; it is not stored as an
 ordinary attribute. `$url` is no longer a reserved key — a client sending it
@@ -724,7 +736,7 @@ caveats below. All the reading tools take `project_id`, `from` and `to` as
 | --- | --- | --- |
 | `list_projects` | none | Every project with its `project_id`, name and data coverage. Call this first — every other tool needs a `project_id` |
 | `views_overview` | `kind` (optional) | Visitors, views, sessions, bounces, average session length per day, summed across kinds unless `kind` filters one |
-| `views_breakdown` | `dimension`, `limit` (default 20) | Top rows for one of `kinds`, `paths`, `hosts`, `referrers`, `utm`, `countries`, `platforms`, `os`, `browsers`, `app_versions`, `devices`, `displays`. Two-key dimensions return both columns |
+| `views_breakdown` | `dimension`, `limit` (default 20) | Top rows for one of `kinds`, `paths`, `hosts`, `referrers`, `utm`, `countries`, `platforms`, `os`, `browsers`, `app_versions`, `devices`, `displays`, `consent`. Two-key dimensions return both columns. `consent` is `given`, `none` or `unknown`. |
 | `product_events` | `event` (optional filter) | Count and unique users per event name, plus daily totals |
 | `product_attributes` | `event`, `key` | Count, unique users and unique groups per value of a declared attribute. `$platform`, `$os` and `$app_version` are always available; a custom key only appears once the project declares it. `unique_groups` is empty for days rolled up before it was measured and `0` when it was measured and no group was involved |
 | `retention` | `actor` (`user` or `install`) | Cohort curves, plus `aggregated_through` — cohorts after that day are **absent, not zero**. Empty for a project whose clients send neither `$user_id` nor `$install_id` |
@@ -807,16 +819,20 @@ the ones `list_projects` returns. The views family
 is `v_views_daily` (per kind), `v_views_paths`, `v_views_hosts`,
 `v_views_referrers`, `v_views_utm`, `v_views_countries`, `v_views_platforms`,
 `v_views_os`, `v_views_browsers`, `v_views_app_versions` (keyed by `platform`
-and `app_version`), `v_views_devices` and `v_views_displays`; each dimension is
-capped at 500 values per day and the tail is one `(other)` row whose visitors
-are distinct actors, not a sum. `os`, `browser` and `device` are lower-case
+and `app_version`), `v_views_devices`, `v_views_displays` and `v_views_consent`
+(`given`, `none` or `unknown`, where `unknown` is every view stored before
+migration 018 or sent without `$consent`); every other dimension is
+capped at 500 values per day, the tail is one `(other)` row whose visitors
+are distinct actors, not a sum, and `consent` never reaches it — it only ever
+has three values. `os`, `browser` and `device` are lower-case
 closed vocabularies (see [Declaring the
 environment](#declaring-the-environment)) where `other` is a real value outside
 the list and `(other)` is the cap. Product events have `v_product_daily`,
 `v_product_totals` and `v_product_attrs` (whose `unique_groups` is NULL, not
 zero, for days rolled up before it was measured — `MAX()` skips it, `SUM()`
 would too, a `COALESCE` to 0 would lie), plus `v_events_flat`, the `events`
-table with one column per declared attribute. `v_identity_daily` and
+table (with its `consent` column, 1, 0 or NULL) and one column per declared
+attribute. `v_identity_daily` and
 `identities` join user and group activity to display names; `v_identity_daily`
 keeps the busiest 500 users and 500 groups per day and drops the rest with no
 `(other)` row, so do not sum it for totals. `v_retention` is keyed by

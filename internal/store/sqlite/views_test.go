@@ -54,6 +54,8 @@ func TestViewsLiveHalvesUseTheDayIndex(t *testing.T) {
 			WHERE project_id = ? AND day BETWEEN ? AND ? GROUP BY path`,
 		"daily": `SELECT kind, SUM(visitors), SUM(views) FROM v_views_daily
 			WHERE project_id = ? AND day BETWEEN ? AND ? GROUP BY kind`,
+		"consent": `SELECT consent, SUM(visitors), SUM(views) FROM v_views_consent
+			WHERE project_id = ? AND day BETWEEN ? AND ? GROUP BY consent`,
 	}
 
 	for name, q := range queries {
@@ -148,6 +150,7 @@ func TestStitchViewsInvariantAllViewsDimensions(t *testing.T) {
 		{"v_views_app_versions", "platform || '|' || app_version"},
 		{"v_views_devices", "device || '|' || device_model"},
 		{"v_views_displays", "display"},
+		{"v_views_consent", "consent"},
 	}
 	snapshot := func(d dim) map[string][2]int {
 		t.Helper()
@@ -189,6 +192,50 @@ func TestStitchViewsInvariantAllViewsDimensions(t *testing.T) {
 		if !reflect.DeepEqual(after, before[d.view]) {
 			t.Errorf("%s: before %v, after %v", d.view, before[d.view], after)
 		}
+	}
+}
+
+// The consent live half and the rollup must agree on every value,
+// including unknown, or the rate jumps the night a day is aggregated.
+func TestStitchViewConsentAcrossBoundary(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	v := func(id, actor string, c store.Consent, h int) store.View {
+		return store.View{ID: id, TS: at(h, 0), ActorID: actor, Kind: "web", Platform: "web", Path: "/", Consent: c}
+	}
+	seedViews(t, db,
+		v("1", "a", store.ConsentGiven, 10), v("2", "a", store.ConsentGiven, 11), v("3", "b", store.ConsentGiven, 10),
+		v("4", "c", store.ConsentNone, 10),
+		v("5", "d", store.ConsentUnknown, 10), v("6", "d", store.ConsentUnknown, 12),
+	)
+	read := func() map[string][2]int {
+		t.Helper()
+		rows, err := db.db.Query(`SELECT consent, visitors, views FROM v_views_consent
+			WHERE project_id=1 AND day='2026-08-10'`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		out := map[string][2]int{}
+		for rows.Next() {
+			var k string
+			var vis, vws int
+			if err := rows.Scan(&k, &vis, &vws); err != nil {
+				t.Fatal(err)
+			}
+			out[k] = [2]int{vis, vws}
+		}
+		return out
+	}
+	want := map[string][2]int{"given": {2, 3}, "none": {1, 1}, "unknown": {1, 2}}
+	if got := read(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("live v_views_consent = %v, want %v", got, want)
+	}
+	if err := db.AggregateViewDay(ctx, 1, day("2026-08-10")); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(); !reflect.DeepEqual(got, want) {
+		t.Errorf("after rollup v_views_consent = %v, want %v", got, want)
 	}
 }
 

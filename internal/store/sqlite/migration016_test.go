@@ -4,8 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"testing"
-
-	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
 // groupsOf reads one row's unique_groups. Valid=false is a NULL, which
@@ -49,14 +47,18 @@ func TestMigration016LeavesHistoryUnmeasured(t *testing.T) {
 		t.Fatalf("view shows %d for a pre-016 day, want NULL", g.Int64)
 	}
 
-	// A raw day: one event with a group, one without.
-	if err := db.WriteProductEvents(ctx, []store.ProductEvent{
-		{ID: "e1", ProjectID: 1, EventName: "signup", ActorID: "u1", GroupID: "org1",
-			TS: ts("2026-09-10T10:00:00Z"), Attributes: map[string]string{"plan": "pro"}},
-		{ID: "e2", ProjectID: 1, EventName: "signup", ActorID: "u2",
-			TS: ts("2026-09-10T11:00:00Z"), Attributes: map[string]string{"plan": "pro"}},
-	}); err != nil {
-		t.Fatal(err)
+	// A raw day: one event with a group, one without. Raw INSERTs, not
+	// WriteProductEvents: this database is at 16, and the write path names
+	// columns later migrations add.
+	for _, q := range []string{
+		`INSERT INTO events (id, project_id, event_name, ts, received_at, actor_id, actor_kind, user_id, group_id, platform, os, app_version, attributes)
+		 VALUES ('e1', 1, 'signup', '2026-09-10T10:00:00Z', '2026-09-10T10:00:00Z', 'u1', '', '', 'org1', 'unknown', '', '', '{"plan":"pro"}')`,
+		`INSERT INTO events (id, project_id, event_name, ts, received_at, actor_id, actor_kind, user_id, group_id, platform, os, app_version, attributes)
+		 VALUES ('e2', 1, 'signup', '2026-09-10T11:00:00Z', '2026-09-10T11:00:00Z', 'u2', '', '', '', 'unknown', '', '', '{"plan":"pro"}')`,
+	} {
+		if _, err := db.db.ExecContext(ctx, q); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
 	}
 	live := `SELECT unique_groups FROM v_product_attrs
 		WHERE project_id=1 AND day='2026-09-10' AND attr_key='plan' AND attr_value='pro'`

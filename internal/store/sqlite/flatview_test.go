@@ -126,6 +126,10 @@ func TestRebuildFlatView(t *testing.T) {
 	if _, err := db.db.Query(`SELECT attr_plan FROM v_events_flat`); err == nil {
 		t.Error("attr_plan should be gone after rebuilding without it")
 	}
+	// consent is a base column, present regardless of declared attributes.
+	if _, err := db.db.Query(`SELECT consent FROM v_events_flat LIMIT 0`); err != nil {
+		t.Errorf("v_events_flat has no consent column: %v", err)
+	}
 }
 
 func TestRebuildFlatViewHostileKeys(t *testing.T) {
@@ -157,9 +161,9 @@ func TestRebuildFlatViewHostileKeys(t *testing.T) {
 	if !cols["attr_1starts_with_digit"] {
 		t.Errorf("digit-leading key not prefixed into a valid identifier: %v", cols)
 	}
-	// 5 base columns (id, project_id, event_name, actor_id, ts) + attributes + 4 attrs (漢字 skipped).
-	if len(cols) != 6+4 {
-		t.Errorf("cols = %v, want 6 base + 4 attrs (漢字 skipped)", cols)
+	// 6 base columns (id, project_id, event_name, actor_id, consent, ts) + attributes + 4 attrs (漢字 skipped).
+	if len(cols) != 7+4 {
+		t.Errorf("cols = %v, want 7 base + 4 attrs (漢字 skipped)", cols)
 	}
 }
 
@@ -211,7 +215,7 @@ func TestRebuildFlatViewDeterministicOrder(t *testing.T) {
 			t.Fatalf("column order not deterministic: %v vs %v", first, second)
 		}
 	}
-	want := []string{"id", "project_id", "event_name", "actor_id", "ts", "attributes",
+	want := []string{"id", "project_id", "event_name", "actor_id", "consent", "ts", "attributes",
 		"attr_alpha", "attr_mu", "attr_zeta"}
 	for i := range want {
 		if first[i] != want[i] {
