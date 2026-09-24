@@ -592,6 +592,7 @@ transport that survives page unload. An unknown key gets a plain `401`.
   "attributes": {                // batch-level defaults, all optional
     "$install_id": "018f1e5a-…", "$user_id": "u_123", "$user_name": "Ada Lovelace",
     "$group_id": "org_9", "$group_name": "Acme Corp", "$session_id": "018f1e5b-…",
+    "$consent": 1,
     "$kind": "app", "$platform": "ios", "$os": "ios", "$os_version": "17.2",
     "$os_name": "iOS 17.2", "$browser": "safari", "$browser_version": "17",
     "$device": "mobile", "$device_model": "iPhone15,2", "$app_version": "2.4.1",
@@ -635,9 +636,14 @@ batch to drop.
 
 | Group | Keys |
 | --- | --- |
-| Identity | `$install_id` `$user_id` `$user_name` `$group_id` `$group_name` `$session_id` |
+| Identity | `$install_id` `$user_id` `$user_name` `$group_id` `$group_name` `$session_id` `$consent` |
 | Environment | `$kind` `$platform` `$os` `$os_version` `$os_name` `$browser` `$browser_version` `$device` `$device_model` `$app_version` `$locale` `$display_width` `$display_height` |
 | Location | `$host` `$path` `$screen` `$utm_source` `$utm_medium` `$utm_campaign` `$referrer` |
+
+`$consent` is whether the client had consent to keep anything on the device
+when it sent the event: `1` (or `true`) given, `0` (or `false`) not given, as a
+number, boolean or string in any case. Absent means unknown. Any other value is
+stored as unknown with a warning, never rejected.
 
 An **unrecognized `$` key is dropped** with a warning; it is not stored as an
 ordinary attribute. `$url` is no longer a reserved key — a client sending it

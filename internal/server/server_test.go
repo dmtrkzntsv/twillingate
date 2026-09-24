@@ -947,3 +947,78 @@ func TestKeyCountersRecordPerLabel(t *testing.T) {
 		t.Error("Drain must reset the counters")
 	}
 }
+
+// $consent is parsed in Go: the accepted spellings map to given/none,
+// absence and null are unknown without a warning, anything else is
+// unknown with one. Never a rejection.
+func TestConsentParsing(t *testing.T) {
+	cases := []struct {
+		raw  string // JSON value, or "" for absent
+		want store.Consent
+		warn bool
+	}{
+		{`1`, store.ConsentGiven, false},
+		{`1.0`, store.ConsentGiven, false},
+		{`"1"`, store.ConsentGiven, false},
+		{`true`, store.ConsentGiven, false},
+		{`" TRUE "`, store.ConsentGiven, false},
+		{`0`, store.ConsentNone, false},
+		{`"0"`, store.ConsentNone, false},
+		{`false`, store.ConsentNone, false},
+		{`"False"`, store.ConsentNone, false},
+		{``, store.ConsentUnknown, false},
+		{`null`, store.ConsentUnknown, false},
+		{`""`, store.ConsentUnknown, false},
+		{`"maybe"`, store.ConsentUnknown, true},
+		{`2`, store.ConsentUnknown, true},
+	}
+	for _, c := range cases {
+		attr := ""
+		if c.raw != "" {
+			attr = `,"$consent":` + c.raw
+		}
+		q, h := testServer(t)
+		res := decodeResult(t, post(h, envelopeOf(
+			`{"name":"$page_view","attributes":{"$path":"/"`+attr+`}},
+			 {"name":"signup","attributes":{"x":"y"`+attr+`}}`), nil))
+		if res.Accepted != 2 || res.Rejected != 0 {
+			t.Errorf("%s: result = %+v, want both accepted", c.raw, res)
+			continue
+		}
+		if len(q.views) != 1 || len(q.events) != 1 {
+			t.Fatalf("%s: views=%d events=%d", c.raw, len(q.views), len(q.events))
+		}
+		if q.views[0].Consent != c.want || q.events[0].Consent != c.want {
+			t.Errorf("%s: view %v event %v, want %v", c.raw, q.views[0].Consent, q.events[0].Consent, c.want)
+		}
+		warned := 0
+		for _, w := range res.Warnings {
+			if strings.Contains(w.Reason, "$consent") {
+				warned++
+			}
+		}
+		if want := map[bool]int{true: 2, false: 0}[c.warn]; warned != want {
+			t.Errorf("%s: %d $consent warnings, want %d (%+v)", c.raw, warned, want, res.Warnings)
+		}
+	}
+}
+
+// Batch-level $consent applies to every event; a per-event value
+// overrides it key by key, including an explicit null, which is unknown.
+func TestConsentPerEventOverridesBatch(t *testing.T) {
+	q, h := testServer(t)
+	body := `{"key":"` + testKey + `","attributes":{"$consent":1},"events":[
+	  {"name":"a"},
+	  {"name":"b","attributes":{"$consent":0}},
+	  {"name":"c","attributes":{"$consent":null}}]}`
+	post(h, body, nil)
+	if len(q.events) != 3 {
+		t.Fatalf("events = %+v", q.events)
+	}
+	want := []store.Consent{store.ConsentGiven, store.ConsentNone, store.ConsentUnknown}
+	for i, e := range q.events {
+		if e.Consent != want[i] {
+			t.Errorf("event %s consent = %v, want %v", e.EventName, e.Consent, want[i])
+		}
+	}
+}
