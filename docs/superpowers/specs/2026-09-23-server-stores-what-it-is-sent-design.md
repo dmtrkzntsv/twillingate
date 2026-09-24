@@ -122,7 +122,11 @@ rows in `agg_identity_daily`, so the ungated users page and `identities`
 tool would list rotating hashes as people until they expired. The
 migration also clears the hashed `user_id` on those rows and deletes their
 `agg_identity_daily` rows of kind `user`; `group` rows are untouched, since
-groups were always stored raw. It is SQL rather than a `dataSteps` entry
+groups were always stored raw — but the next daily pass recomputes every
+day still in the raw window, so each group's `users` count for those days
+becomes 0 (rotating hashes for an always-anonymous project; real ids for
+one switched from identified to anonymous before the upgrade, which are
+gone for good). The runbook says so. It is SQL rather than a `dataSteps` entry
 because steps run after their version's SQL, when the column is gone.
 `store.RegistryProject`,
 `manage.Project`, `manage.ProjectSpec` and the registry's `SELECT`,

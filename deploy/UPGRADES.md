@@ -180,8 +180,15 @@ What changes on the day:
   daily pass does not turn those rotating hashes into cohorts; those same
   rows have their hashed `user_id` cleared, and their per-day `user` rows
   in `agg_identity_daily` are deleted, so the users page and the
-  `identities` tool never list an old rotating hash as a person. Group
-  rows and everything else stay; there is nothing to backfill.
+  `identities` tool never list an old rotating hash as a person. The
+  migration leaves group rows alone, but the next daily pass recomputes
+  every day still inside the raw window, and with the user ids cleared
+  each group's `users` count for those days becomes 0 — for a project that
+  was always `anonymous` that replaces a count of rotating hashes; for a
+  project switched from `identified` to `anonymous` before the upgrade it
+  replaces real user ids, which the migration has also cleared from its
+  raw rows for good. Days already rolled up keep their counts. Nothing
+  else is rewritten and there is nothing to backfill.
 - The collector logs `project receives ids` (with the project id and the
   kind, `user` or `install`) once per project and kind per process, the
   first time a stored view or event carries one. Watch for it after the
