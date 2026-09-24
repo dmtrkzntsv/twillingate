@@ -72,7 +72,7 @@ export interface InitOptions {
   maskUrl?: MaskSpec;
   /** "history" (default) or "hash". */
   routing?: "history" | "hash";
-  /** Milliseconds events wait in the queue before a flush. Default 1000. */
+  /** Milliseconds events wait in the queue before a flush. Default 10000. */
   flushInterval?: number;
   /** true, or a function consulted at every event; OR-ed with the twillingate_ignore flag. */
   optOut?: boolean | (() => unknown);
@@ -203,7 +203,7 @@ export class Twillingate implements Subscriber {
   private kind = "web";
   private platform: string | null = null;
   private appVersion: string | null = null;
-  private flushInterval = 1000;
+  private flushInterval = 10000;
   private k: Keys;
   private driver: StorageDriver = resolveStorage(undefined);
   private consentSpec: () => boolean = () => false;

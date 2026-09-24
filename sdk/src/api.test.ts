@@ -284,3 +284,19 @@ describe("null drops an attribute", () => {
     expect(lastEvent().attributes).toEqual({ tier: "beta" });
   });
 });
+
+describe("flush timer", () => {
+  it("holds events for 10 seconds by default", async () => {
+    const t = new Twillingate();
+    t.init({ key: "ak_test", autoPageviews: false });
+    t.track("first");
+    await vi.advanceTimersByTimeAsync(5000);
+    t.track("second");
+    await vi.advanceTimersByTimeAsync(4999);
+    expect(sent).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.waitFor(() => {});
+    expect(sent).toHaveLength(1);
+    expect(sent[0].body.events.map((e) => e.name)).toEqual(["first", "second"]);
+  });
+});
