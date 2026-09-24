@@ -89,8 +89,19 @@ tables that have drifted apart:
 4. **Indexes**, sized to what the two families filter on:
    - `(project_id, family, day)` serves every live half, replacing
      `idx_views_project_day`;
-   - `(project_id, event_name, ts)`, `(project_id, actor_id, ts)` and
-     `(project_id, session_id, ts)` carry over from the two tables.
+   - `(project_id, event_name, day)` serves everything keyed by event and
+     date: the per-event rollups (`rollupAttrValue` and the daily counts),
+     the `v_product_*` live halves, which group by event and day, and a
+     `product_events` range for one name. It replaces
+     `(project_id, event_name, ts)`: no query orders or ranges events by
+     timestamp within a name;
+   - `(project_id, actor_id, ts)` and `(project_id, session_id, ts)` carry
+     over from the two tables.
+   - **All raw SQL filters on `day`**, never on `ts` ranges or
+     `substr(ts,1,10)`. Today the product rollup ranges on `ts`, and
+     identities and retention compare `substr(ts,1,10)`, which no index can
+     serve. The generated column already equals `substr(ts,1,10)`, so the
+     answers are unchanged and the indexes apply.
 5. **Raw retention and aggregation keep their two settings.**
    - `AggregateViewDay` rolls up and deletes the day's `views` rows;
      `AggregateProductDay` does the same for the `product` rows.
@@ -256,8 +267,9 @@ way it went and shows the numbers.
   `v_events_flat`, which is checked for the added view rows). Also check
   that copied rows carry the derived `event_name` and `family`.
 - **Query plans:** `TestViewsLiveHalvesUseTheDayIndex` moves to the new
-  index through `raw_views`, and the product live halves get the same check
-  through `raw_product`.
+  index through `raw_views`. The product live halves and the per-event
+  rollup get the same check through `raw_product`, and must search
+  `(project_id, event_name, day)` with the day bound.
 - **No unfiltered reads:** a test scans the Go sources and every `v_*`
   definition in `sqlite_schema` and fails on any read of `events` outside
   `raw_views` and `raw_product`.
