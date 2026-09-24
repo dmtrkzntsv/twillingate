@@ -205,8 +205,11 @@ not, NULL when it said nothing. A `consent` views breakdown
 (`v_views_consent`, `views_breakdown` with `dimension: "consent"`) reads it
 as `given`, `none` and `unknown`.
 
-Nothing to check first; the migration adds columns and a table and
-rewrites no rows.
+Nothing to check first on a single-binary install; the migration adds
+columns and a table and rewrites no rows. On a two-server setup, upgrade the
+writer first: a dashboards image newer than its replica cannot read
+`v_views_consent` until the replica carries migration 018, so it keeps
+serving the previous build, or answers 503 on a fresh start, until then.
 
 What changes on the day:
 

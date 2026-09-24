@@ -28,9 +28,8 @@ FROM agg_views_daily GROUP BY project_id, day;
 -- Three values need no top-500 cap, so this is the plain
 -- aggregate-plus-live-half shape. The CASE is consentSQL in
 -- aggregate_views.go; TestStitchViewConsentAcrossBoundary keeps them equal.
--- Aliased "v" like every other dimension view's live half, not for a join
--- here but so EXPLAIN QUERY PLAN names it "v" and
--- TestViewsLiveHalvesUseTheDayIndex can recognise the day-bounded search.
+-- Aliased "v" like every other dimension view's live half, not for a
+-- join here — just consistency with the rest of the family.
 CREATE VIEW v_views_consent AS
 SELECT project_id, day, consent, visitors, views FROM agg_views_consent
 UNION ALL

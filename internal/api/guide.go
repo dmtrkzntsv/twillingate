@@ -81,20 +81,20 @@ func (h *host) integrationGuide(ctx context.Context, in guideIn) (guideOut, erro
 		}
 	case "server":
 		fmt.Fprintf(&b, "POST product events from your backend (no origin/CORS constraints;\nnative and server clients send no Origin header):\n\n"+
-			"    curl -X POST %s/ingest/events \\\n      -H 'Content-Type: application/json' \\\n      -H 'X-Analytics-Key: %s' \\\n      -d '{\"events\":[{\"id\":\"<uuidv7>\",\"ts\":\"2026-08-28T10:00:00Z\",\n            \"name\":\"subscribed\",\"attributes\":{\"plan\":\"pro\",\"$user_id\":\"u_123\"}}]}'\n\n", base, key)
+			"    curl -X POST %s/ingest/events \\\n      -H 'Content-Type: application/json' \\\n      -H 'X-Analytics-Key: %s' \\\n      -d '{\"events\":[{\"id\":\"<uuidv7>\",\"ts\":\"2026-08-28T10:00:00Z\",\n            \"name\":\"subscribed\",\"attributes\":{\"plan\":\"pro\",\"$user_id\":\"u_123\",\"$consent\":1}}]}'\n\n", base, key)
 		b.WriteString("A backend relay records unknown for OS, browser and device unless it\ndeclares $os, $browser and $device itself.\n\n")
-		b.WriteString("- Supply a UUIDv7 id per event: a batch retried after a timeout then\n  dedupes server-side. Omit it and a replay double-counts.\n- Batch up to 500 events per request (256 KiB body cap); rejection is\n  per event, never per batch.\n- Client ts is honoured and clamped to the raw-retention window.\n\n")
+		b.WriteString("- Supply a UUIDv7 id per event: a batch retried after a timeout then\n  dedupes server-side. Omit it and a replay double-counts.\n- Batch up to 500 events per request (256 KiB body cap); rejection is\n  per event, never per batch.\n- Client ts is honoured and clamped to the raw-retention window.\n- $consent: 1 once the user agreed to on-device storage, 0 if not; omit\n  it and the consent breakdown reads unknown.\n\n")
 	case "mobile":
 		fmt.Fprintf(&b, "Apps use the same HTTP API with app context as batch attributes:\n\n"+
 			"    POST %s/ingest/events\n    X-Analytics-Key: %s\n\n"+
 			"    {\"attributes\":{\"$install_id\":\"<stable-uuid-per-install>\",\n"+
 			"                   \"$platform\":\"ios\",\"$os\":\"ios\",\"$app_version\":\"2.4.1\",\n"+
 			"                   \"$os_version\":\"17.2\",\"$device_model\":\"iPhone15,2\",\n"+
-			"                   \"$device\":\"mobile\"},\n"+
+			"                   \"$device\":\"mobile\",\"$consent\":1},\n"+
 			"     \"events\":[{\"id\":\"<uuidv7>\",\"ts\":\"<event-time-utc>\",\n"+
 			"                \"name\":\"$screen_view\",\"attributes\":{\"$screen\":\"/settings\"}}]}\n\n", base, key)
 		b.WriteString("- $platform: the build/surface the app is used through (ios, android,\n  …); app versions are keyed by it, so an app that omits it rolls up\n  under unknown.\n" +
-			"- $install_id: generate once per install, store locally, send on every\n  batch. It is stored as sent and is what install cohorts are built on.\n- Send $screen_view per screen; custom names for product events.\n- Queue offline, replay with original ts and stable UUIDv7 ids —\n  docs://twillingate (Transport, Responses and retry) states the retry rules.\n\n")
+			"- $install_id: generate once per install, store locally, send on every\n  batch. It is stored as sent and is what install cohorts are built on.\n- $consent: 1 once the user agreed to on-device storage, 0 if not; omit\n  it and the consent breakdown reads unknown.\n- Send $screen_view per screen; custom names for product events.\n- Queue offline, replay with original ts and stable UUIDv7 ids —\n  docs://twillingate (Transport, Responses and retry) states the retry rules.\n\n")
 	}
 
 	if len(p.Attributes) > 0 {

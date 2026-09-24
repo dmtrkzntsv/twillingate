@@ -289,7 +289,8 @@ persisting identity, flipping to false deletes every key the instance owns.
 
 Every batch carries `$consent` — `1` or `0`, the answer in force when it was
 sent — in both identity modes, so the `consent` breakdown (`given`, `none`,
-`unknown`) shows how many visitors consented.
+`unknown`) shows how many visitors consented; `none` also catches a view sent
+before the visitor answered, so read it as a trend, not an acceptance rate.
 
 **Where keys live** is the `storage` option:
 
@@ -646,8 +647,9 @@ batch to drop.
 
 `$consent` is whether the client had consent to keep anything on the device
 when it sent the event: `1` (or `true`) given, `0` (or `false`) not given, as a
-number, boolean or string in any case. Absent means unknown. Any other value is
-stored as unknown with a warning, never rejected.
+number, boolean or string in any case. Absent, `null` or `""` mean unknown
+(and a per-event `null` overrides a batch value to unknown, as the merge rule
+implies). Any other value is stored as unknown with a warning, never rejected.
 
 An **unrecognized `$` key is dropped** with a warning; it is not stored as an
 ordinary attribute. `$url` is no longer a reserved key — a client sending it
@@ -819,9 +821,10 @@ is `v_views_daily` (per kind), `v_views_paths`, `v_views_hosts`,
 `v_views_os`, `v_views_browsers`, `v_views_app_versions` (keyed by `platform`
 and `app_version`), `v_views_devices`, `v_views_displays` and `v_views_consent`
 (`given`, `none` or `unknown`, where `unknown` is every view stored before
-migration 018 or sent without `$consent`); each dimension is
-capped at 500 values per day and the tail is one `(other)` row whose visitors
-are distinct actors, not a sum. `os`, `browser` and `device` are lower-case
+migration 018 or sent without `$consent`); every other dimension is
+capped at 500 values per day, the tail is one `(other)` row whose visitors
+are distinct actors, not a sum, and `consent` never reaches it — it only ever
+has three values. `os`, `browser` and `device` are lower-case
 closed vocabularies (see [Declaring the
 environment](#declaring-the-environment)) where `other` is a real value outside
 the list and `(other)` is the cap. Product events have `v_product_daily`,
