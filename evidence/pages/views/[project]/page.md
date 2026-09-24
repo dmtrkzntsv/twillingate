@@ -4,6 +4,8 @@
 select name from twillingate.projects where id = '${params.project}'
 ```
 
+<ReportNav project={params.project} />
+
 [← back to {project_name[0].name}](/views/{params.project})
 
 <ButtonGroup name=range title="Date range">

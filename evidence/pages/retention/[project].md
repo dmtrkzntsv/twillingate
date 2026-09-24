@@ -4,6 +4,8 @@
 select name from twillingate.projects where id = '${params.project}'
 ```
 
+<ReportNav project={params.project} current="retention" />
+
 Cohorts exist for actors identified by a `$user_id` or a stable
 `$install_id`. A project whose clients send neither has none: the tables
 below stay empty until they do.
