@@ -89,7 +89,6 @@ func (h *host) table(ctx context.Context, q string, args ...any) (tableOut, erro
 type projectOut struct {
 	ProjectID      int64    `json:"project_id"`
 	Name           string   `json:"name"`
-	Identity       string   `json:"identity"`
 	Archived       bool     `json:"archived,omitempty"`
 	FirstViewDay   string   `json:"first_view_day,omitempty"`
 	LastViewDay    string   `json:"last_view_day,omitempty"`
@@ -105,7 +104,7 @@ func (h *host) listProjects(ctx context.Context, _ struct{}) (listProjectsOut, e
 	var out listProjectsOut
 	for _, p := range h.reg.Snapshot(ctx).Projects() {
 		po := projectOut{
-			ProjectID: p.ID, Name: p.Name, Identity: p.Identity, Archived: p.Archived,
+			ProjectID: p.ID, Name: p.Name, Archived: p.Archived,
 			AllowedOrigins: p.AllowedOrigins, Attributes: p.Attributes,
 		}
 		// coverage probe: cheap MIN/MAX over the stitch view
@@ -220,7 +219,7 @@ func (h *host) register(r *registrar) {
 	const p = "/api/projects/{project_id}"
 
 	expose(r, spec{Name: "list_projects", Annotations: ro, Method: "GET", Path: "/api/projects",
-		Description: "List projects with id, name, identity mode and data coverage. Call this first: every other tool takes a project_id from here. Projects with identity=identified support retention and identities; anonymous ones cannot (their visitor ids rotate daily)."},
+		Description: "List projects with id, name and data coverage. Call this first: every other tool takes a project_id from here."},
 		h.listProjects)
 	expose(r, spec{Name: "views_overview", Annotations: ro, Method: "GET", Path: p + "/views/overview",
 		Description: "Daily views for one project: visitors, views, sessions, bounces, duration, with derived bounce_rate and avg_session_sec. Sums every kind (web, app, cli, …) unless kind is given. Includes yesterday and today (live)."},
@@ -235,10 +234,10 @@ func (h *host) register(r *registrar) {
 		Description: "Attribute breakdowns for product events: count, unique users and unique groups per value, per event, per day. unique_groups is empty for days rolled up before it was measured and 0 when it was measured and no group was involved. The system dimensions $platform, $os and $app_version are always included; a custom key only appears once the project declares it in attributes (see update_project)."},
 		h.productAttributes)
 	expose(r, spec{Name: "retention", Annotations: ro, Method: "GET", Path: p + "/retention",
-		Description: "D1/D7/D30-style cohort curves for identified projects. Cohorted by how the actor was identified: actor=user or actor=install. Returns aggregated_through: cohorts after it are absent (refreshed 03:00 UTC), not zero. Anonymous projects have no retention by design."},
+		Description: "D1/D7/D30-style cohort curves, cohorted by how the actor was identified: actor=user or actor=install. Returns aggregated_through: cohorts after it are absent (refreshed 03:00 UTC), not zero. Empty for a project whose clients send neither $user_id nor $install_id."},
 		h.retention)
 	expose(r, spec{Name: "identities", Annotations: ro, Method: "GET", Path: p + "/identities",
-		Description: "Per-user or per-group activity with display names. This surfaces personal data on identified projects."},
+		Description: "Per-user or per-group activity with display names. This surfaces personal data on projects whose clients send ids."},
 		h.identities)
 	expose(r, spec{Name: "query", Annotations: ro, Method: "POST", Path: "/api/query",
 		Description: "Escape hatch: run one read-only SELECT/WITH against the v_* views and agg_* tables. Read schema://views first for columns and caveats. Row-capped and time-limited; the connection is read-only at the driver level."},
@@ -248,7 +247,7 @@ func (h *host) register(r *registrar) {
 		Description: "Create a project and (by default) its first ingest key; returns a paste-ready embed snippet (confirm the collector hostname with the user). Set skip_key to suppress the key."},
 		h.createProject)
 	expose(r, spec{Name: "update_project", Annotations: write, Method: "PATCH", Path: "/api/projects/{project_id}",
-		Description: "Update a project's name, identity mode, allowed origins and/or declared product-event attributes (breakdown keys for flat-view columns and attribute rollups). Fields you omit are left unchanged; allowed_origins and attributes replace the whole list when given, and an explicit empty allowed_origins clears it. Switching to identity=identified starts storing user ids and names as given — privacy-significant, say so to the user before doing it."},
+		Description: "Update a project's name, allowed origins and/or declared product-event attributes (breakdown keys for flat-view columns and attribute rollups). Fields you omit are left unchanged; allowed_origins and attributes replace the whole list when given, and an explicit empty allowed_origins clears it."},
 		h.updateProject)
 	expose(r, spec{Name: "archive_project", Annotations: idem, Method: "POST", Path: "/api/projects/{project_id}/archive",
 		Description: "Archive a project: ingestion stops, data and dashboards keep working, fully reversible with restore_project. There is no delete over the API — deletion requires the CLI."},
@@ -270,7 +269,7 @@ func (h *host) register(r *registrar) {
 		h.enableKey)
 
 	expose(r, spec{Name: "integration_guide", Annotations: ro, // MCP only
-		Description: "Tailored integration instructions for one project and platform (web, spa, server, mobile), with the project's real ingest key, collector URL, identity-mode guidance and event examples baked in. Confirm the collector hostname with the user. Call after create_project; read docs://twillingate for depth."},
+		Description: "Tailored integration instructions for one project and platform (web, spa, server, mobile), with the project's real ingest key, collector URL and event examples baked in. Confirm the collector hostname with the user. Call after create_project; read docs://twillingate for depth."},
 		h.integrationGuide)
 
 	registerSchemaRoute(r)

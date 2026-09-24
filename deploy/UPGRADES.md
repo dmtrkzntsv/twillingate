@@ -145,3 +145,54 @@ What changes on the day:
 There is no down migration. An older binary still runs against the upgraded
 file — it writes the seven columns it knows and leaves `unique_groups`
 NULL — but a day it rolls up is then unmeasured for good.
+
+### Upgrading to storing what is sent (migration 017)
+
+The project's identity mode is gone. The collector stores `$user_id`,
+`$user_name` and `$install_id` exactly as a client sends them, for every
+project; what is sent is decided by the tag (`data-identity`, anonymous by
+default) or by whatever a hand-written client posts. The migration cleans
+up what the old anonymous mode hid before dropping the column with
+`ALTER TABLE … DROP COLUMN`; see below for exactly what it rewrites.
+
+**Upgrade at least a day after the release that carries the SDK factory
+(#48) has been on this collector.** The served SDK is cached for a day; a
+page still running the previous SDK sends ids from `identify()` even under
+an anonymous tag, and from upgrade day those would be stored raw.
+
+There is no query to run. The check is a question: for every project that
+was `anonymous`, confirm no client posts `$user_id` or `$install_id` by
+hand, because from upgrade day they are stored as sent. Before the upgrade
+`twillingate project list` still shows the mode column, which is how to
+find those projects.
+
+What changes on the day:
+
+- The mode column is gone; `list_projects`, `schema://projects` and
+  `twillingate project list` stop showing it, and a `create_project` or
+  `update_project` call that still sends `identity` is refused as an
+  unknown field.
+- Retention appears for any project whose clients send `$user_id` or
+  `$install_id`, and is empty for the rest.
+- Ids hashed before the upgrade stay hashed and never link to ids received
+  after it. Raw rows an `anonymous` project received with a `$user_id` or
+  `$install_id` are re-kinded to `connection` by the migration, so the
+  daily pass does not turn those rotating hashes into cohorts; those same
+  rows have their hashed `user_id` cleared, and their per-day `user` rows
+  in `agg_identity_daily` are deleted, so the users page and the
+  `identities` tool never list an old rotating hash as a person. The
+  migration leaves group rows alone, but the next daily pass recomputes
+  every day still inside the raw window, and with the user ids cleared
+  each group's `users` count for those days becomes 0 — for a project that
+  was always `anonymous` that replaces a count of rotating hashes; for a
+  project switched from `identified` to `anonymous` before the upgrade it
+  replaces real user ids, which the migration has also cleared from its
+  raw rows for good. Days already rolled up keep their counts. Nothing
+  else is rewritten and there is nothing to backfill.
+- The collector logs `project receives ids` (with the project id and the
+  kind, `user` or `install`) once per project and kind per process, the
+  first time a stored view or event carries one. Watch for it after the
+  upgrade on a project that should send none.
+
+There is no down migration. The previous binary reads a column that no
+longer exists and refuses to start against the upgraded file.

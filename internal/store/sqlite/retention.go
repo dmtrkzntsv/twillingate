@@ -59,9 +59,13 @@ ON CONFLICT(project_id, actor_id) DO UPDATE SET
 // computation reads day D's raw rows while they still exist, no per-day
 // activity history has to be stored.
 //
-// Callers skip anonymous projects: actor_id rotates at midnight there, so
-// first_seen_day would always equal D and every cohort would hold nothing but
-// offset 0. Retention is genuinely undefined under daily rotation.
+// Cohorts are built for every project now. What keeps a daily-rotating hash
+// out of them is the kind filter, not the caller: UpsertActors only records
+// actor_kind IN ('user', 'install') (cohortKinds), so a connection-hash
+// actor — whose first_seen_day would always equal D, making every cohort
+// hold nothing but offset 0 — is never cohorted. Migration 017 re-kinded the
+// hashed user/install rows a formerly anonymous project had already
+// received to connection for the same reason.
 func (d *DB) AggregateRetentionDay(ctx context.Context, projectID int64, day civil.Date) error {
 	return d.tx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `

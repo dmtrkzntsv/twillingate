@@ -180,9 +180,10 @@ client talks to the running collector over the network — and one
 `API_AUTH_DSN` protects both.
 
 > **A connected session reads every non-archived project — including
-> personal data on `identified` projects — and can use the management
-> tools.** There is no per-project scoping. The token and the password are
-> the whole of the access control. Treat both as admin credentials.
+> personal data on projects whose clients send ids — and can use the
+> management tools.** There is no per-project scoping. The token and the
+> password are the whole of the access control. Treat both as admin
+> credentials.
 
 ### Set it up
 

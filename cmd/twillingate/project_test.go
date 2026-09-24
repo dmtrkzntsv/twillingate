@@ -37,7 +37,7 @@ func TestProjectCreateListArchiveDelete(t *testing.T) {
 	if code := run([]string{"project", "list"}, &out); code != 0 {
 		t.Fatalf("list: exit %d", code)
 	}
-	if !strings.HasPrefix(out.String(), "1\tanonymous\tMy blog") {
+	if !strings.HasPrefix(out.String(), "1\tMy blog") {
 		t.Fatalf("list output: %s", out.String())
 	}
 	out.Reset()
@@ -126,29 +126,30 @@ func TestEnvFileFlag(t *testing.T) {
 func TestProjectUpdateMergeSemantics(t *testing.T) {
 	withDB(t)
 	var out bytes.Buffer
-	// Create an identified project with an origin
+	// Create a project with an origin
 	if code := run([]string{"project", "create", "-name", "Original",
-		"-identity", "identified", "-origin", "https://example.com"}, &out); code != 0 {
+		"-origin", "https://example.com"}, &out); code != 0 {
 		t.Fatalf("create: exit %d: %s", code, out.String())
 	}
 
-	// Update only the name; identity and origin should survive
+	// Update only the name; the origin should survive
 	out.Reset()
 	if code := run([]string{"project", "update", "-id", "1", "-name", "Updated"}, &out); code != 0 {
 		t.Fatalf("update: exit %d: %s", code, out.String())
 	}
 	p := snapshotProject(t, 1)
-	if p.Name != "Updated" || p.Identity != "identified" || len(p.AllowedOrigins) != 1 {
+	if p.Name != "Updated" || len(p.AllowedOrigins) != 1 {
 		t.Fatalf("name-only update changed more than the name: %+v", p)
 	}
 
-	// Now explicitly change identity to anonymous
+	// The flag is gone: the parser refuses it.
 	out.Reset()
-	if code := run([]string{"project", "update", "-id", "1", "-identity", "anonymous"}, &out); code != 0 {
-		t.Fatalf("update identity: exit %d: %s", code, out.String())
+	if code := run([]string{"project", "update", "-id", "1", "-identity", "anonymous"}, &out); code != 2 {
+		t.Fatalf("-identity accepted: exit %d: %s", code, out.String())
 	}
-	if p := snapshotProject(t, 1); p.Identity != "anonymous" || p.Name != "Updated" {
-		t.Fatalf("identity not changed, or the name was reset: %+v", p)
+	out.Reset()
+	if code := run([]string{"project", "list"}, &out); code != 0 || !strings.Contains(out.String(), "1\tUpdated") {
+		t.Fatalf("project list = exit %d: %q, want `1\\tUpdated`", code, out.String())
 	}
 }
 

@@ -80,12 +80,19 @@ func TestCreateProjectSkipKey(t *testing.T) {
 	}
 }
 
-func TestCreateProjectToolValidationError(t *testing.T) {
+// identity was a project field until migration 017; sending it now is an
+// unknown field, refused like any other.
+func TestCreateProjectToolRejectsIdentity(t *testing.T) {
 	_, cs := newTestHost(t)
 	res := callTool(t, cs, "create_project", map[string]any{
-		"name": "bad", "identity": "sometimes"})
+		"name": "bad", "identity": "identified"})
 	if !res.IsError {
-		t.Fatal("invalid identity accepted")
+		t.Fatal("create_project accepted the removed identity field")
+	}
+	res = callTool(t, cs, "update_project", map[string]any{
+		"project_id": 1, "identity": "identified"})
+	if !res.IsError {
+		t.Fatal("update_project accepted the removed identity field")
 	}
 }
 

@@ -117,7 +117,6 @@ func cmdProject(args []string, stdout io.Writer) int {
 		sf := flag.NewFlagSet("project create", flag.ContinueOnError)
 		sf.SetOutput(stdout)
 		name := sf.String("name", "", "display name (required)")
-		identity := sf.String("identity", "anonymous", "anonymous|identified")
 		var origins, attrs multiFlag
 		sf.Var(&origins, "origin", "allowed origin, `*` wildcards accepted (repeatable)")
 		sf.Var(&attrs, "attr", "attribute key to break down (repeatable)")
@@ -125,11 +124,11 @@ func cmdProject(args []string, stdout io.Writer) int {
 			return 2
 		}
 		if *name == "" {
-			fmt.Fprintln(stdout, "usage: twillingate project create -name <name> [-identity anonymous|identified] [-origin ...] [-attr ...]")
+			fmt.Fprintln(stdout, "usage: twillingate project create -name <name> [-origin ...] [-attr ...]")
 			return 2
 		}
 		p, err := ops.CreateProject(ctx, "cli", manage.ProjectSpec{
-			Name: *name, Identity: *identity, AllowedOrigins: origins, Attributes: attrs})
+			Name: *name, AllowedOrigins: origins, Attributes: attrs})
 		if err != nil {
 			fmt.Fprintln(stdout, err)
 			return 1
@@ -142,7 +141,6 @@ func cmdProject(args []string, stdout io.Writer) int {
 		sf.SetOutput(stdout)
 		id := sf.Int64("id", 0, "project id (required)")
 		name := sf.String("name", "", "new display name")
-		identity := sf.String("identity", "", "anonymous|identified")
 		var origins, attrs multiFlag
 		sf.Var(&origins, "origin", "allowed origin, replaces the whole list (repeatable)")
 		clearOrigins := sf.Bool("clear-origins", false, "remove every allowed origin")
@@ -151,7 +149,7 @@ func cmdProject(args []string, stdout io.Writer) int {
 			return 2
 		}
 		if *id == 0 {
-			fmt.Fprintln(stdout, "usage: twillingate project update -id <id> [-name ...] [-identity ...] [-origin ... | -clear-origins] [-attr ...]")
+			fmt.Fprintln(stdout, "usage: twillingate project update -id <id> [-name ...] [-origin ... | -clear-origins] [-attr ...]")
 			return 2
 		}
 		if *clearOrigins && len(origins) > 0 {
@@ -160,7 +158,7 @@ func cmdProject(args []string, stdout io.Writer) int {
 		}
 		// A flag left out is nil and keeps the current list; -clear-origins
 		// sends an empty non-nil list, which clears it.
-		spec := manage.ProjectSpec{ID: *id, Name: *name, Identity: *identity,
+		spec := manage.ProjectSpec{ID: *id, Name: *name,
 			AllowedOrigins: origins, Attributes: attrs}
 		if *clearOrigins {
 			spec.AllowedOrigins = []string{}
@@ -178,7 +176,7 @@ func cmdProject(args []string, stdout io.Writer) int {
 			if p.Archived {
 				state = "\t(archived)"
 			}
-			fmt.Fprintf(stdout, "%d\t%s\t%s%s\n", p.ID, p.Identity, p.Name, state)
+			fmt.Fprintf(stdout, "%d\t%s%s\n", p.ID, p.Name, state)
 		}
 		return 0
 	case "archive", "restore":

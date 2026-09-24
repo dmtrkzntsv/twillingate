@@ -21,9 +21,9 @@ Facts you cannot infer from the DDL:
 2. Every v_* view includes yesterday and today: each stitches aggregated
    history (agg_* tables) with a live half computed from raw rows.
 3. EXCEPTION: v_retention has no live half. It refreshes at the 03:00 UTC
-   daily pass; cohort days after that are ABSENT, not zero. It is populated
-   only for projects with identity=identified (anonymous visitor ids rotate
-   daily, so cohorts are undefined). Check list_projects for identity.
+   daily pass; cohort days after that are ABSENT, not zero. It holds cohorts
+   only for actors identified by $user_id or $install_id; a project whose
+   clients send neither has none.
 4. Every dimension is capped at 500 values per day; the rest sit in one
    '(other)' row per day whose visitors are distinct actors, not a sum.
    v_identity_daily keeps the busiest 500 ids per kind per day and drops
@@ -82,18 +82,18 @@ func (h *host) registerResources(s *mcp.Server) {
 	})
 	s.AddResource(&mcp.Resource{
 		URI: "schema://projects", Name: "projects",
-		Description: "Current projects with identity modes and settings.",
+		Description: "Current projects and their settings.",
 		MIMEType:    "application/json",
 	}, func(ctx context.Context, _ *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
 		type pj struct {
 			ProjectID      int64 `json:"project_id"`
-			Name, Identity string
+			Name           string
 			Archived       bool     `json:",omitempty"`
 			AllowedOrigins []string `json:"allowed_origins"`
 		}
 		var out []pj
 		for _, p := range h.reg.Snapshot(ctx).Projects() {
-			out = append(out, pj{p.ID, p.Name, p.Identity, p.Archived, p.AllowedOrigins})
+			out = append(out, pj{p.ID, p.Name, p.Archived, p.AllowedOrigins})
 		}
 		b, err := json.MarshalIndent(out, "", "  ")
 		if err != nil {

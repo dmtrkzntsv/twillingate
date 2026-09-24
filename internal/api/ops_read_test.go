@@ -13,10 +13,13 @@ func TestListProjects(t *testing.T) {
 		t.Fatalf("error: %s", textOf(res))
 	}
 	out := textOf(res)
-	for _, want := range []string{`"project_id":1`, "blog", "identified", `"project_id":2`, "docs", "anonymous", "https://blog.example.com"} {
+	for _, want := range []string{`"project_id":1`, "blog", `"project_id":2`, "docs", "https://blog.example.com"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in %s", want, out)
 		}
+	}
+	if strings.Contains(out, `"identity"`) {
+		t.Errorf("list_projects still carries an identity field: %s", out)
 	}
 }
 

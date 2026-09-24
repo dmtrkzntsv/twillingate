@@ -255,8 +255,8 @@ func TestRESTWritesAndRefusals(t *testing.T) {
 	}
 	// A refused create leaves no project behind, and no id is consumed:
 	// the retry lands on the next id.
-	if rec := serveREST(t, r, "POST", "/api/projects", `{"name":"bad","identity":"sometimes"}`); rec.Code != 400 {
-		t.Errorf("bad identity = %d %s", rec.Code, rec.Body.String())
+	if rec := serveREST(t, r, "POST", "/api/projects", `{"name":"bad","identity":"identified"}`); rec.Code != 400 {
+		t.Errorf("removed identity field = %d %s", rec.Code, rec.Body.String())
 	}
 	if rec := serveREST(t, r, "POST", "/api/projects", `{"name":"retry"}`); rec.Code != http.StatusCreated || !strings.Contains(rec.Body.String(), `"project_id":4`) {
 		t.Errorf("retry after a refusal = %d %s, want 201 as project 4", rec.Code, rec.Body.String())

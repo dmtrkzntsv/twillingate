@@ -75,7 +75,7 @@ const (
 // RegistryProject represents a project configuration from the registry.
 type RegistryProject struct {
 	ID             int64 // 0 on create; assigned by the store
-	Name, Identity string
+	Name           string
 	AllowedOrigins string // JSON array, "[]" if none
 	Attributes     string // JSON array, "[]" if none declared
 	Archived       bool

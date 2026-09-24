@@ -3,10 +3,10 @@ package manage
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"strings"
 	"testing"
 
-	"github.com/dmtrkzntsv/twillingate/internal/config"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
@@ -31,7 +31,7 @@ func TestArchiveAndRestoreProjectRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	reg.Reload(ctx)
 	ops := NewOps(reg, st)
-	p, err := ops.CreateProject(ctx, "cli", ProjectSpec{Name: "b", Identity: "anonymous"})
+	p, err := ops.CreateProject(ctx, "cli", ProjectSpec{Name: "b"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +55,7 @@ func TestDeleteProjectRemovesEverything(t *testing.T) {
 	ctx := context.Background()
 	reg.Reload(ctx)
 	ops := NewOps(reg, st)
-	p, err := ops.CreateProject(ctx, "cli", ProjectSpec{Name: "b", Identity: "anonymous"})
+	p, err := ops.CreateProject(ctx, "cli", ProjectSpec{Name: "b"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,31 +85,24 @@ func TestIssueIngestKeyUnknownProject(t *testing.T) {
 	}
 }
 
-func TestUpdateProjectAppliesIdentityAndAttributes(t *testing.T) {
+func TestUpdateProjectAppliesAttributes(t *testing.T) {
 	st := testStore(t)
 	reg := New(st, discard())
 	ctx := context.Background()
 	reg.Reload(ctx)
 	ops := NewOps(reg, st)
-	p, err := ops.CreateProject(ctx, "cli", ProjectSpec{Name: "b", Identity: "anonymous"})
+	p, err := ops.CreateProject(ctx, "cli", ProjectSpec{Name: "b"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	u, err := ops.UpdateProject(ctx, "cli", ProjectSpec{
-		ID: p.ID, Identity: "identified", Attributes: []string{"plan"},
+		ID: p.ID, Attributes: []string{"plan"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if u.Identity != "identified" || u.Name != "b" {
+	if u.Name != "b" || len(u.Attributes) != 1 || u.Attributes[0] != "plan" {
 		t.Fatalf("updated project = %+v", u)
-	}
-	if len(u.Attributes) != 1 || u.Attributes[0] != "plan" {
-		t.Fatalf("attributes not applied: %+v", u.Attributes)
-	}
-	// invalid identity is rejected before it reaches the store
-	if _, err := ops.UpdateProject(ctx, "cli", ProjectSpec{ID: p.ID, Identity: "sometimes"}); err == nil {
-		t.Fatal("want validation error for bad identity")
 	}
 }
 
@@ -122,7 +115,7 @@ func TestOpsPropagateStoreErrorsOnClosedDB(t *testing.T) {
 	ctx := context.Background()
 	reg.Reload(ctx)
 	ops := NewOps(reg, st)
-	p, err := ops.CreateProject(ctx, "cli", ProjectSpec{Name: "b", Identity: "anonymous"})
+	p, err := ops.CreateProject(ctx, "cli", ProjectSpec{Name: "b"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,11 +131,11 @@ func TestOpsPropagateStoreErrorsOnClosedDB(t *testing.T) {
 
 	for name, op := range map[string]func() error{
 		"CreateProject": func() error {
-			_, err := ops.CreateProject(ctx, "cli", ProjectSpec{Name: "o", Identity: "anonymous"})
+			_, err := ops.CreateProject(ctx, "cli", ProjectSpec{Name: "o"})
 			return err
 		},
 		"UpdateProject": func() error {
-			_, err := ops.UpdateProject(ctx, "cli", ProjectSpec{ID: p.ID, Name: "b", Identity: "anonymous"})
+			_, err := ops.UpdateProject(ctx, "cli", ProjectSpec{ID: p.ID, Name: "b"})
 			return err
 		},
 		"ArchiveProject":   func() error { return ops.ArchiveProject(ctx, "cli", p.ID) },
@@ -163,26 +156,19 @@ func TestOpsPropagateStoreErrorsOnClosedDB(t *testing.T) {
 
 // ---- ops.go: ProjectSpec.validate / .row, unexported but same package ----
 
-func TestValidateDefaultsIdentity(t *testing.T) {
-	sp := &ProjectSpec{Name: "blog"}
-	if err := sp.validate(); err != nil {
-		t.Fatal(err)
-	}
-	if sp.Identity != config.IdentityAnonymous {
-		t.Errorf("Identity = %q, want default anonymous", sp.Identity)
-	}
-	// A name is required and whitespace does not count.
+// A name is required and whitespace does not count.
+func TestValidateRequiresAName(t *testing.T) {
 	for _, name := range []string{"", "   ", "\t\n"} {
 		sp := &ProjectSpec{Name: name}
-		if err := sp.validate(); err == nil {
-			t.Errorf("validate(Name: %q) = nil, want ErrInvalid", name)
+		if err := sp.validate(); !errors.Is(err, ErrInvalid) {
+			t.Errorf("validate(Name: %q) = %v, want ErrInvalid", name, err)
 		}
 	}
 }
 
 func TestRowMarshalsOriginsAndAttributes(t *testing.T) {
 	// nil origins/attributes -> "[]"
-	sp := &ProjectSpec{Name: "a", Identity: "anonymous"}
+	sp := &ProjectSpec{Name: "a"}
 	row, err := sp.row()
 	if err != nil {
 		t.Fatal(err)
@@ -192,7 +178,7 @@ func TestRowMarshalsOriginsAndAttributes(t *testing.T) {
 	}
 
 	// non-nil origins and attributes set, id carried through
-	sp2 := &ProjectSpec{ID: 7, Name: "b", Identity: "identified",
+	sp2 := &ProjectSpec{ID: 7, Name: "b",
 		AllowedOrigins: []string{"https://b.example.com"},
 		Attributes:     []string{"plan", "tier"}}
 	row2, err := sp2.row()
@@ -211,7 +197,7 @@ func TestRowMarshalsOriginsAndAttributes(t *testing.T) {
 }
 
 func TestSnippetDefaultsOriginWhenEmpty(t *testing.T) {
-	snip := Snippet("", "ak_x", "anonymous")
+	snip := Snippet("", "ak_x")
 	if !strings.Contains(snip, "https://twillingate.example.com/js/twillingate.js") {
 		t.Errorf("Snippet with empty origin did not fall back to the placeholder host: %s", snip)
 	}
@@ -223,7 +209,7 @@ func TestProjectsAnyOriginAllowedAndAttributesFor(t *testing.T) {
 	st := testStore(t)
 	ctx := context.Background()
 	blog, err := st.CreateProject(ctx, store.RegistryProject{
-		Name: "blog", Identity: "anonymous",
+		Name:           "blog",
 		AllowedOrigins: `["https://blog.example.com/"]`, // trailing slash on this side
 		Attributes:     `["plan"]`,
 	}, store.AuditEntry{Actor: "test", Action: "project.create"})
@@ -231,7 +217,7 @@ func TestProjectsAnyOriginAllowedAndAttributesFor(t *testing.T) {
 		t.Fatal(err)
 	}
 	docs, err := st.CreateProject(ctx, store.RegistryProject{
-		Name: "docs", Identity: "anonymous", AllowedOrigins: "[]",
+		Name: "docs", AllowedOrigins: "[]",
 	}, store.AuditEntry{Actor: "test", Action: "project.create"})
 	if err != nil {
 		t.Fatal(err)
@@ -316,7 +302,7 @@ func TestReloadRejectsCorruptRegistryJSON(t *testing.T) {
 			st := testStore(t)
 			ctx := context.Background()
 			id, err := st.CreateProject(ctx, store.RegistryProject{
-				Name: "blog", Identity: "anonymous", AllowedOrigins: "[]",
+				Name: "blog", AllowedOrigins: "[]",
 			}, store.AuditEntry{Actor: "test", Action: "project.create"})
 			if err != nil {
 				t.Fatal(err)

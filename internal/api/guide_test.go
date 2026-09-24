@@ -8,16 +8,16 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-func TestIntegrationGuideWebUsesCollectorURLAndIdentity(t *testing.T) {
+func TestIntegrationGuideWebUsesCollectorURL(t *testing.T) {
 	_, cs := newTestHost(t)
-	// blog is identified and (fixture) has an allowed origin but no key yet
+	// blog (fixture) has an allowed origin but no key yet
 	res := callTool(t, cs, "integration_guide", map[string]any{
 		"project_id": 1, "platform": "web"})
 	if res.IsError {
 		t.Fatalf("error: %s", textOf(res))
 	}
 	out := textOf(res)
-	if !strings.Contains(out, "# Integrating blog (project 1; web, identity=identified)") {
+	if !strings.Contains(out, "# Integrating blog (project 1; web)") {
 		t.Errorf("heading must name the project by name and id: %s", out)
 	}
 	if !strings.Contains(out, "https://collector.test/js/twillingate.js") {
@@ -26,9 +26,18 @@ func TestIntegrationGuideWebUsesCollectorURLAndIdentity(t *testing.T) {
 	if strings.Contains(out, "blog.example.com/js/twillingate.js") {
 		t.Error("snippet points at the customer origin (the old bug)")
 	}
-	for _, want := range []string{"IDENTIFIED", "consent", "twillingate.reset", "keyed by the build rather than counted as web"} {
+	// out is the tool's JSON envelope, so the markdown's own quotes come
+	// back JSON-escaped (\") — match that, not a bare ".
+	for _, want := range []string{`data-identity=\"identified\"`, "twillingate.identify", "twillingate.reset", "optOut", "twillingate_ignore", "without data-key", "keyed by the build rather than counted as web"} {
 		if !strings.Contains(out, want) {
-			t.Errorf("identified-mode guidance missing %q", want)
+			t.Errorf("guidance missing %q", want)
+		}
+	}
+	// ", identity=" (not "identity=" alone) so this doesn't false-positive
+	// on the legitimate data-identity="identified" sample text above.
+	for _, gone := range []string{"IDENTIFIED", "ANONYMOUS", ", identity="} {
+		if strings.Contains(out, gone) {
+			t.Errorf("guide still speaks of a project mode %q: %s", gone, out)
 		}
 	}
 	if !strings.Contains(out, "NO active ingest key") {
@@ -36,7 +45,7 @@ func TestIntegrationGuideWebUsesCollectorURLAndIdentity(t *testing.T) {
 	}
 }
 
-func TestIntegrationGuideAnonymousAndPlatforms(t *testing.T) {
+func TestIntegrationGuidePlatforms(t *testing.T) {
 	_, cs := newTestHost(t)
 	res := callTool(t, cs, "integration_guide", map[string]any{
 		"project_id": 2, "platform": "server"})
@@ -54,6 +63,9 @@ func TestIntegrationGuideAnonymousAndPlatforms(t *testing.T) {
 	if out := textOf(res); !strings.Contains(out, "$install_id") || !strings.Contains(out, "$screen_view") ||
 		!strings.Contains(out, "$platform") {
 		t.Errorf("mobile guide missing app context: %s", out)
+	}
+	if out := textOf(res); strings.Contains(out, "anonymous identity") {
+		t.Errorf("mobile guide still describes salting: %s", out)
 	}
 	// bad platform lists the valid ones
 	res = callTool(t, cs, "integration_guide", map[string]any{

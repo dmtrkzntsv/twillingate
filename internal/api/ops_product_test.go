@@ -125,15 +125,17 @@ func TestRetentionReturnsCurveAndAggregatedThrough(t *testing.T) {
 	}
 }
 
-func TestRetentionOnAnonymousProjectExplains(t *testing.T) {
+// docs (project 2) has no cohorts because its clients send no ids: the
+// answer is an empty table, not a refusal.
+func TestRetentionWithoutIdsIsEmpty(t *testing.T) {
 	_, cs := newTestHost(t)
 	res := callTool(t, cs, "retention", map[string]any{
 		"project_id": 2, "actor": "user", "from": "2026-07-01", "to": "2026-08-31"})
-	if !res.IsError {
-		t.Fatal("anonymous project retention did not error")
+	if res.IsError {
+		t.Fatalf("retention on a project without ids must not error: %s", textOf(res))
 	}
-	if out := textOf(res); !strings.Contains(out, "identified") {
-		t.Errorf("error must explain the identity requirement: %s", out)
+	if out := textOf(res); !strings.Contains(out, `"rows":[]`) && !strings.Contains(out, `"rows":null`) {
+		t.Errorf("want an empty rows array, got %s", out)
 	}
 }
 

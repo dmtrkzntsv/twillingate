@@ -16,7 +16,7 @@ func TestRegistryWritesReturnTypedOutcomes(t *testing.T) {
 	d := openRegistryDB(t)
 	ctx := context.Background()
 	audit := store.AuditEntry{Actor: "test", Action: "test", Subject: "test"}
-	blog := store.RegistryProject{Name: "blog", Identity: "anonymous", AllowedOrigins: "[]", Attributes: "[]"}
+	blog := store.RegistryProject{Name: "blog", AllowedOrigins: "[]", Attributes: "[]"}
 	id, err := d.CreateProject(ctx, blog, audit)
 	if err != nil {
 		t.Fatal(err)

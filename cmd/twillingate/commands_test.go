@@ -151,8 +151,8 @@ func TestKeygenPrintsUsableKeys(t *testing.T) {
 	if !strings.Contains(s, "ak_") {
 		t.Errorf("output has no ak_ prefixed key:\n%s", s)
 	}
-	if !strings.Contains(s, "data-key") || !strings.Contains(s, "data-identity") {
-		t.Errorf("output should include a ready-to-paste snippet:\n%s", s)
+	if !strings.Contains(s, "data-key") || strings.Contains(s, "data-identity") {
+		t.Errorf("output should include a ready-to-paste snippet without data-identity:\n%s", s)
 	}
 	if !strings.Contains(s, "ingest_keys") {
 		t.Errorf("output should include the projects.json fragment:\n%s", s)

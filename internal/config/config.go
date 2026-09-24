@@ -13,14 +13,6 @@ import (
 	"time"
 )
 
-// Identity modes. anonymous salts and rotates whatever identifier the
-// client supplies; identified stores it as given. The server is always the
-// enforcement point: a client hint never overrides this.
-const (
-	IdentityAnonymous  = "anonymous"
-	IdentityIdentified = "identified"
-)
-
 type LogConfig struct {
 	Level  string
 	Format string

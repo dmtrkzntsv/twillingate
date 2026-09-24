@@ -8,10 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dmtrkzntsv/twillingate/internal/config"
 	"github.com/dmtrkzntsv/twillingate/internal/enrich"
 	"github.com/dmtrkzntsv/twillingate/internal/identity"
-	"github.com/dmtrkzntsv/twillingate/internal/manage"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 	"github.com/google/uuid"
 )
@@ -90,6 +88,21 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 
 	var res ingestResult
 	var names []store.Identity
+	var sawUser, sawInstall bool
+	// noteRow records an id kind seen and any display name carried by a row
+	// that is actually stored — called once beside each Enqueue call below,
+	// never for a row that is rejected or bot-filtered, so a batch that
+	// stores nothing leaves no trace in the identities table or the
+	// "project receives ids" log.
+	noteRow := func(actorKind string, rv resolved) {
+		switch actorKind {
+		case store.ActorUser:
+			sawUser = true
+		case store.ActorInstall:
+			sawInstall = true
+		}
+		names = append(names, identityNames(rv)...)
+	}
 	for i, ev := range env.Events {
 		rv, unknown := resolveAttributes(mergeAttributes(env.Attributes, ev.Attributes))
 		for _, k := range unknown {
@@ -110,8 +123,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			res.warn(i, "timestamp out of range, clamped")
 		}
 
-		actor, actorKind, user, group := resolveIdentity(p, rv, salt, ip, ua, hashKey)
-		names = append(names, identityNames(p, rv)...)
+		actor, actorKind, user, group := resolveIdentity(rv, salt, ip, ua, hashKey)
 
 		// The environment is declared, validated and never parsed: the
 		// User-Agent is read for nothing but the bot check below. $os and
@@ -135,6 +147,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 				Platform: platform, OS: osv, AppVersion: rv.AppVersion,
 				Attributes: rv.Custom,
 			})
+			noteRow(actorKind, rv)
 			res.Accepted++
 			continue
 		}
@@ -201,6 +214,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			res.warn(i, "$display_height %q is not a positive integer, ignored", rv.displayHeightRaw)
 		}
 		s.queue.EnqueueView(v)
+		noteRow(actorKind, rv)
 		res.Accepted++
 	}
 
@@ -210,6 +224,12 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.counters.record(label, res.Accepted, res.Rejected)
+	if sawUser {
+		s.noteIDs(p.ID, store.ActorUser)
+	}
+	if sawInstall {
+		s.noteIDs(p.ID, store.ActorInstall)
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
@@ -218,60 +238,38 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// resolveIdentity applies the project's identity mode. anonymous salts and
-// rotates whatever identifier the client supplied; identified stores it as
-// given. actorKind records how the actor id was derived (user, install or
-// connection) regardless of identity mode, so cohorts can be built on it
-// later.
+// resolveIdentity picks the actor for a row: the client's $user_id, else
+// its $install_id, else a hash of the connection under the daily salt.
+// actorKind records which one it was, so cohorts can be built on it later.
+// Ids are stored as sent: the served SDK's identity mode decides what is
+// sent (docs/twillingate.md, Identity), and a client that posts by hand
+// decides by what it posts.
 //
-// group_id stays raw in both modes: it identifies an organization, not a
-// natural person, and hashing it would make dashboards unreadable for no
-// real privacy gain.
+// group_id stays raw: it identifies an organization, not a natural person.
 //
 // hashKey is the project id as a decimal string — the id never changes, so
 // a project's hash input never changes.
-func resolveIdentity(p *manage.Project, rv resolved, salt, ip, ua, hashKey string) (actor, actorKind, user, group string) {
-	raw := rv.UserID
-	actorKind = store.ActorUser
-	if raw == "" {
-		raw = rv.InstallID
-		actorKind = store.ActorInstall
+func resolveIdentity(rv resolved, salt, ip, ua, hashKey string) (actor, actorKind, user, group string) {
+	actor, actorKind = rv.UserID, store.ActorUser
+	if actor == "" {
+		actor, actorKind = rv.InstallID, store.ActorInstall
 	}
-	if raw == "" {
-		actorKind = store.ActorConnection
+	if actor == "" {
+		// No client identifier at all: fall back to the rotating hash
+		// rather than dropping the event.
+		actor, actorKind = identity.VisitorHash(salt, ip, ua, hashKey), store.ActorConnection
 	}
-	if p.Identity == config.IdentityIdentified {
-		actor = raw
-		if actor == "" {
-			// No client identifier at all: fall back to the rotating hash
-			// rather than dropping the event.
-			actor = identity.VisitorHash(salt, ip, ua, hashKey)
-		}
-		return actor, actorKind, rv.UserID, rv.GroupID
-	}
-	if raw == "" {
-		actor = identity.VisitorHash(salt, ip, ua, hashKey)
-	} else {
-		actor = identity.ActorHash(salt, raw, hashKey)
-	}
-	if rv.UserID != "" {
-		user = identity.ActorHash(salt, rv.UserID, hashKey)
-	}
-	return actor, actorKind, user, rv.GroupID
+	return actor, actorKind, rv.UserID, rv.GroupID
 }
 
-// identityNames collects display names to upsert.
-//
-// $user_name is ignored in anonymous mode: storing a person's name against a
-// hash that rotates daily would both defeat the anonymisation and accumulate
-// a fresh row per user per day. $group_name is kept in both modes, on the
-// same reasoning that keeps group_id raw.
-func identityNames(p *manage.Project, rv resolved) []store.Identity {
+// identityNames collects display names to upsert. A name is kept only
+// beside the id it names: $user_name without $user_id names nothing.
+func identityNames(rv resolved) []store.Identity {
 	var out []store.Identity
 	if rv.GroupID != "" && rv.GroupName != "" {
 		out = append(out, store.Identity{Kind: store.KindGroup, ID: rv.GroupID, Name: rv.GroupName})
 	}
-	if p.Identity == config.IdentityIdentified && rv.UserID != "" && rv.UserName != "" {
+	if rv.UserID != "" && rv.UserName != "" {
 		out = append(out, store.Identity{Kind: store.KindUser, ID: rv.UserID, Name: rv.UserName})
 	}
 	return out

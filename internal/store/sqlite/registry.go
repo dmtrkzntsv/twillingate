@@ -37,7 +37,7 @@ func (d *DB) ConfigVersion(ctx context.Context) (int64, error) {
 }
 
 func (d *DB) LoadRegistry(ctx context.Context) ([]store.RegistryProject, []store.RegistryKey, error) {
-	rows, err := d.db.QueryContext(ctx, `SELECT id, name, identity,
+	rows, err := d.db.QueryContext(ctx, `SELECT id, name,
 		allowed_origins, attributes, archived_at IS NOT NULL FROM projects ORDER BY id`)
 	if err != nil {
 		return nil, nil, err
@@ -46,7 +46,7 @@ func (d *DB) LoadRegistry(ctx context.Context) ([]store.RegistryProject, []store
 	var ps []store.RegistryProject
 	for rows.Next() {
 		var p store.RegistryProject
-		if err := rows.Scan(&p.ID, &p.Name, &p.Identity,
+		if err := rows.Scan(&p.ID, &p.Name,
 			&p.AllowedOrigins, &p.Attributes, &p.Archived); err != nil {
 			return nil, nil, err
 		}
@@ -127,8 +127,8 @@ func keySubject(projectID int64, label string) string {
 
 func insertProject(ctx context.Context, tx *sql.Tx, p store.RegistryProject) (int64, error) {
 	res, err := tx.ExecContext(ctx, `INSERT INTO projects
-		(name, identity, allowed_origins, attributes) VALUES (?,?,?,?)`,
-		p.Name, p.Identity, p.AllowedOrigins, p.Attributes)
+		(name, allowed_origins, attributes) VALUES (?,?,?)`,
+		p.Name, p.AllowedOrigins, p.Attributes)
 	if err != nil {
 		return 0, fmt.Errorf("create project %q: %w", p.Name, err)
 	}
@@ -137,9 +137,9 @@ func insertProject(ctx context.Context, tx *sql.Tx, p store.RegistryProject) (in
 
 func (d *DB) UpdateProject(ctx context.Context, p store.RegistryProject, a store.AuditEntry) error {
 	return d.tx(ctx, func(tx *sql.Tx) error {
-		res, err := tx.ExecContext(ctx, `UPDATE projects SET name=?, identity=?,
+		res, err := tx.ExecContext(ctx, `UPDATE projects SET name=?,
 			allowed_origins=?, attributes=? WHERE id=?`,
-			p.Name, p.Identity, p.AllowedOrigins, p.Attributes, p.ID)
+			p.Name, p.AllowedOrigins, p.Attributes, p.ID)
 		if err != nil {
 			return err
 		}

@@ -22,7 +22,7 @@ func seedDB(t *testing.T) string {
 		t.Fatal(err)
 	}
 	if _, err := st.CreateProject(context.Background(), store.RegistryProject{
-		Name: "My blog", Identity: "identified", AllowedOrigins: "[]", Attributes: "[]"},
+		Name: "My blog", AllowedOrigins: "[]", Attributes: "[]"},
 		store.AuditEntry{Actor: "test", Action: "project.create"}); err != nil {
 		t.Fatal(err)
 	}

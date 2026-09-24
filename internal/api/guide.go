@@ -5,13 +5,12 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/dmtrkzntsv/twillingate/internal/config"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
 )
 
 // integration_guide stitches the project's live registry state (keys,
-// identity mode, aggregation, PUBLIC_URL) together with the right slice of
-// the static docs, so a model can integrate a site or app in one read.
+// attributes, PUBLIC_URL) together with the right slice of the static
+// docs, so a model can integrate a site or app in one read.
 
 type guideIn struct {
 	ProjectID int64  `json:"project_id" jsonschema:"project id; call list_projects first"`
@@ -60,24 +59,20 @@ func (h *host) integrationGuide(ctx context.Context, in guideIn) (guideOut, erro
 	hostNote := "\n> URLs below use the default collector hostname, " + base + ". Ask the user\n> which hostname this site should use and substitute it if it differs.\n"
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "# Integrating %s (project %d; %s, identity=%s)\n%s%s%s\n", p.Name, p.ID, in.Platform, p.Identity, baseNote, hostNote, keyLine)
+	fmt.Fprintf(&b, "# Integrating %s (project %d; %s)\n%s%s%s\n", p.Name, p.ID, in.Platform, baseNote, hostNote, keyLine)
 
 	switch in.Platform {
 	case "web", "spa":
 		fmt.Fprintf(&b, "Add to every page (before </head>):\n\n    %s\n\n",
-			strings.ReplaceAll(manage.Snippet(h.publicURL, key, p.Identity), "\n", "\n    "))
+			strings.ReplaceAll(manage.Snippet(h.publicURL, key), "\n", "\n    "))
 		b.WriteString("Pageviews are automatic")
 		if in.Platform == "spa" {
 			b.WriteString(", including SPA route changes (pushState/popstate are hooked) — no router integration needed")
 		}
-		b.WriteString(". Nothing is filtered on the client: a localhost page reports too, so keep development traffic out by not loading the tag there.\n\n")
+		fmt.Fprintf(&b, ". Nothing is filtered on the client: a localhost page reports too. Keep development traffic out by setting localStorage.twillingate_ignore = \"true\" in the development browser, or load the tag without data-key and call twillingate.init({ key: \"%s\", optOut: () => location.hostname === \"localhost\" }) from code.\n\n", key)
 		b.WriteString("An Electron or Tauri app loads the same file without data-key and calls twillingate.init({ key, kind: \"app\", platform: \"electron\", appVersion }) from code, so its views are keyed by the build rather than counted as web; the OS, browser and device are detected by the SDK on every kind.\n\n")
 		fmt.Fprintf(&b, "Product events from the page:\n\n    twillingate.track(\"signup\", { plan: \"pro\" });\n\n")
-		if p.Identity == config.IdentityIdentified {
-			b.WriteString("This project is IDENTIFIED: the tag stores nothing on the device unless it\ndeclares consent (data-consent=\"true\", or the name of a global the site's\nconsent manager maintains); without it the visitor id is not persisted and\nsigned-out visitors fall back to the daily-rotating connection hash. Call\ntwillingate.identify(userId, userName) (and twillingate.group(groupId))\nafter login and twillingate.reset() on logout.\n\n")
-		} else {
-			b.WriteString("This project is ANONYMOUS: no cookies, nothing kept on the device unless\nthe tag declares consent (then only the retry queue), no consent banner\nneeded for pageviews alone; $user_name is ignored and retention curves are\nunavailable by design.\n\n")
-		}
+		b.WriteString("The tag decides what is sent. The printed tag is anonymous: it sends no\n$user_id, $user_name or $install_id, and identify() is inert. For a\nsigned-in app add data-identity=\"identified\" (or identity: \"identified\" in\ncode), call twillingate.identify(userId, userName) and group(groupId) after\nlogin and twillingate.reset() on logout; ids are then stored as sent.\nNothing is kept on the device unless the tag declares consent.\n\n")
 		origins := p.AllowedOrigins
 		if len(origins) == 0 {
 			b.WriteString("WARNING: this project has NO allowed_origins — browser requests send an\nOrigin header and will be rejected. Add the site's origin with\nupdate_project before deploying the snippet.\n\n")
@@ -99,7 +94,7 @@ func (h *host) integrationGuide(ctx context.Context, in guideIn) (guideOut, erro
 			"     \"events\":[{\"id\":\"<uuidv7>\",\"ts\":\"<event-time-utc>\",\n"+
 			"                \"name\":\"$screen_view\",\"attributes\":{\"$screen\":\"/settings\"}}]}\n\n", base, key)
 		b.WriteString("- $platform: the build/surface the app is used through (ios, android,\n  …); app versions are keyed by it, so an app that omits it rolls up\n  under unknown.\n" +
-			"- $install_id: generate once per install, store locally, send on every\n  batch. Under anonymous identity it is salted and rotated daily.\n- Send $screen_view per screen; custom names for product events.\n- Queue offline, replay with original ts and stable UUIDv7 ids —\n  docs://twillingate (Transport, Responses and retry) states the retry rules.\n\n")
+			"- $install_id: generate once per install, store locally, send on every\n  batch. It is stored as sent and is what install cohorts are built on.\n- Send $screen_view per screen; custom names for product events.\n- Queue offline, replay with original ts and stable UUIDv7 ids —\n  docs://twillingate (Transport, Responses and retry) states the retry rules.\n\n")
 	}
 
 	if len(p.Attributes) > 0 {

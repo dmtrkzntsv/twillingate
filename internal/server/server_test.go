@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -59,7 +60,8 @@ const (
 )
 
 func testServer(t *testing.T) (*fakeQueue, http.Handler) {
-	return testServerWithIdentity(t, "anonymous")
+	q, s := newServer(t)
+	return q, s
 }
 
 // newTestRegistry seeds a temp-DB registry with the given projects, in
@@ -102,34 +104,38 @@ func newTestRegistry(t *testing.T, projects []manage.ProjectSpec, keys map[int][
 	return reg
 }
 
-func testServerWithIdentity(t *testing.T, mode string) (*fakeQueue, http.Handler) {
+// newServer builds a *Server over one project with one key, logging to
+// slog.Default(). newLoggingServer is the same with a captured log.
+func newServer(t *testing.T) (*fakeQueue, *Server) {
 	t.Helper()
-	q, s := newServerWithIdentity(t, mode)
-	return q, s
+	return newServerWithLogger(t, slog.Default())
 }
 
-// newServerWithIdentity builds a *Server the same way testServerWithIdentity
-// does, but returns the concrete type so a test that needs to call a
-// Server-only method (like Mount) does not have to type-assert.
-func newServerWithIdentity(t *testing.T, mode string) (*fakeQueue, *Server) {
+func newLoggingServer(t *testing.T) (*fakeQueue, *Server, *bytes.Buffer) {
+	t.Helper()
+	var buf bytes.Buffer
+	q, s := newServerWithLogger(t, slog.New(slog.NewTextHandler(&buf, nil)))
+	return q, s, &buf
+}
+
+func newServerWithLogger(t *testing.T, logger *slog.Logger) (*fakeQueue, *Server) {
 	t.Helper()
 	cfg := configtest.Load(t, nil)
 	reg := newTestRegistry(t,
 		[]manage.ProjectSpec{{
-			Name: "App", Identity: mode,
+			Name:           "App",
 			AllowedOrigins: []string{testOrigin},
 		}},
 		map[int][2]string{0: {testKey, "web"}})
 	g, _ := geo.New("cloudflare://", t.TempDir(), slog.Default())
 	q := &fakeQueue{}
-	return q, New(cfg, reg, q, g, fixedSalt{}, q, slog.Default())
+	return q, New(cfg, reg, q, g, fixedSalt{}, q, logger)
 }
 
-// newTestServer is newServerWithIdentity for a test that only needs the
-// server, in the default anonymous identity mode.
+// newTestServer is newServer for a test that only needs the server.
 func newTestServer(t *testing.T) *Server {
 	t.Helper()
-	_, s := newServerWithIdentity(t, "anonymous")
+	_, s := newServer(t)
 	return s
 }
 
@@ -197,7 +203,7 @@ func TestAcceptsKeyFromHeader(t *testing.T) {
 	}
 }
 
-// TestHashInputIsTheProjectId pins the salt seam: an anonymous actor is
+// TestHashInputIsTheProjectId pins the salt seam: a connection-hash actor is
 // hashed with the id as a decimal string, never a name, so renaming a
 // project cannot change its hashes.
 func TestHashInputIsTheProjectId(t *testing.T) {
@@ -495,7 +501,7 @@ func TestDisplaySizeParsing(t *testing.T) {
 }
 
 func TestActorKindRecorded(t *testing.T) {
-	q, h := testServerWithIdentity(t, "identified")
+	q, h := testServer(t)
 	body := `{"key":"` + testKey + `","events":[
 	    {"name":"$page_view","attributes":{"$path":"/","$user_id":"u1","$install_id":"i1"}},
 	    {"name":"$page_view","attributes":{"$path":"/","$install_id":"i1"}},
@@ -718,9 +724,9 @@ func TestOriginAbsentIsAccepted(t *testing.T) {
 	}
 }
 
-// --- identity modes ---
+// --- ids are stored as sent ---
 
-func TestAnonymousModeHashesIdentifiers(t *testing.T) {
+func TestIdsAreStoredAsSent(t *testing.T) {
 	q, h := testServer(t)
 	post(h, `{"key":"`+testKey+`","attributes":{"$user_id":"u1","$group_id":"org9","$user_name":"Ada","$group_name":"Acme","$install_id":"i1"},
 	  "events":[{"name":"$screen_view","attributes":{"$screen":"/x"}}]}`, nil)
@@ -729,51 +735,108 @@ func TestAnonymousModeHashesIdentifiers(t *testing.T) {
 		t.Fatalf("views = %+v", q.views)
 	}
 	v := q.views[0]
-	if v.UserID == "u1" || v.UserID == "" {
-		t.Errorf("user_id = %q; want a salted hash", v.UserID)
-	}
-	if v.ActorID == "u1" || v.ActorID == "i1" || len(v.ActorID) != 16 {
-		t.Errorf("actor_id = %q; want a salted hash", v.ActorID)
+	if v.UserID != "u1" || v.ActorID != "u1" || v.ActorKind != store.ActorUser {
+		t.Errorf("view identity = actor %q/%s user %q; want raw u1 as the user actor", v.ActorID, v.ActorKind, v.UserID)
 	}
 	if v.GroupID != "org9" {
-		t.Errorf("group_id = %q; groups stay raw in both modes", v.GroupID)
+		t.Errorf("group_id = %q; groups are stored raw", v.GroupID)
 	}
-	if len(q.identities) != 1 || q.identities[0].Kind != store.KindGroup {
-		t.Errorf("identities = %+v; $user_name must be ignored in anonymous mode", q.identities)
+	if len(q.identities) != 2 {
+		t.Fatalf("identities = %+v; want the user and the group name", q.identities)
 	}
-}
-
-func TestIdentifiedModeStoresRawIdentifiers(t *testing.T) {
-	q, h := testServerWithIdentity(t, "identified")
-	post(h, `{"key":"`+testKey+`","attributes":{"$user_id":"u1","$user_name":"Ada","$install_id":"i1"},
-	  "events":[{"name":"$screen_view","attributes":{"$screen":"/x"}}]}`, nil)
-
-	v := q.views[0]
-	if v.UserID != "u1" || v.ActorID != "u1" {
-		t.Errorf("view identity = actor %q user %q; want raw u1", v.ActorID, v.UserID)
+	var user, group bool
+	for _, id := range q.identities {
+		switch {
+		case id.Kind == store.KindUser && id.ID == "u1" && id.Name == "Ada" && id.ProjectID == 1:
+			user = true
+		case id.Kind == store.KindGroup && id.ID == "org9" && id.Name == "Acme" && id.ProjectID == 1:
+			group = true
+		}
 	}
-	if len(q.identities) != 1 || q.identities[0].Name != "Ada" ||
-		q.identities[0].Kind != store.KindUser || q.identities[0].ProjectID != 1 {
-		t.Errorf("identities = %+v", q.identities)
+	if !user || !group {
+		t.Errorf("identities = %+v; want Ada for u1 and Acme for org9", q.identities)
 	}
 }
 
-func TestIdentifiedModeFallsBackToInstallThenHash(t *testing.T) {
-	q, h := testServerWithIdentity(t, "identified")
+func TestInstallIdThenConnectionHash(t *testing.T) {
+	q, h := testServer(t)
 	post(h, `{"key":"`+testKey+`","attributes":{"$install_id":"i1"},
 	  "events":[{"name":"a"}]}`, nil)
 	post(h, envelopeOf(`{"name":"b"}`), nil)
 
-	if q.events[0].ActorID != "i1" {
-		t.Errorf("actor with install only = %q, want i1", q.events[0].ActorID)
+	if q.events[0].ActorID != "i1" || q.events[0].ActorKind != store.ActorInstall {
+		t.Errorf("actor with install only = %q/%s, want i1/install", q.events[0].ActorID, q.events[0].ActorKind)
 	}
-	if len(q.events[1].ActorID) != 16 {
-		t.Errorf("actor with no identifier = %q, want the rotating hash", q.events[1].ActorID)
+	want := identity.VisitorHash("test-salt", "192.0.2.1", chromeUA, "1")
+	if q.events[1].ActorID != want || q.events[1].ActorKind != store.ActorConnection {
+		t.Errorf("actor with no identifier = %q/%s, want the connection hash %q", q.events[1].ActorID, q.events[1].ActorKind, want)
+	}
+}
+
+func TestUserNameNeedsAUserId(t *testing.T) {
+	q, h := testServer(t)
+	post(h, `{"key":"`+testKey+`","attributes":{"$user_name":"Ada","$group_id":"g","$group_name":"G"},
+	  "events":[{"name":"a"}]}`, nil)
+	if len(q.identities) != 1 || q.identities[0].Kind != store.KindGroup {
+		t.Errorf("identities = %+v; a name without an id names nothing", q.identities)
+	}
+}
+
+func TestFirstIdsAreLoggedOncePerKind(t *testing.T) {
+	_, s, buf := newLoggingServer(t)
+	// A rejected view carries $user_id but stores nothing, so it must not
+	// trip the log: the first store, not the first sighting, is what counts.
+	post(s, `{"key":"`+testKey+`","attributes":{"$user_id":"u1"},"events":[{"name":"$page_view"}]}`, nil)
+	if buf.Len() != 0 {
+		t.Fatalf("rejected batch logged something: %s", buf.String())
+	}
+	userBatch := `{"key":"` + testKey + `","attributes":{"$user_id":"u1"},"events":[{"name":"a"}]}`
+	post(s, userBatch, nil)
+	post(s, userBatch, nil)
+	post(s, `{"key":"`+testKey+`","attributes":{"$install_id":"i1"},"events":[{"name":"b"}]}`, nil)
+	post(s, envelopeOf(`{"name":"c"}`), nil)
+
+	out := buf.String()
+	if n := strings.Count(out, "project receives ids"); n != 2 {
+		t.Fatalf("log has %d 'project receives ids' lines, want 2 (one per kind):\n%s", n, out)
+	}
+	for _, want := range []string{"project=1 kind=user", "project=1 kind=install"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("log missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "kind=connection") {
+		t.Errorf("a connection-hash actor must not be logged as an id:\n%s", out)
+	}
+}
+
+// A name arrives only beside a row that is stored: a rejected view and a
+// bot-filtered view carry no identity into the identities table.
+func TestNamesFollowStoredRowsOnly(t *testing.T) {
+	q, h := testServer(t)
+	// no $path and no $screen: the view is rejected
+	post(h, `{"key":"`+testKey+`","attributes":{"$user_id":"u1","$user_name":"Ada"},
+	  "events":[{"name":"$page_view"}]}`, nil)
+	if len(q.views) != 0 || len(q.identities) != 0 {
+		t.Fatalf("rejected view stored views=%d identities=%+v", len(q.views), q.identities)
+	}
+	// a crawler: accepted and silently dropped, names included
+	post(h, `{"key":"`+testKey+`","attributes":{"$user_id":"u1","$user_name":"Ada"},
+	  "events":[{"name":"$page_view","attributes":{"$path":"/"}}]}`,
+		map[string]string{"User-Agent": "Googlebot/2.1 (+http://www.google.com/bot.html)"})
+	if len(q.views) != 0 || len(q.identities) != 0 {
+		t.Fatalf("bot view stored views=%d identities=%+v", len(q.views), q.identities)
+	}
+	// a stored view carries the name
+	post(h, `{"key":"`+testKey+`","attributes":{"$user_id":"u1","$user_name":"Ada"},
+	  "events":[{"name":"$page_view","attributes":{"$path":"/"}}]}`, nil)
+	if len(q.views) != 1 || len(q.identities) != 1 || q.identities[0].Name != "Ada" {
+		t.Fatalf("stored view: views=%d identities=%+v", len(q.views), q.identities)
 	}
 }
 
 func TestBatchNamesAreDedupedAcrossEvents(t *testing.T) {
-	q, h := testServerWithIdentity(t, "identified")
+	q, h := testServer(t)
 	post(h, `{"key":"`+testKey+`","attributes":{"$user_id":"u1","$user_name":"Ada","$group_id":"g","$group_name":"G"},
 	  "events":[{"name":"a"},{"name":"b"},{"name":"c"}]}`, nil)
 	if len(q.identities) != 2 {

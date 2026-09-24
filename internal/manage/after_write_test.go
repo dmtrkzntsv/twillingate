@@ -50,7 +50,7 @@ func TestCommittedWriteSucceedsWhenReloadFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create with key after commit = %v, want success", err)
 	}
-	if p == nil || p.ID != seed.ID+1 || p.Identity != "anonymous" || p.Name != "blog" ||
+	if p == nil || p.ID != seed.ID+1 || p.Name != "blog" ||
 		len(p.AllowedOrigins) != 1 || !strings.HasPrefix(key, "ak_") {
 		t.Fatalf("returned %+v, key %q; want the committed project", p, key)
 	}

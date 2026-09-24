@@ -92,19 +92,15 @@ func (r *Runner) RunDailyPass(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		// Retention is undefined for anonymous projects: actor_id rotates at
-		// midnight, so first_seen_day always equals the day itself and every
-		// cohort would hold nothing but offset 0.
-		p := snap.Project(id)
-		identified := p != nil && p.Identity == config.IdentityIdentified
+		// Actors and cohorts run for every project. UpsertActors keeps
+		// user- and install-identified actors only, so a project whose
+		// clients send no ids gets empty cohorts at no cost.
 		for _, day := range identityDays {
-			if identified {
-				if err := r.store.UpsertActors(ctx, id, day); err != nil {
-					r.logger.Error("upsert actors failed", "project", id, "day", day.String(), "error", err)
-				}
-				if err := r.store.AggregateRetentionDay(ctx, id, day); err != nil {
-					r.logger.Error("aggregate retention failed", "project", id, "day", day.String(), "error", err)
-				}
+			if err := r.store.UpsertActors(ctx, id, day); err != nil {
+				r.logger.Error("upsert actors failed", "project", id, "day", day.String(), "error", err)
+			}
+			if err := r.store.AggregateRetentionDay(ctx, id, day); err != nil {
+				r.logger.Error("aggregate retention failed", "project", id, "day", day.String(), "error", err)
 			}
 			// Today is still arriving. v_identity_daily prefers an
 			// aggregated day over its raw rows, so rolling today up would

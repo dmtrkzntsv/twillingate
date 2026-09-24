@@ -28,16 +28,12 @@ func TestOpsRefusalsAreTyped(t *testing.T) {
 			_, err := ops.CreateProject(ctx, "cli", ProjectSpec{})
 			return err
 		}(),
-		"bad identity": func() error {
-			_, err := ops.CreateProject(ctx, "cli", ProjectSpec{Name: "x", Identity: "pseudonymous"})
-			return err
-		}(),
 		"empty origin": func() error {
 			_, err := ops.CreateProject(ctx, "cli", ProjectSpec{Name: "x", AllowedOrigins: []string{""}})
 			return err
 		}(),
-		"update to bad identity": func() error {
-			_, err := ops.UpdateProject(ctx, "cli", ProjectSpec{ID: blog.ID, Identity: "pseudonymous"})
+		"update to an empty origin": func() error {
+			_, err := ops.UpdateProject(ctx, "cli", ProjectSpec{ID: blog.ID, AllowedOrigins: []string{""}})
 			return err
 		}(),
 	}

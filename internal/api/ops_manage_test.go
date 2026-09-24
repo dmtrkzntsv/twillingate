@@ -18,10 +18,13 @@ func TestCreateProjectToolReturnsSnippet(t *testing.T) {
 		t.Fatalf("error: %s", textOf(res))
 	}
 	out := textOf(res)
-	for _, want := range []string{"twillingate.js", "ak_", "data-identity"} {
+	for _, want := range []string{"twillingate.js", "ak_", "data-key"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q: %s", want, out)
 		}
+	}
+	if strings.Contains(out, "data-identity") {
+		t.Errorf("snippet still prints data-identity: %s", out)
 	}
 	// create_project without skip_key mints a first key; verify the key
 	// is listed under the id the create returned
@@ -168,8 +171,9 @@ func TestUpdateProjectMerges(t *testing.T) {
 	list := callTool(t, cs, "list_projects", nil)
 	out := textOf(list)
 	type row struct {
-		ProjectID      int64 `json:"project_id"`
-		Name, Identity string
+		ProjectID      int64    `json:"project_id"`
+		Name           string   `json:"name"`
+		AllowedOrigins []string `json:"allowed_origins"`
 	}
 	var parsed struct {
 		Projects []row `json:"projects"`
@@ -186,12 +190,11 @@ func TestUpdateProjectMerges(t *testing.T) {
 	if blog == nil {
 		t.Fatalf("blog missing from list_projects: %s", out)
 	}
-	// list_projects also lists "docs" (seeded anonymous); asserting on
-	// the decoded blog entry specifically proves this was a merge, not a
-	// blind overwrite that would have reset identity to its zero value
-	// (anonymous) and name to "".
-	if blog.Identity != "identified" {
-		t.Errorf("blog identity not preserved by merge, got %q", blog.Identity)
+	// list_projects also lists "docs"; asserting on the decoded blog
+	// entry specifically proves this was a merge, not a blind overwrite
+	// that would have reset the origins to nil and the name to "".
+	if len(blog.AllowedOrigins) != 1 || blog.AllowedOrigins[0] != "https://blog.example.com" {
+		t.Errorf("blog origins not preserved by merge, got %v", blog.AllowedOrigins)
 	}
 	if blog.Name != "Blog Renamed" {
 		t.Errorf("name update did not apply, got %q", blog.Name)

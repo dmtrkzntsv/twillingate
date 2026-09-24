@@ -4,9 +4,9 @@
 select name from twillingate.projects where id = '${params.project}'
 ```
 
-Groups work in both identity modes. `group_id` identifies an organization
-rather than a natural person, so it is stored as given even when user
-identifiers are salted.
+Groups need no user ids. `group_id` identifies an organization rather than a
+natural person and is stored as sent, so this page fills for any client that
+sends `$group_id`.
 
 <ButtonGroup name=range title="Date range">
     <ButtonGroupItem value="1" valueLabel="Last 1 day" />

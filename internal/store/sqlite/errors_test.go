@@ -343,7 +343,7 @@ func TestAuditAndBumpFailsOnMissingAuditLogTable(t *testing.T) {
 	if _, err := db.db.ExecContext(ctx, `DROP TABLE audit_log`); err != nil {
 		t.Fatal(err)
 	}
-	p := store.RegistryProject{Name: "a", Identity: "anonymous", AllowedOrigins: "[]"}
+	p := store.RegistryProject{Name: "a", AllowedOrigins: "[]"}
 	_, err := db.CreateProject(ctx, p, store.AuditEntry{Actor: "cli", Action: "project.create"})
 	if err == nil {
 		t.Error("want error writing the audit row to a missing audit_log table")
@@ -356,7 +356,7 @@ func TestAuditAndBumpFailsWhenMetaMissing(t *testing.T) {
 	if _, err := db.db.ExecContext(ctx, `DROP TABLE meta`); err != nil {
 		t.Fatal(err)
 	}
-	p := store.RegistryProject{Name: "a", Identity: "anonymous", AllowedOrigins: "[]"}
+	p := store.RegistryProject{Name: "a", AllowedOrigins: "[]"}
 	_, err := db.CreateProject(ctx, p, store.AuditEntry{Actor: "cli", Action: "project.create"})
 	if err == nil {
 		t.Error("want error bumping config_version in a missing meta table")
@@ -400,7 +400,7 @@ func TestUpdateProjectFailsOnMissingTable(t *testing.T) {
 	if _, err := db.db.ExecContext(ctx, `DROP TABLE projects`); err != nil {
 		t.Fatal(err)
 	}
-	p := store.RegistryProject{ID: 1, Name: "a", Identity: "anonymous", AllowedOrigins: "[]"}
+	p := store.RegistryProject{ID: 1, Name: "a", AllowedOrigins: "[]"}
 	err := db.UpdateProject(ctx, p, store.AuditEntry{Actor: "cli", Action: "project.update", Subject: "1"})
 	if err == nil {
 		t.Error("want error updating a missing projects table")
@@ -435,7 +435,7 @@ func TestInsertIngestKeyFailsOnMissingTable(t *testing.T) {
 func TestInsertIngestKeyFailsOnDuplicateLabel(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	p := store.RegistryProject{Name: "a", Identity: "anonymous", AllowedOrigins: "[]"}
+	p := store.RegistryProject{Name: "a", AllowedOrigins: "[]"}
 	id, err := db.CreateProject(ctx, p, store.AuditEntry{Actor: "cli", Action: "project.create"})
 	if err != nil {
 		t.Fatal(err)
@@ -454,7 +454,7 @@ func TestInsertIngestKeyFailsOnDuplicateLabel(t *testing.T) {
 func TestInsertIngestKeyFailsOnDuplicateKeyValue(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	p := store.RegistryProject{Name: "a", Identity: "anonymous", AllowedOrigins: "[]"}
+	p := store.RegistryProject{Name: "a", AllowedOrigins: "[]"}
 	id, err := db.CreateProject(ctx, p, store.AuditEntry{Actor: "cli", Action: "project.create"})
 	if err != nil {
 		t.Fatal(err)
@@ -509,7 +509,7 @@ func TestDeleteProjectDataFailsOnUnknownID(t *testing.T) {
 func TestDeleteProjectDataFailsOnMissingChildTable(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	p := store.RegistryProject{Name: "a", Identity: "anonymous", AllowedOrigins: "[]"}
+	p := store.RegistryProject{Name: "a", AllowedOrigins: "[]"}
 	id, err := db.CreateProject(ctx, p, store.AuditEntry{Actor: "cli", Action: "project.create"})
 	if err != nil {
 		t.Fatal(err)

@@ -16,10 +16,10 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// newTestHost seeds two projects in a fixed order — blog (id 1,
-// identified) then docs (id 2, anonymous) — two days of web aggregates and
-// one raw hit, and returns a connected in-memory MCP client session
-// against the assembled tool host. A project a test creates on top is id 3.
+// newTestHost seeds two projects in a fixed order — blog (id 1) then
+// docs (id 2) — two days of web aggregates and one raw hit, and returns a
+// connected in-memory MCP client session against the assembled tool host.
+// A project a test creates on top is id 3.
 func newTestHost(t *testing.T) (*host, *mcp.ClientSession) {
 	t.Helper()
 	path := t.TempDir() + "/mcp.db"
@@ -32,9 +32,9 @@ func newTestHost(t *testing.T) (*host, *mcp.ClientSession) {
 	if err := st.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
-	for _, p := range []struct{ name, identity string }{{"blog", "identified"}, {"docs", "anonymous"}} {
+	for _, name := range []string{"blog", "docs"} {
 		if _, err := st.CreateProject(ctx, store.RegistryProject{
-			Name: p.name, Identity: p.identity, AllowedOrigins: "[]", Attributes: "[]"},
+			Name: name, AllowedOrigins: "[]", Attributes: "[]"},
 			store.AuditEntry{Actor: "test", Action: "project.create"}); err != nil {
 			t.Fatal(err)
 		}

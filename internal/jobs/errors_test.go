@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/civil"
-	"github.com/dmtrkzntsv/twillingate/internal/config"
 	"github.com/dmtrkzntsv/twillingate/internal/config/configtest"
 	"github.com/dmtrkzntsv/twillingate/internal/identity"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
@@ -210,12 +209,12 @@ func TestRunDailyPassFailsWhenProductRawWindowQueryErrors(t *testing.T) {
 
 // --- per-project soft failures: logged, pass continues, RunDailyPass returns nil ---
 
-var identifiedJobsSpecs = []manage.ProjectSpec{
-	{Name: "App", Identity: config.IdentityIdentified, AllowedOrigins: []string{"https://a.com"}},
+var appJobsSpecs = []manage.ProjectSpec{
+	{Name: "App", AllowedOrigins: []string{"https://a.com"}},
 }
 
 func TestRunDailyPassLogsUpsertActorsFailure(t *testing.T) {
-	st, fst, r, buf := setupFaulty(t, jobsVars, identifiedJobsSpecs)
+	st, fst, r, buf := setupFaulty(t, jobsVars, appJobsSpecs)
 	ctx := context.Background()
 	ts := mustTime("2026-08-20T10:00:00Z")
 	if err := st.WriteViews(ctx, []store.View{
@@ -232,7 +231,7 @@ func TestRunDailyPassLogsUpsertActorsFailure(t *testing.T) {
 }
 
 func TestRunDailyPassLogsAggregateRetentionDayFailure(t *testing.T) {
-	st, fst, r, buf := setupFaulty(t, jobsVars, identifiedJobsSpecs)
+	st, fst, r, buf := setupFaulty(t, jobsVars, appJobsSpecs)
 	ctx := context.Background()
 	ts := mustTime("2026-08-20T10:00:00Z")
 	if err := st.WriteViews(ctx, []store.View{
