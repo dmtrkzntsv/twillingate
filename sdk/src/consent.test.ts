@@ -4,6 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resolveConsent } from "./consent";
 import { Twillingate, type InitOptions } from "./twillingate";
+import { TwillingateGlobal } from "./factory";
 import { runtime } from "./runtime";
 
 vi.mock("./origin", () => ({
@@ -416,5 +417,42 @@ describe("storage under consent", () => {
     await drain();
     expect(sent).toHaveLength(1);
     expect(sent[0].body.events[0].name).toBe("legacy-opt-out-no-longer-honoured");
+  });
+
+  it("sends $consent on every batch, in both identity modes", async () => {
+    for (const identity of ["anonymous", "identified"] as const) {
+      expect((await lastAttributes(tg({ identity }))).$consent, identity).toBe(0);
+      expect((await lastAttributes(tg({ identity, consent: true }))).$consent, identity).toBe(1);
+    }
+  });
+
+  it("reflects consent(true|false) and a flipping consent manager at the next flush", async () => {
+    const t = tg();
+    expect((await lastAttributes(t)).$consent).toBe(0);
+    t.consent(true);
+    expect((await lastAttributes(t)).$consent).toBe(1);
+    t.consent(false);
+    expect((await lastAttributes(t)).$consent).toBe(0);
+
+    let granted = false;
+    const m = new TwillingateGlobal().create("cmp", { key: "ak_cmp", flushInterval: 0, autoPageviews: false, consent: () => granted });
+    expect((await lastAttributes(m)).$consent).toBe(0);
+    granted = true;
+    expect((await lastAttributes(m)).$consent).toBe(1);
+  });
+
+  it("replays a failed batch with the $consent it was built with", async () => {
+    fetchImpl = failFetch;
+    const t = tg();
+    t.track("while-refused");
+    t.flush();
+    await drain();
+    fetchImpl = okFetch;
+    t.consent(true);
+    window.dispatchEvent(new Event("online"));
+    await drain();
+    const replayed = sent.find((s) => s.body.events.some((e) => e.name === "while-refused"));
+    expect(replayed?.body.attributes.$consent).toBe(0);
+    expect((await lastAttributes(t)).$consent).toBe(1);
   });
 });

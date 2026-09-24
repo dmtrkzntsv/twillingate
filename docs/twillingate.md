@@ -287,6 +287,10 @@ console warning. Consent is consulted at every storage decision, never cached:
 flipping to true writes the waiting memory queue to storage and starts
 persisting identity, flipping to false deletes every key the instance owns.
 
+Every batch carries `$consent` — `1` or `0`, the answer in force when it was
+sent — in both identity modes, so the `consent` breakdown (`given`, `none`,
+`unknown`) shows how many visitors consented.
+
 **Where keys live** is the `storage` option:
 
 | `storage` | Meaning |
