@@ -99,9 +99,10 @@ type resolved struct {
 	InstallID, UserID, UserName   string
 	GroupID, GroupName, SessionID string
 	Kind, Platform, OS, OSVersion string
-	OSName, AppVersion            string
+	OSName, AppVersion, AppLocale string
 	Browser, BrowserVersion       string
-	Device, DeviceModel, Locale   string
+	BrowserLocale                 string
+	Device, DeviceModel           string
 	Host, Path, Referrer, Screen  string
 	UTMSource, UTMMedium          string
 	UTMCampaign                   string
@@ -134,10 +135,11 @@ var reservedKeys = map[string]func(*resolved, string){
 	"$os_name":         func(r *resolved, v string) { r.OSName = v },
 	"$browser":         func(r *resolved, v string) { r.Browser = v },
 	"$browser_version": func(r *resolved, v string) { r.BrowserVersion = v },
+	"$browser_locale":  func(r *resolved, v string) { r.BrowserLocale = v },
 	"$device":          func(r *resolved, v string) { r.Device = v },
 	"$app_version":     func(r *resolved, v string) { r.AppVersion = v },
+	"$app_locale":      func(r *resolved, v string) { r.AppLocale = v },
 	"$device_model":    func(r *resolved, v string) { r.DeviceModel = v },
-	"$locale":          func(r *resolved, v string) { r.Locale = v },
 	"$host":            func(r *resolved, v string) { r.Host = v },
 	"$path":            func(r *resolved, v string) { r.Path = v },
 	"$utm_source":      func(r *resolved, v string) { r.UTMSource = v },

@@ -105,7 +105,7 @@ backfill. `PRODUCT_ATTRIBUTES_TOP_N` (default 50, set
 key and collapses the tail into one `(other)` row whose unique counts are
 recomputed from raw, so **a client sending the literal `(other)` loses its own
 count**. Never declare an unbounded key such as a URL or session id. `$platform`,
-`$os` and `$app_version` roll up automatically and must not be declared:
+`$os`, `$app_version` and `$app_locale` roll up automatically and must not be declared:
 `$`-prefixed keys never reach the custom blob, so `"attributes": ["$os"]`
 extracts nothing. Rollups run whether or not a project declares attributes;
 declaring only adds the per-value breakdown and the `attr_*` columns.
@@ -152,7 +152,7 @@ whichever hostname loaded it.
 
 Every `data-*` has an `init()` equivalent except `data-instance`, which maps to
 `create()`'s name; the reverse does not hold — `flushInterval`, `platform`,
-`appVersion`, `storage`, `taggedEvents`, `optOut` and `debug` are code-only
+`appVersion`, `appLocale`, `storage`, `taggedEvents`, `optOut` and `debug` are code-only
 options with no `data-*` form, and identity is set from code (`identify`,
 `group`, `installId`), never in markup. Views are automatic, including on
 `history.pushState` and `popstate`; elements carrying `data-twillingate-event`
@@ -182,6 +182,7 @@ twillingate.init({
   kind: "app",                 // → $kind ("app" for Electron/Tauri, "cli", …)
   platform: "electron",        // → $platform; defaults to "web" only for kind "web"
   appVersion: "2.4.1",         // → $app_version
+  appLocale: "de",             // → $app_locale; never detected
   flushInterval: 10000,        // milliseconds
   optOut: () => location.hostname === "localhost",   // OR-ed with twillingate_ignore
   debug: false,                // OR-ed with the twillingate_debug flag
@@ -501,7 +502,7 @@ drops for curl or an HTTP library.
 
 **The client declares its environment; the server validates and never parses.**
 Those four keys plus `$os_version`, `$os_name`, `$browser_version`,
-`$device_model`, `$app_version`, `$locale`, `$display_width` and
+`$device_model`, `$app_version`, `$app_locale`, `$browser_locale`, `$display_width` and
 `$display_height` are stored on any kind exactly as declared: the JS SDK sends
 them on every batch (see [Detection](#detection)), and any other client sends
 them itself or records `unknown`. `$platform` is the surface the product is used
@@ -526,10 +527,17 @@ them. The JS SDK sends the major browser version and the OS version it can
 determine (see [Detection](#detection)); what it cannot determine stays absent.
 
 `$app_version` is the version of whatever client sent the event, on any
-kind — a web build as readily as a native app's. Product events keep
-`$platform` and `$os` as columns and resolve and drop the rest
-(`$os_version`, `$os_name`, `$browser`, `$browser_version`, `$device`), so an
-SDK that sends every environment key on every batch is correct and cheap.
+kind — a web build as readily as a native app's. `$app_locale` is the
+language that client shows the product in, as the product names it (`de`,
+`pt-BR`); `$browser_locale` is the language the browser or OS asks for
+(`navigator.language`, which the JS SDK sends on every batch). Both are free
+text stored as sent; the SDK never guesses `$app_locale`, so it is sent only
+when `appLocale` is set. `$locale` is not a key any more: it is dropped with
+an unknown-key warning. Product events keep `$platform`, `$os`,
+`$app_version` and `$app_locale` as columns and resolve and drop the rest
+(`$os_version`, `$os_name`, `$browser`, `$browser_version`, `$device`,
+`$browser_locale`), so an SDK that sends every environment key on every batch
+is correct and cheap.
 
 ### Product (everything else)
 
@@ -601,7 +609,7 @@ transport that survives page unload. An unknown key gets a plain `401`.
     "$kind": "app", "$platform": "ios", "$os": "ios", "$os_version": "17.2",
     "$os_name": "iOS 17.2", "$browser": "safari", "$browser_version": "17",
     "$device": "mobile", "$device_model": "iPhone15,2", "$app_version": "2.4.1",
-    "$locale": "en-US", "$display_width": 1179, "$display_height": 2556
+    "$browser_locale": "en-US", "$app_locale": "de", "$display_width": 1179, "$display_height": 2556
   },
   "events": [
     { "id": "018f1e5c-…", "ts": "2026-08-30T10:00:00Z", "name": "$page_view",
@@ -642,7 +650,7 @@ batch to drop.
 | Group | Keys |
 | --- | --- |
 | Identity | `$install_id` `$user_id` `$user_name` `$group_id` `$group_name` `$session_id` `$consent` |
-| Environment | `$kind` `$platform` `$os` `$os_version` `$os_name` `$browser` `$browser_version` `$device` `$device_model` `$app_version` `$locale` `$display_width` `$display_height` |
+| Environment | `$kind` `$platform` `$os` `$os_version` `$os_name` `$browser` `$browser_version` `$device` `$device_model` `$app_version` `$app_locale` `$browser_locale` `$display_width` `$display_height` |
 | Location | `$host` `$path` `$screen` `$utm_source` `$utm_medium` `$utm_campaign` `$referrer` |
 
 `$consent` is whether the client had consent to keep anything on the device
@@ -736,9 +744,9 @@ caveats below. All the reading tools take `project_id`, `from` and `to` as
 | --- | --- | --- |
 | `list_projects` | none | Every project with its `project_id`, name and data coverage. Call this first — every other tool needs a `project_id` |
 | `views_overview` | `kind` (optional) | Visitors, views, sessions, bounces, average session length per day, summed across kinds unless `kind` filters one |
-| `views_breakdown` | `dimension`, `limit` (default 20) | Top rows for one of `kinds`, `paths`, `hosts`, `referrers`, `utm`, `countries`, `platforms`, `os`, `browsers`, `app_versions`, `devices`, `displays`, `consent`. Two-key dimensions return both columns. `consent` is `given`, `none` or `unknown`. |
+| `views_breakdown` | `dimension`, `limit` (default 20) | Top rows for one of `kinds`, `paths`, `hosts`, `referrers`, `utm`, `countries`, `platforms`, `os`, `browsers`, `app_versions`, `devices`, `displays`, `consent`, `locales`. Two-key dimensions return both columns. `consent` is `given`, `none` or `unknown`. `locales` pairs `browser_locale` with `app_locale`, either empty when not sent. |
 | `product_events` | `event` (optional filter) | Count and unique users per event name, plus daily totals |
-| `product_attributes` | `event`, `key` | Count, unique users and unique groups per value of a declared attribute. `$platform`, `$os` and `$app_version` are always available; a custom key only appears once the project declares it. `unique_groups` is empty for days rolled up before it was measured and `0` when it was measured and no group was involved |
+| `product_attributes` | `event`, `key` | Count, unique users and unique groups per value of a declared attribute. `$platform`, `$os`, `$app_version` and `$app_locale` are always available; a custom key only appears once the project declares it. `unique_groups` is empty for days rolled up before it was measured and `0` when it was measured and no group was involved |
 | `retention` | `actor` (`user` or `install`) | Cohort curves, plus `aggregated_through` — cohorts after that day are **absent, not zero**. Empty for a project whose clients send neither `$user_id` nor `$install_id` |
 | `identities` | `kind` (`user` or `group`), `limit` | Per-user or per-group activity with display names. **Surfaces personal data on projects whose clients send ids** |
 | `query` | `sql` | A single read-only `SELECT`/`WITH` against the views. Row-capped and time-limited |
@@ -819,9 +827,12 @@ the ones `list_projects` returns. The views family
 is `v_views_daily` (per kind), `v_views_paths`, `v_views_hosts`,
 `v_views_referrers`, `v_views_utm`, `v_views_countries`, `v_views_platforms`,
 `v_views_os`, `v_views_browsers`, `v_views_app_versions` (keyed by `platform`
-and `app_version`), `v_views_devices`, `v_views_displays` and `v_views_consent`
+and `app_version`), `v_views_devices`, `v_views_displays`, `v_views_consent`
 (`given`, `none` or `unknown`, where `unknown` is every view stored before
-migration 018 or sent without `$consent`); every other dimension is
+migration 018 or sent without `$consent`) and `v_views_locales` (keyed by
+`browser_locale` and `app_locale`, `''` where one was not sent; a view sending
+neither is left out, and no day rolled up before migration 019 has rows);
+every other dimension is
 capped at 500 values per day, the tail is one `(other)` row whose visitors
 are distinct actors, not a sum, and `consent` never reaches it — it only ever
 has three values. `os`, `browser` and `device` are lower-case

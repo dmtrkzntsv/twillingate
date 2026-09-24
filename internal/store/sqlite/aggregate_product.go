@@ -125,14 +125,15 @@ func (d *DB) rollupProduct(ctx context.Context, tx *sql.Tx, projectID int64, day
 }
 
 // systemDims maps an events column to the attr_key it rolls up
-// under. platform, os and app_version are typed columns written on every
-// event, not declared custom keys. The $ prefix is safe as a namespace
+// under. platform, os, app_version and app_locale are typed columns written
+// on every event, not declared custom keys. The $ prefix is safe as a namespace
 // because resolveAttributes routes every $-prefixed input to a typed
 // field, so a custom key can never collide with one of these.
 var systemDims = []struct{ column, key string }{
 	{"platform", "$platform"},
 	{"os", "$os"},
 	{"app_version", "$app_version"},
+	{"app_locale", "$app_locale"},
 }
 
 // rollupAttrValue writes the ranked top-N breakdown plus the "(other)"

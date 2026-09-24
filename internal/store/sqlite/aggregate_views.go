@@ -130,6 +130,11 @@ var viewDimensions = []viewDimension{
 	{table: "agg_views_displays", keys: []string{"display"}, exprs: []string{displaySQL},
 		where: "AND display_width > 0 AND display_height > 0"},
 	{table: "agg_views_consent", keys: []string{"consent"}, exprs: []string{consentSQL}},
+	// Keyed on the pair: a browser in German showing the product in
+	// English is the row worth seeing. v_views_locales (019_locales.sql)
+	// is the live half.
+	{table: "agg_views_locales", keys: []string{"browser_locale", "app_locale"},
+		where: "AND NOT (browser_locale='' AND app_locale='')"},
 }
 
 // AggregateViewDay rolls one day of views into agg_views_* and deletes the

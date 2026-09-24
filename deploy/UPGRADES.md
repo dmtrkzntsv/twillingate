@@ -219,3 +219,32 @@ What changes on the day:
 - The `unknown` share shrinks as pages pick up the new SDK, which sends
   `$consent` on every batch (the served SDK is cached for a day).
 - A hand-built client sends `$consent` itself or stays `unknown`.
+
+### Upgrading to two locales (migration 019)
+
+`$locale` becomes `$browser_locale`, and `$app_locale` is new: the language
+the product itself is shown in, declared by the client (`appLocale` in the
+SDK) the way `$app_version` is. The migration renames `views.locale` to
+`browser_locale`, adds `app_locale` to views and events, and adds a
+`locales` views breakdown (`v_views_locales`) and an `$app_locale` arm in
+`product_attributes`. It rewrites no values and runs in well under a
+second.
+
+The check is a question: does any client other than the served JS SDK send
+`$locale`? From upgrade day `$locale` is an unknown reserved key: dropped,
+with a warning in the ingest response, so that client stores no locale
+until it sends `$browser_locale`.
+
+What changes on the day:
+
+- Pages still running yesterday's SDK (it is cached for a day) send
+  `$locale`, so their views carry no browser locale until they pick up the
+  new file. Purge the CDN copy of `/js/twillingate.js` on upgrade day if a
+  CDN sits in front of the collector.
+- `locales` has no rows for days rolled up before the upgrade: no locale was
+  ever aggregated. Days still raw at upgrade time appear at once.
+- SQL reading `views.locale` directly (the CLI's database, not the `query`
+  tool, which only sees `v_*` views) needs `browser_locale`.
+
+There is no down migration. The previous binary writes a `locale` column
+that no longer exists, so every view it receives fails to store.

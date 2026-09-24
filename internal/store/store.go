@@ -31,15 +31,17 @@ type View struct {
 	UTMSource, UTMMedium, UTMCampaign              string
 	Platform, OS, OSVersion, OSName                string
 	Browser, BrowserVersion                        string
-	AppVersion, Device, DeviceModel, Locale        string
+	AppVersion, AppLocale, BrowserLocale           string
+	Device, DeviceModel                            string
 	DisplayWidth, DisplayHeight                    int
 	Country                                        string
 	Consent                                        Consent
 }
 
-// ProductEvent represents a custom event from any surface. Platform and OS
-// are the two environment columns a product event carries; every other
-// declared environment key is resolved and dropped at ingest.
+// ProductEvent represents a custom event from any surface. Platform, OS,
+// app version and app locale are the environment columns a product event
+// carries; every other declared environment key is resolved and dropped at
+// ingest.
 type ProductEvent struct {
 	ID                 string
 	ProjectID          int64
@@ -49,6 +51,7 @@ type ProductEvent struct {
 	UserID, GroupID    string
 	Platform, OS       string
 	AppVersion         string
+	AppLocale          string
 	Attributes         map[string]string
 	Consent            Consent
 }

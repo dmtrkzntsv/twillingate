@@ -70,7 +70,7 @@ func (h *host) integrationGuide(ctx context.Context, in guideIn) (guideOut, erro
 			b.WriteString(", including SPA route changes (pushState/popstate are hooked) — no router integration needed")
 		}
 		fmt.Fprintf(&b, ". Nothing is filtered on the client: a localhost page reports too. Keep development traffic out by setting localStorage.twillingate_ignore = \"true\" in the development browser, or load the tag without data-key and call twillingate.init({ key: \"%s\", optOut: () => location.hostname === \"localhost\" }) from code.\n\n", key)
-		b.WriteString("An Electron or Tauri app loads the same file without data-key and calls twillingate.init({ key, kind: \"app\", platform: \"electron\", appVersion }) from code, so its views are keyed by the build rather than counted as web; the OS, browser and device are detected by the SDK on every kind.\n\n")
+		b.WriteString("An Electron or Tauri app loads the same file without data-key and calls twillingate.init({ key, kind: \"app\", platform: \"electron\", appVersion, appLocale }) from code, so its views are keyed by the build rather than counted as web; the OS, browser and device are detected by the SDK on every kind.\n\n")
 		fmt.Fprintf(&b, "Product events from the page:\n\n    twillingate.track(\"signup\", { plan: \"pro\" });\n\n")
 		b.WriteString("The tag decides what is sent. The printed tag is anonymous: it sends no\n$user_id, $user_name or $install_id, and identify() is inert. For a\nsigned-in app add data-identity=\"identified\" (or identity: \"identified\" in\ncode), call twillingate.identify(userId, userName) and group(groupId) after\nlogin and twillingate.reset() on logout; ids are then stored as sent.\nNothing is kept on the device unless the tag declares consent.\n\n")
 		origins := p.AllowedOrigins
@@ -89,7 +89,7 @@ func (h *host) integrationGuide(ctx context.Context, in guideIn) (guideOut, erro
 			"    POST %s/ingest/events\n    X-Analytics-Key: %s\n\n"+
 			"    {\"attributes\":{\"$install_id\":\"<stable-uuid-per-install>\",\n"+
 			"                   \"$platform\":\"ios\",\"$os\":\"ios\",\"$app_version\":\"2.4.1\",\n"+
-			"                   \"$os_version\":\"17.2\",\"$device_model\":\"iPhone15,2\",\n"+
+			"                   \"$app_locale\":\"de\",\"$os_version\":\"17.2\",\"$device_model\":\"iPhone15,2\",\n"+
 			"                   \"$device\":\"mobile\",\"$consent\":1},\n"+
 			"     \"events\":[{\"id\":\"<uuidv7>\",\"ts\":\"<event-time-utc>\",\n"+
 			"                \"name\":\"$screen_view\",\"attributes\":{\"$screen\":\"/settings\"}}]}\n\n", base, key)

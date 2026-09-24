@@ -151,6 +151,7 @@ func TestStitchViewsInvariantAllViewsDimensions(t *testing.T) {
 		{"v_views_devices", "device || '|' || device_model"},
 		{"v_views_displays", "display"},
 		{"v_views_consent", "consent"},
+		{"v_views_locales", "browser_locale || '|' || app_locale"},
 	}
 	snapshot := func(d dim) map[string][2]int {
 		t.Helper()
@@ -263,6 +264,49 @@ func TestStitchViewUTMExcludesEmpty(t *testing.T) {
 	}
 	if n := count(); n != 1 {
 		t.Fatalf("aggregated v_views_utm rows = %d, want 1", n)
+	}
+}
+
+// A row declaring neither locale is left out on both sides of the
+// boundary, and a row declaring one keeps the other empty rather than
+// being dropped.
+func TestStitchViewLocalesExcludesUndeclared(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	v := func(id, actor, browser, app string) store.View {
+		return store.View{ID: id, TS: at(10, 0), ActorID: actor, Kind: "web", Platform: "web", Path: "/",
+			BrowserLocale: browser, AppLocale: app}
+	}
+	seedViews(t, db, v("1", "a", "de-DE", "en"), v("2", "a", "de-DE", "en"), v("3", "b", "fr", ""),
+		v("4", "c", "", "es"), v("5", "d", "", ""))
+	read := func() map[string][2]int {
+		t.Helper()
+		rows, err := db.db.Query(`SELECT browser_locale || '|' || app_locale, visitors, views FROM v_views_locales
+			WHERE project_id=1 AND day='2026-08-10'`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		out := map[string][2]int{}
+		for rows.Next() {
+			var k string
+			var vis, vws int
+			if err := rows.Scan(&k, &vis, &vws); err != nil {
+				t.Fatal(err)
+			}
+			out[k] = [2]int{vis, vws}
+		}
+		return out
+	}
+	want := map[string][2]int{"de-DE|en": {1, 2}, "fr|": {1, 1}, "|es": {1, 1}}
+	if got := read(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("live v_views_locales = %v, want %v", got, want)
+	}
+	if err := db.AggregateViewDay(ctx, 1, day("2026-08-10")); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(); !reflect.DeepEqual(got, want) {
+		t.Errorf("after rollup v_views_locales = %v, want %v", got, want)
 	}
 }
 
@@ -609,6 +653,7 @@ func seedAttrDay(t *testing.T, db *DB, projectID int64) {
 				Attributes: map[string]string{"plan": fmt.Sprintf("p%02d", i)},
 				OS:         []string{"ios", "android"}[i%2],
 				AppVersion: []string{"1.0", "2.0", "3.0"}[i%3],
+				AppLocale:  []string{"en", "de"}[i%2],
 			})
 		}
 	}
@@ -714,7 +759,7 @@ func TestProductAttrsViewSystemDimensionsWithoutDeclaredKeys(t *testing.T) {
 	var sys, custom int
 	for _, r := range before {
 		switch r.Key {
-		case "$os", "$platform", "$app_version":
+		case "$os", "$platform", "$app_version", "$app_locale":
 			sys++
 		default:
 			custom++
