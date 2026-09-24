@@ -65,7 +65,7 @@ interface NavigatorUA extends Navigator {
 // whatever has resolved, so detectOS() right after init answers from the
 // User-Agent and the same call a tick later carries the corrected
 // version. Batches are unaffected: batchAttributes() runs in flush(),
-// after the default 1000ms flushInterval has let this settle.
+// after the default 10000ms flushInterval has let this settle.
 let resolvedPlatformVersion: string | undefined;
 
 export function primePlatformVersion(): void {

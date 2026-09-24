@@ -182,7 +182,7 @@ twillingate.init({
   kind: "app",                 // → $kind ("app" for Electron/Tauri, "cli", …)
   platform: "electron",        // → $platform; defaults to "web" only for kind "web"
   appVersion: "2.4.1",         // → $app_version
-  flushInterval: 1000,         // milliseconds
+  flushInterval: 10000,        // milliseconds
   optOut: () => location.hostname === "localhost",   // OR-ed with twillingate_ignore
   debug: false,                // OR-ed with the twillingate_debug flag
 });
@@ -427,7 +427,7 @@ twillingate.onPage(({ url, path }) => ({
 
 ### Transport
 
-Events queue briefly (~1s) and flush as one batch: on the timer, once 20 events
+Events queue for up to 10s and flush as one batch: on the timer, once 20 events
 accumulate, on `flush()`, and on page unload (`pagehide` / `visibilitychange`
 via `sendBeacon`, the key in the JSON body because beacons cannot set headers).
 Every event carries a UUID and a client timestamp. A batch that fails (network
