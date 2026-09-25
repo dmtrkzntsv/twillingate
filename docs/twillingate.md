@@ -104,11 +104,15 @@ backfill. `PRODUCT_ATTRIBUTES_TOP_N` (default 50, set
 [server-side](deployment.md#configure-the-collector)) keeps the top N values per
 key and collapses the tail into one `(other)` row whose unique counts are
 recomputed from raw, so **a client sending the literal `(other)` loses its own
-count**. Never declare an unbounded key such as a URL or session id. `$platform`,
-`$os`, `$app_version` and `$app_locale` roll up automatically and must not be declared:
-`$`-prefixed keys never reach the custom blob, so `"attributes": ["$os"]`
-extracts nothing. Rollups run whether or not a project declares attributes;
-declaring only adds the per-value breakdown and the `attr_*` columns.
+count**. Never declare an unbounded custom key such as a session id. `$platform`,
+`$os`, `$app_version`, `$app_locale`, `$kind`, `$browser`, `$device` and
+`$browser_locale` roll up automatically and need no declaration. Nine more
+reserved keys can be declared like a custom key to get the same per-value
+breakdown: `$host`, `$path`, `$referrer`, `$utm_source`, `$utm_medium`,
+`$utm_campaign`, `$os_version`, `$browser_version` and `$device_model`. The
+top-N cap keeps a declared `$path` bounded. Declaring any other `$` key is
+refused. Rollups run whether or not a project declares attributes; declaring
+only adds the per-value breakdown and the `attr_*` columns.
 
 ### Ingest keys
 
@@ -750,7 +754,7 @@ caveats below. All the reading tools take `project_id`, `from` and `to` as
 | `views_overview` | `kind` (optional) | Visitors, views, sessions, bounces, average session length per day, summed across kinds unless `kind` filters one |
 | `views_breakdown` | `dimension`, `limit` (default 20) | Top rows for one of `kinds`, `paths`, `hosts`, `referrers`, `utm`, `countries`, `platforms`, `os`, `browsers`, `app_versions`, `devices`, `displays`, `consent`, `locales`. Two-key dimensions return both columns. `consent` is `given`, `none` or `unknown`. `locales` pairs `browser_locale` with `app_locale`, either empty when not sent. |
 | `product_events` | `event` (optional filter) | Count and unique users per event name, plus daily totals |
-| `product_attributes` | `event`, `key` | Count, unique users and unique groups per value of a declared attribute. `$platform`, `$os`, `$app_version` and `$app_locale` are always available; a custom key only appears once the project declares it. `unique_groups` is empty for days rolled up before it was measured and `0` when it was measured and no group was involved |
+| `product_attributes` | `event`, `key` | Count, unique users and unique groups per value of a declared attribute. `$platform`, `$os`, `$app_version`, `$app_locale`, `$kind`, `$browser`, `$device` and `$browser_locale` are always available; a custom key, or one of `$host`, `$path`, `$referrer`, `$utm_source`, `$utm_medium`, `$utm_campaign`, `$os_version`, `$browser_version` and `$device_model`, only appears once the project declares it. `unique_groups` is empty for days rolled up before it was measured and `0` when it was measured and no group was involved |
 | `retention` | `actor` (`user` or `install`) | Cohort curves, plus `aggregated_through` — cohorts after that day are **absent, not zero**. Empty for a project whose clients send neither `$user_id` nor `$install_id` |
 | `identities` | `kind` (`user` or `group`), `limit` | Per-user or per-group activity with display names. **Surfaces personal data on projects whose clients send ids** |
 | `query` | `sql` | A single read-only `SELECT`/`WITH` against the views. Row-capped and time-limited |

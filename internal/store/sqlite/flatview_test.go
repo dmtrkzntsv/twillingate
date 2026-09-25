@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/dmtrkzntsv/twillingate/internal/store"
@@ -301,4 +302,20 @@ func viewSQL(t *testing.T, db *DB, view string) string {
 		t.Fatal(err)
 	}
 	return sql
+}
+
+// A declared $ key is a column of the raw table already; it gets no
+// attr_ column (it would only ever extract NULL from the blob).
+func TestFlatViewSkipsSystemKeys(t *testing.T) {
+	db := newTestDB(t)
+	if err := db.RebuildFlatView(context.Background(), []string{"plan", "$path"}); err != nil {
+		t.Fatal(err)
+	}
+	def, err := db.flatViewDefinition(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(def, "attr_plan") || strings.Contains(def, "attr_path") {
+		t.Fatalf("v_events_flat = %s, want attr_plan and no attr_path", def)
+	}
 }

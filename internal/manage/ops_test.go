@@ -5,7 +5,20 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
+
+// newOps builds Ops over a fresh migrated store, as the other tests here do.
+func newOps(t *testing.T) (*Ops, store.Store, *Registry) {
+	t.Helper()
+	st := testStore(t)
+	reg := New(st, discard())
+	if err := reg.Reload(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	return NewOps(reg, st), st, reg
+}
 
 func TestCreateProjectValidatesAndReloads(t *testing.T) {
 	st := testStore(t)
@@ -208,5 +221,44 @@ func TestCreateProjectWithKey(t *testing.T) {
 	}
 	if n := len(reg.Snapshot(ctx).Projects()); n != 1 {
 		t.Errorf("projects = %d, want 1", n)
+	}
+}
+
+func TestDeclaringSystemKeys(t *testing.T) {
+	ops, _, _ := newOps(t)
+	ctx := context.Background()
+	p, err := ops.CreateProject(ctx, "api", ProjectSpec{Name: "Site", Attributes: []string{"plan", "$path", "$utm_source"}})
+	if err != nil {
+		t.Fatalf("declarable $ keys refused: %v", err)
+	}
+	for _, bad := range []string{"$os", "$user_id", "$session_id", "$consent", "$os_name", "$display_width", "$nope"} {
+		_, err := ops.UpdateProject(ctx, "api", ProjectSpec{ID: p.ID, Attributes: []string{"plan", bad}})
+		if !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), bad) || !strings.Contains(err.Error(), "$path") {
+			t.Errorf("declaring %s: err = %v, want ErrInvalid naming it and listing the declarable keys", bad, err)
+		}
+	}
+}
+
+// A project that declared a now-refused $ key before 020 cannot be edited
+// in any other way until the key goes, and the refusal says which key.
+func TestLegacyRefusedDeclarationBlocksRename(t *testing.T) {
+	ops, st, reg := newOps(t)
+	ctx := context.Background()
+	p, err := ops.CreateProject(ctx, "api", ProjectSpec{Name: "Site"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Plant the legacy declaration through the store, bypassing manage's
+	// validation, as a pre-020 binary would have written it.
+	if err := st.UpdateProject(ctx, store.RegistryProject{ID: p.ID, Name: "Site", AllowedOrigins: "[]",
+		Attributes: `["plan","$os"]`}, store.AuditEntry{Actor: "test", Action: "project.update"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	_, err = ops.UpdateProject(ctx, "api", ProjectSpec{ID: p.ID, Name: "Renamed"})
+	if !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "$os") {
+		t.Fatalf("rename with a legacy $os declaration: err = %v, want ErrInvalid naming $os", err)
 	}
 }

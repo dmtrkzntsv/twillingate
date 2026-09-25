@@ -273,6 +273,9 @@ What changes on the day:
   `WHERE family = 'product'` to keep its old answer.
 - SQL reading the `views` table directly (the CLI's database, not the
   `query` tool) reads `events WHERE family = 'views'`.
+- `product_attributes` always includes `$kind`, `$browser`, `$device` and
+  `$browser_locale`. They are empty for product events stored before the
+  upgrade, which never kept them.
 
 There is no down migration. The previous binary writes a `views` table that no
 longer exists.

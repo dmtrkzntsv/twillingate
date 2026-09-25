@@ -150,6 +150,12 @@ WHERE rn <= 500
     SELECT 1 FROM agg_identity_daily g
     WHERE g.project_id = live.project_id AND g.day = live.day);
 
+-- v_product_attrs: 016's shape over raw_product, with an arm per
+-- store.SystemAttributes entry (eight) and declared $ keys read from their
+-- column (store.DeclarableAttributes). The CASE and the Go map must list
+-- the same keys; TestProductAttrsDeclaredSystemKeysAcrossBoundary fails on
+-- any key one of them misses. NULLIF turns an empty column into "absent",
+-- the same meaning json_extract's NULL has for a custom key.
 CREATE VIEW v_product_attrs AS
 WITH cap AS (
   SELECT COALESCE((SELECT CAST(value AS INTEGER) FROM meta
@@ -162,26 +168,45 @@ declared AS (
        json_each(CASE WHEN json_valid(p.attributes) THEN p.attributes ELSE '[]' END) j
   WHERE j.type = 'text'
 ),
-vals AS (
+declared_vals AS (
   SELECT e.project_id AS project_id, e.day AS day,
          e.event_name AS event_name, d.attr_key AS attr_key,
-         json_extract(e.attributes, '$."' || replace(d.attr_key,'"','\"') || '"') AS attr_value,
+         CASE d.attr_key
+           WHEN '$host'            THEN NULLIF(e.host, '')
+           WHEN '$path'            THEN NULLIF(e.path, '')
+           WHEN '$referrer'        THEN NULLIF(e.referrer_source, '')
+           WHEN '$utm_source'      THEN NULLIF(e.utm_source, '')
+           WHEN '$utm_medium'      THEN NULLIF(e.utm_medium, '')
+           WHEN '$utm_campaign'    THEN NULLIF(e.utm_campaign, '')
+           WHEN '$os_version'      THEN NULLIF(e.os_version, '')
+           WHEN '$browser_version' THEN NULLIF(e.browser_version, '')
+           WHEN '$device_model'    THEN NULLIF(e.device_model, '')
+           ELSE CASE WHEN d.attr_key LIKE '$%' THEN NULL
+                     ELSE json_extract(e.attributes, '$."' || replace(d.attr_key,'"','\"') || '"') END
+         END AS attr_value,
          e.actor_id AS actor_id, e.group_id AS group_id
   FROM raw_product e
   JOIN declared d ON d.project_id = e.project_id
-  WHERE json_extract(e.attributes, '$."' || replace(d.attr_key,'"','\"') || '"') IS NOT NULL
+),
+vals AS (
+  SELECT project_id, day, event_name, attr_key, attr_value, actor_id, group_id
+  FROM declared_vals WHERE attr_value IS NOT NULL
   UNION ALL
-  SELECT project_id, day, event_name, '$os', os, actor_id, group_id
-  FROM raw_product WHERE os <> ''
+  SELECT project_id, day, event_name, '$platform', platform, actor_id, group_id FROM raw_product WHERE platform <> ''
   UNION ALL
-  SELECT project_id, day, event_name, '$platform', platform, actor_id, group_id
-  FROM raw_product WHERE platform <> ''
+  SELECT project_id, day, event_name, '$os', os, actor_id, group_id FROM raw_product WHERE os <> ''
   UNION ALL
-  SELECT project_id, day, event_name, '$app_version', app_version, actor_id, group_id
-  FROM raw_product WHERE app_version <> ''
+  SELECT project_id, day, event_name, '$app_version', app_version, actor_id, group_id FROM raw_product WHERE app_version <> ''
   UNION ALL
-  SELECT project_id, day, event_name, '$app_locale', app_locale, actor_id, group_id
-  FROM raw_product WHERE app_locale <> ''
+  SELECT project_id, day, event_name, '$app_locale', app_locale, actor_id, group_id FROM raw_product WHERE app_locale <> ''
+  UNION ALL
+  SELECT project_id, day, event_name, '$kind', kind, actor_id, group_id FROM raw_product WHERE kind <> ''
+  UNION ALL
+  SELECT project_id, day, event_name, '$browser', browser, actor_id, group_id FROM raw_product WHERE browser <> ''
+  UNION ALL
+  SELECT project_id, day, event_name, '$device', device, actor_id, group_id FROM raw_product WHERE device <> ''
+  UNION ALL
+  SELECT project_id, day, event_name, '$browser_locale', browser_locale, actor_id, group_id FROM raw_product WHERE browser_locale <> ''
 ),
 counted AS (
   SELECT project_id, day, event_name, attr_key, attr_value,

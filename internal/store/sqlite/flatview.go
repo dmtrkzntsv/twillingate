@@ -57,6 +57,9 @@ func (d *DB) RebuildFlatView(ctx context.Context, keys []string) error {
 	exprs := append([]string(nil), flatViewBaseColumns...)
 	used := map[string]bool{}
 	for _, key := range sorted {
+		if strings.HasPrefix(key, "$") {
+			continue // a reserved key is a base column of events, never in the blob
+		}
 		alias := sanitizeAlias(key)
 		if alias == "" {
 			continue

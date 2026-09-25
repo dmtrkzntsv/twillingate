@@ -5,6 +5,7 @@ import (
 	"database/sql/driver"
 	"fmt"
 	"net/url"
+	"sort"
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/civil"
@@ -51,6 +52,51 @@ type Event struct {
 	Country                                        string
 	Consent                                        Consent
 	Attributes                                     map[string]string
+}
+
+// SystemAttribute is a reserved key that product_attributes always breaks
+// down, and the events column it reads.
+type SystemAttribute struct{ Key, Column string }
+
+// SystemAttributes are rolled up for every project, declared or not:
+// low-cardinality environment keys. The v_product_attrs live half
+// (020_one_events_table.sql) carries one arm per entry.
+var SystemAttributes = []SystemAttribute{
+	{"$platform", "platform"},
+	{"$os", "os"},
+	{"$app_version", "app_version"},
+	{"$app_locale", "app_locale"},
+	{"$kind", "kind"},
+	{"$browser", "browser"},
+	{"$device", "device"},
+	{"$browser_locale", "browser_locale"},
+}
+
+// DeclarableAttributes are the reserved keys a project may declare in its
+// attributes to get a per-value breakdown, mapped to the events column
+// each reads. Any other $ key is refused (manage.ErrInvalid): always-on
+// ones need no declaration, and identity, session, consent, os_name and
+// display sizes are unbounded or not breakdowns.
+var DeclarableAttributes = map[string]string{
+	"$host":            "host",
+	"$path":            "path",
+	"$referrer":        "referrer_source",
+	"$utm_source":      "utm_source",
+	"$utm_medium":      "utm_medium",
+	"$utm_campaign":    "utm_campaign",
+	"$os_version":      "os_version",
+	"$browser_version": "browser_version",
+	"$device_model":    "device_model",
+}
+
+// DeclarableAttributeKeys lists DeclarableAttributes' keys, sorted.
+func DeclarableAttributeKeys() []string {
+	keys := make([]string, 0, len(DeclarableAttributes))
+	for k := range DeclarableAttributes {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // Consent is the client's answer, when it sent the row, to "may anything

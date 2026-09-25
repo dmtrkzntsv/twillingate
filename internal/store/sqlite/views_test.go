@@ -655,11 +655,16 @@ func seedAttrDay(t *testing.T, db *DB, projectID int64) {
 			evs = append(evs, store.Event{Family: store.FamilyProduct,
 				ID: fmt.Sprintf("e%04d", id), ProjectID: projectID, EventName: "signup",
 				ActorID: fmt.Sprintf("a%d", (i+n)%4), GroupID: groups[(i/3+n)%3],
-				TS:         ts("2026-08-01T10:00:00Z"),
-				Attributes: map[string]string{"plan": fmt.Sprintf("p%02d", i)},
-				OS:         []string{"ios", "android"}[i%2],
-				AppVersion: []string{"1.0", "2.0", "3.0"}[i%3],
-				AppLocale:  []string{"en", "de"}[i%2],
+				TS:            ts("2026-08-01T10:00:00Z"),
+				Attributes:    map[string]string{"plan": fmt.Sprintf("p%02d", i)},
+				OS:            []string{"ios", "android"}[i%2],
+				AppVersion:    []string{"1.0", "2.0", "3.0"}[i%3],
+				AppLocale:     []string{"en", "de"}[i%2],
+				Kind:          "web",
+				Browser:       []string{"chrome", "safari"}[i%2],
+				Device:        "desktop",
+				BrowserLocale: "en-US",
+				Path:          fmt.Sprintf("/p/%02d", i),
 			})
 		}
 	}
@@ -765,7 +770,7 @@ func TestProductAttrsViewSystemDimensionsWithoutDeclaredKeys(t *testing.T) {
 	var sys, custom int
 	for _, r := range before {
 		switch r.Key {
-		case "$os", "$platform", "$app_version", "$app_locale":
+		case "$os", "$platform", "$app_version", "$app_locale", "$kind", "$browser", "$device", "$browser_locale":
 			sys++
 		default:
 			custom++
@@ -784,6 +789,53 @@ func TestProductAttrsViewSystemDimensionsWithoutDeclaredKeys(t *testing.T) {
 	if after := readAttrs(t, db, id, "2026-08-01"); !reflect.DeepEqual(before, after) {
 		t.Fatalf("system dimensions changed when the day aggregated:\nbefore %v\nafter  %v",
 			before, after)
+	}
+}
+
+// A declared $ key breaks down by its column exactly like a custom key:
+// the live half and the rollup agree, the cap folds the tail into
+// (other), and a project that does not declare it gets no rows.
+func TestProductAttrsDeclaredSystemKeysAcrossBoundary(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	keys := store.DeclarableAttributeKeys()
+	id := seedDeclaredProject(t, db, keys)
+	other := seedDeclaredProject(t, db, nil)
+	var evs []store.Event
+	for i := 0; i < 70; i++ {
+		for _, pid := range []int64{id, other} {
+			evs = append(evs, store.Event{
+				ID: fmt.Sprintf("d%d-%03d", pid, i), ProjectID: pid, Family: store.FamilyProduct,
+				EventName: "signup", ActorID: fmt.Sprintf("a%d", i%7), TS: ts("2026-08-01T10:00:00Z"),
+				Host: "shop.example.com", Path: fmt.Sprintf("/p/%02d", i), ReferrerSource: "google",
+				UTMSource: "hn", UTMMedium: "social", UTMCampaign: "launch",
+				OSVersion: "17", BrowserVersion: "126", DeviceModel: "iPhone15,2",
+			})
+		}
+	}
+	if err := db.WriteEvents(ctx, evs); err != nil {
+		t.Fatal(err)
+	}
+	before := readAttrs(t, db, id, "2026-08-01")
+	seen := map[string]bool{}
+	for _, r := range before {
+		seen[r.Key] = true
+	}
+	for _, k := range keys {
+		if !seen[k] {
+			t.Errorf("declared %s produced no rows in the live half", k)
+		}
+	}
+	for _, r := range readAttrs(t, db, other, "2026-08-01") {
+		if _, declarable := store.DeclarableAttributes[r.Key]; declarable {
+			t.Errorf("undeclared %s produced a row for a project that did not declare it", r.Key)
+		}
+	}
+	if err := db.AggregateProductDay(ctx, id, civil.DateOf(ts("2026-08-01T00:00:00Z")), keys, 50); err != nil {
+		t.Fatal(err)
+	}
+	if after := readAttrs(t, db, id, "2026-08-01"); !reflect.DeepEqual(before, after) {
+		t.Fatalf("declared $ keys changed across the rollup:\nbefore %v\nafter  %v", before, after)
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/dmtrkzntsv/twillingate/internal/civil"
+	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
 // attrPath builds a JSON path literal for a config-supplied attribute key.
@@ -84,53 +85,50 @@ func (d *DB) rollupProduct(ctx context.Context, tx *sql.Tx, projectID int64, day
 	}
 	for _, event := range events {
 		for _, key := range attrs {
-			path := attrPath(key)
-			expr := `json_extract(attributes, :path)`
-			present := expr + ` IS NOT NULL`
+			expr, present := `json_extract(attributes, :path)`, `json_extract(attributes, :path) IS NOT NULL`
+			if strings.HasPrefix(key, "$") {
+				// A declared reserved key reads its column; the blob never
+				// holds $ keys. One the store does not map (a declaration
+				// manage now refuses) has nothing to break down.
+				col, ok := store.DeclarableAttributes[key]
+				if !ok {
+					continue
+				}
+				expr, present = col, col+` <> ''`
+			}
 			named := []any{
 				sql.Named("p", projectID), sql.Named("day", day.String()),
 				sql.Named("event", event), sql.Named("key", key),
-				sql.Named("path", path), sql.Named("n", topN),
+				sql.Named("path", attrPath(key)), sql.Named("n", topN),
 			}
 			if err := d.rollupAttrValue(ctx, tx, expr, present, named); err != nil {
 				return fmt.Errorf("attr %s/%s: %w", event, key, err)
 			}
 		}
 	}
-	// System dimensions: platform, os and app_version are typed columns
-	// written on every event, not declared custom keys, so they roll up
-	// unconditionally under $-prefixed attr_keys. $ is a safe namespace:
-	// resolveAttributes routes every $-prefixed input to a typed field
-	// and drops unrecognised ones, so a custom key can never collide
-	// with a system one. The columns are NOT NULL DEFAULT '', so empty
-	// string (not NULL) means absent.
-	for _, dim := range systemDims {
+	// System dimensions: platform, os, app_version, app_locale, kind,
+	// browser, device and browser_locale (store.SystemAttributes) are
+	// typed columns written on every event, not declared custom keys, so
+	// they roll up unconditionally under $-prefixed attr_keys. $ is a safe
+	// namespace: resolveAttributes routes every $-prefixed input to a
+	// typed field and drops unrecognised ones, so a custom key can never
+	// collide with a system one. The columns are NOT NULL DEFAULT '', so
+	// empty string (not NULL) means absent.
+	for _, dim := range store.SystemAttributes {
 		for _, event := range events {
 			named := []any{
 				sql.Named("p", projectID), sql.Named("day", day.String()),
-				sql.Named("event", event), sql.Named("key", dim.key),
+				sql.Named("event", event), sql.Named("key", dim.Key),
 				sql.Named("n", topN),
 			}
-			expr := dim.column
-			present := dim.column + ` <> ''`
+			expr := dim.Column
+			present := dim.Column + ` <> ''`
 			if err := d.rollupAttrValue(ctx, tx, expr, present, named); err != nil {
-				return fmt.Errorf("system dim %s/%s: %w", event, dim.key, err)
+				return fmt.Errorf("system dim %s/%s: %w", event, dim.Key, err)
 			}
 		}
 	}
 	return nil
-}
-
-// systemDims maps an events column to the attr_key it rolls up
-// under. platform, os, app_version and app_locale are typed columns written
-// on every event, not declared custom keys. The $ prefix is safe as a namespace
-// because resolveAttributes routes every $-prefixed input to a typed
-// field, so a custom key can never collide with one of these.
-var systemDims = []struct{ column, key string }{
-	{"platform", "$platform"},
-	{"os", "$os"},
-	{"app_version", "$app_version"},
-	{"app_locale", "$app_locale"},
 }
 
 // rollupAttrValue writes the ranked top-N breakdown plus the "(other)"
