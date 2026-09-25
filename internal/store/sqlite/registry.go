@@ -224,7 +224,7 @@ func (d *DB) SetIngestKeyDisabled(ctx context.Context, projectID int64, label st
 // both directions, so a forgotten addition or a stale entry fails loudly
 // instead of silently orphaning rows on DeleteProjectData.
 var projectTables = []string{
-	"views", "events",
+	"events",
 	"agg_views_daily", "agg_views_paths", "agg_views_hosts", "agg_views_referrers",
 	"agg_views_utm", "agg_views_countries", "agg_views_platforms", "agg_views_os",
 	"agg_views_browsers", "agg_views_app_versions", "agg_views_devices", "agg_views_displays",

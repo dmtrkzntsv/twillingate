@@ -8,14 +8,15 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/civil"
 )
 
-// actorSources lists the raw tables an actor can appear in. Both carry
-// actor_kind since 012, so the source table no longer implies anything
-// about the population; only the kind does.
-var actorSources = []string{"views", "events"}
+// actorSources are the two family views over the one raw table
+// (020_one_events_table.sql) an actor can appear in. Both carry actor_kind
+// since 012, so the family no longer implies anything about the
+// population; only the kind does.
+var actorSources = []string{rawViews, rawProduct}
 
 // cohortKinds are the actor kinds stable enough to cohort. A connection
-// hash rotates with the salt (and a pre-012 product row carries ''), so
-// recording those only ever produced an offset-0 row.
+// hash rotates with the salt (and a pre-012 product row carries an empty
+// kind), so recording those only ever produced an offset-0 row.
 const cohortKinds = `('user', 'install')`
 
 // UpsertActors records first/last seen for every user- or install-identified
@@ -27,24 +28,20 @@ const cohortKinds = `('user', 'install')`
 // day's raw rows are deleted.
 func (d *DB) UpsertActors(ctx context.Context, projectID int64, day civil.Date) error {
 	return d.tx(ctx, func(tx *sql.Tx) error {
-		for _, table := range actorSources {
-			dayExpr := "substr(ts,1,10)"
-			if table == "views" {
-				dayExpr = "day"
-			}
+		for _, source := range actorSources {
 			q := fmt.Sprintf(`
 INSERT INTO actors (project_id, actor_id, actor_kind, first_seen_day, last_seen_day)
 SELECT ?, actor_id, actor_kind, ?, ?
-FROM %[1]s WHERE project_id=? AND %[3]s=? AND actor_id <> '' AND actor_kind IN %[2]s
+FROM %[1]s WHERE project_id=? AND day=? AND actor_id <> '' AND actor_kind IN %[2]s
 GROUP BY actor_id, actor_kind
 ON CONFLICT(project_id, actor_id) DO UPDATE SET
   actor_kind     = CASE WHEN actors.actor_kind = 'user' OR excluded.actor_kind = 'user'
                         THEN 'user' ELSE excluded.actor_kind END,
   first_seen_day = MIN(actors.first_seen_day, excluded.first_seen_day),
-  last_seen_day  = MAX(actors.last_seen_day,  excluded.last_seen_day)`, table, cohortKinds, dayExpr)
+  last_seen_day  = MAX(actors.last_seen_day,  excluded.last_seen_day)`, source, cohortKinds)
 			if _, err := tx.ExecContext(ctx, q,
 				projectID, day.String(), day.String(), projectID, day.String()); err != nil {
-				return fmt.Errorf("upsert actors from %s: %w", table, err)
+				return fmt.Errorf("upsert actors from %s: %w", source, err)
 			}
 		}
 		return nil
@@ -71,9 +68,9 @@ func (d *DB) AggregateRetentionDay(ctx context.Context, projectID int64, day civ
 		if _, err := tx.ExecContext(ctx, `
 INSERT OR REPLACE INTO agg_retention (project_id, actor_kind, cohort_day, day_offset, actors)
 WITH active AS (
-  SELECT DISTINCT actor_id FROM views         WHERE project_id=? AND day=? AND actor_id <> ''
+  SELECT DISTINCT actor_id FROM raw_views   WHERE project_id=? AND day=? AND actor_id <> ''
   UNION
-  SELECT DISTINCT actor_id FROM events WHERE project_id=? AND substr(ts,1,10)=? AND actor_id <> ''
+  SELECT DISTINCT actor_id FROM raw_product WHERE project_id=? AND day=? AND actor_id <> ''
 )
 SELECT a.project_id, a.actor_kind, a.first_seen_day,
        CAST(julianday(?) - julianday(a.first_seen_day) AS INTEGER),

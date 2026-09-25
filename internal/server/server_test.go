@@ -23,19 +23,18 @@ import (
 
 type fakeQueue struct {
 	mu         sync.Mutex
-	views      []store.View
-	events     []store.ProductEvent
+	views      []store.Event
+	events     []store.Event
 	identities []store.Identity
 }
 
-func (f *fakeQueue) EnqueueView(v store.View) {
+func (f *fakeQueue) Enqueue(e store.Event) {
 	f.mu.Lock()
-	f.views = append(f.views, v)
-	f.mu.Unlock()
-}
-func (f *fakeQueue) EnqueueEvent(e store.ProductEvent) {
-	f.mu.Lock()
-	f.events = append(f.events, e)
+	if e.Family == store.FamilyViews {
+		f.views = append(f.views, e)
+	} else {
+		f.events = append(f.events, e)
+	}
 	f.mu.Unlock()
 }
 
@@ -273,6 +272,63 @@ func TestRoutesViewsAndCustom(t *testing.T) {
 	}
 }
 
+// A product event keeps every reserved key a view keeps, normalised the
+// same way, and a view keeps its custom attributes.
+func TestProductEventsAndViewsKeepEverything(t *testing.T) {
+	q, h := testServer(t)
+	body := `{"key":"` + testKey + `","attributes":{"$kind":"web","$platform":"web","$os":"macOS","$os_version":"14.2",
+	    "$browser":"Chrome","$browser_version":"126","$browser_locale":"de-DE","$device":"desktop",
+	    "$display_width":1440,"$display_height":900,"$session_id":"s9"},
+	  "events":[
+	    {"name":"signup","attributes":{"$host":"shop.example.com","$path":"/pricing","$referrer":"https://www.google.com/",
+	      "$utm_source":"hn","plan":"pro"}},
+	    {"name":"$page_view","attributes":{"$host":"shop.example.com","$path":"/","plan":"free"}},
+	    {"name":"$pageview","attributes":{"$host":"shop.example.com","$path":"/legacy"}}
+	  ]}`
+	w := post(h, body, map[string]string{"Origin": testOrigin})
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status = %d body %s", w.Code, w.Body.String())
+	}
+	if len(q.events) != 1 || len(q.views) != 2 {
+		t.Fatalf("events %d views %d", len(q.events), len(q.views))
+	}
+	e := q.events[0]
+	if e.Family != store.FamilyProduct || e.EventName != "signup" || e.Kind != "web" || e.OS != "macos" ||
+		e.OSVersion != "14.2" || e.Browser != "chrome" || e.BrowserVersion != "126" || e.BrowserLocale != "de-DE" ||
+		e.Device != "desktop" || e.DisplayWidth != 1440 || e.DisplayHeight != 900 || e.SessionID != "s9" ||
+		e.Host != "shop.example.com" || e.Path != "/pricing" || e.ReferrerSource != "google" || e.UTMSource != "hn" ||
+		e.Country != "DE" || e.Attributes["plan"] != "pro" {
+		t.Errorf("product event = %+v", e)
+	}
+	if v := q.views[0]; v.EventName != "$page_view" || v.Attributes["plan"] != "free" {
+		t.Errorf("view = %+v, want its custom attribute kept", v)
+	}
+	if v := q.views[1]; v.EventName != "$page_view" || v.Path != "/legacy" {
+		t.Errorf("legacy $pageview stored as %q, want the canonical $page_view", v.EventName)
+	}
+}
+
+// An event-level null removes the batch default for that event: a
+// reserved key reads as undeclared, a custom key is absent, not "".
+func TestEventNullRemovesTheBatchDefault(t *testing.T) {
+	q, h := testServer(t)
+	body := `{"key":"` + testKey + `","attributes":{"$browser":"chrome","plan":"pro"},
+	  "events":[{"name":"signup","attributes":{"$browser":null,"plan":null}},{"name":"signup"}]}`
+	post(h, body, map[string]string{"Origin": testOrigin})
+	if len(q.events) != 2 {
+		t.Fatalf("events = %+v", q.events)
+	}
+	if q.events[0].Browser != "unknown" {
+		t.Errorf("nulled $browser = %q, want unknown (undeclared)", q.events[0].Browser)
+	}
+	if _, ok := q.events[0].Attributes["plan"]; ok {
+		t.Errorf("nulled plan stored as %q, want absent", q.events[0].Attributes["plan"])
+	}
+	if q.events[1].Browser != "chrome" || q.events[1].Attributes["plan"] != "pro" {
+		t.Errorf("second event lost the batch defaults: %+v", q.events[1])
+	}
+}
+
 func TestPageviewNameIsASilentAlias(t *testing.T) {
 	q, h := testServer(t)
 	w := post(h, envelopeOf(`{"name":"$pageview","attributes":{"$host":"app.com","$path":"/x","$platform":"linux"}}`), nil)
@@ -313,6 +369,20 @@ func TestKindDeclaredValidatedAndDefaulted(t *testing.T) {
 	}
 }
 
+// A product event has no default kind, so an invalid $kind is ignored,
+// not replaced by an empty "using" value.
+func TestInvalidKindOnAProductEventIsIgnored(t *testing.T) {
+	q, h := testServer(t)
+	w := post(h, envelopeOf(`{"name":"signup","attributes":{"$kind":"Bad Kind!"}}`), nil)
+	res := decodeResult(t, w)
+	if res.Accepted != 1 || len(res.Warnings) != 1 || res.Warnings[0].Reason != `invalid $kind "Bad Kind!", ignored` {
+		t.Errorf("result = %+v", res)
+	}
+	if len(q.events) != 1 || q.events[0].Kind != "" {
+		t.Errorf("events = %+v, want one with an empty kind", q.events)
+	}
+}
+
 // A web batch that declares nothing stores unknown for os, browser and
 // device: the server no longer derives any of them from the User-Agent.
 // The one thing it still reads the User-Agent for is the crawler drop.
@@ -348,7 +418,7 @@ func TestOSIsValidatedAndTheNamePreserved(t *testing.T) {
 		{"name":"$page_view","attributes":{"$path":"/","$os":"Haiku R1","$os_name":"Haiku R1 beta 5"}},
 		{"name":"$page_view","attributes":{"$path":"/","$os":"other"}},
 		{"name":"$page_view","attributes":{"$path":"/","$os":"macos","$os_name":"macOS 14.2"}},
-		{"name":"signup","attributes":{"$os":"Haiku R1","$os_name":"dropped on product events"}}`)
+		{"name":"signup","attributes":{"$os":"Haiku R1","$os_name":"Haiku R1 beta"}}`)
 	res := decodeResult(t, post(h, body, nil))
 	if res.Accepted != 6 || res.Rejected != 0 {
 		t.Fatalf("result = %+v", res)
@@ -373,8 +443,8 @@ func TestOSIsValidatedAndTheNamePreserved(t *testing.T) {
 			t.Errorf("view %d os = (%q, %q), want (%q, %q)", i, q.views[i].OS, q.views[i].OSName, w.os, w.name)
 		}
 	}
-	if len(q.events) != 1 || q.events[0].OS != "other" {
-		t.Errorf("product event os = %+v, want other", q.events)
+	if len(q.events) != 1 || q.events[0].OS != "other" || q.events[0].OSName != "Haiku R1 beta" {
+		t.Errorf("product event os = %+v, want other/Haiku R1 beta", q.events)
 	}
 	if _, leaked := q.events[0].Attributes["$os_name"]; leaked {
 		t.Error("$os_name reached the product event's attributes")
@@ -413,9 +483,8 @@ func TestPlatformIsValidatedIndependentlyOfOS(t *testing.T) {
 	}
 }
 
-// Browser and device close on the same terms as os. Both are views-only:
-// on a product event an unrecognised $browser or $device is dropped
-// without any warning at all — only $os and $platform warn there.
+// Browser and device close on the same terms as os. Product events keep
+// them too, validated the same way.
 func TestBrowserAndDeviceAreValidated(t *testing.T) {
 	q, h := testServer(t)
 	body := envelopeOf(`{"name":"$page_view","attributes":{"$path":"/","$browser":"Samsung Internet","$browser_version":"25","$device":"Tablet"}},
@@ -442,8 +511,26 @@ func TestBrowserAndDeviceAreValidated(t *testing.T) {
 			t.Errorf("view %d = %q/%q %q, want %+v", i, v.Browser, v.BrowserVersion, v.Device, w)
 		}
 	}
-	if len(q.events) != 1 || len(q.events[0].Attributes) != 0 {
-		t.Errorf("product event attributes = %+v, want the reserved keys dropped", q.events)
+	if len(q.events) != 1 || q.events[0].Browser != "safari" || q.events[0].Device != "mobile" || len(q.events[0].Attributes) != 0 {
+		t.Errorf("product event = %+v, want safari/mobile stored as columns, not attributes", q.events)
+	}
+}
+
+// The bot filter drops web views only: a product event declaring the web
+// kind under a crawler User-Agent is stored like any other product event.
+func TestBotFilterKeepsWebKindProductEvents(t *testing.T) {
+	q, h := testServer(t)
+	body := envelopeOf(`{"name":"$page_view","attributes":{"$host":"app.com","$path":"/x"}},
+		{"name":"signup","attributes":{"$kind":"web","$host":"app.com","$path":"/x"}}`)
+	w := post(h, body, map[string]string{"User-Agent": "Googlebot/2.1"})
+	if res := decodeResult(t, w); res.Accepted != 2 || res.Rejected != 0 {
+		t.Errorf("result = %+v", res)
+	}
+	if len(q.views) != 0 {
+		t.Errorf("the web view must be bot-filtered: %+v", q.views)
+	}
+	if len(q.events) != 1 || q.events[0].Kind != "web" || q.events[0].EventName != "signup" || q.events[0].Path != "/x" {
+		t.Errorf("web-kind product event = %+v, want it stored", q.events)
 	}
 }
 

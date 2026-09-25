@@ -50,7 +50,7 @@ afterEach(() => {
 });
 
 describe("tagged elements", () => {
-  it("track the event name with the path, nothing else, on every instance with them on", async () => {
+  it("track the event name with the path and the event's own location, on every instance with them on", async () => {
     const web = tg({ key: "ak_web" });
     const et = tg({ key: "ak_et" }, "et");
     click("b");
@@ -60,7 +60,7 @@ describe("tagged elements", () => {
     const byKey = (key: string) => sent.filter((s) => s.body.key === key).flatMap((s) => s.body.events);
     expect(byKey("ak_web")).toHaveLength(1);
     expect(byKey("ak_web")[0].name).toBe("signup");
-    expect(byKey("ak_web")[0].attributes).toEqual({ path: "/pricing" });
+    expect(byKey("ak_web")[0].attributes).toEqual({ path: "/pricing", $host: "example.com", $path: "/pricing" });
     expect(byKey("ak_et")).toHaveLength(1);
   });
 
@@ -81,6 +81,8 @@ describe("tagged elements", () => {
     click("b");
     t.flush();
     await drain();
-    expect(sent[0].body.events[0].attributes).toEqual({ path: "/pricing", site: "docs", via: "markup" });
+    expect(sent[0].body.events[0].attributes).toEqual({
+      path: "/pricing", $host: "example.com", $path: "/pricing", site: "docs", via: "markup",
+    });
   });
 });

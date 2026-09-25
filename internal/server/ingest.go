@@ -49,6 +49,15 @@ func viewName(name string) (kind string, ok bool) {
 	return "", false
 }
 
+// canonicalViewName is the name a view is stored under: the legacy
+// $pageview spelling is stored as $page_view, so one view is one name.
+func canonicalViewName(name string) string {
+	if name == aliasPageview {
+		return namePageView
+	}
+	return name
+}
+
 type envelope struct {
 	Key        string         `json:"key"`
 	Attributes map[string]any `json:"attributes"`
@@ -155,15 +164,23 @@ var reservedKeys = map[string]func(*resolved, string){
 // key. This is the only merge rule, and it applies to system and ordinary
 // keys alike — which is what lets an offline queue spanning an app
 // self-update stamp $app_version on just the events that differ, instead of
-// grouping the queue by context before flushing.
+// grouping the queue by context before flushing. A null means "not sent":
+// a null batch value is skipped, and a null event value removes the batch
+// default for that event.
 //
 // Neither input is mutated: batch defaults are reused across every event.
 func mergeAttributes(batch, event map[string]any) map[string]any {
 	out := make(map[string]any, len(batch)+len(event))
 	for k, v := range batch {
-		out[k] = v
+		if v != nil {
+			out[k] = v
+		}
 	}
 	for k, v := range event {
+		if v == nil {
+			delete(out, k)
+			continue
+		}
 		out[k] = v
 	}
 	return out
@@ -178,6 +195,9 @@ func resolveAttributes(m map[string]any) (resolved, []string) {
 	r := resolved{Custom: map[string]string{}}
 	var unknown []string
 	for k, v := range m {
+		if v == nil {
+			continue
+		}
 		if strings.HasPrefix(k, "$") {
 			set, ok := reservedKeys[k]
 			if !ok {

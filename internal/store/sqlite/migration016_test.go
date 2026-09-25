@@ -48,7 +48,7 @@ func TestMigration016LeavesHistoryUnmeasured(t *testing.T) {
 	}
 
 	// A raw day: one event with a group, one without. Raw INSERTs, not
-	// WriteProductEvents: this database is at 16, and the write path names
+	// WriteEvents: this database is at 16, and the write path names
 	// columns later migrations add.
 	for _, q := range []string{
 		`INSERT INTO events (id, project_id, event_name, ts, received_at, actor_id, actor_kind, user_id, group_id, platform, os, app_version, attributes)

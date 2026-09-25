@@ -32,7 +32,7 @@ func newID() string {
 }
 
 // handleEvents is the only ingest endpoint. It demultiplexes by event name:
-// views to the views table, everything else to events.
+// views and product events land in the one raw table under their family.
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	var env envelope
 	if !decode(w, r, &env) {
@@ -126,9 +126,8 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		actor, actorKind, user, group := resolveIdentity(rv, salt, ip, ua, hashKey)
 
 		// The environment is declared, validated and never parsed: the
-		// User-Agent is read for nothing but the bot check below. $os and
-		// $platform land on views and product events alike; the rest are
-		// views-only and are resolved and dropped on a product event.
+		// User-Agent is read for nothing but the bot check below. Views and
+		// product events keep the same keys.
 		osv, osKnown := enrich.NormalizeOS(rv.OS)
 		if !osKnown {
 			res.warn(i, "$os %q is not a known value, stored as other", rv.OS)
@@ -140,36 +139,31 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		}
 
 		defaultKind, isView := viewName(ev.Name)
-		if !isView {
-			if strings.HasPrefix(ev.Name, "$") {
-				res.warn(i, "unknown reserved name %s, stored as a custom event", ev.Name)
-			}
-			s.queue.EnqueueEvent(store.ProductEvent{
-				ID: id, ProjectID: p.ID, EventName: ev.Name,
-				TS: ts, ReceivedAt: received,
-				ActorID: actor, ActorKind: actorKind, UserID: user, GroupID: group,
-				Platform: platform, OS: osv, AppVersion: rv.AppVersion, AppLocale: rv.AppLocale,
-				Consent:    consent,
-				Attributes: rv.Custom,
-			})
-			noteRow(actorKind, rv)
-			res.Accepted++
-			continue
+		family, name := store.FamilyProduct, ev.Name
+		if isView {
+			family, name = store.FamilyViews, canonicalViewName(ev.Name)
+		} else if strings.HasPrefix(ev.Name, "$") {
+			res.warn(i, "unknown reserved name %s, stored as a custom event", ev.Name)
 		}
-
+		// A view's kind defaults from its name; a product event has no
+		// default and keeps an empty kind unless it declares one.
 		kind := defaultKind
 		if rv.Kind != "" {
 			if kindPattern.MatchString(rv.Kind) {
 				kind = rv.Kind
 			} else {
-				res.warn(i, "invalid $kind %q, using %q", rv.Kind, defaultKind)
+				if isView {
+					res.warn(i, "invalid $kind %q, using %q", rv.Kind, defaultKind)
+				} else {
+					res.warn(i, "invalid $kind %q, ignored", rv.Kind)
+				}
 			}
 		}
 		path := rv.Path
 		if path == "" {
 			path = rv.Screen
 		}
-		if path == "" {
+		if isView && path == "" {
 			res.reject(i, "view requires $path or $screen")
 			continue
 		}
@@ -184,43 +178,42 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		// explicit: $os, $platform, then $browser and $device.
 		browser := res.declared(i, "$browser", rv.Browser, enrich.NormalizeBrowser)
 		device := res.declared(i, "$device", rv.Device, enrich.NormalizeDevice)
-		v := store.View{
-			ID: id, ProjectID: p.ID, TS: ts, ReceivedAt: received, Kind: kind,
+		e := store.Event{
+			ID: id, ProjectID: p.ID, Family: family, EventName: name,
+			TS: ts, ReceivedAt: received, Kind: kind,
 			ActorID: actor, ActorKind: actorKind, UserID: user, GroupID: group, SessionID: rv.SessionID,
 			Host: rv.Host, Path: path,
 			UTMSource: rv.UTMSource, UTMMedium: rv.UTMMedium, UTMCampaign: rv.UTMCampaign,
 			Platform: platform, OS: osv, OSVersion: rv.OSVersion, OSName: osName,
-			Browser:        browser,
-			BrowserVersion: rv.BrowserVersion,
-			Device:         device,
-			AppVersion:     rv.AppVersion, AppLocale: rv.AppLocale, BrowserLocale: rv.BrowserLocale,
-			DeviceModel: rv.DeviceModel, Country: country,
-			Consent: consent,
+			Browser: browser, BrowserVersion: rv.BrowserVersion,
+			Device: device, DeviceModel: rv.DeviceModel,
+			AppVersion: rv.AppVersion, AppLocale: rv.AppLocale, BrowserLocale: rv.BrowserLocale,
+			Country: country, Consent: consent, Attributes: rv.Custom,
 		}
 		// Bot filtering is the one thing still read off the User-Agent,
-		// and it applies to web rows only: any other kind declares what
+		// and it applies to web views only: any other kind declares what
 		// it is and is never filtered, whatever HTTP library it uses.
 		if kind == "web" {
-			if botUA {
+			if isView && botUA {
 				// Accepted and silently ignored: the client did nothing
 				// wrong, so it must not retry.
 				res.Accepted++
 				continue
 			}
-			v.ReferrerSource = enrich.CleanReferrer(rv.Referrer, rv.Host)
+			e.ReferrerSource = enrich.CleanReferrer(rv.Referrer, rv.Host)
 		} else {
 			// No host to compare against, so a referrer is taken at face
 			// value — a deep link can still carry one.
-			v.ReferrerSource = enrich.CleanReferrer(rv.Referrer, "")
+			e.ReferrerSource = enrich.CleanReferrer(rv.Referrer, "")
 		}
 		var bad bool
-		if v.DisplayWidth, bad = parseDisplay(rv.displayWidthRaw); bad {
+		if e.DisplayWidth, bad = parseDisplay(rv.displayWidthRaw); bad {
 			res.warn(i, "$display_width %q is not a positive integer, ignored", rv.displayWidthRaw)
 		}
-		if v.DisplayHeight, bad = parseDisplay(rv.displayHeightRaw); bad {
+		if e.DisplayHeight, bad = parseDisplay(rv.displayHeightRaw); bad {
 			res.warn(i, "$display_height %q is not a positive integer, ignored", rv.displayHeightRaw)
 		}
-		s.queue.EnqueueView(v)
+		s.queue.Enqueue(e)
 		noteRow(actorKind, rv)
 		res.Accepted++
 	}

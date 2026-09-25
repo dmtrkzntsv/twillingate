@@ -21,7 +21,7 @@ func day(s string) civil.Date {
 func at(h, m int) time.Time { return time.Date(2026, 8, 10, h, m, 0, 0, time.UTC) }
 
 // seedViews writes views into project 1 with defaults filled in.
-func seedViews(t *testing.T, db *DB, views ...store.View) {
+func seedViews(t *testing.T, db *DB, views ...store.Event) {
 	t.Helper()
 	for i := range views {
 		if views[i].ReceivedAt.IsZero() {
@@ -37,7 +37,7 @@ func seedViews(t *testing.T, db *DB, views ...store.View) {
 			views[i].ActorKind = store.ActorConnection
 		}
 	}
-	if err := db.WriteViews(context.Background(), views); err != nil {
+	if err := db.WriteEvents(context.Background(), views); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 }
@@ -61,8 +61,8 @@ func seedViews(t *testing.T, db *DB, views ...store.View) {
 // is unknown, not empty.
 func seedViewDay(t *testing.T, db *DB) {
 	t.Helper()
-	web := func(id, actor, path string, ts time.Time) store.View {
-		return store.View{ID: id, TS: ts, ActorID: actor, Kind: "web", Platform: "web",
+	web := func(id, actor, path string, ts time.Time) store.Event {
+		return store.Event{Family: store.FamilyViews, ID: id, TS: ts, ActorID: actor, Kind: "web", Platform: "web",
 			Host: "shop.example.com", Path: path, Country: "US",
 			Device: "desktop", Browser: "firefox", BrowserVersion: "127", OS: "linux"}
 	}
@@ -72,8 +72,8 @@ func seedViewDay(t *testing.T, db *DB) {
 	v2.UTMSource, v2.UTMMedium, v2.UTMCampaign = "hn", "social", "launch"
 	v2.DisplayWidth, v2.DisplayHeight = 390, 844
 	v2.BrowserLocale, v2.AppLocale = "de-DE", "en"
-	app := func(id, actor, path, session, os, osv, model, country string, ts time.Time) store.View {
-		return store.View{ID: id, TS: ts, ActorID: actor, ActorKind: store.ActorInstall, Kind: "app",
+	app := func(id, actor, path, session, os, osv, model, country string, ts time.Time) store.Event {
+		return store.Event{Family: store.FamilyViews, ID: id, TS: ts, ActorID: actor, ActorKind: store.ActorInstall, Kind: "app",
 			Platform: os, SessionID: session, Path: path, OS: os, OSVersion: osv, AppVersion: "2.4.1",
 			Device: "unknown", Browser: "unknown",
 			DeviceModel: model, BrowserLocale: "en-US", AppLocale: "en", Country: country}
@@ -114,7 +114,7 @@ func TestAggregateViewDayPerKind(t *testing.T) {
 		t.Errorf("app = %+v, want %+v", got, want)
 	}
 	var raw int
-	if err := db.db.QueryRow(`SELECT COUNT(*) FROM views WHERE project_id=1`).Scan(&raw); err != nil {
+	if err := db.db.QueryRow(`SELECT COUNT(*) FROM raw_views WHERE project_id=1`).Scan(&raw); err != nil {
 		t.Fatal(err)
 	}
 	if raw != 0 {
@@ -182,17 +182,17 @@ func TestAggregateViewDayDimensions(t *testing.T) {
 func TestAggregateViewDayCapsDimensions(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	var views []store.View
+	var views []store.Event
 	for i := 0; i < topNDimension+10; i++ {
 		// two actors see every collapsed path, so a summed count would say 20
 		for _, actor := range []string{"a", "b"} {
-			views = append(views, store.View{ID: fmt.Sprintf("%s-%d", actor, i), TS: at(9, 0).Add(time.Duration(i) * time.Second),
+			views = append(views, store.Event{Family: store.FamilyViews, ID: fmt.Sprintf("%s-%d", actor, i), TS: at(9, 0).Add(time.Duration(i) * time.Second),
 				ActorID: actor, Path: fmt.Sprintf("/p/%04d", i), OS: "linux", OSVersion: fmt.Sprintf("%d", i)})
 		}
 	}
 	// One popular path stays out of the tail.
 	for i := 0; i < 5; i++ {
-		views = append(views, store.View{ID: fmt.Sprintf("hot-%d", i), TS: at(10, 0), ActorID: "c", Path: "/hot", OS: "linux", OSVersion: "0"})
+		views = append(views, store.Event{Family: store.FamilyViews, ID: fmt.Sprintf("hot-%d", i), TS: at(10, 0), ActorID: "c", Path: "/hot", OS: "linux", OSVersion: "0"})
 	}
 	seedViews(t, db, views...)
 	if err := db.AggregateViewDay(ctx, 1, day("2026-08-10")); err != nil {
@@ -247,9 +247,9 @@ func TestAggregateViewDayIsIdempotentAndSkipsEmptyDay(t *testing.T) {
 func TestViewDaysBefore(t *testing.T) {
 	db := newTestDB(t)
 	seedViews(t, db,
-		store.View{ID: "1", TS: time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC), ActorID: "a", Path: "/"},
-		store.View{ID: "2", TS: time.Date(2026, 8, 3, 10, 0, 0, 0, time.UTC), ActorID: "a", Path: "/"},
-		store.View{ID: "3", TS: time.Date(2026, 8, 9, 10, 0, 0, 0, time.UTC), ActorID: "a", Path: "/"},
+		store.Event{Family: store.FamilyViews, ID: "1", TS: time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC), ActorID: "a", Path: "/"},
+		store.Event{Family: store.FamilyViews, ID: "2", TS: time.Date(2026, 8, 3, 10, 0, 0, 0, time.UTC), ActorID: "a", Path: "/"},
+		store.Event{Family: store.FamilyViews, ID: "3", TS: time.Date(2026, 8, 9, 10, 0, 0, 0, time.UTC), ActorID: "a", Path: "/"},
 	)
 	days, err := db.ViewDaysBefore(context.Background(), 1, day("2026-08-05"))
 	if err != nil {

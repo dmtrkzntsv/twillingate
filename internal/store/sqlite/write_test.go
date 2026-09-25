@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,46 +21,70 @@ func ts(s string) time.Time {
 func TestWriteViewsRoundTrip(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	views := []store.View{{
+	views := []store.Event{{Family: store.FamilyViews,
 		ID: "h1", ProjectID: 1, TS: ts("2026-08-22T10:00:00Z"),
 		Kind: "web", ActorID: "v1", ActorKind: store.ActorConnection, Path: "/x", ReferrerSource: "google",
 		UTMSource: "hn", Country: "DE", Device: "desktop", Browser: "firefox", OS: "linux",
 	}}
-	if err := db.WriteViews(ctx, views); err != nil {
+	if err := db.WriteEvents(ctx, views); err != nil {
 		t.Fatal(err)
 	}
 	var path, tsCol string
-	if err := db.db.QueryRow(`SELECT path, ts FROM views WHERE id='h1'`).Scan(&path, &tsCol); err != nil {
+	if err := db.db.QueryRow(`SELECT path, ts FROM raw_views WHERE id='h1'`).Scan(&path, &tsCol); err != nil {
 		t.Fatal(err)
 	}
 	if path != "/x" || tsCol != "2026-08-22T10:00:00Z" {
 		t.Fatalf("got %q %q", path, tsCol)
 	}
-	if err := db.WriteViews(ctx, nil); err != nil {
+	if err := db.WriteEvents(ctx, nil); err != nil {
 		t.Fatal("empty batch must be a no-op")
+	}
+}
+
+// A row outside both families would be invisible to raw_views and
+// raw_product and never pruned, so the batch holding it is refused whole.
+func TestWriteEventsRefusesAnUnknownFamily(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	at := ts("2026-08-22T10:00:00Z")
+	for _, family := range []store.Family{"", "View"} {
+		err := db.WriteEvents(ctx, []store.Event{
+			{Family: store.FamilyViews, ID: "ok", ProjectID: 1, TS: at, Kind: "web", ActorID: "a", Path: "/"},
+			{Family: family, ID: "stray", ProjectID: 1, EventName: "e", TS: at, ActorID: "a"},
+		})
+		if err == nil || !strings.Contains(err.Error(), "stray") {
+			t.Errorf("family %q: err = %v, want a refusal naming the row id", family, err)
+		}
+	}
+	var n int
+	if err := db.db.QueryRow(`SELECT COUNT(*) FROM events`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Errorf("events holds %d rows after refused batches, want 0", n)
 	}
 }
 
 func TestWriteProductEventsAttributesJSON(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	err := db.WriteProductEvents(ctx, []store.ProductEvent{
-		{ID: "e1", ProjectID: 1, EventName: "sub", UserID: "u1",
+	err := db.WriteEvents(ctx, []store.Event{
+		{Family: store.FamilyProduct, ID: "e1", ProjectID: 1, EventName: "sub", UserID: "u1",
 			TS: ts("2026-08-22T10:00:00Z"), Attributes: map[string]string{"plan": "pro"}},
-		{ID: "e2", ProjectID: 1, EventName: "sub", UserID: "u2",
+		{Family: store.FamilyProduct, ID: "e2", ProjectID: 1, EventName: "sub", UserID: "u2",
 			TS: ts("2026-08-22T10:01:00Z")}, // nil attributes
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	var attrs string
-	if err := db.db.QueryRow(`SELECT attributes->>'plan' FROM events WHERE id='e1'`).Scan(&attrs); err != nil {
+	if err := db.db.QueryRow(`SELECT attributes->>'plan' FROM raw_product WHERE id='e1'`).Scan(&attrs); err != nil {
 		t.Fatal(err)
 	}
 	if attrs != "pro" {
 		t.Fatalf("attrs = %q", attrs)
 	}
-	if err := db.db.QueryRow(`SELECT attributes FROM events WHERE id='e2'`).Scan(&attrs); err != nil {
+	if err := db.db.QueryRow(`SELECT attributes FROM raw_product WHERE id='e2'`).Scan(&attrs); err != nil {
 		t.Fatal(err)
 	}
 	if attrs != "{}" {
@@ -119,19 +144,19 @@ func TestWriteViewsAppRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	tsV := time.Date(2026, 8, 23, 10, 0, 0, 0, time.UTC)
 
-	in := []store.View{{
+	in := []store.Event{{Family: store.FamilyViews,
 		ID: "018f-a", ProjectID: 1, TS: tsV, ReceivedAt: tsV,
 		Kind: "app", ActorID: "act1", ActorKind: store.ActorInstall, UserID: "u1", GroupID: "org9", SessionID: "s1",
 		Path: "/settings", Platform: "ios", OS: "ios", OSName: "iOS 17.2", AppVersion: "2.4.1",
 		OSVersion: "17.2", DeviceModel: "iPhone15,2", BrowserLocale: "en-US", AppLocale: "de", Country: "DE",
 	}}
-	if err := db.WriteViews(ctx, in); err != nil {
+	if err := db.WriteEvents(ctx, in); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 
 	var path, osCol, platform, osName, group, session, locale, appLocale string
 	if err := db.db.QueryRowContext(ctx,
-		`SELECT path, os, platform, os_name, group_id, session_id, browser_locale, app_locale FROM views WHERE id=?`, "018f-a").
+		`SELECT path, os, platform, os_name, group_id, session_id, browser_locale, app_locale FROM raw_views WHERE id=?`, "018f-a").
 		Scan(&path, &osCol, &platform, &osName, &group, &session, &locale, &appLocale); err != nil {
 		t.Fatalf("read back: %v", err)
 	}
@@ -143,7 +168,7 @@ func TestWriteViewsAppRoundTrip(t *testing.T) {
 
 func TestWriteViewsAppEmptyIsNoop(t *testing.T) {
 	db := newTestDB(t)
-	if err := db.WriteViews(context.Background(), nil); err != nil {
+	if err := db.WriteEvents(context.Background(), nil); err != nil {
 		t.Fatalf("empty write: %v", err)
 	}
 }
@@ -153,37 +178,37 @@ func TestWritesAreIdempotentOnID(t *testing.T) {
 	ctx := context.Background()
 	tsV := time.Now().UTC()
 
-	appView := store.View{ID: "dup", ProjectID: 1, TS: tsV, ReceivedAt: tsV,
+	appView := store.Event{Family: store.FamilyViews, ID: "dup", ProjectID: 1, TS: tsV, ReceivedAt: tsV,
 		Kind: "app", ActorID: "a", ActorKind: store.ActorInstall, Path: "/x"}
-	webView := store.View{ID: "duph", ProjectID: 1, TS: tsV, ReceivedAt: tsV,
+	webView := store.Event{Family: store.FamilyViews, ID: "duph", ProjectID: 1, TS: tsV, ReceivedAt: tsV,
 		Kind: "web", ActorID: "a", ActorKind: store.ActorConnection, Path: "/x"}
-	ev := store.ProductEvent{ID: "dupe", ProjectID: 1, EventName: "n",
+	ev := store.Event{Family: store.FamilyProduct, ID: "dupe", ProjectID: 1, EventName: "n",
 		TS: tsV, ReceivedAt: tsV, ActorID: "a"}
 
 	for i := 0; i < 2; i++ {
-		if err := db.WriteViews(ctx, []store.View{appView}); err != nil {
+		if err := db.WriteEvents(ctx, []store.Event{appView}); err != nil {
 			t.Fatalf("app write %d: %v", i, err)
 		}
-		if err := db.WriteViews(ctx, []store.View{webView}); err != nil {
+		if err := db.WriteEvents(ctx, []store.Event{webView}); err != nil {
 			t.Fatalf("web write %d: %v", i, err)
 		}
-		if err := db.WriteProductEvents(ctx, []store.ProductEvent{ev}); err != nil {
+		if err := db.WriteEvents(ctx, []store.Event{ev}); err != nil {
 			t.Fatalf("event write %d: %v", i, err)
 		}
 	}
 
 	var n int
-	if err := db.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM views`).Scan(&n); err != nil {
+	if err := db.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM raw_views`).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	if n != 2 {
-		t.Errorf("views has %d rows after replay, want 2 (one app, one web id)", n)
+		t.Errorf("raw_views has %d rows after replay, want 2 (one app, one web id)", n)
 	}
-	if err := db.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM events`).Scan(&n); err != nil {
+	if err := db.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM raw_product`).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	if n != 1 {
-		t.Errorf("events has %d rows after replay, want 1", n)
+		t.Errorf("raw_product has %d rows after replay, want 1", n)
 	}
 }
 
@@ -192,12 +217,12 @@ func TestWriteCarriesIdentityAndAppContext(t *testing.T) {
 	ctx := context.Background()
 	tsV := time.Now().UTC()
 
-	if err := db.WriteViews(ctx, []store.View{{ID: "h", ProjectID: 1, TS: tsV,
+	if err := db.WriteEvents(ctx, []store.Event{{Family: store.FamilyViews, ID: "h", ProjectID: 1, TS: tsV,
 		ReceivedAt: tsV, Kind: "web", ActorID: "a", ActorKind: store.ActorConnection,
 		UserID: "u1", GroupID: "org9", Path: "/x"}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.WriteProductEvents(ctx, []store.ProductEvent{{ID: "e", ProjectID: 1,
+	if err := db.WriteEvents(ctx, []store.Event{{Family: store.FamilyProduct, ID: "e", ProjectID: 1,
 		EventName: "n", TS: tsV, ReceivedAt: tsV, ActorID: "a", UserID: "u1",
 		GroupID: "org9", Platform: "electron", OS: "macos", AppVersion: "2.4.1"}}); err != nil {
 		t.Fatal(err)
@@ -205,7 +230,7 @@ func TestWriteCarriesIdentityAndAppContext(t *testing.T) {
 
 	var hu, hg string
 	if err := db.db.QueryRowContext(ctx,
-		`SELECT user_id, group_id FROM views WHERE id='h'`).Scan(&hu, &hg); err != nil {
+		`SELECT user_id, group_id FROM raw_views WHERE id='h'`).Scan(&hu, &hg); err != nil {
 		t.Fatal(err)
 	}
 	if hu != "u1" || hg != "org9" {
@@ -214,7 +239,7 @@ func TestWriteCarriesIdentityAndAppContext(t *testing.T) {
 
 	var osCol, platform, ver string
 	if err := db.db.QueryRowContext(ctx,
-		`SELECT os, platform, app_version FROM events WHERE id='e'`).Scan(&osCol, &platform, &ver); err != nil {
+		`SELECT os, platform, app_version FROM raw_product WHERE id='e'`).Scan(&osCol, &platform, &ver); err != nil {
 		t.Fatal(err)
 	}
 	if osCol != "macos" || platform != "electron" || ver != "2.4.1" {
@@ -265,16 +290,16 @@ func TestUpsertIdentitiesEmptyIsNoop(t *testing.T) {
 func TestWriteViewsStoresHost(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	views := []store.View{{
+	views := []store.Event{{Family: store.FamilyViews,
 		ID: "h1", ProjectID: 1, TS: ts("2026-08-10T10:00:00Z"),
 		Kind: "web", ActorID: "v1", ActorKind: store.ActorConnection, Host: "shop.example.com", Path: "/pricing",
 	}}
-	if err := db.WriteViews(ctx, views); err != nil {
+	if err := db.WriteEvents(ctx, views); err != nil {
 		t.Fatal(err)
 	}
 	var host string
 	if err := db.db.QueryRow(
-		`SELECT host FROM views WHERE id='h1'`).Scan(&host); err != nil {
+		`SELECT host FROM raw_views WHERE id='h1'`).Scan(&host); err != nil {
 		t.Fatal(err)
 	}
 	if host != "shop.example.com" {
@@ -287,7 +312,7 @@ func TestWriteViewsStoresHost(t *testing.T) {
 func TestWriteViewsHostDefaultsEmpty(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	if err := db.WriteViews(ctx, []store.View{{
+	if err := db.WriteEvents(ctx, []store.Event{{Family: store.FamilyViews,
 		ID: "h2", ProjectID: 1, TS: ts("2026-08-10T10:00:00Z"),
 		Kind: "web", ActorID: "v1", ActorKind: store.ActorConnection, Path: "/pricing",
 	}}); err != nil {
@@ -295,7 +320,7 @@ func TestWriteViewsHostDefaultsEmpty(t *testing.T) {
 	}
 	var host string
 	if err := db.db.QueryRow(
-		`SELECT host FROM views WHERE id='h2'`).Scan(&host); err != nil {
+		`SELECT host FROM raw_views WHERE id='h2'`).Scan(&host); err != nil {
 		t.Fatal(err)
 	}
 	if host != "" {
@@ -316,24 +341,24 @@ func consentOf(t *testing.T, db *DB, table, id string) sql.NullInt64 {
 func TestWriteStoresConsent(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	if err := db.WriteViews(ctx, []store.View{
-		{ID: "g", ProjectID: 1, TS: ts("2026-08-10T10:00:00Z"), Kind: "web", ActorID: "a", Path: "/", Consent: store.ConsentGiven},
-		{ID: "n", ProjectID: 1, TS: ts("2026-08-10T10:00:00Z"), Kind: "web", ActorID: "a", Path: "/", Consent: store.ConsentNone},
+	if err := db.WriteEvents(ctx, []store.Event{
+		{Family: store.FamilyViews, ID: "g", ProjectID: 1, TS: ts("2026-08-10T10:00:00Z"), Kind: "web", ActorID: "a", Path: "/", Consent: store.ConsentGiven},
+		{Family: store.FamilyViews, ID: "n", ProjectID: 1, TS: ts("2026-08-10T10:00:00Z"), Kind: "web", ActorID: "a", Path: "/", Consent: store.ConsentNone},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.WriteProductEvents(ctx, []store.ProductEvent{
-		{ID: "e", ProjectID: 1, EventName: "x", TS: ts("2026-08-10T10:00:00Z"), ActorID: "a", Consent: store.ConsentNone},
+	if err := db.WriteEvents(ctx, []store.Event{
+		{Family: store.FamilyProduct, ID: "e", ProjectID: 1, EventName: "x", TS: ts("2026-08-10T10:00:00Z"), ActorID: "a", Consent: store.ConsentNone},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if c := consentOf(t, db, "views", "g"); !c.Valid || c.Int64 != 1 {
+	if c := consentOf(t, db, "raw_views", "g"); !c.Valid || c.Int64 != 1 {
 		t.Errorf("given view consent = %+v, want 1", c)
 	}
-	if c := consentOf(t, db, "views", "n"); !c.Valid || c.Int64 != 0 {
+	if c := consentOf(t, db, "raw_views", "n"); !c.Valid || c.Int64 != 0 {
 		t.Errorf("none view consent = %+v, want 0", c)
 	}
-	if c := consentOf(t, db, "events", "e"); !c.Valid || c.Int64 != 0 {
+	if c := consentOf(t, db, "raw_product", "e"); !c.Valid || c.Int64 != 0 {
 		t.Errorf("none event consent = %+v, want 0", c)
 	}
 }
@@ -343,17 +368,17 @@ func TestWriteStoresConsent(t *testing.T) {
 func TestWriteLeavesConsentUnknownByDefault(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	if err := db.WriteViews(ctx, []store.View{
-		{ID: "v", ProjectID: 1, TS: ts("2026-08-10T10:00:00Z"), Kind: "web", ActorID: "a", Path: "/"},
+	if err := db.WriteEvents(ctx, []store.Event{
+		{Family: store.FamilyViews, ID: "v", ProjectID: 1, TS: ts("2026-08-10T10:00:00Z"), Kind: "web", ActorID: "a", Path: "/"},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.WriteProductEvents(ctx, []store.ProductEvent{
-		{ID: "e", ProjectID: 1, EventName: "x", TS: ts("2026-08-10T10:00:00Z"), ActorID: "a"},
+	if err := db.WriteEvents(ctx, []store.Event{
+		{Family: store.FamilyProduct, ID: "e", ProjectID: 1, EventName: "x", TS: ts("2026-08-10T10:00:00Z"), ActorID: "a"},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	for _, r := range [][2]string{{"views", "v"}, {"events", "e"}} {
+	for _, r := range [][2]string{{"raw_views", "v"}, {"raw_product", "e"}} {
 		if c := consentOf(t, db, r[0], r[1]); c.Valid {
 			t.Errorf("%s consent = %d, want NULL", r[0], c.Int64)
 		}

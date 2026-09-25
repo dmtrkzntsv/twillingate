@@ -13,8 +13,8 @@ import (
 
 func onDay(y int, m time.Month, d int) civil.Date { return civil.Date{Year: y, Month: m, Day: d} }
 
-func viewAt(id, actor string, t time.Time) store.View {
-	return store.View{ID: id, ProjectID: 1, TS: t, ReceivedAt: t,
+func viewAt(id, actor string, t time.Time) store.Event {
+	return store.Event{Family: store.FamilyViews, ID: id, ProjectID: 1, TS: t, ReceivedAt: t,
 		Kind: "app", ActorID: actor, ActorKind: store.ActorInstall, Path: "/x", OS: "ios"}
 }
 
@@ -24,13 +24,13 @@ func TestUpsertActorsTracksFirstAndLastSeen(t *testing.T) {
 	d1 := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
 	d2 := time.Date(2026, 8, 8, 10, 0, 0, 0, time.UTC)
 
-	if err := db.WriteViews(ctx, []store.View{viewAt("1", "a", d1)}); err != nil {
+	if err := db.WriteEvents(ctx, []store.Event{viewAt("1", "a", d1)}); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.UpsertActors(ctx, 1, onDay(2026, 8, 1)); err != nil {
 		t.Fatalf("upsert day 1: %v", err)
 	}
-	if err := db.WriteViews(ctx, []store.View{viewAt("2", "a", d2)}); err != nil {
+	if err := db.WriteEvents(ctx, []store.Event{viewAt("2", "a", d2)}); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.UpsertActors(ctx, 1, onDay(2026, 8, 8)); err != nil {
@@ -53,8 +53,8 @@ func TestUpsertActorsRecordsUserActorKind(t *testing.T) {
 	ctx := context.Background()
 	ts := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
 
-	if err := db.WriteViews(ctx, []store.View{
-		{ID: "1", ProjectID: 1, TS: ts, ReceivedAt: ts, Kind: "web", ActorID: "w",
+	if err := db.WriteEvents(ctx, []store.Event{
+		{Family: store.FamilyViews, ID: "1", ProjectID: 1, TS: ts, ReceivedAt: ts, Kind: "web", ActorID: "w",
 			ActorKind: store.ActorUser, UserID: "u1", Path: "/"},
 	}); err != nil {
 		t.Fatal(err)
@@ -77,12 +77,12 @@ func TestUpsertActorsSkipsConnectionActors(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	seedViews(t, db,
-		store.View{ID: "1", TS: at(10, 0), ActorID: "hash-1", ActorKind: store.ActorConnection, Path: "/"},
-		store.View{ID: "2", TS: at(10, 0), ActorID: "u1", ActorKind: store.ActorUser, UserID: "u1", Path: "/"},
-		store.View{ID: "3", TS: at(10, 0), ActorID: "i1", ActorKind: store.ActorInstall, Path: "/", Kind: "app"},
+		store.Event{Family: store.FamilyViews, ID: "1", TS: at(10, 0), ActorID: "hash-1", ActorKind: store.ActorConnection, Path: "/"},
+		store.Event{Family: store.FamilyViews, ID: "2", TS: at(10, 0), ActorID: "u1", ActorKind: store.ActorUser, UserID: "u1", Path: "/"},
+		store.Event{Family: store.FamilyViews, ID: "3", TS: at(10, 0), ActorID: "i1", ActorKind: store.ActorInstall, Path: "/", Kind: "app"},
 	)
-	if err := db.WriteProductEvents(ctx, []store.ProductEvent{
-		{ID: "4", ProjectID: 1, EventName: "x", TS: at(10, 0), ReceivedAt: at(10, 0), ActorID: "legacy", ActorKind: ""},
+	if err := db.WriteEvents(ctx, []store.Event{
+		{Family: store.FamilyProduct, ID: "4", ProjectID: 1, EventName: "x", TS: at(10, 0), ReceivedAt: at(10, 0), ActorID: "legacy", ActorKind: ""},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -113,8 +113,8 @@ func TestUpsertActorsIgnoresEmptyActor(t *testing.T) {
 	ctx := context.Background()
 	ts := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
 
-	if err := db.WriteViews(ctx, []store.View{
-		{ID: "1", ProjectID: 1, TS: ts, ReceivedAt: ts, Kind: "app", ActorID: "", ActorKind: store.ActorInstall, Path: "/x"},
+	if err := db.WriteEvents(ctx, []store.Event{
+		{Family: store.FamilyViews, ID: "1", ProjectID: 1, TS: ts, ReceivedAt: ts, Kind: "app", ActorID: "", ActorKind: store.ActorInstall, Path: "/x"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +137,7 @@ func TestAggregateRetentionDayComputesOffsets(t *testing.T) {
 	later := time.Date(2026, 8, 8, 10, 0, 0, 0, time.UTC)
 
 	// Two actors on day 0; one returns on day 7.
-	if err := db.WriteViews(ctx, []store.View{
+	if err := db.WriteEvents(ctx, []store.Event{
 		viewAt("1", "a", cohort), viewAt("2", "b", cohort),
 	}); err != nil {
 		t.Fatal(err)
@@ -149,7 +149,7 @@ func TestAggregateRetentionDayComputesOffsets(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := db.WriteViews(ctx, []store.View{viewAt("3", "a", later)}); err != nil {
+	if err := db.WriteEvents(ctx, []store.Event{viewAt("3", "a", later)}); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.UpsertActors(ctx, 1, onDay(2026, 8, 8)); err != nil {
@@ -181,7 +181,7 @@ func TestRetentionViewExposesCohortSize(t *testing.T) {
 	cohort := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
 	later := time.Date(2026, 8, 2, 10, 0, 0, 0, time.UTC)
 
-	if err := db.WriteViews(ctx, []store.View{
+	if err := db.WriteEvents(ctx, []store.Event{
 		viewAt("1", "a", cohort), viewAt("2", "b", cohort),
 	}); err != nil {
 		t.Fatal(err)
@@ -192,7 +192,7 @@ func TestRetentionViewExposesCohortSize(t *testing.T) {
 	if err := db.AggregateRetentionDay(ctx, 1, onDay(2026, 8, 1)); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.WriteViews(ctx, []store.View{viewAt("3", "a", later)}); err != nil {
+	if err := db.WriteEvents(ctx, []store.Event{viewAt("3", "a", later)}); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.UpsertActors(ctx, 1, onDay(2026, 8, 2)); err != nil {
@@ -220,7 +220,7 @@ func TestAggregateRetentionDayIsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	cohort := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
 
-	if err := db.WriteViews(ctx, []store.View{viewAt("1", "a", cohort)}); err != nil {
+	if err := db.WriteEvents(ctx, []store.Event{viewAt("1", "a", cohort)}); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.UpsertActors(ctx, 1, onDay(2026, 8, 1)); err != nil {
@@ -248,7 +248,7 @@ func TestUpsertActorsIsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	ts := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
 
-	if err := db.WriteViews(ctx, []store.View{viewAt("1", "a", ts)}); err != nil {
+	if err := db.WriteEvents(ctx, []store.Event{viewAt("1", "a", ts)}); err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i < 2; i++ {
@@ -271,7 +271,7 @@ func TestPruneActorsEvictsStale(t *testing.T) {
 	old := time.Date(2025, 1, 1, 10, 0, 0, 0, time.UTC)
 	recent := time.Date(2026, 8, 20, 10, 0, 0, 0, time.UTC)
 
-	if err := db.WriteViews(ctx, []store.View{
+	if err := db.WriteEvents(ctx, []store.Event{
 		viewAt("1", "stale", old), viewAt("2", "fresh", recent),
 	}); err != nil {
 		t.Fatal(err)
@@ -313,14 +313,14 @@ func TestUpsertActorsPromotesInstallToUser(t *testing.T) {
 	// y is install-only on day 1, then logs in as a user on day 2 (a
 	// separate UpsertActors call, and hence a separate conflict).
 	// z is install-only throughout: the control that must never be promoted.
-	if err := db.WriteViews(ctx, []store.View{
-		{ID: "1", ProjectID: 1, TS: d10, ReceivedAt: d10, Kind: "app",
+	if err := db.WriteEvents(ctx, []store.Event{
+		{Family: store.FamilyViews, ID: "1", ProjectID: 1, TS: d10, ReceivedAt: d10, Kind: "app",
 			ActorID: "x", ActorKind: store.ActorInstall, Path: "/x"},
-		{ID: "2", ProjectID: 1, TS: d10, ReceivedAt: d10, Kind: "app",
+		{Family: store.FamilyViews, ID: "2", ProjectID: 1, TS: d10, ReceivedAt: d10, Kind: "app",
 			ActorID: "x", UserID: "x", ActorKind: store.ActorUser, Path: "/x"},
-		{ID: "3", ProjectID: 1, TS: d10, ReceivedAt: d10, Kind: "app",
+		{Family: store.FamilyViews, ID: "3", ProjectID: 1, TS: d10, ReceivedAt: d10, Kind: "app",
 			ActorID: "y", ActorKind: store.ActorInstall, Path: "/x"},
-		{ID: "4", ProjectID: 1, TS: d10, ReceivedAt: d10, Kind: "app",
+		{Family: store.FamilyViews, ID: "4", ProjectID: 1, TS: d10, ReceivedAt: d10, Kind: "app",
 			ActorID: "z", ActorKind: store.ActorInstall, Path: "/x"},
 	}); err != nil {
 		t.Fatal(err)
@@ -329,8 +329,8 @@ func TestUpsertActorsPromotesInstallToUser(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := db.WriteViews(ctx, []store.View{
-		{ID: "5", ProjectID: 1, TS: d11, ReceivedAt: d11, Kind: "app",
+	if err := db.WriteEvents(ctx, []store.Event{
+		{Family: store.FamilyViews, ID: "5", ProjectID: 1, TS: d11, ReceivedAt: d11, Kind: "app",
 			ActorID: "y", UserID: "y", ActorKind: store.ActorUser, Path: "/x"},
 	}); err != nil {
 		t.Fatal(err)

@@ -16,7 +16,7 @@ import (
 func seedProductEvent(t *testing.T, db *DB, projectID int64, event, at string,
 	attrs map[string]string, os, appVersion string) {
 	t.Helper()
-	if err := db.WriteProductEvents(context.Background(), []store.ProductEvent{{
+	if err := db.WriteEvents(context.Background(), []store.Event{{Family: store.FamilyProduct,
 		ID: uuid.NewString(), ProjectID: projectID, EventName: event,
 		ActorID: "u1", TS: ts(at), Attributes: attrs,
 		OS: os, AppVersion: appVersion,
@@ -31,16 +31,16 @@ func seedProductEvent(t *testing.T, db *DB, projectID int64, event, at string,
 //	ping:       u1 (no attrs)
 func seedProductDay(t *testing.T, db *DB) {
 	t.Helper()
-	evs := []store.ProductEvent{
-		{ID: "p1", ProjectID: 1, EventName: "subscribed", ActorID: "u1", TS: ts("2026-08-10T10:00:00Z"),
+	evs := []store.Event{
+		{Family: store.FamilyProduct, ID: "p1", ProjectID: 1, EventName: "subscribed", ActorID: "u1", TS: ts("2026-08-10T10:00:00Z"),
 			Attributes: map[string]string{"plan": "pro", "source": "ads"}},
-		{ID: "p2", ProjectID: 1, EventName: "subscribed", ActorID: "u2", TS: ts("2026-08-10T11:00:00Z"),
+		{Family: store.FamilyProduct, ID: "p2", ProjectID: 1, EventName: "subscribed", ActorID: "u2", TS: ts("2026-08-10T11:00:00Z"),
 			Attributes: map[string]string{"plan": "free", "source": "ads"}},
-		{ID: "p3", ProjectID: 1, EventName: "subscribed", ActorID: "u2", TS: ts("2026-08-10T12:00:00Z"),
+		{Family: store.FamilyProduct, ID: "p3", ProjectID: 1, EventName: "subscribed", ActorID: "u2", TS: ts("2026-08-10T12:00:00Z"),
 			Attributes: map[string]string{"plan": "free"}},
-		{ID: "p4", ProjectID: 1, EventName: "ping", ActorID: "u1", TS: ts("2026-08-10T13:00:00Z")},
+		{Family: store.FamilyProduct, ID: "p4", ProjectID: 1, EventName: "ping", ActorID: "u1", TS: ts("2026-08-10T13:00:00Z")},
 	}
-	if err := db.WriteProductEvents(context.Background(), evs); err != nil {
+	if err := db.WriteEvents(context.Background(), evs); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -58,7 +58,7 @@ func TestAggregateProductRunsWithNoDeclaredAttributes(t *testing.T) {
 		t.Fatal(err)
 	}
 	var n int
-	db.db.QueryRow(`SELECT COUNT(*) FROM events`).Scan(&n)
+	db.db.QueryRow(`SELECT COUNT(*) FROM raw_product`).Scan(&n)
 	if n != 0 {
 		t.Fatalf("raw remaining %d", n)
 	}
@@ -116,7 +116,7 @@ func TestAggregateProductDeclaredAttributes(t *testing.T) {
 	if count != 2 {
 		t.Fatalf("source=ads count=%d", count)
 	}
-	db.db.QueryRow(`SELECT COUNT(*) FROM events`).Scan(&n)
+	db.db.QueryRow(`SELECT COUNT(*) FROM raw_product`).Scan(&n)
 	if n != 0 {
 		t.Fatal("raw must be deleted after rollup")
 	}
@@ -125,12 +125,12 @@ func TestAggregateProductDeclaredAttributes(t *testing.T) {
 func TestAggregateProductTopNCollapsesTail(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	var evs []store.ProductEvent
+	var evs []store.Event
 	// 5 distinct values; v0 appears 3x, v1 2x, v2..v4 once each.
 	id := 0
 	add := func(user, val string) {
 		id++
-		evs = append(evs, store.ProductEvent{ID: fmt.Sprintf("e%d", id), ProjectID: 1,
+		evs = append(evs, store.Event{Family: store.FamilyProduct, ID: fmt.Sprintf("e%d", id), ProjectID: 1,
 			EventName: "clicked", ActorID: user, TS: ts("2026-08-10T10:00:00Z"),
 			Attributes: map[string]string{"button": val}})
 	}
@@ -142,7 +142,7 @@ func TestAggregateProductTopNCollapsesTail(t *testing.T) {
 	add("u1", "v2")
 	add("u2", "v3")
 	add("u3", "v4")
-	if err := db.WriteProductEvents(ctx, evs); err != nil {
+	if err := db.WriteEvents(ctx, evs); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.AggregateProductDay(ctx, 1, day("2026-08-10"), []string{"button"}, 2); err != nil {
@@ -272,7 +272,7 @@ func TestRollupSystemDimensionsSurviveRawDeletion(t *testing.T) {
 		t.Fatal(err)
 	}
 	var n int
-	db.db.QueryRow(`SELECT COUNT(*) FROM events`).Scan(&n)
+	db.db.QueryRow(`SELECT COUNT(*) FROM raw_product`).Scan(&n)
 	if n != 0 {
 		t.Fatalf("raw remaining %d", n)
 	}
@@ -287,7 +287,7 @@ func TestRollupSystemDimensionsSurviveRawDeletion(t *testing.T) {
 func TestRollupWritesPlatformSystemDimension(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	if err := db.WriteProductEvents(ctx, []store.ProductEvent{{
+	if err := db.WriteEvents(ctx, []store.Event{{Family: store.FamilyProduct,
 		ID: uuid.NewString(), ProjectID: 1, EventName: "signup", ActorID: "u1",
 		TS: ts("2026-08-01T10:00:00Z"), Platform: "electron", OS: "macos", AppVersion: "1.2.0",
 	}}); err != nil {
@@ -334,12 +334,12 @@ func TestAggregateProductGroupsAreDistinctPerEvent(t *testing.T) {
 	ctx := context.Background()
 	at := func(m int) string { return fmt.Sprintf("2026-08-10T10:%02d:00Z", m) }
 	pro := map[string]string{"plan": "pro"}
-	if err := db.WriteProductEvents(ctx, []store.ProductEvent{
-		{ID: "g1", ProjectID: 1, EventName: "signup", ActorID: "u1", GroupID: "acme", TS: ts(at(0)), Attributes: pro},
-		{ID: "g2", ProjectID: 1, EventName: "signup", ActorID: "u2", GroupID: "acme", TS: ts(at(1)), Attributes: pro},
-		{ID: "g3", ProjectID: 1, EventName: "signup", ActorID: "u3", GroupID: "acme", TS: ts(at(2)), Attributes: pro},
-		{ID: "g4", ProjectID: 1, EventName: "signup", ActorID: "u4", GroupID: "globex", TS: ts(at(3)), Attributes: pro},
-		{ID: "g5", ProjectID: 1, EventName: "renew", ActorID: "u1", GroupID: "acme", TS: ts(at(4)), Attributes: pro},
+	if err := db.WriteEvents(ctx, []store.Event{
+		{Family: store.FamilyProduct, ID: "g1", ProjectID: 1, EventName: "signup", ActorID: "u1", GroupID: "acme", TS: ts(at(0)), Attributes: pro},
+		{Family: store.FamilyProduct, ID: "g2", ProjectID: 1, EventName: "signup", ActorID: "u2", GroupID: "acme", TS: ts(at(1)), Attributes: pro},
+		{Family: store.FamilyProduct, ID: "g3", ProjectID: 1, EventName: "signup", ActorID: "u3", GroupID: "acme", TS: ts(at(2)), Attributes: pro},
+		{Family: store.FamilyProduct, ID: "g4", ProjectID: 1, EventName: "signup", ActorID: "u4", GroupID: "globex", TS: ts(at(3)), Attributes: pro},
+		{Family: store.FamilyProduct, ID: "g5", ProjectID: 1, EventName: "renew", ActorID: "u1", GroupID: "acme", TS: ts(at(4)), Attributes: pro},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -363,11 +363,11 @@ func TestAggregateProductGroupsAreDistinctPerEvent(t *testing.T) {
 func TestAggregateProductGroupsInTail(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	var evs []store.ProductEvent
+	var evs []store.Event
 	id := 0
 	add := func(user, group, val string) {
 		id++
-		evs = append(evs, store.ProductEvent{ID: fmt.Sprintf("t%d", id), ProjectID: 1,
+		evs = append(evs, store.Event{Family: store.FamilyProduct, ID: fmt.Sprintf("t%d", id), ProjectID: 1,
 			EventName: "clicked", ActorID: user, GroupID: group, TS: ts("2026-08-10T10:00:00Z"),
 			Attributes: map[string]string{"button": val}})
 	}
@@ -378,7 +378,7 @@ func TestAggregateProductGroupsInTail(t *testing.T) {
 	add("u2", "acme", "v2")
 	add("u3", "globex", "v3")
 	add("u4", "", "v4")
-	if err := db.WriteProductEvents(ctx, evs); err != nil {
+	if err := db.WriteEvents(ctx, evs); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.AggregateProductDay(ctx, 1, day("2026-08-10"), []string{"button"}, 1); err != nil {
@@ -397,4 +397,50 @@ func TestAggregateProductGroupsInTail(t *testing.T) {
 	if count != 4 || !groups.Valid || groups.Int64 != 2 {
 		t.Fatalf("(other): count=%d unique_groups=%+v, want 4 and 2 (acme, globex; a summed tail would say 3)", count, groups)
 	}
+}
+
+// Both families share the one raw table, so each daily rollup must delete
+// only its own family's rows for the day: a views pass that also dropped the
+// day's product rows would lose them before the product pass read them, and
+// the reverse.
+func TestAggregateDayDeletesOnlyItsFamily(t *testing.T) {
+	ctx := context.Background()
+	count := func(t *testing.T, db *DB, view string) int {
+		t.Helper()
+		var n int
+		if err := db.db.QueryRow(`SELECT COUNT(*) FROM ` + view + ` WHERE project_id=1 AND day='2026-08-10'`).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	t.Run("views pass keeps product rows", func(t *testing.T) {
+		db := newTestDB(t)
+		seedViewDay(t, db)
+		seedProductDay(t, db)
+		before := count(t, db, "raw_product")
+		if err := db.AggregateViewDay(ctx, 1, day("2026-08-10")); err != nil {
+			t.Fatal(err)
+		}
+		if n := count(t, db, "raw_views"); n != 0 {
+			t.Errorf("raw_views left %d rows, want 0", n)
+		}
+		if n := count(t, db, "raw_product"); n != before || n == 0 {
+			t.Errorf("raw_product = %d rows after the views pass, want %d", n, before)
+		}
+	})
+	t.Run("product pass keeps view rows", func(t *testing.T) {
+		db := newTestDB(t)
+		seedViewDay(t, db)
+		seedProductDay(t, db)
+		before := count(t, db, "raw_views")
+		if err := db.AggregateProductDay(ctx, 1, day("2026-08-10"), nil, 50); err != nil {
+			t.Fatal(err)
+		}
+		if n := count(t, db, "raw_product"); n != 0 {
+			t.Errorf("raw_product left %d rows, want 0", n)
+		}
+		if n := count(t, db, "raw_views"); n != before || n == 0 {
+			t.Errorf("raw_views = %d rows after the product pass, want %d", n, before)
+		}
+	})
 }

@@ -13,22 +13,22 @@ func TestAggregateIdentityDayCountsUsersAndGroups(t *testing.T) {
 	tstamp := at(10, 0)
 	d := day("2026-08-10")
 
-	if err := db.WriteViews(ctx, []store.View{
-		{ID: "1", ProjectID: 1, TS: tstamp, ReceivedAt: tstamp, ActorID: "a",
+	if err := db.WriteEvents(ctx, []store.Event{
+		{Family: store.FamilyViews, ID: "1", ProjectID: 1, TS: tstamp, ReceivedAt: tstamp, ActorID: "a",
 			UserID: "u1", GroupID: "org9", Kind: "app", ActorKind: store.ActorInstall, Path: "/x"},
-		{ID: "2", ProjectID: 1, TS: tstamp, ReceivedAt: tstamp, ActorID: "b",
+		{Family: store.FamilyViews, ID: "2", ProjectID: 1, TS: tstamp, ReceivedAt: tstamp, ActorID: "b",
 			UserID: "u2", GroupID: "org9", Kind: "app", ActorKind: store.ActorInstall, Path: "/x"},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.WriteProductEvents(ctx, []store.ProductEvent{
-		{ID: "3", ProjectID: 1, EventName: "subscribed", TS: tstamp, ReceivedAt: tstamp,
+	if err := db.WriteEvents(ctx, []store.Event{
+		{Family: store.FamilyProduct, ID: "3", ProjectID: 1, EventName: "subscribed", TS: tstamp, ReceivedAt: tstamp,
 			ActorID: "a", UserID: "u1", GroupID: "org9"},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.WriteViews(ctx, []store.View{
-		{ID: "4", ProjectID: 1, TS: tstamp, ReceivedAt: tstamp, Kind: "web", ActorKind: store.ActorConnection, ActorID: "a",
+	if err := db.WriteEvents(ctx, []store.Event{
+		{Family: store.FamilyViews, ID: "4", ProjectID: 1, TS: tstamp, ReceivedAt: tstamp, Kind: "web", ActorKind: store.ActorConnection, ActorID: "a",
 			UserID: "u1", GroupID: "org9", Path: "/"},
 	}); err != nil {
 		t.Fatal(err)
@@ -69,8 +69,8 @@ func TestAggregateIdentityDayIsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	tstamp := at(10, 0)
 
-	if err := db.WriteViews(ctx, []store.View{
-		{ID: "1", ProjectID: 1, TS: tstamp, ReceivedAt: tstamp, ActorID: "a",
+	if err := db.WriteEvents(ctx, []store.Event{
+		{Family: store.FamilyViews, ID: "1", ProjectID: 1, TS: tstamp, ReceivedAt: tstamp, ActorID: "a",
 			UserID: "u1", Kind: "app", ActorKind: store.ActorInstall, Path: "/x"},
 	}); err != nil {
 		t.Fatal(err)
@@ -101,8 +101,8 @@ func TestAggregateIdentityDayUpdatesLastSeen(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.WriteViews(ctx, []store.View{
-		{ID: "1", ProjectID: 1, TS: tstamp, ReceivedAt: tstamp, ActorID: "a",
+	if err := db.WriteEvents(ctx, []store.Event{
+		{Family: store.FamilyViews, ID: "1", ProjectID: 1, TS: tstamp, ReceivedAt: tstamp, ActorID: "a",
 			UserID: "u1", Kind: "app", ActorKind: store.ActorInstall, Path: "/x"},
 	}); err != nil {
 		t.Fatal(err)
@@ -127,8 +127,8 @@ func TestIdentityDailyViewReadsAggregates(t *testing.T) {
 	ctx := context.Background()
 	tstamp := at(10, 0)
 
-	if err := db.WriteViews(ctx, []store.View{
-		{ID: "1", ProjectID: 1, TS: tstamp, ReceivedAt: tstamp, ActorID: "a",
+	if err := db.WriteEvents(ctx, []store.Event{
+		{Family: store.FamilyViews, ID: "1", ProjectID: 1, TS: tstamp, ReceivedAt: tstamp, ActorID: "a",
 			GroupID: "org9", Kind: "app", ActorKind: store.ActorInstall, Path: "/x"},
 	}); err != nil {
 		t.Fatal(err)

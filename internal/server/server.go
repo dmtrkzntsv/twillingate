@@ -22,8 +22,7 @@ import (
 const maxBody = 256 << 10
 
 type Enqueuer interface {
-	EnqueueView(v store.View)
-	EnqueueEvent(e store.ProductEvent)
+	Enqueue(e store.Event)
 }
 
 // NameStore is the slice of store.Store the handler needs for display names.

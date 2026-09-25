@@ -16,35 +16,39 @@ import (
 
 // TestViewsLiveHalvesUseTheDayIndex is the physical-plan regression for the
 // day-index perf change. It asserts two things for the live halves of
-// v_views_paths and v_views_daily:
+// v_views_paths, v_views_daily, v_views_consent, v_product_daily and
+// v_product_totals:
 //
-//  1. Nothing in the plan touches idx_views_project_ts any more -- before
-//     the day column existed, that was the only index available, and every
+//  1. Nothing in the plan scans the raw events table outright. Before the
+//     day column existed, the only index was (project_id, ts), and every
 //     access via it either ignored the day range entirely or (for the raw
 //     row scan feeding COUNT(DISTINCT actor_id)/session detection) applied
-//     only the project filter.
-//  2. At least one access is a SEARCH on idx_views_project_day carrying an
-//     actual day bound (">", "<" or "="), not just "(project=?)". That is
-//     the raw-row scan driving each live half (the one EXPLAIN labels "v"),
-//     and it is the dominant cost on a large raw table: BenchmarkViewsPathsLiveHalf
-//     and BenchmarkViewsDailyLiveHalf in bench_test.go show the wall-clock
+//     only the project filter. Since 020 the one index, idx_events_family,
+//     leads on family, so even an access with no project or day bound
+//     reads one family rather than both.
+//  2. At least one access is a SEARCH on idx_events_family carrying an
+//     actual day bound (">", "<" or "="), not just "(family=?)". That is
+//     the raw-row scan driving each live half, and it is the dominant cost
+//     on a large raw table: BenchmarkViewsPathsLiveHalf and
+//     BenchmarkViewsDailyLiveHalf in bench_test.go show the wall-clock
 //     effect (~13%/~32% faster on 150k rows -- see the day-index report).
 //
-// It deliberately does NOT assert "no SCAN views at all". One SCAN survives
-// in every dimension view and in v_views_daily: the ranking subquery that
-// computes each day's top-500 cap (aliased "r"/"k" in 012_views.sql) is
-// joined to raw rows, and separately verified (see the day-index report)
-// to remain an un-day-bounded index scan under every formulation tried --
-// including one with no join at all, using COUNT(*) OVER/DENSE_RANK()
-// directly on `views`. The common factor is that this subquery is always
-// the second arm of the view's `agg_* UNION ALL live-computation`
-// structure (012_views.sql's own design, not something introduced here):
-// SQLite's push-down-into-window-function-subquery optimization does not
-// operate across a UNION ALL arm, so a WHERE term on the compound view
-// never reaches a window function computed inside one of its arms, no
-// matter how directly that arm's columns trace back to `views`. Removing
-// that residual scan would mean giving up the aggregate/live UNION ALL
-// shape these views are built on -- out of scope for this change.
+// It deliberately does NOT assert that every access is day-bounded. One
+// access bounded by family alone survives in every dimension view and in
+// v_views_daily: the ranking subquery that computes each day's top-500 cap
+// (aliased "r"/"k" in the view definitions) is joined to raw rows, and
+// separately verified (see the day-index report) to remain an
+// un-day-bounded index scan under every formulation tried -- including one
+// with no join at all, using COUNT(*) OVER/DENSE_RANK() directly on the raw
+// rows. The common factor is that this subquery is always the second arm
+// of the view's `agg_* UNION ALL live-computation` structure (012_views.sql's
+// own design, not something introduced here): SQLite's
+// push-down-into-window-function-subquery optimization does not operate
+// across a UNION ALL arm, so a WHERE term on the compound view never
+// reaches a window function computed inside one of its arms, no matter how
+// directly that arm's columns trace back to the raw table. Removing that
+// residual scan would mean giving up the aggregate/live UNION ALL shape
+// these views are built on -- out of scope for this change.
 func TestViewsLiveHalvesUseTheDayIndex(t *testing.T) {
 	db := newTestDB(t)
 	seedViewDay(t, db) // project 1, day 2026-08-10
@@ -56,6 +60,8 @@ func TestViewsLiveHalvesUseTheDayIndex(t *testing.T) {
 			WHERE project_id = ? AND day BETWEEN ? AND ? GROUP BY kind`,
 		"consent": `SELECT consent, SUM(visitors), SUM(views) FROM v_views_consent
 			WHERE project_id = ? AND day BETWEEN ? AND ? GROUP BY consent`,
+		"v_product_daily":  `SELECT * FROM v_product_daily  WHERE project_id=? AND day BETWEEN ? AND ?`,
+		"v_product_totals": `SELECT * FROM v_product_totals WHERE project_id=? AND day BETWEEN ? AND ?`,
 	}
 
 	for name, q := range queries {
@@ -79,16 +85,16 @@ func TestViewsLiveHalvesUseTheDayIndex(t *testing.T) {
 			}
 			sawDayBoundSearch := false
 			for _, d := range details {
-				if strings.Contains(d, "idx_views_project_ts") {
-					t.Errorf("%s: plan still uses idx_views_project_ts, the day-oblivious index", name)
+				if strings.HasPrefix(d, "SCAN events") {
+					t.Errorf("%s: plan scans the raw events table without idx_events_family", name)
 				}
-				if strings.Contains(d, "SEARCH v USING INDEX idx_views_project_day") &&
+				if strings.Contains(d, "USING INDEX idx_events_family (family=? AND project_id=? AND day") &&
 					(strings.Contains(d, "day>") || strings.Contains(d, "day<") || strings.Contains(d, "day=")) {
 					sawDayBoundSearch = true
 				}
 			}
 			if !sawDayBoundSearch {
-				t.Errorf("%s: no access searches idx_views_project_day bounded by day", name)
+				t.Errorf("%s: no access searches idx_events_family bounded by family, project and day", name)
 			}
 			if t.Failed() {
 				for _, d := range details {
@@ -130,9 +136,9 @@ func TestStitchViewsInvariantAllViewsDimensions(t *testing.T) {
 	seedViewDay(t, db)
 	// Push one dimension past the cap so the other bucket is exercised on
 	// both sides of the boundary.
-	var extra []store.View
+	var extra []store.Event
 	for i := 0; i < topNDimension+5; i++ {
-		extra = append(extra, store.View{ID: fmt.Sprintf("x-%d", i), TS: at(13, 0).Add(time.Duration(i) * time.Second),
+		extra = append(extra, store.Event{Family: store.FamilyViews, ID: fmt.Sprintf("x-%d", i), TS: at(13, 0).Add(time.Duration(i) * time.Second),
 			ActorID: "v3", Path: fmt.Sprintf("/x/%d", i), Platform: "web", OS: "linux", Browser: "firefox", BrowserVersion: "127", Device: "desktop"})
 	}
 	seedViews(t, db, extra...)
@@ -201,8 +207,8 @@ func TestStitchViewsInvariantAllViewsDimensions(t *testing.T) {
 func TestStitchViewConsentAcrossBoundary(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	v := func(id, actor string, c store.Consent, h int) store.View {
-		return store.View{ID: id, TS: at(h, 0), ActorID: actor, Kind: "web", Platform: "web", Path: "/", Consent: c}
+	v := func(id, actor string, c store.Consent, h int) store.Event {
+		return store.Event{Family: store.FamilyViews, ID: id, TS: at(h, 0), ActorID: actor, Kind: "web", Platform: "web", Path: "/", Consent: c}
 	}
 	seedViews(t, db,
 		v("1", "a", store.ConsentGiven, 10), v("2", "a", store.ConsentGiven, 11), v("3", "b", store.ConsentGiven, 10),
@@ -273,8 +279,8 @@ func TestStitchViewUTMExcludesEmpty(t *testing.T) {
 func TestStitchViewLocalesExcludesUndeclared(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	v := func(id, actor, browser, app string) store.View {
-		return store.View{ID: id, TS: at(10, 0), ActorID: actor, Kind: "web", Platform: "web", Path: "/",
+	v := func(id, actor, browser, app string) store.Event {
+		return store.Event{Family: store.FamilyViews, ID: id, TS: at(10, 0), ActorID: actor, Kind: "web", Platform: "web", Path: "/",
 			BrowserLocale: browser, AppLocale: app}
 	}
 	seedViews(t, db, v("1", "a", "de-DE", "en"), v("2", "a", "de-DE", "en"), v("3", "b", "fr", ""),
@@ -376,8 +382,8 @@ func TestStitchViewsMixedAggregatedAndRawDays(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	seedViewDay(t, db) // 2026-08-10
-	if err := db.WriteViews(ctx, []store.View{
-		{ID: "9", ProjectID: 1, TS: ts("2026-08-11T10:00:00Z"), Kind: "web",
+	if err := db.WriteEvents(ctx, []store.Event{
+		{Family: store.FamilyViews, ID: "9", ProjectID: 1, TS: ts("2026-08-11T10:00:00Z"), Kind: "web",
 			ActorKind: store.ActorConnection, ActorID: "v9", Path: "/a"},
 	}); err != nil {
 		t.Fatal(err)
@@ -419,10 +425,10 @@ func TestStitchViewIdentityDailyCoversRawDays(t *testing.T) {
 	ctx := context.Background()
 	tsV := time.Date(2026, 8, 23, 10, 0, 0, 0, time.UTC)
 
-	if err := db.WriteViews(ctx, []store.View{
-		{ID: "1", ProjectID: 1, TS: tsV, ReceivedAt: tsV, Kind: "app", ActorKind: store.ActorInstall, ActorID: "a",
+	if err := db.WriteEvents(ctx, []store.Event{
+		{Family: store.FamilyViews, ID: "1", ProjectID: 1, TS: tsV, ReceivedAt: tsV, Kind: "app", ActorKind: store.ActorInstall, ActorID: "a",
 			UserID: "u1", GroupID: "org9", Path: "/x"},
-		{ID: "2", ProjectID: 1, TS: tsV, ReceivedAt: tsV, Kind: "app", ActorKind: store.ActorInstall, ActorID: "b",
+		{Family: store.FamilyViews, ID: "2", ProjectID: 1, TS: tsV, ReceivedAt: tsV, Kind: "app", ActorKind: store.ActorInstall, ActorID: "b",
 			UserID: "u2", GroupID: "org9", Path: "/x"},
 	}); err != nil {
 		t.Fatal(err)
@@ -475,10 +481,10 @@ func TestStitchViewIdentityDailyDoesNotDoubleCountRetainedRawDays(t *testing.T) 
 	ctx := context.Background()
 	ts := time.Date(2026, 8, 23, 10, 0, 0, 0, time.UTC)
 
-	if err := db.WriteViews(ctx, []store.View{
-		{ID: "1", ProjectID: 1, TS: ts, ReceivedAt: ts, Kind: "web",
+	if err := db.WriteEvents(ctx, []store.Event{
+		{Family: store.FamilyViews, ID: "1", ProjectID: 1, TS: ts, ReceivedAt: ts, Kind: "web",
 			ActorKind: store.ActorUser, ActorID: "a", UserID: "u1", GroupID: "org9", Path: "/x"},
-		{ID: "2", ProjectID: 1, TS: ts, ReceivedAt: ts, Kind: "web",
+		{Family: store.FamilyViews, ID: "2", ProjectID: 1, TS: ts, ReceivedAt: ts, Kind: "web",
 			ActorKind: store.ActorUser, ActorID: "a", UserID: "u1", GroupID: "org9", Path: "/y"},
 	}); err != nil {
 		t.Fatal(err)
@@ -511,23 +517,23 @@ func TestStitchViewIdentityDailyCapsLikeTheAggregate(t *testing.T) {
 	ts := time.Date(2026, 8, 23, 10, 0, 0, 0, time.UTC)
 
 	n := topNDimension + 5
-	var views []store.View
-	var events []store.ProductEvent
+	var views []store.Event
+	var events []store.Event
 	for i := 0; i < n; i++ {
 		u, g := fmt.Sprintf("u%03d", i), fmt.Sprintf("g%03d", i)
-		views = append(views, store.View{ID: fmt.Sprintf("v%d", i), ProjectID: 1, TS: ts, ReceivedAt: ts,
+		views = append(views, store.Event{Family: store.FamilyViews, ID: fmt.Sprintf("v%d", i), ProjectID: 1, TS: ts, ReceivedAt: ts,
 			Kind: "web", ActorKind: store.ActorUser, ActorID: u, UserID: u, GroupID: g, Path: "/"})
 		// The last ids sort after the cut by id alone; an extra product
 		// event ranks them first, so only a count-ordered cap keeps them.
 		if i >= n-5 {
-			events = append(events, store.ProductEvent{ID: fmt.Sprintf("e%d", i), ProjectID: 1, EventName: "clicked",
+			events = append(events, store.Event{Family: store.FamilyProduct, ID: fmt.Sprintf("e%d", i), ProjectID: 1, EventName: "clicked",
 				TS: ts, ReceivedAt: ts, ActorID: u, ActorKind: store.ActorUser, UserID: u, GroupID: g})
 		}
 	}
-	if err := db.WriteViews(ctx, views); err != nil {
+	if err := db.WriteEvents(ctx, views); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.WriteProductEvents(ctx, events); err != nil {
+	if err := db.WriteEvents(ctx, events); err != nil {
 		t.Fatal(err)
 	}
 
@@ -641,29 +647,34 @@ func readAttrs(t *testing.T, db *DB, projectID int64, day string) []attrRow {
 func seedAttrDay(t *testing.T, db *DB, projectID int64) {
 	t.Helper()
 	groups := []string{"", "g1", "g2"}
-	var evs []store.ProductEvent
+	var evs []store.Event
 	id := 0
 	for i := 0; i < 60; i++ {
 		for n := 0; n <= i%3; n++ {
 			id++
-			evs = append(evs, store.ProductEvent{
+			evs = append(evs, store.Event{Family: store.FamilyProduct,
 				ID: fmt.Sprintf("e%04d", id), ProjectID: projectID, EventName: "signup",
 				ActorID: fmt.Sprintf("a%d", (i+n)%4), GroupID: groups[(i/3+n)%3],
-				TS:         ts("2026-08-01T10:00:00Z"),
-				Attributes: map[string]string{"plan": fmt.Sprintf("p%02d", i)},
-				OS:         []string{"ios", "android"}[i%2],
-				AppVersion: []string{"1.0", "2.0", "3.0"}[i%3],
-				AppLocale:  []string{"en", "de"}[i%2],
+				TS:            ts("2026-08-01T10:00:00Z"),
+				Attributes:    map[string]string{"plan": fmt.Sprintf("p%02d", i)},
+				OS:            []string{"ios", "android"}[i%2],
+				AppVersion:    []string{"1.0", "2.0", "3.0"}[i%3],
+				AppLocale:     []string{"en", "de"}[i%2],
+				Kind:          "web",
+				Browser:       []string{"chrome", "safari"}[i%2],
+				Device:        "desktop",
+				BrowserLocale: "en-US",
+				Path:          fmt.Sprintf("/p/%02d", i),
 			})
 		}
 	}
 	// A second event name, so the per-event partitioning is exercised too.
-	evs = append(evs, store.ProductEvent{
+	evs = append(evs, store.Event{Family: store.FamilyProduct,
 		ID: "ping1", ProjectID: projectID, EventName: "ping", ActorID: "a9", GroupID: "g1",
 		TS: ts("2026-08-01T11:00:00Z"), Attributes: map[string]string{"plan": "pro"},
 		OS: "web", AppVersion: "1.0",
 	})
-	if err := db.WriteProductEvents(context.Background(), evs); err != nil {
+	if err := db.WriteEvents(context.Background(), evs); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -759,7 +770,7 @@ func TestProductAttrsViewSystemDimensionsWithoutDeclaredKeys(t *testing.T) {
 	var sys, custom int
 	for _, r := range before {
 		switch r.Key {
-		case "$os", "$platform", "$app_version", "$app_locale":
+		case "$os", "$platform", "$app_version", "$app_locale", "$kind", "$browser", "$device", "$browser_locale":
 			sys++
 		default:
 			custom++
@@ -778,6 +789,53 @@ func TestProductAttrsViewSystemDimensionsWithoutDeclaredKeys(t *testing.T) {
 	if after := readAttrs(t, db, id, "2026-08-01"); !reflect.DeepEqual(before, after) {
 		t.Fatalf("system dimensions changed when the day aggregated:\nbefore %v\nafter  %v",
 			before, after)
+	}
+}
+
+// A declared $ key breaks down by its column exactly like a custom key:
+// the live half and the rollup agree, the cap folds the tail into
+// (other), and a project that does not declare it gets no rows.
+func TestProductAttrsDeclaredSystemKeysAcrossBoundary(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	keys := store.DeclarableAttributeKeys()
+	id := seedDeclaredProject(t, db, keys)
+	other := seedDeclaredProject(t, db, nil)
+	var evs []store.Event
+	for i := 0; i < 70; i++ {
+		for _, pid := range []int64{id, other} {
+			evs = append(evs, store.Event{
+				ID: fmt.Sprintf("d%d-%03d", pid, i), ProjectID: pid, Family: store.FamilyProduct,
+				EventName: "signup", ActorID: fmt.Sprintf("a%d", i%7), TS: ts("2026-08-01T10:00:00Z"),
+				Host: "shop.example.com", Path: fmt.Sprintf("/p/%02d", i), ReferrerSource: "google",
+				UTMSource: "hn", UTMMedium: "social", UTMCampaign: "launch",
+				OSVersion: "17", BrowserVersion: "126", DeviceModel: "iPhone15,2",
+			})
+		}
+	}
+	if err := db.WriteEvents(ctx, evs); err != nil {
+		t.Fatal(err)
+	}
+	before := readAttrs(t, db, id, "2026-08-01")
+	seen := map[string]bool{}
+	for _, r := range before {
+		seen[r.Key] = true
+	}
+	for _, k := range keys {
+		if !seen[k] {
+			t.Errorf("declared %s produced no rows in the live half", k)
+		}
+	}
+	for _, r := range readAttrs(t, db, other, "2026-08-01") {
+		if _, declarable := store.DeclarableAttributes[r.Key]; declarable {
+			t.Errorf("undeclared %s produced a row for a project that did not declare it", r.Key)
+		}
+	}
+	if err := db.AggregateProductDay(ctx, id, civil.DateOf(ts("2026-08-01T00:00:00Z")), keys, 50); err != nil {
+		t.Fatal(err)
+	}
+	if after := readAttrs(t, db, id, "2026-08-01"); !reflect.DeepEqual(before, after) {
+		t.Fatalf("declared $ keys changed across the rollup:\nbefore %v\nafter  %v", before, after)
 	}
 }
 
@@ -899,9 +957,9 @@ func TestStitchViewPlatformsAcrossBoundaryWithCap(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	seedViewDay(t, db)
-	var extra []store.View
+	var extra []store.Event
 	for i := 0; i < topNDimension+5; i++ {
-		extra = append(extra, store.View{ID: fmt.Sprintf("p-%d", i), TS: at(13, 0).Add(time.Duration(i) * time.Second),
+		extra = append(extra, store.Event{Family: store.FamilyViews, ID: fmt.Sprintf("p-%d", i), TS: at(13, 0).Add(time.Duration(i) * time.Second),
 			ActorID: "v3", Path: "/x", Platform: fmt.Sprintf("p%d", i), OS: "linux", Browser: "firefox", Device: "desktop"})
 	}
 	seedViews(t, db, extra...)

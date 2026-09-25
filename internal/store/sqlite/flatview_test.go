@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/dmtrkzntsv/twillingate/internal/store"
@@ -80,11 +81,11 @@ func TestRebuildFlatViewDetectsRenameBehindAnUnchangedAlias(t *testing.T) {
 func TestRebuildFlatView(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	evs := []store.ProductEvent{
-		{ID: "1", ProjectID: 1, EventName: "e", ActorID: "u1", TS: ts("2026-08-10T10:00:00Z"),
+	evs := []store.Event{
+		{Family: store.FamilyProduct, ID: "1", ProjectID: 1, EventName: "e", ActorID: "u1", TS: ts("2026-08-10T10:00:00Z"),
 			Attributes: map[string]string{"plan": "pro"}},
 	}
-	if err := db.WriteProductEvents(ctx, evs); err != nil {
+	if err := db.WriteEvents(ctx, evs); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.RebuildFlatView(ctx, []string{"plan"}); err != nil {
@@ -132,6 +133,39 @@ func TestRebuildFlatView(t *testing.T) {
 	}
 }
 
+// v_events_flat holds both families; family and kind tell them apart.
+func TestFlatViewHoldsBothFamilies(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	if err := db.WriteEvents(ctx, []store.Event{
+		{Family: store.FamilyViews, ID: "v", ProjectID: 1, EventName: "$page_view", Kind: "web",
+			ActorID: "a", Path: "/", TS: ts("2026-08-10T10:00:00Z")},
+		{Family: store.FamilyProduct, ID: "e", ProjectID: 1, EventName: "signup", ActorID: "a",
+			TS: ts("2026-08-10T10:00:00Z")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.RebuildFlatView(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	rows, err := db.db.Query(`SELECT id, family || ' ' || event_name || ' ' || kind FROM v_events_flat`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, v string
+		if err := rows.Scan(&id, &v); err != nil {
+			t.Fatal(err)
+		}
+		got[id] = v
+	}
+	if got["v"] != "views $page_view web" || got["e"] != "product signup " {
+		t.Errorf("v_events_flat rows = %q", got)
+	}
+}
+
 func TestRebuildFlatViewHostileKeys(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
@@ -161,9 +195,9 @@ func TestRebuildFlatViewHostileKeys(t *testing.T) {
 	if !cols["attr_1starts_with_digit"] {
 		t.Errorf("digit-leading key not prefixed into a valid identifier: %v", cols)
 	}
-	// 6 base columns (id, project_id, event_name, actor_id, consent, ts) + attributes + 4 attrs (漢字 skipped).
-	if len(cols) != 7+4 {
-		t.Errorf("cols = %v, want 7 base + 4 attrs (漢字 skipped)", cols)
+	// The base columns + 4 attrs (漢字 skipped).
+	if len(cols) != len(flatViewBaseColumns)+4 {
+		t.Errorf("cols = %v, want %d base + 4 attrs (漢字 skipped)", cols, len(flatViewBaseColumns))
 	}
 }
 
@@ -172,8 +206,8 @@ func TestRebuildFlatViewHostileKeys(t *testing.T) {
 func TestRebuildFlatViewQuotedKeys(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	if err := db.WriteProductEvents(ctx, []store.ProductEvent{
-		{ID: "1", ProjectID: 1, EventName: "e", ActorID: "u", TS: ts("2026-08-10T10:00:00Z"),
+	if err := db.WriteEvents(ctx, []store.Event{
+		{Family: store.FamilyProduct, ID: "1", ProjectID: 1, EventName: "e", ActorID: "u", TS: ts("2026-08-10T10:00:00Z"),
 			Attributes: map[string]string{"it's": "apostrophe", `say"hi`: "doublequote"}},
 	}); err != nil {
 		t.Fatal(err)
@@ -215,8 +249,17 @@ func TestRebuildFlatViewDeterministicOrder(t *testing.T) {
 			t.Fatalf("column order not deterministic: %v vs %v", first, second)
 		}
 	}
-	want := []string{"id", "project_id", "event_name", "actor_id", "consent", "ts", "attributes",
+	// Every typed column of the raw row, then the declared attr_ columns.
+	want := []string{"id", "project_id", "family", "event_name", "actor_id",
+		"kind", "session_id", "user_id", "group_id", "host", "path", "referrer_source",
+		"utm_source", "utm_medium", "utm_campaign", "platform", "os", "os_version", "os_name",
+		"browser", "browser_version", "browser_locale", "app_version", "app_locale",
+		"device", "device_model", "display_width", "display_height", "country",
+		"consent", "ts", "attributes",
 		"attr_alpha", "attr_mu", "attr_zeta"}
+	if len(first) != len(want) {
+		t.Fatalf("columns = %v, want %v", first, want)
+	}
 	for i := range want {
 		if first[i] != want[i] {
 			t.Fatalf("columns = %v, want %v", first, want)
@@ -268,4 +311,46 @@ func viewSQL(t *testing.T, db *DB, view string) string {
 		t.Fatal(err)
 	}
 	return sql
+}
+
+// A declared $ key is a column of the raw table already; it gets no
+// attr_ column (it would only ever extract NULL from the blob).
+func TestFlatViewSkipsSystemKeys(t *testing.T) {
+	db := newTestDB(t)
+	if err := db.RebuildFlatView(context.Background(), []string{"plan", "$path"}); err != nil {
+		t.Fatal(err)
+	}
+	def, err := db.flatViewDefinition(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(def, "attr_plan") || strings.Contains(def, "attr_path") {
+		t.Fatalf("v_events_flat = %s, want attr_plan and no attr_path", def)
+	}
+	// The declared reserved key is already there as its typed column.
+	if cols := viewColumns(t, db, "v_events_flat"); !cols["path"] {
+		t.Fatalf("v_events_flat has no path column: %v", cols)
+	}
+}
+
+// Migration 020 creates the base v_events_flat with exactly the statement
+// RebuildFlatView builds for no declared keys, so the first boot's rebuild
+// finds nothing to change.
+func TestMigration020FlatViewMatchesTheBaseRebuild(t *testing.T) {
+	db := newTestDBAt(t, 20)
+	ctx := context.Background()
+	before, err := db.flatViewDefinition(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.RebuildFlatView(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	after, err := db.flatViewDefinition(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before != after {
+		t.Fatalf("migration 020 v_events_flat differs from the base rebuild:\n migration: %s\n rebuild:   %s", before, after)
+	}
 }

@@ -84,7 +84,7 @@ describe("init", () => {
 
 describe("payload shape", () => {
   it("posts the documented envelope to /ingest/events", async () => {
-    const t = tg();
+    const t = tg({ autoAttributes: false });
     t.track("signup", { plan: "pro" });
     await drain();
     expect(sent).toHaveLength(1);
@@ -125,7 +125,7 @@ describe("payload shape", () => {
     expect(sent[0].body.events[0].attributes).toEqual({ $screen: "/home", a: 1 });
   });
 
-  it("stamps display size on views and the browser locale on every batch", async () => {
+  it("stamps display size on views and product events, and the browser locale on every batch", async () => {
     Object.defineProperty(window, "screen", { value: { width: 1920, height: 1080 }, configurable: true });
     Object.defineProperty(navigator, "language", { value: "de-DE", configurable: true });
     const t = tg();
@@ -137,7 +137,8 @@ describe("payload shape", () => {
     const va = view.attributes as Record<string, unknown>;
     expect(va.$display_width).toBe(1920);
     expect(va.$display_height).toBe(1080);
-    expect((probe.attributes as Record<string, unknown>).$display_width).toBeUndefined();
+    expect((probe.attributes as Record<string, unknown>).$display_width).toBe(1920);
+    expect((probe.attributes as Record<string, unknown>).$display_height).toBe(1080);
     expect(sent[0].body.attributes.$browser_locale).toBe("de-DE");
     expect(sent[0].body.attributes).not.toHaveProperty("$locale");
     expect(sent[0].body.attributes).not.toHaveProperty("$app_locale");

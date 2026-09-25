@@ -26,22 +26,27 @@ const displaySQL = `display_width || 'x' || display_height`
 // (018_consent.sql) so the two cannot drift.
 const consentSQL = `CASE consent WHEN 1 THEN 'given' WHEN 0 THEN 'none' ELSE 'unknown' END`
 
-func dayRange(day civil.Date) (string, string) {
-	return day.String() + "T00:00:00Z", day.AddDays(1).String() + "T00:00:00Z"
-}
+// rawViews and rawProduct are the only read path into the raw events
+// table (020_one_events_table.sql): each is a view carrying one family's
+// filter, so no query can forget it. Writes and deletes go to events
+// with an explicit family.
+const (
+	rawViews   = "raw_views"
+	rawProduct = "raw_product"
+)
 
 func (d *DB) ViewDaysBefore(ctx context.Context, projectID int64, before civil.Date) ([]civil.Date, error) {
-	return d.daysBefore(ctx, "views", projectID, before)
+	return d.daysBefore(ctx, rawViews, projectID, before)
 }
 
 func (d *DB) ProductDaysBefore(ctx context.Context, projectID int64, before civil.Date) ([]civil.Date, error) {
-	return d.daysBefore(ctx, "events", projectID, before)
+	return d.daysBefore(ctx, rawProduct, projectID, before)
 }
 
-func (d *DB) daysBefore(ctx context.Context, table string, projectID int64, before civil.Date) ([]civil.Date, error) {
+func (d *DB) daysBefore(ctx context.Context, source string, projectID int64, before civil.Date) ([]civil.Date, error) {
 	rows, err := d.db.QueryContext(ctx,
-		fmt.Sprintf(`SELECT DISTINCT substr(ts,1,10) FROM %s WHERE project_id=? AND ts < ? ORDER BY 1`, table),
-		projectID, before.String()+"T00:00:00Z")
+		fmt.Sprintf(`SELECT DISTINCT day FROM %s WHERE project_id=? AND day < ? ORDER BY 1`, source),
+		projectID, before.String())
 	if err != nil {
 		return nil, err
 	}
@@ -70,7 +75,7 @@ func (d *DB) daysBefore(ctx context.Context, table string, projectID int64, befo
 const viewSessionsCTE = `
 WITH src AS (
   SELECT kind, actor_id, session_id, CAST(strftime('%s', ts) AS INTEGER) AS t
-  FROM views WHERE project_id = :p AND day = :day
+  FROM raw_views WHERE project_id = :p AND day = :day
 ),
 kinds AS (
   SELECT kind, ROW_NUMBER() OVER (ORDER BY COUNT(*) DESC, kind) AS rn FROM src GROUP BY kind
@@ -144,7 +149,7 @@ func (d *DB) AggregateViewDay(ctx context.Context, projectID int64, day civil.Da
 	return d.tx(ctx, func(tx *sql.Tx) error {
 		var n int
 		if err := tx.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM views WHERE project_id=? AND day=?`,
+			`SELECT COUNT(*) FROM raw_views WHERE project_id=? AND day=?`,
 			projectID, day.String()).Scan(&n); err != nil {
 			return err
 		}
@@ -170,7 +175,7 @@ FROM spans s GROUP BY s.kind`, named...); err != nil {
 			}
 		}
 		if _, err := tx.ExecContext(ctx,
-			`DELETE FROM views WHERE project_id=? AND day=?`, projectID, day.String()); err != nil {
+			`DELETE FROM events WHERE family='views' AND project_id=? AND day=?`, projectID, day.String()); err != nil {
 			return fmt.Errorf("prune raw views: %w", err)
 		}
 		return nil
@@ -202,7 +207,7 @@ func (dim viewDimension) aggregateSQL() string {
 	return fmt.Sprintf(`
 INSERT OR REPLACE INTO %s (project_id, day, %s, visitors, views)
 WITH src AS (
-  SELECT %s, actor_id FROM views
+  SELECT %s, actor_id FROM raw_views
   WHERE project_id = :p AND day = :day %s
 ),
 ranked AS (

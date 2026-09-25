@@ -66,6 +66,14 @@ export interface InitOptions {
   appVersion?: string;
   /** Language this client application is shown in ($app_locale), e.g. "de". Not detected. */
   appLocale?: string;
+  /**
+   * Send what the SDK derives on its own: OS, browser and device detection,
+   * the browser locale, display size, referrer and campaign on views, and
+   * the page's location on product events. Default true. false sends only
+   * what the site sets, plus what a view needs to exist, $kind, $platform
+   * for the web kind, $consent and identity.
+   */
+  autoAttributes?: boolean;
   /** Automatic pageviews incl. pushState/popstate. Default true. */
   autoPageviews?: boolean;
   /** Track elements carrying data-twillingate-event. Default true. */
@@ -162,6 +170,40 @@ const FLUSH_AT = 20; // flush early once this many events queue up
 const MAX_STORED_BATCHES = 50; // offline queue bound: oldest dropped first
 const MAX_HELD = MAX_BATCH; // calls held before init(): oldest dropped first
 
+/** Every reserved attribute key: a `$x: null` family expands over these. */
+const RESERVED_KEYS = [
+  "$install_id", "$user_id", "$user_name", "$group_id", "$group_name", "$session_id", "$consent",
+  "$kind", "$platform", "$os", "$os_version", "$os_name", "$browser", "$browser_version", "$browser_locale",
+  "$device", "$device_model", "$app_version", "$app_locale", "$display_width", "$display_height",
+  "$host", "$path", "$screen", "$utm_source", "$utm_medium", "$utm_campaign", "$referrer",
+];
+
+/** Keys batchAttributes() can set: a null for one of these has to reach the wire. */
+const BATCH_KEYS = new Set([
+  "$user_id", "$user_name", "$install_id", "$group_id", "$group_name", "$kind", "$consent", "$platform",
+  "$os", "$os_version", "$os_name", "$browser", "$browser_version", "$device",
+  "$app_version", "$app_locale", "$browser_locale",
+]);
+
+/**
+ * Expand every `$x: null` in one layer into a null for `$x` and each
+ * reserved `$x_*` key, so a family null drops the whole family. Expanding
+ * per layer, before layers merge, keeps precedence: a later layer's
+ * explicit value still beats an earlier family null. A key the same layer
+ * sets explicitly keeps its value; custom keys never expand.
+ */
+export function expandNulls(layer: Record<string, unknown> | undefined | null): Record<string, unknown> {
+  if (!layer) return {};
+  const out: Record<string, unknown> = { ...layer };
+  for (const [key, value] of Object.entries(layer)) {
+    if (value !== null || !key.startsWith("$")) continue;
+    for (const r of RESERVED_KEYS) {
+      if ((r === key || r.startsWith(key + "_")) && !(r in layer)) out[r] = null;
+    }
+  }
+  return out;
+}
+
 function uuid(): string {
   if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
   return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
@@ -206,6 +248,7 @@ export class Twillingate implements Subscriber {
   private platform: string | null = null;
   private appVersion: string | null = null;
   private appLocale: string | null = null;
+  private autoAttributes = true;
   private flushInterval = 10000;
   private k: Keys;
   private driver: StorageDriver = resolveStorage(undefined);
@@ -225,6 +268,10 @@ export class Twillingate implements Subscriber {
   // undefined = no mask configured; null = configured and unresolvable,
   // which drops pageviews (fail closed).
   private mask: ((href: string) => string) | null | undefined;
+  // The location the last view this instance actually sent carried —
+  // captured after maskUrl, onPage redaction and onEvent listeners — so a
+  // product event can echo it. null until the first view is sent.
+  private lastViewLocation: Record<string, unknown> | null = null;
   private routing: "history" | "hash" = "history";
   private firstPageviewSent = false;
   private ready = false;
@@ -284,8 +331,9 @@ export class Twillingate implements Subscriber {
     }
     this.kind = opts.kind && INSTANCE_RE.test(opts.kind) ? opts.kind : "web";
     this.platform = opts.platform || (this.kind === "web" ? "web" : null);
+    this.autoAttributes = opts.autoAttributes !== false;
     // The one async detection input; read at flush time, not awaited.
-    primePlatformVersion();
+    if (this.autoAttributes) primePlatformVersion();
     this.appVersion = opts.appVersion || null;
     this.appLocale = opts.appLocale || null;
     if (opts.flushInterval !== undefined) this.flushInterval = opts.flushInterval;
@@ -375,9 +423,10 @@ export class Twillingate implements Subscriber {
     const referrer = typeof document !== "undefined" ? document.referrer : "";
 
     // derived < attrs() defaults < the call's own attributes
+    const derived: Record<string, unknown> = { $host: host, $path: path };
+    if (this.autoAttributes) Object.assign(derived, { $referrer: referrer }, utm, displaySize());
     let attributes: Record<string, unknown> = {
-      $host: host, $path: path, $referrer: referrer, ...utm, ...displaySize(),
-      ...this.defaultAttrs, ...attrs,
+      ...derived, ...expandNulls(this.defaultAttrs), ...expandNulls(attrs),
     };
     if (typeof attributes.$host === "string") host = attributes.$host;
     if (typeof attributes.$path === "string") path = attributes.$path;
@@ -391,7 +440,7 @@ export class Twillingate implements Subscriber {
       }
       if (r === false) return;
       if (r && typeof r === "object") {
-        attributes = { ...attributes, ...r };
+        attributes = { ...attributes, ...expandNulls(r) };
         if (typeof r.$host === "string") host = r.$host;
         if (typeof r.$path === "string") path = r.$path;
       }
@@ -402,13 +451,14 @@ export class Twillingate implements Subscriber {
     }
     this.firstPageviewSent = true;
     if (this.kind === "web") {
-      this.emit("$page_view", attributes);
+      this.rememberViewLocation(this.emit("$page_view", attributes));
       return;
     }
     // A non-web kind is an app: the route is the screen, and the page
     // context (host, referrer, campaign) does not apply.
     const { $host: _h, $referrer: _r, $utm_source: _s, $utm_medium: _m, $utm_campaign: _c, $path, ...rest } = attributes;
-    this.emit("$screen_view", { $screen: $path, ...rest });
+    const screenAttrs = { $screen: $path, ...rest };
+    this.rememberViewLocation(this.emit("$screen_view", screenAttrs));
   }
 
   /** Register a pageview listener; runs for every pageview, automatic ones included. */
@@ -431,14 +481,78 @@ export class Twillingate implements Subscriber {
   screen(name: string, attrs?: Record<string, unknown>): void {
     if (!this.ready) return this.hold(() => this.screen(name, attrs));
     if (!this.live() || !name) return;
-    this.emit("$screen_view", { ...displaySize(), ...this.defaultAttrs, $screen: String(name), ...attrs });
+    const screenAttrs = {
+      ...(this.autoAttributes ? displaySize() : {}),
+      ...expandNulls(this.defaultAttrs), $screen: String(name), ...expandNulls(attrs),
+    };
+    this.rememberViewLocation(this.emit("$screen_view", screenAttrs));
   }
 
-  /** Opt-in product event. */
+  /** Opt-in product event, carrying where it happened unless autoAttributes is false. */
   track(name: string, attrs?: Record<string, unknown>): void {
     if (!this.ready) return this.hold(() => this.track(name, attrs));
     if (!this.live() || !name) return;
-    this.emit(String(name), { ...this.defaultAttrs, ...attrs });
+    this.emit(String(name), { ...this.eventContext(), ...expandNulls(this.defaultAttrs), ...expandNulls(attrs) });
+  }
+
+  // Where a product event happened: the location the last view this
+  // instance carried — its $host and $path on the web kind, else its
+  // $screen — captured after maskUrl, any onPage redaction and any onEvent
+  // rewrite, so a redaction recipe written for pageviews reaches product
+  // events too.
+  // Before any view has been sent, the current URL is derived through
+  // maskUrl the same way, but only when no onPage listener is registered
+  // (one might still redact it) and no configured mask is unresolvable;
+  // otherwise the event carries no location. Display size is independent
+  // of all this and sent either way. A mask that throws or returns junk,
+  // or is unresolvable, costs the event its location, never the event
+  // itself.
+  private eventContext(): Record<string, unknown> {
+    if (!this.autoAttributes || typeof location === "undefined") return {};
+    const out: Record<string, unknown> = { ...displaySize() };
+    if (this.lastViewLocation) return { ...out, ...this.lastViewLocation };
+    // No view sent yet: only derive from the current URL when nothing
+    // about it is still uncertain -- an unresolvable mask fails closed,
+    // same as page(), and a registered onPage listener might rewrite the
+    // very first pageview's location before it goes out.
+    if (this.mask === null || this.pageListeners.length > 0) return out;
+    let masked: unknown = location.href;
+    if (this.mask) {
+      try {
+        masked = this.mask(location.href);
+      } catch (e) {
+        console.warn("twillingate: mask threw, sending the event without its location", e);
+        return out;
+      }
+      if (typeof masked !== "string") {
+        console.warn("twillingate: mask returned a non-string, sending the event without its location");
+        return out;
+      }
+    }
+    const split = splitLocation(masked as string, this.routing);
+    if (!split) return out;
+    if (this.kind === "web") {
+      out.$host = split.host;
+      out.$path = split.path;
+    } else {
+      out.$screen = split.path;
+    }
+    return out;
+  }
+
+  // Record what a view actually sent, so the next product event can echo
+  // it: the attributes emit() queued, after onEvent listeners and the null
+  // pass. A view that was not queued (null: a listener cancelled it or
+  // threw) leaves the remembered location as it was.
+  private rememberViewLocation(sent: Record<string, unknown> | null): void {
+    if (!sent) return;
+    // The collector's precedence: a non-empty $path is the view's path and
+    // $screen only stands in when there is none, so remember what it stored.
+    const loc: Record<string, unknown> = {};
+    if (typeof sent.$host === "string") loc.$host = sent.$host;
+    if (typeof sent.$path === "string" && sent.$path !== "") loc.$path = sent.$path;
+    else if (typeof sent.$screen === "string") loc.$screen = sent.$screen;
+    this.lastViewLocation = loc;
   }
 
   /**
@@ -624,28 +738,37 @@ export class Twillingate implements Subscriber {
     return this.ready && !this.retired && !readFlag(IGNORE_FLAG) && !this.optOutSpec();
   }
 
-  // The last layer: onEvent listeners, then null drops a key.
-  private emit(name: string, merged: Record<string, unknown>): void {
+  // The last layer: onEvent listeners, then null drops a key. Returns the
+  // attributes queued, or null when a listener dropped the event.
+  private emit(name: string, merged: Record<string, unknown>): Record<string, unknown> | null {
     for (const listener of this.eventListeners) {
       let r: ReturnType<EventListener>;
       try {
         r = listener({ name, attributes: merged });
       } catch (e) {
         console.warn(`twillingate: an onEvent listener threw, dropping ${name}`, e);
-        return;
+        return null;
       }
-      if (r === false) return;
-      if (r && typeof r === "object") merged = { ...merged, ...r };
+      if (r === false) return null;
+      if (r && typeof r === "object") merged = { ...merged, ...expandNulls(r) };
     }
+    // null drops a key. A batch attribute cannot be dropped by leaving it
+    // out of the event, so its null goes on the wire, where the collector
+    // reads it as "not sent" for this event.
     const attributes: Record<string, unknown> = {};
     for (const key of Object.keys(merged)) {
-      if (merged[key] !== null && merged[key] !== undefined) attributes[key] = merged[key];
+      const v = merged[key];
+      if (v === null) {
+        if (BATCH_KEYS.has(key)) attributes[key] = null;
+        continue;
+      }
+      if (v !== undefined) attributes[key] = v;
     }
     this.log(name, attributes);
     this.queue.push({ id: uuid(), ts: new Date().toISOString(), name, attributes });
     if (this.queue.length >= FLUSH_AT) {
       this.drain(false);
-      return;
+      return attributes;
     }
     if (this.flushTimer === null) {
       this.flushTimer = setTimeout(() => {
@@ -653,6 +776,7 @@ export class Twillingate implements Subscriber {
         this.drain(false);
       }, this.flushInterval);
     }
+    return attributes;
   }
 
   private drain(unloading: boolean): void {
@@ -702,17 +826,22 @@ export class Twillingate implements Subscriber {
     // modes: an anonymous instance's retry queue is still gated on it.
     a.$consent = this.mayStore() ? 1 : 0;
     if (this.platform) a.$platform = this.platform;
-    // Detection runs per flush and is the only source of the environment.
-    const d = detectAll();
-    a.$os = d.os;
-    if (d.osVersion) a.$os_version = d.osVersion;
-    if (d.osName) a.$os_name = d.osName;
-    a.$browser = d.browser;
-    if (d.browserVersion) a.$browser_version = d.browserVersion;
-    a.$device = d.device;
+    if (this.autoAttributes) {
+      // Detection runs per flush and is the only source of the environment.
+      const d = detectAll();
+      a.$os = d.os;
+      if (d.osVersion) a.$os_version = d.osVersion;
+      if (d.osName) a.$os_name = d.osName;
+      a.$browser = d.browser;
+      if (d.browserVersion) a.$browser_version = d.browserVersion;
+      a.$device = d.device;
+      if (typeof navigator !== "undefined" && navigator.language) a.$browser_locale = navigator.language;
+    }
     if (this.appVersion) a.$app_version = this.appVersion;
     if (this.appLocale) a.$app_locale = this.appLocale;
-    if (typeof navigator !== "undefined" && navigator.language) a.$browser_locale = navigator.language;
+    // A key the attrs() defaults null out, family included, is not sent.
+    const nulled = expandNulls(this.defaultAttrs);
+    for (const key of Object.keys(a)) if (nulled[key] === null) delete a[key];
     return a;
   }
 

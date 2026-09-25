@@ -16,13 +16,13 @@ import (
 
 type fakeSink struct {
 	mu     sync.Mutex
-	views  []store.View
-	events []store.ProductEvent
+	views  []store.Event
+	events []store.Event
 	fail   int // fail this many calls before succeeding
 	calls  int
 }
 
-func (f *fakeSink) WriteViews(_ context.Context, v []store.View) error {
+func (f *fakeSink) WriteEvents(_ context.Context, evs []store.Event) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls++
@@ -30,14 +30,13 @@ func (f *fakeSink) WriteViews(_ context.Context, v []store.View) error {
 		f.fail--
 		return errors.New("boom")
 	}
-	f.views = append(f.views, v...)
-	return nil
-}
-
-func (f *fakeSink) WriteProductEvents(_ context.Context, e []store.ProductEvent) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.events = append(f.events, e...)
+	for _, e := range evs {
+		if e.Family == store.FamilyViews {
+			f.views = append(f.views, e)
+		} else {
+			f.events = append(f.events, e)
+		}
+	}
 	return nil
 }
 
@@ -58,7 +57,7 @@ func TestFlushBySize(t *testing.T) {
 	done := make(chan struct{})
 	go func() { b.Run(ctx); close(done) }()
 	for i := 0; i < 3; i++ {
-		b.EnqueueView(store.View{ID: "h"})
+		b.Enqueue(store.Event{Family: store.FamilyViews, ID: "h"})
 	}
 	waitFor(t, func() bool { sink.mu.Lock(); defer sink.mu.Unlock(); return len(sink.views) == 3 })
 	cancel()
@@ -71,7 +70,7 @@ func TestFlushByInterval(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { b.Run(ctx); close(done) }()
-	b.EnqueueEvent(store.ProductEvent{ID: "e"})
+	b.Enqueue(store.Event{Family: store.FamilyProduct, ID: "e"})
 	waitFor(t, func() bool { sink.mu.Lock(); defer sink.mu.Unlock(); return len(sink.events) == 1 })
 	cancel()
 	<-done
@@ -83,7 +82,7 @@ func TestShutdownFlushesRemaining(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { b.Run(ctx); close(done) }()
-	b.EnqueueView(store.View{ID: "h"})
+	b.Enqueue(store.Event{Family: store.FamilyViews, ID: "h"})
 	time.Sleep(10 * time.Millisecond) // let worker pick it up
 	cancel()
 	<-done
@@ -96,9 +95,9 @@ func TestOverflowDropsOldest(t *testing.T) {
 	sink := &fakeSink{}
 	b := New(cfg(1000, time.Hour, 2), sink, slog.Default())
 	// No worker running: fill beyond capacity.
-	b.EnqueueView(store.View{ID: "1"})
-	b.EnqueueView(store.View{ID: "2"})
-	b.EnqueueView(store.View{ID: "3"}) // drops "1"
+	b.Enqueue(store.Event{Family: store.FamilyViews, ID: "1"})
+	b.Enqueue(store.Event{Family: store.FamilyViews, ID: "2"})
+	b.Enqueue(store.Event{Family: store.FamilyViews, ID: "3"}) // drops "1"
 	if b.Dropped() != 1 {
 		t.Fatalf("Dropped = %d, want 1", b.Dropped())
 	}
@@ -113,7 +112,7 @@ func TestFlushRetriesThenDrops(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { b.Run(ctx); close(done) }()
-	b.EnqueueView(store.View{ID: "h"})
+	b.Enqueue(store.Event{Family: store.FamilyViews, ID: "h"})
 	waitFor(t, func() bool { sink.mu.Lock(); defer sink.mu.Unlock(); return len(sink.views) == 1 })
 	cancel()
 	<-done
@@ -133,7 +132,7 @@ func TestFlushExhaustedRetriesDropsAndWorkerContinues(t *testing.T) {
 	done := make(chan struct{})
 	go func() { b.Run(ctx); close(done) }()
 
-	b.EnqueueView(store.View{ID: "dropped"})
+	b.Enqueue(store.Event{Family: store.FamilyViews, ID: "dropped"})
 	// Wait for all 4 attempts (1 + 3 retries) to have been made, i.e. the
 	// batch has been given up on.
 	waitFor(t, func() bool { sink.mu.Lock(); defer sink.mu.Unlock(); return sink.calls == 4 })
@@ -147,7 +146,7 @@ func TestFlushExhaustedRetriesDropsAndWorkerContinues(t *testing.T) {
 	sink.mu.Unlock()
 
 	// Worker must still be running and able to flush a subsequent view.
-	b.EnqueueView(store.View{ID: "ok"})
+	b.Enqueue(store.Event{Family: store.FamilyViews, ID: "ok"})
 	waitFor(t, func() bool { sink.mu.Lock(); defer sink.mu.Unlock(); return len(sink.views) == 1 })
 	sink.mu.Lock()
 	if sink.views[0].ID != "ok" {
@@ -176,7 +175,7 @@ func TestShutdownDuringRetriesDoesNotStall(t *testing.T) {
 	done := make(chan struct{})
 	go func() { b.Run(ctx); close(done) }()
 
-	b.EnqueueView(store.View{ID: "h"})
+	b.Enqueue(store.Event{Family: store.FamilyViews, ID: "h"})
 	// Let the worker pick up the item and enter its first (long) backoff
 	// sleep before we cancel.
 	waitFor(t, func() bool { sink.mu.Lock(); defer sink.mu.Unlock(); return sink.calls >= 1 })
@@ -213,8 +212,8 @@ func TestFlushesViewsBySize(t *testing.T) {
 	done := make(chan struct{})
 	go func() { b.Run(ctx); close(done) }()
 
-	b.EnqueueView(store.View{ID: "1", ProjectID: 1, Path: "/a"})
-	b.EnqueueView(store.View{ID: "2", ProjectID: 1, Path: "/b"})
+	b.Enqueue(store.Event{Family: store.FamilyViews, ID: "1", ProjectID: 1, Path: "/a"})
+	b.Enqueue(store.Event{Family: store.FamilyViews, ID: "2", ProjectID: 1, Path: "/b"})
 
 	deadline := time.Now().Add(2 * time.Second)
 	for sink.viewCount() < 2 && time.Now().Before(deadline) {
@@ -235,7 +234,7 @@ func TestShutdownDrainsViews(t *testing.T) {
 	done := make(chan struct{})
 	go func() { b.Run(ctx); close(done) }()
 
-	b.EnqueueView(store.View{ID: "1", ProjectID: 1, Path: "/a"})
+	b.Enqueue(store.Event{Family: store.FamilyViews, ID: "1", ProjectID: 1, Path: "/a"})
 	time.Sleep(20 * time.Millisecond)
 	cancel()
 	<-done
@@ -255,8 +254,8 @@ func TestFlushSizeCountsAllKinds(t *testing.T) {
 	done := make(chan struct{})
 	go func() { b.Run(ctx); close(done) }()
 
-	b.EnqueueView(store.View{ID: "v", ProjectID: 1, Path: "/a"})
-	b.EnqueueEvent(store.ProductEvent{ID: "e", ProjectID: 1, EventName: "n"})
+	b.Enqueue(store.Event{Family: store.FamilyViews, ID: "v", ProjectID: 1, Path: "/a"})
+	b.Enqueue(store.Event{Family: store.FamilyProduct, ID: "e", ProjectID: 1, EventName: "n"})
 
 	deadline := time.Now().Add(2 * time.Second)
 	for sink.viewCount() < 1 && time.Now().Before(deadline) {

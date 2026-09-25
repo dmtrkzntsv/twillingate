@@ -107,6 +107,15 @@ func (sp *ProjectSpec) validate() error {
 			return fmt.Errorf("%w: allowed_origins must not contain an empty origin", ErrInvalid)
 		}
 	}
+	for _, a := range sp.Attributes {
+		if !strings.HasPrefix(a, "$") {
+			continue
+		}
+		if _, ok := store.DeclarableAttributes[a]; !ok {
+			return fmt.Errorf("%w: attribute %s cannot be declared; the reserved keys a project may declare are %s",
+				ErrInvalid, a, strings.Join(store.DeclarableAttributeKeys(), ", "))
+		}
+	}
 	return nil
 }
 

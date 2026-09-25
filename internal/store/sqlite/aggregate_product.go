@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/dmtrkzntsv/twillingate/internal/civil"
+	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
 // attrPath builds a JSON path literal for a config-supplied attribute key.
@@ -29,44 +30,43 @@ func (d *DB) AggregateProductDay(ctx context.Context, projectID int64, day civil
 	if topN <= 0 {
 		topN = defaultAttrsTopN
 	}
-	from, to := dayRange(day)
 	return d.tx(ctx, func(tx *sql.Tx) error {
 		var n int
 		if err := tx.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM events WHERE project_id=? AND ts>=? AND ts<?`,
-			projectID, from, to).Scan(&n); err != nil {
+			`SELECT COUNT(*) FROM raw_product WHERE project_id=? AND day=?`,
+			projectID, day.String()).Scan(&n); err != nil {
 			return err
 		}
 		if n == 0 {
 			return nil
 		}
-		if err := d.rollupProduct(ctx, tx, projectID, day, from, to, attrs, topN); err != nil {
+		if err := d.rollupProduct(ctx, tx, projectID, day, attrs, topN); err != nil {
 			return err
 		}
 		_, err := tx.ExecContext(ctx,
-			`DELETE FROM events WHERE project_id=? AND ts>=? AND ts<?`, projectID, from, to)
+			`DELETE FROM events WHERE family='product' AND project_id=? AND day=?`, projectID, day.String())
 		return err
 	})
 }
 
-func (d *DB) rollupProduct(ctx context.Context, tx *sql.Tx, projectID int64, day civil.Date, from, to string, attrs []string, topN int) error {
+func (d *DB) rollupProduct(ctx context.Context, tx *sql.Tx, projectID int64, day civil.Date, attrs []string, topN int) error {
 	if _, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO agg_product_daily
 		(project_id, day, event_name, count, unique_users)
 		SELECT project_id, ?, event_name, COUNT(*), COUNT(DISTINCT actor_id)
-		FROM events WHERE project_id=? AND ts>=? AND ts<?
-		GROUP BY event_name`, day.String(), projectID, from, to); err != nil {
+		FROM raw_product WHERE project_id=? AND day=?
+		GROUP BY event_name`, day.String(), projectID, day.String()); err != nil {
 		return fmt.Errorf("agg_product_daily: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO agg_product_totals
 		(project_id, day, total_events, active_users)
 		SELECT project_id, ?, COUNT(*), COUNT(DISTINCT actor_id)
-		FROM events WHERE project_id=? AND ts>=? AND ts<?
-		GROUP BY project_id`, day.String(), projectID, from, to); err != nil {
+		FROM raw_product WHERE project_id=? AND day=?
+		GROUP BY project_id`, day.String(), projectID, day.String()); err != nil {
 		return fmt.Errorf("agg_product_totals: %w", err)
 	}
 	// Attribute breakdowns: resolve per event name present that day.
-	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT event_name FROM events
-		WHERE project_id=? AND ts>=? AND ts<?`, projectID, from, to)
+	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT event_name FROM raw_product
+		WHERE project_id=? AND day=?`, projectID, day.String())
 	if err != nil {
 		return err
 	}
@@ -85,55 +85,50 @@ func (d *DB) rollupProduct(ctx context.Context, tx *sql.Tx, projectID int64, day
 	}
 	for _, event := range events {
 		for _, key := range attrs {
-			path := attrPath(key)
-			expr := `json_extract(attributes, :path)`
-			present := expr + ` IS NOT NULL`
+			expr, present := `json_extract(attributes, :path)`, `json_extract(attributes, :path) IS NOT NULL`
+			if strings.HasPrefix(key, "$") {
+				// A declared reserved key reads its column; the blob never
+				// holds $ keys. One the store does not map (a declaration
+				// manage now refuses) has nothing to break down.
+				col, ok := store.DeclarableAttributes[key]
+				if !ok {
+					continue
+				}
+				expr, present = col, col+` <> ''`
+			}
 			named := []any{
 				sql.Named("p", projectID), sql.Named("day", day.String()),
-				sql.Named("from", from), sql.Named("to", to),
 				sql.Named("event", event), sql.Named("key", key),
-				sql.Named("path", path), sql.Named("n", topN),
+				sql.Named("path", attrPath(key)), sql.Named("n", topN),
 			}
 			if err := d.rollupAttrValue(ctx, tx, expr, present, named); err != nil {
 				return fmt.Errorf("attr %s/%s: %w", event, key, err)
 			}
 		}
 	}
-	// System dimensions: platform, os and app_version are typed columns
-	// written on every event, not declared custom keys, so they roll up
-	// unconditionally under $-prefixed attr_keys. $ is a safe namespace:
-	// resolveAttributes routes every $-prefixed input to a typed field
-	// and drops unrecognised ones, so a custom key can never collide
-	// with a system one. The columns are NOT NULL DEFAULT '', so empty
-	// string (not NULL) means absent.
-	for _, dim := range systemDims {
+	// System dimensions: platform, os, app_version, app_locale, kind,
+	// browser, device and browser_locale (store.SystemAttributes) are
+	// typed columns written on every event, not declared custom keys, so
+	// they roll up unconditionally under $-prefixed attr_keys. $ is a safe
+	// namespace: resolveAttributes routes every $-prefixed input to a
+	// typed field and drops unrecognised ones, so a custom key can never
+	// collide with a system one. The columns are NOT NULL DEFAULT '', so
+	// empty string (not NULL) means absent.
+	for _, dim := range store.SystemAttributes {
 		for _, event := range events {
 			named := []any{
 				sql.Named("p", projectID), sql.Named("day", day.String()),
-				sql.Named("from", from), sql.Named("to", to),
-				sql.Named("event", event), sql.Named("key", dim.key),
+				sql.Named("event", event), sql.Named("key", dim.Key),
 				sql.Named("n", topN),
 			}
-			expr := dim.column
-			present := dim.column + ` <> ''`
+			expr := dim.Column
+			present := dim.Column + ` <> ''`
 			if err := d.rollupAttrValue(ctx, tx, expr, present, named); err != nil {
-				return fmt.Errorf("system dim %s/%s: %w", event, dim.key, err)
+				return fmt.Errorf("system dim %s/%s: %w", event, dim.Key, err)
 			}
 		}
 	}
 	return nil
-}
-
-// systemDims maps an events column to the attr_key it rolls up
-// under. platform, os, app_version and app_locale are typed columns written
-// on every event, not declared custom keys. The $ prefix is safe as a namespace
-// because resolveAttributes routes every $-prefixed input to a typed
-// field, so a custom key can never collide with one of these.
-var systemDims = []struct{ column, key string }{
-	{"platform", "$platform"},
-	{"os", "$os"},
-	{"app_version", "$app_version"},
-	{"app_locale", "$app_locale"},
 }
 
 // rollupAttrValue writes the ranked top-N breakdown plus the "(other)"
@@ -143,9 +138,8 @@ var systemDims = []struct{ column, key string }{
 // the filter identifying rows where that value counts as set (declared
 // attributes use IS NOT NULL on the JSON extract, system columns use a
 // not-empty-string check since they're NOT NULL DEFAULT empty-string).
-// named must supply :p, :day, :from, :to, :event, :key, :n, and whatever
-// expr/present reference
-// (:path for the JSON case).
+// named must supply :p, :day, :event, :key, :n, and whatever expr/present
+// reference (:path for the JSON case).
 //
 // Both statements also write unique_groups, the distinct non-empty
 // group_id among the same rows, so a day rolled up after 016 carries an
@@ -157,8 +151,8 @@ func (d *DB) rollupAttrValue(ctx context.Context, tx *sql.Tx, expr, present stri
 		WITH counted AS (
 		  SELECT `+expr+` AS v, COUNT(*) AS c, COUNT(DISTINCT actor_id) AS u,
 		         COUNT(DISTINCT NULLIF(group_id,'')) AS g
-		  FROM events
-		  WHERE project_id=:p AND ts>=:from AND ts<:to AND event_name=:event
+		  FROM raw_product
+		  WHERE project_id=:p AND day=:day AND event_name=:event
 		    AND `+present+`
 		  GROUP BY v
 		),
@@ -173,8 +167,8 @@ func (d *DB) rollupAttrValue(ctx context.Context, tx *sql.Tx, expr, present stri
 	_, err := tx.ExecContext(ctx, `
 		WITH counted AS (
 		  SELECT `+expr+` AS v, COUNT(*) AS c
-		  FROM events
-		  WHERE project_id=:p AND ts>=:from AND ts<:to AND event_name=:event
+		  FROM raw_product
+		  WHERE project_id=:p AND day=:day AND event_name=:event
 		    AND `+present+`
 		  GROUP BY v
 		),
@@ -184,8 +178,8 @@ func (d *DB) rollupAttrValue(ctx context.Context, tx *sql.Tx, expr, present stri
 		  (project_id, day, event_name, attr_key, attr_value, count, unique_users, unique_groups)
 		SELECT :p, :day, :event, :key, '(other)', COUNT(*), COUNT(DISTINCT actor_id),
 		       COUNT(DISTINCT NULLIF(group_id,''))
-		FROM events
-		WHERE project_id=:p AND ts>=:from AND ts<:to AND event_name=:event
+		FROM raw_product
+		WHERE project_id=:p AND day=:day AND event_name=:event
 		  AND `+present+`
 		  AND `+expr+` NOT IN (SELECT v FROM keep)
 		HAVING COUNT(*) > 0`, named...)

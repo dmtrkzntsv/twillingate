@@ -126,7 +126,7 @@ boot, each naming its replacement: `API_*`, `INGEST_ADDR`,
 
 - Raise `BUFFER_FLUSH_INTERVAL` (say `30s`) and litestream's `sync-interval`: fewer, larger writes.
 - Set `GOMEMLIMIT` (unit and compose files ship `128MiB`) and keep `GEO_DSN` off `maxmind://`, which holds a database in memory.
-- Lower `RETENTION_VIEWS_RAW_DAYS` (say `7`): raw views are the largest table, and the live halves of the `v_views_*` views scan it on every query.
+- Lower `RETENTION_VIEWS_RAW_DAYS` (say `7`): raw views are most of the one raw `events` table, the largest in the file, and the live halves of the `v_views_*` views scan them on every query.
 
 ## Reporting with Evidence
 

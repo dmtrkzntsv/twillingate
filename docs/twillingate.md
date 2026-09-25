@@ -96,19 +96,24 @@ twillingate key disable -project-id 1 -label ios-2025
 twillingate project update -id 1 -attr plan -attr tier
 ```
 
-A declared key gets an `attr_*` column in `v_events_flat` and a value breakdown
-(counts and unique users/groups per value, per event, per day) in
-`agg_product_attrs` / `v_product_attrs`. Undeclared keys are still stored and
-reachable via `json_extract(attributes, '$.junk')`; declaring one later does not
-backfill. `PRODUCT_ATTRIBUTES_TOP_N` (default 50, set
+A declared key gets a value breakdown (counts and unique users/groups per
+value, per event, per day) in `agg_product_attrs` / `v_product_attrs`. A
+declared custom key also gets an `attr_*` column in `v_events_flat`; a declared
+reserved key is already a typed column there. Undeclared keys are still
+stored and reachable via `json_extract(attributes, '$.junk')`; declaring one
+later does not backfill. `PRODUCT_ATTRIBUTES_TOP_N` (default 50, set
 [server-side](deployment.md#configure-the-collector)) keeps the top N values per
 key and collapses the tail into one `(other)` row whose unique counts are
 recomputed from raw, so **a client sending the literal `(other)` loses its own
-count**. Never declare an unbounded key such as a URL or session id. `$platform`,
-`$os`, `$app_version` and `$app_locale` roll up automatically and must not be declared:
-`$`-prefixed keys never reach the custom blob, so `"attributes": ["$os"]`
-extracts nothing. Rollups run whether or not a project declares attributes;
-declaring only adds the per-value breakdown and the `attr_*` columns.
+count**. Never declare an unbounded custom key such as a session id. `$platform`,
+`$os`, `$app_version`, `$app_locale`, `$kind`, `$browser`, `$device` and
+`$browser_locale` roll up automatically and need no declaration. Nine more
+reserved keys can be declared like a custom key to get the same per-value
+breakdown: `$host`, `$path`, `$referrer`, `$utm_source`, `$utm_medium`,
+`$utm_campaign`, `$os_version`, `$browser_version` and `$device_model`. The
+top-N cap keeps a declared `$path` bounded. Declaring any other `$` key is
+refused. Rollups run whether or not a project declares attributes; declaring
+only adds the per-value breakdown and the `attr_*` columns.
 
 ### Ingest keys
 
@@ -152,7 +157,7 @@ whichever hostname loaded it.
 
 Every `data-*` has an `init()` equivalent except `data-instance`, which maps to
 `create()`'s name; the reverse does not hold — `flushInterval`, `platform`,
-`appVersion`, `appLocale`, `storage`, `taggedEvents`, `optOut` and `debug` are code-only
+`appVersion`, `appLocale`, `autoAttributes`, `storage`, `taggedEvents`, `optOut` and `debug` are code-only
 options with no `data-*` form, and identity is set from code (`identify`,
 `group`, `installId`), never in markup. Views are automatic, including on
 `history.pushState` and `popstate`; elements carrying `data-twillingate-event`
@@ -183,6 +188,7 @@ twillingate.init({
   platform: "electron",        // → $platform; defaults to "web" only for kind "web"
   appVersion: "2.4.1",         // → $app_version
   appLocale: "de",             // → $app_locale; never detected
+  autoAttributes: true,        // default; false sends only what you set (see Precedence)
   flushInterval: 10000,        // milliseconds
   optOut: () => location.hostname === "localhost",   // OR-ed with twillingate_ignore
   debug: false,                // OR-ed with the twillingate_debug flag
@@ -228,11 +234,26 @@ et.init({ key: "ak_econumo…", identity: "identified", autoPageviews: false });
 | `detectOS()`, `detectBrowser()`, `detectDevice()` | Read the environment this client would report. See [Detection](#detection). |
 
 **Precedence**: SDK-derived values (`$host`, `$path`, `$referrer`, campaign
-parameters, display size), then `attrs()` defaults, then the call's attributes,
-then listener returns in registration order. Later layers win and a `null` drops
-the key — `twillingate.attrs({ $host: "selfhosted_ab12", $referrer: null })`
-sends that host and no referrer. Batch attributes (`$os`, `$browser`, …) come
-from detection and are not changeable.
+parameters and display size on views; the page's `$host` and `$path`, or
+`$screen` on a non-web kind, and display size on product events), then
+`attrs()` defaults, then the call's attributes, then listener returns in
+registration order. Later layers win, and a `null` drops the key wherever it
+came from: `twillingate.attrs({ $host: "selfhosted_ab12", $referrer: null })`
+sends that host and no referrer. A batch attribute (`$os`, `$browser`, …) set
+to `null` is sent as `null` on the event, which the collector reads as not
+sent. A `null` on a `$` prefix drops the family: `$utm: null` drops
+`$utm_source`, `$utm_medium` and `$utm_campaign`, and `$browser: null` drops
+`$browser`, `$browser_version` and `$browser_locale`. A later layer's
+explicit value still beats an earlier family `null`. `autoAttributes: false`
+sends none of the derived values except what a view needs to exist (`$host`
+and `$path`, or `$screen`), plus `$kind`, `$platform` for the web kind,
+`$consent` and identity. A product event carries the location of the last
+view this instance sent — after `maskUrl`, any `onPage` redaction and any
+`onEvent` rewrite; a view an `onEvent` listener drops is not remembered — so
+a recipe that redacts a pageview's path (`/account/12` → `/account/[id]`)
+redacts product events the same way; before the first view,
+it carries a `maskUrl`-derived location only when no `onPage` listener is
+registered.
 
 ### Two projects on one page
 
@@ -463,6 +484,10 @@ decides which family it lands in:
 | `$screen_view` | views | `app` | same |
 | anything else | product | — | `product_events`, `product_attributes` |
 
+Both families are stored in one raw table, `events`, whose `family` column is
+`views` or `product`; the aggregates, views and tools of each family read only
+its own rows.
+
 The `$` prefix is reserved for the system. An unrecognized `$` **name** is
 stored as an ordinary custom event with a warning; an unrecognized `$`
 **attribute key** is dropped, with a warning in the response body.
@@ -533,11 +558,8 @@ language that client shows the product in, as the product names it (`de`,
 (`navigator.language`, which the JS SDK sends on every batch). Both are free
 text stored as sent; the SDK never guesses `$app_locale`, so it is sent only
 when `appLocale` is set. `$locale` is not a key any more: it is dropped with
-an unknown-key warning. Product events keep `$platform`, `$os`,
-`$app_version` and `$app_locale` as columns and resolve and drop the rest
-(`$os_version`, `$os_name`, `$browser`, `$browser_version`, `$device`,
-`$browser_locale`), so an SDK that sends every environment key on every batch
-is correct and cheap.
+an unknown-key warning. Views and product events store every one of these
+keys, validated the same way; the JS SDK sends them on every batch.
 
 ### Product (everything else)
 
@@ -632,6 +654,10 @@ Batch-level `attributes` are defaults and per-event `attributes` override them
 **key by key**. That is the only merge rule, and it applies to system (`$`) and
 ordinary keys alike.
 
+A `null` means "not sent": a `null` batch value is ignored, and a `null`
+per-event value removes the batch value for that event, so a reserved key
+reads as undeclared and a custom key is absent.
+
 ### Reserved event names
 
 | `name` | Stored as | Default `$kind` | Requires |
@@ -647,11 +673,16 @@ batch to drop.
 
 ### Reserved attribute keys
 
-| Group | Keys |
-| --- | --- |
-| Identity | `$install_id` `$user_id` `$user_name` `$group_id` `$group_name` `$session_id` `$consent` |
-| Environment | `$kind` `$platform` `$os` `$os_version` `$os_name` `$browser` `$browser_version` `$device` `$device_model` `$app_version` `$app_locale` `$browser_locale` `$display_width` `$display_height` |
-| Location | `$host` `$path` `$screen` `$utm_source` `$utm_medium` `$utm_campaign` `$referrer` |
+| Group | Keys | Sent automatically by the JS SDK |
+| --- | --- | --- |
+| Identity | `$install_id` `$user_id` `$user_name` `$group_id` `$group_name` `$session_id` `$consent` | `$install_id` (identified instance with consent), `$consent` |
+| Environment | `$kind` `$platform` `$os` `$os_version` `$os_name` `$browser` `$browser_version` `$device` `$device_model` `$app_version` `$app_locale` `$browser_locale` `$display_width` `$display_height` | `$kind`, `$platform` (`web` for the web kind), `$os` `$os_version` `$os_name` `$browser` `$browser_version` `$browser_locale` `$device` `$display_width` `$display_height` |
+| Location | `$host` `$path` `$screen` `$utm_source` `$utm_medium` `$utm_campaign` `$referrer` | `$host` `$path` (web kind) or `$screen` (app kind) on views and, from the last view, on product events; `$referrer` `$utm_source` `$utm_medium` `$utm_campaign` on web views only |
+
+Every key is stored on views and product events alike. The SDK sends the
+rest only when the page sets them (`identify()`, `group()`, `attrs()`, the
+`platform`, `appVersion` and `appLocale` options). `autoAttributes: false`
+turns the derived environment and location off, except what a view needs.
 
 `$consent` is whether the client had consent to keep anything on the device
 when it sent the event: `1` (or `true`) given, `0` (or `false`) not given, as a
@@ -746,7 +777,7 @@ caveats below. All the reading tools take `project_id`, `from` and `to` as
 | `views_overview` | `kind` (optional) | Visitors, views, sessions, bounces, average session length per day, summed across kinds unless `kind` filters one |
 | `views_breakdown` | `dimension`, `limit` (default 20) | Top rows for one of `kinds`, `paths`, `hosts`, `referrers`, `utm`, `countries`, `platforms`, `os`, `browsers`, `app_versions`, `devices`, `displays`, `consent`, `locales`. Two-key dimensions return both columns. `consent` is `given`, `none` or `unknown`. `locales` pairs `browser_locale` with `app_locale`, either empty when not sent. |
 | `product_events` | `event` (optional filter) | Count and unique users per event name, plus daily totals |
-| `product_attributes` | `event`, `key` | Count, unique users and unique groups per value of a declared attribute. `$platform`, `$os`, `$app_version` and `$app_locale` are always available; a custom key only appears once the project declares it. `unique_groups` is empty for days rolled up before it was measured and `0` when it was measured and no group was involved |
+| `product_attributes` | `event`, `key` | Count, unique users and unique groups per value of a declared attribute. `$platform`, `$os`, `$app_version`, `$app_locale`, `$kind`, `$browser`, `$device` and `$browser_locale` are always available; a custom key, or one of `$host`, `$path`, `$referrer`, `$utm_source`, `$utm_medium`, `$utm_campaign`, `$os_version`, `$browser_version` and `$device_model`, only appears once the project declares it. `unique_groups` is empty for days rolled up before it was measured and `0` when it was measured and no group was involved |
 | `retention` | `actor` (`user` or `install`) | Cohort curves, plus `aggregated_through` — cohorts after that day are **absent, not zero**. Empty for a project whose clients send neither `$user_id` nor `$install_id` |
 | `identities` | `kind` (`user` or `group`), `limit` | Per-user or per-group activity with display names. **Surfaces personal data on projects whose clients send ids** |
 | `query` | `sql` | A single read-only `SELECT`/`WITH` against the views. Row-capped and time-limited |
@@ -841,13 +872,16 @@ environment](#declaring-the-environment)) where `other` is a real value outside
 the list and `(other)` is the cap. Product events have `v_product_daily`,
 `v_product_totals` and `v_product_attrs` (whose `unique_groups` is NULL, not
 zero, for days rolled up before it was measured — `MAX()` skips it, `SUM()`
-would too, a `COALESCE` to 0 would lie), plus `v_events_flat`, the `events`
-table (with its `consent` column, 1, 0 or NULL) and one column per declared
-attribute. `v_identity_daily` and
-`identities` join user and group activity to display names; `v_identity_daily`
-keeps the busiest 500 users and 500 groups per day and drops the rest with no
-`(other)` row, so do not sum it for totals. `v_retention` is keyed by
-`actor_kind`.
+would too, a `COALESCE` to 0 would lie), plus `v_events_flat`, which holds
+every raw row of both families (views and product events) with every typed
+column of the raw row: its `family` column — filter `family = 'product'` for
+product events alone — `kind`, the identity, location and environment columns
+(`path`, `os`, `country`, …), its `consent` column (1, 0 or NULL), the raw
+`attributes` JSON, and one `attr_*` column per declared custom attribute.
+`v_identity_daily` and `identities` join user and group activity to display
+names; `v_identity_daily` keeps the busiest 500 users and 500 groups per day
+and drops the rest with no `(other)` row, so do not sum it for totals.
+`v_retention` is keyed by `actor_kind`.
 
 Cost note: the views' live halves sessionize raw rows with window functions, and
 a `WHERE` on `day` may not prune that work. Narrow ranges and the `agg_*` tables
