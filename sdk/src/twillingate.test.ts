@@ -125,7 +125,7 @@ describe("payload shape", () => {
     expect(sent[0].body.events[0].attributes).toEqual({ $screen: "/home", a: 1 });
   });
 
-  it("stamps display size on views and product events, and the browser locale on every batch", async () => {
+  it("stamps display size and the browser locale once per batch, not on each event", async () => {
     Object.defineProperty(window, "screen", { value: { width: 1920, height: 1080 }, configurable: true });
     Object.defineProperty(navigator, "language", { value: "de-DE", configurable: true });
     const t = tg();
@@ -133,12 +133,8 @@ describe("payload shape", () => {
     t.track("probe");
     t.flush();
     await drain();
-    const [view, probe] = sent[0].body.events;
-    const va = view.attributes as Record<string, unknown>;
-    expect(va.$display_width).toBe(1920);
-    expect(va.$display_height).toBe(1080);
-    expect((probe.attributes as Record<string, unknown>).$display_width).toBe(1920);
-    expect((probe.attributes as Record<string, unknown>).$display_height).toBe(1080);
+    expect(sent[0].body.attributes).toMatchObject({ $display_width: 1920, $display_height: 1080 });
+    for (const e of sent[0].body.events) expect(e.attributes).not.toHaveProperty("$display_width");
     expect(sent[0].body.attributes.$browser_locale).toBe("de-DE");
     expect(sent[0].body.attributes).not.toHaveProperty("$locale");
     expect(sent[0].body.attributes).not.toHaveProperty("$app_locale");

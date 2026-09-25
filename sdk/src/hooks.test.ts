@@ -4,6 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Twillingate, type InitOptions } from "./twillingate";
 import { runtime } from "./runtime";
+import { storedEvents } from "./test-helpers";
 
 vi.mock("./origin", () => ({
   ORIGIN: "https://collector.example.com",
@@ -59,8 +60,10 @@ describe("onEvent", () => {
     t.flush();
     await drain();
     expect(events().map((e) => e.name)).toEqual(["budget_created", "$page_view"]);
-    expect(events()[0].attributes).toEqual({ currency: "EUR", app: "econumo!" });
-    expect((events()[1].attributes as Record<string, unknown>).app).toBe("econumo!");
+    const [budget, page] = sent.flatMap((s) => storedEvents(s));
+    expect(budget).toMatchObject({ currency: "EUR", app: "econumo!" });
+    expect(budget).not.toHaveProperty("$path");
+    expect(page.app).toBe("econumo!");
   });
 
   it("runs after onPage on a pageview and sees its output", async () => {
