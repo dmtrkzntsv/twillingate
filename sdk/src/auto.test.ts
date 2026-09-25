@@ -41,6 +41,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 function only(): { batch: Record<string, unknown>; event: Record<string, unknown> } {
@@ -75,8 +76,30 @@ describe("location on product events", () => {
     await drain();
     const { event } = only();
     expect(event.plan).toBe("pro");
+    expect(event).not.toHaveProperty("$host");
     expect(event).not.toHaveProperty("$path");
     expect(warn).toHaveBeenCalled();
+  });
+
+  it("an unresolvable mask (fail closed) drops the location, not the event", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    tg({ maskUrl: "noSuchFn" }).track("signup", { plan: "pro" });
+    await drain();
+    const { event } = only();
+    expect(event.plan).toBe("pro");
+    expect(event).not.toHaveProperty("$host");
+    expect(event).not.toHaveProperty("$path");
+    expect(warn).toHaveBeenCalled();
+  });
+
+  it("before any view, a registered onPage listener withholds the derived location", async () => {
+    const t = tg();
+    t.onPage(() => undefined);
+    t.track("signup");
+    await drain();
+    const { event } = only();
+    expect(event).not.toHaveProperty("$host");
+    expect(event).not.toHaveProperty("$path");
   });
 
   it("the call's own $path wins over the derived one", async () => {
@@ -87,8 +110,33 @@ describe("location on product events", () => {
   });
 });
 
+describe("a product event echoes the last view's location", () => {
+  it("an onPage redaction that reached a view reaches later product events too", async () => {
+    const t = tg();
+    t.onPage(({ path }) => ({ $path: path.replace(/\/\d+/, "/[id]") }));
+    history.replaceState(null, "", "/account/42");
+    t.page();
+    t.track("x");
+    await drain();
+    const [view, event] = sent[0].body.events.map((e) => e.attributes as Record<string, unknown>);
+    expect(view.$path).toBe("/account/[id]");
+    expect(event.$path).toBe("/account/[id]");
+  });
+
+  it("after screen(), a product event carries that view's $screen", async () => {
+    const t = tg({ kind: "app" });
+    t.screen("/settings");
+    t.track("export");
+    await drain();
+    const [screenView, event] = sent[0].body.events.map((e) => e.attributes as Record<string, unknown>);
+    expect(screenView.$screen).toBe("/settings");
+    expect(event.$screen).toBe("/settings");
+  });
+});
+
 describe("autoAttributes: false", () => {
   it("sends nothing derived but keeps what a view needs, the flags and what the site set", async () => {
+    Object.defineProperty(window, "screen", { value: { width: 1920, height: 1080 }, configurable: true });
     history.replaceState(null, "", "/x?utm_source=hn");
     const t = tg({ autoAttributes: false, appVersion: "2.4.1", appLocale: "de" });
     t.attrs({ tier: "beta" });
@@ -128,7 +176,7 @@ describe("null drops a key wherever it came from", () => {
     await drain();
     const [a, b] = sent[0].body.events.map((e) => e.attributes as Record<string, unknown>);
     expect(a.$os).toBeNull();
-    expect(a.$os_version === undefined || a.$os_version === null).toBe(true);
+    expect(a.$os_version).toBeNull();
     expect(b).not.toHaveProperty("$os");
     expect(sent[0].body.attributes).toHaveProperty("$os");
   });

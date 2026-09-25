@@ -268,6 +268,10 @@ export class Twillingate implements Subscriber {
   // undefined = no mask configured; null = configured and unresolvable,
   // which drops pageviews (fail closed).
   private mask: ((href: string) => string) | null | undefined;
+  // The location the last view this instance actually sent carried —
+  // captured after maskUrl and onPage redaction — so a product event can
+  // echo it. null until the first view is sent.
+  private lastViewLocation: Record<string, unknown> | null = null;
   private routing: "history" | "hash" = "history";
   private firstPageviewSent = false;
   private ready = false;
@@ -447,13 +451,16 @@ export class Twillingate implements Subscriber {
     }
     this.firstPageviewSent = true;
     if (this.kind === "web") {
+      this.rememberViewLocation(attributes);
       this.emit("$page_view", attributes);
       return;
     }
     // A non-web kind is an app: the route is the screen, and the page
     // context (host, referrer, campaign) does not apply.
     const { $host: _h, $referrer: _r, $utm_source: _s, $utm_medium: _m, $utm_campaign: _c, $path, ...rest } = attributes;
-    this.emit("$screen_view", { $screen: $path, ...rest });
+    const screenAttrs = { $screen: $path, ...rest };
+    this.rememberViewLocation(screenAttrs);
+    this.emit("$screen_view", screenAttrs);
   }
 
   /** Register a pageview listener; runs for every pageview, automatic ones included. */
@@ -476,10 +483,12 @@ export class Twillingate implements Subscriber {
   screen(name: string, attrs?: Record<string, unknown>): void {
     if (!this.ready) return this.hold(() => this.screen(name, attrs));
     if (!this.live() || !name) return;
-    this.emit("$screen_view", {
+    const screenAttrs = {
       ...(this.autoAttributes ? displaySize() : {}),
       ...expandNulls(this.defaultAttrs), $screen: String(name), ...expandNulls(attrs),
-    });
+    };
+    this.rememberViewLocation(screenAttrs);
+    this.emit("$screen_view", screenAttrs);
   }
 
   /** Opt-in product event, carrying where it happened unless autoAttributes is false. */
@@ -489,13 +498,26 @@ export class Twillingate implements Subscriber {
     this.emit(String(name), { ...this.eventContext(), ...expandNulls(this.defaultAttrs), ...expandNulls(attrs) });
   }
 
-  // Where a product event happened: the host and path (or, on a non-web
-  // kind, the screen) a view of this page would carry, masked the same
-  // way, plus the display size. A mask that throws or returns junk costs
-  // the event its location, never the event itself.
+  // Where a product event happened: the location the last view this
+  // instance carried — its $host and $path on the web kind, else its
+  // $screen — captured after maskUrl and any onPage redaction, so a
+  // redaction recipe written for pageviews reaches product events too.
+  // Before any view has been sent, the current URL is derived through
+  // maskUrl the same way, but only when no onPage listener is registered
+  // (one might still redact it) and no configured mask is unresolvable;
+  // otherwise the event carries no location. Display size is independent
+  // of all this and sent either way. A mask that throws or returns junk,
+  // or is unresolvable, costs the event its location, never the event
+  // itself.
   private eventContext(): Record<string, unknown> {
     if (!this.autoAttributes || typeof location === "undefined") return {};
     const out: Record<string, unknown> = { ...displaySize() };
+    if (this.lastViewLocation) return { ...out, ...this.lastViewLocation };
+    // No view sent yet: only derive from the current URL when nothing
+    // about it is still uncertain -- an unresolvable mask fails closed,
+    // same as page(), and a registered onPage listener might rewrite the
+    // very first pageview's location before it goes out.
+    if (this.mask === null || this.pageListeners.length > 0) return out;
     let masked: unknown = location.href;
     if (this.mask) {
       try {
@@ -518,6 +540,22 @@ export class Twillingate implements Subscriber {
       out.$screen = split.path;
     }
     return out;
+  }
+
+  // Record what a view actually sent, so the next product event can echo
+  // it. Reads the object handed to emit() -- before onEvent listeners run
+  // -- rather than what left after them: keeping every kind of listener's
+  // output in sync would need emit() to report back what it finally sent,
+  // which is more machinery than a best-effort echo is worth.
+  private rememberViewLocation(sent: Record<string, unknown>): void {
+    const loc: Record<string, unknown> = {};
+    if (typeof sent.$screen === "string") {
+      loc.$screen = sent.$screen;
+    } else {
+      if (typeof sent.$host === "string") loc.$host = sent.$host;
+      if (typeof sent.$path === "string") loc.$path = sent.$path;
+    }
+    this.lastViewLocation = loc;
   }
 
   /**

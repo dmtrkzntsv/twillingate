@@ -232,7 +232,26 @@ et.init({ key: "ak_econumo…", identity: "identified", autoPageviews: false });
 | `util.withQuery(path, url, keys)` | Append allowlisted query parameters, sorted. See [Routing](#routing). |
 | `detectOS()`, `detectBrowser()`, `detectDevice()` | Read the environment this client would report. See [Detection](#detection). |
 
-**Precedence**: SDK-derived values (`$host`, `$path`, `$referrer`, campaign parameters and display size on views; the page's `$host` and `$path`, or `$screen` on a non-web kind, and display size on product events), then `attrs()` defaults, then the call's attributes, then listener returns in registration order. Later layers win, and a `null` drops the key wherever it came from: `twillingate.attrs({ $host: "selfhosted_ab12", $referrer: null })` sends that host and no referrer. A batch attribute (`$os`, `$browser`, …) set to `null` is sent as `null` on the event, which the collector reads as not sent. A `null` on a `$` prefix drops the family: `$utm: null` drops `$utm_source`, `$utm_medium` and `$utm_campaign`, and `$browser: null` drops `$browser`, `$browser_version` and `$browser_locale`. A later layer's explicit value still beats an earlier family `null`. `autoAttributes: false` sends none of the derived values except what a view needs to exist (`$host` and `$path`, or `$screen`), plus `$kind`, `$platform` for the web kind, `$consent` and identity.
+**Precedence**: SDK-derived values (`$host`, `$path`, `$referrer`, campaign
+parameters and display size on views; the page's `$host` and `$path`, or
+`$screen` on a non-web kind, and display size on product events), then
+`attrs()` defaults, then the call's attributes, then listener returns in
+registration order. Later layers win, and a `null` drops the key wherever it
+came from: `twillingate.attrs({ $host: "selfhosted_ab12", $referrer: null })`
+sends that host and no referrer. A batch attribute (`$os`, `$browser`, …) set
+to `null` is sent as `null` on the event, which the collector reads as not
+sent. A `null` on a `$` prefix drops the family: `$utm: null` drops
+`$utm_source`, `$utm_medium` and `$utm_campaign`, and `$browser: null` drops
+`$browser`, `$browser_version` and `$browser_locale`. A later layer's
+explicit value still beats an earlier family `null`. `autoAttributes: false`
+sends none of the derived values except what a view needs to exist (`$host`
+and `$path`, or `$screen`), plus `$kind`, `$platform` for the web kind,
+`$consent` and identity. A product event carries the location of the last
+view this instance sent — after `maskUrl` and any `onPage` redaction — so an
+`onPage` recipe that redacts a pageview's path (`/account/12` →
+`/account/[id]`) redacts product events the same way; before the first view,
+it carries a `maskUrl`-derived location only when no `onPage` listener is
+registered.
 
 ### Two projects on one page
 
