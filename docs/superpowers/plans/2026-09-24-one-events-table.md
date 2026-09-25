@@ -28,14 +28,14 @@
   - The one exception is `v_events_flat`, which reads `events` and carries `family`.
   - Writes (`INSERT INTO events`) and deletes (`DELETE FROM events … family = ?`) go to the table.
 - Raw SQL filters on `day`, never on `ts` ranges or `substr(ts,1,10)`.
-- **Index:** exactly one on `events`, `idx_events_family` on `(family, project_id, day, event_name, actor_id, user_id, group_id)`, plus the primary key. This deviates from the spec's two indexes; see "Deviation from the spec" below.
+- **Index:** exactly one on `events`, `idx_events_family` on `(family, project_id, day, event_name)`, plus the primary key. This deviates from the spec's two indexes; the user approved it (see "Deviation from the spec").
 - The script tag keeps exactly eight `data-` attributes. `autoAttributes` is code-only and defaults to `true`.
 - After any change under `sdk/`, run `npm run build` in `sdk/` so `internal/server/twillingate.js` is regenerated.
 - Docs change in the same task as the behaviour they describe (CLAUDE.md table). `internal/api/docs_sync_test.go` must pass.
 - Commits use Conventional Commits. No model identifiers in any repo file or commit.
 - `make check` must pass at the end of every task.
 
-## Deviation from the spec (needs the user's nod)
+## Deviation from the spec (approved by the user, 2026-09-24)
 
 The spec names two indexes, `(project_id, family, day)` and `(project_id, event_name, day)`. Before this plan, the migration was prototyped on the demo seed: 160k raw views and 5k product events at schema 19, with no `ANALYZE`, as in production. Every `v_*` view returned identical rows before and after.
 
@@ -49,18 +49,19 @@ With the two spec indexes:
 
 The cause: the live halves' union arms get no project filter pushed into them, so they scan by `family` alone. Product rows are also now interleaved with 20× as many view rows.
 
-With one index, `(family, project_id, day, event_name, actor_id, user_id, group_id)`:
+Three single-index shapes were measured:
 
-| read | 019 | 020, one index |
-| --- | --- | --- |
-| views paths | 156 ms | 161 ms |
-| views daily | 1373 ms | 1372 ms |
-| `v_product_daily` | 5.5 ms | 1.6 ms |
-| `v_product_attrs` | 31 ms | 34 ms |
-| `v_identity_daily` | 74 ms | 68 ms |
-| finding un-rolled days | 15 ms | 0.3 ms |
+| read | 019 | A: `family, project_id, day, event_name` | A + `actor_id` | A + `actor_id, user_id, group_id` |
+| --- | --- | --- | --- | --- |
+| views paths | 156 ms | 160 | 164 | 165 |
+| views daily | 1356 ms | 1444 | 1450 | 1446 |
+| `v_product_daily` | 6.2 ms | 2.3 | 1.7 | 1.9 |
+| `v_product_totals` | 3.3 ms | 1.9 | 1.5 | 1.7 |
+| `v_product_attrs` | 29 ms | 33 | 37 | 35 |
+| `v_identity_daily` | 75 ms | 117 | 125 | 81 |
+| index size (165k rows) | — | 6.4 MB | 9.0 MB | 11.2 MB |
 
-The per-event, per-day lookup the user asked for (`family, project_id, day, event_name`) is a prefix of that index. The plan uses the one index; Task 6 re-measures it with the Go benchmarks.
+`actor_id` alone buys nothing. `user_id, group_id` only speed up the `v_identity_daily` live half, which feeds the `identities` tool and the nightly dashboard build; neither is latency-sensitive. **The user chose A.** The identity live half is accepted at about +40 ms on this data. If it ever matters, the fix is letting that query push its project filter down, not widening the index. The per-event, per-day lookup the user asked for is the index itself. Task 6 re-measures with the Go benchmarks.
 
 ## Review Focus
 
@@ -662,11 +663,11 @@ ALTER TABLE events_new RENAME TO events;
 
 -- One index serves every read. Leading on family lets a union arm that
 -- gets no project filter pushed into it (the live halves of v_product_attrs
--- and v_identity_daily) search one family instead of scanning both; the
--- trailing columns cover the product and identity live halves, so they
--- read the index alone. Measured on 160k views + 5k events: every live
--- half at or below its 019 time.
-CREATE INDEX idx_events_family ON events(family, project_id, day, event_name, actor_id, user_id, group_id);
+-- and v_identity_daily) search one family instead of scanning both;
+-- project_id and day serve every ranged read and the daily pass;
+-- event_name serves the per-event product rollup. The old actor and
+-- session indexes had no reader and are not carried over.
+CREATE INDEX idx_events_family ON events(family, project_id, day, event_name);
 
 -- The only read path for Go code and every v_* definition: a query cannot
 -- forget the family filter it never writes. SQLite flattens these into the
@@ -2043,7 +2044,7 @@ Compare each benchmark's median against Task 1's baseline and record both in the
 
 - [ ] **Step 2: Apply the stopping rule**
 
-- **If every live half is within 15% of its baseline, or faster:** continue.
+- **If every live half is within 15% of its baseline, or faster:** continue. Known and accepted: `BenchmarkIdentityDailyLiveHalf` is slower by the margin the prototype showed (about +55%, 75 → 117 ms there). It does not trigger the rule, but report its number.
 - **If one is slower:**
   1. Try index changes first: column order, or adding a covered column. Re-run.
   2. If that doesn't win it back, stop and report to the controller with the numbers. The spec says the fallback is two raw tables built from one column list, and that is the user's call; do not implement it unasked.
