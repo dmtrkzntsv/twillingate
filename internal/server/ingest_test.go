@@ -81,9 +81,10 @@ func TestResolveAttributesSplitsReservedFromCustom(t *testing.T) {
 	if r.displayWidthRaw != "1920" || r.displayHeightRaw != "1080" {
 		t.Errorf("display = %+v", r)
 	}
-	// float64(3) must not render as "3.000000"; bool and nil round-trip.
+	// float64(3) must not render as "3.000000"; bool round-trips; nil is absent.
 	if r.Custom["plan"] != "pro" || r.Custom["count"] != "3" ||
-		r.Custom["ok"] != "true" || r.Custom["nothing"] != "" {
+		r.Custom["ok"] != "true" ||
+		func() bool { _, ok := r.Custom["nothing"]; return ok }() {
 		t.Errorf("custom = %v", r.Custom)
 	}
 	if _, ok := r.Custom["$os"]; ok {

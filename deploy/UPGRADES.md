@@ -276,6 +276,8 @@ What changes on the day:
 - `product_attributes` always includes `$kind`, `$browser`, `$device` and
   `$browser_locale`. They are empty for product events stored before the
   upgrade, which never kept them.
+- Product events keep every reserved key they are sent (`$browser`, `$device`, `$host`, `$path`, `$referrer`, UTM, display size, `$session_id`, country), and views keep their custom attributes. Rows stored before the upgrade have empty columns for what was dropped then.
+- A `null` per-event attribute now removes the batch value instead of storing `""`.
 
 There is no down migration. The previous binary writes a `views` table that no
 longer exists.

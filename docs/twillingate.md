@@ -541,11 +541,8 @@ language that client shows the product in, as the product names it (`de`,
 (`navigator.language`, which the JS SDK sends on every batch). Both are free
 text stored as sent; the SDK never guesses `$app_locale`, so it is sent only
 when `appLocale` is set. `$locale` is not a key any more: it is dropped with
-an unknown-key warning. Product events keep `$platform`, `$os`,
-`$app_version` and `$app_locale` as columns and resolve and drop the rest
-(`$os_version`, `$os_name`, `$browser`, `$browser_version`, `$device`,
-`$browser_locale`), so an SDK that sends every environment key on every batch
-is correct and cheap.
+an unknown-key warning. Views and product events store every one of these
+keys, validated the same way; the JS SDK sends them on every batch.
 
 ### Product (everything else)
 
@@ -640,6 +637,10 @@ Batch-level `attributes` are defaults and per-event `attributes` override them
 **key by key**. That is the only merge rule, and it applies to system (`$`) and
 ordinary keys alike.
 
+A `null` means "not sent": a `null` batch value is ignored, and a `null`
+per-event value removes the batch value for that event, so a reserved key
+reads as undeclared and a custom key is absent.
+
 ### Reserved event names
 
 | `name` | Stored as | Default `$kind` | Requires |
@@ -660,6 +661,8 @@ batch to drop.
 | Identity | `$install_id` `$user_id` `$user_name` `$group_id` `$group_name` `$session_id` `$consent` |
 | Environment | `$kind` `$platform` `$os` `$os_version` `$os_name` `$browser` `$browser_version` `$device` `$device_model` `$app_version` `$app_locale` `$browser_locale` `$display_width` `$display_height` |
 | Location | `$host` `$path` `$screen` `$utm_source` `$utm_medium` `$utm_campaign` `$referrer` |
+
+Every key is stored on views and product events alike.
 
 `$consent` is whether the client had consent to keep anything on the device
 when it sent the event: `1` (or `true`) given, `0` (or `false`) not given, as a
