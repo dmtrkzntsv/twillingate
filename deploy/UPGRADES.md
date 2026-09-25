@@ -278,6 +278,7 @@ What changes on the day:
   upgrade, which never kept them.
 - Product events keep every reserved key they are sent (`$browser`, `$device`, `$host`, `$path`, `$referrer`, UTM, display size, `$session_id`, country), and views keep their custom attributes. Rows stored before the upgrade have empty columns for what was dropped then.
 - A `null` per-event attribute now removes the batch value instead of storing `""`.
+- The served SDK adds the page's `$host` and `$path` (masked like a view's) to every product event, and accepts `autoAttributes: false` and `null` families. Pages on the cached old SDK send events without location for up to a day; purge the CDN copy of `/js/twillingate.js` if one sits in front of the collector.
 
 There is no down migration. The previous binary writes a `views` table that no
 longer exists.

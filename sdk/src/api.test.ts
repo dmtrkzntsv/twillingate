@@ -50,7 +50,7 @@ afterEach(() => {
 
 describe("attrs", () => {
   it("merges defaults under every event, event attrs winning", async () => {
-    const t = tg();
+    const t = tg({ autoAttributes: false });
     t.attrs({ tier: "beta", region: "eu" });
     t.track("signup", { tier: "pro" });
     t.flush();
@@ -72,7 +72,7 @@ describe("attrs", () => {
   });
 
   it("successive calls merge; attrs(null) clears", async () => {
-    const t = tg();
+    const t = tg({ autoAttributes: false });
     t.attrs({ a: 1 });
     t.attrs({ b: 2 });
     t.track("both");
@@ -244,7 +244,7 @@ describe("precedence: derived < attrs() defaults < call < listeners", () => {
   });
 
   it("the call's attributes beat the defaults, and a listener beats the call", async () => {
-    const t = tg();
+    const t = tg({ autoAttributes: false });
     t.attrs({ tier: "beta", region: "eu" });
     t.onEvent(() => ({ region: "us" }));
     t.track("e", { tier: "pro" });
@@ -256,7 +256,7 @@ describe("precedence: derived < attrs() defaults < call < listeners", () => {
 
 describe("null drops an attribute", () => {
   it("omits null and undefined values, keeps 0 and empty strings", async () => {
-    const t = tg();
+    const t = tg({ autoAttributes: false });
     t.track("e", { a: null, b: undefined, c: 0, d: "" });
     t.flush();
     await drain();
@@ -276,7 +276,7 @@ describe("null drops an attribute", () => {
   });
 
   it("lets an event null out an attrs() default", async () => {
-    const t = tg();
+    const t = tg({ autoAttributes: false });
     t.attrs({ region: "eu", tier: "beta" });
     t.track("e", { region: null });
     t.flush();

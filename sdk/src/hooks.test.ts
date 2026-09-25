@@ -50,7 +50,7 @@ afterEach(() => {
 
 describe("onEvent", () => {
   it("amends or drops product events and pageviews alike, in registration order", async () => {
-    const t = tg();
+    const t = tg({ autoAttributes: false });
     t.onEvent(({ name }) => (name.startsWith("debug_") ? false : { app: "econumo" }));
     t.onEvent(({ attributes }) => ({ app: `${attributes.app}!` }));
     t.track("debug_noise");

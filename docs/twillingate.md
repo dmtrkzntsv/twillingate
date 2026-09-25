@@ -156,7 +156,7 @@ whichever hostname loaded it.
 
 Every `data-*` has an `init()` equivalent except `data-instance`, which maps to
 `create()`'s name; the reverse does not hold — `flushInterval`, `platform`,
-`appVersion`, `appLocale`, `storage`, `taggedEvents`, `optOut` and `debug` are code-only
+`appVersion`, `appLocale`, `autoAttributes`, `storage`, `taggedEvents`, `optOut` and `debug` are code-only
 options with no `data-*` form, and identity is set from code (`identify`,
 `group`, `installId`), never in markup. Views are automatic, including on
 `history.pushState` and `popstate`; elements carrying `data-twillingate-event`
@@ -187,6 +187,7 @@ twillingate.init({
   platform: "electron",        // → $platform; defaults to "web" only for kind "web"
   appVersion: "2.4.1",         // → $app_version
   appLocale: "de",             // → $app_locale; never detected
+  autoAttributes: true,        // default; false sends only what you set (see Precedence)
   flushInterval: 10000,        // milliseconds
   optOut: () => location.hostname === "localhost",   // OR-ed with twillingate_ignore
   debug: false,                // OR-ed with the twillingate_debug flag
@@ -231,12 +232,7 @@ et.init({ key: "ak_econumo…", identity: "identified", autoPageviews: false });
 | `util.withQuery(path, url, keys)` | Append allowlisted query parameters, sorted. See [Routing](#routing). |
 | `detectOS()`, `detectBrowser()`, `detectDevice()` | Read the environment this client would report. See [Detection](#detection). |
 
-**Precedence**: SDK-derived values (`$host`, `$path`, `$referrer`, campaign
-parameters, display size), then `attrs()` defaults, then the call's attributes,
-then listener returns in registration order. Later layers win and a `null` drops
-the key — `twillingate.attrs({ $host: "selfhosted_ab12", $referrer: null })`
-sends that host and no referrer. Batch attributes (`$os`, `$browser`, …) come
-from detection and are not changeable.
+**Precedence**: SDK-derived values (`$host`, `$path`, `$referrer`, campaign parameters and display size on views; the page's `$host` and `$path`, or `$screen` on a non-web kind, and display size on product events), then `attrs()` defaults, then the call's attributes, then listener returns in registration order. Later layers win, and a `null` drops the key wherever it came from: `twillingate.attrs({ $host: "selfhosted_ab12", $referrer: null })` sends that host and no referrer. A batch attribute (`$os`, `$browser`, …) set to `null` is sent as `null` on the event, which the collector reads as not sent. A `null` on a `$` prefix drops the family: `$utm: null` drops `$utm_source`, `$utm_medium` and `$utm_campaign`, and `$browser: null` drops `$browser`, `$browser_version` and `$browser_locale`. A later layer's explicit value still beats an earlier family `null`. `autoAttributes: false` sends none of the derived values except what a view needs to exist (`$host` and `$path`, or `$screen`), plus `$kind`, `$platform` for the web kind, `$consent` and identity.
 
 ### Two projects on one page
 
