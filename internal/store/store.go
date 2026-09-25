@@ -10,20 +10,34 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/civil"
 )
 
-// View is one page or screen view of any kind ($page_view, $screen_view).
-// Kind is the client-declared surface ("web", "app", "cli", …); only "web"
-// rows are enriched from the User-Agent. ActorKind records how the actor
-// was identified and is what retention cohorts on.
+// Family names the aggregate family a raw row feeds: views (v_views_*,
+// agg_views_*, views_overview, views_breakdown) or product (v_product_*,
+// agg_product_*, product_events, product_attributes). Ingest decides it
+// from the event name; the database holds no list of families.
+type Family string
+
+const (
+	FamilyViews   Family = "views"
+	FamilyProduct Family = "product"
+)
+
+// Event is one row of the raw events table: a view ($page_view,
+// $screen_view) or a product event (any other name), told apart by Family.
+// Kind is the client-declared surface ("web", "app", "cli", …); empty on a
+// product event that declared none. ActorKind records how the actor was
+// identified and is what retention cohorts on.
 //
 // Platform is the surface the product is used through (web, ios, electron,
 // …); OS is the operating system it runs on. They coincide for a native
-// app and diverge everywhere else. Both are never empty in the database --
-// the server stores unknown for an undeclared value -- and OSName is the
-// free-form name the client reported, kept beside an OS of other so the
-// bucket stays investigable.
-type View struct {
+// app and diverge everywhere else. OSName is the free-form name the client
+// reported, kept beside an OS of other so the bucket stays investigable.
+// Attributes holds the custom (non-$) keys, for views and product events
+// alike.
+type Event struct {
 	ID                                             string
 	ProjectID                                      int64
+	Family                                         Family
+	EventName                                      string
 	TS, ReceivedAt                                 time.Time
 	Kind                                           string
 	ActorID, ActorKind, UserID, GroupID, SessionID string
@@ -36,24 +50,7 @@ type View struct {
 	DisplayWidth, DisplayHeight                    int
 	Country                                        string
 	Consent                                        Consent
-}
-
-// ProductEvent represents a custom event from any surface. Platform, OS,
-// app version and app locale are the environment columns a product event
-// carries; every other declared environment key is resolved and dropped at
-// ingest.
-type ProductEvent struct {
-	ID                 string
-	ProjectID          int64
-	EventName          string
-	TS, ReceivedAt     time.Time
-	ActorID, ActorKind string
-	UserID, GroupID    string
-	Platform, OS       string
-	AppVersion         string
-	AppLocale          string
-	Attributes         map[string]string
-	Consent            Consent
+	Attributes                                     map[string]string
 }
 
 // Consent is the client's answer, when it sent the row, to "may anything
@@ -125,8 +122,7 @@ type AuditEntry struct {
 // Store defines the interface for analytics data storage.
 type Store interface {
 	Migrate(ctx context.Context) error
-	WriteViews(ctx context.Context, views []View) error
-	WriteProductEvents(ctx context.Context, evs []ProductEvent) error
+	WriteEvents(ctx context.Context, evs []Event) error
 	UpsertIdentities(ctx context.Context, ids []Identity) error
 	ViewDaysBefore(ctx context.Context, projectID int64, before civil.Date) ([]civil.Date, error)
 	ProductDaysBefore(ctx context.Context, projectID int64, before civil.Date) ([]civil.Date, error)

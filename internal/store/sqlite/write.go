@@ -12,7 +12,24 @@ import (
 
 const tsFormat = "2006-01-02T15:04:05Z"
 
-func (d *DB) WriteViews(ctx context.Context, views []store.View) error {
+// WriteEvents stores a batch of raw rows. Until migration 020 merges the
+// raw tables, views and product events still land in separate tables.
+func (d *DB) WriteEvents(ctx context.Context, evs []store.Event) error {
+	var views, product []store.Event
+	for _, e := range evs {
+		if e.Family == store.FamilyViews {
+			views = append(views, e)
+		} else {
+			product = append(product, e)
+		}
+	}
+	if err := d.writeViews(ctx, views); err != nil {
+		return err
+	}
+	return d.writeProduct(ctx, product)
+}
+
+func (d *DB) writeViews(ctx context.Context, views []store.Event) error {
 	if len(views) == 0 {
 		return nil
 	}
@@ -43,7 +60,7 @@ func (d *DB) WriteViews(ctx context.Context, views []store.View) error {
 	})
 }
 
-func (d *DB) WriteProductEvents(ctx context.Context, evs []store.ProductEvent) error {
+func (d *DB) writeProduct(ctx context.Context, evs []store.Event) error {
 	if len(evs) == 0 {
 		return nil
 	}

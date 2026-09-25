@@ -117,19 +117,19 @@ func TestRunDailyPassAggregatesOldDays(t *testing.T) {
 	st, _, r := setup(t, jobsVars, jobsProjectSpecs)
 	ctx := context.Background()
 	// Old day (beyond the 7-day raw window relative to fake now 2026-08-22).
-	if err := st.WriteViews(ctx, []store.View{
-		{ID: "1", ProjectID: 1, TS: mustTime("2026-08-10T10:00:00Z"), ReceivedAt: mustTime("2026-08-10T10:00:00Z"),
+	if err := st.WriteEvents(ctx, []store.Event{
+		{Family: store.FamilyViews, ID: "1", ProjectID: 1, TS: mustTime("2026-08-10T10:00:00Z"), ReceivedAt: mustTime("2026-08-10T10:00:00Z"),
 			Kind: "web", ActorID: "v", ActorKind: store.ActorConnection, Path: "/"}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.WriteProductEvents(ctx, []store.ProductEvent{
-		{ID: "2", ProjectID: 1, EventName: "e", UserID: "u", TS: mustTime("2026-08-10T10:00:00Z"),
+	if err := st.WriteEvents(ctx, []store.Event{
+		{Family: store.FamilyProduct, ID: "2", ProjectID: 1, EventName: "e", UserID: "u", TS: mustTime("2026-08-10T10:00:00Z"),
 			Attributes: map[string]string{"plan": "pro"}}}); err != nil {
 		t.Fatal(err)
 	}
 	// Recent day (inside the window) must survive as raw.
-	if err := st.WriteViews(ctx, []store.View{
-		{ID: "3", ProjectID: 1, TS: mustTime("2026-08-21T10:00:00Z"), ReceivedAt: mustTime("2026-08-21T10:00:00Z"),
+	if err := st.WriteEvents(ctx, []store.Event{
+		{Family: store.FamilyViews, ID: "3", ProjectID: 1, TS: mustTime("2026-08-21T10:00:00Z"), ReceivedAt: mustTime("2026-08-21T10:00:00Z"),
 			Kind: "web", ActorID: "v", ActorKind: store.ActorConnection, Path: "/"}}); err != nil {
 		t.Fatal(err)
 	}
@@ -172,8 +172,8 @@ func TestRunDailyPassRebuildsFlatView(t *testing.T) {
 	st, _, r := setup(t, jobsVars, jobsProjectSpecs)
 	ctx := context.Background()
 	// Inside the raw window, so it survives to be discovered.
-	if err := st.WriteProductEvents(ctx, []store.ProductEvent{
-		{ID: "1", ProjectID: 1, EventName: "e", UserID: "u", TS: mustTime("2026-08-21T10:00:00Z"),
+	if err := st.WriteEvents(ctx, []store.Event{
+		{Family: store.FamilyProduct, ID: "1", ProjectID: 1, EventName: "e", UserID: "u", TS: mustTime("2026-08-21T10:00:00Z"),
 			Attributes: map[string]string{"plan": "pro"}}}); err != nil {
 		t.Fatal(err)
 	}
@@ -209,8 +209,8 @@ func TestRunDailyPassCoversArchivedProjects(t *testing.T) {
 	if err := ops.ArchiveProject(ctx, "test", 2); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.WriteViews(ctx, []store.View{
-		{ID: "1", ProjectID: 2, TS: mustTime("2026-08-10T10:00:00Z"), ReceivedAt: mustTime("2026-08-10T10:00:00Z"),
+	if err := st.WriteEvents(ctx, []store.Event{
+		{Family: store.FamilyViews, ID: "1", ProjectID: 2, TS: mustTime("2026-08-10T10:00:00Z"), ReceivedAt: mustTime("2026-08-10T10:00:00Z"),
 			Kind: "web", ActorID: "v", ActorKind: store.ActorConnection, Path: "/"}}); err != nil {
 		t.Fatal(err)
 	}
@@ -388,10 +388,10 @@ func setupApp(t *testing.T, specs []manage.ProjectSpec) (store.Store, *Runner, *
 
 func seedAppDay(t *testing.T, st store.Store, actors ...string) {
 	t.Helper()
-	var views []store.View
+	var views []store.Event
 	for i, a := range actors {
 		ts := mustTime("2026-08-10T10:00:00Z")
-		views = append(views, store.View{
+		views = append(views, store.Event{Family: store.FamilyViews,
 			ID: "v" + a + string(rune('a'+i)), ProjectID: 1,
 			TS: ts, ReceivedAt: ts,
 			Kind: "app", ActorID: a, ActorKind: store.ActorUser,
@@ -399,7 +399,7 @@ func seedAppDay(t *testing.T, st store.Store, actors ...string) {
 			Path: "/home", OS: "iOS", AppVersion: "2.4.1",
 		})
 	}
-	if err := st.WriteViews(context.Background(), views); err != nil {
+	if err := st.WriteEvents(context.Background(), views); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -452,7 +452,7 @@ func TestRunDailyPassBuildsNoActorsWithoutIds(t *testing.T) {
 	st, r, db := setupApp(t, appProjectSpecs)
 	ctx := context.Background()
 	ts := mustTime("2026-08-10T10:00:00Z")
-	if err := st.WriteViews(ctx, []store.View{{
+	if err := st.WriteEvents(ctx, []store.Event{{Family: store.FamilyViews,
 		ID: "vconn", ProjectID: 1, TS: ts, ReceivedAt: ts,
 		Kind: "app", ActorID: "hash1", ActorKind: store.ActorConnection,
 		GroupID: "org9", Path: "/home", OS: "iOS", AppVersion: "2.4.1",
@@ -532,8 +532,8 @@ func TestRunDailyPassCoversWebOnlyProjectsForCohorts(t *testing.T) {
 	ctx := context.Background()
 	ts := mustTime("2026-08-10T10:00:00Z")
 
-	if err := st.WriteViews(ctx, []store.View{
-		{ID: "w1", ProjectID: 1, TS: ts, ReceivedAt: ts, Kind: "web", ActorID: "a", ActorKind: store.ActorUser,
+	if err := st.WriteEvents(ctx, []store.Event{
+		{Family: store.FamilyViews, ID: "w1", ProjectID: 1, TS: ts, ReceivedAt: ts, Kind: "web", ActorID: "a", ActorKind: store.ActorUser,
 			UserID: "u1", GroupID: "org9", Path: "/"},
 	}); err != nil {
 		t.Fatal(err)
@@ -562,8 +562,8 @@ func TestRunDailyPassComputesCohortsForRecentDays(t *testing.T) {
 	// app raw window used by jobsVars.
 	recent := mustTime("2026-08-20T10:00:00Z")
 
-	if err := st.WriteViews(ctx, []store.View{
-		{ID: "r1", ProjectID: 1, TS: recent, ReceivedAt: recent, Kind: "app", ActorID: "a", ActorKind: store.ActorUser,
+	if err := st.WriteEvents(ctx, []store.Event{
+		{Family: store.FamilyViews, ID: "r1", ProjectID: 1, TS: recent, ReceivedAt: recent, Kind: "app", ActorID: "a", ActorKind: store.ActorUser,
 			UserID: "u1", Path: "/home", OS: "iOS"},
 	}); err != nil {
 		t.Fatal(err)
@@ -587,9 +587,9 @@ func TestDailyPassRollsUpEveryKindPastTheWindow(t *testing.T) {
 	st, _, r := setup(t, jobsVars, jobsProjectSpecs)
 	ctx := context.Background()
 	old := mustTime("2026-08-10T10:00:00Z") // 12 days before the fixed clock; window is 7
-	if err := st.WriteViews(ctx, []store.View{
-		{ID: "w", ProjectID: 1, TS: old, ReceivedAt: old, Kind: "web", ActorID: "h", ActorKind: store.ActorConnection, Path: "/"},
-		{ID: "a", ProjectID: 1, TS: old, ReceivedAt: old, Kind: "app", ActorID: "i", ActorKind: store.ActorInstall, Path: "/home"},
+	if err := st.WriteEvents(ctx, []store.Event{
+		{Family: store.FamilyViews, ID: "w", ProjectID: 1, TS: old, ReceivedAt: old, Kind: "web", ActorID: "h", ActorKind: store.ActorConnection, Path: "/"},
+		{Family: store.FamilyViews, ID: "a", ProjectID: 1, TS: old, ReceivedAt: old, Kind: "app", ActorID: "i", ActorKind: store.ActorInstall, Path: "/home"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -625,8 +625,8 @@ func TestRunDailyPassLeavesTodaysIdentityActivityLive(t *testing.T) {
 	ctx := context.Background()
 	for i, ts := range []string{"2026-08-21T10:00:00Z", "2026-08-22T01:00:00Z"} {
 		at := mustTime(ts)
-		if err := st.WriteViews(ctx, []store.View{
-			{ID: "t" + string(rune('a'+i)), ProjectID: 1, TS: at, ReceivedAt: at,
+		if err := st.WriteEvents(ctx, []store.Event{
+			{Family: store.FamilyViews, ID: "t" + string(rune('a'+i)), ProjectID: 1, TS: at, ReceivedAt: at,
 				Kind: "app", ActorID: "a", ActorKind: store.ActorUser, UserID: "u1",
 				Path: "/home", OS: "iOS"},
 		}); err != nil {

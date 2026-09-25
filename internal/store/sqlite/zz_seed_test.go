@@ -39,14 +39,14 @@ func TestSeedEvidenceFixture(t *testing.T) {
 			appID = id
 		}
 	}
-	var views []store.View
-	var evs []store.ProductEvent
+	var views []store.Event
+	var evs []store.Event
 	base := time.Now().UTC().AddDate(0, 0, -10)
 	for d := 0; d < 10; d++ {
 		day := base.AddDate(0, 0, d)
 		for i := 0; i < 5; i++ {
 			tsV := day.Add(time.Duration(i) * time.Hour)
-			views = append(views, store.View{
+			views = append(views, store.Event{Family: store.FamilyViews,
 				ID: fmt.Sprintf("h%d-%d", d, i), ProjectID: appID, Kind: "web", TS: tsV,
 				ActorID: fmt.Sprintf("v%d", i%3), ActorKind: store.ActorConnection,
 				Path:           []string{"/", "/pricing", "/docs"}[i%3],
@@ -57,7 +57,7 @@ func TestSeedEvidenceFixture(t *testing.T) {
 				UTMCampaign: []string{"launch", "", ""}[i%3],
 				Consent:     []store.Consent{store.ConsentGiven, store.ConsentNone, store.ConsentUnknown}[i%3],
 			})
-			evs = append(evs, store.ProductEvent{
+			evs = append(evs, store.Event{Family: store.FamilyProduct,
 				ID: fmt.Sprintf("e%d-%d", d, i), ProjectID: appID,
 				EventName: []string{"signup", "subscribed"}[i%2],
 				ActorID:   fmt.Sprintf("u%d", i%3), TS: tsV,
@@ -65,10 +65,10 @@ func TestSeedEvidenceFixture(t *testing.T) {
 			})
 		}
 	}
-	if err := db.WriteViews(ctx, views); err != nil {
+	if err := db.WriteEvents(ctx, views); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.WriteProductEvents(ctx, evs); err != nil {
+	if err := db.WriteEvents(ctx, evs); err != nil {
 		t.Fatal(err)
 	}
 	// Aggregate the oldest days so both sides of the stitch views have rows.

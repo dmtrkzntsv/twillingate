@@ -80,11 +80,11 @@ func TestRebuildFlatViewDetectsRenameBehindAnUnchangedAlias(t *testing.T) {
 func TestRebuildFlatView(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	evs := []store.ProductEvent{
-		{ID: "1", ProjectID: 1, EventName: "e", ActorID: "u1", TS: ts("2026-08-10T10:00:00Z"),
+	evs := []store.Event{
+		{Family: store.FamilyProduct, ID: "1", ProjectID: 1, EventName: "e", ActorID: "u1", TS: ts("2026-08-10T10:00:00Z"),
 			Attributes: map[string]string{"plan": "pro"}},
 	}
-	if err := db.WriteProductEvents(ctx, evs); err != nil {
+	if err := db.WriteEvents(ctx, evs); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.RebuildFlatView(ctx, []string{"plan"}); err != nil {
@@ -172,8 +172,8 @@ func TestRebuildFlatViewHostileKeys(t *testing.T) {
 func TestRebuildFlatViewQuotedKeys(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	if err := db.WriteProductEvents(ctx, []store.ProductEvent{
-		{ID: "1", ProjectID: 1, EventName: "e", ActorID: "u", TS: ts("2026-08-10T10:00:00Z"),
+	if err := db.WriteEvents(ctx, []store.Event{
+		{Family: store.FamilyProduct, ID: "1", ProjectID: 1, EventName: "e", ActorID: "u", TS: ts("2026-08-10T10:00:00Z"),
 			Attributes: map[string]string{"it's": "apostrophe", `say"hi`: "doublequote"}},
 	}); err != nil {
 		t.Fatal(err)

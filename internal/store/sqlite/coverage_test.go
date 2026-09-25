@@ -18,22 +18,22 @@ import (
 func TestDaysBefore(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	views := []store.View{
-		{ID: "1", ProjectID: 1, Kind: "web", ActorKind: store.ActorConnection, TS: ts("2026-08-10T10:00:00Z"), ActorID: "v1", Path: "/"},
-		{ID: "2", ProjectID: 1, Kind: "web", ActorKind: store.ActorConnection, TS: ts("2026-08-10T11:00:00Z"), ActorID: "v2", Path: "/"},
-		{ID: "3", ProjectID: 1, Kind: "web", ActorKind: store.ActorConnection, TS: ts("2026-08-11T10:00:00Z"), ActorID: "v1", Path: "/"},
-		{ID: "4", ProjectID: 1, Kind: "web", ActorKind: store.ActorConnection, TS: ts("2026-08-20T10:00:00Z"), ActorID: "v1", Path: "/"},
-		{ID: "5", ProjectID: 2, Kind: "web", ActorKind: store.ActorConnection, TS: ts("2026-08-10T10:00:00Z"), ActorID: "v1", Path: "/"},
+	views := []store.Event{
+		{Family: store.FamilyViews, ID: "1", ProjectID: 1, Kind: "web", ActorKind: store.ActorConnection, TS: ts("2026-08-10T10:00:00Z"), ActorID: "v1", Path: "/"},
+		{Family: store.FamilyViews, ID: "2", ProjectID: 1, Kind: "web", ActorKind: store.ActorConnection, TS: ts("2026-08-10T11:00:00Z"), ActorID: "v2", Path: "/"},
+		{Family: store.FamilyViews, ID: "3", ProjectID: 1, Kind: "web", ActorKind: store.ActorConnection, TS: ts("2026-08-11T10:00:00Z"), ActorID: "v1", Path: "/"},
+		{Family: store.FamilyViews, ID: "4", ProjectID: 1, Kind: "web", ActorKind: store.ActorConnection, TS: ts("2026-08-20T10:00:00Z"), ActorID: "v1", Path: "/"},
+		{Family: store.FamilyViews, ID: "5", ProjectID: 2, Kind: "web", ActorKind: store.ActorConnection, TS: ts("2026-08-10T10:00:00Z"), ActorID: "v1", Path: "/"},
 	}
-	if err := db.WriteViews(ctx, views); err != nil {
+	if err := db.WriteEvents(ctx, views); err != nil {
 		t.Fatal(err)
 	}
-	events := []store.ProductEvent{
-		{ID: "e1", ProjectID: 1, EventName: "signup", ActorID: "u1", TS: ts("2026-08-12T10:00:00Z")},
-		{ID: "e2", ProjectID: 1, EventName: "signup", ActorID: "u2", TS: ts("2026-08-12T11:00:00Z")},
-		{ID: "e3", ProjectID: 1, EventName: "signup", ActorID: "u1", TS: ts("2026-08-20T10:00:00Z")},
+	events := []store.Event{
+		{Family: store.FamilyProduct, ID: "e1", ProjectID: 1, EventName: "signup", ActorID: "u1", TS: ts("2026-08-12T10:00:00Z")},
+		{Family: store.FamilyProduct, ID: "e2", ProjectID: 1, EventName: "signup", ActorID: "u2", TS: ts("2026-08-12T11:00:00Z")},
+		{Family: store.FamilyProduct, ID: "e3", ProjectID: 1, EventName: "signup", ActorID: "u1", TS: ts("2026-08-20T10:00:00Z")},
 	}
-	if err := db.WriteProductEvents(ctx, events); err != nil {
+	if err := db.WriteEvents(ctx, events); err != nil {
 		t.Fatal(err)
 	}
 
@@ -132,12 +132,12 @@ func TestOperationsOnClosedDB(t *testing.T) {
 		"IncrementalVacuum": func() error { return db.IncrementalVacuum(ctx) },
 		"AggregateViewDay":  func() error { return db.AggregateViewDay(ctx, 1, day("2026-01-01")) },
 		"Migrate":           func() error { return db.Migrate(ctx) },
-		"WriteViews": func() error {
-			return db.WriteViews(ctx, []store.View{{ID: "1", ProjectID: 1, Kind: "web",
+		"WriteEvents(views)": func() error {
+			return db.WriteEvents(ctx, []store.Event{{Family: store.FamilyViews, ID: "1", ProjectID: 1, Kind: "web",
 				ActorKind: store.ActorConnection, TS: ts("2026-08-10T10:00:00Z"), ActorID: "v", Path: "/"}})
 		},
-		"WriteProductEvents": func() error {
-			return db.WriteProductEvents(ctx, []store.ProductEvent{{ID: "e", ProjectID: 1, EventName: "n", ActorID: "u", TS: ts("2026-08-10T10:00:00Z")}})
+		"WriteEvents(product)": func() error {
+			return db.WriteEvents(ctx, []store.Event{{Family: store.FamilyProduct, ID: "e", ProjectID: 1, EventName: "n", ActorID: "u", TS: ts("2026-08-10T10:00:00Z")}})
 		},
 		"CreateProject": func() error {
 			_, err := db.CreateProject(ctx, store.RegistryProject{Name: "App", AllowedOrigins: "[]"},
@@ -249,14 +249,14 @@ func TestOpenRelativeDSN(t *testing.T) {
 func TestWriteEmptyBatchIsNoOp(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	if err := db.WriteViews(ctx, nil); err != nil {
-		t.Errorf("WriteViews(nil) = %v", err)
+	if err := db.WriteEvents(ctx, nil); err != nil {
+		t.Errorf("WriteEvents(nil) = %v", err)
 	}
-	if err := db.WriteProductEvents(ctx, nil); err != nil {
-		t.Errorf("WriteProductEvents(nil) = %v", err)
+	if err := db.WriteEvents(ctx, nil); err != nil {
+		t.Errorf("WriteEvents(nil) = %v", err)
 	}
-	if err := db.WriteProductEvents(ctx, []store.ProductEvent{}); err != nil {
-		t.Errorf("WriteProductEvents(empty) = %v", err)
+	if err := db.WriteEvents(ctx, []store.Event{}); err != nil {
+		t.Errorf("WriteEvents(empty) = %v", err)
 	}
 }
 

@@ -130,9 +130,9 @@ func TestStitchViewsInvariantAllViewsDimensions(t *testing.T) {
 	seedViewDay(t, db)
 	// Push one dimension past the cap so the other bucket is exercised on
 	// both sides of the boundary.
-	var extra []store.View
+	var extra []store.Event
 	for i := 0; i < topNDimension+5; i++ {
-		extra = append(extra, store.View{ID: fmt.Sprintf("x-%d", i), TS: at(13, 0).Add(time.Duration(i) * time.Second),
+		extra = append(extra, store.Event{Family: store.FamilyViews, ID: fmt.Sprintf("x-%d", i), TS: at(13, 0).Add(time.Duration(i) * time.Second),
 			ActorID: "v3", Path: fmt.Sprintf("/x/%d", i), Platform: "web", OS: "linux", Browser: "firefox", BrowserVersion: "127", Device: "desktop"})
 	}
 	seedViews(t, db, extra...)
@@ -201,8 +201,8 @@ func TestStitchViewsInvariantAllViewsDimensions(t *testing.T) {
 func TestStitchViewConsentAcrossBoundary(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	v := func(id, actor string, c store.Consent, h int) store.View {
-		return store.View{ID: id, TS: at(h, 0), ActorID: actor, Kind: "web", Platform: "web", Path: "/", Consent: c}
+	v := func(id, actor string, c store.Consent, h int) store.Event {
+		return store.Event{Family: store.FamilyViews, ID: id, TS: at(h, 0), ActorID: actor, Kind: "web", Platform: "web", Path: "/", Consent: c}
 	}
 	seedViews(t, db,
 		v("1", "a", store.ConsentGiven, 10), v("2", "a", store.ConsentGiven, 11), v("3", "b", store.ConsentGiven, 10),
@@ -273,8 +273,8 @@ func TestStitchViewUTMExcludesEmpty(t *testing.T) {
 func TestStitchViewLocalesExcludesUndeclared(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	v := func(id, actor, browser, app string) store.View {
-		return store.View{ID: id, TS: at(10, 0), ActorID: actor, Kind: "web", Platform: "web", Path: "/",
+	v := func(id, actor, browser, app string) store.Event {
+		return store.Event{Family: store.FamilyViews, ID: id, TS: at(10, 0), ActorID: actor, Kind: "web", Platform: "web", Path: "/",
 			BrowserLocale: browser, AppLocale: app}
 	}
 	seedViews(t, db, v("1", "a", "de-DE", "en"), v("2", "a", "de-DE", "en"), v("3", "b", "fr", ""),
@@ -376,8 +376,8 @@ func TestStitchViewsMixedAggregatedAndRawDays(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	seedViewDay(t, db) // 2026-08-10
-	if err := db.WriteViews(ctx, []store.View{
-		{ID: "9", ProjectID: 1, TS: ts("2026-08-11T10:00:00Z"), Kind: "web",
+	if err := db.WriteEvents(ctx, []store.Event{
+		{Family: store.FamilyViews, ID: "9", ProjectID: 1, TS: ts("2026-08-11T10:00:00Z"), Kind: "web",
 			ActorKind: store.ActorConnection, ActorID: "v9", Path: "/a"},
 	}); err != nil {
 		t.Fatal(err)
@@ -419,10 +419,10 @@ func TestStitchViewIdentityDailyCoversRawDays(t *testing.T) {
 	ctx := context.Background()
 	tsV := time.Date(2026, 8, 23, 10, 0, 0, 0, time.UTC)
 
-	if err := db.WriteViews(ctx, []store.View{
-		{ID: "1", ProjectID: 1, TS: tsV, ReceivedAt: tsV, Kind: "app", ActorKind: store.ActorInstall, ActorID: "a",
+	if err := db.WriteEvents(ctx, []store.Event{
+		{Family: store.FamilyViews, ID: "1", ProjectID: 1, TS: tsV, ReceivedAt: tsV, Kind: "app", ActorKind: store.ActorInstall, ActorID: "a",
 			UserID: "u1", GroupID: "org9", Path: "/x"},
-		{ID: "2", ProjectID: 1, TS: tsV, ReceivedAt: tsV, Kind: "app", ActorKind: store.ActorInstall, ActorID: "b",
+		{Family: store.FamilyViews, ID: "2", ProjectID: 1, TS: tsV, ReceivedAt: tsV, Kind: "app", ActorKind: store.ActorInstall, ActorID: "b",
 			UserID: "u2", GroupID: "org9", Path: "/x"},
 	}); err != nil {
 		t.Fatal(err)
@@ -475,10 +475,10 @@ func TestStitchViewIdentityDailyDoesNotDoubleCountRetainedRawDays(t *testing.T) 
 	ctx := context.Background()
 	ts := time.Date(2026, 8, 23, 10, 0, 0, 0, time.UTC)
 
-	if err := db.WriteViews(ctx, []store.View{
-		{ID: "1", ProjectID: 1, TS: ts, ReceivedAt: ts, Kind: "web",
+	if err := db.WriteEvents(ctx, []store.Event{
+		{Family: store.FamilyViews, ID: "1", ProjectID: 1, TS: ts, ReceivedAt: ts, Kind: "web",
 			ActorKind: store.ActorUser, ActorID: "a", UserID: "u1", GroupID: "org9", Path: "/x"},
-		{ID: "2", ProjectID: 1, TS: ts, ReceivedAt: ts, Kind: "web",
+		{Family: store.FamilyViews, ID: "2", ProjectID: 1, TS: ts, ReceivedAt: ts, Kind: "web",
 			ActorKind: store.ActorUser, ActorID: "a", UserID: "u1", GroupID: "org9", Path: "/y"},
 	}); err != nil {
 		t.Fatal(err)
@@ -511,23 +511,23 @@ func TestStitchViewIdentityDailyCapsLikeTheAggregate(t *testing.T) {
 	ts := time.Date(2026, 8, 23, 10, 0, 0, 0, time.UTC)
 
 	n := topNDimension + 5
-	var views []store.View
-	var events []store.ProductEvent
+	var views []store.Event
+	var events []store.Event
 	for i := 0; i < n; i++ {
 		u, g := fmt.Sprintf("u%03d", i), fmt.Sprintf("g%03d", i)
-		views = append(views, store.View{ID: fmt.Sprintf("v%d", i), ProjectID: 1, TS: ts, ReceivedAt: ts,
+		views = append(views, store.Event{Family: store.FamilyViews, ID: fmt.Sprintf("v%d", i), ProjectID: 1, TS: ts, ReceivedAt: ts,
 			Kind: "web", ActorKind: store.ActorUser, ActorID: u, UserID: u, GroupID: g, Path: "/"})
 		// The last ids sort after the cut by id alone; an extra product
 		// event ranks them first, so only a count-ordered cap keeps them.
 		if i >= n-5 {
-			events = append(events, store.ProductEvent{ID: fmt.Sprintf("e%d", i), ProjectID: 1, EventName: "clicked",
+			events = append(events, store.Event{Family: store.FamilyProduct, ID: fmt.Sprintf("e%d", i), ProjectID: 1, EventName: "clicked",
 				TS: ts, ReceivedAt: ts, ActorID: u, ActorKind: store.ActorUser, UserID: u, GroupID: g})
 		}
 	}
-	if err := db.WriteViews(ctx, views); err != nil {
+	if err := db.WriteEvents(ctx, views); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.WriteProductEvents(ctx, events); err != nil {
+	if err := db.WriteEvents(ctx, events); err != nil {
 		t.Fatal(err)
 	}
 
@@ -641,12 +641,12 @@ func readAttrs(t *testing.T, db *DB, projectID int64, day string) []attrRow {
 func seedAttrDay(t *testing.T, db *DB, projectID int64) {
 	t.Helper()
 	groups := []string{"", "g1", "g2"}
-	var evs []store.ProductEvent
+	var evs []store.Event
 	id := 0
 	for i := 0; i < 60; i++ {
 		for n := 0; n <= i%3; n++ {
 			id++
-			evs = append(evs, store.ProductEvent{
+			evs = append(evs, store.Event{Family: store.FamilyProduct,
 				ID: fmt.Sprintf("e%04d", id), ProjectID: projectID, EventName: "signup",
 				ActorID: fmt.Sprintf("a%d", (i+n)%4), GroupID: groups[(i/3+n)%3],
 				TS:         ts("2026-08-01T10:00:00Z"),
@@ -658,12 +658,12 @@ func seedAttrDay(t *testing.T, db *DB, projectID int64) {
 		}
 	}
 	// A second event name, so the per-event partitioning is exercised too.
-	evs = append(evs, store.ProductEvent{
+	evs = append(evs, store.Event{Family: store.FamilyProduct,
 		ID: "ping1", ProjectID: projectID, EventName: "ping", ActorID: "a9", GroupID: "g1",
 		TS: ts("2026-08-01T11:00:00Z"), Attributes: map[string]string{"plan": "pro"},
 		OS: "web", AppVersion: "1.0",
 	})
-	if err := db.WriteProductEvents(context.Background(), evs); err != nil {
+	if err := db.WriteEvents(context.Background(), evs); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -899,9 +899,9 @@ func TestStitchViewPlatformsAcrossBoundaryWithCap(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	seedViewDay(t, db)
-	var extra []store.View
+	var extra []store.Event
 	for i := 0; i < topNDimension+5; i++ {
-		extra = append(extra, store.View{ID: fmt.Sprintf("p-%d", i), TS: at(13, 0).Add(time.Duration(i) * time.Second),
+		extra = append(extra, store.Event{Family: store.FamilyViews, ID: fmt.Sprintf("p-%d", i), TS: at(13, 0).Add(time.Duration(i) * time.Second),
 			ActorID: "v3", Path: "/x", Platform: fmt.Sprintf("p%d", i), OS: "linux", Browser: "firefox", Device: "desktop"})
 	}
 	seedViews(t, db, extra...)

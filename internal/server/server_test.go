@@ -23,19 +23,18 @@ import (
 
 type fakeQueue struct {
 	mu         sync.Mutex
-	views      []store.View
-	events     []store.ProductEvent
+	views      []store.Event
+	events     []store.Event
 	identities []store.Identity
 }
 
-func (f *fakeQueue) EnqueueView(v store.View) {
+func (f *fakeQueue) Enqueue(e store.Event) {
 	f.mu.Lock()
-	f.views = append(f.views, v)
-	f.mu.Unlock()
-}
-func (f *fakeQueue) EnqueueEvent(e store.ProductEvent) {
-	f.mu.Lock()
-	f.events = append(f.events, e)
+	if e.Family == store.FamilyViews {
+		f.views = append(f.views, e)
+	} else {
+		f.events = append(f.events, e)
+	}
 	f.mu.Unlock()
 }
 

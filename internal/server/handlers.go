@@ -144,7 +144,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			if strings.HasPrefix(ev.Name, "$") {
 				res.warn(i, "unknown reserved name %s, stored as a custom event", ev.Name)
 			}
-			s.queue.EnqueueEvent(store.ProductEvent{
+			s.queue.Enqueue(store.Event{Family: store.FamilyProduct,
 				ID: id, ProjectID: p.ID, EventName: ev.Name,
 				TS: ts, ReceivedAt: received,
 				ActorID: actor, ActorKind: actorKind, UserID: user, GroupID: group,
@@ -184,7 +184,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		// explicit: $os, $platform, then $browser and $device.
 		browser := res.declared(i, "$browser", rv.Browser, enrich.NormalizeBrowser)
 		device := res.declared(i, "$device", rv.Device, enrich.NormalizeDevice)
-		v := store.View{
+		v := store.Event{Family: store.FamilyViews,
 			ID: id, ProjectID: p.ID, TS: ts, ReceivedAt: received, Kind: kind,
 			ActorID: actor, ActorKind: actorKind, UserID: user, GroupID: group, SessionID: rv.SessionID,
 			Host: rv.Host, Path: path,
@@ -220,7 +220,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		if v.DisplayHeight, bad = parseDisplay(rv.displayHeightRaw); bad {
 			res.warn(i, "$display_height %q is not a positive integer, ignored", rv.displayHeightRaw)
 		}
-		s.queue.EnqueueView(v)
+		s.queue.Enqueue(v)
 		noteRow(actorKind, rv)
 		res.Accepted++
 	}

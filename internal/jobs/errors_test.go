@@ -217,8 +217,8 @@ func TestRunDailyPassLogsUpsertActorsFailure(t *testing.T) {
 	st, fst, r, buf := setupFaulty(t, jobsVars, appJobsSpecs)
 	ctx := context.Background()
 	ts := mustTime("2026-08-20T10:00:00Z")
-	if err := st.WriteViews(ctx, []store.View{
-		{ID: "1", ProjectID: 1, TS: ts, ReceivedAt: ts, Kind: "web", ActorID: "v", ActorKind: store.ActorConnection, Path: "/"}}); err != nil {
+	if err := st.WriteEvents(ctx, []store.Event{
+		{Family: store.FamilyViews, ID: "1", ProjectID: 1, TS: ts, ReceivedAt: ts, Kind: "web", ActorID: "v", ActorKind: store.ActorConnection, Path: "/"}}); err != nil {
 		t.Fatal(err)
 	}
 	fst.failing("UpsertActors")
@@ -234,8 +234,8 @@ func TestRunDailyPassLogsAggregateRetentionDayFailure(t *testing.T) {
 	st, fst, r, buf := setupFaulty(t, jobsVars, appJobsSpecs)
 	ctx := context.Background()
 	ts := mustTime("2026-08-20T10:00:00Z")
-	if err := st.WriteViews(ctx, []store.View{
-		{ID: "1", ProjectID: 1, TS: ts, ReceivedAt: ts, Kind: "web", ActorID: "v", ActorKind: store.ActorConnection, Path: "/"}}); err != nil {
+	if err := st.WriteEvents(ctx, []store.Event{
+		{Family: store.FamilyViews, ID: "1", ProjectID: 1, TS: ts, ReceivedAt: ts, Kind: "web", ActorID: "v", ActorKind: store.ActorConnection, Path: "/"}}); err != nil {
 		t.Fatal(err)
 	}
 	fst.failing("AggregateRetentionDay")
@@ -251,8 +251,8 @@ func TestRunDailyPassLogsAggregateIdentityDayFailure(t *testing.T) {
 	st, fst, r, buf := setupFaulty(t, jobsVars, jobsProjectSpecs)
 	ctx := context.Background()
 	ts := mustTime("2026-08-20T10:00:00Z")
-	if err := st.WriteViews(ctx, []store.View{
-		{ID: "1", ProjectID: 1, TS: ts, ReceivedAt: ts, Kind: "web", ActorID: "v", ActorKind: store.ActorConnection, Path: "/"}}); err != nil {
+	if err := st.WriteEvents(ctx, []store.Event{
+		{Family: store.FamilyViews, ID: "1", ProjectID: 1, TS: ts, ReceivedAt: ts, Kind: "web", ActorID: "v", ActorKind: store.ActorConnection, Path: "/"}}); err != nil {
 		t.Fatal(err)
 	}
 	fst.failing("AggregateIdentityDay")
@@ -268,8 +268,8 @@ func TestRunDailyPassLogsAggregateViewDayFailure(t *testing.T) {
 	st, fst, r, buf := setupFaulty(t, jobsVars, jobsProjectSpecs)
 	ctx := context.Background()
 	ts := mustTime("2026-08-10T10:00:00Z")
-	if err := st.WriteViews(ctx, []store.View{
-		{ID: "1", ProjectID: 1, TS: ts, ReceivedAt: ts, Kind: "web", ActorID: "v", ActorKind: store.ActorConnection, Path: "/"}}); err != nil {
+	if err := st.WriteEvents(ctx, []store.Event{
+		{Family: store.FamilyViews, ID: "1", ProjectID: 1, TS: ts, ReceivedAt: ts, Kind: "web", ActorID: "v", ActorKind: store.ActorConnection, Path: "/"}}); err != nil {
 		t.Fatal(err)
 	}
 	fst.failing("AggregateViewDay")
@@ -294,8 +294,8 @@ func TestRunDailyPassLogsAggregateViewDayFailure(t *testing.T) {
 func TestRunDailyPassLogsAggregateProductDayFailure(t *testing.T) {
 	st, fst, r, buf := setupFaulty(t, jobsVars, jobsProjectSpecs)
 	ctx := context.Background()
-	if err := st.WriteProductEvents(ctx, []store.ProductEvent{
-		{ID: "1", ProjectID: 1, EventName: "e", ActorID: "u", TS: mustTime("2026-08-10T10:00:00Z")}}); err != nil {
+	if err := st.WriteEvents(ctx, []store.Event{
+		{Family: store.FamilyProduct, ID: "1", ProjectID: 1, EventName: "e", ActorID: "u", TS: mustTime("2026-08-10T10:00:00Z")}}); err != nil {
 		t.Fatal(err)
 	}
 	fst.failing("AggregateProductDay")
