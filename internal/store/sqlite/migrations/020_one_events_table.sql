@@ -82,8 +82,10 @@ SELECT id, project_id, 'views', CASE kind WHEN 'web' THEN '$page_view' ELSE '$sc
     display_width, display_height, country, consent, '{}'
 FROM views;
 
--- OR IGNORE: ids are client UUIDs, so a product event reusing a view's id
--- is the only collision possible, and the view wins.
+-- OR IGNORE: the two old tables had separate primary keys, so a client that
+-- reused a UUID can hold it once in each. The view wins and that product
+-- event is dropped, silently: losing the rare row a client double-used is
+-- accepted over failing the upgrade or minting an id nobody sent.
 INSERT OR IGNORE INTO events_new (id, project_id, family, event_name, ts, received_at,
     actor_id, actor_kind, user_id, group_id, platform, os, app_version, app_locale,
     consent, attributes)

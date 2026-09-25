@@ -546,13 +546,12 @@ export class Twillingate implements Subscriber {
   // threw) leaves the remembered location as it was.
   private rememberViewLocation(sent: Record<string, unknown> | null): void {
     if (!sent) return;
+    // The collector's precedence: a non-empty $path is the view's path and
+    // $screen only stands in when there is none, so remember what it stored.
     const loc: Record<string, unknown> = {};
-    if (typeof sent.$screen === "string") {
-      loc.$screen = sent.$screen;
-    } else {
-      if (typeof sent.$host === "string") loc.$host = sent.$host;
-      if (typeof sent.$path === "string") loc.$path = sent.$path;
-    }
+    if (typeof sent.$host === "string") loc.$host = sent.$host;
+    if (typeof sent.$path === "string" && sent.$path !== "") loc.$path = sent.$path;
+    else if (typeof sent.$screen === "string") loc.$screen = sent.$screen;
     this.lastViewLocation = loc;
   }
 

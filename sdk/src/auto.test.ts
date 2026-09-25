@@ -159,6 +159,18 @@ describe("a product event echoes the last view's location", () => {
     expect(screenView.$screen).toBe("/settings");
     expect(event.$screen).toBe("/settings");
   });
+
+  // The collector stores a non-empty $path over $screen, so the event must
+  // echo the path the view was stored under, not its $screen.
+  it("a screen view that also sends $path is remembered by its $path", async () => {
+    const t = tg({ kind: "app" });
+    t.screen("/a", { $path: "/b" });
+    t.track("export");
+    await drain();
+    const [, event] = sent[0].body.events.map((e) => e.attributes as Record<string, unknown>);
+    expect(event.$path).toBe("/b");
+    expect(event).not.toHaveProperty("$screen");
+  });
 });
 
 describe("autoAttributes: false", () => {
