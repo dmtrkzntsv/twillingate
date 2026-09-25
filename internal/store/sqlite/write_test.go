@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"testing"
 	"time"
 
@@ -37,6 +38,30 @@ func TestWriteViewsRoundTrip(t *testing.T) {
 	}
 	if err := db.WriteEvents(ctx, nil); err != nil {
 		t.Fatal("empty batch must be a no-op")
+	}
+}
+
+// A row outside both families would be invisible to raw_views and
+// raw_product and never pruned, so the batch holding it is refused whole.
+func TestWriteEventsRefusesAnUnknownFamily(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	at := ts("2026-08-22T10:00:00Z")
+	for _, family := range []store.Family{"", "View"} {
+		err := db.WriteEvents(ctx, []store.Event{
+			{Family: store.FamilyViews, ID: "ok", ProjectID: 1, TS: at, Kind: "web", ActorID: "a", Path: "/"},
+			{Family: family, ID: "stray", ProjectID: 1, EventName: "e", TS: at, ActorID: "a"},
+		})
+		if err == nil || !strings.Contains(err.Error(), "stray") {
+			t.Errorf("family %q: err = %v, want a refusal naming the row id", family, err)
+		}
+	}
+	var n int
+	if err := db.db.QueryRow(`SELECT COUNT(*) FROM events`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Errorf("events holds %d rows after refused batches, want 0", n)
 	}
 }
 

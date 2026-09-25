@@ -11,11 +11,22 @@ import (
 
 // flatViewBaseColumns are the non-attribute columns of v_events_flat. The
 // view holds both families, views and product events alike, and family
-// tells them apart. attributes carries the raw JSON, so a key that isn't
+// tells them apart. It carries every typed column of the raw row (a
+// reserved key is one of these, never an attr_ column); only day,
+// received_at and actor_kind are left out. Migration 020 creates the view
+// with exactly this list, so the boot rebuild is a no-op when nothing is
+// declared. attributes carries the raw JSON, so a key that isn't
 // declared (and so gets no attr_ column) stays reachable via json_extract
 // — the view is never a downgrade from the base table. Every attribute column carries an
 // attr_ prefix, so none can collide with these.
-var flatViewBaseColumns = []string{"id", "project_id", "family", "event_name", "actor_id", "kind", "consent", "ts", "attributes"}
+var flatViewBaseColumns = []string{
+	"id", "project_id", "family", "event_name", "actor_id",
+	"kind", "session_id", "user_id", "group_id", "host", "path", "referrer_source",
+	"utm_source", "utm_medium", "utm_campaign", "platform", "os", "os_version", "os_name",
+	"browser", "browser_version", "browser_locale", "app_version", "app_locale",
+	"device", "device_model", "display_width", "display_height", "country",
+	"consent", "ts", "attributes",
+}
 
 // sanitizeAlias strips everything outside [A-Za-z0-9_] from an attribute key.
 // The result is always safe to splice into DDL unquoted once prefixed, which

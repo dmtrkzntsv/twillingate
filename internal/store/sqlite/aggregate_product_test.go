@@ -398,3 +398,49 @@ func TestAggregateProductGroupsInTail(t *testing.T) {
 		t.Fatalf("(other): count=%d unique_groups=%+v, want 4 and 2 (acme, globex; a summed tail would say 3)", count, groups)
 	}
 }
+
+// Both families share the one raw table, so each daily rollup must delete
+// only its own family's rows for the day: a views pass that also dropped the
+// day's product rows would lose them before the product pass read them, and
+// the reverse.
+func TestAggregateDayDeletesOnlyItsFamily(t *testing.T) {
+	ctx := context.Background()
+	count := func(t *testing.T, db *DB, view string) int {
+		t.Helper()
+		var n int
+		if err := db.db.QueryRow(`SELECT COUNT(*) FROM ` + view + ` WHERE project_id=1 AND day='2026-08-10'`).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	t.Run("views pass keeps product rows", func(t *testing.T) {
+		db := newTestDB(t)
+		seedViewDay(t, db)
+		seedProductDay(t, db)
+		before := count(t, db, "raw_product")
+		if err := db.AggregateViewDay(ctx, 1, day("2026-08-10")); err != nil {
+			t.Fatal(err)
+		}
+		if n := count(t, db, "raw_views"); n != 0 {
+			t.Errorf("raw_views left %d rows, want 0", n)
+		}
+		if n := count(t, db, "raw_product"); n != before || n == 0 {
+			t.Errorf("raw_product = %d rows after the views pass, want %d", n, before)
+		}
+	})
+	t.Run("product pass keeps view rows", func(t *testing.T) {
+		db := newTestDB(t)
+		seedViewDay(t, db)
+		seedProductDay(t, db)
+		before := count(t, db, "raw_views")
+		if err := db.AggregateProductDay(ctx, 1, day("2026-08-10"), nil, 50); err != nil {
+			t.Fatal(err)
+		}
+		if n := count(t, db, "raw_product"); n != 0 {
+			t.Errorf("raw_product left %d rows, want 0", n)
+		}
+		if n := count(t, db, "raw_views"); n != before || n == 0 {
+			t.Errorf("raw_views = %d rows after the product pass, want %d", n, before)
+		}
+	})
+}

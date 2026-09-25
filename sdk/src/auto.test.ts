@@ -123,6 +123,33 @@ describe("a product event echoes the last view's location", () => {
     expect(event.$path).toBe("/account/[id]");
   });
 
+  it("an onEvent rewrite of a view's $path reaches later product events", async () => {
+    const t = tg();
+    t.onEvent(({ name }) => (name === "$page_view" ? { $path: "/redacted" } : undefined));
+    history.replaceState(null, "", "/account/42");
+    t.page();
+    t.track("x");
+    await drain();
+    const [view, event] = sent[0].body.events.map((e) => e.attributes as Record<string, unknown>);
+    expect(view.$path).toBe("/redacted");
+    expect(event.$path).toBe("/redacted");
+  });
+
+  it("a view an onEvent listener cancels is not echoed by later product events", async () => {
+    const t = tg();
+    t.onEvent(({ name, attributes }) => (name === "$page_view" && attributes.$path === "/secret" ? false : undefined));
+    history.replaceState(null, "", "/public");
+    t.page();
+    history.replaceState(null, "", "/secret");
+    t.page();
+    t.track("x");
+    await drain();
+    const events = sent[0].body.events;
+    expect(events.map((e) => e.name)).toEqual(["$page_view", "x"]);
+    const event = events[1].attributes as Record<string, unknown>;
+    expect(event.$path).toBe("/public");
+  });
+
   it("after screen(), a product event carries that view's $screen", async () => {
     const t = tg({ kind: "app" });
     t.screen("/settings");

@@ -15,9 +15,19 @@ const tsFormat = "2006-01-02T15:04:05Z"
 // WriteEvents stores a batch of raw rows, views and product events alike,
 // in the one raw table. INSERT OR IGNORE: with client-supplied UUIDv7 ids,
 // a batch retried after a timeout that actually succeeded is a no-op.
+//
+// A row whose family is neither views nor product refuses the whole batch
+// before anything is written: raw_views and raw_product would both miss
+// it, so it would never be read, rolled up or pruned.
 func (d *DB) WriteEvents(ctx context.Context, evs []store.Event) error {
 	if len(evs) == 0 {
 		return nil
+	}
+	for _, e := range evs {
+		if e.Family != store.FamilyViews && e.Family != store.FamilyProduct {
+			return fmt.Errorf("event %s: family %q is neither %q nor %q",
+				e.ID, e.Family, store.FamilyViews, store.FamilyProduct)
+		}
 	}
 	return d.tx(ctx, func(tx *sql.Tx) error {
 		stmt, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO events

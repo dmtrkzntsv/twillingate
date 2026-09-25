@@ -17,9 +17,10 @@ type createProjectIn struct {
 	Name           string   `json:"name" jsonschema:"display name (required); need not be unique"`
 	AllowedOrigins []string `json:"allowed_origins,omitempty" jsonschema:"origins allowed to post events. * is a wildcard: https://*.example.com covers every subdomain, a bare * allows any origin"`
 	// Attributes declares which product-event attribute keys are broken
-	// down (v_events_flat columns, agg_product_attrs rollups). Rollups
+	// down (attr_ columns in v_events_flat for custom keys,
+	// agg_product_attrs rollups). Rollups
 	// always run regardless of this list.
-	Attributes []string `json:"attributes,omitempty" jsonschema:"attribute keys to break down and expose as flat-view columns"`
+	Attributes []string `json:"attributes,omitempty" jsonschema:"attribute keys to break down; a custom key also gets an attr_ column in v_events_flat, a reserved $ key is already a typed column there"`
 	// SkipKey rather than IssueKey: JSON booleans have no "unset", and
 	// the zero value must give the default behaviour (issue a key).
 	SkipKey bool `json:"skip_key,omitempty" jsonschema:"set true to NOT issue a first ingest key"`

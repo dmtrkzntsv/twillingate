@@ -369,6 +369,20 @@ func TestKindDeclaredValidatedAndDefaulted(t *testing.T) {
 	}
 }
 
+// A product event has no default kind, so an invalid $kind is ignored,
+// not replaced by an empty "using" value.
+func TestInvalidKindOnAProductEventIsIgnored(t *testing.T) {
+	q, h := testServer(t)
+	w := post(h, envelopeOf(`{"name":"signup","attributes":{"$kind":"Bad Kind!"}}`), nil)
+	res := decodeResult(t, w)
+	if res.Accepted != 1 || len(res.Warnings) != 1 || res.Warnings[0].Reason != `invalid $kind "Bad Kind!", ignored` {
+		t.Errorf("result = %+v", res)
+	}
+	if len(q.events) != 1 || q.events[0].Kind != "" {
+		t.Errorf("events = %+v, want one with an empty kind", q.events)
+	}
+}
+
 // A web batch that declares nothing stores unknown for os, browser and
 // device: the server no longer derives any of them from the User-Agent.
 // The one thing it still reads the User-Agent for is the crawler drop.
@@ -499,6 +513,24 @@ func TestBrowserAndDeviceAreValidated(t *testing.T) {
 	}
 	if len(q.events) != 1 || q.events[0].Browser != "safari" || q.events[0].Device != "mobile" || len(q.events[0].Attributes) != 0 {
 		t.Errorf("product event = %+v, want safari/mobile stored as columns, not attributes", q.events)
+	}
+}
+
+// The bot filter drops web views only: a product event declaring the web
+// kind under a crawler User-Agent is stored like any other product event.
+func TestBotFilterKeepsWebKindProductEvents(t *testing.T) {
+	q, h := testServer(t)
+	body := envelopeOf(`{"name":"$page_view","attributes":{"$host":"app.com","$path":"/x"}},
+		{"name":"signup","attributes":{"$kind":"web","$host":"app.com","$path":"/x"}}`)
+	w := post(h, body, map[string]string{"User-Agent": "Googlebot/2.1"})
+	if res := decodeResult(t, w); res.Accepted != 2 || res.Rejected != 0 {
+		t.Errorf("result = %+v", res)
+	}
+	if len(q.views) != 0 {
+		t.Errorf("the web view must be bot-filtered: %+v", q.views)
+	}
+	if len(q.events) != 1 || q.events[0].Kind != "web" || q.events[0].EventName != "signup" || q.events[0].Path != "/x" {
+		t.Errorf("web-kind product event = %+v, want it stored", q.events)
 	}
 }
 

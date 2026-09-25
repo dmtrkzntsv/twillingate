@@ -157,12 +157,77 @@ func TestRunDailyPassAggregatesOldDays(t *testing.T) {
 	if len(oldProd) != 0 {
 		t.Fatalf("old product raw must be gone: %v", oldProd)
 	}
+	// Both families share one raw table: each must have been rolled up, not
+	// deleted by the other family's pass before its own ran.
+	if got := queryDays(t, `SELECT kind || ':' || views FROM agg_views_daily
+		WHERE project_id=1 AND day='2026-08-10'`); len(got) != 1 || got[0] != "web:1" {
+		t.Errorf("agg_views_daily for 2026-08-10 = %v, want [web:1]", got)
+	}
+	if got := queryDays(t, `SELECT event_name || ':' || count FROM agg_product_daily
+		WHERE project_id=1 AND day='2026-08-10'`); len(got) != 1 || got[0] != "e:1" {
+		t.Errorf("agg_product_daily for 2026-08-10 = %v, want [e:1]", got)
+	}
 	// Second pass is a no-op (idempotency at the job level).
 	if err := r.RunDailyPass(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if len(recent) != 1 {
 		t.Fatal("second pass must not disturb in-window raw data")
+	}
+}
+
+// Each family ages out by its own raw window. With the windows apart, the
+// family still inside its window must keep its raw rows for the shared day
+// (the other family's pass must not delete them) and must not be rolled up.
+func TestRunDailyPassAggregatesEachFamilyByItsOwnWindow(t *testing.T) {
+	for _, tc := range []struct {
+		name              string
+		viewsRaw, prodRaw string
+		wantViewsAgg      bool
+		wantProductAgg    bool
+	}{
+		{"views aged out, product inside", "7", "30", true, false},
+		{"product aged out, views inside", "30", "7", false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			vars := map[string]string{
+				"RETENTION_VIEWS_RAW_DAYS": tc.viewsRaw, "RETENTION_VIEWS_AGGREGATE_DAYS": "365",
+				"RETENTION_PRODUCT_RAW_DAYS": tc.prodRaw, "RETENTION_PRODUCT_AGGREGATE_DAYS": "365",
+			}
+			st, _, r := setup(t, vars, jobsProjectSpecs)
+			ctx := context.Background()
+			// 2026-08-10 is 12 days before the fake now: outside a 7-day
+			// window, inside a 30-day one.
+			old := mustTime("2026-08-10T10:00:00Z")
+			if err := st.WriteEvents(ctx, []store.Event{
+				{Family: store.FamilyViews, ID: "v", ProjectID: 1, TS: old, ReceivedAt: old,
+					Kind: "web", ActorID: "v", ActorKind: store.ActorConnection, Path: "/"},
+				{Family: store.FamilyProduct, ID: "p", ProjectID: 1, EventName: "e", UserID: "u", TS: old, ReceivedAt: old},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if err := r.RunDailyPass(ctx); err != nil {
+				t.Fatal(err)
+			}
+			rawViews := queryDays(t, `SELECT id FROM raw_views WHERE project_id=1 AND day='2026-08-10'`)
+			rawProduct := queryDays(t, `SELECT id FROM raw_product WHERE project_id=1 AND day='2026-08-10'`)
+			aggViews := queryDays(t, `SELECT day FROM agg_views_daily WHERE project_id=1 AND day='2026-08-10'`)
+			aggProduct := queryDays(t, `SELECT day FROM agg_product_daily WHERE project_id=1 AND day='2026-08-10'`)
+			if tc.wantViewsAgg {
+				if len(rawViews) != 0 || len(aggViews) != 1 {
+					t.Errorf("views: raw %v agg %v, want rolled up", rawViews, aggViews)
+				}
+			} else if len(rawViews) != 1 || len(aggViews) != 0 {
+				t.Errorf("views: raw %v agg %v, want raw kept and not rolled up", rawViews, aggViews)
+			}
+			if tc.wantProductAgg {
+				if len(rawProduct) != 0 || len(aggProduct) != 1 {
+					t.Errorf("product: raw %v agg %v, want rolled up", rawProduct, aggProduct)
+				}
+			} else if len(rawProduct) != 1 || len(aggProduct) != 0 {
+				t.Errorf("product: raw %v agg %v, want raw kept and not rolled up", rawProduct, aggProduct)
+			}
+		})
 	}
 }
 

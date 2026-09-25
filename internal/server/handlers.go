@@ -152,7 +152,11 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			if kindPattern.MatchString(rv.Kind) {
 				kind = rv.Kind
 			} else {
-				res.warn(i, "invalid $kind %q, using %q", rv.Kind, defaultKind)
+				if isView {
+					res.warn(i, "invalid $kind %q, using %q", rv.Kind, defaultKind)
+				} else {
+					res.warn(i, "invalid $kind %q, ignored", rv.Kind)
+				}
 			}
 		}
 		path := rv.Path

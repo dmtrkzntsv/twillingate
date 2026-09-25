@@ -96,11 +96,12 @@ twillingate key disable -project-id 1 -label ios-2025
 twillingate project update -id 1 -attr plan -attr tier
 ```
 
-A declared key gets an `attr_*` column in `v_events_flat` and a value breakdown
-(counts and unique users/groups per value, per event, per day) in
-`agg_product_attrs` / `v_product_attrs`. Undeclared keys are still stored and
-reachable via `json_extract(attributes, '$.junk')`; declaring one later does not
-backfill. `PRODUCT_ATTRIBUTES_TOP_N` (default 50, set
+A declared key gets a value breakdown (counts and unique users/groups per
+value, per event, per day) in `agg_product_attrs` / `v_product_attrs`. A
+declared custom key also gets an `attr_*` column in `v_events_flat`; a declared
+reserved key is already a typed column there. Undeclared keys are still
+stored and reachable via `json_extract(attributes, '$.junk')`; declaring one
+later does not backfill. `PRODUCT_ATTRIBUTES_TOP_N` (default 50, set
 [server-side](deployment.md#configure-the-collector)) keeps the top N values per
 key and collapses the tail into one `(other)` row whose unique counts are
 recomputed from raw, so **a client sending the literal `(other)` loses its own
@@ -247,9 +248,10 @@ explicit value still beats an earlier family `null`. `autoAttributes: false`
 sends none of the derived values except what a view needs to exist (`$host`
 and `$path`, or `$screen`), plus `$kind`, `$platform` for the web kind,
 `$consent` and identity. A product event carries the location of the last
-view this instance sent — after `maskUrl` and any `onPage` redaction — so an
-`onPage` recipe that redacts a pageview's path (`/account/12` →
-`/account/[id]`) redacts product events the same way; before the first view,
+view this instance sent — after `maskUrl`, any `onPage` redaction and any
+`onEvent` rewrite; a view an `onEvent` listener drops is not remembered — so
+a recipe that redacts a pageview's path (`/account/12` → `/account/[id]`)
+redacts product events the same way; before the first view,
 it carries a `maskUrl`-derived location only when no `onPage` listener is
 registered.
 
@@ -671,13 +673,16 @@ batch to drop.
 
 ### Reserved attribute keys
 
-| Group | Keys |
-| --- | --- |
-| Identity | `$install_id` `$user_id` `$user_name` `$group_id` `$group_name` `$session_id` `$consent` |
-| Environment | `$kind` `$platform` `$os` `$os_version` `$os_name` `$browser` `$browser_version` `$device` `$device_model` `$app_version` `$app_locale` `$browser_locale` `$display_width` `$display_height` |
-| Location | `$host` `$path` `$screen` `$utm_source` `$utm_medium` `$utm_campaign` `$referrer` |
+| Group | Keys | Sent automatically by the JS SDK |
+| --- | --- | --- |
+| Identity | `$install_id` `$user_id` `$user_name` `$group_id` `$group_name` `$session_id` `$consent` | `$install_id` (identified instance with consent), `$consent` |
+| Environment | `$kind` `$platform` `$os` `$os_version` `$os_name` `$browser` `$browser_version` `$device` `$device_model` `$app_version` `$app_locale` `$browser_locale` `$display_width` `$display_height` | `$kind`, `$platform` (`web` for the web kind), `$os` `$os_version` `$os_name` `$browser` `$browser_version` `$browser_locale` `$device` `$display_width` `$display_height` |
+| Location | `$host` `$path` `$screen` `$utm_source` `$utm_medium` `$utm_campaign` `$referrer` | `$host` `$path` (web kind) or `$screen` (app kind) on views and, from the last view, on product events; `$referrer` `$utm_source` `$utm_medium` `$utm_campaign` on web views only |
 
-Every key is stored on views and product events alike.
+Every key is stored on views and product events alike. The SDK sends the
+rest only when the page sets them (`identify()`, `group()`, `attrs()`, the
+`platform`, `appVersion` and `appLocale` options). `autoAttributes: false`
+turns the derived environment and location off, except what a view needs.
 
 `$consent` is whether the client had consent to keep anything on the device
 when it sent the event: `1` (or `true`) given, `0` (or `false`) not given, as a
@@ -868,9 +873,11 @@ the list and `(other)` is the cap. Product events have `v_product_daily`,
 `v_product_totals` and `v_product_attrs` (whose `unique_groups` is NULL, not
 zero, for days rolled up before it was measured — `MAX()` skips it, `SUM()`
 would too, a `COALESCE` to 0 would lie), plus `v_events_flat`, which holds
-every raw row of both families (views and product events) with its `family`
-column — filter `family = 'product'` for product events alone — its `consent`
-column (1, 0 or NULL) and one column per declared attribute.
+every raw row of both families (views and product events) with every typed
+column of the raw row: its `family` column — filter `family = 'product'` for
+product events alone — `kind`, the identity, location and environment columns
+(`path`, `os`, `country`, …), its `consent` column (1, 0 or NULL), the raw
+`attributes` JSON, and one `attr_*` column per declared custom attribute.
 `v_identity_daily` and `identities` join user and group activity to display
 names; `v_identity_daily` keeps the busiest 500 users and 500 groups per day
 and drops the rest with no `(other)` row, so do not sum it for totals.

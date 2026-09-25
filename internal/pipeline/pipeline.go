@@ -55,9 +55,10 @@ func (b *Buffer) Run(ctx context.Context) {
 	ticker := time.NewTicker(b.cfg.FlushInterval)
 	defer ticker.Stop()
 	var batch []store.Event
-	// One dispatch used by both the steady-state receive and the shutdown
-	// drain, so a new item kind cannot be handled in one and missed in the
-	// other.
+	// One append used by both the steady-state receive and the shutdown
+	// drain. Views and product events share the one batch, which is
+	// written in one transaction, so a failing row drops both families'
+	// rows in that batch once the retries are spent.
 	take := func(e store.Event) {
 		batch = append(batch, e)
 	}

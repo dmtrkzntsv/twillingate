@@ -253,9 +253,10 @@ that no longer exists, so every view it receives fails to store.
 
 Views and product events move into one raw table, `events`, with a `family`
 column (`views` or `product`). Every `v_*` view, aggregate table and tool
-answers exactly as before. The migration copies the raw window (days not yet
-rolled up, 30 by default) and drops the `views` table: seconds on a month
-of traffic.
+answers exactly as before, except as listed below. The migration copies the
+raw window (days not yet rolled up, 30 by default) and drops the `views`
+table: seconds on a month of traffic. While it runs the file briefly holds
+the raw window twice, so keep that much free disk.
 
 Before upgrading, run this against the live database:
 
@@ -269,10 +270,13 @@ SELECT id, attributes FROM projects WHERE attributes LIKE '%"$%';
 
 What changes on the day:
 
-- `v_events_flat` returns view rows too. Saved SQL over it adds
+- `v_events_flat` returns view rows too, and every typed column of the raw
+  row (`path`, `os`, `country`, …). Saved SQL over it adds
   `WHERE family = 'product'` to keep its old answer.
 - SQL reading the `views` table directly (the CLI's database, not the
   `query` tool) reads `events WHERE family = 'views'`.
+- SQL reading the `events` table directly now also gets view rows; it adds
+  `WHERE family = 'product'` to keep its old answer.
 - `product_attributes` always includes `$kind`, `$browser`, `$device` and
   `$browser_locale`. They are empty for product events stored before the
   upgrade, which never kept them.
@@ -280,5 +284,8 @@ What changes on the day:
 - A `null` per-event attribute now removes the batch value instead of storing `""`.
 - The served SDK adds the page's `$host` and `$path` (masked like a view's) to every product event, and accepts `autoAttributes: false` and `null` families. A product event carries the location of the last view the page sent, so an `onPage` redaction recipe applies to product events too. Pages on the cached old SDK send events without location for up to a day; purge the CDN copy of `/js/twillingate.js` if one sits in front of the collector.
 
-There is no down migration. The previous binary writes a `views` table that no
-longer exists.
+There is no down migration, and the previous binary cannot run against the
+upgraded file: its ingest fails for both views and product events (it writes
+a `views` table that no longer exists and `events` rows without a family) and
+its daily pass aborts. Rolling back means restoring the pre-upgrade copy or
+Litestream snapshot, so take one before upgrading.

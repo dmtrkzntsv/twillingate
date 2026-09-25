@@ -269,8 +269,8 @@ export class Twillingate implements Subscriber {
   // which drops pageviews (fail closed).
   private mask: ((href: string) => string) | null | undefined;
   // The location the last view this instance actually sent carried —
-  // captured after maskUrl and onPage redaction — so a product event can
-  // echo it. null until the first view is sent.
+  // captured after maskUrl, onPage redaction and onEvent listeners — so a
+  // product event can echo it. null until the first view is sent.
   private lastViewLocation: Record<string, unknown> | null = null;
   private routing: "history" | "hash" = "history";
   private firstPageviewSent = false;
@@ -451,16 +451,14 @@ export class Twillingate implements Subscriber {
     }
     this.firstPageviewSent = true;
     if (this.kind === "web") {
-      this.rememberViewLocation(attributes);
-      this.emit("$page_view", attributes);
+      this.rememberViewLocation(this.emit("$page_view", attributes));
       return;
     }
     // A non-web kind is an app: the route is the screen, and the page
     // context (host, referrer, campaign) does not apply.
     const { $host: _h, $referrer: _r, $utm_source: _s, $utm_medium: _m, $utm_campaign: _c, $path, ...rest } = attributes;
     const screenAttrs = { $screen: $path, ...rest };
-    this.rememberViewLocation(screenAttrs);
-    this.emit("$screen_view", screenAttrs);
+    this.rememberViewLocation(this.emit("$screen_view", screenAttrs));
   }
 
   /** Register a pageview listener; runs for every pageview, automatic ones included. */
@@ -487,8 +485,7 @@ export class Twillingate implements Subscriber {
       ...(this.autoAttributes ? displaySize() : {}),
       ...expandNulls(this.defaultAttrs), $screen: String(name), ...expandNulls(attrs),
     };
-    this.rememberViewLocation(screenAttrs);
-    this.emit("$screen_view", screenAttrs);
+    this.rememberViewLocation(this.emit("$screen_view", screenAttrs));
   }
 
   /** Opt-in product event, carrying where it happened unless autoAttributes is false. */
@@ -500,8 +497,9 @@ export class Twillingate implements Subscriber {
 
   // Where a product event happened: the location the last view this
   // instance carried — its $host and $path on the web kind, else its
-  // $screen — captured after maskUrl and any onPage redaction, so a
-  // redaction recipe written for pageviews reaches product events too.
+  // $screen — captured after maskUrl, any onPage redaction and any onEvent
+  // rewrite, so a redaction recipe written for pageviews reaches product
+  // events too.
   // Before any view has been sent, the current URL is derived through
   // maskUrl the same way, but only when no onPage listener is registered
   // (one might still redact it) and no configured mask is unresolvable;
@@ -543,11 +541,11 @@ export class Twillingate implements Subscriber {
   }
 
   // Record what a view actually sent, so the next product event can echo
-  // it. Reads the object handed to emit() -- before onEvent listeners run
-  // -- rather than what left after them: keeping every kind of listener's
-  // output in sync would need emit() to report back what it finally sent,
-  // which is more machinery than a best-effort echo is worth.
-  private rememberViewLocation(sent: Record<string, unknown>): void {
+  // it: the attributes emit() queued, after onEvent listeners and the null
+  // pass. A view that was not queued (null: a listener cancelled it or
+  // threw) leaves the remembered location as it was.
+  private rememberViewLocation(sent: Record<string, unknown> | null): void {
+    if (!sent) return;
     const loc: Record<string, unknown> = {};
     if (typeof sent.$screen === "string") {
       loc.$screen = sent.$screen;
@@ -741,17 +739,18 @@ export class Twillingate implements Subscriber {
     return this.ready && !this.retired && !readFlag(IGNORE_FLAG) && !this.optOutSpec();
   }
 
-  // The last layer: onEvent listeners, then null drops a key.
-  private emit(name: string, merged: Record<string, unknown>): void {
+  // The last layer: onEvent listeners, then null drops a key. Returns the
+  // attributes queued, or null when a listener dropped the event.
+  private emit(name: string, merged: Record<string, unknown>): Record<string, unknown> | null {
     for (const listener of this.eventListeners) {
       let r: ReturnType<EventListener>;
       try {
         r = listener({ name, attributes: merged });
       } catch (e) {
         console.warn(`twillingate: an onEvent listener threw, dropping ${name}`, e);
-        return;
+        return null;
       }
-      if (r === false) return;
+      if (r === false) return null;
       if (r && typeof r === "object") merged = { ...merged, ...expandNulls(r) };
     }
     // null drops a key. A batch attribute cannot be dropped by leaving it
@@ -770,7 +769,7 @@ export class Twillingate implements Subscriber {
     this.queue.push({ id: uuid(), ts: new Date().toISOString(), name, attributes });
     if (this.queue.length >= FLUSH_AT) {
       this.drain(false);
-      return;
+      return attributes;
     }
     if (this.flushTimer === null) {
       this.flushTimer = setTimeout(() => {
@@ -778,6 +777,7 @@ export class Twillingate implements Subscriber {
         this.drain(false);
       }, this.flushInterval);
     }
+    return attributes;
   }
 
   private drain(unloading: boolean): void {
