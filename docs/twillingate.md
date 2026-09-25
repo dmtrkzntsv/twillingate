@@ -233,14 +233,14 @@ et.init({ key: "ak_econumo…", identity: "identified", autoPageviews: false });
 | `util.withQuery(path, url, keys)` | Append allowlisted query parameters, sorted. See [Routing](#routing). |
 | `detectOS()`, `detectBrowser()`, `detectDevice()` | Read the environment this client would report. See [Detection](#detection). |
 
-**Precedence**: SDK-derived values (`$host`, `$path`, `$referrer`, campaign
-parameters and display size on views; the page's `$host` and `$path`, or
-`$screen` on a non-web kind, and display size on product events), then
+**Precedence**: SDK-derived values (`$host`, `$path`, `$referrer` and campaign
+parameters on views; the page's `$host` and `$path`, or `$screen` on a non-web
+kind, on product events), then
 `attrs()` defaults, then the call's attributes, then listener returns in
 registration order. Later layers win, and a `null` drops the key wherever it
 came from: `twillingate.attrs({ $host: "selfhosted_ab12", $referrer: null })`
-sends that host and no referrer. A batch attribute (`$os`, `$browser`, …) set
-to `null` is sent as `null` on the event, which the collector reads as not
+sends that host and no referrer. A batch attribute (`$os`, `$browser`, display
+size, …) set to `null` is sent as `null` on the event, which the collector reads as not
 sent. A `null` on a `$` prefix drops the family: `$utm: null` drops
 `$utm_source`, `$utm_medium` and `$utm_campaign`, and `$browser: null` drops
 `$browser`, `$browser_version` and `$browser_locale`. A later layer's
@@ -452,7 +452,11 @@ twillingate.onPage(({ url, path }) => ({
 Events queue for up to 10s and flush as one batch: on the timer, once 20 events
 accumulate, on `flush()`, and on page unload (`pagehide` / `visibilitychange`
 via `sendBeacon`, the key in the JSON body because beacons cannot set headers).
-Every event carries a UUID and a client timestamp. A batch that fails (network
+Every event carries a UUID and a client timestamp. The environment (`$os`,
+`$browser`, display size, …) goes once per batch, and any attribute every event
+in a batch carries with the same value (usually the `attrs()` defaults and
+`$host`) is moved up to the batch too; the collector lays batch attributes
+under each event's, so what it stores is the same and only the body shrinks. A batch that fails (network
 down, 5xx) is kept for retry — in memory, or with
 [consent](#consent-and-storage) in a bounded stored queue (`twillingate_queue`
 or `<instance>_queue`, 50 batches) — and replays on `online`, once more via

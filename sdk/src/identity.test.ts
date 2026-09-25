@@ -3,6 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Twillingate, type InitOptions } from "./twillingate";
 import { runtime } from "./runtime";
+import { storedEvents } from "./test-helpers";
 
 vi.mock("./origin", () => ({
   ORIGIN: "https://collector.example.com",
@@ -294,8 +295,9 @@ describe("location attributes", () => {
     await drain();
     const evs = sent.flatMap((s) => s.body.events);
     expect(evs).toHaveLength(2);
-    expect((evs[0].attributes as Record<string, string>).$path).toBe("/account/[id]");
-    expect((evs[1].attributes as Record<string, string>).$path).toBe("/account/[id]");
+    const stored = sent.flatMap((s) => storedEvents(s));
+    expect(stored[0].$path).toBe("/account/[id]");
+    expect(stored[1].$path).toBe("/account/[id]");
   });
 
   it("drops pageviews when the mask throws", async () => {

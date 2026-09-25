@@ -127,6 +127,34 @@ interface Batch {
   events: Event[];
 }
 
+/**
+ * Move every attribute all events in a batch carry with the same value up
+ * into the batch's own attributes, so the body carries it once. The
+ * collector lays batch attributes under each event's, so what it stores is
+ * unchanged: a shared value that differs from the batch's was overriding it
+ * on every event anyway. A null never moves: on an event it drops a batch
+ * value for that event only. A one-event batch has nothing to save.
+ */
+export function hoistShared(batch: Batch): Batch {
+  const [first, ...rest] = batch.events;
+  if (!first || rest.length === 0) return batch;
+  const shared: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(first.attributes)) {
+    if (value === null || typeof value === "object") continue;
+    if (rest.every((e) => Object.prototype.hasOwnProperty.call(e.attributes, key) && e.attributes[key] === value)) {
+      shared[key] = value;
+    }
+  }
+  const keys = Object.keys(shared);
+  if (keys.length === 0) return batch;
+  const events = batch.events.map((e) => {
+    const attributes = { ...e.attributes };
+    for (const key of keys) delete attributes[key];
+    return { ...e, attributes };
+  });
+  return { ...batch, attributes: { ...batch.attributes, ...shared }, events };
+}
+
 function isBatch(x: unknown): x is Batch {
   if (!x || typeof x !== "object") return false;
   const events = (x as { events?: unknown }).events;
@@ -182,7 +210,7 @@ const RESERVED_KEYS = [
 const BATCH_KEYS = new Set([
   "$user_id", "$user_name", "$install_id", "$group_id", "$group_name", "$kind", "$consent", "$platform",
   "$os", "$os_version", "$os_name", "$browser", "$browser_version", "$device",
-  "$app_version", "$app_locale", "$browser_locale",
+  "$app_version", "$app_locale", "$browser_locale", "$display_width", "$display_height",
 ]);
 
 /**
@@ -424,7 +452,7 @@ export class Twillingate implements Subscriber {
 
     // derived < attrs() defaults < the call's own attributes
     const derived: Record<string, unknown> = { $host: host, $path: path };
-    if (this.autoAttributes) Object.assign(derived, { $referrer: referrer }, utm, displaySize());
+    if (this.autoAttributes) Object.assign(derived, { $referrer: referrer }, utm);
     let attributes: Record<string, unknown> = {
       ...derived, ...expandNulls(this.defaultAttrs), ...expandNulls(attrs),
     };
@@ -482,7 +510,6 @@ export class Twillingate implements Subscriber {
     if (!this.ready) return this.hold(() => this.screen(name, attrs));
     if (!this.live() || !name) return;
     const screenAttrs = {
-      ...(this.autoAttributes ? displaySize() : {}),
       ...expandNulls(this.defaultAttrs), $screen: String(name), ...expandNulls(attrs),
     };
     this.rememberViewLocation(this.emit("$screen_view", screenAttrs));
@@ -503,14 +530,14 @@ export class Twillingate implements Subscriber {
   // Before any view has been sent, the current URL is derived through
   // maskUrl the same way, but only when no onPage listener is registered
   // (one might still redact it) and no configured mask is unresolvable;
-  // otherwise the event carries no location. Display size is independent
-  // of all this and sent either way. A mask that throws or returns junk,
+  // otherwise the event carries no location. (Display size is a batch
+  // attribute, not part of this.) A mask that throws or returns junk,
   // or is unresolvable, costs the event its location, never the event
   // itself.
   private eventContext(): Record<string, unknown> {
     if (!this.autoAttributes || typeof location === "undefined") return {};
-    const out: Record<string, unknown> = { ...displaySize() };
-    if (this.lastViewLocation) return { ...out, ...this.lastViewLocation };
+    const out: Record<string, unknown> = {};
+    if (this.lastViewLocation) return { ...this.lastViewLocation };
     // No view sent yet: only derive from the current URL when nothing
     // about it is still uncertain -- an unresolvable mask fails closed,
     // same as page(), and a registered onPage listener might rewrite the
@@ -786,7 +813,7 @@ export class Twillingate implements Subscriber {
     }
     while (this.queue.length > 0) {
       const events = this.queue.splice(0, MAX_BATCH);
-      this.send({ key: this.key, attributes: this.batchAttributes(), events }, unloading);
+      this.send(hoistShared({ key: this.key, attributes: this.batchAttributes(), events }), unloading);
     }
     // Unloading is the last chance for batches whose delivery failed: try
     // each once more through sendBeacon. A batch the beacon accepts is
@@ -836,6 +863,8 @@ export class Twillingate implements Subscriber {
       if (d.browserVersion) a.$browser_version = d.browserVersion;
       a.$device = d.device;
       if (typeof navigator !== "undefined" && navigator.language) a.$browser_locale = navigator.language;
+      // A device fact, like $os: once per batch, not on every event.
+      Object.assign(a, displaySize());
     }
     if (this.appVersion) a.$app_version = this.appVersion;
     if (this.appLocale) a.$app_locale = this.appLocale;

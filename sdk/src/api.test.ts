@@ -3,6 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Twillingate, type InitOptions } from "./twillingate";
 import { runtime } from "./runtime";
+import { storedEvents } from "./test-helpers";
 
 vi.mock("./origin", () => ({
   ORIGIN: "https://collector.example.com",
@@ -65,10 +66,10 @@ describe("attrs", () => {
     t.screen("/home");
     t.flush();
     await drain();
-    const [pv, sc] = sent[0].body.events.map((e) => e.attributes as Record<string, unknown>);
+    const [pv, sc] = storedEvents(sent[0]);
     expect(pv.ab_test).toBe("b");
     expect(pv.$host).toBe("example.com"); // reserved keys unaffected
-    expect(sc).toEqual({ ab_test: "b", $screen: "/home" });
+    expect(sc).toMatchObject({ ab_test: "b", $screen: "/home" });
   });
 
   it("successive calls merge; attrs(null) clears", async () => {

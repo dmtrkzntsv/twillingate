@@ -3,6 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Twillingate, type InitOptions } from "./twillingate";
 import { runtime } from "./runtime";
+import { storedEvents } from "./test-helpers";
 
 vi.mock("./origin", () => ({
   ORIGIN: "https://collector.example.com",
@@ -118,7 +119,7 @@ describe("a product event echoes the last view's location", () => {
     t.page();
     t.track("x");
     await drain();
-    const [view, event] = sent[0].body.events.map((e) => e.attributes as Record<string, unknown>);
+    const [view, event] = storedEvents(sent[0]);
     expect(view.$path).toBe("/account/[id]");
     expect(event.$path).toBe("/account/[id]");
   });
@@ -130,7 +131,7 @@ describe("a product event echoes the last view's location", () => {
     t.page();
     t.track("x");
     await drain();
-    const [view, event] = sent[0].body.events.map((e) => e.attributes as Record<string, unknown>);
+    const [view, event] = storedEvents(sent[0]);
     expect(view.$path).toBe("/redacted");
     expect(event.$path).toBe("/redacted");
   });
@@ -146,7 +147,7 @@ describe("a product event echoes the last view's location", () => {
     await drain();
     const events = sent[0].body.events;
     expect(events.map((e) => e.name)).toEqual(["$page_view", "x"]);
-    const event = events[1].attributes as Record<string, unknown>;
+    const event = storedEvents(sent[0])[1];
     expect(event.$path).toBe("/public");
   });
 
@@ -155,7 +156,7 @@ describe("a product event echoes the last view's location", () => {
     t.screen("/settings");
     t.track("export");
     await drain();
-    const [screenView, event] = sent[0].body.events.map((e) => e.attributes as Record<string, unknown>);
+    const [screenView, event] = storedEvents(sent[0]);
     expect(screenView.$screen).toBe("/settings");
     expect(event.$screen).toBe("/settings");
   });
@@ -167,7 +168,7 @@ describe("a product event echoes the last view's location", () => {
     t.screen("/a", { $path: "/b" });
     t.track("export");
     await drain();
-    const [, event] = sent[0].body.events.map((e) => e.attributes as Record<string, unknown>);
+    const [, event] = storedEvents(sent[0]);
     expect(event.$path).toBe("/b");
     expect(event).not.toHaveProperty("$screen");
   });
@@ -188,10 +189,11 @@ describe("autoAttributes: false", () => {
     }
     expect(batch).toMatchObject({ $kind: "web", $platform: "web", $app_version: "2.4.1", $app_locale: "de" });
     expect(batch).toHaveProperty("$consent");
-    const [view, event] = sent[0].body.events.map((e) => e.attributes as Record<string, unknown>);
+    const [view, event] = storedEvents(sent[0]);
     expect(view).toMatchObject({ $path: "/x", tier: "beta" });
     for (const k of ["$referrer", "$utm_source", "$display_width"]) expect(view).not.toHaveProperty(k);
-    expect(event).toEqual({ tier: "beta" });
+    expect(event.tier).toBe("beta");
+    for (const k of ["$host", "$path", "$screen", "$display_width"]) expect(event).not.toHaveProperty(k);
   });
 });
 
