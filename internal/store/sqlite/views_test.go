@@ -16,35 +16,39 @@ import (
 
 // TestViewsLiveHalvesUseTheDayIndex is the physical-plan regression for the
 // day-index perf change. It asserts two things for the live halves of
-// v_views_paths and v_views_daily:
+// v_views_paths, v_views_daily, v_views_consent, v_product_daily and
+// v_product_totals:
 //
-//  1. Nothing in the plan touches idx_views_project_ts any more -- before
-//     the day column existed, that was the only index available, and every
+//  1. Nothing in the plan scans the raw events table outright. Before the
+//     day column existed, the only index was (project_id, ts), and every
 //     access via it either ignored the day range entirely or (for the raw
 //     row scan feeding COUNT(DISTINCT actor_id)/session detection) applied
-//     only the project filter.
-//  2. At least one access is a SEARCH on idx_views_project_day carrying an
-//     actual day bound (">", "<" or "="), not just "(project=?)". That is
-//     the raw-row scan driving each live half (the one EXPLAIN labels "v"),
-//     and it is the dominant cost on a large raw table: BenchmarkViewsPathsLiveHalf
-//     and BenchmarkViewsDailyLiveHalf in bench_test.go show the wall-clock
+//     only the project filter. Since 020 the one index, idx_events_family,
+//     leads on family, so even an access with no project or day bound
+//     reads one family rather than both.
+//  2. At least one access is a SEARCH on idx_events_family carrying an
+//     actual day bound (">", "<" or "="), not just "(family=?)". That is
+//     the raw-row scan driving each live half, and it is the dominant cost
+//     on a large raw table: BenchmarkViewsPathsLiveHalf and
+//     BenchmarkViewsDailyLiveHalf in bench_test.go show the wall-clock
 //     effect (~13%/~32% faster on 150k rows -- see the day-index report).
 //
-// It deliberately does NOT assert "no SCAN views at all". One SCAN survives
-// in every dimension view and in v_views_daily: the ranking subquery that
-// computes each day's top-500 cap (aliased "r"/"k" in 012_views.sql) is
-// joined to raw rows, and separately verified (see the day-index report)
-// to remain an un-day-bounded index scan under every formulation tried --
-// including one with no join at all, using COUNT(*) OVER/DENSE_RANK()
-// directly on `views`. The common factor is that this subquery is always
-// the second arm of the view's `agg_* UNION ALL live-computation`
-// structure (012_views.sql's own design, not something introduced here):
-// SQLite's push-down-into-window-function-subquery optimization does not
-// operate across a UNION ALL arm, so a WHERE term on the compound view
-// never reaches a window function computed inside one of its arms, no
-// matter how directly that arm's columns trace back to `views`. Removing
-// that residual scan would mean giving up the aggregate/live UNION ALL
-// shape these views are built on -- out of scope for this change.
+// It deliberately does NOT assert that every access is day-bounded. One
+// access bounded by family alone survives in every dimension view and in
+// v_views_daily: the ranking subquery that computes each day's top-500 cap
+// (aliased "r"/"k" in the view definitions) is joined to raw rows, and
+// separately verified (see the day-index report) to remain an
+// un-day-bounded index scan under every formulation tried -- including one
+// with no join at all, using COUNT(*) OVER/DENSE_RANK() directly on the raw
+// rows. The common factor is that this subquery is always the second arm
+// of the view's `agg_* UNION ALL live-computation` structure (012_views.sql's
+// own design, not something introduced here): SQLite's
+// push-down-into-window-function-subquery optimization does not operate
+// across a UNION ALL arm, so a WHERE term on the compound view never
+// reaches a window function computed inside one of its arms, no matter how
+// directly that arm's columns trace back to the raw table. Removing that
+// residual scan would mean giving up the aggregate/live UNION ALL shape
+// these views are built on -- out of scope for this change.
 func TestViewsLiveHalvesUseTheDayIndex(t *testing.T) {
 	db := newTestDB(t)
 	seedViewDay(t, db) // project 1, day 2026-08-10
@@ -56,6 +60,8 @@ func TestViewsLiveHalvesUseTheDayIndex(t *testing.T) {
 			WHERE project_id = ? AND day BETWEEN ? AND ? GROUP BY kind`,
 		"consent": `SELECT consent, SUM(visitors), SUM(views) FROM v_views_consent
 			WHERE project_id = ? AND day BETWEEN ? AND ? GROUP BY consent`,
+		"v_product_daily":  `SELECT * FROM v_product_daily  WHERE project_id=? AND day BETWEEN ? AND ?`,
+		"v_product_totals": `SELECT * FROM v_product_totals WHERE project_id=? AND day BETWEEN ? AND ?`,
 	}
 
 	for name, q := range queries {
@@ -79,16 +85,16 @@ func TestViewsLiveHalvesUseTheDayIndex(t *testing.T) {
 			}
 			sawDayBoundSearch := false
 			for _, d := range details {
-				if strings.Contains(d, "idx_views_project_ts") {
-					t.Errorf("%s: plan still uses idx_views_project_ts, the day-oblivious index", name)
+				if strings.HasPrefix(d, "SCAN events") {
+					t.Errorf("%s: plan scans the raw events table without idx_events_family", name)
 				}
-				if strings.Contains(d, "SEARCH v USING INDEX idx_views_project_day") &&
+				if strings.Contains(d, "USING INDEX idx_events_family (family=? AND project_id=? AND day") &&
 					(strings.Contains(d, "day>") || strings.Contains(d, "day<") || strings.Contains(d, "day=")) {
 					sawDayBoundSearch = true
 				}
 			}
 			if !sawDayBoundSearch {
-				t.Errorf("%s: no access searches idx_views_project_day bounded by day", name)
+				t.Errorf("%s: no access searches idx_events_family bounded by family, project and day", name)
 			}
 			if t.Failed() {
 				for _, d := range details {

@@ -114,7 +114,7 @@ func TestAggregateViewDayPerKind(t *testing.T) {
 		t.Errorf("app = %+v, want %+v", got, want)
 	}
 	var raw int
-	if err := db.db.QueryRow(`SELECT COUNT(*) FROM views WHERE project_id=1`).Scan(&raw); err != nil {
+	if err := db.db.QueryRow(`SELECT COUNT(*) FROM raw_views WHERE project_id=1`).Scan(&raw); err != nil {
 		t.Fatal(err)
 	}
 	if raw != 0 {

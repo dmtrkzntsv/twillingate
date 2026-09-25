@@ -463,6 +463,10 @@ decides which family it lands in:
 | `$screen_view` | views | `app` | same |
 | anything else | product | — | `product_events`, `product_attributes` |
 
+Both families are stored in one raw table, `events`, whose `family` column is
+`views` or `product`; the aggregates, views and tools of each family read only
+its own rows.
+
 The `$` prefix is reserved for the system. An unrecognized `$` **name** is
 stored as an ordinary custom event with a warning; an unrecognized `$`
 **attribute key** is dropped, with a warning in the response body.
@@ -841,13 +845,14 @@ environment](#declaring-the-environment)) where `other` is a real value outside
 the list and `(other)` is the cap. Product events have `v_product_daily`,
 `v_product_totals` and `v_product_attrs` (whose `unique_groups` is NULL, not
 zero, for days rolled up before it was measured — `MAX()` skips it, `SUM()`
-would too, a `COALESCE` to 0 would lie), plus `v_events_flat`, the `events`
-table (with its `consent` column, 1, 0 or NULL) and one column per declared
-attribute. `v_identity_daily` and
-`identities` join user and group activity to display names; `v_identity_daily`
-keeps the busiest 500 users and 500 groups per day and drops the rest with no
-`(other)` row, so do not sum it for totals. `v_retention` is keyed by
-`actor_kind`.
+would too, a `COALESCE` to 0 would lie), plus `v_events_flat`, which holds
+every raw row of both families (views and product events) with its `family`
+column — filter `family = 'product'` for product events alone — its `consent`
+column (1, 0 or NULL) and one column per declared attribute.
+`v_identity_daily` and `identities` join user and group activity to display
+names; `v_identity_daily` keeps the busiest 500 users and 500 groups per day
+and drops the rest with no `(other)` row, so do not sum it for totals.
+`v_retention` is keyed by `actor_kind`.
 
 Cost note: the views' live halves sessionize raw rows with window functions, and
 a `WHERE` on `day` may not prune that work. Narrow ranges and the `agg_*` tables

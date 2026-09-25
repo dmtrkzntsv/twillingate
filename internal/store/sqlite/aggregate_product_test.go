@@ -58,7 +58,7 @@ func TestAggregateProductRunsWithNoDeclaredAttributes(t *testing.T) {
 		t.Fatal(err)
 	}
 	var n int
-	db.db.QueryRow(`SELECT COUNT(*) FROM events`).Scan(&n)
+	db.db.QueryRow(`SELECT COUNT(*) FROM raw_product`).Scan(&n)
 	if n != 0 {
 		t.Fatalf("raw remaining %d", n)
 	}
@@ -116,7 +116,7 @@ func TestAggregateProductDeclaredAttributes(t *testing.T) {
 	if count != 2 {
 		t.Fatalf("source=ads count=%d", count)
 	}
-	db.db.QueryRow(`SELECT COUNT(*) FROM events`).Scan(&n)
+	db.db.QueryRow(`SELECT COUNT(*) FROM raw_product`).Scan(&n)
 	if n != 0 {
 		t.Fatal("raw must be deleted after rollup")
 	}
@@ -272,7 +272,7 @@ func TestRollupSystemDimensionsSurviveRawDeletion(t *testing.T) {
 		t.Fatal(err)
 	}
 	var n int
-	db.db.QueryRow(`SELECT COUNT(*) FROM events`).Scan(&n)
+	db.db.QueryRow(`SELECT COUNT(*) FROM raw_product`).Scan(&n)
 	if n != 0 {
 		t.Fatalf("raw remaining %d", n)
 	}

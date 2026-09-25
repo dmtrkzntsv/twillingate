@@ -428,7 +428,7 @@ func TestRunDailyPassAggregatesAppDays(t *testing.T) {
 	if n := count(t, db, `SELECT visitors FROM agg_views_daily WHERE kind='app'`); n != 2 {
 		t.Errorf("visitors = %d, want 2", n)
 	}
-	if n := count(t, db, `SELECT COUNT(*) FROM views WHERE project_id=1`); n != 0 {
+	if n := count(t, db, `SELECT COUNT(*) FROM raw_views WHERE project_id=1`); n != 0 {
 		t.Errorf("raw views left = %d, want 0", n)
 	}
 	if n := count(t, db, `SELECT COUNT(*) FROM actors`); n != 2 {
@@ -575,7 +575,7 @@ func TestRunDailyPassComputesCohortsForRecentDays(t *testing.T) {
 		t.Errorf("cohort rows for an in-window day = %d, want 1", n)
 	}
 	// The raw row itself must survive: it is inside the retention window.
-	if n := count(t, db, `SELECT COUNT(*) FROM views WHERE project_id=1`); n != 1 {
+	if n := count(t, db, `SELECT COUNT(*) FROM raw_views WHERE project_id=1`); n != 1 {
 		t.Errorf("raw views = %d; an in-window day must not be aggregated away", n)
 	}
 }
@@ -609,7 +609,7 @@ func TestDailyPassRollsUpEveryKindPastTheWindow(t *testing.T) {
 		t.Errorf("agg_views_daily rows = %d, want one per kind", kinds)
 	}
 	var raw int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM views WHERE project_id=1`).Scan(&raw); err != nil {
+	if err := db.QueryRow(`SELECT COUNT(*) FROM raw_views WHERE project_id=1`).Scan(&raw); err != nil {
 		t.Fatal(err)
 	}
 	if raw != 0 {

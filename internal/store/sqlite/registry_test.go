@@ -442,8 +442,8 @@ func TestDeleteProjectDataCascades(t *testing.T) {
 		t.Fatal(err)
 	}
 	// one row in a raw table and one in an aggregate table
-	if _, err := d.db.Exec(`INSERT INTO views (id, project_id, ts, received_at, kind, actor_id, actor_kind, path)
-		VALUES ('h1',?,'2026-08-01T10:00:00Z','2026-08-01T10:00:00Z','web','a','connection','/x')`, id); err != nil {
+	if _, err := d.db.Exec(`INSERT INTO events (id, project_id, ts, received_at, kind, actor_id, actor_kind, path, family, event_name)
+		VALUES ('h1',?,'2026-08-01T10:00:00Z','2026-08-01T10:00:00Z','web','a','connection','/x','views','$page_view')`, id); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := d.db.Exec(`INSERT INTO agg_views_daily (project_id, day, kind, visitors, views,
@@ -454,7 +454,7 @@ func TestDeleteProjectDataCascades(t *testing.T) {
 		Actor: "cli", Action: "project.delete", Subject: "1"}); err != nil {
 		t.Fatal(err)
 	}
-	for _, table := range []string{"projects", "ingest_keys", "views", "agg_views_daily"} {
+	for _, table := range []string{"projects", "ingest_keys", "events", "agg_views_daily"} {
 		var c int
 		if err := d.db.QueryRow(
 			`SELECT COUNT(*) FROM `+table+` WHERE `+projectCol(table)+`=?`, id).Scan(&c); err != nil {

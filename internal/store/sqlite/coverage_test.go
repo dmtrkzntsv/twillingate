@@ -75,8 +75,8 @@ func TestDaysBeforeRejectsCorruptTimestamp(t *testing.T) {
 	// Must sort before the cutoff so the WHERE clause admits it, yet be an
 	// impossible calendar date so civil.Parse rejects it.
 	if _, err := db.db.Exec(
-		`INSERT INTO views (id, project_id, ts, received_at, kind, actor_id, actor_kind, path)
-		 VALUES ('x',1,'2026-02-30T00:00:00Z','2026-02-30T00:00:00Z','web','v','connection','/')`,
+		`INSERT INTO events (id, project_id, ts, received_at, kind, actor_id, actor_kind, path, family, event_name)
+		 VALUES ('x',1,'2026-02-30T00:00:00Z','2026-02-30T00:00:00Z','web','v','connection','/','views','$page_view')`,
 	); err != nil {
 		t.Fatal(err)
 	}

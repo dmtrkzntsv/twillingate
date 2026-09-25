@@ -12,63 +12,22 @@ import (
 
 const tsFormat = "2006-01-02T15:04:05Z"
 
-// WriteEvents stores a batch of raw rows. Until migration 020 merges the
-// raw tables, views and product events still land in separate tables.
+// WriteEvents stores a batch of raw rows, views and product events alike,
+// in the one raw table. INSERT OR IGNORE: with client-supplied UUIDv7 ids,
+// a batch retried after a timeout that actually succeeded is a no-op.
 func (d *DB) WriteEvents(ctx context.Context, evs []store.Event) error {
-	var views, product []store.Event
-	for _, e := range evs {
-		if e.Family == store.FamilyViews {
-			views = append(views, e)
-		} else {
-			product = append(product, e)
-		}
-	}
-	if err := d.writeViews(ctx, views); err != nil {
-		return err
-	}
-	return d.writeProduct(ctx, product)
-}
-
-func (d *DB) writeViews(ctx context.Context, views []store.Event) error {
-	if len(views) == 0 {
-		return nil
-	}
-	return d.tx(ctx, func(tx *sql.Tx) error {
-		// INSERT OR IGNORE: with client-supplied UUIDv7 ids, a batch
-		// retried after a timeout that actually succeeded is a no-op.
-		stmt, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO views
-			(id, project_id, ts, received_at, kind, actor_id, actor_kind, user_id, group_id, session_id,
-			 host, path, referrer_source, utm_source, utm_medium, utm_campaign,
-			 platform, os, os_version, os_name, browser, browser_version, app_version,
-			 app_locale, browser_locale, device, device_model, display_width, display_height, country, consent)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-		if err != nil {
-			return err
-		}
-		defer stmt.Close()
-		for _, v := range views {
-			if _, err := stmt.ExecContext(ctx, v.ID, v.ProjectID,
-				v.TS.UTC().Format(tsFormat), v.ReceivedAt.UTC().Format(tsFormat),
-				v.Kind, v.ActorID, v.ActorKind, v.UserID, v.GroupID, v.SessionID,
-				v.Host, v.Path, v.ReferrerSource, v.UTMSource, v.UTMMedium, v.UTMCampaign,
-				v.Platform, v.OS, v.OSVersion, v.OSName, v.Browser, v.BrowserVersion, v.AppVersion,
-				v.AppLocale, v.BrowserLocale, v.Device, v.DeviceModel, v.DisplayWidth, v.DisplayHeight, v.Country, v.Consent); err != nil {
-				return fmt.Errorf("view %s: %w", v.ID, err)
-			}
-		}
-		return nil
-	})
-}
-
-func (d *DB) writeProduct(ctx context.Context, evs []store.Event) error {
 	if len(evs) == 0 {
 		return nil
 	}
 	return d.tx(ctx, func(tx *sql.Tx) error {
 		stmt, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO events
-			(id, project_id, event_name, ts, received_at, actor_id, actor_kind, user_id, group_id,
-			 platform, os, app_version, app_locale, attributes, consent)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+			(id, project_id, family, event_name, ts, received_at, kind,
+			 actor_id, actor_kind, user_id, group_id, session_id,
+			 host, path, referrer_source, utm_source, utm_medium, utm_campaign,
+			 platform, os, os_version, os_name, browser, browser_version, browser_locale,
+			 app_version, app_locale, device, device_model, display_width, display_height,
+			 country, consent, attributes)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
 		if err != nil {
 			return err
 		}
@@ -82,10 +41,13 @@ func (d *DB) writeProduct(ctx context.Context, evs []store.Event) error {
 			if err != nil {
 				return fmt.Errorf("event %s attributes: %w", e.ID, err)
 			}
-			if _, err := stmt.ExecContext(ctx, e.ID, e.ProjectID, e.EventName,
-				e.TS.UTC().Format(tsFormat), e.ReceivedAt.UTC().Format(tsFormat),
-				e.ActorID, e.ActorKind, e.UserID, e.GroupID, e.Platform, e.OS, e.AppVersion, e.AppLocale,
-				string(blob), e.Consent); err != nil {
+			if _, err := stmt.ExecContext(ctx, e.ID, e.ProjectID, string(e.Family), e.EventName,
+				e.TS.UTC().Format(tsFormat), e.ReceivedAt.UTC().Format(tsFormat), e.Kind,
+				e.ActorID, e.ActorKind, e.UserID, e.GroupID, e.SessionID,
+				e.Host, e.Path, e.ReferrerSource, e.UTMSource, e.UTMMedium, e.UTMCampaign,
+				e.Platform, e.OS, e.OSVersion, e.OSName, e.Browser, e.BrowserVersion, e.BrowserLocale,
+				e.AppVersion, e.AppLocale, e.Device, e.DeviceModel, e.DisplayWidth, e.DisplayHeight,
+				e.Country, e.Consent, string(blob)); err != nil {
 				return fmt.Errorf("event %s: %w", e.ID, err)
 			}
 		}

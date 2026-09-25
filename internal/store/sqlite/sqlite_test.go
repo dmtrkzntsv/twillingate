@@ -135,7 +135,7 @@ func TestMigrateIsIdempotent(t *testing.T) {
 func TestSchemaTablesExist(t *testing.T) {
 	db := newTestDB(t)
 	for _, table := range []string{
-		"meta", "projects", "views", "events",
+		"meta", "projects", "events",
 		"agg_views_daily", "agg_views_paths", "agg_views_referrers", "agg_views_countries",
 		"agg_views_devices", "agg_views_browsers", "agg_views_os", "agg_views_utm",
 		"agg_product_daily", "agg_product_totals", "agg_product_attrs",
@@ -170,12 +170,21 @@ func hasColumn(t *testing.T, db *DB, table, column string) bool {
 	return false
 }
 
+func hasTable(t *testing.T, db *DB, name string) bool {
+	t.Helper()
+	var n int
+	if err := db.db.QueryRow(`SELECT COUNT(*) FROM sqlite_schema WHERE type='table' AND name=?`, name).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n > 0
+}
+
 func TestMigration003Schema(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 
 	for _, table := range []string{
-		"views", "actors", "agg_retention", "identities", "agg_identity_daily",
+		"events", "actors", "agg_retention", "identities", "agg_identity_daily",
 	} {
 		var n int
 		if err := db.db.QueryRowContext(ctx,
@@ -188,7 +197,7 @@ func TestMigration003Schema(t *testing.T) {
 	}
 
 	for _, c := range []struct{ table, column string }{
-		{"views", "kind"}, {"views", "actor_kind"}, {"views", "display_width"},
+		{"events", "kind"}, {"events", "family"}, {"events", "display_width"},
 		{"events", "actor_id"}, {"events", "user_id"},
 		{"events", "group_id"}, {"events", "actor_kind"}, {"events", "os"},
 		{"events", "app_version"}, {"events", "received_at"},

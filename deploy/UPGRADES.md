@@ -248,3 +248,31 @@ What changes on the day:
 
 There is no down migration. The previous binary writes a `locale` column
 that no longer exists, so every view it receives fails to store.
+
+### Upgrading to one events table (migration 020)
+
+Views and product events move into one raw table, `events`, with a `family`
+column (`views` or `product`). Every `v_*` view, aggregate table and tool
+answers exactly as before. The migration copies the raw window (days not yet
+rolled up, 30 by default) and drops the `views` table: seconds on a month
+of traffic.
+
+Before upgrading, run this against the live database:
+
+```sql
+-- A project declaring a $ key. Until now such a declaration extracted
+-- nothing. From 020, $host, $path, $referrer, $utm_source, $utm_medium,
+-- $utm_campaign, $os_version, $browser_version and $device_model start
+-- working; any other $ key is refused on the project's next edit.
+SELECT id, attributes FROM projects WHERE attributes LIKE '%"$%';
+```
+
+What changes on the day:
+
+- `v_events_flat` returns view rows too. Saved SQL over it adds
+  `WHERE family = 'product'` to keep its old answer.
+- SQL reading the `views` table directly (the CLI's database, not the
+  `query` tool) reads `events WHERE family = 'views'`.
+
+There is no down migration. The previous binary writes a `views` table that no
+longer exists.

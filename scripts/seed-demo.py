@@ -129,7 +129,7 @@ def actor_for(name, day, n, sends_ids):
 
 
 def seed(cur, pid, name, profile, today, sends_ids):
-    for table in ("views", "events", "actors", "identities"):
+    for table in ("events", "actors", "identities"):
         cur.execute(f"DELETE FROM {table} WHERE project_id = ?", (pid,))
 
     hits = 0
@@ -154,11 +154,11 @@ def seed(cur, pid, name, profile, today, sends_ids):
                 ts = datetime.datetime.combine(day, datetime.time()) + datetime.timedelta(
                     seconds=start + p * random.randint(20, 600))
                 cur.execute(
-                    "INSERT INTO views (id, project_id, ts, received_at, kind, actor_id, actor_kind,"
+                    "INSERT INTO events (id, project_id, ts, received_at, kind, actor_id, actor_kind,"
                     " user_id, group_id, path, referrer_source, country, device, browser,"
                     " browser_version, platform, os, utm_source, utm_medium, utm_campaign,"
-                    " display_width, display_height, consent)"
-                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    " display_width, display_height, consent, family, event_name)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'views','$page_view')",
                     (str(uuid.uuid4()), pid, ts.strftime("%Y-%m-%dT%H:%M:%SZ"),
                      ts.strftime("%Y-%m-%dT%H:%M:%SZ"), "web", vh,
                      "install" if sends_ids else "connection", "", "",
@@ -185,7 +185,7 @@ def seed(cur, pid, name, profile, today, sends_ids):
                     cur.execute(
                         "INSERT INTO events (id, project_id, ts, received_at, event_name,"
                         " actor_id, actor_kind, user_id, group_id, platform, os, app_version,"
-                        " attributes, consent) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        " attributes, consent, family) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'product')",
                         (str(uuid.uuid4()), pid, ts.strftime("%Y-%m-%dT%H:%M:%SZ"),
                          ts.strftime("%Y-%m-%dT%H:%M:%SZ"), event_name,
                          actor_for(name, day, n, sends_ids),
@@ -237,10 +237,11 @@ def seed_app(cur, pid, name, profile, today, sends_ids):
                 ts = datetime.datetime.combine(day, datetime.time()) + datetime.timedelta(
                     seconds=start + s * random.randint(15, 240))
                 cur.execute(
-                    "INSERT INTO views (id, project_id, ts, received_at, kind, actor_id, actor_kind, user_id,"
+                    "INSERT INTO events (id, project_id, ts, received_at, kind, actor_id, actor_kind, user_id,"
                     " group_id, session_id, path, platform, os, app_version, os_version,"
-                    " browser, device, device_model, browser_locale, app_locale, country, consent)"
-                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    " browser, device, device_model, browser_locale, app_locale, country, consent,"
+                    " family, event_name)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'views','$screen_view')",
                     (str(uuid.uuid4()), pid, ts.strftime("%Y-%m-%dT%H:%M:%SZ"),
                      ts.strftime("%Y-%m-%dT%H:%M:%SZ"), "app", actor,
                      "user" if sends_ids else "connection",

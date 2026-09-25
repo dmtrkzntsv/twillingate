@@ -29,7 +29,7 @@ func TestWriteViewsRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	var path, tsCol string
-	if err := db.db.QueryRow(`SELECT path, ts FROM views WHERE id='h1'`).Scan(&path, &tsCol); err != nil {
+	if err := db.db.QueryRow(`SELECT path, ts FROM raw_views WHERE id='h1'`).Scan(&path, &tsCol); err != nil {
 		t.Fatal(err)
 	}
 	if path != "/x" || tsCol != "2026-08-22T10:00:00Z" {
@@ -53,13 +53,13 @@ func TestWriteProductEventsAttributesJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 	var attrs string
-	if err := db.db.QueryRow(`SELECT attributes->>'plan' FROM events WHERE id='e1'`).Scan(&attrs); err != nil {
+	if err := db.db.QueryRow(`SELECT attributes->>'plan' FROM raw_product WHERE id='e1'`).Scan(&attrs); err != nil {
 		t.Fatal(err)
 	}
 	if attrs != "pro" {
 		t.Fatalf("attrs = %q", attrs)
 	}
-	if err := db.db.QueryRow(`SELECT attributes FROM events WHERE id='e2'`).Scan(&attrs); err != nil {
+	if err := db.db.QueryRow(`SELECT attributes FROM raw_product WHERE id='e2'`).Scan(&attrs); err != nil {
 		t.Fatal(err)
 	}
 	if attrs != "{}" {
@@ -131,7 +131,7 @@ func TestWriteViewsAppRoundTrip(t *testing.T) {
 
 	var path, osCol, platform, osName, group, session, locale, appLocale string
 	if err := db.db.QueryRowContext(ctx,
-		`SELECT path, os, platform, os_name, group_id, session_id, browser_locale, app_locale FROM views WHERE id=?`, "018f-a").
+		`SELECT path, os, platform, os_name, group_id, session_id, browser_locale, app_locale FROM raw_views WHERE id=?`, "018f-a").
 		Scan(&path, &osCol, &platform, &osName, &group, &session, &locale, &appLocale); err != nil {
 		t.Fatalf("read back: %v", err)
 	}
@@ -173,17 +173,17 @@ func TestWritesAreIdempotentOnID(t *testing.T) {
 	}
 
 	var n int
-	if err := db.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM views`).Scan(&n); err != nil {
+	if err := db.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM raw_views`).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	if n != 2 {
-		t.Errorf("views has %d rows after replay, want 2 (one app, one web id)", n)
+		t.Errorf("raw_views has %d rows after replay, want 2 (one app, one web id)", n)
 	}
-	if err := db.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM events`).Scan(&n); err != nil {
+	if err := db.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM raw_product`).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	if n != 1 {
-		t.Errorf("events has %d rows after replay, want 1", n)
+		t.Errorf("raw_product has %d rows after replay, want 1", n)
 	}
 }
 
@@ -205,7 +205,7 @@ func TestWriteCarriesIdentityAndAppContext(t *testing.T) {
 
 	var hu, hg string
 	if err := db.db.QueryRowContext(ctx,
-		`SELECT user_id, group_id FROM views WHERE id='h'`).Scan(&hu, &hg); err != nil {
+		`SELECT user_id, group_id FROM raw_views WHERE id='h'`).Scan(&hu, &hg); err != nil {
 		t.Fatal(err)
 	}
 	if hu != "u1" || hg != "org9" {
@@ -214,7 +214,7 @@ func TestWriteCarriesIdentityAndAppContext(t *testing.T) {
 
 	var osCol, platform, ver string
 	if err := db.db.QueryRowContext(ctx,
-		`SELECT os, platform, app_version FROM events WHERE id='e'`).Scan(&osCol, &platform, &ver); err != nil {
+		`SELECT os, platform, app_version FROM raw_product WHERE id='e'`).Scan(&osCol, &platform, &ver); err != nil {
 		t.Fatal(err)
 	}
 	if osCol != "macos" || platform != "electron" || ver != "2.4.1" {
@@ -274,7 +274,7 @@ func TestWriteViewsStoresHost(t *testing.T) {
 	}
 	var host string
 	if err := db.db.QueryRow(
-		`SELECT host FROM views WHERE id='h1'`).Scan(&host); err != nil {
+		`SELECT host FROM raw_views WHERE id='h1'`).Scan(&host); err != nil {
 		t.Fatal(err)
 	}
 	if host != "shop.example.com" {
@@ -295,7 +295,7 @@ func TestWriteViewsHostDefaultsEmpty(t *testing.T) {
 	}
 	var host string
 	if err := db.db.QueryRow(
-		`SELECT host FROM views WHERE id='h2'`).Scan(&host); err != nil {
+		`SELECT host FROM raw_views WHERE id='h2'`).Scan(&host); err != nil {
 		t.Fatal(err)
 	}
 	if host != "" {
@@ -327,13 +327,13 @@ func TestWriteStoresConsent(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if c := consentOf(t, db, "views", "g"); !c.Valid || c.Int64 != 1 {
+	if c := consentOf(t, db, "raw_views", "g"); !c.Valid || c.Int64 != 1 {
 		t.Errorf("given view consent = %+v, want 1", c)
 	}
-	if c := consentOf(t, db, "views", "n"); !c.Valid || c.Int64 != 0 {
+	if c := consentOf(t, db, "raw_views", "n"); !c.Valid || c.Int64 != 0 {
 		t.Errorf("none view consent = %+v, want 0", c)
 	}
-	if c := consentOf(t, db, "events", "e"); !c.Valid || c.Int64 != 0 {
+	if c := consentOf(t, db, "raw_product", "e"); !c.Valid || c.Int64 != 0 {
 		t.Errorf("none event consent = %+v, want 0", c)
 	}
 }
@@ -353,7 +353,7 @@ func TestWriteLeavesConsentUnknownByDefault(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	for _, r := range [][2]string{{"views", "v"}, {"events", "e"}} {
+	for _, r := range [][2]string{{"raw_views", "v"}, {"raw_product", "e"}} {
 		if c := consentOf(t, db, r[0], r[1]); c.Valid {
 			t.Errorf("%s consent = %d, want NULL", r[0], c.Int64)
 		}
