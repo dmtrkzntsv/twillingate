@@ -1,0 +1,207 @@
+{
+  "components": [
+    {
+      "name": "stat",
+      "description": "A single number, optionally compared to a previous period; give `x` for a small trend line under it, and it becomes the series' aggregate.",
+      "accepts": [
+        "sql"
+      ],
+      "inputs": {
+        "open": false,
+        "columns": [
+          {
+            "name": "value",
+            "types": [
+              "number"
+            ]
+          },
+          {
+            "name": "previous",
+            "types": [
+              "number"
+            ],
+            "optional": true
+          },
+          {
+            "name": "x",
+            "types": [
+              "day"
+            ],
+            "optional": true
+          }
+        ]
+      },
+      "props": {
+        "type": "object",
+        "properties": {
+          "format": {
+            "enum": [
+              "number",
+              "percent",
+              "duration"
+            ]
+          },
+          "aggregate": {
+            "enum": [
+              "sum",
+              "last",
+              "avg"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "default_width": 3,
+      "default_height": 3
+    },
+    {
+      "name": "line",
+      "description": "A trend over time or category, one line per `series` value; best for a continuous metric like visitors per day.",
+      "accepts": [
+        "sql"
+      ],
+      "inputs": {
+        "open": false,
+        "columns": [
+          {
+            "name": "x",
+            "types": [
+              "day",
+              "text"
+            ]
+          },
+          {
+            "name": "y",
+            "types": [
+              "number"
+            ]
+          },
+          {
+            "name": "series",
+            "types": [
+              "text"
+            ],
+            "optional": true
+          }
+        ]
+      },
+      "props": {
+        "type": "object",
+        "properties": {
+          "format": {
+            "enum": [
+              "number",
+              "percent",
+              "duration"
+            ]
+          },
+          "curve": {
+            "enum": [
+              "linear",
+              "monotone",
+              "step"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "default_width": 6,
+      "default_height": 8
+    },
+    {
+      "name": "table",
+      "description": "Every column the query returns, in order; a raw drill-down table for a card that lists rows.",
+      "accepts": [
+        "sql"
+      ],
+      "inputs": {
+        "open": true,
+        "columns": []
+      },
+      "props": {
+        "type": "object",
+        "properties": {
+          "formats": {
+            "type": "object",
+            "additionalProperties": {
+              "enum": [
+                "number",
+                "percent",
+                "duration"
+              ]
+            }
+          },
+          "colorscale": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "default_width": 6,
+      "default_height": 10
+    },
+    {
+      "name": "markdown",
+      "description": "Free-form text: a note, a caveat, instructions for reading the dashboard.",
+      "accepts": [
+        "md"
+      ],
+      "inputs": {
+        "open": false,
+        "columns": []
+      },
+      "props": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "default_width": 12,
+      "default_height": 2
+    },
+    {
+      "name": "pie",
+      "description": "Parts of a whole, up to ~7 slices; group the rest as 'Other' in SQL.",
+      "accepts": [
+        "sql"
+      ],
+      "inputs": {
+        "open": false,
+        "columns": [
+          {
+            "name": "label",
+            "types": [
+              "text"
+            ]
+          },
+          {
+            "name": "value",
+            "types": [
+              "number"
+            ]
+          }
+        ]
+      },
+      "props": {
+        "type": "object",
+        "properties": {
+          "format": {
+            "enum": [
+              "number",
+              "percent",
+              "duration"
+            ]
+          },
+          "donut": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "default_width": 4,
+      "default_height": 8
+    }
+  ]
+}
