@@ -64,13 +64,13 @@ removes Evidence.
 
    ```
    components            name PK, description, accepts (JSON), inputs (JSON), props (JSON),
-                         default_width, default_height, removed_at
+                         default_width, default_height
    dashboards            id INTEGER PK AUTOINCREMENT, owner ('system'|'user'), title,
                          sort_key TEXT, last_project_id, last_range, last_from, last_to,
                          created_at, updated_at, archived_at
    widgets               id INTEGER PK AUTOINCREMENT,
                          dashboard_id REFERENCES dashboards(id) ON DELETE CASCADE,
-                         component REFERENCES components(name),
+                         component REFERENCES components(name) ON DELETE SET NULL,
                          sort_key TEXT, width, height, name, title,
                          props (JSON), source_type (TEXT), source (TEXT),
                          created_at, updated_at
@@ -78,17 +78,14 @@ removes Evidence.
    ```
 
    Two foreign keys and no checks or triggers: deleting a dashboard
-   deletes its widgets (cascade), and a component cannot be deleted while
-   a widget uses it (no cascade; decision 15 only ever deletes unused
-   ones, and the migrator upserts components before widgets). Unique
+   deletes its widgets (cascade), and deleting a component sets
+   `component` to null on the widgets that used it, which is how a widget
+   knows its component was removed (decision 14). Unique
    indexes: `dashboards (owner, sort_key)` (the sidebar orders each group
    on its own), `widgets (dashboard_id, sort_key)`,
    so every order is total, and `widgets (dashboard_id, name)`, which the
    migrator matches on. Every other rule below is enforced in Go
-   (the standing rule, no validation in the database). The cascade
-   removes widgets without Go seeing them, so every transaction that
-   deletes a dashboard ends with the removed-component cleanup
-   (decision 15).
+   (the standing rule, no validation in the database).
 7. **Foreign keys become enforced.** SQLite checks them only on
    connections that turn them on, and the store never has, so the two
    `REFERENCES` already in the schema (migrations 005 and 014, ingest keys
@@ -183,21 +180,21 @@ removes Evidence.
 
     Queries satisfy inputs by alias: `SELECT day AS x, visitors AS y …`.
     Returning a column a closed interface does not declare is refused.
-14. **A removed component is kept while it is used.** When a component
-    leaves the code, the migrator sets `removed_at`. A removed component
-    cannot be used by `add_widget`, `update_widget` (switching to it) or
-    `copy_widget` (copying a widget on it). Widgets already on it render a
-    "component removed" card, and `widget_data` answers `{"removed": true}`.
-    Such a widget's fields cannot be edited except to switch it to a live
-    component; it can still be resized, or removed.
-15. **A removed component is deleted with its last widget.** Every
-    transaction that can drop the last reference (`remove_widget`,
-    `update_widget` switching component, the migrator deleting a system
-    dashboard or widget) ends by deleting removed components no widget
-    uses. Widgets on archived dashboards count as uses, since the dashboard
-    can be restored.
-16. **A component that comes back is live again:** the migrator clears
-    `removed_at` on upsert.
+14. **A component that leaves the code is deleted; its widgets keep
+    going with `component` null.** The migrator deletes components the
+    manifest no longer has, and the foreign key sets `component` to null
+    on every widget that used one. A null component is the whole signal:
+    there is no removed state to track and nothing to clean up later.
+15. **A widget with no component** renders a "component removed" card,
+    and `widget_data` answers `{"widget_id", "removed": true}`. It can be
+    switched to a live component (`update_widget`), resized, or removed;
+    its other fields cannot be edited and it cannot be copied, until it
+    has a component again.
+16. **A component that comes back does not restore its widgets.** The
+    null holds no name, so when a later release (or an upgrade after a
+    rollback, decision 25) brings a component back, the widgets that lost
+    it stay without one until an agent sets it with `update_widget`.
+    Accepted: removing a component is rare, and the round trip rarer.
 
 ### Parameters and ranges
 
@@ -285,8 +282,8 @@ removes Evidence.
     embedded `dashboard.json`, widget file and `components.json`. If the
     latest `reporting_migrations` row has that hash, nothing runs.
     Otherwise, in one transaction:
-    1. components: upsert by name and clear `removed_at`; set `removed_at`
-       on the ones missing from the manifest;
+    1. components: upsert by name; delete the ones missing from the
+       manifest, which sets `component` to null on their widgets;
     2. system dashboards: upsert by `id` (title, and a sort key in `id`
        order); on insert, the selection from the file's `range`; on
        update, the stored selection is kept; delete system
@@ -295,8 +292,7 @@ removes Evidence.
        width, height and a sort key from the file's order (keys are
        regenerated evenly, since system widgets change only here); insert
        new ones; delete ones with no file;
-    4. delete removed components no widget uses;
-    5. append a `reporting_migrations` row (hash, build version) and one
+    4. append a `reporting_migrations` row (hash, build version) and one
        `audit_log` entry, actor `release`, listing what was added, changed
        and removed.
 
@@ -306,9 +302,11 @@ removes Evidence.
     transaction rolls back and `serve` does not start. The system dashboard
     test (see [Tests](#tests)) runs the same validation in `make check`.
 25. **Rolling the binary back re-migrates to the older definitions,** since
-    the hash differs: components the older binary does not know get
-    `removed_at`, and their widgets show "component removed" until the
-    upgrade returns. `deploy/UPGRADES.md` says so.
+    the hash differs: components the older binary does not know are
+    deleted, and their widgets lose their component for good (decision
+    16): upgrading again does not restore them. `deploy/UPGRADES.md` says
+    so, and suggests `list_widgets` before a rollback to note which
+    widgets use components the older release lacks.
 26. **The five Evidence pages become system dashboards:** Views (id 1),
     Product (2), Users (3), Groups (4), Retention (5), each starting on
     the Evidence page's default range (`7d`; Retention `90d`) and with its stats,
@@ -321,7 +319,7 @@ removes Evidence.
 
 27. **Every write validates the whole result** and refuses with
     `ErrInvalid`, in words an agent can act on:
-    - the component exists, is not removed, and accepts the source type:
+    - the component exists and accepts the source type:
       "component `pie` does not exist; list_components names the 6 there
       are";
     - `sql`: only the three parameters ("sql uses `:path`; widgets get only
@@ -347,7 +345,7 @@ removes Evidence.
 
     | Tool | Route | Returns |
     | --- | --- | --- |
-    | `list_components` | `GET /api/components` | the registered source types, and per component: name, description, accepts, inputs, props, default width and height; `include_removed` adds removed ones |
+    | `list_components` | `GET /api/components` | the registered source types, and per component: name, description, accepts, inputs, props, default width and height |
     | `list_dashboards` | `GET /api/dashboards` | `timezone` (the instance's, decision 19), and per dashboard, in sidebar order: id, title, owner, stored project and range, widget count, archived |
     | `get_dashboard` | `GET /api/dashboards/{dashboard_id}` | the dashboard and its widgets in order, each with id, name, width, height, component, title, props, source type and source |
     | `list_widgets` | `GET /api/widgets?dashboard_id=&component=` | every widget with its dashboard (id, title, owner, archived) and place; the two filters combine |
@@ -399,9 +397,8 @@ removes Evidence.
     a widget fixed in that respect. Fixed-range SQL is bounded by
     `API_QUERY_TIMEOUT`. The body is what the source type's `Load` returns: rows
     for `sql`; `{"widget_id", "markdown"}` for `md`, which ignores project
-    and dates. Only cacheable source types are cached. A widget on a
-    removed component answers
-    `{"widget_id", "removed": true}`. A query that no longer runs, or whose
+    and dates. Only cacheable source types are cached. A widget whose
+    component was removed answers `{"widget_id", "removed": true}`. A query that no longer runs, or whose
     rows no longer satisfy the inputs (a release changed a view), is
     `ErrInvalid` with the reason. Queries run on the read pool with the
     same guards and limits as `query`: read-only, no `ATTACH`,
@@ -544,9 +541,9 @@ code, per the standing rules.
 | following | for project and for range independently: a widget whose SQL uses the parameters requires them in `widget_data` and keys its cache by them; a fixed widget ignores them and keys without them; each switcher is present exactly when a widget follows it; the view route requires and refuses each part to match; a widget following neither is cached per widget only |
 | order | dashboards: `after` on create and update writes one key; system dashboards sort in `id` order |
 | layout | a 6 × 6 widget followed by four 3 × 3 widgets renders them as a 2 × 2 block beside it (browser test); insert first, last and `after` (one key written, no other record touched); removal touches no other record; many inserts at one spot keep keys ordered and short enough; the `layout` list round-trips; widths and heights default from the component; the migrator keeps widget ids when order or size changes |
-| foreign keys | deleting a dashboard deletes its widgets and then any removed component they were the last users of; writer connections report `foreign_keys = 1`; `DeleteProject` succeeds with keys present; a migration leaving a violation fails `foreign_key_check`; existing databases pass the check after 021 |
+| foreign keys | deleting a dashboard deletes its widgets; deleting a component sets `component` null on its widgets; writer connections report `foreign_keys = 1`; `DeleteProject` succeeds with keys present; a migration leaving a violation fails `foreign_key_check`; existing databases pass the check after 021 |
 | source types | an unregistered `source_type` is refused; a component's `accepts` naming an unregistered type fails the migrator; `sql` and `md` each validate and load through the registry |
-| components | the foreign key refuses deleting a component a widget uses; a removed component is refused for new use, answers `removed`, and is deleted with its last widget, including when the migrator deletes a system dashboard |
+| components | a component gone from the manifest is deleted and its widgets get a null `component`; such a widget answers `removed`, accepts only a component switch, resize or removal, and cannot be copied; a component that returns leaves them null |
 | migrator | upserts, deletions, reserved ids, widget ids stable across edits and moves, `last_*` kept, a second run with the same hash writes nothing, a failure writes nothing |
 | **system dashboards** | every system widget, on a database migrated to latest with seeded data, validates and runs for every preset range, and its rows satisfy its component. The load-bearing test |
 | files | pairing errors (no data file, two, orphan data file, unplaced or missing widget, duplicate or out-of-range `id`) |
@@ -564,7 +561,7 @@ In the same PR as the change:
 
 - `docs/twillingate.md`: dashboards, widgets and components; the
   component table (decision 13); the parameters and range vocabulary; the
-  tools and routes; the removed-component lifecycle.
+  tools and routes; what happens to widgets when a release removes a component.
 - `docs/deployment.md`: `/app/` and installing it; the redirect an
   `oauth://` provider must allow; `REPORTING_CACHE_MINUTES` and
   `REPORTING_REFRESH_MINUTES`; that `API_QUERY_TIMEOUT` and
@@ -573,7 +570,8 @@ In the same PR as the change:
 - `deploy/UPGRADES.md`: 021 adds `/app/`; a release that removes a
   component leaves its widgets showing "component removed" until an agent
   switches or removes them; a binary rollback re-migrates system
-  dashboards (decision 25).
+  dashboards and permanently clears the component of widgets on
+  components the older release lacks (decision 25).
 - `CLAUDE.md`: `internal/reporting` and `web/` in the layout; the
   build-and-commit rule extended to `web/`; the docs table rows.
 
