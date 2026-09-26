@@ -599,8 +599,9 @@ removes Evidence.
 
 48. **Archived projects, dashboards and widgets are deleted after
     `RETENTION_ARCHIVED_DAYS`** (default 30; `0` keeps them forever), one
-    value for all three. The daily pass's prune step (03:00 UTC) deletes
-    what has been archived longer than that, each deletion in its own
+    value for all three. Every day the daily pass's prune step (03:00 UTC)
+    deletes whatever has `archived_at + RETENTION_ARCHIVED_DAYS` in the
+    past; nothing else is tracked. Each deletion runs in its own
     transaction with an `audit_log` entry, actor `retention`:
     - a widget: its row;
     - a dashboard: its row, and its widgets by cascade;
@@ -610,13 +611,11 @@ removes Evidence.
       indefinitely.
 
     System dashboards and widgets cannot be archived, so the purge never
-    touches them. The clock is `archived_at`, but never earlier than the
-    upgrade that introduces this: migration 021 records its time as
-    `meta.archive_purge_since`, and an item goes at
-    `max(archived_at, archive_purge_since) + RETENTION_ARCHIVED_DAYS`, so
-    upgrading does not delete, on the first night, projects archived long
-    ago. Archived items expose only `archived_at`; the purge
-    date follows from it and is documented, not returned.
+    touches them. Archived items expose only `archived_at`; the purge
+    date follows from it and is documented, not returned. There is no
+    grace period on upgrade: the first night after it, projects archived
+    more than `RETENTION_ARCHIVED_DAYS` ago go with their data, which
+    `deploy/UPGRADES.md` states as an instruction.
 49. **The UI never shows archived items.** `list_widgets` returns archived
     widgets with their `archived_at`, so an agent can find one to
     restore; `get_dashboard` and the grid show live widgets only.
@@ -627,8 +626,7 @@ removes Evidence.
 `reporting_migrations`, the unique indexes of decision 6, and the
 foreign keys from widgets to dashboards (cascading) and to components,
 and sets
-`sqlite_sequence` for `dashboards` to 1000, and records
-`meta.archive_purge_since` (decision 48). It copies nothing. The
+`sqlite_sequence` for `dashboards` to 1000. It copies nothing. The
 system dashboards arrive through the migrator on the same run. Its test
 pins the ceiling at 21 and migrates to latest before calling current Go
 code, per the standing rules.
@@ -644,7 +642,7 @@ code, per the standing rules.
 | foreign keys | deleting a dashboard deletes its widgets; deleting a component sets `component` null on its widgets; writer connections report `foreign_keys = 1`; `DeleteProject` succeeds with keys present; a migration leaving a violation fails `foreign_key_check`; existing databases pass the check after 021 |
 | source types | an unregistered `source_type` is refused; a component's `accepts` naming an unregistered type fails the migrator; `sql` and `md` each validate and load through the registry |
 | archive | archiving a widget hides it and restoring puts it back in the same place; a widget inserted next to an archived one gets a key that does not collide with it; archived widgets keep their names; an archived widget refuses update and copy; `list_widgets` shows archived ones with `archived_at` |
-| purge | with `RETENTION_ARCHIVED_DAYS=30`, a widget, a dashboard (with its widgets) and a project (with its events, aggregates and keys) archived 31 days ago go and one archived 29 days ago stays; `0` keeps everything; an item archived before the upgrade stays until 30 days after `archive_purge_since`; system dashboards are never archived; each purge writes an audit entry and the registry reloads after a project goes |
+| purge | with `RETENTION_ARCHIVED_DAYS=30`, a widget, a dashboard (with its widgets) and a project (with its events, aggregates and keys) archived 31 days ago go and one archived 29 days ago stays; `0` keeps everything; an item archived before the upgrade is judged by its own `archived_at`; system dashboards are never archived; each purge writes an audit entry and the registry reloads after a project goes |
 | components | a component gone from the manifest is deleted and its widgets get a null `component`; such a widget answers `removed`, accepts only a component switch, resize or archiving, and cannot be copied; a component that returns leaves them null |
 | migrator | upserts, deletions, reserved ids, widget ids stable across edits and moves, `last_*` kept, a second run with the same hash writes nothing, a failure writes nothing |
 | **system dashboards** | every system widget, on a database migrated to latest with seeded data, validates and runs for every preset range, and its rows satisfy its component. The load-bearing test |
@@ -676,9 +674,9 @@ In the same PR as the change:
   dev`.
 - `deploy/UPGRADES.md`: 021 adds `/app/`; archived projects, dashboards
   and widgets are now deleted `RETENTION_ARCHIVED_DAYS` after archiving,
-  counted from the upgrade at the earliest, so the first purge of
-  anything archived before it is 30 days after upgrade day (set `0`
-  first to keep them); a release that removes a
+  and the first night after upgrading deletes projects archived longer
+  ago than that, with their data: before upgrading, restore the ones to
+  keep, or set `RETENTION_ARCHIVED_DAYS=0`; a release that removes a
   component leaves its widgets showing "component removed" until an agent
   switches or archives them; a binary rollback re-migrates system
   dashboards and permanently clears the component of widgets on
