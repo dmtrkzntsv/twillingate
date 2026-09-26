@@ -49,7 +49,8 @@ removes Evidence.
    cache, and the embedded UI. It declares `reporting.Store`, the slice of
    the store it uses, which `store/sqlite` implements. `api` exposes its
    operations through `expose()` and mounts `/app/`. Generic helpers it
-   needs live in shared leaf packages (`internal/sortkey`, decision 10),
+   needs live under `internal/shared/`, the home for small generic leaf
+   packages (`internal/shared/sortkey`, decision 10),
    and the Go side adds no third-party dependency for reporting; the
    frontend uses popular libraries freely (decision 43).
 5. **A widget's SQL decides its project and its range; the dashboard
@@ -151,8 +152,8 @@ removes Evidence.
       (the `fractional-indexing` scheme): a key can always be generated
       between two others (`a0`, `a0V`, `a1`). It is our own code, not a
       dependency (the Go side keeps third-party packages to a minimum):
-      ~150 lines in a new shared leaf package, `internal/sortkey`, which
-      knows nothing about dashboards and is ranked 0 next to `civil`.
+      ~150 lines in `internal/shared/sortkey`, a leaf that knows nothing
+      about dashboards, ranked 0 next to `civil`.
       Inserting a widget between two others writes one key; removing one
       deletes one record; nothing is renumbered or rebalanced. Widgets are
       not reordered once placed.
@@ -560,7 +561,7 @@ code, per the standing rules.
 | cache | the age rules of decision 33, invalidation, one run for simultaneous requests, the boot refusal |
 | manifest | `components.json` matches the widget files in `web/`, and Go loads it |
 | api | MCP ↔ REST parity (the view route REST-only by choice); `docs_sync_test` gains the tools, routes, both `REPORTING_*` settings and the range vocabulary; `redirectAllowed` accepts the API host; OAuth end to end through `/app/callback` |
-| archtest | `internal/reporting` at rank 1, `internal/sortkey` at rank 0 |
+| archtest | `internal/reporting` at rank 1, `internal/shared/sortkey` at rank 0 |
 | browser | Playwright against a seeded `serve`: log in, open every system dashboard at desktop and phone width, no error cards |
 
 ## Docs
@@ -580,7 +581,8 @@ In the same PR as the change:
   switches or removes them; a binary rollback re-migrates system
   dashboards and permanently clears the component of widgets on
   components the older release lacks (decision 25).
-- `CLAUDE.md`: `internal/reporting`, `internal/sortkey` and `web/` in the layout; the
+- `CLAUDE.md`: `internal/reporting`, `internal/shared/` (small generic
+  leaf packages; `sortkey` first) and `web/` in the layout; the
   build-and-commit rule extended to `web/`; the docs table rows.
 
 ## Rollout
