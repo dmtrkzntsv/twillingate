@@ -131,9 +131,11 @@ removes Evidence.
 16. **A `sql` source gets exactly three named parameters:** `:project`
     (project id), `:from` and `:to` (UTC days, `YYYY-MM-DD`). Using any
     other parameter is refused.
-17. **Ranges are a closed vocabulary,** resolved to `:from` and `:to` in
-    UTC days. The rolling ones include today, the window the Evidence
-    pages use:
+17. **Presets live in the UI; the API takes dates.** Range presets are a
+    closed vocabulary used by the dashboard page's URL, the range switcher,
+    `default_range` and the stored last selection. The UI resolves a preset
+    to `from` and `to` in UTC days before calling the API. The rolling
+    presets include today, the window the Evidence pages use:
 
     | Id | Label | `:from` → `:to` |
     | --- | --- | --- |
@@ -144,9 +146,13 @@ removes Evidence.
     | `90d` | Last 90 days | today − 89 → today |
     | `custom` | Custom… | the given `from` → `to` |
 
-    `custom` takes `from` and `to` (`YYYY-MM-DD`): both required,
-    `from ≤ to ≤ today`, at most 365 days; otherwise `ErrInvalid`. Each
-    dashboard has a `default_range`, which cannot be `custom`.
+    **API URLs take only `from` and `to`** (`YYYY-MM-DD`), never a preset.
+    Both are required and `from ≤ to`, spanning at most 365 days;
+    otherwise `ErrInvalid`. A `to` after today (UTC) is clamped to today,
+    before the cache key is built, so a browser clock slightly ahead of
+    the server near midnight still gets data. `default_range` is a preset
+    and cannot be `custom`; the Go side knows the preset ids only to
+    validate `default_range` and the stored last selection.
 
 ### System dashboards: files, migrated on every run
 
@@ -238,7 +244,7 @@ removes Evidence.
     | `list_dashboards` | `GET /api/dashboards` | id, title, owner, position, default range, last project and range, widget count, archived |
     | `get_dashboard` | `GET /api/dashboards/{dashboard_id}` | the dashboard with its layout, and every widget's component, title, props, source type and source |
     | `list_widgets` | `GET /api/widgets?dashboard_id=&component=&removed=` | every widget with its dashboard (id, title, owner, archived); filters combine; `removed=true` lists widgets on removed components |
-    | `widget_data` | `GET /api/widgets/{widget_id}/data?project_id=&range=&from=&to=&fresh=` | the widget's content for a project and range (decision 30) |
+    | `widget_data` | `GET /api/widgets/{widget_id}/data?project_id=&from=&to=&fresh=` | the widget's content for a project and dates (decision 30) |
 
 27. **Write tools,** each refused on system dashboards and recorded in
     `audit_log` with actor `mcp` or `rest`:
@@ -255,9 +261,12 @@ removes Evidence.
     | `remove_widget` | `DELETE /api/widgets/{widget_id}` | removes it from the layout; a row left empty disappears |
 
     A source is `{"type": "sql"|"md", "content": "…"}`.
-28. **REST only:** `PUT /api/dashboards/{dashboard_id}/view` with
-    `project_id`, `range` and, for `custom`, `from` and `to`, which sets
-    `last_project_id`, `last_range`, `last_from` and `last_to`.
+28. **REST only:** `PUT /api/dashboards/{dashboard_id}/view` with a JSON
+    body of `project_id`, `range` (a preset) and, for `custom`, `from` and
+    `to`, which sets `last_project_id`, `last_range`, `last_from` and
+    `last_to`. It stores the preset, not its dates, so "Last week" stays
+    rolling when the dashboard is opened again; its URL carries no
+    range.
     It is allowed on system dashboards (it is viewer state, not
     definition) and writes no audit entry. MCP-only or REST-only is an
     explicit choice the parity test checks.
@@ -283,8 +292,7 @@ removes Evidence.
     `ErrInvalid` with the reason. Queries run on the read pool with the
     `query` guards, row cap and timeout.
 31. **One cache, two ages.** An in-memory entry per (widget, project,
-    `:from`, `:to`), the resolved dates, so a preset and a custom range
-    with the same dates share it, records when it was computed:
+    `from`, `to`) records when it was computed:
 
     | Setting | Default | Meaning |
     | --- | --- | --- |
@@ -304,7 +312,10 @@ removes Evidence.
 32. **Routes:** `/app/` goes to the last dashboard opened on this device,
     else the first system dashboard;
     `/app/dashboards/{id}?project=&range=` (plus `from` and `to` for
-    `custom`) shows one; `/app/callback` completes login. Without
+    `custom`) shows one, e.g. `?project=7&range=7d` or
+    `?project=7&range=custom&from=2026-08-01&to=2026-08-31`; a shared link
+    with a preset shows that preset as of the day it is opened.
+    `/app/callback` completes login. Without
     `project` or `range` in the URL, the dashboard's stored last selection
     applies, then the first active project and `default_range`.
 33. **Selection is remembered per dashboard, server side.** Changing the
@@ -389,7 +400,7 @@ code, per the standing rules.
 | migrator | upserts, deletions, reserved ids, widget ids stable across edits and moves, `last_*` kept, a second run with the same hash writes nothing, a failure writes nothing |
 | **system dashboards** | every system widget, on a database migrated to latest with seeded data, validates and runs for every preset range, and its rows satisfy its component. The load-bearing test |
 | files | pairing errors (no data file, two, orphan data file, unplaced or missing widget, duplicate or out-of-range `id`) |
-| ranges | each preset resolves to the dates in decision 17; `custom` refusals (missing date, `from > to`, future `to`, over 365 days); `custom` rejected as a default range |
+| ranges | the UI resolves each preset to the dates in decision 17 (UTC, around midnight); the API refuses a missing date, `from > to` and spans over 365 days, and clamps a future `to`; `custom` and unknown presets are rejected as a default range, and unknown presets by the view route |
 | cache | the age rules of decision 31, invalidation, one run for simultaneous requests, the boot refusal |
 | manifest | `components.json` matches the widget files in `web/`, and Go loads it |
 | api | MCP ↔ REST parity (the view route REST-only by choice); `docs_sync_test` gains the tools, routes, both settings and the range vocabulary; `redirectAllowed` accepts the API host; OAuth end to end through `/app/callback` |
