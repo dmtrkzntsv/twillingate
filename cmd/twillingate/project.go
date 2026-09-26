@@ -71,7 +71,7 @@ func openOps(stdout io.Writer, envFile string) (*manage.Ops, *config.Config, fun
 		return nil, nil, nil, 1
 	}
 	ctx := context.Background()
-	if err := st.Migrate(ctx); err != nil {
+	if err := app.Migrate(ctx, cfg, st); err != nil {
 		st.Close()
 		fmt.Fprintln(stdout, err)
 		return nil, nil, nil, 1

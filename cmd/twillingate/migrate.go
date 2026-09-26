@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/dmtrkzntsv/twillingate/internal/app"
 	"github.com/dmtrkzntsv/twillingate/internal/config"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 	_ "github.com/dmtrkzntsv/twillingate/internal/store/sqlite"
@@ -32,7 +33,7 @@ func cmdMigrate(args []string, stdout io.Writer) int {
 		return 1
 	}
 	defer st.Close()
-	if err := st.Migrate(context.Background()); err != nil {
+	if err := app.Migrate(context.Background(), cfg, st); err != nil {
 		fmt.Fprintln(stdout, err)
 		return 1
 	}
