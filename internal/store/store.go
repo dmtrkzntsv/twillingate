@@ -211,6 +211,11 @@ type Store interface {
 	InsertWidget(ctx context.Context, w Widget, a AuditEntry) (int64, error)
 	UpdateWidget(ctx context.Context, w Widget, a AuditEntry) error
 	SetWidgetArchived(ctx context.Context, id int64, archived bool, a AuditEntry) error
+	// ReportingHash is the hash of the latest reporting_migrations row, ""
+	// if none has run yet. SyncReporting makes components and system
+	// dashboards (with their widgets) match s in one transaction.
+	ReportingHash(ctx context.Context) (string, error)
+	SyncReporting(ctx context.Context, s ReportingSync) error
 
 	Close() error
 }

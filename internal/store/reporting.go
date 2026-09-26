@@ -41,3 +41,22 @@ type Widget struct {
 	CreatedAt, UpdatedAt string
 	ArchivedAt           string
 }
+
+// ReportingSync is the system state a release carries; SyncReporting
+// makes the database match it in one transaction (spec D23).
+type ReportingSync struct {
+	Hash, Version string
+	Components    []Component
+	Dashboards    []SystemDashboard // ascending id
+}
+
+// SystemDashboard is one system dashboard a release migrates in.
+// Range is the starting selection: SyncReporting writes it only when the
+// dashboard is first inserted, so a viewer's later SetDashboardView
+// survives a resync.
+type SystemDashboard struct {
+	ID             int64
+	Title, SortKey string
+	Range          string   // the starting selection; written on insert only
+	Widgets        []Widget // Name identifies the row; SortKey, sizes and content as in the files
+}
