@@ -176,16 +176,30 @@ removes Evidence.
     `accepts` (source types), `inputs` (for `sql`), `props` (a JSON schema)
     `defaultWidth` and `defaultHeight`. The web build writes `components.json` from these
     exports. Nothing is declared twice.
-13. **The first set:**
+13. **The first set is broad from the start.** Charts are shadcn's
+    `chart` (`ChartContainer`, tooltip and legend) around Recharts, so any
+    Recharts chart can be a component; `funnel` and `scatter` use
+    Recharts directly, outside shadcn's gallery. `format` is
+    `number`\|`percent`\|`duration` everywhere.
 
     | Component | Accepts | Inputs: the columns the query returns | Props | Default width × height |
     | --- | --- | --- | --- | --- |
-    | `stat` | `sql` | `value` number; `previous` number, optional (shows the change) | `format`: `number`\|`percent`\|`duration` | 3 × 3 |
-    | `line` | `sql` | `x` day or text; `y` number; `series` text, optional (one line per value) | `format` | 6 × 8 |
-    | `area` | `sql` | as `line` | `format`, `stacked` | 6 × 8 |
-    | `bar` | `sql` | `x` text; `y` number; `series` text, optional | `format`, `horizontal`, `stacked` | 6 × 8 |
-    | `table` | `sql` | open: any columns, shown in query order | `formats`: column → format | 6 × 10 |
+    | `stat` (a number) | `sql` | `value` number; `previous` number, optional (shows the change) | `format` | 3 × 3 |
+    | `line` | `sql` | `x` day or text; `y` number; `series` text, optional (one line per value) | `format`, `curve`: `linear`\|`monotone`\|`step` | 6 × 8 |
+    | `area` | `sql` | as `line` | `format`, `curve`, `stacked` | 6 × 8 |
+    | `bar` | `sql` | `x` text or day; `y` number; `series` text, optional | `format`, `horizontal`, `stacked` | 6 × 8 |
+    | `bar_list` | `sql` | `label` text; `value` number (a ranked list with an inline bar: top pages, referrers) | `format` | 6 × 8 |
+    | `pie` | `sql` | `label` text; `value` number | `format`, `donut` | 4 × 8 |
+    | `radar` | `sql` | `axis` text; `value` number; `series` text, optional | `format` | 4 × 8 |
+    | `radial` | `sql` | `label` text; `value` number; `max` number, optional (rings toward a target) | `format` | 4 × 8 |
+    | `scatter` | `sql` | `x` number; `y` number; `series` text, optional; `size` number, optional | `format` | 6 × 8 |
+    | `funnel` | `sql` | `step` text; `value` number, in query order | `format` | 6 × 8 |
+    | `table` | `sql` | open: any columns, shown in query order | `formats`: column → format; `colorscale`: columns shaded by value | 6 × 10 |
     | `markdown` | `md` | none | none | 12 × 2 |
+
+    Each component's `description` in the manifest says when to use it
+    and its limits (a pie past ~7 slices should group the rest as
+    "Other" in SQL); `reporting_guide` and `list_components` return it.
 
     Queries satisfy inputs by alias: `SELECT day AS x, visitors AS y …`.
     Returning a column a closed interface does not declare is refused.
@@ -523,10 +537,11 @@ removes Evidence.
 42. **PWA:** `manifest.webmanifest` (`display: standalone`, `start_url`
     and `scope` `/app/`) and a service worker caching the app shell only,
     never API responses. Offline, the installed app opens and says so.
-43. **Stack:** React, Vite, TypeScript, Tailwind and shadcn (`Sidebar`,
-    `Sheet`, `Card`, `Select`, `ToggleGroup`, `Table`, `Chart` on
-    Recharts, `Skeleton`), `react-markdown`, light and dark following the
-    system. Popular frontend libraries are fine; the Go side stays lean.
+43. **Stack:** React, Vite, TypeScript, Tailwind, Recharts and shadcn,
+    added whole up front (`npx shadcn@latest add --all` puts every general
+    component and `chart` into `web/src/components/ui/` as source, so
+    Vite's tree-shaking keeps the bundle to what is rendered),
+    `react-markdown`, light and dark following the system. Popular frontend libraries are fine; the Go side stays lean.
     `web/`
     builds into `internal/reporting/ui/` (bundle and `components.json`),
     which is committed and drift-checked in CI like the SDK bundle.
@@ -696,6 +711,7 @@ code, per the standing rules.
 | limits | a widget query past `API_QUERY_TIMEOUT` is refused naming it; a result past `API_QUERY_MAX_ROWS` is cut and answers `truncated` |
 | cache | the age rules of decision 33, invalidation, one run for simultaneous requests, the boot refusal |
 | manifest | `components.json` matches the widget files in `web/`, and Go loads it |
+| component render | Vitest with Testing Library, per component: renders from sample rows, from no rows, and with each prop; a closed interface's missing optional input (`series`, `previous`, `max`, `size`) renders the simpler form |
 | guide | `reporting_guide` returns the live components, source types, views, projects and dashboards plus the workflow section; the server's `instructions` name both guides; `docs://reporting` is served; `schema://components`, `schema://dashboards` and `schema://widgets` return exactly what `list_components`, `list_dashboards` and unfiltered `list_widgets` return, reflecting a write made just before |
 | api | MCP ↔ REST parity (the view route REST-only by choice, `reporting_guide` MCP-only by choice); `docs_sync_test` reads `docs/reporting.md` and binds its component table to `components.json` in both directions, and gains the tools, routes, both `REPORTING_*` settings and the range vocabulary; `redirectAllowed` accepts the API host; OAuth end to end through `/app/callback` |
 | read-only | one table of write attempts through `query` and through `widget_data` (`INSERT`, `UPDATE`, `DELETE`, `REPLACE`, `DROP`, `CREATE [TEMP] TABLE`, `WITH … INSERT`, `PRAGMA x = y`, `ATTACH`, `VACUUM INTO`, two statements, `load_extension()`): every one is refused and the database file's checksum is unchanged afterwards |
