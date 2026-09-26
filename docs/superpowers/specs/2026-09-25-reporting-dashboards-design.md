@@ -49,8 +49,12 @@ removes Evidence.
    cache, and the embedded UI. It declares `reporting.Store`, the slice of
    the store it uses, which `store/sqlite` implements. `api` exposes its
    operations through `expose()` and mounts `/app/`.
-5. **Every dashboard is project agnostic.** Nothing in a dashboard names a
-   project; the viewer picks one.
+5. **Each widget decides where its project comes from; the dashboard
+   follows.** A widget follows the dashboard's project switcher, is pinned
+   to one project, or spans projects (decision 16). The switcher appears
+   only when at least one widget follows it; there is no dashboard-level
+   setting to fall out of step with the widgets. System dashboards'
+   widgets always follow it, so every system dashboard has a switcher.
 
 ### Model
 
@@ -64,7 +68,7 @@ removes Evidence.
                          last_from, last_to,
                          created_at, updated_at, archived_at
    widgets               id INTEGER PK AUTOINCREMENT, dashboard_id, name, component, title,
-                         props (JSON), source_type ('sql'|'md'), source (TEXT),
+                         props (JSON), source_type ('sql'|'md'), source (TEXT), project_id,
                          created_at, updated_at
    reporting_migrations  id INTEGER PK AUTOINCREMENT, hash, version, applied_at
    ```
@@ -128,9 +132,20 @@ removes Evidence.
 
 ### Parameters and ranges
 
-16. **A `sql` source gets exactly three named parameters:** `:project`
-    (project id), `:from` and `:to` (UTC days, `YYYY-MM-DD`). Using any
-    other parameter is refused.
+16. **A `sql` source can use three named parameters:** `:project`
+    (project id), `:from` and `:to` (days, `YYYY-MM-DD`). Using any other
+    parameter is refused. How it uses `:project` decides the widget's
+    project:
+
+    | Widget | SQL | Project |
+    | --- | --- | --- |
+    | follows the switcher | uses `:project`; `project_id` empty | the dashboard's switcher |
+    | pinned | uses `:project`; `project_id` set | always that project; a chip on the card names it |
+    | cross-project | does not use `:project` | whatever the SQL selects, e.g. grouped by project with `series` from `projects.name` |
+
+    `project_id` on a widget whose SQL does not use `:project` is refused
+    ("widget is pinned to project 7 but its sql never uses :project"), as
+    is any `project_id` on a system widget.
 17. **Presets live in the UI; the API takes dates.** Range presets are a
     closed vocabulary used by the dashboard page's URL, the range switcher,
     `default_range` and the stored last selection. The UI resolves a preset
@@ -240,6 +255,8 @@ removes Evidence.
     - props match the component's `props` schema;
     - the layout: 1–3 widgets per row, height 1–3, every widget placed once
       ("row 2 already holds 3 widgets; omit row to start a new one");
+    - `project_id`: set only on a widget whose SQL uses `:project`, never
+      on a system widget, and naming an existing project (decision 16);
     - system rows: "dashboard 3 is a system dashboard and changes only with
       a release; duplicate_dashboard makes an editable copy".
 
@@ -252,8 +269,8 @@ removes Evidence.
     | `list_components` | `GET /api/components` | name, description, accepts, inputs, props, default height; `include_removed` adds removed ones |
     | `list_dashboards` | `GET /api/dashboards` | `timezone` (the instance's, decision 18), and per dashboard: id, title, owner, position, default range, last project and range, widget count, archived |
     | `get_dashboard` | `GET /api/dashboards/{dashboard_id}` | the dashboard with its layout, and every widget's component, title, props, source type and source |
-    | `list_widgets` | `GET /api/widgets?dashboard_id=&component=&removed=` | every widget with its dashboard (id, title, owner, archived); filters combine; `removed=true` lists widgets on removed components |
-    | `widget_data` | `GET /api/widgets/{widget_id}/data?project_id=&from=&to=&fresh=` | the widget's content for a project and dates (decision 31) |
+    | `list_widgets` | `GET /api/widgets?dashboard_id=&component=&removed=&orphaned=` | every widget with its dashboard (id, title, owner, archived) and pinned project; filters combine; `removed=true` lists widgets on removed components, `orphaned=true` widgets pinned to a deleted project |
+    | `widget_data` | `GET /api/widgets/{widget_id}/data?project_id=&from=&to=&fresh=` | the widget's content for its effective project and the dates (decision 31) |
 
 28. **Write tools,** each refused on system dashboards and recorded in
     `audit_log` with actor `mcp` or `rest`:
@@ -265,17 +282,19 @@ removes Evidence.
     | `duplicate_dashboard` | `POST /api/dashboards/{dashboard_id}/duplicate` → 201 | a user copy of any dashboard, system ones included |
     | `archive_dashboard` / `restore_dashboard` | `POST /api/dashboards/{dashboard_id}/archive` / `…/restore` | hide or unhide |
     | `add_widget` | `POST /api/dashboards/{dashboard_id}/widgets` → 201 | no `row`: a new last row; `row` alone: append; `row` and `col`: insert and shift right |
-    | `update_widget` | `PATCH /api/widgets/{widget_id}` | name, component, title, props, source |
-    | `copy_widget` | `POST /api/widgets/{widget_id}/copy` → 201 | an independent copy into `dashboard_id`, optional `row`/`col`; the source may be a system widget |
+    | `update_widget` | `PATCH /api/widgets/{widget_id}` | name, component, title, props, source, `project_id` (`null` unpins) |
+    | `copy_widget` | `POST /api/widgets/{widget_id}/copy` → 201 | an independent copy into `dashboard_id`, optional `row`/`col` and `project_id`; keeps the pin unless the call changes it; the source may be a system widget |
     | `remove_widget` | `DELETE /api/widgets/{widget_id}` | removes it from the layout; a row left empty disappears |
 
-    A source is `{"type": "sql"|"md", "content": "…"}`.
+    A source is `{"type": "sql"|"md", "content": "…"}`. `add_widget`
+    and `create_dashboard` widgets take an optional `project_id` (the pin).
 29. **REST only:** `PUT /api/dashboards/{dashboard_id}/view` with a JSON
     body of `project_id`, `range` (a preset) and, for `custom`, `from` and
     `to`, which sets `last_project_id`, `last_range`, `last_from` and
     `last_to`. It stores the preset, not its dates, so "Last week" stays
     rolling when the dashboard is opened again; its URL carries no
-    range.
+    range. `project_id` is required when the dashboard has a switcher and
+    refused when it has none.
     It is allowed on system dashboards (it is viewer state, not
     definition) and writes no audit entry. MCP-only or REST-only is an
     explicit choice the parity test checks.
@@ -294,8 +313,12 @@ removes Evidence.
       "columns": ["x", "y"], "rows": [["2026-08-27", "40"], …] }
     ```
 
-    `md` widgets answer `{"widget_id", "markdown"}`, ignore project and
-    range, and are not cached. A widget on a removed component answers
+    The effective project is the widget's pin, else the `project_id`
+    parameter; a widget that follows the switcher and gets none is
+    `ErrInvalid`, and a pinned or cross-project widget ignores the
+    parameter. `md` widgets answer `{"widget_id", "markdown"}`, ignore
+    project and dates, and are not cached. A widget pinned to a project
+    that no longer exists answers `{"widget_id", "orphaned": true}`. A widget on a removed component answers
     `{"widget_id", "removed": true}`. A query that no longer runs, or whose
     rows no longer satisfy the inputs (a release changed a view), is
     `ErrInvalid` with the reason. Queries run on the read pool with the
@@ -312,7 +335,9 @@ removes Evidence.
     Entries live for the longer of the two. A refresh age longer than a
     non-zero cache age refuses the boot. `refresh_after` is `cached_at`
     plus the refresh age. Identical requests in flight share one run
-    (`singleflight`, same key). `update_widget` drops that widget's
+    (`singleflight`, same key). The key's project is the effective one,
+    or none for a cross-project widget, so the switcher does not split a
+    pinned or cross-project widget's entries. `update_widget` drops that widget's
     entries; a copy starts empty; the migrator drops entries of widgets it
     changed.
 
@@ -326,14 +351,16 @@ removes Evidence.
     with a preset shows that preset as of the day it is opened.
     `/app/callback` completes login. Without
     `project` or `range` in the URL, the dashboard's stored last selection
-    applies, then the first active project and `default_range`.
+    applies, then the first active project and `default_range`. A
+    dashboard without a switcher (decision 5) takes no `project` and
+    stores no last project.
 34. **Selection is remembered per dashboard, server side.** Changing the
     project or range updates the URL and calls the view route
     (decision 29).
 35. **Layout:** a sidebar with **Built-in** (system dashboards by position)
     and **Yours** (user dashboards by position), archived ones hidden; a
-    header with the title, the project switcher (active projects, archived
-    ones in a collapsed group), the range switcher ("Custom…" opens a
+    header with the title, the project switcher when the dashboard has one
+    (active projects, archived ones in a collapsed group), the range switcher ("Custom…" opens a
     date-range `Calendar`, in a `Popover` on desktop and a `Sheet` on
     phones), "data as of" (the
     oldest `cached_at` on screen) and a dashboard refresh button; then the
@@ -350,8 +377,10 @@ removes Evidence.
     on narrow screens; tables scroll inside their card.
 37. **Each widget loads on its own** and has its own state: skeleton at the
     row's height while loading; the component with data; "No data for this
-    range"; "component removed"; "query no longer runs" with the error
-    folded; "couldn't load" with a retry.
+    range"; "component removed"; "pinned project was deleted"; "query no
+    longer runs" with the error folded; "couldn't load" with a retry. A
+    pinned card shows the project's name as a chip in its header, marked
+    "archived" when the project is.
 38. **Refresh.** Each `sql` widget has a refresh icon (on hover on desktop,
     always on touch) that requests `fresh=true`; the dashboard button does
     it for every widget past its `refresh_after`. The icon is disabled
@@ -404,6 +433,7 @@ code, per the standing rules.
 | Area | Proves |
 | --- | --- |
 | validation | each refusal in decision 26 fires with its sentinel and message |
+| projects | follows / pinned / cross-project resolve the effective project and cache key as decision 16 says; the switcher is present exactly when a widget follows it; a deleted pinned project answers `orphaned` and is listed by `orphaned=true`; `null` unpins |
 | layout | add, copy, remove and `update_dashboard` layouts keep rows at 1–3 widgets with every widget placed once; append, insert-with-shift, empty-row removal |
 | components | a removed component is refused for new use, answers `removed`, and is deleted with its last widget, including when the migrator deletes a system dashboard |
 | migrator | upserts, deletions, reserved ids, widget ids stable across edits and moves, `last_*` kept, a second run with the same hash writes nothing, a failure writes nothing |
