@@ -145,9 +145,11 @@ removes Evidence.
     - Either may be omitted and takes the component's `default_width` or
       `default_height`.
     - **Order is a fractional sort key.** `sort_key` is a fractional index
-      (the `fractional-indexing` scheme, e.g. Go's
-      `github.com/rocicorp/fracdex`, or ~150 lines of our own): a key can
-      always be generated between two others (`a0`, `a0V`, `a1`).
+      (the `fractional-indexing` scheme): a key can always be generated
+      between two others (`a0`, `a0V`, `a1`). It is our own code, one small
+      file in `internal/reporting` with its tests, not a dependency: the
+      project takes small third-party packages only from very reputable
+      vendors, and this one is ~150 lines.
       Inserting a widget between two others writes one key; removing one
       deletes one record; nothing is renumbered or rebalanced. Widgets are
       not reordered once placed.
@@ -539,7 +541,7 @@ code, per the standing rules.
 | --- | --- |
 | validation | each refusal in decision 27 fires with its sentinel and message |
 | following | for project and for range independently: a widget whose SQL uses the parameters requires them in `widget_data` and keys its cache by them; a fixed widget ignores them and keys without them; each switcher is present exactly when a widget follows it; the view route requires and refuses each part to match; a widget following neither is cached per widget only |
-| order | dashboards: `after` on create and update writes one key; system dashboards sort in `id` order |
+| order | the key generator: a key between any two keys sorts strictly between them, before the first and after the last, including adjacent and long keys; dashboards: `after` on create and update writes one key; system dashboards sort in `id` order |
 | layout | a 6 × 6 widget followed by four 3 × 3 widgets renders them as a 2 × 2 block beside it (browser test); insert first, last and `after` (one key written, no other record touched); removal touches no other record; many inserts at one spot keep keys ordered and short enough; the `layout` list round-trips; widths and heights default from the component; the migrator keeps widget ids when order or size changes |
 | foreign keys | deleting a dashboard deletes its widgets; deleting a component sets `component` null on its widgets; writer connections report `foreign_keys = 1`; `DeleteProject` succeeds with keys present; a migration leaving a violation fails `foreign_key_check`; existing databases pass the check after 021 |
 | source types | an unregistered `source_type` is refused; a component's `accepts` naming an unregistered type fails the migrator; `sql` and `md` each validate and load through the registry |
