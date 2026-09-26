@@ -72,19 +72,105 @@ func TestCheckRefusesEscapesFromTheWrap(t *testing.T) {
 
 // TestCheckAllowsBalancedParensAndTrailingSemicolon guards against the
 // escape-detection above being too strict: legitimate single statements
-// with nested parens, and exactly one trailing semicolon (optionally
-// followed by whitespace or a comment), must still pass.
+// with nested, balanced parens, and a trailing run of ';' and/or
+// whitespace (nothing else — see TestCheckRefusesCommentAfterSemicolon),
+// must still pass.
 func TestCheckAllowsBalancedParensAndTrailingSemicolon(t *testing.T) {
 	for _, q := range []string{
 		`select * from (select 1) x`,
 		`with n(i) as (values (1),(2),(3)) select i from n`,
 		`select 1;`,
 		`select 1 ;  `,
-		"select 1; -- trailing",
+		"select 1; ;",
+		"select 1;\n",
 	} {
 		t.Run(q, func(t *testing.T) {
 			if _, err := Check(q); err != nil {
 				t.Fatalf("Check(%q) = %v, want no error", q, err)
+			}
+		})
+	}
+}
+
+// TestCheckRefusesCommentAfterSemicolon pins the fix for the finding
+// that Check allowed a comment after a top-level ';' (e.g. "select 1;
+// -- trailing"), but Query's trim only strips a trailing run of ';' and
+// whitespace, leaving the ';' and comment inside the wrap — a syntax
+// error there, not the clean refusal a caller can act on. Check and
+// Query's trim now agree: nothing but more ';' or whitespace may follow
+// the first top-level ';'.
+func TestCheckRefusesCommentAfterSemicolon(t *testing.T) {
+	for _, q := range []string{
+		"select 1; -- trailing",
+		"select 1; /* trailing */",
+	} {
+		t.Run(q, func(t *testing.T) {
+			_, err := Check(q)
+			if !errors.Is(err, ErrRefused) || !strings.Contains(err.Error(), "single SELECT or WITH statement") {
+				t.Fatalf("Check(%q) = %v, want the single-statement refusal", q, err)
+			}
+		})
+	}
+}
+
+// TestCheckRefusesUnbalancedOpenParen pins the fix requiring paren depth
+// to be exactly 0 at the end: an unclosed '(' would need the wrap's own
+// closing ')' to balance, changing what that ')' actually closes.
+func TestCheckRefusesUnbalancedOpenParen(t *testing.T) {
+	for _, q := range []string{
+		`select * from (select 1`,
+		`select (1`,
+	} {
+		t.Run(q, func(t *testing.T) {
+			_, err := Check(q)
+			if !errors.Is(err, ErrRefused) {
+				t.Fatalf("Check(%q) = %v, want ErrRefused", q, err)
+			}
+		})
+	}
+}
+
+// TestCheckRefusesNULByte pins the fix for the finding that Check, which
+// walks a Go string with no notion of a string terminator, would happily
+// validate text past a NUL byte that SQLite's C-string-based tokenizer
+// would never even see, letting the two disagree about what the
+// statement even is.
+func TestCheckRefusesNULByte(t *testing.T) {
+	for _, q := range []string{
+		"select 1\x00; drop table x",
+		"select '\x00' as x",
+		"select 1 -- \x00",
+	} {
+		t.Run(q, func(t *testing.T) {
+			_, err := Check(q)
+			if !errors.Is(err, ErrRefused) {
+				t.Fatalf("Check(%q) = %v, want ErrRefused", q, err)
+			}
+		})
+	}
+}
+
+// TestCheckRefusesTclVariableForms pins the fix for the finding that
+// SQLite's tokenizer folds a following "(...)" or "::NAME2" into the
+// same variable token for :, @ and $ (a Tcl-variable compatibility
+// form), consuming any ')' or quote inside as part of the name rather
+// than as SQL — which Check has no matching rule for and would desync
+// on. The # sigil (the same family) is refused unconditionally.
+func TestCheckRefusesTclVariableForms(t *testing.T) {
+	for _, q := range []string{
+		`select $x(1)`,
+		`select :x(1)`,
+		`select @x(1)`,
+		`select $x(')') as y`,
+		`select $x::y`,
+		`select :x::y`,
+		`select @x::y`,
+		`select #x`,
+	} {
+		t.Run(q, func(t *testing.T) {
+			_, err := Check(q)
+			if !errors.Is(err, ErrRefused) {
+				t.Fatalf("Check(%q) = %v, want ErrRefused", q, err)
 			}
 		})
 	}

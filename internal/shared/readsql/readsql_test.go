@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -83,6 +84,8 @@ func TestQueryTrailingCommentAndSemicolon(t *testing.T) {
 	for _, q := range []string{
 		"select 1 as x -- trailing",
 		"select 1 as x;",
+		"select 1 as x; ;",
+		"select 1 as x;\n",
 	} {
 		res, err := db.Query(context.Background(), q)
 		if err != nil {
@@ -91,6 +94,21 @@ func TestQueryTrailingCommentAndSemicolon(t *testing.T) {
 		if len(res.Rows) != 1 || len(res.Rows[0]) != 1 || res.Rows[0][0] != "1" {
 			t.Errorf("Query(%q) rows = %v, want [[1]]", q, res.Rows)
 		}
+	}
+}
+
+// TestQueryRefusesTrailingCommentAfterSemicolon pins the fix for the
+// finding that "select 1; -- c" passed Check but broke Query: Check
+// allowed a comment after the trailing ';', while Query's trim (a
+// trailing run of ';' and whitespace only) left the ';' and the comment
+// inside the subquery wrap, a syntax error rather than a clean refusal.
+// The two now agree: this is refused by Check itself, with the message a
+// caller can act on, never reaching the wrap at all.
+func TestQueryRefusesTrailingCommentAfterSemicolon(t *testing.T) {
+	db, _ := newTestDB(t, 2*time.Second, 3)
+	_, err := db.Query(context.Background(), "select 1; -- c")
+	if !errors.Is(err, ErrRefused) || !strings.Contains(err.Error(), "single SELECT or WITH statement") {
+		t.Fatalf("Query(%q) = %v, want the single-statement refusal", "select 1; -- c", err)
 	}
 }
 

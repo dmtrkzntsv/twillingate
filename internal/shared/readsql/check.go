@@ -17,25 +17,50 @@ import (
 //     separate statement from executing on the same call). Check refuses
 //     this directly: a ')' that has no matching '(' earlier in the text
 //     would close the wrapper's own paren early and let whatever follows
-//     run outside it, so unmatched depth is refused; and a ';' may only
-//     be followed by more ';', whitespace or comments — anything else
-//     refuses, so "select 1; drop table x" cannot ride the same call as
-//     the SELECT it looks like;
+//     run outside it, so unmatched depth going negative is refused, and
+//     so is depth left positive at the end (an unclosed '(' would need
+//     the wrap's own closing ')' to balance, changing what it encloses);
+//     a ';' may only be followed by more ';' or whitespace — nothing else,
+//     not even a comment, since Query's own trim (a run of ';' and
+//     whitespace only) would otherwise leave a comment, or the ';'
+//     itself, inside the wrap;
 //   - an unterminated /* comment, which would otherwise swallow the
 //     wrap's own trailing "\n) LIMIT n" once concatenated, and everything
-//     Check itself would have skipped over unread.
+//     Check itself would have skipped over unread;
+//   - a NUL byte, anywhere: SQLite's tokenizer is C-string based and
+//     stops at the first one, so text after it would never reach SQLite
+//     as SQL at all, while Check — operating on a Go string, which has no
+//     such limit — would have gone on validating it as if it would;
+//   - the $NAME(...) and $NAME::NAME2 (and the same for :, @) forms
+//     SQLite accepts for compatibility with Tcl variable references: its
+//     tokenizer folds the "(...)" or "::NAME2" suffix into the single
+//     variable token, consuming any ')' or quote inside it as part of
+//     the name rather than as SQL, which Check has no matching rule for
+//     and would desync on; refused outright rather than modeled. The #
+//     sigil (also a variable form) is refused unconditionally for the
+//     same reason, having no legitimate use here.
 //
 // A tokenizer rather than a substring search, so 'meta' in a string, a
 // comment, or a column called metadata passes. Without an authorizer (the
 // driver exposes none) this is sound because identifiers have no escapes,
 // a checked statement cannot create a view naming meta or a SQLite
 // internal (an existing view is pinned by a test on every view in the
-// schema), and — with the paren and statement-boundary rules above — the
-// text Check accepts is always exactly the one statement it examined.
+// schema), and — with the rules above — the text Check accepts is always
+// exactly the one statement it examined, with nothing in it SQLite would
+// tokenize differently than Check just did.
 //
 // It returns the named parameters the text uses, sigil included, in
 // order of first use, so a caller can refuse ones it does not bind.
 func Check(q string) ([]string, error) {
+	// Checked once, up front, over the whole string: a NUL can sit inside
+	// a span (a quoted string, a comment) that the loop below jumps over
+	// in one step without visiting each byte, but SQLite's C-string-based
+	// tokenizer stops at the first one regardless of what token it falls
+	// inside, so its notion of "the rest of the text" can differ from
+	// Check's no matter where the NUL is.
+	if strings.IndexByte(q, 0) >= 0 {
+		return nil, fmt.Errorf("%w: sql must not contain a NUL byte", ErrRefused)
+	}
 	var params []string
 	seen := map[string]bool{}
 	depth := 0
@@ -43,19 +68,11 @@ func Check(q string) ([]string, error) {
 	for i := 0; i < len(q); {
 		c := q[i]
 		if stmtEnded {
-			switch {
-			case c == ' ' || c == '\t' || c == '\n' || c == '\r':
+			switch c {
+			case ' ', '\t', '\n', '\r', '\f':
 				i++
-			case c == ';':
+			case ';':
 				i++
-			case c == '-' && strings.HasPrefix(q[i:], "--"):
-				i = skipLineComment(q, i)
-			case c == '/' && strings.HasPrefix(q[i:], "/*"):
-				end, err := skipBlockComment(q, i)
-				if err != nil {
-					return nil, err
-				}
-				i = end
 			default:
 				return nil, fmt.Errorf("%w: sql must be a single SELECT or WITH statement", ErrRefused)
 			}
@@ -100,6 +117,8 @@ func Check(q string) ([]string, error) {
 				return nil, err
 			}
 			i = end
+		case c == '#':
+			return nil, fmt.Errorf("%w: the # variable sigil is not allowed", ErrRefused)
 		case c == '?':
 			j := i + 1 // SQLite's own grammar: ?NNN is digits only, unlike :name/@name/$name
 			for j < len(q) && q[j] >= '0' && q[j] <= '9' {
@@ -114,6 +133,16 @@ func Check(q string) ([]string, error) {
 			j := i + 1
 			for j < len(q) && isIdent(q[j]) {
 				j++
+			}
+			// SQLite folds a following "(...)" or "::NAME" into the same
+			// variable token (a Tcl-variable compatibility form), which
+			// would let a ')' or a quote inside it desync this tokenizer
+			// from SQLite's own. Refused outright rather than modeled.
+			if j < len(q) && q[j] == '(' {
+				return nil, fmt.Errorf("%w: a %c(...) variable is not allowed", ErrRefused, c)
+			}
+			if j+1 < len(q) && q[j] == ':' && q[j+1] == ':' {
+				return nil, fmt.Errorf("%w: a %c...::... variable is not allowed", ErrRefused, c)
 			}
 			if j > i+1 {
 				if p := q[i:j]; !seen[p] {
@@ -144,6 +173,9 @@ func Check(q string) ([]string, error) {
 		default:
 			i++
 		}
+	}
+	if depth != 0 {
+		return nil, fmt.Errorf("%w: sql has an unmatched (", ErrRefused)
 	}
 	return params, nil
 }
