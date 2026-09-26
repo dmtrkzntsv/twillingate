@@ -48,7 +48,10 @@ removes Evidence.
    models, validation, operations, the system-definition migrator, the
    cache, and the embedded UI. It declares `reporting.Store`, the slice of
    the store it uses, which `store/sqlite` implements. `api` exposes its
-   operations through `expose()` and mounts `/app/`.
+   operations through `expose()` and mounts `/app/`. Generic helpers it
+   needs live in shared leaf packages (`internal/sortkey`, decision 10),
+   and the Go side adds no third-party dependency for reporting; the
+   frontend uses popular libraries freely (decision 43).
 5. **A widget's SQL decides its project and its range; the dashboard
    follows.** A widget whose SQL uses `:project` follows the project
    switcher; one whose SQL uses `:from` or `:to` follows the range
@@ -146,10 +149,10 @@ removes Evidence.
       `default_height`.
     - **Order is a fractional sort key.** `sort_key` is a fractional index
       (the `fractional-indexing` scheme): a key can always be generated
-      between two others (`a0`, `a0V`, `a1`). It is our own code, one small
-      file in `internal/reporting` with its tests, not a dependency: the
-      project takes small third-party packages only from very reputable
-      vendors, and this one is ~150 lines.
+      between two others (`a0`, `a0V`, `a1`). It is our own code, not a
+      dependency (the Go side keeps third-party packages to a minimum):
+      ~150 lines in a new shared leaf package, `internal/sortkey`, which
+      knows nothing about dashboards and is ranked 0 next to `civil`.
       Inserting a widget between two others writes one key; removing one
       deletes one record; nothing is renumbered or rebalanced. Widgets are
       not reordered once placed.
@@ -491,7 +494,8 @@ removes Evidence.
     it for every widget past its `refresh_after`. The icon is disabled
     until `refresh_after`, its tooltip showing the age and the wait.
     Markdown widgets have none.
-40. **Markdown renders with raw HTML off.**
+40. **Markdown renders with `react-markdown`, raw HTML off:** without
+    `rehype-raw` it never renders HTML, which is its default.
 41. **Login is the existing OAuth server,** with the page as one more
     client: it registers (client id kept in `localStorage`), runs PKCE
     against the password page, and returns to `https://<api-host>/app/callback`.
@@ -505,7 +509,9 @@ removes Evidence.
     never API responses. Offline, the installed app opens and says so.
 43. **Stack:** React, Vite, TypeScript, Tailwind and shadcn (`Sidebar`,
     `Sheet`, `Card`, `Select`, `ToggleGroup`, `Table`, `Chart` on
-    Recharts, `Skeleton`), light and dark following the system. `web/`
+    Recharts, `Skeleton`), `react-markdown`, light and dark following the
+    system. Popular frontend libraries are fine; the Go side stays lean.
+    `web/`
     builds into `internal/reporting/ui/` (bundle and `components.json`),
     which is committed and drift-checked in CI like the SDK bundle.
 
@@ -554,7 +560,7 @@ code, per the standing rules.
 | cache | the age rules of decision 33, invalidation, one run for simultaneous requests, the boot refusal |
 | manifest | `components.json` matches the widget files in `web/`, and Go loads it |
 | api | MCP ↔ REST parity (the view route REST-only by choice); `docs_sync_test` gains the tools, routes, both `REPORTING_*` settings and the range vocabulary; `redirectAllowed` accepts the API host; OAuth end to end through `/app/callback` |
-| archtest | `internal/reporting` at rank 1 |
+| archtest | `internal/reporting` at rank 1, `internal/sortkey` at rank 0 |
 | browser | Playwright against a seeded `serve`: log in, open every system dashboard at desktop and phone width, no error cards |
 
 ## Docs
@@ -574,7 +580,7 @@ In the same PR as the change:
   switches or removes them; a binary rollback re-migrates system
   dashboards and permanently clears the component of widgets on
   components the older release lacks (decision 25).
-- `CLAUDE.md`: `internal/reporting` and `web/` in the layout; the
+- `CLAUDE.md`: `internal/reporting`, `internal/sortkey` and `web/` in the layout; the
   build-and-commit rule extended to `web/`; the docs table rows.
 
 ## Rollout
