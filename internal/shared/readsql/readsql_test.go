@@ -203,6 +203,31 @@ func TestQueryAllowsNonASCIIInStringsQuotedIdentifiersAndComments(t *testing.T) 
 	}
 }
 
+// TestQueryRefusesStringLiteralsNamingRefusedTables exercises the
+// string-literal-as-table-name fix end to end (Check alone is pinned in
+// check_test.go): SQLite's grammar accepts a STRING wherever a NAME is
+// expected, so these all used to read the real table before checkName
+// ran on a single-quoted string's content too.
+func TestQueryRefusesStringLiteralsNamingRefusedTables(t *testing.T) {
+	db, _ := newTestDB(t, 2*time.Second, 1000)
+	for _, q := range []string{
+		`select * from 'meta'`,
+		`select * from main.'meta'`,
+		`select * from (select * from 'meta')`,
+		`select * from 'sqlite_master'`,
+		`select * from 'sqlite_schema'`,
+		`select * from 'dbstat'`,
+		`select * from 'pragma_table_info'('events')`,
+	} {
+		if res, err := db.Query(context.Background(), q); err == nil {
+			t.Errorf("Query(%q) succeeded with %v, want an error", q, res)
+		}
+		if res, err := db.QueryLimit(context.Background(), q, 5); err == nil {
+			t.Errorf("QueryLimit(%q) succeeded with %v, want an error", q, res)
+		}
+	}
+}
+
 func TestQueryTrailingCommentAndSemicolon(t *testing.T) {
 	db, _ := newTestDB(t, 2*time.Second, 3)
 	for _, q := range []string{

@@ -31,12 +31,17 @@ import (
 var (
 	// ErrRefused reports that Check (or, for an empty statement or a
 	// negative limit, QueryLimit itself) refused the text: it named
-	// ATTACH, a table or pragma view custom SQL may not read, a second
-	// statement (an unmatched ')', a ';' followed by anything but more
-	// ';' or whitespace, or a paren left unmatched at the end), an
-	// unterminated /* comment, a $NAME(...) or $NAME::NAME2 variable form
-	// (or the # sigil) SQLite's tokenizer would read differently than
-	// Check just did, a NUL byte, empty text, or a negative limit.
+	// ATTACH, a table or pragma view custom SQL may not read — as a bare
+	// or quoted identifier, or as a single-quoted string exactly naming
+	// one (SQLite's grammar accepts a STRING wherever a NAME is
+	// expected) — a second statement (an unmatched ')', a ';' followed
+	// by anything but more ';' or whitespace, or a paren left unmatched
+	// at the end), an unterminated /* comment, a $NAME(...) or
+	// $NAME::NAME2 variable form (or the # sigil) SQLite's tokenizer
+	// would read differently than Check just did, a non-ASCII byte
+	// outside a string/quoted identifier/comment (unquoted names and
+	// this package's own SQL are ASCII only), a NUL byte, empty text, or
+	// a negative limit.
 	ErrRefused = errors.New("refused")
 	// ErrTimeout reports that a query's deadline passed before it finished.
 	ErrTimeout = errors.New("query timed out")

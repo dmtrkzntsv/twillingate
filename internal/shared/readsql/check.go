@@ -55,16 +55,32 @@ import (
 //     skipBlockComment jump straight past them), non-ASCII text stays
 //     allowed there — 'Посетители' as a string value, "визиты" as a
 //     quoted column name, a comment in any language — only a bare,
-//     unquoted appearance is refused.
+//     unquoted appearance is refused;
+//   - a single-quoted string whose whole (unescaped) content is a
+//     refused name. SQLite's grammar accepts a STRING wherever a NAME
+//     is expected (nm ::= STRING), so "select * from 'meta'",
+//     "main.'meta'" and "'pragma_table_info'('events')" all read a
+//     table Check exists to refuse, string quoting and all, while the
+//     tokenizer had filed 'meta' as an ordinary string literal and
+//     never asked checkName about it. checkName now runs on a
+//     single-quoted string's content exactly as it does on a
+//     double-quoted or bracketed one. This over-refuses an exact-match
+//     string value unrelated to any table name (comparing a column
+//     against the literal 'meta') — accepted, since the text needed to
+//     name a table this way is indistinguishable from the text needed
+//     to compare against it, and only an exact match is refused:
+//     'metadata' and '%meta%' still pass, the same as an unquoted
+//     identifier only a prefix of one of these names would.
 //
-// A tokenizer rather than a substring search, so 'meta' in a string, a
-// comment, or a column called metadata passes. Without an authorizer (the
-// driver exposes none) this is sound because identifiers have no escapes,
-// a checked statement cannot create a view naming meta or a SQLite
-// internal (an existing view is pinned by a test on every view in the
-// schema), and — with the rules above — the text Check accepts is always
-// exactly the one statement it examined, with nothing in it SQLite would
-// tokenize differently than Check just did.
+// A tokenizer rather than a substring search, so 'metadata' or '%meta%',
+// a comment, or a column called metadata passes. Without an authorizer
+// (the driver exposes none) this is sound because identifiers have no
+// escapes, a checked statement cannot create a view naming meta or a
+// SQLite internal (an existing view is pinned by a test on every view in
+// the schema), and — with the rules above — the text Check accepts is
+// always exactly the one statement it examined, with nothing in it
+// SQLite would tokenize, or resolve as a name, differently than Check
+// just did.
 //
 // It returns the named parameters the text uses, sigil included, in
 // order of first use, so a caller can refuse ones it does not bind.
@@ -109,7 +125,12 @@ func Check(q string) ([]string, error) {
 			}
 			i++
 		case c == '\'':
-			i = skipQuoted(q, i, '\'')
+			end := skipQuoted(q, i, '\'')
+			inner := q[i+1 : max(i+1, end-1)]
+			if err := checkName(strings.ReplaceAll(inner, "''", "'")); err != nil {
+				return nil, err
+			}
+			i = end
 		case c == '-' && strings.HasPrefix(q[i:], "--"):
 			i = skipLineComment(q, i)
 		case c == '/' && strings.HasPrefix(q[i:], "/*"):
@@ -169,11 +190,7 @@ func Check(q string) ([]string, error) {
 			}
 			i = j
 		case c >= '0' && c <= '9':
-			j := i + 1 // numbers like 1e5 or 0x1F are not identifiers
-			for j < len(q) && (isIdent(q[j]) || q[j] == '.') {
-				j++
-			}
-			i = j
+			i = scanNumber(q, i)
 		case isIdentStart(c):
 			j := i + 1
 			for j < len(q) && isIdent(q[j]) {
@@ -242,6 +259,53 @@ func skipBlockComment(q string, i int) (int, error) {
 		return i + j + 4, nil
 	}
 	return 0, fmt.Errorf("%w: unterminated /* comment", ErrRefused)
+}
+
+// scanNumber returns the index just past a numeric literal starting at
+// i (q[i] is a decimal digit), following SQLite's own grammar: a 0x/0X
+// hex literal, or decimal digits with at most one '.' and an optional
+// e/E exponent (itself an optional sign followed by digits — without a
+// digit there, the 'e'/'E' is not part of the number at all). A looser
+// rule here — consuming any run of identifier characters and dots, as
+// this once did — would let a number swallow a following identifier
+// whole ("1.5.meta" as one token), hiding it from checkName below even
+// though SQLite's own lexer stops extending the number at the same
+// point and reads "meta" as a separate, ordinary identifier.
+func scanNumber(q string, i int) int {
+	if q[i] == '0' && i+1 < len(q) && (q[i+1] == 'x' || q[i+1] == 'X') {
+		j := i + 2
+		for j < len(q) && isHexDigit(q[j]) {
+			j++
+		}
+		return j
+	}
+	j := i
+	for j < len(q) && q[j] >= '0' && q[j] <= '9' {
+		j++
+	}
+	if j < len(q) && q[j] == '.' {
+		j++
+		for j < len(q) && q[j] >= '0' && q[j] <= '9' {
+			j++
+		}
+	}
+	if j < len(q) && (q[j] == 'e' || q[j] == 'E') {
+		k := j + 1
+		if k < len(q) && (q[k] == '+' || q[k] == '-') {
+			k++
+		}
+		if k < len(q) && q[k] >= '0' && q[k] <= '9' {
+			for k < len(q) && q[k] >= '0' && q[k] <= '9' {
+				k++
+			}
+			j = k
+		}
+	}
+	return j
+}
+
+func isHexDigit(c byte) bool {
+	return (c >= '0' && c <= '9') || (c|0x20 >= 'a' && c|0x20 <= 'f')
 }
 
 func checkName(name string) error {

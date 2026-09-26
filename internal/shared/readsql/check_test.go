@@ -185,12 +185,17 @@ func TestCheckMessageNamesTheIdentifier(t *testing.T) {
 
 func TestCheckPasses(t *testing.T) {
 	for _, q := range []string{
-		`select 'meta' as x`,
 		"select 1 -- meta",
 		"select 1 /* sqlite_master */",
 		`select metadata, attachment from v_views_paths`,
 		`select "it''s" as ok`,
 		`select x'00'`,
+		// A string literal is only refused on an exact (unescaped)
+		// match against a refused name (see TestCheckRefusesStringLiteralsNamingRefusedTables):
+		// one that merely contains it, as a substring or a prefix, is
+		// an ordinary value, not a table reference.
+		`select 'metadata' as x`,
+		`select '%meta%' as x`,
 		// Non-ASCII stays allowed everywhere the tokenizer never visits
 		// the bytes directly: inside a string, a quoted identifier, or
 		// a comment.
@@ -246,6 +251,68 @@ func TestCheckRefusesUnquotedNonASCIIIdentifiers(t *testing.T) {
 		t.Run(q, func(t *testing.T) {
 			if _, err := Check(q); !errors.Is(err, ErrRefused) {
 				t.Fatalf("Check(%q) = %v, want ErrRefused", q, err)
+			}
+		})
+	}
+}
+
+// TestCheckRefusesStringLiteralsNamingRefusedTables pins the fix for the
+// finding that SQLite's grammar accepts a STRING wherever a NAME is
+// expected (nm ::= STRING), so a single-quoted string exactly naming a
+// refused table reads it just as an unquoted or double-quoted name
+// would — Check used to treat '...' purely as an opaque string literal
+// and never asked checkName about its content. The seven shapes from
+// the finding: a bare string table name, one schema-qualified, one
+// parenthesized, three more refused names as strings, and a
+// string-quoted pragma view called like a function.
+func TestCheckRefusesStringLiteralsNamingRefusedTables(t *testing.T) {
+	for _, q := range []string{
+		`select * from 'meta'`,
+		`select * from main.'meta'`,
+		`select * from (select * from 'meta')`,
+		`select * from 'sqlite_master'`,
+		`select * from 'sqlite_schema'`,
+		`select * from 'dbstat'`,
+		`select * from 'pragma_table_info'('events')`,
+	} {
+		t.Run(q, func(t *testing.T) {
+			if _, err := Check(q); !errors.Is(err, ErrRefused) {
+				t.Fatalf("Check(%q) = %v, want ErrRefused", q, err)
+			}
+		})
+	}
+}
+
+// TestScanNumberSplitsLikeSQLite pins hardening for Check's number scan:
+// it used to consume any run of identifier characters and dots after a
+// leading digit, so "1.5.meta" or "1..meta" were swallowed whole as one
+// "number" token, hiding "meta" from checkName even though SQLite's own
+// lexer stops extending a number at (at most) one '.' and reads "meta"
+// as a separate, ordinary identifier — refused on its own once Check's
+// number scan agrees on where the number ends.
+func TestScanNumberSplitsLikeSQLite(t *testing.T) {
+	for _, q := range []string{
+		`select * from 1.5.meta`,
+		`select * from 1..meta`,
+	} {
+		t.Run(q, func(t *testing.T) {
+			if _, err := Check(q); !errors.Is(err, ErrRefused) {
+				t.Fatalf("Check(%q) = %v, want ErrRefused (meta named after the number)", q, err)
+			}
+		})
+	}
+	// A number's own shape is unaffected: a decimal with one '.', an
+	// exponent, and a hex literal all still scan as a single token and
+	// pass, with no identifier the number could have swallowed.
+	for _, q := range []string{
+		`select 1.5 as x`,
+		`select 1.5e10 as x`,
+		`select 1e-5 as x`,
+		`select 0x1F as x`,
+	} {
+		t.Run(q, func(t *testing.T) {
+			if _, err := Check(q); err != nil {
+				t.Fatalf("Check(%q) = %v, want no error", q, err)
 			}
 		})
 	}
