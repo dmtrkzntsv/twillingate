@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
+	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 	_ "github.com/dmtrkzntsv/twillingate/internal/store/sqlite"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -97,7 +98,7 @@ func newTestHost(t *testing.T) (*host, *mcp.ClientSession) {
 	      VALUES (1,'2026-08-20','signup','plan','pro',3,3,NULL),
 	             (1,'2026-08-21','signup','plan','team',2,2,2)`)
 
-	db, err := OpenReadDB(path)
+	db, err := readsql.Open(path, 5*time.Second, 1000)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,9 +108,8 @@ func newTestHost(t *testing.T) (*host, *mcp.ClientSession) {
 	if err := reg.Reload(ctx); err != nil {
 		t.Fatal(err)
 	}
-	h := &host{db: db, reg: reg, ops: manage.NewOps(reg, st),
-		publicURL: "https://collector.test",
-		timeout:   5 * time.Second, maxRows: 1000, logger: logger}
+	h := &host{db: db, dbPath: path, reg: reg, ops: manage.NewOps(reg, st),
+		publicURL: "https://collector.test", logger: logger}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "analytics", Version: "test"}, nil)
 	h.register(&registrar{mcp: srv, logger: logger})
@@ -124,6 +124,43 @@ func newTestHost(t *testing.T) (*host, *mcp.ClientSession) {
 	}
 	t.Cleanup(func() { cs.Close() })
 	return h, cs
+}
+
+// seedDB migrates a fresh database and returns its path, with one project
+// (My blog) and no data: the minimal fixture for tests that only need a
+// database file to open, not seeded aggregates.
+func seedDB(t *testing.T) string {
+	t.Helper()
+	path := t.TempDir() + "/read.db"
+	st, err := store.Open("sqlite://" + path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Migrate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateProject(context.Background(), store.RegistryProject{
+		Name: "My blog", AllowedOrigins: "[]", Attributes: "[]"},
+		store.AuditEntry{Actor: "test", Action: "project.create"}); err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+	return path
+}
+
+// setGuards reopens h's database with a different timeout and/or row cap
+// for one test — host carries neither directly, only the readsql.DB does
+// (readsql.DB.Timeout/MaxRows) — and closes the replaced handle on
+// cleanup. h.register already bound its tool methods to h itself, so
+// swapping h.db here is visible to the next tool call.
+func setGuards(t *testing.T, h *host, timeout time.Duration, maxRows int) {
+	t.Helper()
+	db, err := readsql.Open(h.dbPath, timeout, maxRows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	h.db = db
 }
 
 // newTestRegistrar registers h's operations on a fresh MCP server and REST

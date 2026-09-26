@@ -42,14 +42,14 @@ func TestMCPWriteRecordsActor(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("create: %s", textOf(res))
 	}
-	var actor string
-	if err := h.db.QueryRowContext(context.Background(),
+	out, err := h.db.Run(context.Background(),
 		"SELECT actor FROM audit_log WHERE action='project.create' AND subject=?",
-		strconv.FormatInt(projectIDOf(t, res), 10)).Scan(&actor); err != nil {
+		strconv.FormatInt(projectIDOf(t, res), 10))
+	if err != nil {
 		t.Fatal(err)
 	}
-	if actor != "mcp" {
-		t.Errorf("audit actor = %q, want mcp", actor)
+	if len(out.Rows) != 1 || out.Rows[0][0] != "mcp" {
+		t.Errorf("audit actor = %v, want mcp", out.Rows)
 	}
 }
 

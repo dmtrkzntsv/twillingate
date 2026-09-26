@@ -9,6 +9,7 @@ import (
 
 	"github.com/dmtrkzntsv/twillingate/internal/config"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
+	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
 	"github.com/modelcontextprotocol/go-sdk/auth"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/modelcontextprotocol/go-sdk/oauthex"
@@ -30,12 +31,11 @@ const (
 // listener, and app calls it directly to mount on the ingest surface's mux
 // via RegisterOn.
 func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *manage.Ops, logger *slog.Logger) (http.Handler, func() error, error) {
-	db, err := OpenReadDB(cfg.API.DBPath)
+	db, err := readsql.Open(cfg.API.DBPath, cfg.API.QueryTimeout, cfg.API.QueryMaxRows)
 	if err != nil {
 		return nil, nil, err
 	}
-	h := &host{db: db, reg: reg, ops: ops,
-		timeout: cfg.API.QueryTimeout, maxRows: cfg.API.QueryMaxRows,
+	h := &host{db: db, dbPath: cfg.API.DBPath, reg: reg, ops: ops,
 		publicURL: cfg.PublicURL, logger: logger}
 	srv := mcp.NewServer(&mcp.Implementation{Name: "twillingate", Version: "1.0.0"}, nil)
 	rest := http.NewServeMux()

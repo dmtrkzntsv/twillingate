@@ -784,7 +784,7 @@ caveats below. All the reading tools take `project_id`, `from` and `to` as
 | `product_attributes` | `event`, `key` | Count, unique users and unique groups per value of a declared attribute. `$platform`, `$os`, `$app_version`, `$app_locale`, `$kind`, `$browser`, `$device` and `$browser_locale` are always available; a custom key, or one of `$host`, `$path`, `$referrer`, `$utm_source`, `$utm_medium`, `$utm_campaign`, `$os_version`, `$browser_version` and `$device_model`, only appears once the project declares it. `unique_groups` is empty for days rolled up before it was measured and `0` when it was measured and no group was involved |
 | `retention` | `actor` (`user` or `install`) | Cohort curves, plus `aggregated_through` — cohorts after that day are **absent, not zero**. Empty for a project whose clients send neither `$user_id` nor `$install_id` |
 | `identities` | `kind` (`user` or `group`), `limit` | Per-user or per-group activity with display names. **Surfaces personal data on projects whose clients send ids** |
-| `query` | `sql` | A single read-only `SELECT`/`WITH` against the views. Row-capped and time-limited |
+| `query` | `sql` | A single read-only `SELECT`/`WITH` against the views. Row-capped and time-limited; `meta` and SQLite's internal tables (`sqlite_master`, `dbstat`, …) are refused |
 
 **Managing** — `create_project`, `update_project`, `archive_project`,
 `restore_project`, `issue_ingest_key`, `list_ingest_keys`, `enable_ingest_key`,

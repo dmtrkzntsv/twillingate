@@ -2,25 +2,27 @@ package api
 
 import (
 	"context"
-	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"regexp"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
+	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 type host struct {
-	db      *sql.DB
-	reg     *manage.Registry
-	ops     *manage.Ops
-	timeout time.Duration
-	maxRows int
+	db  *readsql.DB
+	reg *manage.Registry
+	ops *manage.Ops
+	// dbPath is the file db was opened from; tests use it to reopen with
+	// a different timeout or row cap (host carries neither directly —
+	// see readsql.DB.Timeout/MaxRows).
+	dbPath string
 	// publicURL is the collector's public base (PUBLIC_URL); snippets and
 	// the integration guide are built from it. Empty means "unknown —
 	// placeholder + tell the operator".
@@ -70,16 +72,16 @@ type tableOut struct {
 }
 
 func (h *host) table(ctx context.Context, q string, args ...any) (tableOut, error) {
-	cols, rows, truncated, err := queryRows(ctx, h.db, h.timeout, h.maxRows, q, args...)
+	res, err := h.db.Run(ctx, q, args...)
 	if err != nil {
-		if ctx.Err() != nil || strings.Contains(err.Error(), "context deadline") {
-			return tableOut{}, invalidf("query exceeded %s; narrow the date range", h.timeout)
+		if errors.Is(err, readsql.ErrTimeout) {
+			return tableOut{}, invalidf("query exceeded %s; narrow the date range", h.db.Timeout())
 		}
 		return tableOut{}, err
 	}
-	out := tableOut{Columns: cols, Rows: rows, Truncated: truncated}
-	if truncated {
-		out.Note = fmt.Sprintf("truncated to %d rows; results are PARTIAL — narrow the range or raise the limit", h.maxRows)
+	out := tableOut{Columns: res.Columns, Rows: res.Rows, Truncated: res.Truncated}
+	if res.Truncated {
+		out.Note = fmt.Sprintf("truncated to %d rows; results are PARTIAL — narrow the range or raise the limit", h.db.MaxRows())
 	}
 	return out, nil
 }
@@ -108,13 +110,13 @@ func (h *host) listProjects(ctx context.Context, _ struct{}) (listProjectsOut, e
 			AllowedOrigins: p.AllowedOrigins, Attributes: p.Attributes,
 		}
 		// coverage probe: cheap MIN/MAX over the stitch view
-		_, rows, _, err := queryRows(ctx, h.db, h.timeout, 1,
+		res, err := h.db.Run(ctx,
 			`SELECT COALESCE(MIN(day),''), COALESCE(MAX(day),'') FROM v_views_daily WHERE project_id=?`, p.ID)
 		if err != nil {
 			return out, err
 		}
-		if len(rows) == 1 {
-			po.FirstViewDay, po.LastViewDay = rows[0][0], rows[0][1]
+		if len(res.Rows) == 1 {
+			po.FirstViewDay, po.LastViewDay = res.Rows[0][0], res.Rows[0][1]
 		}
 		out.Projects = append(out.Projects, po)
 	}

@@ -20,7 +20,7 @@ import (
 
 func newHandlerFixture(t *testing.T, over map[string]string) http.Handler {
 	t.Helper()
-	path := seedDB(t) // from readdb_test.go: migrated DB with project 1 (My blog)
+	path := seedDB(t) // from seed_test.go: migrated DB with project 1 (My blog)
 	base := map[string]string{
 		"DATABASE_DSN": "sqlite://" + path,
 		"API_AUTH_DSN": "token://ar_testtoken",
@@ -309,7 +309,7 @@ func TestWrapAuthUnknownMode(t *testing.T) {
 }
 
 // TestBuildFailsWhenOAuthIssuerUnreachable exercises Build's own error
-// branch (wrapAuth failing after OpenReadDB already succeeded, so Build
+// branch (wrapAuth failing after readsql.Open already succeeded, so Build
 // must close the DB it just opened rather than leak it) — ValidateAPI
 // only parses API_AUTH_DSN, it does not probe the issuer, so
 // an unreachable issuer surfaces here, at Build time.

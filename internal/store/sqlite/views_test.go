@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/civil"
+	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
@@ -993,5 +994,51 @@ func TestStitchViewPlatformsAcrossBoundaryWithCap(t *testing.T) {
 	}
 	if after := snapshot(); !reflect.DeepEqual(after, before) {
 		t.Errorf("v_views_platforms changed across the boundary:\nbefore %v\nafter  %v", before, after)
+	}
+}
+
+// TestViewsReferenceNoRefusedName pins readsql.Check against every v_*
+// view's own definition: the query tool's guard must accept what the
+// schema itself relies on, or a legitimate query through a view would be
+// refused. v_product_attrs is the one declared exception (see its
+// migration): it names meta, but only to read a tuning knob
+// (product_attributes_top_n), never visitor data, so the test asserts
+// that specific, narrow shape rather than allowing "meta" outright.
+func TestViewsReferenceNoRefusedName(t *testing.T) {
+	db := newTestDB(t)
+	rows, err := db.db.Query(`SELECT name, sql FROM sqlite_master WHERE type='view' AND name LIKE 'v\_%' ESCAPE '\'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	seen := 0
+	for rows.Next() {
+		var name, def string
+		if err := rows.Scan(&name, &def); err != nil {
+			t.Fatal(err)
+		}
+		seen++
+		if name == "v_product_attrs" {
+			if !strings.Contains(def, "key='product_attributes_top_n'") {
+				t.Errorf("%s: expected the key='product_attributes_top_n' guard, definition:\n%s", name, def)
+			}
+			withoutException := strings.ReplaceAll(def,
+				`(SELECT CAST(value AS INTEGER) FROM meta
+                   WHERE key='product_attributes_top_n'
+                     AND CAST(value AS INTEGER) > 0)`, "50")
+			if strings.Contains(strings.ToLower(withoutException), "from meta") {
+				t.Errorf("%s: names meta somewhere other than the top_n guard:\n%s", name, def)
+			}
+			continue
+		}
+		if _, err := readsql.Check(def); err != nil {
+			t.Errorf("%s: readsql.Check refused the view's own definition: %v\n%s", name, err, def)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if seen == 0 {
+		t.Fatal("no v_* views found in sqlite_master; the scan is broken, not the schema")
 	}
 }

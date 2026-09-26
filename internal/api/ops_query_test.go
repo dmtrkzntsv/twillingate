@@ -36,9 +36,24 @@ func TestQueryToolBlocksWrites(t *testing.T) {
 	}
 }
 
+// TestQueryToolRefusesMeta pins the wording a model sees when it asks for
+// meta directly: the refusal text, not a generic SQL error, and no
+// "refused: " sentinel prefix leaking through.
+func TestQueryToolRefusesMeta(t *testing.T) {
+	_, cs := newTestHost(t)
+	res := callTool(t, cs, "query", map[string]any{"sql": "select * from meta"})
+	if !res.IsError {
+		t.Fatal("select * from meta was accepted")
+	}
+	msg := textOf(res)
+	if !strings.Contains(msg, "meta") || strings.Contains(msg, "refused:") {
+		t.Errorf("error = %q, want the identifier named and no sentinel prefix", msg)
+	}
+}
+
 func TestQueryToolCapsRows(t *testing.T) {
 	h, cs := newTestHost(t)
-	h.maxRows = 1
+	setGuards(t, h, h.db.Timeout(), 1)
 	res := callTool(t, cs, "query", map[string]any{
 		"sql": "WITH n(i) AS (VALUES (1),(2),(3)) SELECT i FROM n"})
 	if res.IsError {

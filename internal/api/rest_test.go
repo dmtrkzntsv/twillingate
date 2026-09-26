@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -245,13 +246,14 @@ func TestRESTWritesAndRefusals(t *testing.T) {
 		t.Errorf("integration guide must be MCP-only, got %d", rec.Code)
 	}
 
-	var actor string
-	if err := h.db.QueryRow(`SELECT actor FROM audit_log WHERE action='project.create' AND subject='3'`).Scan(&actor); err != nil || actor != "api" {
-		t.Errorf("audit actor = %q, %v; want api", actor, err)
+	out, err := h.db.Run(context.Background(), `SELECT actor FROM audit_log WHERE action='project.create' AND subject='3'`)
+	if err != nil || len(out.Rows) != 1 || out.Rows[0][0] != "api" {
+		t.Errorf("audit actor = %v, %v; want api", out.Rows, err)
 	}
 	// The first key is issued by the create itself, not a follow-up call.
-	if err := h.db.QueryRow(`SELECT actor FROM audit_log WHERE action='key.issue' AND subject='3/default'`).Scan(&actor); err != nil || actor != "api" {
-		t.Errorf("first-key audit actor = %q, %v; want api", actor, err)
+	out, err = h.db.Run(context.Background(), `SELECT actor FROM audit_log WHERE action='key.issue' AND subject='3/default'`)
+	if err != nil || len(out.Rows) != 1 || out.Rows[0][0] != "api" {
+		t.Errorf("first-key audit actor = %v, %v; want api", out.Rows, err)
 	}
 	// A refused create leaves no project behind, and no id is consumed:
 	// the retry lands on the next id.
