@@ -642,6 +642,16 @@ removes Evidence.
       and rules sections of `docs/reporting.md`. The descriptions of
       `create_dashboard`, `add_widget`, `update_widget` and `copy_widget`
       begin "Call reporting_guide first."
+    - **Live resources,** following `schema://projects` (a JSON snapshot
+      built on each read), for clients that attach resources: each
+      returns what its list tool returns, from the same code, so no REST
+      route is added.
+
+      | Resource | Content |
+      | --- | --- |
+      | `schema://components` | the registered source types, and per component: name, description, accepts, inputs, props, default width and height (`list_components`) |
+      | `schema://dashboards` | the instance `timezone`, and every dashboard in sidebar order: id, title, owner, stored selection, widget count, `archived_at` (`list_dashboards`) |
+      | `schema://widgets` | every widget with its dashboard, component, title, size, source type and source, and `archived_at` (`list_widgets`, unfiltered) |
     - **MCP server `instructions`** (sent on connect, which the server
       does not set today): "To integrate a site or app, call
       integration_guide. To build or change dashboards, call
@@ -686,7 +696,7 @@ code, per the standing rules.
 | limits | a widget query past `API_QUERY_TIMEOUT` is refused naming it; a result past `API_QUERY_MAX_ROWS` is cut and answers `truncated` |
 | cache | the age rules of decision 33, invalidation, one run for simultaneous requests, the boot refusal |
 | manifest | `components.json` matches the widget files in `web/`, and Go loads it |
-| guide | `reporting_guide` returns the live components, source types, views, projects and dashboards plus the workflow section; the server's `instructions` name both guides; `docs://reporting` is served |
+| guide | `reporting_guide` returns the live components, source types, views, projects and dashboards plus the workflow section; the server's `instructions` name both guides; `docs://reporting` is served; `schema://components`, `schema://dashboards` and `schema://widgets` return exactly what `list_components`, `list_dashboards` and unfiltered `list_widgets` return, reflecting a write made just before |
 | api | MCP ↔ REST parity (the view route REST-only by choice, `reporting_guide` MCP-only by choice); `docs_sync_test` reads `docs/reporting.md` and binds its component table to `components.json` in both directions, and gains the tools, routes, both `REPORTING_*` settings and the range vocabulary; `redirectAllowed` accepts the API host; OAuth end to end through `/app/callback` |
 | read-only | one table of write attempts through `query` and through `widget_data` (`INSERT`, `UPDATE`, `DELETE`, `REPLACE`, `DROP`, `CREATE [TEMP] TABLE`, `WITH … INSERT`, `PRAGMA x = y`, `ATTACH`, `VACUUM INTO`, two statements, `load_extension()`): every one is refused and the database file's checksum is unchanged afterwards |
 | refused names | `meta`, `sqlite_master`, `sqlite_schema`, `sqlite_sequence`, `sqlite_stat1`, `sqlite_dbpage`, `pragma_table_info(…)` and `dbstat` are refused through `query` and `widget_data` in every spelling (quoted `"meta"`, `` `meta` ``, `[meta]`, `main.meta`, upper case); `'meta'` in a string literal, `meta` in a comment, and columns such as `metadata` and `attachment` pass; no `v_*` view definition references a refused name |
@@ -699,7 +709,8 @@ In the same PR as the change:
 
 - `docs/reporting.md` (new, `docs://reporting`, decision 50): dashboards,
   widgets and components; the component table (decision 13); the
-  parameters and range vocabulary; the tools and routes; the authoring
+  parameters and range vocabulary; the tools, routes and the
+  `schema://components|dashboards|widgets` resources; the authoring
   workflow with a worked example per component; what happens to widgets
   when a release removes a component; archiving as undo, and the purge of
   archived projects, dashboards and widgets after
