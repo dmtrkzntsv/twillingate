@@ -37,9 +37,9 @@ removes Evidence.
 1. **twillingate serves a read-only dashboard UI at `/app/`** on the API
    listener. It lists dashboards, switches project and date range, and
    renders widgets. It changes nothing except the viewer's last selection
-   (decision 33).
+   (decision 34).
 2. **Agents are the only authors.** Dashboards and widgets are created and
-   changed through MCP tools and REST routes (decisions 26–28). The UI has
+   changed through MCP tools and REST routes (decisions 27–29). The UI has
    no editing.
 3. **Installable as a PWA.** A manifest and an app-shell service worker
    make "Install app" (Chrome, Edge) and "Add to Dock" (Safari) give it its
@@ -88,7 +88,7 @@ removes Evidence.
    once. A row with no `height` takes the largest `default_height` among its
    widgets. One height unit is about 140px.
 10. **`owner = 'system'` rows change only through the migrator** (decisions
-    18–23). Every write operation refuses them with `ErrInvalid`.
+    19–24). Every write operation refuses them with `ErrInvalid`.
 
 ### Components
 
@@ -134,7 +134,8 @@ removes Evidence.
 17. **Presets live in the UI; the API takes dates.** Range presets are a
     closed vocabulary used by the dashboard page's URL, the range switcher,
     `default_range` and the stored last selection. The UI resolves a preset
-    to `from` and `to` in UTC days before calling the API. The rolling
+    to `from` and `to` in the instance timezone (below) before calling
+    the API. The rolling
     presets include today, the window the Evidence pages use:
 
     | Id | Label | `:from` → `:to` |
@@ -154,9 +155,17 @@ removes Evidence.
     and cannot be `custom`; the Go side knows the preset ids only to
     validate `default_range` and the stored last selection.
 
+18. **Days are the instance's days; for now that is UTC.** `v_*` views
+    group by `day`, the UTC date of `ts`. The API reports the timezone
+    days are grouped in (`timezone` on `list_dashboards`, `UTC` until a
+    `TIMEZONE` setting exists; see [Out of scope](#out-of-scope)). The UI
+    resolves presets and labels dates in that timezone, not the
+    browser's, so everyone viewing an instance sees the same "Today".
+    Moments (`cached_at`, "data as of") show in the browser's local time.
+
 ### System dashboards: files, migrated on every run
 
-18. **System dashboards are files in the repo**, embedded with `go:embed`:
+19. **System dashboards are files in the repo**, embedded with `go:embed`:
 
     ```
     internal/reporting/system/<dir>/
@@ -172,13 +181,13 @@ removes Evidence.
     data file with no config, a layout naming a missing widget, or a widget
     the layout leaves out, is an error. The directory name is for people;
     only `id` identifies the dashboard.
-19. **Matching keys:** a system dashboard by `id`; a widget by
+20. **Matching keys:** a system dashboard by `id`; a widget by
     (`dashboard_id`, file name without extension); a component by name.
-20. **The migrator runs where the schema migrates.** `app.Migrate(ctx, st)`
+21. **The migrator runs where the schema migrates.** `app.Migrate(ctx, st)`
     runs `st.Migrate`, then `reporting.Migrate`. `serve` (via `app`), the
     `migrate` command and the `project` command, the three places that
     migrate today, call it. `cmd` keeps importing only `app`.
-21. **It is tracked like `schema_migrations`.** The hash covers every
+22. **It is tracked like `schema_migrations`.** The hash covers every
     embedded `dashboard.json`, widget file and `components.json`. If the
     latest `reporting_migrations` row has that hash, nothing runs.
     Otherwise, in one transaction:
@@ -195,15 +204,15 @@ removes Evidence.
        and removed.
 
     Every system definition passes the same validation as
-    `create_dashboard` (decision 25) before anything is written.
-22. **A failure stops the run** the way a failed schema migration does: the
+    `create_dashboard` (decision 26) before anything is written.
+23. **A failure stops the run** the way a failed schema migration does: the
     transaction rolls back and `serve` does not start. The system dashboard
     test (see [Tests](#tests)) runs the same validation in `make check`.
-23. **Rolling the binary back re-migrates to the older definitions,** since
+24. **Rolling the binary back re-migrates to the older definitions,** since
     the hash differs: components the older binary does not know get
     `removed_at`, and their widgets show "component removed" until the
     upgrade returns. `deploy/UPGRADES.md` says so.
-24. **The five Evidence pages become system dashboards:** Views (id 1),
+25. **The five Evidence pages become system dashboards:** Views (id 1),
     Product (2), Users (3), Groups (4), Retention (5), each with the
     Evidence page's default range (`7d`; Retention `90d`) and its stats,
     charts and tables. The drill-down into a single page
@@ -213,7 +222,7 @@ removes Evidence.
 
 ### Validation
 
-25. **Every write validates the whole result** and refuses with
+26. **Every write validates the whole result** and refuses with
     `ErrInvalid`, in words an agent can act on:
     - the component exists, is not removed, and accepts the source type:
       "component `pie` does not exist; list_components names the 6 there
@@ -236,17 +245,17 @@ removes Evidence.
 
 ### Agent surface
 
-26. **Read tools:**
+27. **Read tools:**
 
     | Tool | Route | Returns |
     | --- | --- | --- |
     | `list_components` | `GET /api/components` | name, description, accepts, inputs, props, default height; `include_removed` adds removed ones |
-    | `list_dashboards` | `GET /api/dashboards` | id, title, owner, position, default range, last project and range, widget count, archived |
+    | `list_dashboards` | `GET /api/dashboards` | `timezone` (the instance's, decision 18), and per dashboard: id, title, owner, position, default range, last project and range, widget count, archived |
     | `get_dashboard` | `GET /api/dashboards/{dashboard_id}` | the dashboard with its layout, and every widget's component, title, props, source type and source |
     | `list_widgets` | `GET /api/widgets?dashboard_id=&component=&removed=` | every widget with its dashboard (id, title, owner, archived); filters combine; `removed=true` lists widgets on removed components |
-    | `widget_data` | `GET /api/widgets/{widget_id}/data?project_id=&from=&to=&fresh=` | the widget's content for a project and dates (decision 30) |
+    | `widget_data` | `GET /api/widgets/{widget_id}/data?project_id=&from=&to=&fresh=` | the widget's content for a project and dates (decision 31) |
 
-27. **Write tools,** each refused on system dashboards and recorded in
+28. **Write tools,** each refused on system dashboards and recorded in
     `audit_log` with actor `mcp` or `rest`:
 
     | Tool | Route | Effect |
@@ -261,7 +270,7 @@ removes Evidence.
     | `remove_widget` | `DELETE /api/widgets/{widget_id}` | removes it from the layout; a row left empty disappears |
 
     A source is `{"type": "sql"|"md", "content": "…"}`.
-28. **REST only:** `PUT /api/dashboards/{dashboard_id}/view` with a JSON
+29. **REST only:** `PUT /api/dashboards/{dashboard_id}/view` with a JSON
     body of `project_id`, `range` (a preset) and, for `custom`, `from` and
     `to`, which sets `last_project_id`, `last_range`, `last_from` and
     `last_to`. It stores the preset, not its dates, so "Last week" stays
@@ -270,14 +279,14 @@ removes Evidence.
     It is allowed on system dashboards (it is viewer state, not
     definition) and writes no audit entry. MCP-only or REST-only is an
     explicit choice the parity test checks.
-29. **One error vocabulary.** `ErrInvalid` moves to `store`, next to
+30. **One error vocabulary.** `ErrInvalid` moves to `store`, next to
     `ErrNotFound` and `ErrConflict`, and `manage.ErrInvalid` becomes that
     same value, so `errors.Is` keeps working and `api` maps `manage` and
     `reporting` refusals through one path.
 
 ### Data and cache
 
-30. **`widget_data` returns one widget's content:**
+31. **`widget_data` returns one widget's content:**
 
     ```
     { "widget_id": 42, "from": "2026-08-27", "to": "2026-09-25",
@@ -291,7 +300,7 @@ removes Evidence.
     rows no longer satisfy the inputs (a release changed a view), is
     `ErrInvalid` with the reason. Queries run on the read pool with the
     `query` guards, row cap and timeout.
-31. **One cache, two ages.** An in-memory entry per (widget, project,
+32. **One cache, two ages.** An in-memory entry per (widget, project,
     `from`, `to`) records when it was computed:
 
     | Setting | Default | Meaning |
@@ -309,7 +318,7 @@ removes Evidence.
 
 ### UI
 
-32. **Routes:** `/app/` goes to the last dashboard opened on this device,
+33. **Routes:** `/app/` goes to the last dashboard opened on this device,
     else the first system dashboard;
     `/app/dashboards/{id}?project=&range=` (plus `from` and `to` for
     `custom`) shows one, e.g. `?project=7&range=7d` or
@@ -318,10 +327,10 @@ removes Evidence.
     `/app/callback` completes login. Without
     `project` or `range` in the URL, the dashboard's stored last selection
     applies, then the first active project and `default_range`.
-33. **Selection is remembered per dashboard, server side.** Changing the
+34. **Selection is remembered per dashboard, server side.** Changing the
     project or range updates the URL and calls the view route
-    (decision 28).
-34. **Layout:** a sidebar with **Built-in** (system dashboards by position)
+    (decision 29).
+35. **Layout:** a sidebar with **Built-in** (system dashboards by position)
     and **Yours** (user dashboards by position), archived ones hidden; a
     header with the title, the project switcher (active projects, archived
     ones in a collapsed group), the range switcher ("Custom…" opens a
@@ -329,7 +338,7 @@ removes Evidence.
     phones), "data as of" (the
     oldest `cached_at` on screen) and a dashboard refresh button; then the
     rows.
-35. **Adaptive:**
+36. **Adaptive:**
 
     | Width | Rows | Chrome |
     | --- | --- | --- |
@@ -339,17 +348,17 @@ removes Evidence.
 
     Heights keep their pixel size everywhere; charts thin their axis ticks
     on narrow screens; tables scroll inside their card.
-36. **Each widget loads on its own** and has its own state: skeleton at the
+37. **Each widget loads on its own** and has its own state: skeleton at the
     row's height while loading; the component with data; "No data for this
     range"; "component removed"; "query no longer runs" with the error
     folded; "couldn't load" with a retry.
-37. **Refresh.** Each `sql` widget has a refresh icon (on hover on desktop,
+38. **Refresh.** Each `sql` widget has a refresh icon (on hover on desktop,
     always on touch) that requests `fresh=true`; the dashboard button does
     it for every widget past its `refresh_after`. The icon is disabled
     until `refresh_after`, its tooltip showing the age and the wait.
     Markdown widgets have none.
-38. **Markdown renders with raw HTML off.**
-39. **Login is the existing OAuth server,** with the page as one more
+39. **Markdown renders with raw HTML off.**
+40. **Login is the existing OAuth server,** with the page as one more
     client: it registers (client id kept in `localStorage`), runs PKCE
     against the password page, and returns to `https://<api-host>/app/callback`.
     The access token stays in memory, the 30-day refresh token in
@@ -357,10 +366,10 @@ removes Evidence.
     `redirectAllowed` accepts the API's own host. In `oauth://` mode the
     identity provider must allow that redirect. With a bare `token://` and
     no password, the page asks for the token.
-40. **PWA:** `manifest.webmanifest` (`display: standalone`, `start_url`
+41. **PWA:** `manifest.webmanifest` (`display: standalone`, `start_url`
     and `scope` `/app/`) and a service worker caching the app shell only,
     never API responses. Offline, the installed app opens and says so.
-41. **Stack:** React, Vite, TypeScript, Tailwind and shadcn (`Sidebar`,
+42. **Stack:** React, Vite, TypeScript, Tailwind and shadcn (`Sidebar`,
     `Sheet`, `Card`, `Select`, `ToggleGroup`, `Table`, `Chart` on
     Recharts, `Skeleton`), light and dark following the system. `web/`
     builds into `internal/reporting/ui/` (bundle and `components.json`),
@@ -368,7 +377,7 @@ removes Evidence.
 
 ### Local development
 
-42. **`twillingate reporting dev <dir>… [--db <path>] [--addr <host:port>]`**
+43. **`twillingate reporting dev <dir>… [--db <path>] [--addr <host:port>]`**
     serves the embedded UI on a loopback address (default
     `127.0.0.1:3100`, clear of Evidence's 3000) with no login and no
     cache, reading dashboards from the given directories (each a
@@ -378,7 +387,7 @@ removes Evidence.
     Validation errors show in the widget's card, or as a banner for a
     broken `dashboard.json`. In `web/`, `npm run dev` proxies `/api` to it
     for hot-reloading components against real data.
-43. **The command is `twillingate reporting dev`**, not under `dashboards`, which still
+44. **The command is `twillingate reporting dev`**, not under `dashboards`, which still
     runs Evidence until the second PR.
 
 ## Migration 021
@@ -394,14 +403,14 @@ code, per the standing rules.
 
 | Area | Proves |
 | --- | --- |
-| validation | each refusal in decision 25 fires with its sentinel and message |
+| validation | each refusal in decision 26 fires with its sentinel and message |
 | layout | add, copy, remove and `update_dashboard` layouts keep rows at 1–3 widgets with every widget placed once; append, insert-with-shift, empty-row removal |
 | components | a removed component is refused for new use, answers `removed`, and is deleted with its last widget, including when the migrator deletes a system dashboard |
 | migrator | upserts, deletions, reserved ids, widget ids stable across edits and moves, `last_*` kept, a second run with the same hash writes nothing, a failure writes nothing |
 | **system dashboards** | every system widget, on a database migrated to latest with seeded data, validates and runs for every preset range, and its rows satisfy its component. The load-bearing test |
 | files | pairing errors (no data file, two, orphan data file, unplaced or missing widget, duplicate or out-of-range `id`) |
-| ranges | the UI resolves each preset to the dates in decision 17 (UTC, around midnight); the API refuses a missing date, `from > to` and spans over 365 days, and clamps a future `to`; `custom` and unknown presets are rejected as a default range, and unknown presets by the view route |
-| cache | the age rules of decision 31, invalidation, one run for simultaneous requests, the boot refusal |
+| ranges | the UI resolves each preset to the dates in decision 17 (in the reported timezone, around its midnight); the API refuses a missing date, `from > to` and spans over 365 days, and clamps a future `to`; `custom` and unknown presets are rejected as a default range, and unknown presets by the view route |
+| cache | the age rules of decision 32, invalidation, one run for simultaneous requests, the boot refusal |
 | manifest | `components.json` matches the widget files in `web/`, and Go loads it |
 | api | MCP ↔ REST parity (the view route REST-only by choice); `docs_sync_test` gains the tools, routes, both settings and the range vocabulary; `redirectAllowed` accepts the API host; OAuth end to end through `/app/callback` |
 | archtest | `internal/reporting` at rank 1 |
@@ -419,7 +428,7 @@ In the same PR as the change:
   `REPORTING_REFRESH_MINUTES`; `twillingate reporting dev`.
 - `deploy/UPGRADES.md`: 021 adds `/app/`; `list_widgets removed=true` is
   the upgrade-day list of widgets to fix; a binary rollback re-migrates
-  system dashboards (decision 23).
+  system dashboards (decision 24).
 - `CLAUDE.md`: `internal/reporting` and `web/` in the layout; the
   build-and-commit rule extended to `web/`; the docs table rows.
 
@@ -454,3 +463,8 @@ In the same PR as the change:
 - Import or export of dashboards as files.
 - Drill-down between dashboards, and parameters beyond the three.
 - Automatic refresh timers.
+- A `TIMEZONE` setting that groups days by a local timezone: its own
+  spec, after this one. It moves `events.day` from a generated UTC column
+  to one ingest fills, salt rotation and the daily pass to local
+  midnight, and records timezone changes with the day they took effect.
+  Reporting needs no change for it beyond reading `timezone`.
