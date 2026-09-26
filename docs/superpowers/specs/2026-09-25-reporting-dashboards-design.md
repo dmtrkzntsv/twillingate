@@ -218,7 +218,7 @@ removes Evidence.
     on every widget that used one. A null component is the whole signal:
     there is no removed state to track and nothing to clean up later.
 15. **A widget with no component** renders a "component removed" card,
-    and `widget_data` answers `{"widget_id", "removed": true}`. It can be
+    and `widget_data` answers `"removed": true` with `"data": null`. It can be
     switched to a live component (`update_widget`), resized, or archived;
     its other fields cannot be edited and it cannot be copied, until it
     has a component again.
@@ -417,27 +417,37 @@ removes Evidence.
 
 ### Data and cache
 
-32. **`widget_data` returns one widget's content:**
+32. **`widget_data` returns one widget's content in a fixed envelope,
+    with the source-specific part under `data`:**
 
     ```
-    { "widget_id": 42, "from": "2026-08-27", "to": "2026-09-25",
-      "cached_at": "…", "refresh_after": "…",
-      "columns": ["x", "y"], "rows": [["2026-08-27", "40"], …] }
+    { "widget_id": 42, "source_type": "sql",
+      "project_id": 7,                              // only when the widget follows the project
+      "from": "2026-08-27", "to": "2026-09-25",     // only when it follows the range
+      "cached_at": "…", "refresh_after": "…",       // only for cacheable source types
+      "removed": false,
+      "data": { "columns": ["x", "y"], "rows": [["2026-08-27", "40"], …], "truncated": false } }
     ```
+
+    `data` is exactly what the source type's `Load` returns (decision 9):
+    `{columns, rows, truncated}` for `sql`, `{markdown}` for `md`; a new
+    source type brings its own shape and leaves the envelope alone. The
+    envelope echoes the project and dates actually applied, so a caller
+    can see the switcher took effect.
 
     `project_id` is required for a widget whose SQL uses `:project`, and
     `from`/`to` for one whose SQL uses `:from` or `:to`; each is ignored by
     a widget fixed in that respect. Fixed-range SQL is bounded by
-    `API_QUERY_TIMEOUT`. The body is what the source type's `Load` returns: rows
-    for `sql`; `{"widget_id", "markdown"}` for `md`, which ignores project
-    and dates. Only cacheable source types are cached. A widget whose
-    component was removed answers `{"widget_id", "removed": true}`. A query that no longer runs, or whose
+    `API_QUERY_TIMEOUT`. `md` ignores project and dates. Only cacheable
+    source types are cached. A widget whose component was removed answers
+    `"removed": true` with `"data": null`. Refusals stay errors, never
+    inside `data`: a query that no longer runs, or whose
     rows no longer satisfy the inputs (a release changed a view), is
     `ErrInvalid` with the reason. Queries run on the read pool with the
     same guards and limits as `query`: read-only, no `ATTACH`,
     `API_QUERY_TIMEOUT` (default 10s) and `API_QUERY_MAX_ROWS` (default
     1000); reporting adds no settings of its own. A result cut at the row
-    cap answers `"truncated": true`, and the card says "partial: narrow
+    cap has `"truncated": true` in `data`, and the card says "partial: narrow
     the range or group the query" instead of drawing a chart that
     silently stops (a 5-series line over 365 days needs 1,825 rows, so
     operators with long multi-series charts raise `API_QUERY_MAX_ROWS`).
@@ -740,12 +750,13 @@ code, per the standing rules.
 | source types | an unregistered `source_type` is refused; a component's `accepts` naming an unregistered type fails the migrator; `sql` and `md` each validate and load through the registry |
 | archive | archiving a widget hides it and restoring puts it back in the same place; a widget inserted next to an archived one gets a key that does not collide with it; archived widgets keep their names; an archived widget refuses update and copy; `list_widgets` shows archived ones with `archived_at` |
 | purge | with `RETENTION_ARCHIVED_DAYS=30`, a widget, a dashboard (with its widgets) and a project (with its events, aggregates and keys) archived 31 days ago go and one archived 29 days ago stays; `0` keeps everything; an item archived before the upgrade is judged by its own `archived_at`; system dashboards are never archived; each purge writes an audit entry and the registry reloads after a project goes |
-| components | a component gone from the manifest is deleted and its widgets get a null `component`; such a widget answers `removed`, accepts only a component switch, resize or archiving, and cannot be copied; a component that returns leaves them null |
+| components | a component gone from the manifest is deleted and its widgets get a null `component`; such a widget answers `"removed": true` with `"data": null`, accepts only a component switch, resize or archiving, and cannot be copied; a component that returns leaves them null |
 | migrator | upserts, deletions, reserved ids, widget ids stable across edits and moves, `last_*` kept, a second run with the same hash writes nothing, a failure writes nothing |
 | **system dashboards** | every system widget, on a database migrated to latest with seeded data, validates and runs for every preset range, and its rows satisfy its component. The load-bearing test |
 | files | pairing errors (no data file, two, orphan data file, unplaced or missing widget, duplicate or out-of-range `id`) |
 | ranges | the UI resolves each preset to the dates in decision 18 (in the reported timezone, around its midnight); the API refuses a missing date, `from > to` and spans over 365 days, and clamps a future `to`; unknown presets are rejected by `create_dashboard` and the view route; a new dashboard starts on its given range (or `7d`), and the migrator sets a system dashboard's range only on insert |
-| limits | a widget query past `API_QUERY_TIMEOUT` is refused naming it; a result past `API_QUERY_MAX_ROWS` is cut and answers `truncated` |
+| envelope | every `widget_data` answer has `widget_id`, `source_type`, `removed` and `data`; `project_id` appears exactly when the widget follows the project, `from`/`to` exactly when it follows the range, `cached_at`/`refresh_after` exactly for cacheable types; `data` is `{columns, rows, truncated}` for `sql` and `{markdown}` for `md` |
+| limits | a widget query past `API_QUERY_TIMEOUT` is refused naming it; a result past `API_QUERY_MAX_ROWS` is cut and has `"truncated": true` in `data` |
 | cache | the age rules of decision 33, invalidation, one run for simultaneous requests, the boot refusal |
 | manifest | `components.json` matches the widget files in `web/`, and Go loads it |
 | component render | Vitest with Testing Library, per component: renders from sample rows, from no rows, and with each prop; a closed interface's missing optional input (`series`, `previous`, `max`, `size`, `x` on `stat`, `parent`) renders the simpler form; `map` resolves every ISO alpha-2 code in `world-atlas` and lists unknown ones |
