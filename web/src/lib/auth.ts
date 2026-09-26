@@ -4,6 +4,7 @@
 
 const METADATA_PATH = '/.well-known/oauth-protected-resource'
 const CALLBACK_PATH = '/app/callback'
+const CLIENT_NAME = 'twillingate dashboards'
 
 const CLIENT_ID_KEY = 'twillingate.client_id'
 const REFRESH_TOKEN_KEY = 'twillingate.refresh_token'
@@ -34,13 +35,37 @@ interface TokenResponse {
   refresh_token?: string
 }
 
+interface OAuthErrorBody {
+  error?: string
+}
+
 // The access token lives only in memory; a page reload falls back to the
 // refresh token (oauth) or the pasted token (paste), both in localStorage.
 let accessToken: string | null = null
 
-let unauthorized: () => void = () => {
-  window.location.assign('/app/login')
+/**
+ * The host of the authorization server discovered by the last `detectAuth`
+ * call that fell back to "paste" because it has no registration endpoint —
+ * so the paste screen can name it.
+ */
+let providerHint: string | undefined
+
+export function authProviderHint(): string | undefined {
+  return providerHint
 }
+
+/** Keeps a `returnTo` an in-app path: never an absolute or protocol-relative URL. */
+export function sanitizeReturnTo(v: string | null | undefined): string {
+  return v && v.startsWith('/') && !v.startsWith('//') ? v : '/'
+}
+
+function defaultUnauthorized(): void {
+  const path = window.location.pathname.replace(/^\/app(?=\/|$)/, '') || '/'
+  const returnTo = sanitizeReturnTo(path)
+  window.location.assign(`/app/login?returnTo=${encodeURIComponent(returnTo)}`)
+}
+
+let unauthorized: () => void = defaultUnauthorized
 
 /** Lets the app route to /login itself instead of a hard navigation. */
 export function onUnauthorized(handler: () => void): void {
@@ -74,17 +99,32 @@ async function discover(): Promise<{ resource: ProtectedResource; meta: AuthServ
   return { resource, meta }
 }
 
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host
+  } catch {
+    return url
+  }
+}
+
 /**
  * Which login path the client should take (D41): "open" needs no
  * credentials at all (reporting dev), "paste" is a bare bearer token typed
  * in, "login" is the full PKCE flow against a discovered authorization
- * server.
+ * server. When it falls back to "paste" because the server has no
+ * registration endpoint, `authProviderHint()` names the server so the UI
+ * can say why.
  */
 export async function detectAuth(): Promise<'open' | 'login' | 'paste'> {
+  providerHint = undefined
   const open = await fetch('/api/dashboards')
   if (open.ok) return 'open'
   const found = await discover()
-  if (!found || !found.meta.registration_endpoint) return 'paste'
+  if (!found) return 'paste'
+  if (!found.meta.registration_endpoint) {
+    providerHint = hostOf(found.meta.issuer || found.resource.authorization_servers[0])
+    return 'paste'
+  }
   return 'login'
 }
 
@@ -109,10 +149,17 @@ function redirectURI(): string {
   return location.origin + CALLBACK_PATH
 }
 
+// Client ids are JWTs signed with keys derived from the DSN's token and
+// password (internal/api/oauth.go): rotating either strands a cached id on
+// the server's "Unknown client" page. Registration is stateless server-side,
+// so beginLogin always re-registers; the id is still kept in localStorage
+// for refreshAccess, which runs long after the login page is gone.
 async function registerClient(meta: AuthServerMetadata): Promise<string> {
-  const existing = localStorage.getItem(CLIENT_ID_KEY)
-  if (existing) return existing
-  if (!meta.registration_endpoint) throw new Error('the authorization server has no registration endpoint')
+  if (!meta.registration_endpoint) {
+    const existing = localStorage.getItem(CLIENT_ID_KEY)
+    if (existing) return existing
+    throw new Error('the authorization server has no registration endpoint')
+  }
   const registration = await fetchJSON<{ client_id: string }>(meta.registration_endpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -120,6 +167,7 @@ async function registerClient(meta: AuthServerMetadata): Promise<string> {
       redirect_uris: [redirectURI()],
       token_endpoint_auth_method: 'none',
       grant_types: ['authorization_code', 'refresh_token'],
+      client_name: CLIENT_NAME,
     }),
   })
   if (!registration) throw new Error('client registration failed')
@@ -127,7 +175,7 @@ async function registerClient(meta: AuthServerMetadata): Promise<string> {
   return registration.client_id
 }
 
-/** Starts the PKCE flow: register if needed, then redirect to authorize. */
+/** Starts the PKCE flow: (re-)register, then redirect to authorize. */
 export async function beginLogin(returnTo: string): Promise<void> {
   const found = await discover()
   if (!found) throw new Error('no authorization server found')
@@ -138,7 +186,7 @@ export async function beginLogin(returnTo: string): Promise<void> {
   const state = randomToken(16)
   sessionStorage.setItem(VERIFIER_KEY, verifier)
   sessionStorage.setItem(STATE_KEY, state)
-  sessionStorage.setItem(RETURN_TO_KEY, returnTo)
+  sessionStorage.setItem(RETURN_TO_KEY, sanitizeReturnTo(returnTo))
   localStorage.setItem(TOKEN_ENDPOINT_KEY, meta.token_endpoint)
   localStorage.setItem(RESOURCE_KEY, resource.resource)
 
@@ -159,8 +207,7 @@ function clearPendingLogin(): void {
   sessionStorage.removeItem(RETURN_TO_KEY)
 }
 
-/** Exchanges the callback's code for tokens, returning where to send the user. */
-export async function completeLogin(search: string): Promise<string> {
+async function exchangeCode(search: string): Promise<string> {
   const params = new URLSearchParams(search)
   const error = params.get('error')
   if (error) {
@@ -178,7 +225,7 @@ export async function completeLogin(search: string): Promise<string> {
   const tokenEndpoint = localStorage.getItem(TOKEN_ENDPOINT_KEY)
   const resource = localStorage.getItem(RESOURCE_KEY)
   const clientId = localStorage.getItem(CLIENT_ID_KEY)
-  const returnTo = sessionStorage.getItem(RETURN_TO_KEY) ?? '/'
+  const returnTo = sanitizeReturnTo(sessionStorage.getItem(RETURN_TO_KEY))
   clearPendingLogin()
   if (!verifier || !tokenEndpoint || !resource || !clientId) {
     throw new Error('login session expired: start again from the client')
@@ -204,17 +251,45 @@ export async function completeLogin(search: string): Promise<string> {
   return returnTo
 }
 
+// React StrictMode (dev) mounts effects twice, and the callback page reruns
+// the same effect with the same location.search both times. The code and
+// state are single-use, so the second run would find them already cleared
+// and fail even though the first succeeded; memoising by `search` makes the
+// second call join the first instead of repeating it.
+let lastExchange: { search: string; result: Promise<string> } | null = null
+
+/** Exchanges the callback's code for tokens, returning where to send the user. */
+export function completeLogin(search: string): Promise<string> {
+  if (!lastExchange || lastExchange.search !== search) {
+    lastExchange = { search, result: exchangeCode(search) }
+  }
+  return lastExchange.result
+}
+
 /** A bare bearer token pasted in by hand (the "paste" path). */
 export function setPastedToken(t: string): void {
   localStorage.setItem(PASTED_TOKEN_KEY, t)
 }
 
-/**
- * Redeems the stored refresh token for a new access token. Used once by
- * `api()` after a 401; returns false when there is nothing to refresh with
- * (open or paste mode, or the refresh itself failing).
- */
-export async function refreshAccess(): Promise<boolean> {
+// A rotated signing key (or a stale/foreign client id) turns every refresh
+// into invalid_client or invalid_grant forever; clearing the credentials
+// sends the user back through a fresh login instead of failing silently on
+// every request.
+async function clearOnRejection(res: Response): Promise<void> {
+  let code: string | undefined
+  try {
+    code = ((await res.json()) as OAuthErrorBody).error
+  } catch {
+    // Not a JSON OAuth error body; nothing more to learn from it.
+  }
+  if (code === 'invalid_client' || code === 'invalid_grant') {
+    accessToken = null
+    localStorage.removeItem(REFRESH_TOKEN_KEY)
+    localStorage.removeItem(CLIENT_ID_KEY)
+  }
+}
+
+async function exchangeRefresh(): Promise<boolean> {
   const refreshToken = localStorage.getItem(REFRESH_TOKEN_KEY)
   const tokenEndpoint = localStorage.getItem(TOKEN_ENDPOINT_KEY)
   const resource = localStorage.getItem(RESOURCE_KEY)
@@ -232,11 +307,33 @@ export async function refreshAccess(): Promise<boolean> {
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: body.toString(),
   })
-  if (!res.ok) return false
+  if (!res.ok) {
+    await clearOnRejection(res)
+    return false
+  }
   const token = (await res.json()) as TokenResponse
   accessToken = token.access_token
   if (token.refresh_token) localStorage.setItem(REFRESH_TOKEN_KEY, token.refresh_token)
   return true
+}
+
+// Single-flight: concurrent 401s (e.g. several widgets loading at once)
+// share one refresh instead of each redeeming the refresh token, which
+// would race the token's single-use rotation and fail all but one of them.
+let refreshInFlight: Promise<boolean> | null = null
+
+/**
+ * Redeems the stored refresh token for a new access token. Used by `api()`
+ * after a 401 (at most once per failure, shared across concurrent callers);
+ * returns false with nothing to refresh (open or paste mode) or on failure.
+ */
+export function refreshAccess(): Promise<boolean> {
+  if (!refreshInFlight) {
+    refreshInFlight = exchangeRefresh().finally(() => {
+      refreshInFlight = null
+    })
+  }
+  return refreshInFlight
 }
 
 /** Reports the failure that made `api()` give up after one refresh attempt. */
@@ -244,7 +341,11 @@ export function reportUnauthorized(): void {
   unauthorized()
 }
 
-/** Test-only: clears the in-memory access token between cases. */
+/** Test-only: clears in-memory state that would otherwise leak between cases. */
 export function _resetForTests(): void {
   accessToken = null
+  providerHint = undefined
+  refreshInFlight = null
+  lastExchange = null
+  unauthorized = defaultUnauthorized
 }

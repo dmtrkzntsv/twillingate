@@ -1,4 +1,4 @@
-import { PRESETS, type Preset } from './ranges'
+import { daysBetween, PRESETS, type Preset } from './ranges'
 
 /** What a dashboard page shows: the project and/or the date range. */
 export interface Selection {
@@ -21,10 +21,18 @@ interface Switchers {
 }
 
 const PRESET_IDS = new Set<string>(PRESETS.map((p) => p.id))
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/
+
+/** `from`/`to` must be `YYYY-MM-DD`, `from` on or before `to`, within 365 days. */
+function isValidCustomRange(from?: string | null, to?: string | null): boolean {
+  if (!from || !to || !ISO_DATE.test(from) || !ISO_DATE.test(to)) return false
+  const days = daysBetween(from, to)
+  return days >= 0 && days <= 365
+}
 
 function isValidRange(range: string | null | undefined, from?: string | null, to?: string | null): range is Preset {
   if (!range || !PRESET_IDS.has(range)) return false
-  return range !== 'custom' || (!!from && !!to)
+  return range !== 'custom' || isValidCustomRange(from, to)
 }
 
 function parseProjectId(v: string | null): number | undefined {

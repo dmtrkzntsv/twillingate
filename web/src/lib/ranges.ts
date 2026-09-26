@@ -38,6 +38,12 @@ function addDays(s: string, delta: number): string {
   return formatDate(d)
 }
 
+/** The whole number of days from one `YYYY-MM-DD` string to another, in UTC. */
+export function daysBetween(from: string, to: string): number {
+  const ms = parseDate(to).getTime() - parseDate(from).getTime()
+  return Math.round(ms / 86_400_000)
+}
+
 /**
  * Resolves a preset to a `{from, to}` range, both inclusive, computed from
  * "today" in the instance timezone. `custom` uses the given `from`/`to`

@@ -3,17 +3,18 @@ import { useNavigate, useSearchParams } from 'react-router'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
-import { beginLogin, detectAuth, setPastedToken } from '@/lib/auth'
+import { authProviderHint, beginLogin, detectAuth, sanitizeReturnTo, setPastedToken } from '@/lib/auth'
 
 type Mode = 'checking' | 'redirecting' | 'paste' | 'error'
 
 function Login() {
   const navigate = useNavigate()
   const [params] = useSearchParams()
-  const returnTo = params.get('returnTo') || '/'
+  const returnTo = sanitizeReturnTo(params.get('returnTo'))
   const [mode, setMode] = useState<Mode>('checking')
   const [token, setToken] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [providerHint, setProviderHint] = useState<string | undefined>(undefined)
 
   useEffect(() => {
     let cancelled = false
@@ -33,6 +34,7 @@ function Login() {
             })
             break
           case 'paste':
+            setProviderHint(authProviderHint())
             setMode('paste')
         }
       })
@@ -61,7 +63,13 @@ function Login() {
           <CardTitle>Sign in</CardTitle>
           {mode === 'checking' && <CardDescription>Checking how to sign in…</CardDescription>}
           {mode === 'redirecting' && <CardDescription>Redirecting to sign in…</CardDescription>}
-          {mode === 'paste' && <CardDescription>Paste an API token to continue.</CardDescription>}
+          {mode === 'paste' && (
+            <CardDescription>
+              {providerHint
+                ? `${providerHint} has no self-service sign-in. Paste an API token to continue.`
+                : 'Paste an API token to continue.'}
+            </CardDescription>
+          )}
           {mode === 'error' && error && <CardDescription>{error}</CardDescription>}
         </CardHeader>
         {mode === 'paste' && (

@@ -7,6 +7,9 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 beforeEach(() => {
+  localStorage.clear()
+  sessionStorage.clear()
+  auth._resetForTests()
   vi.stubGlobal('fetch', vi.fn())
 })
 
@@ -14,6 +17,10 @@ afterEach(() => {
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
 })
+
+function urlOf(input: RequestInfo | URL): string {
+  return typeof input === 'string' ? input : input.toString()
+}
 
 describe('api', () => {
   it('adds the Authorization header when there is one', async () => {
@@ -74,6 +81,38 @@ describe('api', () => {
 
     await expect(api('/api/dashboards')).rejects.toBeInstanceOf(ApiError)
     expect(fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('shares one refresh request across concurrent 401s (no refresh stampede)', async () => {
+    // Exercises the real refreshAccess, not a mock, since the single-flight
+    // guarantee lives there.
+    vi.spyOn(auth, 'getAuthHeader').mockReturnValue('Bearer stale')
+    localStorage.setItem('twillingate.refresh_token', 'refresh-1')
+    localStorage.setItem('twillingate.token_endpoint', 'https://api.example/oauth/token')
+    localStorage.setItem('twillingate.resource', 'https://api.example')
+    localStorage.setItem('twillingate.client_id', 'client-1')
+
+    let dashboardCalls = 0
+    vi.mocked(fetch).mockImplementation((input) => {
+      if (urlOf(input) === 'https://api.example/oauth/token') {
+        return Promise.resolve(jsonResponse({ access_token: 'access-2', refresh_token: 'refresh-2' }))
+      }
+      dashboardCalls++
+      // The first request from each of the two concurrent callers 401s;
+      // once both have retried after the shared refresh, they succeed.
+      return Promise.resolve(dashboardCalls <= 2 ? new Response(null, { status: 401 }) : jsonResponse({ ok: true }))
+    })
+
+    const [a, b] = await Promise.all([
+      api<{ ok: boolean }>('/api/dashboards'),
+      api<{ ok: boolean }>('/api/dashboards'),
+    ])
+
+    expect(a).toEqual({ ok: true })
+    expect(b).toEqual({ ok: true })
+    const tokenCalls = vi.mocked(fetch).mock.calls.filter(([input]) => urlOf(input) === 'https://api.example/oauth/token')
+    expect(tokenCalls).toHaveLength(1)
+    expect(fetch).toHaveBeenCalledTimes(5) // 2 initial 401s + 1 refresh + 2 retries
   })
 
   it('throws an ApiError for a non-401 error response', async () => {

@@ -69,4 +69,40 @@ describe('chooseSelection', () => {
     const url = new URLSearchParams()
     expect(chooseSelection(url, {}, [], { project: true, range: false })).toEqual({})
   })
+
+  it('a malformed custom date falls through', () => {
+    const url = new URLSearchParams('range=custom&from=01-01-2026&to=2026-01-31')
+    expect(chooseSelection(url, {}, [1], BOTH)).toEqual({ projectId: 1, range: '7d' })
+  })
+
+  it('a custom range with from after to falls through', () => {
+    const url = new URLSearchParams('range=custom&from=2026-02-01&to=2026-01-01')
+    expect(chooseSelection(url, {}, [1], BOTH)).toEqual({ projectId: 1, range: '7d' })
+  })
+
+  it('a custom range over 365 days falls through', () => {
+    const url = new URLSearchParams('range=custom&from=2025-01-01&to=2026-01-02')
+    expect(chooseSelection(url, {}, [1], BOTH)).toEqual({ projectId: 1, range: '7d' })
+  })
+
+  it('a custom range of exactly 365 days is accepted', () => {
+    const url = new URLSearchParams('range=custom&from=2025-01-01&to=2026-01-01')
+    expect(chooseSelection(url, {}, [1], BOTH)).toEqual({
+      projectId: 1,
+      range: 'custom',
+      from: '2025-01-01',
+      to: '2026-01-01',
+    })
+  })
+
+  it('an invalid URL custom range falls through to a valid stored one', () => {
+    const url = new URLSearchParams('range=custom&from=bad&to=bad')
+    const stored = { range: 'custom', from: '2026-01-01', to: '2026-01-05' }
+    expect(chooseSelection(url, stored, [1], BOTH)).toEqual({
+      projectId: 1,
+      range: 'custom',
+      from: '2026-01-01',
+      to: '2026-01-05',
+    })
+  })
 })
