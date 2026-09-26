@@ -117,6 +117,49 @@ func TestQueryLimitRefusesEmptyOrSemicolonOnlySQL(t *testing.T) {
 	}
 }
 
+// TestQueryLimitRefusesNegativeLimit pins the limit<0 guard: nothing in
+// this package ever needs a negative row cap, and letting one through
+// would hand SQLite "LIMIT -1" (unlimited) instead of the caller's own
+// bound.
+func TestQueryLimitRefusesNegativeLimit(t *testing.T) {
+	db, _ := newTestDB(t, 2*time.Second, 3)
+	_, err := db.QueryLimit(context.Background(), "select 1", -1)
+	if !errors.Is(err, ErrRefused) {
+		t.Fatalf("QueryLimit(limit=-1) = %v, want ErrRefused", err)
+	}
+}
+
+// TestQueryAndQueryLimitRefuseUnicodeWhitespaceIdentifierSplicing pins
+// the fix for a security regression: Check's isIdentStart treats every
+// byte >= 0x80 as an identifier byte, so "select * from meta "
+// tokenizes as a single identifier — "meta" plus the trailing space's
+// UTF-8 bytes folded into the same word — which is not equal to "meta",
+// so checkName never matches it and Check passes the text. The former
+// implementation then trimmed with strings.TrimSpace, which treats
+// U+00A0/U+0085/U+3000 as whitespace and stripped it, so SQLite actually
+// received the bare word "meta" (or "dbstat") — text Check never
+// examined, reading the visitor salt or a SQLite internal despite Check
+// having refused every text that names them directly. Both Query and
+// QueryLimit must now treat the trailing Unicode-whitespace byte(s) as
+// part of the table name (matching what Check tokenized), so the query
+// fails with "no such table" — never rows.
+func TestQueryAndQueryLimitRefuseUnicodeWhitespaceIdentifierSplicing(t *testing.T) {
+	db, _ := newTestDB(t, 2*time.Second, 1000)
+	for _, q := range []string{
+		"select * from meta ",
+		"select * from meta\u0085",
+		"select * from meta　",
+		"select * from dbstat ",
+	} {
+		if res, err := db.Query(context.Background(), q); err == nil {
+			t.Errorf("Query(%q) succeeded with %v, want an error (no such table)", q, res)
+		}
+		if res, err := db.QueryLimit(context.Background(), q, 5); err == nil {
+			t.Errorf("QueryLimit(%q) succeeded with %v, want an error (no such table)", q, res)
+		}
+	}
+}
+
 func TestQueryTrailingCommentAndSemicolon(t *testing.T) {
 	db, _ := newTestDB(t, 2*time.Second, 3)
 	for _, q := range []string{

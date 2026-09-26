@@ -47,11 +47,11 @@ func TestCheckRefusesAttach(t *testing.T) {
 
 // TestCheckRefusesEscapesFromTheWrap pins the fix for the finding that
 // Check did not track parens or statement boundaries: a stray ')' with
-// no earlier matching '(' would close Query's own wrapping paren early,
+// no earlier matching '(' would close QueryLimit's own wrapping paren early,
 // and a ';' was never treated as ending the statement, so anything after
 // it — a second statement — rode along on the same call (the driver runs
 // every statement it is handed). An unterminated /* is refused for the
-// same reason: concatenated with Query's own trailing "\n) LIMIT n", it
+// same reason: concatenated with QueryLimit's own trailing "\n) LIMIT n", it
 // would swallow that suffix.
 func TestCheckRefusesEscapesFromTheWrap(t *testing.T) {
 	for _, q := range []string{
@@ -94,10 +94,10 @@ func TestCheckAllowsBalancedParensAndTrailingSemicolon(t *testing.T) {
 
 // TestCheckRefusesCommentAfterSemicolon pins the fix for the finding
 // that Check allowed a comment after a top-level ';' (e.g. "select 1;
-// -- trailing"), but Query's trim only strips a trailing run of ';' and
+// -- trailing"), but QueryLimit's trim only strips a trailing run of ';' and
 // whitespace, leaving the ';' and comment inside the wrap — a syntax
 // error there, not the clean refusal a caller can act on. Check and
-// Query's trim now agree: nothing but more ';' or whitespace may follow
+// QueryLimit's trim now agree: nothing but more ';' or whitespace may follow
 // the first top-level ';'.
 func TestCheckRefusesCommentAfterSemicolon(t *testing.T) {
 	for _, q := range []string{

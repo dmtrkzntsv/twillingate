@@ -29,13 +29,14 @@ import (
 )
 
 var (
-	// ErrRefused reports that Check (or, for an empty statement, Query
-	// itself) refused the text: it named ATTACH, a table or pragma view
-	// custom SQL may not read, a second statement (an unmatched ')', a
-	// ';' followed by anything but more ';' or whitespace, or a paren left
-	// unmatched at the end), an unterminated /* comment, a $NAME(...) or
-	// $NAME::NAME2 variable form (or the # sigil) SQLite's tokenizer would
-	// read differently than Check just did, a NUL byte, or empty text.
+	// ErrRefused reports that Check (or, for an empty statement or a
+	// negative limit, QueryLimit itself) refused the text: it named
+	// ATTACH, a table or pragma view custom SQL may not read, a second
+	// statement (an unmatched ')', a ';' followed by anything but more
+	// ';' or whitespace, or a paren left unmatched at the end), an
+	// unterminated /* comment, a $NAME(...) or $NAME::NAME2 variable form
+	// (or the # sigil) SQLite's tokenizer would read differently than
+	// Check just did, a NUL byte, empty text, or a negative limit.
 	ErrRefused = errors.New("refused")
 	// ErrTimeout reports that a query's deadline passed before it finished.
 	ErrTimeout = errors.New("query timed out")
@@ -150,6 +151,9 @@ func (d *DB) Query(ctx context.Context, q string, args ...any) (Result, error) {
 // doc): Check first, then wraps the text as a subquery carrying limit,
 // then Run.
 func (d *DB) QueryLimit(ctx context.Context, q string, limit int, args ...any) (Result, error) {
+	if limit < 0 {
+		return Result{}, fmt.Errorf("%w: limit must not be negative", ErrRefused)
+	}
 	if _, err := Check(q); err != nil {
 		return Result{}, err
 	}
@@ -158,13 +162,27 @@ func (d *DB) QueryLimit(ctx context.Context, q string, limit int, args ...any) (
 	// statement end looks like, so anything Check accepted past the
 	// statement's own text is exactly what this strips before wrapping —
 	// nothing Check allowed through is left inside the wrap to break it.
-	// Trimmed rather than raw q, so text that is empty or only ';' and
-	// whitespace (which Check itself passes: a lone ';' is a valid, if
-	// pointless, single statement) is refused here instead of becoming
-	// "SELECT * FROM (\n) LIMIT n" — a syntax error rather than a clean
+	//
+	// This must be strings.TrimRight with the ASCII cutset, never
+	// strings.TrimSpace: Check's isIdentStart treats every byte >= 0x80
+	// as an identifier byte, so "select * from meta " tokenizes as
+	// one identifier, "meta " (the trailing NBSP's UTF-8 bytes
+	// folded into the word) — distinct from "meta", so checkName never
+	// matches it and Check passes the text. strings.TrimSpace, though,
+	// treats U+00A0 (and U+0085, U+3000, ...) as whitespace and would
+	// strip it, leaving SQLite reading the bare word "meta" — the very
+	// table Check exists to refuse, executed with text Check never
+	// actually examined. Trimming only the ASCII cutset keeps the text
+	// SQLite receives identical, byte for byte, to what Check tokenized.
+	trimmed := strings.TrimRight(q, "; \t\r\n\f")
+	// The emptiness check may use TrimSpace: it only decides whether to
+	// refuse, never what reaches SQLite (trimmed itself, wrapped below,
+	// is untouched by it). Text that is empty, only ASCII separators, or
+	// only Unicode whitespace once those are stripped, is refused here
+	// instead of becoming "SELECT * FROM (\n) LIMIT n" or "SELECT *
+	// FROM ( \n) LIMIT n" — a syntax error rather than a clean
 	// refusal.
-	trimmed := strings.TrimRight(strings.TrimSpace(q), "; \t\r\n\f")
-	if trimmed == "" {
+	if strings.TrimSpace(trimmed) == "" {
 		return Result{}, fmt.Errorf("%w: sql must not be empty", ErrRefused)
 	}
 	wrapped := fmt.Sprintf("SELECT * FROM (%s\n) LIMIT %d", trimmed, limit)

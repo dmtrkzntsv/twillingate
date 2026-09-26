@@ -11,8 +11,8 @@ import (
 //   - names of tables custom SQL may not read — meta, which holds the
 //     visitor salt, and SQLite's internals;
 //   - a second statement. The driver runs every statement it is given
-//     (Query.wrapped embeds the text inside "SELECT * FROM (…\n) LIMIT
-//     n", which only turns a single non-query statement — DDL, PRAGMA —
+//     (QueryLimit embeds the text inside "SELECT * FROM (…\n) LIMIT n",
+//     which only turns a single non-query statement — DDL, PRAGMA —
 //     into a syntax error; it does nothing to stop a second, textually
 //     separate statement from executing on the same call). Check refuses
 //     this directly: a ')' that has no matching '(' earlier in the text
@@ -21,8 +21,9 @@ import (
 //     so is depth left positive at the end (an unclosed '(' would need
 //     the wrap's own closing ')' to balance, changing what it encloses);
 //     a ';' may only be followed by more ';' or whitespace — nothing else,
-//     not even a comment, since Query's own trim (a run of ';' and
-//     whitespace only) would otherwise leave a comment, or the ';'
+//     not even a comment, since QueryLimit's own trim (a run of ';' and
+//     ASCII whitespace only — never Unicode whitespace; see QueryLimit's
+//     own comment for why) would otherwise leave a comment, or the ';'
 //     itself, inside the wrap;
 //   - an unterminated /* comment, which would otherwise swallow the
 //     wrap's own trailing "\n) LIMIT n" once concatenated, and everything
@@ -206,9 +207,10 @@ func skipLineComment(q string, i int) int {
 
 // skipBlockComment returns the index after a /* */ comment's closing
 // */. Unterminated is refused rather than treated as running to the end
-// of the text: once Query concatenates its own trailing "\n) LIMIT n"
-// after the text Check saw, an unterminated comment here would swallow
-// that suffix too, and whatever Check would have read as SQL after it.
+// of the text: once QueryLimit concatenates its own trailing "\n) LIMIT
+// n" after the text Check saw, an unterminated comment here would
+// swallow that suffix too, and whatever Check would have read as SQL
+// after it.
 func skipBlockComment(q string, i int) (int, error) {
 	if j := strings.Index(q[i+2:], "*/"); j >= 0 {
 		return i + j + 4, nil
