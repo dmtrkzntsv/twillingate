@@ -315,8 +315,8 @@ removes Evidence.
     - `sql`: only the three parameters ("sql uses `:path`; widgets get only
       `:project`, `:from` and `:to`"); the query runs as
       `SELECT * FROM (…) LIMIT 0` on the read pool with sample values bound
-      and the guards `query` applies (read-only, no `ATTACH`), under
-      `REPORTING_QUERY_TIMEOUT` (decision 32);
+      and the guards and timeout `query` applies (read-only, no
+      `ATTACH`, `API_QUERY_TIMEOUT`);
       its columns satisfy the inputs ("line needs y (number); columns are
       x, visitor"); value types are checked on a few rows: for a widget
       using `:project`, of the most recently active project; if there are
@@ -385,25 +385,21 @@ removes Evidence.
     `project_id` is required for a widget whose SQL uses `:project`, and
     `from`/`to` for one whose SQL uses `:from` or `:to`; each is ignored by
     a widget fixed in that respect. Fixed-range SQL is bounded by
-    `REPORTING_QUERY_TIMEOUT`. The body is what the source type's `Load` returns: rows
+    `API_QUERY_TIMEOUT`. The body is what the source type's `Load` returns: rows
     for `sql`; `{"widget_id", "markdown"}` for `md`, which ignores project
     and dates. Only cacheable source types are cached. A widget on a
     removed component answers
     `{"widget_id", "removed": true}`. A query that no longer runs, or whose
     rows no longer satisfy the inputs (a release changed a view), is
     `ErrInvalid` with the reason. Queries run on the read pool with the
-    `query` guards (read-only, no `ATTACH`) and reporting's own caps:
-
-    | Setting | Default | Meaning |
-    | --- | --- | --- |
-    | `REPORTING_QUERY_TIMEOUT` | 10s | per widget query, and per validation run |
-    | `REPORTING_MAX_ROWS` | 10000 | rows a widget query may return |
-
-    A result cut at `REPORTING_MAX_ROWS` answers `"truncated": true`, and
-    the card says "partial: narrow the range or group the query" instead
-    of drawing a chart that silently stops. A timeout is `ErrInvalid`
-    naming the setting. `API_QUERY_TIMEOUT` and `API_QUERY_MAX_ROWS` keep
-    governing `query` and the other API reads only.
+    same guards and limits as `query`: read-only, no `ATTACH`,
+    `API_QUERY_TIMEOUT` (default 10s) and `API_QUERY_MAX_ROWS` (default
+    1000); reporting adds no settings of its own. A result cut at the row
+    cap answers `"truncated": true`, and the card says "partial: narrow
+    the range or group the query" instead of drawing a chart that
+    silently stops (a 5-series line over 365 days needs 1,825 rows, so
+    operators with long multi-series charts raise `API_QUERY_MAX_ROWS`).
+    A timeout is `ErrInvalid` naming `API_QUERY_TIMEOUT`.
 33. **One cache, two ages.** An in-memory entry per (widget, project,
     `from`, `to`) records when it was computed:
 
@@ -540,10 +536,10 @@ code, per the standing rules.
 | **system dashboards** | every system widget, on a database migrated to latest with seeded data, validates and runs for every preset range, and its rows satisfy its component. The load-bearing test |
 | files | pairing errors (no data file, two, orphan data file, unplaced or missing widget, duplicate or out-of-range `id`) |
 | ranges | the UI resolves each preset to the dates in decision 18 (in the reported timezone, around its midnight); the API refuses a missing date, `from > to` and spans over 365 days, and clamps a future `to`; `custom` and unknown presets are rejected as a default range, and unknown presets by the view route |
-| caps | a widget query past `REPORTING_QUERY_TIMEOUT` is refused naming it; a result past `REPORTING_MAX_ROWS` is cut and answers `truncated`; `query` keeps the `API_*` caps |
+| limits | a widget query past `API_QUERY_TIMEOUT` is refused naming it; a result past `API_QUERY_MAX_ROWS` is cut and answers `truncated` |
 | cache | the age rules of decision 33, invalidation, one run for simultaneous requests, the boot refusal |
 | manifest | `components.json` matches the widget files in `web/`, and Go loads it |
-| api | MCP ↔ REST parity (the view route REST-only by choice); `docs_sync_test` gains the tools, routes, the four `REPORTING_*` settings and the range vocabulary; `redirectAllowed` accepts the API host; OAuth end to end through `/app/callback` |
+| api | MCP ↔ REST parity (the view route REST-only by choice); `docs_sync_test` gains the tools, routes, both `REPORTING_*` settings and the range vocabulary; `redirectAllowed` accepts the API host; OAuth end to end through `/app/callback` |
 | archtest | `internal/reporting` at rank 1 |
 | browser | Playwright against a seeded `serve`: log in, open every system dashboard at desktop and phone width, no error cards |
 
@@ -555,9 +551,10 @@ In the same PR as the change:
   component table (decision 13); the parameters and range vocabulary; the
   tools and routes; the removed-component lifecycle.
 - `docs/deployment.md`: `/app/` and installing it; the redirect an
-  `oauth://` provider must allow; `REPORTING_CACHE_MINUTES`,
-  `REPORTING_REFRESH_MINUTES`, `REPORTING_QUERY_TIMEOUT` and
-  `REPORTING_MAX_ROWS`; `twillingate reporting dev`.
+  `oauth://` provider must allow; `REPORTING_CACHE_MINUTES` and
+  `REPORTING_REFRESH_MINUTES`; that `API_QUERY_TIMEOUT` and
+  `API_QUERY_MAX_ROWS` also bound widget queries; `twillingate reporting
+  dev`.
 - `deploy/UPGRADES.md`: 021 adds `/app/`; a release that removes a
   component leaves its widgets showing "component removed" until an agent
   switches or removes them; a binary rollback re-migrates system
