@@ -126,11 +126,18 @@ removes Evidence.
 10. **Layout is a flowing grid.** A dashboard's widgets are one ordered
     list; each has a `width` and a `height`, and they fill a 12-column
     grid left to right, wrapping to the next line when a widget does not
-    fit. A line is as tall as its tallest widget; shorter ones stretch.
+    fit. It is a CSS grid: 12 columns, rows of a fixed ~140px
+    (`grid-auto-rows`), and each widget spans `width` columns and `height`
+    rows (`grid-column: span w; grid-row: span h`). The grid places
+    widgets in order into free cells without backfilling (no `dense`), so
+    a 6 × 2 chart followed by four 3 × 1 stats puts the stats in a 2 × 2
+    block beside the chart. Numbers map straight to spans; words or
+    percentages would only add a translation (percentages would also need
+    `calc()` around gaps).
     - **`width`** is the number of columns, 1–12: 3 is a quarter, 4 a
       third, 6 a half, 12 the full width, which covers the Evidence
       pages' 1-, 2-, 3- and 4-across grids.
-    - **`height`** is the number of units, 1–3, each about 140px.
+    - **`height`** is the number of grid rows spanned, 1–3.
     - Either may be omitted and takes the component's `default_width` or
       `default_height`.
     - **Order is a fractional sort key.** `sort_key` is a fractional index
@@ -418,18 +425,27 @@ removes Evidence.
     phones), "data as of" (the
     oldest `cached_at` on screen) and a dashboard refresh button; then the
     grid.
-37. **Adaptive:**
+37. **Adaptive.** Widths adapt to the grid's own width through container
+    queries (Tailwind's `@container`), not to the screen, because the
+    sidebar changes the space the grid gets. The chrome adapts to the
+    screen:
 
-    | Screen | Widths | Chrome |
-    | --- | --- | --- |
-    | ≥ 1024px | as defined | sidebar; switchers in the header |
-    | 640–1023px | up to 6 becomes 6; above 6 becomes 12 | sidebar collapses to icons |
-    | < 640px | up to 3 becomes 6 (two stats across); above 3 becomes 12 | sidebar in a drawer; switchers as two selects |
+    | Grid width | Widths |
+    | --- | --- |
+    | ≥ 1024px | as defined |
+    | 640–1023px | up to 6 becomes 6; above 6 becomes 12 |
+    | < 640px | up to 3 becomes 6 (two stats across); above 3 becomes 12 |
+
+    | Screen | Chrome |
+    | --- | --- |
+    | ≥ 1024px | sidebar; switchers in the header |
+    | 640–1023px | sidebar collapses to icons |
+    | < 640px | sidebar in a drawer; switchers as two selects |
 
     The grid keeps its order at every width; only spans change, so a
     narrow screen is the same list wrapped sooner.
 
-    Heights keep their pixel size everywhere; charts thin their axis ticks
+    Heights keep their row spans everywhere; charts thin their axis ticks
     on narrow screens; tables scroll inside their card.
 38. **Each widget loads on its own** and has its own state: skeleton at the
     widget's height while loading; the component with data; "No data for this
@@ -489,7 +505,7 @@ code, per the standing rules.
 | --- | --- |
 | validation | each refusal in decision 27 fires with its sentinel and message |
 | projects | a widget using `:project` requires `project_id` in `widget_data` and keys its cache by it; a fixed widget ignores it and keys without it; the switcher is present exactly when a widget uses `:project` |
-| layout | insert first, last and `after` (one key written, no other record touched); removal touches no other record; many inserts at one spot keep keys ordered and short enough; the `layout` list round-trips; widths and heights default from the component; the migrator keeps widget ids when order or size changes |
+| layout | a 6 × 2 widget followed by four 3 × 1 widgets renders them as a 2 × 2 block beside it (browser test); insert first, last and `after` (one key written, no other record touched); removal touches no other record; many inserts at one spot keep keys ordered and short enough; the `layout` list round-trips; widths and heights default from the component; the migrator keeps widget ids when order or size changes |
 | foreign keys | deleting a dashboard deletes its widgets and then any removed component they were the last users of; writer connections report `foreign_keys = 1`; `DeleteProject` succeeds with keys present; a migration leaving a violation fails `foreign_key_check`; existing databases pass the check after 021 |
 | source types | an unregistered `source_type` is refused; a component's `accepts` naming an unregistered type fails the migrator; `sql` and `md` each validate and load through the registry |
 | components | a removed component is refused for new use, answers `removed`, and is deleted with its last widget, including when the migrator deletes a system dashboard |
