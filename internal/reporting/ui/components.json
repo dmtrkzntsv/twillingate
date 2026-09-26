@@ -1,3 +1,501 @@
 {
-  "components": []
+  "components": [
+    {
+      "name": "area",
+      "description": "A trend over time or category, filled under the line; use `stacked` to show parts of a whole changing over time.",
+      "accepts": [
+        "sql"
+      ],
+      "inputs": {
+        "open": false,
+        "columns": [
+          {
+            "name": "x",
+            "types": [
+              "day",
+              "text"
+            ]
+          },
+          {
+            "name": "y",
+            "types": [
+              "number"
+            ]
+          },
+          {
+            "name": "series",
+            "types": [
+              "text"
+            ],
+            "optional": true
+          }
+        ]
+      },
+      "props": {
+        "type": "object",
+        "properties": {
+          "format": {
+            "enum": [
+              "number",
+              "percent",
+              "duration"
+            ]
+          },
+          "curve": {
+            "enum": [
+              "linear",
+              "monotone",
+              "step"
+            ]
+          },
+          "stacked": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "default_width": 6,
+      "default_height": 8
+    },
+    {
+      "name": "bar",
+      "description": "Compare values across categories; use `series` for grouped or `stacked` bars, `horizontal` for long labels.",
+      "accepts": [
+        "sql"
+      ],
+      "inputs": {
+        "open": false,
+        "columns": [
+          {
+            "name": "x",
+            "types": [
+              "text",
+              "day"
+            ]
+          },
+          {
+            "name": "y",
+            "types": [
+              "number"
+            ]
+          },
+          {
+            "name": "series",
+            "types": [
+              "text"
+            ],
+            "optional": true
+          }
+        ]
+      },
+      "props": {
+        "type": "object",
+        "properties": {
+          "format": {
+            "enum": [
+              "number",
+              "percent",
+              "duration"
+            ]
+          },
+          "horizontal": {
+            "type": "boolean"
+          },
+          "stacked": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "default_width": 6,
+      "default_height": 8
+    },
+    {
+      "name": "bar_list",
+      "description": "A ranked list with an inline bar per row: top pages, referrers, top N by value.",
+      "accepts": [
+        "sql"
+      ],
+      "inputs": {
+        "open": false,
+        "columns": [
+          {
+            "name": "label",
+            "types": [
+              "text"
+            ]
+          },
+          {
+            "name": "value",
+            "types": [
+              "number"
+            ]
+          }
+        ]
+      },
+      "props": {
+        "type": "object",
+        "properties": {
+          "format": {
+            "enum": [
+              "number",
+              "percent",
+              "duration"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "default_width": 6,
+      "default_height": 8
+    },
+    {
+      "name": "combo",
+      "description": "Two related metrics on two axes over the same `x`, e.g. visitors (bar) and bounce rate (line).",
+      "accepts": [
+        "sql"
+      ],
+      "inputs": {
+        "open": false,
+        "columns": [
+          {
+            "name": "x",
+            "types": [
+              "day",
+              "text"
+            ]
+          },
+          {
+            "name": "bar",
+            "types": [
+              "number"
+            ]
+          },
+          {
+            "name": "line",
+            "types": [
+              "number"
+            ]
+          }
+        ]
+      },
+      "props": {
+        "type": "object",
+        "properties": {
+          "bar_format": {
+            "enum": [
+              "number",
+              "percent",
+              "duration"
+            ]
+          },
+          "line_format": {
+            "enum": [
+              "number",
+              "percent",
+              "duration"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "default_width": 6,
+      "default_height": 8
+    },
+    {
+      "name": "line",
+      "description": "A trend over time or category, one line per `series` value; best for a continuous metric like visitors per day.",
+      "accepts": [
+        "sql"
+      ],
+      "inputs": {
+        "open": false,
+        "columns": [
+          {
+            "name": "x",
+            "types": [
+              "day",
+              "text"
+            ]
+          },
+          {
+            "name": "y",
+            "types": [
+              "number"
+            ]
+          },
+          {
+            "name": "series",
+            "types": [
+              "text"
+            ],
+            "optional": true
+          }
+        ]
+      },
+      "props": {
+        "type": "object",
+        "properties": {
+          "format": {
+            "enum": [
+              "number",
+              "percent",
+              "duration"
+            ]
+          },
+          "curve": {
+            "enum": [
+              "linear",
+              "monotone",
+              "step"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "default_width": 6,
+      "default_height": 8
+    },
+    {
+      "name": "pie",
+      "description": "Parts of a whole, up to ~7 slices; group the rest as 'Other' in SQL.",
+      "accepts": [
+        "sql"
+      ],
+      "inputs": {
+        "open": false,
+        "columns": [
+          {
+            "name": "label",
+            "types": [
+              "text"
+            ]
+          },
+          {
+            "name": "value",
+            "types": [
+              "number"
+            ]
+          }
+        ]
+      },
+      "props": {
+        "type": "object",
+        "properties": {
+          "format": {
+            "enum": [
+              "number",
+              "percent",
+              "duration"
+            ]
+          },
+          "donut": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "default_width": 4,
+      "default_height": 8
+    },
+    {
+      "name": "radar",
+      "description": "Compare several axes at once, one shape per `series` value; keep the number of axes small (4–8) for readability.",
+      "accepts": [
+        "sql"
+      ],
+      "inputs": {
+        "open": false,
+        "columns": [
+          {
+            "name": "axis",
+            "types": [
+              "text"
+            ]
+          },
+          {
+            "name": "value",
+            "types": [
+              "number"
+            ]
+          },
+          {
+            "name": "series",
+            "types": [
+              "text"
+            ],
+            "optional": true
+          }
+        ]
+      },
+      "props": {
+        "type": "object",
+        "properties": {
+          "format": {
+            "enum": [
+              "number",
+              "percent",
+              "duration"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "default_width": 4,
+      "default_height": 8
+    },
+    {
+      "name": "radial",
+      "description": "A single value as a ring toward a `max` target; use for a goal or capacity metric.",
+      "accepts": [
+        "sql"
+      ],
+      "inputs": {
+        "open": false,
+        "columns": [
+          {
+            "name": "label",
+            "types": [
+              "text"
+            ]
+          },
+          {
+            "name": "value",
+            "types": [
+              "number"
+            ]
+          },
+          {
+            "name": "max",
+            "types": [
+              "number"
+            ],
+            "optional": true
+          }
+        ]
+      },
+      "props": {
+        "type": "object",
+        "properties": {
+          "format": {
+            "enum": [
+              "number",
+              "percent",
+              "duration"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "default_width": 4,
+      "default_height": 8
+    },
+    {
+      "name": "scatter",
+      "description": "Correlation between two numeric measures; `size` adds a third dimension, `series` colors groups.",
+      "accepts": [
+        "sql"
+      ],
+      "inputs": {
+        "open": false,
+        "columns": [
+          {
+            "name": "x",
+            "types": [
+              "number"
+            ]
+          },
+          {
+            "name": "y",
+            "types": [
+              "number"
+            ]
+          },
+          {
+            "name": "series",
+            "types": [
+              "text"
+            ],
+            "optional": true
+          },
+          {
+            "name": "size",
+            "types": [
+              "number"
+            ],
+            "optional": true
+          }
+        ]
+      },
+      "props": {
+        "type": "object",
+        "properties": {
+          "format": {
+            "enum": [
+              "number",
+              "percent",
+              "duration"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "default_width": 6,
+      "default_height": 8
+    },
+    {
+      "name": "stat",
+      "description": "A single number, optionally compared to a previous period; give `x` for a small trend line under it, and it becomes the series' aggregate.",
+      "accepts": [
+        "sql"
+      ],
+      "inputs": {
+        "open": false,
+        "columns": [
+          {
+            "name": "value",
+            "types": [
+              "number"
+            ]
+          },
+          {
+            "name": "previous",
+            "types": [
+              "number"
+            ],
+            "optional": true
+          },
+          {
+            "name": "x",
+            "types": [
+              "day"
+            ],
+            "optional": true
+          }
+        ]
+      },
+      "props": {
+        "type": "object",
+        "properties": {
+          "format": {
+            "enum": [
+              "number",
+              "percent",
+              "duration"
+            ]
+          },
+          "aggregate": {
+            "enum": [
+              "sum",
+              "last",
+              "avg"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "default_width": 3,
+      "default_height": 3
+    }
+  ]
 }

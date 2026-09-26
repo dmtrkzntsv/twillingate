@@ -34,5 +34,7 @@ export interface WidgetProps<P = Record<string, unknown>> {
 
 export interface WidgetModule {
   contract: Contract
-  default: (p: WidgetProps<any>) => ReactElement
+  // `null` covers an empty result: "no data" is the card's job (Task 19),
+  // not the widget's.
+  default: (p: WidgetProps<any>) => ReactElement | null
 }
