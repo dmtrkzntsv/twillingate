@@ -8,7 +8,7 @@
     "dev": "vite",
     "typecheck": "tsc -b --noEmit",
     "test": "vitest run",
-    "build": "tsc -b && vite build && tsx scripts/manifest.ts",
+    "build": "tsc -b && vite build && tsx scripts/manifest.ts && tsx scripts/stamp-sw.ts",
     "e2e": "playwright test",
     "preview": "vite preview"
   },

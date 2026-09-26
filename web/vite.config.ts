@@ -16,6 +16,10 @@ export default defineConfig({
     outDir: '../internal/reporting/ui',
     emptyOutDir: true,
     assetsDir: 'assets',
+    // One bundle, embedded in the binary and cached by the service worker:
+    // Recharts, the map and Markdown make it ~1.3 MB (~400 kB gzipped), all
+    // of which the dashboard page renders anyway.
+    chunkSizeWarningLimit: 1600,
   },
   server: {
     proxy: {

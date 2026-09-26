@@ -167,3 +167,20 @@
     @apply my-4 border-border;
   }
 }
+
+/* A card's own controls (the widget refresh icon): shown on hover or focus,
+   and always on touch screens, which have no hover (D39). */
+.hover-reveal {
+  opacity: 0;
+  transition: opacity 150ms;
+}
+[data-slot='widget-card']:hover .hover-reveal,
+.hover-reveal:focus-within,
+.hover-reveal[data-busy] {
+  opacity: 1;
+}
+@media (hover: none) {
+  .hover-reveal {
+    opacity: 1;
+  }
+}
