@@ -191,10 +191,61 @@ func TestCheckPasses(t *testing.T) {
 		`select metadata, attachment from v_views_paths`,
 		`select "it''s" as ok`,
 		`select x'00'`,
+		// Non-ASCII stays allowed everywhere the tokenizer never visits
+		// the bytes directly: inside a string, a quoted identifier, or
+		// a comment.
+		`select 'Посетители' as x`,
+		`select 1 as "визиты"`,
+		"select 1 -- Посетители",
+		"select 1 /* Посетители */",
 	} {
 		t.Run(q, func(t *testing.T) {
 			if _, err := Check(q); err != nil {
 				t.Fatalf("Check(%q) = %v, want no error", q, err)
+			}
+		})
+	}
+}
+
+// TestCheckRefusesBOMBeforeAReservedName pins the fix for a second
+// Check/SQLite desync class, closed by refusing any non-ASCII byte
+// outright rather than modeling SQLite's whitespace rules: SQLite's
+// tokenizer treats a leading UTF-8 BOM (EF BB BF) as whitespace before a
+// token, so "select * from \ufeffmeta" reads the plain word "meta" once
+// the BOM is skipped, while Check used to fold the BOM's bytes into the
+// identifier it was reading — "\ufeffmeta", distinct from "meta" — and
+// never refuse it. Six shapes from the finding: a bare name, one inside
+// parens, one schema-qualified, and the other two refused names plus a
+// pragma view.
+func TestCheckRefusesBOMBeforeAReservedName(t *testing.T) {
+	for _, q := range []string{
+		"select * from \ufeffmeta",
+		"select * from (\ufeffmeta)",
+		"select * from main.\ufeffmeta",
+		"select * from \ufeffsqlite_master",
+		"select * from \ufeffdbstat",
+		"select * from \ufeffpragma_table_info('events')",
+	} {
+		t.Run(q, func(t *testing.T) {
+			if _, err := Check(q); !errors.Is(err, ErrRefused) {
+				t.Fatalf("Check(%q) = %v, want ErrRefused", q, err)
+			}
+		})
+	}
+}
+
+// TestCheckRefusesUnquotedNonASCIIIdentifiers pins the general rule
+// TestCheckRefusesBOMBeforeAReservedName is one instance of: an
+// unquoted identifier is refused the moment it contains a non-ASCII
+// byte, whether or not the resulting name happens to be a reserved one.
+func TestCheckRefusesUnquotedNonASCIIIdentifiers(t *testing.T) {
+	for _, q := range []string{
+		`select 1 as méta`,
+		`select визиты from events`,
+	} {
+		t.Run(q, func(t *testing.T) {
+			if _, err := Check(q); !errors.Is(err, ErrRefused) {
+				t.Fatalf("Check(%q) = %v, want ErrRefused", q, err)
 			}
 		})
 	}

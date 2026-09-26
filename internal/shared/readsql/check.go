@@ -39,7 +39,23 @@ import (
 //     the name rather than as SQL, which Check has no matching rule for
 //     and would desync on; refused outright rather than modeled. The #
 //     sigil (also a variable form) is refused unconditionally for the
-//     same reason, having no legitimate use here.
+//     same reason, having no legitimate use here;
+//   - any byte >= 0x80 outside a string, a quoted identifier or a
+//     comment. SQLite's tokenizer treats a leading UTF-8 BOM (EF BB BF)
+//     as whitespace before a token, so "select * from \ufeffmeta" reads
+//     the plain word "meta" once the BOM is skipped; Check's own
+//     identifier scan used to fold any byte >= 0x80 into the identifier
+//     it was reading, so it saw one token, "\ufeffmeta", distinct from
+//     "meta" and so never refused by checkName below — the same
+//     Check/SQLite desync class as the Tcl-variable forms above, closed
+//     the same way: refused outright, unconditionally, rather than
+//     modeling SQLite's whitespace rules for every possible non-ASCII
+//     codepoint. Since the tokenizer never visits the bytes inside a
+//     string, quoted identifier or comment (skipQuoted/skipLineComment/
+//     skipBlockComment jump straight past them), non-ASCII text stays
+//     allowed there — 'Посетители' as a string value, "визиты" as a
+//     quoted column name, a comment in any language — only a bare,
+//     unquoted appearance is refused.
 //
 // A tokenizer rather than a substring search, so 'meta' in a string, a
 // comment, or a column called metadata passes. Without an authorizer (the
@@ -171,6 +187,16 @@ func Check(q string) ([]string, error) {
 				return nil, err
 			}
 			i = j
+		case c >= 0x80:
+			// Reached only outside a string, quoted identifier or
+			// comment (those spans are jumped over above without
+			// visiting their bytes through this switch at all) and
+			// outside any identifier this loop was already reading (an
+			// identifier's own scan stops at the first non-ASCII byte,
+			// landing back here on the very next iteration) — so this is
+			// always a bare, unquoted non-ASCII byte, the BOM-splicing
+			// class the package doc explains.
+			return nil, fmt.Errorf("%w: sql may use non-ASCII characters only inside quotes or comments", ErrRefused)
 		default:
 			i++
 		}
@@ -226,8 +252,11 @@ func checkName(name string) error {
 	return nil
 }
 
+// isIdentStart is pure ASCII: a byte >= 0x80 is never part of an
+// unquoted identifier here (see the package doc's non-ASCII bullet), so
+// an identifier's scan stops at one instead of folding it in.
 func isIdentStart(c byte) bool {
-	return c == '_' || c >= 0x80 || (c|0x20 >= 'a' && c|0x20 <= 'z')
+	return c == '_' || (c|0x20 >= 'a' && c|0x20 <= 'z')
 }
 
 func isIdent(c byte) bool { return isIdentStart(c) || c == '$' || (c >= '0' && c <= '9') }

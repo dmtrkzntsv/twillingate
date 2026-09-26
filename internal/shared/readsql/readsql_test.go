@@ -160,6 +160,49 @@ func TestQueryAndQueryLimitRefuseUnicodeWhitespaceIdentifierSplicing(t *testing.
 	}
 }
 
+// TestQueryRefusesBOMAndUnquotedNonASCII exercises the fix for the BOM
+// desync class end to end (Check alone is pinned in check_test.go): a
+// leading BOM before a refused name, in each of the shapes the finding
+// named, and a plain unquoted non-ASCII identifier, must all fail —
+// never return rows — through both Query and QueryLimit.
+func TestQueryRefusesBOMAndUnquotedNonASCII(t *testing.T) {
+	db, _ := newTestDB(t, 2*time.Second, 1000)
+	for _, q := range []string{
+		"select * from \ufeffmeta",
+		"select * from (\ufeffmeta)",
+		"select * from main.\ufeffmeta",
+		"select * from \ufeffsqlite_master",
+		"select * from \ufeffdbstat",
+		"select * from \ufeffpragma_table_info('events')",
+		`select 1 as méta`,
+	} {
+		if res, err := db.Query(context.Background(), q); err == nil {
+			t.Errorf("Query(%q) succeeded with %v, want an error", q, res)
+		}
+		if res, err := db.QueryLimit(context.Background(), q, 5); err == nil {
+			t.Errorf("QueryLimit(%q) succeeded with %v, want an error", q, res)
+		}
+	}
+}
+
+// TestQueryAllowsNonASCIIInStringsQuotedIdentifiersAndComments confirms
+// the fix didn't overreach: non-ASCII text stays allowed everywhere the
+// tokenizer never visits its bytes directly, and those queries actually
+// run (not just pass Check).
+func TestQueryAllowsNonASCIIInStringsQuotedIdentifiersAndComments(t *testing.T) {
+	db, _ := newTestDB(t, 2*time.Second, 10)
+	for _, q := range []string{
+		`select 'Посетители' as x`,
+		`select 1 as "визиты"`,
+		"select 1 as x -- Посетители",
+		"select 1 as x /* Посетители */",
+	} {
+		if _, err := db.Query(context.Background(), q); err != nil {
+			t.Errorf("Query(%q) = %v, want no error", q, err)
+		}
+	}
+}
+
 func TestQueryTrailingCommentAndSemicolon(t *testing.T) {
 	db, _ := newTestDB(t, 2*time.Second, 3)
 	for _, q := range []string{

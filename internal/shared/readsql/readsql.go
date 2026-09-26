@@ -164,16 +164,17 @@ func (d *DB) QueryLimit(ctx context.Context, q string, limit int, args ...any) (
 	// nothing Check allowed through is left inside the wrap to break it.
 	//
 	// This must be strings.TrimRight with the ASCII cutset, never
-	// strings.TrimSpace: Check's isIdentStart treats every byte >= 0x80
-	// as an identifier byte, so "select * from meta " tokenizes as
-	// one identifier, "meta " (the trailing NBSP's UTF-8 bytes
-	// folded into the word) — distinct from "meta", so checkName never
-	// matches it and Check passes the text. strings.TrimSpace, though,
-	// treats U+00A0 (and U+0085, U+3000, ...) as whitespace and would
-	// strip it, leaving SQLite reading the bare word "meta" — the very
-	// table Check exists to refuse, executed with text Check never
-	// actually examined. Trimming only the ASCII cutset keeps the text
-	// SQLite receives identical, byte for byte, to what Check tokenized.
+	// strings.TrimSpace: the two disagree on which bytes are whitespace
+	// (TrimSpace also strips Unicode ones like U+00A0/U+0085/U+3000), and
+	// letting that difference decide even one trailing byte would mean
+	// SQLite parses text that isn't quite what Check examined. Check's
+	// own tokenizer now refuses a bare non-ASCII byte outright (package
+	// doc), closing the specific case where that used to matter (a
+	// trailing "meta\u00a0" folded into one identifier distinct from
+	// "meta", so checkName never caught it, until TrimSpace stripped the
+	// space and left SQLite reading the bare word) — but trimming only
+	// the ASCII cutset here keeps this agreement watertight on its own
+	// terms, rather than leaning on that other rule to hold.
 	trimmed := strings.TrimRight(q, "; \t\r\n\f")
 	// The emptiness check may use TrimSpace: it only decides whether to
 	// refuse, never what reaches SQLite (trimmed itself, wrapped below,
