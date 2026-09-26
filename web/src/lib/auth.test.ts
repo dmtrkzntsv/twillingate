@@ -138,6 +138,15 @@ describe('sanitizeReturnTo', () => {
     expect(sanitizeReturnTo(null)).toBe('/')
     expect(sanitizeReturnTo(undefined)).toBe('/')
   })
+
+  it('rejects a backslash form a browser may normalize into //evil.com', () => {
+    expect(sanitizeReturnTo('/\\evil.com')).toBe('/')
+    expect(sanitizeReturnTo('/\\/evil.com')).toBe('/')
+  })
+
+  it('rejects a backslash anywhere in the path, not just as the second character', () => {
+    expect(sanitizeReturnTo('/dashboards/\\evil.com')).toBe('/')
+  })
 })
 
 describe('beginLogin', () => {
@@ -394,6 +403,17 @@ describe('refreshAccess', () => {
 
     expect(await refreshAccess()).toBe(false)
 
+    expect(localStorage.getItem('twillingate.refresh_token')).toBe('refresh-1')
+    expect(localStorage.getItem('twillingate.client_id')).toBe('client-1')
+  })
+
+  it('treats a 200 with a non-JSON body as a failed refresh, not a thrown SyntaxError', async () => {
+    storeRefreshCredentials()
+    vi.mocked(fetch).mockResolvedValueOnce(new Response('not json', { status: 200 }))
+
+    await expect(refreshAccess()).resolves.toBe(false)
+
+    expect(getAuthHeader()).toBeUndefined()
     expect(localStorage.getItem('twillingate.refresh_token')).toBe('refresh-1')
     expect(localStorage.getItem('twillingate.client_id')).toBe('client-1')
   })

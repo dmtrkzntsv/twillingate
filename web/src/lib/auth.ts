@@ -54,9 +54,16 @@ export function authProviderHint(): string | undefined {
   return providerHint
 }
 
-/** Keeps a `returnTo` an in-app path: never an absolute or protocol-relative URL. */
+/**
+ * Keeps a `returnTo` an in-app path: never an absolute URL, a
+ * protocol-relative one (`//evil.com`), or a backslash form a browser's URL
+ * parser may normalize into one (`/\evil.com`, `/\/evil.com`) before it ever
+ * reaches the router.
+ */
 export function sanitizeReturnTo(v: string | null | undefined): string {
-  return v && v.startsWith('/') && !v.startsWith('//') ? v : '/'
+  if (!v || !v.startsWith('/') || v.includes('\\')) return '/'
+  if (v[1] === '/') return '/'
+  return v
 }
 
 function defaultUnauthorized(): void {
@@ -311,7 +318,14 @@ async function exchangeRefresh(): Promise<boolean> {
     await clearOnRejection(res)
     return false
   }
-  const token = (await res.json()) as TokenResponse
+  let token: TokenResponse
+  try {
+    token = (await res.json()) as TokenResponse
+  } catch {
+    // A 200 with a body that isn't JSON is not a usable token response;
+    // treat it as a failed refresh rather than let the SyntaxError escape.
+    return false
+  }
   accessToken = token.access_token
   if (token.refresh_token) localStorage.setItem(REFRESH_TOKEN_KEY, token.refresh_token)
   return true
