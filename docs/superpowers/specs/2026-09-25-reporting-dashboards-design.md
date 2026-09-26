@@ -59,32 +59,25 @@ removes Evidence.
 
 ### Model
 
-6. **Migration 021 creates four tables and a history table:**
+6. **Migration 021 creates three tables and a history table:**
 
    ```
    components            name PK, description, accepts (JSON), inputs (JSON), props (JSON),
-                         default_height, removed_at
+                         default_width, default_height, removed_at
    dashboards            id INTEGER PK AUTOINCREMENT, owner ('system'|'user'), title, position,
                          default_range, last_project_id, last_range, last_from, last_to,
                          created_at, updated_at, archived_at
-   dashboard_rows        dashboard_id REFERENCES dashboards(id) ON DELETE CASCADE,
-                         sort_key TEXT, height,           PK (dashboard_id, sort_key)
-   widgets               id INTEGER PK AUTOINCREMENT, dashboard_id, row_key TEXT,
-                         FOREIGN KEY (dashboard_id, row_key) REFERENCES dashboard_rows
-                           ON DELETE CASCADE ON UPDATE CASCADE,
-                         sort_key TEXT, name, component, title, props (JSON),
-                         source_type (TEXT), source (TEXT), created_at, updated_at
+   widgets               id INTEGER PK AUTOINCREMENT,
+                         dashboard_id REFERENCES dashboards(id) ON DELETE CASCADE,
+                         sort_key TEXT, width, height, name, component, title,
+                         props (JSON), source_type (TEXT), source (TEXT),
+                         created_at, updated_at
    reporting_migrations  id INTEGER PK AUTOINCREMENT, hash, version, applied_at
    ```
 
-   Cascading foreign keys and no checks or triggers. A row is identified
-   by its dashboard and its sort key, which never changes unless the row
-   itself moves (decision 10), so it needs no surrogate id. A widget
-   references its row by (`dashboard_id`, `row_key`), so it cannot sit on
-   another dashboard's row; deleting a dashboard deletes its rows and,
-   through them, its widgets; moving a row gives it a new key, and
-   `ON UPDATE CASCADE` carries its widgets along. Unique indexes:
-   `widgets (dashboard_id, row_key, sort_key)` and
+   One cascading foreign key and no checks or triggers: deleting a
+   dashboard deletes its widgets. Unique indexes:
+   `widgets (dashboard_id, sort_key)`, so an order is total, and
    `widgets (dashboard_id, name)`, which the migrator matches on. Every
    other rule below is enforced in Go
    (the standing rule, no validation in the database). The cascade
@@ -126,28 +119,33 @@ removes Evidence.
    no migration; validation refuses names that are not registered.
    `title` is optional; the card shows a
    header only when it has one. `name` is unique within the dashboard and
-   is how system files and the `layout` shape (decision 10) refer to the
+   is how system files and the `layout` list (decision 10) refer to the
    widget; an agent gives it or it is
    derived from the title (lower case, `-` for runs of other characters),
    with `-2`, `-3`, … added when taken.
-10. **Layout is rows in a table, ordered by sort keys.** `dashboard_rows`
-    holds each row's `height` (1–3); a widget's place is its `row_key` and
-    its position in that row. Rows, and widgets within a row, are ordered
-    by `sort_key`: a fractional index (the `fractional-indexing` scheme,
-    e.g. Go's `github.com/rocicorp/fracdex`, or ~150 lines of our own),
-    where a key can always be generated between two others (`a0`, `a0V`,
-    `a1`). Inserting writes one key; deleting removes one record; nothing
-    is ever renumbered or rebalanced. Moving a row writes one new key for
-    it. A row whose last widget goes is deleted, alone. 1–3 widgets per row, side by side at equal width.
-    Agents never see keys: tools and the `layout` shape use 1-based
-    `row`/`col` positions, which `reporting` turns into a key between
-    the neighbours. There is no second copy of the layout for the widgets
-    to disagree with. At the edges (system
-    files, `get_dashboard`, `create_dashboard`, `update_dashboard`) the
-    layout travels as one shape, `[{"height": 1..3, "widgets": ["name",
-    …]}, …]`, translated to and from the rows. A row given without
-    `height` takes the largest `default_height` among its widgets. One
-    height unit is about 140px.
+10. **Layout is a flowing grid.** A dashboard's widgets are one ordered
+    list; each has a `width` and a `height`, and they fill a 12-column
+    grid left to right, wrapping to the next line when a widget does not
+    fit. A line is as tall as its tallest widget; shorter ones stretch.
+    - **`width`** is a closed vocabulary: `quarter` (3 columns), `third`
+      (4), `half` (6), `two_thirds` (8), `three_quarters` (9), `full`
+      (12). These cover the Evidence pages' 1-, 2-, 3- and 4-across grids.
+    - **`height`** is 1–3 units of about 140px.
+    - Either may be omitted and takes the component's `default_width` or
+      `default_height`.
+    - **Order is a fractional sort key.** `sort_key` is a fractional index
+      (the `fractional-indexing` scheme, e.g. Go's
+      `github.com/rocicorp/fracdex`, or ~150 lines of our own): a key can
+      always be generated between two others (`a0`, `a0V`, `a1`).
+      Inserting a widget between two others writes one key; removing one
+      deletes one record; nothing is renumbered or rebalanced. Widgets are
+      not reordered once placed.
+    - **Agents never see keys.** Tools place a widget `after` a given
+      widget id (or first, or last by default), and `reporting` generates
+      the key between the neighbours.
+    - At the edges (system files, `get_dashboard`, `create_dashboard`) the
+      layout is the ordered list `[{"widget": "name", "width": "third",
+      "height": 1}, …]`.
 11. **`owner = 'system'` rows change only through the migrator** (decisions
     20–25). Every write operation refuses them with `ErrInvalid`.
 
@@ -156,18 +154,18 @@ removes Evidence.
 12. **A component is a React component in `web/` plus its contract.** Each
     `web/src/components/widgets/<name>.tsx` exports the component and its
     `accepts` (source types), `inputs` (for `sql`), `props` (a JSON schema)
-    and `defaultHeight`. The web build writes `components.json` from these
+    `defaultWidth` and `defaultHeight`. The web build writes `components.json` from these
     exports. Nothing is declared twice.
 13. **The first set:**
 
-    | Component | Accepts | Inputs: the columns the query returns | Props | Default height |
+    | Component | Accepts | Inputs: the columns the query returns | Props | Default size |
     | --- | --- | --- | --- | --- |
-    | `stat` | `sql` | `value` number; `previous` number, optional (shows the change) | `format`: `number`\|`percent`\|`duration` | 1 |
-    | `line` | `sql` | `x` day or text; `y` number; `series` text, optional (one line per value) | `format` | 2 |
-    | `area` | `sql` | as `line` | `format`, `stacked` | 2 |
-    | `bar` | `sql` | `x` text; `y` number; `series` text, optional | `format`, `horizontal`, `stacked` | 2 |
-    | `table` | `sql` | open: any columns, shown in query order | `formats`: column → format | 3 |
-    | `markdown` | `md` | none | none | 1 |
+    | `stat` | `sql` | `value` number; `previous` number, optional (shows the change) | `format`: `number`\|`percent`\|`duration` | quarter × 1 |
+    | `line` | `sql` | `x` day or text; `y` number; `series` text, optional (one line per value) | `format` | half × 2 |
+    | `area` | `sql` | as `line` | `format`, `stacked` | half × 2 |
+    | `bar` | `sql` | `x` text; `y` number; `series` text, optional | `format`, `horizontal`, `stacked` | half × 2 |
+    | `table` | `sql` | open: any columns, shown in query order | `formats`: column → format | half × 3 |
+    | `markdown` | `md` | none | none | full × 1 |
 
     Queries satisfy inputs by alias: `SELECT day AS x, visitors AS y …`.
     Returning a column a closed interface does not declare is refused.
@@ -177,7 +175,7 @@ removes Evidence.
     `copy_widget` (copying a widget on it). Widgets already on it render a
     "component removed" card, and `widget_data` answers `{"removed": true}`.
     Such a widget's fields cannot be edited except to switch it to a live
-    component; it can still be moved in the layout, or removed.
+    component; it can still be resized, or removed.
 15. **A removed component is deleted with its last widget.** Every
     transaction that can drop the last reference (`remove_widget`,
     `update_widget` switching component, the migrator deleting a system
@@ -241,7 +239,8 @@ removes Evidence.
     ```
     internal/reporting/system/<dir>/
       dashboard.json     {"id": 1, "title": "Views", "position": 1, "default_range": "7d",
-                          "layout": [{"height": 1, "widgets": ["visitors", "views", "bounce"]}, …]}
+                          "layout": [{"widget": "visitors", "width": "quarter", "height": 1},
+                                     {"widget": "trend", "width": "half"}, …]}
       <name>.json        {"component": "stat", "title": "Visitors", "props": {"format": "number"}}
       <name>.sql         the query, plain SQL: runs in sqlite3 as it is
       <name>.md          or Markdown, for a markdown widget
@@ -249,8 +248,8 @@ removes Evidence.
 
     A widget is `<name>.json` plus exactly one `<name>.sql` or `<name>.md`;
     the extension is the source type. A config with no data file or two, a
-    data file with no config, a layout naming a missing widget, or a widget
-    the layout leaves out, is an error. The directory name is for people;
+    data file with no config, a layout naming a missing widget or one
+    twice, or a widget the layout leaves out, is an error. The directory name is for people;
     only `id` identifies the dashboard.
 21. **Matching keys:** a system dashboard by `id`; a widget by
     (`dashboard_id`, file name without extension); a component by name.
@@ -266,16 +265,13 @@ removes Evidence.
        on the ones missing from the manifest;
     2. system dashboards: upsert by `id` (title, position, default
        range), keeping the stored last selection; delete system
-       dashboards no file claims, with their rows and widgets;
-    3. rows, per system dashboard: the file's *i*-th row is the *i*-th
-       row by `sort_key`; update heights, append or keep surplus rows for
-       now;
-    4. widgets, per system dashboard: upsert by name, keeping the id, and
-       place each in its row with a fresh key; insert new ones; delete
-       ones with no file; then delete surplus rows, which are empty by
-       now, so the cascade never takes a widget that survives;
-    5. delete removed components no widget uses;
-    6. append a `reporting_migrations` row (hash, build version) and one
+       dashboards no file claims, with their widgets;
+    3. widgets, per system dashboard: upsert by name, keeping the id, with
+       width, height and a sort key from the file's order (keys are
+       regenerated evenly, since system widgets change only here); insert
+       new ones; delete ones with no file;
+    4. delete removed components no widget uses;
+    5. append a `reporting_migrations` row (hash, build version) and one
        `audit_log` entry, actor `release`, listing what was added, changed
        and removed.
 
@@ -313,8 +309,9 @@ removes Evidence.
       no rows, column names only, with the full check on first render;
     - `md`: the text is not empty;
     - props match the component's `props` schema;
-    - the layout: 1–3 widgets per row, height 1–3, every widget placed once
-      ("row 2 already holds 3 widgets; omit row to start a new one");
+    - size: `width` in the vocabulary ("width must be one of quarter,
+      third, half, two_thirds, three_quarters, full"), `height` 1–3;
+      `after` names a widget on the same dashboard;
     - system rows: "dashboard 3 is a system dashboard and changes only with
       a release; duplicate_dashboard makes an editable copy".
 
@@ -324,9 +321,9 @@ removes Evidence.
 
     | Tool | Route | Returns |
     | --- | --- | --- |
-    | `list_components` | `GET /api/components` | the registered source types, and per component: name, description, accepts, inputs, props, default height; `include_removed` adds removed ones |
+    | `list_components` | `GET /api/components` | the registered source types, and per component: name, description, accepts, inputs, props, default width and height; `include_removed` adds removed ones |
     | `list_dashboards` | `GET /api/dashboards` | `timezone` (the instance's, decision 19), and per dashboard: id, title, owner, position, default range, last project and range, widget count, archived |
-    | `get_dashboard` | `GET /api/dashboards/{dashboard_id}` | the dashboard with its layout, and every widget's component, title, props, source type and source |
+    | `get_dashboard` | `GET /api/dashboards/{dashboard_id}` | the dashboard and its widgets in order, each with id, name, width, height, component, title, props, source type and source |
     | `list_widgets` | `GET /api/widgets?dashboard_id=&component=` | every widget with its dashboard (id, title, owner, archived) and place; the two filters combine |
     | `widget_data` | `GET /api/widgets/{widget_id}/data?project_id=&from=&to=&fresh=` | the widget's content for the dates, and for `project_id` when its SQL uses `:project` (decision 32) |
 
@@ -335,14 +332,14 @@ removes Evidence.
 
     | Tool | Route | Effect |
     | --- | --- | --- |
-    | `create_dashboard` | `POST /api/dashboards` → 201 | title, default range, optional widgets and layout; all or nothing |
-    | `update_dashboard` | `PATCH /api/dashboards/{dashboard_id}` | title, default range, position, `layout` (rearrange and resize in one call) |
+    | `create_dashboard` | `POST /api/dashboards` → 201 | title, default range, optional widgets in order; all or nothing |
+    | `update_dashboard` | `PATCH /api/dashboards/{dashboard_id}` | title, default range, position |
     | `duplicate_dashboard` | `POST /api/dashboards/{dashboard_id}/duplicate` → 201 | a user copy of any dashboard, system ones included |
     | `archive_dashboard` / `restore_dashboard` | `POST /api/dashboards/{dashboard_id}/archive` / `…/restore` | hide or unhide |
-    | `add_widget` | `POST /api/dashboards/{dashboard_id}/widgets` → 201 | no `row`: a new last row; `row` alone: append; `row` and `col`: insert and shift right |
-    | `update_widget` | `PATCH /api/widgets/{widget_id}` | name, component, title, props, source |
-    | `copy_widget` | `POST /api/widgets/{widget_id}/copy` → 201 | an independent copy into `dashboard_id`, optional `row`/`col`; the source may be a system widget |
-    | `remove_widget` | `DELETE /api/widgets/{widget_id}` | deletes it; a row left empty is deleted, and nothing else changes |
+    | `add_widget` | `POST /api/dashboards/{dashboard_id}/widgets` → 201 | optional `after` (a widget id; `null` puts it first; omitted, last), `width`, `height`; one sort key written |
+    | `update_widget` | `PATCH /api/widgets/{widget_id}` | name, component, title, props, source, width, height |
+    | `copy_widget` | `POST /api/widgets/{widget_id}/copy` → 201 | an independent copy into `dashboard_id`, optional `after`; keeps width and height; the source may be a system widget |
+    | `remove_widget` | `DELETE /api/widgets/{widget_id}` | deletes it; nothing else changes |
 
     A source is `{"type": "sql"|"md", "content": "…"}`.
 30. **REST only:** `PUT /api/dashboards/{dashboard_id}/view` with a JSON
@@ -420,19 +417,22 @@ removes Evidence.
     date-range `Calendar`, in a `Popover` on desktop and a `Sheet` on
     phones), "data as of" (the
     oldest `cached_at` on screen) and a dashboard refresh button; then the
-    rows.
+    grid.
 37. **Adaptive:**
 
-    | Width | Rows | Chrome |
+    | Screen | Widths | Chrome |
     | --- | --- | --- |
     | ≥ 1024px | as defined | sidebar; switchers in the header |
-    | 640–1023px | 3-widget rows wrap to 2 + 1 | sidebar collapses to icons |
-    | < 640px | one widget per row, in order; a row of only `stat` widgets goes 2 across | sidebar in a drawer; switchers as two selects |
+    | 640–1023px | `quarter` and `third` become `half`; `two_thirds` and `three_quarters` become `full` | sidebar collapses to icons |
+    | < 640px | `quarter` becomes `half` (two stats across); everything else `full` | sidebar in a drawer; switchers as two selects |
+
+    The grid keeps its order at every width; only spans change, so a
+    narrow screen is the same list wrapped sooner.
 
     Heights keep their pixel size everywhere; charts thin their axis ticks
     on narrow screens; tables scroll inside their card.
 38. **Each widget loads on its own** and has its own state: skeleton at the
-    row's height while loading; the component with data; "No data for this
+    widget's height while loading; the component with data; "No data for this
     range"; "component removed"; "query no longer runs" with the error
     folded; "couldn't load" with a retry.
 39. **Refresh.** Each `sql` widget has a refresh icon (on hover on desktop,
@@ -475,11 +475,9 @@ removes Evidence.
 
 ## Migration 021
 
-`021_reporting.sql` creates `components`, `dashboards`, `dashboard_rows`,
-`widgets` and `reporting_migrations`, the primary key on
-`dashboard_rows (dashboard_id, sort_key)`, the two unique indexes on
-`widgets` and the cascading foreign keys (rows to dashboards; widgets to
-rows, also on update), and sets
+`021_reporting.sql` creates `components`, `dashboards`, `widgets` and
+`reporting_migrations`, the two unique indexes on `widgets` and the
+cascading foreign key from widgets to dashboards, and sets
 `sqlite_sequence` for `dashboards` to 1000. It copies nothing. The
 system dashboards arrive through the migrator on the same run. Its test
 pins the ceiling at 21 and migrates to latest before calling current Go
@@ -491,8 +489,8 @@ code, per the standing rules.
 | --- | --- |
 | validation | each refusal in decision 27 fires with its sentinel and message |
 | projects | a widget using `:project` requires `project_id` in `widget_data` and keys its cache by it; a fixed widget ignores it and keys without it; the switcher is present exactly when a widget uses `:project` |
-| layout | add, copy, remove and `update_dashboard` keep 1–3 widgets per row; append, insert before and between (one key written, no other record touched), empty-row deletion (no other record touched); moving a row writes one key and its widgets follow by cascade; a widget cannot reference another dashboard's row; `row`/`col` positions map to keys and back; the `layout` shape round-trips through the rows; many inserts at one spot keep keys ordered and short enough; the migrator's row matching keeps widget ids |
-| foreign keys | deleting a dashboard deletes its rows and widgets and then any removed component they were the last users of; writer connections report `foreign_keys = 1`; `DeleteProject` succeeds with keys present; a migration leaving a violation fails `foreign_key_check`; existing databases pass the check after 021 |
+| layout | insert first, last and `after` (one key written, no other record touched); removal touches no other record; many inserts at one spot keep keys ordered and short enough; the `layout` list round-trips; widths and heights default from the component; the migrator keeps widget ids when order or size changes |
+| foreign keys | deleting a dashboard deletes its widgets and then any removed component they were the last users of; writer connections report `foreign_keys = 1`; `DeleteProject` succeeds with keys present; a migration leaving a violation fails `foreign_key_check`; existing databases pass the check after 021 |
 | source types | an unregistered `source_type` is refused; a component's `accepts` naming an unregistered type fails the migrator; `sql` and `md` each validate and load through the registry |
 | components | a removed component is refused for new use, answers `removed`, and is deleted with its last widget, including when the migrator deletes a system dashboard |
 | migrator | upserts, deletions, reserved ids, widget ids stable across edits and moves, `last_*` kept, a second run with the same hash writes nothing, a failure writes nothing |
