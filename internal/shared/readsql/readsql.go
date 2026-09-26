@@ -10,9 +10,10 @@
 //     the driver runs every statement it is given, so Check tracks paren
 //     depth and statement boundaries itself rather than relying on the
 //     wrap below to contain one;
-//  3. Query wraps the checked text as a subquery with the row cap in the
-//     same clause, so a single statement that is not itself a query —
-//     DDL, PRAGMA — becomes a syntax error instead of executing;
+//  3. QueryLimit (which Query is, at this DB's own row cap) wraps the
+//     checked text as a subquery with a caller-chosen LIMIT in the same
+//     clause, so a single statement that is not itself a query — DDL,
+//     PRAGMA — becomes a syntax error instead of executing;
 //  4. Run enforces a deadline on every query, custom or not.
 package readsql
 
@@ -135,21 +136,37 @@ func wrapTimeout(ctx context.Context, timeout time.Duration, err error) error {
 }
 
 // Query runs custom SQL: text a person or a model wrote, not this
-// program. It applies all four guard layers (package doc): Check first,
-// then wraps the text as a subquery carrying the row cap, then Run.
+// program, capped at maxRows+1 (Run's own truncation then reports
+// Truncated once that many rows come back). It is QueryLimit with this
+// DB's own row cap.
 func (d *DB) Query(ctx context.Context, q string, args ...any) (Result, error) {
+	return d.QueryLimit(ctx, q, d.maxRows+1, args...)
+}
+
+// QueryLimit runs custom SQL wrapped as a subquery capped at limit rows —
+// the security-relevant wrap, shared by Query's own cap and by a caller
+// that needs a different one (reporting's LIMIT 0 shape check and LIMIT 5
+// sample, in particular). It applies all four guard layers (package
+// doc): Check first, then wraps the text as a subquery carrying limit,
+// then Run.
+func (d *DB) QueryLimit(ctx context.Context, q string, limit int, args ...any) (Result, error) {
 	if _, err := Check(q); err != nil {
 		return Result{}, err
-	}
-	if strings.TrimSpace(q) == "" {
-		return Result{}, fmt.Errorf("%w: sql must not be empty", ErrRefused)
 	}
 	// Check's stmtEnded rule (a trailing ';' may only be followed by more
 	// ';' or whitespace) and this cutset agree on exactly what a trailing
 	// statement end looks like, so anything Check accepted past the
 	// statement's own text is exactly what this strips before wrapping —
 	// nothing Check allowed through is left inside the wrap to break it.
-	wrapped := fmt.Sprintf("SELECT * FROM (%s\n) LIMIT %d",
-		strings.TrimRight(q, "; \t\r\n\f"), d.maxRows+1)
+	// Trimmed rather than raw q, so text that is empty or only ';' and
+	// whitespace (which Check itself passes: a lone ';' is a valid, if
+	// pointless, single statement) is refused here instead of becoming
+	// "SELECT * FROM (\n) LIMIT n" — a syntax error rather than a clean
+	// refusal.
+	trimmed := strings.TrimRight(strings.TrimSpace(q), "; \t\r\n\f")
+	if trimmed == "" {
+		return Result{}, fmt.Errorf("%w: sql must not be empty", ErrRefused)
+	}
+	wrapped := fmt.Sprintf("SELECT * FROM (%s\n) LIMIT %d", trimmed, limit)
 	return d.Run(ctx, wrapped, args...)
 }

@@ -77,7 +77,7 @@ func New(st Store, db *readsql.DB, opt Options) *Service {
 	return &Service{
 		st:      st,
 		db:      db,
-		sources: newSources(db, true),
+		sources: newSources(db, true, now),
 		now:     now,
 	}
 }

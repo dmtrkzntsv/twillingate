@@ -67,6 +67,33 @@ func TestParseManifestRefusesPropsThatIsNotASchema(t *testing.T) {
 	}
 }
 
+func TestParseManifestRefusesDuplicateNames(t *testing.T) {
+	entry := `{"name":"gauge","description":"d","accepts":["sql"],
+		"inputs":{"open":false,"columns":[]},"props":{"type":"object","additionalProperties":false},
+		"default_width":3,"default_height":3}`
+	_, err := ParseManifest([]byte(`{"components":[` + entry + `,` + entry + `]}`))
+	if !errors.Is(err, store.ErrInvalid) {
+		t.Fatalf("err = %v, want ErrInvalid", err)
+	}
+	if !strings.Contains(err.Error(), "gauge") {
+		t.Errorf("err = %v, want it to name gauge", err)
+	}
+}
+
+func TestParseManifestRefusesUnknownColumnType(t *testing.T) {
+	entry := `{"name":"gauge","description":"d","accepts":["sql"],
+		"inputs":{"open":false,"columns":[{"name":"x","types":["currency"]}]},
+		"props":{"type":"object","additionalProperties":false},
+		"default_width":3,"default_height":3}`
+	_, err := ParseManifest([]byte(`{"components":[` + entry + `]}`))
+	if !errors.Is(err, store.ErrInvalid) {
+		t.Fatalf("err = %v, want ErrInvalid", err)
+	}
+	if !strings.Contains(err.Error(), "currency") {
+		t.Errorf("err = %v, want it to name currency", err)
+	}
+}
+
 func TestCheckProps(t *testing.T) {
 	stat := testComponents(t)["stat"]
 
@@ -85,6 +112,19 @@ func TestCheckProps(t *testing.T) {
 	err = stat.checkProps([]byte(`{"nope":"x"}`))
 	if !errors.Is(err, store.ErrInvalid) {
 		t.Fatalf("checkProps(unknown prop) = %v, want ErrInvalid", err)
+	}
+}
+
+func TestCheckPropsRefusesNullAndNonObject(t *testing.T) {
+	stat := testComponents(t)["stat"]
+	for _, props := range []string{`null`, `"percent"`, `42`, `[1,2]`, `true`} {
+		err := stat.checkProps([]byte(props))
+		if !errors.Is(err, store.ErrInvalid) {
+			t.Fatalf("checkProps(%s) = %v, want ErrInvalid", props, err)
+		}
+		if !strings.Contains(err.Error(), "props must be a JSON object") {
+			t.Errorf("checkProps(%s) = %q, want it to say props must be a JSON object", props, err.Error())
+		}
 	}
 }
 
@@ -157,6 +197,22 @@ func TestCheckRows(t *testing.T) {
 		err := stat.checkRows(res)
 		if (err != nil) != tt.wantErr {
 			t.Errorf("checkRows(x=%q) = %v, wantErr %v", tt.value, err, tt.wantErr)
+		}
+	}
+}
+
+// TestCheckRowsRefusesNonFiniteNumbers pins the fix for the finding that
+// strconv.ParseFloat itself accepts "nan"/"inf"/"infinity" (any case,
+// optionally signed) as valid float text — technically parseable, but
+// not a value a number column's reader (a chart, a stat tile) can do
+// anything with.
+func TestCheckRowsRefusesNonFiniteNumbers(t *testing.T) {
+	stat := testComponents(t)["stat"]
+	for _, v := range []string{"nan", "NaN", "inf", "-inf", "+Inf", "infinity", "Infinity"} {
+		res := readsql.Result{Columns: []string{"value"}, Rows: [][]string{{v}}}
+		err := stat.checkRows(res)
+		if !errors.Is(err, store.ErrInvalid) {
+			t.Errorf("checkRows(value=%q) = %v, want ErrInvalid", v, err)
 		}
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -49,30 +50,37 @@ type Markdown struct {
 	Markdown string `json:"markdown"`
 }
 
-// sourceTypeNames lists every registered source type, alphabetically —
-// the order newSources builds them in and the order an "there are ..."
-// refusal lists them.
-var sourceTypeNames = []string{"md", "sql"}
-
-// validSourceType reports whether name is a registered source type.
-func validSourceType(name string) bool {
-	for _, n := range sourceTypeNames {
-		if n == name {
-			return true
-		}
-	}
-	return false
-}
-
-// newSources builds the registered source types against db. sampleRows
-// controls whether sql's Validate also runs a sample query and checks
-// its rows' types (true for a widget actually being saved; false where
-// only the query's shape matters).
-func newSources(db *readsql.DB, sampleRows bool) map[string]SourceType {
+// newSources builds the registered source types against db and clock
+// now. sampleRows controls whether sql's Validate also runs a sample
+// query and checks its rows' types (true for a widget actually being
+// saved; false where only the query's shape matters). db and now may be
+// nil when the result is only used to enumerate or check registered
+// names (validSourceType, sortedSourceNames) — no method that touches
+// either is called in that case.
+func newSources(db *readsql.DB, sampleRows bool, now func() time.Time) map[string]SourceType {
 	return map[string]SourceType{
-		"sql": &sqlSource{db: db, sampleRows: sampleRows},
+		"sql": &sqlSource{db: db, sampleRows: sampleRows, now: now},
 		"md":  mdSource{},
 	}
+}
+
+// validSourceType reports whether name is a registered source type. It
+// asks the same registry newSources builds, rather than keeping a second
+// list of names that could drift from it.
+func validSourceType(name string) bool {
+	_, ok := newSources(nil, false, nil)[name]
+	return ok
+}
+
+// sortedSourceNames lists m's keys alphabetically, for a refusal that
+// names every registered source type ("there are md and sql").
+func sortedSourceNames(m map[string]SourceType) []string {
+	names := make([]string, 0, len(m))
+	for n := range m {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // mdSource is the md SourceType: free-form Markdown text, checked only
@@ -99,10 +107,18 @@ func (mdSource) Load(_ context.Context, content string, _ Params) (any, error) {
 type sqlSource struct {
 	db         *readsql.DB
 	sampleRows bool
+	now        func() time.Time // stands in for time.Now in tests; nil means time.Now
 }
 
 func (s *sqlSource) Name() string    { return "sql" }
 func (s *sqlSource) Cacheable() bool { return true }
+
+func (s *sqlSource) clock() time.Time {
+	if s.now != nil {
+		return s.now()
+	}
+	return time.Now()
+}
 
 // allowedParams is the closed set of named parameters a widget's SQL may
 // use: the dashboard's selected project and date range. Anything else —
@@ -137,9 +153,32 @@ func (s *sqlSource) Validate(ctx context.Context, content string, c Component) e
 				"sql uses %s; widgets get only :project, :from and :to", p)
 		}
 	}
-	trimmed := trimSQL(content)
 
-	res, err := s.db.Run(ctx, "SELECT * FROM ("+trimmed+"\n) LIMIT 0")
+	// The sample values must be computed — and bound — before the very
+	// first run: SQLite errors "missing named argument" for a named
+	// parameter the statement mentions but no argument was given for, so
+	// even the LIMIT 0 shape check needs them whenever content uses
+	// :project, :from or :to, not only the sampleRows path below.
+	needsProject, needsRange := s.Follows(content)
+	var projectID int64
+	var from, to string
+	if needsProject {
+		projectID, err = sampleProject(ctx, s.db)
+		if err != nil {
+			if errors.Is(err, readsql.ErrTimeout) {
+				return refuseSQLErr(s.db, err)
+			}
+			return err // an infrastructure error, not a refusal of content
+		}
+	}
+	if needsRange {
+		now := s.clock().UTC()
+		from = now.AddDate(0, 0, -6).Format("2006-01-02")
+		to = now.Format("2006-01-02")
+	}
+	args := bindArgs(params, projectID, from, to)
+
+	res, err := s.db.QueryLimit(ctx, content, 0, args...)
 	if err != nil {
 		return refuseSQLErr(s.db, err)
 	}
@@ -150,14 +189,7 @@ func (s *sqlSource) Validate(ctx context.Context, content string, c Component) e
 		return nil
 	}
 
-	projectID, err := sampleProject(ctx, s.db)
-	if err != nil {
-		return refuseSQLErr(s.db, err)
-	}
-	now := time.Now().UTC()
-	from := now.AddDate(0, 0, -6).Format("2006-01-02")
-	to := now.Format("2006-01-02")
-	sample, err := s.db.Run(ctx, "SELECT * FROM ("+trimmed+"\n) LIMIT 5", bindArgs(params, projectID, from, to)...)
+	sample, err := s.db.QueryLimit(ctx, content, 5, args...)
 	if err != nil {
 		return refuseSQLErr(s.db, err)
 	}
@@ -180,10 +212,9 @@ func (s *sqlSource) Load(ctx context.Context, content string, p Params) (any, er
 }
 
 // bindArgs builds the sql.Named arguments for exactly the params content
-// uses, so a widget that never mentions :project (say) does not need one
-// bound. SQLite treats a named parameter no argument was bound to as
-// NULL rather than an error, so params not in {":project",":from",":to"}
-// — refused before this is ever called — need no case here.
+// uses (params is Check's own list, already refused down to the
+// project/from/to allow-list by the time this is called), so a widget
+// that never mentions :project need not have one bound.
 func bindArgs(params []string, projectID int64, from, to string) []any {
 	var args []any
 	for _, p := range params {
@@ -199,18 +230,10 @@ func bindArgs(params []string, projectID int64, from, to string) []any {
 	return args
 }
 
-// trimSQL mirrors readsql.Query's own trim (its comment on the wrap
-// explains why: a trailing run of ';' and whitespace is exactly what
-// Check's stmtEnded rule allows past the statement's own text), so the
-// LIMIT 0 / LIMIT 5 wrap built here encloses the same text Query would.
-func trimSQL(q string) string {
-	return strings.TrimRight(strings.TrimSpace(q), "; \t\r\n\f")
-}
-
-// refuseSQLErr classifies a readsql error as store.ErrInvalid: a timeout
-// names the environment variable a person can act on, everything else
-// (Check's own refusal, or SQLite's syntax error text) passes through as
-// the message.
+// refuseSQLErr classifies a readsql error from running a widget's own
+// content as store.ErrInvalid: a timeout names the environment variable
+// a person can act on, everything else (Check's own refusal, or
+// SQLite's syntax error text) passes through as the message.
 func refuseSQLErr(db *readsql.DB, err error) error {
 	if errors.Is(err, readsql.ErrTimeout) {
 		return store.Refuse(store.ErrInvalid,
@@ -223,7 +246,9 @@ func refuseSQLErr(db *readsql.DB, err error) error {
 // product), for a sample run of a widget's SQL when no dashboard
 // selection exists yet. It reads projects and events directly — trusted
 // Go SQL, not checked custom SQL — which is why it may read a table
-// widget SQL itself may not.
+// widget SQL itself may not. Its own errors are not store refusals (the
+// caller decides: a timeout still becomes one, anything else is this
+// package's own infrastructure failing, not a problem with the widget).
 func sampleProject(ctx context.Context, db *readsql.DB) (int64, error) {
 	res, err := db.Run(ctx, `
 SELECT p.id FROM projects p WHERE p.archived_at IS NULL

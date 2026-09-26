@@ -65,14 +65,54 @@ func newTestStore(t *testing.T) (store.Store, string) {
 }
 
 // newTestReadDB opens a migrated store and a read-only readsql.DB on the
-// same file, for tests that exercise sqlSource against a real database.
+// same file, for tests that exercise sqlSource against a real database
+// but never write to it.
 func newTestReadDB(t *testing.T) *readsql.DB {
 	t.Helper()
-	_, path := newTestStore(t)
+	_, db := newTestStoreAndReadDB(t)
+	return db
+}
+
+// newTestStoreAndReadDB opens a migrated store and a read-only
+// readsql.DB on the same file, both left open for the test's duration —
+// for a test that writes rows through the store (a project, some
+// events) and then reads them back through sqlSource.
+func newTestStoreAndReadDB(t *testing.T) (store.Store, *readsql.DB) {
+	t.Helper()
+	st, path := newTestStore(t)
 	db, err := readsql.Open(path, 2*time.Second, 1000)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	return db
+	return st, db
+}
+
+// mustCreateProject inserts a project and returns its id.
+func mustCreateProject(t *testing.T, st store.Store, name string) int64 {
+	t.Helper()
+	id, err := st.CreateProject(context.Background(),
+		store.RegistryProject{Name: name, AllowedOrigins: "[]", Attributes: "[]"},
+		store.AuditEntry{Actor: "test", Action: "project.create"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+// mustWriteEvent inserts one minimal event of family on day (a
+// "2006-01-02" date) for projectID.
+func mustWriteEvent(t *testing.T, st store.Store, id string, projectID int64, family store.Family, day string) {
+	t.Helper()
+	ts, err := time.Parse("2006-01-02", day)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = st.WriteEvents(context.Background(), []store.Event{{
+		ID: id, ProjectID: projectID, Family: family, EventName: "$page_view",
+		TS: ts, ActorID: "a",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
 }

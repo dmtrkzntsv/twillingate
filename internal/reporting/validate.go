@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/dmtrkzntsv/twillingate/internal/store"
@@ -90,13 +89,8 @@ func (s *Service) validateWidget(ctx context.Context, comps map[string]Component
 	}
 	st, ok := s.sources[w.SourceType]
 	if !ok {
-		names := make([]string, 0, len(s.sources))
-		for n := range s.sources {
-			names = append(names, n)
-		}
-		sort.Strings(names)
 		return store.Refuse(store.ErrInvalid,
-			"source type %s does not exist; there are %s", w.SourceType, joinAnd(names))
+			"source type %s does not exist; there are %s", w.SourceType, joinAnd(sortedSourceNames(s.sources)))
 	}
 	accepted := false
 	for _, a := range comp.Accepts {

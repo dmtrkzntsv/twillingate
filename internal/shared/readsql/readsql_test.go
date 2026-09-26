@@ -79,6 +79,44 @@ func TestQueryReturnsRowsAndTruncates(t *testing.T) {
 	}
 }
 
+func TestQueryLimit(t *testing.T) {
+	db, _ := newTestDB(t, 2*time.Second, 1000)
+
+	res, err := db.QueryLimit(context.Background(), `select value from json_each('[1,2,3,4]')`, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Columns) != 1 || res.Columns[0] != "value" {
+		t.Errorf("columns = %v, want [value]", res.Columns)
+	}
+	if len(res.Rows) != 0 {
+		t.Errorf("rows = %v, want none (limit 0)", res.Rows)
+	}
+
+	res, err = db.QueryLimit(context.Background(), `select value from json_each('[1,2,3,4]')`, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Rows) != 2 {
+		t.Fatalf("rows = %v, want 2", res.Rows)
+	}
+}
+
+// TestQueryLimitRefusesEmptyOrSemicolonOnlySQL pins the fix for the
+// finding that a lone ';' (or pure whitespace) passed Check — a single,
+// if pointless, valid statement — but then wrapped as
+// "SELECT * FROM (\n) LIMIT n", an opaque SQLite syntax error rather than
+// the clean "sql must not be empty" refusal empty text itself gets.
+func TestQueryLimitRefusesEmptyOrSemicolonOnlySQL(t *testing.T) {
+	db, _ := newTestDB(t, 2*time.Second, 3)
+	for _, q := range []string{"", "   ", ";", "; ;", "\n\t;"} {
+		_, err := db.QueryLimit(context.Background(), q, 5)
+		if !errors.Is(err, ErrRefused) || !strings.Contains(err.Error(), "sql must not be empty") {
+			t.Errorf("QueryLimit(%q) = %v, want the empty-sql refusal", q, err)
+		}
+	}
+}
+
 func TestQueryTrailingCommentAndSemicolon(t *testing.T) {
 	db, _ := newTestDB(t, 2*time.Second, 3)
 	for _, q := range []string{

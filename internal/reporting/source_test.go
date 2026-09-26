@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
@@ -63,6 +64,101 @@ func TestSQLValidateRefusesSyntaxError(t *testing.T) {
 	err := s.Validate(context.Background(), "select from", comps["table"])
 	if !errors.Is(err, store.ErrInvalid) {
 		t.Fatalf("err = %v, want ErrInvalid", err)
+	}
+	// SQLite's own text must come through, not be swallowed by a generic
+	// "invalid SQL" message: it's what tells a person which token it
+	// stumbled on.
+	if !strings.Contains(err.Error(), "syntax error") {
+		t.Errorf("err = %q, want SQLite's own syntax error text", err.Error())
+	}
+}
+
+// TestSQLValidateBindsSampleValuesOnBothRuns pins the fix for the
+// finding that the LIMIT 0 shape check ran with no bound arguments at
+// all: modernc's driver errors "missing named argument \"project\"" for
+// a statement that mentions :project but was given nothing to bind it
+// to, so every widget using :project/:from/:to was refused outright —
+// on the very first run, regardless of sampleRows. The sample project
+// and date range must be computed and bound before that first run, not
+// only before the sampleRows-gated second one.
+func TestSQLValidateBindsSampleValuesOnBothRuns(t *testing.T) {
+	st, db := newTestStoreAndReadDB(t)
+	pid := mustCreateProject(t, st, "blog")
+	mustWriteEvent(t, st, "e1", pid, store.FamilyViews, "2026-08-20")
+	mustWriteEvent(t, st, "e2", pid, store.FamilyViews, "2026-08-21")
+
+	comps := testComponents(t)
+	line := comps["line"]
+	content := `select day as x, count(*) as y from raw_views
+		where project_id = :project and day >= :from and day <= :to group by day`
+
+	for _, sampleRows := range []bool{false, true} {
+		s := &sqlSource{db: db, sampleRows: sampleRows}
+		if err := s.Validate(context.Background(), content, line); err != nil {
+			t.Errorf("sampleRows=%v: Validate = %v, want nil", sampleRows, err)
+		}
+	}
+}
+
+// TestSQLValidateTimesOut pins the API_QUERY_TIMEOUT refusal. The
+// content is a single-row aggregate (COUNT(*)) over an effectively
+// unbounded recursive CTE: SQLite's planner answers a wrapping "LIMIT 0"
+// without evaluating the aggregate at all (there's nothing a caller
+// asking for zero rows needs it for), so the LIMIT 0 shape check itself
+// returns instantly regardless of how expensive the query is — it's the
+// sampleRows-gated LIMIT 5 run that actually has to compute the one row
+// COUNT(*) produces, and that must time out and be reported with the
+// environment variable a person can act on, not SQLite's own "context
+// deadline exceeded" or similar.
+func TestSQLValidateTimesOut(t *testing.T) {
+	_, path := newTestStore(t)
+	db, err := readsql.Open(path, 50*time.Millisecond, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+
+	s := &sqlSource{db: db, sampleRows: true}
+	comps := testComponents(t)
+	content := `WITH RECURSIVE r(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM r WHERE i < 1000000000)
+		SELECT COUNT(*) AS value FROM r`
+	err = s.Validate(context.Background(), content, comps["stat"])
+	if !errors.Is(err, store.ErrInvalid) {
+		t.Fatalf("err = %v, want ErrInvalid", err)
+	}
+	if !strings.Contains(err.Error(), "API_QUERY_TIMEOUT") {
+		t.Errorf("err = %q, want it to name API_QUERY_TIMEOUT", err.Error())
+	}
+}
+
+func TestSampleProject(t *testing.T) {
+	st, db := newTestStoreAndReadDB(t)
+
+	// No projects at all: 0, not an error.
+	id, err := sampleProject(context.Background(), db)
+	if err != nil || id != 0 {
+		t.Fatalf("sampleProject (empty) = (%d, %v), want (0, nil)", id, err)
+	}
+
+	older := mustCreateProject(t, st, "older")
+	mustWriteEvent(t, st, "e-older", older, store.FamilyViews, "2026-08-01")
+
+	newer := mustCreateProject(t, st, "newer")
+	mustWriteEvent(t, st, "e-newer", newer, store.FamilyProduct, "2026-08-15")
+
+	archived := mustCreateProject(t, st, "archived")
+	mustWriteEvent(t, st, "e-archived", archived, store.FamilyViews, "2026-08-31")
+	if err := st.SetProjectArchived(context.Background(), archived, true,
+		store.AuditEntry{Actor: "test", Action: "project.archive"}); err != nil {
+		t.Fatal(err)
+	}
+
+	id, err = sampleProject(context.Background(), db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id != newer {
+		t.Errorf("sampleProject = %d, want %d (most recently active, archived skipped)", id, newer)
 	}
 }
 

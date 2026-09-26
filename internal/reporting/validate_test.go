@@ -37,6 +37,23 @@ func TestDeriveName(t *testing.T) {
 	if strings.HasSuffix(got, "-") {
 		t.Errorf("deriveName(200 chars) = %q, want no trailing -", got)
 	}
+
+	// "Abcde " repeats every 6 folded characters ("abcde-"), so position
+	// 60 of the 200-char title — where the naive [:60] cut lands — falls
+	// exactly on the separator between two words: cutting there leaves a
+	// trailing '-' unless the cut itself also trims it.
+	separator := strings.Repeat("Abcde ", 34)[:200]
+	got = deriveName(separator, nil)
+	if len(got) > 60 {
+		t.Errorf("deriveName(separator-aligned) len = %d, want <= 60", len(got))
+	}
+	if strings.HasSuffix(got, "-") {
+		t.Errorf("deriveName(separator-aligned) = %q, want no trailing -", got)
+	}
+	want := "abcde-abcde-abcde-abcde-abcde-abcde-abcde-abcde-abcde-abcde"
+	if got != want {
+		t.Errorf("deriveName(separator-aligned) = %q, want %q", got, want)
+	}
 }
 
 func TestCheckSize(t *testing.T) {
