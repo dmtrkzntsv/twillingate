@@ -49,39 +49,44 @@ removes Evidence.
    cache, and the embedded UI. It declares `reporting.Store`, the slice of
    the store it uses, which `store/sqlite` implements. `api` exposes its
    operations through `expose()` and mounts `/app/`.
-5. **Each widget decides where its project comes from; the dashboard
-   follows.** A widget follows the dashboard's project switcher, is pinned
-   to one project, or spans projects (decision 17). The switcher appears
-   only when at least one widget follows it; there is no dashboard-level
-   setting to fall out of step with the widgets. System dashboards'
-   widgets always follow it, so every system dashboard has a switcher.
+5. **A widget's SQL decides its project; the dashboard follows.** A
+   widget whose SQL uses `:project` follows the dashboard's project
+   switcher; one that does not is fixed, selecting whatever projects its
+   SQL names (decision 17). The switcher appears only when at least one
+   widget follows it; there is no dashboard-level setting to fall out of
+   step with the widgets. System widgets all use `:project`, so every
+   system dashboard has a switcher.
 
 ### Model
 
-6. **Migration 021 creates three tables and a history table:**
+6. **Migration 021 creates four tables and a history table:**
 
    ```
    components            name PK, description, accepts (JSON), inputs (JSON), props (JSON),
                          default_height, removed_at
    dashboards            id INTEGER PK AUTOINCREMENT, owner ('system'|'user'), title, position,
-                         default_range, layout (JSON), last_project_id, last_range,
-                         last_from, last_to,
+                         default_range, last_project_id, last_range, last_from, last_to,
                          created_at, updated_at, archived_at
-   widgets               id INTEGER PK AUTOINCREMENT,
-                         dashboard_id REFERENCES dashboards(id) ON DELETE CASCADE,
-                         name, component, title,
-                         props (JSON), source_type (TEXT), source (TEXT), project_id,
-                         created_at, updated_at
+   dashboard_rows        dashboard_id REFERENCES dashboards(id) ON DELETE CASCADE,
+                         row, height,                              PK (dashboard_id, row)
+   widgets               id INTEGER PK AUTOINCREMENT, dashboard_id, row, col,
+                         FOREIGN KEY (dashboard_id, row) REFERENCES dashboard_rows
+                           ON DELETE CASCADE ON UPDATE CASCADE,
+                         name, component, title, props (JSON), source_type (TEXT),
+                         source (TEXT), created_at, updated_at
    reporting_migrations  id INTEGER PK AUTOINCREMENT, hash, version, applied_at
    ```
 
-   One foreign key and no checks or triggers: a widget belongs to its
-   dashboard, and deleting a dashboard deletes its widgets. Every other
-   rule below is enforced in Go (the standing rule, no validation in the
-   database). `widgets` is unique on (`dashboard_id`, `name`) as an index,
-   because the migrator matches on it. The cascade removes widgets
-   without Go seeing them, so every transaction that deletes a dashboard
-   ends with the removed-component cleanup (decision 15).
+   Two foreign keys and no checks or triggers: a row belongs to its
+   dashboard and a widget to its row, so deleting a dashboard deletes its
+   rows and their widgets, and renumbering a row carries its widgets
+   along. `widgets` is unique on (`dashboard_id`, `name`), which the
+   migrator matches on, and on (`dashboard_id`, `row`, `col`), so a
+   position holds one widget. Every other rule below is enforced in Go
+   (the standing rule, no validation in the database). The cascade
+   removes widgets without Go seeing them, so every transaction that
+   deletes a dashboard ends with the removed-component cleanup
+   (decision 15).
 7. **Foreign keys become enforced.** SQLite checks them only on
    connections that turn them on, and the store never has, so the two
    `REFERENCES` already in the schema (migrations 005 and 014, ingest keys
@@ -117,14 +122,21 @@ removes Evidence.
    no migration; validation refuses names that are not registered.
    `title` is optional; the card shows a
    header only when it has one. `name` is unique within the dashboard and
-   is how the layout refers to the widget; an agent gives it or it is
+   is how system files and the `layout` shape (decision 10) refer to the
+   widget; an agent gives it or it is
    derived from the title (lower case, `-` for runs of other characters),
    with `-2`, `-3`, … added when taken.
-10. **Layout is rows, stored on the dashboard.** `layout` is
-   `[{"height": 1..3, "widgets": ["name", …]}, …]`: 1–3 widgets per row,
-   side by side at equal width, every widget of the dashboard placed exactly
-   once. A row with no `height` takes the largest `default_height` among its
-   widgets. One height unit is about 140px.
+10. **Layout is rows in a table.** `dashboard_rows` holds each row's
+    `height` (1–3); a widget's place is its own `row` and `col`. Rows are
+    numbered 1…n and columns 1…k with no gaps, 1–3 widgets per row, side
+    by side at equal width; every write keeps that (a row left empty is
+    deleted and the rows after it renumbered). There is no second copy of
+    the layout for the widgets to disagree with. At the edges (system
+    files, `get_dashboard`, `create_dashboard`, `update_dashboard`) the
+    layout travels as one shape, `[{"height": 1..3, "widgets": ["name",
+    …]}, …]`, translated to and from the rows. A row given without
+    `height` takes the largest `default_height` among its widgets. One
+    height unit is about 140px.
 11. **`owner = 'system'` rows change only through the migrator** (decisions
     20–25). Every write operation refuses them with `ErrInvalid`.
 
@@ -168,18 +180,17 @@ removes Evidence.
 
 17. **A `sql` source can use three named parameters:** `:project`
     (project id), `:from` and `:to` (days, `YYYY-MM-DD`). Using any other
-    parameter is refused. How it uses `:project` decides the widget's
+    parameter is refused. Whether it uses `:project` decides the widget's
     project:
 
     | Widget | SQL | Project |
     | --- | --- | --- |
-    | follows the switcher | uses `:project`; `project_id` empty | the dashboard's switcher |
-    | pinned | uses `:project`; `project_id` set | always that project; a chip on the card names it |
-    | cross-project | does not use `:project` | whatever the SQL selects, e.g. grouped by project with `series` from `projects.name` |
+    | follows the switcher | uses `:project` | the dashboard's switcher |
+    | fixed | does not use `:project` | whatever the SQL selects: one project (`WHERE project_id = 7`), several, or all, e.g. grouped by project with `series` from `projects.name` |
 
-    `project_id` on a widget whose SQL does not use `:project` is refused
-    ("widget is pinned to project 7 but its sql never uses :project"), as
-    is any `project_id` on a system widget.
+    A fixed widget names its project in its title ("Signups, iOS app").
+    A deleted project leaves a fixed widget that names it with fewer or no
+    rows, like any SQL; no pin can dangle, because there is none.
 18. **Presets live in the UI; the API takes dates.** Range presets are a
     closed vocabulary used by the dashboard page's URL, the range switcher,
     `default_range` and the stored last selection. The UI resolves a preset
@@ -281,16 +292,13 @@ removes Evidence.
       `SELECT * FROM (…) LIMIT 0` on the read pool with sample values bound
       and the guards `query` applies (read-only, no `ATTACH`, the timeout);
       its columns satisfy the inputs ("line needs y (number); columns are
-      x, visitor"); value types are checked on a few rows of a project that
-      has data: the call's optional `project_id`, else the most recently
-      active project, else column names only, with the full check on first
-      render;
+      x, visitor"); value types are checked on a few rows: for a widget
+      using `:project`, of the most recently active project; if there are
+      no rows, column names only, with the full check on first render;
     - `md`: the text is not empty;
     - props match the component's `props` schema;
     - the layout: 1–3 widgets per row, height 1–3, every widget placed once
       ("row 2 already holds 3 widgets; omit row to start a new one");
-    - `project_id`: set only on a widget whose SQL uses `:project`, never
-      on a system widget, and naming an existing project (decision 17);
     - system rows: "dashboard 3 is a system dashboard and changes only with
       a release; duplicate_dashboard makes an editable copy".
 
@@ -303,8 +311,8 @@ removes Evidence.
     | `list_components` | `GET /api/components` | the registered source types, and per component: name, description, accepts, inputs, props, default height; `include_removed` adds removed ones |
     | `list_dashboards` | `GET /api/dashboards` | `timezone` (the instance's, decision 19), and per dashboard: id, title, owner, position, default range, last project and range, widget count, archived |
     | `get_dashboard` | `GET /api/dashboards/{dashboard_id}` | the dashboard with its layout, and every widget's component, title, props, source type and source |
-    | `list_widgets` | `GET /api/widgets?dashboard_id=&component=` | every widget with its dashboard (id, title, owner, archived) and pinned project; the two filters combine |
-    | `widget_data` | `GET /api/widgets/{widget_id}/data?project_id=&from=&to=&fresh=` | the widget's content for its effective project and the dates (decision 32) |
+    | `list_widgets` | `GET /api/widgets?dashboard_id=&component=` | every widget with its dashboard (id, title, owner, archived) and place; the two filters combine |
+    | `widget_data` | `GET /api/widgets/{widget_id}/data?project_id=&from=&to=&fresh=` | the widget's content for the dates, and for `project_id` when its SQL uses `:project` (decision 32) |
 
 29. **Write tools,** each refused on system dashboards and recorded in
     `audit_log` with actor `mcp` or `rest`:
@@ -316,12 +324,11 @@ removes Evidence.
     | `duplicate_dashboard` | `POST /api/dashboards/{dashboard_id}/duplicate` → 201 | a user copy of any dashboard, system ones included |
     | `archive_dashboard` / `restore_dashboard` | `POST /api/dashboards/{dashboard_id}/archive` / `…/restore` | hide or unhide |
     | `add_widget` | `POST /api/dashboards/{dashboard_id}/widgets` → 201 | no `row`: a new last row; `row` alone: append; `row` and `col`: insert and shift right |
-    | `update_widget` | `PATCH /api/widgets/{widget_id}` | name, component, title, props, source, `project_id` (`null` unpins) |
-    | `copy_widget` | `POST /api/widgets/{widget_id}/copy` → 201 | an independent copy into `dashboard_id`, optional `row`/`col` and `project_id`; keeps the pin unless the call changes it; the source may be a system widget |
-    | `remove_widget` | `DELETE /api/widgets/{widget_id}` | removes it from the layout; a row left empty disappears |
+    | `update_widget` | `PATCH /api/widgets/{widget_id}` | name, component, title, props, source |
+    | `copy_widget` | `POST /api/widgets/{widget_id}/copy` → 201 | an independent copy into `dashboard_id`, optional `row`/`col`; the source may be a system widget |
+    | `remove_widget` | `DELETE /api/widgets/{widget_id}` | deletes it; a row left empty is deleted and later rows renumbered |
 
-    A source is `{"type": "sql"|"md", "content": "…"}`. `add_widget`
-    and `create_dashboard` widgets take an optional `project_id` (the pin).
+    A source is `{"type": "sql"|"md", "content": "…"}`.
 30. **REST only:** `PUT /api/dashboards/{dashboard_id}/view` with a JSON
     body of `project_id`, `range` (a preset) and, for `custom`, `from` and
     `to`, which sets `last_project_id`, `last_range`, `last_from` and
@@ -347,13 +354,11 @@ removes Evidence.
       "columns": ["x", "y"], "rows": [["2026-08-27", "40"], …] }
     ```
 
-    The effective project is the widget's pin, else the `project_id`
-    parameter; a widget that follows the switcher and gets none is
-    `ErrInvalid`, and a pinned or cross-project widget ignores the
-    parameter. The body is what the source type's `Load` returns: rows
+    `project_id` is required for a widget whose SQL uses `:project` and
+    ignored for a fixed one. The body is what the source type's `Load` returns: rows
     for `sql`; `{"widget_id", "markdown"}` for `md`, which ignores project
-    and dates. Only cacheable source types are cached. A widget pinned to a project
-    that no longer exists answers `{"widget_id", "orphaned": true}`. A widget on a removed component answers
+    and dates. Only cacheable source types are cached. A widget on a
+    removed component answers
     `{"widget_id", "removed": true}`. A query that no longer runs, or whose
     rows no longer satisfy the inputs (a release changed a view), is
     `ErrInvalid` with the reason. Queries run on the read pool with the
@@ -370,9 +375,9 @@ removes Evidence.
     Entries live for the longer of the two. A refresh age longer than a
     non-zero cache age refuses the boot. `refresh_after` is `cached_at`
     plus the refresh age. Identical requests in flight share one run
-    (`singleflight`, same key). The key's project is the effective one,
-    or none for a cross-project widget, so the switcher does not split a
-    pinned or cross-project widget's entries. `update_widget` drops that widget's
+    (`singleflight`, same key). A fixed widget's key has no project, so
+    the switcher does not split its entries. `update_widget` drops that
+    widget's
     entries; a copy starts empty; the migrator drops entries of widgets it
     changed.
 
@@ -412,10 +417,8 @@ removes Evidence.
     on narrow screens; tables scroll inside their card.
 38. **Each widget loads on its own** and has its own state: skeleton at the
     row's height while loading; the component with data; "No data for this
-    range"; "component removed"; "pinned project was deleted"; "query no
-    longer runs" with the error folded; "couldn't load" with a retry. A
-    pinned card shows the project's name as a chip in its header, marked
-    "archived" when the project is.
+    range"; "component removed"; "query no longer runs" with the error
+    folded; "couldn't load" with a retry.
 39. **Refresh.** Each `sql` widget has a refresh icon (on hover on desktop,
     always on touch) that requests `fresh=true`; the dashboard button does
     it for every widget past its `refresh_after`. The icon is disabled
@@ -456,9 +459,10 @@ removes Evidence.
 
 ## Migration 021
 
-`021_reporting.sql` creates `components`, `dashboards`, `widgets` and
-`reporting_migrations`, the unique index on `widgets (dashboard_id, name)`
-and the cascading foreign key from `widgets` to `dashboards`, and sets
+`021_reporting.sql` creates `components`, `dashboards`, `dashboard_rows`,
+`widgets` and `reporting_migrations`, the two unique indexes on `widgets`
+and the cascading foreign keys (rows to dashboards, widgets to rows), and
+sets
 `sqlite_sequence` for `dashboards` to 1000. It copies nothing. The
 system dashboards arrive through the migrator on the same run. Its test
 pins the ceiling at 21 and migrates to latest before calling current Go
@@ -469,9 +473,9 @@ code, per the standing rules.
 | Area | Proves |
 | --- | --- |
 | validation | each refusal in decision 27 fires with its sentinel and message |
-| projects | follows / pinned / cross-project resolve the effective project and cache key as decision 17 says; the switcher is present exactly when a widget follows it; a deleted pinned project answers `orphaned`; `null` unpins |
-| layout | add, copy, remove and `update_dashboard` layouts keep rows at 1–3 widgets with every widget placed once; append, insert-with-shift, empty-row removal |
-| foreign keys | deleting a dashboard deletes its widgets and then any removed component they were the last users of; writer connections report `foreign_keys = 1`; `DeleteProject` succeeds with keys present; a migration leaving a violation fails `foreign_key_check`; existing databases pass the check after 021 |
+| projects | a widget using `:project` requires `project_id` in `widget_data` and keys its cache by it; a fixed widget ignores it and keys without it; the switcher is present exactly when a widget uses `:project` |
+| layout | add, copy, remove and `update_dashboard` keep rows and columns gapless with 1–3 widgets per row; append, insert-with-shift, empty-row deletion with renumbering; the `layout` shape round-trips through the rows; a second widget at a taken position is refused by the unique index |
+| foreign keys | deleting a dashboard deletes its rows and widgets and then any removed component they were the last users of; writer connections report `foreign_keys = 1`; `DeleteProject` succeeds with keys present; a migration leaving a violation fails `foreign_key_check`; existing databases pass the check after 021 |
 | source types | an unregistered `source_type` is refused; a component's `accepts` naming an unregistered type fails the migrator; `sql` and `md` each validate and load through the registry |
 | components | a removed component is refused for new use, answers `removed`, and is deleted with its last widget, including when the migrator deletes a system dashboard |
 | migrator | upserts, deletions, reserved ids, widget ids stable across edits and moves, `last_*` kept, a second run with the same hash writes nothing, a failure writes nothing |
