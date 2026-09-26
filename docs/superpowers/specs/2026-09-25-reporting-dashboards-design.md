@@ -127,10 +127,10 @@ removes Evidence.
     list; each has a `width` and a `height`, and they fill a 12-column
     grid left to right, wrapping to the next line when a widget does not
     fit. A line is as tall as its tallest widget; shorter ones stretch.
-    - **`width`** is a closed vocabulary: `quarter` (3 columns), `third`
-      (4), `half` (6), `two_thirds` (8), `three_quarters` (9), `full`
-      (12). These cover the Evidence pages' 1-, 2-, 3- and 4-across grids.
-    - **`height`** is 1–3 units of about 140px.
+    - **`width`** is the number of columns, 1–12: 3 is a quarter, 4 a
+      third, 6 a half, 12 the full width, which covers the Evidence
+      pages' 1-, 2-, 3- and 4-across grids.
+    - **`height`** is the number of units, 1–3, each about 140px.
     - Either may be omitted and takes the component's `default_width` or
       `default_height`.
     - **Order is a fractional sort key.** `sort_key` is a fractional index
@@ -144,7 +144,7 @@ removes Evidence.
       widget id (or first, or last by default), and `reporting` generates
       the key between the neighbours.
     - At the edges (system files, `get_dashboard`, `create_dashboard`) the
-      layout is the ordered list `[{"widget": "name", "width": "third",
+      layout is the ordered list `[{"widget": "name", "width": 4,
       "height": 1}, …]`.
 11. **`owner = 'system'` rows change only through the migrator** (decisions
     20–25). Every write operation refuses them with `ErrInvalid`.
@@ -158,14 +158,14 @@ removes Evidence.
     exports. Nothing is declared twice.
 13. **The first set:**
 
-    | Component | Accepts | Inputs: the columns the query returns | Props | Default size |
+    | Component | Accepts | Inputs: the columns the query returns | Props | Default width × height |
     | --- | --- | --- | --- | --- |
-    | `stat` | `sql` | `value` number; `previous` number, optional (shows the change) | `format`: `number`\|`percent`\|`duration` | quarter × 1 |
-    | `line` | `sql` | `x` day or text; `y` number; `series` text, optional (one line per value) | `format` | half × 2 |
-    | `area` | `sql` | as `line` | `format`, `stacked` | half × 2 |
-    | `bar` | `sql` | `x` text; `y` number; `series` text, optional | `format`, `horizontal`, `stacked` | half × 2 |
-    | `table` | `sql` | open: any columns, shown in query order | `formats`: column → format | half × 3 |
-    | `markdown` | `md` | none | none | full × 1 |
+    | `stat` | `sql` | `value` number; `previous` number, optional (shows the change) | `format`: `number`\|`percent`\|`duration` | 3 × 1 |
+    | `line` | `sql` | `x` day or text; `y` number; `series` text, optional (one line per value) | `format` | 6 × 2 |
+    | `area` | `sql` | as `line` | `format`, `stacked` | 6 × 2 |
+    | `bar` | `sql` | `x` text; `y` number; `series` text, optional | `format`, `horizontal`, `stacked` | 6 × 2 |
+    | `table` | `sql` | open: any columns, shown in query order | `formats`: column → format | 6 × 3 |
+    | `markdown` | `md` | none | none | 12 × 1 |
 
     Queries satisfy inputs by alias: `SELECT day AS x, visitors AS y …`.
     Returning a column a closed interface does not declare is refused.
@@ -239,8 +239,8 @@ removes Evidence.
     ```
     internal/reporting/system/<dir>/
       dashboard.json     {"id": 1, "title": "Views", "position": 1, "default_range": "7d",
-                          "layout": [{"widget": "visitors", "width": "quarter", "height": 1},
-                                     {"widget": "trend", "width": "half"}, …]}
+                          "layout": [{"widget": "visitors", "width": 3, "height": 1},
+                                     {"widget": "trend", "width": 6}, …]}
       <name>.json        {"component": "stat", "title": "Visitors", "props": {"format": "number"}}
       <name>.sql         the query, plain SQL: runs in sqlite3 as it is
       <name>.md          or Markdown, for a markdown widget
@@ -309,8 +309,8 @@ removes Evidence.
       no rows, column names only, with the full check on first render;
     - `md`: the text is not empty;
     - props match the component's `props` schema;
-    - size: `width` in the vocabulary ("width must be one of quarter,
-      third, half, two_thirds, three_quarters, full"), `height` 1–3;
+    - size: `width` a whole number 1–12 ("width is columns out of 12,
+      from 1 to 12"), `height` a whole number 1–3;
       `after` names a widget on the same dashboard;
     - system rows: "dashboard 3 is a system dashboard and changes only with
       a release; duplicate_dashboard makes an editable copy".
@@ -423,8 +423,8 @@ removes Evidence.
     | Screen | Widths | Chrome |
     | --- | --- | --- |
     | ≥ 1024px | as defined | sidebar; switchers in the header |
-    | 640–1023px | `quarter` and `third` become `half`; `two_thirds` and `three_quarters` become `full` | sidebar collapses to icons |
-    | < 640px | `quarter` becomes `half` (two stats across); everything else `full` | sidebar in a drawer; switchers as two selects |
+    | 640–1023px | up to 6 becomes 6; above 6 becomes 12 | sidebar collapses to icons |
+    | < 640px | up to 3 becomes 6 (two stats across); above 3 becomes 12 | sidebar in a drawer; switchers as two selects |
 
     The grid keeps its order at every width; only spans change, so a
     narrow screen is the same list wrapped sooner.
