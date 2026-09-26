@@ -618,6 +618,10 @@ In the same PR as the change:
 - Import or export of dashboards as files.
 - Drill-down between dashboards, and parameters beyond the three.
 - Automatic refresh timers.
+- Moving the existing small generic packages (`internal/civil`,
+  `internal/version`) under `internal/shared/`: a later `refactor:` PR,
+  after the first reporting PR, including the version path in the
+  Makefile's `-ldflags -X`.
 - A `TIMEZONE` setting that groups days by a local timezone: its own
   spec, after this one. It moves `events.day` from a generated UTC column
   to one ingest fills, salt rotation and the daily pass to local
