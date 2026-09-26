@@ -49,13 +49,14 @@ removes Evidence.
    cache, and the embedded UI. It declares `reporting.Store`, the slice of
    the store it uses, which `store/sqlite` implements. `api` exposes its
    operations through `expose()` and mounts `/app/`.
-5. **A widget's SQL decides its project; the dashboard follows.** A
-   widget whose SQL uses `:project` follows the dashboard's project
-   switcher; one that does not is fixed, selecting whatever projects its
-   SQL names (decision 17). The switcher appears only when at least one
+5. **A widget's SQL decides its project and its range; the dashboard
+   follows.** A widget whose SQL uses `:project` follows the project
+   switcher; one whose SQL uses `:from` or `:to` follows the range
+   switcher; otherwise it is fixed in that respect, selecting whatever its
+   SQL names (decision 17). Each switcher appears only when at least one
    widget follows it; there is no dashboard-level setting to fall out of
-   step with the widgets. System widgets all use `:project`, so every
-   system dashboard has a switcher.
+   step with the widgets. System widgets use all three parameters, so
+   every system dashboard has both switchers.
 
 ### Model
 
@@ -198,17 +199,19 @@ removes Evidence.
 
 17. **A `sql` source can use three named parameters:** `:project`
     (project id), `:from` and `:to` (days, `YYYY-MM-DD`). Using any other
-    parameter is refused. Whether it uses `:project` decides the widget's
-    project:
+    parameter is refused. Which it uses decides what the widget follows,
+    independently for project and range:
 
-    | Widget | SQL | Project |
+    | | SQL uses it: follows the switcher | SQL does not: fixed |
     | --- | --- | --- |
-    | follows the switcher | uses `:project` | the dashboard's switcher |
-    | fixed | does not use `:project` | whatever the SQL selects: one project (`WHERE project_id = 7`), several, or all, e.g. grouped by project with `series` from `projects.name` |
+    | **project** | `:project` | one project (`WHERE project_id = 7`), several, or all, e.g. grouped by project with `series` from `projects.name` |
+    | **range** | `:from` and/or `:to` | all time, a window relative to now (`date('now', '-12 months')`), or set dates |
 
-    A fixed widget names its project in its title ("Signups, iOS app").
-    A deleted project leaves a fixed widget that names it with fewer or no
-    rows, like any SQL; no pin can dangle, because there is none.
+    So a widget follows both switchers, one, or neither: "All-time
+    signups, iOS app" follows neither. A fixed widget says what it is
+    fixed to in its title. A deleted project leaves a widget whose SQL
+    names it with fewer or no rows, like any SQL; nothing can dangle,
+    because nothing is stored besides the SQL.
 18. **Presets live in the UI; the API takes dates.** Range presets are a
     closed vocabulary used by the dashboard page's URL, the range switcher,
     `default_range` and the stored last selection. The UI resolves a preset
@@ -226,7 +229,8 @@ removes Evidence.
     | `custom` | Custom… | the given `from` → `to` |
 
     **API URLs take only `from` and `to`** (`YYYY-MM-DD`), never a preset.
-    Both are required and `from ≤ to`, spanning at most 365 days;
+    For a widget that follows the range, both are required and
+    `from ≤ to`, spanning at most 365 days;
     otherwise `ErrInvalid`. A `to` after today (UTC) is clamped to today,
     before the cache key is built, so a browser clock slightly ahead of
     the server near midnight still gets data. `default_range` is a preset
@@ -356,8 +360,9 @@ removes Evidence.
     `to`, which sets `last_project_id`, `last_range`, `last_from` and
     `last_to`. It stores the preset, not its dates, so "Last week" stays
     rolling when the dashboard is opened again; its URL carries no
-    range. `project_id` is required when the dashboard has a switcher and
-    refused when it has none.
+    range. Each part is required when the dashboard has that switcher and
+    refused when it has none: `project_id` for the project switcher,
+    `range` (and `from`/`to`) for the range switcher.
     It is allowed on system dashboards (it is viewer state, not
     definition) and writes no audit entry. MCP-only or REST-only is an
     explicit choice the parity test checks.
@@ -376,8 +381,10 @@ removes Evidence.
       "columns": ["x", "y"], "rows": [["2026-08-27", "40"], …] }
     ```
 
-    `project_id` is required for a widget whose SQL uses `:project` and
-    ignored for a fixed one. The body is what the source type's `Load` returns: rows
+    `project_id` is required for a widget whose SQL uses `:project`, and
+    `from`/`to` for one whose SQL uses `:from` or `:to`; each is ignored by
+    a widget fixed in that respect. Fixed-range SQL is bounded by the
+    query timeout, as `query` is. The body is what the source type's `Load` returns: rows
     for `sql`; `{"widget_id", "markdown"}` for `md`, which ignores project
     and dates. Only cacheable source types are cached. A widget on a
     removed component answers
@@ -397,8 +404,11 @@ removes Evidence.
     Entries live for the longer of the two. A refresh age longer than a
     non-zero cache age refuses the boot. `refresh_after` is `cached_at`
     plus the refresh age. Identical requests in flight share one run
-    (`singleflight`, same key). A fixed widget's key has no project, so
-    the switcher does not split its entries. `update_widget` drops that
+    (`singleflight`, same key). A widget's key holds only what it
+    follows: `(widget)`, `(widget, project)`, `(widget, from, to)` or all
+    three, so a switcher never splits the entries of a widget that ignores
+    it. A fixed widget with `date('now', …)` in its SQL is no staler than
+    the cache age allows. `update_widget` drops that
     widget's
     entries; a copy starts empty; the migrator drops entries of widgets it
     changed.
@@ -414,15 +424,17 @@ removes Evidence.
     `/app/callback` completes login. Without
     `project` or `range` in the URL, the dashboard's stored last selection
     applies, then the first active project and `default_range`. A
-    dashboard without a switcher (decision 5) takes no `project` and
-    stores no last project.
+    dashboard without a project switcher (decision 5) takes no `project`
+    and stores no last project; one without a range switcher takes no
+    `range` and stores no last range.
 35. **Selection is remembered per dashboard, server side.** Changing the
     project or range updates the URL and calls the view route
     (decision 30).
 36. **Layout:** a sidebar with **Built-in** (system dashboards by position)
     and **Yours** (user dashboards by position), archived ones hidden; a
     header with the title, the project switcher when the dashboard has one
-    (active projects, archived ones in a collapsed group), the range switcher ("Custom…" opens a
+    (active projects, archived ones in a collapsed group), the range
+    switcher when it has one ("Custom…" opens a
     date-range `Calendar`, in a `Popover` on desktop and a `Sheet` on
     phones), "data as of" (the
     oldest `cached_at` on screen) and a dashboard refresh button; then the
@@ -506,7 +518,7 @@ code, per the standing rules.
 | Area | Proves |
 | --- | --- |
 | validation | each refusal in decision 27 fires with its sentinel and message |
-| projects | a widget using `:project` requires `project_id` in `widget_data` and keys its cache by it; a fixed widget ignores it and keys without it; the switcher is present exactly when a widget uses `:project` |
+| following | for project and for range independently: a widget whose SQL uses the parameters requires them in `widget_data` and keys its cache by them; a fixed widget ignores them and keys without them; each switcher is present exactly when a widget follows it; the view route requires and refuses each part to match; a widget following neither is cached per widget only |
 | layout | a 6 × 6 widget followed by four 3 × 3 widgets renders them as a 2 × 2 block beside it (browser test); insert first, last and `after` (one key written, no other record touched); removal touches no other record; many inserts at one spot keep keys ordered and short enough; the `layout` list round-trips; widths and heights default from the component; the migrator keeps widget ids when order or size changes |
 | foreign keys | deleting a dashboard deletes its widgets and then any removed component they were the last users of; writer connections report `foreign_keys = 1`; `DeleteProject` succeeds with keys present; a migration leaving a violation fails `foreign_key_check`; existing databases pass the check after 021 |
 | source types | an unregistered `source_type` is refused; a component's `accepts` naming an unregistered type fails the migrator; `sql` and `md` each validate and load through the registry |
