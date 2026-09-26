@@ -50,20 +50,23 @@ func (d *DB) SyncReporting(ctx context.Context, s store.ReportingSync) error {
 
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE dashboards SET sort_key = '~' || id WHERE owner=?`, store.OwnerSystem); err != nil {
-			return fmt.Errorf("park dashboard sort keys: %w", err)
+			return fmt.Errorf("reporting sync: park dashboard sort keys: %w", err)
 		}
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE widgets SET sort_key = '~' || id
 			 WHERE dashboard_id IN (SELECT id FROM dashboards WHERE owner=?)`, store.OwnerSystem); err != nil {
-			return fmt.Errorf("park widget sort keys: %w", err)
+			return fmt.Errorf("reporting sync: park widget sort keys: %w", err)
 		}
 
-		removedDashboards, err := syncDashboards(ctx, tx, s.Dashboards)
+		// removedWidgets starts from the ones a dropped dashboard took with
+		// it by ON DELETE CASCADE inside syncDashboards, which never reach
+		// the per-dashboard syncWidgets loop below.
+		removedDashboards, removedWidgets, err := syncDashboards(ctx, tx, s.Dashboards)
 		if err != nil {
 			return err
 		}
 
-		var widgetCount, removedWidgets int
+		var widgetCount int
 		for _, dash := range s.Dashboards {
 			widgetCount += len(dash.Widgets)
 			removed, err := syncWidgets(ctx, tx, dash.ID, dash.Widgets)
@@ -76,7 +79,7 @@ func (d *DB) SyncReporting(ctx context.Context, s store.ReportingSync) error {
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO reporting_migrations (hash, version) VALUES (?,?)`,
 			s.Hash, s.Version); err != nil {
-			return fmt.Errorf("insert reporting_migrations: %w", err)
+			return fmt.Errorf("reporting sync: insert reporting_migrations: %w", err)
 		}
 
 		subject := s.Hash
@@ -107,7 +110,7 @@ func syncComponents(ctx context.Context, tx *sql.Tx, components []store.Componen
 				default_width=excluded.default_width, default_height=excluded.default_height`,
 			c.Name, c.Description, c.Accepts, c.Inputs, c.Props, c.DefaultWidth, c.DefaultHeight,
 		); err != nil {
-			return 0, fmt.Errorf("sync component %q: %w", c.Name, err)
+			return 0, fmt.Errorf("reporting sync: component %q: %w", c.Name, err)
 		}
 	}
 	names := make([]string, len(components))
@@ -117,7 +120,7 @@ func syncComponents(ctx context.Context, tx *sql.Tx, components []store.Componen
 	res, err := tx.ExecContext(ctx,
 		`DELETE FROM components WHERE name NOT IN (`+placeholders(len(names))+`)`, toArgs(names)...)
 	if err != nil {
-		return 0, fmt.Errorf("delete dropped components: %w", err)
+		return 0, fmt.Errorf("reporting sync: delete dropped components: %w", err)
 	}
 	removed, err := res.RowsAffected()
 	return int(removed), err
@@ -126,11 +129,34 @@ func syncComponents(ctx context.Context, tx *sql.Tx, components []store.Componen
 // syncDashboards upserts every system dashboard by id (title and sort_key
 // only; last_range is written on insert alone, so a viewer's later
 // SetDashboardView survives a resync), then deletes any system dashboard
-// not named in the list (cascading to its widgets), returning the number
-// removed. The upsert's WHERE clause keeps it from ever touching a row
-// whose owner is not 'system'.
-func syncDashboards(ctx context.Context, tx *sql.Tx, dashboards []store.SystemDashboard) (int, error) {
+// not named in the list. A manifest id that already names a row owned by
+// someone other than 'system' is refused outright — the upsert's WHERE
+// clause would otherwise silently no-op the update and leave the row
+// exactly as a plain INSERT ... ON CONFLICT DO UPDATE ... WHERE false
+// does (verified by hand against SQLite: no error, no change), which
+// would then let the per-dashboard widget sync attach the release's
+// widgets onto that unrelated row.
+//
+// Deleting a dropped system dashboard cascades to its widgets (ON DELETE
+// CASCADE), so those never reach the per-dashboard syncWidgets loop; this
+// counts them itself, before the delete, so the caller can fold them into
+// the overall removed-widgets count.
+//
+// Returns (removed dashboards, widgets removed by cascade, error).
+func syncDashboards(ctx context.Context, tx *sql.Tx, dashboards []store.SystemDashboard) (int, int, error) {
 	for _, dash := range dashboards {
+		var existingOwner string
+		err := tx.QueryRowContext(ctx,
+			`SELECT owner FROM dashboards WHERE id=?`, dash.ID).Scan(&existingOwner)
+		switch {
+		case err != nil && !errors.Is(err, sql.ErrNoRows):
+			return 0, 0, fmt.Errorf("reporting sync: check dashboard %d owner: %w", dash.ID, err)
+		case err == nil && existingOwner != store.OwnerSystem:
+			return 0, 0, fmt.Errorf(
+				"reporting sync: dashboard id %d is owned by %q, not %q",
+				dash.ID, existingOwner, store.OwnerSystem)
+		}
+
 		if _, err := tx.ExecContext(ctx, `INSERT INTO dashboards (id, owner, title, sort_key, last_range)
 			VALUES (?,?,?,?,?)
 			ON CONFLICT(id) DO UPDATE SET title=excluded.title, sort_key=excluded.sort_key,
@@ -138,21 +164,30 @@ func syncDashboards(ctx context.Context, tx *sql.Tx, dashboards []store.SystemDa
 			WHERE dashboards.owner=?`,
 			dash.ID, store.OwnerSystem, dash.Title, dash.SortKey, dash.Range, store.OwnerSystem,
 		); err != nil {
-			return 0, fmt.Errorf("sync dashboard %d: %w", dash.ID, err)
+			return 0, 0, fmt.Errorf("reporting sync: system dashboard %d: %w", dash.ID, err)
 		}
 	}
 	ids := make([]int64, len(dashboards))
 	for i, dash := range dashboards {
 		ids[i] = dash.ID
 	}
+
+	var cascadedWidgets int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM widgets WHERE dashboard_id IN (
+			SELECT id FROM dashboards WHERE owner=? AND id NOT IN (`+placeholders(len(ids))+`))`,
+		append([]any{store.OwnerSystem}, toArgs(ids)...)...).Scan(&cascadedWidgets); err != nil {
+		return 0, 0, fmt.Errorf("reporting sync: count cascaded widgets: %w", err)
+	}
+
 	res, err := tx.ExecContext(ctx,
 		`DELETE FROM dashboards WHERE owner=? AND id NOT IN (`+placeholders(len(ids))+`)`,
 		append([]any{store.OwnerSystem}, toArgs(ids)...)...)
 	if err != nil {
-		return 0, fmt.Errorf("delete dropped system dashboards: %w", err)
+		return 0, 0, fmt.Errorf("reporting sync: delete dropped system dashboards: %w", err)
 	}
 	removed, err := res.RowsAffected()
-	return int(removed), err
+	return int(removed), cascadedWidgets, err
 }
 
 // syncWidgets upserts dashboardID's widgets by (dashboard_id, name), then
@@ -171,7 +206,7 @@ func syncWidgets(ctx context.Context, tx *sql.Tx, dashboardID int64, widgets []s
 			dashboardID, w.Component, w.SortKey, w.Width, w.Height,
 			w.Name, w.Title, w.Props, w.SourceType, w.Source,
 		); err != nil {
-			return 0, fmt.Errorf("sync widget %q on dashboard %d: %w", w.Name, dashboardID, err)
+			return 0, fmt.Errorf("reporting sync: system dashboard %d widget %q: %w", dashboardID, w.Name, err)
 		}
 	}
 	names := make([]string, len(widgets))
@@ -182,7 +217,7 @@ func syncWidgets(ctx context.Context, tx *sql.Tx, dashboardID int64, widgets []s
 		`DELETE FROM widgets WHERE dashboard_id=? AND name NOT IN (`+placeholders(len(names))+`)`,
 		append([]any{dashboardID}, toArgs(names)...)...)
 	if err != nil {
-		return 0, fmt.Errorf("delete dropped widgets on dashboard %d: %w", dashboardID, err)
+		return 0, fmt.Errorf("reporting sync: delete dropped widgets on dashboard %d: %w", dashboardID, err)
 	}
 	removed, err := res.RowsAffected()
 	return int(removed), err

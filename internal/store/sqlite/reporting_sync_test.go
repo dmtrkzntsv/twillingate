@@ -377,6 +377,81 @@ func TestSyncReportingDroppedSystemDashboardDeletedWithWidgets(t *testing.T) {
 	if len(ws) != 0 {
 		t.Errorf("widgets on dropped dashboard 2 = %d, want 0 (cascade)", len(ws))
 	}
+
+	// The audit detail must count dashboard 2's one widget as removed even
+	// though it never went through syncWidgets: it was deleted by
+	// ON DELETE CASCADE inside syncDashboards.
+	var detail string
+	if err := db.db.QueryRowContext(ctx,
+		`SELECT detail FROM audit_log WHERE action='reporting.migrate' ORDER BY rowid DESC LIMIT 1`).
+		Scan(&detail); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"1 system dashboards (1 removed)", "2 widgets (1 removed)"} {
+		if !strings.Contains(detail, want) {
+			t.Errorf("audit detail = %q, want it to contain %q (cascaded widget counted)", detail, want)
+		}
+	}
+}
+
+func TestSyncReportingRefusesSystemIDOwnedByUserDashboard(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	// A user dashboard holding an id inside the range a release manifest
+	// might use (nothing at the DB level stops an explicit low id; the
+	// 1-999 reservation is convention, not a constraint).
+	userID, err := db.InsertDashboard(ctx,
+		store.Dashboard{ID: 5, Owner: store.OwnerUser, Title: "Mine", SortKey: "a"},
+		nil, store.AuditEntry{Actor: "agent", Action: "dashboard.create"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if userID != 5 {
+		t.Fatalf("InsertDashboard with explicit id = %d, want 5", userID)
+	}
+
+	s := store.ReportingSync{
+		Hash: "hash-collide", Version: "0.1.0",
+		Dashboards: []store.SystemDashboard{
+			{
+				ID: 5, Title: "Overview", SortKey: "a",
+				Widgets: []store.Widget{
+					{SortKey: "a", Width: 1, Height: 1, Name: "w1", SourceType: "events", Source: "a"},
+				},
+			},
+		},
+	}
+	err = db.SyncReporting(ctx, s)
+	if err == nil {
+		t.Fatal("SyncReporting with a system dashboard id owned by a user dashboard should fail")
+	}
+	if !strings.Contains(err.Error(), "5") {
+		t.Errorf("error = %v, want it to name the colliding id 5", err)
+	}
+
+	// Rolled back entirely: the user's dashboard is untouched and got no
+	// widgets attached, and no sync was recorded.
+	got, err := db.GetDashboard(ctx, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Owner != store.OwnerUser || got.Title != "Mine" {
+		t.Errorf("user dashboard changed by failed sync: %+v", got)
+	}
+	ws, err := db.ListWidgets(ctx, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ws) != 0 {
+		t.Errorf("widgets attached to user dashboard by failed sync = %d, want 0", len(ws))
+	}
+	hash, err := db.ReportingHash(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hash != "" {
+		t.Errorf("ReportingHash after failed sync = %q, want empty (no prior sync)", hash)
+	}
 }
 
 func TestSyncReportingUserDashboardsNeverTouched(t *testing.T) {
