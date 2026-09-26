@@ -235,16 +235,10 @@ func parse(lookup func(string) (string, bool), dashboards bool) (*Config, error)
 	return c, nil
 }
 
-// renamed maps each variable this release retired to its replacement. A
-// set old name refuses the boot: bare `serve` is lenient about API auth,
-// so an unrenamed MCP_AUTH_DSN would otherwise switch the API off silently.
+// renamed maps each retired variable to its replacement. A set old name
+// refuses the boot, so a leftover one cannot silently stop taking effect.
 var renamed = []struct{ old, repl string }{
 	{"LISTEN_ADDR", "INGEST_ADDR"},
-	{"MCP_ADDR", "API_ADDR"},
-	{"MCP_AUTH_DSN", "API_AUTH_DSN"},
-	{"MCP_DB_PATH", "API_DB_PATH"},
-	{"MCP_QUERY_TIMEOUT", "API_QUERY_TIMEOUT"},
-	{"MCP_QUERY_MAX_ROWS", "API_QUERY_MAX_ROWS"},
 	{"RETENTION_WEB_RAW_DAYS", "RETENTION_VIEWS_RAW_DAYS"},
 	{"RETENTION_WEB_AGGREGATE_DAYS", "RETENTION_VIEWS_AGGREGATE_DAYS"},
 	{"RETENTION_APP_RAW_DAYS", "RETENTION_VIEWS_RAW_DAYS"},
@@ -252,7 +246,7 @@ var renamed = []struct{ old, repl string }{
 }
 
 // refuseRenamed treats an empty value as unset, as env.str does, so a
-// leftover `MCP_ADDR=` line does not block the boot.
+// leftover `LISTEN_ADDR=` line does not block the boot.
 func refuseRenamed(lookup func(string) (string, bool)) error {
 	for _, r := range renamed {
 		if v, ok := lookup(r.old); ok && v != "" {

@@ -459,11 +459,6 @@ func TestTokenLoginDSNParsing(t *testing.T) {
 func TestRenamedVariablesRefuse(t *testing.T) {
 	for old, repl := range map[string]string{
 		"LISTEN_ADDR":                  "INGEST_ADDR",
-		"MCP_ADDR":                     "API_ADDR",
-		"MCP_AUTH_DSN":                 "API_AUTH_DSN",
-		"MCP_DB_PATH":                  "API_DB_PATH",
-		"MCP_QUERY_TIMEOUT":            "API_QUERY_TIMEOUT",
-		"MCP_QUERY_MAX_ROWS":           "API_QUERY_MAX_ROWS",
 		"RETENTION_WEB_RAW_DAYS":       "RETENTION_VIEWS_RAW_DAYS",
 		"RETENTION_WEB_AGGREGATE_DAYS": "RETENTION_VIEWS_AGGREGATE_DAYS",
 		"RETENTION_APP_RAW_DAYS":       "RETENTION_VIEWS_RAW_DAYS",
