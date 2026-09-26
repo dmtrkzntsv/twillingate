@@ -457,8 +457,8 @@ removes Evidence.
 
     | Setting | Default | Meaning |
     | --- | --- | --- |
-    | `REPORTING_CACHE_MINUTES` | 15 | an ordinary request reuses an entry younger than this; `0` recomputes every time |
-    | `REPORTING_REFRESH_MINUTES` | 1 | a `fresh=true` request reuses an entry younger than this |
+    | `REPORTING_CACHE_SECONDS` | 900 | an ordinary request reuses an entry younger than this; `0` recomputes every time |
+    | `REPORTING_REFRESH_SECONDS` | 60 | a `fresh=true` request reuses an entry younger than this |
 
     Past the relevant age, the request recomputes and stores the result.
     Entries live for the longer of the two. A refresh age longer than a
@@ -785,8 +785,8 @@ In the same PR as the change:
   `reporting_guide` in "Answer questions with the data"; the purge of
   archived projects in the project lifecycle.
 - `docs/deployment.md`: `/app/` and installing it; the redirect an
-  `oauth://` provider must allow; `REPORTING_CACHE_MINUTES`,
-  `REPORTING_REFRESH_MINUTES` and `RETENTION_ARCHIVED_DAYS`; that `API_QUERY_TIMEOUT` and
+  `oauth://` provider must allow; `REPORTING_CACHE_SECONDS`,
+  `REPORTING_REFRESH_SECONDS` and `RETENTION_ARCHIVED_DAYS`; that `API_QUERY_TIMEOUT` and
   `API_QUERY_MAX_ROWS` also bound widget queries; `twillingate reporting
   dev`.
 - `deploy/UPGRADES.md`: 021 adds `/app/`; archived projects, dashboards
@@ -824,7 +824,7 @@ In the same PR as the change:
 
 - **Cold-load timing.** Run the five system dashboards' queries against a
   copy of the prod database with an empty cache, per range. The result
-  sets the `REPORTING_CACHE_MINUTES` default and says whether any system
+  sets the `REPORTING_CACHE_SECONDS` default and says whether any system
   widget needs a cheaper query.
 
 ## Out of scope
