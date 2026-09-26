@@ -527,6 +527,8 @@ In the same PR as the change:
 - Multi-tenant cloud: accounts, billing, one database per tenant.
 - A native desktop app (Wails or Tauri) around the same bundle.
 - Any editing in the UI.
+- Deleting user dashboards. Agents archive and restore them; the only
+  deletions are the migrator's, of system dashboards gone from the code.
 - Source types other than `sql` and `md` (images and others).
 - Import or export of dashboards as files.
 - Drill-down between dashboards, and parameters beyond the three.
