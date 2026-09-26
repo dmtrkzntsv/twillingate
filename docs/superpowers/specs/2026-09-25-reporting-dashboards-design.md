@@ -77,7 +77,7 @@ removes Evidence.
                          component REFERENCES components(name) ON DELETE SET NULL,
                          sort_key TEXT, width, height, name, title,
                          props (JSON), source_type (TEXT), source (TEXT),
-                         created_at, updated_at
+                         created_at, updated_at, archived_at
    reporting_migrations  id INTEGER PK AUTOINCREMENT, hash, version, applied_at
    ```
 
@@ -154,9 +154,12 @@ removes Evidence.
       dependency (the Go side keeps third-party packages to a minimum):
       ~150 lines in `internal/shared/sortkey`, a leaf that knows nothing
       about dashboards, ranked 0 next to `civil`.
-      Inserting a widget between two others writes one key; removing one
-      deletes one record; nothing is renumbered or rebalanced. Widgets are
-      not reordered once placed.
+      Inserting a widget between two others writes one key; archiving one
+      writes `archived_at`; nothing is renumbered or rebalanced. Widgets
+      are not reordered once placed. An archived widget keeps its key and
+      its name, so restoring it puts it back where it was; new keys are
+      generated against the full order, archived widgets included, so they
+      never collide with one.
     - **Agents never see keys.** Tools place a widget `after` a given
       widget id (or first, or last by default), and `reporting` generates
       the key between the neighbours.
@@ -193,7 +196,7 @@ removes Evidence.
     there is no removed state to track and nothing to clean up later.
 15. **A widget with no component** renders a "component removed" card,
     and `widget_data` answers `{"widget_id", "removed": true}`. It can be
-    switched to a live component (`update_widget`), resized, or removed;
+    switched to a live component (`update_widget`), resized, or archived;
     its other fields cannot be edited and it cannot be copied, until it
     has a component again.
 16. **A component that comes back does not restore its widgets.** The
@@ -353,7 +356,7 @@ removes Evidence.
     | --- | --- | --- |
     | `list_components` | `GET /api/components` | the registered source types, and per component: name, description, accepts, inputs, props, default width and height |
     | `list_dashboards` | `GET /api/dashboards` | `timezone` (the instance's, decision 19), and per dashboard, in sidebar order: id, title, owner, stored project and range, widget count, archived |
-    | `get_dashboard` | `GET /api/dashboards/{dashboard_id}` | the dashboard and its widgets in order, each with id, name, width, height, component, title, props, source type and source |
+    | `get_dashboard` | `GET /api/dashboards/{dashboard_id}` | the dashboard and its live widgets in order, each with id, name, width, height, component, title, props, source type and source |
     | `list_widgets` | `GET /api/widgets?dashboard_id=&component=` | every widget with its dashboard (id, title, owner, archived) and place; the two filters combine |
     | `widget_data` | `GET /api/widgets/{widget_id}/data?project_id=&from=&to=&fresh=` | the widget's content for the dates, and for `project_id` when its SQL uses `:project` (decision 32) |
 
@@ -365,11 +368,11 @@ removes Evidence.
     | `create_dashboard` | `POST /api/dashboards` → 201 | title, optional `range` (the starting selection, default `7d`), optional `after` (a dashboard id; `null` first; omitted, last), optional widgets in order; all or nothing |
     | `update_dashboard` | `PATCH /api/dashboards/{dashboard_id}` | title; `after` moves it in the sidebar (one sort key written) |
     | `duplicate_dashboard` | `POST /api/dashboards/{dashboard_id}/duplicate` → 201 | a user copy of any dashboard, system ones included |
-    | `archive_dashboard` / `restore_dashboard` | `POST /api/dashboards/{dashboard_id}/archive` / `…/restore` | hide or unhide |
+    | `archive_dashboard` / `restore_dashboard` | `POST /api/dashboards/{dashboard_id}/archive` / `…/restore` | hide or unhide; purged after `RETENTION_ARCHIVED_DAYS` (decision 48) |
     | `add_widget` | `POST /api/dashboards/{dashboard_id}/widgets` → 201 | optional `after` (a widget id; `null` puts it first; omitted, last), `width`, `height`; one sort key written |
     | `update_widget` | `PATCH /api/widgets/{widget_id}` | name, component, title, props, source, width, height |
     | `copy_widget` | `POST /api/widgets/{widget_id}/copy` → 201 | an independent copy into `dashboard_id`, optional `after`; keeps width and height; the source may be a system widget |
-    | `remove_widget` | `DELETE /api/widgets/{widget_id}` | deletes it; nothing else changes |
+    | `archive_widget` / `restore_widget` | `POST /api/widgets/{widget_id}/archive` / `…/restore` | hide or unhide, in place: restoring is the undo; purged after `RETENTION_ARCHIVED_DAYS` (decision 48). An archived widget cannot be updated or copied until restored |
 
     A source is `{"type": "sql"|"md", "content": "…"}`.
 30. **REST only:** `PUT /api/dashboards/{dashboard_id}/view` with a JSON
@@ -591,13 +594,41 @@ removes Evidence.
     no escapes; the one indirect path, an existing view that reads a
     refused table, is closed by a test over every `v_*` definition.
 
+
+### Archive and purge
+
+48. **Archived projects, dashboards and widgets are deleted after
+    `RETENTION_ARCHIVED_DAYS`** (default 30; `0` keeps them forever), one
+    value for all three. The daily pass's prune step (03:00 UTC) deletes
+    what has been archived longer than that, each deletion in its own
+    transaction with an `audit_log` entry, actor `retention`:
+    - a widget: its row;
+    - a dashboard: its row, and its widgets by cascade;
+    - a project: everything `DeleteProject` deletes (its events,
+      aggregates, ingest keys and registry row), then a registry reload.
+      This is new: until now an archived project kept its data
+      indefinitely.
+
+    System dashboards and widgets cannot be archived, so the purge never
+    touches them. The clock is `archived_at`, but never earlier than the
+    upgrade that introduces this: migration 021 records its time as
+    `meta.archive_purge_since`, and an item goes at
+    `max(archived_at, archive_purge_since) + RETENTION_ARCHIVED_DAYS`, so
+    upgrading does not delete, on the first night, projects archived long
+    ago. `list_projects`, `list_dashboards` and `list_widgets` show each
+    archived item's `purge_at`.
+49. **The UI never shows archived items.** `list_widgets` returns archived
+    widgets with `archived_at` and `purge_at`, so an agent can find one to
+    restore; `get_dashboard` and the grid show live widgets only.
+
 ## Migration 021
 
 `021_reporting.sql` creates `components`, `dashboards`, `widgets` and
 `reporting_migrations`, the unique indexes of decision 6, and the
 foreign keys from widgets to dashboards (cascading) and to components,
 and sets
-`sqlite_sequence` for `dashboards` to 1000. It copies nothing. The
+`sqlite_sequence` for `dashboards` to 1000, and records
+`meta.archive_purge_since` (decision 48). It copies nothing. The
 system dashboards arrive through the migrator on the same run. Its test
 pins the ceiling at 21 and migrates to latest before calling current Go
 code, per the standing rules.
@@ -612,7 +643,9 @@ code, per the standing rules.
 | layout | a 6 × 6 widget followed by four 3 × 3 widgets renders them as a 2 × 2 block beside it (browser test); insert first, last and `after` (one key written, no other record touched); removal touches no other record; many inserts at one spot keep keys ordered and short enough; the `layout` list round-trips; widths and heights default from the component; the migrator keeps widget ids when order or size changes |
 | foreign keys | deleting a dashboard deletes its widgets; deleting a component sets `component` null on its widgets; writer connections report `foreign_keys = 1`; `DeleteProject` succeeds with keys present; a migration leaving a violation fails `foreign_key_check`; existing databases pass the check after 021 |
 | source types | an unregistered `source_type` is refused; a component's `accepts` naming an unregistered type fails the migrator; `sql` and `md` each validate and load through the registry |
-| components | a component gone from the manifest is deleted and its widgets get a null `component`; such a widget answers `removed`, accepts only a component switch, resize or removal, and cannot be copied; a component that returns leaves them null |
+| archive | archiving a widget hides it and restoring puts it back in the same place; a widget inserted next to an archived one gets a key that does not collide with it; archived widgets keep their names; an archived widget refuses update and copy; `list_widgets` shows archived ones with `purge_at` |
+| purge | with `RETENTION_ARCHIVED_DAYS=30`, a widget, a dashboard (with its widgets) and a project (with its events, aggregates and keys) archived 31 days ago go and one archived 29 days ago stays; `0` keeps everything; an item archived before the upgrade stays until 30 days after `archive_purge_since`; system dashboards are never archived; each purge writes an audit entry and the registry reloads after a project goes |
+| components | a component gone from the manifest is deleted and its widgets get a null `component`; such a widget answers `removed`, accepts only a component switch, resize or archiving, and cannot be copied; a component that returns leaves them null |
 | migrator | upserts, deletions, reserved ids, widget ids stable across edits and moves, `last_*` kept, a second run with the same hash writes nothing, a failure writes nothing |
 | **system dashboards** | every system widget, on a database migrated to latest with seeded data, validates and runs for every preset range, and its rows satisfy its component. The load-bearing test |
 | files | pairing errors (no data file, two, orphan data file, unplaced or missing widget, duplicate or out-of-range `id`) |
@@ -632,15 +665,22 @@ In the same PR as the change:
 
 - `docs/twillingate.md`: dashboards, widgets and components; the
   component table (decision 13); the parameters and range vocabulary; the
-  tools and routes; what happens to widgets when a release removes a component.
+  tools and routes; what happens to widgets when a release removes a
+  component; archiving as undo, and the purge of archived projects,
+  dashboards and widgets after `RETENTION_ARCHIVED_DAYS`, including that
+  a purged project's data is gone.
 - `docs/deployment.md`: `/app/` and installing it; the redirect an
-  `oauth://` provider must allow; `REPORTING_CACHE_MINUTES` and
-  `REPORTING_REFRESH_MINUTES`; that `API_QUERY_TIMEOUT` and
+  `oauth://` provider must allow; `REPORTING_CACHE_MINUTES`,
+  `REPORTING_REFRESH_MINUTES` and `RETENTION_ARCHIVED_DAYS`; that `API_QUERY_TIMEOUT` and
   `API_QUERY_MAX_ROWS` also bound widget queries; `twillingate reporting
   dev`.
-- `deploy/UPGRADES.md`: 021 adds `/app/`; a release that removes a
+- `deploy/UPGRADES.md`: 021 adds `/app/`; archived projects, dashboards
+  and widgets are now deleted `RETENTION_ARCHIVED_DAYS` after archiving,
+  counted from the upgrade at the earliest, so the first purge of
+  anything archived before it is 30 days after upgrade day (set `0`
+  first to keep them); a release that removes a
   component leaves its widgets showing "component removed" until an agent
-  switches or removes them; a binary rollback re-migrates system
+  switches or archives them; a binary rollback re-migrates system
   dashboards and permanently clears the component of widgets on
   components the older release lacks (decision 25).
 - `CLAUDE.md`: `internal/reporting`, `internal/shared/` (small generic
@@ -674,8 +714,9 @@ In the same PR as the change:
 - Multi-tenant cloud: accounts, billing, one database per tenant.
 - A native desktop app (Wails or Tauri) around the same bundle.
 - Any editing in the UI.
-- Deleting user dashboards. Agents archive and restore them; the only
-  deletions are the migrator's, of system dashboards gone from the code.
+- Deleting on request. Agents archive and restore projects, dashboards
+  and widgets; deletion happens only through the purge (decision 48) and
+  the migrator's removal of system dashboards gone from the code.
 - Source types other than `sql` and `md` (images and others).
 - Import or export of dashboards as files.
 - Drill-down between dashboards, and parameters beyond the three.
