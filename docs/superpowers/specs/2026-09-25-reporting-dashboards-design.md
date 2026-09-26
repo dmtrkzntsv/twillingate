@@ -690,7 +690,8 @@ removes Evidence.
       does not set today): "To integrate a site or app, call
       integration_guide. To build or change dashboards, call
       reporting_guide. System dashboards are read-only; duplicate one to
-      customize it. If widgets broke after an update, call changelog."
+      customize it. If widgets broke after an update, read the release notes
+      at https://github.com/dmtrkzntsv/twillingate/releases."
 
     The workflow it teaches: explore with `query` against the `v_*`
     views; pick a component and alias columns to its inputs
@@ -702,30 +703,23 @@ removes Evidence.
 
 ### Changelog for agents
 
-51. **`changelog` tells an agent what changed on this instance,** so it
-    can work out why a widget broke after an update. MCP tool and
-    `GET /api/changelog?since=`; `since` is a date or a version,
-    default the last 90 days. It answers from what the binary and the
-    database already hold, newest first:
-
-    | Part | Source |
-    | --- | --- |
-    | releases | the running version and links: `https://github.com/dmtrkzntsv/twillingate/releases` and `…/releases/tag/v<version>`, where the published notes already are |
-    | schema | each migration applied here since `since`: `schema_migrations.applied_at`, the migration's header comment (every migration starts with one) and its `deploy/UPGRADES.md` section |
-    | reporting | each `reporting_migrations` entry with its `release` audit entry: components removed (their widgets now have no component), system dashboards and widgets added, changed or removed |
-
-    - **Release notes are not copied into the binary;** they are
-      published on GitHub already. What only the instance knows (which
-      migrations ran here and when, what the migrator changed) is what
-      this tool adds.
-    - **`deploy/UPGRADES.md` is embedded** through a small `deploy`
-      package, as `docs` embeds the contract pages, ranked 0.
-    - **Agents find it:** a `widget_data` refusal for a query that no
-      longer runs, or rows that no longer satisfy the component, ends
-      "if this started after an update, call changelog";
-      `reporting_guide` and the server `instructions` name it; the same
-      text is the resource `docs://changelog` for clients that attach
-      resources.
+51. **No changelog API; agents are pointed at the public release notes.**
+    When widgets break after an update, the answer is in the release notes
+    already published at `https://github.com/dmtrkzntsv/twillingate/releases`
+    (one release per tag, `…/releases/tag/v<version>`), which name breaking
+    view and component changes. Agents are told where to look, and which
+    version runs here:
+    - `docs/reporting.md` has a "When widgets break after an update"
+      section: read the notes of every release between the last known
+      good version and the running one; renamed view columns and removed
+      components are the usual causes; fix with `update_widget`.
+    - `reporting_guide` returns the running version (`internal/version`)
+      with those two links.
+    - A `widget_data` refusal for a query that no longer runs, or rows that
+      no longer satisfy the component, ends "if this started after an
+      update, see the release notes at
+      https://github.com/dmtrkzntsv/twillingate/releases".
+    - The server `instructions` carry the same sentence.
 
 ## Migration 021
 
@@ -760,12 +754,12 @@ code, per the standing rules.
 | cache | the age rules of decision 33, invalidation, one run for simultaneous requests, the boot refusal |
 | manifest | `components.json` matches the widget files in `web/`, and Go loads it |
 | component render | Vitest with Testing Library, per component: renders from sample rows, from no rows, and with each prop; a closed interface's missing optional input (`series`, `previous`, `max`, `size`, `x` on `stat`, `parent`) renders the simpler form; `map` resolves every ISO alpha-2 code in `world-atlas` and lists unknown ones |
-| changelog | `changelog` with a date and with a version returns the running version with its release links, the migrations applied since (with header and `UPGRADES.md` section) and the `release` audit entries since, newest first; a failing `widget_data` refusal names `changelog` |
+| release notes | `reporting_guide` returns the running version and the release links; a failing `widget_data` refusal and the server `instructions` carry the releases URL |
 | guide | `reporting_guide` returns the live components, source types, views, projects and dashboards plus the workflow section; the server's `instructions` name both guides; `docs://reporting` is served; `schema://components`, `schema://dashboards` and `schema://widgets` return exactly what `list_components`, `list_dashboards` and unfiltered `list_widgets` return, reflecting a write made just before |
 | api | MCP ↔ REST parity (the view route REST-only by choice, `reporting_guide` MCP-only by choice); `docs_sync_test` reads `docs/reporting.md` and binds its component table to `components.json` in both directions, and gains the tools, routes, both `REPORTING_*` settings and the range vocabulary; `redirectAllowed` accepts the API host; OAuth end to end through `/app/callback` |
 | read-only | one table of write attempts through `query` and through `widget_data` (`INSERT`, `UPDATE`, `DELETE`, `REPLACE`, `DROP`, `CREATE [TEMP] TABLE`, `WITH … INSERT`, `PRAGMA x = y`, `ATTACH`, `VACUUM INTO`, two statements, `load_extension()`): every one is refused and the database file's checksum is unchanged afterwards |
 | refused names | `meta`, `sqlite_master`, `sqlite_schema`, `sqlite_sequence`, `sqlite_stat1`, `sqlite_dbpage`, `pragma_table_info(…)` and `dbstat` are refused through `query` and `widget_data` in every spelling (quoted `"meta"`, `` `meta` ``, `[meta]`, `main.meta`, upper case); `'meta'` in a string literal, `meta` in a comment, and columns such as `metadata` and `attachment` pass; no `v_*` view definition references a refused name |
-| archtest | `internal/reporting` at rank 1, `internal/shared/sortkey`, `internal/shared/readsql` and `deploy` at rank 0 |
+| archtest | `internal/reporting` at rank 1, `internal/shared/sortkey` and `internal/shared/readsql` at rank 0 |
 | browser | Playwright against a seeded `serve`: log in, open every system dashboard at desktop and phone width, no error cards; report tabs carry project and range from tab to tab; a user dashboard opens in the standalone shell |
 
 ## Docs
