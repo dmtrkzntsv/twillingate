@@ -343,8 +343,8 @@ removes Evidence.
 27. **Every write validates the whole result** and refuses with
     `ErrInvalid`, in words an agent can act on:
     - the component exists and accepts the source type:
-      "component `pie` does not exist; list_components names the 6 there
-      are";
+      "component `gauge` does not exist; list_components names the
+      ones there are";
     - `sql`: only the three parameters ("sql uses `:path`; widgets get only
       `:project`, `:from` and `:to`"); the query runs as
       `SELECT * FROM (…) LIMIT 0` on the read pool with sample values bound
