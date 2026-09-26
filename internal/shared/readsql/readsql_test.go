@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -106,6 +107,9 @@ func TestQueryNamedParams(t *testing.T) {
 
 func TestQueryRefusesWrites(t *testing.T) {
 	db, path := newTestDB(t, 2*time.Second, 1000)
+	// A target for the VACUUM INTO escape below: if Check ever regresses
+	// and lets it run, a file appears here.
+	vacuumTarget := filepath.Join(t.TempDir(), "escaped-copy.db")
 	before := hashFile(t, path)
 	for _, q := range []string{
 		`INSERT INTO projects(name) VALUES('x')`,
@@ -117,10 +121,18 @@ func TestQueryRefusesWrites(t *testing.T) {
 		`CREATE TEMP TABLE t(x)`,
 		`WITH x AS (SELECT 1) INSERT INTO projects(name) SELECT 'x'`,
 		`PRAGMA user_version = 5`,
+		`PRAGMA query_only=0`,
 		`ATTACH 'y.db' AS y`,
 		`VACUUM INTO 'z.db'`,
 		`SELECT 1; SELECT 2`,
 		`SELECT load_extension('x')`,
+		// The three below escape the subquery wrap itself: a stray ')'
+		// with no matching '(' earlier in the text closes the wrapper's
+		// own paren early, and the driver runs whatever textually
+		// follows as a separate statement on the same call.
+		`select 1); select 2; select * from (select 3`,
+		fmt.Sprintf(`select 1 where 0); PRAGMA query_only=0; VACUUM INTO '%s'; select * from (select 1`, vacuumTarget),
+		`select 1); CREATE TEMP VIEW v_retention AS SELECT 'poisoned' AS cohort_day; select * from (select 1`,
 	} {
 		if _, err := db.Query(context.Background(), q); err == nil {
 			t.Errorf("Query(%q) succeeded, want an error", q)
@@ -129,6 +141,22 @@ func TestQueryRefusesWrites(t *testing.T) {
 	after := hashFile(t, path)
 	if before != after {
 		t.Error("database file changed after write attempts")
+	}
+	if _, err := os.Stat(vacuumTarget); !os.IsNotExist(err) {
+		t.Errorf("VACUUM INTO escape wrote %s", vacuumTarget)
+	}
+	// The CREATE TEMP VIEW escape, if it had run, would shadow the real
+	// v_retention for whichever pooled connection executed it — poisoning
+	// every later trusted Run/Query that lands on that connection. Check
+	// refuses it before it ever reaches the driver, so no temp view exists
+	// on any connection to poison.
+	temp, err := db.Run(context.Background(),
+		`SELECT count(*) FROM sqlite_temp_master WHERE type='view' AND name='v_retention'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(temp.Rows) != 1 || temp.Rows[0][0] != "0" {
+		t.Errorf("a poisoned temp view v_retention exists: %v", temp.Rows)
 	}
 }
 

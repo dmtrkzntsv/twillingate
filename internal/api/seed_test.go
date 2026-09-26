@@ -108,8 +108,12 @@ func newTestHost(t *testing.T) (*host, *mcp.ClientSession) {
 	if err := reg.Reload(ctx); err != nil {
 		t.Fatal(err)
 	}
-	h := &host{db: db, dbPath: path, reg: reg, ops: manage.NewOps(reg, st),
+	h := &host{db: db, reg: reg, ops: manage.NewOps(reg, st),
 		publicURL: "https://collector.test", logger: logger}
+	// host itself carries no path (production has no need for one once
+	// opened); setGuards needs it to reopen with different guards, so the
+	// test side remembers it here, keyed by the host it belongs to.
+	testDBPaths[h] = path
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "analytics", Version: "test"}, nil)
 	h.register(&registrar{mcp: srv, logger: logger})
@@ -148,6 +152,11 @@ func seedDB(t *testing.T) string {
 	return path
 }
 
+// testDBPaths remembers the file each test host's database was opened
+// from, so setGuards can reopen it with different guards; see
+// newTestHost. Production's host carries no such field.
+var testDBPaths = map[*host]string{}
+
 // setGuards reopens h's database with a different timeout and/or row cap
 // for one test — host carries neither directly, only the readsql.DB does
 // (readsql.DB.Timeout/MaxRows) — and closes the replaced handle on
@@ -155,7 +164,11 @@ func seedDB(t *testing.T) string {
 // swapping h.db here is visible to the next tool call.
 func setGuards(t *testing.T, h *host, timeout time.Duration, maxRows int) {
 	t.Helper()
-	db, err := readsql.Open(h.dbPath, timeout, maxRows)
+	path, ok := testDBPaths[h]
+	if !ok {
+		t.Fatal("setGuards: h was not built by newTestHost")
+	}
+	db, err := readsql.Open(path, timeout, maxRows)
 	if err != nil {
 		t.Fatal(err)
 	}

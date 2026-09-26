@@ -5,11 +5,14 @@
 //  1. the connection pool is opened mode=ro with query_only and
 //     _defensive pragmas, so a write cannot succeed even through a bug
 //     elsewhere in this package;
-//  2. Check tokenizes the text and refuses ATTACH and any read of meta
-//     or a SQLite internal table or pragma view;
-//  3. Query wraps the text as a subquery with the row cap in the same
-//     clause, so DDL, PRAGMA and a second statement become syntax
-//     errors rather than executing;
+//  2. Check tokenizes the text and refuses ATTACH, any read of meta or a
+//     SQLite internal table or pragma view, and a second statement —
+//     the driver runs every statement it is given, so Check tracks paren
+//     depth and statement boundaries itself rather than relying on the
+//     wrap below to contain one;
+//  3. Query wraps the checked text as a subquery with the row cap in the
+//     same clause, so a single statement that is not itself a query —
+//     DDL, PRAGMA — becomes a syntax error instead of executing;
 //  4. Run enforces a deadline on every query, custom or not.
 package readsql
 

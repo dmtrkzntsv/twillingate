@@ -14,11 +14,16 @@ type queryIn struct {
 }
 
 // runQuery applies the four guard layers of endpoint spec §8, all inside
-// readsql.Query: the pool is mode=ro + query_only + _defensive, the text
-// is checked and refused (ATTACH; meta and SQLite internals), wrapped as
-// a subquery with the row cap in the same clause, and run against a
-// deadline. This tool keeps only the messages: readsql's sentinel errors
-// map back to the wording this tool has always used.
+// readsql.Query: the pool is mode=ro + query_only + _defensive; the text
+// is checked and refused (ATTACH; meta and SQLite internals; a second
+// statement — readsql.Check tracks paren depth and statement boundaries
+// itself, since the driver runs every statement it is given and a stray
+// ')' or ';' could otherwise ride a trailing statement in on the same
+// call); it is then wrapped as a subquery with the row cap in the same
+// clause, so a checked single statement that is not itself a query
+// becomes a syntax error; and it runs against a deadline. This tool
+// keeps only the messages: readsql's sentinel errors map back to the
+// wording this tool has always used.
 func (h *host) runQuery(ctx context.Context, in queryIn) (tableOut, error) {
 	h.logger.Debug("mcp query", "sql", in.SQL) // debug only, never info (spec §8)
 	res, err := h.db.Query(ctx, in.SQL)

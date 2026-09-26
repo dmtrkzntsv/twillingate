@@ -19,10 +19,6 @@ type host struct {
 	db  *readsql.DB
 	reg *manage.Registry
 	ops *manage.Ops
-	// dbPath is the file db was opened from; tests use it to reopen with
-	// a different timeout or row cap (host carries neither directly —
-	// see readsql.DB.Timeout/MaxRows).
-	dbPath string
 	// publicURL is the collector's public base (PUBLIC_URL); snippets and
 	// the integration guide are built from it. Empty means "unknown —
 	// placeholder + tell the operator".

@@ -35,7 +35,7 @@ func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *m
 	if err != nil {
 		return nil, nil, err
 	}
-	h := &host{db: db, dbPath: cfg.API.DBPath, reg: reg, ops: ops,
+	h := &host{db: db, reg: reg, ops: ops,
 		publicURL: cfg.PublicURL, logger: logger}
 	srv := mcp.NewServer(&mcp.Implementation{Name: "twillingate", Version: "1.0.0"}, nil)
 	rest := http.NewServeMux()

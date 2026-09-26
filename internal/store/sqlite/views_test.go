@@ -997,16 +997,19 @@ func TestStitchViewPlatformsAcrossBoundaryWithCap(t *testing.T) {
 	}
 }
 
-// TestViewsReferenceNoRefusedName pins readsql.Check against every v_*
-// view's own definition: the query tool's guard must accept what the
-// schema itself relies on, or a legitimate query through a view would be
-// refused. v_product_attrs is the one declared exception (see its
-// migration): it names meta, but only to read a tuning knob
-// (product_attributes_top_n), never visitor data, so the test asserts
-// that specific, narrow shape rather than allowing "meta" outright.
+// TestViewsReferenceNoRefusedName pins readsql.Check against every view's
+// own definition, not just the v_* ones (raw_views and raw_product are
+// views too): the query tool's guard must accept what the schema itself
+// relies on, or a legitimate query through a view would be refused.
+// v_product_attrs is the one declared exception (see its migration): it
+// names meta, but only to read a tuning knob (product_attributes_top_n),
+// never visitor data. Rather than asserting that narrowly by substring,
+// the test removes exactly that fragment and then holds the remainder to
+// the same bar as every other view: readsql.Check must accept it too, so
+// the exception can never widen into "meta is fine anywhere in this view".
 func TestViewsReferenceNoRefusedName(t *testing.T) {
 	db := newTestDB(t)
-	rows, err := db.db.Query(`SELECT name, sql FROM sqlite_master WHERE type='view' AND name LIKE 'v\_%' ESCAPE '\'`)
+	rows, err := db.db.Query(`SELECT name, sql FROM sqlite_master WHERE type='view'`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1026,8 +1029,8 @@ func TestViewsReferenceNoRefusedName(t *testing.T) {
 				`(SELECT CAST(value AS INTEGER) FROM meta
                    WHERE key='product_attributes_top_n'
                      AND CAST(value AS INTEGER) > 0)`, "50")
-			if strings.Contains(strings.ToLower(withoutException), "from meta") {
-				t.Errorf("%s: names meta somewhere other than the top_n guard:\n%s", name, def)
+			if _, err := readsql.Check(withoutException); err != nil {
+				t.Errorf("%s: still refused after removing the top_n exception (so it names meta, or a refused name, somewhere else): %v\n%s", name, err, withoutException)
 			}
 			continue
 		}
@@ -1039,6 +1042,6 @@ func TestViewsReferenceNoRefusedName(t *testing.T) {
 		t.Fatal(err)
 	}
 	if seen == 0 {
-		t.Fatal("no v_* views found in sqlite_master; the scan is broken, not the schema")
+		t.Fatal("no views found in sqlite_master; the scan is broken, not the schema")
 	}
 }
