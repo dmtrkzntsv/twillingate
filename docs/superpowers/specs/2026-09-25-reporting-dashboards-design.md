@@ -67,22 +67,24 @@ removes Evidence.
    dashboards            id INTEGER PK AUTOINCREMENT, owner ('system'|'user'), title, position,
                          default_range, last_project_id, last_range, last_from, last_to,
                          created_at, updated_at, archived_at
-   dashboard_rows        dashboard_id REFERENCES dashboards(id) ON DELETE CASCADE,
-                         row, height,                              PK (dashboard_id, row)
-   widgets               id INTEGER PK AUTOINCREMENT, dashboard_id, row, col,
-                         FOREIGN KEY (dashboard_id, row) REFERENCES dashboard_rows
-                           ON DELETE CASCADE ON UPDATE CASCADE,
-                         name, component, title, props (JSON), source_type (TEXT),
-                         source (TEXT), created_at, updated_at
+   dashboard_rows        id INTEGER PK AUTOINCREMENT,
+                         dashboard_id REFERENCES dashboards(id) ON DELETE CASCADE,
+                         sort_key TEXT, height
+   widgets               id INTEGER PK AUTOINCREMENT,
+                         dashboard_id REFERENCES dashboards(id) ON DELETE CASCADE,
+                         row_id REFERENCES dashboard_rows(id) ON DELETE CASCADE,
+                         sort_key TEXT, name, component, title, props (JSON),
+                         source_type (TEXT), source (TEXT), created_at, updated_at
    reporting_migrations  id INTEGER PK AUTOINCREMENT, hash, version, applied_at
    ```
 
-   Two foreign keys and no checks or triggers: a row belongs to its
-   dashboard and a widget to its row, so deleting a dashboard deletes its
-   rows and their widgets, and renumbering a row carries its widgets
-   along. `widgets` is unique on (`dashboard_id`, `name`), which the
-   migrator matches on, and on (`dashboard_id`, `row`, `col`), so a
-   position holds one widget. Every other rule below is enforced in Go
+   Cascading foreign keys and no checks or triggers: a row belongs to its
+   dashboard and a widget to its dashboard and its row, so deleting a
+   dashboard deletes its rows and widgets, and deleting a row its
+   widgets. Unique indexes: `dashboard_rows (dashboard_id, sort_key)`,
+   `widgets (row_id, sort_key)`, and `widgets (dashboard_id, name)`,
+   which the migrator matches on. That a widget's row is on the widget's
+   own dashboard is checked in Go. Every other rule below is enforced in Go
    (the standing rule, no validation in the database). The cascade
    removes widgets without Go seeing them, so every transaction that
    deletes a dashboard ends with the removed-component cleanup
@@ -126,12 +128,19 @@ removes Evidence.
    widget; an agent gives it or it is
    derived from the title (lower case, `-` for runs of other characters),
    with `-2`, `-3`, … added when taken.
-10. **Layout is rows in a table.** `dashboard_rows` holds each row's
-    `height` (1–3); a widget's place is its own `row` and `col`. Rows are
-    numbered 1…n and columns 1…k with no gaps, 1–3 widgets per row, side
-    by side at equal width; every write keeps that (a row left empty is
-    deleted and the rows after it renumbered). There is no second copy of
-    the layout for the widgets to disagree with. At the edges (system
+10. **Layout is rows in a table, ordered by sort keys.** `dashboard_rows`
+    holds each row's `height` (1–3); a widget's place is its `row_id` and
+    its position in that row. Rows, and widgets within a row, are ordered
+    by `sort_key`: a fractional index (the `fractional-indexing` scheme,
+    e.g. Go's `github.com/rocicorp/fracdex`, or ~150 lines of our own),
+    where a key can always be generated between two others (`a0`, `a0V`,
+    `a1`). Inserting writes one key; deleting removes one record; nothing
+    is ever renumbered or rebalanced. A row whose last widget goes is
+    deleted, alone. 1–3 widgets per row, side by side at equal width.
+    Agents never see keys: tools and the `layout` shape use 1-based
+    `row`/`col` positions, which `reporting` turns into a key between
+    the neighbours. There is no second copy of the layout for the widgets
+    to disagree with. At the edges (system
     files, `get_dashboard`, `create_dashboard`, `update_dashboard`) the
     layout travels as one shape, `[{"height": 1..3, "widgets": ["name",
     …]}, …]`, translated to and from the rows. A row given without
@@ -253,13 +262,18 @@ removes Evidence.
     Otherwise, in one transaction:
     1. components: upsert by name and clear `removed_at`; set `removed_at`
        on the ones missing from the manifest;
-    2. system dashboards: upsert by `id` (title, position, default range,
-       layout), keeping `last_project_id` and `last_range`; delete system
-       dashboards no file claims, with their widgets;
-    3. widgets, per system dashboard: upsert by name, keeping the id;
-       insert new ones; delete ones with no file;
-    4. delete removed components no widget uses;
-    5. append a `reporting_migrations` row (hash, build version) and one
+    2. system dashboards: upsert by `id` (title, position, default
+       range), keeping the stored last selection; delete system
+       dashboards no file claims, with their rows and widgets;
+    3. rows, per system dashboard: the file's *i*-th row is the *i*-th
+       row by `sort_key`; update heights, append or keep surplus rows for
+       now;
+    4. widgets, per system dashboard: upsert by name, keeping the id, and
+       place each in its row with a fresh key; insert new ones; delete
+       ones with no file; then delete surplus rows, which are empty by
+       now, so the cascade never takes a widget that survives;
+    5. delete removed components no widget uses;
+    6. append a `reporting_migrations` row (hash, build version) and one
        `audit_log` entry, actor `release`, listing what was added, changed
        and removed.
 
@@ -326,7 +340,7 @@ removes Evidence.
     | `add_widget` | `POST /api/dashboards/{dashboard_id}/widgets` → 201 | no `row`: a new last row; `row` alone: append; `row` and `col`: insert and shift right |
     | `update_widget` | `PATCH /api/widgets/{widget_id}` | name, component, title, props, source |
     | `copy_widget` | `POST /api/widgets/{widget_id}/copy` → 201 | an independent copy into `dashboard_id`, optional `row`/`col`; the source may be a system widget |
-    | `remove_widget` | `DELETE /api/widgets/{widget_id}` | deletes it; a row left empty is deleted and later rows renumbered |
+    | `remove_widget` | `DELETE /api/widgets/{widget_id}` | deletes it; a row left empty is deleted, and nothing else changes |
 
     A source is `{"type": "sql"|"md", "content": "…"}`.
 30. **REST only:** `PUT /api/dashboards/{dashboard_id}/view` with a JSON
@@ -460,9 +474,9 @@ removes Evidence.
 ## Migration 021
 
 `021_reporting.sql` creates `components`, `dashboards`, `dashboard_rows`,
-`widgets` and `reporting_migrations`, the two unique indexes on `widgets`
-and the cascading foreign keys (rows to dashboards, widgets to rows), and
-sets
+`widgets` and `reporting_migrations`, the three sort-key and name unique
+indexes and the cascading foreign keys (rows to dashboards; widgets to
+dashboards and rows), and sets
 `sqlite_sequence` for `dashboards` to 1000. It copies nothing. The
 system dashboards arrive through the migrator on the same run. Its test
 pins the ceiling at 21 and migrates to latest before calling current Go
@@ -474,7 +488,7 @@ code, per the standing rules.
 | --- | --- |
 | validation | each refusal in decision 27 fires with its sentinel and message |
 | projects | a widget using `:project` requires `project_id` in `widget_data` and keys its cache by it; a fixed widget ignores it and keys without it; the switcher is present exactly when a widget uses `:project` |
-| layout | add, copy, remove and `update_dashboard` keep rows and columns gapless with 1–3 widgets per row; append, insert-with-shift, empty-row deletion with renumbering; the `layout` shape round-trips through the rows; a second widget at a taken position is refused by the unique index |
+| layout | add, copy, remove and `update_dashboard` keep 1–3 widgets per row; append, insert before and between (one key written, no other record touched), empty-row deletion (no other record touched); `row`/`col` positions map to keys and back; the `layout` shape round-trips through the rows; many inserts at one spot keep keys ordered and short enough; the migrator's row matching keeps widget ids |
 | foreign keys | deleting a dashboard deletes its rows and widgets and then any removed component they were the last users of; writer connections report `foreign_keys = 1`; `DeleteProject` succeeds with keys present; a migration leaving a violation fails `foreign_key_check`; existing databases pass the check after 021 |
 | source types | an unregistered `source_type` is refused; a component's `accepts` naming an unregistered type fails the migrator; `sql` and `md` each validate and load through the registry |
 | components | a removed component is refused for new use, answers `removed`, and is deleted with its last widget, including when the migrator deletes a system dashboard |
