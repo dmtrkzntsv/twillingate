@@ -40,3 +40,32 @@ Element.prototype.getBoundingClientRect = function (this: Element) {
   }
   return realGetBoundingClientRect.call(this)
 }
+
+// jsdom has no matchMedia either. Answer width queries against
+// window.innerWidth (a test can set it to play a phone or a desktop) and
+// everything else (hover, color scheme) with false.
+function matches(query: string): boolean {
+  const width = window.innerWidth
+  const min = /min-width:\s*(\d+)px/.exec(query)
+  const max = /max-width:\s*(\d+)px/.exec(query)
+  if (!min && !max) return false
+  return (!min || width >= Number(min[1])) && (!max || width <= Number(max[1]))
+}
+
+Object.defineProperty(window, 'matchMedia', {
+  writable: true,
+  configurable: true,
+  value: (query: string): MediaQueryList =>
+    ({
+      media: query,
+      get matches() {
+        return matches(query)
+      },
+      onchange: null,
+      addEventListener() {},
+      removeEventListener() {},
+      addListener() {},
+      removeListener() {},
+      dispatchEvent: () => false,
+    }) as MediaQueryList,
+})

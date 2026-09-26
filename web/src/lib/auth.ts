@@ -66,10 +66,17 @@ export function sanitizeReturnTo(v: string | null | undefined): string {
   return v
 }
 
-function defaultUnauthorized(): void {
+/**
+ * Where the app is now, inside its `/app` base and with its query string:
+ * the page to come back to after logging in.
+ */
+export function currentAppPath(): string {
   const path = window.location.pathname.replace(/^\/app(?=\/|$)/, '') || '/'
-  const returnTo = sanitizeReturnTo(path)
-  window.location.assign(`/app/login?returnTo=${encodeURIComponent(returnTo)}`)
+  return sanitizeReturnTo(path + window.location.search)
+}
+
+function defaultUnauthorized(): void {
+  window.location.assign(`/app/login?returnTo=${encodeURIComponent(currentAppPath())}`)
 }
 
 let unauthorized: () => void = defaultUnauthorized

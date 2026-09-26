@@ -4,6 +4,9 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import './index.css'
 import App from './App.tsx'
 import { ApiError } from './lib/api.ts'
+import { followSystemTheme } from './lib/theme.ts'
+
+followSystemTheme()
 
 const queryClient = new QueryClient({
   defaultOptions: {

@@ -50,8 +50,8 @@ async function s256(verifier: string): Promise<string> {
 // still works.
 function mockNavigate(): ReturnType<typeof vi.fn> {
   const assign = vi.fn()
-  const { origin, pathname, href } = window.location
-  vi.stubGlobal('location', { origin, pathname, href, assign })
+  const { origin, pathname, search, href } = window.location
+  vi.stubGlobal('location', { origin, pathname, search, href, assign })
   return assign
 }
 
@@ -427,6 +427,15 @@ describe('reportUnauthorized', () => {
     reportUnauthorized()
 
     expect(assign).toHaveBeenCalledWith('/app/login?returnTo=%2Fdashboards%2F7')
+  })
+
+  it('keeps the query string in returnTo', () => {
+    window.history.pushState({}, '', '/app/dashboards/7?project=1&range=30d')
+    const assign = mockNavigate()
+
+    reportUnauthorized()
+
+    expect(assign).toHaveBeenCalledWith('/app/login?returnTo=%2Fdashboards%2F7%3Fproject%3D1%26range%3D30d')
   })
 
   it('falls back to "/" outside of /app', () => {

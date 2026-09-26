@@ -45,19 +45,21 @@ function parseProjectId(v: string | null): number | undefined {
  * Picks the project and/or range a dashboard shows (D34): the URL wins,
  * then the stored selection (if its project is still active), then the
  * first active project with the 7-day range. A part is left out entirely
- * when the dashboard has no switcher for it.
+ * when the dashboard has no switcher for it. The URL may also name an
+ * archived project, since the project switcher offers those too.
  */
 export function chooseSelection(
   url: URLSearchParams,
   stored: StoredSelection,
   activeProjects: number[],
-  switchers: Switchers
+  switchers: Switchers,
+  archivedProjects: number[] = []
 ): Selection {
   const selection: Selection = {}
 
   if (switchers.project) {
     const fromURL = parseProjectId(url.get('project'))
-    if (fromURL !== undefined && activeProjects.includes(fromURL)) {
+    if (fromURL !== undefined && (activeProjects.includes(fromURL) || archivedProjects.includes(fromURL))) {
       selection.projectId = fromURL
     } else if (stored.project_id !== undefined && activeProjects.includes(stored.project_id)) {
       selection.projectId = stored.project_id

@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { useNavigate, useSearchParams } from 'react-router'
+import StatusCard from '@/components/StatusCard'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { authProviderHint, beginLogin, detectAuth, sanitizeReturnTo, setPastedToken } from '@/lib/auth'
 
@@ -56,40 +56,35 @@ function Login() {
     navigate(returnTo, { replace: true })
   }
 
+  const description =
+    mode === 'checking'
+      ? 'Checking how to sign in…'
+      : mode === 'redirecting'
+        ? 'Redirecting to sign in…'
+        : mode === 'paste'
+          ? providerHint
+            ? `${providerHint} has no self-service sign-in. Paste an API token to continue.`
+            : 'Paste an API token to continue.'
+          : error
+
   return (
-    <div className="flex min-h-svh items-center justify-center p-6">
-      <Card className="w-full max-w-sm">
-        <CardHeader>
-          <CardTitle>Sign in</CardTitle>
-          {mode === 'checking' && <CardDescription>Checking how to sign in…</CardDescription>}
-          {mode === 'redirecting' && <CardDescription>Redirecting to sign in…</CardDescription>}
-          {mode === 'paste' && (
-            <CardDescription>
-              {providerHint
-                ? `${providerHint} has no self-service sign-in. Paste an API token to continue.`
-                : 'Paste an API token to continue.'}
-            </CardDescription>
-          )}
-          {mode === 'error' && error && <CardDescription>{error}</CardDescription>}
-        </CardHeader>
-        {mode === 'paste' && (
-          <CardContent>
-            <form className="flex flex-col gap-3" onSubmit={submit}>
-              <Input
-                type="password"
-                placeholder="Bearer token"
-                autoFocus
-                value={token}
-                onChange={(e) => setToken(e.target.value)}
-              />
-              <Button type="submit" disabled={!token.trim()}>
-                Continue
-              </Button>
-            </form>
-          </CardContent>
-        )}
-      </Card>
-    </div>
+    <StatusCard title="Sign in" description={description}>
+      {mode === 'paste' && (
+        <form className="flex flex-col gap-3" onSubmit={submit}>
+          <Input
+            type="password"
+            placeholder="Bearer token"
+            aria-label="API token"
+            autoFocus
+            value={token}
+            onChange={(e) => setToken(e.target.value)}
+          />
+          <Button type="submit" disabled={!token.trim()}>
+            Continue
+          </Button>
+        </form>
+      )}
+    </StatusCard>
   )
 }
 

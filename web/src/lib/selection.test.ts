@@ -20,6 +20,11 @@ describe('chooseSelection', () => {
     })
   })
 
+  it('takes an archived project from the URL, never from storage', () => {
+    expect(chooseSelection(new URLSearchParams('project=9'), {}, [1], BOTH, [9]).projectId).toBe(9)
+    expect(chooseSelection(new URLSearchParams(), { project_id: 9 }, [1], BOTH, [9]).projectId).toBe(1)
+  })
+
   it('falls back to the stored selection when the URL has none', () => {
     const url = new URLSearchParams()
     const stored = { project_id: 5, range: '30d' }

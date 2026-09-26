@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Link, useNavigate } from 'react-router'
+import StatusCard from '@/components/StatusCard'
+import { Button } from '@/components/ui/button'
 import { completeLogin } from '@/lib/auth'
 
 function Callback() {
@@ -21,22 +22,13 @@ function Callback() {
     }
   }, [navigate])
 
+  if (!error) return <StatusCard title="Signing in…" />
   return (
-    <div className="flex min-h-svh items-center justify-center p-6">
-      <Card className="w-full max-w-sm">
-        <CardHeader>
-          <CardTitle>{error ? 'Sign in failed' : 'Signing in…'}</CardTitle>
-          {error && <CardDescription>{error}</CardDescription>}
-        </CardHeader>
-        {error && (
-          <CardContent>
-            <a className="text-sm underline" href="/app/login">
-              Try again
-            </a>
-          </CardContent>
-        )}
-      </Card>
-    </div>
+    <StatusCard title="Sign in failed" description={error}>
+      <Button asChild variant="outline" className="w-full">
+        <Link to="/login">Try again</Link>
+      </Button>
+    </StatusCard>
   )
 }
 

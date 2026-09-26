@@ -1,60 +1,66 @@
-import { useEffect } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useEffect, type ReactNode } from 'react'
+import { WifiOffIcon } from 'lucide-react'
 import { BrowserRouter, Route, Routes, useNavigate } from 'react-router'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { endpoints } from '@/lib/api'
+import StatusCard from '@/components/StatusCard'
+import { TooltipProvider } from '@/components/ui/tooltip'
+import { useOnline } from '@/hooks/use-online'
+import { currentAppPath, onUnauthorized } from '@/lib/auth'
 import Callback from '@/pages/Callback'
+import Dashboard from '@/pages/Dashboard'
+import Home from '@/pages/Home'
 import Login from '@/pages/Login'
 
-const LAST_DASHBOARD_KEY = 'twillingate.last_dashboard'
-
-/**
- * "/" itself shows nothing: it picks a dashboard (the last one opened on
- * this device, else the first system dashboard) and redirects to it.
- */
-function Home() {
+/** Sends a request the API refused with 401 to the login page, in-app, coming back here after. */
+function LoginOnUnauthorized() {
   const navigate = useNavigate()
-  const { data } = useQuery({ queryKey: ['dashboards'], queryFn: endpoints.dashboards })
-
   useEffect(() => {
-    if (!data) return
-    const lastId = Number(localStorage.getItem(LAST_DASHBOARD_KEY))
-    const target =
-      data.dashboards.find((d) => d.dashboard_id === lastId) ??
-      data.dashboards.find((d) => d.owner === 'system') ??
-      data.dashboards[0]
-    if (target) navigate(`/dashboards/${target.dashboard_id}`, { replace: true })
-  }, [data, navigate])
-
+    onUnauthorized(() => {
+      const returnTo = currentAppPath()
+      // Several requests can fail at once: only the first one navigates.
+      if (returnTo.startsWith('/login') || returnTo.startsWith('/callback')) return
+      navigate(`/login?returnTo=${encodeURIComponent(returnTo)}`, { replace: true })
+    })
+  }, [navigate])
   return null
 }
 
-// Placeholder for the dashboard shell Task 19 builds; keeps the route wired
-// up and the app's landing content visible in the meantime.
-function DashboardPlaceholder() {
+/** Offline, the installed app opens but shows no data (D42). */
+function OnlineOnly({ children }: { children: ReactNode }) {
+  const online = useOnline()
+  if (online) return children
   return (
-    <div className="flex min-h-svh items-center justify-center p-6">
-      <Card className="w-full max-w-sm">
-        <CardHeader>
-          <CardTitle>twillingate</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-muted-foreground text-sm">Dashboards are on their way.</p>
-        </CardContent>
-      </Card>
-    </div>
+    <StatusCard title="Offline" description="Offline — showing nothing until the connection is back">
+      <WifiOffIcon className="mx-auto size-6 text-muted-foreground" />
+    </StatusCard>
   )
 }
 
 function App() {
   return (
     <BrowserRouter basename="/app">
-      <Routes>
-        <Route path="/" element={<Home />} />
-        <Route path="/dashboards/:id" element={<DashboardPlaceholder />} />
-        <Route path="/callback" element={<Callback />} />
-        <Route path="/login" element={<Login />} />
-      </Routes>
+      <LoginOnUnauthorized />
+      <TooltipProvider>
+        <Routes>
+          <Route
+            path="/"
+            element={
+              <OnlineOnly>
+                <Home />
+              </OnlineOnly>
+            }
+          />
+          <Route
+            path="/dashboards/:id"
+            element={
+              <OnlineOnly>
+                <Dashboard />
+              </OnlineOnly>
+            }
+          />
+          <Route path="/callback" element={<Callback />} />
+          <Route path="/login" element={<Login />} />
+        </Routes>
+      </TooltipProvider>
     </BrowserRouter>
   )
 }
