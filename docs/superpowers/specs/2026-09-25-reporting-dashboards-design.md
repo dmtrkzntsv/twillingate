@@ -564,6 +564,12 @@ removes Evidence.
     `readsql`'s read-only handle, a distinct type, so handing it the
     store's writer does not compile. `reporting dev` opens `--db` through
     the same function.
+47. **Reads are not restricted by table.** Custom SQL may read any table,
+    not only the `v_*` views: a database holds one tenant, and whoever
+    holds the API login controls that tenant's data (on a self-hosted
+    install they could read the file anyway). Ingest keys in particular
+    are public by design, since every tracked page carries one, and an
+    agent reads them to install the snippet.
 
 ## Migration 021
 
@@ -644,7 +650,12 @@ In the same PR as the change:
 
 ## Out of scope
 
-- Multi-tenant cloud: accounts, billing, one database per tenant.
+- Multi-tenant cloud: accounts, billing, one database per tenant. It must
+  revisit decision 47 for one table: `meta` holds the daily visitor salt,
+  and a hosted tenant, who has no file access, could use it with custom
+  SQL to brute-force visitor IPs from `sha256(salt, ip, user_agent,
+  project)`. Candidate fixes: an `EXPLAIN`-based refusal of plans that
+  open `meta`, or keeping the salt out of the database.
 - A native desktop app (Wails or Tauri) around the same bundle.
 - Any editing in the UI.
 - Deleting user dashboards. Agents archive and restore them; the only
