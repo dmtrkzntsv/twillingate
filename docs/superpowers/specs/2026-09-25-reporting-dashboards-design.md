@@ -680,7 +680,7 @@ removes Evidence.
       does not set today): "To integrate a site or app, call
       integration_guide. To build or change dashboards, call
       reporting_guide. System dashboards are read-only; duplicate one to
-      customize it."
+      customize it. If widgets broke after an update, call changelog."
 
     The workflow it teaches: explore with `query` against the `v_*`
     views; pick a component and alias columns to its inputs
@@ -688,6 +688,35 @@ removes Evidence.
     `:from`/`:to`, or fixed); `add_widget` with `after`, `width` and
     `height`; check `widget_data`; fix with `update_widget`; archive to
     undo; duplicate a system dashboard to customize it.
+
+
+### Changelog for agents
+
+51. **`changelog` tells an agent what changed on this instance,** so it
+    can work out why a widget broke after an update. MCP tool and
+    `GET /api/changelog?since=`; `since` is a date or a version,
+    default the last 90 days. It answers from what the binary and the
+    database already hold, with no network access, newest first:
+
+    | Part | Source |
+    | --- | --- |
+    | releases | each version's notes (`feat`, `fix`, `perf`, breaking marked), embedded at build |
+    | schema | each migration applied here since `since`: `schema_migrations.applied_at`, the migration's header comment (every migration starts with one) and its `deploy/UPGRADES.md` section |
+    | reporting | each `reporting_migrations` entry with its `release` audit entry: components removed (their widgets now have no component), system dashboards and widgets added, changed or removed |
+
+    - **Release notes are embedded at build.** The release job writes the
+      same `feat`/`fix`/`perf` entries changelogithub publishes into
+      `internal/version/notes/` before `go build`, and `go:embed`
+      carries them; a build from source has none and says "development
+      build: no release notes".
+    - **`deploy/UPGRADES.md` is embedded** through a small `deploy`
+      package, as `docs` embeds the contract pages, ranked 0.
+    - **Agents find it:** a `widget_data` refusal for a query that no
+      longer runs, or rows that no longer satisfy the component, ends
+      "if this started after an update, call changelog";
+      `reporting_guide` and the server `instructions` name it; the same
+      text is the resource `docs://changelog` for clients that attach
+      resources.
 
 ## Migration 021
 
@@ -721,11 +750,12 @@ code, per the standing rules.
 | cache | the age rules of decision 33, invalidation, one run for simultaneous requests, the boot refusal |
 | manifest | `components.json` matches the widget files in `web/`, and Go loads it |
 | component render | Vitest with Testing Library, per component: renders from sample rows, from no rows, and with each prop; a closed interface's missing optional input (`series`, `previous`, `max`, `size`, `x` on `stat`, `parent`) renders the simpler form; `map` resolves every ISO alpha-2 code in `world-atlas` and lists unknown ones |
+| changelog | `changelog` with a date and with a version returns the releases, the migrations applied since (with header and `UPGRADES.md` section) and the `release` audit entries since, newest first; a development build says it has no release notes; a failing `widget_data` refusal names `changelog`; the release job embeds notes that match what changelogithub publishes |
 | guide | `reporting_guide` returns the live components, source types, views, projects and dashboards plus the workflow section; the server's `instructions` name both guides; `docs://reporting` is served; `schema://components`, `schema://dashboards` and `schema://widgets` return exactly what `list_components`, `list_dashboards` and unfiltered `list_widgets` return, reflecting a write made just before |
 | api | MCP ↔ REST parity (the view route REST-only by choice, `reporting_guide` MCP-only by choice); `docs_sync_test` reads `docs/reporting.md` and binds its component table to `components.json` in both directions, and gains the tools, routes, both `REPORTING_*` settings and the range vocabulary; `redirectAllowed` accepts the API host; OAuth end to end through `/app/callback` |
 | read-only | one table of write attempts through `query` and through `widget_data` (`INSERT`, `UPDATE`, `DELETE`, `REPLACE`, `DROP`, `CREATE [TEMP] TABLE`, `WITH … INSERT`, `PRAGMA x = y`, `ATTACH`, `VACUUM INTO`, two statements, `load_extension()`): every one is refused and the database file's checksum is unchanged afterwards |
 | refused names | `meta`, `sqlite_master`, `sqlite_schema`, `sqlite_sequence`, `sqlite_stat1`, `sqlite_dbpage`, `pragma_table_info(…)` and `dbstat` are refused through `query` and `widget_data` in every spelling (quoted `"meta"`, `` `meta` ``, `[meta]`, `main.meta`, upper case); `'meta'` in a string literal, `meta` in a comment, and columns such as `metadata` and `attachment` pass; no `v_*` view definition references a refused name |
-| archtest | `internal/reporting` at rank 1, `internal/shared/sortkey` and `internal/shared/readsql` at rank 0 |
+| archtest | `internal/reporting` at rank 1, `internal/shared/sortkey`, `internal/shared/readsql` and `deploy` at rank 0 |
 | browser | Playwright against a seeded `serve`: log in, open every system dashboard at desktop and phone width, no error cards; report tabs carry project and range from tab to tab; a user dashboard opens in the standalone shell |
 
 ## Docs
@@ -758,6 +788,8 @@ In the same PR as the change:
   switches or archives them; a binary rollback re-migrates system
   dashboards and permanently clears the component of widgets on
   components the older release lacks (decision 25).
+- `.github/workflows/release.yml`: write the release notes into
+  `internal/version/notes/` before building the tarballs.
 - `CLAUDE.md`: three contract pages, not two (`docs/reporting.md` joins,
   and the "do not add files there" rule names it), with its rows in the
   docs table (reporting tools, components, views used by system
