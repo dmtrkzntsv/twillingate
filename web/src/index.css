@@ -122,3 +122,48 @@
     @apply bg-background text-foreground;
     }
 }
+
+/* A few element styles for the `markdown` widget, standing in for the
+   Tailwind typography plugin (not a dependency here): just enough to make
+   prose readable inside a card. */
+@layer components {
+  .prose-widget h1 {
+    @apply mt-4 mb-2 text-xl font-semibold first:mt-0;
+  }
+  .prose-widget h2 {
+    @apply mt-4 mb-2 text-lg font-semibold first:mt-0;
+  }
+  .prose-widget h3 {
+    @apply mt-3 mb-1 text-base font-semibold first:mt-0;
+  }
+  .prose-widget p {
+    @apply my-2 leading-relaxed first:mt-0 last:mb-0;
+  }
+  .prose-widget ul {
+    @apply my-2 list-disc pl-5;
+  }
+  .prose-widget ol {
+    @apply my-2 list-decimal pl-5;
+  }
+  .prose-widget li {
+    @apply my-1;
+  }
+  .prose-widget a {
+    @apply text-primary underline underline-offset-2;
+  }
+  .prose-widget code {
+    @apply rounded-sm bg-muted px-1 py-0.5 font-mono text-xs;
+  }
+  .prose-widget pre {
+    @apply my-2 overflow-x-auto rounded-md bg-muted p-2;
+  }
+  .prose-widget pre code {
+    @apply bg-transparent p-0;
+  }
+  .prose-widget blockquote {
+    @apply my-2 border-l-2 border-border pl-3 text-muted-foreground;
+  }
+  .prose-widget hr {
+    @apply my-4 border-border;
+  }
+}

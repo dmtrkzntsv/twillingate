@@ -150,6 +150,45 @@
       "default_height": 8
     },
     {
+      "name": "calendar",
+      "description": "A year of days shaded by value, GitHub-style: daily active users, events per day.",
+      "accepts": [
+        "sql"
+      ],
+      "inputs": {
+        "open": false,
+        "columns": [
+          {
+            "name": "day",
+            "types": [
+              "day"
+            ]
+          },
+          {
+            "name": "value",
+            "types": [
+              "number"
+            ]
+          }
+        ]
+      },
+      "props": {
+        "type": "object",
+        "properties": {
+          "format": {
+            "enum": [
+              "number",
+              "percent",
+              "duration"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "default_width": 12,
+      "default_height": 4
+    },
+    {
       "name": "combo",
       "description": "Two related metrics on two axes over the same `x`, e.g. visitors (bar) and bounce rate (line).",
       "accepts": [
@@ -201,6 +240,95 @@
       },
       "default_width": 6,
       "default_height": 8
+    },
+    {
+      "name": "funnel",
+      "description": "A drop-off funnel, steps in query order; a signup or checkout flow.",
+      "accepts": [
+        "sql"
+      ],
+      "inputs": {
+        "open": false,
+        "columns": [
+          {
+            "name": "step",
+            "types": [
+              "text"
+            ]
+          },
+          {
+            "name": "value",
+            "types": [
+              "number"
+            ]
+          }
+        ]
+      },
+      "props": {
+        "type": "object",
+        "properties": {
+          "format": {
+            "enum": [
+              "number",
+              "percent",
+              "duration"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "default_width": 6,
+      "default_height": 8
+    },
+    {
+      "name": "heatmap",
+      "description": "A shaded grid of x by y, e.g. a retention cohort: cohort day x days since.",
+      "accepts": [
+        "sql"
+      ],
+      "inputs": {
+        "open": false,
+        "columns": [
+          {
+            "name": "x",
+            "types": [
+              "text",
+              "day"
+            ]
+          },
+          {
+            "name": "y",
+            "types": [
+              "text",
+              "day"
+            ]
+          },
+          {
+            "name": "value",
+            "types": [
+              "number"
+            ]
+          }
+        ]
+      },
+      "props": {
+        "type": "object",
+        "properties": {
+          "format": {
+            "enum": [
+              "number",
+              "percent",
+              "duration"
+            ]
+          },
+          "labels": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "default_width": 6,
+      "default_height": 10
     },
     {
       "name": "line",
@@ -255,6 +383,63 @@
       },
       "default_width": 6,
       "default_height": 8
+    },
+    {
+      "name": "map",
+      "description": "Countries shaded by value, ISO alpha-2; unmatched codes are listed below the map, not dropped.",
+      "accepts": [
+        "sql"
+      ],
+      "inputs": {
+        "open": false,
+        "columns": [
+          {
+            "name": "country",
+            "types": [
+              "text"
+            ]
+          },
+          {
+            "name": "value",
+            "types": [
+              "number"
+            ]
+          }
+        ]
+      },
+      "props": {
+        "type": "object",
+        "properties": {
+          "format": {
+            "enum": [
+              "number",
+              "percent",
+              "duration"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "default_width": 6,
+      "default_height": 8
+    },
+    {
+      "name": "markdown",
+      "description": "Free-form text: a note, a caveat, instructions for reading the dashboard.",
+      "accepts": [
+        "md"
+      ],
+      "inputs": {
+        "open": false,
+        "columns": []
+      },
+      "props": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "default_width": 12,
+      "default_height": 2
     },
     {
       "name": "pie",
@@ -496,6 +681,87 @@
       },
       "default_width": 3,
       "default_height": 3
+    },
+    {
+      "name": "table",
+      "description": "Every column the query returns, in order; a raw drill-down table for a card that lists rows.",
+      "accepts": [
+        "sql"
+      ],
+      "inputs": {
+        "open": true,
+        "columns": []
+      },
+      "props": {
+        "type": "object",
+        "properties": {
+          "formats": {
+            "type": "object",
+            "additionalProperties": {
+              "enum": [
+                "number",
+                "percent",
+                "duration"
+              ]
+            }
+          },
+          "colorscale": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "default_width": 6,
+      "default_height": 10
+    },
+    {
+      "name": "treemap",
+      "description": "Nested rectangles sized by value; give `parent` for two levels, e.g. browser -> version.",
+      "accepts": [
+        "sql"
+      ],
+      "inputs": {
+        "open": false,
+        "columns": [
+          {
+            "name": "label",
+            "types": [
+              "text"
+            ]
+          },
+          {
+            "name": "value",
+            "types": [
+              "number"
+            ]
+          },
+          {
+            "name": "parent",
+            "types": [
+              "text"
+            ],
+            "optional": true
+          }
+        ]
+      },
+      "props": {
+        "type": "object",
+        "properties": {
+          "format": {
+            "enum": [
+              "number",
+              "percent",
+              "duration"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "default_width": 6,
+      "default_height": 8
     }
   ]
 }
