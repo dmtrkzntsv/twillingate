@@ -178,13 +178,17 @@ removes Evidence.
     exports. Nothing is declared twice.
 13. **The first set is broad from the start.** Charts are shadcn's
     `chart` (`ChartContainer`, tooltip and legend) around Recharts, so any
-    Recharts chart can be a component; `funnel` and `scatter` use
-    Recharts directly, outside shadcn's gallery. `format` is
-    `number`\|`percent`\|`duration` everywhere.
+    Recharts chart can be a component; `funnel`, `scatter`, `treemap` and
+    `combo` use Recharts directly, outside shadcn's gallery; `heatmap` and
+    `calendar` are CSS grids of shaded cells; `map` draws with `d3-geo`,
+    `topojson-client` and `world-atlas`'s 110m countries, keyed by a small
+    ISO alpha-2 → numeric table in `web/` (countries arrive as `geo`
+    stores them, alpha-2). `format` is `number`\|`percent`\|`duration`
+    everywhere.
 
     | Component | Accepts | Inputs: the columns the query returns | Props | Default width × height |
     | --- | --- | --- | --- | --- |
-    | `stat` (a number) | `sql` | `value` number; `previous` number, optional (shows the change) | `format` | 3 × 3 |
+    | `stat` (a number) | `sql` | `value` number; `previous` number, optional (shows the change); `x` day, optional: when present the rows are a series, drawn as a sparkline under the number, which is their `aggregate` | `format`, `aggregate`: `sum`\|`last`\|`avg` (with `x`) | 3 × 3 |
     | `line` | `sql` | `x` day or text; `y` number; `series` text, optional (one line per value) | `format`, `curve`: `linear`\|`monotone`\|`step` | 6 × 8 |
     | `area` | `sql` | as `line` | `format`, `curve`, `stacked` | 6 × 8 |
     | `bar` | `sql` | `x` text or day; `y` number; `series` text, optional | `format`, `horizontal`, `stacked` | 6 × 8 |
@@ -194,6 +198,11 @@ removes Evidence.
     | `radial` | `sql` | `label` text; `value` number; `max` number, optional (rings toward a target) | `format` | 4 × 8 |
     | `scatter` | `sql` | `x` number; `y` number; `series` text, optional; `size` number, optional | `format` | 6 × 8 |
     | `funnel` | `sql` | `step` text; `value` number, in query order | `format` | 6 × 8 |
+    | `combo` | `sql` | `x` day or text; `bar` number; `line` number (two units on two axes: visitors and bounce rate) | `bar_format`, `line_format` | 6 × 8 |
+    | `heatmap` | `sql` | `x` text or day; `y` text or day; `value` number (a retention cohort grid: cohort day × days since) | `format`, `labels` (print values in cells) | 6 × 10 |
+    | `calendar` | `sql` | `day` day; `value` number (a year of days, GitHub-style) | `format` | 12 × 4 |
+    | `map` | `sql` | `country` text, ISO alpha-2; `value` number (unknown codes are listed below the map, not dropped) | `format` | 6 × 8 |
+    | `treemap` | `sql` | `label` text; `value` number; `parent` text, optional (two levels: browser → version) | `format` | 6 × 8 |
     | `table` | `sql` | open: any columns, shown in query order | `formats`: column → format; `colorscale`: columns shaded by value | 6 × 10 |
     | `markdown` | `md` | none | none | 12 × 2 |
 
@@ -711,7 +720,7 @@ code, per the standing rules.
 | limits | a widget query past `API_QUERY_TIMEOUT` is refused naming it; a result past `API_QUERY_MAX_ROWS` is cut and answers `truncated` |
 | cache | the age rules of decision 33, invalidation, one run for simultaneous requests, the boot refusal |
 | manifest | `components.json` matches the widget files in `web/`, and Go loads it |
-| component render | Vitest with Testing Library, per component: renders from sample rows, from no rows, and with each prop; a closed interface's missing optional input (`series`, `previous`, `max`, `size`) renders the simpler form |
+| component render | Vitest with Testing Library, per component: renders from sample rows, from no rows, and with each prop; a closed interface's missing optional input (`series`, `previous`, `max`, `size`, `x` on `stat`, `parent`) renders the simpler form; `map` resolves every ISO alpha-2 code in `world-atlas` and lists unknown ones |
 | guide | `reporting_guide` returns the live components, source types, views, projects and dashboards plus the workflow section; the server's `instructions` name both guides; `docs://reporting` is served; `schema://components`, `schema://dashboards` and `schema://widgets` return exactly what `list_components`, `list_dashboards` and unfiltered `list_widgets` return, reflecting a write made just before |
 | api | MCP ↔ REST parity (the view route REST-only by choice, `reporting_guide` MCP-only by choice); `docs_sync_test` reads `docs/reporting.md` and binds its component table to `components.json` in both directions, and gains the tools, routes, both `REPORTING_*` settings and the range vocabulary; `redirectAllowed` accepts the API host; OAuth end to end through `/app/callback` |
 | read-only | one table of write attempts through `query` and through `widget_data` (`INSERT`, `UPDATE`, `DELETE`, `REPLACE`, `DROP`, `CREATE [TEMP] TABLE`, `WITH … INSERT`, `PRAGMA x = y`, `ATTACH`, `VACUUM INTO`, two statements, `load_extension()`): every one is refused and the database file's checksum is unchanged afterwards |
