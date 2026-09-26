@@ -1,11 +1,11 @@
 import { ArrowDownIcon, ArrowUpIcon } from 'lucide-react'
 import { Line, LineChart, ResponsiveContainer } from 'recharts'
-import { formatValue } from '@/lib/format'
+import { formatValue, type Format } from '@/lib/format'
 import { toRecords } from '@/lib/records'
 import type { Contract, SqlData, WidgetProps } from './types'
 
 interface StatProps {
-  format?: 'number' | 'percent' | 'duration'
+  format?: Format
   aggregate?: 'sum' | 'last' | 'avg'
 }
 

@@ -5,8 +5,8 @@ import {
   ChartLegendContent,
   ChartTooltip,
   ChartTooltipContent,
-  type ChartConfig,
 } from '@/components/ui/chart'
+import { seriesConfig } from '@/lib/chart'
 import { formatValue, type Format } from '@/lib/format'
 import { toRecords } from '@/lib/records'
 import type { Contract, SqlData, WidgetProps } from './types'
@@ -53,10 +53,7 @@ export default function Scatter({ data, props }: WidgetProps<ScatterProps>) {
     key,
     data: hasSeries ? records.filter((r) => String(r.series) === key) : records,
   }))
-  // Only `label`, no `color` (see radial.tsx / pie.tsx): a series value is
-  // arbitrary text, not safe as the CSS custom property name ChartContainer
-  // would derive from it. Each group is colored directly, cycling colors.
-  const config: ChartConfig = Object.fromEntries(keys.map((key) => [key, { label: key }]))
+  const config = seriesConfig(keys)
 
   return (
     <ChartContainer config={config} className="h-full w-full">

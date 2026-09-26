@@ -20,6 +20,11 @@ describe('formatValue', () => {
       expect(formatValue(12345)).toBe('12.3K')
       expect(formatValue(1234567)).toBe('1.2M')
     })
+
+    it('pins the compact boundary at exactly 10,000', () => {
+      expect(formatValue(9999)).toBe('9,999')
+      expect(formatValue(10000)).toBe('10K')
+    })
   })
 
   describe('percent', () => {
@@ -41,6 +46,16 @@ describe('formatValue', () => {
 
     it('renders hours and minutes at or above an hour', () => {
       expect(formatValue(7500, 'duration')).toBe('2h 5m')
+    })
+
+    it('pins the minute boundary at exactly 60 seconds', () => {
+      expect(formatValue(59, 'duration')).toBe('59s')
+      expect(formatValue(60, 'duration')).toBe('1m 0s')
+    })
+
+    it('pins the hour boundary at exactly 3,600 seconds', () => {
+      expect(formatValue(3599, 'duration')).toBe('59m 59s')
+      expect(formatValue(3600, 'duration')).toBe('1h 0m')
     })
   })
 })

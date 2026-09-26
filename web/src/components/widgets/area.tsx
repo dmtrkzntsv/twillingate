@@ -5,8 +5,8 @@ import {
   ChartLegendContent,
   ChartTooltip,
   ChartTooltipContent,
-  type ChartConfig,
 } from '@/components/ui/chart'
+import { seriesConfig } from '@/lib/chart'
 import { formatValue, type Format } from '@/lib/format'
 import { pivot, toRecords } from '@/lib/records'
 import type { Contract, SqlData, WidgetProps } from './types'
@@ -40,14 +40,6 @@ export const contract: Contract = {
   },
   defaultWidth: 6,
   defaultHeight: 8,
-}
-
-// Only `label`, no `color` (see radial.tsx / pie.tsx): a series value is
-// arbitrary text, not safe as the CSS custom property name ChartContainer
-// would derive from it. Each line/area/bar is colored directly, cycling
-// `var(--chart-1..5)`.
-function seriesConfig(keys: string[]): ChartConfig {
-  return Object.fromEntries(keys.map((key) => [key, { label: key }]))
 }
 
 export default function Area({ data, props }: WidgetProps<AreaProps>) {

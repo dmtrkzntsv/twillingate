@@ -40,11 +40,20 @@ describe('bar', () => {
     expect(container.querySelectorAll('.recharts-bar-rectangle')).toHaveLength(4)
   })
 
-  it('lays out the category axis vertically when horizontal is set', () => {
-    const { container } = renderBar(twoCategories, { horizontal: true })
-    expect(container.querySelector('.recharts-yAxis')?.classList.contains('yAxis')).toBe(true)
-    // the category axis (x data) is now the y-axis tick labels
-    expect(container.textContent).toContain('a')
+  it('moves the category ticks to the y-axis when horizontal is set', () => {
+    const vertical = renderBar(twoCategories)
+    const horizontal = renderBar(twoCategories, { horizontal: true })
+    const categoryTicks = (c: HTMLElement, axis: 'x' | 'y') =>
+      Array.from(c.querySelectorAll(`.recharts-${axis}Axis-tick-labels tspan`)).map((n) => n.textContent)
+
+    // by default, the category (x data) sits on the x-axis, the numeric
+    // value on the y-axis
+    expect(categoryTicks(vertical.container, 'x')).toEqual(['a', 'b'])
+    expect(categoryTicks(vertical.container, 'y')).not.toContain('a')
+
+    // horizontal swaps that: the category moves to the y-axis
+    expect(categoryTicks(horizontal.container, 'y')).toEqual(['a', 'b'])
+    expect(categoryTicks(horizontal.container, 'x')).not.toContain('a')
   })
 
   it('changes rectangle geometry when stacked is set', () => {
