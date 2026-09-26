@@ -316,7 +316,7 @@ removes Evidence.
       `:project`, `:from` and `:to`"); the query runs as
       `SELECT * FROM (…) LIMIT 0` on the read pool with sample values bound
       and the guards `query` applies (read-only, no `ATTACH`), under
-      `REPORTING_QUERY_TIMEOUT` (decision 33);
+      `REPORTING_QUERY_TIMEOUT` (decision 32);
       its columns satisfy the inputs ("line needs y (number); columns are
       x, visitor"); value types are checked on a few rows: for a widget
       using `:project`, of the most recently active project; if there are
