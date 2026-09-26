@@ -3,6 +3,7 @@ package jobs
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -42,6 +43,12 @@ type countingStore struct {
 	vacuums   atomic.Int64
 	purges    atomic.Int64
 	purgeDays atomic.Int64
+
+	// purgeOverride, when set, replaces the delegate call entirely: lets a
+	// test force PurgeArchived to return a partial result alongside an
+	// error (as it does when one of several items failed), without needing
+	// a genuine failure condition in the underlying database.
+	purgeOverride func(ctx context.Context, days int) (store.PurgeResult, error)
 }
 
 func (c *countingStore) IncrementalVacuum(ctx context.Context) error {
@@ -52,6 +59,9 @@ func (c *countingStore) IncrementalVacuum(ctx context.Context) error {
 func (c *countingStore) PurgeArchived(ctx context.Context, days int) (store.PurgeResult, error) {
 	c.purges.Add(1)
 	c.purgeDays.Store(int64(days))
+	if c.purgeOverride != nil {
+		return c.purgeOverride(ctx, days)
+	}
 	return c.Store.PurgeArchived(ctx, days)
 }
 
@@ -369,6 +379,45 @@ func TestRunDailyPassSkipsPurgeWhenArchivedDaysIsZero(t *testing.T) {
 	}
 	if got := st.purges.Load(); got != 0 {
 		t.Errorf("PurgeArchived calls = %d, want 0 when RETENTION_ARCHIVED_DAYS=0", got)
+	}
+}
+
+// PurgeArchived can return a partial result alongside an error (one item
+// among several failed, but it kept going for the rest — see
+// internal/store/sqlite/purge.go). The pass must still reload the registry
+// whenever purged.Projects is non-empty, whether or not err is nil: a
+// project already deleted must not be left in the registry just because a
+// sibling item's purge failed.
+func TestRunDailyPassReloadsRegistryDespiteAPartialPurgeError(t *testing.T) {
+	cfg := configtest.Load(t, jobsVars) // ArchivedDays defaults to 30 (>0): purge still runs, just overridden below.
+	raw, path := openStoreAt(t)
+	t.Setenv("JOBS_TEST_DB", path)
+	st := &countingStore{Store: raw}
+	reg := newRegistry(t, st, cfg, jobsProjectSpecs)
+	ctx := context.Background()
+
+	// Inserted directly (bypassing the registry-aware Ops path) after the
+	// registry's initial load: only a reload picks it up, so it is the
+	// probe for whether RunDailyPass reloaded despite the error below.
+	if _, err := rawExec(t,
+		`INSERT INTO projects (id, name, allowed_origins, attributes) VALUES (7, 'Late', '[]', '[]')`); err != nil {
+		t.Fatal(err)
+	}
+	if p := reg.Snapshot(ctx).Project(7); p != nil {
+		t.Fatal("test setup: project 7 must not be visible before any reload")
+	}
+
+	st.purgeOverride = func(context.Context, int) (store.PurgeResult, error) {
+		return store.PurgeResult{Projects: []int64{7}}, errors.New("dashboard 9: boom")
+	}
+	now := func() time.Time { return time.Date(2026, 8, 22, 4, 0, 0, 0, time.UTC) }
+	r := New(st, cfg, reg, identity.NewSalter(st, now), slog.Default(), now)
+
+	if err := r.RunDailyPass(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if p := reg.Snapshot(ctx).Project(7); p == nil {
+		t.Error("registry not reloaded after a purge error carrying a non-empty partial result")
 	}
 }
 

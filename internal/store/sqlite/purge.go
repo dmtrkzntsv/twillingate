@@ -7,6 +7,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strconv"
 
@@ -21,24 +22,31 @@ import (
 // HH:MM:SS"); dashboards' and widgets' with strftime(...,'Z') (RFC3339).
 // julianday() parses both, so one predicate shape serves every kind.
 //
-// Dashboards are restricted to owner='user': a system dashboard is never
-// archived (it is release-managed, via SyncReporting), so it must never be
-// selected here even if a row were forced into that state. Widgets are
-// selected only when their own dashboard is not itself being purged in
+// Dashboards (and, transitively, widgets) are restricted to owner='user':
+// a system dashboard is never archived (it is release-managed, via
+// SyncReporting), so it — and anything on it — must never be selected here
+// even if a row were forced into that state. Widgets are further
+// restricted to those whose own dashboard is not itself being purged in
 // this same pass — a purged dashboard takes its widgets by cascade
 // (ON DELETE CASCADE), so purging them again here would be redundant, not
 // wrong, but the audit trail would then carry two rows for one deletion.
+//
+// One item's failure does not stop the rest: the store has no logger to
+// report it through (that belongs to the caller, internal/jobs), so a
+// failed item's error is joined into the one returned, but every other
+// item is still attempted and, on success, still counted in the result.
 func (d *DB) PurgeArchived(ctx context.Context, days int) (store.PurgeResult, error) {
 	var res store.PurgeResult
 	if days <= 0 {
 		return res, nil
 	}
+	var errs error
 
 	projectIDs, err := d.purgeableIDs(ctx,
 		`SELECT id FROM projects
 		 WHERE archived_at IS NOT NULL AND julianday(archived_at) < julianday('now') - ?`, days)
 	if err != nil {
-		return res, fmt.Errorf("select archived projects: %w", err)
+		errs = errors.Join(errs, fmt.Errorf("select archived projects: %w", err))
 	}
 	for _, id := range projectIDs {
 		if err := d.tx(ctx, func(tx *sql.Tx) error {
@@ -48,7 +56,8 @@ func (d *DB) PurgeArchived(ctx context.Context, days int) (store.PurgeResult, er
 			return auditAndBump(ctx, tx, store.AuditEntry{
 				Actor: "retention", Action: "project.purge", Subject: strconv.FormatInt(id, 10)})
 		}); err != nil {
-			return res, fmt.Errorf("purge project %d: %w", id, err)
+			errs = errors.Join(errs, fmt.Errorf("purge project %d: %w", id, err))
+			continue
 		}
 		res.Projects = append(res.Projects, id)
 	}
@@ -58,7 +67,7 @@ func (d *DB) PurgeArchived(ctx context.Context, days int) (store.PurgeResult, er
 		 WHERE owner='user' AND archived_at IS NOT NULL
 		   AND julianday(archived_at) < julianday('now') - ?`, days)
 	if err != nil {
-		return res, fmt.Errorf("select archived dashboards: %w", err)
+		errs = errors.Join(errs, fmt.Errorf("select archived dashboards: %w", err))
 	}
 	for _, id := range dashboardIDs {
 		if err := d.tx(ctx, func(tx *sql.Tx) error {
@@ -68,20 +77,25 @@ func (d *DB) PurgeArchived(ctx context.Context, days int) (store.PurgeResult, er
 			return audit(ctx, tx, store.AuditEntry{
 				Actor: "retention", Action: "dashboard.purge", Subject: fmt.Sprintf("dashboard/%d", id)})
 		}); err != nil {
-			return res, fmt.Errorf("purge dashboard %d: %w", id, err)
+			errs = errors.Join(errs, fmt.Errorf("purge dashboard %d: %w", id, err))
+			continue
 		}
 		res.Dashboards = append(res.Dashboards, id)
 	}
 
+	// The join with dashboards restricts every widget considered here to
+	// one on a user-owned dashboard (defense in depth: production code
+	// never archives a widget on a system dashboard either, but a forced
+	// row must still never be selected), and d's own archived state tells
+	// whether that dashboard is being purged in this same pass.
 	widgetIDs, err := d.purgeableIDs(ctx,
-		`SELECT w.id FROM widgets w
-		 WHERE w.archived_at IS NOT NULL AND julianday(w.archived_at) < julianday('now') - ?
-		   AND w.dashboard_id NOT IN (
-		       SELECT id FROM dashboards
-		       WHERE owner='user' AND archived_at IS NOT NULL
-		         AND julianday(archived_at) < julianday('now') - ?)`, days, days)
+		`SELECT w.id FROM widgets w JOIN dashboards d ON d.id = w.dashboard_id
+		 WHERE d.owner='user'
+		   AND w.archived_at IS NOT NULL AND julianday(w.archived_at) < julianday('now') - ?
+		   AND NOT (d.archived_at IS NOT NULL AND julianday(d.archived_at) < julianday('now') - ?)`,
+		days, days)
 	if err != nil {
-		return res, fmt.Errorf("select archived widgets: %w", err)
+		errs = errors.Join(errs, fmt.Errorf("select archived widgets: %w", err))
 	}
 	for _, id := range widgetIDs {
 		if err := d.tx(ctx, func(tx *sql.Tx) error {
@@ -91,12 +105,13 @@ func (d *DB) PurgeArchived(ctx context.Context, days int) (store.PurgeResult, er
 			return audit(ctx, tx, store.AuditEntry{
 				Actor: "retention", Action: "widget.purge", Subject: fmt.Sprintf("widget/%d", id)})
 		}); err != nil {
-			return res, fmt.Errorf("purge widget %d: %w", id, err)
+			errs = errors.Join(errs, fmt.Errorf("purge widget %d: %w", id, err))
+			continue
 		}
 		res.Widgets = append(res.Widgets, id)
 	}
 
-	return res, nil
+	return res, errs
 }
 
 // purgeableIDs runs a SELECT of a single int64 column outside any

@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"testing"
 	"time"
@@ -334,5 +335,88 @@ func TestPurgeArchivedNeverSelectsSystemDashboards(t *testing.T) {
 	}
 	if _, err := db.GetDashboard(ctx, sysDash); err != nil {
 		t.Errorf("system dashboard purged: %v", err)
+	}
+}
+
+// TestPurgeArchivedNeverSelectsWidgetsOnSystemDashboards checks the
+// defense-in-depth guard on the widget query itself: a widget on a system
+// dashboard, forced into an archived state (never happens through
+// production code), must not be purged even though its own archived_at
+// alone would otherwise qualify it.
+func TestPurgeArchivedNeverSelectsWidgetsOnSystemDashboards(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	sysDash := createPurgeableDashboard(t, db, store.OwnerSystem, "a", []store.Widget{
+		{SortKey: "a", Width: 1, Height: 1, Name: "w1", SourceType: "events", Source: "x"},
+	})
+	widgets, err := db.ListWidgets(ctx, sysDash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	archiveWidgetDaysAgo(t, db, widgets[0].ID, 3650)
+
+	res, err := db.PurgeArchived(ctx, 30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contains(res.Widgets, widgets[0].ID) {
+		t.Errorf("Widgets purged = %v, must never include one on a system dashboard", res.Widgets)
+	}
+	if _, err := db.GetWidget(ctx, widgets[0].ID); err != nil {
+		t.Errorf("widget on a system dashboard purged: %v", err)
+	}
+}
+
+// TestPurgeArchivedContinuesPastAFailedItem checks that one item's delete
+// failing does not abort the rest of the pass: a trigger makes one
+// project's events delete fail (rolling back its own transaction only),
+// while a second, otherwise identical project must still be purged, and
+// the error for the first must still be reported.
+func TestPurgeArchivedContinuesPastAFailedItem(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+
+	bad := createPurgeableProject(t, db, "bad")
+	archiveProjectDaysAgo(t, db, bad, 31)
+	good := createPurgeableProject(t, db, "good")
+	archiveProjectDaysAgo(t, db, good, 31)
+
+	if err := db.WriteEvents(ctx, []store.Event{
+		{Family: store.FamilyViews, ID: "e1", ProjectID: bad, TS: time.Now(), ReceivedAt: time.Now(),
+			Kind: "web", ActorID: "a", ActorKind: store.ActorConnection, Path: "/"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Fails only bad's own events delete, so only its purge transaction
+	// rolls back; good's must still commit.
+	if _, err := db.ExecForTest(fmt.Sprintf(
+		`CREATE TRIGGER fail_bad_events BEFORE DELETE ON events WHEN OLD.project_id = %d
+		 BEGIN SELECT RAISE(FAIL, 'boom'); END`, bad)); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := db.PurgeArchived(ctx, 30)
+	if err == nil {
+		t.Fatal("want an error reported for the failed item")
+	}
+	if !contains(res.Projects, good) {
+		t.Errorf("Projects purged = %v, want %d to still be purged", res.Projects, good)
+	}
+	if contains(res.Projects, bad) {
+		t.Errorf("Projects purged = %v, want %d absent (its delete failed)", res.Projects, bad)
+	}
+	var n int
+	if err := db.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM projects WHERE id=?`, bad).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Errorf("failed project's row count = %d, want 1 (its transaction rolled back)", n)
+	}
+	var gone int
+	if err := db.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM projects WHERE id=?`, good).Scan(&gone); err != nil {
+		t.Fatal(err)
+	}
+	if gone != 0 {
+		t.Errorf("good project's row count = %d, want 0 (purged)", gone)
 	}
 }
