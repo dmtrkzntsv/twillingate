@@ -135,13 +135,16 @@ func TestPlaceInsertWritesOneRow(t *testing.T) {
 type racingStore struct {
 	Store
 	races, limit int
+	sameName     bool // the rival also takes the widget's name
 }
 
 func (r *racingStore) InsertWidget(ctx context.Context, w store.Widget, a store.AuditEntry) (int64, error) {
 	if r.races < r.limit {
 		r.races++
 		rival := w
-		rival.Name = "rival-" + itoa(int64(r.races))
+		if !r.sameName {
+			rival.Name = "rival-" + itoa(int64(r.races))
+		}
 		if _, err := r.Store.InsertWidget(ctx, rival, store.AuditEntry{Actor: "rival", Action: "rival.add"}); err != nil {
 			return 0, err
 		}
@@ -175,6 +178,11 @@ func TestPlaceRetriesOnceOnConflict(t *testing.T) {
 	if rs.races != 2 {
 		t.Errorf("attempts = %d, want 2 (one retry)", rs.races)
 	}
+	wantRefusal(t, err, store.ErrConflict, "dashboard "+itoa(d.ID)+" changed while placing this widget; try again")
+
+	named := New(&racingStore{Store: base.st, limit: 1, sameName: true}, base.db, Options{})
+	_, err = named.AddWidget(ctx, "test", AddWidget{DashboardID: d.ID, WidgetSpec: note("Taken")})
+	wantRefusal(t, err, store.ErrConflict, "widget name taken is already used on this dashboard")
 }
 
 // --- Create ---
@@ -791,4 +799,103 @@ func TestUnknownIDsAreNotFound(t *testing.T) {
 	}
 	_, err := svc.CreateDashboard(ctx, "test", CreateDashboard{Title: " "})
 	wantRefusal(t, err, store.ErrInvalid, "title must not be empty")
+}
+
+// --- Review fixes ---
+
+func TestUpdateWidgetRefusesClearingComponent(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	msg := "component must not be empty; list_components names the ones there are"
+	d := mustCreate(t, svc, "D", note("A"))
+	_, err := svc.UpdateWidget(ctx, "test", UpdateWidget{ID: d.Widgets[0].ID, Component: ptr("")})
+	wantRefusal(t, err, store.ErrInvalid, msg)
+	if w, _ := svc.st.GetWidget(ctx, d.Widgets[0].ID); w.Component != "markdown" {
+		t.Errorf("component = %q, want markdown kept", w.Component)
+	}
+	_, id := removedWidget(t, svc)
+	_, err = svc.UpdateWidget(ctx, "test", UpdateWidget{ID: id, Component: ptr(""), Width: ptr(4)})
+	wantRefusal(t, err, store.ErrInvalid, msg)
+}
+
+func TestWidgetNamesTrimmedAndNotBlank(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	spec := note("A")
+	spec.Name = "  spaced  "
+	d := mustCreate(t, svc, "D", spec)
+	if d.Widgets[0].Name != "spaced" {
+		t.Errorf("name = %q, want trimmed", d.Widgets[0].Name)
+	}
+	blank := note("B")
+	blank.Name = "   "
+	_, err := svc.AddWidget(ctx, "test", AddWidget{DashboardID: d.ID, WidgetSpec: blank})
+	wantRefusal(t, err, store.ErrInvalid, "name must not be blank")
+	for _, name := range []string{"", "  "} {
+		_, err = svc.UpdateWidget(ctx, "test", UpdateWidget{ID: d.Widgets[0].ID, Name: ptr(name)})
+		wantRefusal(t, err, store.ErrInvalid, "name must not be blank")
+	}
+	w, err := svc.UpdateWidget(ctx, "test", UpdateWidget{ID: d.Widgets[0].ID, Name: ptr(" renamed ")})
+	if err != nil || w.Name != "renamed" {
+		t.Errorf("rename = %q, %v; want renamed", w.Name, err)
+	}
+}
+
+func TestUpdateDashboardNothingToUpdate(t *testing.T) {
+	svc := newTestService(t)
+	d := mustCreate(t, svc, "D")
+	before := len(auditRows(t, svc))
+	_, err := svc.UpdateDashboard(context.Background(), "test", UpdateDashboard{ID: d.ID})
+	wantRefusal(t, err, store.ErrInvalid, "nothing to update; give title or after")
+	if got := len(auditRows(t, svc)); got != before {
+		t.Errorf("audit rows %d -> %d, want none written", before, got)
+	}
+}
+
+func TestSetViewRefusesNegativeProject(t *testing.T) {
+	svc := newTestService(t)
+	d := switcherDashboard(t, svc, true, false)
+	wantRefusal(t, svc.SetView(context.Background(), View{DashboardID: d.ID, ProjectID: -1}),
+		store.ErrInvalid, "project_id must be a positive id")
+}
+
+func TestUpdateDashboardAfterItselfOrFirstStays(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	first := mustCreate(t, svc, "First")
+	second := mustCreate(t, svc, "Second")
+	key := func(id int64) string {
+		t.Helper()
+		d, err := svc.st.GetDashboard(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return d.SortKey
+	}
+	before := key(second.ID)
+	if _, err := svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: second.ID, After: &second.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if got := key(second.ID); got != before {
+		t.Errorf("after itself: key %q became %q", before, got)
+	}
+	if _, err := svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: first.ID, After: ptr(int64(0))}); err != nil {
+		t.Fatal(err)
+	}
+	list, _ := svc.Dashboards(ctx)
+	if len(list.Dashboards) != 2 || list.Dashboards[0].ID != first.ID || list.Dashboards[1].ID != second.ID {
+		t.Errorf("order = %+v, want First, Second", list.Dashboards)
+	}
+}
+
+func TestCopyWidgetIntoArchivedDashboard(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	src := mustCreate(t, svc, "Src", note("A"))
+	dst := mustCreate(t, svc, "Dst")
+	if err := svc.ArchiveDashboard(ctx, "test", dst.ID); err != nil {
+		t.Fatal(err)
+	}
+	_, err := svc.CopyWidget(ctx, "test", CopyWidget{ID: src.Widgets[0].ID, DashboardID: dst.ID})
+	wantRefusal(t, err, store.ErrInvalid, "dashboard "+itoa(dst.ID)+" is archived; restore_dashboard first")
 }
