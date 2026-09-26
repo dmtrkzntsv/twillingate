@@ -250,7 +250,7 @@ func (h *host) register(r *registrar) {
 		Description: "Update a project's name, allowed origins and/or declared product-event attributes (breakdown keys for flat-view columns and attribute rollups). Fields you omit are left unchanged; allowed_origins and attributes replace the whole list when given, and an explicit empty allowed_origins clears it."},
 		h.updateProject)
 	expose(r, spec{Name: "archive_project", Annotations: idem, Method: "POST", Path: "/api/projects/{project_id}/archive",
-		Description: "Archive a project: ingestion stops, data and dashboards keep working, fully reversible with restore_project. There is no delete over the API — deletion requires the CLI."},
+		Description: "Archive a project: ingestion stops, data and dashboards keep working. Reversible with restore_project — data kept, purged after RETENTION_ARCHIVED_DAYS (default 30) unless restored. There is no delete over the API — deletion requires the CLI."},
 		h.archiveProject)
 	expose(r, spec{Name: "restore_project", Annotations: idem, Method: "POST", Path: "/api/projects/{project_id}/restore",
 		Description: "Restore an archived project."},

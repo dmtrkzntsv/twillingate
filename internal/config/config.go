@@ -33,6 +33,10 @@ type RetentionClass struct {
 type Retention struct {
 	Views   RetentionClass `json:"views"`
 	Product RetentionClass `json:"product"`
+	// ArchivedDays is how long an archived project, dashboard or widget
+	// survives before the daily pass deletes it. 0 keeps archived items
+	// forever.
+	ArchivedDays int `json:"archived_days"`
 }
 
 // DashboardsConfig configures `twillingate dashboards`: which database to
@@ -194,6 +198,7 @@ func parse(lookup func(string) (string, bool), dashboards bool) (*Config, error)
 				RawDays:       e.num("RETENTION_PRODUCT_RAW_DAYS", 30),
 				AggregateDays: e.num("RETENTION_PRODUCT_AGGREGATE_DAYS", 365),
 			},
+			ArchivedDays: e.num("RETENTION_ARCHIVED_DAYS", 30),
 		},
 		// Distinct client-supplied *values* per declared attribute key are
 		// capped globally rather than per project (spec: the operator picks
@@ -271,6 +276,9 @@ func (c *Config) validate() error {
 		if rc.RawDays < 0 || rc.AggregateDays < 0 {
 			return fmt.Errorf("config: retention days must not be negative: %+v", rc)
 		}
+	}
+	if c.Retention.ArchivedDays < 0 {
+		return fmt.Errorf("config: RETENTION_ARCHIVED_DAYS must not be negative: %d", c.Retention.ArchivedDays)
 	}
 	return nil
 }

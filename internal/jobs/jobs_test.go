@@ -34,15 +34,25 @@ var jobsVars = map[string]string{
 }
 
 // countingStore counts daily passes; IncrementalVacuum runs exactly once per
-// pass, which makes it a reliable proxy.
+// pass, which makes it a reliable proxy. It also counts and records the
+// days argument PurgeArchived was called with, for the tests that check
+// the pass calls it (or skips it) as configured.
 type countingStore struct {
 	store.Store
-	vacuums atomic.Int64
+	vacuums   atomic.Int64
+	purges    atomic.Int64
+	purgeDays atomic.Int64
 }
 
 func (c *countingStore) IncrementalVacuum(ctx context.Context) error {
 	c.vacuums.Add(1)
 	return c.Store.IncrementalVacuum(ctx)
+}
+
+func (c *countingStore) PurgeArchived(ctx context.Context, days int) (store.PurgeResult, error) {
+	c.purges.Add(1)
+	c.purgeDays.Store(int64(days))
+	return c.Store.PurgeArchived(ctx, days)
 }
 
 type countingRotator struct {
@@ -288,6 +298,77 @@ func TestRunDailyPassCoversArchivedProjects(t *testing.T) {
 	}
 	if len(left) != 0 {
 		t.Fatalf("archived project not aggregated: %v", left)
+	}
+}
+
+// The pass purges archived projects, dashboards and widgets past
+// RETENTION_ARCHIVED_DAYS before doing anything else, calling
+// PurgeArchived with cfg.Retention.ArchivedDays, and reloads the registry
+// once a project was purged: the registry must not keep handing out a
+// project id that no longer exists in the store.
+func TestRunDailyPassPurgesArchivedAndReloadsRegistryOnProjectPurge(t *testing.T) {
+	vars := map[string]string{}
+	for k, v := range jobsVars {
+		vars[k] = v
+	}
+	vars["RETENTION_ARCHIVED_DAYS"] = "30"
+	cfg := configtest.Load(t, vars)
+	raw, path := openStoreAt(t)
+	t.Setenv("JOBS_TEST_DB", path)
+	st := &countingStore{Store: raw}
+	reg := newRegistry(t, st, cfg, jobsProjectSpecs)
+	ctx := context.Background()
+	ops := manage.NewOps(reg, st)
+	if _, err := ops.CreateProject(ctx, "test", manage.ProjectSpec{Name: "Gone"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ops.ArchiveProject(ctx, "test", 2); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rawExec(t, `UPDATE projects SET archived_at = datetime('now', '-31 days') WHERE id=2`); err != nil {
+		t.Fatal(err)
+	}
+	now := func() time.Time { return time.Date(2026, 8, 22, 4, 0, 0, 0, time.UTC) }
+	r := New(st, cfg, reg, identity.NewSalter(st, now), slog.Default(), now)
+
+	if err := r.RunDailyPass(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.purges.Load(); got != 1 {
+		t.Errorf("PurgeArchived calls = %d, want 1", got)
+	}
+	if got := st.purgeDays.Load(); got != 30 {
+		t.Errorf("PurgeArchived days = %d, want cfg.Retention.ArchivedDays (30)", got)
+	}
+	if got := queryDays(t, `SELECT id FROM projects WHERE id=2`); len(got) != 0 {
+		t.Fatalf("archived project not purged: %v", got)
+	}
+	if p := reg.Snapshot(ctx).Project(2); p != nil {
+		t.Error("registry not reloaded after a project purge: project 2 still present")
+	}
+}
+
+// RETENTION_ARCHIVED_DAYS=0 must keep archived items forever: the pass
+// must not even call PurgeArchived.
+func TestRunDailyPassSkipsPurgeWhenArchivedDaysIsZero(t *testing.T) {
+	vars := map[string]string{}
+	for k, v := range jobsVars {
+		vars[k] = v
+	}
+	vars["RETENTION_ARCHIVED_DAYS"] = "0"
+	cfg := configtest.Load(t, vars)
+	raw, path := openStoreAt(t)
+	t.Setenv("JOBS_TEST_DB", path)
+	st := &countingStore{Store: raw}
+	reg := newRegistry(t, st, cfg, jobsProjectSpecs)
+	now := func() time.Time { return time.Date(2026, 8, 22, 4, 0, 0, 0, time.UTC) }
+	r := New(st, cfg, reg, identity.NewSalter(st, now), slog.Default(), now)
+
+	if err := r.RunDailyPass(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.purges.Load(); got != 0 {
+		t.Errorf("PurgeArchived calls = %d, want 0 when RETENTION_ARCHIVED_DAYS=0", got)
 	}
 }
 

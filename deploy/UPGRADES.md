@@ -289,3 +289,13 @@ upgraded file: its ingest fails for both views and product events (it writes
 a `views` table that no longer exists and `events` rows without a family) and
 its daily pass aborts. Rolling back means restoring the pre-upgrade copy or
 Litestream snapshot, so take one before upgrading.
+
+### Upgrading to reporting dashboards (migration 021)
+
+Adds `components`, `dashboards` and `widgets`, and the daily pass starts
+purging archived rows: once a project, dashboard or widget has been archived
+longer than `RETENTION_ARCHIVED_DAYS` (default 30), the first night after the
+upgrade deletes it — for a project, with all its data. Before upgrading,
+restore any archived project you mean to keep, or set
+`RETENTION_ARCHIVED_DAYS=0` (keeps archived items forever) until you have
+reviewed them.

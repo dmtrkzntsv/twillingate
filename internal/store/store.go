@@ -216,6 +216,10 @@ type Store interface {
 	// dashboards (with their widgets) match s in one transaction.
 	ReportingHash(ctx context.Context) (string, error)
 	SyncReporting(ctx context.Context, s ReportingSync) error
+	// PurgeArchived deletes every project, dashboard and widget archived
+	// more than days ago, each in its own transaction with an audit row
+	// (actor "retention"). days <= 0 purges nothing.
+	PurgeArchived(ctx context.Context, days int) (PurgeResult, error)
 
 	Close() error
 }

@@ -39,6 +39,9 @@ func TestDefaultsApplied(t *testing.T) {
 		c.Retention.Views.AggregateDays != 365 || c.Retention.Product.AggregateDays != 365 {
 		t.Errorf("Retention = %+v", c.Retention)
 	}
+	if c.Retention.ArchivedDays != 30 {
+		t.Errorf("Retention.ArchivedDays = %d, want 30", c.Retention.ArchivedDays)
+	}
 	if c.ProductAttributesTopN != 50 {
 		t.Errorf("ProductAttributesTopN = %d, want 50", c.ProductAttributesTopN)
 	}
@@ -65,6 +68,7 @@ func TestEnvOverrides(t *testing.T) {
 		"RETENTION_VIEWS_AGGREGATE_DAYS":   "30",
 		"RETENTION_PRODUCT_RAW_DAYS":       "10",
 		"RETENTION_PRODUCT_AGGREGATE_DAYS": "60",
+		"RETENTION_ARCHIVED_DAYS":          "7",
 		"DASHBOARDS_ADDR":                  "127.0.0.1:4000",
 		"DASHBOARDS_INTERVAL":              "1m",
 		"DASHBOARDS_PROJECT_DIR":           "/tmp/evidence",
@@ -86,6 +90,9 @@ func TestEnvOverrides(t *testing.T) {
 		c.Retention.Product.RawDays != 10 || c.Retention.Product.AggregateDays != 60 {
 		t.Errorf("Retention = %+v", c.Retention)
 	}
+	if c.Retention.ArchivedDays != 7 {
+		t.Errorf("Retention.ArchivedDays = %d, want 7", c.Retention.ArchivedDays)
+	}
 	if c.Dashboards.Addr != "127.0.0.1:4000" || c.Dashboards.Interval != time.Minute ||
 		c.Dashboards.ProjectDir != "/tmp/evidence" || c.Dashboards.WorkDir != "/tmp/work" {
 		t.Errorf("Dashboards = %+v", c.Dashboards)
@@ -101,11 +108,12 @@ func TestValidationErrors(t *testing.T) {
 		return vars
 	}
 	cases := map[string]map[string]string{
-		"no database":       {"DATABASE_DSN": ""},
-		"bad geo scheme":    base(map[string]string{"GEO_DSN": "???"}),
-		"negative raw_days": base(map[string]string{"RETENTION_VIEWS_RAW_DAYS": "-1"}),
-		"bad integer":       base(map[string]string{"BUFFER_CAPACITY": "many"}),
-		"invalid duration":  base(map[string]string{"BUFFER_FLUSH_INTERVAL": "fast"}),
+		"no database":            {"DATABASE_DSN": ""},
+		"bad geo scheme":         base(map[string]string{"GEO_DSN": "???"}),
+		"negative raw_days":      base(map[string]string{"RETENTION_VIEWS_RAW_DAYS": "-1"}),
+		"negative archived_days": base(map[string]string{"RETENTION_ARCHIVED_DAYS": "-1"}),
+		"bad integer":            base(map[string]string{"BUFFER_CAPACITY": "many"}),
+		"invalid duration":       base(map[string]string{"BUFFER_FLUSH_INTERVAL": "fast"}),
 	}
 	for name, vars := range cases {
 		if _, err := FromEnv(func(k string) (string, bool) { v, ok := vars[k]; return v, ok }); err == nil {
