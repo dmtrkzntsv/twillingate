@@ -620,6 +620,40 @@ removes Evidence.
     widgets with their `archived_at`, so an agent can find one to
     restore; `get_dashboard` and the grid show live widgets only.
 
+
+### Guidance for agents
+
+50. **Agents learn reporting from one contract page, delivered three
+    ways.**
+    - **`docs/reporting.md`, served as `docs://reporting`:** a third
+      contract page beside `docs://twillingate` and `docs://deployment`.
+      It holds the concepts, the authoring workflow, the component table
+      (inputs, props, default sizes), parameters and what a widget
+      follows, range presets, the grid, archiving and the purge, one worked
+      SQL example per component, and each refusal with its fix. The
+      reporting material lives here rather than in `docs/twillingate.md`,
+      which stays about collecting and querying data.
+    - **`reporting_guide`, an MCP-only tool** like `integration_guide`,
+      because many clients never read resources: one call returns the
+      registered components and source types (live, from the database),
+      the `v_*` views (`schema://views`), the active projects, the
+      existing dashboards (id, title, owner, archived), and the workflow
+      and rules sections of `docs/reporting.md`. The descriptions of
+      `create_dashboard`, `add_widget`, `update_widget` and `copy_widget`
+      begin "Call reporting_guide first."
+    - **MCP server `instructions`** (sent on connect, which the server
+      does not set today): "To integrate a site or app, call
+      integration_guide. To build or change dashboards, call
+      reporting_guide. System dashboards are read-only; duplicate one to
+      customize it."
+
+    The workflow it teaches: explore with `query` against the `v_*`
+    views; pick a component and alias columns to its inputs
+    (`day AS x`); choose what the widget follows (`:project`,
+    `:from`/`:to`, or fixed); `add_widget` with `after`, `width` and
+    `height`; check `widget_data`; fix with `update_widget`; archive to
+    undo; duplicate a system dashboard to customize it.
+
 ## Migration 021
 
 `021_reporting.sql` creates `components`, `dashboards`, `widgets` and
@@ -651,7 +685,8 @@ code, per the standing rules.
 | limits | a widget query past `API_QUERY_TIMEOUT` is refused naming it; a result past `API_QUERY_MAX_ROWS` is cut and answers `truncated` |
 | cache | the age rules of decision 33, invalidation, one run for simultaneous requests, the boot refusal |
 | manifest | `components.json` matches the widget files in `web/`, and Go loads it |
-| api | MCP ↔ REST parity (the view route REST-only by choice); `docs_sync_test` gains the tools, routes, both `REPORTING_*` settings and the range vocabulary; `redirectAllowed` accepts the API host; OAuth end to end through `/app/callback` |
+| guide | `reporting_guide` returns the live components, source types, views, projects and dashboards plus the workflow section; the server's `instructions` name both guides; `docs://reporting` is served |
+| api | MCP ↔ REST parity (the view route REST-only by choice, `reporting_guide` MCP-only by choice); `docs_sync_test` reads `docs/reporting.md` and binds its component table to `components.json` in both directions, and gains the tools, routes, both `REPORTING_*` settings and the range vocabulary; `redirectAllowed` accepts the API host; OAuth end to end through `/app/callback` |
 | read-only | one table of write attempts through `query` and through `widget_data` (`INSERT`, `UPDATE`, `DELETE`, `REPLACE`, `DROP`, `CREATE [TEMP] TABLE`, `WITH … INSERT`, `PRAGMA x = y`, `ATTACH`, `VACUUM INTO`, two statements, `load_extension()`): every one is refused and the database file's checksum is unchanged afterwards |
 | refused names | `meta`, `sqlite_master`, `sqlite_schema`, `sqlite_sequence`, `sqlite_stat1`, `sqlite_dbpage`, `pragma_table_info(…)` and `dbstat` are refused through `query` and `widget_data` in every spelling (quoted `"meta"`, `` `meta` ``, `[meta]`, `main.meta`, upper case); `'meta'` in a string literal, `meta` in a comment, and columns such as `metadata` and `attachment` pass; no `v_*` view definition references a refused name |
 | archtest | `internal/reporting` at rank 1, `internal/shared/sortkey` and `internal/shared/readsql` at rank 0 |
@@ -661,12 +696,17 @@ code, per the standing rules.
 
 In the same PR as the change:
 
-- `docs/twillingate.md`: dashboards, widgets and components; the
-  component table (decision 13); the parameters and range vocabulary; the
-  tools and routes; what happens to widgets when a release removes a
-  component; archiving as undo, and the purge of archived projects,
-  dashboards and widgets after `RETENTION_ARCHIVED_DAYS`, including that
-  a purged project's data is gone.
+- `docs/reporting.md` (new, `docs://reporting`, decision 50): dashboards,
+  widgets and components; the component table (decision 13); the
+  parameters and range vocabulary; the tools and routes; the authoring
+  workflow with a worked example per component; what happens to widgets
+  when a release removes a component; archiving as undo, and the purge of
+  archived projects, dashboards and widgets after
+  `RETENTION_ARCHIVED_DAYS`, including that a purged project's data is
+  gone.
+- `docs/twillingate.md`: a pointer to `docs://reporting` and
+  `reporting_guide` in "Answer questions with the data"; the purge of
+  archived projects in the project lifecycle.
 - `docs/deployment.md`: `/app/` and installing it; the redirect an
   `oauth://` provider must allow; `REPORTING_CACHE_MINUTES`,
   `REPORTING_REFRESH_MINUTES` and `RETENTION_ARCHIVED_DAYS`; that `API_QUERY_TIMEOUT` and
@@ -681,7 +721,10 @@ In the same PR as the change:
   switches or archives them; a binary rollback re-migrates system
   dashboards and permanently clears the component of widgets on
   components the older release lacks (decision 25).
-- `CLAUDE.md`: `internal/reporting`, `internal/shared/` (small generic
+- `CLAUDE.md`: three contract pages, not two (`docs/reporting.md` joins,
+  and the "do not add files there" rule names it), with its rows in the
+  docs table (reporting tools, components, views used by system
+  dashboards); `internal/reporting`, `internal/shared/` (small generic
   leaf packages: `sortkey`, `readsql`) and `web/` in the layout; the
   build-and-commit rule extended to `web/`; the docs table rows.
 
