@@ -615,10 +615,10 @@ removes Evidence.
     `meta.archive_purge_since`, and an item goes at
     `max(archived_at, archive_purge_since) + RETENTION_ARCHIVED_DAYS`, so
     upgrading does not delete, on the first night, projects archived long
-    ago. `list_projects`, `list_dashboards` and `list_widgets` show each
-    archived item's `purge_at`.
+    ago. Archived items expose only `archived_at`; the purge
+    date follows from it and is documented, not returned.
 49. **The UI never shows archived items.** `list_widgets` returns archived
-    widgets with `archived_at` and `purge_at`, so an agent can find one to
+    widgets with their `archived_at`, so an agent can find one to
     restore; `get_dashboard` and the grid show live widgets only.
 
 ## Migration 021
@@ -643,7 +643,7 @@ code, per the standing rules.
 | layout | a 6 × 6 widget followed by four 3 × 3 widgets renders them as a 2 × 2 block beside it (browser test); insert first, last and `after` (one key written, no other record touched); removal touches no other record; many inserts at one spot keep keys ordered and short enough; the `layout` list round-trips; widths and heights default from the component; the migrator keeps widget ids when order or size changes |
 | foreign keys | deleting a dashboard deletes its widgets; deleting a component sets `component` null on its widgets; writer connections report `foreign_keys = 1`; `DeleteProject` succeeds with keys present; a migration leaving a violation fails `foreign_key_check`; existing databases pass the check after 021 |
 | source types | an unregistered `source_type` is refused; a component's `accepts` naming an unregistered type fails the migrator; `sql` and `md` each validate and load through the registry |
-| archive | archiving a widget hides it and restoring puts it back in the same place; a widget inserted next to an archived one gets a key that does not collide with it; archived widgets keep their names; an archived widget refuses update and copy; `list_widgets` shows archived ones with `purge_at` |
+| archive | archiving a widget hides it and restoring puts it back in the same place; a widget inserted next to an archived one gets a key that does not collide with it; archived widgets keep their names; an archived widget refuses update and copy; `list_widgets` shows archived ones with `archived_at` |
 | purge | with `RETENTION_ARCHIVED_DAYS=30`, a widget, a dashboard (with its widgets) and a project (with its events, aggregates and keys) archived 31 days ago go and one archived 29 days ago stays; `0` keeps everything; an item archived before the upgrade stays until 30 days after `archive_purge_since`; system dashboards are never archived; each purge writes an audit entry and the registry reloads after a project goes |
 | components | a component gone from the manifest is deleted and its widgets get a null `component`; such a widget answers `removed`, accepts only a component switch, resize or archiving, and cannot be copied; a component that returns leaves them null |
 | migrator | upserts, deletions, reserved ids, widget ids stable across edits and moves, `last_*` kept, a second run with the same hash writes nothing, a failure writes nothing |
