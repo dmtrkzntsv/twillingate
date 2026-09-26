@@ -556,7 +556,7 @@ removes Evidence.
     | `query_only(1)` on the pool | writes, even through a path that finds one |
     | `_defensive=1` on the pool (new) | the schema-corrupting operations SQLite's defensive mode blocks |
     | the SQL runs wrapped as `SELECT * FROM (…) LIMIT n` | DML, DDL, `PRAGMA`, `VACUUM` and several statements: all become syntax errors |
-    | `ATTACH` refused by token scan | attaching another file, which `mode=ro` does not prevent |
+    | `ATTACH` refused as a keyword by the tokenizer (decision 47) | attaching another file, which `mode=ro` does not prevent |
     | timeout and row cap (`API_QUERY_*`) | runaway reads |
 
     The driver (`modernc.org/sqlite`) exposes no authorizer, so these
@@ -564,12 +564,32 @@ removes Evidence.
     `readsql`'s read-only handle, a distinct type, so handing it the
     store's writer does not compile. `reporting dev` opens `--db` through
     the same function.
-47. **Reads are not restricted by table.** Custom SQL may read any table,
-    not only the `v_*` views: a database holds one tenant, and whoever
-    holds the API login controls that tenant's data (on a self-hosted
-    install they could read the file anyway). Ingest keys in particular
-    are public by design, since every tracked page carries one, and an
-    agent reads them to install the snippet.
+47. **Reads reach every table except `meta` and SQLite's own.** A
+    database holds one tenant, and whoever holds the API login controls
+    that tenant's data, so custom SQL may read any table, not only the
+    `v_*` views; ingest keys in particular are public by design (every
+    tracked page carries one) and an agent reads them to install the
+    snippet. Two kinds of name are refused:
+    - `meta`, which holds the daily visitor salt: with it, custom SQL
+      could brute-force visitor IPs from `sha256(salt, ip, user_agent,
+      project)`;
+    - SQLite's internals: every `sqlite_*` name (`sqlite_schema` and
+      `sqlite_master`, `sqlite_temp_schema`, `sqlite_sequence`,
+      `sqlite_stat1`–`4`, and `sqlite_dbpage`, whose raw pages would
+      bypass any table rule), every `pragma_*` table-valued function, and
+      `dbstat`. Agents learn the views from `schema://views`, not from the
+      schema table.
+
+    `readsql` tokenizes the SQL (skipping string literals and comments)
+    and refuses an identifier with one of those names, quoted or not,
+    with or without a schema prefix: "sql reads meta, which custom SQL
+    may not read". A tokenizer, not a substring match, so
+    `WHERE event_name = 'meta'` and a column named `attachment` pass;
+    `ATTACH` moves into the same tokenizer as a keyword. Without an
+    authorizer this is sound because custom SQL cannot create views, the
+    only way to reach a table is to name it, and SQLite identifiers have
+    no escapes; the one indirect path, an existing view that reads a
+    refused table, is closed by a test over every `v_*` definition.
 
 ## Migration 021
 
@@ -602,6 +622,7 @@ code, per the standing rules.
 | manifest | `components.json` matches the widget files in `web/`, and Go loads it |
 | api | MCP ↔ REST parity (the view route REST-only by choice); `docs_sync_test` gains the tools, routes, both `REPORTING_*` settings and the range vocabulary; `redirectAllowed` accepts the API host; OAuth end to end through `/app/callback` |
 | read-only | one table of write attempts through `query` and through `widget_data` (`INSERT`, `UPDATE`, `DELETE`, `REPLACE`, `DROP`, `CREATE [TEMP] TABLE`, `WITH … INSERT`, `PRAGMA x = y`, `ATTACH`, `VACUUM INTO`, two statements, `load_extension()`): every one is refused and the database file's checksum is unchanged afterwards |
+| refused names | `meta`, `sqlite_master`, `sqlite_schema`, `sqlite_sequence`, `sqlite_stat1`, `sqlite_dbpage`, `pragma_table_info(…)` and `dbstat` are refused through `query` and `widget_data` in every spelling (quoted `"meta"`, `` `meta` ``, `[meta]`, `main.meta`, upper case); `'meta'` in a string literal, `meta` in a comment, and columns such as `metadata` and `attachment` pass; no `v_*` view definition references a refused name |
 | archtest | `internal/reporting` at rank 1, `internal/shared/sortkey` and `internal/shared/readsql` at rank 0 |
 | browser | Playwright against a seeded `serve`: log in, open every system dashboard at desktop and phone width, no error cards; report tabs carry project and range from tab to tab; a user dashboard opens in the standalone shell |
 
@@ -650,12 +671,7 @@ In the same PR as the change:
 
 ## Out of scope
 
-- Multi-tenant cloud: accounts, billing, one database per tenant. It must
-  revisit decision 47 for one table: `meta` holds the daily visitor salt,
-  and a hosted tenant, who has no file access, could use it with custom
-  SQL to brute-force visitor IPs from `sha256(salt, ip, user_agent,
-  project)`. Candidate fixes: an `EXPLAIN`-based refusal of plans that
-  open `meta`, or keeping the salt out of the database.
+- Multi-tenant cloud: accounts, billing, one database per tenant.
 - A native desktop app (Wails or Tauri) around the same bundle.
 - Any editing in the UI.
 - Deleting user dashboards. Agents archive and restore them; the only
