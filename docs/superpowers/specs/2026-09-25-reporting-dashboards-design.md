@@ -303,7 +303,7 @@ removes Evidence.
     | `list_components` | `GET /api/components` | the registered source types, and per component: name, description, accepts, inputs, props, default height; `include_removed` adds removed ones |
     | `list_dashboards` | `GET /api/dashboards` | `timezone` (the instance's, decision 19), and per dashboard: id, title, owner, position, default range, last project and range, widget count, archived |
     | `get_dashboard` | `GET /api/dashboards/{dashboard_id}` | the dashboard with its layout, and every widget's component, title, props, source type and source |
-    | `list_widgets` | `GET /api/widgets?dashboard_id=&component=&removed=&orphaned=` | every widget with its dashboard (id, title, owner, archived) and pinned project; filters combine; `removed=true` lists widgets on removed components, `orphaned=true` widgets pinned to a deleted project |
+    | `list_widgets` | `GET /api/widgets?dashboard_id=&component=` | every widget with its dashboard (id, title, owner, archived) and pinned project; the two filters combine |
     | `widget_data` | `GET /api/widgets/{widget_id}/data?project_id=&from=&to=&fresh=` | the widget's content for its effective project and the dates (decision 32) |
 
 29. **Write tools,** each refused on system dashboards and recorded in
@@ -469,7 +469,7 @@ code, per the standing rules.
 | Area | Proves |
 | --- | --- |
 | validation | each refusal in decision 27 fires with its sentinel and message |
-| projects | follows / pinned / cross-project resolve the effective project and cache key as decision 17 says; the switcher is present exactly when a widget follows it; a deleted pinned project answers `orphaned` and is listed by `orphaned=true`; `null` unpins |
+| projects | follows / pinned / cross-project resolve the effective project and cache key as decision 17 says; the switcher is present exactly when a widget follows it; a deleted pinned project answers `orphaned`; `null` unpins |
 | layout | add, copy, remove and `update_dashboard` layouts keep rows at 1–3 widgets with every widget placed once; append, insert-with-shift, empty-row removal |
 | foreign keys | deleting a dashboard deletes its widgets and then any removed component they were the last users of; writer connections report `foreign_keys = 1`; `DeleteProject` succeeds with keys present; a migration leaving a violation fails `foreign_key_check`; existing databases pass the check after 021 |
 | source types | an unregistered `source_type` is refused; a component's `accepts` naming an unregistered type fails the migrator; `sql` and `md` each validate and load through the registry |
@@ -494,9 +494,10 @@ In the same PR as the change:
 - `docs/deployment.md`: `/app/` and installing it; the redirect an
   `oauth://` provider must allow; `REPORTING_CACHE_MINUTES` and
   `REPORTING_REFRESH_MINUTES`; `twillingate reporting dev`.
-- `deploy/UPGRADES.md`: 021 adds `/app/`; `list_widgets removed=true` is
-  the upgrade-day list of widgets to fix; a binary rollback re-migrates
-  system dashboards (decision 25).
+- `deploy/UPGRADES.md`: 021 adds `/app/`; a release that removes a
+  component leaves its widgets showing "component removed" until an agent
+  switches or removes them; a binary rollback re-migrates system
+  dashboards (decision 25).
 - `CLAUDE.md`: `internal/reporting` and `web/` in the layout; the
   build-and-commit rule extended to `web/`; the docs table rows.
 
