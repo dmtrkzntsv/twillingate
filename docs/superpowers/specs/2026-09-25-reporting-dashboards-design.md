@@ -452,11 +452,22 @@ removes Evidence.
     `range` and stores no last range.
 35. **Selection is remembered per dashboard, server side.** Changing the
     project or range updates the URL and calls the view route
-    (decision 30).
-36. **Layout:** a sidebar with **Built-in** (system dashboards by sort
-    key) and **Yours** (user dashboards by sort key), archived ones
-    hidden; a
-    header with the title, the project switcher when the dashboard has one
+    (decision 30). Moving between report tabs (decision 36) carries the
+    current project and range to the next tab and saves them there, so
+    the five reports behave as one selection while storage stays per
+    dashboard.
+36. **Two shells, chosen by `owner`.** Both render widgets in the same
+    grid (decision 10); only the page around them differs.
+    - **System dashboards are reports:** one sidebar entry, **Reports**,
+      opens them as tabs across the top (Views · Product · Users · Groups
+      · Retention, in sort-key order), as Evidence's report navigation
+      does today, under one header whose project and range apply to all
+      of them (decision 35).
+    - **User dashboards are standalone:** listed under **Yours** in the
+      sidebar (by sort key, archived ones hidden), each a page with its
+      own header.
+
+    The header holds the title, the project switcher when the dashboard has one
     (active projects, archived ones in a collapsed group), the range
     switcher when it has one ("Custom…" opens a
     date-range `Calendar`, in a `Popover` on desktop and a `Sheet` on
@@ -476,9 +487,9 @@ removes Evidence.
 
     | Screen | Chrome |
     | --- | --- |
-    | ≥ 1024px | sidebar; switchers in the header |
-    | 640–1023px | sidebar collapses to icons |
-    | < 640px | sidebar in a drawer; switchers as two selects |
+    | ≥ 1024px | sidebar; report tabs in a row; switchers in the header |
+    | 640–1023px | sidebar collapses to icons; report tabs scroll sideways |
+    | < 640px | sidebar in a drawer; report tabs become a select; switchers as two selects |
 
     The grid keeps its order at every width; only spans change, so a
     narrow screen is the same list wrapped sooner.
@@ -562,7 +573,7 @@ code, per the standing rules.
 | manifest | `components.json` matches the widget files in `web/`, and Go loads it |
 | api | MCP ↔ REST parity (the view route REST-only by choice); `docs_sync_test` gains the tools, routes, both `REPORTING_*` settings and the range vocabulary; `redirectAllowed` accepts the API host; OAuth end to end through `/app/callback` |
 | archtest | `internal/reporting` at rank 1, `internal/shared/sortkey` at rank 0 |
-| browser | Playwright against a seeded `serve`: log in, open every system dashboard at desktop and phone width, no error cards |
+| browser | Playwright against a seeded `serve`: log in, open every system dashboard at desktop and phone width, no error cards; report tabs carry project and range from tab to tab; a user dashboard opens in the standalone shell |
 
 ## Docs
 
