@@ -126,18 +126,20 @@ removes Evidence.
 10. **Layout is a flowing grid.** A dashboard's widgets are one ordered
     list; each has a `width` and a `height`, and they fill a 12-column
     grid left to right, wrapping to the next line when a widget does not
-    fit. It is a CSS grid: 12 columns, rows of a fixed ~140px
+    fit. It is a CSS grid: 12 columns, rows of a fixed ~40px
     (`grid-auto-rows`), and each widget spans `width` columns and `height`
     rows (`grid-column: span w; grid-row: span h`). The grid places
     widgets in order into free cells without backfilling (no `dense`), so
-    a 6 × 2 chart followed by four 3 × 1 stats puts the stats in a 2 × 2
+    a 6 × 6 chart followed by four 3 × 3 stats puts the stats in a 2 × 2
     block beside the chart. Numbers map straight to spans; words or
     percentages would only add a translation (percentages would also need
     `calc()` around gaps).
     - **`width`** is the number of columns, 1–12: 3 is a quarter, 4 a
       third, 6 a half, 12 the full width, which covers the Evidence
       pages' 1-, 2-, 3- and 4-across grids.
-    - **`height`** is the number of grid rows spanned, 1–3.
+    - **`height`** is the number of grid rows spanned, 1–12, on the same
+      scale as `width`: 3 is ~120px, 8 ~320px, 12 ~480px. Heights keep
+      their pixels at every width, so charts stay readable on phones.
     - Either may be omitted and takes the component's `default_width` or
       `default_height`.
     - **Order is a fractional sort key.** `sort_key` is a fractional index
@@ -152,7 +154,7 @@ removes Evidence.
       the key between the neighbours.
     - At the edges (system files, `get_dashboard`, `create_dashboard`) the
       layout is the ordered list `[{"widget": "name", "width": 4,
-      "height": 1}, …]`.
+      "height": 3}, …]`.
 11. **`owner = 'system'` rows change only through the migrator** (decisions
     20–25). Every write operation refuses them with `ErrInvalid`.
 
@@ -167,12 +169,12 @@ removes Evidence.
 
     | Component | Accepts | Inputs: the columns the query returns | Props | Default width × height |
     | --- | --- | --- | --- | --- |
-    | `stat` | `sql` | `value` number; `previous` number, optional (shows the change) | `format`: `number`\|`percent`\|`duration` | 3 × 1 |
-    | `line` | `sql` | `x` day or text; `y` number; `series` text, optional (one line per value) | `format` | 6 × 2 |
-    | `area` | `sql` | as `line` | `format`, `stacked` | 6 × 2 |
-    | `bar` | `sql` | `x` text; `y` number; `series` text, optional | `format`, `horizontal`, `stacked` | 6 × 2 |
-    | `table` | `sql` | open: any columns, shown in query order | `formats`: column → format | 6 × 3 |
-    | `markdown` | `md` | none | none | 12 × 1 |
+    | `stat` | `sql` | `value` number; `previous` number, optional (shows the change) | `format`: `number`\|`percent`\|`duration` | 3 × 3 |
+    | `line` | `sql` | `x` day or text; `y` number; `series` text, optional (one line per value) | `format` | 6 × 8 |
+    | `area` | `sql` | as `line` | `format`, `stacked` | 6 × 8 |
+    | `bar` | `sql` | `x` text; `y` number; `series` text, optional | `format`, `horizontal`, `stacked` | 6 × 8 |
+    | `table` | `sql` | open: any columns, shown in query order | `formats`: column → format | 6 × 10 |
+    | `markdown` | `md` | none | none | 12 × 2 |
 
     Queries satisfy inputs by alias: `SELECT day AS x, visitors AS y …`.
     Returning a column a closed interface does not declare is refused.
@@ -246,7 +248,7 @@ removes Evidence.
     ```
     internal/reporting/system/<dir>/
       dashboard.json     {"id": 1, "title": "Views", "position": 1, "default_range": "7d",
-                          "layout": [{"widget": "visitors", "width": 3, "height": 1},
+                          "layout": [{"widget": "visitors", "width": 3, "height": 3},
                                      {"widget": "trend", "width": 6}, …]}
       <name>.json        {"component": "stat", "title": "Visitors", "props": {"format": "number"}}
       <name>.sql         the query, plain SQL: runs in sqlite3 as it is
@@ -317,7 +319,7 @@ removes Evidence.
     - `md`: the text is not empty;
     - props match the component's `props` schema;
     - size: `width` a whole number 1–12 ("width is columns out of 12,
-      from 1 to 12"), `height` a whole number 1–3;
+      from 1 to 12"), `height` a whole number 1–12;
       `after` names a widget on the same dashboard;
     - system rows: "dashboard 3 is a system dashboard and changes only with
       a release; duplicate_dashboard makes an editable copy".
@@ -505,7 +507,7 @@ code, per the standing rules.
 | --- | --- |
 | validation | each refusal in decision 27 fires with its sentinel and message |
 | projects | a widget using `:project` requires `project_id` in `widget_data` and keys its cache by it; a fixed widget ignores it and keys without it; the switcher is present exactly when a widget uses `:project` |
-| layout | a 6 × 2 widget followed by four 3 × 1 widgets renders them as a 2 × 2 block beside it (browser test); insert first, last and `after` (one key written, no other record touched); removal touches no other record; many inserts at one spot keep keys ordered and short enough; the `layout` list round-trips; widths and heights default from the component; the migrator keeps widget ids when order or size changes |
+| layout | a 6 × 6 widget followed by four 3 × 3 widgets renders them as a 2 × 2 block beside it (browser test); insert first, last and `after` (one key written, no other record touched); removal touches no other record; many inserts at one spot keep keys ordered and short enough; the `layout` list round-trips; widths and heights default from the component; the migrator keeps widget ids when order or size changes |
 | foreign keys | deleting a dashboard deletes its widgets and then any removed component they were the last users of; writer connections report `foreign_keys = 1`; `DeleteProject` succeeds with keys present; a migration leaving a violation fails `foreign_key_check`; existing databases pass the check after 021 |
 | source types | an unregistered `source_type` is refused; a component's `accepts` naming an unregistered type fails the migrator; `sql` and `md` each validate and load through the registry |
 | components | a removed component is refused for new use, answers `removed`, and is deleted with its last widget, including when the migrator deletes a system dashboard |
