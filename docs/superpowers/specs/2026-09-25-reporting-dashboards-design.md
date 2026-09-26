@@ -354,6 +354,7 @@ removes Evidence.
 
     | Tool | Route | Returns |
     | --- | --- | --- |
+    | `reporting_guide` | MCP only | live components, source types, views, projects and dashboards, with the workflow and rules (decision 50) |
     | `list_components` | `GET /api/components` | the registered source types, and per component: name, description, accepts, inputs, props, default width and height |
     | `list_dashboards` | `GET /api/dashboards` | `timezone` (the instance's, decision 19), and per dashboard, in sidebar order: id, title, owner, stored project and range, widget count, archived |
     | `get_dashboard` | `GET /api/dashboards/{dashboard_id}` | the dashboard and its live widgets in order, each with id, name, width, height, component, title, props, source type and source |
