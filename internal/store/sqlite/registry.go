@@ -234,19 +234,23 @@ var projectTables = []string{
 	"ingest_keys",
 }
 
-// DeleteProjectData hard-deletes the project and every row keyed by its
-// id, in one transaction (spec §7.3). The audit row is written in the
-// same transaction and survives — audit_log has no project column.
-// Page reclamation is the caller's job (IncrementalVacuum), because a
-// vacuum inside the tx would deadlock the single connection. The id is
-// never reissued (AUTOINCREMENT), so a stale reference to it stays dead.
+// DeleteProjectData hard-deletes every row keyed by the project's id, then
+// the project row itself, in one transaction (spec §7.3). The dependents
+// go first: ingest_keys.project_id REFERENCES projects(id), and foreign
+// keys are enforced (openAt), so deleting the parent while a key still
+// pointed at it would be refused. The audit row is written in the same
+// transaction and survives — audit_log has no project column. Page
+// reclamation is the caller's job (IncrementalVacuum), because a vacuum
+// inside the tx would deadlock the single connection. The id is never
+// reissued (AUTOINCREMENT), so a stale reference to it stays dead.
 func (d *DB) DeleteProjectData(ctx context.Context, id int64, a store.AuditEntry) error {
 	return d.tx(ctx, func(tx *sql.Tx) error {
-		res, err := tx.ExecContext(ctx, `DELETE FROM projects WHERE id=?`, id)
-		if err != nil {
+		var exists int
+		if err := tx.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM projects WHERE id=?`, id).Scan(&exists); err != nil {
 			return err
 		}
-		if n, _ := res.RowsAffected(); n == 0 {
+		if exists == 0 {
 			return fmt.Errorf("delete: unknown id %d: %w", id, store.ErrNotFound)
 		}
 		for _, table := range projectTables {
@@ -254,6 +258,9 @@ func (d *DB) DeleteProjectData(ctx context.Context, id int64, a store.AuditEntry
 				`DELETE FROM `+table+` WHERE project_id=?`, id); err != nil {
 				return fmt.Errorf("delete %s: %w", table, err)
 			}
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM projects WHERE id=?`, id); err != nil {
+			return fmt.Errorf("delete project %d: %w", id, err)
 		}
 		return auditAndBump(ctx, tx, a)
 	})

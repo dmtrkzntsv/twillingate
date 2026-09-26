@@ -43,6 +43,9 @@ func openAt(path string) (*DB, error) {
 		"_pragma=synchronous(NORMAL)",
 		"_pragma=cache_size(-16000)",
 		"_pragma=temp_store(2)",
+		// enforced since 021: widgets cascade with their dashboard and
+		// lose a deleted component (spec D7).
+		"_pragma=foreign_keys(1)",
 	}, "&")
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
