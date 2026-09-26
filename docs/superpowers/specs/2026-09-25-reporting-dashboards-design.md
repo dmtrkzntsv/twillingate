@@ -68,7 +68,7 @@ removes Evidence.
                          last_from, last_to,
                          created_at, updated_at, archived_at
    widgets               id INTEGER PK AUTOINCREMENT, dashboard_id, name, component, title,
-                         props (JSON), source_type ('sql'|'md'), source (TEXT), project_id,
+                         props (JSON), source_type (TEXT), source (TEXT), project_id,
                          created_at, updated_at
    reporting_migrations  id INTEGER PK AUTOINCREMENT, hash, version, applied_at
    ```
@@ -80,8 +80,24 @@ removes Evidence.
 7. **Ids 1–999 are reserved for system dashboards.** Migration 021 sets the
    `dashboards` sequence to 1000, so agent-made dashboards start at 1001 and
    can never collide with a system id.
-8. **A widget is a component plus a source.** `source_type` is `sql` (a
-   query) or `md` (Markdown text). `title` is optional; the card shows a
+8. **A widget is a component plus a source.** `source_type` names a
+   source type registered in Go; the database stores the name as text and
+   knows no list. Each source type implements one interface in
+   `reporting`:
+
+   ```go
+   type SourceType interface {
+       Name() string                                      // "sql", "md"
+       Validate(ctx, content string, c Component) error   // refusals are ErrInvalid
+       Load(ctx, content string, p Params) (Payload, error)
+       Cacheable() bool
+   }
+   ```
+
+   This work registers `sql` (a query; cacheable) and `md` (Markdown
+   text; not cacheable). A new source type is Go code and a release, with
+   no migration; validation refuses names that are not registered.
+   `title` is optional; the card shows a
    header only when it has one. `name` is unique within the dashboard and
    is how the layout refers to the widget; an agent gives it or it is
    derived from the title (lower case, `-` for runs of other characters),
@@ -266,7 +282,7 @@ removes Evidence.
 
     | Tool | Route | Returns |
     | --- | --- | --- |
-    | `list_components` | `GET /api/components` | name, description, accepts, inputs, props, default height; `include_removed` adds removed ones |
+    | `list_components` | `GET /api/components` | the registered source types, and per component: name, description, accepts, inputs, props, default height; `include_removed` adds removed ones |
     | `list_dashboards` | `GET /api/dashboards` | `timezone` (the instance's, decision 18), and per dashboard: id, title, owner, position, default range, last project and range, widget count, archived |
     | `get_dashboard` | `GET /api/dashboards/{dashboard_id}` | the dashboard with its layout, and every widget's component, title, props, source type and source |
     | `list_widgets` | `GET /api/widgets?dashboard_id=&component=&removed=&orphaned=` | every widget with its dashboard (id, title, owner, archived) and pinned project; filters combine; `removed=true` lists widgets on removed components, `orphaned=true` widgets pinned to a deleted project |
@@ -316,8 +332,9 @@ removes Evidence.
     The effective project is the widget's pin, else the `project_id`
     parameter; a widget that follows the switcher and gets none is
     `ErrInvalid`, and a pinned or cross-project widget ignores the
-    parameter. `md` widgets answer `{"widget_id", "markdown"}`, ignore
-    project and dates, and are not cached. A widget pinned to a project
+    parameter. The body is what the source type's `Load` returns: rows
+    for `sql`; `{"widget_id", "markdown"}` for `md`, which ignores project
+    and dates. Only cacheable source types are cached. A widget pinned to a project
     that no longer exists answers `{"widget_id", "orphaned": true}`. A widget on a removed component answers
     `{"widget_id", "removed": true}`. A query that no longer runs, or whose
     rows no longer satisfy the inputs (a release changed a view), is
@@ -435,6 +452,7 @@ code, per the standing rules.
 | validation | each refusal in decision 26 fires with its sentinel and message |
 | projects | follows / pinned / cross-project resolve the effective project and cache key as decision 16 says; the switcher is present exactly when a widget follows it; a deleted pinned project answers `orphaned` and is listed by `orphaned=true`; `null` unpins |
 | layout | add, copy, remove and `update_dashboard` layouts keep rows at 1–3 widgets with every widget placed once; append, insert-with-shift, empty-row removal |
+| source types | an unregistered `source_type` is refused; a component's `accepts` naming an unregistered type fails the migrator; `sql` and `md` each validate and load through the registry |
 | components | a removed component is refused for new use, answers `removed`, and is deleted with its last widget, including when the migrator deletes a system dashboard |
 | migrator | upserts, deletions, reserved ids, widget ids stable across edits and moves, `last_*` kept, a second run with the same hash writes nothing, a failure writes nothing |
 | **system dashboards** | every system widget, on a database migrated to latest with seeded data, validates and runs for every preset range, and its rows satisfy its component. The load-bearing test |
