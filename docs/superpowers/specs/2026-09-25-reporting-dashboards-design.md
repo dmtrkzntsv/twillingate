@@ -65,22 +65,26 @@ removes Evidence.
    ```
    components            name PK, description, accepts (JSON), inputs (JSON), props (JSON),
                          default_width, default_height, removed_at
-   dashboards            id INTEGER PK AUTOINCREMENT, owner ('system'|'user'), title, position,
-                         default_range, last_project_id, last_range, last_from, last_to,
+   dashboards            id INTEGER PK AUTOINCREMENT, owner ('system'|'user'), title,
+                         sort_key TEXT, last_project_id, last_range, last_from, last_to,
                          created_at, updated_at, archived_at
    widgets               id INTEGER PK AUTOINCREMENT,
                          dashboard_id REFERENCES dashboards(id) ON DELETE CASCADE,
-                         sort_key TEXT, width, height, name, component, title,
+                         component REFERENCES components(name),
+                         sort_key TEXT, width, height, name, title,
                          props (JSON), source_type (TEXT), source (TEXT),
                          created_at, updated_at
    reporting_migrations  id INTEGER PK AUTOINCREMENT, hash, version, applied_at
    ```
 
-   One cascading foreign key and no checks or triggers: deleting a
-   dashboard deletes its widgets. Unique indexes:
-   `widgets (dashboard_id, sort_key)`, so an order is total, and
-   `widgets (dashboard_id, name)`, which the migrator matches on. Every
-   other rule below is enforced in Go
+   Two foreign keys and no checks or triggers: deleting a dashboard
+   deletes its widgets (cascade), and a component cannot be deleted while
+   a widget uses it (no cascade; decision 15 only ever deletes unused
+   ones, and the migrator upserts components before widgets). Unique
+   indexes: `dashboards (owner, sort_key)` (the sidebar orders each group
+   on its own), `widgets (dashboard_id, sort_key)`,
+   so every order is total, and `widgets (dashboard_id, name)`, which the
+   migrator matches on. Every other rule below is enforced in Go
    (the standing rule, no validation in the database). The cascade
    removes widgets without Go seeing them, so every transaction that
    deletes a dashboard ends with the removed-component cleanup
@@ -213,8 +217,8 @@ removes Evidence.
     names it with fewer or no rows, like any SQL; nothing can dangle,
     because nothing is stored besides the SQL.
 18. **Presets live in the UI; the API takes dates.** Range presets are a
-    closed vocabulary used by the dashboard page's URL, the range switcher,
-    `default_range` and the stored last selection. The UI resolves a preset
+    closed vocabulary used by the dashboard page's URL, the range switcher
+    and the dashboard's stored selection. The UI resolves a preset
     to `from` and `to` in the instance timezone (below) before calling
     the API. The rolling
     presets include today, the window the Evidence pages use:
@@ -233,9 +237,16 @@ removes Evidence.
     `from ≤ to`, spanning at most 365 days;
     otherwise `ErrInvalid`. A `to` after today (UTC) is clamped to today,
     before the cache key is built, so a browser clock slightly ahead of
-    the server near midnight still gets data. `default_range` is a preset
-    and cannot be `custom`; the Go side knows the preset ids only to
-    validate `default_range` and the stored last selection.
+    the server near midnight still gets data. The Go side knows the
+    preset ids only to validate the stored selection.
+
+    **One stored range per dashboard, no separate default.** A
+    dashboard's selection (`last_range`, with `last_from`/`last_to` for
+    `custom`, and `last_project_id`) starts at the value it is created
+    with and then follows the viewer: `create_dashboard` takes an optional
+    `range` (default `7d`), and a system dashboard's `dashboard.json`
+    gives `range`, which the migrator writes only when it inserts the
+    dashboard, never over a viewer's choice.
 
 19. **Days are the instance's days; for now that is UTC.** `v_*` views
     group by `day`, the UTC date of `ts`. The API reports the timezone
@@ -251,7 +262,7 @@ removes Evidence.
 
     ```
     internal/reporting/system/<dir>/
-      dashboard.json     {"id": 1, "title": "Views", "position": 1, "default_range": "7d",
+      dashboard.json     {"id": 1, "title": "Views", "range": "7d",
                           "layout": [{"widget": "visitors", "width": 3, "height": 3},
                                      {"widget": "trend", "width": 6}, …]}
       <name>.json        {"component": "stat", "title": "Visitors", "props": {"format": "number"}}
@@ -276,8 +287,9 @@ removes Evidence.
     Otherwise, in one transaction:
     1. components: upsert by name and clear `removed_at`; set `removed_at`
        on the ones missing from the manifest;
-    2. system dashboards: upsert by `id` (title, position, default
-       range), keeping the stored last selection; delete system
+    2. system dashboards: upsert by `id` (title, and a sort key in `id`
+       order); on insert, the selection from the file's `range`; on
+       update, the stored selection is kept; delete system
        dashboards no file claims, with their widgets;
     3. widgets, per system dashboard: upsert by name, keeping the id, with
        width, height and a sort key from the file's order (keys are
@@ -298,8 +310,8 @@ removes Evidence.
     `removed_at`, and their widgets show "component removed" until the
     upgrade returns. `deploy/UPGRADES.md` says so.
 26. **The five Evidence pages become system dashboards:** Views (id 1),
-    Product (2), Users (3), Groups (4), Retention (5), each with the
-    Evidence page's default range (`7d`; Retention `90d`) and its stats,
+    Product (2), Users (3), Groups (4), Retention (5), each starting on
+    the Evidence page's default range (`7d`; Retention `90d`) and with its stats,
     charts and tables. The drill-down into a single page
     (`views/[project]/page.md`) is dropped: it needs a path parameter that
     decision 17 does not provide. The empty-database sentinel rows are not
@@ -336,7 +348,7 @@ removes Evidence.
     | Tool | Route | Returns |
     | --- | --- | --- |
     | `list_components` | `GET /api/components` | the registered source types, and per component: name, description, accepts, inputs, props, default width and height; `include_removed` adds removed ones |
-    | `list_dashboards` | `GET /api/dashboards` | `timezone` (the instance's, decision 19), and per dashboard: id, title, owner, position, default range, last project and range, widget count, archived |
+    | `list_dashboards` | `GET /api/dashboards` | `timezone` (the instance's, decision 19), and per dashboard, in sidebar order: id, title, owner, stored project and range, widget count, archived |
     | `get_dashboard` | `GET /api/dashboards/{dashboard_id}` | the dashboard and its widgets in order, each with id, name, width, height, component, title, props, source type and source |
     | `list_widgets` | `GET /api/widgets?dashboard_id=&component=` | every widget with its dashboard (id, title, owner, archived) and place; the two filters combine |
     | `widget_data` | `GET /api/widgets/{widget_id}/data?project_id=&from=&to=&fresh=` | the widget's content for the dates, and for `project_id` when its SQL uses `:project` (decision 32) |
@@ -346,8 +358,8 @@ removes Evidence.
 
     | Tool | Route | Effect |
     | --- | --- | --- |
-    | `create_dashboard` | `POST /api/dashboards` → 201 | title, default range, optional widgets in order; all or nothing |
-    | `update_dashboard` | `PATCH /api/dashboards/{dashboard_id}` | title, default range, position |
+    | `create_dashboard` | `POST /api/dashboards` → 201 | title, optional `range` (the starting selection, default `7d`), optional `after` (a dashboard id; `null` first; omitted, last), optional widgets in order; all or nothing |
+    | `update_dashboard` | `PATCH /api/dashboards/{dashboard_id}` | title; `after` moves it in the sidebar (one sort key written) |
     | `duplicate_dashboard` | `POST /api/dashboards/{dashboard_id}/duplicate` → 201 | a user copy of any dashboard, system ones included |
     | `archive_dashboard` / `restore_dashboard` | `POST /api/dashboards/{dashboard_id}/archive` / `…/restore` | hide or unhide |
     | `add_widget` | `POST /api/dashboards/{dashboard_id}/widgets` → 201 | optional `after` (a widget id; `null` puts it first; omitted, last), `width`, `height`; one sort key written |
@@ -431,15 +443,16 @@ removes Evidence.
     with a preset shows that preset as of the day it is opened.
     `/app/callback` completes login. Without
     `project` or `range` in the URL, the dashboard's stored last selection
-    applies, then the first active project and `default_range`. A
+    applies, then the first active project and `7d`. A
     dashboard without a project switcher (decision 5) takes no `project`
     and stores no last project; one without a range switcher takes no
     `range` and stores no last range.
 35. **Selection is remembered per dashboard, server side.** Changing the
     project or range updates the URL and calls the view route
     (decision 30).
-36. **Layout:** a sidebar with **Built-in** (system dashboards by position)
-    and **Yours** (user dashboards by position), archived ones hidden; a
+36. **Layout:** a sidebar with **Built-in** (system dashboards by sort
+    key) and **Yours** (user dashboards by sort key), archived ones
+    hidden; a
     header with the title, the project switcher when the dashboard has one
     (active projects, archived ones in a collapsed group), the range
     switcher when it has one ("Custom…" opens a
@@ -515,8 +528,9 @@ removes Evidence.
 ## Migration 021
 
 `021_reporting.sql` creates `components`, `dashboards`, `widgets` and
-`reporting_migrations`, the two unique indexes on `widgets` and the
-cascading foreign key from widgets to dashboards, and sets
+`reporting_migrations`, the unique indexes of decision 6, and the
+foreign keys from widgets to dashboards (cascading) and to components,
+and sets
 `sqlite_sequence` for `dashboards` to 1000. It copies nothing. The
 system dashboards arrive through the migrator on the same run. Its test
 pins the ceiling at 21 and migrates to latest before calling current Go
@@ -528,14 +542,15 @@ code, per the standing rules.
 | --- | --- |
 | validation | each refusal in decision 27 fires with its sentinel and message |
 | following | for project and for range independently: a widget whose SQL uses the parameters requires them in `widget_data` and keys its cache by them; a fixed widget ignores them and keys without them; each switcher is present exactly when a widget follows it; the view route requires and refuses each part to match; a widget following neither is cached per widget only |
+| order | dashboards: `after` on create and update writes one key; system dashboards sort in `id` order |
 | layout | a 6 × 6 widget followed by four 3 × 3 widgets renders them as a 2 × 2 block beside it (browser test); insert first, last and `after` (one key written, no other record touched); removal touches no other record; many inserts at one spot keep keys ordered and short enough; the `layout` list round-trips; widths and heights default from the component; the migrator keeps widget ids when order or size changes |
 | foreign keys | deleting a dashboard deletes its widgets and then any removed component they were the last users of; writer connections report `foreign_keys = 1`; `DeleteProject` succeeds with keys present; a migration leaving a violation fails `foreign_key_check`; existing databases pass the check after 021 |
 | source types | an unregistered `source_type` is refused; a component's `accepts` naming an unregistered type fails the migrator; `sql` and `md` each validate and load through the registry |
-| components | a removed component is refused for new use, answers `removed`, and is deleted with its last widget, including when the migrator deletes a system dashboard |
+| components | the foreign key refuses deleting a component a widget uses; a removed component is refused for new use, answers `removed`, and is deleted with its last widget, including when the migrator deletes a system dashboard |
 | migrator | upserts, deletions, reserved ids, widget ids stable across edits and moves, `last_*` kept, a second run with the same hash writes nothing, a failure writes nothing |
 | **system dashboards** | every system widget, on a database migrated to latest with seeded data, validates and runs for every preset range, and its rows satisfy its component. The load-bearing test |
 | files | pairing errors (no data file, two, orphan data file, unplaced or missing widget, duplicate or out-of-range `id`) |
-| ranges | the UI resolves each preset to the dates in decision 18 (in the reported timezone, around its midnight); the API refuses a missing date, `from > to` and spans over 365 days, and clamps a future `to`; `custom` and unknown presets are rejected as a default range, and unknown presets by the view route |
+| ranges | the UI resolves each preset to the dates in decision 18 (in the reported timezone, around its midnight); the API refuses a missing date, `from > to` and spans over 365 days, and clamps a future `to`; unknown presets are rejected by `create_dashboard` and the view route; a new dashboard starts on its given range (or `7d`), and the migrator sets a system dashboard's range only on insert |
 | limits | a widget query past `API_QUERY_TIMEOUT` is refused naming it; a result past `API_QUERY_MAX_ROWS` is cut and answers `truncated` |
 | cache | the age rules of decision 33, invalidation, one run for simultaneous requests, the boot refusal |
 | manifest | `components.json` matches the widget files in `web/`, and Go loads it |
