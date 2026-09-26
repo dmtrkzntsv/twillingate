@@ -8,6 +8,8 @@ interface Props {
   widgets: Widget[]
   /** The data query for one widget: what it follows of the page's selection. */
   paramsFor: (widget: Widget) => WidgetDataQuery
+  /** Show what is cached, but load nothing (the page is about to change). */
+  idle?: boolean
 }
 
 /**
@@ -16,7 +18,7 @@ interface Props {
  * and there is no `dense` packing, so a narrow grid is the same list
  * wrapped sooner.
  */
-function WidgetGrid({ widgets, paramsFor }: Props) {
+function WidgetGrid({ widgets, paramsFor, idle = false }: Props) {
   const ref = useRef<HTMLDivElement>(null)
   const width = useElementWidth(ref)
 
@@ -31,7 +33,7 @@ function WidgetGrid({ widgets, paramsFor }: Props) {
             className="min-w-0"
             style={{ gridColumn: `span ${columns} / span ${columns}`, gridRow: `span ${widget.height} / span ${widget.height}` }}
           >
-            <WidgetCard widget={widget} params={paramsFor(widget)} />
+            <WidgetCard widget={widget} params={paramsFor(widget)} idle={idle} />
           </div>
         )
       })}

@@ -83,6 +83,30 @@ describe('WidgetCard', () => {
     expect(spy).not.toHaveBeenCalled()
   })
 
+  it('says "Component removed" without asking when the registry has no such component', () => {
+    const spy = vi.spyOn(endpoints, 'widgetData')
+    renderCard(statWidget({ component: 'sparkle' }))
+    expect(screen.getByText('Component removed')).toBeInTheDocument()
+    expect(spy).not.toHaveBeenCalled()
+  })
+
+  it('asks for nothing while idle', () => {
+    const spy = vi.spyOn(endpoints, 'widgetData')
+    renderWithProviders(<WidgetCard widget={statWidget()} params={params} idle />)
+    expect(spy).not.toHaveBeenCalled()
+  })
+
+  it('keeps the rendered data when a refresh fails, and says so quietly', async () => {
+    vi.spyOn(endpoints, 'widgetData')
+      .mockResolvedValueOnce(sqlAnswer())
+      .mockRejectedValue(new ApiError(500, 'database is locked', 'internal'))
+    renderCard()
+    await userEvent.click(await screen.findByRole('button', { name: 'Refresh Visitors' }))
+    expect(await screen.findByRole('img', { name: "Couldn't refresh: database is locked" })).toBeInTheDocument()
+    expect(screen.getByText('12.3K')).toBeInTheDocument()
+    expect(screen.queryByText("Couldn't load")).not.toBeInTheDocument()
+  })
+
   it('says "Query no longer runs" on a 400, with the message folded', async () => {
     vi.spyOn(endpoints, 'widgetData').mockRejectedValue(new ApiError(400, 'no such column: visitors', 'invalid'))
     renderCard()
@@ -116,21 +140,23 @@ describe('WidgetCard', () => {
     expect(await screen.findByText('partial: narrow the range or group the query')).toBeInTheDocument()
   })
 
-  it('disables the refresh icon before refresh_after', async () => {
-    vi.spyOn(endpoints, 'widgetData').mockResolvedValue(
-      sqlAnswer({ refresh_after: new Date(Date.now() + HOUR).toISOString() })
-    )
+  it('disables the refresh icon before refresh_after, and ignores clicks', async () => {
+    const spy = vi
+      .spyOn(endpoints, 'widgetData')
+      .mockResolvedValue(sqlAnswer({ refresh_after: new Date(Date.now() + HOUR).toISOString() }))
     renderCard()
     await screen.findByText('12.3K')
-    expect(screen.getByRole('button', { name: 'Refresh' })).toBeDisabled()
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh Visitors' }))
+    expect(spy).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('button', { name: 'Refresh Visitors' })).toHaveAttribute('aria-disabled', 'true')
   })
 
   it('enables the refresh icon after refresh_after and asks for fresh data', async () => {
     const spy = vi.spyOn(endpoints, 'widgetData').mockResolvedValue(sqlAnswer())
     renderCard()
     await screen.findByText('12.3K')
-    const button = screen.getByRole('button', { name: 'Refresh' })
-    expect(button).toBeEnabled()
+    const button = screen.getByRole('button', { name: 'Refresh Visitors' })
+    expect(button).not.toHaveAttribute('aria-disabled', 'true')
     await userEvent.click(button)
     await waitFor(() => expect(spy).toHaveBeenCalledWith(42, { ...params, fresh: true }))
   })
@@ -153,6 +179,17 @@ describe('WidgetCard', () => {
       })
     )
     expect(await screen.findByRole('heading', { name: 'Read me' })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Refresh' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Refresh/ })).not.toBeInTheDocument()
+  })
+
+  it('says "Nothing to show" for blank markdown, which has no range', async () => {
+    vi.spyOn(endpoints, 'widgetData').mockResolvedValue({
+      widget_id: 43,
+      source_type: 'md',
+      removed: false,
+      data: { markdown: '  ' },
+    })
+    renderCard(statWidget({ widget_id: 43, component: 'markdown', source: { type: 'md', content: '' } }))
+    expect(await screen.findByText('Nothing to show')).toBeInTheDocument()
   })
 })

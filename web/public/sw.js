@@ -1,7 +1,8 @@
 // Service worker for the /app/ dashboards. Keeps the shell available offline
 // without ever touching the API: only navigations and the app's own built
 // assets are cached.
-const CACHE = 'app-v1'
+// Stamped per build by scripts/stamp-sw.ts; 'app-dev' only outside a build.
+const CACHE = 'app-dev'
 const SHELL_URLS = ['/app/', '/app/index.html']
 
 self.addEventListener('install', (event) => {

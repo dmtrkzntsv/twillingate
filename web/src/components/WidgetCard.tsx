@@ -1,31 +1,34 @@
 import type { ReactNode } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { ChevronDownIcon, CircleOffIcon, CloudOffIcon, InboxIcon, RefreshCwIcon, TriangleAlertIcon } from 'lucide-react'
+import { ChevronDownIcon, CircleAlertIcon, CircleOffIcon, CloudOffIcon, InboxIcon, RefreshCwIcon, TriangleAlertIcon } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { widgets } from '@/components/widgets'
 import { useNow } from '@/hooks/use-now'
 import { ApiError, type SqlData, type Widget, type WidgetData, type WidgetDataQuery } from '@/lib/api'
 import { formatDuration } from '@/lib/time'
-import { canRefresh, refreshWidget, widgetQuery } from '@/lib/widget-query'
+import { canRefresh, componentOf, refreshWidget, widgetQuery } from '@/lib/widget-query'
 
 interface Props {
   widget: Widget
   params: WidgetDataQuery
+  /** Show what is cached, but ask for nothing (the page is about to change). */
+  idle?: boolean
 }
 
 /** One widget in its card, loading on its own and showing its own state (D38). */
-export default function WidgetCard({ widget, params }: Props) {
+export default function WidgetCard({ widget, params, idle = false }: Props) {
   const client = useQueryClient()
-  const query = useQuery(widgetQuery(widget, params))
-  const Component = widget.component === null ? undefined : widgets[widget.component]?.default
-  const removed = !Component || query.data?.removed === true
-  const truncated = (query.data?.data as SqlData | null | undefined)?.truncated === true
+  const query = useQuery(widgetQuery(widget, params, idle))
+  const Component = componentOf(widget)?.default
+  const answer = query.data
+  const removed = !Component || answer?.removed === true
+  const truncated = (answer?.data as SqlData | null | undefined)?.truncated === true
   const refreshable = widget.source.type === 'sql' && !removed
+  const label = widget.title ?? widget.name
 
   return (
     <Card data-slot="widget-card" className="relative h-full min-w-0 gap-1 overflow-hidden p-3 shadow-xs">
@@ -42,22 +45,29 @@ export default function WidgetCard({ widget, params }: Props) {
       <div className="relative min-h-0 flex-1 overflow-auto">
         {removed ? (
           <CardState icon={<CircleOffIcon />} title="Component removed" />
+        ) : answer ? (
+          // Data already on screen stays there when a later refetch fails.
+          isEmpty(answer) ? (
+            <CardState icon={<InboxIcon />} title={answer.source_type === 'md' ? 'Nothing to show' : 'No data for this range'} />
+          ) : (
+            <Component data={answer.data!} props={widget.props} />
+          )
         ) : query.isError ? (
           <FailedState error={query.error} onRetry={() => query.refetch()} />
-        ) : query.isPending ? (
-          <Skeleton className="h-full w-full" />
-        ) : isEmpty(query.data) ? (
-          <CardState icon={<InboxIcon />} title="No data for this range" />
         ) : (
-          <Component data={query.data.data!} props={widget.props} />
+          <Skeleton className="h-full w-full" />
         )}
       </div>
       {refreshable && (
-        <RefreshButton
-          data={query.data}
-          busy={query.isFetching}
-          onRefresh={() => void refreshWidget(client, widget, params).catch(() => {})}
-        />
+        <div className="absolute top-2.5 right-2.5 flex items-center">
+          {answer && query.isError && <StaleWarning error={query.error} />}
+          <RefreshButton
+            label={`Refresh ${label}`}
+            data={answer}
+            busy={query.isFetching}
+            onRefresh={() => void refreshWidget(client, widget, params).catch(() => {})}
+          />
+        </div>
       )}
     </Card>
   )
@@ -111,6 +121,21 @@ function FailedState({ error, onRetry }: { error: Error; onRetry: () => void }) 
   )
 }
 
+/** A refetch failed while older data stays on screen: say so without taking the card over. */
+function StaleWarning({ error }: { error: Error }) {
+  const text = `Couldn't refresh: ${error.message}`
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span tabIndex={0} role="img" aria-label={text} className="flex size-7 items-center justify-center text-destructive">
+          <CircleAlertIcon className="size-4" />
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>{text}</TooltipContent>
+    </Tooltip>
+  )
+}
+
 function refreshHint(data: WidgetData | undefined, now: number): string {
   if (!data?.cached_at || !data.refresh_after) return 'Refresh'
   const age = `Updated ${formatDuration(now - Date.parse(data.cached_at))} ago`
@@ -118,24 +143,39 @@ function refreshHint(data: WidgetData | undefined, now: number): string {
   return wait > 0 ? `${age} · can refresh in ${formatDuration(wait)}` : `${age} · refresh now`
 }
 
+interface RefreshProps {
+  label: string
+  data?: WidgetData
+  busy: boolean
+  onRefresh: () => void
+}
+
 /**
  * Asks for `fresh=true` (D39). Shown on hover (always on touch screens, see
- * `.hover-reveal`), and disabled until the answer's `refresh_after`.
+ * `.hover-reveal`). Until the answer's `refresh_after` it is `aria-disabled`
+ * rather than `disabled`, so it keeps its focus and its tooltip.
  */
-function RefreshButton({ data, busy, onRefresh }: { data?: WidgetData; busy: boolean; onRefresh: () => void }) {
+function RefreshButton({ label, data, busy, onRefresh }: RefreshProps) {
   const now = useNow()
   const ready = canRefresh(data, now) && !busy
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        {/* A disabled button fires no pointer events; the wrapper keeps the tooltip. */}
-        <span className="hover-reveal absolute top-2.5 right-2.5" data-busy={busy || undefined} tabIndex={ready ? -1 : 0}>
-          <Button variant="ghost" size="icon" className="size-7" aria-label="Refresh" disabled={!ready} onClick={onRefresh}>
+    // The wrapper carries the reveal, so the button's own disabled look is not overridden.
+    <span className="hover-reveal" data-busy={busy || undefined}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-7 aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
+            aria-label={label}
+            aria-disabled={!ready || undefined}
+            onClick={ready ? onRefresh : undefined}
+          >
             <RefreshCwIcon className={busy ? 'animate-spin' : undefined} />
           </Button>
-        </span>
-      </TooltipTrigger>
-      <TooltipContent>{refreshHint(data, now)}</TooltipContent>
-    </Tooltip>
+        </TooltipTrigger>
+        <TooltipContent>{refreshHint(data, now)}</TooltipContent>
+      </Tooltip>
+    </span>
   )
 }

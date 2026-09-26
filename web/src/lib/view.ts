@@ -1,4 +1,4 @@
-import type { SaveViewBody, Widget, WidgetDataQuery } from './api'
+import type { DashboardDetail, SaveViewBody, Widget, WidgetDataQuery } from './api'
 import type { Selection } from './selection'
 
 /** Which switchers a dashboard has (D5): the parts of a selection it takes. */
@@ -46,4 +46,16 @@ export function widgetParams(
     params.to = range.to
   }
   return params
+}
+
+/** A dashboard as it reads once `body` is saved as its view: what the server now stores. */
+export function withSavedView(dashboard: DashboardDetail, body: SaveViewBody): DashboardDetail {
+  const next = { ...dashboard }
+  if (body.project_id !== undefined) next.project_id = body.project_id
+  if (body.range !== undefined) {
+    next.range = body.range
+    next.from = body.from
+    next.to = body.to
+  }
+  return next
 }

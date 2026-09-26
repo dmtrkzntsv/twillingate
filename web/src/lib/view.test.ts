@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import type { Widget } from './api'
-import { selectionParams, viewBody, widgetParams } from './view'
+import type { DashboardDetail, Widget } from './api'
+import { selectionParams, viewBody, widgetParams, withSavedView } from './view'
 
 const widget = (follows_project: boolean, follows_range: boolean) => ({ follows_project, follows_range }) as Widget
 
@@ -33,5 +33,11 @@ describe('view helpers', () => {
     expect(widgetParams(widget(false, true), { projectId: 7 }, range)).toEqual(range)
     expect(widgetParams(widget(true, false), { projectId: 7 }, range)).toEqual({ project_id: 7 })
     expect(widgetParams(widget(false, false), { projectId: 7 }, range)).toEqual({})
+  })
+
+  it('applies a saved view to a cached dashboard, dropping stale custom dates', () => {
+    const d = { dashboard_id: 1, project_id: 7, range: 'custom', from: '2026-08-01', to: '2026-08-31' } as DashboardDetail
+    expect(withSavedView(d, { range: '7d' })).toMatchObject({ project_id: 7, range: '7d', from: undefined, to: undefined })
+    expect(withSavedView(d, { project_id: 1 })).toMatchObject({ project_id: 1, range: 'custom', from: '2026-08-01' })
   })
 })

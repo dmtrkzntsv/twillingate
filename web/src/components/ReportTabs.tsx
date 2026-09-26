@@ -19,7 +19,9 @@ export default function ReportTabs({ reports, currentId, onSelect }: Props) {
 
   return (
     <>
-      <Tabs value={value} onValueChange={select} className="hidden h-full min-w-0 self-stretch sm:flex">
+      {/* Manual activation: arrowing across the tabs only moves focus, so it
+          does not open (and save a selection on) every report on the way. */}
+      <Tabs value={value} onValueChange={select} activationMode="manual" className="hidden h-full min-w-0 self-stretch sm:flex">
         {/* As tall as the bar, so the active tab's underline is not clipped by the scroller. */}
         <div className="flex h-full items-center overflow-x-auto overflow-y-hidden [scrollbar-width:none]">
           <TabsList variant="line" aria-label="Reports" className="w-max">

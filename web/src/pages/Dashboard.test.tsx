@@ -4,7 +4,7 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiError, endpoints, type Project } from '@/lib/api'
 import { span } from '@/lib/grid'
-import { answerFor, dashboardsList, details, projects, views, widgetsById } from '@/test/fixtures'
+import { answerFor, dashboardsList, details, launchWeek, product, projects, views, widgetsById } from '@/test/fixtures'
 import { renderWithProviders } from '@/test/render'
 import Dashboard from './Dashboard'
 
@@ -161,6 +161,63 @@ describe('Dashboard', () => {
     expect(await screen.findByRole('heading', { level: 1, name: 'Users' })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: 'Users' })).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByRole('button', { name: 'Range: Last month' })).toBeInTheDocument()
+    // One GET for the tab it lands on: the saved view goes into the cache.
+    expect(vi.mocked(endpoints.dashboard).mock.calls.filter(([id]) => id === 3)).toHaveLength(1)
+  })
+
+  it('moves focus, not the page, when arrowing across the report tabs', async () => {
+    mockApi()
+    renderAt('/dashboards/2?project=1&range=30d')
+
+    const tab = await screen.findByRole('tab', { name: 'Product' })
+    tab.focus()
+    await userEvent.keyboard('{ArrowRight}{ArrowRight}')
+
+    expect(screen.getByRole('tab', { name: 'Groups' })).toHaveFocus()
+    expect(location()).toBe('/dashboards/2?project=1&range=30d')
+    expect(endpoints.saveView).not.toHaveBeenCalled()
+  })
+
+  it('refreshes, from the header, only the widgets past their refresh_after', async () => {
+    const [events, perDay] = product.widgets
+    const widgetData = mockApi()
+    widgetData.mockImplementation(async (id) => {
+      const answer = answerFor(widgetsById.get(id)!)
+      if (id === perDay.widget_id) answer.refresh_after = new Date(Date.now() + 3_600_000).toISOString()
+      return answer
+    })
+    renderAt('/dashboards/2?project=7&range=7d')
+
+    const button = await screen.findByRole('button', { name: 'Refresh all' })
+    await waitFor(() => expect(button).not.toHaveAttribute('aria-disabled', 'true'))
+    await userEvent.click(button)
+
+    await waitFor(() => expect(widgetData.mock.calls.filter((c) => c[1].fresh)).toHaveLength(1))
+    expect(widgetData.mock.calls.filter((c) => c[1].fresh)[0][0]).toBe(events.widget_id)
+  })
+
+  it('keeps the old dashboard idle while the next one loads', async () => {
+    const widgetData = mockApi()
+    let open: (d: typeof launchWeek) => void = () => {}
+    vi.mocked(endpoints.dashboard).mockImplementation(async (id) =>
+      id === launchWeek.dashboard_id ? new Promise((resolve) => (open = resolve)) : details[id]
+    )
+    renderAt('/dashboards/2?project=7&range=30d')
+    await screen.findByText('Events per day')
+    await waitFor(() => expect(widgetData).toHaveBeenCalledTimes(product.widgets.length))
+
+    // The sidebar link carries no selection: the old dashboard would now
+    // compute its stored one (7d) and ask again for every widget.
+    await userEvent.click(screen.getByRole('link', { name: 'Launch week' }))
+    await waitFor(() => expect(location()).toBe('/dashboards/10'))
+    await act(async () => {})
+    expect(widgetData).toHaveBeenCalledTimes(product.widgets.length)
+
+    await act(async () => open(launchWeek))
+    expect(await screen.findByText('Signups during launch')).toBeInTheDocument()
+    for (const call of widgetData.mock.calls.slice(product.widgets.length)) {
+      expect(launchWeek.widgets.map((w) => w.widget_id)).toContain(call[0])
+    }
   })
 
   it('asks for a project first when there are no active ones, and loads no widget', async () => {
@@ -230,7 +287,7 @@ describe.each([
   it('renders every widget kind in a card spanning its adapted width', async () => {
     window.innerWidth = screenWidth
     observeGridAt(gridWidth)
-    mockApi()
+    const widgetData = mockApi()
     renderAt('/dashboards/1?project=7&range=7d')
 
     const grid = await waitFor(() => {
@@ -254,5 +311,7 @@ describe.each([
       expect(card.queryByText('No data for this range')).toBeNull()
     }
     await act(async () => {})
+    // One request per widget: the header's freshness shares the cards' queries.
+    expect(widgetData).toHaveBeenCalledTimes(views.widgets.length)
   }, 20_000)
 })
