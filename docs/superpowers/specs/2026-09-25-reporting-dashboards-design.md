@@ -542,6 +542,29 @@ removes Evidence.
 45. **The command is `twillingate reporting dev`**, not under `dashboards`, which still
     runs Evidence until the second PR.
 
+### Custom SQL only reads
+
+46. **Every piece of custom SQL runs through one read-only guard.**
+    Widget SQL (on `widget_data`, on validation, in the migrator's check
+    of system widgets, in `reporting dev`) and the `query` operation over
+    MCP and REST share `internal/shared/readsql`, which today's guards in
+    `internal/api` (`readdb.go`, `ops_query.go`) move into:
+
+    | Layer | Stops |
+    | --- | --- |
+    | the pool opens the file `mode=ro` | any write through the connection |
+    | `query_only(1)` on the pool | writes, even through a path that finds one |
+    | `_defensive=1` on the pool (new) | the schema-corrupting operations SQLite's defensive mode blocks |
+    | the SQL runs wrapped as `SELECT * FROM (…) LIMIT n` | DML, DDL, `PRAGMA`, `VACUUM` and several statements: all become syntax errors |
+    | `ATTACH` refused by token scan | attaching another file, which `mode=ro` does not prevent |
+    | timeout and row cap (`API_QUERY_*`) | runaway reads |
+
+    The driver (`modernc.org/sqlite`) exposes no authorizer, so these
+    layers are the guarantee. `reporting`'s executor accepts only
+    `readsql`'s read-only handle, a distinct type, so handing it the
+    store's writer does not compile. `reporting dev` opens `--db` through
+    the same function.
+
 ## Migration 021
 
 `021_reporting.sql` creates `components`, `dashboards`, `widgets` and
@@ -572,7 +595,8 @@ code, per the standing rules.
 | cache | the age rules of decision 33, invalidation, one run for simultaneous requests, the boot refusal |
 | manifest | `components.json` matches the widget files in `web/`, and Go loads it |
 | api | MCP ↔ REST parity (the view route REST-only by choice); `docs_sync_test` gains the tools, routes, both `REPORTING_*` settings and the range vocabulary; `redirectAllowed` accepts the API host; OAuth end to end through `/app/callback` |
-| archtest | `internal/reporting` at rank 1, `internal/shared/sortkey` at rank 0 |
+| read-only | one table of write attempts through `query` and through `widget_data` (`INSERT`, `UPDATE`, `DELETE`, `REPLACE`, `DROP`, `CREATE [TEMP] TABLE`, `WITH … INSERT`, `PRAGMA x = y`, `ATTACH`, `VACUUM INTO`, two statements, `load_extension()`): every one is refused and the database file's checksum is unchanged afterwards |
+| archtest | `internal/reporting` at rank 1, `internal/shared/sortkey` and `internal/shared/readsql` at rank 0 |
 | browser | Playwright against a seeded `serve`: log in, open every system dashboard at desktop and phone width, no error cards; report tabs carry project and range from tab to tab; a user dashboard opens in the standalone shell |
 
 ## Docs
@@ -593,7 +617,7 @@ In the same PR as the change:
   dashboards and permanently clears the component of widgets on
   components the older release lacks (decision 25).
 - `CLAUDE.md`: `internal/reporting`, `internal/shared/` (small generic
-  leaf packages; `sortkey` first) and `web/` in the layout; the
+  leaf packages: `sortkey`, `readsql`) and `web/` in the layout; the
   build-and-commit rule extended to `web/`; the docs table rows.
 
 ## Rollout
