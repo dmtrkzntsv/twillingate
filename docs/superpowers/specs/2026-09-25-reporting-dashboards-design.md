@@ -696,19 +696,18 @@ removes Evidence.
     can work out why a widget broke after an update. MCP tool and
     `GET /api/changelog?since=`; `since` is a date or a version,
     default the last 90 days. It answers from what the binary and the
-    database already hold, with no network access, newest first:
+    database already hold, newest first:
 
     | Part | Source |
     | --- | --- |
-    | releases | each version's notes (`feat`, `fix`, `perf`, breaking marked), embedded at build |
+    | releases | the running version and links: `https://github.com/dmtrkzntsv/twillingate/releases` and `…/releases/tag/v<version>`, where the published notes already are |
     | schema | each migration applied here since `since`: `schema_migrations.applied_at`, the migration's header comment (every migration starts with one) and its `deploy/UPGRADES.md` section |
     | reporting | each `reporting_migrations` entry with its `release` audit entry: components removed (their widgets now have no component), system dashboards and widgets added, changed or removed |
 
-    - **Release notes are embedded at build.** The release job writes the
-      same `feat`/`fix`/`perf` entries changelogithub publishes into
-      `internal/version/notes/` before `go build`, and `go:embed`
-      carries them; a build from source has none and says "development
-      build: no release notes".
+    - **Release notes are not copied into the binary;** they are
+      published on GitHub already. What only the instance knows (which
+      migrations ran here and when, what the migrator changed) is what
+      this tool adds.
     - **`deploy/UPGRADES.md` is embedded** through a small `deploy`
       package, as `docs` embeds the contract pages, ranked 0.
     - **Agents find it:** a `widget_data` refusal for a query that no
@@ -750,7 +749,7 @@ code, per the standing rules.
 | cache | the age rules of decision 33, invalidation, one run for simultaneous requests, the boot refusal |
 | manifest | `components.json` matches the widget files in `web/`, and Go loads it |
 | component render | Vitest with Testing Library, per component: renders from sample rows, from no rows, and with each prop; a closed interface's missing optional input (`series`, `previous`, `max`, `size`, `x` on `stat`, `parent`) renders the simpler form; `map` resolves every ISO alpha-2 code in `world-atlas` and lists unknown ones |
-| changelog | `changelog` with a date and with a version returns the releases, the migrations applied since (with header and `UPGRADES.md` section) and the `release` audit entries since, newest first; a development build says it has no release notes; a failing `widget_data` refusal names `changelog`; the release job embeds notes that match what changelogithub publishes |
+| changelog | `changelog` with a date and with a version returns the running version with its release links, the migrations applied since (with header and `UPGRADES.md` section) and the `release` audit entries since, newest first; a failing `widget_data` refusal names `changelog` |
 | guide | `reporting_guide` returns the live components, source types, views, projects and dashboards plus the workflow section; the server's `instructions` name both guides; `docs://reporting` is served; `schema://components`, `schema://dashboards` and `schema://widgets` return exactly what `list_components`, `list_dashboards` and unfiltered `list_widgets` return, reflecting a write made just before |
 | api | MCP ↔ REST parity (the view route REST-only by choice, `reporting_guide` MCP-only by choice); `docs_sync_test` reads `docs/reporting.md` and binds its component table to `components.json` in both directions, and gains the tools, routes, both `REPORTING_*` settings and the range vocabulary; `redirectAllowed` accepts the API host; OAuth end to end through `/app/callback` |
 | read-only | one table of write attempts through `query` and through `widget_data` (`INSERT`, `UPDATE`, `DELETE`, `REPLACE`, `DROP`, `CREATE [TEMP] TABLE`, `WITH … INSERT`, `PRAGMA x = y`, `ATTACH`, `VACUUM INTO`, two statements, `load_extension()`): every one is refused and the database file's checksum is unchanged afterwards |
@@ -788,8 +787,6 @@ In the same PR as the change:
   switches or archives them; a binary rollback re-migrates system
   dashboards and permanently clears the component of widgets on
   components the older release lacks (decision 25).
-- `.github/workflows/release.yml`: write the release notes into
-  `internal/version/notes/` before building the tarballs.
 - `CLAUDE.md`: three contract pages, not two (`docs/reporting.md` joins,
   and the "do not add files there" rule names it), with its rows in the
   docs table (reporting tools, components, views used by system
