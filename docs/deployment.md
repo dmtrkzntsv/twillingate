@@ -113,8 +113,10 @@ to it.
 | `API_AUTH_DSN` | Authentication for the API endpoint (MCP and REST): `token://<token>?password=…` for the built-in browser login (see [The API endpoint](#the-api-endpoint)), or `oauth://<issuer-host>` for your own identity provider. Unset, bare `serve` skips the API with a warning. |
 | `API_ADDR` | Give the API (MCP and REST) its own listener. Defaults to `INGEST_ADDR` (shared). |
 | `API_DB_PATH` | Database the API reads for queries. Defaults to the `DATABASE_DSN` path. |
-| `API_QUERY_TIMEOUT` | Per-query guard on reads and the `query` operation. Default `10s`. |
-| `API_QUERY_MAX_ROWS` | Row cap on the `query` operation. Default 1000. |
+| `API_QUERY_TIMEOUT` | Per-query guard on reads and the `query` operation; also bounds a reporting widget's sql. Default `10s`. |
+| `API_QUERY_MAX_ROWS` | Row cap on the `query` operation; also bounds a reporting widget's sql. Default 1000. |
+| `REPORTING_CACHE_SECONDS` | How long a sql widget's loaded value is served as-is before a request triggers a fresh load. 0 recomputes on every request. Default 900. |
+| `REPORTING_REFRESH_SECONDS` | How much longer past `REPORTING_CACHE_SECONDS` a stale value is still served while a fresh load runs; must not exceed it. Default 60. |
 
 Litestream credentials (`LITESTREAM_ACCESS_KEY_ID`,
 `LITESTREAM_SECRET_ACCESS_KEY`, `R2_BUCKET`, `R2_ENDPOINT`) live in the same

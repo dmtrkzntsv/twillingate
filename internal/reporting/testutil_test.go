@@ -14,10 +14,20 @@ import (
 // a read-only readsql.DB on the same file, so sql widgets validate).
 func newTestService(t *testing.T) *Service {
 	t.Helper()
-	st, db := newTestStoreAndReadDB(t)
-	svc := New(st, db, Options{})
-	syncReporting(t, svc, nil)
+	svc, _ := newTestServiceOpts(t, Options{}, 1000)
 	return svc
+}
+
+// newTestServiceOpts is newTestService with caller-chosen Options (an
+// injected clock, configured cache ages) and read-only row cap, and also
+// returns the store directly — for a data/cache test that seeds rows
+// (agg_views_daily) or a project no reporting.Store method exposes.
+func newTestServiceOpts(t *testing.T, opt Options, maxRows int) (*Service, store.Store) {
+	t.Helper()
+	st, db := newTestStoreAndReadDBMaxRows(t, maxRows)
+	svc := New(st, db, opt)
+	syncReporting(t, svc, nil)
+	return svc, st
 }
 
 // syncReporting makes the store's components testdata's, minus the names

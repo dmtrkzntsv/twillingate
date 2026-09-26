@@ -49,21 +49,22 @@ type Options struct {
 	// CacheAge and RefreshAge come from REPORTING_CACHE_SECONDS and
 	// REPORTING_REFRESH_SECONDS: how long a sql widget's loaded value is
 	// served as-is, and how long past that it is still served while a
-	// fresh load runs in the background (a later task wires these into
-	// the cache).
+	// fresh load runs in the background.
 	CacheAge, RefreshAge time.Duration
 	// Now stands in for time.Now in tests; nil means time.Now.
 	Now func() time.Time
 }
 
 // Service is the reporting surface's composition root: the store slice
-// it reads and writes, the read-only database sql widgets query, and the
-// registered source types content is checked and run against.
+// it reads and writes, the read-only database sql widgets query, the
+// registered source types content is checked and run against, and the
+// two-age cache their loaded values are served from.
 type Service struct {
 	st      Store
 	db      *readsql.DB
 	sources map[string]SourceType
 	now     func() time.Time
+	cache   *cache
 }
 
 // New builds a Service. db is the read-only handle sql widgets run
@@ -79,5 +80,6 @@ func New(st Store, db *readsql.DB, opt Options) *Service {
 		db:      db,
 		sources: newSources(db, true, now),
 		now:     now,
+		cache:   newCache(opt.CacheAge, opt.RefreshAge, now),
 	}
 }

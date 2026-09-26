@@ -2,6 +2,7 @@ package reporting
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"testing"
@@ -79,13 +80,34 @@ func newTestReadDB(t *testing.T) *readsql.DB {
 // events) and then reads them back through sqlSource.
 func newTestStoreAndReadDB(t *testing.T) (store.Store, *readsql.DB) {
 	t.Helper()
+	return newTestStoreAndReadDBMaxRows(t, 1000)
+}
+
+// newTestStoreAndReadDBMaxRows is newTestStoreAndReadDB with a caller-
+// chosen row cap, for a test that wants readsql.Result.Truncated to
+// actually trip.
+func newTestStoreAndReadDBMaxRows(t *testing.T, maxRows int) (store.Store, *readsql.DB) {
+	t.Helper()
 	st, path := newTestStore(t)
-	db, err := readsql.Open(path, 2*time.Second, 1000)
+	db, err := readsql.Open(path, 2*time.Second, maxRows)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
 	return st, db
+}
+
+// rawExec reaches the underlying *sql.DB of the sqlite store, for
+// seeding rows (agg_views_daily) or breaking them (dropping a table,
+// writing a row that no longer fits a component) that no Store method
+// exists to do directly.
+func rawExec(t *testing.T, st store.Store, q string, args ...any) {
+	t.Helper()
+	if _, err := st.(interface {
+		ExecForTest(string, ...any) (sql.Result, error)
+	}).ExecForTest(q, args...); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // mustCreateProject inserts a project and returns its id.

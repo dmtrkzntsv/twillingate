@@ -51,6 +51,9 @@ func TestDefaultsApplied(t *testing.T) {
 	if c.Dashboards.ProjectDir != "/opt/evidence" || c.Dashboards.WorkDir != "/var/lib/dashboards" {
 		t.Errorf("Dashboards dirs = %+v", c.Dashboards)
 	}
+	if c.Reporting.CacheAge != 900*time.Second || c.Reporting.RefreshAge != 60*time.Second {
+		t.Errorf("Reporting = %+v", c.Reporting)
+	}
 }
 
 func TestEnvOverrides(t *testing.T) {
@@ -73,6 +76,8 @@ func TestEnvOverrides(t *testing.T) {
 		"DASHBOARDS_INTERVAL":              "1m",
 		"DASHBOARDS_PROJECT_DIR":           "/tmp/evidence",
 		"DASHBOARDS_WORK_DIR":              "/tmp/work",
+		"REPORTING_CACHE_SECONDS":          "120",
+		"REPORTING_REFRESH_SECONDS":        "30",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -97,6 +102,9 @@ func TestEnvOverrides(t *testing.T) {
 		c.Dashboards.ProjectDir != "/tmp/evidence" || c.Dashboards.WorkDir != "/tmp/work" {
 		t.Errorf("Dashboards = %+v", c.Dashboards)
 	}
+	if c.Reporting.CacheAge != 120*time.Second || c.Reporting.RefreshAge != 30*time.Second {
+		t.Errorf("Reporting = %+v", c.Reporting)
+	}
 }
 
 func TestValidationErrors(t *testing.T) {
@@ -108,17 +116,44 @@ func TestValidationErrors(t *testing.T) {
 		return vars
 	}
 	cases := map[string]map[string]string{
-		"no database":            {"DATABASE_DSN": ""},
-		"bad geo scheme":         base(map[string]string{"GEO_DSN": "???"}),
-		"negative raw_days":      base(map[string]string{"RETENTION_VIEWS_RAW_DAYS": "-1"}),
-		"negative archived_days": base(map[string]string{"RETENTION_ARCHIVED_DAYS": "-1"}),
-		"bad integer":            base(map[string]string{"BUFFER_CAPACITY": "many"}),
-		"invalid duration":       base(map[string]string{"BUFFER_FLUSH_INTERVAL": "fast"}),
+		"no database":              {"DATABASE_DSN": ""},
+		"bad geo scheme":           base(map[string]string{"GEO_DSN": "???"}),
+		"negative raw_days":        base(map[string]string{"RETENTION_VIEWS_RAW_DAYS": "-1"}),
+		"negative archived_days":   base(map[string]string{"RETENTION_ARCHIVED_DAYS": "-1"}),
+		"bad integer":              base(map[string]string{"BUFFER_CAPACITY": "many"}),
+		"invalid duration":         base(map[string]string{"BUFFER_FLUSH_INTERVAL": "fast"}),
+		"negative cache seconds":   base(map[string]string{"REPORTING_CACHE_SECONDS": "-1"}),
+		"negative refresh seconds": base(map[string]string{"REPORTING_REFRESH_SECONDS": "-1"}),
+		"refresh exceeds cache": base(map[string]string{
+			"REPORTING_CACHE_SECONDS": "60", "REPORTING_REFRESH_SECONDS": "120"}),
 	}
 	for name, vars := range cases {
 		if _, err := FromEnv(func(k string) (string, bool) { v, ok := vars[k]; return v, ok }); err == nil {
 			t.Errorf("%s: expected error", name)
 		}
+	}
+}
+
+// TestRefreshExceedsCacheMessage pins the refusal's exact text, which
+// names both variables and their values so a person can fix the .env
+// without hunting for which one to change.
+func TestRefreshExceedsCacheMessage(t *testing.T) {
+	_, err := load(t, map[string]string{"REPORTING_CACHE_SECONDS": "60", "REPORTING_REFRESH_SECONDS": "120"})
+	if err == nil || err.Error() != "config: REPORTING_REFRESH_SECONDS (120) exceeds REPORTING_CACHE_SECONDS (60)" {
+		t.Errorf("err = %v", err)
+	}
+}
+
+// TestReportingCacheZeroAllowsAnyRefresh: a cache age of 0 disables the
+// cache outright (every request recomputes), so a refresh age longer
+// than it is meaningless to refuse.
+func TestReportingCacheZeroAllowsAnyRefresh(t *testing.T) {
+	c, err := load(t, map[string]string{"REPORTING_CACHE_SECONDS": "0", "REPORTING_REFRESH_SECONDS": "120"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Reporting.CacheAge != 0 || c.Reporting.RefreshAge != 120*time.Second {
+		t.Errorf("Reporting = %+v", c.Reporting)
 	}
 }
 

@@ -49,6 +49,14 @@ type DashboardsConfig struct {
 	WorkDir    string
 }
 
+// ReportingConfig sizes the two-age cache a sql widget's loaded value is
+// served from (internal/reporting): CacheAge is how long it is served
+// as-is, RefreshAge how much longer past that it is still served while a
+// fresh load runs. REPORTING_CACHE_SECONDS 0 recomputes every request.
+type ReportingConfig struct {
+	CacheAge, RefreshAge time.Duration
+}
+
 // APIConfig carries the -api surface settings. Authentication comes from
 // the single API_AUTH_DSN; parsing fans it out into the mode-specific
 // fields the verifiers consume:
@@ -97,6 +105,7 @@ type Config struct {
 	Retention             Retention
 	ProductAttributesTopN int
 	Dashboards            DashboardsConfig
+	Reporting             ReportingConfig
 	API                   APIConfig
 }
 
@@ -211,6 +220,10 @@ func parse(lookup func(string) (string, bool), dashboards bool) (*Config, error)
 			ProjectDir: e.str("DASHBOARDS_PROJECT_DIR", "/opt/evidence"),
 			WorkDir:    e.str("DASHBOARDS_WORK_DIR", "/var/lib/dashboards"),
 		},
+		Reporting: ReportingConfig{
+			CacheAge:   time.Duration(e.num("REPORTING_CACHE_SECONDS", 900)) * time.Second,
+			RefreshAge: time.Duration(e.num("REPORTING_REFRESH_SECONDS", 60)) * time.Second,
+		},
 	}
 	c.API = APIConfig{
 		Addr:         e.str("API_ADDR", c.IngestAddr),
@@ -279,6 +292,16 @@ func (c *Config) validate() error {
 	}
 	if c.Retention.ArchivedDays < 0 {
 		return fmt.Errorf("config: RETENTION_ARCHIVED_DAYS must not be negative: %d", c.Retention.ArchivedDays)
+	}
+	if c.Reporting.CacheAge < 0 {
+		return fmt.Errorf("config: REPORTING_CACHE_SECONDS must not be negative")
+	}
+	if c.Reporting.RefreshAge < 0 {
+		return fmt.Errorf("config: REPORTING_REFRESH_SECONDS must not be negative")
+	}
+	if c.Reporting.CacheAge > 0 && c.Reporting.RefreshAge > c.Reporting.CacheAge {
+		return fmt.Errorf("config: REPORTING_REFRESH_SECONDS (%d) exceeds REPORTING_CACHE_SECONDS (%d)",
+			int(c.Reporting.RefreshAge/time.Second), int(c.Reporting.CacheAge/time.Second))
 	}
 	return nil
 }
