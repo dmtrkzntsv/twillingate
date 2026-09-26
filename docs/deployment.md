@@ -118,9 +118,10 @@ to it.
 Litestream credentials (`LITESTREAM_ACCESS_KEY_ID`,
 `LITESTREAM_SECRET_ACCESS_KEY`, `R2_BUCKET`, `R2_ENDPOINT`) live in the same
 `twillingate.env`; nothing in the collector reads them. The old names
-`MCP_*`, `LISTEN_ADDR` and `RETENTION_WEB_*`/`RETENTION_APP_*` refuse the
-boot, each naming its replacement: `API_*`, `INGEST_ADDR`,
-`RETENTION_VIEWS_*`.
+`LISTEN_ADDR` and `RETENTION_WEB_*`/`RETENTION_APP_*` refuse the boot,
+each naming its replacement: `INGEST_ADDR`, `RETENTION_VIEWS_*`. The
+`MCP_*` names renamed to `API_*` are no longer checked; a leftover one is
+ignored, so rename any still in `twillingate.env`.
 
 ### Raspberry Pi and low-resource hosts
 
