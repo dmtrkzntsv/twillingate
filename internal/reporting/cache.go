@@ -46,29 +46,22 @@ func newCache(cacheAge, refreshAge time.Duration, now func() time.Time) *cache {
 	return &cache{entries: make(map[string]entry), cacheAge: cacheAge, refreshAge: refreshAge, now: now}
 }
 
+// clock is in UTC, since cached_at and refresh_after are sent as they
+// are stamped and every other time the API returns is UTC.
 func (c *cache) clock() time.Time {
 	if c.now != nil {
-		return c.now()
+		return c.now().UTC()
 	}
-	return time.Now()
+	return time.Now().UTC()
 }
 
 // get returns key's cached value when it is younger than refreshAge
-// (fresh) or cacheAge (an ordinary request); otherwise it runs load —
-// once, even against concurrent callers sharing key (singleflight) —
-// and, unless the cache is off, stores the result and returns that
-// instead.
+// (fresh) or cacheAge (an ordinary request); otherwise it runs load, once
+// across concurrent callers sharing key, and stores the result.
 //
-// cacheAge 0 turns the cache off outright rather than merely never
-// reusing an entry: every call — fresh or not — runs load, and nothing
-// is stored. This is deliberate, not just "recompute every time" spelled
-// a longer way: were an entry still stored with cacheAge 0, a fresh
-// request (age refreshAge, which can be > 0 even with caching off) could
-// reuse it while an ordinary one, having no age it ever satisfies, never
-// would — fresh ending up staler than ordinary, backwards from what the
-// name promises. Storing nothing also keeps the map from growing without
-// bound when both ages are 0, since put's own sweep (below) only ever
-// runs when max(cacheAge, refreshAge) > 0.
+// cacheAge 0 stores nothing: a stored entry would let a fresh request
+// (refreshAge may still be > 0) reuse a value an ordinary one never
+// could, making "fresh" the staler of the two.
 func (c *cache) get(key string, fresh bool, load func() (any, error)) (any, time.Time, error) {
 	if c.cacheAge <= 0 {
 		return c.runOnce(key, load)

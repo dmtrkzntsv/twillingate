@@ -41,12 +41,13 @@ func Manifest() []byte {
 // on every load, against an ETag of their content, so an unchanged one
 // costs a 304. components.json is Manifest's input, not the app's, and a
 // missing asset is a 404 rather than the shell served as a script. No
-// response may be framed by another page.
+// response may be framed by another page or sniffed into another type.
 func UI() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
 		h.Set("X-Frame-Options", "DENY")
 		h.Set("Content-Security-Policy", "frame-ancestors 'none'")
+		h.Set("X-Content-Type-Options", "nosniff")
 		name := strings.TrimPrefix(r.URL.Path, "/app/")
 		if name == r.URL.Path || name == "components.json" {
 			http.NotFound(w, r)

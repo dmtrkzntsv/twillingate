@@ -128,13 +128,17 @@ func TestUIRevalidatesWithETags(t *testing.T) {
 	}
 }
 
-// TestUIRefusesFraming: no /app/ response may be framed by another page.
-func TestUIRefusesFraming(t *testing.T) {
+// TestUIRefusesFramingAndSniffing: no /app/ response may be framed by
+// another page, or read as a type other than the one it is served as.
+func TestUIRefusesFramingAndSniffing(t *testing.T) {
 	for _, target := range []string{"/app/", "/app/dashboards/3", "/app/assets/" + builtAsset(t), "/app/sw.js", "/app/components.json"} {
 		h := serveUI(t, target).Header()
 		if h.Get("X-Frame-Options") != "DENY" || h.Get("Content-Security-Policy") != "frame-ancestors 'none'" {
 			t.Errorf("GET %s: X-Frame-Options %q, Content-Security-Policy %q", target,
 				h.Get("X-Frame-Options"), h.Get("Content-Security-Policy"))
+		}
+		if got := h.Get("X-Content-Type-Options"); got != "nosniff" {
+			t.Errorf("GET %s: X-Content-Type-Options %q, want nosniff", target, got)
 		}
 	}
 }

@@ -370,10 +370,10 @@ func TestWidgetDataSharedLoadIgnoresACallerCancellingMidFlight(t *testing.T) {
 // TestWidgetDataCachedAtAndRefreshAfter asserts the actual relationship
 // the envelope promises on a sql widget — CachedAt set, and RefreshAfter
 // exactly CachedAt + Options.RefreshAge — rather than recomputing the
-// same formula the implementation uses (a prior version of this test did
-// exactly that, proving nothing).
+// same formula the implementation uses, and that both are UTC even when
+// the process clock is not.
 func TestWidgetDataCachedAtAndRefreshAfter(t *testing.T) {
-	now := time.Now()
+	now := time.Now().In(time.FixedZone("UTC+3", 3*3600))
 	refreshAge := 30 * time.Second
 	svc, st := newTestServiceOpts(t,
 		Options{CacheAge: time.Minute, RefreshAge: refreshAge, Now: func() time.Time { return now }}, 1000)
@@ -392,6 +392,9 @@ func TestWidgetDataCachedAtAndRefreshAfter(t *testing.T) {
 	want := got.CachedAt.Add(refreshAge)
 	if got.RefreshAfter == nil || !got.RefreshAfter.Equal(want) {
 		t.Errorf("RefreshAfter = %v, want CachedAt + RefreshAge = %v", got.RefreshAfter, want)
+	}
+	if got.CachedAt.Location() != time.UTC || got.RefreshAfter.Location() != time.UTC {
+		t.Errorf("CachedAt/RefreshAfter in %v/%v, want UTC", got.CachedAt.Location(), got.RefreshAfter.Location())
 	}
 }
 
