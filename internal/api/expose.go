@@ -2,14 +2,19 @@ package api
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"reflect"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // spec describes one operation on both transports. Method "" keeps it
-// MCP-only; the parity test makes that an explicit choice.
+// MCP-only and RESTOnly keeps it off MCP; the parity test makes either an
+// explicit choice.
 type spec struct {
 	Name        string // MCP tool name
 	Description string
@@ -17,6 +22,7 @@ type spec struct {
 	Method      string // HTTP method; "" = MCP only
 	Path        string // ServeMux pattern path, e.g. "/api/projects/{project_id}/views/overview"
 	Status      int    // REST success status; 0 = 200
+	RESTOnly    bool   // set by restOnly: a route with no MCP tool
 }
 
 // registrar collects the operations for both transports. specs is what
@@ -48,7 +54,8 @@ func actorFrom(ctx context.Context) string {
 // route. One call per operation, so neither transport can drift.
 func expose[In, Out any](r *registrar, s spec, fn func(context.Context, In) (Out, error)) {
 	r.specs = append(r.specs, s)
-	mcp.AddTool(r.mcp, &mcp.Tool{Name: s.Name, Description: s.Description, Annotations: s.Annotations},
+	mcp.AddTool(r.mcp, &mcp.Tool{Name: s.Name, Description: s.Description, Annotations: s.Annotations,
+		InputSchema: schemaFor[In](), OutputSchema: schemaFor[Out]()},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in In) (*mcp.CallToolResult, Out, error) {
 			out, err := fn(withActor(ctx, "mcp"), in)
 			return nil, out, err
@@ -56,4 +63,33 @@ func expose[In, Out any](r *registrar, s spec, fn func(context.Context, In) (Out
 	if s.Method != "" && r.rest != nil {
 		r.rest.HandleFunc(s.Method+" "+s.Path, restHandler(r, s, fn))
 	}
+}
+
+// restOnly registers fn as a REST route with no MCP tool: state only the
+// web app writes, such as a dashboard's remembered selection.
+func restOnly[In, Out any](r *registrar, s spec, fn func(context.Context, In) (Out, error)) {
+	s.RESTOnly = true
+	r.specs = append(r.specs, s)
+	if r.rest != nil {
+		r.rest.HandleFunc(s.Method+" "+s.Path, restHandler(r, s, fn))
+	}
+}
+
+// schemaOptions describes json.RawMessage as a JSON object: inferred from
+// its Go type it would be an array of bytes, and the SDK would refuse every
+// value passed in or returned. Every RawMessage the tools carry is an
+// object (widget props, a component's props schema).
+var schemaOptions = &jsonschema.ForOptions{TypeSchemas: map[reflect.Type]*jsonschema.Schema{
+	reflect.TypeFor[json.RawMessage](): {Type: "object"},
+}}
+
+// schemaFor infers T's schema with schemaOptions. A type it cannot
+// describe is a programming error, found at startup the way
+// mcp.AddTool's own inference would.
+func schemaFor[T any]() *jsonschema.Schema {
+	s, err := jsonschema.For[T](schemaOptions)
+	if err != nil {
+		panic(fmt.Sprintf("api: schema for %T: %v", *new(T), err))
+	}
+	return s
 }

@@ -14,14 +14,23 @@ func TestActorContext(t *testing.T) {
 	}
 }
 
-// TestEveryToolChoosesATransport: a tool either has a REST route or is on
-// the MCP-only list, and routes are unique. A new tool must decide.
+// TestEveryToolChoosesATransport: an operation is on both transports, or
+// on the MCP-only or REST-only list, and routes are unique. A new
+// operation must decide.
 func TestEveryToolChoosesATransport(t *testing.T) {
-	h, _ := newTestHost(t)
+	h, cs := newTestHost(t)
 	r := newTestRegistrar(t, h)
-	mcpOnly := map[string]bool{"integration_guide": true}
+	mcpOnly := map[string]bool{"integration_guide": true, "reporting_guide": true}
+	restOnly := map[string]bool{"view": true} // the web app's own selection
 	seen := map[string]string{}
+	tools := 0
 	for _, s := range r.specs {
+		if s.RESTOnly != restOnly[s.Name] {
+			t.Errorf("operation %s: REST-only is %v, the list says %v", s.Name, s.RESTOnly, restOnly[s.Name])
+		}
+		if !s.RESTOnly {
+			tools++
+		}
 		if s.Method == "" {
 			if !mcpOnly[s.Name] {
 				t.Errorf("tool %s has no REST route and is not MCP-only", s.Name)
@@ -37,7 +46,19 @@ func TestEveryToolChoosesATransport(t *testing.T) {
 		}
 		seen[key] = s.Name
 	}
-	if len(r.specs) != 17 {
-		t.Errorf("registered %d tools, want 17", len(r.specs))
+	if tools != 33 {
+		t.Errorf("registered %d tools, want 33", tools)
+	}
+	listed, err := cs.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed.Tools) != tools {
+		t.Errorf("MCP lists %d tools, the registrar %d", len(listed.Tools), tools)
+	}
+	for _, tool := range listed.Tools {
+		if restOnly[tool.Name] {
+			t.Errorf("REST-only %s is listed as an MCP tool", tool.Name)
+		}
 	}
 }

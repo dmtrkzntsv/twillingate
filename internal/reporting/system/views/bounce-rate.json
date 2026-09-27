@@ -1,0 +1,7 @@
+{
+  "component": "stat",
+  "title": "Bounce rate",
+  "props": {
+    "format": "percent"
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "component": "stat",
+  "title": "Avg DAU",
+  "props": {
+    "format": "number"
+  }
+}

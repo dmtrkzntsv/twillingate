@@ -1,0 +1,10 @@
+{
+  "component": "table",
+  "title": "Consent states",
+  "props": {
+    "formats": {
+      "Visitors": "number",
+      "Views": "number"
+    }
+  }
+}

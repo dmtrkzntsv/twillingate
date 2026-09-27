@@ -16,7 +16,7 @@ func TestTableTruncatesErrorsAndTimesOut(t *testing.T) {
 
 	// truncation: three rows for blog (2026-08-20, -21 aggregated plus the
 	// live hit on -26), capped to 1.
-	h.maxRows = 1
+	setGuards(t, h, h.db.Timeout(), 1)
 	out, err := h.table(ctx, `SELECT day FROM v_views_daily WHERE project_id=? AND day BETWEEN ? AND ?`,
 		int64(1), "2026-08-01", "2026-08-31")
 	if err != nil {
@@ -25,7 +25,7 @@ func TestTableTruncatesErrorsAndTimesOut(t *testing.T) {
 	if !out.Truncated || out.Note == "" {
 		t.Errorf("out = %+v, want Truncated with a Note", out)
 	}
-	h.maxRows = 1000
+	setGuards(t, h, h.db.Timeout(), 1000)
 
 	// plain SQL error, not a timeout: must not carry the "exceeded" wording.
 	_, err = h.table(ctx, `SELECT no_such_column FROM v_views_daily WHERE project_id=?`, int64(1))
@@ -37,7 +37,7 @@ func TestTableTruncatesErrorsAndTimesOut(t *testing.T) {
 	}
 
 	// timeout: a runaway recursive query against a host with a tiny deadline.
-	h.timeout = 20 * time.Millisecond
+	setGuards(t, h, 20*time.Millisecond, h.db.MaxRows())
 	_, err = h.table(ctx,
 		`WITH RECURSIVE r(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM r) SELECT COUNT(*) FROM r`)
 	if err == nil {

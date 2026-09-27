@@ -1,6 +1,9 @@
 package api
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -19,26 +22,58 @@ func TestQueryToolSelects(t *testing.T) {
 
 func TestQueryToolBlocksWrites(t *testing.T) {
 	_, cs := newTestHost(t)
+	// A target for the VACUUM INTO escape below: if the wrap's paren
+	// guard ever regresses, a file appears here.
+	vacuumTarget := filepath.Join(t.TempDir(), "escaped-copy.db")
 	for _, q := range []string{
 		"DELETE FROM web_hits",
-		"INSERT INTO meta (key, value) VALUES ('x','y')",
+		// projects is a real, readable table (other tools read it): this
+		// proves the read-only connection itself refuses the write, not
+		// just that Check recognizes a refused name.
+		"INSERT INTO projects (name) VALUES ('pwned')",
 		"UPDATE projects SET name='pwned'",
 		"PRAGMA journal_mode=DELETE",
+		"PRAGMA query_only=0",
 		"SELECT 1; DELETE FROM web_hits",
 		"ATTACH DATABASE '/etc/passwd' AS pwn",
 		"attach database '/tmp/x' as pwn",
 		"WITH x AS (SELECT 1) ATTACH DATABASE '/tmp/x' AS pwn",
+		// The three below escape the subquery wrap itself: a stray ')'
+		// with no matching '(' earlier in the text closes the wrapper's
+		// own paren early, so the driver — which runs every statement it
+		// is handed — executes whatever follows as a separate statement.
+		"select 1); select 2; select * from (select 3",
+		fmt.Sprintf("select 1 where 0); PRAGMA query_only=0; VACUUM INTO '%s'; select * from (select 1", vacuumTarget),
+		"select 1); CREATE TEMP VIEW v_retention AS SELECT 'poisoned' AS cohort_day; select * from (select 1",
 	} {
 		res := callTool(t, cs, "query", map[string]any{"sql": q})
 		if !res.IsError {
 			t.Errorf("accepted: %s", q)
 		}
 	}
+	if _, err := os.Stat(vacuumTarget); !os.IsNotExist(err) {
+		t.Errorf("VACUUM INTO escape wrote %s", vacuumTarget)
+	}
+}
+
+// TestQueryToolRefusesMeta pins the wording a model sees when it asks for
+// meta directly: the refusal text, not a generic SQL error, and no
+// "refused: " sentinel prefix leaking through.
+func TestQueryToolRefusesMeta(t *testing.T) {
+	_, cs := newTestHost(t)
+	res := callTool(t, cs, "query", map[string]any{"sql": "select * from meta"})
+	if !res.IsError {
+		t.Fatal("select * from meta was accepted")
+	}
+	msg := textOf(res)
+	if !strings.Contains(msg, "meta") || strings.Contains(msg, "refused:") {
+		t.Errorf("error = %q, want the identifier named and no sentinel prefix", msg)
+	}
 }
 
 func TestQueryToolCapsRows(t *testing.T) {
 	h, cs := newTestHost(t)
-	h.maxRows = 1
+	setGuards(t, h, h.db.Timeout(), 1)
 	res := callTool(t, cs, "query", map[string]any{
 		"sql": "WITH n(i) AS (VALUES (1),(2),(3)) SELECT i FROM n"})
 	if res.IsError {

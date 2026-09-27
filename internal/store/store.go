@@ -197,6 +197,30 @@ type Store interface {
 	InsertIngestKey(ctx context.Context, k RegistryKey, a AuditEntry) error
 	SetIngestKeyDisabled(ctx context.Context, projectID int64, label string, disabled bool, a AuditEntry) error
 	DeleteProjectData(ctx context.Context, id int64, a AuditEntry) error
+
+	// Reporting rows (migration 021): components, dashboards and widgets.
+	ListComponents(ctx context.Context) ([]Component, error)
+	ListDashboards(ctx context.Context) ([]Dashboard, error)
+	GetDashboard(ctx context.Context, id int64) (Dashboard, error)
+	ListWidgets(ctx context.Context, dashboardID int64) ([]Widget, error)
+	GetWidget(ctx context.Context, id int64) (Widget, error)
+	InsertDashboard(ctx context.Context, d Dashboard, ws []Widget, a AuditEntry) (int64, error)
+	UpdateDashboard(ctx context.Context, d Dashboard, a AuditEntry) error
+	SetDashboardView(ctx context.Context, d Dashboard) error
+	SetDashboardArchived(ctx context.Context, id int64, archived bool, a AuditEntry) error
+	InsertWidget(ctx context.Context, w Widget, a AuditEntry) (int64, error)
+	UpdateWidget(ctx context.Context, w Widget, a AuditEntry) error
+	SetWidgetArchived(ctx context.Context, id int64, archived bool, a AuditEntry) error
+	// ReportingHash is the hash of the latest reporting_migrations row, ""
+	// if none has run yet. SyncReporting makes components and system
+	// dashboards (with their widgets) match s in one transaction.
+	ReportingHash(ctx context.Context) (string, error)
+	SyncReporting(ctx context.Context, s ReportingSync) error
+	// PurgeArchived deletes every project, dashboard and widget archived
+	// more than days ago, each in its own transaction with an audit row
+	// (actor "retention"). days <= 0 purges nothing.
+	PurgeArchived(ctx context.Context, days int) (PurgeResult, error)
+
 	Close() error
 }
 

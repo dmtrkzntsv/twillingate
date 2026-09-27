@@ -1,0 +1,7 @@
+{
+  "component": "stat",
+  "title": "Active groups",
+  "props": {
+    "format": "number"
+  }
+}

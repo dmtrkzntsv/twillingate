@@ -1,0 +1,19 @@
+{
+  "id": 2,
+  "title": "Product",
+  "range": "7d",
+  "layout": [
+    {"widget": "total-events", "width": 4, "height": 3},
+    {"widget": "peak-dau", "width": 4, "height": 3},
+    {"widget": "avg-dau", "width": 4, "height": 3},
+    {"widget": "daily-active-users", "width": 6, "height": 8},
+    {"widget": "events-per-day", "width": 6, "height": 8},
+    {"widget": "app-version", "width": 12, "height": 3},
+    {"widget": "events-by-app-version", "width": 12, "height": 8},
+    {"widget": "app-versions", "width": 12, "height": 10},
+    {"widget": "events-by-name", "width": 12, "height": 8},
+    {"widget": "events", "width": 12, "height": 10},
+    {"widget": "attribute-breakdowns", "width": 12, "height": 3},
+    {"widget": "attribute-values", "width": 12, "height": 10}
+  ]
+}

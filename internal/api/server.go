@@ -9,6 +9,8 @@ import (
 
 	"github.com/dmtrkzntsv/twillingate/internal/config"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
+	"github.com/dmtrkzntsv/twillingate/internal/reporting"
+	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
 	"github.com/modelcontextprotocol/go-sdk/auth"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/modelcontextprotocol/go-sdk/oauthex"
@@ -28,16 +30,19 @@ const (
 // challenge names metadata whose resource is that prefix's URL. It mounts
 // nothing itself: NewHandler wraps it with its own mux for the standalone
 // listener, and app calls it directly to mount on the ingest surface's mux
-// via RegisterOn.
-func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *manage.Ops, logger *slog.Logger) (http.Handler, func() error, error) {
-	db, err := OpenReadDB(cfg.API.DBPath)
+// via RegisterOn. rst is the store reporting reads and writes; widget
+// queries run on the same read-only handle, and so under the same
+// API_QUERY_TIMEOUT and API_QUERY_MAX_ROWS, as the query tool.
+func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *manage.Ops, rst reporting.Store, logger *slog.Logger) (http.Handler, func() error, error) {
+	db, err := readsql.Open(cfg.API.DBPath, cfg.API.QueryTimeout, cfg.API.QueryMaxRows)
 	if err != nil {
 		return nil, nil, err
 	}
-	h := &host{db: db, reg: reg, ops: ops,
-		timeout: cfg.API.QueryTimeout, maxRows: cfg.API.QueryMaxRows,
+	rep := reporting.New(rst, db, reporting.Options{CacheAge: cfg.Reporting.CacheAge, RefreshAge: cfg.Reporting.RefreshAge})
+	h := &host{db: db, reg: reg, ops: ops, rep: rep,
 		publicURL: cfg.PublicURL, logger: logger}
-	srv := mcp.NewServer(&mcp.Implementation{Name: "twillingate", Version: "1.0.0"}, nil)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "twillingate", Version: "1.0.0"},
+		&mcp.ServerOptions{Instructions: serverInstructions})
 	rest := http.NewServeMux()
 	h.register(&registrar{mcp: srv, rest: rest, logger: logger})
 	h.registerResources(srv)
@@ -61,12 +66,12 @@ func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *m
 // NewHandler assembles the API surface: tool host, both transports, auth
 // middleware, and (mode-dependent) the RFC 9728 metadata route, mounted
 // on its own mux. Routes registered on the returned mux: /mcp, /api/,
-// /healthz, and
+// /app/, /healthz, and
 // /.well-known/oauth-protected-resource[/mcp] in oauth mode, and the login
 // server's routes in token mode with a password configured.
 // The func() error closes the read DB.
-func NewHandler(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *manage.Ops, logger *slog.Logger) (http.Handler, func() error, error) {
-	protected, closeDB, err := Build(ctx, cfg, reg, ops, logger)
+func NewHandler(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *manage.Ops, rst reporting.Store, logger *slog.Logger) (http.Handler, func() error, error) {
+	protected, closeDB, err := Build(ctx, cfg, reg, ops, rst, logger)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -77,11 +82,20 @@ func NewHandler(ctx context.Context, cfg *config.Config, reg *manage.Registry, o
 
 // RegisterOn mounts the API surface on a mux: protected (from Build) at
 // /mcp and /api/, plus the unauthenticated metadata, login and health
-// routes. withHealthz=false when the mux is shared with the ingest surface,
+// routes, and the dashboards at /app/ (GET / and GET /app redirect there,
+// so the API's address opens the dashboards; an ingest-only listener keeps
+// answering 404 at /). The dashboards' page is public like the login page:
+// it holds no data, and reads everything through /api/ with the login's
+// token. withHealthz=false when the mux is shared with the ingest surface,
 // whose /healthz already exists (ServeMux panics on duplicate patterns).
 func RegisterOn(mux *http.ServeMux, protected http.Handler, cfg *config.Config, withHealthz bool, logger *slog.Logger) {
 	mux.Handle("/mcp", protected)
 	mux.Handle("/api/", protected)
+	mux.Handle("GET /app/", reporting.UI())
+	mux.Handle("GET /app", http.RedirectHandler("/app/", http.StatusMovedPermanently))
+	// 302, not 301: browsers cache a permanent redirect of the root forever,
+	// and the root may serve something of its own one day.
+	mux.Handle("GET /{$}", http.RedirectHandler("/app/", http.StatusFound))
 	if cfg.API.AuthMode == "oauth" {
 		mountResourceMetadata(mux, cfg.API.ResourceURL, cfg.API.Issuer)
 	}

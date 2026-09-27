@@ -2,25 +2,25 @@ package api
 
 import (
 	"context"
-	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"regexp"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
+	"github.com/dmtrkzntsv/twillingate/internal/reporting"
+	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 type host struct {
-	db      *sql.DB
-	reg     *manage.Registry
-	ops     *manage.Ops
-	timeout time.Duration
-	maxRows int
+	db  *readsql.DB
+	reg *manage.Registry
+	ops *manage.Ops
+	rep *reporting.Service
 	// publicURL is the collector's public base (PUBLIC_URL); snippets and
 	// the integration guide are built from it. Empty means "unknown —
 	// placeholder + tell the operator".
@@ -70,16 +70,16 @@ type tableOut struct {
 }
 
 func (h *host) table(ctx context.Context, q string, args ...any) (tableOut, error) {
-	cols, rows, truncated, err := queryRows(ctx, h.db, h.timeout, h.maxRows, q, args...)
+	res, err := h.db.Run(ctx, q, args...)
 	if err != nil {
-		if ctx.Err() != nil || strings.Contains(err.Error(), "context deadline") {
-			return tableOut{}, invalidf("query exceeded %s; narrow the date range", h.timeout)
+		if errors.Is(err, readsql.ErrTimeout) {
+			return tableOut{}, invalidf("query exceeded %s; narrow the date range", h.db.Timeout())
 		}
 		return tableOut{}, err
 	}
-	out := tableOut{Columns: cols, Rows: rows, Truncated: truncated}
-	if truncated {
-		out.Note = fmt.Sprintf("truncated to %d rows; results are PARTIAL — narrow the range or raise the limit", h.maxRows)
+	out := tableOut{Columns: res.Columns, Rows: res.Rows, Truncated: res.Truncated}
+	if res.Truncated {
+		out.Note = fmt.Sprintf("truncated to %d rows; results are PARTIAL — narrow the range or raise the limit", h.db.MaxRows())
 	}
 	return out, nil
 }
@@ -108,13 +108,13 @@ func (h *host) listProjects(ctx context.Context, _ struct{}) (listProjectsOut, e
 			AllowedOrigins: p.AllowedOrigins, Attributes: p.Attributes,
 		}
 		// coverage probe: cheap MIN/MAX over the stitch view
-		_, rows, _, err := queryRows(ctx, h.db, h.timeout, 1,
+		res, err := h.db.Run(ctx,
 			`SELECT COALESCE(MIN(day),''), COALESCE(MAX(day),'') FROM v_views_daily WHERE project_id=?`, p.ID)
 		if err != nil {
 			return out, err
 		}
-		if len(rows) == 1 {
-			po.FirstViewDay, po.LastViewDay = rows[0][0], rows[0][1]
+		if len(res.Rows) == 1 {
+			po.FirstViewDay, po.LastViewDay = res.Rows[0][0], res.Rows[0][1]
 		}
 		out.Projects = append(out.Projects, po)
 	}
@@ -252,7 +252,7 @@ func (h *host) register(r *registrar) {
 		Description: "Update a project's name, allowed origins and/or declared product-event attributes (breakdown keys for flat-view columns and attribute rollups). Fields you omit are left unchanged; allowed_origins and attributes replace the whole list when given, and an explicit empty allowed_origins clears it."},
 		h.updateProject)
 	expose(r, spec{Name: "archive_project", Annotations: idem, Method: "POST", Path: "/api/projects/{project_id}/archive",
-		Description: "Archive a project: ingestion stops, data and dashboards keep working, fully reversible with restore_project. There is no delete over the API — deletion requires the CLI."},
+		Description: "Archive a project: ingestion stops, data and dashboards keep working. Reversible with restore_project — data kept, purged after RETENTION_ARCHIVED_DAYS (default 30) unless restored. There is no delete over the API — deletion requires the CLI."},
 		h.archiveProject)
 	expose(r, spec{Name: "restore_project", Annotations: idem, Method: "POST", Path: "/api/projects/{project_id}/restore",
 		Description: "Restore an archived project."},
@@ -274,5 +274,6 @@ func (h *host) register(r *registrar) {
 		Description: "Tailored integration instructions for one project and platform (web, spa, server, mobile), with the project's real ingest key, collector URL and event examples baked in. Confirm the collector hostname with the user. Call after create_project; read docs://twillingate for depth."},
 		h.integrationGuide)
 
+	h.registerReporting(r)
 	registerSchemaRoute(r)
 }

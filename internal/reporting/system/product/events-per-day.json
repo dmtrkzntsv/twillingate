@@ -1,0 +1,7 @@
+{
+  "component": "line",
+  "title": "Events per day",
+  "props": {
+    "format": "number"
+  }
+}

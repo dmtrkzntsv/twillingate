@@ -194,10 +194,61 @@ func TestKeygenRejectsBadCount(t *testing.T) {
 	}
 }
 
+func TestReportingDevRejectsNonLoopbackAddr(t *testing.T) {
+	var out bytes.Buffer
+	dir := t.TempDir()
+	if code := run([]string{"reporting", "dev", dir, "-addr", "0.0.0.0:3100"}, &out); code != 2 {
+		t.Fatalf("exit code = %d, want 2 (%s)", code, out.String())
+	}
+	if !strings.Contains(out.String(), "loopback") {
+		t.Errorf("output must say why: %s", out.String())
+	}
+}
+
+func TestReportingDevRequiresADirectory(t *testing.T) {
+	var out bytes.Buffer
+	if code := run([]string{"reporting", "dev"}, &out); code != 2 {
+		t.Fatalf("exit code = %d, want 2 (%s)", code, out.String())
+	}
+}
+
+func TestReportingUnknownSubcommand(t *testing.T) {
+	var out bytes.Buffer
+	if code := run([]string{"reporting", "bogus"}, &out); code != 2 {
+		t.Fatalf("exit code = %d, want 2 (%s)", code, out.String())
+	}
+}
+
+func TestReportingAppearsInUsage(t *testing.T) {
+	var out bytes.Buffer
+	run(nil, &out)
+	if !strings.Contains(out.String(), "reporting") {
+		t.Errorf("usage does not mention reporting: %s", out.String())
+	}
+}
+
 func TestKeygenAppearsInUsage(t *testing.T) {
 	var out bytes.Buffer
 	run(nil, &out)
 	if !strings.Contains(out.String(), "keygen") {
 		t.Errorf("usage does not mention keygen: %s", out.String())
+	}
+}
+
+func TestReportingDevRejectsUnknownFlagEvenAfterADir(t *testing.T) {
+	var out bytes.Buffer
+	dir := t.TempDir()
+	if code := run([]string{"reporting", "dev", dir, "-nope"}, &out); code != 2 {
+		t.Fatalf("exit code = %d, want 2 (%s)", code, out.String())
+	}
+}
+
+func TestSplitFlagsAllowsFlagsAfterDirs(t *testing.T) {
+	flagArgs, positional := splitFlags([]string{"d1", "d2", "-addr", "1.2.3.4:80", "-db", "x.db"}, "-db", "-addr")
+	if strings.Join(positional, ",") != "d1,d2" {
+		t.Errorf("positional = %v", positional)
+	}
+	if strings.Join(flagArgs, ",") != "-addr,1.2.3.4:80,-db,x.db" {
+		t.Errorf("flagArgs = %v", flagArgs)
 	}
 }

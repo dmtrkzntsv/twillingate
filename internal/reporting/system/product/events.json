@@ -1,0 +1,13 @@
+{
+  "component": "table",
+  "title": "Events",
+  "props": {
+    "formats": {
+      "Total": "number",
+      "Peak daily uniques": "number"
+    },
+    "colorscale": [
+      "Total"
+    ]
+  }
+}

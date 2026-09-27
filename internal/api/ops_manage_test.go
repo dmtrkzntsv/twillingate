@@ -42,14 +42,14 @@ func TestMCPWriteRecordsActor(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("create: %s", textOf(res))
 	}
-	var actor string
-	if err := h.db.QueryRowContext(context.Background(),
+	out, err := h.db.Run(context.Background(),
 		"SELECT actor FROM audit_log WHERE action='project.create' AND subject=?",
-		strconv.FormatInt(projectIDOf(t, res), 10)).Scan(&actor); err != nil {
+		strconv.FormatInt(projectIDOf(t, res), 10))
+	if err != nil {
 		t.Fatal(err)
 	}
-	if actor != "mcp" {
-		t.Errorf("audit actor = %q, want mcp", actor)
+	if len(out.Rows) != 1 || out.Rows[0][0] != "mcp" {
+		t.Errorf("audit actor = %v, want mcp", out.Rows)
 	}
 }
 
@@ -120,9 +120,13 @@ func TestManagementToolsAnnotatedNonReadOnly(t *testing.T) {
 	}
 	writers := map[string]bool{"create_project": true, "update_project": true,
 		"archive_project": true, "restore_project": true, "issue_ingest_key": true,
-		"disable_ingest_key": true, "enable_ingest_key": true}
+		"disable_ingest_key": true, "enable_ingest_key": true,
+		"create_dashboard": true, "update_dashboard": true, "duplicate_dashboard": true,
+		"archive_dashboard": true, "restore_dashboard": true, "add_widget": true,
+		"update_widget": true, "copy_widget": true, "archive_widget": true, "restore_widget": true}
 	idempotent := map[string]bool{"archive_project": true, "restore_project": true,
-		"disable_ingest_key": true, "enable_ingest_key": true}
+		"disable_ingest_key": true, "enable_ingest_key": true,
+		"archive_dashboard": true, "restore_dashboard": true, "archive_widget": true, "restore_widget": true}
 	for _, tool := range tools.Tools {
 		if writers[tool.Name] && tool.Annotations.ReadOnlyHint {
 			t.Errorf("%s marked read-only", tool.Name)

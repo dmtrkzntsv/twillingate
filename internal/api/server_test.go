@@ -20,7 +20,7 @@ import (
 
 func newHandlerFixture(t *testing.T, over map[string]string) http.Handler {
 	t.Helper()
-	path := seedDB(t) // from readdb_test.go: migrated DB with project 1 (My blog)
+	path := seedDB(t) // from seed_test.go: migrated DB with project 1 (My blog)
 	base := map[string]string{
 		"DATABASE_DSN": "sqlite://" + path,
 		"API_AUTH_DSN": "token://ar_testtoken",
@@ -49,7 +49,7 @@ func newHandlerFixture(t *testing.T, over map[string]string) http.Handler {
 	if err := reg.Reload(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	h, closeDB, err := NewHandler(context.Background(), cfg, reg, manage.NewOps(reg, st), logger)
+	h, closeDB, err := NewHandler(context.Background(), cfg, reg, manage.NewOps(reg, st), st, logger)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +166,7 @@ func TestTokenNeverLoggedAtInfo(t *testing.T) {
 	defer st.Close()
 	reg := manage.New(st, logger)
 	reg.Reload(context.Background())
-	h, closeDB, err := NewHandler(context.Background(), cfg, reg, manage.NewOps(reg, st), logger)
+	h, closeDB, err := NewHandler(context.Background(), cfg, reg, manage.NewOps(reg, st), st, logger)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -281,7 +281,7 @@ func TestRegisterOnWithoutHealthzOmitsRoute(t *testing.T) {
 	if err := reg.Reload(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	protected, closeDB, err := Build(context.Background(), cfg, reg, manage.NewOps(reg, st), logger)
+	protected, closeDB, err := Build(context.Background(), cfg, reg, manage.NewOps(reg, st), st, logger)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -309,7 +309,7 @@ func TestWrapAuthUnknownMode(t *testing.T) {
 }
 
 // TestBuildFailsWhenOAuthIssuerUnreachable exercises Build's own error
-// branch (wrapAuth failing after OpenReadDB already succeeded, so Build
+// branch (wrapAuth failing after readsql.Open already succeeded, so Build
 // must close the DB it just opened rather than leak it) — ValidateAPI
 // only parses API_AUTH_DSN, it does not probe the issuer, so
 // an unreachable issuer surfaces here, at Build time.
@@ -336,7 +336,7 @@ func TestBuildFailsWhenOAuthIssuerUnreachable(t *testing.T) {
 	if err := reg.Reload(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := Build(context.Background(), cfg, reg, manage.NewOps(reg, st), logger); err == nil {
+	if _, _, err := Build(context.Background(), cfg, reg, manage.NewOps(reg, st), st, logger); err == nil {
 		t.Fatal("Build succeeded against an unreachable oauth issuer")
 	}
 }

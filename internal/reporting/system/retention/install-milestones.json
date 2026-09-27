@@ -1,0 +1,11 @@
+{
+  "component": "table",
+  "title": "Install milestones",
+  "props": {
+    "formats": {
+      "D7": "percent",
+      "D30": "percent",
+      "D45": "percent"
+    }
+  }
+}

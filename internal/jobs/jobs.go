@@ -12,6 +12,7 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/civil"
 	"github.com/dmtrkzntsv/twillingate/internal/config"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
+	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
 // Rotator is the slice of identity.Salter the scheduler needs.
@@ -38,6 +39,9 @@ type Store interface {
 	PruneAggregates(ctx context.Context, projectID int64, viewsBefore, productBefore civil.Date) error
 	RebuildFlatView(ctx context.Context, keys []string) error
 	IncrementalVacuum(ctx context.Context) error
+	// PurgeArchived deletes every project, dashboard and widget archived
+	// more than days ago. days <= 0 purges nothing.
+	PurgeArchived(ctx context.Context, days int) (store.PurgeResult, error)
 }
 
 type Runner struct {
@@ -73,13 +77,38 @@ func New(st Store, cfg *config.Config, reg *manage.Registry, salt Rotator, logge
 // enumerate work at all are treated as fatal to the pass.
 func (r *Runner) RunDailyPass(ctx context.Context) error {
 	today := civil.Today(r.now())
+	// Retention is global: the same windows apply to every project.
+	ret := r.cfg.Retention
+
+	// Purge first: a project purged this pass must not then be rolled up
+	// or pruned below, and the registry (which still lists it until this
+	// reloads) must not hand it out to a request arriving mid-pass.
+	//
+	// PurgeArchived returns its partial result alongside an error when one
+	// item among several failed (it keeps going rather than abort the rest
+	// of the pass), so the reload below checks purged.Projects regardless
+	// of err: a project already deleted must not be left in the registry
+	// just because a sibling item's purge failed.
+	if ret.ArchivedDays > 0 {
+		purged, err := r.store.PurgeArchived(ctx, ret.ArchivedDays)
+		if err != nil {
+			r.logger.Error("purge archived failed", "error", err)
+		}
+		r.logger.Info("purge archived",
+			"projects", len(purged.Projects), "dashboards", len(purged.Dashboards),
+			"widgets", len(purged.Widgets))
+		if len(purged.Projects) > 0 {
+			if err := r.reg.Reload(ctx); err != nil {
+				r.logger.Error("registry reload after purge failed", "error", err)
+			}
+		}
+	}
+
+	// store.ProjectIDs (all rows, including archived) is the complete list.
 	ids, err := r.store.ProjectIDs(ctx)
 	if err != nil {
 		return err
 	}
-	// Retention is global: the same windows apply to every project, and
-	// store.ProjectIDs (all rows, including archived) is the complete list.
-	ret := r.cfg.Retention
 	snap := r.reg.Snapshot(ctx)
 	for _, id := range ids {
 		// Cohorts, actors and identity rollups read raw rows across both

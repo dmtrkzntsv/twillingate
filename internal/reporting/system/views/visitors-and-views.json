@@ -1,0 +1,7 @@
+{
+  "component": "line",
+  "title": "Visitors & views",
+  "props": {
+    "format": "number"
+  }
+}

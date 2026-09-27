@@ -14,6 +14,7 @@ internal/jobs/       daily pass: salt rotation, aggregation, prune, view rebuild
 internal/pipeline/   write buffer between ingest and the store
 internal/dashboards/ Evidence build and snapshot for the reporting image
 internal/manage/     project registry snapshot and its audited operations
+internal/reporting/  dashboards, widgets and components: validation, operations, system dashboards, cache; embeds the web app
 internal/store/      Store interface and row types; store/sqlite owns every migration and view
 internal/config/     environment loading
 internal/identity/   actor hashing and salt rotation
@@ -21,14 +22,16 @@ internal/enrich/     User-Agent and URL parsing for web hits
 internal/geo/        MaxMind lookup
 internal/civil/      calendar dates
 internal/version/    build version
-docs/                the two contract pages, embedded and served over MCP
+internal/shared/     small generic leaf packages: sortkey, readsql
+docs/                the three contract pages, embedded and served over MCP
 sdk/                 browser SDK source (TypeScript); the built file is embedded by internal/server
+web/                 dashboard web app source (React, TypeScript); the build is embedded by internal/reporting
 evidence/            the Evidence dashboards project
 deploy/              installer, systemd units, compose files, litestream config, UPGRADES.md
 ```
 
 `app` imports the surfaces (`server`, `api`, `jobs`, `pipeline`, `dashboards`);
-surfaces import `manage` and the leaves, never each other; `manage` and the
+surfaces import `manage`, `reporting` and the leaves, never each other; `manage` and the
 leaves import only leaves. A surface that needs another's behaviour takes an
 interface and `app` passes the implementation (`server.Enqueuer` is
 `pipeline.Buffer`). Each consumer declares the slice of the store it uses
@@ -49,8 +52,8 @@ entry. Only `feat`, `fix` and `perf` appear in the notes; `docs`, `refactor`,
 appear in the notes, so anything a user should read about needs one of the
 three published types. `!` before the colon (or a `BREAKING CHANGE:` footer)
 marks a breaking change. Scopes match the tree: `store`, `server`, `jobs`,
-`config`, `api`, `manage`, `pipeline`, `geo`, `dashboards`, `sdk`, `cmd`,
-`deploy`, `ci`; omit for repo-wide changes.
+`config`, `api`, `manage`, `pipeline`, `geo`, `dashboards`, `reporting`,
+`shared`, `sdk`, `web`, `cmd`, `deploy`, `ci`; omit for repo-wide changes.
 
 Releases are cut by hand with `gh workflow run release.yml` (optional `version`
 input; blank means next patch). Pushing to `main` publishes nothing. Pre-1.0:
@@ -65,17 +68,23 @@ not hand-edited.
 pushing. `make build` compiles; `make test` runs the race-enabled suite. The
 SDK bundle `internal/server/twillingate.js` is committed: after any change in
 `sdk/`, run `npm run build` there and commit the result, or CI's drift check
-fails.
+fails. The same holds for `web/`: `npm run build` there regenerates
+`internal/reporting/ui/` (the bundle and `components.json`). CI's `web` job
+runs its typecheck, tests and build, then the drift check on
+`internal/reporting/ui`; its `e2e` job runs the Playwright suite against a
+built binary (`cd web && npm run e2e`).
 
 ## Documentation
 
-Two pages, both served over MCP, both the contract rather than a summary:
-`docs/twillingate.md` (`docs://twillingate`) for using twillingate, and
+Three pages, all served over MCP, all the contract rather than a summary:
+`docs/twillingate.md` (`docs://twillingate`) for using twillingate,
+`docs/reporting.md` (`docs://reporting`) for building dashboards, and
 `docs/deployment.md` (`docs://deployment`) for running it. `docs/` holds those
-two plus `docs/plausible/README.md`, which stays separate because it
+three plus `docs/plausible/README.md`, which stays separate because it
 documents bytes the collector serves at `/js/plausible-shim.js` and a test
-binds it to them; do not add files there. Per-migration upgrade runbooks live
-in `deploy/UPGRADES.md`.
+binds it to them; do not add files there (dashboard material belongs in
+`docs/reporting.md`). Per-migration upgrade runbooks live in
+`deploy/UPGRADES.md`.
 
 Update in the **same commit** as the change:
 
@@ -85,7 +94,10 @@ Update in the **same commit** as the change:
 | the SDK's public API, `data-` attributes or defaults (`sdk/src/`) | `docs/twillingate.md` |
 | project fields or the CLI/MCP surface that edits them (`internal/manage/`) | `docs/twillingate.md` |
 | MCP tools, REST routes, resources (`internal/api/ops_*.go`, `expose.go`, `rest.go`, `resources.go`) | `docs/twillingate.md` |
+| reporting tools, routes and resources (`internal/api/ops_reporting.go`) | `docs/reporting.md` |
+| components (`web/src/components/widgets/`) | the component table and examples in `docs/reporting.md` |
 | queryable views (`internal/store/sqlite/migrations/`) | `docs/twillingate.md` and `schemaViews` in `internal/api/resources.go` |
+| views the system dashboards read (`internal/store/sqlite/migrations/`) | the system widgets, which `TestSystemDashboards` in `internal/reporting/system_test.go` runs |
 | a migration with pre-checks or a visible change on upgrade day | `deploy/UPGRADES.md` |
 | environment variables (`internal/config/`) | `docs/deployment.md` |
 | install, upgrade, replication or restore procedure (`deploy/`, `Makefile`) | `docs/deployment.md` |
@@ -94,5 +106,6 @@ Update in the **same commit** as the change:
 
 `internal/api/docs_sync_test.go` binds part of this in both directions
 (reserved keys, tool names, routes, views, SDK symbols, environment variables,
-the closed vocabularies), reading the specific table that claims each fact.
+the closed vocabularies, components and their worked examples), reading the
+specific table that claims each fact.
 The rest is on you.

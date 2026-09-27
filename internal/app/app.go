@@ -82,7 +82,7 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 		return err
 	}
 	defer st.Close()
-	if err := st.Migrate(ctx); err != nil {
+	if err := Migrate(ctx, cfg, st); err != nil {
 		return err
 	}
 	// v_product_attrs' live half reads the cardinality cap from meta with a
@@ -156,7 +156,7 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 	var apiClose func() error
 	switch {
 	case runAPI && runIngest && cfg.API.Addr == cfg.IngestAddr:
-		protected, closeDB, err := api.Build(ctx, cfg, reg, manage.NewOps(reg, st), logger)
+		protected, closeDB, err := api.Build(ctx, cfg, reg, manage.NewOps(reg, st), st, logger)
 		if err != nil {
 			stopBackground()
 			return err
@@ -167,7 +167,7 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 		api.RegisterOn(mux, protected, cfg, false, logger)
 		surfaces = append(surfaces, httpSurface{cfg.IngestAddr, mux, "ingest,api"})
 	case runAPI:
-		h, closeDB, err := api.NewHandler(ctx, cfg, reg, manage.NewOps(reg, st), logger)
+		h, closeDB, err := api.NewHandler(ctx, cfg, reg, manage.NewOps(reg, st), st, logger)
 		if err != nil {
 			stopBackground()
 			return err

@@ -42,8 +42,8 @@ func TestOpsRefusalsAreTyped(t *testing.T) {
 			t.Errorf("%s: err = %v, want errors.Is(err, ErrInvalid)", name, err)
 		}
 		// The sentinel leads so the CLI line reads as one sentence.
-		if err != nil && !strings.HasPrefix(err.Error(), "invalid project spec: ") {
-			t.Errorf("%s: err = %q, want the 'invalid project spec: ' prefix", name, err)
+		if err != nil && !strings.HasPrefix(err.Error(), "invalid: ") {
+			t.Errorf("%s: err = %q, want the 'invalid: ' prefix", name, err)
 		}
 	}
 

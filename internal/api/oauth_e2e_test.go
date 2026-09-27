@@ -2,6 +2,9 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -129,6 +132,87 @@ func TestTokenLoginEndToEnd(t *testing.T) {
 	}
 }
 
+// TestAppLoginEndToEnd plays the web app at /app/: it registers with
+// the resource origin's /app/callback, which no redirect= entry lists,
+// runs PKCE through the password page with the resource named at
+// authorize and token, and reads /api/dashboards with the token. The
+// resource is a public https origin while every request reaches the
+// server with its loopback Host, as behind a proxy that rewrites it.
+func TestAppLoginEndToEnd(t *testing.T) {
+	const origin = "https://dash.example.com"
+	const callback = origin + "/app/callback"
+	srv := httptest.NewServer(e2eHandler(t, "token://ar_testtoken?password=hunter2&resource="+origin, true))
+	t.Cleanup(srv.Close)
+	browser := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	do := func(method, path string, body io.Reader, header map[string]string) *http.Response {
+		t.Helper()
+		req, err := http.NewRequestWithContext(t.Context(), method, srv.URL+path, body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for k, v := range header {
+			req.Header.Set(k, v)
+		}
+		resp, err := browser.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp
+	}
+	read := func(resp *http.Response) string {
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return string(b)
+	}
+
+	resp := do("POST", "/oauth/register", strings.NewReader(`{"redirect_uris":["`+callback+`"],`+
+		`"grant_types":["authorization_code","refresh_token"],"client_name":"twillingate"}`),
+		map[string]string{"Content-Type": "application/json"})
+	body := read(resp)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("register = %d %s", resp.StatusCode, body)
+	}
+	var reg struct {
+		ClientID string `json:"client_id"`
+	}
+	if err := json.Unmarshal([]byte(body), &reg); err != nil {
+		t.Fatal(err)
+	}
+
+	verifier := strings.Repeat("v", 43)
+	sum := sha256.Sum256([]byte(verifier))
+	q := url.Values{"response_type": {"code"}, "client_id": {reg.ClientID}, "redirect_uri": {callback},
+		"code_challenge": {base64.RawURLEncoding.EncodeToString(sum[:])}, "code_challenge_method": {"S256"},
+		"state": {"s1"}, "resource": {origin}}
+	page := read(do("GET", "/oauth/authorize?"+q.Encode(), nil, nil))
+	m := requestField.FindStringSubmatch(page)
+	if m == nil {
+		t.Fatalf("login page: %s", page)
+	}
+	resp = do("POST", "/oauth/authorize", strings.NewReader(url.Values{"request": {m[1]}, "password": {"hunter2"}}.Encode()),
+		map[string]string{"Content-Type": "application/x-www-form-urlencoded"})
+	read(resp)
+	loc, err := url.Parse(resp.Header.Get("Location"))
+	if err != nil || resp.StatusCode != http.StatusFound || !strings.HasPrefix(loc.String(), callback+"?") {
+		t.Fatalf("login: %d %q", resp.StatusCode, resp.Header.Get("Location"))
+	}
+
+	form := url.Values{"grant_type": {"authorization_code"}, "code": {loc.Query().Get("code")}, "client_id": {reg.ClientID},
+		"redirect_uri": {callback}, "code_verifier": {verifier}, "resource": {origin}}
+	resp = do("POST", "/oauth/token", strings.NewReader(form.Encode()),
+		map[string]string{"Content-Type": "application/x-www-form-urlencoded"})
+	body = read(resp)
+	var tok tokenResponse
+	if err := json.Unmarshal([]byte(body), &tok); err != nil || resp.StatusCode != http.StatusOK || tok.AccessToken == "" {
+		t.Fatalf("token = %d %s", resp.StatusCode, body)
+	}
+
+	resp = do("GET", "/api/dashboards", nil, map[string]string{"Authorization": "Bearer " + tok.AccessToken})
+	if body := read(resp); resp.StatusCode != http.StatusOK || !strings.Contains(body, `"timezone":"UTC"`) {
+		t.Errorf("GET /api/dashboards with the app's token = %d %s", resp.StatusCode, body)
+	}
+}
+
 // browserLogin plays the browser: load the login page, submit the password,
 // and read the code from the redirect instead of following it.
 func browserLogin(base, password string) auth.AuthorizationCodeFetcher {
@@ -182,14 +266,14 @@ func e2eHandler(t *testing.T, dsn string, shared bool) http.Handler {
 	}
 	ops := manage.NewOps(reg, st)
 	if !shared {
-		h, closeDB, err := NewHandler(context.Background(), cfg, reg, ops, logger)
+		h, closeDB, err := NewHandler(context.Background(), cfg, reg, ops, st, logger)
 		if err != nil {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { closeDB() })
 		return h
 	}
-	protected, closeDB, err := Build(context.Background(), cfg, reg, ops, logger)
+	protected, closeDB, err := Build(context.Background(), cfg, reg, ops, st, logger)
 	if err != nil {
 		t.Fatal(err)
 	}

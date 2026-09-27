@@ -1,0 +1,7 @@
+{
+  "component": "stat",
+  "title": "Avg session",
+  "props": {
+    "format": "duration"
+  }
+}

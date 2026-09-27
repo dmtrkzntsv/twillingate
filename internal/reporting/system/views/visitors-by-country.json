@@ -1,0 +1,7 @@
+{
+  "component": "map",
+  "title": "Visitors by country",
+  "props": {
+    "format": "number"
+  }
+}

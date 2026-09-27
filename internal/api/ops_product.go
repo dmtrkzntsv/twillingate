@@ -96,10 +96,10 @@ func (h *host) retention(ctx context.Context, in retentionIn) (retentionOut, err
 	out := retentionOut{tableOut: tbl}
 	// v_retention has no live half: report how fresh it is so recent
 	// cohorts are read as "not yet aggregated", never as zero.
-	_, rows, _, err := queryRows(ctx, h.db, h.timeout, 1,
+	res, err := h.db.Run(ctx,
 		`SELECT COALESCE(MAX(cohort_day),'') FROM agg_retention WHERE project_id=?`, in.ProjectID)
-	if err == nil && len(rows) == 1 {
-		out.AggregatedThrough = rows[0][0]
+	if err == nil && len(res.Rows) == 1 {
+		out.AggregatedThrough = res.Rows[0][0]
 	}
 	if out.Note == "" {
 		out.Note = "retention refreshes at the 03:00 UTC daily pass; cohorts after aggregated_through are absent, not zero"

@@ -1,0 +1,7 @@
+{
+  "component": "stat",
+  "title": "Views",
+  "props": {
+    "format": "number"
+  }
+}

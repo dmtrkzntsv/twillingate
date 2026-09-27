@@ -153,7 +153,7 @@ func (s *loginServer) registerClient(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, u := range req.RedirectURIs {
-		if !redirectAllowed(s.hosts, u) {
+		if !redirectAllowed(s.hosts, s.resource, u) {
 			s.logger.Warn("mcp login: registration redirect rejected", "redirect_uri", u)
 			oauthError(w, "invalid_redirect_uri", "redirect URI host not allowed (add it to API_AUTH_DSN as redirect=<host>): "+u)
 			return
@@ -216,12 +216,19 @@ func redirectMatches(allowed, candidate string) bool {
 // API_AUTH_DSN entry. Loopback hosts are accepted too.
 var builtinRedirectHosts = []string{"claude.ai", "chatgpt.com"}
 
+// appCallbackPath is where the dashboards at /app/ finish their login.
+const appCallbackPath = "/app/callback"
+
 // redirectAllowed admits a callback by host, leaving port and path to the
 // client: any loopback address over http or https — the code can only reach
 // the machine the browser runs on, RFC 8252's native-app model — and over
 // https a built-in web connector or a host listed in API_AUTH_DSN. Hosts
-// match exactly, so claude.ai does not admit its subdomains.
-func redirectAllowed(hosts []string, candidate string) bool {
+// match exactly, so claude.ai does not admit its subdomains. It also
+// admits exactly one more URL, the dashboards' own callback at the
+// configured resource origin: <resource>/app/callback. The origin comes from
+// configuration, never from the request's Host, which a proxy rewrites to
+// its loopback upstream.
+func redirectAllowed(hosts []string, resource, candidate string) bool {
 	u, err := url.Parse(candidate)
 	if err != nil || u.User != nil || strings.Contains(candidate, "#") {
 		return false
@@ -232,9 +239,42 @@ func redirectAllowed(hosts []string, candidate string) bool {
 		return false
 	case isLoopbackHost(host):
 		return u.Scheme == "http" || u.Scheme == "https"
+	case u.Scheme != "https": // url.Parse lowercases the scheme
+		return false
+	case isAppCallback(resource, u):
+		return true
 	default:
-		return u.Scheme == "https" && (slices.Contains(builtinRedirectHosts, host) || slices.Contains(hosts, host))
+		return slices.Contains(builtinRedirectHosts, host) || slices.Contains(hosts, host)
 	}
+}
+
+// isAppCallback reports whether u is <resource>/app/callback: the same
+// origin (scheme and host compared in lower case, a default port the same
+// as none) and exactly that path, with no query.
+func isAppCallback(resource string, u *url.URL) bool {
+	r, err := url.Parse(resource)
+	if err != nil || r.Host == "" {
+		return false
+	}
+	return canonicalOrigin(r) == canonicalOrigin(u) && u.RawPath == "" && u.Path == appCallbackPath &&
+		u.RawQuery == "" && !u.ForceQuery
+}
+
+// canonicalOrigin is scheme://host[:port] in lower case, without the
+// scheme's default port.
+func canonicalOrigin(u *url.URL) string {
+	scheme := strings.ToLower(u.Scheme)
+	host, port := strings.ToLower(u.Hostname()), u.Port()
+	if (scheme == "https" && port == "443") || (scheme == "http" && port == "80") {
+		port = ""
+	}
+	if strings.Contains(host, ":") {
+		host = "[" + host + "]"
+	}
+	if port != "" {
+		host += ":" + port
+	}
+	return scheme + "://" + host
 }
 
 func matchesAny(allowed []string, candidate string) bool {

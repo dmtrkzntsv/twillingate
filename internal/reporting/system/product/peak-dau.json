@@ -1,0 +1,7 @@
+{
+  "component": "stat",
+  "title": "Peak DAU",
+  "props": {
+    "format": "number"
+  }
+}

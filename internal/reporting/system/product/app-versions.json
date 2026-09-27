@@ -1,0 +1,14 @@
+{
+  "component": "table",
+  "title": "App versions",
+  "props": {
+    "formats": {
+      "Events": "number",
+      "Users (at least)": "number",
+      "Groups (at least)": "number"
+    },
+    "colorscale": [
+      "Events"
+    ]
+  }
+}

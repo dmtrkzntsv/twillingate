@@ -1,12 +1,14 @@
 package api
 
-// Drift tripwires: docs/twillingate.md is the single normative document and
-// the only prose the MCP endpoint serves, so its load-bearing facts are
+// Drift tripwires: docs/twillingate.md and docs/reporting.md are the
+// normative documents agents read over MCP, so their load-bearing facts are
 // asserted against the source they describe. Change the reserved-key set or
 // the SDK's public surface without the document and these tests fail.
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 	"regexp"
 	"slices"
@@ -15,6 +17,7 @@ import (
 
 	"github.com/dmtrkzntsv/twillingate/docs"
 	"github.com/dmtrkzntsv/twillingate/internal/enrich"
+	"github.com/dmtrkzntsv/twillingate/internal/reporting"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -165,14 +168,17 @@ func TestDocumentCoversEveryViewsDimension(t *testing.T) {
 	}
 }
 
-// TestDocumentNamesEveryTool binds the tool tables in docs/twillingate.md to
-// the tools actually registered. A tool nobody documents is one an agent
-// never reaches for; a documented tool that does not exist is a failed call.
+// TestDocumentNamesEveryTool binds the tool tables in docs/twillingate.md
+// and docs/reporting.md to the tools actually registered. A tool nobody
+// documents is one an agent never reaches for; a documented tool that does
+// not exist is a failed call.
 func TestDocumentNamesEveryTool(t *testing.T) {
 	h, _ := newTestHost(t)
 	registered := map[string]bool{}
 	for _, s := range newTestRegistrar(t, h).specs {
-		registered[s.Name] = true
+		if !s.RESTOnly { // a route with no tool is bound by TestDocumentMatchesRoutes
+			registered[s.Name] = true
+		}
 	}
 	// Scoped to the tool tables and the "Managing" list, not the whole
 	// document: `identities` is also a table name in the views prose, so a
@@ -180,7 +186,7 @@ func TestDocumentNamesEveryTool(t *testing.T) {
 	documented := documentedTools()
 	for name := range registered {
 		if !documented[name] {
-			t.Errorf("tool %s is registered but not listed in a tool table in docs/twillingate.md", name)
+			t.Errorf("tool %s is registered but not listed in a tool table in docs/twillingate.md or docs/reporting.md", name)
 		}
 	}
 	// No reverse check: these table rows also carry parameter names and
@@ -193,13 +199,14 @@ func TestDocumentNamesEveryTool(t *testing.T) {
 	}
 }
 
-// documentedTools reads tool names out of the document's tables and its
-// "Managing" list — the places that claim a tool exists, as opposed to
-// prose that may mention the same word for something else.
+// documentedTools reads tool names out of both documents' tables and
+// docs/twillingate.md's "Managing" list — the places that claim a tool
+// exists, as opposed to prose that may mention the same word for
+// something else.
 func documentedTools() map[string]bool {
 	out := map[string]bool{}
 	tick := regexp.MustCompile("`([a-z][a-z_]+)`")
-	for _, line := range strings.Split(docs.Twillingate, "\n") {
+	for _, line := range strings.Split(docs.Twillingate+"\n"+docs.Reporting, "\n") {
 		managing := strings.HasPrefix(line, "**Managing**") ||
 			strings.HasPrefix(line, "`restore_project`") ||
 			strings.HasPrefix(line, "`enable_ingest_key`")
@@ -217,12 +224,19 @@ func documentedTools() map[string]bool {
 // outside it returns "" so the assertion above fails loudly rather than
 // silently passing on a substring that happens to match.
 func spellOut(n int) string {
-	words := map[int]string{
-		15: "fifteen", 16: "sixteen", 17: "seventeen", 18: "eighteen",
-		19: "nineteen", 20: "twenty", 21: "twenty-one", 22: "twenty-two",
-		23: "twenty-three", 24: "twenty-four", 25: "twenty-five",
+	if n < 15 || n > 40 {
+		return ""
 	}
-	return words[n]
+	teens := map[int]string{15: "fifteen", 16: "sixteen", 17: "seventeen", 18: "eighteen", 19: "nineteen"}
+	if w, ok := teens[n]; ok {
+		return w
+	}
+	tens := map[int]string{2: "twenty", 3: "thirty", 4: "forty"}[n/10]
+	units := []string{"", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"}[n%10]
+	if units == "" {
+		return tens
+	}
+	return tens + "-" + units
 }
 
 // TestDeploymentDocumentsEveryEnvVar binds docs/deployment.md to the
@@ -307,9 +321,9 @@ func TestDeploymentResourceServed(t *testing.T) {
 	}
 }
 
-// TestDocumentMatchesRoutes binds the HTTP API table in docs/twillingate.md
-// to the registered routes, in both directions: method, path and the tool
-// each route mirrors.
+// TestDocumentMatchesRoutes binds the HTTP API tables in docs/twillingate.md
+// and docs/reporting.md to the registered routes, in both directions:
+// method, path and the tool each route mirrors.
 func TestDocumentMatchesRoutes(t *testing.T) {
 	h, _ := newTestHost(t)
 	inCode := map[string]string{} // "GET /api/projects" -> tool
@@ -320,30 +334,136 @@ func TestDocumentMatchesRoutes(t *testing.T) {
 	}
 	inCode["GET /api/schema/views"] = "schema://views"
 
-	const heading = "### HTTP API"
-	i := strings.Index(docs.Twillingate, heading)
-	if i < 0 {
-		t.Fatal("docs/twillingate.md has no '### HTTP API' section")
-	}
-	section := docs.Twillingate[i+len(heading):]
-	if j := strings.Index(section, "\n### "); j >= 0 {
-		section = section[:j]
-	}
-	row := regexp.MustCompile("^\\| `(GET|POST|PATCH)` \\| `(/api/[^`]*)` \\| `([a-z_:/]+)` \\|")
+	// The Mirrors cell may say more after the name ("`view`, REST only").
+	row := regexp.MustCompile("^\\| `(GET|POST|PATCH|PUT)` \\| `(/api/[^`]*)` \\| `([a-z_:/]+)`[^|]* \\|")
 	documented := map[string]string{}
-	for _, line := range strings.Split(section, "\n") {
-		if m := row.FindStringSubmatch(line); m != nil {
-			documented[m[1]+" "+m[2]] = m[3]
+	for _, section := range []string{
+		docSection(t, docs.Twillingate, "### HTTP API"),
+		docSection(t, docs.Reporting, "## HTTP API"),
+	} {
+		for _, line := range strings.Split(section, "\n") {
+			if m := row.FindStringSubmatch(line); m != nil {
+				documented[m[1]+" "+m[2]] = m[3]
+			}
 		}
 	}
 	for route, tool := range inCode {
 		if documented[route] != tool {
-			t.Errorf("route %s (%s) is registered but the HTTP API table says %q", route, tool, documented[route])
+			t.Errorf("route %s (%s) is registered but the HTTP API tables say %q", route, tool, documented[route])
 		}
 	}
 	for route := range documented {
 		if _, ok := inCode[route]; !ok {
-			t.Errorf("the HTTP API table lists %s, which is not registered", route)
+			t.Errorf("an HTTP API table lists %s, which is not registered", route)
+		}
+	}
+}
+
+// TestReportingDocumentMatchesComponents binds the component table in
+// docs/reporting.md to the UI's manifest in both directions: every
+// component is documented with its default size, and every documented one
+// exists. The manifest is what the release installs, so a component added
+// or resized in web/ without the document fails here.
+func TestReportingDocumentMatchesComponents(t *testing.T) {
+	comps, err := reporting.ParseManifest(reporting.Manifest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	inCode := map[string]string{}
+	for _, c := range comps {
+		inCode[c.Name] = fmt.Sprintf("%d × %d", c.DefaultWidth, c.DefaultHeight)
+	}
+	row := regexp.MustCompile("^\\| `([a-z_]+)` \\|.*\\| (\\d+ × \\d+) \\|$")
+	documented := map[string]string{}
+	for _, line := range strings.Split(docSection(t, docs.Reporting, "## Components"), "\n") {
+		if m := row.FindStringSubmatch(line); m != nil {
+			documented[m[1]] = m[2]
+		}
+	}
+	for name, size := range inCode {
+		if documented[name] != size {
+			t.Errorf("component %s (%s) is in the manifest but the component table says %q", name, size, documented[name])
+		}
+	}
+	for name := range documented {
+		if _, ok := inCode[name]; !ok {
+			t.Errorf("the component table lists %s, which the manifest does not have", name)
+		}
+	}
+}
+
+// TestReportingExamplesWork: docs/reporting.md's Examples section has one
+// worked example per component in the manifest, and no other; each is
+// accepted by add_widget as written and loads, with project 1's seeded
+// rows, through widget_data. An example that stops validating after a
+// view or component change fails here, not in an agent's session.
+func TestReportingExamplesWork(t *testing.T) {
+	_, cs := newTestHost(t)
+	comps, err := reporting.ParseManifest(reporting.Manifest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var dash struct {
+		ID int64 `json:"dashboard_id"`
+	}
+	toolJSON(t, cs, "create_dashboard", map[string]any{"title": "Examples"}, &dash)
+
+	block := regexp.MustCompile("(?s)```(sql|markdown)\n(.*?)```")
+	props := regexp.MustCompile("(?m)^Props: `(.*)`$")
+	examples := map[string]bool{}
+	for _, part := range strings.Split(docSection(t, docs.Reporting, "## Examples"), "\n### `")[1:] {
+		name := part[:strings.Index(part, "`")]
+		examples[name] = true
+		b := block.FindStringSubmatch(part)
+		p := props.FindStringSubmatch(part)
+		if b == nil || p == nil {
+			t.Errorf("example %s needs a sql or markdown block and a Props: line", name)
+			continue
+		}
+		source := map[string]any{"type": "sql", "content": b[2]}
+		if b[1] == "markdown" {
+			source["type"] = "md"
+		}
+		var pr map[string]any
+		if err := json.Unmarshal([]byte(p[1]), &pr); err != nil {
+			t.Errorf("example %s props %s: %v", name, p[1], err)
+			continue
+		}
+		res := callTool(t, cs, "add_widget", map[string]any{"dashboard_id": dash.ID, "component": name,
+			"title": name, "props": pr, "source": source})
+		if res.IsError {
+			t.Errorf("example %s is refused: %s", name, textOf(res))
+			continue
+		}
+		var w struct {
+			ID int64 `json:"widget_id"`
+		}
+		if err := json.Unmarshal([]byte(textOf(res)), &w); err != nil {
+			t.Fatal(err)
+		}
+		if res := callTool(t, cs, "widget_data", map[string]any{"widget_id": w.ID, "project_id": 1,
+			"from": "2026-08-01", "to": "2026-08-26"}); res.IsError {
+			t.Errorf("example %s does not load: %s", name, textOf(res))
+		}
+	}
+	for _, c := range comps {
+		if !examples[c.Name] {
+			t.Errorf("component %s has no worked example in docs/reporting.md", c.Name)
+		}
+	}
+	if len(examples) != len(comps) {
+		t.Errorf("docs/reporting.md has %d examples for %d components", len(examples), len(comps))
+	}
+}
+
+// TestReportingDocumentNamesEveryPreset: the range vocabulary the stored
+// selection is validated against is spelled out, id by id, where an agent
+// choosing create_dashboard's range reads it.
+func TestReportingDocumentNamesEveryPreset(t *testing.T) {
+	section := docSection(t, docs.Reporting, "## Parameters and ranges")
+	for _, p := range reporting.Presets {
+		if !strings.Contains(section, "| `"+p+"` |") {
+			t.Errorf("range preset %s has no row in docs/reporting.md's range table", p)
 		}
 	}
 }
@@ -424,17 +544,12 @@ func precheckOSVocabulary(t *testing.T) []string {
 }
 
 // docSection returns the text under a heading, up to the next one at the
-// same level.
+// same level, failing the test when the heading is missing.
 func docSection(t *testing.T, doc, heading string) string {
 	t.Helper()
-	i := strings.Index(doc, heading)
-	if i < 0 {
+	body, ok := section(doc, heading)
+	if !ok {
 		t.Fatalf("no %q section", heading)
 	}
-	section := doc[i+len(heading):]
-	level := strings.Repeat("#", len(heading)-len(strings.TrimLeft(heading, "#")))
-	if j := strings.Index(section, "\n"+level+" "); j >= 0 {
-		section = section[:j]
-	}
-	return section
+	return body
 }

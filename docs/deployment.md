@@ -11,6 +11,7 @@ replica, moved there by [litestream](#replication-with-litestream).
 - [Configure the collector](#configure-the-collector)
 - [Reporting with Evidence](#reporting-with-evidence)
 - [The API endpoint](#the-api-endpoint)
+- [Dashboards at /app/](#dashboards-at-app)
 - [Operate and recover](#operate-and-recover) — including litestream for the two-server topology
 
 ## Install
@@ -90,7 +91,7 @@ to it.
 | Variable | Meaning |
 | --- | --- |
 | `INGEST_ADDR` | Address to bind. Default `127.0.0.1:8080` (the docker image sets `0.0.0.0:8080`). |
-| `PUBLIC_URL` | The collector's public base URL (`https://twillingate.example.com`). Embed snippets, MCP integration guidance and the default API resource (its origin) are built from it; unset, they carry a placeholder. With [several hostnames](#one-collector-several-hostnames), the default one. |
+| `PUBLIC_URL` | The collector's public base URL (`https://twillingate.example.com`). Embed snippets and MCP integration guidance are built from it; unset, they carry a placeholder. Also the default for `API_URL`. With [several hostnames](#one-collector-several-hostnames), the default one. |
 | `DATABASE_DSN` | Store DSN. Only `sqlite://<path>` today. Required. |
 | `GEO_DSN` | Country lookup: `cloudflare://` (header), `maxmind://<license-key>`, or `none://`. |
 | `LOG_LEVEL` | `debug`, `info`, `warn`, `error`. Default `info`. |
@@ -103,6 +104,7 @@ to it.
 | `RETENTION_VIEWS_AGGREGATE_DAYS` | Days view aggregates (and actors, cohorts, identities) are kept. Default 365. |
 | `RETENTION_PRODUCT_RAW_DAYS` | Days raw product events are kept before rollup. Default 30. |
 | `RETENTION_PRODUCT_AGGREGATE_DAYS` | Days product aggregates are kept. Default 365. |
+| `RETENTION_ARCHIVED_DAYS` | Days after archiving that a project (with all its data), a dashboard or a widget is deleted by the daily pass. 0 keeps archived items forever. Default 30. |
 | `PRODUCT_ATTRIBUTES_TOP_N` | Distinct attribute values kept per (project, day, event, key) before the rest collapse into `(other)`. Default 50. |
 | `DASHBOARDS_DB_PATH` | Database `dashboards` renders. Defaults to the `DATABASE_DSN` path. |
 | `DASHBOARDS_ADDR` | Address the dashboards bind. Default `0.0.0.0:3000`. |
@@ -111,9 +113,12 @@ to it.
 | `DASHBOARDS_WORK_DIR` | Where the database snapshot is written. Default `/var/lib/dashboards`. |
 | `API_AUTH_DSN` | Authentication for the API endpoint (MCP and REST): `token://<token>?password=…` for the built-in browser login (see [The API endpoint](#the-api-endpoint)), or `oauth://<issuer-host>` for your own identity provider. Unset, bare `serve` skips the API with a warning. |
 | `API_ADDR` | Give the API (MCP and REST) its own listener. Defaults to `INGEST_ADDR` (shared). |
+| `API_URL` | The API's public origin when it has a hostname of its own (`https://api.example.com`), no path. The login's resource, issuer and the dashboards' callback follow it, so that host needs no `redirect=` entry. Defaults to `PUBLIC_URL`. |
 | `API_DB_PATH` | Database the API reads for queries. Defaults to the `DATABASE_DSN` path. |
-| `API_QUERY_TIMEOUT` | Per-query guard on reads and the `query` operation. Default `10s`. |
-| `API_QUERY_MAX_ROWS` | Row cap on the `query` operation. Default 1000. |
+| `API_QUERY_TIMEOUT` | Per-query guard on reads and the `query` operation; also bounds a reporting widget's sql. Default `10s`. |
+| `API_QUERY_MAX_ROWS` | Row cap on the `query` operation; also bounds a reporting widget's sql. Default 1000. |
+| `REPORTING_CACHE_SECONDS` | How long an ordinary widget data request reuses a sql widget's loaded value before loading again. 0 turns the cache off: every request loads again. Default 900. |
+| `REPORTING_REFRESH_SECONDS` | A `fresh=true` request reuses a result younger than this instead of `REPORTING_CACHE_SECONDS`; must not exceed it when that is non-zero. Default 60. |
 
 Litestream credentials (`LITESTREAM_ACCESS_KEY_ID`,
 `LITESTREAM_SECRET_ACCESS_KEY`, `R2_BUCKET`, `R2_ENDPOINT`) live in the same
@@ -212,7 +217,7 @@ client connects through a browser page that asks for a password.
 | Parameter | Meaning |
 | --- | --- |
 | `password` | What the login page asks for. Setting it turns the login on. Five wrong ones in a minute lock the page for everyone until the minute ends; connected clients are unaffected. No minimum length is enforced. In the DSN, percent-encode `&` as `%26`, `#` as `%23`, `%` as `%25`, `;` as `%3B` and `+` as `%2B` — an unencoded `+` becomes a space. |
-| `resource` | The API origin, with no path (`resource=https://api.example.com`); one login covers `/mcp` and `/api/`. Defaults to `PUBLIC_URL`; set it when the API has its own hostname. MCP clients read `/.well-known/oauth-protected-resource/mcp`, which names `<origin>/mcp`; `/api/` clients read `/.well-known/oauth-protected-resource`, which names the origin. A value carrying a path refuses the boot, in both `token://` and `oauth://` mode. |
+| `resource` | The API origin, with no path (`resource=https://api.example.com`); one login covers `/mcp` and `/api/`. Defaults to `API_URL`, which defaults to `PUBLIC_URL`: set `API_URL` when the API has its own hostname, and keep `resource=` for the rare case where the two must differ. MCP clients read `/.well-known/oauth-protected-resource/mcp`, which names `<origin>/mcp`; `/api/` clients read `/.well-known/oauth-protected-resource`, which names the origin. A value carrying a path refuses the boot, in both `token://` and `oauth://` mode. |
 | `redirect` | An extra host clients may return to, such as `redirect=app.example.com`; repeat once per host. |
 
 Accepted without `redirect=`, at any port and path: `localhost`,
@@ -304,7 +309,7 @@ API_AUTH_DSN='oauth://auth.example.com[?resource=<origin>][&audience=<aud>]'
 
 For an IdP you already run or rent (Keycloak, Auth0, Authentik, …): the
 server validates the JWTs it issues and serves no login page. `resource`
-defaults to `PUBLIC_URL` and must be an origin with no path;
+defaults to `API_URL` (then `PUBLIC_URL`) and must be an origin with no path;
 `oauth+insecure://` allows a plain-http IdP in development. It must provide:
 
 1. **RFC 8414 metadata** at `<issuer>/.well-known/oauth-authorization-server`
@@ -329,6 +334,56 @@ defaults to `PUBLIC_URL` and must be an origin with no path;
 | Login page: redirect URI's host not allowed | The client returns to a host that is not built in. The page shows the URI; add its host as `redirect=<host>` and restart. |
 | Login page: password not recognised, though it is right | A `+`, `&`, `#`, `%` or `;` in the password must be percent-encoded in the DSN. "Too many attempts" instead means five wrong passwords this minute; wait for the next one. |
 | Login loops in `oauth://` mode | The IdP issues tokens without the expected `aud`: the origin, `<origin>/mcp`, or the `audience=` value. |
+| `/app/` login: redirect URI host not allowed | The page is open on a host other than `API_URL`'s. Set `API_URL` to it, or add it as `redirect=<host>`, and restart. |
+
+## Dashboards at /app/
+
+Wherever the API is served, `/app/` serves the dashboards beside it:
+`https://twillingate.example.com/app/`, on the API's own listener with
+`API_ADDR`, else on the shared one. The root of that listener redirects to
+`/app/`; an ingest-only listener answers 404 there. The page is read-only; agents build the
+dashboards over MCP ([reporting.md](reporting.md)). It loads without a login
+and reads everything through `/api/` with the same login as any other
+client:
+
+- **`token://` with a password:** the page shows the login page on its own
+  host and returns to `/app/callback` there. On the API's host, `API_URL`
+  (default `PUBLIC_URL`), that needs no entry: the login accepts exactly
+  `<API_URL>/app/callback`, whatever `Host` a proxy passes on. So when the
+  API has its own hostname, set `API_URL=https://api.example.com` and open
+  the dashboards there. Any further name needs `redirect=<host>` in
+  `API_AUTH_DSN`. The login trusts only configured hosts, never a request
+  header. The access token stays in the
+  tab and the refresh token in the browser, so a login lasts 30 days from
+  last use, as for other clients.
+- **A bare `token://`:** the page asks for the token.
+- **`oauth://`:** the page reads the provider's RFC 8414 metadata at the
+  issuer root, `<issuer>/.well-known/oauth-authorization-server`, registers
+  itself there by dynamic client registration (RFC 7591) and logs in,
+  returning to `/app/callback` on the host it is opened on, which the
+  provider must allow. It
+  calls the provider from the browser, so the provider's metadata,
+  registration and token endpoints must allow cross-origin requests. A
+  provider without dynamic registration, with an issuer that has a path, or
+  publishing only `/.well-known/openid-configuration` gets the token prompt
+  instead.
+
+**Install it as an app:** in Chrome or Edge, *Install* in the address bar;
+in Safari, *File → Add to Dock*. It opens in its own window. Its service
+worker keeps the page itself, never data, so offline it opens and says so.
+Files under `/app/assets/` are cached for a year (their names change with
+their content); the page, `sw.js` and `manifest.webmanifest` are revalidated
+on every load, so a proxy or CDN in front needs no rules of its own.
+
+Widget queries run under `API_QUERY_TIMEOUT` and `API_QUERY_MAX_ROWS`, and
+their results are cached for `REPORTING_CACHE_SECONDS`
+([Configure the collector](#configure-the-collector)).
+
+### Previewing dashboard files
+
+`twillingate reporting dev` previews dashboard files against a database on
+a loopback address, without a login; its usage is in
+[reporting.md](reporting.md#local-development).
 
 ## Operate and recover
 
@@ -346,6 +401,7 @@ defaults to `PUBLIC_URL` and must be an origin with no path;
 | Replication status | `journalctl -u litestream --since -1h`, or `docker compose logs litestream` |
 | Dashboard rebuilds | `docker compose logs dashboards` — one `dashboards: rebuilt` line per successful build |
 | Recent config changes | `sqlite3 …/twillingate.db "SELECT * FROM audit_log ORDER BY ts DESC LIMIT 20"` |
+| Preview dashboard files against real data | `twillingate reporting dev <dir>... [-db <path>] [-addr 127.0.0.1:3100]` — a local, no-login server over the built UI; `-db` defaults to `DATABASE_DSN`'s path, `-addr` is refused unless it is loopback |
 
 Every CLI command on a systemd host needs the unit's environment:
 `sudo -u twillingate sh -ac '. /etc/twillingate/twillingate.env; twillingate project list'`.

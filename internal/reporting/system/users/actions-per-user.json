@@ -1,0 +1,7 @@
+{
+  "component": "stat",
+  "title": "Actions per user",
+  "props": {
+    "format": "number"
+  }
+}

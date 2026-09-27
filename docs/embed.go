@@ -6,18 +6,26 @@ package docs
 
 import _ "embed"
 
-// The two normative documents, split on audience: Twillingate is what an
+// The three normative documents, split on audience: Twillingate is what an
 // agent needs to set up a project, get it tracking and answer questions
 // from the data; Deployment is what an operator needs to run the collector
-// on their own server. Both are served over MCP, so the bytes an agent
-// reads are the bytes a person reads. docs_sync_test.go binds
-// Twillingate's reserved-key and tool lists to the source they describe.
+// on their own server; Reporting (below) is how an agent builds dashboards.
+// All three are served over MCP, so the bytes an agent reads are the bytes
+// a person reads. docs_sync_test.go binds Twillingate's reserved-key and
+// tool lists to the source they describe.
 //
 //go:embed twillingate.md
 var Twillingate string
 
 //go:embed deployment.md
 var Deployment string
+
+// Reporting is the third contract page: how an agent builds the
+// dashboards /app/ shows. docs_sync_test.go binds its component table to
+// the UI's manifest and its tool and route tables to the registered ones.
+//
+//go:embed reporting.md
+var Reporting string
 
 // PlausibleShim keeps Plausible's class-based event tagging working after
 // the tracker swap. internal/server hosts it at /js/plausible-shim.js so a

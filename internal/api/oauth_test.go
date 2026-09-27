@@ -214,9 +214,24 @@ func TestRedirectAllowed(t *testing.T) {
 		{"https://claude.ai.evil.com/cb", false},
 		// Configured hosts, likewise.
 		{"https://app.example.com/cb?tenant=1", true},
+		// The dashboards opened on a configured host return there.
+		{"https://app.example.com/app/callback", true},
 		{"https://app.example.com:8443/cb", true},
 		{"http://app.example.com/cb", false},
 		{"https://evil.example/cb", false},
+		// The configured resource origin at the web app's callback
+		// only, over https; the default port is the same origin.
+		{"https://api.example.com/app/callback", true},
+		{"https://API.example.com/app/callback", true},
+		{"HTTPS://api.example.com/app/callback", true},
+		{"https://api.example.com:443/app/callback", true},
+		{"https://api.example.com/app/callback?x=1", false},
+		{"https://api.example.com/app/other", false},
+		{"https://api.example.com/app/callback/", false},
+		{"https://api.example.com/app/%63allback", false},
+		{"http://api.example.com/app/callback", false},
+		{"https://api.example.com:8443/app/callback", false},
+		{"https://other.example.com/app/callback", false},
 		// Never: fragments, userinfo, garbage.
 		{"https://claude.ai/cb#f", false},
 		{"https://evil@claude.ai/cb", false},
@@ -224,7 +239,7 @@ func TestRedirectAllowed(t *testing.T) {
 		{"%zz", false},
 	}
 	for _, tc := range cases {
-		if got := redirectAllowed(hosts, tc.candidate); got != tc.want {
+		if got := redirectAllowed(hosts, "https://api.example.com", tc.candidate); got != tc.want {
 			t.Errorf("redirectAllowed(%q) = %v, want %v", tc.candidate, got, tc.want)
 		}
 	}
@@ -335,6 +350,37 @@ func TestRegisterClient(t *testing.T) {
 	if id := bare.register("http://127.0.0.1:1455/callback/abc123", claudeCallback,
 		"https://chatgpt.com/connector_platform_oauth_redirect"); id == "" {
 		t.Error("default registration returned no client_id")
+	}
+}
+
+// TestRegisterAppCallbackOnResourceOrigin: the dashboards at /app/ log in
+// through this server with no redirect= entry, returning to the configured
+// resource origin's /app/callback — whatever Host the request carries,
+// since a proxy rewrites it to the loopback upstream. Another host's
+// /app/callback stays refused.
+func TestRegisterAppCallbackOnResourceOrigin(t *testing.T) {
+	f := newLoginFixture(t, nil) // resource https://mcp.example.com
+	register := func(host, redirect string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("POST", "/oauth/register",
+			strings.NewReader(`{"redirect_uris":["`+redirect+`"],"client_name":"twillingate"}`))
+		req.Host = host
+		return f.serve(req)
+	}
+	for _, host := range []string{"mcp.example.com", "127.0.0.1:8081"} { // direct, and behind a proxy
+		if rec := register(host, testResource+"/app/callback"); rec.Code != http.StatusCreated {
+			t.Errorf("Host %s: the resource's /app/callback = %d %s, want 201", host, rec.Code, rec.Body)
+		}
+	}
+	for _, redirect := range []string{
+		"https://evil.example/app/callback",
+		"https://dash.example.com/app/callback",
+		testResource + "/elsewhere",
+		"http://mcp.example.com/app/callback",
+	} {
+		// A Host naming the redirect's own host does not admit it either.
+		if rec := register("dash.example.com", redirect); rec.Code != http.StatusBadRequest {
+			t.Errorf("%s = %d, want 400", redirect, rec.Code)
+		}
 	}
 }
 

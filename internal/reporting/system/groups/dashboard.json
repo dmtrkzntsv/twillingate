@@ -1,0 +1,15 @@
+{
+  "id": 4,
+  "title": "Groups",
+  "range": "7d",
+  "layout": [
+    {"widget": "about", "width": 12, "height": 2},
+    {"widget": "active-groups", "width": 3, "height": 3},
+    {"widget": "new-groups", "width": 3, "height": 3},
+    {"widget": "actions", "width": 3, "height": 3},
+    {"widget": "actions-per-group", "width": 3, "height": 3},
+    {"widget": "daily-active-groups", "width": 12, "height": 8},
+    {"widget": "most-active-groups", "width": 12, "height": 2},
+    {"widget": "top-groups", "width": 12, "height": 10}
+  ]
+}

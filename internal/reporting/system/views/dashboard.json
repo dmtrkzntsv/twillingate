@@ -1,0 +1,28 @@
+{
+  "id": 1,
+  "title": "Views",
+  "range": "7d",
+  "layout": [
+    {"widget": "visitors", "width": 3, "height": 3},
+    {"widget": "views", "width": 3, "height": 3},
+    {"widget": "bounce-rate", "width": 3, "height": 3},
+    {"widget": "avg-session", "width": 3, "height": 3},
+    {"widget": "visitors-and-views", "width": 12, "height": 8},
+    {"widget": "visitors-by-kind", "width": 6, "height": 8},
+    {"widget": "avg-session-length", "width": 6, "height": 8},
+    {"widget": "top-pages", "width": 6, "height": 10},
+    {"widget": "referrers", "width": 6, "height": 10},
+    {"widget": "hosts", "width": 12, "height": 10},
+    {"widget": "campaigns", "width": 12, "height": 10},
+    {"widget": "countries", "width": 6, "height": 8},
+    {"widget": "visitors-by-country", "width": 6, "height": 8},
+    {"widget": "devices", "width": 6, "height": 8},
+    {"widget": "browsers", "width": 6, "height": 8},
+    {"widget": "operating-systems", "width": 6, "height": 8},
+    {"widget": "display-resolutions", "width": 6, "height": 8},
+    {"widget": "consent", "width": 12, "height": 3},
+    {"widget": "consent-share", "width": 6, "height": 4},
+    {"widget": "consent-states", "width": 6, "height": 4},
+    {"widget": "visitors-by-app-version", "width": 12, "height": 8}
+  ]
+}

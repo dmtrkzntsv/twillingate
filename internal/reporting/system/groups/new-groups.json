@@ -1,0 +1,7 @@
+{
+  "component": "stat",
+  "title": "New groups",
+  "props": {
+    "format": "number"
+  }
+}

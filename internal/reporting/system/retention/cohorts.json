@@ -1,0 +1,15 @@
+{
+  "component": "table",
+  "title": "Cohorts",
+  "props": {
+    "formats": {
+      "Day": "number",
+      "Size": "number",
+      "Returned": "number",
+      "Retention": "percent"
+    },
+    "colorscale": [
+      "Retention"
+    ]
+  }
+}

@@ -2,46 +2,45 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
 )
 
 type queryIn struct {
 	SQL string `json:"sql" jsonschema:"a single read-only SELECT or WITH query against the v_* views; read schema://views first"`
 }
 
-// runQuery applies the four guard layers of endpoint spec §8:
-//  1. the pool is mode=ro + query_only (writes cannot succeed),
-//  2. the query is wrapped as a subquery — DDL/DML/PRAGMA/multi-statement
-//     become syntax errors, and the row cap rides in the same clause,
-//  3. ATTACH is rejected by token scan (read-only does not prevent it),
-//  4. queryRows enforces the deadline.
-//
-// database/sql with this driver already refuses multi-statement query
-// strings, and wrapping as a subquery makes a second statement a syntax
-// error besides — belt and braces, verified by TestQueryToolBlocksWrites.
+// runQuery applies the four guard layers of endpoint spec §8, all inside
+// readsql.Query: the pool is mode=ro + query_only + _defensive; the text
+// is checked and refused (ATTACH; meta and SQLite internals; a second
+// statement — readsql.Check tracks paren depth and statement boundaries
+// itself, since the driver runs every statement it is given and a stray
+// ')' or ';' could otherwise ride a trailing statement in on the same
+// call); it is then wrapped as a subquery with the row cap in the same
+// clause, so a checked single statement that is not itself a query
+// becomes a syntax error; and it runs against a deadline. This tool
+// keeps only the messages: readsql's sentinel errors map back to the
+// wording this tool has always used.
 func (h *host) runQuery(ctx context.Context, in queryIn) (tableOut, error) {
-	if strings.TrimSpace(in.SQL) == "" {
-		return tableOut{}, invalidf("sql must not be empty")
-	}
-	upper := strings.ToUpper(in.SQL)
-	if strings.Contains(upper, "ATTACH") {
-		return tableOut{}, invalidf("ATTACH is not allowed")
-	}
 	h.logger.Debug("mcp query", "sql", in.SQL) // debug only, never info (spec §8)
-	wrapped := fmt.Sprintf("SELECT * FROM (%s\n) LIMIT %d",
-		strings.TrimRight(strings.TrimSpace(in.SQL), ";"), h.maxRows+1)
-	cols, rows, _, err := queryRows(ctx, h.db, h.timeout, h.maxRows, wrapped)
+	res, err := h.db.Query(ctx, in.SQL)
 	if err != nil {
-		if ctx.Err() != nil || strings.Contains(err.Error(), "context deadline") {
-			return tableOut{}, invalidf("query exceeded %s; narrow the date range or query agg_* tables directly", h.timeout)
+		switch {
+		case errors.Is(err, readsql.ErrTimeout):
+			return tableOut{}, invalidf("query exceeded %s; narrow the date range or query agg_* tables directly", h.db.Timeout())
+		case errors.Is(err, readsql.ErrRefused):
+			return tableOut{}, invalidf("%s", strings.TrimPrefix(err.Error(), readsql.ErrRefused.Error()+": "))
+		default:
+			return tableOut{}, invalidf("SQL error (the query runs wrapped as a subquery; only single SELECT/WITH statements parse): %v", err)
 		}
-		return tableOut{}, invalidf("SQL error (the query runs wrapped as a subquery; only single SELECT/WITH statements parse): %v", err)
 	}
-	out := tableOut{Columns: cols, Rows: rows}
-	if len(rows) == h.maxRows {
+	out := tableOut{Columns: res.Columns, Rows: res.Rows}
+	if res.Truncated {
 		out.Truncated = true
-		out.Note = fmt.Sprintf("truncated to %d rows; results are PARTIAL — add a WHERE or aggregate", h.maxRows)
+		out.Note = fmt.Sprintf("truncated to %d rows; results are PARTIAL — add a WHERE or aggregate", h.db.MaxRows())
 	}
 	return out, nil
 }

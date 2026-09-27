@@ -1,0 +1,7 @@
+{
+  "component": "stat",
+  "title": "Actions",
+  "props": {
+    "format": "number"
+  }
+}

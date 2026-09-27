@@ -65,7 +65,10 @@ Projects live in a registry table, managed through the CLI or, over the API
 but a collector can answer on several hostnames; ask which one this site uses
 and change the snippet's `src`. The SDK posts to the origin it was loaded from.
 There is no rename (`project update -name` is one) and no delete over the API —
-deletion needs the CLI.
+deletion needs the CLI. Archiving is reversible with `restore_project`, but not
+forever: the daily pass deletes an archived project, dashboard or widget (and,
+for a project, all its data) once it has been archived longer than
+`RETENTION_ARCHIVED_DAYS` (default 30; 0 keeps archived items forever).
 
 ```bash
 twillingate project create -name "My App" \
@@ -770,10 +773,14 @@ CORS-simple.
 
 ## Answer questions with the data
 
-A connected session gets seventeen tools. Reach for a purpose-built one before
-`query` — they are cheaper, they cannot be malformed, and they already apply the
-caveats below. All the reading tools take `project_id`, `from` and `to` as
-`YYYY-MM-DD` unless noted.
+A connected session gets thirty-three tools: the seventeen below, and sixteen
+that build the dashboards served at `/app/`, which are documented in
+`docs://reporting` ([reporting.md](reporting.md)). To build or change a
+dashboard, call `reporting_guide` first.
+
+Reach for a purpose-built tool before `query` — they are cheaper, they cannot
+be malformed, and they already apply the caveats below. All the reading tools
+take `project_id`, `from` and `to` as `YYYY-MM-DD` unless noted.
 
 | Tool | Extra parameters | Returns |
 | --- | --- | --- |
@@ -784,7 +791,7 @@ caveats below. All the reading tools take `project_id`, `from` and `to` as
 | `product_attributes` | `event`, `key` | Count, unique users and unique groups per value of a declared attribute. `$platform`, `$os`, `$app_version`, `$app_locale`, `$kind`, `$browser`, `$device` and `$browser_locale` are always available; a custom key, or one of `$host`, `$path`, `$referrer`, `$utm_source`, `$utm_medium`, `$utm_campaign`, `$os_version`, `$browser_version` and `$device_model`, only appears once the project declares it. `unique_groups` is empty for days rolled up before it was measured and `0` when it was measured and no group was involved |
 | `retention` | `actor` (`user` or `install`) | Cohort curves, plus `aggregated_through` — cohorts after that day are **absent, not zero**. Empty for a project whose clients send neither `$user_id` nor `$install_id` |
 | `identities` | `kind` (`user` or `group`), `limit` | Per-user or per-group activity with display names. **Surfaces personal data on projects whose clients send ids** |
-| `query` | `sql` | A single read-only `SELECT`/`WITH` against the views. Row-capped and time-limited |
+| `query` | `sql` | A single read-only `SELECT`/`WITH` against the views. Row-capped and time-limited; `meta` and SQLite's internal tables (`sqlite_master`, `dbstat`, …) are refused, whether named directly or as a quoted or single-quoted string. Non-ASCII names must be quoted |
 
 **Managing** — `create_project`, `update_project`, `archive_project`,
 `restore_project`, `issue_ingest_key`, `list_ingest_keys`, `enable_ingest_key`,
@@ -792,16 +799,20 @@ caveats below. All the reading tools take `project_id`, `from` and `to` as
 project](#set-up-a-project).
 
 **Resources:** `docs://twillingate` (this document), `docs://deployment`
-(installing and configuring the collector), `schema://views` (the authoritative
-column list — read it before writing SQL) and `schema://projects` (the live
-registry). Enabling the endpoint, choosing an auth mode and pointing a client at
-it are in [deployment.md](deployment.md#the-api-endpoint).
+(installing and configuring the collector), `docs://reporting` (building
+dashboards), `schema://views` (the authoritative column list — read it before
+writing SQL), `schema://projects` (the live registry) and the reporting
+snapshots `schema://components`, `schema://dashboards` and
+`schema://widgets`. Enabling the endpoint, choosing an auth mode and pointing
+a client at it are in [deployment.md](deployment.md#the-api-endpoint).
 
 ### HTTP API
 
 Every tool above except `integration_guide` is also a REST route under `/api/`,
 guarded by the same bearer token (`Authorization: Bearer …`) as MCP. Send and
-receive JSON. `integration_guide` and the `docs://` resources are MCP-only.
+receive JSON. `integration_guide`, `reporting_guide` and the `docs://`
+resources are MCP-only. The dashboard routes are listed in
+[reporting.md](reporting.md#http-api).
 
 ```bash
 curl -H "Authorization: Bearer $TOKEN" \

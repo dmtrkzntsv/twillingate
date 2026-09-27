@@ -1,0 +1,7 @@
+{
+  "component": "stat",
+  "title": "Actions per group",
+  "props": {
+    "format": "number"
+  }
+}
