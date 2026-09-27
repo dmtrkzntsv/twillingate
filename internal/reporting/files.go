@@ -76,10 +76,12 @@ func decodeStrict(name string, b []byte, v any) error {
 }
 
 // LoadDashboard reads one system directory: dashboard.json plus the
-// $name.json/$name.(sql|md) pair for every widget its layout names.
-// LoadDashboard does not check dashboard.json's id (LoadDashboards does,
-// for a release's system directory; reporting dev reads directly and
-// accepts no id at all).
+// $name.json/$name.(sql|md) pair for every widget its layout names. Any
+// other file in the directory — an extension other than json/sql/md,
+// most often a typo like visitors.sq — is refused rather than silently
+// ignored. LoadDashboard does not check dashboard.json's id
+// (LoadDashboards does, for a release's system directory; reporting dev
+// reads directly and accepts no id at all).
 func LoadDashboard(fsys fs.FS, dir string) (FileDashboard, error) {
 	dashPath := path.Join(dir, "dashboard.json")
 	dashBytes, err := fs.ReadFile(fsys, dashPath)
@@ -105,7 +107,7 @@ func LoadDashboard(fsys fs.FS, dir string) (FileDashboard, error) {
 		ext := strings.TrimPrefix(path.Ext(name), ".")
 		base := strings.TrimSuffix(name, path.Ext(name))
 		if ext != "json" && ext != "sql" && ext != "md" {
-			continue
+			return FileDashboard{}, fmt.Errorf("reporting: %s: unexpected file %s", dir, name)
 		}
 		b := builds[base]
 		if b == nil {

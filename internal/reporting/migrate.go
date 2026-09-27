@@ -7,15 +7,22 @@
 // directories, validates every widget against a read-only handle on the
 // database, and hands the result to store.SyncReporting in one
 // transaction.
+//
+// Unlike create_dashboard (which defaults an omitted range to "7d"), a
+// system dashboard.json must give one explicitly: the release is
+// choosing the starting selection for every install, not leaving it to a
+// runtime default that could silently change underneath it.
 package reporting
 
 import (
 	"context"
 	"crypto/sha256"
 	"embed"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"hash"
 	"io/fs"
 	"sort"
 	"time"
@@ -84,6 +91,9 @@ func migrateFrom(ctx context.Context, st Store, db *readsql.DB, system fs.FS, ma
 			return fmt.Errorf("reporting: %w", err)
 		}
 		for i, fd := range files {
+			if fd.Range == "" {
+				return fmt.Errorf("reporting: system dashboard %d: dashboard.json needs range", fd.ID)
+			}
 			if err := checkPreset(fd.Range); err != nil {
 				return fmt.Errorf("reporting: system dashboard %d: %w", fd.ID, err)
 			}
@@ -146,9 +156,22 @@ func storeWidget(fw FileWidget, sortKey string, comps map[string]Component) stor
 	}
 }
 
+// writeFramed writes b's length as a big-endian uint64 before b itself,
+// so concatenating several framed writes can never be reproduced by a
+// different split of the same total bytes: hashSystem writes a file's
+// path and content, and the manifest, each through this rather than back
+// to back, so ("a","bx") and ("ab","x") no longer hash the same.
+func writeFramed(h hash.Hash, b []byte) {
+	var size [8]byte
+	binary.BigEndian.PutUint64(size[:], uint64(len(b)))
+	h.Write(size[:])
+	h.Write(b)
+}
+
 // hashSystem hashes every file path and content under system (sorted by
-// path) plus manifest, hex-encoded: the same bytes on two runs mean
-// nothing to sync.
+// path) plus manifest, each length-framed (writeFramed) so no path/content
+// split can collide with a different one, hex-encoded: the same bytes on
+// two runs mean nothing to sync.
 func hashSystem(system fs.FS, manifest []byte) (string, error) {
 	type file struct {
 		path    string
@@ -176,9 +199,9 @@ func hashSystem(system fs.FS, manifest []byte) (string, error) {
 
 	h := sha256.New()
 	for _, f := range files {
-		h.Write([]byte(f.path))
-		h.Write(f.content)
+		writeFramed(h, []byte(f.path))
+		writeFramed(h, f.content)
 	}
-	h.Write(manifest)
+	writeFramed(h, manifest)
 	return hex.EncodeToString(h.Sum(nil)), nil
 }

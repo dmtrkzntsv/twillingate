@@ -42,6 +42,21 @@ func TestLoadDashboardDataFileWithNoConfig(t *testing.T) {
 	}
 }
 
+func TestLoadDashboardRefusesStrayFile(t *testing.T) {
+	fsys := fstest.MapFS{
+		"d/dashboard.json": mapFile(`{"id":1,"title":"D","range":"7d","layout":[{"widget":"visitors"}]}`),
+		"d/visitors.json":  mapFile(`{"component":"stat","title":"Visitors"}`),
+		"d/visitors.sq":    mapFile("select 1 as value"), // typo: .sq, not .sql
+	}
+	_, err := LoadDashboard(fsys, "d")
+	if err == nil {
+		t.Fatal("want error: a stray file with an unexpected extension")
+	}
+	if !strings.Contains(err.Error(), "unexpected file") || !strings.Contains(err.Error(), "visitors.sq") {
+		t.Errorf("error = %q, want it to name the stray file", err)
+	}
+}
+
 func TestLoadDashboardLayoutNamesMissingWidget(t *testing.T) {
 	fsys := fstest.MapFS{
 		"d/dashboard.json": mapFile(`{"id":1,"title":"D","range":"7d","layout":[{"widget":"missing"}]}`),

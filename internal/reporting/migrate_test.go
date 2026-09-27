@@ -7,7 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
@@ -357,5 +359,50 @@ func TestMigrateFromAcceptsUnregisteredTypeFails(t *testing.T) {
 	}
 	if hash != "" {
 		t.Errorf("ReportingHash after a failed first migration = %q, want empty", hash)
+	}
+}
+
+// TestHashSystemFramesFieldsAgainstCollision is the fix for a review
+// finding: hashSystem used to concatenate path, content and manifest
+// with no framing, so ("a","bx") and ("ab","x") hashed the same. Each
+// field is now length-prefixed (writeFramed), so the same total bytes
+// split differently must hash differently.
+func TestHashSystemFramesFieldsAgainstCollision(t *testing.T) {
+	a := fstest.MapFS{"a": &fstest.MapFile{Data: []byte("bx")}}
+	b := fstest.MapFS{"ab": &fstest.MapFile{Data: []byte("x")}}
+
+	hashA, err := hashSystem(a, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hashB, err := hashSystem(b, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hashA == hashB {
+		t.Fatal(`hashSystem: ("a","bx") and ("ab","x") still collide`)
+	}
+}
+
+// TestMigrateFromRefusesEmptyRange is the fix for a review finding: a
+// system dashboard.json must give range explicitly (no default, unlike
+// create_dashboard's "7d"), and the refusal should name the problem
+// plainly rather than reuse checkPreset's "range must be one of ...".
+func TestMigrateFromRefusesEmptyRange(t *testing.T) {
+	st, db := newTestStoreAndReadDB(t)
+	ctx := context.Background()
+	system, dir := systemFSCopy(t)
+
+	if err := os.WriteFile(filepath.Join(dir, "retention", "dashboard.json"),
+		[]byte(`{"id":1,"title":"Retention","layout":[{"widget":"users"}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := migrateFrom(ctx, st, db, system, testManifest(t))
+	if err == nil {
+		t.Fatal("want error: dashboard.json with no range")
+	}
+	if !strings.Contains(err.Error(), "dashboard.json needs range") {
+		t.Errorf("error = %q, want it to say dashboard.json needs range", err)
 	}
 }
