@@ -82,7 +82,7 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 		return err
 	}
 	defer st.Close()
-	if err := st.Migrate(ctx); err != nil {
+	if err := Migrate(ctx, cfg, st); err != nil {
 		return err
 	}
 	// v_product_attrs' live half reads the cardinality cap from meta with a
