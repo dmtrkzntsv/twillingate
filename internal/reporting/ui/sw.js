@@ -7,8 +7,8 @@
 // load, so they would otherwise never be fetched through it, and an offline
 // launch would get HTML that cannot render.
 const PREFIX = 'twillingate-app-'
-const CACHE = 'twillingate-app-749046bc53f7'
-const ASSETS = ["/app/assets/index-DRDzXD-B.css","/app/assets/index-sGJDuCL6.js"]
+const CACHE = 'twillingate-app-2df78595a920'
+const ASSETS = ["/app/assets/index-DKcCyzAF.js","/app/assets/index-DRDzXD-B.css"]
 const SHELL_URLS = ['/app/', '/app/index.html']
 
 self.addEventListener('install', (event) => {

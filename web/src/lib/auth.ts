@@ -104,11 +104,37 @@ async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T | undefi
   return (await res.json()) as T
 }
 
+const AS_METADATA_PATH = '/.well-known/oauth-authorization-server'
+
+// onThisOrigin moves an endpoint URL onto the page's own origin.
+function onThisOrigin(endpoint: string): string {
+  const u = new URL(endpoint, location.origin)
+  return location.origin + u.pathname + u.search
+}
+
+// A token:// backend's login server is mounted on every name that reaches
+// it, so when this origin serves login metadata the page logs in here, even
+// if the issuer names another host: a cross-origin fetch to that host would
+// fail. The server accepts this origin's /app/callback when it is the
+// resource origin or a redirect= host in API_AUTH_DSN. Without metadata
+// here (an oauth:// identity provider), the page follows the issuer.
 async function discover(): Promise<{ resource: ProtectedResource; meta: AuthServerMetadata } | undefined> {
   const resource = await fetchJSON<ProtectedResource>(METADATA_PATH)
   const asURL = resource?.authorization_servers?.[0]
   if (!resource || !asURL) return undefined
-  const meta = await fetchJSON<AuthServerMetadata>(`${asURL}/.well-known/oauth-authorization-server`)
+  const own = await fetchJSON<AuthServerMetadata>(AS_METADATA_PATH)
+  if (own) {
+    return {
+      resource,
+      meta: {
+        ...own,
+        authorization_endpoint: onThisOrigin(own.authorization_endpoint),
+        token_endpoint: onThisOrigin(own.token_endpoint),
+        registration_endpoint: own.registration_endpoint && onThisOrigin(own.registration_endpoint),
+      },
+    }
+  }
+  const meta = await fetchJSON<AuthServerMetadata>(`${asURL}${AS_METADATA_PATH}`)
   if (!meta) return undefined
   return { resource, meta }
 }
@@ -174,7 +200,7 @@ async function registerClient(meta: AuthServerMetadata): Promise<string> {
     if (existing) return existing
     throw new Error('the authorization server has no registration endpoint')
   }
-  const registration = await fetchJSON<{ client_id: string }>(meta.registration_endpoint, {
+  const res = await fetch(meta.registration_endpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -184,7 +210,16 @@ async function registerClient(meta: AuthServerMetadata): Promise<string> {
       client_name: CLIENT_NAME,
     }),
   })
-  if (!registration) throw new Error('client registration failed')
+  // A refusal names its fix (a page opened on a host the login server does
+  // not know says to add it as redirect=<host>), so show it rather than a
+  // bare "failed".
+  const body = (await res.json().catch(() => undefined)) as
+    | { client_id?: string; error_description?: string }
+    | undefined
+  if (!res.ok || !body?.client_id) {
+    throw new Error(body?.error_description || 'client registration failed')
+  }
+  const registration = { client_id: body.client_id }
   localStorage.setItem(CLIENT_ID_KEY, registration.client_id)
   return registration.client_id
 }

@@ -152,6 +152,9 @@ describe('sanitizeReturnTo', () => {
 })
 
 describe('beginLogin', () => {
+  // The fixture's issuer (api.example) is another name than the page's
+  // origin: the login still runs on the page's own origin, where the
+  // backend serves the same login server.
   it('registers, then redirects with S256, resource and the app redirect_uri', async () => {
     vi.mocked(fetch)
       .mockResolvedValueOnce(jsonResponse(PROTECTED_RESOURCE))
@@ -163,7 +166,7 @@ describe('beginLogin', () => {
 
     expect(assign).toHaveBeenCalledTimes(1)
     const url = new URL(assign.mock.calls[0][0] as string)
-    expect(url.origin + url.pathname).toBe('https://api.example/oauth/authorize')
+    expect(url.origin + url.pathname).toBe(`${location.origin}/oauth/authorize`)
     expect(url.searchParams.get('response_type')).toBe('code')
     expect(url.searchParams.get('client_id')).toBe('client-1')
     expect(url.searchParams.get('code_challenge_method')).toBe('S256')
@@ -172,6 +175,35 @@ describe('beginLogin', () => {
     expect(url.searchParams.get('redirect_uri')).toBe(`${location.origin}/app/callback`)
     expect(url.searchParams.get('state')).toBeTruthy()
     expect(localStorage.getItem('twillingate.client_id')).toBe('client-1')
+  })
+
+  it('follows the issuer when this origin serves no login (an oauth:// provider)', async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(jsonResponse(PROTECTED_RESOURCE))
+      .mockResolvedValueOnce(jsonResponse({ error: 'not found' }, 404))
+      .mockResolvedValueOnce(jsonResponse(AS_METADATA))
+      .mockResolvedValueOnce(jsonResponse({ client_id: 'client-1' }, 201))
+    const assign = mockNavigate()
+
+    await beginLogin('/')
+
+    expect(vi.mocked(fetch).mock.calls[1][0]).toBe('/.well-known/oauth-authorization-server')
+    expect(vi.mocked(fetch).mock.calls[2][0]).toBe('https://api.example/.well-known/oauth-authorization-server')
+    expect(vi.mocked(fetch).mock.calls[3][0]).toBe('https://api.example/oauth/register')
+    const url = new URL(assign.mock.calls[0][0] as string)
+    expect(url.origin + url.pathname).toBe('https://api.example/oauth/authorize')
+    expect(localStorage.getItem('twillingate.token_endpoint')).toBe('https://api.example/oauth/token')
+  })
+
+  it('shows the login server\'s reason when it refuses this host\'s callback', async () => {
+    const reason = `redirect URI host not allowed (add it to API_AUTH_DSN as redirect=<host>): ${location.origin}/app/callback`
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(jsonResponse(PROTECTED_RESOURCE))
+      .mockResolvedValueOnce(jsonResponse(AS_METADATA))
+      .mockResolvedValueOnce(jsonResponse({ error: 'invalid_redirect_uri', error_description: reason }, 400))
+    mockNavigate()
+
+    await expect(beginLogin('/')).rejects.toThrow(reason)
   })
 
   it('sends the client name in the registration request', async () => {
@@ -184,7 +216,7 @@ describe('beginLogin', () => {
     await beginLogin('/')
 
     const [registerURL, registerInit] = vi.mocked(fetch).mock.calls[2]
-    expect(registerURL).toBe('https://api.example/oauth/register')
+    expect(registerURL).toBe(`${location.origin}/oauth/register`)
     const body = JSON.parse(registerInit?.body as string)
     expect(body.client_name).toBe('twillingate dashboards')
     expect(body.token_endpoint_auth_method).toBe('none')
@@ -284,7 +316,7 @@ describe('completeLogin', () => {
     await completeLogin(`?code=abc123&state=${state}`)
 
     const [tokenURL, tokenInit] = vi.mocked(fetch).mock.calls[0]
-    expect(tokenURL).toBe('https://api.example/oauth/token')
+    expect(tokenURL).toBe(`${location.origin}/oauth/token`)
     const body = bodyOf(tokenInit)
     expect(body.get('grant_type')).toBe('authorization_code')
     expect(body.get('code')).toBe('abc123')

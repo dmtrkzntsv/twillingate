@@ -333,7 +333,7 @@ defaults to `PUBLIC_URL` and must be an origin with no path;
 | Login page: redirect URI's host not allowed | The client returns to a host that is not built in. The page shows the URI; add its host as `redirect=<host>` and restart. |
 | Login page: password not recognised, though it is right | A `+`, `&`, `#`, `%` or `;` in the password must be percent-encoded in the DSN. "Too many attempts" instead means five wrong passwords this minute; wait for the next one. |
 | Login loops in `oauth://` mode | The IdP issues tokens without the expected `aud`: the origin, `<origin>/mcp`, or the `audience=` value. |
-| `/app/` asks for a token although a password is set | The page is not on the `resource=` origin. Set `resource=https://<api-host>` or open the page there. |
+| `/app/` login: redirect URI host not allowed | The page is open on a host other than `resource=`'s. Add that host as `redirect=<host>` and restart. |
 
 ## Dashboards at /app/
 
@@ -343,19 +343,24 @@ Wherever the API is served, `/app/` serves the dashboards beside it:
 `/app/`; an ingest-only listener answers 404 there. The page is read-only; agents build the
 dashboards over MCP ([reporting.md](reporting.md)). It loads without a login
 and reads everything through `/api/` with the same login as any other
-client, so open it on the API's origin, the one `resource=` names:
+client:
 
-- **`token://` with a password:** the page shows the login page and returns
-  to `<resource>/app/callback`, e.g. `https://twillingate.example.com/app/callback`.
-  No `redirect=` entry is needed: the login accepts exactly that URL, taken
-  from `resource=` (default `PUBLIC_URL`), whatever `Host` a proxy passes
-  on. The access token stays in the tab and the refresh token in the
-  browser, so a login lasts 30 days from last use, as for other clients.
+- **`token://` with a password:** the page shows the login page on its own
+  host and returns to `/app/callback` there. On the host `resource=` names
+  (default `PUBLIC_URL`) that needs no entry: the login accepts exactly
+  `<resource>/app/callback`, whatever `Host` a proxy passes on. On any other
+  name, list it as `redirect=<host>` in `API_AUTH_DSN`, e.g. the API's own
+  host when `PUBLIC_URL` is the ingest host:
+  `token://…?password=…&redirect=tapi.example.com`. The login trusts only
+  configured hosts, never a request header. The access token stays in the
+  tab and the refresh token in the browser, so a login lasts 30 days from
+  last use, as for other clients.
 - **A bare `token://`:** the page asks for the token.
 - **`oauth://`:** the page reads the provider's RFC 8414 metadata at the
   issuer root, `<issuer>/.well-known/oauth-authorization-server`, registers
   itself there by dynamic client registration (RFC 7591) and logs in,
-  returning to `<resource>/app/callback`, which the provider must allow. It
+  returning to `/app/callback` on the host it is opened on, which the
+  provider must allow. It
   calls the provider from the browser, so the provider's metadata,
   registration and token endpoints must allow cross-origin requests. A
   provider without dynamic registration, with an issuer that has a path, or

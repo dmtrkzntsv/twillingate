@@ -214,6 +214,8 @@ func TestRedirectAllowed(t *testing.T) {
 		{"https://claude.ai.evil.com/cb", false},
 		// Configured hosts, likewise.
 		{"https://app.example.com/cb?tenant=1", true},
+		// The dashboards opened on a configured host return there.
+		{"https://app.example.com/app/callback", true},
 		{"https://app.example.com:8443/cb", true},
 		{"http://app.example.com/cb", false},
 		{"https://evil.example/cb", false},
