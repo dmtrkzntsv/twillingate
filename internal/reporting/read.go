@@ -27,7 +27,8 @@ type DashboardInfo struct {
 type Dashboards struct {
 	Timezone   string          `json:"timezone"` // "UTC" (D19)
 	Dashboards []DashboardInfo `json:"dashboards"`
-	Dev        bool            `json:"dev,omitempty"` // set by reporting dev
+	Dev        bool            `json:"dev,omitempty"`    // set by reporting dev
+	Errors     []DevError      `json:"errors,omitempty"` // reporting dev only: directories that failed to load
 }
 
 // WidgetInfo is one widget as the API returns it. Component is nil when

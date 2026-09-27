@@ -68,26 +68,12 @@ func (s *Service) WidgetData(ctx context.Context, in DataRequest) (WidgetData, e
 	}
 
 	followsProject, followsRange := s.follows(w)
-	var projectID int64
-	if followsProject {
-		if in.ProjectID == 0 {
-			return WidgetData{}, store.Refuse(store.ErrInvalid,
-				"widget %d follows the project switcher; pass project_id", w.ID)
-		}
-		projectID = in.ProjectID
-		out.ProjectID = &projectID
+	params, echo, err := s.widgetParams(followsProject, followsRange, w.ID, in)
+	if err != nil {
+		return WidgetData{}, err
 	}
-	var from, to string
-	if followsRange {
-		if in.From == "" && in.To == "" {
-			return WidgetData{}, store.Refuse(store.ErrInvalid,
-				"widget %d follows the date range; pass from and to", w.ID)
-		}
-		if from, to, err = checkRange(in.From, in.To, civil.Today(s.now())); err != nil {
-			return WidgetData{}, err
-		}
-		out.From, out.To = from, to
-	}
+	projectID, from, to := params.ProjectID, params.From, params.To
+	out.ProjectID, out.From, out.To = echo.ProjectID, echo.From, echo.To
 
 	comps, err := s.components(ctx)
 	if err != nil {
@@ -141,6 +127,40 @@ func (s *Service) WidgetData(ctx context.Context, in DataRequest) (WidgetData, e
 	}
 	out.Data = v
 	return out, nil
+}
+
+// widgetParams resolves a load's bound Params and the fields WidgetData
+// echoes, from what a widget's content follows and what the caller
+// asked for: refused when a followed switcher's input is missing,
+// clamped when a custom "to" runs into the future. Shared by WidgetData
+// (against a widget already read from the store) and reporting dev's
+// data handler (against one read fresh from a file, never saved) — the
+// project/range handling is otherwise identical either way.
+func (s *Service) widgetParams(followsProject, followsRange bool, widgetID int64, in DataRequest) (Params, WidgetData, error) {
+	var p Params
+	var echo WidgetData
+	if followsProject {
+		if in.ProjectID == 0 {
+			return Params{}, WidgetData{}, store.Refuse(store.ErrInvalid,
+				"widget %d follows the project switcher; pass project_id", widgetID)
+		}
+		projectID := in.ProjectID
+		p.ProjectID = projectID
+		echo.ProjectID = &projectID
+	}
+	if followsRange {
+		if in.From == "" && in.To == "" {
+			return Params{}, WidgetData{}, store.Refuse(store.ErrInvalid,
+				"widget %d follows the date range; pass from and to", widgetID)
+		}
+		from, to, err := checkRange(in.From, in.To, civil.Today(s.now()))
+		if err != nil {
+			return Params{}, WidgetData{}, err
+		}
+		p.From, p.To = from, to
+		echo.From, echo.To = from, to
+	}
+	return p, echo, nil
 }
 
 // checkRange validates a widget's requested date range and clamps a
