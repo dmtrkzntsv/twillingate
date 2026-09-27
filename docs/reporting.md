@@ -132,7 +132,12 @@ guards as `query`: read-only, `API_QUERY_TIMEOUT` and `API_QUERY_MAX_ROWS`.
 - The only parameters are `:project`, `:from` and `:to`. `day` is text,
   `YYYY-MM-DD` in UTC: compare it as a string (`day BETWEEN :from AND :to`).
 - Read the `v_*` views. Custom SQL may read any table except `meta` and
-  SQLite's own (`sqlite_*`, `pragma_*`, `dbstat`), and only reads.
+  SQLite's own (`sqlite_*`, `pragma_*`, `dbstat`), and only reads. SQLite
+  takes a quoted string as a name, so a single-quoted string that is one
+  of those names (`'meta'`, `'sqlite_master'`) is refused too; `'metadata'`
+  and `'%meta%'` pass.
+- Unquoted names are ASCII: quote any other (`"визиты"`). Strings and
+  comments may hold any text.
 - Group in SQL: a widget gets at most `API_QUERY_MAX_ROWS` rows (default
   1000) and `API_QUERY_TIMEOUT` (default 10s). A result cut at the cap draws
   as "partial". A pie keeps to about seven slices, the rest summed as
@@ -589,7 +594,8 @@ Archiving is how to undo, and the only way to remove anything:
 
 Archived projects, dashboards and widgets are **deleted
 `RETENTION_ARCHIVED_DAYS` after archiving** (default 30; `0` keeps them
-forever), by the daily pass at 03:00 UTC. A purged dashboard takes its widgets
+forever), by the daily pass: on the first start after upgrading, then daily
+at 03:00 UTC. A purged dashboard takes its widgets
 with it. A purged project takes all of its data: its events, aggregates and
 ingest keys are gone, and so is anything a widget's SQL could have shown of
 it. Nothing returns the purge date; it follows from `archived_at`.
@@ -609,7 +615,8 @@ widget's name (`widget visitors: …`), and nothing is created.
 | line needs y (number); columns are x, visitors | Alias the column to the input: `visitors AS y`. |
 | visitors is not an input of line | Drop the column, or alias it to an input; only `table` takes any columns. |
 | line.y: "n/a" is not number | Return a number, a `YYYY-MM-DD` day or text as the input asks; `CAST(… AS REAL)` where needed. An empty value (SQL `NULL`) always passes. |
-| refused: sql reads meta, which custom SQL may not read | Read the `v_*` views instead. The same holds for `sqlite_*`, `pragma_*` and `dbstat`, and for `ATTACH`. |
+| refused: sql reads meta, which custom SQL may not read | Read the `v_*` views instead. The same holds for `sqlite_*`, `pragma_*` and `dbstat`, as a name or as a single-quoted string equal to one (`'meta'`, `'sqlite_master'`), and for `ATTACH`. |
+| refused: sql may use non-ASCII characters only inside quotes or comments | Quote the name: `"визиты"`. |
 | query exceeded API_QUERY_TIMEOUT (10s); narrow the range or group the query | Group in SQL or read fewer days; the operator can raise `API_QUERY_TIMEOUT`. |
 | SQLite's own error, such as a column that does not exist | Fix the query; try it with `query` first. |
 | markdown text is empty | Give the Markdown text. |

@@ -294,9 +294,9 @@ Litestream snapshot, so take one before upgrading.
 
 Adds `components`, `dashboards` and `widgets`, and the daily pass starts
 purging archived rows: once a project, dashboard or widget has been archived
-longer than `RETENTION_ARCHIVED_DAYS` (default 30), the first night after the
-upgrade deletes it — for a project, with all its data. Before upgrading,
-restore any archived project you mean to keep, or set
+longer than `RETENTION_ARCHIVED_DAYS` (default 30), it is deleted on the first
+start after upgrading, then daily at 03:00 UTC — for a project, with all its
+data. Before upgrading, restore any archived project you mean to keep, or set
 `RETENTION_ARCHIVED_DAYS=0` (keeps archived items forever) until you have
 reviewed them.
 
@@ -316,3 +316,5 @@ What changes on the day:
   upgrading again does not restore it. Before rolling back, run
   `list_widgets` and note which widgets use components the older release
   does not have.
+- Rolling back to a binary from before this migration leaves the new tables
+  unused (and nothing purged); upgrading again is safe.
