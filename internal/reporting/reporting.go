@@ -47,9 +47,12 @@ type Store interface {
 // Options configures a Service.
 type Options struct {
 	// CacheAge and RefreshAge come from REPORTING_CACHE_SECONDS and
-	// REPORTING_REFRESH_SECONDS: how long a sql widget's loaded value is
-	// served as-is, and how long past that it is still served while a
-	// fresh load runs in the background.
+	// REPORTING_REFRESH_SECONDS: an ordinary request reuses a sql widget's
+	// loaded value up to CacheAge old; a fresh=true request instead
+	// reuses one only up to the (normally shorter) RefreshAge old. There
+	// is no background refresh and nothing is ever served stale past its
+	// own age — a request past its age simply loads again. CacheAge 0
+	// turns the cache off outright.
 	CacheAge, RefreshAge time.Duration
 	// Now stands in for time.Now in tests; nil means time.Now.
 	Now func() time.Time

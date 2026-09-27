@@ -84,19 +84,70 @@ func TestCacheZeroAgeRecomputesEveryTime(t *testing.T) {
 	if calls != 3 {
 		t.Errorf("calls = %d, want 3: CacheAge 0 never reuses", calls)
 	}
+	if len(c.entries) != 0 {
+		t.Errorf("entries = %d, want 0: CacheAge 0 must never store, not merely never reuse", len(c.entries))
+	}
 }
 
-func TestCacheRefreshAfterIsCachedAtPlusRefreshAge(t *testing.T) {
+// TestCacheZeroCacheAgeIgnoresFresh: CacheAge 0 turns the cache off for a
+// fresh=true request too, even when RefreshAge is large — a fresh
+// request must never end up *staler* than an ordinary one just because
+// RefreshAge outlives a cache that isn't running at all.
+func TestCacheZeroCacheAgeIgnoresFresh(t *testing.T) {
 	now := time.Now()
-	refreshAge := 30 * time.Second
-	c := newCache(time.Minute, refreshAge, func() time.Time { return now })
-	_, at, err := c.get("k", false, countingLoad(new(int32), "v"))
-	if err != nil {
+	c := newCache(0, time.Hour, func() time.Time { return now })
+	var calls int32
+	load := countingLoad(&calls, "v")
+
+	if _, _, err := c.get("k", false, load); err != nil {
 		t.Fatal(err)
 	}
-	refreshAfter := at.Add(c.refreshAge)
-	if !refreshAfter.Equal(at.Add(refreshAge)) {
-		t.Errorf("refresh_after = %v, want cached_at + refreshAge", refreshAfter)
+	if _, _, err := c.get("k", true, load); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 {
+		t.Errorf("calls = %d, want 2: a fresh request must not reuse anything when the cache is off", calls)
+	}
+	if len(c.entries) != 0 {
+		t.Errorf("entries = %d, want 0", len(c.entries))
+	}
+}
+
+// TestCacheZeroCacheAgeStillSharesConcurrentCalls: turning the cache off
+// (CacheAge 0) must not turn singleflight off too — concurrent identical
+// requests still share one load, only nothing is kept afterward. Unlike
+// TestCacheConcurrentMissesRunTheLoaderOnce's start/release handshake
+// (which needs every caller to have already reached sf.Do before the one
+// that got there first is allowed to finish), this gives the leader a
+// fixed, generous head start instead: with cacheAge>0 every caller does
+// a mutex-guarded lookup before Do, which incidentally paces them close
+// together, but runOnce skips that lookup entirely, so a handshake tuned
+// for the other path is not a given here too.
+func TestCacheZeroCacheAgeStillSharesConcurrentCalls(t *testing.T) {
+	c := newCache(0, 0, nil)
+	var calls int32
+	load := func() (any, error) {
+		atomic.AddInt32(&calls, 1)
+		time.Sleep(100 * time.Millisecond) // ample time for every goroutine below to reach sf.Do
+		return "v", nil
+	}
+	const n = 10
+	var wg sync.WaitGroup
+	wg.Add(n)
+	for i := 0; i < n; i++ {
+		go func() {
+			defer wg.Done()
+			if _, _, err := c.get("same-key", false, load); err != nil {
+				t.Errorf("get: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+	if calls != 1 {
+		t.Errorf("calls = %d, want 1", calls)
+	}
+	if len(c.entries) != 0 {
+		t.Errorf("entries = %d, want 0", len(c.entries))
 	}
 }
 

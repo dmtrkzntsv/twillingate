@@ -50,9 +50,11 @@ type DashboardsConfig struct {
 }
 
 // ReportingConfig sizes the two-age cache a sql widget's loaded value is
-// served from (internal/reporting): CacheAge is how long it is served
-// as-is, RefreshAge how much longer past that it is still served while a
-// fresh load runs. REPORTING_CACHE_SECONDS 0 recomputes every request.
+// served from (internal/reporting): an ordinary request reuses a value up
+// to CacheAge old; a fresh=true request reuses one younger than this
+// (RefreshAge instead), which must not exceed CacheAge when that is
+// non-zero. REPORTING_CACHE_SECONDS 0 turns the cache off outright: every
+// request, fresh or not, loads again.
 type ReportingConfig struct {
 	CacheAge, RefreshAge time.Duration
 }

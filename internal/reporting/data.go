@@ -102,47 +102,65 @@ func (s *Service) WidgetData(ctx context.Context, in DataRequest) (WidgetData, e
 		return WidgetData{}, fmt.Errorf("reporting: widget %d: source type %s not registered", w.ID, w.SourceType)
 	}
 
+	// context.WithoutCancel: this call may run on behalf of every request
+	// currently sharing it through the cache's singleflight (below), not
+	// only the one goroutine that happens to run it, so it must not carry
+	// any one caller's cancellation — a client disconnecting partway
+	// through must not turn into a false API_QUERY_TIMEOUT for every
+	// other request sharing the same load. readsql applies its own
+	// deadline (API_QUERY_TIMEOUT) regardless.
+	loadCtx := context.WithoutCancel(ctx)
 	load := func() (any, error) {
-		v, err := src.Load(ctx, w.Source, Params{ProjectID: projectID, From: from, To: to})
-		if err != nil {
-			return nil, err
-		}
-		if res, ok := v.(readsql.Result); ok {
-			if err := comp.checkRows(res); err != nil {
-				return nil, err
-			}
-		}
-		return v, nil
+		return src.Load(loadCtx, w.Source, Params{ProjectID: projectID, From: from, To: to})
 	}
 
-	if !src.Cacheable() {
-		v, err := load()
-		if err != nil {
+	var v any
+	if src.Cacheable() {
+		key := cacheKey(w.ID, w.SourceType, w.Source, followsProject, followsRange, projectID, from, to)
+		var cachedAt time.Time
+		if v, cachedAt, err = s.cache.get(key, in.Fresh, load); err != nil {
 			return WidgetData{}, wrapLoadErr(err)
 		}
-		out.Data = v
-		return out, nil
+		ca, ra := cachedAt, cachedAt.Add(s.cache.refreshAge)
+		out.CachedAt, out.RefreshAfter = &ca, &ra
+	} else {
+		if v, err = load(); err != nil {
+			return WidgetData{}, wrapLoadErr(err)
+		}
 	}
 
-	key := cacheKey(w.Source, followsProject, followsRange, projectID, from, to)
-	v, cachedAt, err := s.cache.get(key, in.Fresh, load)
-	if err != nil {
-		return WidgetData{}, wrapLoadErr(err)
+	// Checked here, after the cache (hit or miss), against the requesting
+	// widget's own current component — not baked into the cached load —
+	// so a value shared from the cache is still checked against whichever
+	// widget is asking for it now, and a component swapped on the widget
+	// since the value was cached is still caught.
+	if res, ok := v.(readsql.Result); ok {
+		if err := comp.checkRows(res); err != nil {
+			return WidgetData{}, wrapLoadErr(err)
+		}
 	}
 	out.Data = v
-	ca, ra := cachedAt, cachedAt.Add(s.cache.refreshAge)
-	out.CachedAt, out.RefreshAfter = &ca, &ra
 	return out, nil
 }
 
 // checkRange validates a widget's requested date range and clamps a
 // future "to" back to today: from and to must parse as YYYY-MM-DD, from
 // must not be after to, and the span must not exceed 365 days (checked
-// with the plain, unclamped values, same as SetView's). It returns the
-// applied values, which the caller echoes in the envelope.
+// with the plain, unclamped values, same as SetView's). from itself must
+// not be after today either — checked before the "to" clamp below, since
+// a wholly future range (both ends past today) would otherwise clamp to
+// below the still-future from, coming back from≤to but from>to. It
+// returns the applied values, which the caller echoes in the envelope.
 func checkRange(from, to string, today civil.Date) (string, string, error) {
 	if err := checkDates(from, to); err != nil {
 		return "", "", err
+	}
+	f, err := civil.Parse(from) // checkDates already refused an unparseable from
+	if err != nil {
+		return "", "", err
+	}
+	if today.Before(f) {
+		return "", "", store.Refuse(store.ErrInvalid, "from %s is after today", from)
 	}
 	t, err := civil.Parse(to) // checkDates already refused an unparseable to
 	if err != nil {
@@ -165,14 +183,22 @@ func wrapLoadErr(err error) error {
 		"%s; if this started after an update, see the release notes at %s", err, ReleasesURL)
 }
 
-// cacheKey identifies a widget's cached value by its source content and
-// only the parts of Params it actually follows (Deviation 2): two
-// widgets whose source is byte-identical and read the same project/range
-// share a cache entry, and a widget whose source changes gets a fresh key
-// rather than needing an explicit invalidation on update.
-func cacheKey(content string, followsProject, followsRange bool, projectID int64, from, to string) string {
+// cacheKey identifies one widget's cached value: its id, its source
+// type, a SHA-256 of its source content (Deviation 2), and only the
+// parts of Params it actually follows. The id keeps two widgets from
+// ever sharing an entry even when their content is byte-identical — a
+// value cached for one component (say table, which reads any shape)
+// must never be handed to a different widget whose component (say stat)
+// has its own column requirements WidgetData checks separately on every
+// read; sharing by content alone let a hit skip that check entirely,
+// since only a genuine load ever ran it. The id also gives a copied
+// widget (same content, new id) an empty cache to start from, per D33.
+// The content hash still matters on top of the id: a widget whose source
+// changes gets a fresh key rather than needing an explicit invalidation
+// on update.
+func cacheKey(widgetID int64, sourceType, content string, followsProject, followsRange bool, projectID int64, from, to string) string {
 	sum := sha256.Sum256([]byte(content))
-	key := fmt.Sprintf("%x", sum)
+	key := fmt.Sprintf("%d:%s:%x", widgetID, sourceType, sum)
 	if followsProject {
 		key += fmt.Sprintf(":p=%d", projectID)
 	}

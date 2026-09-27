@@ -24,11 +24,13 @@ type loadResult struct {
 // cache is the two-age cache a Service's widget reads share (Options.
 // CacheAge/RefreshAge, REPORTING_CACHE_SECONDS/REPORTING_REFRESH_SECONDS):
 // an entry younger than cacheAge is served as-is; a "fresh" request
-// instead requires one younger than the shorter refreshAge. Concurrent
-// misses on the same key run the loader once (singleflight); a put
-// sweeps entries older than max(cacheAge, refreshAge) — stale under
-// either age, so never worth keeping — once that long has passed since
-// the last sweep, so the map does not grow without bound.
+// instead requires one younger than the shorter refreshAge. cacheAge 0
+// turns the cache off outright (get's own comment) rather than merely
+// never reusing an entry. Concurrent identical requests share one load
+// either way (singleflight); when the cache is on, a put also sweeps
+// entries older than max(cacheAge, refreshAge) — stale under either age,
+// so never worth keeping — once that long has passed since the last
+// sweep, so the map does not grow without bound.
 type cache struct {
 	mu                   sync.Mutex
 	entries              map[string]entry
@@ -53,10 +55,24 @@ func (c *cache) clock() time.Time {
 
 // get returns key's cached value when it is younger than refreshAge
 // (fresh) or cacheAge (an ordinary request); otherwise it runs load —
-// once, even against concurrent callers sharing key — stores the result
-// and returns that instead. cacheAge (or refreshAge) 0 never reuses an
-// entry: every call recomputes.
+// once, even against concurrent callers sharing key (singleflight) —
+// and, unless the cache is off, stores the result and returns that
+// instead.
+//
+// cacheAge 0 turns the cache off outright rather than merely never
+// reusing an entry: every call — fresh or not — runs load, and nothing
+// is stored. This is deliberate, not just "recompute every time" spelled
+// a longer way: were an entry still stored with cacheAge 0, a fresh
+// request (age refreshAge, which can be > 0 even with caching off) could
+// reuse it while an ordinary one, having no age it ever satisfies, never
+// would — fresh ending up staler than ordinary, backwards from what the
+// name promises. Storing nothing also keeps the map from growing without
+// bound when both ages are 0, since put's own sweep (below) only ever
+// runs when max(cacheAge, refreshAge) > 0.
 func (c *cache) get(key string, fresh bool, load func() (any, error)) (any, time.Time, error) {
+	if c.cacheAge <= 0 {
+		return c.runOnce(key, load)
+	}
 	age := c.cacheAge
 	if fresh {
 		age = c.refreshAge
@@ -65,6 +81,15 @@ func (c *cache) get(key string, fresh bool, load func() (any, error)) (any, time
 		return v, at, nil
 	}
 	v, err, _ := c.sf.Do(key, func() (any, error) {
+		// Re-checked here, inside the singleflight call: the outer lookup
+		// above and this one can straddle a different call for the same
+		// key that started after the outer one missed but already
+		// finished (and stored its result) before this goroutine reached
+		// sf.Do — singleflight only shares a call still in flight, so
+		// without this check that now-fresh entry would be loaded again.
+		if v, at, ok := c.lookup(key, age); ok {
+			return loadResult{value: v, cachedAt: at}, nil
+		}
 		val, err := load()
 		if err != nil {
 			return nil, err
@@ -72,6 +97,24 @@ func (c *cache) get(key string, fresh bool, load func() (any, error)) (any, time
 		at := c.clock()
 		c.put(key, val, at)
 		return loadResult{value: val, cachedAt: at}, nil
+	})
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	lr := v.(loadResult)
+	return lr.value, lr.cachedAt, nil
+}
+
+// runOnce runs load through singleflight without ever touching the
+// entries map: cacheAge 0's "off, not just always-stale" path (get's own
+// comment). Concurrent identical requests still share one call.
+func (c *cache) runOnce(key string, load func() (any, error)) (any, time.Time, error) {
+	v, err, _ := c.sf.Do(key, func() (any, error) {
+		val, err := load()
+		if err != nil {
+			return nil, err
+		}
+		return loadResult{value: val, cachedAt: c.clock()}, nil
 	})
 	if err != nil {
 		return nil, time.Time{}, err
