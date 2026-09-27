@@ -68,17 +68,29 @@ type ListedWidget struct {
 // SourceTypes lists the registered source type names, sorted.
 func (s *Service) SourceTypes() []string { return sortedSourceNames(s.sources) }
 
-// Components lists the registered components, by name.
+// Components lists the registered components, by name. Each row's parse
+// is memoised keyed by the row itself: resolving a props schema is the
+// costly part of every widget_data call, rows change only when a
+// release's migration rewrites them (a changed row is a new key, so a
+// stale parse is never served), and the map holds a handful of rows.
 func (s *Service) Components(ctx context.Context) ([]Component, error) {
 	rows, err := s.st.ListComponents(ctx)
 	if err != nil {
 		return nil, err
 	}
+	s.parsedMu.Lock()
+	defer s.parsedMu.Unlock()
+	if s.parsed == nil {
+		s.parsed = map[store.Component]Component{}
+	}
 	out := make([]Component, 0, len(rows))
 	for _, r := range rows {
-		c, err := fromRow(r)
-		if err != nil {
-			return nil, err
+		c, ok := s.parsed[r]
+		if !ok {
+			if c, err = fromRow(r); err != nil {
+				return nil, err
+			}
+			s.parsed[r] = c
 		}
 		out = append(out, c)
 	}

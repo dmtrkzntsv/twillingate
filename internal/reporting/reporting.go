@@ -1,9 +1,8 @@
-// Package reporting is the reporting surface (spec 2026-09-26): one
-// package, at rank 1, holding the models, the validation the rest of
-// this file's siblings implement, the operations a later task adds on
-// top of Store, the system-definition migrator that keeps components and
-// system dashboards in sync with the release, the cache, and the
-// embedded UI. It is one package rather than several because those parts
+// Package reporting is the reporting surface (spec 2026-09-25): one
+// package, at rank 1, holding the models, their validation, the
+// dashboard and widget operations on top of Store, the system-definition
+// migrator that keeps components and system dashboards in sync with the
+// release, the cache, and the embedded UI. It is one package rather than several because those parts
 // share the same types (Component, Source, Params) and the same
 // refusals — splitting them would either duplicate that vocabulary or
 // force an import cycle between the pieces that build it and the pieces
@@ -18,6 +17,7 @@ package reporting
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
@@ -68,6 +68,9 @@ type Service struct {
 	sources map[string]SourceType
 	now     func() time.Time
 	cache   *cache
+
+	parsedMu sync.Mutex
+	parsed   map[store.Component]Component // Components' memo
 }
 
 // New builds a Service. db is the read-only handle sql widgets run

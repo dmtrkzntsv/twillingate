@@ -1,6 +1,7 @@
 package reporting
 
 import (
+	"context"
 	"errors"
 	"os"
 	"strings"
@@ -214,5 +215,42 @@ func TestCheckRowsRefusesNonFiniteNumbers(t *testing.T) {
 		if !errors.Is(err, store.ErrInvalid) {
 			t.Errorf("checkRows(value=%q) = %v, want ErrInvalid", v, err)
 		}
+	}
+}
+
+// TestComponentsMemoisesByRow: a second read reuses each row's resolved
+// schema, and a row a release rewrites is parsed afresh, never served
+// from the memo.
+func TestComponentsMemoisesByRow(t *testing.T) {
+	ctx := context.Background()
+	svc := newTestService(t)
+	first, err := svc.Components(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := svc.Components(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range first {
+		if first[i].schema != again[i].schema {
+			t.Errorf("%s: schema resolved again, want the memoised one", first[i].Name)
+		}
+	}
+
+	rows := make([]store.Component, len(first))
+	for i, c := range first {
+		rows[i] = c.row()
+	}
+	rows[0].Description = "rewritten by a release"
+	if err := svc.st.SyncReporting(ctx, store.ReportingSync{Hash: "next", Version: "next", Components: rows}); err != nil {
+		t.Fatal(err)
+	}
+	after, err := svc.Components(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after[0].Name != rows[0].Name || after[0].Description != "rewritten by a release" {
+		t.Errorf("after a rewrite: %s %q, want %s with the new description", after[0].Name, after[0].Description, rows[0].Name)
 	}
 }
