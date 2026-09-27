@@ -304,9 +304,12 @@ What changes on the day:
 
 - `/app/` serves the dashboards wherever the API is served, without a
   login for the page itself; its data comes through `/api/` with the API's
-  login. A `token://` login needs no new `redirect=` entry for it. In
-  `oauth://` mode, allow `https://<api-host>/app/callback` as a redirect at
-  the identity provider (see `docs/deployment.md`, Dashboards at /app/).
+  login. A `token://` login needs no new `redirect=` entry on the API's
+  host. If the API has a hostname of its own (not `PUBLIC_URL`), set
+  `API_URL=https://<api-host>`; a `resource=` already in `API_AUTH_DSN`
+  keeps working. In `oauth://` mode, allow `https://<api-host>/app/callback`
+  as a redirect at the identity provider (see `docs/deployment.md`,
+  Dashboards at /app/).
 - A later release that removes a component leaves the widgets using it
   showing "component removed" until an agent switches them to another
   component or archives them.

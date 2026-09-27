@@ -69,12 +69,14 @@ type ReportingConfig struct {
 // password= on token:// turns on the browser login server, which needs a
 // resource URL. Callbacks are allowed by host: loopback, claude.ai and
 // chatgpt.com always, and each redirect= adds one more. In token and oauth
-// modes resource defaults to PUBLIC_URL and must be an origin
+// modes resource defaults to API_URL (itself defaulting to PUBLIC_URL) and
+// must be an origin
 // (scheme://host[:port], no path): one identifier covers /mcp and /api/.
 // The oauth issuer is https://<host>[/path] and audience defaults to the
 // resource. oauth+insecure produces an http issuer for local IdPs and tests.
 type APIConfig struct {
 	Addr          string // API_ADDR, defaults to IngestAddr
+	URL           string // API_URL, the API's public origin; defaults to PUBLIC_URL
 	DBPath        string // API_DB_PATH, defaults to DATABASE_DSN path
 	AuthDSN       string // API_AUTH_DSN, verbatim
 	AuthMode      string // "oauth" | "token", from the DSN scheme
@@ -228,7 +230,12 @@ func parse(lookup func(string) (string, bool), dashboards bool) (*Config, error)
 		},
 	}
 	c.API = APIConfig{
-		Addr:         e.str("API_ADDR", c.IngestAddr),
+		Addr: e.str("API_ADDR", c.IngestAddr),
+		// The API's public address, when it has a hostname of its own
+		// (https://api.example.com beside an ingest-only PUBLIC_URL). The
+		// login's resource, issuer and dashboards callback follow it, so the
+		// API's own host needs no redirect= entry.
+		URL:          strings.TrimSuffix(e.str("API_URL", c.PublicURL), "/"),
 		DBPath:       e.str("API_DB_PATH", strings.TrimPrefix(c.Database, "sqlite://")),
 		AuthDSN:      e.str("API_AUTH_DSN", ""),
 		QueryTimeout: e.dur("API_QUERY_TIMEOUT", 10*time.Second),
@@ -357,7 +364,7 @@ func (c *Config) parseAPIAuthDSN() error {
 			return err
 		}
 		if m.ResourceURL == "" {
-			return fmt.Errorf("config: API_AUTH_DSN oauth:// requires ?resource=<origin> or PUBLIC_URL to derive it from")
+			return fmt.Errorf("config: API_AUTH_DSN oauth:// requires API_URL, PUBLIC_URL or ?resource=<origin> to derive the resource from")
 		}
 		m.Audience = q.Get("audience")
 		m.audienceGiven = m.Audience != ""
@@ -398,7 +405,7 @@ func (c *Config) parseTokenLogin(query string) error {
 		return err
 	}
 	if m.ResourceURL == "" {
-		return fmt.Errorf("config: API_AUTH_DSN token:// password= requires resource=<origin> or PUBLIC_URL to derive it from")
+		return fmt.Errorf("config: API_AUTH_DSN token:// password= requires API_URL, PUBLIC_URL or resource=<origin> to derive the resource from")
 	}
 	if err := checkLoginURL(m.ResourceURL); err != nil {
 		return fmt.Errorf("config: API_AUTH_DSN token:// resource=%q %v", m.ResourceURL, err)
@@ -407,7 +414,8 @@ func (c *Config) parseTokenLogin(query string) error {
 }
 
 // resource resolves the API resource identifier: resource= when given,
-// else PUBLIC_URL, either way read as an origin. Empty when neither is set.
+// else API_URL (which defaults to PUBLIC_URL), either way read as an
+// origin. Empty when none is set.
 func (c *Config) resource(scheme, given string) (string, error) {
 	switch {
 	case given != "":
@@ -416,10 +424,14 @@ func (c *Config) resource(scheme, given string) (string, error) {
 			return "", fmt.Errorf("config: API_AUTH_DSN %s resource=%q %v", scheme, given, err)
 		}
 		return r, nil
-	case c.PublicURL != "":
-		r, err := resourceOrigin(c.PublicURL)
+	case c.API.URL != "":
+		r, err := resourceOrigin(c.API.URL)
 		if err != nil {
-			return "", fmt.Errorf("config: PUBLIC_URL=%q %v, or set resource= in API_AUTH_DSN", c.PublicURL, err)
+			name := "API_URL"
+			if c.API.URL == c.PublicURL {
+				name = "PUBLIC_URL (API_URL's default)"
+			}
+			return "", fmt.Errorf("config: %s=%q %v, or set API_URL", name, c.API.URL, err)
 		}
 		return r, nil
 	}

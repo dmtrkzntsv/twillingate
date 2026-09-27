@@ -91,7 +91,7 @@ to it.
 | Variable | Meaning |
 | --- | --- |
 | `INGEST_ADDR` | Address to bind. Default `127.0.0.1:8080` (the docker image sets `0.0.0.0:8080`). |
-| `PUBLIC_URL` | The collector's public base URL (`https://twillingate.example.com`). Embed snippets, MCP integration guidance and the default API resource (its origin) are built from it; unset, they carry a placeholder. With [several hostnames](#one-collector-several-hostnames), the default one. |
+| `PUBLIC_URL` | The collector's public base URL (`https://twillingate.example.com`). Embed snippets and MCP integration guidance are built from it; unset, they carry a placeholder. Also the default for `API_URL`. With [several hostnames](#one-collector-several-hostnames), the default one. |
 | `DATABASE_DSN` | Store DSN. Only `sqlite://<path>` today. Required. |
 | `GEO_DSN` | Country lookup: `cloudflare://` (header), `maxmind://<license-key>`, or `none://`. |
 | `LOG_LEVEL` | `debug`, `info`, `warn`, `error`. Default `info`. |
@@ -113,6 +113,7 @@ to it.
 | `DASHBOARDS_WORK_DIR` | Where the database snapshot is written. Default `/var/lib/dashboards`. |
 | `API_AUTH_DSN` | Authentication for the API endpoint (MCP and REST): `token://<token>?password=…` for the built-in browser login (see [The API endpoint](#the-api-endpoint)), or `oauth://<issuer-host>` for your own identity provider. Unset, bare `serve` skips the API with a warning. |
 | `API_ADDR` | Give the API (MCP and REST) its own listener. Defaults to `INGEST_ADDR` (shared). |
+| `API_URL` | The API's public origin when it has a hostname of its own (`https://api.example.com`), no path. The login's resource, issuer and the dashboards' callback follow it, so that host needs no `redirect=` entry. Defaults to `PUBLIC_URL`. |
 | `API_DB_PATH` | Database the API reads for queries. Defaults to the `DATABASE_DSN` path. |
 | `API_QUERY_TIMEOUT` | Per-query guard on reads and the `query` operation; also bounds a reporting widget's sql. Default `10s`. |
 | `API_QUERY_MAX_ROWS` | Row cap on the `query` operation; also bounds a reporting widget's sql. Default 1000. |
@@ -216,7 +217,7 @@ client connects through a browser page that asks for a password.
 | Parameter | Meaning |
 | --- | --- |
 | `password` | What the login page asks for. Setting it turns the login on. Five wrong ones in a minute lock the page for everyone until the minute ends; connected clients are unaffected. No minimum length is enforced. In the DSN, percent-encode `&` as `%26`, `#` as `%23`, `%` as `%25`, `;` as `%3B` and `+` as `%2B` — an unencoded `+` becomes a space. |
-| `resource` | The API origin, with no path (`resource=https://api.example.com`); one login covers `/mcp` and `/api/`. Defaults to `PUBLIC_URL`; set it when the API has its own hostname. MCP clients read `/.well-known/oauth-protected-resource/mcp`, which names `<origin>/mcp`; `/api/` clients read `/.well-known/oauth-protected-resource`, which names the origin. A value carrying a path refuses the boot, in both `token://` and `oauth://` mode. |
+| `resource` | The API origin, with no path (`resource=https://api.example.com`); one login covers `/mcp` and `/api/`. Defaults to `API_URL`, which defaults to `PUBLIC_URL`: set `API_URL` when the API has its own hostname, and keep `resource=` for the rare case where the two must differ. MCP clients read `/.well-known/oauth-protected-resource/mcp`, which names `<origin>/mcp`; `/api/` clients read `/.well-known/oauth-protected-resource`, which names the origin. A value carrying a path refuses the boot, in both `token://` and `oauth://` mode. |
 | `redirect` | An extra host clients may return to, such as `redirect=app.example.com`; repeat once per host. |
 
 Accepted without `redirect=`, at any port and path: `localhost`,
@@ -308,7 +309,7 @@ API_AUTH_DSN='oauth://auth.example.com[?resource=<origin>][&audience=<aud>]'
 
 For an IdP you already run or rent (Keycloak, Auth0, Authentik, …): the
 server validates the JWTs it issues and serves no login page. `resource`
-defaults to `PUBLIC_URL` and must be an origin with no path;
+defaults to `API_URL` (then `PUBLIC_URL`) and must be an origin with no path;
 `oauth+insecure://` allows a plain-http IdP in development. It must provide:
 
 1. **RFC 8414 metadata** at `<issuer>/.well-known/oauth-authorization-server`
@@ -333,7 +334,7 @@ defaults to `PUBLIC_URL` and must be an origin with no path;
 | Login page: redirect URI's host not allowed | The client returns to a host that is not built in. The page shows the URI; add its host as `redirect=<host>` and restart. |
 | Login page: password not recognised, though it is right | A `+`, `&`, `#`, `%` or `;` in the password must be percent-encoded in the DSN. "Too many attempts" instead means five wrong passwords this minute; wait for the next one. |
 | Login loops in `oauth://` mode | The IdP issues tokens without the expected `aud`: the origin, `<origin>/mcp`, or the `audience=` value. |
-| `/app/` login: redirect URI host not allowed | The page is open on a host other than `resource=`'s. Add that host as `redirect=<host>` and restart. |
+| `/app/` login: redirect URI host not allowed | The page is open on a host other than `API_URL`'s. Set `API_URL` to it, or add it as `redirect=<host>`, and restart. |
 
 ## Dashboards at /app/
 
@@ -346,13 +347,13 @@ and reads everything through `/api/` with the same login as any other
 client:
 
 - **`token://` with a password:** the page shows the login page on its own
-  host and returns to `/app/callback` there. On the host `resource=` names
-  (default `PUBLIC_URL`) that needs no entry: the login accepts exactly
-  `<resource>/app/callback`, whatever `Host` a proxy passes on. On any other
-  name, list it as `redirect=<host>` in `API_AUTH_DSN`, e.g. the API's own
-  host when `PUBLIC_URL` is the ingest host:
-  `token://…?password=…&redirect=tapi.example.com`. The login trusts only
-  configured hosts, never a request header. The access token stays in the
+  host and returns to `/app/callback` there. On the API's host, `API_URL`
+  (default `PUBLIC_URL`), that needs no entry: the login accepts exactly
+  `<API_URL>/app/callback`, whatever `Host` a proxy passes on. So when the
+  API has its own hostname, set `API_URL=https://api.example.com` and open
+  the dashboards there. Any further name needs `redirect=<host>` in
+  `API_AUTH_DSN`. The login trusts only configured hosts, never a request
+  header. The access token stays in the
   tab and the refresh token in the browser, so a login lasts 30 days from
   last use, as for other clients.
 - **A bare `token://`:** the page asks for the token.

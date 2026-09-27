@@ -597,3 +597,52 @@ func TestAudienceGivenOnlyWhenExplicit(t *testing.T) {
 		}
 	}
 }
+
+// TestAPIURLIsTheResourceDefault: API_URL names the API's own public
+// address; the login's resource (so its issuer and the dashboards'
+// callback) follows it, falling back to PUBLIC_URL, and resource= still
+// wins when given.
+func TestAPIURLIsTheResourceDefault(t *testing.T) {
+	load := func(env map[string]string) (*Config, error) {
+		env["DATABASE_DSN"] = "sqlite:///tmp/x.db"
+		c, err := FromEnv(func(k string) (string, bool) { v, ok := env[k]; return v, ok })
+		if err != nil {
+			return nil, err
+		}
+		return c, c.ValidateAPI()
+	}
+	cases := []struct {
+		name string
+		env  map[string]string
+		want string
+	}{
+		{"API_URL beside an ingest PUBLIC_URL", map[string]string{
+			"PUBLIC_URL": "https://t.example.com", "API_URL": "https://tapi.example.com/",
+			"API_AUTH_DSN": "token://ar_x?password=pw"}, "https://tapi.example.com"},
+		{"API_URL defaults to PUBLIC_URL", map[string]string{
+			"PUBLIC_URL": "https://t.example.com", "API_AUTH_DSN": "token://ar_x?password=pw"}, "https://t.example.com"},
+		{"API_URL alone", map[string]string{
+			"API_URL": "https://tapi.example.com", "API_AUTH_DSN": "oauth://idp.example.com"}, "https://tapi.example.com"},
+		{"resource= wins over API_URL", map[string]string{
+			"API_URL": "https://tapi.example.com", "API_AUTH_DSN": "token://ar_x?password=pw&resource=https://mcp.example.com"}, "https://mcp.example.com"},
+	}
+	for _, tc := range cases {
+		c, err := load(tc.env)
+		if err != nil || c.API.ResourceURL != tc.want {
+			t.Errorf("%s: resource = %q, %v; want %q", tc.name, c.API.ResourceURL, err, tc.want)
+		}
+	}
+	if c, _ := load(map[string]string{"PUBLIC_URL": "https://t.example.com"}); c.API.URL != "https://t.example.com" {
+		t.Errorf("API_URL default = %q, want PUBLIC_URL", c.API.URL)
+	}
+
+	// A bad value names the variable it came from.
+	if _, err := load(map[string]string{"API_URL": "https://tapi.example.com/api",
+		"API_AUTH_DSN": "token://ar_x?password=pw"}); err == nil || !strings.Contains(err.Error(), "API_URL=") {
+		t.Errorf("API_URL with a path: %v, want a refusal naming API_URL", err)
+	}
+	if _, err := load(map[string]string{"PUBLIC_URL": "https://t.example.com/site",
+		"API_AUTH_DSN": "token://ar_x?password=pw"}); err == nil || !strings.Contains(err.Error(), "PUBLIC_URL (API_URL's default)") {
+		t.Errorf("PUBLIC_URL with a path: %v, want a refusal naming PUBLIC_URL as API_URL's default", err)
+	}
+}
