@@ -31,7 +31,7 @@ deploy/              installer, systemd units, compose files, litestream config,
 ```
 
 `app` imports the surfaces (`server`, `api`, `jobs`, `pipeline`, `dashboards`);
-surfaces import `manage` and the leaves, never each other; `manage` and the
+surfaces import `manage`, `reporting` and the leaves, never each other; `manage` and the
 leaves import only leaves. A surface that needs another's behaviour takes an
 interface and `app` passes the implementation (`server.Enqueuer` is
 `pipeline.Buffer`). Each consumer declares the slice of the store it uses
@@ -52,8 +52,8 @@ entry. Only `feat`, `fix` and `perf` appear in the notes; `docs`, `refactor`,
 appear in the notes, so anything a user should read about needs one of the
 three published types. `!` before the colon (or a `BREAKING CHANGE:` footer)
 marks a breaking change. Scopes match the tree: `store`, `server`, `jobs`,
-`config`, `api`, `manage`, `pipeline`, `geo`, `dashboards`, `sdk`, `cmd`,
-`deploy`, `ci`; omit for repo-wide changes.
+`config`, `api`, `manage`, `pipeline`, `geo`, `dashboards`, `reporting`,
+`shared`, `sdk`, `web`, `cmd`, `deploy`, `ci`; omit for repo-wide changes.
 
 Releases are cut by hand with `gh workflow run release.yml` (optional `version`
 input; blank means next patch). Pushing to `main` publishes nothing. Pre-1.0:
@@ -69,7 +69,10 @@ pushing. `make build` compiles; `make test` runs the race-enabled suite. The
 SDK bundle `internal/server/twillingate.js` is committed: after any change in
 `sdk/`, run `npm run build` there and commit the result, or CI's drift check
 fails. The same holds for `web/`: `npm run build` there regenerates
-`internal/reporting/ui/` (the bundle and `components.json`).
+`internal/reporting/ui/` (the bundle and `components.json`). CI's `web` job
+runs its typecheck, tests and build, then the drift check on
+`internal/reporting/ui`; its `e2e` job runs the Playwright suite against a
+built binary (`cd web && npm run e2e`).
 
 ## Documentation
 
