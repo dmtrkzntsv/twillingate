@@ -103,7 +103,11 @@ func (d *DB) Run(ctx context.Context, q string, args ...any) (Result, error) {
 	if err != nil {
 		return Result{}, wrapTimeout(ctx, d.timeout, err)
 	}
-	var out [][]string
+	// Non-nil even with zero matches: the web app's WidgetCard reads
+	// data.rows.length unconditionally (a query that matches nothing is
+	// the ordinary "no data for this range" case, not an absent field),
+	// and a nil slice would encode as JSON null rather than [].
+	out := [][]string{}
 	truncated := false
 	for rows.Next() {
 		if len(out) == d.maxRows {

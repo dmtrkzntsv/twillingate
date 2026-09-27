@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -99,6 +100,24 @@ func TestQueryLimit(t *testing.T) {
 	}
 	if len(res.Rows) != 2 {
 		t.Fatalf("rows = %v, want 2", res.Rows)
+	}
+}
+
+// TestQueryZeroRowsIsNotNil pins the fix for a widget whose query matches
+// nothing crashing the whole web app: Rows must still marshal to JSON `[]`
+// (WidgetCard's isEmpty reads data.rows.length unconditionally), never
+// `null`, which a bare `var out [][]string` would produce.
+func TestQueryZeroRowsIsNotNil(t *testing.T) {
+	db, _ := newTestDB(t, 2*time.Second, 10)
+	res, err := db.Query(context.Background(), `select value from json_each('[]')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Rows == nil {
+		t.Fatal("Rows = nil, want a non-nil empty slice")
+	}
+	if got, err := json.Marshal(res.Rows); err != nil || string(got) != "[]" {
+		t.Errorf("json.Marshal(Rows) = %s, %v, want []", got, err)
 	}
 }
 

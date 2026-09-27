@@ -70,6 +70,17 @@ describe('WidgetCard', () => {
     expect(await screen.findByText('No data for this range')).toBeInTheDocument()
   })
 
+  // Pins the fix for a whole-page crash: a query matching nothing is meant
+  // to encode as rows: [] (internal/shared/readsql), but a `null` from an
+  // older server or an untested path must not crash the render either.
+  it('treats a null rows as empty rather than throwing', async () => {
+    const answer = sqlAnswer()
+    answer.data = { ...(answer.data as { columns: string[]; rows: string[][]; truncated: boolean }), rows: null as unknown as string[][] }
+    vi.spyOn(endpoints, 'widgetData').mockResolvedValue(answer)
+    renderCard()
+    expect(await screen.findByText('No data for this range')).toBeInTheDocument()
+  })
+
   it('says "Component removed" when the API answers removed', async () => {
     vi.spyOn(endpoints, 'widgetData').mockResolvedValue(sqlAnswer({ removed: true, data: null }))
     renderCard()

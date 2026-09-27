@@ -2,7 +2,7 @@
 // without ever touching the API: only navigations and the app's own built
 // assets are cached.
 // Stamped per build by scripts/stamp-sw.ts; 'app-dev' only outside a build.
-const CACHE = 'app-89ca281d5c73'
+const CACHE = 'app-df4f60a9c737'
 const SHELL_URLS = ['/app/', '/app/index.html']
 
 self.addEventListener('install', (event) => {
