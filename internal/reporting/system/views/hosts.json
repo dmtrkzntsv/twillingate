@@ -1,0 +1,13 @@
+{
+  "component": "table",
+  "title": "Hosts",
+  "props": {
+    "formats": {
+      "Visitors": "number",
+      "Views": "number"
+    },
+    "colorscale": [
+      "Visitors"
+    ]
+  }
+}

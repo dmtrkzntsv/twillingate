@@ -1,0 +1,15 @@
+{
+  "component": "table",
+  "title": "Most active users",
+  "props": {
+    "formats": {
+      "Actions": "number",
+      "Events": "number",
+      "Views": "number",
+      "Active days": "number"
+    },
+    "colorscale": [
+      "Actions"
+    ]
+  }
+}

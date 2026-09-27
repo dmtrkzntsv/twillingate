@@ -1,0 +1,14 @@
+{
+  "component": "table",
+  "title": "Attribute values by day",
+  "props": {
+    "formats": {
+      "Count": "number",
+      "Users (at least)": "number",
+      "Groups (at least)": "number"
+    },
+    "colorscale": [
+      "Count"
+    ]
+  }
+}

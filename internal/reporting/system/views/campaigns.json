@@ -1,0 +1,13 @@
+{
+  "component": "table",
+  "title": "Campaigns",
+  "props": {
+    "formats": {
+      "Visitors": "number",
+      "Views": "number"
+    },
+    "colorscale": [
+      "Visitors"
+    ]
+  }
+}

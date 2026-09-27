@@ -1,0 +1,15 @@
+{
+  "id": 5,
+  "title": "Retention",
+  "range": "90d",
+  "layout": [
+    {"widget": "about", "width": 12, "height": 5},
+    {"widget": "signed-in-users", "width": 12, "height": 2},
+    {"widget": "signed-in-milestones", "width": 12, "height": 4},
+    {"widget": "signed-in-retention", "width": 12, "height": 8},
+    {"widget": "stable-installs", "width": 12, "height": 2},
+    {"widget": "install-milestones", "width": 12, "height": 4},
+    {"widget": "install-retention", "width": 12, "height": 8},
+    {"widget": "cohorts", "width": 12, "height": 10}
+  ]
+}

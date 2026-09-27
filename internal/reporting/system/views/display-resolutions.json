@@ -1,0 +1,7 @@
+{
+  "component": "bar_list",
+  "title": "Display resolutions",
+  "props": {
+    "format": "number"
+  }
+}

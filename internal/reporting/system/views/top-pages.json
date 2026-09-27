@@ -1,0 +1,13 @@
+{
+  "component": "table",
+  "title": "Top pages",
+  "props": {
+    "formats": {
+      "Visitors": "number",
+      "Views": "number"
+    },
+    "colorscale": [
+      "Visitors"
+    ]
+  }
+}

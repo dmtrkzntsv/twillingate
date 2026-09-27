@@ -1,0 +1,7 @@
+{
+  "component": "line",
+  "title": "Signed-in retention by day offset",
+  "props": {
+    "format": "percent"
+  }
+}

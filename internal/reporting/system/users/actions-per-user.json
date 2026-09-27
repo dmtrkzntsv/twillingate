@@ -1,6 +1,6 @@
 {
   "component": "stat",
-  "title": "Views",
+  "title": "Actions per user",
   "props": {
     "format": "number"
   }

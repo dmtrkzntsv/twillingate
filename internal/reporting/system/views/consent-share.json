@@ -1,0 +1,7 @@
+{
+  "component": "stat",
+  "title": "Share with consent in force (given / (given + none))",
+  "props": {
+    "format": "percent"
+  }
+}

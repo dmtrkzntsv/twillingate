@@ -1,6 +1,6 @@
 {
   "component": "stat",
-  "title": "Views",
+  "title": "Actions per group",
   "props": {
     "format": "number"
   }

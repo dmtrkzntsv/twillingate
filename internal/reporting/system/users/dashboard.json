@@ -1,0 +1,15 @@
+{
+  "id": 3,
+  "title": "Users",
+  "range": "7d",
+  "layout": [
+    {"widget": "about", "width": 12, "height": 2},
+    {"widget": "active-users", "width": 3, "height": 3},
+    {"widget": "new-users", "width": 3, "height": 3},
+    {"widget": "actions", "width": 3, "height": 3},
+    {"widget": "actions-per-user", "width": 3, "height": 3},
+    {"widget": "daily-active-users", "width": 12, "height": 8},
+    {"widget": "most-active-users", "width": 12, "height": 2},
+    {"widget": "top-users", "width": 12, "height": 10}
+  ]
+}

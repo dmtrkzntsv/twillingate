@@ -1,0 +1,8 @@
+{
+  "component": "bar",
+  "title": "Daily active users, new and returning",
+  "props": {
+    "format": "number",
+    "stacked": true
+  }
+}

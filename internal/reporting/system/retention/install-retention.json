@@ -1,0 +1,7 @@
+{
+  "component": "line",
+  "title": "Install retention by day offset",
+  "props": {
+    "format": "percent"
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "component": "area",
+  "title": "Events by app version",
+  "props": {
+    "format": "number"
+  }
+}

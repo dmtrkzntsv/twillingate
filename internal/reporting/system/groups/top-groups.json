@@ -1,0 +1,14 @@
+{
+  "component": "table",
+  "title": "Most active groups",
+  "props": {
+    "formats": {
+      "Actions": "number",
+      "Peak daily users": "number",
+      "Active days": "number"
+    },
+    "colorscale": [
+      "Actions"
+    ]
+  }
+}

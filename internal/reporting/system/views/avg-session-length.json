@@ -1,0 +1,7 @@
+{
+  "component": "line",
+  "title": "Avg session length",
+  "props": {
+    "format": "duration"
+  }
+}

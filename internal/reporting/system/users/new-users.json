@@ -1,6 +1,6 @@
 {
   "component": "stat",
-  "title": "Views",
+  "title": "New users",
   "props": {
     "format": "number"
   }

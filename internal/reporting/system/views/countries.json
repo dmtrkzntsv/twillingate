@@ -1,0 +1,7 @@
+{
+  "component": "bar_list",
+  "title": "Countries",
+  "props": {
+    "format": "number"
+  }
+}

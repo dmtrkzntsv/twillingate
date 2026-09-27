@@ -1,0 +1,7 @@
+{
+  "component": "area",
+  "title": "Visitors by kind",
+  "props": {
+    "format": "number"
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "component": "line",
+  "title": "Daily active users",
+  "props": {
+    "format": "number"
+  }
+}

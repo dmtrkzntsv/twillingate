@@ -1,0 +1,7 @@
+{
+  "component": "area",
+  "title": "Visitors by app version",
+  "props": {
+    "format": "number"
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "component": "line",
+  "title": "Events by name",
+  "props": {
+    "format": "number"
+  }
+}

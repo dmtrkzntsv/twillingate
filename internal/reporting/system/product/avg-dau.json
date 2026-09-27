@@ -1,6 +1,6 @@
 {
   "component": "stat",
-  "title": "Views",
+  "title": "Avg DAU",
   "props": {
     "format": "number"
   }

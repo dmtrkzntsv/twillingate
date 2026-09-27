@@ -1,6 +1,6 @@
 {
   "component": "stat",
-  "title": "Views",
+  "title": "Peak DAU",
   "props": {
     "format": "number"
   }
