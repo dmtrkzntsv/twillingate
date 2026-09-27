@@ -153,7 +153,7 @@ func (s *loginServer) registerClient(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, u := range req.RedirectURIs {
-		if !redirectAllowed(s.hosts, u) {
+		if !redirectAllowed(s.hosts, r.Host, u) {
 			s.logger.Warn("mcp login: registration redirect rejected", "redirect_uri", u)
 			oauthError(w, "invalid_redirect_uri", "redirect URI host not allowed (add it to API_AUTH_DSN as redirect=<host>): "+u)
 			return
@@ -216,12 +216,20 @@ func redirectMatches(allowed, candidate string) bool {
 // API_AUTH_DSN entry. Loopback hosts are accepted too.
 var builtinRedirectHosts = []string{"claude.ai", "chatgpt.com"}
 
+// appCallbackPath is where the dashboards at /app/ finish their login.
+const appCallbackPath = "/app/callback"
+
 // redirectAllowed admits a callback by host, leaving port and path to the
 // client: any loopback address over http or https — the code can only reach
 // the machine the browser runs on, RFC 8252's native-app model — and over
 // https a built-in web connector or a host listed in API_AUTH_DSN. Hosts
-// match exactly, so claude.ai does not admit its subdomains.
-func redirectAllowed(hosts []string, candidate string) bool {
+// match exactly, so claude.ai does not admit its subdomains. It also
+// admits the dashboards' own callback, https://<requestHost>/app/callback:
+// the host the request reached this server on, port included, which is the
+// origin the web app registers from. A forged Host at registration gains
+// nothing, since the authorize page checks again against the Host the
+// person's browser sends.
+func redirectAllowed(hosts []string, requestHost, candidate string) bool {
 	u, err := url.Parse(candidate)
 	if err != nil || u.User != nil || strings.Contains(candidate, "#") {
 		return false
@@ -232,8 +240,12 @@ func redirectAllowed(hosts []string, candidate string) bool {
 		return false
 	case isLoopbackHost(host):
 		return u.Scheme == "http" || u.Scheme == "https"
+	case u.Scheme != "https":
+		return false
+	case requestHost != "" && strings.EqualFold(u.Host, requestHost) && u.EscapedPath() == appCallbackPath:
+		return true
 	default:
-		return u.Scheme == "https" && (slices.Contains(builtinRedirectHosts, host) || slices.Contains(hosts, host))
+		return slices.Contains(builtinRedirectHosts, host) || slices.Contains(hosts, host)
 	}
 }
 

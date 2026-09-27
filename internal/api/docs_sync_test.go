@@ -7,6 +7,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"regexp"
@@ -333,7 +334,8 @@ func TestDocumentMatchesRoutes(t *testing.T) {
 	}
 	inCode["GET /api/schema/views"] = "schema://views"
 
-	row := regexp.MustCompile("^\\| `(GET|POST|PATCH|PUT)` \\| `(/api/[^`]*)` \\| `([a-z_:/]+)` \\|")
+	// The Mirrors cell may say more after the name ("`view`, REST only").
+	row := regexp.MustCompile("^\\| `(GET|POST|PATCH|PUT)` \\| `(/api/[^`]*)` \\| `([a-z_:/]+)`[^|]* \\|")
 	documented := map[string]string{}
 	for _, section := range []string{
 		docSection(t, docs.Twillingate, "### HTTP API"),
@@ -387,6 +389,70 @@ func TestReportingDocumentMatchesComponents(t *testing.T) {
 		if _, ok := inCode[name]; !ok {
 			t.Errorf("the component table lists %s, which the manifest does not have", name)
 		}
+	}
+}
+
+// TestReportingExamplesWork: docs/reporting.md's Examples section has one
+// worked example per component in the manifest, and no other; each is
+// accepted by add_widget as written and loads, with project 1's seeded
+// rows, through widget_data. An example that stops validating after a
+// view or component change fails here, not in an agent's session.
+func TestReportingExamplesWork(t *testing.T) {
+	_, cs := newTestHost(t)
+	comps, err := reporting.ParseManifest(reporting.Manifest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var dash struct {
+		ID int64 `json:"dashboard_id"`
+	}
+	toolJSON(t, cs, "create_dashboard", map[string]any{"title": "Examples"}, &dash)
+
+	block := regexp.MustCompile("(?s)```(sql|markdown)\n(.*?)```")
+	props := regexp.MustCompile("(?m)^Props: `(.*)`$")
+	examples := map[string]bool{}
+	for _, part := range strings.Split(docSection(t, docs.Reporting, "## Examples"), "\n### `")[1:] {
+		name := part[:strings.Index(part, "`")]
+		examples[name] = true
+		b := block.FindStringSubmatch(part)
+		p := props.FindStringSubmatch(part)
+		if b == nil || p == nil {
+			t.Errorf("example %s needs a sql or markdown block and a Props: line", name)
+			continue
+		}
+		source := map[string]any{"type": "sql", "content": b[2]}
+		if b[1] == "markdown" {
+			source["type"] = "md"
+		}
+		var pr map[string]any
+		if err := json.Unmarshal([]byte(p[1]), &pr); err != nil {
+			t.Errorf("example %s props %s: %v", name, p[1], err)
+			continue
+		}
+		res := callTool(t, cs, "add_widget", map[string]any{"dashboard_id": dash.ID, "component": name,
+			"title": name, "props": pr, "source": source})
+		if res.IsError {
+			t.Errorf("example %s is refused: %s", name, textOf(res))
+			continue
+		}
+		var w struct {
+			ID int64 `json:"widget_id"`
+		}
+		if err := json.Unmarshal([]byte(textOf(res)), &w); err != nil {
+			t.Fatal(err)
+		}
+		if res := callTool(t, cs, "widget_data", map[string]any{"widget_id": w.ID, "project_id": 1,
+			"from": "2026-08-01", "to": "2026-08-26"}); res.IsError {
+			t.Errorf("example %s does not load: %s", name, textOf(res))
+		}
+	}
+	for _, c := range comps {
+		if !examples[c.Name] {
+			t.Errorf("component %s has no worked example in docs/reporting.md", c.Name)
+		}
+	}
+	if len(examples) != len(comps) {
+		t.Errorf("docs/reporting.md has %d examples for %d components", len(examples), len(comps))
 	}
 }
 
@@ -478,17 +544,12 @@ func precheckOSVocabulary(t *testing.T) []string {
 }
 
 // docSection returns the text under a heading, up to the next one at the
-// same level.
+// same level, failing the test when the heading is missing.
 func docSection(t *testing.T, doc, heading string) string {
 	t.Helper()
-	i := strings.Index(doc, heading)
-	if i < 0 {
+	body, ok := section(doc, heading)
+	if !ok {
 		t.Fatalf("no %q section", heading)
 	}
-	section := doc[i+len(heading):]
-	level := strings.Repeat("#", len(heading)-len(strings.TrimLeft(heading, "#")))
-	if j := strings.Index(section, "\n"+level+" "); j >= 0 {
-		section = section[:j]
-	}
-	return section
+	return body
 }

@@ -299,3 +299,20 @@ upgrade deletes it — for a project, with all its data. Before upgrading,
 restore any archived project you mean to keep, or set
 `RETENTION_ARCHIVED_DAYS=0` (keeps archived items forever) until you have
 reviewed them.
+
+What changes on the day:
+
+- `/app/` serves the dashboards wherever the API is served, without a
+  login for the page itself; its data comes through `/api/` with the API's
+  login. A `token://` login needs no new `redirect=` entry for it. In
+  `oauth://` mode, allow `https://<api-host>/app/callback` as a redirect at
+  the identity provider (see `docs/deployment.md`, Dashboards at /app/).
+- A later release that removes a component leaves the widgets using it
+  showing "component removed" until an agent switches them to another
+  component or archives them.
+- Rolling the binary back to an older release re-migrates the system
+  dashboards to that release's definitions and permanently clears the
+  component of every widget on a component the older release lacks;
+  upgrading again does not restore it. Before rolling back, run
+  `list_widgets` and note which widgets use components the older release
+  does not have.

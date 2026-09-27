@@ -41,7 +41,8 @@ func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *m
 	rep := reporting.New(rst, db, reporting.Options{CacheAge: cfg.Reporting.CacheAge, RefreshAge: cfg.Reporting.RefreshAge})
 	h := &host{db: db, reg: reg, ops: ops, rep: rep,
 		publicURL: cfg.PublicURL, logger: logger}
-	srv := mcp.NewServer(&mcp.Implementation{Name: "twillingate", Version: "1.0.0"}, nil)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "twillingate", Version: "1.0.0"},
+		&mcp.ServerOptions{Instructions: serverInstructions})
 	rest := http.NewServeMux()
 	h.register(&registrar{mcp: srv, rest: rest, logger: logger})
 	h.registerResources(srv)
@@ -65,7 +66,7 @@ func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *m
 // NewHandler assembles the API surface: tool host, both transports, auth
 // middleware, and (mode-dependent) the RFC 9728 metadata route, mounted
 // on its own mux. Routes registered on the returned mux: /mcp, /api/,
-// /healthz, and
+// /app/, /healthz, and
 // /.well-known/oauth-protected-resource[/mcp] in oauth mode, and the login
 // server's routes in token mode with a password configured.
 // The func() error closes the read DB.
@@ -81,11 +82,15 @@ func NewHandler(ctx context.Context, cfg *config.Config, reg *manage.Registry, o
 
 // RegisterOn mounts the API surface on a mux: protected (from Build) at
 // /mcp and /api/, plus the unauthenticated metadata, login and health
-// routes. withHealthz=false when the mux is shared with the ingest surface,
+// routes, and the dashboards at /app/ (GET /app redirects there). The
+// dashboards' page is public like the login page: it holds no data, and
+// reads everything through /api/ with the login's token. withHealthz=false when the mux is shared with the ingest surface,
 // whose /healthz already exists (ServeMux panics on duplicate patterns).
 func RegisterOn(mux *http.ServeMux, protected http.Handler, cfg *config.Config, withHealthz bool, logger *slog.Logger) {
 	mux.Handle("/mcp", protected)
 	mux.Handle("/api/", protected)
+	mux.Handle("GET /app/", reporting.UI())
+	mux.Handle("GET /app", http.RedirectHandler("/app/", http.StatusMovedPermanently))
 	if cfg.API.AuthMode == "oauth" {
 		mountResourceMetadata(mux, cfg.API.ResourceURL, cfg.API.Issuer)
 	}

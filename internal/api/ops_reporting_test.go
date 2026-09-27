@@ -291,3 +291,84 @@ func TestReportingDocServed(t *testing.T) {
 		t.Errorf("docs://reporting starts %.40q", body)
 	}
 }
+
+// TestWidgetDataRESTDecodesQuery: the data route reads project_id, from,
+// to and fresh from the query string, and the envelope echoes what it
+// applied.
+func TestWidgetDataRESTDecodesQuery(t *testing.T) {
+	h, cs := newTestHost(t)
+	r := newTestRegistrar(t, h)
+	var d struct {
+		Widgets []struct {
+			ID int64 `json:"widget_id"`
+		} `json:"widgets"`
+	}
+	toolJSON(t, cs, "create_dashboard", map[string]any{"title": "Traffic", "widgets": []any{map[string]any{
+		"component": "stat", "source": map[string]any{"type": "sql", "content": visitorsSQL},
+	}}}, &d)
+	target := fmt.Sprintf("/api/widgets/%d/data?project_id=1&from=2026-08-20&to=2026-08-21&fresh=true", d.Widgets[0].ID)
+	rec := serveREST(t, r, "GET", target, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET %s = %d %s", target, rec.Code, rec.Body.String())
+	}
+	var got struct {
+		ProjectID int64  `json:"project_id"`
+		From      string `json:"from"`
+		To        string `json:"to"`
+		Data      struct {
+			Rows [][]string `json:"rows"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	// 10 + 12 web visitors and 6 app visitors over the two days.
+	if got.ProjectID != 1 || got.From != "2026-08-20" || got.To != "2026-08-21" ||
+		len(got.Data.Rows) != 1 || got.Data.Rows[0][0] != "28" {
+		t.Errorf("GET %s = %s", target, rec.Body.String())
+	}
+	if rec := serveREST(t, r, "GET", fmt.Sprintf("/api/widgets/%d/data?project_id=1&from=2026-08-20&to=2026-08-21&fresh=maybe", d.Widgets[0].ID), ""); rec.Code != http.StatusBadRequest {
+		t.Errorf("fresh=maybe = %d %s, want 400", rec.Code, rec.Body.String())
+	}
+	if rec := serveREST(t, r, "GET", fmt.Sprintf("/api/widgets/%d/data?from=2026-08-20&to=2026-08-21", d.Widgets[0].ID), ""); rec.Code != http.StatusBadRequest {
+		t.Errorf("no project_id = %d %s, want 400", rec.Code, rec.Body.String())
+	}
+}
+
+// TestViewRouteRefusals: each part is required when the dashboard has
+// that switcher and refused when it has none; presets are a closed list;
+// an unknown dashboard is a 404.
+func TestViewRouteRefusals(t *testing.T) {
+	h, cs := newTestHost(t)
+	r := newTestRegistrar(t, h)
+	var both, none struct {
+		ID int64 `json:"dashboard_id"`
+	}
+	toolJSON(t, cs, "create_dashboard", map[string]any{"title": "Both", "widgets": []any{map[string]any{
+		"component": "stat", "source": map[string]any{"type": "sql", "content": visitorsSQL},
+	}}}, &both)
+	toolJSON(t, cs, "create_dashboard", map[string]any{"title": "Notes", "widgets": []any{map[string]any{
+		"component": "markdown", "source": map[string]any{"type": "md", "content": "Read me."},
+	}}}, &none)
+	for _, c := range []struct {
+		id   int64
+		body string
+		want int
+	}{
+		{both.ID, `{"range":"7d"}`, http.StatusBadRequest},                  // no project_id
+		{both.ID, `{"project_id":1}`, http.StatusBadRequest},                // no range
+		{both.ID, `{"project_id":1,"range":"week"}`, http.StatusBadRequest}, // not a preset
+		{both.ID, `{"project_id":1,"range":"7d","from":"2026-08-01","to":"2026-08-02"}`, http.StatusBadRequest},
+		{both.ID, `{"project_id":1,"range":"custom","from":"2026-08-02","to":"2026-08-01"}`, http.StatusBadRequest},
+		{none.ID, `{"project_id":1}`, http.StatusBadRequest}, // no project switcher
+		{none.ID, `{"range":"7d"}`, http.StatusBadRequest},   // no range switcher
+		{none.ID, `{}`, http.StatusOK},
+		{both.ID, `{"project_id":1,"range":"custom","from":"2026-08-01","to":"2026-08-31"}`, http.StatusOK},
+		{99999, `{"project_id":1,"range":"7d"}`, http.StatusNotFound},
+	} {
+		rec := serveREST(t, r, "PUT", fmt.Sprintf("/api/dashboards/%d/view", c.id), c.body)
+		if rec.Code != c.want {
+			t.Errorf("PUT view %d %s = %d %s, want %d", c.id, c.body, rec.Code, rec.Body.String(), c.want)
+		}
+	}
+}

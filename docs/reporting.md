@@ -4,19 +4,26 @@ How an AI agent builds and changes the dashboards twillingate serves at `/app/`.
 The page is read-only: a person opens it, picks a project and a date range, and
 reads. Agents are its only authors, through the tools and routes below. The MCP
 endpoint serves this file verbatim as `docs://reporting`; `reporting_guide`
-returns its live parts (components, views, projects, dashboards) in one call.
+returns its live parts (components, views, projects, dashboards) with its
+[Workflow](#workflow) and [Rules](#rules) in one call.
 
 Collecting data and querying it with `query` are in
 [twillingate.md](twillingate.md); running the collector and enabling the API
 are in [deployment.md](deployment.md).
 
 - [Concepts](#concepts)
+- [Workflow](#workflow)
+- [Rules](#rules)
 - [Tools](#tools)
 - [HTTP API](#http-api)
 - [Components](#components)
+- [Examples](#examples)
 - [Parameters and ranges](#parameters-and-ranges)
 - [Layout](#layout)
 - [Archiving and the purge](#archiving-and-the-purge)
+- [Refusals and fixes](#refusals-and-fixes)
+- [When widgets break after an update](#when-widgets-break-after-an-update)
+- [Local development](#local-development)
 
 ---
 
@@ -91,17 +98,66 @@ reuses one only up to `REPORTING_REFRESH_SECONDS` old (default 60), and
 widget's source starts it on new entries. Widget queries run under the same
 guards as `query`: read-only, `API_QUERY_TIMEOUT` and `API_QUERY_MAX_ROWS`.
 
+## Workflow
+
+1. **Call `reporting_guide`.** It names the running version, the components
+   and the columns each one reads, the views, the active projects and the
+   dashboards there are.
+2. **Explore with `query`** against the `v_*` views (`schema://views` lists
+   their columns), for one project and a few days, until the numbers are the
+   ones the widget should show.
+3. **Pick a component** and alias the query's columns to its inputs:
+   `SELECT day AS x, SUM(views) AS y …` for `line`. [Examples](#examples) has
+   one query per component.
+4. **Choose what the widget follows:** `WHERE project_id = :project` follows
+   the project switcher, `day BETWEEN :from AND :to` the range switcher;
+   without them the widget is fixed, and its title says to what ("Signups,
+   all time").
+5. **Write it.** `create_dashboard` with its widgets in order, or `add_widget`
+   on an existing user dashboard with `after`, `width` and `height`. To change
+   a system dashboard, `duplicate_dashboard` it and work on the copy.
+6. **Check it with `widget_data`** for a project and a range, as the page
+   loads it: the envelope echoes what the widget followed, and a refusal says
+   what to change.
+7. **Fix with `update_widget`; undo with `archive_widget`**, which
+   `restore_widget` reverses. Nothing is deleted on request.
+
+## Rules
+
+- System dashboards (ids 1–999) are read-only; `duplicate_dashboard` makes an
+  editable copy, and `copy_widget` copies one system widget onto a user
+  dashboard.
+- A query returns exactly the columns the component reads, named by alias; a
+  column marked optional may be left out, and only `table` takes any columns.
+- The only parameters are `:project`, `:from` and `:to`. `day` is text,
+  `YYYY-MM-DD` in UTC: compare it as a string (`day BETWEEN :from AND :to`).
+- Read the `v_*` views. Custom SQL may read any table except `meta` and
+  SQLite's own (`sqlite_*`, `pragma_*`, `dbstat`), and only reads.
+- Group in SQL: a widget gets at most `API_QUERY_MAX_ROWS` rows (default
+  1000) and `API_QUERY_TIMEOUT` (default 10s). A result cut at the cap draws
+  as "partial". A pie keeps to about seven slices, the rest summed as
+  `Other`.
+- A widget that follows neither switcher says in its title what it is fixed
+  to.
+- Widgets are not reordered once placed: to move one, `copy_widget` it with
+  the `after` you want and archive the original. Names are unique on a
+  dashboard, archived widgets included.
+- Markdown renders without raw HTML.
+- Undo is archiving. Archived dashboards and widgets are deleted
+  `RETENTION_ARCHIVED_DAYS` after archiving (default 30).
+
 ## Tools
 
 | Tool | Input | Returns |
 | --- | --- | --- |
+| `reporting_guide` | none | markdown: the running version and its release notes, the source types and components, the views, the active projects and the dashboards, and this document's [Workflow](#workflow) and [Rules](#rules). MCP only |
 | `list_components` | none | `source_types` and `components`: each one's `description`, `accepts`, `inputs`, `props` schema, `default_width` and `default_height` |
 | `list_dashboards` | none | `timezone` and `dashboards` in sidebar order (system, then user), archived ones included: `dashboard_id`, `title`, `owner`, stored `project_id` and `range`, live `widgets` count, `archived_at` |
 | `get_dashboard` | `dashboard_id` | the dashboard, its `follows_project` and `follows_range`, and its live `widgets` in order |
 | `list_widgets` | `dashboard_id`, `component` (both optional; they combine) | `widgets`, archived ones included, each with its `dashboard` and 1-based `position` there |
 | `widget_data` | `widget_id`, `project_id`, `from`, `to`, `fresh` | the envelope above |
 | `create_dashboard` | `title`, `range` (default `7d`), `after`, `widgets` | the new dashboard, as `get_dashboard` returns it; one invalid widget creates nothing |
-| `update_dashboard` | `dashboard_id`, `title`, `after` | the dashboard |
+| `update_dashboard` | `dashboard_id`, `title`, `after` | the dashboard, as `list_dashboards` lists it |
 | `duplicate_dashboard` | `dashboard_id` | a user copy with copies of the live widgets, titled "… (copy)"; works on system dashboards |
 | `archive_dashboard` | `dashboard_id` | hides it; see [Archiving and the purge](#archiving-and-the-purge) |
 | `restore_dashboard` | `dashboard_id` | unhides it |
@@ -122,11 +178,12 @@ snapshots built on each read by the same code as their list tool:
 
 ## HTTP API
 
-Every tool above is also a REST route under `/api/`, with the same bearer token,
-JSON and error shape as the routes in
-[twillingate.md](twillingate.md#http-api). One route has no tool: the page
-stores the viewer's selection with `PUT …/view`, which is viewer state rather
-than a definition, so it is allowed on system dashboards and not audited.
+Every tool above except `reporting_guide`, which is MCP-only, is also a REST
+route under `/api/`, with the same bearer token, JSON and error shape as the
+routes in [twillingate.md](twillingate.md#http-api). One route has no tool:
+the page stores the viewer's selection with `PUT …/view`, which is viewer
+state rather than a definition, so it is allowed on system dashboards and not
+audited.
 
 | Method | Path | Mirrors | Input |
 |---|---|---|---|
@@ -145,7 +202,7 @@ than a definition, so it is allowed on system dashboards and not audited.
 | `POST` | `/api/widgets/{widget_id}/copy` | `copy_widget` | body: `dashboard_id`, `after` → 201 |
 | `POST` | `/api/widgets/{widget_id}/archive` | `archive_widget` | — |
 | `POST` | `/api/widgets/{widget_id}/restore` | `restore_widget` | — |
-| `PUT` | `/api/dashboards/{dashboard_id}/view` | `view` | body: `project_id`, `range`, and `from`/`to` for `custom` → `{"status":"saved"}` |
+| `PUT` | `/api/dashboards/{dashboard_id}/view` | `view`, REST only: no MCP tool | body: `project_id`, `range`, and `from`/`to` for `custom` → `{"status":"saved"}` |
 
 The view route takes `project_id` exactly when the dashboard has a project
 switcher and `range` exactly when it has a range switcher, and refuses either
@@ -195,6 +252,270 @@ null: the card says "component removed" and `widget_data` answers
 `update_widget`, resized or archived; nothing else about it can change, and it
 cannot be copied, until it has a component again. A component that comes back
 in a later release does not reattach itself.
+
+## Examples
+
+One widget per component, each ready for `add_widget`: the component, the
+source (the block below, as `{"type": "sql", "content": "…"}`, or `md` for
+the Markdown one) and the props shown. Unless the title says otherwise, each
+follows both switchers.
+
+### `stat`
+
+Views in the range, with a sparkline of the days under the number:
+
+```sql
+SELECT day AS x, SUM(views) AS value
+FROM v_views_daily
+WHERE project_id = :project AND day BETWEEN :from AND :to
+GROUP BY day
+ORDER BY day
+```
+
+Props: `{"format": "number", "aggregate": "sum"}`
+
+### `line`
+
+Visitors per day, one line per kind (`web`, `app`, …):
+
+```sql
+SELECT day AS x, kind AS series, visitors AS y
+FROM v_views_daily
+WHERE project_id = :project AND day BETWEEN :from AND :to
+ORDER BY day
+```
+
+Props: `{"curve": "monotone"}`
+
+### `area`
+
+Views per day, stacked by platform:
+
+```sql
+SELECT day AS x, platform AS series, views AS y
+FROM v_views_platforms
+WHERE project_id = :project AND day BETWEEN :from AND :to
+ORDER BY day
+```
+
+Props: `{"stacked": true}`
+
+### `bar`
+
+The ten most frequent product events, as horizontal bars:
+
+```sql
+SELECT event_name AS x, SUM(count) AS y
+FROM v_product_daily
+WHERE project_id = :project AND day BETWEEN :from AND :to
+GROUP BY event_name
+ORDER BY y DESC
+LIMIT 10
+```
+
+Props: `{"horizontal": true}`
+
+### `bar_list`
+
+Top pages by views:
+
+```sql
+SELECT path AS label, SUM(views) AS value
+FROM v_views_paths
+WHERE project_id = :project AND day BETWEEN :from AND :to
+GROUP BY path
+ORDER BY value DESC
+LIMIT 10
+```
+
+Props: `{"format": "number"}`
+
+### `pie`
+
+Visitors by device, the six largest and the rest as `Other`:
+
+```sql
+WITH d AS (
+  SELECT device, SUM(visitors) AS v
+  FROM v_views_devices
+  WHERE project_id = :project AND day BETWEEN :from AND :to
+  GROUP BY device
+), ranked AS (
+  SELECT device, v, ROW_NUMBER() OVER (ORDER BY v DESC) AS n FROM d
+)
+SELECT CASE WHEN n <= 6 THEN device ELSE 'Other' END AS label, SUM(v) AS value
+FROM ranked
+GROUP BY label
+ORDER BY value DESC
+```
+
+Props: `{"donut": true}`
+
+### `radar`
+
+Views by day of the week:
+
+```sql
+SELECT substr('SunMonTueWedThuFriSat', 1 + 3 * strftime('%w', day), 3) AS axis,
+       SUM(views) AS value
+FROM v_views_daily
+WHERE project_id = :project AND day BETWEEN :from AND :to
+GROUP BY strftime('%w', day)
+ORDER BY strftime('%w', day)
+```
+
+Props: `{"format": "number"}`
+
+### `radial`
+
+"Signups this month, goal 100": follows the project, fixed to the calendar
+month:
+
+```sql
+SELECT 'Signups' AS label, COALESCE(SUM(count), 0) AS value, 100 AS max
+FROM v_product_daily
+WHERE project_id = :project AND event_name = 'signup'
+  AND day >= date('now', 'start of month')
+```
+
+Props: `{"format": "number"}`
+
+### `scatter`
+
+Pages, visitors against views:
+
+```sql
+SELECT SUM(visitors) AS x, SUM(views) AS y
+FROM v_views_paths
+WHERE project_id = :project AND day BETWEEN :from AND :to
+GROUP BY path
+```
+
+Props: `{"format": "number"}`
+
+### `funnel`
+
+Visitors, then users who signed up, then users who subscribed. The steps
+come in query order, so the query orders them and returns only `step` and
+`value`:
+
+```sql
+SELECT step, value FROM (
+  SELECT 1 AS n, 'Visited' AS step, COALESCE(SUM(visitors), 0) AS value
+  FROM v_views_daily
+  WHERE project_id = :project AND day BETWEEN :from AND :to
+  UNION ALL
+  SELECT 2, 'Signed up', COALESCE(SUM(unique_users), 0)
+  FROM v_product_daily
+  WHERE project_id = :project AND day BETWEEN :from AND :to AND event_name = 'signup'
+  UNION ALL
+  SELECT 3, 'Subscribed', COALESCE(SUM(unique_users), 0)
+  FROM v_product_daily
+  WHERE project_id = :project AND day BETWEEN :from AND :to AND event_name = 'subscribed'
+)
+ORDER BY n
+```
+
+Props: `{"format": "number"}`
+
+### `combo`
+
+Visitors as bars and the bounce rate as a line, on two axes. `percent`
+formats a fraction, so `0.25` reads 25%:
+
+```sql
+SELECT day AS x, SUM(visitors) AS bar,
+       SUM(bounces) * 1.0 / NULLIF(SUM(sessions), 0) AS line
+FROM v_views_daily
+WHERE project_id = :project AND day BETWEEN :from AND :to
+GROUP BY day
+ORDER BY day
+```
+
+Props: `{"bar_format": "number", "line_format": "percent"}`
+
+### `heatmap`
+
+Retention of signed-in users: cohorts that started in the range, by days
+since. A cohort's later days are absent until they have happened:
+
+```sql
+SELECT cohort_day AS x, day_offset AS y, actors * 1.0 / cohort_size AS value
+FROM v_retention
+WHERE project_id = :project AND actor_kind = 'user'
+  AND day_offset IN (0, 1, 7, 14, 30)
+  AND cohort_day BETWEEN :from AND :to
+ORDER BY cohort_day, day_offset
+```
+
+Props: `{"format": "percent", "labels": true}`
+
+### `calendar`
+
+"Views, last 12 months": follows the project, fixed to the last year:
+
+```sql
+SELECT day, SUM(views) AS value
+FROM v_views_daily
+WHERE project_id = :project AND day >= date('now', '-364 days')
+GROUP BY day
+ORDER BY day
+```
+
+Props: `{"format": "number"}`
+
+### `map`
+
+Visitors by country:
+
+```sql
+SELECT country, SUM(visitors) AS value
+FROM v_views_countries
+WHERE project_id = :project AND day BETWEEN :from AND :to
+GROUP BY country
+```
+
+Props: `{"format": "number"}`
+
+### `treemap`
+
+Visitors by browser, then version:
+
+```sql
+SELECT browser AS parent, browser_version AS label, SUM(visitors) AS value
+FROM v_views_browsers
+WHERE project_id = :project AND day BETWEEN :from AND :to
+GROUP BY browser, browser_version
+```
+
+Props: `{"format": "number"}`
+
+### `table`
+
+Pages with visitors and views, the views column shaded. Column names are
+the headers, so quote them as they should read:
+
+```sql
+SELECT path AS "Page", SUM(visitors) AS "Visitors", SUM(views) AS "Views"
+FROM v_views_paths
+WHERE project_id = :project AND day BETWEEN :from AND :to
+GROUP BY path
+ORDER BY 3 DESC
+LIMIT 50
+```
+
+Props: `{"formats": {"Visitors": "number", "Views": "number"}, "colorscale": ["Views"]}`
+
+### `markdown`
+
+A note at the top of a dashboard, as an `md` source:
+
+```markdown
+**Visitors** count each person once per day. Figures for today and
+yesterday are live and settle after the 03:00 UTC pass.
+```
+
+Props: `{}`
 
 ## Parameters and ranges
 
@@ -272,3 +593,71 @@ forever), by the daily pass at 03:00 UTC. A purged dashboard takes its widgets
 with it. A purged project takes all of its data: its events, aggregates and
 ingest keys are gone, and so is anything a widget's SQL could have shown of
 it. Nothing returns the purge date; it follows from `archived_at`.
+
+## Refusals and fixes
+
+A refusal is a tool error over MCP and `400 invalid` over HTTP unless noted;
+its message names what to change. In `create_dashboard` it starts with the
+widget's name (`widget visitors: …`), and nothing is created.
+
+| Refusal | Fix |
+| --- | --- |
+| component gauge does not exist; list_components names the ones there are | Use a name from `list_components` or `reporting_guide`. |
+| line does not accept md; it accepts sql | `markdown` takes `md`; every other component takes `sql`. |
+| source type csv does not exist; there are md and sql | Set `source.type` to `sql` or `md`. |
+| sql uses :path; widgets get only :project, :from and :to | Write the value into the SQL, or use one of the three. |
+| line needs y (number); columns are x, visitors | Alias the column to the input: `visitors AS y`. |
+| visitors is not an input of line | Drop the column, or alias it to an input; only `table` takes any columns. |
+| line.y: "n/a" is not number | Return a number, a `YYYY-MM-DD` day or text as the input asks; `CAST(… AS REAL)` where needed. An empty value (SQL `NULL`) always passes. |
+| refused: sql reads meta, which custom SQL may not read | Read the `v_*` views instead. The same holds for `sqlite_*`, `pragma_*` and `dbstat`, and for `ATTACH`. |
+| query exceeded API_QUERY_TIMEOUT (10s); narrow the range or group the query | Group in SQL or read fewer days; the operator can raise `API_QUERY_TIMEOUT`. |
+| SQLite's own error, such as a column that does not exist | Fix the query; try it with `query` first. |
+| markdown text is empty | Give the Markdown text. |
+| stat: … (a props schema error) | Match the props schema `list_components` returns; unknown props are refused. |
+| width is columns out of 12, from 1 to 12 | A whole number 1–12. `height` is the same, in rows of 40px. |
+| after 7 is not a widget on dashboard 1001 | Name a widget on the same dashboard, `0` for first, or leave `after` out for last. For dashboards: after 7 is not a user dashboard. |
+| widget name visitors is already used on this dashboard (`409 conflict`) | Choose another name. An archived widget keeps its name; restore or rename it to reuse the name. |
+| dashboard 1 is a system dashboard and changes only with a release; duplicate_dashboard makes an editable copy | `duplicate_dashboard`, then change the copy. |
+| dashboard 1001 is archived; restore_dashboard first | `restore_dashboard`. For a widget: widget 42 is archived; restore_widget first. |
+| widget 42's component was removed; set component first | `update_widget` with a `component` (and resize or archive as needed); see [When widgets break after an update](#when-widgets-break-after-an-update). |
+| widget 42 follows the project switcher; pass project_id | Pass `project_id` to `widget_data`. For the range: widget 42 follows the date range; pass from and to. |
+| from 2026-09-10 is after to 2026-09-01; from 2026-01-01 to 2027-02-01 spans more than 365 days; from 2026-10-01 is after today | Pass `from` ≤ `to`, at most 365 days apart, `from` no later than today. |
+| range must be one of today, yesterday, 7d, 30d, 90d, custom | Use a preset id. `create_dashboard` refuses `custom`: create with a preset; the viewer picks custom dates. |
+| title must not be empty; nothing to update; give title or after | Give a title, or something to change. |
+| dashboard 1001 changed while placing this widget; try again (`409 conflict`) | Another write placed a widget at the same spot; call again. |
+| `404 not_found` | The dashboard or widget id does not exist; `list_dashboards` and `list_widgets` name them. `widget_data` on an archived widget is a 404 too. |
+
+## When widgets break after an update
+
+A release can rename a view's columns or remove a component, and widgets
+written against the old ones stop working:
+
+- a query that no longer runs, or whose rows no longer fit the component,
+  refuses in `widget_data` with the reason, ending "if this started after an
+  update, see the release notes at
+  https://github.com/dmtrkzntsv/twillingate/releases";
+- a widget whose component was removed answers `removed: true`, and its card
+  says "component removed".
+
+To fix them:
+
+1. Find the running version: `reporting_guide` names it, with a link to its
+   release notes.
+2. Read the notes of every release between the last version the widgets
+   worked on and the running one, at
+   https://github.com/dmtrkzntsv/twillingate/releases (one page per tag,
+   `…/releases/tag/v<version>`). They name renamed view columns and removed
+   components.
+3. Rewrite the SQL with `update_widget` (check the new columns in
+   `schema://views`), or switch a removed component's widgets to another
+   component. `list_widgets` with `component` finds every widget on one.
+4. Check each with `widget_data`.
+
+A component that comes back in a later release does not reattach itself: set
+it again with `update_widget`. System dashboards are fixed by the release
+itself.
+
+## Local development
+
+`twillingate reporting dev` previews dashboard files against a database
+before they ship.

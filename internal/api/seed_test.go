@@ -187,7 +187,8 @@ func newTestHost(t *testing.T) (*host, *mcp.ClientSession) {
 	// test side remembers it here, keyed by the host it belongs to.
 	testDBPaths[h] = path
 
-	srv := mcp.NewServer(&mcp.Implementation{Name: "analytics", Version: "test"}, nil)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "analytics", Version: "test"},
+		&mcp.ServerOptions{Instructions: serverInstructions})
 	h.register(&registrar{mcp: srv, logger: logger})
 	h.registerResources(srv)
 	ct, stEnd := mcp.NewInMemoryTransports()

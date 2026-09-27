@@ -6,12 +6,13 @@ package docs
 
 import _ "embed"
 
-// The two normative documents, split on audience: Twillingate is what an
+// The three normative documents, split on audience: Twillingate is what an
 // agent needs to set up a project, get it tracking and answer questions
 // from the data; Deployment is what an operator needs to run the collector
-// on their own server. Both are served over MCP, so the bytes an agent
-// reads are the bytes a person reads. docs_sync_test.go binds
-// Twillingate's reserved-key and tool lists to the source they describe.
+// on their own server; Reporting (below) is how an agent builds dashboards.
+// All three are served over MCP, so the bytes an agent reads are the bytes
+// a person reads. docs_sync_test.go binds Twillingate's reserved-key and
+// tool lists to the source they describe.
 //
 //go:embed twillingate.md
 var Twillingate string

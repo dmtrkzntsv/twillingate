@@ -190,6 +190,9 @@ func (h *host) registerReporting(r *registrar) {
 	const d = "/api/dashboards/{dashboard_id}"
 	const w = "/api/widgets/{widget_id}"
 
+	expose(r, spec{Name: "reporting_guide", Annotations: ro, // MCP only
+		Description: "Call before building or changing a dashboard. One read returns what you author against: the running version and its release notes, the source types and every component (when to use it, the columns its query returns, its props and default size), the queryable views, the active projects, the existing dashboards, and the workflow and rules to follow. docs://reporting is the full reference."},
+		h.reportingGuide)
 	expose(r, spec{Name: "list_components", Annotations: ro, Method: "GET", Path: "/api/components",
 		Description: "The source types (sql, md) and the components a widget can use: each one's description, the source types it accepts, the columns its query must return (inputs), its props schema and its default width and height."},
 		h.listComponents)

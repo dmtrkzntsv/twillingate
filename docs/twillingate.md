@@ -773,7 +773,7 @@ CORS-simple.
 
 ## Answer questions with the data
 
-A connected session gets thirty-two tools: the seventeen below, and fifteen
+A connected session gets thirty-three tools: the seventeen below, and sixteen
 that build the dashboards served at `/app/`, which are documented in
 `docs://reporting` ([reporting.md](reporting.md)). To build or change a
 dashboard, call `reporting_guide` first.
@@ -802,8 +802,9 @@ project](#set-up-a-project).
 (installing and configuring the collector), `docs://reporting` (building
 dashboards), `schema://views` (the authoritative column list — read it before
 writing SQL), `schema://projects` (the live registry) and the reporting
-snapshots `schema://components`, `schema://dashboards` and `schema://widgets`. Enabling the endpoint, choosing an auth mode and pointing a client at
-it are in [deployment.md](deployment.md#the-api-endpoint).
+snapshots `schema://components`, `schema://dashboards` and
+`schema://widgets`. Enabling the endpoint, choosing an auth mode and pointing
+a client at it are in [deployment.md](deployment.md#the-api-endpoint).
 
 ### HTTP API
 
