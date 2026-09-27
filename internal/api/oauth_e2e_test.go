@@ -182,14 +182,14 @@ func e2eHandler(t *testing.T, dsn string, shared bool) http.Handler {
 	}
 	ops := manage.NewOps(reg, st)
 	if !shared {
-		h, closeDB, err := NewHandler(context.Background(), cfg, reg, ops, logger)
+		h, closeDB, err := NewHandler(context.Background(), cfg, reg, ops, st, logger)
 		if err != nil {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { closeDB() })
 		return h
 	}
-	protected, closeDB, err := Build(context.Background(), cfg, reg, ops, logger)
+	protected, closeDB, err := Build(context.Background(), cfg, reg, ops, st, logger)
 	if err != nil {
 		t.Fatal(err)
 	}

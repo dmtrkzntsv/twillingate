@@ -773,10 +773,14 @@ CORS-simple.
 
 ## Answer questions with the data
 
-A connected session gets seventeen tools. Reach for a purpose-built one before
-`query` — they are cheaper, they cannot be malformed, and they already apply the
-caveats below. All the reading tools take `project_id`, `from` and `to` as
-`YYYY-MM-DD` unless noted.
+A connected session gets thirty-two tools: the seventeen below, and fifteen
+that build the dashboards served at `/app/`, which are documented in
+`docs://reporting` ([reporting.md](reporting.md)). To build or change a
+dashboard, call `reporting_guide` first.
+
+Reach for a purpose-built tool before `query` — they are cheaper, they cannot
+be malformed, and they already apply the caveats below. All the reading tools
+take `project_id`, `from` and `to` as `YYYY-MM-DD` unless noted.
 
 | Tool | Extra parameters | Returns |
 | --- | --- | --- |
@@ -795,16 +799,18 @@ caveats below. All the reading tools take `project_id`, `from` and `to` as
 project](#set-up-a-project).
 
 **Resources:** `docs://twillingate` (this document), `docs://deployment`
-(installing and configuring the collector), `schema://views` (the authoritative
-column list — read it before writing SQL) and `schema://projects` (the live
-registry). Enabling the endpoint, choosing an auth mode and pointing a client at
+(installing and configuring the collector), `docs://reporting` (building
+dashboards), `schema://views` (the authoritative column list — read it before
+writing SQL), `schema://projects` (the live registry) and the reporting
+snapshots `schema://components`, `schema://dashboards` and `schema://widgets`. Enabling the endpoint, choosing an auth mode and pointing a client at
 it are in [deployment.md](deployment.md#the-api-endpoint).
 
 ### HTTP API
 
 Every tool above except `integration_guide` is also a REST route under `/api/`,
 guarded by the same bearer token (`Authorization: Bearer …`) as MCP. Send and
-receive JSON. `integration_guide` and the `docs://` resources are MCP-only.
+receive JSON. `integration_guide` and the `docs://` resources are MCP-only. The
+dashboard routes are listed in [reporting.md](reporting.md#http-api).
 
 ```bash
 curl -H "Authorization: Bearer $TOKEN" \

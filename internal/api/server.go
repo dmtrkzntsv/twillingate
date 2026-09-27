@@ -9,6 +9,7 @@ import (
 
 	"github.com/dmtrkzntsv/twillingate/internal/config"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
+	"github.com/dmtrkzntsv/twillingate/internal/reporting"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
 	"github.com/modelcontextprotocol/go-sdk/auth"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -29,13 +30,16 @@ const (
 // challenge names metadata whose resource is that prefix's URL. It mounts
 // nothing itself: NewHandler wraps it with its own mux for the standalone
 // listener, and app calls it directly to mount on the ingest surface's mux
-// via RegisterOn.
-func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *manage.Ops, logger *slog.Logger) (http.Handler, func() error, error) {
+// via RegisterOn. rst is the store reporting reads and writes; widget
+// queries run on the same read-only handle, and so under the same
+// API_QUERY_TIMEOUT and API_QUERY_MAX_ROWS, as the query tool.
+func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *manage.Ops, rst reporting.Store, logger *slog.Logger) (http.Handler, func() error, error) {
 	db, err := readsql.Open(cfg.API.DBPath, cfg.API.QueryTimeout, cfg.API.QueryMaxRows)
 	if err != nil {
 		return nil, nil, err
 	}
-	h := &host{db: db, reg: reg, ops: ops,
+	rep := reporting.New(rst, db, reporting.Options{CacheAge: cfg.Reporting.CacheAge, RefreshAge: cfg.Reporting.RefreshAge})
+	h := &host{db: db, reg: reg, ops: ops, rep: rep,
 		publicURL: cfg.PublicURL, logger: logger}
 	srv := mcp.NewServer(&mcp.Implementation{Name: "twillingate", Version: "1.0.0"}, nil)
 	rest := http.NewServeMux()
@@ -65,8 +69,8 @@ func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *m
 // /.well-known/oauth-protected-resource[/mcp] in oauth mode, and the login
 // server's routes in token mode with a password configured.
 // The func() error closes the read DB.
-func NewHandler(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *manage.Ops, logger *slog.Logger) (http.Handler, func() error, error) {
-	protected, closeDB, err := Build(ctx, cfg, reg, ops, logger)
+func NewHandler(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *manage.Ops, rst reporting.Store, logger *slog.Logger) (http.Handler, func() error, error) {
+	protected, closeDB, err := Build(ctx, cfg, reg, ops, rst, logger)
 	if err != nil {
 		return nil, nil, err
 	}

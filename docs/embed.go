@@ -19,6 +19,13 @@ var Twillingate string
 //go:embed deployment.md
 var Deployment string
 
+// Reporting is the third contract page: how an agent builds the
+// dashboards /app/ shows. docs_sync_test.go binds its component table to
+// the UI's manifest and its tool and route tables to the registered ones.
+//
+//go:embed reporting.md
+var Reporting string
+
 // PlausibleShim keeps Plausible's class-based event tagging working after
 // the tracker swap. internal/server hosts it at /js/plausible-shim.js so a
 // migrating site loads it rather than copying it; plausible/README.md

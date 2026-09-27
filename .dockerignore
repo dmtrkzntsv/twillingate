@@ -9,6 +9,7 @@ docs/
 !docs/embed.go
 !docs/twillingate.md
 !docs/deployment.md
+!docs/reporting.md
 !docs/plausible/plausible-shim.js
 local/
 evidence/node_modules

@@ -73,6 +73,18 @@ func (h *host) registerResources(s *mcp.Server) {
 	textResource(s, "docs://deployment", "deployment",
 		"Run twillingate on your own server: systemd and docker install, every environment variable, Evidence reporting, enabling and authenticating the API endpoint (MCP and REST), litestream replication for a two-server topology, backup drills and disaster recovery. Read when helping an operator install or configure the collector itself.",
 		docs.Deployment)
+	textResource(s, "docs://reporting", "reporting",
+		"Build dashboards for the /app/ page: dashboards, widgets and components, the component table with the columns each one reads, the SQL parameters and range presets, the grid, and archiving. Read before creating or changing a dashboard; reporting_guide returns the live parts of it in one call.",
+		docs.Reporting)
+	h.jsonResource(s, "schema://components", "components",
+		"The registered source types and components: what list_components returns.",
+		func(ctx context.Context) (any, error) { return h.listComponents(ctx, struct{}{}) })
+	h.jsonResource(s, "schema://dashboards", "dashboards",
+		"The instance timezone and every dashboard in sidebar order: what list_dashboards returns.",
+		func(ctx context.Context) (any, error) { return h.listDashboards(ctx, struct{}{}) })
+	h.jsonResource(s, "schema://widgets", "widgets",
+		"Every widget, archived ones included, with its dashboard and place: what list_widgets returns unfiltered.",
+		func(ctx context.Context) (any, error) { return h.listWidgets(ctx, listWidgetsIn{}) })
 
 	s.AddResource(&mcp.Resource{
 		URI: "schema://views", Name: "views",
@@ -104,6 +116,24 @@ func (h *host) registerResources(s *mcp.Server) {
 		return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{
 			URI: "schema://projects", MIMEType: "application/json", Text: string(b)}}}, nil
 	})
+}
+
+// jsonResource registers a live JSON resource: load runs on every read,
+// through the same code as the matching tool, so the two cannot differ.
+func (h *host) jsonResource(s *mcp.Server, uri, name, desc string, load func(context.Context) (any, error)) {
+	s.AddResource(&mcp.Resource{URI: uri, Name: name, Description: desc, MIMEType: "application/json"},
+		func(ctx context.Context, _ *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+			v, err := load(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", uri, err)
+			}
+			b, err := json.MarshalIndent(v, "", "  ")
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", uri, err)
+			}
+			return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{
+				URI: uri, MIMEType: "application/json", Text: string(b)}}}, nil
+		})
 }
 
 // registerSchemaRoute serves schema://views over REST: POST /api/query

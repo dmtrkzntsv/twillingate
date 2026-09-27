@@ -49,7 +49,7 @@ func newHandlerFixture(t *testing.T, over map[string]string) http.Handler {
 	if err := reg.Reload(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	h, closeDB, err := NewHandler(context.Background(), cfg, reg, manage.NewOps(reg, st), logger)
+	h, closeDB, err := NewHandler(context.Background(), cfg, reg, manage.NewOps(reg, st), st, logger)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +166,7 @@ func TestTokenNeverLoggedAtInfo(t *testing.T) {
 	defer st.Close()
 	reg := manage.New(st, logger)
 	reg.Reload(context.Background())
-	h, closeDB, err := NewHandler(context.Background(), cfg, reg, manage.NewOps(reg, st), logger)
+	h, closeDB, err := NewHandler(context.Background(), cfg, reg, manage.NewOps(reg, st), st, logger)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -281,7 +281,7 @@ func TestRegisterOnWithoutHealthzOmitsRoute(t *testing.T) {
 	if err := reg.Reload(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	protected, closeDB, err := Build(context.Background(), cfg, reg, manage.NewOps(reg, st), logger)
+	protected, closeDB, err := Build(context.Background(), cfg, reg, manage.NewOps(reg, st), st, logger)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -336,7 +336,7 @@ func TestBuildFailsWhenOAuthIssuerUnreachable(t *testing.T) {
 	if err := reg.Reload(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := Build(context.Background(), cfg, reg, manage.NewOps(reg, st), logger); err == nil {
+	if _, _, err := Build(context.Background(), cfg, reg, manage.NewOps(reg, st), st, logger); err == nil {
 		t.Fatal("Build succeeded against an unreachable oauth issuer")
 	}
 }
