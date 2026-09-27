@@ -69,3 +69,26 @@ jobs:
         working-directory: web
       - name: committed build matches the source
         run: git diff --exit-code internal/reporting/ui
+
+  # A real Chromium drives a seeded `twillingate serve`: login, every system
+  # dashboard at desktop and phone widths, tab selection, the standalone
+  # shell and the widget grid (web/e2e/app.spec.ts). web/e2e/serve.sh builds
+  # its own binary and seeds its own database, so `make build` here is only
+  # a fast-fail check before spending time on Chromium.
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version-file: go.mod, cache: false }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: web/package-lock.json }
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: make build
+      - run: npm ci
+        working-directory: web
+      - run: npx playwright install --with-deps chromium
+        working-directory: web
+      - run: npm run e2e
+        working-directory: web

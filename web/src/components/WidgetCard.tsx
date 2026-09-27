@@ -76,7 +76,10 @@ export default function WidgetCard({ widget, params, idle = false }: Props) {
 function isEmpty(answer: WidgetData): boolean {
   const data = answer.data
   if (!data) return true
-  if ('rows' in data) return data.rows.length === 0
+  // A defensive `?? []`: the server always sends a rows array (a query
+  // that matches nothing is still `[]`, never absent), but this stays cheap
+  // insurance against ever crashing the whole page on one bad answer.
+  if ('rows' in data) return (data.rows ?? []).length === 0
   return data.markdown.trim() === ''
 }
 
