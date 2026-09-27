@@ -349,6 +349,7 @@ defaults to `PUBLIC_URL` and must be an origin with no path;
 | Replication status | `journalctl -u litestream --since -1h`, or `docker compose logs litestream` |
 | Dashboard rebuilds | `docker compose logs dashboards` — one `dashboards: rebuilt` line per successful build |
 | Recent config changes | `sqlite3 …/twillingate.db "SELECT * FROM audit_log ORDER BY ts DESC LIMIT 20"` |
+| Preview dashboard files against real data | `twillingate reporting dev <dir>... [-db <path>] [-addr 127.0.0.1:3100]` — a local, no-login server over the built UI; `-db` defaults to `DATABASE_DSN`'s path, `-addr` is refused unless it is loopback |
 
 Every CLI command on a systemd host needs the unit's environment:
 `sudo -u twillingate sh -ac '. /etc/twillingate/twillingate.env; twillingate project list'`.
