@@ -333,6 +333,7 @@ defaults to `PUBLIC_URL` and must be an origin with no path;
 | Login page: redirect URI's host not allowed | The client returns to a host that is not built in. The page shows the URI; add its host as `redirect=<host>` and restart. |
 | Login page: password not recognised, though it is right | A `+`, `&`, `#`, `%` or `;` in the password must be percent-encoded in the DSN. "Too many attempts" instead means five wrong passwords this minute; wait for the next one. |
 | Login loops in `oauth://` mode | The IdP issues tokens without the expected `aud`: the origin, `<origin>/mcp`, or the `audience=` value. |
+| `/app/` asks for a token although a password is set | The page is not on the `resource=` origin. Set `resource=https://<api-host>` or open the page there. |
 
 ## Dashboards at /app/
 
@@ -344,17 +345,21 @@ and reads everything through `/api/` with the same login as any other
 client, so open it on the API's origin, the one `resource=` names:
 
 - **`token://` with a password:** the page shows the login page and returns
-  to `https://<api-host>/app/callback`. No `redirect=` entry is needed: the
-  login accepts `/app/callback` over `https` on the host it is reached on.
-  The access token stays in the tab and the refresh token in the browser, so
-  a login lasts 30 days from last use, as for other clients.
+  to `<resource>/app/callback`, e.g. `https://twillingate.example.com/app/callback`.
+  No `redirect=` entry is needed: the login accepts exactly that URL, taken
+  from `resource=` (default `PUBLIC_URL`), whatever `Host` a proxy passes
+  on. The access token stays in the tab and the refresh token in the
+  browser, so a login lasts 30 days from last use, as for other clients.
 - **A bare `token://`:** the page asks for the token.
-- **`oauth://`:** the page registers itself with the identity provider and
-  logs in there, returning to `https://<api-host>/app/callback`, which the
-  provider must allow. It calls the provider from the browser, so the
-  provider's metadata, registration and token endpoints must allow
-  cross-origin requests. A provider without dynamic registration gets the
-  token prompt instead.
+- **`oauth://`:** the page reads the provider's RFC 8414 metadata at the
+  issuer root, `<issuer>/.well-known/oauth-authorization-server`, registers
+  itself there by dynamic client registration (RFC 7591) and logs in,
+  returning to `<resource>/app/callback`, which the provider must allow. It
+  calls the provider from the browser, so the provider's metadata,
+  registration and token endpoints must allow cross-origin requests. A
+  provider without dynamic registration, with an issuer that has a path, or
+  publishing only `/.well-known/openid-configuration` gets the token prompt
+  instead.
 
 **Install it as an app:** in Chrome or Edge, *Install* in the address bar;
 in Safari, *File → Add to Dock*. It opens in its own window. Its service
@@ -370,7 +375,8 @@ their results are cached for `REPORTING_CACHE_SECONDS`
 ### Previewing dashboard files
 
 `twillingate reporting dev` previews dashboard files against a database on
-a loopback address, without a login.
+a loopback address, without a login; its usage is in
+[reporting.md](reporting.md#local-development).
 
 ## Operate and recover
 

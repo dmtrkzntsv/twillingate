@@ -2,10 +2,13 @@ package reporting
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"net/http"
 	"path"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -35,10 +38,15 @@ func Manifest() []byte {
 // (/app/dashboards/3, /app/callback). Files under assets/ are named by
 // their content and cached for a year; the shell, the service worker and
 // the manifest keep their names across releases, so they are revalidated
-// on every load. components.json is Manifest's input, not the app's, and
-// a missing asset is a 404 rather than the shell served as a script.
+// on every load, against an ETag of their content, so an unchanged one
+// costs a 304. components.json is Manifest's input, not the app's, and a
+// missing asset is a 404 rather than the shell served as a script. No
+// response may be framed by another page.
 func UI() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Content-Security-Policy", "frame-ancestors 'none'")
 		name := strings.TrimPrefix(r.URL.Path, "/app/")
 		if name == r.URL.Path || name == "components.json" {
 			http.NotFound(w, r)
@@ -54,12 +62,12 @@ func UI() http.Handler {
 			name = "index.html"
 			b = uiIndex()
 		}
-		h := w.Header()
-		switch {
+		switch tag, revalidated := uiETags()[name]; {
 		case strings.HasPrefix(name, "assets/"):
 			h.Set("Cache-Control", "public, max-age=31536000, immutable")
-		case name == "index.html" || name == "sw.js" || name == "manifest.webmanifest":
+		case revalidated:
 			h.Set("Cache-Control", "no-cache")
+			h.Set("ETag", tag)
 		}
 		if ct, ok := uiTypes[path.Ext(name)]; ok {
 			h.Set("Content-Type", ct)
@@ -75,6 +83,22 @@ var uiTypes = map[string]string{
 	".js":          "text/javascript; charset=utf-8",
 	".webmanifest": "application/manifest+json",
 }
+
+// uiETags are the ETags of the files that keep their names across
+// releases (the shell, the service worker, the manifest): a hash of each
+// one's embedded content, computed once.
+var uiETags = sync.OnceValue(func() map[string]string {
+	tags := map[string]string{}
+	for _, name := range []string{"index.html", "sw.js", "manifest.webmanifest"} {
+		b, err := uiFS.ReadFile("ui/" + name)
+		if err != nil {
+			panic("reporting: ui/" + name + ": " + err.Error())
+		}
+		sum := sha256.Sum256(b)
+		tags[name] = `"` + hex.EncodeToString(sum[:12]) + `"`
+	}
+	return tags
+})
 
 // uiIndex is the app's shell, embedded at build time like components.json.
 func uiIndex() []byte {

@@ -33,7 +33,7 @@ func (s *loginServer) authorizePage(w http.ResponseWriter, r *http.Request) {
 	setPageHeaders(w)
 	q := r.URL.Query()
 	redirectURI := q.Get("redirect_uri")
-	client, ok := s.trustedRedirect(w, r.Host, q.Get("client_id"), redirectURI)
+	client, ok := s.trustedRedirect(w, q.Get("client_id"), redirectURI)
 	if !ok {
 		return
 	}
@@ -59,7 +59,7 @@ func (s *loginServer) authorizePage(w http.ResponseWriter, r *http.Request) {
 // trustedRedirect resolves client_id and redirect_uri. When either cannot be
 // trusted it answers with the error page itself and reports false: an
 // untrusted redirect is never followed (RFC 6749 §4.1.2.1).
-func (s *loginServer) trustedRedirect(w http.ResponseWriter, requestHost, clientID, redirectURI string) (*clientClaims, bool) {
+func (s *loginServer) trustedRedirect(w http.ResponseWriter, clientID, redirectURI string) (*clientClaims, bool) {
 	var c clientClaims
 	var reason string
 	switch {
@@ -67,7 +67,7 @@ func (s *loginServer) trustedRedirect(w http.ResponseWriter, requestHost, client
 		reason = "Unknown client. Remove the connector and add it again."
 	case !matchesAny(c.RedirectURIs, redirectURI):
 		reason = "The redirect URI is not registered for this client."
-	case !redirectAllowed(s.hosts, requestHost, redirectURI):
+	case !redirectAllowed(s.hosts, s.resource, redirectURI):
 		reason = "The redirect URI's host is not allowed. Add it to API_AUTH_DSN as redirect=<host>."
 	default:
 		return &c, true

@@ -133,10 +133,11 @@ func TestTokenLoginEndToEnd(t *testing.T) {
 }
 
 // TestAppLoginEndToEnd plays the web app at /app/: it registers with
-// its own origin's /app/callback, which no redirect= entry lists, runs
-// PKCE through the password page with the resource named at authorize
-// and token, and reads /api/dashboards with the token. Every request
-// carries the API's public Host, as a browser behind the proxy would.
+// the resource origin's /app/callback, which no redirect= entry lists,
+// runs PKCE through the password page with the resource named at
+// authorize and token, and reads /api/dashboards with the token. The
+// resource is a public https origin while every request reaches the
+// server with its loopback Host, as behind a proxy that rewrites it.
 func TestAppLoginEndToEnd(t *testing.T) {
 	const origin = "https://dash.example.com"
 	const callback = origin + "/app/callback"
@@ -149,7 +150,6 @@ func TestAppLoginEndToEnd(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		req.Host = "dash.example.com"
 		for k, v := range header {
 			req.Header.Set(k, v)
 		}

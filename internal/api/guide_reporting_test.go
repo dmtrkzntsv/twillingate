@@ -149,3 +149,18 @@ func TestAppMountedBesideTheAPI(t *testing.T) {
 		}
 	}
 }
+
+// TestReportingGuideEscapesTableCells: a title or project name holding a
+// pipe or a line break stays inside its table cell.
+func TestReportingGuideEscapesTableCells(t *testing.T) {
+	_, cs := newTestHost(t)
+	toolJSON(t, cs, "create_dashboard", map[string]any{"title": "Web | App\nweekly"}, nil)
+	toolJSON(t, cs, "create_project", map[string]any{"name": "shop|eu"}, nil)
+	var out guideOut
+	toolJSON(t, cs, "reporting_guide", map[string]any{}, &out)
+	for _, want := range []string{`| Web \| App weekly | user |`, `| shop\|eu |`} {
+		if !strings.Contains(out.Markdown, want) {
+			t.Errorf("the guide lacks the escaped row %q", want)
+		}
+	}
+}

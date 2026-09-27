@@ -59,7 +59,7 @@ func (h *host) reportingGuide(ctx context.Context, _ struct{}) (guideOut, error)
 	active := 0
 	for _, p := range h.reg.Snapshot(ctx).Projects() {
 		if !p.Archived {
-			fmt.Fprintf(&b, "| %d | %s |\n", p.ID, p.Name)
+			fmt.Fprintf(&b, "| %d | %s |\n", p.ID, tableCell(p.Name))
 			active++
 		}
 	}
@@ -73,7 +73,7 @@ func (h *host) reportingGuide(ctx context.Context, _ struct{}) (guideOut, error)
 		if d.ArchivedAt != "" {
 			archived = d.ArchivedAt
 		}
-		fmt.Fprintf(&b, "| %d | %s | %s | %s |\n", d.ID, d.Title, d.Owner, archived)
+		fmt.Fprintf(&b, "| %d | %s | %s | %s |\n", d.ID, tableCell(d.Title), d.Owner, archived)
 	}
 	fmt.Fprintf(&b, "\nDays are grouped in %s.\n", dashboards.Timezone)
 
@@ -102,6 +102,12 @@ func writeVersion(b *strings.Builder, v string) {
 	}
 	fmt.Fprintf(b, "Running version: %s. Its release notes: %s/tag/%s; every release: %s. When widgets break after an update, read the notes of every release since the last version they worked on.\n\n",
 		v, reporting.ReleasesURL, tag, reporting.ReleasesURL)
+}
+
+// tableCell keeps text inside one Markdown table cell: a pipe is escaped
+// and line breaks (any run of white space) become one space.
+func tableCell(s string) string {
+	return strings.Join(strings.Fields(strings.ReplaceAll(s, "|", `\|`)), " ")
 }
 
 // compactJSON prints a props schema on one line; the database keeps it

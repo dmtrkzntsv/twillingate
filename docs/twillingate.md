@@ -810,8 +810,9 @@ a client at it are in [deployment.md](deployment.md#the-api-endpoint).
 
 Every tool above except `integration_guide` is also a REST route under `/api/`,
 guarded by the same bearer token (`Authorization: Bearer …`) as MCP. Send and
-receive JSON. `integration_guide` and the `docs://` resources are MCP-only. The
-dashboard routes are listed in [reporting.md](reporting.md#http-api).
+receive JSON. `integration_guide`, `reporting_guide` and the `docs://`
+resources are MCP-only. The dashboard routes are listed in
+[reporting.md](reporting.md#http-api).
 
 ```bash
 curl -H "Authorization: Bearer $TOKEN" \

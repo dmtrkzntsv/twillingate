@@ -97,3 +97,44 @@ func TestUIHidesItsBuildInputs(t *testing.T) {
 		}
 	}
 }
+
+// TestUIRevalidatesWithETags: the files served no-cache carry an ETag of
+// their content, so a reload that finds them unchanged gets a 304; the SPA
+// fallback carries index.html's own.
+func TestUIRevalidatesWithETags(t *testing.T) {
+	index := serveUI(t, "/app/").Header().Get("ETag")
+	if index == "" {
+		t.Fatal("index.html has no ETag")
+	}
+	if got := serveUI(t, "/app/dashboards/3").Header().Get("ETag"); got != index {
+		t.Errorf("SPA route ETag = %q, want index.html's %q", got, index)
+	}
+	for _, target := range []string{"/app/", "/app/dashboards/3", "/app/sw.js", "/app/manifest.webmanifest"} {
+		tag := serveUI(t, target).Header().Get("ETag")
+		if !strings.HasPrefix(tag, `"`) || !strings.HasSuffix(tag, `"`) || len(tag) < 10 {
+			t.Errorf("GET %s ETag = %q, want a quoted content hash", target, tag)
+			continue
+		}
+		req := httptest.NewRequest("GET", target, nil)
+		req.Header.Set("If-None-Match", tag)
+		rec := httptest.NewRecorder()
+		UI().ServeHTTP(rec, req)
+		if rec.Code != http.StatusNotModified {
+			t.Errorf("GET %s with its ETag = %d, want 304", target, rec.Code)
+		}
+	}
+	if serveUI(t, "/app/sw.js").Header().Get("ETag") == index {
+		t.Error("sw.js and index.html share an ETag")
+	}
+}
+
+// TestUIRefusesFraming: no /app/ response may be framed by another page.
+func TestUIRefusesFraming(t *testing.T) {
+	for _, target := range []string{"/app/", "/app/dashboards/3", "/app/assets/" + builtAsset(t), "/app/sw.js", "/app/components.json"} {
+		h := serveUI(t, target).Header()
+		if h.Get("X-Frame-Options") != "DENY" || h.Get("Content-Security-Policy") != "frame-ancestors 'none'" {
+			t.Errorf("GET %s: X-Frame-Options %q, Content-Security-Policy %q", target,
+				h.Get("X-Frame-Options"), h.Get("Content-Security-Policy"))
+		}
+	}
+}
