@@ -1,5 +1,5 @@
 // Purge of archived projects, dashboards and widgets past
-// RETENTION_ARCHIVED_DAYS (spec 2026-09-26, migration 021 onward). Run by
+// RETENTION_ARCHIVED_DAYS (spec 2026-09-25, migration 021 onward). Run by
 // the daily pass (internal/jobs), never by a request handler: there is no
 // tool or route for it.
 package sqlite

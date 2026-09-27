@@ -29,19 +29,9 @@ import (
 )
 
 var (
-	// ErrRefused reports that Check (or, for an empty statement or a
-	// negative limit, QueryLimit itself) refused the text: it named
-	// ATTACH, a table or pragma view custom SQL may not read — as a bare
-	// or quoted identifier, or as a single-quoted string exactly naming
-	// one (SQLite's grammar accepts a STRING wherever a NAME is
-	// expected) — a second statement (an unmatched ')', a ';' followed
-	// by anything but more ';' or whitespace, or a paren left unmatched
-	// at the end), an unterminated /* comment, a $NAME(...) or
-	// $NAME::NAME2 variable form (or the # sigil) SQLite's tokenizer
-	// would read differently than Check just did, a non-ASCII byte
-	// outside a string/quoted identifier/comment (unquoted names and
-	// this package's own SQL are ASCII only), a NUL byte, empty text, or
-	// a negative limit.
+	// ErrRefused reports text Check refused (see Check for the rules and
+	// why each exists), or empty text or a negative limit refused by
+	// QueryLimit. The wrapped message names what to change.
 	ErrRefused = errors.New("refused")
 	// ErrTimeout reports that a query's deadline passed before it finished.
 	ErrTimeout = errors.New("query timed out")
@@ -166,32 +156,12 @@ func (d *DB) QueryLimit(ctx context.Context, q string, limit int, args ...any) (
 	if _, err := Check(q); err != nil {
 		return Result{}, err
 	}
-	// Check's stmtEnded rule (a trailing ';' may only be followed by more
-	// ';' or whitespace) and this cutset agree on exactly what a trailing
-	// statement end looks like, so anything Check accepted past the
-	// statement's own text is exactly what this strips before wrapping —
-	// nothing Check allowed through is left inside the wrap to break it.
-	//
-	// This must be strings.TrimRight with the ASCII cutset, never
-	// strings.TrimSpace: the two disagree on which bytes are whitespace
-	// (TrimSpace also strips Unicode ones like U+00A0/U+0085/U+3000), and
-	// letting that difference decide even one trailing byte would mean
-	// SQLite parses text that isn't quite what Check examined. Check's
-	// own tokenizer now refuses a bare non-ASCII byte outright (package
-	// doc), closing the specific case where that used to matter (a
-	// trailing "meta\u00a0" folded into one identifier distinct from
-	// "meta", so checkName never caught it, until TrimSpace stripped the
-	// space and left SQLite reading the bare word) — but trimming only
-	// the ASCII cutset here keeps this agreement watertight on its own
-	// terms, rather than leaning on that other rule to hold.
+	// Exactly the set Check accepts after a statement's end: ASCII only,
+	// never strings.TrimSpace, which also strips Unicode spaces and would
+	// let SQLite parse text other than the one Check examined.
 	trimmed := strings.TrimRight(q, "; \t\r\n\f")
-	// The emptiness check may use TrimSpace: it only decides whether to
-	// refuse, never what reaches SQLite (trimmed itself, wrapped below,
-	// is untouched by it). Text that is empty, only ASCII separators, or
-	// only Unicode whitespace once those are stripped, is refused here
-	// instead of becoming "SELECT * FROM (\n) LIMIT n" or "SELECT *
-	// FROM ( \n) LIMIT n" — a syntax error rather than a clean
-	// refusal.
+	// A clean refusal rather than the wrap's syntax error. TrimSpace only
+	// decides; trimmed reaches SQLite unchanged.
 	if strings.TrimSpace(trimmed) == "" {
 		return Result{}, fmt.Errorf("%w: sql must not be empty", ErrRefused)
 	}

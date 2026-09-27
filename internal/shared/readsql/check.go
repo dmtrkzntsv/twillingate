@@ -41,36 +41,18 @@ import (
 //     sigil (also a variable form) is refused unconditionally for the
 //     same reason, having no legitimate use here;
 //   - any byte >= 0x80 outside a string, a quoted identifier or a
-//     comment. SQLite's tokenizer treats a leading UTF-8 BOM (EF BB BF)
-//     as whitespace before a token, so "select * from \ufeffmeta" reads
-//     the plain word "meta" once the BOM is skipped; Check's own
-//     identifier scan used to fold any byte >= 0x80 into the identifier
-//     it was reading, so it saw one token, "\ufeffmeta", distinct from
-//     "meta" and so never refused by checkName below — the same
-//     Check/SQLite desync class as the Tcl-variable forms above, closed
-//     the same way: refused outright, unconditionally, rather than
-//     modeling SQLite's whitespace rules for every possible non-ASCII
-//     codepoint. Since the tokenizer never visits the bytes inside a
-//     string, quoted identifier or comment (skipQuoted/skipLineComment/
-//     skipBlockComment jump straight past them), non-ASCII text stays
-//     allowed there — 'Посетители' as a string value, "визиты" as a
-//     quoted column name, a comment in any language — only a bare,
-//     unquoted appearance is refused;
+//     comment. SQLite skips a UTF-8 BOM (EF BB BF) as whitespace, so
+//     "select * from \ufeffmeta" reads the plain word meta; rather than
+//     model SQLite's whitespace rules for every non-ASCII codepoint, an
+//     unquoted identifier is ASCII only. Quoted text is never scanned
+//     here, so 'Посетители' as a value, "визиты" as a column name and a
+//     comment in any language stay allowed;
 //   - a single-quoted string whose whole (unescaped) content is a
-//     refused name. SQLite's grammar accepts a STRING wherever a NAME
-//     is expected (nm ::= STRING), so "select * from 'meta'",
-//     "main.'meta'" and "'pragma_table_info'('events')" all read a
-//     table Check exists to refuse, string quoting and all, while the
-//     tokenizer had filed 'meta' as an ordinary string literal and
-//     never asked checkName about it. checkName now runs on a
-//     single-quoted string's content exactly as it does on a
-//     double-quoted or bracketed one. This over-refuses an exact-match
-//     string value unrelated to any table name (comparing a column
-//     against the literal 'meta') — accepted, since the text needed to
-//     name a table this way is indistinguishable from the text needed
-//     to compare against it, and only an exact match is refused:
-//     'metadata' and '%meta%' still pass, the same as an unquoted
-//     identifier only a prefix of one of these names would.
+//     refused name. SQLite accepts a STRING wherever a NAME is expected
+//     (nm ::= STRING), so "select * from 'meta'" and
+//     "'pragma_table_info'('events')" read what Check refuses. This also
+//     refuses comparing a column against exactly 'meta' — the two texts
+//     are indistinguishable — while 'metadata' and '%meta%' pass.
 //
 // A tokenizer rather than a substring search, so 'metadata' or '%meta%',
 // a comment, or a column called metadata passes. Without an authorizer
@@ -264,13 +246,10 @@ func skipBlockComment(q string, i int) (int, error) {
 // scanNumber returns the index just past a numeric literal starting at
 // i (q[i] is a decimal digit), following SQLite's own grammar: a 0x/0X
 // hex literal, or decimal digits with at most one '.' and an optional
-// e/E exponent (itself an optional sign followed by digits — without a
-// digit there, the 'e'/'E' is not part of the number at all). A looser
-// rule here — consuming any run of identifier characters and dots, as
-// this once did — would let a number swallow a following identifier
-// whole ("1.5.meta" as one token), hiding it from checkName below even
-// though SQLite's own lexer stops extending the number at the same
-// point and reads "meta" as a separate, ordinary identifier.
+// e/E exponent (an optional sign, then digits; without a digit the e is
+// not part of the number). It must stop exactly where SQLite's lexer
+// does: a looser rule would read "1.5.meta" as one token and hide meta
+// from checkName.
 func scanNumber(q string, i int) int {
 	if q[i] == '0' && i+1 < len(q) && (q[i+1] == 'x' || q[i+1] == 'X') {
 		j := i + 2
