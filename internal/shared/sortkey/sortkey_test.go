@@ -41,10 +41,10 @@ func TestBetweenVectors(t *testing.T) {
 func TestBetweenRefuses(t *testing.T) {
 	for _, c := range [][2]string{
 		{"", "A00000000000000000000000000"}, // the smallest integer is not a key
-		{"a00", ""}, {"a00", "a1"},           // trailing zero
-		{"0", "1"},                           // invalid head
-		{"a1", "a0"}, {"a1", "a1"},           // not before
-		{"a!", ""},                           // not a base-62 digit
+		{"a00", ""}, {"a00", "a1"},          // trailing zero
+		{"0", "1"},                 // invalid head
+		{"a1", "a0"}, {"a1", "a1"}, // not before
+		{"a!", ""}, // not a base-62 digit
 	} {
 		if got, err := Between(c[0], c[1]); err == nil {
 			t.Errorf("Between(%q, %q) = %q; want an error", c[0], c[1], got)

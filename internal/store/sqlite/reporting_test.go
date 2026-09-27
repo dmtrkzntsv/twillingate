@@ -412,4 +412,3 @@ func TestReportingWritesDoNotBumpConfigVersion(t *testing.T) {
 		t.Errorf("config_version = %d after reporting writes, want unchanged %d", v1, v0)
 	}
 }
-
