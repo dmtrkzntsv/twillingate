@@ -15,11 +15,13 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
@@ -66,7 +68,27 @@ func DevHandler(dirs []string, db *readsql.DB) http.Handler {
 	mux.HandleFunc("GET /api/projects", devProjects(db))
 	mux.HandleFunc("GET /api/dev/version", devVersion(dirs))
 	mux.Handle("/app/", UI())
-	return mux
+	return loopbackOnly(mux)
+}
+
+// loopbackOnly answers 403 unless the request names a loopback host.
+// Reporting dev has no login, so a page elsewhere that rebinds its own
+// DNS name to 127.0.0.1 could otherwise read it through the victim's
+// browser; such a request still carries that other name in Host.
+func loopbackOnly(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host, _, err := net.SplitHostPort(r.Host)
+		if err != nil {
+			host = r.Host
+		}
+		ip := net.ParseIP(strings.Trim(host, "[]"))
+		if !strings.EqualFold(host, "localhost") && (ip == nil || !ip.IsLoopback()) {
+			msg := fmt.Sprintf("reporting dev answers only on a loopback host, not %q", r.Host)
+			writeJSON(w, http.StatusForbidden, map[string]any{"error": map[string]string{"code": "forbidden", "message": msg}})
+			return
+		}
+		h.ServeHTTP(w, r)
+	})
 }
 
 // compIndex keys comps by name, for validateWidget and storeWidget.
@@ -161,9 +183,15 @@ func devWidgetRow(fd FileDashboard, i int, comps map[string]Component) store.Wid
 
 // devDashboardRow is the store.Dashboard dashboardInfo needs, built from
 // a loaded file rather than a stored row: dev has no viewer selection to
-// echo back (SetDashboardView is a no-op), so Last* stay unset.
+// echo back (SetDashboardView is a no-op), so Last* stay unset. An id in
+// the system range (1–999) is owned by "system", so a system directory
+// previews among the report tabs as it will ship.
 func devDashboardRow(fd FileDashboard) store.Dashboard {
-	return store.Dashboard{ID: fd.ID, Owner: store.OwnerUser, Title: fd.Title, LastRange: fd.Range, LiveWidgets: len(fd.Widgets)}
+	owner := store.OwnerUser
+	if fd.ID >= 1 && fd.ID <= 999 {
+		owner = store.OwnerSystem
+	}
+	return store.Dashboard{ID: fd.ID, Owner: owner, Title: fd.Title, LastRange: fd.Range, LiveWidgets: len(fd.Widgets)}
 }
 
 func devListDashboards(dirs []string) http.HandlerFunc {
@@ -305,13 +333,14 @@ type devProjectsOut struct {
 	Projects []devProjectOut `json:"projects"`
 }
 
-// devListProjects lists active projects straight off the projects
-// table — trusted Go SQL against db, the same way sampleProject (source.go)
-// reads projects and events directly, not a widget's checked custom SQL —
-// with the same view-coverage probe list_projects itself runs.
+// devListProjects lists every project, archived ones flagged, as
+// list_projects does, straight off the projects table — trusted Go SQL
+// against db, the same way sampleProject (source.go) reads projects and
+// events directly, not a widget's checked custom SQL — with the same
+// view-coverage probe list_projects itself runs.
 func devListProjects(ctx context.Context, db *readsql.DB) (devProjectsOut, error) {
 	rows, err := db.Run(ctx,
-		`SELECT id, name, allowed_origins, attributes FROM projects WHERE archived_at IS NULL ORDER BY id`)
+		`SELECT id, name, allowed_origins, attributes, archived_at IS NOT NULL FROM projects ORDER BY id`)
 	if err != nil {
 		return devProjectsOut{}, err
 	}
@@ -321,7 +350,7 @@ func devListProjects(ctx context.Context, db *readsql.DB) (devProjectsOut, error
 		if err != nil {
 			return devProjectsOut{}, fmt.Errorf("reporting: dev: project id %q: %w", row[0], err)
 		}
-		po := devProjectOut{ProjectID: id, Name: row[1], AllowedOrigins: []string{}}
+		po := devProjectOut{ProjectID: id, Name: row[1], Archived: row[4] == "1", AllowedOrigins: []string{}}
 		if row[2] != "" {
 			if err := json.Unmarshal([]byte(row[2]), &po.AllowedOrigins); err != nil {
 				return devProjectsOut{}, fmt.Errorf("reporting: dev: project %d allowed_origins: %w", id, err)

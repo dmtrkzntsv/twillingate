@@ -676,12 +676,14 @@ twillingate reporting dev <dir>… [-db <path>] [-addr 127.0.0.1:3100]
 
 - Each `<dir>` is a dashboard directory (it has a `dashboard.json`) or a
   parent of several. A `dashboard.json` without an `id` gets 1001, 1002, …
-  in argument order.
+  in argument order. One with an `id` from 1 to 999 previews as a system
+  dashboard, among the report tabs.
 - `-db` defaults to `DATABASE_DSN`'s path. The database is opened read-only
   and never written: the view route answers but stores nothing.
-- `-addr` is refused unless it is a loopback address. There is no login: the
-  page finds `GET /api/dashboards` answering without a token and skips the
-  login.
+- `-addr` is refused unless it is a loopback address, and a request naming
+  any other host (`Host:`) gets `403`, so a page elsewhere cannot reach it
+  by pointing its own name at `127.0.0.1`. There is no login: the page finds
+  `GET /api/dashboards` answering without a token and skips the login.
 - Files are read again on every request, and the page polls
   `/api/dev/version` twice a second and reloads when they change.
 - A directory that does not load shows as a banner (the `errors` array of

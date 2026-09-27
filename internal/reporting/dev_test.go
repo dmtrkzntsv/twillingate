@@ -1,6 +1,7 @@
 package reporting
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
 // devDir builds a temp directory with one valid dashboard ("ok", holding
@@ -47,11 +50,19 @@ func devDir(t *testing.T, widgets ...struct{ name, component, ext, content strin
 	return root
 }
 
+// devRequest is a request as a browser on this machine sends it: to a
+// loopback host, the only kind reporting dev answers.
+func devRequest(method, path string) *http.Request {
+	r := httptest.NewRequest(method, path, nil)
+	r.Host = "127.0.0.1:3100"
+	return r
+}
+
 // getJSON runs a GET against h and decodes the JSON body into out.
 func getJSON(t *testing.T, h http.Handler, path string, out any) *http.Response {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+	h.ServeHTTP(rec, devRequest(http.MethodGet, path))
 	res := rec.Result()
 	if out != nil {
 		if err := json.NewDecoder(res.Body).Decode(out); err != nil {
@@ -203,7 +214,7 @@ func TestDevHandlerComponentsAndProjectsAndView(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/api/dashboards/1001/view", nil))
+	h.ServeHTTP(rec, devRequest(http.MethodPut, "/api/dashboards/1001/view"))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("PUT view status = %d", rec.Code)
 	}
@@ -213,5 +224,78 @@ func TestDevHandlerComponentsAndProjectsAndView(t *testing.T) {
 	}
 	if saved["status"] != "saved" {
 		t.Errorf("status = %q, want saved", saved["status"])
+	}
+}
+
+// TestDevHandlerAnswersOnlyLoopbackHosts: a page that rebinds its own DNS
+// name to 127.0.0.1 still sends that name in Host, and is refused.
+func TestDevHandlerAnswersOnlyLoopbackHosts(t *testing.T) {
+	h := DevHandler([]string{devDir(t)}, newTestReadDB(t))
+	for host, want := range map[string]int{
+		"127.0.0.1:3100":     http.StatusOK,
+		"localhost:3100":     http.StatusOK,
+		"LOCALHOST":          http.StatusOK,
+		"[::1]:3100":         http.StatusOK,
+		"127.8.9.10":         http.StatusOK,
+		"evil.example:3100":  http.StatusForbidden,
+		"evil.example":       http.StatusForbidden,
+		"192.168.1.5:3100":   http.StatusForbidden,
+		"localhost.evil.com": http.StatusForbidden,
+	} {
+		r := httptest.NewRequest(http.MethodGet, "/api/dashboards", nil)
+		r.Host = host
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, r)
+		if rec.Code != want {
+			t.Errorf("Host %q: status = %d, want %d", host, rec.Code, want)
+		}
+	}
+}
+
+// TestDevHandlerSystemRangeIdsPreviewAsSystem: a directory whose
+// dashboard.json gives an id in 1-999 is a system dashboard in the making,
+// so it previews as one; one without an id (1001 on) is the user's.
+func TestDevHandlerSystemRangeIdsPreviewAsSystem(t *testing.T) {
+	root := devDir(t)
+	sys := filepath.Join(root, "sys")
+	if err := os.MkdirAll(sys, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sys, "dashboard.json"), []byte(`{"id":5,"title":"Sys","range":"7d","layout":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h := DevHandler([]string{root}, newTestReadDB(t))
+
+	var out Dashboards
+	getJSON(t, h, "/api/dashboards", &out)
+	owners := map[int64]string{}
+	for _, d := range out.Dashboards {
+		owners[d.ID] = d.Owner
+	}
+	if owners[5] != store.OwnerSystem || owners[firstDevDashboardID] != store.OwnerUser {
+		t.Errorf("owners = %v, want 5 system and %d user", owners, firstDevDashboardID)
+	}
+}
+
+// TestDevHandlerListsArchivedProjects: /api/projects answers as
+// list_projects does, archived projects included and flagged.
+func TestDevHandlerListsArchivedProjects(t *testing.T) {
+	st, db := newTestStoreAndReadDB(t)
+	live := mustCreateProject(t, st, "live")
+	gone := mustCreateProject(t, st, "gone")
+	if err := st.SetProjectArchived(context.Background(), gone, true,
+		store.AuditEntry{Actor: "test", Action: "project.archive"}); err != nil {
+		t.Fatal(err)
+	}
+	h := DevHandler([]string{devDir(t)}, db)
+
+	var out devProjectsOut
+	getJSON(t, h, "/api/projects", &out)
+	archived := map[int64]bool{}
+	for _, p := range out.Projects {
+		archived[p.ProjectID] = p.Archived
+	}
+	if len(out.Projects) != 2 || archived[live] || !archived[gone] {
+		t.Errorf("projects = %+v, want %d live and %d archived", out.Projects, live, gone)
 	}
 }
