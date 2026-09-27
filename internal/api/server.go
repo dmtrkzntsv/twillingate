@@ -82,15 +82,20 @@ func NewHandler(ctx context.Context, cfg *config.Config, reg *manage.Registry, o
 
 // RegisterOn mounts the API surface on a mux: protected (from Build) at
 // /mcp and /api/, plus the unauthenticated metadata, login and health
-// routes, and the dashboards at /app/ (GET /app redirects there). The
-// dashboards' page is public like the login page: it holds no data, and
-// reads everything through /api/ with the login's token. withHealthz=false when the mux is shared with the ingest surface,
+// routes, and the dashboards at /app/ (GET / and GET /app redirect there,
+// so the API's address opens the dashboards; an ingest-only listener keeps
+// answering 404 at /). The dashboards' page is public like the login page:
+// it holds no data, and reads everything through /api/ with the login's
+// token. withHealthz=false when the mux is shared with the ingest surface,
 // whose /healthz already exists (ServeMux panics on duplicate patterns).
 func RegisterOn(mux *http.ServeMux, protected http.Handler, cfg *config.Config, withHealthz bool, logger *slog.Logger) {
 	mux.Handle("/mcp", protected)
 	mux.Handle("/api/", protected)
 	mux.Handle("GET /app/", reporting.UI())
 	mux.Handle("GET /app", http.RedirectHandler("/app/", http.StatusMovedPermanently))
+	// 302, not 301: browsers cache a permanent redirect of the root forever,
+	// and the root may serve something of its own one day.
+	mux.Handle("GET /{$}", http.RedirectHandler("/app/", http.StatusFound))
 	if cfg.API.AuthMode == "oauth" {
 		mountResourceMetadata(mux, cfg.API.ResourceURL, cfg.API.Issuer)
 	}

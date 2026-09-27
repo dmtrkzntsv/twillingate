@@ -193,6 +193,14 @@ func TestDevHandlerUnknownWidgetIs404(t *testing.T) {
 	}
 }
 
+func TestDevHandlerRootOpensTheDashboards(t *testing.T) {
+	h := DevHandler([]string{devDir(t)}, newTestReadDB(t))
+	res := getJSON(t, h, "/", nil)
+	if res.StatusCode != http.StatusFound || res.Header.Get("Location") != "/app/" {
+		t.Fatalf("GET / = %d to %q, want 302 to /app/", res.StatusCode, res.Header.Get("Location"))
+	}
+}
+
 func TestDevHandlerComponentsAndProjectsAndView(t *testing.T) {
 	root := devDir(t)
 	h := DevHandler([]string{root}, newTestReadDB(t))

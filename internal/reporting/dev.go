@@ -68,6 +68,8 @@ func DevHandler(dirs []string, db *readsql.DB) http.Handler {
 	mux.HandleFunc("GET /api/projects", devProjects(db))
 	mux.HandleFunc("GET /api/dev/version", devVersion(dirs))
 	mux.Handle("/app/", UI())
+	// As on the API's listener: the preview's address opens the dashboards.
+	mux.Handle("GET /{$}", http.RedirectHandler("/app/", http.StatusFound))
 	return loopbackOnly(mux)
 }
 

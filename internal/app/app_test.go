@@ -355,6 +355,27 @@ func TestServeSharedListenerServesBothSurfaces(t *testing.T) {
 			}
 		}
 
+		// The root opens the dashboards wherever the API listens, and only
+		// there: an ingest-only listener has no dashboards to send it to.
+		root := func(addr string) *http.Response {
+			t.Helper()
+			noFollow := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+			resp, err := noFollow.Get("http://" + addr + "/")
+			if err != nil {
+				t.Fatalf("GET / on %s: %v", addr, err)
+			}
+			resp.Body.Close()
+			return resp
+		}
+		if resp := root(cfg.API.Addr); resp.StatusCode != http.StatusFound || resp.Header.Get("Location") != "/app/" {
+			t.Errorf("GET / on API port %s = %d to %q, want 302 to /app/", cfg.API.Addr, resp.StatusCode, resp.Header.Get("Location"))
+		}
+		if cfg.API.Addr != cfg.IngestAddr {
+			if resp := root(cfg.IngestAddr); resp.StatusCode != http.StatusNotFound {
+				t.Errorf("GET / on ingest port %s = %d, want 404", cfg.IngestAddr, resp.StatusCode)
+			}
+		}
+
 		if cfg.API.Addr == cfg.IngestAddr {
 			resp := getAPI(cfg.IngestAddr)
 			resp.Body.Close()

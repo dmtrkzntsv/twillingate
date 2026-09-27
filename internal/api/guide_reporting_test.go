@@ -128,21 +128,24 @@ func TestServerInstructionsNameBothGuides(t *testing.T) {
 }
 
 // TestAppMountedBesideTheAPI: the dashboards are served, without a login,
-// on whichever mux the API is mounted on; /app redirects to /app/.
+// on whichever mux the API is mounted on; / and /app redirect to /app/,
+// and only the exact root does.
 func TestAppMountedBesideTheAPI(t *testing.T) {
 	h := newHandlerFixture(t, nil)
 	for target, want := range map[string]int{
 		"/app/":             http.StatusOK,
 		"/app/dashboards/3": http.StatusOK,
 		"/app":              http.StatusMovedPermanently,
+		"/":                 http.StatusFound,
+		"/nothing-here":     http.StatusNotFound,
 	} {
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, httptest.NewRequest("GET", target, nil))
 		if rec.Code != want {
 			t.Errorf("GET %s = %d, want %d", target, rec.Code, want)
 		}
-		if want == http.StatusMovedPermanently && rec.Header().Get("Location") != "/app/" {
-			t.Errorf("GET /app redirects to %q, want /app/", rec.Header().Get("Location"))
+		if (want == http.StatusMovedPermanently || want == http.StatusFound) && rec.Header().Get("Location") != "/app/" {
+			t.Errorf("GET %s redirects to %q, want /app/", target, rec.Header().Get("Location"))
 		}
 		if want == http.StatusOK && !strings.HasPrefix(rec.Header().Get("Content-Type"), "text/html") {
 			t.Errorf("GET %s Content-Type = %q", target, rec.Header().Get("Content-Type"))

@@ -674,6 +674,8 @@ ship:
 twillingate reporting dev <dir>… [-db <path>] [-addr 127.0.0.1:3100]
 ```
 
+Open `http://127.0.0.1:3100/`, which redirects to the dashboards at `/app/`.
+
 - Each `<dir>` is a dashboard directory (it has a `dashboard.json`) or a
   parent of several. A `dashboard.json` without an `id` gets 1001, 1002, …
   in argument order. One with an `id` from 1 to 999 previews as a system

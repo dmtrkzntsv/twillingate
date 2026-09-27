@@ -339,7 +339,8 @@ defaults to `PUBLIC_URL` and must be an origin with no path;
 
 Wherever the API is served, `/app/` serves the dashboards beside it:
 `https://twillingate.example.com/app/`, on the API's own listener with
-`API_ADDR`, else on the shared one. The page is read-only; agents build the
+`API_ADDR`, else on the shared one. The root of that listener redirects to
+`/app/`; an ingest-only listener answers 404 there. The page is read-only; agents build the
 dashboards over MCP ([reporting.md](reporting.md)). It loads without a login
 and reads everything through `/api/` with the same login as any other
 client, so open it on the API's origin, the one `resource=` names:
