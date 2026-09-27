@@ -1,8 +1,9 @@
-import { ChartColumnIcon, LayoutDashboardIcon } from 'lucide-react'
+import { ChartColumnIcon, LayoutDashboardIcon, LogOutIcon } from 'lucide-react'
 import { Link } from 'react-router'
 import {
   Sidebar,
   SidebarContent,
+  SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
   SidebarGroupLabel,
@@ -14,6 +15,7 @@ import {
   useSidebar,
 } from '@/components/ui/sidebar'
 import type { DashboardInfo } from '@/lib/api'
+import { currentAuthState, logout } from '@/lib/auth'
 
 interface Props {
   /** Every dashboard, in sidebar order: system ones, then the user's. */
@@ -24,6 +26,8 @@ interface Props {
 /**
  * Reports (the system dashboards, as one entry) and Yours (the user's
  * live dashboards). Icons only at 640–1023px, a drawer on phones (D37).
+ * Log out shows only when the app holds a credential: reporting dev's
+ * open mode has none to forget.
  */
 export default function AppSidebar({ dashboards, currentId }: Props) {
   const { isMobile, setOpenMobile } = useSidebar()
@@ -94,7 +98,26 @@ export default function AppSidebar({ dashboards, currentId }: Props) {
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
+      {currentAuthState().kind !== 'none' && (
+        <SidebarFooter>
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton tooltip="Log out" onClick={logOut}>
+                <LogOutIcon />
+                <span>Log out</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
+        </SidebarFooter>
+      )}
       <SidebarRail />
     </Sidebar>
   )
+}
+
+// A full page load rather than an in-app route, so the query cache (the
+// last user's dashboards and data) goes with the credentials.
+function logOut() {
+  logout()
+  window.location.assign('/app/login')
 }

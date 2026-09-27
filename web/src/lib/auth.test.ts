@@ -4,8 +4,10 @@ import {
   authProviderHint,
   beginLogin,
   completeLogin,
+  currentAuthState,
   detectAuth,
   getAuthHeader,
+  logout,
   onUnauthorized,
   refreshAccess,
   reportUnauthorized,
@@ -328,6 +330,28 @@ describe('setPastedToken', () => {
   it('stores the token for the Authorization header', () => {
     setPastedToken('pasted-token')
     expect(getAuthHeader()).toBe('Bearer pasted-token')
+  })
+})
+
+describe('logout', () => {
+  it('forgets the in-memory access token and every twillingate.* key, nothing else', async () => {
+    localStorage.setItem('twillingate.refresh_token', 'refresh-1')
+    localStorage.setItem('twillingate.token_endpoint', 'https://api.example/oauth/token')
+    localStorage.setItem('twillingate.resource', 'https://api.example')
+    localStorage.setItem('twillingate.client_id', 'client-1')
+    localStorage.setItem('twillingate.token', 'pasted')
+    localStorage.setItem('twillingate.last_dashboard', '3')
+    localStorage.setItem('other.key', 'kept')
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse({ access_token: 'access-2' }))
+    expect(await refreshAccess()).toBe(true)
+    expect(getAuthHeader()).toBe('Bearer access-2')
+
+    logout()
+
+    expect(getAuthHeader()).toBeUndefined()
+    expect(currentAuthState()).toEqual({ kind: 'none' })
+    expect(localStorage.length).toBe(1)
+    expect(localStorage.getItem('other.key')).toBe('kept')
   })
 })
 

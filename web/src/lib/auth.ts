@@ -357,6 +357,22 @@ export function refreshAccess(): Promise<boolean> {
   return refreshInFlight
 }
 
+/**
+ * Forgets every credential this app holds: the in-memory access token and
+ * every `twillingate.*` key in localStorage (refresh token, pasted token,
+ * client id, endpoints). The identity provider's own session, if any, is
+ * its to end.
+ */
+export function logout(): void {
+  accessToken = null
+  const keys: string[] = []
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i)
+    if (k?.startsWith('twillingate.')) keys.push(k)
+  }
+  keys.forEach((k) => localStorage.removeItem(k))
+}
+
 /** Reports the failure that made `api()` give up after one refresh attempt. */
 export function reportUnauthorized(): void {
   unauthorized()
