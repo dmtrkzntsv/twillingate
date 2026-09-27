@@ -39,13 +39,16 @@ self.addEventListener('fetch', (event) => {
     return
   }
 
-  // Built assets: cache-first, filling the cache on first fetch.
+  // Built assets: cache-first, filling the cache on first fetch. Only a
+  // 2xx is kept: a 404 for an asset of another release would otherwise be
+  // served from the cache forever, its name never changing.
   if (url.pathname.startsWith('/app/assets/')) {
     event.respondWith(
       caches.match(request).then(
         (cached) =>
           cached ||
           fetch(request).then((response) => {
+            if (!response.ok) return response
             const copy = response.clone()
             caches.open(CACHE).then((cache) => cache.put(request, copy))
             return response

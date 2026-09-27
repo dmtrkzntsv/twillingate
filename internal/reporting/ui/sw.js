@@ -2,7 +2,7 @@
 // without ever touching the API: only navigations and the app's own built
 // assets are cached.
 // Stamped per build by scripts/stamp-sw.ts; 'app-dev' only outside a build.
-const CACHE = 'app-df4f60a9c737'
+const CACHE = 'app-749046bc53f7'
 const SHELL_URLS = ['/app/', '/app/index.html']
 
 self.addEventListener('install', (event) => {
@@ -39,13 +39,16 @@ self.addEventListener('fetch', (event) => {
     return
   }
 
-  // Built assets: cache-first, filling the cache on first fetch.
+  // Built assets: cache-first, filling the cache on first fetch. Only a
+  // 2xx is kept: a 404 for an asset of another release would otherwise be
+  // served from the cache forever, its name never changing.
   if (url.pathname.startsWith('/app/assets/')) {
     event.respondWith(
       caches.match(request).then(
         (cached) =>
           cached ||
           fetch(request).then((response) => {
+            if (!response.ok) return response
             const copy = response.clone()
             caches.open(CACHE).then((cache) => cache.put(request, copy))
             return response
