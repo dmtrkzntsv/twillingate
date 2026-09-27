@@ -1,21 +1,32 @@
-// Stamps the built service worker's cache name with a short hash of the
-// built asset names (which Vite already content-hashes), so each release
-// gets a new cache and the service worker's activate step evicts the old
-// bundles. Deterministic: the same build stamps the same name. Run as part
-// of `npm run build`, after `vite build`.
+// Stamps the built service worker with this build's cache name and asset
+// list. The name is a short hash of the asset names (which Vite already
+// content-hashes), so each release gets a new cache and the activate step
+// evicts the old one; the list is what install precaches. Deterministic: the
+// same build stamps the same bytes. Run as part of `npm run build`, after
+// `vite build`.
 import { createHash } from 'node:crypto'
 import { readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const scriptDir = dirname(fileURLToPath(import.meta.url))
-const outDir = join(scriptDir, '..', '..', 'internal', 'reporting', 'ui')
-const swFile = join(outDir, 'sw.js')
 const CACHE_LINE = /^const CACHE = '[^']*'$/m
+const ASSETS_LINE = /^const ASSETS = \[.*\]$/m
 
-const assets = readdirSync(join(outDir, 'assets')).sort()
-const version = createHash('sha256').update(assets.join('\n')).digest('hex').slice(0, 12)
+// stamp returns sw with its CACHE and ASSETS lines set for the given built
+// asset file names (as listed in the assets directory).
+export function stamp(sw: string, assets: string[]): string {
+  if (!CACHE_LINE.test(sw)) throw new Error(`no "const CACHE = '…'" line to stamp`)
+  if (!ASSETS_LINE.test(sw)) throw new Error('no "const ASSETS = […]" line to stamp')
+  const names = [...assets].sort()
+  const version = createHash('sha256').update(names.join('\n')).digest('hex').slice(0, 12)
+  const urls = names.map((name) => `/app/assets/${name}`)
+  return sw
+    .replace(CACHE_LINE, `const CACHE = 'twillingate-app-${version}'`)
+    .replace(ASSETS_LINE, `const ASSETS = ${JSON.stringify(urls)}`)
+}
 
-const sw = readFileSync(swFile, 'utf8')
-if (!CACHE_LINE.test(sw)) throw new Error(`${swFile}: no "const CACHE = '…'" line to stamp`)
-writeFileSync(swFile, sw.replace(CACHE_LINE, `const CACHE = 'app-${version}'`))
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  const outDir = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'internal', 'reporting', 'ui')
+  const swFile = join(outDir, 'sw.js')
+  writeFileSync(swFile, stamp(readFileSync(swFile, 'utf8'), readdirSync(join(outDir, 'assets'))))
+}

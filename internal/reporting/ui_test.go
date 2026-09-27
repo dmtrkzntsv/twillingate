@@ -142,3 +142,28 @@ func TestUIRefusesFramingAndSniffing(t *testing.T) {
 		}
 	}
 }
+
+// The service worker precaches the shell's scripts and styles at install, so
+// an offline launch can render; a build that forgot to stamp the list, or a
+// bundle rebuilt without re-stamping, would ship a worker missing them.
+func TestServiceWorkerPrecachesEveryAsset(t *testing.T) {
+	sw, err := fs.ReadFile(uiFS, "ui/sw.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assets, err := fs.ReadDir(uiFS, "ui/assets")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(assets) == 0 {
+		t.Fatal("no built assets")
+	}
+	for _, a := range assets {
+		if !strings.Contains(string(sw), `"/app/assets/`+a.Name()+`"`) {
+			t.Errorf("sw.js does not precache /app/assets/%s", a.Name())
+		}
+	}
+	if !strings.Contains(string(sw), "const CACHE = 'twillingate-app-") {
+		t.Error("sw.js cache name is not under the twillingate-app- prefix")
+	}
+}
