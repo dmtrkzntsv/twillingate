@@ -1,6 +1,6 @@
 {
   "component": "table",
-  "title": "Attribute values by day",
+  "title": "Top attribute values by day",
   "props": {
     "formats": {
       "Count": "number",
