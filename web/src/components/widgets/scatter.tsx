@@ -39,25 +39,27 @@ export const contract: Contract = {
   defaultHeight: 8,
 }
 
+// x and y share one `format` (both axes use the same tickFormatter), so
+// both are plain counts here rather than mixing a count with a duration.
 export const examples: Example[] = [
   {
-    title: 'Pages: views vs time on page',
-    props: { format: 'duration' },
+    title: 'Pages: visitors vs views',
+    props: { format: 'number' },
     data: {
       columns: ['x', 'y', 'series', 'size'],
       rows: [
-        ['450', '95', 'docs', '40'],
-        ['620', '110', 'docs', '55'],
-        ['310', '80', 'docs', '30'],
-        ['780', '130', 'docs', '70'],
-        ['200', '60', 'docs', '20'],
-        ['540', '105', 'docs', '48'],
-        ['1200', '45', 'marketing', '90'],
-        ['900', '55', 'marketing', '75'],
-        ['1500', '40', 'marketing', '110'],
-        ['700', '60', 'marketing', '60'],
-        ['1100', '50', 'marketing', '85'],
-        ['950', '48', 'marketing', '78'],
+        ['450', '2.3', 'docs', '40'],
+        ['620', '2.8', 'docs', '55'],
+        ['310', '1.9', 'docs', '30'],
+        ['780', '3.1', 'docs', '70'],
+        ['200', '1.5', 'docs', '20'],
+        ['540', '2.6', 'docs', '48'],
+        ['1200', '1.2', 'marketing', '90'],
+        ['900', '1.4', 'marketing', '75'],
+        ['1500', '1.1', 'marketing', '110'],
+        ['700', '1.6', 'marketing', '60'],
+        ['1100', '1.3', 'marketing', '85'],
+        ['950', '1.35', 'marketing', '78'],
       ],
       truncated: false,
     },

@@ -31,8 +31,10 @@ export const contract: Contract = {
   defaultHeight: 8,
 }
 
-// Two levels via one flat `parent` column: browsers group under '' (the
-// implicit root), versions group under their browser's name.
+// Two levels via one flat `parent` column: the component groups rows by
+// `parent`, one top-level box per distinct value, so every row here is a
+// leaf (a version) whose `parent` names its browser -- no row stands for
+// the browser itself, or it would double as a second, duplicate box.
 export const examples: Example[] = [
   {
     title: 'Browsers and versions',
@@ -40,16 +42,14 @@ export const examples: Example[] = [
     data: {
       columns: ['label', 'value', 'parent'],
       rows: [
-        ['Chrome', '620', ''],
-        ['Safari', '480', ''],
-        ['Firefox', '210', ''],
-        ['Edge', '90', ''],
         ['128', '380', 'Chrome'],
         ['127', '240', 'Chrome'],
         ['17', '300', 'Safari'],
         ['16', '180', 'Safari'],
         ['129', '130', 'Firefox'],
         ['128', '80', 'Firefox'],
+        ['121', '70', 'Edge'],
+        ['120', '20', 'Edge'],
       ],
       truncated: false,
     },
