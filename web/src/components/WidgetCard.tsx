@@ -3,13 +3,13 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { ChevronDownIcon, CircleAlertIcon, CircleOffIcon, CloudOffIcon, InboxIcon, RefreshCwIcon, TriangleAlertIcon } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card } from '@/components/ui/card'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useNow } from '@/hooks/use-now'
 import { ApiError, type SqlData, type Widget, type WidgetData, type WidgetDataQuery } from '@/lib/api'
 import { formatDuration } from '@/lib/time'
 import { canRefresh, componentOf, refreshWidget, widgetQuery } from '@/lib/widget-query'
+import WidgetFrame from './WidgetFrame'
 import WidgetSkeleton from './WidgetSkeleton'
 
 interface Props {
@@ -31,45 +31,44 @@ export default function WidgetCard({ widget, params, idle = false }: Props) {
   const label = widget.title ?? widget.name
 
   return (
-    <Card data-slot="widget-card" className="relative h-full min-w-0 gap-1.5 overflow-hidden p-3.5 shadow-[0_1px_2px_rgb(11_31_54/0.04),0_6px_16px_-10px_rgb(11_31_54/0.14)] dark:shadow-none">
-      {(widget.title || truncated) && (
-        <div className={`flex min-h-7 min-w-0 items-center gap-2 ${refreshable ? 'pr-8' : ''}`}>
-          {widget.title && <h3 className="truncate text-sm font-medium text-muted-foreground">{widget.title}</h3>}
-          {truncated && (
-            <Badge variant="outline" className="min-w-0 shrink text-muted-foreground">
-              <span className="truncate">partial: narrow the range or group the query</span>
-            </Badge>
-          )}
-        </div>
-      )}
-      <div className="relative min-h-0 flex-1 overflow-auto">
-        {removed ? (
-          <CardState icon={<CircleOffIcon />} title="Component removed" />
-        ) : answer ? (
-          // Data already on screen stays there when a later refetch fails.
-          isEmpty(answer) ? (
-            <CardState icon={<InboxIcon />} title={answer.source_type === 'md' ? 'Nothing to show' : 'No data for this range'} />
-          ) : (
-            <Component data={answer.data!} props={widget.props} />
-          )
-        ) : query.isError ? (
-          <FailedState error={query.error} onRetry={() => query.refetch()} />
+    <WidgetFrame
+      title={widget.title}
+      badge={
+        truncated && (
+          <Badge variant="outline" className="min-w-0 shrink text-muted-foreground">
+            <span className="truncate">partial: narrow the range or group the query</span>
+          </Badge>
+        )
+      }
+      actions={
+        refreshable && (
+          <>
+            {answer && query.isError && <StaleWarning error={query.error} />}
+            <RefreshButton
+              label={`Refresh ${label}`}
+              data={answer}
+              busy={query.isFetching}
+              onRefresh={() => void refreshWidget(client, widget, params).catch(() => {})}
+            />
+          </>
+        )
+      }
+    >
+      {removed ? (
+        <CardState icon={<CircleOffIcon />} title="Component removed" />
+      ) : answer ? (
+        // Data already on screen stays there when a later refetch fails.
+        isEmpty(answer) ? (
+          <CardState icon={<InboxIcon />} title={answer.source_type === 'md' ? 'Nothing to show' : 'No data for this range'} />
         ) : (
-          <WidgetSkeleton widget={widget} />
-        )}
-      </div>
-      {refreshable && (
-        <div className="absolute top-2.5 right-2.5 flex items-center">
-          {answer && query.isError && <StaleWarning error={query.error} />}
-          <RefreshButton
-            label={`Refresh ${label}`}
-            data={answer}
-            busy={query.isFetching}
-            onRefresh={() => void refreshWidget(client, widget, params).catch(() => {})}
-          />
-        </div>
+          <Component data={answer.data!} props={widget.props} />
+        )
+      ) : query.isError ? (
+        <FailedState error={query.error} onRetry={() => query.refetch()} />
+      ) : (
+        <WidgetSkeleton widget={widget} />
       )}
-    </Card>
+    </WidgetFrame>
   )
 }
 
