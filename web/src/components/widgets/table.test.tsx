@@ -61,9 +61,9 @@ describe('table', () => {
       { colorscale: ['visitors'] }
     )
     const cells = container.querySelectorAll('tbody td')
-    // row 1: page, visitors=0; row 2: page, visitors=100
+    // row 1: page, visitors=0; row 2: page, visitors=100 (the top of the scale, capped at 45%)
     expect((cells[1] as HTMLElement).style.backgroundColor).toContain('0%')
-    expect((cells[3] as HTMLElement).style.backgroundColor).toContain('100%')
+    expect((cells[3] as HTMLElement).style.backgroundColor).toContain('45%')
     // an untouched column never gets a background shade.
     expect((cells[0] as HTMLElement).style.backgroundColor).toBe('')
   })

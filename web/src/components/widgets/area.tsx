@@ -1,3 +1,4 @@
+import { useId } from 'react'
 import { Area as RechartsArea, AreaChart, CartesianGrid, XAxis, YAxis } from 'recharts'
 import {
   ChartContainer,
@@ -45,6 +46,8 @@ export const contract: Contract = {
 export default function Area({ data, props }: WidgetProps<AreaProps>) {
   const sql = data as SqlData
   const records = toRecords(sql, contract)
+  // An SVG id, so only characters url(#...) takes as they are.
+  const fade = 'area' + useId().replace(/[^a-zA-Z0-9_-]/g, '')
   if (records.length === 0) return null
 
   const format = props.format ?? 'number'
@@ -52,10 +55,20 @@ export default function Area({ data, props }: WidgetProps<AreaProps>) {
   const hasSeries = sql.columns.includes('series')
   const { rows, keys } = hasSeries ? pivot(records, 'x', 'series', 'y') : { rows: records, keys: ['y'] }
   const config = hasSeries ? seriesConfig(keys) : { y: { label: 'y', color: 'var(--chart-1)' } }
+  const colors = Math.min(keys.length, 5)
 
   return (
     <ChartContainer config={config} className="h-full w-full">
       <AreaChart data={rows}>
+        <defs>
+          {/* Each colour fades toward the axis, like light into deep water. */}
+          {Array.from({ length: colors }, (_, c) => (
+            <linearGradient key={c} id={`${fade}-${c}`} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={`var(--chart-${c + 1})`} stopOpacity={0.5} />
+              <stop offset="100%" stopColor={`var(--chart-${c + 1})`} stopOpacity={0.06} />
+            </linearGradient>
+          ))}
+        </defs>
         <CartesianGrid vertical={false} />
         <XAxis dataKey="x" interval="preserveStartEnd" minTickGap={32} tickLine={false} axisLine={false} />
         <YAxis
@@ -72,9 +85,9 @@ export default function Area({ data, props }: WidgetProps<AreaProps>) {
             type={curve}
             dataKey={key}
             stackId={props.stacked ? 'stack' : undefined}
-            fill={`var(--chart-${(i % 5) + 1})`}
+            fill={`url(#${fade}-${i % 5})`}
             stroke={`var(--chart-${(i % 5) + 1})`}
-            fillOpacity={0.4}
+            strokeWidth={2}
             isAnimationActive={false}
           />
         ))}

@@ -26,7 +26,11 @@ export default function ReportTabs({ reports, currentId, onSelect }: Props) {
         <div className="flex h-full items-center overflow-x-auto overflow-y-hidden [scrollbar-width:none]">
           <TabsList variant="line" aria-label="Reports" className="w-max">
             {reports.map((d) => (
-              <TabsTrigger key={d.dashboard_id} value={String(d.dashboard_id)} className="flex-none px-3">
+              <TabsTrigger
+                key={d.dashboard_id}
+                value={String(d.dashboard_id)}
+                className="flex-none px-3 after:rounded-full after:bg-primary! data-[state=active]:text-foreground"
+              >
                 {d.title}
               </TabsTrigger>
             ))}

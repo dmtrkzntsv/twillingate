@@ -30,7 +30,7 @@ export default function AppShell({ dashboards, currentId, children }: Props) {
   return (
     <SidebarProvider open={open} onOpenChange={setOpen}>
       <AppSidebar dashboards={dashboards} currentId={currentId} />
-      <SidebarInset className="min-w-0">{children}</SidebarInset>
+      <SidebarInset className="sky-wash min-w-0">{children}</SidebarInset>
     </SidebarProvider>
   )
 }
@@ -38,7 +38,7 @@ export default function AppShell({ dashboards, currentId, children }: Props) {
 /** The bar across the top of the page: the sidebar toggle, then the report tabs or a label. */
 export function TopBar({ children }: { children?: ReactNode }) {
   return (
-    <header className="sticky top-0 z-20 flex h-12 shrink-0 items-center gap-2 border-b bg-background/95 px-3 backdrop-blur sm:px-4">
+    <header className="sticky top-0 z-20 flex h-12 shrink-0 items-center gap-2 border-b border-border/70 bg-background/55 px-3 backdrop-blur-md sm:px-4">
       <SidebarTrigger className="-ml-1" />
       <Separator orientation="vertical" className="mr-1 data-[orientation=vertical]:h-4" />
       {children}

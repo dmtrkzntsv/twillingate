@@ -5,12 +5,12 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
-import { Skeleton } from '@/components/ui/skeleton'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useNow } from '@/hooks/use-now'
 import { ApiError, type SqlData, type Widget, type WidgetData, type WidgetDataQuery } from '@/lib/api'
 import { formatDuration } from '@/lib/time'
 import { canRefresh, componentOf, refreshWidget, widgetQuery } from '@/lib/widget-query'
+import WidgetSkeleton from './WidgetSkeleton'
 
 interface Props {
   widget: Widget
@@ -31,10 +31,10 @@ export default function WidgetCard({ widget, params, idle = false }: Props) {
   const label = widget.title ?? widget.name
 
   return (
-    <Card data-slot="widget-card" className="relative h-full min-w-0 gap-1 overflow-hidden p-3 shadow-xs">
+    <Card data-slot="widget-card" className="relative h-full min-w-0 gap-1.5 overflow-hidden p-3.5 shadow-[0_1px_2px_rgb(11_31_54/0.04),0_6px_16px_-10px_rgb(11_31_54/0.14)] dark:shadow-none">
       {(widget.title || truncated) && (
         <div className={`flex min-h-7 min-w-0 items-center gap-2 ${refreshable ? 'pr-8' : ''}`}>
-          {widget.title && <h3 className="truncate text-sm font-medium">{widget.title}</h3>}
+          {widget.title && <h3 className="truncate text-sm font-medium text-muted-foreground">{widget.title}</h3>}
           {truncated && (
             <Badge variant="outline" className="min-w-0 shrink text-muted-foreground">
               <span className="truncate">partial: narrow the range or group the query</span>
@@ -55,7 +55,7 @@ export default function WidgetCard({ widget, params, idle = false }: Props) {
         ) : query.isError ? (
           <FailedState error={query.error} onRetry={() => query.refetch()} />
         ) : (
-          <Skeleton className="h-full w-full" />
+          <WidgetSkeleton widget={widget} />
         )}
       </div>
       {refreshable && (
@@ -163,7 +163,8 @@ function RefreshButton({ label, data, busy, onRefresh }: RefreshProps) {
   const ready = canRefresh(data, now) && !busy
   return (
     // The wrapper carries the reveal, so the button's own disabled look is not overridden.
-    <span className="hover-reveal" data-busy={busy || undefined}>
+    // A first load already shows its skeleton, so only a refetch keeps it in view.
+    <span className="hover-reveal" data-busy={(busy && data !== undefined) || undefined}>
       <Tooltip>
         <TooltipTrigger asChild>
           <Button
