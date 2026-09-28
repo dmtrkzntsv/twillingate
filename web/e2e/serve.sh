@@ -19,7 +19,7 @@ bin="$scratch/twillingate"
 db="$scratch/e2e.db"
 env_file="$scratch/e2e.env"
 
-(cd "$root" && go build -o "$bin" ./cmd/twillingate)
+(cd "$root" && make ui && go build -o "$bin" ./cmd/twillingate)
 
 cat >"$env_file" <<EOF
 DATABASE_DSN='sqlite://$db'

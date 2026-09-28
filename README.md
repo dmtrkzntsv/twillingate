@@ -115,7 +115,7 @@ install too.
 
 ```bash
 make check       # what CI runs: vet + coverage gate + restore test
-make build       # single binary
+make build       # single binary (needs Go and Node 22: it builds web/ first)
 make run         # local server on 127.0.0.1:8080 with a dev project
 make smoke       # boot the real binary, POST a batch, verify rows land
 make seed-demo   # 180 days of demo traffic in local/twillingate.db

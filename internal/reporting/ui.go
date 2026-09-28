@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"embed"
 	"encoding/hex"
+	"io/fs"
 	"net/http"
 	"path"
 	"strings"
@@ -15,7 +16,9 @@ import (
 // uiFS is the reporting UI's build output: index.html, assets/, the
 // service worker and manifest, and components.json (this package's own
 // input, via Manifest). "all:" so files starting with "_" are embedded
-// too, matching Vite's default asset naming.
+// too, matching Vite's default asset naming. Only components.json is
+// committed; `make ui` builds the rest, so a bare `go build` of a fresh
+// checkout embeds no app (see UI).
 //
 //go:embed all:ui
 var uiFS embed.FS
@@ -42,7 +45,27 @@ func Manifest() []byte {
 // costs a 304. components.json is Manifest's input, not the app's, and a
 // missing asset is a 404 rather than the shell served as a script. No
 // response may be framed by another page or sniffed into another type.
+// A binary built without the app (go build before make ui) answers 503
+// with how to build it, rather than panicking on every request.
 func UI() http.Handler {
+	return uiHandler(uiFS)
+}
+
+func uiHandler(files fs.ReadFileFS) http.Handler {
+	if _, err := fs.Stat(files, "ui/index.html"); err != nil {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "this binary was built without the dashboard app: build it with `make build`", http.StatusServiceUnavailable)
+		})
+	}
+	// The ETags of the files that keep their names across releases.
+	etags := sync.OnceValue(func() map[string]string {
+		tags := map[string]string{}
+		for _, name := range []string{"index.html", "sw.js", "manifest.webmanifest"} {
+			sum := sha256.Sum256(mustRead(files, "ui/"+name))
+			tags[name] = `"` + hex.EncodeToString(sum[:12]) + `"`
+		}
+		return tags
+	})
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
 		h.Set("X-Frame-Options", "DENY")
@@ -53,7 +76,7 @@ func UI() http.Handler {
 			http.NotFound(w, r)
 			return
 		}
-		b, err := uiFS.ReadFile("ui/" + name)
+		b, err := files.ReadFile("ui/" + name)
 		switch {
 		case err == nil:
 		case name == "assets" || strings.HasPrefix(name, "assets/"):
@@ -61,9 +84,9 @@ func UI() http.Handler {
 			return
 		default:
 			name = "index.html"
-			b = uiIndex()
+			b = mustRead(files, "ui/index.html")
 		}
-		switch tag, revalidated := uiETags()[name]; {
+		switch tag, revalidated := etags()[name]; {
 		case strings.HasPrefix(name, "assets/"):
 			h.Set("Cache-Control", "public, max-age=31536000, immutable")
 		case revalidated:
@@ -85,27 +108,13 @@ var uiTypes = map[string]string{
 	".webmanifest": "application/manifest+json",
 }
 
-// uiETags are the ETags of the files that keep their names across
-// releases (the shell, the service worker, the manifest): a hash of each
-// one's embedded content, computed once.
-var uiETags = sync.OnceValue(func() map[string]string {
-	tags := map[string]string{}
-	for _, name := range []string{"index.html", "sw.js", "manifest.webmanifest"} {
-		b, err := uiFS.ReadFile("ui/" + name)
-		if err != nil {
-			panic("reporting: ui/" + name + ": " + err.Error())
-		}
-		sum := sha256.Sum256(b)
-		tags[name] = `"` + hex.EncodeToString(sum[:12]) + `"`
-	}
-	return tags
-})
-
-// uiIndex is the app's shell, embedded at build time like components.json.
-func uiIndex() []byte {
-	b, err := uiFS.ReadFile("ui/index.html")
+// mustRead reads a file every build of the app has: missing means the
+// build that produced this binary is broken, not a runtime condition to
+// recover from.
+func mustRead(files fs.ReadFileFS, name string) []byte {
+	b, err := files.ReadFile(name)
 	if err != nil {
-		panic("reporting: ui/index.html: " + err.Error())
+		panic("reporting: " + name + ": " + err.Error())
 	}
 	return b
 }

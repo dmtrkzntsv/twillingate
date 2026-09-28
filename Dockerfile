@@ -15,11 +15,22 @@
 # cross-compile to TARGET*, instead of QEMU emulating the compiler itself. The
 # binary is CGO_ENABLED=0, so there is no C toolchain to cross-target. Building
 # arm64/arm under emulation cost ~11 min per release against ~80s natively.
+# The dashboards app the binary embeds (internal/reporting/ui): only its
+# components.json is in the repository. Built once on the native platform;
+# the output is the same for every target arch.
+FROM --platform=$BUILDPLATFORM node:22-alpine AS web-build
+WORKDIR /src/web
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+COPY web/ ./
+RUN npm run build
+
 FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS go-build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
+COPY --from=web-build /src/internal/reporting/ui ./internal/reporting/ui
 ARG VERSION=dev
 ARG TARGETOS
 ARG TARGETARCH

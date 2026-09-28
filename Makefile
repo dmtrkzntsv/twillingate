@@ -2,16 +2,31 @@ BIN := twillingate
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X github.com/dmtrkzntsv/twillingate/internal/version.Version=$(VERSION)
 
-.PHONY: build test check vet build-all dist docker run smoke test-install test-compose test-restore dashboards seed-demo clean
+.PHONY: build ui test check vet build-all dist docker run smoke test-install test-compose test-restore dashboards seed-demo clean
 
-build:
+# The dashboards app (web/) builds into internal/reporting/ui, which the
+# binary embeds. Only its components.json is committed, so every Go build
+# and test run needs this first; it reruns only when a web/ input is newer
+# than the last build, and reinstalls only when the lockfile changed.
+UI := internal/reporting/ui/index.html
+WEB_SRC := $(shell find web/src web/public web/scripts -type f) web/index.html web/package.json web/vite.config.ts $(wildcard web/tsconfig*.json)
+
+ui: $(UI)
+
+$(UI): web/node_modules/.package-lock.json $(WEB_SRC)
+	cd web && npm run build
+
+web/node_modules/.package-lock.json: web/package-lock.json
+	cd web && npm ci
+
+build: $(UI)
 	CGO_ENABLED=0 go build -trimpath -ldflags '$(LDFLAGS)' -o $(BIN) ./cmd/twillingate
 
 # GOPKGS excludes node_modules: some npm packages ship Go source that
 # go list ./... would otherwise treat as part of this module.
 GOPKGS = $(shell go list ./... | grep -v '/node_modules/')
 
-test:
+test: $(UI)
 	go test -race $(GOPKGS)
 
 vet:
@@ -19,11 +34,11 @@ vet:
 
 # test-restore is in check because, unlike the docker-backed test-install and
 # test-compose, it only needs sqlite3 and runs in a couple of seconds.
-check: vet
+check: vet $(UI)
 	./scripts/coverage.sh
 	./scripts/test-restore.sh
 
-build-all:
+build-all: $(UI)
 	for target in linux/amd64 linux/arm64 linux/arm; do \
 		GOOS=$${target%/*} GOARCH=$${target#*/} CGO_ENABLED=0 \
 		go build -trimpath -ldflags '$(LDFLAGS)' -o dist/$(BIN)-$${target%/*}-$${target#*/} ./cmd/twillingate || exit 1; \

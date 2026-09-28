@@ -34,7 +34,7 @@ docker compose exec twillingate twillingate key issue -project-id 1 -label web
 ```bash
 # From a published release (no checkout needed):
 curl -fsSL https://raw.githubusercontent.com/dmtrkzntsv/twillingate/main/deploy/systemd/install.sh | sudo bash
-# Or from a checkout: git clone, make build, then
+# Or from a checkout (Go and Node 22 on the host): git clone, make build, then
 sudo ./deploy/systemd/install.sh          # --user NAME to skip the prompt, --yes for defaults
 ```
 
@@ -485,6 +485,7 @@ backups found` against a written bucket means a version mismatch.
 
 ```bash
 # On a fresh host: install, then restore BEFORE starting the collector.
+# make build needs Go and Node 22; or install a published release instead.
 git clone <repo> && cd twillingate && make build
 sudo ./deploy/systemd/install.sh --user twillingate --yes
 sudo vi /etc/twillingate/twillingate.env       # same R2 credentials

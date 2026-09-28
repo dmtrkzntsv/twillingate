@@ -17,3 +17,8 @@ evidence/.evidence
 evidence/build
 evidence/site.a
 evidence/site.b
+# Built inside the image (web-build stage), never taken from the checkout.
+web/node_modules
+sdk/node_modules
+internal/reporting/ui/*
+!internal/reporting/ui/components.json
