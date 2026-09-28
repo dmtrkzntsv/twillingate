@@ -218,7 +218,7 @@ describe('beginLogin', () => {
     const [registerURL, registerInit] = vi.mocked(fetch).mock.calls[2]
     expect(registerURL).toBe(`${location.origin}/oauth/register`)
     const body = JSON.parse(registerInit?.body as string)
-    expect(body.client_name).toBe('twillingate dashboards')
+    expect(body.client_name).toBe('Twillingate Analytics')
     expect(body.token_endpoint_auth_method).toBe('none')
     expect(body.redirect_uris).toEqual([`${location.origin}/app/callback`])
   })

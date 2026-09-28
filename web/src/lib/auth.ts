@@ -4,7 +4,7 @@
 
 const METADATA_PATH = '/.well-known/oauth-protected-resource'
 const CALLBACK_PATH = '/app/callback'
-const CLIENT_NAME = 'twillingate dashboards'
+const CLIENT_NAME = 'Twillingate Analytics'
 
 const CLIENT_ID_KEY = 'twillingate.client_id'
 const REFRESH_TOKEN_KEY = 'twillingate.refresh_token'
