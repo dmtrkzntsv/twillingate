@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router'
+import SeaLoading from '@/components/SeaLoading'
 import StatusCard from '@/components/StatusCard'
 import { Button } from '@/components/ui/button'
 import { completeLogin } from '@/lib/auth'
@@ -22,7 +23,8 @@ function Callback() {
     }
   }, [navigate])
 
-  if (!error) return <StatusCard title="Signing in…" />
+  // Straight back from the connect page: the same sea until the app opens.
+  if (!error) return <SeaLoading />
   return (
     <StatusCard title="Sign in failed" description={error}>
       <Button asChild variant="outline" className="w-full">

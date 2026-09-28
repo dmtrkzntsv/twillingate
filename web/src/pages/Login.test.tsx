@@ -21,6 +21,17 @@ afterEach(() => {
 })
 
 describe('Login', () => {
+  it('shows only a loading note on the way to the connect page', async () => {
+    vi.spyOn(auth, 'detectAuth').mockResolvedValue('login')
+    const begin = vi.spyOn(auth, 'beginLogin').mockReturnValue(new Promise(() => {}))
+    renderLogin()
+
+    expect(screen.getByRole('status')).toHaveTextContent('Loading…')
+    await vi.waitFor(() => expect(begin).toHaveBeenCalledWith('/dashboards/4'))
+    expect(screen.getByRole('status')).toHaveTextContent('Loading…')
+    expect(screen.queryByRole('heading', { name: 'twillingate' })).toBeNull()
+  })
+
   it('takes a pasted token and returns to the page asked for', async () => {
     vi.spyOn(auth, 'detectAuth').mockResolvedValue('paste')
     const paste = vi.spyOn(auth, 'setPastedToken').mockImplementation(() => {})
