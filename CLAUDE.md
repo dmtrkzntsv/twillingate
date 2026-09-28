@@ -68,11 +68,14 @@ not hand-edited.
 pushing. `make build` compiles; `make test` runs the race-enabled suite. The
 SDK bundle `internal/server/twillingate.js` is committed: after any change in
 `sdk/`, run `npm run build` there and commit the result, or CI's drift check
-fails. The same holds for `web/`: `npm run build` there regenerates
-`internal/reporting/ui/` (the bundle and `components.json`). CI's `web` job
-runs its typecheck, tests and build, then the drift check on
-`internal/reporting/ui`; its `e2e` job runs the Playwright suite against a
-built binary (`cd web && npm run e2e`).
+fails. The `web/` build is not committed: `make ui` (a prerequisite of
+`build`, `test` and `check`, so they need Node 22) builds it into
+`internal/reporting/ui/`, which the binary embeds; a bare `go build` without
+it serves a 503 at `/app/`. Only `internal/reporting/ui/components.json` is
+committed, since the Go server validates widgets against it: after changing a
+widget contract, commit the regenerated file, or CI's `web` job (typecheck,
+tests, build, then the drift check on that file) fails. Its `e2e` job runs
+the Playwright suite against a built binary (`cd web && npm run e2e`).
 
 ## Documentation
 

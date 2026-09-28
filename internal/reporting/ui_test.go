@@ -7,6 +7,7 @@ import (
 	"path"
 	"strings"
 	"testing"
+	"testing/fstest"
 )
 
 func serveUI(t *testing.T, target string) *httptest.ResponseRecorder {
@@ -165,5 +166,14 @@ func TestServiceWorkerPrecachesEveryAsset(t *testing.T) {
 	}
 	if !strings.Contains(string(sw), "const CACHE = 'twillingate-app-") {
 		t.Error("sw.js cache name is not under the twillingate-app- prefix")
+	}
+}
+
+func TestUIWithoutTheAppSaysHowToBuildIt(t *testing.T) {
+	files := fstest.MapFS{"ui/components.json": {Data: []byte(`{"components":[]}`)}}
+	rec := httptest.NewRecorder()
+	uiHandler(files).ServeHTTP(rec, httptest.NewRequest("GET", "/app/dashboards/3", nil))
+	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "make build") {
+		t.Fatalf("got %d %q, want 503 naming make build", rec.Code, rec.Body.String())
 	}
 }

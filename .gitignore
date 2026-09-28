@@ -9,3 +9,7 @@ dist/
 .env
 backoffice/evidence/build/
 backoffice/evidence/.evidence/
+# The dashboards app's build (make ui); only its component manifest is
+# committed, as the Go server's input.
+internal/reporting/ui/*
+!internal/reporting/ui/components.json

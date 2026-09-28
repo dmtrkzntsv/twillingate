@@ -26,6 +26,10 @@ jobs:
           restore-keys: |
             go-${{ hashFiles('go.sum') }}-
             go-
+      # make check builds the dashboards app first: the binary embeds it and
+      # only its components.json is committed.
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: web/package-lock.json }
       - run: make check
       - run: make build
 
@@ -49,10 +53,11 @@ jobs:
       - name: committed bundle matches the source
         run: git diff --exit-code internal/server/twillingate.js
 
-  # The dashboards app is built and its output committed (internal/reporting/ui,
-  # embedded by internal/reporting) so the Go build never needs Node either.
-  # Same shape as the sdk job: typecheck, tests, then rebuild and fail on any
-  # drift from the committed bytes.
+  # The dashboards app builds into internal/reporting/ui, embedded by
+  # internal/reporting. The bundle is not committed (make builds it), but its
+  # components.json is: the Go server validates widgets against it. This job
+  # runs typecheck and tests, then rebuilds and fails if the manifest drifted
+  # from the widget contracts.
   web:
     runs-on: ubuntu-latest
     steps:
@@ -67,8 +72,8 @@ jobs:
         working-directory: web
       - run: npm run build
         working-directory: web
-      - name: committed build matches the source
-        run: git diff --exit-code internal/reporting/ui
+      - name: committed component manifest matches the source
+        run: git diff --exit-code internal/reporting/ui/components.json
 
   # A real Chromium drives a seeded `twillingate serve`: login, every system
   # dashboard at desktop and phone widths, tab selection, the standalone
