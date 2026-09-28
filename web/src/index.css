@@ -256,6 +256,16 @@
   }
 }
 
+/* A loading note that stays hidden through a quick hop and shows on a slow one. */
+.fade-in-late {
+  animation: fade-in-late 300ms ease-out 400ms both;
+}
+@keyframes fade-in-late {
+  from {
+    opacity: 0;
+  }
+}
+
 /* The iceberg surfacing on first paint: the page's one entrance. */
 .surface-in {
   animation: surface-in 900ms cubic-bezier(0.22, 1, 0.36, 1) both;

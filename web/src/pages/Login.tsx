@@ -1,7 +1,8 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { useNavigate, useSearchParams } from 'react-router'
-import { ArrowRightIcon, LoaderCircleIcon } from 'lucide-react'
+import { ArrowRightIcon } from 'lucide-react'
 import IcebergLogo, { WATERLINE } from '@/components/IcebergLogo'
+import SeaLoading, { SEA } from '@/components/SeaLoading'
 import Snowfall from '@/components/Snowfall'
 import { authProviderHint, beginLogin, detectAuth, sanitizeReturnTo, setPastedToken } from '@/lib/auth'
 
@@ -56,17 +57,19 @@ function Login() {
     navigate(returnTo, { replace: true })
   }
 
+  // Most sign-ins pass straight through to the connect page: the iceberg
+  // is only for the two cases that stay here, so it does not flash by.
+  if (mode === 'checking' || mode === 'redirecting') return <SeaLoading />
+
   const hint =
     mode === 'paste'
       ? providerHint
         ? `${providerHint} has no self-service sign-in. Paste an API token to continue.`
         : 'Paste an API token to continue.'
-      : mode === 'error'
-        ? error
-        : null
+      : error
 
   return (
-    <main className="relative isolate flex min-h-svh flex-col items-center justify-center overflow-hidden bg-[radial-gradient(ellipse_at_50%_42%,#0b3a66_0%,#061a30_48%,#030b15_100%)] p-6 text-[#f8fcff]">
+    <main className={`relative isolate flex min-h-svh flex-col items-center justify-center overflow-hidden p-6 text-[#f8fcff] ${SEA}`}>
       <Snowfall className="absolute inset-0 z-20" />
 
       <div className="flex flex-col items-center gap-8">
@@ -101,7 +104,7 @@ function Login() {
                   <ArrowRightIcon className="size-4" />
                 </button>
               </form>
-            ) : mode === 'error' ? (
+            ) : (
               <div className={band + ' justify-between pl-5'}>
                 <span className="text-sm text-[#ffd0c8]">Sign-in didn't start</span>
                 <button
@@ -111,11 +114,6 @@ function Login() {
                 >
                   Try again
                 </button>
-              </div>
-            ) : (
-              <div className={band + ' justify-center gap-2.5 text-sm text-[#8fd3ff]'} role="status">
-                <LoaderCircleIcon className="size-4 animate-spin" aria-hidden="true" />
-                {mode === 'checking' ? 'Checking how to sign in…' : 'Redirecting to sign in…'}
               </div>
             )}
           </div>
