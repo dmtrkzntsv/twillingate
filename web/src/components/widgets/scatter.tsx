@@ -9,7 +9,7 @@ import {
 import { seriesConfig } from '@/lib/chart'
 import { formatValue, type Format } from '@/lib/format'
 import { toRecords } from '@/lib/records'
-import type { Contract, SqlData, WidgetProps } from './types'
+import type { Contract, Example, SqlData, WidgetProps } from './types'
 
 interface ScatterProps {
   format?: Format
@@ -38,6 +38,31 @@ export const contract: Contract = {
   defaultWidth: 6,
   defaultHeight: 8,
 }
+
+export const examples: Example[] = [
+  {
+    title: 'Pages: views vs time on page',
+    props: { format: 'duration' },
+    data: {
+      columns: ['x', 'y', 'series', 'size'],
+      rows: [
+        ['450', '95', 'docs', '40'],
+        ['620', '110', 'docs', '55'],
+        ['310', '80', 'docs', '30'],
+        ['780', '130', 'docs', '70'],
+        ['200', '60', 'docs', '20'],
+        ['540', '105', 'docs', '48'],
+        ['1200', '45', 'marketing', '90'],
+        ['900', '55', 'marketing', '75'],
+        ['1500', '40', 'marketing', '110'],
+        ['700', '60', 'marketing', '60'],
+        ['1100', '50', 'marketing', '85'],
+        ['950', '48', 'marketing', '78'],
+      ],
+      truncated: false,
+    },
+  },
+]
 
 export default function Scatter({ data, props }: WidgetProps<ScatterProps>) {
   const sql = data as SqlData

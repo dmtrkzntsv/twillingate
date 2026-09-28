@@ -1,6 +1,6 @@
 import { formatValue, type Format } from '@/lib/format'
 import { toRecords } from '@/lib/records'
-import type { Contract, SqlData, WidgetProps } from './types'
+import type { Contract, Example, SqlData, WidgetProps } from './types'
 
 interface HeatmapProps {
   format?: Format
@@ -29,6 +29,42 @@ export const contract: Contract = {
   defaultWidth: 6,
   defaultHeight: 10,
 }
+
+// Retention by cohort: only cells where cohort day + days since falls within
+// the tracked window (2026-09-01..06), so the grid is the usual triangle.
+export const examples: Example[] = [
+  {
+    title: 'Retention by cohort',
+    props: { format: 'percent', labels: true },
+    data: {
+      columns: ['x', 'y', 'value'],
+      rows: [
+        ['2026-09-01', '0', '1.00'],
+        ['2026-09-01', '1', '0.46'],
+        ['2026-09-01', '2', '0.33'],
+        ['2026-09-01', '3', '0.27'],
+        ['2026-09-01', '4', '0.22'],
+        ['2026-09-01', '5', '0.18'],
+        ['2026-09-02', '0', '1.00'],
+        ['2026-09-02', '1', '0.44'],
+        ['2026-09-02', '2', '0.31'],
+        ['2026-09-02', '3', '0.25'],
+        ['2026-09-02', '4', '0.20'],
+        ['2026-09-03', '0', '1.00'],
+        ['2026-09-03', '1', '0.43'],
+        ['2026-09-03', '2', '0.30'],
+        ['2026-09-03', '3', '0.24'],
+        ['2026-09-04', '0', '1.00'],
+        ['2026-09-04', '1', '0.42'],
+        ['2026-09-04', '2', '0.29'],
+        ['2026-09-05', '0', '1.00'],
+        ['2026-09-05', '1', '0.41'],
+        ['2026-09-06', '0', '1.00'],
+      ],
+      truncated: false,
+    },
+  },
+]
 
 function firstSeen(values: string[]): string[] {
   const seen: string[] = []

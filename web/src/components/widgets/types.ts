@@ -32,8 +32,20 @@ export interface WidgetProps<P = Record<string, unknown>> {
   props: P
 }
 
+/**
+ * A worked example the gallery renders: a result shaped exactly as the
+ * server returns it, and the props to show it with.
+ */
+export interface Example {
+  title: string
+  props: Record<string, unknown>
+  data: SqlData | MarkdownData
+}
+
 export interface WidgetModule {
   contract: Contract
+  /** At least one; the gallery shows each at the default size. */
+  examples: Example[]
   // `null` covers an empty result: "no data" is the card's job (Task 19),
   // not the widget's.
   default: (p: WidgetProps<any>) => ReactElement | null

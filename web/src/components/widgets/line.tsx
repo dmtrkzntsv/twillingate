@@ -9,7 +9,7 @@ import {
 import { seriesConfig } from '@/lib/chart'
 import { formatValue, type Format } from '@/lib/format'
 import { pivot, toRecords } from '@/lib/records'
-import type { Contract, SqlData, WidgetProps } from './types'
+import type { Contract, Example, SqlData, WidgetProps } from './types'
 
 interface LineProps {
   format?: Format
@@ -39,6 +39,57 @@ export const contract: Contract = {
   defaultWidth: 6,
   defaultHeight: 8,
 }
+
+export const examples: Example[] = [
+  {
+    title: 'Visitors per day',
+    props: { format: 'number', curve: 'monotone' },
+    data: {
+      columns: ['x', 'y'],
+      rows: [
+        ['2026-09-01', '240'],
+        ['2026-09-02', '255'],
+        ['2026-09-03', '260'],
+        ['2026-09-04', '275'],
+        ['2026-09-05', '300'],
+        ['2026-09-06', '290'],
+        ['2026-09-07', '310'],
+        ['2026-09-08', '320'],
+        ['2026-09-09', '335'],
+        ['2026-09-10', '340'],
+        ['2026-09-11', '355'],
+        ['2026-09-12', '360'],
+        ['2026-09-13', '375'],
+        ['2026-09-14', '390'],
+      ],
+      truncated: false,
+    },
+  },
+  {
+    title: 'Visitors per day by kind',
+    props: { curve: 'monotone' },
+    data: {
+      columns: ['x', 'series', 'y'],
+      rows: [
+        ['2026-09-01', 'web', '190'],
+        ['2026-09-01', 'app', '50'],
+        ['2026-09-02', 'web', '200'],
+        ['2026-09-02', 'app', '55'],
+        ['2026-09-03', 'web', '205'],
+        ['2026-09-03', 'app', '55'],
+        ['2026-09-04', 'web', '215'],
+        ['2026-09-04', 'app', '60'],
+        ['2026-09-05', 'web', '230'],
+        ['2026-09-05', 'app', '70'],
+        ['2026-09-06', 'web', '225'],
+        ['2026-09-06', 'app', '65'],
+        ['2026-09-07', 'web', '240'],
+        ['2026-09-07', 'app', '70'],
+      ],
+      truncated: false,
+    },
+  },
+]
 
 export default function Line({ data, props }: WidgetProps<LineProps>) {
   const sql = data as SqlData

@@ -9,7 +9,7 @@ import {
 } from '@/components/ui/chart'
 import { formatValue, type Format } from '@/lib/format'
 import { toRecords } from '@/lib/records'
-import type { Contract, SqlData, WidgetProps } from './types'
+import type { Contract, Example, SqlData, WidgetProps } from './types'
 
 interface PieProps {
   format?: Format
@@ -37,6 +37,23 @@ export const contract: Contract = {
   defaultWidth: 4,
   defaultHeight: 8,
 }
+
+export const examples: Example[] = [
+  {
+    title: 'Visitors by device',
+    props: { donut: true },
+    data: {
+      columns: ['label', 'value'],
+      rows: [
+        ['desktop', '620'],
+        ['mobile', '380'],
+        ['tablet', '95'],
+        ['Other', '25'],
+      ],
+      truncated: false,
+    },
+  },
+]
 
 export default function Pie({ data, props }: WidgetProps<PieProps>) {
   const records = toRecords(data as SqlData, contract)

@@ -9,7 +9,7 @@ import {
 } from '@/components/ui/chart'
 import { formatValue, type Format } from '@/lib/format'
 import { toRecords } from '@/lib/records'
-import type { Contract, SqlData, WidgetProps } from './types'
+import type { Contract, Example, SqlData, WidgetProps } from './types'
 
 interface RadialProps {
   format?: Format
@@ -36,6 +36,22 @@ export const contract: Contract = {
   defaultWidth: 4,
   defaultHeight: 8,
 }
+
+export const examples: Example[] = [
+  {
+    title: 'Signups toward goal',
+    props: {},
+    data: {
+      columns: ['label', 'value', 'max'],
+      rows: [
+        ['September', '420', '600'],
+        ['August', '580', '600'],
+        ['July', '495', '500'],
+      ],
+      truncated: false,
+    },
+  },
+]
 
 export default function Radial({ data, props }: WidgetProps<RadialProps>) {
   const sql = data as SqlData
