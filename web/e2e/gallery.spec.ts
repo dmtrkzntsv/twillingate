@@ -1,4 +1,7 @@
 import { expect, test, type Page } from '@playwright/test'
+// Pure, no React/Recharts underneath (unlike ../src/components/widgets, see
+// below), so importing it here is safe.
+import { rowsPx } from '../src/lib/grid'
 
 // Matches web/e2e/serve.sh's API_AUTH_DSN.
 const PASSWORD = 'e2e-pass'
@@ -55,17 +58,33 @@ for (const scheme of ['light', 'dark'] as const) {
     for (const name of NAMES) {
       const section = page.locator(`#component-${name}`)
       await section.scrollIntoViewIfNeeded()
-      const card = section.locator('[data-slot="widget-card"]').first()
-      await expect(card, name).toBeVisible()
-      const body = card.locator('[data-slot="widget-body"]')
-      await expect(body, name).toBeVisible()
-      // Not blank: drawn content with real height, not an empty body.
-      const drawn = await body.evaluate((el) => ({
-        children: el.querySelectorAll('*').length,
-        height: el.firstElementChild?.getBoundingClientRect().height ?? 0,
-      }))
-      expect(drawn.children, name).toBeGreaterThan(3)
-      expect(drawn.height, name).toBeGreaterThan(40)
+      const defaultHeight = Number(await section.getAttribute('data-default-height'))
+      const expectedHeight = rowsPx(defaultHeight)
+      const cards = section.locator('[data-slot="widget-card"]')
+      const count = await cards.count()
+      for (let i = 0; i < count; i++) {
+        const label = `${name}[${i}]`
+        const card = cards.nth(i)
+        await expect(card, label).toBeVisible()
+        // The card is drawn at the component's default size, like a
+        // dashboard would (finding 1): rowsPx(defaultHeight), not taller.
+        const cardHeight = await card.evaluate((el) => el.getBoundingClientRect().height)
+        expect(cardHeight, label).toBeGreaterThan(expectedHeight - 1)
+        expect(cardHeight, label).toBeLessThan(expectedHeight + 1)
+        const body = card.locator('[data-slot="widget-body"]')
+        await expect(body, label).toBeVisible()
+        // Not blank: drawn content with real height, not an empty body. Cards
+        // are now sized like a dashboard (finding 1), so a short component
+        // (e.g. markdown at height 2) legitimately has little room left for
+        // its body; a fixed pixel floor would fail those, so this only
+        // checks for a nonzero, not a collapsed, body.
+        const drawn = await body.evaluate((el) => ({
+          children: el.querySelectorAll('*').length,
+          height: el.firstElementChild?.getBoundingClientRect().height ?? 0,
+        }))
+        expect(drawn.children, label).toBeGreaterThan(3)
+        expect(drawn.height, label).toBeGreaterThan(0)
+      }
     }
     await testInfo.attach(`gallery-${scheme}.png`, {
       body: await page.screenshot({ fullPage: true }),

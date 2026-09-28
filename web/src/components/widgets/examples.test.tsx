@@ -2,7 +2,7 @@ import { render } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { toRecords } from '@/lib/records'
 import { widgets } from './index'
-import type { Contract, Example, SqlData } from './types'
+import type { Contract, SqlData } from './types'
 
 type Schema = { type?: string; enum?: unknown[]; items?: Schema; additionalProperties?: Schema | boolean }
 
@@ -61,7 +61,7 @@ describe('examples', () => {
   })
 
   it.each(entries)('%s: every example fits the contract', (_name, module) => {
-    for (const example of module.examples as Example[]) {
+    for (const example of module.examples) {
       const { contract } = module
       const errors = propErrors(example.props, contract)
       if ('markdown' in example.data) {
