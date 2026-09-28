@@ -23,7 +23,9 @@ export default function WidgetFrame({ title, badge, actions, children }: Props) 
           {badge}
         </div>
       )}
-      <div className="relative min-h-0 flex-1 overflow-auto">{children}</div>
+      <div data-slot="widget-body" className="relative min-h-0 flex-1 overflow-auto">
+        {children}
+      </div>
       {actions && <div className="absolute top-2.5 right-2.5 flex items-center">{actions}</div>}
     </Card>
   )

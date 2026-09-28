@@ -30,7 +30,15 @@ function CopyButton({ text, label }: { text: string; label: string }) {
     timer.current = setTimeout(() => setState('idle'), 2000)
   }
   return (
-    <Button variant="outline" size="sm" className="h-7" onClick={() => void copy()}>
+    <Button
+      variant="outline"
+      size="sm"
+      // h-auto/whitespace-normal: on a narrow card (a 3-wide widget's copy
+      // row, see the comment below), the label wraps instead of forcing
+      // the button past the card's edge.
+      className="h-auto min-h-7 max-w-full justify-start text-left whitespace-normal"
+      onClick={() => void copy()}
+    >
       {state === 'copied' ? <CheckIcon /> : state === 'failed' ? <TriangleAlertIcon /> : <CopyIcon />}
       {state === 'copied' ? 'Copied' : state === 'failed' ? 'Copy failed' : label}
     </Button>
@@ -118,7 +126,10 @@ export default function ComponentEntry({ name, module }: { name: string; module:
                     <Component data={example.data} props={example.props} />
                   </WidgetFrame>
                 </div>
-                <div className="flex min-w-0 items-start gap-2">
+                {/* Below sm, a 3-wide card (see lib/grid.ts's span()) is
+                    narrower than this button's label, so it stacks instead
+                    of forcing the row wider than the viewport. */}
+                <div className="flex min-w-0 flex-col items-start gap-2 sm:flex-row">
                   <CopyButton text={json} label="Copy add_widget JSON" />
                   <pre className="max-h-16 min-w-0 flex-1 overflow-y-auto rounded-md bg-muted px-2 py-1 font-mono text-xs break-all whitespace-pre-wrap select-all">
                     {json}
