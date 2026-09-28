@@ -39,11 +39,12 @@ export const contract: Contract = {
   defaultHeight: 8,
 }
 
-// x and y share one `format` (both axes use the same tickFormatter), so
-// both are plain counts here rather than mixing a count with a duration.
+// x (visitors, a count) and y (views per visitor, a rate) share one
+// `format` since a scatter's two axes use the same tickFormatter; both
+// are kept in plain numbers here rather than mixing a count with a duration.
 export const examples: Example[] = [
   {
-    title: 'Pages: visitors vs views',
+    title: 'Pages: visitors vs views per visitor',
     props: { format: 'number' },
     data: {
       columns: ['x', 'y', 'series', 'size'],
