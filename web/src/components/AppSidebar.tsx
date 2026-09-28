@@ -1,5 +1,5 @@
-import { ChartColumnIcon, LayoutDashboardIcon, LogOutIcon } from 'lucide-react'
-import { Link } from 'react-router'
+import { ChartColumnIcon, LayoutDashboardIcon, LogOutIcon, ShapesIcon } from 'lucide-react'
+import { Link, useLocation } from 'react-router'
 import {
   Sidebar,
   SidebarContent,
@@ -25,13 +25,15 @@ interface Props {
 }
 
 /**
- * Reports (the system dashboards, as one entry) and Yours (the user's
- * live dashboards). Icons only at 640–1023px, a drawer on phones (D37).
+ * Reports (the system dashboards, as one entry), Yours (the user's
+ * live dashboards), and Gallery (the components playground).
+ * Icons only at 640–1023px, a drawer on phones (D37).
  * Log out shows only when the app holds a credential: reporting dev's
  * open mode has none to forget.
  */
 export default function AppSidebar({ dashboards, currentId }: Props) {
   const { isMobile, setOpenMobile } = useSidebar()
+  const { pathname } = useLocation()
   const live = dashboards.filter((d) => !d.archived_at)
   const reports = live.filter((d) => d.owner === 'system')
   const yours = live.filter((d) => d.owner === 'user')
@@ -97,6 +99,26 @@ export default function AppSidebar({ dashboards, currentId }: Props) {
                 None yet. Ask your agent to make one.
               </p>
             )}
+          </SidebarGroupContent>
+        </SidebarGroup>
+        <SidebarGroup>
+          <SidebarGroupLabel className="text-sidebar-foreground/60">Gallery</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  asChild
+                  isActive={pathname.startsWith('/gallery/components')}
+                  tooltip="Components"
+                  className={item}
+                >
+                  <Link to="/gallery/components" onClick={close}>
+                    <ShapesIcon />
+                    <span>Components</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>

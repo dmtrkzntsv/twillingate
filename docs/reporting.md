@@ -251,6 +251,10 @@ appears. `width` and `height` default to the component's size below.
 `list_components` is the authority: it returns each component's props as a
 JSON schema, and its `description` says when to use it.
 
+The dashboard app draws every component with sample data at
+`/app/gallery/components`, with each one's contract and a copyable
+`add_widget` snippet: point the owner there to pick one by name.
+
 **When a release removes a component,** its widgets stay, with `component`
 null: the card says "component removed" and `widget_data` answers
 `removed: true`. Such a widget can be switched to another component with
