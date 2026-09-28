@@ -6,6 +6,8 @@ import worldAtlas from 'world-atlas/countries-110m.json'
 import { ISO_ALPHA2_TO_NUMERIC } from '@/lib/iso-countries'
 import { formatValue, type Format } from '@/lib/format'
 import { toRecords } from '@/lib/records'
+import { ramp } from '@/lib/chart'
+import { ScaleLegend } from './parts'
 import type { Contract, Example, SqlData, WidgetProps } from './types'
 
 interface MapProps {
@@ -93,26 +95,22 @@ export default function MapWidget({ data, props }: WidgetProps<MapProps>) {
   const span = max - min || 1
 
   return (
-    <div className="flex h-full w-full flex-col gap-2 overflow-auto p-2">
+    <div className="flex h-full w-full flex-col gap-2 overflow-auto p-1">
       <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} className="w-full flex-1" preserveAspectRatio="xMidYMid meet">
         {countries.features.map((f: Feature<Geometry, { name?: string }>, i: number) => {
           const id = f.id === undefined ? undefined : String(f.id)
           const value = id ? valueById.get(id) : undefined
           const hasValue = value !== undefined
-          const pct = hasValue ? ((value - min) / span) * 100 : 0
           return (
             <path
               key={id ?? f.properties?.name ?? i}
               d={path(f) ?? undefined}
               data-country-feature
               data-id={id}
-              stroke="var(--border)"
-              strokeWidth={0.5}
-              style={{
-                fill: hasValue
-                  ? `color-mix(in oklab, var(--chart-1) ${pct}%, var(--muted))`
-                  : 'var(--muted)',
-              }}
+              // The card's color between countries: borders read as gaps, not ink.
+              stroke="var(--card)"
+              strokeWidth={0.6}
+              style={{ fill: hasValue ? ramp((value - min) / span, 'var(--muted)') : 'var(--muted)' }}
             >
               <title>
                 {(f.properties?.name ?? id ?? '')}
@@ -122,6 +120,9 @@ export default function MapWidget({ data, props }: WidgetProps<MapProps>) {
           )
         })}
       </svg>
+      {matched.length > 0 && (
+        <ScaleLegend min={formatValue(min, format)} max={formatValue(max, format)} base="var(--muted)" />
+      )}
       {unmatched.length > 0 && (
         <div data-not-on-map className="text-xs text-muted-foreground">
           Not on the map: {unmatched.map((u) => `${u.code} ${formatValue(u.value, format)}`).join(', ')}

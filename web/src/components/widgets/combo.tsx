@@ -1,7 +1,9 @@
 import { Bar, CartesianGrid, ComposedChart, Line, XAxis, YAxis } from 'recharts'
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart'
+import { activeDot, axis, formatHeading, formatTick, grid, MAX_BAR, niceTicks, seriesColor, valueAxis } from '@/lib/chart'
 import { formatValue, type Format } from '@/lib/format'
 import { toRecords } from '@/lib/records'
+import { legend } from './parts'
 import type { Contract, Example, SqlData, WidgetProps } from './types'
 
 interface ComboProps {
@@ -66,43 +68,72 @@ export default function Combo({ data, props }: WidgetProps<ComboProps>) {
 
   const barFormat = props.bar_format ?? 'number'
   const lineFormat = props.line_format ?? 'number'
-  const config = {
-    bar: { label: 'bar', color: 'var(--chart-1)' },
-    line: { label: 'line', color: 'var(--chart-2)' },
-  }
+  const config = { bar: { label: 'bar' }, line: { label: 'line' } }
+  const barTicks = niceTicks(records.map((r) => Number(r.bar)))
+  // The line's axis gets as many steps as the bar's, so both share one set of gridlines.
+  const lineTicks = alignedTicks(
+    records.map((r) => Number(r.line)),
+    barTicks.length - 1
+  )
 
   return (
     <ChartContainer config={config} className="h-full w-full">
-      <ComposedChart data={records}>
-        <CartesianGrid vertical={false} />
-        <XAxis dataKey="x" interval="preserveStartEnd" minTickGap={32} tickLine={false} axisLine={false} />
+      <ComposedChart data={records} margin={{ top: 8, right: 0, bottom: 0, left: 0 }} barCategoryGap="24%">
+        <CartesianGrid {...grid} />
+        <XAxis dataKey="x" {...axis} interval="preserveStartEnd" minTickGap={24} tickFormatter={formatTick} />
         <YAxis
           yAxisId="bar"
+          {...valueAxis}
+          ticks={barTicks}
+          domain={[barTicks[0], barTicks[barTicks.length - 1]]}
           tickFormatter={(v: number) => formatValue(v, barFormat)}
-          tickLine={false}
-          axisLine={false}
-          width={56}
         />
         <YAxis
           yAxisId="line"
           orientation="right"
+          {...valueAxis}
+          ticks={lineTicks}
+          domain={[lineTicks[0], lineTicks[lineTicks.length - 1]]}
           tickFormatter={(v: number) => formatValue(v, lineFormat)}
-          tickLine={false}
-          axisLine={false}
-          width={56}
         />
-        <ChartTooltip content={<ChartTooltipContent />} />
-        <Bar yAxisId="bar" dataKey="bar" fill="var(--chart-1)" isAnimationActive={false} />
+        <ChartTooltip
+          cursor={{ fill: 'var(--muted)', opacity: 0.6 }}
+          content={
+            <ChartTooltipContent
+              labelFormatter={(_, payload) => formatHeading(payload?.[0]?.payload?.x)}
+              valueFormatter={(v, _, key) => formatValue(v, key === 'line' ? lineFormat : barFormat)}
+            />
+          }
+        />
+        {legend()}
+        <Bar
+          yAxisId="bar"
+          dataKey="bar"
+          fill={seriesColor(0)}
+          // Quieter than the line, so the two read as a pair rather than a clash.
+          fillOpacity={0.45}
+          radius={[4, 4, 0, 0]}
+          maxBarSize={MAX_BAR}
+          isAnimationActive={false}
+        />
         <Line
           yAxisId="line"
           type="monotone"
           dataKey="line"
-          stroke="var(--chart-2)"
+          stroke={seriesColor(1)}
           strokeWidth={2}
           dot={false}
+          activeDot={activeDot(seriesColor(1))}
           isAnimationActive={false}
         />
       </ComposedChart>
     </ChartContainer>
   )
+}
+
+/** Round ticks for `values` in exactly `steps` steps, to line up with another axis. */
+function alignedTicks(values: number[], steps: number): number[] {
+  const own = niceTicks(values, steps)
+  const step = (own[own.length - 1] - own[0]) / steps
+  return Array.from({ length: steps + 1 }, (_, i) => Number((own[0] + i * step).toPrecision(12)))
 }

@@ -1,5 +1,7 @@
 import { formatValue, type Format } from '@/lib/format'
 import { toRecords } from '@/lib/records'
+import { formatHeading, ramp } from '@/lib/chart'
+import { ScaleLegend } from './parts'
 import type { Contract, Example, SqlData, WidgetProps } from './types'
 
 interface CalendarProps {
@@ -75,6 +77,12 @@ export const examples: Example[] = [
   },
 ]
 
+/** One day's square and the gap after it, in SVG units; the drawing scales to fit the card. */
+const CELL = 11
+const STEP = 13
+/** Room above the squares for the month labels. */
+const TOP = 14
+
 export default function Calendar({ data, props }: WidgetProps<CalendarProps>) {
   const records = toRecords(data as SqlData, contract)
   if (records.length === 0) return null
@@ -94,25 +102,26 @@ export default function Calendar({ data, props }: WidgetProps<CalendarProps>) {
   const span = max - min || 1
 
   return (
-    <div className="h-full w-full overflow-auto p-2">
-      <div
-        className="grid gap-0.5"
-        style={{
-          gridTemplateColumns: `repeat(${columns.length}, minmax(0.65rem, 1fr))`,
-          gridTemplateRows: `1rem repeat(7, minmax(0.65rem, 1fr))`,
-        }}
+    <div className="flex h-full w-full flex-col gap-1.5 p-1">
+      {/* An SVG rather than a CSS grid: it keeps the squares square at any card size. */}
+      <svg
+        viewBox={`0 0 ${columns.length * STEP - (STEP - CELL)} ${TOP + 7 * STEP - (STEP - CELL)}`}
+        className="min-h-0 w-full flex-1"
+        preserveAspectRatio="xMidYMid meet"
       >
         {columns.map((week, ci) => {
           const monthStart = week.find((d) => d.getUTCDate() === 1)
           return (
-            <div
+            <text
               key={`label-${ci}`}
               data-month-label
-              className="truncate text-[10px] text-muted-foreground"
-              style={{ gridColumn: ci + 1, gridRow: 1 }}
+              x={ci * STEP}
+              y={9}
+              fontSize={9}
+              className="fill-muted-foreground"
             >
               {monthStart ? monthFormatter.format(monthStart) : ''}
-            </div>
+            </text>
           )
         })}
         {columns.map((week, ci) =>
@@ -120,25 +129,24 @@ export default function Calendar({ data, props }: WidgetProps<CalendarProps>) {
             const day = formatDay(date)
             const value = values.get(day)
             const hasValue = value !== undefined
-            const pct = hasValue ? ((value - min) / span) * 100 : 0
             return (
-              <div
+              <rect
                 key={day}
                 data-day={day}
-                title={hasValue ? `${day}: ${formatValue(value, format)}` : day}
-                className="aspect-square rounded-xs bg-muted"
-                style={{
-                  gridColumn: ci + 1,
-                  gridRow: ri + 2,
-                  ...(hasValue
-                    ? { backgroundColor: `color-mix(in oklab, var(--chart-1) ${pct}%, transparent)` }
-                    : {}),
-                }}
-              />
+                x={ci * STEP}
+                y={TOP + ri * STEP}
+                width={CELL}
+                height={CELL}
+                rx={2.5}
+                style={{ fill: hasValue ? ramp((value - min) / span, 'var(--muted)') : 'var(--muted)' }}
+              >
+                <title>{hasValue ? `${formatHeading(day)}: ${formatValue(value, format)}` : formatHeading(day)}</title>
+              </rect>
             )
           })
         )}
-      </div>
+      </svg>
+      <ScaleLegend min={formatValue(min, format)} max={formatValue(max, format)} base="var(--muted)" />
     </div>
   )
 }

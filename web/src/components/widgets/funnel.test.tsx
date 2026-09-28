@@ -12,7 +12,7 @@ function renderFunnel(data: SqlData, props: WidgetProps['props'] = {}) {
 }
 
 describe('funnel', () => {
-  it('renders one trapezoid per step, in query order', () => {
+  it('renders one row per step, in query order', () => {
     const { container } = renderFunnel({
       columns: ['step', 'value'],
       rows: [
@@ -22,7 +22,9 @@ describe('funnel', () => {
       ],
       truncated: false,
     })
-    expect(container.querySelectorAll('.recharts-funnel-trapezoid')).toHaveLength(3)
+    const steps = container.querySelectorAll('[data-funnel-step]')
+    expect(steps).toHaveLength(3)
+    expect([...steps].map((s) => s.querySelector('span')?.textContent)).toEqual(['visit', 'signup', 'purchase'])
   })
 
   it("labels each step with its share of the first step's value", () => {
@@ -42,6 +44,21 @@ describe('funnel', () => {
     expect(scope.getByText('50%')).toBeInTheDocument()
     expect(scope.getByText('purchase')).toBeInTheDocument()
     expect(scope.getByText('25%')).toBeInTheDocument()
+  })
+
+  it('says how much of the step before each step keeps', () => {
+    const { container } = renderFunnel({
+      columns: ['step', 'value'],
+      rows: [
+        ['visit', '200'],
+        ['signup', '50'],
+        ['purchase', '40'],
+      ],
+      truncated: false,
+    })
+    const scope = within(container)
+    expect(scope.getByText('25% of the step before')).toBeInTheDocument()
+    expect(scope.getByText('80% of the step before')).toBeInTheDocument()
   })
 
   it('renders nothing broken for an empty result', () => {

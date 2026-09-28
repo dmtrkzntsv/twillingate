@@ -1,14 +1,13 @@
 import { PolarAngleAxis, RadialBar, RadialBarChart } from 'recharts'
 import {
   ChartContainer,
-  ChartLegend,
-  ChartLegendContent,
   ChartTooltip,
-  ChartTooltipContent,
   type ChartConfig,
 } from '@/components/ui/chart'
+import { seriesColor } from '@/lib/chart'
 import { formatValue, type Format } from '@/lib/format'
 import { toRecords } from '@/lib/records'
+import { legend, tooltip } from './parts'
 import type { Contract, Example, SqlData, WidgetProps } from './types'
 
 interface RadialProps {
@@ -67,11 +66,12 @@ export default function Radial({ data, props }: WidgetProps<RadialProps>) {
     return {
       label: String(r.label),
       value,
-      display: max ? (value / max) * 100 : value,
-      fill: `var(--chart-${(i % 5) + 1})`,
+      display: max ? Math.min(100, (value / max) * 100) : value,
+      fill: seriesColor(i),
     }
   })
   const domainMax = hasMax ? 100 : Math.max(...rows.map((r) => r.display), 1)
+  const single = rows.length === 1
 
   // Only `label`, no `color`: colors are set directly per bar via `fill`
   // below, and a data label can hold arbitrary text (spaces, punctuation)
@@ -81,18 +81,28 @@ export default function Radial({ data, props }: WidgetProps<RadialProps>) {
 
   return (
     <ChartContainer config={config} className="h-full w-full">
-      <RadialBarChart data={rows} innerRadius="20%" outerRadius="90%" startAngle={90} endAngle={-270}>
+      <RadialBarChart
+        data={rows}
+        innerRadius={single ? '72%' : '30%'}
+        outerRadius={single ? '96%' : '92%'}
+        startAngle={90}
+        endAngle={-270}
+        barCategoryGap={single ? 0 : '18%'}
+      >
         <PolarAngleAxis type="number" domain={[0, domainMax]} tick={false} />
-        <ChartTooltip
-          content={
-            <ChartTooltipContent
-              nameKey="label"
-              formatter={(_v, _n, item) => formatValue(Number(item.payload.value), format)}
-            />
-          }
-        />
-        <ChartLegend content={<ChartLegendContent nameKey="label" />} />
-        <RadialBar dataKey="display" background cornerRadius={4} isAnimationActive={false} />
+        <ChartTooltip cursor={false} content={tooltip(format, { nameKey: 'label', valueKey: 'value' })} />
+        {!single && legend('label')}
+        <RadialBar dataKey="display" background cornerRadius={999} isAnimationActive={false} />
+        {single && (
+          <text x="50%" y="50%" textAnchor="middle" dominantBaseline="middle">
+            <tspan x="50%" dy="-0.3em" className="fill-foreground text-2xl font-semibold">
+              {formatValue(rows[0].value, format)}
+            </tspan>
+            <tspan x="50%" dy="1.6em" className="fill-muted-foreground text-xs">
+              {hasMax ? `${Math.round(rows[0].display)}% of ${formatValue(Number(records[0].max), format)}` : rows[0].label}
+            </tspan>
+          </text>
+        )}
       </RadialBarChart>
     </ChartContainer>
   )

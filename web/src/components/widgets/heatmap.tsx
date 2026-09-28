@@ -1,5 +1,6 @@
 import { formatValue, type Format } from '@/lib/format'
 import { toRecords } from '@/lib/records'
+import { formatTick, onRamp, ramp } from '@/lib/chart'
 import type { Contract, Example, SqlData, WidgetProps } from './types'
 
 interface HeatmapProps {
@@ -98,10 +99,13 @@ export default function Heatmap({ data, props }: WidgetProps<HeatmapProps>) {
   const span = max - min || 1
 
   return (
-    <div className="h-full w-full overflow-auto p-2">
+    <div className="h-full w-full overflow-auto p-1">
       <div
-        className="grid gap-0.5"
-        style={{ gridTemplateColumns: `auto repeat(${xs.length}, minmax(1.75rem, 1fr))` }}
+        className="grid h-full gap-0.5"
+        style={{
+          gridTemplateColumns: `auto repeat(${xs.length}, minmax(2rem, 1fr))`,
+          gridTemplateRows: `auto repeat(${ys.length}, minmax(1.5rem, 1fr))`,
+        }}
       >
         <div />
         {xs.map((x) => (
@@ -110,29 +114,27 @@ export default function Heatmap({ data, props }: WidgetProps<HeatmapProps>) {
             data-col-header
             className="truncate px-1 text-center text-xs text-muted-foreground"
           >
-            {x}
+            {formatTick(x)}
           </div>
         ))}
         {ys.map((y) => (
           <div key={y} className="contents">
-            <div data-row-header className="truncate pr-1 text-xs text-muted-foreground">
-              {y}
+            <div data-row-header className="flex items-center truncate pr-1.5 text-xs text-muted-foreground">
+              {formatTick(y)}
             </div>
             {xs.map((x) => {
               const value = values.get(`${y}\u0000${x}`)
               const hasValue = value !== undefined && value !== null
-              const pct = hasValue ? ((value - min) / span) * 100 : 0
+              const t = hasValue ? (value - min) / span : 0
               return (
                 <div
                   key={x}
                   data-cell
-                  title={hasValue ? `${y}, ${x}: ${formatValue(value, format)}` : undefined}
-                  className="flex aspect-square items-center justify-center rounded-xs text-xs"
-                  style={
-                    hasValue
-                      ? { backgroundColor: `color-mix(in oklab, var(--chart-1) ${pct}%, transparent)` }
-                      : undefined
-                  }
+                  title={hasValue ? `${formatTick(y)}, ${formatTick(x)}: ${formatValue(value, format)}` : undefined}
+                  className={`flex min-h-6 items-center justify-center rounded-[3px] text-[11px] tabular-nums ${
+                    hasValue && onRamp(t) ? 'text-white' : 'text-foreground'
+                  }`}
+                  style={hasValue ? { backgroundColor: ramp(t) } : undefined}
                 >
                   {hasValue && showLabels ? formatValue(value, format) : ''}
                 </div>

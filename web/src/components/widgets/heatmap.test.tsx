@@ -41,7 +41,7 @@ describe('heatmap', () => {
     })
     const cells = container.querySelectorAll('[data-cell]')
     expect((cells[0] as HTMLElement).style.backgroundColor).toContain('color-mix')
-    expect((cells[0] as HTMLElement).style.backgroundColor).toContain('0%')
+    expect((cells[0] as HTMLElement).style.backgroundColor).toContain(' 15%')
     expect((cells[1] as HTMLElement).style.backgroundColor).toContain('100%')
   })
 

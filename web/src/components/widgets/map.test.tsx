@@ -67,7 +67,7 @@ describe('map', () => {
     })
     const us = container.querySelector(`[data-country-feature][data-id="${ISO_ALPHA2_TO_NUMERIC.US}"]`)
     const fr = container.querySelector(`[data-country-feature][data-id="${ISO_ALPHA2_TO_NUMERIC.FR}"]`)
-    expect((us as HTMLElement).style.fill).toContain('0%')
+    expect((us as HTMLElement).style.fill).toContain(' 15%')
     expect((fr as HTMLElement).style.fill).toContain('100%')
   })
 

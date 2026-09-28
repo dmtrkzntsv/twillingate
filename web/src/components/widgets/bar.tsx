@@ -1,14 +1,12 @@
-import { Bar as RechartsBar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts'
+import { Bar as RechartsBar, BarChart, CartesianGrid, LabelList, XAxis, YAxis } from 'recharts'
 import {
   ChartContainer,
-  ChartLegend,
-  ChartLegendContent,
   ChartTooltip,
-  ChartTooltipContent,
 } from '@/components/ui/chart'
-import { seriesConfig } from '@/lib/chart'
+import { axis, formatTick, grid, MAX_BAR, niceTicks, seriesColor, seriesConfig, stackTotals, valueAxis, valuesOf } from '@/lib/chart'
 import { formatValue, type Format } from '@/lib/format'
 import { pivot, toRecords } from '@/lib/records'
+import { legend, tooltip } from './parts'
 import type { Contract, Example, SqlData, WidgetProps } from './types'
 
 interface BarProps {
@@ -85,6 +83,15 @@ export const examples: Example[] = [
   },
 ]
 
+/** At most this many bars of one series, each also prints its value. */
+const LABELLED = 12
+
+/** Room for the longest category label on a horizontal chart's axis, within reason. */
+function categoryWidth(labels: string[]): number {
+  const longest = Math.max(...labels.map((l) => l.length))
+  return Math.min(160, Math.max(40, Math.round(longest * 6.4) + 8))
+}
+
 export default function Bar({ data, props }: WidgetProps<BarProps>) {
   const sql = data as SqlData
   const records = toRecords(sql, contract)
@@ -92,60 +99,82 @@ export default function Bar({ data, props }: WidgetProps<BarProps>) {
 
   const format = props.format ?? 'number'
   const horizontal = props.horizontal ?? false
+  const stacked = props.stacked ?? false
   const hasSeries = sql.columns.includes('series')
   const { rows, keys } = hasSeries ? pivot(records, 'x', 'series', 'y') : { rows: records, keys: ['y'] }
-  const config = hasSeries ? seriesConfig(keys) : { y: { label: 'y', color: 'var(--chart-1)' } }
-
-  const valueAxis = (
-    <YAxis
-      type="number"
-      tickFormatter={(v: number) => formatValue(v, format)}
-      tickLine={false}
-      axisLine={false}
-      width={56}
-    />
-  )
-  const categoryAxis = (
-    <XAxis dataKey="x" interval="preserveStartEnd" minTickGap={32} tickLine={false} axisLine={false} />
-  )
+  const config = hasSeries ? seriesConfig(keys) : { y: { label: 'y' } }
+  const ticks = niceTicks(stacked ? stackTotals(rows, keys) : valuesOf(rows, keys))
+  const labelled = keys.length === 1 && rows.length <= LABELLED
+  const show = (v: unknown) => formatValue(Number(v), format)
+  // Rounded at the data end only; in a stack, only the outermost segment.
+  const end: [number, number, number, number] = horizontal ? [0, 4, 4, 0] : [4, 4, 0, 0]
+  const radius = (i: number) => (!stacked || i === keys.length - 1 ? end : 0)
 
   return (
     <ChartContainer config={config} className="h-full w-full">
-      <BarChart data={rows} layout={horizontal ? 'vertical' : 'horizontal'}>
-        <CartesianGrid vertical={horizontal} horizontal={!horizontal} />
+      <BarChart
+        data={rows}
+        layout={horizontal ? 'vertical' : 'horizontal'}
+        margin={{ top: labelled && !horizontal ? 20 : 8, right: labelled && horizontal ? 48 : 8, bottom: 0, left: 0 }}
+        barGap={3}
+        barCategoryGap="24%"
+      >
         {horizontal ? (
           <>
             <XAxis
               type="number"
-              tickFormatter={(v: number) => formatValue(v, format)}
-              tickLine={false}
-              axisLine={false}
+              hide={labelled}
+              {...axis}
+              ticks={ticks}
+              domain={[ticks[0], ticks[ticks.length - 1]]}
+              tickFormatter={show}
             />
             <YAxis
               dataKey="x"
               type="category"
-              tickLine={false}
-              axisLine={false}
-              width={96}
-              interval="preserveStartEnd"
+              {...axis}
+              width={categoryWidth(rows.map((r) => formatTick(r.x)))}
+              tickFormatter={formatTick}
+              interval={0}
             />
+            {!labelled && <CartesianGrid vertical horizontal={false} />}
           </>
         ) : (
           <>
-            {categoryAxis}
-            {valueAxis}
+            <CartesianGrid {...grid} />
+            <XAxis dataKey="x" {...axis} interval="preserveStartEnd" minTickGap={16} tickFormatter={formatTick} />
+            <YAxis {...valueAxis} ticks={ticks} domain={[ticks[0], ticks[ticks.length - 1]]} tickFormatter={show} />
           </>
         )}
-        <ChartTooltip content={<ChartTooltipContent />} />
-        {hasSeries && <ChartLegend content={<ChartLegendContent />} />}
+        <ChartTooltip
+          cursor={{ fill: 'var(--muted)', opacity: 0.6 }}
+          content={tooltip(format, { heading: 'x', total: stacked })}
+        />
+        {hasSeries && legend()}
         {keys.map((key, i) => (
           <RechartsBar
             key={key}
             dataKey={key}
-            stackId={props.stacked ? 'stack' : undefined}
-            fill={`var(--chart-${(i % 5) + 1})`}
+            stackId={stacked ? 'stack' : undefined}
+            fill={seriesColor(i)}
+            radius={radius(i)}
+            maxBarSize={MAX_BAR}
+            // A hairline in the card's color keeps stacked segments apart.
+            stroke={stacked ? 'var(--card)' : undefined}
+            strokeWidth={stacked ? 1.5 : 0}
             isAnimationActive={false}
-          />
+          >
+            {labelled && (
+              <LabelList
+                dataKey={key}
+                position={horizontal ? 'right' : 'top'}
+                offset={8}
+                fontSize={11}
+                className="fill-muted-foreground"
+                formatter={show}
+              />
+            )}
+          </RechartsBar>
         ))}
       </BarChart>
     </ChartContainer>

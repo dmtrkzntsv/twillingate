@@ -129,6 +129,8 @@ function ChartTooltipContent({
   color,
   nameKey,
   labelKey,
+  valueFormatter,
+  total = false,
 }: React.ComponentProps<typeof RechartsPrimitive.Tooltip> &
   React.ComponentProps<"div"> & {
     hideLabel?: boolean
@@ -136,6 +138,10 @@ function ChartTooltipContent({
     indicator?: "line" | "dot" | "dashed"
     nameKey?: string
     labelKey?: string
+    /** Renders each numeric value, given its payload row and data key; defaults to `toLocaleString`. */
+    valueFormatter?: (value: number, row?: Record<string, unknown>, key?: string) => string
+    /** Adds a Total row summing the numeric values (for stacked charts). */
+    total?: boolean
   } & Omit<
     RechartsPrimitive.DefaultTooltipContentProps<
       TooltipValueType,
@@ -186,11 +192,17 @@ function ChartTooltipContent({
   }
 
   const nestLabel = payload.length === 1 && indicator !== "dot"
+  const shown = (value: number, row?: Record<string, unknown>, key?: string) =>
+    valueFormatter ? valueFormatter(value, row, key) : value.toLocaleString()
+  const sum = payload.reduce(
+    (acc, item) => acc + (typeof item.value === "number" ? item.value : 0),
+    0
+  )
 
   return (
     <div
       className={cn(
-        "grid min-w-[8rem] items-start gap-1.5 rounded-lg border border-border/50 bg-background px-2.5 py-1.5 text-xs shadow-xl",
+        "grid min-w-[9rem] items-start gap-1.5 rounded-lg border border-border/70 bg-popover/95 px-2.5 py-2 text-xs text-popover-foreground shadow-lg backdrop-blur-sm",
         className
       )}
     >
@@ -221,10 +233,10 @@ function ChartTooltipContent({
                       !hideIndicator && (
                         <div
                           className={cn(
-                            "shrink-0 rounded-[2px] border-(--color-border) bg-(--color-bg)",
+                            "shrink-0 rounded-full border-(--color-border) bg-(--color-bg)",
                             {
-                              "h-2.5 w-2.5": indicator === "dot",
-                              "w-1": indicator === "line",
+                              "h-2 w-2": indicator === "dot",
+                              "w-[3px]": indicator === "line",
                               "w-0 border-[1.5px] border-dashed bg-transparent":
                                 indicator === "dashed",
                               "my-0.5": nestLabel && indicator === "dashed",
@@ -252,9 +264,9 @@ function ChartTooltipContent({
                         </span>
                       </div>
                       {item.value != null && (
-                        <span className="font-mono font-medium text-foreground tabular-nums">
+                        <span className="font-medium text-foreground tabular-nums">
                           {typeof item.value === "number"
-                            ? item.value.toLocaleString()
+                            ? shown(item.value, item.payload, String(item.dataKey ?? ""))
                             : String(item.value)}
                         </span>
                       )}
@@ -265,6 +277,14 @@ function ChartTooltipContent({
             )
           })}
       </div>
+      {total && payload.length > 1 && (
+        <div className="flex items-center justify-between border-t border-border/70 pt-1.5 leading-none">
+          <span className="text-muted-foreground">Total</span>
+          <span className="font-medium text-foreground tabular-nums">
+            {shown(sum)}
+          </span>
+        </div>
+      )}
     </div>
   )
 }
@@ -290,7 +310,7 @@ function ChartLegendContent({
   return (
     <div
       className={cn(
-        "flex items-center justify-center gap-4",
+        "flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-muted-foreground",
         verticalAlign === "top" ? "pb-3" : "pt-3",
         className
       )}
@@ -312,7 +332,7 @@ function ChartLegendContent({
                 <itemConfig.icon />
               ) : (
                 <div
-                  className="h-2 w-2 shrink-0 rounded-[2px]"
+                  className="h-2 w-2 shrink-0 rounded-full"
                   style={{
                     backgroundColor: item.color,
                   }}

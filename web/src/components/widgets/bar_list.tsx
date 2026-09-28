@@ -57,19 +57,19 @@ export default function BarList({ data, props }: WidgetProps<BarListProps>) {
   const max = Math.max(...values, 1)
 
   return (
-    <ul className="flex h-full flex-col justify-center gap-1.5 overflow-y-auto p-2">
+    <ul className="flex h-full flex-col gap-1 overflow-y-auto py-1">
       {records.map((r, i) => (
         <li
           key={i}
-          className="relative flex items-center justify-between gap-2 overflow-hidden rounded-sm bg-muted px-2 py-1 text-sm"
+          className="relative flex min-h-8 items-center justify-between gap-3 overflow-hidden rounded-sm px-2.5 text-sm"
         >
           <div
             data-bar-fill
-            className="absolute inset-y-0 left-0 bg-[var(--chart-1)]/25"
+            className="absolute inset-y-0 left-0 rounded-sm bg-[var(--chart-1)]/15"
             style={{ width: `${(values[i] / max) * 100}%` }}
           />
           <span className="relative truncate">{String(r.label)}</span>
-          <span className="relative shrink-0 tabular-nums">{formatValue(values[i], format)}</span>
+          <span className="relative shrink-0 font-medium tabular-nums">{formatValue(values[i], format)}</span>
         </li>
       ))}
     </ul>

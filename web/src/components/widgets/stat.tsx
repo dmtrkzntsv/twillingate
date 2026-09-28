@@ -1,5 +1,6 @@
-import { ArrowDownIcon, ArrowUpIcon } from 'lucide-react'
-import { Line, LineChart, ResponsiveContainer } from 'recharts'
+import { useId } from 'react'
+import { ArrowDownRightIcon, ArrowUpRightIcon } from 'lucide-react'
+import { Area, AreaChart, ResponsiveContainer, YAxis } from 'recharts'
 import { formatValue, type Format } from '@/lib/format'
 import { toRecords } from '@/lib/records'
 import type { Contract, Example, SqlData, WidgetProps } from './types'
@@ -76,6 +77,8 @@ export default function Stat({ data, props }: WidgetProps<StatProps>) {
   const sql = data as SqlData
   const format = props.format ?? 'number'
   const records = toRecords(sql, contract)
+  // An SVG id, so only characters url(#...) takes as they are.
+  const fade = 'spark' + useId().replace(/[^a-zA-Z0-9_-]/g, '')
   if (records.length === 0) return null
 
   if (sql.columns.includes('x')) {
@@ -83,20 +86,45 @@ export default function Stat({ data, props }: WidgetProps<StatProps>) {
     const value = aggregate(values, props.aggregate ?? 'sum')
     const series = records.map((r, i) => ({ x: String(r.x ?? i), value: Number(r.value ?? 0) }))
     return (
-      <div className="flex h-full flex-col justify-between gap-2 py-2">
-        <span className="text-3xl font-semibold tracking-tight tabular-nums">{formatValue(value, format)}</span>
-        <div className="h-10 w-full">
+      <div className="flex h-full flex-col justify-between gap-1 pt-1">
+        <Figure>{formatValue(value, format)}</Figure>
+        <div className="-mx-1 min-h-8 flex-1">
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={series}>
-              <Line
+            <AreaChart data={series} margin={{ top: 4, right: 4, bottom: 2, left: 4 }}>
+              <defs>
+                <linearGradient id={fade} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="var(--chart-1)" stopOpacity={0.28} />
+                  <stop offset="100%" stopColor="var(--chart-1)" stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              {/* Its own range, not from zero: the sparkline is for the shape of the trend. */}
+              <YAxis hide domain={['dataMin', 'dataMax']} />
+              <Area
                 type="monotone"
+                baseValue="dataMin"
                 dataKey="value"
                 stroke="var(--chart-1)"
                 strokeWidth={2}
-                dot={false}
+                fill={`url(#${fade})`}
+                // Only the latest point gets a dot: where the number above stands now.
+                dot={(p: { index: number; cx?: number; cy?: number }) =>
+                  p.index === series.length - 1 && p.cx !== undefined && p.cy !== undefined ? (
+                    <circle
+                      key="last"
+                      cx={p.cx}
+                      cy={p.cy}
+                      r={3}
+                      fill="var(--chart-1)"
+                      stroke="var(--card)"
+                      strokeWidth={2}
+                    />
+                  ) : (
+                    <g key={p.index} />
+                  )
+                }
                 isAnimationActive={false}
               />
-            </LineChart>
+            </AreaChart>
           </ResponsiveContainer>
         </div>
       </div>
@@ -108,21 +136,29 @@ export default function Stat({ data, props }: WidgetProps<StatProps>) {
   const delta = typeof previous === 'number' && previous !== 0 ? (value - previous) / previous : null
 
   return (
-    <div className="flex h-full flex-col items-start justify-center gap-2 py-2">
-      <span className="text-3xl font-semibold tracking-tight tabular-nums">{formatValue(value, format)}</span>
+    <div className="flex h-full flex-col items-start justify-center gap-2 pt-1">
+      <Figure>{formatValue(value, format)}</Figure>
       {delta !== null && (
-        <span
-          className={
-            delta >= 0
-              ? 'inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400'
-              : 'inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700 dark:bg-red-950 dark:text-red-400'
-          }
-        >
-          {delta >= 0 ? <ArrowUpIcon className="size-3" /> : <ArrowDownIcon className="size-3" />}
-          {delta >= 0 ? '+' : ''}
-          {formatValue(delta, 'percent')}
-        </span>
+        <div className="flex items-center gap-1.5 text-xs">
+          <span
+            className={
+              delta >= 0
+                ? 'inline-flex items-center gap-0.5 rounded-full bg-emerald-500/12 px-1.5 py-0.5 font-medium text-emerald-700 dark:text-emerald-400'
+                : 'inline-flex items-center gap-0.5 rounded-full bg-red-500/12 px-1.5 py-0.5 font-medium text-red-700 dark:text-red-400'
+            }
+          >
+            {delta >= 0 ? <ArrowUpRightIcon className="size-3" /> : <ArrowDownRightIcon className="size-3" />}
+            {delta >= 0 ? '+' : ''}
+            {formatValue(delta, 'percent')}
+          </span>
+          <span className="text-muted-foreground">vs previous</span>
+        </div>
       )}
     </div>
   )
+}
+
+/** The headline number: large, proportional figures, never the series color. */
+function Figure({ children }: { children: string }) {
+  return <span className="text-3xl leading-none font-semibold tracking-tight">{children}</span>
 }

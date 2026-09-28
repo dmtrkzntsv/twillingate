@@ -1,5 +1,3 @@
-import { Cell, Funnel as RechartsFunnel, FunnelChart, LabelList } from 'recharts'
-import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from '@/components/ui/chart'
 import { formatValue, type Format } from '@/lib/format'
 import { toRecords } from '@/lib/records'
 import type { Contract, Example, SqlData, WidgetProps } from './types'
@@ -51,34 +49,44 @@ export default function Funnel({ data, props }: WidgetProps<FunnelProps>) {
   if (records.length === 0) return null
 
   const format = props.format ?? 'number'
-  const first = Number(records[0].value ?? 0) || 1
-  const rows = records.map((r) => {
-    const value = Number(r.value ?? 0)
-    return {
-      step: String(r.step),
-      value,
-      share: formatValue(value / first, 'percent'),
-    }
-  })
-
-  // Only `label`, no `color` (see radial.tsx): a step name is arbitrary
-  // text, colored directly per Cell below instead.
-  const config: ChartConfig = Object.fromEntries(rows.map((r) => [r.step, { label: r.step }]))
+  const values = records.map((r) => Number(r.value ?? 0))
+  const first = values[0] || 1
+  const last = Math.max(values.length - 1, 1)
 
   return (
-    <ChartContainer config={config} className="h-full w-full">
-      <FunnelChart>
-        <ChartTooltip
-          content={<ChartTooltipContent nameKey="step" formatter={(v) => formatValue(Number(v), format)} />}
-        />
-        <RechartsFunnel data={rows} dataKey="value" nameKey="step" isAnimationActive={false}>
-          <LabelList dataKey="step" position="right" fill="var(--foreground)" stroke="none" />
-          <LabelList dataKey="share" position="left" fill="var(--foreground)" stroke="none" />
-          {rows.map((r, i) => (
-            <Cell key={r.step} fill={`var(--chart-${(i % 5) + 1})`} />
-          ))}
-        </RechartsFunnel>
-      </FunnelChart>
-    </ChartContainer>
+    <ol className="flex h-full flex-col justify-center gap-3 px-1 py-1">
+      {records.map((r, i) => {
+        const value = values[i]
+        const share = value / first
+        const fromPrevious = i > 0 && values[i - 1] ? value / values[i - 1] : null
+        return (
+          <li key={i} data-funnel-step className="flex flex-col gap-1.5">
+            <div className="flex items-baseline justify-between gap-3 text-sm">
+              <span className="truncate font-medium">{String(r.step)}</span>
+              <span className="flex shrink-0 items-baseline gap-2 tabular-nums">
+                <span className="text-muted-foreground">{formatValue(value, format)}</span>
+                <span className="w-12 text-right font-medium">{formatValue(share, 'percent')}</span>
+              </span>
+            </div>
+            <div className="h-2 overflow-hidden rounded-full bg-muted">
+              <div
+                data-bar-fill
+                className="h-full rounded-full"
+                style={{
+                  width: `${Math.max(0, Math.min(1, share)) * 100}%`,
+                  // One hue, fading step by step: the order is the story, not the color.
+                  backgroundColor: `color-mix(in oklab, var(--chart-1) ${100 - (i / last) * 40}%, transparent)`,
+                }}
+              />
+            </div>
+            {fromPrevious !== null && (
+              <span className="text-[11px] text-muted-foreground">
+                {`${formatValue(fromPrevious, 'percent')} of the step before`}
+              </span>
+            )}
+          </li>
+        )
+      })}
+    </ol>
   )
 }
