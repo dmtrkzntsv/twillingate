@@ -5,26 +5,101 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Connect to twillingate</title>
 <style>
-body { font-family: system-ui, sans-serif; max-width: 26rem; margin: 4rem auto; padding: 0 1rem; color: #1a1a1a; }
-h1 { font-size: 1.25rem; }
-.error { color: #b00020; }
-label, input, button { display: block; width: 100%; box-sizing: border-box; font: inherit; }
-input, button { margin-top: .5rem; padding: .5rem; }
-code { word-break: break-all; }
+/* Mirrors web/src/pages/Login.tsx; the CSP allows no scripts, so the flakes come from snowfall() in oauth_authorize.go. */
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  font-family: ui-sans-serif, system-ui, sans-serif; color: #f8fcff;
+  background: radial-gradient(ellipse at 50% 42%, #0b3a66 0%, #061a30 48%, #030b15 100%) #030b15;
+}
+main {
+  position: relative; isolation: isolate; overflow: hidden; min-height: 100svh; padding: 1.5rem;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2rem;
+}
+.snow { position: absolute; inset: 0; z-index: 20; overflow: hidden; pointer-events: none; }
+.flake {
+  position: absolute; top: 0; color: #f8fcff; opacity: 0;
+  animation: snowfall linear infinite; will-change: transform, opacity;
+}
+@keyframes snowfall {
+  0% { transform: translate3d(var(--drift), -10vh, 0) rotate(0deg); opacity: 0; }
+  8%, 88% { opacity: var(--opacity); }
+  100% { transform: translate3d(calc(var(--drift) * -1), 105vh, 0) rotate(var(--spin)); opacity: 0; }
+}
+.berg { position: relative; width: min(78vw, 19rem); height: min(78vw, 19rem); }
+.halo { position: absolute; inset: -45%; background: radial-gradient(closest-side, rgba(46, 159, 229, .4), transparent); }
+.tile {
+  position: relative; z-index: 10; width: 100%; height: 100%; overflow: hidden; border-radius: 22%;
+  box-shadow: 0 24px 60px -24px rgba(0, 0, 0, .8), 0 0 0 1px rgba(255, 255, 255, .15);
+}
+.tile svg { display: block; width: 100%; height: 100%; }
+/* The glass strip laid across the logo's waterline (13 of 30). */
+.band {
+  position: absolute; z-index: 30; left: 5%; width: 90%; top: 43.333%; margin: -1.5rem 0 0; height: 3rem;
+  display: flex; align-items: center; border-radius: 999px; border: 1px solid rgba(255, 255, 255, .2);
+  background: rgba(4, 17, 31, .65); box-shadow: 0 12px 40px -8px rgba(3, 11, 21, .8);
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+  transition: border-color .15s, box-shadow .15s;
+}
+.band:focus-within { border-color: rgba(143, 211, 255, .7); box-shadow: 0 12px 40px -8px rgba(3, 11, 21, .8), 0 0 0 4px rgba(143, 211, 255, .25); }
+.band input {
+  flex: 1; min-width: 0; height: 100%; padding: 0 0 0 1.25rem; border: 0; outline: 0; background: transparent;
+  color: #f8fcff; font: inherit; font-size: .875rem; letter-spacing: .025em;
+}
+.band input::placeholder { color: rgba(143, 211, 255, .6); }
+.band button {
+  flex: none; display: flex; align-items: center; justify-content: center; width: 2.25rem; height: 2.25rem;
+  margin-right: .375rem; padding: 0; border: 0; border-radius: 999px; cursor: pointer;
+  background: #f8fcff; color: #073f7c; transition: background-color .15s, color .15s;
+}
+.band button:hover { background: #8fd3ff; }
+.band button:focus-visible { outline: 0; box-shadow: 0 0 0 4px rgba(143, 211, 255, .5); }
+.band input:placeholder-shown + button { background: rgba(255, 255, 255, .15); color: rgba(143, 211, 255, .5); cursor: default; }
+.band button svg { width: 1rem; height: 1rem; }
+.band.stop { justify-content: center; font-size: .875rem; color: #ffd0c8; }
+.caption { position: relative; z-index: 10; max-width: 20rem; text-align: center; }
+h1 { margin: 0; font-size: 1.5rem; font-weight: 600; letter-spacing: -.025em; }
+p { margin: .5rem 0 0; font-size: .875rem; line-height: 1.45; color: rgba(143, 211, 255, .75); text-wrap: balance; }
+p strong { color: #f8fcff; font-weight: 500; }
+.error { color: #ffd0c8; }
+code { word-break: break-all; font-size: .8125rem; color: #f8fcff; }
+.surface-in { animation: surface-in 900ms cubic-bezier(.22, 1, .36, 1) both; }
+.band.surface-in { animation-delay: 150ms; }
+.caption.surface-in { animation-delay: 250ms; }
+@keyframes surface-in { from { opacity: 0; transform: translateY(24px) scale(.96); } }
+@media (prefers-reduced-motion: reduce) {
+  .flake { animation-play-state: paused; }
+  .surface-in { animation: none; }
+}
 </style>
 </head>
 <body>
-<h1>Connect to twillingate</h1>
+<main>
+<div class="snow" aria-hidden="true">
+<svg width="0" height="0" style="position:absolute"><symbol id="flake" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1.5v21M9.3 3.6 12 6.3l2.7-2.7M9.3 20.4 12 17.7l2.7 2.7"/><path transform="rotate(60 12 12)" d="M12 1.5v21M9.3 3.6 12 6.3l2.7-2.7M9.3 20.4 12 17.7l2.7 2.7"/><path transform="rotate(120 12 12)" d="M12 1.5v21M9.3 3.6 12 6.3l2.7-2.7M9.3 20.4 12 17.7l2.7 2.7"/></g></symbol></svg>
+{{range snowfall}}<svg class="flake" style="left:{{.Left}}%;width:{{.Size}}px;height:{{.Size}}px;animation-delay:{{.Delay}}s;animation-duration:{{.Duration}}s;--drift:{{.Drift}}px;--spin:{{.Spin}}deg;--opacity:{{.Opacity}}{{if .Blur}};filter:blur(.6px){{end}}"><use href="#flake"/></svg>
+{{end}}</div>
+<div class="berg">
+<div class="halo"></div>
+<div class="tile surface-in">
+<svg viewBox="0 0 30 30" aria-hidden="true"><path d="M0 0H30V30H0Z" fill="#0A4D8C"/><path d="M0 0H30V13H0Z" fill="#8FD3FF"/><path d="M5.5 13L10.2 9.1L12.2 10.2L15.5 4L18 8.1L20 7L24.5 13H5.5Z" fill="#F8FCFF"/><path d="M12.2 10.2L15.5 4L16.3 10L14.4 13H9.2L12.2 10.2Z" fill="#D5F1FF"/><path d="M15.5 4L18 8.1L16.3 10Z" fill="#2E9FE5"/><path d="M18 8.1L20 7L22 13H16.3Z" fill="#62C3F3"/><path d="M5.5 13H24.5L20 20.5L15 27L10 20.5L5.5 13Z" fill="#1478C9"/><path d="M5.5 13L12.5 16L10 20.5Z" fill="#54C8F7"/><path d="M12.5 16L15 27L10 20.5Z" fill="#249FE3"/><path d="M12.5 16L17 13L20 20.5L15 27Z" fill="#0D61AD"/><path d="M17 13H24.5L20 20.5Z" fill="#073F7C"/></svg>
+</div>
+{{if .Request}}
+<form class="band surface-in" method="post" action="/oauth/authorize">
+<input type="hidden" name="request" value="{{.Request}}">
+<input name="password" type="password" placeholder="Password" aria-label="Password" autocomplete="current-password" autofocus required>
+<button type="submit" aria-label="Connect"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg></button>
+</form>
+{{else}}
+<div class="band stop surface-in">Can't connect</div>
+{{end}}
+</div>
+<div class="caption surface-in">
+<h1>twillingate</h1>
 {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
 {{if .RejectedRedirect}}<p>Rejected redirect URI: <code>{{.RejectedRedirect}}</code></p>{{end}}
-{{if .Request}}
-<p><strong>{{or .ClientName "An MCP client"}}</strong> is asking for access and will return you to <strong>{{.RedirectHost}}</strong>.</p>
-<form method="post" action="/oauth/authorize">
-<input type="hidden" name="request" value="{{.Request}}">
-<label for="password">Password</label>
-<input id="password" name="password" type="password" autocomplete="current-password" autofocus required>
-<button type="submit">Connect</button>
-</form>
-{{end}}
+{{if .Request}}<p><strong>{{or .ClientName "An MCP client"}}</strong> is asking for access and will return you to <strong>{{.RedirectHost}}</strong>.</p>{{end}}
+</div>
+</main>
 </body>
 </html>

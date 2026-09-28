@@ -5,6 +5,8 @@ import (
 	"crypto/subtle"
 	_ "embed"
 	"html/template"
+	"math"
+	mrand "math/rand/v2"
 	"net/http"
 	"net/url"
 	"sync"
@@ -16,7 +18,40 @@ import (
 //go:embed oauth_page.html
 var loginPageHTML string
 
-var loginPage = template.Must(template.New("login").Parse(loginPageHTML))
+var loginPage = template.Must(template.New("login").
+	Funcs(template.FuncMap{"snowfall": func() []flake { return snow }}).
+	Parse(loginPageHTML))
+
+// snow is drawn once per process: the page's CSP allows no scripts, so the
+// flakes web/src/components/Snowfall.tsx places in the browser come from here.
+var snow = snowfall(42)
+
+// flake is one snowflake's placement and fall; lengths in px, times in s.
+type flake struct {
+	Left, Size, Delay, Duration, Drift, Spin, Opacity float64
+	Blur                                              bool
+}
+
+// snowfall spreads n flakes over three depths, as Snowfall.tsx does: small
+// flakes are far away, so they fall slower, dimmer and out of focus.
+func snowfall(n int) []flake {
+	r := func(lo, span float64) float64 { return math.Round((lo+mrand.Float64()*span)*10) / 10 }
+	flakes := make([]flake, n)
+	for i := range flakes {
+		depth := mrand.Float64()
+		near, far := depth > 0.82, depth < 0.45
+		f := flake{Left: r(0, 100), Delay: -r(0, 24), Spin: r(-270, 540), Size: r(10, 6), Duration: r(15, 5),
+			Drift: r(-20, 40), Opacity: 0.7, Blur: far}
+		switch {
+		case near:
+			f.Size, f.Duration, f.Drift, f.Opacity = r(18, 10), r(11, 4), r(-45, 90), 0.9
+		case far:
+			f.Size, f.Duration, f.Opacity = r(5, 4), r(22, 8), 0.45
+		}
+		flakes[i] = f
+	}
+	return flakes
+}
 
 // pageData fills oauth_page.html; a non-empty Request renders the form.
 type pageData struct {
