@@ -51,8 +51,8 @@ export default function Stat({ data, props }: WidgetProps<StatProps>) {
     const value = aggregate(values, props.aggregate ?? 'sum')
     const series = records.map((r, i) => ({ x: String(r.x ?? i), value: Number(r.value ?? 0) }))
     return (
-      <div className="flex h-full flex-col justify-between gap-2 p-2">
-        <span className="text-2xl font-semibold tabular-nums">{formatValue(value, format)}</span>
+      <div className="flex h-full flex-col justify-between gap-2 py-2">
+        <span className="text-3xl font-semibold tracking-tight tabular-nums">{formatValue(value, format)}</span>
         <div className="h-10 w-full">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={series}>
@@ -76,8 +76,8 @@ export default function Stat({ data, props }: WidgetProps<StatProps>) {
   const delta = typeof previous === 'number' && previous !== 0 ? (value - previous) / previous : null
 
   return (
-    <div className="flex h-full flex-col items-start justify-center gap-2 p-2">
-      <span className="text-2xl font-semibold tabular-nums">{formatValue(value, format)}</span>
+    <div className="flex h-full flex-col items-start justify-center gap-2 py-2">
+      <span className="text-3xl font-semibold tracking-tight tabular-nums">{formatValue(value, format)}</span>
       {delta !== null && (
         <span
           className={

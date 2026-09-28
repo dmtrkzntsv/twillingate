@@ -73,7 +73,8 @@ export default function Table({ data, props }: WidgetProps<TableProps>) {
                   range && raw !== ''
                     ? {
                         backgroundColor: `color-mix(in oklab, var(--chart-1) ${
-                          ((Number(raw) - range.min) / (range.max - range.min || 1)) * 100
+                          // Capped below full strength, so the cell's own text stays readable on it.
+                          ((Number(raw) - range.min) / (range.max - range.min || 1)) * 45
                         }%, transparent)`,
                       }
                     : undefined

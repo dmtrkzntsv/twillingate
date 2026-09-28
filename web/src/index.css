@@ -43,75 +43,79 @@
     --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
     --color-sidebar-border: var(--sidebar-border);
     --color-sidebar-ring: var(--sidebar-ring);
+    --color-sky: var(--sky);
 }
 
 :root {
-    --radius: 0.625rem;
-    --background: oklch(1 0 0);
-    --foreground: oklch(0.145 0 0);
-    --card: oklch(1 0 0);
-    --card-foreground: oklch(0.145 0 0);
-    --popover: oklch(1 0 0);
-    --popover-foreground: oklch(0.145 0 0);
-    --primary: oklch(0.205 0 0);
-    --primary-foreground: oklch(0.985 0 0);
-    --secondary: oklch(0.97 0 0);
-    --secondary-foreground: oklch(0.205 0 0);
-    --muted: oklch(0.97 0 0);
-    --muted-foreground: oklch(0.556 0 0);
-    --accent: oklch(0.97 0 0);
-    --accent-foreground: oklch(0.205 0 0);
-    --destructive: oklch(0.577 0.245 27.325);
-    --border: oklch(0.922 0 0);
-    --input: oklch(0.922 0 0);
-    --ring: oklch(0.708 0 0);
-    --chart-1: oklch(0.87 0 0);
-    --chart-2: oklch(0.556 0 0);
-    --chart-3: oklch(0.439 0 0);
-    --chart-4: oklch(0.371 0 0);
-    --chart-5: oklch(0.269 0 0);
-    --sidebar: oklch(0.985 0 0);
-    --sidebar-foreground: oklch(0.145 0 0);
-    --sidebar-primary: oklch(0.205 0 0);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.97 0 0);
-    --sidebar-accent-foreground: oklch(0.205 0 0);
-    --sidebar-border: oklch(0.922 0 0);
-    --sidebar-ring: oklch(0.708 0 0);
+    /* The iceberg logo's colours (IcebergLogo.tsx): the page is the sky above
+       the waterline, the sidebar the sea below it. Chart series after the
+       ocean blue take the jellybean houses' colours: teal, saffron,
+       raspberry, violet. */
+    --radius: 0.75rem;
+    --background: #f3f7fb;
+    --foreground: #0b1f36;
+    --card: #ffffff;
+    --card-foreground: #0b1f36;
+    --popover: #ffffff;
+    --popover-foreground: #0b1f36;
+    --primary: #1478c9;
+    --primary-foreground: #ffffff;
+    --secondary: #e6f0f9;
+    --secondary-foreground: #0a4d8c;
+    --muted: #eaf1f7;
+    --muted-foreground: #587089;
+    --accent: #e3effa;
+    --accent-foreground: #0a4d8c;
+    --destructive: #d23b3b;
+    --border: #dbe5ee;
+    --input: #d0dce8;
+    --ring: #2e9fe5;
+    --chart-1: #1478c9;
+    --chart-2: #11a08a;
+    --chart-3: #e9a524;
+    --chart-4: #d6457a;
+    --chart-5: #7c5ce6;
+    --sky: #8fd3ff;
+    --skeleton: #e3edf6;
+    --skeleton-shine: #f4f9fd;
+    --sidebar: #061a30;
+    --sidebar-foreground: #c4def2;
+    --sidebar-primary: #8fd3ff;
+    --sidebar-primary-foreground: #06223f;
+    --sidebar-accent: rgb(143 211 255 / 12%);
+    --sidebar-accent-foreground: #f8fcff;
+    --sidebar-border: rgb(143 211 255 / 12%);
+    --sidebar-ring: #62c3f3;
 }
 
 .dark {
-    --background: oklch(0.145 0 0);
-    --foreground: oklch(0.985 0 0);
-    --card: oklch(0.205 0 0);
-    --card-foreground: oklch(0.985 0 0);
-    --popover: oklch(0.205 0 0);
-    --popover-foreground: oklch(0.985 0 0);
-    --primary: oklch(0.922 0 0);
-    --primary-foreground: oklch(0.205 0 0);
-    --secondary: oklch(0.269 0 0);
-    --secondary-foreground: oklch(0.985 0 0);
-    --muted: oklch(0.269 0 0);
-    --muted-foreground: oklch(0.708 0 0);
-    --accent: oklch(0.269 0 0);
-    --accent-foreground: oklch(0.985 0 0);
-    --destructive: oklch(0.704 0.191 22.216);
-    --border: oklch(1 0 0 / 10%);
-    --input: oklch(1 0 0 / 15%);
-    --ring: oklch(0.556 0 0);
-    --chart-1: oklch(0.87 0 0);
-    --chart-2: oklch(0.556 0 0);
-    --chart-3: oklch(0.439 0 0);
-    --chart-4: oklch(0.371 0 0);
-    --chart-5: oklch(0.269 0 0);
-    --sidebar: oklch(0.205 0 0);
-    --sidebar-foreground: oklch(0.985 0 0);
-    --sidebar-primary: oklch(0.488 0.243 264.376);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.269 0 0);
-    --sidebar-accent-foreground: oklch(0.985 0 0);
-    --sidebar-border: oklch(1 0 0 / 10%);
-    --sidebar-ring: oklch(0.556 0 0);
+    --background: #071a2f;
+    --foreground: #e6f2fb;
+    --card: #0c233b;
+    --card-foreground: #e6f2fb;
+    --popover: #0e2742;
+    --popover-foreground: #e6f2fb;
+    --primary: #8fd3ff;
+    --primary-foreground: #06223f;
+    --secondary: #12304e;
+    --secondary-foreground: #e6f2fb;
+    --muted: #10294a;
+    --muted-foreground: #8aa6c1;
+    --accent: #143556;
+    --accent-foreground: #f8fcff;
+    --destructive: #ff7a70;
+    --border: rgb(143 211 255 / 11%);
+    --input: rgb(143 211 255 / 18%);
+    --ring: #62c3f3;
+    --chart-1: #4fb8f4;
+    --chart-2: #33c7a7;
+    --chart-3: #f4c152;
+    --chart-4: #f0719e;
+    --chart-5: #a18af8;
+    --sky: #2e9fe5;
+    --skeleton: #11304f;
+    --skeleton-shine: #1a4169;
+    --sidebar: #030d19;
 }
 
 @layer base {
@@ -165,6 +169,46 @@
   }
   .prose-widget hr {
     @apply my-4 border-border;
+  }
+}
+
+/* The sidebar is the sea below the logo's waterline, as on the sign-in
+   screen: lit from the top, darkening toward the floor. */
+[data-slot='sidebar-inner'],
+[data-slot='sidebar'][data-mobile='true'] {
+  background-image:
+    radial-gradient(120% 55% at 50% 0%, rgb(46 159 229 / 22%), transparent 70%),
+    linear-gradient(180deg, #0b3a66 0%, #061a30 45%, #030b15 100%);
+}
+
+/* The sky over a dashboard: a wash of the logo's sky blue behind the title
+   and switchers, gone by the time the widgets start. */
+.sky-wash {
+  background-repeat: no-repeat;
+  background-size: 100% 18rem;
+  background-image: linear-gradient(180deg, color-mix(in oklab, var(--sky) 22%, transparent) 0%, transparent 100%);
+}
+.dark .sky-wash {
+  background-repeat: no-repeat;
+  background-size: 100% 18rem;
+  background-image: linear-gradient(180deg, color-mix(in oklab, var(--sky) 12%, transparent) 0%, transparent 100%);
+}
+
+/* Loading placeholders: a cool frost with light passing across it, the same
+   sweep on every shape so a loading grid moves as one. */
+.frost {
+  background-color: var(--skeleton);
+  background-image: linear-gradient(100deg, transparent 30%, var(--skeleton-shine) 50%, transparent 70%);
+  background-size: 200% 100%;
+  background-attachment: fixed;
+  animation: frost 1.6s ease-in-out infinite;
+}
+@keyframes frost {
+  from {
+    background-position: 150% 0;
+  }
+  to {
+    background-position: -50% 0;
   }
 }
 
@@ -224,6 +268,9 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .frost {
+    animation: none;
+  }
   .snowflake {
     animation-play-state: paused;
   }
