@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import type { Example, WidgetModule } from '@/components/widgets/types'
+import { rowsPx } from '@/lib/grid'
 
 /** What to paste into a request to an agent: `add_widget`'s component and props. */
 export function addWidgetJson(name: string, example: Example): string {
@@ -20,6 +21,9 @@ function CopyButton({ text, label }: { text: string; label: string }) {
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   useEffect(() => () => clearTimeout(timer.current), [])
   const copy = async () => {
+    // A second click before the first reset fires must not let the old
+    // timer clear a label the new click just set.
+    clearTimeout(timer.current)
     try {
       if (!navigator.clipboard) throw new Error('no clipboard')
       await navigator.clipboard.writeText(text)
@@ -40,7 +44,7 @@ function CopyButton({ text, label }: { text: string; label: string }) {
       onClick={() => void copy()}
     >
       {state === 'copied' ? <CheckIcon /> : state === 'failed' ? <TriangleAlertIcon /> : <CopyIcon />}
-      {state === 'copied' ? 'Copied' : state === 'failed' ? 'Copy failed' : label}
+      <span aria-live="polite">{state === 'copied' ? 'Copied' : state === 'failed' ? 'Copy failed' : label}</span>
     </Button>
   )
 }
@@ -61,7 +65,14 @@ export default function ComponentEntry({ name, module }: { name: string; module:
   const props = Object.entries((contract.props as { properties?: Record<string, PropSchema> }).properties ?? {})
   const headingId = `component-${name}-heading`
   return (
-    <section id={`component-${name}`} aria-labelledby={headingId} className="flex scroll-mt-16 flex-col gap-3">
+    <section
+      id={`component-${name}`}
+      aria-labelledby={headingId}
+      className="flex scroll-mt-16 flex-col gap-3"
+      // Read by e2e/gallery.spec.ts to check each card renders at the
+      // component's default height, in px, like a dashboard does.
+      data-default-height={contract.defaultHeight}
+    >
       <div className="flex flex-col gap-1.5">
         <div className="flex flex-wrap items-center gap-2">
           <h2 id={headingId} className="font-mono text-base font-semibold">
@@ -118,10 +129,16 @@ export default function ComponentEntry({ name, module }: { name: string; module:
           return {
             key: i,
             width: contract.defaultWidth,
+            // 3 extra rows beyond the widget's own default height: the
+            // copy row below it, which stacks on a phone and needs about
+            // 116px there.
             height: contract.defaultHeight + 3,
             node: (
               <div className="flex h-full min-w-0 flex-col gap-2">
-                <div className="min-h-0 flex-1">
+                {/* Fixed at rowsPx(defaultHeight), not flex-1, so the card
+                    is exactly the height a dashboard draws it at (spec
+                    decision 4), with the copy row below taking what's left. */}
+                <div className="min-h-0 shrink-0" style={{ height: rowsPx(contract.defaultHeight) }}>
                   <WidgetFrame title={example.title}>
                     <Component data={example.data} props={example.props} />
                   </WidgetFrame>
@@ -129,7 +146,7 @@ export default function ComponentEntry({ name, module }: { name: string; module:
                 {/* Below sm, a 3-wide card (see lib/grid.ts's span()) is
                     narrower than this button's label, so it stacks instead
                     of forcing the row wider than the viewport. */}
-                <div className="flex min-w-0 flex-col items-start gap-2 sm:flex-row">
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col items-start gap-2 sm:flex-row">
                   <CopyButton text={json} label="Copy add_widget JSON" />
                   <pre className="max-h-16 min-w-0 flex-1 overflow-y-auto rounded-md bg-muted px-2 py-1 font-mono text-xs break-all whitespace-pre-wrap select-all">
                     {json}

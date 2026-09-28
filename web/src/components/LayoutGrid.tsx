@@ -21,6 +21,9 @@ export default function LayoutGrid({ cells }: { cells: GridCell[] }) {
   const ref = useRef<HTMLDivElement>(null)
   const width = useElementWidth(ref)
   return (
+    // auto-rows-[40px] and gap-3 are literal (Tailwind needs static class
+    // names) but must stay in step with ROW_PX and GAP_PX in lib/grid.ts,
+    // which rowsPx() uses to size cells that need an exact pixel height.
     <div ref={ref} data-slot="widget-grid" className="grid auto-rows-[40px] grid-cols-12 gap-3">
       {cells.map((cell) => {
         const columns = span(cell.width, width)
