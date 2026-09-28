@@ -2,7 +2,7 @@ import { Bar, CartesianGrid, ComposedChart, Line, XAxis, YAxis } from 'recharts'
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart'
 import { formatValue, type Format } from '@/lib/format'
 import { toRecords } from '@/lib/records'
-import type { Contract, SqlData, WidgetProps } from './types'
+import type { Contract, Example, SqlData, WidgetProps } from './types'
 
 interface ComboProps {
   bar_format?: Format
@@ -32,6 +32,33 @@ export const contract: Contract = {
   defaultWidth: 6,
   defaultHeight: 8,
 }
+
+export const examples: Example[] = [
+  {
+    title: 'Visitors and bounce rate',
+    props: { bar_format: 'number', line_format: 'percent' },
+    data: {
+      columns: ['x', 'bar', 'line'],
+      rows: [
+        ['2026-09-01', '240', '0.52'],
+        ['2026-09-02', '255', '0.50'],
+        ['2026-09-03', '260', '0.49'],
+        ['2026-09-04', '275', '0.47'],
+        ['2026-09-05', '300', '0.46'],
+        ['2026-09-06', '290', '0.48'],
+        ['2026-09-07', '310', '0.45'],
+        ['2026-09-08', '320', '0.44'],
+        ['2026-09-09', '335', '0.43'],
+        ['2026-09-10', '340', '0.42'],
+        ['2026-09-11', '355', '0.41'],
+        ['2026-09-12', '360', '0.40'],
+        ['2026-09-13', '375', '0.39'],
+        ['2026-09-14', '390', '0.38'],
+      ],
+      truncated: false,
+    },
+  },
+]
 
 export default function Combo({ data, props }: WidgetProps<ComboProps>) {
   const records = toRecords(data as SqlData, contract)

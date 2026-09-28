@@ -1,6 +1,6 @@
 import { Table as ShadcnTable, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { formatValue, type Format } from '@/lib/format'
-import type { Contract, SqlData, WidgetProps } from './types'
+import type { Contract, Example, SqlData, WidgetProps } from './types'
 
 interface TableProps {
   formats?: Record<string, Format>
@@ -22,6 +22,25 @@ export const contract: Contract = {
   defaultWidth: 6,
   defaultHeight: 10,
 }
+
+export const examples: Example[] = [
+  {
+    title: 'Top referrers',
+    props: { formats: { visitors: 'number', bounce_rate: 'percent' }, colorscale: ['visitors'] },
+    data: {
+      columns: ['referrer', 'visitors', 'bounce_rate'],
+      rows: [
+        ['google.com', '620', '0.38'],
+        ['(direct)', '410', '0.30'],
+        ['bing.com', '180', '0.44'],
+        ['github.com', '140', '0.27'],
+        ['twitter.com', '95', '0.52'],
+        ['duckduckgo.com', '60', '0.41'],
+      ],
+      truncated: false,
+    },
+  },
+]
 
 function isNumericCell(v: string): boolean {
   return v === '' || (v.trim() !== '' && Number.isFinite(Number(v)))

@@ -2,7 +2,7 @@ import { Cell, Funnel as RechartsFunnel, FunnelChart, LabelList } from 'recharts
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from '@/components/ui/chart'
 import { formatValue, type Format } from '@/lib/format'
 import { toRecords } from '@/lib/records'
-import type { Contract, SqlData, WidgetProps } from './types'
+import type { Contract, Example, SqlData, WidgetProps } from './types'
 
 interface FunnelProps {
   format?: Format
@@ -28,6 +28,23 @@ export const contract: Contract = {
   defaultWidth: 6,
   defaultHeight: 8,
 }
+
+export const examples: Example[] = [
+  {
+    title: 'Signup funnel',
+    props: { format: 'number' },
+    data: {
+      columns: ['step', 'value'],
+      rows: [
+        ['Visited', '5000'],
+        ['Viewed pricing', '1800'],
+        ['Started signup', '640'],
+        ['Signed up', '410'],
+      ],
+      truncated: false,
+    },
+  },
+]
 
 export default function Funnel({ data, props }: WidgetProps<FunnelProps>) {
   const records = toRecords(data as SqlData, contract)

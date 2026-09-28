@@ -9,7 +9,7 @@ import {
 import { seriesConfig } from '@/lib/chart'
 import { formatValue, type Format } from '@/lib/format'
 import { pivot, toRecords } from '@/lib/records'
-import type { Contract, SqlData, WidgetProps } from './types'
+import type { Contract, Example, SqlData, WidgetProps } from './types'
 
 interface BarProps {
   format?: Format
@@ -41,6 +41,49 @@ export const contract: Contract = {
   defaultWidth: 6,
   defaultHeight: 8,
 }
+
+export const examples: Example[] = [
+  {
+    title: 'Daily active users, new and returning',
+    props: { stacked: true },
+    data: {
+      columns: ['x', 'series', 'y'],
+      rows: [
+        ['2026-09-01', 'new', '85'],
+        ['2026-09-01', 'returning', '210'],
+        ['2026-09-02', 'new', '92'],
+        ['2026-09-02', 'returning', '225'],
+        ['2026-09-03', 'new', '78'],
+        ['2026-09-03', 'returning', '230'],
+        ['2026-09-04', 'new', '104'],
+        ['2026-09-04', 'returning', '240'],
+        ['2026-09-05', 'new', '112'],
+        ['2026-09-05', 'returning', '255'],
+        ['2026-09-06', 'new', '95'],
+        ['2026-09-06', 'returning', '220'],
+        ['2026-09-07', 'new', '120'],
+        ['2026-09-07', 'returning', '260'],
+      ],
+      truncated: false,
+    },
+  },
+  {
+    title: 'Top product events',
+    props: { horizontal: true },
+    data: {
+      columns: ['x', 'y'],
+      rows: [
+        ['page_view', '3200'],
+        ['search', '610'],
+        ['signup', '480'],
+        ['checkout_started', '260'],
+        ['checkout_completed', '150'],
+        ['share', '95'],
+      ],
+      truncated: false,
+    },
+  },
+]
 
 export default function Bar({ data, props }: WidgetProps<BarProps>) {
   const sql = data as SqlData

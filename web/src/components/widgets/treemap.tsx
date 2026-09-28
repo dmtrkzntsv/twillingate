@@ -3,7 +3,7 @@ import { Treemap as RechartsTreemap } from 'recharts'
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart'
 import { formatValue, type Format } from '@/lib/format'
 import { toRecords } from '@/lib/records'
-import type { Contract, SqlData, WidgetProps } from './types'
+import type { Contract, Example, SqlData, WidgetProps } from './types'
 
 interface TreemapProps {
   format?: Format
@@ -30,6 +30,31 @@ export const contract: Contract = {
   defaultWidth: 6,
   defaultHeight: 8,
 }
+
+// Two levels via one flat `parent` column: the component groups rows by
+// `parent`, one top-level box per distinct value, so every row here is a
+// leaf (a version) whose `parent` names its browser -- no row stands for
+// the browser itself, or it would double as a second, duplicate box.
+export const examples: Example[] = [
+  {
+    title: 'Browsers and versions',
+    props: { format: 'number' },
+    data: {
+      columns: ['label', 'value', 'parent'],
+      rows: [
+        ['128', '380', 'Chrome'],
+        ['127', '240', 'Chrome'],
+        ['17', '300', 'Safari'],
+        ['16', '180', 'Safari'],
+        ['129', '130', 'Firefox'],
+        ['128', '80', 'Firefox'],
+        ['121', '70', 'Edge'],
+        ['120', '20', 'Edge'],
+      ],
+      truncated: false,
+    },
+  },
+]
 
 interface Node {
   name: string

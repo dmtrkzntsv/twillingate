@@ -1,6 +1,6 @@
 import { formatValue, type Format } from '@/lib/format'
 import { toRecords } from '@/lib/records'
-import type { Contract, SqlData, WidgetProps } from './types'
+import type { Contract, Example, SqlData, WidgetProps } from './types'
 
 interface CalendarProps {
   format?: Format
@@ -53,6 +53,27 @@ function grid(maxDay: Date): Date[][] {
     Array.from({ length: 7 }, (_, day) => new Date(start.getTime() + (week * 7 + day) * DAY_MS))
   )
 }
+
+// 120 days ending 2026-09-27, values swinging on a 90-unit cycle with a
+// weekend dip, entirely from `i` and the end date (no Math.random/Date.now).
+const CALENDAR_END = Date.UTC(2026, 8, 27)
+export const examples: Example[] = [
+  {
+    title: 'Visitors per day',
+    props: { format: 'number' },
+    data: {
+      columns: ['day', 'value'],
+      rows: Array.from({ length: 120 }, (_, i) => {
+        const date = new Date(CALENDAR_END - (119 - i) * DAY_MS)
+        const day = date.toISOString().slice(0, 10)
+        const dayOfWeek = date.getUTCDay()
+        const value = String(200 + ((i * 37) % 90) + (dayOfWeek >= 5 ? -80 : 0))
+        return [day, value]
+      }),
+      truncated: false,
+    },
+  },
+]
 
 export default function Calendar({ data, props }: WidgetProps<CalendarProps>) {
   const records = toRecords(data as SqlData, contract)

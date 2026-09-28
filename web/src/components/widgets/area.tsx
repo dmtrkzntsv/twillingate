@@ -10,7 +10,7 @@ import {
 import { seriesConfig } from '@/lib/chart'
 import { formatValue, type Format } from '@/lib/format'
 import { pivot, toRecords } from '@/lib/records'
-import type { Contract, SqlData, WidgetProps } from './types'
+import type { Contract, Example, SqlData, WidgetProps } from './types'
 
 interface AreaProps {
   format?: Format
@@ -42,6 +42,41 @@ export const contract: Contract = {
   defaultWidth: 6,
   defaultHeight: 8,
 }
+
+// 7 days, so 3 series stays under the fixture row cap (14 days would be 42 rows).
+export const examples: Example[] = [
+  {
+    title: 'Views per day by platform',
+    props: { stacked: true },
+    data: {
+      columns: ['x', 'series', 'y'],
+      rows: [
+        ['2026-09-01', 'desktop', '420'],
+        ['2026-09-01', 'mobile', '260'],
+        ['2026-09-01', 'tablet', '60'],
+        ['2026-09-02', 'desktop', '440'],
+        ['2026-09-02', 'mobile', '270'],
+        ['2026-09-02', 'tablet', '58'],
+        ['2026-09-03', 'desktop', '430'],
+        ['2026-09-03', 'mobile', '280'],
+        ['2026-09-03', 'tablet', '62'],
+        ['2026-09-04', 'desktop', '460'],
+        ['2026-09-04', 'mobile', '300'],
+        ['2026-09-04', 'tablet', '65'],
+        ['2026-09-05', 'desktop', '480'],
+        ['2026-09-05', 'mobile', '320'],
+        ['2026-09-05', 'tablet', '70'],
+        ['2026-09-06', 'desktop', '410'],
+        ['2026-09-06', 'mobile', '290'],
+        ['2026-09-06', 'tablet', '64'],
+        ['2026-09-07', 'desktop', '470'],
+        ['2026-09-07', 'mobile', '330'],
+        ['2026-09-07', 'tablet', '72'],
+      ],
+      truncated: false,
+    },
+  },
+]
 
 export default function Area({ data, props }: WidgetProps<AreaProps>) {
   const sql = data as SqlData

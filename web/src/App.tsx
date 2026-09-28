@@ -1,12 +1,13 @@
 import { useEffect, type ReactNode } from 'react'
 import { WifiOffIcon } from 'lucide-react'
-import { BrowserRouter, Route, Routes, useNavigate } from 'react-router'
+import { BrowserRouter, Navigate, Route, Routes, useNavigate } from 'react-router'
 import StatusCard from '@/components/StatusCard'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { useOnline } from '@/hooks/use-online'
 import { currentAppPath, onUnauthorized } from '@/lib/auth'
 import Callback from '@/pages/Callback'
 import Dashboard from '@/pages/Dashboard'
+import ComponentsGallery from '@/pages/gallery/ComponentsGallery'
 import Home from '@/pages/Home'
 import Login from '@/pages/Login'
 
@@ -57,6 +58,9 @@ function App() {
               </OnlineOnly>
             }
           />
+          <Route path="/gallery/components" element={<ComponentsGallery />} />
+          <Route path="/gallery" element={<Navigate to="/gallery/components" replace />} />
+          <Route path="/gallery/*" element={<Navigate to="/gallery/components" replace />} />
           <Route path="/callback" element={<Callback />} />
           <Route path="/login" element={<Login />} />
         </Routes>

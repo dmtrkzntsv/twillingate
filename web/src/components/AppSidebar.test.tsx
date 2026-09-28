@@ -46,3 +46,30 @@ describe('AppSidebar log out', () => {
     expect(assign).toHaveBeenCalledWith('/app/login')
   })
 })
+
+describe('AppSidebar gallery', () => {
+  it('links to the components gallery, active on a gallery page', () => {
+    renderWithProviders(
+      <MemoryRouter initialEntries={['/gallery/components']}>
+        <SidebarProvider>
+          <AppSidebar dashboards={[]} currentId={0} />
+        </SidebarProvider>
+      </MemoryRouter>
+    )
+    const link = screen.getByRole('link', { name: 'Components' })
+    expect(link).toHaveAttribute('href', '/gallery/components')
+    expect(link).toHaveAttribute('data-active', 'true')
+    expect(screen.getByText('Gallery')).toBeInTheDocument()
+  })
+
+  it('is not active on a dashboard', () => {
+    renderWithProviders(
+      <MemoryRouter initialEntries={['/dashboards/1']}>
+        <SidebarProvider>
+          <AppSidebar dashboards={[]} currentId={1} />
+        </SidebarProvider>
+      </MemoryRouter>
+    )
+    expect(screen.getByRole('link', { name: 'Components' })).not.toHaveAttribute('data-active', 'true')
+  })
+})

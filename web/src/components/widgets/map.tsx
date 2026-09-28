@@ -6,7 +6,7 @@ import worldAtlas from 'world-atlas/countries-110m.json'
 import { ISO_ALPHA2_TO_NUMERIC } from '@/lib/iso-countries'
 import { formatValue, type Format } from '@/lib/format'
 import { toRecords } from '@/lib/records'
-import type { Contract, SqlData, WidgetProps } from './types'
+import type { Contract, Example, SqlData, WidgetProps } from './types'
 
 interface MapProps {
   format?: Format
@@ -32,6 +32,29 @@ export const contract: Contract = {
   defaultWidth: 6,
   defaultHeight: 8,
 }
+
+export const examples: Example[] = [
+  {
+    title: 'Visitors by country',
+    props: { format: 'number' },
+    data: {
+      columns: ['country', 'value'],
+      rows: [
+        ['US', '1240'],
+        ['DE', '380'],
+        ['GB', '410'],
+        ['FR', '290'],
+        ['IN', '520'],
+        ['BR', '310'],
+        ['CA', '260'],
+        ['NL', '150'],
+        ['JP', '340'],
+        ['AU', '180'],
+      ],
+      truncated: false,
+    },
+  },
+]
 
 const WIDTH = 960
 const HEIGHT = 500

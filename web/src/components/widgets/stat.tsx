@@ -2,7 +2,7 @@ import { ArrowDownIcon, ArrowUpIcon } from 'lucide-react'
 import { Line, LineChart, ResponsiveContainer } from 'recharts'
 import { formatValue, type Format } from '@/lib/format'
 import { toRecords } from '@/lib/records'
-import type { Contract, SqlData, WidgetProps } from './types'
+import type { Contract, Example, SqlData, WidgetProps } from './types'
 
 interface StatProps {
   format?: Format
@@ -32,6 +32,38 @@ export const contract: Contract = {
   defaultWidth: 3,
   defaultHeight: 3,
 }
+
+export const examples: Example[] = [
+  {
+    title: 'Visitors',
+    props: { format: 'number', aggregate: 'sum' },
+    data: {
+      columns: ['value', 'x'],
+      rows: [
+        ['240', '2026-09-01'],
+        ['255', '2026-09-02'],
+        ['260', '2026-09-03'],
+        ['275', '2026-09-04'],
+        ['300', '2026-09-05'],
+        ['290', '2026-09-06'],
+        ['310', '2026-09-07'],
+        ['320', '2026-09-08'],
+        ['335', '2026-09-09'],
+        ['340', '2026-09-10'],
+        ['355', '2026-09-11'],
+        ['360', '2026-09-12'],
+        ['375', '2026-09-13'],
+        ['390', '2026-09-14'],
+      ],
+      truncated: false,
+    },
+  },
+  {
+    title: 'Bounce rate',
+    props: { format: 'percent' },
+    data: { columns: ['value', 'previous'], rows: [['0.42', '0.47']], truncated: false },
+  },
+]
 
 function aggregate(values: number[], how: StatProps['aggregate']): number {
   if (values.length === 0) return 0

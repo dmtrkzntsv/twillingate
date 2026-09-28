@@ -1,6 +1,6 @@
 import { formatValue, type Format } from '@/lib/format'
 import { toRecords } from '@/lib/records'
-import type { Contract, SqlData, WidgetProps } from './types'
+import type { Contract, Example, SqlData, WidgetProps } from './types'
 
 interface BarListProps {
   format?: Format
@@ -26,6 +26,27 @@ export const contract: Contract = {
   defaultWidth: 6,
   defaultHeight: 8,
 }
+
+export const examples: Example[] = [
+  {
+    title: 'Top pages',
+    props: { format: 'number' },
+    data: {
+      columns: ['label', 'value'],
+      rows: [
+        ['/', '1240'],
+        ['/pricing', '860'],
+        ['/docs/install', '540'],
+        ['/docs', '410'],
+        ['/blog', '320'],
+        ['/about', '210'],
+        ['/docs/api', '150'],
+        ['/contact', '90'],
+      ],
+      truncated: false,
+    },
+  },
+]
 
 export default function BarList({ data, props }: WidgetProps<BarListProps>) {
   const records = toRecords(data as SqlData, contract)
