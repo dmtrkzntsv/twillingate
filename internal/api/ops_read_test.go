@@ -23,6 +23,23 @@ func TestListProjects(t *testing.T) {
 	}
 }
 
+// The web app waits on list_projects before loading any widget, so it
+// reads the registry alone: with the read database closed it still
+// answers.
+func TestListProjectsQueriesNothing(t *testing.T) {
+	h, cs := newTestHost(t)
+	if err := h.db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	res := callTool(t, cs, "list_projects", nil)
+	if res.IsError {
+		t.Fatalf("list_projects touched the read database: %s", textOf(res))
+	}
+	if out := textOf(res); !strings.Contains(out, `"project_id":1`) {
+		t.Errorf("missing blog in %s", out)
+	}
+}
+
 func TestViewsOverviewStitchesAggregatedAndLive(t *testing.T) {
 	_, cs := newTestHost(t)
 	res := callTool(t, cs, "views_overview", map[string]any{
