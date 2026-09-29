@@ -1,14 +1,12 @@
-import { PolarAngleAxis, PolarGrid, Radar as RechartsRadar, RadarChart } from 'recharts'
+import { PolarAngleAxis, PolarGrid, PolarRadiusAxis, Radar as RechartsRadar, RadarChart } from 'recharts'
 import {
   ChartContainer,
-  ChartLegend,
-  ChartLegendContent,
   ChartTooltip,
-  ChartTooltipContent,
 } from '@/components/ui/chart'
-import { seriesConfig } from '@/lib/chart'
-import { formatValue, type Format } from '@/lib/format'
+import { seriesColor, seriesConfig } from '@/lib/chart'
+import type { Format } from '@/lib/format'
 import { pivot, toRecords } from '@/lib/records'
+import { legend, tooltip } from '@/components/chart-parts'
 import type { Contract, Example, SqlData, WidgetProps } from './types'
 
 interface RadarProps {
@@ -75,22 +73,29 @@ export default function Radar({ data, props }: WidgetProps<RadarProps>) {
   const { rows, keys } = hasSeries
     ? pivot(records, 'axis', 'series', 'value')
     : { rows: records, keys: ['value'] }
-  const config = hasSeries ? seriesConfig(keys) : { value: { label: 'value', color: 'var(--chart-1)' } }
+  const config = hasSeries ? seriesConfig(keys) : { value: { label: 'value' } }
+  // One shape carries a wash; several stay mostly outline so none hides another.
+  const wash = keys.length === 1 ? 0.25 : 0.08
 
   return (
     <ChartContainer config={config} className="h-full w-full">
-      <RadarChart data={rows}>
-        <PolarGrid />
-        <PolarAngleAxis dataKey="axis" />
-        <ChartTooltip content={<ChartTooltipContent formatter={(v) => formatValue(Number(v), format)} />} />
-        {hasSeries && <ChartLegend content={<ChartLegendContent />} />}
+      <RadarChart data={rows} outerRadius="72%">
+        <PolarGrid gridType="circle" radialLines={false} />
+        <PolarAngleAxis dataKey="axis" tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }} />
+        {/* The largest value reaches the outer ring. */}
+        <PolarRadiusAxis domain={[0, 'dataMax']} tick={false} axisLine={false} />
+        <ChartTooltip cursor={false} content={tooltip(format, { heading: 'axis' })} />
+        {hasSeries && legend()}
         {keys.map((key, i) => (
           <RechartsRadar
             key={key}
             dataKey={key}
-            stroke={`var(--chart-${(i % 5) + 1})`}
-            fill={`var(--chart-${(i % 5) + 1})`}
-            fillOpacity={0.3}
+            stroke={seriesColor(i)}
+            strokeWidth={2}
+            strokeLinejoin="round"
+            fill={seriesColor(i)}
+            fillOpacity={wash}
+            dot={{ r: 3, fill: seriesColor(i), stroke: 'var(--card)', strokeWidth: 2, fillOpacity: 1 }}
             isAnimationActive={false}
           />
         ))}

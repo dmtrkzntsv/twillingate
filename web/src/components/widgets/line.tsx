@@ -1,14 +1,12 @@
 import { CartesianGrid, Line as RechartsLine, LineChart, XAxis, YAxis } from 'recharts'
 import {
   ChartContainer,
-  ChartLegend,
-  ChartLegendContent,
   ChartTooltip,
-  ChartTooltipContent,
 } from '@/components/ui/chart'
-import { seriesConfig } from '@/lib/chart'
+import { activeDot, axis, formatTick, grid, niceTicks, seriesColor, seriesConfig, valueAxis, valuesOf } from '@/lib/chart'
 import { formatValue, type Format } from '@/lib/format'
 import { pivot, toRecords } from '@/lib/records'
+import { legend, tooltip } from '@/components/chart-parts'
 import type { Contract, Example, SqlData, WidgetProps } from './types'
 
 interface LineProps {
@@ -91,38 +89,41 @@ export const examples: Example[] = [
   },
 ]
 
+/** At most this many points per line, each point also gets a dot. */
+const DOTTED = 14
+
 export default function Line({ data, props }: WidgetProps<LineProps>) {
   const sql = data as SqlData
   const records = toRecords(sql, contract)
   if (records.length === 0) return null
 
   const format = props.format ?? 'number'
-  const curve = props.curve ?? 'linear'
+  const curve = props.curve ?? 'monotone'
   const hasSeries = sql.columns.includes('series')
   const { rows, keys } = hasSeries ? pivot(records, 'x', 'series', 'y') : { rows: records, keys: ['y'] }
-  const config = hasSeries ? seriesConfig(keys) : { y: { label: 'y', color: 'var(--chart-1)' } }
+  const config = hasSeries ? seriesConfig(keys) : { y: { label: 'y' } }
+  const ticks = niceTicks(valuesOf(rows, keys))
+  const dotted = rows.length <= DOTTED
 
   return (
     <ChartContainer config={config} className="h-full w-full">
-      <LineChart data={rows}>
-        <CartesianGrid vertical={false} />
-        <XAxis dataKey="x" interval="preserveStartEnd" minTickGap={32} tickLine={false} axisLine={false} />
-        <YAxis
-          tickFormatter={(v: number) => formatValue(v, format)}
-          tickLine={false}
-          axisLine={false}
-          width={56}
-        />
-        <ChartTooltip content={<ChartTooltipContent />} />
-        {hasSeries && <ChartLegend content={<ChartLegendContent />} />}
+      <LineChart data={rows} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
+        <CartesianGrid {...grid} />
+        <XAxis dataKey="x" {...axis} interval="preserveStartEnd" minTickGap={24} tickFormatter={formatTick} />
+        <YAxis {...valueAxis} ticks={ticks} domain={[ticks[0], ticks[ticks.length - 1]]} tickFormatter={(v: number) => formatValue(v, format)} />
+        <ChartTooltip cursor={{ strokeWidth: 1 }} content={tooltip(format, { indicator: 'line', heading: 'x' })} />
+        {hasSeries && legend()}
         {keys.map((key, i) => (
           <RechartsLine
             key={key}
             type={curve}
             dataKey={key}
-            stroke={`var(--chart-${(i % 5) + 1})`}
+            stroke={seriesColor(i)}
             strokeWidth={2}
-            dot={false}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            dot={dotted ? { r: 3, fill: seriesColor(i), stroke: 'var(--card)', strokeWidth: 2 } : false}
+            activeDot={activeDot(seriesColor(i))}
             isAnimationActive={false}
           />
         ))}

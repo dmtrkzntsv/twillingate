@@ -107,11 +107,13 @@
     --border: rgb(143 211 255 / 11%);
     --input: rgb(143 211 255 / 18%);
     --ring: #62c3f3;
-    --chart-1: #4fb8f4;
-    --chart-2: #33c7a7;
-    --chart-3: #f4c152;
-    --chart-4: #f0719e;
-    --chart-5: #a18af8;
+    /* OKLCH L 0.66, inside the dark band; checked for colour-blind and
+       normal-vision separation against the card. */
+    --chart-1: #3899e2;
+    --chart-2: #05ab86;
+    --chart-3: #c38300;
+    --chart-4: #dc6292;
+    --chart-5: #927fe7;
     --sky: #2e9fe5;
     --skeleton: #11304f;
     --skeleton-shine: #1a4169;

@@ -2,14 +2,12 @@ import { useId } from 'react'
 import { Area as RechartsArea, AreaChart, CartesianGrid, XAxis, YAxis } from 'recharts'
 import {
   ChartContainer,
-  ChartLegend,
-  ChartLegendContent,
   ChartTooltip,
-  ChartTooltipContent,
 } from '@/components/ui/chart'
-import { seriesConfig } from '@/lib/chart'
+import { activeDot, axis, formatTick, grid, niceTicks, seriesColor, seriesConfig, stackTotals, valueAxis, valuesOf } from '@/lib/chart'
 import { formatValue, type Format } from '@/lib/format'
 import { pivot, toRecords } from '@/lib/records'
+import { legend, tooltip } from '@/components/chart-parts'
 import type { Contract, Example, SqlData, WidgetProps } from './types'
 
 interface AreaProps {
@@ -86,43 +84,44 @@ export default function Area({ data, props }: WidgetProps<AreaProps>) {
   if (records.length === 0) return null
 
   const format = props.format ?? 'number'
-  const curve = props.curve ?? 'linear'
+  const curve = props.curve ?? 'monotone'
   const hasSeries = sql.columns.includes('series')
   const { rows, keys } = hasSeries ? pivot(records, 'x', 'series', 'y') : { rows: records, keys: ['y'] }
-  const config = hasSeries ? seriesConfig(keys) : { y: { label: 'y', color: 'var(--chart-1)' } }
-  const colors = Math.min(keys.length, 5)
+  const config = hasSeries ? seriesConfig(keys) : { y: { label: 'y' } }
+  // Overlapping areas each keep a lighter wash so the ones behind still show.
+  const ticks = niceTicks(props.stacked ? stackTotals(rows, keys) : valuesOf(rows, keys))
+  const wash = props.stacked || keys.length === 1 ? 0.32 : 0.16
 
   return (
     <ChartContainer config={config} className="h-full w-full">
-      <AreaChart data={rows}>
+      <AreaChart data={rows} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
         <defs>
-          {/* Each colour fades toward the axis, like light into deep water. */}
-          {Array.from({ length: colors }, (_, c) => (
-            <linearGradient key={c} id={`${fade}-${c}`} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor={`var(--chart-${c + 1})`} stopOpacity={0.5} />
-              <stop offset="100%" stopColor={`var(--chart-${c + 1})`} stopOpacity={0.06} />
+          {/* Each color fades toward the axis, like light into deep water. */}
+          {keys.map((_, i) => (
+            <linearGradient key={i} id={`${fade}-${i}`} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={seriesColor(i)} stopOpacity={wash} />
+              <stop offset="100%" stopColor={seriesColor(i)} stopOpacity={0.02} />
             </linearGradient>
           ))}
         </defs>
-        <CartesianGrid vertical={false} />
-        <XAxis dataKey="x" interval="preserveStartEnd" minTickGap={32} tickLine={false} axisLine={false} />
-        <YAxis
-          tickFormatter={(v: number) => formatValue(v, format)}
-          tickLine={false}
-          axisLine={false}
-          width={56}
+        <CartesianGrid {...grid} />
+        <XAxis dataKey="x" {...axis} interval="preserveStartEnd" minTickGap={24} tickFormatter={formatTick} />
+        <YAxis {...valueAxis} ticks={ticks} domain={[ticks[0], ticks[ticks.length - 1]]} tickFormatter={(v: number) => formatValue(v, format)} />
+        <ChartTooltip
+          cursor={{ strokeWidth: 1 }}
+          content={tooltip(format, { indicator: 'line', heading: 'x', total: props.stacked })}
         />
-        <ChartTooltip content={<ChartTooltipContent />} />
-        {hasSeries && <ChartLegend content={<ChartLegendContent />} />}
+        {hasSeries && legend()}
         {keys.map((key, i) => (
           <RechartsArea
             key={key}
             type={curve}
             dataKey={key}
             stackId={props.stacked ? 'stack' : undefined}
-            fill={`url(#${fade}-${i % 5})`}
-            stroke={`var(--chart-${(i % 5) + 1})`}
+            fill={`url(#${fade}-${i})`}
+            stroke={seriesColor(i)}
             strokeWidth={2}
+            activeDot={activeDot(seriesColor(i))}
             isAnimationActive={false}
           />
         ))}

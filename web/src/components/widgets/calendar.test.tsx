@@ -36,9 +36,9 @@ describe('calendar', () => {
     })
     const low = container.querySelector('[data-day="2024-06-01"]') as HTMLElement
     const high = container.querySelector('[data-day="2024-06-15"]') as HTMLElement
-    expect(low.style.backgroundColor).toContain('color-mix')
-    expect(low.style.backgroundColor).toContain('0%')
-    expect(high.style.backgroundColor).toContain('100%')
+    expect(low.style.fill).toContain('color-mix')
+    expect(low.style.fill).toContain(' 15%')
+    expect(high.style.fill).toContain('100%')
   })
 
   it('labels the columns that contain the first of a month', () => {

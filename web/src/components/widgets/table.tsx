@@ -69,12 +69,15 @@ export default function Table({ data, props }: WidgetProps<TableProps>) {
   })
 
   return (
-    <div className="h-full overflow-auto p-2">
+    <div className="h-full overflow-auto">
       <ShadcnTable>
         <TableHeader>
           <TableRow>
             {sql.columns.map((col) => (
-              <TableHead key={col} className={numericColumns.has(col) ? 'text-right' : ''}>
+              <TableHead
+                key={col}
+                className={`h-8 text-xs font-medium text-muted-foreground ${numericColumns.has(col) ? 'text-right' : ''}`}
+              >
                 {col}
               </TableHead>
             ))}
@@ -100,7 +103,7 @@ export default function Table({ data, props }: WidgetProps<TableProps>) {
                 return (
                   <TableCell
                     key={col}
-                    className={numericColumns.has(col) ? 'text-right tabular-nums' : ''}
+                    className={`py-1.5 ${numericColumns.has(col) ? 'text-right tabular-nums' : ''}`}
                     style={style}
                   >
                     {text}
