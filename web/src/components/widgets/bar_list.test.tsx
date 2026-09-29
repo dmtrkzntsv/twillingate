@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 import type { SqlData, WidgetProps } from './types'
 import BarList, { contract } from './bar_list'
@@ -44,6 +45,40 @@ describe('bar_list', () => {
   it('applies the format prop', () => {
     renderBarList({ columns: ['label', 'value'], rows: [['a', '0.5']], truncated: false }, { format: 'percent' })
     expect(screen.getByText('50%')).toBeInTheDocument()
+  })
+
+  it('shows the full label, exact value, share and rank on hover', async () => {
+    const user = userEvent.setup()
+    renderBarList({
+      columns: ['label', 'value'],
+      rows: [
+        ['/home', '12345'],
+        ['/about', '4115'],
+      ],
+      truncated: false,
+    })
+    const row = screen.getByText('/home')
+    await user.hover(row)
+    const card = screen.getByRole('tooltip')
+    expect(card).toHaveTextContent('/home')
+    expect(card).toHaveTextContent('12,345')
+    expect(card).toHaveTextContent('Share of list75%')
+    expect(card).toHaveTextContent('Rank1 of 2')
+
+    await user.unhover(row)
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+  })
+
+  it('leaves the share out of a cut list, or one that is not counts', async () => {
+    const user = userEvent.setup()
+    const cut = renderBarList({ columns: ['label', 'value'], rows: [['a', '5']], truncated: true })
+    await user.hover(screen.getByText('a'))
+    expect(screen.getByRole('tooltip')).not.toHaveTextContent('Share')
+    cut.unmount()
+
+    renderBarList({ columns: ['label', 'value'], rows: [['b', '0.5']], truncated: false }, { format: 'percent' })
+    await user.hover(screen.getByText('b'))
+    expect(screen.getByRole('tooltip')).not.toHaveTextContent('Share')
   })
 
   it('renders nothing broken for an empty result', () => {

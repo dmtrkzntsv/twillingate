@@ -1,4 +1,5 @@
-import { render } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 import type { SqlData, WidgetProps } from './types'
 import Heatmap, { contract } from './heatmap'
@@ -60,13 +61,18 @@ describe('heatmap', () => {
     expect(withLabels.container.querySelector('[data-cell]')?.textContent).toBe('5')
   })
 
-  it('puts the formatted value in the cell title, for the tooltip', () => {
+  it('shows the cell row, column and value on hover, not as a native title', async () => {
+    const user = userEvent.setup()
     const { container } = renderHeatmap(
       { columns: ['x', 'y', 'value'], rows: [['a', 'r', '0.5']], truncated: false },
       { format: 'percent' }
     )
     const cell = container.querySelector('[data-cell]') as HTMLElement
-    expect(cell.title).toContain('50%')
+    expect(cell.title).toBe('')
+    await user.hover(cell)
+    const card = screen.getByRole('tooltip')
+    expect(card).toHaveTextContent('r, a')
+    expect(card).toHaveTextContent('Value50%')
   })
 
   it('renders nothing broken for an empty result', () => {

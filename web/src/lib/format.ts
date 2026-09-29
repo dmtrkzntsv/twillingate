@@ -42,3 +42,13 @@ export function formatValue(v: number | null, f: Format = 'number'): string {
       return formatNumber(v)
   }
 }
+
+/**
+ * Renders a value in full, for a hover card beside its shown value: a number
+ * with every digit (12,345 where the widget shows 12.3K); a percent or a
+ * duration exactly as `formatValue` does.
+ */
+export function formatExact(v: number | null, f: Format = 'number'): string {
+  if (f !== 'number' || v === null || !Number.isFinite(v)) return formatValue(v, f)
+  return new Intl.NumberFormat(LOCALE, { maximumFractionDigits: 2 }).format(v)
+}

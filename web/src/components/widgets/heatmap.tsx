@@ -1,4 +1,5 @@
-import { formatValue, type Format } from '@/lib/format'
+import { HoverCard, useHover } from '@/components/chart-parts'
+import { formatExact, formatValue, type Format } from '@/lib/format'
 import { toRecords } from '@/lib/records'
 import { formatTick, onRamp, ramp } from '@/lib/chart'
 import type { Contract, Example, SqlData, WidgetProps } from './types'
@@ -80,6 +81,7 @@ function firstSeen(values: string[]): string[] {
 }
 
 export default function Heatmap({ data, props }: WidgetProps<HeatmapProps>) {
+  const { hovered, bind } = useHover<{ x: string; y: string; value: number; t: number }>()
   const records = toRecords(data as SqlData, contract)
   if (records.length === 0) return null
 
@@ -100,6 +102,13 @@ export default function Heatmap({ data, props }: WidgetProps<HeatmapProps>) {
 
   return (
     <div className="h-full w-full overflow-auto p-1">
+      {hovered && (
+        <HoverCard
+          at={hovered}
+          heading={`${formatTick(hovered.item.y)}, ${formatTick(hovered.item.x)}`}
+          rows={[{ label: 'Value', value: formatExact(hovered.item.value, format), color: ramp(hovered.item.t) }]}
+        />
+      )}
       <div
         className="grid h-full gap-0.5"
         style={{
@@ -130,10 +139,10 @@ export default function Heatmap({ data, props }: WidgetProps<HeatmapProps>) {
                 <div
                   key={x}
                   data-cell
-                  title={hasValue ? `${formatTick(y)}, ${formatTick(x)}: ${formatValue(value, format)}` : undefined}
+                  {...(hasValue ? bind({ x, y, value, t }) : {})}
                   className={`flex min-h-6 items-center justify-center rounded-[3px] text-[11px] tabular-nums ${
                     hasValue && onRamp(t) ? 'text-white' : 'text-foreground'
-                  }`}
+                  } ${hasValue ? 'hover:ring-2 hover:ring-foreground/50 hover:ring-inset' : ''}`}
                   style={hasValue ? { backgroundColor: ramp(t) } : undefined}
                 >
                   {hasValue && showLabels ? formatValue(value, format) : ''}

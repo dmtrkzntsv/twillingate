@@ -1,7 +1,7 @@
-import { formatValue, type Format } from '@/lib/format'
+import { formatExact, formatValue, type Format } from '@/lib/format'
 import { toRecords } from '@/lib/records'
 import { formatHeading, ramp } from '@/lib/chart'
-import { ScaleLegend } from '@/components/chart-parts'
+import { HoverCard, ScaleLegend, useHover, type HoverRow } from '@/components/chart-parts'
 import type { Contract, Example, SqlData, WidgetProps } from './types'
 
 interface CalendarProps {
@@ -84,6 +84,7 @@ const STEP = 13
 const TOP = 14
 
 export default function Calendar({ data, props }: WidgetProps<CalendarProps>) {
+  const { hovered, bind } = useHover<string>()
   const records = toRecords(data as SqlData, contract)
   if (records.length === 0) return null
 
@@ -100,6 +101,15 @@ export default function Calendar({ data, props }: WidgetProps<CalendarProps>) {
   const min = Math.min(...present)
   const max = Math.max(...present)
   const span = max - min || 1
+  const fillOf = (value: number | undefined) =>
+    value === undefined ? 'var(--muted)' : ramp((value - min) / span, 'var(--muted)')
+
+  const rowsOf = (day: string): HoverRow[] => {
+    const value = values.get(day)
+    return value === undefined
+      ? [{ label: 'No data', value: '' }]
+      : [{ label: 'Value', value: formatExact(value, format), color: fillOf(value) }]
+  }
 
   return (
     <div className="flex h-full w-full flex-col gap-1.5 p-1">
@@ -127,26 +137,26 @@ export default function Calendar({ data, props }: WidgetProps<CalendarProps>) {
         {columns.map((week, ci) =>
           week.map((date, ri) => {
             const day = formatDay(date)
-            const value = values.get(day)
-            const hasValue = value !== undefined
             return (
               <rect
                 key={day}
                 data-day={day}
+                {...bind(day)}
                 x={ci * STEP}
                 y={TOP + ri * STEP}
                 width={CELL}
                 height={CELL}
                 rx={2.5}
-                style={{ fill: hasValue ? ramp((value - min) / span, 'var(--muted)') : 'var(--muted)' }}
-              >
-                <title>{hasValue ? `${formatHeading(day)}: ${formatValue(value, format)}` : formatHeading(day)}</title>
-              </rect>
+                strokeWidth={1}
+                className="stroke-transparent hover:stroke-foreground/60"
+                style={{ fill: fillOf(values.get(day)) }}
+              />
             )
           })
         )}
       </svg>
       <ScaleLegend min={formatValue(min, format)} max={formatValue(max, format)} base="var(--muted)" />
+      {hovered && <HoverCard at={hovered} heading={formatHeading(hovered.item)} rows={rowsOf(hovered.item)} />}
     </div>
   )
 }

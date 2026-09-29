@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatValue } from './format'
+import { formatExact, formatValue } from './format'
 
 describe('formatValue', () => {
   it('renders null as an em dash', () => {
@@ -57,5 +57,18 @@ describe('formatValue', () => {
       expect(formatValue(3599, 'duration')).toBe('59m 59s')
       expect(formatValue(3600, 'duration')).toBe('1h 0m')
     })
+  })
+})
+
+describe('formatExact', () => {
+  it('shows every digit of a number the widget compacts', () => {
+    expect(formatExact(12345)).toBe('12,345')
+    expect(formatExact(1234567.891)).toBe('1,234,567.89')
+  })
+
+  it('shows percents, durations and missing values as formatValue does', () => {
+    expect(formatExact(0.5, 'percent')).toBe('50%')
+    expect(formatExact(75, 'duration')).toBe('1m 15s')
+    expect(formatExact(null)).toBe('–')
   })
 })

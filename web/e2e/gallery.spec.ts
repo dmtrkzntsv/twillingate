@@ -93,6 +93,30 @@ for (const scheme of ['light', 'dark'] as const) {
   })
 }
 
+// The widgets drawn without recharts, and a mark in each one's gallery example
+// that carries a value (see each widget's `examples`).
+const HOVER_MARKS: Record<string, { mark: string; text: string }> = {
+  bar_list: { mark: 'li', text: '1,240' },
+  calendar: { mark: 'rect[data-day="2026-09-27"]', text: 'Sep 27, 2026' },
+  funnel: { mark: '[data-funnel-step]', text: '5,000' },
+  heatmap: { mark: '[data-cell]', text: '100%' },
+  map: { mark: 'path[data-id="840"]', text: 'United States' },
+}
+
+test('the widgets drawn without recharts show a hover card too', async ({ page }) => {
+  await page.goto('/app/gallery/components')
+  await signIn(page)
+  await page.waitForURL(/\/app\/gallery\/components/)
+  for (const [name, { mark, text }] of Object.entries(HOVER_MARKS)) {
+    const card = page.getByRole('tooltip')
+    await page.locator(`#component-${name} [data-slot="widget-body"]`).first().locator(mark).first().hover()
+    await expect(card, name).toBeVisible()
+    await expect(card, name).toContainText(text)
+    await page.mouse.move(0, 0)
+    await expect(card, name).toHaveCount(0)
+  }
+})
+
 test('fits a phone without sideways scrolling', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   await page.goto('/app/gallery/components')

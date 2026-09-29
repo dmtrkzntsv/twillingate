@@ -4,10 +4,10 @@ import { feature } from 'topojson-client'
 import type { GeometryCollection, Topology } from 'topojson-specification'
 import worldAtlas from 'world-atlas/countries-110m.json'
 import { ISO_ALPHA2_TO_NUMERIC } from '@/lib/iso-countries'
-import { formatValue, type Format } from '@/lib/format'
+import { formatExact, formatValue, type Format } from '@/lib/format'
 import { toRecords } from '@/lib/records'
 import { ramp } from '@/lib/chart'
-import { ScaleLegend } from '@/components/chart-parts'
+import { HoverCard, ScaleLegend, useHover, type HoverRow } from '@/components/chart-parts'
 import type { Contract, Example, SqlData, WidgetProps } from './types'
 
 interface MapProps {
@@ -70,6 +70,7 @@ const projection = geoEqualEarth().fitSize([WIDTH, HEIGHT], countries)
 const path = geoPath(projection)
 
 export default function MapWidget({ data, props }: WidgetProps<MapProps>) {
+  const { hovered, bind } = useHover<{ name: string; value?: number }>()
   const records = toRecords(data as SqlData, contract)
   if (records.length === 0) return null
 
@@ -93,6 +94,19 @@ export default function MapWidget({ data, props }: WidgetProps<MapProps>) {
   const min = matched.length ? Math.min(...matched) : 0
   const max = matched.length ? Math.max(...matched) : 0
   const span = max - min || 1
+  const fillOf = (value: number | undefined) =>
+    value === undefined ? 'var(--muted)' : ramp((value - min) / span, 'var(--muted)')
+  // A share only of counts, and only of a whole result: a cut one has no total.
+  const sum = records.reduce((a, r) => a + Number(r.value ?? 0), 0)
+  const shares = format === 'number' && !(data as SqlData).truncated && sum > 0
+
+  const rowsOf = (value: number | undefined): HoverRow[] =>
+    value === undefined
+      ? [{ label: 'No data', value: '' }]
+      : [
+          { label: 'Value', value: formatExact(value, format), color: fillOf(value) },
+          ...(shares ? [{ label: 'Share of total', value: formatValue(value / sum, 'percent') }] : []),
+        ]
 
   return (
     <div className="flex h-full w-full flex-col gap-2 overflow-auto p-1">
@@ -100,23 +114,19 @@ export default function MapWidget({ data, props }: WidgetProps<MapProps>) {
         {countries.features.map((f: Feature<Geometry, { name?: string }>, i: number) => {
           const id = f.id === undefined ? undefined : String(f.id)
           const value = id ? valueById.get(id) : undefined
-          const hasValue = value !== undefined
           return (
             <path
               key={id ?? f.properties?.name ?? i}
               d={path(f) ?? undefined}
               data-country-feature
               data-id={id}
+              {...bind({ name: f.properties?.name ?? id ?? '', value })}
               // The card's color between countries: borders read as gaps, not ink.
               stroke="var(--card)"
               strokeWidth={0.6}
-              style={{ fill: hasValue ? ramp((value - min) / span, 'var(--muted)') : 'var(--muted)' }}
-            >
-              <title>
-                {(f.properties?.name ?? id ?? '')}
-                {hasValue ? `: ${formatValue(value, format)}` : ''}
-              </title>
-            </path>
+              className="hover:stroke-foreground/70"
+              style={{ fill: fillOf(value) }}
+            />
           )
         })}
       </svg>
@@ -128,6 +138,7 @@ export default function MapWidget({ data, props }: WidgetProps<MapProps>) {
           Not on the map: {unmatched.map((u) => `${u.code} ${formatValue(u.value, format)}`).join(', ')}
         </div>
       )}
+      {hovered && <HoverCard at={hovered} heading={hovered.item.name} rows={rowsOf(hovered.item.value)} />}
     </div>
   )
 }

@@ -1,4 +1,5 @@
-import { render } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 import type { SqlData, WidgetProps } from './types'
 import Calendar, { contract } from './calendar'
@@ -59,6 +60,24 @@ describe('calendar', () => {
   it('renders nothing broken for an empty result', () => {
     const { container } = renderCalendar({ columns: ['day', 'value'], rows: [], truncated: false })
     expect(container.firstChild).toBeEmptyDOMElement()
+  })
+
+  it('shows the day and its exact value on hover, or that it has no data', async () => {
+    const user = userEvent.setup()
+    const { container } = renderCalendar({
+      columns: ['day', 'value'],
+      rows: [['2024-06-15', '12345']],
+      truncated: false,
+    })
+    expect(container.querySelector('title')).toBeNull()
+
+    await user.hover(container.querySelector('[data-day="2024-06-15"]') as Element)
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Jun 15, 2024')
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Value12,345')
+
+    await user.hover(container.querySelector('[data-day="2024-06-14"]') as Element)
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Jun 14, 2024')
+    expect(screen.getByRole('tooltip')).toHaveTextContent('No data')
   })
 
   it('exposes its contract', () => {
