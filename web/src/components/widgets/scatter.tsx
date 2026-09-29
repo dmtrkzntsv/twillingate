@@ -6,7 +6,7 @@ import {
 import { axis, niceTicks, seriesColor, seriesConfig, valueAxis } from '@/lib/chart'
 import { formatValue, type Format } from '@/lib/format'
 import { toRecords } from '@/lib/records'
-import { legend, tooltip } from './parts'
+import { legend, tooltip } from '@/components/chart-parts'
 import type { Contract, Example, SqlData, WidgetProps } from './types'
 
 interface ScatterProps {

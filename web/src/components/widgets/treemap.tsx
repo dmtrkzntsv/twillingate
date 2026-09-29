@@ -4,7 +4,7 @@ import { ChartContainer, ChartTooltip } from '@/components/ui/chart'
 import { seriesColor } from '@/lib/chart'
 import { formatValue, type Format } from '@/lib/format'
 import { toRecords } from '@/lib/records'
-import { tooltip } from './parts'
+import { tooltip } from '@/components/chart-parts'
 import type { Contract, Example, SqlData, WidgetProps } from './types'
 
 interface TreemapProps {

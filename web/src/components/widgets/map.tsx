@@ -7,7 +7,7 @@ import { ISO_ALPHA2_TO_NUMERIC } from '@/lib/iso-countries'
 import { formatValue, type Format } from '@/lib/format'
 import { toRecords } from '@/lib/records'
 import { ramp } from '@/lib/chart'
-import { ScaleLegend } from './parts'
+import { ScaleLegend } from '@/components/chart-parts'
 import type { Contract, Example, SqlData, WidgetProps } from './types'
 
 interface MapProps {

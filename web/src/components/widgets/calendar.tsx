@@ -1,7 +1,7 @@
 import { formatValue, type Format } from '@/lib/format'
 import { toRecords } from '@/lib/records'
 import { formatHeading, ramp } from '@/lib/chart'
-import { ScaleLegend } from './parts'
+import { ScaleLegend } from '@/components/chart-parts'
 import type { Contract, Example, SqlData, WidgetProps } from './types'
 
 interface CalendarProps {

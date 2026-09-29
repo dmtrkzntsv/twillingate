@@ -7,7 +7,7 @@ import {
 import { activeDot, axis, formatTick, grid, niceTicks, seriesColor, seriesConfig, stackTotals, valueAxis, valuesOf } from '@/lib/chart'
 import { formatValue, type Format } from '@/lib/format'
 import { pivot, toRecords } from '@/lib/records'
-import { legend, tooltip } from './parts'
+import { legend, tooltip } from '@/components/chart-parts'
 import type { Contract, Example, SqlData, WidgetProps } from './types'
 
 interface AreaProps {

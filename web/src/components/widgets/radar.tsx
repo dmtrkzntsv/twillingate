@@ -6,7 +6,7 @@ import {
 import { seriesColor, seriesConfig } from '@/lib/chart'
 import type { Format } from '@/lib/format'
 import { pivot, toRecords } from '@/lib/records'
-import { legend, tooltip } from './parts'
+import { legend, tooltip } from '@/components/chart-parts'
 import type { Contract, Example, SqlData, WidgetProps } from './types'
 
 interface RadarProps {
