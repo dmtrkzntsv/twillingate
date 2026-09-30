@@ -8,7 +8,7 @@ import (
 	"regexp"
 
 	"github.com/dmtrkzntsv/twillingate/docs"
-	"github.com/dmtrkzntsv/twillingate/internal/version"
+	"github.com/dmtrkzntsv/twillingate/internal/shared/version"
 )
 
 // twillingate.js is the only served client, compiled from sdk/ (`npm run

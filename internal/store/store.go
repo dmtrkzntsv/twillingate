@@ -8,7 +8,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/dmtrkzntsv/twillingate/internal/civil"
+	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
 )
 
 // Family names the aggregate family a raw row feeds: views (v_views_*,

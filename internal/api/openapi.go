@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/dmtrkzntsv/twillingate/internal/version"
+	"github.com/dmtrkzntsv/twillingate/internal/shared/version"
 	"github.com/google/jsonschema-go/jsonschema"
 )
 

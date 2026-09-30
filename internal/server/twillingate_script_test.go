@@ -10,7 +10,7 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/config/configtest"
 	"github.com/dmtrkzntsv/twillingate/internal/geo"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
-	"github.com/dmtrkzntsv/twillingate/internal/version"
+	"github.com/dmtrkzntsv/twillingate/internal/shared/version"
 )
 
 // serverWithPublicURL builds a *Server like newServerWithLogger, but with

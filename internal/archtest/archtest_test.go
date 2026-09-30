@@ -25,15 +25,15 @@ const module = "github.com/dmtrkzntsv/twillingate/"
 // internal/app except cmd/.
 var rank = map[string]int{
 	"docs":                       0,
-	"internal/civil":             0,
-	"internal/version":           0,
 	"internal/config":            0,
 	"internal/config/configtest": 0,
 	"internal/enrich":            0,
 	"internal/identity":          0,
 	"internal/geo":               0,
+	"internal/shared/civil":      0,
 	"internal/shared/readsql":    0,
 	"internal/shared/sortkey":    0,
+	"internal/shared/version":    0,
 	"internal/store":             0,
 	"internal/store/sqlite":      0,
 	"internal/manage":            1,
@@ -114,7 +114,7 @@ func TestRuleRejectsUpwardAndSidewaysImports(t *testing.T) {
 	ok := map[string][]string{
 		"internal/store/sqlite": {"internal/store"},
 		"internal/manage":       {"internal/config", "internal/store"},
-		"internal/jobs":         {"internal/civil", "internal/manage", "internal/store"},
+		"internal/jobs":         {"internal/shared/civil", "internal/manage", "internal/store"},
 		"internal/app":          {"internal/server", "internal/api", "internal/jobs"},
 		"cmd/twillingate":       {"internal/app", "internal/store/sqlite"},
 	}
