@@ -54,7 +54,7 @@ func TestReportingGuideIsLive(t *testing.T) {
 		"| 1 | blog |", "| 2 | docs |",
 		"| 1001 | Signups this quarter | user | 1001 | no |", "| 1 | Views | system | 1 | no |",
 		"| 2 | Product | system | 1 | no |", // a tab of Views' group
-		`"format"`, // props schemas, verbatim
+		`"format"`,                          // props schemas, verbatim
 		"default 6 × 8",
 	} {
 		if !strings.Contains(md, want) {
