@@ -1,0 +1,12 @@
+{
+  "component": "table",
+  "title": "By device and browser",
+  "props": {
+    "formats": {
+      "Samples": "number",
+      "LCP p75 (ms)": "number",
+      "INP p75 (ms)": "number",
+      "CLS p75": "number"
+    }
+  }
+}

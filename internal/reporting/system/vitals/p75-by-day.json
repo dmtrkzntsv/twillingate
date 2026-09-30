@@ -1,0 +1,7 @@
+{
+  "component": "line",
+  "title": "p75 by day (ms)",
+  "props": {
+    "format": "number"
+  }
+}

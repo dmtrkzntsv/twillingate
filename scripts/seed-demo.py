@@ -9,6 +9,10 @@ Covers 180 days so the widest dashboard range has data to plot. Idempotent:
 seeded rows are cleared before reinsertion, so re-running refreshes the window
 rather than stacking another copy on top.
 
+The "dev" profile also sends Web Vitals from a share of its page views and
+a backend's checkout_api timing, so the Web Vitals and Measures dashboards
+have histograms to read.
+
 Projects with an "app" profile also get screen views across two platforms and
 three app versions, so the version-adoption chart has a rollout to show.
 Projects whose profile sends ids ("ids": True) get stable actor ids plus
@@ -25,6 +29,7 @@ PROFILES, keyed by project name.
 import datetime
 import hashlib
 import json
+import math
 import random
 import sqlite3
 import sys
@@ -38,7 +43,7 @@ DAYS = 180
 # app, and a decaying blog.
 PROFILES = {
     "dev": {
-        "base": 18, "growth": 0.45, "product": True, "app": 12, "ids": True,
+        "base": 18, "growth": 0.45, "product": True, "app": 12, "ids": True, "measures": True,
         "pages": [("/", 30), ("/pricing", 18), ("/docs", 15), ("/docs/quickstart", 10),
                   ("/blog/launch", 9), ("/blog/why-privacy", 7), ("/about", 6), ("/changelog", 5)],
         "refs": [("", 30), ("google", 25), ("hackernews", 15), ("reddit", 10),
@@ -83,6 +88,16 @@ UTMS = [(("", "", ""), 62), (("twitter", "social", "launch"), 14),
         (("producthunt", "referral", "launch"), 8), (("google", "cpc", "brand"), 6)]
 EVENTS = [("signup", 12), ("activated", 8), ("subscribed", 4), ("invite_sent", 6), ("export", 5)]
 PLANS = [("free", 60), ("pro", 30), ("team", 10)]
+
+# Web Vitals: (name, measure, median, log-normal sigma). Mobile page loads
+# are slower (MOBILE_SLOWDOWN on the time vitals). CLS is exactly 0 on
+# CLS_ZERO of page loads and mostly under 0.1 otherwise.
+VITALS = [("$lcp", "time", 1900, 0.45), ("$inp", "time", 140, 0.6),
+          ("$cls", "number", 0.03, 0.9), ("$fcp", "time", 1200, 0.4),
+          ("$ttfb", "time", 420, 0.5)]
+VITALS_SHARE = 0.3       # the page views that report vitals (data-vitals="0.3")
+MOBILE_SLOWDOWN = 1.4
+CLS_ZERO = 0.4
 
 # App dimensions. Versions are dated so the adoption chart shows one release
 # superseding another rather than a flat stack.
@@ -167,20 +182,23 @@ def seed(cur, pid, name, profile, today, sends_ids):
             for p in range(random.randint(1, 3 if device == "mobile" else 5)):
                 ts = datetime.datetime.combine(day, datetime.time()) + datetime.timedelta(
                     seconds=start + p * random.randint(20, 600))
+                path = pick(profile["pages"])
                 cur.execute(
-                    "INSERT INTO events (id, project_id, ts, day, received_at, kind, actor_id,"
-                    " actor_kind, user_id, group_id, path, referrer_source, country, device,"
-                    " browser, browser_version, platform, os, utm_source, utm_medium,"
-                    " utm_campaign, display_width, display_height, consent, family, event_name)"
+                    "INSERT INTO events (id, project_id, ts, received_at, kind, actor_id, actor_kind,"
+                    " user_id, group_id, path, referrer_source, country, device, browser,"
+                    " browser_version, platform, os, utm_source, utm_medium, utm_campaign,"
+                    " display_width, display_height, consent, day, family, event_name)"
                     " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'views','$page_view')",
-                    (str(uuid.uuid4()), pid, ts.strftime("%Y-%m-%dT%H:%M:%SZ"), day.isoformat(),
+                    (str(uuid.uuid4()), pid, ts.strftime("%Y-%m-%dT%H:%M:%SZ"),
                      ts.strftime("%Y-%m-%dT%H:%M:%SZ"), "web", vh,
                      "install" if sends_ids else "connection", "", "",
-                     pick(profile["pages"]), ref, country, device, browser,
+                     path, ref, country, device, browser,
                      random.choice(BROWSER_VERSIONS),
                      "web", osname, us, um, uc, *random.choice(DISPLAYS),
-                     1 if sends_ids else random.choice([0, 0, 1])))
+                     1 if sends_ids else random.choice([0, 0, 1]), day.isoformat()))
                 hits += 1
+                if profile.get("measures") and random.random() < VITALS_SHARE:
+                    seed_vitals(cur, pid, ts, vh, sends_ids, path, country, device, browser, osname)
 
     events = 0
     if profile["product"]:
@@ -209,10 +227,54 @@ def seed(cur, pid, name, profile, today, sends_ids):
                          1 if sends_ids else random.choice([0, 0, 1])))
                     events += 1
 
+    if profile.get("measures"):
+        seed_backend(cur, pid, profile, today)
     views = hits + (seed_app(cur, pid, name, profile, today, sends_ids) if profile.get("app") else 0)
     if sends_ids:
         seed_identities(cur, pid, name)
     return views, events
+
+
+def insert_measure(cur, pid, ts, name, measure, value, actor, actor_kind, **dims):
+    """One measures row, as ingest stores it: sample_rate 1 (the page load
+    was sampled in whole), the day from the timestamp, and bucket left to
+    the generated column."""
+    cols = ["id", "project_id", "ts", "received_at", "day", "family", "event_name",
+            "value", "measure", "sample_rate", "actor_id", "actor_kind", *dims]
+    stamp = ts.strftime("%Y-%m-%dT%H:%M:%SZ")
+    vals = [str(uuid.uuid4()), pid, stamp, stamp, ts.date().isoformat(), "measures", name,
+            value, measure, 1, actor, actor_kind, *dims.values()]
+    cur.execute(f"INSERT INTO events ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})", vals)
+
+
+def seed_vitals(cur, pid, ts, actor, sends_ids, path, country, device, browser, osname):
+    """The five Web Vitals of one page load, log-normal around typical values."""
+    for name, measure, median, sigma in VITALS:
+        if name == "$cls" and random.random() < CLS_ZERO:
+            value = 0.0
+        else:
+            value = random.lognormvariate(math.log(median), sigma)
+            if measure == "time" and device == "mobile":
+                value *= MOBILE_SLOWDOWN
+            value = round(value, 4 if measure == "number" else 1)
+        insert_measure(cur, pid, ts + datetime.timedelta(seconds=2), name, measure, value,
+                       actor, "install" if sends_ids else "connection",
+                       kind="web", platform="web", path=path, country=country,
+                       device=device, browser=browser, os=osname)
+
+
+def seed_backend(cur, pid, profile, today):
+    """A backend's checkout_api timing: a few dozen requests a day, growing
+    with the site, with a slow tail."""
+    for back in range(DAYS - 1, -1, -1):
+        day = today - datetime.timedelta(days=back)
+        n = max(3, int(random.gauss(20 + (DAYS - 1 - back) * profile["growth"], 5)))
+        for _ in range(n):
+            ts = datetime.datetime.combine(day, datetime.time()) + datetime.timedelta(
+                seconds=random.randint(0, 86399))
+            value = round(random.lognormvariate(math.log(320), 0.35), 1)
+            insert_measure(cur, pid, ts, "checkout_api", "time", value,
+                           hashlib.sha256(f"backend-{day}".encode()).hexdigest()[:16], "connection")
 
 
 def seed_app(cur, pid, name, profile, today, sends_ids):
@@ -252,12 +314,12 @@ def seed_app(cur, pid, name, profile, today, sends_ids):
                 ts = datetime.datetime.combine(day, datetime.time()) + datetime.timedelta(
                     seconds=start + s * random.randint(15, 240))
                 cur.execute(
-                    "INSERT INTO events (id, project_id, ts, day, received_at, kind, actor_id,"
-                    " actor_kind, user_id, group_id, session_id, path, platform, os, app_version,"
-                    " os_version, browser, device, device_model, browser_locale, app_locale,"
-                    " country, consent, family, event_name)"
+                    "INSERT INTO events (id, project_id, ts, received_at, kind, actor_id, actor_kind, user_id,"
+                    " group_id, session_id, path, platform, os, app_version, os_version,"
+                    " browser, device, device_model, browser_locale, app_locale, country, consent,"
+                    " day, family, event_name)"
                     " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'views','$screen_view')",
-                    (str(uuid.uuid4()), pid, ts.strftime("%Y-%m-%dT%H:%M:%SZ"), day.isoformat(),
+                    (str(uuid.uuid4()), pid, ts.strftime("%Y-%m-%dT%H:%M:%SZ"),
                      ts.strftime("%Y-%m-%dT%H:%M:%SZ"), "app", actor,
                      "user" if sends_ids else "connection",
                      f"user-{name}-{n}" if sends_ids else "",
@@ -266,7 +328,7 @@ def seed_app(cur, pid, name, profile, today, sends_ids):
                      pick(OS_VERSIONS[platform]), "unknown", "unknown",
                      pick(DEVICE_MODELS[platform]),
                      browser_locale, app_locale, pick(COUNTRIES),
-                     1 if sends_ids else random.choice([0, 1])))
+                     1 if sends_ids else random.choice([0, 1]), day.isoformat()))
                 views += 1
     return views
 

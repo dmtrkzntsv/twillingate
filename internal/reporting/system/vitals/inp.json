@@ -1,0 +1,7 @@
+{
+  "component": "stat",
+  "title": "INP p75 (ms)",
+  "props": {
+    "format": "number"
+  }
+}

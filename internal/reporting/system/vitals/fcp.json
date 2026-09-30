@@ -1,0 +1,7 @@
+{
+  "component": "stat",
+  "title": "FCP p75 (ms)",
+  "props": {
+    "format": "number"
+  }
+}

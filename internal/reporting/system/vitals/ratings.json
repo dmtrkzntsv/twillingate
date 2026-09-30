@@ -1,0 +1,9 @@
+{
+  "component": "bar",
+  "title": "Good, needs improvement, poor",
+  "props": {
+    "format": "percent",
+    "stacked": true,
+    "horizontal": true
+  }
+}

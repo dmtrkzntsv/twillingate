@@ -1,0 +1,7 @@
+{
+  "component": "stat",
+  "title": "CLS p75",
+  "props": {
+    "format": "number"
+  }
+}

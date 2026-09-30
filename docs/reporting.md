@@ -33,7 +33,8 @@ are in [deployment.md](deployment.md).
 `user`:
 
 - **System dashboards** ship with each release, have ids 1–999, and change only
-  when the release does. A system group is archived and restored whole, with
+  when the release does: Views, Product, Users, Groups, Retention, Web Vitals
+  and Measures. A system group is archived and restored whole, with
   `whole_group`, and is never purged; every other write refuses them. To
   customize one, call `duplicate_dashboard`: the copy is a user dashboard you
   can edit. Duplicating never archives anything; to take the system group out
@@ -288,7 +289,8 @@ in a later release does not reattach itself.
 One widget per component, each ready for `add_widget`: the component, the
 source (the block below, as `{"type": "sql", "content": "…"}`, or `md` for
 the Markdown one) and the props shown. Unless the title says otherwise, each
-follows both switchers.
+follows both switchers. [Percentiles from measures](#percentiles-from-measures)
+closes the section with the one query pattern measures need.
 
 ### `stat`
 
@@ -550,6 +552,32 @@ yesterday are live and settle after the 03:00 UTC pass.
 ```
 
 Props: `{}`
+
+### Percentiles from measures
+
+Measures are stored as log-scale histograms, not values, so a percentile is
+read from buckets: `approx_value` is a bucket's value (within about 2%, 0 for
+the zero bucket) and `weight` its estimated count, with sampled rows counted
+`1 / sample_rate` times. Sum `weight` per bucket, run it up in bucket order,
+and take the first bucket whose running weight reaches the share wanted. The
+Web Vitals and Measures system dashboards are built this way. p75 per metric:
+
+```sql
+WITH h AS (SELECT event_name, bucket, approx_value, SUM(weight) AS w FROM v_measures_daily
+           WHERE project_id = :project AND day BETWEEN :from AND :to GROUP BY 1, 2, 3),
+     c AS (SELECT *, SUM(w) OVER (PARTITION BY event_name ORDER BY bucket) AS run,
+                     SUM(w) OVER (PARTITION BY event_name) AS total FROM h)
+SELECT event_name, MIN(approx_value) FILTER (WHERE run >= 0.75 * total) AS p75,
+       SUM(w) AS est_count
+FROM c GROUP BY 1;
+```
+
+Use `0.5` or `0.95` for p50 or p95, add `day` to the grouping and the
+`PARTITION BY` for one value per day, and read `v_measures_attrs` with
+`attr_key` and `attr_value` for one per browser, device or declared key.
+The mean is exact: `SUM(sum) / SUM(weight)`. A `time` measure is in
+milliseconds; show it with the `number` format and put "(ms)" in the title,
+since `duration` renders seconds.
 
 ## Parameters and ranges
 
