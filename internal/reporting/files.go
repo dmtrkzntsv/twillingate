@@ -36,6 +36,15 @@ type FileDashboard struct {
 	Widgets      []FileWidget // layout order
 }
 
+// groupID resolves Group: 0 (the file names no group) means this
+// dashboard is its own, so its group is its own id.
+func (fd FileDashboard) groupID() int64 {
+	if fd.Group == 0 {
+		return fd.ID
+	}
+	return fd.Group
+}
+
 // fileDashboardDoc is dashboard.json's own shape.
 type fileDashboardDoc struct {
 	ID     int64            `json:"id"`

@@ -144,7 +144,12 @@ func hasDashboardJSON(dir string) bool {
 // whose widget files don't match it) is reported in errs rather than
 // aborting the rest. A dashboard.json that gives no id is assigned one,
 // starting at firstDevDashboardID, in the order its directory was
-// encountered.
+// encountered (devDashboardDirs' scan order — alphabetical by directory
+// name, os.ReadDir's own order). The result is then sorted by id, the
+// same rule LoadDashboards uses for the real release: dev has no sort
+// key to order by, and ordering by id is the only ordering that matches
+// what a group's members will look like once it ships (D17), for both
+// devListDashboards and a group's Tabs.
 func loadDevDashboards(dirs []string) ([]FileDashboard, []DevError) {
 	paths, errs := devDashboardDirs(dirs)
 	var out []FileDashboard
@@ -161,6 +166,7 @@ func loadDevDashboards(dirs []string) ([]FileDashboard, []DevError) {
 		}
 		out = append(out, fd)
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, errs
 }
 
@@ -194,11 +200,7 @@ func devDashboardRow(fd FileDashboard) store.Dashboard {
 	if fd.ID >= 1 && fd.ID <= 999 {
 		owner = store.OwnerSystem
 	}
-	groupID := fd.Group
-	if groupID == 0 {
-		groupID = fd.ID
-	}
-	return store.Dashboard{ID: fd.ID, Owner: owner, GroupID: groupID, Title: fd.Title, LastRange: fd.Range, LiveWidgets: len(fd.Widgets)}
+	return store.Dashboard{ID: fd.ID, Owner: owner, GroupID: fd.groupID(), Title: fd.Title, LastRange: fd.Range, LiveWidgets: len(fd.Widgets)}
 }
 
 func devListDashboards(dirs []string) http.HandlerFunc {

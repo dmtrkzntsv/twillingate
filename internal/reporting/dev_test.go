@@ -288,9 +288,14 @@ func TestDevHandlerSystemRangeIdsPreviewAsSystem(t *testing.T) {
 
 // TestDevHandlerGroupTabs mirrors Service.Dashboard's tab rule (D17): a
 // system group previews with its tabs exactly as it will ship. Five
-// directories, ids 1-5; 2-5 name "group":1, 1 names none (so its own id,
-// 1, is the group) — the same shape as the real Views/Product/Users/
-// Groups/Retention release.
+// directories, ids 1-5, named so an alphabetical directory scan would
+// give the wrong order (groups, product, retention, users, views); 2-5
+// name "group":1, 1 names none (so its own id, 1, is the group) — the
+// same shape as the real Views/Product/Users/Groups/Retention release.
+// loadDevDashboards sorts by id (the same rule LoadDashboards uses for
+// the real release), so both devListDashboards and a group's Tabs come
+// out in id order — Views, Product, Users, Groups, Retention — matching
+// what ships, not the directory scan order.
 func TestDevHandlerGroupTabs(t *testing.T) {
 	root := t.TempDir()
 	dash := func(id int64, title string, group int64) string {
@@ -322,8 +327,23 @@ func TestDevHandlerGroupTabs(t *testing.T) {
 	}
 	h := DevHandler([]string{root}, newTestReadDB(t))
 
+	want := []string{"Views", "Product", "Users", "Groups", "Retention"}
+
+	var list Dashboards
+	res := getJSON(t, h, "/api/dashboards", &list)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", res.StatusCode)
+	}
+	var listTitles []string
+	for _, d := range list.Dashboards {
+		listTitles = append(listTitles, d.Title)
+	}
+	if strings.Join(listTitles, ",") != strings.Join(want, ",") {
+		t.Errorf("list order = %v, want %v (id order, not directory scan order)", listTitles, want)
+	}
+
 	var detail DashboardDetail
-	res := getJSON(t, h, "/api/dashboards/3", &detail)
+	res = getJSON(t, h, "/api/dashboards/3", &detail)
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d", res.StatusCode)
 	}
@@ -333,16 +353,12 @@ func TestDevHandlerGroupTabs(t *testing.T) {
 	if len(detail.Tabs) != 5 {
 		t.Fatalf("Tabs = %+v, want 5", detail.Tabs)
 	}
-	var titles []string
+	var tabTitles []string
 	for _, tab := range detail.Tabs {
-		titles = append(titles, tab.Title)
+		tabTitles = append(tabTitles, tab.Title)
 	}
-	// loadDevDashboards has no sort key to order by — it reflects
-	// devDashboardDirs' directory scan, alphabetical by name (os.ReadDir),
-	// not id: groups, product, retention, users, views.
-	want := []string{"Groups", "Product", "Retention", "Users", "Views"}
-	if strings.Join(titles, ",") != strings.Join(want, ",") {
-		t.Errorf("Tabs = %v, want %v", titles, want)
+	if strings.Join(tabTitles, ",") != strings.Join(want, ",") {
+		t.Errorf("Tabs = %v, want %v", tabTitles, want)
 	}
 }
 

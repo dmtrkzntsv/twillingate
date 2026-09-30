@@ -189,10 +189,7 @@ func checkGroups(files []FileDashboard) error {
 	var seen int64 = -1 // no group id is negative
 	closed := make(map[int64]bool, len(files))
 	for _, fd := range files {
-		g := fd.Group
-		if g == 0 {
-			g = fd.ID
-		}
+		g := fd.groupID()
 		if g == seen {
 			continue
 		}
