@@ -210,7 +210,7 @@ func (h *host) registerReporting(r *registrar) {
 		Description: "Every dashboard in sidebar order (system first, then user), archived ones included: id, title, owner (system or user), group_id (the group it is a tab of), stored project and range, live widget count, archived_at; plus the timezone days are grouped in."},
 		h.listDashboards)
 	expose(r, spec{Name: "get_dashboard", Annotations: ro, Method: "GET", Path: d,
-		Description: "One dashboard with its group's tabs and its live widgets in order: tabs (the group's other live dashboards, in tab order) and each widget's id, name, component, title, width, height, props, source, and whether it follows the project and range switchers."},
+		Description: "One dashboard with its group's tabs and its live widgets in order: tabs (the group's live dashboards, this one included, in tab order) and each widget's id, name, component, title, width, height, props, source, and whether it follows the project and range switchers."},
 		h.getDashboard)
 	expose(r, spec{Name: "list_widgets", Annotations: ro, Method: "GET", Path: "/api/widgets",
 		Description: "Widgets, archived ones included, each with its dashboard and its 1-based position there. Filter by dashboard_id and/or component; use it to find an archived widget to restore, or every widget on a component."},

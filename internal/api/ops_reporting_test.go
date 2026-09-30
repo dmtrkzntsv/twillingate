@@ -422,6 +422,17 @@ func TestDashboardGroups(t *testing.T) {
 	}
 	toolJSON(t, cs, "restore_dashboard", map[string]any{"dashboard_id": two.ID}, nil)
 
+	// REST: POST archive with a literal {} body (whole_group omitted)
+	// archives just the one dashboard too.
+	rec = serveREST(t, r, "POST", fmt.Sprintf("/api/dashboards/%d/archive", two.ID), "{}")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("archive one with {} body = %d %s", rec.Code, rec.Body.String())
+	}
+	if archivedAt := dashboardArchivedAt(t, cs); archivedAt[two.ID] == "" || archivedAt[one.ID] != "" {
+		t.Fatalf("archive one with {} body archived the wrong set: %+v", archivedAt)
+	}
+	toolJSON(t, cs, "restore_dashboard", map[string]any{"dashboard_id": two.ID}, nil)
+
 	// REST: POST archive with whole_group archives every tab.
 	rec = serveREST(t, r, "POST", fmt.Sprintf("/api/dashboards/%d/archive", two.ID), `{"whole_group":true}`)
 	if rec.Code != http.StatusOK {
