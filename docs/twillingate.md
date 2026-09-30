@@ -464,10 +464,9 @@ has them on sends each Core Web Vital as a [measure](#measures): `$lcp`,
 `$inp`, `$fcp` and `$ttfb` in milliseconds (`time`), `$cls` as a `number`.
 Every one carries `$sample_rate` (the configured rate, `1` included) and,
 unless `autoAttributes` is false, the `$host` and `$path` of the page load it
-measures, masking applied; a
-single-page app's later route changes do not move them, and INP and CLS cover
-the page's whole life, as Chrome counts them. The `attrs()` defaults apply;
-identity, consent, `optOut` and `debug` work as for any other event.
+measures, masking applied; a single-page app's later route changes do not
+move them. The `attrs()` defaults apply; identity, consent, `optOut` and
+`debug` work as for any other event.
 
 Sampling is decided once per page load: one random draw against the rate,
 after which the page sends every vital it produces, or none, so a sampled page
@@ -484,6 +483,11 @@ navigation, a close), and a vital reported then goes out at once through
 page load, with its value at the first time the page is hidden; INP and CLS
 growth after that (a tab switch and return) is not sent. A page restored from
 the back/forward cache reports its vitals again.
+
+Storage: `data-vitals="1"` adds up to five raw rows to every page view, so a
+busy site should sample (`0.1` to `0.2` is plenty for stable percentiles).
+Vitals from a crawler User-Agent (Lighthouse, headless Chrome) are dropped,
+as its views are.
 
 ### Transport
 
