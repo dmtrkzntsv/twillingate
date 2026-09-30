@@ -159,3 +159,39 @@ test('a 6x6 widget and four 3x3 widgets lay out as a 2x2 block beside it', async
     expect(box!.y + box!.height).toBeLessThanOrEqual(main!.y + main!.height + 1)
   }
 })
+
+test('a table sorts by its header and remembers the sort across a reload', async ({ page, request }) => {
+  const created = await request.post('/api/dashboards', {
+    headers: authHeaders(),
+    data: {
+      title: 'Sort check',
+      range: '7d',
+      widgets: [
+        {
+          component: 'table',
+          title: 'Scores',
+          source: {
+            type: 'sql',
+            content: "SELECT 'b' AS name, 1 AS score UNION ALL SELECT 'a', 3 UNION ALL SELECT 'c', 2",
+          },
+          width: 6,
+          height: 6,
+        },
+      ],
+    },
+  })
+  expect(created.ok(), await created.text()).toBeTruthy()
+  const { dashboard_id: id } = (await created.json()) as { dashboard_id: number }
+
+  await login(page)
+  await page.goto(`/app/dashboards/${id}`)
+  const names = page.locator('tbody tr td:first-child')
+  await expect(names).toHaveText(['b', 'a', 'c'])
+
+  await page.getByRole('button', { name: 'score', exact: true }).click()
+  await expect(names).toHaveText(['a', 'c', 'b'])
+  await expect(page.getByRole('columnheader', { name: 'score', exact: true })).toHaveAttribute('aria-sort', 'descending')
+
+  await page.reload()
+  await expect(names).toHaveText(['a', 'c', 'b'])
+})

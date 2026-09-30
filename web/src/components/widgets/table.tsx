@@ -1,4 +1,6 @@
+import { ArrowDownIcon, ArrowUpIcon } from 'lucide-react'
 import { Table as ShadcnTable, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { useStoredState } from '@/hooks/use-stored-state'
 import { formatValue, type Format } from '@/lib/format'
 import type { Contract, Example, SqlData, WidgetProps } from './types'
 
@@ -8,7 +10,8 @@ interface TableProps {
 }
 
 export const contract: Contract = {
-  description: 'Every column the query returns, in order; a raw drill-down table for a card that lists rows.',
+  description:
+    'Every column the query returns, in order; a raw drill-down table for a card that lists rows. Viewers sort it by clicking a header.',
   accepts: ['sql'],
   inputs: { open: true, columns: [] },
   props: {
@@ -42,12 +45,37 @@ export const examples: Example[] = [
   },
 ]
 
+interface Sort {
+  column: string
+  dir: 'asc' | 'desc'
+}
+
 function isNumericCell(v: string): boolean {
   return v === '' || (v.trim() !== '' && Number.isFinite(Number(v)))
 }
 
-export default function Table({ data, props }: WidgetProps<TableProps>) {
+function parseSort(v: unknown): Sort | null {
+  if (typeof v !== 'object' || v === null) return null
+  const { column, dir } = v as Record<string, unknown>
+  return typeof column === 'string' && (dir === 'asc' || dir === 'desc') ? { column, dir } : null
+}
+
+const collator = new Intl.Collator(undefined, { numeric: true })
+
+/** The rows ordered by one column, empty cells last either way; ties keep query order. */
+function sortRows(rows: string[][], index: number, numeric: boolean, dir: Sort['dir']): string[][] {
+  const sign = dir === 'asc' ? 1 : -1
+  return [...rows].sort((a, b) => {
+    const x = a[index] ?? ''
+    const y = b[index] ?? ''
+    if (x === '' || y === '') return (x === '' ? 1 : 0) - (y === '' ? 1 : 0)
+    return sign * (numeric ? Number(x) - Number(y) : collator.compare(x, y))
+  })
+}
+
+export default function Table({ data, props, stateKey }: WidgetProps<TableProps>) {
   const sql = data as SqlData
+  const [stored, setSort] = useStoredState(stateKey && `${stateKey}.sort`, parseSort)
   if (sql.rows.length === 0) return null
 
   const formats = props.formats ?? {}
@@ -68,23 +96,51 @@ export default function Table({ data, props }: WidgetProps<TableProps>) {
     ranges.set(col, { min: Math.min(...values), max: Math.max(...values) })
   })
 
+  // A remembered sort on a column the query no longer returns is left alone, not cleared.
+  const sort = stored && sql.columns.includes(stored.column) ? stored : null
+  const rows = sort
+    ? sortRows(sql.rows, sql.columns.indexOf(sort.column), numericColumns.has(sort.column), sort.dir)
+    : sql.rows
+
+  // Numbers read biggest first, text A to Z; the third click is query order again.
+  const cycle = (col: string) => {
+    const first: Sort['dir'] = numericColumns.has(col) ? 'desc' : 'asc'
+    if (sort?.column !== col) setSort({ column: col, dir: first })
+    else if (sort.dir === first) setSort({ column: col, dir: first === 'asc' ? 'desc' : 'asc' })
+    else setSort(null)
+  }
+
   return (
     <div className="h-full overflow-auto">
       <ShadcnTable>
         <TableHeader>
           <TableRow>
-            {sql.columns.map((col) => (
-              <TableHead
-                key={col}
-                className={`h-8 text-xs font-medium text-muted-foreground ${numericColumns.has(col) ? 'text-right' : ''}`}
-              >
-                {col}
-              </TableHead>
-            ))}
+            {sql.columns.map((col) => {
+              const dir = sort?.column === col ? sort.dir : undefined
+              const Arrow = dir === 'asc' ? ArrowUpIcon : ArrowDownIcon
+              return (
+                <TableHead
+                  key={col}
+                  aria-sort={dir && (dir === 'asc' ? 'ascending' : 'descending')}
+                  className={`h-8 text-xs font-medium text-muted-foreground ${numericColumns.has(col) ? 'text-right' : ''}`}
+                >
+                  <button
+                    type="button"
+                    onClick={() => cycle(col)}
+                    className={`inline-flex items-center gap-1 rounded-sm outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring ${
+                      numericColumns.has(col) ? 'flex-row-reverse' : ''
+                    } ${dir ? 'text-foreground' : ''}`}
+                  >
+                    {col}
+                    <Arrow aria-hidden className={`size-3 ${dir ? '' : 'invisible'}`} />
+                  </button>
+                </TableHead>
+              )
+            })}
           </TableRow>
         </TableHeader>
         <TableBody>
-          {sql.rows.map((row, ri) => (
+          {rows.map((row, ri) => (
             <TableRow key={ri}>
               {sql.columns.map((col, ci) => {
                 const raw = row[ci] ?? ''
