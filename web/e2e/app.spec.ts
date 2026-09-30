@@ -107,6 +107,52 @@ test('a user dashboard opens in the standalone shell with no report tabs', async
   await expect(page.getByRole('main').getByText('Yours', { exact: true })).toBeVisible()
 })
 
+test('an agent-made group shows its tab bar', async ({ page, request }) => {
+  const first = await request.post('/api/dashboards', {
+    headers: authHeaders(),
+    data: { title: 'Growth', range: '7d' },
+  })
+  expect(first.ok(), await first.text()).toBeTruthy()
+  const { dashboard_id: firstId, group_id: groupId } = (await first.json()) as { dashboard_id: number; group_id: number }
+
+  const second = await request.post('/api/dashboards', {
+    headers: authHeaders(),
+    data: { title: 'Retention (beta)', range: '7d', group_id: groupId },
+  })
+  expect(second.ok(), await second.text()).toBeTruthy()
+
+  await login(page)
+  await page.goto(`/app/dashboards/${firstId}`)
+  await page.waitForLoadState('networkidle')
+
+  const tablist = page.getByRole('tablist')
+  await expect(tablist.getByRole('tab', { name: 'Growth', exact: true })).toBeVisible()
+  await expect(tablist.getByRole('tab', { name: 'Retention (beta)', exact: true })).toBeVisible()
+  // One sidebar entry for the whole group, not two.
+  await expect(page.getByRole('link', { name: 'Growth', exact: true })).toHaveCount(1)
+  await expect(page.getByRole('link', { name: 'Retention (beta)', exact: true })).toHaveCount(0)
+})
+
+test('a whole-group copy of Views opens with five tabs', async ({ page, request }) => {
+  const ids = await dashboardIds(request)
+  const viewsId = ids.get('Views')
+  expect(viewsId, 'no dashboard titled Views').toBeDefined()
+
+  const copied = await request.post(`/api/dashboards/${viewsId}/duplicate`, {
+    headers: authHeaders(),
+    data: { whole_group: true },
+  })
+  expect(copied.ok(), await copied.text()).toBeTruthy()
+  const { dashboard_id: copyId, tabs } = (await copied.json()) as { dashboard_id: number; tabs: { dashboard_id: number }[] }
+  expect(tabs).toHaveLength(5)
+
+  await login(page)
+  await page.goto(`/app/dashboards/${copyId}`)
+  await page.waitForLoadState('networkidle')
+
+  await expect(page.getByRole('tab')).toHaveCount(5)
+})
+
 test('a 6x6 widget and four 3x3 widgets lay out as a 2x2 block beside it', async ({ page, request }) => {
   // Wide enough that WidgetGrid's span() keeps the authored widths verbatim
   // (>=1024px of grid width; see web/src/lib/grid.ts) even with the sidebar
