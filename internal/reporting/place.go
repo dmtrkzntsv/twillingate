@@ -62,6 +62,15 @@ func lostDashboardRace() error {
 	return store.Refuse(store.ErrConflict, "the dashboard order changed while placing this dashboard; try again")
 }
 
+// placeDashboards runs place, a dashboard placement's read of the order
+// and the writes computed from it, under placeMu and through
+// retryConflict.
+func (s *Service) placeDashboards(place func() error) error {
+	s.placeMu.Lock()
+	defer s.placeMu.Unlock()
+	return retryConflict(place, lostDashboardRace)
+}
+
 // readOrder reads the user dashboards in order, archived ones included:
 // what every dashboard placement is computed over, read afresh on each
 // retryConflict attempt.

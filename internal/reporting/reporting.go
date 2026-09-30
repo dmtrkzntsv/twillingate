@@ -74,6 +74,15 @@ type Service struct {
 
 	parsedMu sync.Mutex
 	parsed   map[store.Component]Component // Components' memo
+
+	// placeMu serialises dashboard placement (placeDashboards in
+	// place.go). Each one reads the user order, computes keys and group
+	// ids from it, and writes them back in a later transaction; two
+	// interleaved in this process can write from a stale read (a title
+	// change putting back the key a concurrent group move just replaced)
+	// and split a group without any key colliding, which retryConflict
+	// cannot see. Other processes (the CLI) are still caught only by it.
+	placeMu sync.Mutex
 }
 
 // New builds a Service. db is the read-only handle sql widgets run

@@ -83,7 +83,7 @@ func (s *Service) CreateDashboard(ctx context.Context, actor string, in CreateDa
 		ws[i].SortKey = keys[i]
 	}
 	var id int64
-	err = retryConflict(func() error {
+	err = s.placeDashboards(func() error {
 		o, err := s.readOrder(ctx)
 		if err != nil {
 			return err
@@ -101,7 +101,7 @@ func (s *Service) CreateDashboard(ctx context.Context, actor string, in CreateDa
 			store.Dashboard{Owner: store.OwnerUser, Title: in.Title, SortKey: key, GroupID: in.GroupID, LastRange: rng},
 			ws, store.AuditEntry{Actor: actor, Action: "dashboard.create"})
 		return err
-	}, lostDashboardRace)
+	})
 	if err != nil {
 		return DashboardDetail{}, err
 	}
@@ -123,7 +123,7 @@ func (s *Service) UpdateDashboard(ctx context.Context, actor string, in UpdateDa
 		return DashboardInfo{}, store.Refuse(store.ErrInvalid, "title must not be empty")
 	}
 	a := store.AuditEntry{Actor: actor, Action: "dashboard.update"}
-	err = retryConflict(func() error {
+	err = s.placeDashboards(func() error {
 		o, err := s.readOrder(ctx)
 		if err != nil {
 			return err
@@ -136,7 +136,7 @@ func (s *Service) UpdateDashboard(ctx context.Context, actor string, in UpdateDa
 			row.Title = in.Title
 		}
 		return s.placeDashboard(ctx, o, row, in, a)
-	}, lostDashboardRace)
+	})
 	if err != nil {
 		return DashboardInfo{}, err
 	}
@@ -269,7 +269,7 @@ func (s *Service) duplicateOne(ctx context.Context, actor string, src store.Dash
 		LastProjectID: src.LastProjectID, LastRange: src.LastRange, LastFrom: src.LastFrom, LastTo: src.LastTo,
 	}
 	var newID int64
-	err = retryConflict(func() error {
+	err = s.placeDashboards(func() error {
 		o, err := s.readOrder(ctx)
 		if err != nil {
 			return err
@@ -286,7 +286,7 @@ func (s *Service) duplicateOne(ctx context.Context, actor string, src store.Dash
 		newID, err = s.st.InsertDashboard(ctx, copyOf, ws, store.AuditEntry{
 			Actor: actor, Action: "dashboard.duplicate", Detail: fmt.Sprintf("from dashboard/%d", src.ID)})
 		return err
-	}, lostDashboardRace)
+	})
 	if err != nil {
 		return DashboardDetail{}, err
 	}
@@ -326,7 +326,7 @@ func (s *Service) duplicateGroup(ctx context.Context, actor string, src store.Da
 		}
 	}
 	var ids []int64
-	err = retryConflict(func() error {
+	err = s.placeDashboards(func() error {
 		o, err := s.readOrder(ctx)
 		if err != nil {
 			return err
@@ -345,7 +345,7 @@ func (s *Service) duplicateGroup(ctx context.Context, actor string, src store.Da
 		ids, err = s.st.InsertDashboardGroup(ctx, ds, wss, store.AuditEntry{
 			Actor: actor, Action: "dashboard.duplicate", Detail: fmt.Sprintf("group of dashboard/%d", src.ID)})
 		return err
-	}, lostDashboardRace)
+	})
 	if err != nil {
 		return DashboardDetail{}, err
 	}
