@@ -321,3 +321,37 @@ What changes on the day:
   does not have.
 - Rolling back to a binary from before this migration leaves the new tables
   unused (and nothing purged); upgrading again is safe.
+
+### Upgrading to dashboard groups (migration 022)
+
+Adds `group_id` to `dashboards`: dashboards sharing one are tabs of a single
+sidebar entry, named by the first live one. Nothing to check before: the
+migration adds the column, one index and one trigger, then sets every
+existing row's `group_id` to its own id, so every dashboard starts as a group
+of one. The trigger, `dashboards_own_group`, gives a row inserted without a
+`group_id` its own id as its group.
+
+What changes on the day:
+
+- The sidebar's "Reports" entry reads "Views", with the same five tabs
+  (Views, Product, Users, Groups, Retention) it always had — the system
+  dashboards become one group.
+- Every existing user dashboard becomes a group of one, so nothing else
+  changes: `list_dashboards` and `get_dashboard` gain `group_id` (and
+  `get_dashboard` a `tabs` list), but a dashboard alone shows no tab bar and
+  moves exactly as before.
+- `duplicate_dashboard` on a user dashboard no longer makes a separate
+  dashboard: the copy joins the source's group as the next tab
+  (`update_dashboard` with `group_id: 0` makes it its own sidebar entry). A
+  system dashboard's copy is still a new dashboard, and `whole_group` copies
+  a whole group as a new dashboard with the same tabs.
+
+There is no down migration, but the column is additive and the previous
+binary starts against the upgraded file. It inserts dashboards without
+naming `group_id`; the trigger gives each one its own id as its group, so
+dashboards it creates or duplicates stay separate entries when the upgrade
+is applied again. Its `update_dashboard` with `after` moves one dashboard,
+not its group, so it can leave a group's tabs split around another
+dashboard in the order: the sidebar and the tab bar key on `group_id`, so
+the group still shows as one entry with all its tabs, and the next move of
+that group to a new place, on this binary, joins its tabs up again.

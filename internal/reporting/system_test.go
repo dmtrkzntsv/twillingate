@@ -124,6 +124,31 @@ func TestSystemDashboards(t *testing.T) {
 	}
 }
 
+// TestSystemDashboardsAreOneGroup is D16: Views (id 1) names no group of
+// its own, so it is group 1; Product, Users, Groups and Retention (ids
+// 2-5) each name "group": 1 in their dashboard.json. This release's
+// embedded system definition (loaded by the real Migrate, not a test
+// fixture) must leave every one of the five with GroupID 1.
+func TestSystemDashboardsAreOneGroup(t *testing.T) {
+	ctx := context.Background()
+	f := newSystemFixture(t)
+
+	ds, err := f.svc.Dashboards(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[int64]int64{}
+	for _, d := range ds.Dashboards {
+		if d.Owner == store.OwnerSystem {
+			got[d.ID] = d.GroupID
+		}
+	}
+	want := map[int64]int64{1: 1, 2: 1, 3: 1, 4: 1, 5: 1}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("system dashboard GroupIDs = %v, want %v", got, want)
+	}
+}
+
 // systemFixture is a store migrated to latest and synced with this
 // release's embedded system definition, a Service over it with the cache
 // off, and two seeded projects: project, with seedSystemData's 100 days,

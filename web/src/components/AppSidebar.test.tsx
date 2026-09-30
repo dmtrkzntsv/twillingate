@@ -3,15 +3,17 @@ import { screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 import { SidebarProvider } from '@/components/ui/sidebar'
+import type { DashboardInfo } from '@/lib/api'
 import { _resetForTests, getAuthHeader } from '@/lib/auth'
+import { dashboardsList } from '@/test/fixtures'
 import { renderWithProviders } from '@/test/render'
 import AppSidebar from './AppSidebar'
 
-function renderSidebar() {
+function renderSidebar(dashboards: DashboardInfo[] = [], currentId = 0) {
   renderWithProviders(
     <MemoryRouter>
       <SidebarProvider>
-        <AppSidebar dashboards={[]} currentId={0} />
+        <AppSidebar dashboards={dashboards} currentId={currentId} />
       </SidebarProvider>
     </MemoryRouter>
   )
@@ -71,5 +73,31 @@ describe('AppSidebar gallery', () => {
       </MemoryRouter>
     )
     expect(screen.getByRole('link', { name: 'Components' })).not.toHaveAttribute('data-active', 'true')
+  })
+})
+
+describe('AppSidebar dashboard groups', () => {
+  const dashboards = dashboardsList().dashboards
+
+  it('shows the system group once, named by its first member, with no "Reports" entry', () => {
+    renderSidebar(dashboards, 1)
+    expect(screen.getByRole('link', { name: 'Views' })).toHaveAttribute('href', '/dashboards/1')
+    expect(screen.queryByRole('link', { name: 'Reports' })).not.toBeInTheDocument()
+    // Only one sidebar entry for the whole group: none of the other four titles is its own link.
+    for (const title of ['Product', 'Users', 'Groups', 'Retention']) {
+      expect(screen.queryByRole('link', { name: title })).not.toBeInTheDocument()
+    }
+  })
+
+  it('gives a two-dashboard user group one link, named by the first tab', () => {
+    renderSidebar(dashboards, 0)
+    const link = screen.getByRole('link', { name: 'Marketing' })
+    expect(link).toHaveAttribute('href', '/dashboards/13')
+    expect(screen.queryByRole('link', { name: 'Funnel' })).not.toBeInTheDocument()
+  })
+
+  it('is active on the group entry when the current page is the second tab', () => {
+    renderSidebar(dashboards, 14)
+    expect(screen.getByRole('link', { name: 'Marketing' })).toHaveAttribute('data-active', 'true')
   })
 })

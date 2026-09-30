@@ -73,6 +73,28 @@ func TestPlaceKeysBetweenFullOrder(t *testing.T) {
 	}
 }
 
+// add_widget and copy_widget refuse an after naming an archived widget,
+// and write nothing.
+func TestPlaceWidgetAfterArchivedRefused(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	d := mustCreate(t, svc, "D", note("A"), note("B"))
+	src := mustCreate(t, svc, "Src", note("S"))
+	b := d.Widgets[1].ID
+	if err := svc.ArchiveWidget(ctx, "test", b); err != nil {
+		t.Fatal(err)
+	}
+	msg := "after " + itoa(b) + " is archived; name a live widget"
+
+	_, err := svc.AddWidget(ctx, "test", AddWidget{DashboardID: d.ID, After: &b, WidgetSpec: note("X")})
+	wantRefusal(t, err, store.ErrInvalid, msg)
+	_, err = svc.CopyWidget(ctx, "test", CopyWidget{ID: src.Widgets[0].ID, DashboardID: d.ID, After: &b})
+	wantRefusal(t, err, store.ErrInvalid, msg)
+	if got := widgetRows(t, svc, d.ID); len(got) != 2 {
+		t.Errorf("widgets on D = %d, want 2 (nothing written)", len(got))
+	}
+}
+
 func TestPlaceWidgetAfterMustBeOnSameDashboard(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -289,8 +311,8 @@ func TestSystemDashboardRefusesWrites(t *testing.T) {
 			_, err := svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: 3, Title: "X"})
 			return err
 		},
-		"archive": func() error { return svc.ArchiveDashboard(ctx, "test", 3) },
-		"restore": func() error { return svc.RestoreDashboard(ctx, "test", 3) },
+		"archive": func() error { return svc.ArchiveDashboard(ctx, "test", 3, false) },
+		"restore": func() error { return svc.RestoreDashboard(ctx, "test", 3, false) },
 		"add": func() error {
 			_, err := svc.AddWidget(ctx, "test", AddWidget{DashboardID: 3, WidgetSpec: note("X")})
 			return err
@@ -317,7 +339,7 @@ func TestSystemDashboardAllowsDuplicateCopyAndView(t *testing.T) {
 	svc := newTestService(t)
 	syncReporting(t, svc, nil, systemDashboard())
 	ctx := context.Background()
-	if _, err := svc.DuplicateDashboard(ctx, "test", 3); err != nil {
+	if _, err := svc.DuplicateDashboard(ctx, "test", 3, false); err != nil {
 		t.Errorf("duplicate: %v", err)
 	}
 	d := mustCreate(t, svc, "D")
@@ -346,7 +368,7 @@ func TestDuplicateDashboard(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cp, err := svc.DuplicateDashboard(ctx, "test", src.ID)
+	cp, err := svc.DuplicateDashboard(ctx, "test", src.ID, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -374,17 +396,25 @@ func TestDuplicateDashboard(t *testing.T) {
 	if !reflect.DeepEqual(keys, want) {
 		t.Errorf("keys = %v, want fresh %v", keys, want)
 	}
-	list, _ := svc.Dashboards(ctx)
-	if last := list.Dashboards[len(list.Dashboards)-1]; last.ID != cp.ID {
-		t.Errorf("last dashboard = %d, want the copy %d", last.ID, cp.ID)
+	// D10: a user source's copy joins the source's group right after it.
+	if cp.GroupID != src.GroupID {
+		t.Errorf("copy group_id = %d, want the source's %d", cp.GroupID, src.GroupID)
+	}
+	if got, want := sidebar(t, svc), []string{"Src/Src", "Src (copy)/Src", "Other/Other"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("sidebar = %v, want %v", got, want)
 	}
 
-	sys, err := svc.DuplicateDashboard(ctx, "test", 3)
+	// D10: a system source's copy is a new user group, last in the sidebar.
+	sys, err := svc.DuplicateDashboard(ctx, "test", 3, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if sys.Owner != store.OwnerUser || sys.Title != "Users (copy)" || len(sys.Widgets) != 1 || sys.Range != "7d" {
 		t.Errorf("system copy = %+v", sys)
+	}
+	list, _ := svc.Dashboards(ctx)
+	if last := list.Dashboards[len(list.Dashboards)-1]; last.ID != sys.ID {
+		t.Errorf("last dashboard = %d, want the system copy %d", last.ID, sys.ID)
 	}
 }
 
@@ -409,7 +439,7 @@ func TestArchivedDashboardRefusesAddAndUpdate(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 	d := mustCreate(t, svc, "D")
-	if err := svc.ArchiveDashboard(ctx, "test", d.ID); err != nil {
+	if err := svc.ArchiveDashboard(ctx, "test", d.ID, false); err != nil {
 		t.Fatal(err)
 	}
 	msg := "dashboard " + itoa(d.ID) + " is archived; restore_dashboard first"
@@ -417,7 +447,7 @@ func TestArchivedDashboardRefusesAddAndUpdate(t *testing.T) {
 	wantRefusal(t, err, store.ErrInvalid, msg)
 	_, err = svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: d.ID, Title: "E"})
 	wantRefusal(t, err, store.ErrInvalid, msg)
-	if err := svc.RestoreDashboard(ctx, "test", d.ID); err != nil {
+	if err := svc.RestoreDashboard(ctx, "test", d.ID, false); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: d.ID, Title: "E"}); err != nil {
@@ -743,10 +773,10 @@ func TestAuditActions(t *testing.T) {
 	must(err)
 	_, err = svc.UpdateDashboard(ctx, "rest", UpdateDashboard{ID: d.ID, Title: "E"})
 	must(err)
-	cp, err := svc.DuplicateDashboard(ctx, "mcp", d.ID)
+	cp, err := svc.DuplicateDashboard(ctx, "mcp", d.ID, false)
 	must(err)
-	must(svc.ArchiveDashboard(ctx, "rest", cp.ID))
-	must(svc.RestoreDashboard(ctx, "mcp", cp.ID))
+	must(svc.ArchiveDashboard(ctx, "rest", cp.ID, false))
+	must(svc.RestoreDashboard(ctx, "mcp", cp.ID, false))
 	w, err := svc.AddWidget(ctx, "rest", AddWidget{DashboardID: d.ID, WidgetSpec: note("B")})
 	must(err)
 	_, err = svc.UpdateWidget(ctx, "mcp", UpdateWidget{ID: w.ID, Title: ptr("C")})
@@ -782,8 +812,8 @@ func TestUnknownIDsAreNotFound(t *testing.T) {
 	for name, op := range map[string]func() error{
 		"dashboard": func() error { _, err := svc.Dashboard(ctx, 9999); return err },
 		"widgets":   func() error { _, err := svc.Widgets(ctx, 9999, ""); return err },
-		"duplicate": func() error { _, err := svc.DuplicateDashboard(ctx, "test", 9999); return err },
-		"archive":   func() error { return svc.ArchiveDashboard(ctx, "test", 9999) },
+		"duplicate": func() error { _, err := svc.DuplicateDashboard(ctx, "test", 9999, false); return err },
+		"archive":   func() error { return svc.ArchiveDashboard(ctx, "test", 9999, false) },
 		"add": func() error {
 			_, err := svc.AddWidget(ctx, "test", AddWidget{DashboardID: 9999, WidgetSpec: note("A")})
 			return err
@@ -846,7 +876,7 @@ func TestUpdateDashboardNothingToUpdate(t *testing.T) {
 	d := mustCreate(t, svc, "D")
 	before := len(auditRows(t, svc))
 	_, err := svc.UpdateDashboard(context.Background(), "test", UpdateDashboard{ID: d.ID})
-	wantRefusal(t, err, store.ErrInvalid, "nothing to update; give title or after")
+	wantRefusal(t, err, store.ErrInvalid, "nothing to update; give title, after or group_id")
 	if got := len(auditRows(t, svc)); got != before {
 		t.Errorf("audit rows %d -> %d, want none written", before, got)
 	}
@@ -857,6 +887,44 @@ func TestSetViewRefusesNegativeProject(t *testing.T) {
 	d := switcherDashboard(t, svc, true, false)
 	wantRefusal(t, svc.SetView(context.Background(), View{DashboardID: d.ID, ProjectID: -1}),
 		store.ErrInvalid, "project_id must be a positive id")
+}
+
+// Every tool that takes after refuses one naming an archived dashboard,
+// and moves or writes nothing (spec decision 8).
+func TestAfterArchivedDashboardRefused(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	a := mustCreate(t, svc, "A")
+	b := mustJoin(t, svc, "B", a.ID)
+	c := mustJoin(t, svc, "C", a.ID)
+	x := mustCreate(t, svc, "X")
+	y := mustCreate(t, svc, "Y")
+	if err := svc.ArchiveDashboard(ctx, "test", b.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ArchiveDashboard(ctx, "test", y.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	before := userRows(t, svc)
+	msg := func(id int64) string { return "after " + itoa(id) + " is archived; name a live dashboard" }
+
+	_, err := svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: c.ID, After: &b.ID})
+	wantRefusal(t, err, store.ErrInvalid, msg(b.ID)) // a tab of its own group
+	_, err = svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: x.ID, After: &b.ID})
+	wantRefusal(t, err, store.ErrInvalid, msg(b.ID)) // another group's tab: a group move
+	_, err = svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: x.ID, GroupID: &a.GroupID, After: &b.ID})
+	wantRefusal(t, err, store.ErrInvalid, msg(b.ID)) // joining a group
+	zero := int64(0)
+	_, err = svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: c.ID, GroupID: &zero, After: &y.ID})
+	wantRefusal(t, err, store.ErrInvalid, msg(y.ID)) // leaving a group
+	_, err = svc.CreateDashboard(ctx, "test", CreateDashboard{Title: "N", After: &y.ID})
+	wantRefusal(t, err, store.ErrInvalid, msg(y.ID))
+	_, err = svc.CreateDashboard(ctx, "test", CreateDashboard{Title: "N", GroupID: a.GroupID, After: &b.ID})
+	wantRefusal(t, err, store.ErrInvalid, msg(b.ID))
+
+	if after := userRows(t, svc); !sameKeys(before, after) {
+		t.Errorf("rows changed after refused placements:\n before %+v\n after  %+v", before, after)
+	}
 }
 
 func TestUpdateDashboardAfterItselfOrFirstStays(t *testing.T) {
@@ -893,9 +961,679 @@ func TestCopyWidgetIntoArchivedDashboard(t *testing.T) {
 	ctx := context.Background()
 	src := mustCreate(t, svc, "Src", note("A"))
 	dst := mustCreate(t, svc, "Dst")
-	if err := svc.ArchiveDashboard(ctx, "test", dst.ID); err != nil {
+	if err := svc.ArchiveDashboard(ctx, "test", dst.ID, false); err != nil {
 		t.Fatal(err)
 	}
 	_, err := svc.CopyWidget(ctx, "test", CopyWidget{ID: src.Widgets[0].ID, DashboardID: dst.ID})
 	wantRefusal(t, err, store.ErrInvalid, "dashboard "+itoa(dst.ID)+" is archived; restore_dashboard first")
+}
+
+// --- Groups ---
+
+// mustJoin creates a user dashboard titled title as the last tab of
+// group g.
+func mustJoin(t *testing.T, svc *Service, title string, g int64) DashboardDetail {
+	t.Helper()
+	d, err := svc.CreateDashboard(context.Background(), "test", CreateDashboard{Title: title, GroupID: g})
+	if err != nil {
+		t.Fatalf("CreateDashboard(%q, group %d): %v", title, g, err)
+	}
+	return d
+}
+
+// userRows is the user dashboard rows in sidebar order, archived ones
+// included, straight from the store.
+func userRows(t *testing.T, svc *Service) []store.Dashboard {
+	t.Helper()
+	ds, err := svc.st.ListDashboards(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return userOrder(ds)
+}
+
+// sidebar is the user dashboards' titles in sidebar order, archived
+// ones included, each as "title/group title" where group title is the
+// title of the dashboard whose id is the group's id ("" for a reserved
+// group id) — enough to read both the order and the grouping at a
+// glance.
+func sidebar(t *testing.T, svc *Service) []string {
+	t.Helper()
+	rows := userRows(t, svc)
+	titles := map[int64]string{}
+	for _, d := range rows {
+		titles[d.ID] = d.Title
+	}
+	out := make([]string, len(rows))
+	for i, d := range rows {
+		out[i] = d.Title + "/" + titles[d.GroupID]
+	}
+	return out
+}
+
+// wantContiguous fails unless every group's rows are adjacent in the
+// user order, archived ones included (spec decision 3).
+func wantContiguous(t *testing.T, svc *Service) {
+	t.Helper()
+	done := map[int64]bool{}
+	var cur int64
+	for _, d := range userRows(t, svc) {
+		if d.GroupID == cur {
+			continue
+		}
+		if done[d.GroupID] {
+			t.Errorf("group %d is split: %v", d.GroupID, sidebar(t, svc))
+			return
+		}
+		done[cur] = true
+		cur = d.GroupID
+	}
+}
+
+// tabIDs is the ids of get_dashboard(id).Tabs.
+func tabIDs(t *testing.T, svc *Service, id int64) []int64 {
+	t.Helper()
+	d, err := svc.Dashboard(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Tabs == nil {
+		t.Fatalf("dashboard %d: Tabs is nil, want non-nil", id)
+	}
+	out := []int64{}
+	for _, tab := range d.Tabs {
+		out = append(out, tab.ID)
+	}
+	return out
+}
+
+func TestDashboardGroupAndTabs(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("a new dashboard is its own group of one", func(t *testing.T) {
+		svc := newTestService(t)
+		d := mustCreate(t, svc, "D")
+		if d.GroupID != d.ID {
+			t.Errorf("group_id = %d, want its own id %d", d.GroupID, d.ID)
+		}
+		if len(d.Tabs) != 1 || d.Tabs[0] != (Tab{ID: d.ID, Title: "D"}) {
+			t.Errorf("tabs = %+v, want just itself", d.Tabs)
+		}
+		list, err := svc.Dashboards(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if list.Dashboards[0].GroupID != d.ID {
+			t.Errorf("list group_id = %d, want %d", list.Dashboards[0].GroupID, d.ID)
+		}
+	})
+
+	t.Run("every member answers the same live tabs", func(t *testing.T) {
+		svc := newTestService(t)
+		a := mustCreate(t, svc, "A")
+		b := mustJoin(t, svc, "B", a.ID)
+		c := mustJoin(t, svc, "C", a.ID)
+		mustCreate(t, svc, "Other")
+		if err := svc.ArchiveDashboard(ctx, "test", b.ID, false); err != nil {
+			t.Fatal(err)
+		}
+		want := []int64{a.ID, c.ID}
+		for _, id := range []int64{a.ID, b.ID, c.ID} {
+			if got := tabIDs(t, svc, id); !reflect.DeepEqual(got, want) {
+				t.Errorf("tabs from %d = %v, want %v", id, got, want)
+			}
+		}
+	})
+
+	t.Run("a group with no live member answers no tabs", func(t *testing.T) {
+		svc := newTestService(t)
+		a := mustCreate(t, svc, "A")
+		if err := svc.ArchiveDashboard(ctx, "test", a.ID, false); err != nil {
+			t.Fatal(err)
+		}
+		if got := tabIDs(t, svc, a.ID); len(got) != 0 {
+			t.Errorf("tabs = %v, want none", got)
+		}
+	})
+}
+
+func TestCreateDashboardInGroup(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("group_id alone makes it the last tab", func(t *testing.T) {
+		svc := newTestService(t)
+		a := mustCreate(t, svc, "A")
+		mustCreate(t, svc, "Other")
+		b := mustJoin(t, svc, "B", a.ID)
+		c := mustJoin(t, svc, "C", a.ID)
+		if b.GroupID != a.ID || c.GroupID != a.ID {
+			t.Errorf("group ids = %d, %d, want %d", b.GroupID, c.GroupID, a.ID)
+		}
+		if got, want := sidebar(t, svc), []string{"A/A", "B/A", "C/A", "Other/Other"}; !reflect.DeepEqual(got, want) {
+			t.Errorf("sidebar = %v, want %v", got, want)
+		}
+		if got, want := c.Tabs, []Tab{{a.ID, "A"}, {b.ID, "B"}, {c.ID, "C"}}; !reflect.DeepEqual(got, want) {
+			t.Errorf("tabs = %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("after 0 makes it the first tab", func(t *testing.T) {
+		svc := newTestService(t)
+		mustCreate(t, svc, "Before")
+		a := mustCreate(t, svc, "A")
+		mustJoin(t, svc, "B", a.ID)
+		if _, err := svc.CreateDashboard(ctx, "test", CreateDashboard{Title: "Z", GroupID: a.ID, After: ptr(int64(0))}); err != nil {
+			t.Fatal(err)
+		}
+		if got, want := sidebar(t, svc), []string{"Before/Before", "Z/A", "A/A", "B/A"}; !reflect.DeepEqual(got, want) {
+			t.Errorf("sidebar = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("after a member places it right after that tab", func(t *testing.T) {
+		svc := newTestService(t)
+		a := mustCreate(t, svc, "A")
+		mustJoin(t, svc, "B", a.ID)
+		if _, err := svc.CreateDashboard(ctx, "test", CreateDashboard{Title: "Z", GroupID: a.ID, After: &a.ID}); err != nil {
+			t.Fatal(err)
+		}
+		if got, want := sidebar(t, svc), []string{"A/A", "Z/A", "B/A"}; !reflect.DeepEqual(got, want) {
+			t.Errorf("sidebar = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("after a non-member is refused", func(t *testing.T) {
+		svc := newTestService(t)
+		a := mustCreate(t, svc, "A")
+		other := mustCreate(t, svc, "Other")
+		_, err := svc.CreateDashboard(ctx, "test", CreateDashboard{Title: "Z", GroupID: a.ID, After: &other.ID})
+		wantRefusal(t, err, store.ErrInvalid, "after "+itoa(other.ID)+" is not a member of group "+itoa(a.ID))
+	})
+
+	t.Run("a system, unknown or all-archived group is refused", func(t *testing.T) {
+		svc := newTestService(t)
+		syncReporting(t, svc, nil, systemDashboard())
+		gone := mustCreate(t, svc, "Gone")
+		if err := svc.ArchiveDashboard(ctx, "test", gone.ID, false); err != nil {
+			t.Fatal(err)
+		}
+		for _, g := range []int64{3, 9999, gone.ID} {
+			_, err := svc.CreateDashboard(ctx, "test", CreateDashboard{Title: "Z", GroupID: g})
+			wantRefusal(t, err, store.ErrInvalid, "group "+itoa(g)+" has no live user dashboard")
+		}
+		if got := len(userRows(t, svc)); got != 1 {
+			t.Errorf("user rows = %d, want 1 (nothing created)", got)
+		}
+	})
+
+	t.Run("without group_id, after a tab lands after the whole group", func(t *testing.T) {
+		svc := newTestService(t)
+		a := mustCreate(t, svc, "A")
+		mustJoin(t, svc, "B", a.ID)
+		mustCreate(t, svc, "Other")
+		if _, err := svc.CreateDashboard(ctx, "test", CreateDashboard{Title: "Z", After: &a.ID}); err != nil {
+			t.Fatal(err)
+		}
+		if got, want := sidebar(t, svc), []string{"A/A", "B/A", "Z/Z", "Other/Other"}; !reflect.DeepEqual(got, want) {
+			t.Errorf("sidebar = %v, want %v", got, want)
+		}
+	})
+}
+
+func TestUpdateDashboardPlacesInGroups(t *testing.T) {
+	ctx := context.Background()
+	update := func(t *testing.T, svc *Service, in UpdateDashboard) DashboardInfo {
+		t.Helper()
+		d, err := svc.UpdateDashboard(ctx, "test", in)
+		if err != nil {
+			t.Fatalf("UpdateDashboard(%+v): %v", in, err)
+		}
+		return d
+	}
+
+	t.Run("after a member reorders the tabs only", func(t *testing.T) {
+		svc := newTestService(t)
+		mustCreate(t, svc, "X")
+		a := mustCreate(t, svc, "A")
+		b := mustJoin(t, svc, "B", a.ID)
+		c := mustJoin(t, svc, "C", a.ID)
+		mustCreate(t, svc, "Y")
+		update(t, svc, UpdateDashboard{ID: c.ID, After: &a.ID})
+		if got, want := sidebar(t, svc), []string{"X/X", "A/A", "C/A", "B/A", "Y/Y"}; !reflect.DeepEqual(got, want) {
+			t.Errorf("sidebar = %v, want %v", got, want)
+		}
+		if got, want := tabIDs(t, svc, b.ID), []int64{a.ID, c.ID, b.ID}; !reflect.DeepEqual(got, want) {
+			t.Errorf("tabs = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("after another group's member moves the whole group, archived members too", func(t *testing.T) {
+		svc := newTestService(t)
+		a := mustCreate(t, svc, "A")
+		b := mustJoin(t, svc, "B", a.ID)
+		c := mustJoin(t, svc, "C", a.ID)
+		mustCreate(t, svc, "Solo")
+		x := mustCreate(t, svc, "X")
+		mustJoin(t, svc, "X2", x.ID)
+		mustCreate(t, svc, "Last")
+		if err := svc.ArchiveDashboard(ctx, "test", b.ID, false); err != nil {
+			t.Fatal(err)
+		}
+		got := update(t, svc, UpdateDashboard{ID: c.ID, After: &x.ID, Title: "C2"})
+		if got.Title != "C2" || got.GroupID != a.ID {
+			t.Errorf("answer = %+v, want title C2 in group %d", got, a.ID)
+		}
+		if got, want := sidebar(t, svc), []string{"Solo/Solo", "X/X", "X2/X", "A/A", "B/A", "C2/A", "Last/Last"}; !reflect.DeepEqual(got, want) {
+			t.Errorf("sidebar = %v, want %v", got, want)
+		}
+		wantContiguous(t, svc)
+	})
+
+	t.Run("after 0 moves a tab's whole group to the top", func(t *testing.T) {
+		svc := newTestService(t)
+		mustCreate(t, svc, "X")
+		a := mustCreate(t, svc, "A")
+		b := mustJoin(t, svc, "B", a.ID)
+		update(t, svc, UpdateDashboard{ID: b.ID, After: ptr(int64(0))})
+		if got, want := sidebar(t, svc), []string{"A/A", "B/A", "X/X"}; !reflect.DeepEqual(got, want) {
+			t.Errorf("sidebar = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("after itself changes nothing", func(t *testing.T) {
+		svc := newTestService(t)
+		mustCreate(t, svc, "X")
+		a := mustCreate(t, svc, "A")
+		b := mustJoin(t, svc, "B", a.ID)
+		mustCreate(t, svc, "Y")
+		before := userRows(t, svc)
+		for _, in := range []UpdateDashboard{
+			{ID: b.ID, After: &b.ID},
+			{ID: b.ID, GroupID: &a.ID, After: &b.ID},
+		} {
+			update(t, svc, in)
+			if got := userRows(t, svc); !sameKeys(got, before) {
+				t.Errorf("%+v: rows changed:\n%+v\nwas\n%+v", in, got, before)
+			}
+		}
+	})
+
+	t.Run("after the group already before it changes nothing", func(t *testing.T) {
+		svc := newTestService(t)
+		x := mustCreate(t, svc, "X")
+		x2 := mustJoin(t, svc, "X2", x.ID)
+		a := mustCreate(t, svc, "A")
+		mustJoin(t, svc, "B", a.ID)
+		before := userRows(t, svc)
+		for _, after := range []int64{x.ID, x2.ID} {
+			update(t, svc, UpdateDashboard{ID: a.ID, After: &after})
+			if got := userRows(t, svc); !sameKeys(got, before) {
+				t.Errorf("after %d: rows changed:\n%+v\nwas\n%+v", after, got, before)
+			}
+		}
+	})
+
+	t.Run("group_id own with after 0 makes it the first tab, alone the last", func(t *testing.T) {
+		svc := newTestService(t)
+		a := mustCreate(t, svc, "A")
+		b := mustJoin(t, svc, "B", a.ID)
+		c := mustJoin(t, svc, "C", a.ID)
+		update(t, svc, UpdateDashboard{ID: c.ID, GroupID: &a.ID, After: ptr(int64(0))})
+		if got, want := tabIDs(t, svc, a.ID), []int64{c.ID, a.ID, b.ID}; !reflect.DeepEqual(got, want) {
+			t.Errorf("after 0: tabs = %v, want %v", got, want)
+		}
+		update(t, svc, UpdateDashboard{ID: c.ID, GroupID: &a.ID})
+		if got, want := tabIDs(t, svc, a.ID), []int64{a.ID, b.ID, c.ID}; !reflect.DeepEqual(got, want) {
+			t.Errorf("no after: tabs = %v, want %v", got, want)
+		}
+		wantContiguous(t, svc)
+	})
+
+	t.Run("group_id of another group moves it there as a tab", func(t *testing.T) {
+		svc := newTestService(t)
+		a := mustCreate(t, svc, "A")
+		b := mustJoin(t, svc, "B", a.ID)
+		x := mustCreate(t, svc, "X")
+		mustJoin(t, svc, "X2", x.ID)
+		got := update(t, svc, UpdateDashboard{ID: b.ID, GroupID: &x.ID, After: &x.ID})
+		if got.GroupID != x.ID {
+			t.Errorf("group_id = %d, want %d", got.GroupID, x.ID)
+		}
+		if got, want := sidebar(t, svc), []string{"A/A", "X/X", "B/X", "X2/X"}; !reflect.DeepEqual(got, want) {
+			t.Errorf("sidebar = %v, want %v", got, want)
+		}
+		_, err := svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: a.ID, GroupID: &x.ID, After: &a.ID})
+		wantRefusal(t, err, store.ErrInvalid, "after "+itoa(a.ID)+" is not a member of group "+itoa(x.ID))
+	})
+
+	t.Run("group_id 0 leaves as a group of one right after the old group", func(t *testing.T) {
+		svc := newTestService(t)
+		a := mustCreate(t, svc, "A")
+		b := mustJoin(t, svc, "B", a.ID)
+		mustJoin(t, svc, "C", a.ID)
+		mustCreate(t, svc, "Y")
+		got := update(t, svc, UpdateDashboard{ID: b.ID, GroupID: ptr(int64(0))})
+		if got.GroupID != b.ID {
+			t.Errorf("group_id = %d, want its own id %d", got.GroupID, b.ID)
+		}
+		if got, want := sidebar(t, svc), []string{"A/A", "C/A", "B/B", "Y/Y"}; !reflect.DeepEqual(got, want) {
+			t.Errorf("sidebar = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("group_id 0 with after places the new group in the sidebar", func(t *testing.T) {
+		svc := newTestService(t)
+		y := mustCreate(t, svc, "Y")
+		a := mustCreate(t, svc, "A")
+		b := mustJoin(t, svc, "B", a.ID)
+		update(t, svc, UpdateDashboard{ID: b.ID, GroupID: ptr(int64(0)), After: ptr(int64(0))})
+		if got, want := sidebar(t, svc), []string{"B/B", "Y/Y", "A/A"}; !reflect.DeepEqual(got, want) {
+			t.Errorf("after 0: sidebar = %v, want %v", got, want)
+		}
+		update(t, svc, UpdateDashboard{ID: b.ID, GroupID: ptr(int64(0)), After: &y.ID})
+		if got, want := sidebar(t, svc), []string{"Y/Y", "B/B", "A/A"}; !reflect.DeepEqual(got, want) {
+			t.Errorf("after Y: sidebar = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("group_id 0 alone in its group changes only the title", func(t *testing.T) {
+		svc := newTestService(t)
+		mustCreate(t, svc, "X")
+		a := mustCreate(t, svc, "A")
+		mustCreate(t, svc, "Y")
+		before := userRows(t, svc)
+		got := update(t, svc, UpdateDashboard{ID: a.ID, GroupID: ptr(int64(0)), Title: "A2"})
+		if got.Title != "A2" {
+			t.Errorf("title = %q, want A2", got.Title)
+		}
+		update(t, svc, UpdateDashboard{ID: a.ID, GroupID: ptr(int64(0)), After: &a.ID})
+		if got := userRows(t, svc); !sameKeys(got, before) {
+			t.Errorf("rows moved:\n%+v\nwas\n%+v", got, before)
+		}
+	})
+
+	t.Run("group_id 0 on the dashboard whose id the group uses hands the group over", func(t *testing.T) {
+		svc := newTestService(t)
+		a := mustCreate(t, svc, "A")
+		b := mustJoin(t, svc, "B", a.ID)
+		mustCreate(t, svc, "Y")
+		got := update(t, svc, UpdateDashboard{ID: a.ID, GroupID: ptr(int64(0))})
+		if got.GroupID != a.ID {
+			t.Errorf("A group_id = %d, want its own id %d", got.GroupID, a.ID)
+		}
+		if got, want := sidebar(t, svc), []string{"B/B", "A/A", "Y/Y"}; !reflect.DeepEqual(got, want) {
+			t.Errorf("sidebar = %v, want %v (B's group handed to B's id)", got, want)
+		}
+		if got, want := tabIDs(t, svc, b.ID), []int64{b.ID}; !reflect.DeepEqual(got, want) {
+			t.Errorf("old group's tabs = %v, want %v", got, want)
+		}
+		// Having left, it can come back without merging into anything.
+		update(t, svc, UpdateDashboard{ID: a.ID, GroupID: &b.ID, After: ptr(int64(0))})
+		if got, want := tabIDs(t, svc, b.ID), []int64{a.ID, b.ID}; !reflect.DeepEqual(got, want) {
+			t.Errorf("rejoined tabs = %v, want %v", got, want)
+		}
+		wantContiguous(t, svc)
+	})
+
+	t.Run("the handover goes to the first live dashboard left, archived ones repointed too", func(t *testing.T) {
+		svc := newTestService(t)
+		a := mustCreate(t, svc, "A")
+		b := mustJoin(t, svc, "B", a.ID)
+		c := mustJoin(t, svc, "C", a.ID)
+		if err := svc.ArchiveDashboard(ctx, "test", b.ID, false); err != nil {
+			t.Fatal(err)
+		}
+		update(t, svc, UpdateDashboard{ID: a.ID, GroupID: ptr(int64(0))})
+		for _, d := range userRows(t, svc) {
+			if (d.ID == b.ID || d.ID == c.ID) && d.GroupID != c.ID {
+				t.Errorf("dashboard %d group_id = %d, want C's id %d (B archived, so C is the heir)", d.ID, d.GroupID, c.ID)
+			}
+		}
+		wantContiguous(t, svc)
+	})
+
+	t.Run("group_id 0 alone keeps its group id", func(t *testing.T) {
+		svc := newTestService(t)
+		a := mustCreate(t, svc, "A")
+		b := mustJoin(t, svc, "B", a.ID)
+		y := mustCreate(t, svc, "Y")
+		update(t, svc, UpdateDashboard{ID: a.ID, GroupID: &y.ID}) // joining hands A's group to B
+		before := userRows(t, svc)
+		if got := update(t, svc, UpdateDashboard{ID: b.ID, GroupID: ptr(int64(0))}); got.GroupID != b.ID {
+			t.Errorf("group_id = %d, want the one it had, %d", got.GroupID, b.ID)
+		}
+		if got := userRows(t, svc); !sameKeys(got, before) {
+			t.Errorf("rows moved:\n%+v\nwas\n%+v", got, before)
+		}
+		if got := update(t, svc, UpdateDashboard{ID: b.ID, GroupID: ptr(int64(0)), After: &y.ID}); got.GroupID != b.ID {
+			t.Errorf("with after: group_id = %d, want %d", got.GroupID, b.ID)
+		}
+		if got, want := sidebar(t, svc), []string{"Y/Y", "A/Y", "B/B"}; !reflect.DeepEqual(got, want) {
+			t.Errorf("sidebar = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("a system dashboard or group is refused and nothing moves", func(t *testing.T) {
+		svc := newTestService(t)
+		syncReporting(t, svc, nil, systemDashboard())
+		mustCreate(t, svc, "X")
+		a := mustCreate(t, svc, "A")
+		before := userRows(t, svc)
+		_, err := svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: a.ID, After: ptr(int64(3))})
+		wantRefusal(t, err, store.ErrInvalid, "after 3 is not a user dashboard")
+		_, err = svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: a.ID, GroupID: ptr(int64(3))})
+		wantRefusal(t, err, store.ErrInvalid, "group 3 has no live user dashboard")
+		if got := userRows(t, svc); !sameKeys(got, before) {
+			t.Errorf("rows moved:\n%+v\nwas\n%+v", got, before)
+		}
+		sys, err := svc.st.GetDashboard(ctx, 3)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if sys.SortKey != "a0" || sys.GroupID != 3 {
+			t.Errorf("system row = %+v, want untouched", sys)
+		}
+	})
+}
+
+// sameKeys reports whether a and b hold the same rows in the same
+// order with the same group ids and sort keys.
+func sameKeys(a, b []store.Dashboard) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].ID != b[i].ID || a[i].GroupID != b[i].GroupID || a[i].SortKey != b[i].SortKey {
+			return false
+		}
+	}
+	return true
+}
+
+// --- Whole-group duplicate ---
+
+func TestDuplicateWholeGroupFromSystem(t *testing.T) {
+	svc := newTestService(t)
+	syncReporting(t, svc, nil, systemGroup()...)
+	ctx := context.Background()
+
+	// Users' one widget is archived directly at the store (the service
+	// refuses archiving a system widget): proves it is not copied.
+	usersWidget := widgetRows(t, svc, 12)[0].ID
+	if err := svc.st.SetWidgetArchived(ctx, usersWidget, true, store.AuditEntry{Actor: "test", Action: "widget.archive"}); err != nil {
+		t.Fatal(err)
+	}
+
+	cp, err := svc.DuplicateDashboard(ctx, "test", 12, true) // from Users, a middle member
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cp.Title != "Views (copy)" || cp.Owner != store.OwnerUser {
+		t.Errorf("first copy = %q owned by %q, want \"Views (copy)\" owned by user", cp.Title, cp.Owner)
+	}
+	var titles []string
+	for _, tab := range cp.Tabs {
+		titles = append(titles, tab.Title)
+	}
+	if want := []string{"Views (copy)", "Product", "Users", "Groups", "Retention"}; !reflect.DeepEqual(titles, want) {
+		t.Errorf("tab titles = %v, want %v (same order, only the first retitled)", titles, want)
+	}
+
+	usersCopy, err := svc.Dashboard(ctx, cp.Tabs[2].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(usersCopy.Widgets) != 0 {
+		t.Errorf("Users copy widgets = %d, want 0 (its only widget was archived)", len(usersCopy.Widgets))
+	}
+	productCopy, err := svc.Dashboard(ctx, cp.Tabs[1].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(productCopy.Widgets) != 1 {
+		t.Errorf("Product copy widgets = %d, want 1 (its live widget)", len(productCopy.Widgets))
+	}
+}
+
+func TestDuplicateWholeGroupArchivedMemberNotCopied(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	a := mustCreate(t, svc, "A")
+	b := mustJoin(t, svc, "B", a.ID)
+	mustJoin(t, svc, "C", a.ID)
+	if err := svc.ArchiveDashboard(ctx, "test", b.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	mustCreate(t, svc, "Z")
+
+	cp, err := svc.DuplicateDashboard(ctx, "test", a.ID, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var titles []string
+	for _, tab := range cp.Tabs {
+		titles = append(titles, tab.Title)
+	}
+	if want := []string{"A (copy)", "C"}; !reflect.DeepEqual(titles, want) {
+		t.Errorf("tab titles = %v, want %v (B, archived, not copied)", titles, want)
+	}
+	rows := userRows(t, svc)
+	if last := rows[len(rows)-1]; last.GroupID != cp.GroupID {
+		t.Errorf("last dashboard's group = %d, want the copy's group %d (new group placed last)", last.GroupID, cp.GroupID)
+	}
+}
+
+// An archived dashboard is not duplicated, alone or with its group: the
+// copy would otherwise revive a group whose dashboards are all archived.
+func TestDuplicateArchivedDashboardRefused(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	a := mustCreate(t, svc, "A")
+	b := mustJoin(t, svc, "B", a.ID)
+	if err := svc.ArchiveDashboard(ctx, "test", a.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	before := userRows(t, svc)
+
+	for _, whole := range []bool{false, true} {
+		_, err := svc.DuplicateDashboard(ctx, "test", b.ID, whole)
+		wantRefusal(t, err, store.ErrInvalid, "dashboard "+itoa(b.ID)+" is archived; restore_dashboard first")
+	}
+	if after := userRows(t, svc); len(after) != len(before) {
+		t.Errorf("dashboards after refused duplicates = %d, want %d (nothing written)", len(after), len(before))
+	}
+}
+
+// --- Archiving and restoring ---
+
+func TestArchiveDashboardKeepsOtherTabs(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	a := mustCreate(t, svc, "A")
+	b := mustJoin(t, svc, "B", a.ID)
+	c := mustJoin(t, svc, "C", a.ID)
+
+	if err := svc.ArchiveDashboard(ctx, "test", b.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := tabIDs(t, svc, a.ID), []int64{a.ID, c.ID}; !reflect.DeepEqual(got, want) {
+		t.Errorf("tabs after archiving B (a middle tab) = %v, want %v", got, want)
+	}
+
+	if err := svc.ArchiveDashboard(ctx, "test", a.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := tabIDs(t, svc, c.ID), []int64{c.ID}; !reflect.DeepEqual(got, want) {
+		t.Errorf("tabs after archiving A (the first tab) = %v, want %v (C becomes first)", got, want)
+	}
+}
+
+func TestArchiveOnlyLiveMemberThenRestoreSamePosition(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	mustCreate(t, svc, "X")
+	a := mustCreate(t, svc, "A")
+	mustCreate(t, svc, "Y")
+	before := userRows(t, svc)
+
+	if err := svc.ArchiveDashboard(ctx, "test", a.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.RestoreDashboard(ctx, "test", a.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	if got := userRows(t, svc); !sameKeys(got, before) {
+		t.Errorf("rows after archive then restore:\n%+v\nwant unchanged (same sidebar position):\n%+v", got, before)
+	}
+}
+
+func TestArchiveRestoreWholeGroup(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	a := mustCreate(t, svc, "A")
+	b := mustJoin(t, svc, "B", a.ID)
+	c := mustJoin(t, svc, "C", a.ID)
+	// C was archived on its own, before the whole-group archive.
+	if err := svc.ArchiveDashboard(ctx, "test", c.ID, false); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := svc.ArchiveDashboard(ctx, "test", a.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []int64{a.ID, b.ID, c.ID} {
+		d, err := svc.st.GetDashboard(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if d.ArchivedAt == "" {
+			t.Errorf("dashboard %d live after archive whole_group, want archived", id)
+		}
+	}
+	// Every member is now archived: archiving the whole group again is a
+	// no-op, as the single archive is idempotent.
+	if err := svc.ArchiveDashboard(ctx, "test", b.ID, true); err != nil {
+		t.Errorf("archive whole_group with none live: %v", err)
+	}
+
+	if err := svc.RestoreDashboard(ctx, "test", a.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []int64{a.ID, b.ID, c.ID} {
+		d, err := svc.st.GetDashboard(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if d.ArchivedAt != "" {
+			t.Errorf("dashboard %d still archived after restore whole_group, want live (C included, archived earlier on its own)", id)
+		}
+	}
+}
+
+func TestArchiveRestoreWholeGroupRefusesSystem(t *testing.T) {
+	svc := newTestService(t)
+	syncReporting(t, svc, nil, systemDashboard())
+	ctx := context.Background()
+	wantRefusal(t, svc.ArchiveDashboard(ctx, "test", 3, true), store.ErrInvalid, systemRefusal)
+	wantRefusal(t, svc.RestoreDashboard(ctx, "test", 3, true), store.ErrInvalid, systemRefusal)
 }

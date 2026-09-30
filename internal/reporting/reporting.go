@@ -36,7 +36,9 @@ type Store interface {
 	InsertDashboard(ctx context.Context, d store.Dashboard, ws []store.Widget, a store.AuditEntry) (int64, error)
 	UpdateDashboard(ctx context.Context, d store.Dashboard, a store.AuditEntry) error
 	SetDashboardView(ctx context.Context, d store.Dashboard) error
-	SetDashboardArchived(ctx context.Context, id int64, archived bool, a store.AuditEntry) error
+	MoveDashboards(ctx context.Context, ks []store.DashboardKey, a store.AuditEntry) error
+	InsertDashboardGroup(ctx context.Context, ds []store.Dashboard, ws [][]store.Widget, a store.AuditEntry) ([]int64, error)
+	SetDashboardsArchived(ctx context.Context, ids []int64, archived bool, a store.AuditEntry) error
 	InsertWidget(ctx context.Context, w store.Widget, a store.AuditEntry) (int64, error)
 	UpdateWidget(ctx context.Context, w store.Widget, a store.AuditEntry) error
 	SetWidgetArchived(ctx context.Context, id int64, archived bool, a store.AuditEntry) error
@@ -71,6 +73,15 @@ type Service struct {
 
 	parsedMu sync.Mutex
 	parsed   map[store.Component]Component // Components' memo
+
+	// placeMu serialises dashboard placement (placeDashboards in
+	// place.go). Each one reads the user order, computes keys and group
+	// ids from it, and writes them back in a later transaction; two
+	// interleaved in this process can write from a stale read (a title
+	// change putting back the key a concurrent group move just replaced)
+	// and split a group without any key colliding, which retryConflict
+	// cannot see. Other processes (the CLI) are still caught only by it.
+	placeMu sync.Mutex
 }
 
 // New builds a Service. db is the read-only handle sql widgets run

@@ -2,6 +2,7 @@
   "id": 3,
   "title": "Users",
   "range": "7d",
+  "group": 1,
   "layout": [
     {"widget": "about", "width": 12, "height": 2},
     {"widget": "active-users", "width": 3, "height": 3},

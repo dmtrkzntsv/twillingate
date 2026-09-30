@@ -58,7 +58,7 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
   const client = useQueryClient()
   const projects = useQuery({ ...projectsQuery, enabled: dashboard.follows_project })
   const all = projects.data?.projects ?? []
-  const { sel, switchers, paramsFor, change, openReport } = useDashboardSelection(dashboard, all, list.timezone, frozen)
+  const { sel, switchers, paramsFor, change, openTab } = useDashboardSelection(dashboard, all, list.timezone, frozen)
 
   const waiting = switchers.project && !projects.data
   const noProjects = switchers.project && projects.data !== undefined && all.every((p) => p.archived)
@@ -73,16 +73,14 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
     )
   }
 
-  const reports = list.dashboards.filter((d) => d.owner === 'system' && !d.archived_at)
-
   return (
     <>
       <TopBar>
-        {dashboard.owner === 'system' ? (
-          <ReportTabs reports={reports} currentId={dashboard.dashboard_id} onSelect={openReport} />
-        ) : (
+        {dashboard.tabs.length > 1 ? (
+          <ReportTabs tabs={dashboard.tabs} currentId={dashboard.dashboard_id} onSelect={openTab} />
+        ) : dashboard.owner === 'user' ? (
           <span className="text-sm text-muted-foreground">Yours</span>
-        )}
+        ) : null}
       </TopBar>
       <div
         aria-busy={frozen || undefined}

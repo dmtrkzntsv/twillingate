@@ -71,6 +71,30 @@ func systemDashboard() store.SystemDashboard {
 	}
 }
 
+// systemGroup is a system group of five dashboards, Reports' shape
+// (D16): Views first (names the sidebar entry), then Product, Users,
+// Groups and Retention, ids 10-14, each with one live markdown widget
+// "note".
+func systemGroup() []store.SystemDashboard {
+	names := []string{"Views", "Product", "Users", "Groups", "Retention"}
+	keys := []string{"a0", "a1", "a2", "a3", "a4"}
+	out := make([]store.SystemDashboard, len(names))
+	for i, name := range names {
+		var group int64
+		if i > 0 {
+			group = 10 // Views' id: the rest join its group
+		}
+		out[i] = store.SystemDashboard{
+			ID: int64(10 + i), Title: name, SortKey: keys[i], GroupID: group, Range: "7d",
+			Widgets: []store.Widget{{
+				Name: "note", Component: "markdown", SortKey: "a0", Width: 12, Height: 2,
+				Props: "{}", SourceType: "md", Source: "system text",
+			}},
+		}
+	}
+	return out
+}
+
 func ptr[T any](v T) *T { return &v }
 
 func md(text string) Source { return Source{Type: "md", Content: text} }

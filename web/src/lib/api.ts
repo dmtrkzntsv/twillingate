@@ -52,12 +52,19 @@ export interface DashboardInfo {
   dashboard_id: number
   title: string
   owner: 'system' | 'user'
+  group_id: number
   project_id?: number
   range?: string
   from?: string
   to?: string
   widgets: number
   archived_at?: string
+}
+
+/** One tab of a dashboard's group: enough to link to it and label it (tabs D18). */
+export interface DashboardTab {
+  dashboard_id: number
+  title: string
 }
 
 export interface DashboardsResponse {
@@ -86,6 +93,8 @@ export interface DashboardDetail extends Omit<DashboardInfo, 'widgets'> {
   follows_project: boolean
   follows_range: boolean
   widgets: Widget[]
+  /** The group's live members, in order, this dashboard included; always an array (tabs D18). */
+  tabs: DashboardTab[]
 }
 
 export interface SqlData {

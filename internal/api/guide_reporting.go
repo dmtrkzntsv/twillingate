@@ -67,13 +67,13 @@ func (h *host) reportingGuide(ctx context.Context, _ struct{}) (guideOut, error)
 		b.WriteString("\nNone yet: a widget following the project has nothing to show until create_project makes one.\n")
 	}
 
-	b.WriteString("\n## Dashboards\n\nIn sidebar order; system ones are read-only (duplicate_dashboard makes an editable copy).\n\n| dashboard_id | title | owner | archived |\n| --- | --- | --- | --- |\n")
+	b.WriteString("\n## Dashboards\n\nIn sidebar order; system ones are read-only (duplicate_dashboard makes an editable copy). Rows sharing a group_id are the tabs of one sidebar entry.\n\n| dashboard_id | title | owner | group_id | archived |\n| --- | --- | --- | --- | --- |\n")
 	for _, d := range dashboards.Dashboards {
 		archived := "no"
 		if d.ArchivedAt != "" {
 			archived = d.ArchivedAt
 		}
-		fmt.Fprintf(&b, "| %d | %s | %s | %s |\n", d.ID, tableCell(d.Title), d.Owner, archived)
+		fmt.Fprintf(&b, "| %d | %s | %s | %d | %s |\n", d.ID, tableCell(d.Title), d.Owner, d.GroupID, archived)
 	}
 	fmt.Fprintf(&b, "\nDays are grouped in %s.\n", dashboards.Timezone)
 

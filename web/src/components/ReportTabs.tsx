@@ -1,31 +1,32 @@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import type { DashboardInfo } from '@/lib/api'
+import type { DashboardTab } from '@/lib/api'
 
 interface Props {
-  /** The live system dashboards, in sort-key order. */
-  reports: DashboardInfo[]
+  /** A dashboard group's live members, in order (tabs D18, D21). */
+  tabs: DashboardTab[]
   currentId: number
   onSelect: (dashboardId: number) => void
 }
 
 /**
- * The system reports as tabs (D36): a row on wide screens that scrolls
- * sideways when it runs out of room, and a select on phones.
+ * A dashboard group's tabs (D36, tabs D21): a row on wide screens that
+ * scrolls sideways when it runs out of room, and a select on phones. Shown
+ * for any group with more than one live member, system or user.
  */
-export default function ReportTabs({ reports, currentId, onSelect }: Props) {
+export default function ReportTabs({ tabs, currentId, onSelect }: Props) {
   const value = String(currentId)
   const select = (v: string) => onSelect(Number(v))
 
   return (
     <>
       {/* Manual activation: arrowing across the tabs only moves focus, so it
-          does not open (and save a selection on) every report on the way. */}
+          does not open (and save a selection on) every tab on the way. */}
       <Tabs value={value} onValueChange={select} activationMode="manual" className="hidden h-full min-w-0 self-stretch sm:flex">
         {/* As tall as the bar, so the active tab's underline is not clipped by the scroller. */}
         <div className="flex h-full items-center overflow-x-auto overflow-y-hidden [scrollbar-width:none]">
-          <TabsList variant="line" aria-label="Reports" className="w-max">
-            {reports.map((d) => (
+          <TabsList variant="line" aria-label="Tabs" className="w-max">
+            {tabs.map((d) => (
               <TabsTrigger
                 key={d.dashboard_id}
                 value={String(d.dashboard_id)}
@@ -38,11 +39,11 @@ export default function ReportTabs({ reports, currentId, onSelect }: Props) {
         </div>
       </Tabs>
       <Select value={value} onValueChange={select}>
-        <SelectTrigger size="sm" aria-label="Report" className="min-w-36 sm:hidden">
+        <SelectTrigger size="sm" aria-label="Tab" className="min-w-36 sm:hidden">
           <SelectValue />
         </SelectTrigger>
         <SelectContent position="popper" align="start">
-          {reports.map((d) => (
+          {tabs.map((d) => (
             <SelectItem key={d.dashboard_id} value={String(d.dashboard_id)}>
               {d.title}
             </SelectItem>

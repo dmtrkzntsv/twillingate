@@ -174,6 +174,32 @@ func TestLoadDashboardHappyPath(t *testing.T) {
 	}
 }
 
+func TestLoadDashboardParsesGroup(t *testing.T) {
+	fsys := fstest.MapFS{
+		"d/dashboard.json": mapFile(`{"id":2,"title":"D","range":"7d","group":1,"layout":[]}`),
+	}
+	fd, err := LoadDashboard(fsys, "d")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fd.Group != 1 {
+		t.Errorf("Group = %d, want 1", fd.Group)
+	}
+}
+
+func TestLoadDashboardGroupDefaultsToZero(t *testing.T) {
+	fsys := fstest.MapFS{
+		"d/dashboard.json": mapFile(`{"id":1,"title":"D","range":"7d","layout":[]}`),
+	}
+	fd, err := LoadDashboard(fsys, "d")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fd.Group != 0 {
+		t.Errorf("Group = %d, want 0 (no \"group\" key)", fd.Group)
+	}
+}
+
 func TestLoadDashboardAcceptsNoID(t *testing.T) {
 	fsys := fstest.MapFS{
 		"d/dashboard.json": mapFile(`{"title":"D","range":"7d","layout":[]}`),

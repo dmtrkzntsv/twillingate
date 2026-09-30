@@ -62,22 +62,37 @@ func lostDashboardRace() error {
 	return store.Refuse(store.ErrConflict, "the dashboard order changed while placing this dashboard; try again")
 }
 
-// dashboardKey places a dashboard among the user dashboards, leaving out
-// self (the one being moved; 0 for a new one).
-func (s *Service) dashboardKey(ctx context.Context, self int64, after *int64) (string, error) {
+// placeDashboards runs place, a dashboard placement's read of the order
+// and the writes computed from it, under placeMu and through
+// retryConflict.
+func (s *Service) placeDashboards(place func() error) error {
+	s.placeMu.Lock()
+	defer s.placeMu.Unlock()
+	return retryConflict(place, lostDashboardRace)
+}
+
+// readOrder reads the user dashboards in order, archived ones included:
+// what every dashboard placement is computed over, read afresh on each
+// retryConflict attempt.
+func (s *Service) readOrder(ctx context.Context) (order, error) {
 	ds, err := s.st.ListDashboards(ctx)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	var order []placed
-	for _, d := range ds {
-		if d.Owner == store.OwnerUser && d.ID != self {
-			order = append(order, placed{d.ID, d.SortKey})
+	return userOrder(ds), nil
+}
+
+// refuseGroup refuses group g unless a live user dashboard is in it. A
+// dashboard joins a group by its live tabs, so a group that is unknown,
+// wholly archived or another owner's (a system group: o holds only user
+// rows) is refused alike (spec decisions 5 and 8).
+func refuseGroup(o order, g int64) error {
+	for _, d := range o {
+		if d.GroupID == g && d.ArchivedAt == "" {
+			return nil
 		}
 	}
-	return keyAfter(order, after, func(id int64) error {
-		return store.Refuse(store.ErrInvalid, "after %d is not a user dashboard", id)
-	})
+	return store.Refuse(store.ErrInvalid, "group %d has no live user dashboard", g)
 }
 
 // insertWidget places w on its dashboard after `after` and writes it,
@@ -91,6 +106,12 @@ func (s *Service) insertWidget(ctx context.Context, w store.Widget, after *int64
 		}
 		order := make([]placed, len(ws))
 		for i, x := range ws {
+			// An archived widget still holds its key (order keeps it so a
+			// new key never takes it), but after may not name one: the
+			// page shows nothing to place the new widget by.
+			if after != nil && x.ID == *after && x.ArchivedAt != "" {
+				return store.Refuse(store.ErrInvalid, "after %d is archived; name a live widget", x.ID)
+			}
 			order[i] = placed{x.ID, x.SortKey}
 		}
 		w.SortKey, err = keyAfter(order, after, func(id int64) error {

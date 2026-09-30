@@ -14,8 +14,8 @@ export interface DashboardSelection {
   paramsFor: (w: Widget) => WidgetDataQuery
   /** Switches the project or range: into the URL, and saved as the dashboard's view (D35). */
   change: (next: Selection) => void
-  /** Opens another report tab, carrying the selection there and saving it on that tab (D35). */
-  openReport: (id: number) => void
+  /** Opens another tab of the group, carrying the selection there and saving it on that tab (D35). */
+  openTab: (id: number) => void
 }
 
 /**
@@ -66,7 +66,7 @@ export function useDashboardSelection(
   }
 
   // Saved with only the parts the target tab has switchers for.
-  const openReport = (id: number) => {
+  const openTab = (id: number) => {
     if (frozen) return
     navigate({ pathname: `/dashboards/${id}`, search: selectionParams(sel).toString() })
     client
@@ -75,5 +75,5 @@ export function useDashboardSelection(
       .catch(() => {})
   }
 
-  return { sel, switchers, paramsFor, change, openReport }
+  return { sel, switchers, paramsFor, change, openTab }
 }

@@ -335,6 +335,207 @@ func TestWidgetDataRESTDecodesQuery(t *testing.T) {
 	}
 }
 
+// dashboardArchivedAt returns every dashboard's archived_at, keyed by id,
+// fresh from list_dashboards each call. archived_at is omitempty, so a
+// struct decoded into repeatedly would keep a stale value once a
+// dashboard is restored; a fresh local avoids that trap.
+func dashboardArchivedAt(t *testing.T, cs *mcp.ClientSession) map[int64]string {
+	t.Helper()
+	var list struct {
+		Dashboards []struct {
+			ID         int64  `json:"dashboard_id"`
+			ArchivedAt string `json:"archived_at"`
+		} `json:"dashboards"`
+	}
+	toolJSON(t, cs, "list_dashboards", map[string]any{}, &list)
+	out := make(map[int64]string, len(list.Dashboards))
+	for _, d := range list.Dashboards {
+		out[d.ID] = d.ArchivedAt
+	}
+	return out
+}
+
+// TestDashboardGroups: group_id on create and update makes and moves
+// tabs, whole_group extends duplicate/archive/restore to every tab, and
+// get_dashboard shows the group's tabs (Task 6, group_id/whole_group on
+// the existing tools and routes).
+func TestDashboardGroups(t *testing.T) {
+	h, cs := newTestHost(t)
+	r := newTestRegistrar(t, h)
+
+	var one struct {
+		ID      int64 `json:"dashboard_id"`
+		GroupID int64 `json:"group_id"`
+	}
+	toolJSON(t, cs, "create_dashboard", map[string]any{"title": "One"}, &one)
+
+	// create_dashboard with group_id joins that group as a tab.
+	var two struct {
+		ID      int64 `json:"dashboard_id"`
+		GroupID int64 `json:"group_id"`
+	}
+	toolJSON(t, cs, "create_dashboard", map[string]any{"title": "Two", "group_id": one.GroupID}, &two)
+	if two.GroupID != one.GroupID {
+		t.Fatalf("create_dashboard group_id = %d, want %d", two.GroupID, one.GroupID)
+	}
+
+	// get_dashboard shows group_id and both tabs.
+	var detail struct {
+		GroupID int64 `json:"group_id"`
+		Tabs    []struct {
+			ID    int64  `json:"dashboard_id"`
+			Title string `json:"title"`
+		} `json:"tabs"`
+	}
+	toolJSON(t, cs, "get_dashboard", map[string]any{"dashboard_id": one.ID}, &detail)
+	if detail.GroupID != one.GroupID || len(detail.Tabs) != 2 {
+		t.Fatalf("get_dashboard tabs = %+v", detail)
+	}
+
+	// REST: PATCH with group_id 0 takes it out as a dashboard of its own.
+	rec := serveREST(t, r, "PATCH", fmt.Sprintf("/api/dashboards/%d", two.ID), `{"group_id":0}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PATCH group_id=0 = %d %s", rec.Code, rec.Body.String())
+	}
+	toolJSON(t, cs, "get_dashboard", map[string]any{"dashboard_id": two.ID}, &detail)
+	if detail.GroupID == one.GroupID {
+		t.Fatalf("group_id=0 left it in the group: %+v", detail)
+	}
+
+	// REST: PATCH with group_id moves it back in as a tab.
+	rec = serveREST(t, r, "PATCH", fmt.Sprintf("/api/dashboards/%d", two.ID), fmt.Sprintf(`{"group_id":%d}`, one.ID))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PATCH group_id = %d %s", rec.Code, rec.Body.String())
+	}
+	toolJSON(t, cs, "get_dashboard", map[string]any{"dashboard_id": two.ID}, &detail)
+	if detail.GroupID != one.GroupID {
+		t.Fatalf("group_id move did not join the group: %+v", detail)
+	}
+
+	// REST: POST archive with an empty body archives just the one dashboard.
+	rec = serveREST(t, r, "POST", fmt.Sprintf("/api/dashboards/%d/archive", two.ID), "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("archive one = %d %s", rec.Code, rec.Body.String())
+	}
+	if archivedAt := dashboardArchivedAt(t, cs); archivedAt[two.ID] == "" || archivedAt[one.ID] != "" {
+		t.Fatalf("archive one archived the wrong set: %+v", archivedAt)
+	}
+	toolJSON(t, cs, "restore_dashboard", map[string]any{"dashboard_id": two.ID}, nil)
+
+	// REST: POST archive with a literal {} body (whole_group omitted)
+	// archives just the one dashboard too.
+	rec = serveREST(t, r, "POST", fmt.Sprintf("/api/dashboards/%d/archive", two.ID), "{}")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("archive one with {} body = %d %s", rec.Code, rec.Body.String())
+	}
+	if archivedAt := dashboardArchivedAt(t, cs); archivedAt[two.ID] == "" || archivedAt[one.ID] != "" {
+		t.Fatalf("archive one with {} body archived the wrong set: %+v", archivedAt)
+	}
+	toolJSON(t, cs, "restore_dashboard", map[string]any{"dashboard_id": two.ID}, nil)
+
+	// REST: POST archive with whole_group archives every tab.
+	rec = serveREST(t, r, "POST", fmt.Sprintf("/api/dashboards/%d/archive", two.ID), `{"whole_group":true}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("archive whole_group = %d %s", rec.Code, rec.Body.String())
+	}
+	if archivedAt := dashboardArchivedAt(t, cs); archivedAt[one.ID] == "" || archivedAt[two.ID] == "" {
+		t.Fatalf("archive whole_group left a tab live: %+v", archivedAt)
+	}
+
+	// MCP: restore_dashboard with whole_group restores every tab.
+	toolJSON(t, cs, "restore_dashboard", map[string]any{"dashboard_id": one.ID, "whole_group": true}, nil)
+	if archivedAt := dashboardArchivedAt(t, cs); archivedAt[one.ID] != "" || archivedAt[two.ID] != "" {
+		t.Fatalf("restore whole_group left a tab archived: %+v", archivedAt)
+	}
+
+	// MCP: duplicate_dashboard with whole_group copies every tab as one
+	// new group.
+	var dup struct {
+		ID      int64 `json:"dashboard_id"`
+		GroupID int64 `json:"group_id"`
+	}
+	toolJSON(t, cs, "duplicate_dashboard", map[string]any{"dashboard_id": one.ID, "whole_group": true}, &dup)
+	toolJSON(t, cs, "get_dashboard", map[string]any{"dashboard_id": dup.ID}, &detail)
+	if len(detail.Tabs) != 2 {
+		t.Fatalf("duplicate_dashboard whole_group tabs = %+v", detail)
+	}
+
+	// REST: POST /api/dashboards with group_id creates a tab.
+	created := serveREST(t, r, "POST", "/api/dashboards", fmt.Sprintf(`{"title":"Three","group_id":%d}`, one.ID))
+	if created.Code != http.StatusCreated {
+		t.Fatalf("POST create with group_id = %d %s", created.Code, created.Body.String())
+	}
+	var three map[string]any
+	if err := json.Unmarshal(created.Body.Bytes(), &three); err != nil {
+		t.Fatal(err)
+	}
+	if int64(three["group_id"].(float64)) != one.GroupID {
+		t.Fatalf("POST create group_id = %v, want %d", three["group_id"], one.GroupID)
+	}
+}
+
+// TestDashboardGroupRouteBodies: the restore and duplicate routes, like
+// archive, act on the one dashboard with an empty body or {} and on its
+// whole group with {"whole_group": true}.
+func TestDashboardGroupRouteBodies(t *testing.T) {
+	h, cs := newTestHost(t)
+	r := newTestRegistrar(t, h)
+	type dash struct {
+		ID      int64 `json:"dashboard_id"`
+		GroupID int64 `json:"group_id"`
+		Tabs    []struct {
+			ID int64 `json:"dashboard_id"`
+		} `json:"tabs"`
+	}
+	var one, two dash
+	toolJSON(t, cs, "create_dashboard", map[string]any{"title": "One"}, &one)
+	toolJSON(t, cs, "create_dashboard", map[string]any{"title": "Two", "group_id": one.GroupID}, &two)
+
+	for _, tc := range []struct {
+		body      string
+		wantWhole bool
+	}{{"", false}, {"{}", false}, {`{"whole_group":true}`, true}} {
+		toolJSON(t, cs, "archive_dashboard", map[string]any{"dashboard_id": one.ID, "whole_group": true}, nil)
+		rec := serveREST(t, r, "POST", fmt.Sprintf("/api/dashboards/%d/restore", two.ID), tc.body)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("restore with body %q = %d %s", tc.body, rec.Code, rec.Body.String())
+		}
+		archivedAt := dashboardArchivedAt(t, cs)
+		if archivedAt[two.ID] != "" || (archivedAt[one.ID] == "") != tc.wantWhole {
+			t.Fatalf("restore with body %q restored the wrong set: %+v", tc.body, archivedAt)
+		}
+	}
+
+	for _, tc := range []struct {
+		body      string
+		wantWhole bool
+	}{{"", false}, {"{}", false}, {`{"whole_group":true}`, true}} {
+		var before dash
+		toolJSON(t, cs, "get_dashboard", map[string]any{"dashboard_id": one.ID}, &before)
+		rec := serveREST(t, r, "POST", fmt.Sprintf("/api/dashboards/%d/duplicate", two.ID), tc.body)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("duplicate with body %q = %d %s", tc.body, rec.Code, rec.Body.String())
+		}
+		var cp dash
+		if err := json.Unmarshal(rec.Body.Bytes(), &cp); err != nil {
+			t.Fatal(err)
+		}
+		if tc.wantWhole {
+			// A new group holding a copy of every tab.
+			if cp.GroupID == one.GroupID || len(cp.Tabs) != len(before.Tabs) {
+				t.Fatalf("duplicate with body %q = group %d with %d tabs, want a new group of %d",
+					tc.body, cp.GroupID, len(cp.Tabs), len(before.Tabs))
+			}
+			continue
+		}
+		// One copy, the next tab of the source's group.
+		if cp.GroupID != one.GroupID || len(cp.Tabs) != len(before.Tabs)+1 {
+			t.Fatalf("duplicate with body %q = group %d with %d tabs, want group %d with %d",
+				tc.body, cp.GroupID, len(cp.Tabs), one.GroupID, len(before.Tabs)+1)
+		}
+	}
+}
+
 // TestViewRouteRefusals: each part is required when the dashboard has
 // that switcher and refused when it has none; presets are a closed list;
 // an unknown dashboard is a 404.

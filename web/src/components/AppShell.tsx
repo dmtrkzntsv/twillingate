@@ -35,7 +35,7 @@ export default function AppShell({ dashboards, currentId, children }: Props) {
   )
 }
 
-/** The bar across the top of the page: the sidebar toggle, then the report tabs or a label. */
+/** The bar across the top of the page: the sidebar toggle, then the group's tabs or a label. */
 export function TopBar({ children }: { children?: ReactNode }) {
   return (
     <header className="sticky top-0 z-20 flex h-12 shrink-0 items-center gap-2 border-b border-border/70 bg-background/55 px-3 backdrop-blur-md sm:px-4">

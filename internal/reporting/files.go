@@ -32,7 +32,17 @@ type FileWidget struct {
 type FileDashboard struct {
 	ID           int64 // 0 when the file gives none (reporting dev only)
 	Title, Range string
+	Group        int64        // the group this dashboard is a tab of; 0 = its own id (D16)
 	Widgets      []FileWidget // layout order
+}
+
+// groupID resolves Group: 0 (the file names no group) means this
+// dashboard is its own, so its group is its own id.
+func (fd FileDashboard) groupID() int64 {
+	if fd.Group == 0 {
+		return fd.ID
+	}
+	return fd.Group
 }
 
 // fileDashboardDoc is dashboard.json's own shape.
@@ -40,6 +50,7 @@ type fileDashboardDoc struct {
 	ID     int64            `json:"id"`
 	Title  string           `json:"title"`
 	Range  string           `json:"range"`
+	Group  int64            `json:"group"`
 	Layout []fileLayoutItem `json:"layout"`
 }
 
@@ -174,7 +185,7 @@ func LoadDashboard(fsys fs.FS, dir string) (FileDashboard, error) {
 		}
 	}
 
-	return FileDashboard{ID: doc.ID, Title: doc.Title, Range: doc.Range, Widgets: widgets}, nil
+	return FileDashboard{ID: doc.ID, Title: doc.Title, Range: doc.Range, Group: doc.Group, Widgets: widgets}, nil
 }
 
 // LoadDashboards loads every top-level directory in fsys as a

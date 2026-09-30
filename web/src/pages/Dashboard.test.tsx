@@ -72,27 +72,40 @@ describe('Dashboard', () => {
     expect(screen.getByRole('button', { name: 'Refresh all' })).toBeInTheDocument()
   })
 
-  it('lists Reports and the live user dashboards in the sidebar', async () => {
+  it('lists the system group and the live user dashboards in the sidebar, one entry each', async () => {
     mockApi()
     renderAt('/dashboards/1')
 
-    const reports = await screen.findByRole('link', { name: 'Reports' })
-    expect(reports).toHaveAttribute('href', '/dashboards/1')
+    const views = await screen.findByRole('link', { name: 'Views' })
+    expect(views).toHaveAttribute('href', '/dashboards/1')
+    expect(screen.queryByRole('link', { name: 'Reports' })).not.toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Launch week' })).toHaveAttribute('href', '/dashboards/10')
+    expect(screen.getByRole('link', { name: 'Marketing' })).toHaveAttribute('href', '/dashboards/13')
+    expect(screen.queryByRole('link', { name: 'Funnel' })).not.toBeInTheDocument()
     expect(screen.queryByRole('link', { name: 'Old experiment' })).not.toBeInTheDocument()
   })
 
-  it('renders a user dashboard with only fixed widgets without switchers or tabs', async () => {
+  it('renders a user dashboard with only fixed widgets without switchers or tabs, and the "Yours" label', async () => {
     const widgetData = mockApi()
     renderAt('/dashboards/10')
 
     expect(await screen.findByRole('heading', { level: 1, name: 'Launch week' })).toBeInTheDocument()
     expect(await screen.findByText('Signups during launch')).toBeInTheDocument()
     expect(screen.queryByRole('tab')).not.toBeInTheDocument()
+    expect(within(screen.getByRole('main')).getByText('Yours', { exact: true })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /^Project/ })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /^Range/ })).not.toBeInTheDocument()
     await waitFor(() => expect(widgetData).toHaveBeenCalled())
     for (const call of widgetData.mock.calls) expect(call[1]).toEqual({})
+  })
+
+  it('shows a tablist for a two-tab user group', async () => {
+    mockApi()
+    renderAt('/dashboards/13')
+
+    const tabs = await screen.findAllByRole('tab')
+    expect(tabs.map((t) => t.textContent)).toEqual(['Marketing', 'Funnel'])
+    expect(screen.getByRole('tab', { name: 'Marketing' })).toHaveAttribute('aria-selected', 'true')
   })
 
   // The switcher tests use the small Product report: the Views one renders

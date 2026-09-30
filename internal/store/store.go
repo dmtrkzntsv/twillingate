@@ -208,6 +208,20 @@ type Store interface {
 	UpdateDashboard(ctx context.Context, d Dashboard, a AuditEntry) error
 	SetDashboardView(ctx context.Context, d Dashboard) error
 	SetDashboardArchived(ctx context.Context, id int64, archived bool, a AuditEntry) error
+	// MoveDashboards rewrites group_id and sort_key of every row in ks in
+	// one transaction, with one audit row a (Subject "dashboard/<first
+	// id>").
+	MoveDashboards(ctx context.Context, ks []DashboardKey, a AuditEntry) error
+	// InsertDashboardGroup inserts dashboards as one new group, in one
+	// transaction: the first gets group_id = its own id, the rest that
+	// id. ws[i] are dashboards[i]'s widgets. Returns the new ids in
+	// order.
+	InsertDashboardGroup(ctx context.Context, ds []Dashboard, ws [][]Widget, a AuditEntry) ([]int64, error)
+	// SetDashboardsArchived archives (only rows currently live) or
+	// restores (only rows currently archived) ids in one transaction,
+	// one audit row per id. Unknown ids are ErrNotFound and nothing is
+	// written.
+	SetDashboardsArchived(ctx context.Context, ids []int64, archived bool, a AuditEntry) error
 	InsertWidget(ctx context.Context, w Widget, a AuditEntry) (int64, error)
 	UpdateWidget(ctx context.Context, w Widget, a AuditEntry) error
 	SetWidgetArchived(ctx context.Context, id int64, archived bool, a AuditEntry) error
