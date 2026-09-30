@@ -25,14 +25,18 @@ type fakeQueue struct {
 	mu         sync.Mutex
 	views      []store.Event
 	events     []store.Event
+	measures   []store.Event
 	identities []store.Identity
 }
 
 func (f *fakeQueue) Enqueue(e store.Event) {
 	f.mu.Lock()
-	if e.Family == store.FamilyViews {
+	switch e.Family {
+	case store.FamilyViews:
 		f.views = append(f.views, e)
-	} else {
+	case store.FamilyMeasures:
+		f.measures = append(f.measures, e)
+	default:
 		f.events = append(f.events, e)
 	}
 	f.mu.Unlock()
@@ -1086,6 +1090,180 @@ func TestConsentParsing(t *testing.T) {
 		}
 		if want := map[bool]int{true: 2, false: 0}[c.warn]; warned != want {
 			t.Errorf("%s: %d $consent warnings, want %d (%+v)", c.raw, warned, want, res.Warnings)
+		}
+	}
+}
+
+// --- measures ---
+
+// containsNotice reports whether any notice's reason contains substr.
+func containsNotice(notices []notice, substr string) bool {
+	for _, n := range notices {
+		if strings.Contains(n.Reason, substr) {
+			return true
+		}
+	}
+	return false
+}
+
+// TestFamilyRules pins the routing table for all three families: an
+// explicit family is checked, never overridden; a missing one keeps the old
+// view/product rule; measures require a valid value and measure and never
+// arise by inference.
+func TestFamilyRules(t *testing.T) {
+	cases := []struct {
+		name, event string
+		wantFamily  store.Family // "" = rejected
+		reject      string       // substring of the rejection reason
+		warn        string       // substring of a warning
+	}{
+		{"view without family", `{"name":"$page_view","attributes":{"$path":"/"}}`, store.FamilyViews, "", ""},
+		{"product without family", `{"name":"signup"}`, store.FamilyProduct, "", ""},
+		{"explicit product", `{"family":"product","name":"signup"}`, store.FamilyProduct, "", ""},
+		{"explicit views", `{"family":"views","name":"$screen_view","attributes":{"$screen":"/s"}}`, store.FamilyViews, "", ""},
+		{"views with a product name", `{"family":"views","name":"signup"}`, "", "family views", ""},
+		{"product with a view name", `{"family":"product","name":"$page_view","attributes":{"$path":"/"}}`, "", "is a view", ""},
+		{"unknown family", `{"family":"logs","name":"x"}`, "", "unknown family", ""},
+		{"measure", `{"family":"measures","name":"checkout_api","value":340,"measure":"time"}`, store.FamilyMeasures, "", ""},
+		{"measure zero", `{"family":"measures","name":"q","value":0,"measure":"number"}`, store.FamilyMeasures, "", ""},
+		{"measure without value", `{"family":"measures","name":"q","measure":"number"}`, "", "value", ""},
+		{"measure null value", `{"family":"measures","name":"q","value":null,"measure":"number"}`, "", "value", ""},
+		{"measure string value", `{"family":"measures","name":"q","value":"340","measure":"time"}`, "", "value", ""},
+		{"measure bool value", `{"family":"measures","name":"q","value":true,"measure":"time"}`, "", "value", ""},
+		{"measure negative", `{"family":"measures","name":"q","value":-1,"measure":"time"}`, "", "value", ""},
+		{"measure without kind", `{"family":"measures","name":"q","value":1}`, "", "measure", ""},
+		{"measure unknown kind", `{"family":"measures","name":"q","value":1,"measure":"seconds"}`, "", "measure", ""},
+		{"lcp as time", `{"family":"measures","name":"$lcp","value":1200,"measure":"time"}`, store.FamilyMeasures, "", ""},
+		{"cls as time", `{"family":"measures","name":"$cls","value":0.1,"measure":"time"}`, "", "$cls", ""},
+		{"future metric", `{"family":"measures","name":"$tbt","value":10,"measure":"time"}`, store.FamilyMeasures, "", "unknown reserved metric"},
+		{"value on product", `{"name":"signup","value":3,"measure":"number"}`, store.FamilyProduct, "", "value"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			q, h := testServer(t)
+			res := decodeResult(t, post(h, envelopeOf(c.event), nil))
+			if c.wantFamily == "" {
+				if res.Rejected != 1 || res.Accepted != 0 {
+					t.Fatalf("result = %+v, want 1 rejected", res)
+				}
+				if c.reject != "" && !containsNotice(res.Errors, c.reject) {
+					t.Errorf("errors = %+v, want one containing %q", res.Errors, c.reject)
+				}
+				return
+			}
+			if res.Accepted != 1 || res.Rejected != 0 {
+				t.Fatalf("result = %+v, want 1 accepted", res)
+			}
+			var stored []store.Event
+			switch c.wantFamily {
+			case store.FamilyViews:
+				stored = q.views
+			case store.FamilyProduct:
+				stored = q.events
+			case store.FamilyMeasures:
+				stored = q.measures
+			}
+			if len(stored) != 1 {
+				t.Fatalf("family %s stored %d rows, want 1 (views=%d events=%d measures=%d)",
+					c.wantFamily, len(stored), len(q.views), len(q.events), len(q.measures))
+			}
+			if c.warn != "" && !containsNotice(res.Warnings, c.warn) {
+				t.Errorf("warnings = %+v, want one containing %q", res.Warnings, c.warn)
+			}
+		})
+	}
+}
+
+// TestMissingFamilyNeverInfersMeasures pins decision 1: a product event
+// cannot become a measure because of what it carries. $lcp with no family
+// (even carrying value and measure) is stored as a product event, not a
+// measure, and warns about the unrecognised reserved name.
+func TestMissingFamilyNeverInfersMeasures(t *testing.T) {
+	q, h := testServer(t)
+	res := decodeResult(t, post(h, envelopeOf(`{"name":"$lcp","attributes":{"$path":"/"}}`), nil))
+	if res.Accepted != 1 || res.Rejected != 0 {
+		t.Fatalf("result = %+v", res)
+	}
+	if len(q.events) != 1 || len(q.measures) != 0 || q.events[0].EventName != "$lcp" {
+		t.Fatalf("events = %+v measures = %+v, want $lcp stored as product", q.events, q.measures)
+	}
+	if !containsNotice(res.Warnings, "unknown reserved name") {
+		t.Errorf("warnings = %+v, want an unknown reserved name warning", res.Warnings)
+	}
+
+	q, h = testServer(t)
+	res = decodeResult(t, post(h, envelopeOf(`{"name":"$lcp","attributes":{"$path":"/"},"value":1200,"measure":"time"}`), nil))
+	if res.Accepted != 1 || res.Rejected != 0 {
+		t.Fatalf("result = %+v", res)
+	}
+	if len(q.events) != 1 || len(q.measures) != 0 || q.events[0].EventName != "$lcp" || q.events[0].Value != nil {
+		t.Fatalf("events = %+v measures = %+v, want $lcp stored as product with no value", q.events, q.measures)
+	}
+	if !containsNotice(res.Warnings, "unknown reserved name") {
+		t.Errorf("warnings = %+v, want the unknown reserved name warning", res.Warnings)
+	}
+	if !containsNotice(res.Warnings, "value is only read on the measures family") {
+		t.Errorf("warnings = %+v, want the value-ignored warning", res.Warnings)
+	}
+}
+
+// TestSampleRateOnlyOnMeasures pins decision 6: $sample_rate is meaningful
+// only on the measures family. Declared once as a batch default, it lands
+// on the measure and is dropped, with a warning, on the view and the
+// product event beside it.
+func TestSampleRateOnlyOnMeasures(t *testing.T) {
+	q, h := testServer(t)
+	body := `{"key":"` + testKey + `","attributes":{"$sample_rate":0.1},
+	  "events":[
+	    {"family":"measures","name":"checkout_api","value":340,"measure":"time"},
+	    {"name":"signup"},
+	    {"name":"$page_view","attributes":{"$path":"/"}}
+	  ]}`
+	res := decodeResult(t, post(h, body, nil))
+	if res.Accepted != 3 || res.Rejected != 0 {
+		t.Fatalf("result = %+v", res)
+	}
+	if len(q.measures) != 1 || q.measures[0].SampleRate != 0.1 {
+		t.Fatalf("measures = %+v, want sample rate 0.1", q.measures)
+	}
+	if len(q.events) != 1 || q.events[0].SampleRate != 1 {
+		t.Fatalf("events = %+v, want sample rate 1 (ignored)", q.events)
+	}
+	if len(q.views) != 1 || q.views[0].SampleRate != 1 {
+		t.Fatalf("views = %+v, want sample rate 1 (ignored)", q.views)
+	}
+	n := 0
+	for _, w := range res.Warnings {
+		if strings.Contains(w.Reason, "$sample_rate") {
+			n++
+		}
+	}
+	if n != 2 {
+		t.Errorf("warnings = %+v, want 2 containing $sample_rate (product event and view)", res.Warnings)
+	}
+}
+
+// TestSampleRateParsing pins parseSampleRate: a number in (0, 1], absent
+// means 1 with no warning, and anything else is stored as 1 and reported.
+func TestSampleRateParsing(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want float64
+		bad  bool
+	}{
+		{"", 1, false},
+		{"1", 1, false},
+		{"0.2", 0.2, false},
+		{"0", 1, true},
+		{"-0.5", 1, true},
+		{"1.5", 1, true},
+		{"abc", 1, true},
+		{"true", 1, true},
+	}
+	for _, c := range cases {
+		got, bad := parseSampleRate(c.raw)
+		if got != c.want || bad != c.bad {
+			t.Errorf("parseSampleRate(%q) = %v, %v; want %v, %v", c.raw, got, bad, c.want, c.bad)
 		}
 	}
 }

@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/enrich"
@@ -138,13 +138,47 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			res.warn(i, "unknown $consent value %q, ignored", rv.consentRaw)
 		}
 
-		defaultKind, isView := viewName(ev.Name)
-		family, name := store.FamilyProduct, ev.Name
-		if isView {
-			family, name = store.FamilyViews, canonicalViewName(ev.Name)
-		} else if strings.HasPrefix(ev.Name, "$") {
-			res.warn(i, "unknown reserved name %s, stored as a custom event", ev.Name)
+		defaultKind, _ := viewName(ev.Name)
+		family, name, famWarn, famReject := resolveFamily(ev)
+		if famReject != "" {
+			res.reject(i, "%s", famReject)
+			continue
 		}
+		if famWarn != "" {
+			res.warn(i, "%s", famWarn)
+		}
+
+		var value *float64
+		sampleRate := 1.0
+		measure := ""
+		if family == store.FamilyMeasures {
+			v, ok := parseValue(ev.Value)
+			if !ok {
+				res.reject(i, "measures require a value: a number >= 0")
+				continue
+			}
+			if !slices.Contains(store.MeasureKinds, ev.Measure) {
+				res.reject(i, "measures require measure: time, size or number")
+				continue
+			}
+			value, measure = &v, ev.Measure
+			rate, bad := parseSampleRate(rv.sampleRateRaw)
+			if bad {
+				res.warn(i, "$sample_rate %q is not in (0, 1], stored as 1", rv.sampleRateRaw)
+			}
+			sampleRate = rate
+		} else {
+			if len(ev.Value) > 0 {
+				res.warn(i, "value is only read on the measures family, ignored")
+			}
+			if ev.Measure != "" {
+				res.warn(i, "measure is only read on the measures family, ignored")
+			}
+			if rv.sampleRateRaw != "" {
+				res.warn(i, "$sample_rate is only read on the measures family, ignored")
+			}
+		}
+
 		// A view's kind defaults from its name; a product event has no
 		// default and keeps an empty kind unless it declares one.
 		kind := defaultKind
@@ -152,7 +186,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			if kindPattern.MatchString(rv.Kind) {
 				kind = rv.Kind
 			} else {
-				if isView {
+				if family == store.FamilyViews {
 					res.warn(i, "invalid $kind %q, using %q", rv.Kind, defaultKind)
 				} else {
 					res.warn(i, "invalid $kind %q, ignored", rv.Kind)
@@ -163,7 +197,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		if path == "" {
 			path = rv.Screen
 		}
-		if isView && path == "" {
+		if family == store.FamilyViews && path == "" {
 			res.reject(i, "view requires $path or $screen")
 			continue
 		}
@@ -189,12 +223,13 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			Device: device, DeviceModel: rv.DeviceModel,
 			AppVersion: rv.AppVersion, AppLocale: rv.AppLocale, BrowserLocale: rv.BrowserLocale,
 			Country: country, Consent: consent, Attributes: rv.Custom,
+			Value: value, Measure: measure, SampleRate: sampleRate,
 		}
 		// Bot filtering is the one thing still read off the User-Agent,
 		// and it applies to web views only: any other kind declares what
 		// it is and is never filtered, whatever HTTP library it uses.
 		if kind == "web" {
-			if isView && botUA {
+			if family == store.FamilyViews && botUA {
 				// Accepted and silently ignored: the client did nothing
 				// wrong, so it must not retry.
 				res.Accepted++

@@ -489,10 +489,11 @@ decides which family it lands in:
 | `$page_view` | views | `web` | the views dashboard, `views_overview`, `views_breakdown`, retention |
 | `$screen_view` | views | `app` | same |
 | anything else | product | — | `product_events`, `product_attributes` |
+| any name, with `family: "measures"` | measures | — | `measures`, the Web Vitals and Measures dashboards |
 
 Both families are stored in one raw table, `events`, whose `family` column is
-`views` or `product`; the aggregates, views and tools of each family read only
-its own rows.
+`views`, `product` or `measures`; the aggregates, views and tools of each
+family read only its own rows.
 
 The `$` prefix is reserved for the system. An unrecognized `$` **name** is
 stored as an ordinary custom event with a warning; an unrecognized `$`
@@ -577,6 +578,41 @@ which keys get their own column and value breakdown.
 twillingate.track("signup", { plan: "pro" });
 ```
 
+### Measures
+
+A measure is a name, a numeric value and a time: `measure("checkout_api", 340,
+"time")`. Send `family: "measures"` explicitly — it is never inferred, so a
+product event carrying a number stays a product event. `value` is a finite
+JSON number `>= 0`; `measure` sets the kind and its fixed unit:
+
+| `measure` | Unit | Examples |
+| --- | --- | --- |
+| `time` | milliseconds | request duration, LCP |
+| `size` | bytes | payload, file, memory |
+| `number` | none | queue depth, retries, CLS |
+
+Money is not a kind: send it as a `number` and put the currency in the name
+(`cart_value_eur`).
+
+Web Vitals are reserved metric names, each with the one kind it may be sent
+as:
+
+| Name | Metric | `measure` |
+| --- | --- | --- |
+| `$lcp` | Largest Contentful Paint | `time` |
+| `$inp` | Interaction to Next Paint | `time` |
+| `$cls` | Cumulative Layout Shift | `number` |
+| `$fcp` | First Contentful Paint | `time` |
+| `$ttfb` | Time to First Byte | `time` |
+
+A reserved metric sent with the wrong kind is rejected; an unrecognized `$`
+metric name is stored with a warning, like any other unrecognized `$` name.
+`$sample_rate` (a number in `(0, 1]`) is read on measures only, and is what
+lets a page or backend send a fraction of its measures and still have the
+count and mean come out right: each stored row counts as `1/rate`.
+
+A measure only exists when the event says `family: "measures"`.
+
 ### Identity
 
 | The tag says | `$user_id`, `$install_id`, `$user_name` | `$group_id`, `$group_name` |
@@ -647,12 +683,17 @@ transport that survives page unload. An unknown key gets a plain `401`.
     { "id": "018f1e5d-…", "ts": "2026-08-30T10:00:05Z",
       "name": "$screen_view", "attributes": { "$screen": "/settings" } },
     { "id": "018f1e5e-…", "ts": "2026-08-30T10:00:09Z", "name": "subscribed",
-      "attributes": { "plan": "pro", "$app_version": "2.5.0" } }
+      "attributes": { "plan": "pro", "$app_version": "2.5.0" } },
+    { "id": "018f1e5f-…", "ts": "2026-08-30T10:00:10Z", "family": "measures",
+      "name": "checkout_api", "value": 340, "measure": "time",
+      "attributes": { "$sample_rate": 0.1 } }
   ]
 }
 ```
 
-An event is `{id, ts, name, attributes}` and nothing else.
+An event is `{id, ts, family, name, value, measure, attributes}`; `family` is
+optional for views and product events, and `value` and `measure` belong to
+measures only.
 
 ### Attribute merge
 
@@ -664,18 +705,34 @@ A `null` means "not sent": a `null` batch value is ignored, and a `null`
 per-event value removes the batch value for that event, so a reserved key
 reads as undeclared and a custom key is absent.
 
-### Reserved event names
+### Families and reserved names
 
-| `name` | Stored as | Default `$kind` | Requires |
+| `family` | `name` | Requires | When `family` is omitted |
 | --- | --- | --- | --- |
-| `$page_view` | view | `web` | `$path` (or `$screen`) |
-| `$screen_view` | view | `app` | `$screen` (or `$path`) |
-| anything else | custom event | — | `name` |
+| `views` | `$page_view` or `$screen_view` (or the `$pageview` alias) | `$path` (or `$screen`) | inferred from `name`: these two names are views |
+| `product` | anything else | `name` | inferred from `name`: the default for every other name |
+| `measures` | any name, or a reserved `$` metric | a finite `value` `>= 0` and a `measure` of `time`, `size` or `number` | never inferred — a measure only exists when the event declares `family: "measures"` |
 
-An **unrecognized `$` name is stored as an ordinary custom event** with a
-warning, never rejected: a client shipping a future `$session_start` against an
-older server must not get a `4xx`, which the retry rules classify as a poison
-batch to drop.
+`family` absent keeps the pre-measures rule unchanged: `$page_view` and
+`$screen_view` are views, everything else is product, so a client built
+before this change keeps working unchanged.
+
+A per-event rejection (the batch's other events are still stored):
+- **An unknown `family`** (anything but `views`, `product` or `measures`) is
+  rejected, not stored as `product`.
+- **A contradiction is rejected:** `family: "views"` with a name that is not
+  a view name; `family: "product"` with a view name; `family: "measures"`
+  without a valid `value` or `measure`; a reserved metric (`$lcp`, `$inp`,
+  `$cls`, `$fcp`, `$ttfb`) sent with the wrong `measure`.
+
+An **unrecognized `$` name is stored as an ordinary custom event or measure**
+with a warning, never rejected: a client shipping a future reserved name
+(`$session_start`, a future `$tbt` metric) against an older server must not
+get a `4xx`, which the retry rules classify as a poison batch to drop. The
+same reasoning runs the other way: an **older server ignores `family`, `value`
+and `measure`** (unknown top-level fields are dropped by the decoder) and
+stores the event as a product event, so a backend or a self-hosted SDK copy
+sending measures must upgrade the server first.
 
 ### Reserved attribute keys
 
@@ -684,6 +741,10 @@ batch to drop.
 | Identity | `$install_id` `$user_id` `$user_name` `$group_id` `$group_name` `$session_id` `$consent` | `$install_id` (identified instance with consent), `$consent` |
 | Environment | `$kind` `$platform` `$os` `$os_version` `$os_name` `$browser` `$browser_version` `$device` `$device_model` `$app_version` `$app_locale` `$browser_locale` `$display_width` `$display_height` | `$kind`, `$platform` (`web` for the web kind), `$os` `$os_version` `$os_name` `$browser` `$browser_version` `$browser_locale` `$device` `$display_width` `$display_height` |
 | Location | `$host` `$path` `$screen` `$utm_source` `$utm_medium` `$utm_campaign` `$referrer` | `$host` `$path` (web kind) or `$screen` (app kind) on views and, from the last view, on product events; `$referrer` `$utm_source` `$utm_medium` `$utm_campaign` on web views only |
+| Sampling | `$sample_rate` | on Web Vitals when `data-vitals` is below 1 |
+
+`$sample_rate` is a number in `(0, 1]`, read on measures only; each stored row
+counts as `1/rate`. On any other family it is dropped with a warning.
 
 Every key is stored on views and product events alike. The SDK sends the
 rest only when the page sets them (`identify()`, `group()`, `attrs()`, the

@@ -1,7 +1,9 @@
 package server
 
 import (
+	"encoding/json"
 	"fmt"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -65,10 +67,13 @@ type envelope struct {
 }
 
 type rawEvent struct {
-	ID         string         `json:"id"`
-	TS         string         `json:"ts"`
-	Name       string         `json:"name"`
-	Attributes map[string]any `json:"attributes"`
+	ID         string          `json:"id"`
+	TS         string          `json:"ts"`
+	Family     string          `json:"family"`
+	Name       string          `json:"name"`
+	Value      json.RawMessage `json:"value"`
+	Measure    string          `json:"measure"`
+	Attributes map[string]any  `json:"attributes"`
 }
 
 type notice struct {
@@ -118,6 +123,7 @@ type resolved struct {
 	displayWidthRaw               string
 	displayHeightRaw              string
 	consentRaw                    string
+	sampleRateRaw                 string
 	Custom                        map[string]string
 }
 
@@ -137,6 +143,7 @@ var reservedKeys = map[string]func(*resolved, string){
 	"$group_name":      func(r *resolved, v string) { r.GroupName = v },
 	"$session_id":      func(r *resolved, v string) { r.SessionID = v },
 	"$consent":         func(r *resolved, v string) { r.consentRaw = v },
+	"$sample_rate":     func(r *resolved, v string) { r.sampleRateRaw = v },
 	"$kind":            func(r *resolved, v string) { r.Kind = v },
 	"$platform":        func(r *resolved, v string) { r.Platform = v },
 	"$os":              func(r *resolved, v string) { r.OS = v },
@@ -301,4 +308,70 @@ func clampTS(client, received time.Time, maxAge time.Duration) (time.Time, bool)
 		return received, true
 	}
 	return client, false
+}
+
+// parseValue reads a measure's value: a JSON number, finite and >= 0.
+// Absent, null, a string or a boolean is not a value.
+func parseValue(raw json.RawMessage) (float64, bool) {
+	s := strings.TrimSpace(string(raw))
+	if s == "" || s == "null" || s[0] == '"' || s == "true" || s == "false" {
+		return 0, false
+	}
+	var v float64
+	if err := json.Unmarshal(raw, &v); err != nil || math.IsNaN(v) || math.IsInf(v, 0) || v < 0 {
+		return 0, false
+	}
+	return v, true
+}
+
+// parseSampleRate reads $sample_rate: a number in (0, 1]. Absent means 1;
+// anything else is stored as 1 and reported.
+func parseSampleRate(raw string) (rate float64, bad bool) {
+	if raw == "" {
+		return 1, false
+	}
+	v, err := strconv.ParseFloat(raw, 64)
+	if err != nil || !(v > 0 && v <= 1) {
+		return 1, true
+	}
+	return v, false
+}
+
+// resolveFamily decides an event's family and stored name. An explicit
+// family is checked, never overridden; a missing one keeps the old rule
+// (view names are views, everything else product), so a measure only
+// exists when the event declares it.
+func resolveFamily(ev rawEvent) (family store.Family, name, warn, reject string) {
+	_, isView := viewName(ev.Name)
+	switch ev.Family {
+	case "":
+		if isView {
+			return store.FamilyViews, canonicalViewName(ev.Name), "", ""
+		}
+		if strings.HasPrefix(ev.Name, "$") {
+			warn = fmt.Sprintf("unknown reserved name %s, stored as a custom event", ev.Name)
+		}
+		return store.FamilyProduct, ev.Name, warn, ""
+	case string(store.FamilyViews):
+		if !isView {
+			return "", "", "", fmt.Sprintf("family views requires %s or %s", namePageView, nameScreenView)
+		}
+		return store.FamilyViews, canonicalViewName(ev.Name), "", ""
+	case string(store.FamilyProduct):
+		if isView {
+			return "", "", "", fmt.Sprintf("%s is a view: send family views or omit family", ev.Name)
+		}
+		if strings.HasPrefix(ev.Name, "$") {
+			warn = fmt.Sprintf("unknown reserved name %s, stored as a custom event", ev.Name)
+		}
+		return store.FamilyProduct, ev.Name, warn, ""
+	case string(store.FamilyMeasures):
+		if want, reserved := store.ReservedMetrics[ev.Name]; reserved && ev.Measure != want {
+			return "", "", "", fmt.Sprintf("%s requires measure %s", ev.Name, want)
+		} else if !reserved && strings.HasPrefix(ev.Name, "$") {
+			warn = fmt.Sprintf("unknown reserved metric %s, stored", ev.Name)
+		}
+		return store.FamilyMeasures, ev.Name, warn, ""
+	}
+	return "", "", "", fmt.Sprintf("unknown family %q", ev.Family)
 }
