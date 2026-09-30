@@ -480,7 +480,10 @@ instance enables vitals, once per page however many do, so a site without
 vitals downloads nothing more. FCP and TTFB are queued as soon as they are
 known; LCP, CLS and INP arrive when the page is hidden (a tab switch, a
 navigation, a close), and a vital reported then goes out at once through
-`sendBeacon` rather than waiting for the timer.
+`sendBeacon` rather than waiting for the timer. Each vital is sent once per
+page load, with its value at the first time the page is hidden; INP and CLS
+growth after that (a tab switch and return) is not sent. A page restored from
+the back/forward cache reports its vitals again.
 
 ### Transport
 

@@ -7,8 +7,12 @@ import { collectorOrigin } from "./origin";
 
 export type VitalName = "LCP" | "INP" | "CLS" | "FCP" | "TTFB";
 
-/** One value the vitals bundle reports, final or updated. */
-export type VitalsReport = (m: { name: VitalName; value: number }) => void;
+/**
+ * One value the vitals bundle reports. id is web-vitals' metric id: a
+ * re-report of the same metric keeps it, a back/forward-cache restore
+ * starts a new one.
+ */
+export type VitalsReport = (m: { name: VitalName; value: number; id: string }) => void;
 
 declare global {
   interface Window {

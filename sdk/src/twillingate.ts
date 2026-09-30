@@ -337,6 +337,8 @@ export class Twillingate implements Subscriber {
   private heldWarned = false;
   private warnedAnonymous = false;
   private retired = false;
+  // web-vitals metric ids already sent: a metric goes out once, first value wins.
+  private sentVitals = new Set<string>();
 
   /** Path-shaping helpers, for use inside an onPage listener. */
   readonly util = { maskIds, withQuery };
@@ -584,14 +586,21 @@ export class Twillingate implements Subscriber {
     requestVitals((m) => this.vital(m, rate, at));
   }
 
-  // One vital from the vitals bundle, as a measure. web-vitals reports
+  // One vital from the vitals bundle, as a measure, once per metric id:
+  // web-vitals re-reports CLS and INP, same id, on every later hide that
+  // finds them grown, and counting those would weigh one page load twice.
+  // The first report wins. web-vitals reports
   // from its own visibilitychange listener, which may run after the
   // runtime's has already drained the queue for an unload, so a vital
   // reported while the page is hidden is beaconed at once, not queued.
-  private vital(m: { name: string; value: number }, rate: number, at: Record<string, unknown>): void {
+  private vital(m: { name: string; value: number; id: string }, rate: number, at: Record<string, unknown>): void {
     if (!this.live()) return;
     const v = Object.prototype.hasOwnProperty.call(VITALS, m.name) ? VITALS[m.name] : undefined;
     if (!v || typeof m.value !== "number" || !isFinite(m.value) || m.value < 0) return;
+    if (typeof m.id === "string") {
+      if (this.sentVitals.has(m.id)) return;
+      this.sentVitals.add(m.id);
+    }
     this.emit(v.metric, { ...at, ...expandNulls(this.defaultAttrs), $sample_rate: rate }, "measures", { value: m.value, measure: v.measure });
     if (document.visibilityState === "hidden") this.drain(true);
   }

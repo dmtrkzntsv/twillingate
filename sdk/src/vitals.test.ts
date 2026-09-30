@@ -29,8 +29,12 @@ function tg(opts: Partial<InitOptions> = {}, name?: string): Twillingate {
   return t;
 }
 
-function report(name: "LCP" | "INP" | "CLS" | "FCP" | "TTFB", value: number): void {
-  for (const r of reporters) r({ name, value });
+let nextId = 0;
+
+// One report from the bundle; a fresh metric id unless one is given (the
+// same id is web-vitals re-reporting the same metric).
+function report(name: "LCP" | "INP" | "CLS" | "FCP" | "TTFB", value: number, id = `v6-${++nextId}`): void {
+  for (const r of reporters) r({ name, value, id });
 }
 
 async function drain(): Promise<void> {
@@ -206,13 +210,33 @@ describe("Web Vitals", () => {
     expect(measures()).toHaveLength(0);
   });
 
+  it("sends each metric once: a re-report of the same id is ignored, the first value wins", async () => {
+    const t = tg({ vitals: 1 });
+    report("CLS", 0.05, "v6-cls-1"); // first hide
+    report("CLS", 0.2, "v6-cls-1"); // tab back, more shifts, hidden again
+    report("INP", 80, "v6-inp-1");
+    report("INP", 300, "v6-inp-1");
+    t.flush();
+    await drain();
+    expect(measures().map((m) => [m.name, m.value])).toEqual([["$cls", 0.05], ["$inp", 80]]);
+  });
+
+  it("sends a restored page's metric again: a back/forward-cache restore brings a new id", async () => {
+    const t = tg({ vitals: 1 });
+    report("CLS", 0.05, "v6-cls-1");
+    report("CLS", 0.01, "v6-cls-2"); // after the restore
+    t.flush();
+    await drain();
+    expect(measures().map((m) => [m.name, m.value])).toEqual([["$cls", 0.05], ["$cls", 0.01]]);
+  });
+
   it("drops a report with an unknown name or an unusable value", async () => {
     const t = tg({ vitals: 1 });
     for (const r of reporters) {
-      r({ name: "FID", value: 10 } as unknown as Parameters<VitalsReport>[0]);
-      r({ name: "constructor", value: 10 } as unknown as Parameters<VitalsReport>[0]);
-      r({ name: "LCP", value: -1 });
-      r({ name: "LCP", value: NaN });
+      r({ name: "FID", value: 10, id: "a" } as unknown as Parameters<VitalsReport>[0]);
+      r({ name: "constructor", value: 10, id: "b" } as unknown as Parameters<VitalsReport>[0]);
+      r({ name: "LCP", value: -1, id: "c" });
+      r({ name: "LCP", value: NaN, id: "d" });
     }
     t.flush();
     await drain();

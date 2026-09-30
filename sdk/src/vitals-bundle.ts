@@ -2,18 +2,20 @@
  * web-vitals package behind one global the SDK subscribes to
  * (vitals-loader.ts). Loaded only when an instance enables vitals.
  *
- * web-vitals reports final LCP, CLS and INP when the page is hidden; with
- * default options each metric reports once per page load, and again after
- * a back/forward-cache restore.
+ * web-vitals reports LCP, CLS and INP when the page is hidden, and reports
+ * CLS and INP again, under the same metric id, on every later hide that
+ * finds them grown (a tab switch and return). The SDK sends the first
+ * report per id and ignores the rest. A back/forward-cache restore starts
+ * new ids, so a restored page reports again.
  */
 import { onCLS, onFCP, onINP, onLCP, onTTFB, type Metric } from "web-vitals";
 import type { VitalName, VitalsReport } from "./vitals-loader";
 
 const subscribers: VitalsReport[] = [];
-const seen: { name: VitalName; value: number }[] = [];
+const seen: { name: VitalName; value: number; id: string }[] = [];
 
 const fan = (m: Metric) => {
-  const r = { name: m.name, value: m.value };
+  const r = { name: m.name, value: m.value, id: m.id };
   seen.push(r);
   subscribers.forEach((s) => s(r));
 };
