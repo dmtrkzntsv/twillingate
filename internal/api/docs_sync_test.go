@@ -122,7 +122,7 @@ func TestDocumentMatchesSDK(t *testing.T) {
 		"data-key", "data-identity", "data-auto",
 		"data-mask-url", "data-routing", "data-consent", "data-instance",
 		"data-kind",
-		"init", "page", "onPage(", "onEvent(", "screen", "track", "attrs", "identify", "group", "installId(",
+		"init", "page", "onPage(", "onEvent(", "screen", "track", "measure(", "attrs", "identify", "group", "installId(",
 		"reset", "flush", "consent", "optOut(", "debug(", ".create(", ".get(", "storage", "taggedEvents",
 		"detectOS", "detectBrowser", "detectDevice", "ClientSignals",
 		"twillingate_ignore", "twillingate_debug",

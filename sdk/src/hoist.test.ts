@@ -54,7 +54,7 @@ afterEach(() => {
 });
 
 describe("hoistShared", () => {
-  const ev = (attributes: Record<string, unknown>) => ({ id: "i", ts: "t", name: "n", attributes });
+  const ev = (attributes: Record<string, unknown>) => ({ id: "i", ts: "t", family: "product" as const, name: "n", attributes });
 
   it("moves a key every event carries with the same value, and only that key", () => {
     const out = hoistShared({

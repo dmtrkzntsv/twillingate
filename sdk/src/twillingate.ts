@@ -114,10 +114,21 @@ export interface EventInfo {
 
 export type EventListener = (event: EventInfo) => Record<string, unknown> | false | void;
 
+/** Which family an event belongs to; declared on the wire, never inferred. */
+export type Family = "views" | "product" | "measures";
+
+/** The unit `measure()` reports in: milliseconds, bytes, or a bare number. */
+export type MeasureKind = "time" | "size" | "number";
+
+const MEASURE_KINDS: MeasureKind[] = ["time", "size", "number"];
+
 interface Event {
   id: string;
   ts: string;
+  family: Family;
   name: string;
+  value?: number;
+  measure?: MeasureKind;
   attributes: Record<string, unknown>;
 }
 
@@ -479,14 +490,14 @@ export class Twillingate implements Subscriber {
     }
     this.firstPageviewSent = true;
     if (this.kind === "web") {
-      this.rememberViewLocation(this.emit("$page_view", attributes));
+      this.rememberViewLocation(this.emit("$page_view", attributes, "views"));
       return;
     }
     // A non-web kind is an app: the route is the screen, and the page
     // context (host, referrer, campaign) does not apply.
     const { $host: _h, $referrer: _r, $utm_source: _s, $utm_medium: _m, $utm_campaign: _c, $path, ...rest } = attributes;
     const screenAttrs = { $screen: $path, ...rest };
-    this.rememberViewLocation(this.emit("$screen_view", screenAttrs));
+    this.rememberViewLocation(this.emit("$screen_view", screenAttrs, "views"));
   }
 
   /** Register a pageview listener; runs for every pageview, automatic ones included. */
@@ -512,14 +523,36 @@ export class Twillingate implements Subscriber {
     const screenAttrs = {
       ...expandNulls(this.defaultAttrs), $screen: String(name), ...expandNulls(attrs),
     };
-    this.rememberViewLocation(this.emit("$screen_view", screenAttrs));
+    this.rememberViewLocation(this.emit("$screen_view", screenAttrs, "views"));
   }
 
   /** Opt-in product event, carrying where it happened unless autoAttributes is false. */
   track(name: string, attrs?: Record<string, unknown>): void {
     if (!this.ready) return this.hold(() => this.track(name, attrs));
     if (!this.live() || !name) return;
-    this.emit(String(name), { ...this.eventContext(), ...expandNulls(this.defaultAttrs), ...expandNulls(attrs) });
+    this.emit(String(name), { ...this.eventContext(), ...expandNulls(this.defaultAttrs), ...expandNulls(attrs) }, "product");
+  }
+
+  /**
+   * Record a measure: a name, a numeric value and a kind, on its own
+   * family. `value` must be a finite number >= 0 and `measure` one of
+   * "time" (milliseconds), "size" (bytes) or "number" — the server's own
+   * rules, checked here so an invalid call never reaches the wire. An
+   * invalid call is dropped and logged in debug mode.
+   */
+  measure(name: string, value: number, measure: MeasureKind, attrs?: Record<string, unknown>): void {
+    if (!this.ready) return this.hold(() => this.measure(name, value, measure, attrs));
+    if (!this.live()) return;
+    if (!name || typeof value !== "number" || !isFinite(value) || value < 0 || !MEASURE_KINDS.includes(measure)) {
+      this.log("measure ignored: needs a name, a number >= 0 and time, size or number", { name, value, measure });
+      return;
+    }
+    this.emit(
+      String(name),
+      { ...this.eventContext(), ...expandNulls(this.defaultAttrs), ...expandNulls(attrs) },
+      "measures",
+      { value, measure },
+    );
   }
 
   // Where a product event happened: the location the last view this
@@ -767,7 +800,12 @@ export class Twillingate implements Subscriber {
 
   // The last layer: onEvent listeners, then null drops a key. Returns the
   // attributes queued, or null when a listener dropped the event.
-  private emit(name: string, merged: Record<string, unknown>): Record<string, unknown> | null {
+  private emit(
+    name: string,
+    merged: Record<string, unknown>,
+    family: Family,
+    m?: { value: number; measure: MeasureKind },
+  ): Record<string, unknown> | null {
     for (const listener of this.eventListeners) {
       let r: ReturnType<EventListener>;
       try {
@@ -792,7 +830,7 @@ export class Twillingate implements Subscriber {
       if (v !== undefined) attributes[key] = v;
     }
     this.log(name, attributes);
-    this.queue.push({ id: uuid(), ts: new Date().toISOString(), name, attributes });
+    this.queue.push({ id: uuid(), ts: new Date().toISOString(), family, name, ...(m ?? {}), attributes });
     if (this.queue.length >= FLUSH_AT) {
       this.drain(false);
       return attributes;

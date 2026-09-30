@@ -210,6 +210,10 @@ et.identify(userHash); et.group(workspaceId);
 et.init({ key: "ak_econumo…", identity: "identified", autoPageviews: false });
 ```
 
+```js
+twillingate.measure("checkout_api", 340, "time", { endpoint: "/api/checkout" });
+```
+
 ### Runtime API
 
 | Call | Meaning |
@@ -220,6 +224,7 @@ et.init({ key: "ak_econumo…", identity: "identified", autoPageviews: false });
 | `onEvent(fn)` | Runs for every event, after `onPage` has finished with a pageview. Receives `{ name, attributes }`; return attributes to merge, `false` to drop the event, anything else to observe. A listener that throws drops the event with a warning. |
 | `screen(name, attrs?)` | An explicit `$screen_view`, on any kind. |
 | `track(name, attrs?)` | An opt-in product event. Don't `$`-prefix your own names. |
+| `measure(name, value, measure, attrs?)` | Records a measure: `measure` is `"time"` (ms), `"size"` (bytes) or `"number"`; invalid calls are dropped (logged with `debug`). |
 | `attrs(obj)` | Default attributes under every event. Successive calls merge; `attrs(null)` clears. |
 | `identify(user, name?)` | Sets `$user_id` and the optional `$user_name`. Inert on an anonymous instance, with one warning; persisted on an identified instance with consent. Events already sent stay unattributed. |
 | `group(id, name?)` | Sets `$group_id` and the optional `$group_name` in every mode; persisted with consent on an identified instance. |
@@ -454,7 +459,10 @@ twillingate.onPage(({ url, path }) => ({
 Events queue for up to 10s and flush as one batch: on the timer, once 20 events
 accumulate, on `flush()`, and on page unload (`pagehide` / `visibilitychange`
 via `sendBeacon`, the key in the JSON body because beacons cannot set headers).
-Every event carries a UUID and a client timestamp. The environment (`$os`,
+Every event carries a UUID, a client timestamp and its `family` — `views` for
+`page()`/`screen()`, `product` for `track()` and tagged elements, `measures`
+for `measure()` — sent explicitly, never left for the collector to infer.
+The environment (`$os`,
 `$browser`, display size, …) goes once per batch, and any attribute every event
 in a batch carries with the same value (usually the `attrs()` defaults and
 `$host`) is moved up to the batch too; the collector lays batch attributes
