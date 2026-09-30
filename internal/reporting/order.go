@@ -80,12 +80,18 @@ func (o order) withoutGroup(g int64) order {
 // prev is the named member's key, next is the row right after it. If g
 // turns out to have no member besides self (self is the sole occupant of
 // its own group and is being placed back into it), self is put back at
-// its own current neighbours in o instead.
+// its own current neighbours in o instead — but only for an after that
+// still names a member of g in that case (nil, 0, or self itself); any
+// other after is refused exactly as the non-empty path refuses one (spec
+// decision 8: "group_id: G with an after that is not a member of G").
 func (o order) keyInGroup(self, g int64, after *int64) (string, error) {
 	rest := o.without(self)
 	members := rest.group(g)
 
 	if len(members) == 0 {
+		if after != nil && *after != 0 && *after != self {
+			return "", store.Refuse(store.ErrInvalid, "after %d is not a member of group %d", *after, g)
+		}
 		i := slices.IndexFunc(o, func(d store.Dashboard) bool { return d.ID == self })
 		var prev, next string
 		if i > 0 {

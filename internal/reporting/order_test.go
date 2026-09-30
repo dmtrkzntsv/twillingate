@@ -132,6 +132,45 @@ func TestOrderKeyInGroupSoleMemberKeepsOwnNeighbours(t *testing.T) {
 	if !(o[0].SortKey < key && key < o[2].SortKey) {
 		t.Fatalf("key %q not between %q and %q", key, o[0].SortKey, o[2].SortKey)
 	}
+
+	t.Run("after 0 also keeps own neighbours", func(t *testing.T) {
+		zero := int64(0)
+		key, err := o.keyInGroup(2, 2, &zero)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !(o[0].SortKey < key && key < o[2].SortKey) {
+			t.Fatalf("key %q not between %q and %q", key, o[0].SortKey, o[2].SortKey)
+		}
+	})
+}
+
+// TestOrderKeyInGroupSoleMemberRefusesForeignAfter covers the "self is the
+// sole member of g" branch: spec decision 8 refuses an after that is not
+// a member of the target group even when that group is empty after
+// removing self, so {group_id: <own group>, after: 999} must not silently
+// succeed.
+func TestOrderKeyInGroupSoleMemberRefusesForeignAfter(t *testing.T) {
+	// self (2) is the only member of group 2, between groups 1 and 3.
+	o := order{
+		row(1, 1, "a0"),
+		row(2, 2, "a1"),
+		row(3, 3, "a2"),
+	}
+
+	t.Run("after names a member of another group", func(t *testing.T) {
+		after := int64(1) // a member of group 1, not group 2
+		if _, err := o.keyInGroup(2, 2, &after); !errors.Is(err, store.ErrInvalid) {
+			t.Fatalf("err = %v, want ErrInvalid", err)
+		}
+	})
+
+	t.Run("after names an id not in the order", func(t *testing.T) {
+		after := int64(999)
+		if _, err := o.keyInGroup(2, 2, &after); !errors.Is(err, store.ErrInvalid) {
+			t.Fatalf("err = %v, want ErrInvalid", err)
+		}
+	})
 }
 
 func TestOrderKeyInGroupIntoOtherGroupStaysContiguous(t *testing.T) {
