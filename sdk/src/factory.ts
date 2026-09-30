@@ -85,7 +85,15 @@ export function tagOptions(script: HTMLScriptElement | null): InitOptions | null
     maskUrl: script.getAttribute("data-mask-url") || undefined,
     routing: script.getAttribute("data-routing") === "hash" ? "hash" : "history",
     kind: script.getAttribute("data-kind") || undefined,
+    vitals: parseRate(script.getAttribute("data-vitals")),
   };
+}
+
+/** A sample rate from a tag attribute: a number in (0, 1], else undefined (off). */
+export function parseRate(raw: string | null): number | undefined {
+  if (raw === null || raw.trim() === "") return undefined;
+  const v = Number(raw);
+  return v > 0 && v <= 1 ? v : undefined;
 }
 
 /** Snippet-mode init from the loading <script>'s attributes; dormant without data-key. */

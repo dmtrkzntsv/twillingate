@@ -24,6 +24,7 @@ import { collectorOrigin } from "./origin";
 import { DEBUG_FLAG, IGNORE_FLAG, readFlag, resolveStorage, writeFlag, type StorageDriver, type StorageSpec } from "./storage";
 import { runtime, type NavigationSource, type Subscriber } from "./runtime";
 import { maskIds, withQuery } from "./util";
+import { requestVitals } from "./vitals-loader";
 import {
   detectAll, detectBrowser as detectBrowserFrom, detectDevice as detectDeviceFrom,
   detectOS as detectOSFrom, primePlatformVersion, type BrowserInfo, type ClientSignals, type DeviceInfo, type OSInfo,
@@ -88,6 +89,12 @@ export interface InitOptions {
   optOut?: boolean | (() => unknown);
   /** Log every event and send to the console; OR-ed with the twillingate_debug flag. */
   debug?: boolean;
+  /**
+   * Sample rate for Web Vitals, in (0, 1]; absent or 0 = off. Decided once
+   * per page load: a sampled load sends every vital with $sample_rate, an
+   * unsampled one none. Web kind only; loads /js/twillingate-vitals.js.
+   */
+  vitals?: number;
 }
 
 /**
@@ -121,6 +128,15 @@ export type Family = "views" | "product" | "measures";
 export type MeasureKind = "time" | "size" | "number";
 
 const MEASURE_KINDS: MeasureKind[] = ["time", "size", "number"];
+
+/** The reserved metric each Web Vital is sent as, with its one kind. */
+const VITALS: Record<string, { metric: string; measure: MeasureKind }> = {
+  LCP: { metric: "$lcp", measure: "time" },
+  INP: { metric: "$inp", measure: "time" },
+  CLS: { metric: "$cls", measure: "number" },
+  FCP: { metric: "$fcp", measure: "time" },
+  TTFB: { metric: "$ttfb", measure: "time" },
+};
 
 interface Event {
   id: string;
@@ -214,7 +230,7 @@ const RESERVED_KEYS = [
   "$install_id", "$user_id", "$user_name", "$group_id", "$group_name", "$session_id", "$consent",
   "$kind", "$platform", "$os", "$os_version", "$os_name", "$browser", "$browser_version", "$browser_locale",
   "$device", "$device_model", "$app_version", "$app_locale", "$display_width", "$display_height",
-  "$host", "$path", "$screen", "$utm_source", "$utm_medium", "$utm_campaign", "$referrer",
+  "$host", "$path", "$screen", "$utm_source", "$utm_medium", "$utm_campaign", "$referrer", "$sample_rate",
 ];
 
 /** Keys batchAttributes() can set: a null for one of these has to reach the wire. */
@@ -397,6 +413,7 @@ export class Twillingate implements Subscriber {
     const held = this.held;
     this.held = [];
     for (const call of held) call();
+    this.startVitals(opts.vitals);
     return this;
   }
 
@@ -553,6 +570,30 @@ export class Twillingate implements Subscriber {
       "measures",
       { value, measure },
     );
+  }
+
+  // Web Vitals, when the rate says so for this page load: one draw, then
+  // every vital or none. Runs last in init(), after the entry pageview and
+  // held calls, so the location it captures is the load's own; a route
+  // change later does not move it.
+  private startVitals(rate: unknown): void {
+    if (typeof rate !== "number" || !(rate > 0 && rate <= 1)) return;
+    if (this.kind !== "web" || typeof window === "undefined" || typeof document === "undefined") return;
+    if (Math.random() >= rate) return;
+    const at = this.eventContext();
+    requestVitals((m) => this.vital(m, rate, at));
+  }
+
+  // One vital from the vitals bundle, as a measure. web-vitals reports
+  // from its own visibilitychange listener, which may run after the
+  // runtime's has already drained the queue for an unload, so a vital
+  // reported while the page is hidden is beaconed at once, not queued.
+  private vital(m: { name: string; value: number }, rate: number, at: Record<string, unknown>): void {
+    if (!this.live()) return;
+    const v = Object.prototype.hasOwnProperty.call(VITALS, m.name) ? VITALS[m.name] : undefined;
+    if (!v || typeof m.value !== "number" || !isFinite(m.value) || m.value < 0) return;
+    this.emit(v.metric, { ...at, ...expandNulls(this.defaultAttrs), $sample_rate: rate }, "measures", { value: m.value, measure: v.measure });
+    if (document.visibilityState === "hidden") this.drain(true);
   }
 
   // Where a product event happened: the location the last view this

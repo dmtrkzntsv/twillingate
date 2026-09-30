@@ -131,6 +131,7 @@ func TestDocumentMatchesSDK(t *testing.T) {
 		"$browser", "$browser_version", "$device", "$consent",
 		"$os_version", "$display_width", "$display_height", "$browser_locale", "$app_locale", "appLocale",
 		"autoAttributes",
+		"data-vitals", "vitals", "$sample_rate", "$lcp",
 	} {
 		if !strings.Contains(src, symbol) {
 			t.Errorf("docs/twillingate.md documents %q but the SDK source does not contain it", symbol)

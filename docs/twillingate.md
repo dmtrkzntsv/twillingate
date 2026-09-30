@@ -33,7 +33,7 @@ discarded.
 
 | Command | Does |
 | --- | --- |
-| `twillingate serve -ingest` | Ingestion: `POST /ingest/events`, the SDK at `/js/twillingate.js`, `/healthz` |
+| `twillingate serve -ingest` | Ingestion: `POST /ingest/events`, the SDK at `/js/twillingate.js` (and its Web Vitals add-on at `/js/twillingate-vitals.js`), `/healthz` |
 | `twillingate serve -api` | The API endpoint: MCP at `/mcp`, REST at `/api/`, the dashboards at `/app/` |
 | `twillingate serve` | Both, on one listener unless `API_ADDR` says otherwise |
 | `twillingate project`, `key`, `config` | Registry management |
@@ -155,6 +155,7 @@ whichever hostname loaded it.
 | `data-routing` | `routing` | `history` (default) or `hash`. See [Routing](#routing). |
 | `data-kind` | `kind` | What this client is: `web` (default), `app`, `cli`, or any short lower-case token. Anything but `web` switches automatic tracking from `$page_view` to `$screen_view` (the route path becomes the screen) and exempts the client from the server's crawler filter. |
 | `data-consent` | `consent` | May this instance keep anything on the device. `false` (default): nothing is read from or written to storage. `true`, or the name of a global variable or function a consent manager maintains, unlocks it. See [Consent and storage](#consent-and-storage). |
+| `data-vitals` | `vitals` | Sample rate for [Web Vitals](#web-vitals), in `(0, 1]`: `1` measures every page load, `0.2` one in five. Absent (or anything outside the range) = off. |
 | `data-instance` | `create(name)` | Register this tag's instance as `twillingate.get(name)` instead of as the default instance. See [Two projects on one page](#two-projects-on-one-page). |
 
 Every `data-*` has an `init()` equivalent except `data-instance`, which maps to
@@ -192,6 +193,7 @@ twillingate.init({
   appLocale: "de",             // → $app_locale; never detected
   autoAttributes: true,        // default; false sends only what you set (see Precedence)
   flushInterval: 10000,        // milliseconds
+  vitals: 0.2,                 // Web Vitals sample rate in (0, 1]; absent = off
   optOut: () => location.hostname === "localhost",   // OR-ed with twillingate_ignore
   debug: false,                // OR-ed with the twillingate_debug flag
 });
@@ -453,6 +455,32 @@ twillingate.onPage(({ url, path }) => ({
   $path: twillingate.util.withQuery(path, url, ["tab", "view"]),
 }));   // → /settings?tab=billing
 ```
+
+### Web Vitals
+
+Off unless asked for: `data-vitals="0.2"` on the tag, or `vitals: 0.2` in
+`init()`, turns them on for that instance (web kind only). A page load that
+has them on sends each Core Web Vital as a [measure](#measures): `$lcp`,
+`$inp`, `$fcp` and `$ttfb` in milliseconds (`time`), `$cls` as a `number`.
+Every one carries `$sample_rate` (the configured rate, `1` included) and,
+unless `autoAttributes` is false, the `$host` and `$path` of the page load it
+measures, masking applied; a
+single-page app's later route changes do not move them, and INP and CLS cover
+the page's whole life, as Chrome counts them. The `attrs()` defaults apply;
+identity, consent, `optOut` and `debug` work as for any other event.
+
+Sampling is decided once per page load: one random draw against the rate,
+after which the page sends every vital it produces, or none, so a sampled page
+is complete. Two instances on one page each have their own rate and draw.
+
+The numbers come from Google's [`web-vitals`](https://github.com/GoogleChrome/web-vitals)
+package, in a second script the collector serves at `/js/twillingate-vitals.js`
+(≈3.9 KB gzip, Apache-2.0). The SDK loads it from the same origin only when an
+instance enables vitals, once per page however many do, so a site without
+vitals downloads nothing more. FCP and TTFB are queued as soon as they are
+known; LCP, CLS and INP arrive when the page is hidden (a tab switch, a
+navigation, a close), and a vital reported then goes out at once through
+`sendBeacon` rather than waiting for the timer.
 
 ### Transport
 
@@ -750,7 +778,7 @@ sending measures must upgrade the server first.
 | Identity | `$install_id` `$user_id` `$user_name` `$group_id` `$group_name` `$session_id` `$consent` | `$install_id` (identified instance with consent), `$consent` |
 | Environment | `$kind` `$platform` `$os` `$os_version` `$os_name` `$browser` `$browser_version` `$device` `$device_model` `$app_version` `$app_locale` `$browser_locale` `$display_width` `$display_height` | `$kind`, `$platform` (`web` for the web kind), `$os` `$os_version` `$os_name` `$browser` `$browser_version` `$browser_locale` `$device` `$display_width` `$display_height` |
 | Location | `$host` `$path` `$screen` `$utm_source` `$utm_medium` `$utm_campaign` `$referrer` | `$host` `$path` (web kind) or `$screen` (app kind) on views and, from the last view, on product events; `$referrer` `$utm_source` `$utm_medium` `$utm_campaign` on web views only |
-| Sampling | `$sample_rate` | on Web Vitals when `data-vitals` is below 1 |
+| Sampling | `$sample_rate` | on every Web Vital: the `vitals` rate, `1` included |
 
 `$sample_rate` is a number in `(0, 1]`, read on measures only; each stored row
 counts as `1/rate`. On any other family it is dropped with a warning.
