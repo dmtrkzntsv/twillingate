@@ -56,8 +56,10 @@ func TestMigration024KeepsExistingRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	var total, clean int
-	db.db.QueryRow(`SELECT COUNT(*), COUNT(*) FILTER (WHERE value IS NULL AND measure = ''
-		AND sample_rate = 1 AND bucket IS NULL) FROM events`).Scan(&total, &clean)
+	if err := db.db.QueryRow(`SELECT COUNT(*), COUNT(*) FILTER (WHERE value IS NULL AND measure = ''
+		AND sample_rate = 1 AND bucket IS NULL) FROM events`).Scan(&total, &clean); err != nil {
+		t.Fatal(err)
+	}
 	if total == 0 || clean != total {
 		t.Fatalf("%d of %d existing rows take the defaults", clean, total)
 	}
@@ -95,7 +97,9 @@ func TestBucketColumn(t *testing.T) {
 		t.Fatal(err)
 	}
 	var n int
-	db.db.QueryRow(`SELECT COUNT(*) FROM events WHERE family<>'measures' AND bucket IS NOT NULL`).Scan(&n)
+	if err := db.db.QueryRow(`SELECT COUNT(*) FROM events WHERE family<>'measures' AND bucket IS NOT NULL`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
 	if n != 0 {
 		t.Errorf("non-measure rows have a bucket")
 	}
@@ -123,7 +127,9 @@ func TestWriteMeasureRoundTrip(t *testing.T) {
 	if err := db.WriteEvents(context.Background(), []store.Event{unset}); err != nil {
 		t.Fatal(err)
 	}
-	db.db.QueryRow(`SELECT sample_rate FROM raw_measures WHERE id=?`, unset.ID).Scan(&rate)
+	if err := db.db.QueryRow(`SELECT sample_rate FROM raw_measures WHERE id=?`, unset.ID).Scan(&rate); err != nil {
+		t.Fatal(err)
+	}
 	if rate != 1 {
 		t.Fatalf("unset sample rate stored as %v, want 1", rate)
 	}
@@ -134,7 +140,9 @@ func TestWriteMeasureRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	var isNull bool
-	db.db.QueryRow(`SELECT value IS NULL AND sample_rate = 1 FROM raw_product WHERE id=?`, p.ID).Scan(&isNull)
+	if err := db.db.QueryRow(`SELECT value IS NULL AND sample_rate = 1 FROM raw_product WHERE id=?`, p.ID).Scan(&isNull); err != nil {
+		t.Fatal(err)
+	}
 	if !isNull {
 		t.Fatal("product row carries a value or a rate")
 	}
@@ -150,7 +158,9 @@ func TestMeasuresAreTheirOwnFamily(t *testing.T) {
 	}
 	for _, v := range []string{"raw_views", "raw_product"} {
 		var n int
-		db.db.QueryRow(`SELECT COUNT(*) FROM `+v+` WHERE id=?`, ev.ID).Scan(&n)
+		if err := db.db.QueryRow(`SELECT COUNT(*) FROM `+v+` WHERE id=?`, ev.ID).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
 		if n != 0 {
 			t.Errorf("%s holds a measure", v)
 		}

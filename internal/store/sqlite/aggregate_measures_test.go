@@ -380,3 +380,89 @@ func TestAllZeroMetricPercentileIsZero(t *testing.T) {
 		}
 	}
 }
+
+// A sampled metric reads like the unsampled one it samples (spec decision
+// 6: each stored row counts as 1/rate). One distribution, two populations
+// (fast and slow page loads), is written three ways: "full", every sample
+// at rate 1; "sampled", every 4th sample of both at rate 0.25; "mixed",
+// every fast sample at rate 1 and every 4th slow one at 0.25, where
+// dropping the weights would over-count the fast half four to one and pull
+// every percentile down. Both read p50/p75/p95 and est_count within 10% of
+// "full", on the live half and on the rolled-up histogram alike.
+func TestSampledMeasuresMatchUnsampled(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	r := rand.New(rand.NewPCG(6, 25))
+	const n = 8000
+	var evs []store.Event
+	add := func(name string, v, rate float64) {
+		ev := measureEvent(name, v, "time")
+		ev.SampleRate = rate
+		evs = append(evs, ev)
+	}
+	for i := 0; i < n; i++ {
+		slow := i%2 == 1
+		mu := 6.5 // fast loads, ~650 ms
+		if slow {
+			mu = 8 // slow loads, ~3 s
+		}
+		v := math.Exp(r.NormFloat64()*0.5 + mu)
+		add("full", v, 1)
+		if i%8 < 2 { // every 4th of each population
+			add("sampled", v, 0.25)
+		}
+		switch {
+		case !slow:
+			add("mixed", v, 1)
+		case i%8 == 1:
+			add("mixed", v, 0.25)
+		}
+	}
+	if err := db.WriteEvents(ctx, evs); err != nil {
+		t.Fatal(err)
+	}
+	within := func(got, want float64) bool { return math.Abs(got-want) <= 0.10*want }
+	check := func(stage string) {
+		p := percentiles(t, db, 1, "2026-09-01", "2026-09-01")
+		for _, name := range []string{"sampled", "mixed"} {
+			for i, q := range []string{"p50", "p75", "p95"} {
+				full, got := p["full"][i], p[name][i]
+				t.Logf("%s %s %s: %.1f, unsampled %.1f", stage, name, q, got, full)
+				if full <= 0 || !within(got, full) {
+					t.Errorf("%s %s %s = %v, unsampled %v: more than 10%% apart", stage, name, q, got, full)
+				}
+			}
+		}
+		counts := map[string]float64{}
+		rows, err := db.db.Query(`SELECT event_name, SUM(weight) FROM v_measures_daily
+			WHERE project_id = 1 AND day = '2026-09-01' GROUP BY 1`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var name string
+			var w float64
+			if err := rows.Scan(&name, &w); err != nil {
+				t.Fatal(err)
+			}
+			counts[name] = w
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
+		}
+		if counts["full"] != n {
+			t.Errorf("%s est_count full = %v, want %d", stage, counts["full"], n)
+		}
+		for _, name := range []string{"sampled", "mixed"} {
+			if !within(counts[name], counts["full"]) {
+				t.Errorf("%s est_count %s = %v, unsampled %v: more than 10%% apart", stage, name, counts[name], counts["full"])
+			}
+		}
+	}
+	check("live")
+	if err := db.AggregateMeasureDay(ctx, 1, day("2026-09-01"), nil, 50); err != nil {
+		t.Fatal(err)
+	}
+	check("rolled up")
+}
