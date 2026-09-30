@@ -7,9 +7,10 @@ Date: 2026-09-30
 
 Two PRs:
 
-1. **Tabs for agents** (this spec) — `feat(reporting)`: a dashboard can
-   have tabs, agents build and copy them over MCP and REST, and the page
-   shows them. Nothing that exists changes meaning, so it is not breaking.
+1. **Tabs for agents** (this spec) — `feat(reporting)`: dashboards can be
+   grouped into one tabbed sidebar entry, agents build, move, archive and
+   copy groups over MCP and REST, and the page shows them. Nothing that
+   exists changes meaning, so it is not breaking.
 2. **Editing in the page** — a later spec: create, rename, archive and
    duplicate from `/app/`, which today writes nothing but the viewer's
    selection.
@@ -31,215 +32,203 @@ Two PRs:
 
 ### Model
 
-1. **A tab is a dashboard with a parent.** `dashboards` gains a nullable
-   `parent_id`. A dashboard with `parent_id` NULL is top level: it is a
-   sidebar entry. A dashboard with a parent is a tab of that parent. No
-   new table, no new kind of row: widgets, the stored selection, `after`,
-   archiving and every widget tool work on a tab exactly as on a
-   dashboard today.
-2. **Two columns carry the structure: `parent_id` and `sort_key`.**
-   `parent_id` says which list a dashboard is in: the sidebar (NULL) or
-   a parent's tabs. `sort_key` orders it within that list. `after` is
-   only how the API sets `sort_key`; nothing else is stored.
-3. **The parent is the first tab.** Its widgets are the first tab's, and
-   its title is both the sidebar entry and that tab's label. Its
-   children follow in their sort-key order. The parent's own `sort_key`
-   places it in the sidebar only, so moving a dashboard in the sidebar
-   never reshuffles its tabs. There is no container state (a parent with
-   no widgets of its own is simply an empty first tab).
-4. **No foreign key on `parent_id`.** Every rule is enforced in Go (as
-   the rest of reporting is, 021's header), in one transaction per
-   multi-row change. The invariant: **a live tab never has an archived
-   parent.** It follows from decisions 12–14, and it is what makes the
-   purge safe without a cascade (decision 15).
-5. **One level.** A parent must be top level; a dashboard that has
-   children (archived ones included) cannot be given a parent. Refused
-   with `ErrInvalid`.
-6. **One owner.** A tab has its parent's owner. A user dashboard cannot be
-   put under a system one, and a system dashboard is never moved.
-   Refused with `ErrInvalid` (user under system) or the existing
-   system-dashboard refusal.
-7. **Order is per list.** The order index becomes
-   `UNIQUE (owner, IFNULL(parent_id, 0), sort_key)`: top-level dashboards
-   keep the keys they have, and each parent's children have their own
-   order. `dashboardKey` places among siblings instead of among every
-   user dashboard.
+1. **A group is the dashboards that share a `group_id`.** `dashboards`
+   gains `group_id INTEGER NOT NULL`. Every dashboard is in exactly one
+   group; a group of one is a dashboard as it is today. There is no
+   group table and no group row: a group has no name, position or state
+   of its own, so nothing about it can be out of step with its members.
+2. **A new group's id is its first dashboard's id.** A dashboard created
+   without joining a group gets `group_id` = its own id, written in the
+   insert's transaction. Dashboard ids are never reused
+   (`AUTOINCREMENT`), so group ids are unique without a counter. The
+   number stays with the group if that dashboard later leaves it.
+3. **One order per owner, groups contiguous.** `sort_key` keeps its one
+   order per owner and its index, `UNIQUE (owner, sort_key)`. The rows of
+   a group, archived ones included, are always adjacent in that order;
+   every write that places a dashboard keeps them so.
+4. **The sidebar shows each group's first live dashboard.** Live
+   dashboards in `sort_key` order, one entry per group: the first live
+   member, by its title, linking to it. The group's live members, in the
+   same order, are its tabs. Archiving the first tab makes the next one
+   the entry, with no write beyond the archive itself.
+5. **One owner per group.** A user dashboard cannot join a system group,
+   and a system dashboard is never moved or regrouped. Refused with
+   `ErrInvalid`, or the existing system-dashboard refusal.
 
 ### Placing and moving
 
-8. **`create_dashboard` takes an optional `parent_id`.** Given, the new
-   dashboard is a tab of that parent, placed by `after` among its tabs
-   (decision 10); omitted, it is top level, as today. An archived parent
-   is refused (`ErrConflict`), keeping the invariant.
-9. **`update_dashboard` changes one of `parent_id` and `after` per call;
-   both together are refused (`ErrInvalid`).**
-   - `parent_id: N` moves the dashboard under N as its last tab;
-     `parent_id: 0` takes a tab out to the top level, last in the
-     sidebar. Moving a dashboard that has children is refused
-     (decision 5), and so is moving one under an archived parent
-     (`ErrConflict`).
-   - `after` reorders within the list the dashboard is already in
-     (decision 10).
-10. **`after` names a dashboard in the same list.** On a top-level
-    dashboard it is the sidebar, as today. On a tab it is the tabs after
-    the parent: `after: <sibling id>` puts it after that sibling, and
-    `after: 0` or `after: <parent id>` puts it right after the parent.
-    Which dashboard is the first tab (the parent) never changes by
-    ordering; a later, explicit operation can add that if it is needed.
+6. **`after` names a dashboard; which list it moves in follows from
+   which dashboard it names.** Without `group_id`:
+   - `after: X`, X in the same group: this dashboard moves right after X
+     among the tabs.
+   - `after: X`, X in another group: this dashboard's whole group moves
+     in the sidebar, right after X's group. Every member's key is
+     rewritten in one transaction (`sortkey.Spread` between the two
+     neighbouring groups).
+   - `after: 0`: the whole group moves to the top of the user
+     dashboards, as today.
+
+   For a dashboard alone in its group, which is every user dashboard
+   before this change, all three behave exactly as today.
+7. **`group_id` names the list explicitly.**
+   - `create_dashboard {group_id: G}` adds the new dashboard to G, last,
+     or where `after` says: `after` must then be a member of G, and `0`
+     makes it the first tab. Without `group_id`, a new dashboard is a new
+     group, placed by `after` in the sidebar, as today.
+   - `update_dashboard {group_id: G}` moves the dashboard into G, placed
+     the same way. G may be its own group, which is how a tab moves to
+     the front: `{group_id: <own group>, after: 0}`.
+   - `update_dashboard {group_id: 0}` takes the dashboard out of its
+     group as a new group of one (`group_id` = its own id), placed by
+     `after` in the sidebar, or right after the group it left.
+8. **Refusals.**
+   - `after: X` with X archived, missing, or another owner's:
+     `ErrInvalid`, as today.
+   - `group_id: G` with no live dashboard in G, or G another owner's:
+     `ErrInvalid`.
+   - `group_id: G` with an `after` that is not a member of G:
+     `ErrInvalid`.
+   - A lost race on the order: `ErrConflict` after the existing
+     `retryConflict`.
+
+### Acting on a whole group
+
+9. **`duplicate_dashboard`, `archive_dashboard` and `restore_dashboard`
+   take exactly one of `dashboard_id` and `group_id`.** `dashboard_id`
+   acts on that dashboard, `group_id` on the group. Both or neither is
+   refused (`ErrInvalid`); a `group_id` with no dashboard in it is
+   `ErrNotFound`, and a system group is refused by archive and restore as
+   a system dashboard is. Over REST the group forms are their own routes
+   (Surfaces), since the dashboard routes carry the id in the path.
 
 ### Copying
 
-11. **`duplicate_dashboard` copies what it is given:**
-    - **a parent**: the parent and every live child, each with its live
-      widgets, in one transaction. The copy is a user dashboard at the
-      top level; the new parent is titled "… (copy)", its tabs keep their
-      titles. Works on a system parent, so Views (Reports) copies as one
-      dashboard with five tabs.
-    - **a tab of a user dashboard**: that tab alone, titled "… (copy)",
-      placed right after it under the same parent.
-    - **a tab of a system dashboard**: that tab alone, as a top-level
-      user dashboard (decision 6 forbids putting it under the system
-      parent).
-    - **a dashboard with no tabs**: as today.
+10. **`duplicate_dashboard {dashboard_id}` copies one dashboard.** A copy
+    of a user dashboard joins the original's group, right after it. A
+    copy of a system dashboard is a new user group, last in the sidebar
+    (decision 5). Titled "… (copy)", as today.
+11. **`duplicate_dashboard {group_id}` copies the group.** Every live
+    member, each with its live widgets, in one transaction, as a new user
+    group last in the sidebar, in the same tab order. The first copy is
+    titled "… (copy)"; the others keep their titles. On group 1 this
+    copies all of Reports into one editable dashboard with five tabs.
+    Returns the first copy, as `get_dashboard` does, `tabs` included.
 
 ### Archiving
 
-An archived dashboard keeps a link only when it was archived together
-with its parent; every other archive detaches it.
-
-12. **`archive_dashboard` archives one dashboard by default.**
-    - **On a tab**: in one transaction, the tab is archived and
-      detached: `parent_id` NULL and a new `sort_key` after the last
-      top-level dashboard. `restore_dashboard` brings it back as its own
-      sidebar entry; `update_dashboard {parent_id}` makes it a tab again.
-    - **On a parent with live tabs**: in one transaction, the next live
-      tab takes over as parent (`parent_id` NULL, the old parent's
-      sidebar `sort_key`), every other child, archived ones included, is
-      repointed to it, and the old parent is archived as a dashboard
-      with no children and a new `sort_key` after the last top-level
-      dashboard. The sidebar entry stays where it was, under the new
-      parent's title.
-    - **On a dashboard with no live tabs**: that dashboard, as today.
-13. **`archive_dashboard` with `with_tabs: true` archives the whole
-    dashboard**: on a top-level dashboard, it and every live child, in
-    one transaction, the children keeping their `parent_id`. On a tab it
-    is refused (`ErrInvalid`: "dashboard N is a tab; archive its parent
-    M with with_tabs"), so an agent never archives more than it named.
-14. **`restore_dashboard` mirrors it.**
-    - By default it restores the one dashboard. A tab whose parent is
-      live comes back in place; a tab whose parent is archived (they
-      were archived together) is detached as in decision 12 and comes
-      back as its own sidebar entry.
-    - `with_tabs: true` on a top-level dashboard also restores every
-      archived child still pointing at it: by decision 12, those are
-      exactly the ones archived together with it. Refused on a tab, as
-      in decision 13.
+12. **`archive_dashboard {dashboard_id}` archives one dashboard.**
+    Nothing is relinked: the row keeps its `group_id` and its key inside
+    the group's block, and the sidebar entry moves to the next live
+    member if this one was first (decision 4).
+13. **`archive_dashboard {group_id}` archives the group**: every live
+    member, in one transaction.
+14. **`restore_dashboard {dashboard_id}` restores one dashboard**, in
+    place: its key is still in its group's block, since moves carry
+    archived members along (decision 3). **`restore_dashboard
+    {group_id}` restores every archived member of the group**, in one
+    transaction; a member archived on its own earlier comes back too,
+    and can be archived again.
 15. **The purge is unchanged.** It deletes each archived user dashboard
-    in its own transaction, with its widgets by their existing foreign
-    key. A `parent_id` on an archived row points only at a live parent or
-    at one archived in the same transaction, so a tab is never purged
-    later than its parent and no live row ever points at a purged one.
-    Between two deletes of one pass, an archived row's `parent_id` can
-    dangle, and nothing reads it.
+    with its widgets. Rows point at nothing, so nothing can dangle; a
+    group whose members are all purged is simply gone.
 
 ### System dashboards
 
-16. **Views is the parent of the other four.** `dashboard.json` gains an
-    optional `"parent": <id>`; Product, Users, Groups and Retention name
-    `1`. The system migrator checks that the parent is in the same
-    release, is top level, and is not itself a tab, and writes
-    `parent_id` in `SyncReporting`'s transaction. The sidebar entry is
-    "Views"; renaming it is not part of this change.
-17. **`reporting dev` previews a directory with `"parent"`** as a tab of
-    that parent, so a system tab is seen as it will ship.
+16. **Reports is group 1.** `dashboard.json` gains an optional
+    `"group": <id>`; Product, Users, Groups and Retention name `1`. The
+    migrator checks that the group's id is a dashboard in the same
+    release, and writes `group_id` in `SyncReporting`'s transaction (a
+    dashboard without `"group"` is its own group). Keys are spread in
+    file order, as today, so Views comes first and names the sidebar
+    entry: "Views", with the same five tabs. Renaming it is not part of
+    this change.
+17. **`reporting dev` honours `"group"`**, so a system tab previews as it
+    will ship.
 
 ### Reading
 
-18. **`get_dashboard` adds `parent_id` and `tabs`**: the top-level
-    dashboard and its live children in order, each `{dashboard_id,
-    title}`, the same list whichever tab was asked for. Empty when the
-    dashboard has no live tabs. The page draws the tab bar from it.
-19. **`list_dashboards` adds `parent_id`** and lists each parent's
-    children right after it, so the order stays sidebar order with tabs
-    in place. `schema://dashboards` and `reporting_guide` follow, as they
-    are built from it.
+18. **`get_dashboard` adds `group_id` and `tabs`**: the group's live
+    members in order, each `{dashboard_id, title}`, the same list from
+    every member. The page draws the tab bar from it.
+19. **`list_dashboards` adds `group_id`.** Its order is already
+    `sort_key` order, which now keeps groups together.
+    `schema://dashboards` and `reporting_guide` follow, as they are built
+    from it.
 
 ### Page
 
-20. **The sidebar lists live top-level dashboards**: system ones, then
-    "Yours". An entry is active on its own page and on any of its tabs'.
-    The special "Reports" entry and its system-only filter go.
+20. **The sidebar lists each group's first live dashboard**: system ones,
+    then "Yours". An entry is active on any of its group's pages. The
+    special "Reports" entry and its system-only filter go.
 21. **The tab bar is `ReportTabs`, fed from `get_dashboard.tabs`,** shown
-    for any dashboard with at least one live tab, system or user; a
+    when the group has more than one live member, system or user; a
     select on phones, as today.
 22. **Selection stays per dashboard.** Moving between tabs carries the
     project and range and saves them on the tab opened (`openReport`,
-    decision 35 of the reporting spec), now for every tabbed dashboard,
-    not only system ones. No server change.
+    decision 35 of the reporting spec), now for every group, not only
+    the system one. No server change.
 23. **URLs do not change.** `/dashboards/{id}` opens that tab.
 
 ## Surfaces
 
-| Tool / route | Change |
-| --- | --- |
-| `create_dashboard` / `POST /api/dashboards` | `parent_id` |
-| `update_dashboard` / `PATCH /api/dashboards/{id}` | `parent_id`, or `after` (orders tabs on a tab); not both |
-| `duplicate_dashboard` / `POST …/duplicate` | copies a parent's tabs (decision 11) |
-| `archive_dashboard` / `POST …/archive` | `with_tabs` |
-| `restore_dashboard` / `POST …/restore` | `with_tabs` |
-| `get_dashboard` | `parent_id`, `tabs` |
-| `list_dashboards` | `parent_id`, children after their parent |
+| Tool | Change | REST |
+| --- | --- | --- |
+| `create_dashboard` | `group_id`; `after` then places among its tabs | `POST /api/dashboards` |
+| `update_dashboard` | `group_id`; `after` moves a tab or the whole group, by what it names | `PATCH /api/dashboards/{dashboard_id}` |
+| `duplicate_dashboard` | `dashboard_id` or `group_id` | `POST /api/dashboards/{dashboard_id}/duplicate`, new `POST /api/groups/{group_id}/duplicate` |
+| `archive_dashboard` | `dashboard_id` or `group_id` | `POST /api/dashboards/{dashboard_id}/archive`, new `POST /api/groups/{group_id}/archive` |
+| `restore_dashboard` | `dashboard_id` or `group_id` | `POST /api/dashboards/{dashboard_id}/restore`, new `POST /api/groups/{group_id}/restore` |
+| `get_dashboard` | returns `group_id`, `tabs` | `GET /api/dashboards/{dashboard_id}` |
+| `list_dashboards` | returns `group_id` | `GET /api/dashboards` |
 
-No tool is added, removed or renamed. The OpenAPI route specs carry the
+No tool is added, removed or renamed, and no widget tool changes. The
+three group routes are new; the OpenAPI route specs carry them and the
 new fields.
 
 ## Migration 022
 
 ```sql
-ALTER TABLE dashboards ADD COLUMN parent_id INTEGER;
-DROP INDEX dashboards_order;
-CREATE UNIQUE INDEX dashboards_order
-    ON dashboards (owner, IFNULL(parent_id, 0), sort_key);
+ALTER TABLE dashboards ADD COLUMN group_id INTEGER NOT NULL DEFAULT 0;
+UPDATE dashboards SET group_id = id;
+CREATE INDEX dashboards_group ON dashboards (group_id);
 ```
 
-No rows move in SQL: every existing dashboard is top level, and the
-system migrator sets the four system parents on its next run (the
-release's system hash changes with the `dashboard.json` files).
+Every existing dashboard becomes a group of one; the order index and the
+keys do not change. The system migrator groups Reports on its next run
+(the release's system hash changes with the `dashboard.json` files).
 `deploy/UPGRADES.md` notes the visible change: the sidebar's "Reports"
 becomes "Views", with the same five tabs.
 
 ## Documentation
 
-`docs/reporting.md`, same commit: Concepts (tabs, the parent is the first
-tab), Tools and HTTP API (the new fields), Layout (`after` on a tab,
-promotion), Archiving and the purge (`with_tabs`, the restore rule),
-Refusals and fixes (the new refusals). `docs_sync_test` stays green.
+`docs/reporting.md`, same commit: Concepts (groups and tabs), Tools and
+HTTP API (the new fields and routes), Layout (`after` and `group_id`),
+Archiving and the purge (acting on a group), Refusals and fixes (the new
+refusals). `docs_sync_test` stays green.
 
 ## Tests
 
-- **reporting (Go)**: each rule in decisions 5–14 with its refusal;
-  `parent_id` and `after` together refused; archiving a tab detaches it
-  and restoring brings it back as its own entry; archiving a parent hands
-  the sidebar entry to the next tab and repoints every child, archived
-  ones included; `with_tabs` archives and restores the group, and a tab
-  of an archived group restored alone comes back detached; duplicating
-  Views copies five tabs and their live widgets and none of the archived
-  ones; `get_dashboard.tabs` is the same from every tab.
-- **migrate**: a `"parent"` in a system directory sets `parent_id`; a
-  parent that is missing, is a tab, or is not in the release fails the
-  migration.
-- **purge**: a parent and its tabs archived together purge in one pass;
-  a detached tab purges on its own clock.
-- **web (unit)**: sidebar lists top-level only and marks the entry
-  active on a tab; the tab bar shows for a user dashboard with tabs and
-  not for one without.
-- **e2e**: an agent-made dashboard with tabs shows its tab bar; a
-  duplicated Views opens with five tabs; project and range carry across
-  tabs.
+- **reporting (Go)**: each placement in decisions 6–7 and each refusal in
+  decisions 8–9; groups stay contiguous after every move, archived
+  members included; moving a group carries its archived members; a new
+  dashboard's `group_id` is its id; leaving a group keeps the old group's
+  id with it; `duplicate_dashboard` by dashboard and by group, from a
+  user and a system group, copying no archived widgets or members;
+  archive and restore by dashboard and by group; `get_dashboard.tabs` is
+  the same from every member.
+- **api**: the three group routes, and both-or-neither refused.
+- **migrate**: `"group"` sets `group_id`; a group naming a dashboard not
+  in the release fails the migration; a dashboard without it is its own
+  group.
+- **store**: migration 022 sets `group_id = id` on existing rows.
+- **web (unit)**: the sidebar shows one entry per group, named by its
+  first live member, active on every member; the tab bar shows for a
+  group of two and not for a group of one.
+- **e2e**: an agent-made group shows its tab bar; a duplicated group 1
+  opens with five tabs; project and range carry across tabs.
 
 ## Out of scope
 
 - Editing from the page (PR 2).
-- A name for the Views group other than its first tab's title.
-- Nesting deeper than one level.
-- Moving a dashboard together with its tabs under another dashboard.
+- A group name other than its first tab's title.
+- Moving a whole group into another group in one call.
