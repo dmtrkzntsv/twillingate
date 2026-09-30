@@ -52,7 +52,8 @@ func TestReportingGuideIsLive(t *testing.T) {
 		"Source types: md, sql",
 		"v_views_daily(project_id, day",
 		"| 1 | blog |", "| 2 | docs |",
-		"Signups this quarter", "| 1 | Views | system |",
+		"| 1001 | Signups this quarter | user | 1001 | no |", "| 1 | Views | system | 1 | no |",
+		"| 2 | Product | system | 1 | no |", // a tab of Views' group
 		`"format"`, // props schemas, verbatim
 		"default 6 × 8",
 	} {

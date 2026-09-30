@@ -340,6 +340,11 @@ What changes on the day:
   changes: `list_dashboards` and `get_dashboard` gain `group_id` (and
   `get_dashboard` a `tabs` list), but a dashboard alone shows no tab bar and
   moves exactly as before.
+- `duplicate_dashboard` on a user dashboard no longer makes a separate
+  dashboard: the copy joins the source's group as the next tab
+  (`update_dashboard` with `group_id: 0` makes it its own sidebar entry). A
+  system dashboard's copy is still a new dashboard, and `whole_group` copies
+  a whole group as a new dashboard with the same tabs.
 
 A rebuild of the `dashboards` table (a hand-written migration or a manual
 fix) must carry `sqlite_sequence`'s `dashboards` counter over to the new

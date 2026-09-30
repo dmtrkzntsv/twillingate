@@ -123,8 +123,10 @@ guards as `query`: read-only, `API_QUERY_TIMEOUT` and `API_QUERY_MAX_ROWS`.
    without them the widget is fixed, and its title says to what ("Signups,
    all time").
 5. **Write it.** `create_dashboard` with its widgets in order, or `add_widget`
-   on an existing user dashboard with `after`, `width` and `height`. To change
-   a system dashboard, `duplicate_dashboard` it and work on the copy.
+   on an existing user dashboard with `after`, `width` and `height`.
+   `create_dashboard` with `group_id` adds the dashboard as a tab of that
+   group. To change a system dashboard, `duplicate_dashboard` it and work on
+   the copy.
 6. **Check it with `widget_data`** for a project and a range, as the page
    loads it: the envelope echoes what the widget followed, and a refusal says
    what to change.
@@ -594,7 +596,9 @@ block beside the chart.
   *same* group moves this one among that group's tabs; a dashboard in
   *another* group moves this one's *whole group* to sit right after that
   other group in the sidebar; `0` moves it (or its whole group) to the top;
-  naming itself is a no-op.
+  naming itself is a no-op. On `create_dashboard` nothing moves: the new
+  dashboard goes right after the named dashboard's whole group, or, with a
+  `group_id`, right after that tab.
 - `group_id` says which group a dashboard is in. On `create_dashboard`, a
   `group_id` from `list_dashboards` adds the new dashboard as a tab of that
   group (`after` then names a tab there, `0` first); omitted, it starts a

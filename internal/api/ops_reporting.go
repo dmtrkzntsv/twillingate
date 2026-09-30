@@ -56,7 +56,7 @@ type createDashboardIn struct {
 	Title   string                 `json:"title" jsonschema:"the dashboard's title (required)"`
 	Range   string                 `json:"range,omitempty" jsonschema:"starting range: today, yesterday, 7d, 30d or 90d; default 7d"`
 	GroupID int64                  `json:"group_id,omitempty" jsonschema:"add it as a tab of this group (a group_id from list_dashboards); after then names a tab of that group, 0 first; omit for a dashboard of its own"`
-	After   *int64                 `json:"after,omitempty" jsonschema:"a dashboard id: one in the same group moves this tab; one in another group moves the whole group after that group; 0 first"`
+	After   *int64                 `json:"after,omitempty" jsonschema:"where the new dashboard goes. Without group_id: after the named dashboard's whole group in the sidebar, 0 first. With group_id: after that tab, 0 the first tab. Omit to put it last"`
 	Widgets []reporting.WidgetSpec `json:"widgets,omitempty" jsonschema:"widgets in order; all are validated, and one refusal creates nothing"`
 }
 
@@ -64,7 +64,7 @@ type updateDashboardIn struct {
 	DashboardID int64  `json:"dashboard_id" jsonschema:"dashboard id"`
 	Title       string `json:"title,omitempty" jsonschema:"new title; omit to keep"`
 	GroupID     *int64 `json:"group_id,omitempty" jsonschema:"move it into this group as a tab (after then names a tab there; 0 first); 0 takes it out as a dashboard of its own; omit to stay"`
-	After       *int64 `json:"after,omitempty" jsonschema:"a dashboard id: one in the same group moves this tab; one in another group moves the whole group after that group; 0 first"`
+	After       *int64 `json:"after,omitempty" jsonschema:"a dashboard id: one in the same group moves this tab after it; one in another group moves the whole group after that group (with group_id, it names a tab of that group; with group_id 0, the dashboard goes after that group on its own). 0: without group_id, moves the whole group to the top of the sidebar; with group_id, makes it the first tab (group_id 0: the top of the sidebar)"`
 }
 
 type addWidgetIn struct {
@@ -226,7 +226,7 @@ func (h *host) registerReporting(r *registrar) {
 		Description: "Rename a user dashboard and/or move it with group_id (join a group as a tab, or 0 to leave one) and/or after (a dashboard id; 0 first). System dashboards are read-only."},
 		h.updateDashboard)
 	expose(r, spec{Name: "duplicate_dashboard", Annotations: write, Method: "POST", Path: d + "/duplicate", Status: http.StatusCreated,
-		Description: "Copy any dashboard, a system one included, into a new user dashboard with copies of its live widgets. This is how to customize a system dashboard. whole_group copies every tab of its group as one new group, in tab order."},
+		Description: "Copy any dashboard, a system one included, with copies of its live widgets; the copy is a user dashboard. A user dashboard's copy joins its group as the next tab (update_dashboard {group_id: 0} makes it its own sidebar entry); a system dashboard's copy is a new dashboard, last in the sidebar. This is how to customize a system dashboard. whole_group copies the whole group as a new dashboard with the same tabs, in tab order."},
 		h.duplicateDashboard)
 	expose(r, spec{Name: "archive_dashboard", Annotations: idem, Method: "POST", Path: d + "/archive",
 		Description: "Hide a user dashboard and its widgets. Reversible with restore_dashboard; purged, with its widgets, RETENTION_ARCHIVED_DAYS (default 30) after archiving unless restored. whole_group archives every tab of its group."},
