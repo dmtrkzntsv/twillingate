@@ -30,6 +30,8 @@ export interface MarkdownData {
 export interface WidgetProps<P = Record<string, unknown>> {
   data: SqlData | MarkdownData
   props: P
+  /** A localStorage key prefix for what a viewer changes on this widget; absent in the gallery. */
+  stateKey?: string
 }
 
 /**

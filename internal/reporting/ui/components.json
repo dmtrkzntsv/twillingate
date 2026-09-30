@@ -684,7 +684,7 @@
     },
     {
       "name": "table",
-      "description": "Every column the query returns, in order; a raw drill-down table for a card that lists rows.",
+      "description": "Every column the query returns, in order; a raw drill-down table for a card that lists rows. Viewers sort it by clicking a header.",
       "accepts": [
         "sql"
       ],

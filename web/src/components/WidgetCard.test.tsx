@@ -64,6 +64,15 @@ describe('WidgetCard', () => {
     expect(spy).toHaveBeenCalledWith(42, params)
   })
 
+  it('keeps what a viewer changes under the dashboard and widget ids', async () => {
+    const user = userEvent.setup()
+    vi.spyOn(endpoints, 'widgetData').mockResolvedValue(sqlAnswer({}, [['12'], ['30']]))
+    renderCard(statWidget({ component: 'table', dashboard_id: 3 }))
+    await user.click(await screen.findByRole('button', { name: /value/ }))
+    expect(localStorage.getItem('twillingate.widget.3.42.sort')).toBe('{"column":"value","dir":"desc"}')
+    localStorage.clear()
+  })
+
   it('says "No data for this range" on an empty result', async () => {
     vi.spyOn(endpoints, 'widgetData').mockResolvedValue(sqlAnswer({}, []))
     renderCard()

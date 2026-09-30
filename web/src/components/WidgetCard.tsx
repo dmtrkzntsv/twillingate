@@ -61,7 +61,11 @@ export default function WidgetCard({ widget, params, idle = false }: Props) {
         isEmpty(answer) ? (
           <CardState icon={<InboxIcon />} title={answer.source_type === 'md' ? 'Nothing to show' : 'No data for this range'} />
         ) : (
-          <Component data={answer.data!} props={widget.props} />
+          <Component
+            data={answer.data!}
+            props={widget.props}
+            stateKey={`twillingate.widget.${widget.dashboard_id}.${widget.widget_id}`}
+          />
         )
       ) : query.isError ? (
         <FailedState error={query.error} onRetry={() => query.refetch()} />

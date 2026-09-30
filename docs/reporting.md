@@ -245,7 +245,7 @@ appears. `width` and `height` default to the component's size below.
 | `calendar` | `sql` | `day` day; `value` number (a year of days) | `format` | 12 × 4 |
 | `map` | `sql` | `country` text, ISO alpha-2; `value` number (unknown codes are listed under the map) | `format` | 6 × 8 |
 | `treemap` | `sql` | `label` text; `value` number; `parent` text, optional (two levels, e.g. browser → version) | `format` | 6 × 8 |
-| `table` | `sql` | any columns, shown in query order | `formats` (column → format), `colorscale` (columns shaded by value) | 6 × 10 |
+| `table` | `sql` | any columns, shown in query order until a viewer sorts by a header | `formats` (column → format), `colorscale` (columns shaded by value) | 6 × 10 |
 | `markdown` | `md` | none | none | 12 × 2 |
 
 `list_components` is the authority: it returns each component's props as a
@@ -502,7 +502,11 @@ Props: `{"format": "number"}`
 ### `table`
 
 Pages with visitors and views, the views column shaded. Column names are
-the headers, so quote them as they should read:
+the headers, so quote them as they should read. The query's `ORDER BY` is
+the order a table opens in; a viewer who clicks a header sorts the rows on
+the page (a third click restores query order), and that browser remembers
+the sort per widget. It sorts only the rows returned, so a `LIMIT`ed query
+still decides which rows those are:
 
 ```sql
 SELECT path AS "Page", SUM(visitors) AS "Visitors", SUM(views) AS "Views"
