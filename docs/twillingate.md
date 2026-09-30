@@ -545,16 +545,16 @@ A view is one page or screen shown to someone, and both names store the same
 row. `$kind` overrides the default kind with any token matching
 `^[a-z][a-z0-9_]{0,15}$`, usually as a batch attribute; an invalid value warns
 and the default is used. Every view, of any kind, is enriched with a country
-derived from the connection's IP; only `web` has further server-side
-meaning — a web view is also filtered for a crawler User-Agent, while no
-other kind is filtered. `$path` (or its alias `$screen`) is **required** and
-`$host` optional, both stored verbatim, and `$path` may contain a `#` (hash
-routing) or a `?` (query routing). Campaign parameters are `$utm_source`,
-`$utm_medium` and `$utm_campaign`; `$referrer` is reduced to a source name
-and dropped on web views as a self-referral when its host matches `$host`. A
-client `$session_id` is authoritative, otherwise a gap over 30 minutes per
-actor starts a session, and a bounce is a single-view session — expect high
-bounce rates on app kinds.
+derived from the connection's IP; only `web` has further server-side meaning —
+a web view (and a web measure) is also filtered for a crawler User-Agent,
+while no other kind is filtered. `$path` (or its alias `$screen`) is
+**required** and `$host` optional, both stored verbatim, and `$path` may
+contain a `#` (hash routing) or a `?` (query routing). Campaign parameters are
+`$utm_source`, `$utm_medium` and `$utm_campaign`; `$referrer` is reduced to a
+source name and dropped on web views as a self-referral when its host matches
+`$host`. A client `$session_id` is authoritative, otherwise a gap over 30
+minutes per actor starts a session, and a bounce is a single-view session —
+expect high bounce rates on app kinds.
 
 The IP and the User-Agent are never stored, on any kind: the IP becomes the
 country, the User-Agent is checked for a crawler and discarded — the only
@@ -622,8 +622,10 @@ twillingate.track("signup", { plan: "pro" });
 
 A measure is a name, a numeric value and a time: `measure("checkout_api", 340,
 "time")`. Send `family: "measures"` explicitly — it is never inferred, so a
-product event carrying a number stays a product event. `value` is a finite
-JSON number `>= 0`; `measure` sets the kind and its fixed unit:
+product event carrying a number stays a product event. `value` is a JSON
+number from `0` to `1e15` (about 31,000 years in milliseconds, 1 PB in
+bytes; a larger one is rejected as a client bug); `measure` sets the kind and
+its fixed unit:
 
 | `measure` | Unit | Examples |
 | --- | --- | --- |
@@ -647,11 +649,16 @@ as:
 
 A reserved metric sent with the wrong kind is rejected; an unrecognized `$`
 metric name is stored with a warning, like any other unrecognized `$` name.
-`$sample_rate` (a number in `(0, 1]`) is read on measures only, and is what
-lets a page or backend send a fraction of its measures and still have the
-count and mean come out right: each stored row counts as `1/rate`.
+`$sample_rate` (a number in `[0.0001, 1]`) is read on measures only, and is
+what lets a page or backend send a fraction of its measures and still have the
+count and mean come out right: each stored row counts as `1/rate`. A rate
+below `0.0001` would let one row outweigh 10,000 unsampled ones, so it is
+stored as `1` with a warning, like any other invalid rate.
 
-A measure only exists when the event says `family: "measures"`.
+A measure only exists when the event says `family: "measures"`. One that
+declares `$kind: "web"` (every Web Vital does) is dropped, still accepted,
+when the User-Agent is a crawler, as a web view is; a backend's measures
+declare no kind and are never filtered.
 
 ### Identity
 
@@ -751,7 +758,7 @@ reads as undeclared and a custom key is absent.
 | --- | --- | --- | --- |
 | `views` | `$page_view` or `$screen_view` | `$path` (or `$screen`) | inferred from `name`: these two names are views |
 | `product` | anything else | `name` | inferred from `name`: the default for every other name |
-| `measures` | any name, or a reserved `$` metric | a finite `value` `>= 0` and a `measure` of `time`, `size` or `number` | never inferred — a measure only exists when the event declares `family: "measures"` |
+| `measures` | any name, or a reserved `$` metric | a `value` from `0` to `1e15` and a `measure` of `time`, `size` or `number` | never inferred — a measure only exists when the event declares `family: "measures"` |
 
 `family` absent keeps the pre-measures rule unchanged: `$page_view` and
 `$screen_view` are views, everything else is product, so a client built
@@ -783,8 +790,9 @@ sending measures must upgrade the server first.
 | Location | `$host` `$path` `$screen` `$utm_source` `$utm_medium` `$utm_campaign` `$referrer` | `$host` `$path` (web kind) or `$screen` (app kind) on views and, from the last view, on product events; `$referrer` `$utm_source` `$utm_medium` `$utm_campaign` on web views only |
 | Sampling | `$sample_rate` | on every Web Vital: the `vitals` rate, `1` included |
 
-`$sample_rate` is a number in `(0, 1]`, read on measures only; each stored row
-counts as `1/rate`. On any other family it is dropped with a warning.
+`$sample_rate` is a number in `[0.0001, 1]`, read on measures only; each stored
+row counts as `1/rate`. Outside that range it is stored as `1` with a warning;
+on any other family it is dropped with a warning.
 
 Every key but `$sample_rate` is stored on views and product events alike;
 `$sample_rate` is dropped, with a warning, on both and stored on measures

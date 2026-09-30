@@ -1,9 +1,23 @@
-import { expect, test, type Request } from '@playwright/test'
+import { expect, test, type Request, type Response } from '@playwright/test'
 
 // Matches web/e2e/serve.sh's API_AUTH_DSN (token://e2e-token?password=e2e-pass&...),
 // the same token app.spec.ts uses for the REST API.
 const TOKEN = 'e2e-token'
 const ORIGIN = 'http://127.0.0.1:18080'
+
+// The collector drops web views and web measures from a crawler User-Agent
+// (enrich.IsBot: "headless", "lighthouse", ...). Pin a normal desktop Chrome
+// here, whatever the project's device default, so the vitals are stored.
+test.use({
+  userAgent:
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36',
+})
+
+interface IngestResult {
+  accepted: number
+  rejected: number
+  errors: unknown[] | null
+}
 
 function authHeaders() {
   return { Authorization: `Bearer ${TOKEN}` }
@@ -65,6 +79,13 @@ test('Web Vitals reach the collector from a real browser', async ({ page, reques
     if (!data) return
     bodies.push(JSON.parse(data) as WireBody)
   })
+  // And every answer: each must be a 202 with no per-event errors, so a
+  // rejected vital fails here rather than only by its absence.
+  const results: { status: number; body: IngestResult }[] = []
+  page.on('response', async (res: Response) => {
+    if (res.request().method() !== 'POST' || !res.url().endsWith('/ingest/events')) return
+    results.push({ status: res.status(), body: (await res.json()) as IngestResult })
+  })
 
   await page.route(`${ORIGIN}/vitals-test`, (r) =>
     r.fulfill({
@@ -98,6 +119,13 @@ test('Web Vitals reach the collector from a real browser', async ({ page, reques
   await expect
     .poll(() => measures(bodies).map((m) => m.name).sort(), { timeout: 15_000 })
     .toEqual(['$cls', '$fcp', '$inp', '$lcp', '$ttfb'])
+
+  await expect.poll(() => results.length, { timeout: 15_000 }).toBe(bodies.length)
+  for (const r of results) {
+    expect(r.status, JSON.stringify(r.body)).toBe(202)
+    expect(r.body.errors ?? [], JSON.stringify(r.body)).toEqual([])
+    expect(r.body.rejected, JSON.stringify(r.body)).toBe(0)
+  }
 
   for (const m of measures(bodies)) {
     expect(m.measure, `${m.name} measure kind`).toBe(expectedMeasureKind[m.name])

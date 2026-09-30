@@ -520,8 +520,9 @@ func TestBrowserAndDeviceAreValidated(t *testing.T) {
 	}
 }
 
-// The bot filter drops web views only: a product event declaring the web
-// kind under a crawler User-Agent is stored like any other product event.
+// The bot filter drops web views and web measures only: a product event
+// declaring the web kind under a crawler User-Agent is stored like any
+// other product event.
 func TestBotFilterKeepsWebKindProductEvents(t *testing.T) {
 	q, h := testServer(t)
 	body := envelopeOf(`{"name":"$page_view","attributes":{"$host":"app.com","$path":"/x"}},
@@ -535,6 +536,35 @@ func TestBotFilterKeepsWebKindProductEvents(t *testing.T) {
 	}
 	if len(q.events) != 1 || q.events[0].Kind != "web" || q.events[0].EventName != "signup" || q.events[0].Path != "/x" {
 		t.Errorf("web-kind product event = %+v, want it stored", q.events)
+	}
+}
+
+// A crawler's Web Vitals are filtered like its views: a measure declaring
+// the web kind under a bot User-Agent (Lighthouse, headless Chrome) is
+// accepted and dropped, the same measure from a browser is stored, and a
+// backend's measure (no kind) is stored whatever its HTTP library sends.
+func TestBotFilterDropsWebMeasures(t *testing.T) {
+	vital := `{"family":"measures","name":"$lcp","value":1200,"measure":"time","attributes":{"$kind":"web","$host":"app.com","$path":"/"}}`
+	backend := `{"family":"measures","name":"checkout_api","value":340,"measure":"time"}`
+	for _, c := range []struct {
+		name, ua, body string
+		stored         int
+	}{
+		{"lighthouse", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36 Chrome-Lighthouse", vital, 0},
+		{"headless chrome", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/129.0.0.0 Safari/537.36", vital, 0},
+		{"desktop chrome", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36", vital, 1},
+		{"backend via curl", "curl/8.5.0", backend, 1},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			q, h := testServer(t)
+			res := decodeResult(t, post(h, envelopeOf(c.body), map[string]string{"User-Agent": c.ua}))
+			if res.Accepted != 1 || res.Rejected != 0 || len(res.Errors) != 0 {
+				t.Fatalf("result = %+v, want the measure accepted", res)
+			}
+			if len(q.measures) != c.stored {
+				t.Fatalf("stored %d measures, want %d: %+v", len(q.measures), c.stored, q.measures)
+			}
+		})
 	}
 }
 
@@ -1219,8 +1249,8 @@ func TestMistypedFamilyOrMeasureDoesNotPoisonTheBatch(t *testing.T) {
 // TestMeasureNeverGetsAViewDefaultKind pins that the view default kind
 // ($page_view -> "web", $screen_view -> "app") only applies to an actual
 // view: a measure sharing a view's name must keep an empty kind, since kind
-// drives host-relative referrer cleaning and the web-kind bot filter,
-// neither of which a measure should be subject to.
+// drives host-relative referrer cleaning and the web-kind bot filter, which
+// a measure is subject to only when it declares $kind web itself.
 func TestMeasureNeverGetsAViewDefaultKind(t *testing.T) {
 	q, h := testServer(t)
 	res := decodeResult(t, post(h, envelopeOf(
@@ -1302,7 +1332,7 @@ func TestSampleRateOnlyOnMeasures(t *testing.T) {
 	}
 }
 
-// TestSampleRateParsing pins parseSampleRate: a number in (0, 1], absent
+// TestSampleRateParsing pins parseSampleRate: a number in [1e-4, 1], absent
 // means 1 with no warning, and anything else is stored as 1 and reported.
 func TestSampleRateParsing(t *testing.T) {
 	cases := []struct {
@@ -1318,12 +1348,84 @@ func TestSampleRateParsing(t *testing.T) {
 		{"1.5", 1, true},
 		{"abc", 1, true},
 		{"true", 1, true},
+		{"1e-4", 1e-4, false},
+		{"0.0001", 1e-4, false},
+		{"9.9e-5", 1, true},
+		{"1e-300", 1, true},
+		{"5e-324", 1, true},
 	}
 	for _, c := range cases {
 		got, bad := parseSampleRate(c.raw)
 		if got != c.want || bad != c.bad {
 			t.Errorf("parseSampleRate(%q) = %v, %v; want %v, %v", c.raw, got, bad, c.want, c.bad)
 		}
+	}
+}
+
+// TestValueParsing pins parseValue: a JSON number from 0 to 1e15. Beyond
+// that bound a value is a client bug (1e15 ms is about 31,000 years), and
+// accepting 1e308 would overflow the weighted sums to infinity.
+func TestValueParsing(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want float64
+		ok   bool
+	}{
+		{"0", 0, true},
+		{"1200", 1200, true},
+		{"0.05", 0.05, true},
+		{"1e15", 1e15, true},
+		{"1000000000000000", 1e15, true},
+		{"1.0000001e15", 0, false},
+		{"1e308", 0, false},
+		{"-1", 0, false},
+		{"", 0, false},
+		{"null", 0, false},
+		{`"5"`, 0, false},
+		{"true", 0, false},
+	}
+	for _, c := range cases {
+		got, ok := parseValue(json.RawMessage(c.raw))
+		if got != c.want || ok != c.ok {
+			t.Errorf("parseValue(%s) = %v, %v; want %v, %v", c.raw, got, ok, c.want, c.ok)
+		}
+	}
+}
+
+// Extremes reach the wire as JSON numbers, not strings: a value above 1e15
+// rejects that one measure, and a $sample_rate below 1e-4 (down to the
+// smallest subnormal) is stored as 1 with a warning.
+func TestMeasureExtremes(t *testing.T) {
+	q, h := testServer(t)
+	body := envelopeOf(`{"family":"measures","name":"a","value":1e308,"measure":"time"},
+		{"family":"measures","name":"b","value":1e15,"measure":"size"},
+		{"family":"measures","name":"c","value":5,"measure":"time","attributes":{"$sample_rate":1e-300}},
+		{"family":"measures","name":"d","value":5,"measure":"time","attributes":{"$sample_rate":5e-324}},
+		{"family":"measures","name":"e","value":5,"measure":"time","attributes":{"$sample_rate":1e-4}}`)
+	res := decodeResult(t, post(h, body, nil))
+	if res.Accepted != 4 || res.Rejected != 1 || !containsNotice(res.Errors, "1e15") {
+		t.Fatalf("result = %+v, want 1e308 rejected and the rest accepted", res)
+	}
+	want := map[string]float64{"b": 1, "c": 1, "d": 1, "e": 1e-4}
+	if len(q.measures) != len(want) {
+		t.Fatalf("measures = %+v", q.measures)
+	}
+	for _, m := range q.measures {
+		if m.SampleRate != want[m.EventName] {
+			t.Errorf("%s: sample rate %v, want %v", m.EventName, m.SampleRate, want[m.EventName])
+		}
+	}
+	if q.measures[0].Value == nil || *q.measures[0].Value != 1e15 {
+		t.Errorf("b: value %v, want 1e15", q.measures[0].Value)
+	}
+	n := 0
+	for _, w := range res.Warnings {
+		if strings.Contains(w.Reason, "$sample_rate") {
+			n++
+		}
+	}
+	if n != 2 {
+		t.Errorf("warnings = %+v, want 2 about $sample_rate (c and d)", res.Warnings)
 	}
 }
 

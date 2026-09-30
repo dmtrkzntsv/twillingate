@@ -154,7 +154,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		if family == store.FamilyMeasures {
 			v, ok := parseValue(ev.Value)
 			if !ok {
-				res.reject(i, "measures require a value: a number >= 0")
+				res.reject(i, "measures require a value: a number from 0 to 1e15")
 				continue
 			}
 			// A non-string measure (a typo like {"measure":5}) parses as ""
@@ -168,7 +168,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			value, measure = &v, measureStr
 			rate, bad := parseSampleRate(rv.sampleRateRaw)
 			if bad {
-				res.warn(i, "$sample_rate %q is not in (0, 1], stored as 1", rv.sampleRateRaw)
+				res.warn(i, "$sample_rate %q is not in [0.0001, 1], stored as 1", rv.sampleRateRaw)
 			}
 			sampleRate = rate
 		} else {
@@ -238,10 +238,13 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			Value: value, Measure: measure, SampleRate: sampleRate,
 		}
 		// Bot filtering is the one thing still read off the User-Agent,
-		// and it applies to web views only: any other kind declares what
-		// it is and is never filtered, whatever HTTP library it uses.
+		// and it applies to web views and web measures only (a crawler's
+		// Web Vitals are not a visitor's): any other kind declares what it
+		// is and is never filtered, whatever HTTP library it uses, so a
+		// backend's measures (no kind) are kept. Product events are never
+		// filtered.
 		if kind == "web" {
-			if family == store.FamilyViews && botUA {
+			if (family == store.FamilyViews || family == store.FamilyMeasures) && botUA {
 				// Accepted and silently ignored: the client did nothing
 				// wrong, so it must not retry.
 				res.Accepted++
