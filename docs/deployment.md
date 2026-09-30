@@ -381,6 +381,13 @@ owned by the service user, delete any `twillingate.db-wal` and
 `twillingate.db-shm` beside it, and start the service. A copy from an older
 release migrates on start.
 
+Any `sqlite3` that opens the file (the backup and check above, a host cron,
+litestream's restore drill) must be SQLite 3.35+ built with math functions:
+`sqlite3 :memory: 'select log(10)'` answers `1.0`. The `bucket` column of
+`events` calls `log()` and `ceil()`, and without them even
+`PRAGMA quick_check` fails with `unknown function: ceil()`. Debian 12's and
+Alpine's packages have them, as does the `litestream/litestream:0.5` image.
+
 Two things do not survive: the visitor salt (rotated daily anyway, so at
 most a day of continuity) and whatever arrived after the copy was taken,
 including events buffered in memory, bounded by `BUFFER_FLUSH_INTERVAL`.

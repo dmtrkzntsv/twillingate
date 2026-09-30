@@ -16,7 +16,9 @@
 #   LOOP_INTERVAL seconds between runs; unset means run once and exit, which
 #                 is what cron wants
 #
-# Requires: litestream, sqlite3, flock.
+# Requires: litestream, flock, and sqlite3 3.35+ built with math functions:
+# the events table's bucket column calls log() and ceil(), and without them
+# even PRAGMA quick_check fails ("unknown function: ceil()").
 set -eu
 
 SOURCE_DB="${SOURCE_DB:-/var/lib/twillingate/twillingate.db}"
@@ -45,6 +47,11 @@ restore_once() {
   fi
   check="$(sqlite3 -readonly "$tmp" 'PRAGMA quick_check' 2>&1)" || {
     echo "restore: quick_check failed to run: $check" >&2
+    case "$check" in
+      *"unknown function"* | *"no such function"*)
+        echo "restore: this sqlite3 lacks math functions; install SQLite 3.35+ built with them" >&2
+        ;;
+    esac
     return 1
   }
   if [ "$check" != "ok" ]; then
