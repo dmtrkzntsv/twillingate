@@ -188,7 +188,7 @@ func tagOf(path string) string {
 		switch segs[2] {
 		case "keys", "widgets":
 			return segs[2]
-		case "views", "product", "retention", "identities":
+		case "views", "product", "retention", "identities", "measures":
 			return "analytics"
 		}
 	}

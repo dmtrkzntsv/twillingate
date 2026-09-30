@@ -50,6 +50,8 @@ Views (all carry a 'project_id' column — always filter on it; ids come from li
   v_identity_daily(project_id, day, kind, id, actors, users, views, events)  -- kind: 'user'|'group'
   v_retention(project_id, actor_kind, cohort_day, day_offset, actors, cohort_size)  -- actor_kind: 'user'|'install'
   v_product_attrs(project_id, day, event_name, attr_key, attr_value, count, unique_users, unique_groups)  -- attr_key '$platform', '$os', '$app_version', '$app_locale', '$kind', '$browser', '$device', '$browser_locale' always present; unique_groups is NULL for days rolled up before it was measured (0 = measured, none)
+  v_measures_daily(project_id, day, event_name, measure, bucket, approx_value, samples, weight, sum)  -- measure: 'time' (ms)|'size' (bytes)|'number'; weight = estimated count; percentile: order by bucket, first bucket whose running weight reaches q × total
+  v_measures_attrs(project_id, day, event_name, measure, attr_key, attr_value, bucket, approx_value, samples, weight, sum)  -- same keys and top-N as v_product_attrs
   identities(project_id, kind, id, name)  -- display names, joinable to v_identity_daily
 
 Cost note: the views' live halves sessionize raw rows with window

@@ -836,7 +836,7 @@ CORS-simple.
 
 ## Answer questions with the data
 
-A connected session gets thirty-three tools: the seventeen below, and sixteen
+A connected session gets thirty-four tools: the eighteen below, and sixteen
 that build the dashboards served at `/app/`, which are documented in
 `docs://reporting` ([reporting.md](reporting.md)). To build or change a
 dashboard, call `reporting_guide` first.
@@ -852,6 +852,7 @@ take `project_id`, `from` and `to` as `YYYY-MM-DD` unless noted.
 | `views_breakdown` | `dimension`, `limit` (default 20) | Top rows for one of `kinds`, `paths`, `hosts`, `referrers`, `utm`, `countries`, `platforms`, `os`, `browsers`, `app_versions`, `devices`, `displays`, `consent`, `locales`. Two-key dimensions return both columns. `consent` is `given`, `none` or `unknown`. `locales` pairs `browser_locale` with `app_locale`, either empty when not sent. |
 | `product_events` | `event` (optional filter) | Count and unique users per event name, plus daily totals |
 | `product_attributes` | `event`, `key` | Count, unique users and unique groups per value of a declared attribute. `$platform`, `$os`, `$app_version`, `$app_locale`, `$kind`, `$browser`, `$device` and `$browser_locale` are always available; a custom key, or one of `$host`, `$path`, `$referrer`, `$utm_source`, `$utm_medium`, `$utm_campaign`, `$os_version`, `$browser_version` and `$device_model`, only appears once the project declares it. `unique_groups` is empty for days rolled up before it was measured and `0` when it was measured and no group was involved |
+| `measures` | `name`, `attr_key` | per metric: samples, estimated count, mean, p50/p75/p95 (time in ms, size in bytes) |
 | `retention` | `actor` (`user` or `install`) | Cohort curves, plus `aggregated_through` — cohorts after that day are **absent, not zero**. Empty for a project whose clients send neither `$user_id` nor `$install_id` |
 | `identities` | `kind` (`user` or `group`), `limit` | Per-user or per-group activity with display names. **Surfaces personal data on projects whose clients send ids** |
 | `query` | `sql` | A single read-only `SELECT`/`WITH` against the views. Row-capped and time-limited; `meta` and SQLite's internal tables (`sqlite_master`, `dbstat`, …) are refused, whether named directly or as a quoted or single-quoted string. Non-ASCII names must be quoted |
@@ -904,6 +905,7 @@ curl -H "Authorization: Bearer $TOKEN" \
 | `GET` | `/api/projects/{project_id}/views/breakdown` | `views_breakdown` | query: `from`, `to`, `dimension`, `limit` |
 | `GET` | `/api/projects/{project_id}/product/events` | `product_events` | query: `from`, `to`, `event` |
 | `GET` | `/api/projects/{project_id}/product/attributes` | `product_attributes` | query: `from`, `to`, `event` |
+| `GET` | `/api/projects/{project_id}/measures` | `measures` | query: `from`, `to`, `name`, `attr_key` |
 | `GET` | `/api/projects/{project_id}/retention` | `retention` | query: `from`, `to`, `actor` |
 | `GET` | `/api/projects/{project_id}/identities` | `identities` | query: `from`, `to`, `kind`, `limit` |
 | `POST` | `/api/query` | `query` | body: `sql` |
@@ -957,12 +959,24 @@ environment](#declaring-the-environment)) where `other` is a real value outside
 the list and `(other)` is the cap. Product events have `v_product_daily`,
 `v_product_totals` and `v_product_attrs` (whose `unique_groups` is NULL, not
 zero, for days rolled up before it was measured — `MAX()` skips it, `SUM()`
-would too, a `COALESCE` to 0 would lie), plus `v_events_flat`, which holds
-every raw row of both families (views and product events) with every typed
-column of the raw row: its `family` column — filter `family = 'product'` for
-product events alone — `kind`, the identity, location and environment columns
-(`path`, `os`, `country`, …), its `consent` column (1, 0 or NULL), the raw
-`attributes` JSON, and one `attr_*` column per declared custom attribute.
+would too, a `COALESCE` to 0 would lie). Measures (performance timings, sizes
+and counts, including Web Vitals) have `raw_measures`, `v_measures_daily`
+and `v_measures_attrs` (keyed the same way as `v_product_daily` /
+`v_product_attrs`, plus `measure` — `time`, `size` or `number` — and
+`bucket`/`approx_value` from the log-scale histogram; the `measures` tool
+does the percentile math over them). `raw_views`, `raw_product`,
+`raw_measures` and `v_events_flat` are all views over the one raw table, so
+each now carries every family's columns: `value`, `measure` and
+`sample_rate` are NULL, `''` and `1` on `raw_views`/`raw_product` rows (they
+only mean something on a measure), and `raw_*` additionally carries `bucket`,
+the log-scale bucket `value` falls in (NULL outside measures). `v_events_flat`
+holds every raw row of every family (views, product events and measures)
+with every typed column of the raw row: its `family` column — filter
+`family = 'product'` for product events alone, `family = 'measures'` for
+measures — `kind`, the identity, location and environment columns (`path`,
+`os`, `country`, …), its `consent` column (1, 0 or NULL), the raw
+`attributes` JSON, `value`, `measure`, `sample_rate`, and one `attr_*` column
+per declared custom attribute.
 `v_identity_daily` and `identities` join user and group activity to display
 names; `v_identity_daily` keeps the busiest 500 users and 500 groups per day
 and drops the rest with no `(other)` row, so do not sum it for totals.
