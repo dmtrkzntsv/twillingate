@@ -8,3 +8,13 @@
 ALTER TABLE dashboards ADD COLUMN group_id INTEGER NOT NULL DEFAULT 0;
 UPDATE dashboards SET group_id = id;
 CREATE INDEX dashboards_group ON dashboards (group_id);
+-- A row inserted without a group_id (the column DEFAULT 0) is a group of
+-- its own. The store relies on this for every new group, and it keeps a
+-- rolled-back binary, which never names group_id, from bundling every
+-- dashboard it creates into one "group 0". A rebuild of the dashboards
+-- table must recreate this trigger.
+CREATE TRIGGER dashboards_own_group AFTER INSERT ON dashboards
+WHEN NEW.group_id = 0
+BEGIN
+  UPDATE dashboards SET group_id = NEW.id WHERE id = NEW.id;
+END;

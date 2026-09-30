@@ -326,8 +326,10 @@ What changes on the day:
 
 Adds `group_id` to `dashboards`: dashboards sharing one are tabs of a single
 sidebar entry, named by the first live one. Nothing to check before: the
-migration adds the column and one index, then sets every existing row's
-`group_id` to its own id, so every dashboard starts as a group of one.
+migration adds the column, one index and one trigger, then sets every
+existing row's `group_id` to its own id, so every dashboard starts as a group
+of one. The trigger, `dashboards_own_group`, gives a row inserted without a
+`group_id` its own id as its group.
 
 What changes on the day:
 
@@ -346,9 +348,11 @@ that resets the counter can hand out a group id a later dashboard insert
 then collides with.
 
 There is no down migration, but the column is additive and the previous
-binary starts against the upgraded file: it inserts dashboards without
-naming `group_id`, so any it creates get the column's default, `0`, instead
-of a group id of their own. A later binary that knows about groups then
-reads every such dashboard as one member of "group 0", bundling unrelated
-dashboards into a single sidebar entry with the wrong tabs. Avoid creating
-dashboards on the previous binary once this migration has run.
+binary starts against the upgraded file. It inserts dashboards without
+naming `group_id`; the trigger gives each one its own id as its group, so
+dashboards it creates or duplicates stay separate entries when the upgrade
+is applied again. Its `update_dashboard` with `after` moves one dashboard,
+not its group, so it can leave a group's tabs split around another
+dashboard in the order: the sidebar and the tab bar key on `group_id`, so
+the group still shows as one entry with all its tabs, and the next move of
+that group to a new place, on this binary, joins its tabs up again.

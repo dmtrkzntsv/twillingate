@@ -163,9 +163,9 @@ func (d *DB) InsertDashboard(ctx context.Context, dash store.Dashboard, ws []sto
 }
 
 // insertDashboardRow inserts dash and returns its id. dash.GroupID == 0
-// means "a new group: its own id" — since the id is not known until the
-// insert, that case runs a follow-up UPDATE inside the same tx once the
-// id comes back.
+// means "a new group: its own id"; the id is not known until the insert,
+// so migration 022's dashboards_own_group trigger sets it, in the same
+// statement.
 func insertDashboardRow(ctx context.Context, tx *sql.Tx, dash store.Dashboard) (int64, error) {
 	var res sql.Result
 	var err error
@@ -185,18 +185,10 @@ func insertDashboardRow(ctx context.Context, tx *sql.Tx, dash store.Dashboard) (
 	if err != nil {
 		return 0, mapDashboardConflict(dash, err)
 	}
-	id := dash.ID
-	if id == 0 {
-		if id, err = res.LastInsertId(); err != nil {
-			return 0, err
-		}
+	if dash.ID != 0 {
+		return dash.ID, nil
 	}
-	if dash.GroupID == 0 {
-		if _, err := tx.ExecContext(ctx, `UPDATE dashboards SET group_id=id WHERE id=?`, id); err != nil {
-			return 0, fmt.Errorf("insert dashboard %q: set own group id: %w", dash.Title, err)
-		}
-	}
-	return id, nil
+	return res.LastInsertId()
 }
 
 func mapDashboardConflict(dash store.Dashboard, err error) error {
@@ -371,8 +363,8 @@ func (d *DB) NewDashboardGroupID(ctx context.Context) (int64, error) {
 }
 
 // InsertDashboardGroup inserts ds as one new group, in one transaction:
-// the first dashboard gets group_id = its own id (insertDashboardRow's
-// GroupID==0 behaviour), the rest get that id. ws[i] are ds[i]'s
+// the first dashboard gets group_id = its own id (inserted with GroupID
+// 0, which migration 022's trigger resolves), the rest get that id. ws[i] are ds[i]'s
 // widgets: ws must be empty (no dashboard gets any widget) or the same
 // length as ds, one slice per dashboard in order — anything else would
 // either index out of range or silently drop a trailing dashboard's
