@@ -90,8 +90,6 @@ type projectOut struct {
 	ProjectID      int64    `json:"project_id"`
 	Name           string   `json:"name"`
 	Archived       bool     `json:"archived,omitempty"`
-	FirstViewDay   string   `json:"first_view_day,omitempty"`
-	LastViewDay    string   `json:"last_view_day,omitempty"`
 	AllowedOrigins []string `json:"allowed_origins"`
 	Attributes     []string `json:"attributes,omitempty"`
 }
@@ -100,23 +98,15 @@ type listProjectsOut struct {
 	Projects []projectOut `json:"projects"`
 }
 
+// listProjects reads the registry snapshot and nothing else: the web
+// app waits on it before loading any widget.
 func (h *host) listProjects(ctx context.Context, _ struct{}) (listProjectsOut, error) {
 	var out listProjectsOut
 	for _, p := range h.reg.Snapshot(ctx).Projects() {
-		po := projectOut{
+		out.Projects = append(out.Projects, projectOut{
 			ProjectID: p.ID, Name: p.Name, Archived: p.Archived,
 			AllowedOrigins: p.AllowedOrigins, Attributes: p.Attributes,
-		}
-		// coverage probe: cheap MIN/MAX over the stitch view
-		res, err := h.db.Run(ctx,
-			`SELECT COALESCE(MIN(day),''), COALESCE(MAX(day),'') FROM v_views_daily WHERE project_id=?`, p.ID)
-		if err != nil {
-			return out, err
-		}
-		if len(res.Rows) == 1 {
-			po.FirstViewDay, po.LastViewDay = res.Rows[0][0], res.Rows[0][1]
-		}
-		out.Projects = append(out.Projects, po)
+		})
 	}
 	return out, nil
 }
@@ -221,7 +211,7 @@ func (h *host) register(r *registrar) {
 	const p = "/api/projects/{project_id}"
 
 	expose(r, spec{Name: "list_projects", Annotations: ro, Method: "GET", Path: "/api/projects",
-		Description: "List projects with id, name and data coverage. Call this first: every other tool takes a project_id from here."},
+		Description: "List projects with id, name, allowed origins and declared attributes. Call this first: every other tool takes a project_id from here."},
 		h.listProjects)
 	expose(r, spec{Name: "views_overview", Annotations: ro, Method: "GET", Path: p + "/views/overview",
 		Description: "Daily views for one project: visitors, views, sessions, bounces, duration, with derived bounce_rate and avg_session_sec. Sums every kind (web, app, cli, …) unless kind is given. Includes yesterday and today (live)."},

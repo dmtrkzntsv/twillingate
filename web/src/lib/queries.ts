@@ -9,4 +9,9 @@ export const dashboardQuery = (id: number) => ({
   queryFn: () => endpoints.dashboard(id),
 })
 
-export const projectsQuery = { queryKey: ['projects'], queryFn: () => endpoints.projects() }
+/**
+ * The project switcher's list. Projects change through MCP and the CLI,
+ * never here, so a dashboard switch or a refocus reuses it instead of
+ * asking again; a reload still does.
+ */
+export const projectsQuery = { queryKey: ['projects'], queryFn: () => endpoints.projects(), staleTime: 5 * 60_000 }

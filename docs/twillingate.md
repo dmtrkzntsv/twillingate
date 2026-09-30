@@ -784,7 +784,7 @@ take `project_id`, `from` and `to` as `YYYY-MM-DD` unless noted.
 
 | Tool | Extra parameters | Returns |
 | --- | --- | --- |
-| `list_projects` | none | Every project with its `project_id`, name and data coverage. Call this first — every other tool needs a `project_id` |
+| `list_projects` | none | Every project with its `project_id`, name, `archived`, `allowed_origins` and declared `attributes`. Call this first — every other tool needs a `project_id` |
 | `views_overview` | `kind` (optional) | Visitors, views, sessions, bounces, average session length per day, summed across kinds unless `kind` filters one |
 | `views_breakdown` | `dimension`, `limit` (default 20) | Top rows for one of `kinds`, `paths`, `hosts`, `referrers`, `utm`, `countries`, `platforms`, `os`, `browsers`, `app_versions`, `devices`, `displays`, `consent`, `locales`. Two-key dimensions return both columns. `consent` is `given`, `none` or `unknown`. `locales` pairs `browser_locale` with `app_locale`, either empty when not sent. |
 | `product_events` | `event` (optional filter) | Count and unique users per event name, plus daily totals |

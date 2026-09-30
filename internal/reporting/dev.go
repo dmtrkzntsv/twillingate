@@ -325,8 +325,6 @@ type devProjectOut struct {
 	ProjectID      int64    `json:"project_id"`
 	Name           string   `json:"name"`
 	Archived       bool     `json:"archived,omitempty"`
-	FirstViewDay   string   `json:"first_view_day,omitempty"`
-	LastViewDay    string   `json:"last_view_day,omitempty"`
 	AllowedOrigins []string `json:"allowed_origins"`
 	Attributes     []string `json:"attributes,omitempty"`
 }
@@ -338,8 +336,7 @@ type devProjectsOut struct {
 // devListProjects lists every project, archived ones flagged, as
 // list_projects does, straight off the projects table — trusted Go SQL
 // against db, the same way sampleProject (source.go) reads projects and
-// events directly, not a widget's checked custom SQL — with the same
-// view-coverage probe list_projects itself runs.
+// events directly, not a widget's checked custom SQL.
 func devListProjects(ctx context.Context, db *readsql.DB) (devProjectsOut, error) {
 	rows, err := db.Run(ctx,
 		`SELECT id, name, allowed_origins, attributes, archived_at IS NOT NULL FROM projects ORDER BY id`)
@@ -362,14 +359,6 @@ func devListProjects(ctx context.Context, db *readsql.DB) (devProjectsOut, error
 			if err := json.Unmarshal([]byte(row[3]), &po.Attributes); err != nil {
 				return devProjectsOut{}, fmt.Errorf("reporting: dev: project %d attributes: %w", id, err)
 			}
-		}
-		cov, err := db.Run(ctx,
-			`SELECT COALESCE(MIN(day),''), COALESCE(MAX(day),'') FROM v_views_daily WHERE project_id=?`, id)
-		if err != nil {
-			return devProjectsOut{}, err
-		}
-		if len(cov.Rows) == 1 {
-			po.FirstViewDay, po.LastViewDay = cov.Rows[0][0], cov.Rows[0][1]
 		}
 		out.Projects = append(out.Projects, po)
 	}
