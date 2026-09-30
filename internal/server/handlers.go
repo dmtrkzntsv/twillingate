@@ -297,7 +297,8 @@ func dedupeIdentities(in []store.Identity, projectID int64) []store.Identity {
 
 // eventID validates a client-supplied UUID or generates one. Supplying an id
 // is what makes an at-least-once retry safe: the write is INSERT OR IGNORE
-// on this primary key, so a replayed batch is a no-op.
+// on the primary key (family, project_id, day, id), and a retry repeats all
+// four, so a replayed batch is a no-op.
 func eventID(id string) (string, error) {
 	if id == "" {
 		return newID(), nil

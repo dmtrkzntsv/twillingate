@@ -399,3 +399,23 @@ grep -E '^RETENTION_(VIEWS|PRODUCT|WEB|APP)_' /etc/twillingate/twillingate.env
 Replace them with the two new names, choosing one value where views and
 product differed. A lower aggregate window than before deletes the older
 aggregates on the first daily pass.
+
+### Upgrading to a clustered events table (migration 023)
+
+The raw `events` table is rebuilt so each family's rows for a project and
+day are stored together, keyed by `(family, project_id, day, id)`. Its two
+indexes go away. Every view, tool, dashboard and saved query answers exactly
+as before. The migration copies the raw window (30 days by default): while it
+runs the file briefly holds that window twice, so keep that much free disk.
+
+What changes on the day:
+
+- Duplicates are detected on `(family, project_id, day, id)`. A retried
+  batch is still ignored; the one gap is a retry of an event whose timestamp
+  was clamped (more than 5 minutes ahead, or older than the raw window) that
+  arrives on the other side of midnight: it is stored twice.
+- SQL reading `events` directly (the CLI's database, not the `query` tool)
+  sees `day` as an ordinary column; its values are unchanged.
+
+There is no down migration. Rolling back means restoring the pre-upgrade copy
+or Litestream snapshot, so take one before upgrading.

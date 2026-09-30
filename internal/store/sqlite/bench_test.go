@@ -144,6 +144,31 @@ func BenchmarkIdentityDailyLiveHalf(b *testing.B) {
 		WHERE project_id = ? AND day BETWEEN ? AND ? GROUP BY 1`)
 }
 
+// BenchmarkEventsFileSize reports the on-disk size of the database file
+// after the same 150k views + 7.5k product events fixture the live-half
+// benchmarks use, once checkpointed out of the WAL: the metric the
+// clustering migration (023) exists for. b.N is not the point here — the
+// loop body does no work after the first iteration's setup, so the
+// reported ns/op is meaningless and only the MB metric matters (run with
+// -benchtime=1x or a small Nx).
+func BenchmarkEventsFileSize(b *testing.B) {
+	db := setupBenchDB(b)
+	seedBenchViews(b, db)
+	seedBenchEvents(b, db)
+	ctx := context.Background()
+	if _, err := db.db.ExecContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
+		b.Fatal(err)
+	}
+	var pageCount, pageSize int64
+	if err := db.db.QueryRowContext(ctx, `PRAGMA page_count`).Scan(&pageCount); err != nil {
+		b.Fatal(err)
+	}
+	if err := db.db.QueryRowContext(ctx, `PRAGMA page_size`).Scan(&pageSize); err != nil {
+		b.Fatal(err)
+	}
+	b.ReportMetric(float64(pageCount*pageSize)/1e6, "MB")
+}
+
 func setupBenchDB(b *testing.B) *DB {
 	b.Helper()
 	db, err := openAt(filepath.Join(b.TempDir(), "bench.db"))
