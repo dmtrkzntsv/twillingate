@@ -358,6 +358,45 @@ func TestRetentionMilestonesMatchCurve(t *testing.T) {
 	}
 }
 
+// TestVitalsStatsBlankWithoutSamples: collection is opt-in, so a
+// project without vitals is the common case, and a stat drawn from a
+// NULL value renders 0 — a perfect score. Each vital stat returns no row
+// instead, for the neighbour (no measures), and a value for the seeded
+// project; none carries a previous period (stat reads a rise as good,
+// and a vital is better lower).
+func TestVitalsStatsBlankWithoutSamples(t *testing.T) {
+	ctx := context.Background()
+	f := newSystemFixture(t)
+	d, err := f.svc.Dashboard(ctx, 6)
+	if err != nil {
+		t.Fatal(err)
+	}
+	from, to := presetDates("7d", f.today)
+	stats := 0
+	for _, w := range d.Widgets {
+		if w.Component == nil || *w.Component != "stat" {
+			continue
+		}
+		stats++
+		for _, pid := range []int64{f.project, f.neighbour} {
+			got, err := f.svc.WidgetData(ctx, DataRequest{WidgetID: w.ID, ProjectID: pid, From: from, To: to})
+			if err != nil {
+				t.Fatalf("%s: %v", w.Name, err)
+			}
+			res := got.Data.(readsql.Result)
+			if strings.Join(res.Columns, ",") != "value" {
+				t.Errorf("%s: columns %v, want only value", w.Name, res.Columns)
+			}
+			if want := map[bool]int{true: 1, false: 0}[pid == f.project]; len(res.Rows) != want {
+				t.Errorf("%s project %d: %d rows %v, want %d", w.Name, pid, len(res.Rows), res.Rows, want)
+			}
+		}
+	}
+	if stats != 5 {
+		t.Errorf("Web Vitals has %d stats, want 5", stats)
+	}
+}
+
 // seedNeighbour gives projectID raw views on the same three days as
 // seedSystemData's project, with sessions of its own (three views per
 // actor, the last 50 minutes after the second: two sessions without an

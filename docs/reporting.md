@@ -560,16 +560,17 @@ read from buckets: `approx_value` is a bucket's value (within about 2%, 0 for
 the zero bucket) and `weight` its estimated count, with sampled rows counted
 `1 / sample_rate` times. Sum `weight` per bucket, run it up in bucket order,
 and take the first bucket whose running weight reaches the share wanted. The
-Web Vitals and Measures system dashboards are built this way. p75 per metric:
+Web Vitals and Measures system dashboards are built this way. A name sent as
+two kinds (`measure`) is two series, so group by both. p75 per metric:
 
 ```sql
-WITH h AS (SELECT event_name, bucket, approx_value, SUM(weight) AS w FROM v_measures_daily
-           WHERE project_id = :project AND day BETWEEN :from AND :to GROUP BY 1, 2, 3),
-     c AS (SELECT *, SUM(w) OVER (PARTITION BY event_name ORDER BY bucket) AS run,
-                     SUM(w) OVER (PARTITION BY event_name) AS total FROM h)
-SELECT event_name, MIN(approx_value) FILTER (WHERE run >= 0.75 * total) AS p75,
+WITH h AS (SELECT event_name, measure, bucket, approx_value, SUM(weight) AS w FROM v_measures_daily
+           WHERE project_id = :project AND day BETWEEN :from AND :to GROUP BY 1, 2, 3, 4),
+     c AS (SELECT *, SUM(w) OVER (PARTITION BY event_name, measure ORDER BY bucket) AS run,
+                     SUM(w) OVER (PARTITION BY event_name, measure) AS total FROM h)
+SELECT event_name, measure, MIN(approx_value) FILTER (WHERE run >= 0.75 * total) AS p75,
        SUM(w) AS est_count
-FROM c GROUP BY 1;
+FROM c GROUP BY 1, 2;
 ```
 
 Use `0.5` or `0.95` for p50 or p95, add `day` to the grouping and the
