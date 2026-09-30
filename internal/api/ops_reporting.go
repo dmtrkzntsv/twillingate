@@ -18,6 +18,14 @@ type dashboardIn struct {
 	DashboardID int64 `json:"dashboard_id" jsonschema:"dashboard id; list_dashboards names them"`
 }
 
+// dashboardGroupIn is duplicate_dashboard, archive_dashboard and
+// restore_dashboard's input: the dashboard, and whether the operation
+// acts on its whole group of tabs.
+type dashboardGroupIn struct {
+	DashboardID int64 `json:"dashboard_id" jsonschema:"dashboard id; list_dashboards names them"`
+	WholeGroup  bool  `json:"whole_group,omitempty" jsonschema:"true acts on every dashboard in this dashboard's group (all its tabs)"`
+}
+
 type widgetIn struct {
 	WidgetID int64 `json:"widget_id" jsonschema:"widget id; get_dashboard or list_widgets names them"`
 }
@@ -47,14 +55,16 @@ type widgetDataIn struct {
 type createDashboardIn struct {
 	Title   string                 `json:"title" jsonschema:"the dashboard's title (required)"`
 	Range   string                 `json:"range,omitempty" jsonschema:"starting range: today, yesterday, 7d, 30d or 90d; default 7d"`
-	After   *int64                 `json:"after,omitempty" jsonschema:"place it after this dashboard id in the sidebar; 0 puts it first; omit to put it last"`
+	GroupID int64                  `json:"group_id,omitempty" jsonschema:"add it as a tab of this group (a group_id from list_dashboards); after then names a tab of that group, 0 first; omit for a dashboard of its own"`
+	After   *int64                 `json:"after,omitempty" jsonschema:"a dashboard id: one in the same group moves this tab; one in another group moves the whole group after that group; 0 first"`
 	Widgets []reporting.WidgetSpec `json:"widgets,omitempty" jsonschema:"widgets in order; all are validated, and one refusal creates nothing"`
 }
 
 type updateDashboardIn struct {
 	DashboardID int64  `json:"dashboard_id" jsonschema:"dashboard id"`
 	Title       string `json:"title,omitempty" jsonschema:"new title; omit to keep"`
-	After       *int64 `json:"after,omitempty" jsonschema:"move it after this dashboard id in the sidebar; 0 moves it first; omit to leave it"`
+	GroupID     *int64 `json:"group_id,omitempty" jsonschema:"move it into this group as a tab (after then names a tab there; 0 first); 0 takes it out as a dashboard of its own; omit to stay"`
+	After       *int64 `json:"after,omitempty" jsonschema:"a dashboard id: one in the same group moves this tab; one in another group moves the whole group after that group; 0 first"`
 }
 
 type addWidgetIn struct {
@@ -113,27 +123,27 @@ func (h *host) widgetData(ctx context.Context, in widgetDataIn) (reporting.Widge
 
 func (h *host) createDashboard(ctx context.Context, in createDashboardIn) (reporting.DashboardDetail, error) {
 	return h.rep.CreateDashboard(ctx, actorFrom(ctx), reporting.CreateDashboard{
-		Title: in.Title, Range: in.Range, After: in.After, Widgets: in.Widgets})
+		Title: in.Title, Range: in.Range, GroupID: in.GroupID, After: in.After, Widgets: in.Widgets})
 }
 
 func (h *host) updateDashboard(ctx context.Context, in updateDashboardIn) (reporting.DashboardInfo, error) {
 	return h.rep.UpdateDashboard(ctx, actorFrom(ctx), reporting.UpdateDashboard{
-		ID: in.DashboardID, Title: in.Title, After: in.After})
+		ID: in.DashboardID, Title: in.Title, GroupID: in.GroupID, After: in.After})
 }
 
-func (h *host) duplicateDashboard(ctx context.Context, in dashboardIn) (reporting.DashboardDetail, error) {
-	return h.rep.DuplicateDashboard(ctx, actorFrom(ctx), in.DashboardID, false)
+func (h *host) duplicateDashboard(ctx context.Context, in dashboardGroupIn) (reporting.DashboardDetail, error) {
+	return h.rep.DuplicateDashboard(ctx, actorFrom(ctx), in.DashboardID, in.WholeGroup)
 }
 
-func (h *host) archiveDashboard(ctx context.Context, in dashboardIn) (okOut, error) {
-	if err := h.rep.ArchiveDashboard(ctx, actorFrom(ctx), in.DashboardID, false); err != nil {
+func (h *host) archiveDashboard(ctx context.Context, in dashboardGroupIn) (okOut, error) {
+	if err := h.rep.ArchiveDashboard(ctx, actorFrom(ctx), in.DashboardID, in.WholeGroup); err != nil {
 		return okOut{}, err
 	}
 	return okOut{Status: "archived; hidden, reversible with restore_dashboard, purged after RETENTION_ARCHIVED_DAYS"}, nil
 }
 
-func (h *host) restoreDashboard(ctx context.Context, in dashboardIn) (okOut, error) {
-	if err := h.rep.RestoreDashboard(ctx, actorFrom(ctx), in.DashboardID, false); err != nil {
+func (h *host) restoreDashboard(ctx context.Context, in dashboardGroupIn) (okOut, error) {
+	if err := h.rep.RestoreDashboard(ctx, actorFrom(ctx), in.DashboardID, in.WholeGroup); err != nil {
 		return okOut{}, err
 	}
 	return okOut{Status: "restored"}, nil
@@ -197,10 +207,10 @@ func (h *host) registerReporting(r *registrar) {
 		Description: "The source types (sql, md) and the components a widget can use: each one's description, the source types it accepts, the columns its query must return (inputs), its props schema and its default width and height."},
 		h.listComponents)
 	expose(r, spec{Name: "list_dashboards", Annotations: ro, Method: "GET", Path: "/api/dashboards",
-		Description: "Every dashboard in sidebar order (system first, then user), archived ones included: id, title, owner (system or user), stored project and range, live widget count, archived_at; plus the timezone days are grouped in."},
+		Description: "Every dashboard in sidebar order (system first, then user), archived ones included: id, title, owner (system or user), group_id (the group it is a tab of), stored project and range, live widget count, archived_at; plus the timezone days are grouped in."},
 		h.listDashboards)
 	expose(r, spec{Name: "get_dashboard", Annotations: ro, Method: "GET", Path: d,
-		Description: "One dashboard with its live widgets in order: each widget's id, name, component, title, width, height, props, source, and whether it follows the project and range switchers."},
+		Description: "One dashboard with its group's tabs and its live widgets in order: tabs (the group's other live dashboards, in tab order) and each widget's id, name, component, title, width, height, props, source, and whether it follows the project and range switchers."},
 		h.getDashboard)
 	expose(r, spec{Name: "list_widgets", Annotations: ro, Method: "GET", Path: "/api/widgets",
 		Description: "Widgets, archived ones included, each with its dashboard and its 1-based position there. Filter by dashboard_id and/or component; use it to find an archived widget to restore, or every widget on a component."},
@@ -210,19 +220,19 @@ func (h *host) registerReporting(r *registrar) {
 		h.widgetData)
 
 	expose(r, spec{Name: "create_dashboard", Annotations: write, Method: "POST", Path: "/api/dashboards", Status: http.StatusCreated,
-		Description: "Call reporting_guide first. Create a user dashboard: title, optional starting range (default 7d), optional after (a dashboard id; 0 first; omitted, last), and optional widgets in order. All or nothing: one invalid widget creates nothing."},
+		Description: "Call reporting_guide first. Create a user dashboard: title, optional starting range (default 7d), optional group_id to add it as a tab of that group, optional after (a dashboard id; 0 first), and optional widgets in order. All or nothing: one invalid widget creates nothing."},
 		h.createDashboard)
 	expose(r, spec{Name: "update_dashboard", Annotations: write, Method: "PATCH", Path: d,
-		Description: "Rename a user dashboard and/or move it in the sidebar with after (a dashboard id; 0 first). System dashboards are read-only."},
+		Description: "Rename a user dashboard and/or move it with group_id (join a group as a tab, or 0 to leave one) and/or after (a dashboard id; 0 first). System dashboards are read-only."},
 		h.updateDashboard)
 	expose(r, spec{Name: "duplicate_dashboard", Annotations: write, Method: "POST", Path: d + "/duplicate", Status: http.StatusCreated,
-		Description: "Copy any dashboard, a system one included, into a new user dashboard with copies of its live widgets. This is how to customize a system dashboard."},
+		Description: "Copy any dashboard, a system one included, into a new user dashboard with copies of its live widgets. This is how to customize a system dashboard. whole_group copies every tab of its group as one new group, in tab order."},
 		h.duplicateDashboard)
 	expose(r, spec{Name: "archive_dashboard", Annotations: idem, Method: "POST", Path: d + "/archive",
-		Description: "Hide a user dashboard and its widgets. Reversible with restore_dashboard; purged, with its widgets, RETENTION_ARCHIVED_DAYS (default 30) after archiving unless restored."},
+		Description: "Hide a user dashboard and its widgets. Reversible with restore_dashboard; purged, with its widgets, RETENTION_ARCHIVED_DAYS (default 30) after archiving unless restored. whole_group archives every tab of its group."},
 		h.archiveDashboard)
 	expose(r, spec{Name: "restore_dashboard", Annotations: idem, Method: "POST", Path: d + "/restore",
-		Description: "Unhide an archived dashboard, where it was in the sidebar."},
+		Description: "Unhide an archived dashboard, where it was in the sidebar. whole_group restores every archived tab of its group."},
 		h.restoreDashboard)
 	expose(r, spec{Name: "add_widget", Annotations: write, Method: "POST", Path: d + "/widgets", Status: http.StatusCreated,
 		Description: "Call reporting_guide first. Add a widget to a user dashboard: a component, a source ({type: sql|md, content}), optional title, props, width and height (default from the component), name (derived from the title when omitted) and after (a widget id; 0 first; omitted, last). The SQL is run once to check its columns against the component's inputs."},
