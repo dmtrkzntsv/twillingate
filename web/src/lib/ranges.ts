@@ -46,8 +46,10 @@ export function daysBetween(from: string, to: string): number {
 
 /**
  * Resolves a preset to a `{from, to}` range, both inclusive, computed from
- * "today" in the instance timezone. `custom` uses the given `from`/`to`
- * verbatim, falling back to today when they are missing.
+ * "today" in the instance timezone. The multi-day presets are whole days, so
+ * they end yesterday: a partial today would drag the last point down.
+ * `custom` uses the given `from`/`to` verbatim, falling back to today when
+ * they are missing.
  */
 export function resolve(
   p: Preset,
@@ -64,11 +66,11 @@ export function resolve(
       return { from: y, to: y }
     }
     case '7d':
-      return { from: addDays(today, -6), to: today }
+      return { from: addDays(today, -7), to: addDays(today, -1) }
     case '30d':
-      return { from: addDays(today, -29), to: today }
+      return { from: addDays(today, -30), to: addDays(today, -1) }
     case '90d':
-      return { from: addDays(today, -89), to: today }
+      return { from: addDays(today, -90), to: addDays(today, -1) }
     case 'custom':
       return { from: custom?.from ?? today, to: custom?.to ?? today }
   }

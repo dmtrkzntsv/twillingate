@@ -545,15 +545,16 @@ in its title:
 | **range** | `WHERE day BETWEEN :from AND :to` | all time, a window relative to now (`date('now', '-12 months')`), or set dates |
 
 The page offers these range presets; a dashboard remembers the viewer's last
-choice, starting from the `range` it was created with:
+choice, starting from the `range` it was created with. The multi-day presets
+are whole days and leave out today, which is still filling:
 
 | Id | Label | `:from` → `:to` |
 | --- | --- | --- |
 | `today` | Today | today → today |
 | `yesterday` | Yesterday | yesterday → yesterday |
-| `7d` | Last week | today − 6 → today |
-| `30d` | Last month | today − 29 → today |
-| `90d` | Last 90 days | today − 89 → today |
+| `7d` | Last week | today − 7 → yesterday |
+| `30d` | Last month | today − 30 → yesterday |
+| `90d` | Last 90 days | today − 90 → yesterday |
 | `custom` | Custom… | the dates the viewer picks |
 
 `create_dashboard` takes any preset but `custom`. The API itself never takes a
