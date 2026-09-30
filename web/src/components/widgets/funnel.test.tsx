@@ -1,4 +1,5 @@
-import { render, within } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 import type { SqlData, WidgetProps } from './types'
 import Funnel, { contract } from './funnel'
@@ -64,6 +65,30 @@ describe('funnel', () => {
   it('renders nothing broken for an empty result', () => {
     const { container } = renderFunnel({ columns: ['step', 'value'], rows: [], truncated: false })
     expect(container.firstChild).toBeEmptyDOMElement()
+  })
+
+  it('shows the step value, conversion and drop-off on hover', async () => {
+    const user = userEvent.setup()
+    renderFunnel({
+      columns: ['step', 'value'],
+      rows: [
+        ['visit', '20000'],
+        ['signup', '5000'],
+      ],
+      truncated: false,
+    })
+    const signup = screen.getByText('signup')
+    await user.hover(signup)
+    const card = screen.getByRole('tooltip')
+    expect(card).toHaveTextContent('signup')
+    expect(card).toHaveTextContent('Value5,000')
+    expect(card).toHaveTextContent('Of the first step25%')
+    expect(card).toHaveTextContent('Of the step before25%')
+    expect(card).toHaveTextContent('Dropped15,000')
+
+    await user.unhover(signup)
+    await user.hover(screen.getByText('visit'))
+    expect(screen.getByRole('tooltip')).not.toHaveTextContent('step before')
   })
 
   it('exposes its contract', () => {

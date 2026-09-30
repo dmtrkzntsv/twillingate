@@ -1,4 +1,5 @@
-import { render } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 import worldAtlas from 'world-atlas/countries-110m.json'
 import { ISO_ALPHA2_TO_NUMERIC } from '@/lib/iso-countries'
@@ -83,6 +84,29 @@ describe('map', () => {
   it('renders nothing broken for an empty result', () => {
     const { container } = renderMap({ columns: ['country', 'value'], rows: [], truncated: false })
     expect(container.firstChild).toBeEmptyDOMElement()
+  })
+
+  it('shows the country, its value and share on hover, or that it has no data', async () => {
+    const user = userEvent.setup()
+    const { container } = renderMap({
+      columns: ['country', 'value'],
+      rows: [
+        ['US', '30000'],
+        ['DE', '10000'],
+      ],
+      truncated: false,
+    })
+    expect(container.querySelector('title')).toBeNull()
+
+    await user.hover(container.querySelector(`[data-id="${ISO_ALPHA2_TO_NUMERIC.US}"]`) as Element)
+    const card = screen.getByRole('tooltip')
+    expect(card).toHaveTextContent('United States')
+    expect(card).toHaveTextContent('Value30,000')
+    expect(card).toHaveTextContent('Share of total75%')
+
+    await user.hover(container.querySelector(`[data-id="${ISO_ALPHA2_TO_NUMERIC.FR}"]`) as Element)
+    expect(screen.getByRole('tooltip')).toHaveTextContent('France')
+    expect(screen.getByRole('tooltip')).toHaveTextContent('No data')
   })
 
   it('exposes its contract', () => {
