@@ -11,9 +11,10 @@ Three PRs, in this order, each releasable on its own:
 2. `perf(store): cluster events by family, project and day`
 3. `feat: record performance measures and Web Vitals`
 
-PR 2 owns the next free migration number. #91 (dashboard tabs) claims 022,
-so this is 022 or 023, whichever is free when it lands. PR 3 owns the one
-after it.
+PR 2 owns migration 023 and PR 3 owns 024. 022 is left to #91 (dashboard
+tabs), whose branch already carries `022_dashboard_groups.sql`: two files
+with one number would share a version, and the migrator would silently skip
+the second.
 
 ## Problem
 
@@ -184,7 +185,9 @@ after it.
     measure      TEXT NOT NULL DEFAULT '',    -- 'time' | 'size' | 'number'
     sample_rate  REAL NOT NULL DEFAULT 1,     -- as sent, in (0, 1]
     bucket       INTEGER GENERATED ALWAYS AS
-                 (CASE WHEN value > 0 THEN CAST(ceil(log(value) / log(1.04)) AS INTEGER) END) VIRTUAL
+                 (CASE WHEN value IS NULL THEN NULL
+                       WHEN value > 1e-17 THEN CAST(ceil(log(value) / log(1.04)) AS INTEGER)
+                       ELSE -1000 END) VIRTUAL
     ```
     plus `CREATE VIEW raw_measures AS SELECT * FROM events WHERE family =
     'measures'`. As everywhere else, there are no `CHECK` constraints:
@@ -196,8 +199,10 @@ after it.
     and in the aggregates. Base 1.04 gives about ±2% relative precision:
     340 ms falls in bucket 149 (about 332–345), and 1 ms to one hour spans
     about 380 buckets, of which only those with data are stored. CLS values
-    below 1 get negative buckets (0.08 is bucket −64). A value of 0 has no
-    bucket and is the zero bucket. The virtual column works on a
+    below 1 get negative buckets (0.08 is bucket −64). A value of 0 (or
+    anything up to 10⁻¹⁷) goes to the zero bucket, −1000, below every real
+    bucket. It is a number, not `NULL`, because a `WITHOUT ROWID` primary key
+    makes every key column `NOT NULL`. The virtual column works on a
     `WITHOUT ROWID` table (checked). Buckets combine exactly across days and
     dimensions, so a p75 over a quarter is still correct. Rejected:
     percentiles only within the raw window (no long-term trend); daily
@@ -208,7 +213,7 @@ after it.
     CREATE TABLE agg_measures_daily (             -- ≈ agg_product_daily
         project_id INTEGER NOT NULL, day TEXT NOT NULL,
         event_name TEXT NOT NULL, measure TEXT NOT NULL,
-        bucket INTEGER,                           -- NULL = zero bucket
+        bucket INTEGER NOT NULL,                  -- -1000 = zero bucket
         samples INTEGER NOT NULL,                 -- rows received
         weight  REAL    NOT NULL,                 -- Σ 1/sample_rate: estimated true count
         sum     REAL    NOT NULL,                 -- Σ value/sample_rate: exact mean
@@ -219,7 +224,7 @@ after it.
         project_id INTEGER NOT NULL, day TEXT NOT NULL,
         event_name TEXT NOT NULL, measure TEXT NOT NULL,
         attr_key TEXT NOT NULL, attr_value TEXT NOT NULL,
-        bucket INTEGER,
+        bucket INTEGER NOT NULL,
         samples INTEGER NOT NULL, weight REAL NOT NULL, sum REAL NOT NULL,
         PRIMARY KEY (project_id, day, event_name, measure, attr_key, attr_value, bucket)
     ) WITHOUT ROWID;
@@ -244,7 +249,11 @@ after it.
       measures-only dimension list with an automatic `path` (cap 500) and
       `country`, which would be a second set of rules to document.
 17. **The daily job rolls up and prunes measures in the same pass as
-    product**, under the one retention pair.
+    product**, under the one retention pair. Measures do not feed the actor,
+    cohort or identity passes (`allRawDays`): a backend's connection hash is
+    a server, not a visitor, and a page's vitals always come with its view.
+    Widgets show `time` in milliseconds with the `number` format, because
+    the `duration` format renders seconds.
 
 ### Reading
 
@@ -257,15 +266,15 @@ after it.
       the live half capped like `v_product_attrs`.
 
     `approx_value` is the value with the smallest relative error for the
-    bucket, `2 · 1.04^bucket / 2.04`, and 0 for the zero bucket, so SQL never
+    bucket, `2 · 1.04^bucket / 2.04`, and 0 for the zero bucket (−1000), so SQL never
     needs the bucket formula.
 19. **Percentiles are plain SQL, in one documented pattern** in
     `docs/reporting.md`. On 1,000 test values (10% zeros) it gave a p75 of
     712.9 against an exact 722:
     ```sql
     WITH h AS (SELECT event_name, bucket, approx_value, SUM(weight) AS w FROM v_measures_daily
-               WHERE project_id = $project AND day BETWEEN $from AND $to GROUP BY 1, 2, 3),
-         c AS (SELECT *, SUM(w) OVER (PARTITION BY event_name ORDER BY bucket NULLS FIRST) AS run,
+               WHERE project_id = :project AND day BETWEEN :from AND :to GROUP BY 1, 2, 3),
+         c AS (SELECT *, SUM(w) OVER (PARTITION BY event_name ORDER BY bucket) AS run,
                          SUM(w) OVER (PARTITION BY event_name) AS total FROM h)
     SELECT event_name, MIN(approx_value) FILTER (WHERE run >= 0.75 * total) AS p75,
            SUM(w) AS est_count
