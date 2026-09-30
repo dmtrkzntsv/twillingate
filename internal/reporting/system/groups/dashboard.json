@@ -2,6 +2,7 @@
   "id": 4,
   "title": "Groups",
   "range": "7d",
+  "group": 1,
   "layout": [
     {"widget": "about", "width": 12, "height": 2},
     {"widget": "active-groups", "width": 3, "height": 3},

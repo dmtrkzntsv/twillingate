@@ -187,13 +187,18 @@ func devWidgetRow(fd FileDashboard, i int, comps map[string]Component) store.Wid
 // a loaded file rather than a stored row: dev has no viewer selection to
 // echo back (SetDashboardView is a no-op), so Last* stay unset. An id in
 // the system range (1–999) is owned by "system", so a system directory
-// previews among the report tabs as it will ship.
+// previews among the report tabs as it will ship. GroupID mirrors D16:
+// fd.Group, or fd.ID when the file names none.
 func devDashboardRow(fd FileDashboard) store.Dashboard {
 	owner := store.OwnerUser
 	if fd.ID >= 1 && fd.ID <= 999 {
 		owner = store.OwnerSystem
 	}
-	return store.Dashboard{ID: fd.ID, Owner: owner, Title: fd.Title, LastRange: fd.Range, LiveWidgets: len(fd.Widgets)}
+	groupID := fd.Group
+	if groupID == 0 {
+		groupID = fd.ID
+	}
+	return store.Dashboard{ID: fd.ID, Owner: owner, GroupID: groupID, Title: fd.Title, LastRange: fd.Range, LiveWidgets: len(fd.Widgets)}
 }
 
 func devListDashboards(dirs []string) http.HandlerFunc {
@@ -220,6 +225,17 @@ func devGetDashboard(dirs []string, svc *Service, comps map[string]Component) ht
 			writeAPIErr(w, store.Refuse(store.ErrNotFound, "dashboard %d not found", id))
 			return
 		}
+		row := devDashboardRow(fd)
+		// Mirrors Service.Dashboard's rule (read.go): the group's live
+		// members, same owner, in list order. In dev mode every loaded
+		// file counts as live — there is no archived state to skip.
+		tabs := []Tab{}
+		for _, x := range fds {
+			xRow := devDashboardRow(x)
+			if xRow.GroupID == row.GroupID && xRow.Owner == row.Owner {
+				tabs = append(tabs, Tab{ID: xRow.ID, Title: xRow.Title})
+			}
+		}
 		widgets := make([]WidgetInfo, 0, len(fd.Widgets))
 		var followsProject, followsRange bool
 		for i := range fd.Widgets {
@@ -229,9 +245,9 @@ func devGetDashboard(dirs []string, svc *Service, comps map[string]Component) ht
 			widgets = append(widgets, info)
 		}
 		out := DashboardDetail{
-			DashboardInfo:  dashboardInfo(devDashboardRow(fd)),
+			DashboardInfo:  dashboardInfo(row),
 			FollowsProject: followsProject, FollowsRange: followsRange,
-			Widgets: widgets,
+			Tabs: tabs, Widgets: widgets,
 		}
 		writeJSON(w, http.StatusOK, out)
 	}

@@ -75,6 +75,9 @@ func migrateFrom(ctx context.Context, st Store, db *readsql.DB, system fs.FS, ma
 	if err != nil {
 		return err
 	}
+	if err := checkGroups(files); err != nil {
+		return err
+	}
 
 	// Deviation 4: validation during migration checks shape only (LIMIT
 	// 0), never sample rows — the sql content is the release's own, not
@@ -114,7 +117,8 @@ func migrateFrom(ctx context.Context, st Store, db *readsql.DB, system fs.FS, ma
 				widgets = append(widgets, w)
 			}
 			dashboards = append(dashboards, store.SystemDashboard{
-				ID: fd.ID, Title: fd.Title, SortKey: dashKeys[i], Range: fd.Range, Widgets: widgets,
+				ID: fd.ID, Title: fd.Title, SortKey: dashKeys[i], Range: fd.Range,
+				GroupID: fd.Group, Widgets: widgets,
 			})
 		}
 	}
@@ -154,6 +158,53 @@ func storeWidget(fw FileWidget, sortKey string, comps map[string]Component) stor
 		Name: fw.Name, Title: fw.Title, Props: string(props),
 		SourceType: fw.SourceType, Source: fw.Source,
 	}
+}
+
+// checkGroups refuses a release whose "group" fields (D16) don't hold
+// together: a file naming a group (fd.Group != 0) must name a dashboard
+// in the same release, and that dashboard must not itself be in another
+// group (a group names its first dashboard, which cannot be a tab of
+// something else). It also refuses a release whose groups are not
+// contiguous in files' order (LoadDashboards' id order, the same order
+// sortkey.Spread assigns keys in), since a gap there could never close
+// up into a contiguous run of sort keys either.
+func checkGroups(files []FileDashboard) error {
+	byID := make(map[int64]FileDashboard, len(files))
+	for _, fd := range files {
+		byID[fd.ID] = fd
+	}
+	for _, fd := range files {
+		if fd.Group == 0 {
+			continue
+		}
+		target, ok := byID[fd.Group]
+		if !ok {
+			return fmt.Errorf("reporting: system dashboard %d: group %d is not a dashboard in this release", fd.ID, fd.Group)
+		}
+		if target.Group != 0 && target.Group != target.ID {
+			return fmt.Errorf("reporting: system dashboard %d: group %d is itself in another group", fd.ID, fd.Group)
+		}
+	}
+
+	var seen int64 = -1 // no group id is negative
+	closed := make(map[int64]bool, len(files))
+	for _, fd := range files {
+		g := fd.Group
+		if g == 0 {
+			g = fd.ID
+		}
+		if g == seen {
+			continue
+		}
+		if closed[g] {
+			return fmt.Errorf("reporting: system dashboard %d: group %d is not contiguous", fd.ID, g)
+		}
+		if seen != -1 {
+			closed[seen] = true
+		}
+		seen = g
+	}
+	return nil
 }
 
 // writeFramed writes b's length as a big-endian uint64 before b itself,

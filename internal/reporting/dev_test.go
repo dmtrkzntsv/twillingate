@@ -3,6 +3,7 @@ package reporting
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -282,6 +283,66 @@ func TestDevHandlerSystemRangeIdsPreviewAsSystem(t *testing.T) {
 	}
 	if owners[5] != store.OwnerSystem || owners[firstDevDashboardID] != store.OwnerUser {
 		t.Errorf("owners = %v, want 5 system and %d user", owners, firstDevDashboardID)
+	}
+}
+
+// TestDevHandlerGroupTabs mirrors Service.Dashboard's tab rule (D17): a
+// system group previews with its tabs exactly as it will ship. Five
+// directories, ids 1-5; 2-5 name "group":1, 1 names none (so its own id,
+// 1, is the group) — the same shape as the real Views/Product/Users/
+// Groups/Retention release.
+func TestDevHandlerGroupTabs(t *testing.T) {
+	root := t.TempDir()
+	dash := func(id int64, title string, group int64) string {
+		if group == 0 {
+			return fmt.Sprintf(`{"id":%d,"title":%q,"range":"7d","layout":[]}`, id, title)
+		}
+		return fmt.Sprintf(`{"id":%d,"title":%q,"range":"7d","group":%d,"layout":[]}`, id, title, group)
+	}
+	dirs := []struct {
+		name  string
+		id    int64
+		title string
+		group int64
+	}{
+		{"views", 1, "Views", 0},
+		{"product", 2, "Product", 1},
+		{"users", 3, "Users", 1},
+		{"groups", 4, "Groups", 1},
+		{"retention", 5, "Retention", 1},
+	}
+	for _, d := range dirs {
+		dir := filepath.Join(root, d.name)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "dashboard.json"), []byte(dash(d.id, d.title, d.group)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h := DevHandler([]string{root}, newTestReadDB(t))
+
+	var detail DashboardDetail
+	res := getJSON(t, h, "/api/dashboards/3", &detail)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", res.StatusCode)
+	}
+	if detail.GroupID != 1 {
+		t.Errorf("GroupID = %d, want 1", detail.GroupID)
+	}
+	if len(detail.Tabs) != 5 {
+		t.Fatalf("Tabs = %+v, want 5", detail.Tabs)
+	}
+	var titles []string
+	for _, tab := range detail.Tabs {
+		titles = append(titles, tab.Title)
+	}
+	// loadDevDashboards has no sort key to order by — it reflects
+	// devDashboardDirs' directory scan, alphabetical by name (os.ReadDir),
+	// not id: groups, product, retention, users, views.
+	want := []string{"Groups", "Product", "Retention", "Users", "Views"}
+	if strings.Join(titles, ",") != strings.Join(want, ",") {
+		t.Errorf("Tabs = %v, want %v", titles, want)
 	}
 }
 

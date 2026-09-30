@@ -384,6 +384,87 @@ func TestHashSystemFramesFieldsAgainstCollision(t *testing.T) {
 	}
 }
 
+// TestMigrateFromGroupNamingMissingIDFails is D16: a file's "group" must
+// name a dashboard in the same release.
+func TestMigrateFromGroupNamingMissingIDFails(t *testing.T) {
+	st, db := newTestStoreAndReadDB(t)
+	ctx := context.Background()
+	system, dir := systemFSCopy(t)
+
+	if err := os.WriteFile(filepath.Join(dir, "retention", "dashboard.json"),
+		[]byte(`{"id":1,"title":"Retention","range":"30d","group":99,"layout":[{"widget":"users"}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := migrateFrom(ctx, st, db, system, testManifest(t))
+	if err == nil {
+		t.Fatal("want error: group names a dashboard not in the release")
+	}
+	if !strings.Contains(err.Error(), "group 99 is not a dashboard in this release") {
+		t.Errorf("error = %q, want it to name the missing group", err)
+	}
+}
+
+// TestMigrateFromGroupNamingATabFails: a group must name a dashboard that
+// is not itself in another group (D16: "a group names its first
+// dashboard, which is not itself in another group").
+func TestMigrateFromGroupNamingATabFails(t *testing.T) {
+	st, db := newTestStoreAndReadDB(t)
+	ctx := context.Background()
+	system, dir := systemFSCopy(t)
+
+	// overview (id 2) joins retention's group (id 1)...
+	if err := os.WriteFile(filepath.Join(dir, "overview", "dashboard.json"),
+		[]byte(`{"id":2,"title":"Overview","range":"7d","group":1,"layout":[{"widget":"note"}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// ...and retention (id 1) tries to join overview's group instead of
+	// naming its own: retention is no longer a valid group name.
+	if err := os.WriteFile(filepath.Join(dir, "retention", "dashboard.json"),
+		[]byte(`{"id":1,"title":"Retention","range":"30d","group":2,"layout":[{"widget":"users"}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := migrateFrom(ctx, st, db, system, testManifest(t))
+	if err == nil {
+		t.Fatal("want error: group names a dashboard that is itself in another group")
+	}
+	if !strings.Contains(err.Error(), "is itself in another group") {
+		t.Errorf("error = %q, want it to say the group is itself in another group", err)
+	}
+}
+
+// TestMigrateFromNonContiguousGroupFails is D16/the spec's "Keys stay
+// sortkey.Spread in file order... check that order puts each group's
+// members together": a third dashboard between two members of group 1
+// breaks it up, and migrateFrom refuses rather than silently splitting
+// the group's tabs apart in sort key order.
+func TestMigrateFromNonContiguousGroupFails(t *testing.T) {
+	st, db := newTestStoreAndReadDB(t)
+	ctx := context.Background()
+	system, dir := systemFSCopy(t)
+
+	// retention (id 1) is its own group (1); overview (id 2) is its own
+	// group (2); a new dashboard (id 3) joins group 1, landing after
+	// group 2 in id order: 1, 2, 1 — not contiguous.
+	third := filepath.Join(dir, "third")
+	if err := os.MkdirAll(third, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(third, "dashboard.json"),
+		[]byte(`{"id":3,"title":"Third","range":"7d","group":1,"layout":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := migrateFrom(ctx, st, db, system, testManifest(t))
+	if err == nil {
+		t.Fatal("want error: group 1 is not contiguous")
+	}
+	if !strings.Contains(err.Error(), "group 1 is not contiguous") {
+		t.Errorf("error = %q, want it to say group 1 is not contiguous", err)
+	}
+}
+
 // TestMigrateFromRefusesEmptyRange is the fix for a review finding: a
 // system dashboard.json must give range explicitly (no default, unlike
 // create_dashboard's "7d"), and the refusal should name the problem

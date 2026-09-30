@@ -32,6 +32,7 @@ type FileWidget struct {
 type FileDashboard struct {
 	ID           int64 // 0 when the file gives none (reporting dev only)
 	Title, Range string
+	Group        int64        // the group this dashboard is a tab of; 0 = its own id (D16)
 	Widgets      []FileWidget // layout order
 }
 
@@ -40,6 +41,7 @@ type fileDashboardDoc struct {
 	ID     int64            `json:"id"`
 	Title  string           `json:"title"`
 	Range  string           `json:"range"`
+	Group  int64            `json:"group"`
 	Layout []fileLayoutItem `json:"layout"`
 }
 
@@ -174,7 +176,7 @@ func LoadDashboard(fsys fs.FS, dir string) (FileDashboard, error) {
 		}
 	}
 
-	return FileDashboard{ID: doc.ID, Title: doc.Title, Range: doc.Range, Widgets: widgets}, nil
+	return FileDashboard{ID: doc.ID, Title: doc.Title, Range: doc.Range, Group: doc.Group, Widgets: widgets}, nil
 }
 
 // LoadDashboards loads every top-level directory in fsys as a
