@@ -817,8 +817,8 @@ resources are MCP-only. The dashboard routes are listed in
 Every route is also described by an OpenAPI 3.1 document at
 `/api/openapi.json`, generated from the same definitions that register the
 routes, with each operation's `operationId` naming the tool it mirrors.
-`/api/docs` redirects to `/app/api-docs`, which renders it in Swagger UI;
-signed in to the dashboards, Try it out uses that login. Neither needs a
+`/api/docs` renders it in Swagger UI; signed in to the dashboards, Try it
+out uses that login. Neither needs a
 token: they describe routes and fields, never data.
 
 ```bash

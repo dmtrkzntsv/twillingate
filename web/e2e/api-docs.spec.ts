@@ -12,7 +12,7 @@ test('/api/docs opens Swagger UI, and Try it out is signed with the app login', 
   await page.waitForURL(/\/app\/dashboards\/\d+/)
 
   await page.goto('/api/docs')
-  await expect(page).toHaveURL(/\/app\/api-docs$/)
+  await expect(page).toHaveURL(/\/api\/docs$/)
   await expect(page.getByRole('heading', { name: /Twillingate API/ })).toBeVisible()
 
   const op = page.locator('#operations-projects-list_projects')

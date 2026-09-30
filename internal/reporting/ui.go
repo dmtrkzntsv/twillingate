@@ -47,11 +47,21 @@ func Manifest() []byte {
 // response may be framed by another page or sniffed into another type.
 // A binary built without the app (go build before make ui) answers 503
 // with how to build it, rather than panicking on every request.
+// api-docs.html is a page of the build but not of the app: APIDocs serves it.
 func UI() http.Handler {
-	return uiHandler(uiFS)
+	return uiHandler(uiFS, "")
 }
 
-func uiHandler(files fs.ReadFileFS) http.Handler {
+// APIDocs serves the build's other page, api-docs.html (Swagger UI over
+// the REST API's OpenAPI document), at whatever path it is mounted on:
+// /api/docs. Its scripts and styles load from /app/assets/, and it is
+// cached and guarded the way the app's shell is.
+func APIDocs() http.Handler {
+	return uiHandler(uiFS, "api-docs.html")
+}
+
+// uiHandler serves page for every request, or with page "" the /app/ tree.
+func uiHandler(files fs.ReadFileFS, page string) http.Handler {
 	if _, err := fs.Stat(files, "ui/index.html"); err != nil {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "this binary was built without the dashboard app: build it with `make build`", http.StatusServiceUnavailable)
@@ -60,7 +70,7 @@ func uiHandler(files fs.ReadFileFS) http.Handler {
 	// The ETags of the files that keep their names across releases.
 	etags := sync.OnceValue(func() map[string]string {
 		tags := map[string]string{}
-		for _, name := range []string{"index.html", "sw.js", "manifest.webmanifest"} {
+		for _, name := range []string{"index.html", "api-docs.html", "sw.js", "manifest.webmanifest"} {
 			sum := sha256.Sum256(mustRead(files, "ui/"+name))
 			tags[name] = `"` + hex.EncodeToString(sum[:12]) + `"`
 		}
@@ -71,20 +81,15 @@ func uiHandler(files fs.ReadFileFS) http.Handler {
 		h.Set("X-Frame-Options", "DENY")
 		h.Set("Content-Security-Policy", "frame-ancestors 'none'")
 		h.Set("X-Content-Type-Options", "nosniff")
-		name := strings.TrimPrefix(r.URL.Path, "/app/")
-		if name == r.URL.Path || name == "components.json" {
-			http.NotFound(w, r)
-			return
-		}
-		b, err := files.ReadFile("ui/" + name)
-		switch {
-		case err == nil:
-		case name == "assets" || strings.HasPrefix(name, "assets/"):
-			http.NotFound(w, r)
-			return
-		default:
-			name = "index.html"
-			b = mustRead(files, "ui/index.html")
+		name, b := page, []byte(nil)
+		if page == "" {
+			var ok bool
+			if name, b, ok = appFile(files, r.URL.Path); !ok {
+				http.NotFound(w, r)
+				return
+			}
+		} else {
+			b = mustRead(files, "ui/"+page)
 		}
 		switch tag, revalidated := etags()[name]; {
 		case strings.HasPrefix(name, "assets/"):
@@ -98,6 +103,25 @@ func uiHandler(files fs.ReadFileFS) http.Handler {
 		}
 		http.ServeContent(w, r, name, time.Time{}, bytes.NewReader(b))
 	})
+}
+
+// appFile resolves an /app/ path to the build file that answers it: the
+// file itself, or index.html for a route the app handles on the client. ok
+// is false for what is not the app's to serve: components.json,
+// api-docs.html (served at /api/docs) and a missing asset.
+func appFile(files fs.ReadFileFS, urlPath string) (name string, b []byte, ok bool) {
+	name = strings.TrimPrefix(urlPath, "/app/")
+	if name == urlPath || name == "components.json" || name == "api-docs.html" {
+		return "", nil, false
+	}
+	b, err := files.ReadFile("ui/" + name)
+	switch {
+	case err == nil:
+		return name, b, true
+	case name == "assets" || strings.HasPrefix(name, "assets/"):
+		return "", nil, false
+	}
+	return "index.html", mustRead(files, "ui/index.html"), true
 }
 
 // uiTypes are the content types Go's own table may lack or get wrong for

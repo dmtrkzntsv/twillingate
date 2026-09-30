@@ -12,7 +12,13 @@ import (
 
 type openAPIDoc struct {
 	OpenAPI string `json:"openapi"`
-	Paths   map[string]map[string]struct {
+	Info    struct {
+		License struct {
+			Name string `json:"name"`
+			URL  string `json:"url"`
+		} `json:"license"`
+	} `json:"info"`
+	Paths map[string]map[string]struct {
 		OperationID string `json:"operationId"`
 		Parameters  []struct {
 			Name     string          `json:"name"`
@@ -49,6 +55,9 @@ func TestOpenAPIDescribesEveryRoute(t *testing.T) {
 	}
 	if doc.OpenAPI != "3.1.0" {
 		t.Errorf("openapi = %q", doc.OpenAPI)
+	}
+	if l := doc.Info.License; l.Name != "AGPL-3.0" || l.URL == "" {
+		t.Errorf("info.license = %+v", l)
 	}
 	routes := 0
 	for _, s := range specs {
@@ -145,7 +154,7 @@ func TestOpenAPIRefusesUndeclaredWildcard(t *testing.T) {
 	}
 }
 
-// The document and the docs redirect answer without a token; everything
+// The document and its Swagger UI page answer without a token; everything
 // else under /api/ still needs one.
 func TestOpenAPIServedUnauthenticated(t *testing.T) {
 	h := newHandlerFixture(t, nil)
@@ -160,8 +169,8 @@ func TestOpenAPIServedUnauthenticated(t *testing.T) {
 	}
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest("GET", "/api/docs", nil))
-	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/app/api-docs" {
-		t.Fatalf("/api/docs: %d → %q", rec.Code, rec.Header().Get("Location"))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "<title>Twillingate API</title>") {
+		t.Fatalf("/api/docs: %d %.200s", rec.Code, rec.Body.String())
 	}
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest("POST", "/api/openapi.json", nil))

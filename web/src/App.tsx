@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, type ReactNode } from 'react'
+import { useEffect, type ReactNode } from 'react'
 import { WifiOffIcon } from 'lucide-react'
 import { BrowserRouter, Navigate, Route, Routes, useNavigate } from 'react-router'
 import StatusCard from '@/components/StatusCard'
@@ -10,9 +10,6 @@ import Dashboard from '@/pages/Dashboard'
 import ComponentsGallery from '@/pages/gallery/ComponentsGallery'
 import Home from '@/pages/Home'
 import Login from '@/pages/Login'
-
-// Swagger UI is ~1.5 MB: its own chunk, fetched only when this page opens.
-const ApiDocs = lazy(() => import('@/pages/ApiDocs'))
 
 /** Sends a request the API refused with 401 to the login page, in-app, coming back here after. */
 function LoginOnUnauthorized() {
@@ -64,14 +61,6 @@ function App() {
           <Route path="/gallery/components" element={<ComponentsGallery />} />
           <Route path="/gallery" element={<Navigate to="/gallery/components" replace />} />
           <Route path="/gallery/*" element={<Navigate to="/gallery/components" replace />} />
-          <Route
-            path="/api-docs"
-            element={
-              <Suspense>
-                <ApiDocs />
-              </Suspense>
-            }
-          />
           <Route path="/callback" element={<Callback />} />
           <Route path="/login" element={<Login />} />
         </Routes>

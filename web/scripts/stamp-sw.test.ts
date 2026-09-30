@@ -11,8 +11,8 @@ describe('stamp', () => {
     expect(out).toContain('const ASSETS = ["/app/assets/index-a.css","/app/assets/index-b.js"]')
   })
 
-  it('leaves the API docs chunk out of the precache', () => {
-    const out = stamp(source, ['index-a.js', 'ApiDocs-c.js', 'ApiDocs-d.css'])
+  it('leaves the API docs bundle out of the precache', () => {
+    const out = stamp(source, ['index-a.js', 'api-docs-c.js', 'api-docs-d.css'])
     expect(out).toContain('const ASSETS = ["/app/assets/index-a.js"]')
   })
 

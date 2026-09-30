@@ -14,12 +14,11 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 )
 
-// The OpenAPI document's path and the Swagger UI it is read by, which the
-// dashboards app serves: /api/docs only redirects there.
+// The OpenAPI document's path, and that of the Swagger UI page reading it
+// (built with the dashboards app, served by reporting.APIDocs).
 const (
 	openAPIPath = "/api/openapi.json"
 	docsPath    = "/api/docs"
-	docsUIPath  = "/app/api-docs"
 )
 
 // pathParam matches a ServeMux wildcard; OpenAPI writes path parameters the
@@ -63,6 +62,7 @@ func openAPI(specs []spec) ([]byte, error) {
 		"info": map[string]any{
 			"title":       "Twillingate API",
 			"version":     version.Version,
+			"license":     map[string]string{"name": "AGPL-3.0", "url": "https://www.gnu.org/licenses/agpl-3.0.html"},
 			"description": "Every route but PUT /api/dashboards/{dashboard_id}/view mirrors the MCP tool its operationId names. Reference: docs://twillingate and docs://reporting.",
 		},
 		// Relative: the routes are wherever this document was fetched from.

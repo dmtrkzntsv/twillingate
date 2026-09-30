@@ -12,10 +12,10 @@ import { fileURLToPath } from 'node:url'
 const CACHE_LINE = /^const CACHE = '[^']*'$/m
 const ASSETS_LINE = /^const ASSETS = \[.*\]$/m
 
-// The API docs page's chunk (Swagger UI, ~1.5 MB) is left out of the
+// The API docs page's bundle (Swagger UI, ~1.4 MB) is left out of the
 // precache: the dashboards never load it, so installing it would only cost
 // every visitor the download.
-const NOT_PRECACHED = /^ApiDocs-/
+const NOT_PRECACHED = /^api-docs-/
 
 // stamp returns sw with its CACHE and ASSETS lines set for the given built
 // asset file names (as listed in the assets directory).

@@ -27,7 +27,7 @@ const (
 // returning one handler that serves the API surface: the MCP streamable
 // endpoint at /mcp and the REST routes under /api/ (unmatched /api/ paths
 // answer a JSON 404), plus, unauthenticated, their OpenAPI document at
-// /api/openapi.json and /api/docs, a redirect to its Swagger UI. Each prefix is auth-wrapped on its own so its 401
+// /api/openapi.json and its Swagger UI at /api/docs. Each prefix is auth-wrapped on its own so its 401
 // challenge names metadata whose resource is that prefix's URL. It mounts
 // nothing itself: NewHandler wraps it with its own mux for the standalone
 // listener, and app calls it directly to mount on the ingest surface's mux
@@ -73,7 +73,7 @@ func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *m
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(doc)
 	})
-	protected.Handle("GET "+docsPath, http.RedirectHandler(docsUIPath, http.StatusFound))
+	protected.Handle("GET "+docsPath, reporting.APIDocs())
 	return protected, db.Close, nil
 }
 
