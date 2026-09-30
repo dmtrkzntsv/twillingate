@@ -59,6 +59,7 @@ RUN npm ci
 COPY evidence/ ./
 
 FROM alpine:3.20 AS runtime
+LABEL org.opencontainers.image.licenses="AGPL-3.0-only"
 RUN apk add --no-cache ca-certificates tzdata && adduser -D -H -u 10001 twillingate
 COPY --from=go-build /out/twillingate /usr/local/bin/twillingate
 # Docker seeds a fresh named volume from the image directory, ownership
@@ -76,6 +77,7 @@ ENTRYPOINT ["/usr/local/bin/twillingate"]
 CMD ["serve"]
 
 FROM node:22-alpine AS evidence
+LABEL org.opencontainers.image.licenses="AGPL-3.0-only"
 RUN apk add --no-cache ca-certificates tzdata && adduser -D -H -u 10001 twillingate
 COPY --from=go-build /out/twillingate /usr/local/bin/twillingate
 # Evidence writes .evidence/ and build/ inside the project, and the snapshot

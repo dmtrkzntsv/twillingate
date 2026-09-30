@@ -156,3 +156,10 @@ under ePrivacy, the same legal category as a cookie. See
 **Access and erasure.** Enabling the API exposes every stored id to every
 valid token holder, over MCP and the REST routes alike; complete erasure is
 `twillingate project delete`, deliberately CLI-only.
+
+## License
+
+twillingate is licensed under the [GNU Affero General Public License v3.0](LICENSE)
+(AGPL-3.0-only). The browser SDK in [`sdk/`](sdk/), which ships inside other
+people's sites and apps, and the [Plausible shim](docs/plausible/) are
+licensed under [MIT](sdk/LICENSE).
