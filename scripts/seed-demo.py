@@ -168,12 +168,12 @@ def seed(cur, pid, name, profile, today, sends_ids):
                 ts = datetime.datetime.combine(day, datetime.time()) + datetime.timedelta(
                     seconds=start + p * random.randint(20, 600))
                 cur.execute(
-                    "INSERT INTO events (id, project_id, ts, received_at, kind, actor_id, actor_kind,"
-                    " user_id, group_id, path, referrer_source, country, device, browser,"
-                    " browser_version, platform, os, utm_source, utm_medium, utm_campaign,"
-                    " display_width, display_height, consent, family, event_name)"
-                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'views','$page_view')",
-                    (str(uuid.uuid4()), pid, ts.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "INSERT INTO events (id, project_id, ts, day, received_at, kind, actor_id,"
+                    " actor_kind, user_id, group_id, path, referrer_source, country, device,"
+                    " browser, browser_version, platform, os, utm_source, utm_medium,"
+                    " utm_campaign, display_width, display_height, consent, family, event_name)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'views','$page_view')",
+                    (str(uuid.uuid4()), pid, ts.strftime("%Y-%m-%dT%H:%M:%SZ"), day.isoformat(),
                      ts.strftime("%Y-%m-%dT%H:%M:%SZ"), "web", vh,
                      "install" if sends_ids else "connection", "", "",
                      pick(profile["pages"]), ref, country, device, browser,
@@ -197,10 +197,10 @@ def seed(cur, pid, name, profile, today, sends_ids):
                     # views above, so every product event is web-originated:
                     # platform web, and an OS drawn from the same web mix.
                     cur.execute(
-                        "INSERT INTO events (id, project_id, ts, received_at, event_name,"
+                        "INSERT INTO events (id, project_id, ts, day, received_at, event_name,"
                         " actor_id, actor_kind, user_id, group_id, platform, os, app_version,"
-                        " attributes, consent, family) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'product')",
-                        (str(uuid.uuid4()), pid, ts.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                        " attributes, consent, family) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'product')",
+                        (str(uuid.uuid4()), pid, ts.strftime("%Y-%m-%dT%H:%M:%SZ"), day.isoformat(),
                          ts.strftime("%Y-%m-%dT%H:%M:%SZ"), event_name,
                          actor_for(name, day, n, sends_ids),
                          "user" if sends_ids else "connection", user,
@@ -252,12 +252,12 @@ def seed_app(cur, pid, name, profile, today, sends_ids):
                 ts = datetime.datetime.combine(day, datetime.time()) + datetime.timedelta(
                     seconds=start + s * random.randint(15, 240))
                 cur.execute(
-                    "INSERT INTO events (id, project_id, ts, received_at, kind, actor_id, actor_kind, user_id,"
-                    " group_id, session_id, path, platform, os, app_version, os_version,"
-                    " browser, device, device_model, browser_locale, app_locale, country, consent,"
-                    " family, event_name)"
-                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'views','$screen_view')",
-                    (str(uuid.uuid4()), pid, ts.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "INSERT INTO events (id, project_id, ts, day, received_at, kind, actor_id,"
+                    " actor_kind, user_id, group_id, session_id, path, platform, os, app_version,"
+                    " os_version, browser, device, device_model, browser_locale, app_locale,"
+                    " country, consent, family, event_name)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'views','$screen_view')",
+                    (str(uuid.uuid4()), pid, ts.strftime("%Y-%m-%dT%H:%M:%SZ"), day.isoformat(),
                      ts.strftime("%Y-%m-%dT%H:%M:%SZ"), "app", actor,
                      "user" if sends_ids else "connection",
                      f"user-{name}-{n}" if sends_ids else "",
