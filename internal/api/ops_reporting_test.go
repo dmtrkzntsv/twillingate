@@ -474,6 +474,68 @@ func TestDashboardGroups(t *testing.T) {
 	}
 }
 
+// TestDashboardGroupRouteBodies: the restore and duplicate routes, like
+// archive, act on the one dashboard with an empty body or {} and on its
+// whole group with {"whole_group": true}.
+func TestDashboardGroupRouteBodies(t *testing.T) {
+	h, cs := newTestHost(t)
+	r := newTestRegistrar(t, h)
+	type dash struct {
+		ID      int64 `json:"dashboard_id"`
+		GroupID int64 `json:"group_id"`
+		Tabs    []struct {
+			ID int64 `json:"dashboard_id"`
+		} `json:"tabs"`
+	}
+	var one, two dash
+	toolJSON(t, cs, "create_dashboard", map[string]any{"title": "One"}, &one)
+	toolJSON(t, cs, "create_dashboard", map[string]any{"title": "Two", "group_id": one.GroupID}, &two)
+
+	for _, tc := range []struct {
+		body      string
+		wantWhole bool
+	}{{"", false}, {"{}", false}, {`{"whole_group":true}`, true}} {
+		toolJSON(t, cs, "archive_dashboard", map[string]any{"dashboard_id": one.ID, "whole_group": true}, nil)
+		rec := serveREST(t, r, "POST", fmt.Sprintf("/api/dashboards/%d/restore", two.ID), tc.body)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("restore with body %q = %d %s", tc.body, rec.Code, rec.Body.String())
+		}
+		archivedAt := dashboardArchivedAt(t, cs)
+		if archivedAt[two.ID] != "" || (archivedAt[one.ID] == "") != tc.wantWhole {
+			t.Fatalf("restore with body %q restored the wrong set: %+v", tc.body, archivedAt)
+		}
+	}
+
+	for _, tc := range []struct {
+		body      string
+		wantWhole bool
+	}{{"", false}, {"{}", false}, {`{"whole_group":true}`, true}} {
+		var before dash
+		toolJSON(t, cs, "get_dashboard", map[string]any{"dashboard_id": one.ID}, &before)
+		rec := serveREST(t, r, "POST", fmt.Sprintf("/api/dashboards/%d/duplicate", two.ID), tc.body)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("duplicate with body %q = %d %s", tc.body, rec.Code, rec.Body.String())
+		}
+		var cp dash
+		if err := json.Unmarshal(rec.Body.Bytes(), &cp); err != nil {
+			t.Fatal(err)
+		}
+		if tc.wantWhole {
+			// A new group holding a copy of every tab.
+			if cp.GroupID == one.GroupID || len(cp.Tabs) != len(before.Tabs) {
+				t.Fatalf("duplicate with body %q = group %d with %d tabs, want a new group of %d",
+					tc.body, cp.GroupID, len(cp.Tabs), len(before.Tabs))
+			}
+			continue
+		}
+		// One copy, the next tab of the source's group.
+		if cp.GroupID != one.GroupID || len(cp.Tabs) != len(before.Tabs)+1 {
+			t.Fatalf("duplicate with body %q = group %d with %d tabs, want group %d with %d",
+				tc.body, cp.GroupID, len(cp.Tabs), one.GroupID, len(before.Tabs)+1)
+		}
+	}
+}
+
 // TestViewRouteRefusals: each part is required when the dashboard has
 // that switcher and refused when it has none; presets are a closed list;
 // an unknown dashboard is a 404.
