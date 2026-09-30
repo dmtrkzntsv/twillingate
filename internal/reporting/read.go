@@ -13,6 +13,7 @@ type DashboardInfo struct {
 	ID         int64  `json:"dashboard_id"`
 	Title      string `json:"title"`
 	Owner      string `json:"owner"`
+	GroupID    int64  `json:"group_id"`             // the group it is a tab of: its first dashboard's id, or a number reserved for one that left a group
 	ProjectID  int64  `json:"project_id,omitempty"` // stored selection
 	Range      string `json:"range,omitempty"`
 	From       string `json:"from,omitempty"`
@@ -54,7 +55,14 @@ type DashboardDetail struct {
 	DashboardInfo
 	FollowsProject bool         `json:"follows_project"` // any live widget does: show the project switcher
 	FollowsRange   bool         `json:"follows_range"`
+	Tabs           []Tab        `json:"tabs"`    // the group's live members in order, the same from every member; always non-nil
 	Widgets        []WidgetInfo `json:"widgets"` // live, in order; each carries width and height (the layout)
+}
+
+// Tab is one entry of a group's tab bar.
+type Tab struct {
+	ID    int64  `json:"dashboard_id"`
+	Title string `json:"title"`
 }
 
 // ListedWidget is one list_widgets row: the widget, its dashboard, and
@@ -125,7 +133,8 @@ func (s *Service) Dashboards(ctx context.Context) (Dashboards, error) {
 	return out, nil
 }
 
-// Dashboard returns dashboard id with its live widgets in order.
+// Dashboard returns dashboard id with its group's tabs and its live
+// widgets in order.
 func (s *Service) Dashboard(ctx context.Context, id int64) (DashboardDetail, error) {
 	d, err := s.st.GetDashboard(ctx, id)
 	if err != nil {
@@ -135,7 +144,18 @@ func (s *Service) Dashboard(ctx context.Context, id int64) (DashboardDetail, err
 	if err != nil {
 		return DashboardDetail{}, err
 	}
-	out := DashboardDetail{DashboardInfo: dashboardInfo(d), Widgets: []WidgetInfo{}}
+	ds, err := s.st.ListDashboards(ctx)
+	if err != nil {
+		return DashboardDetail{}, err
+	}
+	out := DashboardDetail{DashboardInfo: dashboardInfo(d), Tabs: []Tab{}, Widgets: []WidgetInfo{}}
+	// An archived dashboard is not a tab, but its detail still shows the
+	// tabs of the group it belongs to.
+	for _, x := range ds {
+		if x.GroupID == d.GroupID && x.Owner == d.Owner && x.ArchivedAt == "" {
+			out.Tabs = append(out.Tabs, Tab{ID: x.ID, Title: x.Title})
+		}
+	}
 	for _, w := range ws {
 		if w.ArchivedAt != "" {
 			continue
@@ -187,7 +207,7 @@ func (s *Service) Widgets(ctx context.Context, dashboardID int64, component stri
 
 func dashboardInfo(d store.Dashboard) DashboardInfo {
 	return DashboardInfo{
-		ID: d.ID, Title: d.Title, Owner: d.Owner,
+		ID: d.ID, Title: d.Title, Owner: d.Owner, GroupID: d.GroupID,
 		ProjectID: d.LastProjectID, Range: d.LastRange, From: d.LastFrom, To: d.LastTo,
 		Widgets: d.LiveWidgets, ArchivedAt: d.ArchivedAt,
 	}

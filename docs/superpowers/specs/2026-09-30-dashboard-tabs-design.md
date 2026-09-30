@@ -42,6 +42,9 @@ Two PRs:
    insert's transaction. Dashboard ids are never reused
    (`AUTOINCREMENT`), so group ids are unique without a counter. The
    number stays with the group if that dashboard later leaves it.
+   A dashboard taken out of a group that still has other members gets a
+   new number reserved from the same id sequence, since the group it
+   left may still use its id.
 3. **One order per owner, groups contiguous.** `sort_key` keeps its one
    order per owner and its index, `UNIQUE (owner, sort_key)`. The rows of
    a group, archived ones included, are always adjacent in that order;
@@ -79,7 +82,7 @@ Two PRs:
      the same way. G may be its own group, which is how a tab moves to
      the front: `{group_id: <own group>, after: 0}`.
    - `update_dashboard {group_id: 0}` takes the dashboard out of its
-     group as a new group of one (`group_id` = its own id), placed by
+     group as a new group of one (a new group id, decision 2), placed by
      `after` in the sidebar, or right after the group it left.
 8. **Refusals.**
    - `after: X` with X archived, missing, or another owner's:

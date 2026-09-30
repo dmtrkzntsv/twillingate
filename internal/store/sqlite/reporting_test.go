@@ -622,3 +622,27 @@ func TestReportingWritesDoNotBumpConfigVersion(t *testing.T) {
 		t.Errorf("config_version = %d after reporting writes, want unchanged %d", v1, v0)
 	}
 }
+
+func TestNewDashboardGroupIDIsNeverADashboardID(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	first, err := db.NewDashboardGroupID(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := db.NewDashboardGroupID(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second <= first {
+		t.Errorf("reserved %d then %d, want increasing", first, second)
+	}
+	id, err := db.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "D", SortKey: "a"}, nil,
+		store.AuditEntry{Actor: "t", Action: "dashboard.create"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id <= second {
+		t.Errorf("dashboard id %d after reserving %d, want greater", id, second)
+	}
+}

@@ -341,6 +341,21 @@ func (d *DB) MoveDashboards(ctx context.Context, ks []store.DashboardKey, a stor
 	})
 }
 
+// NewDashboardGroupID reserves a number no dashboard has or will get by
+// advancing the dashboards AUTOINCREMENT sequence (migration 021 seeds
+// its sqlite_sequence row): a later insert takes the next number after
+// it, so the reserved one is a group id no dashboard id can collide
+// with.
+func (d *DB) NewDashboardGroupID(ctx context.Context) (int64, error) {
+	var id int64
+	err := d.db.QueryRowContext(ctx,
+		`UPDATE sqlite_sequence SET seq = seq + 1 WHERE name = 'dashboards' RETURNING seq`).Scan(&id)
+	if err != nil {
+		return 0, fmt.Errorf("reserve dashboard group id: %w", err)
+	}
+	return id, nil
+}
+
 // InsertDashboardGroup inserts ds as one new group, in one transaction:
 // the first dashboard gets group_id = its own id (insertDashboardRow's
 // GroupID==0 behaviour), the rest get that id. ws[i] are ds[i]'s

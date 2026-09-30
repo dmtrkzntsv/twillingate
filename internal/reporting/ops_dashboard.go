@@ -17,20 +17,28 @@ var Presets = []string{"today", "yesterday", "7d", "30d", "90d", "custom"}
 
 // After, in CreateDashboard, UpdateDashboard, AddWidget and CopyWidget,
 // places an item: nil last, 0 first, an id right after that item
-// (Deviation 1; keyAfter in place.go).
+// (Deviation 1; keyAfter in place.go for widgets, order.go for
+// dashboards, where an id in another group means after that group).
 
+// CreateDashboard makes a new group of one when GroupID is 0, placed by
+// After in the sidebar; otherwise a tab of group GroupID, placed by After
+// among its tabs (After must then be a member).
 type CreateDashboard struct {
 	Title, Range string
+	GroupID      int64
 	After        *int64
 	Widgets      []WidgetSpec
 }
 
 // UpdateDashboard changes the title when Title is not "", and moves the
-// dashboard when After is not nil.
+// dashboard when After or GroupID is not nil. GroupID nil keeps its
+// group; 0 takes it out as a group of one (a fresh group id; one already
+// alone keeps its own); G makes it a tab of G.
 type UpdateDashboard struct {
-	ID    int64
-	Title string
-	After *int64
+	ID      int64
+	Title   string
+	GroupID *int64
+	After   *int64
 }
 
 // View is a viewer's selection on a dashboard: each part only when the
@@ -76,12 +84,21 @@ func (s *Service) CreateDashboard(ctx context.Context, actor string, in CreateDa
 	}
 	var id int64
 	err = retryConflict(func() error {
-		key, err := s.dashboardKey(ctx, 0, in.After)
+		o, err := s.readOrder(ctx)
+		if err != nil {
+			return err
+		}
+		var key string
+		if in.GroupID == 0 {
+			key, err = o.keyAfterGroup(0, in.After)
+		} else if err = refuseGroup(o, in.GroupID); err == nil {
+			key, err = o.keyInGroup(0, in.GroupID, in.After)
+		}
 		if err != nil {
 			return err
 		}
 		id, err = s.st.InsertDashboard(ctx,
-			store.Dashboard{Owner: store.OwnerUser, Title: in.Title, SortKey: key, LastRange: rng},
+			store.Dashboard{Owner: store.OwnerUser, Title: in.Title, SortKey: key, GroupID: in.GroupID, LastRange: rng},
 			ws, store.AuditEntry{Actor: actor, Action: "dashboard.create"})
 		return err
 	}, lostDashboardRace)
@@ -91,36 +108,129 @@ func (s *Service) CreateDashboard(ctx context.Context, actor string, in CreateDa
 	return s.Dashboard(ctx, id)
 }
 
-// UpdateDashboard retitles and/or moves a user dashboard.
+// UpdateDashboard retitles and/or moves a user dashboard: among its
+// group's tabs, with its whole group in the sidebar, into another group,
+// or out of its group (spec decisions 6 and 7).
 func (s *Service) UpdateDashboard(ctx context.Context, actor string, in UpdateDashboard) (DashboardInfo, error) {
 	d, err := s.editableDashboard(ctx, in.ID)
 	if err != nil {
 		return DashboardInfo{}, err
 	}
-	if in.Title == "" && in.After == nil {
-		return DashboardInfo{}, store.Refuse(store.ErrInvalid, "nothing to update; give title or after")
+	if in.Title == "" && in.After == nil && in.GroupID == nil {
+		return DashboardInfo{}, store.Refuse(store.ErrInvalid, "nothing to update; give title, after or group_id")
 	}
-	if in.Title != "" {
-		if strings.TrimSpace(in.Title) == "" {
-			return DashboardInfo{}, store.Refuse(store.ErrInvalid, "title must not be empty")
-		}
-		d.Title = in.Title
+	if in.Title != "" && strings.TrimSpace(in.Title) == "" {
+		return DashboardInfo{}, store.Refuse(store.ErrInvalid, "title must not be empty")
 	}
+	a := store.AuditEntry{Actor: actor, Action: "dashboard.update"}
 	err = retryConflict(func() error {
-		if in.After != nil && *in.After != d.ID { // after itself: stays where it is
-			key, err := s.dashboardKey(ctx, d.ID, in.After)
-			if err != nil {
-				return err
-			}
-			d.SortKey = key
+		o, err := s.readOrder(ctx)
+		if err != nil {
+			return err
 		}
-		return s.st.UpdateDashboard(ctx, d, store.AuditEntry{Actor: actor, Action: "dashboard.update"})
+		row, ok := o.find(d.ID)
+		if !ok {
+			return store.Refuse(store.ErrNotFound, "dashboard %d: not found", d.ID)
+		}
+		if in.Title != "" {
+			row.Title = in.Title
+		}
+		return s.placeDashboard(ctx, o, row, in, a)
 	}, lostDashboardRace)
 	if err != nil {
 		return DashboardInfo{}, err
 	}
 	d, err = s.st.GetDashboard(ctx, d.ID)
 	return dashboardInfo(d), err
+}
+
+// placeDashboard writes row (already retitled if asked) at the place in
+// asks for, computed over o, the user order read for this attempt.
+func (s *Service) placeDashboard(ctx context.Context, o order, row store.Dashboard, in UpdateDashboard, a store.AuditEntry) error {
+	switch {
+	case in.GroupID != nil && *in.GroupID == 0:
+		return s.leaveGroup(ctx, o, row, in.After, a)
+
+	case in.GroupID != nil:
+		g := *in.GroupID
+		if err := refuseGroup(o, g); err != nil {
+			return err
+		}
+		if in.After != nil && *in.After == row.ID && row.GroupID == g {
+			break // after itself in its own group: stays where it is
+		}
+		key, err := o.keyInGroup(row.ID, g, in.After)
+		if err != nil {
+			return err
+		}
+		row.GroupID, row.SortKey = g, key
+
+	case in.After != nil && *in.After != row.ID: // after itself: stays where it is
+		if x, ok := o.find(*in.After); ok && x.GroupID == row.GroupID {
+			key, err := o.keyInGroup(row.ID, row.GroupID, in.After) // among its tabs
+			if err != nil {
+				return err
+			}
+			row.SortKey = key
+			break
+		}
+		keys, err := o.moveGroup(row.GroupID, *in.After) // with its whole group
+		if err != nil {
+			return err
+		}
+		if keys == nil {
+			break // already there: only the title, if any, below
+		}
+		// MoveDashboards audits under its first key's dashboard: name
+		// the one the caller moved. The keys are parked before any is
+		// written, so their order is free.
+		i := slices.IndexFunc(keys, func(k store.DashboardKey) bool { return k.ID == row.ID })
+		keys[0], keys[i] = keys[i], keys[0]
+		if err := s.st.MoveDashboards(ctx, keys, a); err != nil {
+			return err
+		}
+		if in.Title == "" {
+			return nil
+		}
+		// A new title is a second write (and a second audit row): the
+		// move rewrites keys only. row takes its new key so the title
+		// write keeps it.
+		row.SortKey = keys[0].SortKey
+	}
+	return s.st.UpdateDashboard(ctx, row, a)
+}
+
+// leaveGroup takes row out of its group as a group of one (group_id: 0),
+// placed by after in the sidebar, or right after the group it left.
+//
+// A dashboard already alone is a group of one: it keeps its group id and
+// moves only if after says so. One with others gets a fresh group id,
+// never its own: the group it leaves may still use its id (spec decision
+// 2), and taking it would merge rather than part. A retried attempt
+// reserves another number; a skipped one is harmless.
+func (s *Service) leaveGroup(ctx context.Context, o order, row store.Dashboard, after *int64, a store.AuditEntry) error {
+	if after != nil && *after == row.ID {
+		after = nil // after itself: no place of its own to name
+	}
+	others := o.without(row.ID).group(row.GroupID)
+	if len(others) > 0 {
+		g, err := s.st.NewDashboardGroupID(ctx)
+		if err != nil {
+			return err
+		}
+		row.GroupID = g
+		if after == nil {
+			after = &others[len(others)-1].ID
+		}
+	}
+	if after != nil {
+		key, err := o.keyAfterGroup(row.ID, after)
+		if err != nil {
+			return err
+		}
+		row.SortKey = key
+	}
+	return s.st.UpdateDashboard(ctx, row, a)
 }
 
 // DuplicateDashboard makes a user copy of any dashboard, system ones
@@ -158,11 +268,13 @@ func (s *Service) DuplicateDashboard(ctx context.Context, actor string, id int64
 	}
 	var newID int64
 	err = retryConflict(func() error {
-		key, err := s.dashboardKey(ctx, 0, nil)
+		o, err := s.readOrder(ctx)
 		if err != nil {
 			return err
 		}
-		copyOf.SortKey = key
+		if copyOf.SortKey, err = o.keyAfterGroup(0, nil); err != nil {
+			return err
+		}
 		newID, err = s.st.InsertDashboard(ctx, copyOf, ws, store.AuditEntry{
 			Actor: actor, Action: "dashboard.duplicate", Detail: fmt.Sprintf("from dashboard/%d", id)})
 		return err
