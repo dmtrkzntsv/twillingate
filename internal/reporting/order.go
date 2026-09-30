@@ -123,6 +123,9 @@ func (o order) keyInGroup(self, g int64, after *int64) (string, error) {
 			return "", store.Refuse(store.ErrInvalid, "after %d is not a member of group %d", *after, g)
 		}
 		m := members[idx]
+		if err := refuseArchivedAfter(m); err != nil {
+			return "", err
+		}
 		prev = m.SortKey
 		if i := slices.IndexFunc(rest, func(d store.Dashboard) bool { return d.ID == m.ID }); i+1 < len(rest) {
 			next = rest[i+1].SortKey
@@ -155,6 +158,9 @@ func (o order) moveGroup(g int64, after int64) ([]store.DashboardKey, error) {
 		row, ok := o.find(after)
 		if !ok {
 			return nil, store.Refuse(store.ErrInvalid, "after %d is not a user dashboard", after)
+		}
+		if err := refuseArchivedAfter(row); err != nil {
+			return nil, err
 		}
 		if row.GroupID == g {
 			return nil, nil
@@ -225,6 +231,9 @@ func (o order) keyAfterGroup(self int64, after *int64) (string, error) {
 		if !ok {
 			return "", store.Refuse(store.ErrInvalid, "after %d is not a user dashboard", *after)
 		}
+		if err := refuseArchivedAfter(row); err != nil {
+			return "", err
+		}
 		members := rest.group(row.GroupID)
 		last := members[len(members)-1]
 		i := slices.IndexFunc(rest, func(d store.Dashboard) bool { return d.ID == last.ID })
@@ -234,4 +243,16 @@ func (o order) keyAfterGroup(self int64, after *int64) (string, error) {
 		}
 	}
 	return sortkey.Between(prev, next)
+}
+
+// refuseArchivedAfter refuses an after that names an archived dashboard
+// (spec decision 8): placing next to something hidden would put a
+// dashboard where the page shows nothing to place it by. The order
+// itself keeps archived rows, so new keys never collide with theirs and
+// groups stay contiguous; only the dashboard after names must be live.
+func refuseArchivedAfter(d store.Dashboard) error {
+	if d.ArchivedAt != "" {
+		return store.Refuse(store.ErrInvalid, "after %d is archived; name a live dashboard", d.ID)
+	}
+	return nil
 }

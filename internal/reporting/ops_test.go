@@ -867,6 +867,44 @@ func TestSetViewRefusesNegativeProject(t *testing.T) {
 		store.ErrInvalid, "project_id must be a positive id")
 }
 
+// Every tool that takes after refuses one naming an archived dashboard,
+// and moves or writes nothing (spec decision 8).
+func TestAfterArchivedDashboardRefused(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	a := mustCreate(t, svc, "A")
+	b := mustJoin(t, svc, "B", a.ID)
+	c := mustJoin(t, svc, "C", a.ID)
+	x := mustCreate(t, svc, "X")
+	y := mustCreate(t, svc, "Y")
+	if err := svc.ArchiveDashboard(ctx, "test", b.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ArchiveDashboard(ctx, "test", y.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	before := userRows(t, svc)
+	msg := func(id int64) string { return "after " + itoa(id) + " is archived; name a live dashboard" }
+
+	_, err := svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: c.ID, After: &b.ID})
+	wantRefusal(t, err, store.ErrInvalid, msg(b.ID)) // a tab of its own group
+	_, err = svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: x.ID, After: &b.ID})
+	wantRefusal(t, err, store.ErrInvalid, msg(b.ID)) // another group's tab: a group move
+	_, err = svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: x.ID, GroupID: &a.GroupID, After: &b.ID})
+	wantRefusal(t, err, store.ErrInvalid, msg(b.ID)) // joining a group
+	zero := int64(0)
+	_, err = svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: c.ID, GroupID: &zero, After: &y.ID})
+	wantRefusal(t, err, store.ErrInvalid, msg(y.ID)) // leaving a group
+	_, err = svc.CreateDashboard(ctx, "test", CreateDashboard{Title: "N", After: &y.ID})
+	wantRefusal(t, err, store.ErrInvalid, msg(y.ID))
+	_, err = svc.CreateDashboard(ctx, "test", CreateDashboard{Title: "N", GroupID: a.GroupID, After: &b.ID})
+	wantRefusal(t, err, store.ErrInvalid, msg(b.ID))
+
+	if after := userRows(t, svc); !sameKeys(before, after) {
+		t.Errorf("rows changed after refused placements:\n before %+v\n after  %+v", before, after)
+	}
+}
+
 func TestUpdateDashboardAfterItselfOrFirstStays(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()

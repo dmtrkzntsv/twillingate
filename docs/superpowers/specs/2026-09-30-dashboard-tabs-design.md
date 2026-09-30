@@ -85,8 +85,11 @@ Two PRs:
      group as a new group of one (a new group id, decision 2), placed by
      `after` in the sidebar, or right after the group it left.
 8. **Refusals.**
-   - `after: X` with X archived, missing, or another owner's:
-     `ErrInvalid`, as today.
+   - `after: X` with X missing or another owner's: `ErrInvalid`, as
+     today; with X archived: `ErrInvalid` ("after X is archived; name a
+     live dashboard"), new — before this change an archived X was
+     accepted. Archived rows still count when new keys are computed, so
+     groups stay contiguous.
    - `group_id: G` with no live dashboard in G, or G another owner's:
      `ErrInvalid`.
    - `group_id: G` with an `after` that is not a member of G:

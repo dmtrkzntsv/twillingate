@@ -343,3 +343,36 @@ func TestOrderKeyAfterGroupRefusesUnknownAfter(t *testing.T) {
 		t.Fatalf("err = %v, want ErrInvalid", err)
 	}
 }
+
+// An after naming an archived dashboard is refused by every placement
+// (spec decision 8), whether it names a tab, another group or the
+// group being moved; the archived rows still count for the keys.
+func TestOrderRefusesArchivedAfter(t *testing.T) {
+	o := order{
+		row(1, 1, "a0"), archivedRow(2, 1, "a1"),
+		row(3, 3, "b0"), archivedRow(4, 3, "b1"),
+	}
+	archivedTab, archivedOther := int64(2), int64(4)
+	wantArchived := func(t *testing.T, err error) {
+		t.Helper()
+		if !errors.Is(err, store.ErrInvalid) {
+			t.Fatalf("err = %v, want ErrInvalid", err)
+		}
+	}
+	t.Run("keyInGroup", func(t *testing.T) {
+		_, err := o.keyInGroup(0, 1, &archivedTab)
+		wantArchived(t, err)
+	})
+	t.Run("moveGroup after another group's archived row", func(t *testing.T) {
+		_, err := o.moveGroup(1, archivedOther)
+		wantArchived(t, err)
+	})
+	t.Run("moveGroup after its own archived row", func(t *testing.T) {
+		_, err := o.moveGroup(1, archivedTab)
+		wantArchived(t, err)
+	})
+	t.Run("keyAfterGroup", func(t *testing.T) {
+		_, err := o.keyAfterGroup(0, &archivedOther)
+		wantArchived(t, err)
+	})
+}

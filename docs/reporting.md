@@ -667,8 +667,9 @@ widget's name (`widget visitors: …`), and nothing is created.
 | width is columns out of 12, from 1 to 12 | A whole number 1–12. `height` is the same, in rows of 40px. |
 | after 7 is not a widget on dashboard 1001 | Name a widget on the same dashboard, `0` for first, or leave `after` out for last. |
 | group 5 has no live user dashboard | Give a `group_id` from `list_dashboards` naming a group with a live user dashboard; a system group cannot be joined this way. |
-| after 7 is not a member of group 5 | For `after` naming a tab of the `group_id` given: name a dashboard in that same group (an archived one counts), `0` for its first tab, or leave `after` out for last. |
-| after 7 is not a user dashboard | For `after` with no `group_id` (moving a whole group by the dashboard after it lands): name a user dashboard (an archived one counts), `0` for the top, or leave `after` out for last. |
+| after 7 is not a member of group 5 | For `after` naming a tab of the `group_id` given: name a live dashboard in that same group, `0` for its first tab, or leave `after` out for last. |
+| after 7 is not a user dashboard | For `after` with no `group_id` (moving a whole group by the dashboard after it lands): name a live user dashboard, `0` for the top, or leave `after` out for last. |
+| after 7 is archived; name a live dashboard | `after` never names an archived dashboard: name a live one next to where it should go, or `restore_dashboard` it first. |
 | widget name visitors is already used on this dashboard (`409 conflict`) | Choose another name. An archived widget keeps its name; restore or rename it to reuse the name. |
 | dashboard 1 is a system dashboard and changes only with a release; duplicate_dashboard makes an editable copy | `duplicate_dashboard`, then change the copy. |
 | dashboard 1001 is archived; restore_dashboard first | `restore_dashboard` (updating, adding to or duplicating an archived dashboard is refused). For a widget: widget 42 is archived; restore_widget first. |
