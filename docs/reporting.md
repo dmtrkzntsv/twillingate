@@ -667,8 +667,8 @@ widget's name (`widget visitors: …`), and nothing is created.
 | width is columns out of 12, from 1 to 12 | A whole number 1–12. `height` is the same, in rows of 40px. |
 | after 7 is not a widget on dashboard 1001 | Name a widget on the same dashboard, `0` for first, or leave `after` out for last. |
 | group 5 has no live user dashboard | Give a `group_id` from `list_dashboards` naming a group with a live user dashboard; a system group cannot be joined this way. |
-| after 7 is not a member of group 5 | For `after` naming a tab of the `group_id` given: name a live dashboard in that same group, `0` for its first tab, or leave `after` out for last. |
-| after 7 is not a user dashboard | For `after` with no `group_id` (moving a whole group by the dashboard after it lands): name a live user dashboard, `0` for the top, or leave `after` out for last. |
+| after 7 is not a member of group 5 | For `after` naming a tab of the `group_id` given: name a dashboard in that same group (an archived one counts), `0` for its first tab, or leave `after` out for last. |
+| after 7 is not a user dashboard | For `after` with no `group_id` (moving a whole group by the dashboard after it lands): name a user dashboard (an archived one counts), `0` for the top, or leave `after` out for last. |
 | group 5 has no live member to duplicate | Restore a dashboard in that group first, or duplicate one that still has a live member. |
 | widget name visitors is already used on this dashboard (`409 conflict`) | Choose another name. An archived widget keeps its name; restore or rename it to reuse the name. |
 | dashboard 1 is a system dashboard and changes only with a release; duplicate_dashboard makes an editable copy | `duplicate_dashboard`, then change the copy. |
@@ -679,6 +679,7 @@ widget's name (`widget visitors: …`), and nothing is created.
 | range must be one of today, yesterday, 7d, 30d, 90d, custom | Use a preset id. `create_dashboard` refuses `custom`: create with a preset; the viewer picks custom dates. |
 | title must not be empty; nothing to update; give title, after or group_id | Give a title, or something to change. |
 | dashboard 1001 changed while placing this widget; try again (`409 conflict`) | Another write placed a widget at the same spot; call again. |
+| the dashboard order changed while placing this dashboard; try again (`409 conflict`) | Another write moved or placed a dashboard at the same spot; call again. |
 | `404 not_found` | The dashboard or widget id does not exist; `list_dashboards` and `list_widgets` name them. `widget_data` on an archived widget is a 404 too. |
 
 ## When widgets break after an update
@@ -726,7 +727,8 @@ Open `http://127.0.0.1:3100/`, which redirects to the dashboards at `/app/`.
 - Each `<dir>` is a dashboard directory (it has a `dashboard.json`) or a
   parent of several. A `dashboard.json` without an `id` gets 1001, 1002, …
   in argument order. One with an `id` from 1 to 999 previews as a system
-  dashboard, among the report tabs.
+  dashboard, in its group: a tab of the dashboard its `group` names, or its
+  own sidebar entry when it names none.
 - `-db` defaults to `DATABASE_DSN`'s path. The database is opened read-only
   and never written: the view route answers but stores nothing.
 - `-addr` is refused unless it is a loopback address, and a request naming

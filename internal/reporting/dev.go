@@ -193,8 +193,8 @@ func devWidgetRow(fd FileDashboard, i int, comps map[string]Component) store.Wid
 // a loaded file rather than a stored row: dev has no viewer selection to
 // echo back (SetDashboardView is a no-op), so Last* stay unset. An id in
 // the system range (1–999) is owned by "system", so a system directory
-// previews among the report tabs as it will ship. GroupID mirrors D16:
-// fd.Group, or fd.ID when the file names none.
+// previews in its group as it will ship. GroupID mirrors D16: fd.Group,
+// or fd.ID when the file names none (its own sidebar entry).
 func devDashboardRow(fd FileDashboard) store.Dashboard {
 	owner := store.OwnerUser
 	if fd.ID >= 1 && fd.ID <= 999 {
