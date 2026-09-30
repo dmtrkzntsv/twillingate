@@ -37,23 +37,29 @@ Two PRs:
    new table, no new kind of row: widgets, the stored selection, `after`,
    archiving and every widget tool work on a tab exactly as on a
    dashboard today.
-2. **The parent is the first tab.** Its widgets are the first tab's, and
-   its title is both the sidebar entry and that tab's label. Its children
-   follow in sort-key order. There is no container state (a parent with
+2. **Two columns carry the structure: `parent_id` and `sort_key`.**
+   `parent_id` says which list a dashboard is in: the sidebar (NULL) or
+   a parent's tabs. `sort_key` orders it within that list. `after` is
+   only how the API sets `sort_key`; nothing else is stored.
+3. **The parent is the first tab.** Its widgets are the first tab's, and
+   its title is both the sidebar entry and that tab's label. Its
+   children follow in their sort-key order. The parent's own `sort_key`
+   places it in the sidebar only, so moving a dashboard in the sidebar
+   never reshuffles its tabs. There is no container state (a parent with
    no widgets of its own is simply an empty first tab).
-3. **No foreign key on `parent_id`.** Every rule is enforced in Go (as
+4. **No foreign key on `parent_id`.** Every rule is enforced in Go (as
    the rest of reporting is, 021's header), in one transaction per
    multi-row change. The invariant: **a live tab never has an archived
-   parent.** It follows from decisions 11–13, and it is what makes the
-   purge safe without a cascade (decision 14).
-4. **One level.** A parent must be top level; a dashboard that has
+   parent.** It follows from decisions 12–14, and it is what makes the
+   purge safe without a cascade (decision 15).
+5. **One level.** A parent must be top level; a dashboard that has
    children (archived ones included) cannot be given a parent. Refused
    with `ErrInvalid`.
-5. **One owner.** A tab has its parent's owner. A user dashboard cannot be
+6. **One owner.** A tab has its parent's owner. A user dashboard cannot be
    put under a system one, and a system dashboard is never moved.
    Refused with `ErrInvalid` (user under system) or the existing
    system-dashboard refusal.
-6. **Order is per set of siblings.** The order index becomes
+7. **Order is per list.** The order index becomes
    `UNIQUE (owner, IFNULL(parent_id, 0), sort_key)`: top-level dashboards
    keep the keys they have, and each parent's children have their own
    order. `dashboardKey` places among siblings instead of among every
@@ -61,29 +67,29 @@ Two PRs:
 
 ### Placing and moving
 
-7. **`create_dashboard` takes an optional `parent_id`.** Given, the new
-   dashboard is a tab of that parent, placed by `after` among the tabs
-   (decision 8); omitted, it is top level, as today. A parent that is
-   archived is refused (`ErrConflict`), keeping the invariant.
-8. **`after` orders whatever list the dashboard is in.** On a top-level
-   dashboard it is the sidebar, as today. On a tab it is the tab bar,
-   where the parent is always first: `after: <parent id>` puts the tab
-   right after the parent, `after: <sibling id>` after that sibling, and
-   **`after: 0` makes it the first tab, which means promoting it**: in
-   one transaction it takes the old parent's `parent_id` (NULL) and
-   sidebar `sort_key`, and the old parent and every other child
-   (archived ones included, so decision 4 holds for them too) move under
-   it, the old parent right after it and the rest keeping their order.
-9. **`update_dashboard` takes an optional `parent_id`.** `N` moves the
-   dashboard under N as its last tab, or where `after` says. `0` takes a
-   tab out to the top level, placed last among the owner's dashboards or
-   where `after` says. Moving a dashboard that has children is refused
-   (decision 4), and so is moving one under an archived parent
-   (`ErrConflict`).
+8. **`create_dashboard` takes an optional `parent_id`.** Given, the new
+   dashboard is a tab of that parent, placed by `after` among its tabs
+   (decision 10); omitted, it is top level, as today. An archived parent
+   is refused (`ErrConflict`), keeping the invariant.
+9. **`update_dashboard` changes one of `parent_id` and `after` per call;
+   both together are refused (`ErrInvalid`).**
+   - `parent_id: N` moves the dashboard under N as its last tab;
+     `parent_id: 0` takes a tab out to the top level, last in the
+     sidebar. Moving a dashboard that has children is refused
+     (decision 5), and so is moving one under an archived parent
+     (`ErrConflict`).
+   - `after` reorders within the list the dashboard is already in
+     (decision 10).
+10. **`after` names a dashboard in the same list.** On a top-level
+    dashboard it is the sidebar, as today. On a tab it is the tabs after
+    the parent: `after: <sibling id>` puts it after that sibling, and
+    `after: 0` or `after: <parent id>` puts it right after the parent.
+    Which dashboard is the first tab (the parent) never changes by
+    ordering; a later, explicit operation can add that if it is needed.
 
 ### Copying
 
-10. **`duplicate_dashboard` copies what it is given:**
+11. **`duplicate_dashboard` copies what it is given:**
     - **a parent**: the parent and every live child, each with its live
       widgets, in one transaction. The copy is a user dashboard at the
       top level; the new parent is titled "… (copy)", its tabs keep their
@@ -92,80 +98,93 @@ Two PRs:
     - **a tab of a user dashboard**: that tab alone, titled "… (copy)",
       placed right after it under the same parent.
     - **a tab of a system dashboard**: that tab alone, as a top-level
-      user dashboard (decision 5 forbids putting it under the system
+      user dashboard (decision 6 forbids putting it under the system
       parent).
     - **a dashboard with no tabs**: as today.
 
 ### Archiving
 
-11. **`archive_dashboard` archives one dashboard by default.**
-    - On a tab: that tab.
-    - On a parent with live tabs: the next live tab is promoted
-      (decision 8's promotion), then the old parent, now a tab, is
-      archived. The dashboard stays in the sidebar under the promoted
-      tab's title.
-    - On a dashboard with no live tabs: that dashboard, as today.
-12. **`archive_dashboard` with `with_tabs: true` archives the whole
-    dashboard**: on a top-level dashboard, it and every live child, all
-    with the same `archived_at`, in one transaction. On a tab it is refused
-    (`ErrInvalid`: "dashboard N is a tab; archive its parent M with
-    with_tabs"), so an agent never archives more than it named.
-13. **`restore_dashboard` mirrors it.** By default it restores the one
-    dashboard. `with_tabs: true` (refused on a tab, as in decision 12) on
-    a top-level dashboard also restores the children
-    whose `archived_at` equals the parent's, so a tab archived on its own
-    earlier stays archived. Restoring a tab whose parent is archived is
-    refused (`ErrConflict`: "restore dashboard M first").
-14. **The purge is unchanged.** It deletes each archived user dashboard
+An archived dashboard keeps a link only when it was archived together
+with its parent; every other archive detaches it.
+
+12. **`archive_dashboard` archives one dashboard by default.**
+    - **On a tab**: in one transaction, the tab is archived and
+      detached: `parent_id` NULL and a new `sort_key` after the last
+      top-level dashboard. `restore_dashboard` brings it back as its own
+      sidebar entry; `update_dashboard {parent_id}` makes it a tab again.
+    - **On a parent with live tabs**: in one transaction, the next live
+      tab takes over as parent (`parent_id` NULL, the old parent's
+      sidebar `sort_key`), every other child, archived ones included, is
+      repointed to it, and the old parent is archived as a dashboard
+      with no children and a new `sort_key` after the last top-level
+      dashboard. The sidebar entry stays where it was, under the new
+      parent's title.
+    - **On a dashboard with no live tabs**: that dashboard, as today.
+13. **`archive_dashboard` with `with_tabs: true` archives the whole
+    dashboard**: on a top-level dashboard, it and every live child, in
+    one transaction, the children keeping their `parent_id`. On a tab it
+    is refused (`ErrInvalid`: "dashboard N is a tab; archive its parent
+    M with with_tabs"), so an agent never archives more than it named.
+14. **`restore_dashboard` mirrors it.**
+    - By default it restores the one dashboard. A tab whose parent is
+      live comes back in place; a tab whose parent is archived (they
+      were archived together) is detached as in decision 12 and comes
+      back as its own sidebar entry.
+    - `with_tabs: true` on a top-level dashboard also restores every
+      archived child still pointing at it: by decision 12, those are
+      exactly the ones archived together with it. Refused on a tab, as
+      in decision 13.
+15. **The purge is unchanged.** It deletes each archived user dashboard
     in its own transaction, with its widgets by their existing foreign
-    key. By the invariant (decision 3), a tab is archived no later than
-    its parent, so it is purged no later: no live row ever points at a
-    purged parent. A `parent_id` can dangle only on an archived row
-    between two passes, and nothing reads it.
+    key. A `parent_id` on an archived row points only at a live parent or
+    at one archived in the same transaction, so a tab is never purged
+    later than its parent and no live row ever points at a purged one.
+    Between two deletes of one pass, an archived row's `parent_id` can
+    dangle, and nothing reads it.
 
 ### System dashboards
 
-15. **Views is the parent of the other four.** `dashboard.json` gains an
+16. **Views is the parent of the other four.** `dashboard.json` gains an
     optional `"parent": <id>`; Product, Users, Groups and Retention name
     `1`. The system migrator checks that the parent is in the same
     release, is top level, and is not itself a tab, and writes
     `parent_id` in `SyncReporting`'s transaction. The sidebar entry is
     "Views"; renaming it is not part of this change.
-16. **`reporting dev` previews a directory with `"parent"`** as a tab of
+17. **`reporting dev` previews a directory with `"parent"`** as a tab of
     that parent, so a system tab is seen as it will ship.
 
 ### Reading
 
-17. **`get_dashboard` adds `parent_id` and `tabs`**: the top-level
+18. **`get_dashboard` adds `parent_id` and `tabs`**: the top-level
     dashboard and its live children in order, each `{dashboard_id,
     title}`, the same list whichever tab was asked for. Empty when the
     dashboard has no live tabs. The page draws the tab bar from it.
-18. **`list_dashboards` adds `parent_id`** and lists each parent's
+19. **`list_dashboards` adds `parent_id`** and lists each parent's
     children right after it, so the order stays sidebar order with tabs
     in place. `schema://dashboards` and `reporting_guide` follow, as they
     are built from it.
 
 ### Page
 
-19. **The sidebar lists live top-level dashboards**: system ones, then
+20. **The sidebar lists live top-level dashboards**: system ones, then
     "Yours". An entry is active on its own page and on any of its tabs'.
     The special "Reports" entry and its system-only filter go.
-20. **The tab bar is `ReportTabs`, fed from `get_dashboard.tabs`,** shown
+21. **The tab bar is `ReportTabs`, fed from `get_dashboard.tabs`,** shown
     for any dashboard with at least one live tab, system or user; a
     select on phones, as today.
-21. **Selection stays per dashboard.** Moving between tabs carries the
+22. **Selection stays per dashboard.** Moving between tabs carries the
     project and range and saves them on the tab opened (`openReport`,
     decision 35 of the reporting spec), now for every tabbed dashboard,
     not only system ones. No server change.
-22. **URLs do not change.** `/dashboards/{id}` opens that tab.
+23. **URLs do not change.** `/dashboards/{id}` opens that tab.
 
 ## Surfaces
 
 | Tool / route | Change |
 | --- | --- |
 | `create_dashboard` / `POST /api/dashboards` | `parent_id` |
-| `update_dashboard` / `PATCH /api/dashboards/{id}` | `parent_id`; `after` orders tabs on a tab |
-| `duplicate_dashboard` / `POST …/duplicate` | copies a parent's tabs (decision 10) |
+| `update_dashboard` / `PATCH /api/dashboards/{id}` | `parent_id`, or `after` (orders tabs on a tab); not both |
+| `duplicate_dashboard` / `POST …/duplicate` | copies a parent's tabs (decision 11) |
 | `archive_dashboard` / `POST …/archive` | `with_tabs` |
 | `restore_dashboard` / `POST …/restore` | `with_tabs` |
 | `get_dashboard` | `parent_id`, `tabs` |
@@ -198,16 +217,19 @@ Refusals and fixes (the new refusals). `docs_sync_test` stays green.
 
 ## Tests
 
-- **reporting (Go)**: each rule in decisions 4–13 with its refusal;
-  promotion moves archived children too; duplicating Views copies five
-  tabs and their live widgets and none of the archived ones; archive and
-  restore with and without `with_tabs`, including a tab archived earlier
-  staying archived; `get_dashboard.tabs` is the same from every tab.
+- **reporting (Go)**: each rule in decisions 5–14 with its refusal;
+  `parent_id` and `after` together refused; archiving a tab detaches it
+  and restoring brings it back as its own entry; archiving a parent hands
+  the sidebar entry to the next tab and repoints every child, archived
+  ones included; `with_tabs` archives and restores the group, and a tab
+  of an archived group restored alone comes back detached; duplicating
+  Views copies five tabs and their live widgets and none of the archived
+  ones; `get_dashboard.tabs` is the same from every tab.
 - **migrate**: a `"parent"` in a system directory sets `parent_id`; a
   parent that is missing, is a tab, or is not in the release fails the
   migration.
 - **purge**: a parent and its tabs archived together purge in one pass;
-  a tab archived earlier purges first.
+  a detached tab purges on its own clock.
 - **web (unit)**: sidebar lists top-level only and marks the entry
   active on a tab; the tab bar shows for a user dashboard with tabs and
   not for one without.
