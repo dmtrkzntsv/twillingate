@@ -94,38 +94,39 @@ Two PRs:
 ### Acting on a whole group
 
 9. **`duplicate_dashboard`, `archive_dashboard` and `restore_dashboard`
-   take exactly one of `dashboard_id` and `group_id`.** `dashboard_id`
-   acts on that dashboard, `group_id` on the group. Both or neither is
-   refused (`ErrInvalid`); a `group_id` with no dashboard in it is
-   `ErrNotFound`, and a system group is refused by archive and restore as
-   a system dashboard is. Over REST the group forms are their own routes
-   (Surfaces), since the dashboard routes carry the id in the path.
+   take an optional `with_group`.** Left out or false, they act on the
+   dashboard, as today; `true` acts on the dashboard's whole group. The
+   dashboard already names its group, so no `group_id` is taken here.
+   Over REST it is an optional JSON body on the existing routes,
+   `{"with_group": true}`; an empty body behaves as today. A system
+   group is refused by archive and restore as a system dashboard is.
 
 ### Copying
 
-10. **`duplicate_dashboard {dashboard_id}` copies one dashboard.** A copy
+10. **`duplicate_dashboard` copies one dashboard by default.** A copy
     of a user dashboard joins the original's group, right after it. A
     copy of a system dashboard is a new user group, last in the sidebar
     (decision 5). Titled "… (copy)", as today.
-11. **`duplicate_dashboard {group_id}` copies the group.** Every live
+11. **`duplicate_dashboard {with_group: true}` copies the group.** Every live
     member, each with its live widgets, in one transaction, as a new user
     group last in the sidebar, in the same tab order. The first copy is
     titled "… (copy)"; the others keep their titles. On group 1 this
-    copies all of Reports into one editable dashboard with five tabs.
+    copies all of Reports into one editable dashboard with five tabs,
+    from any of its five dashboards.
     Returns the first copy, as `get_dashboard` does, `tabs` included.
 
 ### Archiving
 
-12. **`archive_dashboard {dashboard_id}` archives one dashboard.**
+12. **`archive_dashboard` archives one dashboard by default.**
     Nothing is relinked: the row keeps its `group_id` and its key inside
     the group's block, and the sidebar entry moves to the next live
     member if this one was first (decision 4).
-13. **`archive_dashboard {group_id}` archives the group**: every live
+13. **`archive_dashboard {with_group: true}` archives the group**: every live
     member, in one transaction.
-14. **`restore_dashboard {dashboard_id}` restores one dashboard**, in
+14. **`restore_dashboard` restores one dashboard by default**, in
     place: its key is still in its group's block, since moves carry
     archived members along (decision 3). **`restore_dashboard
-    {group_id}` restores every archived member of the group**, in one
+    {with_group: true}` restores every archived member of the group**, in one
     transaction; a member archived on its own earlier comes back too,
     and can be archived again.
 15. **The purge is unchanged.** It deletes each archived user dashboard
@@ -175,15 +176,15 @@ Two PRs:
 | --- | --- | --- |
 | `create_dashboard` | `group_id`; `after` then places among its tabs | `POST /api/dashboards` |
 | `update_dashboard` | `group_id`; `after` moves a tab or the whole group, by what it names | `PATCH /api/dashboards/{dashboard_id}` |
-| `duplicate_dashboard` | `dashboard_id` or `group_id` | `POST /api/dashboards/{dashboard_id}/duplicate`, new `POST /api/groups/{group_id}/duplicate` |
-| `archive_dashboard` | `dashboard_id` or `group_id` | `POST /api/dashboards/{dashboard_id}/archive`, new `POST /api/groups/{group_id}/archive` |
-| `restore_dashboard` | `dashboard_id` or `group_id` | `POST /api/dashboards/{dashboard_id}/restore`, new `POST /api/groups/{group_id}/restore` |
+| `duplicate_dashboard` | `with_group` | `POST /api/dashboards/{dashboard_id}/duplicate`, optional body |
+| `archive_dashboard` | `with_group` | `POST /api/dashboards/{dashboard_id}/archive`, optional body |
+| `restore_dashboard` | `with_group` | `POST /api/dashboards/{dashboard_id}/restore`, optional body |
 | `get_dashboard` | returns `group_id`, `tabs` | `GET /api/dashboards/{dashboard_id}` |
 | `list_dashboards` | returns `group_id` | `GET /api/dashboards` |
 
-No tool is added, removed or renamed, and no widget tool changes. The
-three group routes are new; the OpenAPI route specs carry them and the
-new fields.
+No tool or route is added, removed or renamed, and no widget tool
+changes. Each tool and its route still take the same input; the OpenAPI
+route specs carry the new fields and the optional bodies.
 
 ## Migration 022
 
@@ -202,7 +203,7 @@ becomes "Views", with the same five tabs.
 ## Documentation
 
 `docs/reporting.md`, same commit: Concepts (groups and tabs), Tools and
-HTTP API (the new fields and routes), Layout (`after` and `group_id`),
+HTTP API (the new fields and optional bodies), Layout (`after` and `group_id`),
 Archiving and the purge (acting on a group), Refusals and fixes (the new
 refusals). `docs_sync_test` stays green.
 
@@ -212,11 +213,12 @@ refusals). `docs_sync_test` stays green.
   decisions 8–9; groups stay contiguous after every move, archived
   members included; moving a group carries its archived members; a new
   dashboard's `group_id` is its id; leaving a group keeps the old group's
-  id with it; `duplicate_dashboard` by dashboard and by group, from a
-  user and a system group, copying no archived widgets or members;
-  archive and restore by dashboard and by group; `get_dashboard.tabs` is
+  id with it; `duplicate_dashboard` with and without `with_group`, from
+  a user and a system group, copying no archived widgets or members;
+  archive and restore with and without `with_group`; `get_dashboard.tabs` is
   the same from every member.
-- **api**: the three group routes, and both-or-neither refused.
+- **api**: the three routes with an empty body, `{}` and
+  `{"with_group": true}`.
 - **migrate**: `"group"` sets `group_id`; a group naming a dashboard not
   in the release fails the migration; a dashboard without it is its own
   group.
