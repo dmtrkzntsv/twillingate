@@ -23,6 +23,8 @@ type spec struct {
 	Path        string // ServeMux pattern path, e.g. "/api/projects/{project_id}/views/overview"
 	Status      int    // REST success status; 0 = 200
 	RESTOnly    bool   // set by restOnly: a route with no MCP tool
+
+	in, out *jsonschema.Schema // inferred from the handler's types; the OpenAPI document reads them
 }
 
 // registrar collects the operations for both transports. specs is what
@@ -53,9 +55,10 @@ func actorFrom(ctx context.Context) string {
 // expose registers fn as an MCP tool and, when s.Method is set, as a REST
 // route. One call per operation, so neither transport can drift.
 func expose[In, Out any](r *registrar, s spec, fn func(context.Context, In) (Out, error)) {
+	s.in, s.out = schemaFor[In](), schemaFor[Out]()
 	r.specs = append(r.specs, s)
 	mcp.AddTool(r.mcp, &mcp.Tool{Name: s.Name, Description: s.Description, Annotations: s.Annotations,
-		InputSchema: schemaFor[In](), OutputSchema: schemaFor[Out]()},
+		InputSchema: s.in, OutputSchema: s.out},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in In) (*mcp.CallToolResult, Out, error) {
 			out, err := fn(withActor(ctx, "mcp"), in)
 			return nil, out, err
@@ -69,6 +72,7 @@ func expose[In, Out any](r *registrar, s spec, fn func(context.Context, In) (Out
 // web app writes, such as a dashboard's remembered selection.
 func restOnly[In, Out any](r *registrar, s spec, fn func(context.Context, In) (Out, error)) {
 	s.RESTOnly = true
+	s.in, s.out = schemaFor[In](), schemaFor[Out]()
 	r.specs = append(r.specs, s)
 	if r.rest != nil {
 		r.rest.HandleFunc(s.Method+" "+s.Path, restHandler(r, s, fn))

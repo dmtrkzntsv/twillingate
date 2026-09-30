@@ -146,7 +146,9 @@ func TestUIRefusesFramingAndSniffing(t *testing.T) {
 
 // The service worker precaches the shell's scripts and styles at install, so
 // an offline launch can render; a build that forgot to stamp the list, or a
-// bundle rebuilt without re-stamping, would ship a worker missing them.
+// bundle rebuilt without re-stamping, would ship a worker missing them. The
+// API docs page's chunk (Swagger UI) is the exception, and must stay one:
+// the dashboards never load it (web/scripts/stamp-sw.ts).
 func TestServiceWorkerPrecachesEveryAsset(t *testing.T) {
 	sw, err := fs.ReadFile(uiFS, "ui/sw.js")
 	if err != nil {
@@ -160,7 +162,11 @@ func TestServiceWorkerPrecachesEveryAsset(t *testing.T) {
 		t.Fatal("no built assets")
 	}
 	for _, a := range assets {
-		if !strings.Contains(string(sw), `"/app/assets/`+a.Name()+`"`) {
+		listed := strings.Contains(string(sw), `"/app/assets/`+a.Name()+`"`)
+		switch docs := strings.HasPrefix(a.Name(), "ApiDocs-"); {
+		case docs && listed:
+			t.Errorf("sw.js precaches the API docs chunk /app/assets/%s", a.Name())
+		case !docs && !listed:
 			t.Errorf("sw.js does not precache /app/assets/%s", a.Name())
 		}
 	}

@@ -11,6 +11,11 @@ describe('stamp', () => {
     expect(out).toContain('const ASSETS = ["/app/assets/index-a.css","/app/assets/index-b.js"]')
   })
 
+  it('leaves the API docs chunk out of the precache', () => {
+    const out = stamp(source, ['index-a.js', 'ApiDocs-c.js', 'ApiDocs-d.css'])
+    expect(out).toContain('const ASSETS = ["/app/assets/index-a.js"]')
+  })
+
   it('names the cache under the app prefix, by the asset names', () => {
     const a = stamp(source, ['index-a.js'])
     const b = stamp(source, ['index-b.js'])

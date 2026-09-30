@@ -12,12 +12,17 @@ import { fileURLToPath } from 'node:url'
 const CACHE_LINE = /^const CACHE = '[^']*'$/m
 const ASSETS_LINE = /^const ASSETS = \[.*\]$/m
 
+// The API docs page's chunk (Swagger UI, ~1.5 MB) is left out of the
+// precache: the dashboards never load it, so installing it would only cost
+// every visitor the download.
+const NOT_PRECACHED = /^ApiDocs-/
+
 // stamp returns sw with its CACHE and ASSETS lines set for the given built
 // asset file names (as listed in the assets directory).
 export function stamp(sw: string, assets: string[]): string {
   if (!CACHE_LINE.test(sw)) throw new Error(`no "const CACHE = '…'" line to stamp`)
   if (!ASSETS_LINE.test(sw)) throw new Error('no "const ASSETS = […]" line to stamp')
-  const names = [...assets].sort()
+  const names = assets.filter((name) => !NOT_PRECACHED.test(name)).sort()
   const version = createHash('sha256').update(names.join('\n')).digest('hex').slice(0, 12)
   const urls = names.map((name) => `/app/assets/${name}`)
   return sw

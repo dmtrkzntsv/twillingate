@@ -26,7 +26,8 @@ const (
 // Build assembles the tool host, both transports and the auth middleware,
 // returning one handler that serves the API surface: the MCP streamable
 // endpoint at /mcp and the REST routes under /api/ (unmatched /api/ paths
-// answer a JSON 404). Each prefix is auth-wrapped on its own so its 401
+// answer a JSON 404), plus, unauthenticated, their OpenAPI document at
+// /api/openapi.json and /api/docs, a redirect to its Swagger UI. Each prefix is auth-wrapped on its own so its 401
 // challenge names metadata whose resource is that prefix's URL. It mounts
 // nothing itself: NewHandler wraps it with its own mux for the standalone
 // listener, and app calls it directly to mount on the ingest surface's mux
@@ -44,8 +45,14 @@ func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *m
 	srv := mcp.NewServer(&mcp.Implementation{Name: "twillingate", Version: "1.0.0"},
 		&mcp.ServerOptions{Instructions: serverInstructions})
 	rest := http.NewServeMux()
-	h.register(&registrar{mcp: srv, rest: rest, logger: logger})
+	r := &registrar{mcp: srv, rest: rest, logger: logger}
+	h.register(r)
 	h.registerResources(srv)
+	doc, err := openAPI(r.specs)
+	if err != nil {
+		db.Close()
+		return nil, nil, err
+	}
 	rest.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]apiError{"error": {Code: "not_found", Message: "no such API route"}})
 	})
@@ -60,6 +67,13 @@ func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *m
 	protected.Handle(mcpPath, requireAuth(resource+metadataPath+mcpPath,
 		mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv }, nil)))
 	protected.Handle("/api/", requireAuth(resource+metadataPath, rest))
+	// The route reference is public, like the dashboards' page: it names
+	// routes and fields, never data, and Swagger UI reads it before login.
+	protected.HandleFunc("GET "+openAPIPath, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(doc)
+	})
+	protected.Handle("GET "+docsPath, http.RedirectHandler(docsUIPath, http.StatusFound))
 	return protected, db.Close, nil
 }
 
