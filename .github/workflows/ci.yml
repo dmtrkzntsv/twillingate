@@ -1,23 +1,67 @@
 name: ci
+# Pull requests only. A squash merge of an up-to-date branch lands the tree
+# its pull request already tested, so main is not tested again on push;
+# release.yml runs the race suite before it tags.
 on:
-  push: { branches: [main] }
   pull_request:
+# A new push to a pull request cancels the run it supersedes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
 jobs:
-  # Every pull request and every push to main. Releases are dispatched by
-  # hand, so this is the only thing that checks a commit once it lands, and
-  # the only job that saves a build cache keyed on a main commit.
-  test:
+  # Which of the jobs below the changed files call for. A change to a
+  # workflow runs everything, so a CI edit always tests itself. Main has no
+  # required checks, so a skipped job never blocks a merge.
+  changes:
+    runs-on: ubuntu-latest
+    permissions: { pull-requests: read }
+    outputs:
+      go: ${{ steps.filter.outputs.go }}
+      web: ${{ steps.filter.outputs.web }}
+      e2e: ${{ steps.filter.outputs.e2e }}
+      sdk: ${{ steps.filter.outputs.sdk }}
+    steps:
+      - id: filter
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          gh api --paginate "repos/$REPO/pulls/$PR/files" \
+            --jq '.[] | .filename, (.previous_filename // empty)' > "$RUNNER_TEMP/files"
+          cat "$RUNNER_TEMP/files"
+          has() { grep -qE "$1" "$RUNNER_TEMP/files"; }
+          # Go tests read far beyond Go source (docs/, sdk/src, web/ widgets,
+          # evidence/, deploy/), so only specs and plans skip them.
+          go=false; web=false; e2e=false; sdk=false
+          grep -qv '^docs/superpowers/' "$RUNNER_TEMP/files" && go=true
+          has '^web/' && web=true
+          # What the browser suite drives: the app, the API it calls, and the
+          # views, daily pass and seed script behind the system dashboards.
+          has '^(web/|internal/(reporting|api|store|jobs|app)/|cmd/|scripts/seed-demo\.py$|go\.(mod|sum)$|Makefile$)' && e2e=true
+          has '^(sdk/|internal/server/twillingate\.js$)' && sdk=true
+          if has '^\.github/workflows/'; then
+            go=true; web=true; e2e=true; sdk=true
+          fi
+          printf 'go=%s\nweb=%s\ne2e=%s\nsdk=%s\n' "$go" "$web" "$e2e" "$sdk" | tee -a "$GITHUB_OUTPUT"
+
+  # Vet, the coverage gate without -race, the SQLite-free packages with it,
+  # the restore test (make check), and a link of the binary.
+  check:
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with: { go-version-file: go.mod, cache: false }
-      # Not setup-go's built-in cache: that keys on go.sum alone, so it is a
-      # snapshot from the last dependency change and goes staler with every
-      # commit. Keying on the sha (unique, so every run saves) and restoring
-      # by prefix starts each run from the newest cache instead. What it
-      # carries is mostly the -race test builds, which dominate make check.
-      - uses: actions/cache@v4
+      # Restore only. A cache saved from a pull request is visible to that
+      # pull request alone, and at ~450 MB apiece they pushed the repository
+      # past its 10 GB cache limit, evicting the release image caches.
+      # release.yml, which runs on main, is the one writer.
+      - uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cache/go-build
@@ -37,6 +81,8 @@ jobs:
   # build never needs Node. This job keeps the artifact honest: typecheck,
   # tests, then rebuild and fail on any drift from the committed bytes.
   sdk:
+    needs: changes
+    if: needs.changes.outputs.sdk == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -59,6 +105,8 @@ jobs:
   # runs typecheck and tests, then rebuilds and fails if the manifest drifted
   # from the widget contracts.
   web:
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -79,13 +127,25 @@ jobs:
   # dashboard at desktop and phone widths, tab selection, the standalone
   # shell and the widget grid (web/e2e/app.spec.ts). web/e2e/serve.sh builds
   # its own binary and seeds its own database, so `make build` here is only
-  # a fast-fail check before spending time on Chromium.
+  # a fast-fail check before spending time on Chromium; the restored Go cache
+  # makes both builds incremental.
   e2e:
+    needs: changes
+    if: needs.changes.outputs.e2e == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with: { go-version-file: go.mod, cache: false }
+      - uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-${{ hashFiles('go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            go-${{ hashFiles('go.sum') }}-
+            go-
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: npm, cache-dependency-path: web/package-lock.json }
       - uses: actions/setup-python@v5

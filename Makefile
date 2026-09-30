@@ -26,16 +26,29 @@ build: $(UI)
 # go list ./... would otherwise treat as part of this module.
 GOPKGS = $(shell go list ./... | grep -v '/node_modules/')
 
+# The full suite under the race detector. modernc.org/sqlite is C translated
+# to Go, so -race instruments every SQLite memory access and the suite runs
+# about ten times slower than without it (~9 min against ~1 on a CI runner).
+# CI runs it in release.yml before tagging, not on every pull request push.
 test: $(UI)
 	go test -race $(GOPKGS)
+
+# The packages whose own code runs goroutines and whose tests never open
+# SQLite: under -race they take seconds, so check keeps them race-tested on
+# every pull request. A package that opens SQLite in its tests belongs in
+# `make test` only.
+RACE_PKGS = ./internal/pipeline/... ./internal/identity/... ./internal/geo/...
 
 vet:
 	go vet $(GOPKGS)
 
-# test-restore is in check because, unlike the docker-backed test-install and
-# test-compose, it only needs sqlite3 and runs in a couple of seconds.
+# What pull request CI runs: vet, the coverage gate without -race, the
+# SQLite-free packages with it, and the restore test. test-restore is here
+# because, unlike the docker-backed test-install and test-compose, it only
+# needs sqlite3 and runs in a couple of seconds.
 check: vet $(UI)
 	./scripts/coverage.sh
+	go test -race $(RACE_PKGS)
 	./scripts/test-restore.sh
 
 build-all: $(UI)

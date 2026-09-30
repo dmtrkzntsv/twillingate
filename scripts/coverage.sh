@@ -10,8 +10,10 @@ if [ -z "$packages" ]; then
   exit 0
 fi
 
+# No -race: it slows the SQLite-backed packages about tenfold without changing
+# coverage. The race detector runs in `make test`, which release.yml runs.
 # shellcheck disable=SC2086  # word splitting of the package list is intended
-go test -race -coverprofile=coverage.out $packages
+go test -coverprofile=coverage.out $packages
 
 total=$(go tool cover -func=coverage.out | awk '/^total:/ {gsub(/%/,"",$3); print $3}')
 echo "total coverage: ${total}%"

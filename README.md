@@ -114,7 +114,8 @@ install too.
 ## Development
 
 ```bash
-make check       # what CI runs: vet + coverage gate + restore test
+make check       # what PR CI runs: vet + coverage gate + restore test
+make test        # the full suite under -race (slow; the release runs it)
 make build       # single binary (needs Go and Node 22: it builds web/ first)
 make run         # local server on 127.0.0.1:8080 with a dev project
 make smoke       # boot the real binary, POST a batch, verify rows land
