@@ -207,6 +207,17 @@ func mapDashboardConflict(dash store.Dashboard, err error) error {
 	return fmt.Errorf("insert dashboard %q: %w", dash.Title, err)
 }
 
+// mapMoveDashboardConflict is mapDashboardConflict's twin for
+// MoveDashboards, which only has a DashboardKey (no title or owner) to
+// report against.
+func mapMoveDashboardConflict(k store.DashboardKey, err error) error {
+	if strings.Contains(err.Error(), "UNIQUE constraint failed: dashboards.") {
+		return store.Refuse(store.ErrConflict,
+			"move dashboard %d: sort key %q already used", k.ID, k.SortKey)
+	}
+	return fmt.Errorf("move dashboard %d: %w", k.ID, err)
+}
+
 // UpdateDashboard updates title, sort_key and group_id: the caller passes
 // the row it read, with any change.
 func (d *DB) UpdateDashboard(ctx context.Context, dash store.Dashboard, a store.AuditEntry) error {
@@ -330,7 +341,7 @@ func (d *DB) MoveDashboards(ctx context.Context, ks []store.DashboardKey, a stor
 				`UPDATE dashboards SET group_id=?, sort_key=?, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')
 				 WHERE id=?`, k.GroupID, k.SortKey, k.ID)
 			if err != nil {
-				return mapDashboardConflict(store.Dashboard{SortKey: k.SortKey}, err)
+				return mapMoveDashboardConflict(k, err)
 			}
 			if n, _ := res.RowsAffected(); n == 0 {
 				return store.Refuse(store.ErrNotFound, "move dashboards: unknown id %d", k.ID)
@@ -362,8 +373,16 @@ func (d *DB) NewDashboardGroupID(ctx context.Context) (int64, error) {
 // InsertDashboardGroup inserts ds as one new group, in one transaction:
 // the first dashboard gets group_id = its own id (insertDashboardRow's
 // GroupID==0 behaviour), the rest get that id. ws[i] are ds[i]'s
-// widgets. Returns the new ids, in order.
+// widgets: ws must be empty (no dashboard gets any widget) or the same
+// length as ds, one slice per dashboard in order — anything else would
+// either index out of range or silently drop a trailing dashboard's
+// widgets, so it is refused before the transaction opens. Returns the
+// new ids, in order.
 func (d *DB) InsertDashboardGroup(ctx context.Context, ds []store.Dashboard, ws [][]store.Widget, a store.AuditEntry) ([]int64, error) {
+	if len(ws) != 0 && len(ws) != len(ds) {
+		return nil, store.Refuse(store.ErrInvalid,
+			"insert dashboard group: %d widget slices for %d dashboards", len(ws), len(ds))
+	}
 	ids := make([]int64, len(ds))
 	err := d.tx(ctx, func(tx *sql.Tx) error {
 		var groupID int64
