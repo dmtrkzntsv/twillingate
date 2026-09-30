@@ -90,7 +90,7 @@ export interface InitOptions {
   /** Log every event and send to the console; OR-ed with the twillingate_debug flag. */
   debug?: boolean;
   /**
-   * Sample rate for Web Vitals, in (0, 1]; absent or 0 = off. Decided once
+   * Sample rate for Web Vitals, in [0.0001, 1]; absent or 0 = off. Decided once
    * per page load: a sampled load sends every vital with $sample_rate, an
    * unsampled one none. Web kind only; loads /js/twillingate-vitals.js.
    */
@@ -128,6 +128,21 @@ export type Family = "views" | "product" | "measures";
 export type MeasureKind = "time" | "size" | "number";
 
 const MEASURE_KINDS: MeasureKind[] = ["time", "size", "number"];
+
+// The server's bounds on a measure (internal/server/ingest.go): a value
+// above 1e15 is rejected, a $sample_rate below 1e-4 is stored as 1.
+const MAX_MEASURE_VALUE = 1e15;
+const MIN_SAMPLE_RATE = 1e-4;
+
+/** A sample rate the server accepts: a number in [1e-4, 1]. */
+export function validRate(v: unknown): v is number {
+  return typeof v === "number" && v >= MIN_SAMPLE_RATE && v <= 1;
+}
+
+// Names the server stores as views. track() with one of them would go out
+// as a product event, which the server rejects: page() and screen() send
+// views.
+const VIEW_NAMES = ["$page_view", "$pageview", "$screen_view"];
 
 /** The reserved metric each Web Vital is sent as, with its one kind. */
 const VITALS: Record<string, { metric: string; measure: MeasureKind }> = {
@@ -545,16 +560,24 @@ export class Twillingate implements Subscriber {
     this.rememberViewLocation(this.emit("$screen_view", screenAttrs, "views"));
   }
 
-  /** Opt-in product event, carrying where it happened unless autoAttributes is false. */
+  /**
+   * Opt-in product event, carrying where it happened unless autoAttributes
+   * is false. A view name ($page_view, $screen_view) is not a product event
+   * and is dropped, logged in debug mode: use page() or screen().
+   */
   track(name: string, attrs?: Record<string, unknown>): void {
     if (!this.ready) return this.hold(() => this.track(name, attrs));
     if (!this.live() || !name) return;
+    if (VIEW_NAMES.includes(String(name))) {
+      this.log(`track("${String(name)}") ignored: views are sent with page() or screen()`);
+      return;
+    }
     this.emit(String(name), { ...this.eventContext(), ...expandNulls(this.defaultAttrs), ...expandNulls(attrs) }, "product");
   }
 
   /**
    * Record a measure: a name, a numeric value and a kind, on its own
-   * family. `value` must be a finite number >= 0 and `measure` one of
+   * family. `value` must be a finite number from 0 to 1e15 and `measure` one of
    * "time" (milliseconds), "size" (bytes) or "number" — the server's own
    * rules, checked here so an invalid call never reaches the wire. An
    * invalid call is dropped and logged in debug mode.
@@ -562,8 +585,15 @@ export class Twillingate implements Subscriber {
   measure(name: string, value: number, measure: MeasureKind, attrs?: Record<string, unknown>): void {
     if (!this.ready) return this.hold(() => this.measure(name, value, measure, attrs));
     if (!this.live()) return;
-    if (!name || typeof value !== "number" || !isFinite(value) || value < 0 || !MEASURE_KINDS.includes(measure)) {
-      this.log("measure ignored: needs a name, a number >= 0 and time, size or number", { name, value, measure });
+    if (
+      !name ||
+      typeof value !== "number" ||
+      !isFinite(value) ||
+      value < 0 ||
+      value > MAX_MEASURE_VALUE ||
+      !MEASURE_KINDS.includes(measure)
+    ) {
+      this.log("measure ignored: needs a name, a number from 0 to 1e15 and time, size or number", { name, value, measure });
       return;
     }
     this.emit(
@@ -579,7 +609,7 @@ export class Twillingate implements Subscriber {
   // held calls, so the location it captures is the load's own; a route
   // change later does not move it.
   private startVitals(rate: unknown): void {
-    if (typeof rate !== "number" || !(rate > 0 && rate <= 1)) return;
+    if (!validRate(rate)) return;
     if (this.kind !== "web" || typeof window === "undefined" || typeof document === "undefined") return;
     if (Math.random() >= rate) return;
     const at = this.eventContext();

@@ -248,6 +248,8 @@ describe("data-vitals", () => {
   it.each([
     ["1", 1],
     ["0.25", 0.25],
+    ["0.0001", 0.0001],
+    ["0.00009", undefined],
     ["0", undefined],
     ["2", undefined],
     ["x", undefined],

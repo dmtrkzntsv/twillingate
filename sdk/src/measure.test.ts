@@ -72,6 +72,7 @@ describe("measure()", () => {
     ["a negative value", "q", -1, "time"],
     ["a NaN value", "q", NaN, "time"],
     ["an infinite value", "q", Infinity, "time"],
+    ["a value above 1e15", "q", 1.0000001e15, "time"],
     ["a non-number value", "q", "3", "time"],
     ["an unknown kind", "q", 1, "seconds"],
     ["an empty name", "", 1, "time"],
@@ -95,6 +96,27 @@ describe("measure()", () => {
     const events = sent.flatMap((s) => s.body.events);
     expect(events.map((e) => e.family)).toEqual(["views", "product", "product", "measures"]);
   });
+
+  it("accepts 1e15, the server's upper bound", async () => {
+    const t = tg();
+    t.measure("big", 1e15, "size");
+    t.flush();
+    await drain();
+    expect(lastEvent()).toMatchObject({ family: "measures", name: "big", value: 1e15 });
+  });
+
+  it.each(["$page_view", "$pageview", "$screen_view"])(
+    "track(%j) sends nothing and says why in debug mode: views go through page() and screen()",
+    async (name) => {
+      const log = vi.spyOn(console, "log").mockImplementation(() => {});
+      const t = tg({ debug: true });
+      t.track(name, { plan: "pro" });
+      t.flush();
+      await drain();
+      expect(sent).toHaveLength(0);
+      expect(log.mock.calls.some((c) => String(c[0]).includes(`track("${name}") ignored`))).toBe(true);
+    },
+  );
 
   it("is held before init() and replayed after, like track()", async () => {
     const t = new Twillingate();

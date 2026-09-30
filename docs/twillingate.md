@@ -155,7 +155,7 @@ whichever hostname loaded it.
 | `data-routing` | `routing` | `history` (default) or `hash`. See [Routing](#routing). |
 | `data-kind` | `kind` | What this client is: `web` (default), `app`, `cli`, or any short lower-case token. Anything but `web` switches automatic tracking from `$page_view` to `$screen_view` (the route path becomes the screen) and exempts the client from the server's crawler filter. |
 | `data-consent` | `consent` | May this instance keep anything on the device. `false` (default): nothing is read from or written to storage. `true`, or the name of a global variable or function a consent manager maintains, unlocks it. See [Consent and storage](#consent-and-storage). |
-| `data-vitals` | `vitals` | Sample rate for [Web Vitals](#web-vitals), in `(0, 1]`: `1` measures every page load, `0.2` one in five. Absent (or anything outside the range) = off. |
+| `data-vitals` | `vitals` | Sample rate for [Web Vitals](#web-vitals), in `[0.0001, 1]`: `1` measures every page load, `0.2` one in five. Absent (or anything outside the range) = off. |
 | `data-instance` | `create(name)` | Register this tag's instance as `twillingate.get(name)` instead of as the default instance. See [Two projects on one page](#two-projects-on-one-page). |
 
 Every `data-*` has an `init()` equivalent except `data-instance`, which maps to
@@ -193,7 +193,7 @@ twillingate.init({
   appLocale: "de",             // → $app_locale; never detected
   autoAttributes: true,        // default; false sends only what you set (see Precedence)
   flushInterval: 10000,        // milliseconds
-  vitals: 0.2,                 // Web Vitals sample rate in (0, 1]; absent = off
+  vitals: 0.2,                 // Web Vitals sample rate in [0.0001, 1]; absent = off
   optOut: () => location.hostname === "localhost",   // OR-ed with twillingate_ignore
   debug: false,                // OR-ed with the twillingate_debug flag
 });
@@ -225,8 +225,8 @@ twillingate.measure("checkout_api", 340, "time", { endpoint: "/api/checkout" });
 | `onPage(fn)` | A pageview listener, automatic pageviews included. See [Listeners](#listeners). |
 | `onEvent(fn)` | Runs for every event, after `onPage` has finished with a pageview. Receives `{ name, attributes }`; return attributes to merge, `false` to drop the event, anything else to observe. A listener that throws drops the event with a warning. |
 | `screen(name, attrs?)` | An explicit `$screen_view`, on any kind. |
-| `track(name, attrs?)` | An opt-in product event. Don't `$`-prefix your own names. |
-| `measure(name, value, measure, attrs?)` | Records a measure: `measure` is `"time"` (ms), `"size"` (bytes) or `"number"`; invalid calls are dropped (logged with `debug`). |
+| `track(name, attrs?)` | An opt-in product event. Don't `$`-prefix your own names. A view name (`$page_view`, `$pageview`, `$screen_view`) sends nothing (logged with `debug`): views go through `page()` and `screen()`. |
+| `measure(name, value, measure, attrs?)` | Records a measure: `value` is a number from 0 to 1e15, `measure` is `"time"` (ms), `"size"` (bytes) or `"number"`; invalid calls are dropped (logged with `debug`). |
 | `attrs(obj)` | Default attributes under every event. Successive calls merge; `attrs(null)` clears. |
 | `identify(user, name?)` | Sets `$user_id` and the optional `$user_name`. Inert on an anonymous instance, with one warning; persisted on an identified instance with consent. Events already sent stay unattributed. |
 | `group(id, name?)` | Sets `$group_id` and the optional `$group_name` in every mode; persisted with consent on an identified instance. |
