@@ -20,9 +20,7 @@ internal/config/     environment loading
 internal/identity/   actor hashing and salt rotation
 internal/enrich/     User-Agent and URL parsing for web hits
 internal/geo/        MaxMind lookup
-internal/civil/      calendar dates
-internal/version/    build version
-internal/shared/     small generic leaf packages: sortkey, readsql
+internal/shared/     small generic leaf packages: civil (calendar dates), readsql, sortkey, version
 docs/                the three contract pages, embedded and served over MCP
 sdk/                 browser SDK source (TypeScript); the built file is embedded by internal/server
 web/                 dashboard web app source (React, TypeScript); the build is embedded by internal/reporting
@@ -37,6 +35,11 @@ interface and `app` passes the implementation (`server.Enqueuer` is
 `pipeline.Buffer`). Each consumer declares the slice of the store it uses
 (`jobs.Store`, `manage.Store`) rather than `store.Store`. A new package goes
 into the rank table in `internal/archtest/archtest_test.go`.
+
+A small generic helper (no twillingate domain in it) is our own code in its
+own leaf package under `internal/shared/`, rank 0, rather than a third-party
+Go dependency; only a very reputable vendor justifies one. Domain leaves
+(`enrich`, `identity`, `geo`, `config`) stay at the top of `internal/`.
 
 Refusals are typed (`manage.ErrNotFound`, `manage.ErrConflict`,
 `manage.ErrInvalid`; the first two are the store's own values) and matched

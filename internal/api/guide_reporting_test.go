@@ -9,7 +9,7 @@ import (
 
 	"github.com/dmtrkzntsv/twillingate/docs"
 	"github.com/dmtrkzntsv/twillingate/internal/reporting"
-	"github.com/dmtrkzntsv/twillingate/internal/version"
+	"github.com/dmtrkzntsv/twillingate/internal/shared/version"
 )
 
 // reportingGuide calls reporting_guide and returns its markdown.

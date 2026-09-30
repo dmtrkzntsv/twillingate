@@ -29,8 +29,8 @@ import (
 
 	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/sortkey"
+	"github.com/dmtrkzntsv/twillingate/internal/shared/version"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
-	"github.com/dmtrkzntsv/twillingate/internal/version"
 )
 
 //go:embed system

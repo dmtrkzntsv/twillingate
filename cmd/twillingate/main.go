@@ -6,7 +6,7 @@ package main
 
 import (
 	"fmt"
-	internalversion "github.com/dmtrkzntsv/twillingate/internal/version"
+	internalversion "github.com/dmtrkzntsv/twillingate/internal/shared/version"
 	"io"
 	"os"
 )

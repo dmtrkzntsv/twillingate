@@ -42,7 +42,7 @@ ARG TARGETVARIANT
 # release.yml carries it between runs, since a CI builder starts empty.
 RUN --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} GOARM=${TARGETVARIANT#v} \
-    go build -trimpath -ldflags "-s -w -X github.com/dmtrkzntsv/twillingate/internal/version.Version=${VERSION}" \
+    go build -trimpath -ldflags "-s -w -X github.com/dmtrkzntsv/twillingate/internal/shared/version.Version=${VERSION}" \
     -o /out/twillingate ./cmd/twillingate
 
 # @evidence-dev/sqlite depends on node-gyp's sqlite3, which publishes no musl

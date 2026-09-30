@@ -9,7 +9,7 @@ import (
 
 	"github.com/dmtrkzntsv/twillingate/docs"
 	"github.com/dmtrkzntsv/twillingate/internal/reporting"
-	"github.com/dmtrkzntsv/twillingate/internal/version"
+	"github.com/dmtrkzntsv/twillingate/internal/shared/version"
 )
 
 // reporting_guide is the one call an agent makes before authoring a
