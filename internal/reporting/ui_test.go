@@ -89,10 +89,10 @@ func TestUICachesHashedAssetsForever(t *testing.T) {
 }
 
 // TestUIHidesItsBuildInputs: components.json is the Go side's input, not
-// part of the app; and a missing asset is a 404, not the shell served as
-// a script.
+// part of the app; api-docs.html is served at /api/docs only; and a missing
+// asset is a 404, not the shell served as a script.
 func TestUIHidesItsBuildInputs(t *testing.T) {
-	for _, target := range []string{"/app/components.json", "/app/assets/missing-0000.js", "/app/assets/"} {
+	for _, target := range []string{"/app/components.json", "/app/api-docs.html", "/app/assets/missing-0000.js", "/app/assets/"} {
 		if rec := serveUI(t, target); rec.Code != http.StatusNotFound {
 			t.Errorf("GET %s = %d, want 404", target, rec.Code)
 		}
@@ -146,7 +146,9 @@ func TestUIRefusesFramingAndSniffing(t *testing.T) {
 
 // The service worker precaches the shell's scripts and styles at install, so
 // an offline launch can render; a build that forgot to stamp the list, or a
-// bundle rebuilt without re-stamping, would ship a worker missing them.
+// bundle rebuilt without re-stamping, would ship a worker missing them. The
+// API docs page's bundle (Swagger UI) is the exception, and must stay one:
+// the dashboards never load it (web/scripts/stamp-sw.ts).
 func TestServiceWorkerPrecachesEveryAsset(t *testing.T) {
 	sw, err := fs.ReadFile(uiFS, "ui/sw.js")
 	if err != nil {
@@ -160,7 +162,11 @@ func TestServiceWorkerPrecachesEveryAsset(t *testing.T) {
 		t.Fatal("no built assets")
 	}
 	for _, a := range assets {
-		if !strings.Contains(string(sw), `"/app/assets/`+a.Name()+`"`) {
+		listed := strings.Contains(string(sw), `"/app/assets/`+a.Name()+`"`)
+		switch docs := strings.HasPrefix(a.Name(), "api-docs-"); {
+		case docs && listed:
+			t.Errorf("sw.js precaches the API docs bundle /app/assets/%s", a.Name())
+		case !docs && !listed:
 			t.Errorf("sw.js does not precache /app/assets/%s", a.Name())
 		}
 	}
@@ -169,10 +175,35 @@ func TestServiceWorkerPrecachesEveryAsset(t *testing.T) {
 	}
 }
 
+// TestAPIDocsServesItsPage: /api/docs answers api-docs.html at its own
+// path, revalidated and guarded like the shell.
+func TestAPIDocsServesItsPage(t *testing.T) {
+	page, err := uiFS.ReadFile("ui/api-docs.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	APIDocs().ServeHTTP(rec, httptest.NewRequest("GET", "/api/docs", nil))
+	h := rec.Header()
+	if rec.Code != http.StatusOK || rec.Body.String() != string(page) {
+		t.Fatalf("GET /api/docs = %d, not api-docs.html", rec.Code)
+	}
+	if !strings.HasPrefix(h.Get("Content-Type"), "text/html") || h.Get("Cache-Control") != "no-cache" ||
+		h.Get("ETag") == "" || h.Get("ETag") == serveUI(t, "/app/").Header().Get("ETag") {
+		t.Errorf("headers: Content-Type %q, Cache-Control %q, ETag %q", h.Get("Content-Type"), h.Get("Cache-Control"), h.Get("ETag"))
+	}
+	if h.Get("X-Frame-Options") != "DENY" || h.Get("X-Content-Type-Options") != "nosniff" {
+		t.Errorf("framing/sniffing headers: %v", h)
+	}
+	if !strings.Contains(string(page), `src="/app/assets/api-docs-`) {
+		t.Error("api-docs.html does not load its bundle from /app/assets/")
+	}
+}
+
 func TestUIWithoutTheAppSaysHowToBuildIt(t *testing.T) {
 	files := fstest.MapFS{"ui/components.json": {Data: []byte(`{"components":[]}`)}}
 	rec := httptest.NewRecorder()
-	uiHandler(files).ServeHTTP(rec, httptest.NewRequest("GET", "/app/dashboards/3", nil))
+	uiHandler(files, "").ServeHTTP(rec, httptest.NewRequest("GET", "/app/dashboards/3", nil))
 	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "make build") {
 		t.Fatalf("got %d %q, want 503 naming make build", rec.Code, rec.Body.String())
 	}

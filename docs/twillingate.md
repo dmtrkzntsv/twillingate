@@ -814,6 +814,13 @@ receive JSON. `integration_guide`, `reporting_guide` and the `docs://`
 resources are MCP-only. The dashboard routes are listed in
 [reporting.md](reporting.md#http-api).
 
+Every route is also described by an OpenAPI 3.1 document at
+`/api/openapi.json`, generated from the same definitions that register the
+routes, with each operation's `operationId` naming the tool it mirrors.
+`/api/docs` renders it in Swagger UI; signed in to the dashboards, Try it
+out uses that login. Neither needs a
+token: they describe routes and fields, never data.
+
 ```bash
 curl -H "Authorization: Bearer $TOKEN" \
   "https://t.example.com/api/projects/1/views/overview?from=2026-09-01&to=2026-09-13"

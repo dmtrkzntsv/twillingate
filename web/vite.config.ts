@@ -20,6 +20,14 @@ export default defineConfig({
     // Recharts, the map and Markdown make it ~1.3 MB (~400 kB gzipped), all
     // of which the dashboard page renders anyway.
     chunkSizeWarningLimit: 1600,
+    // Two pages: the dashboards, and the API docs Go serves at /api/docs
+    // (Swagger UI, its own ~1.4 MB bundle the dashboards never load).
+    rolldownOptions: {
+      input: {
+        index: path.resolve(import.meta.dirname, 'index.html'),
+        'api-docs': path.resolve(import.meta.dirname, 'api-docs.html'),
+      },
+    },
   },
   server: {
     proxy: {
