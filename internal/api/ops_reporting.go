@@ -122,18 +122,18 @@ func (h *host) updateDashboard(ctx context.Context, in updateDashboardIn) (repor
 }
 
 func (h *host) duplicateDashboard(ctx context.Context, in dashboardIn) (reporting.DashboardDetail, error) {
-	return h.rep.DuplicateDashboard(ctx, actorFrom(ctx), in.DashboardID)
+	return h.rep.DuplicateDashboard(ctx, actorFrom(ctx), in.DashboardID, false)
 }
 
 func (h *host) archiveDashboard(ctx context.Context, in dashboardIn) (okOut, error) {
-	if err := h.rep.ArchiveDashboard(ctx, actorFrom(ctx), in.DashboardID); err != nil {
+	if err := h.rep.ArchiveDashboard(ctx, actorFrom(ctx), in.DashboardID, false); err != nil {
 		return okOut{}, err
 	}
 	return okOut{Status: "archived; hidden, reversible with restore_dashboard, purged after RETENTION_ARCHIVED_DAYS"}, nil
 }
 
 func (h *host) restoreDashboard(ctx context.Context, in dashboardIn) (okOut, error) {
-	if err := h.rep.RestoreDashboard(ctx, actorFrom(ctx), in.DashboardID); err != nil {
+	if err := h.rep.RestoreDashboard(ctx, actorFrom(ctx), in.DashboardID, false); err != nil {
 		return okOut{}, err
 	}
 	return okOut{Status: "restored"}, nil

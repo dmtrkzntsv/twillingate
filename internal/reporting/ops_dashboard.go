@@ -233,34 +233,36 @@ func (s *Service) leaveGroup(ctx context.Context, o order, row store.Dashboard, 
 	return s.st.UpdateDashboard(ctx, row, a)
 }
 
-// DuplicateDashboard makes a user copy of any dashboard, system ones
-// included, placed last: its live widgets in order with fresh keys and
+// DuplicateDashboard makes a user copy of a dashboard, system ones
+// included. Its live widgets are copied in order with fresh keys and
 // the same content, and the same stored selection. The widgets are
 // copied as they are, not re-checked, so the copy is faithful: a widget
 // whose component was removed is copied too and still shows "component
 // removed" there, until update_widget switches it. D15's no-copy rule is
 // copy_widget's, which places one widget somewhere new.
-func (s *Service) DuplicateDashboard(ctx context.Context, actor string, id int64) (DashboardDetail, error) {
+//
+// wholeGroup false (D10) copies just id: a user source's copy joins the
+// source's group right after it; a system source's copy is a new user
+// group, last in the sidebar. wholeGroup true (D11) copies every live
+// member of id's group, each with its live widgets, as one new user
+// group placed last, in the same tab order; the first copy is titled
+// "… (copy)", the rest keep their titles.
+func (s *Service) DuplicateDashboard(ctx context.Context, actor string, id int64, wholeGroup bool) (DashboardDetail, error) {
 	src, err := s.st.GetDashboard(ctx, id)
 	if err != nil {
 		return DashboardDetail{}, err
 	}
-	all, err := s.st.ListWidgets(ctx, id)
+	if wholeGroup {
+		return s.duplicateGroup(ctx, actor, src)
+	}
+	return s.duplicateOne(ctx, actor, src)
+}
+
+// duplicateOne is DuplicateDashboard(wholeGroup: false).
+func (s *Service) duplicateOne(ctx context.Context, actor string, src store.Dashboard) (DashboardDetail, error) {
+	ws, err := s.copyLiveWidgets(ctx, src.ID)
 	if err != nil {
 		return DashboardDetail{}, err
-	}
-	var ws []store.Widget
-	for _, w := range all {
-		if w.ArchivedAt == "" {
-			ws = append(ws, freshCopy(w))
-		}
-	}
-	keys, err := sortkey.Spread("", "", len(ws))
-	if err != nil {
-		return DashboardDetail{}, err
-	}
-	for i := range ws {
-		ws[i].SortKey = keys[i]
 	}
 	copyOf := store.Dashboard{
 		Owner: store.OwnerUser, Title: src.Title + " (copy)",
@@ -272,11 +274,17 @@ func (s *Service) DuplicateDashboard(ctx context.Context, actor string, id int64
 		if err != nil {
 			return err
 		}
-		if copyOf.SortKey, err = o.keyAfterGroup(0, nil); err != nil {
+		if src.Owner == store.OwnerUser {
+			copyOf.GroupID = src.GroupID
+			copyOf.SortKey, err = o.keyInGroup(0, src.GroupID, &src.ID)
+		} else {
+			copyOf.SortKey, err = o.keyAfterGroup(0, nil)
+		}
+		if err != nil {
 			return err
 		}
 		newID, err = s.st.InsertDashboard(ctx, copyOf, ws, store.AuditEntry{
-			Actor: actor, Action: "dashboard.duplicate", Detail: fmt.Sprintf("from dashboard/%d", id)})
+			Actor: actor, Action: "dashboard.duplicate", Detail: fmt.Sprintf("from dashboard/%d", src.ID)})
 		return err
 	}, lostDashboardRace)
 	if err != nil {
@@ -285,15 +293,102 @@ func (s *Service) DuplicateDashboard(ctx context.Context, actor string, id int64
 	return s.Dashboard(ctx, newID)
 }
 
-func (s *Service) ArchiveDashboard(ctx context.Context, actor string, id int64) error {
-	return s.setDashboardArchived(ctx, actor, id, true)
+// duplicateGroup is DuplicateDashboard(wholeGroup: true): every live
+// member of src's group (system or user), copied in tab order, as one
+// new user group placed last among the user dashboards.
+func (s *Service) duplicateGroup(ctx context.Context, actor string, src store.Dashboard) (DashboardDetail, error) {
+	all, err := s.st.ListDashboards(ctx)
+	if err != nil {
+		return DashboardDetail{}, err
+	}
+	var members []store.Dashboard
+	for _, d := range all {
+		if d.GroupID == src.GroupID && d.Owner == src.Owner && d.ArchivedAt == "" {
+			members = append(members, d)
+		}
+	}
+	if len(members) == 0 {
+		return DashboardDetail{}, store.Refuse(store.ErrInvalid, "group %d has no live member to duplicate", src.GroupID)
+	}
+	ds := make([]store.Dashboard, len(members))
+	wss := make([][]store.Widget, len(members))
+	for i, m := range members {
+		if wss[i], err = s.copyLiveWidgets(ctx, m.ID); err != nil {
+			return DashboardDetail{}, err
+		}
+		title := m.Title
+		if i == 0 {
+			title += " (copy)"
+		}
+		ds[i] = store.Dashboard{
+			Owner: store.OwnerUser, Title: title,
+			LastProjectID: m.LastProjectID, LastRange: m.LastRange, LastFrom: m.LastFrom, LastTo: m.LastTo,
+		}
+	}
+	var ids []int64
+	err = retryConflict(func() error {
+		o, err := s.readOrder(ctx)
+		if err != nil {
+			return err
+		}
+		var last string
+		if len(o) > 0 {
+			last = o[len(o)-1].SortKey
+		}
+		keys, err := sortkey.Spread(last, "", len(ds))
+		if err != nil {
+			return err
+		}
+		for i := range ds {
+			ds[i].SortKey = keys[i]
+		}
+		ids, err = s.st.InsertDashboardGroup(ctx, ds, wss, store.AuditEntry{
+			Actor: actor, Action: "dashboard.duplicate", Detail: fmt.Sprintf("group of dashboard/%d", src.ID)})
+		return err
+	}, lostDashboardRace)
+	if err != nil {
+		return DashboardDetail{}, err
+	}
+	return s.Dashboard(ctx, ids[0])
 }
 
-func (s *Service) RestoreDashboard(ctx context.Context, actor string, id int64) error {
-	return s.setDashboardArchived(ctx, actor, id, false)
+// copyLiveWidgets returns fresh copies of dashboardID's live widgets, in
+// order, with fresh spread keys; a widget whose component was removed
+// still copies, faithfully.
+func (s *Service) copyLiveWidgets(ctx context.Context, dashboardID int64) ([]store.Widget, error) {
+	all, err := s.st.ListWidgets(ctx, dashboardID)
+	if err != nil {
+		return nil, err
+	}
+	var ws []store.Widget
+	for _, w := range all {
+		if w.ArchivedAt == "" {
+			ws = append(ws, freshCopy(w))
+		}
+	}
+	keys, err := sortkey.Spread("", "", len(ws))
+	if err != nil {
+		return nil, err
+	}
+	for i := range ws {
+		ws[i].SortKey = keys[i]
+	}
+	return ws, nil
 }
 
-func (s *Service) setDashboardArchived(ctx context.Context, actor string, id int64, archived bool) error {
+func (s *Service) ArchiveDashboard(ctx context.Context, actor string, id int64, wholeGroup bool) error {
+	return s.setDashboardArchived(ctx, actor, id, true, wholeGroup)
+}
+
+func (s *Service) RestoreDashboard(ctx context.Context, actor string, id int64, wholeGroup bool) error {
+	return s.setDashboardArchived(ctx, actor, id, false, wholeGroup)
+}
+
+// setDashboardArchived archives or restores id, or (wholeGroup) every
+// live member (archiving) or archived member (restoring) of its group,
+// in one call to the store (D12–D14). A system dashboard or group is
+// refused as any other write to one is.
+func (s *Service) setDashboardArchived(ctx context.Context, actor string, id int64, archived, wholeGroup bool) error {
 	d, err := s.st.GetDashboard(ctx, id)
 	if err != nil {
 		return err
@@ -301,7 +396,20 @@ func (s *Service) setDashboardArchived(ctx context.Context, actor string, id int
 	if err := refuseSystem(d); err != nil {
 		return err
 	}
-	return s.st.SetDashboardArchived(ctx, id, archived,
+	ids := []int64{id}
+	if wholeGroup {
+		o, err := s.readOrder(ctx)
+		if err != nil {
+			return err
+		}
+		ids = nil
+		for _, m := range o.group(d.GroupID) {
+			if (m.ArchivedAt == "") == archived {
+				ids = append(ids, m.ID)
+			}
+		}
+	}
+	return s.st.SetDashboardsArchived(ctx, ids, archived,
 		store.AuditEntry{Actor: actor, Action: archiveAction("dashboard", archived)})
 }
 
