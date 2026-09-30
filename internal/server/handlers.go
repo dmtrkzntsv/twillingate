@@ -31,8 +31,9 @@ func newID() string {
 	return id.String()
 }
 
-// handleEvents is the only ingest endpoint. It demultiplexes by event name:
-// views and product events land in the one raw table under their family.
+// handleEvents is the only ingest endpoint. It demultiplexes by the event's
+// declared or inferred family (resolveFamily): views, product events and
+// measures all land in the one raw table under their family.
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	var env envelope
 	if !decode(w, r, &env) {
@@ -138,7 +139,6 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			res.warn(i, "unknown $consent value %q, ignored", rv.consentRaw)
 		}
 
-		defaultKind, _ := viewName(ev.Name)
 		family, name, famWarn, famReject := resolveFamily(ev)
 		if famReject != "" {
 			res.reject(i, "%s", famReject)
@@ -157,11 +157,15 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 				res.reject(i, "measures require a value: a number >= 0")
 				continue
 			}
-			if !slices.Contains(store.MeasureKinds, ev.Measure) {
+			// A non-string measure (a typo like {"measure":5}) parses as ""
+			// here, which fails the Contains check exactly like an absent
+			// or unknown one: same rejection, no special case needed.
+			measureStr, _ := jsonString(ev.Measure)
+			if !slices.Contains(store.MeasureKinds, measureStr) {
 				res.reject(i, "measures require measure: time, size or number")
 				continue
 			}
-			value, measure = &v, ev.Measure
+			value, measure = &v, measureStr
 			rate, bad := parseSampleRate(rv.sampleRateRaw)
 			if bad {
 				res.warn(i, "$sample_rate %q is not in (0, 1], stored as 1", rv.sampleRateRaw)
@@ -171,7 +175,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			if len(ev.Value) > 0 {
 				res.warn(i, "value is only read on the measures family, ignored")
 			}
-			if ev.Measure != "" {
+			if len(ev.Measure) > 0 {
 				res.warn(i, "measure is only read on the measures family, ignored")
 			}
 			if rv.sampleRateRaw != "" {
@@ -180,7 +184,15 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// A view's kind defaults from its name; a product event has no
-		// default and keeps an empty kind unless it declares one.
+		// default and keeps an empty kind unless it declares one. The
+		// default is taken only for an actual view: a measure or product
+		// event sharing a view's name (e.g. a mistyped family) must not
+		// inherit "web", which drives host-relative referrer cleaning and
+		// the bot filter.
+		var defaultKind string
+		if family == store.FamilyViews {
+			defaultKind, _ = viewName(ev.Name)
+		}
 		kind := defaultKind
 		if rv.Kind != "" {
 			if kindPattern.MatchString(rv.Kind) {

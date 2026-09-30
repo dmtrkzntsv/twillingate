@@ -481,8 +481,9 @@ the instance name, without changing what is sent.
 
 ## The event model
 
-Everything goes to one endpoint, `POST /ingest/events`. The event **name**
-decides which family it lands in:
+Everything goes to one endpoint, `POST /ingest/events`. `family` decides
+which family an event lands in; when it is omitted, the event's **name**
+decides instead:
 
 | name | family | default `$kind` | feeds |
 | --- | --- | --- | --- |
@@ -491,9 +492,9 @@ decides which family it lands in:
 | anything else | product | — | `product_events`, `product_attributes` |
 | any name, with `family: "measures"` | measures | — | `measures`, the Web Vitals and Measures dashboards |
 
-Both families are stored in one raw table, `events`, whose `family` column is
-`views`, `product` or `measures`; the aggregates, views and tools of each
-family read only its own rows.
+All three families are stored in one raw table, `events`, whose `family`
+column is `views`, `product` or `measures`; the aggregates, views and tools
+of each family read only its own rows.
 
 The `$` prefix is reserved for the system. An unrecognized `$` **name** is
 stored as an ordinary custom event with a warning; an unrecognized `$`
@@ -709,7 +710,7 @@ reads as undeclared and a custom key is absent.
 
 | `family` | `name` | Requires | When `family` is omitted |
 | --- | --- | --- | --- |
-| `views` | `$page_view` or `$screen_view` (or the `$pageview` alias) | `$path` (or `$screen`) | inferred from `name`: these two names are views |
+| `views` | `$page_view` or `$screen_view` | `$path` (or `$screen`) | inferred from `name`: these two names are views |
 | `product` | anything else | `name` | inferred from `name`: the default for every other name |
 | `measures` | any name, or a reserved `$` metric | a finite `value` `>= 0` and a `measure` of `time`, `size` or `number` | never inferred — a measure only exists when the event declares `family: "measures"` |
 
@@ -746,10 +747,12 @@ sending measures must upgrade the server first.
 `$sample_rate` is a number in `(0, 1]`, read on measures only; each stored row
 counts as `1/rate`. On any other family it is dropped with a warning.
 
-Every key is stored on views and product events alike. The SDK sends the
-rest only when the page sets them (`identify()`, `group()`, `attrs()`, the
-`platform`, `appVersion` and `appLocale` options). `autoAttributes: false`
-turns the derived environment and location off, except what a view needs.
+Every key but `$sample_rate` is stored on views and product events alike;
+`$sample_rate` is dropped, with a warning, on both and stored on measures
+only. The SDK sends the rest only when the page sets them (`identify()`,
+`group()`, `attrs()`, the `platform`, `appVersion` and `appLocale` options).
+`autoAttributes: false` turns the derived environment and location off,
+except what a view needs.
 
 `$consent` is whether the client had consent to keep anything on the device
 when it sent the event: `1` (or `true`) given, `0` (or `false`) not given, as a

@@ -1124,6 +1124,8 @@ func TestFamilyRules(t *testing.T) {
 		{"views with a product name", `{"family":"views","name":"signup"}`, "", "family views", ""},
 		{"product with a view name", `{"family":"product","name":"$page_view","attributes":{"$path":"/"}}`, "", "is a view", ""},
 		{"unknown family", `{"family":"logs","name":"x"}`, "", "unknown family", ""},
+		{"family is a number", `{"family":1,"name":"x"}`, "", "unknown family", ""},
+		{"family is a bool", `{"family":true,"name":"x"}`, "", "unknown family", ""},
 		{"measure", `{"family":"measures","name":"checkout_api","value":340,"measure":"time"}`, store.FamilyMeasures, "", ""},
 		{"measure zero", `{"family":"measures","name":"q","value":0,"measure":"number"}`, store.FamilyMeasures, "", ""},
 		{"measure without value", `{"family":"measures","name":"q","measure":"number"}`, "", "value", ""},
@@ -1133,6 +1135,7 @@ func TestFamilyRules(t *testing.T) {
 		{"measure negative", `{"family":"measures","name":"q","value":-1,"measure":"time"}`, "", "value", ""},
 		{"measure without kind", `{"family":"measures","name":"q","value":1}`, "", "measure", ""},
 		{"measure unknown kind", `{"family":"measures","name":"q","value":1,"measure":"seconds"}`, "", "measure", ""},
+		{"measure is a number", `{"family":"measures","name":"q","value":1,"measure":5}`, "", "measure", ""},
 		{"lcp as time", `{"family":"measures","name":"$lcp","value":1200,"measure":"time"}`, store.FamilyMeasures, "", ""},
 		{"cls as time", `{"family":"measures","name":"$cls","value":0.1,"measure":"time"}`, "", "$cls", ""},
 		{"future metric", `{"family":"measures","name":"$tbt","value":10,"measure":"time"}`, store.FamilyMeasures, "", "unknown reserved metric"},
@@ -1141,7 +1144,16 @@ func TestFamilyRules(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			q, h := testServer(t)
-			res := decodeResult(t, post(h, envelopeOf(c.event), nil))
+			w := post(h, envelopeOf(c.event), nil)
+			// A malformed field (an unknown family, a mistyped family or
+			// measure) is a per-event rejection, never a batch-level 4xx:
+			// resolveFamily and the measures block run per event, and
+			// rawEvent decodes family/measure as json.RawMessage precisely
+			// so a type mismatch can't fail decoding the whole envelope.
+			if w.Code != http.StatusAccepted {
+				t.Fatalf("status = %d, want 202 even when this event is rejected: %s", w.Code, w.Body.String())
+			}
+			res := decodeResult(t, w)
 			if c.wantFamily == "" {
 				if res.Rejected != 1 || res.Accepted != 0 {
 					t.Fatalf("result = %+v, want 1 rejected", res)
@@ -1171,6 +1183,53 @@ func TestFamilyRules(t *testing.T) {
 				t.Errorf("warnings = %+v, want one containing %q", res.Warnings, c.warn)
 			}
 		})
+	}
+}
+
+// TestMistypedFamilyOrMeasureDoesNotPoisonTheBatch pins the fix for a batch
+// containing an event with a mistyped family or measure field: those two
+// events are rejected individually and the well-formed event beside them in
+// the same batch is still accepted with a 202, not a 400 for the whole
+// request (which is what unmarshaling family/measure straight into a Go
+// string field used to produce).
+func TestMistypedFamilyOrMeasureDoesNotPoisonTheBatch(t *testing.T) {
+	q, h := testServer(t)
+	body := envelopeOf(`{"family":1,"name":"x"},
+		{"family":"measures","name":"q","value":1,"measure":5},
+		{"name":"good"}`)
+	w := post(h, body, nil)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202: %s", w.Code, w.Body.String())
+	}
+	res := decodeResult(t, w)
+	if res.Accepted != 1 || res.Rejected != 2 || len(res.Errors) != 2 {
+		t.Fatalf("result = %+v, want 1 accepted and 2 rejected", res)
+	}
+	if !containsNotice(res.Errors, "unknown family") {
+		t.Errorf("errors = %+v, want one about the mistyped family", res.Errors)
+	}
+	if !containsNotice(res.Errors, "measure") {
+		t.Errorf("errors = %+v, want one about the mistyped measure", res.Errors)
+	}
+	if len(q.events) != 1 || q.events[0].EventName != "good" {
+		t.Errorf("events = %+v, want only the well-formed event stored", q.events)
+	}
+}
+
+// TestMeasureNeverGetsAViewDefaultKind pins that the view default kind
+// ($page_view -> "web", $screen_view -> "app") only applies to an actual
+// view: a measure sharing a view's name must keep an empty kind, since kind
+// drives host-relative referrer cleaning and the web-kind bot filter,
+// neither of which a measure should be subject to.
+func TestMeasureNeverGetsAViewDefaultKind(t *testing.T) {
+	q, h := testServer(t)
+	res := decodeResult(t, post(h, envelopeOf(
+		`{"family":"measures","name":"$page_view","value":1200,"measure":"time"}`), nil))
+	if res.Accepted != 1 || res.Rejected != 0 {
+		t.Fatalf("result = %+v", res)
+	}
+	if len(q.measures) != 1 || q.measures[0].Kind != "" {
+		t.Fatalf("measures = %+v, want an empty kind (no view default leaking in)", q.measures)
 	}
 }
 

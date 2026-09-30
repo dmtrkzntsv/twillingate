@@ -66,13 +66,17 @@ type envelope struct {
 	Events     []rawEvent     `json:"events"`
 }
 
+// Family and Measure are json.RawMessage, not string: a typo like
+// {"family":1} must reject that one event (resolveFamily below), not fail
+// decoding the whole batch, which unmarshaling straight into a string field
+// would do (encoding/json errors the whole Decode call on a type mismatch).
 type rawEvent struct {
 	ID         string          `json:"id"`
 	TS         string          `json:"ts"`
-	Family     string          `json:"family"`
+	Family     json.RawMessage `json:"family"`
 	Name       string          `json:"name"`
 	Value      json.RawMessage `json:"value"`
-	Measure    string          `json:"measure"`
+	Measure    json.RawMessage `json:"measure"`
 	Attributes map[string]any  `json:"attributes"`
 }
 
@@ -337,13 +341,36 @@ func parseSampleRate(raw string) (rate float64, bad bool) {
 	return v, false
 }
 
+// jsonString reads a field decoded as json.RawMessage and requires it to be
+// a JSON string. Absent (nil or empty) is not a mistake: it reports "",
+// true, so the caller's normal "omitted" branch runs. Present but some
+// other JSON type (a number, a bool, an object) reports ok=false, which is
+// what lets a typo like {"family":1} or {"measure":5} reject that one
+// event rather than value never reaching here at all (a mismatched Go
+// struct field type would fail decoding the whole batch instead).
+func jsonString(raw json.RawMessage) (s string, ok bool) {
+	if len(raw) == 0 {
+		return "", true
+	}
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return "", false
+	}
+	return s, true
+}
+
 // resolveFamily decides an event's family and stored name. An explicit
 // family is checked, never overridden; a missing one keeps the old rule
 // (view names are views, everything else product), so a measure only
-// exists when the event declares it.
+// exists when the event declares it. family and measure being anything but
+// a JSON string (or absent) is a per-event rejection, never a decode
+// failure for the whole batch.
 func resolveFamily(ev rawEvent) (family store.Family, name, warn, reject string) {
+	fam, ok := jsonString(ev.Family)
+	if !ok {
+		return "", "", "", fmt.Sprintf("unknown family %s", ev.Family)
+	}
 	_, isView := viewName(ev.Name)
-	switch ev.Family {
+	switch fam {
 	case "":
 		if isView {
 			return store.FamilyViews, canonicalViewName(ev.Name), "", ""
@@ -366,12 +393,13 @@ func resolveFamily(ev rawEvent) (family store.Family, name, warn, reject string)
 		}
 		return store.FamilyProduct, ev.Name, warn, ""
 	case string(store.FamilyMeasures):
-		if want, reserved := store.ReservedMetrics[ev.Name]; reserved && ev.Measure != want {
+		measure, _ := jsonString(ev.Measure) // a non-string measure fails the value/measure check in handleEvents
+		if want, reserved := store.ReservedMetrics[ev.Name]; reserved && measure != want {
 			return "", "", "", fmt.Sprintf("%s requires measure %s", ev.Name, want)
 		} else if !reserved && strings.HasPrefix(ev.Name, "$") {
 			warn = fmt.Sprintf("unknown reserved metric %s, stored", ev.Name)
 		}
 		return store.FamilyMeasures, ev.Name, warn, ""
 	}
-	return "", "", "", fmt.Sprintf("unknown family %q", ev.Family)
+	return "", "", "", fmt.Sprintf("unknown family %q", fam)
 }
