@@ -94,11 +94,11 @@ Two PRs:
 ### Acting on a whole group
 
 9. **`duplicate_dashboard`, `archive_dashboard` and `restore_dashboard`
-   take an optional `with_group`.** Left out or false, they act on the
+   take an optional `whole_group`.** Left out or false, they act on the
    dashboard, as today; `true` acts on the dashboard's whole group. The
    dashboard already names its group, so no `group_id` is taken here.
    Over REST it is an optional JSON body on the existing routes,
-   `{"with_group": true}`; an empty body behaves as today. A system
+   `{"whole_group": true}`; an empty body behaves as today. A system
    group is refused by archive and restore as a system dashboard is.
 
 ### Copying
@@ -107,7 +107,7 @@ Two PRs:
     of a user dashboard joins the original's group, right after it. A
     copy of a system dashboard is a new user group, last in the sidebar
     (decision 5). Titled "… (copy)", as today.
-11. **`duplicate_dashboard {with_group: true}` copies the group.** Every live
+11. **`duplicate_dashboard {whole_group: true}` copies the group.** Every live
     member, each with its live widgets, in one transaction, as a new user
     group last in the sidebar, in the same tab order. The first copy is
     titled "… (copy)"; the others keep their titles. On group 1 this
@@ -121,12 +121,12 @@ Two PRs:
     Nothing is relinked: the row keeps its `group_id` and its key inside
     the group's block, and the sidebar entry moves to the next live
     member if this one was first (decision 4).
-13. **`archive_dashboard {with_group: true}` archives the group**: every live
+13. **`archive_dashboard {whole_group: true}` archives the group**: every live
     member, in one transaction.
 14. **`restore_dashboard` restores one dashboard by default**, in
     place: its key is still in its group's block, since moves carry
     archived members along (decision 3). **`restore_dashboard
-    {with_group: true}` restores every archived member of the group**, in one
+    {whole_group: true}` restores every archived member of the group**, in one
     transaction; a member archived on its own earlier comes back too,
     and can be archived again.
 15. **The purge is unchanged.** It deletes each archived user dashboard
@@ -176,9 +176,9 @@ Two PRs:
 | --- | --- | --- |
 | `create_dashboard` | `group_id`; `after` then places among its tabs | `POST /api/dashboards` |
 | `update_dashboard` | `group_id`; `after` moves a tab or the whole group, by what it names | `PATCH /api/dashboards/{dashboard_id}` |
-| `duplicate_dashboard` | `with_group` | `POST /api/dashboards/{dashboard_id}/duplicate`, optional body |
-| `archive_dashboard` | `with_group` | `POST /api/dashboards/{dashboard_id}/archive`, optional body |
-| `restore_dashboard` | `with_group` | `POST /api/dashboards/{dashboard_id}/restore`, optional body |
+| `duplicate_dashboard` | `whole_group` | `POST /api/dashboards/{dashboard_id}/duplicate`, optional body |
+| `archive_dashboard` | `whole_group` | `POST /api/dashboards/{dashboard_id}/archive`, optional body |
+| `restore_dashboard` | `whole_group` | `POST /api/dashboards/{dashboard_id}/restore`, optional body |
 | `get_dashboard` | returns `group_id`, `tabs` | `GET /api/dashboards/{dashboard_id}` |
 | `list_dashboards` | returns `group_id` | `GET /api/dashboards` |
 
@@ -213,12 +213,12 @@ refusals). `docs_sync_test` stays green.
   decisions 8–9; groups stay contiguous after every move, archived
   members included; moving a group carries its archived members; a new
   dashboard's `group_id` is its id; leaving a group keeps the old group's
-  id with it; `duplicate_dashboard` with and without `with_group`, from
+  id with it; `duplicate_dashboard` with and without `whole_group`, from
   a user and a system group, copying no archived widgets or members;
-  archive and restore with and without `with_group`; `get_dashboard.tabs` is
+  archive and restore with and without `whole_group`; `get_dashboard.tabs` is
   the same from every member.
 - **api**: the three routes with an empty body, `{}` and
-  `{"with_group": true}`.
+  `{"whole_group": true}`.
 - **migrate**: `"group"` sets `group_id`; a group naming a dashboard not
   in the release fails the migration; a dashboard without it is its own
   group.
