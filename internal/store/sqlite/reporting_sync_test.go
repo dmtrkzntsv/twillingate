@@ -235,6 +235,101 @@ func TestSyncReportingSecondSyncEditsPreservesIDsAndView(t *testing.T) {
 	}
 }
 
+// TestSyncReportingGroupIDDefaultsToOwnID checks a manifest dashboard
+// with GroupID 0 (the ordinary case: no dashboard in this release is
+// grouped with another) stores group_id = its own id on first sync,
+// mirroring insertDashboardRow's rule for an ordinary InsertDashboard.
+func TestSyncReportingGroupIDDefaultsToOwnID(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	if err := db.SyncReporting(ctx, baseSync("hash-group-default")); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []int64{1, 2} {
+		got, err := db.GetDashboard(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.GroupID != id {
+			t.Errorf("dashboard %d GroupID = %d, want %d (own id)", id, got.GroupID, id)
+		}
+	}
+}
+
+// TestSyncReportingGroupIDNamesAnotherDashboard checks a manifest
+// dashboard whose GroupID names another dashboard in the same manifest
+// (id 2 naming group 1) stores that group_id, not its own id.
+func TestSyncReportingGroupIDNamesAnotherDashboard(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	s := store.ReportingSync{
+		Hash: "hash-group-named", Version: "0.1.0",
+		Dashboards: []store.SystemDashboard{
+			{ID: 1, Title: "Overview", SortKey: "a"},
+			{ID: 2, Title: "Overview tab 2", SortKey: "b", GroupID: 1},
+		},
+	}
+	if err := db.SyncReporting(ctx, s); err != nil {
+		t.Fatal(err)
+	}
+	got1, err := db.GetDashboard(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got1.GroupID != 1 {
+		t.Errorf("dashboard 1 GroupID = %d, want 1 (own id)", got1.GroupID)
+	}
+	got2, err := db.GetDashboard(ctx, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got2.GroupID != 1 {
+		t.Errorf("dashboard 2 GroupID = %d, want 1 (named group)", got2.GroupID)
+	}
+}
+
+// TestSyncReportingResyncUpdatesGroupID checks a later sync that changes
+// a dashboard's GroupID overwrites the stored group_id, the same as it
+// overwrites title and sort_key.
+func TestSyncReportingResyncUpdatesGroupID(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	first := store.ReportingSync{
+		Hash: "hash-regroup-1", Version: "0.1.0",
+		Dashboards: []store.SystemDashboard{
+			{ID: 1, Title: "Overview", SortKey: "a"},
+			{ID: 2, Title: "Retention", SortKey: "b"},
+		},
+	}
+	if err := db.SyncReporting(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	got2Before, err := db.GetDashboard(ctx, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got2Before.GroupID != 2 {
+		t.Fatalf("dashboard 2 GroupID before regroup = %d, want 2 (own id)", got2Before.GroupID)
+	}
+
+	second := first
+	second.Hash = "hash-regroup-2"
+	second.Dashboards = []store.SystemDashboard{
+		{ID: 1, Title: "Overview", SortKey: "a"},
+		{ID: 2, Title: "Retention", SortKey: "b", GroupID: 1},
+	}
+	if err := db.SyncReporting(ctx, second); err != nil {
+		t.Fatal(err)
+	}
+	got2After, err := db.GetDashboard(ctx, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got2After.GroupID != 1 {
+		t.Errorf("dashboard 2 GroupID after regroup = %d, want 1 (updated on resync)", got2After.GroupID)
+	}
+}
+
 func TestSyncReportingSwapsSortKeysWithoutConflict(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
