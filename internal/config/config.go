@@ -31,8 +31,10 @@ type RetentionClass struct {
 }
 
 type Retention struct {
-	Views   RetentionClass `json:"views"`
-	Product RetentionClass `json:"product"`
+	// Events is every family's window: raw rows are rolled up and deleted
+	// after RawDays; aggregates, actors, cohorts and identities are kept
+	// AggregateDays.
+	Events RetentionClass `json:"events"`
 	// ArchivedDays is how long an archived project, dashboard or widget
 	// survives before the daily pass deletes it. 0 keeps archived items
 	// forever.
@@ -176,13 +178,9 @@ func FromEnv(lookup func(string) (string, bool)) (*Config, error) {
 			Capacity:       e.num("BUFFER_CAPACITY", 10000),
 		},
 		Retention: Retention{
-			Views: RetentionClass{
-				RawDays:       e.num("RETENTION_VIEWS_RAW_DAYS", 30),
-				AggregateDays: e.num("RETENTION_VIEWS_AGGREGATE_DAYS", 365),
-			},
-			Product: RetentionClass{
-				RawDays:       e.num("RETENTION_PRODUCT_RAW_DAYS", 30),
-				AggregateDays: e.num("RETENTION_PRODUCT_AGGREGATE_DAYS", 365),
+			Events: RetentionClass{
+				RawDays:       e.num("RETENTION_EVENTS_RAW_DAYS", 30),
+				AggregateDays: e.num("RETENTION_EVENTS_AGGREGATE_DAYS", 365),
 			},
 			ArchivedDays: e.num("RETENTION_ARCHIVED_DAYS", 30),
 		},
@@ -223,10 +221,6 @@ func FromEnv(lookup func(string) (string, bool)) (*Config, error) {
 // refuses the boot, so a leftover one cannot silently stop taking effect.
 var renamed = []struct{ old, repl string }{
 	{"LISTEN_ADDR", "INGEST_ADDR"},
-	{"RETENTION_WEB_RAW_DAYS", "RETENTION_VIEWS_RAW_DAYS"},
-	{"RETENTION_WEB_AGGREGATE_DAYS", "RETENTION_VIEWS_AGGREGATE_DAYS"},
-	{"RETENTION_APP_RAW_DAYS", "RETENTION_VIEWS_RAW_DAYS"},
-	{"RETENTION_APP_AGGREGATE_DAYS", "RETENTION_VIEWS_AGGREGATE_DAYS"},
 }
 
 // refuseRenamed treats an empty value as unset, as env.str does, so a
@@ -251,10 +245,8 @@ func (c *Config) validate() error {
 		}
 	}
 	// Validate global retention (negative values only)
-	for _, rc := range []RetentionClass{c.Retention.Views, c.Retention.Product} {
-		if rc.RawDays < 0 || rc.AggregateDays < 0 {
-			return fmt.Errorf("config: retention days must not be negative: %+v", rc)
-		}
+	if rc := c.Retention.Events; rc.RawDays < 0 || rc.AggregateDays < 0 {
+		return fmt.Errorf("config: retention days must not be negative: %+v", rc)
 	}
 	if c.Retention.ArchivedDays < 0 {
 		return fmt.Errorf("config: RETENTION_ARCHIVED_DAYS must not be negative: %d", c.Retention.ArchivedDays)
@@ -272,12 +264,10 @@ func (c *Config) validate() error {
 	return nil
 }
 
-// MaxEventAge is derived from the views raw window rather than separately
-// configurable: the two must agree or a clamped timestamp could land in
-// an already-aggregated day. Retention is global, so ingest clamps against
-// exactly this value.
+// MaxEventAge is the raw window: a clamped timestamp can never land in a
+// day already rolled up.
 func (c *Config) MaxEventAge() time.Duration {
-	return time.Duration(c.Retention.Views.RawDays) * 24 * time.Hour
+	return time.Duration(c.Retention.Events.RawDays) * 24 * time.Hour
 }
 
 // parseAPIAuthDSN fans API_AUTH_DSN out into the mode-specific APIConfig

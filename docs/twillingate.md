@@ -711,7 +711,7 @@ User-Agent is read only to drop crawlers, and both are discarded.
 happened, not at flush time. The server clamps it to `[received − max_event_age,
 received + 5 minutes]`, records the server clock separately, and **clamps and
 counts, never drops**, out-of-range values; `max_event_age` equals
-`RETENTION_VIEWS_RAW_DAYS` (30 days by default), so a clamped event can never
+`RETENTION_EVENTS_RAW_DAYS` (30 days by default), so a clamped event can never
 target a day already rolled up. **`id`** is a client-generated UUID (v7
 recommended, so ids sort by time) and is what makes at-least-once delivery safe:
 the write ignores a duplicate primary key, so a batch retried after a timeout

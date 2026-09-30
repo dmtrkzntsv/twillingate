@@ -115,11 +115,11 @@ func (f *faultyStore) AggregateProductDay(ctx context.Context, projectID int64, 
 	return f.Store.AggregateProductDay(ctx, projectID, day, attrs, topN)
 }
 
-func (f *faultyStore) PruneAggregates(ctx context.Context, projectID int64, viewsBefore, productBefore civil.Date) error {
+func (f *faultyStore) PruneAggregates(ctx context.Context, projectID int64, before civil.Date) error {
 	if f.shouldFail("PruneAggregates") {
 		return errBoom
 	}
-	return f.Store.PruneAggregates(ctx, projectID, viewsBefore, productBefore)
+	return f.Store.PruneAggregates(ctx, projectID, before)
 }
 
 func (f *faultyStore) PruneActors(ctx context.Context, projectID int64, before civil.Date) error {

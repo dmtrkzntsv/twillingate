@@ -98,10 +98,8 @@ to it.
 | `BUFFER_FLUSH_MAX_EVENTS` | Flush once this many events are buffered. Default 1000. |
 | `BUFFER_FLUSH_INTERVAL` | Flush at least this often. Default `5s`. |
 | `BUFFER_CAPACITY` | Bounded queue size; excess is dropped rather than growing memory. Default 10000. |
-| `RETENTION_VIEWS_RAW_DAYS` | Days raw page and screen views are kept before rollup. Also the oldest client timestamp accepted: older events are clamped to this edge. Default 30. |
-| `RETENTION_VIEWS_AGGREGATE_DAYS` | Days view aggregates (and actors, cohorts, identities) are kept. Default 365. |
-| `RETENTION_PRODUCT_RAW_DAYS` | Days raw product events are kept before rollup. Default 30. |
-| `RETENTION_PRODUCT_AGGREGATE_DAYS` | Days product aggregates are kept. Default 365. |
+| `RETENTION_EVENTS_RAW_DAYS` | Days raw events of every family are kept before rollup. Also the oldest client timestamp accepted: older events are clamped to this edge. Default 30. |
+| `RETENTION_EVENTS_AGGREGATE_DAYS` | Days aggregates of every family (and actors, cohorts, identities) are kept. Default 365. |
 | `RETENTION_ARCHIVED_DAYS` | Days after archiving that a project (with all its data), a dashboard or a widget is deleted by the daily pass. 0 keeps archived items forever. Default 30. |
 | `PRODUCT_ATTRIBUTES_TOP_N` | Distinct attribute values kept per (project, day, event, key) before the rest collapse into `(other)`. Default 50. |
 | `API_AUTH_DSN` | Authentication for the API endpoint (MCP and REST): `token://<token>?password=…` for the built-in browser login (see [The API endpoint](#the-api-endpoint)), or `oauth://<issuer-host>` for your own identity provider. Unset, bare `serve` skips the API with a warning. |
@@ -113,17 +111,15 @@ to it.
 | `REPORTING_CACHE_SECONDS` | How long an ordinary widget data request reuses a sql widget's loaded value before loading again. 0 turns the cache off: every request loads again. Default 900. |
 | `REPORTING_REFRESH_SECONDS` | A `fresh=true` request reuses a result younger than this instead of `REPORTING_CACHE_SECONDS`; must not exceed it when that is non-zero. Default 60. A dashboard with auto-refresh on reloads every max(`REPORTING_CACHE_SECONDS`, `REPORTING_REFRESH_SECONDS`) seconds while its window has focus; both 0 removes the option. |
 
-The old names
-`LISTEN_ADDR` and `RETENTION_WEB_*`/`RETENTION_APP_*` refuse the boot,
-each naming its replacement: `INGEST_ADDR`, `RETENTION_VIEWS_*`. The
-`MCP_*` names renamed to `API_*` are no longer checked; a leftover one is
-ignored, so rename any still in `twillingate.env`.
+The old name `LISTEN_ADDR` refuses the boot, naming its replacement:
+`INGEST_ADDR`. The `MCP_*` names renamed to `API_*` are no longer checked; a
+leftover one is ignored, so rename any still in `twillingate.env`.
 
 ### Raspberry Pi and low-resource hosts
 
 - Raise `BUFFER_FLUSH_INTERVAL` (say `30s`): fewer, larger writes.
 - Set `GOMEMLIMIT` (unit and compose files ship `128MiB`) and keep `GEO_DSN` off `maxmind://`, which holds a database in memory.
-- Lower `RETENTION_VIEWS_RAW_DAYS` (say `7`): raw views are most of the one raw `events` table, the largest in the file, and the live halves of the `v_views_*` views scan them on every query.
+- Lower `RETENTION_EVENTS_RAW_DAYS` (say `7`): raw events are the largest table in the file, and the live halves of the `v_*` views scan them on every query.
 
 ## The API endpoint
 

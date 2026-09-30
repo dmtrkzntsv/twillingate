@@ -26,7 +26,7 @@ func TestPruneAggregates(t *testing.T) {
 	// Different project must be untouched.
 	exec(`INSERT INTO agg_views_daily VALUES (2,'2025-01-01','web',9,9,9,0,0)`)
 
-	if err := db.PruneAggregates(ctx, 1, day("2026-01-01"), day("2026-01-01")); err != nil {
+	if err := db.PruneAggregates(ctx, 1, day("2026-01-01")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -51,19 +51,20 @@ func TestPruneAggregates(t *testing.T) {
 	}
 }
 
-// Views and product retention are configured independently, so a cutoff
-// that prunes one must not prune the other.
-func TestPruneAggregatesIndependentCutoffs(t *testing.T) {
+// Every agg table shares the one cutoff: a row before it is dropped, a row
+// on or after it survives, whichever family the table belongs to.
+func TestPruneAggregatesOneCutoff(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	if _, err := db.db.Exec(`INSERT INTO agg_views_daily VALUES (1,'2026-03-01','web',1,1,1,0,0)`); err != nil {
+	if _, err := db.db.Exec(`INSERT INTO agg_views_daily VALUES
+		(1,'2026-01-01','web',1,1,1,0,0), (1,'2026-06-01','web',2,2,2,0,0)`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.db.Exec(`INSERT INTO agg_product_daily VALUES (1,'2026-03-01','e',1,1)`); err != nil {
+	if _, err := db.db.Exec(`INSERT INTO agg_product_daily VALUES
+		(1,'2026-01-01','e',1,1), (1,'2026-06-01','e',2,2)`); err != nil {
 		t.Fatal(err)
 	}
-	// Prune views through 2026-06-01 but keep product back to 2026-01-01.
-	if err := db.PruneAggregates(ctx, 1, day("2026-06-01"), day("2026-01-01")); err != nil {
+	if err := db.PruneAggregates(ctx, 1, day("2026-03-01")); err != nil {
 		t.Fatal(err)
 	}
 	var views, product int
@@ -73,11 +74,11 @@ func TestPruneAggregatesIndependentCutoffs(t *testing.T) {
 	if err := db.db.QueryRow(`SELECT COUNT(*) FROM agg_product_daily`).Scan(&product); err != nil {
 		t.Fatal(err)
 	}
-	if views != 0 {
-		t.Errorf("agg_views_daily: %d rows, want 0 (before views cutoff)", views)
+	if views != 1 {
+		t.Errorf("agg_views_daily: %d rows, want 1 (before the cutoff dropped, on/after kept)", views)
 	}
 	if product != 1 {
-		t.Errorf("agg_product_daily: %d rows, want 1 (after product cutoff)", product)
+		t.Errorf("agg_product_daily: %d rows, want 1 (before the cutoff dropped, on/after kept)", product)
 	}
 }
 

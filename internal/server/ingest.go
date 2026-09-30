@@ -286,9 +286,9 @@ func truncate(s string, n int) string {
 
 // clampTS bounds a client timestamp to [received-maxAge, received+skew].
 // Out-of-range values are clamped and counted, never dropped: a device with
-// a broken clock still contributes. The lower bound is tied to the project's
-// views raw window, which is what guarantees a clamped event can never
-// target a day that has already been aggregated and had its raw rows
+// a broken clock still contributes. The lower bound is the raw window
+// (RETENTION_EVENTS_RAW_DAYS), which is what guarantees a clamped event can
+// never target a day that has already been aggregated and had its raw rows
 // deleted.
 func clampTS(client, received time.Time, maxAge time.Duration) (time.Time, bool) {
 	if client.IsZero() {

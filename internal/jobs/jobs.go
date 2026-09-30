@@ -36,7 +36,7 @@ type Store interface {
 	PruneActors(ctx context.Context, projectID int64, before civil.Date) error
 	AggregateIdentityDay(ctx context.Context, projectID int64, day civil.Date) error
 	PruneIdentities(ctx context.Context, projectID int64, before civil.Date) error
-	PruneAggregates(ctx context.Context, projectID int64, viewsBefore, productBefore civil.Date) error
+	PruneAggregates(ctx context.Context, projectID int64, before civil.Date) error
 	RebuildFlatView(ctx context.Context, keys []string) error
 	IncrementalVacuum(ctx context.Context) error
 	// PurgeArchived deletes every project, dashboard and widget archived
@@ -143,7 +143,7 @@ func (r *Runner) RunDailyPass(ctx context.Context) error {
 			}
 		}
 
-		days, err := r.store.ViewDaysBefore(ctx, id, today.AddDays(-ret.Views.RawDays))
+		days, err := r.store.ViewDaysBefore(ctx, id, today.AddDays(-ret.Events.RawDays))
 		if err != nil {
 			return err
 		}
@@ -153,7 +153,7 @@ func (r *Runner) RunDailyPass(ctx context.Context) error {
 			}
 		}
 
-		prodDays, err := r.store.ProductDaysBefore(ctx, id, today.AddDays(-ret.Product.RawDays))
+		prodDays, err := r.store.ProductDaysBefore(ctx, id, today.AddDays(-ret.Events.RawDays))
 		if err != nil {
 			return err
 		}
@@ -164,15 +164,13 @@ func (r *Runner) RunDailyPass(ctx context.Context) error {
 			}
 		}
 
-		if err := r.store.PruneAggregates(ctx, id,
-			today.AddDays(-ret.Views.AggregateDays),
-			today.AddDays(-ret.Product.AggregateDays)); err != nil {
+		if err := r.store.PruneAggregates(ctx, id, today.AddDays(-ret.Events.AggregateDays)); err != nil {
 			r.logger.Error("prune failed", "project", id, "error", err)
 		}
-		if err := r.store.PruneActors(ctx, id, today.AddDays(-ret.Views.AggregateDays)); err != nil {
+		if err := r.store.PruneActors(ctx, id, today.AddDays(-ret.Events.AggregateDays)); err != nil {
 			r.logger.Error("prune actors failed", "project", id, "error", err)
 		}
-		if err := r.store.PruneIdentities(ctx, id, today.AddDays(-ret.Views.AggregateDays)); err != nil {
+		if err := r.store.PruneIdentities(ctx, id, today.AddDays(-ret.Events.AggregateDays)); err != nil {
 			r.logger.Error("prune identities failed", "project", id, "error", err)
 		}
 	}
