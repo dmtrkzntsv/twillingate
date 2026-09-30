@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/dmtrkzntsv/twillingate/internal/store"
@@ -644,5 +645,273 @@ func TestNewDashboardGroupIDIsNeverADashboardID(t *testing.T) {
 	}
 	if id <= second {
 		t.Errorf("dashboard id %d after reserving %d, want greater", id, second)
+	}
+}
+
+// TestNewDashboardGroupIDCancelledContextIsError drives the one branch
+// TestNewDashboardGroupIDIsNeverADashboardID cannot reach: the
+// sqlite_sequence UPDATE's own error path. A cancelled context is
+// refused before the statement runs (database/sql checks ctx.Done()
+// when acquiring the connection), the same technique
+// TestMigrateWithCancelledContextLeavesForeignKeysOn (fk_test.go) uses
+// for migrateThrough.
+func TestNewDashboardGroupIDCancelledContextIsError(t *testing.T) {
+	db := newTestDB(t)
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := db.NewDashboardGroupID(cancelled); err == nil {
+		t.Fatal("NewDashboardGroupID with a cancelled context: want an error, got nil")
+	}
+}
+
+func TestInsertDashboardSortKeyConflictIsErrConflict(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	audit := store.AuditEntry{Actor: "agent", Action: "dashboard.create"}
+	if _, err := db.InsertDashboard(ctx,
+		store.Dashboard{Owner: store.OwnerUser, Title: "D1", SortKey: "a"}, nil, audit); err != nil {
+		t.Fatal(err)
+	}
+	_, err := db.InsertDashboard(ctx,
+		store.Dashboard{Owner: store.OwnerUser, Title: "D2", SortKey: "a"}, nil, audit)
+	if !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("InsertDashboard duplicate (owner, sort_key) = %v, want ErrConflict", err)
+	}
+	// A different owner may reuse the same sort key: the unique index is
+	// (owner, sort_key), not sort_key alone.
+	if _, err := db.InsertDashboard(ctx,
+		store.Dashboard{Owner: store.OwnerSystem, Title: "S1", SortKey: "a"}, nil, audit); err != nil {
+		t.Fatalf("InsertDashboard with same sort key, different owner: %v, want success", err)
+	}
+}
+
+func TestUpdateDashboardSortKeyConflictIsErrConflict(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	audit := store.AuditEntry{Actor: "agent", Action: "dashboard.create"}
+	id1, err := db.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "D1", SortKey: "a"}, nil, audit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id2, err := db.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "D2", SortKey: "b"}, nil, audit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = db.UpdateDashboard(ctx, store.Dashboard{ID: id2, Title: "D2", SortKey: "a"},
+		store.AuditEntry{Actor: "agent", Action: "dashboard.update"})
+	if !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("UpdateDashboard onto another row's (owner, sort_key) = %v, want ErrConflict", err)
+	}
+	got, err := db.GetDashboard(ctx, id1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SortKey != "a" {
+		t.Errorf("dashboard 1 sort key after refused update = %q, want unchanged %q", got.SortKey, "a")
+	}
+}
+
+// TestMoveDashboardsConflictWritesNothing moves one dashboard onto a
+// sort key another (untouched) row already holds: the park phase only
+// parks the rows named in ks, so the real write for the moved row
+// collides with the other row's still-live key. Checks the error is
+// ErrConflict with its own message (not MoveDashboards reusing
+// mapDashboardConflict's "insert dashboard" / blank-owner text) and
+// that the transaction rolled back — including the moved row's own
+// parked '~' sort key, which must not survive the failed call.
+func TestMoveDashboardsConflictWritesNothing(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	audit := store.AuditEntry{Actor: "agent", Action: "dashboard.create"}
+	id1, err := db.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "D1", SortKey: "a"}, nil, audit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id2, err := db.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "D2", SortKey: "b"}, nil, audit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var auditCountBefore int
+	if err := db.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_log`).Scan(&auditCountBefore); err != nil {
+		t.Fatal(err)
+	}
+
+	err = db.MoveDashboards(ctx, []store.DashboardKey{
+		{ID: id1, GroupID: id1, SortKey: "b"}, // id2 still holds "b": not named in this call
+	}, store.AuditEntry{Actor: "agent", Action: "dashboard.move"})
+	if !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("MoveDashboards onto another row's sort key = %v, want ErrConflict", err)
+	}
+	if strings.Contains(err.Error(), "insert dashboard") {
+		t.Errorf("MoveDashboards conflict message reused insert's wording: %v", err)
+	}
+
+	got1, err := db.GetDashboard(ctx, id1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got1.SortKey != "a" {
+		t.Errorf("dashboard 1 sort key after failed move = %q, want unchanged %q (park phase rolled back too)",
+			got1.SortKey, "a")
+	}
+	got2, err := db.GetDashboard(ctx, id2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got2.SortKey != "b" {
+		t.Errorf("dashboard 2 sort key after failed move = %q, want unchanged %q", got2.SortKey, "b")
+	}
+	var auditCountAfter int
+	if err := db.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_log`).Scan(&auditCountAfter); err != nil {
+		t.Fatal(err)
+	}
+	if auditCountAfter != auditCountBefore {
+		t.Errorf("audit_log rows after failed MoveDashboards = %d, want unchanged %d", auditCountAfter, auditCountBefore)
+	}
+}
+
+// TestMoveDashboardsUnknownIDIsNotFound checks the RowsAffected==0
+// branch: an id in ks that no row has (the park phase's WHERE id IN
+// (...) matches nothing for it, and neither does the real per-key
+// UPDATE) is refused ErrNotFound rather than silently accepted as a
+// no-op move.
+func TestMoveDashboardsUnknownIDIsNotFound(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	err := db.MoveDashboards(ctx, []store.DashboardKey{
+		{ID: 999999, GroupID: 999999, SortKey: "a"},
+	}, store.AuditEntry{Actor: "agent", Action: "dashboard.move"})
+	if !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("MoveDashboards unknown id = %v, want ErrNotFound", err)
+	}
+}
+
+func TestSetDashboardsArchivedEmptyIDsIsNoOp(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	var auditCountBefore int
+	if err := db.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_log`).Scan(&auditCountBefore); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetDashboardsArchived(ctx, nil, true, store.AuditEntry{Actor: "agent", Action: "dashboard.archive"}); err != nil {
+		t.Fatalf("SetDashboardsArchived with no ids: %v, want nil", err)
+	}
+	var auditCountAfter int
+	if err := db.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_log`).Scan(&auditCountAfter); err != nil {
+		t.Fatal(err)
+	}
+	if auditCountAfter != auditCountBefore {
+		t.Errorf("audit_log rows after empty-ids SetDashboardsArchived = %d, want unchanged %d",
+			auditCountAfter, auditCountBefore)
+	}
+}
+
+// TestSetDashboardsArchivedRestoresMixedIDs restores two ids in one
+// call where only one is actually archived (the other is already live,
+// so its UPDATE is an idempotent no-op) — both branches of the restore
+// statement's WHERE-less UPDATE in one call, each still auditing its own
+// row.
+func TestSetDashboardsArchivedRestoresMixedIDs(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	audit := store.AuditEntry{Actor: "agent", Action: "dashboard.create"}
+	id1, err := db.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "D1", SortKey: "a"}, nil, audit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id2, err := db.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "D2", SortKey: "b"}, nil, audit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetDashboardArchived(ctx, id1, true, store.AuditEntry{Actor: "agent", Action: "dashboard.archive"}); err != nil {
+		t.Fatal(err)
+	}
+	// id2 is left live.
+
+	var auditCountBefore int
+	if err := db.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_log`).Scan(&auditCountBefore); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetDashboardsArchived(ctx, []int64{id1, id2}, false,
+		store.AuditEntry{Actor: "agent", Action: "dashboard.restore"}); err != nil {
+		t.Fatal(err)
+	}
+	got1, err := db.GetDashboard(ctx, id1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got2, err := db.GetDashboard(ctx, id2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got1.ArchivedAt != "" {
+		t.Errorf("dashboard 1 (was archived) ArchivedAt after restore = %q, want empty", got1.ArchivedAt)
+	}
+	if got2.ArchivedAt != "" {
+		t.Errorf("dashboard 2 (was already live) ArchivedAt after restore = %q, want empty", got2.ArchivedAt)
+	}
+	var auditCountAfter int
+	if err := db.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_log`).Scan(&auditCountAfter); err != nil {
+		t.Fatal(err)
+	}
+	if auditCountAfter != auditCountBefore+2 {
+		t.Errorf("audit_log rows after restoring 2 mixed ids = %d, want %d (one per id)",
+			auditCountAfter, auditCountBefore+2)
+	}
+}
+
+// TestInsertDashboardGroupEmptyIsNoOp checks an empty ds is accepted as
+// a no-op (empty ids, no error, nothing audited) rather than writing a
+// group with no members.
+func TestInsertDashboardGroupEmptyIsNoOp(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	var auditCountBefore int
+	if err := db.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_log`).Scan(&auditCountBefore); err != nil {
+		t.Fatal(err)
+	}
+	ids, err := db.InsertDashboardGroup(ctx, nil, nil, store.AuditEntry{Actor: "agent", Action: "dashboard.group.create"})
+	if err != nil {
+		t.Fatalf("InsertDashboardGroup with no dashboards: %v, want nil", err)
+	}
+	if len(ids) != 0 {
+		t.Errorf("InsertDashboardGroup with no dashboards returned ids = %v, want none", ids)
+	}
+	var auditCountAfter int
+	if err := db.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_log`).Scan(&auditCountAfter); err != nil {
+		t.Fatal(err)
+	}
+	if auditCountAfter != auditCountBefore {
+		t.Errorf("audit_log rows after empty InsertDashboardGroup = %d, want unchanged %d",
+			auditCountAfter, auditCountBefore)
+	}
+}
+
+// TestInsertDashboardGroupRefusesMismatchedWidgetSlices checks the ws
+// length guard added alongside this test: a ws slice with a length
+// other than 0 or len(ds) would otherwise silently drop a trailing
+// dashboard's widgets (or index out of range), so it is refused before
+// the transaction opens — nothing is written.
+func TestInsertDashboardGroupRefusesMismatchedWidgetSlices(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	ds := []store.Dashboard{
+		{Owner: store.OwnerUser, Title: "D1", SortKey: "a"},
+		{Owner: store.OwnerUser, Title: "D2", SortKey: "b"},
+	}
+	ws := [][]store.Widget{
+		{{SortKey: "a", Width: 1, Height: 1, Name: "w1", SourceType: "events", Source: "a"}},
+	} // one slice, two dashboards
+	_, err := db.InsertDashboardGroup(ctx, ds, ws, store.AuditEntry{Actor: "agent", Action: "dashboard.group.create"})
+	if !errors.Is(err, store.ErrInvalid) {
+		t.Fatalf("InsertDashboardGroup with %d widget slices for %d dashboards = %v, want ErrInvalid",
+			len(ws), len(ds), err)
+	}
+	dashes, err := db.ListDashboards(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dashes) != 0 {
+		t.Errorf("dashboards after refused InsertDashboardGroup = %d, want 0 (nothing written)", len(dashes))
 	}
 }
