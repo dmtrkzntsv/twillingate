@@ -384,6 +384,216 @@ func TestReportingAuditSubjects(t *testing.T) {
 	}
 }
 
+func TestInsertDashboardGroupIDDefaultsToOwnID(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	audit := store.AuditEntry{Actor: "agent", Action: "dashboard.create"}
+	id, err := db.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "D", SortKey: "a"}, nil, audit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := db.GetDashboard(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.GroupID != id {
+		t.Errorf("GroupID = %d, want %d (own id)", got.GroupID, id)
+	}
+
+	id2, err := db.InsertDashboard(ctx,
+		store.Dashboard{Owner: store.OwnerUser, Title: "D2", SortKey: "b", GroupID: 1001}, nil, audit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got2, err := db.GetDashboard(ctx, id2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got2.GroupID != 1001 {
+		t.Errorf("GroupID = %d, want 1001 (given group)", got2.GroupID)
+	}
+}
+
+func TestUpdateDashboardWritesGroupID(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	audit := store.AuditEntry{Actor: "agent", Action: "dashboard.create"}
+	id, err := db.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "D", SortKey: "a"}, nil, audit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpdateDashboard(ctx, store.Dashboard{ID: id, Title: "D", SortKey: "a", GroupID: 4242},
+		store.AuditEntry{Actor: "agent", Action: "dashboard.update"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := db.GetDashboard(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.GroupID != 4242 {
+		t.Errorf("GroupID after UpdateDashboard = %d, want 4242", got.GroupID)
+	}
+}
+
+// TestMoveDashboardsSwapsSortKeysWithoutConflict swaps two rows' sort
+// keys in one call, which a naive single-pass UPDATE would fail on the
+// (owner, sort_key) unique index mid-way.
+func TestMoveDashboardsSwapsSortKeysWithoutConflict(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	audit := store.AuditEntry{Actor: "agent", Action: "dashboard.create"}
+	id1, err := db.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "D1", SortKey: "a"}, nil, audit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id2, err := db.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "D2", SortKey: "b"}, nil, audit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var auditCountBefore int
+	if err := db.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_log`).Scan(&auditCountBefore); err != nil {
+		t.Fatal(err)
+	}
+	err = db.MoveDashboards(ctx, []store.DashboardKey{
+		{ID: id1, GroupID: id1, SortKey: "b"},
+		{ID: id2, GroupID: id2, SortKey: "a"},
+	}, store.AuditEntry{Actor: "agent", Action: "dashboard.move"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got1, err := db.GetDashboard(ctx, id1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got2, err := db.GetDashboard(ctx, id2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got1.SortKey != "b" || got2.SortKey != "a" {
+		t.Fatalf("swapped sort keys = %q, %q, want b, a", got1.SortKey, got2.SortKey)
+	}
+	var auditCountAfter int
+	if err := db.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_log`).Scan(&auditCountAfter); err != nil {
+		t.Fatal(err)
+	}
+	if auditCountAfter != auditCountBefore+1 {
+		t.Errorf("audit_log rows after MoveDashboards = %d, want %d (one row)", auditCountAfter, auditCountBefore+1)
+	}
+	var subject string
+	if err := db.db.QueryRowContext(ctx,
+		`SELECT subject FROM audit_log WHERE action='dashboard.move' ORDER BY rowid DESC LIMIT 1`).
+		Scan(&subject); err != nil {
+		t.Fatal(err)
+	}
+	wantSubject := "dashboard/" + strconv.FormatInt(id1, 10)
+	if subject != wantSubject {
+		t.Errorf("MoveDashboards audit subject = %q, want %q", subject, wantSubject)
+	}
+}
+
+func TestInsertDashboardGroupAttachesWidgetsAndSharesGroupID(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	ds := []store.Dashboard{
+		{Owner: store.OwnerUser, Title: "D1", SortKey: "a"},
+		{Owner: store.OwnerUser, Title: "D2", SortKey: "b"},
+		{Owner: store.OwnerUser, Title: "D3", SortKey: "c"},
+	}
+	ws := [][]store.Widget{
+		{{SortKey: "a", Width: 1, Height: 1, Name: "w1", SourceType: "events", Source: "a"}},
+		nil,
+		{{SortKey: "a", Width: 1, Height: 1, Name: "w3", SourceType: "events", Source: "c"}},
+	}
+	ids, err := db.InsertDashboardGroup(ctx, ds, ws, store.AuditEntry{Actor: "agent", Action: "dashboard.group.create"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 3 {
+		t.Fatalf("InsertDashboardGroup returned %d ids, want 3", len(ids))
+	}
+	if !(ids[0] < ids[1] && ids[1] < ids[2]) {
+		t.Fatalf("ids not ascending: %v", ids)
+	}
+	for i, id := range ids {
+		got, err := db.GetDashboard(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.GroupID != ids[0] {
+			t.Errorf("dashboard %d (index %d) GroupID = %d, want %d", id, i, got.GroupID, ids[0])
+		}
+	}
+	w1, err := db.ListWidgets(ctx, ids[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(w1) != 1 || w1[0].Name != "w1" {
+		t.Errorf("widgets on dashboard 0 = %+v, want [w1]", w1)
+	}
+	w2, err := db.ListWidgets(ctx, ids[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(w2) != 0 {
+		t.Errorf("widgets on dashboard 1 = %+v, want none", w2)
+	}
+	w3, err := db.ListWidgets(ctx, ids[2])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(w3) != 1 || w3[0].Name != "w3" {
+		t.Errorf("widgets on dashboard 2 = %+v, want [w3]", w3)
+	}
+}
+
+func TestSetDashboardsArchivedUnknownIDArchivesNone(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	audit := store.AuditEntry{Actor: "agent", Action: "dashboard.create"}
+	id1, err := db.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "D1", SortKey: "a"}, nil, audit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id2, err := db.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "D2", SortKey: "b"}, nil, audit)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = db.SetDashboardsArchived(ctx, []int64{id1, id2, 999999}, true,
+		store.AuditEntry{Actor: "agent", Action: "dashboard.archive"})
+	if !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("SetDashboardsArchived with an unknown id = %v, want ErrNotFound", err)
+	}
+	got1, err := db.GetDashboard(ctx, id1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got2, err := db.GetDashboard(ctx, id2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got1.ArchivedAt != "" || got2.ArchivedAt != "" {
+		t.Fatalf("archived after a partly-unknown call: %q, %q, want both empty (nothing written)",
+			got1.ArchivedAt, got2.ArchivedAt)
+	}
+
+	if err := db.SetDashboardsArchived(ctx, []int64{id1, id2}, true,
+		store.AuditEntry{Actor: "agent", Action: "dashboard.archive"}); err != nil {
+		t.Fatal(err)
+	}
+	got1, err = db.GetDashboard(ctx, id1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got2, err = db.GetDashboard(ctx, id2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got1.ArchivedAt == "" || got2.ArchivedAt == "" {
+		t.Fatalf("archived after full call: %q, %q, want both set", got1.ArchivedAt, got2.ArchivedAt)
+	}
+}
+
 func TestReportingWritesDoNotBumpConfigVersion(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()

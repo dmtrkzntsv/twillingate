@@ -157,12 +157,21 @@ func syncDashboards(ctx context.Context, tx *sql.Tx, dashboards []store.SystemDa
 				dash.ID, existingOwner, store.OwnerSystem)
 		}
 
-		if _, err := tx.ExecContext(ctx, `INSERT INTO dashboards (id, owner, title, sort_key, last_range)
-			VALUES (?,?,?,?,?)
+		// A manifest dashboard with GroupID 0 is its own group, same as
+		// insertDashboardRow's rule, but the id must be known up front here
+		// (it's the manifest's own, not an autoincrement result), so it's
+		// resolved before the statement rather than inside it: SQLite's
+		// VALUES clause cannot express "CASE WHEN ?=0 THEN id ELSE ? END".
+		groupID := dash.GroupID
+		if groupID == 0 {
+			groupID = dash.ID
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO dashboards (id, owner, title, sort_key, group_id, last_range)
+			VALUES (?,?,?,?,?,?)
 			ON CONFLICT(id) DO UPDATE SET title=excluded.title, sort_key=excluded.sort_key,
-				updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')
+				group_id=excluded.group_id, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')
 			WHERE dashboards.owner=?`,
-			dash.ID, store.OwnerSystem, dash.Title, dash.SortKey, dash.Range, store.OwnerSystem,
+			dash.ID, store.OwnerSystem, dash.Title, dash.SortKey, groupID, dash.Range, store.OwnerSystem,
 		); err != nil {
 			return 0, 0, fmt.Errorf("reporting sync: system dashboard %d: %w", dash.ID, err)
 		}

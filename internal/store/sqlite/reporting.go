@@ -28,14 +28,14 @@ func audit(ctx context.Context, tx *sql.Tx, a store.AuditEntry) error {
 // helper serves a single-row Get and a multi-row List.
 type rowScanner interface{ Scan(dest ...any) error }
 
-const dashboardCols = `d.id, d.owner, d.title, d.sort_key, COALESCE(d.last_project_id,0),
+const dashboardCols = `d.id, d.owner, d.title, d.sort_key, d.group_id, COALESCE(d.last_project_id,0),
 	COALESCE(d.last_range,''), COALESCE(d.last_from,''), COALESCE(d.last_to,''),
 	d.created_at, d.updated_at, COALESCE(d.archived_at,''),
 	(SELECT COUNT(*) FROM widgets w WHERE w.dashboard_id=d.id AND w.archived_at IS NULL)`
 
 func scanDashboard(s rowScanner) (store.Dashboard, error) {
 	var d store.Dashboard
-	err := s.Scan(&d.ID, &d.Owner, &d.Title, &d.SortKey, &d.LastProjectID,
+	err := s.Scan(&d.ID, &d.Owner, &d.Title, &d.SortKey, &d.GroupID, &d.LastProjectID,
 		&d.LastRange, &d.LastFrom, &d.LastTo, &d.CreatedAt, &d.UpdatedAt,
 		&d.ArchivedAt, &d.LiveWidgets)
 	return d, err
@@ -162,29 +162,41 @@ func (d *DB) InsertDashboard(ctx context.Context, dash store.Dashboard, ws []sto
 	return id, err
 }
 
+// insertDashboardRow inserts dash and returns its id. dash.GroupID == 0
+// means "a new group: its own id" — since the id is not known until the
+// insert, that case runs a follow-up UPDATE inside the same tx once the
+// id comes back.
 func insertDashboardRow(ctx context.Context, tx *sql.Tx, dash store.Dashboard) (int64, error) {
 	var res sql.Result
 	var err error
 	if dash.ID != 0 {
 		res, err = tx.ExecContext(ctx, `INSERT INTO dashboards
-			(id, owner, title, sort_key, last_project_id, last_range, last_from, last_to)
-			VALUES (?,?,?,?,NULLIF(?,0),?,?,?)`,
-			dash.ID, dash.Owner, dash.Title, dash.SortKey, dash.LastProjectID,
+			(id, owner, title, sort_key, group_id, last_project_id, last_range, last_from, last_to)
+			VALUES (?,?,?,?,?,NULLIF(?,0),?,?,?)`,
+			dash.ID, dash.Owner, dash.Title, dash.SortKey, dash.GroupID, dash.LastProjectID,
 			dash.LastRange, dash.LastFrom, dash.LastTo)
 	} else {
 		res, err = tx.ExecContext(ctx, `INSERT INTO dashboards
-			(owner, title, sort_key, last_project_id, last_range, last_from, last_to)
-			VALUES (?,?,?,NULLIF(?,0),?,?,?)`,
-			dash.Owner, dash.Title, dash.SortKey, dash.LastProjectID,
+			(owner, title, sort_key, group_id, last_project_id, last_range, last_from, last_to)
+			VALUES (?,?,?,?,NULLIF(?,0),?,?,?)`,
+			dash.Owner, dash.Title, dash.SortKey, dash.GroupID, dash.LastProjectID,
 			dash.LastRange, dash.LastFrom, dash.LastTo)
 	}
 	if err != nil {
 		return 0, mapDashboardConflict(dash, err)
 	}
-	if dash.ID != 0 {
-		return dash.ID, nil
+	id := dash.ID
+	if id == 0 {
+		if id, err = res.LastInsertId(); err != nil {
+			return 0, err
+		}
 	}
-	return res.LastInsertId()
+	if dash.GroupID == 0 {
+		if _, err := tx.ExecContext(ctx, `UPDATE dashboards SET group_id=id WHERE id=?`, id); err != nil {
+			return 0, fmt.Errorf("insert dashboard %q: set own group id: %w", dash.Title, err)
+		}
+	}
+	return id, nil
 }
 
 func mapDashboardConflict(dash store.Dashboard, err error) error {
@@ -195,12 +207,13 @@ func mapDashboardConflict(dash store.Dashboard, err error) error {
 	return fmt.Errorf("insert dashboard %q: %w", dash.Title, err)
 }
 
-// UpdateDashboard updates the two editable columns: title and sort_key.
+// UpdateDashboard updates title, sort_key and group_id: the caller passes
+// the row it read, with any change.
 func (d *DB) UpdateDashboard(ctx context.Context, dash store.Dashboard, a store.AuditEntry) error {
 	return d.tx(ctx, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx,
-			`UPDATE dashboards SET title=?, sort_key=?, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')
-			 WHERE id=?`, dash.Title, dash.SortKey, dash.ID)
+			`UPDATE dashboards SET title=?, sort_key=?, group_id=?, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')
+			 WHERE id=?`, dash.Title, dash.SortKey, dash.GroupID, dash.ID)
 		if err != nil {
 			return mapDashboardConflict(dash, err)
 		}
@@ -231,35 +244,141 @@ func (d *DB) SetDashboardView(ctx context.Context, dash store.Dashboard) error {
 	})
 }
 
-// SetDashboardArchived sets archived_at only when it is currently NULL
-// (idempotent archive), or clears it (idempotent restore); an unknown id
-// is refused either way. Mirrors SetProjectArchived's shape.
+// SetDashboardArchived is SetDashboardsArchived for a single id.
 func (d *DB) SetDashboardArchived(ctx context.Context, id int64, archived bool, a store.AuditEntry) error {
+	return d.SetDashboardsArchived(ctx, []int64{id}, archived, a)
+}
+
+// SetDashboardsArchived archives (only rows currently live) or restores
+// (only rows currently archived) every id in ids, in one transaction,
+// one audit row per id (idempotent no-op rows are still audited, mirroring
+// SetProjectArchived's shape). Every id must exist first — checked up
+// front, against the whole list, so an unknown id anywhere in ids leaves
+// every row untouched rather than archiving a prefix of the list.
+func (d *DB) SetDashboardsArchived(ctx context.Context, ids []int64, archived bool, a store.AuditEntry) error {
+	if len(ids) == 0 {
+		return nil
+	}
 	return d.tx(ctx, func(tx *sql.Tx) error {
+		rows, err := tx.QueryContext(ctx,
+			`SELECT id FROM dashboards WHERE id IN (`+placeholders(len(ids))+`)`, toArgs(ids)...)
+		if err != nil {
+			return err
+		}
+		exists := map[int64]bool{}
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return err
+			}
+			exists[id] = true
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return err
+		}
+		rows.Close()
+		for _, id := range ids {
+			if !exists[id] {
+				return store.Refuse(store.ErrNotFound, "dashboard %d: not found", id)
+			}
+		}
+
 		q := `UPDATE dashboards SET archived_at=strftime('%Y-%m-%dT%H:%M:%SZ','now'),
 			updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=? AND archived_at IS NULL`
 		if !archived {
 			q = `UPDATE dashboards SET archived_at=NULL,
 				updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=?`
 		}
-		res, err := tx.ExecContext(ctx, q, id)
-		if err != nil {
-			return err
-		}
-		if n, _ := res.RowsAffected(); n == 0 {
-			var exists int
-			if err := tx.QueryRowContext(ctx,
-				`SELECT COUNT(*) FROM dashboards WHERE id=?`, id).Scan(&exists); err != nil {
+		for _, id := range ids {
+			if _, err := tx.ExecContext(ctx, q, id); err != nil {
 				return err
 			}
-			if exists == 0 {
-				return store.Refuse(store.ErrNotFound, "dashboard %d: not found", id)
+			entry := a
+			entry.Subject = fmt.Sprintf("dashboard/%d", id)
+			if err := audit(ctx, tx, entry); err != nil {
+				return err
 			}
-			// already in the requested state: idempotent no-op, still audited.
 		}
-		a.Subject = fmt.Sprintf("dashboard/%d", id)
+		return nil
+	})
+}
+
+// MoveDashboards rewrites group_id and sort_key of every row named in ks,
+// in one transaction, with one audit row (Subject "dashboard/<ks[0].ID>").
+// Sort keys are parked to '~'||id first (the same trick SyncReporting
+// uses at reporting_sync.go:52), so reassigning many rows' keys in one
+// pass — including swapping two rows' keys — can never collide with the
+// unique (owner, sort_key) index mid-way.
+func (d *DB) MoveDashboards(ctx context.Context, ks []store.DashboardKey, a store.AuditEntry) error {
+	if len(ks) == 0 {
+		return nil
+	}
+	return d.tx(ctx, func(tx *sql.Tx) error {
+		ids := make([]int64, len(ks))
+		for i, k := range ks {
+			ids[i] = k.ID
+		}
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE dashboards SET sort_key = '~' || id WHERE id IN (`+placeholders(len(ids))+`)`,
+			toArgs(ids)...); err != nil {
+			return fmt.Errorf("move dashboards: park sort keys: %w", err)
+		}
+		for _, k := range ks {
+			res, err := tx.ExecContext(ctx,
+				`UPDATE dashboards SET group_id=?, sort_key=?, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')
+				 WHERE id=?`, k.GroupID, k.SortKey, k.ID)
+			if err != nil {
+				return mapDashboardConflict(store.Dashboard{SortKey: k.SortKey}, err)
+			}
+			if n, _ := res.RowsAffected(); n == 0 {
+				return store.Refuse(store.ErrNotFound, "move dashboards: unknown id %d", k.ID)
+			}
+		}
+		a.Subject = fmt.Sprintf("dashboard/%d", ks[0].ID)
 		return audit(ctx, tx, a)
 	})
+}
+
+// InsertDashboardGroup inserts ds as one new group, in one transaction:
+// the first dashboard gets group_id = its own id (insertDashboardRow's
+// GroupID==0 behaviour), the rest get that id. ws[i] are ds[i]'s
+// widgets. Returns the new ids, in order.
+func (d *DB) InsertDashboardGroup(ctx context.Context, ds []store.Dashboard, ws [][]store.Widget, a store.AuditEntry) ([]int64, error) {
+	ids := make([]int64, len(ds))
+	err := d.tx(ctx, func(tx *sql.Tx) error {
+		var groupID int64
+		for i, dash := range ds {
+			if i == 0 {
+				dash.GroupID = 0
+			} else {
+				dash.GroupID = groupID
+			}
+			id, err := insertDashboardRow(ctx, tx, dash)
+			if err != nil {
+				return err
+			}
+			if i == 0 {
+				groupID = id
+			}
+			ids[i] = id
+			if i < len(ws) {
+				for _, w := range ws[i] {
+					w.DashboardID = id
+					if _, err := insertWidgetRow(ctx, tx, w); err != nil {
+						return err
+					}
+				}
+			}
+		}
+		if len(ids) == 0 {
+			return nil
+		}
+		a.Subject = fmt.Sprintf("dashboard/%d", ids[0])
+		return audit(ctx, tx, a)
+	})
+	return ids, err
 }
 
 // InsertWidget inserts one widget onto an existing dashboard. a's Subject
