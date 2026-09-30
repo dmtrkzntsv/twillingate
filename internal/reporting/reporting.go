@@ -36,7 +36,6 @@ type Store interface {
 	InsertDashboard(ctx context.Context, d store.Dashboard, ws []store.Widget, a store.AuditEntry) (int64, error)
 	UpdateDashboard(ctx context.Context, d store.Dashboard, a store.AuditEntry) error
 	SetDashboardView(ctx context.Context, d store.Dashboard) error
-	SetDashboardArchived(ctx context.Context, id int64, archived bool, a store.AuditEntry) error
 	MoveDashboards(ctx context.Context, ks []store.DashboardKey, a store.AuditEntry) error
 	InsertDashboardGroup(ctx context.Context, ds []store.Dashboard, ws [][]store.Widget, a store.AuditEntry) ([]int64, error)
 	SetDashboardsArchived(ctx context.Context, ids []int64, archived bool, a store.AuditEntry) error
