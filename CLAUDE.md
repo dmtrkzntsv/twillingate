@@ -60,15 +60,20 @@ marks a breaking change. Scopes match the tree: `store`, `server`, `jobs`,
 
 Releases are cut by hand with `gh workflow run release.yml` (optional `version`
 input; blank means next patch). Pushing to `main` publishes nothing. Pre-1.0:
-breaking changes bump the minor. The workflow tags, runs `make check`, builds
-the tarballs and hands off to `npx changelogithub`; container images publish
+breaking changes bump the minor. The workflow runs `make check` and the race
+suite (`make test`), tags, builds the tarballs and hands off to `npx changelogithub`; container images publish
 from a separate job; several commits can ship under one version; notes are
 not hand-edited.
 
 ## Checks
 
-`make check` (vet, coverage, restore test) is what CI runs; run it before
-pushing. `make build` compiles; `make test` runs the race-enabled suite. The
+`make check` (vet, the coverage gate without `-race`, the SQLite-free packages
+with it, restore test) is what pull request CI runs; run it before pushing.
+`make build` compiles; `make test` runs the whole suite under `-race`, about
+ten times slower because modernc SQLite is instrumented too, so CI runs it only
+in the release workflow. CI runs on pull requests only (nothing on push to
+`main`) and skips jobs whose inputs a pull request does not touch: the path
+rules are in the `changes` job of `.github/workflows/ci.yml`. The
 SDK bundle `internal/server/twillingate.js` is committed: after any change in
 `sdk/`, run `npm run build` there and commit the result, or CI's drift check
 fails. The `web/` build is not committed: `make ui` (a prerequisite of
