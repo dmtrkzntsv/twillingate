@@ -125,12 +125,13 @@ func TestSystemDashboards(t *testing.T) {
 	}
 }
 
-// TestSystemDashboardsAreOneGroup is D16: Views (id 1) names no group of
-// its own, so it is group 1; Product, Users, Groups and Retention (ids
-// 2-5) each name "group": 1 in their dashboard.json. This release's
+// TestSystemDashboardGroups is D16: Views (id 1) names no group of its
+// own, so it is group 1; Product, Users, Groups and Retention (ids 2-5)
+// each name "group": 1 in their dashboard.json. Web Vitals (id 6) is a
+// second group, and Measures (id 7) names "group": 6. This release's
 // embedded system definition (loaded by the real Migrate, not a test
-// fixture) must leave every one of the five with GroupID 1.
-func TestSystemDashboardsAreOneGroup(t *testing.T) {
+// fixture) must give each dashboard exactly that GroupID.
+func TestSystemDashboardGroups(t *testing.T) {
 	ctx := context.Background()
 	f := newSystemFixture(t)
 
@@ -144,7 +145,7 @@ func TestSystemDashboardsAreOneGroup(t *testing.T) {
 			got[d.ID] = d.GroupID
 		}
 	}
-	want := map[int64]int64{1: 1, 2: 1, 3: 1, 4: 1, 5: 1}
+	want := map[int64]int64{1: 1, 2: 1, 3: 1, 4: 1, 5: 1, 6: 6, 7: 6}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("system dashboard GroupIDs = %v, want %v", got, want)
 	}

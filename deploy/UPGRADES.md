@@ -437,8 +437,9 @@ and two views appear. Nothing existing changes its answer.
 
 What changes on the day:
 
-- Two system dashboards appear, Web Vitals and Measures; they stay empty
-  until a site sets `data-vitals` or a client sends `family: "measures"`.
+- Two system dashboards appear as one sidebar entry, Web Vitals, with a
+  Measures tab. They stay empty until a site sets `data-vitals` or a client
+  sends `family: "measures"`.
 - `v_events_flat` has three more columns: `value`, `measure`, `sample_rate`.
   `raw_views` and `raw_product` gain the same three plus `bucket`, so a
   `SELECT *` over any of the four returns more columns.

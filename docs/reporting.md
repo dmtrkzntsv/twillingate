@@ -33,11 +33,12 @@ are in [deployment.md](deployment.md).
 `user`:
 
 - **System dashboards** ship with each release, have ids 1–999, and change only
-  when the release does: Views, Product, Users, Groups, Retention, Web Vitals
-  and Measures. A system group is archived and restored whole, with
+  when the release does: Views, Product, Users, Groups and Retention (one
+  group, the Views entry), and Web Vitals and Measures (a second group, the
+  Web Vitals entry). A system group is archived and restored whole, with
   `whole_group`, and is never purged; every other write refuses them. To
   customize one, call `duplicate_dashboard`: the copy is a user dashboard you
-  can edit. Duplicating never archives anything; to take the system group out
+  can edit. Duplicating never archives anything; to take a system group out
   of the sidebar, `archive_dashboard` it with `whole_group` too.
 - **User dashboards** are what agents create. Their ids start at 1001.
 
@@ -47,8 +48,9 @@ dashboard; a group of one is drawn as one tab. A dashboard made on its own
 starts as a group of one, its `group_id` its own id; beyond that, a
 `group_id` is just a number a group's dashboards share — read it from
 `list_dashboards` or `get_dashboard`, never assume it names a member.
-System dashboards are one group (`group_id` 1): its sidebar entry reads
-"Views", with tabs Views · Product · Users · Groups · Retention.
+System dashboards are two groups: `group_id` 1, whose sidebar entry reads
+"Views", with tabs Views · Product · Users · Groups · Retention; and
+`group_id` 6, "Web Vitals", with tabs Web Vitals · Measures.
 
 **A widget** is a component plus a source:
 
