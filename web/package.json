@@ -1,6 +1,7 @@
 {
   "name": "twillingate-web",
   "private": true,
+  "license": "AGPL-3.0-only",
   "version": "0.0.0",
   "type": "module",
   "description": "Source of the read-only dashboards app, embedded from internal/reporting/ui.",

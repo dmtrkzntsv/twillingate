@@ -10,6 +10,9 @@
  *   → twillingate.track("signup_cloud")
  *
  * See README.md in this folder for the class syntax and where the events land.
+ *
+ * MIT License, the same as the SDK: see sdk/LICENSE in
+ * https://github.com/dmtrkzntsv/twillingate
  */
 (function () {
   "use strict";

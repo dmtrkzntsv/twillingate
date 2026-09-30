@@ -24,3 +24,6 @@ the SDK stays dormant. Tests mock `src/origin.ts` to supply an origin.
 The user-facing API reference and the wire format the SDK speaks both live
 in [docs/twillingate.md](../docs/twillingate.md).
 This bundle is the only client the collector serves.
+
+Unlike the rest of the repository (AGPL-3.0), the SDK is licensed under
+[MIT](LICENSE), so it can be bundled into any site or app.
