@@ -14,8 +14,8 @@ type openAPIDoc struct {
 	OpenAPI string `json:"openapi"`
 	Info    struct {
 		License struct {
-			Name string `json:"name"`
-			URL  string `json:"url"`
+			Name       string `json:"name"`
+			Identifier string `json:"identifier"`
 		} `json:"license"`
 	} `json:"info"`
 	Paths map[string]map[string]struct {
@@ -56,7 +56,7 @@ func TestOpenAPIDescribesEveryRoute(t *testing.T) {
 	if doc.OpenAPI != "3.1.0" {
 		t.Errorf("openapi = %q", doc.OpenAPI)
 	}
-	if l := doc.Info.License; l.Name != "AGPL-3.0" || l.URL == "" {
+	if l := doc.Info.License; l.Identifier != "AGPL-3.0-only" || l.Name == "" {
 		t.Errorf("info.license = %+v", l)
 	}
 	routes := 0

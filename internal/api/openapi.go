@@ -62,7 +62,7 @@ func openAPI(specs []spec) ([]byte, error) {
 		"info": map[string]any{
 			"title":       "Twillingate API",
 			"version":     version.Version,
-			"license":     map[string]string{"name": "AGPL-3.0", "url": "https://www.gnu.org/licenses/agpl-3.0.html"},
+			"license":     map[string]string{"name": "GNU Affero General Public License v3.0 only", "identifier": "AGPL-3.0-only"},
 			"description": "Every route but PUT /api/dashboards/{dashboard_id}/view mirrors the MCP tool its operationId names. Reference: docs://twillingate and docs://reporting.",
 		},
 		// Relative: the routes are wherever this document was fetched from.
