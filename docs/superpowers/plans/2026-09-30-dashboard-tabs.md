@@ -18,7 +18,7 @@
 - Every commit message ends with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
 - Refusals are typed (`store.ErrInvalid`, `store.ErrNotFound`, `store.ErrConflict` via `store.Refuse`), matched with `errors.Is`, never by text.
 - No new Go dependencies. No new MCP tools or REST routes (spec Surfaces).
-- `docs/reporting.md` and `deploy/UPGRADES.md` change in the same commit as the behaviour they describe (CLAUDE.md table).
+- `docs/reporting.md` and `deploy/UPGRADES.md` change in the same PR as the behaviour (it is squash-merged into one commit, which satisfies CLAUDE.md's same-commit table); Task 8 writes them.
 - Match the surrounding code's comment density and idiom; comments explain why.
 
 ## Review Focus
@@ -95,20 +95,46 @@
 
 - [ ] **Step 1: Write the migration test**
 
-`internal/store/sqlite/migration022_test.go`, modelled on `migration021_test.go` (read it for the helper that migrates to a ceiling — migration tests must pin their ceiling):
+`internal/store/sqlite/migration022_test.go`, modelled on `migration021_test.go` (migration tests pin their ceiling with `newTestDBAt` and step with `migrateThrough`):
 
 ```go
+package sqlite
+
+import (
+	"context"
+	"testing"
+)
+
+// TestMigration022GroupsEveryDashboardAlone checks every existing
+// dashboard becomes a group of one: group_id = its own id.
 func TestMigration022GroupsEveryDashboardAlone(t *testing.T) {
-	db := migrateTo(t, 21) // use the same helper migration021_test.go uses
-	mustExec(t, db, `INSERT INTO dashboards (id, owner, title, sort_key) VALUES
-		(1,'system','Views','a0'), (1001,'user','Mine','a0')`)
-	migrateTo022(t, db) // continue to 22 with that helper
-	rows := query(t, db, `SELECT id, group_id FROM dashboards ORDER BY id`)
-	// want (1,1), (1001,1001)
+	db := newTestDBAt(t, 21)
+	ctx := context.Background()
+	if _, err := db.db.ExecContext(ctx, `INSERT INTO dashboards (id, owner, title, sort_key) VALUES
+		(1, 'system', 'Views', 'a0'), (1001, 'user', 'Mine', 'a0')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.migrateThrough(ctx, 22); err != nil {
+		t.Fatalf("migration 022: %v", err)
+	}
+	rows, err := db.db.QueryContext(ctx, `SELECT id, group_id FROM dashboards ORDER BY id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	got := map[int64]int64{}
+	for rows.Next() {
+		var id, g int64
+		if err := rows.Scan(&id, &g); err != nil {
+			t.Fatal(err)
+		}
+		got[id] = g
+	}
+	if got[1] != 1 || got[1001] != 1001 {
+		t.Fatalf("group ids = %v, want 1→1 and 1001→1001", got)
+	}
 }
 ```
-
-Use the actual helper names from `migration021_test.go`; do not invent new ones.
 
 - [ ] **Step 2: Run it — FAIL (no migration 022)**
 
@@ -260,7 +286,7 @@ git commit -m "feat(reporting): compute dashboard placement within and between g
 - `reporting.Store` (reporting.go) gains `MoveDashboards`, `InsertDashboardGroup`, `SetDashboardsArchived` with Task 1's signatures.
 
 Behaviour (spec D6–D8, D18–D19):
-- `dashboardInfo` fills `GroupID`. `Dashboard(ctx, id)` fills `Tabs` from `ListDashboards`: rows with `GroupID == d.GroupID`, live, same order; `[]Tab{}` when none (an archived dashboard's own detail still lists its group's live tabs).
+- `dashboardInfo` fills `GroupID`. `Dashboard(ctx, id)` fills `Tabs` from `ListDashboards`: rows with `GroupID == d.GroupID` and the same owner, live, in list order; `[]Tab{}` when none (an archived dashboard's own detail still lists its group's live tabs).
 - `CreateDashboard`, `GroupID == 0`: as today but the key comes from `order.keyAfterGroup(0, in.After)`. `GroupID != 0`: `refuseGroup` (below), then `keyInGroup(0, G, in.After)`, insert with `GroupID: G`.
 - `UpdateDashboard`:
   - `GroupID != nil && *GroupID == 0`: new `GroupID = d.ID`; key `keyAfterGroup(d.ID, after)` where `after` defaults to the last member of the old group (so it lands right after the group it left). If `d` is alone in its group already and `After == nil`, only the title changes.
@@ -273,7 +299,7 @@ Behaviour (spec D6–D8, D18–D19):
 - Remove `dashboardKey` from `place.go` once nothing calls it.
 
 - [ ] **Step 1: Write failing service tests** in `ops_test.go` (reuse its existing helpers for creating a service and dashboards — read the top of the file), one `t.Run` per case:
-  - new dashboard: `GroupID == ID`, `Tabs` empty… no: `Tabs` holds itself (a group of one has one live member). Assert `len(Tabs) == 1`.
+  - new dashboard: `GroupID == ID`, and `Tabs` holds just itself (a group of one has one live member): `len(Tabs) == 1`.
   - `create_dashboard {group_id: A}` → last tab of A; `{group_id: A, after: 0}` → first tab; `{group_id: A, after: <non-member>}` → `ErrInvalid`.
   - `create_dashboard {group_id: 1}` (system) → `ErrInvalid`.
   - `update {after: <member>}` reorders tabs only; the group's sidebar position (its first row's neighbours) is unchanged.
