@@ -30,15 +30,15 @@ describe('resolve', () => {
   })
 
   it('7d', () => {
-    expect(resolve('7d', 'UTC', NOW)).toEqual({ from: '2026-09-20', to: '2026-09-26' })
+    expect(resolve('7d', 'UTC', NOW)).toEqual({ from: '2026-09-19', to: '2026-09-25' })
   })
 
   it('30d', () => {
-    expect(resolve('30d', 'UTC', NOW)).toEqual({ from: '2026-08-28', to: '2026-09-26' })
+    expect(resolve('30d', 'UTC', NOW)).toEqual({ from: '2026-08-27', to: '2026-09-25' })
   })
 
   it('90d', () => {
-    expect(resolve('90d', 'UTC', NOW)).toEqual({ from: '2026-06-29', to: '2026-09-26' })
+    expect(resolve('90d', 'UTC', NOW)).toEqual({ from: '2026-06-28', to: '2026-09-25' })
   })
 
   it('custom uses the given from/to', () => {
@@ -58,15 +58,15 @@ describe('resolve', () => {
 
   it('crosses a month boundary', () => {
     expect(resolve('7d', 'UTC', new Date('2026-10-03T12:00:00Z'))).toEqual({
-      from: '2026-09-27',
-      to: '2026-10-03',
+      from: '2026-09-26',
+      to: '2026-10-02',
     })
   })
 
   it('crosses a year boundary', () => {
     expect(resolve('30d', 'UTC', new Date('2027-01-05T12:00:00Z'))).toEqual({
-      from: '2026-12-07',
-      to: '2027-01-05',
+      from: '2026-12-06',
+      to: '2027-01-04',
     })
   })
 })

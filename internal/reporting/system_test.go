@@ -28,11 +28,11 @@ func presetDates(preset string, today civil.Date) (from, to string) {
 		y := today.AddDays(-1).String()
 		return y, y
 	case "7d":
-		return today.AddDays(-6).String(), today.String()
+		return today.AddDays(-7).String(), today.AddDays(-1).String()
 	case "30d":
-		return today.AddDays(-29).String(), today.String()
+		return today.AddDays(-30).String(), today.AddDays(-1).String()
 	case "90d":
-		return today.AddDays(-89).String(), today.String()
+		return today.AddDays(-90).String(), today.AddDays(-1).String()
 	}
 	panic("presetDates: unknown preset " + preset)
 }
