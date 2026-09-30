@@ -226,7 +226,7 @@ func (h *host) registerReporting(r *registrar) {
 		Description: "Rename a user dashboard and/or move it with group_id (join a group as a tab, or 0 to leave one) and/or after (a dashboard id; 0 first). System dashboards are read-only."},
 		h.updateDashboard)
 	expose(r, spec{Name: "duplicate_dashboard", Annotations: write, Method: "POST", Path: d + "/duplicate", Status: http.StatusCreated,
-		Description: "Copy any dashboard, a system one included, with copies of its live widgets; the copy is a user dashboard. A user dashboard's copy joins its group as the next tab (update_dashboard {group_id: 0} makes it its own sidebar entry); a system dashboard's copy is a new dashboard, last in the sidebar. This is how to customize a system dashboard. whole_group copies the whole group as a new dashboard with the same tabs, in tab order."},
+		Description: "Copy any live dashboard, a system one included, with copies of its live widgets (an archived one is refused: restore it first); the copy is a user dashboard. A user dashboard's copy joins its group as the next tab (update_dashboard {group_id: 0} makes it its own sidebar entry); a system dashboard's copy is a new dashboard, last in the sidebar. This is how to customize a system dashboard. whole_group copies the group's live dashboards (archived ones are skipped) as a new dashboard with the same tabs, in tab order."},
 		h.duplicateDashboard)
 	expose(r, spec{Name: "archive_dashboard", Annotations: idem, Method: "POST", Path: d + "/archive",
 		Description: "Hide a user dashboard and its widgets. Reversible with restore_dashboard; purged, with its widgets, RETENTION_ARCHIVED_DAYS (default 30) after archiving unless restored. whole_group archives every tab of its group."},

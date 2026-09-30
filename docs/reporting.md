@@ -174,7 +174,7 @@ guards as `query`: read-only, `API_QUERY_TIMEOUT` and `API_QUERY_MAX_ROWS`.
 | `widget_data` | `widget_id`, `project_id`, `from`, `to`, `fresh` | the envelope above |
 | `create_dashboard` | `title`, `range` (default `7d`), `group_id`, `after`, `widgets` | the new dashboard, as `get_dashboard` returns it; one invalid widget creates nothing |
 | `update_dashboard` | `dashboard_id`, `title`, `group_id`, `after` | the dashboard, as `list_dashboards` lists it |
-| `duplicate_dashboard` | `dashboard_id`, `whole_group` | a user copy with copies of the live widgets, titled "… (copy)"; works on system dashboards. Without `whole_group`, a user source's copy joins the source's group right after it, and a system source's copy starts a new group, last in the sidebar. `whole_group` copies every live member of the source's group, in tab order, as one new user group placed last: the first copy is titled "… (copy)", the rest keep their titles |
+| `duplicate_dashboard` | `dashboard_id`, `whole_group` | a user copy with copies of the live widgets, titled "… (copy)"; works on system dashboards, refused on an archived one. Without `whole_group`, a user source's copy joins the source's group right after it, and a system source's copy starts a new group, last in the sidebar. `whole_group` copies every live member of the source's group, in tab order, as one new user group placed last: the first copy is titled "… (copy)", the rest keep their titles |
 | `archive_dashboard` | `dashboard_id`, `whole_group` | hides it (`whole_group`: every live member of its group); see [Archiving and the purge](#archiving-and-the-purge) |
 | `restore_dashboard` | `dashboard_id`, `whole_group` | unhides it (`whole_group`: every archived member of its group) |
 | `add_widget` | `dashboard_id`, `component`, `source`, `title`, `name`, `props`, `width`, `height`, `after` | the widget |
@@ -669,10 +669,9 @@ widget's name (`widget visitors: …`), and nothing is created.
 | group 5 has no live user dashboard | Give a `group_id` from `list_dashboards` naming a group with a live user dashboard; a system group cannot be joined this way. |
 | after 7 is not a member of group 5 | For `after` naming a tab of the `group_id` given: name a dashboard in that same group (an archived one counts), `0` for its first tab, or leave `after` out for last. |
 | after 7 is not a user dashboard | For `after` with no `group_id` (moving a whole group by the dashboard after it lands): name a user dashboard (an archived one counts), `0` for the top, or leave `after` out for last. |
-| group 5 has no live member to duplicate | Restore a dashboard in that group first, or duplicate one that still has a live member. |
 | widget name visitors is already used on this dashboard (`409 conflict`) | Choose another name. An archived widget keeps its name; restore or rename it to reuse the name. |
 | dashboard 1 is a system dashboard and changes only with a release; duplicate_dashboard makes an editable copy | `duplicate_dashboard`, then change the copy. |
-| dashboard 1001 is archived; restore_dashboard first | `restore_dashboard`. For a widget: widget 42 is archived; restore_widget first. |
+| dashboard 1001 is archived; restore_dashboard first | `restore_dashboard` (updating, adding to or duplicating an archived dashboard is refused). For a widget: widget 42 is archived; restore_widget first. |
 | widget 42's component was removed; set component first | `update_widget` with a `component` (and resize or archive as needed); see [When widgets break after an update](#when-widgets-break-after-an-update). |
 | widget 42 follows the project switcher; pass project_id | Pass `project_id` to `widget_data`. For the range: widget 42 follows the date range; pass from and to. |
 | from 2026-09-10 is after to 2026-09-01; from 2026-01-01 to 2027-02-01 spans more than 365 days; from 2026-10-01 is after today | Pass `from` ≤ `to`, at most 365 days apart, `from` no later than today. |

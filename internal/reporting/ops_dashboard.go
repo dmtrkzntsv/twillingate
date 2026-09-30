@@ -247,10 +247,18 @@ func (s *Service) leaveGroup(ctx context.Context, o order, row store.Dashboard, 
 // member of id's group, each with its live widgets, as one new user
 // group placed last, in the same tab order; the first copy is titled
 // "… (copy)", the rest keep their titles.
+//
+// An archived source is refused: its copy would otherwise land in a
+// group that may have no live dashboard left, bringing that group back
+// into the sidebar through the copy. Since the source is live, its group
+// always has at least one live member to copy.
 func (s *Service) DuplicateDashboard(ctx context.Context, actor string, id int64, wholeGroup bool) (DashboardDetail, error) {
 	src, err := s.st.GetDashboard(ctx, id)
 	if err != nil {
 		return DashboardDetail{}, err
+	}
+	if src.ArchivedAt != "" {
+		return DashboardDetail{}, store.Refuse(store.ErrInvalid, "dashboard %d is archived; restore_dashboard first", id)
 	}
 	if wholeGroup {
 		return s.duplicateGroup(ctx, actor, src)
@@ -306,9 +314,6 @@ func (s *Service) duplicateGroup(ctx context.Context, actor string, src store.Da
 		if d.GroupID == src.GroupID && d.Owner == src.Owner && d.ArchivedAt == "" {
 			members = append(members, d)
 		}
-	}
-	if len(members) == 0 {
-		return DashboardDetail{}, store.Refuse(store.ErrInvalid, "group %d has no live member to duplicate", src.GroupID)
 	}
 	ds := make([]store.Dashboard, len(members))
 	wss := make([][]store.Widget, len(members))

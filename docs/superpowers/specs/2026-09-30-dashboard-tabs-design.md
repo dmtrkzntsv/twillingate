@@ -109,7 +109,11 @@ Two PRs:
 10. **`duplicate_dashboard` copies one dashboard by default.** A copy
     of a user dashboard joins the original's group, right after it. A
     copy of a system dashboard is a new user group, last in the sidebar
-    (decision 5). Titled "… (copy)", as today.
+    (decision 5). Titled "… (copy)", as today. An archived dashboard is
+    not duplicated, alone or with `whole_group` (`ErrInvalid`: "restore
+    it first"), so a copy can never bring back a group whose dashboards
+    are all archived; a live source also means its group always has a
+    live member to copy.
 11. **`duplicate_dashboard {whole_group: true}` copies the group.** Every live
     member, each with its live widgets, in one transaction, as a new user
     group last in the sidebar, in the same tab order. The first copy is

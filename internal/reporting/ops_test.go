@@ -1458,6 +1458,27 @@ func TestDuplicateWholeGroupArchivedMemberNotCopied(t *testing.T) {
 	}
 }
 
+// An archived dashboard is not duplicated, alone or with its group: the
+// copy would otherwise revive a group whose dashboards are all archived.
+func TestDuplicateArchivedDashboardRefused(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	a := mustCreate(t, svc, "A")
+	b := mustJoin(t, svc, "B", a.ID)
+	if err := svc.ArchiveDashboard(ctx, "test", a.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	before := userRows(t, svc)
+
+	for _, whole := range []bool{false, true} {
+		_, err := svc.DuplicateDashboard(ctx, "test", b.ID, whole)
+		wantRefusal(t, err, store.ErrInvalid, "dashboard "+itoa(b.ID)+" is archived; restore_dashboard first")
+	}
+	if after := userRows(t, svc); len(after) != len(before) {
+		t.Errorf("dashboards after refused duplicates = %d, want %d (nothing written)", len(after), len(before))
+	}
+}
+
 // --- Archiving and restoring ---
 
 func TestArchiveDashboardKeepsOtherTabs(t *testing.T) {
