@@ -64,8 +64,25 @@ func TestPruneAggregatesOneCutoff(t *testing.T) {
 		(1,'2026-01-01','e',1,1), (1,'2026-06-01','e',2,2)`); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := db.db.Exec(`INSERT INTO agg_measures_daily VALUES
+		(1,'2026-01-01','m','time',0,1,1,1), (1,'2026-06-01','m','time',0,2,2,2)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.db.Exec(`INSERT INTO agg_measures_attrs VALUES
+		(1,'2026-01-01','m','time','$os','ios',0,1,1,1), (1,'2026-06-01','m','time','$os','ios',0,2,2,2)`); err != nil {
+		t.Fatal(err)
+	}
 	if err := db.PruneAggregates(ctx, 1, day("2026-03-01")); err != nil {
 		t.Fatal(err)
+	}
+	for _, tbl := range []string{"agg_measures_daily", "agg_measures_attrs"} {
+		var n int
+		if err := db.db.QueryRow(`SELECT COUNT(*) FROM ` + tbl).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if n != 1 {
+			t.Errorf("%s: %d rows, want 1 (before the cutoff dropped, on/after kept)", tbl, n)
+		}
 	}
 	var views, product int
 	if err := db.db.QueryRow(`SELECT COUNT(*) FROM agg_views_daily`).Scan(&views); err != nil {
@@ -95,6 +112,7 @@ func TestPruneAggregatesCoversAllAggTables(t *testing.T) {
 	pruned := map[string]bool{}
 	all := append([]string{}, viewsAggTables...)
 	all = append(all, productAggTables...)
+	all = append(all, measuresAggTables...)
 	all = append(all, identityAggTables...)
 	// agg_retention is pruned by PruneActors alongside the actors rows it
 	// derives from, not by PruneAggregates.

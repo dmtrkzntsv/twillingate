@@ -12,14 +12,14 @@ import (
 // ("DELETE FROM events") is a write and is excluded by the caller.
 var rawRead = regexp.MustCompile(`\b(FROM|JOIN)\s+events\b`)
 
-// Nothing reads the raw events table except raw_views, raw_product and
-// v_events_flat (which holds both families on purpose). Everything else
-// reads through the two family views, so a product query can never count
-// pageviews by forgetting a filter.
+// Nothing reads the raw events table except raw_views, raw_product,
+// raw_measures and v_events_flat (which holds every family on purpose).
+// Everything else reads through the family views, so a product query can
+// never count pageviews by forgetting a filter.
 func TestRawTableIsReadOnlyThroughFamilyViews(t *testing.T) {
 	db := newTestDB(t)
 	rows, err := db.db.Query(`SELECT name, sql FROM sqlite_schema
-		WHERE type='view' AND name NOT IN ('raw_views', 'raw_product', 'v_events_flat')`)
+		WHERE type='view' AND name NOT IN ('raw_views', 'raw_product', 'raw_measures', 'v_events_flat')`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +51,7 @@ func TestRawTableIsReadOnlyThroughFamilyViews(t *testing.T) {
 				continue
 			}
 			line := 1 + strings.Count(string(src[:loc[0]]), "\n")
-			t.Errorf("%s:%d reads the raw events table directly; use raw_views or raw_product", f, line)
+			t.Errorf("%s:%d reads the raw events table directly; use raw_views, raw_product or raw_measures", f, line)
 		}
 	}
 }

@@ -10,11 +10,11 @@ import (
 )
 
 // flatViewBaseColumns are the non-attribute columns of v_events_flat. The
-// view holds both families, views and product events alike, and family
-// tells them apart. It carries every typed column of the raw row (a
+// view holds every family, views, product events and measures alike, and
+// family tells them apart. It carries every typed column of the raw row (a
 // reserved key is one of these, never an attr_ column); only day,
-// received_at and actor_kind are left out. Migration 020 creates the view
-// with exactly this list, so the boot rebuild is a no-op when nothing is
+// received_at, actor_kind and the derived bucket are left out. Migration
+// 024 creates the view with exactly this list, so the boot rebuild is a no-op when nothing is
 // declared. attributes carries the raw JSON, so a key that isn't
 // declared (and so gets no attr_ column) stays reachable via json_extract
 // — the view is never a downgrade from the base table. Every attribute column carries an
@@ -25,7 +25,7 @@ var flatViewBaseColumns = []string{
 	"utm_source", "utm_medium", "utm_campaign", "platform", "os", "os_version", "os_name",
 	"browser", "browser_version", "browser_locale", "app_version", "app_locale",
 	"device", "device_model", "display_width", "display_height", "country",
-	"consent", "ts", "attributes",
+	"consent", "ts", "attributes", "value", "measure", "sample_rate",
 }
 
 // sanitizeAlias strips everything outside [A-Za-z0-9_] from an attribute key.

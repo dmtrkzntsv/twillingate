@@ -223,6 +223,7 @@ func TestMigrationViews(t *testing.T) {
 		"v_views_app_versions",
 		"v_views_devices", "v_views_displays", "v_views_consent",
 		"v_product_daily", "v_product_totals", "v_product_attrs",
+		"raw_measures", "v_measures_daily", "v_measures_attrs",
 		"v_identity_daily", "v_retention",
 	} {
 		var n int
