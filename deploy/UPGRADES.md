@@ -321,3 +321,34 @@ What changes on the day:
   does not have.
 - Rolling back to a binary from before this migration leaves the new tables
   unused (and nothing purged); upgrading again is safe.
+
+### Upgrading to dashboard groups (migration 022)
+
+Adds `group_id` to `dashboards`: dashboards sharing one are tabs of a single
+sidebar entry, named by the first live one. Nothing to check before: the
+migration adds the column and one index, then sets every existing row's
+`group_id` to its own id, so every dashboard starts as a group of one.
+
+What changes on the day:
+
+- The sidebar's "Reports" entry reads "Views", with the same five tabs
+  (Views, Product, Users, Groups, Retention) it always had — the system
+  dashboards become one group.
+- Every existing user dashboard becomes a group of one, so nothing else
+  changes: `list_dashboards` and `get_dashboard` gain `group_id` (and
+  `get_dashboard` a `tabs` list), but a dashboard alone shows no tab bar and
+  moves exactly as before.
+
+A rebuild of the `dashboards` table (a hand-written migration or a manual
+fix) must carry `sqlite_sequence`'s `dashboards` counter over to the new
+table: reserved group ids live above the highest dashboard id, and a rebuild
+that resets the counter can hand out a group id a later dashboard insert
+then collides with.
+
+There is no down migration, but the column is additive and the previous
+binary starts against the upgraded file: it inserts dashboards without
+naming `group_id`, so any it creates get the column's default, `0`, instead
+of a group id of their own. A later binary that knows about groups then
+reads every such dashboard as one member of "group 0", bundling unrelated
+dashboards into a single sidebar entry with the wrong tabs. Avoid creating
+dashboards on the previous binary once this migration has run.

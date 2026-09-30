@@ -37,6 +37,15 @@ are in [deployment.md](deployment.md).
   `duplicate_dashboard`: the copy is a user dashboard you can edit.
 - **User dashboards** are what agents create. Their ids start at 1001.
 
+**A dashboard is in a group.** Dashboards sharing a `group_id` are one
+sidebar entry, drawn as tabs in tab order, named by the group's first live
+dashboard; a group of one shows no tab bar. A dashboard made on its own
+starts as a group of one, its `group_id` its own id; beyond that, a
+`group_id` is just a number a group's dashboards share — read it from
+`list_dashboards` or `get_dashboard`, never assume it names a member.
+System dashboards are one group (`group_id` 1): its sidebar entry reads
+"Views", with tabs Views · Product · Users · Groups · Retention.
+
 **A widget** is a component plus a source:
 
 - the **component** is how it is drawn (`line`, `stat`, `table`, …; see
@@ -157,15 +166,15 @@ guards as `query`: read-only, `API_QUERY_TIMEOUT` and `API_QUERY_MAX_ROWS`.
 | --- | --- | --- |
 | `reporting_guide` | none | markdown: the running version and its release notes, the source types and components, the views, the active projects and the dashboards, and this document's [Workflow](#workflow) and [Rules](#rules). MCP only |
 | `list_components` | none | `source_types` and `components`: each one's `description`, `accepts`, `inputs`, `props` schema, `default_width` and `default_height` |
-| `list_dashboards` | none | `timezone` and `dashboards` in sidebar order (system, then user), archived ones included: `dashboard_id`, `title`, `owner`, stored `project_id` and `range`, live `widgets` count, `archived_at` |
-| `get_dashboard` | `dashboard_id` | the dashboard, its `follows_project` and `follows_range`, and its live `widgets` in order |
+| `list_dashboards` | none | `timezone` and `dashboards` in sidebar order (system, then user), archived ones included: `dashboard_id`, `title`, `owner`, `group_id`, stored `project_id` and `range`, live `widgets` count, `archived_at` |
+| `get_dashboard` | `dashboard_id` | the dashboard, its `group_id`, its `follows_project` and `follows_range`, its `tabs` (the group's live dashboards, this one included, in tab order), and its live `widgets` in order |
 | `list_widgets` | `dashboard_id`, `component` (both optional; they combine) | `widgets`, archived ones included, each with its `dashboard` and 1-based `position` there |
 | `widget_data` | `widget_id`, `project_id`, `from`, `to`, `fresh` | the envelope above |
-| `create_dashboard` | `title`, `range` (default `7d`), `after`, `widgets` | the new dashboard, as `get_dashboard` returns it; one invalid widget creates nothing |
-| `update_dashboard` | `dashboard_id`, `title`, `after` | the dashboard, as `list_dashboards` lists it |
-| `duplicate_dashboard` | `dashboard_id` | a user copy with copies of the live widgets, titled "… (copy)"; works on system dashboards |
-| `archive_dashboard` | `dashboard_id` | hides it; see [Archiving and the purge](#archiving-and-the-purge) |
-| `restore_dashboard` | `dashboard_id` | unhides it |
+| `create_dashboard` | `title`, `range` (default `7d`), `group_id`, `after`, `widgets` | the new dashboard, as `get_dashboard` returns it; one invalid widget creates nothing |
+| `update_dashboard` | `dashboard_id`, `title`, `group_id`, `after` | the dashboard, as `list_dashboards` lists it |
+| `duplicate_dashboard` | `dashboard_id`, `whole_group` | a user copy with copies of the live widgets, titled "… (copy)"; works on system dashboards. Without `whole_group`, a user source's copy joins the source's group right after it, and a system source's copy starts a new group, last in the sidebar. `whole_group` copies every live member of the source's group, in tab order, as one new user group placed last: the first copy is titled "… (copy)", the rest keep their titles |
+| `archive_dashboard` | `dashboard_id`, `whole_group` | hides it (`whole_group`: every live member of its group); see [Archiving and the purge](#archiving-and-the-purge) |
+| `restore_dashboard` | `dashboard_id`, `whole_group` | unhides it (`whole_group`: every archived member of its group) |
 | `add_widget` | `dashboard_id`, `component`, `source`, `title`, `name`, `props`, `width`, `height`, `after` | the widget |
 | `update_widget` | `widget_id` and any of `name`, `component`, `title`, `props`, `source`, `width`, `height` | the widget; omitted fields are kept |
 | `copy_widget` | `widget_id`, `dashboard_id`, `after` | the independent copy, same size; the original may be on a system dashboard |
@@ -197,11 +206,11 @@ audited.
 | `GET` | `/api/dashboards/{dashboard_id}` | `get_dashboard` | — |
 | `GET` | `/api/widgets` | `list_widgets` | query: `dashboard_id`, `component` |
 | `GET` | `/api/widgets/{widget_id}/data` | `widget_data` | query: `project_id`, `from`, `to`, `fresh` |
-| `POST` | `/api/dashboards` | `create_dashboard` | body: `title`, `range`, `after`, `widgets` → 201 |
-| `PATCH` | `/api/dashboards/{dashboard_id}` | `update_dashboard` | body: `title`, `after` |
-| `POST` | `/api/dashboards/{dashboard_id}/duplicate` | `duplicate_dashboard` | — → 201 |
-| `POST` | `/api/dashboards/{dashboard_id}/archive` | `archive_dashboard` | — |
-| `POST` | `/api/dashboards/{dashboard_id}/restore` | `restore_dashboard` | — |
+| `POST` | `/api/dashboards` | `create_dashboard` | body: `title`, `range`, `group_id`, `after`, `widgets` → 201 |
+| `PATCH` | `/api/dashboards/{dashboard_id}` | `update_dashboard` | body: `title`, `group_id`, `after` |
+| `POST` | `/api/dashboards/{dashboard_id}/duplicate` | `duplicate_dashboard` | body: `whole_group` (optional) → 201 |
+| `POST` | `/api/dashboards/{dashboard_id}/archive` | `archive_dashboard` | body: `whole_group` (optional) |
+| `POST` | `/api/dashboards/{dashboard_id}/restore` | `restore_dashboard` | body: `whole_group` (optional) |
 | `POST` | `/api/dashboards/{dashboard_id}/widgets` | `add_widget` | body: the widget, `after` → 201 |
 | `PATCH` | `/api/widgets/{widget_id}` | `update_widget` | body: fields to change |
 | `POST` | `/api/widgets/{widget_id}/copy` | `copy_widget` | body: `dashboard_id`, `after` → 201 |
@@ -579,8 +588,31 @@ block beside the chart.
   right after that one, `0` puts it first, and leaving it out puts it last.
   Widgets are not reordered once placed; to move one, `copy_widget` it with
   the `after` you want and archive the original.
-- Dashboards take `after` the same way in the sidebar, among user dashboards
-  (system dashboards always come first); `update_dashboard` moves one.
+- Dashboards sit in groups, drawn as tabs of one sidebar entry (see
+  [Concepts](#concepts)). `after`, on `create_dashboard` and
+  `update_dashboard`, follows what the id it names is: a dashboard in the
+  *same* group moves this one among that group's tabs; a dashboard in
+  *another* group moves this one's *whole group* to sit right after that
+  other group in the sidebar; `0` moves it (or its whole group) to the top;
+  naming itself is a no-op.
+- `group_id` says which group a dashboard is in. On `create_dashboard`, a
+  `group_id` from `list_dashboards` adds the new dashboard as a tab of that
+  group (`after` then names a tab there, `0` first); omitted, it starts a
+  new group of its own, its `group_id` its own id. On `update_dashboard`,
+  a `group_id` moves the dashboard into that group as a tab; `group_id: 0`
+  takes it out as a group of one — a dashboard already alone keeps its own
+  id, one with other tabs still in the old group gets a new id reserved
+  from the dashboard id sequence, since the old group keeps using its id.
+
+A two-tab dashboard, in two calls:
+
+```
+create_dashboard {"title": "Overview"}                  → id 1001, group_id 1001
+create_dashboard {"title": "Detail", "group_id": 1001}   → id 1002, group_id 1001
+```
+
+The sidebar now shows one entry, "Overview" (the group's first live
+dashboard), with two tabs: "Overview" and "Detail".
 
 ## Archiving and the purge
 
@@ -589,8 +621,11 @@ Archiving is how to undo, and the only way to remove anything:
 - `archive_widget` hides a widget in place; `restore_widget` puts it back where
   it was. An archived widget keeps its name, so the name stays taken, and it
   cannot be updated or copied until restored.
-- `archive_dashboard` hides a dashboard with its widgets; `restore_dashboard`
-  brings it back where it was in the sidebar.
+- `archive_dashboard` hides a dashboard with its widgets; `whole_group`
+  hides every live member of its group. `restore_dashboard` brings a
+  dashboard back where it was in the sidebar; `whole_group` brings back
+  every archived member of its group, including one archived on its own,
+  earlier, before the rest.
 - `list_dashboards` and `list_widgets` include archived items with their
   `archived_at`, so you can find one to restore; `get_dashboard` and the page
   show live ones only.
@@ -626,7 +661,11 @@ widget's name (`widget visitors: …`), and nothing is created.
 | markdown text is empty | Give the Markdown text. |
 | stat: … (a props schema error) | Match the props schema `list_components` returns; unknown props are refused. |
 | width is columns out of 12, from 1 to 12 | A whole number 1–12. `height` is the same, in rows of 40px. |
-| after 7 is not a widget on dashboard 1001 | Name a widget on the same dashboard, `0` for first, or leave `after` out for last. For dashboards: after 7 is not a user dashboard. |
+| after 7 is not a widget on dashboard 1001 | Name a widget on the same dashboard, `0` for first, or leave `after` out for last. |
+| group 5 has no live user dashboard | Give a `group_id` from `list_dashboards` naming a group with a live user dashboard; a system group cannot be joined this way. |
+| after 7 is not a member of group 5 | For `after` naming a tab of the `group_id` given: name a live dashboard in that same group, `0` for its first tab, or leave `after` out for last. |
+| after 7 is not a user dashboard | For `after` with no `group_id` (moving a whole group by the dashboard after it lands): name a live user dashboard, `0` for the top, or leave `after` out for last. |
+| group 5 has no live member to duplicate | Restore a dashboard in that group first, or duplicate one that still has a live member. |
 | widget name visitors is already used on this dashboard (`409 conflict`) | Choose another name. An archived widget keeps its name; restore or rename it to reuse the name. |
 | dashboard 1 is a system dashboard and changes only with a release; duplicate_dashboard makes an editable copy | `duplicate_dashboard`, then change the copy. |
 | dashboard 1001 is archived; restore_dashboard first | `restore_dashboard`. For a widget: widget 42 is archived; restore_widget first. |
@@ -634,7 +673,7 @@ widget's name (`widget visitors: …`), and nothing is created.
 | widget 42 follows the project switcher; pass project_id | Pass `project_id` to `widget_data`. For the range: widget 42 follows the date range; pass from and to. |
 | from 2026-09-10 is after to 2026-09-01; from 2026-01-01 to 2027-02-01 spans more than 365 days; from 2026-10-01 is after today | Pass `from` ≤ `to`, at most 365 days apart, `from` no later than today. |
 | range must be one of today, yesterday, 7d, 30d, 90d, custom | Use a preset id. `create_dashboard` refuses `custom`: create with a preset; the viewer picks custom dates. |
-| title must not be empty; nothing to update; give title or after | Give a title, or something to change. |
+| title must not be empty; nothing to update; give title, after or group_id | Give a title, or something to change. |
 | dashboard 1001 changed while placing this widget; try again (`409 conflict`) | Another write placed a widget at the same spot; call again. |
 | `404 not_found` | The dashboard or widget id does not exist; `list_dashboards` and `list_widgets` name them. `widget_data` on an archived widget is a 404 too. |
 
