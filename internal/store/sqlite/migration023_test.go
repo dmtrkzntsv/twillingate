@@ -2,6 +2,8 @@ package sqlite
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"testing"
@@ -67,6 +69,11 @@ func TestMigration023KeepsEveryViewsAnswer(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDBAt(t, 22) // 022 does not exist on this branch; migrateThrough skips missing versions
 	seed023(t, db)
+	cols := eventsColumns(t, db)
+	count, digest := eventsDigest(t, db, cols)
+	if count == 0 {
+		t.Fatal("events empty before migrating")
+	}
 	before := snapshotViews(t, db)
 	for _, v := range []string{"v_views_daily", "v_views_paths", "v_product_daily", "v_product_attrs", "v_identity_daily"} {
 		if len(before[v]) == 0 {
@@ -76,6 +83,12 @@ func TestMigration023KeepsEveryViewsAnswer(t *testing.T) {
 	if err := db.migrateThrough(ctx, 23); err != nil {
 		t.Fatal(err)
 	}
+	if got := eventsColumns(t, db); strings.Join(got, ",") != strings.Join(cols, ",") {
+		t.Fatalf("events columns changed across 023:\n before %v\n after  %v", cols, got)
+	}
+	if n, d := eventsDigest(t, db, cols); n != count || d != digest {
+		t.Errorf("events rows changed across 023: %d rows (digest %s), want %d (digest %s)", n, d, count, digest)
+	}
 	after := snapshotViews(t, db)
 	for v, rows := range before {
 		if strings.Join(rows, "\n") != strings.Join(after[v], "\n") {
@@ -83,16 +96,22 @@ func TestMigration023KeepsEveryViewsAnswer(t *testing.T) {
 		}
 	}
 	var sql string
-	db.db.QueryRowContext(ctx, `SELECT sql FROM sqlite_schema WHERE name='events'`).Scan(&sql)
+	if err := db.db.QueryRowContext(ctx, `SELECT sql FROM sqlite_schema WHERE name='events'`).Scan(&sql); err != nil {
+		t.Fatal(err)
+	}
 	if !strings.Contains(sql, "WITHOUT ROWID") || !strings.Contains(sql, "PRIMARY KEY (family, project_id, day, id)") {
 		t.Errorf("events not clustered: %s", sql)
 	}
 	var n int
-	db.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_schema WHERE type='index' AND tbl_name='events' AND sql IS NOT NULL`).Scan(&n)
+	if err := db.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_schema WHERE type='index' AND tbl_name='events' AND sql IS NOT NULL`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
 	if n != 0 {
 		t.Errorf("events still has %d explicit indexes", n)
 	}
-	db.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM events WHERE day <> substr(ts,1,10)`).Scan(&n)
+	if err := db.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM events WHERE day <> substr(ts,1,10)`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
 	if n != 0 {
 		t.Errorf("%d rows with day != date(ts)", n)
 	}
@@ -111,8 +130,70 @@ func TestMigration023ReplayIsIgnored(t *testing.T) {
 		}
 	}
 	var n int
-	db.db.QueryRow(`SELECT COUNT(*) FROM events WHERE id=?`, ev.ID).Scan(&n)
+	if err := db.db.QueryRow(`SELECT COUNT(*) FROM events WHERE id=?`, ev.ID).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
 	if n != 1 {
 		t.Fatalf("replay stored %d rows", n)
 	}
+}
+
+// eventsColumns lists every column of events by name, generated ones
+// included (before 023, day is generated and PRAGMA table_info omits it).
+func eventsColumns(t *testing.T, db *DB) []string {
+	t.Helper()
+	rows, err := db.db.Query(`SELECT name FROM pragma_table_xinfo('events') ORDER BY name`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var cols []string
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		cols = append(cols, n)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return cols
+}
+
+// eventsDigest counts the rows of events and hashes every named column of
+// every row, ordered by id, with each value's Go type so that NULL, an
+// empty string and 0 stay distinct. Selecting by name makes the digest
+// independent of the column order, which 023 changes.
+func eventsDigest(t *testing.T, db *DB, cols []string) (int, string) {
+	t.Helper()
+	rows, err := db.db.Query(`SELECT ` + strings.Join(cols, ", ") + ` FROM events ORDER BY id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	h := sha256.New()
+	n := 0
+	vals := make([]any, len(cols))
+	ptrs := make([]any, len(cols))
+	for i := range vals {
+		ptrs[i] = &vals[i]
+	}
+	for rows.Next() {
+		if err := rows.Scan(ptrs...); err != nil {
+			t.Fatal(err)
+		}
+		for i, v := range vals {
+			if b, ok := v.([]byte); ok {
+				v = string(b)
+			}
+			fmt.Fprintf(h, "%s=%T:%v\x1f", cols[i], v, v)
+		}
+		h.Write([]byte{0x1e})
+		n++
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return n, hex.EncodeToString(h.Sum(nil))
 }
