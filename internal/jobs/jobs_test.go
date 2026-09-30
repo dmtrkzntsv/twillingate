@@ -241,6 +241,68 @@ func TestRunDailyPassAggregatesEveryFamilyByOneWindow(t *testing.T) {
 	}
 }
 
+// Measures roll up on the same shared raw window as views and product: a
+// day older than RETENTION_EVENTS_RAW_DAYS is aggregated into
+// agg_measures_daily and its raw rows deleted; a day still inside it stays
+// raw.
+func TestRunDailyPassRollsUpMeasures(t *testing.T) {
+	st, _, r := setup(t, jobsVars, jobsProjectSpecs)
+	ctx := context.Background()
+	old := mustTime("2026-08-12T10:00:00Z")    // 10 days before the fake now (2026-08-22)
+	recent := mustTime("2026-08-19T10:00:00Z") // 3 days before the fake now
+	v := 120.0
+	if err := st.WriteEvents(ctx, []store.Event{
+		{Family: store.FamilyMeasures, ID: "m-old", ProjectID: 1, EventName: "$lcp", TS: old, ReceivedAt: old,
+			ActorID: "v", ActorKind: store.ActorConnection, Value: &v, Measure: store.MeasureTime, SampleRate: 1},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.WriteEvents(ctx, []store.Event{
+		{Family: store.FamilyMeasures, ID: "m-recent", ProjectID: 1, EventName: "$lcp", TS: recent, ReceivedAt: recent,
+			ActorID: "v", ActorKind: store.ActorConnection, Value: &v, Measure: store.MeasureTime, SampleRate: 1},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.RunDailyPass(ctx); err != nil {
+		t.Fatal(err)
+	}
+	oldRaw := queryDays(t, `SELECT id FROM raw_measures WHERE project_id=1 AND day='2026-08-12'`)
+	if len(oldRaw) != 0 {
+		t.Errorf("old raw measures left = %v, want 0", oldRaw)
+	}
+	oldAgg := queryDays(t, `SELECT day FROM agg_measures_daily WHERE project_id=1 AND day='2026-08-12'`)
+	if len(oldAgg) != 1 {
+		t.Errorf("agg_measures_daily for 2026-08-12 = %v, want 1 row", oldAgg)
+	}
+	recentRaw := queryDays(t, `SELECT id FROM raw_measures WHERE project_id=1 AND day='2026-08-19'`)
+	if len(recentRaw) != 1 {
+		t.Errorf("recent raw measures = %v, want 1 (still inside the window)", recentRaw)
+	}
+}
+
+// A measure alone must not create actors: measures are deliberately left
+// out of allRawDays (spec decision 17 -- a backend's connection hash is a
+// server, not a visitor), so UpsertActors never runs for a day that only
+// carries measures, however old that day is.
+func TestMeasuresDoNotCreateActors(t *testing.T) {
+	st, _, r := setup(t, jobsVars, jobsProjectSpecs)
+	ctx := context.Background()
+	old := mustTime("2026-08-12T10:00:00Z") // past the 7-day raw window
+	v := 42.0
+	if err := st.WriteEvents(ctx, []store.Event{
+		{Family: store.FamilyMeasures, ID: "m1", ProjectID: 1, EventName: "$lcp", TS: old, ReceivedAt: old,
+			ActorID: "srv", ActorKind: store.ActorConnection, Value: &v, Measure: store.MeasureTime, SampleRate: 1},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.RunDailyPass(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := queryDays(t, `SELECT actor_id FROM actors WHERE actor_id='srv'`); len(got) != 0 {
+		t.Errorf("actors for srv = %v, want 0", got)
+	}
+}
+
 // The pass must rebuild v_events_flat from the keys actually present, so a
 // newly seen attribute becomes queryable without a restart.
 func TestRunDailyPassRebuildsFlatView(t *testing.T) {
