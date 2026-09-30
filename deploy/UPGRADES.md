@@ -346,12 +346,6 @@ What changes on the day:
   system dashboard's copy is still a new dashboard, and `whole_group` copies
   a whole group as a new dashboard with the same tabs.
 
-A rebuild of the `dashboards` table (a hand-written migration or a manual
-fix) must carry `sqlite_sequence`'s `dashboards` counter over to the new
-table: reserved group ids live above the highest dashboard id, and a rebuild
-that resets the counter can hand out a group id a later dashboard insert
-then collides with.
-
 There is no down migration, but the column is additive and the previous
 binary starts against the upgraded file. It inserts dashboards without
 naming `group_id`; the trigger gives each one its own id as its group, so

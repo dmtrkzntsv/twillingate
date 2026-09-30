@@ -624,46 +624,6 @@ func TestReportingWritesDoNotBumpConfigVersion(t *testing.T) {
 	}
 }
 
-func TestNewDashboardGroupIDIsNeverADashboardID(t *testing.T) {
-	db := newTestDB(t)
-	ctx := context.Background()
-	first, err := db.NewDashboardGroupID(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	second, err := db.NewDashboardGroupID(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if second <= first {
-		t.Errorf("reserved %d then %d, want increasing", first, second)
-	}
-	id, err := db.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "D", SortKey: "a"}, nil,
-		store.AuditEntry{Actor: "t", Action: "dashboard.create"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if id <= second {
-		t.Errorf("dashboard id %d after reserving %d, want greater", id, second)
-	}
-}
-
-// TestNewDashboardGroupIDCancelledContextIsError drives the one branch
-// TestNewDashboardGroupIDIsNeverADashboardID cannot reach: the
-// sqlite_sequence UPDATE's own error path. A cancelled context is
-// refused before the statement runs (database/sql checks ctx.Done()
-// when acquiring the connection), the same technique
-// TestMigrateWithCancelledContextLeavesForeignKeysOn (fk_test.go) uses
-// for migrateThrough.
-func TestNewDashboardGroupIDCancelledContextIsError(t *testing.T) {
-	db := newTestDB(t)
-	cancelled, cancel := context.WithCancel(context.Background())
-	cancel()
-	if _, err := db.NewDashboardGroupID(cancelled); err == nil {
-		t.Fatal("NewDashboardGroupID with a cancelled context: want an error, got nil")
-	}
-}
-
 func TestInsertDashboardSortKeyConflictIsErrConflict(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()

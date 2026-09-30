@@ -376,3 +376,22 @@ func TestOrderRefusesArchivedAfter(t *testing.T) {
 		wantArchived(t, err)
 	})
 }
+
+func TestOrderHandOver(t *testing.T) {
+	o := order{row(1, 1, "a0"), archivedRow(2, 1, "a1"), row(3, 1, "a2"), row(4, 4, "b0")}
+	keys := o.handOver(o[0])
+	want := []store.DashboardKey{{ID: 2, GroupID: 3, SortKey: "a1"}, {ID: 3, GroupID: 3, SortKey: "a2"}}
+	if len(keys) != len(want) || keys[0] != want[0] || keys[1] != want[1] {
+		t.Errorf("handOver(1) = %+v, want %+v (first live left is 3; archived 2 repointed, keys kept)", keys, want)
+	}
+	if keys := o.handOver(o[2]); keys != nil {
+		t.Errorf("handOver(3) = %+v, want nil: group 1 does not use 3's id", keys)
+	}
+	if keys := o.handOver(o[3]); keys != nil {
+		t.Errorf("handOver(4) = %+v, want nil: nobody left in group 4", keys)
+	}
+	allArchived := order{row(1, 1, "a0"), archivedRow(2, 1, "a1"), archivedRow(3, 1, "a2")}
+	if keys := allArchived.handOver(allArchived[0]); len(keys) != 2 || keys[0].GroupID != 2 {
+		t.Errorf("all archived: %+v, want the first member left (2) as heir", keys)
+	}
+}

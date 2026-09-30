@@ -604,9 +604,12 @@ block beside the chart.
   group (`after` then names a tab there, `0` first); omitted, it starts a
   new group of its own, its `group_id` its own id. On `update_dashboard`,
   a `group_id` moves the dashboard into that group as a tab; `group_id: 0`
-  takes it out as a group of one — a dashboard already alone keeps its own
-  id, one with other tabs still in the old group gets a new id reserved
-  from the dashboard id sequence, since the old group keeps using its id.
+  takes it out as a group of one, its `group_id` its own id (a dashboard
+  already alone keeps the one it has). When a dashboard leaves a group
+  whose `group_id` is its own id, by `group_id: 0` or by joining another
+  group, the tabs left behind take the id of their first live tab: a
+  group's id can change, so read it from `list_dashboards` or
+  `get_dashboard` before using it.
 
 A two-tab dashboard, in two calls:
 

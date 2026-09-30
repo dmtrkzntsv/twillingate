@@ -344,24 +344,6 @@ func (d *DB) MoveDashboards(ctx context.Context, ks []store.DashboardKey, a stor
 	})
 }
 
-// NewDashboardGroupID reserves a number no dashboard has or will get by
-// advancing the dashboards AUTOINCREMENT sequence (migration 021 seeds
-// its sqlite_sequence row): a later insert takes the next number after
-// it, so the reserved one is a group id no dashboard id can collide
-// with. A rebuild of the dashboards table (CREATE _new / INSERT SELECT /
-// DROP / RENAME, as a migration does) must carry sqlite_sequence's
-// dashboards row over to the new table, or a reserved group id can later
-// collide with a dashboard id the reset counter hands out.
-func (d *DB) NewDashboardGroupID(ctx context.Context) (int64, error) {
-	var id int64
-	err := d.db.QueryRowContext(ctx,
-		`UPDATE sqlite_sequence SET seq = seq + 1 WHERE name = 'dashboards' RETURNING seq`).Scan(&id)
-	if err != nil {
-		return 0, fmt.Errorf("reserve dashboard group id: %w", err)
-	}
-	return id, nil
-}
-
 // InsertDashboardGroup inserts ds as one new group, in one transaction:
 // the first dashboard gets group_id = its own id (inserted with GroupID
 // 0, which migration 022's trigger resolves), the rest get that id. ws[i] are ds[i]'s

@@ -256,3 +256,33 @@ func refuseArchivedAfter(d store.Dashboard) error {
 	}
 	return nil
 }
+
+// handOver returns the keys that move row's group to another number as
+// row leaves it, or nil when there is nothing to hand over: row's group
+// does not use row's id, or no other member is left. The group takes the
+// id of its first live member left, in tab order (the first member left
+// if all are archived); every member left, archived ones included, is
+// repointed, keeping its key.
+//
+// This keeps one invariant (spec decision 2): a group's id is the id of
+// one of its own dashboards, or of a purged one. Ids are never reused, so
+// a dashboard leaving a group can always take its own id without merging
+// into another group.
+func (o order) handOver(row store.Dashboard) []store.DashboardKey {
+	if row.GroupID != row.ID {
+		return nil
+	}
+	left := o.without(row.ID).group(row.GroupID)
+	if len(left) == 0 {
+		return nil
+	}
+	heir := left[0]
+	if i := slices.IndexFunc(left, func(d store.Dashboard) bool { return d.ArchivedAt == "" }); i >= 0 {
+		heir = left[i]
+	}
+	out := make([]store.DashboardKey, len(left))
+	for i, d := range left {
+		out[i] = store.DashboardKey{ID: d.ID, GroupID: heir.ID, SortKey: d.SortKey}
+	}
+	return out
+}

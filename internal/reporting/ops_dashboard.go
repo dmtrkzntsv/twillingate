@@ -32,8 +32,8 @@ type CreateDashboard struct {
 
 // UpdateDashboard changes the title when Title is not "", and moves the
 // dashboard when After or GroupID is not nil. GroupID nil keeps its
-// group; 0 takes it out as a group of one (a fresh group id; one already
-// alone keeps its own); G makes it a tab of G.
+// group; 0 takes it out as a group of one (its own id; one already alone
+// keeps the id it has); G makes it a tab of G.
 type UpdateDashboard struct {
 	ID      int64
 	Title   string
@@ -163,7 +163,12 @@ func (s *Service) placeDashboard(ctx context.Context, o order, row store.Dashboa
 		if err != nil {
 			return err
 		}
-		row.GroupID, row.SortKey = g, key
+		if g != row.GroupID {
+			heirs := o.handOver(row)
+			row.GroupID, row.SortKey = g, key
+			return s.writePlaced(ctx, row, heirs, a)
+		}
+		row.SortKey = key
 
 	case in.After != nil && *in.After != row.ID: // after itself: stays where it is
 		if x, ok := o.find(*in.After); ok && x.GroupID == row.GroupID {
@@ -204,21 +209,18 @@ func (s *Service) placeDashboard(ctx context.Context, o order, row store.Dashboa
 // placed by after in the sidebar, or right after the group it left.
 //
 // A dashboard already alone is a group of one: it keeps its group id and
-// moves only if after says so. One with others gets a fresh group id,
-// never its own: the group it leaves may still use its id (spec decision
-// 2), and taking it would merge rather than part. A retried attempt
-// reserves another number; a skipped one is harmless.
+// moves only if after says so. One with others takes its own id as its
+// group id: that id is free, because a group whose id it was is handed
+// to another member as row leaves (order.handOver, spec decision 2).
 func (s *Service) leaveGroup(ctx context.Context, o order, row store.Dashboard, after *int64, a store.AuditEntry) error {
 	if after != nil && *after == row.ID {
 		after = nil // after itself: no place of its own to name
 	}
 	others := o.without(row.ID).group(row.GroupID)
+	var heirs []store.DashboardKey
 	if len(others) > 0 {
-		g, err := s.st.NewDashboardGroupID(ctx)
-		if err != nil {
-			return err
-		}
-		row.GroupID = g
+		heirs = o.handOver(row)
+		row.GroupID = row.ID
 		if after == nil {
 			after = &others[len(others)-1].ID
 		}
@@ -229,6 +231,23 @@ func (s *Service) leaveGroup(ctx context.Context, o order, row store.Dashboard, 
 			return err
 		}
 		row.SortKey = key
+	}
+	return s.writePlaced(ctx, row, heirs, a)
+}
+
+// writePlaced writes row at its new group and key. When row leaves a
+// group that used its id, heirs repoints the members left behind in the
+// same transaction (MoveDashboards), so no moment exists where two
+// groups share a number; a title change, if any, is a second write.
+func (s *Service) writePlaced(ctx context.Context, row store.Dashboard, heirs []store.DashboardKey, a store.AuditEntry) error {
+	if len(heirs) == 0 {
+		return s.st.UpdateDashboard(ctx, row, a)
+	}
+	// MoveDashboards audits under its first key's dashboard: row, the one
+	// the caller moved.
+	keys := append([]store.DashboardKey{{ID: row.ID, GroupID: row.GroupID, SortKey: row.SortKey}}, heirs...)
+	if err := s.st.MoveDashboards(ctx, keys, a); err != nil {
+		return err
 	}
 	return s.st.UpdateDashboard(ctx, row, a)
 }

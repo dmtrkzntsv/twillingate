@@ -40,11 +40,15 @@ Two PRs:
 2. **A new group's id is its first dashboard's id.** A dashboard created
    without joining a group gets `group_id` = its own id, written in the
    insert's transaction. Dashboard ids are never reused
-   (`AUTOINCREMENT`), so group ids are unique without a counter. The
-   number stays with the group if that dashboard later leaves it.
-   A dashboard taken out of a group that still has other members gets a
-   new number reserved from the same id sequence, since the group it
-   left may still use its id.
+   (`AUTOINCREMENT`), so group ids are unique without a counter. When
+   the dashboard whose id a group uses leaves it (`group_id: 0`, or
+   joining another group) while other members remain, those members,
+   archived ones included, take the id of the first live member left in
+   tab order (the first member left, when all are archived), in the same
+   transaction. So a group's id is always the id of one of its own
+   dashboards, or of a purged one, and a dashboard leaving a group can
+   always take its own id without merging into another. The cost: a
+   group's id can change, so an agent reads it fresh before using it.
 3. **One order per owner, groups contiguous.** `sort_key` keeps its one
    order per owner and its index, `UNIQUE (owner, sort_key)`. The rows of
    a group, archived ones included, are always adjacent in that order;
@@ -82,7 +86,7 @@ Two PRs:
      the same way. G may be its own group, which is how a tab moves to
      the front: `{group_id: <own group>, after: 0}`.
    - `update_dashboard {group_id: 0}` takes the dashboard out of its
-     group as a new group of one (a new group id, decision 2), placed by
+     group as a new group of one (its own id, decision 2), placed by
      `after` in the sidebar, or right after the group it left.
 8. **Refusals.**
    - `after: X` with X missing or another owner's: `ErrInvalid`, as

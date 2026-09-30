@@ -222,10 +222,6 @@ type Store interface {
 	// one audit row per id. Unknown ids are ErrNotFound and nothing is
 	// written.
 	SetDashboardsArchived(ctx context.Context, ids []int64, archived bool, a AuditEntry) error
-	// NewDashboardGroupID reserves a number no dashboard has or will get, by
-	// advancing the dashboards AUTOINCREMENT sequence, for a group whose
-	// dashboard cannot use its own id (it left a group that still uses it).
-	NewDashboardGroupID(ctx context.Context) (int64, error)
 	InsertWidget(ctx context.Context, w Widget, a AuditEntry) (int64, error)
 	UpdateWidget(ctx context.Context, w Widget, a AuditEntry) error
 	SetWidgetArchived(ctx context.Context, id int64, archived bool, a AuditEntry) error

@@ -1313,11 +1313,10 @@ func TestUpdateDashboardPlacesInGroups(t *testing.T) {
 		mustJoin(t, svc, "C", a.ID)
 		mustCreate(t, svc, "Y")
 		got := update(t, svc, UpdateDashboard{ID: b.ID, GroupID: ptr(int64(0))})
-		if got.GroupID == a.ID || got.GroupID == b.ID {
-			t.Errorf("group_id = %d, want a fresh one (not %d, not %d)", got.GroupID, a.ID, b.ID)
+		if got.GroupID != b.ID {
+			t.Errorf("group_id = %d, want its own id %d", got.GroupID, b.ID)
 		}
-		// "B/": its group id is a reserved number, no dashboard's id.
-		if got, want := sidebar(t, svc), []string{"A/A", "C/A", "B/", "Y/Y"}; !reflect.DeepEqual(got, want) {
+		if got, want := sidebar(t, svc), []string{"A/A", "C/A", "B/B", "Y/Y"}; !reflect.DeepEqual(got, want) {
 			t.Errorf("sidebar = %v, want %v", got, want)
 		}
 	})
@@ -1328,11 +1327,11 @@ func TestUpdateDashboardPlacesInGroups(t *testing.T) {
 		a := mustCreate(t, svc, "A")
 		b := mustJoin(t, svc, "B", a.ID)
 		update(t, svc, UpdateDashboard{ID: b.ID, GroupID: ptr(int64(0)), After: ptr(int64(0))})
-		if got, want := sidebar(t, svc), []string{"B/", "Y/Y", "A/A"}; !reflect.DeepEqual(got, want) {
+		if got, want := sidebar(t, svc), []string{"B/B", "Y/Y", "A/A"}; !reflect.DeepEqual(got, want) {
 			t.Errorf("after 0: sidebar = %v, want %v", got, want)
 		}
 		update(t, svc, UpdateDashboard{ID: b.ID, GroupID: ptr(int64(0)), After: &y.ID})
-		if got, want := sidebar(t, svc), []string{"Y/Y", "B/", "A/A"}; !reflect.DeepEqual(got, want) {
+		if got, want := sidebar(t, svc), []string{"Y/Y", "B/B", "A/A"}; !reflect.DeepEqual(got, want) {
 			t.Errorf("after Y: sidebar = %v, want %v", got, want)
 		}
 	})
@@ -1353,36 +1352,42 @@ func TestUpdateDashboardPlacesInGroups(t *testing.T) {
 		}
 	})
 
-	t.Run("group_id 0 on a group's first dashboard gets a fresh group id", func(t *testing.T) {
+	t.Run("group_id 0 on the dashboard whose id the group uses hands the group over", func(t *testing.T) {
 		svc := newTestService(t)
 		a := mustCreate(t, svc, "A")
 		b := mustJoin(t, svc, "B", a.ID)
 		mustCreate(t, svc, "Y")
 		got := update(t, svc, UpdateDashboard{ID: a.ID, GroupID: ptr(int64(0))})
-		if got.GroupID == a.ID || got.GroupID == b.ID {
-			t.Errorf("group_id = %d, want a fresh one (not %d, not %d)", got.GroupID, a.ID, b.ID)
+		if got.GroupID != a.ID {
+			t.Errorf("A group_id = %d, want its own id %d", got.GroupID, a.ID)
 		}
-		rows := userRows(t, svc)
-		var order []string
-		for _, d := range rows {
-			order = append(order, d.Title)
-			if d.ID == b.ID && d.GroupID != a.ID {
-				t.Errorf("B group_id = %d, want the old group's %d", d.GroupID, a.ID)
-			}
-		}
-		if want := []string{"B", "A", "Y"}; !reflect.DeepEqual(order, want) {
-			t.Errorf("order = %v, want %v", order, want)
+		if got, want := sidebar(t, svc), []string{"B/B", "A/A", "Y/Y"}; !reflect.DeepEqual(got, want) {
+			t.Errorf("sidebar = %v, want %v (B's group handed to B's id)", got, want)
 		}
 		if got, want := tabIDs(t, svc, b.ID), []int64{b.ID}; !reflect.DeepEqual(got, want) {
 			t.Errorf("old group's tabs = %v, want %v", got, want)
 		}
-		if got, want := tabIDs(t, svc, a.ID), []int64{a.ID}; !reflect.DeepEqual(got, want) {
-			t.Errorf("new group's tabs = %v, want %v", got, want)
-		}
 		// Having left, it can come back without merging into anything.
-		update(t, svc, UpdateDashboard{ID: a.ID, GroupID: &a.ID, After: ptr(int64(0))})
+		update(t, svc, UpdateDashboard{ID: a.ID, GroupID: &b.ID, After: ptr(int64(0))})
 		if got, want := tabIDs(t, svc, b.ID), []int64{a.ID, b.ID}; !reflect.DeepEqual(got, want) {
 			t.Errorf("rejoined tabs = %v, want %v", got, want)
+		}
+		wantContiguous(t, svc)
+	})
+
+	t.Run("the handover goes to the first live dashboard left, archived ones repointed too", func(t *testing.T) {
+		svc := newTestService(t)
+		a := mustCreate(t, svc, "A")
+		b := mustJoin(t, svc, "B", a.ID)
+		c := mustJoin(t, svc, "C", a.ID)
+		if err := svc.ArchiveDashboard(ctx, "test", b.ID, false); err != nil {
+			t.Fatal(err)
+		}
+		update(t, svc, UpdateDashboard{ID: a.ID, GroupID: ptr(int64(0))})
+		for _, d := range userRows(t, svc) {
+			if (d.ID == b.ID || d.ID == c.ID) && d.GroupID != c.ID {
+				t.Errorf("dashboard %d group_id = %d, want C's id %d (B archived, so C is the heir)", d.ID, d.GroupID, c.ID)
+			}
 		}
 		wantContiguous(t, svc)
 	})
@@ -1392,18 +1397,18 @@ func TestUpdateDashboardPlacesInGroups(t *testing.T) {
 		a := mustCreate(t, svc, "A")
 		b := mustJoin(t, svc, "B", a.ID)
 		y := mustCreate(t, svc, "Y")
-		update(t, svc, UpdateDashboard{ID: a.ID, GroupID: &y.ID}) // group A.ID is B alone
+		update(t, svc, UpdateDashboard{ID: a.ID, GroupID: &y.ID}) // joining hands A's group to B
 		before := userRows(t, svc)
-		if got := update(t, svc, UpdateDashboard{ID: b.ID, GroupID: ptr(int64(0))}); got.GroupID != a.ID {
-			t.Errorf("group_id = %d, want the one it had, %d", got.GroupID, a.ID)
+		if got := update(t, svc, UpdateDashboard{ID: b.ID, GroupID: ptr(int64(0))}); got.GroupID != b.ID {
+			t.Errorf("group_id = %d, want the one it had, %d", got.GroupID, b.ID)
 		}
 		if got := userRows(t, svc); !sameKeys(got, before) {
 			t.Errorf("rows moved:\n%+v\nwas\n%+v", got, before)
 		}
-		if got := update(t, svc, UpdateDashboard{ID: b.ID, GroupID: ptr(int64(0)), After: &y.ID}); got.GroupID != a.ID {
-			t.Errorf("with after: group_id = %d, want %d", got.GroupID, a.ID)
+		if got := update(t, svc, UpdateDashboard{ID: b.ID, GroupID: ptr(int64(0)), After: &y.ID}); got.GroupID != b.ID {
+			t.Errorf("with after: group_id = %d, want %d", got.GroupID, b.ID)
 		}
-		if got, want := sidebar(t, svc), []string{"Y/Y", "A/Y", "B/A"}; !reflect.DeepEqual(got, want) {
+		if got, want := sidebar(t, svc), []string{"Y/Y", "A/Y", "B/B"}; !reflect.DeepEqual(got, want) {
 			t.Errorf("sidebar = %v, want %v", got, want)
 		}
 	})
