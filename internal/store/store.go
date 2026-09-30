@@ -207,6 +207,7 @@ type Store interface {
 	MeasureDaysBefore(ctx context.Context, projectID int64, before civil.Date) ([]civil.Date, error)
 	AggregateViewDay(ctx context.Context, projectID int64, day civil.Date) error
 	AggregateProductDay(ctx context.Context, projectID int64, day civil.Date, attrs []string, topN int) error
+	AggregateMeasureDay(ctx context.Context, projectID int64, day civil.Date, attrs []string, topN int) error
 	UpsertActors(ctx context.Context, projectID int64, day civil.Date) error
 	AggregateRetentionDay(ctx context.Context, projectID int64, day civil.Date) error
 	PruneActors(ctx context.Context, projectID int64, before civil.Date) error
