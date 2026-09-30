@@ -666,6 +666,7 @@ widget's name (`widget visitors: …`), and nothing is created.
 | stat: … (a props schema error) | Match the props schema `list_components` returns; unknown props are refused. |
 | width is columns out of 12, from 1 to 12 | A whole number 1–12. `height` is the same, in rows of 40px. |
 | after 7 is not a widget on dashboard 1001 | Name a widget on the same dashboard, `0` for first, or leave `after` out for last. |
+| after 7 is archived; name a live widget | `after` never names an archived widget: name a live one, or `restore_widget` it first. |
 | group 5 has no live user dashboard | Give a `group_id` from `list_dashboards` naming a group with a live user dashboard; a system group cannot be joined this way. |
 | after 7 is not a member of group 5 | For `after` naming a tab of the `group_id` given: name a live dashboard in that same group, `0` for its first tab, or leave `after` out for last. |
 | after 7 is not a user dashboard | For `after` with no `group_id` (moving a whole group by the dashboard after it lands): name a live user dashboard, `0` for the top, or leave `after` out for last. |

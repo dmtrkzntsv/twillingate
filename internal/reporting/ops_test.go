@@ -73,6 +73,28 @@ func TestPlaceKeysBetweenFullOrder(t *testing.T) {
 	}
 }
 
+// add_widget and copy_widget refuse an after naming an archived widget,
+// and write nothing.
+func TestPlaceWidgetAfterArchivedRefused(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	d := mustCreate(t, svc, "D", note("A"), note("B"))
+	src := mustCreate(t, svc, "Src", note("S"))
+	b := d.Widgets[1].ID
+	if err := svc.ArchiveWidget(ctx, "test", b); err != nil {
+		t.Fatal(err)
+	}
+	msg := "after " + itoa(b) + " is archived; name a live widget"
+
+	_, err := svc.AddWidget(ctx, "test", AddWidget{DashboardID: d.ID, After: &b, WidgetSpec: note("X")})
+	wantRefusal(t, err, store.ErrInvalid, msg)
+	_, err = svc.CopyWidget(ctx, "test", CopyWidget{ID: src.Widgets[0].ID, DashboardID: d.ID, After: &b})
+	wantRefusal(t, err, store.ErrInvalid, msg)
+	if got := widgetRows(t, svc, d.ID); len(got) != 2 {
+		t.Errorf("widgets on D = %d, want 2 (nothing written)", len(got))
+	}
+}
+
 func TestPlaceWidgetAfterMustBeOnSameDashboard(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()

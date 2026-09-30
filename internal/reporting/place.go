@@ -106,6 +106,12 @@ func (s *Service) insertWidget(ctx context.Context, w store.Widget, after *int64
 		}
 		order := make([]placed, len(ws))
 		for i, x := range ws {
+			// An archived widget still holds its key (order keeps it so a
+			// new key never takes it), but after may not name one: the
+			// page shows nothing to place the new widget by.
+			if after != nil && x.ID == *after && x.ArchivedAt != "" {
+				return store.Refuse(store.ErrInvalid, "after %d is archived; name a live widget", x.ID)
+			}
 			order[i] = placed{x.ID, x.SortKey}
 		}
 		w.SortKey, err = keyAfter(order, after, func(id int64) error {
