@@ -308,6 +308,24 @@ describe('Dashboard', () => {
     await waitFor(() => expect(endpoints.devVersion).toHaveBeenCalled())
   })
 
+  it('shows the archived line and a Restore button only for an archived dashboard', async () => {
+    mockApi()
+    vi.spyOn(endpoints, 'restore').mockResolvedValue({ status: 'ok' })
+    renderAt('/dashboards/11')
+
+    expect(await screen.findByText('Archived: not in the sidebar')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Restore' }))
+    await waitFor(() => expect(endpoints.restore).toHaveBeenCalledWith(11, false))
+  })
+
+  it('shows no archived line for a live dashboard', async () => {
+    mockApi()
+    renderAt('/dashboards/10')
+
+    await screen.findByRole('heading', { level: 1, name: 'Launch week' })
+    expect(screen.queryByText('Archived: not in the sidebar')).not.toBeInTheDocument()
+  })
+
   it('reloads the page when the dev version changes', async () => {
     mockApi({ dev: true })
     vi.mocked(endpoints.devVersion).mockResolvedValueOnce({ version: 'v1' }).mockResolvedValue({ version: 'v2' })

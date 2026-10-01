@@ -1,6 +1,6 @@
 import { DndContext, closestCenter } from '@dnd-kit/core'
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
-import { ChartColumnIcon, LayoutDashboardIcon, LogOutIcon, ShapesIcon } from 'lucide-react'
+import { ChartColumnIcon, LayoutDashboardIcon, LayoutGridIcon, LogOutIcon, ShapesIcon } from 'lucide-react'
 import { Link, useLocation } from 'react-router'
 import {
   Sidebar,
@@ -33,7 +33,8 @@ interface Props {
 
 /**
  * One entry per dashboard group (tabs D20): system groups first, then
- * "Yours" (the user's), and Gallery (the components playground). Each
+ * "Yours" (the user's), and Gallery (the components playground and the
+ * dashboard gallery, where an archived dashboard is restored, D17). Each
  * entry links to its group's first live member and is named by its
  * title; it is active on any live member of the group. "Yours" entries
  * drag to a new order (D14, D15); system entries do not, and since the
@@ -150,6 +151,19 @@ export default function AppSidebar({ dashboards, currentId }: Props) {
                   <Link to="/gallery/components" onClick={close}>
                     <ShapesIcon />
                     <span>Components</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  asChild
+                  isActive={pathname.startsWith('/gallery/dashboards')}
+                  tooltip="Dashboards"
+                  className={item}
+                >
+                  <Link to="/gallery/dashboards" onClick={close}>
+                    <LayoutGridIcon />
+                    <span>Dashboards</span>
                   </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>

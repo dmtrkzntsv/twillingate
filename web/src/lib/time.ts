@@ -23,3 +23,11 @@ export function formatAsOf(at: Date, now: Date = new Date()): string {
     minute: '2-digit',
   }).format(at)
 }
+
+/**
+ * A purge date, day and short month only ("1 Oct"), formatted in UTC so
+ * the label does not shift with the viewer's time zone (D17).
+ */
+export function formatPurgeDate(date: Date): string {
+  return new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' }).format(date)
+}

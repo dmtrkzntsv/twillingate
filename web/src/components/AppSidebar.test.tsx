@@ -74,6 +74,20 @@ describe('AppSidebar gallery', () => {
     )
     expect(screen.getByRole('link', { name: 'Components' })).not.toHaveAttribute('data-active', 'true')
   })
+
+  it('links to the dashboards gallery, active there and not on Components (D17)', () => {
+    renderWithProviders(
+      <MemoryRouter initialEntries={['/gallery/dashboards']}>
+        <SidebarProvider>
+          <AppSidebar dashboards={[]} currentId={0} />
+        </SidebarProvider>
+      </MemoryRouter>
+    )
+    const link = screen.getByRole('link', { name: 'Dashboards' })
+    expect(link).toHaveAttribute('href', '/gallery/dashboards')
+    expect(link).toHaveAttribute('data-active', 'true')
+    expect(screen.getByRole('link', { name: 'Components' })).not.toHaveAttribute('data-active', 'true')
+  })
 })
 
 describe('AppSidebar dashboard groups', () => {

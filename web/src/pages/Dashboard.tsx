@@ -8,6 +8,7 @@ import { DevErrors, GridSkeleton, NoProjects, NoWidgets, PageError, PageLoading 
 import ProjectSwitcher from '@/components/ProjectSwitcher'
 import RangeSwitcher from '@/components/RangeSwitcher'
 import ReportTabs from '@/components/ReportTabs'
+import { Button } from '@/components/ui/button'
 import WidgetGrid from '@/components/WidgetGrid'
 import { useDashboardActions } from '@/hooks/use-dashboard-actions'
 import { useDashboardSelection } from '@/hooks/use-dashboard-selection'
@@ -68,7 +69,7 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
   const showGrid = !waiting && !noProjects && dashboard.widgets.length > 0
   const freshness = useFreshness(dashboard.widgets, paramsFor, showGrid && !frozen)
   const [refreshing, setRefreshing] = useState(false)
-  const { move } = useDashboardActions()
+  const { move, restore } = useDashboardActions()
   // Only a live user dashboard's group is arranged from the page (D11,
   // D14), and never while frozen: the dashboard on screen is being left.
   // Its tabs stay sortable while frozen, only without moves, so the tab
@@ -107,6 +108,21 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
         className={`mx-auto flex w-full max-w-[1600px] flex-1 flex-col gap-4 p-3 transition-opacity sm:p-4 lg:p-6 ${frozen ? 'opacity-60' : ''}`}
       >
         {list.dev && list.errors && list.errors.length > 0 && <DevErrors errors={list.errors} />}
+        {dashboard.archived_at && (
+          // `get_dashboard` and widget data still serve an archived
+          // dashboard opened by its URL; this line is the only hint on the
+          // page itself that it is gone from the sidebar (D18).
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border/70 bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
+            <span>Archived: not in the sidebar</span>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void restore(dashboard.dashboard_id, dashboard.owner === 'system')}
+            >
+              Restore
+            </Button>
+          </div>
+        )}
         <DashboardHeader
           title={dashboard.title}
           asOf={showGrid ? freshness.asOf : undefined}

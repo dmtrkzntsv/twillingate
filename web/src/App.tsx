@@ -9,6 +9,7 @@ import { currentAppPath, onUnauthorized } from '@/lib/auth'
 import Callback from '@/pages/Callback'
 import Dashboard from '@/pages/Dashboard'
 import ComponentsGallery from '@/pages/gallery/ComponentsGallery'
+import DashboardsGallery from '@/pages/gallery/DashboardsGallery'
 import Home from '@/pages/Home'
 import Login from '@/pages/Login'
 
@@ -62,6 +63,14 @@ function App() {
             }
           />
           <Route path="/gallery/components" element={<ComponentsGallery />} />
+          <Route
+            path="/gallery/dashboards"
+            element={
+              <OnlineOnly>
+                <DashboardsGallery />
+              </OnlineOnly>
+            }
+          />
           <Route path="/gallery" element={<Navigate to="/gallery/components" replace />} />
           <Route path="/gallery/*" element={<Navigate to="/gallery/components" replace />} />
           <Route path="/callback" element={<Callback />} />
