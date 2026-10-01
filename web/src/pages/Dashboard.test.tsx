@@ -7,6 +7,7 @@ import { span } from '@/lib/grid'
 import { answerFor, dashboardsList, details, launchWeek, product, projects, views, widgetsById } from '@/test/fixtures'
 import { renderWithProviders } from '@/test/render'
 import Dashboard from './Dashboard'
+import Home from './Home'
 
 function LocationProbe() {
   const location = useLocation()
@@ -32,6 +33,26 @@ function renderAt(url: string) {
   return renderWithProviders(
     <MemoryRouter initialEntries={[url]}>
       <Routes>
+        <Route
+          path="/dashboards/:id"
+          element={
+            <>
+              <Dashboard />
+              <LocationProbe />
+            </>
+          }
+        />
+      </Routes>
+    </MemoryRouter>
+  )
+}
+
+/** Like renderAt, with "/" routed to Home, where an archive with no next tab lands. */
+function renderAppAt(url: string) {
+  return renderWithProviders(
+    <MemoryRouter initialEntries={[url]}>
+      <Routes>
+        <Route path="/" element={<Home />} />
         <Route
           path="/dashboards/:id"
           element={
@@ -73,6 +94,30 @@ describe('Dashboard', () => {
     // The header's "…" menu edits a user dashboard's place among tabs; a
     // system dashboard has none to edit, so it stays off the page.
     expect(screen.queryByRole('button', { name: 'Dashboard actions' })).not.toBeInTheDocument()
+  })
+
+  it('lands on a live dashboard after archiving the lone one shown, however slow the list refetch', async () => {
+    mockApi()
+    const archived = dashboardsList()
+    archived.dashboards = archived.dashboards.map((d) =>
+      d.dashboard_id === 10 ? { ...d, archived_at: '2026-09-30T00:00:00Z' } : d
+    )
+    vi.spyOn(endpoints, 'archive').mockImplementation(async () => {
+      vi.mocked(endpoints.dashboards).mockImplementation(
+        () => new Promise((resolve) => setTimeout(() => resolve(archived), 300))
+      )
+      return { status: 'archived' }
+    })
+    renderAppAt('/dashboards/10')
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Dashboard actions' }))
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Archive' }))
+
+    // "/" picks from the refetched list: Launch week, the last dashboard
+    // opened here, is archived there, so the first system one wins.
+    await waitFor(() => expect(location()).toBe('/dashboards/1'), { timeout: 2000 })
+    expect(vi.mocked(endpoints.archive).mock.calls[0][0]).toBe(10)
+    expect(screen.queryByText('Archived: not in the sidebar')).not.toBeInTheDocument()
   })
 
   it('lists the system group and the live user dashboards in the sidebar, one entry each', async () => {

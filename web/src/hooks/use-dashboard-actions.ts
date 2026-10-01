@@ -25,9 +25,11 @@ export interface DashboardActions {
  * The actions the page writes dashboards with: duplicate, archive, restore
  * and move, each the existing audited route, with the page's own bearer
  * token (D19). Every action refetches the dashboard list and the
- * dashboard shown so the sidebar and the tabs follow; a refusal shows its
- * message in a toast instead of throwing to the caller, and so does any
- * other failure — a dropped connection throws a bare `TypeError` from
+ * dashboard shown so the sidebar and the tabs follow, and navigates only
+ * once the list is back: "/" picks from that list, and before the
+ * refetch it still offers the dashboard just archived. A refusal shows
+ * its message in a toast instead of throwing to the caller, and so does
+ * any other failure — a dropped connection throws a bare `TypeError` from
  * `fetch`, not an `ApiError`, and callers (menus, drag handlers) must not
  * see an unhandled rejection either way (D12).
  */
@@ -36,24 +38,28 @@ export function useDashboardActions(): DashboardActions {
   const navigate = useNavigate()
   const [pending, setPending] = useState(false)
 
-  const refresh = useCallback(() => {
-    queryClient.invalidateQueries({ queryKey: ['dashboards'] })
-    queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+  /** Refetches both; resolves once the list has (a failed refetch resolves too). */
+  const refresh = useCallback(async () => {
+    void queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+    await queryClient.invalidateQueries({ queryKey: ['dashboards'] })
   }, [queryClient])
 
+  /** Runs `fn`, refetches, then calls what `fn` returned (a navigation) if it succeeded. */
   const run = useCallback(
-    async (fn: () => Promise<void>) => {
+    async (fn: () => Promise<(() => void) | void>) => {
       setPending(true)
+      let then: (() => void) | void = undefined
       try {
-        await fn()
+        then = await fn()
       } catch (err) {
         if (err instanceof ApiError) toast.error(err.message)
         else if (err instanceof TypeError) toast.error("Couldn't reach the server")
         else toast.error(err instanceof Error ? err.message : String(err))
       } finally {
-        refresh()
+        await refresh()
         setPending(false)
       }
+      then?.()
     },
     [refresh]
   )
@@ -73,7 +79,8 @@ export function useDashboardActions(): DashboardActions {
         toast(`Archived '${d.title}'`, {
           action: { label: 'Undo', onClick: () => void restore(d.dashboard_id, opts.wholeGroup) },
         })
-        if (opts.navigateTo) navigate(opts.navigateTo)
+        const to = opts.navigateTo
+        if (to) return () => navigate(to)
       }),
     [run, restore, navigate]
   )
@@ -82,7 +89,7 @@ export function useDashboardActions(): DashboardActions {
     (d: { dashboard_id: number; title: string }, opts: { wholeGroup?: boolean; archiveSource?: boolean } = {}) =>
       run(async () => {
         const copy = await endpoints.duplicate(d.dashboard_id, { whole_group: opts.wholeGroup, archive_source: opts.archiveSource })
-        navigate(`/dashboards/${copy.dashboard_id}`)
+        return () => navigate(`/dashboards/${copy.dashboard_id}`)
       }),
     [run, navigate]
   )
