@@ -749,7 +749,8 @@ Open `http://127.0.0.1:3100/`, which redirects to the dashboards at `/app/`.
   dashboard, in its group: a tab of the dashboard its `group` names, or its
   own sidebar entry when it names none.
 - `-db` defaults to `DATABASE_DSN`'s path. The database is opened read-only
-  and never written: the view route answers but stores nothing.
+  and never written: the view route answers but stores nothing, and the page
+  offers no writes (no "…" menus, dragging, Restore or copy buttons).
 - `-addr` is refused unless it is a loopback address, and a request naming
   any other host (`Host:`) gets `403`, so a page elsewhere cannot reach it
   by pointing its own name at `127.0.0.1`. There is no login: the page finds

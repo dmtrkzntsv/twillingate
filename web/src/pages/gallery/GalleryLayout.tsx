@@ -15,7 +15,7 @@ interface Props {
 export default function GalleryLayout({ title, description, sections, children }: Props) {
   const list = useQuery(dashboardsQuery)
   return (
-    <AppShell dashboards={list.data?.dashboards ?? []} currentId={0}>
+    <AppShell dashboards={list.data?.dashboards ?? []} currentId={0} readOnly={list.data?.dev === true}>
       <TopBar>
         <span className="text-sm text-muted-foreground">Gallery</span>
       </TopBar>

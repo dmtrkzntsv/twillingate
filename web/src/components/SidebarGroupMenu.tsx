@@ -30,7 +30,7 @@ interface Props {
  * desktop; the sidebar shows it unconditionally on phones.
  */
 export default function SidebarGroupMenu({ group, userGroups, currentId }: Props) {
-  const { duplicate, archive, move } = useDashboardActions()
+  const { duplicate, archive, move, pending } = useDashboardActions()
   const { isMobile, setOpenMobile } = useSidebar()
   const first = group.members[0]
   const navigateTo = group.members.some((m) => m.dashboard_id === currentId) ? '/' : undefined
@@ -58,6 +58,7 @@ export default function SidebarGroupMenu({ group, userGroups, currentId }: Props
       <DropdownMenuContent side="right" align="start">
         {group.owner === 'system' ? (
           <DropdownMenuItem
+            disabled={pending}
             onClick={() => {
               close()
               void duplicate(first, {})
@@ -71,6 +72,7 @@ export default function SidebarGroupMenu({ group, userGroups, currentId }: Props
           </DropdownMenuItem>
         ) : (
           <DropdownMenuItem
+            disabled={pending}
             onClick={() => {
               close()
               void duplicate(first, { wholeGroup: true })
@@ -81,6 +83,7 @@ export default function SidebarGroupMenu({ group, userGroups, currentId }: Props
           </DropdownMenuItem>
         )}
         <DropdownMenuItem
+          disabled={pending}
           onClick={() => {
             if (navigateTo) close()
             void archive(first, { wholeGroup: true, navigateTo })
@@ -92,11 +95,11 @@ export default function SidebarGroupMenu({ group, userGroups, currentId }: Props
         {group.owner === 'user' && (
           <>
             <DropdownMenuSeparator />
-            <DropdownMenuItem disabled={index <= 0} onClick={() => moveTo(index - 1)}>
+            <DropdownMenuItem disabled={pending || index <= 0} onClick={() => moveTo(index - 1)}>
               <ArrowUpIcon />
               Move up
             </DropdownMenuItem>
-            <DropdownMenuItem disabled={index === userGroups.length - 1} onClick={() => moveTo(index + 1)}>
+            <DropdownMenuItem disabled={pending || index === userGroups.length - 1} onClick={() => moveTo(index + 1)}>
               <ArrowDownIcon />
               Move down
             </DropdownMenuItem>

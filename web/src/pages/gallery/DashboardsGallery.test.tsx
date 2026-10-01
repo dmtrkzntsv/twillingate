@@ -196,3 +196,30 @@ describe('DashboardsGallery, Archived section', () => {
     expect(await screen.findByText('Nothing archived.')).toBeInTheDocument()
   })
 })
+
+describe('DashboardsGallery, writes', () => {
+  it('makes one copy from a double click: the buttons wait while an action runs', async () => {
+    const actual = await vi.importActual<typeof import('@/hooks/use-dashboard-actions')>('@/hooks/use-dashboard-actions')
+    vi.mocked(useDashboardActions).mockImplementation(actual.useDashboardActions)
+    const copy = vi.spyOn(endpoints, 'duplicate').mockReturnValue(new Promise(() => {}))
+    mockApi()
+    renderGallery()
+    const views = (await screen.findByRole('heading', { name: 'Views' })).closest('li')!
+    const button = within(views).getAllByRole('button', { name: 'Copy as a dashboard' })[0]
+
+    await userEvent.dblClick(button)
+
+    expect(copy).toHaveBeenCalledTimes(1)
+    expect(button).toBeDisabled()
+    expect(within(views).getByRole('button', { name: 'Archive' })).toBeDisabled()
+  })
+
+  it('shows no Archive, Restore or Copy in reporting dev, which takes no writes', async () => {
+    vi.spyOn(endpoints, 'dashboards').mockResolvedValue({ timezone: 'UTC', dashboards, dev: true })
+    renderGallery()
+
+    await screen.findByRole('heading', { name: 'Views' })
+    expect(screen.getByText('Old experiment')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^(Archive|Restore|Copy as a dashboard)$/ })).not.toBeInTheDocument()
+  })
+})

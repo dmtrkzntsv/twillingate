@@ -1,5 +1,5 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
 import type { ReactNode } from 'react'
 import { MemoryRouter, useLocation } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -107,6 +107,38 @@ describe('useDashboardActions', () => {
     expect(toast.error).toHaveBeenCalledWith("Couldn't reach the server")
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['dashboards'] })
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['dashboard'] })
+  })
+
+  it('stays pending, and navigates, only once the dashboards list has refetched', async () => {
+    vi.mocked(endpoints.archive).mockResolvedValue({ status: 'archived' })
+    let release: () => void = () => {}
+    const list = vi
+      .fn()
+      .mockResolvedValueOnce({ timezone: 'UTC', dashboards: [] })
+      .mockImplementation(() => new Promise((resolve) => (release = () => resolve({ timezone: 'UTC', dashboards: [] }))))
+    const { result } = renderHook(
+      () => {
+        useQuery({ queryKey: ['dashboards'], queryFn: list })
+        return useDashboardActions()
+      },
+      { wrapper }
+    )
+    await waitFor(() => expect(list).toHaveBeenCalledTimes(1))
+
+    let done: Promise<void> = Promise.resolve()
+    act(() => {
+      done = result.current.archive({ dashboard_id: 5, title: 'Marketing' }, { navigateTo: '/' })
+    })
+    await waitFor(() => expect(list).toHaveBeenCalledTimes(2))
+    expect(result.current.pending).toBe(true)
+    expect(location).toBe('/dashboards/1')
+
+    await act(async () => {
+      release()
+      await done
+    })
+    expect(result.current.pending).toBe(false)
+    expect(location).toBe('/')
   })
 
   it('duplicate navigates to the copy', async () => {

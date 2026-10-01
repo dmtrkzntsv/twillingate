@@ -29,6 +29,8 @@ interface Props {
   /** Every dashboard, in sidebar order: system ones, then the user's. */
   dashboards: DashboardInfo[]
   currentId: number
+  /** Reporting dev, which takes no writes: no "…" menus and no dragging. */
+  readOnly?: boolean
 }
 
 /**
@@ -43,7 +45,7 @@ interface Props {
  * Log out shows only when the app holds a credential: reporting dev's
  * open mode has none to forget.
  */
-export default function AppSidebar({ dashboards, currentId }: Props) {
+export default function AppSidebar({ dashboards, currentId, readOnly = false }: Props) {
   const { isMobile, setOpenMobile } = useSidebar()
   const { pathname } = useLocation()
   const groups = liveGroups(dashboards)
@@ -67,6 +69,12 @@ export default function AppSidebar({ dashboards, currentId }: Props) {
   const close = () => {
     if (isMobile) setOpenMobile(false)
   }
+  const yourLink = (g: Group) => (
+    <Link to={`/dashboards/${g.members[0].dashboard_id}`} onClick={close}>
+      <LayoutDashboardIcon />
+      <span>{g.members[0].title}</span>
+    </Link>
+  )
 
   return (
     <Sidebar collapsible="icon">
@@ -97,7 +105,7 @@ export default function AppSidebar({ dashboards, currentId }: Props) {
                         <span>{g.members[0].title}</span>
                       </Link>
                     </SidebarMenuButton>
-                    <SidebarGroupMenu group={g} userGroups={yours} currentId={currentId} />
+                    {!readOnly && <SidebarGroupMenu group={g} userGroups={yours} currentId={currentId} />}
                   </SidebarMenuItem>
                 ))}
               </SidebarMenu>
@@ -107,29 +115,36 @@ export default function AppSidebar({ dashboards, currentId }: Props) {
         <SidebarGroup>
           <SidebarGroupLabel className="text-sidebar-foreground/60">Yours</SidebarGroupLabel>
           <SidebarGroupContent>
-            <DndContext collisionDetection={closestCenter} {...context}>
-              <SortableContext items={order} strategy={verticalListSortingStrategy}>
-                <SidebarMenu>
-                  {yours.map((g) => (
-                    <SortableGroupItem
-                      key={g.groupId}
-                      groupId={g.groupId}
-                      title={g.members[0].title}
-                      isActive={isActive(g)}
-                      className={item}
-                      disabled={busy}
-                      link={
-                        <Link to={`/dashboards/${g.members[0].dashboard_id}`} onClick={close}>
-                          <LayoutDashboardIcon />
-                          <span>{g.members[0].title}</span>
-                        </Link>
-                      }
-                      menu={<SidebarGroupMenu group={g} userGroups={yours} currentId={currentId} />}
-                    />
-                  ))}
-                </SidebarMenu>
-              </SortableContext>
-            </DndContext>
+            {readOnly ? (
+              <SidebarMenu>
+                {yours.map((g) => (
+                  <SidebarMenuItem key={g.groupId}>
+                    <SidebarMenuButton asChild isActive={isActive(g)} tooltip={g.members[0].title} className={item}>
+                      {yourLink(g)}
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ))}
+              </SidebarMenu>
+            ) : (
+              <DndContext collisionDetection={closestCenter} {...context}>
+                <SortableContext items={order} strategy={verticalListSortingStrategy}>
+                  <SidebarMenu>
+                    {yours.map((g) => (
+                      <SortableGroupItem
+                        key={g.groupId}
+                        groupId={g.groupId}
+                        title={g.members[0].title}
+                        isActive={isActive(g)}
+                        className={item}
+                        disabled={busy}
+                        link={yourLink(g)}
+                        menu={<SidebarGroupMenu group={g} userGroups={yours} currentId={currentId} />}
+                      />
+                    ))}
+                  </SidebarMenu>
+                </SortableContext>
+              </DndContext>
+            )}
             {yours.length === 0 && (
               <p className="px-2 py-1 text-xs text-sidebar-foreground/55 group-data-[collapsible=icon]:hidden">
                 None yet. Ask your agent to make one.

@@ -52,12 +52,15 @@ function groupLabel(dashboards: DashboardInfo[], d: DashboardInfo): string | und
  * `/gallery/dashboards`: every system group, live or archived, with its
  * tabs to copy as a dashboard of your own, and every archived user
  * dashboard to restore — the only page that reaches a dashboard archived
- * out of the sidebar (D17, D18).
+ * out of the sidebar (D17, D18). Its buttons wait while one action runs,
+ * so a double click makes one copy, not two; reporting dev, which takes
+ * no writes, shows none.
  */
 export default function DashboardsGallery() {
   const { data } = useQuery(dashboardsQuery)
   const dashboards = data?.dashboards ?? []
-  const { duplicate, archive, restore } = useDashboardActions()
+  const writable = data?.dev !== true
+  const { duplicate, archive, restore, pending } = useDashboardActions()
   const groups = systemGroups(dashboards)
   const archivedUsers = dashboards.filter((d) => d.owner === 'user' && d.archived_at)
 
@@ -85,13 +88,16 @@ export default function DashboardsGallery() {
                     <h3 className="text-sm font-medium">{first.title}</h3>
                     <Badge variant={live ? 'secondary' : 'outline'}>{live ? 'In the sidebar' : 'Archived'}</Badge>
                   </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => void (live ? archive(first, { wholeGroup: true }) : restore(first.dashboard_id, true))}
-                  >
-                    {live ? 'Archive' : 'Restore'}
-                  </Button>
+                  {writable && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={pending}
+                      onClick={() => void (live ? archive(first, { wholeGroup: true }) : restore(first.dashboard_id, true))}
+                    >
+                      {live ? 'Archive' : 'Restore'}
+                    </Button>
+                  )}
                 </div>
                 <ul className="flex flex-col gap-1">
                   {g.members.map((tab) => (
@@ -102,9 +108,16 @@ export default function DashboardsGallery() {
                       >
                         {tab.title}
                       </Link>
-                      <Button variant="ghost" size="sm" onClick={() => void duplicate(tab, { archiveSource: false })}>
-                        Copy as a dashboard
-                      </Button>
+                      {writable && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={pending}
+                          onClick={() => void duplicate(tab, { archiveSource: false })}
+                        >
+                          Copy as a dashboard
+                        </Button>
+                      )}
                     </li>
                   ))}
                 </ul>
@@ -131,9 +144,11 @@ export default function DashboardsGallery() {
                     <span className="truncate font-medium">{d.title}</span>
                     {meta && <span className="text-xs text-muted-foreground">{meta}</span>}
                   </div>
-                  <Button variant="outline" size="sm" onClick={() => void restore(d.dashboard_id)}>
-                    Restore
-                  </Button>
+                  {writable && (
+                    <Button variant="outline" size="sm" disabled={pending} onClick={() => void restore(d.dashboard_id)}>
+                      Restore
+                    </Button>
+                  )}
                 </li>
               )
             })}

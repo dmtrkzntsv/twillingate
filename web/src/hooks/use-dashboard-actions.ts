@@ -17,7 +17,7 @@ export interface DashboardActions {
    * the toast), so a drag can drop its optimistic order at once.
    */
   move(id: number, body: MoveBody): Promise<boolean>
-  /** True while an action's request is in flight. */
+  /** True while an action runs, from its request until the list has refetched; buttons wait on it. Per hook call. */
   pending: boolean
 }
 

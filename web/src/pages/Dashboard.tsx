@@ -35,7 +35,7 @@ export default function Dashboard() {
 
   const error = list.error ?? detail.error
   return (
-    <AppShell dashboards={list.data?.dashboards ?? []} currentId={id}>
+    <AppShell dashboards={list.data?.dashboards ?? []} currentId={id} readOnly={list.data?.dev === true}>
       {error ? (
         <PageError error={error} onRetry={() => (list.error ? list.refetch() : detail.refetch())} />
       ) : list.data && detail.data ? (
@@ -69,12 +69,15 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
   const showGrid = !waiting && !noProjects && dashboard.widgets.length > 0
   const freshness = useFreshness(dashboard.widgets, paramsFor, showGrid && !frozen)
   const [refreshing, setRefreshing] = useState(false)
-  const { move, restore } = useDashboardActions()
+  const { move, restore, pending } = useDashboardActions()
+  // Reporting dev serves only reads (and the view), so the page offers no
+  // writes there: every one of them would answer 405.
+  const writable = !list.dev
   // Only a live user dashboard's group is arranged from the page (D11,
   // D14), and never while frozen: the dashboard on screen is being left.
   // Its tabs stay sortable while frozen, only without moves, so the tab
   // list is not rebuilt under the focus of the tab just chosen.
-  const userGroup = dashboard.owner === 'user' && !dashboard.archived_at
+  const userGroup = writable && dashboard.owner === 'user' && !dashboard.archived_at
   const arrangeable = userGroup && !frozen
   const moveTab = async (id: number, to: number) => {
     const body = moveTabBody(dashboard.tabs, id, dashboard.group_id, to)
@@ -114,13 +117,16 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
           // page itself that it is gone from the sidebar (D18).
           <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border/70 bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
             <span>Archived: not in the sidebar</span>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => void restore(dashboard.dashboard_id, dashboard.owner === 'system')}
-            >
-              Restore
-            </Button>
+            {writable && (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={pending}
+                onClick={() => void restore(dashboard.dashboard_id, dashboard.owner === 'system')}
+              >
+                Restore
+              </Button>
+            )}
           </div>
         )}
         <DashboardHeader

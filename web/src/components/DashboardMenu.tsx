@@ -33,7 +33,7 @@ interface Props {
  * since a lone dashboard is already its own dashboard.
  */
 export default function DashboardMenu({ dashboard, list }: Props) {
-  const { duplicate, archive, move } = useDashboardActions()
+  const { duplicate, archive, move, pending } = useDashboardActions()
   const { tabs, dashboard_id: id, group_id: groupId } = dashboard
   const n = tabs.length
   const i = tabs.findIndex((t) => t.dashboard_id === id)
@@ -59,31 +59,31 @@ export default function DashboardMenu({ dashboard, list }: Props) {
       <DropdownMenuContent align="end">
         {n > 1 ? (
           <>
-            <DropdownMenuItem onClick={() => void duplicate(dashboard)}>
+            <DropdownMenuItem disabled={pending} onClick={() => void duplicate(dashboard)}>
               <CopyIcon />
               Duplicate tab
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => void archive(dashboard, { navigateTo: nextAfterArchive(tabs, id) })}>
+            <DropdownMenuItem disabled={pending} onClick={() => void archive(dashboard, { navigateTo: nextAfterArchive(tabs, id) })}>
               <ArchiveIcon />
               Archive tab
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem disabled={i <= 0} onClick={moveLeft}>
+            <DropdownMenuItem disabled={pending || i <= 0} onClick={moveLeft}>
               <ArrowLeftIcon />
               Move left
             </DropdownMenuItem>
-            <DropdownMenuItem disabled={i === n - 1} onClick={moveRight}>
+            <DropdownMenuItem disabled={pending || i === n - 1} onClick={moveRight}>
               <ArrowRightIcon />
               Move right
             </DropdownMenuItem>
           </>
         ) : (
           <>
-            <DropdownMenuItem onClick={() => void duplicate(dashboard, { wholeGroup: true })}>
+            <DropdownMenuItem disabled={pending} onClick={() => void duplicate(dashboard, { wholeGroup: true })}>
               <CopyIcon />
               Duplicate
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => void archive(dashboard, { navigateTo: '/' })}>
+            <DropdownMenuItem disabled={pending} onClick={() => void archive(dashboard, { navigateTo: '/' })}>
               <ArchiveIcon />
               Archive
             </DropdownMenuItem>
@@ -97,14 +97,16 @@ export default function DashboardMenu({ dashboard, list }: Props) {
             </DropdownMenuSubTrigger>
             <DropdownMenuSubContent>
               {otherGroups.map((g) => (
-                <DropdownMenuItem key={g.groupId} onClick={() => void move(id, { group_id: g.groupId })}>
+                <DropdownMenuItem key={g.groupId} disabled={pending} onClick={() => void move(id, { group_id: g.groupId })}>
                   {g.members[0].title}
                 </DropdownMenuItem>
               ))}
               {n > 1 && (
                 <>
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={() => void move(id, { group_id: 0 })}>Own dashboard</DropdownMenuItem>
+                  <DropdownMenuItem disabled={pending} onClick={() => void move(id, { group_id: 0 })}>
+                    Own dashboard
+                  </DropdownMenuItem>
                 </>
               )}
             </DropdownMenuSubContent>

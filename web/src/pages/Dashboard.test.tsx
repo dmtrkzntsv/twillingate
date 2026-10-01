@@ -363,6 +363,25 @@ describe('Dashboard', () => {
     await waitFor(() => expect(endpoints.restore).toHaveBeenCalledWith(11, false))
   })
 
+  it('offers no writes in reporting dev: no menus, no sortable tabs', async () => {
+    mockApi({ dev: true })
+    renderAt('/dashboards/13')
+
+    const tabs = await screen.findAllByRole('tab')
+    for (const tab of tabs) expect(tab).not.toHaveAttribute('aria-roledescription')
+    expect(screen.getByRole('link', { name: 'Marketing' })).not.toHaveAttribute('aria-roledescription')
+    // Neither the header's "Dashboard actions" nor any sidebar "… actions".
+    expect(screen.queryByRole('button', { name: /actions$/ })).not.toBeInTheDocument()
+  })
+
+  it('offers no Restore on an archived dashboard in reporting dev', async () => {
+    mockApi({ dev: true })
+    renderAt('/dashboards/11')
+
+    expect(await screen.findByText('Archived: not in the sidebar')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Restore' })).not.toBeInTheDocument()
+  })
+
   it('shows no archived line for a live dashboard', async () => {
     mockApi()
     renderAt('/dashboards/10')
