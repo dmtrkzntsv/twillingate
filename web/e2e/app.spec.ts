@@ -140,7 +140,11 @@ test('a whole-group copy of Views opens with five tabs', async ({ page, request 
 
   const copied = await request.post(`/api/dashboards/${viewsId}/duplicate`, {
     headers: authHeaders(),
-    data: { whole_group: true },
+    // archive_source: false — this test is only about the copy's tab
+    // count; the new system default (archiving Reports) would otherwise
+    // race other tests running in parallel against the same server that
+    // expect Reports live.
+    data: { whole_group: true, archive_source: false },
   })
   expect(copied.ok(), await copied.text()).toBeTruthy()
   const { dashboard_id: copyId, tabs } = (await copied.json()) as { dashboard_id: number; tabs: { dashboard_id: number }[] }

@@ -341,7 +341,10 @@ func TestSystemDashboardAllowsDuplicateCopyAndView(t *testing.T) {
 	svc := newTestService(t)
 	syncReporting(t, svc, nil, systemDashboard())
 	ctx := context.Background()
-	if _, err := svc.DuplicateDashboard(ctx, "test", 3, false, nil); err != nil {
+	// archive_source false: the CopyWidget and SetView below exercise
+	// dashboard 3 live; the default would archive it, as duplicating a
+	// system dashboard does since D6.
+	if _, err := svc.DuplicateDashboard(ctx, "test", 3, false, ptr(false)); err != nil {
 		t.Errorf("duplicate: %v", err)
 	}
 	d := mustCreate(t, svc, "D")
@@ -1561,8 +1564,8 @@ func TestDuplicateSystemTabReplacesGroup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Owner != store.OwnerUser || got.Title != "Users" {
-		t.Errorf("copy = %s %q, want the user copy of Users", got.Owner, got.Title)
+	if got.Owner != store.OwnerUser || got.Title != "Users" || got.ArchivedAt != "" {
+		t.Errorf("copy = %s %q archived %q, want a live user copy of Users", got.Owner, got.Title, got.ArchivedAt)
 	}
 	titles := []string{}
 	for _, tab := range got.Tabs {
@@ -1576,6 +1579,16 @@ func TestDuplicateSystemTabReplacesGroup(t *testing.T) {
 			t.Errorf("system dashboard %d live, want archived", id)
 		}
 	}
+	// The copy's group is placed last in the sidebar, after every other
+	// user dashboard.
+	list, err := svc.Dashboards(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if last := list.Dashboards[len(list.Dashboards)-1]; last.GroupID != got.GroupID {
+		t.Errorf("last sidebar entry's group = %d, want the copy's group %d", last.GroupID, got.GroupID)
+	}
+
 	// Review focus 1: with Reports archived, copying a tab again works,
 	// and Reports stays archived.
 	again, err := svc.DuplicateDashboard(ctx, "test", 11, false, nil)
@@ -1584,6 +1597,11 @@ func TestDuplicateSystemTabReplacesGroup(t *testing.T) {
 	}
 	if len(again.Tabs) != 5 {
 		t.Errorf("second copy has %d tabs, want 5", len(again.Tabs))
+	}
+	for id := int64(10); id <= 14; id++ {
+		if d, _ := svc.st.GetDashboard(ctx, id); d.ArchivedAt == "" {
+			t.Errorf("system dashboard %d live after a second duplicate, want still archived", id)
+		}
 	}
 }
 

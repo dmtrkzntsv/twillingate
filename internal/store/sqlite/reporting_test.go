@@ -632,6 +632,46 @@ func TestInsertDashboardUnknownArchiveIDWritesNothing(t *testing.T) {
 	}
 }
 
+// TestInsertDashboardGroupUnknownArchiveIDWritesNothing is
+// TestInsertDashboardUnknownArchiveIDWritesNothing's twin for
+// InsertDashboardGroup: an unknown id in archive fails the whole
+// transaction, ErrNotFound — none of the new group's rows, no audit row.
+func TestInsertDashboardGroupUnknownArchiveIDWritesNothing(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	ds := []store.Dashboard{
+		{Owner: store.OwnerUser, Title: "D1", SortKey: "a"},
+		{Owner: store.OwnerUser, Title: "D2", SortKey: "b"},
+	}
+	var dashCountBefore, auditCountBefore int
+	if err := db.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM dashboards`).Scan(&dashCountBefore); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_log`).Scan(&auditCountBefore); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := db.InsertDashboardGroup(ctx, ds, nil, []int64{999999},
+		store.AuditEntry{Actor: "agent", Action: "dashboard.duplicate"})
+	if !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("InsertDashboardGroup with an unknown archive id = %v, want ErrNotFound", err)
+	}
+
+	var dashCountAfter, auditCountAfter int
+	if err := db.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM dashboards`).Scan(&dashCountAfter); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_log`).Scan(&auditCountAfter); err != nil {
+		t.Fatal(err)
+	}
+	if dashCountAfter != dashCountBefore {
+		t.Errorf("dashboards rows after failed InsertDashboardGroup = %d, want unchanged %d", dashCountAfter, dashCountBefore)
+	}
+	if auditCountAfter != auditCountBefore {
+		t.Errorf("audit_log rows after failed InsertDashboardGroup = %d, want unchanged %d", auditCountAfter, auditCountBefore)
+	}
+}
+
 func TestReportingWritesDoNotBumpConfigVersion(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
