@@ -128,6 +128,18 @@ def actor_for(name, day, n, sends_ids):
     return hashlib.sha256(f"{name}-{day}-{n}".encode()).hexdigest()[:16]
 
 
+def growing_pool(elapsed, final):
+    """A stable id number from a pool that grows across the window.
+
+    Drawing from a fixed pool would introduce every id within the first few
+    weeks, leaving the recent days without a single new cohort -- and the
+    retention page, which reads the last 90 days, empty or not depending on
+    which weekday the window happens to start on. Growing the pool keeps
+    newcomers arriving every day while most draws are returning ids.
+    """
+    return random.randint(1, max(1, final * (elapsed + 1) // DAYS))
+
+
 def seed(cur, pid, name, profile, today, sends_ids):
     for table in ("events", "actors", "identities"):
         cur.execute(f"DELETE FROM {table} WHERE project_id = ?", (pid,))
@@ -142,7 +154,9 @@ def seed(cur, pid, name, profile, today, sends_ids):
         visitors = max(2, int(random.gauss(base, base * 0.16)))
 
         for v in range(visitors):
-            vh = actor_for(name, day, v, sends_ids)
+            # Web installs are numbered after the 400 signed-in users, so an
+            # early web visit never claims a user's id (and its first seen day).
+            vh = actor_for(name, day, 400 + growing_pool(elapsed, 1200) if sends_ids else v, sends_ids)
             device = pick(DEVICES)
             country = pick(COUNTRIES)
             browser = pick(BROWSERS)
@@ -177,7 +191,7 @@ def seed(cur, pid, name, profile, today, sends_ids):
                 for _ in range(max(0, int(random.gauss(weight * scale * 0.5, weight * 0.3)))):
                     ts = datetime.datetime.combine(day, datetime.time()) + datetime.timedelta(
                         seconds=random.randint(0, 86399))
-                    n = random.randint(1, 400)
+                    n = growing_pool(DAYS - 1 - back, 400)
                     user = f"user-{name}-{n}" if sends_ids else ""
                     # This is the only event loop and it sits beside the web
                     # views above, so every product event is web-originated:
@@ -223,7 +237,8 @@ def seed_app(cur, pid, name, profile, today, sends_ids):
             live = [APP_VERSIONS[0]]
         weights = [(v, max(1, 40 - (d - back))) for v, d in live]
 
-        for n in range(max(2, int(random.gauss(base, base * 0.14)))):
+        for i in range(max(2, int(random.gauss(base, base * 0.14)))):
+            n = growing_pool(elapsed, 400) if sends_ids else i
             actor = actor_for(name, day, n, sends_ids)
             platform = pick(PLATFORMS)
             version = pick(weights)
