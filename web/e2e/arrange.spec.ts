@@ -64,10 +64,14 @@ async function dragAbove(page: Page, source: Locator, target: Locator): Promise<
   await page.mouse.up()
 }
 
-/** The accessible names of the links under the sidebar's "Yours" section, in order. */
+/**
+ * The "E2E …" links under the sidebar's "Yours" section, in order. Only
+ * this file's own: app.spec.ts runs first on the same server and leaves
+ * dashboards of its own there.
+ */
 async function yoursOrder(page: Page): Promise<string[]> {
   const group = page.locator('[data-sidebar="group"]').filter({ has: page.getByText('Yours', { exact: true }) })
-  return group.getByRole('link').allTextContents()
+  return (await group.getByRole('link').allTextContents()).filter((t) => t.startsWith('E2E '))
 }
 
 // Runs every test in this file one at a time: several tests act on the
@@ -128,7 +132,11 @@ test('duplicates Views from the sidebar without archiving it, then archives and 
   // Duplicating is only a copy: Views is still in the sidebar alongside it.
   await expect(page.getByRole('tab')).toHaveCount(5)
   await expect(page.getByRole('link', { name: 'Views', exact: true })).toHaveCount(1)
-  await expect(page.getByRole('link', { name: 'Views (copy)', exact: true })).toHaveCount(1)
+  // By id: app.spec.ts runs first on the same server and leaves its own
+  // "Views (copy)" behind, so the title alone is not this test's copy.
+  await expect(
+    page.getByRole('link', { name: 'Views (copy)', exact: true }).and(page.locator(`[href="/app/dashboards/${copyId}"]`))
+  ).toHaveCount(1)
 
   // Replacing it is a second, explicit step: archive the original.
   await page.getByRole('link', { name: 'Views', exact: true }).hover()
