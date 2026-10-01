@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/shared/sortkey"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
@@ -1813,5 +1814,32 @@ func TestDashboardsPurgeAfterDays(t *testing.T) {
 	b, _ := json.Marshal(Dashboards{Timezone: "UTC"})
 	if strings.Contains(string(b), "purge_after_days") {
 		t.Errorf("0 days marshals as %s, want the field omitted", b)
+	}
+}
+
+// list_dashboards says how often the page auto-refreshes: the longer of
+// the two cache ages, so a reload always loads anew; 0 (both off) is
+// omitted.
+func TestDashboardsAutoRefreshSeconds(t *testing.T) {
+	for _, c := range []struct {
+		cache, refresh time.Duration
+		want           int
+	}{
+		{15 * time.Minute, time.Minute, 900},
+		{0, time.Minute, 60},
+		{0, 0, 0},
+	} {
+		svc, _ := newTestServiceOpts(t, Options{CacheAge: c.cache, RefreshAge: c.refresh}, 1000)
+		got, err := svc.Dashboards(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.AutoRefreshSeconds != c.want {
+			t.Errorf("cache %v, refresh %v: AutoRefreshSeconds = %d, want %d", c.cache, c.refresh, got.AutoRefreshSeconds, c.want)
+		}
+	}
+	b, _ := json.Marshal(Dashboards{Timezone: "UTC"})
+	if strings.Contains(string(b), "auto_refresh_seconds") {
+		t.Errorf("0 marshals as %s, want the field omitted", b)
 	}
 }

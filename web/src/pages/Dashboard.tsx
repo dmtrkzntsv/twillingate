@@ -10,10 +10,12 @@ import RangeSwitcher from '@/components/RangeSwitcher'
 import ReportTabs from '@/components/ReportTabs'
 import { Button } from '@/components/ui/button'
 import WidgetGrid from '@/components/WidgetGrid'
+import { useAutoRefresh } from '@/hooks/use-auto-refresh'
 import { useDashboardActions } from '@/hooks/use-dashboard-actions'
 import { useDashboardSelection } from '@/hooks/use-dashboard-selection'
 import { useDevReload } from '@/hooks/use-dev-reload'
 import { useFreshness } from '@/hooks/use-freshness'
+import { useStoredState } from '@/hooks/use-stored-state'
 import type { DashboardDetail, DashboardInfo, DashboardsResponse, DashboardTab } from '@/lib/api'
 import { moveTabBody } from '@/lib/arrange'
 import { rememberDashboard } from '@/lib/last-dashboard'
@@ -97,8 +99,9 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
   const userGroup = writable && dashboard.owner === 'user' && !dashboard.archived_at
   const arrangeable = userGroup && !frozen
   // The group's "…" sits top right, a tab's own one beside its title
-  // (D11): on a system group (a template, archived or not, which can still
-  // be duplicated) and on a live user one, never while frozen.
+  // (D11), never while frozen. The group's always offers its refreshes;
+  // both offer writes on a system group (a template, archived or not,
+  // which can still be duplicated) and on a live user one.
   const menus = writable && !frozen && (dashboard.owner === 'system' || !dashboard.archived_at)
   const tabs = shownTabs(dashboard, list.dashboards)
   const moveTab = async (id: number, to: number) => {
@@ -113,6 +116,16 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
     )
   }
 
+  // Auto-refresh is the viewer's own choice per dashboard, kept in this
+  // browser and off until turned on. Each reload is an ordinary one: the
+  // interval is at least REPORTING_CACHE_SECONDS, so it runs the queries
+  // again rather than being served the answers already on screen.
+  const autoSeconds = list.auto_refresh_seconds ?? 0
+  const [autoOn, setAutoOn] = useStoredState(`twillingate.auto_refresh.${dashboard.group_id}`, (v) => (v === true ? true : null))
+  useAutoRefresh(autoOn === true && showGrid && !frozen, autoSeconds, () => {
+    void client.invalidateQueries({ queryKey: ['widget'] })
+  })
+
   return (
     <>
       <TopBar>
@@ -123,9 +136,18 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
           sortable={userGroup}
           onMove={arrangeable ? moveTab : undefined}
         />
-        {menus && (
+        {!frozen && (
           <div className="ml-auto shrink-0">
-            <GroupMenu dashboard={dashboard} />
+            <GroupMenu
+              dashboard={dashboard}
+              editable={menus}
+              refresh={{ count: showGrid ? freshness.refreshable.length : 0, refreshing, onRefresh: refreshAll }}
+              autoRefresh={
+                autoSeconds > 0
+                  ? { seconds: autoSeconds, on: autoOn === true, onChange: (on) => setAutoOn(on ? true : null) }
+                  : undefined
+              }
+            />
           </div>
         )}
       </TopBar>

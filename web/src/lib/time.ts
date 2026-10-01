@@ -11,6 +11,11 @@ export function formatDuration(ms: number): string {
   return days === 1 ? '1 day' : `${days} days`
 }
 
+/** An interval given in seconds, as a menu names it: "90 s", "15 min". */
+export function formatInterval(seconds: number): string {
+  return seconds >= 60 && seconds % 60 === 0 ? `${seconds / 60} min` : `${seconds} s`
+}
+
 /**
  * When the data on screen was computed, in the browser's own time: just the
  * time for today, the date too for anything older.

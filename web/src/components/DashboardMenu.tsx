@@ -1,6 +1,16 @@
-import { ArchiveIcon, ArrowLeftIcon, ArrowRightIcon, CopyIcon, CopyPlusIcon, FolderInputIcon, MoreHorizontalIcon } from 'lucide-react'
+import {
+  ArchiveIcon,
+  ArrowLeftIcon,
+  ArrowRightIcon,
+  CopyIcon,
+  CopyPlusIcon,
+  FolderInputIcon,
+  MoreHorizontalIcon,
+  RefreshCwIcon,
+} from 'lucide-react'
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
@@ -13,6 +23,7 @@ import { Button } from '@/components/ui/button'
 import { useDashboardActions, type DashboardActions } from '@/hooks/use-dashboard-actions'
 import type { DashboardDetail, DashboardInfo } from '@/lib/api'
 import { liveGroups, moveTabBody, nextAfterArchive } from '@/lib/arrange'
+import { formatInterval } from '@/lib/time'
 
 interface Props {
   /** The dashboard shown on screen; `dashboard.tabs` is its group, itself included (D11). */
@@ -57,14 +68,27 @@ function MoveTo({ dashboard, list, actions }: Props & { actions: DashboardAction
   )
 }
 
+interface GroupMenuProps {
+  dashboard: DashboardDetail
+  /** Whether Duplicate and Archive are offered: not in reporting dev, not on an archived user dashboard. */
+  editable: boolean
+  /** How many cards may be refreshed now (past `refresh_after`), whether a refresh runs, and the refresh. */
+  refresh: { count: number; refreshing: boolean; onRefresh: () => void }
+  /** The auto-refresh interval and its per-viewer switch; absent when the server allows none. */
+  autoRefresh?: { seconds: number; on: boolean; onChange: (on: boolean) => void }
+}
+
 /**
  * The top bar's "…" menu, acting on the whole dashboard (its group), like
- * the sidebar's (D10, D11): "Duplicate dashboard" copies every tab and
+ * the sidebar's (D10, D11). "Refresh" reloads every card past its
+ * `refresh_after`, as the button under the title does; "Auto-refresh
+ * every …" is a checkmark that reloads the dashboard on that interval
+ * while the window has focus. "Duplicate dashboard" copies every tab and
  * opens the copy, never archiving anything; "Archive dashboard" takes the
  * whole group out of the sidebar and lands on "/". An archived group
- * offers only the copy, since its banner already offers Restore.
+ * offers no Archive, since its banner already offers Restore.
  */
-export function GroupMenu({ dashboard }: { dashboard: DashboardDetail }) {
+export function GroupMenu({ dashboard, editable, refresh, autoRefresh }: GroupMenuProps) {
   const { duplicate, archive, pending } = useDashboardActions()
   const first = dashboard.tabs[0] ?? dashboard
 
@@ -76,18 +100,32 @@ export function GroupMenu({ dashboard }: { dashboard: DashboardDetail }) {
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
-        <DropdownMenuItem disabled={pending} onClick={() => void duplicate(first, { wholeGroup: true })}>
-          <CopyIcon />
-          Duplicate dashboard
+        <DropdownMenuItem disabled={refresh.count === 0 || refresh.refreshing} onClick={refresh.onRefresh}>
+          <RefreshCwIcon />
+          Refresh
         </DropdownMenuItem>
-        {!dashboard.archived_at && (
-          <DropdownMenuItem
-            disabled={pending}
-            onClick={() => void archive(first, { wholeGroup: true, navigateTo: '/' })}
-          >
-            <ArchiveIcon />
-            Archive dashboard
-          </DropdownMenuItem>
+        {autoRefresh && (
+          <DropdownMenuCheckboxItem checked={autoRefresh.on} onCheckedChange={(on) => autoRefresh.onChange(on === true)}>
+            Auto-refresh every {formatInterval(autoRefresh.seconds)}
+          </DropdownMenuCheckboxItem>
+        )}
+        {editable && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem disabled={pending} onClick={() => void duplicate(first, { wholeGroup: true })}>
+              <CopyIcon />
+              Duplicate dashboard
+            </DropdownMenuItem>
+            {!dashboard.archived_at && (
+              <DropdownMenuItem
+                disabled={pending}
+                onClick={() => void archive(first, { wholeGroup: true, navigateTo: '/' })}
+              >
+                <ArchiveIcon />
+                Archive dashboard
+              </DropdownMenuItem>
+            )}
+          </>
         )}
       </DropdownMenuContent>
     </DropdownMenu>

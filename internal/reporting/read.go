@@ -3,6 +3,7 @@ package reporting
 import (
 	"context"
 	"encoding/json"
+	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
@@ -29,8 +30,13 @@ type Dashboards struct {
 	Timezone       string          `json:"timezone"` // "UTC" (D19)
 	Dashboards     []DashboardInfo `json:"dashboards"`
 	PurgeAfterDays int             `json:"purge_after_days,omitempty"` // RETENTION_ARCHIVED_DAYS; 0 (omitted): kept forever
-	Dev            bool            `json:"dev,omitempty"`              // set by reporting dev
-	Errors         []DevError      `json:"errors,omitempty"`           // reporting dev only: directories that failed to load
+	// AutoRefreshSeconds is how often the page reloads a dashboard whose
+	// viewer turned auto-refresh on: the longer of REPORTING_CACHE_SECONDS
+	// and REPORTING_REFRESH_SECONDS, so a reload never comes back with the
+	// answer it already has. 0 (omitted, both off): no auto-refresh.
+	AutoRefreshSeconds int        `json:"auto_refresh_seconds,omitempty"`
+	Dev                bool       `json:"dev,omitempty"`    // set by reporting dev
+	Errors             []DevError `json:"errors,omitempty"` // reporting dev only: directories that failed to load
 }
 
 // WidgetInfo is one widget as the API returns it. Component is nil when
@@ -127,7 +133,10 @@ func (s *Service) Dashboards(ctx context.Context) (Dashboards, error) {
 	if err != nil {
 		return Dashboards{}, err
 	}
-	out := Dashboards{Timezone: "UTC", Dashboards: make([]DashboardInfo, 0, len(ds)), PurgeAfterDays: s.archivedDays}
+	out := Dashboards{
+		Timezone: "UTC", Dashboards: make([]DashboardInfo, 0, len(ds)), PurgeAfterDays: s.archivedDays,
+		AutoRefreshSeconds: int(max(s.cache.cacheAge, s.cache.refreshAge) / time.Second),
+	}
 	for _, d := range ds {
 		out.Dashboards = append(out.Dashboards, dashboardInfo(d))
 	}

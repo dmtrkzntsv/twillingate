@@ -5,8 +5,10 @@ import './index.css'
 import App from './App.tsx'
 import { ApiError } from './lib/api.ts'
 import { followSystemTheme } from './lib/theme.ts'
+import { trackWindowFocus } from './lib/window-focus.ts'
 
 followSystemTheme()
+trackWindowFocus()
 
 const queryClient = new QueryClient({
   defaultOptions: {

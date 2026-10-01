@@ -68,8 +68,22 @@ function renderTabMenu(dashboard: DashboardDetail) {
   renderWithProviders(<TabMenu dashboard={dashboard} list={list} />)
 }
 
-function renderGroupMenu(dashboard: DashboardDetail) {
-  renderWithProviders(<GroupMenu dashboard={dashboard} />)
+const onRefresh = vi.fn()
+const onAutoRefresh = vi.fn()
+
+function renderGroupMenu(
+  dashboard: DashboardDetail,
+  opts: { editable?: boolean; count?: number; auto?: { seconds: number; on: boolean } } = {}
+) {
+  const { editable = true, count = 2, auto } = opts
+  renderWithProviders(
+    <GroupMenu
+      dashboard={dashboard}
+      editable={editable}
+      refresh={{ count, refreshing: false, onRefresh }}
+      autoRefresh={auto && { ...auto, onChange: onAutoRefresh }}
+    />
+  )
 }
 
 async function openTabMenu() {
@@ -211,7 +225,7 @@ describe('GroupMenu', () => {
   it('duplicates and archives the whole group, named by its first tab', async () => {
     renderGroupMenu(reach)
     await openGroupMenu()
-    expect(items()).toEqual(['Duplicate dashboard', 'Archive dashboard'])
+    expect(items()).toEqual(['Refresh', 'Duplicate dashboard', 'Archive dashboard'])
 
     await userEvent.click(screen.getByText('Duplicate dashboard'))
     expect(duplicate).toHaveBeenCalledWith(marketingTabs[0], { wholeGroup: true })
@@ -225,13 +239,54 @@ describe('GroupMenu', () => {
     renderGroupMenu(product)
     await openGroupMenu()
 
-    expect(items()).toEqual(['Duplicate dashboard', 'Archive dashboard'])
+    expect(items()).toEqual(['Refresh', 'Duplicate dashboard', 'Archive dashboard'])
   })
 
   it('offers only Duplicate on an archived group, whose banner offers Restore', async () => {
     renderGroupMenu({ ...product, archived_at: '2026-09-30T00:00:00Z' })
     await openGroupMenu()
 
-    expect(items()).toEqual(['Duplicate dashboard'])
+    expect(items()).toEqual(['Refresh', 'Duplicate dashboard'])
+  })
+
+  it('offers only the refreshes where it may not write', async () => {
+    renderGroupMenu(reach, { editable: false })
+    await openGroupMenu()
+
+    expect(items()).toEqual(['Refresh'])
+  })
+
+  it('Refresh reloads the cards past refresh_after, and waits while there are none', async () => {
+    renderGroupMenu(reach)
+    await openGroupMenu()
+    await userEvent.click(screen.getByText('Refresh'))
+    expect(onRefresh).toHaveBeenCalledTimes(1)
+  })
+
+  it('disables Refresh when no card may be refreshed yet', async () => {
+    renderGroupMenu(reach, { count: 0 })
+    await openGroupMenu()
+
+    expect(screen.getByRole('menuitem', { name: 'Refresh' })).toHaveAttribute('data-disabled')
+  })
+
+  it('shows "Auto-refresh every …" as a checkmark that toggles', async () => {
+    renderGroupMenu(reach, { auto: { seconds: 900, on: false } })
+    await openGroupMenu()
+
+    const auto = screen.getByRole('menuitemcheckbox', { name: 'Auto-refresh every 15 min' })
+    expect(auto).toHaveAttribute('aria-checked', 'false')
+    await userEvent.click(auto)
+    expect(onAutoRefresh).toHaveBeenCalledWith(true)
+  })
+
+  it('shows the checkmark checked when on, and turns it off', async () => {
+    renderGroupMenu(reach, { auto: { seconds: 90, on: true } })
+    await openGroupMenu()
+
+    const auto = screen.getByRole('menuitemcheckbox', { name: 'Auto-refresh every 90 s' })
+    expect(auto).toHaveAttribute('aria-checked', 'true')
+    await userEvent.click(auto)
+    expect(onAutoRefresh).toHaveBeenCalledWith(false)
   })
 })
