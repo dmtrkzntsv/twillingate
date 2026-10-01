@@ -65,9 +65,11 @@ function label(value: RangeValue): string {
 export default function RangeSwitcher({ value, timezone, onChange, className }: Props) {
   const phone = useMediaQuery(PHONE)
   const [picking, setPicking] = useState(false)
-  // Choosing "Custom…" closes the menu, which would hand focus back to its
-  // trigger and so dismiss the popover that has just opened.
-  const keepFocus = useRef(false)
+  // Choosing "Custom…" opens the picker only once the menu has finished
+  // closing: while it animates out, the menu takes focus back (to its trigger,
+  // or to its own content as the pointer leaves the item), and a popover
+  // already open would read that as focus outside and dismiss itself.
+  const pickAfterClose = useRef(false)
   const today = todayIn(timezone)
   const text = label(value)
 
@@ -95,8 +97,10 @@ export default function RangeSwitcher({ value, timezone, onChange, className }: 
         align="end"
         className="min-w-44"
         onCloseAutoFocus={(e) => {
-          if (keepFocus.current) e.preventDefault()
-          keepFocus.current = false
+          if (!pickAfterClose.current) return
+          pickAfterClose.current = false
+          e.preventDefault()
+          setPicking(true)
         }}
       >
         <DropdownMenuRadioGroup value={value.range} onValueChange={(v) => onChange({ range: v as Preset })}>
@@ -109,8 +113,7 @@ export default function RangeSwitcher({ value, timezone, onChange, className }: 
         <DropdownMenuSeparator />
         <DropdownMenuItem
           onSelect={() => {
-            keepFocus.current = true
-            setPicking(true)
+            pickAfterClose.current = true
           }}
         >
           Custom…

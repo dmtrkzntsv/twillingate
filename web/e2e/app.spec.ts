@@ -241,3 +241,22 @@ test('a table sorts by its header and remembers the sort across a reload', async
   await page.reload()
   await expect(names).toHaveText(['a', 'c', 'b'])
 })
+
+for (const viewport of VIEWPORTS) {
+  test(`a custom range stays open to pick, then applies at ${viewport.name}`, async ({ page }) => {
+    await page.setViewportSize(viewport)
+    await login(page)
+    await page.getByRole('button', { name: /^Range:/ }).click()
+    await page.getByRole('menuitem', { name: 'Custom…' }).click()
+    const apply = page.getByRole('button', { name: 'Apply' })
+    await expect(apply).toBeVisible()
+    // The menu's close animation used to take focus back and dismiss the picker.
+    await page.waitForTimeout(500)
+    await expect(apply).toBeVisible()
+    const days = page.getByRole('grid').first().getByRole('button', { disabled: false })
+    await days.nth(0).click()
+    await days.nth(2).click()
+    await apply.click()
+    await expect(page).toHaveURL(/[?&]range=custom&from=\d{4}-\d\d-\d\d&to=\d{4}-\d\d-\d\d/)
+  })
+}
