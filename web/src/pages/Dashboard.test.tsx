@@ -70,6 +70,9 @@ describe('Dashboard', () => {
     expect(await screen.findByRole('button', { name: 'Project: shop' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Range: Last week' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Refresh all' })).toBeInTheDocument()
+    // The header's "…" menu edits a user dashboard's place among tabs; a
+    // system dashboard has none to edit, so it stays off the page.
+    expect(screen.queryByRole('button', { name: 'Dashboard actions' })).not.toBeInTheDocument()
   })
 
   it('lists the system group and the live user dashboards in the sidebar, one entry each', async () => {
@@ -97,6 +100,7 @@ describe('Dashboard', () => {
     expect(screen.queryByRole('button', { name: /^Range/ })).not.toBeInTheDocument()
     await waitFor(() => expect(widgetData).toHaveBeenCalled())
     for (const call of widgetData.mock.calls) expect(call[1]).toEqual({})
+    expect(screen.getByRole('button', { name: 'Dashboard actions' })).toBeInTheDocument()
   })
 
   it('shows a tablist for a two-tab user group', async () => {

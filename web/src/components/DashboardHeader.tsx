@@ -14,10 +14,12 @@ interface Props {
   refreshable: number
   refreshing: boolean
   onRefresh: () => void
+  /** The "…" menu (`DashboardMenu`), for a live user dashboard only (D11). */
+  menu?: ReactNode
 }
 
-/** The title, the switchers, how old the data is, and a refresh for every card that allows one. */
-export default function DashboardHeader({ title, children, asOf, refreshable, refreshing, onRefresh }: Props) {
+/** The title, the switchers, how old the data is, a refresh for every card that allows one, and the "…" menu. */
+export default function DashboardHeader({ title, children, asOf, refreshable, refreshing, onRefresh, menu }: Props) {
   const hasSwitchers = Children.toArray(children).length > 0
   const idle = refreshable === 0 || refreshing
   return (
@@ -51,6 +53,7 @@ export default function DashboardHeader({ title, children, asOf, refreshable, re
                 : `Refresh ${refreshable} ${refreshable === 1 ? 'widget' : 'widgets'}`}
             </TooltipContent>
           </Tooltip>
+          {menu}
         </div>
       </div>
     </div>

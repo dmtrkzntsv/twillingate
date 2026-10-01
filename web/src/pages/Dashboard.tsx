@@ -3,6 +3,7 @@ import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-quer
 import { useParams } from 'react-router'
 import AppShell, { TopBar } from '@/components/AppShell'
 import DashboardHeader from '@/components/DashboardHeader'
+import DashboardMenu from '@/components/DashboardMenu'
 import { DevErrors, GridSkeleton, NoProjects, NoWidgets, PageError, PageLoading } from '@/components/PageStates'
 import ProjectSwitcher from '@/components/ProjectSwitcher'
 import RangeSwitcher from '@/components/RangeSwitcher'
@@ -93,6 +94,7 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
           refreshable={showGrid && !frozen ? freshness.refreshable.length : 0}
           refreshing={refreshing}
           onRefresh={refreshAll}
+          menu={dashboard.owner === 'user' && !dashboard.archived_at ? <DashboardMenu dashboard={dashboard} list={list.dashboards} /> : undefined}
         >
           {switchers.project && !noProjects && projects.data && (
             <ProjectSwitcher projects={all} value={sel.projectId} onChange={(projectId) => change({ ...sel, projectId })} />
