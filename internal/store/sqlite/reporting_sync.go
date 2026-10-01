@@ -156,6 +156,7 @@ func syncDashboards(ctx context.Context, tx *sql.Tx, dashboards []store.SystemDa
 				"reporting sync: dashboard id %d is owned by %q, not %q",
 				dash.ID, existingOwner, store.OwnerSystem)
 		}
+		existed := err == nil
 
 		// A manifest dashboard with GroupID 0 is its own group, same as
 		// insertDashboardRow's rule. Migration 022's trigger only covers
@@ -174,6 +175,21 @@ func syncDashboards(ctx context.Context, tx *sql.Tx, dashboards []store.SystemDa
 			dash.ID, store.OwnerSystem, dash.Title, dash.SortKey, groupID, dash.Range, store.OwnerSystem,
 		); err != nil {
 			return 0, 0, fmt.Errorf("reporting sync: system dashboard %d: %w", dash.ID, err)
+		}
+
+		// D3: a dashboard a release adds to a group whose existing
+		// members are all archived arrives archived itself, rather than
+		// resurrecting a group the user archived whole. Dashboards are
+		// upserted in manifest order, so the group's other members (if
+		// any existed before this one) are already written above.
+		if !existed {
+			if _, err := tx.ExecContext(ctx, `UPDATE dashboards
+				SET archived_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')
+				WHERE id=? AND EXISTS (SELECT 1 FROM dashboards WHERE group_id=? AND id<>? AND owner=?)
+				  AND NOT EXISTS (SELECT 1 FROM dashboards WHERE group_id=? AND id<>? AND owner=? AND archived_at IS NULL)`,
+				dash.ID, groupID, dash.ID, store.OwnerSystem, groupID, dash.ID, store.OwnerSystem); err != nil {
+				return 0, 0, fmt.Errorf("reporting sync: archive new dashboard %d of an archived group: %w", dash.ID, err)
+			}
 		}
 	}
 	ids := make([]int64, len(dashboards))

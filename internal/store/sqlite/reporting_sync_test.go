@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -622,6 +623,48 @@ func TestSyncReportingFailingSyncRollsBackEverything(t *testing.T) {
 	}
 	if len(comps) != 2 {
 		t.Errorf("components after failed sync = %d, want unchanged 2", len(comps))
+	}
+}
+
+// D3: archiving a system group survives a sync, and a dashboard the
+// release adds to that group arrives archived too.
+func TestSyncKeepsArchivedSystemGroup(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	group := func(n int) []store.SystemDashboard {
+		out := make([]store.SystemDashboard, n)
+		for i := range out {
+			var g int64
+			if i > 0 {
+				g = 10
+			}
+			out[i] = store.SystemDashboard{ID: int64(10 + i), Title: fmt.Sprintf("T%d", i),
+				SortKey: fmt.Sprintf("a%d", i), GroupID: g, Range: "7d"}
+		}
+		return out
+	}
+	sync := func(hash string, ds []store.SystemDashboard) {
+		t.Helper()
+		if err := db.SyncReporting(ctx, store.ReportingSync{Hash: hash, Version: "test", Dashboards: ds}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sync("h1", group(2))
+	if err := db.SetDashboardsArchived(ctx, []int64{10, 11}, true, store.AuditEntry{Actor: "t", Action: "dashboard.archive"}); err != nil {
+		t.Fatal(err)
+	}
+	sync("h2", append(group(3), store.SystemDashboard{ID: 20, Title: "Alone", SortKey: "b0", Range: "7d"}))
+	for _, id := range []int64{10, 11, 12} {
+		d, err := db.GetDashboard(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if d.ArchivedAt == "" {
+			t.Errorf("dashboard %d live after sync, want archived (its group is archived)", id)
+		}
+	}
+	if d, _ := db.GetDashboard(ctx, 20); d.ArchivedAt != "" {
+		t.Errorf("new dashboard 20 in its own group archived, want live")
 	}
 }
 
