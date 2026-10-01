@@ -14,9 +14,11 @@ import {
   SidebarRail,
   useSidebar,
 } from '@/components/ui/sidebar'
+import { liveGroups, type Group } from '@/lib/arrange'
 import type { DashboardInfo } from '@/lib/api'
 import { currentAuthState, logout } from '@/lib/auth'
 import IcebergLogo from './IcebergLogo'
+import SidebarGroupMenu from './SidebarGroupMenu'
 
 interface Props {
   /** Every dashboard, in sidebar order: system ones, then the user's. */
@@ -36,19 +38,10 @@ interface Props {
 export default function AppSidebar({ dashboards, currentId }: Props) {
   const { isMobile, setOpenMobile } = useSidebar()
   const { pathname } = useLocation()
-  const live = dashboards.filter((d) => !d.archived_at)
-  const groupOf = new Map(live.map((d) => [d.dashboard_id, d.group_id]))
-  // One row per group_id, kept in list order (system before user, and
-  // groups always adjacent), first live member named and linked.
-  const seen = new Set<number>()
-  const groups = live.filter((d) => {
-    if (seen.has(d.group_id)) return false
-    seen.add(d.group_id)
-    return true
-  })
-  const system = groups.filter((d) => d.owner === 'system')
-  const yours = groups.filter((d) => d.owner === 'user')
-  const isActive = (d: DashboardInfo) => groupOf.get(currentId) === d.group_id
+  const groups = liveGroups(dashboards)
+  const system = groups.filter((g) => g.owner === 'system')
+  const yours = groups.filter((g) => g.owner === 'user')
+  const isActive = (g: Group) => g.members.some((m) => m.dashboard_id === currentId)
   const close = () => {
     if (isMobile) setOpenMobile(false)
   }
@@ -74,14 +67,15 @@ export default function AppSidebar({ dashboards, currentId }: Props) {
           <SidebarGroup>
             <SidebarGroupContent>
               <SidebarMenu>
-                {system.map((d) => (
-                  <SidebarMenuItem key={d.group_id}>
-                    <SidebarMenuButton asChild isActive={isActive(d)} tooltip={d.title} className={item}>
-                      <Link to={`/dashboards/${d.dashboard_id}`} onClick={close}>
+                {system.map((g) => (
+                  <SidebarMenuItem key={g.groupId}>
+                    <SidebarMenuButton asChild isActive={isActive(g)} tooltip={g.members[0].title} className={item}>
+                      <Link to={`/dashboards/${g.members[0].dashboard_id}`} onClick={close}>
                         <ChartColumnIcon />
-                        <span>{d.title}</span>
+                        <span>{g.members[0].title}</span>
                       </Link>
                     </SidebarMenuButton>
+                    <SidebarGroupMenu group={g} userGroups={yours} currentId={currentId} />
                   </SidebarMenuItem>
                 ))}
               </SidebarMenu>
@@ -92,14 +86,15 @@ export default function AppSidebar({ dashboards, currentId }: Props) {
           <SidebarGroupLabel className="text-sidebar-foreground/60">Yours</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {yours.map((d) => (
-                <SidebarMenuItem key={d.group_id}>
-                  <SidebarMenuButton asChild isActive={isActive(d)} tooltip={d.title} className={item}>
-                    <Link to={`/dashboards/${d.dashboard_id}`} onClick={close}>
+              {yours.map((g) => (
+                <SidebarMenuItem key={g.groupId}>
+                  <SidebarMenuButton asChild isActive={isActive(g)} tooltip={g.members[0].title} className={item}>
+                    <Link to={`/dashboards/${g.members[0].dashboard_id}`} onClick={close}>
                       <LayoutDashboardIcon />
-                      <span>{d.title}</span>
+                      <span>{g.members[0].title}</span>
                     </Link>
                   </SidebarMenuButton>
+                  <SidebarGroupMenu group={g} userGroups={yours} currentId={currentId} />
                 </SidebarMenuItem>
               ))}
             </SidebarMenu>
