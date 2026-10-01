@@ -26,10 +26,11 @@ type DashboardInfo struct {
 // order (system first, each group by sort key), and the timezone days
 // are grouped in.
 type Dashboards struct {
-	Timezone   string          `json:"timezone"` // "UTC" (D19)
-	Dashboards []DashboardInfo `json:"dashboards"`
-	Dev        bool            `json:"dev,omitempty"`    // set by reporting dev
-	Errors     []DevError      `json:"errors,omitempty"` // reporting dev only: directories that failed to load
+	Timezone       string          `json:"timezone"` // "UTC" (D19)
+	Dashboards     []DashboardInfo `json:"dashboards"`
+	PurgeAfterDays int             `json:"purge_after_days,omitempty"` // RETENTION_ARCHIVED_DAYS; 0 (omitted): kept forever
+	Dev            bool            `json:"dev,omitempty"`              // set by reporting dev
+	Errors         []DevError      `json:"errors,omitempty"`           // reporting dev only: directories that failed to load
 }
 
 // WidgetInfo is one widget as the API returns it. Component is nil when
@@ -126,7 +127,7 @@ func (s *Service) Dashboards(ctx context.Context) (Dashboards, error) {
 	if err != nil {
 		return Dashboards{}, err
 	}
-	out := Dashboards{Timezone: "UTC", Dashboards: make([]DashboardInfo, 0, len(ds))}
+	out := Dashboards{Timezone: "UTC", Dashboards: make([]DashboardInfo, 0, len(ds)), PurgeAfterDays: s.archivedDays}
 	for _, d := range ds {
 		out.Dashboards = append(out.Dashboards, dashboardInfo(d))
 	}

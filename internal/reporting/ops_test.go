@@ -1774,3 +1774,20 @@ func TestArchiveRestoreSystemGroup(t *testing.T) {
 		t.Errorf("update on a system dashboard: err = %v, want ErrInvalid", err)
 	}
 }
+
+// D17, review focus 5: list_dashboards says how long an archived user
+// dashboard is kept; 0 (kept forever) is omitted.
+func TestDashboardsPurgeAfterDays(t *testing.T) {
+	svc, _ := newTestServiceOpts(t, Options{ArchivedDays: 30}, 1000)
+	got, err := svc.Dashboards(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.PurgeAfterDays != 30 {
+		t.Errorf("PurgeAfterDays = %d, want 30", got.PurgeAfterDays)
+	}
+	b, _ := json.Marshal(Dashboards{Timezone: "UTC"})
+	if strings.Contains(string(b), "purge_after_days") {
+		t.Errorf("0 days marshals as %s, want the field omitted", b)
+	}
+}

@@ -39,7 +39,7 @@ func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *m
 	if err != nil {
 		return nil, nil, err
 	}
-	rep := reporting.New(rst, db, reporting.Options{CacheAge: cfg.Reporting.CacheAge, RefreshAge: cfg.Reporting.RefreshAge})
+	rep := reporting.New(rst, db, reporting.Options{CacheAge: cfg.Reporting.CacheAge, RefreshAge: cfg.Reporting.RefreshAge, ArchivedDays: cfg.Retention.ArchivedDays})
 	h := &host{db: db, reg: reg, ops: ops, rep: rep,
 		publicURL: cfg.PublicURL, logger: logger}
 	srv := mcp.NewServer(&mcp.Implementation{Name: "twillingate", Version: "1.0.0"},

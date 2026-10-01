@@ -214,7 +214,7 @@ func (h *host) registerReporting(r *registrar) {
 		Description: "The source types (sql, md) and the components a widget can use: each one's description, the source types it accepts, the columns its query must return (inputs), its props schema and its default width and height."},
 		h.listComponents)
 	expose(r, spec{Name: "list_dashboards", Annotations: ro, Method: "GET", Path: "/api/dashboards",
-		Description: "Every dashboard in sidebar order (system first, then user), archived ones included: id, title, owner (system or user), group_id (the group it is a tab of; it changes when the dashboard whose id it is leaves the group, so read it here before using it), stored project and range, live widget count, archived_at; plus the timezone days are grouped in."},
+		Description: "Every dashboard in sidebar order (system first, then user), archived ones included: id, title, owner (system or user), group_id (the group it is a tab of; it changes when the dashboard whose id it is leaves the group, so read it here before using it), stored project and range, live widget count, archived_at; plus the timezone days are grouped in, and purge_after_days, how long an archived user dashboard is kept before it is deleted (absent: kept forever)."},
 		h.listDashboards)
 	expose(r, spec{Name: "get_dashboard", Annotations: ro, Method: "GET", Path: d,
 		Description: "One dashboard with its group's tabs and its live widgets in order: tabs (the group's live dashboards, this one included, in tab order) and each widget's id, name, component, title, width, height, props, source, and whether it follows the project and range switchers."},
