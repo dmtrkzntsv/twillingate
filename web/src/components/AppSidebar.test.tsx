@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter } from 'react-router'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import type { DashboardInfo } from '@/lib/api'
 import { _resetForTests, getAuthHeader } from '@/lib/auth'
@@ -99,5 +99,45 @@ describe('AppSidebar dashboard groups', () => {
   it('is active on the group entry when the current page is the second tab', () => {
     renderSidebar(dashboards, 14)
     expect(screen.getByRole('link', { name: 'Marketing' })).toHaveAttribute('data-active', 'true')
+  })
+})
+
+describe('AppSidebar reordering', () => {
+  const dashboards = dashboardsList().dashboards
+
+  function Probe() {
+    return <output data-testid="location">{useLocation().pathname}</output>
+  }
+
+  it('makes the user entries sortable and leaves the system ones and the menus alone', () => {
+    renderSidebar(dashboards, 1)
+    expect(screen.getByRole('link', { name: 'Launch week' })).toHaveAttribute('aria-roledescription', 'sortable')
+    expect(screen.getByRole('link', { name: 'Marketing' })).toHaveAttribute('aria-roledescription', 'sortable')
+    expect(screen.getByRole('link', { name: 'Views' })).not.toHaveAttribute('aria-roledescription')
+    expect(screen.getByRole('button', { name: 'Marketing actions' })).not.toHaveAttribute('aria-roledescription')
+  })
+
+  it('still navigates on a plain click of a sortable entry', async () => {
+    renderWithProviders(
+      <MemoryRouter initialEntries={['/dashboards/1']}>
+        <SidebarProvider>
+          <Routes>
+            <Route
+              path="*"
+              element={
+                <>
+                  <AppSidebar dashboards={dashboards} currentId={1} />
+                  <Probe />
+                </>
+              }
+            />
+          </Routes>
+        </SidebarProvider>
+      </MemoryRouter>
+    )
+
+    await userEvent.click(screen.getByRole('link', { name: 'Marketing' }))
+
+    expect(screen.getByTestId('location')).toHaveTextContent('/dashboards/13')
   })
 })

@@ -74,12 +74,23 @@ describe('useDashboardActions', () => {
     })
   })
 
+  it('a move the server takes resolves true and refetches', async () => {
+    vi.mocked(endpoints.move).mockResolvedValue({ status: 'moved' } as never)
+    const invalidate = vi.spyOn(client, 'invalidateQueries')
+    const { result } = renderHook(() => useDashboardActions(), { wrapper })
+
+    await expect(act(() => result.current.move(5, { after: 3 }))).resolves.toBe(true)
+
+    expect(endpoints.move).toHaveBeenCalledWith(5, { after: 3 })
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['dashboards'] })
+  })
+
   it('a rejected move toasts the error, resolves, and refetches', async () => {
     vi.mocked(endpoints.move).mockRejectedValue(new ApiError(409, 'conflict'))
     const invalidate = vi.spyOn(client, 'invalidateQueries')
     const { result } = renderHook(() => useDashboardActions(), { wrapper })
 
-    await expect(act(() => result.current.move(5, { after: 3 }))).resolves.toBeUndefined()
+    await expect(act(() => result.current.move(5, { after: 3 }))).resolves.toBe(false)
 
     expect(toast.error).toHaveBeenCalledWith('conflict')
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['dashboards'] })
@@ -91,7 +102,7 @@ describe('useDashboardActions', () => {
     const invalidate = vi.spyOn(client, 'invalidateQueries')
     const { result } = renderHook(() => useDashboardActions(), { wrapper })
 
-    await expect(act(() => result.current.move(5, { after: 3 }))).resolves.toBeUndefined()
+    await expect(act(() => result.current.move(5, { after: 3 }))).resolves.toBe(false)
 
     expect(toast.error).toHaveBeenCalledWith("Couldn't reach the server")
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['dashboards'] })

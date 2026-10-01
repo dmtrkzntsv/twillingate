@@ -56,6 +56,19 @@ export function moveTabBody(tabs: DashboardTab[], id: number, groupId: number, t
   return { after: before.dashboard_id }
 }
 
+/**
+ * Where a drag ends: `activeId` dropped on `overId` takes `overId`'s index,
+ * the `to` that `moveGroupBody` and `moveTabBody` read (the index after
+ * removing the moved one). Null when dropped on itself or when either id
+ * is not in `ids` (D14, D15).
+ */
+export function reorder(ids: number[], activeId: number, overId: number): { to: number } | null {
+  const from = ids.indexOf(activeId)
+  const to = ids.indexOf(overId)
+  if (from === -1 || to === -1 || from === to) return null
+  return { to }
+}
+
 /** Where to go after archiving `id`: the next live tab, else the previous, else '/' (D12). */
 export function nextAfterArchive(tabs: DashboardTab[], id: number): string {
   const idx = tabs.findIndex((t) => t.dashboard_id === id)

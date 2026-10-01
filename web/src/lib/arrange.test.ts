@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { DashboardInfo, DashboardTab } from './api'
-import { liveGroups, moveGroupBody, moveTabBody, nextAfterArchive, purgeDate } from './arrange'
+import { liveGroups, moveGroupBody, moveTabBody, nextAfterArchive, purgeDate, reorder } from './arrange'
 
 function mkInfo(dashboard_id: number, title: string, owner: 'system' | 'user', group_id: number, extra: Partial<DashboardInfo> = {}): DashboardInfo {
   return { dashboard_id, title, owner, group_id, widgets: 1, ...extra }
@@ -106,5 +106,19 @@ describe('purgeDate', () => {
   it('is undefined when days is 0 or absent', () => {
     expect(purgeDate('2026-09-01T00:00:00Z', 0)).toBeUndefined()
     expect(purgeDate('2026-09-01T00:00:00Z')).toBeUndefined()
+  })
+})
+
+describe('reorder', () => {
+  it('puts the dragged id at the index of the one it was dropped on', () => {
+    expect(reorder([10, 20, 30], 10, 30)).toEqual({ to: 2 })
+    expect(reorder([10, 20, 30], 30, 10)).toEqual({ to: 0 })
+    expect(reorder([10, 20, 30], 20, 30)).toEqual({ to: 2 })
+  })
+
+  it('is null when dropped on itself or on an id not in the list', () => {
+    expect(reorder([10, 20, 30], 10, 10)).toBeNull()
+    expect(reorder([10, 20, 30], 10, 99)).toBeNull()
+    expect(reorder([10, 20, 30], 99, 10)).toBeNull()
   })
 })

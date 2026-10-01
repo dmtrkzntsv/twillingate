@@ -9,10 +9,12 @@ import ProjectSwitcher from '@/components/ProjectSwitcher'
 import RangeSwitcher from '@/components/RangeSwitcher'
 import ReportTabs from '@/components/ReportTabs'
 import WidgetGrid from '@/components/WidgetGrid'
+import { useDashboardActions } from '@/hooks/use-dashboard-actions'
 import { useDashboardSelection } from '@/hooks/use-dashboard-selection'
 import { useDevReload } from '@/hooks/use-dev-reload'
 import { useFreshness } from '@/hooks/use-freshness'
 import type { DashboardDetail, DashboardsResponse } from '@/lib/api'
+import { moveTabBody } from '@/lib/arrange'
 import { rememberDashboard } from '@/lib/last-dashboard'
 import { dashboardQuery, dashboardsQuery, projectsQuery } from '@/lib/queries'
 import { refreshWidget } from '@/lib/widget-query'
@@ -66,6 +68,14 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
   const showGrid = !waiting && !noProjects && dashboard.widgets.length > 0
   const freshness = useFreshness(dashboard.widgets, paramsFor, showGrid && !frozen)
   const [refreshing, setRefreshing] = useState(false)
+  const { move } = useDashboardActions()
+  // Only a live user dashboard's group is arranged from the page (D11,
+  // D14), and never while frozen: the dashboard on screen is being left.
+  const arrangeable = dashboard.owner === 'user' && !dashboard.archived_at && !frozen
+  const moveTab = async (id: number, to: number) => {
+    const body = moveTabBody(dashboard.tabs, id, dashboard.group_id, to)
+    return body ? move(id, body) : false
+  }
 
   const refreshAll = () => {
     setRefreshing(true)
@@ -78,7 +88,12 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
     <>
       <TopBar>
         {dashboard.tabs.length > 1 ? (
-          <ReportTabs tabs={dashboard.tabs} currentId={dashboard.dashboard_id} onSelect={openTab} />
+          <ReportTabs
+            tabs={dashboard.tabs}
+            currentId={dashboard.dashboard_id}
+            onSelect={openTab}
+            onMove={arrangeable ? moveTab : undefined}
+          />
         ) : dashboard.owner === 'user' ? (
           <span className="text-sm text-muted-foreground">Yours</span>
         ) : null}
@@ -94,7 +109,7 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
           refreshable={showGrid && !frozen ? freshness.refreshable.length : 0}
           refreshing={refreshing}
           onRefresh={refreshAll}
-          menu={dashboard.owner === 'user' && !dashboard.archived_at ? <DashboardMenu dashboard={dashboard} list={list.dashboards} /> : undefined}
+          menu={arrangeable ? <DashboardMenu dashboard={dashboard} list={list.dashboards} /> : undefined}
         >
           {switchers.project && !noProjects && projects.data && (
             <ProjectSwitcher projects={all} value={sel.projectId} onChange={(projectId) => change({ ...sel, projectId })} />

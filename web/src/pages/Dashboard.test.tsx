@@ -103,13 +103,38 @@ describe('Dashboard', () => {
     expect(screen.getByRole('button', { name: 'Dashboard actions' })).toBeInTheDocument()
   })
 
-  it('shows a tablist for a two-tab user group', async () => {
+  it('shows a tablist for a two-tab user group, its tabs sortable', async () => {
     mockApi()
     renderAt('/dashboards/13')
 
     const tabs = await screen.findAllByRole('tab')
     expect(tabs.map((t) => t.textContent)).toEqual(['Marketing', 'Funnel'])
     expect(screen.getByRole('tab', { name: 'Marketing' })).toHaveAttribute('aria-selected', 'true')
+    for (const tab of tabs) expect(tab).toHaveAttribute('aria-roledescription', 'sortable')
+  })
+
+  it('does not make system tabs sortable', async () => {
+    mockApi()
+    renderAt('/dashboards/2?project=7&range=7d')
+
+    for (const tab of await screen.findAllByRole('tab')) expect(tab).not.toHaveAttribute('aria-roledescription')
+  })
+
+  it('writes nothing on the dashboard being left: no header menu, no sortable tabs', async () => {
+    mockApi()
+    vi.mocked(endpoints.dashboard).mockImplementation(async (id) =>
+      id === launchWeek.dashboard_id ? new Promise(() => {}) : details[id]
+    )
+    renderAt('/dashboards/13')
+    expect(await screen.findByRole('button', { name: 'Dashboard actions' })).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('link', { name: 'Launch week' }))
+    await waitFor(() => expect(location()).toBe('/dashboards/10'))
+
+    // Marketing stays on screen, frozen, until Launch week loads.
+    expect(screen.getByRole('heading', { level: 1, name: 'Marketing' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Dashboard actions' })).not.toBeInTheDocument()
+    for (const tab of screen.getAllByRole('tab')) expect(tab).not.toHaveAttribute('aria-roledescription')
   })
 
   // The switcher tests use the small Product report: the Views one renders

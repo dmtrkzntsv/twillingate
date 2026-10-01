@@ -1,3 +1,5 @@
+import { DndContext, closestCenter } from '@dnd-kit/core'
+import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { ChartColumnIcon, LayoutDashboardIcon, LogOutIcon, ShapesIcon } from 'lucide-react'
 import { Link, useLocation } from 'react-router'
 import {
@@ -14,11 +16,14 @@ import {
   SidebarRail,
   useSidebar,
 } from '@/components/ui/sidebar'
-import { liveGroups, type Group } from '@/lib/arrange'
+import { useDashboardActions } from '@/hooks/use-dashboard-actions'
+import { useReorder } from '@/hooks/use-reorder'
+import { liveGroups, moveGroupBody, type Group } from '@/lib/arrange'
 import type { DashboardInfo } from '@/lib/api'
 import { currentAuthState, logout } from '@/lib/auth'
 import IcebergLogo from './IcebergLogo'
 import SidebarGroupMenu from './SidebarGroupMenu'
+import SortableGroupItem from './SortableGroupItem'
 
 interface Props {
   /** Every dashboard, in sidebar order: system ones, then the user's. */
@@ -30,8 +35,10 @@ interface Props {
  * One entry per dashboard group (tabs D20): system groups first, then
  * "Yours" (the user's), and Gallery (the components playground). Each
  * entry links to its group's first live member and is named by its
- * title; it is active on any live member of the group. Icons only at
- * 640–1023px, a drawer on phones (D37).
+ * title; it is active on any live member of the group. "Yours" entries
+ * drag to a new order (D14, D15); system entries do not, and since the
+ * sortable list holds only user groups, nothing drops above them. Icons
+ * only at 640–1023px, a drawer on phones (D37).
  * Log out shows only when the app holds a credential: reporting dev's
  * open mode has none to forget.
  */
@@ -40,7 +47,20 @@ export default function AppSidebar({ dashboards, currentId }: Props) {
   const { pathname } = useLocation()
   const groups = liveGroups(dashboards)
   const system = groups.filter((g) => g.owner === 'system')
-  const yours = groups.filter((g) => g.owner === 'user')
+  const serverYours = groups.filter((g) => g.owner === 'user')
+  const { move } = useDashboardActions()
+  const { order, busy, context } = useReorder(
+    serverYours.map((g) => g.groupId),
+    // `busy` keeps a second drag off until the first's order is in the
+    // props, so `to` and `serverYours` agree.
+    async (groupId, to) => {
+      const body = moveGroupBody(serverYours, groupId, to)
+      const group = serverYours.find((g) => g.groupId === groupId)
+      return body && group ? move(group.members[0].dashboard_id, body) : false
+    },
+    'y'
+  )
+  const yours = order.map((id) => serverYours.find((g) => g.groupId === id)!)
   const isActive = (g: Group) => g.members.some((m) => m.dashboard_id === currentId)
   const close = () => {
     if (isMobile) setOpenMobile(false)
@@ -85,19 +105,29 @@ export default function AppSidebar({ dashboards, currentId }: Props) {
         <SidebarGroup>
           <SidebarGroupLabel className="text-sidebar-foreground/60">Yours</SidebarGroupLabel>
           <SidebarGroupContent>
-            <SidebarMenu>
-              {yours.map((g) => (
-                <SidebarMenuItem key={g.groupId}>
-                  <SidebarMenuButton asChild isActive={isActive(g)} tooltip={g.members[0].title} className={item}>
-                    <Link to={`/dashboards/${g.members[0].dashboard_id}`} onClick={close}>
-                      <LayoutDashboardIcon />
-                      <span>{g.members[0].title}</span>
-                    </Link>
-                  </SidebarMenuButton>
-                  <SidebarGroupMenu group={g} userGroups={yours} currentId={currentId} />
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
+            <DndContext collisionDetection={closestCenter} {...context}>
+              <SortableContext items={order} strategy={verticalListSortingStrategy}>
+                <SidebarMenu>
+                  {yours.map((g) => (
+                    <SortableGroupItem
+                      key={g.groupId}
+                      groupId={g.groupId}
+                      title={g.members[0].title}
+                      isActive={isActive(g)}
+                      className={item}
+                      disabled={busy}
+                      link={
+                        <Link to={`/dashboards/${g.members[0].dashboard_id}`} onClick={close}>
+                          <LayoutDashboardIcon />
+                          <span>{g.members[0].title}</span>
+                        </Link>
+                      }
+                      menu={<SidebarGroupMenu group={g} userGroups={yours} currentId={currentId} />}
+                    />
+                  ))}
+                </SidebarMenu>
+              </SortableContext>
+            </DndContext>
             {yours.length === 0 && (
               <p className="px-2 py-1 text-xs text-sidebar-foreground/55 group-data-[collapsible=icon]:hidden">
                 None yet. Ask your agent to make one.

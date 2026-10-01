@@ -11,8 +11,12 @@ export interface DashboardActions {
   archive(d: { dashboard_id: number; title: string }, opts: { wholeGroup?: boolean; navigateTo?: string }): Promise<void>
   /** Restores the dashboard, or its whole group (D1, tabs D14). */
   restore(id: number, wholeGroup?: boolean): Promise<void>
-  /** Moves a tab or a group by naming the dashboard it goes after (D15). */
-  move(id: number, body: MoveBody): Promise<void>
+  /**
+   * Moves a tab or a group by naming the dashboard it goes after (D15).
+   * Resolves true when the server took it and false when it did not (after
+   * the toast), so a drag can drop its optimistic order at once.
+   */
+  move(id: number, body: MoveBody): Promise<boolean>
   /** True while an action's request is in flight. */
   pending: boolean
 }
@@ -84,10 +88,14 @@ export function useDashboardActions(): DashboardActions {
   )
 
   const move = useCallback(
-    (id: number, body: MoveBody) =>
-      run(async () => {
+    async (id: number, body: MoveBody) => {
+      let ok = false
+      await run(async () => {
         await endpoints.move(id, body)
-      }),
+        ok = true
+      })
+      return ok
+    },
     [run]
   )
 
