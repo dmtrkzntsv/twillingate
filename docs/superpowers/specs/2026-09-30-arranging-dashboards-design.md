@@ -77,8 +77,12 @@ Date: 2026-09-30
    takes the ids to archive and writes them with the copy, so a failure
    leaves neither. The audit keeps its one `dashboard.duplicate` row, whose
    detail notes the archived ids.
-8. **An archived source is still refused**, as today ("restore_dashboard
-   first").
+8. **An archived user source is still refused**, as today
+   ("restore_dashboard first"): its copy would land in a group that may
+   have no live member left. **An archived system source is accepted**:
+   its copy is always a new user group, so the gallery can copy a tab of
+   Reports after Reports was replaced. With `archive_source` true, members
+   already archived stay archived.
 9. **Over REST**, `archive_source` joins `whole_group` in the optional body
    of `POST /api/dashboards/{dashboard_id}/duplicate`. The OpenAPI route
    spec carries it.
@@ -96,9 +100,17 @@ Date: 2026-09-30
     have no header menu.
     - In a group of more than one: **Duplicate tab** (the copy joins the
       group right after the original, as `duplicate_dashboard` does today),
-      **Archive tab**, **Move left** and **Move right**.
+      **Archive tab**, **Move left**, **Move right** and **Move to**.
     - In a group of one: **Duplicate** and **Archive**, the same as the
-      sidebar entry's (a new sidebar entry, not a second tab).
+      sidebar entry's (a new sidebar entry, not a second tab), and **Move
+      to**.
+    - **Move to** is a submenu: every other live user group, by its
+      sidebar title, and, in a group of more than one, **Own dashboard**.
+      A group takes the tab as its last tab (`update_dashboard
+      {group_id: G}`); Own dashboard makes it a sidebar entry of its own,
+      right after the group it left (`{group_id: 0}`). The page stays on
+      the dashboard, now among its new group's tabs. Moving a group's last
+      tab out ends that group, which is what the tabs spec already does.
 12. **After an action** the page refetches the dashboard list and the
     dashboard shown, so the sidebar and the tabs follow:
     - Duplicate opens the copy.
@@ -125,9 +137,10 @@ Date: 2026-09-30
       place, or `after: 0` to become the first in "Yours".
     The dragged item stays where it was dropped while the request runs,
     and snaps back with a toast if it is refused.
-16. **Not in this change**: dragging a tab into another group or out of its
-    group, creating and renaming dashboards (the tabs spec's PR 2 keeps
-    those).
+16. **Moving a tab between groups is a menu action only**, on every
+    layout. Dragging a tab from the tab bar onto a sidebar entry is not in
+    this change. Creating and renaming dashboards stay in the tabs spec's
+    PR 2.
 
 ### Dashboard gallery
 
@@ -136,7 +149,10 @@ Date: 2026-09-30
     - **System**: every system group, archived or not, by its first
       dashboard's title with its tabs, each linking to its dashboard; an
       **Archive** button on a live group and a **Restore** button on an
-      archived one.
+      archived one. Each tab has **Copy as a dashboard**:
+      `duplicate_dashboard {archive_source: false}`, a live, standalone
+      user dashboard last in "Yours", titled "… (copy)", which the page
+      then opens. The system group stays as it was, live or archived.
     - **Archived**: every archived user dashboard, with its group's title
       when it has one, when it will be purged ("deleted on 30 Oct",
       from `archived_at` plus `RETENTION_ARCHIVED_DAYS`, which
@@ -161,7 +177,7 @@ Date: 2026-09-30
 | --- | --- | --- |
 | `archive_dashboard` | accepts a system dashboard with `whole_group` | `POST /api/dashboards/{dashboard_id}/archive` |
 | `restore_dashboard` | accepts a system dashboard with `whole_group` | `POST /api/dashboards/{dashboard_id}/restore` |
-| `duplicate_dashboard` | `archive_source`; a system source copies and archives its whole group by default | `POST /api/dashboards/{dashboard_id}/duplicate`, optional body |
+| `duplicate_dashboard` | `archive_source`; a system source copies and archives its whole group by default; an archived system source is accepted | `POST /api/dashboards/{dashboard_id}/duplicate`, optional body |
 | `list_dashboards` | returns `purge_after_days` | `GET /api/dashboards` |
 
 No tool or route is added, removed or renamed. No migration:
@@ -203,7 +219,8 @@ No `deploy/UPGRADES.md` entry: nothing changes on upgrade day.
     from a user source it archives nothing by default, and what it copied
     with `archive_source: true`.
   - A failed insert archives nothing.
-  - An archived source is still refused.
+  - An archived user source is still refused; an archived system source
+    is copied, and its group stays archived.
 - **store**: a sync keeps a system dashboard's `archived_at`; a new system
   dashboard arrives live, and archived when every existing member of its
   group is archived.
@@ -212,17 +229,20 @@ No `deploy/UPGRADES.md` entry: nothing changes on upgrade day.
   `purge_after_days` in the list.
 - **web (unit)**: which menu items show for a system group, a user group,
   a user tab and a lone user dashboard; the move items compute the right
-  `after`; the gallery lists system groups and archived user dashboards
-  with the right buttons; the archived line.
+  `after`; Move to lists the other user groups and Own dashboard only in
+  a group of more than one; the gallery lists system groups and archived
+  user dashboards with the right buttons; the archived line.
 - **e2e**: duplicate Reports from the sidebar menu, land on the copy, no
   Reports in the sidebar, restore it from the gallery; archive a user tab
   and undo from the toast; drag a user tab and a user group, and reload
-  to see the order kept.
+  to see the order kept; move a tab into another group and back out to its
+  own dashboard; copy a system tab from the gallery while Reports is
+  archived.
 
 ## Out of scope
 
 - Telling a copy that its system source changed in a later release.
-- Moving a tab between groups; creating and renaming dashboards.
+- Dragging a tab between groups; creating and renaming dashboards.
 - Archiving one system tab, or system widgets.
 - Per-viewer visibility or order: an install has one operator, so both
   are global.
