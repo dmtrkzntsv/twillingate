@@ -99,7 +99,7 @@ func (s *Service) CreateDashboard(ctx context.Context, actor string, in CreateDa
 		}
 		id, err = s.st.InsertDashboard(ctx,
 			store.Dashboard{Owner: store.OwnerUser, Title: in.Title, SortKey: key, GroupID: in.GroupID, LastRange: rng},
-			ws, nil, store.AuditEntry{Actor: actor, Action: "dashboard.create"})
+			ws, store.AuditEntry{Actor: actor, Action: "dashboard.create"})
 		return err
 	})
 	if err != nil {
@@ -260,26 +260,24 @@ func (s *Service) writePlaced(ctx context.Context, row store.Dashboard, heirs []
 // removed" there, until update_widget switches it. D15's no-copy rule is
 // copy_widget's, which places one widget somewhere new.
 //
-// archiveSource nil defaults to true for a system source and false for
-// a user one (D6): true archives what was copied, in the same
-// transaction as the insert, so the copy replaces it in the sidebar. A
-// system source with archive true always copies and archives its whole
-// group — whatever wholeGroup says — because a system group is archived
-// and restored only as a unit (D1). Otherwise wholeGroup false (D10)
-// copies just id: a user source's copy joins the source's group right
-// after it; a system source's copy (archive false, the gallery's "Copy
-// as a dashboard") is a new user group of one, last in the sidebar.
-// wholeGroup true (D11) copies every live member of id's group, each
-// with its live widgets, as one new user group placed last, in the same
-// tab order; the first copy is titled "… (copy)", the rest keep their
-// titles.
+// Duplicating never archives anything (nothing but archive_dashboard
+// does): wholeGroup false copies just id — a user source's copy joins
+// the source's group right after it; a system source's copy is a new
+// user group of one, last in the sidebar. wholeGroup true copies every
+// member of id's group, each with its live widgets, as one new user
+// group placed last, in the same tab order; the first copy is titled
+// "… (copy)", the rest keep their titles. For a system source with
+// wholeGroup, every member is copied, archived ones included, since a
+// system group is archived and restored only as a unit (D1); for a user
+// source, only the live members are copied.
 //
-// An archived user source is refused (D8): its copy would otherwise
-// land in a group that may have no live dashboard left, bringing that
-// group back into the sidebar through the copy. An archived system
-// source is accepted (D8): customizing an already-archived group is
-// exactly how its replacement is edited further.
-func (s *Service) DuplicateDashboard(ctx context.Context, actor string, id int64, wholeGroup bool, archiveSource *bool) (DashboardDetail, error) {
+// An archived user source is refused: its copy would otherwise land in
+// a group that may have no live dashboard left, bringing that group
+// back into the sidebar through the copy. An archived system source is
+// accepted: the gallery copies a tab of a group already archived to
+// make room for its replacement (archive_dashboard whole_group, then
+// duplicate_dashboard).
+func (s *Service) DuplicateDashboard(ctx context.Context, actor string, id int64, wholeGroup bool) (DashboardDetail, error) {
 	src, err := s.st.GetDashboard(ctx, id)
 	if err != nil {
 		return DashboardDetail{}, err
@@ -288,26 +286,14 @@ func (s *Service) DuplicateDashboard(ctx context.Context, actor string, id int64
 	if src.ArchivedAt != "" && !system {
 		return DashboardDetail{}, store.Refuse(store.ErrInvalid, "dashboard %d is archived; restore_dashboard first", id)
 	}
-	archive := system
-	if archiveSource != nil {
-		archive = *archiveSource
-	}
-	if system && archive {
-		return s.duplicateGroup(ctx, actor, src, true)
-	}
 	if wholeGroup {
-		return s.duplicateGroup(ctx, actor, src, archive)
+		return s.duplicateGroup(ctx, actor, src)
 	}
-	return s.duplicateOne(ctx, actor, src, archive)
+	return s.duplicateOne(ctx, actor, src)
 }
 
-// duplicateOne is DuplicateDashboard for a single tab (wholeGroup
-// false, or a system source with archive_source false). archive true
-// archives src once its copy exists, in the same transaction as the
-// insert, provided src is live: src.ID never reaches this function
-// archived unless it is a system dashboard with archive_source
-// explicitly false, which leaves archive false too.
-func (s *Service) duplicateOne(ctx context.Context, actor string, src store.Dashboard, archive bool) (DashboardDetail, error) {
+// duplicateOne is DuplicateDashboard for a single tab.
+func (s *Service) duplicateOne(ctx context.Context, actor string, src store.Dashboard) (DashboardDetail, error) {
 	ws, err := s.copyLiveWidgets(ctx, src.ID)
 	if err != nil {
 		return DashboardDetail{}, err
@@ -315,10 +301,6 @@ func (s *Service) duplicateOne(ctx context.Context, actor string, src store.Dash
 	copyOf := store.Dashboard{
 		Owner: store.OwnerUser, Title: src.Title + " (copy)",
 		LastProjectID: src.LastProjectID, LastRange: src.LastRange, LastFrom: src.LastFrom, LastTo: src.LastTo,
-	}
-	var archiveIDs []int64
-	if archive && src.ArchivedAt == "" {
-		archiveIDs = []int64{src.ID}
 	}
 	var newID int64
 	err = s.placeDashboards(func() error {
@@ -335,9 +317,9 @@ func (s *Service) duplicateOne(ctx context.Context, actor string, src store.Dash
 		if err != nil {
 			return err
 		}
-		newID, err = s.st.InsertDashboard(ctx, copyOf, ws, archiveIDs, store.AuditEntry{
+		newID, err = s.st.InsertDashboard(ctx, copyOf, ws, store.AuditEntry{
 			Actor: actor, Action: "dashboard.duplicate",
-			Detail: fmt.Sprintf("from dashboard/%d", src.ID) + archivedDetail(archiveIDs)})
+			Detail: fmt.Sprintf("from dashboard/%d", src.ID)})
 		return err
 	})
 	if err != nil {
@@ -349,23 +331,19 @@ func (s *Service) duplicateOne(ctx context.Context, actor string, src store.Dash
 // duplicateGroup is DuplicateDashboard for id's whole group, as one new
 // user group placed last among the user dashboards, in the same tab
 // order. For a system source, every member of src.GroupID owned by the
-// system is copied, archived members included (D6): the system group is
-// a unit, so Reports' widget-free "Groups" tab (say) copies even while
-// archived. For a user source, only the live members are copied, as
-// before. archive true archives, in the same transaction as the insert,
-// every member that is currently live; one already archived (Reports
-// after an earlier duplicate, say) is left as it is — review focus 1.
+// system is copied, archived members included: the system group is a
+// unit, so Reports' widget-free "Groups" tab (say) copies even while
+// archived. For a user source, only the live members are copied.
 // Returns the copy at src's own position among the copied members, not
 // always the group's first (that one is always titled "… (copy)").
 //
-// The membership read and the archive list are computed inside
-// placeDashboards' closure, alongside the placement read, so every
-// placement attempt (retryConflict's rerun included) reads the group
-// afresh rather than reusing an outer read. A bare archive or restore
-// takes no placeMu and raises no sort-key conflict, so one racing the
-// copy is not serialised with it: the copy follows the membership as
-// its last attempt read it.
-func (s *Service) duplicateGroup(ctx context.Context, actor string, src store.Dashboard, archive bool) (DashboardDetail, error) {
+// The membership read is computed inside placeDashboards' closure,
+// alongside the placement read, so every placement attempt
+// (retryConflict's rerun included) reads the group afresh rather than
+// reusing an outer read. A bare archive or restore takes no placeMu and
+// raises no sort-key conflict, so one racing the copy is not serialised
+// with it: the copy follows the membership as its last attempt read it.
+func (s *Service) duplicateGroup(ctx context.Context, actor string, src store.Dashboard) (DashboardDetail, error) {
 	system := src.Owner == store.OwnerSystem
 	var ids []int64
 	var srcIndex int
@@ -387,7 +365,6 @@ func (s *Service) duplicateGroup(ctx context.Context, actor string, src store.Da
 		ds := make([]store.Dashboard, len(members))
 		wss := make([][]store.Widget, len(members))
 		srcIndex = 0
-		var archiveIDs []int64
 		for i, m := range members {
 			if m.ID == src.ID {
 				srcIndex = i
@@ -402,9 +379,6 @@ func (s *Service) duplicateGroup(ctx context.Context, actor string, src store.Da
 			ds[i] = store.Dashboard{
 				Owner: store.OwnerUser, Title: title,
 				LastProjectID: m.LastProjectID, LastRange: m.LastRange, LastFrom: m.LastFrom, LastTo: m.LastTo,
-			}
-			if archive && m.ArchivedAt == "" {
-				archiveIDs = append(archiveIDs, m.ID)
 			}
 		}
 
@@ -423,28 +397,15 @@ func (s *Service) duplicateGroup(ctx context.Context, actor string, src store.Da
 		for i := range ds {
 			ds[i].SortKey = keys[i]
 		}
-		ids, err = s.st.InsertDashboardGroup(ctx, ds, wss, archiveIDs, store.AuditEntry{
+		ids, err = s.st.InsertDashboardGroup(ctx, ds, wss, store.AuditEntry{
 			Actor: actor, Action: "dashboard.duplicate",
-			Detail: fmt.Sprintf("group of dashboard/%d", src.ID) + archivedDetail(archiveIDs)})
+			Detail: fmt.Sprintf("group of dashboard/%d", src.ID)})
 		return err
 	})
 	if err != nil {
 		return DashboardDetail{}, err
 	}
 	return s.Dashboard(ctx, ids[srcIndex])
-}
-
-// archivedDetail is the duplicate audit detail's suffix naming what
-// archive_source archived, "" when it archived nothing.
-func archivedDetail(archive []int64) string {
-	if len(archive) == 0 {
-		return ""
-	}
-	parts := make([]string, len(archive))
-	for i, id := range archive {
-		parts[i] = fmt.Sprintf("dashboard/%d", id)
-	}
-	return "; archived " + strings.Join(parts, ",")
 }
 
 // copyLiveWidgets returns fresh copies of dashboardID's live widgets, in

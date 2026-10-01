@@ -5,12 +5,13 @@ Date: 2026-09-30
 
 ## Problem
 
-- **Customizing leaves two copies in the sidebar.** The system dashboards
-  are the zero-setup default: a fresh install shows Reports (group 1, five
-  tabs) with nothing to configure. To change one, an agent calls
-  `duplicate_dashboard {whole_group: true}`, and the copy lands under
-  "Yours" next to the original, which can never be removed. The sidebar
-  keeps both "Views" and "Views (copy)" forever.
+- **Customizing a system dashboard takes two steps, not one.** The system
+  dashboards are the zero-setup default: a fresh install shows Reports
+  (group 1, five tabs) with nothing to configure. To change one, an agent
+  calls `duplicate_dashboard {whole_group: true}`, and the copy lands under
+  "Yours" next to the original, which stays in the sidebar until the agent
+  also calls `archive_dashboard {whole_group: true}` on it. Duplicating
+  never archives anything on its own: a copy is only ever a copy.
 - **The page cannot arrange anything.** Duplicating, archiving and
   reordering dashboards and tabs all need an agent, even though each one
   is one existing REST call.
@@ -59,40 +60,36 @@ Date: 2026-09-30
 5. **Audited as for user dashboards**: `dashboard.archive` and
    `dashboard.restore`, with the actor.
 
-### Duplicating a system group replaces it
+### Duplicating never archives
 
-6. **`duplicate_dashboard` takes `archive_source`**, a boolean that
-   defaults to `true` when the source is a system dashboard and to `false`
-   when it is a user one.
-   - **System source, `archive_source` true:** the whole group is copied,
-     whatever `whole_group` says, as one new user group last in the
-     sidebar, and the system group is archived. The result is the copy of
-     the dashboard named, so the page opens on the tab it was on.
-   - **System source, `archive_source: false`:** copies what was asked
-     (the dashboard, or its group with `whole_group`), archiving nothing.
-     An agent borrowing a system dashboard as a starting point uses this.
-   - **User source, `archive_source: true`:** archives what was copied
-     (the dashboard, or its group's live members with `whole_group`).
-7. **Copy and archive are one transaction.** The store's dashboard insert
-   takes the ids to archive and writes them with the copy, so a failure
-   leaves neither. The audit keeps its one `dashboard.duplicate` row, whose
-   detail notes the archived ids.
+6. **`duplicate_dashboard` copies, nothing more**, exactly as on main:
+   `wholeGroup` false copies just the dashboard named (a user source's
+   copy joins its group right after it; a system source's copy is a new
+   user group of one, last in the sidebar); `wholeGroup` true copies
+   every member of its group as one new user group placed last, in the
+   same tab order (a system group whole, archived tabs included; a user
+   group's live tabs). The first copy of a `wholeGroup` duplicate is
+   titled "… (copy)", the rest keep their titles. The result is the copy
+   of the dashboard named, so the page opens on the tab it was on.
+7. **Removed: no coupling between duplicating and archiving.** There is
+   no `archive_source`, default or otherwise. Replacing a system group in
+   the sidebar is two explicit calls: `duplicate_dashboard
+   {whole_group: true}`, then `archive_dashboard {whole_group: true}` on
+   the original.
 8. **An archived user source is still refused**, as today
    ("restore_dashboard first"): its copy would land in a group that may
    have no live member left. **An archived system source is accepted**:
    its copy is always a new user group, so the gallery can copy a tab of
-   Reports after Reports was replaced. With `archive_source` true, members
-   already archived stay archived.
-9. **Over REST**, `archive_source` joins `whole_group` in the optional body
-   of `POST /api/dashboards/{dashboard_id}/duplicate`. The OpenAPI route
-   spec carries it.
+   Reports after Reports was archived to make room for its replacement.
+9. **Over REST**, the body of `POST /api/dashboards/{dashboard_id}/duplicate`
+   stays just the optional `{whole_group}`, as on main.
 
 ### Menus in the page
 
 10. **The sidebar entry of a group has a "…" menu** (shown on hover, always
     on phones), acting on the whole group:
-    - System group: **Duplicate** ("your copy replaces it in the sidebar")
-      and **Archive**.
+    - System group: **Duplicate** (`whole_group`, a new entry last in
+      "Yours", no hint — it is only a copy) and **Archive**.
     - User group: **Duplicate** (`whole_group`, a new entry last in
       "Yours"), **Archive** (`whole_group`), **Move up** and **Move down**.
 11. **The dashboard header has a "…" menu next to Refresh on user
@@ -150,9 +147,10 @@ Date: 2026-09-30
       dashboard's title with its tabs, each linking to its dashboard; an
       **Archive** button on a live group and a **Restore** button on an
       archived one. Each tab has **Copy as a dashboard**:
-      `duplicate_dashboard {archive_source: false}`, a live, standalone
-      user dashboard last in "Yours", titled "… (copy)", which the page
-      then opens. The system group stays as it was, live or archived.
+      `duplicate_dashboard` on that tab (no `whole_group`), a live,
+      standalone user dashboard last in "Yours", titled "… (copy)", which
+      the page then opens. The system group stays as it was, live or
+      archived.
     - **Archived**: every archived user dashboard, with its group's title
       when it has one, when it will be purged ("deleted on 30 Oct",
       from `archived_at` plus `RETENTION_ARCHIVED_DAYS`, which
@@ -177,7 +175,7 @@ Date: 2026-09-30
 | --- | --- | --- |
 | `archive_dashboard` | accepts a system dashboard with `whole_group` | `POST /api/dashboards/{dashboard_id}/archive` |
 | `restore_dashboard` | accepts a system dashboard with `whole_group` | `POST /api/dashboards/{dashboard_id}/restore` |
-| `duplicate_dashboard` | `archive_source`; a system source copies and archives its whole group by default; an archived system source is accepted | `POST /api/dashboards/{dashboard_id}/duplicate`, optional body |
+| `duplicate_dashboard` | unchanged from main: copies, never archives; an archived system source is accepted | `POST /api/dashboards/{dashboard_id}/duplicate`, optional body `{whole_group}` |
 | `list_dashboards` | returns `purge_after_days` | `GET /api/dashboards` |
 
 No tool or route is added, removed or renamed. No migration:
@@ -186,19 +184,18 @@ No tool or route is added, removed or renamed. No migration:
 The MCP server instructions (`serverInstructions` in
 `internal/api/guide_reporting.go`) change from "System dashboards are
 read-only; duplicate one to customize it." to "To customize a system
-dashboard, duplicate it: the copy replaces its group in the sidebar."
+dashboard, duplicate it with whole_group, then archive the original with
+archive_dashboard whole_group to take it out of the sidebar."
 
 ## Documentation
 
 `docs/reporting.md`, same commit:
 
 - Concepts: system groups change only with a release, are archived and
-  restored whole, and duplicating one replaces it unless
-  `archive_source: false`.
+  restored whole; duplicating one never archives it — replacing it in the
+  sidebar is `duplicate_dashboard` then `archive_dashboard`.
 - Workflow step 5 and Rules: the same, replacing "read-only".
-- Tools table: `archive_source`; archive and restore on system
-  dashboards; `purge_after_days`.
-- HTTP API: the duplicate body's `archive_source`.
+- Tools table: archive and restore on system dashboards; `purge_after_days`.
 - Archiving and the purge: "System dashboards and their widgets cannot be
   archived" becomes "A system group is archived and restored whole and
   never purged; system widgets cannot be archived."
@@ -213,18 +210,15 @@ No `deploy/UPGRADES.md` entry: nothing changes on upgrade day.
   - Archive and restore a system group with `whole_group`; without it,
     refused.
   - `archive_widget` on a system widget is still refused.
-  - `duplicate_dashboard` from a system tab copies and archives the whole
-    group by default and returns the copy of that tab; with
-    `archive_source: false` it copies only the tab and archives nothing;
-    from a user source it archives nothing by default, and what it copied
-    with `archive_source: true`.
-  - A failed insert archives nothing.
-  - An archived user source is still refused; an archived system source
-    is copied, and its group stays archived.
+  - `duplicate_dashboard` from a system tab copies just that tab, as a
+    standalone user dashboard; `whole_group` copies all five, archived
+    ones included, and neither ever archives the source.
+  - A user source is never archived by duplicating it; an archived user
+    source is still refused.
 - **store**: a sync keeps a system dashboard's `archived_at`; a new system
   dashboard arrives live, and archived when every existing member of its
   group is archived.
-- **api**: the duplicate route with `{"archive_source": false}`; archive
+- **api**: the duplicate route leaves a system dashboard live; archive
   and restore on a system id with and without `whole_group`;
   `purge_after_days` in the list.
 - **web (unit)**: which menu items show for a system group, a user group,
@@ -232,11 +226,12 @@ No `deploy/UPGRADES.md` entry: nothing changes on upgrade day.
   `after`; Move to lists the other user groups and Own dashboard only in
   a group of more than one; the gallery lists system groups and archived
   user dashboards with the right buttons; the archived line.
-- **e2e**: duplicate Reports from the sidebar menu, land on the copy, no
-  Reports in the sidebar, restore it from the gallery; archive a user tab
-  and undo from the toast; drag a user tab and a user group, and reload
-  to see the order kept; move a tab into another group and back out to its
-  own dashboard; copy a system tab from the gallery while Reports is
+- **e2e**: duplicate Reports from the sidebar menu, land on the copy with
+  five tabs, Reports still in the sidebar; archive it from the sidebar
+  menu, Reports leaves the sidebar, restore it from the gallery; archive a
+  user tab and undo from the toast; drag a user tab and a user group, and
+  reload to see the order kept; move a tab into another group and back out
+  to its own dashboard; copy a system tab from the gallery while Reports is
   archived.
 
 ## Out of scope

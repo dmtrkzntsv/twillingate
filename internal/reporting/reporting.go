@@ -33,11 +33,11 @@ type Store interface {
 	GetDashboard(ctx context.Context, id int64) (store.Dashboard, error)
 	ListWidgets(ctx context.Context, dashboardID int64) ([]store.Widget, error)
 	GetWidget(ctx context.Context, id int64) (store.Widget, error)
-	InsertDashboard(ctx context.Context, d store.Dashboard, ws []store.Widget, archive []int64, a store.AuditEntry) (int64, error)
+	InsertDashboard(ctx context.Context, d store.Dashboard, ws []store.Widget, a store.AuditEntry) (int64, error)
 	UpdateDashboard(ctx context.Context, d store.Dashboard, a store.AuditEntry) error
 	SetDashboardView(ctx context.Context, d store.Dashboard) error
 	MoveDashboards(ctx context.Context, ks []store.DashboardKey, a store.AuditEntry) error
-	InsertDashboardGroup(ctx context.Context, ds []store.Dashboard, ws [][]store.Widget, archive []int64, a store.AuditEntry) ([]int64, error)
+	InsertDashboardGroup(ctx context.Context, ds []store.Dashboard, ws [][]store.Widget, a store.AuditEntry) ([]int64, error)
 	SetDashboardsArchived(ctx context.Context, ids []int64, archived bool, a store.AuditEntry) error
 	InsertWidget(ctx context.Context, w store.Widget, a store.AuditEntry) (int64, error)
 	UpdateWidget(ctx context.Context, w store.Widget, a store.AuditEntry) error

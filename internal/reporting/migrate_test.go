@@ -233,7 +233,7 @@ func TestMigrateFromRemovedComponentNullsUserWidget(t *testing.T) {
 			Component: "pie", SortKey: "a", Width: 4, Height: 8,
 			Name: "w1", SourceType: "sql", Source: "select 'a' as label, 1 as value",
 		}},
-		nil, store.AuditEntry{Actor: "test", Action: "dashboard.create"})
+		store.AuditEntry{Actor: "test", Action: "dashboard.create"})
 	if err != nil {
 		t.Fatal(err)
 	}
