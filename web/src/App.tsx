@@ -2,6 +2,7 @@ import { useEffect, type ReactNode } from 'react'
 import { WifiOffIcon } from 'lucide-react'
 import { BrowserRouter, Navigate, Route, Routes, useNavigate } from 'react-router'
 import StatusCard from '@/components/StatusCard'
+import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { useOnline } from '@/hooks/use-online'
 import { currentAppPath, onUnauthorized } from '@/lib/auth'
@@ -41,6 +42,8 @@ function App() {
     <BrowserRouter basename="/app">
       <LoginOnUnauthorized />
       <TooltipProvider>
+        {/* Archive and refusal toasts for the page's write layer (D12). */}
+        <Toaster richColors={false} position="bottom-right" />
         <Routes>
           <Route
             path="/"

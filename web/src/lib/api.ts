@@ -72,6 +72,8 @@ export interface DashboardsResponse {
   dev?: boolean
   errors?: { dir: string; message: string }[]
   dashboards: DashboardInfo[]
+  /** Days until an archived dashboard is purged; absent when retention is off (D17). */
+  purge_after_days?: number
 }
 
 export interface Widget {
@@ -133,6 +135,16 @@ export interface SaveViewBody {
   to?: string
 }
 
+/**
+ * The update_dashboard body a move sends: `after` names a live dashboard
+ * (0 for first); `group_id` regroups, 0 taking the dashboard out as its
+ * own group (tabs D6-D8; D15).
+ */
+export interface MoveBody {
+  group_id?: number
+  after?: number
+}
+
 export interface Project {
   project_id: number
   name: string
@@ -167,6 +179,34 @@ export const endpoints = {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(sel),
+    }),
+  /** Copies a dashboard, or its whole group (tabs D10-D11; D6-D9). */
+  duplicate: (id: number, body: { whole_group?: boolean; archive_source?: boolean } = {}) =>
+    api<DashboardDetail>(`/api/dashboards/${id}/duplicate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  /** Archives a dashboard, or its whole group (a system one needs `wholeGroup`) (D1). */
+  archive: (id: number, wholeGroup = false) =>
+    api<{ status: string }>(`/api/dashboards/${id}/archive`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(wholeGroup ? { whole_group: true } : {}),
+    }),
+  /** Restores a dashboard, or its whole group (D1). */
+  restore: (id: number, wholeGroup = false) =>
+    api<{ status: string }>(`/api/dashboards/${id}/restore`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(wholeGroup ? { whole_group: true } : {}),
+    }),
+  /** Moves a tab or a group by naming the dashboard it goes after (tabs D6-D7; D15). */
+  move: (id: number, body: MoveBody) =>
+    api<DashboardInfo>(`/api/dashboards/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
     }),
   projects: () => api<ProjectsResponse>('/api/projects'),
   devVersion: () => api<{ version: string }>('/api/dev/version'),

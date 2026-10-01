@@ -1,0 +1,91 @@
+import { useCallback, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
+import { useNavigate } from 'react-router'
+import { toast } from 'sonner'
+import { ApiError, endpoints, type MoveBody } from '@/lib/api'
+
+export interface DashboardActions {
+  /** Copies the dashboard (or its group with `wholeGroup`) and opens the copy (tabs D10; D6-D9). */
+  duplicate(d: { dashboard_id: number; title: string }, opts?: { wholeGroup?: boolean; archiveSource?: boolean }): Promise<void>
+  /** Archives the dashboard (or its group with `wholeGroup`); shows an Undo toast and navigates when asked (D1, D12-D13). */
+  archive(d: { dashboard_id: number; title: string }, opts: { wholeGroup?: boolean; navigateTo?: string }): Promise<void>
+  /** Restores the dashboard, or its whole group (D1, tabs D14). */
+  restore(id: number, wholeGroup?: boolean): Promise<void>
+  /** Moves a tab or a group by naming the dashboard it goes after (D15). */
+  move(id: number, body: MoveBody): Promise<void>
+  /** True while an action's request is in flight. */
+  pending: boolean
+}
+
+/**
+ * The actions the page writes dashboards with: duplicate, archive, restore
+ * and move, each the existing audited route, with the page's own bearer
+ * token (D19). Every action refetches the dashboard list and the
+ * dashboard shown so the sidebar and the tabs follow; a refusal shows its
+ * message in a toast instead of throwing to the caller (D12).
+ */
+export function useDashboardActions(): DashboardActions {
+  const queryClient = useQueryClient()
+  const navigate = useNavigate()
+  const [pending, setPending] = useState(false)
+
+  const refresh = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ['dashboards'] })
+    queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+  }, [queryClient])
+
+  const run = useCallback(
+    async (fn: () => Promise<void>) => {
+      setPending(true)
+      try {
+        await fn()
+      } catch (err) {
+        if (err instanceof ApiError) toast.error(err.message)
+        else throw err
+      } finally {
+        refresh()
+        setPending(false)
+      }
+    },
+    [refresh]
+  )
+
+  const restore = useCallback(
+    (id: number, wholeGroup = false) =>
+      run(async () => {
+        await endpoints.restore(id, wholeGroup)
+      }),
+    [run]
+  )
+
+  const archive = useCallback(
+    (d: { dashboard_id: number; title: string }, opts: { wholeGroup?: boolean; navigateTo?: string }) =>
+      run(async () => {
+        await endpoints.archive(d.dashboard_id, opts.wholeGroup)
+        toast(`Archived '${d.title}'`, {
+          action: { label: 'Undo', onClick: () => void restore(d.dashboard_id, opts.wholeGroup) },
+        })
+        if (opts.navigateTo) navigate(opts.navigateTo)
+      }),
+    [run, restore, navigate]
+  )
+
+  const duplicate = useCallback(
+    (d: { dashboard_id: number; title: string }, opts: { wholeGroup?: boolean; archiveSource?: boolean } = {}) =>
+      run(async () => {
+        const copy = await endpoints.duplicate(d.dashboard_id, { whole_group: opts.wholeGroup, archive_source: opts.archiveSource })
+        navigate(`/dashboards/${copy.dashboard_id}`)
+      }),
+    [run, navigate]
+  )
+
+  const move = useCallback(
+    (id: number, body: MoveBody) =>
+      run(async () => {
+        await endpoints.move(id, body)
+      }),
+    [run]
+  )
+
+  return { duplicate, archive, restore, move, pending }
+}

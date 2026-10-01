@@ -1,0 +1,72 @@
+import type { DashboardInfo, DashboardTab, MoveBody } from './api'
+
+/** One sidebar entry: a group's live members in order (tabs D4, D20). */
+export interface Group {
+  groupId: number
+  owner: 'system' | 'user'
+  members: DashboardInfo[]
+}
+
+/** Live dashboards grouped, in list order. */
+export function liveGroups(list: DashboardInfo[]): Group[] {
+  const groups: Group[] = []
+  for (const d of list) {
+    if (d.archived_at) continue
+    const last = groups.at(-1)
+    if (last && last.groupId === d.group_id) {
+      last.members.push(d)
+    } else {
+      groups.push({ groupId: d.group_id, owner: d.owner, members: [d] })
+    }
+  }
+  return groups
+}
+
+/**
+ * The update_dashboard body that puts `group` at index `to` among the user
+ * groups (after removing it), or null if that is where it is. Names only
+ * live ids: the anchor is the target group's first *live* member, which
+ * `liveGroups` already guarantees `members[0]` to be even when that
+ * group's literal first dashboard is archived (tabs D4; D15).
+ */
+export function moveGroupBody(groups: Group[], groupId: number, to: number): MoveBody | null {
+  const userGroups = groups.filter((g) => g.owner === 'user')
+  const from = userGroups.findIndex((g) => g.groupId === groupId)
+  if (from === -1 || from === to) return null
+  if (to === 0) return { after: 0 }
+  const without = userGroups.filter((g) => g.groupId !== groupId)
+  const target = without[to - 1]
+  if (!target) return null
+  return { after: target.members[0].dashboard_id }
+}
+
+/**
+ * The body that puts tab `id` at index `to` among `tabs` (after removing
+ * it): `{group_id: own, after: 0}` for first, else `{after: <tab
+ * before>}`. Null if unchanged (tabs D6-D7; D15).
+ */
+export function moveTabBody(tabs: DashboardTab[], id: number, groupId: number, to: number): MoveBody | null {
+  const from = tabs.findIndex((t) => t.dashboard_id === id)
+  if (from === -1 || from === to) return null
+  if (to === 0) return { group_id: groupId, after: 0 }
+  const without = tabs.filter((t) => t.dashboard_id !== id)
+  const before = without[to - 1]
+  if (!before) return null
+  return { after: before.dashboard_id }
+}
+
+/** Where to go after archiving `id`: the next live tab, else the previous, else '/' (D12). */
+export function nextAfterArchive(tabs: DashboardTab[], id: number): string {
+  const idx = tabs.findIndex((t) => t.dashboard_id === id)
+  if (idx === -1) return '/'
+  const target = tabs[idx + 1] ?? tabs[idx - 1]
+  return target ? `/dashboards/${target.dashboard_id}` : '/'
+}
+
+/** The date an archived dashboard is purged, or undefined when days is 0/absent (D17). */
+export function purgeDate(archivedAt: string, days?: number): Date | undefined {
+  if (!days) return undefined
+  const date = new Date(archivedAt)
+  date.setUTCDate(date.getUTCDate() + days)
+  return date
+}
