@@ -306,13 +306,14 @@ func TestSystemDashboardRefusesWrites(t *testing.T) {
 	syncReporting(t, svc, nil, systemDashboard())
 	ctx := context.Background()
 	sysWidget := widgetRows(t, svc, 3)[0].ID
+	const soloGroup = "dashboard 3 is a system dashboard, archived and restored with its group; pass whole_group"
+	wantRefusal(t, svc.ArchiveDashboard(ctx, "test", 3, false), store.ErrInvalid, soloGroup)
+	wantRefusal(t, svc.RestoreDashboard(ctx, "test", 3, false), store.ErrInvalid, soloGroup)
 	for name, op := range map[string]func() error{
 		"update": func() error {
 			_, err := svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: 3, Title: "X"})
 			return err
 		},
-		"archive": func() error { return svc.ArchiveDashboard(ctx, "test", 3, false) },
-		"restore": func() error { return svc.RestoreDashboard(ctx, "test", 3, false) },
 		"add": func() error {
 			_, err := svc.AddWidget(ctx, "test", AddWidget{DashboardID: 3, WidgetSpec: note("X")})
 			return err
@@ -1630,10 +1631,39 @@ func TestArchiveRestoreWholeGroup(t *testing.T) {
 	}
 }
 
-func TestArchiveRestoreWholeGroupRefusesSystem(t *testing.T) {
+// D1: a system group is archived and restored whole; one system
+// dashboard alone is refused.
+func TestArchiveRestoreSystemGroup(t *testing.T) {
 	svc := newTestService(t)
-	syncReporting(t, svc, nil, systemDashboard())
+	syncReporting(t, svc, nil, systemGroup()...)
 	ctx := context.Background()
-	wantRefusal(t, svc.ArchiveDashboard(ctx, "test", 3, true), store.ErrInvalid, systemRefusal)
-	wantRefusal(t, svc.RestoreDashboard(ctx, "test", 3, true), store.ErrInvalid, systemRefusal)
+	const one = "dashboard 12 is a system dashboard, archived and restored with its group; pass whole_group"
+	wantRefusal(t, svc.ArchiveDashboard(ctx, "test", 12, false), store.ErrInvalid, one)
+
+	if err := svc.ArchiveDashboard(ctx, "test", 12, true); err != nil {
+		t.Fatal(err)
+	}
+	for id := int64(10); id <= 14; id++ {
+		d, err := svc.st.GetDashboard(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if d.ArchivedAt == "" {
+			t.Errorf("system dashboard %d live after archive whole_group, want archived", id)
+		}
+	}
+	wantRefusal(t, svc.RestoreDashboard(ctx, "test", 12, false), store.ErrInvalid, one)
+	if err := svc.RestoreDashboard(ctx, "test", 10, true); err != nil {
+		t.Fatal(err)
+	}
+	for id := int64(10); id <= 14; id++ {
+		if d, _ := svc.st.GetDashboard(ctx, id); d.ArchivedAt != "" {
+			t.Errorf("system dashboard %d archived after restore whole_group, want live", id)
+		}
+	}
+	// Writes other than archive/restore stay refused.
+	_, err := svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: 10, Title: "X"})
+	if !errors.Is(err, store.ErrInvalid) {
+		t.Errorf("update on a system dashboard: err = %v, want ErrInvalid", err)
+	}
 }

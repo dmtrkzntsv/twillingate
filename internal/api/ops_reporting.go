@@ -229,10 +229,10 @@ func (h *host) registerReporting(r *registrar) {
 		Description: "Copy any live dashboard, a system one included, with copies of its live widgets (an archived one is refused: restore it first); the copy is a user dashboard. A user dashboard's copy joins its group as the next tab (update_dashboard {group_id: 0} makes it its own sidebar entry); a system dashboard's copy is a new dashboard, last in the sidebar. This is how to customize a system dashboard. whole_group copies the group's live dashboards (archived ones are skipped) as a new dashboard with the same tabs, in tab order."},
 		h.duplicateDashboard)
 	expose(r, spec{Name: "archive_dashboard", Annotations: idem, Method: "POST", Path: d + "/archive",
-		Description: "Hide a user dashboard and its widgets. Reversible with restore_dashboard; purged, with its widgets, RETENTION_ARCHIVED_DAYS (default 30) after archiving unless restored. whole_group archives every tab of its group."},
+		Description: "Hide a dashboard and its widgets. Reversible with restore_dashboard; a user dashboard is purged, with its widgets, RETENTION_ARCHIVED_DAYS (default 30) after archiving unless restored. whole_group archives every tab of its group. A system dashboard is archived only with whole_group, is never purged, and keeps its archive across releases."},
 		h.archiveDashboard)
 	expose(r, spec{Name: "restore_dashboard", Annotations: idem, Method: "POST", Path: d + "/restore",
-		Description: "Unhide an archived dashboard, where it was in the sidebar. whole_group restores every archived tab of its group."},
+		Description: "Unhide an archived dashboard, where it was in the sidebar. whole_group restores every archived tab of its group; a system dashboard is restored only with whole_group."},
 		h.restoreDashboard)
 	expose(r, spec{Name: "add_widget", Annotations: write, Method: "POST", Path: d + "/widgets", Status: http.StatusCreated,
 		Description: "Call reporting_guide first. Add a widget to a user dashboard: a component, a source ({type: sql|md, content}), optional title, props, width and height (default from the component), name (derived from the title when omitted) and after (a widget id; 0 first; omitted, last). The SQL is run once to check its columns against the component's inputs."},

@@ -33,8 +33,11 @@ are in [deployment.md](deployment.md).
 `user`:
 
 - **System dashboards** ship with each release, have ids 1–999, and change only
-  when the release does. Every write tool refuses them. To customize one, call
-  `duplicate_dashboard`: the copy is a user dashboard you can edit.
+  when the release does. A system group is archived and restored whole, with
+  `whole_group`, and is never purged; every other write refuses them. To
+  customize one, call `duplicate_dashboard`: the copy is a user dashboard you
+  can edit, and it replaces the system group in the sidebar (see
+  `archive_source`).
 - **User dashboards** are what agents create. Their ids start at 1001.
 
 **A dashboard is in a group.** Dashboards sharing a `group_id` are one
@@ -135,9 +138,10 @@ guards as `query`: read-only, `API_QUERY_TIMEOUT` and `API_QUERY_MAX_ROWS`.
 
 ## Rules
 
-- System dashboards (ids 1–999) are read-only; `duplicate_dashboard` makes an
-  editable copy, and `copy_widget` copies one system widget onto a user
-  dashboard.
+- System dashboards (ids 1–999) change only with a release:
+  `archive_dashboard`/`restore_dashboard` with `whole_group` hide or show a
+  system group, `duplicate_dashboard` makes an editable copy that replaces
+  it, and `copy_widget` copies one system widget onto a user dashboard.
 - A query returns exactly the columns the component reads, named by alias; a
   column marked optional may be left out, and only `table` takes any columns.
 - The only parameters are `:project`, `:from` and `:to`. `day` is text,
@@ -641,7 +645,8 @@ Archiving is how to undo, and the only way to remove anything:
 - `list_dashboards` and `list_widgets` include archived items with their
   `archived_at`, so you can find one to restore; `get_dashboard` and the page
   show live ones only.
-- System dashboards and their widgets cannot be archived.
+- A system group is archived and restored whole (`whole_group`) and is never
+  purged; system widgets cannot be archived.
 
 Archived projects, dashboards and widgets are **deleted
 `RETENTION_ARCHIVED_DAYS` after archiving** (default 30; `0` keeps them
@@ -681,6 +686,7 @@ widget's name (`widget visitors: …`), and nothing is created.
 | after 7 is archived; name a live dashboard | `after` never names an archived dashboard: name a live one next to where it should go, or `restore_dashboard` it first. |
 | widget name visitors is already used on this dashboard (`409 conflict`) | Choose another name. An archived widget keeps its name; restore or rename it to reuse the name. |
 | dashboard 1 is a system dashboard and changes only with a release; duplicate_dashboard makes an editable copy | `duplicate_dashboard`, then change the copy. |
+| dashboard 12 is a system dashboard, archived and restored with its group; pass whole_group | Pass `whole_group: true`; the whole system group is archived or restored. |
 | dashboard 1001 is archived; restore_dashboard first | `restore_dashboard` (updating, adding to or duplicating an archived dashboard is refused). For a widget: widget 42 is archived; restore_widget first. |
 | widget 42's component was removed; set component first | `update_widget` with a `component` (and resize or archive as needed); see [When widgets break after an update](#when-widgets-break-after-an-update). |
 | widget 42 follows the project switcher; pass project_id | Pass `project_id` to `widget_data`. For the range: widget 42 follows the date range; pass from and to. |

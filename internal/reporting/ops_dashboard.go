@@ -410,25 +410,27 @@ func (s *Service) RestoreDashboard(ctx context.Context, actor string, id int64, 
 
 // setDashboardArchived archives or restores id, or (wholeGroup) every
 // live member (archiving) or archived member (restoring) of its group,
-// in one call to the store (D12–D14). A system dashboard or group is
-// refused as any other write to one is.
+// in one call to the store (D12–D14). A system dashboard is archived and
+// restored only with its whole group (D1); every other write to one
+// stays refused.
 func (s *Service) setDashboardArchived(ctx context.Context, actor string, id int64, archived, wholeGroup bool) error {
 	d, err := s.st.GetDashboard(ctx, id)
 	if err != nil {
 		return err
 	}
-	if err := refuseSystem(d); err != nil {
-		return err
+	if d.Owner == store.OwnerSystem && !wholeGroup {
+		return store.Refuse(store.ErrInvalid,
+			"dashboard %d is a system dashboard, archived and restored with its group; pass whole_group", d.ID)
 	}
 	ids := []int64{id}
 	if wholeGroup {
-		o, err := s.readOrder(ctx)
+		all, err := s.st.ListDashboards(ctx)
 		if err != nil {
 			return err
 		}
 		ids = nil
-		for _, m := range o.group(d.GroupID) {
-			if (m.ArchivedAt == "") == archived {
+		for _, m := range all {
+			if m.Owner == d.Owner && m.GroupID == d.GroupID && (m.ArchivedAt == "") == archived {
 				ids = append(ids, m.ID)
 			}
 		}
