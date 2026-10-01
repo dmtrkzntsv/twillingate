@@ -5,7 +5,7 @@ import type { DashboardActions } from '@/hooks/use-dashboard-actions'
 import { useDashboardActions } from '@/hooks/use-dashboard-actions'
 import type { DashboardDetail, DashboardInfo, DashboardTab } from '@/lib/api'
 import { renderWithProviders } from '@/test/render'
-import DashboardMenu from './DashboardMenu'
+import { GroupMenu, TabMenu } from './DashboardMenu'
 
 vi.mock('@/hooks/use-dashboard-actions', () => ({
   useDashboardActions: vi.fn(),
@@ -23,8 +23,14 @@ function tab(dashboard_id: number, title: string): DashboardTab {
   return { dashboard_id, title }
 }
 
-function detail(dashboard_id: number, title: string, group_id: number, tabs: DashboardTab[]): DashboardDetail {
-  return { dashboard_id, title, owner: 'user', group_id, widgets: [], follows_project: false, follows_range: false, tabs }
+function detail(
+  dashboard_id: number,
+  title: string,
+  group_id: number,
+  tabs: DashboardTab[],
+  extra: Partial<DashboardDetail> = {}
+): DashboardDetail {
+  return { dashboard_id, title, owner: 'user', group_id, widgets: [], follows_project: false, follows_range: false, tabs, ...extra }
 }
 
 // Views/Product: a system group, uninvolved in these tests other than
@@ -44,6 +50,8 @@ const marketingTabs = [tab(13, 'Marketing'), tab(14, 'Funnel'), tab(15, 'Reach')
 const marketing = detail(13, 'Marketing', 13, marketingTabs)
 const reach = detail(15, 'Reach', 13, marketingTabs)
 const launchWeek = detail(20, 'Launch week', 20, [tab(20, 'Launch week')])
+const systemTabs = [tab(1, 'Views'), tab(2, 'Product')]
+const product = detail(2, 'Product', 1, systemTabs, { owner: 'system' })
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -56,69 +64,77 @@ beforeEach(() => {
   } satisfies DashboardActions)
 })
 
-function renderMenu(dashboard: DashboardDetail) {
-  renderWithProviders(<DashboardMenu dashboard={dashboard} list={list} />)
+function renderTabMenu(dashboard: DashboardDetail) {
+  renderWithProviders(<TabMenu dashboard={dashboard} list={list} />)
 }
 
-async function openMenu() {
+function renderGroupMenu(dashboard: DashboardDetail) {
+  renderWithProviders(<GroupMenu dashboard={dashboard} />)
+}
+
+async function openTabMenu() {
+  await userEvent.click(screen.getByRole('button', { name: 'Tab actions' }))
+}
+
+async function openGroupMenu() {
   await userEvent.click(screen.getByRole('button', { name: 'Dashboard actions' }))
 }
 
-describe('DashboardMenu, a tab among others (n > 1)', () => {
-  it('has Duplicate tab, Archive tab, Move left (disabled first), Move right and Move to', async () => {
-    renderMenu(marketing)
-    await openMenu()
+const items = () => screen.getAllByRole('menuitem').map((i) => i.textContent)
 
-    expect(screen.getByText('Duplicate tab')).toBeInTheDocument()
-    expect(screen.getByText('Archive tab')).toBeInTheDocument()
+describe('TabMenu, a user tab among others', () => {
+  it('has Duplicate tab, Archive tab, Move left (disabled first), Move right and Move to', async () => {
+    renderTabMenu(marketing)
+    await openTabMenu()
+
+    expect(items()).toEqual(['Duplicate tab', 'Archive tab', 'Move left', 'Move right', 'Move to'])
     expect(screen.getByText('Move left').closest('[role="menuitem"]')).toHaveAttribute('data-disabled')
     expect(screen.getByText('Move right').closest('[role="menuitem"]')).not.toHaveAttribute('data-disabled')
-    expect(screen.getByText('Move to')).toBeInTheDocument()
   })
 
   it('disables Move right on the last tab', async () => {
-    renderMenu(reach)
-    await openMenu()
+    renderTabMenu(reach)
+    await openTabMenu()
 
     expect(screen.getByText('Move right').closest('[role="menuitem"]')).toHaveAttribute('data-disabled')
     expect(screen.getByText('Move left').closest('[role="menuitem"]')).not.toHaveAttribute('data-disabled')
   })
 
   it('Duplicate tab calls duplicate(d) with no wholeGroup', async () => {
-    renderMenu(marketing)
-    await openMenu()
+    renderTabMenu(marketing)
+    await openTabMenu()
     await userEvent.click(screen.getByText('Duplicate tab'))
 
     expect(duplicate).toHaveBeenCalledWith(marketing)
   })
 
   it('Move left calls move with the tab before it as after', async () => {
-    renderMenu(reach)
-    await openMenu()
+    renderTabMenu(reach)
+    await openTabMenu()
     await userEvent.click(screen.getByText('Move left'))
 
     expect(move).toHaveBeenCalledWith(15, { after: 13 })
   })
 
   it('Move right calls move with the tab after it as after', async () => {
-    renderMenu(marketing)
-    await openMenu()
+    renderTabMenu(marketing)
+    await openTabMenu()
     await userEvent.click(screen.getByText('Move right'))
 
     expect(move).toHaveBeenCalledWith(13, { after: 14 })
   })
 
   it('Archive tab on the last tab navigates to the previous one', async () => {
-    renderMenu(reach)
-    await openMenu()
+    renderTabMenu(reach)
+    await openTabMenu()
     await userEvent.click(screen.getByText('Archive tab'))
 
     expect(archive).toHaveBeenCalledWith(reach, { navigateTo: '/dashboards/14' })
   })
 
   it('"Move to" → "Own dashboard" calls move(id, {group_id: 0})', async () => {
-    renderMenu(marketing)
-    await openMenu()
+    renderTabMenu(marketing)
+    await openTabMenu()
     await userEvent.click(screen.getByText('Move to'))
     await userEvent.click(await screen.findByText('Own dashboard'))
 
@@ -126,8 +142,8 @@ describe('DashboardMenu, a tab among others (n > 1)', () => {
   })
 
   it('"Move to" lists the other live user group by its first member\'s title', async () => {
-    renderMenu(marketing)
-    await openMenu()
+    renderTabMenu(marketing)
+    await openTabMenu()
     await userEvent.click(screen.getByText('Move to'))
 
     expect(await screen.findByText('Launch week')).toBeInTheDocument()
@@ -135,50 +151,79 @@ describe('DashboardMenu, a tab among others (n > 1)', () => {
   })
 })
 
-describe('DashboardMenu, a lone dashboard (n === 1)', () => {
-  it('has Duplicate, Archive, no Move left/right, and "Move to" without "Own dashboard"', async () => {
-    renderMenu(launchWeek)
-    await openMenu()
+describe('TabMenu, the one tab of a lone user dashboard', () => {
+  it('has the same items, Move left and right both disabled', async () => {
+    renderTabMenu(launchWeek)
+    await openTabMenu()
 
-    expect(screen.getByText('Duplicate')).toBeInTheDocument()
-    expect(screen.getByText('Archive')).toBeInTheDocument()
-    expect(screen.queryByText('Move left')).not.toBeInTheDocument()
-    expect(screen.queryByText('Move right')).not.toBeInTheDocument()
-    await userEvent.click(screen.getByText('Move to'))
-    expect(await screen.findByText('Marketing')).toBeInTheDocument()
-    expect(screen.queryByText('Own dashboard')).not.toBeInTheDocument()
+    expect(items()).toEqual(['Duplicate tab', 'Archive tab', 'Move left', 'Move right', 'Move to'])
+    expect(screen.getByText('Move left').closest('[role="menuitem"]')).toHaveAttribute('data-disabled')
+    expect(screen.getByText('Move right').closest('[role="menuitem"]')).toHaveAttribute('data-disabled')
   })
 
-  it('Duplicate calls duplicate(d, { wholeGroup: true })', async () => {
-    renderMenu(launchWeek)
-    await openMenu()
-    await userEvent.click(screen.getByText('Duplicate'))
-
-    expect(duplicate).toHaveBeenCalledWith(launchWeek, { wholeGroup: true })
-  })
-
-  it('Archive calls archive(d, { navigateTo: \'/\' })', async () => {
-    renderMenu(launchWeek)
-    await openMenu()
-    await userEvent.click(screen.getByText('Archive'))
-
-    expect(archive).toHaveBeenCalledWith(launchWeek, { navigateTo: '/' })
-  })
-
-  it('"Move to" → "Marketing" calls move(id, {group_id: <Marketing\'s group>})', async () => {
-    renderMenu(launchWeek)
-    await openMenu()
+  it('"Move to" lists other groups but no "Own dashboard": it already is one', async () => {
+    renderTabMenu(launchWeek)
+    await openTabMenu()
     await userEvent.click(screen.getByText('Move to'))
     await userEvent.click(await screen.findByText('Marketing'))
 
     expect(move).toHaveBeenCalledWith(20, { group_id: 13 })
+    expect(screen.queryByText('Own dashboard')).not.toBeInTheDocument()
+  })
+
+  it('Archive tab lands on "/", there being no other tab', async () => {
+    renderTabMenu(launchWeek)
+    await openTabMenu()
+    await userEvent.click(screen.getByText('Archive tab'))
+
+    expect(archive).toHaveBeenCalledWith(launchWeek, { navigateTo: '/' })
   })
 
   it('hides "Move to" entirely when there are no other user groups', async () => {
     const lone = detail(30, 'Solo', 30, [tab(30, 'Solo')])
-    renderWithProviders(<DashboardMenu dashboard={lone} list={[info(1, 'Views', 'system', 1), info(30, 'Solo', 'user', 30)]} />)
-    await openMenu()
+    renderWithProviders(<TabMenu dashboard={lone} list={[info(1, 'Views', 'system', 1), info(30, 'Solo', 'user', 30)]} />)
+    await openTabMenu()
 
     expect(screen.queryByText('Move to')).not.toBeInTheDocument()
+  })
+})
+
+describe('TabMenu, a system tab', () => {
+  it('offers only Duplicate tab: a system tab is never archived or moved alone', async () => {
+    renderTabMenu(product)
+    await openTabMenu()
+    expect(items()).toEqual(['Duplicate tab'])
+
+    await userEvent.click(screen.getByText('Duplicate tab'))
+    expect(duplicate).toHaveBeenCalledWith(product)
+  })
+})
+
+describe('GroupMenu', () => {
+  it('duplicates and archives the whole group, named by its first tab', async () => {
+    renderGroupMenu(reach)
+    await openGroupMenu()
+    expect(items()).toEqual(['Duplicate', 'Archive'])
+
+    await userEvent.click(screen.getByText('Duplicate'))
+    expect(duplicate).toHaveBeenCalledWith(marketingTabs[0], { wholeGroup: true })
+
+    await openGroupMenu()
+    await userEvent.click(screen.getByText('Archive'))
+    expect(archive).toHaveBeenCalledWith(marketingTabs[0], { wholeGroup: true, navigateTo: '/' })
+  })
+
+  it('offers the same on a system group', async () => {
+    renderGroupMenu(product)
+    await openGroupMenu()
+
+    expect(items()).toEqual(['Duplicate', 'Archive'])
+  })
+
+  it('offers only Duplicate on an archived group, whose banner offers Restore', async () => {
+    renderGroupMenu({ ...product, archived_at: '2026-09-30T00:00:00Z' })
+    await openGroupMenu()
+
+    expect(items()).toEqual(['Duplicate'])
   })
 })

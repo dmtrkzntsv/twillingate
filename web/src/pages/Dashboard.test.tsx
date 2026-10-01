@@ -91,9 +91,25 @@ describe('Dashboard', () => {
     expect(await screen.findByRole('button', { name: 'Project: shop' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Range: Last week' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Refresh all' })).toBeInTheDocument()
-    // The header's "…" menu edits a user dashboard's place among tabs; a
-    // system dashboard has none to edit, so it stays off the page.
-    expect(screen.queryByRole('button', { name: 'Dashboard actions' })).not.toBeInTheDocument()
+  })
+
+  it('puts the group menu in the top bar and the tab menu beside the title, on a system tab too', async () => {
+    mockApi()
+    const copy = vi.spyOn(endpoints, 'duplicate').mockResolvedValue({ ...product, dashboard_id: 30 })
+    renderAt('/dashboards/2')
+
+    const group = await screen.findByRole('button', { name: 'Dashboard actions' })
+    expect(group.closest('header')).toContainElement(screen.getByRole('tablist'))
+    await userEvent.click(group)
+    expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Duplicate', 'Archive'])
+    await userEvent.keyboard('{Escape}')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Tab actions' }))
+    expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Duplicate tab'])
+
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Duplicate tab' }))
+    expect(copy).toHaveBeenCalledWith(2, { whole_group: undefined })
+    await waitFor(() => expect(location()).toBe('/dashboards/30'))
   })
 
   it('lands on a live dashboard after archiving the lone one shown, however slow the list refetch', async () => {
@@ -133,19 +149,19 @@ describe('Dashboard', () => {
     expect(screen.queryByRole('link', { name: 'Old experiment' })).not.toBeInTheDocument()
   })
 
-  it('renders a user dashboard with only fixed widgets without switchers or tabs, and the "Yours" label', async () => {
+  it('renders a lone user dashboard as one tab, the same layout as a group, without switchers', async () => {
     const widgetData = mockApi()
     renderAt('/dashboards/10')
 
     expect(await screen.findByRole('heading', { level: 1, name: 'Launch week' })).toBeInTheDocument()
     expect(await screen.findByText('Signups during launch')).toBeInTheDocument()
-    expect(screen.queryByRole('tab')).not.toBeInTheDocument()
-    expect(within(screen.getByRole('main')).getByText('Yours', { exact: true })).toBeInTheDocument()
+    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Launch week'])
     expect(screen.queryByRole('button', { name: /^Project/ })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /^Range/ })).not.toBeInTheDocument()
     await waitFor(() => expect(widgetData).toHaveBeenCalled())
     for (const call of widgetData.mock.calls) expect(call[1]).toEqual({})
     expect(screen.getByRole('button', { name: 'Dashboard actions' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Tab actions' })).toBeInTheDocument()
   })
 
   it('shows a tablist for a two-tab user group, its tabs sortable', async () => {
@@ -196,6 +212,7 @@ describe('Dashboard', () => {
     // Marketing stays on screen, frozen, until Launch week loads.
     expect(screen.getByRole('heading', { level: 1, name: 'Marketing' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Dashboard actions' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Tab actions' })).not.toBeInTheDocument()
     for (const tab of screen.getAllByRole('tab')) expect(tab).not.toHaveAttribute('aria-roledescription')
   })
 
@@ -372,6 +389,26 @@ describe('Dashboard', () => {
     expect(screen.getByRole('link', { name: 'Marketing' })).not.toHaveAttribute('aria-roledescription')
     // Neither the header's "Dashboard actions" nor any sidebar "… actions".
     expect(screen.queryByRole('button', { name: /actions$/ })).not.toBeInTheDocument()
+  })
+
+  it('opens a system group archived whole with all its tabs, and its menus', async () => {
+    mockApi()
+    const archived = dashboardsList()
+    archived.dashboards = archived.dashboards.map((d) =>
+      d.owner === 'system' ? { ...d, archived_at: '2026-09-30T00:00:00Z' } : d
+    )
+    vi.mocked(endpoints.dashboards).mockResolvedValue(archived)
+    // get_dashboard lists only live tabs: none, the whole group being archived.
+    vi.mocked(endpoints.dashboard).mockResolvedValue({ ...product, tabs: [], archived_at: '2026-09-30T00:00:00Z' })
+    renderAt('/dashboards/2')
+
+    expect(await screen.findByText('Archived: not in the sidebar')).toBeInTheDocument()
+    await waitFor(() =>
+      expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Views', 'Product', 'Users', 'Groups', 'Retention'])
+    )
+    expect(screen.getByRole('tab', { name: 'Product' })).toHaveAttribute('aria-selected', 'true')
+    await userEvent.click(screen.getByRole('button', { name: 'Dashboard actions' }))
+    expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Duplicate'])
   })
 
   it('offers no Restore on an archived dashboard in reporting dev', async () => {

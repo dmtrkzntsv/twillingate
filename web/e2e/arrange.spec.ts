@@ -163,7 +163,7 @@ test('archives a user tab and undoes it', async ({ page, request }) => {
   await page.goto(`/app/dashboards/${two.id}`)
   await page.waitForLoadState('networkidle')
 
-  await page.getByRole('button', { name: 'Dashboard actions' }).click()
+  await page.getByRole('button', { name: 'Tab actions' }).click()
   await page.getByRole('menuitem', { name: 'Archive tab' }).click()
 
   await expect(page).toHaveURL(new RegExp(`/dashboards/${one.id}$`))
@@ -185,7 +185,7 @@ test('moves a tab between groups', async ({ page, request }) => {
   await page.goto(`/app/dashboards/${a2.id}`)
   await page.waitForLoadState('networkidle')
 
-  await page.getByRole('button', { name: 'Dashboard actions' }).click()
+  await page.getByRole('button', { name: 'Tab actions' }).click()
   await page.getByRole('menuitem', { name: 'Move to' }).click()
   await page.getByRole('menuitem', { name: 'E2E B', exact: true }).click()
 
@@ -193,11 +193,11 @@ test('moves a tab between groups', async ({ page, request }) => {
   await expect(tablist.getByRole('tab', { name: 'E2E B', exact: true })).toBeVisible()
   await expect(tablist.getByRole('tab', { name: 'A2', exact: true })).toBeVisible()
 
-  await page.getByRole('button', { name: 'Dashboard actions' }).click()
+  await page.getByRole('button', { name: 'Tab actions' }).click()
   await page.getByRole('menuitem', { name: 'Move to' }).click()
   await page.getByRole('menuitem', { name: 'Own dashboard' }).click()
 
-  await expect(page.getByRole('tablist')).toHaveCount(0)
+  await expect(page.getByRole('tab')).toHaveText(['A2'])
   await expect(page.getByRole('link', { name: 'A2', exact: true })).toBeVisible()
 })
 
@@ -224,7 +224,7 @@ test('drag reorder persists across a reload', async ({ page, request }) => {
   await expect.poll(() => yoursOrder(page)).toEqual(['E2E Y', 'E2E X'])
 })
 
-test('copies a system tab from the gallery while Reports is archived', async ({ page, request }) => {
+test('copies a system group and one of its tabs from the gallery while it is archived', async ({ page, request }) => {
   // Logging in first, while Views is still live, so the post-login
   // redirect ("/") has a live dashboard to land on; it is archived only
   // after we are already signed in.
@@ -242,17 +242,33 @@ test('copies a system tab from the gallery while Reports is archived', async ({ 
   await page.goto('/app/gallery/dashboards')
   await page.waitForLoadState('networkidle')
 
-  const viewsCard = page.locator('li').filter({ has: page.getByRole('heading', { level: 3, name: 'Views', exact: true }) })
+  const main = page.getByRole('main')
+  const viewsRow = main.locator('li').filter({ has: page.getByRole('heading', { level: 3, name: 'Views', exact: true }) })
   // Templates show no archive state at all, live or archived (D17).
-  await expect(viewsCard.getByText('Archived', { exact: true })).toHaveCount(0)
-  const usersRow = viewsCard.locator('li').filter({ hasText: 'Users' })
-  await usersRow.getByRole('button', { name: 'Copy as a dashboard' }).click()
+  await expect(viewsRow.getByText('Archived', { exact: true })).toHaveCount(0)
+  await viewsRow.getByRole('button', { name: 'Views actions' }).click()
+  await page.getByRole('menuitem', { name: 'Duplicate' }).click()
 
   await page.waitForURL(/\/app\/dashboards\/\d+/)
+  await page.waitForLoadState('networkidle')
+  const groupCopyId = Number(page.url().match(/dashboards\/(\d+)/)?.[1])
+  toArchive.push({ id: groupCopyId, wholeGroup: true })
+  await expect(page.getByRole('heading', { level: 1, name: 'Views (copy)', exact: true })).toBeVisible()
+  await expect(page.getByRole('tab')).toHaveCount(5)
+
+  // One tab of the archived template, from that tab's own menu.
+  await page.goto('/app/gallery/dashboards')
+  await main.getByRole('link', { name: 'Views', exact: true }).click()
+  await page.getByRole('tab', { name: 'Users', exact: true }).click()
+  await expect(page.getByRole('heading', { level: 1, name: 'Users', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Tab actions' }).click()
+  await page.getByRole('menuitem', { name: 'Duplicate tab' }).click()
+
+  await page.waitForURL((url) => /\/app\/dashboards\/\d+/.test(url.pathname) && !url.pathname.endsWith(`/${groupCopyId}`))
   await page.waitForLoadState('networkidle')
   const copyId = Number(page.url().match(/dashboards\/(\d+)/)?.[1])
   toArchive.push({ id: copyId })
 
   await expect(page.getByRole('heading', { level: 1, name: 'Users (copy)', exact: true })).toBeVisible()
-  await expect(page.getByRole('tab')).toHaveCount(0)
+  await expect(page.getByRole('tab')).toHaveText(['Users (copy)'])
 })

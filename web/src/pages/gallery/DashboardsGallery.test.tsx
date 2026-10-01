@@ -76,45 +76,56 @@ describe('DashboardsGallery, templates', () => {
     expect(main.queryByText('Launch week')).not.toBeInTheDocument()
   })
 
-  it('lists each tab with a link to its dashboard and a "Copy as a dashboard" button', async () => {
+  it('shows each group as one row: its first tab\'s title, opening that tab, and its tabs listed', async () => {
     mockApi()
     renderGallery()
 
-    const product = await screen.findByRole('link', { name: 'Product' })
-    expect(product).toHaveAttribute('href', '/dashboards/2')
+    await screen.findByRole('heading', { name: 'Views' })
+    // The sidebar links to Views too; scope to the page content.
+    const main = within(screen.getByRole('main'))
+    const views = main.getByRole('link', { name: 'Views' })
+    expect(views).toHaveAttribute('href', '/dashboards/1')
+    const row = views.closest('li')!
+    expect(within(row).getByText('2 tabs · Views, Product')).toBeInTheDocument()
+    expect(within(row).queryByRole('link', { name: 'Product' })).not.toBeInTheDocument()
+    // A lone-tab group lists no tabs.
+    const reach = main.getByRole('link', { name: 'Reach' }).closest('li')!
+    expect(within(reach).queryByText(/tabs/)).not.toBeInTheDocument()
   })
 
-  it('"Copy as a dashboard" calls duplicate(tab)', async () => {
+  it('duplicates the whole group from the row\'s "…" menu', async () => {
     mockApi()
     renderGallery()
-    await screen.findByRole('link', { name: 'Product' })
 
-    const row = screen.getByRole('link', { name: 'Product' }).closest('li')!
-    await userEvent.click(within(row).getByRole('button', { name: 'Copy as a dashboard' }))
+    await screen.findByRole('heading', { name: 'Views' })
+    await userEvent.click(within(screen.getByRole('main')).getByRole('button', { name: 'Views actions' }))
+    expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Duplicate'])
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Duplicate' }))
 
-    expect(duplicate).toHaveBeenCalledWith(dashboards[1])
+    expect(duplicate).toHaveBeenCalledWith(dashboards[0], { wholeGroup: true })
   })
 
-  it('makes one copy from a double click: the buttons wait while an action runs', async () => {
-    const actual = await vi.importActual<typeof import('@/hooks/use-dashboard-actions')>('@/hooks/use-dashboard-actions')
-    vi.mocked(useDashboardActions).mockImplementation(actual.useDashboardActions)
-    const copy = vi.spyOn(endpoints, 'duplicate').mockReturnValue(new Promise(() => {}))
+  it('makes no copy while another action runs: Duplicate waits', async () => {
+    vi.mocked(useDashboardActions).mockReturnValue({
+      duplicate,
+      archive: vi.fn(),
+      restore,
+      move: vi.fn(),
+      pending: true,
+    } satisfies DashboardActions)
     mockApi()
     renderGallery()
-    const views = (await screen.findByRole('heading', { name: 'Views' })).closest('li')!
-    const button = within(views).getAllByRole('button', { name: 'Copy as a dashboard' })[0]
 
-    await userEvent.dblClick(button)
-
-    expect(copy).toHaveBeenCalledTimes(1)
-    expect(button).toBeDisabled()
+    await screen.findByRole('heading', { name: 'Views' })
+    await userEvent.click(within(screen.getByRole('main')).getByRole('button', { name: 'Views actions' }))
+    expect(screen.getByRole('menuitem', { name: 'Duplicate' })).toHaveAttribute('data-disabled')
   })
 
-  it('shows no "Copy as a dashboard" in reporting dev, which takes no writes', async () => {
+  it('shows no "…" menu in reporting dev, which takes no writes', async () => {
     vi.spyOn(endpoints, 'dashboards').mockResolvedValue({ timezone: 'UTC', dashboards, dev: true })
     renderGallery()
 
     await screen.findByRole('heading', { name: 'Views' })
-    expect(screen.queryByRole('button', { name: 'Copy as a dashboard' })).not.toBeInTheDocument()
+    expect(within(screen.getByRole('main')).queryByRole('button', { name: 'Views actions' })).not.toBeInTheDocument()
   })
 })

@@ -10,44 +10,63 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Button } from '@/components/ui/button'
-import { useDashboardActions } from '@/hooks/use-dashboard-actions'
+import { useDashboardActions, type DashboardActions } from '@/hooks/use-dashboard-actions'
 import type { DashboardDetail, DashboardInfo } from '@/lib/api'
 import { liveGroups, moveTabBody, nextAfterArchive } from '@/lib/arrange'
 
 interface Props {
-  /** The live user dashboard shown on screen; `dashboard.tabs` is its group, itself included (D11). */
+  /** The dashboard shown on screen; `dashboard.tabs` is its group, itself included (D11). */
   dashboard: DashboardDetail
   /** Every dashboard, for finding this one's sibling user groups ("Move to"). */
   list: DashboardInfo[]
 }
 
 /**
- * The dashboard header's "…" menu (D11): Duplicate, Archive and reordering
- * for a live user dashboard, mirroring the sidebar's group menu but acting
- * on this one tab instead of the whole group. A tab among others gets
- * "Duplicate tab"/"Archive tab" (no `wholeGroup`) plus Move left/right
- * within the group; a lone dashboard's Duplicate and Archive take the
- * whole (one-member) group, and there is nothing to reorder. "Move to"
- * lists every other live user group by its first member's title, with
- * "Own dashboard" (`group_id: 0`) added for a tab that still has company,
- * since a lone dashboard is already its own dashboard.
+ * "Move to": every other live user group by its first member's title,
+ * with "Own dashboard" (`group_id: 0`) added for a tab that still has
+ * company, since a lone dashboard is already its own dashboard. Nothing
+ * when there is nowhere to go.
  */
-export default function DashboardMenu({ dashboard, list }: Props) {
-  const { duplicate, archive, move, pending } = useDashboardActions()
+function MoveTo({ dashboard, list, actions }: Props & { actions: DashboardActions }) {
+  const { move, pending } = actions
   const { tabs, dashboard_id: id, group_id: groupId } = dashboard
-  const n = tabs.length
-  const i = tabs.findIndex((t) => t.dashboard_id === id)
   const otherGroups = liveGroups(list).filter((g) => g.owner === 'user' && g.groupId !== groupId)
-  const showMoveTo = n > 1 || otherGroups.length > 0
+  if (tabs.length < 2 && otherGroups.length === 0) return null
+  return (
+    <DropdownMenuSub>
+      <DropdownMenuSubTrigger>
+        <FolderInputIcon />
+        Move to
+      </DropdownMenuSubTrigger>
+      <DropdownMenuSubContent>
+        {otherGroups.map((g) => (
+          <DropdownMenuItem key={g.groupId} disabled={pending} onClick={() => void move(id, { group_id: g.groupId })}>
+            {g.members[0].title}
+          </DropdownMenuItem>
+        ))}
+        {tabs.length > 1 && (
+          <>
+            {otherGroups.length > 0 && <DropdownMenuSeparator />}
+            <DropdownMenuItem disabled={pending} onClick={() => void move(id, { group_id: 0 })}>
+              Own dashboard
+            </DropdownMenuItem>
+          </>
+        )}
+      </DropdownMenuSubContent>
+    </DropdownMenuSub>
+  )
+}
 
-  const moveLeft = () => {
-    const body = moveTabBody(tabs, id, groupId, i - 1)
-    if (body) void move(id, body)
-  }
-  const moveRight = () => {
-    const body = moveTabBody(tabs, id, groupId, i + 1)
-    if (body) void move(id, body)
-  }
+/**
+ * The top bar's "…" menu, acting on the whole group, like the sidebar's
+ * (D10, D11): Duplicate copies every tab and opens the copy, never
+ * archiving anything; Archive takes the whole group out of the sidebar
+ * and lands on "/". An archived group offers only Duplicate, since its
+ * banner already offers Restore.
+ */
+export function GroupMenu({ dashboard }: { dashboard: DashboardDetail }) {
+  const { duplicate, archive, pending } = useDashboardActions()
+  const first = dashboard.tabs[0] ?? dashboard
 
   return (
     <DropdownMenu>
@@ -57,60 +76,76 @@ export default function DashboardMenu({ dashboard, list }: Props) {
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
-        {n > 1 ? (
+        <DropdownMenuItem disabled={pending} onClick={() => void duplicate(first, { wholeGroup: true })}>
+          <CopyIcon />
+          Duplicate
+        </DropdownMenuItem>
+        {!dashboard.archived_at && (
+          <DropdownMenuItem
+            disabled={pending}
+            onClick={() => void archive(first, { wholeGroup: true, navigateTo: '/' })}
+          >
+            <ArchiveIcon />
+            Archive
+          </DropdownMenuItem>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
+/**
+ * The "…" menu beside a tab's title, acting on that tab alone (D11), the
+ * same for a group of one tab as of several. Every tab offers "Duplicate
+ * tab"; a live user tab adds "Archive tab", Move left/right within the
+ * group and "Move to". A system tab is never archived or moved on its
+ * own.
+ */
+export function TabMenu({ dashboard, list }: Props) {
+  const actions = useDashboardActions()
+  const { duplicate, archive, move, pending } = actions
+  const { tabs, dashboard_id: id, group_id: groupId } = dashboard
+  const n = tabs.length
+  const i = tabs.findIndex((t) => t.dashboard_id === id)
+  const editable = dashboard.owner === 'user' && !dashboard.archived_at
+
+  const moveTo = (to: number) => {
+    const body = moveTabBody(tabs, id, groupId, to)
+    if (body) void move(id, body)
+  }
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="icon" className="size-7" aria-label="Tab actions">
+          <MoreHorizontalIcon />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start">
+        <DropdownMenuItem disabled={pending} onClick={() => void duplicate(dashboard)}>
+          <CopyIcon />
+          Duplicate tab
+        </DropdownMenuItem>
+        {editable && (
           <>
-            <DropdownMenuItem disabled={pending} onClick={() => void duplicate(dashboard)}>
-              <CopyIcon />
-              Duplicate tab
-            </DropdownMenuItem>
-            <DropdownMenuItem disabled={pending} onClick={() => void archive(dashboard, { navigateTo: nextAfterArchive(tabs, id) })}>
+            <DropdownMenuItem
+              disabled={pending}
+              onClick={() => void archive(dashboard, { navigateTo: nextAfterArchive(tabs, id) })}
+            >
               <ArchiveIcon />
               Archive tab
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem disabled={pending || i <= 0} onClick={moveLeft}>
+            <DropdownMenuItem disabled={pending || i <= 0} onClick={() => moveTo(i - 1)}>
               <ArrowLeftIcon />
               Move left
             </DropdownMenuItem>
-            <DropdownMenuItem disabled={pending || i === n - 1} onClick={moveRight}>
+            <DropdownMenuItem disabled={pending || i === n - 1} onClick={() => moveTo(i + 1)}>
               <ArrowRightIcon />
               Move right
             </DropdownMenuItem>
+            <MoveTo dashboard={dashboard} list={list} actions={actions} />
           </>
-        ) : (
-          <>
-            <DropdownMenuItem disabled={pending} onClick={() => void duplicate(dashboard, { wholeGroup: true })}>
-              <CopyIcon />
-              Duplicate
-            </DropdownMenuItem>
-            <DropdownMenuItem disabled={pending} onClick={() => void archive(dashboard, { navigateTo: '/' })}>
-              <ArchiveIcon />
-              Archive
-            </DropdownMenuItem>
-          </>
-        )}
-        {showMoveTo && (
-          <DropdownMenuSub>
-            <DropdownMenuSubTrigger>
-              <FolderInputIcon />
-              Move to
-            </DropdownMenuSubTrigger>
-            <DropdownMenuSubContent>
-              {otherGroups.map((g) => (
-                <DropdownMenuItem key={g.groupId} disabled={pending} onClick={() => void move(id, { group_id: g.groupId })}>
-                  {g.members[0].title}
-                </DropdownMenuItem>
-              ))}
-              {n > 1 && (
-                <>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem disabled={pending} onClick={() => void move(id, { group_id: 0 })}>
-                    Own dashboard
-                  </DropdownMenuItem>
-                </>
-              )}
-            </DropdownMenuSubContent>
-          </DropdownMenuSub>
         )}
       </DropdownMenuContent>
     </DropdownMenu>

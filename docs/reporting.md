@@ -42,7 +42,7 @@ are in [deployment.md](deployment.md).
 
 **A dashboard is in a group.** Dashboards sharing a `group_id` are one
 sidebar entry, drawn as tabs in tab order, named by the group's first live
-dashboard; a group of one shows no tab bar. A dashboard made on its own
+dashboard; a group of one is drawn as one tab. A dashboard made on its own
 starts as a group of one, its `group_id` its own id; beyond that, a
 `group_id` is just a number a group's dashboards share — read it from
 `list_dashboards` or `get_dashboard`, never assume it names a member.
@@ -650,10 +650,13 @@ Archiving is how to undo, and the only way to remove anything:
   an archived dashboard, with only its live widgets and its group's live
   tabs. The page's sidebar shows live dashboards only; one opened by its URL
   says "Archived: not in the sidebar" and offers Restore, and the page's
-  Archive page (`/app/archive`) lists every archived dashboard. The
-  Templates gallery (`/app/gallery/dashboards`) lists the system
-  dashboards as templates, archived ones included: archive state does not
-  matter there.
+  Archive page (`/app/archive`) lists every archived dashboard; one archived
+  with its group opens with that group's archived tabs. The Templates
+  gallery (`/app/gallery/dashboards`) lists each system group as a
+  template, one row per group, archived ones included: archive state does
+  not matter there. A row's "…" menu duplicates the whole group; an opened
+  tab's "…" menu, beside its title, duplicates that tab alone, while the
+  group's own "…" menu sits at the top right of the tab bar.
 - A system group is archived and restored whole (`whole_group`) and is never
   purged; system widgets cannot be archived.
 
@@ -755,7 +758,7 @@ Open `http://127.0.0.1:3100/`, which redirects to the dashboards at `/app/`.
   own sidebar entry when it names none.
 - `-db` defaults to `DATABASE_DSN`'s path. The database is opened read-only
   and never written: the view route answers but stores nothing, and the page
-  offers no writes (no "…" menus, dragging, Restore or copy buttons).
+  offers no writes (no "…" menus, dragging or Restore buttons).
 - `-addr` is refused unless it is a loopback address, and a request naming
   any other host (`Host:`) gets `403`, so a page elsewhere cannot reach it
   by pointing its own name at `127.0.0.1`. There is no login: the page finds
