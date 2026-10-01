@@ -56,6 +56,10 @@ type Options struct {
 	// own age — a request past its age simply loads again. CacheAge 0
 	// turns the cache off outright.
 	CacheAge, RefreshAge time.Duration
+	// ArchivedDays is RETENTION_ARCHIVED_DAYS, echoed by list_dashboards
+	// as purge_after_days so a client can show when an archived user
+	// dashboard will be deleted. 0 means kept forever.
+	ArchivedDays int
 	// Now stands in for time.Now in tests; nil means time.Now.
 	Now func() time.Time
 }
@@ -65,11 +69,12 @@ type Options struct {
 // registered source types content is checked and run against, and the
 // two-age cache their loaded values are served from.
 type Service struct {
-	st      Store
-	db      *readsql.DB
-	sources map[string]SourceType
-	now     func() time.Time
-	cache   *cache
+	st           Store
+	db           *readsql.DB
+	sources      map[string]SourceType
+	now          func() time.Time
+	cache        *cache
+	archivedDays int
 
 	parsedMu sync.Mutex
 	parsed   map[store.Component]Component // Components' memo
@@ -93,10 +98,11 @@ func New(st Store, db *readsql.DB, opt Options) *Service {
 		now = time.Now
 	}
 	return &Service{
-		st:      st,
-		db:      db,
-		sources: newSources(db, true, now),
-		now:     now,
-		cache:   newCache(opt.CacheAge, opt.RefreshAge, now),
+		st:           st,
+		db:           db,
+		sources:      newSources(db, true, now),
+		now:          now,
+		cache:        newCache(opt.CacheAge, opt.RefreshAge, now),
+		archivedDays: opt.ArchivedDays,
 	}
 }

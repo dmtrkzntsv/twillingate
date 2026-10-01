@@ -56,6 +56,7 @@ func TestReportingGuideIsLive(t *testing.T) {
 		"| 2 | Product | system | 1 | no |", // a tab of Views' group
 		`"format"`,                          // props schemas, verbatim
 		"default 6 × 8",
+		"A system group is archived and restored whole", // the Dashboards intro
 	} {
 		if !strings.Contains(md, want) {
 			t.Errorf("the guide lacks %q", want)

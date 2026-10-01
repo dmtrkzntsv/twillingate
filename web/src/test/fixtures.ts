@@ -109,6 +109,10 @@ export const launchWeek = detail(
 
 export const empty = detail(info(12, 'Scratch', 'user', 0), [])
 
+// Archived, lone user dashboard (tabs D17, D18): still fetchable by id,
+// just gone from the sidebar.
+export const oldExperiment = detail(list[6], [], { tabs: [{ dashboard_id: 11, title: 'Old experiment' }] })
+
 export const marketing = detail(list[7], [widget(13, 'stat', 'Leads', 3, 3)], { tabs: marketingTabs })
 export const funnel = detail(list[8], [widget(14, 'stat', 'Conversions', 3, 3)], { tabs: marketingTabs })
 
@@ -119,6 +123,7 @@ export const details: Record<number, DashboardDetail> = {
   4: detail(list[3], [widget(4, 'stat', 'Groups', 3, 3)], { tabs: systemTabs }),
   5: detail(list[4], [widget(5, 'heatmap', 'Cohorts', 12, 10)], { tabs: systemTabs }),
   10: launchWeek,
+  11: oldExperiment,
   12: empty,
   13: marketing,
   14: funnel,

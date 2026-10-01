@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { useNavigate } from 'react-router'
+import { Link, useNavigate } from 'react-router'
 import StatusCard from '@/components/StatusCard'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
@@ -14,7 +14,12 @@ export function pickDashboard(dashboards: DashboardInfo[], last?: number): Dashb
   return live.find((d) => d.dashboard_id === last) ?? live.find((d) => d.owner === 'system') ?? live[0]
 }
 
-/** "/" itself shows nothing: it picks a dashboard and redirects to it. */
+/**
+ * "/" itself shows nothing: it picks a dashboard and redirects to it. With
+ * none live it says why: an empty install has nothing yet, but one where
+ * everything is archived links to the archive, the only way back once the
+ * Undo toast is gone (D17a).
+ */
 export default function Home() {
   const navigate = useNavigate()
   const { data, error, refetch } = useQuery(dashboardsQuery)
@@ -36,6 +41,15 @@ export default function Home() {
     )
   }
   if (data && !target) {
+    if (data.dashboards.length > 0) {
+      return (
+        <StatusCard title="Everything is archived" description="Restore a dashboard from the archive to put it back in the sidebar.">
+          <Button asChild variant="outline" className="w-full">
+            <Link to="/archive">Open the archive</Link>
+          </Button>
+        </StatusCard>
+      )
+    }
     return <StatusCard title="No dashboards yet" description="Ask your agent to make one: it will show up here." />
   }
   return (

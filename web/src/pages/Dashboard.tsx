@@ -3,15 +3,19 @@ import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-quer
 import { useParams } from 'react-router'
 import AppShell, { TopBar } from '@/components/AppShell'
 import DashboardHeader from '@/components/DashboardHeader'
+import DashboardMenu from '@/components/DashboardMenu'
 import { DevErrors, GridSkeleton, NoProjects, NoWidgets, PageError, PageLoading } from '@/components/PageStates'
 import ProjectSwitcher from '@/components/ProjectSwitcher'
 import RangeSwitcher from '@/components/RangeSwitcher'
 import ReportTabs from '@/components/ReportTabs'
+import { Button } from '@/components/ui/button'
 import WidgetGrid from '@/components/WidgetGrid'
+import { useDashboardActions } from '@/hooks/use-dashboard-actions'
 import { useDashboardSelection } from '@/hooks/use-dashboard-selection'
 import { useDevReload } from '@/hooks/use-dev-reload'
 import { useFreshness } from '@/hooks/use-freshness'
 import type { DashboardDetail, DashboardsResponse } from '@/lib/api'
+import { moveTabBody } from '@/lib/arrange'
 import { rememberDashboard } from '@/lib/last-dashboard'
 import { dashboardQuery, dashboardsQuery, projectsQuery } from '@/lib/queries'
 import { refreshWidget } from '@/lib/widget-query'
@@ -31,7 +35,7 @@ export default function Dashboard() {
 
   const error = list.error ?? detail.error
   return (
-    <AppShell dashboards={list.data?.dashboards ?? []} currentId={id}>
+    <AppShell dashboards={list.data?.dashboards ?? []} currentId={id} readOnly={list.data?.dev === true}>
       {error ? (
         <PageError error={error} onRetry={() => (list.error ? list.refetch() : detail.refetch())} />
       ) : list.data && detail.data ? (
@@ -65,6 +69,20 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
   const showGrid = !waiting && !noProjects && dashboard.widgets.length > 0
   const freshness = useFreshness(dashboard.widgets, paramsFor, showGrid && !frozen)
   const [refreshing, setRefreshing] = useState(false)
+  const { move, restore, pending } = useDashboardActions()
+  // Reporting dev serves only reads (and the view), so the page offers no
+  // writes there: every one of them would answer 405.
+  const writable = !list.dev
+  // Only a live user dashboard's group is arranged from the page (D11,
+  // D14), and never while frozen: the dashboard on screen is being left.
+  // Its tabs stay sortable while frozen, only without moves, so the tab
+  // list is not rebuilt under the focus of the tab just chosen.
+  const userGroup = writable && dashboard.owner === 'user' && !dashboard.archived_at
+  const arrangeable = userGroup && !frozen
+  const moveTab = async (id: number, to: number) => {
+    const body = moveTabBody(dashboard.tabs, id, dashboard.group_id, to)
+    return body ? move(id, body) : false
+  }
 
   const refreshAll = () => {
     setRefreshing(true)
@@ -77,7 +95,13 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
     <>
       <TopBar>
         {dashboard.tabs.length > 1 ? (
-          <ReportTabs tabs={dashboard.tabs} currentId={dashboard.dashboard_id} onSelect={openTab} />
+          <ReportTabs
+            tabs={dashboard.tabs}
+            currentId={dashboard.dashboard_id}
+            onSelect={openTab}
+            sortable={userGroup}
+            onMove={arrangeable ? moveTab : undefined}
+          />
         ) : dashboard.owner === 'user' ? (
           <span className="text-sm text-muted-foreground">Yours</span>
         ) : null}
@@ -87,12 +111,31 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
         className={`mx-auto flex w-full max-w-[1600px] flex-1 flex-col gap-4 p-3 transition-opacity sm:p-4 lg:p-6 ${frozen ? 'opacity-60' : ''}`}
       >
         {list.dev && list.errors && list.errors.length > 0 && <DevErrors errors={list.errors} />}
+        {dashboard.archived_at && (
+          // `get_dashboard` and widget data still serve an archived
+          // dashboard opened by its URL; this line is the only hint on the
+          // page itself that it is gone from the sidebar (D18).
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border/70 bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
+            <span>Archived: not in the sidebar</span>
+            {writable && (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={pending}
+                onClick={() => void restore(dashboard.dashboard_id, dashboard.owner === 'system')}
+              >
+                Restore
+              </Button>
+            )}
+          </div>
+        )}
         <DashboardHeader
           title={dashboard.title}
           asOf={showGrid ? freshness.asOf : undefined}
           refreshable={showGrid && !frozen ? freshness.refreshable.length : 0}
           refreshing={refreshing}
           onRefresh={refreshAll}
+          menu={arrangeable ? <DashboardMenu dashboard={dashboard} list={list.dashboards} /> : undefined}
         >
           {switchers.project && !noProjects && projects.data && (
             <ProjectSwitcher projects={all} value={sel.projectId} onChange={(projectId) => change({ ...sel, projectId })} />

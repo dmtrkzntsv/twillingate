@@ -33,8 +33,11 @@ are in [deployment.md](deployment.md).
 `user`:
 
 - **System dashboards** ship with each release, have ids 1–999, and change only
-  when the release does. Every write tool refuses them. To customize one, call
-  `duplicate_dashboard`: the copy is a user dashboard you can edit.
+  when the release does. A system group is archived and restored whole, with
+  `whole_group`, and is never purged; every other write refuses them. To
+  customize one, call `duplicate_dashboard`: the copy is a user dashboard you
+  can edit. Duplicating never archives anything; to take the system group out
+  of the sidebar, `archive_dashboard` it with `whole_group` too.
 - **User dashboards** are what agents create. Their ids start at 1001.
 
 **A dashboard is in a group.** Dashboards sharing a `group_id` are one
@@ -125,8 +128,9 @@ guards as `query`: read-only, `API_QUERY_TIMEOUT` and `API_QUERY_MAX_ROWS`.
 5. **Write it.** `create_dashboard` with its widgets in order, or `add_widget`
    on an existing user dashboard with `after`, `width` and `height`.
    `create_dashboard` with `group_id` adds the dashboard as a tab of that
-   group. To change a system dashboard, `duplicate_dashboard` it and work on
-   the copy.
+   group. To change a system dashboard, `duplicate_dashboard` it with
+   `whole_group`, work on the copy, then `archive_dashboard` the original
+   with `whole_group` to take it out of the sidebar.
 6. **Check it with `widget_data`** for a project and a range, as the page
    loads it: the envelope echoes what the widget followed, and a refusal says
    what to change.
@@ -135,8 +139,10 @@ guards as `query`: read-only, `API_QUERY_TIMEOUT` and `API_QUERY_MAX_ROWS`.
 
 ## Rules
 
-- System dashboards (ids 1–999) are read-only; `duplicate_dashboard` makes an
-  editable copy, and `copy_widget` copies one system widget onto a user
+- System dashboards (ids 1–999) change only with a release:
+  `archive_dashboard`/`restore_dashboard` with `whole_group` hide or show a
+  system group, `duplicate_dashboard` makes an editable copy (it never
+  archives anything), and `copy_widget` copies one system widget onto a user
   dashboard.
 - A query returns exactly the columns the component reads, named by alias; a
   column marked optional may be left out, and only `table` takes any columns.
@@ -159,8 +165,9 @@ guards as `query`: read-only, `API_QUERY_TIMEOUT` and `API_QUERY_MAX_ROWS`.
   the `after` you want and archive the original. Names are unique on a
   dashboard, archived widgets included.
 - Markdown renders without raw HTML.
-- Undo is archiving. Archived dashboards and widgets are deleted
-  `RETENTION_ARCHIVED_DAYS` after archiving (default 30).
+- Undo is archiving. Archived user dashboards and widgets are deleted
+  `RETENTION_ARCHIVED_DAYS` after archiving (default 30); an archived system
+  group is never purged.
 
 ## Tools
 
@@ -168,13 +175,13 @@ guards as `query`: read-only, `API_QUERY_TIMEOUT` and `API_QUERY_MAX_ROWS`.
 | --- | --- | --- |
 | `reporting_guide` | none | markdown: the running version and its release notes, the source types and components, the views, the active projects and the dashboards, and this document's [Workflow](#workflow) and [Rules](#rules). MCP only |
 | `list_components` | none | `source_types` and `components`: each one's `description`, `accepts`, `inputs`, `props` schema, `default_width` and `default_height` |
-| `list_dashboards` | none | `timezone` and `dashboards` in sidebar order (system, then user), archived ones included: `dashboard_id`, `title`, `owner`, `group_id`, stored `project_id` and `range`, live `widgets` count, `archived_at` |
+| `list_dashboards` | none | `timezone` and `dashboards` in sidebar order (system, then user), archived ones included: `dashboard_id`, `title`, `owner`, `group_id`, stored `project_id` and `range`, live `widgets` count, `archived_at`; plus `purge_after_days`, how long an archived user dashboard is kept before it is deleted (absent: kept forever) |
 | `get_dashboard` | `dashboard_id` | the dashboard, its `group_id`, its `follows_project` and `follows_range`, its `tabs` (the group's live dashboards, this one included, in tab order), and its live `widgets` in order |
 | `list_widgets` | `dashboard_id`, `component` (both optional; they combine) | `widgets`, archived ones included, each with its `dashboard` and 1-based `position` there |
 | `widget_data` | `widget_id`, `project_id`, `from`, `to`, `fresh` | the envelope above |
 | `create_dashboard` | `title`, `range` (default `7d`), `group_id`, `after`, `widgets` | the new dashboard, as `get_dashboard` returns it; one invalid widget creates nothing |
 | `update_dashboard` | `dashboard_id`, `title`, `group_id`, `after` | the dashboard, as `list_dashboards` lists it |
-| `duplicate_dashboard` | `dashboard_id`, `whole_group` | a user copy with copies of the live widgets, titled "… (copy)"; works on system dashboards, refused on an archived one. Without `whole_group`, a user source's copy joins the source's group right after it, and a system source's copy starts a new group, last in the sidebar. `whole_group` copies every live member of the source's group, in tab order, as one new user group placed last: the first copy is titled "… (copy)", the rest keep their titles |
+| `duplicate_dashboard` | `dashboard_id`, `whole_group` | a user copy with copies of its live widgets. A user dashboard's copy joins its group as the next tab; a system dashboard's copy is a new dashboard last in the sidebar, also from an archived system dashboard. An archived user dashboard is refused (restore it first). `whole_group` copies the group as a new dashboard with the same tabs: a system group whole, a user group's live tabs. Duplicating never archives: to replace a system group, `archive_dashboard` it with `whole_group` |
 | `archive_dashboard` | `dashboard_id`, `whole_group` | hides it (`whole_group`: every live member of its group); see [Archiving and the purge](#archiving-and-the-purge) |
 | `restore_dashboard` | `dashboard_id`, `whole_group` | unhides it (`whole_group`: every archived member of its group) |
 | `add_widget` | `dashboard_id`, `component`, `source`, `title`, `name`, `props`, `width`, `height`, `after` | the widget |
@@ -210,7 +217,7 @@ audited.
 | `GET` | `/api/widgets/{widget_id}/data` | `widget_data` | query: `project_id`, `from`, `to`, `fresh` |
 | `POST` | `/api/dashboards` | `create_dashboard` | body: `title`, `range`, `group_id`, `after`, `widgets` → 201 |
 | `PATCH` | `/api/dashboards/{dashboard_id}` | `update_dashboard` | body: `title`, `group_id`, `after` |
-| `POST` | `/api/dashboards/{dashboard_id}/duplicate` | `duplicate_dashboard` | body: `whole_group` (optional) → 201 |
+| `POST` | `/api/dashboards/{dashboard_id}/duplicate` | `duplicate_dashboard` | optional body `{whole_group}` → 201 |
 | `POST` | `/api/dashboards/{dashboard_id}/archive` | `archive_dashboard` | body: `whole_group` (optional) |
 | `POST` | `/api/dashboards/{dashboard_id}/restore` | `restore_dashboard` | body: `whole_group` (optional) |
 | `POST` | `/api/dashboards/{dashboard_id}/widgets` | `add_widget` | body: the widget, `after` → 201 |
@@ -639,9 +646,16 @@ Archiving is how to undo, and the only way to remove anything:
   every archived member of its group, including one archived on its own,
   earlier, before the rest.
 - `list_dashboards` and `list_widgets` include archived items with their
-  `archived_at`, so you can find one to restore; `get_dashboard` and the page
-  show live ones only.
-- System dashboards and their widgets cannot be archived.
+  `archived_at`, so you can find one to restore. `get_dashboard` still opens
+  an archived dashboard, with only its live widgets and its group's live
+  tabs. The page's sidebar shows live dashboards only; one opened by its URL
+  says "Archived: not in the sidebar" and offers Restore, and the page's
+  Archive page (`/app/archive`) lists every archived dashboard. The
+  Templates gallery (`/app/gallery/dashboards`) lists the system
+  dashboards as templates, archived ones included: archive state does not
+  matter there.
+- A system group is archived and restored whole (`whole_group`) and is never
+  purged; system widgets cannot be archived.
 
 Archived projects, dashboards and widgets are **deleted
 `RETENTION_ARCHIVED_DAYS` after archiving** (default 30; `0` keeps them
@@ -681,6 +695,7 @@ widget's name (`widget visitors: …`), and nothing is created.
 | after 7 is archived; name a live dashboard | `after` never names an archived dashboard: name a live one next to where it should go, or `restore_dashboard` it first. |
 | widget name visitors is already used on this dashboard (`409 conflict`) | Choose another name. An archived widget keeps its name; restore or rename it to reuse the name. |
 | dashboard 1 is a system dashboard and changes only with a release; duplicate_dashboard makes an editable copy | `duplicate_dashboard`, then change the copy. |
+| dashboard 12 is a system dashboard, archived and restored with its group; pass whole_group | Pass `whole_group: true`; the whole system group is archived or restored. |
 | dashboard 1001 is archived; restore_dashboard first | `restore_dashboard` (updating, adding to or duplicating an archived dashboard is refused). For a widget: widget 42 is archived; restore_widget first. |
 | widget 42's component was removed; set component first | `update_widget` with a `component` (and resize or archive as needed); see [When widgets break after an update](#when-widgets-break-after-an-update). |
 | widget 42 follows the project switcher; pass project_id | Pass `project_id` to `widget_data`. For the range: widget 42 follows the date range; pass from and to. |
@@ -739,7 +754,8 @@ Open `http://127.0.0.1:3100/`, which redirects to the dashboards at `/app/`.
   dashboard, in its group: a tab of the dashboard its `group` names, or its
   own sidebar entry when it names none.
 - `-db` defaults to `DATABASE_DSN`'s path. The database is opened read-only
-  and never written: the view route answers but stores nothing.
+  and never written: the view route answers but stores nothing, and the page
+  offers no writes (no "…" menus, dragging, Restore or copy buttons).
 - `-addr` is refused unless it is a loopback address, and a request naming
   any other host (`Host:`) gets `403`, so a page elsewhere cannot reach it
   by pointing its own name at `127.0.0.1`. There is no login: the page finds

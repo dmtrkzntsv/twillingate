@@ -204,8 +204,9 @@ func TestReportingRefusals(t *testing.T) {
 	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), system) {
 		t.Errorf("PATCH system dashboard = %d %s", rec.Code, rec.Body.String())
 	}
+	const archiveSystem = "dashboard 1 is a system dashboard, archived and restored with its group; pass whole_group"
 	res := callTool(t, cs, "archive_dashboard", map[string]any{"dashboard_id": 1})
-	if !res.IsError || !strings.Contains(textOf(res), system) {
+	if !res.IsError || !strings.Contains(textOf(res), archiveSystem) {
 		t.Errorf("archive_dashboard(1) = %s", textOf(res))
 	}
 	for _, target := range []string{"/api/dashboards/99999", "/api/widgets/99999/data"} {
@@ -533,6 +534,20 @@ func TestDashboardGroupRouteBodies(t *testing.T) {
 			t.Fatalf("duplicate with body %q = group %d with %d tabs, want group %d with %d",
 				tc.body, cp.GroupID, len(cp.Tabs), one.GroupID, len(before.Tabs)+1)
 		}
+	}
+}
+
+// TestDuplicateSystemDashboardRESTLeavesItLive: duplicating a system
+// dashboard over the REST route copies it without archiving the source.
+func TestDuplicateSystemDashboardRESTLeavesItLive(t *testing.T) {
+	h, cs := newTestHost(t)
+	r := newTestRegistrar(t, h)
+	rec := serveREST(t, r, "POST", "/api/dashboards/1/duplicate", "")
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("duplicate = %d %s", rec.Code, rec.Body.String())
+	}
+	if archivedAt := dashboardArchivedAt(t, cs); archivedAt[1] != "" {
+		t.Errorf("system dashboard 1 archived_at = %q, want live", archivedAt[1])
 	}
 }
 

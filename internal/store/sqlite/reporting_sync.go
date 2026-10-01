@@ -144,6 +144,7 @@ func syncComponents(ctx context.Context, tx *sql.Tx, components []store.Componen
 //
 // Returns (removed dashboards, widgets removed by cascade, error).
 func syncDashboards(ctx context.Context, tx *sql.Tx, dashboards []store.SystemDashboard) (int, int, error) {
+	var newIDs []int64
 	for _, dash := range dashboards {
 		var existingOwner string
 		err := tx.QueryRowContext(ctx,
@@ -155,6 +156,9 @@ func syncDashboards(ctx context.Context, tx *sql.Tx, dashboards []store.SystemDa
 			return 0, 0, fmt.Errorf(
 				"reporting sync: dashboard id %d is owned by %q, not %q",
 				dash.ID, existingOwner, store.OwnerSystem)
+		}
+		if err != nil {
+			newIDs = append(newIDs, dash.ID)
 		}
 
 		// A manifest dashboard with GroupID 0 is its own group, same as
@@ -176,6 +180,39 @@ func syncDashboards(ctx context.Context, tx *sql.Tx, dashboards []store.SystemDa
 			return 0, 0, fmt.Errorf("reporting sync: system dashboard %d: %w", dash.ID, err)
 		}
 	}
+
+	// D3: a dashboard a release adds to a group whose pre-existing members
+	// are all archived arrives archived itself, rather than resurrecting a
+	// group the user archived whole. This runs once, after every upsert
+	// above, and judges each new id (one that didn't exist before this
+	// sync) by its final group_id: manifest rows arrive sorted by id
+	// (internal/reporting/files.go), not grouped by leader, so a new
+	// group's leader can have a higher id than a pre-existing member that
+	// is joining it, or a lower one than a sibling that already existed —
+	// a per-row check during the loop above can't see the whole group.
+	// Other rows that are themselves new in this sync never count as
+	// "pre-existing members": a brand-new group (leader and all tabs new)
+	// always arrives live, even if a new tab happens to be upserted first.
+	if len(newIDs) > 0 {
+		args := []any{store.OwnerSystem}
+		args = append(args, toArgs(newIDs)...)
+		args = append(args, store.OwnerSystem)
+		args = append(args, toArgs(newIDs)...)
+		args = append(args, store.OwnerSystem)
+		args = append(args, toArgs(newIDs)...)
+		if _, err := tx.ExecContext(ctx, `UPDATE dashboards
+			SET archived_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')
+			WHERE owner=? AND id IN (`+placeholders(len(newIDs))+`)
+			  AND EXISTS (SELECT 1 FROM dashboards other WHERE other.group_id=dashboards.group_id
+					AND other.owner=? AND other.id<>dashboards.id AND other.id NOT IN (`+placeholders(len(newIDs))+`))
+			  AND NOT EXISTS (SELECT 1 FROM dashboards other WHERE other.group_id=dashboards.group_id
+					AND other.owner=? AND other.id<>dashboards.id AND other.id NOT IN (`+placeholders(len(newIDs))+`)
+					AND other.archived_at IS NULL)`,
+			args...); err != nil {
+			return 0, 0, fmt.Errorf("reporting sync: archive new dashboards of an archived group: %w", err)
+		}
+	}
+
 	ids := make([]int64, len(dashboards))
 	for i, dash := range dashboards {
 		ids[i] = dash.ID

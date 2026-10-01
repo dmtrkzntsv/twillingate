@@ -7,6 +7,7 @@ import { span } from '@/lib/grid'
 import { answerFor, dashboardsList, details, launchWeek, product, projects, views, widgetsById } from '@/test/fixtures'
 import { renderWithProviders } from '@/test/render'
 import Dashboard from './Dashboard'
+import Home from './Home'
 
 function LocationProbe() {
   const location = useLocation()
@@ -46,6 +47,26 @@ function renderAt(url: string) {
   )
 }
 
+/** Like renderAt, with "/" routed to Home, where an archive with no next tab lands. */
+function renderAppAt(url: string) {
+  return renderWithProviders(
+    <MemoryRouter initialEntries={[url]}>
+      <Routes>
+        <Route path="/" element={<Home />} />
+        <Route
+          path="/dashboards/:id"
+          element={
+            <>
+              <Dashboard />
+              <LocationProbe />
+            </>
+          }
+        />
+      </Routes>
+    </MemoryRouter>
+  )
+}
+
 const location = () => screen.getByTestId('location').textContent
 
 beforeEach(() => {
@@ -70,6 +91,33 @@ describe('Dashboard', () => {
     expect(await screen.findByRole('button', { name: 'Project: shop' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Range: Last week' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Refresh all' })).toBeInTheDocument()
+    // The header's "…" menu edits a user dashboard's place among tabs; a
+    // system dashboard has none to edit, so it stays off the page.
+    expect(screen.queryByRole('button', { name: 'Dashboard actions' })).not.toBeInTheDocument()
+  })
+
+  it('lands on a live dashboard after archiving the lone one shown, however slow the list refetch', async () => {
+    mockApi()
+    const archived = dashboardsList()
+    archived.dashboards = archived.dashboards.map((d) =>
+      d.dashboard_id === 10 ? { ...d, archived_at: '2026-09-30T00:00:00Z' } : d
+    )
+    vi.spyOn(endpoints, 'archive').mockImplementation(async () => {
+      vi.mocked(endpoints.dashboards).mockImplementation(
+        () => new Promise((resolve) => setTimeout(() => resolve(archived), 300))
+      )
+      return { status: 'archived' }
+    })
+    renderAppAt('/dashboards/10')
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Dashboard actions' }))
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Archive' }))
+
+    // "/" picks from the refetched list: Launch week, the last dashboard
+    // opened here, is archived there, so the first system one wins.
+    await waitFor(() => expect(location()).toBe('/dashboards/1'), { timeout: 2000 })
+    expect(vi.mocked(endpoints.archive).mock.calls[0][0]).toBe(10)
+    expect(screen.queryByText('Archived: not in the sidebar')).not.toBeInTheDocument()
   })
 
   it('lists the system group and the live user dashboards in the sidebar, one entry each', async () => {
@@ -97,15 +145,58 @@ describe('Dashboard', () => {
     expect(screen.queryByRole('button', { name: /^Range/ })).not.toBeInTheDocument()
     await waitFor(() => expect(widgetData).toHaveBeenCalled())
     for (const call of widgetData.mock.calls) expect(call[1]).toEqual({})
+    expect(screen.getByRole('button', { name: 'Dashboard actions' })).toBeInTheDocument()
   })
 
-  it('shows a tablist for a two-tab user group', async () => {
+  it('shows a tablist for a two-tab user group, its tabs sortable', async () => {
     mockApi()
     renderAt('/dashboards/13')
 
     const tabs = await screen.findAllByRole('tab')
     expect(tabs.map((t) => t.textContent)).toEqual(['Marketing', 'Funnel'])
     expect(screen.getByRole('tab', { name: 'Marketing' })).toHaveAttribute('aria-selected', 'true')
+    for (const tab of tabs) expect(tab).toHaveAttribute('aria-roledescription', 'sortable')
+  })
+
+  it('does not make system tabs sortable', async () => {
+    mockApi()
+    renderAt('/dashboards/2?project=7&range=7d')
+
+    for (const tab of await screen.findAllByRole('tab')) expect(tab).not.toHaveAttribute('aria-roledescription')
+  })
+
+  it('keeps focus on the user tab chosen with Enter while its dashboard loads', async () => {
+    mockApi()
+    vi.mocked(endpoints.dashboard).mockImplementation(async (id) => (id === 14 ? new Promise(() => {}) : details[id]))
+    renderAt('/dashboards/13')
+
+    const funnel = await screen.findByRole('tab', { name: 'Funnel' })
+    funnel.focus()
+    await userEvent.keyboard('{Enter}')
+    await waitFor(() => expect(location()).toMatch(/^\/dashboards\/14\b/))
+    await act(async () => {})
+
+    // Marketing is frozen on screen; the tab list was not rebuilt under the focus.
+    expect(screen.getByRole('heading', { level: 1, name: 'Marketing' })).toBeInTheDocument()
+    expect(document.activeElement).toHaveAttribute('role', 'tab')
+    expect(document.activeElement).toHaveTextContent('Funnel')
+  })
+
+  it('writes nothing on the dashboard being left: no header menu, no sortable tabs', async () => {
+    mockApi()
+    vi.mocked(endpoints.dashboard).mockImplementation(async (id) =>
+      id === launchWeek.dashboard_id ? new Promise(() => {}) : details[id]
+    )
+    renderAt('/dashboards/13')
+    expect(await screen.findByRole('button', { name: 'Dashboard actions' })).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('link', { name: 'Launch week' }))
+    await waitFor(() => expect(location()).toBe('/dashboards/10'))
+
+    // Marketing stays on screen, frozen, until Launch week loads.
+    expect(screen.getByRole('heading', { level: 1, name: 'Marketing' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Dashboard actions' })).not.toBeInTheDocument()
+    for (const tab of screen.getAllByRole('tab')) expect(tab).not.toHaveAttribute('aria-roledescription')
   })
 
   // The switcher tests use the small Product report: the Views one renders
@@ -260,6 +351,43 @@ describe('Dashboard', () => {
     expect(await screen.findByText(/unknown component/)).toBeInTheDocument()
     expect(screen.getByText(/dashboards\/sales/)).toBeInTheDocument()
     await waitFor(() => expect(endpoints.devVersion).toHaveBeenCalled())
+  })
+
+  it('shows the archived line and a Restore button only for an archived dashboard', async () => {
+    mockApi()
+    vi.spyOn(endpoints, 'restore').mockResolvedValue({ status: 'ok' })
+    renderAt('/dashboards/11')
+
+    expect(await screen.findByText('Archived: not in the sidebar')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Restore' }))
+    await waitFor(() => expect(endpoints.restore).toHaveBeenCalledWith(11, false))
+  })
+
+  it('offers no writes in reporting dev: no menus, no sortable tabs', async () => {
+    mockApi({ dev: true })
+    renderAt('/dashboards/13')
+
+    const tabs = await screen.findAllByRole('tab')
+    for (const tab of tabs) expect(tab).not.toHaveAttribute('aria-roledescription')
+    expect(screen.getByRole('link', { name: 'Marketing' })).not.toHaveAttribute('aria-roledescription')
+    // Neither the header's "Dashboard actions" nor any sidebar "… actions".
+    expect(screen.queryByRole('button', { name: /actions$/ })).not.toBeInTheDocument()
+  })
+
+  it('offers no Restore on an archived dashboard in reporting dev', async () => {
+    mockApi({ dev: true })
+    renderAt('/dashboards/11')
+
+    expect(await screen.findByText('Archived: not in the sidebar')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Restore' })).not.toBeInTheDocument()
+  })
+
+  it('shows no archived line for a live dashboard', async () => {
+    mockApi()
+    renderAt('/dashboards/10')
+
+    await screen.findByRole('heading', { level: 1, name: 'Launch week' })
+    expect(screen.queryByText('Archived: not in the sidebar')).not.toBeInTheDocument()
   })
 
   it('reloads the page when the dev version changes', async () => {

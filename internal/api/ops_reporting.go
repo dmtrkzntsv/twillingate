@@ -18,8 +18,8 @@ type dashboardIn struct {
 	DashboardID int64 `json:"dashboard_id" jsonschema:"dashboard id; list_dashboards names them"`
 }
 
-// dashboardGroupIn is duplicate_dashboard, archive_dashboard and
-// restore_dashboard's input: the dashboard, and whether the operation
+// dashboardGroupIn is archive_dashboard, restore_dashboard and
+// duplicate_dashboard's input: the dashboard, and whether the operation
 // acts on its whole group of tabs.
 type dashboardGroupIn struct {
 	DashboardID int64 `json:"dashboard_id" jsonschema:"dashboard id; list_dashboards names them"`
@@ -207,7 +207,7 @@ func (h *host) registerReporting(r *registrar) {
 		Description: "The source types (sql, md) and the components a widget can use: each one's description, the source types it accepts, the columns its query must return (inputs), its props schema and its default width and height."},
 		h.listComponents)
 	expose(r, spec{Name: "list_dashboards", Annotations: ro, Method: "GET", Path: "/api/dashboards",
-		Description: "Every dashboard in sidebar order (system first, then user), archived ones included: id, title, owner (system or user), group_id (the group it is a tab of; it changes when the dashboard whose id it is leaves the group, so read it here before using it), stored project and range, live widget count, archived_at; plus the timezone days are grouped in."},
+		Description: "Every dashboard in sidebar order (system first, then user), archived ones included: id, title, owner (system or user), group_id (the group it is a tab of; it changes when the dashboard whose id it is leaves the group, so read it here before using it), stored project and range, live widget count, archived_at; plus the timezone days are grouped in, and purge_after_days, how long an archived user dashboard is kept before it is deleted (absent: kept forever)."},
 		h.listDashboards)
 	expose(r, spec{Name: "get_dashboard", Annotations: ro, Method: "GET", Path: d,
 		Description: "One dashboard with its group's tabs and its live widgets in order: tabs (the group's live dashboards, this one included, in tab order) and each widget's id, name, component, title, width, height, props, source, and whether it follows the project and range switchers."},
@@ -226,13 +226,13 @@ func (h *host) registerReporting(r *registrar) {
 		Description: "Rename a user dashboard and/or move it with group_id (join a group as a tab, or 0 to leave one) and/or after (a dashboard id; 0 first). System dashboards are read-only."},
 		h.updateDashboard)
 	expose(r, spec{Name: "duplicate_dashboard", Annotations: write, Method: "POST", Path: d + "/duplicate", Status: http.StatusCreated,
-		Description: "Copy any live dashboard, a system one included, with copies of its live widgets (an archived one is refused: restore it first); the copy is a user dashboard. A user dashboard's copy joins its group as the next tab (update_dashboard {group_id: 0} makes it its own sidebar entry); a system dashboard's copy is a new dashboard, last in the sidebar. This is how to customize a system dashboard. whole_group copies the group's live dashboards (archived ones are skipped) as a new dashboard with the same tabs, in tab order."},
+		Description: "Copy any dashboard with copies of its live widgets; the copy is a user dashboard. A user dashboard's copy joins its group as the next tab; a system dashboard's copy is a new dashboard last in the sidebar, also from an archived system dashboard. An archived user dashboard is refused (restore it first). whole_group copies the group as a new dashboard with the same tabs: a system group whole, a user group's live tabs. Duplicating never archives: to replace a system group, archive it with archive_dashboard {whole_group: true}."},
 		h.duplicateDashboard)
 	expose(r, spec{Name: "archive_dashboard", Annotations: idem, Method: "POST", Path: d + "/archive",
-		Description: "Hide a user dashboard and its widgets. Reversible with restore_dashboard; purged, with its widgets, RETENTION_ARCHIVED_DAYS (default 30) after archiving unless restored. whole_group archives every tab of its group."},
+		Description: "Hide a dashboard and its widgets. Reversible with restore_dashboard; a user dashboard is purged, with its widgets, RETENTION_ARCHIVED_DAYS (default 30) after archiving unless restored. whole_group archives every tab of its group. A system dashboard is archived only with whole_group, is never purged, and keeps its archive across releases."},
 		h.archiveDashboard)
 	expose(r, spec{Name: "restore_dashboard", Annotations: idem, Method: "POST", Path: d + "/restore",
-		Description: "Unhide an archived dashboard, where it was in the sidebar. whole_group restores every archived tab of its group."},
+		Description: "Unhide an archived dashboard, where it was in the sidebar. whole_group restores every archived tab of its group; a system dashboard is restored only with whole_group."},
 		h.restoreDashboard)
 	expose(r, spec{Name: "add_widget", Annotations: write, Method: "POST", Path: d + "/widgets", Status: http.StatusCreated,
 		Description: "Call reporting_guide first. Add a widget to a user dashboard: a component, a source ({type: sql|md, content}), optional title, props, width and height (default from the component), name (derived from the title when omitted) and after (a widget id; 0 first; omitted, last). The SQL is run once to check its columns against the component's inputs."},

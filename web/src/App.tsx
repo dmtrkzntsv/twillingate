@@ -2,12 +2,15 @@ import { useEffect, type ReactNode } from 'react'
 import { WifiOffIcon } from 'lucide-react'
 import { BrowserRouter, Navigate, Route, Routes, useNavigate } from 'react-router'
 import StatusCard from '@/components/StatusCard'
+import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { useOnline } from '@/hooks/use-online'
 import { currentAppPath, onUnauthorized } from '@/lib/auth'
+import Archive from '@/pages/Archive'
 import Callback from '@/pages/Callback'
 import Dashboard from '@/pages/Dashboard'
 import ComponentsGallery from '@/pages/gallery/ComponentsGallery'
+import DashboardsGallery from '@/pages/gallery/DashboardsGallery'
 import Home from '@/pages/Home'
 import Login from '@/pages/Login'
 
@@ -41,6 +44,8 @@ function App() {
     <BrowserRouter basename="/app">
       <LoginOnUnauthorized />
       <TooltipProvider>
+        {/* Archive and refusal toasts for the page's write layer (D12). */}
+        <Toaster richColors={false} position="bottom-right" />
         <Routes>
           <Route
             path="/"
@@ -58,7 +63,23 @@ function App() {
               </OnlineOnly>
             }
           />
+          <Route
+            path="/archive"
+            element={
+              <OnlineOnly>
+                <Archive />
+              </OnlineOnly>
+            }
+          />
           <Route path="/gallery/components" element={<ComponentsGallery />} />
+          <Route
+            path="/gallery/dashboards"
+            element={
+              <OnlineOnly>
+                <DashboardsGallery />
+              </OnlineOnly>
+            }
+          />
           <Route path="/gallery" element={<Navigate to="/gallery/components" replace />} />
           <Route path="/gallery/*" element={<Navigate to="/gallery/components" replace />} />
           <Route path="/callback" element={<Callback />} />

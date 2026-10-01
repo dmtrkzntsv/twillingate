@@ -1,4 +1,6 @@
-import { ChartColumnIcon, LayoutDashboardIcon, LogOutIcon, ShapesIcon } from 'lucide-react'
+import { DndContext, closestCenter } from '@dnd-kit/core'
+import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
+import { ArchiveIcon, ChartColumnIcon, LayoutDashboardIcon, LayoutGridIcon, LogOutIcon, ShapesIcon } from 'lucide-react'
 import { Link, useLocation } from 'react-router'
 import {
   Sidebar,
@@ -14,44 +16,66 @@ import {
   SidebarRail,
   useSidebar,
 } from '@/components/ui/sidebar'
+import { useDashboardActions } from '@/hooks/use-dashboard-actions'
+import { useReorder } from '@/hooks/use-reorder'
+import { liveGroups, moveGroupBody, type Group } from '@/lib/arrange'
 import type { DashboardInfo } from '@/lib/api'
 import { currentAuthState, logout } from '@/lib/auth'
 import IcebergLogo from './IcebergLogo'
+import SidebarGroupMenu from './SidebarGroupMenu'
+import SortableGroupItem from './SortableGroupItem'
 
 interface Props {
   /** Every dashboard, in sidebar order: system ones, then the user's. */
   dashboards: DashboardInfo[]
   currentId: number
+  /** Reporting dev, which takes no writes: no "…" menus and no dragging. */
+  readOnly?: boolean
 }
 
 /**
  * One entry per dashboard group (tabs D20): system groups first, then
- * "Yours" (the user's), and Gallery (the components playground). Each
- * entry links to its group's first live member and is named by its
- * title; it is active on any live member of the group. Icons only at
- * 640–1023px, a drawer on phones (D37).
+ * "Yours" (the user's), Archive (every archived dashboard, user or
+ * system, D17a), and Gallery (the components playground and the
+ * templates gallery, D17). Each entry links to its group's first live
+ * member and is named by its title; it is active on any live member of
+ * the group. "Yours" entries drag to a new order (D14, D15); system
+ * entries do not, and since the sortable list holds only user groups,
+ * nothing drops above them. Icons only at 640–1023px, a drawer on phones
+ * (D37).
  * Log out shows only when the app holds a credential: reporting dev's
  * open mode has none to forget.
  */
-export default function AppSidebar({ dashboards, currentId }: Props) {
+export default function AppSidebar({ dashboards, currentId, readOnly = false }: Props) {
   const { isMobile, setOpenMobile } = useSidebar()
   const { pathname } = useLocation()
-  const live = dashboards.filter((d) => !d.archived_at)
-  const groupOf = new Map(live.map((d) => [d.dashboard_id, d.group_id]))
-  // One row per group_id, kept in list order (system before user, and
-  // groups always adjacent), first live member named and linked.
-  const seen = new Set<number>()
-  const groups = live.filter((d) => {
-    if (seen.has(d.group_id)) return false
-    seen.add(d.group_id)
-    return true
-  })
-  const system = groups.filter((d) => d.owner === 'system')
-  const yours = groups.filter((d) => d.owner === 'user')
-  const isActive = (d: DashboardInfo) => groupOf.get(currentId) === d.group_id
+  const groups = liveGroups(dashboards)
+  const system = groups.filter((g) => g.owner === 'system')
+  const serverYours = groups.filter((g) => g.owner === 'user')
+  const { move } = useDashboardActions()
+  const { order, busy, context } = useReorder(
+    serverYours.map((g) => g.groupId),
+    // `busy` keeps a second drag off until the first's order is in the
+    // props, so `to` and `serverYours` agree.
+    async (groupId, to) => {
+      const body = moveGroupBody(serverYours, groupId, to)
+      const group = serverYours.find((g) => g.groupId === groupId)
+      return body && group ? move(group.members[0].dashboard_id, body) : false
+    },
+    'y',
+    (id) => serverYours.find((g) => g.groupId === id)?.members[0].title ?? String(id)
+  )
+  const yours = order.map((id) => serverYours.find((g) => g.groupId === id)!)
+  const isActive = (g: Group) => g.members.some((m) => m.dashboard_id === currentId)
   const close = () => {
     if (isMobile) setOpenMobile(false)
   }
+  const yourLink = (g: Group) => (
+    <Link to={`/dashboards/${g.members[0].dashboard_id}`} onClick={close}>
+      <LayoutDashboardIcon />
+      <span>{g.members[0].title}</span>
+    </Link>
+  )
 
   return (
     <Sidebar collapsible="icon">
@@ -74,14 +98,15 @@ export default function AppSidebar({ dashboards, currentId }: Props) {
           <SidebarGroup>
             <SidebarGroupContent>
               <SidebarMenu>
-                {system.map((d) => (
-                  <SidebarMenuItem key={d.group_id}>
-                    <SidebarMenuButton asChild isActive={isActive(d)} tooltip={d.title} className={item}>
-                      <Link to={`/dashboards/${d.dashboard_id}`} onClick={close}>
+                {system.map((g) => (
+                  <SidebarMenuItem key={g.groupId}>
+                    <SidebarMenuButton asChild isActive={isActive(g)} tooltip={g.members[0].title} className={item}>
+                      <Link to={`/dashboards/${g.members[0].dashboard_id}`} onClick={close}>
                         <ChartColumnIcon />
-                        <span>{d.title}</span>
+                        <span>{g.members[0].title}</span>
                       </Link>
                     </SidebarMenuButton>
+                    {!readOnly && <SidebarGroupMenu group={g} userGroups={yours} currentId={currentId} />}
                   </SidebarMenuItem>
                 ))}
               </SidebarMenu>
@@ -91,23 +116,55 @@ export default function AppSidebar({ dashboards, currentId }: Props) {
         <SidebarGroup>
           <SidebarGroupLabel className="text-sidebar-foreground/60">Yours</SidebarGroupLabel>
           <SidebarGroupContent>
-            <SidebarMenu>
-              {yours.map((d) => (
-                <SidebarMenuItem key={d.group_id}>
-                  <SidebarMenuButton asChild isActive={isActive(d)} tooltip={d.title} className={item}>
-                    <Link to={`/dashboards/${d.dashboard_id}`} onClick={close}>
-                      <LayoutDashboardIcon />
-                      <span>{d.title}</span>
-                    </Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
+            {readOnly ? (
+              <SidebarMenu>
+                {yours.map((g) => (
+                  <SidebarMenuItem key={g.groupId}>
+                    <SidebarMenuButton asChild isActive={isActive(g)} tooltip={g.members[0].title} className={item}>
+                      {yourLink(g)}
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ))}
+              </SidebarMenu>
+            ) : (
+              <DndContext collisionDetection={closestCenter} {...context}>
+                <SortableContext items={order} strategy={verticalListSortingStrategy}>
+                  <SidebarMenu>
+                    {yours.map((g) => (
+                      <SortableGroupItem
+                        key={g.groupId}
+                        groupId={g.groupId}
+                        title={g.members[0].title}
+                        isActive={isActive(g)}
+                        className={item}
+                        disabled={busy}
+                        link={yourLink(g)}
+                        menu={<SidebarGroupMenu group={g} userGroups={yours} currentId={currentId} />}
+                      />
+                    ))}
+                  </SidebarMenu>
+                </SortableContext>
+              </DndContext>
+            )}
             {yours.length === 0 && (
               <p className="px-2 py-1 text-xs text-sidebar-foreground/55 group-data-[collapsible=icon]:hidden">
                 None yet. Ask your agent to make one.
               </p>
             )}
+          </SidebarGroupContent>
+        </SidebarGroup>
+        <SidebarGroup>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild isActive={pathname === '/archive'} tooltip="Archive" className={item}>
+                  <Link to="/archive" onClick={close}>
+                    <ArchiveIcon />
+                    <span>Archive</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
         <SidebarGroup>
@@ -124,6 +181,19 @@ export default function AppSidebar({ dashboards, currentId }: Props) {
                   <Link to="/gallery/components" onClick={close}>
                     <ShapesIcon />
                     <span>Components</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  asChild
+                  isActive={pathname.startsWith('/gallery/dashboards')}
+                  tooltip="Templates"
+                  className={item}
+                >
+                  <Link to="/gallery/dashboards" onClick={close}>
+                    <LayoutGridIcon />
+                    <span>Templates</span>
                   </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>
