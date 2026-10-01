@@ -359,10 +359,12 @@ func (s *Service) duplicateOne(ctx context.Context, actor string, src store.Dash
 // always the group's first (that one is always titled "… (copy)").
 //
 // The membership read and the archive list are computed inside
-// placeDashboards' closure, alongside the placement read, so a
-// concurrent archive or restore between an outer read and this write
-// cannot leave either stale: retryConflict reruns the whole closure,
-// membership included, not just the sort-key maths.
+// placeDashboards' closure, alongside the placement read, so every
+// placement attempt (retryConflict's rerun included) reads the group
+// afresh rather than reusing an outer read. A bare archive or restore
+// takes no placeMu and raises no sort-key conflict, so one racing the
+// copy is not serialised with it: the copy follows the membership as
+// its last attempt read it.
 func (s *Service) duplicateGroup(ctx context.Context, actor string, src store.Dashboard, archive bool) (DashboardDetail, error) {
 	system := src.Owner == store.OwnerSystem
 	var ids []int64

@@ -163,8 +163,9 @@ guards as `query`: read-only, `API_QUERY_TIMEOUT` and `API_QUERY_MAX_ROWS`.
   the `after` you want and archive the original. Names are unique on a
   dashboard, archived widgets included.
 - Markdown renders without raw HTML.
-- Undo is archiving. Archived dashboards and widgets are deleted
-  `RETENTION_ARCHIVED_DAYS` after archiving (default 30).
+- Undo is archiving. Archived user dashboards and widgets are deleted
+  `RETENTION_ARCHIVED_DAYS` after archiving (default 30); an archived system
+  group is never purged.
 
 ## Tools
 
@@ -643,8 +644,11 @@ Archiving is how to undo, and the only way to remove anything:
   every archived member of its group, including one archived on its own,
   earlier, before the rest.
 - `list_dashboards` and `list_widgets` include archived items with their
-  `archived_at`, so you can find one to restore; `get_dashboard` and the page
-  show live ones only.
+  `archived_at`, so you can find one to restore. `get_dashboard` still opens
+  an archived dashboard, with only its live widgets and its group's live
+  tabs. The page's sidebar shows live dashboards only; one opened by its URL
+  says "Archived: not in the sidebar" and offers Restore, and the dashboard
+  gallery (`/app/gallery/dashboards`) lists every archived one.
 - A system group is archived and restored whole (`whole_group`) and is never
   purged; system widgets cannot be archived.
 
