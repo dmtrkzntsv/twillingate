@@ -68,16 +68,15 @@ describe('SidebarGroupMenu, system group', () => {
     const items = screen.getAllByRole('menuitem')
     expect(items).toHaveLength(2)
     expect(screen.getByText('Duplicate')).toBeInTheDocument()
-    expect(screen.getByText('Your copy replaces it in the sidebar')).toBeInTheDocument()
     expect(screen.getByText('Archive')).toBeInTheDocument()
   })
 
-  it('duplicate calls duplicate(first, {}), letting the server default apply', async () => {
+  it('duplicate calls duplicate(first, { wholeGroup: true }), copying every tab', async () => {
     renderMenu(systemGroup, 99)
     await userEvent.click(screen.getByRole('button', { name: 'Views actions' }))
     await userEvent.click(screen.getByText('Duplicate'))
 
-    expect(duplicate).toHaveBeenCalledWith(systemGroup.members[0], {})
+    expect(duplicate).toHaveBeenCalledWith(systemGroup.members[0], { wholeGroup: true })
   })
 
   it('archive while viewing one of its tabs navigates to /', async () => {

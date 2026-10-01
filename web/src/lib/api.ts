@@ -180,8 +180,8 @@ export const endpoints = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(sel),
     }),
-  /** Copies a dashboard, or its whole group (tabs D10-D11; D6-D9). */
-  duplicate: (id: number, body: { whole_group?: boolean; archive_source?: boolean } = {}) =>
+  /** Copies a dashboard, or its whole group (tabs D10-D11); never archives anything. */
+  duplicate: (id: number, body: { whole_group?: boolean } = {}) =>
     api<DashboardDetail>(`/api/dashboards/${id}/duplicate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

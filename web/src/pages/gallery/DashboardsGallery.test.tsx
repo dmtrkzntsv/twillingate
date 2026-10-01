@@ -103,7 +103,7 @@ describe('DashboardsGallery, System section', () => {
     expect(product).toHaveAttribute('href', '/dashboards/2')
   })
 
-  it('"Copy as a dashboard" calls duplicate(tab, {archiveSource: false})', async () => {
+  it('"Copy as a dashboard" calls duplicate(tab), archiving nothing', async () => {
     mockApi()
     renderGallery()
     await screen.findByRole('link', { name: 'Product' })
@@ -111,7 +111,7 @@ describe('DashboardsGallery, System section', () => {
     const row = screen.getByRole('link', { name: 'Product' }).closest('li')!
     await userEvent.click(within(row).getByRole('button', { name: 'Copy as a dashboard' }))
 
-    expect(duplicate).toHaveBeenCalledWith(dashboards[1], { archiveSource: false })
+    expect(duplicate).toHaveBeenCalledWith(dashboards[1])
   })
 
   it('shows Archive for a group with a live member even when its literal first is archived', async () => {

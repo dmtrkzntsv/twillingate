@@ -21,10 +21,10 @@ interface Props {
 /**
  * The sidebar entry's "…" menu (D10), acting on the whole group named by
  * its first live member: Duplicate and Archive on both kinds, Move up and
- * Move down added for a user group. A system group's Duplicate carries
- * the "replaces it" hint because the server's default `archive_source`
- * copies the group and archives the original (duplicating-a-system-group
- * design); its Archive always passes `wholeGroup`, since a system
+ * Move down added for a user group. Duplicate always copies the whole
+ * group (`wholeGroup`) and never archives anything — to replace a system
+ * group in the sidebar, Duplicate it, then Archive the original. A
+ * system group's Archive always passes `wholeGroup`, since a system
  * dashboard refuses to archive alone.
  * `showOnHover` keeps the trigger out of the way until hovered on
  * desktop; the sidebar shows it unconditionally on phones.
@@ -56,32 +56,16 @@ export default function SidebarGroupMenu({ group, userGroups, currentId }: Props
         </SidebarMenuAction>
       </DropdownMenuTrigger>
       <DropdownMenuContent side="right" align="start">
-        {group.owner === 'system' ? (
-          <DropdownMenuItem
-            disabled={pending}
-            onClick={() => {
-              close()
-              void duplicate(first, {})
-            }}
-          >
-            <CopyIcon />
-            <div className="flex flex-col">
-              <span>Duplicate</span>
-              <span className="text-xs text-muted-foreground">Your copy replaces it in the sidebar</span>
-            </div>
-          </DropdownMenuItem>
-        ) : (
-          <DropdownMenuItem
-            disabled={pending}
-            onClick={() => {
-              close()
-              void duplicate(first, { wholeGroup: true })
-            }}
-          >
-            <CopyIcon />
-            Duplicate
-          </DropdownMenuItem>
-        )}
+        <DropdownMenuItem
+          disabled={pending}
+          onClick={() => {
+            close()
+            void duplicate(first, { wholeGroup: true })
+          }}
+        >
+          <CopyIcon />
+          Duplicate
+        </DropdownMenuItem>
         <DropdownMenuItem
           disabled={pending}
           onClick={() => {

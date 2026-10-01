@@ -113,7 +113,7 @@ export default function DashboardsGallery() {
                           variant="ghost"
                           size="sm"
                           disabled={pending}
-                          onClick={() => void duplicate(tab, { archiveSource: false })}
+                          onClick={() => void duplicate(tab)}
                         >
                           Copy as a dashboard
                         </Button>

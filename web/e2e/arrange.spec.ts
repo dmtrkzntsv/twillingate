@@ -106,7 +106,7 @@ test.afterEach(async ({ request }) => {
   }
 })
 
-test('replaces Reports from the sidebar, then restores it from the gallery', async ({ page, request }) => {
+test('duplicates Views from the sidebar without archiving it, then archives and restores it', async ({ page, request }) => {
   const before = await dashboardIds(request)
   const viewsId = before.get('Views')
   expect(viewsId, 'no dashboard titled Views').toBeDefined()
@@ -125,9 +125,17 @@ test('replaces Reports from the sidebar, then restores it from the gallery', asy
   expect(copyId).not.toBe(viewsId)
   toArchive.push({ id: copyId, wholeGroup: true })
 
+  // Duplicating is only a copy: Views is still in the sidebar alongside it.
   await expect(page.getByRole('tab')).toHaveCount(5)
-  await expect(page.getByRole('link', { name: 'Views', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('link', { name: 'Views', exact: true })).toHaveCount(1)
   await expect(page.getByRole('link', { name: 'Views (copy)', exact: true })).toHaveCount(1)
+
+  // Replacing it is a second, explicit step: archive the original.
+  await page.getByRole('link', { name: 'Views', exact: true }).hover()
+  await page.getByRole('button', { name: 'Views actions' }).click()
+  await page.getByRole('menuitem', { name: 'Archive' }).click()
+
+  await expect(page.getByRole('link', { name: 'Views', exact: true })).toHaveCount(0)
 
   await page.goto('/app/gallery/dashboards')
   await page.waitForLoadState('networkidle')
