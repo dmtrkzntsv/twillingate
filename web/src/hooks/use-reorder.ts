@@ -4,9 +4,11 @@ import {
   PointerSensor,
   useSensor,
   useSensors,
+  type Announcements,
   type DndContextProps,
   type DragEndEvent,
   type Modifier,
+  type UniqueIdentifier,
 } from '@dnd-kit/core'
 import { arrayMove, sortableKeyboardCoordinates } from '@dnd-kit/sortable'
 import { reorder } from '@/lib/arrange'
@@ -17,7 +19,7 @@ export interface Reorder {
   /** True while a dropped order waits for the server's; dragging is off until then. */
   busy: boolean
   /** Props for the `DndContext` around the sortable items. */
-  context: Pick<DndContextProps, 'sensors' | 'modifiers' | 'onDragStart' | 'onDragEnd' | 'onDragCancel'>
+  context: Pick<DndContextProps, 'sensors' | 'modifiers' | 'accessibility' | 'onDragStart' | 'onDragEnd' | 'onDragCancel'>
 }
 
 /**
@@ -33,8 +35,14 @@ export interface Reorder {
  * back at once rather than waiting for a refetch that returns the same
  * list. While a dropped order shows, `busy` turns dragging off, so the
  * next drop's `to` is always against the order the server has.
+ * Screen readers hear the items by `titleOf`, not by id.
  */
-export function useReorder(ids: number[], onMove: (id: number, to: number) => Promise<boolean>, axis: 'x' | 'y'): Reorder {
+export function useReorder(
+  ids: number[],
+  onMove: (id: number, to: number) => Promise<boolean>,
+  axis: 'x' | 'y',
+  titleOf: (id: number) => string
+): Reorder {
   const key = ids.join(',')
   const [dropped, setDropped] = useState<{ key: string; order: number[] } | null>(null)
   // New props mean the server's order (or someone else's change) arrived:
@@ -54,9 +62,11 @@ export function useReorder(ids: number[], onMove: (id: number, to: number) => Pr
     const id = Number(active.id)
     const move = reorder(ids, id, Number(over.id))
     if (!move) return
-    setDropped({ key, order: arrayMove(ids, ids.indexOf(id), move.to) })
+    const mine = { key, order: arrayMove(ids, ids.indexOf(id), move.to) }
+    setDropped(mine)
+    // A late refusal clears only its own drop, never a newer one.
     void onMove(id, move.to).then((ok) => {
-      if (!ok) setDropped(null)
+      if (!ok) setDropped((d) => (d === mine ? null : d))
     })
   }
 
@@ -66,10 +76,25 @@ export function useReorder(ids: number[], onMove: (id: number, to: number) => Pr
     context: {
       sensors,
       modifiers: [axis === 'x' ? alongX : alongY],
+      accessibility: { announcements: announcements(titleOf, ids) },
       onDragStart: swallowClicks,
       onDragEnd,
       onDragCancel: releaseClicksSoon,
     },
+  }
+}
+
+/** What a screen reader hears during a drag of `order`: titles and positions rather than ids (D14). */
+export function announcements(titleOf: (id: number) => string, order: number[]): Announcements {
+  const title = (id: UniqueIdentifier) => titleOf(Number(id))
+  const at = (id: UniqueIdentifier) => `position ${order.indexOf(Number(id)) + 1} of ${order.length}`
+  return {
+    onDragStart: ({ active }) => `Picked up ${title(active.id)}, ${at(active.id)}.`,
+    onDragOver: ({ active, over }) =>
+      over ? `${title(active.id)} moved to ${at(over.id)}.` : `${title(active.id)} is outside the list.`,
+    onDragEnd: ({ active, over }) =>
+      over ? `${title(active.id)} dropped at ${at(over.id)}.` : `${title(active.id)} dropped where it was.`,
+    onDragCancel: ({ active }) => `Moving ${title(active.id)} was cancelled.`,
   }
 }
 
@@ -88,14 +113,21 @@ function swallow(e: MouseEvent) {
   e.stopPropagation()
 }
 
+let releasing: ReturnType<typeof setTimeout> | undefined
+
 function swallowClicks() {
+  clearTimeout(releasing)
   window.addEventListener('click', swallow, true)
 }
 
+// Also the unmount cleanup, which cancels a pending release so no timer
+// outlives the list.
 function releaseClicks() {
+  clearTimeout(releasing)
   window.removeEventListener('click', swallow, true)
 }
 
 function releaseClicksSoon() {
-  setTimeout(releaseClicks, 50)
+  clearTimeout(releasing)
+  releasing = setTimeout(releaseClicks, 50)
 }

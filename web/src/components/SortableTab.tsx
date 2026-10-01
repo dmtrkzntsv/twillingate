@@ -8,6 +8,12 @@ interface Props {
   id: number
   title: string
   className: string
+  /**
+   * False while the page may not move tabs (frozen on a dashboard being
+   * left): the tab stays in the same tree, so focus survives, but it
+   * neither drags nor says it is sortable.
+   */
+  movable: boolean
   /** True while a dropped order waits for the server's. */
   disabled: boolean
   onSelect: (id: number) => void
@@ -24,10 +30,15 @@ interface Props {
  * cancelled and a click selects instead, which a drag's closing click
  * never reaches. Enter selects through Radix as before; Space picks the
  * tab up (`useReorder`). The click a key press sends after it is skipped,
- * so a keyboard selection does not select twice.
+ * so a keyboard selection does not select twice; the flag clears just
+ * after the key comes up, so a screen reader's later click still selects.
+ * A modified click (Ctrl, Cmd, Shift, Alt) selects nothing, as in Radix.
  */
-export default function SortableTab({ id, title, className, disabled, onSelect }: Props) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id, disabled })
+export default function SortableTab({ id, title, className, movable, disabled, onSelect }: Props) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id,
+    disabled: disabled || !movable,
+  })
   const keyed = useRef(false)
 
   const onKeyDown = (e: KeyboardEvent<HTMLButtonElement>) => {
@@ -37,11 +48,17 @@ export default function SortableTab({ id, title, className, disabled, onSelect }
     // and Enter drops it rather than selecting: keep Radix out.
     if (isDragging) e.preventDefault()
   }
+  // Space clicks on key up, Enter on key down: both clicks come before
+  // this deferred reset runs.
+  const onKeyUp = () => {
+    setTimeout(() => (keyed.current = false))
+  }
   const onClick = (e: MouseEvent<HTMLButtonElement>) => {
     if (keyed.current) {
       keyed.current = false
       return
     }
+    if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return
     e.currentTarget.focus()
     onSelect(id)
   }
@@ -50,14 +67,15 @@ export default function SortableTab({ id, title, className, disabled, onSelect }
     <TabsTrigger
       ref={setNodeRef}
       value={String(id)}
-      aria-roledescription={attributes['aria-roledescription']}
-      aria-describedby={attributes['aria-describedby']}
+      aria-roledescription={movable ? attributes['aria-roledescription'] : undefined}
+      aria-describedby={movable ? attributes['aria-describedby'] : undefined}
       onPointerDown={(e) => {
         keyed.current = false
         listeners?.onPointerDown?.(e)
       }}
       onMouseDown={(e) => e.preventDefault()}
       onKeyDown={onKeyDown}
+      onKeyUp={onKeyUp}
       onClick={onClick}
       style={{ transform: CSS.Translate.toString(transform), transition }}
       className={cn(className, isDragging && 'z-10')}

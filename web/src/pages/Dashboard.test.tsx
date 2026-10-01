@@ -120,6 +120,23 @@ describe('Dashboard', () => {
     for (const tab of await screen.findAllByRole('tab')) expect(tab).not.toHaveAttribute('aria-roledescription')
   })
 
+  it('keeps focus on the user tab chosen with Enter while its dashboard loads', async () => {
+    mockApi()
+    vi.mocked(endpoints.dashboard).mockImplementation(async (id) => (id === 14 ? new Promise(() => {}) : details[id]))
+    renderAt('/dashboards/13')
+
+    const funnel = await screen.findByRole('tab', { name: 'Funnel' })
+    funnel.focus()
+    await userEvent.keyboard('{Enter}')
+    await waitFor(() => expect(location()).toMatch(/^\/dashboards\/14\b/))
+    await act(async () => {})
+
+    // Marketing is frozen on screen; the tab list was not rebuilt under the focus.
+    expect(screen.getByRole('heading', { level: 1, name: 'Marketing' })).toBeInTheDocument()
+    expect(document.activeElement).toHaveAttribute('role', 'tab')
+    expect(document.activeElement).toHaveTextContent('Funnel')
+  })
+
   it('writes nothing on the dashboard being left: no header menu, no sortable tabs', async () => {
     mockApi()
     vi.mocked(endpoints.dashboard).mockImplementation(async (id) =>

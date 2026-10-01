@@ -71,7 +71,10 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
   const { move } = useDashboardActions()
   // Only a live user dashboard's group is arranged from the page (D11,
   // D14), and never while frozen: the dashboard on screen is being left.
-  const arrangeable = dashboard.owner === 'user' && !dashboard.archived_at && !frozen
+  // Its tabs stay sortable while frozen, only without moves, so the tab
+  // list is not rebuilt under the focus of the tab just chosen.
+  const userGroup = dashboard.owner === 'user' && !dashboard.archived_at
+  const arrangeable = userGroup && !frozen
   const moveTab = async (id: number, to: number) => {
     const body = moveTabBody(dashboard.tabs, id, dashboard.group_id, to)
     return body ? move(id, body) : false
@@ -92,6 +95,7 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
             tabs={dashboard.tabs}
             currentId={dashboard.dashboard_id}
             onSelect={openTab}
+            sortable={userGroup}
             onMove={arrangeable ? moveTab : undefined}
           />
         ) : dashboard.owner === 'user' ? (

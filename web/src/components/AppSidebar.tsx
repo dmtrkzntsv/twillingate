@@ -58,7 +58,8 @@ export default function AppSidebar({ dashboards, currentId }: Props) {
       const group = serverYours.find((g) => g.groupId === groupId)
       return body && group ? move(group.members[0].dashboard_id, body) : false
     },
-    'y'
+    'y',
+    (id) => serverYours.find((g) => g.groupId === id)?.members[0].title ?? String(id)
   )
   const yours = order.map((id) => serverYours.find((g) => g.groupId === id)!)
   const isActive = (g: Group) => g.members.some((m) => m.dashboard_id === currentId)
