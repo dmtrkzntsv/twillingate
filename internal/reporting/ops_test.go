@@ -1773,6 +1773,26 @@ func TestArchiveRestoreSystemGroup(t *testing.T) {
 	if !errors.Is(err, store.ErrInvalid) {
 		t.Errorf("update on a system dashboard: err = %v, want ErrInvalid", err)
 	}
+
+	// D5: one audit row per member each way, the refusals writing none.
+	res, err := svc.db.Run(ctx,
+		`SELECT actor, action, subject FROM audit_log WHERE action LIKE 'dashboard.%' ORDER BY rowid`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, r := range res.Rows {
+		got = append(got, strings.Join(r, " "))
+	}
+	var want []string
+	for _, action := range []string{"dashboard.archive", "dashboard.restore"} {
+		for id := 10; id <= 14; id++ {
+			want = append(want, fmt.Sprintf("test %s dashboard/%d", action, id))
+		}
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("audit =\n%v\nwant\n%v", got, want)
+	}
 }
 
 // D17, review focus 5: list_dashboards says how long an archived user

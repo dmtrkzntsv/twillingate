@@ -40,8 +40,8 @@ describe('App', () => {
       'fetch',
       vi.fn().mockResolvedValue(
         dashboardsResponse([
-          { dashboard_id: 1, title: 'Views', owner: 'system', widgets: 1 },
-          { dashboard_id: 2, title: 'Mine', owner: 'user', widgets: 1 },
+          { dashboard_id: 1, title: 'Views', owner: 'system', group_id: 1, widgets: 1 },
+          { dashboard_id: 2, title: 'Mine', owner: 'user', group_id: 2, widgets: 1 },
         ])
       )
     )
@@ -57,8 +57,8 @@ describe('App', () => {
       'fetch',
       vi.fn().mockResolvedValue(
         dashboardsResponse([
-          { dashboard_id: 9, title: 'Mine', owner: 'user', widgets: 1 },
-          { dashboard_id: 3, title: 'Views', owner: 'system', widgets: 1 },
+          { dashboard_id: 9, title: 'Mine', owner: 'user', group_id: 9, widgets: 1 },
+          { dashboard_id: 3, title: 'Views', owner: 'system', group_id: 3, widgets: 1 },
         ])
       )
     )
@@ -75,9 +75,9 @@ describe('App', () => {
       'fetch',
       vi.fn().mockResolvedValue(
         dashboardsResponse([
-          { dashboard_id: 1, title: 'Old views', owner: 'system', widgets: 1, archived_at: '2026-09-01T00:00:00Z' },
-          { dashboard_id: 2, title: 'Mine', owner: 'user', widgets: 1, archived_at: '2026-09-01T00:00:00Z' },
-          { dashboard_id: 4, title: 'Views', owner: 'system', widgets: 1 },
+          { dashboard_id: 1, title: 'Old views', owner: 'system', group_id: 1, widgets: 1, archived_at: '2026-09-01T00:00:00Z' },
+          { dashboard_id: 2, title: 'Mine', owner: 'user', group_id: 2, widgets: 1, archived_at: '2026-09-01T00:00:00Z' },
+          { dashboard_id: 4, title: 'Views', owner: 'system', group_id: 4, widgets: 1 },
         ])
       )
     )
@@ -122,7 +122,7 @@ describe('App', () => {
     const fetch = vi
       .fn()
       .mockResolvedValueOnce(json({ error: { code: 'internal', message: 'database is locked' } }, 500))
-      .mockResolvedValue(dashboardsResponse([{ dashboard_id: 3, title: 'Views', owner: 'system', widgets: 1 }]))
+      .mockResolvedValue(dashboardsResponse([{ dashboard_id: 3, title: 'Views', owner: 'system', group_id: 3, widgets: 1 }]))
     vi.stubGlobal('fetch', fetch)
     window.history.pushState({}, '', '/app/')
 
