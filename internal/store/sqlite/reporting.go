@@ -139,11 +139,14 @@ func (d *DB) GetWidget(ctx context.Context, id int64) (store.Widget, error) {
 	return w, err
 }
 
-// InsertDashboard inserts a dashboard and its widgets in one transaction,
-// the widgets getting DashboardID set from the id the dashboard gets. a's
+// InsertDashboard inserts a dashboard and its widgets, then archives
+// archive (live rows only; spec 2026-09-30 D6), all in one transaction.
+// The widgets get DashboardID set from the id the dashboard gets. a's
 // Subject becomes "dashboard/<id>"; the widgets carry no audit entries of
-// their own (InsertWidget is what audits a widget added later).
-func (d *DB) InsertDashboard(ctx context.Context, dash store.Dashboard, ws []store.Widget, a store.AuditEntry) (int64, error) {
+// their own (InsertWidget is what audits a widget added later). An
+// unknown id in archive fails the whole transaction (ErrNotFound): the
+// insert and the archive are one unit, nothing or everything.
+func (d *DB) InsertDashboard(ctx context.Context, dash store.Dashboard, ws []store.Widget, archive []int64, a store.AuditEntry) (int64, error) {
 	var id int64
 	err := d.tx(ctx, func(tx *sql.Tx) error {
 		var err error
@@ -153,6 +156,12 @@ func (d *DB) InsertDashboard(ctx context.Context, dash store.Dashboard, ws []sto
 		for _, w := range ws {
 			w.DashboardID = id
 			if _, err := insertWidgetRow(ctx, tx, w); err != nil {
+				return err
+			}
+		}
+		if len(archive) > 0 {
+			if err := archiveRows(ctx, tx, archive, true,
+				store.AuditEntry{Actor: a.Actor, Action: "dashboard.archive"}); err != nil {
 				return err
 			}
 		}
@@ -262,50 +271,58 @@ func (d *DB) SetDashboardsArchived(ctx context.Context, ids []int64, archived bo
 	if len(ids) == 0 {
 		return nil
 	}
-	return d.tx(ctx, func(tx *sql.Tx) error {
-		rows, err := tx.QueryContext(ctx,
-			`SELECT id FROM dashboards WHERE id IN (`+placeholders(len(ids))+`)`, toArgs(ids)...)
-		if err != nil {
-			return err
-		}
-		exists := map[int64]bool{}
-		for rows.Next() {
-			var id int64
-			if err := rows.Scan(&id); err != nil {
-				rows.Close()
-				return err
-			}
-			exists[id] = true
-		}
-		if err := rows.Err(); err != nil {
+	return d.tx(ctx, func(tx *sql.Tx) error { return archiveRows(ctx, tx, ids, archived, a) })
+}
+
+// archiveRows is SetDashboardsArchived's transaction body, shared with
+// InsertDashboard and InsertDashboardGroup so a duplicated system group
+// can archive the dashboards it replaces in the same transaction as the
+// insert (spec 2026-09-30 D6). Every id must exist first — checked up
+// front, against the whole list, so an unknown id anywhere in ids leaves
+// every row untouched (ErrNotFound) rather than archiving a prefix.
+func archiveRows(ctx context.Context, tx *sql.Tx, ids []int64, archived bool, a store.AuditEntry) error {
+	rows, err := tx.QueryContext(ctx,
+		`SELECT id FROM dashboards WHERE id IN (`+placeholders(len(ids))+`)`, toArgs(ids)...)
+	if err != nil {
+		return err
+	}
+	exists := map[int64]bool{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
 			rows.Close()
 			return err
 		}
+		exists[id] = true
+	}
+	if err := rows.Err(); err != nil {
 		rows.Close()
-		for _, id := range ids {
-			if !exists[id] {
-				return store.Refuse(store.ErrNotFound, "dashboard %d: not found", id)
-			}
+		return err
+	}
+	rows.Close()
+	for _, id := range ids {
+		if !exists[id] {
+			return store.Refuse(store.ErrNotFound, "dashboard %d: not found", id)
 		}
+	}
 
-		q := `UPDATE dashboards SET archived_at=strftime('%Y-%m-%dT%H:%M:%SZ','now'),
-			updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=? AND archived_at IS NULL`
-		if !archived {
-			q = `UPDATE dashboards SET archived_at=NULL,
-				updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=?`
+	q := `UPDATE dashboards SET archived_at=strftime('%Y-%m-%dT%H:%M:%SZ','now'),
+		updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=? AND archived_at IS NULL`
+	if !archived {
+		q = `UPDATE dashboards SET archived_at=NULL,
+			updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=?`
+	}
+	for _, id := range ids {
+		if _, err := tx.ExecContext(ctx, q, id); err != nil {
+			return err
 		}
-		for _, id := range ids {
-			if _, err := tx.ExecContext(ctx, q, id); err != nil {
-				return err
-			}
-			entry := a
-			entry.Subject = fmt.Sprintf("dashboard/%d", id)
-			if err := audit(ctx, tx, entry); err != nil {
-				return err
-			}
+		entry := a
+		entry.Subject = fmt.Sprintf("dashboard/%d", id)
+		if err := audit(ctx, tx, entry); err != nil {
+			return err
 		}
-		return nil
-	})
+	}
+	return nil
 }
 
 // MoveDashboards rewrites group_id and sort_key of every row named in ks,
@@ -350,9 +367,10 @@ func (d *DB) MoveDashboards(ctx context.Context, ks []store.DashboardKey, a stor
 // widgets: ws must be empty (no dashboard gets any widget) or the same
 // length as ds, one slice per dashboard in order — anything else would
 // either index out of range or silently drop a trailing dashboard's
-// widgets, so it is refused before the transaction opens. Returns the
-// new ids, in order.
-func (d *DB) InsertDashboardGroup(ctx context.Context, ds []store.Dashboard, ws [][]store.Widget, a store.AuditEntry) ([]int64, error) {
+// widgets, so it is refused before the transaction opens. Then archives
+// archive (live rows only; spec 2026-09-30 D6), in the same transaction.
+// Returns the new ids, in order.
+func (d *DB) InsertDashboardGroup(ctx context.Context, ds []store.Dashboard, ws [][]store.Widget, archive []int64, a store.AuditEntry) ([]int64, error) {
 	if len(ws) != 0 && len(ws) != len(ds) {
 		return nil, store.Refuse(store.ErrInvalid,
 			"insert dashboard group: %d widget slices for %d dashboards", len(ws), len(ds))
@@ -381,6 +399,12 @@ func (d *DB) InsertDashboardGroup(ctx context.Context, ds []store.Dashboard, ws 
 						return err
 					}
 				}
+			}
+		}
+		if len(archive) > 0 {
+			if err := archiveRows(ctx, tx, archive, true,
+				store.AuditEntry{Actor: a.Actor, Action: "dashboard.archive"}); err != nil {
+				return err
 			}
 		}
 		if len(ids) == 0 {

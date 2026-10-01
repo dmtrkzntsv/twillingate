@@ -21,7 +21,7 @@ import (
 
 // serverInstructions are sent on connect (MCP's initialize result): the
 // two guides are where an agent starts, whatever it came to do.
-const serverInstructions = "To integrate a site or app, call integration_guide. To build or change dashboards, call reporting_guide. System dashboards are read-only; duplicate one to customize it. If widgets broke after an update, read the release notes at https://github.com/dmtrkzntsv/twillingate/releases."
+const serverInstructions = "To integrate a site or app, call integration_guide. To build or change dashboards, call reporting_guide. To customize a system dashboard, duplicate it: the copy replaces its group in the sidebar. If widgets broke after an update, read the release notes at https://github.com/dmtrkzntsv/twillingate/releases."
 
 // guideSections are the parts of docs/reporting.md the guide carries.
 var guideSections = []string{"## Workflow", "## Rules"}

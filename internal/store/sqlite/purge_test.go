@@ -40,7 +40,7 @@ func createPurgeableDashboard(t *testing.T, db *DB, owner, sortKey string, ws []
 	t.Helper()
 	id, err := db.InsertDashboard(context.Background(),
 		store.Dashboard{Owner: owner, Title: "D " + sortKey, SortKey: sortKey}, ws,
-		store.AuditEntry{Actor: "agent", Action: "dashboard.create"})
+		nil, store.AuditEntry{Actor: "agent", Action: "dashboard.create"})
 	if err != nil {
 		t.Fatal(err)
 	}

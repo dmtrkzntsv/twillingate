@@ -391,7 +391,7 @@ func TestSyncReportingDroppedComponentNullsUserWidget(t *testing.T) {
 		store.Dashboard{Owner: store.OwnerUser, Title: "Mine", SortKey: "a"},
 		[]store.Widget{{Component: "chart", SortKey: "a", Width: 1, Height: 1,
 			Name: "w1", SourceType: "events", Source: "a"}},
-		store.AuditEntry{Actor: "agent", Action: "dashboard.create"})
+		nil, store.AuditEntry{Actor: "agent", Action: "dashboard.create"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -430,7 +430,7 @@ func TestSyncReportingComponentReappearingDoesNotRestoreWidgetLink(t *testing.T)
 		store.Dashboard{Owner: store.OwnerUser, Title: "Mine", SortKey: "a"},
 		[]store.Widget{{Component: "chart", SortKey: "a", Width: 1, Height: 1,
 			Name: "w1", SourceType: "events", Source: "a"}},
-		store.AuditEntry{Actor: "agent", Action: "dashboard.create"})
+		nil, store.AuditEntry{Actor: "agent", Action: "dashboard.create"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -498,7 +498,7 @@ func TestSyncReportingRefusesSystemIDOwnedByUserDashboard(t *testing.T) {
 	// 1-999 reservation is convention, not a constraint).
 	userID, err := db.InsertDashboard(ctx,
 		store.Dashboard{ID: 5, Owner: store.OwnerUser, Title: "Mine", SortKey: "a"},
-		nil, store.AuditEntry{Actor: "agent", Action: "dashboard.create"})
+		nil, nil, store.AuditEntry{Actor: "agent", Action: "dashboard.create"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -556,7 +556,7 @@ func TestSyncReportingUserDashboardsNeverTouched(t *testing.T) {
 	userID, err := db.InsertDashboard(ctx,
 		store.Dashboard{Owner: store.OwnerUser, Title: "Mine", SortKey: "a"},
 		[]store.Widget{{SortKey: "a", Width: 1, Height: 1, Name: "w1", SourceType: "events", Source: "a"}},
-		store.AuditEntry{Actor: "agent", Action: "dashboard.create"})
+		nil, store.AuditEntry{Actor: "agent", Action: "dashboard.create"})
 	if err != nil {
 		t.Fatal(err)
 	}

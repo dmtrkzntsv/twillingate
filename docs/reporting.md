@@ -128,8 +128,8 @@ guards as `query`: read-only, `API_QUERY_TIMEOUT` and `API_QUERY_MAX_ROWS`.
 5. **Write it.** `create_dashboard` with its widgets in order, or `add_widget`
    on an existing user dashboard with `after`, `width` and `height`.
    `create_dashboard` with `group_id` adds the dashboard as a tab of that
-   group. To change a system dashboard, `duplicate_dashboard` it and work on
-   the copy.
+   group. To change a system dashboard, `duplicate_dashboard` it: the copy
+   replaces its group in the sidebar; work on the copy.
 6. **Check it with `widget_data`** for a project and a range, as the page
    loads it: the envelope echoes what the widget followed, and a refusal says
    what to change.
@@ -178,7 +178,7 @@ guards as `query`: read-only, `API_QUERY_TIMEOUT` and `API_QUERY_MAX_ROWS`.
 | `widget_data` | `widget_id`, `project_id`, `from`, `to`, `fresh` | the envelope above |
 | `create_dashboard` | `title`, `range` (default `7d`), `group_id`, `after`, `widgets` | the new dashboard, as `get_dashboard` returns it; one invalid widget creates nothing |
 | `update_dashboard` | `dashboard_id`, `title`, `group_id`, `after` | the dashboard, as `list_dashboards` lists it |
-| `duplicate_dashboard` | `dashboard_id`, `whole_group` | a user copy with copies of the live widgets, titled "… (copy)"; works on system dashboards, refused on an archived one. Without `whole_group`, a user source's copy joins the source's group right after it, and a system source's copy starts a new group, last in the sidebar. `whole_group` copies every live member of the source's group, in tab order, as one new user group placed last: the first copy is titled "… (copy)", the rest keep their titles |
+| `duplicate_dashboard` | `dashboard_id`, `whole_group`, `archive_source` | a user copy with copies of its live widgets. A system dashboard's copy replaces it: by default its whole group is copied as a new dashboard last in the sidebar, with the same tabs, and the system group is archived (`restore_dashboard` `whole_group` brings it back). `archive_source` false copies just what was asked and archives nothing, also from an archived system dashboard. A user dashboard's copy joins its group as the next tab; an archived user dashboard is refused (restore it first). `whole_group` copies the group's live dashboards as a new dashboard with the same tabs; `archive_source` true then archives them |
 | `archive_dashboard` | `dashboard_id`, `whole_group` | hides it (`whole_group`: every live member of its group); see [Archiving and the purge](#archiving-and-the-purge) |
 | `restore_dashboard` | `dashboard_id`, `whole_group` | unhides it (`whole_group`: every archived member of its group) |
 | `add_widget` | `dashboard_id`, `component`, `source`, `title`, `name`, `props`, `width`, `height`, `after` | the widget |
@@ -214,7 +214,7 @@ audited.
 | `GET` | `/api/widgets/{widget_id}/data` | `widget_data` | query: `project_id`, `from`, `to`, `fresh` |
 | `POST` | `/api/dashboards` | `create_dashboard` | body: `title`, `range`, `group_id`, `after`, `widgets` → 201 |
 | `PATCH` | `/api/dashboards/{dashboard_id}` | `update_dashboard` | body: `title`, `group_id`, `after` |
-| `POST` | `/api/dashboards/{dashboard_id}/duplicate` | `duplicate_dashboard` | body: `whole_group` (optional) → 201 |
+| `POST` | `/api/dashboards/{dashboard_id}/duplicate` | `duplicate_dashboard` | optional body `{whole_group, archive_source}` → 201 |
 | `POST` | `/api/dashboards/{dashboard_id}/archive` | `archive_dashboard` | body: `whole_group` (optional) |
 | `POST` | `/api/dashboards/{dashboard_id}/restore` | `restore_dashboard` | body: `whole_group` (optional) |
 | `POST` | `/api/dashboards/{dashboard_id}/widgets` | `add_widget` | body: the widget, `after` → 201 |

@@ -204,7 +204,12 @@ type Store interface {
 	GetDashboard(ctx context.Context, id int64) (Dashboard, error)
 	ListWidgets(ctx context.Context, dashboardID int64) ([]Widget, error)
 	GetWidget(ctx context.Context, id int64) (Widget, error)
-	InsertDashboard(ctx context.Context, d Dashboard, ws []Widget, a AuditEntry) (int64, error)
+	// InsertDashboard inserts d and its widgets and archives the
+	// dashboards in archive (live ones only), all in one transaction
+	// (spec 2026-09-30 D6: a system dashboard's duplicate replaces its
+	// group). An unknown id in archive is ErrNotFound and nothing is
+	// written.
+	InsertDashboard(ctx context.Context, d Dashboard, ws []Widget, archive []int64, a AuditEntry) (int64, error)
 	UpdateDashboard(ctx context.Context, d Dashboard, a AuditEntry) error
 	SetDashboardView(ctx context.Context, d Dashboard) error
 	SetDashboardArchived(ctx context.Context, id int64, archived bool, a AuditEntry) error
@@ -214,9 +219,10 @@ type Store interface {
 	MoveDashboards(ctx context.Context, ks []DashboardKey, a AuditEntry) error
 	// InsertDashboardGroup inserts dashboards as one new group, in one
 	// transaction: the first gets group_id = its own id, the rest that
-	// id. ws[i] are dashboards[i]'s widgets. Returns the new ids in
-	// order.
-	InsertDashboardGroup(ctx context.Context, ds []Dashboard, ws [][]Widget, a AuditEntry) ([]int64, error)
+	// id. ws[i] are dashboards[i]'s widgets. Then archives the
+	// dashboards in archive (live ones only; D6), in the same
+	// transaction. Returns the new ids in order.
+	InsertDashboardGroup(ctx context.Context, ds []Dashboard, ws [][]Widget, archive []int64, a AuditEntry) ([]int64, error)
 	// SetDashboardsArchived archives (only rows currently live) or
 	// restores (only rows currently archived) ids in one transaction,
 	// one audit row per id. Unknown ids are ErrNotFound and nothing is

@@ -537,6 +537,22 @@ func TestDashboardGroupRouteBodies(t *testing.T) {
 	}
 }
 
+// TestDuplicateSystemDashboardRESTArchiveSourceFalse: archive_source
+// false on a system dashboard's duplicate route copies it without
+// touching the source (spec 2026-09-30 D6), the opposite of the route's
+// own default.
+func TestDuplicateSystemDashboardRESTArchiveSourceFalse(t *testing.T) {
+	h, cs := newTestHost(t)
+	r := newTestRegistrar(t, h)
+	rec := serveREST(t, r, "POST", "/api/dashboards/1/duplicate", `{"archive_source":false}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("duplicate archive_source false = %d %s", rec.Code, rec.Body.String())
+	}
+	if archivedAt := dashboardArchivedAt(t, cs); archivedAt[1] != "" {
+		t.Errorf("system dashboard 1 archived_at = %q, want live", archivedAt[1])
+	}
+}
+
 // TestViewRouteRefusals: each part is required when the dashboard has
 // that switcher and refused when it has none; presets are a closed list;
 // an unknown dashboard is a 404.
