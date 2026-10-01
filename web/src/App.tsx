@@ -6,6 +6,7 @@ import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { useOnline } from '@/hooks/use-online'
 import { currentAppPath, onUnauthorized } from '@/lib/auth'
+import Archive from '@/pages/Archive'
 import Callback from '@/pages/Callback'
 import Dashboard from '@/pages/Dashboard'
 import ComponentsGallery from '@/pages/gallery/ComponentsGallery'
@@ -59,6 +60,14 @@ function App() {
             element={
               <OnlineOnly>
                 <Dashboard />
+              </OnlineOnly>
+            }
+          />
+          <Route
+            path="/archive"
+            element={
+              <OnlineOnly>
+                <Archive />
               </OnlineOnly>
             }
           />

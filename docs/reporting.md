@@ -649,8 +649,11 @@ Archiving is how to undo, and the only way to remove anything:
   `archived_at`, so you can find one to restore. `get_dashboard` still opens
   an archived dashboard, with only its live widgets and its group's live
   tabs. The page's sidebar shows live dashboards only; one opened by its URL
-  says "Archived: not in the sidebar" and offers Restore, and the dashboard
-  gallery (`/app/gallery/dashboards`) lists every archived one.
+  says "Archived: not in the sidebar" and offers Restore, and the page's
+  Archive page (`/app/archive`) lists every archived dashboard. The
+  Templates gallery (`/app/gallery/dashboards`) lists the system
+  dashboards as templates, archived ones included: archive state does not
+  matter there.
 - A system group is archived and restored whole (`whole_group`) and is never
   purged; system widgets cannot be archived.
 

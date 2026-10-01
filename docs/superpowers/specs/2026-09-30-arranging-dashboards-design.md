@@ -139,24 +139,31 @@ Date: 2026-09-30
     this change. Creating and renaming dashboards stay in the tabs spec's
     PR 2.
 
-### Dashboard gallery
+### Templates gallery and Archive page
 
-17. **`/app/gallery/dashboards`**, next to Components in the sidebar's
-    Gallery section, lists:
-    - **System**: every system group, archived or not, by its first
-      dashboard's title with its tabs, each linking to its dashboard; an
-      **Archive** button on a live group and a **Restore** button on an
-      archived one. Each tab has **Copy as a dashboard**:
-      `duplicate_dashboard` on that tab (no `whole_group`), a live,
-      standalone user dashboard last in "Yours", titled "… (copy)", which
-      the page then opens. The system group stays as it was, live or
-      archived.
-    - **Archived**: every archived user dashboard, with its group's title
+17. **`/app/gallery/dashboards`** ("Templates" in the sidebar's Gallery
+    section) lists every system group as a template, archived or not —
+    archive state does not matter here, so there is no badge and no
+    Archive or Restore button: by its first dashboard's title with its
+    tabs, each tab's title linking to its dashboard and offering **Copy as
+    a dashboard**: `duplicate_dashboard` on that tab (no `whole_group`), a
+    live, standalone user dashboard last in "Yours", titled "… (copy)",
+    which the page then opens. The system group stays exactly as it was,
+    live or archived.
+17a. **`/app/archive`**, its own sidebar entry between "Yours" and
+    Gallery, lists everything out of the sidebar:
+    - **Yours**: every archived user dashboard, with its group's title
       when it has one, when it will be purged ("deleted on 30 Oct",
       from `archived_at` plus `RETENTION_ARCHIVED_DAYS`, which
       `list_dashboards` gains as `purge_after_days`, absent when 0), and a
       **Restore** button (the dashboard alone).
-    So everything the page archives can be restored from the page.
+    - **System**: every system group with an archived member, by its
+      first dashboard's title, its tab count when more than one, "never
+      deleted" (system groups are never purged), and a **Restore** button
+      (`whole_group`).
+    Nothing archived at all reads "Nothing archived." in place of the two
+    sections. So everything the page archives can be restored from the
+    page.
 18. **An archived dashboard opened by URL says so.** `/dashboards/{id}`
     still opens it, since `get_dashboard` and widget data serve archived
     dashboards. A line above the grid reads "Archived: not in the
@@ -224,15 +231,19 @@ No `deploy/UPGRADES.md` entry: nothing changes on upgrade day.
 - **web (unit)**: which menu items show for a system group, a user group,
   a user tab and a lone user dashboard; the move items compute the right
   `after`; Move to lists the other user groups and Own dashboard only in
-  a group of more than one; the gallery lists system groups and archived
-  user dashboards with the right buttons; the archived line.
+  a group of more than one; the templates gallery lists every system
+  group, live or archived, identically, with no badge, Archive or
+  Restore; the archive page lists archived user dashboards (with group
+  label and purge date) and archived system groups (with tab count and
+  "never deleted") with Restore, and "Nothing archived." when neither has
+  anything; the archived line on a dashboard opened by URL.
 - **e2e**: duplicate Reports from the sidebar menu, land on the copy with
   five tabs, Reports still in the sidebar; archive it from the sidebar
-  menu, Reports leaves the sidebar, restore it from the gallery; archive a
+  menu, Reports leaves the sidebar, restore it from the archive; archive a
   user tab and undo from the toast; drag a user tab and a user group, and
   reload to see the order kept; move a tab into another group and back out
-  to its own dashboard; copy a system tab from the gallery while Reports is
-  archived.
+  to its own dashboard; copy a system tab from the templates gallery while
+  Reports is archived, with no "Archived" badge shown there.
 
 ## Out of scope
 

@@ -1,6 +1,6 @@
 import { DndContext, closestCenter } from '@dnd-kit/core'
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
-import { ChartColumnIcon, LayoutDashboardIcon, LayoutGridIcon, LogOutIcon, ShapesIcon } from 'lucide-react'
+import { ArchiveIcon, ChartColumnIcon, LayoutDashboardIcon, LayoutGridIcon, LogOutIcon, ShapesIcon } from 'lucide-react'
 import { Link, useLocation } from 'react-router'
 import {
   Sidebar,
@@ -35,13 +35,14 @@ interface Props {
 
 /**
  * One entry per dashboard group (tabs D20): system groups first, then
- * "Yours" (the user's), and Gallery (the components playground and the
- * dashboard gallery, where an archived dashboard is restored, D17). Each
- * entry links to its group's first live member and is named by its
- * title; it is active on any live member of the group. "Yours" entries
- * drag to a new order (D14, D15); system entries do not, and since the
- * sortable list holds only user groups, nothing drops above them. Icons
- * only at 640–1023px, a drawer on phones (D37).
+ * "Yours" (the user's), Archive (every archived dashboard, user or
+ * system, D17a), and Gallery (the components playground and the
+ * templates gallery, D17). Each entry links to its group's first live
+ * member and is named by its title; it is active on any live member of
+ * the group. "Yours" entries drag to a new order (D14, D15); system
+ * entries do not, and since the sortable list holds only user groups,
+ * nothing drops above them. Icons only at 640–1023px, a drawer on phones
+ * (D37).
  * Log out shows only when the app holds a credential: reporting dev's
  * open mode has none to forget.
  */
@@ -153,6 +154,20 @@ export default function AppSidebar({ dashboards, currentId, readOnly = false }: 
           </SidebarGroupContent>
         </SidebarGroup>
         <SidebarGroup>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild isActive={pathname === '/archive'} tooltip="Archive" className={item}>
+                  <Link to="/archive" onClick={close}>
+                    <ArchiveIcon />
+                    <span>Archive</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+        <SidebarGroup>
           <SidebarGroupLabel className="text-sidebar-foreground/60">Gallery</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
@@ -173,12 +188,12 @@ export default function AppSidebar({ dashboards, currentId, readOnly = false }: 
                 <SidebarMenuButton
                   asChild
                   isActive={pathname.startsWith('/gallery/dashboards')}
-                  tooltip="Dashboards"
+                  tooltip="Templates"
                   className={item}
                 >
                   <Link to="/gallery/dashboards" onClick={close}>
                     <LayoutGridIcon />
-                    <span>Dashboards</span>
+                    <span>Templates</span>
                   </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>

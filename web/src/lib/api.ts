@@ -72,7 +72,7 @@ export interface DashboardsResponse {
   dev?: boolean
   errors?: { dir: string; message: string }[]
   dashboards: DashboardInfo[]
-  /** Days until an archived dashboard is purged; absent when retention is off (D17). */
+  /** Days until an archived dashboard is purged; absent when retention is off (D17a). */
   purge_after_days?: number
 }
 

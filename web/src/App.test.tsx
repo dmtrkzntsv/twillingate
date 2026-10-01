@@ -95,10 +95,10 @@ describe('App', () => {
     renderApp()
 
     expect(await screen.findByText('No dashboards yet')).toBeInTheDocument()
-    expect(screen.queryByRole('link', { name: 'Open the dashboard gallery' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Open the archive' })).not.toBeInTheDocument()
   })
 
-  it('points to the dashboard gallery on "/" when every dashboard is archived', async () => {
+  it('points to the archive on "/" when every dashboard is archived', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue(
@@ -114,8 +114,8 @@ describe('App', () => {
 
     expect(await screen.findByText('Everything is archived')).toBeInTheDocument()
     expect(screen.queryByText('No dashboards yet')).not.toBeInTheDocument()
-    await userEvent.click(screen.getByRole('link', { name: 'Open the dashboard gallery' }))
-    await waitFor(() => expect(window.location.pathname).toBe('/app/gallery/dashboards'))
+    await userEvent.click(screen.getByRole('link', { name: 'Open the archive' }))
+    await waitFor(() => expect(window.location.pathname).toBe('/app/archive'))
   })
 
   it('offers a retry on "/" when the dashboards fail to load', async () => {

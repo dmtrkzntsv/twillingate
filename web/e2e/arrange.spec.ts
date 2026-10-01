@@ -137,10 +137,10 @@ test('duplicates Views from the sidebar without archiving it, then archives and 
 
   await expect(page.getByRole('link', { name: 'Views', exact: true })).toHaveCount(0)
 
-  await page.goto('/app/gallery/dashboards')
+  await page.goto('/app/archive')
   await page.waitForLoadState('networkidle')
-  const viewsCard = page.locator('li').filter({ has: page.getByRole('heading', { level: 3, name: 'Views', exact: true }) })
-  await viewsCard.getByRole('button', { name: 'Restore' }).click()
+  const viewsRow = page.locator('li').filter({ has: page.getByRole('link', { name: 'Views', exact: true }) })
+  await viewsRow.getByRole('button', { name: 'Restore' }).click()
 
   await expect(page.getByRole('link', { name: 'Views', exact: true })).toHaveCount(1)
 })
@@ -235,6 +235,8 @@ test('copies a system tab from the gallery while Reports is archived', async ({ 
   await page.waitForLoadState('networkidle')
 
   const viewsCard = page.locator('li').filter({ has: page.getByRole('heading', { level: 3, name: 'Views', exact: true }) })
+  // Templates show no archive state at all, live or archived (D17).
+  await expect(viewsCard.getByText('Archived', { exact: true })).toHaveCount(0)
   const usersRow = viewsCard.locator('li').filter({ hasText: 'Users' })
   await usersRow.getByRole('button', { name: 'Copy as a dashboard' }).click()
 

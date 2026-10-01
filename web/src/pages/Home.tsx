@@ -17,8 +17,8 @@ export function pickDashboard(dashboards: DashboardInfo[], last?: number): Dashb
 /**
  * "/" itself shows nothing: it picks a dashboard and redirects to it. With
  * none live it says why: an empty install has nothing yet, but one where
- * everything is archived links to the dashboard gallery, the only way back
- * once the Undo toast is gone (D17).
+ * everything is archived links to the archive, the only way back once the
+ * Undo toast is gone (D17a).
  */
 export default function Home() {
   const navigate = useNavigate()
@@ -43,9 +43,9 @@ export default function Home() {
   if (data && !target) {
     if (data.dashboards.length > 0) {
       return (
-        <StatusCard title="Everything is archived" description="Restore a dashboard from the gallery to put it back in the sidebar.">
+        <StatusCard title="Everything is archived" description="Restore a dashboard from the archive to put it back in the sidebar.">
           <Button asChild variant="outline" className="w-full">
-            <Link to="/gallery/dashboards">Open the dashboard gallery</Link>
+            <Link to="/archive">Open the archive</Link>
           </Button>
         </StatusCard>
       )

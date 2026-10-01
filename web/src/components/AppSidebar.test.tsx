@@ -75,7 +75,7 @@ describe('AppSidebar gallery', () => {
     expect(screen.getByRole('link', { name: 'Components' })).not.toHaveAttribute('data-active', 'true')
   })
 
-  it('links to the dashboards gallery, active there and not on Components (D17)', () => {
+  it('links to the templates gallery, labelled "Templates", active there and not on Components (D17)', () => {
     renderWithProviders(
       <MemoryRouter initialEntries={['/gallery/dashboards']}>
         <SidebarProvider>
@@ -83,10 +83,36 @@ describe('AppSidebar gallery', () => {
         </SidebarProvider>
       </MemoryRouter>
     )
-    const link = screen.getByRole('link', { name: 'Dashboards' })
+    const link = screen.getByRole('link', { name: 'Templates' })
     expect(link).toHaveAttribute('href', '/gallery/dashboards')
     expect(link).toHaveAttribute('data-active', 'true')
     expect(screen.getByRole('link', { name: 'Components' })).not.toHaveAttribute('data-active', 'true')
+  })
+})
+
+describe('AppSidebar archive', () => {
+  it('links to the archive, between Yours and Gallery, shown with nothing archived', () => {
+    renderWithProviders(
+      <MemoryRouter initialEntries={['/']}>
+        <SidebarProvider>
+          <AppSidebar dashboards={[]} currentId={0} />
+        </SidebarProvider>
+      </MemoryRouter>
+    )
+    const link = screen.getByRole('link', { name: 'Archive' })
+    expect(link).toHaveAttribute('href', '/archive')
+    expect(link).not.toHaveAttribute('data-active', 'true')
+  })
+
+  it('is active on /archive', () => {
+    renderWithProviders(
+      <MemoryRouter initialEntries={['/archive']}>
+        <SidebarProvider>
+          <AppSidebar dashboards={[]} currentId={0} />
+        </SidebarProvider>
+      </MemoryRouter>
+    )
+    expect(screen.getByRole('link', { name: 'Archive' })).toHaveAttribute('data-active', 'true')
   })
 })
 

@@ -77,7 +77,7 @@ export function nextAfterArchive(tabs: DashboardTab[], id: number): string {
   return target ? `/dashboards/${target.dashboard_id}` : '/'
 }
 
-/** The date an archived dashboard is purged, or undefined when days is 0/absent (D17). */
+/** The date an archived dashboard is purged, or undefined when days is 0/absent (D17a). */
 export function purgeDate(archivedAt: string, days?: number): Date | undefined {
   if (!days) return undefined
   const date = new Date(archivedAt)
