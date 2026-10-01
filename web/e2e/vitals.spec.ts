@@ -54,10 +54,11 @@ function measures(bodies: WireBody[]): Measure[] {
 test('Web Vitals reach the collector from a real browser', async ({ page, request }) => {
   // Issue a fresh ingest key for the seeded "dev" project (id 1; see
   // docs/twillingate.md "### HTTP API") and allow the page origin this
-  // test serves from, in case the project restricts origins.
+  // test serves from, in case the project restricts origins. Labels are
+  // unique per project, so each run (a retry, a repeat) takes its own.
   const keyRes = await request.post('/api/projects/1/keys', {
     headers: authHeaders(),
-    data: { label: 'vitals-e2e' },
+    data: { label: `vitals-e2e-${test.info().testId}-${test.info().repeatEachIndex}-${test.info().retry}` },
   })
   expect(keyRes.ok(), await keyRes.text()).toBeTruthy()
   const { key } = (await keyRes.json()) as { key: string }
@@ -90,17 +91,33 @@ test('Web Vitals reach the collector from a real browser', async ({ page, reques
   await page.route(`${ORIGIN}/vitals-test`, (r) =>
     r.fulfill({
       contentType: 'text/html',
-      body: `<html><body><h1>Vitals</h1><button id="b">tap</button><script src="/js/twillingate.js" data-key="${key}" data-vitals="1"></script></body></html>`,
+      // The page notes its first input with its own observer, so the test
+      // can tell when Chromium has recorded the interaction.
+      body: `<html><body><h1>Vitals</h1><button id="b">tap</button><script>window.firstInput = false; new PerformanceObserver(() => { window.firstInput = true }).observe({ type: 'first-input', buffered: true })</script><script src="/js/twillingate.js" data-key="${key}" data-vitals="1"></script></body></html>`,
     }),
   )
   await page.goto(`${ORIGIN}/vitals-test`)
 
-  // A real interaction, for INP. A click alone was not always enough to
-  // make Chromium report INP under Playwright's synthetic input, so this
-  // also presses a key on the button (see commit body).
+  // A real interaction, for INP. Playwright's synthetic click alone does
+  // not always make Chromium report INP, so a key press on the button
+  // follows.
   await page.click('#b')
   await page.focus('#b')
   await page.keyboard.press(' ')
+
+  // Hide only once web-vitals has processed the interaction. It handles
+  // event entries in an idle callback; if the page is hidden first, its
+  // forced report runs before that batch and finds no INP, and the batch's
+  // own report afterwards is not sent. So wait for the first-input entry,
+  // then for two idle periods (web-vitals' idle callback was queued before
+  // ours, so it has run by the second).
+  await page.waitForFunction(() => (window as unknown as { firstInput: boolean }).firstInput)
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestIdleCallback(() => requestIdleCallback(() => resolve(), { timeout: 2000 }), { timeout: 2000 }),
+      ),
+  )
 
   // LCP, CLS and INP are only reported once the page goes hidden.
   await page.evaluate(() => {
