@@ -6,7 +6,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { SidebarMenuAction } from '@/components/ui/sidebar'
+import { SidebarMenuAction, useSidebar } from '@/components/ui/sidebar'
 import { useDashboardActions } from '@/hooks/use-dashboard-actions'
 import { moveGroupBody, type Group } from '@/lib/arrange'
 
@@ -31,9 +31,17 @@ interface Props {
  */
 export default function SidebarGroupMenu({ group, userGroups, currentId }: Props) {
   const { duplicate, archive, move } = useDashboardActions()
+  const { isMobile, setOpenMobile } = useSidebar()
   const first = group.members[0]
   const navigateTo = group.members.some((m) => m.dashboard_id === currentId) ? '/' : undefined
   const index = userGroups.findIndex((g) => g.groupId === group.groupId)
+
+  // Same drawer dismissal as the sidebar's own links (AppSidebar's `close`,
+  // D37): a menu action that opens another dashboard must close the phone
+  // drawer too, or it stays open over the page it navigated to.
+  const close = () => {
+    if (isMobile) setOpenMobile(false)
+  }
 
   const moveTo = (to: number) => {
     const body = moveGroupBody(userGroups, group.groupId, to)
@@ -49,7 +57,12 @@ export default function SidebarGroupMenu({ group, userGroups, currentId }: Props
       </DropdownMenuTrigger>
       <DropdownMenuContent side="right" align="start">
         {group.owner === 'system' ? (
-          <DropdownMenuItem onClick={() => void duplicate(first, {})}>
+          <DropdownMenuItem
+            onClick={() => {
+              close()
+              void duplicate(first, {})
+            }}
+          >
             <CopyIcon />
             <div className="flex flex-col">
               <span>Duplicate</span>
@@ -57,12 +70,22 @@ export default function SidebarGroupMenu({ group, userGroups, currentId }: Props
             </div>
           </DropdownMenuItem>
         ) : (
-          <DropdownMenuItem onClick={() => void duplicate(first, { wholeGroup: true })}>
+          <DropdownMenuItem
+            onClick={() => {
+              close()
+              void duplicate(first, { wholeGroup: true })
+            }}
+          >
             <CopyIcon />
             Duplicate
           </DropdownMenuItem>
         )}
-        <DropdownMenuItem onClick={() => void archive(first, { wholeGroup: true, navigateTo })}>
+        <DropdownMenuItem
+          onClick={() => {
+            if (navigateTo) close()
+            void archive(first, { wholeGroup: true, navigateTo })
+          }}
+        >
           <ArchiveIcon />
           Archive
         </DropdownMenuItem>

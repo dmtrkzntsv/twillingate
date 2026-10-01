@@ -1,6 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { screen } from '@testing-library/react'
+import { useEffect } from 'react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { SidebarProvider, useSidebar } from '@/components/ui/sidebar'
 import type { DashboardActions } from '@/hooks/use-dashboard-actions'
 import { useDashboardActions } from '@/hooks/use-dashboard-actions'
 import type { Group } from '@/lib/arrange'
@@ -51,7 +53,11 @@ beforeEach(() => {
 })
 
 function renderMenu(group: Group, currentId: number) {
-  renderWithProviders(<SidebarGroupMenu group={group} userGroups={userGroups} currentId={currentId} />)
+  renderWithProviders(
+    <SidebarProvider>
+      <SidebarGroupMenu group={group} userGroups={userGroups} currentId={currentId} />
+    </SidebarProvider>
+  )
 }
 
 describe('SidebarGroupMenu, system group', () => {
@@ -140,5 +146,68 @@ describe('SidebarGroupMenu, user group', () => {
     await userEvent.click(screen.getByText('Move up'))
 
     expect(move).toHaveBeenCalledWith(20, { after: 0 })
+  })
+})
+
+/** Reads `openMobile` so a test can observe the phone drawer close. */
+function DrawerProbe() {
+  const { openMobile } = useSidebar()
+  return <div data-testid="drawer">{openMobile ? 'open' : 'closed'}</div>
+}
+
+/** Opens the drawer on mount, as the sidebar's own trigger would. */
+function OpenDrawer() {
+  const { setOpenMobile } = useSidebar()
+  useEffect(() => setOpenMobile(true), [setOpenMobile])
+  return null
+}
+
+function renderOnPhone(group: Group, currentId: number) {
+  renderWithProviders(
+    <SidebarProvider>
+      <OpenDrawer />
+      <DrawerProbe />
+      <SidebarGroupMenu group={group} userGroups={userGroups} currentId={currentId} />
+    </SidebarProvider>
+  )
+}
+
+describe('SidebarGroupMenu, phone drawer (D37)', () => {
+  beforeEach(() => {
+    window.innerWidth = 390
+  })
+
+  afterEach(() => {
+    window.innerWidth = 1024
+  })
+
+  it('closes the drawer when Duplicate opens the copy', async () => {
+    renderOnPhone(systemGroup, 99)
+    await waitFor(() => expect(screen.getByTestId('drawer')).toHaveTextContent('open'))
+
+    await userEvent.click(screen.getByRole('button', { name: 'Views actions' }))
+    await userEvent.click(screen.getByText('Duplicate'))
+
+    expect(screen.getByTestId('drawer')).toHaveTextContent('closed')
+  })
+
+  it('closes the drawer when Archive navigates away', async () => {
+    renderOnPhone(systemGroup, 2)
+    await waitFor(() => expect(screen.getByTestId('drawer')).toHaveTextContent('open'))
+
+    await userEvent.click(screen.getByRole('button', { name: 'Views actions' }))
+    await userEvent.click(screen.getByText('Archive'))
+
+    expect(screen.getByTestId('drawer')).toHaveTextContent('closed')
+  })
+
+  it('leaves the drawer open when Archive does not navigate', async () => {
+    renderOnPhone(systemGroup, 99)
+    await waitFor(() => expect(screen.getByTestId('drawer')).toHaveTextContent('open'))
+
+    await userEvent.click(screen.getByRole('button', { name: 'Views actions' }))
+    await userEvent.click(screen.getByText('Archive'))
+
+    expect(screen.getByTestId('drawer')).toHaveTextContent('open')
   })
 })
