@@ -37,13 +37,15 @@ function systemGroups(dashboards: DashboardInfo[]): SystemGroup[] {
 
 /**
  * What an archived user dashboard's row names its group by: the first
- * still-live member, else the group's literal first, or undefined when it
- * has no other members (D17).
+ * still-live *other* member, else the group's literal first other member,
+ * or undefined when it has none — excluding `d` itself, so a dashboard
+ * never names its own group after itself when the whole group is archived
+ * (D17).
  */
 function groupLabel(dashboards: DashboardInfo[], d: DashboardInfo): string | undefined {
-  const members = dashboards.filter((m) => m.group_id === d.group_id)
-  if (members.length < 2) return undefined
-  return (members.find((m) => !m.archived_at) ?? members[0]).title
+  const others = dashboards.filter((m) => m.group_id === d.group_id && m.dashboard_id !== d.dashboard_id)
+  if (others.length === 0) return undefined
+  return (others.find((m) => !m.archived_at) ?? others[0]).title
 }
 
 /**
@@ -94,7 +96,10 @@ export default function DashboardsGallery() {
                 <ul className="flex flex-col gap-1">
                   {g.members.map((tab) => (
                     <li key={tab.dashboard_id} className="flex items-center justify-between gap-2 text-sm">
-                      <Link to={`/dashboards/${tab.dashboard_id}`} className="truncate underline-offset-2 hover:underline">
+                      <Link
+                        to={`/dashboards/${tab.dashboard_id}`}
+                        className="min-w-0 flex-1 truncate underline-offset-2 hover:underline"
+                      >
                         {tab.title}
                       </Link>
                       <Button variant="ghost" size="sm" onClick={() => void duplicate(tab, { archiveSource: false })}>
@@ -122,7 +127,7 @@ export default function DashboardsGallery() {
               const meta = [label && `in ${label}`, purged && `deleted on ${formatPurgeDate(purged)}`].filter(Boolean).join(' · ')
               return (
                 <li key={d.dashboard_id} className="flex items-center justify-between gap-3 rounded-lg border p-3">
-                  <div className="flex min-w-0 flex-col gap-0.5">
+                  <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                     <span className="truncate font-medium">{d.title}</span>
                     {meta && <span className="text-xs text-muted-foreground">{meta}</span>}
                   </div>

@@ -38,6 +38,10 @@ function mockApi(purge_after_days?: number) {
   vi.spyOn(endpoints, 'dashboards').mockResolvedValue({ timezone: 'UTC', dashboards, purge_after_days })
 }
 
+function mockApiWith(list: DashboardInfo[]) {
+  vi.spyOn(endpoints, 'dashboards').mockResolvedValue({ timezone: 'UTC', dashboards: list })
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   vi.mocked(useDashboardActions).mockReturnValue({
@@ -109,6 +113,18 @@ describe('DashboardsGallery, System section', () => {
 
     expect(duplicate).toHaveBeenCalledWith(dashboards[1], { archiveSource: false })
   })
+
+  it('shows Archive for a group with a live member even when its literal first is archived', async () => {
+    const first = info(30, 'Reports', 'system', 30, { archived_at: '2026-09-10T00:00:00Z' })
+    mockApiWith([first, info(31, 'Extra', 'system', 30)])
+    renderGallery()
+
+    const row = (await screen.findByRole('heading', { name: 'Reports' })).closest('li')!
+    expect(within(row).getByText('In the sidebar')).toBeInTheDocument()
+    await userEvent.click(within(row).getByRole('button', { name: 'Archive' }))
+
+    expect(archive).toHaveBeenCalledWith(first, { wholeGroup: true })
+  })
 })
 
 describe('DashboardsGallery, Archived section', () => {
@@ -134,6 +150,22 @@ describe('DashboardsGallery, Archived section', () => {
 
     const row = (await screen.findByText('Funnel')).closest('li')!
     expect(within(row).getByText(/in Marketing/)).toBeInTheDocument()
+  })
+
+  it('never names a dashboard after itself when its whole group is archived', async () => {
+    mockApiWith([
+      info(13, 'Marketing', 'user', 13, { archived_at: '2026-09-01T00:00:00Z' }),
+      info(14, 'Funnel', 'user', 13, { archived_at: '2026-09-02T00:00:00Z' }),
+    ])
+    renderGallery()
+
+    const marketingRow = (await screen.findByText('Marketing')).closest('li')!
+    expect(within(marketingRow).getByText(/in Funnel/)).toBeInTheDocument()
+    expect(within(marketingRow).queryByText(/in Marketing/)).not.toBeInTheDocument()
+
+    const funnelRow = screen.getByText('Funnel').closest('li')!
+    expect(within(funnelRow).getByText(/in Marketing/)).toBeInTheDocument()
+    expect(within(funnelRow).queryByText(/in Funnel/)).not.toBeInTheDocument()
   })
 
   it('names nothing for an archived dashboard with no siblings', async () => {
