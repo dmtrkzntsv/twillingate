@@ -95,6 +95,27 @@ describe('App', () => {
     renderApp()
 
     expect(await screen.findByText('No dashboards yet')).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Open the dashboard gallery' })).not.toBeInTheDocument()
+  })
+
+  it('points to the dashboard gallery on "/" when every dashboard is archived', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        dashboardsResponse([
+          { dashboard_id: 1, title: 'Views', owner: 'system', group_id: 1, widgets: 1, archived_at: '2026-09-01T00:00:00Z' },
+          { dashboard_id: 2, title: 'Mine', owner: 'user', group_id: 2, widgets: 1, archived_at: '2026-09-01T00:00:00Z' },
+        ])
+      )
+    )
+    window.history.pushState({}, '', '/app/')
+
+    renderApp()
+
+    expect(await screen.findByText('Everything is archived')).toBeInTheDocument()
+    expect(screen.queryByText('No dashboards yet')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('link', { name: 'Open the dashboard gallery' }))
+    await waitFor(() => expect(window.location.pathname).toBe('/app/gallery/dashboards'))
   })
 
   it('offers a retry on "/" when the dashboards fail to load', async () => {
