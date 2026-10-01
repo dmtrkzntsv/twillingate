@@ -86,6 +86,18 @@ describe('useDashboardActions', () => {
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['dashboard'] })
   })
 
+  it('a move rejecting with a plain TypeError (a dropped connection) toasts, resolves, and refetches', async () => {
+    vi.mocked(endpoints.move).mockRejectedValue(new TypeError('Failed to fetch'))
+    const invalidate = vi.spyOn(client, 'invalidateQueries')
+    const { result } = renderHook(() => useDashboardActions(), { wrapper })
+
+    await expect(act(() => result.current.move(5, { after: 3 }))).resolves.toBeUndefined()
+
+    expect(toast.error).toHaveBeenCalledWith("Couldn't reach the server")
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['dashboards'] })
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['dashboard'] })
+  })
+
   it('duplicate navigates to the copy', async () => {
     const copy: DashboardDetail = {
       dashboard_id: 42,

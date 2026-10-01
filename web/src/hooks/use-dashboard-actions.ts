@@ -22,7 +22,10 @@ export interface DashboardActions {
  * and move, each the existing audited route, with the page's own bearer
  * token (D19). Every action refetches the dashboard list and the
  * dashboard shown so the sidebar and the tabs follow; a refusal shows its
- * message in a toast instead of throwing to the caller (D12).
+ * message in a toast instead of throwing to the caller, and so does any
+ * other failure — a dropped connection throws a bare `TypeError` from
+ * `fetch`, not an `ApiError`, and callers (menus, drag handlers) must not
+ * see an unhandled rejection either way (D12).
  */
 export function useDashboardActions(): DashboardActions {
   const queryClient = useQueryClient()
@@ -41,7 +44,8 @@ export function useDashboardActions(): DashboardActions {
         await fn()
       } catch (err) {
         if (err instanceof ApiError) toast.error(err.message)
-        else throw err
+        else if (err instanceof TypeError) toast.error("Couldn't reach the server")
+        else toast.error(err instanceof Error ? err.message : String(err))
       } finally {
         refresh()
         setPending(false)

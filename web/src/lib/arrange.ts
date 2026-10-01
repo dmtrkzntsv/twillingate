@@ -27,7 +27,8 @@ export function liveGroups(list: DashboardInfo[]): Group[] {
  * groups (after removing it), or null if that is where it is. Names only
  * live ids: the anchor is the target group's first *live* member, which
  * `liveGroups` already guarantees `members[0]` to be even when that
- * group's literal first dashboard is archived (tabs D4; D15).
+ * group's literal first dashboard is archived (tabs D4; D15). An
+ * out-of-range `to` also returns null, as if unchanged.
  */
 export function moveGroupBody(groups: Group[], groupId: number, to: number): MoveBody | null {
   const userGroups = groups.filter((g) => g.owner === 'user')
@@ -43,7 +44,7 @@ export function moveGroupBody(groups: Group[], groupId: number, to: number): Mov
 /**
  * The body that puts tab `id` at index `to` among `tabs` (after removing
  * it): `{group_id: own, after: 0}` for first, else `{after: <tab
- * before>}`. Null if unchanged (tabs D6-D7; D15).
+ * before>}`. Null if unchanged, or if `to` is out of range (tabs D6-D7; D15).
  */
 export function moveTabBody(tabs: DashboardTab[], id: number, groupId: number, to: number): MoveBody | null {
   const from = tabs.findIndex((t) => t.dashboard_id === id)
