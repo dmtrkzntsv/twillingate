@@ -44,7 +44,7 @@ export default function DashboardsGallery() {
   return (
     <GalleryLayout
       title="Templates"
-      description="The dashboards that ship with twillingate. Open one to look at it, or duplicate it as a dashboard of your own: the whole thing from its … menu here, or one tab from the … menu on that tab."
+      description="The dashboards that ship with twillingate. Open one to look at it, or make it your own: duplicate the whole dashboard from its … menu here, or copy one tab to a new dashboard from that tab's … menu."
       sections={sections}
     >
       <section id="system" aria-labelledby="system-heading" className="flex scroll-mt-16 flex-col gap-3">

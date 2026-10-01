@@ -173,6 +173,36 @@ test('archives a user tab and undoes it', async ({ page, request }) => {
   await expect(page.getByRole('tab', { name: 'Two', exact: true })).toBeVisible()
 })
 
+test('duplicates a user tab into its dashboard, or copies it to a new one', async ({ page, request }) => {
+  const c1 = await createDashboard(request, 'C1')
+  toArchive.push({ id: c1.id, wholeGroup: true })
+  const c2 = await createDashboard(request, 'C2', c1.groupId)
+  toArchive.push({ id: c2.id })
+
+  await login(page)
+  await page.goto(`/app/dashboards/${c2.id}`)
+  await page.waitForLoadState('networkidle')
+
+  await page.getByRole('button', { name: 'Tab actions' }).click()
+  await page.getByRole('menuitem', { name: 'Duplicate tab' }).click()
+  await page.waitForURL((url) => !url.pathname.endsWith(`/${c2.id}`))
+  await expect(page.getByRole('tab')).toHaveText(['C1', 'C2', 'C2 (copy)'])
+
+  await page.getByRole('tab', { name: 'C2', exact: true }).click()
+  await expect(page.getByRole('heading', { level: 1, name: 'C2', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Tab actions' }).click()
+  await page.getByRole('menuitem', { name: 'Copy to new dashboard' }).click()
+  await page.waitForURL((url) => !url.pathname.endsWith(`/${c2.id}`))
+  await page.waitForLoadState('networkidle')
+  const ownId = Number(page.url().match(/dashboards\/(\d+)/)?.[1])
+  toArchive.push({ id: ownId })
+
+  await expect(page.getByRole('tab')).toHaveText(['C2 (copy)'])
+  // The source dashboard keeps its three tabs.
+  await page.goto(`/app/dashboards/${c1.id}`)
+  await expect(page.getByRole('tab')).toHaveText(['C1', 'C2', 'C2 (copy)'])
+})
+
 test('moves a tab between groups', async ({ page, request }) => {
   const a1 = await createDashboard(request, 'A1')
   toArchive.push({ id: a1.id })
@@ -247,7 +277,7 @@ test('copies a system group and one of its tabs from the gallery while it is arc
   // Templates show no archive state at all, live or archived (D17).
   await expect(viewsRow.getByText('Archived', { exact: true })).toHaveCount(0)
   await viewsRow.getByRole('button', { name: 'Views actions' }).click()
-  await page.getByRole('menuitem', { name: 'Duplicate' }).click()
+  await page.getByRole('menuitem', { name: 'Duplicate dashboard' }).click()
 
   await page.waitForURL(/\/app\/dashboards\/\d+/)
   await page.waitForLoadState('networkidle')
@@ -262,7 +292,7 @@ test('copies a system group and one of its tabs from the gallery while it is arc
   await page.getByRole('tab', { name: 'Users', exact: true }).click()
   await expect(page.getByRole('heading', { level: 1, name: 'Users', exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Tab actions' }).click()
-  await page.getByRole('menuitem', { name: 'Duplicate tab' }).click()
+  await page.getByRole('menuitem', { name: 'Copy to new dashboard' }).click()
 
   await page.waitForURL((url) => /\/app\/dashboards\/\d+/.test(url.pathname) && !url.pathname.endsWith(`/${groupCopyId}`))
   await page.waitForLoadState('networkidle')

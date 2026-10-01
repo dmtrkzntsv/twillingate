@@ -14,7 +14,7 @@ interface Props {
 }
 
 /**
- * A Templates row's "…" menu (D17): Duplicate copies the whole system
+ * A Templates row's "…" menu (D17): "Duplicate dashboard" copies the whole system
  * group (`wholeGroup`) and opens the copy, archived or not, never
  * archiving anything. A single tab is duplicated from its own "…" menu
  * once the template is open.
@@ -31,7 +31,7 @@ export default function TemplateMenu({ first }: Props) {
       <DropdownMenuContent align="end">
         <DropdownMenuItem disabled={pending} onClick={() => void duplicate(first, { wholeGroup: true })}>
           <CopyIcon />
-          Duplicate
+          Duplicate dashboard
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

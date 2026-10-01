@@ -83,11 +83,11 @@ async function openGroupMenu() {
 const items = () => screen.getAllByRole('menuitem').map((i) => i.textContent)
 
 describe('TabMenu, a user tab among others', () => {
-  it('has Duplicate tab, Archive tab, Move left (disabled first), Move right and Move to', async () => {
+  it('has Duplicate tab, Copy to new dashboard, Archive tab, Move left (disabled first), Move right and Move to', async () => {
     renderTabMenu(marketing)
     await openTabMenu()
 
-    expect(items()).toEqual(['Duplicate tab', 'Archive tab', 'Move left', 'Move right', 'Move to'])
+    expect(items()).toEqual(['Duplicate tab', 'Copy to new dashboard', 'Archive tab', 'Move left', 'Move right', 'Move to'])
     expect(screen.getByText('Move left').closest('[role="menuitem"]')).toHaveAttribute('data-disabled')
     expect(screen.getByText('Move right').closest('[role="menuitem"]')).not.toHaveAttribute('data-disabled')
   })
@@ -100,12 +100,20 @@ describe('TabMenu, a user tab among others', () => {
     expect(screen.getByText('Move left').closest('[role="menuitem"]')).not.toHaveAttribute('data-disabled')
   })
 
-  it('Duplicate tab calls duplicate(d) with no wholeGroup', async () => {
+  it('Duplicate tab copies it into this dashboard: duplicate(d), no options', async () => {
     renderTabMenu(marketing)
     await openTabMenu()
     await userEvent.click(screen.getByText('Duplicate tab'))
 
     expect(duplicate).toHaveBeenCalledWith(marketing)
+  })
+
+  it('Copy to new dashboard copies it out: duplicate(d, { ownDashboard: true })', async () => {
+    renderTabMenu(marketing)
+    await openTabMenu()
+    await userEvent.click(screen.getByText('Copy to new dashboard'))
+
+    expect(duplicate).toHaveBeenCalledWith(marketing, { ownDashboard: true })
   })
 
   it('Move left calls move with the tab before it as after', async () => {
@@ -156,7 +164,7 @@ describe('TabMenu, the one tab of a lone user dashboard', () => {
     renderTabMenu(launchWeek)
     await openTabMenu()
 
-    expect(items()).toEqual(['Duplicate tab', 'Archive tab', 'Move left', 'Move right', 'Move to'])
+    expect(items()).toEqual(['Duplicate tab', 'Copy to new dashboard', 'Archive tab', 'Move left', 'Move right', 'Move to'])
     expect(screen.getByText('Move left').closest('[role="menuitem"]')).toHaveAttribute('data-disabled')
     expect(screen.getByText('Move right').closest('[role="menuitem"]')).toHaveAttribute('data-disabled')
   })
@@ -189,13 +197,13 @@ describe('TabMenu, the one tab of a lone user dashboard', () => {
 })
 
 describe('TabMenu, a system tab', () => {
-  it('offers only Duplicate tab: a system tab is never archived or moved alone', async () => {
+  it('offers only Copy to new dashboard: a system group takes no new tabs, and a system tab is never archived or moved alone', async () => {
     renderTabMenu(product)
     await openTabMenu()
-    expect(items()).toEqual(['Duplicate tab'])
+    expect(items()).toEqual(['Copy to new dashboard'])
 
-    await userEvent.click(screen.getByText('Duplicate tab'))
-    expect(duplicate).toHaveBeenCalledWith(product)
+    await userEvent.click(screen.getByText('Copy to new dashboard'))
+    expect(duplicate).toHaveBeenCalledWith(product, { ownDashboard: true })
   })
 })
 
@@ -203,13 +211,13 @@ describe('GroupMenu', () => {
   it('duplicates and archives the whole group, named by its first tab', async () => {
     renderGroupMenu(reach)
     await openGroupMenu()
-    expect(items()).toEqual(['Duplicate', 'Archive'])
+    expect(items()).toEqual(['Duplicate dashboard', 'Archive dashboard'])
 
-    await userEvent.click(screen.getByText('Duplicate'))
+    await userEvent.click(screen.getByText('Duplicate dashboard'))
     expect(duplicate).toHaveBeenCalledWith(marketingTabs[0], { wholeGroup: true })
 
     await openGroupMenu()
-    await userEvent.click(screen.getByText('Archive'))
+    await userEvent.click(screen.getByText('Archive dashboard'))
     expect(archive).toHaveBeenCalledWith(marketingTabs[0], { wholeGroup: true, navigateTo: '/' })
   })
 
@@ -217,13 +225,13 @@ describe('GroupMenu', () => {
     renderGroupMenu(product)
     await openGroupMenu()
 
-    expect(items()).toEqual(['Duplicate', 'Archive'])
+    expect(items()).toEqual(['Duplicate dashboard', 'Archive dashboard'])
   })
 
   it('offers only Duplicate on an archived group, whose banner offers Restore', async () => {
     renderGroupMenu({ ...product, archived_at: '2026-09-30T00:00:00Z' })
     await openGroupMenu()
 
-    expect(items()).toEqual(['Duplicate'])
+    expect(items()).toEqual(['Duplicate dashboard'])
   })
 })

@@ -1,4 +1,4 @@
-import { ArchiveIcon, ArrowLeftIcon, ArrowRightIcon, CopyIcon, FolderInputIcon, MoreHorizontalIcon } from 'lucide-react'
+import { ArchiveIcon, ArrowLeftIcon, ArrowRightIcon, CopyIcon, CopyPlusIcon, FolderInputIcon, MoreHorizontalIcon } from 'lucide-react'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -58,11 +58,11 @@ function MoveTo({ dashboard, list, actions }: Props & { actions: DashboardAction
 }
 
 /**
- * The top bar's "…" menu, acting on the whole group, like the sidebar's
- * (D10, D11): Duplicate copies every tab and opens the copy, never
- * archiving anything; Archive takes the whole group out of the sidebar
- * and lands on "/". An archived group offers only Duplicate, since its
- * banner already offers Restore.
+ * The top bar's "…" menu, acting on the whole dashboard (its group), like
+ * the sidebar's (D10, D11): "Duplicate dashboard" copies every tab and
+ * opens the copy, never archiving anything; "Archive dashboard" takes the
+ * whole group out of the sidebar and lands on "/". An archived group
+ * offers only the copy, since its banner already offers Restore.
  */
 export function GroupMenu({ dashboard }: { dashboard: DashboardDetail }) {
   const { duplicate, archive, pending } = useDashboardActions()
@@ -78,7 +78,7 @@ export function GroupMenu({ dashboard }: { dashboard: DashboardDetail }) {
       <DropdownMenuContent align="end">
         <DropdownMenuItem disabled={pending} onClick={() => void duplicate(first, { wholeGroup: true })}>
           <CopyIcon />
-          Duplicate
+          Duplicate dashboard
         </DropdownMenuItem>
         {!dashboard.archived_at && (
           <DropdownMenuItem
@@ -86,7 +86,7 @@ export function GroupMenu({ dashboard }: { dashboard: DashboardDetail }) {
             onClick={() => void archive(first, { wholeGroup: true, navigateTo: '/' })}
           >
             <ArchiveIcon />
-            Archive
+            Archive dashboard
           </DropdownMenuItem>
         )}
       </DropdownMenuContent>
@@ -96,10 +96,12 @@ export function GroupMenu({ dashboard }: { dashboard: DashboardDetail }) {
 
 /**
  * The "…" menu beside a tab's title, acting on that tab alone (D11), the
- * same for a group of one tab as of several. Every tab offers "Duplicate
- * tab"; a live user tab adds "Archive tab", Move left/right within the
- * group and "Move to". A system tab is never archived or moved on its
- * own.
+ * same for a group of one tab as of several. Every tab offers "Copy to
+ * new dashboard", its copy a dashboard of its own (`ownDashboard`). A
+ * live user tab adds "Duplicate tab", whose copy is the next tab of this
+ * dashboard, "Archive tab", Move left/right and "Move to". A system tab
+ * is only copied out: its group takes no new tabs, and it is never
+ * archived or moved on its own.
  */
 export function TabMenu({ dashboard, list }: Props) {
   const actions = useDashboardActions()
@@ -122,9 +124,15 @@ export function TabMenu({ dashboard, list }: Props) {
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start">
-        <DropdownMenuItem disabled={pending} onClick={() => void duplicate(dashboard)}>
-          <CopyIcon />
-          Duplicate tab
+        {editable && (
+          <DropdownMenuItem disabled={pending} onClick={() => void duplicate(dashboard)}>
+            <CopyIcon />
+            Duplicate tab
+          </DropdownMenuItem>
+        )}
+        <DropdownMenuItem disabled={pending} onClick={() => void duplicate(dashboard, { ownDashboard: true })}>
+          <CopyPlusIcon />
+          Copy to new dashboard
         </DropdownMenuItem>
         {editable && (
           <>

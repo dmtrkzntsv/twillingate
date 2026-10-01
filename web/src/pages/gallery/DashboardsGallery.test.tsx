@@ -99,8 +99,8 @@ describe('DashboardsGallery, templates', () => {
 
     await screen.findByRole('heading', { name: 'Views' })
     await userEvent.click(within(screen.getByRole('main')).getByRole('button', { name: 'Views actions' }))
-    expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Duplicate'])
-    await userEvent.click(screen.getByRole('menuitem', { name: 'Duplicate' }))
+    expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Duplicate dashboard'])
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Duplicate dashboard' }))
 
     expect(duplicate).toHaveBeenCalledWith(dashboards[0], { wholeGroup: true })
   })
@@ -118,7 +118,7 @@ describe('DashboardsGallery, templates', () => {
 
     await screen.findByRole('heading', { name: 'Views' })
     await userEvent.click(within(screen.getByRole('main')).getByRole('button', { name: 'Views actions' }))
-    expect(screen.getByRole('menuitem', { name: 'Duplicate' })).toHaveAttribute('data-disabled')
+    expect(screen.getByRole('menuitem', { name: 'Duplicate dashboard' })).toHaveAttribute('data-disabled')
   })
 
   it('shows no "…" menu in reporting dev, which takes no writes', async () => {

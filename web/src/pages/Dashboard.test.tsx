@@ -101,14 +101,14 @@ describe('Dashboard', () => {
     const group = await screen.findByRole('button', { name: 'Dashboard actions' })
     expect(group.closest('header')).toContainElement(screen.getByRole('tablist'))
     await userEvent.click(group)
-    expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Duplicate', 'Archive'])
+    expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Duplicate dashboard', 'Archive dashboard'])
     await userEvent.keyboard('{Escape}')
 
     await userEvent.click(screen.getByRole('button', { name: 'Tab actions' }))
-    expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Duplicate tab'])
+    expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Copy to new dashboard'])
 
-    await userEvent.click(screen.getByRole('menuitem', { name: 'Duplicate tab' }))
-    expect(copy).toHaveBeenCalledWith(2, { whole_group: undefined })
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Copy to new dashboard' }))
+    expect(copy).toHaveBeenCalledWith(2, { whole_group: undefined, own_dashboard: true })
     await waitFor(() => expect(location()).toBe('/dashboards/30'))
   })
 
@@ -127,7 +127,7 @@ describe('Dashboard', () => {
     renderAppAt('/dashboards/10')
 
     await userEvent.click(await screen.findByRole('button', { name: 'Dashboard actions' }))
-    await userEvent.click(await screen.findByRole('menuitem', { name: 'Archive' }))
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Archive dashboard' }))
 
     // "/" picks from the refetched list: Launch week, the last dashboard
     // opened here, is archived there, so the first system one wins.
@@ -408,7 +408,7 @@ describe('Dashboard', () => {
     )
     expect(screen.getByRole('tab', { name: 'Product' })).toHaveAttribute('aria-selected', 'true')
     await userEvent.click(screen.getByRole('button', { name: 'Dashboard actions' }))
-    expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Duplicate'])
+    expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Duplicate dashboard'])
   })
 
   it('offers no Restore on an archived dashboard in reporting dev', async () => {

@@ -181,7 +181,7 @@ guards as `query`: read-only, `API_QUERY_TIMEOUT` and `API_QUERY_MAX_ROWS`.
 | `widget_data` | `widget_id`, `project_id`, `from`, `to`, `fresh` | the envelope above |
 | `create_dashboard` | `title`, `range` (default `7d`), `group_id`, `after`, `widgets` | the new dashboard, as `get_dashboard` returns it; one invalid widget creates nothing |
 | `update_dashboard` | `dashboard_id`, `title`, `group_id`, `after` | the dashboard, as `list_dashboards` lists it |
-| `duplicate_dashboard` | `dashboard_id`, `whole_group` | a user copy with copies of its live widgets. A user dashboard's copy joins its group as the next tab; a system dashboard's copy is a new dashboard last in the sidebar, also from an archived system dashboard. An archived user dashboard is refused (restore it first). `whole_group` copies the group as a new dashboard with the same tabs: a system group whole, a user group's live tabs. Duplicating never archives: to replace a system group, `archive_dashboard` it with `whole_group` |
+| `duplicate_dashboard` | `dashboard_id`, `whole_group`, `own_dashboard` | a user copy with copies of its live widgets. A user dashboard's copy joins its group as the next tab, or with `own_dashboard` is a new dashboard last in the sidebar; a system dashboard's copy is always a new dashboard last in the sidebar, also from an archived system dashboard. An archived user dashboard is refused (restore it first). `whole_group` copies the group as a new dashboard with the same tabs: a system group whole, a user group's live tabs. Duplicating never archives: to replace a system group, `archive_dashboard` it with `whole_group` |
 | `archive_dashboard` | `dashboard_id`, `whole_group` | hides it (`whole_group`: every live member of its group); see [Archiving and the purge](#archiving-and-the-purge) |
 | `restore_dashboard` | `dashboard_id`, `whole_group` | unhides it (`whole_group`: every archived member of its group) |
 | `add_widget` | `dashboard_id`, `component`, `source`, `title`, `name`, `props`, `width`, `height`, `after` | the widget |
@@ -654,9 +654,12 @@ Archiving is how to undo, and the only way to remove anything:
   with its group opens with that group's archived tabs. The Templates
   gallery (`/app/gallery/dashboards`) lists each system group as a
   template, one row per group, archived ones included: archive state does
-  not matter there. A row's "…" menu duplicates the whole group; an opened
-  tab's "…" menu, beside its title, duplicates that tab alone, while the
-  group's own "…" menu sits at the top right of the tab bar.
+  not matter there. A row's "…" menu duplicates the whole group. On any
+  dashboard, the "…" menu at the top right of the tab bar acts on the whole
+  dashboard ("Duplicate dashboard", `whole_group`), and the one beside the
+  title on that tab: "Duplicate tab" adds its copy as the next tab,
+  "Copy to new dashboard" makes it a dashboard of its own
+  (`own_dashboard`); a system tab offers only the latter.
 - A system group is archived and restored whole (`whole_group`) and is never
   purged; system widgets cannot be archived.
 
