@@ -1,8 +1,9 @@
 # Schema upgrades
 
-One section per migration that needs more than `docker compose pull` or a
-re-run of the installer: what to check before the upgrade, and what changes
-on the day. Newest last. Snapshot the database first in every case.
+One section per migration (or other change) that needs more than `docker
+compose pull` or a re-run of the installer: what to check before the
+upgrade, and what changes on the day. Newest last. Snapshot the database
+first in every case.
 
 ### Upgrading to integer project ids (migration 014)
 
@@ -27,9 +28,8 @@ SELECT project, label, COUNT(*) FROM ingest_keys
 GROUP BY project, label HAVING COUNT(*) > 1;
 ```
 
-Then stop the service, copy the database (or take a Litestream
-snapshot), run the installer, and check `journalctl` for migration 014.
-`list_projects` (or `twillingate project list`) shows the new ids: they
+Then stop the service, copy the database, run the installer, and check
+`journalctl` for migration 014. `list_projects` (or `twillingate project list`) shows the new ids: they
 follow creation order, starting at 1. Agents and scripts that stored
 aliases need those ids.
 
@@ -89,8 +89,8 @@ SELECT os, COUNT(*) FROM views WHERE lower(os) NOT IN (
 GROUP BY os;
 ```
 
-Then stop the service, copy the database (or take a Litestream snapshot),
-run the installer, and check `journalctl` for migration 015.
+Then stop the service, copy the database, run the installer, and check
+`journalctl` for migration 015.
 
 What changes on the day:
 
@@ -287,8 +287,8 @@ What changes on the day:
 There is no down migration, and the previous binary cannot run against the
 upgraded file: its ingest fails for both views and product events (it writes
 a `views` table that no longer exists and `events` rows without a family) and
-its daily pass aborts. Rolling back means restoring the pre-upgrade copy or
-Litestream snapshot, so take one before upgrading.
+its daily pass aborts. Rolling back means restoring the pre-upgrade copy,
+so take one before upgrading.
 
 ### Upgrading to reporting dashboards (migration 021)
 
@@ -355,3 +355,31 @@ not its group, so it can leave a group's tabs split around another
 dashboard in the order: the sidebar and the tab bar key on `group_id`, so
 the group still shows as one entry with all its tabs, and the next move of
 that group to a new place, on this binary, joins its tabs up again.
+
+### Upgrading past the Evidence dashboards and litestream
+
+The Evidence site, the `twillingate-evidence` image, the `dashboards`
+subcommand and `docker-compose.evidence.yml` are gone; the dashboards at
+`/app/`, served by the API, replace them. The litestream files go with
+them. No schema changes.
+
+- **compose:** take `docker-compose.evidence.yml` out of `COMPOSE_FILE` in
+  `.env` (or drop its `-f`) *before* pulling: the new release publishes no
+  `twillingate-evidence` image, and a compose project still naming the file
+  keeps running the last one it pulled. Then `docker compose up -d
+  --remove-orphans` stops the old `dashboards` container, and the file can
+  be deleted. Its volume is the shared `data` one, so nothing is lost.
+- **A dashboards-only host** (the old two-server topology) has nothing left
+  to run: stop its compose project and remove its restore cron or `restore`
+  service.
+- **litestream:** the release no longer ships `litestream.yml`,
+  `litestream.service` or `restore.sh`, and the installer no longer writes
+  them. One already installed keeps running untouched: the installer neither
+  updates nor removes it, so keep it as your backup or take it out yourself.
+  `docs/litestream.md` now holds the configuration, the unit and the
+  compose service, to compare against or set up again.
+- **`DASHBOARDS_*`** variables are no longer read; delete them from
+  `twillingate.env` or `.env` at leisure. A leftover one is ignored.
+- Open the dashboards at `/app/` on the API's host. That needs
+  `API_AUTH_DSN` set, which a reporting-only install may not have had: see
+  "The API endpoint" in `docs/deployment.md`.

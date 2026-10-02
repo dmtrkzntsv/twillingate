@@ -1,8 +1,6 @@
-# Tracking: ingestion, the tracker script and — once API_AUTH_DSN is set in
-# `.env` — the API (MCP and REST), all on :8080. See docs/deployment.md.
-#
-# Dashboards are docker-compose.evidence.yml. To run both, put this in `.env`:
-#   COMPOSE_FILE=docker-compose.yml:docker-compose.evidence.yml
+# Ingestion, the tracker script and — once API_AUTH_DSN is set in `.env` —
+# the API (MCP and REST) and the dashboards at /app/, all on :8080. See
+# docs/deployment.md.
 #
 # Once it is up, create a project and issue a key:
 #   docker compose exec twillingate twillingate project create -name myapp
@@ -21,19 +19,6 @@ services:
         required: false
     environment:
       - GOMEMLIMIT=128MiB
-
-  # Continuous backup: streams this database to object storage. Needs the R2
-  # credentials in `.env` and deploy/litestream/litestream.yml next to this
-  # file. Never on at the same time as the `restore` service in
-  # docker-compose.evidence.yml. See docs/twillingate.md.
-  # litestream:
-  #   image: litestream/litestream:0.5
-  #   restart: unless-stopped
-  #   command: ["replicate", "-config", "/etc/litestream.yml"]
-  #   volumes:
-  #     - ./litestream.yml:/etc/litestream.yml:ro
-  #     - data:/var/lib/twillingate
-  #   env_file: .env
 
 volumes:
   data:

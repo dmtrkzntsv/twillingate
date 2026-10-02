@@ -3,23 +3,21 @@
 The operator's runbook: getting twillingate onto a host, keeping it backed
 up, getting it back after the host is gone. Using it is
 [twillingate.md](twillingate.md); both are served over MCP, this one as
-`docs://deployment`. **One server** runs ingestion and dashboards together;
-**two servers** runs ingestion on a VPS and dashboards at home off a
-replica, moved there by [litestream](#replication-with-litestream).
+`docs://deployment`. One process serves ingestion, the API and the
+dashboards at `/app/`, and its whole state is one SQLite file.
 
 - [Install](#install)
 - [Configure the collector](#configure-the-collector)
-- [Reporting with Evidence](#reporting-with-evidence)
 - [The API endpoint](#the-api-endpoint)
 - [Dashboards at /app/](#dashboards-at-app)
-- [Operate and recover](#operate-and-recover) — including litestream for the two-server topology
+- [Operate and recover](#operate-and-recover) — including backups
 
 ## Install
 
 ### docker compose
 
-Ingestion, the SDK and — once `API_AUTH_DSN` is set — the API; dashboards
-are a second file, under [Reporting with Evidence](#reporting-with-evidence).
+Ingestion, the SDK and — once `API_AUTH_DSN` is set — the API and the
+[dashboards at /app/](#dashboards-at-app).
 
 ```bash
 mkdir twillingate && cd twillingate
@@ -106,11 +104,6 @@ to it.
 | `RETENTION_PRODUCT_AGGREGATE_DAYS` | Days product aggregates are kept. Default 365. |
 | `RETENTION_ARCHIVED_DAYS` | Days after archiving that a project (with all its data), a dashboard or a widget is deleted by the daily pass. 0 keeps archived items forever. Default 30. |
 | `PRODUCT_ATTRIBUTES_TOP_N` | Distinct attribute values kept per (project, day, event, key) before the rest collapse into `(other)`. Default 50. |
-| `DASHBOARDS_DB_PATH` | Database `dashboards` renders. Defaults to the `DATABASE_DSN` path. |
-| `DASHBOARDS_ADDR` | Address the dashboards bind. Default `0.0.0.0:3000`. |
-| `DASHBOARDS_INTERVAL` | Minimum spacing between Evidence rebuilds. Default `15m`. |
-| `DASHBOARDS_PROJECT_DIR` | Evidence project in the image. Default `/opt/evidence`. |
-| `DASHBOARDS_WORK_DIR` | Where the database snapshot is written. Default `/var/lib/dashboards`. |
 | `API_AUTH_DSN` | Authentication for the API endpoint (MCP and REST): `token://<token>?password=…` for the built-in browser login (see [The API endpoint](#the-api-endpoint)), or `oauth://<issuer-host>` for your own identity provider. Unset, bare `serve` skips the API with a warning. |
 | `API_ADDR` | Give the API (MCP and REST) its own listener. Defaults to `INGEST_ADDR` (shared). |
 | `API_URL` | The API's public origin when it has a hostname of its own (`https://api.example.com`), no path. The login's resource, issuer and the dashboards' callback follow it, so that host needs no `redirect=` entry. Defaults to `PUBLIC_URL`. |
@@ -120,9 +113,7 @@ to it.
 | `REPORTING_CACHE_SECONDS` | How long an ordinary widget data request reuses a sql widget's loaded value before loading again. 0 turns the cache off: every request loads again. Default 900. |
 | `REPORTING_REFRESH_SECONDS` | A `fresh=true` request reuses a result younger than this instead of `REPORTING_CACHE_SECONDS`; must not exceed it when that is non-zero. Default 60. A dashboard with auto-refresh on reloads every max(`REPORTING_CACHE_SECONDS`, `REPORTING_REFRESH_SECONDS`) seconds while its window has focus; both 0 removes the option. |
 
-Litestream credentials (`LITESTREAM_ACCESS_KEY_ID`,
-`LITESTREAM_SECRET_ACCESS_KEY`, `R2_BUCKET`, `R2_ENDPOINT`) live in the same
-`twillingate.env`; nothing in the collector reads them. The old names
+The old names
 `LISTEN_ADDR` and `RETENTION_WEB_*`/`RETENTION_APP_*` refuse the boot,
 each naming its replacement: `INGEST_ADDR`, `RETENTION_VIEWS_*`. The
 `MCP_*` names renamed to `API_*` are no longer checked; a leftover one is
@@ -130,52 +121,9 @@ ignored, so rename any still in `twillingate.env`.
 
 ### Raspberry Pi and low-resource hosts
 
-- Raise `BUFFER_FLUSH_INTERVAL` (say `30s`) and litestream's `sync-interval`: fewer, larger writes.
+- Raise `BUFFER_FLUSH_INTERVAL` (say `30s`): fewer, larger writes.
 - Set `GOMEMLIMIT` (unit and compose files ship `128MiB`) and keep `GEO_DSN` off `maxmind://`, which holds a database in memory.
 - Lower `RETENTION_VIEWS_RAW_DAYS` (say `7`): raw views are most of the one raw `events` table, the largest in the file, and the live halves of the `v_views_*` views scan them on every query.
-
-## Reporting with Evidence
-
-`twillingate dashboards` renders an Evidence site from the database; in
-compose it is `docker-compose.evidence.yml`, on port 3000, which answers
-`503` for about a minute until the first build finishes. It rebuilds within
-a minute of the database changing (size and modification time), no closer
-together than `DASHBOARDS_INTERVAL` (default `15m`), snapshotting the
-database into `DASHBOARDS_WORK_DIR` each time — the host needs room for one
-more copy.
-
-A rebuild that cannot read its data does not publish: a database that is not
-a twillingate one stops at `not a twillingate database`, a source Evidence
-cannot read at `could not read a source`. The previous site keeps serving
-and no `dashboards: rebuilt` line appears; the fault is in the database, so
-check `docker compose logs restore` and that `SOURCE_DB` matches the `path:`
-in `litestream.yml` exactly.
-
-**One server.** Add the second compose file beside the tracking one;
-`COMPOSE_FILE` joins them on one database (else pass `-f` to every command).
-
-```bash
-curl -fsSLO https://raw.githubusercontent.com/dmtrkzntsv/twillingate/main/deploy/compose/docker-compose.evidence.yml
-echo COMPOSE_FILE=docker-compose.yml:docker-compose.evidence.yml >> .env
-docker compose up -d
-```
-
-**Two servers.** Fetch the same file on the dashboard machine and run it
-alone (`docker compose -f docker-compose.evidence.yml up -d`) with
-`DASHBOARDS_DB_PATH=/data/replica.db` in `.env` — it defaults to
-`/data/twillingate.db`, the shared-volume case. Restore the replica from the
-compose file's commented `restore` service or host cron, never both. To move
-an existing single server here, stand up the VPS on the same bucket, stop
-the old writer, then point the reader's restore at the VPS's database path:
-`REPLICA_PATH` and `DASHBOARDS_DB_PATH` must both read `/data/replica.db`,
-and the tracking snippet's `src` repoints at the VPS hostname.
-
-`restore.sh` verifies into a temporary file, renames only on success, and
-counts the applied migrations, because litestream does not fail an *empty*
-restore: a `path:` that does not match the writer's, or a bucket from a
-different litestream major/minor, downloads a valid database with nothing in
-it and exits 0. The previous replica keeps serving either way, and an empty
-restore lands as `restored file is not a twillingate database`.
 
 ## The API endpoint
 
@@ -296,8 +244,8 @@ running instances and leaves the bare unit disabled; reverse to go back.
 > **An API-only process still runs the daily aggregation pass against
 > `DATABASE_DSN`** — `-api` only makes the HTTP listener conditional, not
 > the background jobs. Set `API_DB_PATH` (what the API reads) and
-> `DATABASE_DSN` (what the pass writes) deliberately: aimed at a litestream
-> replica, an API-only unit writes to that replica on every pass — or
+> `DATABASE_DSN` (what the pass writes) deliberately: aimed at a copy of the
+> database, an API-only unit writes to that copy on every pass — or
 > accept that a two-process topology runs the idempotent daily aggregation
 > twice.
 
@@ -396,10 +344,8 @@ a loopback address, without a login; its usage is in
 | Upgrade (systemd) | `curl -fsSL …/install.sh \| sudo bash` — restarts the running service and reports the old and new version |
 | Upgrade (compose) | `docker compose pull && docker compose up -d`. Never `down -v`: the database lives in the named volume. Pin with `TWILLINGATE_VERSION=v0.9.2` in `.env`. |
 | Apply migrations only | `twillingate migrate` |
-| Upgrade across a schema change | Snapshot first (`litestream snapshots …`, or copy the file while the service is stopped): migrations 012, 014, 015 and 016 are irreversible. Pre-checks and what changes on the day: <https://github.com/dmtrkzntsv/twillingate/blob/main/deploy/UPGRADES.md> (not served over MCP; open it in the repository) |
+| Upgrade across a schema change | [Back up](#back-up-and-restore) first: migrations 012, 014, 015 and 016 are irreversible. Pre-checks and what changes on the day: <https://github.com/dmtrkzntsv/twillingate/blob/main/deploy/UPGRADES.md> (not served over MCP; open it in the repository) |
 | Database size | `du -h /var/lib/twillingate/twillingate.db` |
-| Replication status | `journalctl -u litestream --since -1h`, or `docker compose logs litestream` |
-| Dashboard rebuilds | `docker compose logs dashboards` — one `dashboards: rebuilt` line per successful build |
 | Recent config changes | `sqlite3 …/twillingate.db "SELECT * FROM audit_log ORDER BY ts DESC LIMIT 20"` |
 | Preview dashboard files against real data | `twillingate reporting dev <dir>... [-db <path>] [-addr 127.0.0.1:3100]` — a local, no-login server over the built UI; `-db` defaults to `DATABASE_DSN`'s path, `-addr` is refused unless it is loopback |
 
@@ -410,95 +356,35 @@ visitor salt rotates at 00:00 UTC; a catch-up pass at startup means downtime
 across those times skips no day. With `LOG_FILE` set, install
 `deploy/logrotate/twillingate` into `/etc/logrotate.d/`.
 
-### Replication with litestream
+### Back up and restore
 
-Litestream streams the SQLite WAL to S3-compatible storage as it is written,
-so the bucket copy is seconds behind: a backup, and a read replica, with
-both sides connecting outbound. A single server you back up some other way
-needs none of it. Any S3-compatible store works — these use Cloudflare R2.
-Create a bucket and an **Object Read & Write** token for the writer, plus an
-**Object Read** token for any reader (one that cannot write cannot corrupt
-the backup), in `twillingate.env`, never in a config file:
-
-```sh
-LITESTREAM_ACCESS_KEY_ID=…
-LITESTREAM_SECRET_ACCESS_KEY=…
-R2_BUCKET=twillingate-backup
-R2_ENDPOINT=https://<account_id>.r2.cloudflarestorage.com
-```
-
-`deploy/litestream/litestream.yml` is the whole configuration:
-
-```yaml
-dbs:
-  - path: /var/lib/twillingate/twillingate.db
-    replicas:
-      - type: s3
-        bucket: ${R2_BUCKET}
-        path: litestream
-        endpoint: ${R2_ENDPOINT}
-        sync-interval: 5s
-```
-
-> **`path:` is the identity of the replica in the bucket.** A restore asks
-> for the database by the path it had on the machine that wrote it, so
-> writer, reader and recovery host must use that value byte for byte, even
-> when the file lives elsewhere locally. Getting it wrong produces an empty
-> restore rather than an error.
-
-> **Writer and reader must run the same litestream major/minor version.**
-> 0.5 stores backups in a bucket format (LTX) 0.3 cannot see, and vice
-> versa: a mismatched restore reports `no matching backups found`, which
-> looks exactly like an empty bucket. The compose files pin
-> `litestream/litestream:0.5` — pin the same version everywhere.
-
-On the writer: for docker, uncomment the `litestream` service, copy
-`litestream.yml` next to the compose files and put the four variables in
-`.env`. For systemd, `install.sh` installs `litestream.service` and
-`/etc/litestream.yml` but not the binary — take that from
-<https://litestream.io/install/>, then enable the unit:
-```bash
-sudo systemctl enable --now litestream
-```
-
-### Backup restore drill — do this monthly
+Everything twillingate keeps is in one SQLite file,
+`/var/lib/twillingate/twillingate.db` (in compose, `twillingate.db` in the
+`data` volume). SQLite's online backup copies it safely while the service
+runs; a plain `cp` of a live database can catch a half-written page and
+misses whatever is still in the `-wal` file beside it. Ship the copy off the
+host however you ship files, and check it now and then. For a continuous
+off-host copy instead, seconds behind, run litestream beside the collector:
+<https://github.com/dmtrkzntsv/twillingate/blob/main/docs/litestream.md>
+sets it up for systemd and docker compose, with the restore drill and
+disaster recovery (not served over MCP; open it in the repository).
 
 ```bash
-# What is in the bucket? (0.5 syntax; replaces the old snapshots/generations)
-litestream ltx -config /etc/litestream.yml /var/lib/twillingate/twillingate.db
-litestream restore -config /etc/litestream.yml -o /tmp/check.db \
-  /var/lib/twillingate/twillingate.db
-# It must be a valid database, not just a file that exists:
-sqlite3 /tmp/check.db 'PRAGMA quick_check;'          # expect: ok
-sqlite3 /tmp/check.db 'SELECT COUNT(*) FROM projects;'
-sqlite3 /tmp/check.db "SELECT MAX(day) FROM v_views_daily;"
-rm /tmp/check.db
+sudo -u twillingate sqlite3 /var/lib/twillingate/twillingate.db \
+  ".backup '/var/lib/twillingate/backup.db'"
+sqlite3 /var/lib/twillingate/backup.db 'PRAGMA quick_check;'         # expect: ok
+sqlite3 /var/lib/twillingate/backup.db "SELECT MAX(day) FROM v_views_daily;"
 ```
 
-A backup you have never restored is not a backup, and
-`deploy/litestream/restore.sh` runs the same restore-and-verify against a
-scratch `REPLICA_PATH`. The max day must be recent: days stale means
-litestream is not replicating (`journalctl -u litestream`), and `no matching
-backups found` against a written bucket means a version mismatch.
+The image carries no `sqlite3`: under compose, `docker compose stop
+twillingate`, copy `twillingate.db` out of the volume, and start it again.
 
-### Disaster recovery — the host is gone
-
-```bash
-# On a fresh host: install, then restore BEFORE starting the collector.
-# make build needs Go and Node 22; or install a published release instead.
-git clone <repo> && cd twillingate && make build
-sudo ./deploy/systemd/install.sh --user twillingate --yes
-sudo vi /etc/twillingate/twillingate.env       # same R2 credentials
-sudo -u twillingate litestream restore -config /etc/litestream.yml \
-  -o /var/lib/twillingate/twillingate.db /var/lib/twillingate/twillingate.db
-sudo -u twillingate sqlite3 /var/lib/twillingate/twillingate.db 'PRAGMA quick_check;'
-sudo systemctl start twillingate litestream
-```
-
-> **Restore first, always.** Starting `twillingate serve` against an empty
-> data directory creates a fresh database, and litestream would then
-> replicate that empty database over the good backup.
+To restore, on the old host or a fresh one after [installing](#install):
+stop the service, put the copy at `/var/lib/twillingate/twillingate.db`
+owned by the service user, delete any `twillingate.db-wal` and
+`twillingate.db-shm` beside it, and start the service. A copy from an older
+release migrates on start.
 
 Two things do not survive: the visitor salt (rotated daily anyway, so at
-most a day of continuity) and events buffered in memory when the host died,
-bounded by `BUFFER_FLUSH_INTERVAL`.
+most a day of continuity) and whatever arrived after the copy was taken,
+including events buffered in memory, bounded by `BUFFER_FLUSH_INTERVAL`.

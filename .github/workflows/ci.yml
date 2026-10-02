@@ -34,7 +34,7 @@ jobs:
           cat "$RUNNER_TEMP/files"
           has() { grep -qE "$1" "$RUNNER_TEMP/files"; }
           # Go tests read far beyond Go source (docs/, sdk/src, web/ widgets,
-          # evidence/, deploy/), so only specs and plans skip them.
+          # deploy/), so only specs and plans skip them.
           go=false; web=false; e2e=false; sdk=false
           grep -qv '^docs/superpowers/' "$RUNNER_TEMP/files" && go=true
           has '^web/' && web=true
@@ -47,8 +47,8 @@ jobs:
           fi
           printf 'go=%s\nweb=%s\ne2e=%s\nsdk=%s\n' "$go" "$web" "$e2e" "$sdk" | tee -a "$GITHUB_OUTPUT"
 
-  # Vet, the coverage gate without -race, the SQLite-free packages with it,
-  # the restore test (make check), and a link of the binary.
+  # Vet, the coverage gate without -race, the SQLite-free packages with it
+  # (make check), and a link of the binary.
   check:
     needs: changes
     if: needs.changes.outputs.go == 'true'

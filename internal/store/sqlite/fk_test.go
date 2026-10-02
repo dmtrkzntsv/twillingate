@@ -77,9 +77,9 @@ func TestMigrationViolationFails(t *testing.T) {
 	}
 }
 
-// TestExistingDatabasePassesCheck seeds projects and keys the way
-// zz_seed_test.go does, then migrates to latest: no dangling FK should
-// ever come out of ordinary use.
+// TestExistingDatabasePassesCheck seeds projects and keys through the
+// store, then migrates to latest: no dangling FK should ever come out of
+// ordinary use.
 func TestExistingDatabasePassesCheck(t *testing.T) {
 	db := newTestDBAt(t, 19)
 	ctx := context.Background()

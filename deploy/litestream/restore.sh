@@ -1,15 +1,11 @@
 #!/bin/sh
-# Refresh a local read replica from object storage.
-#
-# The application does not do this: how a database gets from the machine that
-# writes it to the machine that reads it is a deployment choice. This script
-# is the litestream answer, and it is what `twillingate dashboards` expects to
-# find at REPLICA_PATH.
+# Restore the backup from object storage into a local copy and verify it: the
+# backup drill in docs/deployment.md, run by hand or on a schedule.
 #
 # The restore never writes to REPLICA_PATH directly. A failed download, a
 # truncated file, a corrupt database or one with no twillingate schema in it
-# leaves the previous replica in place, so the dashboards keep serving
-# stale-but-valid data instead of nothing.
+# leaves the previous copy in place and exits non-zero, so a broken backup is
+# reported rather than replacing a good copy with nothing.
 #
 # Environment:
 #   SOURCE_DB     path of the database *on the writer* — litestream keys a
@@ -60,8 +56,8 @@ restore_once() {
   # match the writer's, or a bucket written by a different litestream
   # major/minor, produces a valid database with nothing in it and exits 0 —
   # it passes quick_check, and renaming it into place replaces good data with
-  # none. The dashboards then rebuild from it and report success. The schema
-  # is what tells an empty restore from a real one.
+  # none while the drill reports success. The schema is what tells an empty
+  # restore from a real one.
   applied="$(sqlite3 -readonly "$tmp" 'SELECT COUNT(*) FROM schema_migrations' 2>&1)" || {
     echo "restore: restored file is not a twillingate database: $applied" >&2
     return 1
@@ -95,8 +91,8 @@ main() {
   fi
 }
 
-# Overlapping runs would race on the temporary file: cron must not start a
-# second restore while a slow one is still running. The lock is held through
+# Overlapping runs would race on the temporary file: a schedule must not
+# start a second restore while a slow one is still running. The lock is held through
 # an open file descriptor, so it is released even if this process is killed —
 # a lock file left on disk cannot wedge replication.
 exec 9>"$REPLICA_PATH.lock"

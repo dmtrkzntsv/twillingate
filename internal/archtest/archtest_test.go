@@ -1,6 +1,6 @@
 // Package archtest pins the package graph described in CLAUDE.md
 // ("Layout"): leaves import only leaves, manage sits above the leaves,
-// the surfaces (server, api, jobs, pipeline, dashboards) import
+// the surfaces (server, api, jobs, pipeline) import
 // leaves and manage but never each other, and internal/app is the only
 // package that wires the surfaces together. cmd/ is unconstrained.
 //
@@ -42,7 +42,6 @@ var rank = map[string]int{
 	"internal/jobs":              2,
 	"internal/server":            2,
 	"internal/api":               2,
-	"internal/dashboards":        2,
 	"internal/app":               3,
 }
 

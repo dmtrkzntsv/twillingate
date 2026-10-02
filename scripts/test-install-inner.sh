@@ -56,15 +56,12 @@ echo "ok: twillingate@.service templated for split surfaces"
 echo "$fresh_log" | grep -q 'systemctl enable twillingate.service' \
   || fail "fresh install did not enable twillingate.service"
 echo "ok: fresh install enables twillingate.service"
-grep -q 'User=twillingate' /etc/systemd/system/litestream.service \
-                                       && echo "ok: litestream.service templated"
 [ "$(stat -c '%a' /etc/twillingate/twillingate.env)" = 640 ] \
                                        && echo "ok: twillingate.env 0640"
 grep -q '^DATABASE_DSN=' /etc/twillingate/twillingate.env \
                                        && echo "ok: twillingate.env has DATABASE_DSN"
 grep -q 'EnvironmentFile=/etc/twillingate/twillingate.env' /etc/systemd/system/twillingate.service \
                                        && echo "ok: unit loads twillingate.env"
-test -f /etc/litestream.yml            && echo "ok: litestream.yml installed"
 test -f /etc/logrotate.d/twillingate     && echo "ok: logrotate installed"
 
 # Projects live in the database, not a shipped file: the installer's own

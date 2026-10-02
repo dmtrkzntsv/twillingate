@@ -255,8 +255,8 @@ func TestDeploymentDocumentsEveryEnvVar(t *testing.T) {
 	}
 	// Both directions read the variable TABLE, not the whole document: the
 	// prose names GEO_DSN and BUFFER_FLUSH_INTERVAL again in the tuning
-	// advice, and litestream's own credentials besides, so a document-wide
-	// match would pass for a variable that had fallen out of the table.
+	// advice, so a document-wide match would pass for a variable that had
+	// fallen out of the table.
 	documented := map[string]bool{}
 	for _, k := range documentedEnvVars(t) {
 		documented[k] = true
@@ -313,7 +313,7 @@ func TestDeploymentResourceServed(t *testing.T) {
 	}
 	body := res.Contents[0].Text
 	for _, want := range []string{
-		"API_AUTH_DSN", "litestream", "install.sh", "DATABASE_DSN",
+		"API_AUTH_DSN", "/app/", "install.sh", "DATABASE_DSN",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("docs://deployment missing %q", want)

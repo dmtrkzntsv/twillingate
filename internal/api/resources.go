@@ -71,7 +71,7 @@ func (h *host) registerResources(s *mcp.Server) {
 		"Set up a project, instrument a site or app, and answer questions from the data: project and ingest-key management, the JS SDK, the normative POST /ingest/events wire format and event model, the HTTP API, and the queryable views. Read before instrumenting or integrating anything.",
 		docs.Twillingate)
 	textResource(s, "docs://deployment", "deployment",
-		"Run twillingate on your own server: systemd and docker install, every environment variable, Evidence reporting, enabling and authenticating the API endpoint (MCP and REST), litestream replication for a two-server topology, backup drills and disaster recovery. Read when helping an operator install or configure the collector itself.",
+		"Run twillingate on your own server: systemd and docker install, every environment variable, enabling and authenticating the API endpoint (MCP and REST) and the dashboards at /app/, backup and restore. Read when helping an operator install or configure the collector itself.",
 		docs.Deployment)
 	textResource(s, "docs://reporting", "reporting",
 		"Build dashboards for the /app/ page: dashboards, widgets and components, the component table with the columns each one reads, the SQL parameters and range presets, the grid, and archiving. Read before creating or changing a dashboard; reporting_guide returns the live parts of it in one call.",

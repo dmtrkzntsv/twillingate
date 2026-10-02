@@ -12,7 +12,6 @@ internal/server/     ingest HTTP API; serves the JS SDK and the helper scripts
 internal/api/        private API: MCP endpoint and REST routes, one auth
 internal/jobs/       daily pass: salt rotation, aggregation, prune, view rebuild
 internal/pipeline/   write buffer between ingest and the store
-internal/dashboards/ Evidence build and snapshot for the reporting image
 internal/manage/     project registry snapshot and its audited operations
 internal/reporting/  dashboards, widgets and components: validation, operations, system dashboards, cache; embeds the web app
 internal/store/      Store interface and row types; store/sqlite owns every migration and view
@@ -24,11 +23,10 @@ internal/shared/     small generic leaf packages: civil (calendar dates), readsq
 docs/                the three contract pages, embedded and served over MCP
 sdk/                 browser SDK source (TypeScript); the built file is embedded by internal/server
 web/                 dashboard web app source (React, TypeScript); the build is embedded by internal/reporting
-evidence/            the Evidence dashboards project
-deploy/              installer, systemd units, compose files, litestream config, UPGRADES.md
+deploy/              installer, systemd unit, compose file, UPGRADES.md
 ```
 
-`app` imports the surfaces (`server`, `api`, `jobs`, `pipeline`, `dashboards`);
+`app` imports the surfaces (`server`, `api`, `jobs`, `pipeline`);
 surfaces import `manage`, `reporting` and the leaves, never each other; `manage` and the
 leaves import only leaves. A surface that needs another's behaviour takes an
 interface and `app` passes the implementation (`server.Enqueuer` is
@@ -55,7 +53,7 @@ entry. Only `feat`, `fix` and `perf` appear in the notes; `docs`, `refactor`,
 appear in the notes, so anything a user should read about needs one of the
 three published types. `!` before the colon (or a `BREAKING CHANGE:` footer)
 marks a breaking change. Scopes match the tree: `store`, `server`, `jobs`,
-`config`, `api`, `manage`, `pipeline`, `geo`, `dashboards`, `reporting`,
+`config`, `api`, `manage`, `pipeline`, `geo`, `reporting`,
 `shared`, `sdk`, `web`, `cmd`, `deploy`, `ci`; omit for repo-wide changes.
 
 Releases are cut by hand with `gh workflow run release.yml` (optional `version`
@@ -68,7 +66,7 @@ not hand-edited.
 ## Checks
 
 `make check` (vet, the coverage gate without `-race`, the SQLite-free packages
-with it, restore test) is what pull request CI runs; run it before pushing.
+with it) is what pull request CI runs; run it before pushing.
 `make build` compiles; `make test` runs the whole suite under `-race`, about
 ten times slower because modernc SQLite is instrumented too, so CI runs it only
 in the release workflow. CI runs on pull requests only (nothing on push to
@@ -91,9 +89,10 @@ Three pages, all served over MCP, all the contract rather than a summary:
 `docs/twillingate.md` (`docs://twillingate`) for using twillingate,
 `docs/reporting.md` (`docs://reporting`) for building dashboards, and
 `docs/deployment.md` (`docs://deployment`) for running it. `docs/` holds those
-three plus `docs/plausible/README.md`, which stays separate because it
-documents bytes the collector serves at `/js/plausible-shim.js` and a test
-binds it to them; do not add files there (dashboard material belongs in
+three, `docs/litestream.md` (a backup guide for a tool twillingate ships no
+code for, so not served over MCP), and `docs/plausible/README.md`, which
+stays separate because it documents bytes the collector serves at
+`/js/plausible-shim.js` and a test binds it to them; do not add files there (dashboard material belongs in
 `docs/reporting.md`). Per-migration upgrade runbooks live in
 `deploy/UPGRADES.md`.
 
@@ -111,9 +110,8 @@ Update in the **same commit** as the change:
 | views the system dashboards read (`internal/store/sqlite/migrations/`) | the system widgets, which `TestSystemDashboards` in `internal/reporting/system_test.go` runs |
 | a migration with pre-checks or a visible change on upgrade day | `deploy/UPGRADES.md` |
 | environment variables (`internal/config/`) | `docs/deployment.md` |
-| install, upgrade, replication or restore procedure (`deploy/`, `Makefile`) | `docs/deployment.md` |
+| install, upgrade, backup or restore procedure (`deploy/`, `Makefile`) | `docs/deployment.md`, and `docs/litestream.md` when it touches the data directory, the service user or the image |
 | API auth modes or client setup (`internal/api/auth.go`, `oauth*.go`) | `docs/deployment.md` |
-| the Evidence dashboards (`internal/dashboards/`, `evidence/`) | `docs/deployment.md` |
 
 `internal/api/docs_sync_test.go` binds part of this in both directions
 (reserved keys, tool names, routes, views, SDK symbols, environment variables,

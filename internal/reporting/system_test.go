@@ -201,7 +201,7 @@ func column(t *testing.T, res readsql.Result, i int, name string) string {
 
 // viewsDailyReference is, for each Views widget whose SQL reads
 // agg_views_daily and raw_views directly instead of v_views_daily, the
-// same answer read from v_views_daily in the Evidence page's shapes
+// same answer read from v_views_daily in the plain shapes
 // (totals, daily, kinds) and, for the two stats with a trend, the
 // previous window read the obvious way. The widget exists only because
 // the view is slow; it must never answer differently.

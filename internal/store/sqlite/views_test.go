@@ -106,7 +106,7 @@ func TestViewsLiveHalvesUseTheDayIndex(t *testing.T) {
 	}
 }
 
-// The invariant that makes Evidence dashboards boundary-free (spec §8.1):
+// The invariant that makes dashboards boundary-free (spec §8.1):
 // v_* views must return IDENTICAL numbers before and after aggregation.
 func TestStitchViewsInvariantDaily(t *testing.T) {
 	db := newTestDB(t)

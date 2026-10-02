@@ -4,9 +4,9 @@ What an AI agent — or a person — needs to set up a project, get a site or ap
 sending data, and answer questions from what comes back. The MCP endpoint
 serves this file verbatim as `docs://twillingate`.
 
-Installing twillingate, configuring the collector, standing up Evidence
-reporting, enabling the API endpoint and replicating the database are the
-operator's job, in [deployment.md](deployment.md).
+Installing twillingate, configuring the collector, enabling the API endpoint
+and backing up the database are the operator's job, in
+[deployment.md](deployment.md).
 
 - [What twillingate is](#what-twillingate-is)
 - [Set up a project](#set-up-a-project)
@@ -21,7 +21,7 @@ operator's job, in [deployment.md](deployment.md).
 
 One Go binary, one SQLite file. It collects views (page views from websites,
 screen views from apps and CLIs) and custom product events through one endpoint,
-rolls them up nightly, and exposes the result as Evidence dashboards, a
+rolls them up nightly, and exposes the result as dashboards at `/app/`, a
 read-only SQL surface, and an API (MCP or HTTP). It is cookieless by default:
 the served SDK's `anonymous` default writes nothing to a visitor's device
 unless the tag declares consent, and then only its retry queue, never an
@@ -34,9 +34,8 @@ discarded.
 | Command | Does |
 | --- | --- |
 | `twillingate serve -ingest` | Ingestion: `POST /ingest/events`, the SDK at `/js/twillingate.js`, `/healthz` |
-| `twillingate serve -api` | The API endpoint: MCP at `/mcp`, REST at `/api/` |
+| `twillingate serve -api` | The API endpoint: MCP at `/mcp`, REST at `/api/`, the dashboards at `/app/` |
 | `twillingate serve` | Both, on one listener unless `API_ADDR` says otherwise |
-| `twillingate dashboards` | Renders the Evidence site from the database |
 | `twillingate project`, `key`, `config` | Registry management |
 | `twillingate migrate` | Applies schema migrations and exits |
 
