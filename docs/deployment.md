@@ -118,7 +118,7 @@ to it.
 | `API_QUERY_TIMEOUT` | Per-query guard on reads and the `query` operation; also bounds a reporting widget's sql. Default `10s`. |
 | `API_QUERY_MAX_ROWS` | Row cap on the `query` operation; also bounds a reporting widget's sql. Default 1000. |
 | `REPORTING_CACHE_SECONDS` | How long an ordinary widget data request reuses a sql widget's loaded value before loading again. 0 turns the cache off: every request loads again. Default 900. |
-| `REPORTING_REFRESH_SECONDS` | A `fresh=true` request reuses a result younger than this instead of `REPORTING_CACHE_SECONDS`; must not exceed it when that is non-zero. Default 60. |
+| `REPORTING_REFRESH_SECONDS` | A `fresh=true` request reuses a result younger than this instead of `REPORTING_CACHE_SECONDS`; must not exceed it when that is non-zero. Default 60. A dashboard with auto-refresh on reloads every max(`REPORTING_CACHE_SECONDS`, `REPORTING_REFRESH_SECONDS`) seconds while its window has focus; both 0 removes the option. |
 
 Litestream credentials (`LITESTREAM_ACCESS_KEY_ID`,
 `LITESTREAM_SECRET_ACCESS_KEY`, `R2_BUCKET`, `R2_ENDPOINT`) live in the same

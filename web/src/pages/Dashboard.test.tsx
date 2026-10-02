@@ -101,7 +101,7 @@ describe('Dashboard', () => {
     const group = await screen.findByRole('button', { name: 'Dashboard actions' })
     expect(group.closest('header')).toContainElement(screen.getByRole('tablist'))
     await userEvent.click(group)
-    expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Duplicate dashboard', 'Archive dashboard'])
+    expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Refresh', 'Duplicate dashboard', 'Archive dashboard'])
     await userEvent.keyboard('{Escape}')
 
     await userEvent.click(screen.getByRole('button', { name: 'Tab actions' }))
@@ -380,15 +380,43 @@ describe('Dashboard', () => {
     await waitFor(() => expect(endpoints.restore).toHaveBeenCalledWith(11, false))
   })
 
-  it('offers no writes in reporting dev: no menus, no sortable tabs', async () => {
+  it('offers no writes in reporting dev: only Refresh, no tab menu, no sortable tabs', async () => {
     mockApi({ dev: true })
     renderAt('/dashboards/13')
 
     const tabs = await screen.findAllByRole('tab')
     for (const tab of tabs) expect(tab).not.toHaveAttribute('aria-roledescription')
     expect(screen.getByRole('link', { name: 'Marketing' })).not.toHaveAttribute('aria-roledescription')
-    // Neither the header's "Dashboard actions" nor any sidebar "… actions".
-    expect(screen.queryByRole('button', { name: /actions$/ })).not.toBeInTheDocument()
+    // No "Tab actions", and no sidebar "… actions": only the dashboard's
+    // own menu, whose refreshes are reads.
+    expect(screen.getAllByRole('button', { name: /actions$/ }).map((b) => b.getAttribute('aria-label'))).toEqual([
+      'Dashboard actions',
+    ])
+    await userEvent.click(screen.getByRole('button', { name: 'Dashboard actions' }))
+    expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Refresh'])
+  })
+
+  it('offers auto-refresh at the server\'s interval, remembered per dashboard in this browser', async () => {
+    mockApi()
+    vi.mocked(endpoints.dashboards).mockResolvedValue({ ...dashboardsList(), auto_refresh_seconds: 900 })
+    renderAt('/dashboards/13')
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Dashboard actions' }))
+    const auto = screen.getByRole('menuitemcheckbox', { name: 'Auto-refresh every 15 min' })
+    expect(auto).toHaveAttribute('aria-checked', 'false')
+    await userEvent.click(auto)
+    expect(localStorage.getItem('twillingate.auto_refresh.13')).toBe('true')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Dashboard actions' }))
+    expect(screen.getByRole('menuitemcheckbox', { name: 'Auto-refresh every 15 min' })).toHaveAttribute('aria-checked', 'true')
+  })
+
+  it('offers no auto-refresh when the server allows none', async () => {
+    mockApi()
+    renderAt('/dashboards/13')
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Dashboard actions' }))
+    expect(screen.queryByRole('menuitemcheckbox')).not.toBeInTheDocument()
   })
 
   it('opens a system group archived whole with all its tabs, and its menus', async () => {
@@ -408,7 +436,7 @@ describe('Dashboard', () => {
     )
     expect(screen.getByRole('tab', { name: 'Product' })).toHaveAttribute('aria-selected', 'true')
     await userEvent.click(screen.getByRole('button', { name: 'Dashboard actions' }))
-    expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Duplicate dashboard'])
+    expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Refresh', 'Duplicate dashboard'])
   })
 
   it('offers no Restore on an archived dashboard in reporting dev', async () => {

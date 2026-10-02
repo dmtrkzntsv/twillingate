@@ -74,6 +74,8 @@ export interface DashboardsResponse {
   dashboards: DashboardInfo[]
   /** Days until an archived dashboard is purged; absent when retention is off (D17a). */
   purge_after_days?: number
+  /** How often a dashboard with auto-refresh on reloads: max(REPORTING_CACHE_SECONDS, REPORTING_REFRESH_SECONDS); absent when both are 0. */
+  auto_refresh_seconds?: number
 }
 
 export interface Widget {

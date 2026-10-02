@@ -106,7 +106,10 @@ component:
 `sql` results are cached per widget and per value it follows. An ordinary load
 reuses a result up to `REPORTING_CACHE_SECONDS` old (default 900); `fresh=true`
 reuses one only up to `REPORTING_REFRESH_SECONDS` old (default 60), and
-`refresh_after` says when a fresh load would run the query again. Changing a
+`refresh_after` says when a fresh load would run the query again. A viewer
+can turn on auto-refresh from a dashboard's top-right "…" menu: the page
+then reloads it every `auto_refresh_seconds` (the longer of the two, so
+each reload runs the queries again), only while its window has focus. Changing a
 widget's source starts it on new entries. Widget queries run under the same
 guards as `query`: read-only, `API_QUERY_TIMEOUT` and `API_QUERY_MAX_ROWS`.
 
@@ -175,7 +178,7 @@ guards as `query`: read-only, `API_QUERY_TIMEOUT` and `API_QUERY_MAX_ROWS`.
 | --- | --- | --- |
 | `reporting_guide` | none | markdown: the running version and its release notes, the source types and components, the views, the active projects and the dashboards, and this document's [Workflow](#workflow) and [Rules](#rules). MCP only |
 | `list_components` | none | `source_types` and `components`: each one's `description`, `accepts`, `inputs`, `props` schema, `default_width` and `default_height` |
-| `list_dashboards` | none | `timezone` and `dashboards` in sidebar order (system, then user), archived ones included: `dashboard_id`, `title`, `owner`, `group_id`, stored `project_id` and `range`, live `widgets` count, `archived_at`; plus `purge_after_days`, how long an archived user dashboard is kept before it is deleted (absent: kept forever) |
+| `list_dashboards` | none | `timezone` and `dashboards` in sidebar order (system, then user), archived ones included: `dashboard_id`, `title`, `owner`, `group_id`, stored `project_id` and `range`, live `widgets` count, `archived_at`; plus `purge_after_days`, how long an archived user dashboard is kept before it is deleted (absent: kept forever), and `auto_refresh_seconds`, how often the page reloads a dashboard with auto-refresh on (absent: never) |
 | `get_dashboard` | `dashboard_id` | the dashboard, its `group_id`, its `follows_project` and `follows_range`, its `tabs` (the group's live dashboards, this one included, in tab order), and its live `widgets` in order |
 | `list_widgets` | `dashboard_id`, `component` (both optional; they combine) | `widgets`, archived ones included, each with its `dashboard` and 1-based `position` there |
 | `widget_data` | `widget_id`, `project_id`, `from`, `to`, `fresh` | the envelope above |
