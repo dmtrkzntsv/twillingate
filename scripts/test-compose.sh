@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
-# End-to-end test of the published topology: build both images, run tracking
-# and reporting together as one project, send a hit, and wait for the
-# dashboards to render it. This is the one test that exercises the real
-# Evidence build, so it is slow (a first build takes about a minute) and
-# manual — `make check` does not run it.
+# End-to-end test of the published compose file: build the image, start it
+# with the API on, send a hit, read it back over REST, and load /app/. It
+# needs docker, so it is manual — `make check` does not run it.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -12,11 +10,8 @@ command -v docker > /dev/null || { echo "docker is required"; exit 1; }
 dir="$(mktemp -d)"
 project="twillingate-composetest-$$"
 
-# Tracking and reporting are separate files; the single-machine topology is
-# both of them up as one project, sharing the `data` volume.
 compose() {
-  docker compose -p "$project" \
-    -f "$dir/docker-compose.yml" -f "$dir/docker-compose.evidence.yml" "$@"
+  docker compose -p "$project" -f "$dir/docker-compose.yml" "$@"
 }
 
 cleanup() {
@@ -27,21 +22,20 @@ trap cleanup EXIT
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
-echo "building images..."
+echo "building the image..."
 docker build --target runtime -t twillingate:composetest . > /dev/null
-docker build --target evidence -t twillingate-evidence:composetest . > /dev/null
 
-# The compose files name published images; the test substitutes the ones it
-# just built so it exercises this working tree rather than the registry. The
-# same substitutions run over both files — each is a no-op in the other.
-for f in docker-compose.yml docker-compose.evidence.yml; do
-  # shellcheck disable=SC2016  # the ${TWILLINGATE_VERSION} text is matched, not expanded
-  sed -e 's|ghcr.io/dmtrkzntsv/twillingate:${TWILLINGATE_VERSION:-latest}|twillingate:composetest|' \
-      -e 's|ghcr.io/dmtrkzntsv/twillingate-evidence:${TWILLINGATE_VERSION:-latest}|twillingate-evidence:composetest|' \
-      -e 's|"8080:8080"|"18080:8080"|' \
-      -e 's|"3000:3000"|"13000:3000"|' \
-      "deploy/compose/$f" > "$dir/$f"
-done
+# The compose file names the published image; the test substitutes the one it
+# just built so it exercises this working tree rather than the registry.
+# shellcheck disable=SC2016  # the ${TWILLINGATE_VERSION} text is matched, not expanded
+sed -e 's|ghcr.io/dmtrkzntsv/twillingate:${TWILLINGATE_VERSION:-latest}|twillingate:composetest|' \
+    -e 's|"8080:8080"|"18080:8080"|' \
+    deploy/compose/docker-compose.yml > "$dir/docker-compose.yml"
+
+# A bare token turns the API (and /app/) on without a login page; a short
+# flush makes the hit readable within seconds.
+token="ar_composetest"
+printf 'API_AUTH_DSN=token://%s\nBUFFER_FLUSH_INTERVAL=1s\n' "$token" > "$dir/.env"
 
 compose up -d > /dev/null
 
@@ -91,28 +85,22 @@ for _ in $(seq 1 10); do
 done
 [ "$code" = "202" ] || fail "/ingest/events returned $code: $(cat "$dir/events.out")"
 
-echo "waiting for the first Evidence build (this takes about a minute)..."
-status=""
-for _ in $(seq 1 60); do
-  status="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:13000/")"
-  [ "$status" = "200" ] && break
-  sleep 5
+# The pageview must come back out of the API once the buffer has flushed: a
+# 202 alone only says the collector accepted it.
+echo "waiting for the hit to reach the API..."
+today="$(date -u +%Y-%m-%d)"
+overview=""
+for _ in $(seq 1 20); do
+  overview="$(curl -s -H "Authorization: Bearer $token" \
+    "http://127.0.0.1:18080/api/projects/1/views/overview?from=$today&to=$today")"
+  case "$overview" in *"\"$today\""*) break ;; esac
+  sleep 1
 done
-[ "$status" = "200" ] || fail "dashboards never left $status"
+case "$overview" in *"\"$today\""*) ;; *) fail "views overview never showed $today: $overview" ;; esac
 
-curl -fsS "http://127.0.0.1:13000/" | grep -q "<title>" || fail "index is not a rendered page"
+# The dashboards app is embedded in the binary; a build without it serves 503.
+status="$(curl -s -o "$dir/app.out" -w '%{http_code}' "http://127.0.0.1:18080/app/")"
+[ "$status" = "200" ] || fail "/app/ returned $status"
+grep -q "<title>" "$dir/app.out" || fail "/app/ is not the dashboards page"
 
-# Every templated route, including the drill-down that only prerenders when
-# its query-string read is guarded for the prerender pass.
-for page in /views/1/ /product/1/ /users/1/ /groups/1/ /retention/1/ /views/1/page/; do
-  code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:13000$page")"
-  [ "$code" = "200" ] || fail "$page returned $code"
-done
-
-# A rendered page is not enough: sources must have produced data. The parquet
-# extracts are what the browser queries, and an empty build still serves 200.
-compose exec -T dashboards \
-  sh -c 'find /opt/evidence/site.* -name "*.parquet" -size +1k | head -1' | grep -q parquet \
-  || fail "no non-trivial parquet extracts in the served site"
-
-echo "PASS: ingestion on :18080, dashboards rendered on :13000"
+echo "PASS: ingestion, API and dashboards on :18080"

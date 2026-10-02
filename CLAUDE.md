@@ -12,7 +12,6 @@ internal/server/     ingest HTTP API; serves the JS SDK and the helper scripts
 internal/api/        private API: MCP endpoint and REST routes, one auth
 internal/jobs/       daily pass: salt rotation, aggregation, prune, view rebuild
 internal/pipeline/   write buffer between ingest and the store
-internal/dashboards/ Evidence build and snapshot for the reporting image
 internal/manage/     project registry snapshot and its audited operations
 internal/reporting/  dashboards, widgets and components: validation, operations, system dashboards, cache; embeds the web app
 internal/store/      Store interface and row types; store/sqlite owns every migration and view
@@ -24,11 +23,10 @@ internal/shared/     small generic leaf packages: civil (calendar dates), readsq
 docs/                the three contract pages, embedded and served over MCP
 sdk/                 browser SDK source (TypeScript); the built file is embedded by internal/server
 web/                 dashboard web app source (React, TypeScript); the build is embedded by internal/reporting
-evidence/            the Evidence dashboards project
 deploy/              installer, systemd units, compose files, litestream config, UPGRADES.md
 ```
 
-`app` imports the surfaces (`server`, `api`, `jobs`, `pipeline`, `dashboards`);
+`app` imports the surfaces (`server`, `api`, `jobs`, `pipeline`);
 surfaces import `manage`, `reporting` and the leaves, never each other; `manage` and the
 leaves import only leaves. A surface that needs another's behaviour takes an
 interface and `app` passes the implementation (`server.Enqueuer` is
@@ -55,7 +53,7 @@ entry. Only `feat`, `fix` and `perf` appear in the notes; `docs`, `refactor`,
 appear in the notes, so anything a user should read about needs one of the
 three published types. `!` before the colon (or a `BREAKING CHANGE:` footer)
 marks a breaking change. Scopes match the tree: `store`, `server`, `jobs`,
-`config`, `api`, `manage`, `pipeline`, `geo`, `dashboards`, `reporting`,
+`config`, `api`, `manage`, `pipeline`, `geo`, `reporting`,
 `shared`, `sdk`, `web`, `cmd`, `deploy`, `ci`; omit for repo-wide changes.
 
 Releases are cut by hand with `gh workflow run release.yml` (optional `version`
@@ -113,7 +111,6 @@ Update in the **same commit** as the change:
 | environment variables (`internal/config/`) | `docs/deployment.md` |
 | install, upgrade, replication or restore procedure (`deploy/`, `Makefile`) | `docs/deployment.md` |
 | API auth modes or client setup (`internal/api/auth.go`, `oauth*.go`) | `docs/deployment.md` |
-| the Evidence dashboards (`internal/dashboards/`, `evidence/`) | `docs/deployment.md` |
 
 `internal/api/docs_sync_test.go` binds part of this in both directions
 (reserved keys, tool names, routes, views, SDK symbols, environment variables,

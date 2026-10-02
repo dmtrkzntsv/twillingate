@@ -113,11 +113,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
 
-  # The images publish separately from the tarballs and from each other: the
-  # ingestion image is a static Go binary on alpine, while the Evidence image
-  # carries a Node toolchain and compiles sqlite3 from source. Parallel jobs
-  # mean a slow or broken build of either image can neither hold up the
-  # release of the binaries nor stop the other image from publishing.
+  # The image publishes separately from the tarballs, so a slow or broken
+  # image build cannot hold up the release of the binaries.
   image-twillingate:
     runs-on: ubuntu-latest
     needs: release
@@ -164,47 +161,3 @@ jobs:
             ghcr.io/${{ github.repository_owner }}/twillingate:latest
           cache-from: type=gha,scope=twillingate
           cache-to: type=gha,mode=max,scope=twillingate
-
-  # No linux/arm/v7: sqlite3 publishes no prebuilds for it, and building
-  # it from source under QEMU is not worth the release time. A 32-bit
-  # host runs the tarball, or renders dashboards elsewhere.
-  image-evidence:
-    runs-on: ubuntu-latest
-    needs: release
-    steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-qemu-action@v3
-      - id: buildx
-        uses: docker/setup-buildx-action@v3
-      # Restore-only: amd64 and arm64 are a subset of the arches the
-      # twillingate job compiles, so its cache (from the previous release,
-      # as the two run in parallel) covers this build and one saved copy
-      # per release is enough.
-      - uses: actions/cache/restore@v4
-        with:
-          path: docker-go-build
-          key: docker-go-build-${{ github.sha }}
-          restore-keys: docker-go-build-
-      - uses: reproducible-containers/buildkit-cache-dance@5422eac04292c961a382e0f584ea0f03ad9da723 # v3.4.0
-        with:
-          builder: ${{ steps.buildx.outputs.name }}
-          cache-map: '{"docker-go-build": "/root/.cache/go-build"}'
-          skip-extraction: true
-      - uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: twillingate-evidence
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          target: evidence
-          platforms: linux/amd64,linux/arm64
-          push: true
-          build-args: VERSION=${{ needs.release.outputs.tag }}
-          tags: |
-            ghcr.io/${{ github.repository_owner }}/twillingate-evidence:${{ needs.release.outputs.tag }}
-            ghcr.io/${{ github.repository_owner }}/twillingate-evidence:latest
-          cache-from: type=gha,scope=evidence
-          cache-to: type=gha,mode=max,scope=evidence

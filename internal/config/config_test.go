@@ -45,12 +45,6 @@ func TestDefaultsApplied(t *testing.T) {
 	if c.ProductAttributesTopN != 50 {
 		t.Errorf("ProductAttributesTopN = %d, want 50", c.ProductAttributesTopN)
 	}
-	if c.Dashboards.Addr != "0.0.0.0:3000" || c.Dashboards.Interval != 15*time.Minute {
-		t.Errorf("Dashboards = %+v", c.Dashboards)
-	}
-	if c.Dashboards.ProjectDir != "/opt/evidence" || c.Dashboards.WorkDir != "/var/lib/dashboards" {
-		t.Errorf("Dashboards dirs = %+v", c.Dashboards)
-	}
 	if c.Reporting.CacheAge != 900*time.Second || c.Reporting.RefreshAge != 60*time.Second {
 		t.Errorf("Reporting = %+v", c.Reporting)
 	}
@@ -72,10 +66,6 @@ func TestEnvOverrides(t *testing.T) {
 		"RETENTION_PRODUCT_RAW_DAYS":       "10",
 		"RETENTION_PRODUCT_AGGREGATE_DAYS": "60",
 		"RETENTION_ARCHIVED_DAYS":          "7",
-		"DASHBOARDS_ADDR":                  "127.0.0.1:4000",
-		"DASHBOARDS_INTERVAL":              "1m",
-		"DASHBOARDS_PROJECT_DIR":           "/tmp/evidence",
-		"DASHBOARDS_WORK_DIR":              "/tmp/work",
 		"REPORTING_CACHE_SECONDS":          "120",
 		"REPORTING_REFRESH_SECONDS":        "30",
 	})
@@ -97,10 +87,6 @@ func TestEnvOverrides(t *testing.T) {
 	}
 	if c.Retention.ArchivedDays != 7 {
 		t.Errorf("Retention.ArchivedDays = %d, want 7", c.Retention.ArchivedDays)
-	}
-	if c.Dashboards.Addr != "127.0.0.1:4000" || c.Dashboards.Interval != time.Minute ||
-		c.Dashboards.ProjectDir != "/tmp/evidence" || c.Dashboards.WorkDir != "/tmp/work" {
-		t.Errorf("Dashboards = %+v", c.Dashboards)
 	}
 	if c.Reporting.CacheAge != 120*time.Second || c.Reporting.RefreshAge != 30*time.Second {
 		t.Errorf("Reporting = %+v", c.Reporting)
@@ -173,52 +159,6 @@ func TestLoadFromProcessEnv(t *testing.T) {
 // mapLookup is the FromEnv* seam: a lookup backed by a plain map.
 func mapLookup(vars map[string]string) func(string) (string, bool) {
 	return func(k string) (string, bool) { v, ok := vars[k]; return v, ok }
-}
-
-func TestDashboardsDefaults(t *testing.T) {
-	c, err := FromEnvDashboards(mapLookup(map[string]string{
-		"DATABASE_DSN": "sqlite:///var/lib/twillingate/twillingate.db",
-	}))
-	if err != nil {
-		t.Fatalf("FromEnvDashboards: %v", err)
-	}
-	if c.Dashboards.DBPath != "/var/lib/twillingate/twillingate.db" {
-		t.Errorf("DBPath = %q, want the DATABASE_DSN path", c.Dashboards.DBPath)
-	}
-	if c.Dashboards.Addr != "0.0.0.0:3000" || c.Dashboards.Interval != 15*time.Minute {
-		t.Errorf("defaults = %+v", c.Dashboards)
-	}
-	if c.Dashboards.ProjectDir != "/opt/evidence" || c.Dashboards.WorkDir != "/var/lib/dashboards" {
-		t.Errorf("dir defaults = %+v", c.Dashboards)
-	}
-}
-
-func TestDashboardsDBPathWins(t *testing.T) {
-	c, err := FromEnvDashboards(mapLookup(map[string]string{
-		"DATABASE_DSN":       "sqlite:///var/lib/twillingate/twillingate.db",
-		"DASHBOARDS_DB_PATH": "/data/replica.db",
-	}))
-	if err != nil {
-		t.Fatalf("FromEnvDashboards: %v", err)
-	}
-	if c.Dashboards.DBPath != "/data/replica.db" {
-		t.Errorf("DBPath = %q, want the explicit override", c.Dashboards.DBPath)
-	}
-}
-
-func TestDashboardsNeedsADatabase(t *testing.T) {
-	if _, err := FromEnvDashboards(mapLookup(map[string]string{})); err == nil {
-		t.Fatal("want an error with neither DASHBOARDS_DB_PATH nor DATABASE_DSN")
-	}
-}
-
-func TestDashboardsReportsBadDurations(t *testing.T) {
-	if _, err := FromEnvDashboards(mapLookup(map[string]string{
-		"DASHBOARDS_DB_PATH":  "/data/replica.db",
-		"DASHBOARDS_INTERVAL": "soon",
-	})); err == nil {
-		t.Fatal("want an error for an unparseable DASHBOARDS_INTERVAL")
-	}
 }
 
 func TestViewsRetentionDefaultsAndMaxEventAge(t *testing.T) {

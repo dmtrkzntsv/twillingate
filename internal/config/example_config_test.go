@@ -32,7 +32,7 @@ func TestExamplesLoad(t *testing.T) {
 	if err := sc.Err(); err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{"DATABASE_DSN", "INGEST_ADDR", "BUFFER_FLUSH_INTERVAL", "DASHBOARDS_INTERVAL"} {
+	for _, key := range []string{"DATABASE_DSN", "INGEST_ADDR", "BUFFER_FLUSH_INTERVAL", "REPORTING_CACHE_SECONDS"} {
 		if _, ok := vars[key]; !ok {
 			t.Fatalf("example env must document %s", key)
 		}
@@ -41,8 +41,8 @@ func TestExamplesLoad(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Dashboards.Interval.Minutes() != 15 {
-		t.Errorf("dashboards interval = %v", cfg.Dashboards.Interval)
+	if cfg.Reporting.CacheAge.Minutes() != 15 {
+		t.Errorf("reporting cache age = %v", cfg.Reporting.CacheAge)
 	}
 	if cfg.Retention.Product.RawDays != 30 || cfg.Retention.Views.RawDays != 30 {
 		t.Errorf("retention = %+v", cfg.Retention)

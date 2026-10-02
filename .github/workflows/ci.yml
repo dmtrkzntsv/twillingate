@@ -34,7 +34,7 @@ jobs:
           cat "$RUNNER_TEMP/files"
           has() { grep -qE "$1" "$RUNNER_TEMP/files"; }
           # Go tests read far beyond Go source (docs/, sdk/src, web/ widgets,
-          # evidence/, deploy/), so only specs and plans skip them.
+          # deploy/), so only specs and plans skip them.
           go=false; web=false; e2e=false; sdk=false
           grep -qv '^docs/superpowers/' "$RUNNER_TEMP/files" && go=true
           has '^web/' && web=true

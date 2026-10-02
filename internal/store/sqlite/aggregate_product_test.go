@@ -328,7 +328,7 @@ func TestAggregateProductGroupsZeroIsMeasured(t *testing.T) {
 
 // Distinctness: many events from one group count as one group, and the
 // same group under two event names counts once per event row -- which is
-// why the Evidence page takes max(unique_groups) rather than a sum.
+// why a dashboard takes max(unique_groups) rather than a sum.
 func TestAggregateProductGroupsAreDistinctPerEvent(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()

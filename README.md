@@ -24,15 +24,14 @@ wires it into your code itself.
 
 **Then ask it for the numbers.** "How many visitors did myapp get last week, by
 country" beats clicking through a dashboard, and read tools plus a guarded SQL
-`query` tool answer it. Run the Evidence dashboards too if you like charts —
-that is a second compose file, and skipping it costs you nothing else.
+`query` tool answer it. If you like charts, the same agent builds dashboards,
+served at `/app/` beside the API.
 
 ## Run it
 
-Tracking is one file: ingestion, the tracker script and — once `API_AUTH_DSN`
-is set, see [The API endpoint](docs/deployment.md#the-api-endpoint)
-— the API (MCP and REST), all on
-`:8080`:
+One file: ingestion, the tracker script and — once `API_AUTH_DSN` is set,
+see [The API endpoint](docs/deployment.md#the-api-endpoint) — the API (MCP
+and REST) and the dashboards at `/app/`, all on `:8080`:
 
 ```bash
 mkdir twillingate && cd twillingate
@@ -47,19 +46,9 @@ That prints a snippet to paste; an agent with MCP access can do the same two
 steps for you. Put Caddy, nginx or a Cloudflare tunnel in front of `:8080` for
 TLS.
 
-Dashboards are a second file, whenever you want them:
-
-```bash
-curl -fsSLO $base/docker-compose.evidence.yml
-echo COMPOSE_FILE=docker-compose.yml:docker-compose.evidence.yml > .env
-docker compose up -d          # dashboards on :3000, 503 for a minute while Evidence builds
-```
-
-The `COMPOSE_FILE` line saves repeating `-f` on every later command. Beyond a
-hobby install, keep tracking and reporting apart: reporting reads a Litestream
-replica rather than the live database, so a reporting outage cannot cost you
-events. Each file ships the litestream service it needs, commented out.
-[docs/deployment.md](docs/deployment.md) is the runbook.
+For backups the file ships a litestream service, commented out, that streams
+the database to object storage. [docs/deployment.md](docs/deployment.md) is
+the runbook.
 
 ## Track something
 
@@ -93,8 +82,7 @@ and is what the MCP endpoint serves to agents as `docs://twillingate`, so
 the text you read and the text they read are the same bytes.
 [docs/deployment.md](docs/deployment.md) is everything needed to run
 twillingate on your own server: installing it, configuring the collector,
-Evidence reporting, the API endpoint, and litestream if you split across two
-machines. It is served as `docs://deployment`, so an agent can help with an
+the API endpoint and the dashboards, and litestream backups. It is served as `docs://deployment`, so an agent can help with an
 install too.
 
 | Section | Covers |
@@ -106,9 +94,9 @@ install too.
 | [Answer questions with the data](docs/twillingate.md#answer-questions-with-the-data) | The MCP tools, the HTTP API, the views, and the caveats needed to write correct SQL |
 | [Install](docs/deployment.md#install) | systemd and docker compose, verifying ingestion |
 | [Configure the collector](docs/deployment.md#configure-the-collector) | Every environment variable, low-resource tuning |
-| [Reporting with Evidence](docs/deployment.md#reporting-with-evidence) | Dashboards, one server and two |
 | [The API endpoint](docs/deployment.md#the-api-endpoint) | The browser login, and pointing claude.ai, Desktop or Claude Code at it |
-| [Operate and recover](docs/deployment.md#operate-and-recover) | Upgrades, litestream replication, backup drills, disaster recovery, schema upgrades in deploy/UPGRADES.md |
+| [Dashboards at /app/](docs/deployment.md#dashboards-at-app) | Where the dashboards are served and how they log in |
+| [Operate and recover](docs/deployment.md#operate-and-recover) | Upgrades, litestream backups, backup drills, disaster recovery, schema upgrades in deploy/UPGRADES.md |
 | [docs/plausible/](docs/plausible/) | The Plausible class-tagging shim |
 
 ## Development
@@ -120,7 +108,6 @@ make build       # single binary (needs Go and Node 22: it builds web/ first)
 make run         # local server on 127.0.0.1:8080 with a dev project
 make smoke       # boot the real binary, POST a batch, verify rows land
 make seed-demo   # 180 days of demo traffic in local/twillingate.db
-make dashboards  # Evidence dev server against the local database
 cd sdk && npm ci && npm test   # the twillingate.js SDK suite
 ```
 

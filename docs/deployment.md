@@ -3,23 +3,22 @@
 The operator's runbook: getting twillingate onto a host, keeping it backed
 up, getting it back after the host is gone. Using it is
 [twillingate.md](twillingate.md); both are served over MCP, this one as
-`docs://deployment`. **One server** runs ingestion and dashboards together;
-**two servers** runs ingestion on a VPS and dashboards at home off a
-replica, moved there by [litestream](#replication-with-litestream).
+`docs://deployment`. One process serves ingestion, the API and the
+dashboards at `/app/`; [litestream](#replication-with-litestream) keeps a
+continuous backup of its database.
 
 - [Install](#install)
 - [Configure the collector](#configure-the-collector)
-- [Reporting with Evidence](#reporting-with-evidence)
 - [The API endpoint](#the-api-endpoint)
 - [Dashboards at /app/](#dashboards-at-app)
-- [Operate and recover](#operate-and-recover) — including litestream for the two-server topology
+- [Operate and recover](#operate-and-recover) — including litestream backups
 
 ## Install
 
 ### docker compose
 
-Ingestion, the SDK and — once `API_AUTH_DSN` is set — the API; dashboards
-are a second file, under [Reporting with Evidence](#reporting-with-evidence).
+Ingestion, the SDK and — once `API_AUTH_DSN` is set — the API and the
+[dashboards at /app/](#dashboards-at-app).
 
 ```bash
 mkdir twillingate && cd twillingate
@@ -106,11 +105,6 @@ to it.
 | `RETENTION_PRODUCT_AGGREGATE_DAYS` | Days product aggregates are kept. Default 365. |
 | `RETENTION_ARCHIVED_DAYS` | Days after archiving that a project (with all its data), a dashboard or a widget is deleted by the daily pass. 0 keeps archived items forever. Default 30. |
 | `PRODUCT_ATTRIBUTES_TOP_N` | Distinct attribute values kept per (project, day, event, key) before the rest collapse into `(other)`. Default 50. |
-| `DASHBOARDS_DB_PATH` | Database `dashboards` renders. Defaults to the `DATABASE_DSN` path. |
-| `DASHBOARDS_ADDR` | Address the dashboards bind. Default `0.0.0.0:3000`. |
-| `DASHBOARDS_INTERVAL` | Minimum spacing between Evidence rebuilds. Default `15m`. |
-| `DASHBOARDS_PROJECT_DIR` | Evidence project in the image. Default `/opt/evidence`. |
-| `DASHBOARDS_WORK_DIR` | Where the database snapshot is written. Default `/var/lib/dashboards`. |
 | `API_AUTH_DSN` | Authentication for the API endpoint (MCP and REST): `token://<token>?password=…` for the built-in browser login (see [The API endpoint](#the-api-endpoint)), or `oauth://<issuer-host>` for your own identity provider. Unset, bare `serve` skips the API with a warning. |
 | `API_ADDR` | Give the API (MCP and REST) its own listener. Defaults to `INGEST_ADDR` (shared). |
 | `API_URL` | The API's public origin when it has a hostname of its own (`https://api.example.com`), no path. The login's resource, issuer and the dashboards' callback follow it, so that host needs no `redirect=` entry. Defaults to `PUBLIC_URL`. |
@@ -133,49 +127,6 @@ ignored, so rename any still in `twillingate.env`.
 - Raise `BUFFER_FLUSH_INTERVAL` (say `30s`) and litestream's `sync-interval`: fewer, larger writes.
 - Set `GOMEMLIMIT` (unit and compose files ship `128MiB`) and keep `GEO_DSN` off `maxmind://`, which holds a database in memory.
 - Lower `RETENTION_VIEWS_RAW_DAYS` (say `7`): raw views are most of the one raw `events` table, the largest in the file, and the live halves of the `v_views_*` views scan them on every query.
-
-## Reporting with Evidence
-
-`twillingate dashboards` renders an Evidence site from the database; in
-compose it is `docker-compose.evidence.yml`, on port 3000, which answers
-`503` for about a minute until the first build finishes. It rebuilds within
-a minute of the database changing (size and modification time), no closer
-together than `DASHBOARDS_INTERVAL` (default `15m`), snapshotting the
-database into `DASHBOARDS_WORK_DIR` each time — the host needs room for one
-more copy.
-
-A rebuild that cannot read its data does not publish: a database that is not
-a twillingate one stops at `not a twillingate database`, a source Evidence
-cannot read at `could not read a source`. The previous site keeps serving
-and no `dashboards: rebuilt` line appears; the fault is in the database, so
-check `docker compose logs restore` and that `SOURCE_DB` matches the `path:`
-in `litestream.yml` exactly.
-
-**One server.** Add the second compose file beside the tracking one;
-`COMPOSE_FILE` joins them on one database (else pass `-f` to every command).
-
-```bash
-curl -fsSLO https://raw.githubusercontent.com/dmtrkzntsv/twillingate/main/deploy/compose/docker-compose.evidence.yml
-echo COMPOSE_FILE=docker-compose.yml:docker-compose.evidence.yml >> .env
-docker compose up -d
-```
-
-**Two servers.** Fetch the same file on the dashboard machine and run it
-alone (`docker compose -f docker-compose.evidence.yml up -d`) with
-`DASHBOARDS_DB_PATH=/data/replica.db` in `.env` — it defaults to
-`/data/twillingate.db`, the shared-volume case. Restore the replica from the
-compose file's commented `restore` service or host cron, never both. To move
-an existing single server here, stand up the VPS on the same bucket, stop
-the old writer, then point the reader's restore at the VPS's database path:
-`REPLICA_PATH` and `DASHBOARDS_DB_PATH` must both read `/data/replica.db`,
-and the tracking snippet's `src` repoints at the VPS hostname.
-
-`restore.sh` verifies into a temporary file, renames only on success, and
-counts the applied migrations, because litestream does not fail an *empty*
-restore: a `path:` that does not match the writer's, or a bucket from a
-different litestream major/minor, downloads a valid database with nothing in
-it and exits 0. The previous replica keeps serving either way, and an empty
-restore lands as `restored file is not a twillingate database`.
 
 ## The API endpoint
 
@@ -399,7 +350,6 @@ a loopback address, without a login; its usage is in
 | Upgrade across a schema change | Snapshot first (`litestream snapshots …`, or copy the file while the service is stopped): migrations 012, 014, 015 and 016 are irreversible. Pre-checks and what changes on the day: <https://github.com/dmtrkzntsv/twillingate/blob/main/deploy/UPGRADES.md> (not served over MCP; open it in the repository) |
 | Database size | `du -h /var/lib/twillingate/twillingate.db` |
 | Replication status | `journalctl -u litestream --since -1h`, or `docker compose logs litestream` |
-| Dashboard rebuilds | `docker compose logs dashboards` — one `dashboards: rebuilt` line per successful build |
 | Recent config changes | `sqlite3 …/twillingate.db "SELECT * FROM audit_log ORDER BY ts DESC LIMIT 20"` |
 | Preview dashboard files against real data | `twillingate reporting dev <dir>... [-db <path>] [-addr 127.0.0.1:3100]` — a local, no-login server over the built UI; `-db` defaults to `DATABASE_DSN`'s path, `-addr` is refused unless it is loopback |
 
@@ -413,12 +363,11 @@ across those times skips no day. With `LOG_FILE` set, install
 ### Replication with litestream
 
 Litestream streams the SQLite WAL to S3-compatible storage as it is written,
-so the bucket copy is seconds behind: a backup, and a read replica, with
-both sides connecting outbound. A single server you back up some other way
-needs none of it. Any S3-compatible store works — these use Cloudflare R2.
+so the bucket copy is seconds behind, with the writer connecting outbound.
+A server you back up some other way needs none of it. Any S3-compatible store works — these use Cloudflare R2.
 Create a bucket and an **Object Read & Write** token for the writer, plus an
-**Object Read** token for any reader (one that cannot write cannot corrupt
-the backup), in `twillingate.env`, never in a config file:
+**Object Read** token for restore drills (one that cannot write cannot
+corrupt the backup), in `twillingate.env`, never in a config file:
 
 ```sh
 LITESTREAM_ACCESS_KEY_ID=…
@@ -442,14 +391,14 @@ dbs:
 
 > **`path:` is the identity of the replica in the bucket.** A restore asks
 > for the database by the path it had on the machine that wrote it, so
-> writer, reader and recovery host must use that value byte for byte, even
+> the writer, a drill and a recovery host must use that value byte for byte, even
 > when the file lives elsewhere locally. Getting it wrong produces an empty
 > restore rather than an error.
 
-> **Writer and reader must run the same litestream major/minor version.**
+> **Writer and restorer must run the same litestream major/minor version.**
 > 0.5 stores backups in a bucket format (LTX) 0.3 cannot see, and vice
 > versa: a mismatched restore reports `no matching backups found`, which
-> looks exactly like an empty bucket. The compose files pin
+> looks exactly like an empty bucket. The compose file pins
 > `litestream/litestream:0.5` — pin the same version everywhere.
 
 On the writer: for docker, uncomment the `litestream` service, copy

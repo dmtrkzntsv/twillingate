@@ -39,16 +39,6 @@ type Retention struct {
 	ArchivedDays int `json:"archived_days"`
 }
 
-// DashboardsConfig configures `twillingate dashboards`: which database to
-// render, where the Evidence project lives, and how often to rebuild it.
-type DashboardsConfig struct {
-	DBPath     string
-	Addr       string
-	Interval   time.Duration
-	ProjectDir string
-	WorkDir    string
-}
-
 // ReportingConfig sizes the two-age cache a sql widget's loaded value is
 // served from (internal/reporting): an ordinary request reuses a value up
 // to CacheAge old; a fresh=true request reuses one younger than this
@@ -108,7 +98,6 @@ type Config struct {
 	Buffer                BufferConfig
 	Retention             Retention
 	ProductAttributesTopN int
-	Dashboards            DashboardsConfig
 	Reporting             ReportingConfig
 	API                   APIConfig
 }
@@ -116,12 +105,6 @@ type Config struct {
 // Load builds the configuration from the process environment.
 func Load() (*Config, error) {
 	return FromEnv(os.LookupEnv)
-}
-
-// LoadDashboards builds the configuration for `twillingate dashboards`, which
-// renders whatever database it is pointed at.
-func LoadDashboards() (*Config, error) {
-	return FromEnvDashboards(os.LookupEnv)
 }
 
 // env reads typed values from a lookup function, remembering the first error.
@@ -170,16 +153,6 @@ func (e *env) dur(key string, def time.Duration) time.Duration {
 // FromEnv parses the environment via lookup (os.LookupEnv in production,
 // a map lookup in tests).
 func FromEnv(lookup func(string) (string, bool)) (*Config, error) {
-	return parse(lookup, false)
-}
-
-// FromEnvDashboards is FromEnv, plus the DASHBOARDS_DB_PATH fallback to
-// DATABASE_DSN that only the dashboards renderer needs.
-func FromEnvDashboards(lookup func(string) (string, bool)) (*Config, error) {
-	return parse(lookup, true)
-}
-
-func parse(lookup func(string) (string, bool), dashboards bool) (*Config, error) {
 	if err := refuseRenamed(lookup); err != nil {
 		return nil, err
 	}
@@ -217,13 +190,6 @@ func parse(lookup func(string) (string, bool), dashboards bool) (*Config, error)
 		// capped globally rather than per project (spec: the operator picks
 		// the key, clients pick the values).
 		ProductAttributesTopN: e.num("PRODUCT_ATTRIBUTES_TOP_N", 50),
-		Dashboards: DashboardsConfig{
-			DBPath:     e.str("DASHBOARDS_DB_PATH", ""),
-			Addr:       e.str("DASHBOARDS_ADDR", "0.0.0.0:3000"),
-			Interval:   e.dur("DASHBOARDS_INTERVAL", 15*time.Minute),
-			ProjectDir: e.str("DASHBOARDS_PROJECT_DIR", "/opt/evidence"),
-			WorkDir:    e.str("DASHBOARDS_WORK_DIR", "/var/lib/dashboards"),
-		},
 		Reporting: ReportingConfig{
 			CacheAge:   time.Duration(e.num("REPORTING_CACHE_SECONDS", 900)) * time.Second,
 			RefreshAge: time.Duration(e.num("REPORTING_REFRESH_SECONDS", 60)) * time.Second,
@@ -246,15 +212,6 @@ func parse(lookup func(string) (string, bool), dashboards bool) (*Config, error)
 	}
 	if e.err != nil {
 		return nil, e.err
-	}
-	if dashboards {
-		if c.Dashboards.DBPath == "" {
-			if c.Database == "" {
-				return nil, fmt.Errorf("config: DASHBOARDS_DB_PATH or DATABASE_DSN is required")
-			}
-			c.Dashboards.DBPath = strings.TrimPrefix(c.Database, "sqlite://")
-		}
-		return c, nil
 	}
 	if err := c.validate(); err != nil {
 		return nil, err
