@@ -510,7 +510,8 @@ func TestDashboardGroupRouteBodies(t *testing.T) {
 	for _, tc := range []struct {
 		body      string
 		wantWhole bool
-	}{{"", false}, {"{}", false}, {`{"whole_group":true}`, true}} {
+		wantJoin  bool
+	}{{"", false, false}, {"{}", false, false}, {fmt.Sprintf(`{"group_id":%d}`, one.GroupID), false, true}, {`{"whole_group":true}`, true, false}} {
 		var before dash
 		toolJSON(t, cs, "get_dashboard", map[string]any{"dashboard_id": one.ID}, &before)
 		rec := serveREST(t, r, "POST", fmt.Sprintf("/api/dashboards/%d/duplicate", two.ID), tc.body)
@@ -529,7 +530,14 @@ func TestDashboardGroupRouteBodies(t *testing.T) {
 			}
 			continue
 		}
-		// One copy, the next tab of the source's group.
+		if !tc.wantJoin {
+			// One copy, a dashboard of its own.
+			if cp.GroupID == one.GroupID || len(cp.Tabs) != 1 {
+				t.Fatalf("duplicate with body %q = group %d with %d tabs, want a new group of 1", tc.body, cp.GroupID, len(cp.Tabs))
+			}
+			continue
+		}
+		// One copy, the next tab of the group named.
 		if cp.GroupID != one.GroupID || len(cp.Tabs) != len(before.Tabs)+1 {
 			t.Fatalf("duplicate with body %q = group %d with %d tabs, want group %d with %d",
 				tc.body, cp.GroupID, len(cp.Tabs), one.GroupID, len(before.Tabs)+1)

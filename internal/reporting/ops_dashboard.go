@@ -42,13 +42,13 @@ type UpdateDashboard struct {
 }
 
 // DuplicateDashboard copies dashboard ID: alone, or with WholeGroup its
-// whole group. OwnDashboard makes a single tab's copy a dashboard of its
-// own instead of the source group's next tab; a system source's copy and
-// a whole group's always are one.
+// whole group. A single tab's copy is a group of one when GroupID is 0,
+// as CreateDashboard's is, and otherwise a tab of group GroupID; a whole
+// group's copy is always a new group, so GroupID must then be 0.
 type DuplicateDashboard struct {
-	ID           int64
-	WholeGroup   bool
-	OwnDashboard bool
+	ID         int64
+	WholeGroup bool
+	GroupID    int64
 }
 
 // View is a viewer's selection on a dashboard: each part only when the
@@ -271,10 +271,11 @@ func (s *Service) writePlaced(ctx context.Context, row store.Dashboard, heirs []
 // copy_widget's, which places one widget somewhere new.
 //
 // Duplicating never archives anything (nothing but archive_dashboard
-// does): without WholeGroup it copies just in.ID — a user source's copy
-// joins the source's group right after it, unless OwnDashboard; a system
-// source's copy, and one with OwnDashboard, is a new user group of one,
-// last in the sidebar. WholeGroup copies every
+// does): without WholeGroup it copies just in.ID, system or user — as a
+// new user group of one, last in the sidebar, when GroupID is 0; as a
+// tab of user group GroupID otherwise, right after the source when that
+// is the source's own group and last among its tabs when not. WholeGroup
+// copies every
 // member of id's group, each with its live widgets, as one new user
 // group placed last, in the same tab order; the first copy is titled
 // "… (copy)", the rest keep their titles. For a system source with
@@ -299,14 +300,17 @@ func (s *Service) DuplicateDashboard(ctx context.Context, actor string, in Dupli
 		return DashboardDetail{}, store.Refuse(store.ErrInvalid, "dashboard %d is archived; restore_dashboard first", id)
 	}
 	if in.WholeGroup {
+		if in.GroupID != 0 {
+			return DashboardDetail{}, store.Refuse(store.ErrInvalid, "whole_group copies the group as a new dashboard; drop group_id")
+		}
 		return s.duplicateGroup(ctx, actor, src)
 	}
-	return s.duplicateOne(ctx, actor, src, in.OwnDashboard)
+	return s.duplicateOne(ctx, actor, src, in.GroupID)
 }
 
-// duplicateOne is DuplicateDashboard for a single tab; own places a user
-// source's copy as a group of its own rather than in the source's group.
-func (s *Service) duplicateOne(ctx context.Context, actor string, src store.Dashboard, own bool) (DashboardDetail, error) {
+// duplicateOne is DuplicateDashboard for a single tab: a group of its own
+// when group is 0, else a tab of group (a live user group).
+func (s *Service) duplicateOne(ctx context.Context, actor string, src store.Dashboard, group int64) (DashboardDetail, error) {
 	ws, err := s.copyLiveWidgets(ctx, src.ID)
 	if err != nil {
 		return DashboardDetail{}, err
@@ -321,11 +325,17 @@ func (s *Service) duplicateOne(ctx context.Context, actor string, src store.Dash
 		if err != nil {
 			return err
 		}
-		if src.Owner == store.OwnerUser && !own {
-			copyOf.GroupID = src.GroupID
-			copyOf.SortKey, err = o.keyInGroup(0, src.GroupID, &src.ID)
-		} else {
+		switch {
+		case group == 0:
 			copyOf.SortKey, err = o.keyAfterGroup(0, nil)
+		case src.Owner == store.OwnerUser && group == src.GroupID:
+			copyOf.GroupID = group
+			copyOf.SortKey, err = o.keyInGroup(0, group, &src.ID)
+		default:
+			if err = refuseGroup(o, group); err == nil {
+				copyOf.GroupID = group
+				copyOf.SortKey, err = o.keyInGroup(0, group, nil)
+			}
 		}
 		if err != nil {
 			return err

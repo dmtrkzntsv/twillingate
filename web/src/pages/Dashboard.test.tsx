@@ -108,7 +108,7 @@ describe('Dashboard', () => {
     expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Copy to new dashboard'])
 
     await userEvent.click(screen.getByRole('menuitem', { name: 'Copy to new dashboard' }))
-    expect(copy).toHaveBeenCalledWith(2, { whole_group: undefined, own_dashboard: true })
+    expect(copy).toHaveBeenCalledWith(2, { whole_group: undefined, group_id: undefined })
     await waitFor(() => expect(location()).toBe('/dashboards/30'))
   })
 

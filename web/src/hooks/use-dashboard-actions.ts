@@ -7,10 +7,10 @@ import { ApiError, endpoints, type MoveBody } from '@/lib/api'
 export interface DashboardActions {
   /**
    * Copies the dashboard (or its group with `wholeGroup`) and opens the
-   * copy; a user tab's copy joins its group unless `ownDashboard`. Never
-   * archives anything (tabs D10).
+   * copy: a dashboard of its own, or with `groupId` a tab of that group.
+   * Never archives anything (tabs D10).
    */
-  duplicate(d: { dashboard_id: number; title: string }, opts?: { wholeGroup?: boolean; ownDashboard?: boolean }): Promise<void>
+  duplicate(d: { dashboard_id: number; title: string }, opts?: { wholeGroup?: boolean; groupId?: number }): Promise<void>
   /** Archives the dashboard (or its group with `wholeGroup`); shows an Undo toast and navigates when asked (D1, D12-D13). */
   archive(d: { dashboard_id: number; title: string }, opts: { wholeGroup?: boolean; navigateTo?: string }): Promise<void>
   /** Restores the dashboard, or its whole group (D1, tabs D14). */
@@ -90,12 +90,9 @@ export function useDashboardActions(): DashboardActions {
   )
 
   const duplicate = useCallback(
-    (d: { dashboard_id: number; title: string }, opts: { wholeGroup?: boolean; ownDashboard?: boolean } = {}) =>
+    (d: { dashboard_id: number; title: string }, opts: { wholeGroup?: boolean; groupId?: number } = {}) =>
       run(async () => {
-        const copy = await endpoints.duplicate(d.dashboard_id, {
-          whole_group: opts.wholeGroup,
-          own_dashboard: opts.ownDashboard,
-        })
+        const copy = await endpoints.duplicate(d.dashboard_id, { whole_group: opts.wholeGroup, group_id: opts.groupId })
         return () => navigate(`/dashboards/${copy.dashboard_id}`)
       }),
     [run, navigate]

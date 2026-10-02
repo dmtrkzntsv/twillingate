@@ -100,20 +100,20 @@ describe('TabMenu, a user tab among others', () => {
     expect(screen.getByText('Move left').closest('[role="menuitem"]')).not.toHaveAttribute('data-disabled')
   })
 
-  it('Duplicate tab copies it into this dashboard: duplicate(d), no options', async () => {
+  it('Duplicate tab copies it into this dashboard: duplicate(d, { groupId: its group })', async () => {
     renderTabMenu(marketing)
     await openTabMenu()
     await userEvent.click(screen.getByText('Duplicate tab'))
 
-    expect(duplicate).toHaveBeenCalledWith(marketing)
+    expect(duplicate).toHaveBeenCalledWith(marketing, { groupId: 13 })
   })
 
-  it('Copy to new dashboard copies it out: duplicate(d, { ownDashboard: true })', async () => {
+  it('Copy to new dashboard copies it out: duplicate(d), no group', async () => {
     renderTabMenu(marketing)
     await openTabMenu()
     await userEvent.click(screen.getByText('Copy to new dashboard'))
 
-    expect(duplicate).toHaveBeenCalledWith(marketing, { ownDashboard: true })
+    expect(duplicate).toHaveBeenCalledWith(marketing)
   })
 
   it('Move left calls move with the tab before it as after', async () => {
@@ -203,7 +203,7 @@ describe('TabMenu, a system tab', () => {
     expect(items()).toEqual(['Copy to new dashboard'])
 
     await userEvent.click(screen.getByText('Copy to new dashboard'))
-    expect(duplicate).toHaveBeenCalledWith(product, { ownDashboard: true })
+    expect(duplicate).toHaveBeenCalledWith(product)
   })
 })
 

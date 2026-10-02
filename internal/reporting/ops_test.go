@@ -362,7 +362,7 @@ func TestDuplicateDashboard(t *testing.T) {
 	sized := note("B")
 	sized.Width, sized.Height = 5, 7
 	src := mustCreate(t, svc, "Src", note("A"), sized, note("C"))
-	mustCreate(t, svc, "Other")
+	other := mustCreate(t, svc, "Other")
 	if err := svc.ArchiveWidget(ctx, "test", src.Widgets[2].ID); err != nil {
 		t.Fatal(err)
 	}
@@ -370,7 +370,7 @@ func TestDuplicateDashboard(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cp, err := svc.DuplicateDashboard(ctx, "test", DuplicateDashboard{ID: src.ID})
+	cp, err := svc.DuplicateDashboard(ctx, "test", DuplicateDashboard{ID: src.ID, GroupID: src.GroupID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -398,7 +398,7 @@ func TestDuplicateDashboard(t *testing.T) {
 	if !reflect.DeepEqual(keys, want) {
 		t.Errorf("keys = %v, want fresh %v", keys, want)
 	}
-	// D10: a user source's copy joins the source's group right after it.
+	// With its own group_id, a copy joins that group right after the source.
 	if cp.GroupID != src.GroupID {
 		t.Errorf("copy group_id = %d, want the source's %d", cp.GroupID, src.GroupID)
 	}
@@ -406,9 +406,9 @@ func TestDuplicateDashboard(t *testing.T) {
 		t.Errorf("sidebar = %v, want %v", got, want)
 	}
 
-	// OwnDashboard: a user tab's copy is a new group of one, last in the
-	// sidebar, and the source's group keeps its tabs.
-	own, err := svc.DuplicateDashboard(ctx, "test", DuplicateDashboard{ID: src.ID, OwnDashboard: true})
+	// Without group_id, a copy is a new group of one, last in the sidebar,
+	// and the source's group keeps its tabs.
+	own, err := svc.DuplicateDashboard(ctx, "test", DuplicateDashboard{ID: src.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -419,7 +419,26 @@ func TestDuplicateDashboard(t *testing.T) {
 		t.Errorf("sidebar = %v, want %v", got, want)
 	}
 
-	// D10: a system source's copy is a new user group, last in the sidebar.
+	// With another group's group_id, a copy is that group's last tab.
+	into, err := svc.DuplicateDashboard(ctx, "test", DuplicateDashboard{ID: src.ID, GroupID: other.GroupID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if into.GroupID != other.GroupID {
+		t.Errorf("copy group_id = %d, want Other's %d", into.GroupID, other.GroupID)
+	}
+	if got, want := sidebar(t, svc), []string{"Src/Src", "Src (copy)/Src", "Other/Other", "Src (copy)/Other", "Src (copy)/Src (copy)"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("sidebar = %v, want %v", got, want)
+	}
+
+	// A group with no live user dashboard is refused, a system one included,
+	// and so is group_id with whole_group.
+	_, err = svc.DuplicateDashboard(ctx, "test", DuplicateDashboard{ID: src.ID, GroupID: 1})
+	wantRefusal(t, err, store.ErrInvalid, "group 1 has no live user dashboard")
+	_, err = svc.DuplicateDashboard(ctx, "test", DuplicateDashboard{ID: src.ID, WholeGroup: true, GroupID: src.GroupID})
+	wantRefusal(t, err, store.ErrInvalid, "whole_group copies the group as a new dashboard; drop group_id")
+
+	// A system source's copy, likewise, is a new user group, last in the sidebar.
 	sys, err := svc.DuplicateDashboard(ctx, "test", DuplicateDashboard{ID: 3})
 	if err != nil {
 		t.Fatal(err)

@@ -97,9 +97,9 @@ export function GroupMenu({ dashboard }: { dashboard: DashboardDetail }) {
 /**
  * The "…" menu beside a tab's title, acting on that tab alone (D11), the
  * same for a group of one tab as of several. Every tab offers "Copy to
- * new dashboard", its copy a dashboard of its own (`ownDashboard`). A
- * live user tab adds "Duplicate tab", whose copy is the next tab of this
- * dashboard, "Archive tab", Move left/right and "Move to". A system tab
+ * new dashboard", its copy a dashboard of its own (no `groupId`). A live
+ * user tab adds "Duplicate tab", whose copy joins this group right after
+ * it, "Archive tab", Move left/right and "Move to". A system tab
  * is only copied out: its group takes no new tabs, and it is never
  * archived or moved on its own.
  */
@@ -125,12 +125,12 @@ export function TabMenu({ dashboard, list }: Props) {
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start">
         {editable && (
-          <DropdownMenuItem disabled={pending} onClick={() => void duplicate(dashboard)}>
+          <DropdownMenuItem disabled={pending} onClick={() => void duplicate(dashboard, { groupId })}>
             <CopyIcon />
             Duplicate tab
           </DropdownMenuItem>
         )}
-        <DropdownMenuItem disabled={pending} onClick={() => void duplicate(dashboard, { ownDashboard: true })}>
+        <DropdownMenuItem disabled={pending} onClick={() => void duplicate(dashboard)}>
           <CopyPlusIcon />
           Copy to new dashboard
         </DropdownMenuItem>
