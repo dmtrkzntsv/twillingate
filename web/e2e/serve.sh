@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds twillingate, seeds one demo project, and execs `serve` for the
+# Builds twillingate, seeds one demo project, and runs `serve` for the
 # Playwright e2e suite (see playwright.config.ts, which runs this as its
 # webServer and waits on /healthz). Everything lives under a scratch
 # directory so runs never collide with a developer's local/twillingate.db.
@@ -15,6 +15,11 @@ if ! command -v go >/dev/null 2>&1 && [ -x /usr/local/go/bin/go ]; then
 fi
 
 scratch="$(mktemp -d -t twillingate-e2e-XXXXXX)"
+# Removed on the way out, binary and database with it. playwright.config.ts
+# stops this script with SIGTERM (gracefulShutdown) rather than a SIGKILL
+# no trap survives, so serve runs as a child, not exec'd over this shell.
+trap 'rm -rf "$scratch"' EXIT
+trap 'if [ -n "${pid:-}" ]; then kill -TERM "$pid" 2>/dev/null; wait "$pid"; fi; exit 143' TERM INT
 bin="$scratch/twillingate"
 db="$scratch/e2e.db"
 env_file="$scratch/e2e.env"
@@ -38,4 +43,6 @@ set +a
 "$bin" project create -name dev
 python3 "$root/scripts/seed-demo.py" "$db"
 
-exec "$bin" serve
+"$bin" serve &
+pid=$!
+wait "$pid"
