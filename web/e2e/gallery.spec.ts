@@ -23,6 +23,7 @@ const NAMES = [
   'pie',
   'radar',
   'radial',
+  'sankey',
   'scatter',
   'stat',
   'table',

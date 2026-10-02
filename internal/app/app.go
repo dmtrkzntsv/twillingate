@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -184,6 +185,22 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 		defer apiClose()
 	}
 
+	// Bind every listener before serving or logging "serving": a caller (or
+	// a test) that sees one surface answer can rely on the others accepting
+	// too, and a port in use fails here, before anything is left running.
+	listeners := make([]net.Listener, 0, len(surfaces))
+	for _, s := range surfaces {
+		ln, err := net.Listen("tcp", s.addr)
+		if err != nil {
+			for _, l := range listeners {
+				l.Close()
+			}
+			stopBackground()
+			return err
+		}
+		listeners = append(listeners, ln)
+	}
+
 	summaryDone := make(chan struct{})
 	stopSummary := func() {}
 	if runIngest {
@@ -208,7 +225,7 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 			ReadHeaderTimeout: 5 * time.Second,
 		}
 		srvs[i] = sv
-		go func(sv *http.Server) { errCh <- sv.ListenAndServe() }(sv)
+		go func(sv *http.Server, ln net.Listener) { errCh <- sv.Serve(ln) }(sv, listeners[i])
 		logger.Info("serving", "addr", s.addr, "surfaces", s.label, "projects", len(reg.Snapshot(ctx).Projects()))
 	}
 
