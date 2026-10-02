@@ -46,6 +46,23 @@ describe('heatmap', () => {
     expect((cells[1] as HTMLElement).style.backgroundColor).toContain('100%')
   })
 
+  it('leaves a NULL cell out of the scale rather than counting it as 0', () => {
+    const { container } = renderHeatmap({
+      columns: ['x', 'y', 'value'],
+      rows: [
+        ['a', 'r', ''],
+        ['b', 'r', '50'],
+        ['c', 'r', '100'],
+      ],
+      truncated: false,
+    })
+    const cells = container.querySelectorAll('[data-cell]')
+    expect((cells[0] as HTMLElement).style.backgroundColor).toBe('')
+    // 50 is the minimum, so the bottom of the ramp, not its middle.
+    expect((cells[1] as HTMLElement).style.backgroundColor).toContain(' 15%')
+    expect((cells[2] as HTMLElement).style.backgroundColor).toContain('100%')
+  })
+
   it('prints values in cells only when labels is true', () => {
     const withoutLabels = renderHeatmap({
       columns: ['x', 'y', 'value'],
