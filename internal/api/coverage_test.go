@@ -110,14 +110,15 @@ func TestArchiveToolUnknownId(t *testing.T) {
 	}
 }
 
-// restore of an unknown id is a deliberate no-op at the store layer
-// (distinguishing "already restored" from "never existed" would need an
-// extra existence check the archive path already pays for); the tool
-// must therefore succeed rather than error.
-func TestRestoreToolUnknownIdIsANoOp(t *testing.T) {
+// restore of an unknown id is refused like archive, not reported as done.
+func TestRestoreToolUnknownIdIsRefused(t *testing.T) {
 	_, cs := newTestHost(t)
-	if res := callTool(t, cs, "restore_project", map[string]any{"project_id": 99}); res.IsError {
-		t.Fatalf("restore of unknown id errored: %s", textOf(res))
+	res := callTool(t, cs, "restore_project", map[string]any{"project_id": 99})
+	if !res.IsError {
+		t.Fatal("restore of unknown id accepted")
+	}
+	if msg := textOf(res); !strings.Contains(msg, "unknown project 99; valid projects: 1 (blog), 2 (docs)") {
+		t.Errorf("error = %q, want the valid ids and names listed", msg)
 	}
 }
 
