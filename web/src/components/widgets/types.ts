@@ -1,4 +1,4 @@
-import type { ReactElement } from 'react'
+import type { ComponentType } from 'react'
 
 export type ColumnType = 'number' | 'text' | 'day'
 
@@ -48,7 +48,8 @@ export interface WidgetModule {
   contract: Contract
   /** At least one; the gallery shows each at the default size. */
   examples: Example[]
-  // `null` covers an empty result: "no data" is the card's job (Task 19),
-  // not the widget's.
-  default: (p: WidgetProps<any>) => ReactElement | null
+  // Rendering `null` covers an empty result: "no data" is the card's job
+  // (Task 19), not the widget's. A heavy one is `React.lazy`, so whoever
+  // renders it provides the Suspense boundary.
+  default: ComponentType<WidgetProps<any>>
 }

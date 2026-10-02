@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { Suspense, type ReactNode } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { ChevronDownIcon, CircleAlertIcon, CircleOffIcon, CloudOffIcon, InboxIcon, RefreshCwIcon, TriangleAlertIcon } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
@@ -61,11 +61,14 @@ export default function WidgetCard({ widget, params, idle = false }: Props) {
         isEmpty(answer) ? (
           <CardState icon={<InboxIcon />} title={answer.source_type === 'md' ? 'Nothing to show' : 'No data for this range'} />
         ) : (
-          <Component
-            data={answer.data!}
-            props={widget.props}
-            stateKey={`twillingate.widget.${widget.dashboard_id}.${widget.widget_id}`}
-          />
+          // A lazy component (the map, markdown) keeps the skeleton up while its code loads.
+          <Suspense fallback={<WidgetSkeleton widget={widget} />}>
+            <Component
+              data={answer.data!}
+              props={widget.props}
+              stateKey={`twillingate.widget.${widget.dashboard_id}.${widget.widget_id}`}
+            />
+          </Suspense>
         )
       ) : query.isError ? (
         <FailedState error={query.error} onRetry={() => query.refetch()} />

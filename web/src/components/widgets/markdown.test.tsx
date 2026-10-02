@@ -1,7 +1,8 @@
 import { render } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import type { MarkdownData, WidgetProps } from './types'
-import Markdown, { contract } from './markdown'
+import { contract } from './markdown'
+import Markdown from './lazy/markdown'
 
 function renderMarkdown(data: MarkdownData, props: WidgetProps['props'] = {}) {
   return render(
