@@ -3,7 +3,7 @@ import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-quer
 import { useParams } from 'react-router'
 import AppShell, { TopBar } from '@/components/AppShell'
 import DashboardHeader from '@/components/DashboardHeader'
-import DashboardMenu from '@/components/DashboardMenu'
+import { GroupMenu, TabMenu } from '@/components/DashboardMenu'
 import { DevErrors, GridSkeleton, NoProjects, NoWidgets, PageError, PageLoading } from '@/components/PageStates'
 import ProjectSwitcher from '@/components/ProjectSwitcher'
 import RangeSwitcher from '@/components/RangeSwitcher'
@@ -14,7 +14,7 @@ import { useDashboardActions } from '@/hooks/use-dashboard-actions'
 import { useDashboardSelection } from '@/hooks/use-dashboard-selection'
 import { useDevReload } from '@/hooks/use-dev-reload'
 import { useFreshness } from '@/hooks/use-freshness'
-import type { DashboardDetail, DashboardsResponse } from '@/lib/api'
+import type { DashboardDetail, DashboardInfo, DashboardsResponse, DashboardTab } from '@/lib/api'
 import { moveTabBody } from '@/lib/arrange'
 import { rememberDashboard } from '@/lib/last-dashboard'
 import { dashboardQuery, dashboardsQuery, projectsQuery } from '@/lib/queries'
@@ -58,6 +58,23 @@ interface ViewProps {
   frozen: boolean
 }
 
+/**
+ * The tabs the top bar shows: every dashboard is a group of one or more
+ * tabs, laid out the same. `tabs` holds the group's live members, so an
+ * archived dashboard opened by its URL (an archived template, say) is not
+ * among them; it shows the group's archived members instead, from the
+ * list, so a template archived whole still opens with all its tabs.
+ */
+function shownTabs(dashboard: DashboardDetail, list: DashboardInfo[]): DashboardTab[] {
+  if (dashboard.tabs.some((t) => t.dashboard_id === dashboard.dashboard_id)) return dashboard.tabs
+  const archived = list
+    .filter((d) => d.group_id === dashboard.group_id && d.owner === dashboard.owner && d.archived_at)
+    .map((d) => ({ dashboard_id: d.dashboard_id, title: d.title }))
+  return archived.some((t) => t.dashboard_id === dashboard.dashboard_id)
+    ? archived
+    : [{ dashboard_id: dashboard.dashboard_id, title: dashboard.title }]
+}
+
 function DashboardView({ list, dashboard, frozen }: ViewProps) {
   const client = useQueryClient()
   const projects = useQuery({ ...projectsQuery, enabled: dashboard.follows_project })
@@ -79,6 +96,11 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
   // list is not rebuilt under the focus of the tab just chosen.
   const userGroup = writable && dashboard.owner === 'user' && !dashboard.archived_at
   const arrangeable = userGroup && !frozen
+  // The group's "…" sits top right, a tab's own one beside its title
+  // (D11): on a system group (a template, archived or not, which can still
+  // be duplicated) and on a live user one, never while frozen.
+  const menus = writable && !frozen && (dashboard.owner === 'system' || !dashboard.archived_at)
+  const tabs = shownTabs(dashboard, list.dashboards)
   const moveTab = async (id: number, to: number) => {
     const body = moveTabBody(dashboard.tabs, id, dashboard.group_id, to)
     return body ? move(id, body) : false
@@ -94,17 +116,18 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
   return (
     <>
       <TopBar>
-        {dashboard.tabs.length > 1 ? (
-          <ReportTabs
-            tabs={dashboard.tabs}
-            currentId={dashboard.dashboard_id}
-            onSelect={openTab}
-            sortable={userGroup}
-            onMove={arrangeable ? moveTab : undefined}
-          />
-        ) : dashboard.owner === 'user' ? (
-          <span className="text-sm text-muted-foreground">Yours</span>
-        ) : null}
+        <ReportTabs
+          tabs={tabs}
+          currentId={dashboard.dashboard_id}
+          onSelect={openTab}
+          sortable={userGroup}
+          onMove={arrangeable ? moveTab : undefined}
+        />
+        {menus && (
+          <div className="ml-auto shrink-0">
+            <GroupMenu dashboard={dashboard} />
+          </div>
+        )}
       </TopBar>
       <div
         aria-busy={frozen || undefined}
@@ -135,7 +158,7 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
           refreshable={showGrid && !frozen ? freshness.refreshable.length : 0}
           refreshing={refreshing}
           onRefresh={refreshAll}
-          menu={arrangeable ? <DashboardMenu dashboard={dashboard} list={list.dashboards} /> : undefined}
+          menu={menus ? <TabMenu dashboard={dashboard} list={list.dashboards} /> : undefined}
         >
           {switchers.project && !noProjects && projects.data && (
             <ProjectSwitcher projects={all} value={sel.projectId} onChange={(projectId) => change({ ...sel, projectId })} />

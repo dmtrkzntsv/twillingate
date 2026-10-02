@@ -18,12 +18,20 @@ type dashboardIn struct {
 	DashboardID int64 `json:"dashboard_id" jsonschema:"dashboard id; list_dashboards names them"`
 }
 
-// dashboardGroupIn is archive_dashboard, restore_dashboard and
-// duplicate_dashboard's input: the dashboard, and whether the operation
-// acts on its whole group of tabs.
+// dashboardGroupIn is archive_dashboard and restore_dashboard's input:
+// the dashboard, and whether the operation acts on its whole group of
+// tabs.
 type dashboardGroupIn struct {
 	DashboardID int64 `json:"dashboard_id" jsonschema:"dashboard id; list_dashboards names them"`
 	WholeGroup  bool  `json:"whole_group,omitempty" jsonschema:"true acts on every dashboard in this dashboard's group (all its tabs)"`
+}
+
+// duplicateDashboardIn is duplicate_dashboard's input: dashboardGroupIn,
+// plus the group a single tab's copy joins.
+type duplicateDashboardIn struct {
+	DashboardID int64 `json:"dashboard_id" jsonschema:"dashboard id; list_dashboards names them"`
+	WholeGroup  bool  `json:"whole_group,omitempty" jsonschema:"true acts on every dashboard in this dashboard's group (all its tabs)"`
+	GroupID     int64 `json:"group_id,omitempty" jsonschema:"the user group the copy joins as a tab: right after the source when it is the source's own group, last otherwise; omit for a dashboard of its own. Not with whole_group"`
 }
 
 type widgetIn struct {
@@ -131,8 +139,9 @@ func (h *host) updateDashboard(ctx context.Context, in updateDashboardIn) (repor
 		ID: in.DashboardID, Title: in.Title, GroupID: in.GroupID, After: in.After})
 }
 
-func (h *host) duplicateDashboard(ctx context.Context, in dashboardGroupIn) (reporting.DashboardDetail, error) {
-	return h.rep.DuplicateDashboard(ctx, actorFrom(ctx), in.DashboardID, in.WholeGroup)
+func (h *host) duplicateDashboard(ctx context.Context, in duplicateDashboardIn) (reporting.DashboardDetail, error) {
+	return h.rep.DuplicateDashboard(ctx, actorFrom(ctx), reporting.DuplicateDashboard{
+		ID: in.DashboardID, WholeGroup: in.WholeGroup, GroupID: in.GroupID})
 }
 
 func (h *host) archiveDashboard(ctx context.Context, in dashboardGroupIn) (okOut, error) {
@@ -226,7 +235,7 @@ func (h *host) registerReporting(r *registrar) {
 		Description: "Rename a user dashboard and/or move it with group_id (join a group as a tab, or 0 to leave one) and/or after (a dashboard id; 0 first). System dashboards are read-only."},
 		h.updateDashboard)
 	expose(r, spec{Name: "duplicate_dashboard", Annotations: write, Method: "POST", Path: d + "/duplicate", Status: http.StatusCreated,
-		Description: "Copy any dashboard with copies of its live widgets; the copy is a user dashboard. A user dashboard's copy joins its group as the next tab; a system dashboard's copy is a new dashboard last in the sidebar, also from an archived system dashboard. An archived user dashboard is refused (restore it first). whole_group copies the group as a new dashboard with the same tabs: a system group whole, a user group's live tabs. Duplicating never archives: to replace a system group, archive it with archive_dashboard {whole_group: true}."},
+		Description: "Copy any dashboard with copies of its live widgets; the copy is a user dashboard. The copy is a new dashboard last in the sidebar; with group_id it joins that user group as a tab instead (right after the source when that is the source's own group, last otherwise). A system dashboard is copied too, also an archived one. An archived user dashboard is refused (restore it first). whole_group copies the group as a new dashboard with the same tabs: a system group whole, a user group's live tabs; it takes no group_id. Duplicating never archives: to replace a system group, archive it with archive_dashboard {whole_group: true}."},
 		h.duplicateDashboard)
 	expose(r, spec{Name: "archive_dashboard", Annotations: idem, Method: "POST", Path: d + "/archive",
 		Description: "Hide a dashboard and its widgets. Reversible with restore_dashboard; a user dashboard is purged, with its widgets, RETENTION_ARCHIVED_DAYS (default 30) after archiving unless restored. whole_group archives every tab of its group. A system dashboard is archived only with whole_group, is never purged, and keeps its archive across releases."},

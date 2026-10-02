@@ -42,7 +42,7 @@ are in [deployment.md](deployment.md).
 
 **A dashboard is in a group.** Dashboards sharing a `group_id` are one
 sidebar entry, drawn as tabs in tab order, named by the group's first live
-dashboard; a group of one shows no tab bar. A dashboard made on its own
+dashboard; a group of one is drawn as one tab. A dashboard made on its own
 starts as a group of one, its `group_id` its own id; beyond that, a
 `group_id` is just a number a group's dashboards share — read it from
 `list_dashboards` or `get_dashboard`, never assume it names a member.
@@ -181,7 +181,7 @@ guards as `query`: read-only, `API_QUERY_TIMEOUT` and `API_QUERY_MAX_ROWS`.
 | `widget_data` | `widget_id`, `project_id`, `from`, `to`, `fresh` | the envelope above |
 | `create_dashboard` | `title`, `range` (default `7d`), `group_id`, `after`, `widgets` | the new dashboard, as `get_dashboard` returns it; one invalid widget creates nothing |
 | `update_dashboard` | `dashboard_id`, `title`, `group_id`, `after` | the dashboard, as `list_dashboards` lists it |
-| `duplicate_dashboard` | `dashboard_id`, `whole_group` | a user copy with copies of its live widgets. A user dashboard's copy joins its group as the next tab; a system dashboard's copy is a new dashboard last in the sidebar, also from an archived system dashboard. An archived user dashboard is refused (restore it first). `whole_group` copies the group as a new dashboard with the same tabs: a system group whole, a user group's live tabs. Duplicating never archives: to replace a system group, `archive_dashboard` it with `whole_group` |
+| `duplicate_dashboard` | `dashboard_id`, `whole_group`, `group_id` | a user copy with copies of its live widgets: a new dashboard last in the sidebar, or with `group_id` a tab of that user group (right after the source when it is the source's own group, last otherwise). A system dashboard is copied too, also an archived one. An archived user dashboard is refused (restore it first). `whole_group` copies the group as a new dashboard with the same tabs: a system group whole, a user group's live tabs; it takes no `group_id`. Duplicating never archives: to replace a system group, `archive_dashboard` it with `whole_group` |
 | `archive_dashboard` | `dashboard_id`, `whole_group` | hides it (`whole_group`: every live member of its group); see [Archiving and the purge](#archiving-and-the-purge) |
 | `restore_dashboard` | `dashboard_id`, `whole_group` | unhides it (`whole_group`: every archived member of its group) |
 | `add_widget` | `dashboard_id`, `component`, `source`, `title`, `name`, `props`, `width`, `height`, `after` | the widget |
@@ -217,7 +217,7 @@ audited.
 | `GET` | `/api/widgets/{widget_id}/data` | `widget_data` | query: `project_id`, `from`, `to`, `fresh` |
 | `POST` | `/api/dashboards` | `create_dashboard` | body: `title`, `range`, `group_id`, `after`, `widgets` → 201 |
 | `PATCH` | `/api/dashboards/{dashboard_id}` | `update_dashboard` | body: `title`, `group_id`, `after` |
-| `POST` | `/api/dashboards/{dashboard_id}/duplicate` | `duplicate_dashboard` | optional body `{whole_group}` → 201 |
+| `POST` | `/api/dashboards/{dashboard_id}/duplicate` | `duplicate_dashboard` | optional body `{whole_group}` or `{group_id}` → 201 |
 | `POST` | `/api/dashboards/{dashboard_id}/archive` | `archive_dashboard` | body: `whole_group` (optional) |
 | `POST` | `/api/dashboards/{dashboard_id}/restore` | `restore_dashboard` | body: `whole_group` (optional) |
 | `POST` | `/api/dashboards/{dashboard_id}/widgets` | `add_widget` | body: the widget, `after` → 201 |
@@ -650,10 +650,16 @@ Archiving is how to undo, and the only way to remove anything:
   an archived dashboard, with only its live widgets and its group's live
   tabs. The page's sidebar shows live dashboards only; one opened by its URL
   says "Archived: not in the sidebar" and offers Restore, and the page's
-  Archive page (`/app/archive`) lists every archived dashboard. The
-  Templates gallery (`/app/gallery/dashboards`) lists the system
-  dashboards as templates, archived ones included: archive state does not
-  matter there.
+  Archive page (`/app/archive`) lists every archived dashboard; one archived
+  with its group opens with that group's archived tabs. The Templates
+  gallery (`/app/gallery/dashboards`) lists each system group as a
+  template, one row per group, archived ones included: archive state does
+  not matter there. A row's "…" menu duplicates the whole group. On any
+  dashboard, the "…" menu at the top right of the tab bar acts on the whole
+  dashboard ("Duplicate dashboard", `whole_group`), and the one beside the
+  title on that tab: "Duplicate tab" adds its copy as the next tab
+  (`group_id` its own group), "Copy to new dashboard" makes it a dashboard
+  of its own (no `group_id`); a system tab offers only the latter.
 - A system group is archived and restored whole (`whole_group`) and is never
   purged; system widgets cannot be archived.
 
@@ -755,7 +761,7 @@ Open `http://127.0.0.1:3100/`, which redirects to the dashboards at `/app/`.
   own sidebar entry when it names none.
 - `-db` defaults to `DATABASE_DSN`'s path. The database is opened read-only
   and never written: the view route answers but stores nothing, and the page
-  offers no writes (no "…" menus, dragging, Restore or copy buttons).
+  offers no writes (no "…" menus, dragging or Restore buttons).
 - `-addr` is refused unless it is a loopback address, and a request naming
   any other host (`Host:`) gets `403`, so a page elsewhere cannot reach it
   by pointing its own name at `127.0.0.1`. There is no login: the page finds

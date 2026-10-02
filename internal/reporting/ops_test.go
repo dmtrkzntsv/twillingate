@@ -341,7 +341,7 @@ func TestSystemDashboardAllowsDuplicateCopyAndView(t *testing.T) {
 	svc := newTestService(t)
 	syncReporting(t, svc, nil, systemDashboard())
 	ctx := context.Background()
-	if _, err := svc.DuplicateDashboard(ctx, "test", 3, false); err != nil {
+	if _, err := svc.DuplicateDashboard(ctx, "test", DuplicateDashboard{ID: 3}); err != nil {
 		t.Errorf("duplicate: %v", err)
 	}
 	d := mustCreate(t, svc, "D")
@@ -362,7 +362,7 @@ func TestDuplicateDashboard(t *testing.T) {
 	sized := note("B")
 	sized.Width, sized.Height = 5, 7
 	src := mustCreate(t, svc, "Src", note("A"), sized, note("C"))
-	mustCreate(t, svc, "Other")
+	other := mustCreate(t, svc, "Other")
 	if err := svc.ArchiveWidget(ctx, "test", src.Widgets[2].ID); err != nil {
 		t.Fatal(err)
 	}
@@ -370,7 +370,7 @@ func TestDuplicateDashboard(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cp, err := svc.DuplicateDashboard(ctx, "test", src.ID, false)
+	cp, err := svc.DuplicateDashboard(ctx, "test", DuplicateDashboard{ID: src.ID, GroupID: src.GroupID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -398,7 +398,7 @@ func TestDuplicateDashboard(t *testing.T) {
 	if !reflect.DeepEqual(keys, want) {
 		t.Errorf("keys = %v, want fresh %v", keys, want)
 	}
-	// D10: a user source's copy joins the source's group right after it.
+	// With its own group_id, a copy joins that group right after the source.
 	if cp.GroupID != src.GroupID {
 		t.Errorf("copy group_id = %d, want the source's %d", cp.GroupID, src.GroupID)
 	}
@@ -406,8 +406,40 @@ func TestDuplicateDashboard(t *testing.T) {
 		t.Errorf("sidebar = %v, want %v", got, want)
 	}
 
-	// D10: a system source's copy is a new user group, last in the sidebar.
-	sys, err := svc.DuplicateDashboard(ctx, "test", 3, false)
+	// Without group_id, a copy is a new group of one, last in the sidebar,
+	// and the source's group keeps its tabs.
+	own, err := svc.DuplicateDashboard(ctx, "test", DuplicateDashboard{ID: src.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if own.GroupID != own.ID || own.Title != "Src (copy)" || len(own.Widgets) != 2 || len(own.Tabs) != 1 {
+		t.Errorf("own copy = group %d (id %d) %q, %d widgets, %d tabs; want its own group of one", own.GroupID, own.ID, own.Title, len(own.Widgets), len(own.Tabs))
+	}
+	if got, want := sidebar(t, svc), []string{"Src/Src", "Src (copy)/Src", "Other/Other", "Src (copy)/Src (copy)"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("sidebar = %v, want %v", got, want)
+	}
+
+	// With another group's group_id, a copy is that group's last tab.
+	into, err := svc.DuplicateDashboard(ctx, "test", DuplicateDashboard{ID: src.ID, GroupID: other.GroupID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if into.GroupID != other.GroupID {
+		t.Errorf("copy group_id = %d, want Other's %d", into.GroupID, other.GroupID)
+	}
+	if got, want := sidebar(t, svc), []string{"Src/Src", "Src (copy)/Src", "Other/Other", "Src (copy)/Other", "Src (copy)/Src (copy)"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("sidebar = %v, want %v", got, want)
+	}
+
+	// A group with no live user dashboard is refused, a system one included,
+	// and so is group_id with whole_group.
+	_, err = svc.DuplicateDashboard(ctx, "test", DuplicateDashboard{ID: src.ID, GroupID: 1})
+	wantRefusal(t, err, store.ErrInvalid, "group 1 has no live user dashboard")
+	_, err = svc.DuplicateDashboard(ctx, "test", DuplicateDashboard{ID: src.ID, WholeGroup: true, GroupID: src.GroupID})
+	wantRefusal(t, err, store.ErrInvalid, "whole_group copies the group as a new dashboard; drop group_id")
+
+	// A system source's copy, likewise, is a new user group, last in the sidebar.
+	sys, err := svc.DuplicateDashboard(ctx, "test", DuplicateDashboard{ID: 3})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -775,7 +807,7 @@ func TestAuditActions(t *testing.T) {
 	must(err)
 	_, err = svc.UpdateDashboard(ctx, "rest", UpdateDashboard{ID: d.ID, Title: "E"})
 	must(err)
-	cp, err := svc.DuplicateDashboard(ctx, "mcp", d.ID, false)
+	cp, err := svc.DuplicateDashboard(ctx, "mcp", DuplicateDashboard{ID: d.ID})
 	must(err)
 	must(svc.ArchiveDashboard(ctx, "rest", cp.ID, false))
 	must(svc.RestoreDashboard(ctx, "mcp", cp.ID, false))
@@ -814,7 +846,7 @@ func TestUnknownIDsAreNotFound(t *testing.T) {
 	for name, op := range map[string]func() error{
 		"dashboard": func() error { _, err := svc.Dashboard(ctx, 9999); return err },
 		"widgets":   func() error { _, err := svc.Widgets(ctx, 9999, ""); return err },
-		"duplicate": func() error { _, err := svc.DuplicateDashboard(ctx, "test", 9999, false); return err },
+		"duplicate": func() error { _, err := svc.DuplicateDashboard(ctx, "test", DuplicateDashboard{ID: 9999}); return err },
 		"archive":   func() error { return svc.ArchiveDashboard(ctx, "test", 9999, false) },
 		"add": func() error {
 			_, err := svc.AddWidget(ctx, "test", AddWidget{DashboardID: 9999, WidgetSpec: note("A")})
@@ -1466,7 +1498,7 @@ func TestDuplicateWholeGroupFromSystem(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cp, err := svc.DuplicateDashboard(ctx, "test", 12, true) // from Users, a middle member
+	cp, err := svc.DuplicateDashboard(ctx, "test", DuplicateDashboard{ID: 12, WholeGroup: true}) // from Users, a middle member
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1510,7 +1542,7 @@ func TestDuplicateWholeGroupArchivedMemberNotCopied(t *testing.T) {
 	}
 	mustCreate(t, svc, "Z")
 
-	cp, err := svc.DuplicateDashboard(ctx, "test", a.ID, true)
+	cp, err := svc.DuplicateDashboard(ctx, "test", DuplicateDashboard{ID: a.ID, WholeGroup: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1540,7 +1572,7 @@ func TestDuplicateArchivedDashboardRefused(t *testing.T) {
 	before := userRows(t, svc)
 
 	for _, whole := range []bool{false, true} {
-		_, err := svc.DuplicateDashboard(ctx, "test", b.ID, whole)
+		_, err := svc.DuplicateDashboard(ctx, "test", DuplicateDashboard{ID: b.ID, WholeGroup: whole})
 		wantRefusal(t, err, store.ErrInvalid, "dashboard "+itoa(b.ID)+" is archived; restore_dashboard first")
 	}
 	if after := userRows(t, svc); len(after) != len(before) {
@@ -1559,7 +1591,7 @@ func TestDuplicateSystemTab(t *testing.T) {
 	syncReporting(t, svc, nil, systemGroup()...)
 	ctx := context.Background()
 
-	got, err := svc.DuplicateDashboard(ctx, "test", 12, false) // Users
+	got, err := svc.DuplicateDashboard(ctx, "test", DuplicateDashboard{ID: 12}) // Users
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1575,7 +1607,7 @@ func TestDuplicateSystemTab(t *testing.T) {
 	if err := svc.ArchiveDashboard(ctx, "test", 10, true); err != nil {
 		t.Fatal(err)
 	}
-	whole, err := svc.DuplicateDashboard(ctx, "test", 12, true) // whole_group, group archived
+	whole, err := svc.DuplicateDashboard(ctx, "test", DuplicateDashboard{ID: 12, WholeGroup: true}) // whole_group, group archived
 	if err != nil {
 		t.Fatalf("duplicate of an archived system group: %v", err)
 	}
@@ -1611,7 +1643,7 @@ func TestDuplicateUserSourceNeverArchived(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 	a := mustCreate(t, svc, "A")
-	if _, err := svc.DuplicateDashboard(ctx, "test", a.ID, false); err != nil {
+	if _, err := svc.DuplicateDashboard(ctx, "test", DuplicateDashboard{ID: a.ID}); err != nil {
 		t.Fatal(err)
 	}
 	if d, _ := svc.st.GetDashboard(ctx, a.ID); d.ArchivedAt != "" {
@@ -1620,7 +1652,7 @@ func TestDuplicateUserSourceNeverArchived(t *testing.T) {
 	if err := svc.ArchiveDashboard(ctx, "test", a.ID, false); err != nil {
 		t.Fatal(err)
 	}
-	_, err := svc.DuplicateDashboard(ctx, "test", a.ID, false)
+	_, err := svc.DuplicateDashboard(ctx, "test", DuplicateDashboard{ID: a.ID})
 	wantRefusal(t, err, store.ErrInvalid, fmt.Sprintf("dashboard %d is archived; restore_dashboard first", a.ID))
 }
 

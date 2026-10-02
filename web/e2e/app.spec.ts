@@ -89,7 +89,7 @@ test('tabs carry the selection across to the next report', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Range: Last month' })).toBeVisible()
 })
 
-test('a user dashboard opens in the standalone shell with no report tabs', async ({ page, request }) => {
+test('a lone user dashboard shows a tab bar of its one tab', async ({ page, request }) => {
   const created = await request.post('/api/dashboards', {
     headers: authHeaders(),
     data: { title: 'Standalone check', range: '7d' },
@@ -101,10 +101,8 @@ test('a user dashboard opens in the standalone shell with no report tabs', async
   await page.goto(`/app/dashboards/${id}`)
   await page.waitForLoadState('networkidle')
 
-  await expect(page.getByRole('tablist')).toHaveCount(0)
-  // The sidebar also has a "Yours" section label; scope to the main pane's
-  // header, where DashboardView puts the owner label in place of ReportTabs.
-  await expect(page.getByRole('main').getByText('Yours', { exact: true })).toBeVisible()
+  // A lone dashboard is laid out like a group: a tab bar of its one tab.
+  await expect(page.getByRole('tab')).toHaveText(['Standalone check'])
 })
 
 test('an agent-made group shows its tab bar', async ({ page, request }) => {

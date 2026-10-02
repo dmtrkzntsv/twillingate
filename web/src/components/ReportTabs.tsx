@@ -28,7 +28,7 @@ interface Props {
 /**
  * A dashboard group's tabs (D36, tabs D21): a row on wide screens that
  * scrolls sideways when it runs out of room, and a select on phones. Shown
- * for any group with more than one live member, system or user. With
+ * for every dashboard, a group of one tab included, system or user. With
  * `sortable` and `onMove`, the row's tabs drag to a new order (D14);
  * phones reorder from the header menu's Move left/right instead.
  */

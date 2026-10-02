@@ -14,22 +14,28 @@ interface Props {
   refreshable: number
   refreshing: boolean
   onRefresh: () => void
-  /** The "…" menu (`DashboardMenu`), for a live user dashboard only (D11). */
+  /** The tab's own "…" menu (`TabMenu`), beside the title; the group's sits in the top bar (D11). */
   menu?: ReactNode
 }
 
-/** The title, the switchers, how old the data is, a refresh for every card that allows one, and the "…" menu. */
+/**
+ * The title with its tab menu, how old the data is and a refresh for
+ * every card that allows one on a quiet line beneath, and the switchers
+ * on the right.
+ */
 export default function DashboardHeader({ title, children, asOf, refreshable, refreshing, onRefresh, menu }: Props) {
   const hasSwitchers = Children.toArray(children).length > 0
   const idle = refreshable === 0 || refreshing
   return (
     <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
-      <h1 className="min-w-0 truncate text-2xl font-semibold tracking-tight">{title}</h1>
-      <div className="flex flex-wrap items-center gap-2">
-        {hasSwitchers && <div className="grid min-w-0 flex-1 auto-cols-fr grid-flow-col gap-2 sm:flex sm:flex-none">{children}</div>}
-        <div className="flex items-center gap-1">
+      <div className="flex min-w-0 flex-col gap-0.5">
+        <div className="flex min-w-0 items-center gap-1">
+          <h1 className="min-w-0 truncate text-2xl font-semibold tracking-tight">{title}</h1>
+          {menu}
+        </div>
+        <div className="flex items-center gap-1 text-xs text-muted-foreground">
           {asOf && (
-            <span className="text-xs whitespace-nowrap text-muted-foreground tabular-nums" title={asOf.toLocaleString()}>
+            <span className="whitespace-nowrap tabular-nums" title={asOf.toLocaleString()}>
               Data as of {formatAsOf(asOf)}
             </span>
           )}
@@ -39,12 +45,12 @@ export default function DashboardHeader({ title, children, asOf, refreshable, re
               <Button
                 variant="ghost"
                 size="icon"
-                className="size-8 aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
+                className="size-6 aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
                 aria-label="Refresh all"
                 aria-disabled={idle || undefined}
                 onClick={idle ? undefined : onRefresh}
               >
-                <RefreshCwIcon className={refreshing ? 'animate-spin' : undefined} />
+                <RefreshCwIcon className={`size-3.5 ${refreshing ? 'animate-spin' : ''}`} />
               </Button>
             </TooltipTrigger>
             <TooltipContent>
@@ -53,9 +59,9 @@ export default function DashboardHeader({ title, children, asOf, refreshable, re
                 : `Refresh ${refreshable} ${refreshable === 1 ? 'widget' : 'widgets'}`}
             </TooltipContent>
           </Tooltip>
-          {menu}
         </div>
       </div>
+      {hasSwitchers && <div className="grid min-w-0 auto-cols-fr grid-flow-col gap-2 sm:flex">{children}</div>}
     </div>
   )
 }
