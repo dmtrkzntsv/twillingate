@@ -447,10 +447,10 @@ What changes on the day:
   `/js/twillingate.js` if one sits in front of the collector.
 - Backends and self-hosted SDK copies must reach an upgraded server before
   sending measures: an older one stores them as product events.
-- Tools that open the database file directly (`sqlite3`, `restore.sh`, the
-  restore drill) need SQLite 3.35+ built with math functions: the new
-  `bucket` column calls `log()` and `ceil()`, and without them even `PRAGMA
-  quick_check` fails with `unknown function: ceil()`, so `restore.sh` would
-  keep the previous replica on every run. Check with `sqlite3 :memory:
-  'select log(10)'` (expect `1.0`). The litestream 0.5 and Evidence images
-  and Debian 12's and Alpine's `sqlite3` already qualify.
+- Tools that open the database file directly (`sqlite3` for a backup or a
+  check, litestream's `restore.sh`) need SQLite 3.35+ built with math
+  functions: the new `bucket` column calls `log()` and `ceil()`, and without
+  them even `PRAGMA quick_check` fails with `unknown function: ceil()`, so
+  `restore.sh` would keep the previous replica on every run. Check with
+  `sqlite3 :memory: 'select log(10)'` (expect `1.0`). The litestream 0.5
+  image and Debian 12's and Alpine's `sqlite3` already qualify.
