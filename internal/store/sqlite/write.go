@@ -12,26 +12,32 @@ import (
 
 const tsFormat = "2006-01-02T15:04:05Z"
 
-// WriteEvents stores a batch of raw rows, views and product events alike,
-// in the one raw table. INSERT OR IGNORE: with client-supplied UUIDv7 ids,
-// a batch retried after a timeout that actually succeeded is a no-op —
+// WriteEvents stores a batch of raw rows, views, product events and
+// measures alike, in the one raw table. INSERT OR IGNORE: with
+// client-supplied UUIDv7 ids, a batch retried after a timeout that
+// actually succeeded is a no-op —
 // duplicates are detected on the whole primary key (family, project_id,
 // day, id), so a retry is a no-op only because it repeats all four
 // unchanged. The one gap: a retry of an event whose ts was clamped, landing
 // on the other side of midnight, clamps to a different day and is stored
 // twice (deploy/UPGRADES.md).
 //
-// A row whose family is neither views nor product refuses the whole batch
-// before anything is written: raw_views and raw_product would both miss
-// it, so it would never be read, rolled up or pruned.
+// A row whose family is none of views, product and measures refuses the
+// whole batch before anything is written: every raw_* view would miss it,
+// so it would never be read, rolled up or pruned.
+//
+// value is NULL outside measures (a nil Value), and a SampleRate of 0
+// means unset and is stored as 1.
 func (d *DB) WriteEvents(ctx context.Context, evs []store.Event) error {
 	if len(evs) == 0 {
 		return nil
 	}
 	for _, e := range evs {
-		if e.Family != store.FamilyViews && e.Family != store.FamilyProduct {
-			return fmt.Errorf("event %s: family %q is neither %q nor %q",
-				e.ID, e.Family, store.FamilyViews, store.FamilyProduct)
+		switch e.Family {
+		case store.FamilyViews, store.FamilyProduct, store.FamilyMeasures:
+		default:
+			return fmt.Errorf("event %s: family %q is not %q, %q or %q",
+				e.ID, e.Family, store.FamilyViews, store.FamilyProduct, store.FamilyMeasures)
 		}
 	}
 	return d.tx(ctx, func(tx *sql.Tx) error {
@@ -41,8 +47,8 @@ func (d *DB) WriteEvents(ctx context.Context, evs []store.Event) error {
 			 host, path, referrer_source, utm_source, utm_medium, utm_campaign,
 			 platform, os, os_version, os_name, browser, browser_version, browser_locale,
 			 app_version, app_locale, device, device_model, display_width, display_height,
-			 country, consent, attributes)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+			 country, consent, attributes, value, measure, sample_rate)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
 		if err != nil {
 			return err
 		}
@@ -56,6 +62,10 @@ func (d *DB) WriteEvents(ctx context.Context, evs []store.Event) error {
 			if err != nil {
 				return fmt.Errorf("event %s attributes: %w", e.ID, err)
 			}
+			rate := e.SampleRate
+			if rate == 0 {
+				rate = 1
+			}
 			if _, err := stmt.ExecContext(ctx, e.ID, e.ProjectID, string(e.Family), e.EventName,
 				e.TS.UTC().Format(tsFormat), e.TS.UTC().Format("2006-01-02"),
 				e.ReceivedAt.UTC().Format(tsFormat), e.Kind,
@@ -63,7 +73,7 @@ func (d *DB) WriteEvents(ctx context.Context, evs []store.Event) error {
 				e.Host, e.Path, e.ReferrerSource, e.UTMSource, e.UTMMedium, e.UTMCampaign,
 				e.Platform, e.OS, e.OSVersion, e.OSName, e.Browser, e.BrowserVersion, e.BrowserLocale,
 				e.AppVersion, e.AppLocale, e.Device, e.DeviceModel, e.DisplayWidth, e.DisplayHeight,
-				e.Country, e.Consent, string(blob)); err != nil {
+				e.Country, e.Consent, string(blob), e.Value, e.Measure, rate); err != nil {
 				return fmt.Errorf("event %s: %w", e.ID, err)
 			}
 		}

@@ -1,0 +1,7 @@
+{
+  "component": "line",
+  "title": "CLS p75 by day",
+  "props": {
+    "format": "number"
+  }
+}

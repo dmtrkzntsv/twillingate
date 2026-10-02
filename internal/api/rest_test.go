@@ -172,6 +172,7 @@ func TestRESTMatchesMCP(t *testing.T) {
 		{"retention", "/api/projects/1/retention?actor=user&" + rng, with(map[string]any{"actor": "user"})},
 		{"product_events", "/api/projects/1/product/events?" + rng, args},
 		{"product_attributes", "/api/projects/1/product/attributes?" + rng, args},
+		{"measures", "/api/projects/1/measures?" + rng, args},
 		{"identities", "/api/projects/1/identities?kind=user&" + rng, with(map[string]any{"kind": "user"})},
 		{"list_ingest_keys", "/api/keys", map[string]any{}},
 	} {

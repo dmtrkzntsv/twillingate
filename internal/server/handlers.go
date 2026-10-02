@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/enrich"
@@ -31,8 +31,9 @@ func newID() string {
 	return id.String()
 }
 
-// handleEvents is the only ingest endpoint. It demultiplexes by event name:
-// views and product events land in the one raw table under their family.
+// handleEvents is the only ingest endpoint. It demultiplexes by the event's
+// declared or inferred family (resolveFamily): views, product events and
+// measures all land in the one raw table under their family.
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	var env envelope
 	if !decode(w, r, &env) {
@@ -138,21 +139,66 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			res.warn(i, "unknown $consent value %q, ignored", rv.consentRaw)
 		}
 
-		defaultKind, isView := viewName(ev.Name)
-		family, name := store.FamilyProduct, ev.Name
-		if isView {
-			family, name = store.FamilyViews, canonicalViewName(ev.Name)
-		} else if strings.HasPrefix(ev.Name, "$") {
-			res.warn(i, "unknown reserved name %s, stored as a custom event", ev.Name)
+		family, name, famWarn, famReject := resolveFamily(ev)
+		if famReject != "" {
+			res.reject(i, "%s", famReject)
+			continue
 		}
+		if famWarn != "" {
+			res.warn(i, "%s", famWarn)
+		}
+
+		var value *float64
+		sampleRate := 1.0
+		measure := ""
+		if family == store.FamilyMeasures {
+			v, ok := parseValue(ev.Value)
+			if !ok {
+				res.reject(i, "measures require a value: a number from 0 to 1e15")
+				continue
+			}
+			// A non-string measure (a typo like {"measure":5}) parses as ""
+			// here, which fails the Contains check exactly like an absent
+			// or unknown one: same rejection, no special case needed.
+			measureStr, _ := jsonString(ev.Measure)
+			if !slices.Contains(store.MeasureKinds, measureStr) {
+				res.reject(i, "measures require measure: time, size or number")
+				continue
+			}
+			value, measure = &v, measureStr
+			rate, bad := parseSampleRate(rv.sampleRateRaw)
+			if bad {
+				res.warn(i, "$sample_rate %q is not in [0.0001, 1], stored as 1", rv.sampleRateRaw)
+			}
+			sampleRate = rate
+		} else {
+			if len(ev.Value) > 0 {
+				res.warn(i, "value is only read on the measures family, ignored")
+			}
+			if len(ev.Measure) > 0 {
+				res.warn(i, "measure is only read on the measures family, ignored")
+			}
+			if rv.sampleRateRaw != "" {
+				res.warn(i, "$sample_rate is only read on the measures family, ignored")
+			}
+		}
+
 		// A view's kind defaults from its name; a product event has no
-		// default and keeps an empty kind unless it declares one.
+		// default and keeps an empty kind unless it declares one. The
+		// default is taken only for an actual view: a measure or product
+		// event sharing a view's name (e.g. a mistyped family) must not
+		// inherit "web", which drives host-relative referrer cleaning and
+		// the bot filter.
+		var defaultKind string
+		if family == store.FamilyViews {
+			defaultKind, _ = viewName(ev.Name)
+		}
 		kind := defaultKind
 		if rv.Kind != "" {
 			if kindPattern.MatchString(rv.Kind) {
 				kind = rv.Kind
 			} else {
-				if isView {
+				if family == store.FamilyViews {
 					res.warn(i, "invalid $kind %q, using %q", rv.Kind, defaultKind)
 				} else {
 					res.warn(i, "invalid $kind %q, ignored", rv.Kind)
@@ -163,7 +209,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		if path == "" {
 			path = rv.Screen
 		}
-		if isView && path == "" {
+		if family == store.FamilyViews && path == "" {
 			res.reject(i, "view requires $path or $screen")
 			continue
 		}
@@ -189,12 +235,16 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			Device: device, DeviceModel: rv.DeviceModel,
 			AppVersion: rv.AppVersion, AppLocale: rv.AppLocale, BrowserLocale: rv.BrowserLocale,
 			Country: country, Consent: consent, Attributes: rv.Custom,
+			Value: value, Measure: measure, SampleRate: sampleRate,
 		}
 		// Bot filtering is the one thing still read off the User-Agent,
-		// and it applies to web views only: any other kind declares what
-		// it is and is never filtered, whatever HTTP library it uses.
+		// and it applies to web views and web measures only (a crawler's
+		// Web Vitals are not a visitor's): any other kind declares what it
+		// is and is never filtered, whatever HTTP library it uses, so a
+		// backend's measures (no kind) are kept. Product events are never
+		// filtered.
 		if kind == "web" {
-			if isView && botUA {
+			if (family == store.FamilyViews || family == store.FamilyMeasures) && botUA {
 				// Accepted and silently ignored: the client did nothing
 				// wrong, so it must not retry.
 				res.Accepted++

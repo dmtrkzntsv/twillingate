@@ -124,6 +124,30 @@ func hostTemplate(t *testing.T) string {
 		seed(`INSERT INTO agg_product_attrs (project_id, day, event_name, attr_key, attr_value, count, unique_users, unique_groups)
 		      VALUES (1,'2026-08-20','signup','plan','pro',3,3,NULL),
 		             (1,'2026-08-21','signup','plan','team',2,2,2)`)
+		// Measures: an aggregated day (2026-08-20, checkout_api/time and an
+		// all-zero $cls/number) plus a live day (2026-08-21, written through
+		// WriteEvents like real ingest) that TestMeasures* combines with it.
+		// The $browser attrs rows plus the live rows' own browser column
+		// exercise attr_key breakdown across both halves.
+		seed(`INSERT INTO agg_measures_daily (project_id, day, event_name, measure, bucket, samples, weight, sum)
+		      VALUES (1,'2026-08-20','checkout_api','time',135,2,2,400),
+		             (1,'2026-08-20','$cls','number',-1000,3,3,0)`)
+		seed(`INSERT INTO agg_measures_attrs (project_id, day, event_name, measure, attr_key, attr_value, bucket, samples, weight, sum)
+		      VALUES (1,'2026-08-20','checkout_api','time','$browser','chrome',135,1,1,200),
+		             (1,'2026-08-20','checkout_api','time','$browser','firefox',135,1,1,200)`)
+		checkoutValue, clsValue := 300.0, 0.0
+		if err := st.WriteEvents(ctx, []store.Event{
+			{ID: "0190dddd-0000-7000-8000-000000000001", ProjectID: 1, Family: store.FamilyMeasures,
+				EventName: "checkout_api", TS: time.Date(2026, 8, 21, 10, 0, 0, 0, time.UTC),
+				ActorID: "a1", ActorKind: "user", Browser: "chrome",
+				Value: &checkoutValue, Measure: store.MeasureTime, SampleRate: 1},
+			{ID: "0190dddd-0000-7000-8000-000000000002", ProjectID: 1, Family: store.FamilyMeasures,
+				EventName: "$cls", TS: time.Date(2026, 8, 21, 10, 0, 0, 0, time.UTC),
+				ActorID: "a1", ActorKind: "user", Browser: "chrome",
+				Value: &clsValue, Measure: store.MeasureNumber, SampleRate: 1},
+		}); err != nil {
+			t.Fatal(err)
+		}
 
 		db, err := readsql.Open(path, 5*time.Second, 1000)
 		if err != nil {

@@ -12,18 +12,43 @@ import (
 )
 
 // Family names the aggregate family a raw row feeds: views (v_views_*,
-// agg_views_*, views_overview, views_breakdown) or product (v_product_*,
-// agg_product_*, product_events, product_attributes). Ingest decides it
-// from the event name; the database holds no list of families.
+// agg_views_*, views_overview, views_breakdown), product (v_product_*,
+// agg_product_*, product_events, product_attributes) or measures
+// (v_measures_*, agg_measures_*). Ingest decides it from the event's
+// family, or from its name when family is absent; the database holds no
+// list of families.
 type Family string
 
 const (
-	FamilyViews   Family = "views"
-	FamilyProduct Family = "product"
+	FamilyViews    Family = "views"
+	FamilyProduct  Family = "product"
+	FamilyMeasures Family = "measures"
 )
 
+// The kinds a measure declares, each with a fixed unit: time in
+// milliseconds, size in bytes, number unitless. The unit follows from the
+// kind and is never stored.
+const (
+	MeasureTime   = "time"
+	MeasureSize   = "size"
+	MeasureNumber = "number"
+)
+
+// MeasureKinds lists every kind a measure may declare.
+var MeasureKinds = []string{MeasureTime, MeasureSize, MeasureNumber}
+
+// ReservedMetrics are the Web Vitals names, each with the one kind it may
+// be sent as. Their thresholds live only in the system dashboard's SQL.
+var ReservedMetrics = map[string]string{
+	"$lcp":  MeasureTime,
+	"$inp":  MeasureTime,
+	"$cls":  MeasureNumber,
+	"$fcp":  MeasureTime,
+	"$ttfb": MeasureTime,
+}
+
 // Event is one row of the raw events table: a view ($page_view,
-// $screen_view) or a product event (any other name), told apart by Family.
+// $screen_view), a product event or a measure, told apart by Family.
 // Kind is the client-declared surface ("web", "app", "cli", …); empty on a
 // product event that declared none. ActorKind records how the actor was
 // identified and is what retention cohorts on.
@@ -32,8 +57,12 @@ const (
 // …); OS is the operating system it runs on. They coincide for a native
 // app and diverge everywhere else. OSName is the free-form name the client
 // reported, kept beside an OS of other so the bucket stays investigable.
-// Attributes holds the custom (non-$) keys, for views and product events
-// alike.
+// Attributes holds the custom (non-$) keys, for every family alike.
+//
+// Value, Measure and SampleRate belong to a measure: Value is nil on every
+// other family (stored as NULL), Measure is one of MeasureKinds, and
+// SampleRate is the share of occurrences the client sent, in (0, 1]; 0
+// means unset and is stored as 1.
 type Event struct {
 	ID                                             string
 	ProjectID                                      int64
@@ -52,6 +81,9 @@ type Event struct {
 	Country                                        string
 	Consent                                        Consent
 	Attributes                                     map[string]string
+	Value                                          *float64
+	Measure                                        string
+	SampleRate                                     float64
 }
 
 // SystemAttribute is a reserved key that product_attributes always breaks
@@ -172,8 +204,10 @@ type Store interface {
 	UpsertIdentities(ctx context.Context, ids []Identity) error
 	ViewDaysBefore(ctx context.Context, projectID int64, before civil.Date) ([]civil.Date, error)
 	ProductDaysBefore(ctx context.Context, projectID int64, before civil.Date) ([]civil.Date, error)
+	MeasureDaysBefore(ctx context.Context, projectID int64, before civil.Date) ([]civil.Date, error)
 	AggregateViewDay(ctx context.Context, projectID int64, day civil.Date) error
 	AggregateProductDay(ctx context.Context, projectID int64, day civil.Date, attrs []string, topN int) error
+	AggregateMeasureDay(ctx context.Context, projectID int64, day civil.Date, attrs []string, topN int) error
 	UpsertActors(ctx context.Context, projectID int64, day civil.Date) error
 	AggregateRetentionDay(ctx context.Context, projectID int64, day civil.Date) error
 	PruneActors(ctx context.Context, projectID int64, before civil.Date) error

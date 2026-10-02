@@ -218,7 +218,7 @@ describe("script tag and init parity", () => {
     for (let m = re.exec(factorySource); m !== null; m = re.exec(factorySource)) attrs.push(m[1]);
     const optionFor: Record<string, string> = {
       key: "key", identity: "identity", auto: "autoPageviews", "mask-url": "maskUrl",
-      routing: "routing", kind: "kind", consent: "consent",
+      routing: "routing", kind: "kind", consent: "consent", vitals: "vitals",
     };
     expect(attrs.length).toBeGreaterThan(0);
     for (const a of attrs) {

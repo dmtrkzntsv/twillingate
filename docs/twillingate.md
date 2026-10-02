@@ -33,7 +33,7 @@ discarded.
 
 | Command | Does |
 | --- | --- |
-| `twillingate serve -ingest` | Ingestion: `POST /ingest/events`, the SDK at `/js/twillingate.js`, `/healthz` |
+| `twillingate serve -ingest` | Ingestion: `POST /ingest/events`, the SDK at `/js/twillingate.js` (and its Web Vitals add-on at `/js/twillingate-vitals.js`), `/healthz` |
 | `twillingate serve -api` | The API endpoint: MCP at `/mcp`, REST at `/api/`, the dashboards at `/app/` |
 | `twillingate serve` | Both, on one listener unless `API_ADDR` says otherwise |
 | `twillingate project`, `key`, `config` | Registry management |
@@ -155,6 +155,7 @@ whichever hostname loaded it.
 | `data-routing` | `routing` | `history` (default) or `hash`. See [Routing](#routing). |
 | `data-kind` | `kind` | What this client is: `web` (default), `app`, `cli`, or any short lower-case token. Anything but `web` switches automatic tracking from `$page_view` to `$screen_view` (the route path becomes the screen) and exempts the client from the server's crawler filter. |
 | `data-consent` | `consent` | May this instance keep anything on the device. `false` (default): nothing is read from or written to storage. `true`, or the name of a global variable or function a consent manager maintains, unlocks it. See [Consent and storage](#consent-and-storage). |
+| `data-vitals` | `vitals` | Sample rate for [Web Vitals](#web-vitals), in `[0.0001, 1]`: `1` measures every page load, `0.2` one in five. Absent (or anything outside the range) = off. |
 | `data-instance` | `create(name)` | Register this tag's instance as `twillingate.get(name)` instead of as the default instance. See [Two projects on one page](#two-projects-on-one-page). |
 
 Every `data-*` has an `init()` equivalent except `data-instance`, which maps to
@@ -192,6 +193,7 @@ twillingate.init({
   appLocale: "de",             // → $app_locale; never detected
   autoAttributes: true,        // default; false sends only what you set (see Precedence)
   flushInterval: 10000,        // milliseconds
+  vitals: 0.2,                 // Web Vitals sample rate in [0.0001, 1]; absent = off
   optOut: () => location.hostname === "localhost",   // OR-ed with twillingate_ignore
   debug: false,                // OR-ed with the twillingate_debug flag
 });
@@ -210,6 +212,10 @@ et.identify(userHash); et.group(workspaceId);
 et.init({ key: "ak_econumo…", identity: "identified", autoPageviews: false });
 ```
 
+```js
+twillingate.measure("checkout_api", 340, "time", { endpoint: "/api/checkout" });
+```
+
 ### Runtime API
 
 | Call | Meaning |
@@ -219,7 +225,8 @@ et.init({ key: "ak_econumo…", identity: "identified", autoPageviews: false });
 | `onPage(fn)` | A pageview listener, automatic pageviews included. See [Listeners](#listeners). |
 | `onEvent(fn)` | Runs for every event, after `onPage` has finished with a pageview. Receives `{ name, attributes }`; return attributes to merge, `false` to drop the event, anything else to observe. A listener that throws drops the event with a warning. |
 | `screen(name, attrs?)` | An explicit `$screen_view`, on any kind. |
-| `track(name, attrs?)` | An opt-in product event. Don't `$`-prefix your own names. |
+| `track(name, attrs?)` | An opt-in product event. Don't `$`-prefix your own names. A view name (`$page_view`, `$pageview`, `$screen_view`) sends nothing (logged with `debug`): views go through `page()` and `screen()`. |
+| `measure(name, value, measure, attrs?)` | Records a measure: `value` is a number from 0 to 1e15, `measure` is `"time"` (ms), `"size"` (bytes) or `"number"`; invalid calls are dropped (logged with `debug`). |
 | `attrs(obj)` | Default attributes under every event. Successive calls merge; `attrs(null)` clears. |
 | `identify(user, name?)` | Sets `$user_id` and the optional `$user_name`. Inert on an anonymous instance, with one warning; persisted on an identified instance with consent. Events already sent stay unattributed. |
 | `group(id, name?)` | Sets `$group_id` and the optional `$group_name` in every mode; persisted with consent on an identified instance. |
@@ -449,12 +456,48 @@ twillingate.onPage(({ url, path }) => ({
 }));   // → /settings?tab=billing
 ```
 
+### Web Vitals
+
+Off unless asked for: `data-vitals="0.2"` on the tag, or `vitals: 0.2` in
+`init()`, turns them on for that instance (web kind only). A page load that
+has them on sends each Core Web Vital as a [measure](#measures): `$lcp`,
+`$inp`, `$fcp` and `$ttfb` in milliseconds (`time`), `$cls` as a `number`.
+Every one carries `$sample_rate` (the configured rate, `1` included) and,
+unless `autoAttributes` is false, the `$host` and `$path` of the page load it
+measures, masking applied; a single-page app's later route changes do not
+move them. The `attrs()` defaults apply; identity, consent, `optOut` and
+`debug` work as for any other event.
+
+Sampling is decided once per page load: one random draw against the rate,
+after which the page sends every vital it produces, or none, so a sampled page
+is complete. Two instances on one page each have their own rate and draw.
+
+The numbers come from Google's [`web-vitals`](https://github.com/GoogleChrome/web-vitals)
+package, in a second script the collector serves at `/js/twillingate-vitals.js`
+(≈3.9 KB gzip, Apache-2.0). The SDK loads it from the same origin only when an
+instance enables vitals, once per page however many do, so a site without
+vitals downloads nothing more. FCP and TTFB are queued as soon as they are
+known; LCP, CLS and INP arrive when the page is hidden (a tab switch, a
+navigation, a close), and a vital reported then goes out at once through
+`sendBeacon` rather than waiting for the timer. Each vital is sent once per
+page load, with its value at the first time the page is hidden; INP and CLS
+growth after that (a tab switch and return) is not sent. A page restored from
+the back/forward cache reports its vitals again.
+
+Storage: `data-vitals="1"` adds up to five raw rows to every page view, so a
+busy site should sample (`0.1` to `0.2` is plenty for stable percentiles).
+Vitals from a crawler User-Agent (Lighthouse, headless Chrome) are dropped,
+as its views are.
+
 ### Transport
 
 Events queue for up to 10s and flush as one batch: on the timer, once 20 events
 accumulate, on `flush()`, and on page unload (`pagehide` / `visibilitychange`
 via `sendBeacon`, the key in the JSON body because beacons cannot set headers).
-Every event carries a UUID and a client timestamp. The environment (`$os`,
+Every event carries a UUID, a client timestamp and its `family` — `views` for
+`page()`/`screen()`, `product` for `track()` and tagged elements, `measures`
+for `measure()` — sent explicitly, never left for the collector to infer.
+The environment (`$os`,
 `$browser`, display size, …) goes once per batch, and any attribute every event
 in a batch carries with the same value (usually the `attrs()` defaults and
 `$host`) is moved up to the batch too; the collector lays batch attributes
@@ -481,18 +524,20 @@ the instance name, without changing what is sent.
 
 ## The event model
 
-Everything goes to one endpoint, `POST /ingest/events`. The event **name**
-decides which family it lands in:
+Everything goes to one endpoint, `POST /ingest/events`. `family` decides
+which family an event lands in; when it is omitted, the event's **name**
+decides instead:
 
 | name | family | default `$kind` | feeds |
 | --- | --- | --- | --- |
 | `$page_view` | views | `web` | the views dashboard, `views_overview`, `views_breakdown`, retention |
 | `$screen_view` | views | `app` | same |
 | anything else | product | — | `product_events`, `product_attributes` |
+| any name, with `family: "measures"` | measures | — | `measures`, the Web Vitals and Measures dashboards |
 
-Both families are stored in one raw table, `events`, whose `family` column is
-`views` or `product`; the aggregates, views and tools of each family read only
-its own rows.
+All three families are stored in one raw table, `events`, whose `family`
+column is `views`, `product` or `measures`; the aggregates, views and tools
+of each family read only its own rows.
 
 The `$` prefix is reserved for the system. An unrecognized `$` **name** is
 stored as an ordinary custom event with a warning; an unrecognized `$`
@@ -504,16 +549,16 @@ A view is one page or screen shown to someone, and both names store the same
 row. `$kind` overrides the default kind with any token matching
 `^[a-z][a-z0-9_]{0,15}$`, usually as a batch attribute; an invalid value warns
 and the default is used. Every view, of any kind, is enriched with a country
-derived from the connection's IP; only `web` has further server-side
-meaning — a web view is also filtered for a crawler User-Agent, while no
-other kind is filtered. `$path` (or its alias `$screen`) is **required** and
-`$host` optional, both stored verbatim, and `$path` may contain a `#` (hash
-routing) or a `?` (query routing). Campaign parameters are `$utm_source`,
-`$utm_medium` and `$utm_campaign`; `$referrer` is reduced to a source name
-and dropped on web views as a self-referral when its host matches `$host`. A
-client `$session_id` is authoritative, otherwise a gap over 30 minutes per
-actor starts a session, and a bounce is a single-view session — expect high
-bounce rates on app kinds.
+derived from the connection's IP; only `web` has further server-side meaning —
+a web view (and a web measure) is also filtered for a crawler User-Agent,
+while no other kind is filtered. `$path` (or its alias `$screen`) is
+**required** and `$host` optional, both stored verbatim, and `$path` may
+contain a `#` (hash routing) or a `?` (query routing). Campaign parameters are
+`$utm_source`, `$utm_medium` and `$utm_campaign`; `$referrer` is reduced to a
+source name and dropped on web views as a self-referral when its host matches
+`$host`. A client `$session_id` is authoritative, otherwise a gap over 30
+minutes per actor starts a session, and a bounce is a single-view session —
+expect high bounce rates on app kinds.
 
 The IP and the User-Agent are never stored, on any kind: the IP becomes the
 country, the User-Agent is checked for a crawler and discarded — the only
@@ -576,6 +621,48 @@ which keys get their own column and value breakdown.
 ```js
 twillingate.track("signup", { plan: "pro" });
 ```
+
+### Measures
+
+A measure is a name, a numeric value and a time: `measure("checkout_api", 340,
+"time")`. Send `family: "measures"` explicitly — it is never inferred, so a
+product event carrying a number stays a product event. `value` is a JSON
+number from `0` to `1e15` (about 31,000 years in milliseconds, 1 PB in
+bytes; a larger one is rejected as a client bug); `measure` sets the kind and
+its fixed unit:
+
+| `measure` | Unit | Examples |
+| --- | --- | --- |
+| `time` | milliseconds | request duration, LCP |
+| `size` | bytes | payload, file, memory |
+| `number` | none | queue depth, retries, CLS |
+
+Money is not a kind: send it as a `number` and put the currency in the name
+(`cart_value_eur`).
+
+Web Vitals are reserved metric names, each with the one kind it may be sent
+as:
+
+| Name | Metric | `measure` |
+| --- | --- | --- |
+| `$lcp` | Largest Contentful Paint | `time` |
+| `$inp` | Interaction to Next Paint | `time` |
+| `$cls` | Cumulative Layout Shift | `number` |
+| `$fcp` | First Contentful Paint | `time` |
+| `$ttfb` | Time to First Byte | `time` |
+
+A reserved metric sent with the wrong kind is rejected; an unrecognized `$`
+metric name is stored with a warning, like any other unrecognized `$` name.
+`$sample_rate` (a number in `[0.0001, 1]`) is read on measures only, and is
+what lets a page or backend send a fraction of its measures and still have the
+count and mean come out right: each stored row counts as `1/rate`. A rate
+below `0.0001` would let one row outweigh 10,000 unsampled ones, so it is
+stored as `1` with a warning, like any other invalid rate.
+
+A measure only exists when the event says `family: "measures"`. One that
+declares `$kind: "web"` (every Web Vital does) is dropped, still accepted,
+when the User-Agent is a crawler, as a web view is; a backend's measures
+declare no kind and are never filtered.
 
 ### Identity
 
@@ -647,12 +734,17 @@ transport that survives page unload. An unknown key gets a plain `401`.
     { "id": "018f1e5d-…", "ts": "2026-08-30T10:00:05Z",
       "name": "$screen_view", "attributes": { "$screen": "/settings" } },
     { "id": "018f1e5e-…", "ts": "2026-08-30T10:00:09Z", "name": "subscribed",
-      "attributes": { "plan": "pro", "$app_version": "2.5.0" } }
+      "attributes": { "plan": "pro", "$app_version": "2.5.0" } },
+    { "id": "018f1e5f-…", "ts": "2026-08-30T10:00:10Z", "family": "measures",
+      "name": "checkout_api", "value": 340, "measure": "time",
+      "attributes": { "$sample_rate": 0.1 } }
   ]
 }
 ```
 
-An event is `{id, ts, name, attributes}` and nothing else.
+An event is `{id, ts, family, name, value, measure, attributes}`; `family` is
+optional for views and product events, and `value` and `measure` belong to
+measures only.
 
 ### Attribute merge
 
@@ -664,18 +756,34 @@ A `null` means "not sent": a `null` batch value is ignored, and a `null`
 per-event value removes the batch value for that event, so a reserved key
 reads as undeclared and a custom key is absent.
 
-### Reserved event names
+### Families and reserved names
 
-| `name` | Stored as | Default `$kind` | Requires |
+| `family` | `name` | Requires | When `family` is omitted |
 | --- | --- | --- | --- |
-| `$page_view` | view | `web` | `$path` (or `$screen`) |
-| `$screen_view` | view | `app` | `$screen` (or `$path`) |
-| anything else | custom event | — | `name` |
+| `views` | `$page_view` or `$screen_view` | `$path` (or `$screen`) | inferred from `name`: these two names are views |
+| `product` | anything else | `name` | inferred from `name`: the default for every other name |
+| `measures` | any name, or a reserved `$` metric | a `value` from `0` to `1e15` and a `measure` of `time`, `size` or `number` | never inferred — a measure only exists when the event declares `family: "measures"` |
 
-An **unrecognized `$` name is stored as an ordinary custom event** with a
-warning, never rejected: a client shipping a future `$session_start` against an
-older server must not get a `4xx`, which the retry rules classify as a poison
-batch to drop.
+`family` absent keeps the pre-measures rule unchanged: `$page_view` and
+`$screen_view` are views, everything else is product, so a client built
+before this change keeps working unchanged.
+
+A per-event rejection (the batch's other events are still stored):
+- **An unknown `family`** (anything but `views`, `product` or `measures`) is
+  rejected, not stored as `product`.
+- **A contradiction is rejected:** `family: "views"` with a name that is not
+  a view name; `family: "product"` with a view name; `family: "measures"`
+  without a valid `value` or `measure`; a reserved metric (`$lcp`, `$inp`,
+  `$cls`, `$fcp`, `$ttfb`) sent with the wrong `measure`.
+
+An **unrecognized `$` name is stored as an ordinary custom event or measure**
+with a warning, never rejected: a client shipping a future reserved name
+(`$session_start`, a future `$tbt` metric) against an older server must not
+get a `4xx`, which the retry rules classify as a poison batch to drop. The
+same reasoning runs the other way: an **older server ignores `family`, `value`
+and `measure`** (unknown top-level fields are dropped by the decoder) and
+stores the event as a product event, so a backend or a self-hosted SDK copy
+sending measures must upgrade the server first.
 
 ### Reserved attribute keys
 
@@ -684,11 +792,18 @@ batch to drop.
 | Identity | `$install_id` `$user_id` `$user_name` `$group_id` `$group_name` `$session_id` `$consent` | `$install_id` (identified instance with consent), `$consent` |
 | Environment | `$kind` `$platform` `$os` `$os_version` `$os_name` `$browser` `$browser_version` `$device` `$device_model` `$app_version` `$app_locale` `$browser_locale` `$display_width` `$display_height` | `$kind`, `$platform` (`web` for the web kind), `$os` `$os_version` `$os_name` `$browser` `$browser_version` `$browser_locale` `$device` `$display_width` `$display_height` |
 | Location | `$host` `$path` `$screen` `$utm_source` `$utm_medium` `$utm_campaign` `$referrer` | `$host` `$path` (web kind) or `$screen` (app kind) on views and, from the last view, on product events; `$referrer` `$utm_source` `$utm_medium` `$utm_campaign` on web views only |
+| Sampling | `$sample_rate` | on every Web Vital: the `vitals` rate, `1` included |
 
-Every key is stored on views and product events alike. The SDK sends the
-rest only when the page sets them (`identify()`, `group()`, `attrs()`, the
-`platform`, `appVersion` and `appLocale` options). `autoAttributes: false`
-turns the derived environment and location off, except what a view needs.
+`$sample_rate` is a number in `[0.0001, 1]`, read on measures only; each stored
+row counts as `1/rate`. Outside that range it is stored as `1` with a warning;
+on any other family it is dropped with a warning.
+
+Every key but `$sample_rate` is stored on views and product events alike;
+`$sample_rate` is dropped, with a warning, on both and stored on measures
+only. The SDK sends the rest only when the page sets them (`identify()`,
+`group()`, `attrs()`, the `platform`, `appVersion` and `appLocale` options).
+`autoAttributes: false` turns the derived environment and location off,
+except what a view needs.
 
 `$consent` is whether the client had consent to keep anything on the device
 when it sent the event: `1` (or `true`) given, `0` (or `false`) not given, as a
@@ -772,7 +887,7 @@ CORS-simple.
 
 ## Answer questions with the data
 
-A connected session gets thirty-three tools: the seventeen below, and sixteen
+A connected session gets thirty-four tools: the eighteen below, and sixteen
 that build the dashboards served at `/app/`, which are documented in
 `docs://reporting` ([reporting.md](reporting.md)). To build or change a
 dashboard, call `reporting_guide` first.
@@ -788,6 +903,7 @@ take `project_id`, `from` and `to` as `YYYY-MM-DD` unless noted.
 | `views_breakdown` | `dimension`, `limit` (default 20) | Top rows for one of `kinds`, `paths`, `hosts`, `referrers`, `utm`, `countries`, `platforms`, `os`, `browsers`, `app_versions`, `devices`, `displays`, `consent`, `locales`. Two-key dimensions return both columns. `consent` is `given`, `none` or `unknown`. `locales` pairs `browser_locale` with `app_locale`, either empty when not sent. |
 | `product_events` | `event` (optional filter) | Count and unique users per event name, plus daily totals |
 | `product_attributes` | `event`, `key` | Count, unique users and unique groups per value of a declared attribute. `$platform`, `$os`, `$app_version`, `$app_locale`, `$kind`, `$browser`, `$device` and `$browser_locale` are always available; a custom key, or one of `$host`, `$path`, `$referrer`, `$utm_source`, `$utm_medium`, `$utm_campaign`, `$os_version`, `$browser_version` and `$device_model`, only appears once the project declares it. `unique_groups` is empty for days rolled up before it was measured and `0` when it was measured and no group was involved |
+| `measures` | `name`, `attr_key` | per metric: samples, estimated count, mean, p50/p75/p95 (time in ms, size in bytes) |
 | `retention` | `actor` (`user` or `install`) | Cohort curves, plus `aggregated_through` — cohorts after that day are **absent, not zero**. Empty for a project whose clients send neither `$user_id` nor `$install_id` |
 | `identities` | `kind` (`user` or `group`), `limit` | Per-user or per-group activity with display names. **Surfaces personal data on projects whose clients send ids** |
 | `query` | `sql` | A single read-only `SELECT`/`WITH` against the views. Row-capped and time-limited; `meta` and SQLite's internal tables (`sqlite_master`, `dbstat`, …) are refused, whether named directly or as a quoted or single-quoted string. Non-ASCII names must be quoted |
@@ -840,6 +956,7 @@ curl -H "Authorization: Bearer $TOKEN" \
 | `GET` | `/api/projects/{project_id}/views/breakdown` | `views_breakdown` | query: `from`, `to`, `dimension`, `limit` |
 | `GET` | `/api/projects/{project_id}/product/events` | `product_events` | query: `from`, `to`, `event` |
 | `GET` | `/api/projects/{project_id}/product/attributes` | `product_attributes` | query: `from`, `to`, `event` |
+| `GET` | `/api/projects/{project_id}/measures` | `measures` | query: `from`, `to`, `name`, `attr_key` |
 | `GET` | `/api/projects/{project_id}/retention` | `retention` | query: `from`, `to`, `actor` |
 | `GET` | `/api/projects/{project_id}/identities` | `identities` | query: `from`, `to`, `kind`, `limit` |
 | `POST` | `/api/query` | `query` | body: `sql` |
@@ -893,12 +1010,24 @@ environment](#declaring-the-environment)) where `other` is a real value outside
 the list and `(other)` is the cap. Product events have `v_product_daily`,
 `v_product_totals` and `v_product_attrs` (whose `unique_groups` is NULL, not
 zero, for days rolled up before it was measured — `MAX()` skips it, `SUM()`
-would too, a `COALESCE` to 0 would lie), plus `v_events_flat`, which holds
-every raw row of both families (views and product events) with every typed
-column of the raw row: its `family` column — filter `family = 'product'` for
-product events alone — `kind`, the identity, location and environment columns
-(`path`, `os`, `country`, …), its `consent` column (1, 0 or NULL), the raw
-`attributes` JSON, and one `attr_*` column per declared custom attribute.
+would too, a `COALESCE` to 0 would lie). Measures (performance timings, sizes
+and counts, including Web Vitals) have `raw_measures`, `v_measures_daily`
+and `v_measures_attrs` (keyed the same way as `v_product_daily` /
+`v_product_attrs`, plus `measure` — `time`, `size` or `number` — and
+`bucket`/`approx_value` from the log-scale histogram; the `measures` tool
+does the percentile math over them). `raw_views`, `raw_product`,
+`raw_measures` and `v_events_flat` are all views over the one raw table, so
+each now carries every family's columns: `value`, `measure` and
+`sample_rate` are NULL, `''` and `1` on `raw_views`/`raw_product` rows (they
+only mean something on a measure), and `raw_*` additionally carries `bucket`,
+the log-scale bucket `value` falls in (NULL outside measures). `v_events_flat`
+holds every raw row of every family (views, product events and measures)
+with every typed column of the raw row: its `family` column — filter
+`family = 'product'` for product events alone, `family = 'measures'` for
+measures — `kind`, the identity, location and environment columns (`path`,
+`os`, `country`, …), its `consent` column (1, 0 or NULL), the raw
+`attributes` JSON, `value`, `measure`, `sample_rate`, and one `attr_*` column
+per declared custom attribute.
 `v_identity_daily` and `identities` join user and group activity to display
 names; `v_identity_daily` keeps the busiest 500 users and 500 groups per day
 and drops the rest with no `(other)` row, so do not sum it for totals.

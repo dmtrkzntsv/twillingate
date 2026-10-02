@@ -8,8 +8,8 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
 )
 
-// viewsAggTables and productAggTables must list every agg_* table in the
-// schema; TestPruneAggregatesCoversAllAggTables fails if a migration adds
+// viewsAggTables, productAggTables and measuresAggTables must list every
+// agg_* table in the schema; TestPruneAggregatesCoversAllAggTables fails if a migration adds
 // one that is missing here, since such a table would never honour
 // retention.
 var viewsAggTables = []string{
@@ -20,6 +20,8 @@ var viewsAggTables = []string{
 }
 
 var productAggTables = []string{"agg_product_daily", "agg_product_totals", "agg_product_attrs"}
+
+var measuresAggTables = []string{"agg_measures_daily", "agg_measures_attrs"}
 
 // agg_retention and agg_identity_daily are keyed by cohort_day and day and
 // follow the views cutoff. agg_retention is pruned by PruneActors, which
@@ -43,7 +45,10 @@ func (d *DB) PruneAggregates(ctx context.Context, projectID int64, before civil.
 		if err := del(viewsAggTables); err != nil {
 			return err
 		}
-		return del(productAggTables)
+		if err := del(productAggTables); err != nil {
+			return err
+		}
+		return del(measuresAggTables)
 	})
 }
 

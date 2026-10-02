@@ -122,7 +122,7 @@ func TestDocumentMatchesSDK(t *testing.T) {
 		"data-key", "data-identity", "data-auto",
 		"data-mask-url", "data-routing", "data-consent", "data-instance",
 		"data-kind",
-		"init", "page", "onPage(", "onEvent(", "screen", "track", "attrs", "identify", "group", "installId(",
+		"init", "page", "onPage(", "onEvent(", "screen", "track", "measure(", "attrs", "identify", "group", "installId(",
 		"reset", "flush", "consent", "optOut(", "debug(", ".create(", ".get(", "storage", "taggedEvents",
 		"detectOS", "detectBrowser", "detectDevice", "ClientSignals",
 		"twillingate_ignore", "twillingate_debug",
@@ -131,6 +131,7 @@ func TestDocumentMatchesSDK(t *testing.T) {
 		"$browser", "$browser_version", "$device", "$consent",
 		"$os_version", "$display_width", "$display_height", "$browser_locale", "$app_locale", "appLocale",
 		"autoAttributes",
+		"data-vitals", "vitals", "$sample_rate", "$lcp",
 	} {
 		if !strings.Contains(src, symbol) {
 			t.Errorf("docs/twillingate.md documents %q but the SDK source does not contain it", symbol)

@@ -1003,12 +1003,13 @@ func TestStitchViewPlatformsAcrossBoundaryWithCap(t *testing.T) {
 // own definition, not just the v_* ones (raw_views and raw_product are
 // views too): the query tool's guard must accept what the schema itself
 // relies on, or a legitimate query through a view would be refused.
-// v_product_attrs is the one declared exception (see its migration): it
-// names meta, but only to read a tuning knob (product_attributes_top_n),
-// never visitor data. Rather than asserting that narrowly by substring,
-// the test removes exactly that fragment and then holds the remainder to
-// the same bar as every other view: readsql.Check must accept it too, so
-// the exception can never widen into "meta is fine anywhere in this view".
+// v_product_attrs and v_measures_attrs are the declared exceptions (see
+// their migrations): they name meta, but only to read a tuning knob
+// (product_attributes_top_n), never visitor data. Rather than asserting
+// that narrowly by substring, the test removes exactly that fragment and
+// then holds the remainder to the same bar as every other view:
+// readsql.Check must accept it too, so the exception can never widen into
+// "meta is fine anywhere in this view".
 func TestViewsReferenceNoRefusedName(t *testing.T) {
 	db := newTestDB(t)
 	rows, err := db.db.Query(`SELECT name, sql FROM sqlite_master WHERE type='view'`)
@@ -1023,7 +1024,7 @@ func TestViewsReferenceNoRefusedName(t *testing.T) {
 			t.Fatal(err)
 		}
 		seen++
-		if name == "v_product_attrs" {
+		if name == "v_product_attrs" || name == "v_measures_attrs" {
 			if !strings.Contains(def, "key='product_attributes_top_n'") {
 				t.Errorf("%s: expected the key='product_attributes_top_n' guard, definition:\n%s", name, def)
 			}

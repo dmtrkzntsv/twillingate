@@ -1,0 +1,7 @@
+{
+  "component": "stat",
+  "title": "LCP p75 (ms)",
+  "props": {
+    "format": "number"
+  }
+}

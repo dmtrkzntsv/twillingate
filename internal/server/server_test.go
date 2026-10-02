@@ -25,14 +25,18 @@ type fakeQueue struct {
 	mu         sync.Mutex
 	views      []store.Event
 	events     []store.Event
+	measures   []store.Event
 	identities []store.Identity
 }
 
 func (f *fakeQueue) Enqueue(e store.Event) {
 	f.mu.Lock()
-	if e.Family == store.FamilyViews {
+	switch e.Family {
+	case store.FamilyViews:
 		f.views = append(f.views, e)
-	} else {
+	case store.FamilyMeasures:
+		f.measures = append(f.measures, e)
+	default:
 		f.events = append(f.events, e)
 	}
 	f.mu.Unlock()
@@ -516,8 +520,9 @@ func TestBrowserAndDeviceAreValidated(t *testing.T) {
 	}
 }
 
-// The bot filter drops web views only: a product event declaring the web
-// kind under a crawler User-Agent is stored like any other product event.
+// The bot filter drops web views and web measures only: a product event
+// declaring the web kind under a crawler User-Agent is stored like any
+// other product event.
 func TestBotFilterKeepsWebKindProductEvents(t *testing.T) {
 	q, h := testServer(t)
 	body := envelopeOf(`{"name":"$page_view","attributes":{"$host":"app.com","$path":"/x"}},
@@ -531,6 +536,35 @@ func TestBotFilterKeepsWebKindProductEvents(t *testing.T) {
 	}
 	if len(q.events) != 1 || q.events[0].Kind != "web" || q.events[0].EventName != "signup" || q.events[0].Path != "/x" {
 		t.Errorf("web-kind product event = %+v, want it stored", q.events)
+	}
+}
+
+// A crawler's Web Vitals are filtered like its views: a measure declaring
+// the web kind under a bot User-Agent (Lighthouse, headless Chrome) is
+// accepted and dropped, the same measure from a browser is stored, and a
+// backend's measure (no kind) is stored whatever its HTTP library sends.
+func TestBotFilterDropsWebMeasures(t *testing.T) {
+	vital := `{"family":"measures","name":"$lcp","value":1200,"measure":"time","attributes":{"$kind":"web","$host":"app.com","$path":"/"}}`
+	backend := `{"family":"measures","name":"checkout_api","value":340,"measure":"time"}`
+	for _, c := range []struct {
+		name, ua, body string
+		stored         int
+	}{
+		{"lighthouse", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36 Chrome-Lighthouse", vital, 0},
+		{"headless chrome", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/129.0.0.0 Safari/537.36", vital, 0},
+		{"desktop chrome", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36", vital, 1},
+		{"backend via curl", "curl/8.5.0", backend, 1},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			q, h := testServer(t)
+			res := decodeResult(t, post(h, envelopeOf(c.body), map[string]string{"User-Agent": c.ua}))
+			if res.Accepted != 1 || res.Rejected != 0 || len(res.Errors) != 0 {
+				t.Fatalf("result = %+v, want the measure accepted", res)
+			}
+			if len(q.measures) != c.stored {
+				t.Fatalf("stored %d measures, want %d: %+v", len(q.measures), c.stored, q.measures)
+			}
+		})
 	}
 }
 
@@ -1087,6 +1121,311 @@ func TestConsentParsing(t *testing.T) {
 		if want := map[bool]int{true: 2, false: 0}[c.warn]; warned != want {
 			t.Errorf("%s: %d $consent warnings, want %d (%+v)", c.raw, warned, want, res.Warnings)
 		}
+	}
+}
+
+// --- measures ---
+
+// containsNotice reports whether any notice's reason contains substr.
+func containsNotice(notices []notice, substr string) bool {
+	for _, n := range notices {
+		if strings.Contains(n.Reason, substr) {
+			return true
+		}
+	}
+	return false
+}
+
+// TestFamilyRules pins the routing table for all three families: an
+// explicit family is checked, never overridden; a missing one keeps the old
+// view/product rule; measures require a valid value and measure and never
+// arise by inference.
+func TestFamilyRules(t *testing.T) {
+	cases := []struct {
+		name, event string
+		wantFamily  store.Family // "" = rejected
+		reject      string       // substring of the rejection reason
+		warn        string       // substring of a warning
+	}{
+		{"view without family", `{"name":"$page_view","attributes":{"$path":"/"}}`, store.FamilyViews, "", ""},
+		{"product without family", `{"name":"signup"}`, store.FamilyProduct, "", ""},
+		{"explicit product", `{"family":"product","name":"signup"}`, store.FamilyProduct, "", ""},
+		{"explicit views", `{"family":"views","name":"$screen_view","attributes":{"$screen":"/s"}}`, store.FamilyViews, "", ""},
+		{"views with a product name", `{"family":"views","name":"signup"}`, "", "family views", ""},
+		{"product with a view name", `{"family":"product","name":"$page_view","attributes":{"$path":"/"}}`, "", "is a view", ""},
+		{"unknown family", `{"family":"logs","name":"x"}`, "", "unknown family", ""},
+		{"family is a number", `{"family":1,"name":"x"}`, "", "unknown family", ""},
+		{"family is a bool", `{"family":true,"name":"x"}`, "", "unknown family", ""},
+		{"measure", `{"family":"measures","name":"checkout_api","value":340,"measure":"time"}`, store.FamilyMeasures, "", ""},
+		{"measure zero", `{"family":"measures","name":"q","value":0,"measure":"number"}`, store.FamilyMeasures, "", ""},
+		{"measure without value", `{"family":"measures","name":"q","measure":"number"}`, "", "value", ""},
+		{"measure null value", `{"family":"measures","name":"q","value":null,"measure":"number"}`, "", "value", ""},
+		{"measure string value", `{"family":"measures","name":"q","value":"340","measure":"time"}`, "", "value", ""},
+		{"measure bool value", `{"family":"measures","name":"q","value":true,"measure":"time"}`, "", "value", ""},
+		{"measure negative", `{"family":"measures","name":"q","value":-1,"measure":"time"}`, "", "value", ""},
+		{"measure without kind", `{"family":"measures","name":"q","value":1}`, "", "measure", ""},
+		{"measure unknown kind", `{"family":"measures","name":"q","value":1,"measure":"seconds"}`, "", "measure", ""},
+		{"measure is a number", `{"family":"measures","name":"q","value":1,"measure":5}`, "", "measure", ""},
+		{"lcp as time", `{"family":"measures","name":"$lcp","value":1200,"measure":"time"}`, store.FamilyMeasures, "", ""},
+		{"cls as time", `{"family":"measures","name":"$cls","value":0.1,"measure":"time"}`, "", "$cls", ""},
+		{"future metric", `{"family":"measures","name":"$tbt","value":10,"measure":"time"}`, store.FamilyMeasures, "", "unknown reserved metric"},
+		{"value on product", `{"name":"signup","value":3,"measure":"number"}`, store.FamilyProduct, "", "value"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			q, h := testServer(t)
+			w := post(h, envelopeOf(c.event), nil)
+			// A malformed field (an unknown family, a mistyped family or
+			// measure) is a per-event rejection, never a batch-level 4xx:
+			// resolveFamily and the measures block run per event, and
+			// rawEvent decodes family/measure as json.RawMessage precisely
+			// so a type mismatch can't fail decoding the whole envelope.
+			if w.Code != http.StatusAccepted {
+				t.Fatalf("status = %d, want 202 even when this event is rejected: %s", w.Code, w.Body.String())
+			}
+			res := decodeResult(t, w)
+			if c.wantFamily == "" {
+				if res.Rejected != 1 || res.Accepted != 0 {
+					t.Fatalf("result = %+v, want 1 rejected", res)
+				}
+				if c.reject != "" && !containsNotice(res.Errors, c.reject) {
+					t.Errorf("errors = %+v, want one containing %q", res.Errors, c.reject)
+				}
+				return
+			}
+			if res.Accepted != 1 || res.Rejected != 0 {
+				t.Fatalf("result = %+v, want 1 accepted", res)
+			}
+			var stored []store.Event
+			switch c.wantFamily {
+			case store.FamilyViews:
+				stored = q.views
+			case store.FamilyProduct:
+				stored = q.events
+			case store.FamilyMeasures:
+				stored = q.measures
+			}
+			if len(stored) != 1 {
+				t.Fatalf("family %s stored %d rows, want 1 (views=%d events=%d measures=%d)",
+					c.wantFamily, len(stored), len(q.views), len(q.events), len(q.measures))
+			}
+			if c.warn != "" && !containsNotice(res.Warnings, c.warn) {
+				t.Errorf("warnings = %+v, want one containing %q", res.Warnings, c.warn)
+			}
+		})
+	}
+}
+
+// TestMistypedFamilyOrMeasureDoesNotPoisonTheBatch pins the fix for a batch
+// containing an event with a mistyped family or measure field: those two
+// events are rejected individually and the well-formed event beside them in
+// the same batch is still accepted with a 202, not a 400 for the whole
+// request (which is what unmarshaling family/measure straight into a Go
+// string field used to produce).
+func TestMistypedFamilyOrMeasureDoesNotPoisonTheBatch(t *testing.T) {
+	q, h := testServer(t)
+	body := envelopeOf(`{"family":1,"name":"x"},
+		{"family":"measures","name":"q","value":1,"measure":5},
+		{"name":"good"}`)
+	w := post(h, body, nil)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202: %s", w.Code, w.Body.String())
+	}
+	res := decodeResult(t, w)
+	if res.Accepted != 1 || res.Rejected != 2 || len(res.Errors) != 2 {
+		t.Fatalf("result = %+v, want 1 accepted and 2 rejected", res)
+	}
+	if !containsNotice(res.Errors, "unknown family") {
+		t.Errorf("errors = %+v, want one about the mistyped family", res.Errors)
+	}
+	if !containsNotice(res.Errors, "measure") {
+		t.Errorf("errors = %+v, want one about the mistyped measure", res.Errors)
+	}
+	if len(q.events) != 1 || q.events[0].EventName != "good" {
+		t.Errorf("events = %+v, want only the well-formed event stored", q.events)
+	}
+}
+
+// TestMeasureNeverGetsAViewDefaultKind pins that the view default kind
+// ($page_view -> "web", $screen_view -> "app") only applies to an actual
+// view: a measure sharing a view's name must keep an empty kind, since kind
+// drives host-relative referrer cleaning and the web-kind bot filter, which
+// a measure is subject to only when it declares $kind web itself.
+func TestMeasureNeverGetsAViewDefaultKind(t *testing.T) {
+	q, h := testServer(t)
+	res := decodeResult(t, post(h, envelopeOf(
+		`{"family":"measures","name":"$page_view","value":1200,"measure":"time"}`), nil))
+	if res.Accepted != 1 || res.Rejected != 0 {
+		t.Fatalf("result = %+v", res)
+	}
+	if len(q.measures) != 1 || q.measures[0].Kind != "" {
+		t.Fatalf("measures = %+v, want an empty kind (no view default leaking in)", q.measures)
+	}
+}
+
+// TestMissingFamilyNeverInfersMeasures pins decision 1: a product event
+// cannot become a measure because of what it carries. $lcp with no family
+// (even carrying value and measure) is stored as a product event, not a
+// measure, and warns about the unrecognised reserved name.
+func TestMissingFamilyNeverInfersMeasures(t *testing.T) {
+	q, h := testServer(t)
+	res := decodeResult(t, post(h, envelopeOf(`{"name":"$lcp","attributes":{"$path":"/"}}`), nil))
+	if res.Accepted != 1 || res.Rejected != 0 {
+		t.Fatalf("result = %+v", res)
+	}
+	if len(q.events) != 1 || len(q.measures) != 0 || q.events[0].EventName != "$lcp" {
+		t.Fatalf("events = %+v measures = %+v, want $lcp stored as product", q.events, q.measures)
+	}
+	if !containsNotice(res.Warnings, "unknown reserved name") {
+		t.Errorf("warnings = %+v, want an unknown reserved name warning", res.Warnings)
+	}
+
+	q, h = testServer(t)
+	res = decodeResult(t, post(h, envelopeOf(`{"name":"$lcp","attributes":{"$path":"/"},"value":1200,"measure":"time"}`), nil))
+	if res.Accepted != 1 || res.Rejected != 0 {
+		t.Fatalf("result = %+v", res)
+	}
+	if len(q.events) != 1 || len(q.measures) != 0 || q.events[0].EventName != "$lcp" || q.events[0].Value != nil {
+		t.Fatalf("events = %+v measures = %+v, want $lcp stored as product with no value", q.events, q.measures)
+	}
+	if !containsNotice(res.Warnings, "unknown reserved name") {
+		t.Errorf("warnings = %+v, want the unknown reserved name warning", res.Warnings)
+	}
+	if !containsNotice(res.Warnings, "value is only read on the measures family") {
+		t.Errorf("warnings = %+v, want the value-ignored warning", res.Warnings)
+	}
+}
+
+// TestSampleRateOnlyOnMeasures pins decision 6: $sample_rate is meaningful
+// only on the measures family. Declared once as a batch default, it lands
+// on the measure and is dropped, with a warning, on the view and the
+// product event beside it.
+func TestSampleRateOnlyOnMeasures(t *testing.T) {
+	q, h := testServer(t)
+	body := `{"key":"` + testKey + `","attributes":{"$sample_rate":0.1},
+	  "events":[
+	    {"family":"measures","name":"checkout_api","value":340,"measure":"time"},
+	    {"name":"signup"},
+	    {"name":"$page_view","attributes":{"$path":"/"}}
+	  ]}`
+	res := decodeResult(t, post(h, body, nil))
+	if res.Accepted != 3 || res.Rejected != 0 {
+		t.Fatalf("result = %+v", res)
+	}
+	if len(q.measures) != 1 || q.measures[0].SampleRate != 0.1 {
+		t.Fatalf("measures = %+v, want sample rate 0.1", q.measures)
+	}
+	if len(q.events) != 1 || q.events[0].SampleRate != 1 {
+		t.Fatalf("events = %+v, want sample rate 1 (ignored)", q.events)
+	}
+	if len(q.views) != 1 || q.views[0].SampleRate != 1 {
+		t.Fatalf("views = %+v, want sample rate 1 (ignored)", q.views)
+	}
+	n := 0
+	for _, w := range res.Warnings {
+		if strings.Contains(w.Reason, "$sample_rate") {
+			n++
+		}
+	}
+	if n != 2 {
+		t.Errorf("warnings = %+v, want 2 containing $sample_rate (product event and view)", res.Warnings)
+	}
+}
+
+// TestSampleRateParsing pins parseSampleRate: a number in [1e-4, 1], absent
+// means 1 with no warning, and anything else is stored as 1 and reported.
+func TestSampleRateParsing(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want float64
+		bad  bool
+	}{
+		{"", 1, false},
+		{"1", 1, false},
+		{"0.2", 0.2, false},
+		{"0", 1, true},
+		{"-0.5", 1, true},
+		{"1.5", 1, true},
+		{"abc", 1, true},
+		{"true", 1, true},
+		{"1e-4", 1e-4, false},
+		{"0.0001", 1e-4, false},
+		{"9.9e-5", 1, true},
+		{"1e-300", 1, true},
+		{"5e-324", 1, true},
+	}
+	for _, c := range cases {
+		got, bad := parseSampleRate(c.raw)
+		if got != c.want || bad != c.bad {
+			t.Errorf("parseSampleRate(%q) = %v, %v; want %v, %v", c.raw, got, bad, c.want, c.bad)
+		}
+	}
+}
+
+// TestValueParsing pins parseValue: a JSON number from 0 to 1e15. Beyond
+// that bound a value is a client bug (1e15 ms is about 31,000 years), and
+// accepting 1e308 would overflow the weighted sums to infinity.
+func TestValueParsing(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want float64
+		ok   bool
+	}{
+		{"0", 0, true},
+		{"1200", 1200, true},
+		{"0.05", 0.05, true},
+		{"1e15", 1e15, true},
+		{"1000000000000000", 1e15, true},
+		{"1.0000001e15", 0, false},
+		{"1e308", 0, false},
+		{"-1", 0, false},
+		{"", 0, false},
+		{"null", 0, false},
+		{`"5"`, 0, false},
+		{"true", 0, false},
+	}
+	for _, c := range cases {
+		got, ok := parseValue(json.RawMessage(c.raw))
+		if got != c.want || ok != c.ok {
+			t.Errorf("parseValue(%s) = %v, %v; want %v, %v", c.raw, got, ok, c.want, c.ok)
+		}
+	}
+}
+
+// Extremes reach the wire as JSON numbers, not strings: a value above 1e15
+// rejects that one measure, and a $sample_rate below 1e-4 (down to the
+// smallest subnormal) is stored as 1 with a warning.
+func TestMeasureExtremes(t *testing.T) {
+	q, h := testServer(t)
+	body := envelopeOf(`{"family":"measures","name":"a","value":1e308,"measure":"time"},
+		{"family":"measures","name":"b","value":1e15,"measure":"size"},
+		{"family":"measures","name":"c","value":5,"measure":"time","attributes":{"$sample_rate":1e-300}},
+		{"family":"measures","name":"d","value":5,"measure":"time","attributes":{"$sample_rate":5e-324}},
+		{"family":"measures","name":"e","value":5,"measure":"time","attributes":{"$sample_rate":1e-4}}`)
+	res := decodeResult(t, post(h, body, nil))
+	if res.Accepted != 4 || res.Rejected != 1 || !containsNotice(res.Errors, "1e15") {
+		t.Fatalf("result = %+v, want 1e308 rejected and the rest accepted", res)
+	}
+	want := map[string]float64{"b": 1, "c": 1, "d": 1, "e": 1e-4}
+	if len(q.measures) != len(want) {
+		t.Fatalf("measures = %+v", q.measures)
+	}
+	for _, m := range q.measures {
+		if m.SampleRate != want[m.EventName] {
+			t.Errorf("%s: sample rate %v, want %v", m.EventName, m.SampleRate, want[m.EventName])
+		}
+	}
+	if q.measures[0].Value == nil || *q.measures[0].Value != 1e15 {
+		t.Errorf("b: value %v, want 1e15", q.measures[0].Value)
+	}
+	n := 0
+	for _, w := range res.Warnings {
+		if strings.Contains(w.Reason, "$sample_rate") {
+			n++
+		}
+	}
+	if n != 2 {
+		t.Errorf("warnings = %+v, want 2 about $sample_rate (c and d)", res.Warnings)
 	}
 }
 

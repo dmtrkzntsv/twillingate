@@ -83,6 +83,38 @@ func TestTwillingateSDKServed(t *testing.T) {
 	}
 }
 
+// TestVitalsBundleServed: the Web Vitals bundle is served next to the SDK,
+// versioned, cached like it, and carries web-vitals' Apache-2.0 notice.
+func TestVitalsBundleServed(t *testing.T) {
+	_, h := testServer(t)
+	r := httptest.NewRequest("GET", "/js/twillingate-vitals.js", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != 200 {
+		t.Fatalf("code = %d", w.Code)
+	}
+	if ct := w.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/javascript") {
+		t.Errorf("content-type = %q", ct)
+	}
+	if cc := w.Header().Get("Cache-Control"); !strings.Contains(cc, "max-age=86400") {
+		t.Errorf("cache-control = %q", cc)
+	}
+	body := w.Body.String()
+	banner, _, _ := strings.Cut(body, "*/")
+	if !strings.Contains(banner, "twillingate-vitals.js "+version.Version) {
+		t.Error("banner does not carry the build version; rebuild with `npm run build` in sdk/")
+	}
+	if !strings.Contains(banner, "Apache License") {
+		t.Error("banner lacks web-vitals' Apache License notice")
+	}
+	if strings.Contains(body, "__TWILLINGATE_VERSION__") {
+		t.Error("served bundle still contains the version placeholder")
+	}
+	if !strings.Contains(body, "twillingateVitals") {
+		t.Error("bundle does not define window.twillingateVitals")
+	}
+}
+
 // The collector bakes the origin the file was requested from into the
 // served copy, so a collector answering on several hostnames serves each
 // site a copy that posts back to the hostname that site used.

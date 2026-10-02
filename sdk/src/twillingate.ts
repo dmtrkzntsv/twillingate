@@ -24,6 +24,7 @@ import { collectorOrigin } from "./origin";
 import { DEBUG_FLAG, IGNORE_FLAG, readFlag, resolveStorage, writeFlag, type StorageDriver, type StorageSpec } from "./storage";
 import { runtime, type NavigationSource, type Subscriber } from "./runtime";
 import { maskIds, withQuery } from "./util";
+import { requestVitals } from "./vitals-loader";
 import {
   detectAll, detectBrowser as detectBrowserFrom, detectDevice as detectDeviceFrom,
   detectOS as detectOSFrom, primePlatformVersion, type BrowserInfo, type ClientSignals, type DeviceInfo, type OSInfo,
@@ -88,6 +89,12 @@ export interface InitOptions {
   optOut?: boolean | (() => unknown);
   /** Log every event and send to the console; OR-ed with the twillingate_debug flag. */
   debug?: boolean;
+  /**
+   * Sample rate for Web Vitals, in [0.0001, 1]; absent or 0 = off. Decided once
+   * per page load: a sampled load sends every vital with $sample_rate, an
+   * unsampled one none. Web kind only; loads /js/twillingate-vitals.js.
+   */
+  vitals?: number;
 }
 
 /**
@@ -114,10 +121,45 @@ export interface EventInfo {
 
 export type EventListener = (event: EventInfo) => Record<string, unknown> | false | void;
 
+/** Which family an event belongs to; declared on the wire, never inferred. */
+export type Family = "views" | "product" | "measures";
+
+/** The unit `measure()` reports in: milliseconds, bytes, or a bare number. */
+export type MeasureKind = "time" | "size" | "number";
+
+const MEASURE_KINDS: MeasureKind[] = ["time", "size", "number"];
+
+// The server's bounds on a measure (internal/server/ingest.go): a value
+// above 1e15 is rejected, a $sample_rate below 1e-4 is stored as 1.
+const MAX_MEASURE_VALUE = 1e15;
+const MIN_SAMPLE_RATE = 1e-4;
+
+/** A sample rate the server accepts: a number in [1e-4, 1]. */
+export function validRate(v: unknown): v is number {
+  return typeof v === "number" && v >= MIN_SAMPLE_RATE && v <= 1;
+}
+
+// Names the server stores as views. track() with one of them would go out
+// as a product event, which the server rejects: page() and screen() send
+// views.
+const VIEW_NAMES = ["$page_view", "$pageview", "$screen_view"];
+
+/** The reserved metric each Web Vital is sent as, with its one kind. */
+const VITALS: Record<string, { metric: string; measure: MeasureKind }> = {
+  LCP: { metric: "$lcp", measure: "time" },
+  INP: { metric: "$inp", measure: "time" },
+  CLS: { metric: "$cls", measure: "number" },
+  FCP: { metric: "$fcp", measure: "time" },
+  TTFB: { metric: "$ttfb", measure: "time" },
+};
+
 interface Event {
   id: string;
   ts: string;
+  family: Family;
   name: string;
+  value?: number;
+  measure?: MeasureKind;
   attributes: Record<string, unknown>;
 }
 
@@ -203,7 +245,7 @@ const RESERVED_KEYS = [
   "$install_id", "$user_id", "$user_name", "$group_id", "$group_name", "$session_id", "$consent",
   "$kind", "$platform", "$os", "$os_version", "$os_name", "$browser", "$browser_version", "$browser_locale",
   "$device", "$device_model", "$app_version", "$app_locale", "$display_width", "$display_height",
-  "$host", "$path", "$screen", "$utm_source", "$utm_medium", "$utm_campaign", "$referrer",
+  "$host", "$path", "$screen", "$utm_source", "$utm_medium", "$utm_campaign", "$referrer", "$sample_rate",
 ];
 
 /** Keys batchAttributes() can set: a null for one of these has to reach the wire. */
@@ -310,6 +352,8 @@ export class Twillingate implements Subscriber {
   private heldWarned = false;
   private warnedAnonymous = false;
   private retired = false;
+  // web-vitals metric ids already sent: a metric goes out once, first value wins.
+  private sentVitals = new Set<string>();
 
   /** Path-shaping helpers, for use inside an onPage listener. */
   readonly util = { maskIds, withQuery };
@@ -386,6 +430,7 @@ export class Twillingate implements Subscriber {
     const held = this.held;
     this.held = [];
     for (const call of held) call();
+    this.startVitals(opts.vitals);
     return this;
   }
 
@@ -479,14 +524,14 @@ export class Twillingate implements Subscriber {
     }
     this.firstPageviewSent = true;
     if (this.kind === "web") {
-      this.rememberViewLocation(this.emit("$page_view", attributes));
+      this.rememberViewLocation(this.emit("$page_view", attributes, "views"));
       return;
     }
     // A non-web kind is an app: the route is the screen, and the page
     // context (host, referrer, campaign) does not apply.
     const { $host: _h, $referrer: _r, $utm_source: _s, $utm_medium: _m, $utm_campaign: _c, $path, ...rest } = attributes;
     const screenAttrs = { $screen: $path, ...rest };
-    this.rememberViewLocation(this.emit("$screen_view", screenAttrs));
+    this.rememberViewLocation(this.emit("$screen_view", screenAttrs, "views"));
   }
 
   /** Register a pageview listener; runs for every pageview, automatic ones included. */
@@ -512,14 +557,82 @@ export class Twillingate implements Subscriber {
     const screenAttrs = {
       ...expandNulls(this.defaultAttrs), $screen: String(name), ...expandNulls(attrs),
     };
-    this.rememberViewLocation(this.emit("$screen_view", screenAttrs));
+    this.rememberViewLocation(this.emit("$screen_view", screenAttrs, "views"));
   }
 
-  /** Opt-in product event, carrying where it happened unless autoAttributes is false. */
+  /**
+   * Opt-in product event, carrying where it happened unless autoAttributes
+   * is false. A view name ($page_view, $screen_view) is not a product event
+   * and is dropped, logged in debug mode: use page() or screen().
+   */
   track(name: string, attrs?: Record<string, unknown>): void {
     if (!this.ready) return this.hold(() => this.track(name, attrs));
     if (!this.live() || !name) return;
-    this.emit(String(name), { ...this.eventContext(), ...expandNulls(this.defaultAttrs), ...expandNulls(attrs) });
+    if (VIEW_NAMES.includes(String(name))) {
+      this.log(`track("${String(name)}") ignored: views are sent with page() or screen()`);
+      return;
+    }
+    this.emit(String(name), { ...this.eventContext(), ...expandNulls(this.defaultAttrs), ...expandNulls(attrs) }, "product");
+  }
+
+  /**
+   * Record a measure: a name, a numeric value and a kind, on its own
+   * family. `value` must be a finite number from 0 to 1e15 and `measure` one of
+   * "time" (milliseconds), "size" (bytes) or "number" — the server's own
+   * rules, checked here so an invalid call never reaches the wire. An
+   * invalid call is dropped and logged in debug mode.
+   */
+  measure(name: string, value: number, measure: MeasureKind, attrs?: Record<string, unknown>): void {
+    if (!this.ready) return this.hold(() => this.measure(name, value, measure, attrs));
+    if (!this.live()) return;
+    if (
+      !name ||
+      typeof value !== "number" ||
+      !isFinite(value) ||
+      value < 0 ||
+      value > MAX_MEASURE_VALUE ||
+      !MEASURE_KINDS.includes(measure)
+    ) {
+      this.log("measure ignored: needs a name, a number from 0 to 1e15 and time, size or number", { name, value, measure });
+      return;
+    }
+    this.emit(
+      String(name),
+      { ...this.eventContext(), ...expandNulls(this.defaultAttrs), ...expandNulls(attrs) },
+      "measures",
+      { value, measure },
+    );
+  }
+
+  // Web Vitals, when the rate says so for this page load: one draw, then
+  // every vital or none. Runs last in init(), after the entry pageview and
+  // held calls, so the location it captures is the load's own; a route
+  // change later does not move it.
+  private startVitals(rate: unknown): void {
+    if (!validRate(rate)) return;
+    if (this.kind !== "web" || typeof window === "undefined" || typeof document === "undefined") return;
+    if (Math.random() >= rate) return;
+    const at = this.eventContext();
+    requestVitals((m) => this.vital(m, rate, at));
+  }
+
+  // One vital from the vitals bundle, as a measure, once per metric id:
+  // web-vitals re-reports CLS and INP, same id, on every later hide that
+  // finds them grown, and counting those would weigh one page load twice.
+  // The first report wins. web-vitals reports
+  // from its own visibilitychange listener, which may run after the
+  // runtime's has already drained the queue for an unload, so a vital
+  // reported while the page is hidden is beaconed at once, not queued.
+  private vital(m: { name: string; value: number; id: string }, rate: number, at: Record<string, unknown>): void {
+    if (!this.live()) return;
+    const v = Object.prototype.hasOwnProperty.call(VITALS, m.name) ? VITALS[m.name] : undefined;
+    if (!v || typeof m.value !== "number" || !isFinite(m.value) || m.value < 0) return;
+    if (typeof m.id === "string") {
+      if (this.sentVitals.has(m.id)) return;
+      this.sentVitals.add(m.id);
+    }
+    this.emit(v.metric, { ...at, ...expandNulls(this.defaultAttrs), $sample_rate: rate }, "measures", { value: m.value, measure: v.measure });
+    if (document.visibilityState === "hidden") this.drain(true);
   }
 
   // Where a product event happened: the location the last view this
@@ -767,7 +880,12 @@ export class Twillingate implements Subscriber {
 
   // The last layer: onEvent listeners, then null drops a key. Returns the
   // attributes queued, or null when a listener dropped the event.
-  private emit(name: string, merged: Record<string, unknown>): Record<string, unknown> | null {
+  private emit(
+    name: string,
+    merged: Record<string, unknown>,
+    family: Family,
+    m?: { value: number; measure: MeasureKind },
+  ): Record<string, unknown> | null {
     for (const listener of this.eventListeners) {
       let r: ReturnType<EventListener>;
       try {
@@ -792,7 +910,7 @@ export class Twillingate implements Subscriber {
       if (v !== undefined) attributes[key] = v;
     }
     this.log(name, attributes);
-    this.queue.push({ id: uuid(), ts: new Date().toISOString(), name, attributes });
+    this.queue.push({ id: uuid(), ts: new Date().toISOString(), family, name, ...(m ?? {}), attributes });
     if (this.queue.length >= FLUSH_AT) {
       this.drain(false);
       return attributes;

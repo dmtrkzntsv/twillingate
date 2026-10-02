@@ -17,6 +17,14 @@ import (
 //go:embed twillingate.js
 var sdkScript []byte
 
+// twillingate-vitals.js is the second bundle from the same build: Google's
+// web-vitals package, which the SDK loads from this collector only when an
+// instance enables vitals. It posts nothing itself, so it carries no
+// origin placeholder, only the version.
+//
+//go:embed twillingate-vitals.js
+var vitalsScript []byte
+
 // The committed bundle carries two placeholders so the artifact stays
 // deterministic for CI's drift check. The version is substituted once at
 // startup; the origin per request, with the origin the file was
@@ -82,6 +90,12 @@ func (s *Server) registerScript(mux *http.ServeMux) {
 			body = bytes.ReplaceAll(versioned, []byte(sdkOriginPlaceholder), []byte(origin))
 		}
 		w.Write(body)
+	})
+	versionedVitals := bytes.ReplaceAll(vitalsScript,
+		[]byte(sdkVersionPlaceholder), []byte(version.Version))
+	mux.HandleFunc("GET /js/twillingate-vitals.js", func(w http.ResponseWriter, _ *http.Request) {
+		headers(w)
+		w.Write(versionedVitals)
 	})
 	// plausible-shim.js is embedded from docs/, where the README documenting
 	// it lives, so the hosted copy and the documented one are the same

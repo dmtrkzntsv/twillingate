@@ -4,7 +4,7 @@
  * lands in the registry of whichever copy got there first.
  */
 
-import { DEFAULT_INSTANCE, Twillingate, VERSION, instanceName, type InitOptions } from "./twillingate";
+import { DEFAULT_INSTANCE, Twillingate, VERSION, instanceName, validRate, type InitOptions } from "./twillingate";
 
 export class TwillingateGlobal extends Twillingate {
   readonly VERSION = VERSION;
@@ -85,7 +85,15 @@ export function tagOptions(script: HTMLScriptElement | null): InitOptions | null
     maskUrl: script.getAttribute("data-mask-url") || undefined,
     routing: script.getAttribute("data-routing") === "hash" ? "hash" : "history",
     kind: script.getAttribute("data-kind") || undefined,
+    vitals: parseRate(script.getAttribute("data-vitals")),
   };
+}
+
+/** A sample rate from a tag attribute: a number in [0.0001, 1], else undefined (off). */
+export function parseRate(raw: string | null): number | undefined {
+  if (raw === null || raw.trim() === "") return undefined;
+  const v = Number(raw);
+  return validRate(v) ? v : undefined;
 }
 
 /** Snippet-mode init from the loading <script>'s attributes; dormant without data-key. */

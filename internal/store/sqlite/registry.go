@@ -230,6 +230,7 @@ var projectTables = []string{
 	"agg_views_browsers", "agg_views_app_versions", "agg_views_devices", "agg_views_displays",
 	"agg_views_consent", "agg_views_locales",
 	"agg_product_daily", "agg_product_totals", "agg_product_attrs",
+	"agg_measures_daily", "agg_measures_attrs",
 	"actors", "agg_retention", "identities", "agg_identity_daily",
 	"ingest_keys",
 }

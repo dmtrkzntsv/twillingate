@@ -1,0 +1,7 @@
+{
+  "component": "stat",
+  "title": "TTFB p75 (ms)",
+  "props": {
+    "format": "number"
+  }
+}

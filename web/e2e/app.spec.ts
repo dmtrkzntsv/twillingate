@@ -4,7 +4,7 @@ import { expect, test, type APIRequestContext, type Page } from '@playwright/tes
 const PASSWORD = 'e2e-pass'
 const TOKEN = 'e2e-token'
 
-const SYSTEM_TITLES = ['Views', 'Product', 'Users', 'Groups', 'Retention']
+const SYSTEM_TITLES = ['Views', 'Product', 'Users', 'Groups', 'Retention', 'Web Vitals', 'Measures']
 const VIEWPORTS = [
   { width: 1280, height: 800, name: 'desktop' },
   { width: 390, height: 844, name: 'phone' },

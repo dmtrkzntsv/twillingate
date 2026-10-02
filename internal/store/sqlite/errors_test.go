@@ -292,6 +292,98 @@ BEGIN SELECT RAISE(ABORT, 'blocked'); END`); err != nil {
 	}
 }
 
+// --- aggregate_measures.go ---
+
+func TestAggregateMeasureDayFailsOnCountQuery(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	if _, err := db.db.ExecContext(ctx, `DROP TABLE events`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AggregateMeasureDay(ctx, 1, day("2026-09-01"), nil, 50); err == nil {
+		t.Error("want error counting a missing events table")
+	}
+}
+
+// seedMeasureFailure writes one measure with a declared value, then runs
+// the breaking statement.
+func seedMeasureFailure(t *testing.T, db *DB, breaking string) {
+	t.Helper()
+	ctx := context.Background()
+	ev := measureEvent("checkout_api", 340, "time")
+	ev.Attributes, ev.Browser = map[string]string{"plan": "pro"}, "Chrome"
+	if err := db.WriteEvents(ctx, []store.Event{ev}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.db.ExecContext(ctx, breaking); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAggregateMeasureDayFailsOnDailyRollup(t *testing.T) {
+	db := newTestDB(t)
+	seedMeasureFailure(t, db, `DROP TABLE agg_measures_daily`)
+	err := db.AggregateMeasureDay(context.Background(), 1, day("2026-09-01"), nil, 50)
+	if err == nil || !strings.Contains(err.Error(), "agg_measures_daily") {
+		t.Errorf("err = %v, want mention of agg_measures_daily", err)
+	}
+}
+
+func TestAggregateMeasureDayFailsOnAttrRollup(t *testing.T) {
+	db := newTestDB(t)
+	seedMeasureFailure(t, db, `DROP TABLE agg_measures_attrs`)
+	err := db.AggregateMeasureDay(context.Background(), 1, day("2026-09-01"), []string{"plan"}, 10)
+	if err == nil || !strings.Contains(err.Error(), "attr checkout_api/time/plan") {
+		t.Errorf("err = %v, want mention of attr checkout_api/time/plan", err)
+	}
+}
+
+func TestAggregateMeasureDayFailsOnSystemDimRollup(t *testing.T) {
+	db := newTestDB(t)
+	seedMeasureFailure(t, db, `DROP TABLE agg_measures_attrs`)
+	err := db.AggregateMeasureDay(context.Background(), 1, day("2026-09-01"), nil, 10)
+	if err == nil || !strings.Contains(err.Error(), "system dim checkout_api/time/$") {
+		t.Errorf("err = %v, want mention of a system dim", err)
+	}
+}
+
+// The tail is its own statement: a failure there (after the kept values
+// were written) still fails the whole day.
+func TestAggregateMeasureDayFailsOnTail(t *testing.T) {
+	db := newTestDB(t)
+	seedMeasureFailure(t, db, `
+CREATE TRIGGER block_measure_tail BEFORE INSERT ON agg_measures_attrs
+WHEN NEW.attr_value = '(other)' BEGIN SELECT RAISE(ABORT, 'tail blocked'); END`)
+	ctx := context.Background()
+	extra := measureEvent("checkout_api", 100, "time")
+	extra.Attributes = map[string]string{"plan": "free"}
+	if err := db.WriteEvents(ctx, []store.Event{extra}); err != nil {
+		t.Fatal(err)
+	}
+	err := db.AggregateMeasureDay(ctx, 1, day("2026-09-01"), []string{"plan"}, 1)
+	if err == nil || !strings.Contains(err.Error(), "tail blocked") {
+		t.Errorf("err = %v, want mention of the blocking trigger", err)
+	}
+	var n int
+	if err := db.db.QueryRow(`SELECT COUNT(*) FROM agg_measures_attrs`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Errorf("%d attribute rows survived a failed rollup, want 0", n)
+	}
+}
+
+func TestAggregateMeasureDayFailsOnRawDeleteBlocked(t *testing.T) {
+	db := newTestDB(t)
+	seedMeasureFailure(t, db, `
+CREATE TRIGGER block_measure_delete BEFORE DELETE ON events
+BEGIN SELECT RAISE(ABORT, 'blocked'); END`)
+	err := db.AggregateMeasureDay(context.Background(), 1, day("2026-09-01"), nil, 50)
+	if err == nil || !strings.Contains(err.Error(), "blocked") {
+		t.Errorf("err = %v, want mention of the blocking trigger", err)
+	}
+}
+
 // --- flatview.go ---
 
 // SQLite views are validated lazily (at query time, not creation time), so

@@ -255,7 +255,7 @@ func TestRebuildFlatViewDeterministicOrder(t *testing.T) {
 		"utm_source", "utm_medium", "utm_campaign", "platform", "os", "os_version", "os_name",
 		"browser", "browser_version", "browser_locale", "app_version", "app_locale",
 		"device", "device_model", "display_width", "display_height", "country",
-		"consent", "ts", "attributes",
+		"consent", "ts", "attributes", "value", "measure", "sample_rate",
 		"attr_alpha", "attr_mu", "attr_zeta"}
 	if len(first) != len(want) {
 		t.Fatalf("columns = %v, want %v", first, want)
@@ -333,11 +333,13 @@ func TestFlatViewSkipsSystemKeys(t *testing.T) {
 	}
 }
 
-// Migration 020 creates the base v_events_flat with exactly the statement
-// RebuildFlatView builds for no declared keys, so the first boot's rebuild
-// finds nothing to change.
-func TestMigration020FlatViewMatchesTheBaseRebuild(t *testing.T) {
-	db := newTestDBAt(t, 20)
+// The latest migration to write v_events_flat (024) creates the base view
+// with exactly the statement RebuildFlatView builds for no declared keys,
+// so the first boot's rebuild finds nothing to change. The same held for
+// 020 and 023 until 024 added the measure columns to flatViewBaseColumns;
+// only the latest migration's text can match the current list.
+func TestMigration024FlatViewMatchesTheBaseRebuild(t *testing.T) {
+	db := newTestDBAt(t, 24)
 	ctx := context.Background()
 	before, err := db.flatViewDefinition(ctx)
 	if err != nil {
@@ -351,28 +353,6 @@ func TestMigration020FlatViewMatchesTheBaseRebuild(t *testing.T) {
 		t.Fatal(err)
 	}
 	if before != after {
-		t.Fatalf("migration 020 v_events_flat differs from the base rebuild:\n migration: %s\n rebuild:   %s", before, after)
-	}
-}
-
-// Migration 023 recreates v_events_flat byte-for-byte from 020, so the same
-// invariant holds after clustering events: the first boot's rebuild finds
-// nothing to change.
-func TestMigration023FlatViewMatchesTheBaseRebuild(t *testing.T) {
-	db := newTestDBAt(t, 23)
-	ctx := context.Background()
-	before, err := db.flatViewDefinition(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := db.RebuildFlatView(ctx, nil); err != nil {
-		t.Fatal(err)
-	}
-	after, err := db.flatViewDefinition(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if before != after {
-		t.Fatalf("migration 023 v_events_flat differs from the base rebuild:\n migration: %s\n rebuild:   %s", before, after)
+		t.Fatalf("migration 024 v_events_flat differs from the base rebuild:\n migration: %s\n rebuild:   %s", before, after)
 	}
 }

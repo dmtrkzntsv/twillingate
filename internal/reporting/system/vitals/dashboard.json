@@ -1,0 +1,18 @@
+{
+  "id": 6,
+  "title": "Web Vitals",
+  "range": "30d",
+  "layout": [
+    {"widget": "lcp", "width": 3, "height": 3},
+    {"widget": "inp", "width": 3, "height": 3},
+    {"widget": "cls", "width": 2, "height": 3},
+    {"widget": "fcp", "width": 2, "height": 3},
+    {"widget": "ttfb", "width": 2, "height": 3},
+    {"widget": "ratings", "width": 12, "height": 6},
+    {"widget": "p75-by-day", "width": 6, "height": 8},
+    {"widget": "cls-by-day", "width": 6, "height": 8},
+    {"widget": "by-page", "width": 12, "height": 10},
+    {"widget": "by-device-browser", "width": 12, "height": 10},
+    {"widget": "thresholds", "width": 12, "height": 6}
+  ]
+}

@@ -1,7 +1,9 @@
 package server
 
 import (
+	"encoding/json"
 	"fmt"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -64,11 +66,18 @@ type envelope struct {
 	Events     []rawEvent     `json:"events"`
 }
 
+// Family and Measure are json.RawMessage, not string: a typo like
+// {"family":1} must reject that one event (resolveFamily below), not fail
+// decoding the whole batch, which unmarshaling straight into a string field
+// would do (encoding/json errors the whole Decode call on a type mismatch).
 type rawEvent struct {
-	ID         string         `json:"id"`
-	TS         string         `json:"ts"`
-	Name       string         `json:"name"`
-	Attributes map[string]any `json:"attributes"`
+	ID         string          `json:"id"`
+	TS         string          `json:"ts"`
+	Family     json.RawMessage `json:"family"`
+	Name       string          `json:"name"`
+	Value      json.RawMessage `json:"value"`
+	Measure    json.RawMessage `json:"measure"`
+	Attributes map[string]any  `json:"attributes"`
 }
 
 type notice struct {
@@ -118,6 +127,7 @@ type resolved struct {
 	displayWidthRaw               string
 	displayHeightRaw              string
 	consentRaw                    string
+	sampleRateRaw                 string
 	Custom                        map[string]string
 }
 
@@ -137,6 +147,7 @@ var reservedKeys = map[string]func(*resolved, string){
 	"$group_name":      func(r *resolved, v string) { r.GroupName = v },
 	"$session_id":      func(r *resolved, v string) { r.SessionID = v },
 	"$consent":         func(r *resolved, v string) { r.consentRaw = v },
+	"$sample_rate":     func(r *resolved, v string) { r.sampleRateRaw = v },
 	"$kind":            func(r *resolved, v string) { r.Kind = v },
 	"$platform":        func(r *resolved, v string) { r.Platform = v },
 	"$os":              func(r *resolved, v string) { r.OS = v },
@@ -301,4 +312,105 @@ func clampTS(client, received time.Time, maxAge time.Duration) (time.Time, bool)
 		return received, true
 	}
 	return client, false
+}
+
+// maxMeasureValue bounds a measure's value: 1e15 is about 31,000 years in
+// milliseconds and 1 PB in bytes, beyond anything a time, size or count can
+// honestly be. A larger value is a bug on the client; accepted, it would
+// overflow the weighted sums and push the histogram to an infinite bucket.
+const maxMeasureValue = 1e15
+
+// minSampleRate bounds $sample_rate from below: one sample in 10,000. A
+// smaller rate would weight a single sample as more than 10,000 samples and
+// let one client outvote every unsampled one in the percentiles.
+const minSampleRate = 1e-4
+
+// parseValue reads a measure's value: a JSON number, finite, >= 0 and at
+// most maxMeasureValue. Absent, null, a string or a boolean is not a value.
+func parseValue(raw json.RawMessage) (float64, bool) {
+	s := strings.TrimSpace(string(raw))
+	if s == "" || s == "null" || s[0] == '"' || s == "true" || s == "false" {
+		return 0, false
+	}
+	var v float64
+	if err := json.Unmarshal(raw, &v); err != nil || math.IsNaN(v) || math.IsInf(v, 0) || v < 0 || v > maxMeasureValue {
+		return 0, false
+	}
+	return v, true
+}
+
+// parseSampleRate reads $sample_rate: a number in [minSampleRate, 1].
+// Absent means 1; anything else is stored as 1 and reported.
+func parseSampleRate(raw string) (rate float64, bad bool) {
+	if raw == "" {
+		return 1, false
+	}
+	v, err := strconv.ParseFloat(raw, 64)
+	if err != nil || !(v >= minSampleRate && v <= 1) {
+		return 1, true
+	}
+	return v, false
+}
+
+// jsonString reads a field decoded as json.RawMessage and requires it to be
+// a JSON string. Absent (nil or empty) is not a mistake: it reports "",
+// true, so the caller's normal "omitted" branch runs. Present but some
+// other JSON type (a number, a bool, an object) reports ok=false, which is
+// what lets a typo like {"family":1} or {"measure":5} reject that one
+// event rather than value never reaching here at all (a mismatched Go
+// struct field type would fail decoding the whole batch instead).
+func jsonString(raw json.RawMessage) (s string, ok bool) {
+	if len(raw) == 0 {
+		return "", true
+	}
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return "", false
+	}
+	return s, true
+}
+
+// resolveFamily decides an event's family and stored name. An explicit
+// family is checked, never overridden; a missing one keeps the old rule
+// (view names are views, everything else product), so a measure only
+// exists when the event declares it. family and measure being anything but
+// a JSON string (or absent) is a per-event rejection, never a decode
+// failure for the whole batch.
+func resolveFamily(ev rawEvent) (family store.Family, name, warn, reject string) {
+	fam, ok := jsonString(ev.Family)
+	if !ok {
+		return "", "", "", fmt.Sprintf("unknown family %s", ev.Family)
+	}
+	_, isView := viewName(ev.Name)
+	switch fam {
+	case "":
+		if isView {
+			return store.FamilyViews, canonicalViewName(ev.Name), "", ""
+		}
+		if strings.HasPrefix(ev.Name, "$") {
+			warn = fmt.Sprintf("unknown reserved name %s, stored as a custom event", ev.Name)
+		}
+		return store.FamilyProduct, ev.Name, warn, ""
+	case string(store.FamilyViews):
+		if !isView {
+			return "", "", "", fmt.Sprintf("family views requires %s or %s", namePageView, nameScreenView)
+		}
+		return store.FamilyViews, canonicalViewName(ev.Name), "", ""
+	case string(store.FamilyProduct):
+		if isView {
+			return "", "", "", fmt.Sprintf("%s is a view: send family views or omit family", ev.Name)
+		}
+		if strings.HasPrefix(ev.Name, "$") {
+			warn = fmt.Sprintf("unknown reserved name %s, stored as a custom event", ev.Name)
+		}
+		return store.FamilyProduct, ev.Name, warn, ""
+	case string(store.FamilyMeasures):
+		measure, _ := jsonString(ev.Measure) // a non-string measure fails the value/measure check in handleEvents
+		if want, reserved := store.ReservedMetrics[ev.Name]; reserved && measure != want {
+			return "", "", "", fmt.Sprintf("%s requires measure %s", ev.Name, want)
+		} else if !reserved && strings.HasPrefix(ev.Name, "$") {
+			warn = fmt.Sprintf("unknown reserved metric %s, stored", ev.Name)
+		}
+		return store.FamilyMeasures, ev.Name, warn, ""
+	}
+	return "", "", "", fmt.Sprintf("unknown family %q", fam)
 }

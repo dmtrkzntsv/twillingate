@@ -115,6 +115,20 @@ func (f *faultyStore) AggregateProductDay(ctx context.Context, projectID int64, 
 	return f.Store.AggregateProductDay(ctx, projectID, day, attrs, topN)
 }
 
+func (f *faultyStore) MeasureDaysBefore(ctx context.Context, projectID int64, before civil.Date) ([]civil.Date, error) {
+	if f.shouldFail("MeasureDaysBefore") {
+		return nil, errBoom
+	}
+	return f.Store.MeasureDaysBefore(ctx, projectID, before)
+}
+
+func (f *faultyStore) AggregateMeasureDay(ctx context.Context, projectID int64, day civil.Date, attrs []string, topN int) error {
+	if f.shouldFail("AggregateMeasureDay") {
+		return errBoom
+	}
+	return f.Store.AggregateMeasureDay(ctx, projectID, day, attrs, topN)
+}
+
 func (f *faultyStore) PruneAggregates(ctx context.Context, projectID int64, before civil.Date) error {
 	if f.shouldFail("PruneAggregates") {
 		return errBoom
@@ -304,6 +318,24 @@ func TestRunDailyPassLogsAggregateProductDayFailure(t *testing.T) {
 	}
 	if !logged(buf, "aggregate product failed") {
 		t.Errorf("log output = %q, want mention of aggregate product failed", buf.String())
+	}
+}
+
+func TestRunDailyPassLogsAggregateMeasuresFailure(t *testing.T) {
+	st, fst, r, buf := setupFaulty(t, jobsVars, jobsProjectSpecs)
+	ctx := context.Background()
+	v := 120.0
+	if err := st.WriteEvents(ctx, []store.Event{
+		{Family: store.FamilyMeasures, ID: "1", ProjectID: 1, EventName: "$lcp", TS: mustTime("2026-08-10T10:00:00Z"), ReceivedAt: mustTime("2026-08-10T10:00:00Z"),
+			ActorID: "v", ActorKind: store.ActorConnection, Value: &v, Measure: store.MeasureTime, SampleRate: 1}}); err != nil {
+		t.Fatal(err)
+	}
+	fst.failing("AggregateMeasureDay")
+	if err := r.RunDailyPass(ctx); err != nil {
+		t.Fatalf("RunDailyPass = %v, want nil", err)
+	}
+	if !logged(buf, "aggregate measures failed") {
+		t.Errorf("log output = %q, want mention of aggregate measures failed", buf.String())
 	}
 }
 

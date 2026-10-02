@@ -142,9 +142,12 @@ func TestSampleProject(t *testing.T) {
 
 	older := mustCreateProject(t, st, "older")
 	mustWriteEvent(t, st, "e-older", older, store.FamilyViews, "2026-08-01")
+	mustWriteEvent(t, st, "e-older-product", older, store.FamilyProduct, "2026-08-10")
 
+	// Only measures, and the most recent: a backend that sends timings
+	// and nothing else still has data to sample.
 	newer := mustCreateProject(t, st, "newer")
-	mustWriteEvent(t, st, "e-newer", newer, store.FamilyProduct, "2026-08-15")
+	mustWriteEvent(t, st, "e-newer", newer, store.FamilyMeasures, "2026-08-15")
 
 	archived := mustCreateProject(t, st, "archived")
 	mustWriteEvent(t, st, "e-archived", archived, store.FamilyViews, "2026-08-31")

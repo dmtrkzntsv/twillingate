@@ -1,0 +1,10 @@
+{
+  "id": 7,
+  "title": "Measures",
+  "range": "7d",
+  "group": 6,
+  "layout": [
+    {"widget": "metrics", "width": 12, "height": 10},
+    {"widget": "p75-by-day", "width": 12, "height": 8}
+  ]
+}

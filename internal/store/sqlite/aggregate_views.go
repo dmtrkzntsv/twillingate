@@ -26,13 +26,14 @@ const displaySQL = `display_width || 'x' || display_height`
 // (018_consent.sql) so the two cannot drift.
 const consentSQL = `CASE consent WHEN 1 THEN 'given' WHEN 0 THEN 'none' ELSE 'unknown' END`
 
-// rawViews and rawProduct are the only read path into the raw events
-// table (020_one_events_table.sql): each is a view carrying one family's
-// filter, so no query can forget it. Writes and deletes go to events
-// with an explicit family.
+// rawViews, rawProduct and rawMeasures are the only read path into the
+// raw events table (020_one_events_table.sql, 024_measures.sql): each is a
+// view carrying one family's filter, so no query can forget it. Writes and
+// deletes go to events with an explicit family.
 const (
-	rawViews   = "raw_views"
-	rawProduct = "raw_product"
+	rawViews    = "raw_views"
+	rawProduct  = "raw_product"
+	rawMeasures = "raw_measures"
 )
 
 func (d *DB) ViewDaysBefore(ctx context.Context, projectID int64, before civil.Date) ([]civil.Date, error) {
@@ -41,6 +42,10 @@ func (d *DB) ViewDaysBefore(ctx context.Context, projectID int64, before civil.D
 
 func (d *DB) ProductDaysBefore(ctx context.Context, projectID int64, before civil.Date) ([]civil.Date, error) {
 	return d.daysBefore(ctx, rawProduct, projectID, before)
+}
+
+func (d *DB) MeasureDaysBefore(ctx context.Context, projectID int64, before civil.Date) ([]civil.Date, error) {
+	return d.daysBefore(ctx, rawMeasures, projectID, before)
 }
 
 func (d *DB) daysBefore(ctx context.Context, source string, projectID int64, before civil.Date) ([]civil.Date, error) {

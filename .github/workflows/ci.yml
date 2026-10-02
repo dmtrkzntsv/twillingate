@@ -38,10 +38,11 @@ jobs:
           go=false; web=false; e2e=false; sdk=false
           grep -qv '^docs/superpowers/' "$RUNNER_TEMP/files" && go=true
           has '^web/' && web=true
-          # What the browser suite drives: the app, the API it calls, and the
-          # views, daily pass and seed script behind the system dashboards.
-          has '^(web/|internal/(reporting|api|store|jobs|app)/|cmd/|scripts/seed-demo\.py$|go\.(mod|sum)$|Makefile$)' && e2e=true
-          has '^(sdk/|internal/server/twillingate\.js$)' && sdk=true
+          # What the browser suite drives: the app, the API it calls, the
+          # views, daily pass and seed script behind the system dashboards,
+          # and the served SDK and ingest the Web Vitals test goes through.
+          has '^(web/|sdk/|internal/(reporting|api|store|jobs|app|server)/|cmd/|scripts/seed-demo\.py$|go\.(mod|sum)$|Makefile$)' && e2e=true
+          has '^(sdk/|internal/server/twillingate(-vitals)?\.js$)' && sdk=true
           if has '^\.github/workflows/'; then
             go=true; web=true; e2e=true; sdk=true
           fi
@@ -77,9 +78,10 @@ jobs:
       - run: make check
       - run: make build
 
-  # The SDK bundle is committed (internal/server/twillingate.js) so the Go
-  # build never needs Node. This job keeps the artifact honest: typecheck,
-  # tests, then rebuild and fail on any drift from the committed bytes.
+  # The SDK bundles are committed (internal/server/twillingate.js and
+  # twillingate-vitals.js) so the Go build never needs Node. This job keeps
+  # the artifacts honest: typecheck, tests, then rebuild and fail on any
+  # drift from the committed bytes.
   sdk:
     needs: changes
     if: needs.changes.outputs.sdk == 'true'
@@ -96,8 +98,10 @@ jobs:
         working-directory: sdk
       - run: npm run build
         working-directory: sdk
-      - name: committed bundle matches the source
-        run: git diff --exit-code internal/server/twillingate.js
+      - name: committed bundles match the source
+        run: |
+          git diff --exit-code internal/server/twillingate.js
+          git diff --exit-code internal/server/twillingate-vitals.js
 
   # The dashboards app builds into internal/reporting/ui, embedded by
   # internal/reporting. The bundle is not committed (make builds it), but its

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io/fs"
+	"math"
 	"reflect"
 	"strings"
 	"testing"
@@ -65,7 +66,7 @@ func TestSystemDashboards(t *testing.T) {
 			titles = append(titles, fmt.Sprintf("%d %s %s", d.ID, d.Title, d.Range))
 		}
 	}
-	want := "1 Views 7d, 2 Product 7d, 3 Users 7d, 4 Groups 7d, 5 Retention 90d"
+	want := "1 Views 7d, 2 Product 7d, 3 Users 7d, 4 Groups 7d, 5 Retention 90d, 6 Web Vitals 30d, 7 Measures 7d"
 	if got := strings.Join(titles, ", "); got != want {
 		t.Fatalf("system dashboards = %s, want %s", got, want)
 	}
@@ -124,12 +125,13 @@ func TestSystemDashboards(t *testing.T) {
 	}
 }
 
-// TestSystemDashboardsAreOneGroup is D16: Views (id 1) names no group of
-// its own, so it is group 1; Product, Users, Groups and Retention (ids
-// 2-5) each name "group": 1 in their dashboard.json. This release's
+// TestSystemDashboardGroups is D16: Views (id 1) names no group of its
+// own, so it is group 1; Product, Users, Groups and Retention (ids 2-5)
+// each name "group": 1 in their dashboard.json. Web Vitals (id 6) is a
+// second group, and Measures (id 7) names "group": 6. This release's
 // embedded system definition (loaded by the real Migrate, not a test
-// fixture) must leave every one of the five with GroupID 1.
-func TestSystemDashboardsAreOneGroup(t *testing.T) {
+// fixture) must give each dashboard exactly that GroupID.
+func TestSystemDashboardGroups(t *testing.T) {
 	ctx := context.Background()
 	f := newSystemFixture(t)
 
@@ -143,7 +145,7 @@ func TestSystemDashboardsAreOneGroup(t *testing.T) {
 			got[d.ID] = d.GroupID
 		}
 	}
-	want := map[int64]int64{1: 1, 2: 1, 3: 1, 4: 1, 5: 1}
+	want := map[int64]int64{1: 1, 2: 1, 3: 1, 4: 1, 5: 1, 6: 6, 7: 6}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("system dashboard GroupIDs = %v, want %v", got, want)
 	}
@@ -357,6 +359,45 @@ func TestRetentionMilestonesMatchCurve(t *testing.T) {
 	}
 }
 
+// TestVitalsStatsBlankWithoutSamples: collection is opt-in, so a
+// project without vitals is the common case, and a stat drawn from a
+// NULL value renders 0 — a perfect score. Each vital stat returns no row
+// instead, for the neighbour (no measures), and a value for the seeded
+// project; none carries a previous period (stat reads a rise as good,
+// and a vital is better lower).
+func TestVitalsStatsBlankWithoutSamples(t *testing.T) {
+	ctx := context.Background()
+	f := newSystemFixture(t)
+	d, err := f.svc.Dashboard(ctx, 6)
+	if err != nil {
+		t.Fatal(err)
+	}
+	from, to := presetDates("7d", f.today)
+	stats := 0
+	for _, w := range d.Widgets {
+		if w.Component == nil || *w.Component != "stat" {
+			continue
+		}
+		stats++
+		for _, pid := range []int64{f.project, f.neighbour} {
+			got, err := f.svc.WidgetData(ctx, DataRequest{WidgetID: w.ID, ProjectID: pid, From: from, To: to})
+			if err != nil {
+				t.Fatalf("%s: %v", w.Name, err)
+			}
+			res := got.Data.(readsql.Result)
+			if strings.Join(res.Columns, ",") != "value" {
+				t.Errorf("%s: columns %v, want only value", w.Name, res.Columns)
+			}
+			if want := map[bool]int{true: 1, false: 0}[pid == f.project]; len(res.Rows) != want {
+				t.Errorf("%s project %d: %d rows %v, want %d", w.Name, pid, len(res.Rows), res.Rows, want)
+			}
+		}
+	}
+	if stats != 5 {
+		t.Errorf("Web Vitals has %d stats, want 5", stats)
+	}
+}
+
 // seedNeighbour gives projectID raw views on the same three days as
 // seedSystemData's project, with sessions of its own (three views per
 // actor, the last 50 minutes after the second: two sessions without an
@@ -400,7 +441,8 @@ func valuesInsert(t *testing.T, st store.Store, table, cols string, rows []strin
 // aggregate rows in every agg_* table a system dashboard reads for each
 // older day. It covers retention cohorts of both actor kinds, user and
 // group identities with display names, two app versions, all three
-// consent states, and product events carrying a declared attribute.
+// consent states, product events carrying a declared attribute, and
+// measures: the five Web Vitals and one custom timing.
 func seedSystemData(t *testing.T, st store.Store, projectID int64, today civil.Date) {
 	t.Helper()
 	rawExec(t, st, `UPDATE projects SET attributes = '["plan"]' WHERE id = ?`, projectID)
@@ -482,6 +524,48 @@ func seedSystemData(t *testing.T, st store.Store, projectID int64, today civil.D
 		platform, os, os_version, browser, browser_version, browser_locale, app_version, app_locale,
 		device, device_model, display_width, display_height, country, consent, attributes`, events)
 
+	// Raw measures on the same three days: each web actor's page load
+	// reports the five Web Vitals (CLS often exactly 0, the zero bucket),
+	// a backend reports a custom checkout_api timing, and every third
+	// actor samples at half rate so weight differs from samples.
+	var measures []string
+	for back := 0; back < 3; back++ {
+		day := today.AddDays(-back).String()
+		for i := 0; i < 12; i++ {
+			if i%3 == 0 {
+				continue // the app actors: no Web Vitals
+			}
+			rate := 1.0
+			if i%3 == 2 {
+				rate = 0.5
+			}
+			path := []string{"/", "/pricing", "/docs", "/"}[i%4]
+			browser, device := []string{"chrome", "safari"}[i%2], []string{"desktop", "mobile"}[i%4/2]
+			ts := fmt.Sprintf("%sT%02d:00:10Z", day, 1+i)
+			for _, m := range []struct {
+				name, measure string
+				value         float64
+			}{
+				{"$lcp", "time", 1500 + 350*float64(i)},
+				{"$inp", "time", 80 + 45*float64(i)},
+				{"$cls", "number", []float64{0, 0, 0.02, 0.05, 0.08, 0.15, 0.3}[i%7]},
+				{"$fcp", "time", 900 + 250*float64(i)},
+				{"$ttfb", "time", 200 + 160*float64(i)},
+				{"checkout_api", "time", 250 + 30*float64(i)},
+			} {
+				pth, br, dv := path, browser, device
+				if m.name == "checkout_api" {
+					pth, br, dv = "", "", ""
+				}
+				measures = append(measures, fmt.Sprintf("(%s, %d, 'measures', %s, %s, %s, %s, 'web', %s, 'user', 'web', %s, %s, %s, %g, %s, %g)",
+					q(fmt.Sprintf("m-%d-%d-%s", back, i, m.name)), projectID, q(m.name), q(ts), q(day), q(ts),
+					q(fmt.Sprintf("a%d-%d", back, i)), q(pth), q(br), q(dv), m.value, q(m.measure), rate))
+			}
+		}
+	}
+	valuesInsert(t, st, "events", `id, project_id, family, event_name, ts, day, received_at, kind, actor_id, actor_kind,
+		platform, path, browser, device, value, measure, sample_rate`, measures)
+
 	// Aggregates: every older day back to today-99, as the daily pass
 	// would have left them.
 	agg := map[string][]string{}
@@ -542,6 +626,32 @@ func seedSystemData(t *testing.T, st store.Store, projectID int64, today civil.D
 			add("agg_identity_daily", "(%d, %s, 'group', %s, 2, 2, %d, %d)", p, day, q(fmt.Sprintf("g%d", k)), 6+k, 3)
 		}
 		add("agg_identity_daily", "(%d, %s, 'group', %s, 1, 1, 1, 0)", p, day, q(fmt.Sprintf("team-%d", back)))
+		// Measures: three buckets per metric (good, needs improvement,
+		// poor for the vitals), drifting with the day of the week so the
+		// p75 lines move; the first two in chrome, the last in safari,
+		// and only the first on desktop.
+		drift := 1 + 0.03*float64(back%7)
+		for _, m := range []struct {
+			name, measure string
+			values        [3]float64
+		}{
+			{"$lcp", "time", [3]float64{1800, 3000, 4800}},
+			{"$inp", "time", [3]float64{120, 300, 650}},
+			{"$cls", "number", [3]float64{0, 0.05, 0.3}},
+			{"$fcp", "time", [3]float64{1200, 2200, 3600}},
+			{"$ttfb", "time", [3]float64{400, 1100, 2200}},
+			{"checkout_api", "time", [3]float64{180, 340, 900}},
+		} {
+			for j, v := range m.values {
+				v *= drift
+				samples := []int{6, 3, 1}[j]
+				b := measureBucket(v)
+				add("agg_measures_daily", "(%d, %s, %s, %s, %d, %d, %d, %g)", p, day, q(m.name), q(m.measure), b, samples, samples, v*float64(samples))
+				for _, a := range [][2]string{{"$browser", []string{"chrome", "chrome", "safari"}[j]}, {"$device", []string{"desktop", "mobile", "mobile"}[j]}} {
+					add("agg_measures_attrs", "(%d, %s, %s, %s, %s, %s, %d, %d, %d, %g)", p, day, q(m.name), q(m.measure), q(a[0]), q(a[1]), b, samples, samples, v*float64(samples))
+				}
+			}
+		}
 	}
 	// Retention: a cohort of each actor kind every day through yesterday,
 	// followed up to 45 days, as far as each cohort has reached.
@@ -574,6 +684,8 @@ func seedSystemData(t *testing.T, st store.Store, projectID int64, today civil.D
 		"agg_product_attrs":      "project_id, day, event_name, attr_key, attr_value, count, unique_users, unique_groups",
 		"agg_identity_daily":     "project_id, day, kind, id, actors, users, views, events",
 		"agg_retention":          "project_id, actor_kind, cohort_day, day_offset, actors",
+		"agg_measures_daily":     "project_id, day, event_name, measure, bucket, samples, weight, sum",
+		"agg_measures_attrs":     "project_id, day, event_name, measure, attr_key, attr_value, bucket, samples, weight, sum",
 	}
 	for table, rows := range agg {
 		valuesInsert(t, st, table, cols[table], rows)
@@ -587,4 +699,13 @@ func seedSystemData(t *testing.T, st store.Store, projectID int64, today civil.D
 		names = append(names, fmt.Sprintf("(%d, 'group', 'g%d', 'Team %d')", p, k, k))
 	}
 	valuesInsert(t, st, "identities", "project_id, kind, id, name", names)
+}
+
+// measureBucket is the events.bucket formula (migration 024): the
+// log-scale bucket, base 1.04, of v, and -1000 for 0.
+func measureBucket(v float64) int {
+	if v <= 1e-17 {
+		return -1000
+	}
+	return int(math.Ceil(math.Log(v) / math.Log(1.04)))
 }

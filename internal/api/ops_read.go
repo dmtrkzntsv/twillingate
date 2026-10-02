@@ -225,6 +225,9 @@ func (h *host) register(r *registrar) {
 	expose(r, spec{Name: "product_attributes", Annotations: ro, Method: "GET", Path: p + "/product/attributes",
 		Description: "Attribute breakdowns for product events: count, unique users and unique groups per value, per event, per day. unique_groups is empty for days rolled up before it was measured and 0 when it was measured and no group was involved. The system dimensions $platform, $os, $app_version, $app_locale, $kind, $browser, $device and $browser_locale are always included. A custom key, or one of $host, $path, $referrer, $utm_source, $utm_medium, $utm_campaign, $os_version, $browser_version and $device_model, only appears once the project declares it in attributes (see update_project)."},
 		h.productAttributes)
+	expose(r, spec{Name: "measures", Annotations: ro, Method: "GET", Path: p + "/measures",
+		Description: "Performance measures and Web Vitals: per metric, samples, estimated count, mean and p50/p75/p95 from log-scale histograms (about ±2%). time is milliseconds, size bytes, number unitless. attr_key breaks each metric down by one attribute."},
+		h.measures)
 	expose(r, spec{Name: "retention", Annotations: ro, Method: "GET", Path: p + "/retention",
 		Description: "D1/D7/D30-style cohort curves, cohorted by how the actor was identified: actor=user or actor=install. Returns aggregated_through: cohorts after it are absent (refreshed 03:00 UTC), not zero. Empty for a project whose clients send neither $user_id nor $install_id."},
 		h.retention)

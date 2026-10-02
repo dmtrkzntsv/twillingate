@@ -31,6 +31,8 @@ type Store interface {
 	ProductDaysBefore(ctx context.Context, projectID int64, before civil.Date) ([]civil.Date, error)
 	AggregateViewDay(ctx context.Context, projectID int64, day civil.Date) error
 	AggregateProductDay(ctx context.Context, projectID int64, day civil.Date, attrs []string, topN int) error
+	MeasureDaysBefore(ctx context.Context, projectID int64, before civil.Date) ([]civil.Date, error)
+	AggregateMeasureDay(ctx context.Context, projectID int64, day civil.Date, attrs []string, topN int) error
 	UpsertActors(ctx context.Context, projectID int64, day civil.Date) error
 	AggregateRetentionDay(ctx context.Context, projectID int64, day civil.Date) error
 	PruneActors(ctx context.Context, projectID int64, before civil.Date) error
@@ -161,6 +163,20 @@ func (r *Runner) RunDailyPass(ctx context.Context) error {
 		for _, day := range prodDays {
 			if err := r.store.AggregateProductDay(ctx, id, day, attrs, r.topN); err != nil {
 				r.logger.Error("aggregate product failed", "project", id, "day", day.String(), "error", err)
+			}
+		}
+
+		// Measures share the product family's raw window but never feed
+		// allRawDays above (spec decision 17): a backend's connection hash
+		// is a server, not a visitor, so a measure alone must not create an
+		// actor, a cohort or an identity rollup.
+		measureDays, err := r.store.MeasureDaysBefore(ctx, id, today.AddDays(-ret.Events.RawDays))
+		if err != nil {
+			return err
+		}
+		for _, day := range measureDays {
+			if err := r.store.AggregateMeasureDay(ctx, id, day, attrs, r.topN); err != nil {
+				r.logger.Error("aggregate measures failed", "project", id, "day", day.String(), "error", err)
 			}
 		}
 
