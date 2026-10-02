@@ -192,6 +192,11 @@ func insertDashboardRow(ctx context.Context, tx *sql.Tx, dash store.Dashboard) (
 }
 
 func mapDashboardConflict(dash store.Dashboard, err error) error {
+	// An explicit id (dash.ID != 0) can collide on the primary key, which
+	// SQLite reports as a UNIQUE failure too.
+	if strings.Contains(err.Error(), "UNIQUE constraint failed: dashboards.id") {
+		return store.Refuse(store.ErrConflict, "dashboard: id %d already exists", dash.ID)
+	}
 	if strings.Contains(err.Error(), "UNIQUE constraint failed: dashboards.") {
 		return store.Refuse(store.ErrConflict,
 			"dashboard: sort key %q already used for owner %q", dash.SortKey, dash.Owner)
