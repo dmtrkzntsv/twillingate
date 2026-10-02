@@ -183,6 +183,10 @@ func TestSetProjectArchivedErrors(t *testing.T) {
 	if err := d.SetProjectArchived(ctx, 7, true, store.AuditEntry{Actor: "cli", Action: "project.archive", Subject: "7"}); err == nil {
 		t.Fatal("archiving unknown id did not fail")
 	}
+	// So should restoring one, rather than reporting success.
+	if err := d.SetProjectArchived(ctx, 7, false, store.AuditEntry{Actor: "cli", Action: "project.restore", Subject: "7"}); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("restoring unknown id: err = %v, want ErrNotFound", err)
+	}
 
 	// Create a project but don't archive it.
 	p := store.RegistryProject{Name: "a", AllowedOrigins: "[]"}

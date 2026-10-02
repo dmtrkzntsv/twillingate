@@ -23,6 +23,7 @@ const countries = feature(topology, topology.objects.countries) as unknown as Fe
   Geometry,
   { name?: string }
 >
+const featureIds = new Set(countries.features.map((f) => f.id))
 const projection = geoEqualEarth().fitSize([WIDTH, HEIGHT], countries)
 const path = geoPath(projection)
 
@@ -33,17 +34,17 @@ export default function MapWidget({ data, props }: WidgetProps<MapProps>) {
 
   const format = props.format ?? 'number'
   const valueById = new Map<string, number>()
-  const unmatched: { code: string; value: number }[] = []
+  const unmatched: { code: string; value: number | null }[] = []
 
   for (const r of records) {
     const code = String(r.country)
-    const value = Number(r.value ?? 0)
+    // NULL is no data: an unshaded country, not a 0 on the scale.
+    const value = r.value === null ? null : Number(r.value)
     const numericId = ISO_ALPHA2_TO_NUMERIC[code]
-    const hasShape = numericId !== undefined && countries.features.some((f) => f.id === numericId)
-    if (hasShape) {
-      valueById.set(numericId, value)
-    } else {
+    if (numericId === undefined || !featureIds.has(numericId)) {
       unmatched.push({ code, value })
+    } else if (value !== null) {
+      valueById.set(numericId, value)
     }
   }
 
@@ -92,7 +93,8 @@ export default function MapWidget({ data, props }: WidgetProps<MapProps>) {
       )}
       {unmatched.length > 0 && (
         <div data-not-on-map className="text-xs text-muted-foreground">
-          Not on the map: {unmatched.map((u) => `${u.code} ${formatValue(u.value, format)}`).join(', ')}
+          Not on the map:{' '}
+          {unmatched.map((u) => (u.value === null ? u.code : `${u.code} ${formatValue(u.value, format)}`)).join(', ')}
         </div>
       )}
       {hovered && <HoverCard at={hovered} heading={hovered.item.name} rows={rowsOf(hovered.item.value)} />}

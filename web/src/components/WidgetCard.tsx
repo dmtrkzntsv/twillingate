@@ -136,9 +136,10 @@ function StaleWarning({ error }: { error: Error }) {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <span tabIndex={0} role="img" aria-label={text} className="flex size-7 items-center justify-center text-destructive">
+        {/* A button only to take focus, so keyboard users reach the tooltip too. */}
+        <button type="button" aria-label={text} className="flex size-7 items-center justify-center text-destructive">
           <CircleAlertIcon className="size-4" />
-        </span>
+        </button>
       </TooltipTrigger>
       <TooltipContent>{text}</TooltipContent>
     </Tooltip>

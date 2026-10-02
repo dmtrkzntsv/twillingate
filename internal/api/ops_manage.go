@@ -110,7 +110,7 @@ func (h *host) archiveProject(ctx context.Context, in idIn) (okOut, error) {
 
 func (h *host) restoreProject(ctx context.Context, in idIn) (okOut, error) {
 	if err := h.ops.RestoreProject(ctx, actorFrom(ctx), in.ProjectID); err != nil {
-		return okOut{}, err
+		return okOut{}, h.projectErr(ctx, in.ProjectID, err)
 	}
 	return okOut{Status: "restored"}, nil
 }

@@ -43,5 +43,8 @@ export default defineConfig({
     timeout: 120_000,
     stdout: 'pipe',
     stderr: 'pipe',
+    // SIGTERM, not the default SIGKILL, so serve.sh removes its scratch
+    // directory (binary and database) on the way out.
+    gracefulShutdown: { signal: 'SIGTERM', timeout: 10_000 },
   },
 })

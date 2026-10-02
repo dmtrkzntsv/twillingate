@@ -122,7 +122,7 @@ describe('WidgetCard', () => {
       .mockRejectedValue(new ApiError(500, 'database is locked', 'internal'))
     renderCard()
     await userEvent.click(await screen.findByRole('button', { name: 'Refresh Visitors' }))
-    expect(await screen.findByRole('img', { name: "Couldn't refresh: database is locked" })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: "Couldn't refresh: database is locked" })).toBeInTheDocument()
     expect(screen.getByText('12.3K')).toBeInTheDocument()
     expect(screen.queryByText("Couldn't load")).not.toBeInTheDocument()
   })

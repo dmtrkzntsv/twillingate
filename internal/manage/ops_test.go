@@ -126,6 +126,7 @@ func TestUnknownIdsAreNotFound(t *testing.T) {
 	ops := NewOps(reg, st)
 	for name, err := range map[string]error{
 		"archive": ops.ArchiveProject(ctx, "test", 42),
+		"restore": ops.RestoreProject(ctx, "test", 42),
 		"delete":  ops.DeleteProject(ctx, "test", 42),
 		"key":     func() error { _, e := ops.IssueIngestKey(ctx, "test", 42, "web"); return e }(),
 		"disable": ops.DisableIngestKey(ctx, "test", 42, "web"),

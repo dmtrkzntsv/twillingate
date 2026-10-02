@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
@@ -642,6 +643,25 @@ func TestInsertDashboardSortKeyConflictIsErrConflict(t *testing.T) {
 	if _, err := db.InsertDashboard(ctx,
 		store.Dashboard{Owner: store.OwnerSystem, Title: "S1", SortKey: "a"}, nil, audit); err != nil {
 		t.Fatalf("InsertDashboard with same sort key, different owner: %v, want success", err)
+	}
+}
+
+func TestInsertDashboardIDConflictNamesTheID(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	audit := store.AuditEntry{Actor: "agent", Action: "dashboard.create"}
+	id, err := db.InsertDashboard(ctx,
+		store.Dashboard{Owner: store.OwnerUser, Title: "D1", SortKey: "a"}, nil, audit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.InsertDashboard(ctx,
+		store.Dashboard{ID: id, Owner: store.OwnerUser, Title: "D2", SortKey: "b"}, nil, audit)
+	if !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("InsertDashboard with a taken id = %v, want ErrConflict", err)
+	}
+	if want := fmt.Sprintf("id %d already exists", id); !strings.Contains(err.Error(), want) {
+		t.Errorf("InsertDashboard with a taken id = %q, want it to say %q", err, want)
 	}
 }
 

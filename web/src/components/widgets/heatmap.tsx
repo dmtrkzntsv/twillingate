@@ -95,9 +95,10 @@ export default function Heatmap({ data, props }: WidgetProps<HeatmapProps>) {
     values.set(`${String(r.y)}\u0000${String(r.x)}`, r.value === null ? null : Number(r.value))
   }
 
-  const numbers = records.map((r) => Number(r.value ?? 0))
-  const min = Math.min(...numbers)
-  const max = Math.max(...numbers)
+  // A NULL cell is drawn empty, so it takes no part in the scale either.
+  const numbers = [...values.values()].filter((v): v is number => v !== null)
+  const min = numbers.length ? Math.min(...numbers) : 0
+  const max = numbers.length ? Math.max(...numbers) : 0
   const span = max - min || 1
 
   return (

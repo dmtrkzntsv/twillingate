@@ -160,16 +160,18 @@ func (d *DB) SetProjectArchived(ctx context.Context, id int64, archived bool, a 
 		if err != nil {
 			return err
 		}
-		if n, _ := res.RowsAffected(); n == 0 && archived {
-			// restore of a non-archived project is a no-op, archive of an
-			// unknown id is an error; check existence to distinguish.
+		if n, _ := res.RowsAffected(); n == 0 {
+			// Archiving an archived project is a no-op, either way on an
+			// unknown id an error; check existence to distinguish. (A
+			// restore matches every existing id, so only an unknown one
+			// gets here.)
 			var c int
 			if err := tx.QueryRowContext(ctx,
 				`SELECT COUNT(*) FROM projects WHERE id=?`, id).Scan(&c); err != nil {
 				return err
 			}
 			if c == 0 {
-				return fmt.Errorf("archive: unknown id %d: %w", id, store.ErrNotFound)
+				return fmt.Errorf("unknown project %d: %w", id, store.ErrNotFound)
 			}
 		}
 		return auditAndBump(ctx, tx, a)

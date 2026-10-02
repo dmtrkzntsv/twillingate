@@ -1,7 +1,7 @@
 import path from 'node:path'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
-import { defineConfig } from 'vite'
+import { defineConfig } from 'vitest/config'
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -35,5 +35,12 @@ export default defineConfig({
     proxy: {
       '/api': 'http://127.0.0.1:3100',
     },
+  },
+  test: {
+    environment: 'jsdom',
+    globals: true,
+    setupFiles: ['./src/test/setup.ts'],
+    // e2e/ holds Playwright specs, run by `npm run e2e`, not vitest.
+    exclude: ['**/node_modules/**', 'e2e/**'],
   },
 })

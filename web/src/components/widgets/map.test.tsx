@@ -73,6 +73,25 @@ describe('map', () => {
     expect((fr as HTMLElement).style.fill).toContain('100%')
   })
 
+  it('leaves a NULL country unshaded and out of the scale rather than counting it as 0', () => {
+    const { container, getByText } = renderMap({
+      columns: ['country', 'value'],
+      rows: [
+        ['US', ''],
+        ['DE', '50'],
+        ['FR', '100'],
+        ['ZZ', ''],
+      ],
+      truncated: false,
+    })
+    const at = (code: string) =>
+      container.querySelector(`[data-country-feature][data-id="${ISO_ALPHA2_TO_NUMERIC[code]}"]`) as HTMLElement
+    expect(at('US').style.fill).toBe('var(--muted)')
+    expect(at('DE').style.fill).toContain(' 15%')
+    expect(at('FR').style.fill).toContain('100%')
+    expect(getByText('Not on the map: ZZ')).toBeInTheDocument()
+  })
+
   it('lists a code that matches no shape below the map, instead of dropping it', () => {
     const { getByText } = renderMap({
       columns: ['country', 'value'],
