@@ -51,32 +51,32 @@ func NewLogger(cfg config.LogConfig) *slog.Logger {
 
 // httpSurface pairs a listen address with the handler serving it, so
 // Serve can start/shut down an arbitrary number of listeners (one for the
-// shared -ingest/-api case, up to two when the surfaces use different
+// shared -ingest/-console case, up to two when the surfaces use different
 // addresses) with the same loop. label names which surface(s) the listener
-// carries ("ingest", "api" or "ingest,api"), logged at boot so a role swap
-// between two units (e.g. `-api` used to mean ingest-only) is visible in
-// journalctl rather than only inferred from the port.
+// carries ("ingest", "console" or "ingest,console"), logged at boot so a
+// role swap between two units is visible in journalctl rather than only
+// inferred from the port.
 type httpSurface struct {
 	addr    string
 	handler http.Handler
 	label   string
 }
 
-// Serve runs the requested surfaces (ingest: events and the SDK, api: MCP
-// and REST) until ctx is cancelled or a listener fails. At least one of
-// ingest/api must be true; the caller (cmd/twillingate) enforces that as a
+// Serve runs the requested surfaces (ingest: events and the SDK, console:
+// MCP, REST, login and dashboards) until ctx is cancelled or a listener
+// fails. At least one of ingest/console must be true; the caller (cmd/twillingate) enforces that as a
 // usage error before reaching here.
 //
 // Store/registry/geo/pipeline/jobs setup runs regardless of which surfaces
-// are requested: jobs and pipeline are harmless when only the API runs, and
-// the API surface itself needs store+registry. Only the HTTP listeners and
+// are requested: jobs and pipeline are harmless when only the console runs,
+// and the console itself needs store+registry. Only the HTTP listeners and
 // the ingest-summary goroutine are conditional.
 //
 // Shutdown order matters: HTTP drains first so no new events/requests
 // arrive, then the ingest summary logger, then the jobs runner stops, and
 // only then is the pipeline cancelled — its cancellation is what triggers
 // the final flush, so it must come last or buffered events would be lost.
-func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runIngest, runAPI bool) error {
+func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runIngest, runConsole bool) error {
 	st, err := store.Open(cfg.Database)
 	if err != nil {
 		return err
@@ -147,7 +147,7 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 		ingestHandler = server.New(cfg, reg, buf, geoProvider, salter, st, logger)
 	}
 
-	// Assemble the HTTP surface(s). When both -ingest and -api target the
+	// Assemble the HTTP surface(s). When both -ingest and -console target the
 	// same address, they share one listener/mux, each registering its own
 	// patterns (Build, not NewHandler, so /mcp and /api/ mount alongside
 	// the ingest routes without a double /healthz registration); otherwise
@@ -155,7 +155,7 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 	var surfaces []httpSurface
 	var apiClose func() error
 	switch {
-	case runAPI && runIngest && cfg.API.Addr == cfg.IngestAddr:
+	case runConsole && runIngest && cfg.Console.Addr == cfg.IngestAddr:
 		protected, closeDB, err := api.Build(ctx, cfg, reg, manage.NewOps(reg, st), st, logger)
 		if err != nil {
 			stopBackground()
@@ -165,8 +165,8 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 		mux := http.NewServeMux()
 		ingestHandler.Mount(mux)
 		api.RegisterOn(mux, protected, cfg, false, logger)
-		surfaces = append(surfaces, httpSurface{cfg.IngestAddr, mux, "ingest,api"})
-	case runAPI:
+		surfaces = append(surfaces, httpSurface{cfg.IngestAddr, mux, "ingest,console"})
+	case runConsole:
 		h, closeDB, err := api.NewHandler(ctx, cfg, reg, manage.NewOps(reg, st), st, logger)
 		if err != nil {
 			stopBackground()
@@ -176,7 +176,7 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 		if runIngest {
 			surfaces = append(surfaces, httpSurface{cfg.IngestAddr, ingestHandler, "ingest"})
 		}
-		surfaces = append(surfaces, httpSurface{cfg.API.Addr, h, "api"})
+		surfaces = append(surfaces, httpSurface{cfg.Console.Addr, h, "console"})
 	default:
 		surfaces = append(surfaces, httpSurface{cfg.IngestAddr, ingestHandler, "ingest"})
 	}

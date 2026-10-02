@@ -3,12 +3,13 @@
 The operator's runbook: getting twillingate onto a host, keeping it backed
 up, getting it back after the host is gone. Using it is
 [twillingate.md](twillingate.md); both are served over MCP, this one as
-`docs://deployment`. One process serves ingestion, the API and the
-dashboards at `/app/`, and its whole state is one SQLite file.
+`docs://deployment`. One process serves two surfaces — ingest, and the
+console (MCP, REST, the login and the dashboards at `/app/`) — and its
+whole state is one SQLite file.
 
 - [Install](#install)
 - [Configure the collector](#configure-the-collector)
-- [The API endpoint](#the-api-endpoint)
+- [The console](#the-console)
 - [Dashboards at /app/](#dashboards-at-app)
 - [Operate and recover](#operate-and-recover) — including backups
 
@@ -16,8 +17,8 @@ dashboards at `/app/`, and its whole state is one SQLite file.
 
 ### docker compose
 
-Ingestion, the SDK and — once `API_AUTH_DSN` is set — the API and the
-[dashboards at /app/](#dashboards-at-app).
+Ingestion, the SDK and — once `CONSOLE_AUTH_DSN` is set — the console: MCP,
+REST and the [dashboards at /app/](#dashboards-at-app).
 
 ```bash
 mkdir twillingate && cd twillingate
@@ -81,7 +82,7 @@ the collector falls back to the scheme of `PUBLIC_URL`, so a single-hostname
 install with `PUBLIC_URL=https://…` works unconfigured. A `Host` that is not
 a plain hostname (optional port aside) leaves the file originless and the
 SDK dormant with a console warning. Snippets use `PUBLIC_URL`; change the
-`src` per hostname, and keep the API on one — OAuth and `cloudflare://` bind
+`src` per hostname, and keep the console on one — OAuth and `cloudflare://` bind
 to it.
 
 ## Configure the collector
@@ -89,7 +90,7 @@ to it.
 | Variable | Meaning |
 | --- | --- |
 | `INGEST_ADDR` | Address to bind. Default `127.0.0.1:8080` (the docker image sets `0.0.0.0:8080`). |
-| `PUBLIC_URL` | The collector's public base URL (`https://twillingate.example.com`). Embed snippets and MCP integration guidance are built from it; unset, they carry a placeholder. Also the default for `API_URL`. With [several hostnames](#one-collector-several-hostnames), the default one. |
+| `PUBLIC_URL` | The collector's public base URL (`https://twillingate.example.com`). Embed snippets and MCP integration guidance are built from it; unset, they carry a placeholder. Also the default for `CONSOLE_URL`. With [several hostnames](#one-collector-several-hostnames), the default one. |
 | `DATABASE_DSN` | Store DSN. Only `sqlite://<path>` today. Required. |
 | `GEO_DSN` | Country lookup: `cloudflare://` (header), `maxmind://<license-key>`, or `none://`. |
 | `LOG_LEVEL` | `debug`, `info`, `warn`, `error`. Default `info`. |
@@ -102,18 +103,19 @@ to it.
 | `RETENTION_EVENTS_AGGREGATE_DAYS` | Days aggregates of every family (and actors, cohorts, identities) are kept. Default 365. |
 | `RETENTION_ARCHIVED_DAYS` | Days after archiving that a project (with all its data), a dashboard or a widget is deleted by the daily pass. 0 keeps archived items forever. Default 30. |
 | `PRODUCT_ATTRIBUTES_TOP_N` | Distinct attribute values kept per (project, day, event, key) before the rest collapse into `(other)`. Default 50. |
-| `API_AUTH_DSN` | Authentication for the API endpoint (MCP and REST): `token://<token>?password=…` for the built-in browser login (see [The API endpoint](#the-api-endpoint)), or `oauth://<issuer-host>` for your own identity provider. Unset, bare `serve` skips the API with a warning. |
-| `API_ADDR` | Give the API (MCP and REST) its own listener. Defaults to `INGEST_ADDR` (shared). |
-| `API_URL` | The API's public origin when it has a hostname of its own (`https://api.example.com`), no path. The login's resource, issuer and the dashboards' callback follow it, so that host needs no `redirect=` entry. Defaults to `PUBLIC_URL`. |
-| `API_DB_PATH` | Database the API reads for queries. Defaults to the `DATABASE_DSN` path. |
-| `API_QUERY_TIMEOUT` | Per-query guard on reads and the `query` operation; also bounds a reporting widget's sql. Default `10s`. |
-| `API_QUERY_MAX_ROWS` | Row cap on the `query` operation; also bounds a reporting widget's sql. Default 1000. |
+| `CONSOLE_AUTH_DSN` | Authentication for the console (MCP, REST and the dashboards' data): `token://<token>?password=…` for the built-in browser login (see [The console](#the-console)), or `oauth://<issuer-host>` for your own identity provider. Unset, bare `serve` skips the console with a warning. |
+| `CONSOLE_ADDR` | Give the console its own listener. Defaults to `INGEST_ADDR` (shared). |
+| `CONSOLE_URL` | The console's public origin when it has a hostname of its own (`https://console.example.com`), no path. The login's resource, issuer and the dashboards' callback follow it, so that host needs no `redirect=` entry. Defaults to `PUBLIC_URL`. |
+| `CONSOLE_DB_PATH` | Database the console reads for queries. Defaults to the `DATABASE_DSN` path. |
+| `CONSOLE_QUERY_TIMEOUT` | Per-query guard on reads and the `query` operation; also bounds a reporting widget's sql. Default `10s`. |
+| `CONSOLE_QUERY_MAX_ROWS` | Row cap on the `query` operation; also bounds a reporting widget's sql. Default 1000. |
 | `REPORTING_CACHE_SECONDS` | How long an ordinary widget data request reuses a sql widget's loaded value before loading again. 0 turns the cache off: every request loads again. Default 900. |
 | `REPORTING_REFRESH_SECONDS` | A `fresh=true` request reuses a result younger than this instead of `REPORTING_CACHE_SECONDS`; must not exceed it when that is non-zero. Default 60. A dashboard with auto-refresh on reloads every max(`REPORTING_CACHE_SECONDS`, `REPORTING_REFRESH_SECONDS`) seconds while its window has focus; both 0 removes the option. |
 
-The old name `LISTEN_ADDR` refuses the boot, naming its replacement:
-`INGEST_ADDR`. The `MCP_*` names renamed to `API_*` are no longer checked; a
-leftover one is ignored, so rename any still in `twillingate.env`.
+The old names refuse the boot, naming their replacement: `LISTEN_ADDR`
+(now `INGEST_ADDR`) and the six `API_*` names (now `CONSOLE_*`, same
+suffix). The older `MCP_*` names are no longer checked; a leftover one is
+ignored, so rename any still in `twillingate.env`.
 
 ### Raspberry Pi and low-resource hosts
 
@@ -121,13 +123,14 @@ leftover one is ignored, so rename any still in `twillingate.env`.
 - Set `GOMEMLIMIT` (unit and compose files ship `128MiB`) and keep `GEO_DSN` off `maxmind://`, which holds a database in memory.
 - Lower `RETENTION_EVENTS_RAW_DAYS` (say `7`): raw events are the largest table in the file, and the live halves of the `v_*` views scan them on every query.
 
-## The API endpoint
+## The console
 
-`serve -api` answers both transports on one listener: streamable HTTP MCP at
+The console is the authenticated surface. `serve -console` answers both
+transports on one listener: streamable HTTP MCP at
 `https://twillingate.example.com/mcp`, REST under
 `https://twillingate.example.com/api/`. There is no stdio server — every
 client talks to the running collector over the network — and one
-`API_AUTH_DSN` protects both.
+`CONSOLE_AUTH_DSN` protects both.
 
 > **A connected session reads every non-archived project — including
 > personal data on projects whose clients send ids — and can use the
@@ -140,16 +143,16 @@ client talks to the running collector over the network — and one
 The binary runs its own login — no identity provider to run — and every
 client connects through a browser page that asks for a password.
 
-1. Mint the token — `keygen -api` mints it as `ar_` plus hex. It prints
-   `API_AUTH_DSN=token://ar_…`:
+1. Mint the token — `keygen -console` mints it as `ar_` plus hex. It prints
+   `CONSOLE_AUTH_DSN=token://ar_…`:
    ```bash
-   sudo -u twillingate sh -ac '. /etc/twillingate/twillingate.env; twillingate keygen -api'
+   sudo -u twillingate sh -ac '. /etc/twillingate/twillingate.env; twillingate keygen -console'
    ```
 2. Set it in `/etc/twillingate/twillingate.env` (compose: `.env`), in single
    quotes — these commands load the file with `sh`, where an unquoted `&`
    cuts the value short:
    ```
-   API_AUTH_DSN='token://ar_…?password=<password>'
+   CONSOLE_AUTH_DSN='token://ar_…?password=<password>'
    ```
 3. Restart, then check that `/mcp` asks for a login:
    ```bash
@@ -161,7 +164,7 @@ client connects through a browser page that asks for a password.
 | Parameter | Meaning |
 | --- | --- |
 | `password` | What the login page asks for. Setting it turns the login on. Five wrong ones in a minute lock the page for everyone until the minute ends; connected clients are unaffected. No minimum length is enforced. In the DSN, percent-encode `&` as `%26`, `#` as `%23`, `%` as `%25`, `;` as `%3B` and `+` as `%2B` — an unencoded `+` becomes a space. |
-| `resource` | The API origin, with no path (`resource=https://api.example.com`); one login covers `/mcp` and `/api/`. Defaults to `API_URL`, which defaults to `PUBLIC_URL`: set `API_URL` when the API has its own hostname, and keep `resource=` for the rare case where the two must differ. MCP clients read `/.well-known/oauth-protected-resource/mcp`, which names `<origin>/mcp`; `/api/` clients read `/.well-known/oauth-protected-resource`, which names the origin. A value carrying a path refuses the boot, in both `token://` and `oauth://` mode. |
+| `resource` | The console origin, with no path (`resource=https://console.example.com`); one login covers `/mcp` and `/api/`. Defaults to `CONSOLE_URL`, which defaults to `PUBLIC_URL`: set `CONSOLE_URL` when the console has its own hostname, and keep `resource=` for the rare case where the two must differ. MCP clients read `/.well-known/oauth-protected-resource/mcp`, which names `<origin>/mcp`; `/api/` clients read `/.well-known/oauth-protected-resource`, which names the origin. A value carrying a path refuses the boot, in both `token://` and `oauth://` mode. |
 | `redirect` | An extra host clients may return to, such as `redirect=app.example.com`; repeat once per host. |
 
 Accepted without `redirect=`, at any port and path: `localhost`,
@@ -204,7 +207,7 @@ curl -H "Authorization: Bearer $TOKEN" \
   https://twillingate.example.com/api/projects/1/views/overview?from=…&to=…
 ```
 A client that can send headers can present the token itself instead of
-logging in; a bare `API_AUTH_DSN='token://ar_…'` turns the login off and
+logging in; a bare `CONSOLE_AUTH_DSN='token://ar_…'` turns the login off and
 leaves only this.
 
 ```bash
@@ -220,40 +223,40 @@ removing and re-adding any client holding the old header.
 
 ### Hostnames and processes
 
-`API_ADDR` gives the API its own listener; unset, it shares the ingestion
+`CONSOLE_ADDR` gives the console its own listener; unset, it shares the ingestion
 one. Put it on its own hostname when you can, with `resource=` set to that
 origin: only `/ingest/`, `/js/` and `/healthz` have to be public. For
 separate processes, use the `twillingate@.service` template rendered beside
-the main unit: its instances run `serve -ingest` and `serve -api`, and
+the main unit: its instances run `serve -ingest` and `serve -console`, and
 naming a flag makes that surface's misconfiguration a hard error rather than
 the warn-and-skip of a bare `serve`.
 
 ```bash
 sudo systemctl disable --now twillingate
-sudo systemctl enable --now twillingate@ingest twillingate@api
+sudo systemctl enable --now twillingate@ingest twillingate@console
 ```
 
 Disable the bare unit first: enabling both `twillingate.service` and an
 instance binds the same listeners at the next boot. An upgrade restarts
 running instances and leaves the bare unit disabled; reverse to go back.
 
-> **An API-only process still runs the daily aggregation pass against
-> `DATABASE_DSN`** — `-api` only makes the HTTP listener conditional, not
-> the background jobs. Set `API_DB_PATH` (what the API reads) and
-> `DATABASE_DSN` (what the pass writes) deliberately: aimed at a copy of the
-> database, an API-only unit writes to that copy on every pass — or
+> **A console-only process still runs the daily aggregation pass against
+> `DATABASE_DSN`** — `-console` only makes the HTTP listener conditional,
+> not the background jobs. Set `CONSOLE_DB_PATH` (what the console reads)
+> and `DATABASE_DSN` (what the pass writes) deliberately: aimed at a copy of
+> the database, a console-only unit writes to that copy on every pass — or
 > accept that a two-process topology runs the idempotent daily aggregation
 > twice.
 
 ### Other auth modes
 
 ```bash
-API_AUTH_DSN='oauth://auth.example.com[?resource=<origin>][&audience=<aud>]'
+CONSOLE_AUTH_DSN='oauth://auth.example.com[?resource=<origin>][&audience=<aud>]'
 ```
 
 For an IdP you already run or rent (Keycloak, Auth0, Authentik, …): the
 server validates the JWTs it issues and serves no login page. `resource`
-defaults to `API_URL` (then `PUBLIC_URL`) and must be an origin with no path;
+defaults to `CONSOLE_URL` (then `PUBLIC_URL`) and must be an origin with no path;
 `oauth+insecure://` allows a plain-http IdP in development. It must provide:
 
 1. **RFC 8414 metadata** at `<issuer>/.well-known/oauth-authorization-server`
@@ -272,31 +275,31 @@ defaults to `API_URL` (then `PUBLIC_URL`) and must be an origin with no path;
 
 | Symptom | Cause and fix |
 | --- | --- |
-| `404` on `/mcp` or `/api/` | The API is off — usually a DSN that does not parse. `journalctl -u twillingate \| grep 'API disabled'` names the reason. |
+| `404` on `/mcp` or `/api/` | The console is off — usually a DSN that does not parse. `journalctl -u twillingate \| grep 'console disabled'` names the reason. |
 | `401` on connect | Run the curl from [Set it up](#set-it-up). A `401` carrying the `resource_metadata` challenge means the server is fine: the client or the password is the problem. |
 | Connects but no tools | Wrong path: the endpoint is `/mcp`, not the bare hostname. |
 | Login page: redirect URI's host not allowed | The client returns to a host that is not built in. The page shows the URI; add its host as `redirect=<host>` and restart. |
 | Login page: password not recognised, though it is right | A `+`, `&`, `#`, `%` or `;` in the password must be percent-encoded in the DSN. "Too many attempts" instead means five wrong passwords this minute; wait for the next one. |
 | Login loops in `oauth://` mode | The IdP issues tokens without the expected `aud`: the origin, `<origin>/mcp`, or the `audience=` value. |
-| `/app/` login: redirect URI host not allowed | The page is open on a host other than `API_URL`'s. Set `API_URL` to it, or add it as `redirect=<host>`, and restart. |
+| `/app/` login: redirect URI host not allowed | The page is open on a host other than `CONSOLE_URL`'s. Set `CONSOLE_URL` to it, or add it as `redirect=<host>`, and restart. |
 
 ## Dashboards at /app/
 
-Wherever the API is served, `/app/` serves the dashboards beside it:
-`https://twillingate.example.com/app/`, on the API's own listener with
-`API_ADDR`, else on the shared one. The root of that listener redirects to
+Wherever the console is served, `/app/` serves the dashboards beside it:
+`https://twillingate.example.com/app/`, on the console's own listener with
+`CONSOLE_ADDR`, else on the shared one. The root of that listener redirects to
 `/app/`; an ingest-only listener answers 404 there. The page is read-only; agents build the
 dashboards over MCP ([reporting.md](reporting.md)). It loads without a login
 and reads everything through `/api/` with the same login as any other
 client:
 
 - **`token://` with a password:** the page shows the login page on its own
-  host and returns to `/app/callback` there. On the API's host, `API_URL`
+  host and returns to `/app/callback` there. On the console's host, `CONSOLE_URL`
   (default `PUBLIC_URL`), that needs no entry: the login accepts exactly
-  `<API_URL>/app/callback`, whatever `Host` a proxy passes on. So when the
-  API has its own hostname, set `API_URL=https://api.example.com` and open
+  `<CONSOLE_URL>/app/callback`, whatever `Host` a proxy passes on. So when the
+  console has its own hostname, set `CONSOLE_URL=https://console.example.com` and open
   the dashboards there. Any further name needs `redirect=<host>` in
-  `API_AUTH_DSN`. The login trusts only configured hosts, never a request
+  `CONSOLE_AUTH_DSN`. The login trusts only configured hosts, never a request
   header. The access token stays in the
   tab and the refresh token in the browser, so a login lasts 30 days from
   last use, as for other clients.
@@ -319,7 +322,7 @@ Files under `/app/assets/` are cached for a year (their names change with
 their content); the page, `sw.js` and `manifest.webmanifest` are revalidated
 on every load, so a proxy or CDN in front needs no rules of its own.
 
-Widget queries run under `API_QUERY_TIMEOUT` and `API_QUERY_MAX_ROWS`, and
+Widget queries run under `CONSOLE_QUERY_TIMEOUT` and `CONSOLE_QUERY_MAX_ROWS`, and
 their results are cached for `REPORTING_CACHE_SECONDS`
 ([Configure the collector](#configure-the-collector)).
 

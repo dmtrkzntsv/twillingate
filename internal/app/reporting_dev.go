@@ -11,8 +11,8 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
 )
 
-// devQueryTimeout and devQueryMaxRows mirror API_QUERY_TIMEOUT and
-// API_QUERY_MAX_ROWS' own defaults (config.go): `reporting dev` has no
+// devQueryTimeout and devQueryMaxRows mirror CONSOLE_QUERY_TIMEOUT and
+// CONSOLE_QUERY_MAX_ROWS' own defaults (config.go): `reporting dev` has no
 // config of its own to read them from, and is a local preview tool
 // rather than something an operator tunes.
 const (
@@ -21,7 +21,7 @@ const (
 )
 
 // ReportingDev runs `twillingate reporting dev`: a read-only handle on
-// dbPath (the same sql widgets in the real API run against) and
+// dbPath (the same sql widgets in the real console run against) and
 // reporting.DevHandler, serving addr until ctx is cancelled. There is no
 // store, no registry and no auth here — cmd/twillingate/reporting.go has
 // already refused a non-loopback addr before this is called.

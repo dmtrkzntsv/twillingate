@@ -20,13 +20,13 @@ var _ reporting.Store = store.Store(nil)
 // with the release too.
 //
 // The reporting migrator gets its own read-only handle on the writer's
-// own database file (databasePath(cfg.Database)), not API_DB_PATH, which
+// own database file (databasePath(cfg.Database)), not CONSOLE_DB_PATH, which
 // may point at a copy that lags the write this migration itself just made.
 func Migrate(ctx context.Context, cfg *config.Config, st store.Store) error {
 	if err := st.Migrate(ctx); err != nil {
 		return err
 	}
-	db, err := readsql.Open(databasePath(cfg.Database), cfg.API.QueryTimeout, cfg.API.QueryMaxRows)
+	db, err := readsql.Open(databasePath(cfg.Database), cfg.Console.QueryTimeout, cfg.Console.QueryMaxRows)
 	if err != nil {
 		return err
 	}

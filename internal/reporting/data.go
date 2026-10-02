@@ -92,9 +92,9 @@ func (s *Service) WidgetData(ctx context.Context, in DataRequest) (WidgetData, e
 	// currently sharing it through the cache's singleflight (below), not
 	// only the one goroutine that happens to run it, so it must not carry
 	// any one caller's cancellation — a client disconnecting partway
-	// through must not turn into a false API_QUERY_TIMEOUT for every
+	// through must not turn into a false CONSOLE_QUERY_TIMEOUT for every
 	// other request sharing the same load. readsql applies its own
-	// deadline (API_QUERY_TIMEOUT) regardless.
+	// deadline (CONSOLE_QUERY_TIMEOUT) regardless.
 	loadCtx := context.WithoutCancel(ctx)
 	load := func() (any, error) {
 		return src.Load(loadCtx, w.Source, Params{ProjectID: projectID, From: from, To: to})

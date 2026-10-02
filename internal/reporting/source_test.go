@@ -100,7 +100,7 @@ func TestSQLValidateBindsSampleValuesOnBothRuns(t *testing.T) {
 	}
 }
 
-// TestSQLValidateTimesOut pins the API_QUERY_TIMEOUT refusal. The
+// TestSQLValidateTimesOut pins the CONSOLE_QUERY_TIMEOUT refusal. The
 // content is a single-row aggregate (COUNT(*)) over an effectively
 // unbounded recursive CTE: SQLite's planner answers a wrapping "LIMIT 0"
 // without evaluating the aggregate at all (there's nothing a caller
@@ -126,8 +126,8 @@ func TestSQLValidateTimesOut(t *testing.T) {
 	if !errors.Is(err, store.ErrInvalid) {
 		t.Fatalf("err = %v, want ErrInvalid", err)
 	}
-	if !strings.Contains(err.Error(), "API_QUERY_TIMEOUT") {
-		t.Errorf("err = %q, want it to name API_QUERY_TIMEOUT", err.Error())
+	if !strings.Contains(err.Error(), "CONSOLE_QUERY_TIMEOUT") {
+		t.Errorf("err = %q, want it to name CONSOLE_QUERY_TIMEOUT", err.Error())
 	}
 }
 

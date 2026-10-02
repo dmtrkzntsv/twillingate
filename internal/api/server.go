@@ -24,7 +24,7 @@ const (
 )
 
 // Build assembles the tool host, both transports and the auth middleware,
-// returning one handler that serves the API surface: the MCP streamable
+// returning one handler that serves the console surface: the MCP streamable
 // endpoint at /mcp and the REST routes under /api/ (unmatched /api/ paths
 // answer a JSON 404), plus, unauthenticated, their OpenAPI document at
 // /api/openapi.json and its Swagger UI at /api/docs. Each prefix is auth-wrapped on its own so its 401
@@ -33,9 +33,9 @@ const (
 // listener, and app calls it directly to mount on the ingest surface's mux
 // via RegisterOn. rst is the store reporting reads and writes; widget
 // queries run on the same read-only handle, and so under the same
-// API_QUERY_TIMEOUT and API_QUERY_MAX_ROWS, as the query tool.
+// CONSOLE_QUERY_TIMEOUT and CONSOLE_QUERY_MAX_ROWS, as the query tool.
 func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *manage.Ops, rst reporting.Store, logger *slog.Logger) (http.Handler, func() error, error) {
-	db, err := readsql.Open(cfg.API.DBPath, cfg.API.QueryTimeout, cfg.API.QueryMaxRows)
+	db, err := readsql.Open(cfg.Console.DBPath, cfg.Console.QueryTimeout, cfg.Console.QueryMaxRows)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -57,12 +57,12 @@ func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *m
 		writeJSON(w, http.StatusNotFound, map[string]apiError{"error": {Code: "not_found", Message: "no such API route"}})
 	})
 
-	requireAuth, err := wrapAuth(ctx, cfg.API)
+	requireAuth, err := wrapAuth(ctx, cfg.Console)
 	if err != nil {
 		db.Close()
 		return nil, nil, err
 	}
-	resource := cfg.API.ResourceURL
+	resource := cfg.Console.ResourceURL
 	protected := http.NewServeMux()
 	protected.Handle(mcpPath, requireAuth(resource+metadataPath+mcpPath,
 		mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv }, nil)))
@@ -77,7 +77,7 @@ func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *m
 	return protected, db.Close, nil
 }
 
-// NewHandler assembles the API surface: tool host, both transports, auth
+// NewHandler assembles the console surface: tool host, both transports, auth
 // middleware, and (mode-dependent) the RFC 9728 metadata route, mounted
 // on its own mux. Routes registered on the returned mux: /mcp, /api/,
 // /app/, /healthz, and
@@ -94,10 +94,10 @@ func NewHandler(ctx context.Context, cfg *config.Config, reg *manage.Registry, o
 	return mux, closeDB, nil
 }
 
-// RegisterOn mounts the API surface on a mux: protected (from Build) at
+// RegisterOn mounts the console surface on a mux: protected (from Build) at
 // /mcp and /api/, plus the unauthenticated metadata, login and health
 // routes, and the dashboards at /app/ (GET / and GET /app redirect there,
-// so the API's address opens the dashboards; an ingest-only listener keeps
+// so the console's address opens the dashboards; an ingest-only listener keeps
 // answering 404 at /). The dashboards' page is public like the login page:
 // it holds no data, and reads everything through /api/ with the login's
 // token. withHealthz=false when the mux is shared with the ingest surface,
@@ -110,11 +110,11 @@ func RegisterOn(mux *http.ServeMux, protected http.Handler, cfg *config.Config, 
 	// 302, not 301: browsers cache a permanent redirect of the root forever,
 	// and the root may serve something of its own one day.
 	mux.Handle("GET /{$}", http.RedirectHandler("/app/", http.StatusFound))
-	if cfg.API.AuthMode == "oauth" {
-		mountResourceMetadata(mux, cfg.API.ResourceURL, cfg.API.Issuer)
+	if cfg.Console.AuthMode == "oauth" {
+		mountResourceMetadata(mux, cfg.Console.ResourceURL, cfg.Console.Issuer)
 	}
-	if cfg.API.LoginEnabled() {
-		newLoginServer(cfg.API, logger).mount(mux)
+	if cfg.Console.LoginEnabled() {
+		newLoginServer(cfg.Console, logger).mount(mux)
 	}
 	if withHealthz {
 		mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -127,7 +127,7 @@ func RegisterOn(mux *http.ServeMux, protected http.Handler, cfg *config.Config, 
 // wrapAuth builds the mode's verifier once (endpoint spec §5.2) and
 // returns the middleware applying it, given the metadata URL each prefix's
 // 401 challenge names. Plain token:// has no metadata and no challenge.
-func wrapAuth(ctx context.Context, m config.APIConfig) (func(metadataURL string, next http.Handler) http.Handler, error) {
+func wrapAuth(ctx context.Context, m config.ConsoleConfig) (func(metadataURL string, next http.Handler) http.Handler, error) {
 	var verify auth.TokenVerifier
 	opts := auth.RequireBearerTokenOptions{}
 	challenge := true
@@ -144,7 +144,7 @@ func wrapAuth(ctx context.Context, m config.APIConfig) (func(metadataURL string,
 	case "oauth":
 		jwksURL, err := DiscoverJWKSURL(ctx, m.Issuer, nil)
 		if err != nil {
-			return nil, fmt.Errorf("api oauth mode: %w (is the API_AUTH_DSN issuer correct and reachable?)", err)
+			return nil, fmt.Errorf("api oauth mode: %w (is the CONSOLE_AUTH_DSN issuer correct and reachable?)", err)
 		}
 		verify = OAuthVerifier(m.Issuer, oauthAudiences(m), NewJWKSCache(jwksURL, nil))
 	default:
@@ -162,7 +162,7 @@ func wrapAuth(ctx context.Context, m config.APIConfig) (func(metadataURL string,
 // oauthAudiences is what an oauth:// JWT's aud must contain one of. An
 // IdP mints aud from the resource the client asked for, the origin or
 // origin/mcp, so both pass by default; an explicit audience= passes alone.
-func oauthAudiences(m config.APIConfig) []string {
+func oauthAudiences(m config.ConsoleConfig) []string {
 	if m.AudienceGiven() {
 		return []string{m.Audience}
 	}

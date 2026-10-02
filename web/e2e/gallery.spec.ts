@@ -3,7 +3,7 @@ import { expect, test, type Page } from '@playwright/test'
 // below), so importing it here is safe.
 import { rowsPx } from '../src/lib/grid'
 
-// Matches web/e2e/serve.sh's API_AUTH_DSN.
+// Matches web/e2e/serve.sh's CONSOLE_AUTH_DSN.
 const PASSWORD = 'e2e-pass'
 // Importing ../src/components/widgets here pulls React/Recharts (and
 // world-atlas's JSON import) into Node and fails to load, so this is a

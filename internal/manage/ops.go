@@ -290,9 +290,9 @@ func (o *Ops) DeleteProject(ctx context.Context, actor string, id int64) error {
 // design (they ship in page source); 128 bits makes guessing infeasible.
 func MintIngestKey() (string, error) { return mint("ak_", 16) }
 
-// MintAPIToken mints "ar_" + 256 bits hex. Unlike ingest keys this is a
+// MintConsoleToken mints "ar_" + 256 bits hex. Unlike ingest keys this is a
 // true secret: it reads every project and authorizes management.
-func MintAPIToken() (string, error) { return mint("ar_", 32) }
+func MintConsoleToken() (string, error) { return mint("ar_", 32) }
 
 func mint(prefix string, n int) (string, error) {
 	buf := make([]byte, n)

@@ -176,7 +176,7 @@ func TestIssueKeyMintsAndResolves(t *testing.T) {
 }
 
 func TestMintersAndSnippet(t *testing.T) {
-	tok, err := MintAPIToken()
+	tok, err := MintConsoleToken()
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -63,8 +63,8 @@ func TestSubcommandsRejectBadConfig(t *testing.T) {
 
 func TestResolveSurfaces(t *testing.T) {
 	cases := []struct {
-		ingest, api                bool
-		runIngest, runAPI, lenient bool
+		ingest, console                bool
+		runIngest, runConsole, lenient bool
 	}{
 		{false, false, true, true, true}, // bare serve: both, lenient
 		{true, false, true, false, false},
@@ -72,39 +72,39 @@ func TestResolveSurfaces(t *testing.T) {
 		{true, true, true, true, false}, // explicit both: strict
 	}
 	for _, c := range cases {
-		i, a, l := resolveSurfaces(c.ingest, c.api)
-		if i != c.runIngest || a != c.runAPI || l != c.lenient {
+		i, a, l := resolveSurfaces(c.ingest, c.console)
+		if i != c.runIngest || a != c.runConsole || l != c.lenient {
 			t.Errorf("resolveSurfaces(%v,%v) = %v,%v,%v; want %v,%v,%v",
-				c.ingest, c.api, i, a, l, c.runIngest, c.runAPI, c.lenient)
+				c.ingest, c.console, i, a, l, c.runIngest, c.runConsole, c.lenient)
 		}
 	}
 }
 
-// Explicitly requesting -api without auth config stays a hard error;
+// Explicitly requesting -console without auth config stays a hard error;
 // bare serve degrades to a warning instead (exercised end to end by
-// scripts/smoke.sh, which boots bare `serve` with no API config).
-func TestExplicitAPIWithoutConfigFails(t *testing.T) {
+// scripts/smoke.sh, which boots bare `serve` with no console config).
+func TestExplicitConsoleWithoutConfigFails(t *testing.T) {
 	withDB(t)
 	var out bytes.Buffer
-	if code := run([]string{"serve", "-api"}, &out); code != 1 {
-		t.Fatalf("serve -api without API_AUTH_DSN: exit %d, want 1: %s", code, out.String())
+	if code := run([]string{"serve", "-console"}, &out); code != 1 {
+		t.Fatalf("serve -console without CONSOLE_AUTH_DSN: exit %d, want 1: %s", code, out.String())
 	}
-	if !strings.Contains(out.String(), "API_AUTH_DSN") {
+	if !strings.Contains(out.String(), "CONSOLE_AUTH_DSN") {
 		t.Errorf("error must name the missing variable: %s", out.String())
 	}
 }
 
-// Bare serve is lenient about a missing API_AUTH_DSN, but a DSN that is set
+// Bare serve is lenient about a missing CONSOLE_AUTH_DSN, but a DSN that is set
 // and fails to parse is a mistake, not an absence: it must still exit 1,
-// even without -api naming the surface explicitly.
-func TestBareServeFailsOnInvalidAPIAuthDSN(t *testing.T) {
+// even without -console naming the surface explicitly.
+func TestBareServeFailsOnInvalidConsoleAuthDSN(t *testing.T) {
 	withDB(t)
-	t.Setenv("API_AUTH_DSN", "token://x?password=p&resource=https://h.example.com/mcp")
+	t.Setenv("CONSOLE_AUTH_DSN", "token://x?password=p&resource=https://h.example.com/mcp")
 	var out bytes.Buffer
 	if code := run([]string{"serve"}, &out); code != 1 {
-		t.Fatalf("bare serve with an invalid API_AUTH_DSN: exit %d, want 1: %s", code, out.String())
+		t.Fatalf("bare serve with an invalid CONSOLE_AUTH_DSN: exit %d, want 1: %s", code, out.String())
 	}
-	if !strings.Contains(out.String(), "API_AUTH_DSN") {
+	if !strings.Contains(out.String(), "CONSOLE_AUTH_DSN") {
 		t.Errorf("error must name the bad variable: %s", out.String())
 	}
 }
@@ -116,6 +116,23 @@ func TestServeRejectsRemovedMCPFlag(t *testing.T) {
 	var out bytes.Buffer
 	if code := run([]string{"serve", "-mcp"}, &out); code != 2 {
 		t.Fatalf("serve -mcp: exit %d, want 2 (unknown flag): %s", code, out.String())
+	}
+}
+
+// -api was renamed to -console; a leftover one in a unit or compose file
+// must name its replacement rather than read as an unknown flag.
+func TestRenamedAPIFlagNamesConsole(t *testing.T) {
+	withDB(t)
+	for _, args := range [][]string{
+		{"serve", "-api"}, {"serve", "-ingest", "--api"}, {"serve", "-api=true"}, {"keygen", "-api"},
+	} {
+		var out bytes.Buffer
+		if code := run(args, &out); code != 2 {
+			t.Errorf("%v: exit %d, want 2: %s", args, code, out.String())
+		}
+		if !strings.Contains(out.String(), "-api was renamed to -console") {
+			t.Errorf("%v: output %q, want it to name -console", args, out.String())
+		}
 	}
 }
 

@@ -1,5 +1,5 @@
-# Ingestion, the tracker script and — once API_AUTH_DSN is set in `.env` —
-# the API (MCP and REST) and the dashboards at /app/, all on :8080. See
+# Ingestion, the tracker script and — once CONSOLE_AUTH_DSN is set in `.env` —
+# the console (MCP, REST and the dashboards at /app/), all on :8080. See
 # docs/deployment.md.
 #
 # Once it is up, create a project and issue a key:

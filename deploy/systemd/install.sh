@@ -117,7 +117,7 @@ fi
 sed -e "s/__USER__/$SERVICE_USER/g" "$root/deploy/systemd/twillingate.service" \
   > /etc/systemd/system/twillingate.service
 # A split install runs one surface per instance: twillingate@ingest and
-# twillingate@api. The template is the main unit with the surface flag
+# twillingate@console. The template is the main unit with the surface flag
 # added, so the two can never drift apart, and it is re-rendered on every
 # upgrade like the main unit.
 sed -e 's|^Description=.*|& (%i surface)|' \
@@ -126,19 +126,32 @@ sed -e 's|^Description=.*|& (%i surface)|' \
 grep -qx 'ExecStart=/usr/local/bin/twillingate serve -%i' /etc/systemd/system/twillingate@.service \
   || die "twillingate.service has an unexpected ExecStart=; cannot render twillingate@.service"
 systemctl daemon-reload
+# The console surface was called api (serve -api) before v0.13: move a split
+# install's twillingate@api over to twillingate@console, which the upgrade
+# below starts if the old instance was running.
+start_console=0
+if systemctl is-enabled --quiet twillingate@api.service; then
+  if systemctl is-active --quiet twillingate@api.service; then start_console=1; fi
+  systemctl disable --now twillingate@api.service
+  systemctl enable twillingate@console.service
+  echo "Renamed twillingate@api to twillingate@console"
+fi
 if systemctl is-enabled --quiet twillingate@ingest.service \
-  || systemctl is-enabled --quiet twillingate@api.service; then
+  || systemctl is-enabled --quiet twillingate@console.service; then
   # Enabling the bare unit too would bind the same listeners at next boot.
-  echo "Split install (twillingate@ingest, twillingate@api): leaving twillingate.service disabled"
+  echo "Split install (twillingate@ingest, twillingate@console): leaving twillingate.service disabled"
 else
   systemctl enable twillingate.service
 fi
 
 if [ "$upgrade" -eq 1 ]; then
   # Restart only what was running: a stopped service stays stopped. The glob
-  # also catches the twillingate@ingest and twillingate@api instances.
+  # also catches the twillingate@ingest and twillingate@console instances.
   running="$(systemctl list-units --type=service --state=active --no-legend --plain 'twillingate*.service' \
     | awk '{print $1}')"
+  if [ "$start_console" -eq 1 ]; then
+    running="$running twillingate@console.service"
+  fi
   for unit in $running; do
     systemctl restart "$unit"
   done

@@ -13,7 +13,7 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
 )
 
-// timingLimit is API_QUERY_TIMEOUT's default: a system widget slower
+// timingLimit is CONSOLE_QUERY_TIMEOUT's default: a system widget slower
 // than this cold would fail to load on an install left at the default.
 const timingLimit = 10 * time.Second
 

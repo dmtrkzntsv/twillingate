@@ -116,7 +116,7 @@ function onThisOrigin(endpoint: string): string {
 // it, so when this origin serves login metadata the page logs in here, even
 // if the issuer names another host: a cross-origin fetch to that host would
 // fail. The server accepts this origin's /app/callback when it is the
-// resource origin or a redirect= host in API_AUTH_DSN. Without metadata
+// resource origin or a redirect= host in CONSOLE_AUTH_DSN. Without metadata
 // here (an oauth:// identity provider), the page follows the issuer.
 async function discover(): Promise<{ resource: ProtectedResource; meta: AuthServerMetadata } | undefined> {
   const resource = await fetchJSON<ProtectedResource>(METADATA_PATH)

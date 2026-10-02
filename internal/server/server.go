@@ -102,15 +102,15 @@ func New(cfg *config.Config, reg *manage.Registry, q Enqueuer, g geo.Provider, s
 }
 
 // Mount registers the ingest surface's routes on mux: its own when the
-// surface has a listener to itself, the shared one beside the API
+// surface has a listener to itself, the shared one beside the console
 // otherwise.
 func (s *Server) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("POST /ingest/events", s.handleEvents)
 	mux.HandleFunc("OPTIONS /ingest/events", s.handlePreflight)
-	// /api/events is where events went before the API surface took /api/.
+	// /api/events is where events went before the console took /api/.
 	// Native apps ship it compiled in and browsers keep cached SDKs posting
 	// there, so it stays an alias. On a shared listener these patterns are
-	// more specific than the API's /api/ prefix, so they never reach its auth.
+	// more specific than the console's /api/ prefix, so they never reach its auth.
 	mux.HandleFunc("POST /api/events", s.handleEvents)
 	mux.HandleFunc("OPTIONS /api/events", s.handlePreflight)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {

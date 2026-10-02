@@ -1,6 +1,6 @@
 import { expect, test, type Request, type Response } from '@playwright/test'
 
-// Matches web/e2e/serve.sh's API_AUTH_DSN (token://e2e-token?password=e2e-pass&...),
+// Matches web/e2e/serve.sh's CONSOLE_AUTH_DSN (token://e2e-token?password=e2e-pass&...),
 // the same token app.spec.ts uses for the REST API.
 const TOKEN = 'e2e-token'
 const ORIGIN = 'http://127.0.0.1:18080'

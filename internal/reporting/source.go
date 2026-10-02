@@ -237,7 +237,7 @@ func bindArgs(params []string, projectID int64, from, to string) []any {
 func refuseSQLErr(db *readsql.DB, err error) error {
 	if errors.Is(err, readsql.ErrTimeout) {
 		return store.Refuse(store.ErrInvalid,
-			"query exceeded API_QUERY_TIMEOUT (%s); narrow the range or group the query", db.Timeout())
+			"query exceeded CONSOLE_QUERY_TIMEOUT (%s); narrow the range or group the query", db.Timeout())
 	}
 	return store.Refuse(store.ErrInvalid, "%s", err)
 }

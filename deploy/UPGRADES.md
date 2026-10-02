@@ -360,7 +360,7 @@ that group to a new place, on this binary, joins its tabs up again.
 
 The Evidence site, the `twillingate-evidence` image, the `dashboards`
 subcommand and `docker-compose.evidence.yml` are gone; the dashboards at
-`/app/`, served by the API, replace them. The litestream files go with
+`/app/`, served by the console, replace them. The litestream files go with
 them. No schema changes.
 
 - **compose:** take `docker-compose.evidence.yml` out of `COMPOSE_FILE` in
@@ -380,9 +380,9 @@ them. No schema changes.
   compose service, to compare against or set up again.
 - **`DASHBOARDS_*`** variables are no longer read; delete them from
   `twillingate.env` or `.env` at leisure. A leftover one is ignored.
-- Open the dashboards at `/app/` on the API's host. That needs
-  `API_AUTH_DSN` set, which a reporting-only install may not have had: see
-  "The API endpoint" in `docs/deployment.md`.
+- Open the dashboards at `/app/` on the console's host. That needs
+  `CONSOLE_AUTH_DSN` set, which a reporting-only install may not have had:
+  see "The console" in `docs/deployment.md`.
 
 ### Upgrading to one retention pair (no migration)
 
@@ -454,3 +454,40 @@ What changes on the day:
   `restore.sh` would keep the previous replica on every run. Check with
   `sqlite3 :memory: 'select log(10)'` (expect `1.0`). The litestream 0.5
   image and Debian 12's and Alpine's `sqlite3` already qualify.
+
+### Upgrading to the console (no migration)
+
+The authenticated surface — MCP, REST, the login and `/app/` — is called
+the console, and every name that said "api" for it now says "console". URL
+paths do not change: `/ingest/events`, the `/api/events` alias, `/api/`,
+`/mcp`, `/oauth/*` and `/app/` stay where they are, so connected clients,
+saved tokens and ingest keys keep working. Before upgrading, rename in
+`twillingate.env` (compose: `.env`):
+
+| Before | After |
+| --- | --- |
+| `API_AUTH_DSN` | `CONSOLE_AUTH_DSN` |
+| `API_ADDR` | `CONSOLE_ADDR` |
+| `API_URL` | `CONSOLE_URL` |
+| `API_DB_PATH` | `CONSOLE_DB_PATH` |
+| `API_QUERY_TIMEOUT` | `CONSOLE_QUERY_TIMEOUT` |
+| `API_QUERY_MAX_ROWS` | `CONSOLE_QUERY_MAX_ROWS` |
+
+```sh
+sudo sed -i 's/^API_/CONSOLE_/' /etc/twillingate/twillingate.env
+```
+
+A leftover `API_*` name refuses the boot, naming its replacement, so a
+missed one shows up at once rather than silently turning the console off.
+
+What changes on the day:
+
+- `serve -api` is `serve -console` and `keygen -api` is `keygen -console`;
+  the old flags exit naming the new one. Update any compose `command:` or
+  script that passes them.
+- A split systemd install's `twillingate@api` becomes `twillingate@console`:
+  the installer disables the old instance, enables the new one and starts it
+  if the old one was running.
+- The boot log labels the listeners `surfaces=ingest,console` (or
+  `console`) instead of `ingest,api`, and the skip warning reads `console
+  disabled`; update any log alert matching the old text.

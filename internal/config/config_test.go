@@ -225,8 +225,8 @@ func TestLoadDoesNotRequireProjectsFile(t *testing.T) {
 
 func mcpEnv(over map[string]string) func(string) (string, bool) {
 	base := map[string]string{
-		"DATABASE_DSN": "sqlite:///tmp/x.db",
-		"API_AUTH_DSN": "token://ar_x",
+		"DATABASE_DSN":     "sqlite:///tmp/x.db",
+		"CONSOLE_AUTH_DSN": "token://ar_x",
 	}
 	for k, v := range over {
 		if v == "" {
@@ -238,75 +238,75 @@ func mcpEnv(over map[string]string) func(string) (string, bool) {
 	return func(k string) (string, bool) { v, ok := base[k]; return v, ok }
 }
 
-func TestValidateAPI(t *testing.T) {
+func TestValidateConsole(t *testing.T) {
 	cases := []struct {
 		name string
 		over map[string]string
 		ok   bool
 	}{
 		{"token ok", nil, true},
-		{"no dsn", map[string]string{"API_AUTH_DSN": ""}, false},
-		{"not a dsn", map[string]string{"API_AUTH_DSN": "token"}, false},
-		{"unknown scheme", map[string]string{"API_AUTH_DSN": "basic://x"}, false},
-		{"empty token", map[string]string{"API_AUTH_DSN": "token://"}, false},
+		{"no dsn", map[string]string{"CONSOLE_AUTH_DSN": ""}, false},
+		{"not a dsn", map[string]string{"CONSOLE_AUTH_DSN": "token"}, false},
+		{"unknown scheme", map[string]string{"CONSOLE_AUTH_DSN": "basic://x"}, false},
+		{"empty token", map[string]string{"CONSOLE_AUTH_DSN": "token://"}, false},
 		{"oauth ok", map[string]string{
-			"API_AUTH_DSN": "oauth://idp.example.com?resource=https://twillingate.example.com"}, true},
+			"CONSOLE_AUTH_DSN": "oauth://idp.example.com?resource=https://twillingate.example.com"}, true},
 		{"oauth resource from PUBLIC_URL", map[string]string{
-			"API_AUTH_DSN": "oauth://idp.example.com",
-			"PUBLIC_URL":   "https://twillingate.example.com"}, true},
+			"CONSOLE_AUTH_DSN": "oauth://idp.example.com",
+			"PUBLIC_URL":       "https://twillingate.example.com"}, true},
 		{"oauth no resource and no PUBLIC_URL", map[string]string{
-			"API_AUTH_DSN": "oauth://idp.example.com"}, false},
+			"CONSOLE_AUTH_DSN": "oauth://idp.example.com"}, false},
 		{"oauth empty issuer", map[string]string{
-			"API_AUTH_DSN": "oauth://?resource=https://twillingate.example.com"}, false},
+			"CONSOLE_AUTH_DSN": "oauth://?resource=https://twillingate.example.com"}, false},
 		{"cloudflare removed", map[string]string{
-			"API_AUTH_DSN": "cloudflare://team.cloudflareaccess.com?aud=aud123"}, false},
+			"CONSOLE_AUTH_DSN": "cloudflare://team.cloudflareaccess.com?aud=aud123"}, false},
 		{"token login ok", map[string]string{
-			"API_AUTH_DSN": "token://ar_x?password=pw&redirect=https://claude.ai/api/mcp/auth_callback&resource=https://mcp.example.com"}, true},
+			"CONSOLE_AUTH_DSN": "token://ar_x?password=pw&redirect=https://claude.ai/api/mcp/auth_callback&resource=https://mcp.example.com"}, true},
 		{"token login resource from PUBLIC_URL", map[string]string{
-			"API_AUTH_DSN": "token://ar_x?password=pw&redirect=https://claude.ai/api/mcp/auth_callback",
-			"PUBLIC_URL":   "https://mcp.example.com"}, true},
+			"CONSOLE_AUTH_DSN": "token://ar_x?password=pw&redirect=https://claude.ai/api/mcp/auth_callback",
+			"PUBLIC_URL":       "https://mcp.example.com"}, true},
 		{"token login one-character password", map[string]string{
-			"API_AUTH_DSN": "token://ar_x?password=a&redirect=http://localhost/callback&resource=https://mcp.example.com"}, true},
+			"CONSOLE_AUTH_DSN": "token://ar_x?password=a&redirect=http://localhost/callback&resource=https://mcp.example.com"}, true},
 		{"token login http loopback redirect", map[string]string{
-			"API_AUTH_DSN": "token://ar_x?password=pw&redirect=http://127.0.0.1/callback&resource=https://mcp.example.com"}, true},
+			"CONSOLE_AUTH_DSN": "token://ar_x?password=pw&redirect=http://127.0.0.1/callback&resource=https://mcp.example.com"}, true},
 		{"token login no resource and no PUBLIC_URL", map[string]string{
-			"API_AUTH_DSN": "token://ar_x?password=pw&redirect=https://claude.ai/cb"}, false},
+			"CONSOLE_AUTH_DSN": "token://ar_x?password=pw&redirect=https://claude.ai/cb"}, false},
 		{"token login no password", map[string]string{
-			"API_AUTH_DSN": "token://ar_x?redirect=https://claude.ai/cb&resource=https://mcp.example.com"}, false},
+			"CONSOLE_AUTH_DSN": "token://ar_x?redirect=https://claude.ai/cb&resource=https://mcp.example.com"}, false},
 		{"token login empty password", map[string]string{
-			"API_AUTH_DSN": "token://ar_x?password=&redirect=https://claude.ai/cb&resource=https://mcp.example.com"}, false},
+			"CONSOLE_AUTH_DSN": "token://ar_x?password=&redirect=https://claude.ai/cb&resource=https://mcp.example.com"}, false},
 		{"token login password only", map[string]string{
-			"API_AUTH_DSN": "token://ar_x?password=pw&resource=https://mcp.example.com"}, true},
+			"CONSOLE_AUTH_DSN": "token://ar_x?password=pw&resource=https://mcp.example.com"}, true},
 		{"token resource without password", map[string]string{
-			"API_AUTH_DSN": "token://ar_x?resource=https://mcp.example.com"}, false},
+			"CONSOLE_AUTH_DSN": "token://ar_x?resource=https://mcp.example.com"}, false},
 		{"token unknown parameter", map[string]string{
-			"API_AUTH_DSN": "token://ar_x?password=pw&redirects=https://claude.ai/cb&resource=https://mcp.example.com"}, false},
+			"CONSOLE_AUTH_DSN": "token://ar_x?password=pw&redirects=https://claude.ai/cb&resource=https://mcp.example.com"}, false},
 		{"token malformed query", map[string]string{
-			"API_AUTH_DSN": "token://ar_x?password=%zz"}, false},
+			"CONSOLE_AUTH_DSN": "token://ar_x?password=%zz"}, false},
 		{"token empty token with query", map[string]string{
-			"API_AUTH_DSN": "token://?password=pw&redirect=https://claude.ai/cb"}, false},
+			"CONSOLE_AUTH_DSN": "token://?password=pw&redirect=https://claude.ai/cb"}, false},
 		{"token redirect http on public host", map[string]string{
-			"API_AUTH_DSN": "token://ar_x?password=pw&redirect=http://claude.ai/cb&resource=https://mcp.example.com"}, false},
+			"CONSOLE_AUTH_DSN": "token://ar_x?password=pw&redirect=http://claude.ai/cb&resource=https://mcp.example.com"}, false},
 		{"token redirect relative", map[string]string{
-			"API_AUTH_DSN": "token://ar_x?password=pw&redirect=/callback&resource=https://mcp.example.com"}, false},
+			"CONSOLE_AUTH_DSN": "token://ar_x?password=pw&redirect=/callback&resource=https://mcp.example.com"}, false},
 		{"token redirect custom scheme", map[string]string{
-			"API_AUTH_DSN": "token://ar_x?password=pw&redirect=myapp://callback&resource=https://mcp.example.com"}, false},
+			"CONSOLE_AUTH_DSN": "token://ar_x?password=pw&redirect=myapp://callback&resource=https://mcp.example.com"}, false},
 		{"token redirect with fragment", map[string]string{
-			"API_AUTH_DSN": "token://ar_x?password=pw&redirect=https://claude.ai/cb%23frag&resource=https://mcp.example.com"}, false},
+			"CONSOLE_AUTH_DSN": "token://ar_x?password=pw&redirect=https://claude.ai/cb%23frag&resource=https://mcp.example.com"}, false},
 		{"token redirect unparseable", map[string]string{
-			"API_AUTH_DSN": "token://ar_x?password=pw&redirect=https://%25zz/cb&resource=https://mcp.example.com"}, false},
+			"CONSOLE_AUTH_DSN": "token://ar_x?password=pw&redirect=https://%25zz/cb&resource=https://mcp.example.com"}, false},
 		{"token redirect host", map[string]string{
-			"API_AUTH_DSN": "token://ar_x?password=pw&redirect=app.example.com&resource=https://mcp.example.com"}, true},
+			"CONSOLE_AUTH_DSN": "token://ar_x?password=pw&redirect=app.example.com&resource=https://mcp.example.com"}, true},
 		{"token redirect IPv6 loopback host", map[string]string{
-			"API_AUTH_DSN": "token://ar_x?password=pw&redirect=[::1]&resource=https://mcp.example.com"}, true},
+			"CONSOLE_AUTH_DSN": "token://ar_x?password=pw&redirect=[::1]&resource=https://mcp.example.com"}, true},
 		{"token redirect host with path", map[string]string{
-			"API_AUTH_DSN": "token://ar_x?password=pw&redirect=app.example.com/cb&resource=https://mcp.example.com"}, false},
+			"CONSOLE_AUTH_DSN": "token://ar_x?password=pw&redirect=app.example.com/cb&resource=https://mcp.example.com"}, false},
 		{"token redirect host with port", map[string]string{
-			"API_AUTH_DSN": "token://ar_x?password=pw&redirect=app.example.com:8443&resource=https://mcp.example.com"}, false},
+			"CONSOLE_AUTH_DSN": "token://ar_x?password=pw&redirect=app.example.com:8443&resource=https://mcp.example.com"}, false},
 		{"token redirect empty", map[string]string{
-			"API_AUTH_DSN": "token://ar_x?password=pw&redirect=&resource=https://mcp.example.com"}, false},
+			"CONSOLE_AUTH_DSN": "token://ar_x?password=pw&redirect=&resource=https://mcp.example.com"}, false},
 		{"token resource http on public host", map[string]string{
-			"API_AUTH_DSN": "token://ar_x?password=pw&redirect=https://claude.ai/cb&resource=http://mcp.example.com"}, false},
+			"CONSOLE_AUTH_DSN": "token://ar_x?password=pw&redirect=https://claude.ai/cb&resource=http://mcp.example.com"}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -314,9 +314,9 @@ func TestValidateAPI(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			err = cfg.ValidateAPI()
+			err = cfg.ValidateConsole()
 			if (err == nil) != tc.ok {
-				t.Fatalf("ValidateAPI = %v, want ok=%v", err, tc.ok)
+				t.Fatalf("ValidateConsole = %v, want ok=%v", err, tc.ok)
 			}
 		})
 	}
@@ -328,17 +328,17 @@ func TestMCPAuthDSNParsing(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if cfg.API.AuthMode != "token" || cfg.API.Token != "ar_x" {
-			t.Errorf("mode = %q token = %q", cfg.API.AuthMode, cfg.API.Token)
+		if cfg.Console.AuthMode != "token" || cfg.Console.Token != "ar_x" {
+			t.Errorf("mode = %q token = %q", cfg.Console.AuthMode, cfg.Console.Token)
 		}
 	})
 	t.Run("oauth issuer keeps path, resource explicit", func(t *testing.T) {
 		cfg, err := FromEnv(mcpEnv(map[string]string{
-			"API_AUTH_DSN": "oauth://idp.example.com/tenant1?resource=https://t.example.com&audience=aud9"}))
+			"CONSOLE_AUTH_DSN": "oauth://idp.example.com/tenant1?resource=https://t.example.com&audience=aud9"}))
 		if err != nil {
 			t.Fatal(err)
 		}
-		m := cfg.API
+		m := cfg.Console
 		if m.AuthMode != "oauth" || m.Issuer != "https://idp.example.com/tenant1" {
 			t.Errorf("mode = %q issuer = %q", m.AuthMode, m.Issuer)
 		}
@@ -348,12 +348,12 @@ func TestMCPAuthDSNParsing(t *testing.T) {
 	})
 	t.Run("oauth defaults resource to PUBLIC_URL and audience to resource", func(t *testing.T) {
 		cfg, err := FromEnv(mcpEnv(map[string]string{
-			"API_AUTH_DSN": "oauth://idp.example.com",
-			"PUBLIC_URL":   "https://twillingate.example.com"}))
+			"CONSOLE_AUTH_DSN": "oauth://idp.example.com",
+			"PUBLIC_URL":       "https://twillingate.example.com"}))
 		if err != nil {
 			t.Fatal(err)
 		}
-		m := cfg.API
+		m := cfg.Console
 		if m.ResourceURL != "https://twillingate.example.com" {
 			t.Errorf("resource = %q", m.ResourceURL)
 		}
@@ -363,21 +363,21 @@ func TestMCPAuthDSNParsing(t *testing.T) {
 	})
 	t.Run("oauth+insecure issuer is http for local IdPs", func(t *testing.T) {
 		cfg, err := FromEnv(mcpEnv(map[string]string{
-			"API_AUTH_DSN": "oauth+insecure://127.0.0.1:9999?resource=https://t.example.com"}))
+			"CONSOLE_AUTH_DSN": "oauth+insecure://127.0.0.1:9999?resource=https://t.example.com"}))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if cfg.API.AuthMode != "oauth" || cfg.API.Issuer != "http://127.0.0.1:9999" {
-			t.Errorf("mode = %q issuer = %q", cfg.API.AuthMode, cfg.API.Issuer)
+		if cfg.Console.AuthMode != "oauth" || cfg.Console.Issuer != "http://127.0.0.1:9999" {
+			t.Errorf("mode = %q issuer = %q", cfg.Console.AuthMode, cfg.Console.Issuer)
 		}
 	})
-	t.Run("malformed DSN does not fail FromEnv, only ValidateAPI", func(t *testing.T) {
-		cfg, err := FromEnv(mcpEnv(map[string]string{"API_AUTH_DSN": "basic://x"}))
+	t.Run("malformed DSN does not fail FromEnv, only ValidateConsole", func(t *testing.T) {
+		cfg, err := FromEnv(mcpEnv(map[string]string{"CONSOLE_AUTH_DSN": "basic://x"}))
 		if err != nil {
 			t.Fatalf("FromEnv must stay lenient for bare `serve`: %v", err)
 		}
-		if err := cfg.ValidateAPI(); err == nil {
-			t.Error("ValidateAPI accepted an unknown scheme")
+		if err := cfg.ValidateConsole(); err == nil {
+			t.Error("ValidateConsole accepted an unknown scheme")
 		}
 	})
 }
@@ -387,39 +387,39 @@ func TestMCPDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.API.Addr != cfg.IngestAddr {
-		t.Errorf("Addr = %q, want Listen %q", cfg.API.Addr, cfg.IngestAddr)
+	if cfg.Console.Addr != cfg.IngestAddr {
+		t.Errorf("Addr = %q, want Listen %q", cfg.Console.Addr, cfg.IngestAddr)
 	}
-	if cfg.API.DBPath != "/tmp/x.db" {
-		t.Errorf("DBPath = %q", cfg.API.DBPath)
+	if cfg.Console.DBPath != "/tmp/x.db" {
+		t.Errorf("DBPath = %q", cfg.Console.DBPath)
 	}
-	if cfg.API.QueryTimeout != 10*time.Second || cfg.API.QueryMaxRows != 1000 {
-		t.Errorf("guards = %v %d", cfg.API.QueryTimeout, cfg.API.QueryMaxRows)
+	if cfg.Console.QueryTimeout != 10*time.Second || cfg.Console.QueryMaxRows != 1000 {
+		t.Errorf("guards = %v %d", cfg.Console.QueryTimeout, cfg.Console.QueryMaxRows)
 	}
 }
 
 func TestMCPAudienceDefaultsToResource(t *testing.T) {
 	cfg, err := FromEnv(mcpEnv(map[string]string{
-		"API_AUTH_DSN": "oauth://idp.example.com?resource=https://twillingate.example.com"}))
+		"CONSOLE_AUTH_DSN": "oauth://idp.example.com?resource=https://twillingate.example.com"}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.API.Audience != "https://twillingate.example.com" {
-		t.Errorf("Audience = %q", cfg.API.Audience)
+	if cfg.Console.Audience != "https://twillingate.example.com" {
+		t.Errorf("Audience = %q", cfg.Console.Audience)
 	}
 }
 
 func TestTokenLoginDSNParsing(t *testing.T) {
 	cfg, err := FromEnv(mcpEnv(map[string]string{
-		"API_AUTH_DSN": "token://ar_x?redirect=https://claude.ai/api/mcp/auth_callback&password=a%2Bb%26c&redirect=App.Example.com",
-		"PUBLIC_URL":   "https://mcp.example.com"}))
+		"CONSOLE_AUTH_DSN": "token://ar_x?redirect=https://claude.ai/api/mcp/auth_callback&password=a%2Bb%26c&redirect=App.Example.com",
+		"PUBLIC_URL":       "https://mcp.example.com"}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := cfg.ValidateAPI(); err != nil {
+	if err := cfg.ValidateConsole(); err != nil {
 		t.Fatal(err)
 	}
-	m := cfg.API
+	m := cfg.Console
 	if m.AuthMode != "token" || m.Token != "ar_x" {
 		t.Errorf("mode = %q token = %q; the query must not leak into the token", m.AuthMode, m.Token)
 	}
@@ -439,13 +439,13 @@ func TestTokenLoginDSNParsing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(plain.API.RedirectHosts) != 0 || plain.API.Password != "" || plain.API.ResourceURL != "" {
-		t.Errorf("plain token:// grew login settings: %+v", plain.API)
+	if len(plain.Console.RedirectHosts) != 0 || plain.Console.Password != "" || plain.Console.ResourceURL != "" {
+		t.Errorf("plain token:// grew login settings: %+v", plain.Console)
 	}
-	if !m.LoginEnabled() || plain.API.LoginEnabled() {
-		t.Errorf("LoginEnabled: with password %v, plain %v; want true, false", m.LoginEnabled(), plain.API.LoginEnabled())
+	if !m.LoginEnabled() || plain.Console.LoginEnabled() {
+		t.Errorf("LoginEnabled: with password %v, plain %v; want true, false", m.LoginEnabled(), plain.Console.LoginEnabled())
 	}
-	oauth := APIConfig{AuthMode: "oauth", Password: "ignored"}
+	oauth := ConsoleConfig{AuthMode: "oauth", Password: "ignored"}
 	if oauth.LoginEnabled() {
 		t.Error("LoginEnabled true outside token mode")
 	}
@@ -453,7 +453,13 @@ func TestTokenLoginDSNParsing(t *testing.T) {
 
 func TestRenamedVariablesRefuse(t *testing.T) {
 	for old, repl := range map[string]string{
-		"LISTEN_ADDR": "INGEST_ADDR",
+		"LISTEN_ADDR":        "INGEST_ADDR",
+		"API_ADDR":           "CONSOLE_ADDR",
+		"API_URL":            "CONSOLE_URL",
+		"API_AUTH_DSN":       "CONSOLE_AUTH_DSN",
+		"API_DB_PATH":        "CONSOLE_DB_PATH",
+		"API_QUERY_TIMEOUT":  "CONSOLE_QUERY_TIMEOUT",
+		"API_QUERY_MAX_ROWS": "CONSOLE_QUERY_MAX_ROWS",
 	} {
 		env := map[string]string{"DATABASE_DSN": "sqlite:///tmp/x.db", old: "x"}
 		_, err := FromEnv(func(k string) (string, bool) { v, ok := env[k]; return v, ok })
@@ -464,18 +470,18 @@ func TestRenamedVariablesRefuse(t *testing.T) {
 	}
 }
 
-func TestAPIDefaults(t *testing.T) {
+func TestConsoleDefaults(t *testing.T) {
 	env := map[string]string{"DATABASE_DSN": "sqlite:///tmp/x.db", "INGEST_ADDR": "127.0.0.1:9"}
 	c, err := FromEnv(func(k string) (string, bool) { v, ok := env[k]; return v, ok })
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.IngestAddr != "127.0.0.1:9" || c.API.Addr != "127.0.0.1:9" || c.API.DBPath != "/tmp/x.db" ||
-		c.API.QueryTimeout != 10*time.Second || c.API.QueryMaxRows != 1000 {
-		t.Errorf("defaults = %+v / %+v", c.IngestAddr, c.API)
+	if c.IngestAddr != "127.0.0.1:9" || c.Console.Addr != "127.0.0.1:9" || c.Console.DBPath != "/tmp/x.db" ||
+		c.Console.QueryTimeout != 10*time.Second || c.Console.QueryMaxRows != 1000 {
+		t.Errorf("defaults = %+v / %+v", c.IngestAddr, c.Console)
 	}
-	if err := c.ValidateAPI(); err == nil || !strings.Contains(err.Error(), "API_AUTH_DSN") {
-		t.Errorf("ValidateAPI without DSN = %v", err)
+	if err := c.ValidateConsole(); err == nil || !strings.Contains(err.Error(), "CONSOLE_AUTH_DSN") {
+		t.Errorf("ValidateConsole without DSN = %v", err)
 	}
 }
 
@@ -486,15 +492,15 @@ func TestResourceIsTheAPIOrigin(t *testing.T) {
 		if err != nil {
 			return nil, err
 		}
-		return c, c.ValidateAPI()
+		return c, c.ValidateConsole()
 	}
-	c, err := load(map[string]string{"PUBLIC_URL": "https://t.example.com/", "API_AUTH_DSN": "token://ar_x?password=pw"})
-	if err != nil || c.API.ResourceURL != "https://t.example.com" {
-		t.Errorf("token login default resource = %q, %v", c.API.ResourceURL, err)
+	c, err := load(map[string]string{"PUBLIC_URL": "https://t.example.com/", "CONSOLE_AUTH_DSN": "token://ar_x?password=pw"})
+	if err != nil || c.Console.ResourceURL != "https://t.example.com" {
+		t.Errorf("token login default resource = %q, %v", c.Console.ResourceURL, err)
 	}
-	c, err = load(map[string]string{"PUBLIC_URL": "https://t.example.com", "API_AUTH_DSN": "oauth://idp.example.com"})
-	if err != nil || c.API.ResourceURL != "https://t.example.com" || c.API.Audience != "https://t.example.com" {
-		t.Errorf("oauth default resource/audience = %q/%q, %v", c.API.ResourceURL, c.API.Audience, err)
+	c, err = load(map[string]string{"PUBLIC_URL": "https://t.example.com", "CONSOLE_AUTH_DSN": "oauth://idp.example.com"})
+	if err != nil || c.Console.ResourceURL != "https://t.example.com" || c.Console.Audience != "https://t.example.com" {
+		t.Errorf("oauth default resource/audience = %q/%q, %v", c.Console.ResourceURL, c.Console.Audience, err)
 	}
 	for _, dsn := range []string{
 		"token://ar_x?password=pw&resource=https://api.example.com/mcp",
@@ -503,30 +509,30 @@ func TestResourceIsTheAPIOrigin(t *testing.T) {
 		"token://ar_x?password=pw&resource=https://user@api.example.com",
 		"oauth://idp.example.com?resource=api.example.com",
 	} {
-		if _, err := load(map[string]string{"API_AUTH_DSN": dsn}); err == nil || !strings.Contains(err.Error(), "origin") {
+		if _, err := load(map[string]string{"CONSOLE_AUTH_DSN": dsn}); err == nil || !strings.Contains(err.Error(), "origin") {
 			t.Errorf("%s: err = %v, want an origin-only refusal", dsn, err)
 		}
 	}
 	for _, dsn := range []string{"token://ar_x?password=pw", "oauth://idp.example.com"} {
-		if _, err := load(map[string]string{"PUBLIC_URL": "https://t.example.com/analytics", "API_AUTH_DSN": dsn}); err == nil || !strings.Contains(err.Error(), "origin") {
+		if _, err := load(map[string]string{"PUBLIC_URL": "https://t.example.com/analytics", "CONSOLE_AUTH_DSN": dsn}); err == nil || !strings.Contains(err.Error(), "origin") {
 			t.Errorf("%s with a PUBLIC_URL path: err = %v, want an origin-only refusal", dsn, err)
 		}
 	}
-	if c, err := load(map[string]string{"API_AUTH_DSN": "token://ar_x?password=pw&resource=https://api.example.com/"}); err != nil || c.API.ResourceURL != "https://api.example.com" {
-		t.Errorf("trailing slash origin = %q, %v", c.API.ResourceURL, err)
+	if c, err := load(map[string]string{"CONSOLE_AUTH_DSN": "token://ar_x?password=pw&resource=https://api.example.com/"}); err != nil || c.Console.ResourceURL != "https://api.example.com" {
+		t.Errorf("trailing slash origin = %q, %v", c.Console.ResourceURL, err)
 	}
 	// The resource must name the same origin a client actually connects
 	// to: uppercase host and an explicit default port are just spellings
 	// of the same origin, not a different one.
-	if c, err := load(map[string]string{"API_AUTH_DSN": "token://ar_x?password=pw&resource=https://API.example.com:443"}); err != nil || c.API.ResourceURL != "https://api.example.com" {
-		t.Errorf("uppercase host + default port origin = %q, %v, want https://api.example.com", c.API.ResourceURL, err)
+	if c, err := load(map[string]string{"CONSOLE_AUTH_DSN": "token://ar_x?password=pw&resource=https://API.example.com:443"}); err != nil || c.Console.ResourceURL != "https://api.example.com" {
+		t.Errorf("uppercase host + default port origin = %q, %v, want https://api.example.com", c.Console.ResourceURL, err)
 	}
-	if c, err := load(map[string]string{"API_AUTH_DSN": "oauth://idp.example.com?resource=http://api.example.com:80"}); err != nil || c.API.ResourceURL != "http://api.example.com" {
-		t.Errorf("http default port origin = %q, %v, want http://api.example.com", c.API.ResourceURL, err)
+	if c, err := load(map[string]string{"CONSOLE_AUTH_DSN": "oauth://idp.example.com?resource=http://api.example.com:80"}); err != nil || c.Console.ResourceURL != "http://api.example.com" {
+		t.Errorf("http default port origin = %q, %v, want http://api.example.com", c.Console.ResourceURL, err)
 	}
 	// A non-default port must survive: it is part of the origin.
-	if c, err := load(map[string]string{"API_AUTH_DSN": "token://ar_x?password=pw&resource=https://api.example.com:8443"}); err != nil || c.API.ResourceURL != "https://api.example.com:8443" {
-		t.Errorf("non-default port origin = %q, %v, want https://api.example.com:8443", c.API.ResourceURL, err)
+	if c, err := load(map[string]string{"CONSOLE_AUTH_DSN": "token://ar_x?password=pw&resource=https://api.example.com:8443"}); err != nil || c.Console.ResourceURL != "https://api.example.com:8443" {
+		t.Errorf("non-default port origin = %q, %v, want https://api.example.com:8443", c.Console.ResourceURL, err)
 	}
 }
 
@@ -536,61 +542,61 @@ func TestAudienceGivenOnlyWhenExplicit(t *testing.T) {
 		"oauth://idp.example.com?resource=https://t.example.com&audience=https://t.example.com": true,
 		"token://ar_x?password=pw&resource=https://t.example.com":                               false,
 	} {
-		cfg, err := FromEnv(mcpEnv(map[string]string{"API_AUTH_DSN": dsn}))
-		if err != nil || cfg.ValidateAPI() != nil {
-			t.Fatalf("%s: %v %v", dsn, err, cfg.ValidateAPI())
+		cfg, err := FromEnv(mcpEnv(map[string]string{"CONSOLE_AUTH_DSN": dsn}))
+		if err != nil || cfg.ValidateConsole() != nil {
+			t.Fatalf("%s: %v %v", dsn, err, cfg.ValidateConsole())
 		}
-		if got := cfg.API.AudienceGiven(); got != want {
+		if got := cfg.Console.AudienceGiven(); got != want {
 			t.Errorf("%s: AudienceGiven = %v, want %v", dsn, got, want)
 		}
 	}
 }
 
-// TestAPIURLIsTheResourceDefault: API_URL names the API's own public
+// TestConsoleURLIsTheResourceDefault: CONSOLE_URL names the console's own public
 // address; the login's resource (so its issuer and the dashboards'
 // callback) follows it, falling back to PUBLIC_URL, and resource= still
 // wins when given.
-func TestAPIURLIsTheResourceDefault(t *testing.T) {
+func TestConsoleURLIsTheResourceDefault(t *testing.T) {
 	load := func(env map[string]string) (*Config, error) {
 		env["DATABASE_DSN"] = "sqlite:///tmp/x.db"
 		c, err := FromEnv(func(k string) (string, bool) { v, ok := env[k]; return v, ok })
 		if err != nil {
 			return nil, err
 		}
-		return c, c.ValidateAPI()
+		return c, c.ValidateConsole()
 	}
 	cases := []struct {
 		name string
 		env  map[string]string
 		want string
 	}{
-		{"API_URL beside an ingest PUBLIC_URL", map[string]string{
-			"PUBLIC_URL": "https://t.example.com", "API_URL": "https://tapi.example.com/",
-			"API_AUTH_DSN": "token://ar_x?password=pw"}, "https://tapi.example.com"},
-		{"API_URL defaults to PUBLIC_URL", map[string]string{
-			"PUBLIC_URL": "https://t.example.com", "API_AUTH_DSN": "token://ar_x?password=pw"}, "https://t.example.com"},
-		{"API_URL alone", map[string]string{
-			"API_URL": "https://tapi.example.com", "API_AUTH_DSN": "oauth://idp.example.com"}, "https://tapi.example.com"},
-		{"resource= wins over API_URL", map[string]string{
-			"API_URL": "https://tapi.example.com", "API_AUTH_DSN": "token://ar_x?password=pw&resource=https://mcp.example.com"}, "https://mcp.example.com"},
+		{"CONSOLE_URL beside an ingest PUBLIC_URL", map[string]string{
+			"PUBLIC_URL": "https://t.example.com", "CONSOLE_URL": "https://tapi.example.com/",
+			"CONSOLE_AUTH_DSN": "token://ar_x?password=pw"}, "https://tapi.example.com"},
+		{"CONSOLE_URL defaults to PUBLIC_URL", map[string]string{
+			"PUBLIC_URL": "https://t.example.com", "CONSOLE_AUTH_DSN": "token://ar_x?password=pw"}, "https://t.example.com"},
+		{"CONSOLE_URL alone", map[string]string{
+			"CONSOLE_URL": "https://tapi.example.com", "CONSOLE_AUTH_DSN": "oauth://idp.example.com"}, "https://tapi.example.com"},
+		{"resource= wins over CONSOLE_URL", map[string]string{
+			"CONSOLE_URL": "https://tapi.example.com", "CONSOLE_AUTH_DSN": "token://ar_x?password=pw&resource=https://mcp.example.com"}, "https://mcp.example.com"},
 	}
 	for _, tc := range cases {
 		c, err := load(tc.env)
-		if err != nil || c.API.ResourceURL != tc.want {
-			t.Errorf("%s: resource = %q, %v; want %q", tc.name, c.API.ResourceURL, err, tc.want)
+		if err != nil || c.Console.ResourceURL != tc.want {
+			t.Errorf("%s: resource = %q, %v; want %q", tc.name, c.Console.ResourceURL, err, tc.want)
 		}
 	}
-	if c, _ := load(map[string]string{"PUBLIC_URL": "https://t.example.com"}); c.API.URL != "https://t.example.com" {
-		t.Errorf("API_URL default = %q, want PUBLIC_URL", c.API.URL)
+	if c, _ := load(map[string]string{"PUBLIC_URL": "https://t.example.com"}); c.Console.URL != "https://t.example.com" {
+		t.Errorf("CONSOLE_URL default = %q, want PUBLIC_URL", c.Console.URL)
 	}
 
 	// A bad value names the variable it came from.
-	if _, err := load(map[string]string{"API_URL": "https://tapi.example.com/api",
-		"API_AUTH_DSN": "token://ar_x?password=pw"}); err == nil || !strings.Contains(err.Error(), "API_URL=") {
-		t.Errorf("API_URL with a path: %v, want a refusal naming API_URL", err)
+	if _, err := load(map[string]string{"CONSOLE_URL": "https://tapi.example.com/api",
+		"CONSOLE_AUTH_DSN": "token://ar_x?password=pw"}); err == nil || !strings.Contains(err.Error(), "CONSOLE_URL=") {
+		t.Errorf("CONSOLE_URL with a path: %v, want a refusal naming CONSOLE_URL", err)
 	}
 	if _, err := load(map[string]string{"PUBLIC_URL": "https://t.example.com/site",
-		"API_AUTH_DSN": "token://ar_x?password=pw"}); err == nil || !strings.Contains(err.Error(), "PUBLIC_URL (API_URL's default)") {
-		t.Errorf("PUBLIC_URL with a path: %v, want a refusal naming PUBLIC_URL as API_URL's default", err)
+		"CONSOLE_AUTH_DSN": "token://ar_x?password=pw"}); err == nil || !strings.Contains(err.Error(), "PUBLIC_URL (CONSOLE_URL's default)") {
+		t.Errorf("PUBLIC_URL with a path: %v, want a refusal naming PUBLIC_URL as CONSOLE_URL's default", err)
 	}
 }
