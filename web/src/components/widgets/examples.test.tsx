@@ -1,4 +1,5 @@
-import { render } from '@testing-library/react'
+import { Suspense } from 'react'
+import { render, waitFor } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { toRecords } from '@/lib/records'
 import { widgets } from './index'
@@ -74,15 +75,18 @@ describe('examples', () => {
     }
   })
 
-  it.each(entries)('%s: every example renders', (_name, module) => {
+  it.each(entries)('%s: every example renders', async (_name, module) => {
     const Component = module.default
     for (const example of module.examples) {
+      // A lazy component renders nothing until its code arrives.
       const { container, unmount } = render(
         <div style={{ width: 600, height: 400 }}>
-          <Component data={example.data} props={example.props} />
+          <Suspense fallback={null}>
+            <Component data={example.data} props={example.props} />
+          </Suspense>
         </div>
       )
-      expect(container.firstElementChild?.childElementCount, example.title).toBeGreaterThan(0)
+      await waitFor(() => expect(container.firstElementChild?.childElementCount, example.title).toBeGreaterThan(0))
       unmount()
     }
   })

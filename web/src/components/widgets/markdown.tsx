@@ -1,5 +1,5 @@
-import ReactMarkdown from 'react-markdown'
-import type { Contract, Example, MarkdownData, WidgetProps } from './types'
+import { lazy } from 'react'
+import type { Contract, Example } from './types'
 
 export const contract: Contract = {
   description: 'Free-form text: a note, a caveat, instructions for reading the dashboard.',
@@ -21,14 +21,5 @@ export const examples: Example[] = [
   },
 ]
 
-export default function Markdown({ data }: WidgetProps) {
-  const md = data as MarkdownData
-  if (!md.markdown || md.markdown.trim() === '') return null
-
-  return (
-    <div className="prose-widget h-full overflow-auto p-2 text-sm">
-      {/* No rehype-raw: any raw HTML in the text is neutralized, never rendered as an element. */}
-      <ReactMarkdown>{md.markdown}</ReactMarkdown>
-    </div>
-  )
-}
+// react-markdown and micromark load with the first markdown widget on screen.
+export default lazy(() => import('./lazy/markdown'))

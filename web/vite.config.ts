@@ -16,9 +16,11 @@ export default defineConfig({
     outDir: '../internal/reporting/ui',
     emptyOutDir: true,
     assetsDir: 'assets',
-    // One bundle, embedded in the binary and cached by the service worker:
-    // Recharts, the map and Markdown make it ~1.3 MB (~400 kB gzipped), all
-    // of which the dashboard page renders anyway.
+    // One main bundle, embedded in the binary and cached by the service
+    // worker: Recharts makes it ~1.2 MB (~360 kB gzipped), and every
+    // dashboard renders it (the stat sparkline). The map and markdown
+    // widgets are their own chunks (widgets/lazy/), fetched with the first
+    // one on screen. The limit is for the API docs bundle below.
     chunkSizeWarningLimit: 1600,
     // Two pages: the dashboards, and the API docs Go serves at /api/docs
     // (Swagger UI, its own ~1.4 MB bundle the dashboards never load).

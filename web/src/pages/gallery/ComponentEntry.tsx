@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { Suspense, useEffect, useRef, useState } from 'react'
 import { CheckIcon, ChevronDownIcon, CopyIcon, TriangleAlertIcon } from 'lucide-react'
 import LayoutGrid from '@/components/LayoutGrid'
 import WidgetFrame from '@/components/WidgetFrame'
+import WidgetSkeleton from '@/components/WidgetSkeleton'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
@@ -140,7 +141,9 @@ export default function ComponentEntry({ name, module }: { name: string; module:
                     decision 4), with the copy row below taking what's left. */}
                 <div className="min-h-0 shrink-0" style={{ height: rowsPx(contract.defaultHeight) }}>
                   <WidgetFrame title={example.title}>
-                    <Component data={example.data} props={example.props} />
+                    <Suspense fallback={<WidgetSkeleton widget={{ component: name, props: example.props }} />}>
+                      <Component data={example.data} props={example.props} />
+                    </Suspense>
                   </WidgetFrame>
                 </div>
                 {/* Below sm, a 3-wide card (see lib/grid.ts's span()) is
