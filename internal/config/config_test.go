@@ -35,8 +35,7 @@ func TestDefaultsApplied(t *testing.T) {
 	if c.Buffer.FlushMaxEvents != 1000 || c.Buffer.FlushInterval != 5*time.Second || c.Buffer.Capacity != 10000 {
 		t.Errorf("Buffer = %+v", c.Buffer)
 	}
-	if c.Retention.Views.RawDays != 30 || c.Retention.Product.RawDays != 30 ||
-		c.Retention.Views.AggregateDays != 365 || c.Retention.Product.AggregateDays != 365 {
+	if c.Retention.Events.RawDays != 30 || c.Retention.Events.AggregateDays != 365 {
 		t.Errorf("Retention = %+v", c.Retention)
 	}
 	if c.Retention.ArchivedDays != 30 {
@@ -52,22 +51,20 @@ func TestDefaultsApplied(t *testing.T) {
 
 func TestEnvOverrides(t *testing.T) {
 	c, err := load(t, map[string]string{
-		"DATABASE_DSN":                     "sqlite:///tmp/a.db",
-		"INGEST_ADDR":                      "0.0.0.0:9999",
-		"GEO_DSN":                          "none://",
-		"LOG_LEVEL":                        "debug",
-		"LOG_FORMAT":                       "text",
-		"LOG_FILE":                         "/tmp/a.log",
-		"BUFFER_FLUSH_MAX_EVENTS":          "5",
-		"BUFFER_FLUSH_INTERVAL":            "250ms",
-		"BUFFER_CAPACITY":                  "42",
-		"RETENTION_VIEWS_RAW_DAYS":         "3",
-		"RETENTION_VIEWS_AGGREGATE_DAYS":   "30",
-		"RETENTION_PRODUCT_RAW_DAYS":       "10",
-		"RETENTION_PRODUCT_AGGREGATE_DAYS": "60",
-		"RETENTION_ARCHIVED_DAYS":          "7",
-		"REPORTING_CACHE_SECONDS":          "120",
-		"REPORTING_REFRESH_SECONDS":        "30",
+		"DATABASE_DSN":                    "sqlite:///tmp/a.db",
+		"INGEST_ADDR":                     "0.0.0.0:9999",
+		"GEO_DSN":                         "none://",
+		"LOG_LEVEL":                       "debug",
+		"LOG_FORMAT":                      "text",
+		"LOG_FILE":                        "/tmp/a.log",
+		"BUFFER_FLUSH_MAX_EVENTS":         "5",
+		"BUFFER_FLUSH_INTERVAL":           "250ms",
+		"BUFFER_CAPACITY":                 "42",
+		"RETENTION_EVENTS_RAW_DAYS":       "3",
+		"RETENTION_EVENTS_AGGREGATE_DAYS": "60",
+		"RETENTION_ARCHIVED_DAYS":         "7",
+		"REPORTING_CACHE_SECONDS":         "120",
+		"REPORTING_REFRESH_SECONDS":       "30",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -81,8 +78,7 @@ func TestEnvOverrides(t *testing.T) {
 	if c.Buffer.FlushMaxEvents != 5 || c.Buffer.FlushInterval != 250*time.Millisecond || c.Buffer.Capacity != 42 {
 		t.Errorf("Buffer = %+v", c.Buffer)
 	}
-	if c.Retention.Views.RawDays != 3 || c.Retention.Views.AggregateDays != 30 ||
-		c.Retention.Product.RawDays != 10 || c.Retention.Product.AggregateDays != 60 {
+	if c.Retention.Events.RawDays != 3 || c.Retention.Events.AggregateDays != 60 {
 		t.Errorf("Retention = %+v", c.Retention)
 	}
 	if c.Retention.ArchivedDays != 7 {
@@ -104,7 +100,7 @@ func TestValidationErrors(t *testing.T) {
 	cases := map[string]map[string]string{
 		"no database":              {"DATABASE_DSN": ""},
 		"bad geo scheme":           base(map[string]string{"GEO_DSN": "???"}),
-		"negative raw_days":        base(map[string]string{"RETENTION_VIEWS_RAW_DAYS": "-1"}),
+		"negative raw_days":        base(map[string]string{"RETENTION_EVENTS_RAW_DAYS": "-1"}),
 		"negative archived_days":   base(map[string]string{"RETENTION_ARCHIVED_DAYS": "-1"}),
 		"bad integer":              base(map[string]string{"BUFFER_CAPACITY": "many"}),
 		"invalid duration":         base(map[string]string{"BUFFER_FLUSH_INTERVAL": "fast"}),
@@ -161,38 +157,54 @@ func mapLookup(vars map[string]string) func(string) (string, bool) {
 	return func(k string) (string, bool) { v, ok := vars[k]; return v, ok }
 }
 
-func TestViewsRetentionDefaultsAndMaxEventAge(t *testing.T) {
+// load is package config's own FromEnv wrapper (above); configtest cannot be
+// imported here without an import cycle (it imports this package).
+func TestEventsRetentionDefaultsAndMaxEventAge(t *testing.T) {
 	c, err := load(t, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Retention.Views.RawDays != 30 || c.Retention.Views.AggregateDays != 365 {
-		t.Fatalf("views retention = %+v", c.Retention.Views)
+	if c.Retention.Events.RawDays != 30 || c.Retention.Events.AggregateDays != 365 {
+		t.Fatalf("events retention = %+v, want 30/365", c.Retention.Events)
 	}
-	if want := 30 * 24 * time.Hour; c.MaxEventAge() != want {
-		t.Errorf("MaxEventAge() = %v, want %v", c.MaxEventAge(), want)
+	if got := c.MaxEventAge(); got != 30*24*time.Hour {
+		t.Fatalf("MaxEventAge = %v", got)
 	}
 }
 
-func TestViewsRetentionFromEnv(t *testing.T) {
+func TestEventsRetentionFromEnv(t *testing.T) {
 	c, err := load(t, map[string]string{
-		"RETENTION_VIEWS_RAW_DAYS":       "14",
-		"RETENTION_VIEWS_AGGREGATE_DAYS": "90",
-	})
+		"RETENTION_EVENTS_RAW_DAYS": "14", "RETENTION_EVENTS_AGGREGATE_DAYS": "90"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Retention.Views.RawDays != 14 || c.Retention.Views.AggregateDays != 90 {
-		t.Errorf("views retention = %+v", c.Retention.Views)
+	if c.Retention.Events.RawDays != 14 || c.Retention.Events.AggregateDays != 90 {
+		t.Fatalf("events retention = %+v", c.Retention.Events)
 	}
-	if want := 14 * 24 * time.Hour; c.MaxEventAge() != want {
-		t.Errorf("MaxEventAge() = %v, want %v", c.MaxEventAge(), want)
+	if got := c.MaxEventAge(); got != 14*24*time.Hour {
+		t.Fatalf("MaxEventAge = %v, want 14 days", got)
 	}
 }
 
-func TestRejectsNegativeViewsRetention(t *testing.T) {
-	if _, err := load(t, map[string]string{"RETENTION_VIEWS_RAW_DAYS": "-1"}); err == nil {
-		t.Fatal("want error for negative views retention")
+func TestRejectsNegativeEventsRetention(t *testing.T) {
+	for _, k := range []string{"RETENTION_EVENTS_RAW_DAYS", "RETENTION_EVENTS_AGGREGATE_DAYS"} {
+		if _, err := load(t, map[string]string{k: "-1"}); err == nil {
+			t.Errorf("%s=-1 accepted", k)
+		}
+	}
+}
+
+// The per-family names are gone, with no refusal: a leftover one is ignored.
+func TestOldRetentionNamesHaveNoEffect(t *testing.T) {
+	c, err := load(t, map[string]string{
+		"RETENTION_VIEWS_RAW_DAYS": "3", "RETENTION_VIEWS_AGGREGATE_DAYS": "4",
+		"RETENTION_PRODUCT_RAW_DAYS": "5", "RETENTION_PRODUCT_AGGREGATE_DAYS": "6",
+		"RETENTION_WEB_RAW_DAYS": "7", "RETENTION_APP_AGGREGATE_DAYS": "8"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Retention.Events.RawDays != 30 || c.Retention.Events.AggregateDays != 365 {
+		t.Fatalf("old names changed retention: %+v", c.Retention.Events)
 	}
 }
 
@@ -441,11 +453,7 @@ func TestTokenLoginDSNParsing(t *testing.T) {
 
 func TestRenamedVariablesRefuse(t *testing.T) {
 	for old, repl := range map[string]string{
-		"LISTEN_ADDR":                  "INGEST_ADDR",
-		"RETENTION_WEB_RAW_DAYS":       "RETENTION_VIEWS_RAW_DAYS",
-		"RETENTION_WEB_AGGREGATE_DAYS": "RETENTION_VIEWS_AGGREGATE_DAYS",
-		"RETENTION_APP_RAW_DAYS":       "RETENTION_VIEWS_RAW_DAYS",
-		"RETENTION_APP_AGGREGATE_DAYS": "RETENTION_VIEWS_AGGREGATE_DAYS",
+		"LISTEN_ADDR": "INGEST_ADDR",
 	} {
 		env := map[string]string{"DATABASE_DSN": "sqlite:///tmp/x.db", old: "x"}
 		_, err := FromEnv(func(k string) (string, bool) { v, ok := env[k]; return v, ok })

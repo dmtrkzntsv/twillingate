@@ -702,20 +702,20 @@ func TestClientTimestampIsUsedAndClamped(t *testing.T) {
 	if !q.events[0].TS.Equal(recent) {
 		t.Errorf("in-range ts = %v, want the client value", q.events[0].TS)
 	}
-	// Clamped, not dropped, and never older than the global views raw
-	// window (30 days by default).
+	// Clamped, not dropped, and never older than the global raw window
+	// (RETENTION_EVENTS_RAW_DAYS, 30 days by default).
 	if q.events[1].TS.Before(q.events[1].ReceivedAt.Add(-31 * 24 * time.Hour)) {
 		t.Errorf("clamped ts = %v, older than the raw window", q.events[1].TS)
 	}
 }
 
 // TestEventAgeClampUsesGlobalRawWindow verifies the clamp follows the
-// configured views raw window rather than a hard-coded default: retention
-// is global, so an operator who shortens RETENTION_VIEWS_RAW_DAYS must
-// also shorten how far back a clock-skewed late event can land, or it
-// could target a day the daily pass already aggregated and deleted.
+// configured raw window rather than a hard-coded default: retention is
+// global, so an operator who shortens RETENTION_EVENTS_RAW_DAYS must also
+// shorten how far back a clock-skewed late event can land, or it could
+// target a day the daily pass already aggregated and deleted.
 func TestEventAgeClampUsesGlobalRawWindow(t *testing.T) {
-	cfg := configtest.Load(t, map[string]string{"RETENTION_VIEWS_RAW_DAYS": "3"})
+	cfg := configtest.Load(t, map[string]string{"RETENTION_EVENTS_RAW_DAYS": "3"})
 	reg := newTestRegistry(t,
 		[]manage.ProjectSpec{
 			{Name: "Clamped", AllowedOrigins: []string{testOrigin}},

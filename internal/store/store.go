@@ -179,7 +179,7 @@ type Store interface {
 	PruneActors(ctx context.Context, projectID int64, before civil.Date) error
 	AggregateIdentityDay(ctx context.Context, projectID int64, day civil.Date) error
 	PruneIdentities(ctx context.Context, projectID int64, before civil.Date) error
-	PruneAggregates(ctx context.Context, projectID int64, viewsBefore, productBefore civil.Date) error
+	PruneAggregates(ctx context.Context, projectID int64, before civil.Date) error
 	IncrementalVacuum(ctx context.Context) error
 	ProjectIDs(ctx context.Context) ([]int64, error) // all rows incl. archived, ascending
 	RebuildFlatView(ctx context.Context, keys []string) error

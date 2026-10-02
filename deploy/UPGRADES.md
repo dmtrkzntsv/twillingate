@@ -383,3 +383,19 @@ them. No schema changes.
 - Open the dashboards at `/app/` on the API's host. That needs
   `API_AUTH_DSN` set, which a reporting-only install may not have had: see
   "The API endpoint" in `docs/deployment.md`.
+
+### Upgrading to one retention pair (no migration)
+
+Retention is one pair for every family: `RETENTION_EVENTS_RAW_DAYS`
+(default 30) and `RETENTION_EVENTS_AGGREGATE_DAYS` (default 365). The old
+per-family variables are no longer read and no longer refuse the boot, so a
+leftover one is silently ignored and its family falls back to the defaults.
+Before upgrading, look for them in `twillingate.env`:
+
+```sh
+grep -E '^RETENTION_(VIEWS|PRODUCT|WEB|APP)_' /etc/twillingate/twillingate.env
+```
+
+Replace them with the two new names, choosing one value where views and
+product differed. A lower aggregate window than before deletes the older
+aggregates on the first daily pass.

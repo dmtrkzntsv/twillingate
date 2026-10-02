@@ -127,7 +127,7 @@ func TestOperationsOnClosedDB(t *testing.T) {
 
 	for name, op := range map[string]func() error{
 		"PruneAggregates": func() error {
-			return db.PruneAggregates(ctx, 1, day("2026-01-01"), day("2026-01-01"))
+			return db.PruneAggregates(ctx, 1, day("2026-01-01"))
 		},
 		"IncrementalVacuum": func() error { return db.IncrementalVacuum(ctx) },
 		"AggregateViewDay":  func() error { return db.AggregateViewDay(ctx, 1, day("2026-01-01")) },
@@ -210,7 +210,7 @@ func TestPruneAggregatesReportsFailingTable(t *testing.T) {
 	if _, err := db.db.ExecContext(ctx, `DROP TABLE agg_product_attrs`); err != nil {
 		t.Fatal(err)
 	}
-	err := db.PruneAggregates(ctx, 1, day("2026-01-01"), day("2026-01-01"))
+	err := db.PruneAggregates(ctx, 1, day("2026-01-01"))
 	if err == nil {
 		t.Fatal("want error when a target table is missing, got nil")
 	}
@@ -289,7 +289,7 @@ func TestPruneAggregatesReportsFailingViewsTable(t *testing.T) {
 	if _, err := db.db.ExecContext(ctx, `DROP TABLE agg_views_utm`); err != nil {
 		t.Fatal(err)
 	}
-	err := db.PruneAggregates(ctx, 1, day("2026-01-01"), day("2026-01-01"))
+	err := db.PruneAggregates(ctx, 1, day("2026-01-01"))
 	if err == nil || !strings.Contains(err.Error(), "agg_views_utm") {
 		t.Errorf("error %v does not name the failing views table", err)
 	}
