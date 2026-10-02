@@ -354,3 +354,25 @@ func TestMigration020FlatViewMatchesTheBaseRebuild(t *testing.T) {
 		t.Fatalf("migration 020 v_events_flat differs from the base rebuild:\n migration: %s\n rebuild:   %s", before, after)
 	}
 }
+
+// Migration 023 recreates v_events_flat byte-for-byte from 020, so the same
+// invariant holds after clustering events: the first boot's rebuild finds
+// nothing to change.
+func TestMigration023FlatViewMatchesTheBaseRebuild(t *testing.T) {
+	db := newTestDBAt(t, 23)
+	ctx := context.Background()
+	before, err := db.flatViewDefinition(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.RebuildFlatView(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	after, err := db.flatViewDefinition(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before != after {
+		t.Fatalf("migration 023 v_events_flat differs from the base rebuild:\n migration: %s\n rebuild:   %s", before, after)
+	}
+}

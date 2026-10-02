@@ -399,3 +399,32 @@ grep -E '^RETENTION_(VIEWS|PRODUCT|WEB|APP)_' /etc/twillingate/twillingate.env
 Replace them with the two new names, choosing one value where views and
 product differed. A lower aggregate window than before deletes the older
 aggregates on the first daily pass.
+
+### Upgrading to a clustered events table (migration 023)
+
+The raw `events` table is rebuilt so each family's rows for a project and
+day are stored together, keyed by `(family, project_id, day, id)`. Its two
+indexes go away. Every view, tool, dashboard and saved query answers exactly
+as before. The migration writes a full new copy of the raw window (30 days
+by default), and the WAL holds that copy too until it is checkpointed: keep
+free disk of about twice the raw window's size at peak. The file does not
+shrink afterwards: with `auto_vacuum=INCREMENTAL` each daily pass returns
+only about 4 MB, so if the space matters, stop the service after the upgrade
+and run `sqlite3 /var/lib/twillingate/twillingate.db 'VACUUM'` once
+(it needs as much free disk again while it runs). Litestream replicates the
+whole new copy as WAL, so expect one upload of about the raw window's size.
+
+What changes on the day:
+
+- Duplicates are detected on `(family, project_id, day, id)`. A retried
+  batch is still ignored; the one gap is a retry of an event whose timestamp
+  was clamped (more than 5 minutes ahead, or older than the raw window) that
+  arrives on the other side of midnight: it is stored twice.
+- SQL reading `events` directly (the CLI's database, not the `query` tool)
+  sees `day` as an ordinary column; its values are unchanged.
+- `SELECT *` over `events`, `raw_views` and `raw_product` returns
+  `family, project_id, day, id` first; the other columns follow, and every
+  column keeps its name. Queries that name their columns are unaffected.
+
+There is no down migration. Rolling back means restoring the pre-upgrade copy
+or Litestream snapshot, so take one before upgrading.

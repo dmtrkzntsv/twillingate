@@ -369,12 +369,12 @@ func seedNeighbour(t *testing.T, st store.Store, projectID int64, today civil.Da
 		for i := 0; i < 5; i++ {
 			for v, minute := range []int{0, 10, 60} {
 				ts := fmt.Sprintf("%sT%02d:%02d:00Z", day, 2+i+minute/60, minute%60)
-				views = append(views, fmt.Sprintf("('n-%d-%d-%d', %d, 'views', '$page_view', '%s', '%s', 'web', 'n%d', 'user', '/')",
-					back, i, v, projectID, ts, ts, i))
+				views = append(views, fmt.Sprintf("('n-%d-%d-%d', %d, 'views', '$page_view', '%s', '%s', '%s', 'web', 'n%d', 'user', '/')",
+					back, i, v, projectID, ts, day, ts, i))
 			}
 		}
 	}
-	valuesInsert(t, st, "events", "id, project_id, family, event_name, ts, received_at, kind, actor_id, actor_kind, path", views)
+	valuesInsert(t, st, "events", "id, project_id, family, event_name, ts, day, received_at, kind, actor_id, actor_kind, path", views)
 	for back := 3; back < 100; back++ {
 		agg = append(agg, fmt.Sprintf("(%d, '%s', 'web', 7, 30, 9, 4, 700)", projectID, today.AddDays(-back)))
 	}
@@ -461,23 +461,23 @@ func seedSystemData(t *testing.T, st store.Store, projectID int64, today civil.D
 					sessionID = sessions[v]
 				}
 				ts := fmt.Sprintf("%sT%02d:%02d:00Z", day, 1+i, minute)
-				events = append(events, fmt.Sprintf("(%s, %d, 'views', %s, %s, %s, %s, %s, 'user', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'en-US', %s, %s, %s, %s, %d, %d, %s, %s, '{}')",
-					q(fmt.Sprintf("v-%s-%d", actor, v)), p, q(name), q(ts), q(ts), q(kind), q(actor),
+				events = append(events, fmt.Sprintf("(%s, %d, 'views', %s, %s, %s, %s, %s, %s, 'user', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'en-US', %s, %s, %s, %s, %d, %d, %s, %s, '{}')",
+					q(fmt.Sprintf("v-%s-%d", actor, v)), p, q(name), q(ts), q(day), q(ts), q(kind), q(actor),
 					q(userID), q(groupID), q(sessionID), q(host), q(path), q(ref), q(utmSource), q(utmMedium), q(utmCampaign),
 					q(platform), q(os), q(osVersion), q(browser), q(browserVersion),
 					q(appVersion), q(appLocale), q(device), q(model), width, height, q(country), consent))
 			}
 			for e, event := range []string{"signup", "click"} {
 				ts := fmt.Sprintf("%sT%02d:%02d:30Z", day, 1+i, e)
-				events = append(events, fmt.Sprintf("(%s, %d, 'product', %s, %s, %s, %s, %s, 'user', %s, %s, '', '', '', '', '', '', '', %s, %s, %s, %s, %s, 'en-US', %s, 'en', %s, '', 0, 0, %s, %s, %s)",
-					q(fmt.Sprintf("e-%s-%d", actor, e)), p, q(event), q(ts), q(ts), q(kind), q(actor),
+				events = append(events, fmt.Sprintf("(%s, %d, 'product', %s, %s, %s, %s, %s, %s, 'user', %s, %s, '', '', '', '', '', '', '', %s, %s, %s, %s, %s, 'en-US', %s, 'en', %s, '', 0, 0, %s, %s, %s)",
+					q(fmt.Sprintf("e-%s-%d", actor, e)), p, q(event), q(ts), q(day), q(ts), q(kind), q(actor),
 					q(userID), q(groupID), q(platform), q(os), q(osVersion), q(browser), q(browserVersion),
 					q([]string{"2.4.1", "2.5.0"}[i%2]), q(device), q(country), consent,
 					q(fmt.Sprintf(`{"plan":"%s"}`, []string{"free", "pro"}[i%2]))))
 			}
 		}
 	}
-	valuesInsert(t, st, "events", `id, project_id, family, event_name, ts, received_at, kind, actor_id, actor_kind,
+	valuesInsert(t, st, "events", `id, project_id, family, event_name, ts, day, received_at, kind, actor_id, actor_kind,
 		user_id, group_id, session_id, host, path, referrer_source, utm_source, utm_medium, utm_campaign,
 		platform, os, os_version, browser, browser_version, browser_locale, app_version, app_locale,
 		device, device_model, display_width, display_height, country, consent, attributes`, events)

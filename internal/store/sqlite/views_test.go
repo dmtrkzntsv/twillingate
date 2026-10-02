@@ -25,9 +25,11 @@ import (
 //     access via it either ignored the day range entirely or (for the raw
 //     row scan feeding COUNT(DISTINCT actor_id)/session detection) applied
 //     only the project filter. Since 020 the one index, idx_events_family,
-//     leads on family, so even an access with no project or day bound
-//     reads one family rather than both.
-//  2. At least one access is a SEARCH on idx_events_family carrying an
+//     led on family, so even an access with no project or day bound read
+//     one family rather than both; since 023 events is a WITHOUT ROWID
+//     table clustered on (family, project_id, day, id), so the same is
+//     true of the primary key, which replaced that index.
+//  2. At least one access is a SEARCH on the primary key carrying an
 //     actual day bound (">", "<" or "="), not just "(family=?)". That is
 //     the raw-row scan driving each live half, and it is the dominant cost
 //     on a large raw table: BenchmarkViewsPathsLiveHalf and
@@ -87,15 +89,15 @@ func TestViewsLiveHalvesUseTheDayIndex(t *testing.T) {
 			sawDayBoundSearch := false
 			for _, d := range details {
 				if strings.HasPrefix(d, "SCAN events") {
-					t.Errorf("%s: plan scans the raw events table without idx_events_family", name)
+					t.Errorf("%s: plan scans the raw events table without its primary key", name)
 				}
-				if strings.Contains(d, "USING INDEX idx_events_family (family=? AND project_id=? AND day") &&
+				if strings.Contains(d, "USING PRIMARY KEY (family=? AND project_id=? AND day") &&
 					(strings.Contains(d, "day>") || strings.Contains(d, "day<") || strings.Contains(d, "day=")) {
 					sawDayBoundSearch = true
 				}
 			}
 			if !sawDayBoundSearch {
-				t.Errorf("%s: no access searches idx_events_family bounded by family, project and day", name)
+				t.Errorf("%s: no access searches the primary key bounded by family, project and day", name)
 			}
 			if t.Failed() {
 				for _, d := range details {

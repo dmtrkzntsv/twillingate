@@ -14,7 +14,12 @@ const tsFormat = "2006-01-02T15:04:05Z"
 
 // WriteEvents stores a batch of raw rows, views and product events alike,
 // in the one raw table. INSERT OR IGNORE: with client-supplied UUIDv7 ids,
-// a batch retried after a timeout that actually succeeded is a no-op.
+// a batch retried after a timeout that actually succeeded is a no-op —
+// duplicates are detected on the whole primary key (family, project_id,
+// day, id), so a retry is a no-op only because it repeats all four
+// unchanged. The one gap: a retry of an event whose ts was clamped, landing
+// on the other side of midnight, clamps to a different day and is stored
+// twice (deploy/UPGRADES.md).
 //
 // A row whose family is neither views nor product refuses the whole batch
 // before anything is written: raw_views and raw_product would both miss
@@ -31,13 +36,13 @@ func (d *DB) WriteEvents(ctx context.Context, evs []store.Event) error {
 	}
 	return d.tx(ctx, func(tx *sql.Tx) error {
 		stmt, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO events
-			(id, project_id, family, event_name, ts, received_at, kind,
+			(id, project_id, family, event_name, ts, day, received_at, kind,
 			 actor_id, actor_kind, user_id, group_id, session_id,
 			 host, path, referrer_source, utm_source, utm_medium, utm_campaign,
 			 platform, os, os_version, os_name, browser, browser_version, browser_locale,
 			 app_version, app_locale, device, device_model, display_width, display_height,
 			 country, consent, attributes)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
 		if err != nil {
 			return err
 		}
@@ -52,7 +57,8 @@ func (d *DB) WriteEvents(ctx context.Context, evs []store.Event) error {
 				return fmt.Errorf("event %s attributes: %w", e.ID, err)
 			}
 			if _, err := stmt.ExecContext(ctx, e.ID, e.ProjectID, string(e.Family), e.EventName,
-				e.TS.UTC().Format(tsFormat), e.ReceivedAt.UTC().Format(tsFormat), e.Kind,
+				e.TS.UTC().Format(tsFormat), e.TS.UTC().Format("2006-01-02"),
+				e.ReceivedAt.UTC().Format(tsFormat), e.Kind,
 				e.ActorID, e.ActorKind, e.UserID, e.GroupID, e.SessionID,
 				e.Host, e.Path, e.ReferrerSource, e.UTMSource, e.UTMMedium, e.UTMCampaign,
 				e.Platform, e.OS, e.OSVersion, e.OSName, e.Browser, e.BrowserVersion, e.BrowserLocale,

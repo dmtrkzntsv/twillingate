@@ -297,7 +297,11 @@ func dedupeIdentities(in []store.Identity, projectID int64) []store.Identity {
 
 // eventID validates a client-supplied UUID or generates one. Supplying an id
 // is what makes an at-least-once retry safe: the write is INSERT OR IGNORE
-// on this primary key, so a replayed batch is a no-op.
+// on the primary key (family, project_id, day, id), and a retry repeats all
+// four, so a replayed batch is a no-op. The one exception: an event whose ts
+// is clamped (clampTS in ingest.go) and whose retry lands on the other side
+// of midnight gets a different day and is stored twice. That gap is
+// documented in the store's write.go and deploy/UPGRADES.md (migration 023).
 func eventID(id string) (string, error) {
 	if id == "" {
 		return newID(), nil
