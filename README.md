@@ -46,7 +46,8 @@ That prints a snippet to paste; an agent with MCP access can do the same two
 steps for you. Put Caddy, nginx or a Cloudflare tunnel in front of `:8080` for
 TLS.
 
-Back up the one SQLite file in its `data` volume.
+Back up the one SQLite file in its `data` volume, or stream it to object
+storage with [litestream](docs/litestream.md).
 [docs/deployment.md](docs/deployment.md) is the runbook.
 
 ## Track something
@@ -96,6 +97,7 @@ install too.
 | [The API endpoint](docs/deployment.md#the-api-endpoint) | The browser login, and pointing claude.ai, Desktop or Claude Code at it |
 | [Dashboards at /app/](docs/deployment.md#dashboards-at-app) | Where the dashboards are served and how they log in |
 | [Operate and recover](docs/deployment.md#operate-and-recover) | Upgrades, backup and restore, schema upgrades in deploy/UPGRADES.md |
+| [docs/litestream.md](docs/litestream.md) | Continuous backups with litestream under systemd or docker compose, drills, disaster recovery |
 | [docs/plausible/](docs/plausible/) | The Plausible class-tagging shim |
 
 ## Development

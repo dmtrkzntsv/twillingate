@@ -376,8 +376,8 @@ them. No schema changes.
   `litestream.service` or `restore.sh`, and the installer no longer writes
   them. One already installed keeps running untouched: the installer neither
   updates nor removes it, so keep it as your backup or take it out yourself.
-  The backup the docs describe now is a `sqlite3 .backup` copy ("Back up and
-  restore" in `docs/deployment.md`).
+  `docs/litestream.md` now holds the configuration, the unit and the
+  compose service, to compare against or set up again.
 - **`DASHBOARDS_*`** variables are no longer read; delete them from
   `twillingate.env` or `.env` at leisure. A leftover one is ignored.
 - Open the dashboards at `/app/` on the API's host. That needs

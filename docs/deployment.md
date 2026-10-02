@@ -363,7 +363,11 @@ Everything twillingate keeps is in one SQLite file,
 `data` volume). SQLite's online backup copies it safely while the service
 runs; a plain `cp` of a live database can catch a half-written page and
 misses whatever is still in the `-wal` file beside it. Ship the copy off the
-host however you ship files, and check it now and then:
+host however you ship files, and check it now and then. For a continuous
+off-host copy instead, seconds behind, run litestream beside the collector:
+<https://github.com/dmtrkzntsv/twillingate/blob/main/docs/litestream.md>
+sets it up for systemd and docker compose, with the restore drill and
+disaster recovery (not served over MCP; open it in the repository).
 
 ```bash
 sudo -u twillingate sqlite3 /var/lib/twillingate/twillingate.db \

@@ -89,9 +89,10 @@ Three pages, all served over MCP, all the contract rather than a summary:
 `docs/twillingate.md` (`docs://twillingate`) for using twillingate,
 `docs/reporting.md` (`docs://reporting`) for building dashboards, and
 `docs/deployment.md` (`docs://deployment`) for running it. `docs/` holds those
-three plus `docs/plausible/README.md`, which stays separate because it
-documents bytes the collector serves at `/js/plausible-shim.js` and a test
-binds it to them; do not add files there (dashboard material belongs in
+three, `docs/litestream.md` (a backup guide for a tool twillingate ships no
+code for, so not served over MCP), and `docs/plausible/README.md`, which
+stays separate because it documents bytes the collector serves at
+`/js/plausible-shim.js` and a test binds it to them; do not add files there (dashboard material belongs in
 `docs/reporting.md`). Per-migration upgrade runbooks live in
 `deploy/UPGRADES.md`.
 
@@ -109,7 +110,7 @@ Update in the **same commit** as the change:
 | views the system dashboards read (`internal/store/sqlite/migrations/`) | the system widgets, which `TestSystemDashboards` in `internal/reporting/system_test.go` runs |
 | a migration with pre-checks or a visible change on upgrade day | `deploy/UPGRADES.md` |
 | environment variables (`internal/config/`) | `docs/deployment.md` |
-| install, upgrade, backup or restore procedure (`deploy/`, `Makefile`) | `docs/deployment.md` |
+| install, upgrade, backup or restore procedure (`deploy/`, `Makefile`) | `docs/deployment.md`, and `docs/litestream.md` when it touches the data directory, the service user or the image |
 | API auth modes or client setup (`internal/api/auth.go`, `oauth*.go`) | `docs/deployment.md` |
 
 `internal/api/docs_sync_test.go` binds part of this in both directions
