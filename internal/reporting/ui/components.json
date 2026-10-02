@@ -576,6 +576,51 @@
       "default_height": 8
     },
     {
+      "name": "sankey",
+      "description": "Flows from one stage to the next, ribbons sized by value; referrer -> landing page -> event. A node is its name, so a name in two columns is one node; a row that would loop back is left out.",
+      "accepts": [
+        "sql"
+      ],
+      "inputs": {
+        "open": false,
+        "columns": [
+          {
+            "name": "source",
+            "types": [
+              "text"
+            ]
+          },
+          {
+            "name": "target",
+            "types": [
+              "text"
+            ]
+          },
+          {
+            "name": "value",
+            "types": [
+              "number"
+            ]
+          }
+        ]
+      },
+      "props": {
+        "type": "object",
+        "properties": {
+          "format": {
+            "enum": [
+              "number",
+              "percent",
+              "duration"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "default_width": 12,
+      "default_height": 8
+    },
+    {
       "name": "scatter",
       "description": "Correlation between two numeric measures; `size` adds a third dimension, `series` colors groups.",
       "accepts": [

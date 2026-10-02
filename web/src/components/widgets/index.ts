@@ -12,6 +12,7 @@ import * as markdown from './markdown'
 import * as pie from './pie'
 import * as radar from './radar'
 import * as radial from './radial'
+import * as sankey from './sankey'
 import * as scatter from './scatter'
 import * as stat from './stat'
 import * as table from './table'
@@ -31,6 +32,7 @@ export const widgets: Record<string, WidgetModule> = {
   pie,
   radar,
   radial,
+  sankey,
   scatter,
   stat,
   table,

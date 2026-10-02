@@ -5,6 +5,8 @@ import type { Widget } from '@/lib/api'
 // Fixed, not random: the same widget loads in the same shape every time.
 const WIDTHS = [92, 74, 66, 58, 51, 45, 40, 34, 30, 26, 22, 19, 16, 14]
 const HEIGHTS = [46, 62, 55, 78, 70, 88, 64, 72, 94, 80, 58, 68]
+// Node heights per column, for a three-stage flow.
+const SANKEY = [[38, 26, 18], [30, 22, 16, 10], [34, 24]]
 // A rolling skyline, as a clip-path over one frost block.
 const RIDGE = 'polygon(0 62%, 9% 48%, 18% 54%, 29% 34%, 40% 42%, 51% 22%, 62% 38%, 72% 30%, 83% 46%, 92% 26%, 100% 34%, 100% 100%, 0 100%)'
 
@@ -101,6 +103,18 @@ function Shape({ component, donut }: { component: string | null; donut: boolean 
           <Skeleton className="col-span-2 row-span-2" />
           <Skeleton />
           <Skeleton />
+        </div>
+      )
+    case 'sankey':
+      return (
+        <div className="flex h-full justify-between gap-[18%] py-1">
+          {SANKEY.map((column, i) => (
+            <div key={i} className="flex w-2.5 flex-col justify-center gap-3">
+              {column.map((h, j) => (
+                <Skeleton key={j} className="rounded-[2px]" style={{ height: `${h}%` }} />
+              ))}
+            </div>
+          ))}
         </div>
       )
     case 'markdown':

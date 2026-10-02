@@ -17,6 +17,7 @@ describe('WidgetSkeleton', () => {
     expect(blocks('stat')).toHaveLength(2)
     expect(blocks('bar').length).toBeGreaterThan(5)
     expect(blocks('heatmap').length).toBeGreaterThan(50)
+    expect(blocks('sankey')).toHaveLength(9)
   })
 
   it('draws a ring only for a donut pie', () => {

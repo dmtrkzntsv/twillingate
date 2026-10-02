@@ -269,6 +269,7 @@ appears. `width` and `height` default to the component's size below.
 | `calendar` | `sql` | `day` day; `value` number (a year of days) | `format` | 12 × 4 |
 | `map` | `sql` | `country` text, ISO alpha-2; `value` number (unknown codes are listed under the map) | `format` | 6 × 8 |
 | `treemap` | `sql` | `label` text; `value` number; `parent` text, optional (two levels, e.g. browser → version) | `format` | 6 × 8 |
+| `sankey` | `sql` | `source` text; `target` text; `value` number (one row per flow; a name is one node in whichever column it appears, so a page that is a target and a source joins two stages; a row that would loop back is left out and listed under the chart) | `format` | 12 × 8 |
 | `table` | `sql` | any columns, shown in query order until a viewer sorts by a header | `formats` (column → format), `colorscale` (columns shaded by value) | 6 × 10 |
 | `markdown` | `md` | none | none | 12 × 2 |
 
@@ -520,6 +521,32 @@ SELECT browser AS parent, browser_version AS label, SUM(visitors) AS value
 FROM v_views_browsers
 WHERE project_id = :project AND day BETWEEN :from AND :to
 GROUP BY browser, browser_version
+```
+
+Props: `{"format": "number"}`
+
+### `sankey`
+
+Arrivals by referrer and landing page, then events by the page they were sent
+from. The two kinds of row share the page names, so each page is one node in
+the middle. It reads raw rows, so it reaches back only as far as
+`RETENTION_EVENTS_RAW_DAYS`; each stage keeps its top rows, since a ribbon
+too thin to see is noise:
+
+```sql
+SELECT * FROM (
+  SELECT referrer_source AS source, path AS target, COUNT(*) AS value
+  FROM raw_views
+  WHERE project_id = :project AND day BETWEEN :from AND :to AND referrer_source <> ''
+  GROUP BY 1, 2 ORDER BY 3 DESC LIMIT 15
+)
+UNION ALL
+SELECT * FROM (
+  SELECT path, event_name, COUNT(*)
+  FROM raw_product
+  WHERE project_id = :project AND day BETWEEN :from AND :to AND path <> ''
+  GROUP BY 1, 2 ORDER BY 3 DESC LIMIT 15
+)
 ```
 
 Props: `{"format": "number"}`
