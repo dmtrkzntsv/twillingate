@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # End-to-end test of the published compose file: build the image, start it
-# with the API on, send a hit, read it back over REST, and load /app/. It
+# with the console on, send a hit, read it back over REST, and load /app/. It
 # needs docker, so it is manual — `make check` does not run it.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -32,10 +32,10 @@ sed -e 's|ghcr.io/dmtrkzntsv/twillingate:${TWILLINGATE_VERSION:-latest}|twilling
     -e 's|"8080:8080"|"18080:8080"|' \
     deploy/compose/docker-compose.yml > "$dir/docker-compose.yml"
 
-# A bare token turns the API (and /app/) on without a login page; a short
+# A bare token turns the console (and /app/) on without a login page; a short
 # flush makes the hit readable within seconds.
 token="ar_composetest"
-printf 'API_AUTH_DSN=token://%s\nBUFFER_FLUSH_INTERVAL=1s\n' "$token" > "$dir/.env"
+printf 'CONSOLE_AUTH_DSN=token://%s\nBUFFER_FLUSH_INTERVAL=1s\n' "$token" > "$dir/.env"
 
 compose up -d > /dev/null
 
@@ -85,9 +85,9 @@ for _ in $(seq 1 10); do
 done
 [ "$code" = "202" ] || fail "/ingest/events returned $code: $(cat "$dir/events.out")"
 
-# The pageview must come back out of the API once the buffer has flushed: a
+# The pageview must come back out of the console once the buffer has flushed: a
 # 202 alone only says the collector accepted it.
-echo "waiting for the hit to reach the API..."
+echo "waiting for the hit to reach the console..."
 today="$(date -u +%Y-%m-%d)"
 overview=""
 for _ in $(seq 1 20); do
@@ -103,4 +103,4 @@ status="$(curl -s -o "$dir/app.out" -w '%{http_code}' "http://127.0.0.1:18080/ap
 [ "$status" = "200" ] || fail "/app/ returned $status"
 grep -q "<title>" "$dir/app.out" || fail "/app/ is not the dashboards page"
 
-echo "PASS: ingestion, API and dashboards on :18080"
+echo "PASS: ingestion, console and dashboards on :18080"

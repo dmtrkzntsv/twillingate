@@ -314,7 +314,7 @@ func TestDeploymentResourceServed(t *testing.T) {
 	}
 	body := res.Contents[0].Text
 	for _, want := range []string{
-		"API_AUTH_DSN", "/app/", "install.sh", "DATABASE_DSN",
+		"CONSOLE_AUTH_DSN", "/app/", "install.sh", "DATABASE_DSN",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("docs://deployment missing %q", want)

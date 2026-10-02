@@ -4,7 +4,7 @@ What an AI agent — or a person — needs to set up a project, get a site or ap
 sending data, and answer questions from what comes back. The MCP endpoint
 serves this file verbatim as `docs://twillingate`.
 
-Installing twillingate, configuring the collector, enabling the API endpoint
+Installing twillingate, configuring the collector, enabling the console
 and backing up the database are the operator's job, in
 [deployment.md](deployment.md).
 
@@ -34,8 +34,8 @@ discarded.
 | Command | Does |
 | --- | --- |
 | `twillingate serve -ingest` | Ingestion: `POST /ingest/events`, the SDK at `/js/twillingate.js` (and its Web Vitals add-on at `/js/twillingate-vitals.js`), `/healthz` |
-| `twillingate serve -api` | The API endpoint: MCP at `/mcp`, REST at `/api/`, the dashboards at `/app/` |
-| `twillingate serve` | Both, on one listener unless `API_ADDR` says otherwise |
+| `twillingate serve -console` | The console: MCP at `/mcp`, REST at `/api/`, the login, the dashboards at `/app/` |
+| `twillingate serve` | Both, on one listener unless `CONSOLE_ADDR` says otherwise |
 | `twillingate project`, `key`, `config` | Registry management |
 | `twillingate migrate` | Applies schema migrations and exits |
 
@@ -918,8 +918,8 @@ project](#set-up-a-project).
 dashboards), `schema://views` (the authoritative column list — read it before
 writing SQL), `schema://projects` (the live registry) and the reporting
 snapshots `schema://components`, `schema://dashboards` and
-`schema://widgets`. Enabling the endpoint, choosing an auth mode and pointing
-a client at it are in [deployment.md](deployment.md#the-api-endpoint).
+`schema://widgets`. Enabling the console, choosing an auth mode and pointing
+a client at it are in [deployment.md](deployment.md#the-console).
 
 ### HTTP API
 
@@ -972,8 +972,8 @@ given twice are all 400: a filter is never dropped silently.
 ### Writing SQL against the views
 
 The `query` tool takes read-only SQL against the views below; it is
-row-capped (`API_QUERY_MAX_ROWS`, default 1000) and time-limited
-(`API_QUERY_TIMEOUT`, default `10s`). Read `schema://views` for the
+row-capped (`CONSOLE_QUERY_MAX_ROWS`, default 1000) and time-limited
+(`CONSOLE_QUERY_TIMEOUT`, default `10s`). Read `schema://views` for the
 authoritative column list; it is kept in step with the migrations and
 carries the caveats the DDL cannot express. Three matter most:
 

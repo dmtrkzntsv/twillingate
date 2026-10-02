@@ -196,7 +196,7 @@ describe('beginLogin', () => {
   })
 
   it('shows the login server\'s reason when it refuses this host\'s callback', async () => {
-    const reason = `redirect URI host not allowed (add it to API_AUTH_DSN as redirect=<host>): ${location.origin}/app/callback`
+    const reason = `redirect URI host not allowed (add it to CONSOLE_AUTH_DSN as redirect=<host>): ${location.origin}/app/callback`
     vi.mocked(fetch)
       .mockResolvedValueOnce(jsonResponse(PROTECTED_RESOURCE))
       .mockResolvedValueOnce(jsonResponse(AS_METADATA))

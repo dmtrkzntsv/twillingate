@@ -17,7 +17,7 @@ import (
 )
 
 // The token:// login server: a minimal OAuth 2.1 authorization server whose
-// only credential is the password in API_AUTH_DSN, for clients that cannot
+// only credential is the password in CONSOLE_AUTH_DSN, for clients that cannot
 // send the token as a header (docs/superpowers/specs/2026-09-12-mcp-token-login-design.md).
 
 const (
@@ -36,7 +36,7 @@ type loginServer struct {
 	keys      loginKeys
 	static    auth.TokenVerifier // the env token, still accepted on /mcp
 	password  []byte
-	hosts     []string // callback hosts from API_AUTH_DSN, beyond the built-in ones
+	hosts     []string // callback hosts from CONSOLE_AUTH_DSN, beyond the built-in ones
 	resource  string
 	issuer    string
 	accessTTL time.Duration
@@ -46,7 +46,7 @@ type loginServer struct {
 	used      usedCodes
 }
 
-func newLoginServer(m config.APIConfig, logger *slog.Logger) *loginServer {
+func newLoginServer(m config.ConsoleConfig, logger *slog.Logger) *loginServer {
 	return &loginServer{
 		keys:      deriveLoginKeys(m.Token, m.Password),
 		static:    StaticVerifier(m.Token),
@@ -155,7 +155,7 @@ func (s *loginServer) registerClient(w http.ResponseWriter, r *http.Request) {
 	for _, u := range req.RedirectURIs {
 		if !redirectAllowed(s.hosts, s.resource, u) {
 			s.logger.Warn("mcp login: registration redirect rejected", "redirect_uri", u)
-			oauthError(w, "invalid_redirect_uri", "redirect URI host not allowed (add it to API_AUTH_DSN as redirect=<host>): "+u)
+			oauthError(w, "invalid_redirect_uri", "redirect URI host not allowed (add it to CONSOLE_AUTH_DSN as redirect=<host>): "+u)
 			return
 		}
 	}
@@ -213,7 +213,7 @@ func redirectMatches(allowed, candidate string) bool {
 }
 
 // builtinRedirectHosts are the web connectors, accepted without an
-// API_AUTH_DSN entry. Loopback hosts are accepted too.
+// CONSOLE_AUTH_DSN entry. Loopback hosts are accepted too.
 var builtinRedirectHosts = []string{"claude.ai", "chatgpt.com"}
 
 // appCallbackPath is where the dashboards at /app/ finish their login.
@@ -222,7 +222,7 @@ const appCallbackPath = "/app/callback"
 // redirectAllowed admits a callback by host, leaving port and path to the
 // client: any loopback address over http or https — the code can only reach
 // the machine the browser runs on, RFC 8252's native-app model — and over
-// https a built-in web connector or a host listed in API_AUTH_DSN. Hosts
+// https a built-in web connector or a host listed in CONSOLE_AUTH_DSN. Hosts
 // match exactly, so claude.ai does not admit its subdomains. It also
 // admits exactly one more URL, the dashboards' own callback at the
 // configured resource origin: <resource>/app/callback. The origin comes from

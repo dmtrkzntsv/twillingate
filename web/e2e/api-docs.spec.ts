@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 
-// Matches web/e2e/serve.sh's API_AUTH_DSN (token://e2e-token?password=e2e-pass&...).
+// Matches web/e2e/serve.sh's CONSOLE_AUTH_DSN (token://e2e-token?password=e2e-pass&...).
 const PASSWORD = 'e2e-pass'
 
 test('/api/docs opens Swagger UI, and Try it out is signed with the app login', async ({ page }) => {

@@ -5,9 +5,11 @@ package main
 
 import (
 	"fmt"
-	internalversion "github.com/dmtrkzntsv/twillingate/internal/shared/version"
 	"io"
 	"os"
+	"strings"
+
+	internalversion "github.com/dmtrkzntsv/twillingate/internal/shared/version"
 )
 
 var version = internalversion.Version
@@ -32,6 +34,23 @@ func run(args []string, stdout io.Writer) int {
 		return 2
 	}
 	return cmd(args[1:], stdout)
+}
+
+// renamedFlag reports a retired flag by its replacement, so a leftover
+// `serve -api` in a unit or compose file names the fix instead of printing
+// the flag package's bare "flag provided but not defined".
+func renamedFlag(args []string, old, repl string, stdout io.Writer) bool {
+	for _, a := range args {
+		if a == "--" {
+			break
+		}
+		name, _, _ := strings.Cut(strings.TrimLeft(a, "-"), "=")
+		if strings.HasPrefix(a, "-") && name == old {
+			fmt.Fprintf(stdout, "-%s was renamed to -%s\n", old, repl)
+			return true
+		}
+	}
+	return false
 }
 
 func main() {

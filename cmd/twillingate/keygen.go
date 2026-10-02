@@ -24,20 +24,23 @@ func runKeygen(args []string, stdout io.Writer) int {
 	fs := flag.NewFlagSet("keygen", flag.ContinueOnError)
 	fs.SetOutput(stdout)
 	n := fs.Int("n", 1, "number of keys to generate")
-	api := fs.Bool("api", false, "mint the API access token instead")
+	console := fs.Bool("console", false, "mint the console access token instead")
+	if renamedFlag(args, "api", "console", stdout) {
+		return 2
+	}
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 
-	if *api {
-		tok, err := manage.MintAPIToken()
+	if *console {
+		tok, err := manage.MintConsoleToken()
 		if err != nil {
 			fmt.Fprintf(stdout, "keygen: entropy: %v\n", err)
 			return 1
 		}
 		fmt.Fprintln(stdout, "Add to twillingate.env:")
 		fmt.Fprintln(stdout)
-		fmt.Fprintf(stdout, "  API_AUTH_DSN=token://%s\n", tok)
+		fmt.Fprintf(stdout, "  CONSOLE_AUTH_DSN=token://%s\n", tok)
 		return 0
 	}
 

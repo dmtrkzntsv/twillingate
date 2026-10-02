@@ -51,8 +51,8 @@ type ReportingConfig struct {
 	CacheAge, RefreshAge time.Duration
 }
 
-// APIConfig carries the -api surface settings. Authentication comes from
-// the single API_AUTH_DSN; parsing fans it out into the mode-specific
+// ConsoleConfig carries the console surface settings (serve -console). Authentication comes from
+// the single CONSOLE_AUTH_DSN; parsing fans it out into the mode-specific
 // fields the verifiers consume:
 //
 //	token://<token>[?password=<pw>[&redirect=<host>…][&resource=<url>]]
@@ -61,16 +61,15 @@ type ReportingConfig struct {
 // password= on token:// turns on the browser login server, which needs a
 // resource URL. Callbacks are allowed by host: loopback, claude.ai and
 // chatgpt.com always, and each redirect= adds one more. In token and oauth
-// modes resource defaults to API_URL (itself defaulting to PUBLIC_URL) and
-// must be an origin
-// (scheme://host[:port], no path): one identifier covers /mcp and /api/.
+// modes resource defaults to CONSOLE_URL (itself defaulting to PUBLIC_URL)
+// and must be an origin (scheme://host[:port], no path): one identifier covers /mcp and /api/.
 // The oauth issuer is https://<host>[/path] and audience defaults to the
 // resource. oauth+insecure produces an http issuer for local IdPs and tests.
-type APIConfig struct {
-	Addr          string // API_ADDR, defaults to IngestAddr
-	URL           string // API_URL, the API's public origin; defaults to PUBLIC_URL
-	DBPath        string // API_DB_PATH, defaults to DATABASE_DSN path
-	AuthDSN       string // API_AUTH_DSN, verbatim
+type ConsoleConfig struct {
+	Addr          string // CONSOLE_ADDR, defaults to IngestAddr
+	URL           string // CONSOLE_URL, the console's public origin; defaults to PUBLIC_URL
+	DBPath        string // CONSOLE_DB_PATH, defaults to DATABASE_DSN path
+	AuthDSN       string // CONSOLE_AUTH_DSN, verbatim
 	AuthMode      string // "oauth" | "token", from the DSN scheme
 	ResourceURL   string
 	Issuer        string
@@ -78,15 +77,15 @@ type APIConfig struct {
 	Token         string
 	RedirectHosts []string      // token:// redirect=, callback hosts beyond loopback, claude.ai and chatgpt.com
 	Password      string        // token:// password=; set, it turns on the login server
-	QueryTimeout  time.Duration // API_QUERY_TIMEOUT, default 10s
-	QueryMaxRows  int           // API_QUERY_MAX_ROWS, default 1000
+	QueryTimeout  time.Duration // CONSOLE_QUERY_TIMEOUT, default 10s
+	QueryMaxRows  int           // CONSOLE_QUERY_MAX_ROWS, default 1000
 
 	// audienceGiven records an explicit oauth audience=, which the verifier
 	// accepts alone; the default admits the resource and resource/mcp.
 	audienceGiven bool
 
-	// authErr holds the DSN parse failure until ValidateAPI reports it:
-	// bare `serve` must stay lenient (warn and skip the API), so FromEnv
+	// authErr holds the DSN parse failure until ValidateConsole reports it:
+	// bare `serve` must stay lenient (warn and skip the console), so FromEnv
 	// cannot fail on a broken auth DSN.
 	authErr error
 }
@@ -101,7 +100,7 @@ type Config struct {
 	Retention             Retention
 	ProductAttributesTopN int
 	Reporting             ReportingConfig
-	API                   APIConfig
+	Console               ConsoleConfig
 }
 
 // Load builds the configuration from the process environment.
@@ -193,20 +192,20 @@ func FromEnv(lookup func(string) (string, bool)) (*Config, error) {
 			RefreshAge: time.Duration(e.num("REPORTING_REFRESH_SECONDS", 60)) * time.Second,
 		},
 	}
-	c.API = APIConfig{
-		Addr: e.str("API_ADDR", c.IngestAddr),
-		// The API's public address, when it has a hostname of its own
-		// (https://api.example.com beside an ingest-only PUBLIC_URL). The
+	c.Console = ConsoleConfig{
+		Addr: e.str("CONSOLE_ADDR", c.IngestAddr),
+		// The console's public address, when it has a hostname of its own
+		// (https://console.example.com beside an ingest-only PUBLIC_URL). The
 		// login's resource, issuer and dashboards callback follow it, so the
-		// API's own host needs no redirect= entry.
-		URL:          strings.TrimSuffix(e.str("API_URL", c.PublicURL), "/"),
-		DBPath:       e.str("API_DB_PATH", strings.TrimPrefix(c.Database, "sqlite://")),
-		AuthDSN:      e.str("API_AUTH_DSN", ""),
-		QueryTimeout: e.dur("API_QUERY_TIMEOUT", 10*time.Second),
-		QueryMaxRows: e.num("API_QUERY_MAX_ROWS", 1000),
+		// console's own host needs no redirect= entry.
+		URL:          strings.TrimSuffix(e.str("CONSOLE_URL", c.PublicURL), "/"),
+		DBPath:       e.str("CONSOLE_DB_PATH", strings.TrimPrefix(c.Database, "sqlite://")),
+		AuthDSN:      e.str("CONSOLE_AUTH_DSN", ""),
+		QueryTimeout: e.dur("CONSOLE_QUERY_TIMEOUT", 10*time.Second),
+		QueryMaxRows: e.num("CONSOLE_QUERY_MAX_ROWS", 1000),
 	}
-	if c.API.AuthDSN != "" {
-		c.API.authErr = c.parseAPIAuthDSN()
+	if c.Console.AuthDSN != "" {
+		c.Console.authErr = c.parseConsoleAuthDSN()
 	}
 	if e.err != nil {
 		return nil, e.err
@@ -221,6 +220,12 @@ func FromEnv(lookup func(string) (string, bool)) (*Config, error) {
 // refuses the boot, so a leftover one cannot silently stop taking effect.
 var renamed = []struct{ old, repl string }{
 	{"LISTEN_ADDR", "INGEST_ADDR"},
+	{"API_ADDR", "CONSOLE_ADDR"},
+	{"API_URL", "CONSOLE_URL"},
+	{"API_AUTH_DSN", "CONSOLE_AUTH_DSN"},
+	{"API_DB_PATH", "CONSOLE_DB_PATH"},
+	{"API_QUERY_TIMEOUT", "CONSOLE_QUERY_TIMEOUT"},
+	{"API_QUERY_MAX_ROWS", "CONSOLE_QUERY_MAX_ROWS"},
 }
 
 // refuseRenamed treats an empty value as unset, as env.str does, so a
@@ -270,14 +275,14 @@ func (c *Config) MaxEventAge() time.Duration {
 	return time.Duration(c.Retention.Events.RawDays) * 24 * time.Hour
 }
 
-// parseAPIAuthDSN fans API_AUTH_DSN out into the mode-specific APIConfig
+// parseConsoleAuthDSN fans CONSOLE_AUTH_DSN out into the mode-specific ConsoleConfig
 // fields. Called from parse once the rest of the config (PUBLIC_URL for
 // the oauth resource default) is known.
-func (c *Config) parseAPIAuthDSN() error {
-	m := &c.API
+func (c *Config) parseConsoleAuthDSN() error {
+	m := &c.Console
 	scheme, rest, ok := strings.Cut(m.AuthDSN, "://")
 	if !ok {
-		return fmt.Errorf("config: invalid API_AUTH_DSN %q (token://<token> or oauth://<issuer-host>)", m.AuthDSN)
+		return fmt.Errorf("config: invalid CONSOLE_AUTH_DSN %q (token://<token> or oauth://<issuer-host>)", m.AuthDSN)
 	}
 	switch scheme {
 	case "token":
@@ -287,7 +292,7 @@ func (c *Config) parseAPIAuthDSN() error {
 		m.AuthMode = "token"
 		m.Token = token
 		if m.Token == "" {
-			return fmt.Errorf("config: API_AUTH_DSN token:// requires a token (mint with `twillingate keygen -api`)")
+			return fmt.Errorf("config: CONSOLE_AUTH_DSN token:// requires a token (mint with `twillingate keygen -console`)")
 		}
 		if hasQuery {
 			return c.parseTokenLogin(query)
@@ -295,10 +300,10 @@ func (c *Config) parseAPIAuthDSN() error {
 	case "oauth", "oauth+insecure":
 		u, err := url.Parse(m.AuthDSN)
 		if err != nil {
-			return fmt.Errorf("config: invalid API_AUTH_DSN: %v", err)
+			return fmt.Errorf("config: invalid CONSOLE_AUTH_DSN: %v", err)
 		}
 		if u.Host == "" {
-			return fmt.Errorf("config: API_AUTH_DSN oauth:// requires an issuer host (oauth://idp.example.com)")
+			return fmt.Errorf("config: CONSOLE_AUTH_DSN oauth:// requires an issuer host (oauth://idp.example.com)")
 		}
 		m.AuthMode = "oauth"
 		issuerScheme := "https"
@@ -311,7 +316,7 @@ func (c *Config) parseAPIAuthDSN() error {
 			return err
 		}
 		if m.ResourceURL == "" {
-			return fmt.Errorf("config: API_AUTH_DSN oauth:// requires API_URL, PUBLIC_URL or ?resource=<origin> to derive the resource from")
+			return fmt.Errorf("config: CONSOLE_AUTH_DSN oauth:// requires CONSOLE_URL, PUBLIC_URL or ?resource=<origin> to derive the resource from")
 		}
 		m.Audience = q.Get("audience")
 		m.audienceGiven = m.Audience != ""
@@ -319,7 +324,7 @@ func (c *Config) parseAPIAuthDSN() error {
 			m.Audience = m.ResourceURL
 		}
 	default:
-		return fmt.Errorf("config: unknown API_AUTH_DSN scheme %q (token or oauth)", scheme)
+		return fmt.Errorf("config: unknown CONSOLE_AUTH_DSN scheme %q (token or oauth)", scheme)
 	}
 	return nil
 }
@@ -327,24 +332,24 @@ func (c *Config) parseAPIAuthDSN() error {
 // parseTokenLogin reads the token:// query that turns on the browser login
 // server: password=, repeated redirect= and resource=.
 func (c *Config) parseTokenLogin(query string) error {
-	m := &c.API
+	m := &c.Console
 	q, err := url.ParseQuery(query)
 	if err != nil {
-		return fmt.Errorf("config: invalid API_AUTH_DSN token:// query: %v", err)
+		return fmt.Errorf("config: invalid CONSOLE_AUTH_DSN token:// query: %v", err)
 	}
 	for k := range q {
 		if k != "redirect" && k != "password" && k != "resource" {
-			return fmt.Errorf("config: API_AUTH_DSN token:// has unknown parameter %q (redirect, password or resource)", k)
+			return fmt.Errorf("config: CONSOLE_AUTH_DSN token:// has unknown parameter %q (redirect, password or resource)", k)
 		}
 	}
 	m.Password = q.Get("password")
 	if m.Password == "" {
-		return fmt.Errorf("config: API_AUTH_DSN token:// redirect= and resource= need a password=, which turns the login on")
+		return fmt.Errorf("config: CONSOLE_AUTH_DSN token:// redirect= and resource= need a password=, which turns the login on")
 	}
 	for _, r := range q["redirect"] {
 		host, err := redirectHost(r)
 		if err != nil {
-			return fmt.Errorf("config: API_AUTH_DSN token:// redirect=%q %v", r, err)
+			return fmt.Errorf("config: CONSOLE_AUTH_DSN token:// redirect=%q %v", r, err)
 		}
 		m.RedirectHosts = append(m.RedirectHosts, host)
 	}
@@ -352,53 +357,53 @@ func (c *Config) parseTokenLogin(query string) error {
 		return err
 	}
 	if m.ResourceURL == "" {
-		return fmt.Errorf("config: API_AUTH_DSN token:// password= requires API_URL, PUBLIC_URL or resource=<origin> to derive the resource from")
+		return fmt.Errorf("config: CONSOLE_AUTH_DSN token:// password= requires CONSOLE_URL, PUBLIC_URL or resource=<origin> to derive the resource from")
 	}
 	if err := checkLoginURL(m.ResourceURL); err != nil {
-		return fmt.Errorf("config: API_AUTH_DSN token:// resource=%q %v", m.ResourceURL, err)
+		return fmt.Errorf("config: CONSOLE_AUTH_DSN token:// resource=%q %v", m.ResourceURL, err)
 	}
 	return nil
 }
 
-// resource resolves the API resource identifier: resource= when given,
-// else API_URL (which defaults to PUBLIC_URL), either way read as an
+// resource resolves the console resource identifier: resource= when given,
+// else CONSOLE_URL (which defaults to PUBLIC_URL), either way read as an
 // origin. Empty when none is set.
 func (c *Config) resource(scheme, given string) (string, error) {
 	switch {
 	case given != "":
 		r, err := resourceOrigin(given)
 		if err != nil {
-			return "", fmt.Errorf("config: API_AUTH_DSN %s resource=%q %v", scheme, given, err)
+			return "", fmt.Errorf("config: CONSOLE_AUTH_DSN %s resource=%q %v", scheme, given, err)
 		}
 		return r, nil
-	case c.API.URL != "":
-		r, err := resourceOrigin(c.API.URL)
+	case c.Console.URL != "":
+		r, err := resourceOrigin(c.Console.URL)
 		if err != nil {
-			name := "API_URL"
-			if c.API.URL == c.PublicURL {
-				name = "PUBLIC_URL (API_URL's default)"
+			name := "CONSOLE_URL"
+			if c.Console.URL == c.PublicURL {
+				name = "PUBLIC_URL (CONSOLE_URL's default)"
 			}
-			return "", fmt.Errorf("config: %s=%q %v, or set API_URL", name, c.API.URL, err)
+			return "", fmt.Errorf("config: %s=%q %v, or set CONSOLE_URL", name, c.Console.URL, err)
 		}
 		return r, nil
 	}
 	return "", nil
 }
 
-// resourceOrigin reads a resource= value as the API origin: an absolute
+// resourceOrigin reads a resource= value as the console origin: an absolute
 // http(s) URL with no path beyond "/", returned without the slash. One
 // identifier covers /mcp and /api/, and matches the host-rooted RFC 9728
-// metadata the API serves. The host is lowercased and a default port (443
-// for https, 80 for http) is dropped, so resource=https://API.example.com:443
+// metadata the console serves. The host is lowercased and a default port (443
+// for https, 80 for http) is dropped, so resource=https://Console.example.com:443
 // names the same origin a client actually connects to (case-insensitive,
 // port-implicit) rather than comparing as a distinct string.
 func resourceOrigin(raw string) (string, error) {
 	u, err := url.Parse(raw)
 	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
-		return "", fmt.Errorf("must be an absolute http(s) origin such as https://api.example.com")
+		return "", fmt.Errorf("must be an absolute http(s) origin such as https://console.example.com")
 	}
 	if (u.Path != "" && u.Path != "/") || u.User != nil || u.RawQuery != "" || u.ForceQuery || strings.Contains(raw, "#") {
-		return "", fmt.Errorf("must be an origin with no path, userinfo, query or fragment, such as https://api.example.com (the API serves /mcp and /api/ under it)")
+		return "", fmt.Errorf("must be an origin with no path, userinfo, query or fragment, such as https://console.example.com (the console serves /mcp and /api/ under it)")
 	}
 	host := strings.ToLower(u.Hostname())
 	if strings.Contains(host, ":") { // IPv6; Hostname() strips the brackets Host carried
@@ -449,17 +454,17 @@ func checkLoginURL(raw string) error {
 
 // AudienceGiven reports whether oauth:// named its audience= explicitly
 // rather than defaulting it to the resource.
-func (m APIConfig) AudienceGiven() bool { return m.audienceGiven }
+func (m ConsoleConfig) AudienceGiven() bool { return m.audienceGiven }
 
 // LoginEnabled reports whether token:// runs the browser login server.
-func (m APIConfig) LoginEnabled() bool { return m.AuthMode == "token" && m.Password != "" }
+func (m ConsoleConfig) LoginEnabled() bool { return m.AuthMode == "token" && m.Password != "" }
 
-// ValidateAPI fail-fasts the -api surface (endpoint spec §4): there is no
+// ValidateConsole fail-fasts the console surface (endpoint spec §4): there is no
 // unauthenticated mode and no way to reach one by omission.
-func (c *Config) ValidateAPI() error {
-	m := c.API
+func (c *Config) ValidateConsole() error {
+	m := c.Console
 	if m.AuthDSN == "" {
-		return fmt.Errorf("config: -api requires API_AUTH_DSN (token://<token> or oauth://<issuer-host>)")
+		return fmt.Errorf("config: -console requires CONSOLE_AUTH_DSN (token://<token> or oauth://<issuer-host>)")
 	}
 	return m.authErr
 }

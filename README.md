@@ -25,13 +25,13 @@ wires it into your code itself.
 **Then ask it for the numbers.** "How many visitors did myapp get last week, by
 country" beats clicking through a dashboard, and read tools plus a guarded SQL
 `query` tool answer it. If you like charts, the same agent builds dashboards,
-served at `/app/` beside the API.
+served at `/app/` on the console beside MCP and REST.
 
 ## Run it
 
-One file: ingestion, the tracker script and — once `API_AUTH_DSN` is set,
-see [The API endpoint](docs/deployment.md#the-api-endpoint) — the API (MCP
-and REST) and the dashboards at `/app/`, all on `:8080`:
+One file: ingestion, the tracker script and — once `CONSOLE_AUTH_DSN` is set,
+see [The console](docs/deployment.md#the-console) — the console (MCP,
+REST and the dashboards at `/app/`), all on `:8080`:
 
 ```bash
 mkdir twillingate && cd twillingate
@@ -82,7 +82,7 @@ and is what the MCP endpoint serves to agents as `docs://twillingate`, so
 the text you read and the text they read are the same bytes.
 [docs/deployment.md](docs/deployment.md) is everything needed to run
 twillingate on your own server: installing it, configuring the collector,
-the API endpoint and the dashboards, and backups. It is served as `docs://deployment`, so an agent can help with an
+the console and its dashboards, and backups. It is served as `docs://deployment`, so an agent can help with an
 install too.
 
 | Section | Covers |
@@ -94,7 +94,7 @@ install too.
 | [Answer questions with the data](docs/twillingate.md#answer-questions-with-the-data) | The MCP tools, the HTTP API, the views, and the caveats needed to write correct SQL |
 | [Install](docs/deployment.md#install) | systemd and docker compose, verifying ingestion |
 | [Configure the collector](docs/deployment.md#configure-the-collector) | Every environment variable, low-resource tuning |
-| [The API endpoint](docs/deployment.md#the-api-endpoint) | The browser login, and pointing claude.ai, Desktop or Claude Code at it |
+| [The console](docs/deployment.md#the-console) | The browser login, and pointing claude.ai, Desktop or Claude Code at it |
 | [Dashboards at /app/](docs/deployment.md#dashboards-at-app) | Where the dashboards are served and how they log in |
 | [Operate and recover](docs/deployment.md#operate-and-recover) | Upgrades, backup and restore, schema upgrades in deploy/UPGRADES.md |
 | [docs/litestream.md](docs/litestream.md) | Continuous backups with litestream under systemd or docker compose, drills, disaster recovery |
@@ -142,7 +142,7 @@ visitor id, user and group in `localStorage` — terminal-equipment storage
 under ePrivacy, the same legal category as a cookie. See
 [docs/twillingate.md](docs/twillingate.md) "Consent and storage".
 
-**Access and erasure.** Enabling the API exposes every stored id to every
+**Access and erasure.** Enabling the console exposes every stored id to every
 valid token holder, over MCP and the REST routes alike; complete erasure is
 `twillingate project delete`, deliberately CLI-only.
 

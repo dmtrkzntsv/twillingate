@@ -255,7 +255,7 @@ func TestServeRestartsOnExistingDatabase(t *testing.T) {
 	}
 }
 
-// apiTestConfig is testConfig plus the API surface's env: token auth mode
+// apiTestConfig is testConfig plus the console's env: token auth mode
 // so a request with no bearer token is a deterministic 401, and (when
 // apiAddr is non-empty) a second listener address for the split-listener
 // sub-run.
@@ -270,16 +270,16 @@ func apiTestConfig(t *testing.T, addr, dbPath, apiAddr string) *config.Config {
 		"BUFFER_FLUSH_MAX_EVENTS": "2",
 		"BUFFER_FLUSH_INTERVAL":   "50ms",
 		"BUFFER_CAPACITY":         "100",
-		"API_AUTH_DSN":            "token://ar_apptest",
+		"CONSOLE_AUTH_DSN":        "token://ar_apptest",
 	}
 	if apiAddr != "" {
-		vars["API_ADDR"] = apiAddr
+		vars["CONSOLE_ADDR"] = apiAddr
 	}
 	return configtest.Load(t, vars)
 }
 
-// Spec §3.2/Task 21: -ingest and -api together share one listener when
-// API_ADDR equals INGEST_ADDR, and use two listeners otherwise. Both
+// Spec §3.2/Task 21: -ingest and -console together share one listener when
+// CONSOLE_ADDR equals INGEST_ADDR, and use two listeners otherwise. Both
 // arrangements must serve both surfaces correctly and shut down cleanly.
 func TestServeSharedListenerServesBothSurfaces(t *testing.T) {
 	run := func(t *testing.T, cfg *config.Config) {
@@ -339,7 +339,7 @@ func TestServeSharedListenerServesBothSurfaces(t *testing.T) {
 		}
 
 		// The legacy ingest path sits under /api/ but belongs to ingest on
-		// any topology: a shared listener must route it past the API's auth.
+		// any topology: a shared listener must route it past the console's auth.
 		// A preflight tells the two apart — ingest answers 204, auth 401.
 		legacy, err := http.NewRequest("OPTIONS", "http://"+cfg.IngestAddr+"/api/events", nil)
 		if err != nil {
@@ -355,7 +355,7 @@ func TestServeSharedListenerServesBothSurfaces(t *testing.T) {
 			}
 		}
 
-		// The root opens the dashboards wherever the API listens, and only
+		// The root opens the dashboards wherever the console listens, and only
 		// there: an ingest-only listener has no dashboards to send it to.
 		root := func(addr string) *http.Response {
 			t.Helper()
@@ -367,16 +367,16 @@ func TestServeSharedListenerServesBothSurfaces(t *testing.T) {
 			resp.Body.Close()
 			return resp
 		}
-		if resp := root(cfg.API.Addr); resp.StatusCode != http.StatusFound || resp.Header.Get("Location") != "/app/" {
-			t.Errorf("GET / on API port %s = %d to %q, want 302 to /app/", cfg.API.Addr, resp.StatusCode, resp.Header.Get("Location"))
+		if resp := root(cfg.Console.Addr); resp.StatusCode != http.StatusFound || resp.Header.Get("Location") != "/app/" {
+			t.Errorf("GET / on console port %s = %d to %q, want 302 to /app/", cfg.Console.Addr, resp.StatusCode, resp.Header.Get("Location"))
 		}
-		if cfg.API.Addr != cfg.IngestAddr {
+		if cfg.Console.Addr != cfg.IngestAddr {
 			if resp := root(cfg.IngestAddr); resp.StatusCode != http.StatusNotFound {
 				t.Errorf("GET / on ingest port %s = %d, want 404", cfg.IngestAddr, resp.StatusCode)
 			}
 		}
 
-		if cfg.API.Addr == cfg.IngestAddr {
+		if cfg.Console.Addr == cfg.IngestAddr {
 			resp := getAPI(cfg.IngestAddr)
 			resp.Body.Close()
 			if resp.StatusCode != 401 {
@@ -394,10 +394,10 @@ func TestServeSharedListenerServesBothSurfaces(t *testing.T) {
 			if resp.StatusCode != 404 {
 				t.Errorf("GET /api/projects on ingest port %s = %d, want 404", cfg.IngestAddr, resp.StatusCode)
 			}
-			resp = getAPI(cfg.API.Addr)
+			resp = getAPI(cfg.Console.Addr)
 			resp.Body.Close()
 			if resp.StatusCode != 401 {
-				t.Errorf("GET /api/projects on API port %s (no token) = %d, want 401", cfg.API.Addr, resp.StatusCode)
+				t.Errorf("GET /api/projects on console port %s (no token) = %d, want 401", cfg.Console.Addr, resp.StatusCode)
 			}
 
 			resp = postMCP(cfg.IngestAddr)
@@ -405,10 +405,10 @@ func TestServeSharedListenerServesBothSurfaces(t *testing.T) {
 			if resp.StatusCode != 404 {
 				t.Errorf("POST /mcp on ingest port %s = %d, want 404", cfg.IngestAddr, resp.StatusCode)
 			}
-			resp = postMCP(cfg.API.Addr)
+			resp = postMCP(cfg.Console.Addr)
 			resp.Body.Close()
 			if resp.StatusCode != 401 {
-				t.Errorf("POST /mcp on API port %s (no token) = %d, want 401", cfg.API.Addr, resp.StatusCode)
+				t.Errorf("POST /mcp on console port %s (no token) = %d, want 401", cfg.Console.Addr, resp.StatusCode)
 			}
 		}
 	}

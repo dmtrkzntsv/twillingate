@@ -39,10 +39,9 @@ func (s *syncLogBuffer) String() string {
 	return s.buf.String()
 }
 
-// `serve -api` used to mean ingest-only; now it means the private API. The
-// "serving" boot line names which surface(s) each listener carries, so a
-// role swap between two systemd units (one now stuck on the old meaning of
-// -api) is visible in journalctl rather than only inferred from the port.
+// The "serving" boot line names which surface(s) each listener carries, so
+// a role swap between two systemd units is visible in journalctl rather
+// than only inferred from the port.
 func TestServeLogsSurfacesPerListener(t *testing.T) {
 	t.Run("shared listener", func(t *testing.T) {
 		dbPath := filepath.Join(t.TempDir(), "surfaces-shared.db")
@@ -60,8 +59,8 @@ func TestServeLogsSurfacesPerListener(t *testing.T) {
 			t.Fatalf("serve: %v", err)
 		}
 
-		if !strings.Contains(buf.String(), `surfaces=ingest,api`) {
-			t.Errorf("log output = %q, want surfaces=ingest,api for the shared listener", buf.String())
+		if !strings.Contains(buf.String(), `surfaces=ingest,console`) {
+			t.Errorf("log output = %q, want surfaces=ingest,console for the shared listener", buf.String())
 		}
 	})
 
@@ -85,8 +84,8 @@ func TestServeLogsSurfacesPerListener(t *testing.T) {
 		if !strings.Contains(buf.String(), `addr=`+addr+` surfaces=ingest`) {
 			t.Errorf("log output = %q, want surfaces=ingest for the ingest listener", buf.String())
 		}
-		if !strings.Contains(buf.String(), `addr=`+apiAddr+` surfaces=api`) {
-			t.Errorf("log output = %q, want surfaces=api for the API listener", buf.String())
+		if !strings.Contains(buf.String(), `addr=`+apiAddr+` surfaces=console`) {
+			t.Errorf("log output = %q, want surfaces=console for the console listener", buf.String())
 		}
 	})
 }
@@ -181,7 +180,7 @@ func TestServeFailsOnMigrateError(t *testing.T) {
 	}
 }
 
-// An API auth mode that fails eagerly (oauth against an unreachable issuer)
+// A console auth mode that fails eagerly (oauth against an unreachable issuer)
 // must fail Serve's boot on the standalone-listener path (ingest=false,
 // api=true always goes through api.NewHandler).
 func TestServeFailsOnMCPHandlerError(t *testing.T) {
@@ -193,7 +192,7 @@ func TestServeFailsOnMCPHandlerError(t *testing.T) {
 		"INGEST_ADDR":  freePort(t),
 		"DATABASE_DSN": "sqlite://" + dbPath,
 		// nothing listens on port 1: fails fast
-		"API_AUTH_DSN": "oauth+insecure://127.0.0.1:1?resource=https://mcp.example.com",
+		"CONSOLE_AUTH_DSN": "oauth+insecure://127.0.0.1:1?resource=https://mcp.example.com",
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -203,7 +202,7 @@ func TestServeFailsOnMCPHandlerError(t *testing.T) {
 	}
 }
 
-// Same failure, but on the shared-listener path (ingest=true with the API
+// Same failure, but on the shared-listener path (ingest=true with the console
 // sharing the ingest address), which goes through api.Build directly
 // instead of NewHandler.
 func TestServeFailsOnMCPBuildErrorSharedListener(t *testing.T) {
@@ -213,10 +212,10 @@ func TestServeFailsOnMCPBuildErrorSharedListener(t *testing.T) {
 		"ak_test", "web")
 	addr := freePort(t)
 	cfg := configtest.Load(t, map[string]string{
-		"INGEST_ADDR":  addr,
-		"DATABASE_DSN": "sqlite://" + dbPath,
-		"API_ADDR":     addr, // same as INGEST_ADDR: shared-listener path
-		"API_AUTH_DSN": "oauth+insecure://127.0.0.1:1?resource=https://mcp.example.com",
+		"INGEST_ADDR":      addr,
+		"DATABASE_DSN":     "sqlite://" + dbPath,
+		"CONSOLE_ADDR":     addr, // same as INGEST_ADDR: shared-listener path
+		"CONSOLE_AUTH_DSN": "oauth+insecure://127.0.0.1:1?resource=https://mcp.example.com",
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()

@@ -22,8 +22,8 @@ func newHandlerFixture(t *testing.T, over map[string]string) http.Handler {
 	t.Helper()
 	path := seedDB(t) // from seed_test.go: migrated DB with project 1 (My blog)
 	base := map[string]string{
-		"DATABASE_DSN": "sqlite://" + path,
-		"API_AUTH_DSN": "token://ar_testtoken",
+		"DATABASE_DSN":     "sqlite://" + path,
+		"CONSOLE_AUTH_DSN": "token://ar_testtoken",
 	}
 	for k, v := range over {
 		if v == "" {
@@ -36,7 +36,7 @@ func newHandlerFixture(t *testing.T, over map[string]string) http.Handler {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := cfg.ValidateAPI(); err != nil {
+	if err := cfg.ValidateConsole(); err != nil {
 		t.Fatal(err)
 	}
 	st, err := store.Open(cfg.Database)
@@ -60,7 +60,7 @@ func newHandlerFixture(t *testing.T, over map[string]string) http.Handler {
 func TestMCPRequires401WithChallenge(t *testing.T) {
 	f := newJWKSFixture(t)
 	h := newHandlerFixture(t, map[string]string{
-		"API_AUTH_DSN": "oauth+insecure://" + strings.TrimPrefix(f.issuer, "http://") +
+		"CONSOLE_AUTH_DSN": "oauth+insecure://" + strings.TrimPrefix(f.issuer, "http://") +
 			"?resource=https://twillingate.example.com"})
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest("POST", "/mcp", strings.NewReader("{}")))
@@ -133,7 +133,7 @@ func TestMCPWrongTokenRejected(t *testing.T) {
 func TestPRMServedWhenIssuerConfigured(t *testing.T) {
 	f := newJWKSFixture(t)
 	h := newHandlerFixture(t, map[string]string{
-		"API_AUTH_DSN": "oauth+insecure://" + strings.TrimPrefix(f.issuer, "http://") +
+		"CONSOLE_AUTH_DSN": "oauth+insecure://" + strings.TrimPrefix(f.issuer, "http://") +
 			"?resource=https://twillingate.example.com"})
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest("GET", "/.well-known/oauth-protected-resource", nil))
@@ -160,7 +160,7 @@ func TestTokenNeverLoggedAtInfo(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	path := seedDB(t)
 	base := map[string]string{"DATABASE_DSN": "sqlite://" + path,
-		"API_AUTH_DSN": "token://ar_secrettoken"}
+		"CONSOLE_AUTH_DSN": "token://ar_secrettoken"}
 	cfg, _ := config.FromEnv(func(k string) (string, bool) { v, ok := base[k]; return v, ok })
 	st, _ := store.Open(cfg.Database)
 	defer st.Close()
@@ -201,7 +201,7 @@ func initReq() *http.Request {
 func TestMCPOAuthModePasses(t *testing.T) {
 	f := newJWKSFixture(t)
 	h := newHandlerFixture(t, map[string]string{
-		"API_AUTH_DSN": "oauth+insecure://" + strings.TrimPrefix(f.issuer, "http://") +
+		"CONSOLE_AUTH_DSN": "oauth+insecure://" + strings.TrimPrefix(f.issuer, "http://") +
 			"?resource=https://twillingate.example.com",
 	})
 
@@ -260,13 +260,13 @@ func TestHealthzUnauthenticated(t *testing.T) {
 }
 
 // TestRegisterOnWithoutHealthzOmitsRoute proves the shared-mux case
-// (Task 21: API_ADDR == INGEST_ADDR) doesn't collide with the ingest
+// (Task 21: CONSOLE_ADDR == INGEST_ADDR) doesn't collide with the ingest
 // surface's own /healthz — RegisterOn(..., withHealthz=false) must not
 // mount the route at all.
 func TestRegisterOnWithoutHealthzOmitsRoute(t *testing.T) {
 	path := seedDB(t)
 	base := map[string]string{"DATABASE_DSN": "sqlite://" + path,
-		"API_AUTH_DSN": "token://ar_testtoken"}
+		"CONSOLE_AUTH_DSN": "token://ar_testtoken"}
 	cfg, err := config.FromEnv(func(k string) (string, bool) { v, ok := base[k]; return v, ok })
 	if err != nil {
 		t.Fatal(err)
@@ -297,12 +297,12 @@ func TestRegisterOnWithoutHealthzOmitsRoute(t *testing.T) {
 }
 
 // TestWrapAuthUnknownMode exercises wrapAuth's default branch directly:
-// ValidateAPI normally rejects an unknown AuthMode before Build ever
+// ValidateConsole normally rejects an unknown AuthMode before Build ever
 // runs, so this branch only matters as a defense-in-depth invariant if
 // that validation is ever bypassed or a mode is added to one but not the
 // other.
 func TestWrapAuthUnknownMode(t *testing.T) {
-	_, err := wrapAuth(context.Background(), config.APIConfig{AuthMode: "bogus"})
+	_, err := wrapAuth(context.Background(), config.ConsoleConfig{AuthMode: "bogus"})
 	if err == nil {
 		t.Fatal("unknown auth mode accepted")
 	}
@@ -310,20 +310,20 @@ func TestWrapAuthUnknownMode(t *testing.T) {
 
 // TestBuildFailsWhenOAuthIssuerUnreachable exercises Build's own error
 // branch (wrapAuth failing after readsql.Open already succeeded, so Build
-// must close the DB it just opened rather than leak it) — ValidateAPI
-// only parses API_AUTH_DSN, it does not probe the issuer, so
+// must close the DB it just opened rather than leak it) — ValidateConsole
+// only parses CONSOLE_AUTH_DSN, it does not probe the issuer, so
 // an unreachable issuer surfaces here, at Build time.
 func TestBuildFailsWhenOAuthIssuerUnreachable(t *testing.T) {
 	path := seedDB(t)
 	base := map[string]string{
-		"DATABASE_DSN": "sqlite://" + path,
-		"API_AUTH_DSN": "oauth+insecure://127.0.0.1:0?resource=https://twillingate.example.com",
+		"DATABASE_DSN":     "sqlite://" + path,
+		"CONSOLE_AUTH_DSN": "oauth+insecure://127.0.0.1:0?resource=https://twillingate.example.com",
 	}
 	cfg, err := config.FromEnv(func(k string) (string, bool) { v, ok := base[k]; return v, ok })
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := cfg.ValidateAPI(); err != nil {
+	if err := cfg.ValidateConsole(); err != nil {
 		t.Fatal(err)
 	}
 	st, err := store.Open(cfg.Database)
@@ -359,7 +359,7 @@ func TestTokenLoginRoutesFollowRedirects(t *testing.T) {
 		t.Errorf("plain token:// grew a challenge: %q", rec.Header().Get("WWW-Authenticate"))
 	}
 
-	login := newHandlerFixture(t, map[string]string{"API_AUTH_DSN": loginDSN})
+	login := newHandlerFixture(t, map[string]string{"CONSOLE_AUTH_DSN": loginDSN})
 	if rec := serve(login, httptest.NewRequest("GET", "/.well-known/oauth-authorization-server", nil)); rec.Code != http.StatusOK {
 		t.Errorf("login: metadata %d, want 200", rec.Code)
 	}
@@ -369,7 +369,7 @@ func TestTokenLoginRoutesFollowRedirects(t *testing.T) {
 		t.Errorf("login: /mcp %d WWW-Authenticate=%q, want 401 with %s", rec.Code, rec.Header().Get("WWW-Authenticate"), want)
 	}
 	passwordOnly := newHandlerFixture(t, map[string]string{
-		"API_AUTH_DSN": "token://ar_testtoken?password=hunter2&resource=https://mcp.example.com"})
+		"CONSOLE_AUTH_DSN": "token://ar_testtoken?password=hunter2&resource=https://mcp.example.com"})
 	if rec := serve(passwordOnly, httptest.NewRequest("GET", "/.well-known/oauth-authorization-server", nil)); rec.Code != http.StatusOK {
 		t.Errorf("password without redirect: metadata %d, want 200 — the password turns the login on", rec.Code)
 	}
@@ -381,7 +381,7 @@ func TestTokenLoginRoutesFollowRedirects(t *testing.T) {
 }
 
 func TestIssuedAccessTokenNeedsTheLoginServer(t *testing.T) {
-	m := config.APIConfig{Token: "ar_testtoken", Password: "hunter2", ResourceURL: "https://mcp.example.com"}
+	m := config.ConsoleConfig{Token: "ar_testtoken", Password: "hunter2", ResourceURL: "https://mcp.example.com"}
 	access := newLoginServer(m, slog.New(slog.DiscardHandler)).keys.sign(kindAccess, grantClaims{
 		RegisteredClaims: jwt.RegisteredClaims{Issuer: "https://mcp.example.com", Subject: "mcp",
 			Audience: jwt.ClaimStrings{m.ResourceURL}, ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour))}})
@@ -390,7 +390,7 @@ func TestIssuedAccessTokenNeedsTheLoginServer(t *testing.T) {
 		h    http.Handler
 		want int
 	}{
-		"login on":  {newHandlerFixture(t, map[string]string{"API_AUTH_DSN": loginDSN}), http.StatusOK},
+		"login on":  {newHandlerFixture(t, map[string]string{"CONSOLE_AUTH_DSN": loginDSN}), http.StatusOK},
 		"login off": {newHandlerFixture(t, nil), http.StatusUnauthorized},
 	} {
 		req := initReq()
@@ -416,7 +416,7 @@ func TestEachPrefixChallengesWithItsOwnMetadata(t *testing.T) {
 		"login": {"token://ar_testtoken?password=hunter2&resource=" + origin, origin},
 	}
 	for mode, m := range modes {
-		h := newHandlerFixture(t, map[string]string{"API_AUTH_DSN": m.dsn})
+		h := newHandlerFixture(t, map[string]string{"CONSOLE_AUTH_DSN": m.dsn})
 		for _, tc := range []struct{ method, path, meta, resource string }{
 			{"POST", "/mcp", "/.well-known/oauth-protected-resource/mcp", origin + "/mcp"},
 			{"GET", "/api/projects", "/.well-known/oauth-protected-resource", origin},
@@ -471,7 +471,7 @@ func TestOAuthAudienceDefaultsToOriginOrMCP(t *testing.T) {
 		"explicit aud9, aud aud9":         {dsn + "&audience=aud9", "aud9", http.StatusOK},
 		"explicit aud9, aud origin":       {dsn + "&audience=aud9", origin, http.StatusUnauthorized},
 	} {
-		h := newHandlerFixture(t, map[string]string{"API_AUTH_DSN": tc.dsn})
+		h := newHandlerFixture(t, map[string]string{"CONSOLE_AUTH_DSN": tc.dsn})
 		req := httptest.NewRequest("GET", "/api/projects", nil)
 		req.Header.Set("Authorization", "Bearer "+f.sign(t, f.claims(jwt.MapClaims{"aud": tc.aud})))
 		rec := httptest.NewRecorder()

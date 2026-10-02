@@ -6,8 +6,10 @@ set -euo pipefail
 # The container has no systemd; stub systemctl so enable/daemon-reload
 # succeed. Calls are logged; /tmp/running makes twillingate.service look
 # active to list-units, /tmp/healthy makes is-active succeed, and /tmp/split
-# stands for a split install: the twillingate@ingest and @api instances are
-# enabled and, with /tmp/running, active instead of the bare unit.
+# stands for a split install: the twillingate@ingest and @console instances
+# are enabled and, with /tmp/running, active instead of the bare unit.
+# /tmp/split-api stands for one from before the rename, with twillingate@api
+# enabled and active instead of @console.
 cat > /usr/local/bin/systemctl <<'STUB'
 #!/bin/sh
 echo "systemctl $*" >> /tmp/systemctl.log
@@ -15,14 +17,20 @@ case "$1" in
   list-units)
     [ -f /tmp/running ] || exit 0
     if [ -f /tmp/split ]; then
-      echo "twillingate@api.service loaded active running twillingate api"
+      echo "twillingate@console.service loaded active running twillingate console"
+      echo "twillingate@ingest.service loaded active running twillingate ingest"
+    elif [ -f /tmp/split-api ]; then
+      # The installer has already stopped twillingate@api by the time it lists.
       echo "twillingate@ingest.service loaded active running twillingate ingest"
     else
       echo "twillingate.service loaded active running twillingate"
     fi ;;
   is-active) [ -f /tmp/healthy ] || exit 3 ;;
   is-enabled)
-    case "$*" in *twillingate@*) [ -f /tmp/split ] || exit 1 ;; esac ;;
+    case "$*" in
+      *twillingate@api*) [ -f /tmp/split-api ] || exit 1 ;;
+      *twillingate@*) [ -f /tmp/split ] || [ -f /tmp/split-api ] || exit 1 ;;
+    esac ;;
 esac
 exit 0
 STUB
@@ -106,7 +114,7 @@ if /tmp/deploy/systemd/install.sh > /dev/null 2>&1; then
 fi
 echo "ok: upgrade fails when the restarted service is down"
 
-# A split install runs twillingate@ingest and twillingate@api. An upgrade
+# A split install runs twillingate@ingest and twillingate@console. An upgrade
 # must restart both and must not re-enable the bare unit, which would bind
 # the same listeners at the next boot.
 touch /tmp/split /tmp/healthy
@@ -117,11 +125,31 @@ if grep -q 'systemctl enable twillingate.service' /tmp/systemctl.log; then
 fi
 echo "ok: split upgrade leaves twillingate.service disabled"
 grep -q 'systemctl restart twillingate@ingest.service' /tmp/systemctl.log \
-  && grep -q 'systemctl restart twillingate@api.service' /tmp/systemctl.log \
+  && grep -q 'systemctl restart twillingate@console.service' /tmp/systemctl.log \
   || fail "split upgrade did not restart both surfaces"
 echo "ok: split upgrade restarts both surfaces"
 grep -qx 'User=analytics' /etc/systemd/system/twillingate@.service \
   || fail "split template lost the service account"
 echo "ok: split template keeps the service account"
+
+# A split install from before the rename runs twillingate@api. The upgrade
+# moves it to twillingate@console and starts that, since @api was running.
+rm /tmp/split
+touch /tmp/split-api
+: > /tmp/systemctl.log
+out="$(/tmp/deploy/systemd/install.sh)"
+grep -q 'systemctl disable --now twillingate@api.service' /tmp/systemctl.log \
+  && grep -q 'systemctl enable twillingate@console.service' /tmp/systemctl.log \
+  || fail "upgrade did not move twillingate@api to twillingate@console"
+echo "ok: upgrade moves twillingate@api to twillingate@console"
+grep -q 'systemctl restart twillingate@console.service' /tmp/systemctl.log \
+  || fail "upgrade did not start twillingate@console"
+echo "$out" | grep -q '^Restarted twillingate@console.service$' \
+  || fail "upgrade did not check twillingate@console came up"
+echo "ok: upgrade starts and checks twillingate@console"
+if grep -q 'systemctl enable twillingate.service' /tmp/systemctl.log; then
+  fail "renamed split upgrade re-enabled twillingate.service"
+fi
+echo "ok: renamed split upgrade leaves twillingate.service disabled"
 
 echo "INSTALL TEST OK"

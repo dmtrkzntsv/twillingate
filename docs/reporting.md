@@ -8,7 +8,7 @@ returns its live parts (components, views, projects, dashboards) with its
 [Workflow](#workflow) and [Rules](#rules) in one call.
 
 Collecting data and querying it with `query` are in
-[twillingate.md](twillingate.md); running the collector and enabling the API
+[twillingate.md](twillingate.md); running the collector and enabling the console
 are in [deployment.md](deployment.md).
 
 - [Concepts](#concepts)
@@ -98,7 +98,7 @@ component:
   `to` only for one that follows the range; both echo the values applied.
 - `data` is `{columns, rows, truncated}` for `sql` (every value a string, as
   `query` returns them) and `{markdown}` for `md`.
-- `truncated: true` means the result hit `API_QUERY_MAX_ROWS`: group the query
+- `truncated: true` means the result hit `CONSOLE_QUERY_MAX_ROWS`: group the query
   or narrow it.
 - `removed: true` with `data: null` means the widget's component left the code
   in a release; switch it to another with `update_widget`, or archive it.
@@ -114,7 +114,7 @@ can turn on auto-refresh from a dashboard's top-right "…" menu: the page
 then reloads it every `auto_refresh_seconds` (the longer of the two, so
 each reload runs the queries again), only while its window has focus. Changing a
 widget's source starts it on new entries. Widget queries run under the same
-guards as `query`: read-only, `API_QUERY_TIMEOUT` and `API_QUERY_MAX_ROWS`.
+guards as `query`: read-only, `CONSOLE_QUERY_TIMEOUT` and `CONSOLE_QUERY_MAX_ROWS`.
 
 ## Workflow
 
@@ -161,8 +161,8 @@ guards as `query`: read-only, `API_QUERY_TIMEOUT` and `API_QUERY_MAX_ROWS`.
   and `'%meta%'` pass.
 - Unquoted names are ASCII: quote any other (`"визиты"`). Strings and
   comments may hold any text.
-- Group in SQL: a widget gets at most `API_QUERY_MAX_ROWS` rows (default
-  1000) and `API_QUERY_TIMEOUT` (default 10s). A result cut at the cap draws
+- Group in SQL: a widget gets at most `CONSOLE_QUERY_MAX_ROWS` rows (default
+  1000) and `CONSOLE_QUERY_TIMEOUT` (default 10s). A result cut at the cap draws
   as "partial". A pie keeps to about seven slices, the rest summed as
   `Other`.
 - A widget that follows neither switcher says in its title what it is fixed
@@ -722,7 +722,7 @@ widget's name (`widget visitors: …`), and nothing is created.
 | line.y: "n/a" is not number | Return a number, a `YYYY-MM-DD` day or text as the input asks; `CAST(… AS REAL)` where needed. An empty value (SQL `NULL`) always passes. |
 | refused: sql reads meta, which custom SQL may not read | Read the `v_*` views instead. The same holds for `sqlite_*`, `pragma_*` and `dbstat`, as a name or as a single-quoted string equal to one (`'meta'`, `'sqlite_master'`), and for `ATTACH`. |
 | refused: sql may use non-ASCII characters only inside quotes or comments | Quote the name: `"визиты"`. |
-| query exceeded API_QUERY_TIMEOUT (10s); narrow the range or group the query | Group in SQL or read fewer days; the operator can raise `API_QUERY_TIMEOUT`. |
+| query exceeded CONSOLE_QUERY_TIMEOUT (10s); narrow the range or group the query | Group in SQL or read fewer days; the operator can raise `CONSOLE_QUERY_TIMEOUT`. |
 | SQLite's own error, such as a column that does not exist | Fix the query; try it with `query` first. |
 | markdown text is empty | Give the Markdown text. |
 | stat: … (a props schema error) | Match the props schema `list_components` returns; unknown props are refused. |
