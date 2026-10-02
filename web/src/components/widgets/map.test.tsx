@@ -4,7 +4,8 @@ import { describe, expect, it } from 'vitest'
 import worldAtlas from 'world-atlas/countries-110m.json'
 import { ISO_ALPHA2_TO_NUMERIC } from '@/lib/iso-countries'
 import type { SqlData, WidgetProps } from './types'
-import Map, { contract } from './map'
+import { contract } from './map'
+import Map from './lazy/map'
 
 function renderMap(data: SqlData, props: WidgetProps['props'] = {}) {
   return render(
