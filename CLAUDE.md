@@ -58,10 +58,13 @@ marks a breaking change. Scopes match the tree: `store`, `server`, `jobs`,
 
 Releases are cut by hand with `gh workflow run release.yml` (optional `version`
 input; blank means next patch). Pushing to `main` publishes nothing. Pre-1.0:
-breaking changes bump the minor. The workflow runs `make check` and the race
-suite (`make test`), tags, builds the tarballs and hands off to `npx changelogithub`; container images publish
-from a separate job; several commits can ship under one version; notes are
-not hand-edited.
+breaking changes bump the minor. The workflow has four jobs: `build` settles
+the version and builds the tarballs (`make dist`); `test` (`make check`, then
+the race suite `make test`) and `build docker image` (pushed untagged, by
+digest) run side by side; `build and publish release` waits for all three,
+tags, hands the tarballs to `npx changelogithub`, then tags the image with the
+version and `latest`. A failure anywhere publishes nothing. Several commits
+can ship under one version; notes are not hand-edited.
 
 ## Checks
 

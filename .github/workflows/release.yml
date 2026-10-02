@@ -8,22 +8,24 @@ on:
         description: 'Version to release, e.g. 0.9.2 or v0.9.2. Blank bumps the patch.'
         required: false
         type: string
+# Each job widens this to what it needs; only the last one writes anything
+# a user can see.
 permissions:
-  contents: write
-  packages: write
-  actions: write # prune superseded Go caches
+  contents: read
 # Serialize runs so releases are published in commit order.
 concurrency:
   group: release
+# Four stages. build settles the version and compiles the tarballs; test and
+# the image then run side by side; release publishes only once all three have
+# passed, so a failure anywhere leaves no tag, no release and no tagged image.
 jobs:
-  release:
+  build:
+    name: build
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
     steps:
-      # Full history: changelogithub derives the previous tag from the log to
-      # decide which commits the notes cover. A shallow clone sees no earlier
-      # tag and would restate the whole history in every release.
+      # Full history for the tag lookup below.
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
       - id: tag
@@ -53,11 +55,50 @@ jobs:
           echo "tag=$next" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-go@v5
         with: { go-version-file: go.mod, cache: false }
+      # The Go cache the test job saves (see there). Restore only: the three
+      # cross-compiles are not what pull requests build, so this job's
+      # entries would serve nobody.
+      - uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-${{ hashFiles('go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            go-${{ hashFiles('go.sum') }}-
+            go-
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: web/package-lock.json }
+      # VERSION explicitly: the Makefile default is `git describe`, and the
+      # tag does not exist yet, so the binaries would report the previous
+      # tag plus a commit suffix (v0.9.1-1-gd76e64b in v0.9.2).
+      - run: make dist VERSION=${{ steps.tag.outputs.tag }}
+      # The release job publishes these exact files.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: |
+            dist/*.tar.gz
+            dist/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 7
+
+  test:
+    name: test
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write # prune superseded Go caches
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version-file: go.mod, cache: false }
       # Same cache as ci.yml. Not setup-go's built-in cache: that keys on
       # go.sum alone, so it is a snapshot from the last dependency change and
       # goes staler with every commit. Keying on the sha and restoring by
       # prefix starts each run from the newest entry. Pull requests only
-      # restore; this run, on main, is the one that saves, so its entry is
+      # restore; this job, on main, is the one that saves, so its entry is
       # visible to every pull request.
       - uses: actions/cache/restore@v4
         with:
@@ -76,8 +117,8 @@ jobs:
       # it to here: nothing is tagged until it passes.
       - run: make check
       - run: make test
-      # After the tests, before dist: the pull request jobs run make check
-      # and make build, not the three cross-compiles.
+      # Saved here and not from build: this cache holds what make check
+      # compiles, which is what the pull request jobs run.
       - uses: actions/cache/save@v4
         with:
           path: |
@@ -94,30 +135,19 @@ jobs:
           gh cache list --key go- --limit 100 --json id,key \
             --jq '.[] | select(.key != env.KEEP) | .id' |
             xargs -r -n1 gh cache delete
-      # VERSION explicitly: the Makefile default is `git describe`, and the
-      # tag does not exist yet, so the binaries would report the previous
-      # tag plus a commit suffix (v0.9.1-1-gd76e64b in v0.9.2).
-      - run: make dist VERSION=${{ steps.tag.outputs.tag }}
-      # The tag has to exist on the remote before the release points at it.
-      - name: tag
-        run: |
-          git tag "${{ steps.tag.outputs.tag }}" "$GITHUB_SHA"
-          git push origin "${{ steps.tag.outputs.tag }}"
-      # changelogithub creates the release, groups the notes by conventional
-      # commit type and uploads the artifacts in one call.
-      - name: release
-        run: >
-          npx -y changelogithub@15
-          --to "${{ steps.tag.outputs.tag }}"
-          --assets "dist/*.tar.gz" --assets dist/SHA256SUMS
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
 
-  # The image publishes separately from the tarballs, so a slow or broken
-  # image build cannot hold up the release of the binaries.
-  image-twillingate:
+  # Builds and pushes the image untagged, by digest; the release job names it
+  # with the version once everything has passed. It runs alongside the tests
+  # rather than after them, since the tests take several times as long.
+  image:
+    name: build docker image
+    needs: build
     runs-on: ubuntu-latest
-    needs: release
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-qemu-action@v3
@@ -128,7 +158,7 @@ jobs:
       # cache it cost ~60s. The Dockerfile mounts /root/.cache/go-build; this
       # pair restores that mount from the previous release before the build
       # and saves it back afterwards (post steps run in reverse, so the dance
-      # extracts before actions/cache uploads). Not the release job's Go
+      # extracts before actions/cache uploads). Not the test job's Go
       # cache: setup-go and golang:1.25-alpine resolve different patch
       # toolchains, so none of its entries would match. Keyed on the sha like
       # the Go caches, so every release saves and restores the newest.
@@ -148,16 +178,63 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: twillingate
+      # No tags: a pull of :latest or a version must never reach an image
+      # whose release then failed. The digest goes to the release job.
+      - id: push
+        name: twillingate
         uses: docker/build-push-action@v6
         with:
           context: .
           target: runtime
           platforms: linux/amd64,linux/arm64,linux/arm/v7
-          push: true
-          build-args: VERSION=${{ needs.release.outputs.tag }}
-          tags: |
-            ghcr.io/${{ github.repository_owner }}/twillingate:${{ needs.release.outputs.tag }}
-            ghcr.io/${{ github.repository_owner }}/twillingate:latest
+          build-args: VERSION=${{ needs.build.outputs.tag }}
+          outputs: type=image,name=ghcr.io/${{ github.repository_owner }}/twillingate,push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=twillingate
           cache-to: type=gha,mode=max,scope=twillingate
+
+  release:
+    name: build and publish release
+    needs: [build, test, image]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    env:
+      TAG: ${{ needs.build.outputs.tag }}
+      IMAGE: ghcr.io/${{ github.repository_owner }}/twillingate
+    steps:
+      # Full history: changelogithub derives the previous tag from the log to
+      # decide which commits the notes cover. A shallow clone sees no earlier
+      # tag and would restate the whole history in every release.
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/download-artifact@v4
+        with: { name: dist, path: dist }
+      # The tag has to exist on the remote before the release points at it.
+      - name: tag
+        run: |
+          git tag "$TAG" "$GITHUB_SHA"
+          git push origin "$TAG"
+      # changelogithub creates the release, groups the notes by conventional
+      # commit type and uploads the artifacts in one call.
+      - name: release
+        run: >
+          npx -y changelogithub@15
+          --to "$TAG"
+          --assets "dist/*.tar.gz" --assets dist/SHA256SUMS
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+      # After the release, so the binaries never wait on the registry. Names
+      # the multi-arch index the image job pushed; nothing is rebuilt.
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: tag the image
+        env:
+          DIGEST: ${{ needs.image.outputs.digest }}
+        run: |
+          docker buildx imagetools create \
+            -t "$IMAGE:$TAG" -t "$IMAGE:latest" "$IMAGE@$DIGEST"
+          docker buildx imagetools inspect "$IMAGE:$TAG"
