@@ -47,8 +47,8 @@ jobs:
           fi
           printf 'go=%s\nweb=%s\ne2e=%s\nsdk=%s\n' "$go" "$web" "$e2e" "$sdk" | tee -a "$GITHUB_OUTPUT"
 
-  # Vet, the coverage gate without -race, the SQLite-free packages with it,
-  # the restore test (make check), and a link of the binary.
+  # Vet, the coverage gate without -race, the SQLite-free packages with it
+  # (make check), and a link of the binary.
   check:
     needs: changes
     if: needs.changes.outputs.go == 'true'

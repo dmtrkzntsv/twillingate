@@ -23,7 +23,7 @@ internal/shared/     small generic leaf packages: civil (calendar dates), readsq
 docs/                the three contract pages, embedded and served over MCP
 sdk/                 browser SDK source (TypeScript); the built file is embedded by internal/server
 web/                 dashboard web app source (React, TypeScript); the build is embedded by internal/reporting
-deploy/              installer, systemd units, compose files, litestream config, UPGRADES.md
+deploy/              installer, systemd unit, compose file, UPGRADES.md
 ```
 
 `app` imports the surfaces (`server`, `api`, `jobs`, `pipeline`);
@@ -66,7 +66,7 @@ not hand-edited.
 ## Checks
 
 `make check` (vet, the coverage gate without `-race`, the SQLite-free packages
-with it, restore test) is what pull request CI runs; run it before pushing.
+with it) is what pull request CI runs; run it before pushing.
 `make build` compiles; `make test` runs the whole suite under `-race`, about
 ten times slower because modernc SQLite is instrumented too, so CI runs it only
 in the release workflow. CI runs on pull requests only (nothing on push to
@@ -109,7 +109,7 @@ Update in the **same commit** as the change:
 | views the system dashboards read (`internal/store/sqlite/migrations/`) | the system widgets, which `TestSystemDashboards` in `internal/reporting/system_test.go` runs |
 | a migration with pre-checks or a visible change on upgrade day | `deploy/UPGRADES.md` |
 | environment variables (`internal/config/`) | `docs/deployment.md` |
-| install, upgrade, replication or restore procedure (`deploy/`, `Makefile`) | `docs/deployment.md` |
+| install, upgrade, backup or restore procedure (`deploy/`, `Makefile`) | `docs/deployment.md` |
 | API auth modes or client setup (`internal/api/auth.go`, `oauth*.go`) | `docs/deployment.md` |
 
 `internal/api/docs_sync_test.go` binds part of this in both directions

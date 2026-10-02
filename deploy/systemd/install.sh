@@ -108,27 +108,14 @@ install -d -m 0755 /etc/twillingate
 
 if [ ! -f /etc/twillingate/twillingate.env ]; then
   install -m 0640 -g "$SERVICE_USER" "$root/.env.example" /etc/twillingate/twillingate.env
-  echo "Installed /etc/twillingate/twillingate.env — EDIT IT (R2 credentials, geo)."
-fi
-if [ ! -f /etc/litestream.yml ] && [ -f "$root/deploy/litestream/litestream.yml" ]; then
-  install -m 0644 "$root/deploy/litestream/litestream.yml" /etc/litestream.yml
+  echo "Installed /etc/twillingate/twillingate.env — EDIT IT (public URL, geo)."
 fi
 if [ -d /etc/logrotate.d ] && [ -f "$root/deploy/logrotate/twillingate" ]; then
   install -m 0644 "$root/deploy/logrotate/twillingate" /etc/logrotate.d/twillingate
 fi
 
-# Litestream is not installed by us — it may live in /usr/local/bin (manual
-# tarball) or /usr/bin (package manager), so bake in wherever it actually is.
-# The fallback keeps the unit sensible when it is installed later by hand.
-litestream_bin="$(command -v litestream || true)"
-litestream_bin="${litestream_bin:-/usr/local/bin/litestream}"
-
-for unit in twillingate litestream; do
-  sed -e "s/__USER__/$SERVICE_USER/g" \
-      -e "s|__LITESTREAM__|$litestream_bin|g" \
-      "$root/deploy/systemd/$unit.service" \
-    > "/etc/systemd/system/$unit.service"
-done
+sed -e "s/__USER__/$SERVICE_USER/g" "$root/deploy/systemd/twillingate.service" \
+  > /etc/systemd/system/twillingate.service
 # A split install runs one surface per instance: twillingate@ingest and
 # twillingate@api. The template is the main unit with the surface flag
 # added, so the two can never drift apart, and it is re-rendered on every
@@ -145,13 +132,6 @@ if systemctl is-enabled --quiet twillingate@ingest.service \
   echo "Split install (twillingate@ingest, twillingate@api): leaving twillingate.service disabled"
 else
   systemctl enable twillingate.service
-fi
-if command -v litestream >/dev/null 2>&1; then
-  systemctl enable litestream.service
-else
-  echo "NOTE: litestream binary not found; install it (https://litestream.io/install/)."
-  echo "  If it does not land at $litestream_bin, fix ExecStart= in"
-  echo "  /etc/systemd/system/litestream.service, then: systemctl enable --now litestream"
 fi
 
 if [ "$upgrade" -eq 1 ]; then
@@ -186,8 +166,8 @@ fi
 cat <<EOF_DONE
 
 Installed. Next steps:
-  1. Edit /etc/twillingate/twillingate.env (R2 credentials, geo)
-  2. systemctl start twillingate   (and litestream once installed)
+  1. Edit /etc/twillingate/twillingate.env (public URL, geo)
+  2. systemctl start twillingate
   3. Put Cloudflare/Caddy/nginx in front of 127.0.0.1:8080 for TLS
   4. Create your first project:
        sudo -u $SERVICE_USER sh -ac '. /etc/twillingate/twillingate.env; twillingate project create -name myapp'

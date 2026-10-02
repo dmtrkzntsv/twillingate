@@ -2,7 +2,7 @@ BIN := twillingate
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X github.com/dmtrkzntsv/twillingate/internal/shared/version.Version=$(VERSION)
 
-.PHONY: build ui test check vet build-all dist docker run smoke test-install test-compose test-restore seed-demo clean
+.PHONY: build ui test check vet build-all dist docker run smoke test-install test-compose seed-demo clean
 
 # The dashboards app (web/) builds into internal/reporting/ui, which the
 # binary embeds. Only its components.json is committed, so every Go build
@@ -42,14 +42,11 @@ RACE_PKGS = ./internal/pipeline/... ./internal/identity/... ./internal/geo/...
 vet:
 	go vet $(GOPKGS)
 
-# What pull request CI runs: vet, the coverage gate without -race, the
-# SQLite-free packages with it, and the restore test. test-restore is here
-# because, unlike the docker-backed test-install and test-compose, it only
-# needs sqlite3 and runs in a couple of seconds.
+# What pull request CI runs: vet, the coverage gate without -race, and the
+# SQLite-free packages with it.
 check: vet $(UI)
 	./scripts/coverage.sh
 	go test -race $(RACE_PKGS)
-	./scripts/test-restore.sh
 
 build-all: $(UI)
 	for target in linux/amd64 linux/arm64 linux/arm; do \
@@ -111,11 +108,6 @@ test-install: build
 # is not part of `make check`.
 test-compose:
 	./scripts/test-compose.sh
-
-# Runs restore.sh against a stubbed litestream and asserts a failed cycle
-# never replaces the previous replica. Also part of `make check`.
-test-restore:
-	./scripts/test-restore.sh
 
 # Fills local/twillingate.db with 180 days of believable traffic so the dashboards
 # have something to plot. Projects come from the database, one profile per

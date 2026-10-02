@@ -46,9 +46,8 @@ That prints a snippet to paste; an agent with MCP access can do the same two
 steps for you. Put Caddy, nginx or a Cloudflare tunnel in front of `:8080` for
 TLS.
 
-For backups the file ships a litestream service, commented out, that streams
-the database to object storage. [docs/deployment.md](docs/deployment.md) is
-the runbook.
+Back up the one SQLite file in its `data` volume.
+[docs/deployment.md](docs/deployment.md) is the runbook.
 
 ## Track something
 
@@ -82,7 +81,7 @@ and is what the MCP endpoint serves to agents as `docs://twillingate`, so
 the text you read and the text they read are the same bytes.
 [docs/deployment.md](docs/deployment.md) is everything needed to run
 twillingate on your own server: installing it, configuring the collector,
-the API endpoint and the dashboards, and litestream backups. It is served as `docs://deployment`, so an agent can help with an
+the API endpoint and the dashboards, and backups. It is served as `docs://deployment`, so an agent can help with an
 install too.
 
 | Section | Covers |
@@ -96,13 +95,13 @@ install too.
 | [Configure the collector](docs/deployment.md#configure-the-collector) | Every environment variable, low-resource tuning |
 | [The API endpoint](docs/deployment.md#the-api-endpoint) | The browser login, and pointing claude.ai, Desktop or Claude Code at it |
 | [Dashboards at /app/](docs/deployment.md#dashboards-at-app) | Where the dashboards are served and how they log in |
-| [Operate and recover](docs/deployment.md#operate-and-recover) | Upgrades, litestream backups, backup drills, disaster recovery, schema upgrades in deploy/UPGRADES.md |
+| [Operate and recover](docs/deployment.md#operate-and-recover) | Upgrades, backup and restore, schema upgrades in deploy/UPGRADES.md |
 | [docs/plausible/](docs/plausible/) | The Plausible class-tagging shim |
 
 ## Development
 
 ```bash
-make check       # what PR CI runs: vet + coverage gate + restore test
+make check       # what PR CI runs: vet + coverage gate
 make test        # the full suite under -race (slow; the release runs it)
 make build       # single binary (needs Go and Node 22: it builds web/ first)
 make run         # local server on 127.0.0.1:8080 with a dev project

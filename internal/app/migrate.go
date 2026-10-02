@@ -21,8 +21,7 @@ var _ reporting.Store = store.Store(nil)
 //
 // The reporting migrator gets its own read-only handle on the writer's
 // own database file (databasePath(cfg.Database)), not API_DB_PATH, which
-// may point at a litestream replica that lags the write this migration
-// itself just made.
+// may point at a copy that lags the write this migration itself just made.
 func Migrate(ctx context.Context, cfg *config.Config, st store.Store) error {
 	if err := st.Migrate(ctx); err != nil {
 		return err
