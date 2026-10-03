@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
@@ -127,37 +128,98 @@ func TestMigration025KeepsProductAttrsAnswer(t *testing.T) {
 	}
 }
 
-// The point of 025: a query's project and day reach the raw rows, so the
+// v_measures_attrs' answer must not move either. The fixture folds a
+// tail per bucket, merges a kept value spelled "(other)" with it, reads a
+// declared custom and $ key beside the system ones, and has a second
+// metric, a day already rolled up and a project declaring nothing. Sample
+// rates are powers of two, so weight and sum add up exactly in any order.
+func TestMigration025KeepsMeasuresAttrsAnswer(t *testing.T) {
+	db := newTestDBAt(t, 24)
+	ctx := context.Background()
+	if err := db.SetMeta(ctx, "product_attributes_top_n", "2"); err != nil {
+		t.Fatal(err)
+	}
+	keys := []string{"endpoint", "$path"}
+	id := seedDeclaredProject(t, db, keys)
+	bare := seedDeclaredProject(t, db, nil)
+	values := []float64{0, 100, 340, 5000, 12.5}
+	var evs []store.Event
+	for d, ts := range []time.Time{
+		time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC),
+		time.Date(2026, 9, 2, 10, 0, 0, 0, time.UTC),
+		time.Date(2026, 9, 3, 10, 0, 0, 0, time.UTC),
+	} {
+		for i := 0; i < 30; i++ {
+			for _, pid := range []int64{id, bare} {
+				ev := measureEvent([]string{"checkout_api", "$lcp"}[i%2], values[(i+d)%5], "time")
+				ev.ProjectID, ev.TS = pid, ts
+				ev.SampleRate = []float64{1, 0.5, 0.25}[i%3]
+				ev.Attributes = map[string]string{"endpoint": []string{"(other)", "a", "b", "c", "d"}[(i*(d+1))%5]}
+				ev.Path = fmt.Sprintf("/p/%d", i%4)
+				ev.Browser = []string{"Chrome", "Firefox", "Safari", "Edge"}[(i+d)%4]
+				ev.Device = []string{"desktop", "mobile"}[i%2]
+				evs = append(evs, ev)
+			}
+		}
+	}
+	if err := db.WriteEvents(ctx, evs); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AggregateMeasureDay(ctx, id, day("2026-09-01"), keys, 2); err != nil {
+		t.Fatal(err)
+	}
+
+	const q = `SELECT * FROM v_measures_attrs ORDER BY 1,2,3,4,5,6,7`
+	before := snapshotRows(t, db, q)
+	var others, raw int
+	if err := db.db.QueryRow(`SELECT COUNT(*) FILTER (WHERE attr_value = '(other)'),
+		COUNT(*) FILTER (WHERE day > '2026-09-01') FROM v_measures_attrs`).Scan(&others, &raw); err != nil {
+		t.Fatal(err)
+	}
+	if others == 0 || raw == 0 {
+		t.Fatalf("fixture has %d (other) rows and %d raw-day rows; both must be exercised", others, raw)
+	}
+	if err := db.migrateThrough(ctx, 25); err != nil {
+		t.Fatal(err)
+	}
+	if after := snapshotRows(t, db, q); !reflect.DeepEqual(before, after) {
+		t.Fatalf("v_measures_attrs changed across 025:\nbefore %v\nafter  %v", before, after)
+	}
+}
+
+// The point of 025: a query's project and day reach the raw rows, so each
 // live half runs over the days the range covers and none other. Pinned on
 // the plan, since a result cannot show which rows were read.
-func TestProductAttrsLiveHalfReadsOnlyTheRange(t *testing.T) {
+func TestAttrsLiveHalvesReadOnlyTheRange(t *testing.T) {
 	db := newTestDB(t)
-	rows, err := db.db.Query(`EXPLAIN QUERY PLAN SELECT * FROM v_product_attrs
-		WHERE project_id = ? AND day BETWEEN ? AND ?`, 1, "2026-08-01", "2026-08-07")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rows.Close()
-	var plan []string
-	for rows.Next() {
-		var id, parent, unused int
-		var detail string
-		if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+	for _, view := range []string{"v_product_attrs", "v_measures_attrs"} {
+		rows, err := db.db.Query(`EXPLAIN QUERY PLAN SELECT * FROM `+view+`
+			WHERE project_id = ? AND day BETWEEN ? AND ?`, 1, "2026-08-01", "2026-08-07")
+		if err != nil {
 			t.Fatal(err)
 		}
-		plan = append(plan, detail)
-	}
-	if err := rows.Err(); err != nil {
-		t.Fatal(err)
-	}
-	var raw []string
-	for _, d := range plan {
-		if strings.Contains(d, "events") {
-			raw = append(raw, d)
+		var plan []string
+		for rows.Next() {
+			var id, parent, unused int
+			var detail string
+			if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+				t.Fatal(err)
+			}
+			plan = append(plan, detail)
 		}
-	}
-	want := "USING PRIMARY KEY (family=? AND project_id=? AND day>? AND day<?)"
-	if len(raw) != 1 || !strings.Contains(raw[0], want) {
-		t.Fatalf("events reads %q, want one read %s\nplan:\n%s", raw, want, strings.Join(plan, "\n"))
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
+		}
+		rows.Close()
+		var raw []string
+		for _, d := range plan {
+			if strings.Contains(d, "events") {
+				raw = append(raw, d)
+			}
+		}
+		want := "USING PRIMARY KEY (family=? AND project_id=? AND day>? AND day<?)"
+		if len(raw) != 1 || !strings.Contains(raw[0], want) {
+			t.Errorf("%s reads events %q, want one read %s\nplan:\n%s", view, raw, want, strings.Join(plan, "\n"))
+		}
 	}
 }

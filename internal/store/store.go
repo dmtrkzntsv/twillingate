@@ -92,7 +92,7 @@ type SystemAttribute struct{ Key, Column string }
 
 // SystemAttributes are rolled up for every project, declared or not:
 // low-cardinality environment keys. The v_product_attrs live half
-// (025_product_attrs_live_half.sql) lists every entry in its keys and its
+// (025_attrs_live_halves.sql) lists every entry in its keys and its
 // CASE.
 var SystemAttributes = []SystemAttribute{
 	{"$platform", "platform"},
