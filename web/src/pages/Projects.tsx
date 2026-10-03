@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { ChevronRightIcon, PlusIcon } from 'lucide-react'
 import AppShell, { TopBar } from '@/components/AppShell'
-import CopyButton from '@/components/projects/CopyButton'
+import IssuedKeyView from '@/components/projects/IssuedKeyView'
 import LimitsPanel from '@/components/projects/LimitsPanel'
 import ProjectCard from '@/components/projects/ProjectCard'
 import ProjectFormDialog from '@/components/projects/ProjectFormDialog'
@@ -100,19 +100,7 @@ export default function Projects() {
             <DialogTitle>Project created</DialogTitle>
             <DialogDescription>Its first ingest key and the snippet to install it. The snippet is shown here once; the key stays on the project page.</DialogDescription>
           </DialogHeader>
-          {created?.key && (
-            <div className="flex items-center gap-2 rounded-md border p-2 font-mono text-sm">
-              <span className="flex-1 truncate">{created.key}</span>
-              <CopyButton value={created.key} label="Copy key" />
-            </div>
-          )}
-          {created?.snippet && (
-            <div className="flex items-start gap-2 rounded-md border p-2">
-              <pre className="flex-1 overflow-x-auto font-mono text-xs whitespace-pre-wrap">{created.snippet}</pre>
-              <CopyButton value={created.snippet} label="Copy snippet" />
-            </div>
-          )}
-          {created?.note && <p className="text-xs text-muted-foreground">{created.note}</p>}
+          {created && <IssuedKeyView keyValue={created.key} snippet={created.snippet} note={created.note} />}
         </DialogContent>
       </Dialog>
     </AppShell>

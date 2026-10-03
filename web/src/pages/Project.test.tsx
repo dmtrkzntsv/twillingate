@@ -1,0 +1,110 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { screen, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { MemoryRouter, Route, Routes } from 'react-router'
+import { endpoints } from '@/lib/api'
+import { dashboardsList } from '@/test/fixtures'
+import { renderWithProviders } from '@/test/render'
+import Project from './Project'
+
+const actions = {
+  update: vi.fn(), archive: vi.fn(), restore: vi.fn(), issueKey: vi.fn(),
+  disableKey: vi.fn(), enableKey: vi.fn(), create: vi.fn(), pending: false,
+}
+vi.mock('@/hooks/use-project-actions', () => ({ useProjectActions: () => actions }))
+
+beforeEach(() => {
+  vi.restoreAllMocks()
+  Object.values(actions).forEach((f) => typeof f === 'function' && f.mockReset())
+  vi.spyOn(endpoints, 'dashboards').mockResolvedValue(dashboardsList({ purge_after_days: 30 }))
+  vi.spyOn(endpoints, 'projects').mockResolvedValue({ projects: [
+    { project_id: 4, name: 'econumo.com', allowed_origins: ['https://econumo.com'], attributes: ['plan'] },
+    { project_id: 3, name: 'legacy', archived: true, allowed_origins: [] },
+  ] })
+  vi.spyOn(endpoints, 'keys').mockResolvedValue({ keys: [
+    { project_id: 4, label: 'web', key: 'ak_web_123456789', state: 'active' },
+    { project_id: 4, label: 'old', key: 'ak_old_123456789', state: 'disabled' },
+  ] })
+  vi.spyOn(endpoints, 'stats').mockResolvedValue({ from: 'a', to: 'b', database_bytes: 0, projects: [] })
+  vi.spyOn(endpoints, 'capUsage').mockResolvedValue({ project_id: 4, from: 'a', to: 'b', dimensions: [] })
+})
+
+function renderAt(path: string) {
+  return renderWithProviders(
+    <MemoryRouter initialEntries={[path]}>
+      <Routes><Route path="/projects/:id" element={<Project />} /></Routes>
+    </MemoryRouter>
+  )
+}
+
+describe('Project', () => {
+  it('shows the details and edits them through PATCH', async () => {
+    const user = userEvent.setup()
+    actions.update.mockResolvedValue(true)
+    renderAt('/projects/4')
+    const details = await screen.findByRole('region', { name: 'Details' })
+    expect(within(details).getByText('https://econumo.com')).toBeInTheDocument()
+    expect(within(details).getByText('plan')).toBeInTheDocument()
+    await user.click(within(details).getByRole('button', { name: 'Edit' }))
+    await user.click(screen.getByRole('button', { name: 'Remove plan' }))
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    expect(actions.update).toHaveBeenCalledWith(4, { name: 'econumo.com', allowed_origins: ['https://econumo.com'], attributes: [] })
+  })
+
+  it('lists keys and disables one after confirming', async () => {
+    const user = userEvent.setup()
+    actions.disableKey.mockResolvedValue(true)
+    renderAt('/projects/4')
+    const keys = await screen.findByRole('region', { name: 'Ingest keys' })
+    const row = within(keys).getByRole('row', { name: /web/ })
+    expect(within(row).getByText('active')).toBeInTheDocument()
+    await user.click(within(row).getByRole('button', { name: 'Disable web' }))
+    expect(actions.disableKey).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: 'Disable key' }))
+    expect(actions.disableKey).toHaveBeenCalledWith(4, 'web')
+    expect(within(within(keys).getByRole('row', { name: /old/ })).getByRole('button', { name: 'Enable old' })).toBeInTheDocument()
+  })
+
+  it('enables a disabled key without asking', async () => {
+    const user = userEvent.setup()
+    actions.enableKey.mockResolvedValue(true)
+    renderAt('/projects/4')
+    const keys = await screen.findByRole('region', { name: 'Ingest keys' })
+    await user.click(within(keys).getByRole('button', { name: 'Enable old' }))
+    expect(actions.enableKey).toHaveBeenCalledWith(4, 'old')
+  })
+
+  it('issues a key and shows it with its snippet', async () => {
+    const user = userEvent.setup()
+    actions.issueKey.mockResolvedValue({ key: 'ak_ios', snippet: 'twillingate.init(…)', status: 'issued' })
+    renderAt('/projects/4')
+    await user.click(await screen.findByRole('button', { name: 'Issue key' }))
+    await user.type(screen.getByLabelText('Label'), 'ios')
+    await user.click(screen.getByRole('button', { name: 'Issue' }))
+    expect(actions.issueKey).toHaveBeenCalledWith(4, 'ios')
+    expect(await screen.findByText('ak_ios')).toBeInTheDocument()
+    expect(screen.getByText('twillingate.init(…)')).toBeInTheDocument()
+  })
+
+  it('archives after a confirmation naming the purge window', async () => {
+    const user = userEvent.setup()
+    actions.archive.mockResolvedValue(true)
+    renderAt('/projects/4')
+    await user.click(await screen.findByRole('button', { name: 'Archive' }))
+    expect(screen.getByText(/deleted after 30 days/)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Archive project' }))
+    expect(actions.archive).toHaveBeenCalledWith(4)
+  })
+
+  it('offers Restore on an archived project and still shows it', async () => {
+    renderAt('/projects/3')
+    expect(await screen.findByRole('button', { name: 'Restore' })).toBeInTheDocument()
+    expect(screen.getByText('Archived')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Archive' })).not.toBeInTheDocument()
+  })
+
+  it('says so for an unknown project', async () => {
+    renderAt('/projects/77')
+    expect(await screen.findByText('No project 77')).toBeInTheDocument()
+  })
+})
