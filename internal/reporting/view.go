@@ -101,7 +101,7 @@ func parseView(in DataRequest, maxRows int) (view, error) {
 				var list []string
 				if !isList || json.Unmarshal(r.Value, &list) != nil {
 					return view{}, store.Refuse(store.ErrInvalid,
-						"filter on %q: %s takes a list of values", r.Column, r.Op)
+						"filter on %q: %s takes a list of strings (quote numbers: [\"1\", \"2\"])", r.Column, r.Op)
 				}
 				if len(list) == 0 {
 					return view{}, store.Refuse(store.ErrInvalid,

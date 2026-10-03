@@ -131,7 +131,8 @@ result in SQL, and `widget_data` takes `filters`, `sort`, `distinct`,
 - `filters` is a JSON list of `{column, op, value}`, combined with AND; a
   column may appear in several (`Count > 10`, `Count < 100`). `op` is `=`,
   `!=`, `<`, `>`, `in` or `not in`; `in` and `not in` take a list of
-  strings (at least one), the others one string.
+  strings (at least one), the others one string; a number goes quoted
+  (`"100"`, `["1", "2"]`).
 - Cells compare as the table shows them: an integer in decimal, a real in
   its shortest form, text as is, `NULL` as empty. `=`, `!=`, `in` and
   `not in` compare that text exactly and case-sensitively, so an integer
@@ -149,9 +150,10 @@ result in SQL, and `widget_data` takes `filters`, `sort`, `distinct`,
   before text, numbers by value, text by code point, empty cells last in
   both directions; ties break by every column in order, so pages never
   overlap or skip a row. Without it, the query's own order.
-- `offset` (default 0) and `limit` (1 to `CONSOLE_QUERY_MAX_ROWS`, the
-  default) pick the page; `page.matched` counts the rows the filters
-  keep and `page.total` the rows the query returns.
+- `offset` (default 0) and `limit` (up to `CONSOLE_QUERY_MAX_ROWS`; 0 or
+  absent means `CONSOLE_QUERY_MAX_ROWS`) pick the page; `page.matched`
+  counts the rows the filters keep and `page.total` the rows the query
+  returns.
 - `distinct` names a column and returns `data` with columns `value` and
   `rows`: that column's values among rows matching the **other** filters,
   most frequent first, paged by the same `offset` and `limit`;
@@ -160,9 +162,10 @@ result in SQL, and `widget_data` takes `filters`, `sort`, `distinct`,
 - Refused (a tool error over MCP, `400 invalid` over HTTP; the message
   says what to change): an unknown column (it lists the query's columns),
   an unknown `op`, a list given to a
-  single-value `op` or one value to `in`/`not in`, an empty list,
-  malformed `filters` JSON, a `sort` direction other than `asc` or
-  `desc`, a negative `offset`, a `limit` out of range, and any of these
+  single-value `op` or one value to `in`/`not in`, an unquoted number,
+  an empty list, malformed `filters` JSON, a `sort` direction other than `asc` or
+  `desc`, a negative `offset`, a negative `limit` or one over
+  `CONSOLE_QUERY_MAX_ROWS`, and any of these
   arguments on a widget that is not a remote table. A filter that matches
   nothing is not refused: no rows, `matched: 0`.
 

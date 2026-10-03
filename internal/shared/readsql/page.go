@@ -50,7 +50,9 @@ type PageResult struct {
 }
 
 // QueryPage runs q wrapped so the database filters, sorts, counts and
-// pages it in one statement (Run's deadline applies). It is QueryLimit's
+// pages it in one statement. That statement follows a shape query, and an
+// empty page past offset 0 adds two counts, so one call runs up to four
+// statements and each gets Run's deadline of its own. It is QueryLimit's
 // guard 3 extended, not a second path around it: q passes Check first and
 // the only text added around it is this package's own, with every column
 // name taken from q's own result and quoted, and every value bound.

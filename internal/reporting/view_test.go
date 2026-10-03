@@ -139,6 +139,7 @@ func TestViewRefusals(t *testing.T) {
 	}{
 		{"malformed filters", DataRequest{Filters: "not json"}, "filters"},
 		{"one value to in", DataRequest{Filters: `[{"column":"N","op":"in","value":"1"}]`}, "list"},
+		{"numbers to in", DataRequest{Filters: `[{"column":"N","op":"in","value":[1,2]}]`}, "a list of strings (quote numbers"},
 		{"empty in", DataRequest{Filters: `[{"column":"N","op":"in","value":[]}]`}, "at least one"},
 		{"a list to =", DataRequest{Filters: `[{"column":"N","op":"=","value":["1"]}]`}, "not a list"},
 		{"unknown op", DataRequest{Filters: `[{"column":"N","op":"like","value":"1"}]`}, "not one of"},
