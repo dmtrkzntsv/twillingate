@@ -158,6 +158,7 @@ func TestSystemDashboardGroups(t *testing.T) {
 // own, so a query that forgets its project filter reads wrong numbers.
 type systemFixture struct {
 	svc                *Service
+	st                 store.Store
 	db                 *readsql.DB
 	project, neighbour int64
 	today              civil.Date
@@ -182,7 +183,7 @@ func newSystemFixture(t *testing.T) systemFixture {
 	seedSystemData(t, st, pid, today)
 	other := mustCreateProject(t, st, "neighbour")
 	seedNeighbour(t, st, other, today)
-	return systemFixture{svc: New(st, db, Options{}), db: db, project: pid, neighbour: other, today: today}
+	return systemFixture{svc: New(st, db, Options{}), st: st, db: db, project: pid, neighbour: other, today: today}
 }
 
 // column returns row i's value in res's column name, failing the test
@@ -354,6 +355,63 @@ func TestRetentionMilestonesMatchCurve(t *testing.T) {
 			}
 			if preset == "90d" && ys["45"] == "" {
 				t.Errorf("%s 90d: curve never reaches 45; the seed does not exercise the milestones", pair[1])
+			}
+		}
+	}
+}
+
+// TestAttributeValuesKeepEveryDay: "Top attribute values by day" ranks
+// values within each day, so a quiet day keeps its own top values
+// instead of losing every row to a busier day's. For every preset, the
+// widget's days are exactly the days v_product_attrs holds in the range.
+func TestAttributeValuesKeepEveryDay(t *testing.T) {
+	ctx := context.Background()
+	f := newSystemFixture(t)
+	d, err := f.svc.Dashboard(ctx, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var id int64
+	for _, w := range d.Widgets {
+		if w.Name == "attribute-values" {
+			id = w.ID
+		}
+	}
+	if id == 0 {
+		t.Fatal("product has no widget attribute-values")
+	}
+	// One day far busier than the rest: 120 values each outranking any
+	// other day's, as a launch or a backfill leaves them.
+	var burst []string
+	for i := 0; i < 120; i++ {
+		burst = append(burst, fmt.Sprintf("(%d, '%s', 'click', 'ref', 'r%03d', 1000, 50, 5)", f.project, f.today.AddDays(-10), i))
+	}
+	valuesInsert(t, f.st, "agg_product_attrs", "project_id, day, event_name, attr_key, attr_value, count, unique_users, unique_groups", burst)
+	for _, preset := range systemPresets {
+		from, to := presetDates(preset, f.today)
+		got, err := f.svc.WidgetData(ctx, DataRequest{WidgetID: id, ProjectID: f.project, From: from, To: to})
+		if err != nil {
+			t.Fatal(err)
+		}
+		res := got.Data.(readsql.Result)
+		if res.Truncated {
+			t.Errorf("%s: truncated at %d rows", preset, len(res.Rows))
+		}
+		shown := map[string]bool{}
+		for i := range res.Rows {
+			shown[column(t, res, i, "Day")] = true
+		}
+		all, err := f.db.Query(ctx, `SELECT DISTINCT day FROM v_product_attrs
+			WHERE project_id = ? AND day BETWEEN ? AND ? ORDER BY day`, f.project, from, to)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if preset == "90d" && len(all.Rows) < 30 {
+			t.Errorf("90d: v_product_attrs holds %d days; the seed does not exercise the ranking", len(all.Rows))
+		}
+		for _, r := range all.Rows {
+			if !shown[r[0]] {
+				t.Errorf("%s: day %s has attribute values but the widget shows none", preset, r[0])
 			}
 		}
 	}
