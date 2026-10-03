@@ -67,18 +67,24 @@ func TestUsageRange(t *testing.T) {
 		{From: "2026-09-10", To: "2026-09-01"},
 		{From: "2025-01-01", To: "2026-09-01"},
 		{From: "yesterday"},
+		{From: "2025-09-01", To: "2026-10-06"}, // 401 days inclusive
 	} {
 		if _, _, err := usageRange(in, now); !errors.Is(err, manage.ErrInvalid) {
 			t.Errorf("%+v: err = %v, want invalid", in, err)
 		}
+	}
+	// A range runs at most 400 days, both ends included.
+	if _, _, err := usageRange(usageRangeIn{From: "2025-09-01", To: "2026-10-05"}, now); err != nil {
+		t.Errorf("400 days inclusive: %v, want accepted", err)
 	}
 }
 
 // cap_usage reports, per capped dimension, the busiest day, the days with
 // data, the days that folded into (other) and the share folded. The test
 // host has blog (1) with aggregated days 2026-08-20/21 and a raw view on
-// 2026-08-26; this adds a folded paths day, a folded plan day and caps of
-// 1 so the identities seeded on 2026-08-20 reach theirs.
+// 2026-08-26 (path /live, user u1); this adds a folded paths day and a
+// folded plan day, and caps of 1 so the identity days (u1 on 2026-08-20
+// aggregated, and again on 2026-08-26 from the raw view) reach theirs.
 func TestCapUsage(t *testing.T) {
 	h, _ := newTestHost(t)
 	h.limits = limitsFrom(&config.Config{ProductAttributesTopN: 1, ViewsDimensionsTopN: 2, IdentitiesTopN: 1})
@@ -161,7 +167,7 @@ func TestCapUsageEmptyAndUnknown(t *testing.T) {
 	h, _ := newTestHost(t)
 	out, err := h.capUsage(context.Background(), capUsageIn{ProjectID: 2, usageRangeIn: usageRangeIn{From: "2026-08-20", To: "2026-08-26"}})
 	if err != nil || len(out.Dimensions) != 0 || out.Dimensions == nil {
-		t.Errorf("docs = %+v, %v; want an empty, non-nil list", out, err)
+		t.Errorf("project 2 (no data) = %+v, %v; want an empty, non-nil list", out, err)
 	}
 	if _, err := h.capUsage(context.Background(), capUsageIn{ProjectID: 99}); !errors.Is(err, manage.ErrNotFound) {
 		t.Errorf("unknown project: %v, want not_found", err)

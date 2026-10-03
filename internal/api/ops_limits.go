@@ -2,13 +2,14 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"sort"
 	"strconv"
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/config"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
+	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
 )
 
 // The caps, by the setting that sets each.
@@ -65,8 +66,8 @@ type usageRangeIn struct {
 	To   string `json:"to,omitempty" jsonschema:"end day inclusive, YYYY-MM-DD; default today (UTC)"`
 }
 
-// maxUsageDays bounds a usage range: a year and a bit, so a 365-day range
-// fits whatever day it starts.
+// maxUsageDays bounds a usage range, both ends included: a year and a bit,
+// so a 365-day range fits whatever day it starts.
 const maxUsageDays = 400
 
 // usageRange resolves the usage tools' range: to defaults to today (UTC),
@@ -91,7 +92,7 @@ func usageRange(in usageRangeIn, now time.Time) (civil.Date, civil.Date, error) 
 	if to.Before(from) {
 		return civil.Date{}, civil.Date{}, invalidf("from %s is after to %s", from, to)
 	}
-	if from.AddDays(maxUsageDays).Before(to) {
+	if from.AddDays(maxUsageDays - 1).Before(to) {
 		return civil.Date{}, civil.Date{}, invalidf("a range runs at most %d days; %s..%s is longer", maxUsageDays, from, to)
 	}
 	return from, to, nil
@@ -171,6 +172,24 @@ func summarize(setting, dimension string, cap int, days []dayUsage, share bool) 
 	return row
 }
 
+// run is db.Run for the tools that fold several queries into one answer: a
+// timeout and a truncated result are both refusals (invalid, narrow the
+// range), never a partial answer. Each query must be shaped so its rows fit
+// the row cap for any allowed range.
+func (h *host) run(ctx context.Context, q string, args ...any) (readsql.Result, error) {
+	res, err := h.db.Run(ctx, q, args...)
+	if err != nil {
+		if errors.Is(err, readsql.ErrTimeout) {
+			return readsql.Result{}, invalidf("query exceeded %s; narrow the date range", h.db.Timeout())
+		}
+		return readsql.Result{}, err
+	}
+	if res.Truncated {
+		return readsql.Result{}, invalidf("too many rows; narrow the date range")
+	}
+	return res, nil
+}
+
 func (h *host) capUsage(ctx context.Context, in capUsageIn) (capUsageOut, error) {
 	if h.reg.Snapshot(ctx).Project(in.ProjectID) == nil {
 		return capUsageOut{}, h.unknownProjectErr(ctx, in.ProjectID)
@@ -183,7 +202,7 @@ func (h *host) capUsage(ctx context.Context, in capUsageIn) (capUsageOut, error)
 	out := capUsageOut{ProjectID: in.ProjectID, From: from, To: to, Dimensions: []capUsageRow{}}
 
 	for _, v := range capViews {
-		res, err := h.db.Run(ctx, fmt.Sprintf(`SELECT day, COUNT(*), MAX(%[1]s = '(other)'),
+		res, err := h.run(ctx, fmt.Sprintf(`SELECT day, COUNT(*), MAX(%[1]s = '(other)'),
 			SUM(views), SUM(CASE WHEN %[1]s = '(other)' THEN views ELSE 0 END)
 			FROM %[2]s WHERE project_id = ? AND day BETWEEN ? AND ? GROUP BY day ORDER BY day`, v.last, v.view),
 			in.ProjectID, from, to)
@@ -196,39 +215,39 @@ func (h *host) capUsage(ctx context.Context, in capUsageIn) (capUsageOut, error)
 	}
 
 	// Attributes: the cap is per event (and per measure), so a day's values
-	// are its busiest event's; it folded if any event did.
-	res, err := h.db.Run(ctx, `SELECT attr_key, day, MAX(n), MAX(other), SUM(c), SUM(oc) FROM (
-		  SELECT attr_key, day, COUNT(*) AS n, MAX(attr_value = '(other)') AS other,
-		         SUM(count) AS c, SUM(CASE WHEN attr_value = '(other)' THEN count ELSE 0 END) AS oc
-		  FROM v_product_attrs WHERE project_id = ? AND day BETWEEN ? AND ?
-		  GROUP BY attr_key, day, event_name
-		  UNION ALL
-		  SELECT attr_key, day, COUNT(DISTINCT attr_value), MAX(attr_value = '(other)'),
-		         SUM(samples), SUM(CASE WHEN attr_value = '(other)' THEN samples ELSE 0 END)
-		  FROM v_measures_attrs WHERE project_id = ? AND day BETWEEN ? AND ?
-		  GROUP BY attr_key, day, event_name, measure
-		) GROUP BY attr_key, day ORDER BY attr_key, day`,
+	// are its busiest event's; it folded if any event did. One query per
+	// key keeps each answer to one row a day, whatever the number of keys.
+	keys, err := h.run(ctx, `SELECT attr_key FROM v_product_attrs WHERE project_id = ? AND day BETWEEN ? AND ?
+		UNION
+		SELECT attr_key FROM v_measures_attrs WHERE project_id = ? AND day BETWEEN ? AND ?
+		ORDER BY attr_key`,
 		in.ProjectID, from, to, in.ProjectID, from, to)
 	if err != nil {
 		return capUsageOut{}, err
 	}
-	byKey := map[string][]dayUsage{}
-	var keys []string
-	for _, r := range res.Rows {
-		if _, seen := byKey[r[0]]; !seen {
-			keys = append(keys, r[0])
+	for _, k := range keys.Rows {
+		res, err := h.run(ctx, `SELECT day, MAX(n), MAX(other), SUM(c), SUM(oc) FROM (
+			  SELECT day, COUNT(*) AS n, MAX(attr_value = '(other)') AS other,
+			         SUM(count) AS c, SUM(CASE WHEN attr_value = '(other)' THEN count ELSE 0 END) AS oc
+			  FROM v_product_attrs WHERE project_id = ? AND day BETWEEN ? AND ? AND attr_key = ?
+			  GROUP BY day, event_name
+			  UNION ALL
+			  SELECT day, COUNT(DISTINCT attr_value), MAX(attr_value = '(other)'),
+			         SUM(samples), SUM(CASE WHEN attr_value = '(other)' THEN samples ELSE 0 END)
+			  FROM v_measures_attrs WHERE project_id = ? AND day BETWEEN ? AND ? AND attr_key = ?
+			  GROUP BY day, event_name, measure
+			) GROUP BY day ORDER BY day`,
+			in.ProjectID, from, to, k[0], in.ProjectID, from, to, k[0])
+		if err != nil {
+			return capUsageOut{}, err
 		}
-		byKey[r[0]] = append(byKey[r[0]], daysOf([][]string{r[1:]})...)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		out.Dimensions = append(out.Dimensions, summarize(settingAttrs, k, h.capOf(settingAttrs), byKey[k], true))
+		out.Dimensions = append(out.Dimensions, summarize(settingAttrs, k[0], h.capOf(settingAttrs), daysOf(res.Rows), true))
 	}
 
 	// Identities keep no (other) row: a day is capped when it reached the cap.
 	idCap := h.capOf(settingIdentities)
 	for _, kind := range []struct{ kind, dimension string }{{"user", "users"}, {"group", "groups"}} {
-		res, err := h.db.Run(ctx, `SELECT day, COUNT(*) FROM v_identity_daily
+		res, err := h.run(ctx, `SELECT day, COUNT(*) FROM v_identity_daily
 			WHERE project_id = ? AND day BETWEEN ? AND ? AND kind = ? GROUP BY day ORDER BY day`,
 			in.ProjectID, from, to, kind.kind)
 		if err != nil {

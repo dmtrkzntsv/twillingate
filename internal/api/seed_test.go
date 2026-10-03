@@ -18,7 +18,7 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/reporting"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
-	_ "github.com/dmtrkzntsv/twillingate/internal/store/sqlite"
+	"github.com/dmtrkzntsv/twillingate/internal/store/sqlite"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -292,10 +292,18 @@ func newTestRegistrar(t *testing.T, h *host) *registrar {
 // The store interface deliberately has no Exec; ExecForTest is a
 // test-only accessor added to internal/store/sqlite/sqlite.go.
 func rawExec(st any, q string, args ...any) (sql.Result, error) {
-	return st.(interface {
-		ExecForTest(string, ...any) (sql.Result, error)
-	}).ExecForTest(q, args...)
+	return st.(execForTest).ExecForTest(q, args...)
 }
+
+// execForTest is the sqlite store's test-only Exec, which neither
+// store.Store nor manage.Store declares, so callers hold those and rawExec
+// asserts down. The assertion below keeps the method's signature checked at
+// compile time.
+type execForTest interface {
+	ExecForTest(string, ...any) (sql.Result, error)
+}
+
+var _ execForTest = (*sqlite.DB)(nil)
 
 // callTool invokes a tool over the session and fails the test on
 // protocol errors; tool errors come back in the result.

@@ -96,9 +96,11 @@ One row per capped dimension that has data in the range:
   its row count reaches the cap (some ids may have been dropped), and
   `folded_share` is null.
 
-For days already rolled up the views only hold the kept values and the
-`(other)` row, so "values per day" is at most cap + 1 there; the true
-distinct count of a folded day is not recoverable. The UI says so.
+For days already rolled up the views only hold the kept values and their
+`(other)` rows, so "values per day" stays near the cap there (cap + 1 for
+single-key breakdowns and attributes, cap plus one per leading key for
+two-key breakdowns); the true distinct count of a folded day is not
+recoverable. The UI says so.
 
 A cap of 0 reports `cap: 0`. A day rolled up under an older cap keeps its `(other)` row and still counts as capped; identities, which keep no trace, report no capped day under no cap.
 
