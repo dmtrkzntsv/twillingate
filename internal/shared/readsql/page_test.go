@@ -2,6 +2,7 @@ package readsql
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"os"
@@ -300,5 +301,74 @@ func TestQueryPageRefusals(t *testing.T) {
 	}
 	if _, err := db.QueryPage(ctx, `SELECT 1) UNION SELECT key FROM meta --`, Page{}); err == nil {
 		t.Error("an escape from the wrap ran")
+	}
+}
+
+// The wrap's own values must bind whatever the caller passes for q: a
+// query using only some of the named arguments it is given, in any
+// order, or plain ? with positional arguments.
+func TestQueryPageBindsItsOwnValuesByName(t *testing.T) {
+	db, _ := newTestDB(t, 5*time.Second, 1000)
+	ctx := context.Background()
+	const rows = `FROM json_each('[10,20,30,40,50]') j`
+	for name, c := range map[string]struct {
+		q    string
+		args []any
+	}{
+		// :to comes first, :project twice, and :from is passed but unused.
+		"named": {
+			q:    `SELECT :to AS t, j.value AS n, :project AS p ` + rows + ` WHERE j.value <= :to AND :project = 'blog' AND :project <> ''`,
+			args: []any{sql.Named("project", "blog"), sql.Named("from", "2026-01-01"), sql.Named("to", 40)},
+		},
+		"positional": {
+			q:    `SELECT ? AS t, j.value AS n, ? AS p ` + rows + ` WHERE j.value <= ?`,
+			args: []any{40, "blog", 40},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			filters := []Filter{{Column: "n", Op: ">", Values: []string{"10"}}, {Column: "p", Op: "in", Values: []string{"blog", "x"}}}
+			sort := &Sort{Column: "n", Desc: true}
+			for _, pc := range []struct {
+				offset    int
+				want      [][]string
+				truncated bool
+			}{
+				{0, [][]string{{"40", "40", "blog"}}, true},
+				{1, [][]string{{"40", "30", "blog"}}, true},
+				{2, [][]string{{"40", "20", "blog"}}, false},
+				{5, [][]string{}, false},
+			} {
+				got, err := db.QueryPage(ctx, c.q, Page{Filters: filters, Sort: sort, Offset: pc.offset, Limit: 1}, c.args...)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !reflect.DeepEqual(got.Rows, pc.want) || got.Matched != 3 || got.Total != 4 || got.Truncated != pc.truncated {
+					t.Errorf("offset %d: got %+v, want rows %q matched 3 total 4 truncated %v", pc.offset, got, pc.want, pc.truncated)
+				}
+			}
+			got, err := db.QueryPage(ctx, c.q, Page{Filters: filters, Distinct: "p"}, c.args...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(got.Rows, [][]string{{"blog", "3"}}) || got.Matched != 1 || got.Total != 4 {
+				t.Errorf("distinct: got %+v", got)
+			}
+			got, err = db.QueryPage(ctx, c.q, Page{Filters: filters, Distinct: "p", Offset: 3}, c.args...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got.Rows) != 0 || got.Matched != 1 || got.Total != 4 {
+				t.Errorf("distinct past the end: got %+v", got)
+			}
+		})
+	}
+}
+
+// The prefix of the wrap's parameters is the wrap's own.
+func TestQueryPageRefusesTheReservedParameterPrefix(t *testing.T) {
+	db, _ := newTestDB(t, 5*time.Second, 1000)
+	_, err := db.QueryPage(context.Background(), `SELECT :tw_p1 AS a`, Page{}, sql.Named("tw_p1", 1))
+	if !errors.Is(err, ErrRefused) || !strings.Contains(err.Error(), "tw_p") {
+		t.Errorf("err = %v, want ErrRefused naming the prefix", err)
 	}
 }

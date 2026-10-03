@@ -2,6 +2,7 @@ package readsql
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strconv"
 	"strings"
@@ -69,7 +70,20 @@ func (d *DB) QueryPage(ctx context.Context, q string, p Page, args ...any) (Page
 		return PageResult{}, fmt.Errorf("%w: distinct and sort cannot be combined; drop one", ErrRefused)
 	}
 
-	// The shape query also runs Check and the empty-text refusal.
+	// The wrap's own values are bound by name, under a prefix q may not
+	// use: the driver binds a plain ? by its position among all the
+	// arguments, so a caller passing named arguments q does not use (which
+	// plain Query accepts) would shift every value this wrap adds.
+	params, err := Check(q)
+	if err != nil {
+		return PageResult{}, err
+	}
+	for _, name := range params {
+		if strings.HasPrefix(strings.ToLower(name[1:]), paramPrefix) {
+			return PageResult{}, fmt.Errorf("%w: parameter %s uses the reserved prefix %q; rename it", ErrRefused, name, paramPrefix)
+		}
+	}
+	// The shape query also runs Check again and the empty-text refusal.
 	shape, err := d.QueryLimit(ctx, q, 0, args...)
 	if err != nil {
 		return PageResult{}, err
@@ -90,29 +104,30 @@ func (d *DB) QueryPage(ctx context.Context, q string, p Page, args ...any) (Page
 			filters = append(filters, f)
 		}
 	}
-	where, whereArgs := whereClause(filters)
+	var b binder
+	where := whereClause(filters, &b)
 
 	// Every row carries both counts: matched counts after the filters,
 	// total before them.
 	counted := fmt.Sprintf("SELECT *, COUNT(*) OVER () AS %s FROM (%s\n)", ident(total), trimmed)
-	pageArgs := append(append(append([]any{}, args...), whereArgs...), limit, p.Offset)
+	paging := " LIMIT " + b.bind(limit) + " OFFSET " + b.bind(p.Offset)
 
 	var stmt string
 	if p.Distinct != "" {
 		c := ident(p.Distinct)
 		// MAX over the window: total is the same on every row but is not
 		// grouped, so it must be aggregated to be read.
-		stmt = fmt.Sprintf(`SELECT tw_cell(%[1]s) AS "value", COUNT(*) AS "rows", COUNT(*) OVER () AS %[2]s, MAX(%[3]s) OVER () AS %[3]s FROM (%[4]s) WHERE %[5]s GROUP BY tw_cell(%[1]s) ORDER BY COUNT(*) DESC, %[6]s LIMIT ? OFFSET ?`,
-			c, ident(matched), ident(total), counted, where, sortKeys(p.Distinct, false))
+		stmt = fmt.Sprintf(`SELECT tw_cell(%[1]s) AS "value", COUNT(*) AS "rows", COUNT(*) OVER () AS %[2]s, MAX(%[3]s) OVER () AS %[3]s FROM (%[4]s) WHERE %[5]s GROUP BY tw_cell(%[1]s) ORDER BY COUNT(*) DESC, %[6]s%[7]s`,
+			c, ident(matched), ident(total), counted, where, sortKeys(p.Distinct, false), paging)
 	} else {
 		var names []string
 		for _, c := range cols {
 			names = append(names, ident(c))
 		}
-		stmt = fmt.Sprintf(`SELECT %s, %s, %s FROM (SELECT *, COUNT(*) OVER () AS %s FROM (%s) WHERE %s)%s LIMIT ? OFFSET ?`,
-			strings.Join(names, ", "), ident(matched), ident(total), ident(matched), counted, where, orderBy(p.Sort, cols))
+		stmt = fmt.Sprintf(`SELECT %s, %s, %s FROM (SELECT *, COUNT(*) OVER () AS %s FROM (%s) WHERE %s)%s%s`,
+			strings.Join(names, ", "), ident(matched), ident(total), ident(matched), counted, where, orderBy(p.Sort, cols), paging)
 	}
-	res, err := d.Run(ctx, stmt, pageArgs...)
+	res, err := d.Run(ctx, stmt, append(append([]any{}, args...), b.args...)...)
 	if err != nil {
 		return PageResult{}, err
 	}
@@ -133,7 +148,7 @@ func (d *DB) QueryPage(ctx context.Context, q string, p Page, args ...any) (Page
 		for i, row := range res.Rows {
 			out.Rows[i] = row[:keep]
 		}
-	} else if err := d.countWhenEmpty(ctx, &out, trimmed, p, where, args, whereArgs); err != nil {
+	} else if err := d.countWhenEmpty(ctx, &out, trimmed, p, where, append(append([]any{}, args...), b.args...)); err != nil {
 		return PageResult{}, err
 	}
 	out.Truncated = out.Matched > p.Offset+len(out.Rows)
@@ -143,16 +158,16 @@ func (d *DB) QueryPage(ctx context.Context, q string, p Page, args ...any) (Page
 // countWhenEmpty fills Matched and Total for a page with no rows, which has
 // no row to carry them. Offset 0 with no rows means nothing matched; a page
 // past the end still has to count what it skipped.
-func (d *DB) countWhenEmpty(ctx context.Context, out *PageResult, trimmed string, p Page, where string, args, whereArgs []any) error {
-	count := func(what, cond string, a []any) (int, error) {
-		res, err := d.Run(ctx, fmt.Sprintf("SELECT %s FROM (%s\n) WHERE %s", what, trimmed, cond), a...)
+func (d *DB) countWhenEmpty(ctx context.Context, out *PageResult, trimmed string, p Page, where string, args []any) error {
+	count := func(what, cond string) (int, error) {
+		res, err := d.Run(ctx, fmt.Sprintf("SELECT %s FROM (%s\n) WHERE %s", what, trimmed, cond), args...)
 		if err != nil {
 			return 0, err
 		}
 		return strconv.Atoi(res.Rows[0][0])
 	}
 	var err error
-	if out.Total, err = count("COUNT(*)", "1", args); err != nil {
+	if out.Total, err = count("COUNT(*)", "1"); err != nil {
 		return err
 	}
 	if p.Offset == 0 {
@@ -162,7 +177,7 @@ func (d *DB) countWhenEmpty(ctx context.Context, out *PageResult, trimmed string
 	if p.Distinct != "" {
 		what = "COUNT(DISTINCT tw_cell(" + ident(p.Distinct) + "))"
 	}
-	out.Matched, err = count(what, where, append(append([]any{}, args...), whereArgs...))
+	out.Matched, err = count(what, where)
 	return err
 }
 
@@ -230,45 +245,57 @@ func ident(name string) string {
 	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 }
 
+// paramPrefix starts the name of every parameter this wrap adds.
+const paramPrefix = "tw_p"
+
+// binder hands out the wrap's named parameters and keeps their values.
+type binder struct{ args []any }
+
+// bind returns the placeholder for v, bound by name when the statement runs.
+func (b *binder) bind(v any) string {
+	name := paramPrefix + strconv.Itoa(len(b.args)+1)
+	b.args = append(b.args, sql.Named(name, v))
+	return ":" + name
+}
+
 // whereClause ANDs the filters. Values are bound, never spliced, and an
 // empty cell reaches only the negative operators.
-func whereClause(filters []Filter) (string, []any) {
+func whereClause(filters []Filter, b *binder) string {
 	if len(filters) == 0 {
-		return "1", nil
+		return "1"
 	}
 	var terms []string
-	var args []any
 	for _, f := range filters {
 		cell := "tw_cell(" + ident(f.Column) + ")"
-		marks := strings.TrimSuffix(strings.Repeat("?, ", len(f.Values)), ", ")
 		switch f.Op {
 		case "=":
-			terms = append(terms, cell+" <> '' AND "+cell+" = ?")
+			terms = append(terms, cell+" <> '' AND "+cell+" = "+b.bind(f.Values[0]))
 		case "!=":
-			terms = append(terms, "("+cell+" = '' OR "+cell+" <> ?)")
-		case "in":
-			terms = append(terms, cell+" <> '' AND "+cell+" IN ("+marks+")")
-		case "not in":
-			terms = append(terms, "("+cell+" = '' OR "+cell+" NOT IN ("+marks+"))")
+			terms = append(terms, "("+cell+" = '' OR "+cell+" <> "+b.bind(f.Values[0])+")")
+		case "in", "not in":
+			marks := make([]string, len(f.Values))
+			for i, v := range f.Values {
+				marks[i] = b.bind(v)
+			}
+			list := "(" + strings.Join(marks, ", ") + ")"
+			if f.Op == "in" {
+				terms = append(terms, cell+" <> '' AND "+cell+" IN "+list)
+			} else {
+				terms = append(terms, "("+cell+" = '' OR "+cell+" NOT IN "+list+")")
+			}
 		case "<", ">":
 			if IsDecimal(f.Values[0]) {
 				// Out of range reads as an infinity, which still orders correctly.
 				n, _ := strconv.ParseFloat(f.Values[0], 64)
 				num := "tw_num(" + ident(f.Column) + ")"
-				terms = append(terms, num+" IS NOT NULL AND "+num+" "+f.Op+" ?")
-				args = append(args, n)
+				terms = append(terms, num+" IS NOT NULL AND "+num+" "+f.Op+" "+b.bind(n))
 			} else {
 				// BINARY collation over UTF-8 is code-point order.
-				terms = append(terms, cell+" <> '' AND "+cell+" "+f.Op+" ?")
-				args = append(args, f.Values[0])
+				terms = append(terms, cell+" <> '' AND "+cell+" "+f.Op+" "+b.bind(f.Values[0]))
 			}
-			continue
-		}
-		for _, v := range f.Values {
-			args = append(args, v)
 		}
 	}
-	return "(" + strings.Join(terms, ") AND (") + ")", args
+	return "(" + strings.Join(terms, ") AND (") + ")"
 }
 
 // sortKeys orders one column: non-empty before empty, numbers before
