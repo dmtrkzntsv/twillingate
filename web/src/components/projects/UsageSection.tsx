@@ -85,8 +85,10 @@ export default function UsageSection({ projectId, range }: { projectId: number; 
             <Tile label="Events" value={(s.totals.views + s.totals.events + s.totals.measures).toLocaleString()}
               hint={`${s.totals.views.toLocaleString()} views · ${s.totals.events.toLocaleString()} product · ${s.totals.measures.toLocaleString()} measures`} />
             <Tile label="Last received" value={s.last_received_at ? formatAgo(s.last_received_at) : 'Nothing received yet'} />
-            <Tile label="Data size" value={s.size ? formatBytes(s.size.total_bytes) : 'unknown'}
-              hint={s.size ? `${formatBytes(s.size.raw_bytes)} raw · ${formatBytes(s.size.aggregate_bytes)} aggregates (estimate)` : undefined} />
+            <Tile label="Data size" value={s.size ? formatBytes(s.size.total_bytes) : 'Not measured yet'}
+              hint={s.size
+                ? `${formatBytes(s.size.raw_bytes)} raw · ${formatBytes(s.size.aggregate_bytes)} aggregates · estimate, measured ${formatAgo(s.size.measured_at)}`
+                : 'measured by the daily pass'} />
             <Tile label="Days kept" value={`${s.raw_days + s.rolled_up_days}`} hint={`${s.raw_days} raw · ${s.rolled_up_days} rolled up${s.first_day ? ` · since ${s.first_day}` : ''}`} />
           </div>
           {s.unused_attributes && s.unused_attributes.length > 0 && (

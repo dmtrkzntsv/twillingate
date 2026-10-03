@@ -19,7 +19,7 @@ function stats(project_id: number, over: Partial<ProjectStats> = {}): ProjectSta
     totals: { views: 5, events: 2, measures: 0 },
     last_received_at: new Date(Date.now() - 120_000).toISOString(),
     first_day: '2026-09-01', raw_days: 30, rolled_up_days: 2,
-    size: { raw_bytes: 1_000_000, aggregate_bytes: 1_300_000, total_bytes: 2_300_000 },
+    size: { raw_bytes: 1_000_000, aggregate_bytes: 1_300_000, total_bytes: 2_300_000, measured_at: '2026-10-03T03:00:09Z' },
     unused_attributes: [],
     ...over,
   }
@@ -66,6 +66,7 @@ describe('Projects', () => {
     renderPage()
     const card = await screen.findByRole('article', { name: 'quiet.dev' })
     expect(within(card).getByText('Nothing received yet')).toBeInTheDocument()
+    expect(within(card).getByText(/size not measured yet/)).toBeInTheDocument()
   })
 
   it('shows dashes, not zeros, while stats and keys load, and no count before projects', async () => {
@@ -74,7 +75,7 @@ describe('Projects', () => {
     renderPage()
     const card = await screen.findByRole('article', { name: 'econumo.com' })
     expect(within(card).queryByText(/0 events/)).not.toBeInTheDocument()
-    expect(within(card).queryByText(/size unknown/)).not.toBeInTheDocument()
+    expect(within(card).queryByText(/size not measured yet/)).not.toBeInTheDocument()
     expect(within(card).queryByText(/0 active keys/)).not.toBeInTheDocument()
     expect(screen.queryByText(/on disk/)).not.toBeInTheDocument()
   })

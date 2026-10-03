@@ -51,7 +51,7 @@ export default function ProjectCard({ project, stats, keys, statsFailed, onResto
         </p>
         <p className="text-xs text-muted-foreground">
           {[
-            stats ? (stats.size ? formatBytes(stats.size.total_bytes) : 'size unknown') : '—',
+            stats ? (stats.size ? formatBytes(stats.size.total_bytes) : 'size not measured yet') : '—',
             active === undefined ? '—' : `${active} active ${active === 1 ? 'key' : 'keys'}`,
             `${attrs} ${attrs === 1 ? 'attribute' : 'attributes'}`,
           ].join(' · ')}

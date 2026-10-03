@@ -222,7 +222,8 @@ export interface ProjectStats {
   first_day: string | null
   raw_days: number
   rolled_up_days: number
-  size: { raw_bytes: number; aggregate_bytes: number; total_bytes: number } | null
+  /** Measured by the daily pass (and once after the server starts); null until the first measurement. */
+  size: { raw_bytes: number; aggregate_bytes: number; total_bytes: number; measured_at: string } | null
   /** Only computed for one project (asked with project_id); null in the all-projects answer. */
   unused_attributes: string[] | null
 }

@@ -17,13 +17,15 @@ describe('UsageSection', () => {
       totals: { views: 30, events: 3, measures: 1 },
       last_received_at: new Date(Date.now() - 3 * 3600_000).toISOString(),
       first_day: '2026-08-01', raw_days: 30, rolled_up_days: 2,
-      size: { raw_bytes: 812_000, aggregate_bytes: 1_450_000, total_bytes: 2_262_000 },
+      size: { raw_bytes: 812_000, aggregate_bytes: 1_450_000, total_bytes: 2_262_000,
+        measured_at: new Date(Date.now() - 5 * 3600_000).toISOString() },
       unused_attributes: ['self_hosted'],
     }] })
     renderWithProviders(<UsageSection projectId={4} range={{ from: '2026-09-01', to: '2026-09-02' }} />)
     expect(await screen.findByText('34')).toBeInTheDocument()
     expect(screen.getByText('3 h ago')).toBeInTheDocument()
     expect(screen.getByText('2.3 MB')).toBeInTheDocument()
+    expect(screen.getByText(/estimate, measured 5 h ago/)).toBeInTheDocument()
     expect(screen.getByText(/30 raw · 2 rolled up/)).toBeInTheDocument()
     expect(screen.getByText('self_hosted')).toBeInTheDocument()
     expect(endpoints.stats).toHaveBeenCalledWith({ project_id: 4, from: '2026-09-01', to: '2026-09-02' })
@@ -36,7 +38,7 @@ describe('UsageSection', () => {
     }] })
     renderWithProviders(<UsageSection projectId={5} range={{ from: 'a', to: 'b' }} />)
     expect(await screen.findByText('Nothing received yet')).toBeInTheDocument()
-    expect(screen.getByText('unknown')).toBeInTheDocument()
+    expect(screen.getByText('Not measured yet')).toBeInTheDocument()
     expect(screen.getByText('No events in this range.')).toBeInTheDocument()
   })
 
