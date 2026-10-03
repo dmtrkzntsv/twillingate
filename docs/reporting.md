@@ -151,8 +151,9 @@ result in SQL, and `widget_data` takes `filters`, `sort`, `distinct`,
   keep and `page.total` the rows the query returns.
 - `distinct` names a column and returns `data` with columns `value` and
   `rows`: that column's values among rows matching the **other** filters,
-  most frequent first, paged by the same `offset` and `limit`. It cannot
-  be combined with `sort`.
+  most frequent first, paged by the same `offset` and `limit`;
+  `page.matched` then counts values, not rows. It cannot be combined with
+  `sort`.
 - Refused (a tool error over MCP, `400 invalid` over HTTP; the message
   says what to change): an unknown column (it lists the query's columns),
   an unknown `op`, a list given to a
@@ -161,6 +162,16 @@ result in SQL, and `widget_data` takes `filters`, `sort`, `distinct`,
   `desc`, a negative `offset`, a `limit` out of range, and any of these
   arguments on a widget that is not a remote table. A filter that matches
   nothing is not refused: no rows, `matched: 0`.
+
+A remote table returns every row, with no `LIMIT`:
+
+```
+add_widget {"dashboard_id": 3, "component": "table", "title": "Attribute values",
+            "props": {"mode": "remote"},
+            "source": {"type": "sql", "content": "SELECT attr_key AS \"Attribute\", day AS \"Day\", attr_value AS \"Value\", SUM(count) AS \"Count\" FROM v_product_attrs WHERE project_id = :project AND day BETWEEN :from AND :to GROUP BY attr_key, day, attr_value ORDER BY attr_key, day DESC, \"Count\" DESC"}}
+```
+
+A viewer's filter and sort on it reach the server as:
 
 ```
 widget_data {"widget_id": 42, "project_id": 7, "from": "2026-09-01", "to": "2026-09-30",
@@ -322,7 +333,7 @@ appears. `width` and `height` default to the component's size below.
 | `map` | `sql` | `country` text, ISO alpha-2; `value` number (unknown codes are listed under the map) | `format` | 6 × 8 |
 | `treemap` | `sql` | `label` text; `value` number; `parent` text, optional (two levels, e.g. browser → version) | `format` | 6 × 8 |
 | `sankey` | `sql` | `source` text; `target` text; `value` number (one row per flow; a name is one node in whichever column it appears, so a page that is a target and a source joins two stages; a row that would loop back is left out and listed under the chart) | `format` | 12 × 8 |
-| `table` | `sql` | any columns, shown in query order until a viewer sorts by a header | `formats` (column → format), `colorscale` (columns shaded by value), `mode` (`local`, the default, filters the loaded rows; `remote` filters, sorts and pages the whole result on the server) | 6 × 10 |
+| `table` | `sql` | any columns, shown in query order until a viewer sorts by a header or filters by a column | `formats` (column → format), `colorscale` (columns shaded by value), `mode` (`local`, the default, filters the loaded rows; `remote` filters, sorts and pages the whole result on the server) | 6 × 10 |
 | `markdown` | `md` | none | none | 12 × 2 |
 
 `list_components` is the authority: it returns each component's props as a
@@ -609,8 +620,11 @@ Pages with visitors and views, the views column shaded. Column names are
 the headers, so quote them as they should read. The query's `ORDER BY` is
 the order a table opens in; a viewer who clicks a header sorts the rows on
 the page (a third click restores query order), and that browser remembers
-the sort per widget. It sorts only the rows returned, so a `LIMIT`ed query
-still decides which rows those are:
+the sort per widget. A remote table (`"mode": "remote"`) runs the viewer's
+filters, sort and page in SQL over every row the query returns, so leave
+the `LIMIT` off. A local table, like this one, filters and sorts only the
+rows returned (at most `CONSOLE_QUERY_MAX_ROWS`), so a `LIMIT`ed query
+decides which rows those are:
 
 ```sql
 SELECT path AS "Page", SUM(visitors) AS "Visitors", SUM(views) AS "Views"

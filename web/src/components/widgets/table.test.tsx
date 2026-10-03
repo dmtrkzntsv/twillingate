@@ -1,6 +1,7 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { emptyView, type TableView } from '@/lib/table-view'
 import type { SqlData, WidgetProps } from './types'
 import Table, { contract } from './table'
 
@@ -21,6 +22,23 @@ const pages: SqlData = {
     ['/page2', '20'],
   ],
   truncated: false,
+}
+
+const attrs: SqlData = {
+  columns: ['Attribute', 'Value', 'Count'],
+  rows: [
+    ['$os', 'iOS', '412'],
+    ['$os', 'Android', '98'],
+    ['plan', 'pro', '205'],
+    ['plan', 'free', '150'],
+    ['ref', 'news', '60'],
+    ['ref', 'blog', '12'],
+  ],
+  truncated: false,
+}
+
+function view(...filters: TableView['filters']): TableView {
+  return { ...emptyView, filters }
 }
 
 function column(container: HTMLElement, i: number): string[] {
@@ -115,13 +133,24 @@ describe('table', () => {
     expect(header('visitors')).not.toHaveAttribute('aria-sort')
   })
 
-  it('sorts a text column ascending first, with digits compared as numbers', async () => {
+  it('sorts a text column ascending first, by code point as the server does', async () => {
     const user = userEvent.setup()
     const { container } = renderTable(pages)
     await user.click(screen.getByRole('button', { name: /page/ }))
-    expect(column(container, 0)).toEqual(['/a', '/b', '/page2', '/page10'])
+    expect(column(container, 0)).toEqual(['/a', '/b', '/page10', '/page2'])
     await user.click(screen.getByRole('button', { name: /page/ }))
-    expect(column(container, 0)).toEqual(['/page10', '/page2', '/b', '/a'])
+    expect(column(container, 0)).toEqual(['/page2', '/page10', '/b', '/a'])
+  })
+
+  it('puts v1.10 before v1.9 ascending: text compares by code point', async () => {
+    const user = userEvent.setup()
+    const { container } = renderTable({
+      columns: ['version'],
+      rows: [['v1.9'], ['v1.10']],
+      truncated: false,
+    })
+    await user.click(screen.getByRole('button', { name: /version/ }))
+    expect(column(container, 0)).toEqual(['v1.10', 'v1.9'])
   })
 
   it('keeps query order between equal values', async () => {
@@ -169,6 +198,109 @@ describe('table', () => {
     const { container } = renderTable(pages, {}, 'w')
     expect(column(container, 0)).toEqual(['/b', '/page10', '/a', '/page2'])
     expect(localStorage.getItem('w.sort')).not.toBeNull()
+  })
+
+  it('filters the loaded rows in local mode, offering their values without asking the server', async () => {
+    const user = userEvent.setup()
+    const fetchDistinct = vi.fn()
+    const { container } = render(
+      <Table data={attrs} props={{}} view={view({ column: 'Count', op: '>', value: '100' })} onView={() => {}} fetchDistinct={fetchDistinct} />
+    )
+    expect(column(container, 2)).toEqual(['412', '205', '150'])
+    await user.click(screen.getByRole('button', { name: 'Filter' }))
+    // Counted among the rows the other filter keeps.
+    expect(await screen.findByRole('option', { name: /plan/ })).toHaveTextContent('2')
+    expect(screen.getByRole('option', { name: /\$os/ })).toHaveTextContent('1')
+    expect(fetchDistinct).not.toHaveBeenCalled()
+  })
+
+  it('pages a local table past 1,000 matching rows', async () => {
+    const user = userEvent.setup()
+    const many: SqlData = { columns: ['n'], rows: Array.from({ length: 1500 }, (_, i) => [String(i)]), truncated: false }
+    const onView = vi.fn()
+    const { container } = render(<Table data={many} props={{}} view={emptyView} onView={onView} />)
+    expect(container.querySelectorAll('tbody tr')).toHaveLength(1000)
+    expect(screen.getByText('1–1,000 of 1,500')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Next page' }))
+    expect(onView).toHaveBeenCalledWith({ ...emptyView, offset: 1000 })
+  })
+
+  it('says a truncated local table needs mode "remote"', () => {
+    renderTable({ ...attrs, truncated: true })
+    expect(screen.getByText(/needs mode "remote"/)).toBeInTheDocument()
+  })
+
+  it('keeps the bar when a filter matches nothing', () => {
+    const { container } = render(
+      <Table data={attrs} props={{}} view={view({ column: 'Count', op: '>', value: '100000' })} onView={() => {}} />
+    )
+    expect(screen.getByText('No rows match these filters')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Count > 100000' })).toBeInTheDocument()
+    expect(container.querySelector('tbody tr')).toBeNull()
+  })
+
+  it('keeps the bar on a remote table the server filtered to nothing', () => {
+    render(
+      <Table
+        data={{ ...attrs, rows: [] }}
+        props={{ mode: 'remote' }}
+        view={view({ column: 'Count', op: '>', value: '100000' })}
+        onView={() => {}}
+        page={{ offset: 0, limit: 1000, matched: 0, total: 6 }}
+      />
+    )
+    expect(screen.getByText('No rows match these filters')).toBeInTheDocument()
+  })
+
+  it("renders a remote table's rows as given, with the footer from the page", () => {
+    const { container } = render(
+      <Table
+        data={attrs}
+        props={{ mode: 'remote' }}
+        view={view({ column: 'Count', op: '>', value: '100' })}
+        onView={() => {}}
+        page={{ offset: 0, limit: 6, matched: 40, total: 90 }}
+      />
+    )
+    expect(column(container, 2)).toEqual(['412', '98', '205', '150', '60', '12'])
+    expect(screen.getByText('1–6 of 40')).toBeInTheDocument()
+  })
+
+  it("asks a remote table's loader for the picker's values", async () => {
+    const user = userEvent.setup()
+    const fetchDistinct = vi.fn().mockResolvedValue([{ value: 'plan', rows: 900, capped: false }])
+    render(<Table data={attrs} props={{ mode: 'remote' }} view={emptyView} onView={() => {}} fetchDistinct={fetchDistinct} />)
+    await user.click(screen.getByRole('button', { name: 'Filter' }))
+    expect(await screen.findByRole('option', { name: /plan/ })).toHaveTextContent('900')
+    expect(fetchDistinct).toHaveBeenCalledWith('Attribute', [])
+  })
+
+  it('shows query order for a sort on a column the result no longer has', () => {
+    const { container } = render(
+      <Table data={pages} props={{}} view={{ ...emptyView, sort: { column: 'gone', dir: 'asc' } }} onView={() => {}} />
+    )
+    expect(column(container, 0)).toEqual(['/b', '/page10', '/a', '/page2'])
+  })
+
+  it('sorts through onView when controlled, back on the first page', async () => {
+    const user = userEvent.setup()
+    const onView = vi.fn()
+    render(
+      <Table
+        data={pages}
+        props={{ mode: 'remote' }}
+        view={{ ...emptyView, offset: 1000 }}
+        onView={onView}
+        page={{ offset: 1000, limit: 4, matched: 2000, total: 2000 }}
+      />
+    )
+    await user.click(screen.getByRole('button', { name: /visitors/ }))
+    expect(onView).toHaveBeenCalledWith({ filters: [], sort: { column: 'visitors', dir: 'desc' }, offset: 0 })
+  })
+
+  it('dims the rows while a later load is in flight', () => {
+    const { container } = render(<Table data={pages} props={{}} reloading />)
+    expect(container.querySelector('tbody')).toHaveClass('opacity-60')
   })
 
   it('exposes its contract', () => {
