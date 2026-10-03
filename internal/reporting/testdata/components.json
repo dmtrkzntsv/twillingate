@@ -136,6 +136,12 @@
             "items": {
               "type": "string"
             }
+          },
+          "mode": {
+            "enum": [
+              "local",
+              "remote"
+            ]
           }
         },
         "additionalProperties": false

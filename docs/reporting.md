@@ -100,13 +100,17 @@ component:
   `query` returns them) and `{markdown}` for `md`.
 - `truncated: true` means the result hit `CONSOLE_QUERY_MAX_ROWS`: group the query
   or narrow it.
+- `page` appears only for a remote table: `{offset, limit, matched, total,
+  sort, distinct, filters}`, what was applied. `data.truncated` is then
+  `matched > offset + limit`: there are more rows.
 - `removed: true` with `data: null` means the widget's component left the code
   in a release; switch it to another with `update_widget`, or archive it.
 - A query that no longer runs, or rows that no longer fit the component, is a
   refusal (never data) ending "if this started after an update, see the
   release notes at https://github.com/dmtrkzntsv/twillingate/releases".
 
-`sql` results are cached per widget and per value it follows. An ordinary load
+`sql` results are cached per widget and per value it follows (for a remote
+table, per page: its filters, sort, distinct, offset and limit). An ordinary load
 reuses a result up to `REPORTING_CACHE_SECONDS` old (default 900); `fresh=true`
 reuses one only up to `REPORTING_REFRESH_SECONDS` old (default 60), and
 `refresh_after` says when a fresh load would run the query again. A viewer
@@ -115,6 +119,54 @@ then reloads it every `auto_refresh_seconds` (the longer of the two, so
 each reload runs the queries again), only while its window has focus. Changing a
 widget's source starts it on new entries. Widget queries run under the same
 guards as `query`: read-only, `CONSOLE_QUERY_TIMEOUT` and `CONSOLE_QUERY_MAX_ROWS`.
+
+### Filtering and paging a table
+
+Viewers filter a `table` by column. By default (`mode` `local`) the page
+filters and sorts the rows it loaded, up to `CONSOLE_QUERY_MAX_ROWS`; with
+props `{"mode": "remote"}` the server filters, sorts and pages the whole
+result in SQL, and `widget_data` takes `filters`, `sort`, `distinct`,
+`offset` and `limit` for it. On any other widget each of them is refused.
+
+- `filters` is a JSON list of `{column, op, value}`, combined with AND; a
+  column may appear in several (`Count > 10`, `Count < 100`). `op` is `=`,
+  `!=`, `<`, `>`, `in` or `not in`; `in` and `not in` take a list of
+  strings (at least one), the others one string.
+- Cells compare as the table shows them: an integer in decimal, a real in
+  its shortest form, text as is, `NULL` as empty. `=`, `!=`, `in` and
+  `not in` compare that text exactly and case-sensitively, so an integer
+  `100` equals `"100"`.
+- `<` and `>` compare as numbers when the value is a decimal number (a
+  cell that is not a number never matches) and as text by code point
+  otherwise, which orders `YYYY-MM-DD` dates (`Day > 2026-09-25`).
+- An empty cell (`NULL` or `''`) matches `!=` and `not in` only, never
+  `=`, `in`, `<` or `>`.
+- `sort` is `<column>:asc` or `<column>:desc`, split on the last `:`. It
+  orders the whole result, not the page: non-empty cells first, numbers
+  before text, numbers by value, text by code point, empty cells last in
+  both directions; ties break by every column in order, so pages never
+  overlap or skip a row. Without it, the query's own order.
+- `offset` (default 0) and `limit` (1 to `CONSOLE_QUERY_MAX_ROWS`, the
+  default) pick the page; `page.matched` counts the rows the filters
+  keep and `page.total` the rows the query returns.
+- `distinct` names a column and returns `data` with columns `value` and
+  `rows`: that column's values among rows matching the **other** filters,
+  most frequent first, paged by the same `offset` and `limit`. It cannot
+  be combined with `sort`.
+- Refused (a tool error over MCP, `400 invalid` over HTTP; the message
+  says what to change): an unknown column (it lists the query's columns),
+  an unknown `op`, a list given to a
+  single-value `op` or one value to `in`/`not in`, an empty list,
+  malformed `filters` JSON, a `sort` direction other than `asc` or
+  `desc`, a negative `offset`, a `limit` out of range, and any of these
+  arguments on a widget that is not a remote table. A filter that matches
+  nothing is not refused: no rows, `matched: 0`.
+
+```
+widget_data {"widget_id": 42, "project_id": 7, "from": "2026-09-01", "to": "2026-09-30",
+             "filters": "[{\"column\":\"Attribute\",\"op\":\"in\",\"value\":[\"$os\",\"plan\"]}]",
+             "sort": "Count:desc", "limit": 100}
+```
 
 ## Workflow
 
@@ -184,7 +236,7 @@ guards as `query`: read-only, `CONSOLE_QUERY_TIMEOUT` and `CONSOLE_QUERY_MAX_ROW
 | `list_dashboards` | none | `timezone` and `dashboards` in sidebar order (system, then user), archived ones included: `dashboard_id`, `title`, `owner`, `group_id`, stored `project_id` and `range`, live `widgets` count, `archived_at`; plus `purge_after_days`, how long an archived user dashboard is kept before it is deleted (absent: kept forever), and `auto_refresh_seconds`, how often the page reloads a dashboard with auto-refresh on (absent: never) |
 | `get_dashboard` | `dashboard_id` | the dashboard, its `group_id`, its `follows_project` and `follows_range`, its `tabs` (the group's live dashboards, this one included, in tab order), and its live `widgets` in order |
 | `list_widgets` | `dashboard_id`, `component` (both optional; they combine) | `widgets`, archived ones included, each with its `dashboard` and 1-based `position` there |
-| `widget_data` | `widget_id`, `project_id`, `from`, `to`, `fresh` | the envelope above |
+| `widget_data` | `widget_id`, `project_id`, `from`, `to`, `fresh`; for a remote table `filters`, `sort`, `distinct`, `offset`, `limit` | the envelope above |
 | `create_dashboard` | `title`, `range` (default `7d`), `group_id`, `after`, `widgets` | the new dashboard, as `get_dashboard` returns it; one invalid widget creates nothing |
 | `update_dashboard` | `dashboard_id`, `title`, `group_id`, `after` | the dashboard, as `list_dashboards` lists it |
 | `duplicate_dashboard` | `dashboard_id`, `whole_group`, `group_id` | a user copy with copies of its live widgets: a new dashboard last in the sidebar, or with `group_id` a tab of that user group (right after the source when it is the source's own group, last otherwise). A system dashboard is copied too, also an archived one. An archived user dashboard is refused (restore it first). `whole_group` copies the group as a new dashboard with the same tabs: a system group whole, a user group's live tabs; it takes no `group_id`. Duplicating never archives: to replace a system group, `archive_dashboard` it with `whole_group` |
@@ -220,7 +272,7 @@ audited.
 | `GET` | `/api/dashboards` | `list_dashboards` | — |
 | `GET` | `/api/dashboards/{dashboard_id}` | `get_dashboard` | — |
 | `GET` | `/api/widgets` | `list_widgets` | query: `dashboard_id`, `component` |
-| `GET` | `/api/widgets/{widget_id}/data` | `widget_data` | query: `project_id`, `from`, `to`, `fresh` |
+| `GET` | `/api/widgets/{widget_id}/data` | `widget_data` | query: `project_id`, `from`, `to`, `fresh`, and for a remote table `filters`, `sort`, `distinct`, `offset`, `limit` |
 | `POST` | `/api/dashboards` | `create_dashboard` | body: `title`, `range`, `group_id`, `after`, `widgets` → 201 |
 | `PATCH` | `/api/dashboards/{dashboard_id}` | `update_dashboard` | body: `title`, `group_id`, `after` |
 | `POST` | `/api/dashboards/{dashboard_id}/duplicate` | `duplicate_dashboard` | optional body `{whole_group}` or `{group_id}` → 201 |
@@ -270,7 +322,7 @@ appears. `width` and `height` default to the component's size below.
 | `map` | `sql` | `country` text, ISO alpha-2; `value` number (unknown codes are listed under the map) | `format` | 6 × 8 |
 | `treemap` | `sql` | `label` text; `value` number; `parent` text, optional (two levels, e.g. browser → version) | `format` | 6 × 8 |
 | `sankey` | `sql` | `source` text; `target` text; `value` number (one row per flow; a name is one node in whichever column it appears, so a page that is a target and a source joins two stages; a row that would loop back is left out and listed under the chart) | `format` | 12 × 8 |
-| `table` | `sql` | any columns, shown in query order until a viewer sorts by a header | `formats` (column → format), `colorscale` (columns shaded by value) | 6 × 10 |
+| `table` | `sql` | any columns, shown in query order until a viewer sorts by a header | `formats` (column → format), `colorscale` (columns shaded by value), `mode` (`local`, the default, filters the loaded rows; `remote` filters, sorts and pages the whole result on the server) | 6 × 10 |
 | `markdown` | `md` | none | none | 12 × 2 |
 
 `list_components` is the authority: it returns each component's props as a

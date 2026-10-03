@@ -7,11 +7,12 @@ import type { Contract, Example, SqlData, WidgetProps } from './types'
 interface TableProps {
   formats?: Record<string, Format>
   colorscale?: string[]
+  mode?: 'local' | 'remote'
 }
 
 export const contract: Contract = {
   description:
-    'Every column the query returns, in order; a raw drill-down table for a card that lists rows. Viewers sort it by clicking a header.',
+    'Every column the query returns, in order; a raw drill-down table for a card that lists rows. Viewers sort it by clicking a header. Viewers filter it by column; with mode "remote" filters, sort and paging run on the server over the whole result.',
   accepts: ['sql'],
   inputs: { open: true, columns: [] },
   props: {
@@ -19,6 +20,7 @@ export const contract: Contract = {
     properties: {
       formats: { type: 'object', additionalProperties: { enum: ['number', 'percent', 'duration'] } },
       colorscale: { type: 'array', items: { type: 'string' } },
+      mode: { enum: ['local', 'remote'] },
     },
     additionalProperties: false,
   },

@@ -21,12 +21,21 @@ const ReleasesURL = "https://github.com/dmtrkzntsv/twillingate/releases"
 // current selection. ProjectID and From/To matter only when the widget
 // follows that switcher (WidgetInfo.FollowsProject/FollowsRange); Fresh
 // asks for a value no older than Options.RefreshAge rather than
-// Options.CacheAge — a manual refresh.
+// Options.CacheAge — a manual refresh. Filters, Sort, Distinct, Offset
+// and Limit are a remote table's paging arguments (view.go), refused on
+// any other widget; zero means absent, and Limit 0 the
+// CONSOLE_QUERY_MAX_ROWS cap.
 type DataRequest struct {
 	WidgetID  int64
 	ProjectID int64
 	From, To  string
 	Fresh     bool
+
+	Filters  string // JSON: [{"column": "...", "op": "...", "value": "..." | ["..."]}]
+	Sort     string // "<column>:asc" | "<column>:desc", split on the last ':'
+	Distinct string // a column name
+	Offset   int
+	Limit    int
 }
 
 // WidgetData is get_widget_data's answer: the fixed envelope every
@@ -34,7 +43,8 @@ type DataRequest struct {
 // ProjectID/From/To are set only when the widget follows that switcher,
 // and echo the applied (possibly clamped) values. CachedAt and
 // RefreshAfter are set only for a cacheable source (sql; not md). Data is
-// nil when Removed.
+// nil when Removed. Page is set only for a remote table, whose Data is
+// then one page of its result.
 type WidgetData struct {
 	WidgetID     int64      `json:"widget_id"`
 	SourceType   string     `json:"source_type"`
@@ -45,6 +55,7 @@ type WidgetData struct {
 	RefreshAfter *time.Time `json:"refresh_after,omitempty"`
 	Removed      bool       `json:"removed"`
 	Data         any        `json:"data"` // readsql.Result (sql) | Markdown (md) | nil (removed)
+	Page         *PageInfo  `json:"page,omitempty"`
 }
 
 // WidgetData loads one widget's value: checked against what it follows,
@@ -87,6 +98,10 @@ func (s *Service) WidgetData(ctx context.Context, in DataRequest) (WidgetData, e
 	if !ok {
 		return WidgetData{}, fmt.Errorf("reporting: widget %d: source type %s not registered", w.ID, w.SourceType)
 	}
+	v, load, err := s.loader(w, src, params, in)
+	if err != nil {
+		return WidgetData{}, err
+	}
 
 	// context.WithoutCancel: this call may run on behalf of every request
 	// currently sharing it through the cache's singleflight (below), not
@@ -96,21 +111,22 @@ func (s *Service) WidgetData(ctx context.Context, in DataRequest) (WidgetData, e
 	// other request sharing the same load. readsql applies its own
 	// deadline (CONSOLE_QUERY_TIMEOUT) regardless.
 	loadCtx := context.WithoutCancel(ctx)
-	load := func() (any, error) {
-		return src.Load(loadCtx, w.Source, Params{ProjectID: projectID, From: from, To: to})
-	}
 
-	var v any
+	var value any
 	if src.Cacheable() {
-		key := cacheKey(w.ID, w.SourceType, w.Source, followsProject, followsRange, projectID, from, to)
+		var suffix string
+		if remoteTable(w) {
+			suffix = v.cacheSuffix()
+		}
+		key := cacheKey(w.ID, w.SourceType, w.Source, followsProject, followsRange, projectID, from, to, suffix)
 		var cachedAt time.Time
-		if v, cachedAt, err = s.cache.get(key, in.Fresh, load); err != nil {
+		if value, cachedAt, err = s.cache.get(key, in.Fresh, func() (any, error) { return load(loadCtx) }); err != nil {
 			return WidgetData{}, wrapLoadErr(err)
 		}
 		ca, ra := cachedAt, cachedAt.Add(s.cache.refreshAge)
 		out.CachedAt, out.RefreshAfter = &ca, &ra
 	} else {
-		if v, err = load(); err != nil {
+		if value, err = load(loadCtx); err != nil {
 			return WidgetData{}, wrapLoadErr(err)
 		}
 	}
@@ -120,13 +136,60 @@ func (s *Service) WidgetData(ctx context.Context, in DataRequest) (WidgetData, e
 	// so a value shared from the cache is still checked against whichever
 	// widget is asking for it now, and a component swapped on the widget
 	// since the value was cached is still caught.
-	if res, ok := v.(readsql.Result); ok {
-		if err := comp.checkRows(res); err != nil {
-			return WidgetData{}, wrapLoadErr(err)
-		}
+	if err := setData(&out, comp, v, value); err != nil {
+		return WidgetData{}, err
 	}
-	out.Data = v
 	return out, nil
+}
+
+// loader parses in's paging arguments for w and returns them with the
+// load that answers them: one page of the result for a remote table, the
+// whole result for any other widget, which is refused any paging
+// argument. Shared by WidgetData and reporting dev's data handler, so
+// the two cannot disagree on which widgets page or how.
+func (s *Service) loader(w store.Widget, src SourceType, p Params, in DataRequest) (view, func(context.Context) (any, error), error) {
+	v, err := parseView(in, s.db.MaxRows())
+	if err != nil {
+		return view{}, nil, err
+	}
+	if !remoteTable(w) {
+		if v.present {
+			return view{}, nil, store.Refuse(store.ErrInvalid,
+				"widget %d is not a remote table; filters, sort, distinct, offset and limit need a table with props.mode \"remote\"", w.ID)
+		}
+		return v, func(ctx context.Context) (any, error) { return src.Load(ctx, w.Source, p) }, nil
+	}
+	pl, ok := src.(pageLoader)
+	if !ok { // a table accepts only sql, which pages
+		return view{}, nil, fmt.Errorf("reporting: widget %d: source type %s cannot page", w.ID, w.SourceType)
+	}
+	return v, func(ctx context.Context) (any, error) { return pl.LoadPage(ctx, w.Source, p, v.page) }, nil
+}
+
+// setData checks a loaded value's rows against comp and puts it in out:
+// a remote table's page as Data, with its page block. A distinct answer
+// is not checked, its columns being value and rows rather than the
+// widget's own.
+func setData(out *WidgetData, comp Component, v view, value any) error {
+	switch res := value.(type) {
+	case readsql.PageResult:
+		if v.page.Distinct == "" {
+			if err := comp.checkRows(res.Result); err != nil {
+				return wrapLoadErr(err)
+			}
+		}
+		page := v.echo
+		page.Matched, page.Total = res.Matched, res.Total
+		out.Data, out.Page = res.Result, &page
+	case readsql.Result:
+		if err := comp.checkRows(res); err != nil {
+			return wrapLoadErr(err)
+		}
+		out.Data = res
+	default:
+		out.Data = value
+	}
+	return nil
 }
 
 // widgetParams resolves a load's bound Params and the fields WidgetData
@@ -215,8 +278,10 @@ func wrapLoadErr(err error) error {
 // widget (same content, new id) an empty cache to start from, per D33.
 // The content hash still matters on top of the id: a widget whose source
 // changes gets a fresh key rather than needing an explicit invalidation
-// on update.
-func cacheKey(widgetID int64, sourceType, content string, followsProject, followsRange bool, projectID int64, from, to string) string {
+// on update. suffix is a remote table's view (view.cacheSuffix), "" for
+// every other widget, so a page is cached per filters, sort and range of
+// rows.
+func cacheKey(widgetID int64, sourceType, content string, followsProject, followsRange bool, projectID int64, from, to, suffix string) string {
 	sum := sha256.Sum256([]byte(content))
 	key := fmt.Sprintf("%d:%s:%x", widgetID, sourceType, sum)
 	if followsProject {
@@ -225,5 +290,5 @@ func cacheKey(widgetID int64, sourceType, content string, followsProject, follow
 	if followsRange {
 		key += fmt.Sprintf(":r=%s,%s", from, to)
 	}
-	return key
+	return key + suffix
 }

@@ -211,6 +211,26 @@ func (s *sqlSource) Load(ctx context.Context, content string, p Params) (any, er
 	return res, nil
 }
 
+// pageLoader is a source type that can load one page of its content
+// rather than the whole result: sql, for a remote table.
+type pageLoader interface {
+	LoadPage(ctx context.Context, content string, p Params, pg readsql.Page) (readsql.PageResult, error)
+}
+
+// LoadPage is Load for a remote table: content filtered, sorted and paged
+// by pg in the database, with the matched and total counts.
+func (s *sqlSource) LoadPage(ctx context.Context, content string, p Params, pg readsql.Page) (readsql.PageResult, error) {
+	params, err := readsql.Check(content)
+	if err != nil {
+		return readsql.PageResult{}, store.Refuse(store.ErrInvalid, "%s", err)
+	}
+	res, err := s.db.QueryPage(ctx, content, pg, bindArgs(params, p.ProjectID, p.From, p.To)...)
+	if err != nil {
+		return readsql.PageResult{}, refuseSQLErr(s.db, err)
+	}
+	return res, nil
+}
+
 // bindArgs builds the sql.Named arguments for exactly the params content
 // uses (params is Check's own list, already refused down to the
 // project/from/to allow-list by the time this is called), so a widget
