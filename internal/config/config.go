@@ -90,6 +90,15 @@ type ConsoleConfig struct {
 	authErr error
 }
 
+// The caps' defaults (PRODUCT_ATTRIBUTES_TOP_N, VIEWS_DIMENSIONS_TOP_N,
+// IDENTITIES_TOP_N). The console's limits tool reports them beside the
+// values in force, so they live here rather than as literals in parse.
+const (
+	DefaultProductAttributesTopN = 100
+	DefaultViewsDimensionsTopN   = 1000
+	DefaultIdentitiesTopN        = 1000
+)
+
 type Config struct {
 	IngestAddr            string
 	Database              string
@@ -191,9 +200,9 @@ func FromEnv(lookup func(string) (string, bool)) (*Config, error) {
 		// of a views breakdown and for users and groups a day. Each cap
 		// keeps the aggregates, which outlive raw rows, from growing with a
 		// dimension that carries ids; 0 keeps every value.
-		ProductAttributesTopN: e.num("PRODUCT_ATTRIBUTES_TOP_N", 100),
-		ViewsDimensionsTopN:   e.num("VIEWS_DIMENSIONS_TOP_N", 1000),
-		IdentitiesTopN:        e.num("IDENTITIES_TOP_N", 1000),
+		ProductAttributesTopN: e.num("PRODUCT_ATTRIBUTES_TOP_N", DefaultProductAttributesTopN),
+		ViewsDimensionsTopN:   e.num("VIEWS_DIMENSIONS_TOP_N", DefaultViewsDimensionsTopN),
+		IdentitiesTopN:        e.num("IDENTITIES_TOP_N", DefaultIdentitiesTopN),
 		Reporting: ReportingConfig{
 			CacheAge:   time.Duration(e.num("REPORTING_CACHE_SECONDS", 900)) * time.Second,
 			RefreshAge: time.Duration(e.num("REPORTING_REFRESH_SECONDS", 60)) * time.Second,

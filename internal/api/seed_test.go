@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dmtrkzntsv/twillingate/internal/config"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
 	"github.com/dmtrkzntsv/twillingate/internal/reporting"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
@@ -205,7 +206,8 @@ func newTestHost(t *testing.T) (*host, *mcp.ClientSession) {
 	}
 	h := &host{db: db, reg: reg, ops: manage.NewOps(reg, st),
 		rep:       reporting.New(st, db, reporting.Options{CacheAge: time.Minute, RefreshAge: time.Second}),
-		publicURL: "https://collector.test", logger: logger}
+		publicURL: "https://collector.test", logger: logger,
+		limits: limitsFrom(&config.Config{ProductAttributesTopN: config.DefaultProductAttributesTopN, ViewsDimensionsTopN: config.DefaultViewsDimensionsTopN, IdentitiesTopN: config.DefaultIdentitiesTopN})}
 	// host itself carries no path (production has no need for one once
 	// opened); setGuards needs it to reopen with different guards, so the
 	// test side remembers it here, keyed by the host it belongs to.

@@ -26,6 +26,8 @@ type host struct {
 	// placeholder + tell the operator".
 	publicURL string
 	logger    *slog.Logger
+	// limits are the caps in force (limitsFrom); limits and cap_usage read them.
+	limits []limitOut
 }
 
 var dayRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
@@ -213,6 +215,9 @@ func (h *host) register(r *registrar) {
 	expose(r, spec{Name: "list_projects", Annotations: ro, Method: "GET", Path: "/api/projects",
 		Description: "List projects with id, name, allowed origins and declared attributes. Call this first: every other tool takes a project_id from here."},
 		h.listProjects)
+	expose(r, spec{Name: "limits", Annotations: ro, Method: "GET", Path: "/api/limits",
+		Description: "The caps in force: values kept per views breakdown and day (VIEWS_DIMENSIONS_TOP_N), per attribute key, event and day (PRODUCT_ATTRIBUTES_TOP_N), and users and groups per day (IDENTITIES_TOP_N), each with its default. 0 means no cap. Set in the server's environment, not here."},
+		h.listLimits)
 	expose(r, spec{Name: "views_overview", Annotations: ro, Method: "GET", Path: p + "/views/overview",
 		Description: "Daily views for one project: visitors, views, sessions, bounces, duration, with derived bounce_rate and avg_session_sec. Sums every kind (web, app, cli, …) unless kind is given. Includes yesterday and today (live)."},
 		h.viewsOverview)
