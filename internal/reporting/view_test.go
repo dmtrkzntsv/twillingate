@@ -161,6 +161,30 @@ func TestViewRefusals(t *testing.T) {
 		if !strings.Contains(err.Error(), tc.msg) {
 			t.Errorf("%s: %q does not contain %q", tc.name, err, tc.msg)
 		}
+		// The caller's arguments are what to change, not the widget: no
+		// pointer to the release notes, even for a column only the query's
+		// own run can find missing.
+		if strings.Contains(err.Error(), "release notes") {
+			t.Errorf("%s: %q points to the release notes, as if an update broke the widget", tc.name, err)
+		}
+	}
+}
+
+// TestRemoteTableBrokenQueryNamesReleaseNotes: a remote table whose query
+// no longer runs is the widget's problem, not the viewer's, so it keeps
+// the release notes pointer that view refusals leave out.
+func TestRemoteTableBrokenQueryNamesReleaseNotes(t *testing.T) {
+	svc := newTestService(t)
+	rawExecOn(t, svc, "CREATE TABLE probe(n INTEGER)")
+	id := mustRemoteTable(t, svc, `SELECT n AS "N" FROM probe`)
+	rawExecOn(t, svc, "DROP TABLE probe")
+
+	_, err := svc.WidgetData(context.Background(), DataRequest{WidgetID: id, Sort: "N:asc"})
+	if !errors.Is(err, store.ErrInvalid) {
+		t.Fatalf("err = %v, want ErrInvalid", err)
+	}
+	if !strings.HasSuffix(err.Error(), "; if this started after an update, see the release notes at "+ReleasesURL) {
+		t.Errorf("err = %q, want it to end with the release notes pointer", err)
 	}
 }
 

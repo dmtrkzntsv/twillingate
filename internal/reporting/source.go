@@ -217,6 +217,13 @@ type pageLoader interface {
 	LoadPage(ctx context.Context, content string, p Params, pg readsql.Page) (readsql.PageResult, error)
 }
 
+// viewRefusal marks a refusal of the paging arguments a caller sent
+// rather than of the widget itself, so wrapLoadErr leaves out the release
+// notes pointer: what to change is the filter, not the query.
+type viewRefusal struct{ error }
+
+func (e viewRefusal) Unwrap() error { return e.error }
+
 // LoadPage is Load for a remote table: content filtered, sorted and paged
 // by pg in the database, with the matched and total counts.
 func (s *sqlSource) LoadPage(ctx context.Context, content string, p Params, pg readsql.Page) (readsql.PageResult, error) {
@@ -225,6 +232,12 @@ func (s *sqlSource) LoadPage(ctx context.Context, content string, p Params, pg r
 		return readsql.PageResult{}, store.Refuse(store.ErrInvalid, "%s", err)
 	}
 	res, err := s.db.QueryPage(ctx, content, pg, bindArgs(params, p.ProjectID, p.From, p.To)...)
+	if errors.Is(err, readsql.ErrRefused) {
+		// content passed Check just above, the only refusal of the text
+		// itself (a timeout is ErrTimeout), so a refusal from QueryPage is
+		// of pg: most often a column the query does not return.
+		return readsql.PageResult{}, viewRefusal{store.Refuse(store.ErrInvalid, "%s", err)}
+	}
 	if err != nil {
 		return readsql.PageResult{}, refuseSQLErr(s.db, err)
 	}

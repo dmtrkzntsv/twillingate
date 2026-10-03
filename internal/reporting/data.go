@@ -3,6 +3,7 @@ package reporting
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"time"
 
@@ -258,9 +259,15 @@ func checkRange(from, to string, today civil.Date) (string, string, error) {
 // wrapLoadErr appends a pointer to the release notes to a load failure —
 // a query that no longer runs, or rows that no longer fit the component —
 // while keeping it an ErrInvalid a caller can still match with errors.Is.
+// A refusal of a remote table's paging arguments (viewRefusal) passes
+// through as it is: the caller's own arguments are what to change.
 func wrapLoadErr(err error) error {
 	if err == nil {
 		return nil
+	}
+	var vr viewRefusal
+	if errors.As(err, &vr) {
+		return vr.error
 	}
 	return store.Refuse(store.ErrInvalid,
 		"%s; if this started after an update, see the release notes at %s", err, ReleasesURL)
