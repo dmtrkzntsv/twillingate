@@ -2,8 +2,11 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useParams } from 'react-router'
 import AppShell, { TopBar } from '@/components/AppShell'
+import RangeSwitcher, { type RangeValue } from '@/components/RangeSwitcher'
+import CapImpactSection from '@/components/projects/CapImpactSection'
 import DetailsSection from '@/components/projects/DetailsSection'
 import KeysSection from '@/components/projects/KeysSection'
+import UsageSection from '@/components/projects/UsageSection'
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -12,8 +15,9 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useProjectActions } from '@/hooks/use-project-actions'
 import { dashboardsQuery, keysQuery, projectsQuery } from '@/lib/queries'
+import { resolve } from '@/lib/ranges'
 
-/** `/projects/:id`: one project's details and keys (usage and cap impact join in Task 10), with Archive or Restore. */
+/** `/projects/:id`: one project's usage, details, keys and cap impact, with Archive or Restore. */
 export default function Project() {
   const id = Number(useParams().id)
   const { data: dash } = useQuery(dashboardsQuery)
@@ -21,6 +25,9 @@ export default function Project() {
   const { data: keysData } = useQuery(keysQuery(id))
   const actions = useProjectActions()
   const [archiving, setArchiving] = useState(false)
+  const [rangeValue, setRangeValue] = useState<RangeValue>({ range: '30d' })
+  const tz = dash?.timezone ?? 'UTC'
+  const range = resolve(rangeValue.range, tz, new Date(), rangeValue.from && rangeValue.to ? { from: rangeValue.from, to: rangeValue.to } : undefined)
   const project = projectsData?.projects.find((p) => p.project_id === id)
   const purgeDays = dash?.purge_after_days
 
@@ -39,12 +46,16 @@ export default function Project() {
                 <h1 className="text-xl font-semibold tracking-tight">{project.name}</h1>
                 {project.archived && <Badge variant="outline">Archived</Badge>}
               </div>
-              {project.archived ? (
-                <Button variant="outline" disabled={actions.pending} onClick={() => void actions.restore(id)}>Restore</Button>
-              ) : (
-                <Button variant="outline" disabled={actions.pending} onClick={() => setArchiving(true)}>Archive</Button>
-              )}
+              <div className="flex items-center gap-2">
+                <RangeSwitcher value={rangeValue} timezone={tz} onChange={setRangeValue} />
+                {project.archived ? (
+                  <Button variant="outline" disabled={actions.pending} onClick={() => void actions.restore(id)}>Restore</Button>
+                ) : (
+                  <Button variant="outline" disabled={actions.pending} onClick={() => setArchiving(true)}>Archive</Button>
+                )}
+              </div>
             </header>
+            <UsageSection projectId={id} range={range} />
             <DetailsSection project={project} pending={actions.pending} onSave={(body) => actions.update(id, body)} />
             <KeysSection
               keys={keysData?.keys ?? []}
@@ -53,6 +64,7 @@ export default function Project() {
               onDisable={(label) => actions.disableKey(id, label)}
               onEnable={(label) => actions.enableKey(id, label)}
             />
+            <CapImpactSection projectId={id} range={range} />
           </>
         )}
       </div>
