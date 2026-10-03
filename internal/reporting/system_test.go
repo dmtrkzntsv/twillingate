@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"math"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -451,6 +452,22 @@ func TestAttributeValuesFilterByAliases(t *testing.T) {
 	f := newSystemFixture(t)
 	id := attributeValuesWidget(t, f)
 	from, to := presetDates("90d", f.today)
+	// The seed holds only $app_version and plan, which the filter keeps. A
+	// third attribute with the largest user counts must be filtered out,
+	// and would head the sort if the filter were ignored.
+	var extra []string
+	for i := 0; i < 3; i++ {
+		extra = append(extra, fmt.Sprintf("(%d, '%s', 'click', 'ref', 'r%d', 10, 100000, 5)", f.project, f.today.AddDays(-5), i))
+	}
+	valuesInsert(t, f.st, "agg_product_attrs", "project_id, day, event_name, attr_key, attr_value, count, unique_users, unique_groups", extra)
+	held, err := f.db.Query(ctx, `SELECT COUNT(*) FROM v_product_attrs
+		WHERE project_id = ? AND day BETWEEN ? AND ? AND attr_key = 'ref'`, f.project, from, to)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if held.Rows[0][0] == "0" {
+		t.Fatal("v_product_attrs holds no ref rows in the range; the filter has nothing to exclude")
+	}
 	got, err := f.svc.WidgetData(ctx, DataRequest{
 		WidgetID: id, ProjectID: f.project, From: from, To: to,
 		Filters: `[{"column":"Attribute","op":"in","value":["$app_version","plan"]}]`,
@@ -463,10 +480,31 @@ func TestAttributeValuesFilterByAliases(t *testing.T) {
 	if len(res.Rows) == 0 {
 		t.Fatal("no rows for $app_version and plan; the seed does not exercise the filter")
 	}
+	prev, numbers, empty := 0.0, 0, false
 	for i := range res.Rows {
 		if a := column(t, res, i, "Attribute"); a != "$app_version" && a != "plan" {
 			t.Errorf("row %d: Attribute %q passed a filter for $app_version and plan", i, a)
 		}
+		cell := column(t, res, i, "Users (at least)")
+		if cell == "" { // NULL sorts last in a descending sort
+			empty = true
+			continue
+		}
+		if empty {
+			t.Errorf("row %d: a value follows an empty Users (at least) cell", i)
+		}
+		n, err := strconv.ParseFloat(cell, 64)
+		if err != nil {
+			t.Fatalf("row %d: Users (at least) %q: %v", i, cell, err)
+		}
+		if numbers > 0 && n > prev {
+			t.Errorf("row %d: Users (at least) %v follows %v; the sort is not descending", i, n, prev)
+		}
+		prev = n
+		numbers++
+	}
+	if numbers < 2 {
+		t.Errorf("%d Users (at least) values; too few to check the sort", numbers)
 	}
 }
 
