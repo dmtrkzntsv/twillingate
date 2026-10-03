@@ -24,6 +24,11 @@ type spec struct {
 	Status      int    // REST success status; 0 = 200
 	RESTOnly    bool   // set by restOnly: a route with no MCP tool
 
+	// constrain, when set, tightens the inferred input schema before the
+	// tool is registered and the OpenAPI document reads it: what a Go
+	// type cannot say, such as the widget contract.
+	constrain func(in *jsonschema.Schema)
+
 	in, out *jsonschema.Schema // inferred from the handler's types; the OpenAPI document reads them
 }
 
@@ -56,6 +61,9 @@ func actorFrom(ctx context.Context) string {
 // route. One call per operation, so neither transport can drift.
 func expose[In, Out any](r *registrar, s spec, fn func(context.Context, In) (Out, error)) {
 	s.in, s.out = schemaFor[In](), schemaFor[Out]()
+	if s.constrain != nil {
+		s.constrain(s.in)
+	}
 	r.specs = append(r.specs, s)
 	mcp.AddTool(r.mcp, &mcp.Tool{Name: s.Name, Description: s.Description, Annotations: s.Annotations,
 		InputSchema: s.in, OutputSchema: s.out},
@@ -73,6 +81,9 @@ func expose[In, Out any](r *registrar, s spec, fn func(context.Context, In) (Out
 func restOnly[In, Out any](r *registrar, s spec, fn func(context.Context, In) (Out, error)) {
 	s.RESTOnly = true
 	s.in, s.out = schemaFor[In](), schemaFor[Out]()
+	if s.constrain != nil {
+		s.constrain(s.in)
+	}
 	r.specs = append(r.specs, s)
 	if r.rest != nil {
 		r.rest.HandleFunc(s.Method+" "+s.Path, restHandler(r, s, fn))

@@ -33,7 +33,7 @@ separate dry run would add nothing.
   - `width`, `height`: `integer`, `minimum` 1, `maximum` 12;
   - `props` stays `{"type": "object"}`, and an `allOf` carries one rule
     per component: `if {properties: {component: {const: X}}, required:
-    [component]} then {properties: {props: {$ref: "#/$defs/X_props"},
+    [component]} then {properties: {props: X's props schema,
     source: {properties: {type: {enum: X.accepts}}}}}`.
   MCP `tools/list` and `/api/doc` show the same schema, since both read
   `spec.in`.
@@ -42,21 +42,22 @@ separate dry run would add nothing.
   service syncs into the database at startup, so it is always this
   build's component set. A component removed from the code is not in the
   enum, which matches the server: it cannot be added either.
-- **D3. Props are named per component in `$defs`.** Each component's
-  props schema is a `$defs` entry `<name>_props` on the schema root, so
-  a refusal's path names the component (`/$defs/bar_props/properties/
-  format`), and a client reads each component's props once.
+- **D3. Props are inlined per component.** Each component's props
+  schema sits in its rule's `then`. `$defs` was the first choice, for a
+  refusal path naming the component, but the OpenAPI document copies
+  the input schema into a request body, where `#/$defs/...` resolves
+  against the document root, not the schema. A refusal's path reads
+  `/allOf/<n>/then/properties/props/...`; the caller knows which
+  component it sent.
 - **D4. `update_widget` without `component` keeps a plain object.**
   Its `if` requires `component`; when it is omitted the call changes the
   stored component's props, which the schema cannot know, so `props` is
   any object and the server checks it as today.
 - **D5. `reporting` owns the tightening.** The widget contract is
-  reporting's domain: `reporting.ConstrainWidget(root, widget
-  *jsonschema.Schema, comps []Component, sourceTypes []string)`
-  tightens, in place, `widget`, an object schema carrying `component`,
-  `props`, `source`, `width` and `height`, and adds the `$defs` to
-  `root` (the same schema for `add_widget` and `update_widget`; the
-  tool's input for `create_dashboard`, whose `widget` is
+  reporting's domain: `reporting.ConstrainWidget(widget *jsonschema.Schema,
+  comps []Component, sourceTypes []string) error` tightens, in place,
+  `widget`, an object schema carrying `component`, `props`, `source`,
+  `width` and `height` (for `create_dashboard`,
   `properties.widgets.items`). `api` calls it; `spec` gains an optional
   hook that `expose` applies to the inferred input schema before
   registering the tool and before the OpenAPI document reads it.
@@ -69,8 +70,7 @@ separate dry run would add nothing.
 - **D7. MCP refusals for a schema failure are the SDK's.** The MCP SDK
   validates arguments against the input schema before the handler runs,
   so a bad prop, an unknown component or a width of 13 is refused with
-  jsonschema-go's text, for example `validating /$defs/bar_props/
-  properties/format: enum: pct does not equal any of: [number percent]`.
+  jsonschema-go's text, for example `validating /allOf/1/then/properties/props/properties/format: enum: pct does not equal any of: [number percent duration]`.
   Wordier than the server's refusals, but it names the field and the
   allowed values.
 - **D8. `width: 0` is refused over MCP.** It meant "default"; omitting
@@ -84,8 +84,7 @@ separate dry run would add nothing.
 - `internal/api/expose.go`: an optional `spec` hook,
   `constrain func(in *jsonschema.Schema)`, applied after `schemaFor`.
 - `internal/api/ops_reporting.go`: the three tools set the hook;
-  `create_dashboard`'s targets `properties.widgets.items`, with the
-  `$defs` on its root.
+  `create_dashboard`'s targets `properties.widgets.items`.
 - `docs/reporting.md`: one sentence saying that the widget tools' input
   schemas carry each component's props, source types and size bounds.
 
@@ -98,7 +97,7 @@ separate dry run would add nothing.
 - MCP: `add_widget` with a bad prop is refused before anything is
   written (the dashboard's widget count is unchanged), and `tools/list`
   shows the component enum on all three tools.
-- OpenAPI: `/api/doc` carries the component enum and the `$defs`.
+- OpenAPI: `/api/doc` carries the component enum and the per-component rules.
 - The existing `docs_sync` worked-example test keeps passing through
   `add_widget`, now through the tightened schema too.
 
