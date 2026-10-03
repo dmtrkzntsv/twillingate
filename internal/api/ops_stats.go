@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"log/slog"
 	"strconv"
 	"strings"
 	"sync"
@@ -47,7 +48,7 @@ type projectStats struct {
 	RawDays          int         `json:"raw_days"`
 	RolledUpDays     int         `json:"rolled_up_days"`
 	Size             *statsSize  `json:"size" jsonschema:"an estimate from table sizes; null when they cannot be read"`
-	UnusedAttributes []string    `json:"unused_attributes" jsonschema:"declared keys no event carried in the range"`
+	UnusedAttributes *[]string   `json:"unused_attributes" jsonschema:"declared keys no event carried in the range; computed only when project_id is given, null otherwise"`
 }
 
 type statsOut struct {
@@ -77,12 +78,9 @@ func (h *host) projectStats(ctx context.Context, in statsIn) (statsOut, error) {
 	if res, err := h.db.Run(ctx, `SELECT page_count * page_size FROM pragma_page_count(), pragma_page_size()`); err == nil && len(res.Rows) == 1 {
 		out.DatabaseBytes, _ = strconv.ParseInt(res.Rows[0][0], 10, 64)
 	}
-	sizes, sizeErr := h.sizes.get(ctx, h.db)
-	if sizeErr != nil {
-		h.logger.Warn("project sizes unavailable", "error", sizeErr)
-	}
+	sizes, _ := h.sizes.get(ctx, h.db, h.logger)
 	for _, p := range projects {
-		ps, err := h.statsFor(ctx, p, fromD, toD)
+		ps, err := h.statsFor(ctx, p, fromD, toD, in.ProjectID != 0)
 		if err != nil {
 			return statsOut{}, err
 		}
@@ -94,8 +92,11 @@ func (h *host) projectStats(ctx context.Context, in statsIn) (statsOut, error) {
 	return out, nil
 }
 
-func (h *host) statsFor(ctx context.Context, p *manage.Project, fromD, toD civil.Date) (projectStats, error) {
-	ps := projectStats{ProjectID: p.ID, UnusedAttributes: []string{}}
+// statsFor reads one project's usage. withUnused also computes the
+// declared attributes no event carried: two view scans per project, so
+// only the one-project answer pays for it.
+func (h *host) statsFor(ctx context.Context, p *manage.Project, fromD, toD civil.Date, withUnused bool) (projectStats, error) {
+	ps := projectStats{ProjectID: p.ID}
 	from, to := fromD.String(), toD.String()
 	index := map[string]int{}
 	for d := fromD; !toD.Before(d); d = d.AddDays(1) {
@@ -138,10 +139,15 @@ func (h *host) statsFor(ctx context.Context, p *manage.Project, fromD, toD civil
 		ps.Totals.Measures += d.Measures
 	}
 
+	// The newest row arrived on its family's newest day, so each family
+	// scans one day, not every row of the project.
 	res, err := h.run(ctx, `SELECT
 		  (SELECT MAX(r) FROM (SELECT MAX(received_at) AS r FROM raw_views WHERE project_id = ?1
+		                          AND day = (SELECT MAX(day) FROM raw_views WHERE project_id = ?1)
 		                        UNION ALL SELECT MAX(received_at) FROM raw_product WHERE project_id = ?1
-		                        UNION ALL SELECT MAX(received_at) FROM raw_measures WHERE project_id = ?1)),
+		                          AND day = (SELECT MAX(day) FROM raw_product WHERE project_id = ?1)
+		                        UNION ALL SELECT MAX(received_at) FROM raw_measures WHERE project_id = ?1
+		                          AND day = (SELECT MAX(day) FROM raw_measures WHERE project_id = ?1))),
 		  (SELECT MIN(d) FROM (SELECT MIN(day) AS d FROM agg_views_daily WHERE project_id = ?1
 		                        UNION ALL SELECT MIN(day) FROM agg_product_totals WHERE project_id = ?1
 		                        UNION ALL SELECT MIN(day) FROM agg_measures_daily WHERE project_id = ?1
@@ -167,7 +173,11 @@ func (h *host) statsFor(ctx context.Context, p *manage.Project, fromD, toD civil
 	ps.RawDays, _ = strconv.Atoi(r[2])
 	ps.RolledUpDays, _ = strconv.Atoi(r[3])
 
-	if len(p.Attributes) > 0 {
+	if withUnused {
+		unused := []string{}
+		ps.UnusedAttributes = &unused
+	}
+	if withUnused && len(p.Attributes) > 0 {
 		res, err := h.run(ctx, `SELECT attr_key FROM v_product_attrs WHERE project_id = ?1 AND day BETWEEN ?2 AND ?3
 			UNION SELECT attr_key FROM v_measures_attrs WHERE project_id = ?1 AND day BETWEEN ?2 AND ?3`, p.ID, from, to)
 		if err != nil {
@@ -179,7 +189,7 @@ func (h *host) statsFor(ctx context.Context, p *manage.Project, fromD, toD civil
 		}
 		for _, k := range p.Attributes {
 			if !carried[k] {
-				ps.UnusedAttributes = append(ps.UnusedAttributes, k)
+				*ps.UnusedAttributes = append(*ps.UnusedAttributes, k)
 			}
 		}
 	}
@@ -226,30 +236,44 @@ func (s *tableSizes) size(projectID int64) *statsSize {
 	return out
 }
 
+// failTTL is how long a failed reading is remembered: a database that
+// cannot read dbstat would otherwise be asked on every call.
+const failTTL = time.Minute
+
 type sizeCache struct {
-	ttl   time.Duration
-	mu    sync.Mutex
-	at    time.Time
-	val   *tableSizes
-	loads int // readings taken; tests check the cache is used
+	ttl    time.Duration
+	mu     sync.Mutex
+	at     time.Time
+	val    *tableSizes
+	failAt time.Time // when the last reading failed; zero after a success
+	fail   error
+	loads  int // readings taken; tests check the cache is used
 }
 
 func newSizeCache(ttl time.Duration) *sizeCache { return &sizeCache{ttl: ttl} }
 
 // get answers the cached reading, or takes a new one when it is older than
-// ttl. A failed reading is not cached.
-func (c *sizeCache) get(ctx context.Context, db *readsql.DB) (*tableSizes, error) {
+// ttl. A failed reading is remembered for failTTL: the error is answered
+// at once in that window, and logged once, when it happens.
+func (c *sizeCache) get(ctx context.Context, db *readsql.DB, logger *slog.Logger) (*tableSizes, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.val != nil && time.Since(c.at) < c.ttl {
 		return c.val, nil
 	}
+	if c.fail != nil && time.Since(c.failAt) < failTTL {
+		return nil, c.fail
+	}
 	c.loads++
 	val, err := readTableSizes(ctx, db)
 	if err != nil {
+		logger.Warn("project sizes unavailable", "error", err)
+		if ctx.Err() == nil { // a caller that gave up says nothing about the database
+			c.fail, c.failAt = err, time.Now()
+		}
 		return nil, err
 	}
-	c.val, c.at = val, time.Now()
+	c.val, c.at, c.fail = val, time.Now(), nil
 	return val, nil
 }
 
