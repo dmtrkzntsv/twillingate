@@ -126,6 +126,9 @@ one, add the replacement, ship clients, watch the old label fall to zero in the
 per-minute `ingest summary` log line, then disable it. Disabling is reversible;
 deleting the entry is the eventual cleanup.
 
+`list_ingest_keys` answers one row per key: `project_id`, `label`, `key`
+and `state` (`active` or `disabled`).
+
 ---
 
 ## Instrument a website

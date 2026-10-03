@@ -165,8 +165,10 @@ type listKeysOut struct {
 	Keys []keyRow `json:"keys"`
 }
 type keyRow struct {
-	ProjectID         int64 `json:"project_id"`
-	Label, Key, State string
+	ProjectID int64  `json:"project_id"`
+	Label     string `json:"label"`
+	Key       string `json:"key"`
+	State     string `json:"state"` // active or disabled
 }
 
 func (h *host) listKeys(ctx context.Context, in listKeysIn) (listKeysOut, error) {

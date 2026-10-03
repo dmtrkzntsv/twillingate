@@ -299,3 +299,33 @@ func TestUpdateProjectUnknownId(t *testing.T) {
 		t.Errorf("error does not name the id and the valid ones: %s", msg)
 	}
 }
+
+// list_ingest_keys names its fields like every other tool: project_id,
+// label, key, state. Before the rename three of them were capitalized.
+func TestListKeysUsesSnakeCase(t *testing.T) {
+	_, cs := newTestHost(t)
+	res := callTool(t, cs, "issue_ingest_key", map[string]any{"project_id": 1, "label": "web"})
+	if res.IsError {
+		t.Fatalf("issue: %s", textOf(res))
+	}
+	out := textOf(callTool(t, cs, "list_ingest_keys", map[string]any{"project_id": 1}))
+	var got struct {
+		Keys []map[string]any `json:"keys"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	if len(got.Keys) == 0 {
+		t.Fatalf("no keys: %s", out)
+	}
+	for _, field := range []string{"project_id", "label", "key", "state"} {
+		if _, ok := got.Keys[0][field]; !ok {
+			t.Errorf("key row has no %q field: %v", field, got.Keys[0])
+		}
+	}
+	for _, field := range []string{"Label", "Key", "State"} {
+		if _, ok := got.Keys[0][field]; ok {
+			t.Errorf("key row still carries %q: %v", field, got.Keys[0])
+		}
+	}
+}

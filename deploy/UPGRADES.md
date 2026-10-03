@@ -521,3 +521,7 @@ Also check there:
 A changed cap applies to the live days at once and to days rolled up after
 the change; days already rolled up keep the `(other)` rows they were written
 with.
+
+`list_ingest_keys` (and `GET /api/keys`) now answers `label`, `key` and
+`state` instead of `Label`, `Key` and `State`; update any script that reads
+them.
