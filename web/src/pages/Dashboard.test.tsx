@@ -391,7 +391,7 @@ describe('Dashboard', () => {
   })
 
   it('asks for a project first when there are no active ones, and loads no widget', async () => {
-    const widgetData = mockApi({ projects: [{ project_id: 3, name: 'legacy', archived: true }] })
+    const widgetData = mockApi({ projects: [{ project_id: 3, name: 'legacy', archived: true, allowed_origins: [] }] })
     renderAt('/dashboards/1')
 
     expect(await screen.findByText('Create a project first')).toBeInTheDocument()

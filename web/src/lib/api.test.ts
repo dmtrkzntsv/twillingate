@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as auth from './auth'
-import { ApiError, api } from './api'
+import { ApiError, api, endpoints } from './api'
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
@@ -124,5 +124,31 @@ describe('api', () => {
     const error = await api('/api/dashboards/1').catch((e) => e)
     expect(error).toBeInstanceOf(ApiError)
     expect(error).toMatchObject({ status: 404, code: 'not_found', message: 'no such dashboard' })
+  })
+})
+
+describe('project endpoints', () => {
+  beforeEach(() => {
+    vi.spyOn(auth, 'getAuthHeader').mockReturnValue(undefined)
+  })
+
+  it('encodes a key label with spaces and slashes in the path', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse({ status: 'disabled' }))
+    await endpoints.disableKey(7, 'web / staging 100%')
+    expect(vi.mocked(fetch).mock.calls[0][0]).toBe('/api/projects/7/keys/web%20%2F%20staging%20100%25/disable')
+  })
+
+  it('sends only the fields given to update', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse({ project_id: 7 }))
+    await endpoints.updateProject(7, { allowed_origins: [] })
+    const init = vi.mocked(fetch).mock.calls[0][1] as RequestInit
+    expect(init.method).toBe('PATCH')
+    expect(JSON.parse(init.body as string)).toEqual({ allowed_origins: [] })
+  })
+
+  it('asks for stats with the query it was given', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse({ from: 'a', to: 'b', database_bytes: 0, projects: [] }))
+    await endpoints.stats({ project_id: 4, from: '2026-09-01', to: '2026-09-30' })
+    expect(vi.mocked(fetch).mock.calls[0][0]).toBe('/api/stats?project_id=4&from=2026-09-01&to=2026-09-30')
   })
 })
