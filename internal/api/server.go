@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/config"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
@@ -41,7 +42,7 @@ func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *m
 	}
 	rep := reporting.New(rst, db, reporting.Options{CacheAge: cfg.Reporting.CacheAge, RefreshAge: cfg.Reporting.RefreshAge, ArchivedDays: cfg.Retention.ArchivedDays})
 	h := &host{db: db, reg: reg, ops: ops, rep: rep,
-		publicURL: cfg.PublicURL, logger: logger, limits: limitsFrom(cfg)}
+		publicURL: cfg.PublicURL, logger: logger, limits: limitsFrom(cfg), sizes: newSizeCache(10 * time.Minute)}
 	srv := mcp.NewServer(&mcp.Implementation{Name: "twillingate", Version: "1.0.0"},
 		&mcp.ServerOptions{Instructions: serverInstructions})
 	rest := http.NewServeMux()

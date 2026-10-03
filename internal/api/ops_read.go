@@ -28,6 +28,8 @@ type host struct {
 	logger    *slog.Logger
 	// limits are the caps in force (limitsFrom); limits and cap_usage read them.
 	limits []limitOut
+	// sizes caches table sizes for project_stats: dbstat reads every page.
+	sizes *sizeCache
 }
 
 var dayRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
 )
@@ -123,5 +124,52 @@ func TestProjectStatsViewsMatchTheView(t *testing.T) {
 		if d.Views != want[d.Day] {
 			t.Errorf("%s: views %d, v_views_daily %d", d.Day, d.Views, want[d.Day])
 		}
+	}
+}
+
+// Sizes split each table's bytes by the project's share of its rows: blog
+// has raw rows and aggregates, docs has neither. The database's size comes
+// back too, and table sizes are read once for every project.
+func TestProjectStatsSizes(t *testing.T) {
+	h, _ := newTestHost(t)
+	out, err := h.projectStats(context.Background(), statsIn{usageRangeIn: usageRangeIn{From: "2026-08-20", To: "2026-08-21"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.DatabaseBytes <= 0 {
+		t.Errorf("database_bytes = %d", out.DatabaseBytes)
+	}
+	blog, docs := out.Projects[0], out.Projects[1]
+	if blog.Size == nil || blog.Size.RawBytes <= 0 || blog.Size.AggregateBytes <= 0 ||
+		blog.Size.TotalBytes != blog.Size.RawBytes+blog.Size.AggregateBytes {
+		t.Errorf("blog size = %+v", blog.Size)
+	}
+	if docs.Size == nil || docs.Size.TotalBytes != 0 {
+		t.Errorf("docs size = %+v, want zeros", docs.Size)
+	}
+	if h.sizes.loads != 1 {
+		t.Errorf("table sizes loaded %d times for two projects, want 1", h.sizes.loads)
+	}
+	if _, err := h.projectStats(context.Background(), statsIn{ProjectID: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if h.sizes.loads != 1 {
+		t.Errorf("a second call within the TTL reloaded: %d", h.sizes.loads)
+	}
+}
+
+// When dbstat cannot be read, size is null and the rest still answers.
+func TestProjectStatsWithoutDbstat(t *testing.T) {
+	h, _ := newTestHost(t)
+	old := tableBytesSQL
+	tableBytesSQL = `SELECT name, 0 FROM no_such_table`
+	t.Cleanup(func() { tableBytesSQL = old })
+	h.sizes = newSizeCache(time.Minute)
+	out, err := h.projectStats(context.Background(), statsIn{ProjectID: 1, usageRangeIn: usageRangeIn{From: "2026-08-20", To: "2026-08-21"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Projects[0].Size != nil || out.Projects[0].Totals.Views == 0 {
+		t.Errorf("size %+v totals %+v; want null size and the totals", out.Projects[0].Size, out.Projects[0].Totals)
 	}
 }
