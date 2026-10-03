@@ -29,7 +29,7 @@ export default function Projects() {
   const active = projects.filter((p) => !p.archived)
   const archived = projects.filter((p) => p.archived)
   const statsOf = (id: number) => statsData?.projects.find((s) => s.project_id === id)
-  const keysOf = (id: number) => (keysData?.keys ?? []).filter((k) => k.project_id === id)
+  const keysOf = (id: number) => keysData?.keys.filter((k) => k.project_id === id)
 
   return (
     <AppShell dashboards={dash?.dashboards ?? []} currentId={0} readOnly={dash?.dev === true}>
@@ -40,9 +40,13 @@ export default function Projects() {
         <header className="flex flex-wrap items-end justify-between gap-3">
           <div className="flex flex-col gap-1">
             <h1 className="text-xl font-semibold tracking-tight">Projects</h1>
-            <p className="text-sm text-muted-foreground">
-              {active.length} {active.length === 1 ? 'project' : 'projects'}
-              {statsData ? ` · ${formatBytes(statsData.database_bytes)} on disk` : ''}
+            <p className="min-h-5 text-sm text-muted-foreground">
+              {[
+                projectsData ? `${active.length} ${active.length === 1 ? 'project' : 'projects'}` : null,
+                statsData ? `${formatBytes(statsData.database_bytes)} on disk` : null,
+              ]
+                .filter(Boolean)
+                .join(' · ')}
             </p>
           </div>
           <Button onClick={() => setCreating(true)}>

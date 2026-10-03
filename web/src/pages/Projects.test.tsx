@@ -68,6 +68,24 @@ describe('Projects', () => {
     expect(within(card).getByText('Nothing received yet')).toBeInTheDocument()
   })
 
+  it('shows dashes, not zeros, while stats and keys load, and no count before projects', async () => {
+    vi.spyOn(endpoints, 'stats').mockReturnValue(new Promise(() => {}))
+    vi.spyOn(endpoints, 'keys').mockReturnValue(new Promise(() => {}))
+    renderPage()
+    const card = await screen.findByRole('article', { name: 'econumo.com' })
+    expect(within(card).queryByText(/0 events/)).not.toBeInTheDocument()
+    expect(within(card).queryByText(/size unknown/)).not.toBeInTheDocument()
+    expect(within(card).queryByText(/0 active keys/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/on disk/)).not.toBeInTheDocument()
+  })
+
+  it('links the whole card to its project and titles the origins', async () => {
+    renderPage()
+    const card = await screen.findByRole('article', { name: 'econumo.com' })
+    expect(within(card).getByRole('link', { name: 'econumo.com' })).toHaveAttribute('href', '/projects/4')
+    expect(within(card).getByTitle('https://econumo.com')).toBeInTheDocument()
+  })
+
   it('keeps archived projects in a collapsed group', async () => {
     const user = userEvent.setup()
     renderPage()

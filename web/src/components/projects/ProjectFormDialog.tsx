@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useId, useState, type FormEvent } from 'react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -11,6 +11,7 @@ interface Props {
   onOpenChange: (open: boolean) => void
   title: string
   submitLabel: string
+  /** Read when the dialog opens, not while it stays open. */
   initial?: CreateProjectBody
   /** Resolves true when saved, so the dialog closes; false keeps it open with the input. */
   onSubmit: (body: Required<CreateProjectBody>) => Promise<boolean>
@@ -19,6 +20,7 @@ interface Props {
 
 /** Name, allowed origins (`*` for any) and declared attributes: creating a project or editing one. */
 export default function ProjectFormDialog({ open, onOpenChange, title, submitLabel, initial, onSubmit, pending }: Props) {
+  const nameId = useId()
   const [name, setName] = useState(initial?.name ?? '')
   const [origins, setOrigins] = useState<string[]>(initial?.allowed_origins ?? [])
   const [attributes, setAttributes] = useState<string[]>(initial?.attributes ?? [])
@@ -42,8 +44,8 @@ export default function ProjectFormDialog({ open, onOpenChange, title, submitLab
             <DialogTitle>{title}</DialogTitle>
           </DialogHeader>
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="project-name">Name</Label>
-            <Input id="project-name" value={name} onChange={(e) => setName(e.target.value)} required />
+            <Label htmlFor={nameId}>Name</Label>
+            <Input id={nameId} value={name} onChange={(e) => setName(e.target.value)} required />
           </div>
           <ChipsInput label="Allowed origins" value={origins} onChange={setOrigins} placeholder="https://example.com or *" />
           <ChipsInput label="Declared attributes" value={attributes} onChange={setAttributes} placeholder="plan, $path, …" />
