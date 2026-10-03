@@ -522,6 +522,9 @@ A changed cap applies to the live days at once and to days rolled up after
 the change; days already rolled up keep the `(other)` rows they were written
 with.
 
+### Upgrading to projects in the console (no migration)
+
 `list_ingest_keys` (and `GET /api/keys`) now answers `label`, `key` and
 `state` instead of `Label`, `Key` and `State`; update any script that reads
-them.
+them. The console gains `/app/projects`: every project's usage, details and
+ingest keys, and how its data meets the caps.
