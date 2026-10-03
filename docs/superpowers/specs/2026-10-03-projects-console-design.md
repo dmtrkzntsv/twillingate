@@ -33,7 +33,8 @@ Date: 2026-10-03
   settings.** `limits`, `cap_usage` and `project_stats`, each an MCP tool
   and a REST route through `expose`, so MCP clients get the same answers.
   All compute on request from the `v_*` views (which since #119 read only
-  the raw days a range covers) and from `dbstat`; nothing new is stored.
+  the raw days a range covers); project sizes are the one exception, read
+  from `server_stats`, which the daily pass fills (see `project_stats`).
 - **D4. Caps are shown, not edited.** They are environment settings; the
   UI shows the value in force, the default, what each caps, and that 0
   means no cap, and points at `twillingate.env`.
@@ -119,7 +120,8 @@ included, is returned, which is what the list page reads. Range rules as
    "totals": {"views": 2765, "events": 0, "measures": 310},
    "last_received_at": "2026-10-03T16:02:11Z",
    "first_day": "2026-08-25", "raw_days": 30, "rolled_up_days": 9,
-   "size": {"raw_bytes": 812000, "aggregate_bytes": 1450000, "total_bytes": 2262000},
+   "size": {"raw_bytes": 812000, "aggregate_bytes": 1450000, "total_bytes": 2262000,
+            "measured_at": "2026-10-03T03:00:09Z"},
    "unused_attributes": ["self_hosted"]
  }]}
 ```
@@ -134,20 +136,21 @@ included, is returned, which is what the list page reads. Range rules as
   (raw or aggregated), the number of distinct raw days, and of rolled-up
   days (`agg_views_daily`, `agg_product_totals`, `agg_measures_daily`
   days).
-- **size:** an estimate. Each table's bytes come from `dbstat`
-  (`aggregate = TRUE`); a project's share of a table is its rows over the
-  table's rows. `raw_bytes` covers `events`; `aggregate_bytes` every table
-  keyed by `project_id` (the `agg_*` tables, `actors`, `identities`). Table
-  byte counts are computed once and cached in memory for 10 minutes, since
-  `dbstat` reads every page; if `dbstat` fails, the size fields are null
-  and the rest of the answer stands.
+- **size:** an estimate, measured by the daily pass and once after the
+  server starts (the pass runs at boot), stored in `server_stats` (`key`,
+  `project_id`, `value`, `measured_at`; latest value only) and read by
+  requests: no `dbstat` at request time. Each table's bytes come from
+  `dbstat` (`aggregate = TRUE`); a project's share of a table is its rows
+  over the table's rows. `raw_bytes` covers `events`; `aggregate_bytes`
+  every table keyed by `project_id` (the `agg_*` tables, `actors`,
+  `identities`). `measured_at` says when; `size` is null until the project
+  has a measurement, and the rest of the answer stands.
 - **database_bytes:** `page_count × page_size` of the database file.
 - **unused_attributes:** declared keys with no row in `v_product_attrs`
   or `v_measures_attrs` in the range.
 
-Before building, the `dbstat` cost is measured on a copy of production;
-if a cold read takes over a second, the cache stays and the list page
-shows sizes as they load.
+A cold `dbstat` read took seconds on a production database of about 2 GB,
+which is why the measurement moved out of the request.
 
 ### `list_ingest_keys`
 
@@ -218,9 +221,9 @@ components and the widgets' chart setup; no new library.
   fixture with capped and uncapped days for paths, an attribute key and
   users (max per day, days capped, folded share, the cap-0 case);
   `project_stats` (series sums equal the views', every day present,
-  sizes positive and split, last event, unused attributes, all projects
-  without `project_id`, null sizes when `dbstat` fails); the key fields in
-  snake_case over REST and MCP; REST/MCP parity and docs-sync cover the
+  sizes read from `server_stats` and null before the first measurement,
+  last event, unused attributes, all projects without `project_id`); the
+  key fields in snake_case over REST and MCP; REST/MCP parity and docs-sync cover the
   new operations.
 - **Web (vitest):** sidebar group collapsed by default and remembered;
   cards from fixtures (live and muted dots); project page sections;

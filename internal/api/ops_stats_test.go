@@ -7,9 +7,9 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
+	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
 // The test host's blog (1): views aggregated on 08-20 (45) and 08-21 (30),
@@ -144,10 +144,9 @@ func TestProjectStatsViewsMatchTheView(t *testing.T) {
 	}
 }
 
-// Sizes split each table's bytes by the project's share of its rows: blog
-// has raw rows and aggregates, docs has neither. The database's size comes
-// back too, and table sizes are read once for every project.
-func TestProjectStatsSizes(t *testing.T) {
+// Until the daily pass has measured, a project has no size: null, with the
+// rest of the answer standing and the database's size live.
+func TestProjectStatsSizeIsNullUntilMeasured(t *testing.T) {
 	h, _ := newTestHost(t)
 	out, err := h.projectStats(context.Background(), statsIn{usageRangeIn: usageRangeIn{From: "2026-08-20", To: "2026-08-21"}})
 	if err != nil {
@@ -156,67 +155,84 @@ func TestProjectStatsSizes(t *testing.T) {
 	if out.DatabaseBytes <= 0 {
 		t.Errorf("database_bytes = %d", out.DatabaseBytes)
 	}
-	blog, docs := out.Projects[0], out.Projects[1]
-	if blog.Size == nil || blog.Size.RawBytes <= 0 || blog.Size.AggregateBytes <= 0 ||
-		blog.Size.TotalBytes != blog.Size.RawBytes+blog.Size.AggregateBytes {
-		t.Errorf("blog size = %+v", blog.Size)
+	for _, p := range out.Projects {
+		if p.Size != nil {
+			t.Errorf("project %d size = %+v, want null before a measurement", p.ProjectID, p.Size)
+		}
 	}
-	if docs.Size == nil || docs.Size.TotalBytes != 0 {
-		t.Errorf("docs size = %+v, want zeros", docs.Size)
+	if out.Projects[0].Totals.Views == 0 {
+		t.Errorf("totals = %+v; the rest of the answer must stand", out.Projects[0].Totals)
 	}
-	if h.sizes.loads != 1 {
-		t.Errorf("table sizes loaded %d times for two projects, want 1", h.sizes.loads)
-	}
-	if _, err := h.projectStats(context.Background(), statsIn{ProjectID: 1}); err != nil {
-		t.Fatal(err)
-	}
-	if h.sizes.loads != 1 {
-		t.Errorf("a second call within the TTL reloaded: %d", h.sizes.loads)
-	}
-}
-
-// When dbstat cannot be read, size is null and the rest still answers.
-func TestProjectStatsWithoutDbstat(t *testing.T) {
-	h, _ := newTestHost(t)
-	old := tableBytesSQL
-	tableBytesSQL = `SELECT name, 0 FROM no_such_table`
-	t.Cleanup(func() { tableBytesSQL = old })
-	h.sizes = newSizeCache(time.Minute)
-	out, err := h.projectStats(context.Background(), statsIn{ProjectID: 1, usageRangeIn: usageRangeIn{From: "2026-08-20", To: "2026-08-21"}})
+	body, err := json.Marshal(out.Projects[0])
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.Projects[0].Size != nil || out.Projects[0].Totals.Views == 0 {
-		t.Errorf("size %+v totals %+v; want null size and the totals", out.Projects[0].Size, out.Projects[0].Totals)
+	if !strings.Contains(string(body), `"size":null`) {
+		t.Errorf("size must be present as null: %s", body)
 	}
 }
 
-// A failed reading is remembered for a minute: two calls take one reading,
-// and both answer without sizes.
-func TestProjectStatsFailedSizesAreCachedBriefly(t *testing.T) {
+// Sizes are what the daily pass stored in server_stats, read for every
+// project at once: both projects get theirs, with the time they were
+// measured, and a stat this answer does not know is left alone.
+func TestProjectStatsSizesComeFromServerStats(t *testing.T) {
 	h, _ := newTestHost(t)
-	old := tableBytesSQL
-	tableBytesSQL = `SELECT name, 0 FROM no_such_table`
-	t.Cleanup(func() { tableBytesSQL = old })
-	h.sizes = newSizeCache(time.Minute)
-	for i := 0; i < 2; i++ {
-		out, err := h.projectStats(context.Background(), statsIn{ProjectID: 1, usageRangeIn: usageRangeIn{From: "2026-08-20", To: "2026-08-21"}})
-		if err != nil {
+	for _, r := range []struct {
+		key  string
+		id   int64
+		v    int64
+		when string
+	}{
+		{store.StatRawBytes, 1, 812000, "2026-08-22T03:00:05Z"},
+		{store.StatAggregateBytes, 1, 1450000, "2026-08-22T03:00:05Z"},
+		{store.StatRawBytes, 2, 7, "2026-08-22T03:00:05Z"},
+		{store.StatAggregateBytes, 2, 0, "2026-08-22T03:00:05Z"},
+		{"something_else", 1, 99, "2026-08-22T03:00:05Z"},
+	} {
+		if _, err := rawExec(h.ops.St, `INSERT INTO server_stats (key, project_id, value, measured_at) VALUES (?,?,?,?)`,
+			r.key, r.id, r.v, r.when); err != nil {
 			t.Fatal(err)
 		}
-		if out.Projects[0].Size != nil {
-			t.Errorf("call %d: size %+v, want null", i, out.Projects[0].Size)
-		}
 	}
-	if h.sizes.loads != 1 {
-		t.Errorf("readings taken = %d across two calls, want 1", h.sizes.loads)
-	}
-	// Past the window the reading is tried again.
-	h.sizes.failAt = time.Now().Add(-2 * failTTL)
-	if _, err := h.projectStats(context.Background(), statsIn{ProjectID: 1}); err != nil {
+	out, err := h.projectStats(context.Background(), statsIn{usageRangeIn: usageRangeIn{From: "2026-08-20", To: "2026-08-21"}})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if h.sizes.loads != 2 {
-		t.Errorf("readings taken = %d after the window, want 2", h.sizes.loads)
+	blog, docs := out.Projects[0], out.Projects[1]
+	if want := (statsSize{RawBytes: 812000, AggregateBytes: 1450000, TotalBytes: 2262000, MeasuredAt: "2026-08-22T03:00:05Z"}); blog.Size == nil || *blog.Size != want {
+		t.Errorf("blog size = %+v, want %+v", blog.Size, want)
+	}
+	if want := (statsSize{RawBytes: 7, TotalBytes: 7, MeasuredAt: "2026-08-22T03:00:05Z"}); docs.Size == nil || *docs.Size != want {
+		t.Errorf("docs size = %+v, want %+v", docs.Size, want)
+	}
+	one, err := h.projectStats(context.Background(), statsIn{ProjectID: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if one.Projects[0].Size == nil || one.Projects[0].Size.TotalBytes != 7 {
+		t.Errorf("one-project size = %+v, want docs' 7", one.Projects[0].Size)
+	}
+	body, err := json.Marshal(blog.Size)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), `"measured_at":"2026-08-22T03:00:05Z"`) {
+		t.Errorf("size JSON = %s, want measured_at", body)
+	}
+}
+
+// A project measured on one side only (raw rows, no aggregate pair yet)
+// still answers, with the missing side zero.
+func TestProjectStatsSizeWithOneStat(t *testing.T) {
+	h, _ := newTestHost(t)
+	if _, err := rawExec(h.ops.St, `INSERT INTO server_stats VALUES (?, 1, 40, '2026-08-22T03:00:05Z')`, store.StatRawBytes); err != nil {
+		t.Fatal(err)
+	}
+	out, err := h.projectStats(context.Background(), statsIn{ProjectID: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := out.Projects[0].Size; s == nil || s.RawBytes != 40 || s.AggregateBytes != 0 || s.TotalBytes != 40 {
+		t.Errorf("size = %+v, want raw 40 only", s)
 	}
 }

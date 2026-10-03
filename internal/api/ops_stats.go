@@ -2,15 +2,12 @@ package api
 
 import (
 	"context"
-	"log/slog"
 	"strconv"
-	"strings"
-	"sync"
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
-	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
+	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
 // ---- project_stats ----
@@ -37,6 +34,8 @@ type statsSize struct {
 	RawBytes       int64 `json:"raw_bytes"`
 	AggregateBytes int64 `json:"aggregate_bytes"`
 	TotalBytes     int64 `json:"total_bytes"`
+	// MeasuredAt is when the daily pass took the measurement (RFC 3339, UTC).
+	MeasuredAt string `json:"measured_at"`
 }
 
 type projectStats struct {
@@ -47,7 +46,7 @@ type projectStats struct {
 	FirstDay         *string     `json:"first_day" jsonschema:"the oldest day with data, raw or rolled up"`
 	RawDays          int         `json:"raw_days"`
 	RolledUpDays     int         `json:"rolled_up_days"`
-	Size             *statsSize  `json:"size" jsonschema:"an estimate from table sizes; null when they cannot be read"`
+	Size             *statsSize  `json:"size" jsonschema:"an estimate measured by the daily pass, with measured_at; null until the first measurement"`
 	UnusedAttributes *[]string   `json:"unused_attributes" jsonschema:"declared keys no event carried in the range; computed only when project_id is given, null otherwise"`
 }
 
@@ -78,15 +77,16 @@ func (h *host) projectStats(ctx context.Context, in statsIn) (statsOut, error) {
 	if res, err := h.db.Run(ctx, `SELECT page_count * page_size FROM pragma_page_count(), pragma_page_size()`); err == nil && len(res.Rows) == 1 {
 		out.DatabaseBytes, _ = strconv.ParseInt(res.Rows[0][0], 10, 64)
 	}
-	sizes, _ := h.sizes.get(ctx, h.db, h.logger)
+	sizes, err := h.readSizes(ctx)
+	if err != nil {
+		return statsOut{}, err
+	}
 	for _, p := range projects {
 		ps, err := h.statsFor(ctx, p, fromD, toD, in.ProjectID != 0)
 		if err != nil {
 			return statsOut{}, err
 		}
-		if sizes != nil {
-			ps.Size = sizes.size(p.ID)
-		}
+		ps.Size = sizes[p.ID]
 		out.Projects = append(out.Projects, ps)
 	}
 	return out, nil
@@ -196,128 +196,37 @@ func (h *host) statsFor(ctx context.Context, p *manage.Project, fromD, toD civil
 	return ps, nil
 }
 
-// tableBytesSQL reads each table's bytes, its indexes included. dbstat
-// walks every page, so sizeCache keeps the answer. A var so a test can
-// make it fail.
-var tableBytesSQL = `SELECT s.tbl_name, SUM(d.pgsize)
-	FROM (SELECT name, pgsize FROM dbstat WHERE aggregate = TRUE) d
-	JOIN sqlite_schema s ON s.name = d.name
-	GROUP BY s.tbl_name`
-
-// tableSizes is one reading: every table holding project rows, with its
-// bytes and its rows per project.
-type tableSizes struct {
-	tables []tableSize
-}
-
-type tableSize struct {
-	name  string
-	raw   bool // events: raw rows; everything else is an aggregate
-	bytes int64
-	rows  int64
-	per   map[int64]int64
-}
-
-// size is a project's share of each table's bytes by its share of rows.
-func (s *tableSizes) size(projectID int64) *statsSize {
-	out := &statsSize{}
-	for _, t := range s.tables {
-		if t.rows == 0 {
-			continue
-		}
-		b := t.bytes * t.per[projectID] / t.rows
-		if t.raw {
-			out.RawBytes += b
-		} else {
-			out.AggregateBytes += b
-		}
-	}
-	out.TotalBytes = out.RawBytes + out.AggregateBytes
-	return out
-}
-
-// failTTL is how long a failed reading is remembered: a database that
-// cannot read dbstat would otherwise be asked on every call.
-const failTTL = time.Minute
-
-type sizeCache struct {
-	ttl    time.Duration
-	mu     sync.Mutex
-	at     time.Time
-	val    *tableSizes
-	failAt time.Time // when the last reading failed; zero after a success
-	fail   error
-	loads  int // readings taken; tests check the cache is used
-}
-
-func newSizeCache(ttl time.Duration) *sizeCache { return &sizeCache{ttl: ttl} }
-
-// get answers the cached reading, or takes a new one when it is older than
-// ttl. A failed reading is remembered for failTTL: the error is answered
-// at once in that window, and logged once, when it happens.
-func (c *sizeCache) get(ctx context.Context, db *readsql.DB, logger *slog.Logger) (*tableSizes, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.val != nil && time.Since(c.at) < c.ttl {
-		return c.val, nil
-	}
-	if c.fail != nil && time.Since(c.failAt) < failTTL {
-		return nil, c.fail
-	}
-	c.loads++
-	val, err := readTableSizes(ctx, db)
-	if err != nil {
-		logger.Warn("project sizes unavailable", "error", err)
-		if ctx.Err() == nil { // a caller that gave up says nothing about the database
-			c.fail, c.failAt = err, time.Now()
-		}
-		return nil, err
-	}
-	c.val, c.at, c.fail = val, time.Now(), nil
-	return val, nil
-}
-
-func readTableSizes(ctx context.Context, db *readsql.DB) (*tableSizes, error) {
-	res, err := db.Run(ctx, tableBytesSQL)
+// readSizes answers every measured project's size, by project id: the rows
+// the daily pass stored in server_stats, read in one query however many
+// projects there are. A project with no raw_bytes row has no measurement
+// and is absent. The size rows of a project are written in one transaction,
+// so the raw row's measured_at stands for both.
+func (h *host) readSizes(ctx context.Context) (map[int64]*statsSize, error) {
+	res, err := h.run(ctx, `SELECT key, project_id, value, measured_at FROM server_stats WHERE key IN (?, ?)`,
+		store.StatRawBytes, store.StatAggregateBytes)
 	if err != nil {
 		return nil, err
 	}
-	bytes := map[string]int64{}
+	out := map[int64]*statsSize{}
+	at := func(id int64) *statsSize {
+		if out[id] == nil {
+			out[id] = &statsSize{}
+		}
+		return out[id]
+	}
 	for _, r := range res.Rows {
-		bytes[r[0]], _ = strconv.ParseInt(r[1], 10, 64)
+		id, _ := strconv.ParseInt(r[1], 10, 64)
+		n, _ := strconv.ParseInt(r[2], 10, 64)
+		switch r[0] {
+		case store.StatRawBytes:
+			at(id).RawBytes = n
+			at(id).MeasuredAt = r[3]
+		case store.StatAggregateBytes:
+			at(id).AggregateBytes = n
+		}
 	}
-	// A project's data: its raw rows (events, read through v_events_flat,
-	// the raw read path for every family) and every rollup keyed by
-	// project_id. Dashboards and the registry are not data.
-	res, err = db.Run(ctx, `SELECT m.name FROM sqlite_schema m, pragma_table_info(m.name) c
-		WHERE m.type = 'table' AND c.name = 'project_id'
-		  AND (m.name = 'events' OR m.name LIKE 'agg\_%' ESCAPE '\' OR m.name IN ('actors', 'identities'))
-		ORDER BY m.name`)
-	if err != nil {
-		return nil, err
-	}
-	out := &tableSizes{}
-	for _, r := range res.Rows {
-		name := r[0]
-		src := name
-		if name == "events" {
-			src = "v_events_flat"
-		}
-		if strings.ContainsAny(src, "\"'` ") {
-			continue // never quote-splice an odd name
-		}
-		counts, err := db.Run(ctx, `SELECT project_id, COUNT(*) FROM "`+src+`" GROUP BY project_id`)
-		if err != nil {
-			return nil, err
-		}
-		t := tableSize{name: name, raw: name == "events", bytes: bytes[name], per: map[int64]int64{}}
-		for _, c := range counts.Rows {
-			id, _ := strconv.ParseInt(c[0], 10, 64)
-			n, _ := strconv.ParseInt(c[1], 10, 64)
-			t.per[id] = n
-			t.rows += n
-		}
-		out.tables = append(out.tables, t)
+	for _, sz := range out {
+		sz.TotalBytes = sz.RawBytes + sz.AggregateBytes
 	}
 	return out, nil
 }
