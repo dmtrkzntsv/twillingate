@@ -249,6 +249,23 @@ func TestQueryPageCountingColumnsDoNotCollide(t *testing.T) {
 	}
 }
 
+// A sorted page adds a tw_cell and a tw_num column per result column; a
+// query already using those names must neither break nor sort by them.
+func TestQueryPageSortKeysDoNotCollide(t *testing.T) {
+	db, _ := newTestDB(t, 5*time.Second, 1000)
+	// Unguarded, x's number key would be named __tw_num_1 and the sort
+	// would read the query's own column of that name instead.
+	got, err := db.QueryPage(context.Background(),
+		`SELECT 1 AS __tw_num_1, 2 AS x UNION ALL SELECT 2, 1`,
+		Page{Sort: &Sort{Column: "x"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := [][]string{{"2", "1"}, {"1", "2"}}; !reflect.DeepEqual(got.Rows, want) {
+		t.Errorf("rows = %v, want %v", got.Rows, want)
+	}
+}
+
 // Comparisons go through tw_cell and tw_num, not SQLite's affinity:
 // projects.name is a TEXT column, so SQLite itself would turn the bound
 // 5 into '5' and match 'blog' > '5'. A decimal value compares as a
@@ -370,5 +387,32 @@ func TestQueryPageRefusesTheReservedParameterPrefix(t *testing.T) {
 	_, err := db.QueryPage(context.Background(), `SELECT :tw_p1 AS a`, Page{}, sql.Named("tw_p1", 1))
 	if !errors.Is(err, ErrRefused) || !strings.Contains(err.Error(), "tw_p") {
 		t.Errorf("err = %v, want ErrRefused naming the prefix", err)
+	}
+}
+
+// A sorted page over 40,000 rows of six columns, the size of the
+// attribute values table over a long range: the wrap's own cost, beside
+// the same page unsorted.
+func BenchmarkQueryPage(b *testing.B) {
+	db, _ := newTestDB(b, time.Minute, 1000)
+	q := `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 40000)
+		SELECT 'key' || (i % 24) AS "Attribute", date('2026-01-01', '+' || (i % 90) || ' days') AS "Day",
+		       'value' || (i % 997) AS "Value", i % 5000 AS "Count", i % 300 AS "Users",
+		       CASE WHEN i % 7 = 0 THEN NULL ELSE i % 40 END AS "Groups"
+		FROM n`
+	for _, bc := range []struct {
+		name string
+		page Page
+	}{
+		{"unsorted", Page{}},
+		{"sorted", Page{Sort: &Sort{Column: "Count", Desc: true}}},
+	} {
+		b.Run(bc.name, func(b *testing.B) {
+			for b.Loop() {
+				if _, err := db.QueryPage(context.Background(), q, bc.page); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
 	}
 }

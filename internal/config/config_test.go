@@ -41,8 +41,8 @@ func TestDefaultsApplied(t *testing.T) {
 	if c.Retention.ArchivedDays != 30 {
 		t.Errorf("Retention.ArchivedDays = %d, want 30", c.Retention.ArchivedDays)
 	}
-	if c.ProductAttributesTopN != 50 {
-		t.Errorf("ProductAttributesTopN = %d, want 50", c.ProductAttributesTopN)
+	if c.ProductAttributesTopN != 100 || c.ViewsDimensionsTopN != 1000 || c.IdentitiesTopN != 1000 {
+		t.Errorf("caps = %d/%d/%d, want 100/1000/1000", c.ProductAttributesTopN, c.ViewsDimensionsTopN, c.IdentitiesTopN)
 	}
 	if c.Reporting.CacheAge != 900*time.Second || c.Reporting.RefreshAge != 60*time.Second {
 		t.Errorf("Reporting = %+v", c.Reporting)
@@ -65,9 +65,15 @@ func TestEnvOverrides(t *testing.T) {
 		"RETENTION_ARCHIVED_DAYS":         "7",
 		"REPORTING_CACHE_SECONDS":         "120",
 		"REPORTING_REFRESH_SECONDS":       "30",
+		"PRODUCT_ATTRIBUTES_TOP_N":        "200",
+		"VIEWS_DIMENSIONS_TOP_N":          "0",
+		"IDENTITIES_TOP_N":                "2000",
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if c.ProductAttributesTopN != 200 || c.ViewsDimensionsTopN != 0 || c.IdentitiesTopN != 2000 {
+		t.Errorf("caps = %d/%d/%d, want 200/0/2000", c.ProductAttributesTopN, c.ViewsDimensionsTopN, c.IdentitiesTopN)
 	}
 	if c.IngestAddr != "0.0.0.0:9999" || c.Geo != "none://" {
 		t.Errorf("IngestAddr/Geo = %q/%q", c.IngestAddr, c.Geo)
@@ -102,6 +108,9 @@ func TestValidationErrors(t *testing.T) {
 		"bad geo scheme":           base(map[string]string{"GEO_DSN": "???"}),
 		"negative raw_days":        base(map[string]string{"RETENTION_EVENTS_RAW_DAYS": "-1"}),
 		"negative archived_days":   base(map[string]string{"RETENTION_ARCHIVED_DAYS": "-1"}),
+		"negative attributes cap":  base(map[string]string{"PRODUCT_ATTRIBUTES_TOP_N": "-1"}),
+		"negative dimensions cap":  base(map[string]string{"VIEWS_DIMENSIONS_TOP_N": "-1"}),
+		"negative identities cap":  base(map[string]string{"IDENTITIES_TOP_N": "-1"}),
 		"bad integer":              base(map[string]string{"BUFFER_CAPACITY": "many"}),
 		"invalid duration":         base(map[string]string{"BUFFER_FLUSH_INTERVAL": "fast"}),
 		"negative cache seconds":   base(map[string]string{"REPORTING_CACHE_SECONDS": "-1"}),

@@ -13,13 +13,22 @@ import (
 var rawRead = regexp.MustCompile(`\b(FROM|JOIN)\s+events\b`)
 
 // Nothing reads the raw events table except raw_views, raw_product,
-// raw_measures and v_events_flat (which holds every family on purpose).
+// raw_measures, v_events_flat (which holds every family on purpose) and
+// v_identity_daily, whose live half groups views and product rows in one
+// aggregate over the table (025_live_halves.sql) and names both families.
 // Everything else reads through the family views, so a product query can
 // never count pageviews by forgetting a filter.
 func TestRawTableIsReadOnlyThroughFamilyViews(t *testing.T) {
 	db := newTestDB(t)
+	var identity string
+	if err := db.db.QueryRow(`SELECT sql FROM sqlite_schema WHERE name = 'v_identity_daily'`).Scan(&identity); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(rawRead.FindAllString(identity, -1)); n != 1 || !strings.Contains(identity, "WHERE family IN ('views', 'product')") {
+		t.Errorf("v_identity_daily reads events %d times; want once, under WHERE family IN ('views', 'product')", n)
+	}
 	rows, err := db.db.Query(`SELECT name, sql FROM sqlite_schema
-		WHERE type='view' AND name NOT IN ('raw_views', 'raw_product', 'raw_measures', 'v_events_flat')`)
+		WHERE type='view' AND name NOT IN ('raw_views', 'raw_product', 'raw_measures', 'v_events_flat', 'v_identity_daily')`)
 	if err != nil {
 		t.Fatal(err)
 	}

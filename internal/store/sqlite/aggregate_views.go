@@ -9,11 +9,30 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
 )
 
-// topNDimension caps client-supplied dimension values per day; the tail
-// collapses into "(other)". Applies to every dimension, paths included: an
-// unbounded dimension is the wrong default on the SD-card hardware target
-// (a path carrying record ids would grow the aggregate without limit).
-const topNDimension = 500
+// defaultDimensionsTopN is VIEWS_DIMENSIONS_TOP_N's and IDENTITIES_TOP_N's
+// default: the client-supplied values a views breakdown keeps per day (the
+// tail collapses into "(other)"), and the users and groups a day keeps.
+// It applies to every dimension, paths included: an unbounded dimension is
+// the wrong default on the SD-card hardware target (a path carrying record
+// ids would grow the aggregate without limit). 0 keeps every value.
+const defaultDimensionsTopN = 1000
+
+// noCap is the cap 0 stands for: a rank no day reaches. The views read the
+// same number (025_live_halves.sql) when the meta row holds 0.
+const noCap = 1 << 62
+
+// capRows is the rank a rollup keeps up to for a configured cap: n itself,
+// noCap for 0, and def for a negative n (config refuses one; the guard
+// keeps a bad call from folding every value into "(other)").
+func capRows(n, def int) int {
+	switch {
+	case n == 0:
+		return noCap
+	case n < 0:
+		return def
+	}
+	return n
+}
 
 const otherBucket = "(other)"
 
@@ -29,7 +48,10 @@ const consentSQL = `CASE consent WHEN 1 THEN 'given' WHEN 0 THEN 'none' ELSE 'un
 // rawViews, rawProduct and rawMeasures are the only read path into the
 // raw events table (020_one_events_table.sql, 024_measures.sql): each is a
 // view carrying one family's filter, so no query can forget it. Writes and
-// deletes go to events with an explicit family.
+// deletes go to events with an explicit family, and so do the two views
+// that read more than one family: v_events_flat, and v_identity_daily
+// (025_live_halves.sql), whose live half groups views and product rows in
+// one aggregate over the table so a query's day filter reaches them.
 const (
 	rawViews    = "raw_views"
 	rawProduct  = "raw_product"
@@ -75,8 +97,9 @@ func (d *DB) daysBefore(ctx context.Context, source string, projectID int64, bef
 // "(other)" first, so a hostile client cannot grow agg_views_daily. A
 // client-declared session_id is authoritative (the app knows its own
 // foreground/background transitions); otherwise a gap over 30 minutes per
-// actor splits sessions. The live half of v_views_daily (012_views.sql)
-// mirrors this per (project_id, day); views_test.go enforces the parity.
+// actor splits sessions. The live half of v_views_daily
+// (025_live_halves.sql) runs the same per raw day; views_test.go enforces
+// the parity.
 const viewSessionsCTE = `
 WITH src AS (
   SELECT kind, actor_id, session_id, CAST(strftime('%s', ts) AS INTEGER) AS t
@@ -86,7 +109,7 @@ kinds AS (
   SELECT kind, ROW_NUMBER() OVER (ORDER BY COUNT(*) DESC, kind) AS rn FROM src GROUP BY kind
 ),
 bucketed AS (
-  SELECT CASE WHEN k.rn <= 500 THEN src.kind ELSE '(other)' END AS kind,
+  SELECT CASE WHEN k.rn <= :n THEN src.kind ELSE '(other)' END AS kind,
          src.actor_id, src.session_id, src.t
   FROM src JOIN kinds k ON k.kind = src.kind
 ),
@@ -141,7 +164,7 @@ var viewDimensions = []viewDimension{
 		where: "AND display_width > 0 AND display_height > 0"},
 	{table: "agg_views_consent", keys: []string{"consent"}, exprs: []string{consentSQL}},
 	// Keyed on the pair: a browser in German showing the product in
-	// English is the row worth seeing. v_views_locales (019_locales.sql)
+	// English is the row worth seeing. v_views_locales (025_live_halves.sql)
 	// is the live half.
 	{table: "agg_views_locales", keys: []string{"browser_locale", "app_locale"},
 		where: "AND NOT (browser_locale='' AND app_locale='')"},
@@ -150,7 +173,9 @@ var viewDimensions = []viewDimension{
 // AggregateViewDay rolls one day of views into agg_views_* and deletes the
 // raw rows, in one transaction. Idempotent: every write is INSERT OR
 // REPLACE keyed on (project_id, day, ...), recomputed wholly from raw rows.
-func (d *DB) AggregateViewDay(ctx context.Context, projectID int64, day civil.Date) error {
+// topN is VIEWS_DIMENSIONS_TOP_N: values (and kinds) kept per breakdown
+// and day, 0 for all of them.
+func (d *DB) AggregateViewDay(ctx context.Context, projectID int64, day civil.Date, topN int) error {
 	return d.tx(ctx, func(tx *sql.Tx) error {
 		var n int
 		if err := tx.QueryRowContext(ctx,
@@ -161,7 +186,8 @@ func (d *DB) AggregateViewDay(ctx context.Context, projectID int64, day civil.Da
 		if n == 0 {
 			return nil // already aggregated (or empty day): no-op keeps idempotency
 		}
-		named := []any{sql.Named("p", projectID), sql.Named("day", day.String())}
+		named := []any{sql.Named("p", projectID), sql.Named("day", day.String()),
+			sql.Named("n", capRows(topN, defaultDimensionsTopN))}
 		if _, err := tx.ExecContext(ctx, viewSessionsCTE+`
 INSERT OR REPLACE INTO agg_views_daily
   (project_id, day, kind, visitors, views, sessions, bounces, duration_sec)
@@ -206,7 +232,7 @@ func (dim viewDimension) aggregateSQL() string {
 		}
 	}
 	last := dim.keys[len(dim.keys)-1]
-	bucket := fmt.Sprintf("CASE WHEN r.rn <= %d THEN s.%s ELSE '%s' END", topNDimension, last, otherBucket)
+	bucket := fmt.Sprintf("CASE WHEN r.rn <= :n THEN s.%s ELSE '%s' END", last, otherBucket)
 	cols := strings.Join(dim.keys, ", ")
 	group := strings.Join(append(append([]string{}, lead...), bucket), ", ")
 	return fmt.Sprintf(`

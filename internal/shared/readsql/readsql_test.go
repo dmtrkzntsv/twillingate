@@ -23,7 +23,7 @@ import (
 // tests) — so the returned path is a single, quiescent file a readsql.DB
 // can open independently. It returns both the open DB and its path so a
 // test can hash the file or reopen it with different settings.
-func newTestDB(t *testing.T, timeout time.Duration, maxRows int) (*DB, string) {
+func newTestDB(t testing.TB, timeout time.Duration, maxRows int) (*DB, string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "readsql.db")
 	st, err := store.Open("sqlite://" + path)

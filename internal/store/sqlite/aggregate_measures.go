@@ -14,12 +14,10 @@ import (
 // deletes the day's raw rows, in one transaction. Dimensions and the top-N
 // cap follow the product rules: the system attributes always, plus the
 // project's declared keys. The rows written are exactly what the live
-// halves of v_measures_daily and v_measures_attrs (024_measures.sql)
-// compute over the same raw rows.
+// halves of v_measures_daily (024_measures.sql) and v_measures_attrs
+// (025_live_halves.sql) compute over the same raw rows.
 func (d *DB) AggregateMeasureDay(ctx context.Context, projectID int64, day civil.Date, attrs []string, topN int) error {
-	if topN <= 0 {
-		topN = defaultAttrsTopN
-	}
+	topN = capRows(topN, defaultAttrsTopN)
 	return d.tx(ctx, func(tx *sql.Tx) error {
 		var n int
 		if err := tx.QueryRowContext(ctx,
