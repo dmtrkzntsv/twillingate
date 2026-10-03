@@ -3,9 +3,11 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"github.com/dmtrkzntsv/twillingate/internal/reporting"
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -215,6 +217,22 @@ func (h *host) registerReporting(r *registrar) {
 	const d = "/api/dashboards/{dashboard_id}"
 	const w = "/api/widgets/{widget_id}"
 
+	// The widget tools' input schemas carry the widget contract, from
+	// this build's own component manifest: the one migrate syncs.
+	comps, err := reporting.ParseManifest(reporting.Manifest())
+	if err != nil {
+		panic("api: " + err.Error()) // embedded at build time: this build is broken
+	}
+	widget := func(pick func(*jsonschema.Schema) *jsonschema.Schema) func(*jsonschema.Schema) {
+		return func(in *jsonschema.Schema) {
+			if err := reporting.ConstrainWidget(pick(in), comps, h.rep.SourceTypes()); err != nil {
+				panic(fmt.Sprintf("api: widget schema: %v", err))
+			}
+		}
+	}
+	self := func(in *jsonschema.Schema) *jsonschema.Schema { return in }
+	items := func(in *jsonschema.Schema) *jsonschema.Schema { return in.Properties["widgets"].Items }
+
 	expose(r, spec{Name: "reporting_guide", Annotations: ro, // MCP only
 		Description: "Call before building or changing a dashboard. One read returns what you author against: the running version and its release notes, the source types and every component (when to use it, the columns its query returns, its props and default size), the queryable views, the active projects, the existing dashboards, and the workflow and rules to follow. docs://reporting is the full reference."},
 		h.reportingGuide)
@@ -234,7 +252,7 @@ func (h *host) registerReporting(r *registrar) {
 		Description: "Load one widget's content, as its card draws it. project_id is required when the widget's SQL uses :project, and from/to (YYYY-MM-DD, at most 365 days) when it uses :from or :to; each is ignored otherwise, and the answer echoes the values applied. fresh=true reuses a cached result only up to REPORTING_REFRESH_SECONDS old. A query that no longer runs, or rows that no longer fit the component, is refused with the reason; removed=true means the widget's component left the code. A table with props.mode \"remote\" also takes filters, sort, distinct, offset and limit, applied in SQL over its whole result; the answer's page block echoes them with matched and total counts (docs://reporting, Filtering and paging a table)."},
 		h.widgetData)
 
-	expose(r, spec{Name: "create_dashboard", Annotations: write, Method: "POST", Path: "/api/dashboards", Status: http.StatusCreated,
+	expose(r, spec{Name: "create_dashboard", Annotations: write, Method: "POST", Path: "/api/dashboards", Status: http.StatusCreated, constrain: widget(items),
 		Description: "Call reporting_guide first. Create a user dashboard: title, optional starting range (default 7d), optional group_id to add it as a tab of that group, optional after (a dashboard id; 0 first), and optional widgets in order. All or nothing: one invalid widget creates nothing."},
 		h.createDashboard)
 	expose(r, spec{Name: "update_dashboard", Annotations: write, Method: "PATCH", Path: d,
@@ -249,10 +267,10 @@ func (h *host) registerReporting(r *registrar) {
 	expose(r, spec{Name: "restore_dashboard", Annotations: idem, Method: "POST", Path: d + "/restore",
 		Description: "Unhide an archived dashboard, where it was in the sidebar. whole_group restores every archived tab of its group; a system dashboard is restored only with whole_group."},
 		h.restoreDashboard)
-	expose(r, spec{Name: "add_widget", Annotations: write, Method: "POST", Path: d + "/widgets", Status: http.StatusCreated,
+	expose(r, spec{Name: "add_widget", Annotations: write, Method: "POST", Path: d + "/widgets", Status: http.StatusCreated, constrain: widget(self),
 		Description: "Call reporting_guide first. Add a widget to a user dashboard: a component, a source ({type: sql|md, content}), optional title, props, width and height (default from the component), name (derived from the title when omitted) and after (a widget id; 0 first; omitted, last). The SQL is run once to check its columns against the component's inputs."},
 		h.addWidget)
-	expose(r, spec{Name: "update_widget", Annotations: write, Method: "PATCH", Path: w,
+	expose(r, spec{Name: "update_widget", Annotations: write, Method: "PATCH", Path: w, constrain: widget(self),
 		Description: "Call reporting_guide first. Change a widget on a user dashboard: name, component, title, props, source, width or height. Fields you omit are kept; the result is validated whole."},
 		h.updateWidget)
 	expose(r, spec{Name: "copy_widget", Annotations: write, Method: "POST", Path: w + "/copy", Status: http.StatusCreated,

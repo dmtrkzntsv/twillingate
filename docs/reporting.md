@@ -345,6 +345,14 @@ appears. `width` and `height` default to the component's size below.
 `list_components` is the authority: it returns each component's props as a
 JSON schema, and its `description` says when to use it.
 
+The input schemas of `add_widget`, `update_widget` and `create_dashboard`
+carry the same contract: the component names, each component's props and
+source types, and `width` and `height` from 1 to 12. An MCP client sees it
+in `tools/list`, and the server refuses a call that breaks it before
+running it, with `validating "arguments": …` and the field at fault.
+`update_widget` without `component` keeps the stored one, so its props are
+checked by the server instead.
+
 The dashboard app draws every component with sample data at
 `/app/gallery/components`, with each one's contract and a copyable
 `add_widget` snippet: point the owner there to pick one by name.
@@ -826,6 +834,7 @@ widget's name (`widget visitors: …`), and nothing is created.
 | SQLite's own error, such as a column that does not exist | Fix the query; try it with `query` first. |
 | markdown text is empty | Give the Markdown text. |
 | stat: … (a props schema error) | Match the props schema `list_components` returns; unknown props are refused. |
+| validating "arguments": … (an MCP input schema error) | The path and message name the field; match `list_components`. The path is the schema's, not the widget's: for `create_dashboard` it points into `widgets/items`, not at a particular widget, so find the value it names in your own input. Over REST the same mistake gets the server's own refusal. |
 | width is columns out of 12, from 1 to 12 | A whole number 1–12. `height` is the same, in rows of 40px. |
 | after 7 is not a widget on dashboard 1001 | Name a widget on the same dashboard, `0` for first, or leave `after` out for last. |
 | after 7 is archived; name a live widget | `after` never names an archived widget: name a live one, or `restore_widget` it first. |
