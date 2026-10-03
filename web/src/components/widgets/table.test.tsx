@@ -182,24 +182,6 @@ describe('table', () => {
     expect((cells[1] as HTMLElement).style.backgroundColor).toContain('45%')
   })
 
-  it('remembers the sort under its state key', async () => {
-    const user = userEvent.setup()
-    const first = renderTable(pages, {}, 'w')
-    await user.click(screen.getByRole('button', { name: /visitors/ }))
-    expect(JSON.parse(localStorage.getItem('w.sort')!)).toEqual({ column: 'visitors', dir: 'desc' })
-    first.unmount()
-
-    const { container } = renderTable(pages, {}, 'w')
-    expect(column(container, 1)).toEqual(['30', '20', '10', ''])
-  })
-
-  it('ignores a remembered sort on a column the result no longer has', () => {
-    localStorage.setItem('w.sort', JSON.stringify({ column: 'gone', dir: 'desc' }))
-    const { container } = renderTable(pages, {}, 'w')
-    expect(column(container, 0)).toEqual(['/b', '/page10', '/a', '/page2'])
-    expect(localStorage.getItem('w.sort')).not.toBeNull()
-  })
-
   it('filters the loaded rows in local mode, offering their values without asking the server', async () => {
     const user = userEvent.setup()
     const fetchDistinct = vi.fn()
@@ -296,6 +278,41 @@ describe('table', () => {
     )
     await user.click(screen.getByRole('button', { name: /visitors/ }))
     expect(onView).toHaveBeenCalledWith({ filters: [], sort: { column: 'visitors', dir: 'desc' }, offset: 0 })
+  })
+
+  it('moves back to the last page when a remote answer ends before the page shown', () => {
+    const onView = vi.fn()
+    render(
+      <Table
+        data={{ ...pages, rows: [] }}
+        props={{ mode: 'remote' }}
+        view={{ ...emptyView, offset: 3000 }}
+        onView={onView}
+        page={{ offset: 3000, limit: 1000, matched: 2500, total: 2500 }}
+      />
+    )
+    expect(onView).toHaveBeenCalledWith({ ...emptyView, offset: 2000 })
+  })
+
+  it('moves back to the first page when the loaded rows no longer reach the page shown', () => {
+    const onView = vi.fn()
+    render(<Table data={pages} props={{}} view={{ ...emptyView, offset: 1000 }} onView={onView} />)
+    expect(onView).toHaveBeenCalledWith({ ...emptyView, offset: 0 })
+  })
+
+  it('leaves a remote page alone while the answer on screen is for another one', () => {
+    const onView = vi.fn()
+    render(
+      <Table
+        data={pages}
+        props={{ mode: 'remote' }}
+        view={{ ...emptyView, offset: 3000 }}
+        onView={onView}
+        page={{ offset: 0, limit: 1000, matched: 2500, total: 2500 }}
+        reloading
+      />
+    )
+    expect(onView).not.toHaveBeenCalled()
   })
 
   it('dims the rows while a later load is in flight', () => {

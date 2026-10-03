@@ -1,6 +1,6 @@
 import { useQueries } from '@tanstack/react-query'
 import type { Widget, WidgetDataQuery } from '@/lib/api'
-import { canRefresh, widgetQuery } from '@/lib/widget-query'
+import { canRefresh, isRemoteTable, widgetQuery } from '@/lib/widget-query'
 import { useNow } from './use-now'
 
 export interface Freshness {
@@ -19,7 +19,9 @@ export function useFreshness(widgets: Widget[], paramsFor: (w: Widget) => Widget
   return useQueries({
     queries: widgets.map((w) => {
       const options = widgetQuery(w, paramsFor(w))
-      return { ...options, enabled: enabled && options.enabled }
+      // A remote table's card asks for its own view; this only reads its first,
+      // unfiltered page when that is the one on screen, and never fetches one.
+      return { ...options, enabled: enabled && options.enabled && !isRemoteTable(w) }
     }),
     combine: (results) => {
       let oldest: number | undefined

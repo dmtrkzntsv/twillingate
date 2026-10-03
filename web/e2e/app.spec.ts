@@ -236,8 +236,64 @@ test('a table sorts by its header and remembers the sort across a reload', async
   await expect(names).toHaveText(['a', 'c', 'b'])
   await expect(page.getByRole('columnheader', { name: 'score', exact: true })).toHaveAttribute('aria-sort', 'descending')
 
+  // Kept by the card, with the filters, under the widget's own key.
+  const stored = await page.evaluate(() =>
+    Object.keys(localStorage)
+      .filter((k) => k.startsWith('twillingate.widget.'))
+      .map((k) => [k, localStorage.getItem(k)])
+  )
+  expect(stored).toEqual([[expect.stringMatching(/\.view$/), expect.stringContaining('"sort":{"column":"score","dir":"desc"}')]])
+
   await page.reload()
   await expect(names).toHaveText(['a', 'c', 'b'])
+})
+
+test('the attribute table filters and pages on the server', async ({ page, request }) => {
+  const id = (await dashboardIds(request)).get('Product')
+  expect(id, 'no Product dashboard').toBeDefined()
+  await login(page)
+  await page.goto(`/app/dashboards/${id}`)
+  await page.getByRole('button', { name: /^Range:/ }).click()
+  await page.getByRole('menuitemradio', { name: 'Last 90 days' }).click()
+  await expect(page).toHaveURL(/[?&]range=90d(&|$)/)
+
+  const card = page
+    .locator('[data-slot=widget-card]')
+    .filter({ has: page.getByRole('heading', { name: 'Top attribute values by day', exact: true }) })
+  await card.getByRole('button', { name: 'Filter', exact: true }).click()
+  // The picker offers the column's values from the server, most frequent first.
+  const options = page.getByRole('option')
+  await expect(options.nth(1)).toBeVisible()
+  const picked: string[] = []
+  for (const i of [0, 1]) {
+    picked.push((await options.nth(i).locator('span').first().textContent())!.trim())
+    await options.nth(i).click()
+  }
+  await page.getByRole('button', { name: 'Apply', exact: true }).click()
+
+  const chip = card.getByRole('button', { name: `Attribute in ${picked.join(', ')}`, exact: true })
+  await expect(chip).toBeVisible()
+  const attributes = card.locator('tbody tr td:first-child')
+  // Every row on the page is one of the two picked: the server filtered the whole result.
+  const onlyPicked = async () => {
+    const shown = await attributes.allTextContents()
+    return shown.length > 0 && shown.every((a) => picked.includes(a))
+  }
+  await expect.poll(onlyPicked).toBe(true)
+
+  // The footer shows only when the filtered result runs past one page.
+  const footer = card.getByText(/^[\d,]+–[\d,]+ of [\d,]+$/)
+  if (await footer.isVisible()) {
+    await expect(footer).toHaveText(/^1–/)
+    await card.getByRole('button', { name: 'Next page' }).click()
+    await expect(footer).not.toHaveText(/^1–/)
+    await expect.poll(onlyPicked).toBe(true)
+  }
+
+  await page.reload()
+  await expect(chip).toBeVisible()
+  await expect.poll(onlyPicked).toBe(true)
+  if (await footer.isVisible()) await expect(footer).toHaveText(/^1–/)
 })
 
 for (const viewport of VIEWPORTS) {

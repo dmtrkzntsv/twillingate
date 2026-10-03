@@ -20,7 +20,7 @@ import type { DashboardDetail, DashboardInfo, DashboardsResponse, DashboardTab }
 import { moveTabBody } from '@/lib/arrange'
 import { rememberDashboard } from '@/lib/last-dashboard'
 import { dashboardQuery, dashboardsQuery, projectsQuery } from '@/lib/queries'
-import { refreshWidget } from '@/lib/widget-query'
+import { refreshWidget, shownViews } from '@/lib/widget-query'
 
 /** `/dashboards/:id`: one dashboard in the app shell, as a report tab or a page of its own (D36). */
 export default function Dashboard() {
@@ -111,9 +111,11 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
 
   const refreshAll = () => {
     setRefreshing(true)
-    void Promise.allSettled(freshness.refreshable.map((w) => refreshWidget(client, w, paramsFor(w)))).finally(() =>
-      setRefreshing(false)
+    // Each widget refreshes what its card shows, a remote table its current page.
+    const refreshes = freshness.refreshable.flatMap((w) =>
+      shownViews(client, w, paramsFor(w)).map((view) => refreshWidget(client, w, paramsFor(w), view))
     )
+    void Promise.allSettled(refreshes).finally(() => setRefreshing(false))
   }
 
   // Auto-refresh is the viewer's own choice per dashboard, kept in this

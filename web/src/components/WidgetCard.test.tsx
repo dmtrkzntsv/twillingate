@@ -1,7 +1,10 @@
 import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ApiError, endpoints, type Widget, type WidgetData } from '@/lib/api'
+import { QueryClientProvider } from '@tanstack/react-query'
+import { TooltipProvider } from '@/components/ui/tooltip'
+import { ApiError, endpoints, type PageInfo, type Widget, type WidgetData, type WidgetDataQuery } from '@/lib/api'
+import type { Filter } from '@/lib/table-view'
 import { renderWithProviders } from '@/test/render'
 import WidgetCard from './WidgetCard'
 
@@ -47,6 +50,7 @@ function renderCard(widget: Widget = statWidget()) {
 
 afterEach(() => {
   vi.restoreAllMocks()
+  localStorage.clear()
 })
 
 describe('WidgetCard', () => {
@@ -69,8 +73,10 @@ describe('WidgetCard', () => {
     vi.spyOn(endpoints, 'widgetData').mockResolvedValue(sqlAnswer({}, [['12'], ['30']]))
     renderCard(statWidget({ component: 'table', dashboard_id: 3 }))
     await user.click(await screen.findByRole('button', { name: /value/ }))
-    expect(localStorage.getItem('twillingate.widget.3.42.sort')).toBe('{"column":"value","dir":"desc"}')
-    localStorage.clear()
+    expect(JSON.parse(localStorage.getItem('twillingate.widget.3.42.view')!)).toMatchObject({
+      filters: [],
+      sort: { column: 'value', dir: 'desc' },
+    })
   })
 
   it('says "No data for this range" on an empty result', async () => {
@@ -211,5 +217,172 @@ describe('WidgetCard', () => {
     })
     renderCard(statWidget({ widget_id: 43, component: 'markdown', source: { type: 'md', content: '' } }))
     expect(await screen.findByText('Nothing to show')).toBeInTheDocument()
+  })
+})
+
+// A remote table as the server answers it: the page of rows, with the counts in `page`.
+const ATTR_COLUMNS = ['Attribute', 'Value', 'Count']
+const ATTR_ROWS = [
+  ['$os', 'iOS', '412'],
+  ['plan', 'pro', '205'],
+]
+const VIEW_KEY = 'twillingate.widget.1.42.view'
+const PLAN: Filter = { column: 'Attribute', op: 'in', value: ['plan'] }
+
+function remoteWidget(): Widget {
+  return statWidget({ component: 'table', title: 'Attributes', props: { mode: 'remote' } })
+}
+
+function remoteAnswer(q: WidgetDataQuery, rows: string[][] = ATTR_ROWS, page: Partial<PageInfo> = {}): WidgetData {
+  return sqlAnswer({
+    data: { columns: ATTR_COLUMNS, rows, truncated: false },
+    page: { offset: q.offset ?? 0, limit: 1000, matched: rows.length, total: rows.length, filters: [], ...page },
+  })
+}
+
+function distinctAnswer(rows: string[][]): WidgetData {
+  return sqlAnswer({
+    data: { columns: ['value', 'rows'], rows, truncated: false },
+    page: { offset: 0, limit: 1000, matched: rows.length, total: 9, filters: [] },
+  })
+}
+
+function storeView(filters: Filter[], sort: { column: string; dir: 'asc' | 'desc' } | null = null) {
+  localStorage.setItem(VIEW_KEY, JSON.stringify({ filters, sort }))
+}
+
+function cardIn(client: ReturnType<typeof renderWithProviders>['client'], widget: Widget, p: WidgetDataQuery) {
+  return (
+    <QueryClientProvider client={client}>
+      <TooltipProvider>
+        <WidgetCard widget={widget} params={p} />
+      </TooltipProvider>
+    </QueryClientProvider>
+  )
+}
+
+describe('WidgetCard with a remote table', () => {
+  it('asks for the first page with no view, then sends a new filter as JSON on the first page', async () => {
+    const user = userEvent.setup()
+    const spy = vi
+      .spyOn(endpoints, 'widgetData')
+      .mockImplementation(async (_, q) => (q.distinct ? distinctAnswer([['$os', '12'], ['plan', '7']]) : remoteAnswer(q)))
+    renderCard(remoteWidget())
+    expect(await screen.findByText('iOS')).toBeInTheDocument()
+    expect(spy).toHaveBeenCalledTimes(1)
+    expect(spy.mock.calls[0][1]).toEqual(params)
+
+    await user.click(screen.getByRole('button', { name: 'Filter' }))
+    expect(await screen.findByRole('option', { name: /plan/ })).toHaveTextContent('7')
+    expect(spy).toHaveBeenLastCalledWith(42, { ...params, distinct: 'Attribute' })
+    await user.click(screen.getByRole('option', { name: /plan/ }))
+    await user.click(screen.getByRole('button', { name: 'Apply' }))
+    await waitFor(() => expect(spy).toHaveBeenLastCalledWith(42, { ...params, filters: JSON.stringify([PLAN]) }))
+    expect(spy.mock.lastCall![1]).not.toHaveProperty('offset')
+  })
+
+  it('goes back to the first page, keeping the filters, when the range changes', async () => {
+    const user = userEvent.setup()
+    storeView([PLAN])
+    const spy = vi
+      .spyOn(endpoints, 'widgetData')
+      .mockImplementation(async (_, q) => remoteAnswer(q, ATTR_ROWS, { matched: 2500 }))
+    const { client, rerender } = renderCard(remoteWidget())
+    await screen.findByText('1–1,000 of 2,500')
+    await user.click(screen.getByRole('button', { name: 'Next page' }))
+    await waitFor(() => expect(spy).toHaveBeenLastCalledWith(42, { ...params, filters: JSON.stringify([PLAN]), offset: 1000 }))
+    await screen.findByText('1,001–2,000 of 2,500')
+
+    const later = { ...params, from: '2026-09-21' }
+    rerender(cardIn(client, remoteWidget(), later))
+    await waitFor(() => expect(spy).toHaveBeenLastCalledWith(42, { ...later, filters: JSON.stringify([PLAN]) }))
+    expect(spy.mock.calls.filter(([, q]) => q.from === later.from).every(([, q]) => q.offset === undefined)).toBe(true)
+  })
+
+  it('refreshes with the filters, sort and page on screen', async () => {
+    const user = userEvent.setup()
+    storeView([PLAN], { column: 'Count', dir: 'desc' })
+    const spy = vi
+      .spyOn(endpoints, 'widgetData')
+      .mockImplementation(async (_, q) => remoteAnswer(q, ATTR_ROWS, { matched: 2500 }))
+    renderCard(remoteWidget())
+    await screen.findByText('1–1,000 of 2,500')
+    await user.click(screen.getByRole('button', { name: 'Next page' }))
+    await screen.findByText('1,001–2,000 of 2,500')
+    await user.click(screen.getByRole('button', { name: 'Refresh Attributes' }))
+    await waitFor(() =>
+      expect(spy).toHaveBeenLastCalledWith(42, {
+        ...params,
+        filters: JSON.stringify([PLAN]),
+        sort: 'Count:desc',
+        offset: 1000,
+        fresh: true,
+      })
+    )
+  })
+
+  it('keeps the rows and shows the refusal under the bar when the server refuses a view', async () => {
+    const user = userEvent.setup()
+    storeView([PLAN])
+    vi.spyOn(endpoints, 'widgetData').mockImplementation(async (_, q) => {
+      if (q.sort) throw new ApiError(400, 'sort: "Count" cannot be sorted here; pick another column', 'invalid')
+      return remoteAnswer(q)
+    })
+    renderCard(remoteWidget())
+    await screen.findByText('iOS')
+    await user.click(screen.getByRole('button', { name: /Count/ }))
+    expect(await screen.findByText(/cannot be sorted here/)).toHaveClass('text-destructive')
+    expect(screen.getByText('iOS')).toBeInTheDocument()
+    expect(screen.queryByText('Query no longer runs')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Attribute in plan' })).toHaveAttribute('aria-invalid', 'true')
+  })
+
+  it('says no rows match a filter, not that the range is empty', async () => {
+    storeView([PLAN])
+    vi.spyOn(endpoints, 'widgetData').mockImplementation(async (_, q) => remoteAnswer(q, [], { matched: 0, total: 40 }))
+    renderCard(remoteWidget())
+    expect(await screen.findByText('No rows match these filters')).toBeInTheDocument()
+    expect(screen.queryByText('No data for this range')).not.toBeInTheDocument()
+  })
+
+  it('stops sending a stored filter on a column the answer does not have', async () => {
+    const gone: Filter = { column: 'Platform', op: '=', value: 'web' }
+    storeView([gone, PLAN])
+    // As the server does: a filter on a column the query lacks is refused.
+    const spy = vi.spyOn(endpoints, 'widgetData').mockImplementation(async (_, q) => {
+      if (q.filters?.includes('Platform')) throw new ApiError(400, 'filters: no column "Platform"', 'invalid')
+      return remoteAnswer(q)
+    })
+    renderCard(remoteWidget())
+    await waitFor(() => expect(spy).toHaveBeenLastCalledWith(42, { ...params, filters: JSON.stringify([PLAN]) }))
+    expect(await screen.findByText('iOS')).toBeInTheDocument()
+    expect(screen.queryByText('Query no longer runs')).not.toBeInTheDocument()
+    // Kept, greyed, and still stored.
+    expect(screen.getByRole('button', { name: 'Platform = web' }).closest('[data-stale]')).not.toBeNull()
+    expect(JSON.parse(localStorage.getItem(VIEW_KEY)!).filters).toEqual([gone, PLAN])
+  })
+
+  it('takes the sort a viewer stored before filters existed, once', async () => {
+    localStorage.setItem('twillingate.widget.1.42.sort', JSON.stringify({ column: 'Count', dir: 'desc' }))
+    const spy = vi.spyOn(endpoints, 'widgetData').mockImplementation(async (_, q) => remoteAnswer(q))
+    renderCard(remoteWidget())
+    await screen.findByText('iOS')
+    expect(spy).toHaveBeenLastCalledWith(42, { ...params, sort: 'Count:desc' })
+    expect(localStorage.getItem('twillingate.widget.1.42.sort')).toBeNull()
+    expect(JSON.parse(localStorage.getItem(VIEW_KEY)!)).toMatchObject({ filters: [], sort: { column: 'Count', dir: 'desc' } })
+  })
+
+  it("never sends a local table's view to the server", async () => {
+    const user = userEvent.setup()
+    storeView([PLAN])
+    const spy = vi.spyOn(endpoints, 'widgetData').mockImplementation(async (_, q) => remoteAnswer(q))
+    renderCard(statWidget({ component: 'table', title: 'Attributes' }))
+    // Filtered in the browser: the $os row is not shown.
+    expect(await screen.findByText('pro')).toBeInTheDocument()
+    expect(screen.queryByText('iOS')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /Count/ }))
+    await user.click(screen.getByRole('button', { name: 'Refresh Attributes' }))
+    await waitFor(() => expect(spy).toHaveBeenCalledTimes(2))
+    expect(spy.mock.calls.map(([, q]) => q)).toEqual([params, { ...params, fresh: true }])
   })
 })

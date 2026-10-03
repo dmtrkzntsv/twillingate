@@ -35,6 +35,7 @@ interface FilterBarProps {
   view: TableView
   onView: (v: TableView) => void
   options: OptionLoader
+  /** The server refused this view: shown under the bar, its chips marked until edited or removed. */
   error?: string
 }
 
@@ -66,6 +67,8 @@ export function FilterBar({ columns, numeric, view, onView, options, error }: Fi
               key={i}
               text={chipText(f)}
               stale={!columns.includes(f.column)}
+              // Any edit is a new view, which clears the refusal and with it the mark.
+              invalid={error !== undefined && columns.includes(f.column)}
               editor={editor(f, i)}
               onRemove={() => setFilters(view.filters.filter((_, j) => j !== i))}
             />
@@ -107,23 +110,26 @@ function EditPopover({ trigger, children }: { trigger: ReactElement; children: (
 interface ChipProps {
   text: string
   stale: boolean
+  invalid: boolean
   editor: (close: () => void) => ReactNode
   onRemove: () => void
 }
 
-function Chip({ text, stale, editor, onRemove }: ChipProps) {
+function Chip({ text, stale, invalid, editor, onRemove }: ChipProps) {
   const chip = (
     <span
       data-stale={stale || undefined}
       className={cn(
         'inline-flex h-7 max-w-full items-center rounded-md border bg-muted/40 text-xs',
-        stale && 'border-dashed text-muted-foreground opacity-70'
+        stale && 'border-dashed text-muted-foreground opacity-70',
+        invalid && 'border-destructive'
       )}
     >
       <EditPopover
         trigger={
           <button
             type="button"
+            aria-invalid={invalid || undefined}
             className="min-w-0 truncate rounded-l-md py-1 pl-2 pr-1 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
           >
             {text}

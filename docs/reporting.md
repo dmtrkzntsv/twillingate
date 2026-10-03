@@ -618,9 +618,10 @@ Props: `{"format": "number"}`
 
 Pages with visitors and views, the views column shaded. Column names are
 the headers, so quote them as they should read. The query's `ORDER BY` is
-the order a table opens in; a viewer who clicks a header sorts the rows on
-the page (a third click restores query order), and that browser remembers
-the sort per widget. A remote table (`"mode": "remote"`) runs the viewer's
+the order a table opens in; a viewer who clicks a header sorts the loaded
+rows in a local table and the whole result in a remote one (a third click
+restores query order), and that browser remembers the viewer's filters and
+sort per widget. A remote table (`"mode": "remote"`) runs the viewer's
 filters, sort and page in SQL over every row the query returns, so leave
 the `LIMIT` off. A local table, like this one, filters and sorts only the
 rows returned (at most `CONSOLE_QUERY_MAX_ROWS`), so a `LIMIT`ed query

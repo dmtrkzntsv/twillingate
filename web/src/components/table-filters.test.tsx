@@ -123,6 +123,18 @@ describe('FilterBar', () => {
     renderBar(emptyView, { error: 'no column "x"' })
     expect(screen.getByText('no column "x"')).toHaveClass('text-destructive', 'text-xs')
   })
+
+  it('marks the chips of a refused view, but not one on a column the table lacks', () => {
+    const view = withFilters(
+      { column: 'Attribute', op: 'in', value: ['plan'] },
+      { column: 'Platform', op: '=', value: 'web' }
+    )
+    const { rerender, onView, options } = renderBar(view, { error: 'filters: value too long' })
+    expect(screen.getByRole('button', { name: 'Attribute in plan' })).toHaveAttribute('aria-invalid', 'true')
+    expect(screen.getByRole('button', { name: 'Platform = web' })).not.toHaveAttribute('aria-invalid')
+    rerender(<FilterBar columns={columns} numeric={numeric} view={view} onView={onView} options={options} />)
+    expect(screen.getByRole('button', { name: 'Attribute in plan' })).not.toHaveAttribute('aria-invalid')
+  })
 })
 
 describe('PageFooter', () => {

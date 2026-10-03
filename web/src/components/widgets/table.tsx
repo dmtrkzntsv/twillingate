@@ -1,8 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { ArrowDownIcon, ArrowUpIcon } from 'lucide-react'
 import { FilterBar, PageFooter, type OptionLoader } from '@/components/table-filters'
 import { Table as ShadcnTable, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { useStoredState } from '@/hooks/use-stored-state'
 import { formatValue, type Format } from '@/lib/format'
 import {
   applyView,
@@ -10,7 +9,6 @@ import {
   emptyView,
   isDecimal,
   liveFilters,
-  parseView,
   type Sort,
   type TableView,
 } from '@/lib/table-view'
@@ -79,15 +77,9 @@ export const examples: Example[] = [
 
 const LOCAL_PAGE = 1000
 
-// Until the card owns the view, an uncontrolled table keeps its sort under its state key, as before.
-function parseSort(v: unknown): Sort | null {
-  return parseView({ sort: v })?.sort ?? null
-}
-
 export default function Table({
   data,
   props,
-  stateKey,
   view: controlled,
   onView,
   fetchDistinct,
@@ -96,19 +88,29 @@ export default function Table({
   reloading,
 }: WidgetProps<TableProps>) {
   const sql = data as SqlData
-  // Without view and onView (the gallery), the table keeps its own.
-  const isControlled = controlled !== undefined && onView !== undefined
+  // Without view and onView (the gallery), the table keeps its own, in memory.
   const [ownView, setOwnView] = useState<TableView>(emptyView)
-  const [ownSort, setOwnSort] = useStoredState(isControlled ? undefined : stateKey && `${stateKey}.sort`, parseSort)
-  const view = isControlled ? controlled : { ...ownView, sort: ownSort }
-  const setView = isControlled
-    ? onView
-    : (next: TableView) => {
-        setOwnView(next)
-        setOwnSort(next.sort)
-      }
+  const [view, setView] = controlled !== undefined && onView !== undefined ? [controlled, onView] : [ownView, setOwnView]
 
   const remote = props.mode === 'remote'
+  // A sort on a column the query no longer returns is kept but not applied: query order.
+  const sort = view.sort && sql.columns.includes(view.sort.column) ? view.sort : null
+  const local = remote ? null : applyView(sql.rows, sql.columns, { ...view, sort }, LOCAL_PAGE)
+
+  // Rows can drop away under the page shown (a refresh, a refetch): move back
+  // to the last page that has rows rather than show an empty one. A remote
+  // answer counts only once it is the answer for this page.
+  const shown = local
+    ? { offset: view.offset, limit: LOCAL_PAGE, matched: local.matched }
+    : page?.offset === view.offset
+      ? page
+      : undefined
+  const pastEnd = shown !== undefined && shown.matched > 0 && shown.offset >= shown.matched
+  useEffect(() => {
+    if (pastEnd) setView({ ...view, offset: Math.floor((shown.matched - 1) / shown.limit) * shown.limit })
+    // Only a new answer or page can end up past the end.
+  }, [pastEnd, shown?.matched, shown?.offset])
+
   // An unfiltered empty result is the card's empty state; a filtered one keeps the bar.
   if (sql.rows.length === 0 && liveFilters(view, sql.columns).length === 0) return null
 
@@ -130,9 +132,6 @@ export default function Table({
     ranges.set(col, { min: Math.min(...values), max: Math.max(...values) })
   })
 
-  // A sort on a column the query no longer returns is kept but not applied: query order.
-  const sort = view.sort && sql.columns.includes(view.sort.column) ? view.sort : null
-  const local = remote ? null : applyView(sql.rows, sql.columns, { ...view, sort }, LOCAL_PAGE)
   const rows = local ? local.rows : sql.rows
   const options: OptionLoader =
     remote && fetchDistinct
