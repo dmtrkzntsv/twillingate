@@ -360,26 +360,32 @@ func TestRetentionMilestonesMatchCurve(t *testing.T) {
 	}
 }
 
-// TestAttributeValuesKeepEveryDay: "Top attribute values by day" ranks
-// values within each day, so a quiet day keeps its own top values
-// instead of losing every row to a busier day's. For every preset, the
-// widget's days are exactly the days v_product_attrs holds in the range.
-func TestAttributeValuesKeepEveryDay(t *testing.T) {
-	ctx := context.Background()
-	f := newSystemFixture(t)
-	d, err := f.svc.Dashboard(ctx, 2)
+// attributeValuesWidget finds the Product dashboard's attribute-values
+// widget, failing the test when it is missing.
+func attributeValuesWidget(t *testing.T, f systemFixture) int64 {
+	t.Helper()
+	d, err := f.svc.Dashboard(context.Background(), 2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var id int64
 	for _, w := range d.Widgets {
 		if w.Name == "attribute-values" {
-			id = w.ID
+			return w.ID
 		}
 	}
-	if id == 0 {
-		t.Fatal("product has no widget attribute-values")
-	}
+	t.Fatal("product has no widget attribute-values")
+	return 0
+}
+
+// TestAttributeValuesKeepEveryDay: "Top attribute values by day" is a
+// remote table over every (attribute, day, value) in the range, so a
+// quiet day keeps its own values however busy another day was. Paging
+// through it, for every preset, yields exactly the rows the range holds
+// and the days v_product_attrs holds in it.
+func TestAttributeValuesKeepEveryDay(t *testing.T) {
+	ctx := context.Background()
+	f := newSystemFixture(t)
+	id := attributeValuesWidget(t, f)
 	// One day far busier than the rest: 120 values each outranking any
 	// other day's, as a launch or a backfill leaves them.
 	var burst []string
@@ -389,17 +395,37 @@ func TestAttributeValuesKeepEveryDay(t *testing.T) {
 	valuesInsert(t, f.st, "agg_product_attrs", "project_id, day, event_name, attr_key, attr_value, count, unique_users, unique_groups", burst)
 	for _, preset := range systemPresets {
 		from, to := presetDates(preset, f.today)
-		got, err := f.svc.WidgetData(ctx, DataRequest{WidgetID: id, ProjectID: f.project, From: from, To: to})
+		shown := map[string]bool{}
+		collected, matched := 0, -1
+		for offset := 0; ; offset += 50 {
+			got, err := f.svc.WidgetData(ctx, DataRequest{WidgetID: id, ProjectID: f.project, From: from, To: to, Offset: offset, Limit: 50})
+			if err != nil {
+				t.Fatal(err)
+			}
+			res := got.Data.(readsql.Result)
+			if got.Page == nil {
+				t.Fatalf("%s: no page block", preset)
+			}
+			matched = got.Page.Matched
+			for i := range res.Rows {
+				shown[column(t, res, i, "Day")] = true
+			}
+			collected += len(res.Rows)
+			if len(res.Rows) < 50 {
+				break
+			}
+		}
+		var want int
+		rows, err := f.db.Query(ctx, `SELECT COUNT(*) FROM (SELECT 1 FROM v_product_attrs
+			WHERE project_id = ? AND day BETWEEN ? AND ? GROUP BY attr_key, day, attr_value)`, f.project, from, to)
 		if err != nil {
 			t.Fatal(err)
 		}
-		res := got.Data.(readsql.Result)
-		if res.Truncated {
-			t.Errorf("%s: truncated at %d rows", preset, len(res.Rows))
+		if _, err := fmt.Sscan(rows.Rows[0][0], &want); err != nil {
+			t.Fatal(err)
 		}
-		shown := map[string]bool{}
-		for i := range res.Rows {
-			shown[column(t, res, i, "Day")] = true
+		if collected != matched || matched != want {
+			t.Errorf("%s: collected %d rows, Page.Matched %d, v_product_attrs holds %d", preset, collected, matched, want)
 		}
 		all, err := f.db.Query(ctx, `SELECT DISTINCT day FROM v_product_attrs
 			WHERE project_id = ? AND day BETWEEN ? AND ? ORDER BY day`, f.project, from, to)
@@ -407,12 +433,39 @@ func TestAttributeValuesKeepEveryDay(t *testing.T) {
 			t.Fatal(err)
 		}
 		if preset == "90d" && len(all.Rows) < 30 {
-			t.Errorf("90d: v_product_attrs holds %d days; the seed does not exercise the ranking", len(all.Rows))
+			t.Errorf("90d: v_product_attrs holds %d days; the seed does not exercise paging", len(all.Rows))
 		}
 		for _, r := range all.Rows {
 			if !shown[r[0]] {
 				t.Errorf("%s: day %s has attribute values but the widget shows none", preset, r[0])
 			}
+		}
+	}
+}
+
+// TestAttributeValuesFilterByAliases: the table's filters and sort name
+// the columns the viewer sees ("Attribute", "Users (at least)"), not the
+// view's own, and run over every row rather than a page of them.
+func TestAttributeValuesFilterByAliases(t *testing.T) {
+	ctx := context.Background()
+	f := newSystemFixture(t)
+	id := attributeValuesWidget(t, f)
+	from, to := presetDates("90d", f.today)
+	got, err := f.svc.WidgetData(ctx, DataRequest{
+		WidgetID: id, ProjectID: f.project, From: from, To: to,
+		Filters: `[{"column":"Attribute","op":"in","value":["$app_version","plan"]}]`,
+		Sort:    "Users (at least):desc",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := got.Data.(readsql.Result)
+	if len(res.Rows) == 0 {
+		t.Fatal("no rows for $app_version and plan; the seed does not exercise the filter")
+	}
+	for i := range res.Rows {
+		if a := column(t, res, i, "Attribute"); a != "$app_version" && a != "plan" {
+			t.Errorf("row %d: Attribute %q passed a filter for $app_version and plan", i, a)
 		}
 	}
 }
