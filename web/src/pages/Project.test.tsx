@@ -91,7 +91,8 @@ describe('Project', () => {
     actions.archive.mockResolvedValue(true)
     renderAt('/projects/4')
     await user.click(await screen.findByRole('button', { name: 'Archive' }))
-    expect(screen.getByText(/deleted after 30 days/)).toBeInTheDocument()
+    const purge = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' }).format(new Date(Date.now() + 30 * 86_400_000))
+    expect(screen.getByText(new RegExp(`deleted on ${purge} \\(30 days\\)`))).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Archive project' }))
     expect(actions.archive).toHaveBeenCalledWith(4)
   })
@@ -121,5 +122,68 @@ describe('Project', () => {
     await vi.waitFor(() => expect(vi.mocked(endpoints.capUsage).mock.calls.at(-1)![1]).toEqual({
       from: vi.mocked(endpoints.stats).mock.calls.at(-1)![0].from, to: vi.mocked(endpoints.stats).mock.calls.at(-1)![0].to,
     }))
+  })
+
+  it('keeps "kept until restored" when the server names no purge window', async () => {
+    const user = userEvent.setup()
+    vi.spyOn(endpoints, 'dashboards').mockResolvedValue(dashboardsList())
+    renderAt('/projects/4')
+    await user.click(await screen.findByRole('button', { name: 'Archive' }))
+    expect(screen.getByText(/It is kept until restored/)).toBeInTheDocument()
+  })
+
+  it('says so for a non-numeric id and asks for no keys', async () => {
+    renderAt('/projects/abc')
+    expect(await screen.findByText('No project abc')).toBeInTheDocument()
+    expect(endpoints.keys).not.toHaveBeenCalled()
+  })
+
+  it('treats 0 and a fractional id the same way', async () => {
+    renderAt('/projects/0')
+    expect(await screen.findByText('No project 0')).toBeInTheDocument()
+    renderAt('/projects/4.5')
+    expect(await screen.findByText('No project 4.5')).toBeInTheDocument()
+    expect(endpoints.keys).not.toHaveBeenCalled()
+  })
+
+  it('shows a skeleton, not "No keys", while keys load', async () => {
+    vi.spyOn(endpoints, 'keys').mockReturnValue(new Promise(() => {}))
+    renderAt('/projects/4')
+    const keys = await screen.findByRole('region', { name: 'Ingest keys' })
+    expect(within(keys).queryByText(/No keys/)).not.toBeInTheDocument()
+  })
+
+  it('says why keys did not load, with Retry, not "No keys"', async () => {
+    const user = userEvent.setup()
+    const keysSpy = vi.spyOn(endpoints, 'keys').mockRejectedValueOnce(new Error('keys exploded'))
+    renderAt('/projects/4')
+    const keys = await screen.findByRole('region', { name: 'Ingest keys' })
+    expect(await within(keys).findByText(/Couldn't load keys\. keys exploded/)).toBeInTheDocument()
+    expect(within(keys).queryByText(/No keys/)).not.toBeInTheDocument()
+    await user.click(within(keys).getByRole('button', { name: 'Retry' }))
+    expect(await within(keys).findByRole('row', { name: /web/ })).toBeInTheDocument()
+    expect(keysSpy).toHaveBeenCalledTimes(2)
+  })
+
+  it('says "No keys" only once loaded and empty', async () => {
+    vi.spyOn(endpoints, 'keys').mockResolvedValue({ keys: [] })
+    renderAt('/projects/4')
+    expect(await screen.findByText(/No keys: this project can receive nothing/)).toBeInTheDocument()
+  })
+
+  it('tolerates a registry answering no projects list', async () => {
+    vi.spyOn(endpoints, 'projects').mockResolvedValue({ projects: null } as never)
+    renderAt('/projects/4')
+    expect(await screen.findByText('No project 4')).toBeInTheDocument()
+  })
+
+  it('keeps the key label in the disable dialog while it closes', async () => {
+    const user = userEvent.setup()
+    renderAt('/projects/4')
+    const keys = await screen.findByRole('region', { name: 'Ingest keys' })
+    await user.click(within(keys).getByRole('button', { name: 'Disable web' }))
+    expect(await screen.findByText('Disable web?')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByText('Disable null?')).not.toBeInTheDocument()
   })
 })

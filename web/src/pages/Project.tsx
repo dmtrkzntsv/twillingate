@@ -16,29 +16,33 @@ import { Button } from '@/components/ui/button'
 import { useProjectActions } from '@/hooks/use-project-actions'
 import { dashboardsQuery, keysQuery, projectsQuery } from '@/lib/queries'
 import { resolve } from '@/lib/ranges'
+import { formatPurgeDate } from '@/lib/time'
 
 /** `/projects/:id`: one project's usage, details, keys and cap impact, with Archive or Restore. */
 export default function Project() {
-  const id = Number(useParams().id)
+  const param = useParams().id
+  const id = Number(param)
+  const valid = Number.isInteger(id) && id > 0
   const { data: dash } = useQuery(dashboardsQuery)
   const { data: projectsData, isLoading } = useQuery(projectsQuery)
-  const { data: keysData } = useQuery(keysQuery(id))
+  const keysQ = useQuery({ ...keysQuery(id), enabled: valid })
   const actions = useProjectActions()
   const [archiving, setArchiving] = useState(false)
   const [rangeValue, setRangeValue] = useState<RangeValue>({ range: '30d' })
   const tz = dash?.timezone ?? 'UTC'
   const range = resolve(rangeValue.range, tz, new Date(), rangeValue.from && rangeValue.to ? { from: rangeValue.from, to: rangeValue.to } : undefined)
-  const project = projectsData?.projects.find((p) => p.project_id === id)
+  const project = valid ? projectsData?.projects?.find((p) => p.project_id === id) : undefined
   const purgeDays = dash?.purge_after_days
+  const purgeOn = purgeDays ? formatPurgeDate(new Date(Date.now() + purgeDays * 86_400_000)) : null
 
   return (
     <AppShell dashboards={dash?.dashboards ?? []} currentId={0} readOnly={dash?.dev === true}>
       <TopBar>
-        <span className="text-sm text-muted-foreground">Projects / {project?.name ?? id}</span>
+        <span className="text-sm text-muted-foreground">Projects / {project?.name ?? param}</span>
       </TopBar>
       <div className="mx-auto flex w-full max-w-[1200px] flex-1 flex-col gap-6 p-3 sm:p-4 lg:p-6">
         {!project ? (
-          !isLoading && <p className="text-sm text-muted-foreground">No project {id}</p>
+          (!valid || !isLoading) && <p className="text-sm text-muted-foreground">No project {param}</p>
         ) : (
           <>
             <header className="flex flex-wrap items-center justify-between gap-3">
@@ -58,7 +62,9 @@ export default function Project() {
             <UsageSection projectId={id} range={range} />
             <DetailsSection project={project} pending={actions.pending} onSave={(body) => actions.update(id, body)} />
             <KeysSection
-              keys={keysData?.keys ?? []}
+              keys={keysQ.data?.keys}
+              error={keysQ.error}
+              onRetry={() => void keysQ.refetch()}
               pending={actions.pending}
               onIssue={(label) => actions.issueKey(id, label)}
               onDisable={(label) => actions.disableKey(id, label)}
@@ -74,7 +80,7 @@ export default function Project() {
             <AlertDialogTitle>Archive {project?.name}?</AlertDialogTitle>
             <AlertDialogDescription>
               Ingestion stops; data and dashboards keep working.
-              {purgeDays ? ` Unless restored, the project and its data are deleted after ${purgeDays} days.` : ' It is kept until restored.'}
+              {purgeOn ? ` Unless restored, the project and its data are deleted on ${purgeOn} (${purgeDays} days).` : ' It is kept until restored.'}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

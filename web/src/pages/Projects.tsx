@@ -4,6 +4,7 @@ import { ChevronRightIcon, PlusIcon } from 'lucide-react'
 import AppShell, { TopBar } from '@/components/AppShell'
 import IssuedKeyView from '@/components/projects/IssuedKeyView'
 import LimitsPanel from '@/components/projects/LimitsPanel'
+import LoadError from '@/components/projects/LoadError'
 import ProjectCard from '@/components/projects/ProjectCard'
 import ProjectFormDialog from '@/components/projects/ProjectFormDialog'
 import { Button } from '@/components/ui/button'
@@ -17,9 +18,12 @@ import { formatBytes } from '@/lib/units'
 /** `/projects`: every project as a card with its last 30 days, the caps, archived projects, and New project. */
 export default function Projects() {
   const { data: dash } = useQuery(dashboardsQuery)
-  const { data: projectsData } = useQuery(projectsQuery)
-  const { data: statsData } = useQuery(statsQuery({}))
-  const { data: keysData } = useQuery(keysQuery())
+  const projectsQ = useQuery(projectsQuery)
+  const statsQ = useQuery(statsQuery({}))
+  const keysQ = useQuery(keysQuery())
+  const { data: projectsData } = projectsQ
+  const { data: statsData } = statsQ
+  const { data: keysData } = keysQ
   const { data: limitsData } = useQuery(limitsQuery)
   const { create, restore, pending } = useProjectActions()
   const [creating, setCreating] = useState(false)
@@ -30,6 +34,13 @@ export default function Projects() {
   const archived = projects.filter((p) => p.archived)
   const statsOf = (id: number) => statsData?.projects.find((s) => s.project_id === id)
   const keysOf = (id: number) => keysData?.keys.filter((k) => k.project_id === id)
+  // A failed refetch behind data already on screen is not an error line.
+  const statsFailed = statsQ.isError && !statsData
+  const keysFailed = keysQ.isError && !keysData
+  const retryUsage = () => {
+    if (statsFailed) void statsQ.refetch()
+    if (keysFailed) void keysQ.refetch()
+  }
 
   return (
     <AppShell dashboards={dash?.dashboards ?? []} currentId={0} readOnly={dash?.dev === true}>
@@ -53,10 +64,22 @@ export default function Projects() {
             <PlusIcon /> New project
           </Button>
         </header>
+        {projectsQ.isError && !projectsData && (
+          <LoadError what="projects" error={projectsQ.error} onRetry={() => void projectsQ.refetch()} />
+        )}
+        {(statsFailed || keysFailed) && (
+          <LoadError what={statsFailed ? 'usage' : 'keys'} error={(statsFailed ? statsQ.error : keysQ.error)!} onRetry={retryUsage} />
+        )}
         {projectsData && active.length === 0 && <p className="text-sm text-muted-foreground">No projects yet. Create one to get an ingest key.</p>}
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {active.map((p) => (
-            <ProjectCard key={p.project_id} project={p} stats={statsOf(p.project_id)} keys={keysOf(p.project_id)} />
+            <ProjectCard
+              key={p.project_id}
+              project={p}
+              stats={statsOf(p.project_id)}
+              keys={keysOf(p.project_id)}
+              statsFailed={statsFailed}
+            />
           ))}
         </div>
         {limitsData && <LimitsPanel limits={limitsData.limits} />}
@@ -74,6 +97,7 @@ export default function Projects() {
                   project={p}
                   stats={statsOf(p.project_id)}
                   keys={keysOf(p.project_id)}
+                  statsFailed={statsFailed}
                   pending={pending}
                   onRestore={() => void restore(p.project_id)}
                 />

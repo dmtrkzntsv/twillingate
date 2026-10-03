@@ -113,4 +113,35 @@ describe('Projects', () => {
     expect(await screen.findByText('ak_new')).toBeInTheDocument()
     expect(screen.getByText('<script src="…"></script>')).toBeInTheDocument()
   })
+
+  it('says why the projects did not load, with Retry, instead of a blank page', async () => {
+    const user = userEvent.setup()
+    const projects = vi.spyOn(endpoints, 'projects').mockRejectedValueOnce(new Error('registry unavailable'))
+    renderPage()
+    expect(await screen.findByText(/Couldn't load projects\. registry unavailable/)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(await screen.findByRole('article', { name: 'econumo.com' })).toBeInTheDocument()
+    expect(projects).toHaveBeenCalledTimes(2)
+    expect(screen.queryByText(/Couldn't load/)).not.toBeInTheDocument()
+  })
+
+  it('shows one error line above the grid when stats fail, not dashes and skeletons forever', async () => {
+    const user = userEvent.setup()
+    const stats = vi.spyOn(endpoints, 'stats').mockRejectedValueOnce(new Error('stats exploded'))
+    const { container } = renderPage()
+    expect(await screen.findByText(/Couldn't load usage\. stats exploded/)).toBeInTheDocument()
+    const card = screen.getByRole('article', { name: 'econumo.com' })
+    expect(card.querySelector('[data-slot="skeleton"]')).toBeNull()
+    expect(container.querySelectorAll('[role="alert"]')).toHaveLength(1)
+    await user.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(await within(screen.getByRole('article', { name: 'econumo.com' })).findByText(/7 events/)).toBeInTheDocument()
+    expect(stats).toHaveBeenCalledTimes(2)
+    expect(screen.queryByText(/Couldn't load/)).not.toBeInTheDocument()
+  })
+
+  it('shows the keys error when only keys fail', async () => {
+    vi.spyOn(endpoints, 'keys').mockRejectedValueOnce(new Error('keys exploded'))
+    renderPage()
+    expect(await screen.findByText(/Couldn't load keys\. keys exploded/)).toBeInTheDocument()
+  })
 })

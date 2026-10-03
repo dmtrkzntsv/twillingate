@@ -11,14 +11,21 @@ interface Props {
   placeholder?: string
 }
 
-/** A list of strings as chips: Enter or comma adds the trimmed text, never twice; × removes. */
+/**
+ * A list of strings as chips: Enter or a comma adds the trimmed text, never
+ * twice; pasted text with commas becomes one chip per piece; × removes.
+ */
 export default function ChipsInput({ label, value, onChange, placeholder }: Props) {
   const id = useId()
   const [text, setText] = useState('')
   const add = (raw = text) => {
-    const v = raw.trim()
+    const next = [...value]
+    for (const piece of raw.split(',')) {
+      const v = piece.trim()
+      if (v && !next.includes(v)) next.push(v)
+    }
     setText('')
-    if (v && !value.includes(v)) onChange([...value, v])
+    if (next.length > value.length) onChange(next)
   }
   return (
     <div className="flex flex-col gap-1.5">
@@ -38,7 +45,7 @@ export default function ChipsInput({ label, value, onChange, placeholder }: Prop
           placeholder={placeholder}
           className="h-7 min-w-32 flex-1 border-0 shadow-none focus-visible:ring-0"
           onChange={(e) => {
-            if (e.target.value.endsWith(',')) add(e.target.value.slice(0, -1))
+            if (e.target.value.includes(',')) add(e.target.value)
             else setText(e.target.value)
           }}
           onKeyDown={(e) => {

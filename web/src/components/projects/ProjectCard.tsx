@@ -16,12 +16,14 @@ interface Props {
   stats?: ProjectStats
   /** Undefined while keys load. */
   keys?: IngestKey[]
+  /** The stats read failed (the page says why): no skeleton, which would never resolve. */
+  statsFailed?: boolean
   onRestore?: () => void
   pending?: boolean
 }
 
 /** One project at a glance: freshness, origins, 30 days of events, size, keys and attributes. */
-export default function ProjectCard({ project, stats, keys, onRestore, pending }: Props) {
+export default function ProjectCard({ project, stats, keys, statsFailed, onRestore, pending }: Props) {
   const last = stats?.last_received_at
   const live = last !== null && last !== undefined && Date.now() - new Date(last).getTime() < DAY
   const total = stats ? stats.totals.views + stats.totals.events + stats.totals.measures : undefined
@@ -42,7 +44,7 @@ export default function ProjectCard({ project, stats, keys, onRestore, pending }
         <p className="truncate text-xs text-muted-foreground" title={project.allowed_origins.join(', ')}>
           {project.allowed_origins.join(', ') || 'No origins'}
         </p>
-        {stats ? <Sparkline series={stats.series} /> : <Skeleton className="h-10 w-full" />}
+        {stats ? <Sparkline series={stats.series} /> : !statsFailed && <Skeleton className="h-10 w-full" />}
         <p className="text-sm">
           <span className="font-medium">{total === undefined ? '—' : `${formatValue(total)} events`}</span>
           <span className="text-muted-foreground"> · 30 days</span>

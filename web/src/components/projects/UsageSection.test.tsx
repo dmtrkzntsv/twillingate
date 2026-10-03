@@ -40,6 +40,16 @@ describe('UsageSection', () => {
     expect(screen.getByText('No events in this range.')).toBeInTheDocument()
   })
 
+  it('treats null unused attributes as not computed', async () => {
+    vi.spyOn(endpoints, 'stats').mockResolvedValue({ from: 'a', to: 'b', database_bytes: 0, projects: [{
+      project_id: 5, series: [{ day: 'a', views: 1, events: 0, measures: 0 }], totals: { views: 1, events: 0, measures: 0 }, last_received_at: null,
+      first_day: null, raw_days: 1, rolled_up_days: 0, size: null, unused_attributes: null,
+    }] })
+    renderWithProviders(<UsageSection projectId={5} range={{ from: 'a', to: 'b' }} />)
+    expect(await screen.findByText('Nothing received yet')).toBeInTheDocument()
+    expect(screen.queryByText(/Declared but not sent/)).not.toBeInTheDocument()
+  })
+
   it('offers a retry when the stats fail', async () => {
     const user = userEvent.setup()
     const spy = vi.spyOn(endpoints, 'stats').mockRejectedValue(new ApiError(400, 'range over 400 days; narrow the date range'))

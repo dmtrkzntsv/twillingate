@@ -171,13 +171,15 @@ export default function AppSidebar({ dashboards, currentId, readOnly = false }: 
             )}
           </SidebarGroupContent>
         </SidebarGroup>
-        <SidebarGroup>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              <ProjectsGroup pathname={pathname} close={close} />
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+        {!readOnly && (
+          <SidebarGroup>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                <ProjectsGroup pathname={pathname} close={close} />
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        )}
         <SidebarGroup>
           <SidebarGroupContent>
             <SidebarMenu>

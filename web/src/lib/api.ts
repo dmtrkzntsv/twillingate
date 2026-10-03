@@ -223,7 +223,8 @@ export interface ProjectStats {
   raw_days: number
   rolled_up_days: number
   size: { raw_bytes: number; aggregate_bytes: number; total_bytes: number } | null
-  unused_attributes: string[]
+  /** Only computed for one project (asked with project_id); null in the all-projects answer. */
+  unused_attributes: string[] | null
 }
 
 export interface StatsResponse {

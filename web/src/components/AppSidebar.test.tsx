@@ -205,4 +205,16 @@ describe('Projects group', () => {
     expect(screen.queryByRole('link', { name: 'gone' })).not.toBeInTheDocument()
     expect(localStorage.getItem('twillingate.sidebar.projects')).toBe('open')
   })
+
+  it('is absent in dev mode, which serves none of the console routes', async () => {
+    renderWithProviders(
+      <MemoryRouter>
+        <SidebarProvider>
+          <AppSidebar dashboards={[]} currentId={0} readOnly />
+        </SidebarProvider>
+      </MemoryRouter>
+    )
+    expect(await screen.findByRole('link', { name: 'Archive' })).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Projects' })).not.toBeInTheDocument()
+  })
 })

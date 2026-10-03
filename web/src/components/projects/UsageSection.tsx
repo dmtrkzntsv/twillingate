@@ -89,7 +89,7 @@ export default function UsageSection({ projectId, range }: { projectId: number; 
               hint={s.size ? `${formatBytes(s.size.raw_bytes)} raw · ${formatBytes(s.size.aggregate_bytes)} aggregates (estimate)` : undefined} />
             <Tile label="Days kept" value={`${s.raw_days + s.rolled_up_days}`} hint={`${s.raw_days} raw · ${s.rolled_up_days} rolled up${s.first_day ? ` · since ${s.first_day}` : ''}`} />
           </div>
-          {s.unused_attributes.length > 0 && (
+          {s.unused_attributes && s.unused_attributes.length > 0 && (
             <p className="text-sm text-muted-foreground">
               Declared but not sent in this range: {s.unused_attributes.map((a) => <code key={a} className="mx-0.5 rounded bg-muted px-1">{a}</code>)}
             </p>

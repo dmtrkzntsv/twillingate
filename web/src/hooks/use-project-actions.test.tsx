@@ -30,7 +30,30 @@ describe('useProjectActions', () => {
     })
     expect(issued).toEqual({ key: 'ak_x', status: 'issued' })
     expect(toast.success).toHaveBeenCalled()
-    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['keys'] })
+    expect(invalidate.mock.calls.map((c) => (c[0] as { queryKey: string[] }).queryKey[0])).toEqual(['keys'])
+  })
+
+  it('refetches projects, keys and stats after a project write, never cap usage', async () => {
+    vi.spyOn(endpoints, 'archiveProject').mockResolvedValue({ status: 'archived' } as never)
+    const { client, wrapper: w } = wrapper()
+    const invalidate = vi.spyOn(client, 'invalidateQueries')
+    const { result } = renderHook(() => useProjectActions(), { wrapper: w })
+    await act(async () => {
+      await result.current.archive(7)
+    })
+    const keys = invalidate.mock.calls.map((c) => (c[0] as { queryKey: string[] }).queryKey[0])
+    expect(keys.sort()).toEqual(['keys', 'projects', 'stats'])
+  })
+
+  it('refetches nothing when the action failed', async () => {
+    vi.spyOn(endpoints, 'disableKey').mockRejectedValue(new ApiError(409, 'already disabled', 'conflict'))
+    const { client, wrapper: w } = wrapper()
+    const invalidate = vi.spyOn(client, 'invalidateQueries')
+    const { result } = renderHook(() => useProjectActions(), { wrapper: w })
+    await act(async () => {
+      await result.current.disableKey(7, 'web')
+    })
+    expect(invalidate).not.toHaveBeenCalled()
   })
 
   it('shows a refusal as a toast and resolves undefined', async () => {
