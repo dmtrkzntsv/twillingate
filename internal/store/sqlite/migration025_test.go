@@ -280,10 +280,10 @@ func TestMigration025KeepsViewsAnswers(t *testing.T) {
 	if err := db.WriteEvents(ctx, evs); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AggregateIdentityDay(ctx, p1, day("2026-08-01")); err != nil {
+	if err := db.AggregateIdentityDay(ctx, p1, day("2026-08-01"), 500); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AggregateViewDay(ctx, p1, day("2026-08-01")); err != nil {
+	if err := db.AggregateViewDay(ctx, p1, day("2026-08-01"), 500); err != nil {
 		t.Fatal(err)
 	}
 

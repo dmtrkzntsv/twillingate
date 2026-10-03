@@ -49,12 +49,22 @@
 -- product view misses, and the TestMigration025 tests on any row a view
 -- answers differently from 024. NULLIF turns an empty column into
 -- "absent", the same meaning json_extract's NULL has for a custom key.
+--
+-- Every cap is a setting (PRODUCT_ATTRIBUTES_TOP_N, VIEWS_DIMENSIONS_TOP_N,
+-- IDENTITIES_TOP_N) that app.go writes to meta at boot, since SQL cannot
+-- see the environment; each view's cap CTE reads its own key. 0 means no
+-- cap and reads as 4611686018427387904 (noCap in aggregate_views.go), a
+-- rank no day reaches, so the daily pass and the live half keep the same
+-- values; a missing or malformed row reads as the default (50, 500, 500).
+-- The JSON arrays only feed the "(other)" rows, so they are built only
+-- while a cap is in force.
 DROP VIEW v_product_attrs;
 CREATE VIEW v_product_attrs AS
 WITH cap AS (
-  SELECT COALESCE((SELECT CAST(value AS INTEGER) FROM meta
-                   WHERE key='product_attributes_top_n'
-                     AND CAST(value AS INTEGER) > 0), 50) AS n
+  SELECT COALESCE((SELECT CASE CAST(value AS INTEGER) WHEN 0 THEN 4611686018427387904
+                                ELSE CAST(value AS INTEGER) END
+                   FROM meta WHERE key='product_attributes_top_n'
+                     AND (CAST(value AS INTEGER) > 0 OR value = '0')), 50) AS n
 )
 SELECT project_id, day, event_name, attr_key, attr_value, count, unique_users, unique_groups
 FROM agg_product_attrs
@@ -80,8 +90,8 @@ FROM (
     SELECT project_id, day, event_name, attr_key, attr_value,
            COUNT(*) AS c, COUNT(DISTINCT actor_id) AS u,
            COUNT(DISTINCT NULLIF(group_id, '')) AS g,
-           json_group_array(actor_id) AS actors,
-           json_group_array(NULLIF(group_id, '')) AS groups,
+           json_group_array(actor_id) FILTER (WHERE (SELECT n FROM cap) < 4611686018427387904) AS actors,
+           json_group_array(NULLIF(group_id, '')) FILTER (WHERE (SELECT n FROM cap) < 4611686018427387904) AS groups,
            ROW_NUMBER() OVER (PARTITION BY project_id, day, event_name, attr_key
                               ORDER BY COUNT(*) DESC, attr_value) AS rn
     FROM (
@@ -140,9 +150,10 @@ WHERE rn <= (SELECT n FROM cap) + 1;
 DROP VIEW v_measures_attrs;
 CREATE VIEW v_measures_attrs AS
 WITH cap AS (
-  SELECT COALESCE((SELECT CAST(value AS INTEGER) FROM meta
-                   WHERE key='product_attributes_top_n'
-                     AND CAST(value AS INTEGER) > 0), 50) AS n
+  SELECT COALESCE((SELECT CASE CAST(value AS INTEGER) WHEN 0 THEN 4611686018427387904
+                                ELSE CAST(value AS INTEGER) END
+                   FROM meta WHERE key='product_attributes_top_n'
+                     AND (CAST(value AS INTEGER) > 0 OR value = '0')), 50) AS n
 )
 SELECT project_id, day, event_name, measure, attr_key, attr_value, bucket,
        CASE WHEN bucket = -1000 THEN 0 ELSE 2 * pow(1.04, bucket) / 2.04 END AS approx_value,
@@ -217,6 +228,12 @@ WHERE rf = 1;
 -- four arms over raw_views and raw_product; ranked in the same SELECT.
 DROP VIEW v_identity_daily;
 CREATE VIEW v_identity_daily AS
+WITH cap AS (
+  SELECT COALESCE((SELECT CASE CAST(value AS INTEGER) WHEN 0 THEN 4611686018427387904
+                                ELSE CAST(value AS INTEGER) END
+                   FROM meta WHERE key='identities_top_n'
+                     AND (CAST(value AS INTEGER) > 0 OR value = '0')), 500) AS n
+)
 SELECT project_id, day, kind, id, actors, users, views, events
 FROM agg_identity_daily
 UNION ALL
@@ -235,15 +252,15 @@ FROM (
     AND CASE k.kind WHEN 'user' THEN user_id ELSE group_id END <> ''
   GROUP BY project_id, day, k.kind, CASE k.kind WHEN 'user' THEN user_id ELSE group_id END
 ) live
-WHERE rn <= 500
+WHERE rn <= (SELECT n FROM cap)
   AND NOT EXISTS (
     SELECT 1 FROM agg_identity_daily g
     WHERE g.project_id = live.project_id AND g.day = live.day);
 
 -- The v_views_* breakdowns: one aggregate per full key over raw_views,
 -- ranked in the same SELECT, with each key's actors kept as a JSON array;
--- then one row per kept key (the day's 500 most viewed, the last column
--- '(other)' past them) and the columns before it. Views add up; distinct
+-- then one row per kept key (the day's most viewed up to the cap, the
+-- last column '(other)' past them) and the columns before it. Views add up; distinct
 -- visitors of a row that merges several keys (the tail, and a kept value
 -- spelled '(other)', which merges with it as before) are counted from
 -- their joined arrays.
@@ -261,23 +278,30 @@ DROP VIEW v_views_referrers;
 DROP VIEW v_views_utm;
 
 CREATE VIEW v_views_app_versions AS
+WITH cap AS (
+  SELECT COALESCE((SELECT CASE CAST(value AS INTEGER) WHEN 0 THEN 4611686018427387904
+                                ELSE CAST(value AS INTEGER) END
+                   FROM meta WHERE key='views_dimensions_top_n'
+                     AND (CAST(value AS INTEGER) > 0 OR value = '0')), 500) AS n
+)
 SELECT project_id, day, platform, app_version, visitors, views FROM agg_views_app_versions
 UNION ALL
 SELECT project_id, day, platform, kept,
-       CASE WHEN n = 1 THEN u
+       CASE WHEN keys = 1 THEN u
             ELSE (SELECT COUNT(DISTINCT value) FROM json_each(merged)) END,
        views
 FROM (
   SELECT project_id, day, platform, kept, u,
-         COUNT(*) OVER f AS n, SUM(c) OVER f AS views,
+         COUNT(*) OVER f AS keys, SUM(c) OVER f AS views,
          '[' || group_concat(substr(actors, 2, length(actors) - 2), ',') OVER f || ']' AS merged,
          ROW_NUMBER() OVER f AS rf
   FROM (
     SELECT project_id, day, platform,
            CASE WHEN ROW_NUMBER() OVER (PARTITION BY project_id, day
-                                        ORDER BY COUNT(*) DESC, platform, app_version) <= 500
+                                        ORDER BY COUNT(*) DESC, platform, app_version) <= (SELECT n FROM cap)
                 THEN app_version ELSE '(other)' END AS kept,
-           COUNT(*) AS c, COUNT(DISTINCT actor_id) AS u, json_group_array(actor_id) AS actors
+           COUNT(*) AS c, COUNT(DISTINCT actor_id) AS u,
+           json_group_array(actor_id) FILTER (WHERE (SELECT n FROM cap) < 4611686018427387904) AS actors
     FROM raw_views
     WHERE app_version <> ''
     GROUP BY project_id, day, platform, app_version
@@ -287,23 +311,30 @@ FROM (
 WHERE rf = 1;
 
 CREATE VIEW v_views_browsers AS
+WITH cap AS (
+  SELECT COALESCE((SELECT CASE CAST(value AS INTEGER) WHEN 0 THEN 4611686018427387904
+                                ELSE CAST(value AS INTEGER) END
+                   FROM meta WHERE key='views_dimensions_top_n'
+                     AND (CAST(value AS INTEGER) > 0 OR value = '0')), 500) AS n
+)
 SELECT project_id, day, browser, browser_version, visitors, views FROM agg_views_browsers
 UNION ALL
 SELECT project_id, day, browser, kept,
-       CASE WHEN n = 1 THEN u
+       CASE WHEN keys = 1 THEN u
             ELSE (SELECT COUNT(DISTINCT value) FROM json_each(merged)) END,
        views
 FROM (
   SELECT project_id, day, browser, kept, u,
-         COUNT(*) OVER f AS n, SUM(c) OVER f AS views,
+         COUNT(*) OVER f AS keys, SUM(c) OVER f AS views,
          '[' || group_concat(substr(actors, 2, length(actors) - 2), ',') OVER f || ']' AS merged,
          ROW_NUMBER() OVER f AS rf
   FROM (
     SELECT project_id, day, browser,
            CASE WHEN ROW_NUMBER() OVER (PARTITION BY project_id, day
-                                        ORDER BY COUNT(*) DESC, browser, browser_version) <= 500
+                                        ORDER BY COUNT(*) DESC, browser, browser_version) <= (SELECT n FROM cap)
                 THEN browser_version ELSE '(other)' END AS kept,
-           COUNT(*) AS c, COUNT(DISTINCT actor_id) AS u, json_group_array(actor_id) AS actors
+           COUNT(*) AS c, COUNT(DISTINCT actor_id) AS u,
+           json_group_array(actor_id) FILTER (WHERE (SELECT n FROM cap) < 4611686018427387904) AS actors
     FROM raw_views
     GROUP BY project_id, day, browser, browser_version
   )
@@ -312,23 +343,30 @@ FROM (
 WHERE rf = 1;
 
 CREATE VIEW v_views_countries AS
+WITH cap AS (
+  SELECT COALESCE((SELECT CASE CAST(value AS INTEGER) WHEN 0 THEN 4611686018427387904
+                                ELSE CAST(value AS INTEGER) END
+                   FROM meta WHERE key='views_dimensions_top_n'
+                     AND (CAST(value AS INTEGER) > 0 OR value = '0')), 500) AS n
+)
 SELECT project_id, day, country, visitors, views FROM agg_views_countries
 UNION ALL
 SELECT project_id, day, kept,
-       CASE WHEN n = 1 THEN u
+       CASE WHEN keys = 1 THEN u
             ELSE (SELECT COUNT(DISTINCT value) FROM json_each(merged)) END,
        views
 FROM (
   SELECT project_id, day, kept, u,
-         COUNT(*) OVER f AS n, SUM(c) OVER f AS views,
+         COUNT(*) OVER f AS keys, SUM(c) OVER f AS views,
          '[' || group_concat(substr(actors, 2, length(actors) - 2), ',') OVER f || ']' AS merged,
          ROW_NUMBER() OVER f AS rf
   FROM (
     SELECT project_id, day,
            CASE WHEN ROW_NUMBER() OVER (PARTITION BY project_id, day
-                                        ORDER BY COUNT(*) DESC, country) <= 500
+                                        ORDER BY COUNT(*) DESC, country) <= (SELECT n FROM cap)
                 THEN country ELSE '(other)' END AS kept,
-           COUNT(*) AS c, COUNT(DISTINCT actor_id) AS u, json_group_array(actor_id) AS actors
+           COUNT(*) AS c, COUNT(DISTINCT actor_id) AS u,
+           json_group_array(actor_id) FILTER (WHERE (SELECT n FROM cap) < 4611686018427387904) AS actors
     FROM raw_views
     GROUP BY project_id, day, country
   )
@@ -337,23 +375,30 @@ FROM (
 WHERE rf = 1;
 
 CREATE VIEW v_views_devices AS
+WITH cap AS (
+  SELECT COALESCE((SELECT CASE CAST(value AS INTEGER) WHEN 0 THEN 4611686018427387904
+                                ELSE CAST(value AS INTEGER) END
+                   FROM meta WHERE key='views_dimensions_top_n'
+                     AND (CAST(value AS INTEGER) > 0 OR value = '0')), 500) AS n
+)
 SELECT project_id, day, device, device_model, visitors, views FROM agg_views_devices
 UNION ALL
 SELECT project_id, day, device, kept,
-       CASE WHEN n = 1 THEN u
+       CASE WHEN keys = 1 THEN u
             ELSE (SELECT COUNT(DISTINCT value) FROM json_each(merged)) END,
        views
 FROM (
   SELECT project_id, day, device, kept, u,
-         COUNT(*) OVER f AS n, SUM(c) OVER f AS views,
+         COUNT(*) OVER f AS keys, SUM(c) OVER f AS views,
          '[' || group_concat(substr(actors, 2, length(actors) - 2), ',') OVER f || ']' AS merged,
          ROW_NUMBER() OVER f AS rf
   FROM (
     SELECT project_id, day, device,
            CASE WHEN ROW_NUMBER() OVER (PARTITION BY project_id, day
-                                        ORDER BY COUNT(*) DESC, device, device_model) <= 500
+                                        ORDER BY COUNT(*) DESC, device, device_model) <= (SELECT n FROM cap)
                 THEN device_model ELSE '(other)' END AS kept,
-           COUNT(*) AS c, COUNT(DISTINCT actor_id) AS u, json_group_array(actor_id) AS actors
+           COUNT(*) AS c, COUNT(DISTINCT actor_id) AS u,
+           json_group_array(actor_id) FILTER (WHERE (SELECT n FROM cap) < 4611686018427387904) AS actors
     FROM raw_views
     GROUP BY project_id, day, device, device_model
   )
@@ -362,23 +407,30 @@ FROM (
 WHERE rf = 1;
 
 CREATE VIEW v_views_displays AS
+WITH cap AS (
+  SELECT COALESCE((SELECT CASE CAST(value AS INTEGER) WHEN 0 THEN 4611686018427387904
+                                ELSE CAST(value AS INTEGER) END
+                   FROM meta WHERE key='views_dimensions_top_n'
+                     AND (CAST(value AS INTEGER) > 0 OR value = '0')), 500) AS n
+)
 SELECT project_id, day, display, visitors, views FROM agg_views_displays
 UNION ALL
 SELECT project_id, day, kept,
-       CASE WHEN n = 1 THEN u
+       CASE WHEN keys = 1 THEN u
             ELSE (SELECT COUNT(DISTINCT value) FROM json_each(merged)) END,
        views
 FROM (
   SELECT project_id, day, kept, u,
-         COUNT(*) OVER f AS n, SUM(c) OVER f AS views,
+         COUNT(*) OVER f AS keys, SUM(c) OVER f AS views,
          '[' || group_concat(substr(actors, 2, length(actors) - 2), ',') OVER f || ']' AS merged,
          ROW_NUMBER() OVER f AS rf
   FROM (
     SELECT project_id, day,
            CASE WHEN ROW_NUMBER() OVER (PARTITION BY project_id, day
-                                        ORDER BY COUNT(*) DESC, display_width || 'x' || display_height) <= 500
+                                        ORDER BY COUNT(*) DESC, display_width || 'x' || display_height) <= (SELECT n FROM cap)
                 THEN display_width || 'x' || display_height ELSE '(other)' END AS kept,
-           COUNT(*) AS c, COUNT(DISTINCT actor_id) AS u, json_group_array(actor_id) AS actors
+           COUNT(*) AS c, COUNT(DISTINCT actor_id) AS u,
+           json_group_array(actor_id) FILTER (WHERE (SELECT n FROM cap) < 4611686018427387904) AS actors
     FROM raw_views
     WHERE display_width > 0 AND display_height > 0
     GROUP BY project_id, day, display_width || 'x' || display_height
@@ -388,23 +440,30 @@ FROM (
 WHERE rf = 1;
 
 CREATE VIEW v_views_hosts AS
+WITH cap AS (
+  SELECT COALESCE((SELECT CASE CAST(value AS INTEGER) WHEN 0 THEN 4611686018427387904
+                                ELSE CAST(value AS INTEGER) END
+                   FROM meta WHERE key='views_dimensions_top_n'
+                     AND (CAST(value AS INTEGER) > 0 OR value = '0')), 500) AS n
+)
 SELECT project_id, day, host, visitors, views FROM agg_views_hosts
 UNION ALL
 SELECT project_id, day, kept,
-       CASE WHEN n = 1 THEN u
+       CASE WHEN keys = 1 THEN u
             ELSE (SELECT COUNT(DISTINCT value) FROM json_each(merged)) END,
        views
 FROM (
   SELECT project_id, day, kept, u,
-         COUNT(*) OVER f AS n, SUM(c) OVER f AS views,
+         COUNT(*) OVER f AS keys, SUM(c) OVER f AS views,
          '[' || group_concat(substr(actors, 2, length(actors) - 2), ',') OVER f || ']' AS merged,
          ROW_NUMBER() OVER f AS rf
   FROM (
     SELECT project_id, day,
            CASE WHEN ROW_NUMBER() OVER (PARTITION BY project_id, day
-                                        ORDER BY COUNT(*) DESC, host) <= 500
+                                        ORDER BY COUNT(*) DESC, host) <= (SELECT n FROM cap)
                 THEN host ELSE '(other)' END AS kept,
-           COUNT(*) AS c, COUNT(DISTINCT actor_id) AS u, json_group_array(actor_id) AS actors
+           COUNT(*) AS c, COUNT(DISTINCT actor_id) AS u,
+           json_group_array(actor_id) FILTER (WHERE (SELECT n FROM cap) < 4611686018427387904) AS actors
     FROM raw_views
     GROUP BY project_id, day, host
   )
@@ -413,23 +472,30 @@ FROM (
 WHERE rf = 1;
 
 CREATE VIEW v_views_locales AS
+WITH cap AS (
+  SELECT COALESCE((SELECT CASE CAST(value AS INTEGER) WHEN 0 THEN 4611686018427387904
+                                ELSE CAST(value AS INTEGER) END
+                   FROM meta WHERE key='views_dimensions_top_n'
+                     AND (CAST(value AS INTEGER) > 0 OR value = '0')), 500) AS n
+)
 SELECT project_id, day, browser_locale, app_locale, visitors, views FROM agg_views_locales
 UNION ALL
 SELECT project_id, day, browser_locale, kept,
-       CASE WHEN n = 1 THEN u
+       CASE WHEN keys = 1 THEN u
             ELSE (SELECT COUNT(DISTINCT value) FROM json_each(merged)) END,
        views
 FROM (
   SELECT project_id, day, browser_locale, kept, u,
-         COUNT(*) OVER f AS n, SUM(c) OVER f AS views,
+         COUNT(*) OVER f AS keys, SUM(c) OVER f AS views,
          '[' || group_concat(substr(actors, 2, length(actors) - 2), ',') OVER f || ']' AS merged,
          ROW_NUMBER() OVER f AS rf
   FROM (
     SELECT project_id, day, browser_locale,
            CASE WHEN ROW_NUMBER() OVER (PARTITION BY project_id, day
-                                        ORDER BY COUNT(*) DESC, browser_locale, app_locale) <= 500
+                                        ORDER BY COUNT(*) DESC, browser_locale, app_locale) <= (SELECT n FROM cap)
                 THEN app_locale ELSE '(other)' END AS kept,
-           COUNT(*) AS c, COUNT(DISTINCT actor_id) AS u, json_group_array(actor_id) AS actors
+           COUNT(*) AS c, COUNT(DISTINCT actor_id) AS u,
+           json_group_array(actor_id) FILTER (WHERE (SELECT n FROM cap) < 4611686018427387904) AS actors
     FROM raw_views
     WHERE NOT (browser_locale = '' AND app_locale = '')
     GROUP BY project_id, day, browser_locale, app_locale
@@ -439,23 +505,30 @@ FROM (
 WHERE rf = 1;
 
 CREATE VIEW v_views_os AS
+WITH cap AS (
+  SELECT COALESCE((SELECT CASE CAST(value AS INTEGER) WHEN 0 THEN 4611686018427387904
+                                ELSE CAST(value AS INTEGER) END
+                   FROM meta WHERE key='views_dimensions_top_n'
+                     AND (CAST(value AS INTEGER) > 0 OR value = '0')), 500) AS n
+)
 SELECT project_id, day, os, os_version, visitors, views FROM agg_views_os
 UNION ALL
 SELECT project_id, day, os, kept,
-       CASE WHEN n = 1 THEN u
+       CASE WHEN keys = 1 THEN u
             ELSE (SELECT COUNT(DISTINCT value) FROM json_each(merged)) END,
        views
 FROM (
   SELECT project_id, day, os, kept, u,
-         COUNT(*) OVER f AS n, SUM(c) OVER f AS views,
+         COUNT(*) OVER f AS keys, SUM(c) OVER f AS views,
          '[' || group_concat(substr(actors, 2, length(actors) - 2), ',') OVER f || ']' AS merged,
          ROW_NUMBER() OVER f AS rf
   FROM (
     SELECT project_id, day, os,
            CASE WHEN ROW_NUMBER() OVER (PARTITION BY project_id, day
-                                        ORDER BY COUNT(*) DESC, os, os_version) <= 500
+                                        ORDER BY COUNT(*) DESC, os, os_version) <= (SELECT n FROM cap)
                 THEN os_version ELSE '(other)' END AS kept,
-           COUNT(*) AS c, COUNT(DISTINCT actor_id) AS u, json_group_array(actor_id) AS actors
+           COUNT(*) AS c, COUNT(DISTINCT actor_id) AS u,
+           json_group_array(actor_id) FILTER (WHERE (SELECT n FROM cap) < 4611686018427387904) AS actors
     FROM raw_views
     GROUP BY project_id, day, os, os_version
   )
@@ -464,23 +537,30 @@ FROM (
 WHERE rf = 1;
 
 CREATE VIEW v_views_paths AS
+WITH cap AS (
+  SELECT COALESCE((SELECT CASE CAST(value AS INTEGER) WHEN 0 THEN 4611686018427387904
+                                ELSE CAST(value AS INTEGER) END
+                   FROM meta WHERE key='views_dimensions_top_n'
+                     AND (CAST(value AS INTEGER) > 0 OR value = '0')), 500) AS n
+)
 SELECT project_id, day, path, visitors, views FROM agg_views_paths
 UNION ALL
 SELECT project_id, day, kept,
-       CASE WHEN n = 1 THEN u
+       CASE WHEN keys = 1 THEN u
             ELSE (SELECT COUNT(DISTINCT value) FROM json_each(merged)) END,
        views
 FROM (
   SELECT project_id, day, kept, u,
-         COUNT(*) OVER f AS n, SUM(c) OVER f AS views,
+         COUNT(*) OVER f AS keys, SUM(c) OVER f AS views,
          '[' || group_concat(substr(actors, 2, length(actors) - 2), ',') OVER f || ']' AS merged,
          ROW_NUMBER() OVER f AS rf
   FROM (
     SELECT project_id, day,
            CASE WHEN ROW_NUMBER() OVER (PARTITION BY project_id, day
-                                        ORDER BY COUNT(*) DESC, path) <= 500
+                                        ORDER BY COUNT(*) DESC, path) <= (SELECT n FROM cap)
                 THEN path ELSE '(other)' END AS kept,
-           COUNT(*) AS c, COUNT(DISTINCT actor_id) AS u, json_group_array(actor_id) AS actors
+           COUNT(*) AS c, COUNT(DISTINCT actor_id) AS u,
+           json_group_array(actor_id) FILTER (WHERE (SELECT n FROM cap) < 4611686018427387904) AS actors
     FROM raw_views
     GROUP BY project_id, day, path
   )
@@ -489,23 +569,30 @@ FROM (
 WHERE rf = 1;
 
 CREATE VIEW v_views_platforms AS
+WITH cap AS (
+  SELECT COALESCE((SELECT CASE CAST(value AS INTEGER) WHEN 0 THEN 4611686018427387904
+                                ELSE CAST(value AS INTEGER) END
+                   FROM meta WHERE key='views_dimensions_top_n'
+                     AND (CAST(value AS INTEGER) > 0 OR value = '0')), 500) AS n
+)
 SELECT project_id, day, platform, visitors, views FROM agg_views_platforms
 UNION ALL
 SELECT project_id, day, kept,
-       CASE WHEN n = 1 THEN u
+       CASE WHEN keys = 1 THEN u
             ELSE (SELECT COUNT(DISTINCT value) FROM json_each(merged)) END,
        views
 FROM (
   SELECT project_id, day, kept, u,
-         COUNT(*) OVER f AS n, SUM(c) OVER f AS views,
+         COUNT(*) OVER f AS keys, SUM(c) OVER f AS views,
          '[' || group_concat(substr(actors, 2, length(actors) - 2), ',') OVER f || ']' AS merged,
          ROW_NUMBER() OVER f AS rf
   FROM (
     SELECT project_id, day,
            CASE WHEN ROW_NUMBER() OVER (PARTITION BY project_id, day
-                                        ORDER BY COUNT(*) DESC, platform) <= 500
+                                        ORDER BY COUNT(*) DESC, platform) <= (SELECT n FROM cap)
                 THEN platform ELSE '(other)' END AS kept,
-           COUNT(*) AS c, COUNT(DISTINCT actor_id) AS u, json_group_array(actor_id) AS actors
+           COUNT(*) AS c, COUNT(DISTINCT actor_id) AS u,
+           json_group_array(actor_id) FILTER (WHERE (SELECT n FROM cap) < 4611686018427387904) AS actors
     FROM raw_views
     GROUP BY project_id, day, platform
   )
@@ -514,23 +601,30 @@ FROM (
 WHERE rf = 1;
 
 CREATE VIEW v_views_referrers AS
+WITH cap AS (
+  SELECT COALESCE((SELECT CASE CAST(value AS INTEGER) WHEN 0 THEN 4611686018427387904
+                                ELSE CAST(value AS INTEGER) END
+                   FROM meta WHERE key='views_dimensions_top_n'
+                     AND (CAST(value AS INTEGER) > 0 OR value = '0')), 500) AS n
+)
 SELECT project_id, day, source, visitors, views FROM agg_views_referrers
 UNION ALL
 SELECT project_id, day, kept,
-       CASE WHEN n = 1 THEN u
+       CASE WHEN keys = 1 THEN u
             ELSE (SELECT COUNT(DISTINCT value) FROM json_each(merged)) END,
        views
 FROM (
   SELECT project_id, day, kept, u,
-         COUNT(*) OVER f AS n, SUM(c) OVER f AS views,
+         COUNT(*) OVER f AS keys, SUM(c) OVER f AS views,
          '[' || group_concat(substr(actors, 2, length(actors) - 2), ',') OVER f || ']' AS merged,
          ROW_NUMBER() OVER f AS rf
   FROM (
     SELECT project_id, day,
            CASE WHEN ROW_NUMBER() OVER (PARTITION BY project_id, day
-                                        ORDER BY COUNT(*) DESC, referrer_source) <= 500
+                                        ORDER BY COUNT(*) DESC, referrer_source) <= (SELECT n FROM cap)
                 THEN referrer_source ELSE '(other)' END AS kept,
-           COUNT(*) AS c, COUNT(DISTINCT actor_id) AS u, json_group_array(actor_id) AS actors
+           COUNT(*) AS c, COUNT(DISTINCT actor_id) AS u,
+           json_group_array(actor_id) FILTER (WHERE (SELECT n FROM cap) < 4611686018427387904) AS actors
     FROM raw_views
     GROUP BY project_id, day, referrer_source
   )
@@ -539,23 +633,30 @@ FROM (
 WHERE rf = 1;
 
 CREATE VIEW v_views_utm AS
+WITH cap AS (
+  SELECT COALESCE((SELECT CASE CAST(value AS INTEGER) WHEN 0 THEN 4611686018427387904
+                                ELSE CAST(value AS INTEGER) END
+                   FROM meta WHERE key='views_dimensions_top_n'
+                     AND (CAST(value AS INTEGER) > 0 OR value = '0')), 500) AS n
+)
 SELECT project_id, day, utm_source, utm_medium, utm_campaign, visitors, views FROM agg_views_utm
 UNION ALL
 SELECT project_id, day, utm_source, utm_medium, kept,
-       CASE WHEN n = 1 THEN u
+       CASE WHEN keys = 1 THEN u
             ELSE (SELECT COUNT(DISTINCT value) FROM json_each(merged)) END,
        views
 FROM (
   SELECT project_id, day, utm_source, utm_medium, kept, u,
-         COUNT(*) OVER f AS n, SUM(c) OVER f AS views,
+         COUNT(*) OVER f AS keys, SUM(c) OVER f AS views,
          '[' || group_concat(substr(actors, 2, length(actors) - 2), ',') OVER f || ']' AS merged,
          ROW_NUMBER() OVER f AS rf
   FROM (
     SELECT project_id, day, utm_source, utm_medium,
            CASE WHEN ROW_NUMBER() OVER (PARTITION BY project_id, day
-                                        ORDER BY COUNT(*) DESC, utm_source, utm_medium, utm_campaign) <= 500
+                                        ORDER BY COUNT(*) DESC, utm_source, utm_medium, utm_campaign) <= (SELECT n FROM cap)
                 THEN utm_campaign ELSE '(other)' END AS kept,
-           COUNT(*) AS c, COUNT(DISTINCT actor_id) AS u, json_group_array(actor_id) AS actors
+           COUNT(*) AS c, COUNT(DISTINCT actor_id) AS u,
+           json_group_array(actor_id) FILTER (WHERE (SELECT n FROM cap) < 4611686018427387904) AS actors
     FROM raw_views
     WHERE NOT (utm_source = '' AND utm_medium = '' AND utm_campaign = '')
     GROUP BY project_id, day, utm_source, utm_medium, utm_campaign
@@ -570,9 +671,16 @@ WHERE rf = 1;
 -- as JSON. The subquery is one chain with no join: SQLite re-runs a
 -- correlated subquery's inner join side for every outer row. Every view
 -- lands in exactly one span, so visitors and views come from the spans
--- too; kinds past the day's 500 most viewed are '(other)', as before.
+-- too; kinds past the cap (the day's most viewed first) are '(other)', as
+-- before.
 DROP VIEW v_views_daily;
 CREATE VIEW v_views_daily AS
+WITH cap AS (
+  SELECT COALESCE((SELECT CASE CAST(value AS INTEGER) WHEN 0 THEN 4611686018427387904
+                                ELSE CAST(value AS INTEGER) END
+                   FROM meta WHERE key='views_dimensions_top_n'
+                     AND (CAST(value AS INTEGER) > 0 OR value = '0')), 500) AS n
+)
 SELECT project_id, day, kind, visitors, views, sessions, bounces, duration_sec FROM agg_views_daily
 UNION ALL
 SELECT pd.project_id, pd.day, r.value ->> 0, r.value ->> 1, r.value ->> 2,
@@ -602,7 +710,7 @@ FROM (SELECT project_id, day FROM raw_views GROUP BY project_id, day) pd,
           FROM (
             -- the day's views under their bucketed kind: the 500 kinds
             -- with the most views that day, the rest as (other)
-            SELECT CASE WHEN DENSE_RANK() OVER (ORDER BY kind_views DESC, kind) <= 500
+            SELECT CASE WHEN DENSE_RANK() OVER (ORDER BY kind_views DESC, kind) <= (SELECT n FROM cap)
                         THEN kind ELSE '(other)' END AS kind,
                    actor_id, session_id, t
             FROM (

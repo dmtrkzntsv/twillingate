@@ -94,18 +94,18 @@ func (f *faultyStore) AggregateRetentionDay(ctx context.Context, projectID int64
 	return f.Store.AggregateRetentionDay(ctx, projectID, day)
 }
 
-func (f *faultyStore) AggregateIdentityDay(ctx context.Context, projectID int64, day civil.Date) error {
+func (f *faultyStore) AggregateIdentityDay(ctx context.Context, projectID int64, day civil.Date, topN int) error {
 	if f.shouldFail("AggregateIdentityDay") {
 		return errBoom
 	}
-	return f.Store.AggregateIdentityDay(ctx, projectID, day)
+	return f.Store.AggregateIdentityDay(ctx, projectID, day, topN)
 }
 
-func (f *faultyStore) AggregateViewDay(ctx context.Context, projectID int64, day civil.Date) error {
+func (f *faultyStore) AggregateViewDay(ctx context.Context, projectID int64, day civil.Date, topN int) error {
 	if f.shouldFail("AggregateViewDay") {
 		return errBoom
 	}
-	return f.Store.AggregateViewDay(ctx, projectID, day)
+	return f.Store.AggregateViewDay(ctx, projectID, day, topN)
 }
 
 func (f *faultyStore) AggregateProductDay(ctx context.Context, projectID int64, day civil.Date, attrs []string, topN int) error {

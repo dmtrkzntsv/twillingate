@@ -22,9 +22,12 @@ var identityKinds = []struct{ kind, column string }{
 // users counts distinct users active in a group that day; for kind='user' it
 // is always 1, since the row already is one user.
 //
+// topN is IDENTITIES_TOP_N: the busiest users (and groups) kept for the
+// day, the rest dropped; 0 keeps them all.
+//
 // Must run before AggregateViewDay and AggregateProductDay for the same day,
 // which delete the raw rows this reads.
-func (d *DB) AggregateIdentityDay(ctx context.Context, projectID int64, day civil.Date) error {
+func (d *DB) AggregateIdentityDay(ctx context.Context, projectID int64, day civil.Date, topN int) error {
 	return d.tx(ctx, func(tx *sql.Tx) error {
 		for _, k := range identityKinds {
 			q := fmt.Sprintf(`
@@ -48,11 +51,12 @@ ranked AS (
 SELECT ?, ?, ?, id, actors,
        CASE WHEN ? = 'user' THEN 1 ELSE users END,
        views, events
-FROM ranked WHERE rn <= %[2]d`, k.column, topNDimension)
+FROM ranked WHERE rn <= ?`, k.column)
 
 			if _, err := tx.ExecContext(ctx, q,
 				projectID, day.String(), projectID, day.String(),
-				projectID, day.String(), k.kind, k.kind); err != nil {
+				projectID, day.String(), k.kind, k.kind,
+				capRows(topN, defaultDimensionsTopN)); err != nil {
 				return fmt.Errorf("agg_identity_daily %s: %w", k.kind, err)
 			}
 

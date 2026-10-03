@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -95,7 +96,7 @@ func TestStitchViewsInvariantDaily(t *testing.T) {
 	if webBefore != (dailyRow{2, 4, 3, 2, 600}) || appBefore != (dailyRow{2, 3, 2, 1, 300}) {
 		t.Fatalf("live v_views_daily web=%+v app=%+v; fixture expectations wrong", webBefore, appBefore)
 	}
-	if err := db.AggregateViewDay(ctx, 1, day("2026-08-10")); err != nil {
+	if err := db.AggregateViewDay(ctx, 1, day("2026-08-10"), 500); err != nil {
 		t.Fatal(err)
 	}
 	if got := read("web"); got != webBefore {
@@ -115,7 +116,7 @@ func TestStitchViewsInvariantAllViewsDimensions(t *testing.T) {
 	// Push one dimension past the cap so the other bucket is exercised on
 	// both sides of the boundary.
 	var extra []store.Event
-	for i := 0; i < topNDimension+5; i++ {
+	for i := 0; i < defaultDimensionsTopN+5; i++ {
 		extra = append(extra, store.Event{Family: store.FamilyViews, ID: fmt.Sprintf("x-%d", i), TS: at(13, 0).Add(time.Duration(i) * time.Second),
 			ActorID: "v3", Path: fmt.Sprintf("/x/%d", i), Platform: "web", OS: "linux", Browser: "firefox", BrowserVersion: "127", Device: "desktop"})
 	}
@@ -169,7 +170,7 @@ func TestStitchViewsInvariantAllViewsDimensions(t *testing.T) {
 	if _, ok := before["v_views_paths"]["(other)"]; !ok {
 		t.Fatal("paths fixture did not exceed the cap; the other-bucket parity is untested")
 	}
-	if err := db.AggregateViewDay(ctx, 1, day("2026-08-10")); err != nil {
+	if err := db.AggregateViewDay(ctx, 1, day("2026-08-10"), 500); err != nil {
 		t.Fatal(err)
 	}
 	for _, d := range dims {
@@ -216,7 +217,7 @@ func TestStitchViewConsentAcrossBoundary(t *testing.T) {
 	if got := read(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("live v_views_consent = %v, want %v", got, want)
 	}
-	if err := db.AggregateViewDay(ctx, 1, day("2026-08-10")); err != nil {
+	if err := db.AggregateViewDay(ctx, 1, day("2026-08-10"), 500); err != nil {
 		t.Fatal(err)
 	}
 	if got := read(); !reflect.DeepEqual(got, want) {
@@ -243,7 +244,7 @@ func TestStitchViewUTMExcludesEmpty(t *testing.T) {
 	if n := count(); n != 1 {
 		t.Fatalf("live v_views_utm rows = %d, want 1", n)
 	}
-	if err := db.AggregateViewDay(ctx, 1, day("2026-08-10")); err != nil {
+	if err := db.AggregateViewDay(ctx, 1, day("2026-08-10"), 500); err != nil {
 		t.Fatal(err)
 	}
 	if n := count(); n != 1 {
@@ -286,7 +287,7 @@ func TestStitchViewLocalesExcludesUndeclared(t *testing.T) {
 	if got := read(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("live v_views_locales = %v, want %v", got, want)
 	}
-	if err := db.AggregateViewDay(ctx, 1, day("2026-08-10")); err != nil {
+	if err := db.AggregateViewDay(ctx, 1, day("2026-08-10"), 500); err != nil {
 		t.Fatal(err)
 	}
 	if got := read(); !reflect.DeepEqual(got, want) {
@@ -366,7 +367,7 @@ func TestStitchViewsMixedAggregatedAndRawDays(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AggregateViewDay(ctx, 1, day("2026-08-10")); err != nil {
+	if err := db.AggregateViewDay(ctx, 1, day("2026-08-10"), 500); err != nil {
 		t.Fatal(err)
 	}
 	rows, err := db.db.Query(`SELECT day, views FROM v_views_daily
@@ -425,10 +426,10 @@ func TestStitchViewIdentityDailyCoversRawDays(t *testing.T) {
 
 	// After aggregation the same figures must come from the aggregate half,
 	// with no double counting from the raw rows the pass deletes.
-	if err := db.AggregateIdentityDay(ctx, 1, day("2026-08-23")); err != nil {
+	if err := db.AggregateIdentityDay(ctx, 1, day("2026-08-23"), 500); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AggregateViewDay(ctx, 1, day("2026-08-23")); err != nil {
+	if err := db.AggregateViewDay(ctx, 1, day("2026-08-23"), 500); err != nil {
 		t.Fatal(err)
 	}
 	var rows int
@@ -469,7 +470,7 @@ func TestStitchViewIdentityDailyDoesNotDoubleCountRetainedRawDays(t *testing.T) 
 	}
 	// AggregateIdentityDay does not delete raw rows; only AggregateViewDay
 	// does, and the pass rolls identity up long before that.
-	if err := db.AggregateIdentityDay(ctx, 1, day("2026-08-23")); err != nil {
+	if err := db.AggregateIdentityDay(ctx, 1, day("2026-08-23"), 500); err != nil {
 		t.Fatal(err)
 	}
 
@@ -486,7 +487,7 @@ func TestStitchViewIdentityDailyDoesNotDoubleCountRetainedRawDays(t *testing.T) 
 	}
 }
 
-// AggregateIdentityDay keeps the top topNDimension ids per kind and day, so
+// AggregateIdentityDay keeps the top defaultDimensionsTopN ids per kind and day, so
 // the live half must rank and cut the same way or a busy project's figures
 // jump when the day rolls up.
 func TestStitchViewIdentityDailyCapsLikeTheAggregate(t *testing.T) {
@@ -494,7 +495,7 @@ func TestStitchViewIdentityDailyCapsLikeTheAggregate(t *testing.T) {
 	ctx := context.Background()
 	ts := time.Date(2026, 8, 23, 10, 0, 0, 0, time.UTC)
 
-	n := topNDimension + 5
+	n := defaultDimensionsTopN + 5
 	var views []store.Event
 	var events []store.Event
 	for i := 0; i < n; i++ {
@@ -539,12 +540,12 @@ func TestStitchViewIdentityDailyCapsLikeTheAggregate(t *testing.T) {
 	}
 
 	live := snapshot()
-	if err := db.AggregateIdentityDay(ctx, 1, day("2026-08-23")); err != nil {
+	if err := db.AggregateIdentityDay(ctx, 1, day("2026-08-23"), 500); err != nil {
 		t.Fatal(err)
 	}
 	agg := snapshot()
-	if len(agg) != 2*topNDimension {
-		t.Fatalf("aggregate kept %d rows, want %d; the fixture does not exercise the cap", len(agg), 2*topNDimension)
+	if len(agg) != 2*defaultDimensionsTopN {
+		t.Fatalf("aggregate kept %d rows, want %d; the fixture does not exercise the cap", len(agg), 2*defaultDimensionsTopN)
 	}
 	if _, ok := agg[fmt.Sprintf("user|u%03d", n-1)]; !ok {
 		t.Fatal("aggregate dropped a boosted user; the fixture does not exercise the ranking")
@@ -873,19 +874,18 @@ func TestProductAttrsViewDefaultsCapWhenMetaMissing(t *testing.T) {
 	}
 }
 
-// aggregate_product.go:29-31 clamps a non-positive topN to defaultAttrsTopN
-// precisely so breakdowns are not silently lost -- `rn <= 0` keeps nothing,
-// which would sweep every value into "(other)". The view's cap must clamp
-// identically, or PRODUCT_ATTRIBUTES_TOP_N=0 (or a hand-edited meta row)
-// makes the current day collapse to a single "(other)" row while the same
-// day after rollup shows the full top-N: exactly the jump the invariant
-// forbids.
+// capRows clamps a negative topN to defaultAttrsTopN precisely so
+// breakdowns are not silently lost -- `rn <= -7` keeps nothing, which
+// would sweep every value into "(other)". The view's cap must clamp
+// identically, or a hand-edited meta row makes the current day collapse to
+// a single "(other)" row while the same day after rollup shows the full
+// top-N: exactly the jump the invariant forbids. 0 is not bad: it means no
+// cap (caps_test.go).
 func TestProductAttrsViewClampsBadMetaCap(t *testing.T) {
 	for _, tc := range []struct {
 		name, meta string
 		goTopN     int // what the Go side is handed for the same setting
 	}{
-		{"zero", "0", 0},
 		{"negative", "-7", -7},
 		// A non-numeric value casts to 0 in SQL. No env value produces it,
 		// so the Go side is handed the configured default while meta has
@@ -936,7 +936,7 @@ func TestStitchViewPlatformsAcrossBoundaryWithCap(t *testing.T) {
 	ctx := context.Background()
 	seedViewDay(t, db)
 	var extra []store.Event
-	for i := 0; i < topNDimension+5; i++ {
+	for i := 0; i < defaultDimensionsTopN+5; i++ {
 		extra = append(extra, store.Event{Family: store.FamilyViews, ID: fmt.Sprintf("p-%d", i), TS: at(13, 0).Add(time.Duration(i) * time.Second),
 			ActorID: "v3", Path: "/x", Platform: fmt.Sprintf("p%d", i), OS: "linux", Browser: "firefox", Device: "desktop"})
 	}
@@ -966,7 +966,7 @@ func TestStitchViewPlatformsAcrossBoundaryWithCap(t *testing.T) {
 	if _, ok := before[otherBucket]; !ok {
 		t.Fatal("platform fixture did not exceed the cap")
 	}
-	if err := db.AggregateViewDay(ctx, 1, day("2026-08-10")); err != nil {
+	if err := db.AggregateViewDay(ctx, 1, day("2026-08-10"), 500); err != nil {
 		t.Fatal(err)
 	}
 	if after := snapshot(); !reflect.DeepEqual(after, before) {
@@ -974,46 +974,48 @@ func TestStitchViewPlatformsAcrossBoundaryWithCap(t *testing.T) {
 	}
 }
 
+// capRead is the one way a view may read meta (025_live_halves.sql): a
+// cap, by its key, never visitor data.
+var capRead = regexp.MustCompile(`\(SELECT CASE CAST\(value AS INTEGER\) WHEN 0 THEN 4611686018427387904
+\s+ELSE CAST\(value AS INTEGER\) END
+\s+FROM meta WHERE key='(product_attributes_top_n|views_dimensions_top_n|identities_top_n)'
+\s+AND \(CAST\(value AS INTEGER\) > 0 OR value = '0'\)\)`)
+
 // TestViewsReferenceNoRefusedName pins readsql.Check against every view's
 // own definition, not just the v_* ones (raw_views and raw_product are
 // views too): the query tool's guard must accept what the schema itself
-// relies on, or a legitimate query through a view would be refused.
-// v_product_attrs and v_measures_attrs are the declared exceptions (see
-// their migrations): they name meta, but only to read a tuning knob
-// (product_attributes_top_n), never visitor data. Rather than asserting
-// that narrowly by substring, the test removes exactly that fragment and
-// then holds the remainder to the same bar as every other view:
-// readsql.Check must accept it too, so the exception can never widen into
-// "meta is fine anywhere in this view".
+// relies on, or a legitimate query through a view would be refused. The
+// views with a cap are the declared exception: they name meta, but only
+// to read a tuning knob (product_attributes_top_n, views_dimensions_top_n
+// or identities_top_n), never visitor data. Rather than asserting that
+// narrowly by substring, the test removes exactly that fragment and then
+// holds the remainder to the same bar as every other view: readsql.Check
+// must accept it too, so the exception can never widen into "meta is fine
+// anywhere in this view". The literal the views read 0 as must also be
+// noCap, the daily pass's.
 func TestViewsReferenceNoRefusedName(t *testing.T) {
+	if noCap != 4611686018427387904 {
+		t.Fatalf("noCap = %d; the views (025_live_halves.sql) read 0 as 4611686018427387904", noCap)
+	}
 	db := newTestDB(t)
 	rows, err := db.db.Query(`SELECT name, sql FROM sqlite_master WHERE type='view'`)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer rows.Close()
-	seen := 0
+	seen, capped := 0, 0
 	for rows.Next() {
 		var name, def string
 		if err := rows.Scan(&name, &def); err != nil {
 			t.Fatal(err)
 		}
 		seen++
-		if name == "v_product_attrs" || name == "v_measures_attrs" {
-			if !strings.Contains(def, "key='product_attributes_top_n'") {
-				t.Errorf("%s: expected the key='product_attributes_top_n' guard, definition:\n%s", name, def)
-			}
-			withoutException := strings.ReplaceAll(def,
-				`(SELECT CAST(value AS INTEGER) FROM meta
-                   WHERE key='product_attributes_top_n'
-                     AND CAST(value AS INTEGER) > 0)`, "50")
-			if _, err := readsql.Check(withoutException); err != nil {
-				t.Errorf("%s: still refused after removing the top_n exception (so it names meta, or a refused name, somewhere else): %v\n%s", name, err, withoutException)
-			}
-			continue
+		if capRead.MatchString(def) {
+			capped++
+			def = capRead.ReplaceAllString(def, "50")
 		}
 		if _, err := readsql.Check(def); err != nil {
-			t.Errorf("%s: readsql.Check refused the view's own definition: %v\n%s", name, err, def)
+			t.Errorf("%s: readsql.Check refused the view's own definition, cap reads aside (so it names meta, or a refused name, somewhere else): %v\n%s", name, err, def)
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -1021,5 +1023,8 @@ func TestViewsReferenceNoRefusedName(t *testing.T) {
 	}
 	if seen == 0 {
 		t.Fatal("no views found in sqlite_master; the scan is broken, not the schema")
+	}
+	if capped != 16 {
+		t.Errorf("%d views read a cap, want 16: the two attribute views, the 12 breakdowns, v_views_daily and v_identity_daily", capped)
 	}
 }

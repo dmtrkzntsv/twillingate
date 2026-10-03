@@ -491,3 +491,20 @@ What changes on the day:
 - The boot log labels the listeners `surfaces=ingest,console` (or
   `console`) instead of `ingest,api`, and the skip warning reads `console
   disabled`; update any log alert matching the old text.
+
+### Upgrading to range-bounded views and configurable caps (migration 025)
+
+Migration 025 recreates every `v_*` view's live half so a query reads only
+the raw days its range covers; no data is copied and every view answers as
+before. Two settings join `PRODUCT_ATTRIBUTES_TOP_N`: `VIEWS_DIMENSIONS_TOP_N`
+and `IDENTITIES_TOP_N` (both default 500, today's fixed caps).
+
+Before upgrading, check `twillingate.env` (compose: `.env`):
+
+- `PRODUCT_ATTRIBUTES_TOP_N=0` used to fall back to 50; it now keeps every
+  value. Remove the line, or set 50, to keep today's behaviour.
+- A negative `*_TOP_N` now refuses the boot, naming the variable.
+
+A changed cap applies to the live days at once and to days rolled up after
+the change; days already rolled up keep the `(other)` rows they were written
+with.

@@ -99,6 +99,8 @@ type Config struct {
 	Buffer                BufferConfig
 	Retention             Retention
 	ProductAttributesTopN int
+	ViewsDimensionsTopN   int
+	IdentitiesTopN        int
 	Reporting             ReportingConfig
 	Console               ConsoleConfig
 }
@@ -185,8 +187,13 @@ func FromEnv(lookup func(string) (string, bool)) (*Config, error) {
 		},
 		// Distinct client-supplied *values* per declared attribute key are
 		// capped globally rather than per project (spec: the operator picks
-		// the key, clients pick the values).
+		// the key, clients pick the values). The same holds for the values
+		// of a views breakdown and for users and groups a day. Each cap
+		// keeps the aggregates, which outlive raw rows, from growing with a
+		// dimension that carries ids; 0 keeps every value.
 		ProductAttributesTopN: e.num("PRODUCT_ATTRIBUTES_TOP_N", 50),
+		ViewsDimensionsTopN:   e.num("VIEWS_DIMENSIONS_TOP_N", 500),
+		IdentitiesTopN:        e.num("IDENTITIES_TOP_N", 500),
 		Reporting: ReportingConfig{
 			CacheAge:   time.Duration(e.num("REPORTING_CACHE_SECONDS", 900)) * time.Second,
 			RefreshAge: time.Duration(e.num("REPORTING_REFRESH_SECONDS", 60)) * time.Second,
@@ -252,6 +259,18 @@ func (c *Config) validate() error {
 	// Validate global retention (negative values only)
 	if rc := c.Retention.Events; rc.RawDays < 0 || rc.AggregateDays < 0 {
 		return fmt.Errorf("config: retention days must not be negative: %+v", rc)
+	}
+	for _, v := range []struct {
+		name string
+		n    int
+	}{
+		{"PRODUCT_ATTRIBUTES_TOP_N", c.ProductAttributesTopN},
+		{"VIEWS_DIMENSIONS_TOP_N", c.ViewsDimensionsTopN},
+		{"IDENTITIES_TOP_N", c.IdentitiesTopN},
+	} {
+		if v.n < 0 {
+			return fmt.Errorf("config: %s must not be negative (0 keeps every value): %d", v.name, v.n)
+		}
 	}
 	if c.Retention.ArchivedDays < 0 {
 		return fmt.Errorf("config: RETENTION_ARCHIVED_DAYS must not be negative: %d", c.Retention.ArchivedDays)

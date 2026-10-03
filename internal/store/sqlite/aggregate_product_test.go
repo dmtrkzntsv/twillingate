@@ -418,7 +418,7 @@ func TestAggregateDayDeletesOnlyItsFamily(t *testing.T) {
 		seedViewDay(t, db)
 		seedProductDay(t, db)
 		before := count(t, db, "raw_product")
-		if err := db.AggregateViewDay(ctx, 1, day("2026-08-10")); err != nil {
+		if err := db.AggregateViewDay(ctx, 1, day("2026-08-10"), 500); err != nil {
 			t.Fatal(err)
 		}
 		if n := count(t, db, "raw_views"); n != 0 {

@@ -17,9 +17,7 @@ import (
 // halves of v_measures_daily (024_measures.sql) and v_measures_attrs
 // (025_live_halves.sql) compute over the same raw rows.
 func (d *DB) AggregateMeasureDay(ctx context.Context, projectID int64, day civil.Date, attrs []string, topN int) error {
-	if topN <= 0 {
-		topN = defaultAttrsTopN
-	}
+	topN = capRows(topN, defaultAttrsTopN)
 	return d.tx(ctx, func(tx *sql.Tx) error {
 		var n int
 		if err := tx.QueryRowContext(ctx,

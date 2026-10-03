@@ -24,7 +24,7 @@ func TestAggregateViewDayFailsOnCountQuery(t *testing.T) {
 	if _, err := db.db.ExecContext(ctx, `DROP VIEW raw_views`); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AggregateViewDay(ctx, 1, day("2026-08-10")); err == nil {
+	if err := db.AggregateViewDay(ctx, 1, day("2026-08-10"), 500); err == nil {
 		t.Error("want error counting through a missing raw_views")
 	}
 }
@@ -36,7 +36,7 @@ func TestAggregateViewDayFailsOnMissingDailyTable(t *testing.T) {
 	if _, err := db.db.ExecContext(ctx, `DROP TABLE agg_views_daily`); err != nil {
 		t.Fatal(err)
 	}
-	err := db.AggregateViewDay(ctx, 1, day("2026-08-10"))
+	err := db.AggregateViewDay(ctx, 1, day("2026-08-10"), 500)
 	if err == nil || !strings.Contains(err.Error(), "agg_views_daily") {
 		t.Errorf("err = %v, want mention of agg_views_daily", err)
 	}
@@ -49,7 +49,7 @@ func TestAggregateViewDayFailsOnMissingDimensionTable(t *testing.T) {
 	if _, err := db.db.ExecContext(ctx, `DROP TABLE agg_views_paths`); err != nil {
 		t.Fatal(err)
 	}
-	err := db.AggregateViewDay(ctx, 1, day("2026-08-10"))
+	err := db.AggregateViewDay(ctx, 1, day("2026-08-10"), 500)
 	if err == nil || !strings.Contains(err.Error(), "agg_views_paths") {
 		t.Errorf("err = %v, want mention of agg_views_paths", err)
 	}
@@ -64,7 +64,7 @@ CREATE TRIGGER block_view_delete BEFORE DELETE ON events
 BEGIN SELECT RAISE(ABORT, 'blocked'); END`); err != nil {
 		t.Fatal(err)
 	}
-	err := db.AggregateViewDay(ctx, 1, day("2026-08-10"))
+	err := db.AggregateViewDay(ctx, 1, day("2026-08-10"), 500)
 	if err == nil || !strings.Contains(err.Error(), "prune raw views") {
 		t.Errorf("err = %v, want mention of prune raw views", err)
 	}
@@ -96,7 +96,7 @@ func TestAggregateIdentityDayFailsOnMissingAggTable(t *testing.T) {
 	if _, err := db.db.ExecContext(ctx, `DROP TABLE agg_identity_daily`); err != nil {
 		t.Fatal(err)
 	}
-	err := db.AggregateIdentityDay(ctx, 1, day("2026-08-10"))
+	err := db.AggregateIdentityDay(ctx, 1, day("2026-08-10"), 500)
 	if err == nil || !strings.Contains(err.Error(), "agg_identity_daily") {
 		t.Errorf("err = %v, want mention of agg_identity_daily", err)
 	}
@@ -115,7 +115,7 @@ func TestAggregateIdentityDayFailsUpdatingLastSeen(t *testing.T) {
 	if _, err := db.db.ExecContext(ctx, `DROP TABLE identities`); err != nil {
 		t.Fatal(err)
 	}
-	err := db.AggregateIdentityDay(ctx, 1, day("2026-08-10"))
+	err := db.AggregateIdentityDay(ctx, 1, day("2026-08-10"), 500)
 	if err == nil || !strings.Contains(err.Error(), "identities last_seen") {
 		t.Errorf("err = %v, want mention of identities last_seen", err)
 	}
