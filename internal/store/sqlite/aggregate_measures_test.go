@@ -31,7 +31,7 @@ func TestAggregateMeasureDayHistogram(t *testing.T) {
 	if err := db.WriteEvents(ctx, evs); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AggregateMeasureDay(ctx, 1, day("2026-09-01"), nil, 50); err != nil {
+	if err := db.AggregateMeasureDay(ctx, 1, day("2026-09-01"), nil, defaultAttrsTopN); err != nil {
 		t.Fatal(err)
 	}
 	rows, err := db.db.Query(`SELECT event_name, measure, bucket, samples, weight, sum
@@ -350,7 +350,7 @@ func TestMeasurePercentilesWithinTwoPercent(t *testing.T) {
 		}
 	}
 	check("live")
-	if err := db.AggregateMeasureDay(ctx, 1, day("2026-09-01"), nil, 50); err != nil {
+	if err := db.AggregateMeasureDay(ctx, 1, day("2026-09-01"), nil, defaultAttrsTopN); err != nil {
 		t.Fatal(err)
 	}
 	check("rolled up")
@@ -370,7 +370,7 @@ func TestAllZeroMetricPercentileIsZero(t *testing.T) {
 	}
 	for _, stage := range []string{"live", "rolled up"} {
 		if stage == "rolled up" {
-			if err := db.AggregateMeasureDay(ctx, 1, day("2026-09-01"), nil, 50); err != nil {
+			if err := db.AggregateMeasureDay(ctx, 1, day("2026-09-01"), nil, defaultAttrsTopN); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -461,7 +461,7 @@ func TestSampledMeasuresMatchUnsampled(t *testing.T) {
 		}
 	}
 	check("live")
-	if err := db.AggregateMeasureDay(ctx, 1, day("2026-09-01"), nil, 50); err != nil {
+	if err := db.AggregateMeasureDay(ctx, 1, day("2026-09-01"), nil, defaultAttrsTopN); err != nil {
 		t.Fatal(err)
 	}
 	check("rolled up")

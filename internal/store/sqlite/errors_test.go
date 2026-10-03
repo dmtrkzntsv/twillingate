@@ -24,7 +24,7 @@ func TestAggregateViewDayFailsOnCountQuery(t *testing.T) {
 	if _, err := db.db.ExecContext(ctx, `DROP VIEW raw_views`); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AggregateViewDay(ctx, 1, day("2026-08-10"), 500); err == nil {
+	if err := db.AggregateViewDay(ctx, 1, day("2026-08-10"), defaultDimensionsTopN); err == nil {
 		t.Error("want error counting through a missing raw_views")
 	}
 }
@@ -36,7 +36,7 @@ func TestAggregateViewDayFailsOnMissingDailyTable(t *testing.T) {
 	if _, err := db.db.ExecContext(ctx, `DROP TABLE agg_views_daily`); err != nil {
 		t.Fatal(err)
 	}
-	err := db.AggregateViewDay(ctx, 1, day("2026-08-10"), 500)
+	err := db.AggregateViewDay(ctx, 1, day("2026-08-10"), defaultDimensionsTopN)
 	if err == nil || !strings.Contains(err.Error(), "agg_views_daily") {
 		t.Errorf("err = %v, want mention of agg_views_daily", err)
 	}
@@ -49,7 +49,7 @@ func TestAggregateViewDayFailsOnMissingDimensionTable(t *testing.T) {
 	if _, err := db.db.ExecContext(ctx, `DROP TABLE agg_views_paths`); err != nil {
 		t.Fatal(err)
 	}
-	err := db.AggregateViewDay(ctx, 1, day("2026-08-10"), 500)
+	err := db.AggregateViewDay(ctx, 1, day("2026-08-10"), defaultDimensionsTopN)
 	if err == nil || !strings.Contains(err.Error(), "agg_views_paths") {
 		t.Errorf("err = %v, want mention of agg_views_paths", err)
 	}
@@ -64,7 +64,7 @@ CREATE TRIGGER block_view_delete BEFORE DELETE ON events
 BEGIN SELECT RAISE(ABORT, 'blocked'); END`); err != nil {
 		t.Fatal(err)
 	}
-	err := db.AggregateViewDay(ctx, 1, day("2026-08-10"), 500)
+	err := db.AggregateViewDay(ctx, 1, day("2026-08-10"), defaultDimensionsTopN)
 	if err == nil || !strings.Contains(err.Error(), "prune raw views") {
 		t.Errorf("err = %v, want mention of prune raw views", err)
 	}
@@ -96,7 +96,7 @@ func TestAggregateIdentityDayFailsOnMissingAggTable(t *testing.T) {
 	if _, err := db.db.ExecContext(ctx, `DROP TABLE agg_identity_daily`); err != nil {
 		t.Fatal(err)
 	}
-	err := db.AggregateIdentityDay(ctx, 1, day("2026-08-10"), 500)
+	err := db.AggregateIdentityDay(ctx, 1, day("2026-08-10"), defaultDimensionsTopN)
 	if err == nil || !strings.Contains(err.Error(), "agg_identity_daily") {
 		t.Errorf("err = %v, want mention of agg_identity_daily", err)
 	}
@@ -115,7 +115,7 @@ func TestAggregateIdentityDayFailsUpdatingLastSeen(t *testing.T) {
 	if _, err := db.db.ExecContext(ctx, `DROP TABLE identities`); err != nil {
 		t.Fatal(err)
 	}
-	err := db.AggregateIdentityDay(ctx, 1, day("2026-08-10"), 500)
+	err := db.AggregateIdentityDay(ctx, 1, day("2026-08-10"), defaultDimensionsTopN)
 	if err == nil || !strings.Contains(err.Error(), "identities last_seen") {
 		t.Errorf("err = %v, want mention of identities last_seen", err)
 	}
@@ -211,7 +211,7 @@ func TestAggregateProductDayFailsOnCountQuery(t *testing.T) {
 	if _, err := db.db.ExecContext(ctx, `DROP TABLE events`); err != nil {
 		t.Fatal(err)
 	}
-	err := db.AggregateProductDay(ctx, 1, day("2026-08-10"), nil, 50)
+	err := db.AggregateProductDay(ctx, 1, day("2026-08-10"), nil, defaultAttrsTopN)
 	if err == nil {
 		t.Error("want error counting a missing events table")
 	}
@@ -229,7 +229,7 @@ func TestAggregateProductDayFailsOnDailyRollup(t *testing.T) {
 	if _, err := db.db.ExecContext(ctx, `DROP TABLE agg_product_daily`); err != nil {
 		t.Fatal(err)
 	}
-	err := db.AggregateProductDay(ctx, 1, day("2026-08-10"), nil, 50)
+	err := db.AggregateProductDay(ctx, 1, day("2026-08-10"), nil, defaultAttrsTopN)
 	if err == nil || !strings.Contains(err.Error(), "agg_product_daily") {
 		t.Errorf("err = %v, want mention of agg_product_daily", err)
 	}
@@ -247,7 +247,7 @@ func TestAggregateProductDayFailsOnTotalsRollup(t *testing.T) {
 	if _, err := db.db.ExecContext(ctx, `DROP TABLE agg_product_totals`); err != nil {
 		t.Fatal(err)
 	}
-	err := db.AggregateProductDay(ctx, 1, day("2026-08-10"), nil, 50)
+	err := db.AggregateProductDay(ctx, 1, day("2026-08-10"), nil, defaultAttrsTopN)
 	if err == nil || !strings.Contains(err.Error(), "agg_product_totals") {
 		t.Errorf("err = %v, want mention of agg_product_totals", err)
 	}
@@ -286,7 +286,7 @@ CREATE TRIGGER block_product_delete BEFORE DELETE ON events
 BEGIN SELECT RAISE(ABORT, 'blocked'); END`); err != nil {
 		t.Fatal(err)
 	}
-	err := db.AggregateProductDay(ctx, 1, day("2026-08-10"), nil, 50)
+	err := db.AggregateProductDay(ctx, 1, day("2026-08-10"), nil, defaultAttrsTopN)
 	if err == nil || !strings.Contains(err.Error(), "blocked") {
 		t.Errorf("err = %v, want mention of the blocking trigger", err)
 	}
@@ -300,7 +300,7 @@ func TestAggregateMeasureDayFailsOnCountQuery(t *testing.T) {
 	if _, err := db.db.ExecContext(ctx, `DROP TABLE events`); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AggregateMeasureDay(ctx, 1, day("2026-09-01"), nil, 50); err == nil {
+	if err := db.AggregateMeasureDay(ctx, 1, day("2026-09-01"), nil, defaultAttrsTopN); err == nil {
 		t.Error("want error counting a missing events table")
 	}
 }

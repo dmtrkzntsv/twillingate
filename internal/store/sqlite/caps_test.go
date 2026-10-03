@@ -15,7 +15,7 @@ import (
 // Each cap (PRODUCT_ATTRIBUTES_TOP_N, VIEWS_DIMENSIONS_TOP_N,
 // IDENTITIES_TOP_N) reaches the live halves through meta and the daily
 // pass as an argument; the two must agree for every setting, 0 (no cap)
-// included, or a day's numbers jump when it rolls up. The fixture has 60
+// included, or a day's numbers jump when it rolls up. The fixture has 110
 // plan values, 600 paths and kinds, and 600 users and groups on one day.
 func TestCapsAgreeAcrossRollup(t *testing.T) {
 	for _, n := range []int{0, 3, 50} {
@@ -61,7 +61,7 @@ func TestCapsAgreeAcrossRollup(t *testing.T) {
 			// one ping event adds a plan row of its own.
 			wantPlans, wantPaths, wantUsers := n+1+1, n+1, n
 			if n == 0 {
-				wantPlans, wantPaths, wantUsers = 60+1, 600, 600
+				wantPlans, wantPaths, wantUsers = defaultAttrsTopN+10+1, 600, 600
 			}
 			if plans != wantPlans || paths != wantPaths || kinds != wantPaths || users != wantUsers {
 				t.Errorf("rows: plans %d paths %d kinds %d users %d, want %d %d %d %d",

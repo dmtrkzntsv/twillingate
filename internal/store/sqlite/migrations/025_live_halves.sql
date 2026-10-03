@@ -55,7 +55,8 @@
 -- see the environment; each view's cap CTE reads its own key. 0 means no
 -- cap and reads as 4611686018427387904 (noCap in aggregate_views.go), a
 -- rank no day reaches, so the daily pass and the live half keep the same
--- values; a missing or malformed row reads as the default (50, 500, 500).
+-- values; a missing or malformed row reads as the default (100, 1000,
+-- 1000).
 -- The JSON arrays only feed the "(other)" rows, so they are built only
 -- while a cap is in force.
 DROP VIEW v_product_attrs;
@@ -64,7 +65,7 @@ WITH cap AS (
   SELECT COALESCE((SELECT CASE CAST(value AS INTEGER) WHEN 0 THEN 4611686018427387904
                                 ELSE CAST(value AS INTEGER) END
                    FROM meta WHERE key='product_attributes_top_n'
-                     AND (CAST(value AS INTEGER) > 0 OR value = '0')), 50) AS n
+                     AND (CAST(value AS INTEGER) > 0 OR value = '0')), 100) AS n
 )
 SELECT project_id, day, event_name, attr_key, attr_value, count, unique_users, unique_groups
 FROM agg_product_attrs
@@ -153,7 +154,7 @@ WITH cap AS (
   SELECT COALESCE((SELECT CASE CAST(value AS INTEGER) WHEN 0 THEN 4611686018427387904
                                 ELSE CAST(value AS INTEGER) END
                    FROM meta WHERE key='product_attributes_top_n'
-                     AND (CAST(value AS INTEGER) > 0 OR value = '0')), 50) AS n
+                     AND (CAST(value AS INTEGER) > 0 OR value = '0')), 100) AS n
 )
 SELECT project_id, day, event_name, measure, attr_key, attr_value, bucket,
        CASE WHEN bucket = -1000 THEN 0 ELSE 2 * pow(1.04, bucket) / 2.04 END AS approx_value,
@@ -232,7 +233,7 @@ WITH cap AS (
   SELECT COALESCE((SELECT CASE CAST(value AS INTEGER) WHEN 0 THEN 4611686018427387904
                                 ELSE CAST(value AS INTEGER) END
                    FROM meta WHERE key='identities_top_n'
-                     AND (CAST(value AS INTEGER) > 0 OR value = '0')), 500) AS n
+                     AND (CAST(value AS INTEGER) > 0 OR value = '0')), 1000) AS n
 )
 SELECT project_id, day, kind, id, actors, users, views, events
 FROM agg_identity_daily
@@ -282,7 +283,7 @@ WITH cap AS (
   SELECT COALESCE((SELECT CASE CAST(value AS INTEGER) WHEN 0 THEN 4611686018427387904
                                 ELSE CAST(value AS INTEGER) END
                    FROM meta WHERE key='views_dimensions_top_n'
-                     AND (CAST(value AS INTEGER) > 0 OR value = '0')), 500) AS n
+                     AND (CAST(value AS INTEGER) > 0 OR value = '0')), 1000) AS n
 )
 SELECT project_id, day, platform, app_version, visitors, views FROM agg_views_app_versions
 UNION ALL
@@ -315,7 +316,7 @@ WITH cap AS (
   SELECT COALESCE((SELECT CASE CAST(value AS INTEGER) WHEN 0 THEN 4611686018427387904
                                 ELSE CAST(value AS INTEGER) END
                    FROM meta WHERE key='views_dimensions_top_n'
-                     AND (CAST(value AS INTEGER) > 0 OR value = '0')), 500) AS n
+                     AND (CAST(value AS INTEGER) > 0 OR value = '0')), 1000) AS n
 )
 SELECT project_id, day, browser, browser_version, visitors, views FROM agg_views_browsers
 UNION ALL
@@ -347,7 +348,7 @@ WITH cap AS (
   SELECT COALESCE((SELECT CASE CAST(value AS INTEGER) WHEN 0 THEN 4611686018427387904
                                 ELSE CAST(value AS INTEGER) END
                    FROM meta WHERE key='views_dimensions_top_n'
-                     AND (CAST(value AS INTEGER) > 0 OR value = '0')), 500) AS n
+                     AND (CAST(value AS INTEGER) > 0 OR value = '0')), 1000) AS n
 )
 SELECT project_id, day, country, visitors, views FROM agg_views_countries
 UNION ALL
@@ -379,7 +380,7 @@ WITH cap AS (
   SELECT COALESCE((SELECT CASE CAST(value AS INTEGER) WHEN 0 THEN 4611686018427387904
                                 ELSE CAST(value AS INTEGER) END
                    FROM meta WHERE key='views_dimensions_top_n'
-                     AND (CAST(value AS INTEGER) > 0 OR value = '0')), 500) AS n
+                     AND (CAST(value AS INTEGER) > 0 OR value = '0')), 1000) AS n
 )
 SELECT project_id, day, device, device_model, visitors, views FROM agg_views_devices
 UNION ALL
@@ -411,7 +412,7 @@ WITH cap AS (
   SELECT COALESCE((SELECT CASE CAST(value AS INTEGER) WHEN 0 THEN 4611686018427387904
                                 ELSE CAST(value AS INTEGER) END
                    FROM meta WHERE key='views_dimensions_top_n'
-                     AND (CAST(value AS INTEGER) > 0 OR value = '0')), 500) AS n
+                     AND (CAST(value AS INTEGER) > 0 OR value = '0')), 1000) AS n
 )
 SELECT project_id, day, display, visitors, views FROM agg_views_displays
 UNION ALL
@@ -444,7 +445,7 @@ WITH cap AS (
   SELECT COALESCE((SELECT CASE CAST(value AS INTEGER) WHEN 0 THEN 4611686018427387904
                                 ELSE CAST(value AS INTEGER) END
                    FROM meta WHERE key='views_dimensions_top_n'
-                     AND (CAST(value AS INTEGER) > 0 OR value = '0')), 500) AS n
+                     AND (CAST(value AS INTEGER) > 0 OR value = '0')), 1000) AS n
 )
 SELECT project_id, day, host, visitors, views FROM agg_views_hosts
 UNION ALL
@@ -476,7 +477,7 @@ WITH cap AS (
   SELECT COALESCE((SELECT CASE CAST(value AS INTEGER) WHEN 0 THEN 4611686018427387904
                                 ELSE CAST(value AS INTEGER) END
                    FROM meta WHERE key='views_dimensions_top_n'
-                     AND (CAST(value AS INTEGER) > 0 OR value = '0')), 500) AS n
+                     AND (CAST(value AS INTEGER) > 0 OR value = '0')), 1000) AS n
 )
 SELECT project_id, day, browser_locale, app_locale, visitors, views FROM agg_views_locales
 UNION ALL
@@ -509,7 +510,7 @@ WITH cap AS (
   SELECT COALESCE((SELECT CASE CAST(value AS INTEGER) WHEN 0 THEN 4611686018427387904
                                 ELSE CAST(value AS INTEGER) END
                    FROM meta WHERE key='views_dimensions_top_n'
-                     AND (CAST(value AS INTEGER) > 0 OR value = '0')), 500) AS n
+                     AND (CAST(value AS INTEGER) > 0 OR value = '0')), 1000) AS n
 )
 SELECT project_id, day, os, os_version, visitors, views FROM agg_views_os
 UNION ALL
@@ -541,7 +542,7 @@ WITH cap AS (
   SELECT COALESCE((SELECT CASE CAST(value AS INTEGER) WHEN 0 THEN 4611686018427387904
                                 ELSE CAST(value AS INTEGER) END
                    FROM meta WHERE key='views_dimensions_top_n'
-                     AND (CAST(value AS INTEGER) > 0 OR value = '0')), 500) AS n
+                     AND (CAST(value AS INTEGER) > 0 OR value = '0')), 1000) AS n
 )
 SELECT project_id, day, path, visitors, views FROM agg_views_paths
 UNION ALL
@@ -573,7 +574,7 @@ WITH cap AS (
   SELECT COALESCE((SELECT CASE CAST(value AS INTEGER) WHEN 0 THEN 4611686018427387904
                                 ELSE CAST(value AS INTEGER) END
                    FROM meta WHERE key='views_dimensions_top_n'
-                     AND (CAST(value AS INTEGER) > 0 OR value = '0')), 500) AS n
+                     AND (CAST(value AS INTEGER) > 0 OR value = '0')), 1000) AS n
 )
 SELECT project_id, day, platform, visitors, views FROM agg_views_platforms
 UNION ALL
@@ -605,7 +606,7 @@ WITH cap AS (
   SELECT COALESCE((SELECT CASE CAST(value AS INTEGER) WHEN 0 THEN 4611686018427387904
                                 ELSE CAST(value AS INTEGER) END
                    FROM meta WHERE key='views_dimensions_top_n'
-                     AND (CAST(value AS INTEGER) > 0 OR value = '0')), 500) AS n
+                     AND (CAST(value AS INTEGER) > 0 OR value = '0')), 1000) AS n
 )
 SELECT project_id, day, source, visitors, views FROM agg_views_referrers
 UNION ALL
@@ -637,7 +638,7 @@ WITH cap AS (
   SELECT COALESCE((SELECT CASE CAST(value AS INTEGER) WHEN 0 THEN 4611686018427387904
                                 ELSE CAST(value AS INTEGER) END
                    FROM meta WHERE key='views_dimensions_top_n'
-                     AND (CAST(value AS INTEGER) > 0 OR value = '0')), 500) AS n
+                     AND (CAST(value AS INTEGER) > 0 OR value = '0')), 1000) AS n
 )
 SELECT project_id, day, utm_source, utm_medium, utm_campaign, visitors, views FROM agg_views_utm
 UNION ALL
@@ -679,7 +680,7 @@ WITH cap AS (
   SELECT COALESCE((SELECT CASE CAST(value AS INTEGER) WHEN 0 THEN 4611686018427387904
                                 ELSE CAST(value AS INTEGER) END
                    FROM meta WHERE key='views_dimensions_top_n'
-                     AND (CAST(value AS INTEGER) > 0 OR value = '0')), 500) AS n
+                     AND (CAST(value AS INTEGER) > 0 OR value = '0')), 1000) AS n
 )
 SELECT project_id, day, kind, visitors, views, sessions, bounces, duration_sec FROM agg_views_daily
 UNION ALL

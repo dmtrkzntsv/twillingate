@@ -41,8 +41,8 @@ func TestDefaultsApplied(t *testing.T) {
 	if c.Retention.ArchivedDays != 30 {
 		t.Errorf("Retention.ArchivedDays = %d, want 30", c.Retention.ArchivedDays)
 	}
-	if c.ProductAttributesTopN != 50 || c.ViewsDimensionsTopN != 500 || c.IdentitiesTopN != 500 {
-		t.Errorf("caps = %d/%d/%d, want 50/500/500", c.ProductAttributesTopN, c.ViewsDimensionsTopN, c.IdentitiesTopN)
+	if c.ProductAttributesTopN != 100 || c.ViewsDimensionsTopN != 1000 || c.IdentitiesTopN != 1000 {
+		t.Errorf("caps = %d/%d/%d, want 100/1000/1000", c.ProductAttributesTopN, c.ViewsDimensionsTopN, c.IdentitiesTopN)
 	}
 	if c.Reporting.CacheAge != 900*time.Second || c.Reporting.RefreshAge != 60*time.Second {
 		t.Errorf("Reporting = %+v", c.Reporting)

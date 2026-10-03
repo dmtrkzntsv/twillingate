@@ -223,6 +223,13 @@ func typedViews(t *testing.T, db *DB) map[string][]string {
 func TestMigration025KeepsViewsAnswers(t *testing.T) {
 	db := newTestDBAt(t, 24)
 	ctx := context.Background()
+	// 024's views hard-code 500; 025's read the setting, written here as
+	// a boot would write VIEWS_DIMENSIONS_TOP_N=500 and IDENTITIES_TOP_N=500.
+	for _, key := range []string{"views_dimensions_top_n", "identities_top_n"} {
+		if err := db.SetMeta(ctx, key, "500"); err != nil {
+			t.Fatal(err)
+		}
+	}
 	p1 := seedDeclaredProject(t, db, nil)
 	p2 := seedDeclaredProject(t, db, nil)
 	var evs []store.Event

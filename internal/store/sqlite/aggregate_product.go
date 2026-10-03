@@ -23,7 +23,7 @@ func attrPath(key string) string {
 // `rn <= :n` filter would read it as "keep nothing" and silently collapse
 // every distinct value into "(other)" -- a permanent, undetected loss of
 // attribute breakdowns. 0 keeps every value (capRows).
-const defaultAttrsTopN = 50
+const defaultAttrsTopN = 100
 
 func (d *DB) AggregateProductDay(ctx context.Context, projectID int64, day civil.Date, attrs []string, topN int) error {
 	topN = capRows(topN, defaultAttrsTopN)

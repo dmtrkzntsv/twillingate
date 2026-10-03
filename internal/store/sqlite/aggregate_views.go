@@ -15,7 +15,7 @@ import (
 // It applies to every dimension, paths included: an unbounded dimension is
 // the wrong default on the SD-card hardware target (a path carrying record
 // ids would grow the aggregate without limit). 0 keeps every value.
-const defaultDimensionsTopN = 500
+const defaultDimensionsTopN = 1000
 
 // noCap is the cap 0 stands for: a rank no day reaches. The views read the
 // same number (025_live_halves.sql) when the meta row holds 0.

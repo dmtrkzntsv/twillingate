@@ -104,7 +104,7 @@ func TestAggregateViewDayPerKind(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	seedViewDay(t, db)
-	if err := db.AggregateViewDay(ctx, 1, day("2026-08-10"), 500); err != nil {
+	if err := db.AggregateViewDay(ctx, 1, day("2026-08-10"), defaultDimensionsTopN); err != nil {
 		t.Fatal(err)
 	}
 	if got, want := readDaily(t, db, "agg_views_daily", "web"), (dailyRow{2, 4, 3, 2, 600}); got != want {
@@ -126,7 +126,7 @@ func TestAggregateViewDayDimensions(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	seedViewDay(t, db)
-	if err := db.AggregateViewDay(ctx, 1, day("2026-08-10"), 500); err != nil {
+	if err := db.AggregateViewDay(ctx, 1, day("2026-08-10"), defaultDimensionsTopN); err != nil {
 		t.Fatal(err)
 	}
 	check := func(q string, args []any, wantV, wantP int) {
@@ -195,7 +195,7 @@ func TestAggregateViewDayCapsDimensions(t *testing.T) {
 		views = append(views, store.Event{Family: store.FamilyViews, ID: fmt.Sprintf("hot-%d", i), TS: at(10, 0), ActorID: "c", Path: "/hot", OS: "linux", OSVersion: "0"})
 	}
 	seedViews(t, db, views...)
-	if err := db.AggregateViewDay(ctx, 1, day("2026-08-10"), 500); err != nil {
+	if err := db.AggregateViewDay(ctx, 1, day("2026-08-10"), defaultDimensionsTopN); err != nil {
 		t.Fatal(err)
 	}
 	var rows, otherV, otherP int
@@ -225,14 +225,14 @@ func TestAggregateViewDayIsIdempotentAndSkipsEmptyDay(t *testing.T) {
 	ctx := context.Background()
 	seedViewDay(t, db)
 	for i := 0; i < 2; i++ {
-		if err := db.AggregateViewDay(ctx, 1, day("2026-08-10"), 500); err != nil {
+		if err := db.AggregateViewDay(ctx, 1, day("2026-08-10"), defaultDimensionsTopN); err != nil {
 			t.Fatal(err)
 		}
 	}
 	if got, want := readDaily(t, db, "agg_views_daily", "web"), (dailyRow{2, 4, 3, 2, 600}); got != want {
 		t.Errorf("after re-run web = %+v, want %+v", got, want)
 	}
-	if err := db.AggregateViewDay(ctx, 1, day("2026-08-11"), 500); err != nil {
+	if err := db.AggregateViewDay(ctx, 1, day("2026-08-11"), defaultDimensionsTopN); err != nil {
 		t.Fatalf("empty day must be a no-op: %v", err)
 	}
 	var n int

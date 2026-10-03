@@ -96,7 +96,7 @@ func TestStitchViewsInvariantDaily(t *testing.T) {
 	if webBefore != (dailyRow{2, 4, 3, 2, 600}) || appBefore != (dailyRow{2, 3, 2, 1, 300}) {
 		t.Fatalf("live v_views_daily web=%+v app=%+v; fixture expectations wrong", webBefore, appBefore)
 	}
-	if err := db.AggregateViewDay(ctx, 1, day("2026-08-10"), 500); err != nil {
+	if err := db.AggregateViewDay(ctx, 1, day("2026-08-10"), defaultDimensionsTopN); err != nil {
 		t.Fatal(err)
 	}
 	if got := read("web"); got != webBefore {
@@ -170,7 +170,7 @@ func TestStitchViewsInvariantAllViewsDimensions(t *testing.T) {
 	if _, ok := before["v_views_paths"]["(other)"]; !ok {
 		t.Fatal("paths fixture did not exceed the cap; the other-bucket parity is untested")
 	}
-	if err := db.AggregateViewDay(ctx, 1, day("2026-08-10"), 500); err != nil {
+	if err := db.AggregateViewDay(ctx, 1, day("2026-08-10"), defaultDimensionsTopN); err != nil {
 		t.Fatal(err)
 	}
 	for _, d := range dims {
@@ -217,7 +217,7 @@ func TestStitchViewConsentAcrossBoundary(t *testing.T) {
 	if got := read(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("live v_views_consent = %v, want %v", got, want)
 	}
-	if err := db.AggregateViewDay(ctx, 1, day("2026-08-10"), 500); err != nil {
+	if err := db.AggregateViewDay(ctx, 1, day("2026-08-10"), defaultDimensionsTopN); err != nil {
 		t.Fatal(err)
 	}
 	if got := read(); !reflect.DeepEqual(got, want) {
@@ -244,7 +244,7 @@ func TestStitchViewUTMExcludesEmpty(t *testing.T) {
 	if n := count(); n != 1 {
 		t.Fatalf("live v_views_utm rows = %d, want 1", n)
 	}
-	if err := db.AggregateViewDay(ctx, 1, day("2026-08-10"), 500); err != nil {
+	if err := db.AggregateViewDay(ctx, 1, day("2026-08-10"), defaultDimensionsTopN); err != nil {
 		t.Fatal(err)
 	}
 	if n := count(); n != 1 {
@@ -287,7 +287,7 @@ func TestStitchViewLocalesExcludesUndeclared(t *testing.T) {
 	if got := read(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("live v_views_locales = %v, want %v", got, want)
 	}
-	if err := db.AggregateViewDay(ctx, 1, day("2026-08-10"), 500); err != nil {
+	if err := db.AggregateViewDay(ctx, 1, day("2026-08-10"), defaultDimensionsTopN); err != nil {
 		t.Fatal(err)
 	}
 	if got := read(); !reflect.DeepEqual(got, want) {
@@ -312,7 +312,7 @@ func TestStitchViewsInvariantProduct(t *testing.T) {
 	if c1 != 3 || u1 != 2 {
 		t.Fatalf("live v_product_daily subscribed = (%d,%d), want (3,2)", c1, u1)
 	}
-	if err := db.AggregateProductDay(ctx, 1, day("2026-08-10"), nil, 50); err != nil {
+	if err := db.AggregateProductDay(ctx, 1, day("2026-08-10"), nil, defaultAttrsTopN); err != nil {
 		t.Fatal(err)
 	}
 	c2, u2 := read()
@@ -347,7 +347,7 @@ func TestStitchViewProductTotalsIsTrueDAU(t *testing.T) {
 	if e1 != 4 || u1 != 2 {
 		t.Fatalf("live v_product_totals = (%d,%d), want (4,2)", e1, u1)
 	}
-	if err := db.AggregateProductDay(ctx, 1, day("2026-08-10"), nil, 50); err != nil {
+	if err := db.AggregateProductDay(ctx, 1, day("2026-08-10"), nil, defaultAttrsTopN); err != nil {
 		t.Fatal(err)
 	}
 	if e2, u2 := read(); e1 != e2 || u1 != u2 {
@@ -367,7 +367,7 @@ func TestStitchViewsMixedAggregatedAndRawDays(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AggregateViewDay(ctx, 1, day("2026-08-10"), 500); err != nil {
+	if err := db.AggregateViewDay(ctx, 1, day("2026-08-10"), defaultDimensionsTopN); err != nil {
 		t.Fatal(err)
 	}
 	rows, err := db.db.Query(`SELECT day, views FROM v_views_daily
@@ -426,10 +426,10 @@ func TestStitchViewIdentityDailyCoversRawDays(t *testing.T) {
 
 	// After aggregation the same figures must come from the aggregate half,
 	// with no double counting from the raw rows the pass deletes.
-	if err := db.AggregateIdentityDay(ctx, 1, day("2026-08-23"), 500); err != nil {
+	if err := db.AggregateIdentityDay(ctx, 1, day("2026-08-23"), defaultDimensionsTopN); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AggregateViewDay(ctx, 1, day("2026-08-23"), 500); err != nil {
+	if err := db.AggregateViewDay(ctx, 1, day("2026-08-23"), defaultDimensionsTopN); err != nil {
 		t.Fatal(err)
 	}
 	var rows int
@@ -470,7 +470,7 @@ func TestStitchViewIdentityDailyDoesNotDoubleCountRetainedRawDays(t *testing.T) 
 	}
 	// AggregateIdentityDay does not delete raw rows; only AggregateViewDay
 	// does, and the pass rolls identity up long before that.
-	if err := db.AggregateIdentityDay(ctx, 1, day("2026-08-23"), 500); err != nil {
+	if err := db.AggregateIdentityDay(ctx, 1, day("2026-08-23"), defaultDimensionsTopN); err != nil {
 		t.Fatal(err)
 	}
 
@@ -540,7 +540,7 @@ func TestStitchViewIdentityDailyCapsLikeTheAggregate(t *testing.T) {
 	}
 
 	live := snapshot()
-	if err := db.AggregateIdentityDay(ctx, 1, day("2026-08-23"), 500); err != nil {
+	if err := db.AggregateIdentityDay(ctx, 1, day("2026-08-23"), defaultDimensionsTopN); err != nil {
 		t.Fatal(err)
 	}
 	agg := snapshot()
@@ -614,28 +614,29 @@ func readAttrs(t *testing.T, db *DB, projectID int64, day string) []attrRow {
 	return out
 }
 
-// seedAttrDay writes 60 distinct "plan" values for one event on one day --
-// more than the 50 cap, so the top-N cutoff and the "(other)" tail are both
-// exercised. Counts vary (1..3) so the ranking is not a pure alphabetical
-// tiebreak, and the four actors repeat across values so the tail's
-// unique_users is strictly less than the sum of its per-value uniques --
-// the exact case a summed "(other)" row would get wrong. Groups cycle
-// through "", g1 and g2 by (i/3+n)%3, so the tail (the count-1 values
-// p30..p57, i.e. i/3 in 10..19) holds empties as well as both groups:
-// its distinct non-empty groups are 2 while its per-value sum is 7.
+// seedAttrDay writes defaultAttrsTopN+10 distinct "plan" values for one
+// event on one day -- ten more than the default cap, so the top-N cutoff and
+// the "(other)" tail are both exercised. Counts vary (1..3) so the ranking
+// is not a pure alphabetical tiebreak, and the four actors repeat across
+// values so the tail's unique_users is strictly less than the sum of its
+// per-value uniques -- the exact case a summed "(other)" row would get
+// wrong. Groups cycle through "", g1 and g2 by (i/3+n)%3, so the tail (the
+// last ten count-1 values, i/3 running over ten consecutive numbers) holds
+// empties as well as both groups: its distinct non-empty groups are 2 while
+// its per-value sum is 6 or 7.
 func seedAttrDay(t *testing.T, db *DB, projectID int64) {
 	t.Helper()
 	groups := []string{"", "g1", "g2"}
 	var evs []store.Event
 	id := 0
-	for i := 0; i < 60; i++ {
+	for i := 0; i < defaultAttrsTopN+10; i++ {
 		for n := 0; n <= i%3; n++ {
 			id++
 			evs = append(evs, store.Event{Family: store.FamilyProduct,
 				ID: fmt.Sprintf("e%04d", id), ProjectID: projectID, EventName: "signup",
 				ActorID: fmt.Sprintf("a%d", (i+n)%4), GroupID: groups[(i/3+n)%3],
 				TS:            ts("2026-08-01T10:00:00Z"),
-				Attributes:    map[string]string{"plan": fmt.Sprintf("p%02d", i)},
+				Attributes:    map[string]string{"plan": fmt.Sprintf("p%03d", i)},
 				OS:            []string{"ios", "android"}[i%2],
 				AppVersion:    []string{"1.0", "2.0", "3.0"}[i%3],
 				AppLocale:     []string{"en", "de"}[i%2],
@@ -643,7 +644,7 @@ func seedAttrDay(t *testing.T, db *DB, projectID int64) {
 				Browser:       []string{"chrome", "safari"}[i%2],
 				Device:        "desktop",
 				BrowserLocale: "en-US",
-				Path:          fmt.Sprintf("/p/%02d", i),
+				Path:          fmt.Sprintf("/p/%03d", i),
 			})
 		}
 	}
@@ -683,8 +684,8 @@ func TestProductAttrsViewInvariant(t *testing.T) {
 			}
 		}
 	}
-	if plans != 51 {
-		t.Fatalf("live signup/plan rows = %d, want 51 (50 capped + one (other))", plans)
+	if plans != defaultAttrsTopN+1 {
+		t.Fatalf("live signup/plan rows = %d, want %d (capped + one (other))", plans, defaultAttrsTopN+1)
 	}
 	if other == 0 {
 		t.Fatal("no (other) row: the tail path is untested")
@@ -699,7 +700,7 @@ func TestProductAttrsViewInvariant(t *testing.T) {
 	}
 
 	if err := db.AggregateProductDay(ctx, id,
-		civil.DateOf(ts("2026-08-01T00:00:00Z")), []string{"plan"}, 50); err != nil {
+		civil.DateOf(ts("2026-08-01T00:00:00Z")), []string{"plan"}, defaultAttrsTopN); err != nil {
 		t.Fatal(err)
 	}
 	after := readAttrs(t, db, id, "2026-08-01")
@@ -728,9 +729,9 @@ func TestProductAttrsViewOtherRecomputesUniques(t *testing.T) {
 			"tail values, so uniques must be strictly smaller than a summed count",
 			count, uniques)
 	}
-	// The tail is the ten count-1 values p30..p57 (i/3 in 10..19): groups
-	// g1, g2 and "" in rotation, so the distinct non-empty count is 2
-	// while a per-value sum would be 7.
+	// The tail is the last ten count-1 values (i/3 over ten consecutive
+	// numbers): groups g1, g2 and "" in rotation, so the distinct non-empty
+	// count is 2 while a per-value sum would be 6 or 7.
 	if !groups.Valid || groups.Int64 != 2 {
 		t.Fatalf("(other) unique_groups = %+v, want 2 (distinct across the tail, not summed)", groups)
 	}
@@ -762,7 +763,7 @@ func TestProductAttrsViewSystemDimensionsWithoutDeclaredKeys(t *testing.T) {
 		t.Fatalf("%d rows for undeclared custom keys; only system dimensions were expected", custom)
 	}
 	if err := db.AggregateProductDay(ctx, id,
-		civil.DateOf(ts("2026-08-01T00:00:00Z")), nil, 50); err != nil {
+		civil.DateOf(ts("2026-08-01T00:00:00Z")), nil, defaultAttrsTopN); err != nil {
 		t.Fatal(err)
 	}
 	if after := readAttrs(t, db, id, "2026-08-01"); !reflect.DeepEqual(before, after) {
@@ -781,7 +782,7 @@ func TestProductAttrsDeclaredSystemKeysAcrossBoundary(t *testing.T) {
 	id := seedDeclaredProject(t, db, keys)
 	other := seedDeclaredProject(t, db, nil)
 	var evs []store.Event
-	for i := 0; i < 70; i++ {
+	for i := 0; i < defaultAttrsTopN+20; i++ {
 		for _, pid := range []int64{id, other} {
 			evs = append(evs, store.Event{
 				ID: fmt.Sprintf("d%d-%03d", pid, i), ProjectID: pid, Family: store.FamilyProduct,
@@ -810,7 +811,7 @@ func TestProductAttrsDeclaredSystemKeysAcrossBoundary(t *testing.T) {
 			t.Errorf("undeclared %s produced a row for a project that did not declare it", r.Key)
 		}
 	}
-	if err := db.AggregateProductDay(ctx, id, civil.DateOf(ts("2026-08-01T00:00:00Z")), keys, 50); err != nil {
+	if err := db.AggregateProductDay(ctx, id, civil.DateOf(ts("2026-08-01T00:00:00Z")), keys, defaultAttrsTopN); err != nil {
 		t.Fatal(err)
 	}
 	if after := readAttrs(t, db, id, "2026-08-01"); !reflect.DeepEqual(before, after) {
@@ -966,7 +967,7 @@ func TestStitchViewPlatformsAcrossBoundaryWithCap(t *testing.T) {
 	if _, ok := before[otherBucket]; !ok {
 		t.Fatal("platform fixture did not exceed the cap")
 	}
-	if err := db.AggregateViewDay(ctx, 1, day("2026-08-10"), 500); err != nil {
+	if err := db.AggregateViewDay(ctx, 1, day("2026-08-10"), defaultDimensionsTopN); err != nil {
 		t.Fatal(err)
 	}
 	if after := snapshot(); !reflect.DeepEqual(after, before) {

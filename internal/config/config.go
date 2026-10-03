@@ -191,9 +191,9 @@ func FromEnv(lookup func(string) (string, bool)) (*Config, error) {
 		// of a views breakdown and for users and groups a day. Each cap
 		// keeps the aggregates, which outlive raw rows, from growing with a
 		// dimension that carries ids; 0 keeps every value.
-		ProductAttributesTopN: e.num("PRODUCT_ATTRIBUTES_TOP_N", 50),
-		ViewsDimensionsTopN:   e.num("VIEWS_DIMENSIONS_TOP_N", 500),
-		IdentitiesTopN:        e.num("IDENTITIES_TOP_N", 500),
+		ProductAttributesTopN: e.num("PRODUCT_ATTRIBUTES_TOP_N", 100),
+		ViewsDimensionsTopN:   e.num("VIEWS_DIMENSIONS_TOP_N", 1000),
+		IdentitiesTopN:        e.num("IDENTITIES_TOP_N", 1000),
 		Reporting: ReportingConfig{
 			CacheAge:   time.Duration(e.num("REPORTING_CACHE_SECONDS", 900)) * time.Second,
 			RefreshAge: time.Duration(e.num("REPORTING_REFRESH_SECONDS", 60)) * time.Second,

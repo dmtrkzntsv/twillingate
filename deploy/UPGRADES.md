@@ -497,9 +497,22 @@ What changes on the day:
 Migration 025 recreates every `v_*` view's live half so a query reads only
 the raw days its range covers; no data is copied and every view answers as
 before. Two settings join `PRODUCT_ATTRIBUTES_TOP_N`: `VIEWS_DIMENSIONS_TOP_N`
-and `IDENTITIES_TOP_N` (both default 500, today's fixed caps).
+and `IDENTITIES_TOP_N`, replacing fixed caps of 500.
 
-Before upgrading, check `twillingate.env` (compose: `.env`):
+The defaults rise: views breakdowns and identities keep 1000 values a day
+(was 500), attribute values 100 per day, event and key (was 50). Aggregates
+grow only on days a dimension had more values than the old cap; a
+dimension saturated every day costs about 19 MB a year at 1000. To keep
+today's caps, set them before upgrading in `twillingate.env` (compose:
+`.env`):
+
+```sh
+PRODUCT_ATTRIBUTES_TOP_N=50
+VIEWS_DIMENSIONS_TOP_N=500
+IDENTITIES_TOP_N=500
+```
+
+Also check there:
 
 - `PRODUCT_ATTRIBUTES_TOP_N=0` used to fall back to 50; it now keeps every
   value. Remove the line, or set 50, to keep today's behaviour.

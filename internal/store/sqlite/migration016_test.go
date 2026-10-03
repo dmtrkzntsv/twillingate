@@ -70,7 +70,7 @@ func TestMigration016LeavesHistoryUnmeasured(t *testing.T) {
 	if err := db.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AggregateProductDay(ctx, 1, day("2026-09-10"), []string{"plan"}, 50); err != nil {
+	if err := db.AggregateProductDay(ctx, 1, day("2026-09-10"), []string{"plan"}, defaultAttrsTopN); err != nil {
 		t.Fatal(err)
 	}
 	if g := groupsOf(t, db, `SELECT unique_groups FROM agg_product_attrs
