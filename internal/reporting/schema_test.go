@@ -52,6 +52,7 @@ func constrained[T any](t *testing.T) *jsonschema.Resolved {
 	return r
 }
 
+// validate decodes in as JSON and checks it against r.
 func validate(t *testing.T, r *jsonschema.Resolved, in string) error {
 	t.Helper()
 	var v any
@@ -61,6 +62,8 @@ func validate(t *testing.T, r *jsonschema.Resolved, in string) error {
 	return r.Validate(v)
 }
 
+// TestConstrainWidgetSpec: a WidgetSpec schema accepts each component's
+// own props and source types and refuses the others, naming the culprit.
 func TestConstrainWidgetSpec(t *testing.T) {
 	r := constrained[WidgetSpec](t)
 	const sql = `"source":{"type":"sql","content":"SELECT 1 AS value"}`
@@ -121,7 +124,13 @@ func TestConstrainWidgetUpdate(t *testing.T) {
 	}
 }
 
+// TestConstrainWidgetRefusesOtherShapes: a schema that is not a widget's,
+// or no schema at all, is an error rather than a half-tightened schema or
+// a panic.
 func TestConstrainWidgetRefusesOtherShapes(t *testing.T) {
+	if err := ConstrainWidget(nil, nil, []string{"sql"}); err == nil {
+		t.Error("a nil schema was tightened")
+	}
 	s, err := jsonschema.For[Source](nil)
 	if err != nil {
 		t.Fatal(err)

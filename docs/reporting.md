@@ -834,7 +834,7 @@ widget's name (`widget visitors: …`), and nothing is created.
 | SQLite's own error, such as a column that does not exist | Fix the query; try it with `query` first. |
 | markdown text is empty | Give the Markdown text. |
 | stat: … (a props schema error) | Match the props schema `list_components` returns; unknown props are refused. |
-| validating "arguments": … (an MCP input schema error) | The path and message name the field; match `list_components`. Over REST the same mistake gets the server's own refusal. |
+| validating "arguments": … (an MCP input schema error) | The path and message name the field; match `list_components`. The path is the schema's, not the widget's: for `create_dashboard` it points into `widgets/items`, not at a particular widget, so find the value it names in your own input. Over REST the same mistake gets the server's own refusal. |
 | width is columns out of 12, from 1 to 12 | A whole number 1–12. `height` is the same, in rows of 40px. |
 | after 7 is not a widget on dashboard 1001 | Name a widget on the same dashboard, `0` for first, or leave `after` out for last. |
 | after 7 is archived; name a live widget | `after` never names an archived widget: name a live one, or `restore_widget` it first. |

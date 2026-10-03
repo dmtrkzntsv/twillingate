@@ -18,8 +18,13 @@ import (
 // stored one) props stays any object, and the server checks it as
 // before. Props schemas are inlined rather than put in $defs: the OpenAPI
 // document copies this schema into a request body, where a "#/$defs/..."
-// reference would resolve against the document, not the schema.
+// reference would resolve against the document, not the schema. A nil
+// widget (a caller whose property lookup came back empty) is an error, not
+// a panic.
 func ConstrainWidget(widget *jsonschema.Schema, comps []Component, sourceTypes []string) error {
+	if widget == nil {
+		return fmt.Errorf("reporting: no widget schema")
+	}
 	props := widget.Properties
 	for _, name := range []string{"component", "props", "source", "width", "height"} {
 		if props[name] == nil {

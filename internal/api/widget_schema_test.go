@@ -27,7 +27,8 @@ func schemaAt(t *testing.T, v any, keys ...string) map[string]any {
 }
 
 // widgetSchemaOK checks one widget schema carries the contract: the
-// component enum and one allOf rule per component.
+// component enum, one allOf rule per component, the source types and the
+// width bound.
 func widgetSchemaOK(t *testing.T, tool string, w map[string]any) {
 	t.Helper()
 	enum, _ := schemaAt(t, w, "properties", "component")["enum"].([]any)
@@ -37,11 +38,16 @@ func widgetSchemaOK(t *testing.T, tool string, w map[string]any) {
 	if rules, _ := w["allOf"].([]any); len(rules) != len(enum) && len(rules) != len(enum)-1 {
 		t.Errorf("%s: %d allOf rules for %d enum values", tool, len(rules), len(enum))
 	}
-	if max := schemaAt(t, w, "properties", "width")["maximum"]; max != 12.0 {
-		t.Errorf("%s: width maximum = %v", tool, max)
+	srcTypes, _ := schemaAt(t, w, "properties", "source", "properties", "type")["enum"].([]any)
+	if !containsAny(srcTypes, "sql") || !containsAny(srcTypes, "md") {
+		t.Errorf("%s: source.type enum = %v", tool, srcTypes)
+	}
+	if widthMax := schemaAt(t, w, "properties", "width")["maximum"]; widthMax != 12.0 {
+		t.Errorf("%s: width maximum = %v", tool, widthMax)
 	}
 }
 
+// containsAny reports whether vs, a decoded JSON array, holds want.
 func containsAny(vs []any, want any) bool {
 	for _, v := range vs {
 		if v == want {
@@ -98,7 +104,9 @@ func TestWidgetSchemaRefusesBeforeWriting(t *testing.T) {
 		"dashboard_id": d.ID, "component": "stat", "props": map[string]any{"format": "pct"},
 		"source": map[string]any{"type": "sql", "content": visitorsSQL},
 	})
-	if !res.IsError || !strings.Contains(textOf(res), "pct") {
+	// The prefix is the SDK's, so it pins that the input schema refused the
+	// call: the server's own refusal also names "pct" but lacks it.
+	if !res.IsError || !strings.Contains(textOf(res), `validating "arguments"`) || !strings.Contains(textOf(res), "pct") {
 		t.Fatalf("add_widget with a bad prop = %s", textOf(res))
 	}
 	toolJSON(t, cs, "get_dashboard", map[string]any{"dashboard_id": d.ID}, &d)
