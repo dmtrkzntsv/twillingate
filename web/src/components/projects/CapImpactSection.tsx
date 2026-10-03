@@ -1,5 +1,7 @@
-import { useQuery } from '@tanstack/react-query'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import type { CapUsageRow } from '@/lib/api'
 import { capUsageQuery } from '@/lib/queries'
@@ -12,7 +14,7 @@ function order(rows: CapUsageRow[]): CapUsageRow[] {
 
 /** Per capped dimension: the busiest day against the cap, days capped, and the share folded into (other). */
 export default function CapImpactSection({ projectId, range }: { projectId: number; range: { from: string; to: string } }) {
-  const { data, isError, refetch } = useQuery(capUsageQuery(projectId, range))
+  const { data, error, isError, isPlaceholderData, refetch } = useQuery({ ...capUsageQuery(projectId, range), placeholderData: keepPreviousData })
   return (
     <section aria-label="Cap impact" className="flex flex-col gap-3 rounded-lg border p-4">
       <header>
@@ -22,13 +24,17 @@ export default function CapImpactSection({ projectId, range }: { projectId: numb
         </p>
       </header>
       {isError ? (
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          Couldn't load cap impact. <Button variant="outline" size="sm" onClick={() => void refetch()}>Retry</Button>
+        <div className="flex flex-col gap-2 text-sm text-muted-foreground">
+          <p>Couldn't load cap impact.</p>
+          <p>{error.message}</p>
+          <Button variant="outline" size="sm" className="self-start" onClick={() => void refetch()}>Retry</Button>
         </div>
-      ) : !data ? null : data.dimensions.length === 0 ? (
+      ) : !data ? (
+        <Skeleton aria-hidden className="h-40 w-full" />
+      ) : data.dimensions.length === 0 ? (
         <p className="text-sm text-muted-foreground">No data in this range.</p>
       ) : (
-        <Table>
+        <Table className={cn('transition-opacity', isPlaceholderData && 'opacity-60')}>
           <TableHeader>
             <TableRow>
               <TableHead>Dimension</TableHead><TableHead>Cap</TableHead><TableHead>Busiest day</TableHead>
@@ -37,8 +43,11 @@ export default function CapImpactSection({ projectId, range }: { projectId: numb
           </TableHeader>
           <TableBody>
             {order(data.dimensions).map((d) => (
-              <TableRow key={`${d.setting}/${d.dimension}`} aria-label={d.dimension} className={cn(d.days_capped > 0 && 'bg-amber-500/5')}>
-                <TableCell className="font-medium">{d.dimension}</TableCell>
+              <TableRow key={`${d.setting}/${d.dimension}`} aria-label={d.dimension} className={cn(d.days_capped > 0 && 'bg-amber-500/10')}>
+                <TableCell className={cn('font-medium', d.days_capped > 0 && 'border-l-2 border-amber-500')}>
+                  {d.dimension}
+                  {d.days_capped > 0 && <Badge variant="outline" className="ml-2 border-amber-500/50 text-amber-700 dark:text-amber-400">capped</Badge>}
+                </TableCell>
                 <TableCell>{d.cap === 0 ? 'no cap' : d.cap.toLocaleString()}</TableCell>
                 <TableCell>{d.max_values_per_day.toLocaleString()} <span className="text-xs text-muted-foreground">{d.max_day}</span></TableCell>
                 <TableCell>{`${d.days_capped} of ${d.days}`}</TableCell>
