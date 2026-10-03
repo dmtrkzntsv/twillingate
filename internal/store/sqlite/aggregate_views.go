@@ -29,7 +29,10 @@ const consentSQL = `CASE consent WHEN 1 THEN 'given' WHEN 0 THEN 'none' ELSE 'un
 // rawViews, rawProduct and rawMeasures are the only read path into the
 // raw events table (020_one_events_table.sql, 024_measures.sql): each is a
 // view carrying one family's filter, so no query can forget it. Writes and
-// deletes go to events with an explicit family.
+// deletes go to events with an explicit family, and so do the two views
+// that read more than one family: v_events_flat, and v_identity_daily
+// (025_live_halves.sql), whose live half groups views and product rows in
+// one aggregate over the table so a query's day filter reaches them.
 const (
 	rawViews    = "raw_views"
 	rawProduct  = "raw_product"
@@ -75,8 +78,9 @@ func (d *DB) daysBefore(ctx context.Context, source string, projectID int64, bef
 // "(other)" first, so a hostile client cannot grow agg_views_daily. A
 // client-declared session_id is authoritative (the app knows its own
 // foreground/background transitions); otherwise a gap over 30 minutes per
-// actor splits sessions. The live half of v_views_daily (012_views.sql)
-// mirrors this per (project_id, day); views_test.go enforces the parity.
+// actor splits sessions. The live half of v_views_daily
+// (025_live_halves.sql) runs the same per raw day; views_test.go enforces
+// the parity.
 const viewSessionsCTE = `
 WITH src AS (
   SELECT kind, actor_id, session_id, CAST(strftime('%s', ts) AS INTEGER) AS t

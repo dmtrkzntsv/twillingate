@@ -15,94 +15,69 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
-// TestViewsLiveHalvesUseTheDayIndex is the physical-plan regression for the
-// day-index perf change. It asserts two things for the live halves of
-// v_views_paths, v_views_daily, v_views_consent, v_product_daily and
-// v_product_totals:
-//
-//  1. Nothing in the plan scans the raw events table outright. Before the
-//     day column existed, the only index was (project_id, ts), and every
-//     access via it either ignored the day range entirely or (for the raw
-//     row scan feeding COUNT(DISTINCT actor_id)/session detection) applied
-//     only the project filter. Since 020 the one index, idx_events_family,
-//     led on family, so even an access with no project or day bound read
-//     one family rather than both; since 023 events is a WITHOUT ROWID
-//     table clustered on (family, project_id, day, id), so the same is
-//     true of the primary key, which replaced that index.
-//  2. At least one access is a SEARCH on the primary key carrying an
-//     actual day bound (">", "<" or "="), not just "(family=?)". That is
-//     the raw-row scan driving each live half, and it is the dominant cost
-//     on a large raw table: BenchmarkViewsPathsLiveHalf and
-//     BenchmarkViewsDailyLiveHalf in bench_test.go show the wall-clock
-//     effect (~13%/~32% faster on 150k rows -- see the day-index report).
-//
-// It deliberately does NOT assert that every access is day-bounded. One
-// access bounded by family alone survives in every dimension view and in
-// v_views_daily: the ranking subquery that computes each day's top-500 cap
-// (aliased "r"/"k" in the view definitions) is joined to raw rows, and
-// separately verified (see the day-index report) to remain an
-// un-day-bounded index scan under every formulation tried -- including one
-// with no join at all, using COUNT(*) OVER/DENSE_RANK() directly on the raw
-// rows. The common factor is that this subquery is always the second arm
-// of the view's `agg_* UNION ALL live-computation` structure (012_views.sql's
-// own design, not something introduced here): SQLite's
-// push-down-into-window-function-subquery optimization does not operate
-// across a UNION ALL arm, so a WHERE term on the compound view never
-// reaches a window function computed inside one of its arms, no matter how
-// directly that arm's columns trace back to the raw table. Removing that
-// residual scan would mean giving up the aggregate/live UNION ALL shape
-// these views are built on -- out of scope for this change.
-func TestViewsLiveHalvesUseTheDayIndex(t *testing.T) {
+// TestLiveHalvesReadOnlyTheRange pins what 025_live_halves.sql is for: a
+// query's project and day reach the raw rows of every v_* view, so each
+// live half runs over the raw days the range covers and none other. Every
+// access to events in the plan must search the primary key bounded by
+// family, project and day (a range, or one day where v_views_daily works
+// day by day). A result cannot show which rows were read, so the plan is
+// the test. It reads the view list from the schema: a new view is held to
+// the same bar. v_retention has no live half and v_events_flat is the raw
+// rows themselves; neither is filtered by day.
+func TestLiveHalvesReadOnlyTheRange(t *testing.T) {
 	db := newTestDB(t)
-	seedViewDay(t, db) // project 1, day 2026-08-10
-
-	queries := map[string]string{
-		"paths": `SELECT path, SUM(visitors), SUM(views) FROM v_views_paths
-			WHERE project_id = ? AND day BETWEEN ? AND ? GROUP BY path`,
-		"daily": `SELECT kind, SUM(visitors), SUM(views) FROM v_views_daily
-			WHERE project_id = ? AND day BETWEEN ? AND ? GROUP BY kind`,
-		"consent": `SELECT consent, SUM(visitors), SUM(views) FROM v_views_consent
-			WHERE project_id = ? AND day BETWEEN ? AND ? GROUP BY consent`,
-		"v_product_daily":  `SELECT * FROM v_product_daily  WHERE project_id=? AND day BETWEEN ? AND ?`,
-		"v_product_totals": `SELECT * FROM v_product_totals WHERE project_id=? AND day BETWEEN ? AND ?`,
+	rows, err := db.db.Query(`SELECT name FROM sqlite_schema WHERE type='view'
+		AND name LIKE 'v\_%' ESCAPE '\' AND name NOT IN ('v_events_flat', 'v_retention')
+		ORDER BY name`)
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	for name, q := range queries {
-		t.Run(name, func(t *testing.T) {
-			rows, err := db.db.Query("EXPLAIN QUERY PLAN "+q, 1, "2026-08-01", "2026-08-10")
+	var views []string
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		views = append(views, n)
+	}
+	rows.Close()
+	if len(views) < 20 {
+		t.Fatalf("found %d views: %v", len(views), views)
+	}
+	for _, view := range views {
+		t.Run(view, func(t *testing.T) {
+			rows, err := db.db.Query(`EXPLAIN QUERY PLAN SELECT * FROM `+view+`
+				WHERE project_id = ? AND day BETWEEN ? AND ?`, 1, "2026-08-01", "2026-08-07")
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer rows.Close()
-			var details []string
+			var plan []string
+			reads := 0
 			for rows.Next() {
-				var id, parent, notUsed int
+				var id, parent, unused int
 				var detail string
-				if err := rows.Scan(&id, &parent, &notUsed, &detail); err != nil {
+				if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
 					t.Fatal(err)
 				}
-				details = append(details, detail)
+				plan = append(plan, detail)
+				if !strings.Contains(detail, " events ") && !strings.HasSuffix(detail, " events") {
+					continue
+				}
+				reads++
+				if !strings.Contains(detail, "USING PRIMARY KEY (family=? AND project_id=? AND day>? AND day<?)") &&
+					!strings.Contains(detail, "USING PRIMARY KEY (family=? AND project_id=? AND day=?)") {
+					t.Errorf("reads events without a project and day bound: %s", detail)
+				}
 			}
 			if err := rows.Err(); err != nil {
 				t.Fatal(err)
 			}
-			sawDayBoundSearch := false
-			for _, d := range details {
-				if strings.HasPrefix(d, "SCAN events") {
-					t.Errorf("%s: plan scans the raw events table without its primary key", name)
-				}
-				if strings.Contains(d, "USING PRIMARY KEY (family=? AND project_id=? AND day") &&
-					(strings.Contains(d, "day>") || strings.Contains(d, "day<") || strings.Contains(d, "day=")) {
-					sawDayBoundSearch = true
-				}
-			}
-			if !sawDayBoundSearch {
-				t.Errorf("%s: no access searches the primary key bounded by family, project and day", name)
+			if reads == 0 {
+				t.Errorf("no read of events in the plan")
 			}
 			if t.Failed() {
-				for _, d := range details {
-					t.Logf("plan: %s", d)
-				}
+				t.Logf("plan:\n%s", strings.Join(plan, "\n"))
 			}
 		})
 	}

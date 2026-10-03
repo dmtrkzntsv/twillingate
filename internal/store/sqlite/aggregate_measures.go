@@ -15,7 +15,7 @@ import (
 // cap follow the product rules: the system attributes always, plus the
 // project's declared keys. The rows written are exactly what the live
 // halves of v_measures_daily (024_measures.sql) and v_measures_attrs
-// (025_attrs_live_halves.sql) compute over the same raw rows.
+// (025_live_halves.sql) compute over the same raw rows.
 func (d *DB) AggregateMeasureDay(ctx context.Context, projectID int64, day civil.Date, attrs []string, topN int) error {
 	if topN <= 0 {
 		topN = defaultAttrsTopN

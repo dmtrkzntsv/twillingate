@@ -187,39 +187,131 @@ func TestMigration025KeepsMeasuresAttrsAnswer(t *testing.T) {
 	}
 }
 
-// The point of 025: a query's project and day reach the raw rows, so each
-// live half runs over the days the range covers and none other. Pinned on
-// the plan, since a result cannot show which rows were read.
-func TestAttrsLiveHalvesReadOnlyTheRange(t *testing.T) {
-	db := newTestDB(t)
-	for _, view := range []string{"v_product_attrs", "v_measures_attrs"} {
-		rows, err := db.db.Query(`EXPLAIN QUERY PLAN SELECT * FROM `+view+`
-			WHERE project_id = ? AND day BETWEEN ? AND ?`, 1, "2026-08-01", "2026-08-07")
-		if err != nil {
+// typedViews reads every v_* view but the raw rows (v_events_flat), each
+// value with its SQL type, rows sorted.
+func typedViews(t *testing.T, db *DB) map[string][]string {
+	t.Helper()
+	rows, err := db.db.Query(`SELECT name FROM sqlite_schema WHERE type='view'
+		AND name LIKE 'v\_%' ESCAPE '\' AND name <> 'v_events_flat' ORDER BY name`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
 			t.Fatal(err)
 		}
-		var plan []string
-		for rows.Next() {
-			var id, parent, unused int
-			var detail string
-			if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
-				t.Fatal(err)
+		names = append(names, n)
+	}
+	rows.Close()
+	out := map[string][]string{}
+	for _, n := range names {
+		r := snapshotRows(t, db, "SELECT * FROM "+n)
+		sort.Strings(r)
+		out[n] = r
+	}
+	return out
+}
+
+// Every view 025 reshapes answers as it did at 24. Project 1 has three
+// days of views and product events with every breakdown column set,
+// sessions both keyed and split by gaps, and its first day rolled up.
+// Project 2 has one day past every cap: 600 paths (one spelled
+// "(other)"), 600 kinds, browser versions, UTM campaigns, and 520 users
+// and groups.
+func TestMigration025KeepsViewsAnswers(t *testing.T) {
+	db := newTestDBAt(t, 24)
+	ctx := context.Background()
+	p1 := seedDeclaredProject(t, db, nil)
+	p2 := seedDeclaredProject(t, db, nil)
+	var evs []store.Event
+	for d := 0; d < 3; d++ {
+		base := time.Date(2026, 8, 1+d, 8, 0, 0, 0, time.UTC)
+		for i := 0; i < 120; i++ {
+			// Minutes apart, with every fifth gap past half an hour.
+			ts := base.Add(time.Duration(i*7+(i/5)*40) * time.Minute)
+			evs = append(evs, store.Event{Family: store.FamilyViews, ID: fmt.Sprintf("v1-%d-%03d", d, i),
+				ProjectID: p1, TS: ts, ReceivedAt: ts, Kind: []string{"web", "app", "cli"}[i%3],
+				ActorID: fmt.Sprintf("a%d", i%13), ActorKind: store.ActorConnection,
+				SessionID: []string{"", "", fmt.Sprintf("s%d", i%4)}[i%3],
+				UserID:    []string{"", fmt.Sprintf("u%d", i%9)}[i%2], GroupID: []string{"", fmt.Sprintf("g%d", i%5)}[i%2],
+				Host: []string{"a.example", "b.example"}[i%2], Path: fmt.Sprintf("/p/%d", i%17),
+				ReferrerSource: []string{"", "google", "hn"}[i%3],
+				UTMSource:      []string{"", "hn", "x"}[i%3], UTMMedium: []string{"", "social"}[i%2], UTMCampaign: []string{"", "launch"}[i%2],
+				Platform: []string{"web", "ios", "android"}[i%3], OS: []string{"linux", "ios", "android"}[i%3],
+				OSVersion: fmt.Sprintf("%d", i%4), Browser: []string{"firefox", "chrome"}[i%2], BrowserVersion: fmt.Sprintf("%d", 120+i%5),
+				BrowserLocale: []string{"", "en-US", "de-DE"}[i%3], AppLocale: []string{"", "en"}[i%2],
+				AppVersion: []string{"", "2.4.1", "2.5.0"}[i%3], Device: []string{"desktop", "mobile"}[i%2],
+				DeviceModel: []string{"", "Pixel 8"}[i%2], DisplayWidth: []int{0, 390, 1440}[i%3], DisplayHeight: []int{0, 844, 900}[i%3],
+				Country: []string{"US", "DE", "FR"}[i%3]})
+			if i%2 == 0 {
+				evs = append(evs, store.Event{Family: store.FamilyProduct, ID: fmt.Sprintf("p1-%d-%03d", d, i),
+					ProjectID: p1, EventName: "signup", TS: ts, ReceivedAt: ts,
+					ActorID: fmt.Sprintf("a%d", i%13), ActorKind: store.ActorUser,
+					UserID: fmt.Sprintf("u%d", i%11), GroupID: []string{"", fmt.Sprintf("g%d", i%3)}[i%4/2]})
 			}
-			plan = append(plan, detail)
 		}
-		if err := rows.Err(); err != nil {
-			t.Fatal(err)
+	}
+	// One actor whose views are 10, 29 and 61 minutes apart: the 30-minute
+	// session gap splits them exactly once.
+	for d := 1; d < 3; d++ {
+		for i, m := range []int{0, 10, 39, 100} {
+			ts := time.Date(2026, 8, 1+d, 20, m, 0, 0, time.UTC)
+			evs = append(evs, store.Event{Family: store.FamilyViews, ID: fmt.Sprintf("z-%d-%d", d, i),
+				ProjectID: p1, TS: ts, ReceivedAt: ts, Kind: "web", ActorID: "z", ActorKind: store.ActorConnection,
+				Path: "/z"})
 		}
-		rows.Close()
-		var raw []string
-		for _, d := range plan {
-			if strings.Contains(d, "events") {
-				raw = append(raw, d)
-			}
+	}
+	base := time.Date(2026, 8, 2, 0, 0, 0, 0, time.UTC)
+	for i := 0; i < 1300; i++ {
+		ts := base.Add(time.Duration(i) * time.Minute)
+		path := fmt.Sprintf("/q/%d", i%600)
+		if i%11 == 0 {
+			path = "(other)"
 		}
-		want := "USING PRIMARY KEY (family=? AND project_id=? AND day>? AND day<?)"
-		if len(raw) != 1 || !strings.Contains(raw[0], want) {
-			t.Errorf("%s reads events %q, want one read %s\nplan:\n%s", view, raw, want, strings.Join(plan, "\n"))
+		evs = append(evs, store.Event{Family: store.FamilyViews, ID: fmt.Sprintf("v2-%04d", i),
+			ProjectID: p2, TS: ts, ReceivedAt: ts, Kind: fmt.Sprintf("k%d", i%600),
+			ActorID: fmt.Sprintf("b%d", i%90), ActorKind: store.ActorConnection, Path: path,
+			Browser: "firefox", BrowserVersion: fmt.Sprintf("%d", i%600),
+			UTMSource: "hn", UTMMedium: "social", UTMCampaign: fmt.Sprintf("c%d", i%600),
+			UserID: fmt.Sprintf("u%d", i%520), GroupID: fmt.Sprintf("g%d", i%520)})
+	}
+	if err := db.WriteEvents(ctx, evs); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AggregateIdentityDay(ctx, p1, day("2026-08-01")); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AggregateViewDay(ctx, p1, day("2026-08-01")); err != nil {
+		t.Fatal(err)
+	}
+
+	before := typedViews(t, db)
+	for _, v := range []string{"v_identity_daily", "v_views_app_versions", "v_views_browsers", "v_views_countries",
+		"v_views_daily", "v_views_devices", "v_views_displays", "v_views_hosts", "v_views_locales", "v_views_os",
+		"v_views_paths", "v_views_platforms", "v_views_referrers", "v_views_utm"} {
+		if len(before[v]) == 0 {
+			t.Errorf("fixture: %s has no rows", v)
+		}
+	}
+	var others int
+	if err := db.db.QueryRow(`SELECT (SELECT COUNT(*) FROM v_views_paths WHERE path = '(other)')
+		+ (SELECT COUNT(*) FROM v_views_daily WHERE kind = '(other)')
+		+ (SELECT COUNT(*) FROM v_views_browsers WHERE browser_version = '(other)')
+		+ (SELECT COUNT(*) FROM v_views_utm WHERE utm_campaign = '(other)')`).Scan(&others); err != nil {
+		t.Fatal(err)
+	}
+	if others != 4 {
+		t.Errorf("fixture: %d (other) rows across paths, kinds, versions and campaigns, want 4", others)
+	}
+	if err := db.migrateThrough(ctx, 25); err != nil {
+		t.Fatal(err)
+	}
+	after := typedViews(t, db)
+	for v, rows := range before {
+		if !reflect.DeepEqual(rows, after[v]) {
+			t.Errorf("%s changed across 025:\nbefore %v\nafter  %v", v, rows, after[v])
 		}
 	}
 }

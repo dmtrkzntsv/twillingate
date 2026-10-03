@@ -121,7 +121,7 @@ ignored, so rename any still in `twillingate.env`.
 
 - Raise `BUFFER_FLUSH_INTERVAL` (say `30s`): fewer, larger writes.
 - Set `GOMEMLIMIT` (unit and compose files ship `128MiB`) and keep `GEO_DSN` off `maxmind://`, which holds a database in memory.
-- Lower `RETENTION_EVENTS_RAW_DAYS` (say `7`): raw events are the largest table in the file, and the live halves of the `v_*` views scan them on every query.
+- Lower `RETENTION_EVENTS_RAW_DAYS` (say `7`): raw events are the largest table in the file, and the live halves of the `v_*` views scan the raw days each query's range covers.
 
 ## The console
 
