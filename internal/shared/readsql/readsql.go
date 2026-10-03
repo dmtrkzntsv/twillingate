@@ -13,7 +13,9 @@
 //  3. QueryLimit (which Query is, at this DB's own row cap) wraps the
 //     checked text as a subquery with a caller-chosen LIMIT in the same
 //     clause, so a single statement that is not itself a query — DDL,
-//     PRAGMA — becomes a syntax error instead of executing;
+//     PRAGMA — becomes a syntax error instead of executing (QueryPage
+//     extends the same wrap with filters, an order and counts, after the
+//     same Check);
 //  4. Run enforces a deadline on every query, custom or not.
 package readsql
 
