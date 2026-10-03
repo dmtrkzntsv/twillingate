@@ -1,7 +1,19 @@
 import { DndContext, closestCenter } from '@dnd-kit/core'
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
-import { ArchiveIcon, ChartColumnIcon, LayoutDashboardIcon, LayoutGridIcon, LogOutIcon, ShapesIcon } from 'lucide-react'
+import { useQuery } from '@tanstack/react-query'
+import {
+  ArchiveIcon,
+  ChartColumnIcon,
+  ChevronRightIcon,
+  FolderIcon,
+  LayoutDashboardIcon,
+  LayoutGridIcon,
+  LogOutIcon,
+  ShapesIcon,
+} from 'lucide-react'
+import { useState } from 'react'
 import { Link, useLocation } from 'react-router'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import {
   Sidebar,
   SidebarContent,
@@ -11,8 +23,12 @@ import {
   SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
+  SidebarMenuAction,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarMenuSub,
+  SidebarMenuSubButton,
+  SidebarMenuSubItem,
   SidebarRail,
   useSidebar,
 } from '@/components/ui/sidebar'
@@ -21,6 +37,7 @@ import { useReorder } from '@/hooks/use-reorder'
 import { liveGroups, moveGroupBody, type Group } from '@/lib/arrange'
 import type { DashboardInfo } from '@/lib/api'
 import { currentAuthState, logout } from '@/lib/auth'
+import { projectsQuery } from '@/lib/queries'
 import IcebergLogo from './IcebergLogo'
 import SidebarGroupMenu from './SidebarGroupMenu'
 import SortableGroupItem from './SortableGroupItem'
@@ -35,7 +52,8 @@ interface Props {
 
 /**
  * One entry per dashboard group (tabs D20): system groups first, then
- * "Yours" (the user's), Archive (every archived dashboard, user or
+ * "Yours" (the user's), Projects (a link to the list, opening to the
+ * active projects), Archive (every archived dashboard, user or
  * system, D17a), and Gallery (the components playground and the
  * templates gallery, D17). Each entry links to its group's first live
  * member and is named by its title; it is active on any live member of
@@ -156,6 +174,13 @@ export default function AppSidebar({ dashboards, currentId, readOnly = false }: 
         <SidebarGroup>
           <SidebarGroupContent>
             <SidebarMenu>
+              <ProjectsGroup pathname={pathname} close={close} />
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+        <SidebarGroup>
+          <SidebarGroupContent>
+            <SidebarMenu>
               <SidebarMenuItem>
                 <SidebarMenuButton asChild isActive={pathname === '/archive'} tooltip="Archive" className={item}>
                   <Link to="/archive" onClick={close}>
@@ -215,6 +240,54 @@ export default function AppSidebar({ dashboards, currentId, readOnly = false }: 
       )}
       <SidebarRail />
     </Sidebar>
+  )
+}
+
+const PROJECTS_OPEN = 'twillingate.sidebar.projects'
+
+/** "Projects": a link to the list, opening to the active projects; closed until opened, then remembered. */
+function ProjectsGroup({ pathname, close }: { pathname: string; close: () => void }) {
+  const { data } = useQuery(projectsQuery)
+  const [open, setOpen] = useState(() => localStorage.getItem(PROJECTS_OPEN) === 'open')
+  const toggle = (next: boolean) => {
+    setOpen(next)
+    if (next) localStorage.setItem(PROJECTS_OPEN, 'open')
+    else localStorage.removeItem(PROJECTS_OPEN)
+  }
+  const active = (data?.projects ?? []).filter((p) => !p.archived)
+  return (
+    <Collapsible open={open} onOpenChange={toggle} asChild>
+      <SidebarMenuItem>
+        <SidebarMenuButton asChild isActive={pathname === '/projects'} tooltip="Projects" className={item}>
+          <Link to="/projects" onClick={close}>
+            <FolderIcon />
+            <span>Projects</span>
+          </Link>
+        </SidebarMenuButton>
+        {active.length > 0 && (
+          <>
+            <CollapsibleTrigger asChild>
+              <SidebarMenuAction className="data-[state=open]:rotate-90" aria-label={open ? 'Hide projects' : 'Show projects'}>
+                <ChevronRightIcon />
+              </SidebarMenuAction>
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <SidebarMenuSub>
+                {active.map((p) => (
+                  <SidebarMenuSubItem key={p.project_id}>
+                    <SidebarMenuSubButton asChild isActive={pathname === `/projects/${p.project_id}`}>
+                      <Link to={`/projects/${p.project_id}`} onClick={close}>
+                        <span>{p.name}</span>
+                      </Link>
+                    </SidebarMenuSubButton>
+                  </SidebarMenuSubItem>
+                ))}
+              </SidebarMenuSub>
+            </CollapsibleContent>
+          </>
+        )}
+      </SidebarMenuItem>
+    </Collapsible>
   )
 }
 

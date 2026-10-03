@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import type { DashboardInfo } from '@/lib/api'
+import { endpoints, type Project } from '@/lib/api'
 import { _resetForTests, getAuthHeader } from '@/lib/auth'
 import { dashboardsList } from '@/test/fixtures'
 import { renderWithProviders } from '@/test/render'
@@ -179,5 +180,29 @@ describe('AppSidebar reordering', () => {
     await userEvent.click(screen.getByRole('link', { name: 'Marketing' }))
 
     expect(screen.getByTestId('location')).toHaveTextContent('/dashboards/13')
+  })
+})
+
+describe('Projects group', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    const projects: Project[] = Array.from({ length: 40 }, (_, i) => ({ project_id: i + 1, name: `site-${i + 1}`, allowed_origins: [] }))
+    projects.push({ project_id: 99, name: 'gone', archived: true, allowed_origins: [] })
+    vi.spyOn(endpoints, 'projects').mockResolvedValue({ projects })
+  })
+
+  it('is collapsed by default, however many projects there are', async () => {
+    renderSidebar()
+    expect(await screen.findByRole('link', { name: 'Projects' })).toHaveAttribute('href', '/projects')
+    expect(screen.queryByRole('link', { name: 'site-1' })).not.toBeInTheDocument()
+  })
+
+  it('opens to the active projects and remembers it', async () => {
+    const user = userEvent.setup()
+    renderSidebar()
+    await user.click(await screen.findByRole('button', { name: 'Show projects' }))
+    expect(await screen.findByRole('link', { name: 'site-40' })).toHaveAttribute('href', '/projects/40')
+    expect(screen.queryByRole('link', { name: 'gone' })).not.toBeInTheDocument()
+    expect(localStorage.getItem('twillingate.sidebar.projects')).toBe('open')
   })
 })
