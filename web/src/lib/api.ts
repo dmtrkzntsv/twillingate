@@ -170,6 +170,94 @@ export interface Project {
   project_id: number
   name: string
   archived?: boolean
+  allowed_origins: string[]
+  attributes?: string[]
+}
+
+export interface IngestKey {
+  project_id: number
+  label: string
+  key: string
+  state: 'active' | 'disabled'
+}
+
+export interface Limit {
+  setting: 'VIEWS_DIMENSIONS_TOP_N' | 'PRODUCT_ATTRIBUTES_TOP_N' | 'IDENTITIES_TOP_N'
+  /** The cap in force; 0 means no cap. */
+  value: number
+  default: number
+  caps: string
+}
+
+export interface CapUsageRow {
+  setting: Limit['setting']
+  dimension: string
+  cap: number
+  max_values_per_day: number
+  max_day: string
+  days: number
+  days_capped: number
+  folded_share: number | null
+}
+
+export interface CapUsage {
+  project_id: number
+  from: string
+  to: string
+  dimensions: CapUsageRow[]
+}
+
+export interface StatsDay {
+  day: string
+  views: number
+  events: number
+  measures: number
+}
+
+export interface ProjectStats {
+  project_id: number
+  series: StatsDay[]
+  totals: { views: number; events: number; measures: number }
+  last_received_at: string | null
+  first_day: string | null
+  raw_days: number
+  rolled_up_days: number
+  /** Measured by the daily pass (and once after the server starts); null until the first measurement. */
+  size: { raw_bytes: number; aggregate_bytes: number; total_bytes: number; measured_at: string } | null
+  /** Only computed for one project (asked with project_id); null in the all-projects answer. */
+  unused_attributes: string[] | null
+}
+
+export interface StatsResponse {
+  from: string
+  to: string
+  database_bytes: number
+  projects: ProjectStats[]
+}
+
+export interface CreateProjectBody {
+  name: string
+  allowed_origins?: string[]
+  attributes?: string[]
+}
+
+export interface CreatedProject {
+  project_id: number
+  key?: string
+  snippet?: string
+  note?: string
+}
+
+export interface IssuedKey {
+  key: string
+  snippet?: string
+  status: string
+  note?: string
+}
+
+export interface RangeQuery {
+  from?: string
+  to?: string
 }
 
 export interface ProjectsResponse {
@@ -188,6 +276,10 @@ function toQuery(q: object): string {
   }
   const s = params.toString()
   return s ? `?${s}` : ''
+}
+
+function json(method: string, body: unknown): RequestInit {
+  return { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
 }
 
 export const endpoints = {
@@ -230,5 +322,18 @@ export const endpoints = {
       body: JSON.stringify(body),
     }),
   projects: () => api<ProjectsResponse>('/api/projects'),
+  keys: (projectId?: number) => api<{ keys: IngestKey[] }>(`/api/keys${toQuery({ project_id: projectId })}`),
+  createProject: (body: CreateProjectBody) => api<CreatedProject>('/api/projects', json('POST', body)),
+  updateProject: (id: number, body: Partial<CreateProjectBody>) => api<{ project_id: number }>(`/api/projects/${id}`, json('PATCH', body)),
+  archiveProject: (id: number) => api<{ status: string }>(`/api/projects/${id}/archive`, json('POST', {})),
+  restoreProject: (id: number) => api<{ status: string }>(`/api/projects/${id}/restore`, json('POST', {})),
+  issueKey: (id: number, label: string) => api<IssuedKey>(`/api/projects/${id}/keys`, json('POST', { label })),
+  disableKey: (id: number, label: string) =>
+    api<{ status: string }>(`/api/projects/${id}/keys/${encodeURIComponent(label)}/disable`, json('POST', {})),
+  enableKey: (id: number, label: string) =>
+    api<{ status: string }>(`/api/projects/${id}/keys/${encodeURIComponent(label)}/enable`, json('POST', {})),
+  limits: () => api<{ limits: Limit[] }>('/api/limits'),
+  stats: (q: RangeQuery & { project_id?: number }) => api<StatsResponse>(`/api/stats${toQuery(q)}`),
+  capUsage: (id: number, q: RangeQuery) => api<CapUsage>(`/api/projects/${id}/cap-usage${toQuery(q)}`),
   devVersion: () => api<{ version: string }>('/api/dev/version'),
 }

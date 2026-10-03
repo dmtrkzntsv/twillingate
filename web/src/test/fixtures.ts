@@ -30,9 +30,9 @@ export function dashboardsList(over: Partial<DashboardsResponse> = {}): Dashboar
 }
 
 export const projects: Project[] = [
-  { project_id: 7, name: 'shop' },
-  { project_id: 1, name: 'blog' },
-  { project_id: 3, name: 'legacy', archived: true },
+  { project_id: 7, name: 'shop', allowed_origins: ['https://shop.example'] },
+  { project_id: 1, name: 'blog', allowed_origins: ['https://blog.example'] },
+  { project_id: 3, name: 'legacy', archived: true, allowed_origins: [] },
 ]
 
 let nextId = 100

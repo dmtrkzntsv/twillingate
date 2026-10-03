@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -131,6 +132,26 @@ func mustTime(s string) time.Time {
 }
 
 func mustDay(s string) civil.Date { d, _ := civil.Parse(s); return d }
+
+// The pass ends by measuring the server's stats at its own clock: a project
+// with rows has its sizes stored.
+func TestRunDailyPassMeasuresServerStats(t *testing.T) {
+	st, _, r := setup(t, jobsVars, jobsProjectSpecs)
+	if err := st.WriteEvents(context.Background(), []store.Event{
+		{Family: store.FamilyViews, ID: "1", ProjectID: 1, TS: mustTime("2026-08-21T10:00:00Z"), ReceivedAt: mustTime("2026-08-21T10:00:00Z"),
+			Kind: "web", ActorKind: store.ActorConnection, ActorID: "v", Path: "/"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.RunDailyPass(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	got := queryDays(t, `SELECT key || ' ' || project_id || ' ' || measured_at FROM server_stats ORDER BY key`)
+	want := []string{"aggregate_bytes 1 2026-08-22T04:00:00Z", "raw_bytes 1 2026-08-22T04:00:00Z"}
+	if !slices.Equal(got, want) {
+		t.Errorf("server_stats = %v, want %v", got, want)
+	}
+}
 
 func TestRunDailyPassAggregatesOldDays(t *testing.T) {
 	st, _, r := setup(t, jobsVars, jobsProjectSpecs)

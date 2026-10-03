@@ -1,9 +1,14 @@
 package api
 
 import (
+	"context"
+	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/dmtrkzntsv/twillingate/internal/manage"
+	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
 func TestListProjects(t *testing.T) {
@@ -20,6 +25,35 @@ func TestListProjects(t *testing.T) {
 	}
 	if strings.Contains(out, `"identity"`) {
 		t.Errorf("list_projects still carries an identity field: %s", out)
+	}
+}
+
+// An empty registry answers {"projects":[]}, never null: the console calls
+// .projects.filter on it.
+func TestListProjectsEmptyRegistryIsAnArray(t *testing.T) {
+	h, _ := newTestHost(t)
+	st, err := store.Open("sqlite://" + t.TempDir() + "/empty.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	if err := st.Migrate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	h.reg = manage.New(st, h.logger)
+	if err := h.reg.Reload(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	out, err := h.listProjects(context.Background(), struct{}{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != `{"projects":[]}` {
+		t.Errorf("empty registry marshals to %s", body)
 	}
 }
 

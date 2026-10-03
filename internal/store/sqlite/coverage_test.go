@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
@@ -129,9 +130,10 @@ func TestOperationsOnClosedDB(t *testing.T) {
 		"PruneAggregates": func() error {
 			return db.PruneAggregates(ctx, 1, day("2026-01-01"))
 		},
-		"IncrementalVacuum": func() error { return db.IncrementalVacuum(ctx) },
-		"AggregateViewDay":  func() error { return db.AggregateViewDay(ctx, 1, day("2026-01-01"), defaultDimensionsTopN) },
-		"Migrate":           func() error { return db.Migrate(ctx) },
+		"IncrementalVacuum":  func() error { return db.IncrementalVacuum(ctx) },
+		"MeasureServerStats": func() error { return db.MeasureServerStats(ctx, time.Now()) },
+		"AggregateViewDay":   func() error { return db.AggregateViewDay(ctx, 1, day("2026-01-01"), defaultDimensionsTopN) },
+		"Migrate":            func() error { return db.Migrate(ctx) },
 		"WriteEvents(views)": func() error {
 			return db.WriteEvents(ctx, []store.Event{{Family: store.FamilyViews, ID: "1", ProjectID: 1, Kind: "web",
 				ActorKind: store.ActorConnection, TS: ts("2026-08-10T10:00:00Z"), ActorID: "v", Path: "/"}})
