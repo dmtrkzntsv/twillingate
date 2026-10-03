@@ -252,10 +252,12 @@ test('the attribute table filters and pages on the server', async ({ page, reque
   const id = (await dashboardIds(request)).get('Product')
   expect(id, 'no Product dashboard').toBeDefined()
   await login(page)
-  await page.goto(`/app/dashboards/${id}`)
-  await page.getByRole('button', { name: /^Range:/ }).click()
-  await page.getByRole('menuitemradio', { name: 'Last 90 days' }).click()
-  await expect(page).toHaveURL(/[?&]range=90d(&|$)/)
+  // The seed fills 180 days with two attributes, $os (about five values a day)
+  // and $platform (one), so over all of them the table holds about 1,050 rows:
+  // two pages of CONSOLE_QUERY_MAX_ROWS (1,000). The last 90 days hold about
+  // 530, one page. A `to` past today is cut to today by the server.
+  const day = (n: number) => new Date(Date.now() + n * 86_400_000).toISOString().slice(0, 10)
+  await page.goto(`/app/dashboards/${id}?range=custom&from=${day(-200)}&to=${day(1)}`)
 
   const card = page
     .locator('[data-slot=widget-card]')
@@ -281,19 +283,18 @@ test('the attribute table filters and pages on the server', async ({ page, reque
   }
   await expect.poll(onlyPicked).toBe(true)
 
-  // The footer shows only when the filtered result runs past one page.
+  // Both attributes keep every row, more than one page.
   const footer = card.getByText(/^[\d,]+–[\d,]+ of [\d,]+$/)
-  if (await footer.isVisible()) {
-    await expect(footer).toHaveText(/^1–/)
-    await card.getByRole('button', { name: 'Next page' }).click()
-    await expect(footer).not.toHaveText(/^1–/)
-    await expect.poll(onlyPicked).toBe(true)
-  }
+  await expect(footer).toHaveText(/^1–1,000 of /)
+  await card.getByRole('button', { name: 'Next page' }).click()
+  await expect(footer).toHaveText(/^1,001–/)
+  await expect.poll(onlyPicked).toBe(true)
 
+  // The filters are stored and come back; the page is not, and starts again at 1.
   await page.reload()
   await expect(chip).toBeVisible()
   await expect.poll(onlyPicked).toBe(true)
-  if (await footer.isVisible()) await expect(footer).toHaveText(/^1–/)
+  await expect(footer).toHaveText(/^1–1,000 of /)
 })
 
 for (const viewport of VIEWPORTS) {
