@@ -176,7 +176,8 @@ func (h *host) listKeys(ctx context.Context, in listKeysIn) (listKeysOut, error)
 	if err != nil {
 		return listKeysOut{}, err
 	}
-	var out listKeysOut
+	// A project with no keys lists as [], never null: the console reads .keys.filter.
+	out := listKeysOut{Keys: []keyRow{}}
 	for _, k := range ks {
 		if in.ProjectID != 0 && k.ProjectID != in.ProjectID {
 			continue

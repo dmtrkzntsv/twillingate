@@ -300,6 +300,16 @@ func TestUpdateProjectUnknownId(t *testing.T) {
 	}
 }
 
+// A project with no keys lists as an empty array: the console calls
+// .keys.filter on the response and a null crashed its projects page.
+func TestListKeysEmptyIsAnArray(t *testing.T) {
+	_, cs := newTestHost(t)
+	out := textOf(callTool(t, cs, "list_ingest_keys", map[string]any{"project_id": 1}))
+	if !strings.Contains(out, `"keys":[]`) {
+		t.Errorf("no keys should list as an empty array: %s", out)
+	}
+}
+
 // list_ingest_keys names its fields like every other tool: project_id,
 // label, key, state. Before the rename three of them were capitalized.
 func TestListKeysUsesSnakeCase(t *testing.T) {
