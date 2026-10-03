@@ -291,7 +291,7 @@ func newTestRegistrar(t *testing.T, h *host) *registrar {
 // rawExec reaches the underlying *sql.DB of the sqlite store for seeding.
 // The store interface deliberately has no Exec; ExecForTest is a
 // test-only accessor added to internal/store/sqlite/sqlite.go.
-func rawExec(st store.Store, q string, args ...any) (sql.Result, error) {
+func rawExec(st any, q string, args ...any) (sql.Result, error) {
 	return st.(interface {
 		ExecForTest(string, ...any) (sql.Result, error)
 	}).ExecForTest(q, args...)

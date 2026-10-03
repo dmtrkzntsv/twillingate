@@ -218,6 +218,9 @@ func (h *host) register(r *registrar) {
 	expose(r, spec{Name: "limits", Annotations: ro, Method: "GET", Path: "/api/limits",
 		Description: "The caps in force: values kept per views breakdown and day (VIEWS_DIMENSIONS_TOP_N), per attribute key, event and day (PRODUCT_ATTRIBUTES_TOP_N), and users and groups per day (IDENTITIES_TOP_N), each with its default. 0 means no cap. Set in the server's environment, not here."},
 		h.listLimits)
+	expose(r, spec{Name: "cap_usage", Annotations: ro, Method: "GET", Path: p + "/cap-usage",
+		Description: "How a project's data meets the caps over a range (default the last 30 days, at most 400): per views breakdown, attribute key, and users/groups, the busiest day's values against the cap, days with data, days folded into (other) (users and groups: days that reached the cap), and the share of views, counts or samples folded. Days already rolled up keep only the kept values and the (other) row, so values per day is at most cap + 1 there."},
+		h.capUsage)
 	expose(r, spec{Name: "views_overview", Annotations: ro, Method: "GET", Path: p + "/views/overview",
 		Description: "Daily views for one project: visitors, views, sessions, bounces, duration, with derived bounce_rate and avg_session_sec. Sums every kind (web, app, cli, …) unless kind is given. Includes yesterday and today (live)."},
 		h.viewsOverview)
