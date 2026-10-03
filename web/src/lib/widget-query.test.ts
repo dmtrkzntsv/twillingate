@@ -85,7 +85,7 @@ describe('shownViews', () => {
     stops.forEach((stop) => stop())
   })
 
-  it('falls back to no view when nothing is on screen', () => {
-    expect(shownViews(new QueryClient(), widget('stat'), params)).toEqual([{}])
+  it('names nothing when no card shows the widget, rather than an unshown first page', () => {
+    expect(shownViews(new QueryClient(), widget('stat'), params)).toEqual([])
   })
 })

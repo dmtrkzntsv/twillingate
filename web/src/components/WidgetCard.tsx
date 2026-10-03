@@ -25,29 +25,33 @@ interface Props {
 export default function WidgetCard({ widget, params, idle = false }: Props) {
   const client = useQueryClient()
   const stateKey = `twillingate.widget.${widget.dashboard_id}.${widget.widget_id}`
-  const [view, setView] = useTableView(stateKey, params)
+  // The project and range: a view's page, and the answers below, belong to one.
+  const selection = JSON.stringify([params.project_id, params.from, params.to])
+  const [view, setView] = useTableView(stateKey, selection)
   const remote = isRemoteTable(widget)
-  // A remote table's last answer: its columns decide which filters are sent,
-  // and its rows stay on screen while a new view loads or is refused.
-  const [last, setLast] = useState<WidgetData>()
-  // Set when the stored view was refused before any answer named the columns:
-  // ask once without it, to learn them.
-  const [blind, setBlind] = useState(false)
+  // A remote table's last answer under this selection: its columns decide
+  // which filters are sent, and its rows stay on screen while a new view
+  // loads or is refused. Another selection's rows never show here.
+  const [kept, setKept] = useState<{ selection: string; answer: WidgetData }>()
+  const last = kept?.selection === selection ? kept.answer : undefined
+  // The selection under which the stored view was refused before any answer
+  // named the columns: there, ask once without it, to learn them.
+  const [blindFor, setBlindFor] = useState<string>()
   const lastColumns = (last?.data as SqlData | null | undefined)?.columns
-  const viewArgs = viewQuery(widget, view, lastColumns ?? (blind ? [] : undefined))
+  const viewArgs = viewQuery(widget, view, lastColumns ?? (blindFor === selection ? [] : undefined))
   const query = useQuery(widgetQuery(widget, params, idle, viewArgs))
   const settled = remote && !query.isPlaceholderData ? query.data : undefined
   useEffect(() => {
-    if (settled) setLast(settled)
-  }, [settled])
+    if (settled) setKept({ selection, answer: settled })
+  }, [settled, selection])
 
   const Component = componentOf(widget)?.default
   const answer = query.data ?? (remote ? last : undefined)
   const refused = query.error instanceof ApiError && query.error.status === 400 ? query.error : undefined
   const sentView = Object.keys(viewArgs).length > 0
   useEffect(() => {
-    if (remote && refused && !last && sentView) setBlind(true)
-  }, [remote, refused, last, sentView])
+    if (remote && refused && !last && sentView) setBlindFor(selection)
+  }, [remote, refused, last, sentView, selection])
   // A remote refusal with rows to keep is the view's fault: it shows under the filter bar.
   const viewError = remote && refused && answer ? refused.message : undefined
 
@@ -135,14 +139,15 @@ export default function WidgetCard({ widget, params, idle = false }: Props) {
  * in memory only. A change of filters or sort, project or range returns to
  * the first page.
  */
-function useTableView(stateKey: string, params: WidgetDataQuery): [TableView, (next: TableView) => void] {
+function useTableView(stateKey: string, selection: string): [TableView, (next: TableView) => void] {
   // Runs once, before the stored view is read below.
   useState(() => upgradeStoredSort(stateKey))
   const [stored, setStored] = useStoredState(`${stateKey}.view`, parseView)
   // The offset belongs to the selection it was set under, so a new one reads 0
-  // in the same render, before any request for the old page goes out.
-  const selection = JSON.stringify([params.project_id, params.from, params.to])
+  // in the same render, before any request for the old page goes out; and is
+  // reset, so going back to the old selection starts on the first page too.
   const [paging, setPaging] = useState({ selection, offset: 0 })
+  if (paging.selection !== selection) setPaging({ selection, offset: 0 })
   const view: TableView = {
     filters: stored?.filters ?? [],
     sort: stored?.sort ?? null,

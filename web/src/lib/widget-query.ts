@@ -1,4 +1,4 @@
-import { keepPreviousData, queryOptions, type QueryClient } from '@tanstack/react-query'
+import { queryOptions, type Query, type QueryClient, type QueryKey } from '@tanstack/react-query'
 import { widgets } from '@/components/widgets'
 import type { WidgetModule } from '@/components/widgets/types'
 import { endpoints, type Widget, type WidgetData, type WidgetDataQuery } from './api'
@@ -38,6 +38,7 @@ export function viewQuery(widget: Widget, view: TableView, columns: string[] | u
  * under the same key.
  */
 export function widgetQuery(widget: Widget, params: WidgetDataQuery, idle = false, view: Partial<WidgetDataQuery> = {}) {
+  const selection = selectionKey(widget, params)
   return queryOptions({
     queryKey: [
       'widget',
@@ -54,9 +55,25 @@ export function widgetQuery(widget: Widget, params: WidgetDataQuery, idle = fals
     // an idle one keeps showing what is cached but asks for nothing new.
     enabled: !idle && componentOf(widget) !== undefined,
     staleTime: 60_000,
-    // A remote table keeps its current page on screen while the next one loads.
-    placeholderData: isRemoteTable(widget) ? keepPreviousData : undefined,
+    // A remote table keeps its current page on screen while the next one
+    // loads, but only for a new view: another project or range starts from
+    // the skeleton, never showing the old one's rows.
+    placeholderData: isRemoteTable(widget)
+      ? (previous: WidgetData | undefined, previousQuery: Query<WidgetData, Error, WidgetData, QueryKey> | undefined) =>
+          previousQuery && sameKeyStart(previousQuery.queryKey, selection) ? previous : undefined
+      : undefined,
   })
+}
+
+type WidgetKey = [string, number, number?, string?, string?, string?, string?, number?]
+
+/** The start of a widget's query keys that names the widget and its selection, before any view. */
+function selectionKey(widget: Widget, params: WidgetDataQuery) {
+  return ['widget', widget.widget_id, params.project_id, params.from, params.to] as const
+}
+
+function sameKeyStart(key: QueryKey, start: readonly unknown[]): boolean {
+  return start.every((part, i) => key[i] === part)
 }
 
 /** Refetches a widget with `fresh=true`, bypassing the server's cache (D39). */
@@ -75,20 +92,23 @@ export function refreshWidget(
 }
 
 /**
- * The view arguments of every query on screen for this widget and selection:
- * a remote table's current page, or `{}` for any other widget. The view lives
- * in the card, so a refresh from outside it reads the view back from the key.
+ * The widget's queries on screen under this selection: the one its card
+ * runs, with a remote table's view in the key; none while the card is idle.
+ */
+export function shownQueries(client: QueryClient, widget: Widget, params: WidgetDataQuery): Query[] {
+  return client.getQueryCache().findAll({ queryKey: [...selectionKey(widget, params)], type: 'active' })
+}
+
+/**
+ * The view arguments of each query on screen for this widget and selection
+ * (`{}` for a widget without a view). The view lives in the card, so a
+ * refresh from outside it reads the view back from the key.
  */
 export function shownViews(client: QueryClient, widget: Widget, params: WidgetDataQuery): Partial<WidgetDataQuery>[] {
-  const prefix = widgetQuery(widget, params).queryKey.slice(0, 5)
-  const views = client
-    .getQueryCache()
-    .findAll({ queryKey: prefix, type: 'active' })
-    .map(({ queryKey }) => {
-      const [, , , , , filters, sort, offset] = queryKey as ReturnType<typeof widgetQuery>['queryKey']
-      return { filters, sort, offset }
-    })
-  return views.length > 0 ? views : [{}]
+  return shownQueries(client, widget, params).map(({ queryKey }) => {
+    const [, , , , , filters, sort, offset] = queryKey as WidgetKey
+    return { filters, sort, offset }
+  })
 }
 
 /** Whether a widget's answer may be refreshed yet: cacheable and past `refresh_after`. */

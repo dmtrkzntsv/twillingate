@@ -297,6 +297,35 @@ describe('WidgetCard with a remote table', () => {
     rerender(cardIn(client, remoteWidget(), later))
     await waitFor(() => expect(spy).toHaveBeenLastCalledWith(42, { ...later, filters: JSON.stringify([PLAN]) }))
     expect(spy.mock.calls.filter(([, q]) => q.from === later.from).every(([, q]) => q.offset === undefined)).toBe(true)
+    await screen.findByText('1–1,000 of 2,500')
+
+    // Back to the first range: its first page, not the one left there.
+    rerender(cardIn(client, remoteWidget(), params))
+    expect(await screen.findByText('1–1,000 of 2,500')).toBeInTheDocument()
+    expect(screen.queryByText('1,001–2,000 of 2,500')).not.toBeInTheDocument()
+  })
+
+  it("shows the skeleton, not the last project's rows, while another project loads", async () => {
+    vi.spyOn(endpoints, 'widgetData').mockImplementation(async (_, q) =>
+      q.project_id === 8 ? new Promise<never>(() => {}) : remoteAnswer(q)
+    )
+    const { client, container, rerender } = renderCard(remoteWidget())
+    await screen.findByText('iOS')
+    rerender(cardIn(client, remoteWidget(), { ...params, project_id: 8 }))
+    await waitFor(() => expect(screen.queryByText('iOS')).not.toBeInTheDocument())
+    expect(container.querySelector('[data-slot=skeleton]')).toBeInTheDocument()
+  })
+
+  it("says the query no longer runs, without the last project's rows, when another project's is refused", async () => {
+    vi.spyOn(endpoints, 'widgetData').mockImplementation(async (_, q) => {
+      if (q.project_id === 8) throw new ApiError(400, 'no such view: v_gone', 'invalid')
+      return remoteAnswer(q)
+    })
+    const { client, rerender } = renderCard(remoteWidget())
+    await screen.findByText('iOS')
+    rerender(cardIn(client, remoteWidget(), { ...params, project_id: 8 }))
+    expect(await screen.findByText('Query no longer runs')).toBeInTheDocument()
+    expect(screen.queryByText('iOS')).not.toBeInTheDocument()
   })
 
   it('refreshes with the filters, sort and page on screen', async () => {

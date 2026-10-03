@@ -1,6 +1,7 @@
-import { useQueries } from '@tanstack/react-query'
-import type { Widget, WidgetDataQuery } from '@/lib/api'
-import { canRefresh, isRemoteTable, widgetQuery } from '@/lib/widget-query'
+import { useCallback, useSyncExternalStore } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
+import type { Widget, WidgetData, WidgetDataQuery } from '@/lib/api'
+import { canRefresh, shownQueries } from '@/lib/widget-query'
 import { useNow } from './use-now'
 
 export interface Freshness {
@@ -11,27 +12,32 @@ export interface Freshness {
 }
 
 /**
- * How old the data on screen is, read from the same queries the cards run
- * (TanStack shares them, so this adds no requests).
+ * How old the data on screen is, read from the queries the cards run (with a
+ * remote table's view in the key), so this adds no requests and follows
+ * whatever page a card shows.
  */
 export function useFreshness(widgets: Widget[], paramsFor: (w: Widget) => WidgetDataQuery, enabled: boolean): Freshness {
+  const client = useQueryClient()
   const now = useNow()
-  return useQueries({
-    queries: widgets.map((w) => {
-      const options = widgetQuery(w, paramsFor(w))
-      // A remote table's card asks for its own view; this only reads its first,
-      // unfiltered page when that is the one on screen, and never fetches one.
-      return { ...options, enabled: enabled && options.enabled && !isRemoteTable(w) }
-    }),
-    combine: (results) => {
-      let oldest: number | undefined
-      const refreshable: Widget[] = []
-      results.forEach((r, i) => {
-        const cachedAt = r.data?.cached_at ? Date.parse(r.data.cached_at) : NaN
-        if (!Number.isNaN(cachedAt) && (oldest === undefined || cachedAt < oldest)) oldest = cachedAt
-        if (canRefresh(r.data, now)) refreshable.push(widgets[i])
-      })
-      return { asOf: oldest === undefined ? undefined : new Date(oldest), refreshable }
-    },
-  })
+  const cache = client.getQueryCache()
+  const answers = (w: Widget) =>
+    enabled ? shownQueries(client, w, paramsFor(w)).map((q) => q.state.data as WidgetData | undefined) : []
+  // Re-rendered when an answer on screen changes; the snapshot is a string,
+  // so an unrelated cache event leaves it equal and renders nothing.
+  useSyncExternalStore(
+    useCallback((onChange) => cache.subscribe(onChange), [cache]),
+    () => widgets.map((w) => answers(w).map((a) => `${a?.cached_at}/${a?.refresh_after}`).join(',')).join('|')
+  )
+
+  let oldest: number | undefined
+  const refreshable: Widget[] = []
+  for (const w of widgets) {
+    const shown = answers(w)
+    for (const a of shown) {
+      const cachedAt = a?.cached_at ? Date.parse(a.cached_at) : NaN
+      if (!Number.isNaN(cachedAt) && (oldest === undefined || cachedAt < oldest)) oldest = cachedAt
+    }
+    if (shown.some((a) => canRefresh(a, now))) refreshable.push(w)
+  }
+  return { asOf: oldest === undefined ? undefined : new Date(oldest), refreshable }
 }

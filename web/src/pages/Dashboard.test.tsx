@@ -2,7 +2,7 @@ import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { ApiError, endpoints, type Project } from '@/lib/api'
+import { ApiError, endpoints, type Project, type Widget } from '@/lib/api'
 import { span } from '@/lib/grid'
 import { answerFor, dashboardsList, details, launchWeek, product, projects, views, widgetsById } from '@/test/fixtures'
 import { renderWithProviders } from '@/test/render'
@@ -315,6 +315,55 @@ describe('Dashboard', () => {
 
     await waitFor(() => expect(widgetData.mock.calls.filter((c) => c[1].fresh)).toHaveLength(1))
     expect(widgetData.mock.calls.filter((c) => c[1].fresh)[0][0]).toBe(events.widget_id)
+  })
+
+  it('counts a remote table by the page on screen and refreshes that page', async () => {
+    const attrs: Widget = {
+      ...product.widgets[0],
+      widget_id: 900,
+      name: 'attributes',
+      component: 'table',
+      title: 'Attributes',
+      width: 6,
+      height: 10,
+      props: { mode: 'remote' },
+    }
+    const filters = [{ column: 'Attribute', op: 'in', value: ['plan'] }]
+    localStorage.setItem('twillingate.widget.2.900.view', JSON.stringify({ filters, sort: { column: 'Count', dir: 'desc' } }))
+    const later = () => new Date(Date.now() + 3_600_000).toISOString()
+    const widgetData = mockApi()
+    vi.mocked(endpoints.dashboard).mockImplementation(async (id) =>
+      id === 2 ? { ...product, widgets: [...product.widgets, attrs] } : details[id]
+    )
+    // Only the remote table is past its refresh_after, until it is refreshed.
+    widgetData.mockImplementation(async (id, q) => {
+      if (id !== attrs.widget_id) return { ...answerFor(widgetsById.get(id)!), refresh_after: later() }
+      return {
+        widget_id: id,
+        source_type: 'sql',
+        removed: false,
+        cached_at: new Date(Date.now() - 20 * 60_000).toISOString(),
+        refresh_after: q.fresh ? later() : new Date(Date.now() - 60_000).toISOString(),
+        data: { columns: ['Attribute', 'Count'], rows: [['plan', '7']], truncated: false },
+        page: { offset: q.offset ?? 0, limit: 1000, matched: 2500, total: 2500, filters: [] },
+      }
+    })
+    renderAt('/dashboards/2?project=7&range=7d')
+
+    const button = await screen.findByRole('button', { name: 'Refresh all' })
+    await waitFor(() => expect(button).not.toHaveAttribute('aria-disabled', 'true'))
+    await userEvent.click(await screen.findByRole('button', { name: 'Next page' }))
+    await screen.findByText('1,001–2,000 of 2,500')
+    await waitFor(() => expect(button).not.toHaveAttribute('aria-disabled', 'true'))
+    await userEvent.click(button)
+
+    await waitFor(() => expect(button).toHaveAttribute('aria-disabled', 'true'))
+    const fresh = widgetData.mock.calls.filter((c) => c[1].fresh)
+    expect(fresh).toHaveLength(1)
+    expect(fresh[0]).toEqual([
+      900,
+      expect.objectContaining({ filters: JSON.stringify(filters), sort: 'Count:desc', offset: 1000, fresh: true }),
+    ])
   })
 
   it('keeps the old dashboard idle while the next one loads', async () => {
