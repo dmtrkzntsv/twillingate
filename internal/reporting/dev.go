@@ -292,8 +292,20 @@ func devWidgetData(dirs []string, svc *Service, comps map[string]Component) http
 				return
 			}
 		}
+		in := DataRequest{WidgetID: id, ProjectID: projectID, From: q.Get("from"), To: q.Get("to"),
+			Filters: q.Get("filters"), Sort: q.Get("sort"), Distinct: q.Get("distinct")}
+		for _, arg := range []struct {
+			name string
+			n    *int
+		}{{"offset", &in.Offset}, {"limit", &in.Limit}} {
+			if v := q.Get(arg.name); v != "" {
+				if *arg.n, err = strconv.Atoi(v); err != nil {
+					writeAPIErr(w, store.Refuse(store.ErrInvalid, "%s must be an integer", arg.name))
+					return
+				}
+			}
+		}
 		followsProject, followsRange := svc.follows(row)
-		in := DataRequest{WidgetID: id, ProjectID: projectID, From: q.Get("from"), To: q.Get("to")}
 		params, echo, err := svc.widgetParams(followsProject, followsRange, id, in)
 		if err != nil {
 			writeAPIErr(w, err)
@@ -301,18 +313,21 @@ func devWidgetData(dirs []string, svc *Service, comps map[string]Component) http
 		}
 
 		src := svc.sources[row.SourceType] // present: validateWidget just checked it
-		v, err := src.Load(ctx, row.Source, params)
+		v, load, err := svc.loader(row, src, params, in)
+		if err != nil {
+			writeAPIErr(w, err)
+			return
+		}
+		value, err := load(ctx)
 		if err != nil {
 			writeAPIErr(w, wrapLoadErr(err))
 			return
 		}
-		if res, ok := v.(readsql.Result); ok {
-			if err := comp.checkRows(res); err != nil {
-				writeAPIErr(w, wrapLoadErr(err))
-				return
-			}
+		out := WidgetData{WidgetID: id, SourceType: row.SourceType, ProjectID: echo.ProjectID, From: echo.From, To: echo.To}
+		if err := setData(&out, comp, v, value); err != nil {
+			writeAPIErr(w, err)
+			return
 		}
-		out := WidgetData{WidgetID: id, SourceType: row.SourceType, ProjectID: echo.ProjectID, From: echo.From, To: echo.To, Data: v}
 		writeJSON(w, http.StatusOK, out)
 	}
 }

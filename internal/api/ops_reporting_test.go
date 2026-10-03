@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -333,6 +334,62 @@ func TestWidgetDataRESTDecodesQuery(t *testing.T) {
 	}
 	if rec := serveREST(t, r, "GET", fmt.Sprintf("/api/widgets/%d/data?from=2026-08-20&to=2026-08-21", d.Widgets[0].ID), ""); rec.Code != http.StatusBadRequest {
 		t.Errorf("no project_id = %d %s, want 400", rec.Code, rec.Body.String())
+	}
+}
+
+// TestWidgetDataRemoteTable: a remote table's paging arguments reach the
+// service from the REST query string and from the MCP tool alike, and the
+// envelope carries the page block.
+func TestWidgetDataRemoteTable(t *testing.T) {
+	h, cs := newTestHost(t)
+	r := newTestRegistrar(t, h)
+	var d struct {
+		Widgets []struct {
+			ID int64 `json:"widget_id"`
+		} `json:"widgets"`
+	}
+	toolJSON(t, cs, "create_dashboard", map[string]any{"title": "Rows", "widgets": []any{map[string]any{
+		"component": "table", "props": map[string]any{"mode": "remote"}, "source": map[string]any{"type": "sql",
+			"content": `SELECT 'a' AS "Key", 3 AS "N" UNION ALL SELECT 'b', 1 UNION ALL SELECT 'c', 2`},
+	}}}, &d)
+	id := d.Widgets[0].ID
+	type envelope struct {
+		Data struct {
+			Rows      [][]string `json:"rows"`
+			Truncated bool       `json:"truncated"`
+		} `json:"data"`
+		Page struct {
+			Offset, Limit, Matched, Total int
+			Sort                          string
+			Filters                       []map[string]any
+		} `json:"page"`
+	}
+	check := func(via string, got envelope) {
+		t.Helper()
+		if len(got.Data.Rows) != 1 || got.Data.Rows[0][0] != "a" || !got.Data.Truncated ||
+			got.Page.Limit != 1 || got.Page.Matched != 2 || got.Page.Total != 3 || got.Page.Sort != "N:desc" || len(got.Page.Filters) != 1 {
+			t.Errorf("%s: %+v", via, got)
+		}
+	}
+
+	filters := `[{"column":"N","op":">","value":"1"}]`
+	target := fmt.Sprintf("/api/widgets/%d/data?filters=%s&sort=N:desc&limit=1", id, url.QueryEscape(filters))
+	rec := serveREST(t, r, "GET", target, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET %s = %d %s", target, rec.Code, rec.Body.String())
+	}
+	var got envelope
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	check("REST", got)
+
+	var viaMCP envelope
+	toolJSON(t, cs, "widget_data", map[string]any{"widget_id": id, "filters": filters, "sort": "N:desc", "limit": 1}, &viaMCP)
+	check("MCP", viaMCP)
+
+	if rec := serveREST(t, r, "GET", fmt.Sprintf("/api/widgets/%d/data?sort=N:up", id), ""); rec.Code != http.StatusBadRequest {
+		t.Errorf("sort=N:up = %d %s, want 400", rec.Code, rec.Body.String())
 	}
 }
 

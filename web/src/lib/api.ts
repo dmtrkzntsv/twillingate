@@ -1,4 +1,5 @@
 import { getAuthHeader, refreshAccess, reportUnauthorized } from './auth'
+import type { Filter } from './table-view'
 
 /** A 4xx/5xx from the API: `{"error":{"code","message"}}` (api-contract.md). */
 export class ApiError extends Error {
@@ -121,6 +122,18 @@ export interface WidgetData {
   refresh_after?: string
   removed: boolean
   data: SqlData | MarkdownData | null
+  /** A remote table's place in the whole result: `matched` rows after the filters, `total` before them. */
+  page?: PageInfo
+}
+
+export interface PageInfo {
+  offset: number
+  limit: number
+  matched: number
+  total: number
+  sort?: string
+  distinct?: string
+  filters: Filter[]
 }
 
 export interface WidgetDataQuery {
@@ -128,6 +141,12 @@ export interface WidgetDataQuery {
   from?: string
   to?: string
   fresh?: boolean
+  // A remote table's view (filters as JSON, sort as `column:asc|desc`); other widgets refuse them.
+  filters?: string
+  sort?: string
+  distinct?: string
+  offset?: number
+  limit?: number
 }
 
 export interface SaveViewBody {

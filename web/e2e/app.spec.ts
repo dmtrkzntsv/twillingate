@@ -236,8 +236,65 @@ test('a table sorts by its header and remembers the sort across a reload', async
   await expect(names).toHaveText(['a', 'c', 'b'])
   await expect(page.getByRole('columnheader', { name: 'score', exact: true })).toHaveAttribute('aria-sort', 'descending')
 
+  // Kept by the card, with the filters, under the widget's own key.
+  const stored = await page.evaluate(() =>
+    Object.keys(localStorage)
+      .filter((k) => k.startsWith('twillingate.widget.'))
+      .map((k) => [k, localStorage.getItem(k)])
+  )
+  expect(stored).toEqual([[expect.stringMatching(/\.view$/), expect.stringContaining('"sort":{"column":"score","dir":"desc"}')]])
+
   await page.reload()
   await expect(names).toHaveText(['a', 'c', 'b'])
+})
+
+test('the attribute table filters and pages on the server', async ({ page, request }) => {
+  const id = (await dashboardIds(request)).get('Product')
+  expect(id, 'no Product dashboard').toBeDefined()
+  await login(page)
+  // The seed fills 180 days with two attributes, $os (about five values a day)
+  // and $platform (one), so over all of them the table holds about 1,050 rows:
+  // two pages of CONSOLE_QUERY_MAX_ROWS (1,000). The last 90 days hold about
+  // 530, one page. A `to` past today is cut to today by the server.
+  const day = (n: number) => new Date(Date.now() + n * 86_400_000).toISOString().slice(0, 10)
+  await page.goto(`/app/dashboards/${id}?range=custom&from=${day(-200)}&to=${day(1)}`)
+
+  const card = page
+    .locator('[data-slot=widget-card]')
+    .filter({ has: page.getByRole('heading', { name: 'Attribute values by day', exact: true }) })
+  await card.getByRole('button', { name: 'Filter', exact: true }).click()
+  // The picker offers the column's values from the server, most frequent first.
+  const options = page.getByRole('option')
+  await expect(options.nth(1)).toBeVisible()
+  const picked: string[] = []
+  for (const i of [0, 1]) {
+    picked.push((await options.nth(i).locator('span').first().textContent())!.trim())
+    await options.nth(i).click()
+  }
+  await page.getByRole('button', { name: 'Apply', exact: true }).click()
+
+  const chip = card.getByRole('button', { name: `Attribute in ${picked.join(', ')}`, exact: true })
+  await expect(chip).toBeVisible()
+  const attributes = card.locator('tbody tr td:first-child')
+  // Every row on the page is one of the two picked: the server filtered the whole result.
+  const onlyPicked = async () => {
+    const shown = await attributes.allTextContents()
+    return shown.length > 0 && shown.every((a) => picked.includes(a))
+  }
+  await expect.poll(onlyPicked).toBe(true)
+
+  // Both attributes keep every row, more than one page.
+  const footer = card.getByText(/^[\d,]+–[\d,]+ of [\d,]+$/)
+  await expect(footer).toHaveText(/^1–1,000 of /)
+  await card.getByRole('button', { name: 'Next page' }).click()
+  await expect(footer).toHaveText(/^1,001–/)
+  await expect.poll(onlyPicked).toBe(true)
+
+  // The filters are stored and come back; the page is not, and starts again at 1.
+  await page.reload()
+  await expect(chip).toBeVisible()
+  await expect.poll(onlyPicked).toBe(true)
+  await expect(footer).toHaveText(/^1–1,000 of /)
 })
 
 for (const viewport of VIEWPORTS) {

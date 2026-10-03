@@ -1,0 +1,53 @@
+{
+  "columns": ["Attribute", "Day", "Value", "Count", "Users (at least)"],
+  "rows": [
+    ["$os",      "2026-09-24", "other",  1069, 33],
+    ["$os",      "2026-09-26", "iOS",     100, null],
+    ["plan",     "2026-09-25", "2026",    100, 7],
+    ["plan",     "2026-09-26", "",        12.5, 2],
+    ["auth_sso", "2026-09-26", "off",     587, 6],
+    ["auth_sso", "2026-09-27", "on",      9, 6],
+    ["$os",      "2026-09-27", null,      100, 1],
+    ["v",        "2026-09-27", "v1.10",   3, 1],
+    ["v",        "2026-09-27", "v1.9",    4, 1],
+    ["v",        "2026-09-28", "Ångström", 5, 1]
+  ],
+  "cells": [
+    ["$os",      "2026-09-24", "other",  "1069", "33"],
+    ["$os",      "2026-09-26", "iOS",    "100",  ""],
+    ["plan",     "2026-09-25", "2026",   "100",  "7"],
+    ["plan",     "2026-09-26", "",       "12.5", "2"],
+    ["auth_sso", "2026-09-26", "off",    "587",  "6"],
+    ["auth_sso", "2026-09-27", "on",     "9",    "6"],
+    ["$os",      "2026-09-27", "",       "100",  "1"],
+    ["v",        "2026-09-27", "v1.10",  "3",    "1"],
+    ["v",        "2026-09-27", "v1.9",   "4",    "1"],
+    ["v",        "2026-09-28", "Ångström", "5",  "1"]
+  ],
+  "cases": [
+    {"name": "no filters keeps query order", "filters": [], "expect": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]},
+    {"name": "in", "filters": [{"column": "Attribute", "op": "in", "value": ["$os", "plan"]}], "expect": [0, 1, 2, 3, 6]},
+    {"name": "not in keeps all but the listed", "filters": [{"column": "Attribute", "op": "not in", "value": ["$os", "plan", "v"]}], "expect": [4, 5]},
+    {"name": "= on an integer equals its text", "filters": [{"column": "Count", "op": "=", "value": "100"}], "expect": [1, 2, 6]},
+    {"name": "= is exact and case-sensitive", "filters": [{"column": "Value", "op": "=", "value": "ios"}], "expect": []},
+    {"name": "= never matches an empty cell", "filters": [{"column": "Value", "op": "=", "value": ""}], "expect": []},
+    {"name": "!= matches empty cells", "filters": [{"column": "Value", "op": "!=", "value": "off"}], "expect": [0, 1, 2, 3, 5, 6, 7, 8, 9]},
+    {"name": "not in matches empty cells", "filters": [{"column": "Users (at least)", "op": "not in", "value": ["1"]}], "expect": [0, 1, 2, 3, 4, 5]},
+    {"name": "> numeric", "filters": [{"column": "Count", "op": ">", "value": "99"}], "expect": [0, 1, 2, 4, 6]},
+    {"name": "< numeric with a real", "filters": [{"column": "Count", "op": "<", "value": "12.5"}], "expect": [5, 7, 8, 9]},
+    {"name": "> numeric skips empty and text cells", "filters": [{"column": "Value", "op": ">", "value": "2000"}], "expect": [2]},
+    {"name": "> text on days", "filters": [{"column": "Day", "op": ">", "value": "2026-09-26"}], "expect": [5, 6, 7, 8, 9]},
+    {"name": "< text value compares as text, numbers included", "filters": [{"column": "Count", "op": "<", "value": "2x"}], "expect": [0, 1, 2, 3, 6]},
+    {"name": "and of two on one column", "filters": [{"column": "Count", "op": ">", "value": "5"}, {"column": "Count", "op": "<", "value": "200"}], "expect": [1, 2, 3, 5, 6]},
+    {"name": "sort numeric desc, ties by every column", "filters": [], "sort": {"column": "Count", "dir": "desc"}, "expect": [0, 4, 1, 6, 2, 3, 5, 9, 8, 7]},
+    {"name": "sort text asc by code point, empty last", "filters": [], "sort": {"column": "Value", "dir": "asc"}, "expect": [2, 1, 4, 5, 0, 7, 8, 9, 6, 3]},
+    {"name": "sort text desc, empty still last", "filters": [], "sort": {"column": "Value", "dir": "desc"}, "expect": [2, 9, 8, 7, 0, 5, 4, 1, 6, 3]},
+    {"name": "sort numbers before text, in both directions", "filters": [{"column": "Attribute", "op": "in", "value": ["plan", "$os"]}], "sort": {"column": "Value", "dir": "desc"}, "expect": [2, 0, 1, 6, 3]},
+    {"name": "sort empty numeric cells last", "filters": [], "sort": {"column": "Users (at least)", "dir": "asc"}, "expect": [6, 7, 8, 9, 3, 4, 5, 2, 0, 1]}
+  ],
+  "distinct": [
+    {"name": "values by frequency, then by value", "column": "Attribute", "filters": [], "expect": [["$os", 3], ["v", 3], ["auth_sso", 2], ["plan", 2]]},
+    {"name": "ignores the filter on its own column", "column": "Attribute", "filters": [{"column": "Attribute", "op": "in", "value": ["plan"]}, {"column": "Count", "op": ">", "value": "99"}], "expect": [["$os", 3], ["auth_sso", 1], ["plan", 1]]},
+    {"name": "empty cells are a value, last among equal counts", "column": "Value", "filters": [{"column": "Attribute", "op": "=", "value": "$os"}], "expect": [["iOS", 1], ["other", 1], ["", 1]]}
+  ]
+}

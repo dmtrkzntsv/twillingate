@@ -1,4 +1,4 @@
-import { Suspense, type ReactNode } from 'react'
+import { Suspense, useEffect, useState, type ReactNode } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { ChevronDownIcon, CircleAlertIcon, CircleOffIcon, CloudOffIcon, InboxIcon, RefreshCwIcon, TriangleAlertIcon } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
@@ -6,9 +6,11 @@ import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useNow } from '@/hooks/use-now'
-import { ApiError, type SqlData, type Widget, type WidgetData, type WidgetDataQuery } from '@/lib/api'
+import { useStoredState } from '@/hooks/use-stored-state'
+import { ApiError, endpoints, type SqlData, type Widget, type WidgetData, type WidgetDataQuery } from '@/lib/api'
+import { liveFilters, parseView, type Filter, type TableView } from '@/lib/table-view'
 import { formatDuration } from '@/lib/time'
-import { canRefresh, componentOf, refreshWidget, widgetQuery } from '@/lib/widget-query'
+import { canRefresh, componentOf, isRemoteTable, refreshWidget, viewQuery, widgetQuery } from '@/lib/widget-query'
 import WidgetFrame from './WidgetFrame'
 import WidgetSkeleton from './WidgetSkeleton'
 
@@ -22,19 +24,65 @@ interface Props {
 /** One widget in its card, loading on its own and showing its own state (D38). */
 export default function WidgetCard({ widget, params, idle = false }: Props) {
   const client = useQueryClient()
-  const query = useQuery(widgetQuery(widget, params, idle))
+  const stateKey = `twillingate.widget.${widget.dashboard_id}.${widget.widget_id}`
+  // The project and range: a view's page, and the answers below, belong to one.
+  const selection = JSON.stringify([params.project_id, params.from, params.to])
+  const [view, setView] = useTableView(stateKey, selection)
+  const remote = isRemoteTable(widget)
+  // A remote table's last answer under this selection: its columns decide
+  // which filters are sent, and its rows stay on screen while a new view
+  // loads or is refused. Another selection's rows never show here.
+  const [kept, setKept] = useState<{ selection: string; answer: WidgetData }>()
+  const last = kept?.selection === selection ? kept.answer : undefined
+  // The selection under which the stored view was refused before any answer
+  // named the columns: there, ask once without it, to learn them.
+  const [blindFor, setBlindFor] = useState<string>()
+  const lastColumns = (last?.data as SqlData | null | undefined)?.columns
+  const viewArgs = viewQuery(widget, view, lastColumns ?? (blindFor === selection ? [] : undefined))
+  const query = useQuery(widgetQuery(widget, params, idle, viewArgs))
+  const settled = remote && !query.isPlaceholderData ? query.data : undefined
+  useEffect(() => {
+    if (settled) setKept({ selection, answer: settled })
+  }, [settled, selection])
+
   const Component = componentOf(widget)?.default
-  const answer = query.data
+  const answer = query.data ?? (remote ? last : undefined)
+  const refused = query.error instanceof ApiError && query.error.status === 400 ? query.error : undefined
+  const sentView = Object.keys(viewArgs).length > 0
+  useEffect(() => {
+    if (remote && refused && !last && sentView) setBlindFor(selection)
+  }, [remote, refused, last, sentView, selection])
+  // A remote refusal with rows to keep is the view's fault: it shows under the filter bar.
+  const viewError = remote && refused && answer ? refused.message : undefined
+
   const removed = !Component || answer?.removed === true
   const truncated = (answer?.data as SqlData | null | undefined)?.truncated === true
   const refreshable = widget.source.type === 'sql' && !removed
   const label = widget.title ?? widget.name
+  const columns = (answer?.data as SqlData | null | undefined)?.columns ?? []
+  // Only the server's filters can empty a remote answer; a local table's empty
+  // answer is the whole result, whatever its filters.
+  const filtered = remote && liveFilters(view, columns).length > 0
+
+  const fetchDistinct = async (column: string, filters: Filter[]) => {
+    const others = liveFilters({ ...view, filters }, columns)
+    const res = await endpoints.widgetData(widget.widget_id, {
+      ...params,
+      filters: others.length > 0 ? JSON.stringify(others) : undefined,
+      distinct: column,
+      limit: undefined,
+    })
+    const rows = (res.data as SqlData | null)?.rows ?? []
+    const capped = res.page !== undefined && res.page.matched > res.page.offset + rows.length
+    return rows.map(([value, n]) => ({ value, rows: Number(n), capped }))
+  }
 
   return (
     <WidgetFrame
       title={widget.title}
       badge={
-        truncated && (
+        truncated &&
+        !remote && (
           <Badge variant="outline" className="min-w-0 shrink text-muted-foreground">
             <span className="truncate">partial: narrow the range or group the query</span>
           </Badge>
@@ -43,12 +91,12 @@ export default function WidgetCard({ widget, params, idle = false }: Props) {
       actions={
         refreshable && (
           <>
-            {answer && query.isError && <StaleWarning error={query.error} />}
+            {answer && query.isError && !viewError && <StaleWarning error={query.error} />}
             <RefreshButton
               label={`Refresh ${label}`}
               data={answer}
               busy={query.isFetching}
-              onRefresh={() => void refreshWidget(client, widget, params).catch(() => {})}
+              onRefresh={() => void refreshWidget(client, widget, params, viewArgs).catch(() => {})}
             />
           </>
         )
@@ -58,7 +106,8 @@ export default function WidgetCard({ widget, params, idle = false }: Props) {
         <CardState icon={<CircleOffIcon />} title="Component removed" />
       ) : answer ? (
         // Data already on screen stays there when a later refetch fails.
-        isEmpty(answer) ? (
+        // A remote table filtered to nothing still shows its filters.
+        isEmpty(answer) && !filtered ? (
           <CardState icon={<InboxIcon />} title={answer.source_type === 'md' ? 'Nothing to show' : 'No data for this range'} />
         ) : (
           // A lazy component (the map, markdown) keeps the skeleton up while its code loads.
@@ -66,7 +115,13 @@ export default function WidgetCard({ widget, params, idle = false }: Props) {
             <Component
               data={answer.data!}
               props={widget.props}
-              stateKey={`twillingate.widget.${widget.dashboard_id}.${widget.widget_id}`}
+              stateKey={stateKey}
+              view={view}
+              onView={setView}
+              fetchDistinct={remote ? fetchDistinct : undefined}
+              page={remote ? answer.page : undefined}
+              viewError={viewError}
+              reloading={query.isPlaceholderData || (query.isFetching && !!answer)}
             />
           </Suspense>
         )
@@ -79,9 +134,58 @@ export default function WidgetCard({ widget, params, idle = false }: Props) {
   )
 }
 
+/**
+ * A table's view: filters and sort kept in this browser per widget, the page
+ * in memory only. A change of filters or sort, project or range returns to
+ * the first page.
+ */
+function useTableView(stateKey: string, selection: string): [TableView, (next: TableView) => void] {
+  // Runs once, before the stored view is read below.
+  useState(() => upgradeStoredSort(stateKey))
+  const [stored, setStored] = useStoredState(`${stateKey}.view`, parseView)
+  // The offset belongs to the selection it was set under, so a new one reads 0
+  // in the same render, before any request for the old page goes out; and is
+  // reset, so going back to the old selection starts on the first page too.
+  const [paging, setPaging] = useState({ selection, offset: 0 })
+  if (paging.selection !== selection) setPaging({ selection, offset: 0 })
+  const view: TableView = {
+    filters: stored?.filters ?? [],
+    sort: stored?.sort ?? null,
+    offset: paging.selection === selection ? paging.offset : 0,
+  }
+  const setView = (next: TableView) => {
+    const changed = JSON.stringify([next.filters, next.sort]) !== JSON.stringify([view.filters, view.sort])
+    if (changed) setStored(next.filters.length === 0 && next.sort === null ? null : { ...next, offset: 0 })
+    setPaging({ selection, offset: changed ? 0 : next.offset })
+  }
+  return [view, setView]
+}
+
+/**
+ * Before the card kept the view, a table kept only its sort, under `.sort`.
+ * That sort becomes the stored view's, unless a view is already stored, and
+ * the old key goes.
+ */
+function upgradeStoredSort(stateKey: string) {
+  try {
+    const old = localStorage.getItem(`${stateKey}.sort`)
+    if (old === null) return
+    const sort = parseView({ sort: JSON.parse(old) })?.sort
+    if (sort && localStorage.getItem(`${stateKey}.view`) === null) {
+      localStorage.setItem(`${stateKey}.view`, JSON.stringify({ filters: [], sort }))
+    }
+    localStorage.removeItem(`${stateKey}.sort`)
+  } catch {
+    // Storage blocked or the old value unreadable: start without it.
+  }
+}
+
 function isEmpty(answer: WidgetData): boolean {
   const data = answer.data
   if (!data) return true
+  // A remote page past the end of a result that has rows is not empty: the
+  // table moves back to its last page.
+  if (answer.page && answer.page.matched > 0) return false
   // A defensive `?? []`: the server always sends a rows array (a query
   // that matches nothing is still `[]`, never absent), but this stays cheap
   // insurance against ever crashing the whole page on one bad answer.

@@ -1,4 +1,5 @@
 import type { ComponentType } from 'react'
+import type { Filter, TableView } from '@/lib/table-view'
 
 export type ColumnType = 'number' | 'text' | 'day'
 
@@ -32,6 +33,18 @@ export interface WidgetProps<P = Record<string, unknown>> {
   props: P
   /** A localStorage key prefix for what a viewer changes on this widget; absent in the gallery. */
   stateKey?: string
+  // The rest is read by `table` only.
+  /** The viewer's filters, sort and page; absent, the table keeps its own (the gallery). */
+  view?: TableView
+  onView?: (next: TableView) => void
+  /** Remote mode: the card's loader for distinct values; absent, they come from the loaded rows. */
+  fetchDistinct?: (column: string, filters: Filter[]) => Promise<{ value: string; rows: number; capped: boolean }[]>
+  /** Remote mode: what the server answered for this page. */
+  page?: { offset: number; limit: number; matched: number; total: number }
+  /** Remote mode: the server refused the last view (shown under the bar). */
+  viewError?: string
+  /** A later load is in flight: the current rows stay, dimmed. */
+  reloading?: boolean
 }
 
 /**

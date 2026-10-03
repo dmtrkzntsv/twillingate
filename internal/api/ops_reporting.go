@@ -58,6 +58,11 @@ type widgetDataIn struct {
 	From      string `json:"from,omitempty" jsonschema:"YYYY-MM-DD; with to, required when the widget follows the range switcher (its SQL uses :from or :to); ignored otherwise"`
 	To        string `json:"to,omitempty" jsonschema:"YYYY-MM-DD, at most 365 days after from; a day after today is clamped to today"`
 	Fresh     bool   `json:"fresh,omitempty" jsonschema:"true reuses a cached result only up to REPORTING_REFRESH_SECONDS old instead of REPORTING_CACHE_SECONDS"`
+	Filters   string `json:"filters,omitempty" jsonschema:"remote tables only (props.mode \"remote\"): a JSON list of {column, op, value}; op is =, !=, <, >, in or not in; in/not in take a list. See docs://reporting, Filtering and paging a table"`
+	Sort      string `json:"sort,omitempty" jsonschema:"remote tables only: <column>:asc or <column>:desc; the whole result is sorted, not the page"`
+	Distinct  string `json:"distinct,omitempty" jsonschema:"remote tables only: return [value, rows] for this column among rows matching the other filters, most frequent first"`
+	Offset    int    `json:"offset,omitempty" jsonschema:"remote tables only: rows to skip"`
+	Limit     int    `json:"limit,omitempty" jsonschema:"remote tables only: page size, 1 to CONSOLE_QUERY_MAX_ROWS (the default)"`
 }
 
 type createDashboardIn struct {
@@ -126,7 +131,8 @@ func (h *host) listWidgets(ctx context.Context, in listWidgetsIn) (listWidgetsOu
 
 func (h *host) widgetData(ctx context.Context, in widgetDataIn) (reporting.WidgetData, error) {
 	return h.rep.WidgetData(ctx, reporting.DataRequest{
-		WidgetID: in.WidgetID, ProjectID: in.ProjectID, From: in.From, To: in.To, Fresh: in.Fresh})
+		WidgetID: in.WidgetID, ProjectID: in.ProjectID, From: in.From, To: in.To, Fresh: in.Fresh,
+		Filters: in.Filters, Sort: in.Sort, Distinct: in.Distinct, Offset: in.Offset, Limit: in.Limit})
 }
 
 func (h *host) createDashboard(ctx context.Context, in createDashboardIn) (reporting.DashboardDetail, error) {
@@ -225,7 +231,7 @@ func (h *host) registerReporting(r *registrar) {
 		Description: "Widgets, archived ones included, each with its dashboard and its 1-based position there. Filter by dashboard_id and/or component; use it to find an archived widget to restore, or every widget on a component."},
 		h.listWidgets)
 	expose(r, spec{Name: "widget_data", Annotations: ro, Method: "GET", Path: w + "/data",
-		Description: "Load one widget's content, as its card draws it. project_id is required when the widget's SQL uses :project, and from/to (YYYY-MM-DD, at most 365 days) when it uses :from or :to; each is ignored otherwise, and the answer echoes the values applied. fresh=true reuses a cached result only up to REPORTING_REFRESH_SECONDS old. A query that no longer runs, or rows that no longer fit the component, is refused with the reason; removed=true means the widget's component left the code."},
+		Description: "Load one widget's content, as its card draws it. project_id is required when the widget's SQL uses :project, and from/to (YYYY-MM-DD, at most 365 days) when it uses :from or :to; each is ignored otherwise, and the answer echoes the values applied. fresh=true reuses a cached result only up to REPORTING_REFRESH_SECONDS old. A query that no longer runs, or rows that no longer fit the component, is refused with the reason; removed=true means the widget's component left the code. A table with props.mode \"remote\" also takes filters, sort, distinct, offset and limit, applied in SQL over its whole result; the answer's page block echoes them with matched and total counts (docs://reporting, Filtering and paging a table)."},
 		h.widgetData)
 
 	expose(r, spec{Name: "create_dashboard", Annotations: write, Method: "POST", Path: "/api/dashboards", Status: http.StatusCreated,

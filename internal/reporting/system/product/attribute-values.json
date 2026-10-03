@@ -1,7 +1,8 @@
 {
   "component": "table",
-  "title": "Top attribute values by day",
+  "title": "Attribute values by day",
   "props": {
+    "mode": "remote",
     "formats": {
       "Count": "number",
       "Users (at least)": "number",
