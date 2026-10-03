@@ -378,7 +378,7 @@ func attributeValuesWidget(t *testing.T, f systemFixture) int64 {
 	return 0
 }
 
-// TestAttributeValuesKeepEveryDay: "Top attribute values by day" is a
+// TestAttributeValuesKeepEveryDay: "Attribute values by day" is a
 // remote table over every (attribute, day, value) in the range, so a
 // quiet day keeps its own values however busy another day was. Paging
 // through it, for every preset, yields exactly the rows the range holds

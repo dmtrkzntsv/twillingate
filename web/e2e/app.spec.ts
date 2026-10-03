@@ -259,7 +259,7 @@ test('the attribute table filters and pages on the server', async ({ page, reque
 
   const card = page
     .locator('[data-slot=widget-card]')
-    .filter({ has: page.getByRole('heading', { name: 'Top attribute values by day', exact: true }) })
+    .filter({ has: page.getByRole('heading', { name: 'Attribute values by day', exact: true }) })
   await card.getByRole('button', { name: 'Filter', exact: true }).click()
   // The picker offers the column's values from the server, most frequent first.
   const options = page.getByRole('option')
