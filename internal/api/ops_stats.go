@@ -93,11 +93,19 @@ func (h *host) statsFor(ctx context.Context, p *manage.Project, fromD, toD civil
 		q   string
 		set func(*statsDay, int64)
 	}{
-		{`SELECT day, SUM(views) FROM v_views_daily WHERE project_id = ? AND day BETWEEN ? AND ? GROUP BY day`,
+		// Not v_views_daily: its live half sessionizes raw rows with window
+		// functions only to yield a count, and this runs per project. A day
+		// is rolled up or raw, never both, and each view counts once either
+		// way, so this sums to the same (TestProjectStatsViewsMatchTheView).
+		{`SELECT day, SUM(n) FROM (
+			  SELECT day, SUM(views) AS n FROM agg_views_daily WHERE project_id = ?1 AND day BETWEEN ?2 AND ?3 GROUP BY day
+			  UNION ALL
+			  SELECT day, COUNT(*) FROM raw_views WHERE project_id = ?1 AND day BETWEEN ?2 AND ?3 GROUP BY day
+			) GROUP BY day`,
 			func(d *statsDay, n int64) { d.Views = n }},
-		{`SELECT day, SUM(total_events) FROM v_product_totals WHERE project_id = ? AND day BETWEEN ? AND ? GROUP BY day`,
+		{`SELECT day, SUM(total_events) FROM v_product_totals WHERE project_id = ?1 AND day BETWEEN ?2 AND ?3 GROUP BY day`,
 			func(d *statsDay, n int64) { d.Events = n }},
-		{`SELECT day, SUM(samples) FROM v_measures_daily WHERE project_id = ? AND day BETWEEN ? AND ? GROUP BY day`,
+		{`SELECT day, SUM(samples) FROM v_measures_daily WHERE project_id = ?1 AND day BETWEEN ?2 AND ?3 GROUP BY day`,
 			func(d *statsDay, n int64) { d.Measures = n }},
 	} {
 		res, err := h.run(ctx, s.q, p.ID, from, to)

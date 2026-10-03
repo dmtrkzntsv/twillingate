@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"strconv"
 	"testing"
 
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
@@ -76,5 +77,51 @@ func TestProjectStatsAllProjectsAndEmpty(t *testing.T) {
 	}
 	if _, err := h.projectStats(context.Background(), statsIn{usageRangeIn: usageRangeIn{From: "2026-09-02", To: "2026-09-01"}}); !errors.Is(err, manage.ErrInvalid) {
 		t.Errorf("backwards range: %v", err)
+	}
+}
+
+// A declared key no event carried is reported while a carried one is not.
+func TestProjectStatsUnusedAttributesMixed(t *testing.T) {
+	h, cs := newTestHost(t)
+	res := callTool(t, cs, "update_project", map[string]any{"project_id": 1, "attributes": []string{"plan", "never_sent"}})
+	if res.IsError {
+		t.Fatal(textOf(res))
+	}
+	out, err := h.projectStats(context.Background(), statsIn{ProjectID: 1,
+		usageRangeIn: usageRangeIn{From: "2026-08-19", To: "2026-08-27"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u := out.Projects[0].UnusedAttributes; len(u) != 1 || u[0] != "never_sent" {
+		t.Errorf("unused = %v, want [never_sent] (plan is carried)", u)
+	}
+}
+
+// The views series skips v_views_daily's sessionizing live half; this pins
+// that it still equals the view, day by day, across rolled-up and raw days.
+func TestProjectStatsViewsMatchTheView(t *testing.T) {
+	h, _ := newTestHost(t)
+	ctx := context.Background()
+	res, err := h.db.Run(ctx, `SELECT day, SUM(views) FROM v_views_daily
+		WHERE project_id = 1 AND day BETWEEN '2026-08-19' AND '2026-08-27' GROUP BY day`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Rows) < 3 {
+		t.Fatalf("the fixture should hold rolled-up and raw days, view rows = %v", res.Rows)
+	}
+	want := map[string]int64{}
+	for _, r := range res.Rows {
+		want[r[0]], _ = strconv.ParseInt(r[1], 10, 64)
+	}
+	out, err := h.projectStats(ctx, statsIn{ProjectID: 1,
+		usageRangeIn: usageRangeIn{From: "2026-08-19", To: "2026-08-27"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range out.Projects[0].Series {
+		if d.Views != want[d.Day] {
+			t.Errorf("%s: views %d, v_views_daily %d", d.Day, d.Views, want[d.Day])
+		}
 	}
 }
