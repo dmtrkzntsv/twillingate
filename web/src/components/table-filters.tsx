@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent, type ReactElement, type ReactNode } from 'react'
+import { useEffect, useId, useState, type FormEvent, type ReactElement, type ReactNode } from 'react'
 import { ChevronLeftIcon, ChevronRightIcon, PlusIcon, XIcon } from 'lucide-react'
 import { cn } from 'cn'
 import { Button } from '@/components/ui/button'
@@ -7,7 +7,8 @@ import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { OPS, type Filter, type FilterOp, type TableView } from '@/lib/table-view'
+import type { Format } from '@/lib/format'
+import { isDecimal, OPS, type Filter, type FilterOp, type TableView } from '@/lib/table-view'
 
 /** One value a column holds, with how many rows hold it; `capped` when the list was cut short. */
 export interface ValueOption {
@@ -21,6 +22,9 @@ export type OptionLoader = (column: string, filters: Filter[]) => Promise<ValueO
 const OP_LABELS: Record<FilterOp, string> = { '=': '=', '!=': '≠', '<': '<', '>': '>', in: 'in', 'not in': 'not in' }
 
 const isList = (op: FilterOp) => op === 'in' || op === 'not in'
+
+// A percent or a duration column shows its value formatted but holds, and is filtered by, the raw number.
+const RAW_HINTS: Partial<Record<Format, string>> = { percent: '0.38 means 38%', duration: 'In seconds: 90 means 1m 30s' }
 const count = (n: number) => n.toLocaleString('en-US')
 
 function chipText(f: Filter): string {
@@ -32,6 +36,8 @@ function chipText(f: Filter): string {
 interface FilterBarProps {
   columns: string[]
   numeric: Set<string>
+  /** How the table shows each column, so the editor can say a value is raw. */
+  formats?: Record<string, Format>
   view: TableView
   onView: (v: TableView) => void
   options: OptionLoader
@@ -40,13 +46,14 @@ interface FilterBarProps {
 }
 
 /** The view's filters as chips, each editable in a popover, above the table. */
-export function FilterBar({ columns, numeric, view, onView, options, error }: FilterBarProps) {
+export function FilterBar({ columns, numeric, formats = {}, view, onView, options, error }: FilterBarProps) {
   // Any change of filters returns to the first page.
   const setFilters = (filters: Filter[]) => onView({ ...view, filters, offset: 0 })
   const editor = (initial: Filter | undefined, index: number) => (close: () => void) => (
     <FilterEditor
       columns={columns}
       numeric={numeric}
+      formats={formats}
       initial={initial}
       others={view.filters.filter((_, j) => j !== index)}
       options={options}
@@ -160,6 +167,7 @@ function Chip({ text, stale, invalid, editor, onRemove }: ChipProps) {
 interface EditorProps {
   columns: string[]
   numeric: Set<string>
+  formats: Record<string, Format>
   initial?: Filter
   /** The view's other filters: the value picker offers what this filter would add to them. */
   others: Filter[]
@@ -168,7 +176,7 @@ interface EditorProps {
   onCancel: () => void
 }
 
-function FilterEditor({ columns, numeric, initial, others, options, onApply, onCancel }: EditorProps) {
+function FilterEditor({ columns, numeric, formats, initial, others, options, onApply, onCancel }: EditorProps) {
   const defaultOp = (c: string): FilterOp => (numeric.has(c) ? '>' : 'in')
   const [column, setColumn] = useState(initial?.column ?? columns[0])
   const [op, setOp] = useState<FilterOp>(initial?.op ?? defaultOp(column))
@@ -209,8 +217,15 @@ function FilterEditor({ columns, numeric, initial, others, options, onApply, onC
   const rows = new Map(items.map((o) => [o.value, o.rows]))
   const values = [...items.map((o) => o.value), ...list.filter((v) => !rows.has(v))]
   const capped = items.some((o) => o.capped)
-  const value = isList(op) ? list : text
-  const ready = isList(op) ? list.length > 0 : text !== ''
+  // < and > compare as numbers only when the value is a plain decimal, and as text otherwise, so on a
+  // numeric column "1,000" or "38%" (the value as the table shows it) would quietly match the wrong rows.
+  const plain = text.trim()
+  const wantsNumber = ordered && numeric.has(column)
+  const notNumber = wantsNumber && plain !== '' && !isDecimal(plain)
+  const value = isList(op) ? list : wantsNumber ? plain : text
+  const ready = isList(op) ? list.length > 0 : wantsNumber ? isDecimal(plain) : text !== ''
+  const rawHint = RAW_HINTS[formats[column]]
+  const hintId = useId()
 
   const submit = (e: FormEvent) => {
     e.preventDefault()
@@ -267,6 +282,8 @@ function FilterEditor({ columns, numeric, initial, others, options, onApply, onC
       {ordered ? (
         <Input
           aria-label="Value"
+          aria-invalid={notNumber || undefined}
+          aria-describedby={notNumber ? hintId : undefined}
           className="h-8"
           inputMode={numeric.has(column) ? 'decimal' : undefined}
           value={text}
@@ -295,6 +312,12 @@ function FilterEditor({ columns, numeric, initial, others, options, onApply, onC
           {notes}
         </Combobox>
       )}
+      {notNumber && (
+        <p id={hintId} className="text-xs text-destructive">
+          Enter a plain number, like 1000
+        </p>
+      )}
+      {rawHint && <p className="text-xs text-muted-foreground">{rawHint}</p>}
       <div className="flex justify-end gap-2">
         <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
           Cancel

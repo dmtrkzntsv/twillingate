@@ -139,6 +139,9 @@ result in SQL, and `widget_data` takes `filters`, `sort`, `distinct`,
 - `<` and `>` compare as numbers when the value is a decimal number (a
   cell that is not a number never matches) and as text by code point
   otherwise, which orders `YYYY-MM-DD` dates (`Day > 2026-09-25`).
+  `formats` play no part: `1,000` is text, and a `percent` cell holding
+  `0.38` passes `> 0.3`, not `> 30`. The viewer's filter editor asks for
+  a plain number for `<` and `>` on a numeric column.
 - An empty cell (`NULL` or `''`) matches `!=` and `not in` only, never
   `=`, `in`, `<` or `>`.
 - `sort` is `<column>:asc` or `<column>:desc`, split on the last `:`. It

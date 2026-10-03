@@ -156,6 +156,7 @@ export default function Table({
       <FilterBar
         columns={sql.columns}
         numeric={numericColumns}
+        formats={formats}
         view={view}
         onView={setView}
         options={options}

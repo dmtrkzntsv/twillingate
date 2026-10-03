@@ -1,6 +1,7 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
+import type { Format } from '@/lib/format'
 import { emptyView, type Filter, type TableView } from '@/lib/table-view'
 import { FilterBar, PageFooter } from './table-filters'
 
@@ -11,8 +12,9 @@ beforeAll(() => {
   Element.prototype.scrollIntoView ??= () => {}
 })
 
-const columns = ['Attribute', 'Day', 'Value', 'Count']
-const numeric = new Set(['Count'])
+const columns = ['Attribute', 'Day', 'Value', 'Count', 'Bounce', 'Time']
+const numeric = new Set(['Count', 'Bounce', 'Time'])
+const formats: Record<string, Format> = { Count: 'number', Bounce: 'percent', Time: 'duration' }
 
 type Option = { value: string; rows: number; capped: boolean }
 
@@ -28,9 +30,26 @@ function renderBar(view: TableView, opts: { options?: () => Promise<Option[]>; e
   const onView = vi.fn<(v: TableView) => void>()
   const options = vi.fn(opts.options ?? (() => Promise.resolve(attributes())))
   const utils = render(
-    <FilterBar columns={columns} numeric={numeric} view={view} onView={onView} options={options} error={opts.error} />
+    <FilterBar
+      columns={columns}
+      numeric={numeric}
+      formats={formats}
+      view={view}
+      onView={onView}
+      options={options}
+      error={opts.error}
+    />
   )
   return { ...utils, onView, options }
+}
+
+/** Opens the editor on a new filter with this column and operator. */
+async function pick(user: ReturnType<typeof userEvent.setup>, column: string, op: string) {
+  await user.click(screen.getByRole('button', { name: 'Filter' }))
+  await user.click(screen.getByRole('combobox', { name: 'Column' }))
+  await user.click(screen.getByRole('option', { name: column }))
+  await user.click(screen.getByRole('combobox', { name: 'Operator' }))
+  await user.click(screen.getByRole('option', { name: op }))
 }
 
 const withFilters = (...filters: Filter[]): TableView => ({ ...emptyView, filters, offset: 2000 })
@@ -71,6 +90,53 @@ describe('FilterBar', () => {
     await user.type(screen.getByRole('textbox', { name: 'Value' }), '100')
     await user.click(screen.getByRole('button', { name: 'Apply' }))
     expect(onView).toHaveBeenCalledWith({ filters: [{ column: 'Count', op: '>', value: '100' }], sort: null, offset: 0 })
+  })
+
+  it('refuses a number typed the way the table shows it, saying what it wants', async () => {
+    const user = userEvent.setup()
+    const { onView } = renderBar(emptyView)
+    await pick(user, 'Count', '>')
+    const input = screen.getByRole('textbox', { name: 'Value' })
+    await user.type(input, '1,000')
+    expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled()
+    expect(screen.getByText('Enter a plain number, like 1000')).toBeInTheDocument()
+    expect(input).toHaveAttribute('aria-invalid', 'true')
+    await user.type(input, '{Enter}')
+    expect(onView).not.toHaveBeenCalled()
+
+    await user.clear(input)
+    await user.type(input, ' 1000 ')
+    expect(screen.queryByText('Enter a plain number, like 1000')).toBeNull()
+    await user.click(screen.getByRole('button', { name: 'Apply' }))
+    expect(onView).toHaveBeenCalledWith({ filters: [{ column: 'Count', op: '>', value: '1000' }], sort: null, offset: 0 })
+  })
+
+  it('compares a text column by < or > with any value', async () => {
+    const user = userEvent.setup()
+    const { onView } = renderBar(emptyView)
+    await pick(user, 'Day', '>')
+    await user.type(screen.getByRole('textbox', { name: 'Value' }), '2026-09-25')
+    expect(screen.queryByText('Enter a plain number, like 1000')).toBeNull()
+    await user.click(screen.getByRole('button', { name: 'Apply' }))
+    expect(onView).toHaveBeenCalledWith({
+      filters: [{ column: 'Day', op: '>', value: '2026-09-25' }],
+      sort: null,
+      offset: 0,
+    })
+  })
+
+  it('says a percent or duration column holds raw values', async () => {
+    const user = userEvent.setup()
+    renderBar(emptyView)
+    await pick(user, 'Bounce', '<')
+    expect(screen.getByText('0.38 means 38%')).toBeInTheDocument()
+    await user.click(screen.getByRole('combobox', { name: 'Column' }))
+    await user.click(screen.getByRole('option', { name: 'Time' }))
+    expect(screen.getByText('In seconds: 90 means 1m 30s')).toBeInTheDocument()
+    expect(screen.queryByText('0.38 means 38%')).toBeNull()
+    await user.click(screen.getByRole('combobox', { name: 'Column' }))
+    await user.click(screen.getByRole('option', { name: 'Count' }))
+    expect(screen.queryByText('In seconds: 90 means 1m 30s')).toBeNull()
   })
 
   it('edits a chip in place when it is clicked', async () => {
