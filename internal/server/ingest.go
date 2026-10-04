@@ -10,17 +10,11 @@ import (
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/store"
+	"github.com/dmtrkzntsv/twillingate/internal/wire"
 )
 
-// Wire limits.
-const (
-	maxBatchEvents = 500
-	maxAttrs       = 50
-	maxAttrKey     = 64
-	maxAttrValue   = 512
-	maxNotices     = 10
-	futureSkew     = 5 * time.Minute
-)
+// maxNotices caps the errors, and the warnings, one response lists.
+const maxNotices = 10
 
 // Reserved event names. Both are views; the name only supplies the default
 // kind. $pageview is the pre-views spelling every deployed tag still sends,
@@ -215,13 +209,13 @@ func resolveAttributes(m map[string]any) (resolved, []string) {
 				unknown = append(unknown, k)
 				continue
 			}
-			set(&r, truncate(stringify(v), maxAttrValue))
+			set(&r, truncate(stringify(v), wire.MaxAttrValue))
 			continue
 		}
-		if len(k) > maxAttrKey || len(r.Custom) >= maxAttrs {
+		if len(k) > wire.MaxAttrKey || len(r.Custom) >= wire.MaxAttrs {
 			continue
 		}
-		r.Custom[k] = truncate(stringify(v), maxAttrValue)
+		r.Custom[k] = truncate(stringify(v), wire.MaxAttrValue)
 	}
 	return r, unknown
 }
@@ -308,45 +302,34 @@ func clampTS(client, received time.Time, maxAge time.Duration) (time.Time, bool)
 	if oldest := received.Add(-maxAge); client.Before(oldest) {
 		return oldest, true
 	}
-	if client.After(received.Add(futureSkew)) {
+	if client.After(received.Add(wire.FutureSkew)) {
 		return received, true
 	}
 	return client, false
 }
 
-// maxMeasureValue bounds a measure's value: 1e15 is about 31,000 years in
-// milliseconds and 1 PB in bytes, beyond anything a time, size or count can
-// honestly be. A larger value is a bug on the client; accepted, it would
-// overflow the weighted sums and push the histogram to an infinite bucket.
-const maxMeasureValue = 1e15
-
-// minSampleRate bounds $sample_rate from below: one sample in 10,000. A
-// smaller rate would weight a single sample as more than 10,000 samples and
-// let one client outvote every unsampled one in the percentiles.
-const minSampleRate = 1e-4
-
 // parseValue reads a measure's value: a JSON number, finite, >= 0 and at
-// most maxMeasureValue. Absent, null, a string or a boolean is not a value.
+// most wire.MaxMeasureValue. Absent, null, a string or a boolean is not a value.
 func parseValue(raw json.RawMessage) (float64, bool) {
 	s := strings.TrimSpace(string(raw))
 	if s == "" || s == "null" || s[0] == '"' || s == "true" || s == "false" {
 		return 0, false
 	}
 	var v float64
-	if err := json.Unmarshal(raw, &v); err != nil || math.IsNaN(v) || math.IsInf(v, 0) || v < 0 || v > maxMeasureValue {
+	if err := json.Unmarshal(raw, &v); err != nil || math.IsNaN(v) || math.IsInf(v, 0) || v < 0 || v > wire.MaxMeasureValue {
 		return 0, false
 	}
 	return v, true
 }
 
-// parseSampleRate reads $sample_rate: a number in [minSampleRate, 1].
+// parseSampleRate reads $sample_rate: a number in [wire.MinSampleRate, 1].
 // Absent means 1; anything else is stored as 1 and reported.
 func parseSampleRate(raw string) (rate float64, bad bool) {
 	if raw == "" {
 		return 1, false
 	}
 	v, err := strconv.ParseFloat(raw, 64)
-	if err != nil || !(v >= minSampleRate && v <= 1) {
+	if err != nil || !(v >= wire.MinSampleRate && v <= 1) {
 		return 1, true
 	}
 	return v, false

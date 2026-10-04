@@ -181,16 +181,27 @@ export interface IngestKey {
   state: 'active' | 'disabled'
 }
 
+export type CapSetting = 'VIEWS_DIMENSIONS_TOP_N' | 'ATTRIBUTES_TOP_N' | 'IDENTITIES_TOP_N'
+
+/** A limit in force: a setting (with its environment variable and default) or one of the wire format's fixed limits. */
 export interface Limit {
-  setting: 'VIEWS_DIMENSIONS_TOP_N' | 'ATTRIBUTES_TOP_N' | 'IDENTITIES_TOP_N'
-  /** The cap in force; 0 means no cap. */
+  group: 'retention' | 'caps' | 'ingest'
+  name: string
+  /** Absent for a fixed limit. */
+  setting?: string
+  /** In unit. */
   value: number
-  default: number
-  caps: string
+  /** Absent for a fixed limit. */
+  default?: number
+  /** Absent for a count or a plain number. */
+  unit?: 'days' | 'bytes' | 'characters' | 'seconds'
+  /** What 0 means when it is not the number: no cap, kept forever. */
+  zero?: string
+  description: string
 }
 
 export interface CapUsageRow {
-  setting: Limit['setting']
+  setting: CapSetting
   dimension: string
   cap: number
   max_values_per_day: number

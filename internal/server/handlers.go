@@ -11,11 +11,12 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/enrich"
 	"github.com/dmtrkzntsv/twillingate/internal/identity"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
+	"github.com/dmtrkzntsv/twillingate/internal/wire"
 	"github.com/google/uuid"
 )
 
 func decode(w http.ResponseWriter, r *http.Request, dst any) bool {
-	r.Body = http.MaxBytesReader(w, r.Body, maxBody)
+	r.Body = http.MaxBytesReader(w, r.Body, wire.MaxBody)
 	if err := json.NewDecoder(r.Body).Decode(dst); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return false
@@ -63,7 +64,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "origin not allowed", http.StatusForbidden)
 		return
 	}
-	if len(env.Events) > maxBatchEvents {
+	if len(env.Events) > wire.MaxBatchEvents {
 		http.Error(w, "too many events", http.StatusRequestEntityTooLarge)
 		return
 	}

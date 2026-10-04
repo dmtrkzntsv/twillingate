@@ -108,6 +108,15 @@ const (
 	DefaultIdentitiesTopN      = 500
 )
 
+// The retention defaults (RETENTION_EVENTS_RAW_DAYS,
+// RETENTION_EVENTS_AGGREGATE_DAYS, RETENTION_ARCHIVED_DAYS), reported by the
+// limits tool beside the values in force like the caps'.
+const (
+	DefaultRawDays       = 30
+	DefaultAggregateDays = 365
+	DefaultArchivedDays  = 30
+)
+
 type Config struct {
 	IngestAddr          string
 	Database            string
@@ -198,10 +207,10 @@ func FromEnv(lookup func(string) (string, bool)) (*Config, error) {
 		},
 		Retention: Retention{
 			Events: RetentionClass{
-				RawDays:       e.num("RETENTION_EVENTS_RAW_DAYS", 30),
-				AggregateDays: e.num("RETENTION_EVENTS_AGGREGATE_DAYS", 365),
+				RawDays:       e.num("RETENTION_EVENTS_RAW_DAYS", DefaultRawDays),
+				AggregateDays: e.num("RETENTION_EVENTS_AGGREGATE_DAYS", DefaultAggregateDays),
 			},
-			ArchivedDays: e.num("RETENTION_ARCHIVED_DAYS", 30),
+			ArchivedDays: e.num("RETENTION_ARCHIVED_DAYS", DefaultArchivedDays),
 		},
 		// Distinct client-supplied *values* per declared attribute key are
 		// capped globally rather than per project (spec: the operator picks

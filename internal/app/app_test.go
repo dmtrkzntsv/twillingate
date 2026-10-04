@@ -614,9 +614,9 @@ func TestServeWritesTheCapsToMeta(t *testing.T) {
 		}
 		defer st.Close()
 		for key, want := range map[string]string{
-			"attributes_top_n": product,
-			"views_dimensions_top_n":   views,
-			"identities_top_n":         identities,
+			"attributes_top_n":       product,
+			"views_dimensions_top_n": views,
+			"identities_top_n":       identities,
 		} {
 			if got, err := st.GetMeta(bg, key); err != nil || got != want {
 				t.Errorf("meta %s = %q (%v), want %q", key, got, err, want)
