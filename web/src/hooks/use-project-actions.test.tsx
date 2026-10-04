@@ -45,6 +45,26 @@ describe('useProjectActions', () => {
     expect(keys.sort()).toEqual(['keys', 'projects', 'received-attributes', 'usage'])
   })
 
+  it('stays pending until the project list has refetched, so a next write builds on the saved list', async () => {
+    vi.spyOn(endpoints, 'updateProject').mockResolvedValue({ project_id: 7 })
+    const { client, wrapper: w } = wrapper()
+    let finish!: () => void
+    vi.spyOn(client, 'invalidateQueries').mockImplementation(((filters: { queryKey: string[] }) =>
+      filters.queryKey[0] === 'projects' ? new Promise<void>((r) => { finish = r }) : Promise.resolve()) as never)
+    const { result } = renderHook(() => useProjectActions(), { wrapper: w })
+    let saved: Promise<boolean> | undefined
+    act(() => {
+      saved = result.current.update(7, { attributes: ['plan'] })
+    })
+    await vi.waitFor(() => expect(finish).toBeDefined())
+    expect(result.current.pending).toBe(true)
+    await act(async () => {
+      finish()
+      await saved
+    })
+    expect(result.current.pending).toBe(false)
+  })
+
   it('refetches nothing when the action failed', async () => {
     vi.spyOn(endpoints, 'disableKey').mockRejectedValue(new ApiError(409, 'already disabled', 'conflict'))
     const { client, wrapper: w } = wrapper()

@@ -39,7 +39,11 @@ export function useProjectActions(): ProjectActions {
       try {
         const out = await fn()
         toast.success(done)
-        for (const key of changed) void client.invalidateQueries({ queryKey: [key] })
+        const refetches = changed.map((key) => client.invalidateQueries({ queryKey: [key] }))
+        // Pending holds until the project list has refetched: breakdowns
+        // send the whole attribute list, so a second write in that gap would
+        // build on the old list and undo the first.
+        if (changed.includes('projects')) await refetches[changed.indexOf('projects')]
         return out
       } catch (err) {
         if (err instanceof ApiError) toast.error(err.message)

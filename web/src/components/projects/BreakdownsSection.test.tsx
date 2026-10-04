@@ -77,7 +77,7 @@ describe('BreakdownsSection', () => {
     expect(onSave).toHaveBeenCalledWith(['never_sent'])
   })
 
-  it('removes nothing on Cancel, and keeps the key in the title while the dialog closes', async () => {
+  it('removes nothing on Cancel, and never titles the dialog with a missing key', async () => {
     const user = userEvent.setup()
     const onSave = renderSection()
     await user.click(await screen.findByRole('button', { name: 'Remove plan' }))
