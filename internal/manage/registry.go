@@ -288,6 +288,20 @@ func (s *Snapshot) AttributesFor(id int64) []string {
 	return p.Attributes
 }
 
+// BreakdownsInUse is how many attributes the active projects declare
+// together: each is an attribute breakdown, held against
+// ATTRIBUTE_BREAKDOWNS_MAX. Archived projects receive nothing, so theirs
+// don't count.
+func (s *Snapshot) BreakdownsInUse() int {
+	n := 0
+	for _, p := range s.ordered {
+		if !p.Archived {
+			n += len(p.Attributes)
+		}
+	}
+	return n
+}
+
 // DeclaredAttributeKeys is the sorted, deduplicated union of every
 // project's declared keys — the column set of v_events_flat. Archived
 // projects are included: archiving keeps their data queryable.

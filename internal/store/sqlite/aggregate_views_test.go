@@ -104,7 +104,7 @@ func TestAggregateViewDayPerKind(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	seedViewDay(t, db)
-	if err := db.AggregateViewDay(ctx, 1, day("2026-08-10"), defaultDimensionsTopN); err != nil {
+	if err := db.AggregateViewDay(ctx, 1, day("2026-08-10"), defaultAttrsTopN); err != nil {
 		t.Fatal(err)
 	}
 	if got, want := readDaily(t, db, "agg_views_daily", "web"), (dailyRow{2, 4, 3, 2, 600}); got != want {
@@ -126,7 +126,7 @@ func TestAggregateViewDayDimensions(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	seedViewDay(t, db)
-	if err := db.AggregateViewDay(ctx, 1, day("2026-08-10"), defaultDimensionsTopN); err != nil {
+	if err := db.AggregateViewDay(ctx, 1, day("2026-08-10"), defaultAttrsTopN); err != nil {
 		t.Fatal(err)
 	}
 	check := func(q string, args []any, wantV, wantP int) {
@@ -183,7 +183,7 @@ func TestAggregateViewDayCapsDimensions(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	var views []store.Event
-	for i := 0; i < defaultDimensionsTopN+10; i++ {
+	for i := 0; i < defaultAttrsTopN+10; i++ {
 		// two actors see every collapsed path, so a summed count would say 20
 		for _, actor := range []string{"a", "b"} {
 			views = append(views, store.Event{Family: store.FamilyViews, ID: fmt.Sprintf("%s-%d", actor, i), TS: at(9, 0).Add(time.Duration(i) * time.Second),
@@ -195,15 +195,15 @@ func TestAggregateViewDayCapsDimensions(t *testing.T) {
 		views = append(views, store.Event{Family: store.FamilyViews, ID: fmt.Sprintf("hot-%d", i), TS: at(10, 0), ActorID: "c", Path: "/hot", OS: "linux", OSVersion: "0"})
 	}
 	seedViews(t, db, views...)
-	if err := db.AggregateViewDay(ctx, 1, day("2026-08-10"), defaultDimensionsTopN); err != nil {
+	if err := db.AggregateViewDay(ctx, 1, day("2026-08-10"), defaultAttrsTopN); err != nil {
 		t.Fatal(err)
 	}
 	var rows, otherV, otherP int
 	if err := db.db.QueryRow(`SELECT COUNT(*) FROM agg_views_paths WHERE project_id=1`).Scan(&rows); err != nil {
 		t.Fatal(err)
 	}
-	if rows != defaultDimensionsTopN+1 {
-		t.Errorf("paths rows = %d, want %d (top-N plus the other bucket)", rows, defaultDimensionsTopN+1)
+	if rows != defaultAttrsTopN+1 {
+		t.Errorf("paths rows = %d, want %d (top-N plus the other bucket)", rows, defaultAttrsTopN+1)
 	}
 	if err := db.db.QueryRow(`SELECT visitors, views FROM agg_views_paths WHERE project_id=1 AND path='(other)'`).Scan(&otherV, &otherP); err != nil {
 		t.Fatal(err)
@@ -225,14 +225,14 @@ func TestAggregateViewDayIsIdempotentAndSkipsEmptyDay(t *testing.T) {
 	ctx := context.Background()
 	seedViewDay(t, db)
 	for i := 0; i < 2; i++ {
-		if err := db.AggregateViewDay(ctx, 1, day("2026-08-10"), defaultDimensionsTopN); err != nil {
+		if err := db.AggregateViewDay(ctx, 1, day("2026-08-10"), defaultAttrsTopN); err != nil {
 			t.Fatal(err)
 		}
 	}
 	if got, want := readDaily(t, db, "agg_views_daily", "web"), (dailyRow{2, 4, 3, 2, 600}); got != want {
 		t.Errorf("after re-run web = %+v, want %+v", got, want)
 	}
-	if err := db.AggregateViewDay(ctx, 1, day("2026-08-11"), defaultDimensionsTopN); err != nil {
+	if err := db.AggregateViewDay(ctx, 1, day("2026-08-11"), defaultAttrsTopN); err != nil {
 		t.Fatalf("empty day must be a no-op: %v", err)
 	}
 	var n int

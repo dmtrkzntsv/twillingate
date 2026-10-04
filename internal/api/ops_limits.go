@@ -15,8 +15,8 @@ import (
 
 // The caps, by the setting that sets each.
 const (
-	settingViews      = "VIEWS_DIMENSIONS_TOP_N"
 	settingAttrs      = "ATTRIBUTE_VALUES_TOP_N"
+	settingBreakdowns = "ATTRIBUTE_BREAKDOWNS_MAX"
 	settingIdentities = "IDENTITIES_TOP_N"
 )
 
@@ -68,10 +68,10 @@ func limitsFrom(cfg *config.Config) []limitOut {
 			"aggregates, actors, cohorts and identities are kept this long, then deleted"),
 		setting(groupRetention, "Archived items", "RETENTION_ARCHIVED_DAYS", ret.ArchivedDays, config.DefaultArchivedDays, "days", "kept forever",
 			"an archived project (with its data), dashboard or widget is deleted this long after archiving"),
-		setting(groupCaps, "Views breakdown values", settingViews, cfg.ViewsDimensionsTopN, config.DefaultViewsDimensionsTopN, "", "no cap",
-			"values per views breakdown and kinds, per project and day; the rest fold into (other)"),
 		setting(groupCaps, "Attribute values", settingAttrs, cfg.AttributeValuesTopN, config.DefaultAttributeValuesTopN, "", "no cap",
-			"values per attribute key, per project, day and event; the rest fold into (other)"),
+			"values per views breakdown and kinds per project and day, and per attribute key per project, day and event; the rest fold into (other)"),
+		setting(groupCaps, "Attribute breakdowns", settingBreakdowns, cfg.AttributeBreakdownsMax, config.DefaultAttributeBreakdownsMax, "", "no cap",
+			"attributes declared across every active project, each a breakdown with its own aggregate rows; a save that adds more is refused"),
 		setting(groupCaps, "Users and groups", settingIdentities, cfg.IdentitiesTopN, config.DefaultIdentitiesTopN, "", "no cap",
 			"users, and groups, per project and day; the rest are dropped"),
 		fixed("Request body", wire.MaxBody, "bytes", "a larger request is refused with 413"),
@@ -162,7 +162,7 @@ type capUsageOut struct {
 	Dimensions []capUsageRow `json:"dimensions"`
 }
 
-// capViews are the views breakdowns VIEWS_DIMENSIONS_TOP_N caps, each with
+// capViews are the views breakdowns ATTRIBUTE_VALUES_TOP_N caps, each with
 // the column that folds into (other). consent is not here: three values.
 var capViews = []struct{ dimension, view, last string }{
 	{"paths", "v_views_paths", "path"},
@@ -249,7 +249,7 @@ func (h *host) capUsage(ctx context.Context, in capUsageIn) (capUsageOut, error)
 			return capUsageOut{}, err
 		}
 		if days := daysOf(res.Rows); len(days) > 0 {
-			out.Dimensions = append(out.Dimensions, summarize(settingViews, v.dimension, h.capOf(settingViews), days, true))
+			out.Dimensions = append(out.Dimensions, summarize(settingAttrs, v.dimension, h.capOf(settingAttrs), days, true))
 		}
 	}
 

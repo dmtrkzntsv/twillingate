@@ -44,8 +44,7 @@ beforeEach(() => {
   vi.spyOn(endpoints, 'keys').mockResolvedValue({ keys: [{ project_id: 4, label: 'web', key: 'ak_1', state: 'active' }] })
   vi.spyOn(endpoints, 'limits').mockResolvedValue({ limits: [
     { group: 'retention', name: 'Raw events', setting: 'RETENTION_EVENTS_RAW_DAYS', value: 7, default: 30, unit: 'days', description: 'raw events are kept this long' },
-    { group: 'caps', name: 'Views breakdown values', setting: 'VIEWS_DIMENSIONS_TOP_N', value: 0, default: 100, zero: 'no cap', description: 'values per views breakdown' },
-    { group: 'caps', name: 'Attribute values', setting: 'ATTRIBUTE_VALUES_TOP_N', value: 50, default: 50, zero: 'no cap', description: 'values per attribute key' },
+    { group: 'caps', name: 'Attribute values', setting: 'ATTRIBUTE_VALUES_TOP_N', value: 0, default: 100, zero: 'no cap', description: 'values per views breakdown and per attribute key' },
     { group: 'ingest', name: 'Request body', value: 262144, unit: 'bytes', description: 'a larger request is refused with 413' },
   ] })
 })
@@ -125,7 +124,7 @@ describe('Projects', () => {
     await user.click(await screen.findByRole('button', { name: 'New project' }))
     await user.type(screen.getByLabelText('Name'), 'shop')
     await user.click(screen.getByRole('button', { name: 'Create' }))
-    expect(create).toHaveBeenCalledWith({ name: 'shop', allowed_origins: [], attributes: [] })
+    expect(create).toHaveBeenCalledWith({ name: 'shop', allowed_origins: [] })
     expect(await screen.findByText('ak_new')).toBeInTheDocument()
     expect(screen.getByText('<script src="…"></script>')).toBeInTheDocument()
   })

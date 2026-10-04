@@ -21,8 +21,8 @@ test('creates a project, edits it, manages a key, archives and restores it', asy
   const name = `e2e-${Date.now()}`
   await page.getByRole('button', { name: 'New project' }).click()
   await page.getByLabel('Name').fill(name)
-  await page.getByLabel('Allowed origins').fill('https://e2e.example')
-  await page.getByLabel('Allowed origins').press('Enter')
+  await page.getByRole('button', { name: 'Add origin' }).click()
+  await page.getByRole('textbox', { name: 'Origin 1' }).fill('https://e2e.example')
   await page.getByRole('button', { name: 'Create' }).click()
   await expect(page.getByText('Project created')).toBeVisible()
   await expect(page.getByText(/^ak_/)).toBeVisible()
@@ -33,8 +33,8 @@ test('creates a project, edits it, manages a key, archives and restores it', asy
 
   const details = page.getByRole('region', { name: 'Details' })
   await details.getByRole('button', { name: 'Edit' }).click()
-  await page.getByLabel('Allowed origins').fill('*')
-  await page.getByLabel('Allowed origins').press('Enter')
+  await page.getByRole('button', { name: 'Add origin' }).click()
+  await page.getByRole('textbox', { name: 'Origin 2' }).fill('*')
   await page.getByRole('button', { name: 'Save' }).click()
   await expect(details.getByText('*', { exact: true })).toBeVisible()
 
@@ -74,4 +74,37 @@ test('lists Projects first in the sidebar, as a plain link', async ({ page }) =>
   await expect(sidebar.getByRole('link', { name: 'dev', exact: true })).toHaveCount(0)
   await expect(sidebar.getByText('Dashboards', { exact: true })).toBeVisible()
   await expect(sidebar.getByRole('list', { name: 'Built-in dashboards' }).getByRole('link', { name: 'Views', exact: true })).toBeVisible()
+})
+
+test('adds a breakdown from the attributes the seeded project received, then removes it', async ({ page }) => {
+  // Login, the wait below and the cleanup share one test limit, which must
+  // outlast the wait's own 90s or the default 30s would cut it short.
+  test.setTimeout(120_000)
+  await login(page)
+  await page.goto('/app/projects')
+  await page.getByRole('article', { name: 'dev' }).getByRole('link', { name: 'dev' }).click()
+  const breakdowns = page.getByRole('region', { name: 'Breakdowns' })
+  // The pass that counts the seeded days runs after the server starts listening
+  // (about 20s on a loaded host), so reopen the dialog, which refetches the keys,
+  // until `plan` is listed. The wait is bounded by the toPass timeout (90s),
+  // inside the test's 120s limit set above.
+  const plan = page.getByRole('radio', { name: /plan/ })
+  await expect(async () => {
+    await breakdowns.getByRole('button', { name: 'Add breakdown' }).click()
+    try {
+      await expect(plan).toBeVisible({ timeout: 3_000 })
+    } catch (e) {
+      await page.keyboard.press('Escape')
+      throw e
+    }
+  }).toPass({ timeout: 90_000, intervals: [2_000] })
+  await plan.check()
+  await page.getByRole('button', { name: 'Add', exact: true }).click()
+  const row = breakdowns.getByRole('row', { name: /plan/ })
+  await expect(row.getByText('plan', { exact: true })).toBeVisible()
+  await expect(row.getByText(/events · \d+ values?/)).toBeVisible()
+  // Leave the seed as it was for the other tests.
+  await breakdowns.getByRole('button', { name: 'Remove plan' }).click()
+  await page.getByRole('button', { name: 'Remove breakdown' }).click()
+  await expect(breakdowns.getByRole('row', { name: /plan/ })).toHaveCount(0)
 })

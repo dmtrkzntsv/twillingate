@@ -20,7 +20,7 @@ type createProjectIn struct {
 	// down (attr_ columns in v_events_flat for custom keys,
 	// agg_product_attrs rollups). Rollups
 	// always run regardless of this list.
-	Attributes []string `json:"attributes,omitempty" jsonschema:"attribute keys to break down; a custom key also gets an attr_ column in v_events_flat, a reserved $ key is already a typed column there"`
+	Attributes []string `json:"attributes,omitempty" jsonschema:"attribute keys to break down, each counted against ATTRIBUTE_BREAKDOWNS_MAX across active projects (pick them from received_attributes); a custom key also gets an attr_ column in v_events_flat, a reserved $ key is already a typed column there"`
 	// SkipKey rather than IssueKey: JSON booleans have no "unset", and
 	// the zero value must give the default behaviour (issue a key).
 	SkipKey bool `json:"skip_key,omitempty" jsonschema:"set true to NOT issue a first ingest key"`
@@ -30,7 +30,7 @@ type updateProjectIn struct {
 	ProjectID      int64    `json:"project_id" jsonschema:"project id; call list_projects first"`
 	Name           string   `json:"name,omitempty" jsonschema:"new display name; omit to keep"`
 	AllowedOrigins []string `json:"allowed_origins,omitempty" jsonschema:"replaces the whole list; an explicit [] clears it; omit to keep"`
-	Attributes     []string `json:"attributes,omitempty" jsonschema:"replaces the whole list; omit to keep"`
+	Attributes     []string `json:"attributes,omitempty" jsonschema:"breakdown keys, each counted against ATTRIBUTE_BREAKDOWNS_MAX across active projects (pick them from received_attributes); replaces the whole list; omit to keep"`
 }
 
 type projectToolOut struct {

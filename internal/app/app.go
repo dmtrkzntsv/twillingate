@@ -90,15 +90,16 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 	// subquery -- SQL cannot see the environment. Written before anything
 	// queries a view so the first read uses the configured caps rather than
 	// the views' built-in fallbacks. 0 is written as is: the views read it
-	// as no cap, as the daily pass does. ATTRIBUTE_VALUES_TOP_N keeps the
-	// row name of its earlier spelling, attributes_top_n: renaming it would
+	// as no cap, as the daily pass does. ATTRIBUTE_VALUES_TOP_N, the one
+	// values cap (views breakdowns and attributes), keeps the row name of
+	// its earlier spelling, attributes_top_n: renaming it would
 	// mean recreating the views that read it, for no reader's benefit.
 	for _, m := range []struct {
 		key string
 		n   int
 	}{
 		{"attributes_top_n", cfg.AttributeValuesTopN},
-		{"views_dimensions_top_n", cfg.ViewsDimensionsTopN},
+		{"attribute_breakdowns_max", cfg.AttributeBreakdownsMax},
 		{"identities_top_n", cfg.IdentitiesTopN},
 	} {
 		if err := st.SetMeta(ctx, m.key, strconv.Itoa(m.n)); err != nil {
@@ -110,6 +111,8 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 	if err := reg.Reload(ctx); err != nil {
 		return err
 	}
+	ops := manage.NewOps(reg, st)
+	ops.BreakdownsMax = cfg.AttributeBreakdownsMax
 	if len(reg.Snapshot(ctx).Projects()) == 0 {
 		logger.Warn("no projects configured; create one with `twillingate project create` or an API management operation")
 	}
@@ -168,7 +171,7 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 	var apiClose func() error
 	switch {
 	case runConsole && runIngest && cfg.Console.Addr == cfg.IngestAddr:
-		protected, closeDB, err := api.Build(ctx, cfg, reg, manage.NewOps(reg, st), st, logger)
+		protected, closeDB, err := api.Build(ctx, cfg, reg, ops, st, logger)
 		if err != nil {
 			stopBackground()
 			return err
@@ -179,7 +182,7 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 		api.RegisterOn(mux, protected, cfg, false, logger)
 		surfaces = append(surfaces, httpSurface{cfg.IngestAddr, mux, "ingest,console"})
 	case runConsole:
-		h, closeDB, err := api.NewHandler(ctx, cfg, reg, manage.NewOps(reg, st), st, logger)
+		h, closeDB, err := api.NewHandler(ctx, cfg, reg, ops, st, logger)
 		if err != nil {
 			stopBackground()
 			return err

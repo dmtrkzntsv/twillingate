@@ -1,24 +1,17 @@
 import { useState } from 'react'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import type { Project } from '@/lib/api'
 import ProjectFormDialog from './ProjectFormDialog'
 
 interface Props {
   project: Project
-  onSave: (body: { name: string; allowed_origins: string[]; attributes: string[] }) => Promise<boolean>
+  onSave: (body: { name: string; allowed_origins: string[] }) => Promise<boolean>
   pending?: boolean
 }
 
-/** Name, allowed origins and declared attributes, with Edit. */
+/** Allowed origins, with Edit for the name and origins. */
 export default function DetailsSection({ project, onSave, pending }: Props) {
   const [editing, setEditing] = useState(false)
-  const chips = (values: string[] | undefined, none: string) =>
-    values && values.length > 0 ? (
-      <div className="flex flex-wrap gap-1.5">{values.map((v) => <Badge key={v} variant="secondary">{v}</Badge>)}</div>
-    ) : (
-      <span className="text-sm text-muted-foreground">{none}</span>
-    )
   return (
     <section aria-label="Details" className="flex flex-col gap-3 rounded-lg border p-4">
       <header className="flex items-center justify-between">
@@ -27,9 +20,15 @@ export default function DetailsSection({ project, onSave, pending }: Props) {
       </header>
       <dl className="grid gap-3 sm:grid-cols-[10rem_1fr]">
         <dt className="text-sm text-muted-foreground">Allowed origins</dt>
-        <dd>{chips(project.allowed_origins, 'None: browsers cannot send')}</dd>
-        <dt className="text-sm text-muted-foreground">Declared attributes</dt>
-        <dd>{chips(project.attributes, 'None')}</dd>
+        <dd>
+          {project.allowed_origins && project.allowed_origins.length > 0 ? (
+            <ul aria-label="Allowed origins" className="flex flex-col gap-0.5 text-sm">
+              {project.allowed_origins.map((o) => <li key={o}>{o}</li>)}
+            </ul>
+          ) : (
+            <span className="text-sm text-muted-foreground">None: browsers cannot send</span>
+          )}
+        </dd>
       </dl>
       <ProjectFormDialog
         open={editing}
@@ -37,7 +36,7 @@ export default function DetailsSection({ project, onSave, pending }: Props) {
         title={`Edit ${project.name}`}
         submitLabel="Save"
         pending={pending}
-        initial={{ name: project.name, allowed_origins: project.allowed_origins, attributes: project.attributes ?? [] }}
+        initial={{ name: project.name, allowed_origins: project.allowed_origins }}
         onSubmit={onSave}
       />
     </section>

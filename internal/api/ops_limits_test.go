@@ -18,7 +18,7 @@ import (
 // fixed limits from internal/wire with neither setting nor default.
 func TestLimitsReportsTheLimitsInForce(t *testing.T) {
 	h, cs := newTestHost(t)
-	cfg := &config.Config{AttributeValuesTopN: 7, ViewsDimensionsTopN: 0, IdentitiesTopN: 2000}
+	cfg := &config.Config{AttributeValuesTopN: 7, IdentitiesTopN: 2000, AttributeBreakdownsMax: 12}
 	cfg.Retention.Events = config.RetentionClass{RawDays: 7, AggregateDays: 90}
 	h.limits = limitsFrom(cfg)
 	out, err := h.listLimits(context.Background(), struct{}{})
@@ -33,8 +33,8 @@ func TestLimitsReportsTheLimitsInForce(t *testing.T) {
 		{groupRetention, "RETENTION_EVENTS_RAW_DAYS", 7, config.DefaultRawDays},
 		{groupRetention, "RETENTION_EVENTS_AGGREGATE_DAYS", 90, config.DefaultAggregateDays},
 		{groupRetention, "RETENTION_ARCHIVED_DAYS", 0, config.DefaultArchivedDays},
-		{groupCaps, "VIEWS_DIMENSIONS_TOP_N", 0, config.DefaultViewsDimensionsTopN},
 		{groupCaps, "ATTRIBUTE_VALUES_TOP_N", 7, config.DefaultAttributeValuesTopN},
+		{groupCaps, "ATTRIBUTE_BREAKDOWNS_MAX", 12, config.DefaultAttributeBreakdownsMax},
 		{groupCaps, "IDENTITIES_TOP_N", 2000, config.DefaultIdentitiesTopN},
 	}
 	if len(out.Limits) <= len(settings) {
@@ -63,7 +63,7 @@ func TestLimitsReportsTheLimitsInForce(t *testing.T) {
 			t.Errorf("%s = %+v, want %v", name, fixedByName[name], v)
 		}
 	}
-	if h.capOf(settingViews) != 0 || h.capOf(settingAttrs) != 7 || h.capOf(settingIdentities) != 2000 {
+	if h.capOf("NO_SUCH_TOP_N") != 0 || h.capOf(settingAttrs) != 7 || h.capOf(settingIdentities) != 2000 {
 		t.Errorf("capOf disagrees with limits: %+v", out.Limits)
 	}
 	// The MCP tool answers the same.
@@ -108,11 +108,12 @@ func TestUsageRange(t *testing.T) {
 // data, the days that folded into (other) and the share folded. The test
 // host has blog (1) with aggregated days 2026-08-20/21 and a raw view on
 // 2026-08-26 (path /live, user u1); this adds a folded paths day and a
-// folded plan day, and caps of 1 so the identity days (u1 on 2026-08-20
+// folded plan day, a values cap of 2 (views breakdowns and attributes
+// alike) and an identities cap of 1 so the identity days (u1 on 2026-08-20
 // aggregated, and again on 2026-08-26 from the raw view) reach theirs.
 func TestCapUsage(t *testing.T) {
 	h, _ := newTestHost(t)
-	h.limits = limitsFrom(&config.Config{AttributeValuesTopN: 1, ViewsDimensionsTopN: 2, IdentitiesTopN: 1})
+	h.limits = limitsFrom(&config.Config{AttributeValuesTopN: 2, IdentitiesTopN: 1})
 	for _, q := range []string{
 		`INSERT INTO agg_views_paths (project_id, day, path, visitors, views) VALUES
 		 (1,'2026-08-22','/a',3,10), (1,'2026-08-22','/b',2,5), (1,'2026-08-22','(other)',4,15)`,
@@ -134,13 +135,13 @@ func TestCapUsage(t *testing.T) {
 	paths := byDim["paths"]
 	// Days 08-20 (3 paths, 37 views), 08-22 (3 rows, 30 views, 15 folded),
 	// 08-26 (the raw /live view): the busiest is the earliest of the two 3s.
-	if paths.Setting != settingViews || paths.Cap != 2 || paths.MaxValuesPerDay != 3 || paths.MaxDay != "2026-08-20" ||
+	if paths.Setting != settingAttrs || paths.Cap != 2 || paths.MaxValuesPerDay != 3 || paths.MaxDay != "2026-08-20" ||
 		paths.Days != 3 || paths.DaysCapped != 1 || paths.FoldedShare == nil || math.Abs(*paths.FoldedShare-15.0/68) > 1e-9 {
 		t.Errorf("paths = %+v (share %v)", paths, paths.FoldedShare)
 	}
 	plan := byDim["plan"]
 	// pro (08-20, 3), team (08-21, 2), basic + (other) (08-22, 6 + 4).
-	if plan.Setting != settingAttrs || plan.Cap != 1 || plan.MaxValuesPerDay != 2 || plan.MaxDay != "2026-08-22" ||
+	if plan.Setting != settingAttrs || plan.Cap != 2 || plan.MaxValuesPerDay != 2 || plan.MaxDay != "2026-08-22" ||
 		plan.Days != 3 || plan.DaysCapped != 1 || plan.FoldedShare == nil || math.Abs(*plan.FoldedShare-4.0/15) > 1e-9 {
 		t.Errorf("plan = %+v (share %v)", plan, plan.FoldedShare)
 	}
@@ -155,7 +156,7 @@ func TestCapUsage(t *testing.T) {
 		t.Error("consent is listed; it is never capped")
 	}
 	// Views dimensions come first, in a fixed order; identities last.
-	if out.Dimensions[0].Setting != settingViews || out.Dimensions[len(out.Dimensions)-1].Setting != settingIdentities {
+	if out.Dimensions[0].Dimension != "paths" || out.Dimensions[len(out.Dimensions)-1].Setting != settingIdentities {
 		t.Errorf("order: first %+v, last %+v", out.Dimensions[0], out.Dimensions[len(out.Dimensions)-1])
 	}
 }

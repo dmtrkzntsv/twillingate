@@ -82,7 +82,9 @@ func openOps(stdout io.Writer, envFile string) (*manage.Ops, *config.Config, fun
 		fmt.Fprintln(stdout, err)
 		return nil, nil, nil, 1
 	}
-	return manage.NewOps(reg, st), cfg, func() { st.Close() }, 0
+	ops := manage.NewOps(reg, st)
+	ops.BreakdownsMax = cfg.AttributeBreakdownsMax
+	return ops, cfg, func() { st.Close() }, 0
 }
 
 const projectUsage = "usage: twillingate project <create|update|list|archive|restore|delete> [flags]"

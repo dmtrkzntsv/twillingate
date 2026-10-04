@@ -181,7 +181,7 @@ export interface IngestKey {
   state: 'active' | 'disabled'
 }
 
-export type CapSetting = 'VIEWS_DIMENSIONS_TOP_N' | 'ATTRIBUTE_VALUES_TOP_N' | 'IDENTITIES_TOP_N'
+export type CapSetting = 'ATTRIBUTE_VALUES_TOP_N' | 'IDENTITIES_TOP_N'
 
 /** A limit in force: a setting (with its environment variable and default) or one of the wire format's fixed limits. */
 export interface Limit {
@@ -281,6 +281,32 @@ export interface RangeQuery {
   to?: string
 }
 
+/** One attribute key a project received in a range (or declared without receiving). `max_values` is null before the nightly count. */
+export interface ReceivedKey {
+  key: string
+  /** As the daily pass counted them: today's arrive the night after, so a key first received today has 0. */
+  events: number
+  max_values: number | null
+  /** Whether any event in the range carried it; false for a declared key none carried. */
+  received: boolean
+  declared: boolean
+}
+
+/**
+ * The keys a project received over a range, with the breakdown budget (`breakdowns_max` 0 is no limit).
+ * `keys` holds the 500 busiest received keys and every declared one; `keys_total` counts every key received.
+ */
+export interface ReceivedAttributes {
+  project_id?: number
+  from: string
+  to: string
+  keys: ReceivedKey[]
+  keys_total: number
+  values_cap: number
+  breakdowns_used: number
+  breakdowns_max: number
+}
+
 export interface ProjectsResponse {
   projects: Project[]
 }
@@ -355,6 +381,8 @@ export const endpoints = {
     api<{ status: string }>(`/api/projects/${id}/keys/${encodeURIComponent(label)}/enable`, json('POST', {})),
   limits: () => api<{ limits: Limit[] }>('/api/limits'),
   usage: (q: RangeQuery & { project_id?: number }) => api<UsageResponse>(`/api/usage${toQuery(q)}`),
+  receivedAttributes: (q: RangeQuery & { project_id?: number }) =>
+    api<ReceivedAttributes>(`/api/received-attributes${toQuery(q)}`),
   capUsage: (id: number, q: RangeQuery) => api<CapUsage>(`/api/projects/${id}/cap-usage${toQuery(q)}`),
   devVersion: () => api<{ version: string }>('/api/dev/version'),
 }

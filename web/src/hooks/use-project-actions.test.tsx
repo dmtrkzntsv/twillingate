@@ -33,7 +33,7 @@ describe('useProjectActions', () => {
     expect(invalidate.mock.calls.map((c) => (c[0] as { queryKey: string[] }).queryKey[0])).toEqual(['keys'])
   })
 
-  it('refetches projects, keys and stats after a project write, never cap usage', async () => {
+  it('refetches projects, keys, stats and received attributes after a project write, never cap usage', async () => {
     vi.spyOn(endpoints, 'archiveProject').mockResolvedValue({ status: 'archived' } as never)
     const { client, wrapper: w } = wrapper()
     const invalidate = vi.spyOn(client, 'invalidateQueries')
@@ -42,7 +42,27 @@ describe('useProjectActions', () => {
       await result.current.archive(7)
     })
     const keys = invalidate.mock.calls.map((c) => (c[0] as { queryKey: string[] }).queryKey[0])
-    expect(keys.sort()).toEqual(['keys', 'projects', 'usage'])
+    expect(keys.sort()).toEqual(['keys', 'projects', 'received-attributes', 'usage'])
+  })
+
+  it('stays pending until the project list has refetched, so a next write builds on the saved list', async () => {
+    vi.spyOn(endpoints, 'updateProject').mockResolvedValue({ project_id: 7 })
+    const { client, wrapper: w } = wrapper()
+    let finish!: () => void
+    vi.spyOn(client, 'invalidateQueries').mockImplementation(((filters: { queryKey: string[] }) =>
+      filters.queryKey[0] === 'projects' ? new Promise<void>((r) => { finish = r }) : Promise.resolve()) as never)
+    const { result } = renderHook(() => useProjectActions(), { wrapper: w })
+    let saved: Promise<boolean> | undefined
+    act(() => {
+      saved = result.current.update(7, { attributes: ['plan'] })
+    })
+    await vi.waitFor(() => expect(finish).toBeDefined())
+    expect(result.current.pending).toBe(true)
+    await act(async () => {
+      finish()
+      await saved
+    })
+    expect(result.current.pending).toBe(false)
   })
 
   it('refetches nothing when the action failed', async () => {

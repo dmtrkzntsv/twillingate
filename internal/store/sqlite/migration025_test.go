@@ -57,6 +57,7 @@ func productAttrsRows(t *testing.T, db *DB) []string {
 // a project declaring nothing, and a day already rolled up.
 func TestMigration025KeepsProductAttrsAnswer(t *testing.T) {
 	db := newTestDBAt(t, 24)
+	withReceivedAttributes(t, db)
 	ctx := context.Background()
 	if err := db.SetMeta(ctx, "product_attributes_top_n", "3"); err != nil {
 		t.Fatal(err)
@@ -135,6 +136,7 @@ func TestMigration025KeepsProductAttrsAnswer(t *testing.T) {
 // rates are powers of two, so weight and sum add up exactly in any order.
 func TestMigration025KeepsMeasuresAttrsAnswer(t *testing.T) {
 	db := newTestDBAt(t, 24)
+	withReceivedAttributes(t, db)
 	ctx := context.Background()
 	if err := db.SetMeta(ctx, "product_attributes_top_n", "2"); err != nil {
 		t.Fatal(err)

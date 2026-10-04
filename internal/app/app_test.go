@@ -578,21 +578,20 @@ func runServeAndCollectLogs(t *testing.T, cfg *config.Config) string {
 }
 
 // The views read their caps from meta, since SQL cannot see the
-// environment: every boot writes all three before anything is served, and
+// environment: every boot writes both before anything is served, and
 // a restart with new values replaces them. Without it every view would
 // fall back to its built-in default while the daily pass used the setting.
 func TestServeWritesTheCapsToMeta(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "caps.db")
 	bg := context.Background()
-	boot := func(product, views, identities string) {
+	boot := func(values, identities string) {
 		t.Helper()
 		addr := freePort(t)
 		testConfig(t, addr, dbPath) // seeds the project
 		cfg := configtest.Load(t, map[string]string{
 			"INGEST_ADDR":            addr,
 			"DATABASE_DSN":           "sqlite://" + dbPath,
-			"ATTRIBUTE_VALUES_TOP_N": product,
-			"VIEWS_DIMENSIONS_TOP_N": views,
+			"ATTRIBUTE_VALUES_TOP_N": values,
 			"IDENTITIES_TOP_N":       identities,
 		})
 		ctx, cancel := context.WithCancel(bg)
@@ -614,15 +613,14 @@ func TestServeWritesTheCapsToMeta(t *testing.T) {
 		}
 		defer st.Close()
 		for key, want := range map[string]string{
-			"attributes_top_n":       product,
-			"views_dimensions_top_n": views,
-			"identities_top_n":       identities,
+			"attributes_top_n": values,
+			"identities_top_n": identities,
 		} {
 			if got, err := st.GetMeta(bg, key); err != nil || got != want {
 				t.Errorf("meta %s = %q (%v), want %q", key, got, err, want)
 			}
 		}
 	}
-	boot("7", "0", "1200")
-	boot("50", "500", "0")
+	boot("7", "1200")
+	boot("0", "0")
 }

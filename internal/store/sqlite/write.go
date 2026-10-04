@@ -28,6 +28,10 @@ const tsFormat = "2006-01-02T15:04:05Z"
 //
 // value is NULL outside measures (a nil Value), and a SampleRate of 0
 // means unset and is stored as 1.
+//
+// The attribute keys the inserted product and measure rows carried are
+// recorded in received_attributes in the same transaction, only those
+// ingest has not written yet (receivedSeen); the daily pass counts them.
 func (d *DB) WriteEvents(ctx context.Context, evs []store.Event) error {
 	if len(evs) == 0 {
 		return nil
@@ -40,7 +44,8 @@ func (d *DB) WriteEvents(ctx context.Context, evs []store.Event) error {
 				e.ID, e.Family, store.FamilyViews, store.FamilyProduct, store.FamilyMeasures)
 		}
 	}
-	return d.tx(ctx, func(tx *sql.Tx) error {
+	var fresh []receivedKey
+	err := d.tx(ctx, func(tx *sql.Tx) error {
 		stmt, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO events
 			(id, project_id, family, event_name, ts, day, received_at, kind,
 			 actor_id, actor_kind, user_id, group_id, session_id,
@@ -53,6 +58,7 @@ func (d *DB) WriteEvents(ctx context.Context, evs []store.Event) error {
 			return err
 		}
 		defer stmt.Close()
+		received := receivedKeys{}
 		for _, e := range evs {
 			attrs := e.Attributes
 			if attrs == nil {
@@ -66,19 +72,32 @@ func (d *DB) WriteEvents(ctx context.Context, evs []store.Event) error {
 			if rate == 0 {
 				rate = 1
 			}
-			if _, err := stmt.ExecContext(ctx, e.ID, e.ProjectID, string(e.Family), e.EventName,
-				e.TS.UTC().Format(tsFormat), e.TS.UTC().Format("2006-01-02"),
+			day := e.TS.UTC().Format("2006-01-02")
+			res, err := stmt.ExecContext(ctx, e.ID, e.ProjectID, string(e.Family), e.EventName,
+				e.TS.UTC().Format(tsFormat), day,
 				e.ReceivedAt.UTC().Format(tsFormat), e.Kind,
 				e.ActorID, e.ActorKind, e.UserID, e.GroupID, e.SessionID,
 				e.Host, e.Path, e.ReferrerSource, e.UTMSource, e.UTMMedium, e.UTMCampaign,
 				e.Platform, e.OS, e.OSVersion, e.OSName, e.Browser, e.BrowserVersion, e.BrowserLocale,
 				e.AppVersion, e.AppLocale, e.Device, e.DeviceModel, e.DisplayWidth, e.DisplayHeight,
-				e.Country, e.Consent, string(blob), e.Value, e.Measure, rate); err != nil {
+				e.Country, e.Consent, string(blob), e.Value, e.Measure, rate)
+			if err != nil {
 				return fmt.Errorf("event %s: %w", e.ID, err)
 			}
+			// INSERT OR IGNORE: a duplicate id (a retried batch) inserts
+			// nothing and so records nothing.
+			if n, err := res.RowsAffected(); err == nil && n == 1 {
+				received.add(e, day)
+			}
 		}
-		return nil
+		fresh = d.seen.unseen(received)
+		return writeReceived(ctx, tx, fresh)
 	})
+	// Remembered only once committed: a rolled-back batch wrote nothing.
+	if err == nil {
+		d.seen.remember(fresh)
+	}
+	return err
 }
 
 // UpsertIdentities records display names, latest write wins.

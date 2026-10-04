@@ -26,6 +26,10 @@ beforeEach(() => {
     { project_id: 4, label: 'old', key: 'ak_old_123456789', state: 'disabled' },
   ] })
   vi.spyOn(endpoints, 'usage').mockResolvedValue({ from: 'a', to: 'b', database_bytes: 0, database_series: [], projects: [] })
+  vi.spyOn(endpoints, 'receivedAttributes').mockResolvedValue({
+    project_id: 4, from: 'a', to: 'b', values_cap: 50, breakdowns_used: 1, breakdowns_max: 50, keys_total: 1,
+    keys: [{ key: 'plan', events: 900, max_values: 3, received: true, declared: true }],
+  })
   vi.spyOn(endpoints, 'capUsage').mockResolvedValue({ project_id: 4, from: 'a', to: 'b', dimensions: [] })
 })
 
@@ -45,17 +49,56 @@ describe('Project', () => {
     expect(await within(nav).findByText('econumo.com')).toHaveAttribute('aria-current', 'page')
   })
 
-  it('shows the details and edits them through PATCH', async () => {
+  it('shows the details and edits name and origins through PATCH, never the attributes', async () => {
     const user = userEvent.setup()
     actions.update.mockResolvedValue(true)
     renderAt('/projects/4')
     const details = await screen.findByRole('region', { name: 'Details' })
     expect(within(details).getByText('https://econumo.com')).toBeInTheDocument()
-    expect(within(details).getByText('plan')).toBeInTheDocument()
+    expect(within(details).queryByText('plan')).not.toBeInTheDocument()
     await user.click(within(details).getByRole('button', { name: 'Edit' }))
-    await user.click(screen.getByRole('button', { name: 'Remove plan' }))
+    await user.click(screen.getByRole('button', { name: 'Add origin' }))
+    await user.type(screen.getByRole('textbox', { name: 'Origin 2' }), '*')
     await user.click(screen.getByRole('button', { name: 'Save' }))
-    expect(actions.update).toHaveBeenCalledWith(4, { name: 'econumo.com', allowed_origins: ['https://econumo.com'], attributes: [] })
+    expect(actions.update).toHaveBeenCalledWith(4, { name: 'econumo.com', allowed_origins: ['https://econumo.com', '*'] })
+  })
+
+  it('places Breakdowns between Details and Ingest keys', async () => {
+    renderAt('/projects/4')
+    await screen.findByRole('region', { name: 'Breakdowns' })
+    const names = screen.getAllByRole('region').map((r) => r.getAttribute('aria-label'))
+    expect(names.indexOf('Details')).toBeLessThan(names.indexOf('Breakdowns'))
+    expect(names.indexOf('Breakdowns')).toBeLessThan(names.indexOf('Ingest keys'))
+  })
+
+  it('lists the breakdowns and removes one through PATCH after confirming', async () => {
+    const user = userEvent.setup()
+    actions.update.mockResolvedValue(true)
+    renderAt('/projects/4')
+    const section = await screen.findByRole('region', { name: 'Breakdowns' })
+    expect(await within(section).findByText('900 events · 3 values')).toBeInTheDocument()
+    await user.click(within(section).getByRole('button', { name: 'Remove plan' }))
+    expect(actions.update).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: 'Remove breakdown' }))
+    expect(actions.update).toHaveBeenCalledWith(4, { attributes: [] })
+  })
+
+  it('adds a breakdown through PATCH with the full new list', async () => {
+    const user = userEvent.setup()
+    actions.update.mockResolvedValue(true)
+    vi.spyOn(endpoints, 'receivedAttributes').mockResolvedValue({
+      project_id: 4, from: 'a', to: 'b', values_cap: 50, breakdowns_used: 1, breakdowns_max: 50, keys_total: 2,
+      keys: [
+        { key: 'plan', events: 900, max_values: 3, received: true, declared: true },
+        { key: 'tier', events: 20, max_values: 2, received: true, declared: false },
+      ],
+    })
+    renderAt('/projects/4')
+    const section = await screen.findByRole('region', { name: 'Breakdowns' })
+    await user.click(within(section).getByRole('button', { name: 'Add breakdown' }))
+    await user.click(await screen.findByRole('radio', { name: /tier/ }))
+    await user.click(screen.getByRole('button', { name: 'Add' }))
+    expect(actions.update).toHaveBeenCalledWith(4, { attributes: ['plan', 'tier'] })
   })
 
   it('lists keys and disables one after confirming', async () => {

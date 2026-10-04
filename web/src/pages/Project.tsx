@@ -4,6 +4,7 @@ import { useParams } from 'react-router'
 import AppShell, { TopBar } from '@/components/AppShell'
 import Crumbs from '@/components/Crumbs'
 import RangeSwitcher, { type RangeValue } from '@/components/RangeSwitcher'
+import BreakdownsSection from '@/components/projects/BreakdownsSection'
 import CapImpactSection from '@/components/projects/CapImpactSection'
 import DetailsSection from '@/components/projects/DetailsSection'
 import KeysSection from '@/components/projects/KeysSection'
@@ -19,7 +20,7 @@ import { dashboardsQuery, keysQuery, projectsQuery } from '@/lib/queries'
 import { resolve } from '@/lib/ranges'
 import { formatPurgeDate } from '@/lib/time'
 
-/** `/projects/:id`: one project's usage, details, keys and cap impact, with Archive or Restore. */
+/** `/projects/:id`: one project's usage, details, breakdowns, keys and cap impact, with Archive or Restore. */
 export default function Project() {
   const param = useParams().id
   const id = Number(param)
@@ -62,6 +63,7 @@ export default function Project() {
             </header>
             <UsageSection projectId={id} range={range} />
             <DetailsSection project={project} pending={actions.pending} onSave={(body) => actions.update(id, body)} />
+            <BreakdownsSection project={project} range={range} pending={actions.pending} onSave={(attributes) => actions.update(id, { attributes })} />
             <KeysSection
               keys={keysQ.data?.keys}
               error={keysQ.error}
