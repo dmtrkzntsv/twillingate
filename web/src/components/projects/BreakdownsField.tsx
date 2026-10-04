@@ -21,7 +21,9 @@ export function budget(used: number, max: number, initial: string[], value: stri
 
 /** What a key received: its events and its most distinct values in a day, or "not received". `valuesCap` 0 is no cap. */
 export function describeKey(r: ReceivedKey, valuesCap: number): string {
-  if (r.events === 0) return 'not received'
+  if (!r.received) return 'not received'
+  // Recorded at ingest, counted by the daily pass: a key first seen today has no counts yet.
+  if (r.events === 0) return 'received today · counted tonight'
   const values =
     r.max_values === null
       ? 'values counted tonight'
@@ -55,7 +57,7 @@ export default function BreakdownsField({ projectId, initial, value, onChange, o
     placeholderData: keepPreviousData,
   })
   const listed: ReceivedKey[] = [...(data?.keys ?? [])]
-  for (const k of value) if (!listed.some((r) => r.key === k)) listed.push({ key: k, events: 0, max_values: null, declared: false })
+  for (const k of value) if (!listed.some((r) => r.key === k)) listed.push({ key: k, events: 0, max_values: null, received: false, declared: false })
   // The server lists only the busiest received keys; say so when it left some out.
   const receivedListed = data ? data.keys.filter((r) => r.events > 0).length : 0
   const b = data ? budget(data.breakdowns_used, data.breakdowns_max, initial, value) : null

@@ -9,9 +9,9 @@ import BreakdownsField, { budget, describeKey } from './BreakdownsField'
 const answer = {
   project_id: 1, from: '2026-09-05', to: '2026-10-04', values_cap: 50, breakdowns_used: 3, breakdowns_max: 3, keys_total: 3,
   keys: [
-    { key: 'order_id', events: 980, max_values: 412, declared: false },
-    { key: 'plan', events: 900, max_values: 3, declared: true },
-    { key: '$path', events: 900, max_values: 38, declared: false },
+    { key: 'order_id', events: 980, max_values: 412, received: true, declared: false },
+    { key: 'plan', events: 900, max_values: 3, received: true, declared: true },
+    { key: '$path', events: 900, max_values: 38, received: true, declared: false },
   ],
 }
 
@@ -31,10 +31,11 @@ describe('budget', () => {
 
 describe('describeKey', () => {
   it('says what a key received, and when it is not received', () => {
-    expect(describeKey({ key: 'plan', events: 900, max_values: 3, declared: true }, 50)).toBe('900 events · 3 values')
-    expect(describeKey({ key: 'k', events: 5, max_values: 1, declared: true }, 50)).toBe('5 events · 1 value')
-    expect(describeKey({ key: 'k', events: 5, max_values: null, declared: true }, 50)).toBe('5 events · values counted tonight')
-    expect(describeKey({ key: 'k', events: 0, max_values: null, declared: true }, 50)).toBe('not received')
+    expect(describeKey({ key: 'plan', events: 900, max_values: 3, received: true, declared: true }, 50)).toBe('900 events · 3 values')
+    expect(describeKey({ key: 'k', events: 5, max_values: 1, received: true, declared: true }, 50)).toBe('5 events · 1 value')
+    expect(describeKey({ key: 'k', events: 5, max_values: null, received: true, declared: true }, 50)).toBe('5 events · values counted tonight')
+    expect(describeKey({ key: 'k', events: 0, max_values: null, received: false, declared: true }, 50)).toBe('not received')
+    expect(describeKey({ key: 'k', events: 0, max_values: null, received: true, declared: false }, 50)).toBe('received today · counted tonight')
   })
 })
 

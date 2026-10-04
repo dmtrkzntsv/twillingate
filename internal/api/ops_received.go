@@ -23,8 +23,9 @@ type receivedIn struct {
 
 type receivedKeyOut struct {
 	Key       string `json:"key"`
-	Events    int64  `json:"events" jsonschema:"events and measures that carried the key over the range; 0 for a declared key none carried"`
+	Events    int64  `json:"events" jsonschema:"events and measures that carried the key over the range, as the daily pass counted them; today's are counted the night after, so a key first received today has 0"`
 	MaxValues *int64 `json:"max_values" jsonschema:"the most distinct values one event (or measure) had on one day; null until the daily pass counts the day (today's), and for a key not received"`
+	Received  bool   `json:"received" jsonschema:"whether any event in the range carried the key; false for a declared key none carried"`
 	Declared  bool   `json:"declared" jsonschema:"whether the project declares the key as a breakdown"`
 }
 
@@ -78,7 +79,7 @@ func (h *host) receivedAttributes(ctx context.Context, in receivedIn) (receivedO
 	add := func(rows [][]string) {
 		for _, r := range rows {
 			n, _ := strconv.ParseInt(r[1], 10, 64)
-			k := receivedKeyOut{Key: r[0], Events: n, Declared: declared[r[0]]}
+			k := receivedKeyOut{Key: r[0], Events: n, Received: true, Declared: declared[r[0]]}
 			// A day not yet counted has a NULL max_values, which reads as no number.
 			if mv, err := strconv.ParseInt(r[2], 10, 64); err == nil {
 				k.MaxValues = &mv
@@ -116,6 +117,9 @@ func (h *host) receivedAttributes(ctx context.Context, in receivedIn) (receivedO
 		a, b := out.Keys[i], out.Keys[j]
 		if a.Events != b.Events {
 			return a.Events > b.Events
+		}
+		if a.Received != b.Received {
+			return a.Received
 		}
 		return a.Key < b.Key
 	})

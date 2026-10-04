@@ -21,7 +21,7 @@ func TestReceivedAttributes(t *testing.T) {
 	for _, q := range []string{
 		`UPDATE projects SET attributes = '["plan","never_sent"]' WHERE id = 1`,
 		`INSERT INTO received_attributes (project_id, day, attr_key, events, max_values) VALUES
-		 (1,'2026-10-01','plan',5,3), (1,'2026-10-02','plan',2,4), (1,'2026-10-02','order_id',9,NULL),
+		 (1,'2026-10-01','plan',5,3), (1,'2026-10-02','plan',2,4), (1,'2026-10-02','order_id',9,NULL), (1,'2026-10-02','zz_new_today',0,NULL),
 		 (1,'2026-09-30','old_key',1,1), (2,'2026-10-02','other_project',4,1)`,
 	} {
 		if _, err := rawExec(h.ops.St, q); err != nil {
@@ -36,15 +36,18 @@ func TestReceivedAttributes(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []receivedKeyOut{
-		{Key: "order_id", Events: 9, MaxValues: nil, Declared: false},
-		{Key: "plan", Events: 7, MaxValues: ptr(int64(4)), Declared: true},
+		{Key: "order_id", Events: 9, MaxValues: nil, Received: true, Declared: false},
+		{Key: "plan", Events: 7, MaxValues: ptr(int64(4)), Received: true, Declared: true},
+		// First received today: ingest records it with events 0 until the
+		// daily pass counts the day; listed before a key none carried.
+		{Key: "zz_new_today", Events: 0, MaxValues: nil, Received: true},
 		{Key: "never_sent", Events: 0, MaxValues: nil, Declared: true},
 	}
 	if !reflect.DeepEqual(out.Keys, want) {
 		t.Errorf("keys = %+v, want %+v", out.Keys, want)
 	}
-	if out.KeysTotal != 2 {
-		t.Errorf("keys_total = %d, want 2", out.KeysTotal)
+	if out.KeysTotal != 3 {
+		t.Errorf("keys_total = %d, want 3", out.KeysTotal)
 	}
 	if out.From != "2026-10-01" || out.To != "2026-10-02" || out.ProjectID != 1 {
 		t.Errorf("range = %+v", out)
@@ -98,9 +101,9 @@ func TestReceivedAttributesCapsTheKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []receivedKeyOut{
-		{Key: "id_1", Events: 10, MaxValues: ptr(int64(1))},
-		{Key: "id_2", Events: 8, MaxValues: ptr(int64(1))},
-		{Key: "plan", Events: 3, MaxValues: ptr(int64(2)), Declared: true},
+		{Key: "id_1", Events: 10, MaxValues: ptr(int64(1)), Received: true},
+		{Key: "id_2", Events: 8, MaxValues: ptr(int64(1)), Received: true},
+		{Key: "plan", Events: 3, MaxValues: ptr(int64(2)), Received: true, Declared: true},
 		{Key: "never_sent", Declared: true},
 	}
 	if !reflect.DeepEqual(out.Keys, want) {

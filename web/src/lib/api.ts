@@ -284,8 +284,11 @@ export interface RangeQuery {
 /** One attribute key a project received in a range (or declared without receiving). `max_values` is null before the nightly count. */
 export interface ReceivedKey {
   key: string
+  /** As the daily pass counted them: today's arrive the night after, so a key first received today has 0. */
   events: number
   max_values: number | null
+  /** Whether any event in the range carried it; false for a declared key none carried. */
+  received: boolean
   declared: boolean
 }
 

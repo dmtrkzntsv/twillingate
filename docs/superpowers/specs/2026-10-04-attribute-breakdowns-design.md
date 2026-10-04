@@ -44,25 +44,25 @@ Date: 2026-10-04
   always-on keys (`$platform`, `$os`, …) are not recorded: they are
   never declared.
 
-- **D2. Ingest counts keys in the same transaction as the events.**
-  `WriteEvents` (`internal/store/sqlite/write.go`) adds 1 per key for
-  each product or measure row it actually inserts (`RowsAffected() == 1`).
-  A row ignored as a duplicate `id` (a retried batch) counts nothing.
-  The counts are summed in memory per (project, day, key) across the
-  batch, then written with one upsert per distinct triple:
-  `INSERT … ON CONFLICT DO UPDATE SET events = events + excluded.events`.
-  A 500-event batch with 5 keys each therefore costs a handful of
-  upserts, not 2,500. Views rows are skipped before any work.
+- **D2. Ingest records keys it has not seen; the daily pass counts.**
+  `WriteEvents` (`internal/store/sqlite/write.go`) collects the
+  (project, day, key) triples of the product and measure rows it
+  actually inserts (`RowsAffected() == 1`; a duplicate `id` from a
+  retried batch records nothing). The store keeps the triples it has
+  written in memory (`receivedSeen`, the newest day and the day before)
+  and inserts only the new ones, in the same transaction, with
+  `events` 0 (`INSERT OR IGNORE`), remembering them once the
+  transaction commits. A batch whose keys are all known writes nothing
+  more. Event counts come from the daily pass (D4) alone, so a key first
+  received today lists with `events` 0 until the night after. Views
+  rows are skipped. (Revised after implementation: the first version
+  upserted a running count per key on every batch.)
 
-- **D3. Ingest must not slow storing events by more than 10%.** A new
-  `BenchmarkWriteEvents` in `internal/store/sqlite/bench_test.go` writes
-  500-event product batches with 0, 5 and 20 custom attributes each. It
-  lands in its own commit first, so `benchstat` can compare the commit
-  before the counting with the one after; the PR reports the numbers
-  (ns/op and allocs). If the overhead on the 5-attribute case exceeds
-  10%, the counting moves out of the write path (the daily pass alone
-  writes the table, and today's keys appear the next day). We'd decide
-  that from the benchmark, not by default.
+- **D3. Ingest must not slow storing events by more than 10%.**
+  `BenchmarkWriteEvents` writes 500-event product batches with 0, 5 and
+  20 custom attributes each. Counting per batch measured +3.5% on 5
+  attributes; recording only new keys is level with that (within noise),
+  and writes no rows once a day's keys are known.
 
 - **D4. The daily pass recounts finished days and fills `max_values`.**
   For every raw day before today, the pass rewrites each project's rows
@@ -113,8 +113,10 @@ Date: 2026-10-04
   {
     "project_id": 1, "from": "2026-09-05", "to": "2026-10-04",
     "keys": [
-      // events: summed over the range; max_values: the busiest day's,
-      // null when no day in the range has been counted yet (today only)
+      // events: summed over the range as the pass counted them (today's
+      // the night after); max_values: the busiest day's, null when no
+      // day in the range has been counted yet (today only); received:
+      // whether any event carried it
       { "key": "plan", "events": 1204, "max_values": 3, "declared": true },
       { "key": "order_id", "events": 980, "max_values": 412, "declared": false },
       { "key": "$path", "events": 1204, "max_values": 38, "declared": false }

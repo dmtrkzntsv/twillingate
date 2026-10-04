@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"sync"
 
+	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
@@ -26,39 +28,97 @@ type receivedKey struct {
 	key     string
 }
 
-// receivedCounts sums, over a batch's inserted product and measure rows,
-// how many carried each key per project and day.
-type receivedCounts map[receivedKey]int64
+// receivedKeys collects the (project, day, key) triples a batch's inserted
+// product and measure rows carried.
+type receivedKeys map[receivedKey]struct{}
 
-func (c receivedCounts) add(e store.Event, day string) {
+func (c receivedKeys) add(e store.Event, day string) {
 	if e.Family == store.FamilyViews {
 		return
 	}
 	for k := range e.Attributes {
-		c[receivedKey{e.ProjectID, day, k}]++
+		c[receivedKey{e.ProjectID, day, k}] = struct{}{}
 	}
 	for _, kv := range declarableValues(e) {
 		if kv.value != "" {
-			c[receivedKey{e.ProjectID, day, kv.key}]++
+			c[receivedKey{e.ProjectID, day, kv.key}] = struct{}{}
 		}
 	}
 }
 
-// write upserts the batch's counts: one statement per distinct
-// (project, day, key), however many events carried it.
-func (c receivedCounts) write(ctx context.Context, tx *sql.Tx) error {
-	if len(c) == 0 {
+// receivedSeen remembers the triples ingest has already written to
+// received_attributes, so a batch whose keys are all known writes nothing
+// more: ingest records that a key arrived, and the daily pass counts it.
+// It holds the newest day a batch carried and the day before; older days
+// leave it as the newest day moves on, and a late event for one falls back
+// to INSERT OR IGNORE, which writes nothing when the row exists. Empty
+// after a restart, when each key costs one ignored insert per day.
+type receivedSeen struct {
+	mu     sync.Mutex
+	keys   map[receivedKey]struct{}
+	newest string
+}
+
+// unseen lists the batch's triples not yet remembered.
+func (s *receivedSeen) unseen(batch receivedKeys) []receivedKey {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []receivedKey
+	for k := range batch {
+		if _, ok := s.keys[k]; !ok {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
+// remember records the triples a committed batch wrote, then drops the
+// days before the newest day's eve.
+func (s *receivedSeen) remember(written []receivedKey) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.keys == nil {
+		s.keys = map[receivedKey]struct{}{}
+	}
+	moved := false
+	for _, k := range written {
+		if k.day > s.newest {
+			s.newest, moved = k.day, true
+		}
+	}
+	floor := s.newest
+	if d, err := civil.Parse(s.newest); err == nil {
+		floor = d.AddDays(-1).String()
+	}
+	if moved {
+		for k := range s.keys {
+			if k.day < floor {
+				delete(s.keys, k)
+			}
+		}
+	}
+	for _, k := range written {
+		if k.day >= floor {
+			s.keys[k] = struct{}{}
+		}
+	}
+}
+
+// writeReceived inserts the triples ingest has not seen yet, with events 0
+// until the daily pass counts their day; a row already there (a restart,
+// or a late event for an older day) is left as it is.
+func writeReceived(ctx context.Context, tx *sql.Tx, keys []receivedKey) error {
+	if len(keys) == 0 {
 		return nil
 	}
-	stmt, err := tx.PrepareContext(ctx, `INSERT INTO received_attributes (project_id, day, attr_key, events)
-		VALUES (?, ?, ?, ?)
-		ON CONFLICT (project_id, day, attr_key) DO UPDATE SET events = events + excluded.events`)
+	stmt, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO received_attributes (project_id, day, attr_key, events)
+		VALUES (?, ?, ?, 0)`)
 	if err != nil {
 		return err
 	}
 	defer stmt.Close()
-	for k, n := range c {
-		if _, err := stmt.ExecContext(ctx, k.project, k.day, k.key, n); err != nil {
+	for _, k := range keys {
+		if _, err := stmt.ExecContext(ctx, k.project, k.day, k.key); err != nil {
 			return err
 		}
 	}

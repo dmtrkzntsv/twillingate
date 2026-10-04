@@ -7,7 +7,7 @@ import ProjectFormDialog from './ProjectFormDialog'
 
 const answer = {
   project_id: 1, from: '2026-09-05', to: '2026-10-04', values_cap: 50, breakdowns_used: 3, breakdowns_max: 3, keys_total: 1,
-  keys: [{ key: 'order_id', events: 980, max_values: 412, declared: false }],
+  keys: [{ key: 'order_id', events: 980, max_values: 412, received: true, declared: false }],
 }
 
 describe('ProjectFormDialog', () => {

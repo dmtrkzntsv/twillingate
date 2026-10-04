@@ -534,10 +534,11 @@ history starts there; sizes start that day and fill in one day at a time.
 ### Upgrading to attribute breakdowns (migration 028)
 
 Migration 028 adds `received_attributes`, the attribute keys each
-project's product events and measures carried per day. Ingest counts
-them as it writes; the first daily pass, which also runs at start,
-counts the raw window's days, so the project dialog lists the keys
-received in the last 30 days at once.
+project's product events and measures carried per day. Ingest records
+a key the first time it arrives each day; the daily pass counts them.
+The first pass, which also runs at start, counts the raw window's days,
+so the project dialog lists the keys received in the last 30 days at
+once.
 
 `ATTRIBUTE_BREAKDOWNS_MAX` (default 10) now bounds the attributes all
 active projects declare together. A server already past it keeps every

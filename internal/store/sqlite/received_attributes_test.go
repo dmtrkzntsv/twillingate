@@ -46,11 +46,11 @@ func receivedRows(t *testing.T, db *DB) []string {
 	return out
 }
 
-// Ingest counts each key once per inserted product or measure row, per
-// project and day; views are not counted; a retried batch (same ids) adds
-// nothing; a key with a quote or a dot is kept verbatim; the declarable
-// reserved keys count from their columns when set.
-func TestWriteEventsCountsReceivedAttributes(t *testing.T) {
+// Ingest records each key a product or measure row carried, per project
+// and day, with events 0 for the daily pass to count; views are not
+// recorded; a key with a quote or a dot is kept verbatim; the declarable
+// reserved keys are recorded from their columns when set.
+func TestWriteEventsRecordsReceivedAttributes(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	boot := 1.0
@@ -71,22 +71,15 @@ func TestWriteEventsCountsReceivedAttributes(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{
-		"1/2026-08-02/$path=1",
-		"1/2026-08-02/plan=2",
-		`1/2026-08-02/we"ird.key=1`,
-		"1/2026-08-03/plan=1",
-		"2/2026-08-02/$device_model=1",
-		"2/2026-08-02/plan=1",
+		"1/2026-08-02/$path=0",
+		"1/2026-08-02/plan=0",
+		`1/2026-08-02/we"ird.key=0`,
+		"1/2026-08-03/plan=0",
+		"2/2026-08-02/$device_model=0",
+		"2/2026-08-02/plan=0",
 	}
 	if got := receivedRows(t, db); !reflect.DeepEqual(got, want) {
-		t.Fatalf("after first write\n got %v\nwant %v", got, want)
-	}
-	// The same batch again: every row is ignored as a duplicate id.
-	if err := db.WriteEvents(ctx, evs); err != nil {
-		t.Fatal(err)
-	}
-	if got := receivedRows(t, db); !reflect.DeepEqual(got, want) {
-		t.Fatalf("a retried batch changed the counts\n got %v\nwant %v", got, want)
+		t.Fatalf("got %v\nwant %v", got, want)
 	}
 }
 
@@ -102,44 +95,71 @@ func TestDeclarableValuesMatchesTheDeclarableKeys(t *testing.T) {
 	}
 }
 
-// A later batch on the same project, day and keys adds to the stored
-// counts (the upsert's accumulate branch); an id repeated from an earlier
-// batch is ignored and adds nothing.
-func TestWriteEventsAccumulatesReceivedAttributes(t *testing.T) {
+// A batch whose keys ingest has already written writes nothing more:
+// with the rows deleted behind its back, a second batch on the same keys
+// leaves the table empty, and only a new key (or a retried batch's ids,
+// which insert nothing) is written. A fresh store (a restart) writes a
+// known key again, as INSERT OR IGNORE.
+func TestWriteEventsWritesOnlyNewReceivedKeys(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	first := []store.Event{
-		{ID: "a1", ProjectID: 1, Family: store.FamilyProduct, EventName: "signup", TS: ts("2026-08-02T10:00:00Z"),
-			ActorID: "a", Attributes: map[string]string{"plan": "pro", "seats": "3"}},
-		{ID: "a2", ProjectID: 1, Family: store.FamilyProduct, EventName: "signup", TS: ts("2026-08-02T11:00:00Z"),
-			ActorID: "b", Attributes: map[string]string{"plan": "free"}},
+	ev := func(id, day string, attrs map[string]string) store.Event {
+		return store.Event{ID: id, ProjectID: 1, Family: store.FamilyProduct, EventName: "signup",
+			TS: ts(day + "T10:00:00Z"), ActorID: "a", Attributes: attrs}
 	}
+	first := []store.Event{ev("a1", "2026-08-02", map[string]string{"plan": "pro", "seats": "3"})}
 	if err := db.WriteEvents(ctx, first); err != nil {
 		t.Fatal(err)
 	}
-	second := []store.Event{
-		first[0], // already stored: ignored, counts nothing
-		{ID: "a3", ProjectID: 1, Family: store.FamilyProduct, EventName: "signup", TS: ts("2026-08-02T12:00:00Z"),
-			ActorID: "c", Attributes: map[string]string{"plan": "team", "region": "eu"}},
-		{ID: "a4", ProjectID: 1, Family: store.FamilyProduct, EventName: "signup", TS: ts("2026-08-02T13:00:00Z"),
-			ActorID: "d", Attributes: map[string]string{"plan": "pro"}},
-	}
-	if err := db.WriteEvents(ctx, second); err != nil {
+	if _, err := db.db.Exec(`DELETE FROM received_attributes`); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{
-		"1/2026-08-02/plan=4",
-		"1/2026-08-02/region=1",
-		"1/2026-08-02/seats=1",
+	if err := db.WriteEvents(ctx, []store.Event{
+		first[0], // a retried id: inserts nothing, records nothing
+		ev("a2", "2026-08-02", map[string]string{"plan": "free", "region": "eu"}),
+	}); err != nil {
+		t.Fatal(err)
 	}
-	if got := receivedRows(t, db); !reflect.DeepEqual(got, want) {
-		t.Fatalf("after two batches\n got %v\nwant %v", got, want)
+	if got, want := receivedRows(t, db), []string{"1/2026-08-02/region=0"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("second batch wrote %v, want only the new key %v", got, want)
+	}
+	// A restart forgets what was written; the next batch records its keys again.
+	db.seen = receivedSeen{}
+	if err := db.WriteEvents(ctx, []store.Event{ev("a3", "2026-08-02", map[string]string{"plan": "pro"})}); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := receivedRows(t, db), []string{"1/2026-08-02/plan=0", "1/2026-08-02/region=0"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("after a restart got %v, want %v", got, want)
+	}
+}
+
+// The seen set keeps the newest day a batch carried and the day before;
+// an older day leaves it once the newest day moves past its eve, and a
+// rolled-back batch's keys are never remembered (WriteEvents remembers
+// only after commit).
+func TestReceivedSeenKeepsTheNewestTwoDays(t *testing.T) {
+	var s receivedSeen
+	k := func(day, key string) receivedKey { return receivedKey{1, day, key} }
+	s.remember([]receivedKey{k("2026-08-01", "a"), k("2026-08-02", "b")})
+	if got := s.unseen(receivedKeys{k("2026-08-01", "a"): {}, k("2026-08-02", "b"): {}}); len(got) != 0 {
+		t.Fatalf("unseen = %v, want none", got)
+	}
+	s.remember([]receivedKey{k("2026-08-03", "c")})
+	got := s.unseen(receivedKeys{k("2026-08-01", "a"): {}, k("2026-08-02", "b"): {}, k("2026-08-03", "c"): {}})
+	if !reflect.DeepEqual(got, []receivedKey{k("2026-08-01", "a")}) {
+		t.Fatalf("unseen after the newest day moved = %v, want only 08-01's key", got)
+	}
+	// An older day's key is not remembered at all.
+	s.remember([]receivedKey{k("2026-07-30", "old")})
+	if got := s.unseen(receivedKeys{k("2026-07-30", "old"): {}}); len(got) != 1 {
+		t.Fatalf("an old day's key was remembered: unseen = %v", got)
 	}
 }
 
 // The pass recounts every raw day before today exactly, fills max_values
 // with the busiest (event, measure) partition's distinct values, leaves
-// today's ingest counts alone, and drops days whose raw rows are gone.
+// today's row as ingest wrote it (events 0), and drops days whose raw rows
+// are gone.
 func TestMeasureServerStatsRecountsReceivedAttributes(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
@@ -152,7 +172,7 @@ func TestMeasureServerStatsRecountsReceivedAttributes(t *testing.T) {
 	}
 	evs = append(evs, store.Event{ID: "u1", ProjectID: 1, Family: store.FamilyProduct, EventName: "upgrade",
 		TS: ts("2026-08-02T12:00:00Z"), ActorID: "a", Attributes: map[string]string{"plan": "pro"}})
-	// 2026-08-04 is "today" for the pass: counted by ingest only.
+	// 2026-08-04 is "today" for the pass: recorded by ingest only.
 	evs = append(evs, store.Event{ID: "t1", ProjectID: 1, Family: store.FamilyProduct, EventName: "signup",
 		TS: ts("2026-08-04T09:00:00Z"), ActorID: "a", Attributes: map[string]string{"plan": "pro"}})
 	if err := db.WriteEvents(ctx, evs); err != nil {
@@ -162,7 +182,7 @@ func TestMeasureServerStatsRecountsReceivedAttributes(t *testing.T) {
 	if _, err := db.db.Exec(`INSERT INTO received_attributes VALUES (1, '2026-07-01', 'plan', 9, 2)`); err != nil {
 		t.Fatal(err)
 	}
-	// A wrong ingest count for a raw day: corrected.
+	// Ingest's events 0 (here a stray number) for a raw day: counted.
 	if _, err := db.db.Exec(`UPDATE received_attributes SET events = 99 WHERE day = '2026-08-02'`); err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +204,7 @@ func TestMeasureServerStatsRecountsReceivedAttributes(t *testing.T) {
 		}
 		got = append(got, fmt.Sprintf("%s/%s=%d/%v", day, key, n, mv))
 	}
-	want := []string{"2026-08-02/plan=4/{3 true}", "2026-08-04/plan=1/{0 false}"}
+	want := []string{"2026-08-02/plan=4/{3 true}", "2026-08-04/plan=0/{0 false}"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v\nwant %v", got, want)
 	}
