@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"reflect"
 	"sort"
@@ -133,5 +134,58 @@ func TestWriteEventsAccumulatesReceivedAttributes(t *testing.T) {
 	}
 	if got := receivedRows(t, db); !reflect.DeepEqual(got, want) {
 		t.Fatalf("after two batches\n got %v\nwant %v", got, want)
+	}
+}
+
+// The pass recounts every raw day before today exactly, fills max_values
+// with the busiest (event, measure) partition's distinct values, leaves
+// today's ingest counts alone, and drops days whose raw rows are gone.
+func TestMeasureServerStatsRecountsReceivedAttributes(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	var evs []store.Event
+	// 2026-08-02: signup carries plan free/pro/team (3 values), upgrade
+	// carries plan pro (1): max_values 3, events 4.
+	for i, plan := range []string{"free", "pro", "team"} {
+		evs = append(evs, store.Event{ID: fmt.Sprintf("s%d", i), ProjectID: 1, Family: store.FamilyProduct,
+			EventName: "signup", TS: ts("2026-08-02T10:00:00Z"), ActorID: "a", Attributes: map[string]string{"plan": plan}})
+	}
+	evs = append(evs, store.Event{ID: "u1", ProjectID: 1, Family: store.FamilyProduct, EventName: "upgrade",
+		TS: ts("2026-08-02T12:00:00Z"), ActorID: "a", Attributes: map[string]string{"plan": "pro"}})
+	// 2026-08-04 is "today" for the pass: counted by ingest only.
+	evs = append(evs, store.Event{ID: "t1", ProjectID: 1, Family: store.FamilyProduct, EventName: "signup",
+		TS: ts("2026-08-04T09:00:00Z"), ActorID: "a", Attributes: map[string]string{"plan": "pro"}})
+	if err := db.WriteEvents(ctx, evs); err != nil {
+		t.Fatal(err)
+	}
+	// A stale row for a day with no raw rows left (rolled up): pruned.
+	if _, err := db.db.Exec(`INSERT INTO received_attributes VALUES (1, '2026-07-01', 'plan', 9, 2)`); err != nil {
+		t.Fatal(err)
+	}
+	// A wrong ingest count for a raw day: corrected.
+	if _, err := db.db.Exec(`UPDATE received_attributes SET events = 99 WHERE day = '2026-08-02'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.MeasureServerStats(ctx, ts("2026-08-04T03:00:00Z")); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := db.db.Query(`SELECT day, attr_key, events, max_values FROM received_attributes ORDER BY day, attr_key`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var got []string
+	for rows.Next() {
+		var day, key string
+		var n int64
+		var mv sql.NullInt64
+		if err := rows.Scan(&day, &key, &n, &mv); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, fmt.Sprintf("%s/%s=%d/%v", day, key, n, mv))
+	}
+	want := []string{"2026-08-02/plan=4/{3 true}", "2026-08-04/plan=1/{0 false}"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v\nwant %v", got, want)
 	}
 }

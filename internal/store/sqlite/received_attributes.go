@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"fmt"
 
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
@@ -59,6 +60,54 @@ func (c receivedCounts) write(ctx context.Context, tx *sql.Tx) error {
 		if _, err := stmt.ExecContext(ctx, k.project, k.day, k.key, n); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// receivedSQL lists every (project, day, family, event, measure, key,
+// value) the raw product and measure rows before ?1 carry: their JSON
+// attributes and the declarable reserved columns that are set.
+var receivedSQL = func() string {
+	cols := []struct{ key, col string }{
+		{"$host", "host"}, {"$path", "path"}, {"$referrer", "referrer_source"},
+		{"$utm_source", "utm_source"}, {"$utm_medium", "utm_medium"}, {"$utm_campaign", "utm_campaign"},
+		{"$os_version", "os_version"}, {"$browser_version", "browser_version"}, {"$device_model", "device_model"},
+	}
+	names := "project_id, day, family, event_name, measure, attributes"
+	for _, c := range cols {
+		names += ", " + c.col
+	}
+	q := `WITH raw AS (
+		SELECT ` + names + ` FROM raw_product WHERE day < ?1
+		UNION ALL SELECT ` + names + ` FROM raw_measures WHERE day < ?1
+	)
+	SELECT project_id, day, family, event_name, measure, j.key AS k, j.value AS v
+		FROM raw, json_each(CASE WHEN json_valid(attributes) THEN attributes ELSE '{}' END) j`
+	for _, c := range cols {
+		q += `
+		UNION ALL SELECT project_id, day, family, event_name, measure, '` + c.key + `', ` + c.col + `
+		FROM raw WHERE ` + c.col + ` != ''`
+	}
+	return q
+}()
+
+// countReceived rewrites received_attributes for every day before today:
+// the days whose raw product or measure rows remain get exact counts and
+// max_values (the most distinct values in one (family, event, measure)
+// partition, the partition ATTRIBUTE_VALUES_TOP_N caps); the rest, days
+// already rolled up, are dropped. Today stays as ingest counts it.
+func countReceived(ctx context.Context, tx *sql.Tx, today string) error {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM received_attributes WHERE day < ?1`, today); err != nil {
+		return fmt.Errorf("received attributes: %w", err)
+	}
+	_, err := tx.ExecContext(ctx, `INSERT INTO received_attributes (project_id, day, attr_key, events, max_values)
+		SELECT project_id, day, k, SUM(n), MAX(vals) FROM (
+		  SELECT project_id, day, k, COUNT(*) AS n, COUNT(DISTINCT v) AS vals
+		  FROM (`+receivedSQL+`)
+		  GROUP BY project_id, day, family, event_name, measure, k
+		) GROUP BY project_id, day, k`, today)
+	if err != nil {
+		return fmt.Errorf("received attributes: %w", err)
 	}
 	return nil
 }

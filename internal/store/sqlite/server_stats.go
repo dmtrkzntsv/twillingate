@@ -22,6 +22,10 @@ import (
 //   - attribute counts, for every day before now's still raw: keys and
 //     values received, and values folded into (other). Only raw rows know
 //     them; a rolled-up day keeps what was counted while it was raw.
+//   - received attribute keys, for every day before now's still raw: each
+//     key's events and its busiest partition's distinct values
+//     (received_attributes); days already rolled up are dropped, today is
+//     left to ingest.
 //   - counts, for every day before now's: each project's views, product
 //     events and measure samples per day, from the same rows the views
 //     read (aggregates for days rolled up, raw rows for the rest). A raw
@@ -47,7 +51,10 @@ func (d *DB) MeasureServerStats(ctx context.Context, now time.Time) error {
 		if err := countDays(ctx, tx, day); err != nil {
 			return err
 		}
-		return countAttributes(ctx, tx, day)
+		if err := countAttributes(ctx, tx, day); err != nil {
+			return err
+		}
+		return countReceived(ctx, tx, day)
 	})
 }
 
