@@ -543,8 +543,7 @@ received in the last 30 days at once.
 active projects declare together. A server already past it keeps every
 declared attribute, and saving a project still works, but nothing can
 add an attribute until the total is under the limit or the setting is
-raised. Check the total before upgrading:
-
-```sh
-twillingate project list   # sum the attributes of the active projects
-```
+raised. After upgrading, the project dialog's Breakdowns header shows
+"N of 50 in use", and the `received_attributes` tool (or
+`GET /api/received-attributes` without `project_id`) answers
+`breakdowns_used` and `breakdowns_max`.

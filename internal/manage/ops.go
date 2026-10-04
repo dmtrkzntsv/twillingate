@@ -101,7 +101,10 @@ type ProjectSpec struct {
 }
 
 // validate checks a complete spec: the one a caller built for create, or
-// the merged one UpdateProject built over the current row.
+// the merged one UpdateProject built over the current row. It also
+// collapses duplicate attributes, keeping the first of each in order, so
+// what is stored, counted and held against ATTRIBUTE_BREAKDOWNS_MAX is one
+// entry per key.
 func (sp *ProjectSpec) validate() error {
 	if strings.TrimSpace(sp.Name) == "" {
 		return fmt.Errorf("%w: name must not be empty", ErrInvalid)
@@ -120,7 +123,30 @@ func (sp *ProjectSpec) validate() error {
 				ErrInvalid, a, strings.Join(store.DeclarableAttributeKeys(), ", "))
 		}
 	}
+	sp.Attributes = dedupe(sp.Attributes)
 	return nil
+}
+
+// dedupe returns keys without repeats, first occurrences in order. It
+// returns keys itself when there are none, and never writes to it: the
+// slice may be the registry snapshot's.
+func dedupe(keys []string) []string {
+	seen := make(map[string]bool, len(keys))
+	for i, k := range keys {
+		if !seen[k] {
+			seen[k] = true
+			continue
+		}
+		out := append([]string(nil), keys[:i]...)
+		for _, k := range keys[i+1:] {
+			if !seen[k] {
+				seen[k] = true
+				out = append(out, k)
+			}
+		}
+		return out
+	}
+	return keys
 }
 
 func (sp *ProjectSpec) row() (store.RegistryProject, error) {
