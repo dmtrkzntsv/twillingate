@@ -95,13 +95,25 @@ describe('BreakdownsField', () => {
     expect(screen.getByRole('checkbox', { name: /region/ })).toBeChecked()
   })
 
-  it('refuses a $ key on blur without adding it', async () => {
+  it('refuses a $ key on blur without adding it, and reports it until the field changes', async () => {
     const user = userEvent.setup()
-    renderWithProviders(<Harness initial={[]} onProblem={vi.fn()} />)
-    await user.type(await screen.findByRole('textbox', { name: 'Key not received yet' }), '$host')
+    const onProblem = vi.fn()
+    renderWithProviders(<Harness initial={[]} onProblem={onProblem} />)
+    const input = await screen.findByRole('textbox', { name: 'Key not received yet' })
+    await user.type(input, '$host')
     await user.tab()
     expect(screen.getByText(/\$ keys appear in the list once received/)).toBeInTheDocument()
     expect(screen.queryByRole('checkbox', { name: /host/ })).not.toBeInTheDocument()
+    expect(onProblem).toHaveBeenLastCalledWith(expect.stringMatching(/\$ keys appear in the list once received/))
+    await user.clear(input)
+    expect(onProblem).toHaveBeenLastCalledWith(null)
+  })
+
+  it('says it is loading, not that nothing was received, until the first answer', async () => {
+    vi.spyOn(endpoints, 'receivedAttributes').mockReturnValue(new Promise(() => {}))
+    renderWithProviders(<Harness initial={[]} onProblem={vi.fn()} />)
+    expect(await screen.findByText('Loading…')).toBeInTheDocument()
+    expect(screen.queryByText('No attributes received in this range.')).not.toBeInTheDocument()
   })
 
   it('says the load failed with a Retry, keeps selected keys removable and the field usable', async () => {

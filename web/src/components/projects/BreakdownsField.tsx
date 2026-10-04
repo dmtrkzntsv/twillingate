@@ -59,7 +59,9 @@ export default function BreakdownsField({ projectId, initial, value, onChange, o
   // The server lists only the busiest received keys; say so when it left some out.
   const receivedListed = data ? data.keys.filter((r) => r.events > 0).length : 0
   const b = data ? budget(data.breakdowns_used, data.breakdowns_max, initial, value) : null
-  const problem = b?.over ? `${b.used} of ${data!.breakdowns_max} breakdowns: over the limit (ATTRIBUTE_BREAKDOWNS_MAX)` : null
+  const over = b?.over ? `${b.used} of ${data!.breakdowns_max} breakdowns: over the limit (ATTRIBUTE_BREAKDOWNS_MAX)` : null
+  // A refused key still in the field holds Save too: saving would drop it unseen.
+  const problem = refused ?? over
   useEffect(() => onProblem(problem), [problem])
   const toggle = (k: string, on: boolean) => onChange(on ? [...value, k] : value.filter((x) => x !== k))
   const add = () => {
@@ -96,8 +98,10 @@ export default function BreakdownsField({ projectId, initial, value, onChange, o
             )
           })}
         </ul>
-      ) : data || !error ? (
+      ) : data ? (
         <p className="text-sm text-muted-foreground">{projectId ? 'No attributes received in this range.' : 'Nothing received yet: add keys by name, or pick them once events arrive.'}</p>
+      ) : !error ? (
+        <p className="text-sm text-muted-foreground">Loading…</p>
       ) : null}
       {data && data.keys_total > receivedListed && (
         <p className="text-xs text-muted-foreground">
@@ -117,7 +121,7 @@ export default function BreakdownsField({ projectId, initial, value, onChange, o
         <Button type="button" variant="outline" size="sm" onClick={add}>Add</Button>
       </div>
       {refused && <p className="text-xs text-destructive">{refused}</p>}
-      {problem && <p className="text-xs text-destructive">{problem}</p>}
+      {over && <p className="text-xs text-destructive">{over}</p>}
     </fieldset>
   )
 }

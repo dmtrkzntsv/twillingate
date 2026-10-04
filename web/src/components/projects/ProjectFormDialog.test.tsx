@@ -55,6 +55,28 @@ describe('ProjectFormDialog', () => {
     expect(onSubmit).toHaveBeenCalledWith({ name: 'dev', allowed_origins: [], attributes: ['tier'] })
   })
 
+  it('holds Save while the breakdown field keeps a refused $ key, until it is cleared', async () => {
+    const user = userEvent.setup()
+    vi.spyOn(endpoints, 'receivedAttributes').mockResolvedValue({ ...answer, breakdowns_used: 0 })
+    const onSubmit = vi.fn().mockResolvedValue(true)
+    renderWithProviders(
+      <ProjectFormDialog open onOpenChange={vi.fn()} title="Edit" projectId={1} submitLabel="Save" onSubmit={onSubmit}
+        initial={{ name: 'dev', allowed_origins: [], attributes: [] }} />,
+    )
+    const input = await screen.findByRole('textbox', { name: 'Key not received yet' })
+    await user.type(input, '$host')
+    const save = screen.getByRole('button', { name: 'Save' })
+    await user.click(save)
+    expect(onSubmit).not.toHaveBeenCalled()
+    expect(save).toBeDisabled()
+    expect(save).toHaveAttribute('title', expect.stringMatching(/\$ keys appear in the list once received/))
+    expect(screen.getByText(/\$ keys appear in the list once received/)).toBeInTheDocument()
+    await user.clear(input)
+    expect(save).toBeEnabled()
+    await user.click(save)
+    expect(onSubmit).toHaveBeenCalledWith({ name: 'dev', allowed_origins: [], attributes: [] })
+  })
+
   it('retries a failed load without submitting the form', async () => {
     const user = userEvent.setup()
     const spy = vi.spyOn(endpoints, 'receivedAttributes').mockRejectedValue(new ApiError(500, 'boom'))
