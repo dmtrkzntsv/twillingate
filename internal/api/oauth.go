@@ -225,9 +225,10 @@ const appCallbackPath = "/app/callback"
 // https a built-in web connector or a host listed in CONSOLE_AUTH_DSN. Hosts
 // match exactly, so claude.ai does not admit its subdomains. It also
 // admits exactly one more URL, the dashboards' own callback at the
-// configured resource origin: <resource>/app/callback. The origin comes from
-// configuration, never from the request's Host, which a proxy rewrites to
-// its loopback upstream.
+// configured resource origin: <resource>/app/callback, over the origin's
+// own scheme, so a plain-http origin (insecure=1) admits its http callback.
+// The origin comes from configuration, never from the request's Host, which
+// a proxy rewrites to its loopback upstream.
 func redirectAllowed(hosts []string, resource, candidate string) bool {
 	u, err := url.Parse(candidate)
 	if err != nil || u.User != nil || strings.Contains(candidate, "#") {
@@ -239,10 +240,10 @@ func redirectAllowed(hosts []string, resource, candidate string) bool {
 		return false
 	case isLoopbackHost(host):
 		return u.Scheme == "http" || u.Scheme == "https"
-	case u.Scheme != "https": // url.Parse lowercases the scheme
-		return false
 	case isAppCallback(resource, u):
 		return true
+	case u.Scheme != "https": // url.Parse lowercases the scheme
+		return false
 	default:
 		return slices.Contains(builtinRedirectHosts, host) || slices.Contains(hosts, host)
 	}

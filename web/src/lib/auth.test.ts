@@ -34,8 +34,11 @@ function bodyOf(init: RequestInit | undefined): URLSearchParams {
   return new URLSearchParams(init?.body as string)
 }
 
+// The real subtle crypto, kept for tests that take it away from the page.
+const subtle = crypto.subtle
+
 async function s256(verifier: string): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier))
+  const digest = await subtle.digest('SHA-256', new TextEncoder().encode(verifier))
   let binary = ''
   new Uint8Array(digest).forEach((b) => {
     binary += String.fromCharCode(b)
@@ -235,6 +238,22 @@ describe('beginLogin', () => {
     const url = new URL(assign.mock.calls[0][0] as string)
     const verifier = sessionStorage.getItem('twillingate.oauth_verifier')
     expect(verifier).toBeTruthy()
+    expect(url.searchParams.get('code_challenge')).toBe(await s256(verifier!))
+  })
+
+  it('hashes the challenge without crypto.subtle, as on a plain-http console', async () => {
+    const real = globalThis.crypto
+    vi.stubGlobal('crypto', { getRandomValues: <T extends ArrayBufferView>(a: T) => real.getRandomValues(a as never) as T })
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(jsonResponse(PROTECTED_RESOURCE))
+      .mockResolvedValueOnce(jsonResponse(AS_METADATA))
+      .mockResolvedValueOnce(jsonResponse({ client_id: 'client-1' }, 201))
+    const assign = mockNavigate()
+
+    await beginLogin('/')
+
+    const url = new URL(assign.mock.calls[0][0] as string)
+    const verifier = sessionStorage.getItem('twillingate.oauth_verifier')
     expect(url.searchParams.get('code_challenge')).toBe(await s256(verifier!))
   })
 

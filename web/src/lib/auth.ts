@@ -2,6 +2,8 @@
 // RFC 9728/8414, dynamic client registration, then an authorization-code
 // PKCE flow. See internal/api/oauth*.go for the server side.
 
+import { sha256 } from '@noble/hashes/sha2.js'
+
 const METADATA_PATH = '/.well-known/oauth-protected-resource'
 const CALLBACK_PATH = '/app/callback'
 const CLIENT_NAME = 'Twillingate Analytics'
@@ -181,8 +183,11 @@ function randomToken(byteLength: number): string {
 }
 
 async function challengeFor(verifier: string): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier))
-  return base64url(new Uint8Array(digest))
+  const data = new TextEncoder().encode(verifier)
+  // crypto.subtle exists only in a secure context (https or localhost); a
+  // console served over plain http (insecure=1) hashes in JavaScript.
+  const digest = crypto.subtle ? new Uint8Array(await crypto.subtle.digest('SHA-256', data)) : sha256(data)
+  return base64url(digest)
 }
 
 function redirectURI(): string {

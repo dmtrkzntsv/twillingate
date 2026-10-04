@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strings"
 
 	"github.com/dmtrkzntsv/twillingate/internal/config"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
@@ -115,6 +116,10 @@ func RegisterOn(mux *http.ServeMux, protected http.Handler, cfg *config.Config, 
 	}
 	if cfg.Console.LoginEnabled() {
 		newLoginServer(cfg.Console, logger).mount(mux)
+		if cfg.Console.Insecure && strings.HasPrefix(cfg.Console.ResourceURL, "http://") {
+			logger.Warn("console login over plain http (insecure=1): the password and tokens cross the network unencrypted unless the link encrypts them",
+				"resource", cfg.Console.ResourceURL)
+		}
 	}
 	if withHealthz {
 		mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
