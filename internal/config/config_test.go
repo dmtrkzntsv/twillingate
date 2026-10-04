@@ -460,6 +460,51 @@ func TestTokenLoginDSNParsing(t *testing.T) {
 	}
 }
 
+// insecure=1 lets the console origin be plain http on any host (a tailnet
+// encrypts the link itself); without it only loopback may. It widens the
+// origin only: a redirect= URL stays https-only, and the value must be 1.
+func TestTokenLoginInsecure(t *testing.T) {
+	load := func(dsn, publicURL string) (ConsoleConfig, error) {
+		cfg, err := FromEnv(mcpEnv(map[string]string{"CONSOLE_AUTH_DSN": dsn, "PUBLIC_URL": publicURL}))
+		if err != nil {
+			return ConsoleConfig{}, err
+		}
+		return cfg.Console, cfg.ValidateConsole()
+	}
+	for _, tc := range []struct {
+		name, dsn, publicURL string
+		wantErr              string // substring; "" accepts
+		wantResource         string
+	}{
+		{"http without insecure", "token://ar_x?password=p&resource=http://homelab:8290", "", "insecure=1", ""},
+		{"http PUBLIC_URL without insecure", "token://ar_x?password=p", "http://homelab:8290", "insecure=1", ""},
+		{"http with insecure", "token://ar_x?password=p&resource=http://homelab:8290&insecure=1", "", "", "http://homelab:8290"},
+		{"http PUBLIC_URL with insecure", "token://ar_x?password=p&insecure=1", "http://Homelab:8290", "", "http://homelab:8290"},
+		{"https with insecure", "token://ar_x?password=p&insecure=1", "https://console.example.com", "", "https://console.example.com"},
+		{"insecure=0", "token://ar_x?password=p&resource=http://homelab:8290&insecure=0", "", `insecure="0" must be 1`, ""},
+		{"insecure=true", "token://ar_x?password=p&resource=http://homelab:8290&insecure=true", "", `insecure="true" must be 1`, ""},
+		{"insecure twice", "token://ar_x?password=p&insecure=1&insecure=1", "http://homelab:8290", "must be 1", ""},
+		{"http redirect stays refused", "token://ar_x?password=p&insecure=1&redirect=http://app.example.com/cb", "http://homelab:8290", "may only use http", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, err := load(tc.dsn, tc.publicURL)
+			switch {
+			case tc.wantErr != "":
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("err = %v, want one containing %q", err, tc.wantErr)
+				}
+			case err != nil:
+				t.Fatal(err)
+			case !m.Insecure || m.ResourceURL != tc.wantResource:
+				t.Errorf("insecure = %v resource = %q, want true and %q", m.Insecure, m.ResourceURL, tc.wantResource)
+			}
+		})
+	}
+	if m, err := load("token://ar_x?password=p", "https://console.example.com"); err != nil || m.Insecure {
+		t.Errorf("without insecure=: insecure = %v, err = %v", m.Insecure, err)
+	}
+}
+
 func TestRenamedVariablesRefuse(t *testing.T) {
 	for old, repl := range map[string]string{
 		"LISTEN_ADDR":        "INGEST_ADDR",

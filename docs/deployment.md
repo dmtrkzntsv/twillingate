@@ -169,10 +169,12 @@ client connects through a browser page that asks for a password.
 | `password` | What the login page asks for. Setting it turns the login on. Five wrong ones in a minute lock the page for everyone until the minute ends; connected clients are unaffected. No minimum length is enforced. In the DSN, percent-encode `&` as `%26`, `#` as `%23`, `%` as `%25`, `;` as `%3B` and `+` as `%2B` — an unencoded `+` becomes a space. |
 | `resource` | The console origin, with no path (`resource=https://console.example.com`); one login covers `/mcp` and `/api/`. Defaults to `CONSOLE_URL`, which defaults to `PUBLIC_URL`: set `CONSOLE_URL` when the console has its own hostname, and keep `resource=` for the rare case where the two must differ. MCP clients read `/.well-known/oauth-protected-resource/mcp`, which names `<origin>/mcp`; `/api/` clients read `/.well-known/oauth-protected-resource`, which names the origin. A value carrying a path refuses the boot, in both `token://` and `oauth://` mode. |
 | `redirect` | An extra host clients may return to, such as `redirect=app.example.com`; repeat once per host. |
+| `insecure` | `insecure=1` lets the console origin (`resource`, or the `CONSOLE_URL`/`PUBLIC_URL` it defaults to) be plain `http` on any host, such as `http://homelab:8290` on a tailnet; without it, `http` refuses the boot except on `localhost`, `127.0.0.1` and `[::1]`. The password and tokens then cross the network as sent, so use it only where the link encrypts them itself (Tailscale, WireGuard, a VPN), never on an open network. The boot logs a warning. MCP web connectors such as claude.ai still need `https`. |
 
 Accepted without `redirect=`, at any port and path: `localhost`,
 `127.0.0.1` and `[::1]` over `http` or `https`, plus `claude.ai` and
-`chatgpt.com` over `https`. Any other host is refused until added as
+`chatgpt.com` over `https`, plus the dashboards' own `<resource>/app/callback`
+over the resource's scheme (`http` with `insecure=1`). Any other host is refused until added as
 `redirect=<host>`, then works over `https`, at any port and path, matched
 exactly (`claude.ai` does not admit `foo.claude.ai`) — once the list is
 edited, new logins follow it. A self-chosen token must not contain `?`.

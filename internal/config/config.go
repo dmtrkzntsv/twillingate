@@ -80,6 +80,11 @@ type ConsoleConfig struct {
 	QueryTimeout  time.Duration // CONSOLE_QUERY_TIMEOUT, default 10s
 	QueryMaxRows  int           // CONSOLE_QUERY_MAX_ROWS, default 1000
 
+	// Insecure is token:// insecure=1: the console origin (resource) may
+	// be plain http on any host, for a network that encrypts the link
+	// itself (a tailnet, a VPN). The password and tokens cross it as sent.
+	Insecure bool
+
 	// audienceGiven records an explicit oauth audience=, which the verifier
 	// accepts alone; the default admits the resource and resource/mcp.
 	audienceGiven bool
@@ -349,7 +354,7 @@ func (c *Config) parseConsoleAuthDSN() error {
 }
 
 // parseTokenLogin reads the token:// query that turns on the browser login
-// server: password=, repeated redirect= and resource=.
+// server: password=, repeated redirect=, resource= and insecure=1.
 func (c *Config) parseTokenLogin(query string) error {
 	m := &c.Console
 	q, err := url.ParseQuery(query)
@@ -357,9 +362,15 @@ func (c *Config) parseTokenLogin(query string) error {
 		return fmt.Errorf("config: invalid CONSOLE_AUTH_DSN token:// query: %v", err)
 	}
 	for k := range q {
-		if k != "redirect" && k != "password" && k != "resource" {
-			return fmt.Errorf("config: CONSOLE_AUTH_DSN token:// has unknown parameter %q (redirect, password or resource)", k)
+		if k != "redirect" && k != "password" && k != "resource" && k != "insecure" {
+			return fmt.Errorf("config: CONSOLE_AUTH_DSN token:// has unknown parameter %q (redirect, password, resource or insecure)", k)
 		}
+	}
+	if v, ok := q["insecure"]; ok {
+		if len(v) != 1 || v[0] != "1" {
+			return fmt.Errorf("config: CONSOLE_AUTH_DSN token:// insecure=%q must be 1", strings.Join(v, ","))
+		}
+		m.Insecure = true
 	}
 	m.Password = q.Get("password")
 	if m.Password == "" {
@@ -378,7 +389,7 @@ func (c *Config) parseTokenLogin(query string) error {
 	if m.ResourceURL == "" {
 		return fmt.Errorf("config: CONSOLE_AUTH_DSN token:// password= requires CONSOLE_URL, PUBLIC_URL or resource=<origin> to derive the resource from")
 	}
-	if err := checkLoginURL(m.ResourceURL); err != nil {
+	if err := checkLoginURL(m.ResourceURL, m.Insecure); err != nil {
 		return fmt.Errorf("config: CONSOLE_AUTH_DSN token:// resource=%q %v", m.ResourceURL, err)
 	}
 	return nil
@@ -439,7 +450,7 @@ func resourceOrigin(raw string) (string, error) {
 // callbacks, a full URL whose host is taken.
 func redirectHost(raw string) (string, error) {
 	if strings.Contains(raw, "://") {
-		if err := checkLoginURL(raw); err != nil {
+		if err := checkLoginURL(raw, false); err != nil {
 			return "", err
 		}
 		u, _ := url.Parse(raw)
@@ -453,8 +464,8 @@ func redirectHost(raw string) (string, error) {
 }
 
 // checkLoginURL admits an absolute http(s) URL with no fragment, and plain
-// http only on a loopback host.
-func checkLoginURL(raw string) error {
+// http only on a loopback host, or on any host with anyHTTP (insecure=1).
+func checkLoginURL(raw string, anyHTTP bool) error {
 	u, err := url.Parse(raw)
 	if err != nil {
 		return fmt.Errorf("does not parse: %v", err)
@@ -465,8 +476,8 @@ func checkLoginURL(raw string) error {
 	if strings.Contains(raw, "#") {
 		return fmt.Errorf("must not carry a fragment")
 	}
-	if h := u.Hostname(); u.Scheme == "http" && h != "localhost" && h != "127.0.0.1" && h != "::1" {
-		return fmt.Errorf("may only use http on localhost, 127.0.0.1 or [::1]")
+	if h := u.Hostname(); u.Scheme == "http" && !anyHTTP && h != "localhost" && h != "127.0.0.1" && h != "::1" {
+		return fmt.Errorf("may only use http on localhost, 127.0.0.1 or [::1], or anywhere with insecure=1 on a network that encrypts the link itself")
 	}
 	return nil
 }
