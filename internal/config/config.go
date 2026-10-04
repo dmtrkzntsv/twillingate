@@ -100,9 +100,9 @@ type ConsoleConfig struct {
 // client-supplied value, views breakdowns and attributes alike: past the
 // 100th path of a day, real traffic is single crawler hits, and attributes
 // are mostly a handful of values. Identities are dropped past their cap,
-// so theirs sits well above a small app's daily users. The console's limits tool reports
-// them beside the values in force, so they live here rather than as
-// literals in parse.
+// so theirs sits well above a small app's daily users. The console's
+// limits tool reports them beside the values in force, so they live here
+// rather than as literals in parse.
 //
 // ATTRIBUTE_BREAKDOWNS_MAX: the attributes all active projects may declare
 // together; each is a breakdown with its own aggregate rows.

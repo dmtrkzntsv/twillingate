@@ -458,7 +458,7 @@ FROM (SELECT project_id, day FROM raw_views GROUP BY project_id, day) pd,
                       WHEN LAG(t) OVER w IS NULL OR t - LAG(t) OVER w > 1800 THEN 1
                       ELSE 0 END AS new_session
           FROM (
-            -- the day's views under their bucketed kind: the 500 kinds
+            -- the day's views under their bucketed kind: the cap's kinds
             -- with the most views that day, the rest as (other)
             SELECT CASE WHEN DENSE_RANK() OVER (ORDER BY kind_views DESC, kind) <= (SELECT n FROM cap)
                         THEN kind ELSE '(other)' END AS kind,
