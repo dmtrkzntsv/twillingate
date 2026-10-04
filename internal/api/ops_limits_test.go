@@ -18,7 +18,7 @@ import (
 // fixed limits from internal/wire with neither setting nor default.
 func TestLimitsReportsTheLimitsInForce(t *testing.T) {
 	h, cs := newTestHost(t)
-	cfg := &config.Config{AttributeValuesTopN: 7, ViewsDimensionsTopN: 0, IdentitiesTopN: 2000}
+	cfg := &config.Config{AttributeValuesTopN: 7, ViewsDimensionsTopN: 0, IdentitiesTopN: 2000, AttributeBreakdownsMax: 12}
 	cfg.Retention.Events = config.RetentionClass{RawDays: 7, AggregateDays: 90}
 	h.limits = limitsFrom(cfg)
 	out, err := h.listLimits(context.Background(), struct{}{})
@@ -35,6 +35,7 @@ func TestLimitsReportsTheLimitsInForce(t *testing.T) {
 		{groupRetention, "RETENTION_ARCHIVED_DAYS", 0, config.DefaultArchivedDays},
 		{groupCaps, "VIEWS_DIMENSIONS_TOP_N", 0, config.DefaultViewsDimensionsTopN},
 		{groupCaps, "ATTRIBUTE_VALUES_TOP_N", 7, config.DefaultAttributeValuesTopN},
+		{groupCaps, "ATTRIBUTE_BREAKDOWNS_MAX", 12, config.DefaultAttributeBreakdownsMax},
 		{groupCaps, "IDENTITIES_TOP_N", 2000, config.DefaultIdentitiesTopN},
 	}
 	if len(out.Limits) <= len(settings) {

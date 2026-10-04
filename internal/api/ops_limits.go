@@ -17,6 +17,7 @@ import (
 const (
 	settingViews      = "VIEWS_DIMENSIONS_TOP_N"
 	settingAttrs      = "ATTRIBUTE_VALUES_TOP_N"
+	settingBreakdowns = "ATTRIBUTE_BREAKDOWNS_MAX"
 	settingIdentities = "IDENTITIES_TOP_N"
 )
 
@@ -72,6 +73,8 @@ func limitsFrom(cfg *config.Config) []limitOut {
 			"values per views breakdown and kinds, per project and day; the rest fold into (other)"),
 		setting(groupCaps, "Attribute values", settingAttrs, cfg.AttributeValuesTopN, config.DefaultAttributeValuesTopN, "", "no cap",
 			"values per attribute key, per project, day and event; the rest fold into (other)"),
+		setting(groupCaps, "Attribute breakdowns", settingBreakdowns, cfg.AttributeBreakdownsMax, config.DefaultAttributeBreakdownsMax, "", "no cap",
+			"attributes declared across every active project, each a breakdown with its own aggregate rows; a save that adds more is refused"),
 		setting(groupCaps, "Users and groups", settingIdentities, cfg.IdentitiesTopN, config.DefaultIdentitiesTopN, "", "no cap",
 			"users, and groups, per project and day; the rest are dropped"),
 		fixed("Request body", wire.MaxBody, "bytes", "a larger request is refused with 413"),

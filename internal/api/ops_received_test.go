@@ -1,0 +1,70 @@
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"reflect"
+	"testing"
+)
+
+func ptr[T any](v T) *T { return &v }
+
+// received_attributes lists the range's received keys merged with the
+// project's declared ones (events 0, max_values null when not received),
+// sorted by events then key, with the values cap and the breakdown
+// budget; without project_id it answers only the budget.
+func TestReceivedAttributes(t *testing.T) {
+	h, cs := newTestHost(t)
+	ctx := context.Background()
+	// Project 1 declares plan (the fixture's) and never_sent; plan was
+	// received on two days, order_id on one day not yet counted (today's).
+	for _, q := range []string{
+		`UPDATE projects SET attributes = '["plan","never_sent"]' WHERE id = 1`,
+		`INSERT INTO received_attributes (project_id, day, attr_key, events, max_values) VALUES
+		 (1,'2026-10-01','plan',5,3), (1,'2026-10-02','plan',2,4), (1,'2026-10-02','order_id',9,NULL),
+		 (1,'2026-09-30','old_key',1,1), (2,'2026-10-02','other_project',4,1)`,
+	} {
+		if _, err := rawExec(h.ops.St, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := h.reg.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	out, err := h.receivedAttributes(ctx, receivedIn{ProjectID: 1, usageRangeIn: usageRangeIn{From: "2026-10-01", To: "2026-10-02"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []receivedKeyOut{
+		{Key: "order_id", Events: 9, MaxValues: nil, Declared: false},
+		{Key: "plan", Events: 7, MaxValues: ptr(int64(4)), Declared: true},
+		{Key: "never_sent", Events: 0, MaxValues: nil, Declared: true},
+	}
+	if !reflect.DeepEqual(out.Keys, want) {
+		t.Errorf("keys = %+v, want %+v", out.Keys, want)
+	}
+	if out.From != "2026-10-01" || out.To != "2026-10-02" || out.ProjectID != 1 {
+		t.Errorf("range = %+v", out)
+	}
+	if out.ValuesCap != h.capOf(settingAttrs) || out.BreakdownsMax != h.capOf(settingBreakdowns) || out.BreakdownsUsed != 2 {
+		t.Errorf("budget = %+v", out)
+	}
+	// Without a project: no keys, the budget only.
+	none, err := h.receivedAttributes(ctx, receivedIn{})
+	if err != nil || len(none.Keys) != 0 || none.Keys == nil || none.BreakdownsUsed != 2 {
+		t.Errorf("no project = %+v, %v", none, err)
+	}
+	// An unknown project is refused like every project tool.
+	if _, err := h.receivedAttributes(ctx, receivedIn{ProjectID: 999}); err == nil {
+		t.Error("unknown project accepted")
+	}
+	// The MCP tool answers the same keys.
+	var mcpOut receivedOut
+	if err := json.Unmarshal([]byte(textOf(callTool(t, cs, "received_attributes",
+		map[string]any{"project_id": 1, "from": "2026-10-01", "to": "2026-10-02"}))), &mcpOut); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(mcpOut.Keys, want) {
+		t.Errorf("MCP keys = %+v", mcpOut.Keys)
+	}
+}

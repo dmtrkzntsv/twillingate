@@ -117,6 +117,13 @@ top-N cap keeps a declared `$path` bounded. Declaring any other `$` key is
 refused. Rollups run whether or not a project declares attributes; declaring
 only adds the per-value breakdown and the `attr_*` columns.
 
+Declaring an attribute makes it a breakdown: the daily rollup keeps per-value
+rows for it, so `product_attributes` can break events down by it.
+`received_attributes` lists the keys events actually carry to choose from.
+`ATTRIBUTE_BREAKDOWNS_MAX` (default 50) bounds the attributes all active
+projects declare together; a create or update that adds attributes past it is
+refused (`invalid`), while a save that adds none always passes.
+
 ### Ingest keys
 
 A project needs at least one key, and the key identifies the project — no
@@ -895,7 +902,7 @@ CORS-simple.
 
 ## Answer questions with the data
 
-A connected session gets thirty-seven tools: the twenty-one below, and sixteen
+A connected session gets thirty-eight tools: the twenty-two below, and sixteen
 that build the dashboards served at `/app/`, which are documented in
 `docs://reporting` ([reporting.md](reporting.md)). To build or change a
 dashboard, call `reporting_guide` first.
@@ -907,8 +914,9 @@ take `project_id`, `from` and `to` as `YYYY-MM-DD` unless noted.
 | Tool | Extra parameters | Returns |
 | --- | --- | --- |
 | `list_projects` | none | Every project with its `project_id`, name, `archived`, `allowed_origins` and declared `attributes`. Call this first — every other tool needs a `project_id` |
-| `limits` | none (no `project_id`) | The limits in force, each with a `group`, `name`, `value`, `unit` (`days`, `bytes`, `characters`, `seconds`; absent for a count) and `description`, in three groups: `retention` (`RETENTION_EVENTS_RAW_DAYS`, `RETENTION_EVENTS_AGGREGATE_DAYS`, `RETENTION_ARCHIVED_DAYS`), `caps` (`VIEWS_DIMENSIONS_TOP_N`, `ATTRIBUTE_VALUES_TOP_N`, `IDENTITIES_TOP_N`) and `ingest`, the wire format's fixed [limits](#limits). A setting carries its `setting` and `default`; a fixed limit neither. `zero` says what 0 means where it is not the number (`no cap`, `kept forever`) |
+| `limits` | none (no `project_id`) | The limits in force, each with a `group`, `name`, `value`, `unit` (`days`, `bytes`, `characters`, `seconds`; absent for a count) and `description`, in three groups: `retention` (`RETENTION_EVENTS_RAW_DAYS`, `RETENTION_EVENTS_AGGREGATE_DAYS`, `RETENTION_ARCHIVED_DAYS`), `caps` (`VIEWS_DIMENSIONS_TOP_N`, `ATTRIBUTE_VALUES_TOP_N`, `ATTRIBUTE_BREAKDOWNS_MAX`, `IDENTITIES_TOP_N`) and `ingest`, the wire format's fixed [limits](#limits). A setting carries its `setting` and `default`; a fixed limit neither. `zero` says what 0 means where it is not the number (`no cap`, `kept forever`) |
 | `cap_usage` | `from`, `to` (optional: the last 30 days) | Per capped dimension — views breakdowns and kinds, attribute keys, `users`/`groups` — the busiest day's values against the `cap`, `days` with data, `days_capped` (an `(other)` row; for users and groups, the cap reached) and `folded_share` |
+| `received_attributes` | `project_id` (optional), `from`, `to` (optional: the last 30 days) | The keys the project's product events and measures carried — each key's `events`, `max_values` (the busiest event's distinct values on one day, against `ATTRIBUTE_VALUES_TOP_N`; `null` for today, until the daily pass counts it) and `declared` — plus declared keys not received (`events` 0), `values_cap`, `breakdowns_used` and `breakdowns_max` (`ATTRIBUTE_BREAKDOWNS_MAX`). Kept for the raw window only. Without `project_id`, the budget only |
 | `usage` | `project_id` (optional: every project), `from`, `to` (optional: the last 30 days) | Per project: `views`, product `events` and measure `samples` per day and in total, `last_received_at`, `first_day` (the oldest day with data, stored counts included), `raw_days`, `rolled_up_days`, an estimated `size` (raw rows and aggregates, measured daily by the daily pass, which also runs at start: the newest, with the day it was `measured_at`; `null` until the first measurement) and each day's measured `total_bytes` in the series (`null` on days not measured), `unused_attributes` (declared keys no event carried; computed only with `project_id`, `null` for the all-projects answer); plus the database's size on disk now and per day (`database_series`). Days before the newest daily pass read the counts it stored, which outlive the aggregates' retention. Each series day also carries `declared_attributes` and, counted the night after while the day's rows are raw and kept once rolled up, the distinct `attribute_keys` and `attribute_values` received and the `attribute_values_folded` into `(other)` (`null` on days not stored) |
 | `views_overview` | `kind` (optional) | Visitors, views, sessions, bounces, average session length per day, summed across kinds unless `kind` filters one |
 | `views_breakdown` | `dimension`, `limit` (default 20) | Top rows for one of `kinds`, `paths`, `hosts`, `referrers`, `utm`, `countries`, `platforms`, `os`, `browsers`, `app_versions`, `devices`, `displays`, `consent`, `locales`. Two-key dimensions return both columns. `consent` is `given`, `none` or `unknown`. `locales` pairs `browser_locale` with `app_locale`, either empty when not sent. |
@@ -958,6 +966,7 @@ curl -H "Authorization: Bearer $TOKEN" \
 | `GET` | `/api/limits` | `limits` | — |
 | `GET` | `/api/usage` | `usage` | query: `project_id`, `from`, `to` |
 | `GET` | `/api/projects/{project_id}/cap-usage` | `cap_usage` | query: `from`, `to` |
+| `GET` | `/api/received-attributes` | `received_attributes` | query: `project_id`, `from`, `to` |
 | `POST` | `/api/projects` | `create_project` | body: `name`, `allowed_origins`, `attributes`, `skip_key` → 201 |
 | `PATCH` | `/api/projects/{project_id}` | `update_project` | body: fields to change (merge); `allowed_origins: []` clears |
 | `POST` | `/api/projects/{project_id}/archive` | `archive_project` | — |
