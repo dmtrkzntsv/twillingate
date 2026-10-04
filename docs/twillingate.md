@@ -120,7 +120,7 @@ only adds the per-value breakdown and the `attr_*` columns.
 Declaring an attribute makes it a breakdown: the daily rollup keeps per-value
 rows for it, so `product_attributes` can break events down by it.
 `received_attributes` lists the keys events actually carry to choose from.
-`ATTRIBUTE_BREAKDOWNS_MAX` (default 50) bounds the attributes all active
+`ATTRIBUTE_BREAKDOWNS_MAX` (default 10) bounds the attributes all active
 projects declare together; a create or update that adds attributes past it is
 refused (`invalid`), while a save that adds none always passes.
 

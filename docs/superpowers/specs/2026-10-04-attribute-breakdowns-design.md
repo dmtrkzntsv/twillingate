@@ -85,7 +85,7 @@ Date: 2026-10-04
   needs no cap of its own, even for a client that sends random keys.
 
 - **D6. `ATTRIBUTE_BREAKDOWNS_MAX`: one limit for the whole database.**
-  Default 50; 0 is no limit. It counts the attributes declared across
+  Default 10; 0 is no limit. It counts the attributes declared across
   all active (not archived) projects. Each opt-in `$` key counts as one;
   the eight always-on keys don't.
   - A create or update that adds keys is refused if the total would

@@ -107,7 +107,7 @@ type ConsoleConfig struct {
 // together; each is a breakdown with its own aggregate rows.
 const (
 	DefaultAttributeValuesTopN    = 50
-	DefaultAttributeBreakdownsMax = 50
+	DefaultAttributeBreakdownsMax = 10
 	DefaultViewsDimensionsTopN    = 100
 	DefaultIdentitiesTopN         = 500
 )

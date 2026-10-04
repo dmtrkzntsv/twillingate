@@ -44,8 +44,8 @@ func TestDefaultsApplied(t *testing.T) {
 	if c.AttributeValuesTopN != 50 || c.ViewsDimensionsTopN != 100 || c.IdentitiesTopN != 500 {
 		t.Errorf("caps = %d/%d/%d, want 50/100/500", c.AttributeValuesTopN, c.ViewsDimensionsTopN, c.IdentitiesTopN)
 	}
-	if c.AttributeBreakdownsMax != 50 {
-		t.Errorf("AttributeBreakdownsMax = %d, want 50", c.AttributeBreakdownsMax)
+	if c.AttributeBreakdownsMax != 10 {
+		t.Errorf("AttributeBreakdownsMax = %d, want 10", c.AttributeBreakdownsMax)
 	}
 	if c.Reporting.CacheAge != 900*time.Second || c.Reporting.RefreshAge != 60*time.Second {
 		t.Errorf("Reporting = %+v", c.Reporting)
