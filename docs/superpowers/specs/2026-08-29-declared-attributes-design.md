@@ -58,7 +58,7 @@ already prevents.
 cardinality, not a per-site tuning knob — the operator picks the key, but
 clients pick the values, and `agg_product_attrs` stores one row per
 (project, day, event_name, attr_key, attr_value). It becomes a global
-setting, `PRODUCT_ATTRIBUTES_TOP_N`, default 50, read via `e.num` alongside
+setting, `ATTRIBUTES_TOP_N`, default 50, read via `e.num` alongside
 the `RETENTION_PRODUCT_*` family. A per-project override can be added later
 if a site ever needs one.
 
@@ -191,7 +191,7 @@ with a scalar subquery. If replicating top-N proves
 unreasonable in practice, the documented fallback is a live half that
 reports full cardinality, with a note that recent days are complete while
 aged days are top-N — a difference invisible for any key with fewer than
-`PRODUCT_ATTRIBUTES_TOP_N` distinct values.
+`ATTRIBUTES_TOP_N` distinct values.
 
 ## 7. System dimensions roll up automatically
 
@@ -223,7 +223,7 @@ independent of the `attributes` list.
 The `$` prefix namespaces them safely: since a `$` key can never be a custom
 key, collision is impossible by construction. They inherit `v_product_attrs`,
 the `product_attributes` MCP tool and the Evidence breakdown table for free,
-and `PRODUCT_ATTRIBUTES_TOP_N` caps `app_version` cardinality, which grows
+and `ATTRIBUTES_TOP_N` caps `app_version` cardinality, which grows
 without bound over a product's life.
 
 The alternative — dedicated `agg_product_platforms` and

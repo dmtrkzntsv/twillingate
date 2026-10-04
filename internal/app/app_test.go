@@ -589,11 +589,11 @@ func TestServeWritesTheCapsToMeta(t *testing.T) {
 		addr := freePort(t)
 		testConfig(t, addr, dbPath) // seeds the project
 		cfg := configtest.Load(t, map[string]string{
-			"INGEST_ADDR":              addr,
-			"DATABASE_DSN":             "sqlite://" + dbPath,
-			"PRODUCT_ATTRIBUTES_TOP_N": product,
-			"VIEWS_DIMENSIONS_TOP_N":   views,
-			"IDENTITIES_TOP_N":         identities,
+			"INGEST_ADDR":            addr,
+			"DATABASE_DSN":           "sqlite://" + dbPath,
+			"ATTRIBUTES_TOP_N":       product,
+			"VIEWS_DIMENSIONS_TOP_N": views,
+			"IDENTITIES_TOP_N":       identities,
 		})
 		ctx, cancel := context.WithCancel(bg)
 		done := make(chan error, 1)
@@ -614,7 +614,7 @@ func TestServeWritesTheCapsToMeta(t *testing.T) {
 		}
 		defer st.Close()
 		for key, want := range map[string]string{
-			"product_attributes_top_n": product,
+			"attributes_top_n": product,
 			"views_dimensions_top_n":   views,
 			"identities_top_n":         identities,
 		} {

@@ -63,14 +63,14 @@ type Runner struct {
 	lastAggDay  string
 
 	// topN caps distinct client-supplied values kept per declared product
-	// attribute (PRODUCT_ATTRIBUTES_TOP_N); the operator picks the key,
+	// attribute (ATTRIBUTES_TOP_N); the operator picks the key,
 	// clients pick the values.
 	topN int
 }
 
 func New(st Store, cfg *config.Config, reg *manage.Registry, salt Rotator, logger *slog.Logger, now func() time.Time) *Runner {
 	return &Runner{store: st, cfg: cfg, reg: reg, salt: salt, logger: logger, now: now,
-		topN: cfg.ProductAttributesTopN}
+		topN: cfg.AttributesTopN}
 }
 
 // RunDailyPass rolls up every day that has aged out of the raw window,

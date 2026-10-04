@@ -95,7 +95,7 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 		key string
 		n   int
 	}{
-		{"product_attributes_top_n", cfg.ProductAttributesTopN},
+		{"attributes_top_n", cfg.AttributesTopN},
 		{"views_dimensions_top_n", cfg.ViewsDimensionsTopN},
 		{"identities_top_n", cfg.IdentitiesTopN},
 	} {

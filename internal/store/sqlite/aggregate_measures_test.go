@@ -161,7 +161,7 @@ func TestMeasuresViewsSameAcrossRollup(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	id := seedDeclaredProject(t, db, []string{"endpoint", "$path"})
-	if err := db.SetMeta(ctx, "product_attributes_top_n", "2"); err != nil {
+	if err := db.SetMeta(ctx, "attributes_top_n", "2"); err != nil {
 		t.Fatal(err)
 	}
 	// Nine samples of checkout_api. Every kept value spans at least two

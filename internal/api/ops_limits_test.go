@@ -16,7 +16,7 @@ import (
 // (no cap), in a fixed order: views, attributes, identities.
 func TestLimitsReportsTheCapsInForce(t *testing.T) {
 	h, cs := newTestHost(t)
-	h.limits = limitsFrom(&config.Config{ProductAttributesTopN: 7, ViewsDimensionsTopN: 0, IdentitiesTopN: 2000})
+	h.limits = limitsFrom(&config.Config{AttributesTopN: 7, ViewsDimensionsTopN: 0, IdentitiesTopN: 2000})
 	out, err := h.listLimits(context.Background(), struct{}{})
 	if err != nil {
 		t.Fatal(err)
@@ -26,7 +26,7 @@ func TestLimitsReportsTheCapsInForce(t *testing.T) {
 		value, df int
 	}{
 		{"VIEWS_DIMENSIONS_TOP_N", 0, config.DefaultViewsDimensionsTopN},
-		{"PRODUCT_ATTRIBUTES_TOP_N", 7, config.DefaultProductAttributesTopN},
+		{"ATTRIBUTES_TOP_N", 7, config.DefaultAttributesTopN},
 		{"IDENTITIES_TOP_N", 2000, config.DefaultIdentitiesTopN},
 	}
 	if len(out.Limits) != len(want) {
@@ -87,7 +87,7 @@ func TestUsageRange(t *testing.T) {
 // aggregated, and again on 2026-08-26 from the raw view) reach theirs.
 func TestCapUsage(t *testing.T) {
 	h, _ := newTestHost(t)
-	h.limits = limitsFrom(&config.Config{ProductAttributesTopN: 1, ViewsDimensionsTopN: 2, IdentitiesTopN: 1})
+	h.limits = limitsFrom(&config.Config{AttributesTopN: 1, ViewsDimensionsTopN: 2, IdentitiesTopN: 1})
 	for _, q := range []string{
 		`INSERT INTO agg_views_paths (project_id, day, path, visitors, views) VALUES
 		 (1,'2026-08-22','/a',3,10), (1,'2026-08-22','/b',2,5), (1,'2026-08-22','(other)',4,15)`,

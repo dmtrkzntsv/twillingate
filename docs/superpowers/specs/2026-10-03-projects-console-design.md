@@ -9,7 +9,7 @@ Date: 2026-10-03
   CLI.** The console shows projects only in a dashboard's project switcher;
   there is no place to see a project's origins, declared attributes or
   keys, create one, or issue and disable a key.
-- **The caps are invisible.** `PRODUCT_ATTRIBUTES_TOP_N`,
+- **The caps are invisible.** `ATTRIBUTES_TOP_N`,
   `VIEWS_DIMENSIONS_TOP_N` and `IDENTITIES_TOP_N` (#119) decide what the
   aggregates keep, but nothing reports their values or how close a
   project's data comes to them. Answering "does the cap cost us data" took
@@ -50,11 +50,11 @@ Date: 2026-10-03
 
 ```json
 {"limits": [
-  {"setting": "VIEWS_DIMENSIONS_TOP_N", "value": 1000, "default": 1000,
+  {"setting": "VIEWS_DIMENSIONS_TOP_N", "value": 100, "default": 100,
    "caps": "values per views breakdown and kinds, per project and day; the rest fold into (other)"},
-  {"setting": "PRODUCT_ATTRIBUTES_TOP_N", "value": 100, "default": 100,
+  {"setting": "ATTRIBUTES_TOP_N", "value": 50, "default": 50,
    "caps": "values per attribute key, per project, day and event; the rest fold into (other)"},
-  {"setting": "IDENTITIES_TOP_N", "value": 1000, "default": 1000,
+  {"setting": "IDENTITIES_TOP_N", "value": 500, "default": 500,
    "caps": "users, and groups, per project and day; the rest are dropped"}
 ]}
 ```
@@ -86,7 +86,7 @@ One row per capped dimension that has data in the range:
   value count per day is the view's rows that day, the `(other)` row
   included; a day is capped when it has an `(other)` row; `folded_share`
   is the `(other)` rows' views over all views in the range.
-- **Attributes** (`PRODUCT_ATTRIBUTES_TOP_N`): one row per attribute key
+- **Attributes** (`ATTRIBUTES_TOP_N`): one row per attribute key
   (`dimension` is the key, e.g. `plan` or `$os`), over every event, from
   `v_product_attrs` and `v_measures_attrs`. Values per day is the largest
   per-event count that day (the cap is per event); capped means an
@@ -164,7 +164,7 @@ included, is returned, which is what the list page reads. Range rules as
   rows are raw and kept once they are rolled up, `attribute_keys` and
   `attribute_values` (distinct custom keys and key/value pairs received,
   declared or not) and `attribute_values_folded` (values past
-  `PRODUCT_ATTRIBUTES_TOP_N` in every event, measure and aggregated key;
+  `ATTRIBUTES_TOP_N` in every event, measure and aggregated key;
   exact for product events, an upper bound for measures, whose ranking
   shares places on ties). Null where not stored. The project page's Usage
   shows them as an Attributes tile. The pass also stores the caps in force

@@ -12,7 +12,7 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
-// Each cap (PRODUCT_ATTRIBUTES_TOP_N, VIEWS_DIMENSIONS_TOP_N,
+// Each cap (ATTRIBUTES_TOP_N, VIEWS_DIMENSIONS_TOP_N,
 // IDENTITIES_TOP_N) reaches the live halves through meta and the daily
 // pass as an argument; the two must agree for every setting, 0 (no cap)
 // included, or a day's numbers jump when it rolls up. The fixture has 110
@@ -22,7 +22,7 @@ func TestCapsAgreeAcrossRollup(t *testing.T) {
 		t.Run(strconv.Itoa(n), func(t *testing.T) {
 			db := newTestDB(t)
 			ctx := context.Background()
-			for _, key := range []string{"product_attributes_top_n", "views_dimensions_top_n", "identities_top_n"} {
+			for _, key := range []string{"attributes_top_n", "views_dimensions_top_n", "identities_top_n"} {
 				if err := db.SetMeta(ctx, key, strconv.Itoa(n)); err != nil {
 					t.Fatal(err)
 				}

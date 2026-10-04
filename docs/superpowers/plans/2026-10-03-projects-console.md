@@ -161,17 +161,17 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Test: `internal/api/ops_limits_test.go`
 
 **Interfaces:**
-- Produces (Go): `config.DefaultProductAttributesTopN = 100`, `config.DefaultViewsDimensionsTopN = 1000`, `config.DefaultIdentitiesTopN = 1000`; `limitsFrom(cfg *config.Config) []limitOut`; `(h *host) capOf(setting string) int`; constants `settingViews`, `settingAttrs`, `settingIdentities`; host field `limits []limitOut`.
+- Produces (Go): `config.DefaultAttributesTopN = 100`, `config.DefaultViewsDimensionsTopN = 1000`, `config.DefaultIdentitiesTopN = 1000`; `limitsFrom(cfg *config.Config) []limitOut`; `(h *host) capOf(setting string) int`; constants `settingViews`, `settingAttrs`, `settingIdentities`; host field `limits []limitOut`.
 - Produces (HTTP): `GET /api/limits` → `{"limits":[{"setting","value","default","caps"}]}` in the order views, attributes, identities.
 
 - [ ] **Step 1: Config constants** — in `internal/config/config.go`, above `type Config`, add:
 
 ```go
-// The caps' defaults (PRODUCT_ATTRIBUTES_TOP_N, VIEWS_DIMENSIONS_TOP_N,
+// The caps' defaults (ATTRIBUTES_TOP_N, VIEWS_DIMENSIONS_TOP_N,
 // IDENTITIES_TOP_N). The console's limits tool reports them beside the
 // values in force, so they live here rather than as literals in parse.
 const (
-	DefaultProductAttributesTopN = 100
+	DefaultAttributesTopN = 100
 	DefaultViewsDimensionsTopN   = 1000
 	DefaultIdentitiesTopN        = 1000
 )
@@ -180,7 +180,7 @@ const (
 and in `parse` replace the three literals:
 
 ```go
-		ProductAttributesTopN: e.num("PRODUCT_ATTRIBUTES_TOP_N", DefaultProductAttributesTopN),
+		AttributesTopN: e.num("ATTRIBUTES_TOP_N", DefaultAttributesTopN),
 		ViewsDimensionsTopN:   e.num("VIEWS_DIMENSIONS_TOP_N", DefaultViewsDimensionsTopN),
 		IdentitiesTopN:        e.num("IDENTITIES_TOP_N", DefaultIdentitiesTopN),
 ```
@@ -202,7 +202,7 @@ import (
 // (no cap), in a fixed order: views, attributes, identities.
 func TestLimitsReportsTheCapsInForce(t *testing.T) {
 	h, cs := newTestHost(t)
-	h.limits = limitsFrom(&config.Config{ProductAttributesTopN: 7, ViewsDimensionsTopN: 0, IdentitiesTopN: 2000})
+	h.limits = limitsFrom(&config.Config{AttributesTopN: 7, ViewsDimensionsTopN: 0, IdentitiesTopN: 2000})
 	out, err := h.listLimits(context.Background(), struct{}{})
 	if err != nil {
 		t.Fatal(err)
@@ -212,7 +212,7 @@ func TestLimitsReportsTheCapsInForce(t *testing.T) {
 		value, df int
 	}{
 		{"VIEWS_DIMENSIONS_TOP_N", 0, config.DefaultViewsDimensionsTopN},
-		{"PRODUCT_ATTRIBUTES_TOP_N", 7, config.DefaultProductAttributesTopN},
+		{"ATTRIBUTES_TOP_N", 7, config.DefaultAttributesTopN},
 		{"IDENTITIES_TOP_N", 2000, config.DefaultIdentitiesTopN},
 	}
 	if len(out.Limits) != len(want) {
@@ -257,7 +257,7 @@ import (
 // The caps, by the setting that sets each.
 const (
 	settingViews      = "VIEWS_DIMENSIONS_TOP_N"
-	settingAttrs      = "PRODUCT_ATTRIBUTES_TOP_N"
+	settingAttrs      = "ATTRIBUTES_TOP_N"
 	settingIdentities = "IDENTITIES_TOP_N"
 )
 
@@ -280,7 +280,7 @@ func limitsFrom(cfg *config.Config) []limitOut {
 	return []limitOut{
 		{settingViews, cfg.ViewsDimensionsTopN, config.DefaultViewsDimensionsTopN,
 			"values per views breakdown and kinds, per project and day; the rest fold into (other)"},
-		{settingAttrs, cfg.ProductAttributesTopN, config.DefaultProductAttributesTopN,
+		{settingAttrs, cfg.AttributesTopN, config.DefaultAttributesTopN,
 			"values per attribute key, per project, day and event; the rest fold into (other)"},
 		{settingIdentities, cfg.IdentitiesTopN, config.DefaultIdentitiesTopN,
 			"users, and groups, per project and day; the rest are dropped"},
@@ -313,18 +313,18 @@ and register after `list_projects`:
 
 ```go
 	expose(r, spec{Name: "limits", Annotations: ro, Method: "GET", Path: "/api/limits",
-		Description: "The caps in force: values kept per views breakdown and day (VIEWS_DIMENSIONS_TOP_N), per attribute key, event and day (PRODUCT_ATTRIBUTES_TOP_N), and users and groups per day (IDENTITIES_TOP_N), each with its default. 0 means no cap. Set in the server's environment, not here."},
+		Description: "The caps in force: values kept per views breakdown and day (VIEWS_DIMENSIONS_TOP_N), per attribute key, event and day (ATTRIBUTES_TOP_N), and users and groups per day (IDENTITIES_TOP_N), each with its default. 0 means no cap. Set in the server's environment, not here."},
 		h.listLimits)
 ```
 
-In `internal/api/server.go` `Build`, set `limits: limitsFrom(cfg)` in the `&host{...}` literal. In `internal/api/seed_test.go` `newTestHost`, set `limits: limitsFrom(&config.Config{ProductAttributesTopN: config.DefaultProductAttributesTopN, ViewsDimensionsTopN: config.DefaultViewsDimensionsTopN, IdentitiesTopN: config.DefaultIdentitiesTopN})` (add the `config` import).
+In `internal/api/server.go` `Build`, set `limits: limitsFrom(cfg)` in the `&host{...}` literal. In `internal/api/seed_test.go` `newTestHost`, set `limits: limitsFrom(&config.Config{AttributesTopN: config.DefaultAttributesTopN, ViewsDimensionsTopN: config.DefaultViewsDimensionsTopN, IdentitiesTopN: config.DefaultIdentitiesTopN})` (add the `config` import).
 
 - [ ] **Step 5: Docs** — in `docs/twillingate.md`, section `## Answer questions with the data`:
   - change "A connected session gets thirty-four tools: the eighteen below" to "A connected session gets thirty-five tools: the nineteen below";
   - add a tool table row after `list_projects`:
 
 ```markdown
-| `limits` | none (no `project_id`) | The caps in force — `VIEWS_DIMENSIONS_TOP_N`, `PRODUCT_ATTRIBUTES_TOP_N`, `IDENTITIES_TOP_N` — each with its `value` (0 = no cap), `default` and what it caps |
+| `limits` | none (no `project_id`) | The caps in force — `VIEWS_DIMENSIONS_TOP_N`, `ATTRIBUTES_TOP_N`, `IDENTITIES_TOP_N` — each with its `value` (0 = no cap), `default` and what it caps |
 ```
 
   - add to the `### HTTP API` table after the `GET /api/projects` row:
@@ -395,7 +395,7 @@ func TestUsageRange(t *testing.T) {
 // 1 so the identities seeded on 2026-08-20 reach theirs.
 func TestCapUsage(t *testing.T) {
 	h, _ := newTestHost(t)
-	h.limits = limitsFrom(&config.Config{ProductAttributesTopN: 1, ViewsDimensionsTopN: 2, IdentitiesTopN: 1})
+	h.limits = limitsFrom(&config.Config{AttributesTopN: 1, ViewsDimensionsTopN: 2, IdentitiesTopN: 1})
 	for _, q := range []string{
 		`INSERT INTO agg_views_paths (project_id, day, path, visitors, views) VALUES
 		 (1,'2026-08-22','/a',3,10), (1,'2026-08-22','/b',2,5), (1,'2026-08-22','(other)',4,15)`,
@@ -1449,7 +1449,7 @@ export interface IngestKey {
 }
 
 export interface Limit {
-  setting: 'VIEWS_DIMENSIONS_TOP_N' | 'PRODUCT_ATTRIBUTES_TOP_N' | 'IDENTITIES_TOP_N'
+  setting: 'VIEWS_DIMENSIONS_TOP_N' | 'ATTRIBUTES_TOP_N' | 'IDENTITIES_TOP_N'
   /** The cap in force; 0 means no cap. */
   value: number
   default: number
@@ -1872,7 +1872,7 @@ beforeEach(() => {
   vi.spyOn(endpoints, 'keys').mockResolvedValue({ keys: [{ project_id: 4, label: 'web', key: 'ak_1', state: 'active' }] })
   vi.spyOn(endpoints, 'limits').mockResolvedValue({ limits: [
     { setting: 'VIEWS_DIMENSIONS_TOP_N', value: 0, default: 1000, caps: 'values per views breakdown' },
-    { setting: 'PRODUCT_ATTRIBUTES_TOP_N', value: 100, default: 100, caps: 'values per attribute key' },
+    { setting: 'ATTRIBUTES_TOP_N', value: 100, default: 100, caps: 'values per attribute key' },
     { setting: 'IDENTITIES_TOP_N', value: 1000, default: 1000, caps: 'users and groups' },
   ] })
 })

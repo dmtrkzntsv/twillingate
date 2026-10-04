@@ -18,7 +18,7 @@ func attrPath(key string) string {
 	return `$."` + strings.ReplaceAll(key, `"`, `\"`) + `"`
 }
 
-// defaultAttrsTopN is PRODUCT_ATTRIBUTES_TOP_N's default, and the fallback
+// defaultAttrsTopN is ATTRIBUTES_TOP_N's default, and the fallback
 // for a negative topN. Config refuses one, but the guard stays: the
 // `rn <= :n` filter would read it as "keep nothing" and silently collapse
 // every distinct value into "(other)" -- a permanent, undetected loss of

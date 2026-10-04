@@ -1,6 +1,6 @@
 -- product_aggregation collapses to a flat declared key list. `enabled` is
 -- dropped (rollups are now unconditional) and `top_n` moves to the global
--- PRODUCT_ATTRIBUTES_TOP_N setting. The backfill takes the DISTINCT union
+-- ATTRIBUTES_TOP_N setting. The backfill takes the DISTINCT union
 -- of every array in the old event-keyed map, so
 --   {"*":["plan"],"subscribed":["tier","plan"]}  ->  ["plan","tier"]
 ALTER TABLE projects ADD COLUMN attributes TEXT NOT NULL DEFAULT '[]';

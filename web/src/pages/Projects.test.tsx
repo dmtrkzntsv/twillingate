@@ -44,7 +44,7 @@ beforeEach(() => {
   vi.spyOn(endpoints, 'keys').mockResolvedValue({ keys: [{ project_id: 4, label: 'web', key: 'ak_1', state: 'active' }] })
   vi.spyOn(endpoints, 'limits').mockResolvedValue({ limits: [
     { setting: 'VIEWS_DIMENSIONS_TOP_N', value: 0, default: 1000, caps: 'values per views breakdown' },
-    { setting: 'PRODUCT_ATTRIBUTES_TOP_N', value: 100, default: 100, caps: 'values per attribute key' },
+    { setting: 'ATTRIBUTES_TOP_N', value: 100, default: 100, caps: 'values per attribute key' },
     { setting: 'IDENTITIES_TOP_N', value: 1000, default: 1000, caps: 'users and groups' },
   ] })
 })

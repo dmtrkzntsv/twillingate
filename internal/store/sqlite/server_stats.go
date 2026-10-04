@@ -154,7 +154,7 @@ func recordCaps(ctx context.Context, tx *sql.Tx, day string) error {
 		key string
 		def int
 	}{
-		{store.StatCapProductAttributes, defaultAttrsTopN},
+		{store.StatCapAttributes, defaultAttrsTopN},
 		{store.StatCapViewsDimensions, defaultDimensionsTopN},
 		{store.StatCapIdentities, defaultDimensionsTopN},
 	} {
@@ -184,7 +184,7 @@ const attrDefaultKeys = 8
 // foldedSQL counts, per project and raw day before ?1, the values the
 // attribute views fold into (other): in every partition they rank (event
 // and key for product events; event, measure and key for measures), the
-// distinct values past the product_attributes_top_n cap, read from meta as
+// distinct values past the attributes_top_n cap, read from meta as
 // the views read it. Every project and day with an aggregated value gets a
 // row, 0 included, so a missing day means "not counted while raw". The
 // views keep exactly the cap for product events; measures rank with ties
@@ -206,7 +206,7 @@ var foldedSQL = func() string {
 	return `WITH cap AS (
 		  SELECT COALESCE((SELECT CASE CAST(value AS INTEGER) WHEN 0 THEN 4611686018427387904
 		                                ELSE CAST(value AS INTEGER) END
-		                   FROM meta WHERE key='product_attributes_top_n'
+		                   FROM meta WHERE key='attributes_top_n'
 		                     AND (CAST(value AS INTEGER) > 0 OR value = '0')), 100) AS n
 		), keys AS (
 		  SELECT p.id AS project_id, j.value AS attr_key
