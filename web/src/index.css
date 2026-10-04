@@ -127,6 +127,29 @@
   body {
     @apply bg-background text-foreground;
     }
+  /* Everything clickable shows the hand, here rather than as a class to
+     remember on each control (Tailwind 4 dropped it for buttons). A
+     utility (cursor-grab, cursor-default) still wins over this layer.
+     e2e/cursor.spec.ts fails on a visible, enabled control without it. */
+  button:not(:disabled):not([aria-disabled='true']),
+  a[href]:not([aria-disabled='true']),
+  summary,
+  select:not(:disabled),
+  label[for],
+  input[type='checkbox']:not(:disabled),
+  input[type='radio']:not(:disabled),
+  [role='button']:not([aria-disabled='true']),
+  [role='tab']:not([aria-disabled='true']),
+  [role='menuitem']:not([data-disabled]),
+  [role='menuitemcheckbox']:not([data-disabled]),
+  [role='menuitemradio']:not([data-disabled]),
+  [role='option']:not([data-disabled]),
+  [role='switch']:not([aria-disabled='true']),
+  [role='checkbox']:not([aria-disabled='true']),
+  [role='radio']:not([aria-disabled='true']),
+  [role='combobox']:not([aria-disabled='true']) {
+    cursor: pointer;
+  }
 }
 
 /* A few element styles for the `markdown` widget, standing in for the
