@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { endpoints } from '@/lib/api'
+import { ApiError, endpoints } from '@/lib/api'
 import { renderWithProviders } from '@/test/render'
 import ProjectFormDialog from './ProjectFormDialog'
 
@@ -53,5 +53,18 @@ describe('ProjectFormDialog', () => {
     await user.type(await screen.findByRole('textbox', { name: 'Key not received yet' }), 'tier')
     await user.click(screen.getByRole('button', { name: 'Save' }))
     expect(onSubmit).toHaveBeenCalledWith({ name: 'dev', allowed_origins: [], attributes: ['tier'] })
+  })
+
+  it('retries a failed load without submitting the form', async () => {
+    const user = userEvent.setup()
+    const spy = vi.spyOn(endpoints, 'receivedAttributes').mockRejectedValue(new ApiError(500, 'boom'))
+    const onSubmit = vi.fn().mockResolvedValue(true)
+    renderWithProviders(
+      <ProjectFormDialog open onOpenChange={vi.fn()} title="Edit" projectId={1} submitLabel="Save" onSubmit={onSubmit}
+        initial={{ name: 'dev', allowed_origins: [], attributes: [] }} />,
+    )
+    await user.click(await screen.findByRole('button', { name: 'Retry' }))
+    expect(spy).toHaveBeenCalledTimes(2)
+    expect(onSubmit).not.toHaveBeenCalled()
   })
 })

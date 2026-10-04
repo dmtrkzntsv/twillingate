@@ -7,7 +7,7 @@ export default function LoadError({ what, error, onRetry }: { what: string; erro
       <p>
         Couldn't load {what}. {error.message}
       </p>
-      <Button variant="outline" size="sm" className="self-start" onClick={onRetry}>Retry</Button>
+      <Button type="button" variant="outline" size="sm" className="self-start" onClick={onRetry}>Retry</Button>
     </div>
   )
 }
