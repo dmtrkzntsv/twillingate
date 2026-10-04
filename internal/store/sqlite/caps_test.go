@@ -12,7 +12,7 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
-// Each cap (ATTRIBUTES_TOP_N, VIEWS_DIMENSIONS_TOP_N,
+// Each cap (ATTRIBUTE_VALUES_TOP_N, VIEWS_DIMENSIONS_TOP_N,
 // IDENTITIES_TOP_N) reaches the live halves through meta and the daily
 // pass as an argument; the two must agree for every setting, 0 (no cap)
 // included, or a day's numbers jump when it rolls up. The fixture has 110

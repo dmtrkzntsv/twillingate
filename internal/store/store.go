@@ -181,8 +181,9 @@ const (
 	StatAttributeValues       = "attribute_values"
 	StatAttributeValuesFolded = "attribute_values_folded"
 	// Server-wide (project 0), on the day measured: each cap in force, as
-	// its setting names it (0 = no cap), so a day's folds can be read
-	// against the cap that made them.
+	// its meta row names it (0 = no cap), so a day's folds can be read
+	// against the cap that made them. ATTRIBUTE_VALUES_TOP_N's row keeps
+	// its earlier name, attributes_top_n.
 	StatCapAttributes      = "attributes_top_n"
 	StatCapViewsDimensions = "views_dimensions_top_n"
 	StatCapIdentities      = "identities_top_n"

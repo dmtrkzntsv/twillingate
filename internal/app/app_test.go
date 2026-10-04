@@ -591,7 +591,7 @@ func TestServeWritesTheCapsToMeta(t *testing.T) {
 		cfg := configtest.Load(t, map[string]string{
 			"INGEST_ADDR":            addr,
 			"DATABASE_DSN":           "sqlite://" + dbPath,
-			"ATTRIBUTES_TOP_N":       product,
+			"ATTRIBUTE_VALUES_TOP_N": product,
 			"VIEWS_DIMENSIONS_TOP_N": views,
 			"IDENTITIES_TOP_N":       identities,
 		})

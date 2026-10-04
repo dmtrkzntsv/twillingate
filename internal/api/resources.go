@@ -25,7 +25,7 @@ Facts you cannot infer from the DDL:
    only for actors identified by $user_id or $install_id; a project whose
    clients send neither has none.
 4. Every dimension is capped per day (VIEWS_DIMENSIONS_TOP_N values,
-   default 100; attribute values ATTRIBUTES_TOP_N, default 50; 0 is
+   default 100; attribute values ATTRIBUTE_VALUES_TOP_N, default 50; 0 is
    no cap); the rest sit in one '(other)' row per day whose visitors are
    distinct actors, not a sum. v_identity_daily keeps the busiest
    IDENTITIES_TOP_N ids per kind per day (default 500) and drops the rest:

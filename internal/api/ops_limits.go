@@ -16,7 +16,7 @@ import (
 // The caps, by the setting that sets each.
 const (
 	settingViews      = "VIEWS_DIMENSIONS_TOP_N"
-	settingAttrs      = "ATTRIBUTES_TOP_N"
+	settingAttrs      = "ATTRIBUTE_VALUES_TOP_N"
 	settingIdentities = "IDENTITIES_TOP_N"
 )
 
@@ -70,7 +70,7 @@ func limitsFrom(cfg *config.Config) []limitOut {
 			"an archived project (with its data), dashboard or widget is deleted this long after archiving"),
 		setting(groupCaps, "Views breakdown values", settingViews, cfg.ViewsDimensionsTopN, config.DefaultViewsDimensionsTopN, "", "no cap",
 			"values per views breakdown and kinds, per project and day; the rest fold into (other)"),
-		setting(groupCaps, "Attribute values", settingAttrs, cfg.AttributesTopN, config.DefaultAttributesTopN, "", "no cap",
+		setting(groupCaps, "Attribute values", settingAttrs, cfg.AttributeValuesTopN, config.DefaultAttributeValuesTopN, "", "no cap",
 			"values per attribute key, per project, day and event; the rest fold into (other)"),
 		setting(groupCaps, "Users and groups", settingIdentities, cfg.IdentitiesTopN, config.DefaultIdentitiesTopN, "", "no cap",
 			"users, and groups, per project and day; the rest are dropped"),

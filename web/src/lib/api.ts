@@ -181,7 +181,7 @@ export interface IngestKey {
   state: 'active' | 'disabled'
 }
 
-export type CapSetting = 'VIEWS_DIMENSIONS_TOP_N' | 'ATTRIBUTES_TOP_N' | 'IDENTITIES_TOP_N'
+export type CapSetting = 'VIEWS_DIMENSIONS_TOP_N' | 'ATTRIBUTE_VALUES_TOP_N' | 'IDENTITIES_TOP_N'
 
 /** A limit in force: a setting (with its environment variable and default) or one of the wire format's fixed limits. */
 export interface Limit {
