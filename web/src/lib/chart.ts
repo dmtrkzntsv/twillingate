@@ -55,7 +55,7 @@ export function valuesOf(rows: Record<string, unknown>[], keys: string[]): numbe
 export const grid = { vertical: false } as const
 
 /** A bar's thickest: the band's leftover is air, not ink. */
-export const MAX_BAR = 28
+export const MAX_BAR = 80
 
 /** The dot a hovered line or area point shows: filled, with a ring in the card's color. */
 export function activeDot(color: string) {
