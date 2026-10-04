@@ -28,6 +28,9 @@ const tsFormat = "2006-01-02T15:04:05Z"
 //
 // value is NULL outside measures (a nil Value), and a SampleRate of 0
 // means unset and is stored as 1.
+//
+// Each inserted product or measure row also counts its attribute keys into
+// received_attributes, in the same transaction.
 func (d *DB) WriteEvents(ctx context.Context, evs []store.Event) error {
 	if len(evs) == 0 {
 		return nil
@@ -53,6 +56,7 @@ func (d *DB) WriteEvents(ctx context.Context, evs []store.Event) error {
 			return err
 		}
 		defer stmt.Close()
+		counts := receivedCounts{}
 		for _, e := range evs {
 			attrs := e.Attributes
 			if attrs == nil {
@@ -66,18 +70,25 @@ func (d *DB) WriteEvents(ctx context.Context, evs []store.Event) error {
 			if rate == 0 {
 				rate = 1
 			}
-			if _, err := stmt.ExecContext(ctx, e.ID, e.ProjectID, string(e.Family), e.EventName,
-				e.TS.UTC().Format(tsFormat), e.TS.UTC().Format("2006-01-02"),
+			day := e.TS.UTC().Format("2006-01-02")
+			res, err := stmt.ExecContext(ctx, e.ID, e.ProjectID, string(e.Family), e.EventName,
+				e.TS.UTC().Format(tsFormat), day,
 				e.ReceivedAt.UTC().Format(tsFormat), e.Kind,
 				e.ActorID, e.ActorKind, e.UserID, e.GroupID, e.SessionID,
 				e.Host, e.Path, e.ReferrerSource, e.UTMSource, e.UTMMedium, e.UTMCampaign,
 				e.Platform, e.OS, e.OSVersion, e.OSName, e.Browser, e.BrowserVersion, e.BrowserLocale,
 				e.AppVersion, e.AppLocale, e.Device, e.DeviceModel, e.DisplayWidth, e.DisplayHeight,
-				e.Country, e.Consent, string(blob), e.Value, e.Measure, rate); err != nil {
+				e.Country, e.Consent, string(blob), e.Value, e.Measure, rate)
+			if err != nil {
 				return fmt.Errorf("event %s: %w", e.ID, err)
 			}
+			// INSERT OR IGNORE: a duplicate id (a retried batch) inserts
+			// nothing and so counts nothing.
+			if n, err := res.RowsAffected(); err == nil && n == 1 {
+				counts.add(e, day)
+			}
 		}
-		return nil
+		return counts.write(ctx, tx)
 	})
 }
 

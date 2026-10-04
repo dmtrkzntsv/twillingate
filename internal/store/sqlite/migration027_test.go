@@ -15,6 +15,7 @@ import (
 // under the old name still folds the same values after the migration.
 func TestMigration027MovesTheAttributeCap(t *testing.T) {
 	db := newTestDBAt(t, 26)
+	withReceivedAttributes(t, db)
 	ctx := context.Background()
 	if err := db.SetMeta(ctx, "product_attributes_top_n", "2"); err != nil {
 		t.Fatal(err)
