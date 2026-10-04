@@ -47,7 +47,7 @@ func TestMergeAttributesHandlesNilMaps(t *testing.T) {
 }
 
 func TestResolveAttributesSplitsReservedFromCustom(t *testing.T) {
-	r, unknown := resolveAttributes(map[string]any{
+	r, unknown, _ := resolveAttributes(map[string]any{
 		"$install_id": "018f", "$user_id": "u1", "$user_name": "Ada",
 		"$group_id": "org9", "$group_name": "Acme", "$session_id": "s1",
 		"$kind": "web", "$os": "ios", "$app_version": "2.4.1", "$os_version": "17.2",
@@ -95,7 +95,7 @@ func TestResolveAttributesSplitsReservedFromCustom(t *testing.T) {
 }
 
 func TestResolveAttributesReportsUnknownReservedKeys(t *testing.T) {
-	r, unknown := resolveAttributes(map[string]any{"$app_ver": "2.4.1", "plan": "pro"})
+	r, unknown, _ := resolveAttributes(map[string]any{"$app_ver": "2.4.1", "plan": "pro"})
 
 	if len(unknown) != 1 || unknown[0] != "$app_ver" {
 		t.Fatalf("unknown = %v, want [$app_ver]", unknown)
@@ -110,7 +110,7 @@ func TestResolveAttributesReportsUnknownReservedKeys(t *testing.T) {
 
 func TestResolveAttributesTruncatesLongValues(t *testing.T) {
 	long := strings.Repeat("x", wire.MaxAttrValue+100)
-	r, _ := resolveAttributes(map[string]any{"blob": long, "$user_id": long})
+	r, _, _ := resolveAttributes(map[string]any{"blob": long, "$user_id": long})
 	if len(r.Custom["blob"]) != wire.MaxAttrValue {
 		t.Errorf("custom value length = %d, want %d", len(r.Custom["blob"]), wire.MaxAttrValue)
 	}
@@ -120,20 +120,27 @@ func TestResolveAttributesTruncatesLongValues(t *testing.T) {
 }
 
 func TestResolveAttributesDropsOverlongKeys(t *testing.T) {
-	r, _ := resolveAttributes(map[string]any{strings.Repeat("k", wire.MaxAttrKey+1): "v"})
-	if len(r.Custom) != 0 {
-		t.Errorf("custom = %v, want the overlong key dropped", r.Custom)
+	long := strings.Repeat("k", wire.MaxAttrKey+1)
+	r, _, dropped := resolveAttributes(map[string]any{long: "v", "b" + long: "v", strings.Repeat("k", wire.MaxAttrKey): "v"})
+	if len(r.Custom) != 1 {
+		t.Errorf("custom = %v, want only the key at the limit kept", r.Custom)
+	}
+	// Sorted, so the warnings do not follow map order.
+	if len(dropped) != 2 || dropped[0] != "b"+long || dropped[1] != long {
+		t.Errorf("dropped = %v, want both overlong keys, sorted", dropped)
 	}
 }
 
-func TestResolveAttributesCapsAttributeCount(t *testing.T) {
+// Every attribute an event sends is kept, however many: the body limit
+// bounds an event, and only declared keys reach the aggregates.
+func TestResolveAttributesKeepsEveryAttribute(t *testing.T) {
 	in := map[string]any{}
-	for i := 0; i < wire.MaxAttrs*2; i++ {
-		in[string(rune('a'+i%26))+strconv.Itoa(i)] = "v"
+	for i := 0; i < 200; i++ {
+		in["k"+strconv.Itoa(i)] = "v"
 	}
-	r, _ := resolveAttributes(in)
-	if len(r.Custom) != wire.MaxAttrs {
-		t.Errorf("custom count = %d, want %d", len(r.Custom), wire.MaxAttrs)
+	r, unknown, dropped := resolveAttributes(in)
+	if len(r.Custom) != 200 || len(unknown) != 0 || len(dropped) != 0 {
+		t.Errorf("custom count = %d (unknown %v, dropped %v), want all 200", len(r.Custom), unknown, dropped)
 	}
 }
 
@@ -181,7 +188,7 @@ func TestNoticeCaps(t *testing.T) {
 }
 
 func TestResolveAttributesLocationKeys(t *testing.T) {
-	r, unknown := resolveAttributes(map[string]any{
+	r, unknown, _ := resolveAttributes(map[string]any{
 		"$host":         "shop.example.com",
 		"$path":         "/account/[id]/edit",
 		"$utm_source":   "newsletter",
@@ -207,7 +214,7 @@ func TestResolveAttributesLocationKeys(t *testing.T) {
 // rather than being stored as a custom attribute, so a stale client sees
 // the reason in the response body.
 func TestResolveAttributesRejectsURL(t *testing.T) {
-	r, unknown := resolveAttributes(map[string]any{"$url": "https://a.example.com/x"})
+	r, unknown, _ := resolveAttributes(map[string]any{"$url": "https://a.example.com/x"})
 	if len(unknown) != 1 || unknown[0] != "$url" {
 		t.Errorf("unknown = %v, want [$url]", unknown)
 	}
@@ -219,7 +226,7 @@ func TestResolveAttributesRejectsURL(t *testing.T) {
 // $locale became $browser_locale. The old key gets no alias: it warns as an
 // unknown reserved key like $url, so a stale client sees why.
 func TestResolveAttributesRejectsLocale(t *testing.T) {
-	r, unknown := resolveAttributes(map[string]any{"$locale": "en-US"})
+	r, unknown, _ := resolveAttributes(map[string]any{"$locale": "en-US"})
 	if len(unknown) != 1 || unknown[0] != "$locale" {
 		t.Errorf("unknown = %v, want [$locale]", unknown)
 	}
@@ -236,7 +243,7 @@ func TestResolveAttributesPathVerbatim(t *testing.T) {
 		"/settings?tab=billing",
 		"/plain",
 	} {
-		r, _ := resolveAttributes(map[string]any{"$path": path})
+		r, _, _ := resolveAttributes(map[string]any{"$path": path})
 		if r.Path != path {
 			t.Errorf("path %q stored as %q", path, r.Path)
 		}
