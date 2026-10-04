@@ -15,7 +15,7 @@ vi.mock('@/hooks/use-project-actions', () => ({
 function stats(project_id: number, over: Partial<ProjectStats> = {}): ProjectStats {
   return {
     project_id,
-    series: [{ day: '2026-10-02', views: 5, events: 2, measures: 0, total_bytes: null }],
+    series: [{ day: '2026-10-02', views: 5, events: 2, measures: 0, total_bytes: null, declared_attributes: null, attribute_keys: null, attribute_values: null, attribute_values_folded: null }],
     totals: { views: 5, events: 2, measures: 0 },
     last_received_at: new Date(Date.now() - 120_000).toISOString(),
     first_day: '2026-09-01', raw_days: 30, rolled_up_days: 2,

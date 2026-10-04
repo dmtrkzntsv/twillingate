@@ -214,6 +214,12 @@ export interface StatsDay {
   measures: number
   /** The project's size as the daily pass measured it that day; null on a day not measured. */
   total_bytes: number | null
+  /** Declared attributes on a day the daily pass measured; null otherwise. */
+  declared_attributes: number | null
+  /** Distinct attribute keys and key/value pairs received, and values folded into (other): counted the night after, null until then. */
+  attribute_keys: number | null
+  attribute_values: number | null
+  attribute_values_folded: number | null
 }
 
 export interface ProjectStats {

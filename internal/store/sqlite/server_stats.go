@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
@@ -16,6 +17,11 @@ import (
 //   - sizes, for now's UTC day: each project's estimated disk use, and the
 //     database file's (project 0). A second run the same day (the pass
 //     also runs at start) replaces the day's rows; earlier days stay.
+//   - how many attributes each project declares, for now's day.
+//   - the caps in force, for now's day (project 0).
+//   - attribute counts, for every day before now's still raw: keys and
+//     values received, and values folded into (other). Only raw rows know
+//     them; a rolled-up day keeps what was counted while it was raw.
 //   - counts, for every day before now's: each project's views, product
 //     events and measure samples per day, from the same rows the views
 //     read (aggregates for days rolled up, raw rows for the rest). A raw
@@ -32,7 +38,16 @@ func (d *DB) MeasureServerStats(ctx context.Context, now time.Time) error {
 		if err := measureSizes(ctx, tx, day); err != nil {
 			return err
 		}
-		return countDays(ctx, tx, day)
+		if err := countDeclared(ctx, tx, day); err != nil {
+			return err
+		}
+		if err := recordCaps(ctx, tx, day); err != nil {
+			return err
+		}
+		if err := countDays(ctx, tx, day); err != nil {
+			return err
+		}
+		return countAttributes(ctx, tx, day)
 	})
 }
 
@@ -113,6 +128,124 @@ func countDays(ctx context.Context, tx *sql.Tx, today string) error {
 			SELECT ?2, project_id, day, SUM(n) FROM (`+c.agg+` UNION ALL `+c.raw+`) GROUP BY project_id, day`,
 			today, c.key); err != nil {
 			return fmt.Errorf("count %s: %w", c.key, err)
+		}
+	}
+	return nil
+}
+
+// countDeclared writes each project's declared attribute count for day,
+// archived projects included.
+func countDeclared(ctx context.Context, tx *sql.Tx, day string) error {
+	_, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO server_stats (key, project_id, measured_at, value)
+		SELECT ?1, p.id, ?2, (SELECT COUNT(*) FROM json_each(CASE WHEN json_valid(p.attributes) THEN p.attributes ELSE '[]' END) j
+		                      WHERE j.type = 'text')
+		FROM projects p`, store.StatDeclaredAttributes, day)
+	if err != nil {
+		return fmt.Errorf("count declared attributes: %w", err)
+	}
+	return nil
+}
+
+// recordCaps writes each cap in force on day, as the views and the
+// rollups read it: the setting's meta row (written at every start), else
+// its default; 0 is no cap.
+func recordCaps(ctx context.Context, tx *sql.Tx, day string) error {
+	for _, c := range []struct {
+		key string
+		def int
+	}{
+		{store.StatCapProductAttributes, defaultAttrsTopN},
+		{store.StatCapViewsDimensions, defaultDimensionsTopN},
+		{store.StatCapIdentities, defaultDimensionsTopN},
+	} {
+		if _, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO server_stats (key, project_id, measured_at, value)
+			VALUES (?1, 0, ?2, COALESCE((SELECT CAST(value AS INTEGER) FROM meta
+			                             WHERE key = ?1 AND (CAST(value AS INTEGER) > 0 OR value = '0')), ?3))`,
+			c.key, day, c.def); err != nil {
+			return fmt.Errorf("record %s: %w", c.key, err)
+		}
+	}
+	return nil
+}
+
+// attrColumns maps each system attribute key to the column holding it, as
+// the attribute views do (migration 025). The first eight every project
+// aggregates; the rest a project may declare.
+var attrColumns = []struct{ key, col string }{
+	{"$platform", "platform"}, {"$os", "os"}, {"$app_version", "app_version"}, {"$app_locale", "app_locale"},
+	{"$kind", "kind"}, {"$browser", "browser"}, {"$device", "device"}, {"$browser_locale", "browser_locale"},
+	{"$host", "host"}, {"$path", "path"}, {"$referrer", "referrer_source"}, {"$utm_source", "utm_source"},
+	{"$utm_medium", "utm_medium"}, {"$utm_campaign", "utm_campaign"}, {"$os_version", "os_version"},
+	{"$browser_version", "browser_version"}, {"$device_model", "device_model"},
+}
+
+const attrDefaultKeys = 8
+
+// foldedSQL counts, per project and raw day before ?1, the values the
+// attribute views fold into (other): in every partition they rank (event
+// and key for product events; event, measure and key for measures), the
+// distinct values past the product_attributes_top_n cap, read from meta as
+// the views read it. Every project and day with an aggregated value gets a
+// row, 0 included, so a missing day means "not counted while raw". The
+// views keep exactly the cap for product events; measures rank with ties
+// sharing a place, so there the count is an upper bound.
+var foldedSQL = func() string {
+	var value, defaults strings.Builder
+	value.WriteString("CASE k.attr_key")
+	for _, c := range attrColumns {
+		fmt.Fprintf(&value, " WHEN '%s' THEN NULLIF(e.%s, '')", c.key, c.col)
+	}
+	value.WriteString(` ELSE CASE WHEN k.attr_key LIKE '$%' THEN NULL
+		ELSE json_extract(e.attributes, '$."' || replace(k.attr_key,'"','\"') || '"') END END`)
+	for i, c := range attrColumns[:attrDefaultKeys] {
+		if i > 0 {
+			defaults.WriteString(", ")
+		}
+		fmt.Fprintf(&defaults, "('%s')", c.key)
+	}
+	return `WITH cap AS (
+		  SELECT COALESCE((SELECT CASE CAST(value AS INTEGER) WHEN 0 THEN 4611686018427387904
+		                                ELSE CAST(value AS INTEGER) END
+		                   FROM meta WHERE key='product_attributes_top_n'
+		                     AND (CAST(value AS INTEGER) > 0 OR value = '0')), 100) AS n
+		), keys AS (
+		  SELECT p.id AS project_id, j.value AS attr_key
+		  FROM projects p, json_each(CASE WHEN json_valid(p.attributes) THEN p.attributes ELSE '[]' END) j
+		  WHERE j.type = 'text'
+		  UNION
+		  SELECT p.id, s.column1 FROM projects p, (VALUES ` + defaults.String() + `) s
+		), parts AS (
+		  SELECT project_id, day, COUNT(DISTINCT v) AS n FROM (
+		    SELECT e.project_id, e.day, 'p' AS fam, e.event_name AS ev, '' AS measure, k.attr_key AS attr_key,
+		           ` + value.String() + ` AS v
+		    FROM raw_product e JOIN keys k ON k.project_id = e.project_id WHERE e.day < ?1
+		    UNION ALL
+		    SELECT e.project_id, e.day, 'm', e.event_name, e.measure, k.attr_key,
+		           ` + value.String() + `
+		    FROM raw_measures e JOIN keys k ON k.project_id = e.project_id WHERE e.day < ?1
+		  ) WHERE v IS NOT NULL
+		  GROUP BY project_id, day, fam, ev, measure, attr_key
+		)
+		SELECT project_id, day, SUM(MAX(n - (SELECT n FROM cap), 0)) FROM parts GROUP BY project_id, day`
+}()
+
+// countAttributes writes, for every raw day before today, each project's
+// distinct custom attribute keys and key/value pairs received (product and
+// measure events, declared or not) and the values folded into (other).
+// Only raw days: a rolled-up day keeps what was counted while it was raw.
+func countAttributes(ctx context.Context, tx *sql.Tx, today string) error {
+	received := `SELECT e.project_id AS project_id, e.day AS day, j.key AS k, j.value AS v
+		FROM (SELECT project_id, day, attributes FROM raw_product WHERE day < ?1
+		      UNION ALL SELECT project_id, day, attributes FROM raw_measures WHERE day < ?1) e,
+		     json_each(CASE WHEN json_valid(e.attributes) THEN e.attributes ELSE '{}' END) j`
+	for _, q := range []struct{ key, sql string }{
+		{store.StatAttributeKeys, `SELECT project_id, day, COUNT(DISTINCT k) FROM (` + received + `) GROUP BY project_id, day`},
+		{store.StatAttributeValues, `SELECT project_id, day, COUNT(*) FROM (SELECT DISTINCT project_id, day, k, v FROM (` + received + `)) GROUP BY project_id, day`},
+		{store.StatAttributeValuesFolded, foldedSQL},
+	} {
+		if _, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO server_stats (key, project_id, measured_at, value)
+			SELECT ?2, * FROM (`+q.sql+`)`, today, q.key); err != nil {
+			return fmt.Errorf("count %s: %w", q.key, err)
 		}
 	}
 	return nil

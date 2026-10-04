@@ -234,7 +234,13 @@ func TestMeasureServerStatsIgnoresTheRegistry(t *testing.T) {
 	if err := db.MeasureServerStats(ctx, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	for id := range readStats(t, db) {
+	for id, v := range readStats(t, db) {
+		if id.key == store.StatDeclaredAttributes {
+			if v != 0 {
+				t.Errorf("%v = %d, want 0 declared", id, v)
+			}
+			continue
+		}
 		if id.project != 0 {
 			t.Errorf("%v for a project with only a key, want none", id)
 		}
@@ -354,5 +360,127 @@ func TestMeasureServerStatsRecountsAndOutlivesTheAggregates(t *testing.T) {
 	}
 	if got, ok := stats[statID{store.StatViews, 1, "2026-07-01"}]; !ok || got != 1 {
 		t.Errorf("views on 2026-07-01 = %d (present %v) after its aggregates were pruned, want the 1 counted", got, ok)
+	}
+}
+
+// attrsDB holds one project declaring "plan", with one raw day of product
+// events (plan: free, pro, team; $os: windows, macos; an undeclared "ref")
+// and measures (plan: free, pro), under a product_attributes_top_n of cap.
+func attrsDB(t *testing.T, cap string) (*DB, int64) {
+	t.Helper()
+	db := newTestDB(t)
+	ctx := context.Background()
+	id, err := db.CreateProject(ctx, store.RegistryProject{Name: "a", AllowedOrigins: "[]", Attributes: `["plan"]`},
+		store.AuditEntry{Actor: "t", Action: "project.create"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.db.Exec(`INSERT OR REPLACE INTO meta (key, value) VALUES ('product_attributes_top_n', ?)`, cap); err != nil {
+		t.Fatal(err)
+	}
+	var evs []store.Event
+	for i, plan := range []string{"free", "free", "pro", "team"} {
+		evs = append(evs, store.Event{Family: store.FamilyProduct, ID: uuid.NewString(), ProjectID: id, EventName: "signup",
+			ActorID: "u", TS: ts("2026-08-10T10:00:00Z").Add(time.Duration(i) * time.Minute),
+			OS: []string{"windows", "windows", "macos", "windows"}[i], Attributes: map[string]string{"plan": plan, "ref": "x"}})
+	}
+	boot := 120.0
+	for i, plan := range []string{"free", "pro"} {
+		evs = append(evs, store.Event{Family: store.FamilyMeasures, ID: uuid.NewString(), ProjectID: id, EventName: "boot",
+			ActorID: "c", TS: ts("2026-08-10T12:00:00Z").Add(time.Duration(i) * time.Minute), Measure: store.MeasureTime, Value: &boot,
+			Attributes: map[string]string{"plan": plan}})
+	}
+	if err := db.WriteEvents(ctx, evs); err != nil {
+		t.Fatal(err)
+	}
+	return db, id
+}
+
+// Attributes: what each project declares, and per raw day the keys and
+// values received (declared or not) and the values folded past the cap.
+func TestMeasureServerStatsCountsAttributes(t *testing.T) {
+	db, id := attrsDB(t, "1")
+	if err := db.MeasureServerStats(context.Background(), time.Date(2026, 8, 22, 3, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	stats := readStats(t, db)
+	for key, want := range map[statID]int64{
+		{store.StatDeclaredAttributes, id, "2026-08-22"}: 1,
+		{store.StatAttributeKeys, id, "2026-08-10"}:      2, // plan, ref
+		{store.StatAttributeValues, id, "2026-08-10"}:    4, // plan: free, pro, team; ref: x
+		// Product: plan keeps 1 of 3, $os 1 of 2; measures: plan 1 of 2.
+		{store.StatAttributeValuesFolded, id, "2026-08-10"}: 4,
+	} {
+		if got, ok := stats[key]; !ok || got != want {
+			t.Errorf("%v = %d (present %v), want %d", key, got, ok, want)
+		}
+	}
+	// The views fold exactly there: an (other) row for plan and $os.
+	var others int
+	if err := db.db.QueryRow(`SELECT COUNT(*) FROM v_product_attrs WHERE project_id = ? AND attr_value = '(other)'`, id).Scan(&others); err != nil {
+		t.Fatal(err)
+	}
+	if others != 2 {
+		t.Errorf("v_product_attrs has %d (other) rows, want 2 (plan and $os)", others)
+	}
+}
+
+// With no cap nothing folds, and the day still gets its row: 0, counted.
+func TestMeasureServerStatsFoldsNothingWithoutACap(t *testing.T) {
+	db, id := attrsDB(t, "0")
+	if err := db.MeasureServerStats(context.Background(), time.Date(2026, 8, 22, 3, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := readStats(t, db)[statID{store.StatAttributeValuesFolded, id, "2026-08-10"}]; !ok || got != 0 {
+		t.Errorf("folded = %d (present %v), want a 0 row", got, ok)
+	}
+}
+
+// Once a day's raw rows are gone (rolled up, keeping only what the cap let
+// through), its attribute counts stay as they were counted while raw.
+func TestMeasureServerStatsKeepsAttributeCountsPastTheRawDays(t *testing.T) {
+	db, id := attrsDB(t, "1")
+	ctx := context.Background()
+	now := time.Date(2026, 8, 22, 3, 0, 0, 0, time.UTC)
+	if err := db.MeasureServerStats(ctx, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.db.Exec(`DELETE FROM events WHERE project_id = ?`, id); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.MeasureServerStats(ctx, now.Add(24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	stats := readStats(t, db)
+	for key, want := range map[string]int64{store.StatAttributeKeys: 2, store.StatAttributeValues: 4, store.StatAttributeValuesFolded: 4} {
+		if got := stats[statID{key, id, "2026-08-10"}]; got != want {
+			t.Errorf("%s on 2026-08-10 = %d after its raw rows went, want the %d counted while raw", key, got, want)
+		}
+	}
+}
+
+// The caps in force are recorded for the day, server-wide: the meta value
+// the views read, 0 for no cap, else the default.
+func TestMeasureServerStatsRecordsTheCaps(t *testing.T) {
+	db, _ := attrsDB(t, "0") // product attributes: no cap
+	ctx := context.Background()
+	if _, err := db.db.Exec(`INSERT OR REPLACE INTO meta (key, value) VALUES ('views_dimensions_top_n', '250')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.db.Exec(`DELETE FROM meta WHERE key = 'identities_top_n'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.MeasureServerStats(ctx, time.Date(2026, 8, 22, 3, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	stats := readStats(t, db)
+	for key, want := range map[string]int64{
+		store.StatCapProductAttributes: 0,
+		store.StatCapViewsDimensions:   250,
+		store.StatCapIdentities:        1000, // unset: the default
+	} {
+		if got, ok := stats[statID{key, 0, "2026-08-22"}]; !ok || got != want {
+			t.Errorf("%s = %d (present %v), want %d", key, got, ok, want)
+		}
 	}
 }

@@ -6,6 +6,7 @@ import { ChartContainer, ChartTooltip, type ChartConfig } from '@/components/ui/
 import { legend, tooltip } from '@/components/chart-parts'
 import { axis, formatTick, grid, MAX_BAR, niceTicks, seriesColor, valueAxis } from '@/lib/chart'
 import { formatValue } from '@/lib/format'
+import type { StatsDay } from '@/lib/api'
 import { statsQuery } from '@/lib/queries'
 import { cn } from '@/lib/utils'
 import { formatAgo, formatBytes, formatDay } from '@/lib/units'
@@ -26,6 +27,29 @@ function Tile({ label, value, hint }: { label: string; value: string; hint?: str
       <span className="text-lg font-semibold">{value}</span>
       {hint && <span className="text-xs text-muted-foreground">{hint}</span>}
     </div>
+  )
+}
+
+/**
+ * The project's attributes over the range: the latest declared count, and
+ * from the days the daily pass counted, the busiest day's keys and values
+ * received and every value folded into (other).
+ */
+function AttributesTile({ series }: { series: StatsDay[] }) {
+  const declared = series.findLast((d) => d.declared_attributes !== null)?.declared_attributes
+  const counted = series.filter((d) => d.attribute_values !== null)
+  const max = (pick: (d: StatsDay) => number | null) => Math.max(...counted.map((d) => pick(d) ?? 0))
+  const folded = counted.reduce((n, d) => n + (d.attribute_values_folded ?? 0), 0)
+  return (
+    <Tile
+      label="Attributes"
+      value={declared === undefined || declared === null ? '—' : `${declared} declared`}
+      hint={
+        counted.length === 0
+          ? 'received values are counted nightly'
+          : `up to ${max((d) => d.attribute_keys).toLocaleString()} keys and ${max((d) => d.attribute_values).toLocaleString()} values a day · ${folded.toLocaleString()} folded into (other)`
+      }
+    />
   )
 }
 
@@ -50,8 +74,8 @@ export default function UsageSection({ projectId, range }: { projectId: number; 
       ) : !s ? (
         <div aria-hidden className="flex flex-col gap-3">
           <Skeleton className="h-56 w-full" />
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            {[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-20" />)}
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+            {[0, 1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-20" />)}
           </div>
         </div>
       ) : (
@@ -86,7 +110,7 @@ export default function UsageSection({ projectId, range }: { projectId: number; 
             <h3 className="text-sm font-medium">Data size</h3>
             <SizeChart series={s.series} />
           </div>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
             <Tile label="Events" value={(s.totals.views + s.totals.events + s.totals.measures).toLocaleString()}
               hint={`${s.totals.views.toLocaleString()} views · ${s.totals.events.toLocaleString()} product · ${s.totals.measures.toLocaleString()} measures`} />
             <Tile label="Last received" value={s.last_received_at ? formatAgo(s.last_received_at) : 'Nothing received yet'} />
@@ -94,6 +118,7 @@ export default function UsageSection({ projectId, range }: { projectId: number; 
               hint={s.size
                 ? `${formatBytes(s.size.raw_bytes)} raw · ${formatBytes(s.size.aggregate_bytes)} aggregates · estimate, measured ${formatDay(s.size.measured_at)}`
                 : 'measured by the daily pass'} />
+            <AttributesTile series={s.series} />
             <Tile label="Days kept" value={`${s.raw_days + s.rolled_up_days}`} hint={`${s.raw_days} raw · ${s.rolled_up_days} rolled up${s.first_day ? ` · since ${s.first_day}` : ''}`} />
           </div>
           {s.unused_attributes && s.unused_attributes.length > 0 && (

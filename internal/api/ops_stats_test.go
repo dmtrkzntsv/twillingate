@@ -372,3 +372,36 @@ func TestProjectStatsFirstDayIncludesStoredCounts(t *testing.T) {
 		t.Errorf("first_day = %v after another project's older count, want 2025-03-14", d)
 	}
 }
+
+// The attribute stats come through per day as stored, null where not.
+func TestProjectStatsSeriesCarriesAttributeStats(t *testing.T) {
+	h, _ := newTestHost(t)
+	putStat(t, h, store.StatDeclaredAttributes, 1, "2026-08-21", 3)
+	putStat(t, h, store.StatAttributeKeys, 1, "2026-08-20", 5)
+	putStat(t, h, store.StatAttributeValues, 1, "2026-08-20", 140)
+	putStat(t, h, store.StatAttributeValuesFolded, 1, "2026-08-20", 12)
+	out, err := h.projectStats(context.Background(), statsIn{ProjectID: 1, usageRangeIn: usageRangeIn{From: "2026-08-20", To: "2026-08-21"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d20, d21 := out.Projects[0].Series[0], out.Projects[0].Series[1]
+	val := func(p *int64) any {
+		if p == nil {
+			return nil
+		}
+		return *p
+	}
+	if val(d20.AttributeKeys) != int64(5) || val(d20.AttributeValues) != int64(140) || val(d20.AttributeValuesFolded) != int64(12) || d20.DeclaredAttributes != nil {
+		t.Errorf("2026-08-20 = keys %v values %v folded %v declared %v", val(d20.AttributeKeys), val(d20.AttributeValues), val(d20.AttributeValuesFolded), val(d20.DeclaredAttributes))
+	}
+	if val(d21.DeclaredAttributes) != int64(3) || d21.AttributeKeys != nil {
+		t.Errorf("2026-08-21 = declared %v keys %v, want 3 and null", val(d21.DeclaredAttributes), val(d21.AttributeKeys))
+	}
+	body, err := json.Marshal(d21)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), `"attribute_values_folded":null`) {
+		t.Errorf("a day not counted must say null: %s", body)
+	}
+}

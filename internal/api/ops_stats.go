@@ -25,6 +25,15 @@ type statsDay struct {
 	// TotalBytes is the project's size as the daily pass measured it that
 	// day; null on a day it was not measured.
 	TotalBytes *int64 `json:"total_bytes"`
+	// The project's attributes that day, as the daily pass stored them;
+	// null on a day it did not: declared on the day it measured, and the
+	// distinct keys and key/value pairs received and the values folded into
+	// (other) on a day it counted while the day's rows were raw (the night
+	// after, so never today).
+	DeclaredAttributes    *int64 `json:"declared_attributes"`
+	AttributeKeys         *int64 `json:"attribute_keys"`
+	AttributeValues       *int64 `json:"attribute_values"`
+	AttributeValuesFolded *int64 `json:"attribute_values_folded"`
 }
 
 type statsTotals struct {
@@ -119,6 +128,8 @@ func (h *host) projectStats(ctx context.Context, in statsIn) (statsOut, error) {
 				d.Views, d.Events, d.Measures = stored.views, stored.events, stored.measures
 			}
 			d.TotalBytes = stored.totalBytes
+			d.DeclaredAttributes, d.AttributeKeys, d.AttributeValues, d.AttributeValuesFolded =
+				stored.declared, stored.keys, stored.values, stored.folded
 		}
 		for _, d := range ps.Series {
 			ps.Totals.Views += d.Views
@@ -281,6 +292,8 @@ func (h *host) readSizes(ctx context.Context) (map[int64]*statsSize, error) {
 type storedDay struct {
 	views, events, measures int64
 	totalBytes              *int64
+	declared, keys, values  *int64
+	folded                  *int64
 }
 
 // stored is the daily pass's rows for a range, read in one query.
@@ -303,8 +316,9 @@ func (h *host) readStored(ctx context.Context, fromD, toD civil.Date) (stored, e
 	}
 	st.countedBefore = res.Rows[0][0]
 	res, err = h.run(ctx, `SELECT key, project_id, measured_at, value FROM server_stats
-		WHERE key IN (?1, ?2, ?3, ?4, ?5, ?6) AND measured_at BETWEEN ?7 AND ?8`,
+		WHERE key IN (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) AND measured_at BETWEEN ?11 AND ?12`,
 		store.StatViews, store.StatEvents, store.StatMeasures, store.StatRawBytes, store.StatAggregateBytes, store.StatDatabaseBytes,
+		store.StatDeclaredAttributes, store.StatAttributeKeys, store.StatAttributeValues, store.StatAttributeValuesFolded,
 		fromD.String(), toD.String())
 	if err != nil {
 		return stored{}, err
@@ -336,6 +350,14 @@ func (h *host) readStored(ctx context.Context, fromD, toD civil.Date) (stored, e
 				d.totalBytes = new(int64)
 			}
 			*d.totalBytes += n
+		case store.StatDeclaredAttributes:
+			d.declared = &n
+		case store.StatAttributeKeys:
+			d.keys = &n
+		case store.StatAttributeValues:
+			d.values = &n
+		case store.StatAttributeValuesFolded:
+			d.folded = &n
 		}
 	}
 	return st, nil

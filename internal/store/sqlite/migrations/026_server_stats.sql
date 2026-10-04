@@ -1,6 +1,8 @@
 -- 026: server_stats holds what the daily pass measures and counts: each
--- project's estimated disk use and its views, events and measure samples
--- per day, and the database's size. One row per stat, scope and day, kept
+-- project's estimated disk use, declared attributes, views, events and
+-- measure samples per day, attribute keys and values received and values
+-- folded into (other) per day, and the database's size and the caps in
+-- force. One row per stat, scope and day, kept
 -- as a daily history until the project is purged (past the aggregates'
 -- retention): key is a constant in the code (internal/store/store.go),
 -- project_id 0 is the whole server, measured_at is the UTC day

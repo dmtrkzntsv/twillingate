@@ -170,6 +170,22 @@ const (
 	// Server-wide (project 0), on the day measured: the database file's
 	// size, page_count × page_size.
 	StatDatabaseBytes = "database_bytes"
+	// Per project, on the day measured: how many attributes it declares.
+	StatDeclaredAttributes = "declared_attributes"
+	// Per project, for the day counted while its rows are raw (kept once
+	// they are rolled up, which keeps only what the caps let through): the
+	// distinct attribute keys and key/value pairs received, declared or
+	// not, and the values the attribute views fold into (other), summed
+	// over every event (and measure) and aggregated key.
+	StatAttributeKeys         = "attribute_keys"
+	StatAttributeValues       = "attribute_values"
+	StatAttributeValuesFolded = "attribute_values_folded"
+	// Server-wide (project 0), on the day measured: each cap in force, as
+	// its setting names it (0 = no cap), so a day's folds can be read
+	// against the cap that made them.
+	StatCapProductAttributes = "product_attributes_top_n"
+	StatCapViewsDimensions   = "views_dimensions_top_n"
+	StatCapIdentities        = "identities_top_n"
 )
 
 // Actor kinds: how an actor id was derived. Only user and install actors

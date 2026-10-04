@@ -159,6 +159,17 @@ included, is returned, which is what the list page reads. Range rules as
   `identities`). `measured_at` is the day; `size` is null until the project
   has a measurement, or when the newest measurement found none of its rows,
   and the rest of the answer stands.
+- **attributes per day:** each series day carries `declared_attributes`
+  (on a day the pass measured) and, counted by the pass while the day's
+  rows are raw and kept once they are rolled up, `attribute_keys` and
+  `attribute_values` (distinct custom keys and key/value pairs received,
+  declared or not) and `attribute_values_folded` (values past
+  `PRODUCT_ATTRIBUTES_TOP_N` in every event, measure and aggregated key;
+  exact for product events, an upper bound for measures, whose ranking
+  shares places on ties). Null where not stored. The project page's Usage
+  shows them as an Attributes tile. The pass also stores the caps in force
+  each day (project 0) so a day's folds read against the cap that made
+  them.
 - **database_bytes / database_series:** `page_count × page_size` of the
   database file now, and per day of the range as the daily pass stored it
   (`database_bytes`, project 0; null on days not measured). The list page

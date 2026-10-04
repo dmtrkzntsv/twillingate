@@ -13,7 +13,7 @@ describe('UsageSection', () => {
   it('shows totals, freshness, size and unused attributes', async () => {
     vi.spyOn(endpoints, 'stats').mockResolvedValue({ from: '2026-09-01', to: '2026-09-02', database_bytes: 0, database_series: [], projects: [{
       project_id: 4,
-      series: [{ day: '2026-09-01', views: 10, events: 3, measures: 1, total_bytes: null }, { day: '2026-09-02', views: 20, events: 0, measures: 0, total_bytes: 2_262_000 }],
+      series: [{ day: '2026-09-01', views: 10, events: 3, measures: 1, total_bytes: null, declared_attributes: null, attribute_keys: null, attribute_values: null, attribute_values_folded: null }, { day: '2026-09-02', views: 20, events: 0, measures: 0, total_bytes: 2_262_000, declared_attributes: null, attribute_keys: null, attribute_values: null, attribute_values_folded: null }],
       totals: { views: 30, events: 3, measures: 1 },
       last_received_at: new Date(Date.now() - 3 * 3600_000).toISOString(),
       first_day: '2026-08-01', raw_days: 30, rolled_up_days: 2,
@@ -32,9 +32,35 @@ describe('UsageSection', () => {
     expect(endpoints.stats).toHaveBeenCalledWith({ project_id: 4, from: '2026-09-01', to: '2026-09-02' })
   })
 
+  it('sums up the attributes the daily pass stored', async () => {
+    const day = (d: string, declared: number | null, keys: number | null, values: number | null, folded: number | null) => ({
+      day: d, views: 1, events: 0, measures: 0, total_bytes: null,
+      declared_attributes: declared, attribute_keys: keys, attribute_values: values, attribute_values_folded: folded,
+    })
+    vi.spyOn(endpoints, 'stats').mockResolvedValue({ from: 'a', to: 'c', database_bytes: 0, database_series: [], projects: [{
+      project_id: 4, series: [day('a', 2, 4, 90, 0), day('b', 3, 6, 1_200, 15), day('c', null, null, null, null)],
+      totals: { views: 3, events: 0, measures: 0 }, last_received_at: null,
+      first_day: null, raw_days: 3, rolled_up_days: 0, size: null, unused_attributes: [],
+    }] })
+    renderWithProviders(<UsageSection projectId={4} range={{ from: 'a', to: 'c' }} />)
+    expect(await screen.findByText('3 declared')).toBeInTheDocument()
+    expect(screen.getByText('up to 6 keys and 1,200 values a day · 15 folded into (other)')).toBeInTheDocument()
+  })
+
+  it('says attributes are counted nightly before the first count', async () => {
+    vi.spyOn(endpoints, 'stats').mockResolvedValue({ from: 'a', to: 'a', database_bytes: 0, database_series: [], projects: [{
+      project_id: 4, series: [{ day: 'a', views: 1, events: 0, measures: 0, total_bytes: null,
+        declared_attributes: null, attribute_keys: null, attribute_values: null, attribute_values_folded: null }],
+      totals: { views: 1, events: 0, measures: 0 }, last_received_at: null,
+      first_day: null, raw_days: 1, rolled_up_days: 0, size: null, unused_attributes: [],
+    }] })
+    renderWithProviders(<UsageSection projectId={4} range={{ from: 'a', to: 'a' }} />)
+    expect(await screen.findByText('received values are counted nightly')).toBeInTheDocument()
+  })
+
   it('shows an empty project without errors', async () => {
     vi.spyOn(endpoints, 'stats').mockResolvedValue({ from: 'a', to: 'b', database_bytes: 0, database_series: [], projects: [{
-      project_id: 5, series: [{ day: 'a', views: 0, events: 0, measures: 0, total_bytes: null }, { day: 'b', views: 0, events: 0, measures: 0, total_bytes: null }], totals: { views: 0, events: 0, measures: 0 }, last_received_at: null,
+      project_id: 5, series: [{ day: 'a', views: 0, events: 0, measures: 0, total_bytes: null, declared_attributes: null, attribute_keys: null, attribute_values: null, attribute_values_folded: null }, { day: 'b', views: 0, events: 0, measures: 0, total_bytes: null, declared_attributes: null, attribute_keys: null, attribute_values: null, attribute_values_folded: null }], totals: { views: 0, events: 0, measures: 0 }, last_received_at: null,
       first_day: null, raw_days: 0, rolled_up_days: 0, size: null, unused_attributes: [],
     }] })
     renderWithProviders(<UsageSection projectId={5} range={{ from: 'a', to: 'b' }} />)
@@ -46,7 +72,7 @@ describe('UsageSection', () => {
 
   it('treats null unused attributes as not computed', async () => {
     vi.spyOn(endpoints, 'stats').mockResolvedValue({ from: 'a', to: 'b', database_bytes: 0, database_series: [], projects: [{
-      project_id: 5, series: [{ day: 'a', views: 1, events: 0, measures: 0, total_bytes: null }], totals: { views: 1, events: 0, measures: 0 }, last_received_at: null,
+      project_id: 5, series: [{ day: 'a', views: 1, events: 0, measures: 0, total_bytes: null, declared_attributes: null, attribute_keys: null, attribute_values: null, attribute_values_folded: null }], totals: { views: 1, events: 0, measures: 0 }, last_received_at: null,
       first_day: null, raw_days: 1, rolled_up_days: 0, size: null, unused_attributes: null,
     }] })
     renderWithProviders(<UsageSection projectId={5} range={{ from: 'a', to: 'b' }} />)
@@ -65,7 +91,7 @@ describe('UsageSection', () => {
 
   it('shows a skeleton on the first load, then keeps the previous numbers while a new range loads', async () => {
     const mk = (views: number) => ({ from: 'a', to: 'b', database_bytes: 0, database_series: [], projects: [{
-      project_id: 4, series: [{ day: '2026-09-01', views, events: 0, measures: 0, total_bytes: null }], totals: { views, events: 0, measures: 0 },
+      project_id: 4, series: [{ day: '2026-09-01', views, events: 0, measures: 0, total_bytes: null, declared_attributes: null, attribute_keys: null, attribute_values: null, attribute_values_folded: null }], totals: { views, events: 0, measures: 0 },
       last_received_at: null, first_day: null, raw_days: 1, rolled_up_days: 0, size: null, unused_attributes: [],
     }] })
     let release!: () => void
