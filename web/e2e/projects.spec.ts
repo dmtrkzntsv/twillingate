@@ -21,8 +21,8 @@ test('creates a project, edits it, manages a key, archives and restores it', asy
   const name = `e2e-${Date.now()}`
   await page.getByRole('button', { name: 'New project' }).click()
   await page.getByLabel('Name').fill(name)
-  await page.getByLabel('Allowed origins').fill('https://e2e.example')
-  await page.getByLabel('Allowed origins').press('Enter')
+  await page.getByRole('button', { name: 'Add origin' }).click()
+  await page.getByLabel('Origin 1').fill('https://e2e.example')
   await page.getByRole('button', { name: 'Create' }).click()
   await expect(page.getByText('Project created')).toBeVisible()
   await expect(page.getByText(/^ak_/)).toBeVisible()
@@ -33,8 +33,8 @@ test('creates a project, edits it, manages a key, archives and restores it', asy
 
   const details = page.getByRole('region', { name: 'Details' })
   await details.getByRole('button', { name: 'Edit' }).click()
-  await page.getByLabel('Allowed origins').fill('*')
-  await page.getByLabel('Allowed origins').press('Enter')
+  await page.getByRole('button', { name: 'Add origin' }).click()
+  await page.getByLabel('Origin 2').fill('*')
   await page.getByRole('button', { name: 'Save' }).click()
   await expect(details.getByText('*', { exact: true })).toBeVisible()
 

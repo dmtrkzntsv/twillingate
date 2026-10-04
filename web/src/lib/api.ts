@@ -281,6 +281,25 @@ export interface RangeQuery {
   to?: string
 }
 
+/** One attribute key a project received in a range (or declared without receiving). `max_values` is null before the nightly count. */
+export interface ReceivedKey {
+  key: string
+  events: number
+  max_values: number | null
+  declared: boolean
+}
+
+/** The keys a project received over a range, with the breakdown budget (`breakdowns_max` 0 is no limit). */
+export interface ReceivedAttributes {
+  project_id?: number
+  from: string
+  to: string
+  keys: ReceivedKey[]
+  values_cap: number
+  breakdowns_used: number
+  breakdowns_max: number
+}
+
 export interface ProjectsResponse {
   projects: Project[]
 }
@@ -355,6 +374,8 @@ export const endpoints = {
     api<{ status: string }>(`/api/projects/${id}/keys/${encodeURIComponent(label)}/enable`, json('POST', {})),
   limits: () => api<{ limits: Limit[] }>('/api/limits'),
   usage: (q: RangeQuery & { project_id?: number }) => api<UsageResponse>(`/api/usage${toQuery(q)}`),
+  receivedAttributes: (q: RangeQuery & { project_id?: number }) =>
+    api<ReceivedAttributes>(`/api/received-attributes${toQuery(q)}`),
   capUsage: (id: number, q: RangeQuery) => api<CapUsage>(`/api/projects/${id}/cap-usage${toQuery(q)}`),
   devVersion: () => api<{ version: string }>('/api/dev/version'),
 }

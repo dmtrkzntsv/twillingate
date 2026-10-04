@@ -61,7 +61,7 @@ export default function Project() {
               </div>
             </header>
             <UsageSection projectId={id} range={range} />
-            <DetailsSection project={project} pending={actions.pending} onSave={(body) => actions.update(id, body)} />
+            <DetailsSection project={project} range={range} pending={actions.pending} onSave={(body) => actions.update(id, body)} />
             <KeysSection
               keys={keysQ.data?.keys}
               error={keysQ.error}

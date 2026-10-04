@@ -10,7 +10,7 @@ import UsageSection from './UsageSection'
 beforeEach(() => vi.restoreAllMocks())
 
 describe('UsageSection', () => {
-  it('shows totals, freshness, size and unused attributes', async () => {
+  it('shows totals, freshness and size', async () => {
     vi.spyOn(endpoints, 'usage').mockResolvedValue({ from: '2026-09-01', to: '2026-09-02', database_bytes: 0, database_series: [], projects: [{
       project_id: 4,
       series: [{ day: '2026-09-01', views: 10, events: 3, measures: 1, total_bytes: null, declared_attributes: null, attribute_keys: null, attribute_values: null, attribute_values_folded: null }, { day: '2026-09-02', views: 20, events: 0, measures: 0, total_bytes: 2_262_000, declared_attributes: null, attribute_keys: null, attribute_values: null, attribute_values_folded: null }],
@@ -28,7 +28,7 @@ describe('UsageSection', () => {
     expect(screen.getByText(/estimate, measured yesterday/)).toBeInTheDocument()
     expect(screen.queryByText('No size measured in this range.')).not.toBeInTheDocument()
     expect(screen.getByText(/30 raw · 2 rolled up/)).toBeInTheDocument()
-    expect(screen.getByText('self_hosted')).toBeInTheDocument()
+    expect(screen.queryByText(/Declared but not sent/)).not.toBeInTheDocument()
     expect(endpoints.usage).toHaveBeenCalledWith({ project_id: 4, from: '2026-09-01', to: '2026-09-02' })
   })
 
@@ -68,16 +68,6 @@ describe('UsageSection', () => {
     expect(screen.getByText('Not measured yet')).toBeInTheDocument()
     expect(screen.getByText('No events in this range.')).toBeInTheDocument()
     expect(screen.getByText('No size measured in this range.')).toBeInTheDocument()
-  })
-
-  it('treats null unused attributes as not computed', async () => {
-    vi.spyOn(endpoints, 'usage').mockResolvedValue({ from: 'a', to: 'b', database_bytes: 0, database_series: [], projects: [{
-      project_id: 5, series: [{ day: 'a', views: 1, events: 0, measures: 0, total_bytes: null, declared_attributes: null, attribute_keys: null, attribute_values: null, attribute_values_folded: null }], totals: { views: 1, events: 0, measures: 0 }, last_received_at: null,
-      first_day: null, raw_days: 1, rolled_up_days: 0, size: null, unused_attributes: null,
-    }] })
-    renderWithProviders(<UsageSection projectId={5} range={{ from: 'a', to: 'b' }} />)
-    expect(await screen.findByText('Nothing received yet')).toBeInTheDocument()
-    expect(screen.queryByText(/Declared but not sent/)).not.toBeInTheDocument()
   })
 
   it('offers a retry when the stats fail', async () => {

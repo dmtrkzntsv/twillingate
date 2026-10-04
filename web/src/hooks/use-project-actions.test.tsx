@@ -33,7 +33,7 @@ describe('useProjectActions', () => {
     expect(invalidate.mock.calls.map((c) => (c[0] as { queryKey: string[] }).queryKey[0])).toEqual(['keys'])
   })
 
-  it('refetches projects, keys and stats after a project write, never cap usage', async () => {
+  it('refetches projects, keys, stats and received attributes after a project write, never cap usage', async () => {
     vi.spyOn(endpoints, 'archiveProject').mockResolvedValue({ status: 'archived' } as never)
     const { client, wrapper: w } = wrapper()
     const invalidate = vi.spyOn(client, 'invalidateQueries')
@@ -42,7 +42,7 @@ describe('useProjectActions', () => {
       await result.current.archive(7)
     })
     const keys = invalidate.mock.calls.map((c) => (c[0] as { queryKey: string[] }).queryKey[0])
-    expect(keys.sort()).toEqual(['keys', 'projects', 'usage'])
+    expect(keys.sort()).toEqual(['keys', 'projects', 'received-attributes', 'usage'])
   })
 
   it('refetches nothing when the action failed', async () => {

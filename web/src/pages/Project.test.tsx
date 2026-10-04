@@ -26,6 +26,10 @@ beforeEach(() => {
     { project_id: 4, label: 'old', key: 'ak_old_123456789', state: 'disabled' },
   ] })
   vi.spyOn(endpoints, 'usage').mockResolvedValue({ from: 'a', to: 'b', database_bytes: 0, database_series: [], projects: [] })
+  vi.spyOn(endpoints, 'receivedAttributes').mockResolvedValue({
+    project_id: 4, from: 'a', to: 'b', values_cap: 50, breakdowns_used: 1, breakdowns_max: 50,
+    keys: [{ key: 'plan', events: 900, max_values: 3, declared: true }],
+  })
   vi.spyOn(endpoints, 'capUsage').mockResolvedValue({ project_id: 4, from: 'a', to: 'b', dimensions: [] })
 })
 
@@ -53,7 +57,7 @@ describe('Project', () => {
     expect(within(details).getByText('https://econumo.com')).toBeInTheDocument()
     expect(within(details).getByText('plan')).toBeInTheDocument()
     await user.click(within(details).getByRole('button', { name: 'Edit' }))
-    await user.click(screen.getByRole('button', { name: 'Remove plan' }))
+    await user.click(await screen.findByRole('checkbox', { name: /plan/ }))
     await user.click(screen.getByRole('button', { name: 'Save' }))
     expect(actions.update).toHaveBeenCalledWith(4, { name: 'econumo.com', allowed_origins: ['https://econumo.com'], attributes: [] })
   })
