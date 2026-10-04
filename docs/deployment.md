@@ -103,6 +103,7 @@ to it.
 | `RETENTION_EVENTS_AGGREGATE_DAYS` | Days aggregates of every family (and actors, cohorts, identities) are kept. Default 365. |
 | `RETENTION_ARCHIVED_DAYS` | Days after archiving that a project (with all its data), a dashboard or a widget is deleted by the daily pass. 0 keeps archived items forever. Default 30. |
 | `ATTRIBUTE_VALUES_TOP_N` | Distinct attribute values kept per (project, day, event, key) before the rest collapse into `(other)`. 0 keeps every value. Default 50. |
+| `ATTRIBUTE_BREAKDOWNS_MAX` | Attributes all active projects may declare together; each is a breakdown with its own aggregate rows, kept `RETENTION_EVENTS_AGGREGATE_DAYS`. A create or update that adds attributes past it is refused; saves that add none always pass. 0 is no limit. Default 50. |
 | `VIEWS_DIMENSIONS_TOP_N` | Values kept per (project, day) in each views breakdown (paths, referrers, browsers, …) and kinds in `v_views_daily`, before the rest collapse into `(other)`. 0 keeps every value. Default 100. |
 | `IDENTITIES_TOP_N` | Users, and groups, kept per (project, day) in `v_identity_daily`, busiest first; the rest are dropped. 0 keeps them all. Default 500. |
 | `CONSOLE_AUTH_DSN` | Authentication for the console (MCP, REST and the dashboards' data): `token://<token>?password=…` for the built-in browser login (see [The console](#the-console)), or `oauth://<issuer-host>` for your own identity provider. Unset, bare `serve` skips the console with a warning. |

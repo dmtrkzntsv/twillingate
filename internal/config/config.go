@@ -102,10 +102,14 @@ type ConsoleConfig struct {
 // well above a small app's daily users. The console's limits tool reports
 // them beside the values in force, so they live here rather than as
 // literals in parse.
+//
+// ATTRIBUTE_BREAKDOWNS_MAX: the attributes all active projects may declare
+// together; each is a breakdown with its own aggregate rows.
 const (
-	DefaultAttributeValuesTopN = 50
-	DefaultViewsDimensionsTopN = 100
-	DefaultIdentitiesTopN      = 500
+	DefaultAttributeValuesTopN    = 50
+	DefaultAttributeBreakdownsMax = 50
+	DefaultViewsDimensionsTopN    = 100
+	DefaultIdentitiesTopN         = 500
 )
 
 // The retention defaults (RETENTION_EVENTS_RAW_DAYS,
@@ -126,10 +130,13 @@ type Config struct {
 	Buffer              BufferConfig
 	Retention           Retention
 	AttributeValuesTopN int
-	ViewsDimensionsTopN int
-	IdentitiesTopN      int
-	Reporting           ReportingConfig
-	Console             ConsoleConfig
+	// AttributeBreakdownsMax bounds the attributes all active projects
+	// declare together; 0 is no limit.
+	AttributeBreakdownsMax int
+	ViewsDimensionsTopN    int
+	IdentitiesTopN         int
+	Reporting              ReportingConfig
+	Console                ConsoleConfig
 }
 
 // Load builds the configuration from the process environment.
@@ -218,9 +225,10 @@ func FromEnv(lookup func(string) (string, bool)) (*Config, error) {
 		// of a views breakdown and for users and groups a day. Each cap
 		// keeps the aggregates, which outlive raw rows, from growing with a
 		// dimension that carries ids; 0 keeps every value.
-		AttributeValuesTopN: e.num("ATTRIBUTE_VALUES_TOP_N", DefaultAttributeValuesTopN),
-		ViewsDimensionsTopN: e.num("VIEWS_DIMENSIONS_TOP_N", DefaultViewsDimensionsTopN),
-		IdentitiesTopN:      e.num("IDENTITIES_TOP_N", DefaultIdentitiesTopN),
+		AttributeValuesTopN:    e.num("ATTRIBUTE_VALUES_TOP_N", DefaultAttributeValuesTopN),
+		AttributeBreakdownsMax: e.num("ATTRIBUTE_BREAKDOWNS_MAX", DefaultAttributeBreakdownsMax),
+		ViewsDimensionsTopN:    e.num("VIEWS_DIMENSIONS_TOP_N", DefaultViewsDimensionsTopN),
+		IdentitiesTopN:         e.num("IDENTITIES_TOP_N", DefaultIdentitiesTopN),
 		Reporting: ReportingConfig{
 			CacheAge:   time.Duration(e.num("REPORTING_CACHE_SECONDS", 900)) * time.Second,
 			RefreshAge: time.Duration(e.num("REPORTING_REFRESH_SECONDS", 60)) * time.Second,
@@ -298,6 +306,9 @@ func (c *Config) validate() error {
 		if v.n < 0 {
 			return fmt.Errorf("config: %s must not be negative (0 keeps every value): %d", v.name, v.n)
 		}
+	}
+	if c.AttributeBreakdownsMax < 0 {
+		return fmt.Errorf("config: ATTRIBUTE_BREAKDOWNS_MAX must not be negative (0 is no limit): %d", c.AttributeBreakdownsMax)
 	}
 	if c.Retention.ArchivedDays < 0 {
 		return fmt.Errorf("config: RETENTION_ARCHIVED_DAYS must not be negative: %d", c.Retention.ArchivedDays)

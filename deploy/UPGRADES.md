@@ -530,3 +530,21 @@ ingest keys, and how its data meets the caps. Migration 026 adds
 the database's size. The first daily pass, which also runs at start, counts
 every day the aggregates still hold (a year by default), so the usage
 history starts there; sizes start that day and fill in one day at a time.
+
+### Upgrading to attribute breakdowns (migration 028)
+
+Migration 028 adds `received_attributes`, the attribute keys each
+project's product events and measures carried per day. Ingest counts
+them as it writes; the first daily pass, which also runs at start,
+counts the raw window's days, so the project dialog lists the keys
+received in the last 30 days at once.
+
+`ATTRIBUTE_BREAKDOWNS_MAX` (default 50) now bounds the attributes all
+active projects declare together. A server already past it keeps every
+declared attribute, and saving a project still works, but nothing can
+add an attribute until the total is under the limit or the setting is
+raised. Check the total before upgrading:
+
+```sh
+twillingate project list   # sum the attributes of the active projects
+```

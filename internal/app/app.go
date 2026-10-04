@@ -98,6 +98,7 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 		n   int
 	}{
 		{"attributes_top_n", cfg.AttributeValuesTopN},
+		{"attribute_breakdowns_max", cfg.AttributeBreakdownsMax},
 		{"views_dimensions_top_n", cfg.ViewsDimensionsTopN},
 		{"identities_top_n", cfg.IdentitiesTopN},
 	} {
@@ -110,6 +111,8 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 	if err := reg.Reload(ctx); err != nil {
 		return err
 	}
+	ops := manage.NewOps(reg, st)
+	ops.BreakdownsMax = cfg.AttributeBreakdownsMax
 	if len(reg.Snapshot(ctx).Projects()) == 0 {
 		logger.Warn("no projects configured; create one with `twillingate project create` or an API management operation")
 	}
@@ -168,7 +171,7 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 	var apiClose func() error
 	switch {
 	case runConsole && runIngest && cfg.Console.Addr == cfg.IngestAddr:
-		protected, closeDB, err := api.Build(ctx, cfg, reg, manage.NewOps(reg, st), st, logger)
+		protected, closeDB, err := api.Build(ctx, cfg, reg, ops, st, logger)
 		if err != nil {
 			stopBackground()
 			return err
@@ -179,7 +182,7 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 		api.RegisterOn(mux, protected, cfg, false, logger)
 		surfaces = append(surfaces, httpSurface{cfg.IngestAddr, mux, "ingest,console"})
 	case runConsole:
-		h, closeDB, err := api.NewHandler(ctx, cfg, reg, manage.NewOps(reg, st), st, logger)
+		h, closeDB, err := api.NewHandler(ctx, cfg, reg, ops, st, logger)
 		if err != nil {
 			stopBackground()
 			return err

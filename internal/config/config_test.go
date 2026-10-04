@@ -44,6 +44,9 @@ func TestDefaultsApplied(t *testing.T) {
 	if c.AttributeValuesTopN != 50 || c.ViewsDimensionsTopN != 100 || c.IdentitiesTopN != 500 {
 		t.Errorf("caps = %d/%d/%d, want 50/100/500", c.AttributeValuesTopN, c.ViewsDimensionsTopN, c.IdentitiesTopN)
 	}
+	if c.AttributeBreakdownsMax != 50 {
+		t.Errorf("AttributeBreakdownsMax = %d, want 50", c.AttributeBreakdownsMax)
+	}
 	if c.Reporting.CacheAge != 900*time.Second || c.Reporting.RefreshAge != 60*time.Second {
 		t.Errorf("Reporting = %+v", c.Reporting)
 	}
@@ -68,12 +71,16 @@ func TestEnvOverrides(t *testing.T) {
 		"ATTRIBUTE_VALUES_TOP_N":          "200",
 		"VIEWS_DIMENSIONS_TOP_N":          "0",
 		"IDENTITIES_TOP_N":                "2000",
+		"ATTRIBUTE_BREAKDOWNS_MAX":        "7",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if c.AttributeValuesTopN != 200 || c.ViewsDimensionsTopN != 0 || c.IdentitiesTopN != 2000 {
 		t.Errorf("caps = %d/%d/%d, want 200/0/2000", c.AttributeValuesTopN, c.ViewsDimensionsTopN, c.IdentitiesTopN)
+	}
+	if c.AttributeBreakdownsMax != 7 {
+		t.Errorf("AttributeBreakdownsMax = %d, want 7", c.AttributeBreakdownsMax)
 	}
 	if c.IngestAddr != "0.0.0.0:9999" || c.Geo != "none://" {
 		t.Errorf("IngestAddr/Geo = %q/%q", c.IngestAddr, c.Geo)
@@ -111,6 +118,7 @@ func TestValidationErrors(t *testing.T) {
 		"negative attributes cap":  base(map[string]string{"ATTRIBUTE_VALUES_TOP_N": "-1"}),
 		"negative dimensions cap":  base(map[string]string{"VIEWS_DIMENSIONS_TOP_N": "-1"}),
 		"negative identities cap":  base(map[string]string{"IDENTITIES_TOP_N": "-1"}),
+		"negative breakdowns max":  base(map[string]string{"ATTRIBUTE_BREAKDOWNS_MAX": "-1"}),
 		"bad integer":              base(map[string]string{"BUFFER_CAPACITY": "many"}),
 		"invalid duration":         base(map[string]string{"BUFFER_FLUSH_INTERVAL": "fast"}),
 		"negative cache seconds":   base(map[string]string{"REPORTING_CACHE_SECONDS": "-1"}),

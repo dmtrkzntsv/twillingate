@@ -187,6 +187,7 @@ const (
 	StatCapAttributes      = "attributes_top_n"
 	StatCapViewsDimensions = "views_dimensions_top_n"
 	StatCapIdentities      = "identities_top_n"
+	StatCapBreakdowns      = "attribute_breakdowns_max"
 )
 
 // Actor kinds: how an actor id was derived. Only user and install actors

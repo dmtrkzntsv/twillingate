@@ -466,6 +466,9 @@ func TestMeasureServerStatsRecordsTheCaps(t *testing.T) {
 	if _, err := db.db.Exec(`INSERT OR REPLACE INTO meta (key, value) VALUES ('views_dimensions_top_n', '250')`); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := db.db.Exec(`INSERT OR REPLACE INTO meta (key, value) VALUES ('attribute_breakdowns_max', '12')`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := db.db.Exec(`DELETE FROM meta WHERE key = 'identities_top_n'`); err != nil {
 		t.Fatal(err)
 	}
@@ -477,6 +480,7 @@ func TestMeasureServerStatsRecordsTheCaps(t *testing.T) {
 		store.StatCapAttributes:      0,
 		store.StatCapViewsDimensions: 250,
 		store.StatCapIdentities:      1000, // unset: the default
+		store.StatCapBreakdowns:      12,
 	} {
 		if got, ok := stats[statID{key, 0, "2026-08-22"}]; !ok || got != want {
 			t.Errorf("%s = %d (present %v), want %d", key, got, ok, want)

@@ -164,6 +164,7 @@ func recordCaps(ctx context.Context, tx *sql.Tx, day string) error {
 		{store.StatCapAttributes, defaultAttrsTopN},
 		{store.StatCapViewsDimensions, defaultDimensionsTopN},
 		{store.StatCapIdentities, defaultDimensionsTopN},
+		{store.StatCapBreakdowns, 50}, // ATTRIBUTE_BREAKDOWNS_MAX's default
 	} {
 		if _, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO server_stats (key, project_id, measured_at, value)
 			VALUES (?1, 0, ?2, COALESCE((SELECT CAST(value AS INTEGER) FROM meta

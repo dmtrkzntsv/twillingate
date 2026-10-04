@@ -20,6 +20,10 @@ import (
 type Ops struct {
 	Reg *Registry
 	St  Store
+	// BreakdownsMax is ATTRIBUTE_BREAKDOWNS_MAX: the attributes all active
+	// projects may declare together; 0 is no limit. Set by the caller
+	// after NewOps.
+	BreakdownsMax int
 }
 
 func NewOps(reg *Registry, st Store) *Ops { return &Ops{Reg: reg, St: st} }
@@ -170,6 +174,9 @@ func (o *Ops) create(ctx context.Context, actor string, spec ProjectSpec, write 
 	if err := spec.validate(); err != nil {
 		return nil, err
 	}
+	if err := o.checkBreakdowns(ctx, nil, spec.Attributes); err != nil {
+		return nil, err
+	}
 	row, err := spec.row()
 	if err != nil {
 		return nil, err
@@ -201,6 +208,9 @@ func (o *Ops) UpdateProject(ctx context.Context, actor string, spec ProjectSpec)
 	if err := spec.validate(); err != nil {
 		return nil, err
 	}
+	if err := o.checkBreakdowns(ctx, cur, spec.Attributes); err != nil {
+		return nil, err
+	}
 	row, err := spec.row()
 	if err != nil {
 		return nil, err
@@ -210,6 +220,49 @@ func (o *Ops) UpdateProject(ctx context.Context, actor string, spec ProjectSpec)
 		return nil, err
 	}
 	return o.written(ctx, spec, o.afterWrite(ctx, true, spec.ID)), nil
+}
+
+// checkBreakdowns refuses a save that adds attributes when the active
+// projects would then declare more than BreakdownsMax together. A save
+// that adds none always passes, so a server over the limit can still be
+// edited down. The project counts as active whatever its state, so
+// adding to an archived project cannot dodge the limit.
+func (o *Ops) checkBreakdowns(ctx context.Context, cur *Project, next []string) error {
+	if o.BreakdownsMax <= 0 {
+		return nil
+	}
+	had := map[string]bool{}
+	var curKeys []string
+	if cur != nil {
+		curKeys = cur.Attributes
+	}
+	for _, k := range curKeys {
+		had[k] = true
+	}
+	distinct := map[string]bool{}
+	added := 0
+	for _, k := range next {
+		if distinct[k] {
+			continue
+		}
+		distinct[k] = true
+		if !had[k] {
+			added++
+		}
+	}
+	if added == 0 {
+		return nil
+	}
+	used := o.Reg.Snapshot(ctx).BreakdownsInUse()
+	others := used
+	if cur != nil && !cur.Archived {
+		others -= len(curKeys)
+	}
+	if others+len(distinct) > o.BreakdownsMax {
+		return fmt.Errorf("%w: %d of %d attribute breakdowns are in use; this adds %d (ATTRIBUTE_BREAKDOWNS_MAX)",
+			ErrInvalid, used, o.BreakdownsMax, added)
+	}
+	return nil
 }
 
 func idSubject(id int64) string { return strconv.FormatInt(id, 10) }
