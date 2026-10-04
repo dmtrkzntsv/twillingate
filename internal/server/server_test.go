@@ -374,6 +374,25 @@ func TestKindDeclaredValidatedAndDefaulted(t *testing.T) {
 	}
 }
 
+// A custom key longer than wire.MaxAttrKey is dropped with a warning
+// naming it (shortened), and the event still lands with its other attributes.
+func TestOverlongAttributeKeyWarns(t *testing.T) {
+	q, h := testServer(t)
+	long := strings.Repeat("k", 100)
+	w := post(h, `{"key":"`+testKey+`","events":[{"name":"subscribed","attributes":{"plan":"pro","`+long+`":"v"}}]}`, nil)
+	res := decodeResult(t, w)
+	if res.Accepted != 1 || len(res.Warnings) != 1 || res.Warnings[0].Index != 0 {
+		t.Fatalf("result = %+v", res)
+	}
+	want := `attribute key "` + strings.Repeat("k", 16) + `…" is longer than 64 characters, ignored`
+	if res.Warnings[0].Reason != want {
+		t.Errorf("warning = %q, want %q", res.Warnings[0].Reason, want)
+	}
+	if len(q.events) != 1 || len(q.events[0].Attributes) != 1 || q.events[0].Attributes["plan"] != "pro" {
+		t.Errorf("queued = %+v", q.events)
+	}
+}
+
 // A product event has no default kind, so an invalid $kind is ignored,
 // not replaced by an empty "using" value.
 func TestInvalidKindOnAProductEventIsIgnored(t *testing.T) {

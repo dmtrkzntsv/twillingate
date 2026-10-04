@@ -106,9 +106,13 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		names = append(names, identityNames(rv)...)
 	}
 	for i, ev := range env.Events {
-		rv, unknown := resolveAttributes(mergeAttributes(env.Attributes, ev.Attributes))
+		rv, unknown, overlong := resolveAttributes(mergeAttributes(env.Attributes, ev.Attributes))
 		for _, k := range unknown {
 			res.warn(i, "unknown reserved key %s, ignored", k)
+		}
+		for _, k := range overlong {
+			// Named by its first 16 runes: the key itself can run to the body limit.
+			res.warn(i, "attribute key %q is longer than %d characters, ignored", string([]rune(k)[:16])+"…", wire.MaxAttrKey)
 		}
 
 		if ev.Name == "" {

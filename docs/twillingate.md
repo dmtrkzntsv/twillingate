@@ -868,8 +868,8 @@ is a poison batch to drop**; the `202` is returned **before** the write, so
 | --- | --- |
 | Body | 256 KB |
 | Events per batch | 500 |
-| Attributes per event | 50 (the rest dropped) |
-| Attribute key length | 64 characters (a longer key dropped) |
+| Attributes per event | no limit beyond the body's |
+| Attribute key length | 64 characters (a longer key dropped, with a warning) |
 | Attribute value length | 512 characters (truncated, not rejected) |
 | Timestamp ahead of the server | 5 minutes (clamped, see [Timestamps](#timestamps-and-idempotency)) |
 | Measure value | `0` to `1e15` (else the event is rejected) |

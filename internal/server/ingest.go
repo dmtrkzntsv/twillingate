@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -192,13 +193,14 @@ func mergeAttributes(batch, event map[string]any) map[string]any {
 }
 
 // resolveAttributes splits merged attributes into typed reserved fields and
-// ordinary attributes, returning the unknown `$` keys it dropped. Unknown
-// reserved keys are dropped rather than stored: the `$` namespace is
-// reserved for system fields, so a `$` key this server does not recognize
-// is a client bug, and silently storing it as data would hide that.
-func resolveAttributes(m map[string]any) (resolved, []string) {
-	r := resolved{Custom: map[string]string{}}
-	var unknown []string
+// ordinary attributes, returning the unknown `$` keys and the overlong
+// custom keys it dropped. Unknown reserved keys are dropped rather than
+// stored: the `$` namespace is reserved for system fields, so a `$` key this
+// server does not recognize is a client bug, and silently storing it as data
+// would hide that. Every other attribute is kept, however many: the body
+// limit bounds an event, and only declared keys reach the aggregates.
+func resolveAttributes(m map[string]any) (r resolved, unknown, overlong []string) {
+	r = resolved{Custom: map[string]string{}}
 	for k, v := range m {
 		if v == nil {
 			continue
@@ -212,12 +214,14 @@ func resolveAttributes(m map[string]any) (resolved, []string) {
 			set(&r, truncate(stringify(v), wire.MaxAttrValue))
 			continue
 		}
-		if len(k) > wire.MaxAttrKey || len(r.Custom) >= wire.MaxAttrs {
+		if len(k) > wire.MaxAttrKey {
+			overlong = append(overlong, k)
 			continue
 		}
 		r.Custom[k] = truncate(stringify(v), wire.MaxAttrValue)
 	}
-	return r, unknown
+	slices.Sort(overlong)
+	return r, unknown, overlong
 }
 
 // stringify renders a JSON scalar the way the attributes blob stores it.

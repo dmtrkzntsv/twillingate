@@ -10,9 +10,8 @@ const (
 	// a batch of one.
 	MaxBody        = 256 << 10
 	MaxBatchEvents = 500
-	// MaxAttrs bounds an event's custom attributes; the ones past it are
-	// dropped, as is a custom key longer than MaxAttrKey.
-	MaxAttrs   = 50
+	// MaxAttrKey bounds a custom attribute's key; a longer one is dropped
+	// with a warning. An event's attribute count has no limit of its own.
 	MaxAttrKey = 64
 	// MaxAttrValue truncates a value, never rejects it.
 	MaxAttrValue = 512
