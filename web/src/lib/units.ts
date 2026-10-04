@@ -1,3 +1,5 @@
+import { formatHeading, formatTick } from './chart'
+
 /** Bytes in decimal units: 999 B, 2.3 MB, 2.3 GB. */
 export function formatBytes(n: number): string {
   if (n < 1000) return `${n} B`
@@ -19,4 +21,13 @@ export function formatAgo(iso: string, now: Date = new Date()): string {
   if (s < 86400) return `${Math.floor(s / 3600)} h ago`
   const d = Math.floor(s / 86400)
   return `${d} ${d === 1 ? 'day' : 'days'} ago`
+}
+
+/** A UTC day (YYYY-MM-DD) as a person says it: today, yesterday, Oct 2, or Oct 2, 2025 in another year. */
+export function formatDay(day: string, now: Date = new Date()): string {
+  const today = now.toISOString().slice(0, 10)
+  const yesterday = new Date(now.getTime() - 86_400_000).toISOString().slice(0, 10)
+  if (day === today) return 'today'
+  if (day === yesterday) return 'yesterday'
+  return day.slice(0, 4) === today.slice(0, 4) ? formatTick(day) : formatHeading(day)
 }

@@ -15,11 +15,11 @@ vi.mock('@/hooks/use-project-actions', () => ({
 function stats(project_id: number, over: Partial<ProjectStats> = {}): ProjectStats {
   return {
     project_id,
-    series: [{ day: '2026-10-02', views: 5, events: 2, measures: 0 }],
+    series: [{ day: '2026-10-02', views: 5, events: 2, measures: 0, total_bytes: null }],
     totals: { views: 5, events: 2, measures: 0 },
     last_received_at: new Date(Date.now() - 120_000).toISOString(),
     first_day: '2026-09-01', raw_days: 30, rolled_up_days: 2,
-    size: { raw_bytes: 1_000_000, aggregate_bytes: 1_300_000, total_bytes: 2_300_000, measured_at: '2026-10-03T03:00:09Z' },
+    size: { raw_bytes: 1_000_000, aggregate_bytes: 1_300_000, total_bytes: 2_300_000, measured_at: '2026-10-03' },
     unused_attributes: [],
     ...over,
   }
