@@ -77,13 +77,17 @@ test('lists Projects first in the sidebar, as a plain link', async ({ page }) =>
 })
 
 test('picks a breakdown from the attributes the seeded project received', async ({ page }) => {
+  // Login, the wait below and the cleanup share one test limit, which must
+  // outlast the wait's own 90s or the default 30s would cut it short.
+  test.setTimeout(120_000)
   await login(page)
   await page.goto('/app/projects')
   await page.getByRole('article', { name: 'dev' }).getByRole('link', { name: 'dev' }).click()
   const details = page.getByRole('region', { name: 'Details' })
   // The pass that counts the seeded days runs after the server starts listening
   // (about 20s on a loaded host), so reopen the dialog, which refetches the keys,
-  // until `plan` is listed.
+  // until `plan` is listed. The wait is bounded by the toPass timeout (90s),
+  // inside the test's 120s limit set above.
   const plan = page.getByRole('checkbox', { name: /plan/ })
   await expect(async () => {
     await details.getByRole('button', { name: 'Edit' }).click()
