@@ -27,8 +27,8 @@ Date: 2026-10-03
   restore projects; issue, disable and enable keys. The UI calls the
   existing routes; it adds no write path of its own.
 - **D2. A list page and a page per project.** `/projects` lists every
-  project; `/projects/:id` shows one. The sidebar gains a "Projects" group,
-  collapsed by default, listing active projects.
+  project; `/projects/:id` shows one. The sidebar gains a "Projects" link at
+  the top, and `/` opens the list.
 - **D3. Two new read-only operations for usage and caps, one for the
   settings.** `limits`, `cap_usage` and `project_stats`, each an MCP tool
   and a REST route through `expose`, so MCP clients get the same answers.
@@ -173,9 +173,17 @@ New operations use the existing typed refusals (`manage.ErrNotFound` →
 
 ### Sidebar
 
-A "Projects" group at the top, above the dashboards, collapsed by default, its open state
-kept in localStorage per browser. Its header links to `/projects`; open,
-it lists active projects by name, each linking to `/projects/:id`.
+"Projects" comes first: a plain link to `/projects`, active on the list and
+on any project page; the projects are not listed under it. Then
+"Dashboards", in the style of the old "Yours" heading, holds every
+dashboard: the system ones pinned at the top with a pin icon, then the
+user's, which still drag to a new order.
+
+### Top bar
+
+Each page's top bar shows its breadcrumbs, every crumb but the last a
+link: `Projects › dev` on a project page, `Gallery › Components` in the
+gallery.
 
 ### Landing
 
@@ -241,7 +249,7 @@ components and the widgets' chart setup; no new library.
   last event, unused attributes, all projects without `project_id`); the
   key fields in snake_case over REST and MCP; REST/MCP parity and docs-sync cover the
   new operations.
-- **Web (vitest):** sidebar group collapsed by default and remembered;
+- **Web (vitest):** sidebar Projects first as a plain link and the pinned dashboards; breadcrumbs that link;
   cards from fixtures (live and muted dots); project page sections;
   form bodies sent on edit; key actions and confirmations; a failed
   section shows retry.

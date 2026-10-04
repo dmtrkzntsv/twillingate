@@ -67,11 +67,11 @@ test('shows usage and cap impact for the seeded project', async ({ page }) => {
   await expect(page.getByRole('region', { name: 'Cap impact' }).getByRole('row').nth(1)).toBeVisible({ timeout: 20_000 })
 })
 
-test('keeps the sidebar projects collapsed until opened', async ({ page }) => {
-  await login(page) // lands on /projects, whose cards link "dev" too: look in the sidebar only
+test('lists Projects first in the sidebar, as a plain link', async ({ page }) => {
+  await login(page)
   const sidebar = page.locator('[data-sidebar="sidebar"]')
-  await expect(sidebar.getByRole('link', { name: 'Projects' })).toBeVisible()
+  await expect(sidebar.getByRole('link', { name: 'Projects' })).toHaveAttribute('href', '/app/projects')
   await expect(sidebar.getByRole('link', { name: 'dev', exact: true })).toHaveCount(0)
-  await sidebar.getByRole('button', { name: 'Show projects' }).click()
-  await expect(sidebar.getByRole('link', { name: 'dev', exact: true })).toBeVisible()
+  await expect(sidebar.getByText('Dashboards', { exact: true })).toBeVisible()
+  await expect(sidebar.getByRole('list', { name: 'Pinned dashboards' }).getByRole('link', { name: 'Views', exact: true })).toBeVisible()
 })

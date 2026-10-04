@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { screen } from '@testing-library/react'
+import { screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { SidebarProvider } from '@/components/ui/sidebar'
@@ -191,10 +191,23 @@ describe('Projects group', () => {
     vi.spyOn(endpoints, 'projects').mockResolvedValue({ projects })
   })
 
-  it('is collapsed by default, however many projects there are', async () => {
+  it('is a link to the list, with no projects listed under it', async () => {
     renderSidebar()
     expect(await screen.findByRole('link', { name: 'Projects' })).toHaveAttribute('href', '/projects')
     expect(screen.queryByRole('link', { name: 'site-1' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /projects/i })).not.toBeInTheDocument()
+    expect(endpoints.projects).not.toHaveBeenCalled()
+  })
+
+  it('is active on the list and on a project', () => {
+    renderWithProviders(
+      <MemoryRouter initialEntries={['/projects/4']}>
+        <SidebarProvider>
+          <AppSidebar dashboards={[]} currentId={0} />
+        </SidebarProvider>
+      </MemoryRouter>
+    )
+    expect(screen.getByRole('link', { name: 'Projects' })).toHaveAttribute('data-active', 'true')
   })
 
   it('comes first, above the dashboards', async () => {
@@ -202,15 +215,6 @@ describe('Projects group', () => {
     const projects = await screen.findByRole('link', { name: 'Projects' })
     const views = screen.getByRole('link', { name: 'Views' })
     expect(projects.compareDocumentPosition(views) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-  })
-
-  it('opens to the active projects and remembers it', async () => {
-    const user = userEvent.setup()
-    renderSidebar()
-    await user.click(await screen.findByRole('button', { name: 'Show projects' }))
-    expect(await screen.findByRole('link', { name: 'site-40' })).toHaveAttribute('href', '/projects/40')
-    expect(screen.queryByRole('link', { name: 'gone' })).not.toBeInTheDocument()
-    expect(localStorage.getItem('twillingate.sidebar.projects')).toBe('open')
   })
 
   it('is absent in dev mode, which serves none of the console routes', async () => {
@@ -223,5 +227,29 @@ describe('Projects group', () => {
     )
     expect(await screen.findByRole('link', { name: 'Archive' })).toBeInTheDocument()
     expect(screen.queryByRole('link', { name: 'Projects' })).not.toBeInTheDocument()
+  })
+})
+
+describe('Dashboards group', () => {
+  const dashboards = [
+    { dashboard_id: 1, title: 'Views', owner: 'system' as const, group_id: 1, widgets: 1 },
+    { dashboard_id: 2, title: 'Web Vitals', owner: 'system' as const, group_id: 2, widgets: 1 },
+    { dashboard_id: 7, title: 'Launch week', owner: 'user' as const, group_id: 7, widgets: 1 },
+  ]
+
+  it('lists every dashboard under one heading, the system ones pinned first', () => {
+    renderSidebar(dashboards)
+    expect(screen.getByText('Dashboards')).toBeInTheDocument()
+    expect(screen.queryByText('Yours')).not.toBeInTheDocument()
+    const pinned = screen.getByRole('list', { name: 'Pinned dashboards' })
+    expect(within(pinned).getAllByRole('link').map((l) => l.textContent)).toEqual(['Views', 'Web Vitals'])
+    const mine = screen.getByRole('link', { name: 'Launch week' })
+    expect(within(pinned).queryByRole('link', { name: 'Launch week' })).toBeNull()
+    expect(screen.getByRole('link', { name: 'Web Vitals' }).compareDocumentPosition(mine) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('says how to get one of your own when there is none', () => {
+    renderSidebar(dashboards.slice(0, 2))
+    expect(screen.getByText('None of your own yet. Ask your agent to make one.')).toBeInTheDocument()
   })
 })

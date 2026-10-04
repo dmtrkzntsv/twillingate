@@ -38,6 +38,13 @@ function renderAt(path: string) {
 }
 
 describe('Project', () => {
+  it('heads the page with a breadcrumb back to the projects', async () => {
+    renderAt('/projects/4')
+    const nav = await screen.findByRole('navigation', { name: 'breadcrumb' })
+    expect(within(nav).getByRole('link', { name: 'Projects' })).toHaveAttribute('href', '/projects')
+    expect(await within(nav).findByText('econumo.com')).toHaveAttribute('aria-current', 'page')
+  })
+
   it('shows the details and edits them through PATCH', async () => {
     const user = userEvent.setup()
     actions.update.mockResolvedValue(true)

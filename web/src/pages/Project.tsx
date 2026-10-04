@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useParams } from 'react-router'
 import AppShell, { TopBar } from '@/components/AppShell'
+import Crumbs from '@/components/Crumbs'
 import RangeSwitcher, { type RangeValue } from '@/components/RangeSwitcher'
 import CapImpactSection from '@/components/projects/CapImpactSection'
 import DetailsSection from '@/components/projects/DetailsSection'
@@ -38,7 +39,7 @@ export default function Project() {
   return (
     <AppShell dashboards={dash?.dashboards ?? []} currentId={0} readOnly={dash?.dev === true}>
       <TopBar>
-        <span className="text-sm text-muted-foreground">Projects / {project?.name ?? param}</span>
+        <Crumbs items={[{ label: 'Projects', to: '/projects' }, { label: project?.name ?? String(param) }]} />
       </TopBar>
       <div className="mx-auto flex w-full max-w-[1200px] flex-1 flex-col gap-6 p-3 sm:p-4 lg:p-6">
         {!project ? (

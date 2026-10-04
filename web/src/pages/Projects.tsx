@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { ChevronRightIcon, PlusIcon } from 'lucide-react'
 import AppShell, { TopBar } from '@/components/AppShell'
+import Crumbs from '@/components/Crumbs'
 import IssuedKeyView from '@/components/projects/IssuedKeyView'
 import LimitsPanel from '@/components/projects/LimitsPanel'
 import LoadError from '@/components/projects/LoadError'
@@ -45,7 +46,7 @@ export default function Projects() {
   return (
     <AppShell dashboards={dash?.dashboards ?? []} currentId={0} readOnly={dash?.dev === true}>
       <TopBar>
-        <span className="text-sm text-muted-foreground">Projects</span>
+        <Crumbs items={[{ label: 'Projects' }]} />
       </TopBar>
       <div className="mx-auto flex w-full max-w-[1600px] flex-1 flex-col gap-6 p-3 sm:p-4 lg:p-6">
         <header className="flex flex-wrap items-end justify-between gap-3">

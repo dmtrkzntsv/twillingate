@@ -1,19 +1,15 @@
 import { DndContext, closestCenter } from '@dnd-kit/core'
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
-import { useQuery } from '@tanstack/react-query'
 import {
   ArchiveIcon,
-  ChartColumnIcon,
-  ChevronRightIcon,
   FolderIcon,
   LayoutDashboardIcon,
   LayoutGridIcon,
   LogOutIcon,
+  PinIcon,
   ShapesIcon,
 } from 'lucide-react'
-import { useState } from 'react'
 import { Link, useLocation } from 'react-router'
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import {
   Sidebar,
   SidebarContent,
@@ -23,12 +19,8 @@ import {
   SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
-  SidebarMenuAction,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarMenuSub,
-  SidebarMenuSubButton,
-  SidebarMenuSubItem,
   SidebarRail,
   useSidebar,
 } from '@/components/ui/sidebar'
@@ -37,7 +29,6 @@ import { useReorder } from '@/hooks/use-reorder'
 import { liveGroups, moveGroupBody, type Group } from '@/lib/arrange'
 import type { DashboardInfo } from '@/lib/api'
 import { currentAuthState, logout } from '@/lib/auth'
-import { projectsQuery } from '@/lib/queries'
 import IcebergLogo from './IcebergLogo'
 import SidebarGroupMenu from './SidebarGroupMenu'
 import SortableGroupItem from './SortableGroupItem'
@@ -51,14 +42,14 @@ interface Props {
 }
 
 /**
- * One entry per dashboard group (tabs D20): system groups first, then
- * "Yours" (the user's), Projects (a link to the list, opening to the
- * active projects), Archive (every archived dashboard, user or
+ * Projects (a link to the list) first, then "Dashboards": one entry per
+ * dashboard group (tabs D20), the system groups pinned at the top with a
+ * pin, then the user's. Then Archive (every archived dashboard, user or
  * system, D17a), and Gallery (the components playground and the
  * templates gallery, D17). Each entry links to its group's first live
  * member and is named by its title; it is active on any live member of
- * the group. "Yours" entries drag to a new order (D14, D15); system
- * entries do not, and since the sortable list holds only user groups,
+ * the group. The user's entries drag to a new order (D14, D15); pinned
+ * ones do not, and since the sortable list holds only user groups,
  * nothing drops above them. Icons only at 640–1023px, a drawer on phones
  * (D37).
  * Log out shows only when the app holds a credential: reporting dev's
@@ -116,20 +107,28 @@ export default function AppSidebar({ dashboards, currentId, readOnly = false }: 
           <SidebarGroup>
             <SidebarGroupContent>
               <SidebarMenu>
-                <ProjectsGroup pathname={pathname} close={close} />
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={pathname.startsWith('/projects')} tooltip="Projects" className={item}>
+                    <Link to="/projects" onClick={close}>
+                      <FolderIcon />
+                      <span>Projects</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
         )}
-        {system.length > 0 && (
-          <SidebarGroup>
-            <SidebarGroupContent>
-              <SidebarMenu>
+        <SidebarGroup>
+          <SidebarGroupLabel className="text-sidebar-foreground/60">Dashboards</SidebarGroupLabel>
+          <SidebarGroupContent className="flex flex-col gap-1">
+            {system.length > 0 && (
+              <SidebarMenu aria-label="Pinned dashboards">
                 {system.map((g) => (
                   <SidebarMenuItem key={g.groupId}>
-                    <SidebarMenuButton asChild isActive={isActive(g)} tooltip={g.members[0].title} className={item}>
+                    <SidebarMenuButton asChild isActive={isActive(g)} tooltip={`${g.members[0].title} (pinned)`} className={item}>
                       <Link to={`/dashboards/${g.members[0].dashboard_id}`} onClick={close}>
-                        <ChartColumnIcon />
+                        <PinIcon />
                         <span>{g.members[0].title}</span>
                       </Link>
                     </SidebarMenuButton>
@@ -137,12 +136,7 @@ export default function AppSidebar({ dashboards, currentId, readOnly = false }: 
                   </SidebarMenuItem>
                 ))}
               </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-        )}
-        <SidebarGroup>
-          <SidebarGroupLabel className="text-sidebar-foreground/60">Yours</SidebarGroupLabel>
-          <SidebarGroupContent>
+            )}
             {readOnly ? (
               <SidebarMenu>
                 {yours.map((g) => (
@@ -175,7 +169,7 @@ export default function AppSidebar({ dashboards, currentId, readOnly = false }: 
             )}
             {yours.length === 0 && (
               <p className="px-2 py-1 text-xs text-sidebar-foreground/55 group-data-[collapsible=icon]:hidden">
-                None yet. Ask your agent to make one.
+                {system.length > 0 ? 'None of your own yet. Ask your agent to make one.' : 'None yet. Ask your agent to make one.'}
               </p>
             )}
           </SidebarGroupContent>
@@ -242,54 +236,6 @@ export default function AppSidebar({ dashboards, currentId, readOnly = false }: 
       )}
       <SidebarRail />
     </Sidebar>
-  )
-}
-
-const PROJECTS_OPEN = 'twillingate.sidebar.projects'
-
-/** "Projects": a link to the list, opening to the active projects; closed until opened, then remembered. */
-function ProjectsGroup({ pathname, close }: { pathname: string; close: () => void }) {
-  const { data } = useQuery(projectsQuery)
-  const [open, setOpen] = useState(() => localStorage.getItem(PROJECTS_OPEN) === 'open')
-  const toggle = (next: boolean) => {
-    setOpen(next)
-    if (next) localStorage.setItem(PROJECTS_OPEN, 'open')
-    else localStorage.removeItem(PROJECTS_OPEN)
-  }
-  const active = (data?.projects ?? []).filter((p) => !p.archived)
-  return (
-    <Collapsible open={open} onOpenChange={toggle} asChild>
-      <SidebarMenuItem>
-        <SidebarMenuButton asChild isActive={pathname === '/projects'} tooltip="Projects" className={item}>
-          <Link to="/projects" onClick={close}>
-            <FolderIcon />
-            <span>Projects</span>
-          </Link>
-        </SidebarMenuButton>
-        {active.length > 0 && (
-          <>
-            <CollapsibleTrigger asChild>
-              <SidebarMenuAction className="data-[state=open]:rotate-90" aria-label={open ? 'Hide projects' : 'Show projects'}>
-                <ChevronRightIcon />
-              </SidebarMenuAction>
-            </CollapsibleTrigger>
-            <CollapsibleContent>
-              <SidebarMenuSub>
-                {active.map((p) => (
-                  <SidebarMenuSubItem key={p.project_id}>
-                    <SidebarMenuSubButton asChild isActive={pathname === `/projects/${p.project_id}`}>
-                      <Link to={`/projects/${p.project_id}`} onClick={close}>
-                        <span>{p.name}</span>
-                      </Link>
-                    </SidebarMenuSubButton>
-                  </SidebarMenuSubItem>
-                ))}
-              </SidebarMenuSub>
-            </CollapsibleContent>
-          </>
-        )}
-      </SidebarMenuItem>
-    </Collapsible>
   )
 }
 

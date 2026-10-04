@@ -65,12 +65,12 @@ async function dragAbove(page: Page, source: Locator, target: Locator): Promise<
 }
 
 /**
- * The "E2E …" links under the sidebar's "Yours" section, in order. Only
+ * The "E2E …" links under the sidebar's "Dashboards" section, in order. Only
  * this file's own: app.spec.ts runs first on the same server and leaves
  * dashboards of its own there.
  */
 async function yoursOrder(page: Page): Promise<string[]> {
-  const group = page.locator('[data-sidebar="group"]').filter({ has: page.getByText('Yours', { exact: true }) })
+  const group = page.locator('[data-sidebar="group"]').filter({ has: page.getByText('Dashboards', { exact: true }) })
   return (await group.getByRole('link').allTextContents()).filter((t) => t.startsWith('E2E '))
 }
 
