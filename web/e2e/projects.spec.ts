@@ -3,12 +3,13 @@ import { expect, test, type Page } from '@playwright/test'
 // Matches web/e2e/serve.sh's CONSOLE_AUTH_DSN (token://e2e-token?password=e2e-pass&...).
 const PASSWORD = 'e2e-pass'
 
+// Signs in from the console's address, which opens the projects.
 async function login(page: Page): Promise<void> {
   await page.goto('/app/')
   await page.waitForURL(/\/oauth\/authorize\?/)
   await page.getByLabel('Password').fill(PASSWORD)
   await page.getByRole('button', { name: 'Connect' }).click()
-  await page.waitForURL(/\/app\/dashboards\/\d+/)
+  await page.waitForURL(/\/app\/projects$/)
 }
 
 test('creates a project, edits it, manages a key, archives and restores it', async ({ page }) => {
@@ -67,9 +68,10 @@ test('shows usage and cap impact for the seeded project', async ({ page }) => {
 })
 
 test('keeps the sidebar projects collapsed until opened', async ({ page }) => {
-  await login(page)
-  await expect(page.getByRole('link', { name: 'Projects' })).toBeVisible()
-  await expect(page.getByRole('link', { name: 'dev', exact: true })).toHaveCount(0)
-  await page.getByRole('button', { name: 'Show projects' }).click()
-  await expect(page.getByRole('link', { name: 'dev', exact: true })).toBeVisible()
+  await login(page) // lands on /projects, whose cards link "dev" too: look in the sidebar only
+  const sidebar = page.locator('[data-sidebar="sidebar"]')
+  await expect(sidebar.getByRole('link', { name: 'Projects' })).toBeVisible()
+  await expect(sidebar.getByRole('link', { name: 'dev', exact: true })).toHaveCount(0)
+  await sidebar.getByRole('button', { name: 'Show projects' }).click()
+  await expect(sidebar.getByRole('link', { name: 'dev', exact: true })).toBeVisible()
 })

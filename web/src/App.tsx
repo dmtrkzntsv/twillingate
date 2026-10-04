@@ -12,6 +12,7 @@ import Dashboard from '@/pages/Dashboard'
 import ComponentsGallery from '@/pages/gallery/ComponentsGallery'
 import DashboardsGallery from '@/pages/gallery/DashboardsGallery'
 import Home from '@/pages/Home'
+import Landing from '@/pages/Landing'
 import Login from '@/pages/Login'
 import Project from '@/pages/Project'
 import Projects from '@/pages/Projects'
@@ -51,6 +52,14 @@ function App() {
         <Routes>
           <Route
             path="/"
+            element={
+              <OnlineOnly>
+                <Landing />
+              </OnlineOnly>
+            }
+          />
+          <Route
+            path="/dashboards"
             element={
               <OnlineOnly>
                 <Home />

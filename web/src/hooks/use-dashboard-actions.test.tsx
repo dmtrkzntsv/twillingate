@@ -127,7 +127,7 @@ describe('useDashboardActions', () => {
 
     let done: Promise<void> = Promise.resolve()
     act(() => {
-      done = result.current.archive({ dashboard_id: 5, title: 'Marketing' }, { navigateTo: '/' })
+      done = result.current.archive({ dashboard_id: 5, title: 'Marketing' }, { navigateTo: '/dashboards' })
     })
     await waitFor(() => expect(list).toHaveBeenCalledTimes(2))
     expect(result.current.pending).toBe(true)
@@ -138,7 +138,7 @@ describe('useDashboardActions', () => {
       await done
     })
     expect(result.current.pending).toBe(false)
-    expect(location).toBe('/')
+    expect(location).toBe('/dashboards')
   })
 
   it('duplicate navigates to the copy', async () => {

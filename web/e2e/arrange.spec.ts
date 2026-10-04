@@ -11,7 +11,7 @@ function authHeaders() {
 
 /** Logs in through the real password page and waits for the app to land on a dashboard. */
 async function login(page: Page): Promise<void> {
-  await page.goto('/app/')
+  await page.goto('/app/dashboards')
   await page.waitForURL(/\/oauth\/authorize\?/)
   await page.getByLabel('Password').fill(PASSWORD)
   await page.getByRole('button', { name: 'Connect' }).click()

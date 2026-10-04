@@ -98,7 +98,7 @@ func NewHandler(ctx context.Context, cfg *config.Config, reg *manage.Registry, o
 // RegisterOn mounts the console surface on a mux: protected (from Build) at
 // /mcp and /api/, plus the unauthenticated metadata, login and health
 // routes, and the dashboards at /app/ (GET / and GET /app redirect there,
-// so the console's address opens the dashboards; an ingest-only listener keeps
+// so the console's address opens the app; an ingest-only listener keeps
 // answering 404 at /). The dashboards' page is public like the login page:
 // it holds no data, and reads everything through /api/ with the login's
 // token. withHealthz=false when the mux is shared with the ingest surface,

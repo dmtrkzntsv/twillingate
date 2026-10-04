@@ -66,7 +66,7 @@ export function PageError({ error, onRetry, bare }: { error: Error; onRetry: () 
         {notFound ? 'It may have been deleted.' : error.message}
         {notFound ? (
           <Button asChild variant="outline" size="sm">
-            <Link to="/">Go to your dashboards</Link>
+            <Link to="/dashboards">Go to your dashboards</Link>
           </Button>
         ) : (
           <Button variant="outline" size="sm" onClick={onRetry}>

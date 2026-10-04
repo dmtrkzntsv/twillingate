@@ -69,12 +69,12 @@ export function reorder(ids: number[], activeId: number, overId: number): { to: 
   return { to }
 }
 
-/** Where to go after archiving `id`: the next live tab, else the previous, else '/' (D12). */
+/** Where to go after archiving `id`: the next live tab, else the previous, else '/dashboards' (D12). */
 export function nextAfterArchive(tabs: DashboardTab[], id: number): string {
   const idx = tabs.findIndex((t) => t.dashboard_id === id)
-  if (idx === -1) return '/'
+  if (idx === -1) return '/dashboards'
   const target = tabs[idx + 1] ?? tabs[idx - 1]
-  return target ? `/dashboards/${target.dashboard_id}` : '/'
+  return target ? `/dashboards/${target.dashboard_id}` : '/dashboards'
 }
 
 /** The date an archived dashboard is purged, or undefined when days is 0/absent (D17a). */

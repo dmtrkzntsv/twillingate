@@ -112,6 +112,15 @@ export default function AppSidebar({ dashboards, currentId, readOnly = false }: 
         </SidebarMenu>
       </SidebarHeader>
       <SidebarContent>
+        {!readOnly && (
+          <SidebarGroup>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                <ProjectsGroup pathname={pathname} close={close} />
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        )}
         {system.length > 0 && (
           <SidebarGroup>
             <SidebarGroupContent>
@@ -171,15 +180,6 @@ export default function AppSidebar({ dashboards, currentId, readOnly = false }: 
             )}
           </SidebarGroupContent>
         </SidebarGroup>
-        {!readOnly && (
-          <SidebarGroup>
-            <SidebarGroupContent>
-              <SidebarMenu>
-                <ProjectsGroup pathname={pathname} close={close} />
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-        )}
         <SidebarGroup>
           <SidebarGroupContent>
             <SidebarMenu>

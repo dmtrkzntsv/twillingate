@@ -84,7 +84,7 @@ describe('SidebarGroupMenu, system group', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Views actions' }))
     await userEvent.click(screen.getByText('Archive'))
 
-    expect(archive).toHaveBeenCalledWith(systemGroup.members[0], { wholeGroup: true, navigateTo: '/' })
+    expect(archive).toHaveBeenCalledWith(systemGroup.members[0], { wholeGroup: true, navigateTo: '/dashboards' })
   })
 
   it('archive while elsewhere does not navigate', async () => {
@@ -128,7 +128,7 @@ describe('SidebarGroupMenu, user group', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Marketing actions' }))
     await userEvent.click(screen.getByText('Archive'))
 
-    expect(archive).toHaveBeenCalledWith(userGroupA.members[0], { wholeGroup: true, navigateTo: '/' })
+    expect(archive).toHaveBeenCalledWith(userGroupA.members[0], { wholeGroup: true, navigateTo: '/dashboards' })
   })
 
   it('clicking Move down on the first group calls move with the second group as after', async () => {

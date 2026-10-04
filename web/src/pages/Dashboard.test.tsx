@@ -47,12 +47,12 @@ function renderAt(url: string) {
   )
 }
 
-/** Like renderAt, with "/" routed to Home, where an archive with no next tab lands. */
+/** Like renderAt, with "/dashboards" routed to Home, where an archive with no next tab lands. */
 function renderAppAt(url: string) {
   return renderWithProviders(
     <MemoryRouter initialEntries={[url]}>
       <Routes>
-        <Route path="/" element={<Home />} />
+        <Route path="/dashboards" element={<Home />} />
         <Route
           path="/dashboards/:id"
           element={

@@ -197,6 +197,13 @@ describe('Projects group', () => {
     expect(screen.queryByRole('link', { name: 'site-1' })).not.toBeInTheDocument()
   })
 
+  it('comes first, above the dashboards', async () => {
+    renderSidebar([{ dashboard_id: 1, title: 'Views', owner: 'system', group_id: 1, widgets: 1 }])
+    const projects = await screen.findByRole('link', { name: 'Projects' })
+    const views = screen.getByRole('link', { name: 'Views' })
+    expect(projects.compareDocumentPosition(views) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
   it('opens to the active projects and remembers it', async () => {
     const user = userEvent.setup()
     renderSidebar()

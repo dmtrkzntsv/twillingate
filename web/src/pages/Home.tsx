@@ -15,7 +15,7 @@ export function pickDashboard(dashboards: DashboardInfo[], last?: number): Dashb
 }
 
 /**
- * "/" itself shows nothing: it picks a dashboard and redirects to it. With
+ * "/dashboards" itself shows nothing: it picks a dashboard and redirects to it. With
  * none live it says why: an empty install has nothing yet, but one where
  * everything is archived links to the archive, the only way back once the
  * Undo toast is gone (D17a).

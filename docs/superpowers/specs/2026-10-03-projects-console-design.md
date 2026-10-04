@@ -173,9 +173,17 @@ New operations use the existing typed refusals (`manage.ErrNotFound` →
 
 ### Sidebar
 
-A "Projects" group above Archive, collapsed by default, its open state
+A "Projects" group at the top, above the dashboards, collapsed by default, its open state
 kept in localStorage per browser. Its header links to `/projects`; open,
 it lists active projects by name, each linking to `/projects/:id`.
+
+### Landing
+
+`/` opens `/projects`. The dashboard picker that used to answer `/` (the
+last dashboard opened on this device, else the first system one) moves to
+`/dashboards`, where archiving a dashboard's last tab and "Go to your
+dashboards" land. A dashboards preview (`reporting dev`), which hides the
+projects, still opens the dashboards.
 
 ### `/projects`
 
