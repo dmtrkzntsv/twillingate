@@ -41,4 +41,17 @@ describe('ProjectFormDialog', () => {
     await user.click(screen.getByRole('checkbox', { name: /order_id/ }))
     expect(save).toBeEnabled()
   })
+
+  it('saves a key typed in the breakdown field without Enter', async () => {
+    const user = userEvent.setup()
+    vi.spyOn(endpoints, 'receivedAttributes').mockResolvedValue({ ...answer, breakdowns_used: 0 })
+    const onSubmit = vi.fn().mockResolvedValue(true)
+    renderWithProviders(
+      <ProjectFormDialog open onOpenChange={vi.fn()} title="Edit" projectId={1} submitLabel="Save" onSubmit={onSubmit}
+        initial={{ name: 'dev', allowed_origins: [], attributes: [] }} />,
+    )
+    await user.type(await screen.findByRole('textbox', { name: 'Key not received yet' }), 'tier')
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    expect(onSubmit).toHaveBeenCalledWith({ name: 'dev', allowed_origins: [], attributes: ['tier'] })
+  })
 })

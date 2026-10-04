@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
+import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import type { ReceivedKey } from '@/lib/api'
 import { receivedAttributesQuery } from '@/lib/queries'
+import LoadError from './LoadError'
 
 const DAYS = [7, 14, 30] as const
 
@@ -48,7 +50,7 @@ export default function BreakdownsField({ projectId, initial, value, onChange, o
   const [refused, setRefused] = useState<string | null>(null)
   const to = new Date()
   const from = new Date(to.getTime() - (days - 1) * 86_400_000)
-  const { data } = useQuery({
+  const { data, error, refetch } = useQuery({
     ...receivedAttributesQuery({ project_id: projectId, from: dayString(from), to: dayString(to) }),
     placeholderData: keepPreviousData,
   })
@@ -92,16 +94,21 @@ export default function BreakdownsField({ projectId, initial, value, onChange, o
             )
           })}
         </ul>
-      ) : (
+      ) : data || !error ? (
         <p className="text-sm text-muted-foreground">{projectId ? 'No attributes received in this range.' : 'Nothing received yet: add keys by name, or pick them once events arrive.'}</p>
-      )}
-      <Input
-        aria-label="Key not received yet"
-        placeholder="Add a key not received yet"
-        value={text}
-        onChange={(e) => { setText(e.target.value); setRefused(null) }}
-        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); add() } }}
-      />
+      ) : null}
+      {error && !data && <LoadError what="received attributes" error={error} onRetry={() => void refetch()} />}
+      <div className="flex items-center gap-1.5">
+        <Input
+          aria-label="Key not received yet"
+          placeholder="Add a key not received yet"
+          value={text}
+          onChange={(e) => { setText(e.target.value); setRefused(null) }}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); add() } }}
+          onBlur={add}
+        />
+        <Button type="button" variant="outline" size="sm" onClick={add}>Add</Button>
+      </div>
       {refused && <p className="text-xs text-destructive">{refused}</p>}
       {problem && <p className="text-xs text-destructive">{problem}</p>}
     </fieldset>

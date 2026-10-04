@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import type { Project } from '@/lib/api'
 import { receivedAttributesQuery } from '@/lib/queries'
 import { describeKey } from './BreakdownsField'
+import LoadError from './LoadError'
 import ProjectFormDialog from './ProjectFormDialog'
 
 interface Props {
@@ -17,7 +18,7 @@ interface Props {
 /** Name, allowed origins and breakdowns (with what each received), with Edit. */
 export default function DetailsSection({ project, range, onSave, pending }: Props) {
   const [editing, setEditing] = useState(false)
-  const { data } = useQuery(receivedAttributesQuery({ project_id: project.project_id, from: range.from, to: range.to }))
+  const { data, error, refetch } = useQuery(receivedAttributesQuery({ project_id: project.project_id, from: range.from, to: range.to }))
   const received = new Map((data?.keys ?? []).map((r) => [r.key, r]))
   const attributes = project.attributes ?? []
   return (
@@ -54,6 +55,7 @@ export default function DetailsSection({ project, range, onSave, pending }: Prop
           ) : (
             <span className="text-sm text-muted-foreground">None</span>
           )}
+          {error && !data && <div className="mt-2"><LoadError what="received attributes" error={error} onRetry={() => void refetch()} /></div>}
         </dd>
       </dl>
       <ProjectFormDialog

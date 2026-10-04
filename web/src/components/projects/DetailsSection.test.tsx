@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { screen, within } from '@testing-library/react'
-import { endpoints, type Project } from '@/lib/api'
+import userEvent from '@testing-library/user-event'
+import { ApiError, endpoints, type Project } from '@/lib/api'
 import { renderWithProviders } from '@/test/render'
 import DetailsSection from './DetailsSection'
 
@@ -32,5 +33,15 @@ describe('DetailsSection', () => {
     renderWithProviders(<DetailsSection project={project} range={{ from: 'a', to: 'b' }} onSave={vi.fn()} />)
     const list = screen.getByRole('list', { name: 'Breakdowns' })
     expect(within(list).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['plan', 'never_sent'])
+  })
+
+  it('says the counts could not load, keeps the keys, and retries', async () => {
+    const user = userEvent.setup()
+    const spy = vi.spyOn(endpoints, 'receivedAttributes').mockRejectedValue(new ApiError(500, 'boom'))
+    renderWithProviders(<DetailsSection project={project} range={{ from: 'a', to: 'b' }} onSave={vi.fn()} />)
+    expect(await screen.findByText(/Couldn't load received attributes/)).toBeInTheDocument()
+    expect(within(screen.getByRole('list', { name: 'Breakdowns' })).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['plan', 'never_sent'])
+    await user.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(spy).toHaveBeenCalledTimes(2)
   })
 })

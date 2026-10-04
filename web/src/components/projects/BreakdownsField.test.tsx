@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
-import { endpoints } from '@/lib/api'
+import { ApiError, endpoints } from '@/lib/api'
 import { renderWithProviders } from '@/test/render'
 import BreakdownsField, { budget, describeKey } from './BreakdownsField'
 
@@ -69,5 +69,40 @@ describe('BreakdownsField', () => {
     await user.clear(input)
     await user.type(input, 'tier{Enter}')
     expect(screen.getByRole('checkbox', { name: /tier/ })).toBeChecked()
+  })
+
+  it('adds a typed key with the Add button, and on blur', async () => {
+    const user = userEvent.setup()
+    renderWithProviders(<Harness initial={[]} onProblem={vi.fn()} />)
+    const input = await screen.findByRole('textbox', { name: 'Key not received yet' })
+    await user.type(input, 'tier')
+    await user.click(screen.getByRole('button', { name: 'Add' }))
+    expect(screen.getByRole('checkbox', { name: /tier/ })).toBeChecked()
+    await user.type(input, 'region')
+    await user.tab()
+    expect(screen.getByRole('checkbox', { name: /region/ })).toBeChecked()
+  })
+
+  it('refuses a $ key on blur without adding it', async () => {
+    const user = userEvent.setup()
+    renderWithProviders(<Harness initial={[]} onProblem={vi.fn()} />)
+    await user.type(await screen.findByRole('textbox', { name: 'Key not received yet' }), '$host')
+    await user.tab()
+    expect(screen.getByText(/\$ keys appear in the list once received/)).toBeInTheDocument()
+    expect(screen.queryByRole('checkbox', { name: /host/ })).not.toBeInTheDocument()
+  })
+
+  it('says the load failed with a Retry, keeps selected keys removable and the field usable', async () => {
+    const user = userEvent.setup()
+    const spy = vi.spyOn(endpoints, 'receivedAttributes').mockRejectedValue(new ApiError(500, 'boom'))
+    renderWithProviders(<Harness initial={['plan']} onProblem={vi.fn()} />)
+    expect(await screen.findByText(/Couldn't load received attributes/)).toBeInTheDocument()
+    expect(screen.getByText(/boom/)).toBeInTheDocument()
+    expect(screen.queryByText('No attributes received in this range.')).not.toBeInTheDocument()
+    expect(screen.getByRole('checkbox', { name: /plan/ })).toBeChecked()
+    await user.type(screen.getByRole('textbox', { name: 'Key not received yet' }), 'tier{Enter}')
+    expect(screen.getByRole('checkbox', { name: /tier/ })).toBeChecked()
+    await user.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(spy).toHaveBeenCalledTimes(2)
   })
 })
