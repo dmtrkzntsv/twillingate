@@ -507,14 +507,13 @@ func TestTokenLoginInsecure(t *testing.T) {
 
 func TestRenamedVariablesRefuse(t *testing.T) {
 	for old, repl := range map[string]string{
-		"LISTEN_ADDR":              "INGEST_ADDR",
-		"API_ADDR":                 "CONSOLE_ADDR",
-		"API_URL":                  "CONSOLE_URL",
-		"API_AUTH_DSN":             "CONSOLE_AUTH_DSN",
-		"API_DB_PATH":              "CONSOLE_DB_PATH",
-		"API_QUERY_TIMEOUT":        "CONSOLE_QUERY_TIMEOUT",
-		"API_QUERY_MAX_ROWS":       "CONSOLE_QUERY_MAX_ROWS",
-		"PRODUCT_ATTRIBUTES_TOP_N": "ATTRIBUTES_TOP_N",
+		"LISTEN_ADDR":        "INGEST_ADDR",
+		"API_ADDR":           "CONSOLE_ADDR",
+		"API_URL":            "CONSOLE_URL",
+		"API_AUTH_DSN":       "CONSOLE_AUTH_DSN",
+		"API_DB_PATH":        "CONSOLE_DB_PATH",
+		"API_QUERY_TIMEOUT":  "CONSOLE_QUERY_TIMEOUT",
+		"API_QUERY_MAX_ROWS": "CONSOLE_QUERY_MAX_ROWS",
 	} {
 		env := map[string]string{"DATABASE_DSN": "sqlite:///tmp/x.db", old: "x"}
 		_, err := FromEnv(func(k string) (string, bool) { v, ok := env[k]; return v, ok })

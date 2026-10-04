@@ -50,7 +50,7 @@
 -- answers differently from 024. NULLIF turns an empty column into
 -- "absent", the same meaning json_extract's NULL has for a custom key.
 --
--- Every cap is a setting (PRODUCT_ATTRIBUTES_TOP_N, VIEWS_DIMENSIONS_TOP_N,
+-- Every cap is a setting (ATTRIBUTES_TOP_N, VIEWS_DIMENSIONS_TOP_N,
 -- IDENTITIES_TOP_N) that app.go writes to meta at boot, since SQL cannot
 -- see the environment; each view's cap CTE reads its own key. 0 means no
 -- cap and reads as 4611686018427387904 (noCap in aggregate_views.go), a

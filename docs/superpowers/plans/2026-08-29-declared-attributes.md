@@ -15,7 +15,7 @@
 - Every task must leave `make check` green (vet + coverage + restore test). Go does not compile half-renamed types, so each task is a vertical slice.
 - Migrations are forward-only, numbered `NNN_name.sql`, applied in sorted order inside one transaction each (`internal/store/sqlite/migrate.go`). The next free number is `006`.
 - `internal/config` is stdlib-only: `encoding/json`, `fmt`, `io`, `net/url`, `os`, `strings`, `time`. Do not add dependencies to it.
-- Env vars are bare names read via `e.str` / `e.num` / `e.dur` in `internal/config/config.go`. The new one is `PRODUCT_ATTRIBUTES_TOP_N`, default `50`.
+- Env vars are bare names read via `e.str` / `e.num` / `e.dur` in `internal/config/config.go`. The new one is `ATTRIBUTES_TOP_N`, default `50`.
 - The alias charset is exactly `^[a-z0-9]+$`.
 - Attribute column names in `v_events_flat` are `attr_` + `sanitizeAlias(key)`; that sanitisation stays, and hostile-key tests in `flatview_test.go` must keep passing.
 - Commit messages follow Conventional Commits (`CLAUDE.md`). `feat`, `fix`, `perf` appear in release notes; use them for user-visible behaviour.
@@ -30,7 +30,7 @@ The load-bearing task: the type flows `RegistryProject.Aggregation` -> `manage.P
 
 **Files:**
 - Create: `internal/store/sqlite/migrations/006_attributes.sql`
-- Modify: `internal/config/config.go` (drop `ProductAggregation`, add `Attributes []string` to `Project`, add `ProductAttributesTopN` to `Config`)
+- Modify: `internal/config/config.go` (drop `ProductAggregation`, add `Attributes []string` to `Project`, add `AttributesTopN` to `Config`)
 - Modify: `internal/store/store.go` (`RegistryProject.Aggregation` -> `Attributes`; drop `ProductAggSettings`; change `AggregateProductDay` signature)
 - Modify: `internal/store/sqlite/registry.go:36-40,82-112` (three SQL statements)
 - Modify: `internal/store/sqlite/aggregate_product.go:20-93`
@@ -42,7 +42,7 @@ The load-bearing task: the type flows `RegistryProject.Aggregation` -> `manage.P
 - Test: `internal/store/sqlite/registry_test.go`, `internal/manage/registry_test.go`, `internal/store/sqlite/aggregate_product_test.go`
 
 **Interfaces:**
-- Produces: `store.RegistryProject.Attributes string` (JSON array, `"[]"` when none); `store.Store.AggregateProductDay(ctx, project string, day civil.Date, attrs []string, topN int) error`; `manage.ProjectSpec.Attributes []string`; `func (s *Snapshot) AttributesFor(alias string) []string`; `config.Config.ProductAttributesTopN int`.
+- Produces: `store.RegistryProject.Attributes string` (JSON array, `"[]"` when none); `store.Store.AggregateProductDay(ctx, project string, day civil.Date, attrs []string, topN int) error`; `manage.ProjectSpec.Attributes []string`; `func (s *Snapshot) AttributesFor(alias string) []string`; `config.Config.AttributesTopN int`.
 - Consumes: nothing from earlier tasks.
 
 - [ ] **Step 1: Write the failing migration test**
@@ -82,7 +82,7 @@ Expected: FAIL — `ps[0].Attributes` undefined (field does not exist yet).
 ```sql
 -- product_aggregation collapses to a flat declared key list. `enabled` is
 -- dropped (rollups are now unconditional) and `top_n` moves to the global
--- PRODUCT_ATTRIBUTES_TOP_N setting. The backfill takes the DISTINCT union
+-- ATTRIBUTES_TOP_N setting. The backfill takes the DISTINCT union
 -- of every array in the old event-keyed map, so
 --   {"*":["plan"],"subscribed":["tier","plan"]}  ->  ["plan","tier"]
 ALTER TABLE projects ADD COLUMN attributes TEXT NOT NULL DEFAULT '[]';
@@ -154,9 +154,9 @@ In the legacy bare-array branch (`:80`), `ProductAggregation: lp.ProductAggregat
 
 - [ ] **Step 7: Update the callers**
 
-`internal/jobs/jobs.go:107-113`: replace `settings := snap.AggregationFor(id)` with `attrs := snap.AttributesFor(id)` and pass `attrs, r.topN` to `AggregateProductDay`. Add a `topN int` field to `Runner`, set from `cfg.ProductAttributesTopN` wherever the runner is constructed.
+`internal/jobs/jobs.go:107-113`: replace `settings := snap.AggregationFor(id)` with `attrs := snap.AttributesFor(id)` and pass `attrs, r.topN` to `AggregateProductDay`. Add a `topN int` field to `Runner`, set from `cfg.AttributesTopN` wherever the runner is constructed.
 
-`internal/config/config.go`: add `ProductAttributesTopN: e.num("PRODUCT_ATTRIBUTES_TOP_N", 50)` to the `Config` literal in `parse`, with the matching struct field.
+`internal/config/config.go`: add `AttributesTopN: e.num("ATTRIBUTES_TOP_N", 50)` to the `Config` literal in `parse`, with the matching struct field.
 
 `config.Project` is the **legacy** `projects.json` format read by `config import`, so it must keep parsing the old block — deleting `ProductAggregation` outright would break the documented upgrade path. Give it both shapes and one accessor:
 
@@ -217,7 +217,7 @@ git commit -m "feat(config)!: declare product attributes as a flat list
 BREAKING CHANGE: product_aggregation is replaced by a flat attributes
 array. enabled is gone and rollups always run, so projects that never
 opted in stop losing product history at the raw retention boundary.
-top_n moves to the global PRODUCT_ATTRIBUTES_TOP_N setting."
+top_n moves to the global ATTRIBUTES_TOP_N setting."
 ```
 
 ---
@@ -684,7 +684,7 @@ The most intricate task. `internal/store/sqlite/migrations/002_views.sql:5-8` st
 - Delete: `evidence/sources/twillingate/agg_product_attrs.sql`
 - Modify: `evidence/pages/product/[project].md:71-83`
 - Modify: `internal/mcpserver/tools_product.go:65-67` (query `v_product_attrs`)
-- Modify: `internal/app/app.go` (write `PRODUCT_ATTRIBUTES_TOP_N` to `meta` at boot)
+- Modify: `internal/app/app.go` (write `ATTRIBUTES_TOP_N` to `meta` at boot)
 - Test: `internal/store/sqlite/views_test.go`
 
 **Interfaces:**
@@ -786,7 +786,7 @@ The `ORDER BY c DESC, attr_value` tiebreak must match `rollupAttr`'s `ORDER BY c
 
 - [ ] **Step 4: Seed the cap into `meta` at boot**
 
-In `internal/app/app.go`, after `Migrate`, `SetMeta(ctx, "product_attributes_top_n", strconv.Itoa(cfg.ProductAttributesTopN))`. The view reads it, so it must be present before the first query.
+In `internal/app/app.go`, after `Migrate`, `SetMeta(ctx, "product_attributes_top_n", strconv.Itoa(cfg.AttributesTopN))`. The view reads it, so it must be present before the first query.
 
 - [ ] **Step 5: Point Evidence and MCP at the view**
 
@@ -822,7 +822,7 @@ while v_product_daily showed today."
 
 - [ ] **Step 1: Rewrite the projects table row and the aggregation section**
 
-Replace the `product_aggregation` row with `attributes`, described as: the keys that become `attr_*` columns in `v_events_flat` and get value breakdowns in `agg_product_attrs`. Document that everything sent is still stored and undeclared keys stay reachable through the `attributes` JSON column. Replace the old JSON example with `"attributes": ["plan", "tier"]`, document `PRODUCT_ATTRIBUTES_TOP_N` as the global cardinality cap guarding client-supplied values, and state that `$platform` and `$app_version` roll up automatically without being declared.
+Replace the `product_aggregation` row with `attributes`, described as: the keys that become `attr_*` columns in `v_events_flat` and get value breakdowns in `agg_product_attrs`. Document that everything sent is still stored and undeclared keys stay reachable through the `attributes` JSON column. Replace the old JSON example with `"attributes": ["plan", "tier"]`, document `ATTRIBUTES_TOP_N` as the global cardinality cap guarding client-supplied values, and state that `$platform` and `$app_version` roll up automatically without being declared.
 
 Document the alias rule (`^[a-z0-9]+$`, immutable, changed only via `project rename`) in the `alias` row, and add `project rename` plus `-attr` to the CLI examples.
 

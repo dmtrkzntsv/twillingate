@@ -1,6 +1,6 @@
--- 027: PRODUCT_ATTRIBUTES_TOP_N is now ATTRIBUTES_TOP_N (it caps measures'
--- attributes as well as product events'), and its meta row follows, from
--- product_attributes_top_n to attributes_top_n. The row moves with its
+-- 027: the attribute cap (ATTRIBUTES_TOP_N, which caps measures'
+-- attributes as well as product events') stores its meta row as
+-- attributes_top_n, no longer product_attributes_top_n. The row moves with its
 -- value, which the start writes again from the setting anyway, and the two
 -- views reading it are recreated as 025 left them but for the key.
 

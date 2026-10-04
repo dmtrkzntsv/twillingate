@@ -247,7 +247,6 @@ var renamed = []struct{ old, repl string }{
 	{"API_DB_PATH", "CONSOLE_DB_PATH"},
 	{"API_QUERY_TIMEOUT", "CONSOLE_QUERY_TIMEOUT"},
 	{"API_QUERY_MAX_ROWS", "CONSOLE_QUERY_MAX_ROWS"},
-	{"PRODUCT_ATTRIBUTES_TOP_N", "ATTRIBUTES_TOP_N"},
 }
 
 // refuseRenamed treats an empty value as unset, as env.str does, so a

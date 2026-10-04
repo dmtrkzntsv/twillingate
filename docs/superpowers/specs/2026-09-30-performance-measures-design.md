@@ -233,7 +233,7 @@ the second.
       (`store.SystemAttributes`) always, plus the project's declared keys
       (custom, and the 9 declarable reserved ones such as `$path`). One
       declaration serves product and measures.
-    - **The same cap:** `PRODUCT_ATTRIBUTES_TOP_N` values per key per
+    - **The same cap:** `ATTRIBUTES_TOP_N` values per key per
       metric per day, ranked by `samples`, with the rest in `(other)`.
       Histogram rows add up, so `(other)` is the sum of the rest, with
       nothing to recompute from raw.
