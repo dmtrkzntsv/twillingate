@@ -97,8 +97,9 @@ func (d *DB) QueryPage(ctx context.Context, q string, p Page, args ...any) (Page
 	// Exactly as QueryLimit trims, so SQLite parses the text Check examined.
 	trimmed := strings.TrimRight(q, "; \t\r\n\f")
 
-	// The counting columns are named so no result column can collide with them.
-	total, matched := countingNames(cols)
+	// The columns the wrap adds are named so no result column can collide with them.
+	added := addedNames(cols)
+	total, matched := added.total, added.matched
 
 	var filters []Filter
 	for _, f := range p.Filters {
@@ -120,14 +121,22 @@ func (d *DB) QueryPage(ctx context.Context, q string, p Page, args ...any) (Page
 		// MAX over the window: total is the same on every row but is not
 		// grouped, so it must be aggregated to be read.
 		stmt = fmt.Sprintf(`SELECT tw_cell(%[1]s) AS "value", COUNT(*) AS "rows", COUNT(*) OVER () AS %[2]s, MAX(%[3]s) OVER () AS %[3]s FROM (%[4]s) WHERE %[5]s GROUP BY tw_cell(%[1]s) ORDER BY COUNT(*) DESC, %[6]s%[7]s`,
-			c, ident(matched), ident(total), counted, where, sortKeys(p.Distinct, false), paging)
+			c, ident(matched), ident(total), counted, where, sortKeys("tw_cell("+c+")", "tw_num("+c+")", false), paging)
 	} else {
-		var names []string
-		for _, c := range cols {
+		var names, keys []string
+		for i, c := range cols {
 			names = append(names, ident(c))
+			// Computed once per row here, in a subquery SQLite never
+			// flattens (it has a window function), so the sort reads them
+			// instead of calling both functions twice per column per row.
+			if p.Sort != nil {
+				keys = append(keys, fmt.Sprintf(", tw_cell(%[1]s) AS %[2]s, tw_num(%[1]s) AS %[3]s",
+					ident(c), ident(added.cell[i]), ident(added.num[i])))
+			}
 		}
-		stmt = fmt.Sprintf(`SELECT %s, %s, %s FROM (SELECT *, COUNT(*) OVER () AS %s FROM (%s) WHERE %s)%s%s`,
-			strings.Join(names, ", "), ident(matched), ident(total), ident(matched), counted, where, orderBy(p.Sort, cols), paging)
+		stmt = fmt.Sprintf(`SELECT %s, %s, %s FROM (SELECT *, COUNT(*) OVER () AS %s%s FROM (%s) WHERE %s)%s%s`,
+			strings.Join(names, ", "), ident(matched), ident(total), ident(matched), strings.Join(keys, ""),
+			counted, where, orderBy(p.Sort, cols, added), paging)
 	}
 	res, err := d.Run(ctx, stmt, append(append([]any{}, args...), b.args...)...)
 	if err != nil {
@@ -222,10 +231,17 @@ func (p Page) validate(cols []string) error {
 	return nil
 }
 
-// countingNames picks names for the two counting columns that no result
-// column uses. SQLite compares identifiers without regard to case, so
-// this does too.
-func countingNames(cols []string) (total, matched string) {
+// added names the columns the wrap adds: the two counts, and each result
+// column's tw_cell and tw_num, which a sorted page orders by.
+type added struct {
+	total, matched string
+	cell, num      []string
+}
+
+// addedNames picks names for the wrap's columns that no result column
+// uses. SQLite compares identifiers without regard to case, so this does
+// too.
+func addedNames(cols []string) added {
 	taken := map[string]bool{}
 	for _, c := range cols {
 		taken[strings.ToLower(c)] = true
@@ -235,9 +251,15 @@ func countingNames(cols []string) (total, matched string) {
 		if i > 0 {
 			suffix = "_" + strconv.Itoa(i)
 		}
-		total, matched = "__tw_total"+suffix, "__tw_matched"+suffix
-		if !taken[total] && !taken[matched] {
-			return total, matched
+		a := added{total: "__tw_total" + suffix, matched: "__tw_matched" + suffix}
+		free := !taken[a.total] && !taken[a.matched]
+		for j := range cols {
+			a.cell = append(a.cell, "__tw_cell"+suffix+"_"+strconv.Itoa(j))
+			a.num = append(a.num, "__tw_num"+suffix+"_"+strconv.Itoa(j))
+			free = free && !taken[a.cell[j]] && !taken[a.num[j]]
+		}
+		if free {
+			return a
 		}
 	}
 }
@@ -300,26 +322,35 @@ func whereClause(filters []Filter, b *binder) string {
 	return "(" + strings.Join(terms, ") AND (") + ")"
 }
 
-// sortKeys orders one column: non-empty before empty, numbers before
-// text, each in the given direction.
-func sortKeys(column string, desc bool) string {
+// sortKeys orders one column, given its tw_cell and tw_num: non-empty
+// before empty, numbers before text, each in the given direction.
+func sortKeys(cell, num string, desc bool) string {
 	dir := "ASC"
 	if desc {
 		dir = "DESC"
 	}
-	c := ident(column)
-	return fmt.Sprintf("(tw_cell(%[1]s) = '') ASC, (tw_num(%[1]s) IS NULL) ASC, tw_num(%[1]s) %[2]s, tw_cell(%[1]s) %[2]s", c, dir)
+	return fmt.Sprintf("(%[1]s = '') ASC, (%[2]s IS NULL) ASC, %[2]s %[3]s, %[1]s %[3]s", cell, num, dir)
 }
 
-// orderBy is the ORDER BY of a page. Without a Sort it is empty and the
-// query's own order stands; a tiebreak on every column would replace it.
-func orderBy(s *Sort, cols []string) string {
+// orderBy is the ORDER BY of a page, over the keys the wrap added. Without
+// a Sort it is empty and the query's own order stands; a tiebreak on every
+// column would replace it.
+func orderBy(s *Sort, cols []string, a added) string {
 	if s == nil {
 		return ""
 	}
-	keys := []string{sortKeys(s.Column, s.Desc)}
-	for _, c := range cols {
-		keys = append(keys, sortKeys(c, false))
+	key := func(i int, desc bool) string {
+		return sortKeys(ident(a.cell[i]), ident(a.num[i]), desc)
+	}
+	var keys []string
+	for i, c := range cols {
+		if c == s.Column {
+			keys = append(keys, key(i, s.Desc))
+			break
+		}
+	}
+	for i := range cols {
+		keys = append(keys, key(i, false))
 	}
 	return " ORDER BY " + strings.Join(keys, ", ")
 }

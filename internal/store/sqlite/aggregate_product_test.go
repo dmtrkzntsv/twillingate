@@ -54,7 +54,7 @@ func TestAggregateProductRunsWithNoDeclaredAttributes(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	seedProductDay(t, db)
-	if err := db.AggregateProductDay(ctx, 1, day("2026-08-10"), nil, 50); err != nil {
+	if err := db.AggregateProductDay(ctx, 1, day("2026-08-10"), nil, defaultAttrsTopN); err != nil {
 		t.Fatal(err)
 	}
 	var n int
@@ -77,7 +77,7 @@ func TestAggregateProductDeclaredAttributes(t *testing.T) {
 	ctx := context.Background()
 	seedProductDay(t, db)
 	attrs := []string{"plan", "source"}
-	if err := db.AggregateProductDay(ctx, 1, day("2026-08-10"), attrs, 50); err != nil {
+	if err := db.AggregateProductDay(ctx, 1, day("2026-08-10"), attrs, defaultAttrsTopN); err != nil {
 		t.Fatal(err)
 	}
 	var count, uniq int
@@ -172,8 +172,8 @@ func TestAggregateProductIdempotent(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	must(db.AggregateProductDay(ctx, 1, day("2026-08-10"), nil, 50))
-	must(db.AggregateProductDay(ctx, 1, day("2026-08-10"), nil, 50)) // no raw left: no-op
+	must(db.AggregateProductDay(ctx, 1, day("2026-08-10"), nil, defaultAttrsTopN))
+	must(db.AggregateProductDay(ctx, 1, day("2026-08-10"), nil, defaultAttrsTopN)) // no raw left: no-op
 	var c int
 	db.db.QueryRow(`SELECT count FROM agg_product_daily WHERE event_name='subscribed'`).Scan(&c)
 	if c != 3 {
@@ -314,7 +314,7 @@ func TestAggregateProductGroupsZeroIsMeasured(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	seedProductDay(t, db) // no event carries a group_id
-	if err := db.AggregateProductDay(ctx, 1, day("2026-08-10"), []string{"plan"}, 50); err != nil {
+	if err := db.AggregateProductDay(ctx, 1, day("2026-08-10"), []string{"plan"}, defaultAttrsTopN); err != nil {
 		t.Fatal(err)
 	}
 	for _, value := range []string{"free", "pro"} {
@@ -343,7 +343,7 @@ func TestAggregateProductGroupsAreDistinctPerEvent(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AggregateProductDay(ctx, 1, day("2026-08-10"), []string{"plan"}, 50); err != nil {
+	if err := db.AggregateProductDay(ctx, 1, day("2026-08-10"), []string{"plan"}, defaultAttrsTopN); err != nil {
 		t.Fatal(err)
 	}
 	for event, want := range map[string]int64{"signup": 2, "renew": 1} {
@@ -418,7 +418,7 @@ func TestAggregateDayDeletesOnlyItsFamily(t *testing.T) {
 		seedViewDay(t, db)
 		seedProductDay(t, db)
 		before := count(t, db, "raw_product")
-		if err := db.AggregateViewDay(ctx, 1, day("2026-08-10")); err != nil {
+		if err := db.AggregateViewDay(ctx, 1, day("2026-08-10"), defaultDimensionsTopN); err != nil {
 			t.Fatal(err)
 		}
 		if n := count(t, db, "raw_views"); n != 0 {
@@ -433,7 +433,7 @@ func TestAggregateDayDeletesOnlyItsFamily(t *testing.T) {
 		seedViewDay(t, db)
 		seedProductDay(t, db)
 		before := count(t, db, "raw_views")
-		if err := db.AggregateProductDay(ctx, 1, day("2026-08-10"), nil, 50); err != nil {
+		if err := db.AggregateProductDay(ctx, 1, day("2026-08-10"), nil, defaultAttrsTopN); err != nil {
 			t.Fatal(err)
 		}
 		if n := count(t, db, "raw_product"); n != 0 {

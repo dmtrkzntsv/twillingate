@@ -176,16 +176,28 @@ func setupBenchDB(b *testing.B) *DB {
 		b.Fatal(err)
 	}
 	b.Cleanup(func() { db.Close() })
-	if err := db.Migrate(context.Background()); err != nil {
+	ctx := context.Background()
+	if err := db.Migrate(ctx); err != nil {
 		b.Fatal(err)
+	}
+	// Registered, as every project with events is: the attribute views
+	// read each project's keys from its row.
+	id, err := db.CreateProject(ctx, store.RegistryProject{
+		Name: "bench", AllowedOrigins: "[]", Attributes: "[]"},
+		store.AuditEntry{Actor: "bench", Action: "project.create"})
+	if err != nil {
+		b.Fatal(err)
+	}
+	if id != benchProject {
+		b.Fatalf("bench project id = %d, want %d", id, benchProject)
 	}
 	return db
 }
 
 // BenchmarkViewsPathsLiveHalf measures a top-paths breakdown over a 7-day
 // range of v_views_paths when none of the underlying days have been
-// aggregated: the whole query runs against the live half, which windows
-// over every row in the raw `views` table regardless of the day filter.
+// aggregated: the whole query runs against the live half, over the raw
+// rows of the days in the range.
 func BenchmarkViewsPathsLiveHalf(b *testing.B) {
 	db := setupBenchDB(b)
 	seedBenchViews(b, db)

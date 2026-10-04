@@ -34,7 +34,7 @@ func TestAggregateIdentityDayCountsUsersAndGroups(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := db.AggregateIdentityDay(ctx, 1, d); err != nil {
+	if err := db.AggregateIdentityDay(ctx, 1, d, defaultDimensionsTopN); err != nil {
 		t.Fatalf("aggregate: %v", err)
 	}
 
@@ -76,7 +76,7 @@ func TestAggregateIdentityDayIsIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := 0; i < 2; i++ {
-		if err := db.AggregateIdentityDay(ctx, 1, day("2026-08-10")); err != nil {
+		if err := db.AggregateIdentityDay(ctx, 1, day("2026-08-10"), defaultDimensionsTopN); err != nil {
 			t.Fatalf("run %d: %v", i, err)
 		}
 	}
@@ -107,7 +107,7 @@ func TestAggregateIdentityDayUpdatesLastSeen(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AggregateIdentityDay(ctx, 1, d); err != nil {
+	if err := db.AggregateIdentityDay(ctx, 1, d, defaultDimensionsTopN); err != nil {
 		t.Fatal(err)
 	}
 
@@ -136,10 +136,10 @@ func TestIdentityDailyViewReadsAggregates(t *testing.T) {
 	// The view unions the aggregate table with a live computation over raw
 	// rows, so the raw day must be consumed before counting or the same day
 	// legitimately appears twice. AggregateViewDay is what deletes it.
-	if err := db.AggregateIdentityDay(ctx, 1, day("2026-08-10")); err != nil {
+	if err := db.AggregateIdentityDay(ctx, 1, day("2026-08-10"), defaultDimensionsTopN); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AggregateViewDay(ctx, 1, day("2026-08-10")); err != nil {
+	if err := db.AggregateViewDay(ctx, 1, day("2026-08-10"), defaultDimensionsTopN); err != nil {
 		t.Fatal(err)
 	}
 	var n int

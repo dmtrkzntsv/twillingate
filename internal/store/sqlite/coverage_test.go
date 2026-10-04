@@ -130,7 +130,7 @@ func TestOperationsOnClosedDB(t *testing.T) {
 			return db.PruneAggregates(ctx, 1, day("2026-01-01"))
 		},
 		"IncrementalVacuum": func() error { return db.IncrementalVacuum(ctx) },
-		"AggregateViewDay":  func() error { return db.AggregateViewDay(ctx, 1, day("2026-01-01")) },
+		"AggregateViewDay":  func() error { return db.AggregateViewDay(ctx, 1, day("2026-01-01"), defaultDimensionsTopN) },
 		"Migrate":           func() error { return db.Migrate(ctx) },
 		"WriteEvents(views)": func() error {
 			return db.WriteEvents(ctx, []store.Event{{Family: store.FamilyViews, ID: "1", ProjectID: 1, Kind: "web",

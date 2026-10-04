@@ -86,13 +86,22 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 	if err := Migrate(ctx, cfg, st); err != nil {
 		return err
 	}
-	// v_product_attrs' live half reads the cardinality cap from meta with a
-	// scalar subquery -- SQL cannot see the environment. Written before
-	// anything queries the view so the first read uses the configured cap
-	// rather than the view's built-in fallback.
-	if err := st.SetMeta(ctx, "product_attributes_top_n",
-		strconv.Itoa(cfg.ProductAttributesTopN)); err != nil {
-		return err
+	// The views' live halves read their caps from meta with a scalar
+	// subquery -- SQL cannot see the environment. Written before anything
+	// queries a view so the first read uses the configured caps rather than
+	// the views' built-in fallbacks. 0 is written as is: the views read it
+	// as no cap, as the daily pass does.
+	for _, m := range []struct {
+		key string
+		n   int
+	}{
+		{"product_attributes_top_n", cfg.ProductAttributesTopN},
+		{"views_dimensions_top_n", cfg.ViewsDimensionsTopN},
+		{"identities_top_n", cfg.IdentitiesTopN},
+	} {
+		if err := st.SetMeta(ctx, m.key, strconv.Itoa(m.n)); err != nil {
+			return err
+		}
 	}
 
 	reg := manage.New(st, logger)

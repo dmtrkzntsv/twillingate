@@ -576,3 +576,53 @@ func runServeAndCollectLogs(t *testing.T, cfg *config.Config) string {
 	}
 	return logs.String()
 }
+
+// The views read their caps from meta, since SQL cannot see the
+// environment: every boot writes all three before anything is served, and
+// a restart with new values replaces them. Without it every view would
+// fall back to its built-in default while the daily pass used the setting.
+func TestServeWritesTheCapsToMeta(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "caps.db")
+	bg := context.Background()
+	boot := func(product, views, identities string) {
+		t.Helper()
+		addr := freePort(t)
+		testConfig(t, addr, dbPath) // seeds the project
+		cfg := configtest.Load(t, map[string]string{
+			"INGEST_ADDR":              addr,
+			"DATABASE_DSN":             "sqlite://" + dbPath,
+			"PRODUCT_ATTRIBUTES_TOP_N": product,
+			"VIEWS_DIMENSIONS_TOP_N":   views,
+			"IDENTITIES_TOP_N":         identities,
+		})
+		ctx, cancel := context.WithCancel(bg)
+		done := make(chan error, 1)
+		go func() { done <- Serve(ctx, cfg, slog.Default(), true, false) }()
+		waitHealthy(t, "http://"+addr)
+		cancel()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatalf("serve: %v", err)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("serve did not shut down")
+		}
+		st, err := store.Open("sqlite://" + dbPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer st.Close()
+		for key, want := range map[string]string{
+			"product_attributes_top_n": product,
+			"views_dimensions_top_n":   views,
+			"identities_top_n":         identities,
+		} {
+			if got, err := st.GetMeta(bg, key); err != nil || got != want {
+				t.Errorf("meta %s = %q (%v), want %q", key, got, err, want)
+			}
+		}
+	}
+	boot("7", "0", "1200")
+	boot("50", "500", "0")
+}

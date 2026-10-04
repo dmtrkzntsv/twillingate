@@ -29,14 +29,14 @@ type Store interface {
 	ProjectIDs(ctx context.Context) ([]int64, error)
 	ViewDaysBefore(ctx context.Context, projectID int64, before civil.Date) ([]civil.Date, error)
 	ProductDaysBefore(ctx context.Context, projectID int64, before civil.Date) ([]civil.Date, error)
-	AggregateViewDay(ctx context.Context, projectID int64, day civil.Date) error
+	AggregateViewDay(ctx context.Context, projectID int64, day civil.Date, topN int) error
 	AggregateProductDay(ctx context.Context, projectID int64, day civil.Date, attrs []string, topN int) error
 	MeasureDaysBefore(ctx context.Context, projectID int64, before civil.Date) ([]civil.Date, error)
 	AggregateMeasureDay(ctx context.Context, projectID int64, day civil.Date, attrs []string, topN int) error
 	UpsertActors(ctx context.Context, projectID int64, day civil.Date) error
 	AggregateRetentionDay(ctx context.Context, projectID int64, day civil.Date) error
 	PruneActors(ctx context.Context, projectID int64, before civil.Date) error
-	AggregateIdentityDay(ctx context.Context, projectID int64, day civil.Date) error
+	AggregateIdentityDay(ctx context.Context, projectID int64, day civil.Date, topN int) error
 	PruneIdentities(ctx context.Context, projectID int64, before civil.Date) error
 	PruneAggregates(ctx context.Context, projectID int64, before civil.Date) error
 	RebuildFlatView(ctx context.Context, keys []string) error
@@ -140,7 +140,7 @@ func (r *Runner) RunDailyPass(ctx context.Context) error {
 			if day == today {
 				continue
 			}
-			if err := r.store.AggregateIdentityDay(ctx, id, day); err != nil {
+			if err := r.store.AggregateIdentityDay(ctx, id, day, r.cfg.IdentitiesTopN); err != nil {
 				r.logger.Error("aggregate identity failed", "project", id, "day", day.String(), "error", err)
 			}
 		}
@@ -150,7 +150,7 @@ func (r *Runner) RunDailyPass(ctx context.Context) error {
 			return err
 		}
 		for _, day := range days {
-			if err := r.store.AggregateViewDay(ctx, id, day); err != nil {
+			if err := r.store.AggregateViewDay(ctx, id, day, r.cfg.ViewsDimensionsTopN); err != nil {
 				r.logger.Error("aggregate views failed", "project", id, "day", day.String(), "error", err)
 			}
 		}

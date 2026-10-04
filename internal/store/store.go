@@ -91,8 +91,9 @@ type Event struct {
 type SystemAttribute struct{ Key, Column string }
 
 // SystemAttributes are rolled up for every project, declared or not:
-// low-cardinality environment keys. The v_product_attrs live half
-// (020_one_events_table.sql) carries one arm per entry.
+// low-cardinality environment keys. The live halves of v_product_attrs
+// and v_measures_attrs (025_live_halves.sql) list every entry in their
+// keys and their CASE.
 var SystemAttributes = []SystemAttribute{
 	{"$platform", "platform"},
 	{"$os", "os"},
@@ -205,13 +206,13 @@ type Store interface {
 	ViewDaysBefore(ctx context.Context, projectID int64, before civil.Date) ([]civil.Date, error)
 	ProductDaysBefore(ctx context.Context, projectID int64, before civil.Date) ([]civil.Date, error)
 	MeasureDaysBefore(ctx context.Context, projectID int64, before civil.Date) ([]civil.Date, error)
-	AggregateViewDay(ctx context.Context, projectID int64, day civil.Date) error
+	AggregateViewDay(ctx context.Context, projectID int64, day civil.Date, topN int) error
 	AggregateProductDay(ctx context.Context, projectID int64, day civil.Date, attrs []string, topN int) error
 	AggregateMeasureDay(ctx context.Context, projectID int64, day civil.Date, attrs []string, topN int) error
 	UpsertActors(ctx context.Context, projectID int64, day civil.Date) error
 	AggregateRetentionDay(ctx context.Context, projectID int64, day civil.Date) error
 	PruneActors(ctx context.Context, projectID int64, before civil.Date) error
-	AggregateIdentityDay(ctx context.Context, projectID int64, day civil.Date) error
+	AggregateIdentityDay(ctx context.Context, projectID int64, day civil.Date, topN int) error
 	PruneIdentities(ctx context.Context, projectID int64, before civil.Date) error
 	PruneAggregates(ctx context.Context, projectID int64, before civil.Date) error
 	IncrementalVacuum(ctx context.Context) error
