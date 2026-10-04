@@ -5,7 +5,7 @@ const PASSWORD = 'e2e-pass'
 
 test('/api/docs opens Swagger UI, and Try it out is signed with the app login', async ({ page }) => {
   // Log in first, so the page has a refresh token to sign requests with.
-  await page.goto('/app/')
+  await page.goto('/app/dashboards')
   await page.waitForURL(/\/oauth\/authorize\?/)
   await page.getByLabel('Password').fill(PASSWORD)
   await page.getByRole('button', { name: 'Connect' }).click()

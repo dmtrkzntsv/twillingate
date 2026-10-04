@@ -41,6 +41,9 @@ type Store interface {
 	PruneAggregates(ctx context.Context, projectID int64, before civil.Date) error
 	RebuildFlatView(ctx context.Context, keys []string) error
 	IncrementalVacuum(ctx context.Context) error
+	// MeasureServerStats stores the server_stats measurements (each
+	// project's disk use) as of now.
+	MeasureServerStats(ctx context.Context, now time.Time) error
 	// PurgeArchived deletes every project, dashboard and widget archived
 	// more than days ago. days <= 0 purges nothing.
 	PurgeArchived(ctx context.Context, days int) (store.PurgeResult, error)
@@ -71,8 +74,8 @@ func New(st Store, cfg *config.Config, reg *manage.Registry, salt Rotator, logge
 }
 
 // RunDailyPass rolls up every day that has aged out of the raw window,
-// prunes aggregates past their retention, refreshes the flat view and
-// reclaims free pages.
+// prunes aggregates past their retention, refreshes the flat view,
+// reclaims free pages and measures the server's stats (project sizes).
 //
 // Per-project failures are logged and skipped rather than returned: one
 // broken project must not stop maintenance for the rest. Only failures to
@@ -196,6 +199,12 @@ func (r *Runner) RunDailyPass(ctx context.Context) error {
 	}
 	if err := r.store.IncrementalVacuum(ctx); err != nil {
 		r.logger.Error("incremental vacuum failed", "error", err)
+	}
+	// Last, so the sizes are those left after the pruning and the vacuum.
+	// Run calls this pass at boot, in the background, so sizes exist shortly
+	// after every start, not only after the first 03:00.
+	if err := r.store.MeasureServerStats(ctx, r.now()); err != nil {
+		r.logger.Error("measure server stats", "error", err)
 	}
 	return nil
 }

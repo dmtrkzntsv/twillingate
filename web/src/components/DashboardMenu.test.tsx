@@ -198,7 +198,7 @@ describe('TabMenu, the one tab of a lone user dashboard', () => {
     await openTabMenu()
     await userEvent.click(screen.getByText('Archive tab'))
 
-    expect(archive).toHaveBeenCalledWith(launchWeek, { navigateTo: '/' })
+    expect(archive).toHaveBeenCalledWith(launchWeek, { navigateTo: '/dashboards' })
   })
 
   it('hides "Move to" entirely when there are no other user groups', async () => {
@@ -232,7 +232,7 @@ describe('GroupMenu', () => {
 
     await openGroupMenu()
     await userEvent.click(screen.getByText('Archive dashboard'))
-    expect(archive).toHaveBeenCalledWith(marketingTabs[0], { wholeGroup: true, navigateTo: '/' })
+    expect(archive).toHaveBeenCalledWith(marketingTabs[0], { wholeGroup: true, navigateTo: '/dashboards' })
   })
 
   it('offers the same on a system group', async () => {

@@ -154,6 +154,40 @@ func (c Consent) Value() (driver.Value, error) {
 	return nil, nil
 }
 
+// The server_stats keys the daily pass writes. A new stat is a new
+// constant here, measured in internal/store/sqlite/server_stats.go, never
+// a migration.
+const (
+	// Per project, on the day measured: its estimated disk use in raw rows
+	// (events) and in everything rolled up (agg_*, actors, identities).
+	StatRawBytes       = "raw_bytes"
+	StatAggregateBytes = "aggregate_bytes"
+	// Per project, for the day counted (every day before the pass's): its
+	// views, product events and measure samples.
+	StatViews    = "views"
+	StatEvents   = "events"
+	StatMeasures = "measures"
+	// Server-wide (project 0), on the day measured: the database file's
+	// size, page_count × page_size.
+	StatDatabaseBytes = "database_bytes"
+	// Per project, on the day measured: how many attributes it declares.
+	StatDeclaredAttributes = "declared_attributes"
+	// Per project, for the day counted while its rows are raw (kept once
+	// they are rolled up, which keeps only what the caps let through): the
+	// distinct attribute keys and key/value pairs received, declared or
+	// not, and the values the attribute views fold into (other), summed
+	// over every event (and measure) and aggregated key.
+	StatAttributeKeys         = "attribute_keys"
+	StatAttributeValues       = "attribute_values"
+	StatAttributeValuesFolded = "attribute_values_folded"
+	// Server-wide (project 0), on the day measured: each cap in force, as
+	// its setting names it (0 = no cap), so a day's folds can be read
+	// against the cap that made them.
+	StatCapProductAttributes = "product_attributes_top_n"
+	StatCapViewsDimensions   = "views_dimensions_top_n"
+	StatCapIdentities        = "identities_top_n"
+)
+
 // Actor kinds: how an actor id was derived. Only user and install actors
 // are stable enough to cohort; a connection hash rotates with the salt.
 const (
@@ -216,6 +250,9 @@ type Store interface {
 	PruneIdentities(ctx context.Context, projectID int64, before civil.Date) error
 	PruneAggregates(ctx context.Context, projectID int64, before civil.Date) error
 	IncrementalVacuum(ctx context.Context) error
+	// MeasureServerStats writes now's UTC day of server_stats, replacing
+	// that day's rows and keeping earlier days as history.
+	MeasureServerStats(ctx context.Context, now time.Time) error
 	ProjectIDs(ctx context.Context) ([]int64, error) // all rows incl. archived, ascending
 	RebuildFlatView(ctx context.Context, keys []string) error
 	GetMeta(ctx context.Context, key string) (string, error) // "" if absent

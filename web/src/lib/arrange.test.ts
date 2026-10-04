@@ -94,7 +94,7 @@ describe('nextAfterArchive', () => {
   })
 
   it('goes to "/" for a lone tab', () => {
-    expect(nextAfterArchive([tab(5, 'Scratch')], 5)).toBe('/')
+    expect(nextAfterArchive([tab(5, 'Scratch')], 5)).toBe('/dashboards')
   })
 })
 

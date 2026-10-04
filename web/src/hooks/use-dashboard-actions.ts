@@ -30,7 +30,7 @@ export interface DashboardActions {
  * and move, each the existing audited route, with the page's own bearer
  * token (D19). Every action refetches the dashboard list and the
  * dashboard shown so the sidebar and the tabs follow, and navigates only
- * once the list is back: "/" picks from that list, and before the
+ * once the list is back: "/dashboards" picks from that list, and before the
  * refetch it still offers the dashboard just archived. A refusal shows
  * its message in a toast instead of throwing to the caller, and so does
  * any other failure — a dropped connection throws a bare `TypeError` from

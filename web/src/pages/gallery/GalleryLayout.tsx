@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import AppShell, { TopBar } from '@/components/AppShell'
+import Crumbs from '@/components/Crumbs'
 import { dashboardsQuery } from '@/lib/queries'
 
 interface Props {
@@ -17,7 +18,7 @@ export default function GalleryLayout({ title, description, sections, children }
   return (
     <AppShell dashboards={list.data?.dashboards ?? []} currentId={0} readOnly={list.data?.dev === true}>
       <TopBar>
-        <span className="text-sm text-muted-foreground">Gallery</span>
+        <Crumbs items={[{ label: 'Gallery', to: '/gallery/components' }, { label: title }]} />
       </TopBar>
       <div className="mx-auto flex w-full max-w-[1600px] flex-1 flex-col gap-6 p-3 sm:p-4 lg:p-6">
         <header className="flex flex-col gap-2">

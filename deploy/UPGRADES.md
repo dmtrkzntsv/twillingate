@@ -521,3 +521,14 @@ Also check there:
 A changed cap applies to the live days at once and to days rolled up after
 the change; days already rolled up keep the `(other)` rows they were written
 with.
+
+### Upgrading to projects in the console (migration 026)
+
+`list_ingest_keys` (and `GET /api/keys`) now answers `label`, `key` and
+`state` instead of `Label`, `Key` and `State`; update any script that reads
+them. The console gains `/app/projects`: every project's usage, details and
+ingest keys, and how its data meets the caps. Migration 026 adds
+`server_stats`, a daily history of each project's size and counts and of
+the database's size. The first daily pass, which also runs at start, counts
+every day the aggregates still hold (a year by default), so the usage
+history starts there; sizes start that day and fill in one day at a time.

@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router'
 import AppShell, { TopBar } from '@/components/AppShell'
+import Crumbs from '@/components/Crumbs'
 import { Button } from '@/components/ui/button'
 import { useDashboardActions } from '@/hooks/use-dashboard-actions'
 import type { DashboardInfo } from '@/lib/api'
@@ -57,7 +58,7 @@ export default function Archive() {
   return (
     <AppShell dashboards={dashboards} currentId={0} readOnly={data?.dev === true}>
       <TopBar>
-        <span className="text-sm text-muted-foreground">Archive</span>
+        <Crumbs items={[{ label: 'Archive' }]} />
       </TopBar>
       <div className="mx-auto flex w-full max-w-[1600px] flex-1 flex-col gap-6 p-3 sm:p-4 lg:p-6">
         <header className="flex flex-col gap-2">

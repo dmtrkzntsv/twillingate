@@ -12,7 +12,10 @@ import Dashboard from '@/pages/Dashboard'
 import ComponentsGallery from '@/pages/gallery/ComponentsGallery'
 import DashboardsGallery from '@/pages/gallery/DashboardsGallery'
 import Home from '@/pages/Home'
+import Landing from '@/pages/Landing'
 import Login from '@/pages/Login'
+import Project from '@/pages/Project'
+import Projects from '@/pages/Projects'
 
 /** Sends a request the API refused with 401 to the login page, in-app, coming back here after. */
 function LoginOnUnauthorized() {
@@ -51,6 +54,14 @@ function App() {
             path="/"
             element={
               <OnlineOnly>
+                <Landing />
+              </OnlineOnly>
+            }
+          />
+          <Route
+            path="/dashboards"
+            element={
+              <OnlineOnly>
                 <Home />
               </OnlineOnly>
             }
@@ -68,6 +79,22 @@ function App() {
             element={
               <OnlineOnly>
                 <Archive />
+              </OnlineOnly>
+            }
+          />
+          <Route
+            path="/projects"
+            element={
+              <OnlineOnly>
+                <Projects />
+              </OnlineOnly>
+            }
+          />
+          <Route
+            path="/projects/:id"
+            element={
+              <OnlineOnly>
+                <Project />
               </OnlineOnly>
             }
           />

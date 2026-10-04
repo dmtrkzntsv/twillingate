@@ -85,7 +85,7 @@ interface GroupMenuProps {
  * every …" is a checkmark that reloads the dashboard on that interval
  * while the window has focus. "Duplicate dashboard" copies every tab and
  * opens the copy, never archiving anything; "Archive dashboard" takes the
- * whole group out of the sidebar and lands on "/". An archived group
+ * whole group out of the sidebar and lands on "/dashboards". An archived group
  * offers no Archive, since its banner already offers Restore.
  */
 export function GroupMenu({ dashboard, editable, refresh, autoRefresh }: GroupMenuProps) {
@@ -119,7 +119,7 @@ export function GroupMenu({ dashboard, editable, refresh, autoRefresh }: GroupMe
             {!dashboard.archived_at && (
               <DropdownMenuItem
                 disabled={pending}
-                onClick={() => void archive(first, { wholeGroup: true, navigateTo: '/' })}
+                onClick={() => void archive(first, { wholeGroup: true, navigateTo: '/dashboards' })}
               >
                 <ArchiveIcon />
                 Archive dashboard

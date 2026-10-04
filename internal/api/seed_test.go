@@ -13,11 +13,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dmtrkzntsv/twillingate/internal/config"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
 	"github.com/dmtrkzntsv/twillingate/internal/reporting"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
-	_ "github.com/dmtrkzntsv/twillingate/internal/store/sqlite"
+	"github.com/dmtrkzntsv/twillingate/internal/store/sqlite"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -205,7 +206,8 @@ func newTestHost(t *testing.T) (*host, *mcp.ClientSession) {
 	}
 	h := &host{db: db, reg: reg, ops: manage.NewOps(reg, st),
 		rep:       reporting.New(st, db, reporting.Options{CacheAge: time.Minute, RefreshAge: time.Second}),
-		publicURL: "https://collector.test", logger: logger}
+		publicURL: "https://collector.test", logger: logger,
+		limits: limitsFrom(&config.Config{ProductAttributesTopN: config.DefaultProductAttributesTopN, ViewsDimensionsTopN: config.DefaultViewsDimensionsTopN, IdentitiesTopN: config.DefaultIdentitiesTopN})}
 	// host itself carries no path (production has no need for one once
 	// opened); setGuards needs it to reopen with different guards, so the
 	// test side remembers it here, keyed by the host it belongs to.
@@ -289,11 +291,19 @@ func newTestRegistrar(t *testing.T, h *host) *registrar {
 // rawExec reaches the underlying *sql.DB of the sqlite store for seeding.
 // The store interface deliberately has no Exec; ExecForTest is a
 // test-only accessor added to internal/store/sqlite/sqlite.go.
-func rawExec(st store.Store, q string, args ...any) (sql.Result, error) {
-	return st.(interface {
-		ExecForTest(string, ...any) (sql.Result, error)
-	}).ExecForTest(q, args...)
+func rawExec(st any, q string, args ...any) (sql.Result, error) {
+	return st.(execForTest).ExecForTest(q, args...)
 }
+
+// execForTest is the sqlite store's test-only Exec, which neither
+// store.Store nor manage.Store declares, so callers hold those and rawExec
+// asserts down. The assertion below keeps the method's signature checked at
+// compile time.
+type execForTest interface {
+	ExecForTest(string, ...any) (sql.Result, error)
+}
+
+var _ execForTest = (*sqlite.DB)(nil)
 
 // callTool invokes a tool over the session and fails the test on
 // protocol errors; tool errors come back in the result.

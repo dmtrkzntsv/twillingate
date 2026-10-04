@@ -126,6 +126,9 @@ one, add the replacement, ship clients, watch the old label fall to zero in the
 per-minute `ingest summary` log line, then disable it. Disabling is reversible;
 deleting the entry is the eventual cleanup.
 
+`list_ingest_keys` answers one row per key: `project_id`, `label`, `key`
+and `state` (`active` or `disabled`).
+
 ---
 
 ## Instrument a website
@@ -887,7 +890,7 @@ CORS-simple.
 
 ## Answer questions with the data
 
-A connected session gets thirty-four tools: the eighteen below, and sixteen
+A connected session gets thirty-seven tools: the twenty-one below, and sixteen
 that build the dashboards served at `/app/`, which are documented in
 `docs://reporting` ([reporting.md](reporting.md)). To build or change a
 dashboard, call `reporting_guide` first.
@@ -899,6 +902,9 @@ take `project_id`, `from` and `to` as `YYYY-MM-DD` unless noted.
 | Tool | Extra parameters | Returns |
 | --- | --- | --- |
 | `list_projects` | none | Every project with its `project_id`, name, `archived`, `allowed_origins` and declared `attributes`. Call this first — every other tool needs a `project_id` |
+| `limits` | none (no `project_id`) | The caps in force — `VIEWS_DIMENSIONS_TOP_N`, `PRODUCT_ATTRIBUTES_TOP_N`, `IDENTITIES_TOP_N` — each with its `value` (0 = no cap), `default` and what it caps |
+| `cap_usage` | `from`, `to` (optional: the last 30 days) | Per capped dimension — views breakdowns and kinds, attribute keys, `users`/`groups` — the busiest day's values against the `cap`, `days` with data, `days_capped` (an `(other)` row; for users and groups, the cap reached) and `folded_share` |
+| `usage` | `project_id` (optional: every project), `from`, `to` (optional: the last 30 days) | Per project: `views`, product `events` and measure `samples` per day and in total, `last_received_at`, `first_day` (the oldest day with data, stored counts included), `raw_days`, `rolled_up_days`, an estimated `size` (raw rows and aggregates, measured daily by the daily pass, which also runs at start: the newest, with the day it was `measured_at`; `null` until the first measurement) and each day's measured `total_bytes` in the series (`null` on days not measured), `unused_attributes` (declared keys no event carried; computed only with `project_id`, `null` for the all-projects answer); plus the database's size on disk now and per day (`database_series`). Days before the newest daily pass read the counts it stored, which outlive the aggregates' retention. Each series day also carries `declared_attributes` and, counted the night after while the day's rows are raw and kept once rolled up, the distinct `attribute_keys` and `attribute_values` received and the `attribute_values_folded` into `(other)` (`null` on days not stored) |
 | `views_overview` | `kind` (optional) | Visitors, views, sessions, bounces, average session length per day, summed across kinds unless `kind` filters one |
 | `views_breakdown` | `dimension`, `limit` (default 20) | Top rows for one of `kinds`, `paths`, `hosts`, `referrers`, `utm`, `countries`, `platforms`, `os`, `browsers`, `app_versions`, `devices`, `displays`, `consent`, `locales`. Two-key dimensions return both columns. `consent` is `given`, `none` or `unknown`. `locales` pairs `browser_locale` with `app_locale`, either empty when not sent. |
 | `product_events` | `event` (optional filter) | Count and unique users per event name, plus daily totals |
@@ -944,6 +950,9 @@ curl -H "Authorization: Bearer $TOKEN" \
 | Method | Path | Mirrors | Input |
 |---|---|---|---|
 | `GET` | `/api/projects` | `list_projects` | — |
+| `GET` | `/api/limits` | `limits` | — |
+| `GET` | `/api/usage` | `usage` | query: `project_id`, `from`, `to` |
+| `GET` | `/api/projects/{project_id}/cap-usage` | `cap_usage` | query: `from`, `to` |
 | `POST` | `/api/projects` | `create_project` | body: `name`, `allowed_origins`, `attributes`, `skip_key` → 201 |
 | `PATCH` | `/api/projects/{project_id}` | `update_project` | body: fields to change (merge); `allowed_origins: []` clears |
 | `POST` | `/api/projects/{project_id}/archive` | `archive_project` | — |

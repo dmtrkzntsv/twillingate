@@ -34,7 +34,29 @@ afterEach(() => {
 })
 
 describe('App', () => {
-  it('redirects "/" to the last dashboard opened on this device', async () => {
+  it('opens the projects on "/"', async () => {
+    vi.stubGlobal('fetch', vi.fn((url: string) =>
+      Promise.resolve(url.startsWith('/api/dashboards')
+        ? dashboardsResponse([{ dashboard_id: 3, title: 'Views', owner: 'system', group_id: 3, widgets: 1 }])
+        : json({ projects: [], keys: [], limits: [] }))))
+    window.history.pushState({}, '', '/app/')
+
+    renderApp()
+
+    await waitFor(() => expect(window.location.pathname).toBe('/app/projects'))
+  })
+
+  it('opens the dashboards on "/" in a dashboards preview, which has no projects', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      json({ timezone: 'UTC', dev: true, dashboards: [{ dashboard_id: 3, title: 'Views', owner: 'system', group_id: 3, widgets: 1 }] })))
+    window.history.pushState({}, '', '/app/')
+
+    renderApp()
+
+    await waitFor(() => expect(window.location.pathname).toBe('/app/dashboards/3'))
+  })
+
+  it('redirects "/dashboards" to the last dashboard opened on this device', async () => {
     localStorage.setItem('twillingate.last_dashboard', '2')
     vi.stubGlobal(
       'fetch',
@@ -45,14 +67,14 @@ describe('App', () => {
         ])
       )
     )
-    window.history.pushState({}, '', '/app/')
+    window.history.pushState({}, '', '/app/dashboards')
 
     renderApp()
 
     await waitFor(() => expect(window.location.pathname).toBe('/app/dashboards/2'))
   })
 
-  it('redirects "/" to the first system dashboard with nothing stored', async () => {
+  it('redirects "/dashboards" to the first system dashboard with nothing stored', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue(
@@ -62,7 +84,7 @@ describe('App', () => {
         ])
       )
     )
-    window.history.pushState({}, '', '/app/')
+    window.history.pushState({}, '', '/app/dashboards')
 
     renderApp()
 
@@ -81,16 +103,16 @@ describe('App', () => {
         ])
       )
     )
-    window.history.pushState({}, '', '/app/')
+    window.history.pushState({}, '', '/app/dashboards')
 
     renderApp()
 
     await waitFor(() => expect(window.location.pathname).toBe('/app/dashboards/4'))
   })
 
-  it('says so on "/" when there are no dashboards', async () => {
+  it('says so on "/dashboards" when there are no dashboards', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(dashboardsResponse([])))
-    window.history.pushState({}, '', '/app/')
+    window.history.pushState({}, '', '/app/dashboards')
 
     renderApp()
 
@@ -98,7 +120,7 @@ describe('App', () => {
     expect(screen.queryByRole('link', { name: 'Open the archive' })).not.toBeInTheDocument()
   })
 
-  it('points to the archive on "/" when every dashboard is archived', async () => {
+  it('points to the archive on "/dashboards" when every dashboard is archived', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue(
@@ -108,7 +130,7 @@ describe('App', () => {
         ])
       )
     )
-    window.history.pushState({}, '', '/app/')
+    window.history.pushState({}, '', '/app/dashboards')
 
     renderApp()
 
@@ -118,13 +140,13 @@ describe('App', () => {
     await waitFor(() => expect(window.location.pathname).toBe('/app/archive'))
   })
 
-  it('offers a retry on "/" when the dashboards fail to load', async () => {
+  it('offers a retry on "/dashboards" when the dashboards fail to load', async () => {
     const fetch = vi
       .fn()
       .mockResolvedValueOnce(json({ error: { code: 'internal', message: 'database is locked' } }, 500))
       .mockResolvedValue(dashboardsResponse([{ dashboard_id: 3, title: 'Views', owner: 'system', group_id: 3, widgets: 1 }]))
     vi.stubGlobal('fetch', fetch)
-    window.history.pushState({}, '', '/app/')
+    window.history.pushState({}, '', '/app/dashboards')
 
     renderApp()
 

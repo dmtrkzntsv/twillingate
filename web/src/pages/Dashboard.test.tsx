@@ -47,12 +47,12 @@ function renderAt(url: string) {
   )
 }
 
-/** Like renderAt, with "/" routed to Home, where an archive with no next tab lands. */
+/** Like renderAt, with "/dashboards" routed to Home, where an archive with no next tab lands. */
 function renderAppAt(url: string) {
   return renderWithProviders(
     <MemoryRouter initialEntries={[url]}>
       <Routes>
-        <Route path="/" element={<Home />} />
+        <Route path="/dashboards" element={<Home />} />
         <Route
           path="/dashboards/:id"
           element={
@@ -391,7 +391,7 @@ describe('Dashboard', () => {
   })
 
   it('asks for a project first when there are no active ones, and loads no widget', async () => {
-    const widgetData = mockApi({ projects: [{ project_id: 3, name: 'legacy', archived: true }] })
+    const widgetData = mockApi({ projects: [{ project_id: 3, name: 'legacy', archived: true, allowed_origins: [] }] })
     renderAt('/dashboards/1')
 
     expect(await screen.findByText('Create a project first')).toBeInTheDocument()

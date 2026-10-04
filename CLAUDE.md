@@ -43,6 +43,16 @@ Refusals are typed (`manage.ErrNotFound`, `manage.ErrConflict`,
 `manage.ErrInvalid`; the first two are the store's own values) and matched
 with `errors.Is`; message text is for humans, never for matching.
 
+## Web UI
+
+Everything clickable shows the pointer cursor. `web/src/index.css` sets it
+once, in the base layer, for enabled buttons, links and the interactive
+ARIA roles, and `web/e2e/cursor.spec.ts` fails on a visible, enabled
+control without it. Make a new clickable element one of those (a `button`,
+a link, or `role="button"` on anything else) rather than adding a
+`cursor-pointer` class; a deliberate other cursor goes in that spec's
+`ALLOWED`, with the reason.
+
 ## Commits and releases
 
 [Conventional Commits](https://www.conventionalcommits.org/):

@@ -355,8 +355,8 @@ func TestServeSharedListenerServesBothSurfaces(t *testing.T) {
 			}
 		}
 
-		// The root opens the dashboards wherever the console listens, and only
-		// there: an ingest-only listener has no dashboards to send it to.
+		// The root opens the app wherever the console listens, and only
+		// there: an ingest-only listener has no app to send it to.
 		root := func(addr string) *http.Response {
 			t.Helper()
 			noFollow := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}

@@ -355,8 +355,12 @@ a loopback address, without a login; its usage is in
 
 Every CLI command on a systemd host needs the unit's environment:
 `sudo -u twillingate sh -ac '. /etc/twillingate/twillingate.env; twillingate project list'`.
-Aggregation, pruning and incremental vacuum run daily at 03:00 UTC and the
-visitor salt rotates at 00:00 UTC; a catch-up pass at startup means downtime
+Aggregation, pruning, incremental vacuum and the daily history in
+`server_stats` (each project's disk use, declared attributes, views,
+events and measure samples, and attribute keys, values and values folded
+into `(other)` per day, and the database's size and the caps in force,
+which `usage` reads and which outlive the aggregates' retention) run daily at
+03:00 UTC and the visitor salt rotates at 00:00 UTC; a catch-up pass at startup means downtime
 across those times skips no day. With `LOG_FILE` set, install
 `deploy/logrotate/twillingate` into `/etc/logrotate.d/`.
 

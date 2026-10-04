@@ -164,6 +164,13 @@ func (f *faultyStore) IncrementalVacuum(ctx context.Context) error {
 	return f.Store.IncrementalVacuum(ctx)
 }
 
+func (f *faultyStore) MeasureServerStats(ctx context.Context, now time.Time) error {
+	if f.shouldFail("MeasureServerStats") {
+		return errBoom
+	}
+	return f.Store.MeasureServerStats(ctx, now)
+}
+
 // setupFaulty is setup, but returns a *Runner built over a faultyStore so
 // the caller can arrange targeted failures before calling RunDailyPass, plus
 // a buffer capturing every log line the run produces.
@@ -391,6 +398,19 @@ func TestRunDailyPassLogsIncrementalVacuumFailure(t *testing.T) {
 	}
 	if !logged(buf, "incremental vacuum failed") {
 		t.Errorf("log output = %q, want mention of incremental vacuum failed", buf.String())
+	}
+}
+
+// The measurement is the last step: a failure is logged and the pass still
+// succeeds, and the earlier steps have already run.
+func TestRunDailyPassLogsMeasureServerStatsFailure(t *testing.T) {
+	_, fst, r, buf := setupFaulty(t, jobsVars, jobsProjectSpecs)
+	fst.failing("MeasureServerStats")
+	if err := r.RunDailyPass(context.Background()); err != nil {
+		t.Fatalf("RunDailyPass = %v, want nil", err)
+	}
+	if !logged(buf, "measure server stats") || !logged(buf, "boom") {
+		t.Errorf("log output = %q, want mention of measure server stats and boom", buf.String())
 	}
 }
 

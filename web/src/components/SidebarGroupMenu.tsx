@@ -33,7 +33,7 @@ export default function SidebarGroupMenu({ group, userGroups, currentId }: Props
   const { duplicate, archive, move, pending } = useDashboardActions()
   const { isMobile, setOpenMobile } = useSidebar()
   const first = group.members[0]
-  const navigateTo = group.members.some((m) => m.dashboard_id === currentId) ? '/' : undefined
+  const navigateTo = group.members.some((m) => m.dashboard_id === currentId) ? '/dashboards' : undefined
   const index = userGroups.findIndex((g) => g.groupId === group.groupId)
 
   // Same drawer dismissal as the sidebar's own links (AppSidebar's `close`,

@@ -234,7 +234,7 @@ var projectTables = []string{
 	"agg_product_daily", "agg_product_totals", "agg_product_attrs",
 	"agg_measures_daily", "agg_measures_attrs",
 	"actors", "agg_retention", "identities", "agg_identity_daily",
-	"ingest_keys",
+	"ingest_keys", "server_stats",
 }
 
 // DeleteProjectData hard-deletes every row keyed by the project's id, then

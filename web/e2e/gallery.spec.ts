@@ -129,9 +129,12 @@ test('fits a phone without sideways scrolling', async ({ page }) => {
 })
 
 test('the sidebar opens the gallery', async ({ page }) => {
-  await page.goto('/app/')
+  await page.goto('/app/dashboards')
   await signIn(page)
   await page.waitForURL(/\/app\/dashboards\/\d+/)
+  // Gallery is closed until opened.
+  await expect(page.getByRole('link', { name: 'Components' })).toHaveCount(0)
+  await page.getByRole('button', { name: 'Gallery' }).click()
   await page.getByRole('link', { name: 'Components' }).click()
   await page.waitForURL(/\/app\/gallery\/components/)
 })

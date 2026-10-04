@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { screen } from '@testing-library/react'
+import { screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import type { DashboardInfo } from '@/lib/api'
+import { endpoints, type Project } from '@/lib/api'
 import { _resetForTests, getAuthHeader } from '@/lib/auth'
 import { dashboardsList } from '@/test/fixtures'
 import { renderWithProviders } from '@/test/render'
@@ -64,7 +65,7 @@ describe('AppSidebar gallery', () => {
     expect(screen.getByText('Gallery')).toBeInTheDocument()
   })
 
-  it('is not active on a dashboard', () => {
+  it('is closed elsewhere, and opens to links that are not active there', async () => {
     renderWithProviders(
       <MemoryRouter initialEntries={['/dashboards/1']}>
         <SidebarProvider>
@@ -72,7 +73,22 @@ describe('AppSidebar gallery', () => {
         </SidebarProvider>
       </MemoryRouter>
     )
+    const toggle = screen.getByRole('button', { name: 'Gallery' })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByRole('link', { name: 'Components' })).not.toBeInTheDocument()
+    await userEvent.click(toggle)
     expect(screen.getByRole('link', { name: 'Components' })).not.toHaveAttribute('data-active', 'true')
+  })
+
+  it('stays open with the sidebar down to icons, where its heading is hidden', () => {
+    renderWithProviders(
+      <MemoryRouter initialEntries={['/dashboards/1']}>
+        <SidebarProvider defaultOpen={false}>
+          <AppSidebar dashboards={[]} currentId={1} />
+        </SidebarProvider>
+      </MemoryRouter>
+    )
+    expect(screen.getByRole('link', { name: 'Components' })).toBeInTheDocument()
   })
 
   it('links to the templates gallery, labelled "Templates", active there and not on Components (D17)', () => {
@@ -179,5 +195,101 @@ describe('AppSidebar reordering', () => {
     await userEvent.click(screen.getByRole('link', { name: 'Marketing' }))
 
     expect(screen.getByTestId('location')).toHaveTextContent('/dashboards/13')
+  })
+})
+
+describe('Projects group', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    const projects: Project[] = Array.from({ length: 40 }, (_, i) => ({ project_id: i + 1, name: `site-${i + 1}`, allowed_origins: [] }))
+    projects.push({ project_id: 99, name: 'gone', archived: true, allowed_origins: [] })
+    vi.spyOn(endpoints, 'projects').mockResolvedValue({ projects })
+  })
+
+  it('is a link to the list, with no projects listed under it', async () => {
+    renderSidebar()
+    expect(await screen.findByRole('link', { name: 'Projects' })).toHaveAttribute('href', '/projects')
+    expect(screen.queryByRole('link', { name: 'site-1' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /projects/i })).not.toBeInTheDocument()
+    expect(endpoints.projects).not.toHaveBeenCalled()
+  })
+
+  it('is active on the list and on a project', () => {
+    renderWithProviders(
+      <MemoryRouter initialEntries={['/projects/4']}>
+        <SidebarProvider>
+          <AppSidebar dashboards={[]} currentId={0} />
+        </SidebarProvider>
+      </MemoryRouter>
+    )
+    expect(screen.getByRole('link', { name: 'Projects' })).toHaveAttribute('data-active', 'true')
+  })
+
+  it('comes first, above the dashboards', async () => {
+    renderSidebar([{ dashboard_id: 1, title: 'Views', owner: 'system', group_id: 1, widgets: 1 }])
+    const projects = await screen.findByRole('link', { name: 'Projects' })
+    const views = screen.getByRole('link', { name: 'Views' })
+    expect(projects.compareDocumentPosition(views) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('is absent in dev mode, which serves none of the console routes', async () => {
+    renderWithProviders(
+      <MemoryRouter>
+        <SidebarProvider>
+          <AppSidebar dashboards={[]} currentId={0} readOnly />
+        </SidebarProvider>
+      </MemoryRouter>
+    )
+    expect(await screen.findByRole('link', { name: 'Archive' })).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Projects' })).not.toBeInTheDocument()
+  })
+})
+
+describe('Dashboards group', () => {
+  const dashboards = [
+    { dashboard_id: 1, title: 'Views', owner: 'system' as const, group_id: 1, widgets: 1 },
+    { dashboard_id: 2, title: 'Web Vitals', owner: 'system' as const, group_id: 2, widgets: 1 },
+    { dashboard_id: 7, title: 'Launch week', owner: 'user' as const, group_id: 7, widgets: 1 },
+  ]
+
+  it('lists every dashboard under one heading, the built-in ones first with a badge', () => {
+    renderSidebar(dashboards)
+    expect(screen.getByText('Dashboards')).toBeInTheDocument()
+    expect(screen.queryByText('Yours')).not.toBeInTheDocument()
+    const pinned = screen.getByRole('list', { name: 'Built-in dashboards' })
+    // The badge is shown, not read: the links keep the dashboards' names.
+    const builtIn = within(pinned).getAllByRole('link')
+    expect(builtIn).toHaveLength(2)
+    expect(builtIn[0]).toHaveAccessibleName('Views')
+    expect(builtIn[1]).toHaveAccessibleName('Web Vitals')
+    const mine = screen.getByRole('link', { name: 'Launch week' })
+    expect(within(pinned).getAllByText('Built-in')).toHaveLength(2)
+    expect(within(pinned).getAllByText('Built-in')[0]).toHaveAttribute('title', 'Comes with twillingate and is always listed first')
+    expect(within(mine).queryByText('Built-in')).toBeNull()
+    expect(within(pinned).queryByRole('link', { name: 'Launch week' })).toBeNull()
+    expect(screen.getByRole('link', { name: 'Web Vitals' }).compareDocumentPosition(mine) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('says how to get one of your own when there is none', () => {
+    renderSidebar(dashboards.slice(0, 2))
+    expect(screen.getByText('None of your own yet. Ask your agent to make one.')).toBeInTheDocument()
+  })
+})
+
+describe('AppSidebar footer', () => {
+  it('holds Archive, above Log out', () => {
+    localStorage.setItem('twillingate.token', 'pasted')
+    renderSidebar([{ dashboard_id: 1, title: 'Views', owner: 'system', group_id: 1, widgets: 1 }])
+    const footer = document.querySelector('[data-sidebar="footer"]') as HTMLElement
+    const archive = within(footer).getByRole('link', { name: 'Archive' })
+    const logOut = within(footer).getByRole('button', { name: 'Log out' })
+    expect(archive.compareDocumentPosition(logOut) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('keeps Archive without a login to forget', () => {
+    renderSidebar()
+    const footer = document.querySelector('[data-sidebar="footer"]') as HTMLElement
+    expect(within(footer).getByRole('link', { name: 'Archive' })).toBeInTheDocument()
+    expect(within(footer).queryByRole('button', { name: 'Log out' })).toBeNull()
   })
 })

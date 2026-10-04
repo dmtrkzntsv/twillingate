@@ -23,7 +23,7 @@ function authHeaders() {
  * PKCE flow rather than skipping straight to "open" mode.
  */
 async function login(page: Page): Promise<void> {
-  await page.goto('/app/')
+  await page.goto('/app/dashboards')
   await page.waitForURL(/\/oauth\/authorize\?/)
   await page.getByLabel('Password').fill(PASSWORD)
   await page.getByRole('button', { name: 'Connect' }).click()
