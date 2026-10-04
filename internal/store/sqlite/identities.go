@@ -8,6 +8,12 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
 )
 
+// defaultIdentitiesTopN is IDENTITIES_TOP_N's fallback in the store: the
+// users and groups a day keeps when the rollup is handed a negative cap
+// (config refuses one) and when meta holds no identities_top_n row (the
+// same number v_identity_daily falls back to). 0 keeps every id.
+const defaultIdentitiesTopN = 1000
+
 // identityKinds are the two dimensions agg_identity_daily rolls up, paired
 // with the raw column each reads.
 var identityKinds = []struct{ kind, column string }{
@@ -56,7 +62,7 @@ FROM ranked WHERE rn <= ?`, k.column)
 			if _, err := tx.ExecContext(ctx, q,
 				projectID, day.String(), projectID, day.String(),
 				projectID, day.String(), k.kind, k.kind,
-				capRows(topN, defaultDimensionsTopN)); err != nil {
+				capRows(topN, defaultIdentitiesTopN)); err != nil {
 				return fmt.Errorf("agg_identity_daily %s: %w", k.kind, err)
 			}
 

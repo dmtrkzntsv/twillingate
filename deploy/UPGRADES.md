@@ -492,28 +492,33 @@ What changes on the day:
   `console`) instead of `ingest,api`, and the skip warning reads `console
   disabled`; update any log alert matching the old text.
 
-### Upgrading to range-bounded views and configurable caps (migration 025)
+### Upgrading to range-bounded views and configurable caps (migrations 025 and 029)
 
 Migration 025 recreates every `v_*` view's live half so a query reads only
 the raw days its range covers; no data is copied and every view answers as
-before. Two settings join `ATTRIBUTE_VALUES_TOP_N`: `VIEWS_DIMENSIONS_TOP_N` and
-`IDENTITIES_TOP_N`, replacing fixed caps of 500.
+before. The views breakdowns' fixed cap of 500 gives way to
+`ATTRIBUTE_VALUES_TOP_N`, now one cap for every value a client picks: per
+views breakdown (kinds included) and per attribute event and key. Users and
+groups get their own setting, `IDENTITIES_TOP_N`, in place of a fixed 500.
+Migration 029 points the views breakdowns at that one cap; it copies no
+data either.
 
-The defaults are sized for an indie site or app. Views breakdowns keep 100
-values a day (was 500); identities keep 500 (unchanged) and attribute
-values 50 per day, event and key (unchanged). Past the 100th path of a day,
-a small site's traffic is single crawler hits, so the tables keep every
-value worth ranking while a crawler day stays small. To keep 500 values per
-breakdown, set it before upgrading in `twillingate.env` (compose: `.env`):
+The defaults are sized for an indie site or app. `ATTRIBUTE_VALUES_TOP_N`
+keeps 100 values a day per views breakdown (was 500) and per event and
+attribute key (was 50); identities keep 500 (unchanged). Past the 100th
+path of a day, a small site's traffic is single crawler hits, so the tables
+keep every value worth ranking while a crawler day stays small. To keep 500
+values per breakdown, set it before upgrading in `twillingate.env`
+(compose: `.env`); this raises the attribute cap to 500 as well:
 
 ```sh
-VIEWS_DIMENSIONS_TOP_N=500
+ATTRIBUTE_VALUES_TOP_N=500
 ```
 
 Also check there:
 
-- `ATTRIBUTE_VALUES_TOP_N=0` used to fall back to 50; it now keeps every value.
-  Remove the line, or set 50, to keep today's behaviour.
+- `ATTRIBUTE_VALUES_TOP_N=0` used to fall back to 50; it now keeps every
+  value, in the views breakdowns too. Set a number to keep a cap.
 - A negative `*_TOP_N` now refuses the boot, naming the variable.
 
 A changed cap applies to the live days at once and to days rolled up after

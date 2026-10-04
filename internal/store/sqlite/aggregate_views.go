@@ -9,14 +9,6 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
 )
 
-// defaultDimensionsTopN is VIEWS_DIMENSIONS_TOP_N's and IDENTITIES_TOP_N's
-// default: the client-supplied values a views breakdown keeps per day (the
-// tail collapses into "(other)"), and the users and groups a day keeps.
-// It applies to every dimension, paths included: an unbounded dimension is
-// the wrong default on the SD-card hardware target (a path carrying record
-// ids would grow the aggregate without limit). 0 keeps every value.
-const defaultDimensionsTopN = 1000
-
 // noCap is the cap 0 stands for: a rank no day reaches. The views read the
 // same number (025_live_halves.sql) when the meta row holds 0.
 const noCap = 1 << 62
@@ -173,8 +165,11 @@ var viewDimensions = []viewDimension{
 // AggregateViewDay rolls one day of views into agg_views_* and deletes the
 // raw rows, in one transaction. Idempotent: every write is INSERT OR
 // REPLACE keyed on (project_id, day, ...), recomputed wholly from raw rows.
-// topN is VIEWS_DIMENSIONS_TOP_N: values (and kinds) kept per breakdown
-// and day, 0 for all of them.
+// topN is ATTRIBUTE_VALUES_TOP_N: values (and kinds) kept per breakdown
+// and day, 0 for all of them. It applies to every breakdown, paths
+// included: an unbounded one is the wrong default on the SD-card hardware
+// target (a path carrying record ids would grow the aggregate without
+// limit).
 func (d *DB) AggregateViewDay(ctx context.Context, projectID int64, day civil.Date, topN int) error {
 	return d.tx(ctx, func(tx *sql.Tx) error {
 		var n int
@@ -187,7 +182,7 @@ func (d *DB) AggregateViewDay(ctx context.Context, projectID int64, day civil.Da
 			return nil // already aggregated (or empty day): no-op keeps idempotency
 		}
 		named := []any{sql.Named("p", projectID), sql.Named("day", day.String()),
-			sql.Named("n", capRows(topN, defaultDimensionsTopN))}
+			sql.Named("n", capRows(topN, defaultAttrsTopN))}
 		if _, err := tx.ExecContext(ctx, viewSessionsCTE+`
 INSERT OR REPLACE INTO agg_views_daily
   (project_id, day, kind, visitors, views, sessions, bounces, duration_sec)

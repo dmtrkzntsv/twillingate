@@ -95,20 +95,20 @@ type ConsoleConfig struct {
 	authErr error
 }
 
-// The caps' defaults (ATTRIBUTE_VALUES_TOP_N, VIEWS_DIMENSIONS_TOP_N,
-// IDENTITIES_TOP_N), sized for an indie site or app: past the 100th path of
-// a day, real traffic is single crawler hits; attributes are mostly a
-// handful of values; identities are dropped past their cap, so theirs sits
-// well above a small app's daily users. The console's limits tool reports
+// The caps' defaults (ATTRIBUTE_VALUES_TOP_N, IDENTITIES_TOP_N), sized for
+// an indie site or app. ATTRIBUTE_VALUES_TOP_N is one cap for every
+// client-supplied value, views breakdowns and attributes alike: past the
+// 100th path of a day, real traffic is single crawler hits, and attributes
+// are mostly a handful of values. Identities are dropped past their cap,
+// so theirs sits well above a small app's daily users. The console's limits tool reports
 // them beside the values in force, so they live here rather than as
 // literals in parse.
 //
 // ATTRIBUTE_BREAKDOWNS_MAX: the attributes all active projects may declare
 // together; each is a breakdown with its own aggregate rows.
 const (
-	DefaultAttributeValuesTopN    = 50
+	DefaultAttributeValuesTopN    = 100
 	DefaultAttributeBreakdownsMax = 10
-	DefaultViewsDimensionsTopN    = 100
 	DefaultIdentitiesTopN         = 500
 )
 
@@ -133,7 +133,6 @@ type Config struct {
 	// AttributeBreakdownsMax bounds the attributes all active projects
 	// declare together; 0 is no limit.
 	AttributeBreakdownsMax int
-	ViewsDimensionsTopN    int
 	IdentitiesTopN         int
 	Reporting              ReportingConfig
 	Console                ConsoleConfig
@@ -221,13 +220,12 @@ func FromEnv(lookup func(string) (string, bool)) (*Config, error) {
 		},
 		// Distinct client-supplied *values* per declared attribute key are
 		// capped globally rather than per project (spec: the operator picks
-		// the key, clients pick the values). The same holds for the values
-		// of a views breakdown and for users and groups a day. Each cap
-		// keeps the aggregates, which outlive raw rows, from growing with a
-		// dimension that carries ids; 0 keeps every value.
+		// the key, clients pick the values). The same cap holds the values
+		// of each views breakdown, and IDENTITIES_TOP_N the users and groups
+		// a day. Each cap keeps the aggregates, which outlive raw rows, from
+		// growing with a dimension that carries ids; 0 keeps every value.
 		AttributeValuesTopN:    e.num("ATTRIBUTE_VALUES_TOP_N", DefaultAttributeValuesTopN),
 		AttributeBreakdownsMax: e.num("ATTRIBUTE_BREAKDOWNS_MAX", DefaultAttributeBreakdownsMax),
-		ViewsDimensionsTopN:    e.num("VIEWS_DIMENSIONS_TOP_N", DefaultViewsDimensionsTopN),
 		IdentitiesTopN:         e.num("IDENTITIES_TOP_N", DefaultIdentitiesTopN),
 		Reporting: ReportingConfig{
 			CacheAge:   time.Duration(e.num("REPORTING_CACHE_SECONDS", 900)) * time.Second,
@@ -300,7 +298,6 @@ func (c *Config) validate() error {
 		n    int
 	}{
 		{"ATTRIBUTE_VALUES_TOP_N", c.AttributeValuesTopN},
-		{"VIEWS_DIMENSIONS_TOP_N", c.ViewsDimensionsTopN},
 		{"IDENTITIES_TOP_N", c.IdentitiesTopN},
 	} {
 		if v.n < 0 {

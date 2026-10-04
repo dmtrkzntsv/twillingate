@@ -184,10 +184,9 @@ const (
 	// its meta row names it (0 = no cap), so a day's folds can be read
 	// against the cap that made them. ATTRIBUTE_VALUES_TOP_N's row keeps
 	// its earlier name, attributes_top_n.
-	StatCapAttributes      = "attributes_top_n"
-	StatCapViewsDimensions = "views_dimensions_top_n"
-	StatCapIdentities      = "identities_top_n"
-	StatCapBreakdowns      = "attribute_breakdowns_max"
+	StatCapAttributes = "attributes_top_n"
+	StatCapIdentities = "identities_top_n"
+	StatCapBreakdowns = "attribute_breakdowns_max"
 )
 
 // Actor kinds: how an actor id was derived. Only user and install actors

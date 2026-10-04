@@ -62,9 +62,10 @@ type Runner struct {
 	lastSaltDay string
 	lastAggDay  string
 
-	// topN caps distinct client-supplied values kept per declared product
-	// attribute (ATTRIBUTE_VALUES_TOP_N); the operator picks the key,
-	// clients pick the values.
+	// topN caps distinct client-supplied values kept per day
+	// (ATTRIBUTE_VALUES_TOP_N): per views breakdown, kinds included, and
+	// per attribute key; the operator picks the key, clients pick the
+	// values.
 	topN int
 }
 
@@ -153,7 +154,7 @@ func (r *Runner) RunDailyPass(ctx context.Context) error {
 			return err
 		}
 		for _, day := range days {
-			if err := r.store.AggregateViewDay(ctx, id, day, r.cfg.ViewsDimensionsTopN); err != nil {
+			if err := r.store.AggregateViewDay(ctx, id, day, r.topN); err != nil {
 				r.logger.Error("aggregate views failed", "project", id, "day", day.String(), "error", err)
 			}
 		}

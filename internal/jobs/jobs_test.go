@@ -151,7 +151,7 @@ func TestRunDailyPassMeasuresServerStats(t *testing.T) {
 	// pass day, and the counts of the days before it.
 	want := []string{"aggregate_bytes 1 2026-08-22", "attribute_breakdowns_max 0 2026-08-22", "attributes_top_n 0 2026-08-22", "database_bytes 0 2026-08-22",
 		"declared_attributes 1 2026-08-22", "identities_top_n 0 2026-08-22", "raw_bytes 1 2026-08-22",
-		"views 1 2026-08-21", "views_dimensions_top_n 0 2026-08-22"}
+		"views 1 2026-08-21"}
 	if !slices.Equal(got, want) {
 		t.Errorf("server_stats = %v, want %v", got, want)
 	}

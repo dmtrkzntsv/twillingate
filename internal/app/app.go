@@ -90,8 +90,9 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 	// subquery -- SQL cannot see the environment. Written before anything
 	// queries a view so the first read uses the configured caps rather than
 	// the views' built-in fallbacks. 0 is written as is: the views read it
-	// as no cap, as the daily pass does. ATTRIBUTE_VALUES_TOP_N keeps the
-	// row name of its earlier spelling, attributes_top_n: renaming it would
+	// as no cap, as the daily pass does. ATTRIBUTE_VALUES_TOP_N, the one
+	// values cap (views breakdowns and attributes), keeps the row name of
+	// its earlier spelling, attributes_top_n: renaming it would
 	// mean recreating the views that read it, for no reader's benefit.
 	for _, m := range []struct {
 		key string
@@ -99,7 +100,6 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 	}{
 		{"attributes_top_n", cfg.AttributeValuesTopN},
 		{"attribute_breakdowns_max", cfg.AttributeBreakdownsMax},
-		{"views_dimensions_top_n", cfg.ViewsDimensionsTopN},
 		{"identities_top_n", cfg.IdentitiesTopN},
 	} {
 		if err := st.SetMeta(ctx, m.key, strconv.Itoa(m.n)); err != nil {
