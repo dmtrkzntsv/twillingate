@@ -245,6 +245,26 @@ func TestRedirectAllowed(t *testing.T) {
 	}
 }
 
+// A plain-http resource origin (insecure=1) admits its own http callback,
+// at its port only; every other http redirect stays refused.
+func TestRedirectAllowedHTTPResource(t *testing.T) {
+	for candidate, want := range map[string]bool{
+		"http://homelab:8290/app/callback":  true,
+		"http://HOMELAB:8290/app/callback":  true,
+		"https://homelab:8290/app/callback": false,
+		"http://homelab:8291/app/callback":  false,
+		"http://homelab/app/callback":       false,
+		"http://homelab:8290/app/other":     false,
+		"http://homelab:8290/cb":            false,
+		"http://app.example.com/cb":         false,
+		"http://127.0.0.1:5000/cb":          true, // loopback, as ever
+	} {
+		if got := redirectAllowed([]string{"app.example.com"}, "http://homelab:8290", candidate); got != want {
+			t.Errorf("redirectAllowed(%q) = %v, want %v", candidate, got, want)
+		}
+	}
+}
+
 func TestLoginMetadata(t *testing.T) {
 	f := newLoginFixture(t, nil)
 	rec := f.serve(httptest.NewRequest("GET", "/.well-known/oauth-authorization-server", nil))
@@ -380,6 +400,23 @@ func TestRegisterAppCallbackOnResourceOrigin(t *testing.T) {
 		// A Host naming the redirect's own host does not admit it either.
 		if rec := register("dash.example.com", redirect); rec.Code != http.StatusBadRequest {
 			t.Errorf("%s = %d, want 400", redirect, rec.Code)
+		}
+	}
+}
+
+// With insecure=1 the resource may be plain http (a tailnet host): the
+// dashboards there register their http callback, and nothing else over http.
+func TestRegisterAppCallbackOnHTTPResource(t *testing.T) {
+	f := newLoginFixture(t, func(m *config.ConsoleConfig) {
+		m.ResourceURL, m.Insecure = "http://homelab:8290", true
+	})
+	for redirect, want := range map[string]int{
+		"http://homelab:8290/app/callback":     http.StatusCreated,
+		"http://homelab:8290/elsewhere":        http.StatusBadRequest,
+		"http://dash.example.com/app/callback": http.StatusBadRequest,
+	} {
+		if rec := f.registerRaw(`{"redirect_uris":["` + redirect + `"],"client_name":"twillingate"}`); rec.Code != want {
+			t.Errorf("%s = %d %s, want %d", redirect, rec.Code, rec.Body, want)
 		}
 	}
 }
