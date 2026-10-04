@@ -272,3 +272,38 @@ func BenchmarkViewsDailyLiveHalf(b *testing.B) {
 		}
 	}
 }
+
+// BenchmarkWriteEvents writes 500-event product batches, the most one
+// request carries (wire.MaxBatchEvents), with 0, 5 and 20 custom
+// attributes per event, into a fresh database per sub-benchmark. Event ids
+// are unique across iterations so every row is inserted, never ignored.
+// It guards the write path's cost: received_attributes counting (spec D3)
+// may add at most 10% to attrs=5.
+func BenchmarkWriteEvents(b *testing.B) {
+	for _, n := range []int{0, 5, 20} {
+		b.Run(fmt.Sprintf("attrs=%d", n), func(b *testing.B) {
+			db := setupBenchDB(b) // the file's helper: a fresh migrated database
+			ctx := context.Background()
+			start := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
+			batch := make([]store.Event, 500)
+			b.ReportAllocs()
+			b.ResetTimer()
+			for it := 0; it < b.N; it++ {
+				for i := range batch {
+					attrs := make(map[string]string, n)
+					for k := 0; k < n; k++ {
+						attrs[fmt.Sprintf("key%02d", k)] = fmt.Sprintf("v%d", (i+k)%7)
+					}
+					batch[i] = store.Event{Family: store.FamilyProduct,
+						ID: fmt.Sprintf("w-%d-%03d", it, i), ProjectID: benchProject,
+						EventName: fmt.Sprintf("event-%d", i%5), TS: start, ReceivedAt: start,
+						ActorID: fmt.Sprintf("actor-%03d", i%200), ActorKind: store.ActorUser,
+						Path: fmt.Sprintf("/p/%d", i%20), Attributes: attrs}
+				}
+				if err := db.WriteEvents(ctx, batch); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
