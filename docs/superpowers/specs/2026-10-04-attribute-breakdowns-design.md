@@ -104,8 +104,10 @@ Date: 2026-10-04
     `server_stats` as `attribute_breakdowns_max` beside the other caps.
 
 - **D7. `received_attributes(project_id, from, to)`.** A new read tool,
-  REST `GET /api/projects/{project_id}/received-attributes`. `from`/`to`
-  default to the raw window. It answers:
+  REST `GET /api/received-attributes`. `from`/`to` default to the last 30
+  days, like `usage`. `project_id` is optional: without it (a project not
+  created yet), `keys` is empty and the answer carries only the budget.
+  It answers:
 
   ```jsonc
   {
@@ -132,9 +134,9 @@ Date: 2026-10-04
   - **Allowed origins:** one input row per origin, each with its own ×,
     and an "Add origin" button. The hint reads "`*` allows any origin.
     With none, browsers can't send; native apps still can."
-  - **Breakdowns** (replaces "Declared attributes"): a range switcher
-    (default 30 days, no further back than the raw window) and a
-    checkbox list from D7. Each row shows the key, its events, and its
+  - **Breakdowns** (replaces "Declared attributes"): a 7 / 14 / 30
+    days toggle (default 30; keys older than the raw window are not
+    stored anyway) and a checkbox list from D7. Each row shows the key, its events, and its
     values against the cap ("3 values", or "412 values · folds past 50"
     when `max_values` exceeds `values_cap`). The header reads
     "Breakdowns · 12 of 50 in use". It counts the dialog's own changes,
