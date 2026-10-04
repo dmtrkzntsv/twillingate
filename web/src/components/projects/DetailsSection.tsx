@@ -1,26 +1,17 @@
 import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
 import { Button } from '@/components/ui/button'
 import type { Project } from '@/lib/api'
-import { receivedAttributesQuery } from '@/lib/queries'
-import { describeKey } from './BreakdownsField'
-import LoadError from './LoadError'
 import ProjectFormDialog from './ProjectFormDialog'
 
 interface Props {
   project: Project
-  /** The range the page shows: what each breakdown received in it. */
-  range: { from: string; to: string }
-  onSave: (body: { name: string; allowed_origins: string[]; attributes: string[] }) => Promise<boolean>
+  onSave: (body: { name: string; allowed_origins: string[] }) => Promise<boolean>
   pending?: boolean
 }
 
-/** Name, allowed origins and breakdowns (with what each received), with Edit. */
-export default function DetailsSection({ project, range, onSave, pending }: Props) {
+/** Allowed origins, with Edit for the name and origins. */
+export default function DetailsSection({ project, onSave, pending }: Props) {
   const [editing, setEditing] = useState(false)
-  const { data, error, refetch } = useQuery(receivedAttributesQuery({ project_id: project.project_id, from: range.from, to: range.to }))
-  const received = new Map((data?.keys ?? []).map((r) => [r.key, r]))
-  const attributes = project.attributes ?? []
   return (
     <section aria-label="Details" className="flex flex-col gap-3 rounded-lg border p-4">
       <header className="flex items-center justify-between">
@@ -38,34 +29,14 @@ export default function DetailsSection({ project, range, onSave, pending }: Prop
             <span className="text-sm text-muted-foreground">None: browsers cannot send</span>
           )}
         </dd>
-        <dt className="text-sm text-muted-foreground">Breakdowns</dt>
-        <dd>
-          {attributes.length > 0 ? (
-            <ul aria-label="Breakdowns" className="flex flex-col gap-0.5">
-              {attributes.map((k) => {
-                const r = received.get(k)
-                return (
-                  <li key={k} className="flex items-baseline gap-2">
-                    <code className="text-sm">{k}</code>
-                    {r && <span className="text-xs text-muted-foreground">{describeKey(r, data?.values_cap ?? 0)}</span>}
-                  </li>
-                )
-              })}
-            </ul>
-          ) : (
-            <span className="text-sm text-muted-foreground">None</span>
-          )}
-          {error && !data && <div className="mt-2"><LoadError what="received attributes" error={error} onRetry={() => void refetch()} /></div>}
-        </dd>
       </dl>
       <ProjectFormDialog
         open={editing}
         onOpenChange={setEditing}
         title={`Edit ${project.name}`}
-        projectId={project.project_id}
         submitLabel="Save"
         pending={pending}
-        initial={{ name: project.name, allowed_origins: project.allowed_origins, attributes: project.attributes ?? [] }}
+        initial={{ name: project.name, allowed_origins: project.allowed_origins }}
         onSubmit={onSave}
       />
     </section>

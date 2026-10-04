@@ -124,7 +124,7 @@ describe('Projects', () => {
     await user.click(await screen.findByRole('button', { name: 'New project' }))
     await user.type(screen.getByLabelText('Name'), 'shop')
     await user.click(screen.getByRole('button', { name: 'Create' }))
-    expect(create).toHaveBeenCalledWith({ name: 'shop', allowed_origins: [], attributes: [] })
+    expect(create).toHaveBeenCalledWith({ name: 'shop', allowed_origins: [] })
     expect(await screen.findByText('ak_new')).toBeInTheDocument()
     expect(screen.getByText('<script src="…"></script>')).toBeInTheDocument()
   })

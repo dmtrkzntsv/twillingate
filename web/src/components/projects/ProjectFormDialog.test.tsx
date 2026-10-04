@@ -1,92 +1,65 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { ApiError, endpoints } from '@/lib/api'
+import { endpoints } from '@/lib/api'
 import { renderWithProviders } from '@/test/render'
 import ProjectFormDialog from './ProjectFormDialog'
-
-const answer = {
-  project_id: 1, from: '2026-09-05', to: '2026-10-04', values_cap: 50, breakdowns_used: 3, breakdowns_max: 3, keys_total: 1,
-  keys: [{ key: 'order_id', events: 980, max_values: 412, received: true, declared: false }],
-}
 
 describe('ProjectFormDialog', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
-    vi.spyOn(endpoints, 'receivedAttributes').mockResolvedValue(answer)
+    vi.spyOn(endpoints, 'receivedAttributes')
   })
 
-  it('trims origins and drops empty rows on save', async () => {
+  it('trims origins and drops empty rows on save, sending the name and origins only', async () => {
     const user = userEvent.setup()
     const onSubmit = vi.fn().mockResolvedValue(true)
     renderWithProviders(
-      <ProjectFormDialog open onOpenChange={vi.fn()} title="Edit" projectId={1} submitLabel="Save" onSubmit={onSubmit}
-        initial={{ name: 'dev', allowed_origins: [' https://a.example '], attributes: [] }} />,
+      <ProjectFormDialog open onOpenChange={vi.fn()} title="Edit" submitLabel="Save" onSubmit={onSubmit}
+        initial={{ name: 'dev', allowed_origins: [' https://a.example '] }} />,
     )
     await user.click(screen.getByRole('button', { name: 'Add origin' }))
     await user.click(screen.getByRole('button', { name: 'Save' }))
-    expect(onSubmit).toHaveBeenCalledWith({ name: 'dev', allowed_origins: ['https://a.example'], attributes: [] })
+    expect(onSubmit).toHaveBeenCalledWith({ name: 'dev', allowed_origins: ['https://a.example'] })
   })
 
-  it('disables Save with the reason while the breakdowns are over the limit', async () => {
+  it('creates with a name and no origins, and no attributes', async () => {
     const user = userEvent.setup()
-    renderWithProviders(
-      <ProjectFormDialog open onOpenChange={vi.fn()} title="Edit" projectId={1} submitLabel="Save" onSubmit={vi.fn()}
-        initial={{ name: 'dev', allowed_origins: [], attributes: [] }} />,
-    )
-    const save = screen.getByRole('button', { name: 'Save' })
-    await user.click(await screen.findByRole('checkbox', { name: /order_id/ }))
-    expect(save).toBeDisabled()
-    expect(save).toHaveAttribute('title', expect.stringMatching(/over the limit/))
-    await user.click(screen.getByRole('checkbox', { name: /order_id/ }))
-    expect(save).toBeEnabled()
-  })
-
-  it('saves a key typed in the breakdown field without Enter', async () => {
-    const user = userEvent.setup()
-    vi.spyOn(endpoints, 'receivedAttributes').mockResolvedValue({ ...answer, breakdowns_used: 0 })
     const onSubmit = vi.fn().mockResolvedValue(true)
+    const onOpenChange = vi.fn()
+    renderWithProviders(<ProjectFormDialog open onOpenChange={onOpenChange} title="New project" submitLabel="Create" onSubmit={onSubmit} />)
+    await user.type(screen.getByLabelText('Name'), ' shop ')
+    await user.click(screen.getByRole('button', { name: 'Create' }))
+    expect(onSubmit).toHaveBeenCalledWith({ name: 'shop', allowed_origins: [] })
+    expect(onSubmit.mock.calls[0][0]).not.toHaveProperty('attributes')
+    await vi.waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false))
+  })
+
+  it('has no breakdowns to pick, and asks for no received attributes', () => {
     renderWithProviders(
-      <ProjectFormDialog open onOpenChange={vi.fn()} title="Edit" projectId={1} submitLabel="Save" onSubmit={onSubmit}
-        initial={{ name: 'dev', allowed_origins: [], attributes: [] }} />,
+      <ProjectFormDialog open onOpenChange={vi.fn()} title="Edit" submitLabel="Save" onSubmit={vi.fn()} initial={{ name: 'dev', allowed_origins: [] }} />,
     )
-    await user.type(await screen.findByRole('textbox', { name: 'Key not received yet' }), 'tier')
+    expect(screen.queryByText('Breakdowns')).not.toBeInTheDocument()
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
+    expect(screen.queryByRole('textbox', { name: 'Key not received yet' })).not.toBeInTheDocument()
+    expect(endpoints.receivedAttributes).not.toHaveBeenCalled()
+  })
+
+  it('keeps Save disabled without a name, and while pending', () => {
+    const { unmount } = renderWithProviders(<ProjectFormDialog open onOpenChange={vi.fn()} title="New" submitLabel="Create" onSubmit={vi.fn()} />)
+    expect(screen.getByRole('button', { name: 'Create' })).toBeDisabled()
+    unmount()
+    renderWithProviders(<ProjectFormDialog open onOpenChange={vi.fn()} title="Edit" submitLabel="Save" pending onSubmit={vi.fn()} initial={{ name: 'dev' }} />)
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
+  })
+
+  it('stays open when the save is refused', async () => {
+    const user = userEvent.setup()
+    const onOpenChange = vi.fn()
+    renderWithProviders(
+      <ProjectFormDialog open onOpenChange={onOpenChange} title="Edit" submitLabel="Save" onSubmit={vi.fn().mockResolvedValue(false)} initial={{ name: 'dev', allowed_origins: [] }} />,
+    )
     await user.click(screen.getByRole('button', { name: 'Save' }))
-    expect(onSubmit).toHaveBeenCalledWith({ name: 'dev', allowed_origins: [], attributes: ['tier'] })
-  })
-
-  it('holds Save while the breakdown field keeps a refused $ key, until it is cleared', async () => {
-    const user = userEvent.setup()
-    vi.spyOn(endpoints, 'receivedAttributes').mockResolvedValue({ ...answer, breakdowns_used: 0 })
-    const onSubmit = vi.fn().mockResolvedValue(true)
-    renderWithProviders(
-      <ProjectFormDialog open onOpenChange={vi.fn()} title="Edit" projectId={1} submitLabel="Save" onSubmit={onSubmit}
-        initial={{ name: 'dev', allowed_origins: [], attributes: [] }} />,
-    )
-    const input = await screen.findByRole('textbox', { name: 'Key not received yet' })
-    await user.type(input, '$host')
-    const save = screen.getByRole('button', { name: 'Save' })
-    await user.click(save)
-    expect(onSubmit).not.toHaveBeenCalled()
-    expect(save).toBeDisabled()
-    expect(save).toHaveAttribute('title', expect.stringMatching(/\$ keys appear in the list once received/))
-    expect(screen.getByText(/\$ keys appear in the list once received/)).toBeInTheDocument()
-    await user.clear(input)
-    expect(save).toBeEnabled()
-    await user.click(save)
-    expect(onSubmit).toHaveBeenCalledWith({ name: 'dev', allowed_origins: [], attributes: [] })
-  })
-
-  it('retries a failed load without submitting the form', async () => {
-    const user = userEvent.setup()
-    const spy = vi.spyOn(endpoints, 'receivedAttributes').mockRejectedValue(new ApiError(500, 'boom'))
-    const onSubmit = vi.fn().mockResolvedValue(true)
-    renderWithProviders(
-      <ProjectFormDialog open onOpenChange={vi.fn()} title="Edit" projectId={1} submitLabel="Save" onSubmit={onSubmit}
-        initial={{ name: 'dev', allowed_origins: [], attributes: [] }} />,
-    )
-    await user.click(await screen.findByRole('button', { name: 'Retry' }))
-    expect(spy).toHaveBeenCalledTimes(2)
-    expect(onSubmit).not.toHaveBeenCalled()
+    expect(onOpenChange).not.toHaveBeenCalled()
   })
 })
