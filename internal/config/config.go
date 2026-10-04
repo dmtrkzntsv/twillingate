@@ -95,7 +95,7 @@ type ConsoleConfig struct {
 	authErr error
 }
 
-// The caps' defaults (ATTRIBUTES_TOP_N, VIEWS_DIMENSIONS_TOP_N,
+// The caps' defaults (ATTRIBUTE_VALUES_TOP_N, VIEWS_DIMENSIONS_TOP_N,
 // IDENTITIES_TOP_N), sized for an indie site or app: past the 100th path of
 // a day, real traffic is single crawler hits; attributes are mostly a
 // handful of values; identities are dropped past their cap, so theirs sits
@@ -103,7 +103,7 @@ type ConsoleConfig struct {
 // them beside the values in force, so they live here rather than as
 // literals in parse.
 const (
-	DefaultAttributesTopN      = 50
+	DefaultAttributeValuesTopN = 50
 	DefaultViewsDimensionsTopN = 100
 	DefaultIdentitiesTopN      = 500
 )
@@ -125,7 +125,7 @@ type Config struct {
 	Log                 LogConfig
 	Buffer              BufferConfig
 	Retention           Retention
-	AttributesTopN      int
+	AttributeValuesTopN int
 	ViewsDimensionsTopN int
 	IdentitiesTopN      int
 	Reporting           ReportingConfig
@@ -218,7 +218,7 @@ func FromEnv(lookup func(string) (string, bool)) (*Config, error) {
 		// of a views breakdown and for users and groups a day. Each cap
 		// keeps the aggregates, which outlive raw rows, from growing with a
 		// dimension that carries ids; 0 keeps every value.
-		AttributesTopN:      e.num("ATTRIBUTES_TOP_N", DefaultAttributesTopN),
+		AttributeValuesTopN: e.num("ATTRIBUTE_VALUES_TOP_N", DefaultAttributeValuesTopN),
 		ViewsDimensionsTopN: e.num("VIEWS_DIMENSIONS_TOP_N", DefaultViewsDimensionsTopN),
 		IdentitiesTopN:      e.num("IDENTITIES_TOP_N", DefaultIdentitiesTopN),
 		Reporting: ReportingConfig{
@@ -291,7 +291,7 @@ func (c *Config) validate() error {
 		name string
 		n    int
 	}{
-		{"ATTRIBUTES_TOP_N", c.AttributesTopN},
+		{"ATTRIBUTE_VALUES_TOP_N", c.AttributeValuesTopN},
 		{"VIEWS_DIMENSIONS_TOP_N", c.ViewsDimensionsTopN},
 		{"IDENTITIES_TOP_N", c.IdentitiesTopN},
 	} {

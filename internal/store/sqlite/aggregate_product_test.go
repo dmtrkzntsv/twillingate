@@ -186,7 +186,7 @@ func TestAggregateProductIdempotent(t *testing.T) {
 // keeps nothing, so every distinct value silently collapses into
 // "(other)" instead of erroring. Not reachable from production callers
 // today (jobs.Runner always sets topN from
-// config.Config.AttributesTopN, which defaults to 50), but
+// config.Config.AttributeValuesTopN, which defaults to 50), but
 // AggregateProductDay clamps it anyway as a last line of defense.
 func TestAggregateProductClampsNonPositiveTopN(t *testing.T) {
 	for _, topN := range []int{0, -5} {

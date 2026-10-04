@@ -18,7 +18,7 @@ import (
 // fixed limits from internal/wire with neither setting nor default.
 func TestLimitsReportsTheLimitsInForce(t *testing.T) {
 	h, cs := newTestHost(t)
-	cfg := &config.Config{AttributesTopN: 7, ViewsDimensionsTopN: 0, IdentitiesTopN: 2000}
+	cfg := &config.Config{AttributeValuesTopN: 7, ViewsDimensionsTopN: 0, IdentitiesTopN: 2000}
 	cfg.Retention.Events = config.RetentionClass{RawDays: 7, AggregateDays: 90}
 	h.limits = limitsFrom(cfg)
 	out, err := h.listLimits(context.Background(), struct{}{})
@@ -34,7 +34,7 @@ func TestLimitsReportsTheLimitsInForce(t *testing.T) {
 		{groupRetention, "RETENTION_EVENTS_AGGREGATE_DAYS", 90, config.DefaultAggregateDays},
 		{groupRetention, "RETENTION_ARCHIVED_DAYS", 0, config.DefaultArchivedDays},
 		{groupCaps, "VIEWS_DIMENSIONS_TOP_N", 0, config.DefaultViewsDimensionsTopN},
-		{groupCaps, "ATTRIBUTES_TOP_N", 7, config.DefaultAttributesTopN},
+		{groupCaps, "ATTRIBUTE_VALUES_TOP_N", 7, config.DefaultAttributeValuesTopN},
 		{groupCaps, "IDENTITIES_TOP_N", 2000, config.DefaultIdentitiesTopN},
 	}
 	if len(out.Limits) <= len(settings) {
@@ -112,7 +112,7 @@ func TestUsageRange(t *testing.T) {
 // aggregated, and again on 2026-08-26 from the raw view) reach theirs.
 func TestCapUsage(t *testing.T) {
 	h, _ := newTestHost(t)
-	h.limits = limitsFrom(&config.Config{AttributesTopN: 1, ViewsDimensionsTopN: 2, IdentitiesTopN: 1})
+	h.limits = limitsFrom(&config.Config{AttributeValuesTopN: 1, ViewsDimensionsTopN: 2, IdentitiesTopN: 1})
 	for _, q := range []string{
 		`INSERT INTO agg_views_paths (project_id, day, path, visitors, views) VALUES
 		 (1,'2026-08-22','/a',3,10), (1,'2026-08-22','/b',2,5), (1,'2026-08-22','(other)',4,15)`,
