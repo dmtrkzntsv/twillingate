@@ -56,6 +56,8 @@ export default function BreakdownsField({ projectId, initial, value, onChange, o
   })
   const listed: ReceivedKey[] = [...(data?.keys ?? [])]
   for (const k of value) if (!listed.some((r) => r.key === k)) listed.push({ key: k, events: 0, max_values: null, declared: false })
+  // The server lists only the busiest received keys; say so when it left some out.
+  const receivedListed = data ? data.keys.filter((r) => r.events > 0).length : 0
   const b = data ? budget(data.breakdowns_used, data.breakdowns_max, initial, value) : null
   const problem = b?.over ? `${b.used} of ${data!.breakdowns_max} breakdowns: over the limit (ATTRIBUTE_BREAKDOWNS_MAX)` : null
   useEffect(() => onProblem(problem), [problem])
@@ -97,6 +99,11 @@ export default function BreakdownsField({ projectId, initial, value, onChange, o
       ) : data || !error ? (
         <p className="text-sm text-muted-foreground">{projectId ? 'No attributes received in this range.' : 'Nothing received yet: add keys by name, or pick them once events arrive.'}</p>
       ) : null}
+      {data && data.keys_total > receivedListed && (
+        <p className="text-xs text-muted-foreground">
+          Showing the {receivedListed.toLocaleString()} busiest of {data.keys_total.toLocaleString()} keys.
+        </p>
+      )}
       {error && !data && <LoadError what="received attributes" error={error} onRetry={() => void refetch()} />}
       <div className="flex items-center gap-1.5">
         <Input

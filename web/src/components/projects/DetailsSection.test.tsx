@@ -11,7 +11,7 @@ describe('DetailsSection', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
     vi.spyOn(endpoints, 'receivedAttributes').mockResolvedValue({
-      project_id: 1, from: '2026-09-05', to: '2026-10-04', values_cap: 50, breakdowns_used: 2, breakdowns_max: 50,
+      project_id: 1, from: '2026-09-05', to: '2026-10-04', values_cap: 50, breakdowns_used: 2, breakdowns_max: 50, keys_total: 1,
       keys: [
         { key: 'plan', events: 900, max_values: 3, declared: true },
         { key: 'never_sent', events: 0, max_values: null, declared: true },

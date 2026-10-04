@@ -27,7 +27,7 @@ beforeEach(() => {
   ] })
   vi.spyOn(endpoints, 'usage').mockResolvedValue({ from: 'a', to: 'b', database_bytes: 0, database_series: [], projects: [] })
   vi.spyOn(endpoints, 'receivedAttributes').mockResolvedValue({
-    project_id: 4, from: 'a', to: 'b', values_cap: 50, breakdowns_used: 1, breakdowns_max: 50,
+    project_id: 4, from: 'a', to: 'b', values_cap: 50, breakdowns_used: 1, breakdowns_max: 50, keys_total: 1,
     keys: [{ key: 'plan', events: 900, max_values: 3, declared: true }],
   })
   vi.spyOn(endpoints, 'capUsage').mockResolvedValue({ project_id: 4, from: 'a', to: 'b', dimensions: [] })

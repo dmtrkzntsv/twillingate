@@ -7,7 +7,7 @@ import { renderWithProviders } from '@/test/render'
 import BreakdownsField, { budget, describeKey } from './BreakdownsField'
 
 const answer = {
-  project_id: 1, from: '2026-09-05', to: '2026-10-04', values_cap: 50, breakdowns_used: 3, breakdowns_max: 3,
+  project_id: 1, from: '2026-09-05', to: '2026-10-04', values_cap: 50, breakdowns_used: 3, breakdowns_max: 3, keys_total: 3,
   keys: [
     { key: 'order_id', events: 980, max_values: 412, declared: false },
     { key: 'plan', events: 900, max_values: 3, declared: true },
@@ -58,6 +58,18 @@ describe('BreakdownsField', () => {
     // Unchecking a selected key frees its slot before saving.
     await user.click(screen.getByRole('checkbox', { name: /plan/ }))
     expect(onProblem).toHaveBeenLastCalledWith(null)
+  })
+
+  it('says when the server listed only the busiest keys', async () => {
+    vi.spyOn(endpoints, 'receivedAttributes').mockResolvedValue({ ...answer, keys_total: 1234 })
+    renderWithProviders(<Harness initial={[]} onProblem={vi.fn()} />)
+    expect(await screen.findByText('Showing the 3 busiest of 1,234 keys.')).toBeInTheDocument()
+  })
+
+  it('says nothing about a cap when every received key is listed', async () => {
+    renderWithProviders(<Harness initial={[]} onProblem={vi.fn()} />)
+    await screen.findByRole('checkbox', { name: /order_id/ })
+    expect(screen.queryByText(/busiest of/)).not.toBeInTheDocument()
   })
 
   it('adds a key not received yet, and refuses a $ key there', async () => {

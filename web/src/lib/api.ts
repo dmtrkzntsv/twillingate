@@ -289,12 +289,16 @@ export interface ReceivedKey {
   declared: boolean
 }
 
-/** The keys a project received over a range, with the breakdown budget (`breakdowns_max` 0 is no limit). */
+/**
+ * The keys a project received over a range, with the breakdown budget (`breakdowns_max` 0 is no limit).
+ * `keys` holds the 500 busiest received keys and every declared one; `keys_total` counts every key received.
+ */
 export interface ReceivedAttributes {
   project_id?: number
   from: string
   to: string
   keys: ReceivedKey[]
+  keys_total: number
   values_cap: number
   breakdowns_used: number
   breakdowns_max: number

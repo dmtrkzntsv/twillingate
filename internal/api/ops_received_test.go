@@ -43,6 +43,9 @@ func TestReceivedAttributes(t *testing.T) {
 	if !reflect.DeepEqual(out.Keys, want) {
 		t.Errorf("keys = %+v, want %+v", out.Keys, want)
 	}
+	if out.KeysTotal != 2 {
+		t.Errorf("keys_total = %d, want 2", out.KeysTotal)
+	}
 	if out.From != "2026-10-01" || out.To != "2026-10-02" || out.ProjectID != 1 {
 		t.Errorf("range = %+v", out)
 	}
@@ -66,5 +69,44 @@ func TestReceivedAttributes(t *testing.T) {
 	}
 	if !reflect.DeepEqual(mcpOut.Keys, want) {
 		t.Errorf("MCP keys = %+v", mcpOut.Keys)
+	}
+}
+
+// Past receivedKeysLimit the answer lists only the busiest keys (ties by
+// key), plus every declared key with its own counts, and keys_total
+// counts them all, rather than failing on the row cap.
+func TestReceivedAttributesCapsTheKeys(t *testing.T) {
+	h, _ := newTestHost(t)
+	ctx := context.Background()
+	defer func(n int) { receivedKeysLimit = n }(receivedKeysLimit)
+	receivedKeysLimit = 2
+	for _, q := range []string{
+		`UPDATE projects SET attributes = '["plan","never_sent"]' WHERE id = 1`,
+		`INSERT INTO received_attributes (project_id, day, attr_key, events, max_values) VALUES
+		 (1,'2026-10-01','id_1',9,1), (1,'2026-10-02','id_1',1,1), (1,'2026-10-01','id_2',8,1),
+		 (1,'2026-10-01','id_3',8,1), (1,'2026-10-01','plan',3,2), (1,'2026-10-01','id_4',5,1)`,
+	} {
+		if _, err := rawExec(h.ops.St, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := h.reg.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	out, err := h.receivedAttributes(ctx, receivedIn{ProjectID: 1, usageRangeIn: usageRangeIn{From: "2026-10-01", To: "2026-10-02"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []receivedKeyOut{
+		{Key: "id_1", Events: 10, MaxValues: ptr(int64(1))},
+		{Key: "id_2", Events: 8, MaxValues: ptr(int64(1))},
+		{Key: "plan", Events: 3, MaxValues: ptr(int64(2)), Declared: true},
+		{Key: "never_sent", Declared: true},
+	}
+	if !reflect.DeepEqual(out.Keys, want) {
+		t.Errorf("keys = %+v, want %+v", out.Keys, want)
+	}
+	if out.KeysTotal != 5 {
+		t.Errorf("keys_total = %d, want 5", out.KeysTotal)
 	}
 }
