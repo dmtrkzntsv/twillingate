@@ -108,6 +108,10 @@ describe('Projects', () => {
     expect(within(retention).getByText('7 days')).toBeInTheDocument()
     expect(within(retention).getByText('RETENTION_EVENTS_RAW_DAYS')).toBeInTheDocument()
     expect(within(retention).getByText(/default 30 days/)).toBeInTheDocument()
+    // The variable sits under the value, above the description.
+    const variable = within(retention).getByText('RETENTION_EVENTS_RAW_DAYS').closest('dd')!
+    const description = within(retention).getByText('raw events are kept this long')
+    expect(variable.compareDocumentPosition(description) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(within(panel).getByText('no cap')).toBeInTheDocument()
     const ingest = within(panel).getByRole('region', { name: 'Ingest' })
     expect(within(ingest).getByText('256 KiB')).toBeInTheDocument()

@@ -1,9 +1,9 @@
 import type { Limit } from '@/lib/api'
 
-const GROUPS: { group: Limit['group']; title: string; note: string; cols: string }[] = [
-  { group: 'retention', title: 'Retention', note: 'How long data is kept.', cols: 'sm:grid-cols-3' },
-  { group: 'caps', title: 'Caps', note: 'Values kept per day before the rest fold into (other).', cols: 'sm:grid-cols-3' },
-  { group: 'ingest', title: 'Ingest', note: 'Fixed by the wire format, the same on every server.', cols: 'sm:grid-cols-2 lg:grid-cols-4' },
+const GROUPS: { group: Limit['group']; title: string; note: string }[] = [
+  { group: 'retention', title: 'Retention', note: 'How long data is kept.' },
+  { group: 'caps', title: 'Caps', note: 'Values kept per day before the rest fold into (other).' },
+  { group: 'ingest', title: 'Ingest', note: 'Fixed by the wire format, the same on every server.' },
 ]
 
 const plural = (n: number, one: string, many: string) => `${n.toLocaleString()} ${n === 1 ? one : many}`
@@ -33,26 +33,27 @@ export default function LimitsPanel({ limits }: { limits: Limit[] }) {
         <h2 className="text-base font-semibold">Limits</h2>
         <p className="text-sm text-muted-foreground">Retention and caps are set in twillingate.env.</p>
       </header>
-      {GROUPS.map(({ group, title, note, cols }) => {
+      {GROUPS.map(({ group, title, note }) => {
         const items = limits.filter((l) => l.group === group)
         if (items.length === 0) return null
         return (
-          <section key={group} aria-label={title} className="flex flex-col gap-2">
-            <h3 className="text-sm font-medium">
-              {title} <span className="font-normal text-muted-foreground">· {note}</span>
-            </h3>
-            <dl className={`grid gap-3 ${cols}`}>
+          <section key={group} aria-label={title} className="flex flex-col gap-3 border-t pt-4">
+            <header className="flex flex-col gap-0.5 border-l-2 border-primary pl-2">
+              <h3 className="text-sm font-semibold uppercase tracking-wide">{title}</h3>
+              <p className="text-xs text-muted-foreground">{note}</p>
+            </header>
+            <dl className="grid gap-x-6 gap-y-4 sm:grid-cols-3">
               {items.map((l) => (
                 <div key={l.name} className="flex flex-col gap-0.5">
                   <dt className="text-xs text-muted-foreground">{l.name}</dt>
                   <dd className="text-lg font-semibold">{formatLimit(l)}</dd>
-                  <dd className="text-xs text-muted-foreground">{l.description}</dd>
                   {l.setting && (
                     <dd className="text-xs text-muted-foreground">
                       <span className="font-mono">{l.setting}</span>
                       {l.default !== undefined && ` · default ${formatLimit(l, l.default)}`}
                     </dd>
                   )}
+                  <dd className="text-xs text-muted-foreground">{l.description}</dd>
                 </div>
               ))}
             </dl>
