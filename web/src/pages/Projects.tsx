@@ -14,7 +14,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { useProjectActions } from '@/hooks/use-project-actions'
 import type { CreatedProject } from '@/lib/api'
 import { dashboardsQuery, keysQuery, limitsQuery, projectsQuery, statsQuery } from '@/lib/queries'
-import { formatBytes } from '@/lib/units'
+import { formatBytes, formatGrowth } from '@/lib/units'
 
 /** `/projects`: every project as a card with its last 30 days, the caps, archived projects, and New project. */
 export default function Projects() {
@@ -56,6 +56,7 @@ export default function Projects() {
               {[
                 projectsData ? `${active.length} ${active.length === 1 ? 'project' : 'projects'}` : null,
                 statsData ? `${formatBytes(statsData.database_bytes)} on disk` : null,
+                statsData ? formatGrowth(statsData.database_series) : null,
               ]
                 .filter(Boolean)
                 .join(' · ')}

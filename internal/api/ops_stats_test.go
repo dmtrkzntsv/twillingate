@@ -290,3 +290,56 @@ func TestProjectStatsSizeWithOneStat(t *testing.T) {
 		t.Errorf("size = %+v, want raw 40 only", s)
 	}
 }
+
+// Days before the newest daily pass come from its stored counts (a day
+// with no row counts 0); that day and later are counted live. The totals
+// follow the series, and the database's stored size is a series of its own.
+func TestProjectStatsReadsStoredCountsBeforeTheNewestPass(t *testing.T) {
+	h, _ := newTestHost(t)
+	putStat(t, h, store.StatDatabaseBytes, 0, "2026-08-21", 5000) // the pass ran on the 21st
+	putStat(t, h, store.StatViews, 1, "2026-08-20", 777)          // not what the views hold (45): stored wins
+	putStat(t, h, store.StatEvents, 1, "2026-08-20", 3)
+	out, err := h.projectStats(context.Background(), statsIn{ProjectID: 1, usageRangeIn: usageRangeIn{From: "2026-08-19", To: "2026-08-21"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]statsDay{}
+	for _, d := range out.Projects[0].Series {
+		got[d.Day] = d
+	}
+	if d := got["2026-08-20"]; d.Views != 777 || d.Events != 3 || d.Measures != 0 {
+		t.Errorf("2026-08-20 = %+v, want the stored 777 views and 3 events", d)
+	}
+	if d := got["2026-08-19"]; d.Views != 0 {
+		t.Errorf("2026-08-19 = %+v, want 0: counted, nothing stored", d)
+	}
+	if d := got["2026-08-21"]; d.Views != 30 {
+		t.Errorf("2026-08-21 = %+v, want the live 30: the pass counts only the days before its own", d)
+	}
+	if tot := out.Projects[0].Totals; tot.Views != 807 || tot.Events != 3 {
+		t.Errorf("totals = %+v, want the series' 807 views and 3 events", tot)
+	}
+	five := int64(5000)
+	want := []dbDay{{Day: "2026-08-19"}, {Day: "2026-08-20"}, {Day: "2026-08-21", Bytes: &five}}
+	if len(out.DatabaseSeries) != len(want) {
+		t.Fatalf("database_series = %+v", out.DatabaseSeries)
+	}
+	for i, d := range out.DatabaseSeries {
+		if d.Day != want[i].Day || (d.Bytes == nil) != (want[i].Bytes == nil) || (d.Bytes != nil && *d.Bytes != *want[i].Bytes) {
+			t.Errorf("database_series[%d] = %+v, want %+v", i, d, want[i])
+		}
+	}
+}
+
+// Before any pass every day is counted live, as before server_stats.
+func TestProjectStatsCountsLiveBeforeAnyPass(t *testing.T) {
+	h, _ := newTestHost(t)
+	putStat(t, h, store.StatViews, 1, "2026-08-20", 777) // no database_bytes row: no pass yet
+	out, err := h.projectStats(context.Background(), statsIn{ProjectID: 1, usageRangeIn: usageRangeIn{From: "2026-08-20", To: "2026-08-20"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := out.Projects[0].Series[0]; d.Views != 45 {
+		t.Errorf("2026-08-20 = %+v, want the live 45", d)
+	}
+}

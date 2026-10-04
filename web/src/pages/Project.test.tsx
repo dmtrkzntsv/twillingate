@@ -25,7 +25,7 @@ beforeEach(() => {
     { project_id: 4, label: 'web', key: 'ak_web_123456789', state: 'active' },
     { project_id: 4, label: 'old', key: 'ak_old_123456789', state: 'disabled' },
   ] })
-  vi.spyOn(endpoints, 'stats').mockResolvedValue({ from: 'a', to: 'b', database_bytes: 0, projects: [] })
+  vi.spyOn(endpoints, 'stats').mockResolvedValue({ from: 'a', to: 'b', database_bytes: 0, database_series: [], projects: [] })
   vi.spyOn(endpoints, 'capUsage').mockResolvedValue({ project_id: 4, from: 'a', to: 'b', dimensions: [] })
 })
 

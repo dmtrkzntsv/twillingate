@@ -154,13 +154,22 @@ func (c Consent) Value() (driver.Value, error) {
 	return nil, nil
 }
 
-// The server_stats keys the daily pass measures, each per project: the
-// project's estimated disk use in raw rows (events) and in everything
-// rolled up (agg_*, actors, identities). A new stat is a new constant here,
-// measured in internal/store/sqlite/server_stats.go, never a migration.
+// The server_stats keys the daily pass writes. A new stat is a new
+// constant here, measured in internal/store/sqlite/server_stats.go, never
+// a migration.
 const (
+	// Per project, on the day measured: its estimated disk use in raw rows
+	// (events) and in everything rolled up (agg_*, actors, identities).
 	StatRawBytes       = "raw_bytes"
 	StatAggregateBytes = "aggregate_bytes"
+	// Per project, for the day counted (every day before the pass's): its
+	// views, product events and measure samples.
+	StatViews    = "views"
+	StatEvents   = "events"
+	StatMeasures = "measures"
+	// Server-wide (project 0), on the day measured: the database file's
+	// size, page_count × page_size.
+	StatDatabaseBytes = "database_bytes"
 )
 
 // Actor kinds: how an actor id was derived. Only user and install actors

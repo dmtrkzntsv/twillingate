@@ -31,3 +31,17 @@ export function formatDay(day: string, now: Date = new Date()): string {
   if (day === yesterday) return 'yesterday'
   return day.slice(0, 4) === today.slice(0, 4) ? formatTick(day) : formatHeading(day)
 }
+
+/**
+ * How much the database grew over the measured days of a series:
+ * "+12.3 MB since Sep 4", "−1.0 MB since Sep 4". Null with fewer than two
+ * measured days, or none of them changed.
+ */
+export function formatGrowth(series: { day: string; bytes: number | null }[], now: Date = new Date()): string | null {
+  const measured = series.filter((d): d is { day: string; bytes: number } => d.bytes !== null)
+  if (measured.length < 2) return null
+  const first = measured[0]
+  const delta = measured[measured.length - 1].bytes - first.bytes
+  if (delta === 0) return null
+  return `${delta > 0 ? '+' : '−'}${formatBytes(Math.abs(delta))} since ${formatDay(first.day, now)}`
+}

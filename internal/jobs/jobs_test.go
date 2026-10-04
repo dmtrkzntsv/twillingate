@@ -147,7 +147,8 @@ func TestRunDailyPassMeasuresServerStats(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := queryDays(t, `SELECT key || ' ' || project_id || ' ' || measured_at FROM server_stats ORDER BY key`)
-	want := []string{"aggregate_bytes 1 2026-08-22", "raw_bytes 1 2026-08-22"}
+	// Sizes for the pass day, the database too, and the counts of the days before it.
+	want := []string{"aggregate_bytes 1 2026-08-22", "database_bytes 0 2026-08-22", "raw_bytes 1 2026-08-22", "views 1 2026-08-21"}
 	if !slices.Equal(got, want) {
 		t.Errorf("server_stats = %v, want %v", got, want)
 	}

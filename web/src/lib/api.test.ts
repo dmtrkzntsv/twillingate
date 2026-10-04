@@ -147,7 +147,7 @@ describe('project endpoints', () => {
   })
 
   it('asks for stats with the query it was given', async () => {
-    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse({ from: 'a', to: 'b', database_bytes: 0, projects: [] }))
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse({ from: 'a', to: 'b', database_bytes: 0, database_series: [], projects: [] }))
     await endpoints.stats({ project_id: 4, from: '2026-09-01', to: '2026-09-30' })
     expect(vi.mocked(fetch).mock.calls[0][0]).toBe('/api/stats?project_id=4&from=2026-09-01&to=2026-09-30')
   })

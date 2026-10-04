@@ -34,7 +34,9 @@ beforeEach(() => {
     { project_id: 5, name: 'quiet.dev', allowed_origins: [], attributes: ['plan'] },
     { project_id: 3, name: 'legacy', archived: true, allowed_origins: [] },
   ] })
-  vi.spyOn(endpoints, 'stats').mockResolvedValue({ from: '2026-09-03', to: '2026-10-02', database_bytes: 2_100_000_000, projects: [
+  vi.spyOn(endpoints, 'stats').mockResolvedValue({ from: '2026-09-03', to: '2026-10-02', database_bytes: 2_100_000_000, database_series: [
+    { day: '2026-09-03', bytes: 2_000_000_000 }, { day: '2026-09-04', bytes: null }, { day: '2026-10-02', bytes: 2_100_000_000 },
+  ], projects: [
     stats(4),
     stats(5, { last_received_at: null, totals: { views: 0, events: 0, measures: 0 }, size: null }),
     stats(3),
@@ -59,7 +61,7 @@ describe('Projects', () => {
     expect(within(card).getByText(/7 events/)).toBeInTheDocument()
     expect(within(card).getByText(/2\.3 MB/)).toBeInTheDocument()
     expect(within(card).getByText(/1 active key/)).toBeInTheDocument()
-    expect(screen.getByText(/2 projects · 2\.1 GB on disk/)).toBeInTheDocument()
+    expect(screen.getByText(/2 projects · 2\.1 GB on disk · \+100\.0 MB since Sep 3/)).toBeInTheDocument()
   })
 
   it('says a project never sent anything instead of failing', async () => {

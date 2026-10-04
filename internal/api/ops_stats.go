@@ -53,11 +53,19 @@ type projectStats struct {
 	UnusedAttributes *[]string   `json:"unused_attributes" jsonschema:"declared keys no event carried in the range; computed only when project_id is given, null otherwise"`
 }
 
+// dbDay is the database file's size as the daily pass measured it on a
+// day; null on a day it was not measured.
+type dbDay struct {
+	Day   string `json:"day"`
+	Bytes *int64 `json:"bytes"`
+}
+
 type statsOut struct {
-	From          string         `json:"from"`
-	To            string         `json:"to"`
-	DatabaseBytes int64          `json:"database_bytes"`
-	Projects      []projectStats `json:"projects"`
+	From           string         `json:"from"`
+	To             string         `json:"to"`
+	DatabaseBytes  int64          `json:"database_bytes"`
+	DatabaseSeries []dbDay        `json:"database_series" jsonschema:"the database file's size per day of the range as the daily pass measured it, null on days not measured"`
+	Projects       []projectStats `json:"projects"`
 }
 
 func (h *host) projectStats(ctx context.Context, in statsIn) (statsOut, error) {
@@ -84,36 +92,60 @@ func (h *host) projectStats(ctx context.Context, in statsIn) (statsOut, error) {
 	if err != nil {
 		return statsOut{}, err
 	}
-	history, err := h.readSizeHistory(ctx, fromD, toD)
+	st, err := h.readStored(ctx, fromD, toD)
 	if err != nil {
 		return statsOut{}, err
 	}
+	for d := fromD; !toD.Before(d); d = d.AddDays(1) {
+		day := dbDay{Day: d.String()}
+		if n, ok := st.database[day.Day]; ok {
+			day.Bytes = &n
+		}
+		out.DatabaseSeries = append(out.DatabaseSeries, day)
+	}
 	for _, p := range projects {
-		ps, err := h.statsFor(ctx, p, fromD, toD, in.ProjectID != 0)
+		ps, err := h.statsFor(ctx, p, fromD, toD, st.countedBefore, in.ProjectID != 0)
 		if err != nil {
 			return statsOut{}, err
 		}
 		ps.Size = sizes[p.ID]
 		for i := range ps.Series {
-			if n, ok := history[p.ID][ps.Series[i].Day]; ok {
-				ps.Series[i].TotalBytes = &n
+			d := &ps.Series[i]
+			stored := st.days[p.ID][d.Day]
+			if stored == nil {
+				continue
 			}
+			if d.Day < st.countedBefore {
+				d.Views, d.Events, d.Measures = stored.views, stored.events, stored.measures
+			}
+			d.TotalBytes = stored.totalBytes
+		}
+		for _, d := range ps.Series {
+			ps.Totals.Views += d.Views
+			ps.Totals.Events += d.Events
+			ps.Totals.Measures += d.Measures
 		}
 		out.Projects = append(out.Projects, ps)
 	}
 	return out, nil
 }
 
-// statsFor reads one project's usage. withUnused also computes the
-// declared attributes no event carried: two view scans per project, so
-// only the one-project answer pays for it.
-func (h *host) statsFor(ctx context.Context, p *manage.Project, fromD, toD civil.Date, withUnused bool) (projectStats, error) {
+// statsFor reads one project's usage. Its series counts live only the
+// days from countedBefore on (the newest daily pass's day, "" before any):
+// the days before it are stored, and projectStats fills them in. withUnused
+// also computes the declared attributes no event carried: two view scans
+// per project, so only the one-project answer pays for it.
+func (h *host) statsFor(ctx context.Context, p *manage.Project, fromD, toD civil.Date, countedBefore string, withUnused bool) (projectStats, error) {
 	ps := projectStats{ProjectID: p.ID}
 	from, to := fromD.String(), toD.String()
 	index := map[string]int{}
 	for d := fromD; !toD.Before(d); d = d.AddDays(1) {
 		index[d.String()] = len(ps.Series)
 		ps.Series = append(ps.Series, statsDay{Day: d.String()})
+	}
+	liveFrom := from
+	if countedBefore > liveFrom {
+		liveFrom = countedBefore
 	}
 	for _, s := range []struct {
 		q   string
@@ -134,7 +166,10 @@ func (h *host) statsFor(ctx context.Context, p *manage.Project, fromD, toD civil
 		{`SELECT day, SUM(samples) FROM v_measures_daily WHERE project_id = ?1 AND day BETWEEN ?2 AND ?3 GROUP BY day`,
 			func(d *statsDay, n int64) { d.Measures = n }},
 	} {
-		res, err := h.run(ctx, s.q, p.ID, from, to)
+		if liveFrom > to {
+			break
+		}
+		res, err := h.run(ctx, s.q, p.ID, liveFrom, to)
 		if err != nil {
 			return projectStats{}, err
 		}
@@ -145,12 +180,6 @@ func (h *host) statsFor(ctx context.Context, p *manage.Project, fromD, toD civil
 			}
 		}
 	}
-	for _, d := range ps.Series {
-		ps.Totals.Views += d.Views
-		ps.Totals.Events += d.Events
-		ps.Totals.Measures += d.Measures
-	}
-
 	// The newest row arrived on its family's newest day, so each family
 	// scans one day, not every row of the project.
 	res, err := h.run(ctx, `SELECT
@@ -242,24 +271,66 @@ func (h *host) readSizes(ctx context.Context) (map[int64]*statsSize, error) {
 	return out, nil
 }
 
-// readSizeHistory answers every project's measured size per day of the
-// range (raw and aggregate summed), by project id and day, in one query.
-func (h *host) readSizeHistory(ctx context.Context, fromD, toD civil.Date) (map[int64]map[string]int64, error) {
-	res, err := h.run(ctx, `SELECT project_id, measured_at, SUM(value) FROM server_stats
-		WHERE key IN (?1, ?2) AND measured_at BETWEEN ?3 AND ?4
-		GROUP BY project_id, measured_at`,
-		store.StatRawBytes, store.StatAggregateBytes, fromD.String(), toD.String())
+// storedDay is what the daily pass stored for a project and day.
+type storedDay struct {
+	views, events, measures int64
+	totalBytes              *int64
+}
+
+// stored is the daily pass's rows for a range, read in one query.
+type stored struct {
+	// countedBefore is the newest pass's day: it counted every day before
+	// it, so those days' counts are stored (a day with nothing has no row
+	// and counts 0). "" before any pass.
+	countedBefore string
+	days          map[int64]map[string]*storedDay
+	database      map[string]int64
+}
+
+// readStored reads the counts, the project sizes (raw and aggregate summed)
+// and the database's size stored for every day of the range.
+func (h *host) readStored(ctx context.Context, fromD, toD civil.Date) (stored, error) {
+	st := stored{days: map[int64]map[string]*storedDay{}, database: map[string]int64{}}
+	res, err := h.run(ctx, `SELECT COALESCE(MAX(measured_at), '') FROM server_stats WHERE key = ? AND project_id = 0`, store.StatDatabaseBytes)
 	if err != nil {
-		return nil, err
+		return stored{}, err
 	}
-	out := map[int64]map[string]int64{}
+	st.countedBefore = res.Rows[0][0]
+	res, err = h.run(ctx, `SELECT key, project_id, measured_at, value FROM server_stats
+		WHERE key IN (?1, ?2, ?3, ?4, ?5, ?6) AND measured_at BETWEEN ?7 AND ?8`,
+		store.StatViews, store.StatEvents, store.StatMeasures, store.StatRawBytes, store.StatAggregateBytes, store.StatDatabaseBytes,
+		fromD.String(), toD.String())
+	if err != nil {
+		return stored{}, err
+	}
 	for _, r := range res.Rows {
-		id, _ := strconv.ParseInt(r[0], 10, 64)
-		n, _ := strconv.ParseInt(r[2], 10, 64)
-		if out[id] == nil {
-			out[id] = map[string]int64{}
+		id, _ := strconv.ParseInt(r[1], 10, 64)
+		n, _ := strconv.ParseInt(r[3], 10, 64)
+		if r[0] == store.StatDatabaseBytes {
+			st.database[r[2]] = n
+			continue
 		}
-		out[id][r[1]] = n
+		if st.days[id] == nil {
+			st.days[id] = map[string]*storedDay{}
+		}
+		d := st.days[id][r[2]]
+		if d == nil {
+			d = &storedDay{}
+			st.days[id][r[2]] = d
+		}
+		switch r[0] {
+		case store.StatViews:
+			d.views = n
+		case store.StatEvents:
+			d.events = n
+		case store.StatMeasures:
+			d.measures = n
+		case store.StatRawBytes, store.StatAggregateBytes:
+			if d.totalBytes == nil {
+				d.totalBytes = new(int64)
+			}
+			*d.totalBytes += n
+		}
 	}
-	return out, nil
+	return st, nil
 }

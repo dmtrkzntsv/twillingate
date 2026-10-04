@@ -11,7 +11,7 @@ beforeEach(() => vi.restoreAllMocks())
 
 describe('UsageSection', () => {
   it('shows totals, freshness, size and unused attributes', async () => {
-    vi.spyOn(endpoints, 'stats').mockResolvedValue({ from: '2026-09-01', to: '2026-09-02', database_bytes: 0, projects: [{
+    vi.spyOn(endpoints, 'stats').mockResolvedValue({ from: '2026-09-01', to: '2026-09-02', database_bytes: 0, database_series: [], projects: [{
       project_id: 4,
       series: [{ day: '2026-09-01', views: 10, events: 3, measures: 1, total_bytes: null }, { day: '2026-09-02', views: 20, events: 0, measures: 0, total_bytes: 2_262_000 }],
       totals: { views: 30, events: 3, measures: 1 },
@@ -33,7 +33,7 @@ describe('UsageSection', () => {
   })
 
   it('shows an empty project without errors', async () => {
-    vi.spyOn(endpoints, 'stats').mockResolvedValue({ from: 'a', to: 'b', database_bytes: 0, projects: [{
+    vi.spyOn(endpoints, 'stats').mockResolvedValue({ from: 'a', to: 'b', database_bytes: 0, database_series: [], projects: [{
       project_id: 5, series: [{ day: 'a', views: 0, events: 0, measures: 0, total_bytes: null }, { day: 'b', views: 0, events: 0, measures: 0, total_bytes: null }], totals: { views: 0, events: 0, measures: 0 }, last_received_at: null,
       first_day: null, raw_days: 0, rolled_up_days: 0, size: null, unused_attributes: [],
     }] })
@@ -45,7 +45,7 @@ describe('UsageSection', () => {
   })
 
   it('treats null unused attributes as not computed', async () => {
-    vi.spyOn(endpoints, 'stats').mockResolvedValue({ from: 'a', to: 'b', database_bytes: 0, projects: [{
+    vi.spyOn(endpoints, 'stats').mockResolvedValue({ from: 'a', to: 'b', database_bytes: 0, database_series: [], projects: [{
       project_id: 5, series: [{ day: 'a', views: 1, events: 0, measures: 0, total_bytes: null }], totals: { views: 1, events: 0, measures: 0 }, last_received_at: null,
       first_day: null, raw_days: 1, rolled_up_days: 0, size: null, unused_attributes: null,
     }] })
@@ -64,7 +64,7 @@ describe('UsageSection', () => {
   })
 
   it('shows a skeleton on the first load, then keeps the previous numbers while a new range loads', async () => {
-    const mk = (views: number) => ({ from: 'a', to: 'b', database_bytes: 0, projects: [{
+    const mk = (views: number) => ({ from: 'a', to: 'b', database_bytes: 0, database_series: [], projects: [{
       project_id: 4, series: [{ day: '2026-09-01', views, events: 0, measures: 0, total_bytes: null }], totals: { views, events: 0, measures: 0 },
       last_received_at: null, first_day: null, raw_days: 1, rolled_up_days: 0, size: null, unused_attributes: [],
     }] })

@@ -234,6 +234,8 @@ export interface StatsResponse {
   from: string
   to: string
   database_bytes: number
+  /** The database file's size per day as the daily pass measured it; null on a day not measured. */
+  database_series: { day: string; bytes: number | null }[]
   projects: ProjectStats[]
 }
 

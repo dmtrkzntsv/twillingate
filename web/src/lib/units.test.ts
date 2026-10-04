@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatAgo, formatBytes, formatDay } from './units'
+import { formatAgo, formatBytes, formatDay, formatGrowth } from './units'
 
 describe('formatBytes', () => {
   it('uses binary-free decimal units, one decimal past the first', () => {
@@ -27,5 +27,25 @@ describe('formatDay', () => {
     expect(formatDay('2026-10-02', now)).toBe('yesterday')
     expect(formatDay('2026-09-28', now)).toBe('Sep 28')
     expect(formatDay('2025-12-31', now)).toBe('Dec 31, 2025')
+  })
+})
+
+describe('formatGrowth', () => {
+  const now = new Date('2026-10-03T12:00:00Z')
+  it('says the change between the first and the last measured day', () => {
+    const series = [
+      { day: '2026-09-04', bytes: null },
+      { day: '2026-09-05', bytes: 2_000_000 },
+      { day: '2026-09-06', bytes: null },
+      { day: '2026-10-03', bytes: 14_300_000 },
+    ]
+    expect(formatGrowth(series, now)).toBe('+12.3 MB since Sep 5')
+    expect(formatGrowth([{ day: '2026-10-02', bytes: 5_000 }, { day: '2026-10-03', bytes: 4_000 }], now)).toBe('−1.0 kB since yesterday')
+  })
+
+  it('says nothing with under two measured days or no change', () => {
+    expect(formatGrowth([], now)).toBeNull()
+    expect(formatGrowth([{ day: '2026-10-03', bytes: 5 }, { day: '2026-10-02', bytes: null }], now)).toBeNull()
+    expect(formatGrowth([{ day: '2026-10-02', bytes: 5 }, { day: '2026-10-03', bytes: 5 }], now)).toBeNull()
   })
 })

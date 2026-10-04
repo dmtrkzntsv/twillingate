@@ -129,7 +129,13 @@ included, is returned, which is what the list page reads. Range rules as
 
 - **series / totals:** `views` from `v_views_daily` (sum of `views`),
   `events` from `v_product_totals` (`total_events`), `measures` from
-  `v_measures_daily` (sum of `samples`). Every day in the range is present,
+  `v_measures_daily` (sum of `samples`). Days before the newest daily pass
+  come from the counts it stored in `server_stats` (`views`, `events`,
+  `measures` per project and day; a day with no row counts 0), which
+  outlive the aggregates' retention; that day and later are counted live.
+  The pass counts every day before its own that the aggregates or the raw
+  rows still hold, again each night, so a late event on a raw day is
+  counted. Every day in the range is present,
   zeros included, so a chart needs no gap filling. `total_bytes` is the
   project's size measured that day (raw plus aggregate), null on a day
   not measured.
@@ -152,7 +158,10 @@ included, is returned, which is what the list page reads. Range rules as
   `identities`). `measured_at` is the day; `size` is null until the project
   has a measurement, or when the newest measurement found none of its rows,
   and the rest of the answer stands.
-- **database_bytes:** `page_count × page_size` of the database file.
+- **database_bytes / database_series:** `page_count × page_size` of the
+  database file now, and per day of the range as the daily pass stored it
+  (`database_bytes`, project 0; null on days not measured). The list page
+  shows the growth over the range ("+12 MB since Sep 4").
 - **unused_attributes:** declared keys with no row in `v_product_attrs`
   or `v_measures_attrs` in the range.
 
