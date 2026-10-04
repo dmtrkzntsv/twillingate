@@ -22,7 +22,7 @@ test('creates a project, edits it, manages a key, archives and restores it', asy
   await page.getByRole('button', { name: 'New project' }).click()
   await page.getByLabel('Name').fill(name)
   await page.getByRole('button', { name: 'Add origin' }).click()
-  await page.getByLabel('Origin 1').fill('https://e2e.example')
+  await page.getByRole('textbox', { name: 'Origin 1' }).fill('https://e2e.example')
   await page.getByRole('button', { name: 'Create' }).click()
   await expect(page.getByText('Project created')).toBeVisible()
   await expect(page.getByText(/^ak_/)).toBeVisible()
@@ -34,7 +34,7 @@ test('creates a project, edits it, manages a key, archives and restores it', asy
   const details = page.getByRole('region', { name: 'Details' })
   await details.getByRole('button', { name: 'Edit' }).click()
   await page.getByRole('button', { name: 'Add origin' }).click()
-  await page.getByLabel('Origin 2').fill('*')
+  await page.getByRole('textbox', { name: 'Origin 2' }).fill('*')
   await page.getByRole('button', { name: 'Save' }).click()
   await expect(details.getByText('*', { exact: true })).toBeVisible()
 
@@ -74,4 +74,32 @@ test('lists Projects first in the sidebar, as a plain link', async ({ page }) =>
   await expect(sidebar.getByRole('link', { name: 'dev', exact: true })).toHaveCount(0)
   await expect(sidebar.getByText('Dashboards', { exact: true })).toBeVisible()
   await expect(sidebar.getByRole('list', { name: 'Built-in dashboards' }).getByRole('link', { name: 'Views', exact: true })).toBeVisible()
+})
+
+test('picks a breakdown from the attributes the seeded project received', async ({ page }) => {
+  await login(page)
+  await page.goto('/app/projects')
+  await page.getByRole('article', { name: 'dev' }).getByRole('link', { name: 'dev' }).click()
+  const details = page.getByRole('region', { name: 'Details' })
+  // The pass that counts the seeded days runs after the server starts listening
+  // (about 20s on a loaded host), so reopen the dialog, which refetches the keys,
+  // until `plan` is listed.
+  const plan = page.getByRole('checkbox', { name: /plan/ })
+  await expect(async () => {
+    await details.getByRole('button', { name: 'Edit' }).click()
+    try {
+      await expect(plan).toBeVisible({ timeout: 3_000 })
+    } catch (e) {
+      await page.keyboard.press('Escape')
+      throw e
+    }
+  }).toPass({ timeout: 90_000, intervals: [2_000] })
+  await plan.check()
+  await page.getByRole('button', { name: 'Save' }).click()
+  await expect(details.getByText('plan', { exact: true })).toBeVisible()
+  await expect(details.getByText(/events · \d+ values?/)).toBeVisible()
+  // Leave the seed as it was for the other tests.
+  await details.getByRole('button', { name: 'Edit' }).click()
+  await page.getByRole('checkbox', { name: /plan/ }).uncheck()
+  await page.getByRole('button', { name: 'Save' }).click()
 })
