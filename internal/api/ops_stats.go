@@ -46,7 +46,7 @@ type projectStats struct {
 	Series           []statsDay  `json:"series" jsonschema:"every day of the range, zeros included"`
 	Totals           statsTotals `json:"totals"`
 	LastReceivedAt   *string     `json:"last_received_at" jsonschema:"when the newest raw row arrived; null with none"`
-	FirstDay         *string     `json:"first_day" jsonschema:"the oldest day with data, raw or rolled up"`
+	FirstDay         *string     `json:"first_day" jsonschema:"the oldest day with data: raw, rolled up, or counted by the daily pass (which outlives the aggregates)"`
 	RawDays          int         `json:"raw_days"`
 	RolledUpDays     int         `json:"rolled_up_days"`
 	Size             *statsSize  `json:"size" jsonschema:"the latest estimate the daily pass measured, with the day it was measured_at; null until the first measurement"`
@@ -181,7 +181,9 @@ func (h *host) statsFor(ctx context.Context, p *manage.Project, fromD, toD civil
 		}
 	}
 	// The newest row arrived on its family's newest day, so each family
-	// scans one day, not every row of the project.
+	// scans one day, not every row of the project. The oldest day is also
+	// the oldest the daily pass counted, which outlives the aggregates: the
+	// series reaches that far back, so first_day does too.
 	res, err := h.run(ctx, `SELECT
 		  (SELECT MAX(r) FROM (SELECT MAX(received_at) AS r FROM raw_views WHERE project_id = ?1
 		                          AND day = (SELECT MAX(day) FROM raw_views WHERE project_id = ?1)
@@ -194,13 +196,17 @@ func (h *host) statsFor(ctx context.Context, p *manage.Project, fromD, toD civil
 		                        UNION ALL SELECT MIN(day) FROM agg_measures_daily WHERE project_id = ?1
 		                        UNION ALL SELECT MIN(day) FROM raw_views WHERE project_id = ?1
 		                        UNION ALL SELECT MIN(day) FROM raw_product WHERE project_id = ?1
-		                        UNION ALL SELECT MIN(day) FROM raw_measures WHERE project_id = ?1)),
+		                        UNION ALL SELECT MIN(day) FROM raw_measures WHERE project_id = ?1
+		                        UNION ALL SELECT MIN(measured_at) FROM server_stats WHERE key = ?2 AND project_id = ?1
+		                        UNION ALL SELECT MIN(measured_at) FROM server_stats WHERE key = ?3 AND project_id = ?1
+		                        UNION ALL SELECT MIN(measured_at) FROM server_stats WHERE key = ?4 AND project_id = ?1)),
 		  (SELECT COUNT(*) FROM (SELECT day FROM raw_views WHERE project_id = ?1
 		                          UNION SELECT day FROM raw_product WHERE project_id = ?1
 		                          UNION SELECT day FROM raw_measures WHERE project_id = ?1)),
 		  (SELECT COUNT(*) FROM (SELECT day FROM agg_views_daily WHERE project_id = ?1
 		                          UNION SELECT day FROM agg_product_totals WHERE project_id = ?1
-		                          UNION SELECT day FROM agg_measures_daily WHERE project_id = ?1))`, p.ID)
+		                          UNION SELECT day FROM agg_measures_daily WHERE project_id = ?1))`,
+		p.ID, store.StatViews, store.StatEvents, store.StatMeasures)
 	if err != nil {
 		return projectStats{}, err
 	}

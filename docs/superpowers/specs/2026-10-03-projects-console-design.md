@@ -142,7 +142,8 @@ included, is returned, which is what the list page reads. Range rules as
 - **last_received_at:** the newest `received_at` among the project's raw
   rows of every family; null when it has none.
 - **first_day / raw_days / rolled_up_days:** the oldest day with any data
-  (raw or aggregated), the number of distinct raw days, and of rolled-up
+  (raw, aggregated, or counted by the daily pass, whose counts outlive the
+  aggregates), the number of distinct raw days, and of rolled-up
   days (`agg_views_daily`, `agg_product_totals`, `agg_measures_daily`
   days).
 - **size:** an estimate, measured by the daily pass and once after the

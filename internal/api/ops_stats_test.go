@@ -343,3 +343,32 @@ func TestProjectStatsCountsLiveBeforeAnyPass(t *testing.T) {
 		t.Errorf("2026-08-20 = %+v, want the live 45", d)
 	}
 }
+
+// first_day reaches as far back as the stored counts, which outlive the
+// aggregates, so it matches the oldest day the series can show.
+func TestProjectStatsFirstDayIncludesStoredCounts(t *testing.T) {
+	h, _ := newTestHost(t)
+	before, err := h.projectStats(context.Background(), statsIn{ProjectID: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := before.Projects[0].FirstDay; d == nil || *d <= "2025-03-14" {
+		t.Fatalf("fixture first_day = %v, want a day after the stored count added below", d)
+	}
+	putStat(t, h, store.StatEvents, 1, "2025-03-14", 2) // its aggregates long pruned
+	out, err := h.projectStats(context.Background(), statsIn{ProjectID: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := out.Projects[0].FirstDay; d == nil || *d != "2025-03-14" {
+		t.Errorf("first_day = %v, want the stored count's 2025-03-14 (was %v)", d, before.Projects[0].FirstDay)
+	}
+	putStat(t, h, store.StatViews, 2, "2024-01-01", 1) // another project's count
+	out, err = h.projectStats(context.Background(), statsIn{ProjectID: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := out.Projects[0].FirstDay; d == nil || *d != "2025-03-14" {
+		t.Errorf("first_day = %v after another project's older count, want 2025-03-14", d)
+	}
+}
