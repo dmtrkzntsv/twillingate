@@ -96,12 +96,16 @@ type ConsoleConfig struct {
 }
 
 // The caps' defaults (ATTRIBUTES_TOP_N, VIEWS_DIMENSIONS_TOP_N,
-// IDENTITIES_TOP_N). The console's limits tool reports them beside the
-// values in force, so they live here rather than as literals in parse.
+// IDENTITIES_TOP_N), sized for an indie site or app: past the 100th path of
+// a day, real traffic is single crawler hits; attributes are mostly a
+// handful of values; identities are dropped past their cap, so theirs sits
+// well above a small app's daily users. The console's limits tool reports
+// them beside the values in force, so they live here rather than as
+// literals in parse.
 const (
-	DefaultAttributesTopN      = 100
-	DefaultViewsDimensionsTopN = 1000
-	DefaultIdentitiesTopN      = 1000
+	DefaultAttributesTopN      = 50
+	DefaultViewsDimensionsTopN = 100
+	DefaultIdentitiesTopN      = 500
 )
 
 type Config struct {

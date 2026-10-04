@@ -499,17 +499,15 @@ the raw days its range covers; no data is copied and every view answers as
 before. Two settings join `ATTRIBUTES_TOP_N`: `VIEWS_DIMENSIONS_TOP_N` and
 `IDENTITIES_TOP_N`, replacing fixed caps of 500.
 
-The defaults rise: views breakdowns and identities keep 1000 values a day
-(was 500), attribute values 100 per day, event and key (was 50). Aggregates
-grow only on days a dimension had more values than the old cap; a
-dimension saturated every day costs about 19 MB a year at 1000. To keep
-today's caps, set them before upgrading in `twillingate.env` (compose:
-`.env`):
+The defaults are sized for an indie site or app. Views breakdowns keep 100
+values a day (was 500); identities keep 500 (unchanged) and attribute
+values 50 per day, event and key (unchanged). Past the 100th path of a day,
+a small site's traffic is single crawler hits, so the tables keep every
+value worth ranking while a crawler day stays small. To keep 500 values per
+breakdown, set it before upgrading in `twillingate.env` (compose: `.env`):
 
 ```sh
-ATTRIBUTES_TOP_N=50
 VIEWS_DIMENSIONS_TOP_N=500
-IDENTITIES_TOP_N=500
 ```
 
 Also check there:

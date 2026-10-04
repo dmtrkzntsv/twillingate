@@ -50,11 +50,11 @@ Date: 2026-10-03
 
 ```json
 {"limits": [
-  {"setting": "VIEWS_DIMENSIONS_TOP_N", "value": 1000, "default": 1000,
+  {"setting": "VIEWS_DIMENSIONS_TOP_N", "value": 100, "default": 100,
    "caps": "values per views breakdown and kinds, per project and day; the rest fold into (other)"},
-  {"setting": "ATTRIBUTES_TOP_N", "value": 100, "default": 100,
+  {"setting": "ATTRIBUTES_TOP_N", "value": 50, "default": 50,
    "caps": "values per attribute key, per project, day and event; the rest fold into (other)"},
-  {"setting": "IDENTITIES_TOP_N", "value": 1000, "default": 1000,
+  {"setting": "IDENTITIES_TOP_N", "value": 500, "default": 500,
    "caps": "users, and groups, per project and day; the rest are dropped"}
 ]}
 ```

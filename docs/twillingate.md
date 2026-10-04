@@ -103,7 +103,7 @@ value, per event, per day) in `agg_product_attrs` / `v_product_attrs`. A
 declared custom key also gets an `attr_*` column in `v_events_flat`; a declared
 reserved key is already a typed column there. Undeclared keys are still
 stored and reachable via `json_extract(attributes, '$.junk')`; declaring one
-later does not backfill. `ATTRIBUTES_TOP_N` (default 100, 0 for no cap,
+later does not backfill. `ATTRIBUTES_TOP_N` (default 50, 0 for no cap,
 set [server-side](deployment.md#configure-the-collector)) keeps the top N values per
 key and collapses the tail into one `(other)` row whose unique counts are
 recomputed from raw, so **a client sending the literal `(other)` loses its own
@@ -1011,7 +1011,7 @@ migration 018 or sent without `$consent`) and `v_views_locales` (keyed by
 `browser_locale` and `app_locale`, `''` where one was not sent; a view sending
 neither is left out, and no day rolled up before migration 019 has rows);
 every other dimension is
-capped at `VIEWS_DIMENSIONS_TOP_N` values per day (default 1000, 0 for no cap;
+capped at `VIEWS_DIMENSIONS_TOP_N` values per day (default 100, 0 for no cap;
 a changed cap applies to days rolled up after it, the past keeps its own),
 the tail is one `(other)` row whose visitors
 are distinct actors, not a sum, and `consent` never reaches it — it only ever
