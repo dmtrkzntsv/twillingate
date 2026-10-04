@@ -25,7 +25,7 @@ beforeEach(() => {
     { project_id: 4, label: 'web', key: 'ak_web_123456789', state: 'active' },
     { project_id: 4, label: 'old', key: 'ak_old_123456789', state: 'disabled' },
   ] })
-  vi.spyOn(endpoints, 'stats').mockResolvedValue({ from: 'a', to: 'b', database_bytes: 0, database_series: [], projects: [] })
+  vi.spyOn(endpoints, 'usage').mockResolvedValue({ from: 'a', to: 'b', database_bytes: 0, database_series: [], projects: [] })
   vi.spyOn(endpoints, 'capUsage').mockResolvedValue({ project_id: 4, from: 'a', to: 'b', dimensions: [] })
 })
 
@@ -121,13 +121,13 @@ describe('Project', () => {
     renderAt('/projects/4')
     expect(await screen.findByRole('region', { name: 'Usage' })).toBeInTheDocument()
     expect(await screen.findByRole('region', { name: 'Cap impact' })).toBeInTheDocument()
-    const first = vi.mocked(endpoints.stats).mock.calls.at(-1)![0]
+    const first = vi.mocked(endpoints.usage).mock.calls.at(-1)![0]
     expect(first).toMatchObject({ project_id: 4 })
     await user.click(screen.getByRole('button', { name: /^Range:/ }))
     await user.click(await screen.findByRole('menuitemradio', { name: 'Last week' }))
-    await vi.waitFor(() => expect(vi.mocked(endpoints.stats).mock.calls.at(-1)![0]).not.toEqual(first))
+    await vi.waitFor(() => expect(vi.mocked(endpoints.usage).mock.calls.at(-1)![0]).not.toEqual(first))
     await vi.waitFor(() => expect(vi.mocked(endpoints.capUsage).mock.calls.at(-1)![1]).toEqual({
-      from: vi.mocked(endpoints.stats).mock.calls.at(-1)![0].from, to: vi.mocked(endpoints.stats).mock.calls.at(-1)![0].to,
+      from: vi.mocked(endpoints.usage).mock.calls.at(-1)![0].from, to: vi.mocked(endpoints.usage).mock.calls.at(-1)![0].to,
     }))
   })
 

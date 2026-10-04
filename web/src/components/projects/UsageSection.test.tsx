@@ -11,7 +11,7 @@ beforeEach(() => vi.restoreAllMocks())
 
 describe('UsageSection', () => {
   it('shows totals, freshness, size and unused attributes', async () => {
-    vi.spyOn(endpoints, 'stats').mockResolvedValue({ from: '2026-09-01', to: '2026-09-02', database_bytes: 0, database_series: [], projects: [{
+    vi.spyOn(endpoints, 'usage').mockResolvedValue({ from: '2026-09-01', to: '2026-09-02', database_bytes: 0, database_series: [], projects: [{
       project_id: 4,
       series: [{ day: '2026-09-01', views: 10, events: 3, measures: 1, total_bytes: null, declared_attributes: null, attribute_keys: null, attribute_values: null, attribute_values_folded: null }, { day: '2026-09-02', views: 20, events: 0, measures: 0, total_bytes: 2_262_000, declared_attributes: null, attribute_keys: null, attribute_values: null, attribute_values_folded: null }],
       totals: { views: 30, events: 3, measures: 1 },
@@ -29,7 +29,7 @@ describe('UsageSection', () => {
     expect(screen.queryByText('No size measured in this range.')).not.toBeInTheDocument()
     expect(screen.getByText(/30 raw · 2 rolled up/)).toBeInTheDocument()
     expect(screen.getByText('self_hosted')).toBeInTheDocument()
-    expect(endpoints.stats).toHaveBeenCalledWith({ project_id: 4, from: '2026-09-01', to: '2026-09-02' })
+    expect(endpoints.usage).toHaveBeenCalledWith({ project_id: 4, from: '2026-09-01', to: '2026-09-02' })
   })
 
   it('sums up the attributes the daily pass stored', async () => {
@@ -37,7 +37,7 @@ describe('UsageSection', () => {
       day: d, views: 1, events: 0, measures: 0, total_bytes: null,
       declared_attributes: declared, attribute_keys: keys, attribute_values: values, attribute_values_folded: folded,
     })
-    vi.spyOn(endpoints, 'stats').mockResolvedValue({ from: 'a', to: 'c', database_bytes: 0, database_series: [], projects: [{
+    vi.spyOn(endpoints, 'usage').mockResolvedValue({ from: 'a', to: 'c', database_bytes: 0, database_series: [], projects: [{
       project_id: 4, series: [day('a', 2, 4, 90, 0), day('b', 3, 6, 1_200, 15), day('c', null, null, null, null)],
       totals: { views: 3, events: 0, measures: 0 }, last_received_at: null,
       first_day: null, raw_days: 3, rolled_up_days: 0, size: null, unused_attributes: [],
@@ -48,7 +48,7 @@ describe('UsageSection', () => {
   })
 
   it('says attributes are counted nightly before the first count', async () => {
-    vi.spyOn(endpoints, 'stats').mockResolvedValue({ from: 'a', to: 'a', database_bytes: 0, database_series: [], projects: [{
+    vi.spyOn(endpoints, 'usage').mockResolvedValue({ from: 'a', to: 'a', database_bytes: 0, database_series: [], projects: [{
       project_id: 4, series: [{ day: 'a', views: 1, events: 0, measures: 0, total_bytes: null,
         declared_attributes: null, attribute_keys: null, attribute_values: null, attribute_values_folded: null }],
       totals: { views: 1, events: 0, measures: 0 }, last_received_at: null,
@@ -59,7 +59,7 @@ describe('UsageSection', () => {
   })
 
   it('shows an empty project without errors', async () => {
-    vi.spyOn(endpoints, 'stats').mockResolvedValue({ from: 'a', to: 'b', database_bytes: 0, database_series: [], projects: [{
+    vi.spyOn(endpoints, 'usage').mockResolvedValue({ from: 'a', to: 'b', database_bytes: 0, database_series: [], projects: [{
       project_id: 5, series: [{ day: 'a', views: 0, events: 0, measures: 0, total_bytes: null, declared_attributes: null, attribute_keys: null, attribute_values: null, attribute_values_folded: null }, { day: 'b', views: 0, events: 0, measures: 0, total_bytes: null, declared_attributes: null, attribute_keys: null, attribute_values: null, attribute_values_folded: null }], totals: { views: 0, events: 0, measures: 0 }, last_received_at: null,
       first_day: null, raw_days: 0, rolled_up_days: 0, size: null, unused_attributes: [],
     }] })
@@ -71,7 +71,7 @@ describe('UsageSection', () => {
   })
 
   it('treats null unused attributes as not computed', async () => {
-    vi.spyOn(endpoints, 'stats').mockResolvedValue({ from: 'a', to: 'b', database_bytes: 0, database_series: [], projects: [{
+    vi.spyOn(endpoints, 'usage').mockResolvedValue({ from: 'a', to: 'b', database_bytes: 0, database_series: [], projects: [{
       project_id: 5, series: [{ day: 'a', views: 1, events: 0, measures: 0, total_bytes: null, declared_attributes: null, attribute_keys: null, attribute_values: null, attribute_values_folded: null }], totals: { views: 1, events: 0, measures: 0 }, last_received_at: null,
       first_day: null, raw_days: 1, rolled_up_days: 0, size: null, unused_attributes: null,
     }] })
@@ -82,7 +82,7 @@ describe('UsageSection', () => {
 
   it('offers a retry when the stats fail', async () => {
     const user = userEvent.setup()
-    const spy = vi.spyOn(endpoints, 'stats').mockRejectedValue(new ApiError(400, 'range over 400 days; narrow the date range'))
+    const spy = vi.spyOn(endpoints, 'usage').mockRejectedValue(new ApiError(400, 'range over 400 days; narrow the date range'))
     renderWithProviders(<UsageSection projectId={4} range={{ from: 'a', to: 'b' }} />)
     expect(await screen.findByText('range over 400 days; narrow the date range')).toBeInTheDocument()
     await user.click(await screen.findByRole('button', { name: 'Retry' }))
@@ -96,14 +96,14 @@ describe('UsageSection', () => {
     }] })
     let release!: () => void
     const second = new Promise<ReturnType<typeof mk>>((res) => { release = () => res(mk(99)) })
-    vi.spyOn(endpoints, 'stats').mockResolvedValueOnce(mk(11)).mockReturnValueOnce(second)
+    vi.spyOn(endpoints, 'usage').mockResolvedValueOnce(mk(11)).mockReturnValueOnce(second)
     const { client, rerender } = renderWithProviders(<UsageSection projectId={4} range={{ from: '2026-09-01', to: '2026-09-01' }} />)
     expect(screen.getByRole('region', { name: 'Usage' }).querySelector('[data-slot="skeleton"]')).not.toBeNull()
     expect(screen.queryByText(/Couldn't load/)).not.toBeInTheDocument()
     expect(await screen.findByText('11')).toBeInTheDocument()
     expect(screen.getByRole('region', { name: 'Usage' }).querySelector('[data-slot="skeleton"]')).toBeNull()
     rerender(<QueryClientProvider client={client}><TooltipProvider><UsageSection projectId={4} range={{ from: '2026-09-02', to: '2026-09-02' }} /></TooltipProvider></QueryClientProvider>)
-    await waitFor(() => expect(endpoints.stats).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(endpoints.usage).toHaveBeenCalledTimes(2))
     expect(screen.getByText('11')).toBeInTheDocument()
     release()
     expect(await screen.findByText('99')).toBeInTheDocument()

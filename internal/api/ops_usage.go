@@ -10,14 +10,14 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
-// ---- project_stats ----
+// ---- usage ----
 
-type statsIn struct {
+type usageIn struct {
 	ProjectID int64 `json:"project_id,omitempty" jsonschema:"one project; absent answers every project"`
 	usageRangeIn
 }
 
-type statsDay struct {
+type usageDay struct {
 	Day      string `json:"day"`
 	Views    int64  `json:"views"`
 	Events   int64  `json:"events"`
@@ -36,13 +36,13 @@ type statsDay struct {
 	AttributeValuesFolded *int64 `json:"attribute_values_folded"`
 }
 
-type statsTotals struct {
+type usageTotals struct {
 	Views    int64 `json:"views"`
 	Events   int64 `json:"events"`
 	Measures int64 `json:"measures"`
 }
 
-type statsSize struct {
+type usageSize struct {
 	RawBytes       int64 `json:"raw_bytes"`
 	AggregateBytes int64 `json:"aggregate_bytes"`
 	TotalBytes     int64 `json:"total_bytes"`
@@ -50,15 +50,15 @@ type statsSize struct {
 	MeasuredAt string `json:"measured_at"`
 }
 
-type projectStats struct {
+type projectUsage struct {
 	ProjectID        int64       `json:"project_id"`
-	Series           []statsDay  `json:"series" jsonschema:"every day of the range, zeros included"`
-	Totals           statsTotals `json:"totals"`
+	Series           []usageDay  `json:"series" jsonschema:"every day of the range, zeros included"`
+	Totals           usageTotals `json:"totals"`
 	LastReceivedAt   *string     `json:"last_received_at" jsonschema:"when the newest raw row arrived; null with none"`
 	FirstDay         *string     `json:"first_day" jsonschema:"the oldest day with data: raw, rolled up, or counted by the daily pass (which outlives the aggregates)"`
 	RawDays          int         `json:"raw_days"`
 	RolledUpDays     int         `json:"rolled_up_days"`
-	Size             *statsSize  `json:"size" jsonschema:"the latest estimate the daily pass measured, with the day it was measured_at; null until the first measurement"`
+	Size             *usageSize  `json:"size" jsonschema:"the latest estimate the daily pass measured, with the day it was measured_at; null until the first measurement"`
 	UnusedAttributes *[]string   `json:"unused_attributes" jsonschema:"declared keys no event carried in the range; computed only when project_id is given, null otherwise"`
 }
 
@@ -69,21 +69,21 @@ type dbDay struct {
 	Bytes *int64 `json:"bytes"`
 }
 
-type statsOut struct {
+type usageOut struct {
 	From           string         `json:"from"`
 	To             string         `json:"to"`
 	DatabaseBytes  int64          `json:"database_bytes"`
 	DatabaseSeries []dbDay        `json:"database_series" jsonschema:"the database file's size per day of the range as the daily pass measured it, null on days not measured"`
-	Projects       []projectStats `json:"projects"`
+	Projects       []projectUsage `json:"projects"`
 }
 
-func (h *host) projectStats(ctx context.Context, in statsIn) (statsOut, error) {
+func (h *host) usage(ctx context.Context, in usageIn) (usageOut, error) {
 	snap := h.reg.Snapshot(ctx)
 	var projects []*manage.Project
 	if in.ProjectID != 0 {
 		p := snap.Project(in.ProjectID)
 		if p == nil {
-			return statsOut{}, h.unknownProjectErr(ctx, in.ProjectID)
+			return usageOut{}, h.unknownProjectErr(ctx, in.ProjectID)
 		}
 		projects = append(projects, p)
 	} else {
@@ -91,19 +91,19 @@ func (h *host) projectStats(ctx context.Context, in statsIn) (statsOut, error) {
 	}
 	fromD, toD, err := usageRange(in.usageRangeIn, time.Now())
 	if err != nil {
-		return statsOut{}, err
+		return usageOut{}, err
 	}
-	out := statsOut{From: fromD.String(), To: toD.String(), Projects: []projectStats{}}
+	out := usageOut{From: fromD.String(), To: toD.String(), Projects: []projectUsage{}}
 	if res, err := h.db.Run(ctx, `SELECT page_count * page_size FROM pragma_page_count(), pragma_page_size()`); err == nil && len(res.Rows) == 1 {
 		out.DatabaseBytes, _ = strconv.ParseInt(res.Rows[0][0], 10, 64)
 	}
 	sizes, err := h.readSizes(ctx)
 	if err != nil {
-		return statsOut{}, err
+		return usageOut{}, err
 	}
 	st, err := h.readStored(ctx, fromD, toD)
 	if err != nil {
-		return statsOut{}, err
+		return usageOut{}, err
 	}
 	for d := fromD; !toD.Before(d); d = d.AddDays(1) {
 		day := dbDay{Day: d.String()}
@@ -113,9 +113,9 @@ func (h *host) projectStats(ctx context.Context, in statsIn) (statsOut, error) {
 		out.DatabaseSeries = append(out.DatabaseSeries, day)
 	}
 	for _, p := range projects {
-		ps, err := h.statsFor(ctx, p, fromD, toD, st.countedBefore, in.ProjectID != 0)
+		ps, err := h.usageFor(ctx, p, fromD, toD, st.countedBefore, in.ProjectID != 0)
 		if err != nil {
-			return statsOut{}, err
+			return usageOut{}, err
 		}
 		ps.Size = sizes[p.ID]
 		for i := range ps.Series {
@@ -141,18 +141,18 @@ func (h *host) projectStats(ctx context.Context, in statsIn) (statsOut, error) {
 	return out, nil
 }
 
-// statsFor reads one project's usage. Its series counts live only the
+// usageFor reads one project's usage. Its series counts live only the
 // days from countedBefore on (the newest daily pass's day, "" before any):
-// the days before it are stored, and projectStats fills them in. withUnused
+// the days before it are stored, and usage fills them in. withUnused
 // also computes the declared attributes no event carried: two view scans
 // per project, so only the one-project answer pays for it.
-func (h *host) statsFor(ctx context.Context, p *manage.Project, fromD, toD civil.Date, countedBefore string, withUnused bool) (projectStats, error) {
-	ps := projectStats{ProjectID: p.ID}
+func (h *host) usageFor(ctx context.Context, p *manage.Project, fromD, toD civil.Date, countedBefore string, withUnused bool) (projectUsage, error) {
+	ps := projectUsage{ProjectID: p.ID}
 	from, to := fromD.String(), toD.String()
 	index := map[string]int{}
 	for d := fromD; !toD.Before(d); d = d.AddDays(1) {
 		index[d.String()] = len(ps.Series)
-		ps.Series = append(ps.Series, statsDay{Day: d.String()})
+		ps.Series = append(ps.Series, usageDay{Day: d.String()})
 	}
 	liveFrom := from
 	if countedBefore > liveFrom {
@@ -160,7 +160,7 @@ func (h *host) statsFor(ctx context.Context, p *manage.Project, fromD, toD civil
 	}
 	for _, s := range []struct {
 		q   string
-		set func(*statsDay, int64)
+		set func(*usageDay, int64)
 	}{
 		// Not v_views_daily: its live half sessionizes raw rows with window
 		// functions only to yield a count, and this runs per project. A day
@@ -171,18 +171,18 @@ func (h *host) statsFor(ctx context.Context, p *manage.Project, fromD, toD civil
 			  UNION ALL
 			  SELECT day, COUNT(*) FROM raw_views WHERE project_id = ?1 AND day BETWEEN ?2 AND ?3 GROUP BY day
 			) GROUP BY day`,
-			func(d *statsDay, n int64) { d.Views = n }},
+			func(d *usageDay, n int64) { d.Views = n }},
 		{`SELECT day, SUM(total_events) FROM v_product_totals WHERE project_id = ?1 AND day BETWEEN ?2 AND ?3 GROUP BY day`,
-			func(d *statsDay, n int64) { d.Events = n }},
+			func(d *usageDay, n int64) { d.Events = n }},
 		{`SELECT day, SUM(samples) FROM v_measures_daily WHERE project_id = ?1 AND day BETWEEN ?2 AND ?3 GROUP BY day`,
-			func(d *statsDay, n int64) { d.Measures = n }},
+			func(d *usageDay, n int64) { d.Measures = n }},
 	} {
 		if liveFrom > to {
 			break
 		}
 		res, err := h.run(ctx, s.q, p.ID, liveFrom, to)
 		if err != nil {
-			return projectStats{}, err
+			return projectUsage{}, err
 		}
 		for _, r := range res.Rows {
 			if i, ok := index[r[0]]; ok {
@@ -219,7 +219,7 @@ func (h *host) statsFor(ctx context.Context, p *manage.Project, fromD, toD civil
 		                          UNION SELECT day FROM agg_measures_daily WHERE project_id = ?1))`,
 		p.ID, store.StatViews, store.StatEvents, store.StatMeasures)
 	if err != nil {
-		return projectStats{}, err
+		return projectUsage{}, err
 	}
 	r := res.Rows[0]
 	if r[0] != "" {
@@ -239,7 +239,7 @@ func (h *host) statsFor(ctx context.Context, p *manage.Project, fromD, toD civil
 		res, err := h.run(ctx, `SELECT attr_key FROM v_product_attrs WHERE project_id = ?1 AND day BETWEEN ?2 AND ?3
 			UNION SELECT attr_key FROM v_measures_attrs WHERE project_id = ?1 AND day BETWEEN ?2 AND ?3`, p.ID, from, to)
 		if err != nil {
-			return projectStats{}, err
+			return projectUsage{}, err
 		}
 		carried := map[string]bool{}
 		for _, r := range res.Rows {
@@ -259,20 +259,20 @@ func (h *host) statsFor(ctx context.Context, p *manage.Project, fromD, toD civil
 // in one query however many projects there are. A project with no row that
 // day had no data left to measure and is absent, even if an earlier day
 // measured it.
-func (h *host) readSizes(ctx context.Context) (map[int64]*statsSize, error) {
+func (h *host) readSizes(ctx context.Context) (map[int64]*usageSize, error) {
 	res, err := h.run(ctx, `SELECT key, project_id, value, measured_at FROM server_stats
 		WHERE key IN (?1, ?2) AND measured_at = (SELECT MAX(measured_at) FROM server_stats WHERE key IN (?1, ?2))`,
 		store.StatRawBytes, store.StatAggregateBytes)
 	if err != nil {
 		return nil, err
 	}
-	out := map[int64]*statsSize{}
+	out := map[int64]*usageSize{}
 	for _, r := range res.Rows {
 		id, _ := strconv.ParseInt(r[1], 10, 64)
 		n, _ := strconv.ParseInt(r[2], 10, 64)
 		sz := out[id]
 		if sz == nil {
-			sz = &statsSize{MeasuredAt: r[3]}
+			sz = &usageSize{MeasuredAt: r[3]}
 			out[id] = sz
 		}
 		switch r[0] {

@@ -1,13 +1,13 @@
 import { CartesianGrid, Line, LineChart, XAxis, YAxis } from 'recharts'
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from '@/components/ui/chart'
-import type { StatsDay } from '@/lib/api'
+import type { UsageDay } from '@/lib/api'
 import { activeDot, axis, formatHeading, formatTick, grid, niceTicks, seriesColor, valueAxis } from '@/lib/chart'
 import { formatBytes } from '@/lib/units'
 
 const config: ChartConfig = { total_bytes: { label: 'Data size' } }
 
 /** The project's measured size per day; days not measured are bridged, never drawn as zero. */
-export default function SizeChart({ series }: { series: StatsDay[] }) {
+export default function SizeChart({ series }: { series: UsageDay[] }) {
   const measured = series.flatMap((d) => (d.total_bytes === null ? [] : [d.total_bytes]))
   if (measured.length === 0) return <p className="text-sm text-muted-foreground">No size measured in this range.</p>
   const ticks = niceTicks(measured)

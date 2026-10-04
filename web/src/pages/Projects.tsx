@@ -13,14 +13,14 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { useProjectActions } from '@/hooks/use-project-actions'
 import type { CreatedProject } from '@/lib/api'
-import { dashboardsQuery, keysQuery, limitsQuery, projectsQuery, statsQuery } from '@/lib/queries'
+import { dashboardsQuery, keysQuery, limitsQuery, projectsQuery, usageQuery } from '@/lib/queries'
 import { formatBytes, formatGrowth } from '@/lib/units'
 
 /** `/projects`: every project as a card with its last 30 days, the caps, archived projects, and New project. */
 export default function Projects() {
   const { data: dash } = useQuery(dashboardsQuery)
   const projectsQ = useQuery(projectsQuery)
-  const statsQ = useQuery(statsQuery({}))
+  const statsQ = useQuery(usageQuery({}))
   const keysQ = useQuery(keysQuery())
   const { data: projectsData } = projectsQ
   const { data: statsData } = statsQ

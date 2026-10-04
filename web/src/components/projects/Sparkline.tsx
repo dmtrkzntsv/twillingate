@@ -1,8 +1,8 @@
 import { Area, AreaChart, ResponsiveContainer } from 'recharts'
-import type { StatsDay } from '@/lib/api'
+import type { UsageDay } from '@/lib/api'
 
 /** Events per day, every family summed, as a small area with no axes. */
-export default function Sparkline({ series }: { series: StatsDay[] }) {
+export default function Sparkline({ series }: { series: UsageDay[] }) {
   const data = series.map((d) => ({ day: d.day, n: d.views + d.events + d.measures }))
   return (
     <div className="h-10 w-full" aria-hidden>

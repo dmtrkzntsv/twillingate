@@ -2,7 +2,7 @@ import { Link } from 'react-router'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
-import type { IngestKey, Project, ProjectStats } from '@/lib/api'
+import type { IngestKey, Project, ProjectUsage } from '@/lib/api'
 import { formatValue } from '@/lib/format'
 import { formatAgo, formatBytes } from '@/lib/units'
 import { cn } from '@/lib/utils'
@@ -13,7 +13,7 @@ const DAY = 86_400_000
 interface Props {
   project: Project
   /** Undefined while stats load. */
-  stats?: ProjectStats
+  stats?: ProjectUsage
   /** Undefined while keys load. */
   keys?: IngestKey[]
   /** The stats read failed (the page says why): no skeleton, which would never resolve. */

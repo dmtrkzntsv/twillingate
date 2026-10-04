@@ -359,7 +359,7 @@ Aggregation, pruning, incremental vacuum and the daily history in
 `server_stats` (each project's disk use, declared attributes, views,
 events and measure samples, and attribute keys, values and values folded
 into `(other)` per day, and the database's size and the caps in force,
-which `project_stats` reads and which outlive the aggregates' retention) run daily at
+which `usage` reads and which outlive the aggregates' retention) run daily at
 03:00 UTC and the visitor salt rotates at 00:00 UTC; a catch-up pass at startup means downtime
 across those times skips no day. With `LOG_FILE` set, install
 `deploy/logrotate/twillingate` into `/etc/logrotate.d/`.

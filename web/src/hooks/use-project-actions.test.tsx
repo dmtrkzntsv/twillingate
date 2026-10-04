@@ -42,7 +42,7 @@ describe('useProjectActions', () => {
       await result.current.archive(7)
     })
     const keys = invalidate.mock.calls.map((c) => (c[0] as { queryKey: string[] }).queryKey[0])
-    expect(keys.sort()).toEqual(['keys', 'projects', 'stats'])
+    expect(keys.sort()).toEqual(['keys', 'projects', 'usage'])
   })
 
   it('refetches nothing when the action failed', async () => {

@@ -107,7 +107,7 @@ func measureSizes(ctx context.Context, tx *sql.Tx, day string) error {
 	return putStat(ctx, tx, store.StatDatabaseBytes, 0, day, file)
 }
 
-// dailyCounts are the per-day counts, each the same sum project_stats and
+// dailyCounts are the per-day counts, each the same sum usage and
 // the v_* views make: a day is rolled up or raw, never both, and each row
 // counts once either way.
 var dailyCounts = []struct{ key, agg, raw string }{

@@ -26,9 +26,9 @@ export const keysQuery = (projectId?: number) => ({
 export const limitsQuery = { queryKey: ['limits'], queryFn: () => endpoints.limits(), staleTime: 5 * 60_000 }
 
 /** Per-project usage over a range (the last 30 days when empty). */
-export const statsQuery = (q: RangeQuery & { project_id?: number }) => ({
-  queryKey: ['stats', q.project_id ?? 'all', q.from ?? '', q.to ?? ''],
-  queryFn: () => endpoints.stats({ project_id: q.project_id, from: q.from, to: q.to }),
+export const usageQuery = (q: RangeQuery & { project_id?: number }) => ({
+  queryKey: ['usage', q.project_id ?? 'all', q.from ?? '', q.to ?? ''],
+  queryFn: () => endpoints.usage({ project_id: q.project_id, from: q.from, to: q.to }),
 })
 
 /** How a project's data meets the caps over a range. */

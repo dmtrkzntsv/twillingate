@@ -16,7 +16,7 @@ export interface ProjectActions {
 }
 
 /** What a project write changes: the list, its keys, and the usage cards. */
-const PROJECT_WRITE = ['projects', 'keys', 'stats']
+const PROJECT_WRITE = ['projects', 'keys', 'usage']
 /** What a key write changes. */
 const KEY_WRITE = ['keys']
 

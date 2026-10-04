@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
-import { endpoints, type ProjectStats } from '@/lib/api'
+import { endpoints, type ProjectUsage } from '@/lib/api'
 import { dashboardsList } from '@/test/fixtures'
 import { renderWithProviders } from '@/test/render'
 import Projects from './Projects'
@@ -12,7 +12,7 @@ vi.mock('@/hooks/use-project-actions', () => ({
   useProjectActions: () => ({ create, restore: vi.fn(), pending: false }),
 }))
 
-function stats(project_id: number, over: Partial<ProjectStats> = {}): ProjectStats {
+function stats(project_id: number, over: Partial<ProjectUsage> = {}): ProjectUsage {
   return {
     project_id,
     series: [{ day: '2026-10-02', views: 5, events: 2, measures: 0, total_bytes: null, declared_attributes: null, attribute_keys: null, attribute_values: null, attribute_values_folded: null }],
@@ -34,7 +34,7 @@ beforeEach(() => {
     { project_id: 5, name: 'quiet.dev', allowed_origins: [], attributes: ['plan'] },
     { project_id: 3, name: 'legacy', archived: true, allowed_origins: [] },
   ] })
-  vi.spyOn(endpoints, 'stats').mockResolvedValue({ from: '2026-09-03', to: '2026-10-02', database_bytes: 2_100_000_000, database_series: [
+  vi.spyOn(endpoints, 'usage').mockResolvedValue({ from: '2026-09-03', to: '2026-10-02', database_bytes: 2_100_000_000, database_series: [
     { day: '2026-09-03', bytes: 2_000_000_000 }, { day: '2026-09-04', bytes: null }, { day: '2026-10-02', bytes: 2_100_000_000 },
   ], projects: [
     stats(4),
@@ -72,7 +72,7 @@ describe('Projects', () => {
   })
 
   it('shows dashes, not zeros, while stats and keys load, and no count before projects', async () => {
-    vi.spyOn(endpoints, 'stats').mockReturnValue(new Promise(() => {}))
+    vi.spyOn(endpoints, 'usage').mockReturnValue(new Promise(() => {}))
     vi.spyOn(endpoints, 'keys').mockReturnValue(new Promise(() => {}))
     renderPage()
     const card = await screen.findByRole('article', { name: 'econumo.com' })
@@ -130,7 +130,7 @@ describe('Projects', () => {
 
   it('shows one error line above the grid when stats fail, not dashes and skeletons forever', async () => {
     const user = userEvent.setup()
-    const stats = vi.spyOn(endpoints, 'stats').mockRejectedValueOnce(new Error('stats exploded'))
+    const stats = vi.spyOn(endpoints, 'usage').mockRejectedValueOnce(new Error('stats exploded'))
     const { container } = renderPage()
     expect(await screen.findByText(/Couldn't load usage\. stats exploded/)).toBeInTheDocument()
     const card = screen.getByRole('article', { name: 'econumo.com' })

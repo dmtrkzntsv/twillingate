@@ -207,7 +207,7 @@ export interface CapUsage {
   dimensions: CapUsageRow[]
 }
 
-export interface StatsDay {
+export interface UsageDay {
   day: string
   views: number
   events: number
@@ -222,9 +222,9 @@ export interface StatsDay {
   attribute_values_folded: number | null
 }
 
-export interface ProjectStats {
+export interface ProjectUsage {
   project_id: number
-  series: StatsDay[]
+  series: UsageDay[]
   totals: { views: number; events: number; measures: number }
   last_received_at: string | null
   first_day: string | null
@@ -236,13 +236,13 @@ export interface ProjectStats {
   unused_attributes: string[] | null
 }
 
-export interface StatsResponse {
+export interface UsageResponse {
   from: string
   to: string
   database_bytes: number
   /** The database file's size per day as the daily pass measured it; null on a day not measured. */
   database_series: { day: string; bytes: number | null }[]
-  projects: ProjectStats[]
+  projects: ProjectUsage[]
 }
 
 export interface CreateProjectBody {
@@ -343,7 +343,7 @@ export const endpoints = {
   enableKey: (id: number, label: string) =>
     api<{ status: string }>(`/api/projects/${id}/keys/${encodeURIComponent(label)}/enable`, json('POST', {})),
   limits: () => api<{ limits: Limit[] }>('/api/limits'),
-  stats: (q: RangeQuery & { project_id?: number }) => api<StatsResponse>(`/api/stats${toQuery(q)}`),
+  usage: (q: RangeQuery & { project_id?: number }) => api<UsageResponse>(`/api/usage${toQuery(q)}`),
   capUsage: (id: number, q: RangeQuery) => api<CapUsage>(`/api/projects/${id}/cap-usage${toQuery(q)}`),
   devVersion: () => api<{ version: string }>('/api/dev/version'),
 }

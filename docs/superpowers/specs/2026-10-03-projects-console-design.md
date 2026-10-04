@@ -30,11 +30,11 @@ Date: 2026-10-03
   project; `/projects/:id` shows one. The sidebar gains a "Projects" link at
   the top, and `/` opens the list.
 - **D3. Two new read-only operations for usage and caps, one for the
-  settings.** `limits`, `cap_usage` and `project_stats`, each an MCP tool
+  settings.** `limits`, `cap_usage` and `usage`, each an MCP tool
   and a REST route through `expose`, so MCP clients get the same answers.
   All compute on request from the `v_*` views (which since #119 read only
   the raw days a range covers); project sizes are the one exception, read
-  from `server_stats`, which the daily pass fills (see `project_stats`).
+  from `server_stats`, which the daily pass fills (see `usage`).
 - **D4. Caps are shown, not edited.** They are environment settings; the
   UI shows the value in force, the default, what each caps, and that 0
   means no cap, and points at `twillingate.env`.
@@ -105,9 +105,9 @@ recoverable. The UI says so.
 
 A cap of 0 reports `cap: 0`. A day rolled up under an older cap keeps its `(other)` row and still counts as capped; identities, which keep no trace, report no capped day under no cap.
 
-### `project_stats`
+### `usage`
 
-`GET /api/stats?project_id=&from=&to=`, MCP `project_stats`. `project_id`
+`GET /api/usage?project_id=&from=&to=`, MCP `usage`. `project_id`
 is optional (as on `/api/keys`): without it, every project, archived ones
 included, is returned, which is what the list page reads. Range rules as
 `cap_usage`.
@@ -267,7 +267,7 @@ components and the widgets' chart setup; no new library.
 - **Go:** `limits` against the config, 0 included; `cap_usage` on a
   fixture with capped and uncapped days for paths, an attribute key and
   users (max per day, days capped, folded share, the cap-0 case);
-  `project_stats` (series sums equal the views', every day present,
+  `usage` (series sums equal the views', every day present,
   sizes read from `server_stats`' newest day and null before the first
   measurement, the size history in the series (null on unmeasured days),
   last event, unused attributes, all projects without `project_id`); the
@@ -283,7 +283,7 @@ components and the widgets' chart setup; no new library.
 
 ## Docs
 
-- `docs/twillingate.md`: `limits`, `cap_usage`, `project_stats` (tools
+- `docs/twillingate.md`: `limits`, `cap_usage`, `usage` (tools
   and routes tables), the key field rename.
 - `deploy/UPGRADES.md`: the key field rename.
 

@@ -6,8 +6,8 @@ import { ChartContainer, ChartTooltip, type ChartConfig } from '@/components/ui/
 import { legend, tooltip } from '@/components/chart-parts'
 import { axis, formatTick, grid, MAX_BAR, niceTicks, seriesColor, valueAxis } from '@/lib/chart'
 import { formatValue } from '@/lib/format'
-import type { StatsDay } from '@/lib/api'
-import { statsQuery } from '@/lib/queries'
+import type { UsageDay } from '@/lib/api'
+import { usageQuery } from '@/lib/queries'
 import { cn } from '@/lib/utils'
 import { formatAgo, formatBytes, formatDay } from '@/lib/units'
 import SizeChart from './SizeChart'
@@ -35,10 +35,10 @@ function Tile({ label, value, hint }: { label: string; value: string; hint?: str
  * from the days the daily pass counted, the busiest day's keys and values
  * received and every value folded into (other).
  */
-function AttributesTile({ series }: { series: StatsDay[] }) {
+function AttributesTile({ series }: { series: UsageDay[] }) {
   const declared = series.findLast((d) => d.declared_attributes !== null)?.declared_attributes
   const counted = series.filter((d) => d.attribute_values !== null)
-  const max = (pick: (d: StatsDay) => number | null) => Math.max(...counted.map((d) => pick(d) ?? 0))
+  const max = (pick: (d: UsageDay) => number | null) => Math.max(...counted.map((d) => pick(d) ?? 0))
   const folded = counted.reduce((n, d) => n + (d.attribute_values_folded ?? 0), 0)
   return (
     <Tile
@@ -56,7 +56,7 @@ function AttributesTile({ series }: { series: StatsDay[] }) {
 /** Events per day by family, the measured size per day, and tiles for total, freshness, size and days kept. */
 export default function UsageSection({ projectId, range }: { projectId: number; range: { from: string; to: string } }) {
   const { data, error, isError, isPlaceholderData, refetch } = useQuery({
-    ...statsQuery({ project_id: projectId, from: range.from, to: range.to }),
+    ...usageQuery({ project_id: projectId, from: range.from, to: range.to }),
     placeholderData: keepPreviousData,
   })
   const s = data?.projects[0]
