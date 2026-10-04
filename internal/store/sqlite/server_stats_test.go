@@ -298,7 +298,6 @@ func TestShareOfBytesDoesNotOverflow(t *testing.T) {
 	}
 }
 
-
 // Counts: every day before the run's, from the aggregates where rolled up
 // and the raw rows where not, per project and family; today's rows wait
 // for tomorrow's run.
@@ -365,7 +364,7 @@ func TestMeasureServerStatsRecountsAndOutlivesTheAggregates(t *testing.T) {
 
 // attrsDB holds one project declaring "plan", with one raw day of product
 // events (plan: free, pro, team; $os: windows, macos; an undeclared "ref")
-// and measures (plan: free, pro), under a product_attributes_top_n of cap.
+// and measures (plan: free, pro), under a attributes_top_n of cap.
 func attrsDB(t *testing.T, cap string) (*DB, int64) {
 	t.Helper()
 	db := newTestDB(t)
@@ -375,7 +374,7 @@ func attrsDB(t *testing.T, cap string) (*DB, int64) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.db.Exec(`INSERT OR REPLACE INTO meta (key, value) VALUES ('product_attributes_top_n', ?)`, cap); err != nil {
+	if _, err := db.db.Exec(`INSERT OR REPLACE INTO meta (key, value) VALUES ('attributes_top_n', ?)`, cap); err != nil {
 		t.Fatal(err)
 	}
 	var evs []store.Event
@@ -475,9 +474,9 @@ func TestMeasureServerStatsRecordsTheCaps(t *testing.T) {
 	}
 	stats := readStats(t, db)
 	for key, want := range map[string]int64{
-		store.StatCapProductAttributes: 0,
-		store.StatCapViewsDimensions:   250,
-		store.StatCapIdentities:        1000, // unset: the default
+		store.StatCapAttributes:      0,
+		store.StatCapViewsDimensions: 250,
+		store.StatCapIdentities:      1000, // unset: the default
 	} {
 		if got, ok := stats[statID{key, 0, "2026-08-22"}]; !ok || got != want {
 			t.Errorf("%s = %d (present %v), want %d", key, got, ok, want)

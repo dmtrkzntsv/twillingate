@@ -103,7 +103,7 @@ value, per event, per day) in `agg_product_attrs` / `v_product_attrs`. A
 declared custom key also gets an `attr_*` column in `v_events_flat`; a declared
 reserved key is already a typed column there. Undeclared keys are still
 stored and reachable via `json_extract(attributes, '$.junk')`; declaring one
-later does not backfill. `PRODUCT_ATTRIBUTES_TOP_N` (default 100, 0 for no cap,
+later does not backfill. `ATTRIBUTES_TOP_N` (default 100, 0 for no cap,
 set [server-side](deployment.md#configure-the-collector)) keeps the top N values per
 key and collapses the tail into one `(other)` row whose unique counts are
 recomputed from raw, so **a client sending the literal `(other)` loses its own
@@ -902,7 +902,7 @@ take `project_id`, `from` and `to` as `YYYY-MM-DD` unless noted.
 | Tool | Extra parameters | Returns |
 | --- | --- | --- |
 | `list_projects` | none | Every project with its `project_id`, name, `archived`, `allowed_origins` and declared `attributes`. Call this first — every other tool needs a `project_id` |
-| `limits` | none (no `project_id`) | The caps in force — `VIEWS_DIMENSIONS_TOP_N`, `PRODUCT_ATTRIBUTES_TOP_N`, `IDENTITIES_TOP_N` — each with its `value` (0 = no cap), `default` and what it caps |
+| `limits` | none (no `project_id`) | The caps in force — `VIEWS_DIMENSIONS_TOP_N`, `ATTRIBUTES_TOP_N`, `IDENTITIES_TOP_N` — each with its `value` (0 = no cap), `default` and what it caps |
 | `cap_usage` | `from`, `to` (optional: the last 30 days) | Per capped dimension — views breakdowns and kinds, attribute keys, `users`/`groups` — the busiest day's values against the `cap`, `days` with data, `days_capped` (an `(other)` row; for users and groups, the cap reached) and `folded_share` |
 | `usage` | `project_id` (optional: every project), `from`, `to` (optional: the last 30 days) | Per project: `views`, product `events` and measure `samples` per day and in total, `last_received_at`, `first_day` (the oldest day with data, stored counts included), `raw_days`, `rolled_up_days`, an estimated `size` (raw rows and aggregates, measured daily by the daily pass, which also runs at start: the newest, with the day it was `measured_at`; `null` until the first measurement) and each day's measured `total_bytes` in the series (`null` on days not measured), `unused_attributes` (declared keys no event carried; computed only with `project_id`, `null` for the all-projects answer); plus the database's size on disk now and per day (`database_series`). Days before the newest daily pass read the counts it stored, which outlive the aggregates' retention. Each series day also carries `declared_attributes` and, counted the night after while the day's rows are raw and kept once rolled up, the distinct `attribute_keys` and `attribute_values` received and the `attribute_values_folded` into `(other)` (`null` on days not stored) |
 | `views_overview` | `kind` (optional) | Visitors, views, sessions, bounces, average session length per day, summed across kinds unless `kind` filters one |

@@ -95,28 +95,28 @@ type ConsoleConfig struct {
 	authErr error
 }
 
-// The caps' defaults (PRODUCT_ATTRIBUTES_TOP_N, VIEWS_DIMENSIONS_TOP_N,
+// The caps' defaults (ATTRIBUTES_TOP_N, VIEWS_DIMENSIONS_TOP_N,
 // IDENTITIES_TOP_N). The console's limits tool reports them beside the
 // values in force, so they live here rather than as literals in parse.
 const (
-	DefaultProductAttributesTopN = 100
-	DefaultViewsDimensionsTopN   = 1000
-	DefaultIdentitiesTopN        = 1000
+	DefaultAttributesTopN      = 100
+	DefaultViewsDimensionsTopN = 1000
+	DefaultIdentitiesTopN      = 1000
 )
 
 type Config struct {
-	IngestAddr            string
-	Database              string
-	Geo                   string
-	PublicURL             string
-	Log                   LogConfig
-	Buffer                BufferConfig
-	Retention             Retention
-	ProductAttributesTopN int
-	ViewsDimensionsTopN   int
-	IdentitiesTopN        int
-	Reporting             ReportingConfig
-	Console               ConsoleConfig
+	IngestAddr          string
+	Database            string
+	Geo                 string
+	PublicURL           string
+	Log                 LogConfig
+	Buffer              BufferConfig
+	Retention           Retention
+	AttributesTopN      int
+	ViewsDimensionsTopN int
+	IdentitiesTopN      int
+	Reporting           ReportingConfig
+	Console             ConsoleConfig
 }
 
 // Load builds the configuration from the process environment.
@@ -205,9 +205,9 @@ func FromEnv(lookup func(string) (string, bool)) (*Config, error) {
 		// of a views breakdown and for users and groups a day. Each cap
 		// keeps the aggregates, which outlive raw rows, from growing with a
 		// dimension that carries ids; 0 keeps every value.
-		ProductAttributesTopN: e.num("PRODUCT_ATTRIBUTES_TOP_N", DefaultProductAttributesTopN),
-		ViewsDimensionsTopN:   e.num("VIEWS_DIMENSIONS_TOP_N", DefaultViewsDimensionsTopN),
-		IdentitiesTopN:        e.num("IDENTITIES_TOP_N", DefaultIdentitiesTopN),
+		AttributesTopN:      e.num("ATTRIBUTES_TOP_N", DefaultAttributesTopN),
+		ViewsDimensionsTopN: e.num("VIEWS_DIMENSIONS_TOP_N", DefaultViewsDimensionsTopN),
+		IdentitiesTopN:      e.num("IDENTITIES_TOP_N", DefaultIdentitiesTopN),
 		Reporting: ReportingConfig{
 			CacheAge:   time.Duration(e.num("REPORTING_CACHE_SECONDS", 900)) * time.Second,
 			RefreshAge: time.Duration(e.num("REPORTING_REFRESH_SECONDS", 60)) * time.Second,
@@ -247,6 +247,7 @@ var renamed = []struct{ old, repl string }{
 	{"API_DB_PATH", "CONSOLE_DB_PATH"},
 	{"API_QUERY_TIMEOUT", "CONSOLE_QUERY_TIMEOUT"},
 	{"API_QUERY_MAX_ROWS", "CONSOLE_QUERY_MAX_ROWS"},
+	{"PRODUCT_ATTRIBUTES_TOP_N", "ATTRIBUTES_TOP_N"},
 }
 
 // refuseRenamed treats an empty value as unset, as env.str does, so a
@@ -278,7 +279,7 @@ func (c *Config) validate() error {
 		name string
 		n    int
 	}{
-		{"PRODUCT_ATTRIBUTES_TOP_N", c.ProductAttributesTopN},
+		{"ATTRIBUTES_TOP_N", c.AttributesTopN},
 		{"VIEWS_DIMENSIONS_TOP_N", c.ViewsDimensionsTopN},
 		{"IDENTITIES_TOP_N", c.IdentitiesTopN},
 	} {

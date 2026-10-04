@@ -182,7 +182,7 @@ export interface IngestKey {
 }
 
 export interface Limit {
-  setting: 'VIEWS_DIMENSIONS_TOP_N' | 'PRODUCT_ATTRIBUTES_TOP_N' | 'IDENTITIES_TOP_N'
+  setting: 'VIEWS_DIMENSIONS_TOP_N' | 'ATTRIBUTES_TOP_N' | 'IDENTITIES_TOP_N'
   /** The cap in force; 0 means no cap. */
   value: number
   default: number

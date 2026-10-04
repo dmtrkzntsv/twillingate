@@ -825,7 +825,7 @@ func TestProductAttrsDeclaredSystemKeysAcrossBoundary(t *testing.T) {
 func TestProductAttrsViewHonoursMetaCap(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	if err := db.SetMeta(ctx, "product_attributes_top_n", "3"); err != nil {
+	if err := db.SetMeta(ctx, "attributes_top_n", "3"); err != nil {
 		t.Fatal(err)
 	}
 	id := seedDeclaredProject(t, db, []string{"plan"})
@@ -859,7 +859,7 @@ func TestProductAttrsViewDefaultsCapWhenMetaMissing(t *testing.T) {
 	seedAttrDay(t, db, id)
 	var n int
 	if err := db.db.QueryRow(`SELECT COUNT(*) FROM meta
-		WHERE key='product_attributes_top_n'`).Scan(&n); err != nil {
+		WHERE key='attributes_top_n'`).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	if n != 0 {
@@ -897,7 +897,7 @@ func TestProductAttrsViewClampsBadMetaCap(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			db := newTestDB(t)
 			ctx := context.Background()
-			if err := db.SetMeta(ctx, "product_attributes_top_n", tc.meta); err != nil {
+			if err := db.SetMeta(ctx, "attributes_top_n", tc.meta); err != nil {
 				t.Fatal(err)
 			}
 			id := seedDeclaredProject(t, db, []string{"plan"})
@@ -979,7 +979,7 @@ func TestStitchViewPlatformsAcrossBoundaryWithCap(t *testing.T) {
 // cap, by its key, never visitor data.
 var capRead = regexp.MustCompile(`\(SELECT CASE CAST\(value AS INTEGER\) WHEN 0 THEN 4611686018427387904
 \s+ELSE CAST\(value AS INTEGER\) END
-\s+FROM meta WHERE key='(product_attributes_top_n|views_dimensions_top_n|identities_top_n)'
+\s+FROM meta WHERE key='(attributes_top_n|views_dimensions_top_n|identities_top_n)'
 \s+AND \(CAST\(value AS INTEGER\) > 0 OR value = '0'\)\)`)
 
 // TestViewsReferenceNoRefusedName pins readsql.Check against every view's
@@ -987,7 +987,7 @@ var capRead = regexp.MustCompile(`\(SELECT CASE CAST\(value AS INTEGER\) WHEN 0 
 // views too): the query tool's guard must accept what the schema itself
 // relies on, or a legitimate query through a view would be refused. The
 // views with a cap are the declared exception: they name meta, but only
-// to read a tuning knob (product_attributes_top_n, views_dimensions_top_n
+// to read a tuning knob (attributes_top_n, views_dimensions_top_n
 // or identities_top_n), never visitor data. Rather than asserting that
 // narrowly by substring, the test removes exactly that fragment and then
 // holds the remainder to the same bar as every other view: readsql.Check
