@@ -73,5 +73,5 @@ test('lists Projects first in the sidebar, as a plain link', async ({ page }) =>
   await expect(sidebar.getByRole('link', { name: 'Projects' })).toHaveAttribute('href', '/app/projects')
   await expect(sidebar.getByRole('link', { name: 'dev', exact: true })).toHaveCount(0)
   await expect(sidebar.getByText('Dashboards', { exact: true })).toBeVisible()
-  await expect(sidebar.getByRole('list', { name: 'Pinned dashboards' }).getByRole('link', { name: 'Views', exact: true })).toBeVisible()
+  await expect(sidebar.getByRole('list', { name: 'Built-in dashboards' }).getByRole('link', { name: 'Views', exact: true })).toBeVisible()
 })

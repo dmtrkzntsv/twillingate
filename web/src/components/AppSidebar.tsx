@@ -6,10 +6,13 @@ import {
   LayoutDashboardIcon,
   LayoutGridIcon,
   LogOutIcon,
-  PinIcon,
+  ChartColumnIcon,
+  ChevronRightIcon,
   ShapesIcon,
 } from 'lucide-react'
+import { useState } from 'react'
 import { Link, useLocation } from 'react-router'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import {
   Sidebar,
   SidebarContent,
@@ -43,12 +46,13 @@ interface Props {
 
 /**
  * Projects (a link to the list) first, then "Dashboards": one entry per
- * dashboard group (tabs D20), the system groups pinned at the top with a
- * pin, then the user's. Then Archive (every archived dashboard, user or
- * system, D17a), and Gallery (the components playground and the
- * templates gallery, D17). Each entry links to its group's first live
+ * dashboard group (tabs D20), the system groups first with a "Built-in"
+ * badge, then the user's. Then Gallery (the components playground and the
+ * templates gallery, D17), closed until opened or on a gallery page. At
+ * the bottom, Archive (every archived dashboard, user or system, D17a)
+ * above Log out. Each entry links to its group's first live
  * member and is named by its title; it is active on any live member of
- * the group. The user's entries drag to a new order (D14, D15); pinned
+ * the group. The user's entries drag to a new order (D14, D15); built-in
  * ones do not, and since the sortable list holds only user groups,
  * nothing drops above them. Icons only at 640–1023px, a drawer on phones
  * (D37).
@@ -56,8 +60,12 @@ interface Props {
  * open mode has none to forget.
  */
 export default function AppSidebar({ dashboards, currentId, readOnly = false }: Props) {
-  const { isMobile, setOpenMobile } = useSidebar()
+  const { isMobile, setOpenMobile, state } = useSidebar()
   const { pathname } = useLocation()
+  // Gallery starts closed, and open on a gallery page so its entry shows.
+  // With the sidebar down to icons its heading is hidden, so it stays open.
+  const [galleryOpen, setGalleryOpen] = useState(() => pathname.startsWith('/gallery'))
+  const galleryShown = galleryOpen || (state === 'collapsed' && !isMobile)
   const groups = liveGroups(dashboards)
   const system = groups.filter((g) => g.owner === 'system')
   const serverYours = groups.filter((g) => g.owner === 'user')
@@ -123,13 +131,21 @@ export default function AppSidebar({ dashboards, currentId, readOnly = false }: 
           <SidebarGroupLabel className="text-sidebar-foreground/60">Dashboards</SidebarGroupLabel>
           <SidebarGroupContent className="flex flex-col gap-1">
             {system.length > 0 && (
-              <SidebarMenu aria-label="Pinned dashboards">
+              <SidebarMenu aria-label="Built-in dashboards">
                 {system.map((g) => (
                   <SidebarMenuItem key={g.groupId}>
-                    <SidebarMenuButton asChild isActive={isActive(g)} tooltip={`${g.members[0].title} (pinned)`} className={item}>
+                    <SidebarMenuButton asChild isActive={isActive(g)} tooltip={`${g.members[0].title} · built-in, always listed first`} className={item}>
                       <Link to={`/dashboards/${g.members[0].dashboard_id}`} onClick={close}>
-                        <PinIcon />
-                        <span>{g.members[0].title}</span>
+                        <ChartColumnIcon />
+                        <span className="truncate">{g.members[0].title}</span>
+                        {/* Hidden from the link's name: the list says "Built-in dashboards". */}
+                        <span
+                          aria-hidden
+                          title="Comes with twillingate and is always listed first"
+                          className="ml-auto shrink-0 rounded-sm border border-sidebar-foreground/20 px-1 py-px text-[10px] leading-none font-medium tracking-wide text-sidebar-foreground/60 uppercase group-data-[collapsible=icon]:hidden"
+                        >
+                          Built-in
+                        </span>
                       </Link>
                     </SidebarMenuButton>
                     {!readOnly && <SidebarGroupMenu group={g} userGroups={yours} currentId={currentId} />}
@@ -174,66 +190,69 @@ export default function AppSidebar({ dashboards, currentId, readOnly = false }: 
             )}
           </SidebarGroupContent>
         </SidebarGroup>
-        <SidebarGroup>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild isActive={pathname === '/archive'} tooltip="Archive" className={item}>
-                  <Link to="/archive" onClick={close}>
-                    <ArchiveIcon />
-                    <span>Archive</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-        <SidebarGroup>
-          <SidebarGroupLabel className="text-sidebar-foreground/60">Gallery</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  asChild
-                  isActive={pathname.startsWith('/gallery/components')}
-                  tooltip="Components"
-                  className={item}
-                >
-                  <Link to="/gallery/components" onClick={close}>
-                    <ShapesIcon />
-                    <span>Components</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  asChild
-                  isActive={pathname.startsWith('/gallery/dashboards')}
-                  tooltip="Templates"
-                  className={item}
-                >
-                  <Link to="/gallery/dashboards" onClick={close}>
-                    <LayoutGridIcon />
-                    <span>Templates</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+        <Collapsible open={galleryShown} onOpenChange={setGalleryOpen} className="group/gallery">
+          <SidebarGroup>
+            <SidebarGroupLabel asChild className="text-sidebar-foreground/60">
+              <CollapsibleTrigger>
+                Gallery
+                <ChevronRightIcon className="ml-auto transition-transform group-data-[state=open]/gallery:rotate-90" />
+              </CollapsibleTrigger>
+            </SidebarGroupLabel>
+            <CollapsibleContent>
+              <SidebarGroupContent>
+                <SidebarMenu>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      asChild
+                      isActive={pathname.startsWith('/gallery/components')}
+                      tooltip="Components"
+                      className={item}
+                    >
+                      <Link to="/gallery/components" onClick={close}>
+                        <ShapesIcon />
+                        <span>Components</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      asChild
+                      isActive={pathname.startsWith('/gallery/dashboards')}
+                      tooltip="Templates"
+                      className={item}
+                    >
+                      <Link to="/gallery/dashboards" onClick={close}>
+                        <LayoutGridIcon />
+                        <span>Templates</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </CollapsibleContent>
+          </SidebarGroup>
+        </Collapsible>
       </SidebarContent>
-      {currentAuthState().kind !== 'none' && (
-        <SidebarFooter>
-          <SidebarMenu>
+      <SidebarFooter>
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton asChild isActive={pathname === '/archive'} tooltip="Archive" className={item}>
+              <Link to="/archive" onClick={close}>
+                <ArchiveIcon />
+                <span>Archive</span>
+              </Link>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          {currentAuthState().kind !== 'none' && (
             <SidebarMenuItem>
               <SidebarMenuButton tooltip="Log out" onClick={logOut}>
                 <LogOutIcon />
                 <span>Log out</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
-          </SidebarMenu>
-        </SidebarFooter>
-      )}
+          )}
+        </SidebarMenu>
+      </SidebarFooter>
       <SidebarRail />
     </Sidebar>
   )

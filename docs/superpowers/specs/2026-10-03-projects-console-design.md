@@ -176,8 +176,11 @@ New operations use the existing typed refusals (`manage.ErrNotFound` →
 "Projects" comes first: a plain link to `/projects`, active on the list and
 on any project page; the projects are not listed under it. Then
 "Dashboards", in the style of the old "Yours" heading, holds every
-dashboard: the system ones pinned at the top with a pin icon, then the
-user's, which still drag to a new order.
+dashboard: the system ones first, each with a "Built-in" badge and a
+tooltip saying it is always listed first, then the user's, which still
+drag to a new order. "Gallery" is closed until opened (open on a gallery
+page, and always with the sidebar down to icons, where its heading is
+hidden). Archive sits at the bottom, above Log out.
 
 ### Top bar
 
@@ -249,7 +252,7 @@ components and the widgets' chart setup; no new library.
   last event, unused attributes, all projects without `project_id`); the
   key fields in snake_case over REST and MCP; REST/MCP parity and docs-sync cover the
   new operations.
-- **Web (vitest):** sidebar Projects first as a plain link and the pinned dashboards; breadcrumbs that link;
+- **Web (vitest):** sidebar Projects first as a plain link and the built-in dashboards; breadcrumbs that link;
   cards from fixtures (live and muted dots); project page sections;
   form bodies sent on edit; key actions and confirmations; a failed
   section shows retry.
