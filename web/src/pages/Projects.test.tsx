@@ -43,9 +43,10 @@ beforeEach(() => {
   ] })
   vi.spyOn(endpoints, 'keys').mockResolvedValue({ keys: [{ project_id: 4, label: 'web', key: 'ak_1', state: 'active' }] })
   vi.spyOn(endpoints, 'limits').mockResolvedValue({ limits: [
-    { setting: 'VIEWS_DIMENSIONS_TOP_N', value: 0, default: 1000, caps: 'values per views breakdown' },
-    { setting: 'ATTRIBUTES_TOP_N', value: 100, default: 100, caps: 'values per attribute key' },
-    { setting: 'IDENTITIES_TOP_N', value: 1000, default: 1000, caps: 'users and groups' },
+    { group: 'retention', name: 'Raw events', setting: 'RETENTION_EVENTS_RAW_DAYS', value: 7, default: 30, unit: 'days', description: 'raw events are kept this long' },
+    { group: 'caps', name: 'Views breakdown values', setting: 'VIEWS_DIMENSIONS_TOP_N', value: 0, default: 100, zero: 'no cap', description: 'values per views breakdown' },
+    { group: 'caps', name: 'Attribute values', setting: 'ATTRIBUTES_TOP_N', value: 50, default: 50, zero: 'no cap', description: 'values per attribute key' },
+    { group: 'ingest', name: 'Request body', value: 262144, unit: 'bytes', description: 'a larger request is refused with 413' },
   ] })
 })
 
@@ -98,11 +99,19 @@ describe('Projects', () => {
     expect(screen.getByRole('article', { name: 'legacy' })).toBeInTheDocument()
   })
 
-  it('shows the caps, 0 as no cap', async () => {
+  it('shows the limits by group, retention first, 0 as what it means', async () => {
     renderPage()
     const panel = await screen.findByRole('region', { name: 'Limits' })
-    expect(within(panel).getByText('VIEWS_DIMENSIONS_TOP_N')).toBeInTheDocument()
+    const groups = within(panel).getAllByRole('region').map((r) => r.getAttribute('aria-label'))
+    expect(groups).toEqual(['Retention', 'Caps', 'Ingest'])
+    const retention = within(panel).getByRole('region', { name: 'Retention' })
+    expect(within(retention).getByText('7 days')).toBeInTheDocument()
+    expect(within(retention).getByText('RETENTION_EVENTS_RAW_DAYS')).toBeInTheDocument()
+    expect(within(retention).getByText(/default 30 days/)).toBeInTheDocument()
     expect(within(panel).getByText('no cap')).toBeInTheDocument()
+    const ingest = within(panel).getByRole('region', { name: 'Ingest' })
+    expect(within(ingest).getByText('256 KiB')).toBeInTheDocument()
+    expect(within(ingest).queryByText(/default/)).not.toBeInTheDocument()
   })
 
   it('creates a project and shows its key and snippet once', async () => {

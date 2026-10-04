@@ -10,32 +10,57 @@ import (
 
 	"github.com/dmtrkzntsv/twillingate/internal/config"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
+	"github.com/dmtrkzntsv/twillingate/internal/wire"
 )
 
-// limits reports the caps in force beside their defaults, 0 included
-// (no cap), in a fixed order: views, attributes, identities.
-func TestLimitsReportsTheCapsInForce(t *testing.T) {
+// limits reports retention, the caps and the wire format's fixed limits, in
+// that order: settings with their value in force (0 included) and default,
+// fixed limits from internal/wire with neither setting nor default.
+func TestLimitsReportsTheLimitsInForce(t *testing.T) {
 	h, cs := newTestHost(t)
-	h.limits = limitsFrom(&config.Config{AttributesTopN: 7, ViewsDimensionsTopN: 0, IdentitiesTopN: 2000})
+	cfg := &config.Config{AttributesTopN: 7, ViewsDimensionsTopN: 0, IdentitiesTopN: 2000}
+	cfg.Retention.Events = config.RetentionClass{RawDays: 7, AggregateDays: 90}
+	h.limits = limitsFrom(cfg)
 	out, err := h.listLimits(context.Background(), struct{}{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []struct {
-		setting   string
-		value, df int
-	}{
-		{"VIEWS_DIMENSIONS_TOP_N", 0, config.DefaultViewsDimensionsTopN},
-		{"ATTRIBUTES_TOP_N", 7, config.DefaultAttributesTopN},
-		{"IDENTITIES_TOP_N", 2000, config.DefaultIdentitiesTopN},
+	type want struct {
+		group, setting string
+		value, df      float64
 	}
-	if len(out.Limits) != len(want) {
+	settings := []want{
+		{groupRetention, "RETENTION_EVENTS_RAW_DAYS", 7, config.DefaultRawDays},
+		{groupRetention, "RETENTION_EVENTS_AGGREGATE_DAYS", 90, config.DefaultAggregateDays},
+		{groupRetention, "RETENTION_ARCHIVED_DAYS", 0, config.DefaultArchivedDays},
+		{groupCaps, "VIEWS_DIMENSIONS_TOP_N", 0, config.DefaultViewsDimensionsTopN},
+		{groupCaps, "ATTRIBUTES_TOP_N", 7, config.DefaultAttributesTopN},
+		{groupCaps, "IDENTITIES_TOP_N", 2000, config.DefaultIdentitiesTopN},
+	}
+	if len(out.Limits) <= len(settings) {
 		t.Fatalf("limits = %+v", out.Limits)
 	}
-	for i, w := range want {
+	for i, w := range settings {
 		l := out.Limits[i]
-		if l.Setting != w.setting || l.Value != w.value || l.Default != w.df || l.Caps == "" {
-			t.Errorf("limits[%d] = %+v, want %s %d (default %d) with a description", i, l, w.setting, w.value, w.df)
+		if l.Group != w.group || l.Setting != w.setting || l.Value != w.value || l.Default == nil || *l.Default != w.df ||
+			l.Name == "" || l.Description == "" {
+			t.Errorf("limits[%d] = %+v, want %s %s %v (default %v) with a name and a description", i, l, w.group, w.setting, w.value, w.df)
+		}
+	}
+	fixedByName := map[string]limitOut{}
+	for _, l := range out.Limits[len(settings):] {
+		if l.Group != groupIngest || l.Setting != "" || l.Default != nil || l.Description == "" {
+			t.Errorf("fixed limit = %+v, want an ingest limit with no setting or default", l)
+		}
+		fixedByName[l.Name] = l
+	}
+	for name, v := range map[string]float64{
+		"Request body": wire.MaxBody, "Events per batch": wire.MaxBatchEvents,
+		"Attribute value length": wire.MaxAttrValue, "Timestamp ahead of the server": 300,
+		"Measure value": wire.MaxMeasureValue, "Lowest sample rate": wire.MinSampleRate,
+	} {
+		if fixedByName[name].Value != v {
+			t.Errorf("%s = %+v, want %v", name, fixedByName[name], v)
 		}
 	}
 	if h.capOf(settingViews) != 0 || h.capOf(settingAttrs) != 7 || h.capOf(settingIdentities) != 2000 {
@@ -46,7 +71,7 @@ func TestLimitsReportsTheCapsInForce(t *testing.T) {
 	if err := json.Unmarshal([]byte(textOf(callTool(t, cs, "limits", map[string]any{}))), &mcpOut); err != nil {
 		t.Fatal(err)
 	}
-	if len(mcpOut.Limits) != 3 {
+	if len(mcpOut.Limits) != len(out.Limits) || mcpOut.Limits[0].Group != groupRetention {
 		t.Errorf("MCP limits = %+v", mcpOut.Limits)
 	}
 }

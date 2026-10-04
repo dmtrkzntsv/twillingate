@@ -868,9 +868,14 @@ is a poison batch to drop**; the `202` is returned **before** the write, so
 | --- | --- |
 | Body | 256 KB |
 | Events per batch | 500 |
-| Attributes per event | 50 |
-| Attribute key length | 64 characters |
+| Attributes per event | 50 (the rest dropped) |
+| Attribute key length | 64 characters (a longer key dropped) |
 | Attribute value length | 512 characters (truncated, not rejected) |
+| Timestamp ahead of the server | 5 minutes (clamped, see [Timestamps](#timestamps-and-idempotency)) |
+| Measure value | `0` to `1e15` (else the event is rejected) |
+| `$sample_rate` | `0.0001` to `1` (else stored as `1`) |
+
+The `limits` tool lists these beside the retention and cap settings in force.
 
 ### Origin and CORS
 
@@ -902,7 +907,7 @@ take `project_id`, `from` and `to` as `YYYY-MM-DD` unless noted.
 | Tool | Extra parameters | Returns |
 | --- | --- | --- |
 | `list_projects` | none | Every project with its `project_id`, name, `archived`, `allowed_origins` and declared `attributes`. Call this first — every other tool needs a `project_id` |
-| `limits` | none (no `project_id`) | The caps in force — `VIEWS_DIMENSIONS_TOP_N`, `ATTRIBUTES_TOP_N`, `IDENTITIES_TOP_N` — each with its `value` (0 = no cap), `default` and what it caps |
+| `limits` | none (no `project_id`) | The limits in force, each with a `group`, `name`, `value`, `unit` (`days`, `bytes`, `characters`, `seconds`; absent for a count) and `description`, in three groups: `retention` (`RETENTION_EVENTS_RAW_DAYS`, `RETENTION_EVENTS_AGGREGATE_DAYS`, `RETENTION_ARCHIVED_DAYS`), `caps` (`VIEWS_DIMENSIONS_TOP_N`, `ATTRIBUTES_TOP_N`, `IDENTITIES_TOP_N`) and `ingest`, the wire format's fixed [limits](#limits). A setting carries its `setting` and `default`; a fixed limit neither. `zero` says what 0 means where it is not the number (`no cap`, `kept forever`) |
 | `cap_usage` | `from`, `to` (optional: the last 30 days) | Per capped dimension — views breakdowns and kinds, attribute keys, `users`/`groups` — the busiest day's values against the `cap`, `days` with data, `days_capped` (an `(other)` row; for users and groups, the cap reached) and `folded_share` |
 | `usage` | `project_id` (optional: every project), `from`, `to` (optional: the last 30 days) | Per project: `views`, product `events` and measure `samples` per day and in total, `last_received_at`, `first_day` (the oldest day with data, stored counts included), `raw_days`, `rolled_up_days`, an estimated `size` (raw rows and aggregates, measured daily by the daily pass, which also runs at start: the newest, with the day it was `measured_at`; `null` until the first measurement) and each day's measured `total_bytes` in the series (`null` on days not measured), `unused_attributes` (declared keys no event carried; computed only with `project_id`, `null` for the all-projects answer); plus the database's size on disk now and per day (`database_series`). Days before the newest daily pass read the counts it stored, which outlive the aggregates' retention. Each series day also carries `declared_attributes` and, counted the night after while the day's rows are raw and kept once rolled up, the distinct `attribute_keys` and `attribute_values` received and the `attribute_values_folded` into `(other)` (`null` on days not stored) |
 | `views_overview` | `kind` (optional) | Visitors, views, sessions, bounces, average session length per day, summed across kinds unless `kind` filters one |

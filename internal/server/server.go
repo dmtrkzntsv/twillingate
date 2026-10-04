@@ -17,10 +17,6 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
-// maxBody accommodates a full 500-event batch; single events are a batch
-// of one.
-const maxBody = 256 << 10
-
 type Enqueuer interface {
 	Enqueue(e store.Event)
 }

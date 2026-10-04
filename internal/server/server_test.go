@@ -19,6 +19,7 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 	_ "github.com/dmtrkzntsv/twillingate/internal/store/sqlite"
+	"github.com/dmtrkzntsv/twillingate/internal/wire"
 )
 
 type fakeQueue struct {
@@ -801,7 +802,7 @@ func TestOversizedBatchIsRejected(t *testing.T) {
 	_, h := testServer(t)
 	var b strings.Builder
 	b.WriteString(`{"key":"` + testKey + `","events":[`)
-	for i := 0; i < maxBatchEvents+1; i++ {
+	for i := 0; i < wire.MaxBatchEvents+1; i++ {
 		if i > 0 {
 			b.WriteString(",")
 		}
@@ -815,7 +816,7 @@ func TestOversizedBatchIsRejected(t *testing.T) {
 
 func TestBodyLimit(t *testing.T) {
 	_, h := testServer(t)
-	big := strings.Repeat("a", maxBody+1024)
+	big := strings.Repeat("a", wire.MaxBody+1024)
 	if w := post(h, `{"key":"`+testKey+`","events":[{"name":"`+big+`"}]}`, nil); w.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400 for an oversized body", w.Code)
 	}

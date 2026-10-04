@@ -217,7 +217,7 @@ func (h *host) register(r *registrar) {
 		Description: "List projects with id, name, allowed origins and declared attributes. Call this first: every other tool takes a project_id from here."},
 		h.listProjects)
 	expose(r, spec{Name: "limits", Annotations: ro, Method: "GET", Path: "/api/limits",
-		Description: "The caps in force: values kept per views breakdown and day (VIEWS_DIMENSIONS_TOP_N), per attribute key, event and day (ATTRIBUTES_TOP_N), and users and groups per day (IDENTITIES_TOP_N), each with its default. 0 means no cap. Set in the server's environment, not here."},
+		Description: "The limits in force, grouped: retention (days raw events, aggregates and archived items are kept), caps (values kept per views breakdown and day, per attribute key, event and day, and users and groups per day; 0 means no cap) and ingest (the wire format's fixed limits: body, batch, attributes, timestamps, measures). Each has a name, value, unit and description; settings also carry the environment variable and its default. Set in the server's environment, not here."},
 		h.listLimits)
 	expose(r, spec{Name: "cap_usage", Annotations: ro, Method: "GET", Path: p + "/cap-usage",
 		Description: "How a project's data meets the caps over a range (default the last 30 days, at most 400): per views breakdown, attribute key, and users/groups, the busiest day's values against the cap, days with data, days folded into (other) (users and groups: days that reached the cap), and the share of views, counts or samples folded. Days already rolled up keep only the kept values and their (other) rows, so values per day stay near the cap there (cap + 1 for single-key breakdowns and attributes, cap plus one per leading key for two-key breakdowns)."},

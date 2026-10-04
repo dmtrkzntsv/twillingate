@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/dmtrkzntsv/twillingate/internal/wire"
 )
 
 func TestMergeAttributesEventOverridesBatch(t *testing.T) {
@@ -107,18 +109,18 @@ func TestResolveAttributesReportsUnknownReservedKeys(t *testing.T) {
 }
 
 func TestResolveAttributesTruncatesLongValues(t *testing.T) {
-	long := strings.Repeat("x", maxAttrValue+100)
+	long := strings.Repeat("x", wire.MaxAttrValue+100)
 	r, _ := resolveAttributes(map[string]any{"blob": long, "$user_id": long})
-	if len(r.Custom["blob"]) != maxAttrValue {
-		t.Errorf("custom value length = %d, want %d", len(r.Custom["blob"]), maxAttrValue)
+	if len(r.Custom["blob"]) != wire.MaxAttrValue {
+		t.Errorf("custom value length = %d, want %d", len(r.Custom["blob"]), wire.MaxAttrValue)
 	}
-	if len(r.UserID) != maxAttrValue {
-		t.Errorf("reserved value length = %d, want %d", len(r.UserID), maxAttrValue)
+	if len(r.UserID) != wire.MaxAttrValue {
+		t.Errorf("reserved value length = %d, want %d", len(r.UserID), wire.MaxAttrValue)
 	}
 }
 
 func TestResolveAttributesDropsOverlongKeys(t *testing.T) {
-	r, _ := resolveAttributes(map[string]any{strings.Repeat("k", maxAttrKey+1): "v"})
+	r, _ := resolveAttributes(map[string]any{strings.Repeat("k", wire.MaxAttrKey+1): "v"})
 	if len(r.Custom) != 0 {
 		t.Errorf("custom = %v, want the overlong key dropped", r.Custom)
 	}
@@ -126,12 +128,12 @@ func TestResolveAttributesDropsOverlongKeys(t *testing.T) {
 
 func TestResolveAttributesCapsAttributeCount(t *testing.T) {
 	in := map[string]any{}
-	for i := 0; i < maxAttrs*2; i++ {
+	for i := 0; i < wire.MaxAttrs*2; i++ {
 		in[string(rune('a'+i%26))+strconv.Itoa(i)] = "v"
 	}
 	r, _ := resolveAttributes(in)
-	if len(r.Custom) != maxAttrs {
-		t.Errorf("custom count = %d, want %d", len(r.Custom), maxAttrs)
+	if len(r.Custom) != wire.MaxAttrs {
+		t.Errorf("custom count = %d, want %d", len(r.Custom), wire.MaxAttrs)
 	}
 }
 

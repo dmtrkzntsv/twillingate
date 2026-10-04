@@ -10,6 +10,7 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/config"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
+	"github.com/dmtrkzntsv/twillingate/internal/wire"
 )
 
 // The caps, by the setting that sets each.
@@ -21,27 +22,66 @@ const (
 
 // ---- limits ----
 
+// Limit groups, in the order the console shows them.
+const (
+	groupRetention = "retention"
+	groupCaps      = "caps"
+	groupIngest    = "ingest"
+)
+
 type limitOut struct {
-	Setting string `json:"setting"`
-	Value   int    `json:"value" jsonschema:"the cap in force; 0 means no cap"`
-	Default int    `json:"default"`
-	Caps    string `json:"caps" jsonschema:"what the setting caps"`
+	Group       string   `json:"group" jsonschema:"retention, caps or ingest"`
+	Name        string   `json:"name" jsonschema:"what is limited, for people"`
+	Setting     string   `json:"setting,omitempty" jsonschema:"the environment variable that sets it; absent for a fixed limit"`
+	Value       float64  `json:"value" jsonschema:"the limit in force, in unit"`
+	Default     *float64 `json:"default,omitempty" jsonschema:"the setting's default; absent for a fixed limit"`
+	Unit        string   `json:"unit,omitempty" jsonschema:"days, bytes, characters or seconds; absent for a count or a plain number"`
+	Zero        string   `json:"zero,omitempty" jsonschema:"what a value of 0 means, when it is not the number (no cap, kept forever)"`
+	Description string   `json:"description"`
 }
 
 type limitsOut struct {
 	Limits []limitOut `json:"limits"`
 }
 
-// limitsFrom reads the caps in force from the running config, in the order
-// the console shows them.
+// setting is a limit the environment sets.
+func setting(group, name, env string, value, def int, unit, zero, description string) limitOut {
+	d := float64(def)
+	return limitOut{Group: group, Name: name, Setting: env, Value: float64(value), Default: &d,
+		Unit: unit, Zero: zero, Description: description}
+}
+
+// fixed is a limit of the wire format (internal/wire), the same on every server.
+func fixed(name string, value float64, unit, description string) limitOut {
+	return limitOut{Group: groupIngest, Name: name, Value: value, Unit: unit, Description: description}
+}
+
+// limitsFrom reads the limits in force from the running config, in the
+// order the console shows them: retention, the caps, then the wire
+// format's fixed limits.
 func limitsFrom(cfg *config.Config) []limitOut {
+	ret := cfg.Retention
 	return []limitOut{
-		{settingViews, cfg.ViewsDimensionsTopN, config.DefaultViewsDimensionsTopN,
-			"values per views breakdown and kinds, per project and day; the rest fold into (other)"},
-		{settingAttrs, cfg.AttributesTopN, config.DefaultAttributesTopN,
-			"values per attribute key, per project, day and event; the rest fold into (other)"},
-		{settingIdentities, cfg.IdentitiesTopN, config.DefaultIdentitiesTopN,
-			"users, and groups, per project and day; the rest are dropped"},
+		setting(groupRetention, "Raw events", "RETENTION_EVENTS_RAW_DAYS", ret.Events.RawDays, config.DefaultRawDays, "days", "",
+			"raw events are kept this long, then rolled up into aggregates; also the oldest client timestamp accepted, older ones are clamped to it"),
+		setting(groupRetention, "Aggregates", "RETENTION_EVENTS_AGGREGATE_DAYS", ret.Events.AggregateDays, config.DefaultAggregateDays, "days", "",
+			"aggregates, actors, cohorts and identities are kept this long, then deleted"),
+		setting(groupRetention, "Archived items", "RETENTION_ARCHIVED_DAYS", ret.ArchivedDays, config.DefaultArchivedDays, "days", "kept forever",
+			"an archived project (with its data), dashboard or widget is deleted this long after archiving"),
+		setting(groupCaps, "Views breakdown values", settingViews, cfg.ViewsDimensionsTopN, config.DefaultViewsDimensionsTopN, "", "no cap",
+			"values per views breakdown and kinds, per project and day; the rest fold into (other)"),
+		setting(groupCaps, "Attribute values", settingAttrs, cfg.AttributesTopN, config.DefaultAttributesTopN, "", "no cap",
+			"values per attribute key, per project, day and event; the rest fold into (other)"),
+		setting(groupCaps, "Users and groups", settingIdentities, cfg.IdentitiesTopN, config.DefaultIdentitiesTopN, "", "no cap",
+			"users, and groups, per project and day; the rest are dropped"),
+		fixed("Request body", wire.MaxBody, "bytes", "a larger request is refused with 413"),
+		fixed("Events per batch", wire.MaxBatchEvents, "", "a larger batch is refused with 413; split it and retry"),
+		fixed("Attributes per event", wire.MaxAttrs, "", "custom attributes past it are dropped"),
+		fixed("Attribute key length", wire.MaxAttrKey, "characters", "a custom attribute with a longer key is dropped"),
+		fixed("Attribute value length", wire.MaxAttrValue, "characters", "a longer value is truncated, not rejected"),
+		fixed("Timestamp ahead of the server", wire.FutureSkew.Seconds(), "seconds", "a later client timestamp is clamped to the time received"),
+		fixed("Measure value", wire.MaxMeasureValue, "", "a measure with a larger (or negative) value is rejected"),
+		fixed("Lowest sample rate", wire.MinSampleRate, "", "a $sample_rate outside [lowest, 1] is stored as 1"),
 	}
 }
 
@@ -52,8 +92,8 @@ func (h *host) listLimits(_ context.Context, _ struct{}) (limitsOut, error) {
 // capOf is the cap in force for a setting; 0 (no cap) for an unknown one.
 func (h *host) capOf(setting string) int {
 	for _, l := range h.limits {
-		if l.Setting == setting {
-			return l.Value
+		if l.Group == groupCaps && l.Setting == setting {
+			return int(l.Value)
 		}
 	}
 	return 0
