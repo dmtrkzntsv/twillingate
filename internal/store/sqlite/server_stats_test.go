@@ -10,45 +10,34 @@ import (
 	"github.com/google/uuid"
 )
 
-// statRow is one server_stats row as a test reads it.
-type statRow struct {
-	value      int64
-	measuredAt string
+// statID names one server_stats row: a stat, a project and a day.
+type statID struct {
+	key     string
+	project int64
+	day     string
 }
 
-// readStats answers every server_stats row as key -> project -> row.
-func readStats(t *testing.T, db *DB) map[string]map[int64]statRow {
+// readStats answers every server_stats row's value by its key.
+func readStats(t *testing.T, db *DB) map[statID]int64 {
 	t.Helper()
-	rows, err := db.db.Query(`SELECT key, project_id, value, measured_at FROM server_stats`)
+	rows, err := db.db.Query(`SELECT key, project_id, measured_at, value FROM server_stats`)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer rows.Close()
-	out := map[string]map[int64]statRow{}
+	out := map[statID]int64{}
 	for rows.Next() {
-		var key string
-		var id int64
-		var r statRow
-		if err := rows.Scan(&key, &id, &r.value, &r.measuredAt); err != nil {
+		var id statID
+		var v int64
+		if err := rows.Scan(&id.key, &id.project, &id.day, &v); err != nil {
 			t.Fatal(err)
 		}
-		if out[key] == nil {
-			out[key] = map[int64]statRow{}
-		}
-		out[key][id] = r
+		out[id] = v
 	}
 	if err := rows.Err(); err != nil {
 		t.Fatal(err)
 	}
 	return out
-}
-
-func statCount(stats map[string]map[int64]statRow) int {
-	n := 0
-	for _, byProject := range stats {
-		n += len(byProject)
-	}
-	return n
 }
 
 // seedStatsDB: project 1 holds three raw rows (a view, a product event, a
@@ -90,79 +79,103 @@ func bytesOf(t *testing.T, db *DB, table string) int64 {
 }
 
 // Every project with rows gets a raw and an aggregate size, split by its
-// share of each table's rows; a project with no aggregate rows has an
-// aggregate size of zero, not a missing one.
+// share of each table's rows, on the UTC day of the run; a project with no
+// aggregate rows has an aggregate size of zero, not a missing one.
 func TestMeasureServerStats(t *testing.T) {
 	db := seedStatsDB(t)
 	ctx := context.Background()
-	now := time.Date(2026, 8, 22, 3, 0, 7, 0, time.FixedZone("x", 2*3600))
+	// 01:00 at +02:00 is still the 21st in UTC.
+	now := time.Date(2026, 8, 22, 1, 0, 7, 0, time.FixedZone("x", 2*3600))
 	if err := db.MeasureServerStats(ctx, now); err != nil {
 		t.Fatal(err)
 	}
 	stats := readStats(t, db)
-	if n := statCount(stats); n != 4 {
-		t.Fatalf("%d server_stats rows, want 4 (two stats for each of two projects): %v", n, stats)
+	if len(stats) != 4 {
+		t.Fatalf("%d server_stats rows, want 4 (two stats for each of two projects): %v", len(stats), stats)
 	}
-	wantAt := "2026-08-22T01:00:07Z"
-	for key, byProject := range stats {
-		for id, r := range byProject {
-			if r.measuredAt != wantAt {
-				t.Errorf("%s project %d measured_at = %q, want %q (UTC)", key, id, r.measuredAt, wantAt)
-			}
-		}
-	}
+	const day = "2026-08-21"
 	// events holds 3 of 4 rows for project 1 and 1 of 4 for project 2.
 	events := bytesOf(t, db, "events")
-	if got, want := stats[store.StatRawBytes][1].value, int64(float64(events)*3/4); got != want {
-		t.Errorf("project 1 raw_bytes = %d, want %d (3/4 of %d)", got, want, events)
+	if got, want := stats[statID{store.StatRawBytes, 1, day}], int64(float64(events)*3/4); got != want {
+		t.Errorf("project 1 raw_bytes on %s = %d, want %d (3/4 of %d); rows %v", day, got, want, events, stats)
 	}
-	if got, want := stats[store.StatRawBytes][2].value, int64(float64(events)*1/4); got != want {
+	if got, want := stats[statID{store.StatRawBytes, 2, day}], int64(float64(events)*1/4); got != want {
 		t.Errorf("project 2 raw_bytes = %d, want %d (1/4 of %d)", got, want, events)
 	}
-	if got, want := stats[store.StatAggregateBytes][1].value, bytesOf(t, db, "agg_views_daily"); got != want {
+	if got, want := stats[statID{store.StatAggregateBytes, 1, day}], bytesOf(t, db, "agg_views_daily"); got != want {
 		t.Errorf("project 1 aggregate_bytes = %d, want %d (all of agg_views_daily)", got, want)
 	}
-	if r, ok := stats[store.StatAggregateBytes][2]; !ok || r.value != 0 {
-		t.Errorf("project 2 aggregate_bytes = %+v (present %v), want a zero row", r, ok)
+	if v, ok := stats[statID{store.StatAggregateBytes, 2, day}]; !ok || v != 0 {
+		t.Errorf("project 2 aggregate_bytes = %d (present %v), want a zero row", v, ok)
 	}
 }
 
-// Running again replaces the values and the time; nothing is added.
-func TestMeasureServerStatsReplacesTheLastMeasurement(t *testing.T) {
+// A second run on the same day (the pass runs at start and at 03:00)
+// replaces that day's values; nothing is added.
+func TestMeasureServerStatsReplacesTheSameDay(t *testing.T) {
 	db := seedStatsDB(t)
 	ctx := context.Background()
 	first := time.Date(2026, 8, 22, 3, 0, 0, 0, time.UTC)
 	if err := db.MeasureServerStats(ctx, first); err != nil {
 		t.Fatal(err)
 	}
-	before := readStats(t, db)[store.StatRawBytes][2].value
-	// Project 2 now holds three of its own rows out of six.
-	if err := db.WriteEvents(ctx, []store.Event{
+	p2 := statID{store.StatRawBytes, 2, "2026-08-22"}
+	before := readStats(t, db)[p2]
+	growProject2(t, db)
+	if err := db.MeasureServerStats(ctx, first.Add(12*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	stats := readStats(t, db)
+	if len(stats) != 4 {
+		t.Errorf("%d rows after a second run the same day, want 4: %v", len(stats), stats)
+	}
+	if got := stats[p2]; got <= before {
+		t.Errorf("project 2 raw_bytes = %d after it grew from 1 to 3 rows, was %d", got, before)
+	}
+}
+
+// A run on a new day adds that day's rows and leaves the earlier days: the
+// table is a daily history.
+func TestMeasureServerStatsKeepsEarlierDays(t *testing.T) {
+	db := seedStatsDB(t)
+	ctx := context.Background()
+	first := time.Date(2026, 8, 22, 3, 0, 0, 0, time.UTC)
+	if err := db.MeasureServerStats(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	day1 := readStats(t, db)
+	growProject2(t, db)
+	if err := db.MeasureServerStats(ctx, first.Add(24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	stats := readStats(t, db)
+	if len(stats) != 8 {
+		t.Fatalf("%d rows after two days, want 8: %v", len(stats), stats)
+	}
+	for id, v := range day1 {
+		if stats[id] != v {
+			t.Errorf("%v = %d after the next day's run, was %d", id, stats[id], v)
+		}
+	}
+	if a, b := stats[statID{store.StatRawBytes, 2, "2026-08-22"}], stats[statID{store.StatRawBytes, 2, "2026-08-23"}]; b <= a {
+		t.Errorf("project 2 raw_bytes went %d -> %d after it grew from 1 to 3 rows", a, b)
+	}
+}
+
+// growProject2 gives project 2 two more raw rows: three of six.
+func growProject2(t *testing.T, db *DB) {
+	t.Helper()
+	if err := db.WriteEvents(context.Background(), []store.Event{
 		{Family: store.FamilyProduct, ID: uuid.NewString(), ProjectID: 2, EventName: "a", ActorID: "u", TS: ts("2026-08-10T13:00:00Z")},
 		{Family: store.FamilyProduct, ID: uuid.NewString(), ProjectID: 2, EventName: "b", ActorID: "u", TS: ts("2026-08-10T14:00:00Z")},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	second := first.Add(24 * time.Hour)
-	if err := db.MeasureServerStats(ctx, second); err != nil {
-		t.Fatal(err)
-	}
-	stats := readStats(t, db)
-	if n := statCount(stats); n != 4 {
-		t.Errorf("%d rows after a second run, want 4", n)
-	}
-	if got := stats[store.StatRawBytes][2].value; got <= before {
-		t.Errorf("project 2 raw_bytes = %d after it grew from 1 to 3 rows, was %d", got, before)
-	}
-	for _, r := range stats[store.StatRawBytes] {
-		if r.measuredAt != "2026-08-23T03:00:00Z" {
-			t.Errorf("measured_at = %q, want the second run's time", r.measuredAt)
-		}
-	}
 }
 
-// A project whose rows are all gone has no size at the next run, so the
-// console reads "not measured" rather than a stale figure.
+// A project whose rows are all gone has no size on the next run's day,
+// whether that is the same day (its rows for the day go) or a later one
+// (its earlier days stay, as history).
 func TestMeasureServerStatsDropsAProjectWithNoRows(t *testing.T) {
 	db := seedStatsDB(t)
 	ctx := context.Background()
@@ -177,13 +190,19 @@ func TestMeasureServerStatsDropsAProjectWithNoRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	stats := readStats(t, db)
-	for key, byProject := range stats {
-		if _, ok := byProject[2]; ok {
-			t.Errorf("%s still has a row for project 2 after its rows were deleted", key)
+	for id := range stats {
+		if id.project == 2 {
+			t.Errorf("%v still there after project 2's rows were deleted the same day", id)
 		}
 	}
-	if n := statCount(stats); n != 2 {
-		t.Errorf("%d rows, want project 1's two", n)
+	if len(stats) != 2 {
+		t.Errorf("%d rows, want project 1's two", len(stats))
+	}
+	if err := db.MeasureServerStats(ctx, now.Add(24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if stats := readStats(t, db); len(stats) != 4 {
+		t.Errorf("%d rows the next day, want project 1's two per day: %v", len(stats), stats)
 	}
 }
 
@@ -200,7 +219,7 @@ func TestMeasureServerStatsIgnoresTheRegistry(t *testing.T) {
 	if err := db.MeasureServerStats(ctx, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if n := statCount(readStats(t, db)); n != 0 {
+	if n := len(readStats(t, db)); n != 0 {
 		t.Errorf("%d rows for a project with only a key, want 0", n)
 	}
 }
@@ -216,22 +235,26 @@ func TestDeleteProjectDataRemovesServerStats(t *testing.T) {
 	}
 	for _, key := range []string{store.StatRawBytes, store.StatAggregateBytes} {
 		for _, p := range []int64{id, id + 1} {
-			if _, err := db.db.Exec(`INSERT INTO server_stats VALUES (?, ?, 5, '2026-08-22T03:00:00Z')`, key, p); err != nil {
-				t.Fatal(err)
+			for _, day := range []string{"2026-08-21", "2026-08-22"} {
+				if _, err := db.db.Exec(`INSERT INTO server_stats (key, project_id, measured_at, value) VALUES (?, ?, ?, 5)`, key, p, day); err != nil {
+					t.Fatal(err)
+				}
 			}
 		}
 	}
 	if err := db.DeleteProjectData(ctx, id, store.AuditEntry{Actor: "t", Action: "project.delete"}); err != nil {
 		t.Fatal(err)
 	}
-	stats := readStats(t, db)
-	for key, byProject := range stats {
-		if _, ok := byProject[id]; ok {
-			t.Errorf("%s still has a row for the deleted project", key)
+	others := 0
+	for row := range readStats(t, db) {
+		if row.project == id {
+			t.Errorf("%v survived the project's deletion", row)
+		} else {
+			others++
 		}
-		if _, ok := byProject[id+1]; !ok {
-			t.Errorf("%s lost another project's row", key)
-		}
+	}
+	if others != 4 {
+		t.Errorf("%d rows of another project left, want its 4", others)
 	}
 }
 

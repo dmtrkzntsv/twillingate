@@ -172,37 +172,36 @@ func TestProjectStatsSizeIsNullUntilMeasured(t *testing.T) {
 	}
 }
 
+// putStat writes one server_stats row, as the daily pass would.
+func putStat(t *testing.T, h *host, key string, project int64, day string, v int64) {
+	t.Helper()
+	if _, err := rawExec(h.ops.St, `INSERT INTO server_stats (key, project_id, measured_at, value) VALUES (?,?,?,?)`,
+		key, project, day, v); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // Sizes are what the daily pass stored in server_stats, read for every
-// project at once: both projects get theirs, with the time they were
-// measured, and a stat this answer does not know is left alone.
+// project at once: both projects get theirs from the newest day measured,
+// with that day, and a stat this answer does not know is left alone.
 func TestProjectStatsSizesComeFromServerStats(t *testing.T) {
 	h, _ := newTestHost(t)
-	for _, r := range []struct {
-		key  string
-		id   int64
-		v    int64
-		when string
-	}{
-		{store.StatRawBytes, 1, 812000, "2026-08-22T03:00:05Z"},
-		{store.StatAggregateBytes, 1, 1450000, "2026-08-22T03:00:05Z"},
-		{store.StatRawBytes, 2, 7, "2026-08-22T03:00:05Z"},
-		{store.StatAggregateBytes, 2, 0, "2026-08-22T03:00:05Z"},
-		{"something_else", 1, 99, "2026-08-22T03:00:05Z"},
-	} {
-		if _, err := rawExec(h.ops.St, `INSERT INTO server_stats (key, project_id, value, measured_at) VALUES (?,?,?,?)`,
-			r.key, r.id, r.v, r.when); err != nil {
-			t.Fatal(err)
-		}
-	}
+	putStat(t, h, store.StatRawBytes, 1, "2026-08-21", 1)
+	putStat(t, h, store.StatAggregateBytes, 1, "2026-08-21", 2)
+	putStat(t, h, store.StatRawBytes, 1, "2026-08-22", 812000)
+	putStat(t, h, store.StatAggregateBytes, 1, "2026-08-22", 1450000)
+	putStat(t, h, store.StatRawBytes, 2, "2026-08-22", 7)
+	putStat(t, h, store.StatAggregateBytes, 2, "2026-08-22", 0)
+	putStat(t, h, "something_else", 1, "2026-08-22", 99)
 	out, err := h.projectStats(context.Background(), statsIn{usageRangeIn: usageRangeIn{From: "2026-08-20", To: "2026-08-21"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	blog, docs := out.Projects[0], out.Projects[1]
-	if want := (statsSize{RawBytes: 812000, AggregateBytes: 1450000, TotalBytes: 2262000, MeasuredAt: "2026-08-22T03:00:05Z"}); blog.Size == nil || *blog.Size != want {
+	if want := (statsSize{RawBytes: 812000, AggregateBytes: 1450000, TotalBytes: 2262000, MeasuredAt: "2026-08-22"}); blog.Size == nil || *blog.Size != want {
 		t.Errorf("blog size = %+v, want %+v", blog.Size, want)
 	}
-	if want := (statsSize{RawBytes: 7, TotalBytes: 7, MeasuredAt: "2026-08-22T03:00:05Z"}); docs.Size == nil || *docs.Size != want {
+	if want := (statsSize{RawBytes: 7, TotalBytes: 7, MeasuredAt: "2026-08-22"}); docs.Size == nil || *docs.Size != want {
 		t.Errorf("docs size = %+v, want %+v", docs.Size, want)
 	}
 	one, err := h.projectStats(context.Background(), statsIn{ProjectID: 2})
@@ -216,8 +215,65 @@ func TestProjectStatsSizesComeFromServerStats(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(body), `"measured_at":"2026-08-22T03:00:05Z"`) {
+	if !strings.Contains(string(body), `"measured_at":"2026-08-22"`) {
 		t.Errorf("size JSON = %s, want measured_at", body)
+	}
+}
+
+// A project the newest measurement left out had no rows left that day: it
+// has no size, not the figure an earlier day measured.
+func TestProjectStatsSizeIsNullWhenTheNewestDayLeftItOut(t *testing.T) {
+	h, _ := newTestHost(t)
+	putStat(t, h, store.StatRawBytes, 1, "2026-08-21", 10)
+	putStat(t, h, store.StatRawBytes, 2, "2026-08-21", 20)
+	putStat(t, h, store.StatRawBytes, 1, "2026-08-22", 11)
+	out, err := h.projectStats(context.Background(), statsIn{usageRangeIn: usageRangeIn{From: "2026-08-20", To: "2026-08-22"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := out.Projects[0].Size; s == nil || s.TotalBytes != 11 {
+		t.Errorf("blog size = %+v, want the newest day's 11", s)
+	}
+	if s := out.Projects[1].Size; s != nil {
+		t.Errorf("docs size = %+v, want null: the newest day did not measure it", s)
+	}
+	// Its history stands.
+	if n := out.Projects[1].Series[1].TotalBytes; n == nil || *n != 20 {
+		t.Errorf("docs total_bytes on 2026-08-21 = %v, want 20", n)
+	}
+}
+
+// Every day of the series carries that day's measured size, raw and
+// aggregate summed; a day not measured is null, also in the JSON.
+func TestProjectStatsSeriesCarriesTheSizeHistory(t *testing.T) {
+	h, _ := newTestHost(t)
+	putStat(t, h, store.StatRawBytes, 1, "2026-08-19", 1) // before the range
+	putStat(t, h, store.StatRawBytes, 1, "2026-08-20", 100)
+	putStat(t, h, store.StatAggregateBytes, 1, "2026-08-20", 50)
+	putStat(t, h, store.StatRawBytes, 1, "2026-08-22", 300)
+	putStat(t, h, store.StatRawBytes, 2, "2026-08-21", 9) // another project
+	out, err := h.projectStats(context.Background(), statsIn{ProjectID: 1, usageRangeIn: usageRangeIn{From: "2026-08-20", To: "2026-08-22"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]*int64{}
+	for _, d := range out.Projects[0].Series {
+		got[d.Day] = d.TotalBytes
+	}
+	for day, want := range map[string]int64{"2026-08-20": 150, "2026-08-22": 300} {
+		if got[day] == nil || *got[day] != want {
+			t.Errorf("total_bytes on %s = %v, want %d", day, got[day], want)
+		}
+	}
+	if got["2026-08-21"] != nil {
+		t.Errorf("total_bytes on 2026-08-21 = %d, want null (only another project was measured)", *got["2026-08-21"])
+	}
+	body, err := json.Marshal(out.Projects[0].Series[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), `"total_bytes":null`) {
+		t.Errorf("an unmeasured day must say null: %s", body)
 	}
 }
 
@@ -225,9 +281,7 @@ func TestProjectStatsSizesComeFromServerStats(t *testing.T) {
 // still answers, with the missing side zero.
 func TestProjectStatsSizeWithOneStat(t *testing.T) {
 	h, _ := newTestHost(t)
-	if _, err := rawExec(h.ops.St, `INSERT INTO server_stats VALUES (?, 1, 40, '2026-08-22T03:00:05Z')`, store.StatRawBytes); err != nil {
-		t.Fatal(err)
-	}
+	putStat(t, h, store.StatRawBytes, 1, "2026-08-22", 40)
 	out, err := h.projectStats(context.Background(), statsIn{ProjectID: 1})
 	if err != nil {
 		t.Fatal(err)

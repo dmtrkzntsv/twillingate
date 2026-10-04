@@ -116,12 +116,13 @@ included, is returned, which is what the list page reads. Range rules as
 {"from": "2026-09-03", "to": "2026-10-02", "database_bytes": 2254000000,
  "projects": [{
    "project_id": 4,
-   "series": [{"day": "2026-09-03", "views": 449, "events": 0, "measures": 12}],
+   "series": [{"day": "2026-09-03", "views": 449, "events": 0, "measures": 12,
+               "total_bytes": 2240000}],
    "totals": {"views": 2765, "events": 0, "measures": 310},
    "last_received_at": "2026-10-03T16:02:11Z",
    "first_day": "2026-08-25", "raw_days": 30, "rolled_up_days": 9,
    "size": {"raw_bytes": 812000, "aggregate_bytes": 1450000, "total_bytes": 2262000,
-            "measured_at": "2026-10-03T03:00:09Z"},
+            "measured_at": "2026-10-03"},
    "unused_attributes": ["self_hosted"]
  }]}
 ```
@@ -129,7 +130,9 @@ included, is returned, which is what the list page reads. Range rules as
 - **series / totals:** `views` from `v_views_daily` (sum of `views`),
   `events` from `v_product_totals` (`total_events`), `measures` from
   `v_measures_daily` (sum of `samples`). Every day in the range is present,
-  zeros included, so a chart needs no gap filling.
+  zeros included, so a chart needs no gap filling. `total_bytes` is the
+  project's size measured that day (raw plus aggregate), null on a day
+  not measured.
 - **last_received_at:** the newest `received_at` among the project's raw
   rows of every family; null when it has none.
 - **first_day / raw_days / rolled_up_days:** the oldest day with any data
@@ -138,13 +141,17 @@ included, is returned, which is what the list page reads. Range rules as
   days).
 - **size:** an estimate, measured by the daily pass and once after the
   server starts (the pass runs at boot), stored in `server_stats` (`key`,
-  `project_id`, `value`, `measured_at`; latest value only) and read by
-  requests: no `dbstat` at request time. Each table's bytes come from
+  `project_id`, `measured_at` — the UTC day —, `value`; primary key
+  `key, project_id, measured_at`) and read by requests: no `dbstat` at
+  request time. The table is a daily history, kept until the project is
+  purged (two rows per project and day); a second run on the same day
+  replaces that day's rows. `size` is the newest measured day's. Each table's bytes come from
   `dbstat` (`aggregate = TRUE`); a project's share of a table is its rows
   over the table's rows. `raw_bytes` covers `events`; `aggregate_bytes`
   every table keyed by `project_id` (the `agg_*` tables, `actors`,
-  `identities`). `measured_at` says when; `size` is null until the project
-  has a measurement, and the rest of the answer stands.
+  `identities`). `measured_at` is the day; `size` is null until the project
+  has a measurement, or when the newest measurement found none of its rows,
+  and the rest of the answer stands.
 - **database_bytes:** `page_count × page_size` of the database file.
 - **unused_attributes:** declared keys with no row in `v_product_attrs`
   or `v_measures_attrs` in the range.
@@ -193,7 +200,7 @@ confirmation naming the purge date from `purge_after_days`) or Restore.
 Then:
 
 1. **Usage.** The dashboards' range picker; a stacked bar chart of events
-   per day by family; stat tiles for total events, last received, data
+   per day by family; a line of the measured size per day; stat tiles for total events, last received, data
    size (raw and aggregates), days kept (raw and rolled up); unused
    attributes listed under the tiles when there are any.
 2. **Details.** Name, allowed origins and declared attributes as chips
@@ -221,7 +228,8 @@ components and the widgets' chart setup; no new library.
   fixture with capped and uncapped days for paths, an attribute key and
   users (max per day, days capped, folded share, the cap-0 case);
   `project_stats` (series sums equal the views', every day present,
-  sizes read from `server_stats` and null before the first measurement,
+  sizes read from `server_stats`' newest day and null before the first
+  measurement, the size history in the series (null on unmeasured days),
   last event, unused attributes, all projects without `project_id`); the
   key fields in snake_case over REST and MCP; REST/MCP parity and docs-sync cover the
   new operations.

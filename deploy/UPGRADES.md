@@ -528,5 +528,6 @@ with.
 `state` instead of `Label`, `Key` and `State`; update any script that reads
 them. The console gains `/app/projects`: every project's usage, details and
 ingest keys, and how its data meets the caps. Migration 026 adds
-`server_stats`; sizes appear after the first daily pass, which also runs at
-start.
+`server_stats`, a daily history of each project's size; sizes appear after
+the first daily pass, which also runs at start, and the size chart fills in
+one day at a time from then on.

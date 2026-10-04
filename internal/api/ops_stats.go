@@ -22,6 +22,9 @@ type statsDay struct {
 	Views    int64  `json:"views"`
 	Events   int64  `json:"events"`
 	Measures int64  `json:"measures"`
+	// TotalBytes is the project's size as the daily pass measured it that
+	// day; null on a day it was not measured.
+	TotalBytes *int64 `json:"total_bytes"`
 }
 
 type statsTotals struct {
@@ -34,7 +37,7 @@ type statsSize struct {
 	RawBytes       int64 `json:"raw_bytes"`
 	AggregateBytes int64 `json:"aggregate_bytes"`
 	TotalBytes     int64 `json:"total_bytes"`
-	// MeasuredAt is when the daily pass took the measurement (RFC 3339, UTC).
+	// MeasuredAt is the UTC day the daily pass took the measurement on.
 	MeasuredAt string `json:"measured_at"`
 }
 
@@ -46,7 +49,7 @@ type projectStats struct {
 	FirstDay         *string     `json:"first_day" jsonschema:"the oldest day with data, raw or rolled up"`
 	RawDays          int         `json:"raw_days"`
 	RolledUpDays     int         `json:"rolled_up_days"`
-	Size             *statsSize  `json:"size" jsonschema:"an estimate measured by the daily pass, with measured_at; null until the first measurement"`
+	Size             *statsSize  `json:"size" jsonschema:"the latest estimate the daily pass measured, with the day it was measured_at; null until the first measurement"`
 	UnusedAttributes *[]string   `json:"unused_attributes" jsonschema:"declared keys no event carried in the range; computed only when project_id is given, null otherwise"`
 }
 
@@ -81,12 +84,21 @@ func (h *host) projectStats(ctx context.Context, in statsIn) (statsOut, error) {
 	if err != nil {
 		return statsOut{}, err
 	}
+	history, err := h.readSizeHistory(ctx, fromD, toD)
+	if err != nil {
+		return statsOut{}, err
+	}
 	for _, p := range projects {
 		ps, err := h.statsFor(ctx, p, fromD, toD, in.ProjectID != 0)
 		if err != nil {
 			return statsOut{}, err
 		}
 		ps.Size = sizes[p.ID]
+		for i := range ps.Series {
+			if n, ok := history[p.ID][ps.Series[i].Day]; ok {
+				ps.Series[i].TotalBytes = &n
+			}
+		}
 		out.Projects = append(out.Projects, ps)
 	}
 	return out, nil
@@ -196,37 +208,58 @@ func (h *host) statsFor(ctx context.Context, p *manage.Project, fromD, toD civil
 	return ps, nil
 }
 
-// readSizes answers every measured project's size, by project id: the rows
-// the daily pass stored in server_stats, read in one query however many
-// projects there are. A project with no raw_bytes row has no measurement
-// and is absent. The size rows of a project are written in one transaction,
-// so the raw row's measured_at stands for both.
+// readSizes answers every project's latest size, by project id: the rows
+// the daily pass stored in server_stats on the newest day it measured, read
+// in one query however many projects there are. A project with no row that
+// day had no data left to measure and is absent, even if an earlier day
+// measured it.
 func (h *host) readSizes(ctx context.Context) (map[int64]*statsSize, error) {
-	res, err := h.run(ctx, `SELECT key, project_id, value, measured_at FROM server_stats WHERE key IN (?, ?)`,
+	res, err := h.run(ctx, `SELECT key, project_id, value, measured_at FROM server_stats
+		WHERE key IN (?1, ?2) AND measured_at = (SELECT MAX(measured_at) FROM server_stats WHERE key IN (?1, ?2))`,
 		store.StatRawBytes, store.StatAggregateBytes)
 	if err != nil {
 		return nil, err
 	}
 	out := map[int64]*statsSize{}
-	at := func(id int64) *statsSize {
-		if out[id] == nil {
-			out[id] = &statsSize{}
-		}
-		return out[id]
-	}
 	for _, r := range res.Rows {
 		id, _ := strconv.ParseInt(r[1], 10, 64)
 		n, _ := strconv.ParseInt(r[2], 10, 64)
+		sz := out[id]
+		if sz == nil {
+			sz = &statsSize{MeasuredAt: r[3]}
+			out[id] = sz
+		}
 		switch r[0] {
 		case store.StatRawBytes:
-			at(id).RawBytes = n
-			at(id).MeasuredAt = r[3]
+			sz.RawBytes = n
 		case store.StatAggregateBytes:
-			at(id).AggregateBytes = n
+			sz.AggregateBytes = n
 		}
 	}
 	for _, sz := range out {
 		sz.TotalBytes = sz.RawBytes + sz.AggregateBytes
+	}
+	return out, nil
+}
+
+// readSizeHistory answers every project's measured size per day of the
+// range (raw and aggregate summed), by project id and day, in one query.
+func (h *host) readSizeHistory(ctx context.Context, fromD, toD civil.Date) (map[int64]map[string]int64, error) {
+	res, err := h.run(ctx, `SELECT project_id, measured_at, SUM(value) FROM server_stats
+		WHERE key IN (?1, ?2) AND measured_at BETWEEN ?3 AND ?4
+		GROUP BY project_id, measured_at`,
+		store.StatRawBytes, store.StatAggregateBytes, fromD.String(), toD.String())
+	if err != nil {
+		return nil, err
+	}
+	out := map[int64]map[string]int64{}
+	for _, r := range res.Rows {
+		id, _ := strconv.ParseInt(r[0], 10, 64)
+		n, _ := strconv.ParseInt(r[2], 10, 64)
+		if out[id] == nil {
+			out[id] = map[string]int64{}
+		}
+		out[id][r[1]] = n
 	}
 	return out, nil
 }

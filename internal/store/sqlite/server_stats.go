@@ -6,22 +6,24 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
-// MeasureServerStats takes every server_stats measurement and replaces the
-// last ones with it, in one transaction: a reader sees the old values or
-// the new, never a mix, and every row carries the same measured_at.
+// MeasureServerStats takes every server_stats measurement for now's UTC
+// day, in one transaction: a reader sees the day's old values or the new,
+// never a mix. Earlier days are history and stay; a second run on the same
+// day (the pass also runs at start) replaces that day's rows.
 //
 // Today that is each project's estimated disk use, raw (events) and
 // aggregate (every agg_* table, actors and identities; not the registry,
 // the keys or server_stats itself). dbstat reads every page of the file, so
 // this runs in the daily pass, never in a request. A table's bytes (its
 // indexes included) are split by each project's share of the table's rows.
-// A project with no rows has no size: the old rows go, and only projects
-// holding rows get a new pair.
+// A project with no rows has no size that day: only projects holding rows
+// get a pair.
 func (d *DB) MeasureServerStats(ctx context.Context, now time.Time) error {
-	at := now.UTC().Format(time.RFC3339)
+	day := civil.DateOf(now).String()
 	return d.tx(ctx, func(tx *sql.Tx) error {
 		bytes, err := tableBytes(ctx, tx)
 		if err != nil {
@@ -55,14 +57,14 @@ func (d *DB) MeasureServerStats(ctx context.Context, now time.Time) error {
 				hasRows[id] = true
 			}
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM server_stats WHERE key IN (?, ?)`,
-			store.StatRawBytes, store.StatAggregateBytes); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM server_stats WHERE key IN (?, ?) AND measured_at = ?`,
+			store.StatRawBytes, store.StatAggregateBytes, day); err != nil {
 			return err
 		}
 		for id := range hasRows {
 			for key, v := range map[string]int64{store.StatRawBytes: raw[id], store.StatAggregateBytes: aggregate[id]} {
-				if _, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO server_stats (key, project_id, value, measured_at)
-					VALUES (?, ?, ?, ?)`, key, id, v, at); err != nil {
+				if _, err := tx.ExecContext(ctx, `INSERT INTO server_stats (key, project_id, measured_at, value)
+					VALUES (?, ?, ?, ?)`, key, id, day, v); err != nil {
 					return err
 				}
 			}

@@ -225,8 +225,8 @@ type Store interface {
 	PruneIdentities(ctx context.Context, projectID int64, before civil.Date) error
 	PruneAggregates(ctx context.Context, projectID int64, before civil.Date) error
 	IncrementalVacuum(ctx context.Context) error
-	// MeasureServerStats replaces the server_stats rows with a fresh
-	// measurement taken at now.
+	// MeasureServerStats writes now's UTC day of server_stats, replacing
+	// that day's rows and keeping earlier days as history.
 	MeasureServerStats(ctx context.Context, now time.Time) error
 	ProjectIDs(ctx context.Context) ([]int64, error) // all rows incl. archived, ascending
 	RebuildFlatView(ctx context.Context, keys []string) error
