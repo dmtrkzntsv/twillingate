@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
@@ -66,29 +67,33 @@ func (c receivedCounts) write(ctx context.Context, tx *sql.Tx) error {
 
 // receivedSQL lists every (project, day, family, event, measure, key,
 // value) the raw product and measure rows before ?1 carry: their JSON
-// attributes and the declarable reserved columns that are set.
+// attributes and the declarable reserved columns that are set. Each raw row
+// is read once: jsonb_patch lays the set columns over the attributes as one
+// object (a null in a merge patch removes the key, so an empty column adds
+// nothing) and json_each walks it; one arm per column instead re-read every
+// raw page ten times (the JSONB forms skip rendering the merged text). r.
+// qualifies the row's columns, since json_each has a path column too. A
+// custom key cannot shadow a reserved one: ingest drops every `$` key it
+// does not route to a column (server.resolveAttributes), so stored
+// attributes hold no `$` key.
 var receivedSQL = func() string {
 	cols := []struct{ key, col string }{
 		{"$host", "host"}, {"$path", "path"}, {"$referrer", "referrer_source"},
 		{"$utm_source", "utm_source"}, {"$utm_medium", "utm_medium"}, {"$utm_campaign", "utm_campaign"},
 		{"$os_version", "os_version"}, {"$browser_version", "browser_version"}, {"$device_model", "device_model"},
 	}
-	names := "project_id, day, family, event_name, measure, attributes"
+	var pairs []string
 	for _, c := range cols {
-		names += ", " + c.col
+		pairs = append(pairs, "'"+c.key+"', NULLIF(r."+c.col+", '')")
 	}
-	q := `WITH raw AS (
-		SELECT ` + names + ` FROM raw_product WHERE day < ?1
-		UNION ALL SELECT ` + names + ` FROM raw_measures WHERE day < ?1
-	)
-	SELECT project_id, day, family, event_name, measure, j.key AS k, j.value AS v
-		FROM raw, json_each(CASE WHEN json_valid(attributes) THEN attributes ELSE '{}' END) j`
-	for _, c := range cols {
-		q += `
-		UNION ALL SELECT project_id, day, family, event_name, measure, '` + c.key + `', ` + c.col + `
-		FROM raw WHERE ` + c.col + ` != ''`
+	keyed := `json_each(jsonb_patch(CASE WHEN json_valid(r.attributes) THEN r.attributes ELSE '{}' END,
+		jsonb_object(` + strings.Join(pairs, ", ") + `))) j`
+	arm := func(view string) string {
+		return `SELECT r.project_id, r.day, r.family, r.event_name, r.measure, j.key AS k, j.value AS v
+		FROM ` + view + ` r, ` + keyed + ` WHERE r.day < ?1`
 	}
-	return q
+	return arm("raw_product") + `
+	UNION ALL ` + arm("raw_measures")
 }()
 
 // countReceived rewrites received_attributes for every day before today:

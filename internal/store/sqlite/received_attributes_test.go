@@ -189,3 +189,64 @@ func TestMeasureServerStatsRecountsReceivedAttributes(t *testing.T) {
 		t.Fatalf("got %v\nwant %v", got, want)
 	}
 }
+
+// The recount partitions by (family, event, measure, key): a product event
+// and a measure sharing the name "boot", and two measures under it, are
+// separate partitions, so max_values is the busiest one, never their
+// union; events sum across them. The reserved columns count under their
+// declarable keys ($path, $device_model) next to the custom ones.
+func TestMeasureServerStatsRecountsPartitionsAndReservedColumns(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	v := 1.0
+	day := ts("2026-08-02T10:00:00Z")
+	product := func(id, build, path, model string) store.Event {
+		return store.Event{ID: id, ProjectID: 1, Family: store.FamilyProduct, EventName: "boot", TS: day,
+			ActorID: "a", Path: path, DeviceModel: model, Attributes: map[string]string{"build": build}}
+	}
+	measure := func(id, m, build, path, model string) store.Event {
+		return store.Event{ID: id, ProjectID: 1, Family: store.FamilyMeasures, EventName: "boot", TS: day,
+			ActorID: "a", Measure: m, Value: &v, Path: path, DeviceModel: model, Attributes: map[string]string{"build": build}}
+	}
+	evs := []store.Event{
+		// product boot: build {a, b}, $path {/home, /settings}, $device_model {Pixel 8}
+		product("p1", "a", "/home", "Pixel 8"),
+		product("p2", "b", "/settings", ""),
+		// measure boot/time: build {a, c, d}, $device_model {iPhone15,2}
+		measure("m1", store.MeasureTime, "a", "", "iPhone15,2"),
+		measure("m2", store.MeasureTime, "c", "", "iPhone15,2"),
+		measure("m3", store.MeasureTime, "d", "", "iPhone15,2"),
+		// measure boot/size: build {e}, $path {/home}, $device_model {Pixel 8}
+		measure("m4", store.MeasureSize, "e", "/home", "Pixel 8"),
+	}
+	if err := db.WriteEvents(ctx, evs); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.MeasureServerStats(ctx, ts("2026-08-04T03:00:00Z")); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := db.db.Query(`SELECT attr_key, events, max_values FROM received_attributes
+		WHERE project_id = 1 AND day = '2026-08-02' ORDER BY attr_key`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var got []string
+	for rows.Next() {
+		var key string
+		var n, mv int64
+		if err := rows.Scan(&key, &n, &mv); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, fmt.Sprintf("%s=%d/%d", key, n, mv))
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	// Merged partitions would give build 5 values (or 4 for the two
+	// measures together) and $device_model 2.
+	want := []string{"$device_model=5/1", "$path=3/2", "build=6/3"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v\nwant %v", got, want)
+	}
+}
