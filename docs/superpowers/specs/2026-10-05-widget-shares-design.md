@@ -34,33 +34,47 @@ out of scope.
   the picture. A share is immutable: a new picture means a new link.
   Deleting a share is the only way to take it down.
 
-- **D2. Shares live on the ingest host, at `PUBLIC_URL/s/<token>`.** The
-  ingest host is the one that is always public. Unlike the console, it
-  runs no reporting code for shares: it reads one row by primary key.
+- **D2. Shares live on the console, at `CONSOLE_URL/s/<token>`.** Shares
+  are a reporting feature: the console creates, lists and deletes them,
+  and `reporting` already embeds the app's icon and look. The ingest
+  surface stays a pure collector (`POST` events, serve the SDK), and it can
+  keep running as its own process. A blocklisted collector hostname, which
+  is likely for a privacy-minded audience, costs only the opens count
+  (D7), never the share itself. And the console's hostname is the
+  product's face, which reads better in a post than a tracker domain.
+  Links are built from `CONSOLE_URL`, which defaults to `PUBLIC_URL`, so
+  there is no new setting.
 
   | Route | Answers |
   | --- | --- |
-  | `GET /s/{token}` | An HTML page: the image, the widget title, the project name and the range in words, and a "Made with twillingate" link. Head: `og:title`, `og:type=website`, `og:url`, `og:image` (absolute `PUBLIC_URL/s/{token}.png`), `og:image:width`, `og:image:height`, `og:image:alt`, `twitter:card=summary_large_image`, `<meta name="robots" content="noindex">`. It loads `twillingate.js` (D6). |
+  | `GET /s/{token}` | An HTML page: the image, the widget title, the project name and the range in words, and a "Made with twillingate" link. Head: `og:title`, `og:type=website`, `og:url`, `og:image` (absolute `CONSOLE_URL/s/{token}.png`), `og:image:width`, `og:image:height`, `og:image:alt`, `twitter:card=summary_large_image`, `<meta name="robots" content="noindex">`. Inline CSS and the app's icon, no app bundle. It loads `twillingate.js` (D7). |
   | `GET /s/{token}.png` | The image, `Content-Type: image/png`, `Cache-Control: public, max-age=3600`, plus `X-Robots-Tag: noindex`. |
 
   An unknown or deleted token answers 404 on both routes. The page
   answers `Cache-Control: public, max-age=300`. The hour on the image
   bounds how long a CDN keeps serving a deleted share. The page carries
   `Content-Security-Policy: default-src 'none'; img-src 'self';
-  script-src 'self'; connect-src 'self'; style-src 'unsafe-inline';
-  base-uri 'none'; frame-ancestors 'none'`.
+  script-src <collector origin>; connect-src <collector origin>;
+  style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'`,
+  where the collector origin is `PUBLIC_URL`'s.
 
-  The routes are registered on the ingest mux in `internal/server`, which
-  reads through its own `server.ShareStore` interface (`Share(ctx, token)`
-  for the row, and `ShareKey(ctx)` for the key D7 picks), and `app` passes
-  the store. `server` does
-  not import `reporting` or `api`.
+  `reporting` serves both routes (`reporting.Shares()`), and `api.RegisterOn`
+  mounts them unauthenticated beside `/app/`, `/healthz` and the login
+  routes (`internal/api/server.go:106`). Nothing in `internal/server`
+  changes. On a shared listener, only the console registers `/s/`.
+
+  **A private console.** When the console sits on a LAN or tailnet, links
+  open only there. The fix is a proxy rule, not code: expose only `/s/*`
+  of the console listener to the internet and keep `/app`, `/api`, `/mcp`
+  and the login private. `docs/deployment.md` shows it as a Caddy
+  `handle /s/*` block. A console that is already public (one claude.ai
+  reaches over MCP, or a hosted plan) needs nothing.
 
 - **D3. Embedding is an image link, not an iframe.** The Share dialog's
   "Copy embed code" gives:
 
   ```html
-  <a href="PUBLIC_URL/s/<token>"><img src="PUBLIC_URL/s/<token>.png"
+  <a href="CONSOLE_URL/s/<token>"><img src="CONSOLE_URL/s/<token>.png"
      alt="<title>" width="600" height="315"></a>
   ```
 
@@ -124,7 +138,8 @@ out of scope.
 
   Create validates and refuses with typed errors:
   - The widget is unknown or archived: `ErrNotFound`.
-  - `PUBLIC_URL` is unset: `ErrInvalid` with "set PUBLIC_URL to share widgets".
+  - Neither `CONSOLE_URL` nor `PUBLIC_URL` is set: `ErrInvalid` with "set
+    CONSOLE_URL to share widgets".
   - The upload is not a PNG (magic bytes plus `image/png.DecodeConfig`), is
     over 5 MB, or is not 1200×630 in shape (at pixel ratio 1, 2 or 3):
     `ErrInvalid`.
@@ -134,26 +149,28 @@ out of scope.
   and delete each write an audit row, as other console writes do.
 
 - **D7. Opens are page views sent by `twillingate.js` to a share project.**
-  The share page loads the collector's own SDK:
+  The share page loads the collector's own SDK, cross-origin, as any site
+  does:
 
   ```html
-  <script defer src="/js/twillingate.js" data-key="<key>"></script>
+  <script defer src="PUBLIC_URL/js/twillingate.js" data-key="<key>"></script>
   ```
 
   A click-through is then an ordinary page view of
-  `PUBLIC_URL/s/<token>`, with its referrer (t.co, lnkd.in, a Mastodon
+  `CONSOLE_URL/s/<token>`, with its referrer (t.co, lnkd.in, a Mastodon
   instance), country and browser, and the visitor counts twillingate
   already computes. Unfurlers run no JavaScript, and the collector's
   `IsBot` check drops the rest, so preview fetches do not count. An
   `<img>` embed runs no script: it counts only when someone clicks
-  through. The views dashboards, filtered to the share project, serve as
+  through. A visitor whose blocker drops the script still sees the share;
+  only their open goes uncounted. The views dashboards, filtered to the share project, serve as
   the share analytics, and need no new reporting code.
 
   **Which project.** The share project's id is the `meta` row
   `share_project_id`.
   - **Created automatically by the first share.** If the row is absent,
     Create (D6) makes a project named `Shares` with
-    `allowed_origins = [<PUBLIC_URL's origin>]`, issues it an ingest key
+    `allowed_origins = [<CONSOLE_URL's origin>]`, issues it an ingest key
     labelled `shares`, and writes the row. All of this runs in the same
     transaction as the first share.
   - **The operator can change it.** `SHARE_PROJECT_ID` (env, read in
@@ -162,8 +179,8 @@ out of scope.
     `SHARE_PROJECT_ID=0` turns counting off: the page loads no script and
     nothing is created. Unset leaves the row as it is.
   - The operator owns that project's `allowed_origins`. If they point
-    `SHARE_PROJECT_ID` at a project, they must add `PUBLIC_URL`'s origin to
-    it, and `docs/deployment.md` says so.
+    `SHARE_PROJECT_ID` at a project, they must add `CONSOLE_URL`'s origin
+    to it, and `docs/deployment.md` says so.
 
   **The page picks its key** as the share project's first active ingest
   key, by label. If the project is archived or has no active key, the page
@@ -179,11 +196,11 @@ out of scope.
 
 - `docs/reporting.md`: the Share dialog, Download PNG, and the
   `list_shares` and `delete_share` tools with their REST routes.
-- `docs/twillingate.md`: the `/s/` routes on the ingest host, in the
-  `serve -ingest` row and the route list.
+- `docs/twillingate.md`: the `/s/` routes in the `serve -console` row, as
+  the console's one unauthenticated content.
 - `docs/deployment.md`: `SHARE_PROJECT_ID`, the auto-created `Shares`
-  project, and a reverse proxy in front of the ingest host forwarding
-  `/s/`.
+  project, and the Caddy example that exposes only `/s/*` of a private
+  console.
 - `deploy/UPGRADES.md`: migration 032, which only adds a table and needs
   no pre-check.
 
@@ -195,7 +212,8 @@ out of scope.
   project, its key and the meta row in one transaction, and a second
   share reuses them. `SHARE_PROJECT_ID=0` creates nothing. `opens` counts
   only `/s/<token>` views of the share project.
-- **Server.** The page's meta tags, `noindex`, the CSP, and the script tag
+- **Share routes** (`reporting`, mounted through `api`). They answer
+  without a token while `/api/` still answers 401. The page's meta tags, `noindex`, the CSP, and the script tag
   present or absent (counting on, off, or no active key). The PNG's type
   and cache headers. Both routes answer 404 for an unknown token and
   after delete.
