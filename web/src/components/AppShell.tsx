@@ -57,7 +57,7 @@ export function TopBar({ children }: { children?: ReactNode }) {
 function Footer() {
   return (
     <footer className="mt-auto flex flex-wrap items-center justify-center gap-x-2 px-3 py-4 text-xs text-muted-foreground">
-      <span className="break-all">twillingate {appVersion()}</span>
+      <span className="break-all">{appVersion()}</span>
       <span aria-hidden>·</span>
       <a href="https://twillingate.dev" target="_blank" rel="noopener" className="underline-offset-4 hover:text-foreground hover:underline">
         twillingate.dev
