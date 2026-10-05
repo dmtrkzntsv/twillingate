@@ -42,14 +42,14 @@ export default function LimitsPanel({ limits }: { limits: Limit[] }) {
               <h3 className="text-sm font-semibold uppercase tracking-wide">{title}</h3>
               <p className="text-xs text-muted-foreground">{note}</p>
             </header>
-            <dl className="grid gap-x-6 gap-y-4 sm:grid-cols-3">
+            <dl className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-3">
               {items.map((l) => (
                 <div key={l.name} className="flex flex-col gap-0.5">
                   <dt className="text-xs text-muted-foreground">{l.name}</dt>
                   <dd className="text-lg font-semibold">{formatLimit(l)}</dd>
                   {l.setting && (
                     <dd className="text-xs text-muted-foreground">
-                      <span className="font-mono">{l.setting}</span>
+                      <span className="font-mono break-all">{l.setting}</span>
                       {l.default !== undefined && ` · default ${formatLimit(l, l.default)}`}
                     </dd>
                   )}

@@ -44,20 +44,23 @@ export default function KeysSection({ keys, error, onRetry, onIssue, onDisable, 
       ) : (
         <Table>
           <TableHeader>
-            <TableRow><TableHead>Label</TableHead><TableHead>Key</TableHead><TableHead>State</TableHead><TableHead /></TableRow>
+            <TableRow><TableHead>Label</TableHead><TableHead>Key</TableHead><TableHead /></TableRow>
           </TableHeader>
           <TableBody>
             {keys.map((k) => (
               <TableRow key={k.label} aria-label={k.label}>
-                <TableCell className="font-medium">{k.label}</TableCell>
-                <TableCell>
-                  <span className="flex items-center gap-1 font-mono text-xs">
-                    <span className="max-w-48 truncate">{k.key}</span>
-                    <CopyButton value={k.key} label={`Copy ${k.label}`} />
+                {/* The state sits by the label, not in a column of its own, so the row fits a phone. */}
+                <TableCell className="whitespace-normal">
+                  <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                    <span className="font-medium break-all">{k.label}</span>
+                    <Badge variant={k.state === 'active' ? 'secondary' : 'outline'}>{k.state}</Badge>
                   </span>
                 </TableCell>
                 <TableCell>
-                  <Badge variant={k.state === 'active' ? 'secondary' : 'outline'}>{k.state}</Badge>
+                  <span className="flex items-center gap-1 font-mono text-xs">
+                    <span className="max-w-20 truncate sm:max-w-48">{k.key}</span>
+                    <CopyButton value={k.key} label={`Copy ${k.label}`} />
+                  </span>
                 </TableCell>
                 <TableCell className="text-right">
                   {k.state === 'active' ? (

@@ -73,7 +73,7 @@ export default function Projects() {
           <LoadError what={statsFailed ? 'usage' : 'keys'} error={(statsFailed ? statsQ.error : keysQ.error)!} onRetry={retryUsage} />
         )}
         {projectsData && active.length === 0 && <p className="text-sm text-muted-foreground">No projects yet. Create one to get an ingest key.</p>}
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {active.map((p) => (
             <ProjectCard
               key={p.project_id}
@@ -92,7 +92,7 @@ export default function Projects() {
                 <ChevronRightIcon /> Archived ({archived.length})
               </Button>
             </CollapsibleTrigger>
-            <CollapsibleContent className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            <CollapsibleContent className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
               {archived.map((p) => (
                 <ProjectCard
                   key={p.project_id}

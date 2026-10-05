@@ -51,8 +51,8 @@ export default function BreakdownsSection({ project, range, pending, onSave }: P
               const r = received.get(k)
               return (
                 <TableRow key={k}>
-                  <TableCell><code className="text-sm">{k}</code></TableCell>
-                  <TableCell className="text-xs text-muted-foreground">{r ? describeKey(r, data?.values_cap ?? 0) : ''}</TableCell>
+                  <TableCell className="whitespace-normal"><code className="text-sm break-all">{k}</code></TableCell>
+                  <TableCell className="text-xs whitespace-normal text-muted-foreground">{r ? describeKey(r, data?.values_cap ?? 0) : ''}</TableCell>
                   <TableCell className="text-right">
                     <Button variant="ghost" size="sm" aria-label={`Remove ${k}`} disabled={pending} onClick={() => setRemoving({ key: k, open: true })}>Remove</Button>
                   </TableCell>
