@@ -60,7 +60,7 @@ describe('Project', () => {
     expect(actions.update).toHaveBeenCalledWith(4, { name: 'econumo' })
   })
 
-  it('shows the allowed origins and edits them through PATCH, never the name or attributes', async () => {
+  it('shows the allowed origins and adds one through PATCH, never the name or attributes', async () => {
     const user = userEvent.setup()
     actions.update.mockResolvedValue(true)
     renderAt('/projects/4')
@@ -68,11 +68,10 @@ describe('Project', () => {
     expect(within(origins).getByText('https://econumo.com')).toBeInTheDocument()
     expect(within(origins).queryByText('plan')).not.toBeInTheDocument()
     expect(screen.queryByRole('region', { name: 'Details' })).not.toBeInTheDocument()
-    await user.click(within(origins).getByRole('button', { name: 'Edit' }))
-    await user.click(screen.getByRole('button', { name: 'Add origin' }))
-    await user.type(screen.getByRole('textbox', { name: 'Origin 2' }), '*')
-    await user.click(screen.getByRole('button', { name: 'Save' }))
-    expect(actions.update).toHaveBeenCalledWith(4, { allowed_origins: ['https://econumo.com', '*'] })
+    await user.click(within(origins).getByRole('button', { name: 'Add origin' }))
+    await user.type(screen.getByLabelText('Origin'), 'https://app.econumo.com')
+    await user.click(screen.getByRole('button', { name: 'Add' }))
+    expect(actions.update).toHaveBeenCalledWith(4, { allowed_origins: ['https://econumo.com', 'https://app.econumo.com'] })
   })
 
   it('places Breakdowns between Allowed origins and Ingest keys', async () => {
