@@ -3,6 +3,7 @@ import { Separator } from '@/components/ui/separator'
 import { SidebarInset, SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar'
 import { useMediaQuery } from '@/hooks/use-media-query'
 import type { DashboardInfo } from '@/lib/api'
+import { appVersion } from '@/lib/version'
 import AppSidebar from './AppSidebar'
 
 interface Props {
@@ -16,7 +17,8 @@ interface Props {
 const WIDE = '(min-width: 1024px)'
 
 /**
- * The page around a dashboard: the sidebar, open on wide screens and
+ * The page around a dashboard: the sidebar, the page, and below it the
+ * footer with the running version. The sidebar is open on wide screens and
  * collapsed to icons below 1024px (it stays togglable either way).
  */
 export default function AppShell({ dashboards, currentId, readOnly = false, children }: Props) {
@@ -32,7 +34,10 @@ export default function AppShell({ dashboards, currentId, readOnly = false, chil
   return (
     <SidebarProvider open={open} onOpenChange={setOpen}>
       <AppSidebar dashboards={dashboards} currentId={currentId} readOnly={readOnly} />
-      <SidebarInset className="sky-wash min-w-0">{children}</SidebarInset>
+      <SidebarInset className="sky-wash min-w-0">
+        {children}
+        <Footer apiDocs={!readOnly} />
+      </SidebarInset>
     </SidebarProvider>
   )
 }
@@ -47,3 +52,28 @@ export function TopBar({ children }: { children?: ReactNode }) {
     </header>
   )
 }
+
+/**
+ * The running version, linked to the REST API's reference (/api/docs, a
+ * page of its own outside the app), and a link to the project's site.
+ * Reporting dev serves no API reference, so there the version is plain text.
+ */
+function Footer({ apiDocs }: { apiDocs: boolean }) {
+  return (
+    <footer className="mt-auto flex flex-wrap items-center justify-center gap-x-2 px-3 py-4 text-xs text-muted-foreground">
+      {apiDocs ? (
+        <a href="/api/docs" target="_blank" rel="noopener" title="API reference" className={`break-all ${link}`}>
+          {appVersion()}
+        </a>
+      ) : (
+        <span className="break-all">{appVersion()}</span>
+      )}
+      <span aria-hidden>·</span>
+      <a href="https://twillingate.dev" target="_blank" rel="noopener" className={link}>
+        twillingate.dev
+      </a>
+    </footer>
+  )
+}
+
+const link = 'underline-offset-4 hover:text-foreground hover:underline'
