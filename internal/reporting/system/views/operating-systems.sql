@@ -1,5 +1,5 @@
--- Operating system names alone, versions summed in: the six with the most
--- visitors and the rest as Other, as many slices as a pie can show.
+-- Operating system names alone, versions summed in: five slices, one per chart
+-- color, so past five the four with the most visitors and the rest as Other.
 WITH o AS (
   SELECT os AS label, SUM(visitors) AS value,
          ROW_NUMBER() OVER (ORDER BY SUM(visitors) DESC, os) AS n
@@ -9,7 +9,7 @@ WITH o AS (
     AND os != ''
   GROUP BY os
 )
-SELECT CASE WHEN n <= 6 THEN label ELSE 'Other' END AS label, SUM(value) AS value
+SELECT CASE WHEN n <= 4 OR (SELECT COUNT(*) FROM o) <= 5 THEN label ELSE 'Other' END AS label, SUM(value) AS value
 FROM o
 GROUP BY 1
 ORDER BY MIN(n)

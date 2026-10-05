@@ -565,5 +565,5 @@ of them restores (or archives) all seven.
 
 On the same release the Product dashboard's "Attribute values by day"
 lists declared custom attributes only, "Events by name" becomes "Top
-events" (the range's eight busiest), and the Views dashboard's Browsers
+events" (the range's five busiest), and the Views dashboard's Browsers
 and Operating systems are pies by name, versions summed in.

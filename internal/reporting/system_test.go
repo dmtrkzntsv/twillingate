@@ -522,7 +522,7 @@ func TestAttributeValuesFilterByAliases(t *testing.T) {
 }
 
 // TestTopEventsKeepsTheBusiest: "Top events" draws one line for each of
-// the range's eight busiest events, however many an app sends, so the
+// the range's five busiest events, however many an app sends, so the
 // legend stays readable; a quieter event is left to the Events table.
 func TestTopEventsKeepsTheBusiest(t *testing.T) {
 	ctx := context.Background()
@@ -545,10 +545,9 @@ func TestTopEventsKeepsTheBusiest(t *testing.T) {
 	for i := range res.Rows {
 		series[column(t, res, i, "series")] = true
 	}
-	// e00-e06 (400 down to 130) and click (20 a day) are the eight busiest;
-	// e07 (85) is next.
-	want := map[string]bool{"click": true}
-	for i := 0; i < 7; i++ {
+	// e00-e04 (400 down to 220) are the five busiest; e05 (175) is next.
+	want := map[string]bool{}
+	for i := 0; i < 5; i++ {
 		want[fmt.Sprintf("e%02d", i)] = true
 	}
 	if !reflect.DeepEqual(series, want) {
@@ -558,13 +557,14 @@ func TestTopEventsKeepsTheBusiest(t *testing.T) {
 
 // TestBrowsersAndSystemsByName: the Browsers and Operating systems pies
 // name each browser or system without its version, summing its versions'
-// visitors, and fold everything past the six busiest into Other.
+// visitors, and keep five slices: up to five names, or past five the four
+// busiest and Other.
 func TestBrowsersAndSystemsByName(t *testing.T) {
 	ctx := context.Background()
 	f := newSystemFixture(t)
 	day := f.today.AddDays(-5) // rolled up: the seed's raw rows are the last three days
-	// A second chrome version, and five more browsers, the quietest of
-	// which falls past the six slices.
+	// A second chrome version, and five more browsers, of which opera,
+	// brave and vivaldi fall into Other.
 	extra := []string{fmt.Sprintf("(%d, '%s', 'chrome', '125', 3, 3)", f.project, day)}
 	for i, b := range []string{"firefox", "edge", "opera", "brave", "vivaldi"} {
 		extra = append(extra, fmt.Sprintf("(%d, '%s', '%s', '1', %d, %d)", f.project, day, b, 5-i, 5-i))
@@ -587,7 +587,7 @@ func TestBrowsersAndSystemsByName(t *testing.T) {
 		widget, view, col string
 		want              []string
 	}{
-		{"browsers", "v_views_browsers", "browser", []string{"chrome", "safari", "firefox", "edge", "opera", "brave", "Other"}},
+		{"browsers", "v_views_browsers", "browser", []string{"chrome", "safari", "firefox", "edge", "Other"}},
 		{"operating-systems", "v_views_os", "os", []string{"macos", "windows", "ios"}},
 	} {
 		got, err := f.svc.WidgetData(ctx, DataRequest{WidgetID: systemWidget(t, f, 1, c.widget), ProjectID: f.project, From: from, To: to})

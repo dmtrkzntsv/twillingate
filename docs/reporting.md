@@ -231,8 +231,8 @@ widget_data {"widget_id": 42, "project_id": 7, "from": "2026-09-01", "to": "2026
   comments may hold any text.
 - Group in SQL: a widget gets at most `CONSOLE_QUERY_MAX_ROWS` rows (default
   1000) and `CONSOLE_QUERY_TIMEOUT` (default 10s). A result cut at the cap draws
-  as "partial". A pie keeps to about seven slices, the rest summed as
-  `Other`.
+  as "partial". A pie keeps to five slices, the rest summed as `Other`,
+  and a line chart to five lines: the palette has five colors.
 - A widget that follows neither switcher says in its title what it is fixed
   to.
 - Widgets are not reordered once placed: to move one, `copy_widget` it with
@@ -323,11 +323,11 @@ appears. `width` and `height` default to the component's size below.
 | Component | Accepts | Inputs: the columns the query returns | Props | Default width × height |
 | --- | --- | --- | --- | --- |
 | `stat` | `sql` | `value` number; `previous` number, optional (shows the change); `x` day, optional (a sparkline under the number, which becomes the series' `aggregate`) | `format`, `aggregate` (`sum`, `last`, `avg`) | 3 × 3 |
-| `line` | `sql` | `x` day or text; `y` number; `series` text, optional (one line per value; keep it to ~8 lines, ranking the rest out in SQL) | `format`, `curve` (`linear`, `monotone`, `step`) | 6 × 8 |
+| `line` | `sql` | `x` day or text; `y` number; `series` text, optional (one line per value; keep it to 5 lines, one per chart color, ranking the rest out in SQL) | `format`, `curve` (`linear`, `monotone`, `step`) | 6 × 8 |
 | `area` | `sql` | as `line` | `format`, `curve`, `stacked` | 6 × 8 |
 | `bar` | `sql` | `x` text or day; `y` number; `series` text, optional | `format`, `horizontal`, `stacked` | 6 × 8 |
 | `bar_list` | `sql` | `label` text; `value` number (a ranked list with an inline bar) | `format` | 6 × 8 |
-| `pie` | `sql` | `label` text; `value` number; keep it to ~7 slices and group the rest as 'Other' in SQL | `format`, `donut` | 4 × 8 |
+| `pie` | `sql` | `label` text; `value` number; keep it to 5 slices, one per chart color, and group the rest as 'Other' in SQL | `format`, `donut` | 4 × 8 |
 | `radar` | `sql` | `axis` text; `value` number; `series` text, optional | `format` | 4 × 8 |
 | `radial` | `sql` | `label` text; `value` number; `max` number, optional (a ring toward a target) | `format` | 4 × 8 |
 | `scatter` | `sql` | `x` number; `y` number; `series` text, optional; `size` number, optional | `format` | 6 × 8 |
