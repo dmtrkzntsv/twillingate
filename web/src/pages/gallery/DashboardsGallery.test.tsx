@@ -53,17 +53,34 @@ function renderGallery() {
 }
 
 describe('DashboardsGallery, templates', () => {
-  it('lists a live and an archived system group identically, with no badge, Archive or Restore', async () => {
+  it('lists a live and a hidden system group alike, the hidden one marked hidden', async () => {
     mockApi()
     renderGallery()
 
     const views = (await screen.findByRole('heading', { name: 'Views' })).closest('li')!
-    expect(within(views).queryByText('In the sidebar')).not.toBeInTheDocument()
-    expect(within(views).queryByRole('button', { name: 'Archive' })).not.toBeInTheDocument()
+    expect(within(views).queryByText(/hidden/)).not.toBeInTheDocument()
+    expect(within(views).queryByRole('button', { name: /Archive|Restore|Hide/ })).not.toBeInTheDocument()
 
     const reach = screen.getByRole('heading', { name: 'Reach' }).closest('li')!
-    expect(within(reach).queryByText('Archived')).not.toBeInTheDocument()
-    expect(within(reach).queryByRole('button', { name: 'Restore' })).not.toBeInTheDocument()
+    expect(within(reach).getByText('1 widget · hidden')).toBeInTheDocument()
+    expect(within(reach).queryByText(/archived/i)).not.toBeInTheDocument()
+  })
+
+  it('shows a hidden group in the sidebar again from its "…" menu, and offers that only there', async () => {
+    mockApi()
+    renderGallery()
+
+    await screen.findByRole('heading', { name: 'Views' })
+    const main = within(screen.getByRole('main'))
+    await userEvent.click(main.getByRole('button', { name: 'Views actions' }))
+    expect(screen.queryByRole('menuitem', { name: 'Show in sidebar' })).not.toBeInTheDocument()
+    await userEvent.keyboard('{Escape}')
+
+    await userEvent.click(main.getByRole('button', { name: 'Reach actions' }))
+    expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Show in sidebar', 'Duplicate dashboard'])
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Show in sidebar' }))
+
+    expect(restore).toHaveBeenCalledWith(20, true)
   })
 
   it('leaves out a live user dashboard: not a template', async () => {
@@ -76,24 +93,48 @@ describe('DashboardsGallery, templates', () => {
     expect(main.queryByText('Launch week')).not.toBeInTheDocument()
   })
 
-  it('shows each group as one row: its first tab\'s title, opening that tab, and its tabs listed', async () => {
+  it('shows a group as one card with its tabs, each opening itself, as on the Archive page', async () => {
     mockApi()
     renderGallery()
 
     await screen.findByRole('heading', { name: 'Views' })
     // The sidebar links to Views too; scope to the page content.
     const main = within(screen.getByRole('main'))
-    const views = main.getByRole('link', { name: 'Views' })
-    expect(views).toHaveAttribute('href', '/dashboards/1')
-    const row = views.closest('li')!
-    expect(within(row).getByText('2 tabs · Views, Product')).toBeInTheDocument()
-    expect(within(row).queryByRole('link', { name: 'Product' })).not.toBeInTheDocument()
-    // A lone-tab group lists no tabs.
+    const card = main.getByRole('listitem', { name: 'Views' })
+    expect(within(card).getByText('2 tabs')).toBeInTheDocument()
+    expect(within(card).getByRole('link', { name: 'Views' })).toHaveAttribute('href', '/dashboards/1')
+    expect(within(card).getByRole('link', { name: 'Product' })).toHaveAttribute('href', '/dashboards/2')
+    expect(within(card).getAllByText('1 widget')).toHaveLength(2)
+    // A lone-tab group is a single row: no tab count, no tab menu.
     const reach = main.getByRole('link', { name: 'Reach' }).closest('li')!
     expect(within(reach).queryByText(/tabs/)).not.toBeInTheDocument()
+    expect(within(reach).queryByRole('button', { name: 'Reach tab actions' })).not.toBeInTheDocument()
   })
 
-  it('duplicates the whole group from the row\'s "…" menu', async () => {
+  it('copies one tab to a new dashboard from that tab\'s "…" menu', async () => {
+    mockApi()
+    renderGallery()
+
+    await screen.findByRole('heading', { name: 'Views' })
+    await userEvent.click(within(screen.getByRole('main')).getByRole('button', { name: 'Product tab actions' }))
+    expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Copy to new dashboard'])
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Copy to new dashboard' }))
+
+    expect(duplicate).toHaveBeenCalledWith(dashboards[1])
+  })
+
+  it('duplicates a lone group whole from its row\'s "…" menu', async () => {
+    mockApi()
+    renderGallery()
+
+    await screen.findByRole('heading', { name: 'Reach' })
+    await userEvent.click(within(screen.getByRole('main')).getByRole('button', { name: 'Reach actions' }))
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Duplicate dashboard' }))
+
+    expect(duplicate).toHaveBeenCalledWith(dashboards[2], { wholeGroup: true })
+  })
+
+  it('duplicates the whole group from the card\'s "…" menu', async () => {
     mockApi()
     renderGallery()
 
@@ -126,6 +167,6 @@ describe('DashboardsGallery, templates', () => {
     renderGallery()
 
     await screen.findByRole('heading', { name: 'Views' })
-    expect(within(screen.getByRole('main')).queryByRole('button', { name: 'Views actions' })).not.toBeInTheDocument()
+    expect(within(screen.getByRole('main')).queryByRole('button', { name: /actions/ })).not.toBeInTheDocument()
   })
 })

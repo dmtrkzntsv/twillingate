@@ -790,12 +790,20 @@ Archiving is how to undo, and the only way to remove anything:
   `archived_at`, so you can find one to restore. `get_dashboard` still opens
   an archived dashboard, with only its live widgets and its group's live
   tabs. The page's sidebar shows live dashboards only; one opened by its URL
-  says "Archived: not in the sidebar" and offers Restore, and the page's
-  Archive page (`/app/archive`) lists every archived dashboard; one archived
-  with its group opens with that group's archived tabs. The Templates
-  gallery (`/app/gallery/dashboards`) lists each system group as a
-  template, one row per group, archived ones included: archive state does
-  not matter there. A row's "…" menu duplicates the whole group. On any
+  says "Archived: not in the sidebar" and offers Restore (a system one
+  "Hidden from the sidebar" and "Show in sidebar"), and the page's
+  Archive page (`/app/archive`) lists every user group with an archived
+  tab, the group's live tabs too, each archived tab with its own Restore
+  and "Restore all" for the group; one archived with its group opens with
+  that group's archived tabs. The page calls archiving a system group
+  **Hide** (it is `archive_dashboard` with `whole_group`): a hidden
+  system group is not on the Archive page, and comes back from the
+  Dashboards gallery (`/app/gallery/dashboards`). The gallery lists each
+  system group as a template, laid out as on the Archive page: a card per
+  group with a row per tab. A hidden one is marked "hidden", and its
+  "…" menu offers "Show in sidebar" (`restore_dashboard` with
+  `whole_group`); every group's "…" menu duplicates the whole group, and a
+  tab's copies that tab to a new dashboard. On any
   dashboard, the "…" menu at the top right of the tab bar acts on the whole
   dashboard ("Duplicate dashboard", `whole_group`), and the one beside the
   title on that tab: "Duplicate tab" adds its copy as the next tab

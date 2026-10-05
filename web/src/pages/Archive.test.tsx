@@ -82,13 +82,20 @@ describe('Archive, description', () => {
   })
 })
 
-describe('Archive, Yours section', () => {
-  it('links each archived dashboard to its own page', async () => {
+/** The group card named `name` on the page (not in the sidebar). */
+async function group(name: string) {
+  await screen.findByRole('heading', { name: 'Archive' })
+  return within(screen.getByRole('main')).findByRole('listitem', { name })
+}
+
+describe('Archive, a lone dashboard', () => {
+  it('is one row linking to its page', async () => {
     mockApi()
     renderArchive()
 
     const link = await screen.findByRole('link', { name: 'Old experiment' })
     expect(link).toHaveAttribute('href', '/dashboards/11')
+    expect(within(link.closest('li')!).queryByText(/tabs/)).not.toBeInTheDocument()
   })
 
   it('shows "deleted on 1 Oct" given archived_at plus purge_after_days', async () => {
@@ -107,38 +114,6 @@ describe('Archive, Yours section', () => {
     expect(within(row).queryByText(/deleted on/)).not.toBeInTheDocument()
   })
 
-  it('names the group for an archived dashboard with a live sibling', async () => {
-    mockApi()
-    renderArchive()
-
-    const row = (await screen.findByText('Funnel')).closest('li')!
-    expect(within(row).getByText(/in Marketing/)).toBeInTheDocument()
-  })
-
-  it('never names a dashboard after itself when its whole group is archived', async () => {
-    mockApiWith([
-      info(13, 'Marketing', 'user', 13, { archived_at: '2026-09-01T00:00:00Z' }),
-      info(14, 'Funnel', 'user', 13, { archived_at: '2026-09-02T00:00:00Z' }),
-    ])
-    renderArchive()
-
-    const marketingRow = (await screen.findByText('Marketing')).closest('li')!
-    expect(within(marketingRow).getByText(/in Funnel/)).toBeInTheDocument()
-    expect(within(marketingRow).queryByText(/in Marketing/)).not.toBeInTheDocument()
-
-    const funnelRow = screen.getByText('Funnel').closest('li')!
-    expect(within(funnelRow).getByText(/in Marketing/)).toBeInTheDocument()
-    expect(within(funnelRow).queryByText(/in Funnel/)).not.toBeInTheDocument()
-  })
-
-  it('names nothing for an archived dashboard with no siblings', async () => {
-    mockApi()
-    renderArchive()
-
-    const row = (await screen.findByText('Old experiment')).closest('li')!
-    expect(within(row).queryByText(/^in /)).not.toBeInTheDocument()
-  })
-
   it('Restore calls restore(id) alone, no whole group', async () => {
     mockApi()
     renderArchive()
@@ -150,37 +125,81 @@ describe('Archive, Yours section', () => {
   })
 })
 
-describe('Archive, System section', () => {
-  it('lists an archived system group by its first member, with its tab count', async () => {
+describe('Archive, a user group', () => {
+  it('is one card named by its first live tab, listing every tab', async () => {
     mockApi()
     renderArchive()
 
-    const link = await screen.findByRole('link', { name: 'Views' })
-    expect(link).toHaveAttribute('href', '/dashboards/1')
-    const row = link.closest('li')!
-    expect(within(row).getByText(/5 tabs/)).toBeInTheDocument()
-    expect(within(row).getByText(/never deleted/)).toBeInTheDocument()
+    const card = await group('Marketing')
+    expect(within(card).getByText(/2 tabs · 1 archived/)).toBeInTheDocument()
+    expect(within(card).getByRole('link', { name: 'Marketing' })).toHaveAttribute('href', '/dashboards/13')
+    expect(within(card).getByRole('link', { name: 'Funnel' })).toHaveAttribute('href', '/dashboards/14')
   })
 
-  it('leaves out a live system group', async () => {
+  it('marks the live tab as in the sidebar, with no Restore', async () => {
     mockApi()
     renderArchive()
 
-    await screen.findByRole('link', { name: 'Views' })
-    // Reports (live) is still a legitimate sidebar link; scope to the
-    // page content so that one does not make this a false negative.
+    const card = await group('Marketing')
+    const live = within(card).getByRole('link', { name: 'Marketing' }).closest('li')!
+    expect(within(live).getByText('in the sidebar')).toBeInTheDocument()
+    expect(within(live).queryByRole('button')).not.toBeInTheDocument()
+  })
+
+  it('restores one archived tab on its own', async () => {
+    mockApi(30)
+    renderArchive()
+
+    const card = await group('Marketing')
+    const tab = within(card).getByRole('link', { name: 'Funnel' }).closest('li')!
+    expect(within(tab).getByText(/deleted on 1 Oct/)).toBeInTheDocument()
+    await userEvent.click(within(tab).getByRole('button', { name: 'Restore' }))
+
+    expect(restore).toHaveBeenCalledWith(14)
+  })
+
+  it('offers Restore all only with two or more archived tabs', async () => {
+    mockApi()
+    renderArchive()
+
+    const card = await group('Marketing')
+    expect(within(card).queryByRole('button', { name: 'Restore all' })).not.toBeInTheDocument()
+  })
+
+  it('Restore all restores the whole group', async () => {
+    mockApiWith([
+      info(13, 'Marketing', 'user', 13, { archived_at: '2026-09-01T00:00:00Z' }),
+      info(14, 'Funnel', 'user', 13, { archived_at: '2026-09-02T00:00:00Z' }),
+    ])
+    renderArchive()
+
+    const card = await group('Marketing')
+    expect(within(card).getByText(/2 tabs · all archived/)).toBeInTheDocument()
+    expect(within(card).getAllByRole('button', { name: 'Restore' })).toHaveLength(2)
+    await userEvent.click(within(card).getByRole('button', { name: 'Restore all' }))
+
+    expect(restore).toHaveBeenCalledWith(13, true)
+  })
+})
+
+describe('Archive, system groups', () => {
+  it('leaves out every system group, hidden or live: a hidden one comes back from the gallery', async () => {
+    mockApi()
+    renderArchive()
+
+    await group('Marketing')
+    // The sidebar links to live system dashboards; scope to the page content.
     const main = within(screen.getByRole('main'))
-    expect(main.queryByRole('link', { name: 'Reports' })).not.toBeInTheDocument()
+    for (const name of ['Views', 'Product', 'Reports']) expect(main.queryByRole('link', { name })).not.toBeInTheDocument()
+    expect(main.queryByText('System')).not.toBeInTheDocument()
+    expect(main.getByText(/comes back from Gallery › Dashboards/)).toBeInTheDocument()
   })
 
-  it('Restore calls restore(first.dashboard_id, true)', async () => {
-    mockApi()
+  it('reads "Nothing archived." when only a system group is', async () => {
+    mockApiWith([info(1, 'Views', 'system', 1, { archived_at: '2026-09-15T00:00:00Z' })])
     renderArchive()
-    const row = (await screen.findByRole('link', { name: 'Views' })).closest('li')!
 
-    await userEvent.click(within(row).getByRole('button', { name: 'Restore' }))
-
-    expect(restore).toHaveBeenCalledWith(1, true)
+    expect(await screen.findByText('Nothing archived.')).toBeInTheDocument()
   })
 })
 
@@ -203,6 +222,6 @@ describe('Archive, writes', () => {
     renderArchive()
 
     await screen.findByText('Old experiment')
-    expect(screen.queryByRole('button', { name: 'Restore' })).not.toBeInTheDocument()
+    expect(within(screen.getByRole('main')).queryByRole('button', { name: /Restore/ })).not.toBeInTheDocument()
   })
 })

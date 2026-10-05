@@ -163,7 +163,7 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
           // dashboard opened by its URL; this line is the only hint on the
           // page itself that it is gone from the sidebar (D18).
           <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border/70 bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
-            <span>Archived: not in the sidebar</span>
+            <span>{dashboard.owner === 'system' ? 'Hidden from the sidebar' : 'Archived: not in the sidebar'}</span>
             {writable && (
               <Button
                 variant="outline"
@@ -171,7 +171,7 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
                 disabled={pending}
                 onClick={() => void restore(dashboard.dashboard_id, dashboard.owner === 'system')}
               >
-                Restore
+                {dashboard.owner === 'system' ? 'Show in sidebar' : 'Restore'}
               </Button>
             )}
           </div>

@@ -101,7 +101,7 @@ describe('Dashboard', () => {
     const group = await screen.findByRole('button', { name: 'Dashboard actions' })
     expect(group.closest('header')).toContainElement(screen.getByRole('tablist'))
     await userEvent.click(group)
-    expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Refresh', 'Duplicate dashboard', 'Archive dashboard'])
+    expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Refresh', 'Duplicate dashboard', 'Hide dashboard'])
     await userEvent.keyboard('{Escape}')
 
     await userEvent.click(screen.getByRole('button', { name: 'Tab actions' }))
@@ -468,7 +468,7 @@ describe('Dashboard', () => {
     expect(screen.queryByRole('menuitemcheckbox')).not.toBeInTheDocument()
   })
 
-  it('opens a system group archived whole with all its tabs, and its menus', async () => {
+  it('opens a system group hidden whole with all its tabs, its menus, and Show in sidebar', async () => {
     mockApi()
     const archived = dashboardsList()
     archived.dashboards = archived.dashboards.map((d) =>
@@ -477,15 +477,21 @@ describe('Dashboard', () => {
     vi.mocked(endpoints.dashboards).mockResolvedValue(archived)
     // get_dashboard lists only live tabs: none, the whole group being archived.
     vi.mocked(endpoints.dashboard).mockResolvedValue({ ...product, tabs: [], archived_at: '2026-09-30T00:00:00Z' })
+    vi.spyOn(endpoints, 'restore').mockResolvedValue({ status: 'ok' })
     renderAt('/dashboards/2')
 
-    expect(await screen.findByText('Archived: not in the sidebar')).toBeInTheDocument()
+    expect(await screen.findByText('Hidden from the sidebar')).toBeInTheDocument()
+    expect(screen.queryByText('Archived: not in the sidebar')).not.toBeInTheDocument()
     await waitFor(() =>
       expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Views', 'Product', 'Users', 'Groups', 'Retention'])
     )
     expect(screen.getByRole('tab', { name: 'Product' })).toHaveAttribute('aria-selected', 'true')
     await userEvent.click(screen.getByRole('button', { name: 'Dashboard actions' }))
     expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Refresh', 'Duplicate dashboard'])
+    await userEvent.keyboard('{Escape}')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Show in sidebar' }))
+    await waitFor(() => expect(endpoints.restore).toHaveBeenCalledWith(2, true))
   })
 
   it('offers no Restore on an archived dashboard in reporting dev', async () => {

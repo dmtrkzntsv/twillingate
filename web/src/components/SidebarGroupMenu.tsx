@@ -1,4 +1,4 @@
-import { ArchiveIcon, ArrowDownIcon, ArrowUpIcon, CopyIcon, MoreHorizontalIcon } from 'lucide-react'
+import { ArchiveIcon, ArrowDownIcon, ArrowUpIcon, CopyIcon, MoreHorizontalIcon, EyeOffIcon } from 'lucide-react'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -20,12 +20,13 @@ interface Props {
 
 /**
  * The sidebar entry's "…" menu (D10), acting on the whole group named by
- * its first live member: Duplicate and Archive on both kinds, Move up and
- * Move down added for a user group. Duplicate always copies the whole
- * group (`wholeGroup`) and never archives anything — to replace a system
- * group in the sidebar, Duplicate it, then Archive the original. A
- * system group's Archive always passes `wholeGroup`, since a system
- * dashboard refuses to archive alone.
+ * its first live member: Duplicate on both kinds, Archive on a user group
+ * and Hide on a system one, Move up and Move down added for a user
+ * group. Duplicate always copies the whole group (`wholeGroup`) and never
+ * archives anything — to replace a system group in the sidebar, Duplicate
+ * it, then Hide the original. Hide archives the system group whole
+ * (a system dashboard refuses to archive alone); it stays off the Archive
+ * page and comes back from the Dashboards gallery's "Show in sidebar".
  * `showOnHover` keeps the trigger out of the way until hovered on
  * desktop; the sidebar shows it unconditionally on phones.
  */
@@ -70,11 +71,11 @@ export default function SidebarGroupMenu({ group, userGroups, currentId }: Props
           disabled={pending}
           onClick={() => {
             if (navigateTo) close()
-            void archive(first, { wholeGroup: true, navigateTo })
+            void archive(first, { wholeGroup: true, navigateTo, hidden: group.owner === 'system' })
           }}
         >
-          <ArchiveIcon />
-          Archive
+          {group.owner === 'system' ? <EyeOffIcon /> : <ArchiveIcon />}
+          {group.owner === 'system' ? 'Hide' : 'Archive'}
         </DropdownMenuItem>
         {group.owner === 'user' && (
           <>

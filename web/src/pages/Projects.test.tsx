@@ -82,11 +82,12 @@ describe('Projects', () => {
     expect(screen.queryByText(/on disk/)).not.toBeInTheDocument()
   })
 
-  it('links the whole card to its project and titles the origins', async () => {
+  it('links the whole card to its project, and leaves the origins to the project page', async () => {
     renderPage()
     const card = await screen.findByRole('article', { name: 'econumo.com' })
     expect(within(card).getByRole('link', { name: 'econumo.com' })).toHaveAttribute('href', '/projects/4')
-    expect(within(card).getByTitle('https://econumo.com')).toBeInTheDocument()
+    expect(within(card).queryByText(/econumo\.com\//)).not.toBeInTheDocument()
+    expect(within(card).queryByText('No origins')).not.toBeInTheDocument()
   })
 
   it('keeps archived projects in a collapsed group', async () => {

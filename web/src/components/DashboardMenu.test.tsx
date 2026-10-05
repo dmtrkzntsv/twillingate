@@ -232,17 +232,23 @@ describe('GroupMenu', () => {
 
     await openGroupMenu()
     await userEvent.click(screen.getByText('Archive dashboard'))
-    expect(archive).toHaveBeenCalledWith(marketingTabs[0], { wholeGroup: true, navigateTo: '/dashboards' })
+    expect(archive).toHaveBeenCalledWith(marketingTabs[0], { wholeGroup: true, navigateTo: '/dashboards', hidden: false })
   })
 
-  it('offers the same on a system group', async () => {
+  it('hides a system group instead, whole', async () => {
     renderGroupMenu(product)
     await openGroupMenu()
+    expect(items()).toEqual(['Refresh', 'Duplicate dashboard', 'Hide dashboard'])
 
-    expect(items()).toEqual(['Refresh', 'Duplicate dashboard', 'Archive dashboard'])
+    await userEvent.click(screen.getByText('Hide dashboard'))
+    expect(archive).toHaveBeenCalledWith(expect.objectContaining({ dashboard_id: product.tabs[0].dashboard_id }), {
+      wholeGroup: true,
+      navigateTo: '/dashboards',
+      hidden: true,
+    })
   })
 
-  it('offers only Duplicate on an archived group, whose banner offers Restore', async () => {
+  it('offers only Duplicate on an archived group, whose banner brings it back', async () => {
     renderGroupMenu({ ...product, archived_at: '2026-09-30T00:00:00Z' })
     await openGroupMenu()
 
