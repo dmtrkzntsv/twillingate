@@ -40,6 +40,7 @@ beforeEach(() => {
     archive: vi.fn(),
     restore,
     move: vi.fn(),
+    renameGroup: vi.fn(),
     pending: false,
   } satisfies DashboardActions)
 })
@@ -111,6 +112,45 @@ describe('DashboardsGallery, templates', () => {
     expect(within(reach).queryByRole('button', { name: 'Reach tab actions' })).not.toBeInTheDocument()
   })
 
+  it('titles a group card by its group_title, its tabs keeping their own titles', async () => {
+    vi.spyOn(endpoints, 'dashboards').mockResolvedValue({
+      timezone: 'UTC',
+      dashboards: dashboards.map((d) => (d.group_id === 1 ? { ...d, group_title: 'Reports' } : d)),
+    })
+    renderGallery()
+
+    const card = (await screen.findByRole('heading', { name: 'Reports' })).closest('li')!
+    expect(within(card).getByRole('link', { name: 'Views' })).toHaveAttribute('href', '/dashboards/1')
+    expect(within(card).getByRole('link', { name: 'Product' })).toHaveAttribute('href', '/dashboards/2')
+  })
+
+  it('shows a lone group by its group_title, its menu named the same, the link still to the dashboard', async () => {
+    vi.spyOn(endpoints, 'dashboards').mockResolvedValue({
+      timezone: 'UTC',
+      dashboards: dashboards.map((d) => (d.dashboard_id === 20 ? { ...d, group_title: 'Reach stats' } : d)),
+    })
+    renderGallery()
+
+    const main = within(screen.getByRole('main'))
+    const link = await main.findByRole('link', { name: 'Reach stats' })
+    expect(link).toHaveAttribute('href', '/dashboards/20')
+    expect(main.queryByRole('link', { name: 'Reach' })).not.toBeInTheDocument()
+    await userEvent.click(main.getByRole('button', { name: 'Reach stats actions' }))
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Duplicate dashboard' }))
+    expect(duplicate).toHaveBeenCalledWith(expect.objectContaining({ dashboard_id: 20 }), { wholeGroup: true })
+  })
+
+  it('names a group card\'s menu by the group name', async () => {
+    vi.spyOn(endpoints, 'dashboards').mockResolvedValue({
+      timezone: 'UTC',
+      dashboards: dashboards.map((d) => (d.group_id === 1 ? { ...d, group_title: 'Reports' } : d)),
+    })
+    renderGallery()
+
+    await screen.findByRole('heading', { name: 'Reports' })
+    expect(within(screen.getByRole('main')).getByRole('button', { name: 'Reports actions' })).toBeInTheDocument()
+  })
+
   it('copies one tab to a new dashboard from that tab\'s "…" menu', async () => {
     mockApi()
     renderGallery()
@@ -152,6 +192,7 @@ describe('DashboardsGallery, templates', () => {
       archive: vi.fn(),
       restore,
       move: vi.fn(),
+      renameGroup: vi.fn(),
       pending: true,
     } satisfies DashboardActions)
     mockApi()

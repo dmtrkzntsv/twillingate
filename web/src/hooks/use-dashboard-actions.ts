@@ -24,6 +24,8 @@ export interface DashboardActions {
    * the toast), so a drag can drop its optimistic order at once.
    */
   move(id: number, body: MoveBody): Promise<boolean>
+  /** Names the dashboard's group; resolves true when saved, false after the toast. */
+  renameGroup(id: number, title: string): Promise<boolean>
   /** True while an action runs, from its request until the list has refetched; buttons wait on it. Per hook call. */
   pending: boolean
 }
@@ -113,5 +115,17 @@ export function useDashboardActions(): DashboardActions {
     [run]
   )
 
-  return { duplicate, archive, restore, move, pending }
+  const renameGroup = useCallback(
+    async (id: number, title: string) => {
+      let ok = false
+      await run(async () => {
+        await endpoints.renameGroup(id, title)
+        ok = true
+      })
+      return ok
+    },
+    [run]
+  )
+
+  return { duplicate, archive, restore, move, renameGroup, pending }
 }

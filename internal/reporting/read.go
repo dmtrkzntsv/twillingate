@@ -14,8 +14,9 @@ type DashboardInfo struct {
 	ID         int64  `json:"dashboard_id"`
 	Title      string `json:"title"`
 	Owner      string `json:"owner"`
-	GroupID    int64  `json:"group_id"`             // the group it is a tab of: its first dashboard's id, or a number reserved for one that left a group
-	ProjectID  int64  `json:"project_id,omitempty"` // stored selection
+	GroupID    int64  `json:"group_id"`              // the group it is a tab of: its first dashboard's id, or a number reserved for one that left a group
+	GroupTitle string `json:"group_title,omitempty"` // the group's name; omitted when it has none and the first live tab's title stands in
+	ProjectID  int64  `json:"project_id,omitempty"`  // stored selection
 	Range      string `json:"range,omitempty"`
 	From       string `json:"from,omitempty"`
 	To         string `json:"to,omitempty"`
@@ -217,7 +218,7 @@ func (s *Service) Widgets(ctx context.Context, dashboardID int64, component stri
 
 func dashboardInfo(d store.Dashboard) DashboardInfo {
 	return DashboardInfo{
-		ID: d.ID, Title: d.Title, Owner: d.Owner, GroupID: d.GroupID,
+		ID: d.ID, Title: d.Title, Owner: d.Owner, GroupID: d.GroupID, GroupTitle: d.GroupTitle,
 		ProjectID: d.LastProjectID, Range: d.LastRange, From: d.LastFrom, To: d.LastTo,
 		Widgets: d.LiveWidgets, ArchivedAt: d.ArchivedAt,
 	}

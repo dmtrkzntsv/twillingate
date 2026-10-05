@@ -567,3 +567,15 @@ On the same release the Product dashboard's "Attribute values by day"
 lists declared custom attributes only, "Events by name" becomes "Top
 events" (the range's five busiest), and the Views dashboard's Browsers
 and Operating systems are pies by name, versions summed in.
+
+### Upgrading to dashboard group names (migration 031)
+
+No pre-checks. Migration 031 adds `dashboard_groups`, where a dashboard
+group's name lives (`list_dashboards` and `get_dashboard` answer it as
+`group_title`). A group without a name still takes its first tab's title.
+After the upgrade the built-in group's sidebar entry reads "Reports" instead
+of "Views"; its tabs are unchanged. Dashboard titles and group names now need
+at least 2 characters when set; existing one-character titles are kept.
+Rollback: an older binary keeps the names, but it does not move them. If a
+group's first tab leaves its group under the older binary, its new group of
+one takes the name with it.

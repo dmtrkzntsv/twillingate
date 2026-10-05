@@ -362,6 +362,43 @@ func TestDevHandlerGroupTabs(t *testing.T) {
 	}
 }
 
+// TestDevHandlerGroupTitleFromFounderOnly: the dev preview takes a
+// group's name from its founding file, as the release does. A tab file
+// carrying group_title is refused on release (checkGroups), so it must not
+// name the group here either.
+func TestDevHandlerGroupTitleFromFounderOnly(t *testing.T) {
+	root := t.TempDir()
+	files := map[string]string{
+		"views":   `{"id":1,"title":"Views","group_title":"Reports","range":"7d","layout":[]}`,
+		"product": `{"id":2,"title":"Product","group":1,"group_title":"Sneaky","range":"7d","layout":[]}`,
+		"solo":    `{"id":7,"title":"Solo","group":8,"group_title":"Stray","range":"7d","layout":[]}`,
+		"eight":   `{"id":8,"title":"Eight","range":"7d","layout":[]}`,
+	}
+	for name, body := range files {
+		dir := filepath.Join(root, name)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "dashboard.json"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h := DevHandler([]string{root}, newTestReadDB(t))
+
+	var list Dashboards
+	getJSON(t, h, "/api/dashboards", &list)
+	got := map[int64]string{}
+	for _, d := range list.Dashboards {
+		got[d.ID] = d.GroupTitle
+	}
+	want := map[int64]string{1: "Reports", 2: "Reports", 7: "", 8: ""}
+	for id, w := range want {
+		if got[id] != w {
+			t.Errorf("dashboard %d group_title = %q, want %q", id, got[id], w)
+		}
+	}
+}
+
 // TestDevHandlerListsArchivedProjects: /api/projects answers as
 // list_projects does, archived projects included and flagged.
 func TestDevHandlerListsArchivedProjects(t *testing.T) {

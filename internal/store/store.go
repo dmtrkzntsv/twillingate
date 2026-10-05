@@ -283,8 +283,12 @@ type Store interface {
 	SetDashboardArchived(ctx context.Context, id int64, archived bool, a AuditEntry) error
 	// MoveDashboards rewrites group_id and sort_key of every row in ks in
 	// one transaction, with one audit row a (Subject "dashboard/<first
-	// id>").
-	MoveDashboards(ctx context.Context, ks []DashboardKey, a AuditEntry) error
+	// id>"). A non-zero rekey first moves the group-name row from
+	// rekey.From to rekey.To, in the same transaction.
+	MoveDashboards(ctx context.Context, ks []DashboardKey, rekey GroupRekey, a AuditEntry) error
+	// SetGroupTitle names group groupID (upsert) and audits it under
+	// Subject "group/<groupID>". The caller has validated the title.
+	SetGroupTitle(ctx context.Context, groupID int64, title string, a AuditEntry) error
 	// InsertDashboardGroup inserts dashboards as one new group, in one
 	// transaction: the first gets group_id = its own id, the rest that
 	// id. ws[i] are dashboards[i]'s widgets. Returns the new ids in

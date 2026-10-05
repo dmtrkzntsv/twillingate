@@ -29,9 +29,10 @@ import {
 } from '@/components/ui/sidebar'
 import { useDashboardActions } from '@/hooks/use-dashboard-actions'
 import { useReorder } from '@/hooks/use-reorder'
-import { liveGroups, moveGroupBody, type Group } from '@/lib/arrange'
+import { groupName, liveGroups, moveGroupBody, type Group } from '@/lib/arrange'
 import type { DashboardInfo } from '@/lib/api'
 import { currentAuthState, logout } from '@/lib/auth'
+import GroupNameField from './GroupNameField'
 import IcebergLogo from './IcebergLogo'
 import SidebarGroupMenu from './SidebarGroupMenu'
 import SortableGroupItem from './SortableGroupItem'
@@ -51,7 +52,7 @@ interface Props {
  * Dashboards gallery of templates, D17), closed until opened or on a gallery page. At
  * the bottom, Archive (every user group with an archived dashboard, D17a)
  * above Log out. Each entry links to its group's first live
- * member and is named by its title; it is active on any live member of
+ * member and is named by its group's name (`groupName`); it is active on any live member of
  * the group. The user's entries drag to a new order (D14, D15); built-in
  * ones do not, and since the sortable list holds only user groups,
  * nothing drops above them. Icons only at 640–1023px, a drawer on phones
@@ -69,7 +70,9 @@ export default function AppSidebar({ dashboards, currentId, readOnly = false }: 
   const groups = liveGroups(dashboards)
   const system = groups.filter((g) => g.owner === 'system')
   const serverYours = groups.filter((g) => g.owner === 'user')
-  const { move } = useDashboardActions()
+  const { move, renameGroup, pending } = useDashboardActions()
+  // The user group whose name is open as a field, in place of its entry (group names D9).
+  const [renaming, setRenaming] = useState<number | null>(null)
   const { order, busy, context } = useReorder(
     serverYours.map((g) => g.groupId),
     // `busy` keeps a second drag off until the first's order is in the
@@ -80,7 +83,10 @@ export default function AppSidebar({ dashboards, currentId, readOnly = false }: 
       return body && group ? move(group.members[0].dashboard_id, body) : false
     },
     'y',
-    (id) => serverYours.find((g) => g.groupId === id)?.members[0].title ?? String(id)
+    (id) => {
+      const g = serverYours.find((g) => g.groupId === id)
+      return g ? groupName(g.members) : String(id)
+    }
   )
   const yours = order.map((id) => serverYours.find((g) => g.groupId === id)!)
   const isActive = (g: Group) => g.members.some((m) => m.dashboard_id === currentId)
@@ -90,7 +96,7 @@ export default function AppSidebar({ dashboards, currentId, readOnly = false }: 
   const yourLink = (g: Group) => (
     <Link to={`/dashboards/${g.members[0].dashboard_id}`} onClick={close}>
       <LayoutDashboardIcon />
-      <span>{g.members[0].title}</span>
+      <span>{groupName(g.members)}</span>
     </Link>
   )
 
@@ -134,10 +140,10 @@ export default function AppSidebar({ dashboards, currentId, readOnly = false }: 
               <SidebarMenu aria-label="Built-in dashboards">
                 {system.map((g) => (
                   <SidebarMenuItem key={g.groupId}>
-                    <SidebarMenuButton asChild isActive={isActive(g)} tooltip={`${g.members[0].title} · built-in, always listed first`} className={item}>
+                    <SidebarMenuButton asChild isActive={isActive(g)} tooltip={`${groupName(g.members)} · built-in, always listed first`} className={item}>
                       <Link to={`/dashboards/${g.members[0].dashboard_id}`} onClick={close}>
                         <ChartColumnIcon />
-                        <span className="truncate">{g.members[0].title}</span>
+                        <span className="truncate">{groupName(g.members)}</span>
                         {/* Hidden from the link's name: the list says "Built-in dashboards". */}
                         <span
                           aria-hidden
@@ -157,7 +163,7 @@ export default function AppSidebar({ dashboards, currentId, readOnly = false }: 
               <SidebarMenu>
                 {yours.map((g) => (
                   <SidebarMenuItem key={g.groupId}>
-                    <SidebarMenuButton asChild isActive={isActive(g)} tooltip={g.members[0].title} className={item}>
+                    <SidebarMenuButton asChild isActive={isActive(g)} tooltip={groupName(g.members)} className={item}>
                       {yourLink(g)}
                     </SidebarMenuButton>
                   </SidebarMenuItem>
@@ -167,18 +173,37 @@ export default function AppSidebar({ dashboards, currentId, readOnly = false }: 
               <DndContext collisionDetection={closestCenter} {...context}>
                 <SortableContext items={order} strategy={verticalListSortingStrategy}>
                   <SidebarMenu>
-                    {yours.map((g) => (
-                      <SortableGroupItem
-                        key={g.groupId}
-                        groupId={g.groupId}
-                        title={g.members[0].title}
-                        isActive={isActive(g)}
-                        className={item}
-                        disabled={busy}
-                        link={yourLink(g)}
-                        menu={<SidebarGroupMenu group={g} userGroups={yours} currentId={currentId} />}
-                      />
-                    ))}
+                    {yours.map((g) =>
+                      renaming === g.groupId ? (
+                        <SidebarMenuItem key={g.groupId}>
+                          <GroupNameField
+                            name={groupName(g.members)}
+                            named={g.members.some((m) => !!m.group_title)}
+                            pending={pending}
+                            onRename={(title) => renameGroup(g.members[0].dashboard_id, title)}
+                            onDone={() => setRenaming(null)}
+                          />
+                        </SidebarMenuItem>
+                      ) : (
+                        <SortableGroupItem
+                          key={g.groupId}
+                          groupId={g.groupId}
+                          title={groupName(g.members)}
+                          isActive={isActive(g)}
+                          className={item}
+                          disabled={busy}
+                          link={yourLink(g)}
+                          menu={
+                            <SidebarGroupMenu
+                              group={g}
+                              userGroups={yours}
+                              currentId={currentId}
+                              onRename={() => setRenaming(g.groupId)}
+                            />
+                          }
+                        />
+                      )
+                    )}
                   </SidebarMenu>
                 </SortableContext>
               </DndContext>

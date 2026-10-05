@@ -748,3 +748,54 @@ func TestReportingHashEmptyWhenNeverSynced(t *testing.T) {
 		t.Errorf("ReportingHash before any sync = %q, want empty", hash)
 	}
 }
+
+// namedSystemGroup is baseSync with dashboards 1 and 2 as one group named
+// by the fixture of its founder, 1.
+func namedSystemGroup(hash string) store.ReportingSync {
+	s := baseSync(hash)
+	s.Dashboards[0].GroupTitle = "Reports"
+	s.Dashboards[1].GroupID = 1
+	return s
+}
+
+// TestSyncReportingWritesAndClearsSystemGroupNames checks D6: the founder's
+// fixture names the group for every member, and a sync without it
+// removes the name.
+func TestSyncReportingWritesAndClearsSystemGroupNames(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	if err := db.SyncReporting(ctx, namedSystemGroup("hash-named-1")); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []int64{1, 2} {
+		if got := groupTitleOf(t, db, id); got != "Reports" {
+			t.Errorf("dashboard %d GroupTitle = %q, want Reports", id, got)
+		}
+	}
+	unnamed := namedSystemGroup("hash-named-2")
+	unnamed.Dashboards[0].GroupTitle = ""
+	if err := db.SyncReporting(ctx, unnamed); err != nil {
+		t.Fatal(err)
+	}
+	if got := groupNames(t, db); len(got) != 0 {
+		t.Errorf("names after a sync without group_title = %v, want none", got)
+	}
+}
+
+// TestSyncReportingDroppedSystemGroupLosesName checks a release that drops
+// every dashboard of a named system group leaves no name row behind.
+func TestSyncReportingDroppedSystemGroupLosesName(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	if err := db.SyncReporting(ctx, namedSystemGroup("hash-drop-1")); err != nil {
+		t.Fatal(err)
+	}
+	dropped := baseSync("hash-drop-2")
+	dropped.Dashboards = nil
+	if err := db.SyncReporting(ctx, dropped); err != nil {
+		t.Fatal(err)
+	}
+	if got := groupNames(t, db); len(got) != 0 {
+		t.Errorf("names after dropping the group = %v, want none", got)
+	}
+}

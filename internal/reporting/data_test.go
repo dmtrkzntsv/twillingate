@@ -61,7 +61,7 @@ func TestWidgetDataUnknownWidgetRefused(t *testing.T) {
 
 func TestWidgetDataArchivedRefused(t *testing.T) {
 	svc := newTestService(t)
-	d := mustCreate(t, svc, "D", note("A"))
+	d := mustCreate(t, svc, "DD", note("A"))
 	id := d.Widgets[0].ID
 	if err := svc.ArchiveWidget(context.Background(), "test", id); err != nil {
 		t.Fatal(err)
@@ -72,7 +72,7 @@ func TestWidgetDataArchivedRefused(t *testing.T) {
 
 func TestWidgetDataRemovedComponent(t *testing.T) {
 	svc := newTestService(t)
-	d := mustCreate(t, svc, "D", tableWidget("t", "SELECT 1 AS n"))
+	d := mustCreate(t, svc, "DD", tableWidget("t", "SELECT 1 AS n"))
 	id := d.Widgets[0].ID
 	syncReporting(t, svc, []string{"table"}) // drops the component; widget survives, component NULL
 
@@ -89,7 +89,7 @@ func TestWidgetDataFollowsProjectRequired(t *testing.T) {
 	svc, st := newTestServiceOpts(t, Options{}, 1000)
 	projectID := mustCreateProject(t, st, "p1")
 	seedViewsDaily(t, st, projectID, "2026-08-20")
-	d := mustCreate(t, svc, "D", statWidget("s"))
+	d := mustCreate(t, svc, "DD", statWidget("s"))
 	id := d.Widgets[0].ID
 
 	_, err := svc.WidgetData(context.Background(), DataRequest{WidgetID: id})
@@ -112,7 +112,7 @@ func TestWidgetDataFollowsRangeRules(t *testing.T) {
 	svc, st := newTestServiceOpts(t, Options{}, 1000)
 	projectID := mustCreateProject(t, st, "p1")
 	seedViewsDaily(t, st, projectID, "2026-08-20", "2026-08-21")
-	d := mustCreate(t, svc, "D", lineWidget("l"))
+	d := mustCreate(t, svc, "DD", lineWidget("l"))
 	id := d.Widgets[0].ID
 	ctx := context.Background()
 
@@ -146,7 +146,7 @@ func TestWidgetDataRefusesFromAfterToday(t *testing.T) {
 	svc, st := newTestServiceOpts(t, Options{Now: func() time.Time { return now }}, 1000)
 	projectID := mustCreateProject(t, st, "p1")
 	seedViewsDaily(t, st, projectID, "2026-09-20")
-	d := mustCreate(t, svc, "D", lineWidget("l"))
+	d := mustCreate(t, svc, "DD", lineWidget("l"))
 	id := d.Widgets[0].ID
 
 	_, err := svc.WidgetData(context.Background(), DataRequest{WidgetID: id, From: "2026-10-01", To: "2026-10-05"})
@@ -158,7 +158,7 @@ func TestWidgetDataClampsFutureTo(t *testing.T) {
 	svc, st := newTestServiceOpts(t, Options{Now: func() time.Time { return now }}, 1000)
 	projectID := mustCreateProject(t, st, "p1")
 	seedViewsDaily(t, st, projectID, "2026-09-20")
-	d := mustCreate(t, svc, "D", lineWidget("l"))
+	d := mustCreate(t, svc, "DD", lineWidget("l"))
 	id := d.Widgets[0].ID
 
 	got, err := svc.WidgetData(context.Background(), DataRequest{WidgetID: id, From: "2026-09-01", To: "2026-12-31"})
@@ -172,7 +172,7 @@ func TestWidgetDataClampsFutureTo(t *testing.T) {
 
 func TestWidgetDataFixedWidgetIgnoresParams(t *testing.T) {
 	svc := newTestService(t)
-	d := mustCreate(t, svc, "D", tableWidget("t", "SELECT 1 AS n"))
+	d := mustCreate(t, svc, "DD", tableWidget("t", "SELECT 1 AS n"))
 	id := d.Widgets[0].ID
 	got, err := svc.WidgetData(context.Background(),
 		DataRequest{WidgetID: id, ProjectID: 7, From: "2026-01-01", To: "2026-01-02"})
@@ -186,7 +186,7 @@ func TestWidgetDataFixedWidgetIgnoresParams(t *testing.T) {
 
 func TestWidgetDataMarkdown(t *testing.T) {
 	svc := newTestService(t)
-	d := mustCreate(t, svc, "D", note("A"))
+	d := mustCreate(t, svc, "DD", note("A"))
 	id := d.Widgets[0].ID
 	got, err := svc.WidgetData(context.Background(), DataRequest{WidgetID: id})
 	if err != nil {
@@ -203,7 +203,7 @@ func TestWidgetDataMarkdown(t *testing.T) {
 
 func TestWidgetDataLoadFailureNamesReleaseNotes(t *testing.T) {
 	svc := newTestService(t)
-	d := mustCreate(t, svc, "D", tableWidget("t", "SELECT * FROM agg_views_daily"))
+	d := mustCreate(t, svc, "DD", tableWidget("t", "SELECT * FROM agg_views_daily"))
 	id := d.Widgets[0].ID
 	// Break the table the widget's sql reads, the way a release changing
 	// the schema underneath an already-saved widget would.
@@ -222,7 +222,7 @@ func TestWidgetDataRowsNoLongerFitComponentNamesReleaseNotes(t *testing.T) {
 	svc := newTestService(t)
 	rawExecOn(t, svc, "CREATE TABLE probe(value TEXT)")
 	rawExecOn(t, svc, "INSERT INTO probe(value) VALUES ('1'), ('2')") // fits number; Validate's own sample passes
-	d := mustCreate(t, svc, "D", WidgetSpec{Name: "s", Component: "stat", Title: "s",
+	d := mustCreate(t, svc, "DD", WidgetSpec{Name: "s", Component: "stat", Title: "s",
 		Source: Source{Type: "sql", Content: "SELECT value FROM probe"}})
 	id := d.Widgets[0].ID
 
@@ -248,7 +248,7 @@ func TestWidgetDataTruncated(t *testing.T) {
 		days = append(days, "2026-08-"+twoDigit(i))
 	}
 	seedViewsDaily(t, st, projectID, days...)
-	d := mustCreate(t, svc, "D", tableWidget("t", "SELECT day, views FROM agg_views_daily"))
+	d := mustCreate(t, svc, "DD", tableWidget("t", "SELECT day, views FROM agg_views_daily"))
 	id := d.Widgets[0].ID
 
 	got, err := svc.WidgetData(context.Background(), DataRequest{WidgetID: id})
@@ -335,7 +335,7 @@ func (s *stubSQLSource) Load(ctx context.Context, content string, p Params) (any
 // itself (real callers) times out on its own terms regardless.
 func TestWidgetDataSharedLoadIgnoresACallerCancellingMidFlight(t *testing.T) {
 	svc := newTestService(t)
-	d := mustCreate(t, svc, "D", tableWidget("t", "SELECT 1 AS n"))
+	d := mustCreate(t, svc, "DD", tableWidget("t", "SELECT 1 AS n"))
 	id := d.Widgets[0].ID
 
 	stub := &stubSQLSource{started: make(chan struct{}), unblock: make(chan struct{})}
@@ -379,7 +379,7 @@ func TestWidgetDataCachedAtAndRefreshAfter(t *testing.T) {
 		Options{CacheAge: time.Minute, RefreshAge: refreshAge, Now: func() time.Time { return now }}, 1000)
 	projectID := mustCreateProject(t, st, "p1")
 	seedViewsDaily(t, st, projectID, "2026-08-20")
-	d := mustCreate(t, svc, "D", statWidget("s"))
+	d := mustCreate(t, svc, "DD", statWidget("s"))
 	id := d.Widgets[0].ID
 
 	got, err := svc.WidgetData(context.Background(), DataRequest{WidgetID: id, ProjectID: projectID})
@@ -404,7 +404,7 @@ func TestWidgetDataCachedAtAndRefreshAfter(t *testing.T) {
 // there is nothing to invalidate; it is simply a different cache entry.
 func TestWidgetDataSourceUpdateMisses(t *testing.T) {
 	svc, _ := newTestServiceOpts(t, Options{CacheAge: time.Minute, RefreshAge: time.Minute}, 1000)
-	d := mustCreate(t, svc, "D", tableWidget("t", "SELECT 1 AS n"))
+	d := mustCreate(t, svc, "DD", tableWidget("t", "SELECT 1 AS n"))
 	id := d.Widgets[0].ID
 	ctx := context.Background()
 

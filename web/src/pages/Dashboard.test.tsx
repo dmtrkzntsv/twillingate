@@ -140,9 +140,10 @@ describe('Dashboard', () => {
     mockApi()
     renderAt('/dashboards/1')
 
-    const views = await screen.findByRole('link', { name: 'Views' })
-    expect(views).toHaveAttribute('href', '/dashboards/1')
-    expect(screen.queryByRole('link', { name: 'Reports' })).not.toBeInTheDocument()
+    // The sidebar names the system group by its group_title, not its first tab.
+    const reports = await screen.findByRole('link', { name: 'Reports' })
+    expect(reports).toHaveAttribute('href', '/dashboards/1')
+    expect(screen.queryByRole('link', { name: 'Views' })).not.toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Launch week' })).toHaveAttribute('href', '/dashboards/10')
     expect(screen.getByRole('link', { name: 'Marketing' })).toHaveAttribute('href', '/dashboards/13')
     expect(screen.queryByRole('link', { name: 'Funnel' })).not.toBeInTheDocument()

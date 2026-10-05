@@ -195,20 +195,35 @@ func devWidgetRow(fd FileDashboard, i int, comps map[string]Component) store.Wid
 // the system range (1–999) is owned by "system", so a system directory
 // previews in its group as it will ship. GroupID mirrors D16: fd.Group,
 // or fd.ID when the file names none (its own sidebar entry).
-func devDashboardRow(fd FileDashboard) store.Dashboard {
+func devDashboardRow(fd FileDashboard, groupTitles map[int64]string) store.Dashboard {
 	owner := store.OwnerUser
 	if fd.ID >= 1 && fd.ID <= 999 {
 		owner = store.OwnerSystem
 	}
-	return store.Dashboard{ID: fd.ID, Owner: owner, GroupID: fd.groupID(), Title: fd.Title, LastRange: fd.Range, LiveWidgets: len(fd.Widgets)}
+	return store.Dashboard{ID: fd.ID, Owner: owner, GroupID: fd.groupID(), GroupTitle: groupTitles[fd.groupID()], Title: fd.Title, LastRange: fd.Range, LiveWidgets: len(fd.Widgets)}
+}
+
+// devGroupTitles maps each group id to the name its founding file gives
+// it (D6), for the groups that have one. A file that is not its group's
+// founder (`group` set and not its own id) is skipped, as the release
+// refuses its `group_title` (checkGroups).
+func devGroupTitles(fds []FileDashboard) map[int64]string {
+	m := map[int64]string{}
+	for _, x := range fds {
+		if x.GroupTitle != "" && (x.Group == 0 || x.Group == x.ID) {
+			m[x.groupID()] = x.GroupTitle
+		}
+	}
+	return m
 }
 
 func devListDashboards(dirs []string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		fds, errs := loadDevDashboards(dirs)
 		out := Dashboards{Timezone: "UTC", Dev: true, Dashboards: make([]DashboardInfo, 0, len(fds)), Errors: errs}
+		titles := devGroupTitles(fds)
 		for _, fd := range fds {
-			out.Dashboards = append(out.Dashboards, dashboardInfo(devDashboardRow(fd)))
+			out.Dashboards = append(out.Dashboards, dashboardInfo(devDashboardRow(fd, titles)))
 		}
 		writeJSON(w, http.StatusOK, out)
 	}
@@ -227,13 +242,14 @@ func devGetDashboard(dirs []string, svc *Service, comps map[string]Component) ht
 			writeAPIErr(w, store.Refuse(store.ErrNotFound, "dashboard %d not found", id))
 			return
 		}
-		row := devDashboardRow(fd)
+		titles := devGroupTitles(fds)
+		row := devDashboardRow(fd, titles)
 		// Mirrors Service.Dashboard's rule (read.go): the group's live
 		// members, same owner, in list order. In dev mode every loaded
 		// file counts as live — there is no archived state to skip.
 		tabs := []Tab{}
 		for _, x := range fds {
-			xRow := devDashboardRow(x)
+			xRow := devDashboardRow(x, titles)
 			if xRow.GroupID == row.GroupID && xRow.Owner == row.Owner {
 				tabs = append(tabs, Tab{ID: xRow.ID, Title: xRow.Title})
 			}

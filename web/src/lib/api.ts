@@ -54,6 +54,8 @@ export interface DashboardInfo {
   title: string
   owner: 'system' | 'user'
   group_id: number
+  /** The group's name, on every member of a named group; absent otherwise (group names D2). */
+  group_title?: string
   project_id?: number
   range?: string
   from?: string
@@ -367,6 +369,13 @@ export const endpoints = {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
+    }),
+  /** Names the dashboard's group (group names D5); a name is replaced, never cleared, and no dashboard title changes. */
+  renameGroup: (id: number, title: string) =>
+    api<DashboardInfo>(`/api/dashboards/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ whole_group: true, title }),
     }),
   projects: () => api<ProjectsResponse>('/api/projects'),
   keys: (projectId?: number) => api<{ keys: IngestKey[] }>(`/api/keys${toQuery({ project_id: projectId })}`),

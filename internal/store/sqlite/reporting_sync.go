@@ -140,7 +140,8 @@ func syncComponents(ctx context.Context, tx *sql.Tx, components []store.Componen
 // Deleting a dropped system dashboard cascades to its widgets (ON DELETE
 // CASCADE), so those never reach the per-dashboard syncWidgets loop; this
 // counts them itself, before the delete, so the caller can fold them into
-// the overall removed-widgets count.
+// the overall removed-widgets count. It also rewrites the names of system
+// groups (D6): the release owns those rows.
 //
 // Returns (removed dashboards, widgets removed by cascade, error).
 func syncDashboards(ctx context.Context, tx *sql.Tx, dashboards []store.SystemDashboard) (int, int, error) {
@@ -210,6 +211,28 @@ func syncDashboards(ctx context.Context, tx *sql.Tx, dashboards []store.SystemDa
 					AND other.archived_at IS NULL)`,
 			args...); err != nil {
 			return 0, 0, fmt.Errorf("reporting sync: archive new dashboards of an archived group: %w", err)
+		}
+	}
+
+	// D6: system group names are the release's: drop every one, then
+	// write those the founders' fixtures give. A dropped system
+	// dashboard's group loses its name by migration 031's triggers too.
+	if _, err := tx.ExecContext(ctx, `DELETE FROM dashboard_groups
+		WHERE group_id IN (SELECT group_id FROM dashboards WHERE owner=?)`, store.OwnerSystem); err != nil {
+		return 0, 0, fmt.Errorf("reporting sync: clear system group names: %w", err)
+	}
+	for _, dash := range dashboards {
+		if dash.GroupTitle == "" {
+			continue
+		}
+		groupID := dash.GroupID
+		if groupID == 0 {
+			groupID = dash.ID
+		}
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO dashboard_groups (group_id, title) VALUES (?, ?)
+			 ON CONFLICT(group_id) DO UPDATE SET title=excluded.title`, groupID, dash.GroupTitle); err != nil {
+			return 0, 0, fmt.Errorf("reporting sync: system group %d name: %w", groupID, err)
 		}
 	}
 

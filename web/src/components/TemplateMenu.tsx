@@ -14,6 +14,8 @@ interface Props {
   wholeGroup?: boolean
   /** The group is hidden from the sidebar: its menu offers "Show in sidebar". */
   hidden?: boolean
+  /** What the whole-group menu is named for a screen reader: the group's name, as shown. Defaults to the dashboard's title. */
+  name?: string
 }
 
 /**
@@ -25,7 +27,7 @@ interface Props {
  * whole) also offers "Show in sidebar", which restores it: the gallery is
  * where a hidden system dashboard comes back from.
  */
-export default function TemplateMenu({ dashboard, wholeGroup = false, hidden = false }: Props) {
+export default function TemplateMenu({ dashboard, wholeGroup = false, hidden = false, name = dashboard.title }: Props) {
   const { duplicate, restore, pending } = useDashboardActions()
   return (
     <DropdownMenu>
@@ -34,7 +36,7 @@ export default function TemplateMenu({ dashboard, wholeGroup = false, hidden = f
           variant="ghost"
           size="icon"
           className="size-8"
-          aria-label={wholeGroup ? `${dashboard.title} actions` : `${dashboard.title} tab actions`}
+          aria-label={wholeGroup ? `${name} actions` : `${dashboard.title} tab actions`}
         >
           <MoreHorizontalIcon />
         </Button>

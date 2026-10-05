@@ -68,7 +68,7 @@ type widgetDataIn struct {
 }
 
 type createDashboardIn struct {
-	Title   string                 `json:"title" jsonschema:"the dashboard's title (required)"`
+	Title   string                 `json:"title" jsonschema:"the dashboard's title, at least 2 characters (required)"`
 	Range   string                 `json:"range,omitempty" jsonschema:"starting range: today, yesterday, 7d, 30d or 90d; default 7d"`
 	GroupID int64                  `json:"group_id,omitempty" jsonschema:"add it as a tab of this group (a group_id from list_dashboards); after then names a tab of that group, 0 first; omit for a dashboard of its own"`
 	After   *int64                 `json:"after,omitempty" jsonschema:"where the new dashboard goes. Without group_id: after the named dashboard's whole group in the sidebar, 0 first. With group_id: after that tab, 0 the first tab. Omit to put it last"`
@@ -77,7 +77,8 @@ type createDashboardIn struct {
 
 type updateDashboardIn struct {
 	DashboardID int64  `json:"dashboard_id" jsonschema:"dashboard id"`
-	Title       string `json:"title,omitempty" jsonschema:"new title; omit to keep"`
+	Title       string `json:"title,omitempty" jsonschema:"new title, at least 2 characters; omit to keep"`
+	WholeGroup  bool   `json:"whole_group,omitempty" jsonschema:"true renames this dashboard's group with title (required, at least 2 characters) and leaves every dashboard's own title alone; takes no after or group_id"`
 	GroupID     *int64 `json:"group_id,omitempty" jsonschema:"move it into this group as a tab (after then names a tab there; 0 first); 0 takes it out as a dashboard of its own; omit to stay"`
 	After       *int64 `json:"after,omitempty" jsonschema:"a dashboard id: one in the same group moves this tab after it; one in another group moves the whole group after that group (with group_id, it names a tab of that group; with group_id 0, the dashboard goes after that group on its own). 0: without group_id, moves the whole group to the top of the sidebar; with group_id, makes it the first tab (group_id 0: the top of the sidebar)"`
 }
@@ -144,7 +145,7 @@ func (h *host) createDashboard(ctx context.Context, in createDashboardIn) (repor
 
 func (h *host) updateDashboard(ctx context.Context, in updateDashboardIn) (reporting.DashboardInfo, error) {
 	return h.rep.UpdateDashboard(ctx, actorFrom(ctx), reporting.UpdateDashboard{
-		ID: in.DashboardID, Title: in.Title, GroupID: in.GroupID, After: in.After})
+		ID: in.DashboardID, Title: in.Title, WholeGroup: in.WholeGroup, GroupID: in.GroupID, After: in.After})
 }
 
 func (h *host) duplicateDashboard(ctx context.Context, in duplicateDashboardIn) (reporting.DashboardDetail, error) {
@@ -253,10 +254,10 @@ func (h *host) registerReporting(r *registrar) {
 		h.widgetData)
 
 	expose(r, spec{Name: "create_dashboard", Annotations: write, Method: "POST", Path: "/api/dashboards", Status: http.StatusCreated, constrain: widget(items),
-		Description: "Call reporting_guide first. Create a user dashboard: title, optional starting range (default 7d), optional group_id to add it as a tab of that group, optional after (a dashboard id; 0 first), and optional widgets in order. All or nothing: one invalid widget creates nothing."},
+		Description: "Call reporting_guide first. Create a user dashboard: title (at least 2 characters), optional starting range (default 7d), optional group_id to add it as a tab of that group, optional after (a dashboard id; 0 first), and optional widgets in order. All or nothing: one invalid widget creates nothing."},
 		h.createDashboard)
 	expose(r, spec{Name: "update_dashboard", Annotations: write, Method: "PATCH", Path: d,
-		Description: "Rename a user dashboard and/or move it with group_id (join a group as a tab, or 0 to leave one) and/or after (a dashboard id; 0 first). System dashboards are read-only."},
+		Description: "Rename a user dashboard (title, at least 2 characters) and/or move it with group_id (join a group as a tab, or 0 to leave one) and/or after (a dashboard id; 0 first). whole_group with title renames its group instead: the sidebar name, which otherwise is the first tab's title; a group name can be replaced, never cleared. System dashboards are read-only."},
 		h.updateDashboard)
 	expose(r, spec{Name: "duplicate_dashboard", Annotations: write, Method: "POST", Path: d + "/duplicate", Status: http.StatusCreated,
 		Description: "Copy any dashboard with copies of its live widgets; the copy is a user dashboard. The copy is a new dashboard last in the sidebar; with group_id it joins that user group as a tab instead (right after the source when that is the source's own group, last otherwise). A system dashboard is copied too, also an archived one. An archived user dashboard is refused (restore it first). whole_group copies the group as a new dashboard with the same tabs: a system group whole, a user group's live tabs; it takes no group_id. Duplicating never archives: to replace a system group, archive it with archive_dashboard {whole_group: true}."},

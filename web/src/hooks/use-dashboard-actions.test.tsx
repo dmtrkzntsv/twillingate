@@ -17,6 +17,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
       archive: vi.fn(),
       restore: vi.fn(),
       move: vi.fn(),
+      renameGroup: vi.fn(),
     },
   }
 })
@@ -83,6 +84,26 @@ describe('useDashboardActions', () => {
 
     expect(endpoints.move).toHaveBeenCalledWith(5, { after: 3 })
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['dashboards'] })
+  })
+
+  it('renameGroup sends the group name, resolves true and refetches', async () => {
+    vi.mocked(endpoints.renameGroup).mockResolvedValue({ dashboard_id: 5, group_title: 'Ops' } as never)
+    const invalidate = vi.spyOn(client, 'invalidateQueries')
+    const { result } = renderHook(() => useDashboardActions(), { wrapper })
+
+    await expect(act(() => result.current.renameGroup(5, 'Ops'))).resolves.toBe(true)
+
+    expect(endpoints.renameGroup).toHaveBeenCalledWith(5, 'Ops')
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['dashboards'] })
+  })
+
+  it('a refused renameGroup toasts the error and resolves false', async () => {
+    vi.mocked(endpoints.renameGroup).mockRejectedValue(new ApiError(400, 'name too short'))
+    const { result } = renderHook(() => useDashboardActions(), { wrapper })
+
+    await expect(act(() => result.current.renameGroup(5, 'a'))).resolves.toBe(false)
+
+    expect(toast.error).toHaveBeenCalledWith('name too short')
   })
 
   it('a rejected move toasts the error, resolves, and refetches', async () => {

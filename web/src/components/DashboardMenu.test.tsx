@@ -60,6 +60,7 @@ beforeEach(() => {
     archive,
     restore: vi.fn(),
     move,
+    renameGroup: vi.fn(),
     pending: false,
   } satisfies DashboardActions)
 })
@@ -173,6 +174,18 @@ describe('TabMenu, a user tab among others', () => {
   })
 })
 
+describe('TabMenu, "Move to" names a group by its group_title', () => {
+  it('lists the other group by its stored name, not its first dashboard', async () => {
+    const named = list.map((d) => (d.group_id === 20 ? { ...d, group_title: 'Launch plans' } : d))
+    renderWithProviders(<TabMenu dashboard={marketing} list={named} />)
+    await openTabMenu()
+    await userEvent.click(screen.getByText('Move to'))
+
+    expect(await screen.findByText('Launch plans')).toBeInTheDocument()
+    expect(screen.queryByText('Launch week')).not.toBeInTheDocument()
+  })
+})
+
 describe('TabMenu, the one tab of a lone user dashboard', () => {
   it('has the same items, Move left and right both disabled', async () => {
     renderTabMenu(launchWeek)
@@ -232,7 +245,20 @@ describe('GroupMenu', () => {
 
     await openGroupMenu()
     await userEvent.click(screen.getByText('Archive dashboard'))
-    expect(archive).toHaveBeenCalledWith(marketingTabs[0], { wholeGroup: true, navigateTo: '/dashboards', hidden: false })
+    expect(archive).toHaveBeenCalledWith(
+      { dashboard_id: 13, title: 'Marketing' },
+      { wholeGroup: true, navigateTo: '/dashboards', hidden: false }
+    )
+  })
+
+  it('names the archived group by its group_title, not the first tab', async () => {
+    renderGroupMenu({ ...reach, group_title: 'Growth' })
+    await openGroupMenu()
+    await userEvent.click(screen.getByText('Archive dashboard'))
+    expect(archive).toHaveBeenCalledWith(
+      { dashboard_id: 13, title: 'Growth' },
+      { wholeGroup: true, navigateTo: '/dashboards', hidden: false }
+    )
   })
 
   it('hides a system group instead, whole', async () => {

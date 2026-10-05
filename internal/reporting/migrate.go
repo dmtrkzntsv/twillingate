@@ -118,7 +118,7 @@ func migrateFrom(ctx context.Context, st Store, db *readsql.DB, system fs.FS, ma
 			}
 			dashboards = append(dashboards, store.SystemDashboard{
 				ID: fd.ID, Title: fd.Title, SortKey: dashKeys[i], Range: fd.Range,
-				GroupID: fd.Group, Widgets: widgets,
+				GroupID: fd.Group, GroupTitle: fd.GroupTitle, Widgets: widgets,
 			})
 		}
 	}
@@ -174,6 +174,9 @@ func checkGroups(files []FileDashboard) error {
 		byID[fd.ID] = fd
 	}
 	for _, fd := range files {
+		if fd.GroupTitle != "" && fd.Group != 0 && fd.Group != fd.ID {
+			return fmt.Errorf("reporting: system dashboard %d: group_title belongs on group %d's first dashboard", fd.ID, fd.Group)
+		}
 		if fd.Group == 0 {
 			continue
 		}

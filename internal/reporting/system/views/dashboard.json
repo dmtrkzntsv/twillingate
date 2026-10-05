@@ -1,6 +1,7 @@
 {
   "id": 1,
   "title": "Views",
+  "group_title": "Reports",
   "range": "7d",
   "layout": [
     {"widget": "visitors", "width": 3, "height": 3},

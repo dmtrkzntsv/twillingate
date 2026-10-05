@@ -23,6 +23,22 @@ export function liveGroups(list: DashboardInfo[]): Group[] {
 }
 
 /**
+ * A group's name (group names D2, D8): its stored `group_title`, which
+ * every member carries, or else its first live member's title, as the
+ * sidebar named every group before groups had names.
+ */
+export function groupName(members: DashboardInfo[]): string {
+  const named = members.find((m) => m.group_title)
+  if (named?.group_title) return named.group_title
+  return (members.find((m) => !m.archived_at) ?? members[0]).title
+}
+
+/** True when a dashboard title or group name has fewer than 2 characters once trimmed (D5, D11). */
+export function nameTooShort(s: string): boolean {
+  return [...s.trim()].length < 2
+}
+
+/**
  * The update_dashboard body that puts `group` at index `to` among the user
  * groups (after removing it), or null if that is where it is. Names only
  * live ids: the anchor is the target group's first *live* member, which

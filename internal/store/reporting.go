@@ -26,6 +26,7 @@ type Dashboard struct {
 	ID                          int64
 	Owner, Title, SortKey       string
 	GroupID                     int64
+	GroupTitle                  string // the group's name (migration 031); "" = none, the first live tab's title stands in
 	LastProjectID               int64
 	LastRange, LastFrom, LastTo string
 	CreatedAt, UpdatedAt        string
@@ -40,6 +41,12 @@ type DashboardKey struct {
 	ID, GroupID int64
 	SortKey     string
 }
+
+// GroupRekey moves a group's name from one group id to another, in the
+// same transaction as the rows that change group (spec 2026-10-04 D3):
+// order.handOver gives a group a new id when the dashboard whose id it
+// used leaves. The zero value moves nothing.
+type GroupRekey struct{ From, To int64 }
 
 // Widget is a row of widgets. Component "" is NULL: the component was
 // removed from the code (spec D14).
@@ -76,6 +83,7 @@ type SystemDashboard struct {
 	ID             int64
 	Title, SortKey string
 	GroupID        int64
+	GroupTitle     string   // the group's name from the founding dashboard's fixture; "" = none
 	Range          string   // the starting selection; written on insert only
 	Widgets        []Widget // Name identifies the row; SortKey, sizes and content as in the files
 }

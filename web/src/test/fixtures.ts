@@ -15,11 +15,11 @@ export function dashboardsList(over: Partial<DashboardsResponse> = {}): Dashboar
   return {
     timezone: 'UTC',
     dashboards: [
-      info(1, 'Views', 'system', 17, { group_id: 1, project_id: 7, range: '7d' }),
-      info(2, 'Product', 'system', 2, { group_id: 1 }),
-      info(3, 'Users', 'system', 1, { group_id: 1 }),
-      info(4, 'Groups', 'system', 1, { group_id: 1 }),
-      info(5, 'Retention', 'system', 1, { group_id: 1 }),
+      info(1, 'Views', 'system', 17, { group_id: 1, group_title: 'Reports', project_id: 7, range: '7d' }),
+      info(2, 'Product', 'system', 2, { group_id: 1, group_title: 'Reports' }),
+      info(3, 'Users', 'system', 1, { group_id: 1, group_title: 'Reports' }),
+      info(4, 'Groups', 'system', 1, { group_id: 1, group_title: 'Reports' }),
+      info(5, 'Retention', 'system', 1, { group_id: 1, group_title: 'Reports' }),
       info(10, 'Launch week', 'user', 2),
       info(11, 'Old experiment', 'user', 1, { archived_at: '2026-09-01T00:00:00Z' }),
       info(13, 'Marketing', 'user', 1, { group_id: 13 }),

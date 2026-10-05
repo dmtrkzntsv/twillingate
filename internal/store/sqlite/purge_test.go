@@ -420,3 +420,39 @@ func TestPurgeArchivedContinuesPastAFailedItem(t *testing.T) {
 		t.Errorf("good project's row count = %d, want 0 (purged)", gone)
 	}
 }
+
+// TestPurgeArchivedDeletesGroupNameWithLastDashboard checks a purge takes a
+// group's name with its last dashboard (migration 031's triggers), and
+// keeps it while another member remains.
+func TestPurgeArchivedDeletesGroupNameWithLastDashboard(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	a := store.AuditEntry{Actor: "agent", Action: "dashboard.group.create"}
+	named := func(sortKeys ...string) []int64 {
+		t.Helper()
+		ds := make([]store.Dashboard, len(sortKeys))
+		for i, k := range sortKeys {
+			ds[i] = store.Dashboard{Owner: store.OwnerUser, Title: "D " + k, SortKey: k}
+		}
+		ds[0].GroupTitle = "Named " + sortKeys[0]
+		ids, err := db.InsertDashboardGroup(ctx, ds, nil, a)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ids
+	}
+	whole := named("a", "b")
+	partial := named("c", "d")
+	for _, id := range whole {
+		archiveDashboardDaysAgo(t, db, id, 3650)
+	}
+	archiveDashboardDaysAgo(t, db, partial[1], 3650)
+
+	if _, err := db.PurgeArchived(ctx, 30); err != nil {
+		t.Fatal(err)
+	}
+	got := groupNames(t, db)
+	if len(got) != 1 || got[partial[0]] != "Named c" {
+		t.Errorf("names after purge = %v, want only %d=Named c", got, partial[0])
+	}
+}
