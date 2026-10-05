@@ -18,12 +18,12 @@ export default function DetailsSection({ project, onSave, pending }: Props) {
         <h2 className="text-base font-semibold">Details</h2>
         <Button variant="outline" size="sm" onClick={() => setEditing(true)}>Edit</Button>
       </header>
-      <dl className="grid gap-3 sm:grid-cols-[10rem_1fr]">
+      <dl className="grid grid-cols-1 gap-3 sm:grid-cols-[10rem_minmax(0,1fr)]">
         <dt className="text-sm text-muted-foreground">Allowed origins</dt>
         <dd>
           {project.allowed_origins && project.allowed_origins.length > 0 ? (
             <ul aria-label="Allowed origins" className="flex flex-col gap-0.5 text-sm">
-              {project.allowed_origins.map((o) => <li key={o}>{o}</li>)}
+              {project.allowed_origins.map((o) => <li key={o} className="break-all">{o}</li>)}
             </ul>
           ) : (
             <span className="text-sm text-muted-foreground">None: browsers cannot send</span>

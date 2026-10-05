@@ -74,7 +74,7 @@ export default function UsageSection({ projectId, range }: { projectId: number; 
       ) : !s ? (
         <div aria-hidden className="flex flex-col gap-3">
           <Skeleton className="h-56 w-full" />
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
             {[0, 1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-20" />)}
           </div>
         </div>
@@ -110,7 +110,7 @@ export default function UsageSection({ projectId, range }: { projectId: number; 
             <h3 className="text-sm font-medium">Data size</h3>
             <SizeChart series={s.series} />
           </div>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
             <Tile label="Events" value={(s.totals.views + s.totals.events + s.totals.measures).toLocaleString()}
               hint={`${s.totals.views.toLocaleString()} views · ${s.totals.events.toLocaleString()} product · ${s.totals.measures.toLocaleString()} measures`} />
             <Tile label="Last received" value={s.last_received_at ? formatAgo(s.last_received_at) : 'Nothing received yet'} />

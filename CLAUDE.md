@@ -53,6 +53,14 @@ a link, or `role="button"` on anything else) rather than adding a
 `cursor-pointer` class; a deliberate other cursor goes in that spec's
 `ALLOWED`, with the reason.
 
+Nothing scrolls sideways on a 360px phone: not the page, not a section in
+it (only a widget's own content may, inside its card).
+`web/e2e/phone.spec.ts` visits every page, with a project whose name and
+origins are too long for one line. A single-column grid says
+`grid-cols-1` (an implicit `auto` column grows to its longest nowrap
+line); a table with more columns than a phone fits hides or folds the
+least needed ones below `sm`.
+
 ## Commits and releases
 
 [Conventional Commits](https://www.conventionalcommits.org/):

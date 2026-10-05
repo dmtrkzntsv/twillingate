@@ -34,27 +34,31 @@ export default function CapImpactSection({ projectId, range }: { projectId: numb
       ) : data.dimensions.length === 0 ? (
         <p className="text-sm text-muted-foreground">No data in this range.</p>
       ) : (
-        <Table className={cn('transition-opacity', isPlaceholderData && 'opacity-60')}>
+        // On a phone the Cap column (a server setting, listed under Limits) is
+        // left out and the rest wraps, so the table fits without scrolling sideways.
+        <Table className={cn('transition-opacity max-sm:[&_td]:px-1.5 max-sm:[&_th]:px-1.5 [&_th]:whitespace-normal', isPlaceholderData && 'opacity-60')}>
           <TableHeader>
             <TableRow>
-              <TableHead>Dimension</TableHead><TableHead>Cap</TableHead><TableHead>Busiest day</TableHead>
+              <TableHead>Dimension</TableHead><TableHead className="hidden sm:table-cell">Cap</TableHead><TableHead>Busiest day</TableHead>
               <TableHead>Days capped</TableHead><TableHead>Folded</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {order(data.dimensions).map((d) => (
               <TableRow key={`${d.setting}/${d.dimension}`} aria-label={d.dimension} className={cn(d.days_capped > 0 && 'bg-amber-500/10')}>
-                <TableCell className={cn('font-medium', d.days_capped > 0 && 'border-l-2 border-amber-500')}>
-                  {d.dimension}
-                  {d.days_capped > 0 && <Badge variant="outline" className="ml-2 border-amber-500/50 text-amber-700 dark:text-amber-400">capped</Badge>}
+                <TableCell className={cn('min-w-24 font-medium whitespace-normal', d.days_capped > 0 && 'border-l-2 border-amber-500')}>
+                  <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                    <span className="wrap-anywhere">{d.dimension}</span>
+                    {d.days_capped > 0 && <Badge variant="outline" className="border-amber-500/50 text-amber-700 dark:text-amber-400">capped</Badge>}
+                  </span>
                 </TableCell>
-                <TableCell>{d.cap === 0 ? 'no cap' : d.cap.toLocaleString()}</TableCell>
-                <TableCell>{d.max_values_per_day.toLocaleString()} <span className="text-xs text-muted-foreground">{d.max_day}</span></TableCell>
+                <TableCell className="hidden sm:table-cell">{d.cap === 0 ? 'no cap' : d.cap.toLocaleString()}</TableCell>
+                <TableCell className="whitespace-normal">{d.max_values_per_day.toLocaleString()} <span className="block text-xs whitespace-nowrap text-muted-foreground sm:inline">{d.max_day}</span></TableCell>
                 <TableCell>{`${d.days_capped} of ${d.days}`}</TableCell>
                 <TableCell>
                   {d.folded_share === null ? '—' : (
                     <span className="flex items-center gap-2">
-                      <span className="h-1.5 w-16 overflow-hidden rounded bg-muted">
+                      <span className="hidden h-1.5 w-16 overflow-hidden rounded bg-muted sm:block">
                         <span className="block h-full bg-amber-500" style={{ width: `${Math.round(d.folded_share * 100)}%` }} />
                       </span>
                       {`${Math.round(d.folded_share * 100)}%`}
