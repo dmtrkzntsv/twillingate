@@ -117,8 +117,8 @@ test('duplicates Views from the sidebar without hiding it, then hides it and sho
 
   await login(page)
 
-  await page.getByRole('link', { name: 'Views', exact: true }).hover()
-  await page.getByRole('button', { name: 'Views actions' }).click()
+  await page.getByRole('link', { name: 'Reports', exact: true }).hover()
+  await page.getByRole('button', { name: 'Reports actions' }).click()
   await page.getByRole('menuitem', { name: /^Duplicate/ }).click()
 
   // Already on /app/dashboards/<viewsId>, so a bare dashboards/\d+ pattern
@@ -129,21 +129,21 @@ test('duplicates Views from the sidebar without hiding it, then hides it and sho
   expect(copyId).not.toBe(viewsId)
   toArchive.push({ id: copyId, wholeGroup: true })
 
-  // Duplicating is only a copy: Views is still in the sidebar alongside it.
+  // Duplicating is only a copy: Reports (the group's name) is still in the sidebar alongside it.
   await expect(page.getByRole('tab')).toHaveCount(7)
-  await expect(page.getByRole('link', { name: 'Views', exact: true })).toHaveCount(1)
+  await expect(page.getByRole('link', { name: 'Reports', exact: true })).toHaveCount(1)
   // By id: app.spec.ts runs first on the same server and leaves its own
-  // "Views (copy)" behind, so the title alone is not this test's copy.
+  // "Reports (copy)" behind, so the name alone is not this test's copy.
   await expect(
-    page.getByRole('link', { name: 'Views (copy)', exact: true }).and(page.locator(`[href="/app/dashboards/${copyId}"]`))
+    page.getByRole('link', { name: 'Reports (copy)', exact: true }).and(page.locator(`[href="/app/dashboards/${copyId}"]`))
   ).toHaveCount(1)
 
   // Replacing it is a second, explicit step: hide the original.
-  await page.getByRole('link', { name: 'Views', exact: true }).hover()
-  await page.getByRole('button', { name: 'Views actions' }).click()
+  await page.getByRole('link', { name: 'Reports', exact: true }).hover()
+  await page.getByRole('button', { name: 'Reports actions' }).click()
   await page.getByRole('menuitem', { name: 'Hide' }).click()
 
-  await expect(page.getByRole('link', { name: 'Views', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('link', { name: 'Reports', exact: true })).toHaveCount(0)
 
   // A hidden system group is not on the Archive page: it comes back from the gallery.
   await page.goto('/app/archive')
@@ -152,13 +152,13 @@ test('duplicates Views from the sidebar without hiding it, then hides it and sho
 
   await page.goto('/app/gallery/dashboards')
   await page.waitForLoadState('networkidle')
-  const viewsGroup = page.getByRole('main').getByRole('listitem', { name: 'Views', exact: true })
+  const viewsGroup = page.getByRole('main').getByRole('listitem', { name: 'Reports', exact: true })
   await expect(viewsGroup.getByText('7 tabs · hidden')).toBeVisible()
   await viewsGroup.getByRole('button', { name: 'Views actions', exact: true }).click()
   await page.getByRole('menuitem', { name: 'Show in sidebar' }).click()
 
   // The gallery card links to its Views tab too; count the sidebar's alone.
-  await expect(page.locator('[data-sidebar="sidebar"]').getByRole('link', { name: 'Views', exact: true })).toHaveCount(1)
+  await expect(page.locator('[data-sidebar="sidebar"]').getByRole('link', { name: 'Reports', exact: true })).toHaveCount(1)
   await expect(viewsGroup.getByText('7 tabs', { exact: true })).toBeVisible()
 })
 
@@ -240,6 +240,36 @@ test('moves a tab between groups', async ({ page, request }) => {
   await expect(page.getByRole('link', { name: 'A2', exact: true })).toBeVisible()
 })
 
+test('renames a group from its sidebar menu without touching the dashboard title', async ({ page, request }) => {
+  const d = await createDashboard(request, 'E2E Rename')
+  toArchive.push({ id: d.id })
+
+  await login(page)
+  await page.goto(`/app/dashboards/${d.id}`)
+  await page.waitForLoadState('networkidle')
+
+  await page.getByRole('link', { name: 'E2E Rename', exact: true }).hover()
+  await page.getByRole('button', { name: 'E2E Rename actions' }).click()
+  await page.getByRole('menuitem', { name: 'Rename' }).click()
+
+  const field = page.getByRole('textbox', { name: 'Group name' })
+  const save = page.getByRole('button', { name: 'Save group name' })
+  await expect(field).toBeFocused()
+  await field.fill('a')
+  await expect(save).toBeDisabled()
+  await expect(field).toHaveAttribute('aria-invalid', 'true')
+
+  await field.fill('Team metrics')
+  await field.press('Enter')
+
+  await expect(field).toHaveCount(0)
+  const sidebar = page.locator('[data-sidebar="sidebar"]')
+  await expect(sidebar.getByRole('link', { name: 'Team metrics', exact: true })).toBeVisible()
+  await expect(sidebar.getByRole('link', { name: 'E2E Rename', exact: true })).toHaveCount(0)
+  // The group's name is the sidebar's; the page keeps the dashboard's own title.
+  await expect(page.getByRole('heading', { level: 1, name: 'E2E Rename', exact: true })).toBeVisible()
+})
+
 test('drag reorder persists across a reload', async ({ page, request }) => {
   const x = await createDashboard(request, 'E2E X')
   toArchive.push({ id: x.id })
@@ -282,7 +312,7 @@ test('copies a system group and one of its tabs from the gallery while it is arc
   await page.waitForLoadState('networkidle')
 
   const main = page.getByRole('main')
-  const viewsGroup = main.getByRole('listitem', { name: 'Views', exact: true })
+  const viewsGroup = main.getByRole('listitem', { name: 'Reports', exact: true })
   // The Dashboards gallery shows a hidden group as hidden, never "archived" (D17).
   await expect(viewsGroup.getByText(/archived/i)).toHaveCount(0)
   await viewsGroup.getByRole('button', { name: 'Views actions', exact: true }).click()

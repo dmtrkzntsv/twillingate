@@ -40,6 +40,7 @@ beforeEach(() => {
     archive: vi.fn(),
     restore,
     move: vi.fn(),
+    renameGroup: vi.fn(),
     pending: false,
   } satisfies DashboardActions)
 })
@@ -111,6 +112,18 @@ describe('DashboardsGallery, templates', () => {
     expect(within(reach).queryByRole('button', { name: 'Reach tab actions' })).not.toBeInTheDocument()
   })
 
+  it('titles a group card by its group_title, its tabs keeping their own titles', async () => {
+    vi.spyOn(endpoints, 'dashboards').mockResolvedValue({
+      timezone: 'UTC',
+      dashboards: dashboards.map((d) => (d.group_id === 1 ? { ...d, group_title: 'Reports' } : d)),
+    })
+    renderGallery()
+
+    const card = (await screen.findByRole('heading', { name: 'Reports' })).closest('li')!
+    expect(within(card).getByRole('link', { name: 'Views' })).toHaveAttribute('href', '/dashboards/1')
+    expect(within(card).getByRole('link', { name: 'Product' })).toHaveAttribute('href', '/dashboards/2')
+  })
+
   it('copies one tab to a new dashboard from that tab\'s "…" menu', async () => {
     mockApi()
     renderGallery()
@@ -152,6 +165,7 @@ describe('DashboardsGallery, templates', () => {
       archive: vi.fn(),
       restore,
       move: vi.fn(),
+      renameGroup: vi.fn(),
       pending: true,
     } satisfies DashboardActions)
     mockApi()

@@ -1,4 +1,4 @@
-import { ArchiveIcon, ArrowDownIcon, ArrowUpIcon, CopyIcon, MoreHorizontalIcon, EyeOffIcon } from 'lucide-react'
+import { ArchiveIcon, ArrowDownIcon, ArrowUpIcon, CopyIcon, EyeOffIcon, MoreHorizontalIcon, PencilIcon } from 'lucide-react'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -8,7 +8,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { SidebarMenuAction, useSidebar } from '@/components/ui/sidebar'
 import { useDashboardActions } from '@/hooks/use-dashboard-actions'
-import { moveGroupBody, type Group } from '@/lib/arrange'
+import { groupName, moveGroupBody, type Group } from '@/lib/arrange'
 
 interface Props {
   /** The group this entry is for. */
@@ -16,11 +16,14 @@ interface Props {
   /** Every live user group, in sidebar order, for computing Move up/down (D10, D15). */
   userGroups: Group[]
   currentId: number
+  /** Opens the entry's name field; user groups only (D9). */
+  onRename?: () => void
 }
 
 /**
  * The sidebar entry's "…" menu (D10), acting on the whole group named by
- * its first live member: Duplicate on both kinds, Archive on a user group
+ * its first live member: Rename first on a user group (its name field,
+ * D9), Duplicate on both kinds, Archive on a user group
  * and Hide on a system one, Move up and Move down added for a user
  * group. Duplicate always copies the whole group (`wholeGroup`) and never
  * archives anything — to replace a system group in the sidebar, Duplicate
@@ -30,10 +33,11 @@ interface Props {
  * `showOnHover` keeps the trigger out of the way until hovered on
  * desktop; the sidebar shows it unconditionally on phones.
  */
-export default function SidebarGroupMenu({ group, userGroups, currentId }: Props) {
+export default function SidebarGroupMenu({ group, userGroups, currentId, onRename }: Props) {
   const { duplicate, archive, move, pending } = useDashboardActions()
   const { isMobile, setOpenMobile } = useSidebar()
   const first = group.members[0]
+  const name = groupName(group.members)
   const navigateTo = group.members.some((m) => m.dashboard_id === currentId) ? '/dashboards' : undefined
   const index = userGroups.findIndex((g) => g.groupId === group.groupId)
 
@@ -52,11 +56,20 @@ export default function SidebarGroupMenu({ group, userGroups, currentId }: Props
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <SidebarMenuAction showOnHover aria-label={`${first.title} actions`}>
+        <SidebarMenuAction showOnHover aria-label={`${name} actions`}>
           <MoreHorizontalIcon />
         </SidebarMenuAction>
       </DropdownMenuTrigger>
       <DropdownMenuContent side="right" align="start">
+        {group.owner === 'user' && onRename && (
+          <>
+            <DropdownMenuItem disabled={pending} onClick={onRename}>
+              <PencilIcon />
+              Rename
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+          </>
+        )}
         <DropdownMenuItem
           disabled={pending}
           onClick={() => {
@@ -71,7 +84,7 @@ export default function SidebarGroupMenu({ group, userGroups, currentId }: Props
           disabled={pending}
           onClick={() => {
             if (navigateTo) close()
-            void archive(first, { wholeGroup: true, navigateTo, hidden: group.owner === 'system' })
+            void archive({ dashboard_id: first.dashboard_id, title: name }, { wholeGroup: true, navigateTo, hidden: group.owner === 'system' })
           }}
         >
           {group.owner === 'system' ? <EyeOffIcon /> : <ArchiveIcon />}

@@ -22,6 +22,19 @@ function urlOf(input: RequestInfo | URL): string {
   return typeof input === 'string' ? input : input.toString()
 }
 
+describe('endpoints.renameGroup', () => {
+  it('PATCHes the dashboard with whole_group and the new name', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse({ dashboard_id: 7, group_title: 'Ops' }))
+
+    await endpoints.renameGroup(7, 'Ops')
+
+    const [url, init] = vi.mocked(fetch).mock.calls[0]
+    expect(urlOf(url)).toContain('/api/dashboards/7')
+    expect(init?.method).toBe('PATCH')
+    expect(JSON.parse(init?.body as string)).toEqual({ whole_group: true, title: 'Ops' })
+  })
+})
+
 describe('api', () => {
   it('adds the Authorization header when there is one', async () => {
     vi.spyOn(auth, 'getAuthHeader').mockReturnValue('Bearer token-1')

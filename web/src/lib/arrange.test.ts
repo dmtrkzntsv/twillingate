@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { DashboardInfo, DashboardTab } from './api'
-import { liveGroups, moveGroupBody, moveTabBody, nextAfterArchive, purgeDate, reorder } from './arrange'
+import { groupName, liveGroups, moveGroupBody, moveTabBody, nameTooShort, nextAfterArchive, purgeDate, reorder } from './arrange'
 
 function mkInfo(dashboard_id: number, title: string, owner: 'system' | 'user', group_id: number, extra: Partial<DashboardInfo> = {}): DashboardInfo {
   return { dashboard_id, title, owner, group_id, widgets: 1, ...extra }
@@ -120,5 +120,34 @@ describe('reorder', () => {
     expect(reorder([10, 20, 30], 10, 10)).toBeNull()
     expect(reorder([10, 20, 30], 10, 99)).toBeNull()
     expect(reorder([10, 20, 30], 99, 10)).toBeNull()
+  })
+})
+
+describe('groupName', () => {
+  it('is the stored group_title, whichever member carries it', () => {
+    const members = [mkInfo(1, 'Overview', 'user', 1), mkInfo(2, 'Funnel', 'user', 1, { group_title: 'Ops' })]
+    expect(groupName(members)).toBe('Ops')
+  })
+
+  it('is the first live member title otherwise, skipping an archived first member', () => {
+    const members = [mkInfo(1, 'Old', 'user', 1, { archived_at: '2026-09-01T00:00:00Z' }), mkInfo(2, 'Funnel', 'user', 1)]
+    expect(groupName(members)).toBe('Funnel')
+  })
+
+  it('is the first member title when every member is archived', () => {
+    const archived = { archived_at: '2026-09-01T00:00:00Z' }
+    const members = [mkInfo(1, 'Old', 'user', 1, archived), mkInfo(2, 'Older', 'user', 1, archived)]
+    expect(groupName(members)).toBe('Old')
+  })
+})
+
+describe('nameTooShort', () => {
+  it('is true under 2 characters once trimmed, counting a code point as one', () => {
+    for (const s of ['', ' ', 'a', 'é']) expect(nameTooShort(s)).toBe(true)
+  })
+
+  it('is false from 2 characters', () => {
+    expect(nameTooShort('ab')).toBe(false)
+    expect(nameTooShort(' ab ')).toBe(false)
   })
 })

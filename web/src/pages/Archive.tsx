@@ -5,7 +5,7 @@ import { DashboardGroup, LoneDashboard, type GroupRow } from '@/components/Dashb
 import { Button } from '@/components/ui/button'
 import { useDashboardActions } from '@/hooks/use-dashboard-actions'
 import type { DashboardInfo } from '@/lib/api'
-import { purgeDate } from '@/lib/arrange'
+import { groupName, purgeDate } from '@/lib/arrange'
 import { dashboardsQuery } from '@/lib/queries'
 import { formatPurgeDate } from '@/lib/time'
 
@@ -30,11 +30,6 @@ function archivedGroups(dashboards: DashboardInfo[]): Group[] {
     else groups.set(d.group_id, { groupId: d.group_id, members: [d] })
   }
   return [...groups.values()].filter((g) => g.members.some((m) => m.archived_at))
-}
-
-/** What the sidebar names a group by: its first live member, else its first member. */
-function groupTitle(g: Group): DashboardInfo {
-  return g.members.find((m) => !m.archived_at) ?? g.members[0]
 }
 
 /**
@@ -81,7 +76,7 @@ export default function Archive() {
     return (
       <DashboardGroup
         key={g.groupId}
-        title={groupTitle(g).title}
+        title={groupName(g.members)}
         meta={`${g.members.length} tabs · ${whole ? 'all archived' : `${archived.length} archived`}`}
         action={archived.length > 1 && restoreButton('Restore all', () => void restore(archived[0].dashboard_id, true))}
         rows={rows}

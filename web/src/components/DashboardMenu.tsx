@@ -23,7 +23,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { useDashboardActions, type DashboardActions } from '@/hooks/use-dashboard-actions'
 import type { DashboardDetail, DashboardInfo } from '@/lib/api'
-import { liveGroups, moveTabBody, nextAfterArchive } from '@/lib/arrange'
+import { groupName, liveGroups, moveTabBody, nextAfterArchive } from '@/lib/arrange'
 import { formatInterval } from '@/lib/time'
 
 interface Props {
@@ -53,7 +53,7 @@ function MoveTo({ dashboard, list, actions }: Props & { actions: DashboardAction
       <DropdownMenuSubContent>
         {otherGroups.map((g) => (
           <DropdownMenuItem key={g.groupId} disabled={pending} onClick={() => void move(id, { group_id: g.groupId })}>
-            {g.members[0].title}
+            {groupName(g.members)}
           </DropdownMenuItem>
         ))}
         {tabs.length > 1 && (

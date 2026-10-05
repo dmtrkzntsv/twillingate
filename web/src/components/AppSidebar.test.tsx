@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { screen, within } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { SidebarProvider } from '@/components/ui/sidebar'
@@ -135,10 +135,10 @@ describe('AppSidebar archive', () => {
 describe('AppSidebar dashboard groups', () => {
   const dashboards = dashboardsList().dashboards
 
-  it('shows the system group once, named by its first member, with no "Reports" entry', () => {
+  it('shows the system group once, named Reports, linking to its first member', () => {
     renderSidebar(dashboards, 1)
-    expect(screen.getByRole('link', { name: 'Views' })).toHaveAttribute('href', '/dashboards/1')
-    expect(screen.queryByRole('link', { name: 'Reports' })).not.toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Reports' })).toHaveAttribute('href', '/dashboards/1')
+    expect(screen.queryByRole('link', { name: 'Views' })).not.toBeInTheDocument()
     // Only one sidebar entry for the whole group: none of the other four titles is its own link.
     for (const title of ['Product', 'Users', 'Groups', 'Retention']) {
       expect(screen.queryByRole('link', { name: title })).not.toBeInTheDocument()
@@ -156,6 +156,36 @@ describe('AppSidebar dashboard groups', () => {
     renderSidebar(dashboards, 14)
     expect(screen.getByRole('link', { name: 'Marketing' })).toHaveAttribute('data-active', 'true')
   })
+
+  it('names an entry by its group_title, not its first tab', () => {
+    const named = dashboards.map((d) => (d.group_id === 13 ? { ...d, group_title: 'Ops' } : d))
+    renderSidebar(named, 0)
+    expect(screen.getByRole('link', { name: 'Ops' })).toHaveAttribute('href', '/dashboards/13')
+    expect(screen.queryByRole('link', { name: 'Marketing' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Ops actions' })).toBeInTheDocument()
+  })
+
+  it('renames a group in place from its menu: Rename, type, Enter sends the PATCH and closes the field', async () => {
+    const renameGroup = vi.spyOn(endpoints, 'renameGroup').mockResolvedValue({ dashboard_id: 13 } as DashboardInfo)
+    renderSidebar(dashboards, 0)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Marketing actions' }))
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Rename' }))
+    const field = screen.getByRole('textbox', { name: 'Group name' })
+    expect(field).toHaveValue('Marketing')
+    expect(screen.queryByRole('link', { name: 'Marketing' })).not.toBeInTheDocument()
+    await userEvent.clear(field)
+    await userEvent.type(field, 'Platform{Enter}')
+
+    expect(renameGroup).toHaveBeenCalledWith(13, 'Platform')
+    await waitFor(() => expect(screen.queryByRole('textbox', { name: 'Group name' })).not.toBeInTheDocument())
+  })
+
+  it('offers Rename on user groups only', async () => {
+    renderSidebar(dashboards, 0)
+    await userEvent.click(screen.getByRole('button', { name: 'Reports actions' }))
+    expect(screen.queryByRole('menuitem', { name: 'Rename' })).not.toBeInTheDocument()
+  })
 })
 
 describe('AppSidebar reordering', () => {
@@ -169,7 +199,7 @@ describe('AppSidebar reordering', () => {
     renderSidebar(dashboards, 1)
     expect(screen.getByRole('link', { name: 'Launch week' })).toHaveAttribute('aria-roledescription', 'sortable')
     expect(screen.getByRole('link', { name: 'Marketing' })).toHaveAttribute('aria-roledescription', 'sortable')
-    expect(screen.getByRole('link', { name: 'Views' })).not.toHaveAttribute('aria-roledescription')
+    expect(screen.getByRole('link', { name: 'Reports' })).not.toHaveAttribute('aria-roledescription')
     expect(screen.getByRole('button', { name: 'Marketing actions' })).not.toHaveAttribute('aria-roledescription')
   })
 

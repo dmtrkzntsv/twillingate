@@ -16,6 +16,7 @@ vi.mock('@/hooks/use-dashboard-actions', () => ({
 const duplicate = vi.fn()
 const archive = vi.fn()
 const move = vi.fn()
+const renameGroup = vi.fn()
 
 function member(dashboard_id: number, title: string, owner: 'system' | 'user', group_id: number) {
   return { dashboard_id, title, owner, group_id, widgets: 1 }
@@ -48,14 +49,15 @@ beforeEach(() => {
     archive,
     restore: vi.fn(),
     move,
+    renameGroup,
     pending: false,
   } satisfies DashboardActions)
 })
 
-function renderMenu(group: Group, currentId: number) {
+function renderMenu(group: Group, currentId: number, onRename?: () => void) {
   renderWithProviders(
     <SidebarProvider>
-      <SidebarGroupMenu group={group} userGroups={userGroups} currentId={currentId} />
+      <SidebarGroupMenu group={group} userGroups={userGroups} currentId={currentId} onRename={onRename} />
     </SidebarProvider>
   )
 }
@@ -81,7 +83,7 @@ describe('SidebarGroupMenu, system group', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Views actions' }))
     await userEvent.click(screen.getByText('Hide'))
 
-    expect(archive).toHaveBeenCalledWith(systemGroup.members[0], { wholeGroup: true, navigateTo: '/dashboards', hidden: true })
+    expect(archive).toHaveBeenCalledWith({ dashboard_id: 1, title: 'Views' }, { wholeGroup: true, navigateTo: '/dashboards', hidden: true })
   })
 
   it('hide while elsewhere does not navigate', async () => {
@@ -89,7 +91,42 @@ describe('SidebarGroupMenu, system group', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Views actions' }))
     await userEvent.click(screen.getByText('Hide'))
 
-    expect(archive).toHaveBeenCalledWith(systemGroup.members[0], { wholeGroup: true, navigateTo: undefined, hidden: true })
+    expect(archive).toHaveBeenCalledWith({ dashboard_id: 1, title: 'Views' }, { wholeGroup: true, navigateTo: undefined, hidden: true })
+  })
+})
+
+describe('SidebarGroupMenu, rename and group names', () => {
+  it('a user group menu starts with Rename, which calls onRename', async () => {
+    const onRename = vi.fn()
+    renderMenu(userGroupA, 99, onRename)
+    await userEvent.click(screen.getByRole('button', { name: 'Marketing actions' }))
+
+    expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Rename', 'Duplicate', 'Archive', 'Move up', 'Move down'])
+    await userEvent.click(screen.getByText('Rename'))
+    expect(onRename).toHaveBeenCalledTimes(1)
+  })
+
+  it('a system group menu has no Rename, even when handed onRename', async () => {
+    renderMenu(systemGroup, 99, vi.fn())
+    await userEvent.click(screen.getByRole('button', { name: 'Views actions' }))
+
+    expect(screen.queryByText('Rename')).not.toBeInTheDocument()
+  })
+
+  it('the trigger label and the archive toast use the group name', async () => {
+    const named: Group = {
+      groupId: 13,
+      owner: 'user',
+      members: [
+        { ...member(13, 'Overview', 'user', 13), group_title: 'Team metrics' },
+        { ...member(14, 'Funnel', 'user', 13), group_title: 'Team metrics' },
+      ],
+    }
+    renderMenu(named, 99)
+    await userEvent.click(screen.getByRole('button', { name: 'Team metrics actions' }))
+    await userEvent.click(screen.getByText('Archive'))
+
+    expect(archive).toHaveBeenCalledWith({ dashboard_id: 13, title: 'Team metrics' }, expect.objectContaining({ wholeGroup: true }))
   })
 })
 
@@ -125,7 +162,7 @@ describe('SidebarGroupMenu, user group', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Marketing actions' }))
     await userEvent.click(screen.getByText('Archive'))
 
-    expect(archive).toHaveBeenCalledWith(userGroupA.members[0], { wholeGroup: true, navigateTo: '/dashboards', hidden: false })
+    expect(archive).toHaveBeenCalledWith({ dashboard_id: 13, title: 'Marketing' }, { wholeGroup: true, navigateTo: '/dashboards', hidden: false })
   })
 
   it('clicking Move down on the first group calls move with the second group as after', async () => {

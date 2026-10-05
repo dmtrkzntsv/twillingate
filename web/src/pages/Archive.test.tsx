@@ -53,6 +53,7 @@ beforeEach(() => {
     archive,
     restore,
     move: vi.fn(),
+    renameGroup: vi.fn(),
     pending: false,
   } satisfies DashboardActions)
 })
@@ -134,6 +135,16 @@ describe('Archive, a user group', () => {
     expect(within(card).getByText(/2 tabs · 1 archived/)).toBeInTheDocument()
     expect(within(card).getByRole('link', { name: 'Marketing' })).toHaveAttribute('href', '/dashboards/13')
     expect(within(card).getByRole('link', { name: 'Funnel' })).toHaveAttribute('href', '/dashboards/14')
+  })
+
+  it('is named by its group_title when it has one', async () => {
+    mockApiWith(
+      dashboards.map((d) => (d.group_id === 13 ? { ...d, group_title: 'Team metrics' } : d))
+    )
+    renderArchive()
+
+    const card = await group('Team metrics')
+    expect(within(card).getByRole('link', { name: 'Marketing' })).toHaveAttribute('href', '/dashboards/13')
   })
 
   it('marks the live tab as in the sidebar, with no Restore', async () => {

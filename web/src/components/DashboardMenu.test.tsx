@@ -60,6 +60,7 @@ beforeEach(() => {
     archive,
     restore: vi.fn(),
     move,
+    renameGroup: vi.fn(),
     pending: false,
   } satisfies DashboardActions)
 })
@@ -170,6 +171,18 @@ describe('TabMenu, a user tab among others', () => {
 
     expect(await screen.findByText('Launch week')).toBeInTheDocument()
     expect(screen.queryByText('Views')).not.toBeInTheDocument()
+  })
+})
+
+describe('TabMenu, "Move to" names a group by its group_title', () => {
+  it('lists the other group by its stored name, not its first dashboard', async () => {
+    const named = list.map((d) => (d.group_id === 20 ? { ...d, group_title: 'Launch plans' } : d))
+    renderWithProviders(<TabMenu dashboard={marketing} list={named} />)
+    await openTabMenu()
+    await userEvent.click(screen.getByText('Move to'))
+
+    expect(await screen.findByText('Launch plans')).toBeInTheDocument()
+    expect(screen.queryByText('Launch week')).not.toBeInTheDocument()
   })
 })
 

@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { DashboardGroup, LoneDashboard, type GroupRow } from '@/components/DashboardGroup'
 import TemplateMenu from '@/components/TemplateMenu'
 import type { DashboardInfo } from '@/lib/api'
+import { groupName } from '@/lib/arrange'
 import { dashboardsQuery } from '@/lib/queries'
 import GalleryLayout from './GalleryLayout'
 
@@ -71,7 +72,7 @@ export default function DashboardsGallery() {
               action: writable && <TemplateMenu dashboard={d} />,
             }))
             const meta = [`${g.members.length} tabs`, hidden && HIDDEN].filter(Boolean).join(' · ')
-            return <DashboardGroup key={g.groupId} title={first.title} meta={meta} action={groupMenu} rows={rows} />
+            return <DashboardGroup key={g.groupId} title={groupName(g.members)} meta={meta} action={groupMenu} rows={rows} />
           })}
         </ul>
       </section>
