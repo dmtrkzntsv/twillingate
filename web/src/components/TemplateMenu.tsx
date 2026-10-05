@@ -14,7 +14,7 @@ interface Props {
 }
 
 /**
- * A Templates row's "…" menu (D17): "Duplicate dashboard" copies the whole system
+ * A Dashboards gallery row's "…" menu (D17): "Duplicate dashboard" copies the whole system
  * group (`wholeGroup`) and opens the copy, archived or not, never
  * archiving anything. A single tab is duplicated from its own "…" menu
  * once the template is open.

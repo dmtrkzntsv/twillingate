@@ -49,25 +49,38 @@ describe('Project', () => {
     expect(await within(nav).findByText('econumo.com')).toHaveAttribute('aria-current', 'page')
   })
 
-  it('shows the details and edits name and origins through PATCH, never the attributes', async () => {
+  it('renames the project in place through PATCH, the name alone', async () => {
     const user = userEvent.setup()
     actions.update.mockResolvedValue(true)
     renderAt('/projects/4')
-    const details = await screen.findByRole('region', { name: 'Details' })
-    expect(within(details).getByText('https://econumo.com')).toBeInTheDocument()
-    expect(within(details).queryByText('plan')).not.toBeInTheDocument()
-    await user.click(within(details).getByRole('button', { name: 'Edit' }))
+    await user.click(await screen.findByRole('button', { name: 'Rename' }))
+    const field = screen.getByRole('textbox', { name: 'Project name' })
+    await user.clear(field)
+    await user.type(field, 'econumo{Enter}')
+    expect(actions.update).toHaveBeenCalledWith(4, { name: 'econumo' })
+  })
+
+  it('shows the allowed origins and edits them through PATCH, never the name or attributes', async () => {
+    const user = userEvent.setup()
+    actions.update.mockResolvedValue(true)
+    renderAt('/projects/4')
+    const origins = await screen.findByRole('region', { name: 'Allowed origins' })
+    expect(within(origins).getByText('https://econumo.com')).toBeInTheDocument()
+    expect(within(origins).queryByText('plan')).not.toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Details' })).not.toBeInTheDocument()
+    await user.click(within(origins).getByRole('button', { name: 'Edit' }))
     await user.click(screen.getByRole('button', { name: 'Add origin' }))
     await user.type(screen.getByRole('textbox', { name: 'Origin 2' }), '*')
     await user.click(screen.getByRole('button', { name: 'Save' }))
-    expect(actions.update).toHaveBeenCalledWith(4, { name: 'econumo.com', allowed_origins: ['https://econumo.com', '*'] })
+    expect(actions.update).toHaveBeenCalledWith(4, { allowed_origins: ['https://econumo.com', '*'] })
   })
 
-  it('places Breakdowns between Details and Ingest keys', async () => {
+  it('places Breakdowns between Allowed origins and Ingest keys', async () => {
     renderAt('/projects/4')
     await screen.findByRole('region', { name: 'Breakdowns' })
     const names = screen.getAllByRole('region').map((r) => r.getAttribute('aria-label'))
-    expect(names.indexOf('Details')).toBeLessThan(names.indexOf('Breakdowns'))
+    expect(names.indexOf('Allowed origins')).toBeGreaterThan(-1)
+    expect(names.indexOf('Allowed origins')).toBeLessThan(names.indexOf('Breakdowns'))
     expect(names.indexOf('Breakdowns')).toBeLessThan(names.indexOf('Ingest keys'))
   })
 

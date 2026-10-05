@@ -6,8 +6,9 @@ import Crumbs from '@/components/Crumbs'
 import RangeSwitcher, { type RangeValue } from '@/components/RangeSwitcher'
 import BreakdownsSection from '@/components/projects/BreakdownsSection'
 import CapImpactSection from '@/components/projects/CapImpactSection'
-import DetailsSection from '@/components/projects/DetailsSection'
 import KeysSection from '@/components/projects/KeysSection'
+import OriginsSection from '@/components/projects/OriginsSection'
+import ProjectName from '@/components/projects/ProjectName'
 import UsageSection from '@/components/projects/UsageSection'
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
@@ -20,7 +21,7 @@ import { dashboardsQuery, keysQuery, projectsQuery } from '@/lib/queries'
 import { resolve } from '@/lib/ranges'
 import { formatPurgeDate } from '@/lib/time'
 
-/** `/projects/:id`: one project's usage, details, breakdowns, keys and cap impact, with Archive or Restore. */
+/** `/projects/:id`: one project's usage, renamed in place, allowed origins, breakdowns, keys and cap impact, with Archive or Restore. */
 export default function Project() {
   const param = useParams().id
   const id = Number(param)
@@ -48,8 +49,8 @@ export default function Project() {
         ) : (
           <>
             <header className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <h1 className="text-xl font-semibold tracking-tight">{project.name}</h1>
+              <div className="flex min-w-0 items-center gap-2">
+                <ProjectName key={project.name} name={project.name} pending={actions.pending} onRename={(name) => actions.update(id, { name })} />
                 {project.archived && <Badge variant="outline">Archived</Badge>}
               </div>
               <div className="flex items-center gap-2">
@@ -62,7 +63,7 @@ export default function Project() {
               </div>
             </header>
             <UsageSection projectId={id} range={range} />
-            <DetailsSection project={project} pending={actions.pending} onSave={(body) => actions.update(id, body)} />
+            <OriginsSection project={project} pending={actions.pending} onSave={(body) => actions.update(id, body)} />
             <BreakdownsSection project={project} range={range} pending={actions.pending} onSave={(attributes) => actions.update(id, { attributes })} />
             <KeysSection
               keys={keysQ.data?.keys}

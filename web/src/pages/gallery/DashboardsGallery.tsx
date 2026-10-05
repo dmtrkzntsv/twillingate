@@ -43,7 +43,7 @@ export default function DashboardsGallery() {
 
   return (
     <GalleryLayout
-      title="Templates"
+      title="Dashboards"
       description="The dashboards that ship with twillingate. Open one to look at it, or make it your own: duplicate the whole dashboard from its … menu here, or copy one tab to a new dashboard from that tab's … menu."
       sections={sections}
     >

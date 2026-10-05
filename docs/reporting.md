@@ -791,9 +791,10 @@ Archiving is how to undo, and the only way to remove anything:
   an archived dashboard, with only its live widgets and its group's live
   tabs. The page's sidebar shows live dashboards only; one opened by its URL
   says "Archived: not in the sidebar" and offers Restore, and the page's
-  Archive page (`/app/archive`) lists every archived dashboard; one archived
-  with its group opens with that group's archived tabs. The Templates
-  gallery (`/app/gallery/dashboards`) lists each system group as a
+  Archive page (`/app/archive`) lists every group with an archived tab, the
+  group's live tabs too, each archived tab with its own Restore (a system
+  group's only as the whole group); one archived with its group opens with
+  that group's archived tabs. The Dashboards gallery (`/app/gallery/dashboards`) lists each system group as a
   template, one row per group, archived ones included: archive state does
   not matter there. A row's "…" menu duplicates the whole group. On any
   dashboard, the "…" menu at the top right of the tab bar acts on the whole

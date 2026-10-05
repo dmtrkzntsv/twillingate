@@ -31,12 +31,17 @@ test('creates a project, edits it, manages a key, archives and restores it', asy
   await page.getByRole('article', { name }).getByRole('link', { name }).click()
   await expect(page.getByRole('heading', { name })).toBeVisible()
 
-  const details = page.getByRole('region', { name: 'Details' })
-  await details.getByRole('button', { name: 'Edit' }).click()
+  await page.getByRole('button', { name: 'Rename' }).click()
+  await page.getByRole('textbox', { name: 'Project name' }).fill(`${name}-renamed`)
+  await page.keyboard.press('Enter')
+  await expect(page.getByRole('heading', { level: 1, name: `${name}-renamed` })).toBeVisible()
+
+  const origins = page.getByRole('region', { name: 'Allowed origins' })
+  await origins.getByRole('button', { name: 'Edit' }).click()
   await page.getByRole('button', { name: 'Add origin' }).click()
   await page.getByRole('textbox', { name: 'Origin 2' }).fill('*')
   await page.getByRole('button', { name: 'Save' }).click()
-  await expect(details.getByText('*', { exact: true })).toBeVisible()
+  await expect(origins.getByText('*', { exact: true })).toBeVisible()
 
   const keys = page.getByRole('region', { name: 'Ingest keys' })
   await keys.getByRole('button', { name: 'Issue key' }).click()

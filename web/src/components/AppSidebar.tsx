@@ -48,8 +48,8 @@ interface Props {
  * Projects (a link to the list) first, then "Dashboards": one entry per
  * dashboard group (tabs D20), the system groups first with a "Built-in"
  * badge, then the user's. Then Gallery (the components playground and the
- * templates gallery, D17), closed until opened or on a gallery page. At
- * the bottom, Archive (every archived dashboard, user or system, D17a)
+ * Dashboards gallery of templates, D17), closed until opened or on a gallery page. At
+ * the bottom, Archive (every group with an archived dashboard, D17a)
  * above Log out. Each entry links to its group's first live
  * member and is named by its title; it is active on any live member of
  * the group. The user's entries drag to a new order (D14, D15); built-in
@@ -218,12 +218,12 @@ export default function AppSidebar({ dashboards, currentId, readOnly = false }: 
                     <SidebarMenuButton
                       asChild
                       isActive={pathname.startsWith('/gallery/dashboards')}
-                      tooltip="Templates"
+                      tooltip="Dashboards"
                       className={item}
                     >
                       <Link to="/gallery/dashboards" onClick={close}>
                         <LayoutGridIcon />
-                        <span>Templates</span>
+                        <span>Dashboards</span>
                       </Link>
                     </SidebarMenuButton>
                   </SidebarMenuItem>

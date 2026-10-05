@@ -147,8 +147,11 @@ test('duplicates Views from the sidebar without archiving it, then archives and 
 
   await page.goto('/app/archive')
   await page.waitForLoadState('networkidle')
-  const viewsRow = page.locator('li').filter({ has: page.getByRole('link', { name: 'Views', exact: true }) })
-  await viewsRow.getByRole('button', { name: 'Restore' }).click()
+  // The group is one card, its tabs inside; a system group restores whole.
+  const viewsGroup = page.getByRole('main').getByRole('listitem', { name: 'Views', exact: true })
+  await expect(viewsGroup.getByRole('link')).toHaveCount(5)
+  await expect(viewsGroup.getByRole('button', { name: 'Restore', exact: true })).toHaveCount(0)
+  await viewsGroup.getByRole('button', { name: 'Restore group' }).click()
 
   await expect(page.getByRole('link', { name: 'Views', exact: true })).toHaveCount(1)
 })
@@ -274,7 +277,7 @@ test('copies a system group and one of its tabs from the gallery while it is arc
 
   const main = page.getByRole('main')
   const viewsRow = main.locator('li').filter({ has: page.getByRole('heading', { level: 3, name: 'Views', exact: true }) })
-  // Templates show no archive state at all, live or archived (D17).
+  // The Dashboards gallery shows no archive state at all, live or archived (D17).
   await expect(viewsRow.getByText('Archived', { exact: true })).toHaveCount(0)
   await viewsRow.getByRole('button', { name: 'Views actions' }).click()
   await page.getByRole('menuitem', { name: 'Duplicate dashboard' }).click()

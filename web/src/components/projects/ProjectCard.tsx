@@ -22,7 +22,7 @@ interface Props {
   pending?: boolean
 }
 
-/** One project at a glance: freshness, origins, 30 days of events, size, keys and attributes. */
+/** One project at a glance: freshness, 30 days of events, size, keys and attributes. */
 export default function ProjectCard({ project, stats, keys, statsFailed, onRestore, pending }: Props) {
   const last = stats?.last_received_at
   const live = last !== null && last !== undefined && Date.now() - new Date(last).getTime() < DAY
@@ -41,9 +41,6 @@ export default function ProjectCard({ project, stats, keys, statsFailed, onResto
         </span>
       </CardHeader>
       <CardContent className="flex flex-col gap-2 px-4">
-        <p className="truncate text-xs text-muted-foreground" title={project.allowed_origins.join(', ')}>
-          {project.allowed_origins.join(', ') || 'No origins'}
-        </p>
         {stats ? <Sparkline series={stats.series} /> : !statsFailed && <Skeleton className="h-10 w-full" />}
         <p className="text-sm">
           <span className="font-medium">{total === undefined ? '—' : `${formatValue(total)} events`}</span>
