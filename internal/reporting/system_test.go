@@ -154,7 +154,8 @@ func TestSystemDashboardGroups(t *testing.T) {
 }
 
 // TestSystemGroupNames: Views (id 1) founds the Reports group and gives
-// it its name (D6), so dashboards 1-5 read it and the others have none.
+// it its name (D6); the seven system dashboards are one group, so all of
+// them read it.
 func TestSystemGroupNames(t *testing.T) {
 	ctx := context.Background()
 	f := newSystemFixture(t)
@@ -169,7 +170,7 @@ func TestSystemGroupNames(t *testing.T) {
 			got[d.ID] = d.GroupTitle
 		}
 	}
-	want := map[int64]string{1: "Reports", 2: "Reports", 3: "Reports", 4: "Reports", 5: "Reports", 6: "", 7: ""}
+	want := map[int64]string{1: "Reports", 2: "Reports", 3: "Reports", 4: "Reports", 5: "Reports", 6: "Reports", 7: "Reports"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("system dashboard group titles = %v, want %v", got, want)
 	}

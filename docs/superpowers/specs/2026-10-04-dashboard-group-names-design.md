@@ -10,8 +10,8 @@ Date: 2026-10-04
   rename a group, you have to rename that tab, and its tab label changes
   with it.
 - **The system group of tabs reads "Views".** Views, Product, Users,
-  Groups and Retention are one group (group 1), and the sidebar names it
-  after its first tab. It was "Reports" before tabs (#95).
+  Groups, Retention, Web Vitals and Measures are one group (group 1), and
+  the sidebar names it after its first tab. It was "Reports" before tabs (#95).
 - **Group ids are not stable.** When the dashboard whose id a group uses
   leaves the group, the members left take the id of the first live one
   (`order.handOver`). Anything stored against a group id has to follow

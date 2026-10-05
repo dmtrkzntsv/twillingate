@@ -387,7 +387,7 @@ Tests:
 Tests:
 - `files_test.go`: a dashboard.json with `"title": "x"` → load error; `"group_title": "é"` → load error; `"group_title": "Ops"` → `FileDashboard.GroupTitle == "Ops"`.
 - `migrate_test.go`: `checkGroups` refuses a group_title on a tab.
-- `system_test.go`: after Migrate, dashboards 1–5 read `GroupTitle "Reports"` and the others read "".
+- `system_test.go`: after Migrate, all seven system dashboards (one group, id 1) read `GroupTitle "Reports"`.
 
 - [ ] **Step 9: Invariant test (D10)**
 
