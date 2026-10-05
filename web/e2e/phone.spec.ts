@@ -54,9 +54,9 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
   const created = await request.post('/api/projects', {
     headers: authHeaders(),
     data: {
-      name: `phone-${Date.now()} - a project name longer than a phone is wide`,
-      allowed_origins: ['https://www.a-long-subdomain.example.com', 'https://billing-test.another-long-name.example.com'],
-      attributes: ['months_since_signup_with_a_long_name'],
+      name: `phone-${Date.now()} - longer than a phone is wide on one line`,
+      allowed_origins: ['https://www.a-long-subdomain.example.com', 'https://billing-test.another-long-subdomain.example.com'],
+      attributes: ['months_since_signup_with_a_long_key'],
     },
   })
   expect(created.ok(), await created.text()).toBeTruthy()

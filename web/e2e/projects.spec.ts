@@ -20,7 +20,7 @@ test('creates a project, edits it, manages a key, archives and restores it', asy
 
   const name = `e2e-${Date.now()}`
   await page.getByRole('button', { name: 'New project' }).click()
-  await page.getByLabel('Name').fill(name)
+  await page.getByLabel('Name', { exact: true }).fill(name)
   await page.getByRole('button', { name: 'Add origin' }).click()
   await page.getByRole('textbox', { name: 'Origin 1' }).fill('https://e2e.example')
   await page.getByRole('button', { name: 'Create' }).click()
