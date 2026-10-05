@@ -201,7 +201,7 @@ func (s *Service) placeDashboard(ctx context.Context, o order, row store.Dashboa
 		// written, so their order is free.
 		i := slices.IndexFunc(keys, func(k store.DashboardKey) bool { return k.ID == row.ID })
 		keys[0], keys[i] = keys[i], keys[0]
-		if err := s.st.MoveDashboards(ctx, keys, a); err != nil {
+		if err := s.st.MoveDashboards(ctx, keys, store.GroupRekey{}, a); err != nil {
 			return err
 		}
 		if in.Title == "" {
@@ -256,7 +256,7 @@ func (s *Service) writePlaced(ctx context.Context, row store.Dashboard, heirs []
 	// MoveDashboards audits under its first key's dashboard: row, the one
 	// the caller moved.
 	keys := append([]store.DashboardKey{{ID: row.ID, GroupID: row.GroupID, SortKey: row.SortKey}}, heirs...)
-	if err := s.st.MoveDashboards(ctx, keys, a); err != nil {
+	if err := s.st.MoveDashboards(ctx, keys, store.GroupRekey{}, a); err != nil {
 		return err
 	}
 	return s.st.UpdateDashboard(ctx, row, a)

@@ -459,7 +459,7 @@ func TestMoveDashboardsSwapsSortKeysWithoutConflict(t *testing.T) {
 	err = db.MoveDashboards(ctx, []store.DashboardKey{
 		{ID: id1, GroupID: id1, SortKey: "b"},
 		{ID: id2, GroupID: id2, SortKey: "a"},
-	}, store.AuditEntry{Actor: "agent", Action: "dashboard.move"})
+	}, store.GroupRekey{}, store.AuditEntry{Actor: "agent", Action: "dashboard.move"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -718,7 +718,7 @@ func TestMoveDashboardsConflictWritesNothing(t *testing.T) {
 
 	err = db.MoveDashboards(ctx, []store.DashboardKey{
 		{ID: id1, GroupID: id1, SortKey: "b"}, // id2 still holds "b": not named in this call
-	}, store.AuditEntry{Actor: "agent", Action: "dashboard.move"})
+	}, store.GroupRekey{}, store.AuditEntry{Actor: "agent", Action: "dashboard.move"})
 	if !errors.Is(err, store.ErrConflict) {
 		t.Fatalf("MoveDashboards onto another row's sort key = %v, want ErrConflict", err)
 	}
@@ -760,7 +760,7 @@ func TestMoveDashboardsUnknownIDIsNotFound(t *testing.T) {
 	ctx := context.Background()
 	err := db.MoveDashboards(ctx, []store.DashboardKey{
 		{ID: 999999, GroupID: 999999, SortKey: "a"},
-	}, store.AuditEntry{Actor: "agent", Action: "dashboard.move"})
+	}, store.GroupRekey{}, store.AuditEntry{Actor: "agent", Action: "dashboard.move"})
 	if !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("MoveDashboards unknown id = %v, want ErrNotFound", err)
 	}
@@ -893,5 +893,149 @@ func TestInsertDashboardGroupRefusesMismatchedWidgetSlices(t *testing.T) {
 	}
 	if len(dashes) != 0 {
 		t.Errorf("dashboards after refused InsertDashboardGroup = %d, want 0 (nothing written)", len(dashes))
+	}
+}
+
+// userGroup inserts n user dashboards as one group, the first a group of
+// its own, and returns their ids.
+func userGroup(t *testing.T, db *DB, n int) []int64 {
+	t.Helper()
+	ds := make([]store.Dashboard, n)
+	for i := range ds {
+		ds[i] = store.Dashboard{Owner: store.OwnerUser, Title: fmt.Sprintf("T%d", i), SortKey: fmt.Sprintf("k%d", i)}
+	}
+	ids, err := db.InsertDashboardGroup(context.Background(), ds, nil,
+		store.AuditEntry{Actor: "agent", Action: "dashboard.group.create"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ids
+}
+
+func groupTitleOf(t *testing.T, db *DB, id int64) string {
+	t.Helper()
+	d, err := db.GetDashboard(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return d.GroupTitle
+}
+
+func TestSetGroupTitleUpsertsAndReadsBack(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	ids := userGroup(t, db, 2)
+	g := ids[0]
+	a := store.AuditEntry{Actor: "agent", Action: "dashboard.group.rename"}
+	if err := db.SetGroupTitle(ctx, g, "Ops", a); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range ids {
+		if got := groupTitleOf(t, db, id); got != "Ops" {
+			t.Errorf("GetDashboard(%d).GroupTitle = %q, want Ops", id, got)
+		}
+	}
+	all, err := db.ListDashboards(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range all {
+		if d.GroupID == g && d.GroupTitle != "Ops" {
+			t.Errorf("ListDashboards(%d).GroupTitle = %q, want Ops", d.ID, d.GroupTitle)
+		}
+	}
+	if err := db.SetGroupTitle(ctx, g, "Ops 2", a); err != nil {
+		t.Fatal(err)
+	}
+	if got := groupTitleOf(t, db, ids[1]); got != "Ops 2" {
+		t.Errorf("GroupTitle after second rename = %q, want Ops 2", got)
+	}
+	var rows int
+	if err := db.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM dashboard_groups`).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 1 {
+		t.Errorf("dashboard_groups rows = %d, want 1", rows)
+	}
+	var n int
+	if err := db.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM audit_log WHERE action='dashboard.group.rename' AND subject=?`,
+		"group/"+strconv.FormatInt(g, 10)).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Errorf("rename audit rows for group/%d = %d, want 2", g, n)
+	}
+}
+
+func TestMoveDashboardsRekeysName(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	ids := userGroup(t, db, 3)
+	if err := db.SetGroupTitle(ctx, ids[0], "Ops", store.AuditEntry{Actor: "agent", Action: "dashboard.group.rename"}); err != nil {
+		t.Fatal(err)
+	}
+	err := db.MoveDashboards(ctx, []store.DashboardKey{
+		{ID: ids[1], GroupID: ids[1], SortKey: "k1"},
+		{ID: ids[2], GroupID: ids[1], SortKey: "k2"},
+	}, store.GroupRekey{From: ids[0], To: ids[1]}, store.AuditEntry{Actor: "agent", Action: "dashboard.move"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range ids[1:] {
+		if got := groupTitleOf(t, db, id); got != "Ops" {
+			t.Errorf("dashboard %d GroupTitle = %q, want Ops", id, got)
+		}
+	}
+	if got := groupTitleOf(t, db, ids[0]); got != "" {
+		t.Errorf("dashboard %d (left behind) GroupTitle = %q, want none", ids[0], got)
+	}
+}
+
+func TestMoveDashboardsZeroRekeyLeavesNames(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	ids := userGroup(t, db, 2)
+	if err := db.SetGroupTitle(ctx, ids[0], "Ops", store.AuditEntry{Actor: "agent", Action: "dashboard.group.rename"}); err != nil {
+		t.Fatal(err)
+	}
+	err := db.MoveDashboards(ctx, []store.DashboardKey{
+		{ID: ids[1], GroupID: ids[0], SortKey: "k9"},
+	}, store.GroupRekey{}, store.AuditEntry{Actor: "agent", Action: "dashboard.move"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := groupNames(t, db); len(got) != 1 || got[ids[0]] != "Ops" {
+		t.Errorf("names after a zero-rekey move = %v, want only %d=Ops", got, ids[0])
+	}
+}
+
+func TestInsertDashboardGroupWritesName(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	a := store.AuditEntry{Actor: "agent", Action: "dashboard.group.create"}
+	ids, err := db.InsertDashboardGroup(ctx, []store.Dashboard{
+		{Owner: store.OwnerUser, Title: "A", SortKey: "a", GroupTitle: "Ops (copy)"},
+		{Owner: store.OwnerUser, Title: "B", SortKey: "b"},
+	}, nil, a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range ids {
+		if got := groupTitleOf(t, db, id); got != "Ops (copy)" {
+			t.Errorf("dashboard %d GroupTitle = %q, want Ops (copy)", id, got)
+		}
+	}
+	more, err := db.InsertDashboardGroup(ctx, []store.Dashboard{
+		{Owner: store.OwnerUser, Title: "C", SortKey: "c"},
+	}, nil, a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := groupTitleOf(t, db, more[0]); got != "" {
+		t.Errorf("unnamed group GroupTitle = %q, want none", got)
+	}
+	if got := groupNames(t, db); len(got) != 1 {
+		t.Errorf("name rows = %v, want one", got)
 	}
 }

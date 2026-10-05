@@ -31,13 +31,14 @@ type rowScanner interface{ Scan(dest ...any) error }
 const dashboardCols = `d.id, d.owner, d.title, d.sort_key, d.group_id, COALESCE(d.last_project_id,0),
 	COALESCE(d.last_range,''), COALESCE(d.last_from,''), COALESCE(d.last_to,''),
 	d.created_at, d.updated_at, COALESCE(d.archived_at,''),
-	(SELECT COUNT(*) FROM widgets w WHERE w.dashboard_id=d.id AND w.archived_at IS NULL)`
+	(SELECT COUNT(*) FROM widgets w WHERE w.dashboard_id=d.id AND w.archived_at IS NULL),
+	COALESCE((SELECT g.title FROM dashboard_groups g WHERE g.group_id=d.group_id),'')`
 
 func scanDashboard(s rowScanner) (store.Dashboard, error) {
 	var d store.Dashboard
 	err := s.Scan(&d.ID, &d.Owner, &d.Title, &d.SortKey, &d.GroupID, &d.LastProjectID,
 		&d.LastRange, &d.LastFrom, &d.LastTo, &d.CreatedAt, &d.UpdatedAt,
-		&d.ArchivedAt, &d.LiveWidgets)
+		&d.ArchivedAt, &d.LiveWidgets, &d.GroupTitle)
 	return d, err
 }
 
@@ -315,15 +316,24 @@ func (d *DB) SetDashboardsArchived(ctx context.Context, ids []int64, archived bo
 
 // MoveDashboards rewrites group_id and sort_key of every row named in ks,
 // in one transaction, with one audit row (Subject "dashboard/<ks[0].ID>").
+// A non-zero rekey moves the group's name row to its new id first.
 // Sort keys are parked to '~'||id first (the same trick SyncReporting
 // uses at reporting_sync.go:52), so reassigning many rows' keys in one
 // pass — including swapping two rows' keys — can never collide with the
 // unique (owner, sort_key) index mid-way.
-func (d *DB) MoveDashboards(ctx context.Context, ks []store.DashboardKey, a store.AuditEntry) error {
+func (d *DB) MoveDashboards(ctx context.Context, ks []store.DashboardKey, rekey store.GroupRekey, a store.AuditEntry) error {
 	if len(ks) == 0 {
 		return nil
 	}
 	return d.tx(ctx, func(tx *sql.Tx) error {
+		// The name moves before the rows do, so migration 031's triggers
+		// find no row at the old id once its last member has left.
+		if rekey != (store.GroupRekey{}) {
+			if _, err := tx.ExecContext(ctx,
+				`UPDATE dashboard_groups SET group_id=? WHERE group_id=?`, rekey.To, rekey.From); err != nil {
+				return fmt.Errorf("move dashboards: rekey group %d name: %w", rekey.From, err)
+			}
+		}
 		ids := make([]int64, len(ks))
 		for i, k := range ks {
 			ids[i] = k.ID
@@ -391,10 +401,32 @@ func (d *DB) InsertDashboardGroup(ctx context.Context, ds []store.Dashboard, ws 
 		if len(ids) == 0 {
 			return nil
 		}
+		if ds[0].GroupTitle != "" {
+			if _, err := tx.ExecContext(ctx,
+				`INSERT INTO dashboard_groups (group_id, title) VALUES (?, ?)`, groupID, ds[0].GroupTitle); err != nil {
+				return fmt.Errorf("insert dashboard group: name group %d: %w", groupID, err)
+			}
+		}
 		a.Subject = fmt.Sprintf("dashboard/%d", ids[0])
 		return audit(ctx, tx, a)
 	})
 	return ids, err
+}
+
+// SetGroupTitle names group groupID, inserting its row on the first
+// rename and updating it after (spec 2026-10-04 D1, D5). The caller has
+// checked the title; no call clears a name, which goes only with the
+// group's last dashboard (migration 031's triggers).
+func (d *DB) SetGroupTitle(ctx context.Context, groupID int64, title string, a store.AuditEntry) error {
+	return d.tx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO dashboard_groups (group_id, title) VALUES (?, ?)
+			 ON CONFLICT(group_id) DO UPDATE SET title=excluded.title`, groupID, title); err != nil {
+			return fmt.Errorf("set group %d title: %w", groupID, err)
+		}
+		a.Subject = fmt.Sprintf("group/%d", groupID)
+		return audit(ctx, tx, a)
+	})
 }
 
 // InsertWidget inserts one widget onto an existing dashboard. a's Subject
