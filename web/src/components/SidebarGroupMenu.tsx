@@ -1,4 +1,4 @@
-import { ArchiveIcon, ArrowDownIcon, ArrowUpIcon, CopyIcon, MoreHorizontalIcon, Trash2Icon } from 'lucide-react'
+import { ArchiveIcon, ArrowDownIcon, ArrowUpIcon, CopyIcon, MoreHorizontalIcon, EyeOffIcon } from 'lucide-react'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -21,12 +21,12 @@ interface Props {
 /**
  * The sidebar entry's "…" menu (D10), acting on the whole group named by
  * its first live member: Duplicate on both kinds, Archive on a user group
- * and Delete on a system one, Move up and Move down added for a user
+ * and Hide on a system one, Move up and Move down added for a user
  * group. Duplicate always copies the whole group (`wholeGroup`) and never
  * archives anything — to replace a system group in the sidebar, Duplicate
- * it, then Delete the original. Delete archives the system group whole
+ * it, then Hide the original. Hide archives the system group whole
  * (a system dashboard refuses to archive alone); it stays off the Archive
- * page and comes back from the Dashboards gallery's "Add to sidebar".
+ * page and comes back from the Dashboards gallery's "Show in sidebar".
  * `showOnHover` keeps the trigger out of the way until hovered on
  * desktop; the sidebar shows it unconditionally on phones.
  */
@@ -71,11 +71,11 @@ export default function SidebarGroupMenu({ group, userGroups, currentId }: Props
           disabled={pending}
           onClick={() => {
             if (navigateTo) close()
-            void archive(first, { wholeGroup: true, navigateTo, deleted: group.owner === 'system' })
+            void archive(first, { wholeGroup: true, navigateTo, hidden: group.owner === 'system' })
           }}
         >
-          {group.owner === 'system' ? <Trash2Icon /> : <ArchiveIcon />}
-          {group.owner === 'system' ? 'Delete' : 'Archive'}
+          {group.owner === 'system' ? <EyeOffIcon /> : <ArchiveIcon />}
+          {group.owner === 'system' ? 'Hide' : 'Archive'}
         </DropdownMenuItem>
         {group.owner === 'user' && (
           <>

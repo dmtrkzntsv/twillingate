@@ -53,32 +53,32 @@ function renderGallery() {
 }
 
 describe('DashboardsGallery, templates', () => {
-  it('lists a live and a deleted system group alike, the deleted one marked not in the sidebar', async () => {
+  it('lists a live and a hidden system group alike, the hidden one marked hidden', async () => {
     mockApi()
     renderGallery()
 
     const views = (await screen.findByRole('heading', { name: 'Views' })).closest('li')!
-    expect(within(views).queryByText(/not in the sidebar/)).not.toBeInTheDocument()
-    expect(within(views).queryByRole('button', { name: /Archive|Restore|Delete/ })).not.toBeInTheDocument()
+    expect(within(views).queryByText(/hidden/)).not.toBeInTheDocument()
+    expect(within(views).queryByRole('button', { name: /Archive|Restore|Hide/ })).not.toBeInTheDocument()
 
     const reach = screen.getByRole('heading', { name: 'Reach' }).closest('li')!
-    expect(within(reach).getByText('1 widget · not in the sidebar')).toBeInTheDocument()
+    expect(within(reach).getByText('1 widget · hidden')).toBeInTheDocument()
     expect(within(reach).queryByText(/archived/i)).not.toBeInTheDocument()
   })
 
-  it('adds a deleted group back to the sidebar from its "…" menu, and offers that only there', async () => {
+  it('shows a hidden group in the sidebar again from its "…" menu, and offers that only there', async () => {
     mockApi()
     renderGallery()
 
     await screen.findByRole('heading', { name: 'Views' })
     const main = within(screen.getByRole('main'))
     await userEvent.click(main.getByRole('button', { name: 'Views actions' }))
-    expect(screen.queryByRole('menuitem', { name: 'Add to sidebar' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: 'Show in sidebar' })).not.toBeInTheDocument()
     await userEvent.keyboard('{Escape}')
 
     await userEvent.click(main.getByRole('button', { name: 'Reach actions' }))
-    expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Add to sidebar', 'Duplicate dashboard'])
-    await userEvent.click(screen.getByRole('menuitem', { name: 'Add to sidebar' }))
+    expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Show in sidebar', 'Duplicate dashboard'])
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Show in sidebar' }))
 
     expect(restore).toHaveBeenCalledWith(20, true)
   })

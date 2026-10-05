@@ -17,7 +17,7 @@ interface Group {
 
 /**
  * The user's dashboards grouped by `group_id`, in list order, keeping only
- * the groups with an archived member (D17a). A system group is deleted,
+ * the groups with an archived member (D17a). A system group is hidden,
  * not archived, and comes back from the Dashboards gallery, so it is never
  * here.
  */
@@ -99,7 +99,7 @@ export default function Archive() {
           <h1 className="text-xl font-semibold tracking-tight">Archive</h1>
           <p className="max-w-prose text-sm text-muted-foreground">
             Archived dashboards are out of the sidebar. Restore one to put it back.
-            {purgeDays ? ` They are deleted after ${purgeDays} days.` : ''} A deleted built-in dashboard comes back from Gallery › Dashboards.
+            {purgeDays ? ` They are deleted after ${purgeDays} days.` : ''} A hidden built-in dashboard comes back from Gallery › Dashboards.
           </p>
         </header>
         {groups.length === 0 ? (

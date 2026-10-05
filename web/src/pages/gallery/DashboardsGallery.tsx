@@ -13,7 +13,7 @@ interface SystemGroup {
 }
 
 /**
- * Every system dashboard grouped by `group_id`, in list order, deleted
+ * Every system dashboard grouped by `group_id`, in list order, hidden
  * (archived) ones included: a template is a template whether or not it is
  * in the sidebar right now (D17).
  */
@@ -28,7 +28,7 @@ function systemGroups(dashboards: DashboardInfo[]): SystemGroup[] {
   return groups
 }
 
-const NOT_IN_SIDEBAR = 'not in the sidebar'
+const HIDDEN = 'hidden'
 
 const widgets = (d: DashboardInfo) => `${d.widgets} ${d.widgets === 1 ? 'widget' : 'widgets'}`
 
@@ -36,7 +36,7 @@ const widgets = (d: DashboardInfo) => `${d.widgets} ${d.widgets === 1 ? 'widget'
  * `/gallery/dashboards`: every system group as a template, shown as on the
  * Archive page (D17): a group of one is a row, a larger group a card with
  * its tabs. The group's "…" menu duplicates the whole group, and adds a
- * group deleted from the sidebar back to it; a tab's copies that tab to a
+ * group hidden from the sidebar back to it; a tab's copies that tab to a
  * new dashboard. Reporting dev, which takes no writes, shows no menu.
  */
 export default function DashboardsGallery() {
@@ -58,11 +58,11 @@ export default function DashboardsGallery() {
         <ul className="flex flex-col gap-2">
           {groups.map((g) => {
             const first = g.members[0]
-            // A system group is deleted (archived) only whole.
-            const deleted = g.members.every((m) => m.archived_at)
-            const groupMenu = writable && <TemplateMenu dashboard={first} wholeGroup deleted={deleted} />
+            // A system group is hidden (archived) only whole.
+            const hidden = g.members.every((m) => m.archived_at)
+            const groupMenu = writable && <TemplateMenu dashboard={first} wholeGroup hidden={hidden} />
             if (g.members.length === 1) {
-              const detail = [widgets(first), deleted && NOT_IN_SIDEBAR].filter(Boolean).join(' · ')
+              const detail = [widgets(first), hidden && HIDDEN].filter(Boolean).join(' · ')
               return <LoneDashboard key={g.groupId} row={{ ...first, detail, action: groupMenu }} />
             }
             const rows: GroupRow[] = g.members.map((d) => ({
@@ -70,7 +70,7 @@ export default function DashboardsGallery() {
               detail: widgets(d),
               action: writable && <TemplateMenu dashboard={d} />,
             }))
-            const meta = [`${g.members.length} tabs`, deleted && NOT_IN_SIDEBAR].filter(Boolean).join(' · ')
+            const meta = [`${g.members.length} tabs`, hidden && HIDDEN].filter(Boolean).join(' · ')
             return <DashboardGroup key={g.groupId} title={first.title} meta={meta} action={groupMenu} rows={rows} />
           })}
         </ul>

@@ -7,7 +7,7 @@ import {
   FolderInputIcon,
   MoreHorizontalIcon,
   RefreshCwIcon,
-  Trash2Icon,
+  EyeOffIcon,
 } from 'lucide-react'
 import {
   DropdownMenu,
@@ -86,7 +86,7 @@ interface GroupMenuProps {
  * every …" is a checkmark that reloads the dashboard on that interval
  * while the window has focus. "Duplicate dashboard" copies every tab and
  * opens the copy, never archiving anything; "Archive dashboard" takes the
- * whole group out of the sidebar and lands on "/dashboards" ("Delete
+ * whole group out of the sidebar and lands on "/dashboards" ("Hide
  * dashboard" on a system group, which comes back from the gallery). An
  * archived group offers neither, since its banner already brings it back.
  */
@@ -122,11 +122,11 @@ export function GroupMenu({ dashboard, editable, refresh, autoRefresh }: GroupMe
               <DropdownMenuItem
                 disabled={pending}
                 onClick={() =>
-                  void archive(first, { wholeGroup: true, navigateTo: '/dashboards', deleted: dashboard.owner === 'system' })
+                  void archive(first, { wholeGroup: true, navigateTo: '/dashboards', hidden: dashboard.owner === 'system' })
                 }
               >
-                {dashboard.owner === 'system' ? <Trash2Icon /> : <ArchiveIcon />}
-                {dashboard.owner === 'system' ? 'Delete dashboard' : 'Archive dashboard'}
+                {dashboard.owner === 'system' ? <EyeOffIcon /> : <ArchiveIcon />}
+                {dashboard.owner === 'system' ? 'Hide dashboard' : 'Archive dashboard'}
               </DropdownMenuItem>
             )}
           </>

@@ -183,7 +183,7 @@ describe('Archive, a user group', () => {
 })
 
 describe('Archive, system groups', () => {
-  it('leaves out every system group, deleted or live: a deleted one comes back from the gallery', async () => {
+  it('leaves out every system group, hidden or live: a hidden one comes back from the gallery', async () => {
     mockApi()
     renderArchive()
 

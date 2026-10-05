@@ -1,4 +1,4 @@
-import { CopyIcon, MoreHorizontalIcon, PanelLeftIcon } from 'lucide-react'
+import { CopyIcon, MoreHorizontalIcon, EyeIcon } from 'lucide-react'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -12,8 +12,8 @@ interface Props {
   dashboard: { dashboard_id: number; title: string }
   /** The group's menu: duplicate all of it. Otherwise one tab's: copy that tab alone. */
   wholeGroup?: boolean
-  /** The group was deleted from the sidebar: its menu offers "Add to sidebar". */
-  deleted?: boolean
+  /** The group is hidden from the sidebar: its menu offers "Show in sidebar". */
+  hidden?: boolean
 }
 
 /**
@@ -21,11 +21,11 @@ interface Props {
  * anything. A group's (on its card, or on a group of one) offers
  * "Duplicate dashboard", copying the whole system group (`wholeGroup`); a
  * tab's offers "Copy to new dashboard", that tab as a dashboard of its
- * own. Either opens the copy. A group deleted from the sidebar (archived
- * whole) also offers "Add to sidebar", which restores it: the gallery is
- * where a deleted system dashboard comes back from.
+ * own. Either opens the copy. A group hidden from the sidebar (archived
+ * whole) also offers "Show in sidebar", which restores it: the gallery is
+ * where a hidden system dashboard comes back from.
  */
-export default function TemplateMenu({ dashboard, wholeGroup = false, deleted = false }: Props) {
+export default function TemplateMenu({ dashboard, wholeGroup = false, hidden = false }: Props) {
   const { duplicate, restore, pending } = useDashboardActions()
   return (
     <DropdownMenu>
@@ -40,10 +40,10 @@ export default function TemplateMenu({ dashboard, wholeGroup = false, deleted = 
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
-        {wholeGroup && deleted && (
+        {wholeGroup && hidden && (
           <DropdownMenuItem disabled={pending} onClick={() => void restore(dashboard.dashboard_id, true)}>
-            <PanelLeftIcon />
-            Add to sidebar
+            <EyeIcon />
+            Show in sidebar
           </DropdownMenuItem>
         )}
         <DropdownMenuItem

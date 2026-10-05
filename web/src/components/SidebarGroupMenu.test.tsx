@@ -61,11 +61,11 @@ function renderMenu(group: Group, currentId: number) {
 }
 
 describe('SidebarGroupMenu, system group', () => {
-  it('has exactly Duplicate and Delete: a system group is deleted, not archived', async () => {
+  it('has exactly Duplicate and Hide: a system group is hidden, not archived', async () => {
     renderMenu(systemGroup, 99)
     await userEvent.click(screen.getByRole('button', { name: 'Views actions' }))
 
-    expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Duplicate', 'Delete'])
+    expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Duplicate', 'Hide'])
   })
 
   it('duplicate calls duplicate(first, { wholeGroup: true }), copying every tab', async () => {
@@ -76,20 +76,20 @@ describe('SidebarGroupMenu, system group', () => {
     expect(duplicate).toHaveBeenCalledWith(systemGroup.members[0], { wholeGroup: true })
   })
 
-  it('delete while viewing one of its tabs archives the whole group and navigates to /', async () => {
+  it('hide while viewing one of its tabs archives the whole group and navigates to /', async () => {
     renderMenu(systemGroup, 2)
     await userEvent.click(screen.getByRole('button', { name: 'Views actions' }))
-    await userEvent.click(screen.getByText('Delete'))
+    await userEvent.click(screen.getByText('Hide'))
 
-    expect(archive).toHaveBeenCalledWith(systemGroup.members[0], { wholeGroup: true, navigateTo: '/dashboards', deleted: true })
+    expect(archive).toHaveBeenCalledWith(systemGroup.members[0], { wholeGroup: true, navigateTo: '/dashboards', hidden: true })
   })
 
-  it('delete while elsewhere does not navigate', async () => {
+  it('hide while elsewhere does not navigate', async () => {
     renderMenu(systemGroup, 99)
     await userEvent.click(screen.getByRole('button', { name: 'Views actions' }))
-    await userEvent.click(screen.getByText('Delete'))
+    await userEvent.click(screen.getByText('Hide'))
 
-    expect(archive).toHaveBeenCalledWith(systemGroup.members[0], { wholeGroup: true, navigateTo: undefined, deleted: true })
+    expect(archive).toHaveBeenCalledWith(systemGroup.members[0], { wholeGroup: true, navigateTo: undefined, hidden: true })
   })
 })
 
@@ -125,7 +125,7 @@ describe('SidebarGroupMenu, user group', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Marketing actions' }))
     await userEvent.click(screen.getByText('Archive'))
 
-    expect(archive).toHaveBeenCalledWith(userGroupA.members[0], { wholeGroup: true, navigateTo: '/dashboards', deleted: false })
+    expect(archive).toHaveBeenCalledWith(userGroupA.members[0], { wholeGroup: true, navigateTo: '/dashboards', hidden: false })
   })
 
   it('clicking Move down on the first group calls move with the second group as after', async () => {
@@ -187,22 +187,22 @@ describe('SidebarGroupMenu, phone drawer (D37)', () => {
     expect(screen.getByTestId('drawer')).toHaveTextContent('closed')
   })
 
-  it('closes the drawer when Delete navigates away', async () => {
+  it('closes the drawer when Hide navigates away', async () => {
     renderOnPhone(systemGroup, 2)
     await waitFor(() => expect(screen.getByTestId('drawer')).toHaveTextContent('open'))
 
     await userEvent.click(screen.getByRole('button', { name: 'Views actions' }))
-    await userEvent.click(screen.getByText('Delete'))
+    await userEvent.click(screen.getByText('Hide'))
 
     expect(screen.getByTestId('drawer')).toHaveTextContent('closed')
   })
 
-  it('leaves the drawer open when Delete does not navigate', async () => {
+  it('leaves the drawer open when Hide does not navigate', async () => {
     renderOnPhone(systemGroup, 99)
     await waitFor(() => expect(screen.getByTestId('drawer')).toHaveTextContent('open'))
 
     await userEvent.click(screen.getByRole('button', { name: 'Views actions' }))
-    await userEvent.click(screen.getByText('Delete'))
+    await userEvent.click(screen.getByText('Hide'))
 
     expect(screen.getByTestId('drawer')).toHaveTextContent('open')
   })

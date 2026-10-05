@@ -110,7 +110,7 @@ test.afterEach(async ({ request }) => {
   }
 })
 
-test('duplicates Views from the sidebar without deleting it, then deletes it and adds it back from the gallery', async ({ page, request }) => {
+test('duplicates Views from the sidebar without hiding it, then hides it and shows it again from the gallery', async ({ page, request }) => {
   const before = await dashboardIds(request)
   const viewsId = before.get('Views')
   expect(viewsId, 'no dashboard titled Views').toBeDefined()
@@ -138,14 +138,14 @@ test('duplicates Views from the sidebar without deleting it, then deletes it and
     page.getByRole('link', { name: 'Views (copy)', exact: true }).and(page.locator(`[href="/app/dashboards/${copyId}"]`))
   ).toHaveCount(1)
 
-  // Replacing it is a second, explicit step: delete the original.
+  // Replacing it is a second, explicit step: hide the original.
   await page.getByRole('link', { name: 'Views', exact: true }).hover()
   await page.getByRole('button', { name: 'Views actions' }).click()
-  await page.getByRole('menuitem', { name: 'Delete' }).click()
+  await page.getByRole('menuitem', { name: 'Hide' }).click()
 
   await expect(page.getByRole('link', { name: 'Views', exact: true })).toHaveCount(0)
 
-  // A deleted system group is not on the Archive page: it comes back from the gallery.
+  // A hidden system group is not on the Archive page: it comes back from the gallery.
   await page.goto('/app/archive')
   await page.waitForLoadState('networkidle')
   await expect(page.getByRole('main').getByRole('link', { name: 'Views', exact: true })).toHaveCount(0)
@@ -153,13 +153,13 @@ test('duplicates Views from the sidebar without deleting it, then deletes it and
   await page.goto('/app/gallery/dashboards')
   await page.waitForLoadState('networkidle')
   const viewsGroup = page.getByRole('main').getByRole('listitem', { name: 'Views', exact: true })
-  await expect(viewsGroup.getByText('5 tabs · not in the sidebar')).toBeVisible()
+  await expect(viewsGroup.getByText('7 tabs · hidden')).toBeVisible()
   await viewsGroup.getByRole('button', { name: 'Views actions', exact: true }).click()
-  await page.getByRole('menuitem', { name: 'Add to sidebar' }).click()
+  await page.getByRole('menuitem', { name: 'Show in sidebar' }).click()
 
   // The gallery card links to its Views tab too; count the sidebar's alone.
   await expect(page.locator('[data-sidebar="sidebar"]').getByRole('link', { name: 'Views', exact: true })).toHaveCount(1)
-  await expect(viewsGroup.getByText('5 tabs', { exact: true })).toBeVisible()
+  await expect(viewsGroup.getByText('7 tabs', { exact: true })).toBeVisible()
 })
 
 test('archives a user tab and undoes it', async ({ page, request }) => {
@@ -283,7 +283,7 @@ test('copies a system group and one of its tabs from the gallery while it is arc
 
   const main = page.getByRole('main')
   const viewsGroup = main.getByRole('listitem', { name: 'Views', exact: true })
-  // The Dashboards gallery shows a deleted group as not in the sidebar, never "archived" (D17).
+  // The Dashboards gallery shows a hidden group as hidden, never "archived" (D17).
   await expect(viewsGroup.getByText(/archived/i)).toHaveCount(0)
   await viewsGroup.getByRole('button', { name: 'Views actions', exact: true }).click()
   await page.getByRole('menuitem', { name: 'Duplicate dashboard' }).click()

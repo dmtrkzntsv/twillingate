@@ -232,19 +232,19 @@ describe('GroupMenu', () => {
 
     await openGroupMenu()
     await userEvent.click(screen.getByText('Archive dashboard'))
-    expect(archive).toHaveBeenCalledWith(marketingTabs[0], { wholeGroup: true, navigateTo: '/dashboards', deleted: false })
+    expect(archive).toHaveBeenCalledWith(marketingTabs[0], { wholeGroup: true, navigateTo: '/dashboards', hidden: false })
   })
 
-  it('deletes a system group instead, whole', async () => {
+  it('hides a system group instead, whole', async () => {
     renderGroupMenu(product)
     await openGroupMenu()
-    expect(items()).toEqual(['Refresh', 'Duplicate dashboard', 'Delete dashboard'])
+    expect(items()).toEqual(['Refresh', 'Duplicate dashboard', 'Hide dashboard'])
 
-    await userEvent.click(screen.getByText('Delete dashboard'))
+    await userEvent.click(screen.getByText('Hide dashboard'))
     expect(archive).toHaveBeenCalledWith(expect.objectContaining({ dashboard_id: product.tabs[0].dashboard_id }), {
       wholeGroup: true,
       navigateTo: '/dashboards',
-      deleted: true,
+      hidden: true,
     })
   })
 

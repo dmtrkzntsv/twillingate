@@ -13,9 +13,9 @@ export interface DashboardActions {
   duplicate(d: { dashboard_id: number; title: string }, opts?: { wholeGroup?: boolean; groupId?: number }): Promise<void>
   /**
    * Archives the dashboard (or its group with `wholeGroup`); shows an Undo toast and navigates when asked (D1, D12-D13).
-   * With `deleted`, the toast says "Deleted": the page's word for archiving a system group, which comes back from the gallery.
+   * With `hidden`, the toast says "Hidden": the page's word for archiving a system group, which comes back from the gallery.
    */
-  archive(d: { dashboard_id: number; title: string }, opts: { wholeGroup?: boolean; navigateTo?: string; deleted?: boolean }): Promise<void>
+  archive(d: { dashboard_id: number; title: string }, opts: { wholeGroup?: boolean; navigateTo?: string; hidden?: boolean }): Promise<void>
   /** Restores the dashboard, or its whole group (D1, tabs D14). */
   restore(id: number, wholeGroup?: boolean): Promise<void>
   /**
@@ -80,10 +80,10 @@ export function useDashboardActions(): DashboardActions {
   )
 
   const archive = useCallback(
-    (d: { dashboard_id: number; title: string }, opts: { wholeGroup?: boolean; navigateTo?: string; deleted?: boolean }) =>
+    (d: { dashboard_id: number; title: string }, opts: { wholeGroup?: boolean; navigateTo?: string; hidden?: boolean }) =>
       run(async () => {
         await endpoints.archive(d.dashboard_id, opts.wholeGroup)
-        toast(`${opts.deleted ? 'Deleted' : 'Archived'} '${d.title}'`, {
+        toast(`${opts.hidden ? 'Hidden' : 'Archived'} '${d.title}'`, {
           action: { label: 'Undo', onClick: () => void restore(d.dashboard_id, opts.wholeGroup) },
         })
         const to = opts.navigateTo
