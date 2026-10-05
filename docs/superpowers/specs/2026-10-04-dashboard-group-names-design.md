@@ -87,7 +87,10 @@ Date: 2026-10-04
   They cover every way a group loses its last dashboard: the purge of
   archived dashboards (`purge.go`), a system dashboard dropped by a
   release (`reporting_sync.go`), a group of one joining another group,
-  and any write by an older binary after a rollback. Migration 022 is the
+  and deletion by an older binary after a rollback. They do not cover an
+  older binary rekeying a group's first tab out of it: the older binary
+  does not move names, so the new group of one takes the name with it
+  (see UPGRADES.md). Migration 022 is the
   precedent for a trigger on this table. A rebuild of `dashboards` must
   recreate these triggers, as it must recreate 022's.
 

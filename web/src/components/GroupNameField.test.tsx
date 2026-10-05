@@ -1,12 +1,14 @@
 import { describe, expect, it, vi } from 'vitest'
-import { screen, waitFor } from '@testing-library/react'
+import { fireEvent, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { renderWithProviders } from '@/test/render'
 import GroupNameField from './GroupNameField'
 
-function setup(onRename = vi.fn().mockResolvedValue(true)) {
+function setup(onRename = vi.fn().mockResolvedValue(true), props: { named?: boolean; pending?: boolean } = {}) {
   const onDone = vi.fn()
-  renderWithProviders(<GroupNameField name="Marketing" onRename={onRename} onDone={onDone} />)
+  renderWithProviders(
+    <GroupNameField name="Marketing" named={props.named ?? true} pending={props.pending} onRename={onRename} onDone={onDone} />
+  )
   return { onRename, onDone, field: screen.getByRole('textbox', { name: 'Group name' }) }
 }
 
@@ -36,11 +38,26 @@ describe('GroupNameField', () => {
     expect(onRename).not.toHaveBeenCalled()
   })
 
-  it('closes without a save when the name is unchanged', async () => {
+  it('closes without a save when a named group is unchanged', async () => {
     const user = userEvent.setup()
     const { onRename, onDone } = setup()
     await user.keyboard('{Enter}')
     expect(onDone).toHaveBeenCalledTimes(1)
+    expect(onRename).not.toHaveBeenCalled()
+  })
+
+  it('sends the unchanged fallback for an unnamed group, which names it', async () => {
+    const user = userEvent.setup()
+    const { onRename, onDone } = setup(undefined, { named: false })
+    await user.keyboard('{Enter}')
+    expect(onRename).toHaveBeenCalledWith('Marketing')
+    await waitFor(() => expect(onDone).toHaveBeenCalledTimes(1))
+  })
+
+  it('sends nothing while a save is pending, so a second Enter cannot double-send', () => {
+    const { onRename, field } = setup(undefined, { pending: true })
+    fireEvent.change(field, { target: { value: 'Ops' } })
+    fireEvent.submit(field.closest('form')!)
     expect(onRename).not.toHaveBeenCalled()
   })
 

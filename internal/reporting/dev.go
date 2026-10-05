@@ -204,11 +204,13 @@ func devDashboardRow(fd FileDashboard, groupTitles map[int64]string) store.Dashb
 }
 
 // devGroupTitles maps each group id to the name its founding file gives
-// it (D6), for the groups that have one.
+// it (D6), for the groups that have one. A file that is not its group's
+// founder (`group` set and not its own id) is skipped, as the release
+// refuses its `group_title` (checkGroups).
 func devGroupTitles(fds []FileDashboard) map[int64]string {
 	m := map[int64]string{}
 	for _, x := range fds {
-		if x.GroupTitle != "" {
+		if x.GroupTitle != "" && (x.Group == 0 || x.Group == x.ID) {
 			m[x.groupID()] = x.GroupTitle
 		}
 	}

@@ -21,8 +21,8 @@ interface Props {
 }
 
 /**
- * The sidebar entry's "…" menu (D10), acting on the whole group named by
- * its first live member: Rename first on a user group (its name field,
+ * The sidebar entry's "…" menu (D10), acting on the whole group, named
+ * by its `group_title`, else its first live member's title: Rename first on a user group (its name field,
  * D9), Duplicate on both kinds, Archive on a user group
  * and Hide on a system one, Move up and Move down added for a user
  * group. Duplicate always copies the whole group (`wholeGroup`) and never

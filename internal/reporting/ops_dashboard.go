@@ -454,8 +454,11 @@ func (s *Service) duplicateGroup(ctx context.Context, actor string, src store.Da
 				LastProjectID: m.LastProjectID, LastRange: m.LastRange, LastFrom: m.LastFrom, LastTo: m.LastTo,
 			}
 		}
-		if src.GroupTitle != "" {
-			ds[0].GroupTitle = src.GroupTitle + " (copy)" // D7: the name is copied like the first tab's title
+		// D7: the name is copied like the first tab's title. Taken from this
+		// attempt's own read (every member row carries the group's name), not
+		// from src, which a concurrent rename may have outdated.
+		if len(members) > 0 && members[0].GroupTitle != "" {
+			ds[0].GroupTitle = members[0].GroupTitle + " (copy)"
 		}
 
 		o, err := s.readOrder(ctx)

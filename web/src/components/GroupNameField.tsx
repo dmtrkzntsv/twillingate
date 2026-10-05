@@ -6,6 +6,12 @@ import { nameTooShort } from '@/lib/arrange'
 
 interface Props {
   name: string
+  /**
+   * Whether the group already has a name of its own. An unnamed group's
+   * field starts on the first tab's title, and saving that unchanged still
+   * names the group (D5); a named group's unchanged text closes quietly.
+   */
+  named: boolean
   /** Resolves true when saved, so the field closes; false keeps it open. */
   onRename: (name: string) => Promise<boolean>
   /** Closes the field: after a save, on Escape or ×, or when nothing changed. */
@@ -17,16 +23,18 @@ interface Props {
  * A sidebar group's name as a field, in place of its entry (group names
  * D9): Enter or ✓ saves, Escape or × leaves it as it was. A name under 2
  * characters, blank included, is never sent: a group's name can be
- * replaced, not cleared (D5).
+ * replaced, not cleared (D5). Unchanged text closes without a request only
+ * for a group that already has a name; for an unnamed one it names the
+ * group with the first tab's title.
  */
-export default function GroupNameField({ name, onRename, onDone, pending }: Props) {
+export default function GroupNameField({ name, named, onRename, onDone, pending }: Props) {
   const [draft, setDraft] = useState(name)
   const invalid = nameTooShort(draft)
   const submit = async (e: FormEvent) => {
     e.preventDefault()
-    if (invalid) return
+    if (invalid || pending) return
     const next = draft.trim()
-    if (next === name) return onDone()
+    if (named && next === name) return onDone()
     if (await onRename(next)) onDone()
   }
   return (

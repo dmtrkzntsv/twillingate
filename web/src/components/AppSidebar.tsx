@@ -178,6 +178,7 @@ export default function AppSidebar({ dashboards, currentId, readOnly = false }: 
                         <SidebarMenuItem key={g.groupId}>
                           <GroupNameField
                             name={groupName(g.members)}
+                            named={g.members.some((m) => !!m.group_title)}
                             pending={pending}
                             onRename={(title) => renameGroup(g.members[0].dashboard_id, title)}
                             onDone={() => setRenaming(null)}

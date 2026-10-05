@@ -576,3 +576,6 @@ group's name lives (`list_dashboards` and `get_dashboard` answer it as
 After the upgrade the built-in group's sidebar entry reads "Reports" instead
 of "Views"; its tabs are unchanged. Dashboard titles and group names now need
 at least 2 characters when set; existing one-character titles are kept.
+Rollback: an older binary keeps the names, but it does not move them. If a
+group's first tab leaves its group under the older binary, its new group of
+one takes the name with it.

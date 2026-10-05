@@ -245,7 +245,20 @@ describe('GroupMenu', () => {
 
     await openGroupMenu()
     await userEvent.click(screen.getByText('Archive dashboard'))
-    expect(archive).toHaveBeenCalledWith(marketingTabs[0], { wholeGroup: true, navigateTo: '/dashboards', hidden: false })
+    expect(archive).toHaveBeenCalledWith(
+      { dashboard_id: 13, title: 'Marketing' },
+      { wholeGroup: true, navigateTo: '/dashboards', hidden: false }
+    )
+  })
+
+  it('names the archived group by its group_title, not the first tab', async () => {
+    renderGroupMenu({ ...reach, group_title: 'Growth' })
+    await openGroupMenu()
+    await userEvent.click(screen.getByText('Archive dashboard'))
+    expect(archive).toHaveBeenCalledWith(
+      { dashboard_id: 13, title: 'Growth' },
+      { wholeGroup: true, navigateTo: '/dashboards', hidden: false }
+    )
   })
 
   it('hides a system group instead, whole', async () => {

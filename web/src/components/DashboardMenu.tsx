@@ -34,7 +34,8 @@ interface Props {
 }
 
 /**
- * "Move to": every other live user group by its first member's title,
+ * "Move to": every other live user group by its name (its `group_title`,
+ * else its first live tab's title),
  * with "Own dashboard" (`group_id: 0`) added for a tab that still has
  * company, since a lone dashboard is already its own dashboard. Nothing
  * when there is nowhere to go.
@@ -122,7 +123,10 @@ export function GroupMenu({ dashboard, editable, refresh, autoRefresh }: GroupMe
               <DropdownMenuItem
                 disabled={pending}
                 onClick={() =>
-                  void archive(first, { wholeGroup: true, navigateTo: '/dashboards', hidden: dashboard.owner === 'system' })
+                  void archive(
+                    { dashboard_id: first.dashboard_id, title: dashboard.group_title ?? first.title },
+                    { wholeGroup: true, navigateTo: '/dashboards', hidden: dashboard.owner === 'system' }
+                  )
                 }
               >
                 {dashboard.owner === 'system' ? <EyeOffIcon /> : <ArchiveIcon />}
