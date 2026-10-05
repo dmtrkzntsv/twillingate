@@ -61,10 +61,11 @@ export default function DashboardsGallery() {
             const first = g.members[0]
             // A system group is hidden (archived) only whole.
             const hidden = g.members.every((m) => m.archived_at)
-            const groupMenu = writable && <TemplateMenu dashboard={first} wholeGroup hidden={hidden} />
+            const name = groupName(g.members)
+            const groupMenu = writable && <TemplateMenu dashboard={first} name={name} wholeGroup hidden={hidden} />
             if (g.members.length === 1) {
               const detail = [widgets(first), hidden && HIDDEN].filter(Boolean).join(' · ')
-              return <LoneDashboard key={g.groupId} row={{ ...first, detail, action: groupMenu }} />
+              return <LoneDashboard key={g.groupId} row={{ ...first, title: name, detail, action: groupMenu }} />
             }
             const rows: GroupRow[] = g.members.map((d) => ({
               ...d,
@@ -72,7 +73,7 @@ export default function DashboardsGallery() {
               action: writable && <TemplateMenu dashboard={d} />,
             }))
             const meta = [`${g.members.length} tabs`, hidden && HIDDEN].filter(Boolean).join(' · ')
-            return <DashboardGroup key={g.groupId} title={groupName(g.members)} meta={meta} action={groupMenu} rows={rows} />
+            return <DashboardGroup key={g.groupId} title={name} meta={meta} action={groupMenu} rows={rows} />
           })}
         </ul>
       </section>

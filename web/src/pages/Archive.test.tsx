@@ -90,6 +90,15 @@ async function group(name: string) {
 }
 
 describe('Archive, a lone dashboard', () => {
+  it('shows its group_title in place of its own title, still linking to the dashboard', async () => {
+    mockApiWith(dashboards.map((d) => (d.dashboard_id === 11 ? { ...d, group_title: 'Retired ideas' } : d)))
+    renderArchive()
+
+    const link = await screen.findByRole('link', { name: 'Retired ideas' })
+    expect(link).toHaveAttribute('href', '/dashboards/11')
+    expect(screen.queryByRole('link', { name: 'Old experiment' })).not.toBeInTheDocument()
+  })
+
   it('is one row linking to its page', async () => {
     mockApi()
     renderArchive()

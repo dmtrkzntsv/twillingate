@@ -154,7 +154,7 @@ test('duplicates Views from the sidebar without hiding it, then hides it and sho
   await page.waitForLoadState('networkidle')
   const viewsGroup = page.getByRole('main').getByRole('listitem', { name: 'Reports', exact: true })
   await expect(viewsGroup.getByText('7 tabs · hidden')).toBeVisible()
-  await viewsGroup.getByRole('button', { name: 'Views actions', exact: true }).click()
+  await viewsGroup.getByRole('button', { name: 'Reports actions', exact: true }).click()
   await page.getByRole('menuitem', { name: 'Show in sidebar' }).click()
 
   // The gallery card links to its Views tab too; count the sidebar's alone.
@@ -315,7 +315,7 @@ test('copies a system group and one of its tabs from the gallery while it is arc
   const viewsGroup = main.getByRole('listitem', { name: 'Reports', exact: true })
   // The Dashboards gallery shows a hidden group as hidden, never "archived" (D17).
   await expect(viewsGroup.getByText(/archived/i)).toHaveCount(0)
-  await viewsGroup.getByRole('button', { name: 'Views actions', exact: true }).click()
+  await viewsGroup.getByRole('button', { name: 'Reports actions', exact: true }).click()
   await page.getByRole('menuitem', { name: 'Duplicate dashboard' }).click()
 
   await page.waitForURL(/\/app\/dashboards\/\d+/)

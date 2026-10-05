@@ -71,7 +71,7 @@ export default function Archive() {
       muted: !d.archived_at,
       action: d.archived_at && restoreButton('Restore', () => void restore(d.dashboard_id)),
     }))
-    if (rows.length === 1) return <LoneDashboard key={g.groupId} row={rows[0]} />
+    if (rows.length === 1) return <LoneDashboard key={g.groupId} row={{ ...rows[0], title: groupName(g.members) }} />
     const whole = archived.length === g.members.length
     return (
       <DashboardGroup
