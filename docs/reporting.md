@@ -34,7 +34,7 @@ are in [deployment.md](deployment.md).
 
 - **System dashboards** ship with each release, have ids 1–999, and change only
   when the release does: Views, Product, Users, Groups, Retention, Web Vitals
-  and Measures, one group (the Views entry). A system group is archived and restored whole, with
+  and Measures, one group (the Reports entry). A system group is archived and restored whole, with
   `whole_group`, and is never purged; every other write refuses them. To
   customize one, call `duplicate_dashboard`: the copy is a user dashboard you
   can edit. Duplicating never archives anything; to take a system group out
@@ -42,14 +42,15 @@ are in [deployment.md](deployment.md).
 - **User dashboards** are what agents create. Their ids start at 1001.
 
 **A dashboard is in a group.** Dashboards sharing a `group_id` are one
-sidebar entry, drawn as tabs in tab order, named by the group's first live
-dashboard; a group of one is drawn as one tab. A dashboard made on its own
+sidebar entry, drawn as tabs in tab order, named by the group's `group_title`
+when it has one, else by the group's first live dashboard; a group of one is
+drawn as one tab. A dashboard made on its own
 starts as a group of one, its `group_id` its own id; beyond that, a
 `group_id` is just a number a group's dashboards share — read it from
 `list_dashboards` or `get_dashboard`, never assume it names a member.
 System dashboards are one group: `group_id` 1, whose sidebar entry reads
-"Views", with tabs Views · Product · Users · Groups · Retention · Web Vitals ·
-Measures.
+"Reports" (its `group_title`), with tabs Views · Product · Users · Groups ·
+Retention · Web Vitals · Measures.
 
 **A widget** is a component plus a source:
 
@@ -249,12 +250,12 @@ widget_data {"widget_id": 42, "project_id": 7, "from": "2026-09-01", "to": "2026
 | --- | --- | --- |
 | `reporting_guide` | none | markdown: the running version and its release notes, the source types and components, the views, the active projects and the dashboards, and this document's [Workflow](#workflow) and [Rules](#rules). MCP only |
 | `list_components` | none | `source_types` and `components`: each one's `description`, `accepts`, `inputs`, `props` schema, `default_width` and `default_height` |
-| `list_dashboards` | none | `timezone` and `dashboards` in sidebar order (system, then user), archived ones included: `dashboard_id`, `title`, `owner`, `group_id`, stored `project_id` and `range`, live `widgets` count, `archived_at`; plus `purge_after_days`, how long an archived user dashboard is kept before it is deleted (absent: kept forever), and `auto_refresh_seconds`, how often the page reloads a dashboard with auto-refresh on (absent: never) |
+| `list_dashboards` | none | `timezone` and `dashboards` in sidebar order (system, then user), archived ones included: `dashboard_id`, `title`, `owner`, `group_id`, `group_title` (the group's name; absent when it has none, and the first live tab's title stands in), stored `project_id` and `range`, live `widgets` count, `archived_at`; plus `purge_after_days`, how long an archived user dashboard is kept before it is deleted (absent: kept forever), and `auto_refresh_seconds`, how often the page reloads a dashboard with auto-refresh on (absent: never) |
 | `get_dashboard` | `dashboard_id` | the dashboard, its `group_id`, its `follows_project` and `follows_range`, its `tabs` (the group's live dashboards, this one included, in tab order), and its live `widgets` in order |
 | `list_widgets` | `dashboard_id`, `component` (both optional; they combine) | `widgets`, archived ones included, each with its `dashboard` and 1-based `position` there |
 | `widget_data` | `widget_id`, `project_id`, `from`, `to`, `fresh`; for a remote table `filters`, `sort`, `distinct`, `offset`, `limit` | the envelope above |
-| `create_dashboard` | `title`, `range` (default `7d`), `group_id`, `after`, `widgets` | the new dashboard, as `get_dashboard` returns it; one invalid widget creates nothing |
-| `update_dashboard` | `dashboard_id`, `title`, `group_id`, `after` | the dashboard, as `list_dashboards` lists it |
+| `create_dashboard` | `title` (at least 2 characters), `range` (default `7d`), `group_id`, `after`, `widgets` | the new dashboard, as `get_dashboard` returns it; one invalid widget creates nothing |
+| `update_dashboard` | `dashboard_id`, `title`, `whole_group`, `group_id`, `after` | the dashboard, as `list_dashboards` lists it |
 | `duplicate_dashboard` | `dashboard_id`, `whole_group`, `group_id` | a user copy with copies of its live widgets: a new dashboard last in the sidebar, or with `group_id` a tab of that user group (right after the source when it is the source's own group, last otherwise). A system dashboard is copied too, also an archived one. An archived user dashboard is refused (restore it first). `whole_group` copies the group as a new dashboard with the same tabs: a system group whole, a user group's live tabs; it takes no `group_id`. Duplicating never archives: to replace a system group, `archive_dashboard` it with `whole_group` |
 | `archive_dashboard` | `dashboard_id`, `whole_group` | hides it (`whole_group`: every live member of its group); see [Archiving and the purge](#archiving-and-the-purge) |
 | `restore_dashboard` | `dashboard_id`, `whole_group` | unhides it (`whole_group`: every archived member of its group) |
@@ -290,7 +291,7 @@ audited.
 | `GET` | `/api/widgets` | `list_widgets` | query: `dashboard_id`, `component` |
 | `GET` | `/api/widgets/{widget_id}/data` | `widget_data` | query: `project_id`, `from`, `to`, `fresh`, and for a remote table `filters`, `sort`, `distinct`, `offset`, `limit` |
 | `POST` | `/api/dashboards` | `create_dashboard` | body: `title`, `range`, `group_id`, `after`, `widgets` → 201 |
-| `PATCH` | `/api/dashboards/{dashboard_id}` | `update_dashboard` | body: `title`, `group_id`, `after` |
+| `PATCH` | `/api/dashboards/{dashboard_id}` | `update_dashboard` | body: `title`, `whole_group`, `group_id`, `after` |
 | `POST` | `/api/dashboards/{dashboard_id}/duplicate` | `duplicate_dashboard` | optional body `{whole_group}` or `{group_id}` → 201 |
 | `POST` | `/api/dashboards/{dashboard_id}/archive` | `archive_dashboard` | body: `whole_group` (optional) |
 | `POST` | `/api/dashboards/{dashboard_id}/restore` | `restore_dashboard` | body: `whole_group` (optional) |
@@ -774,6 +775,22 @@ create_dashboard {"title": "Detail", "group_id": 1001}   → id 1002, group_id 1
 The sidebar now shows one entry, "Overview" (the group's first live
 dashboard), with two tabs: "Overview" and "Detail".
 
+A group can have a name of its own. `update_dashboard` with `whole_group`
+and a `title` renames the group of the dashboard it names and leaves every
+dashboard's own title alone; it takes no `after` or `group_id`:
+
+```
+update_dashboard {"dashboard_id": 1001, "whole_group": true, "title": "Ops"}   → group_title "Ops"
+```
+
+The sidebar now reads "Ops", the tabs still "Overview" and "Detail". Dashboard
+rows carry the name as `group_title`; absent, the group has none and its
+first live tab's title stands in. A name can be replaced, never cleared, and
+a system or archived dashboard cannot be renamed this way. Duplicating a
+named group with `whole_group` names the copy with the same name and
+" (copy)". A dashboard title and a group name need at least 2 characters
+(trimmed); `create_dashboard` and `update_dashboard` refuse fewer.
+
 ## Archiving and the purge
 
 Archiving is how to undo, and the only way to remove anything:
@@ -857,7 +874,9 @@ widget's name (`widget visitors: …`), and nothing is created.
 | widget 42 follows the project switcher; pass project_id | Pass `project_id` to `widget_data`. For the range: widget 42 follows the date range; pass from and to. |
 | from 2026-09-10 is after to 2026-09-01; from 2026-01-01 to 2027-02-01 spans more than 365 days; from 2026-10-01 is after today | Pass `from` ≤ `to`, at most 365 days apart, `from` no later than today. |
 | range must be one of today, yesterday, 7d, 30d, 90d, custom | Use a preset id. `create_dashboard` refuses `custom`: create with a preset; the viewer picks custom dates. |
-| title must not be empty; nothing to update; give title, after or group_id | Give a title, or something to change. |
+| nothing to update; give title, after or group_id | Give a title, or something to change. |
+| title must have at least 2 characters; group title must have at least 2 characters | Dashboard titles and group names need two characters or more (trimmed). A `whole_group` update needs a `title`. |
+| whole_group renames the group; it takes no after or group_id | Send `whole_group` with `title` alone; move the dashboard in another call. |
 | dashboard 1001 changed while placing this widget; try again (`409 conflict`) | Another write placed a widget at the same spot; call again. |
 | the dashboard order changed while placing this dashboard; try again (`409 conflict`) | Another write moved or placed a dashboard at the same spot; call again. |
 | `404 not_found` | The dashboard or widget id does not exist; `list_dashboards` and `list_widgets` name them. `widget_data` on an archived widget is a 404 too. |

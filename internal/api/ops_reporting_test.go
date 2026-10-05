@@ -653,3 +653,42 @@ func TestViewRouteRefusals(t *testing.T) {
 		}
 	}
 }
+
+// TestUpdateDashboardWholeGroup: whole_group with title renames the
+// dashboard's group and answers group_title; it needs a title of at least
+// two characters, and a plain title needs them too.
+func TestUpdateDashboardWholeGroup(t *testing.T) {
+	h, cs := newTestHost(t)
+	r := newTestRegistrar(t, h)
+
+	var d struct {
+		ID int64 `json:"dashboard_id"`
+	}
+	toolJSON(t, cs, "create_dashboard", map[string]any{"title": "Traffic"}, &d)
+	path := fmt.Sprintf("/api/dashboards/%d", d.ID)
+
+	rec := serveREST(t, r, "PATCH", path, `{"whole_group":true,"title":"Ops"}`)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"group_title":"Ops"`) {
+		t.Fatalf("PATCH whole_group = %d %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"title":"Traffic"`) {
+		t.Errorf("whole_group changed the dashboard's own title: %s", rec.Body.String())
+	}
+
+	var info struct {
+		GroupTitle string `json:"group_title"`
+	}
+	toolJSON(t, cs, "update_dashboard", map[string]any{"dashboard_id": d.ID, "whole_group": true, "title": "Ops team"}, &info)
+	if info.GroupTitle != "Ops team" {
+		t.Errorf("update_dashboard whole_group group_title = %q", info.GroupTitle)
+	}
+
+	for _, body := range []string{`{"whole_group":true}`, `{"title":"a"}`, `{"whole_group":true,"title":"x"}`} {
+		if rec := serveREST(t, r, "PATCH", path, body); rec.Code != http.StatusBadRequest {
+			t.Errorf("PATCH %s = %d %s, want 400", body, rec.Code, rec.Body.String())
+		}
+	}
+	if res := callTool(t, cs, "create_dashboard", map[string]any{"title": "a"}); !res.IsError {
+		t.Errorf("create_dashboard with a 1-character title succeeded")
+	}
+}
