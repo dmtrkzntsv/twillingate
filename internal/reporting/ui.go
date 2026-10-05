@@ -5,12 +5,15 @@ import (
 	"crypto/sha256"
 	"embed"
 	"encoding/hex"
+	"html"
 	"io/fs"
 	"net/http"
 	"path"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/dmtrkzntsv/twillingate/internal/shared/version"
 )
 
 // uiFS is the reporting UI's build output: index.html, assets/, the
@@ -47,9 +50,11 @@ func Manifest() []byte {
 // response may be framed by another page or sniffed into another type.
 // A binary built without the app (go build before make ui) answers 503
 // with how to build it, rather than panicking on every request.
+// The shell carries the running version (see versioned), which the app
+// shows in its footer.
 // api-docs.html is a page of the build but not of the app: APIDocs serves it.
 func UI() http.Handler {
-	return uiHandler(uiFS, "")
+	return uiHandler(versioned{uiFS, version.Version}, "")
 }
 
 // APIDocs serves the build's other page, api-docs.html (Swagger UI over
@@ -122,6 +127,28 @@ func appFile(files fs.ReadFileFS, urlPath string) (name string, b []byte, ok boo
 		return "", nil, false
 	}
 	return "index.html", mustRead(files, "ui/index.html"), true
+}
+
+// versionMeta is the shell's version tag as the build leaves it
+// (web/index.html), "dev" being what the app shows under `npm run dev`.
+const versionMeta = `<meta name="twillingate-version" content="dev" />`
+
+// versioned stamps version into the shell's version tag, so the app shows
+// the version of the binary serving it rather than one fixed at web build
+// time (make ui does not rebuild for a new tag, nor does the image's web
+// stage know it). Every other file reads through unchanged.
+type versioned struct {
+	fs.ReadFileFS
+	version string
+}
+
+func (v versioned) ReadFile(name string) ([]byte, error) {
+	b, err := v.ReadFileFS.ReadFile(name)
+	if err != nil || name != "ui/index.html" {
+		return b, err
+	}
+	stamped := `<meta name="twillingate-version" content="` + html.EscapeString(v.version) + `" />`
+	return bytes.Replace(b, []byte(versionMeta), []byte(stamped), 1), nil
 }
 
 // uiTypes are the content types Go's own table may lack or get wrong for

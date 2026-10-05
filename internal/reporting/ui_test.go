@@ -208,3 +208,37 @@ func TestUIWithoutTheAppSaysHowToBuildIt(t *testing.T) {
 		t.Fatalf("got %d %q, want 503 naming make build", rec.Code, rec.Body.String())
 	}
 }
+
+// TestUIStampsTheVersion: the shell carries the running binary's version in
+// its version tag, escaped, with an ETag of what is served; the built shell
+// still has the tag the stamp replaces.
+func TestUIStampsTheVersion(t *testing.T) {
+	built, err := uiFS.ReadFile("ui/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(built), versionMeta) {
+		t.Fatalf("the built index.html lacks %s", versionMeta)
+	}
+	files := fstest.MapFS{
+		"ui/index.html":           {Data: []byte("<head>" + versionMeta + "</head>")},
+		"ui/sw.js":                {Data: []byte("")},
+		"ui/api-docs.html":        {Data: []byte("")},
+		"ui/manifest.webmanifest": {Data: []byte("")},
+	}
+	serve := func(v string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		uiHandler(versioned{files, v}, "").ServeHTTP(rec, httptest.NewRequest("GET", "/app/dashboards/3", nil))
+		return rec
+	}
+	release, odd := serve("v0.14.1"), serve(`v1"<x>`)
+	if want := `<head><meta name="twillingate-version" content="v0.14.1" /></head>`; release.Body.String() != want {
+		t.Errorf("shell = %q, want %q", release.Body.String(), want)
+	}
+	if want := `content="v1&#34;&lt;x&gt;"`; !strings.Contains(odd.Body.String(), want) {
+		t.Errorf("shell = %q, want the version escaped as %s", odd.Body.String(), want)
+	}
+	if release.Header().Get("ETag") == odd.Header().Get("ETag") {
+		t.Error("shells of two versions share an ETag")
+	}
+}
