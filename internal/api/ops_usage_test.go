@@ -172,19 +172,19 @@ func TestUsageSizeIsNullUntilMeasured(t *testing.T) {
 	}
 }
 
-// putStat writes one server_stats row, as the daily pass would.
+// putStat writes one usage_history row, as the daily pass would.
 func putStat(t *testing.T, h *host, key string, project int64, day string, v int64) {
 	t.Helper()
-	if _, err := rawExec(h.ops.St, `INSERT INTO server_stats (key, project_id, measured_at, value) VALUES (?,?,?,?)`,
+	if _, err := rawExec(h.ops.St, `INSERT INTO usage_history (key, project_id, measured_at, value) VALUES (?,?,?,?)`,
 		key, project, day, v); err != nil {
 		t.Fatal(err)
 	}
 }
 
-// Sizes are what the daily pass stored in server_stats, read for every
+// Sizes are what the daily pass stored in usage_history, read for every
 // project at once: both projects get theirs from the newest day measured,
 // with that day, and a stat this answer does not know is left alone.
-func TestUsageSizesComeFromServerStats(t *testing.T) {
+func TestUsageSizesComeFromUsageHistory(t *testing.T) {
 	h, _ := newTestHost(t)
 	putStat(t, h, store.StatRawBytes, 1, "2026-08-21", 1)
 	putStat(t, h, store.StatAggregateBytes, 1, "2026-08-21", 2)
@@ -331,7 +331,7 @@ func TestUsageReadsStoredCountsBeforeTheNewestPass(t *testing.T) {
 	}
 }
 
-// Before any pass every day is counted live, as before server_stats.
+// Before any pass every day is counted live, as before usage_history.
 func TestUsageCountsLiveBeforeAnyPass(t *testing.T) {
 	h, _ := newTestHost(t)
 	putStat(t, h, store.StatViews, 1, "2026-08-20", 777) // no database_bytes row: no pass yet

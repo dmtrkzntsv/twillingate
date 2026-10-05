@@ -154,8 +154,8 @@ func (c Consent) Value() (driver.Value, error) {
 	return nil, nil
 }
 
-// The server_stats keys the daily pass writes. A new stat is a new
-// constant here, measured in internal/store/sqlite/server_stats.go, never
+// The usage_history keys the daily pass writes. A new stat is a new
+// constant here, measured in internal/store/sqlite/usage_history.go, never
 // a migration.
 const (
 	// Per project, on the day measured: its estimated disk use in raw rows
@@ -251,9 +251,9 @@ type Store interface {
 	PruneIdentities(ctx context.Context, projectID int64, before civil.Date) error
 	PruneAggregates(ctx context.Context, projectID int64, before civil.Date) error
 	IncrementalVacuum(ctx context.Context) error
-	// MeasureServerStats writes now's UTC day of server_stats, replacing
+	// RecordUsageHistory writes now's UTC day of usage_history, replacing
 	// that day's rows and keeping earlier days as history.
-	MeasureServerStats(ctx context.Context, now time.Time) error
+	RecordUsageHistory(ctx context.Context, now time.Time) error
 	ProjectIDs(ctx context.Context) ([]int64, error) // all rows incl. archived, ascending
 	RebuildFlatView(ctx context.Context, keys []string) error
 	GetMeta(ctx context.Context, key string) (string, error) // "" if absent

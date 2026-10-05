@@ -135,7 +135,7 @@ func mustDay(s string) civil.Date { d, _ := civil.Parse(s); return d }
 
 // The pass ends by measuring the server's stats at its own clock: a project
 // with rows has its sizes stored.
-func TestRunDailyPassMeasuresServerStats(t *testing.T) {
+func TestRunDailyPassRecordsUsageHistory(t *testing.T) {
 	st, _, r := setup(t, jobsVars, jobsProjectSpecs)
 	if err := st.WriteEvents(context.Background(), []store.Event{
 		{Family: store.FamilyViews, ID: "1", ProjectID: 1, TS: mustTime("2026-08-21T10:00:00Z"), ReceivedAt: mustTime("2026-08-21T10:00:00Z"),
@@ -146,14 +146,14 @@ func TestRunDailyPassMeasuresServerStats(t *testing.T) {
 	if err := r.RunDailyPass(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	got := queryDays(t, `SELECT key || ' ' || project_id || ' ' || measured_at FROM server_stats ORDER BY key`)
+	got := queryDays(t, `SELECT key || ' ' || project_id || ' ' || measured_at FROM usage_history ORDER BY key`)
 	// Sizes, the database's, the declared attributes and the caps for the
 	// pass day, and the counts of the days before it.
 	want := []string{"aggregate_bytes 1 2026-08-22", "attribute_breakdowns_max 0 2026-08-22", "attributes_top_n 0 2026-08-22", "database_bytes 0 2026-08-22",
 		"declared_attributes 1 2026-08-22", "identities_top_n 0 2026-08-22", "raw_bytes 1 2026-08-22",
 		"views 1 2026-08-21"}
 	if !slices.Equal(got, want) {
-		t.Errorf("server_stats = %v, want %v", got, want)
+		t.Errorf("usage_history = %v, want %v", got, want)
 	}
 }
 

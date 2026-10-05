@@ -41,9 +41,9 @@ type Store interface {
 	PruneAggregates(ctx context.Context, projectID int64, before civil.Date) error
 	RebuildFlatView(ctx context.Context, keys []string) error
 	IncrementalVacuum(ctx context.Context) error
-	// MeasureServerStats stores the server_stats measurements (each
+	// RecordUsageHistory stores the usage_history measurements (each
 	// project's disk use) as of now.
-	MeasureServerStats(ctx context.Context, now time.Time) error
+	RecordUsageHistory(ctx context.Context, now time.Time) error
 	// PurgeArchived deletes every project, dashboard and widget archived
 	// more than days ago. days <= 0 purges nothing.
 	PurgeArchived(ctx context.Context, days int) (store.PurgeResult, error)
@@ -204,8 +204,8 @@ func (r *Runner) RunDailyPass(ctx context.Context) error {
 	// Last, so the sizes are those left after the pruning and the vacuum.
 	// Run calls this pass at boot, in the background, so sizes exist shortly
 	// after every start, not only after the first 03:00.
-	if err := r.store.MeasureServerStats(ctx, r.now()); err != nil {
-		r.logger.Error("measure server stats", "error", err)
+	if err := r.store.RecordUsageHistory(ctx, r.now()); err != nil {
+		r.logger.Error("record usage history", "error", err)
 	}
 	return nil
 }

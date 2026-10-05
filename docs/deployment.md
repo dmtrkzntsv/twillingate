@@ -356,7 +356,7 @@ a loopback address, without a login; its usage is in
 Every CLI command on a systemd host needs the unit's environment:
 `sudo -u twillingate sh -ac '. /etc/twillingate/twillingate.env; twillingate project list'`.
 Aggregation, pruning, incremental vacuum and the daily history in
-`server_stats` (each project's disk use, declared attributes, views,
+`usage_history` (each project's disk use, declared attributes, views,
 events and measure samples, and attribute keys, values and values folded
 into `(other)` per day, and the database's size and the caps in force,
 which `usage` reads and which outlive the aggregates' retention) run daily at

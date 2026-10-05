@@ -310,7 +310,7 @@ func BenchmarkWriteEvents(b *testing.B) {
 }
 
 // BenchmarkCountReceived runs the nightly received-attributes recount
-// (countReceived, inside MeasureServerStats' transaction, while ingest
+// (countReceived, inside RecordUsageHistory' transaction, while ingest
 // waits) over a raw window of 30 days x 2,000 web product events as the SDK
 // sends them (5 custom attributes, host, path, OS and browser versions, and
 // the other environment columns that widen a row), plus 30 days x 200
