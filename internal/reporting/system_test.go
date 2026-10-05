@@ -153,6 +153,28 @@ func TestSystemDashboardGroups(t *testing.T) {
 	}
 }
 
+// TestSystemGroupNames: Views (id 1) founds the Reports group and gives
+// it its name (D6), so dashboards 1-5 read it and the others have none.
+func TestSystemGroupNames(t *testing.T) {
+	ctx := context.Background()
+	f := newSystemFixture(t)
+
+	ds, err := f.svc.Dashboards(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[int64]string{}
+	for _, d := range ds.Dashboards {
+		if d.Owner == store.OwnerSystem {
+			got[d.ID] = d.GroupTitle
+		}
+	}
+	want := map[int64]string{1: "Reports", 2: "Reports", 3: "Reports", 4: "Reports", 5: "Reports", 6: "", 7: ""}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("system dashboard group titles = %v, want %v", got, want)
+	}
+}
+
 // systemFixture is a store migrated to latest and synced with this
 // release's embedded system definition, a Service over it with the cache
 // off, and two seeded projects: project, with seedSystemData's 100 days,

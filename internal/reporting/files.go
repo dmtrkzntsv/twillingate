@@ -33,6 +33,7 @@ type FileDashboard struct {
 	ID           int64 // 0 when the file gives none (reporting dev only)
 	Title, Range string
 	Group        int64        // the group this dashboard is a tab of; 0 = its own id (D16)
+	GroupTitle   string       // the group's name; only on a group's founding dashboard (D6)
 	Widgets      []FileWidget // layout order
 }
 
@@ -47,11 +48,12 @@ func (fd FileDashboard) groupID() int64 {
 
 // fileDashboardDoc is dashboard.json's own shape.
 type fileDashboardDoc struct {
-	ID     int64            `json:"id"`
-	Title  string           `json:"title"`
-	Range  string           `json:"range"`
-	Group  int64            `json:"group"`
-	Layout []fileLayoutItem `json:"layout"`
+	ID         int64            `json:"id"`
+	Title      string           `json:"title"`
+	Range      string           `json:"range"`
+	Group      int64            `json:"group"`
+	GroupTitle string           `json:"group_title"`
+	Layout     []fileLayoutItem `json:"layout"`
 }
 
 // fileLayoutItem is one entry of dashboard.json's layout: which widget,
@@ -102,6 +104,15 @@ func LoadDashboard(fsys fs.FS, dir string) (FileDashboard, error) {
 	var doc fileDashboardDoc
 	if err := decodeStrict(dashPath, dashBytes, &doc); err != nil {
 		return FileDashboard{}, err
+	}
+
+	if _, err := checkName("title", doc.Title); err != nil {
+		return FileDashboard{}, fmt.Errorf("reporting: %s: %w", dashPath, err)
+	}
+	if doc.GroupTitle != "" {
+		if _, err := checkName("group_title", doc.GroupTitle); err != nil {
+			return FileDashboard{}, fmt.Errorf("reporting: %s: %w", dashPath, err)
+		}
 	}
 
 	entries, err := fs.ReadDir(fsys, dir)
@@ -185,7 +196,7 @@ func LoadDashboard(fsys fs.FS, dir string) (FileDashboard, error) {
 		}
 	}
 
-	return FileDashboard{ID: doc.ID, Title: doc.Title, Range: doc.Range, Group: doc.Group, Widgets: widgets}, nil
+	return FileDashboard{ID: doc.ID, Title: doc.Title, Range: doc.Range, Group: doc.Group, GroupTitle: doc.GroupTitle, Widgets: widgets}, nil
 }
 
 // LoadDashboards loads every top-level directory in fsys as a

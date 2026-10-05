@@ -74,7 +74,7 @@ func systemDashboard() store.SystemDashboard {
 // systemGroup is a system group of five dashboards, Reports' shape
 // (D16): Views first (names the sidebar entry), then Product, Users,
 // Groups and Retention, ids 10-14, each with one live markdown widget
-// "note".
+// "note". The group is named "Reports".
 func systemGroup() []store.SystemDashboard {
 	names := []string{"Views", "Product", "Users", "Groups", "Retention"}
 	keys := []string{"a0", "a1", "a2", "a3", "a4"}
@@ -92,6 +92,7 @@ func systemGroup() []store.SystemDashboard {
 			}},
 		}
 	}
+	out[0].GroupTitle = "Reports" // the founder names the group (D6)
 	return out
 }
 

@@ -39,6 +39,9 @@ type UpdateDashboard struct {
 	Title   string
 	GroupID *int64
 	After   *int64
+	// WholeGroup renames ID's group with Title instead of the dashboard
+	// (D5); it takes no After or GroupID.
+	WholeGroup bool
 }
 
 // DuplicateDashboard copies dashboard ID: alone, or with WholeGroup its
@@ -61,9 +64,11 @@ type View struct {
 // CreateDashboard creates a user dashboard with its widgets, all or
 // nothing: every widget is checked before anything is written.
 func (s *Service) CreateDashboard(ctx context.Context, actor string, in CreateDashboard) (DashboardDetail, error) {
-	if strings.TrimSpace(in.Title) == "" {
-		return DashboardDetail{}, store.Refuse(store.ErrInvalid, "title must not be empty")
+	title, err := checkName("title", in.Title)
+	if err != nil {
+		return DashboardDetail{}, err
 	}
+	in.Title = title
 	rng := in.Range
 	if rng == "" {
 		rng = "7d"
@@ -122,6 +127,9 @@ func (s *Service) CreateDashboard(ctx context.Context, actor string, in CreateDa
 // group's tabs, with its whole group in the sidebar, into another group,
 // or out of its group (spec decisions 6 and 7).
 func (s *Service) UpdateDashboard(ctx context.Context, actor string, in UpdateDashboard) (DashboardInfo, error) {
+	if in.WholeGroup {
+		return s.renameGroup(ctx, actor, in)
+	}
 	d, err := s.editableDashboard(ctx, in.ID)
 	if err != nil {
 		return DashboardInfo{}, err
@@ -129,8 +137,12 @@ func (s *Service) UpdateDashboard(ctx context.Context, actor string, in UpdateDa
 	if in.Title == "" && in.After == nil && in.GroupID == nil {
 		return DashboardInfo{}, store.Refuse(store.ErrInvalid, "nothing to update; give title, after or group_id")
 	}
-	if in.Title != "" && strings.TrimSpace(in.Title) == "" {
-		return DashboardInfo{}, store.Refuse(store.ErrInvalid, "title must not be empty")
+	if in.Title != "" {
+		t, err := checkName("title", in.Title)
+		if err != nil {
+			return DashboardInfo{}, err
+		}
+		in.Title = t
 	}
 	a := store.AuditEntry{Actor: actor, Action: "dashboard.update"}
 	err = s.placeDashboards(func() error {
@@ -146,6 +158,41 @@ func (s *Service) UpdateDashboard(ctx context.Context, actor string, in UpdateDa
 			row.Title = in.Title
 		}
 		return s.placeDashboard(ctx, o, row, in, a)
+	})
+	if err != nil {
+		return DashboardInfo{}, err
+	}
+	d, err = s.st.GetDashboard(ctx, d.ID)
+	return dashboardInfo(d), err
+}
+
+// renameGroup names id's group (spec 2026-10-04 D5). The title is
+// required: a name is never cleared, only replaced. The group id is read
+// inside the placement mutex, so a handover running beside it can't
+// leave the name on the group's old number.
+func (s *Service) renameGroup(ctx context.Context, actor string, in UpdateDashboard) (DashboardInfo, error) {
+	if in.After != nil || in.GroupID != nil {
+		return DashboardInfo{}, store.Refuse(store.ErrInvalid, "whole_group renames the group; it takes no after or group_id")
+	}
+	title, err := checkName("group title", in.Title)
+	if err != nil {
+		return DashboardInfo{}, err
+	}
+	d, err := s.editableDashboard(ctx, in.ID)
+	if err != nil {
+		return DashboardInfo{}, err
+	}
+	err = s.placeDashboards(func() error {
+		o, err := s.readOrder(ctx)
+		if err != nil {
+			return err
+		}
+		row, ok := o.find(d.ID)
+		if !ok {
+			return store.Refuse(store.ErrNotFound, "dashboard %d: not found", d.ID)
+		}
+		return s.st.SetGroupTitle(ctx, row.GroupID, title, store.AuditEntry{
+			Actor: actor, Action: "dashboard.group.rename", Detail: fmt.Sprintf("dashboard/%d", d.ID)})
 	})
 	if err != nil {
 		return DashboardInfo{}, err
@@ -248,7 +295,9 @@ func (s *Service) leaveGroup(ctx context.Context, o order, row store.Dashboard, 
 // writePlaced writes row at its new group and key. When row leaves a
 // group that used its id, heirs repoints the members left behind in the
 // same transaction (MoveDashboards), so no moment exists where two
-// groups share a number; a title change, if any, is a second write.
+// groups share a number; a title change, if any, is a second write. The
+// group's name, if it has one, moves with the heirs (D3): heirs is
+// non-empty only when row founded the group, so its old number is row.ID.
 func (s *Service) writePlaced(ctx context.Context, row store.Dashboard, heirs []store.DashboardKey, a store.AuditEntry) error {
 	if len(heirs) == 0 {
 		return s.st.UpdateDashboard(ctx, row, a)
@@ -256,7 +305,8 @@ func (s *Service) writePlaced(ctx context.Context, row store.Dashboard, heirs []
 	// MoveDashboards audits under its first key's dashboard: row, the one
 	// the caller moved.
 	keys := append([]store.DashboardKey{{ID: row.ID, GroupID: row.GroupID, SortKey: row.SortKey}}, heirs...)
-	if err := s.st.MoveDashboards(ctx, keys, store.GroupRekey{}, a); err != nil {
+	rekey := store.GroupRekey{From: row.ID, To: heirs[0].GroupID}
+	if err := s.st.MoveDashboards(ctx, keys, rekey, a); err != nil {
 		return err
 	}
 	return s.st.UpdateDashboard(ctx, row, a)
@@ -403,6 +453,9 @@ func (s *Service) duplicateGroup(ctx context.Context, actor string, src store.Da
 				Owner: store.OwnerUser, Title: title,
 				LastProjectID: m.LastProjectID, LastRange: m.LastRange, LastFrom: m.LastFrom, LastTo: m.LastTo,
 			}
+		}
+		if src.GroupTitle != "" {
+			ds[0].GroupTitle = src.GroupTitle + " (copy)" // D7: the name is copied like the first tab's title
 		}
 
 		o, err := s.readOrder(ctx)

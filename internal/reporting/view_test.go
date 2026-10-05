@@ -33,7 +33,7 @@ func remoteTableWidget(name, content string) WidgetSpec {
 // content and returns the widget's id.
 func mustRemoteTable(t *testing.T, svc *Service, content string) int64 {
 	t.Helper()
-	return mustCreate(t, svc, "D", remoteTableWidget("t", content)).Widgets[0].ID
+	return mustCreate(t, svc, "DD", remoteTableWidget("t", content)).Widgets[0].ID
 }
 
 // pageOf loads req and returns its rows and page block, failing the test
@@ -103,7 +103,7 @@ func TestRemoteTableDefaultsToTheCap(t *testing.T) {
 
 func TestPagingArgumentsRefusedOffRemoteTables(t *testing.T) {
 	svc := newTestService(t)
-	d := mustCreate(t, svc, "D",
+	d := mustCreate(t, svc, "DD",
 		tableWidget("local", threeRows),
 		WidgetSpec{Name: "pie", Component: "pie", Title: "pie",
 			Source: Source{Type: "sql", Content: "SELECT 'a' AS label, 3 AS value"}})
@@ -229,7 +229,7 @@ func TestRemoteTableCacheKeyPerView(t *testing.T) {
 // next read must page rather than hand back the whole cached result.
 func TestRemoteTableModeSwitchMisses(t *testing.T) {
 	svc, _ := newTestServiceOpts(t, Options{CacheAge: time.Minute, RefreshAge: time.Minute}, 1000)
-	id := mustCreate(t, svc, "D", tableWidget("t", threeRows)).Widgets[0].ID
+	id := mustCreate(t, svc, "DD", tableWidget("t", threeRows)).Widgets[0].ID
 	ctx := context.Background()
 	if got, err := svc.WidgetData(ctx, DataRequest{WidgetID: id}); err != nil || got.Page != nil {
 		t.Fatalf("local: page = %+v, err = %v; want no page", got.Page, err)

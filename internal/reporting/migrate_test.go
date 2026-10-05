@@ -487,3 +487,17 @@ func TestMigrateFromRefusesEmptyRange(t *testing.T) {
 		t.Errorf("error = %q, want it to say dashboard.json needs range", err)
 	}
 }
+
+// TestCheckGroupsRefusesGroupTitleOnATab: only a group's founding
+// dashboard names it (D6).
+func TestCheckGroupsRefusesGroupTitleOnATab(t *testing.T) {
+	founder := FileDashboard{ID: 1, Title: "Views", GroupTitle: "Reports"}
+	tab := FileDashboard{ID: 2, Title: "Product", Group: 1}
+	if err := checkGroups([]FileDashboard{founder, tab}); err != nil {
+		t.Errorf("group_title on the founder: err = %v, want nil", err)
+	}
+	tab.GroupTitle = "Reports"
+	if err := checkGroups([]FileDashboard{founder, tab}); err == nil {
+		t.Error("group_title on a tab: want an error")
+	}
+}
