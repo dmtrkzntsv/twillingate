@@ -10,20 +10,21 @@ import (
 )
 
 // noCap is the cap 0 stands for: a rank no day reaches. The views read the
-// same number (025_live_halves.sql) when the meta row holds 0.
-const noCap = 1 << 62
+// same number (025_live_halves.sql) when the meta row holds 0. An int64, as
+// SQLite's integers are: it does not fit a 32-bit int (linux/arm).
+const noCap int64 = 1 << 62
 
 // capRows is the rank a rollup keeps up to for a configured cap: n itself,
 // noCap for 0, and def for a negative n (config refuses one; the guard
 // keeps a bad call from folding every value into "(other)").
-func capRows(n, def int) int {
+func capRows(n, def int) int64 {
 	switch {
 	case n == 0:
 		return noCap
 	case n < 0:
-		return def
+		return int64(def)
 	}
-	return n
+	return int64(n)
 }
 
 const otherBucket = "(other)"

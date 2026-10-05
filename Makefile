@@ -39,8 +39,12 @@ test: $(UI)
 # `make test` only.
 RACE_PKGS = ./internal/pipeline/... ./internal/identity/... ./internal/geo/...
 
+# vet also type-checks for linux/arm, the 32-bit release target: a
+# constant past 32 bits (an int holding 1<<62) compiles on amd64 and
+# breaks only the release build.
 vet:
 	go vet $(GOPKGS)
+	GOOS=linux GOARCH=arm go vet $(GOPKGS)
 
 # What pull request CI runs: vet, the coverage gate without -race, and the
 # SQLite-free packages with it.
