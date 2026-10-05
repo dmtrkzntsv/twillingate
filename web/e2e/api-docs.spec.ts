@@ -22,3 +22,19 @@ test('/api/docs opens Swagger UI, and Try it out is signed with the app login', 
   await expect(op.locator('.live-responses-table tbody .response-col_status').first()).toHaveText('200')
   await expect(op.locator('.live-responses-table .microlight').first()).toContainText('"projects"')
 })
+
+test('the version in the footer opens /api/docs in a new tab', async ({ page }) => {
+  await page.goto('/app/dashboards')
+  await page.waitForURL(/\/oauth\/authorize\?/)
+  await page.getByLabel('Password').fill(PASSWORD)
+  await page.getByRole('button', { name: 'Connect' }).click()
+  await page.waitForURL(/\/app\/dashboards\/\d+/)
+
+  // serve.sh builds without a version, so the footer reads dev.
+  const [docs] = await Promise.all([
+    page.waitForEvent('popup'),
+    page.getByRole('link', { name: 'dev', exact: true }).click(),
+  ])
+  await expect(docs).toHaveURL(/\/api\/docs$/)
+  await expect(docs.getByRole('heading', { name: /Twillingate API/ })).toBeVisible()
+})

@@ -36,7 +36,7 @@ export default function AppShell({ dashboards, currentId, readOnly = false, chil
       <AppSidebar dashboards={dashboards} currentId={currentId} readOnly={readOnly} />
       <SidebarInset className="sky-wash min-w-0">
         {children}
-        <Footer />
+        <Footer apiDocs={!readOnly} />
       </SidebarInset>
     </SidebarProvider>
   )
@@ -53,15 +53,27 @@ export function TopBar({ children }: { children?: ReactNode }) {
   )
 }
 
-/** The running version, and a link to the project's site. */
-function Footer() {
+/**
+ * The running version, linked to the REST API's reference (/api/docs, a
+ * page of its own outside the app), and a link to the project's site.
+ * Reporting dev serves no API reference, so there the version is plain text.
+ */
+function Footer({ apiDocs }: { apiDocs: boolean }) {
   return (
     <footer className="mt-auto flex flex-wrap items-center justify-center gap-x-2 px-3 py-4 text-xs text-muted-foreground">
-      <span className="break-all">{appVersion()}</span>
+      {apiDocs ? (
+        <a href="/api/docs" target="_blank" rel="noopener" title="API reference" className={`break-all ${link}`}>
+          {appVersion()}
+        </a>
+      ) : (
+        <span className="break-all">{appVersion()}</span>
+      )}
       <span aria-hidden>·</span>
-      <a href="https://twillingate.dev" target="_blank" rel="noopener" className="underline-offset-4 hover:text-foreground hover:underline">
+      <a href="https://twillingate.dev" target="_blank" rel="noopener" className={link}>
         twillingate.dev
       </a>
     </footer>
   )
 }
+
+const link = 'underline-offset-4 hover:text-foreground hover:underline'
