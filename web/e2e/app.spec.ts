@@ -131,7 +131,7 @@ test('an agent-made group shows its tab bar', async ({ page, request }) => {
   await expect(page.getByRole('link', { name: 'Retention (beta)', exact: true })).toHaveCount(0)
 })
 
-test('a whole-group copy of Views opens with five tabs', async ({ page, request }) => {
+test('a whole-group copy of Views opens with seven tabs', async ({ page, request }) => {
   const ids = await dashboardIds(request)
   const viewsId = ids.get('Views')
   expect(viewsId, 'no dashboard titled Views').toBeDefined()
@@ -142,13 +142,13 @@ test('a whole-group copy of Views opens with five tabs', async ({ page, request 
   })
   expect(copied.ok(), await copied.text()).toBeTruthy()
   const { dashboard_id: copyId, tabs } = (await copied.json()) as { dashboard_id: number; tabs: { dashboard_id: number }[] }
-  expect(tabs).toHaveLength(5)
+  expect(tabs).toHaveLength(7)
 
   await login(page)
   await page.goto(`/app/dashboards/${copyId}`)
   await page.waitForLoadState('networkidle')
 
-  await expect(page.getByRole('tab')).toHaveCount(5)
+  await expect(page.getByRole('tab')).toHaveCount(7)
 })
 
 test('a 6x6 widget and four 3x3 widgets lay out as a 2x2 block beside it', async ({ page, request }) => {
@@ -252,10 +252,10 @@ test('the attribute table filters and pages on the server', async ({ page, reque
   const id = (await dashboardIds(request)).get('Product')
   expect(id, 'no Product dashboard').toBeDefined()
   await login(page)
-  // The seed fills 180 days with two attributes, $os (about five values a day)
-  // and $platform (one), so over all of them the table holds about 1,050 rows:
-  // two pages of CONSOLE_QUERY_MAX_ROWS (1,000). The last 90 days hold about
-  // 530, one page. A `to` past today is cut to today by the server.
+  // The seed fills 180 days with two declared attributes, team_size (five
+  // values) and role (three), so over all of them the table holds about 1,400
+  // rows: two pages of CONSOLE_QUERY_MAX_ROWS (1,000). The table leaves out the
+  // `$` keys. A `to` past today is cut to today by the server.
   const day = (n: number) => new Date(Date.now() + n * 86_400_000).toISOString().slice(0, 10)
   await page.goto(`/app/dashboards/${id}?range=custom&from=${day(-200)}&to=${day(1)}`)
 

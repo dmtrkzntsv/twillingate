@@ -16,7 +16,7 @@ interface PieProps {
 }
 
 export const contract: Contract = {
-  description: "Parts of a whole, up to ~7 slices; group the rest as 'Other' in SQL.",
+  description: "Parts of a whole, up to 5 slices, one per chart color; group the rest as 'Other' in SQL.",
   accepts: ['sql'],
   inputs: {
     open: false,

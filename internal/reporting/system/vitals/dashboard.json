@@ -2,6 +2,7 @@
   "id": 6,
   "title": "Web Vitals",
   "range": "30d",
+  "group": 1,
   "layout": [
     {"widget": "lcp", "width": 3, "height": 3},
     {"widget": "inp", "width": 3, "height": 3},

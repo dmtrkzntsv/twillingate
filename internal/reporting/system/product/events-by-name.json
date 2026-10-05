@@ -1,6 +1,6 @@
 {
   "component": "line",
-  "title": "Events by name",
+  "title": "Top events",
   "props": {
     "format": "number"
   }

@@ -1,5 +1,5 @@
 {
-  "component": "bar_list",
+  "component": "pie",
   "title": "Operating systems",
   "props": {
     "format": "number"

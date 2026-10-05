@@ -33,9 +33,8 @@ are in [deployment.md](deployment.md).
 `user`:
 
 - **System dashboards** ship with each release, have ids 1–999, and change only
-  when the release does: Views, Product, Users, Groups and Retention (one
-  group, the Views entry), and Web Vitals and Measures (a second group, the
-  Web Vitals entry). A system group is archived and restored whole, with
+  when the release does: Views, Product, Users, Groups, Retention, Web Vitals
+  and Measures, one group (the Views entry). A system group is archived and restored whole, with
   `whole_group`, and is never purged; every other write refuses them. To
   customize one, call `duplicate_dashboard`: the copy is a user dashboard you
   can edit. Duplicating never archives anything; to take a system group out
@@ -48,9 +47,9 @@ dashboard; a group of one is drawn as one tab. A dashboard made on its own
 starts as a group of one, its `group_id` its own id; beyond that, a
 `group_id` is just a number a group's dashboards share — read it from
 `list_dashboards` or `get_dashboard`, never assume it names a member.
-System dashboards are two groups: `group_id` 1, whose sidebar entry reads
-"Views", with tabs Views · Product · Users · Groups · Retention; and
-`group_id` 6, "Web Vitals", with tabs Web Vitals · Measures.
+System dashboards are one group: `group_id` 1, whose sidebar entry reads
+"Views", with tabs Views · Product · Users · Groups · Retention · Web Vitals ·
+Measures.
 
 **A widget** is a component plus a source:
 
@@ -232,8 +231,8 @@ widget_data {"widget_id": 42, "project_id": 7, "from": "2026-09-01", "to": "2026
   comments may hold any text.
 - Group in SQL: a widget gets at most `CONSOLE_QUERY_MAX_ROWS` rows (default
   1000) and `CONSOLE_QUERY_TIMEOUT` (default 10s). A result cut at the cap draws
-  as "partial". A pie keeps to about seven slices, the rest summed as
-  `Other`.
+  as "partial". A pie keeps to five slices, the rest summed as `Other`,
+  and a line chart to five lines: the palette has five colors.
 - A widget that follows neither switcher says in its title what it is fixed
   to.
 - Widgets are not reordered once placed: to move one, `copy_widget` it with
@@ -324,11 +323,11 @@ appears. `width` and `height` default to the component's size below.
 | Component | Accepts | Inputs: the columns the query returns | Props | Default width × height |
 | --- | --- | --- | --- | --- |
 | `stat` | `sql` | `value` number; `previous` number, optional (shows the change); `x` day, optional (a sparkline under the number, which becomes the series' `aggregate`) | `format`, `aggregate` (`sum`, `last`, `avg`) | 3 × 3 |
-| `line` | `sql` | `x` day or text; `y` number; `series` text, optional (one line per value) | `format`, `curve` (`linear`, `monotone`, `step`) | 6 × 8 |
+| `line` | `sql` | `x` day or text; `y` number; `series` text, optional (one line per value; keep it to 5 lines, one per chart color, ranking the rest out in SQL) | `format`, `curve` (`linear`, `monotone`, `step`) | 6 × 8 |
 | `area` | `sql` | as `line` | `format`, `curve`, `stacked` | 6 × 8 |
 | `bar` | `sql` | `x` text or day; `y` number; `series` text, optional | `format`, `horizontal`, `stacked` | 6 × 8 |
 | `bar_list` | `sql` | `label` text; `value` number (a ranked list with an inline bar) | `format` | 6 × 8 |
-| `pie` | `sql` | `label` text; `value` number; keep it to ~7 slices and group the rest as 'Other' in SQL | `format`, `donut` | 4 × 8 |
+| `pie` | `sql` | `label` text; `value` number; keep it to 5 slices, one per chart color, and group the rest as 'Other' in SQL | `format`, `donut` | 4 × 8 |
 | `radar` | `sql` | `axis` text; `value` number; `series` text, optional | `format` | 4 × 8 |
 | `radial` | `sql` | `label` text; `value` number; `max` number, optional (a ring toward a target) | `format` | 4 × 8 |
 | `scatter` | `sql` | `x` number; `y` number; `series` text, optional; `size` number, optional | `format` | 6 × 8 |

@@ -40,7 +40,10 @@ set -a
 set +a
 
 "$bin" migrate
-"$bin" project create -name dev
+# team_size and role, two of the custom attributes seed-demo.py puts on
+# product events, fill the Product dashboard's attribute table; plan stays
+# undeclared for projects.spec.ts to add as a breakdown.
+"$bin" project create -name dev -attr team_size -attr role
 python3 "$root/scripts/seed-demo.py" "$db"
 
 "$bin" serve &
