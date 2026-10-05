@@ -49,7 +49,7 @@ interface Props {
  * dashboard group (tabs D20), the system groups first with a "Built-in"
  * badge, then the user's. Then Gallery (the components playground and the
  * Dashboards gallery of templates, D17), closed until opened or on a gallery page. At
- * the bottom, Archive (every group with an archived dashboard, D17a)
+ * the bottom, Archive (every user group with an archived dashboard, D17a)
  * above Log out. Each entry links to its group's first live
  * member and is named by its title; it is active on any live member of
  * the group. The user's entries drag to a new order (D14, D15); built-in

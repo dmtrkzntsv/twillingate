@@ -123,16 +123,6 @@ describe('Archive, a lone dashboard', () => {
 
     expect(restore).toHaveBeenCalledWith(11)
   })
-
-  it('restores a lone system dashboard with its group', async () => {
-    mockApiWith([info(6, 'Reports', 'system', 6, { archived_at: '2026-09-15T00:00:00Z' })])
-    renderArchive()
-    const row = (await screen.findByRole('link', { name: 'Reports' })).closest('li')!
-
-    await userEvent.click(within(row).getByRole('button', { name: 'Restore' }))
-
-    expect(restore).toHaveBeenCalledWith(6, true)
-  })
 })
 
 describe('Archive, a user group', () => {
@@ -192,38 +182,24 @@ describe('Archive, a user group', () => {
   })
 })
 
-describe('Archive, a system group', () => {
-  it('is one card listing its tabs, never deleted', async () => {
+describe('Archive, system groups', () => {
+  it('leaves out every system group, deleted or live: a deleted one comes back from the gallery', async () => {
     mockApi()
     renderArchive()
 
-    const card = await group('Views')
-    expect(within(card).getByText(/5 tabs · all archived/)).toBeInTheDocument()
-    expect(within(card).getAllByRole('link')).toHaveLength(5)
-    expect(within(card).getByRole('link', { name: 'Users' })).toHaveAttribute('href', '/dashboards/3')
-    expect(within(card).getAllByText(/never deleted/)).toHaveLength(5)
-  })
-
-  it('leaves out a live system group', async () => {
-    mockApi()
-    renderArchive()
-
-    await group('Views')
-    // Reports (live) is still a legitimate sidebar link; scope to the
-    // page content so that one does not make this a false negative.
+    await group('Marketing')
+    // The sidebar links to live system dashboards; scope to the page content.
     const main = within(screen.getByRole('main'))
-    expect(main.queryByRole('link', { name: 'Reports' })).not.toBeInTheDocument()
+    for (const name of ['Views', 'Product', 'Reports']) expect(main.queryByRole('link', { name })).not.toBeInTheDocument()
+    expect(main.queryByText('System')).not.toBeInTheDocument()
+    expect(main.getByText(/comes back from Gallery › Dashboards/)).toBeInTheDocument()
   })
 
-  it('restores only whole: Restore group, and no button per tab', async () => {
-    mockApi()
+  it('reads "Nothing archived." when only a system group is', async () => {
+    mockApiWith([info(1, 'Views', 'system', 1, { archived_at: '2026-09-15T00:00:00Z' })])
     renderArchive()
 
-    const card = await group('Views')
-    expect(within(card).queryByRole('button', { name: 'Restore' })).not.toBeInTheDocument()
-    await userEvent.click(within(card).getByRole('button', { name: 'Restore group' }))
-
-    expect(restore).toHaveBeenCalledWith(1, true)
+    expect(await screen.findByText('Nothing archived.')).toBeInTheDocument()
   })
 })
 

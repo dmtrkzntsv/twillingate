@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { Link } from 'react-router'
+import { DashboardGroup, LoneDashboard, type GroupRow } from '@/components/DashboardGroup'
 import TemplateMenu from '@/components/TemplateMenu'
 import type { DashboardInfo } from '@/lib/api'
 import { dashboardsQuery } from '@/lib/queries'
@@ -13,10 +13,9 @@ interface SystemGroup {
 }
 
 /**
- * Every system dashboard grouped by `group_id`, in list order, archived
- * ones included: a template is a template whether or not it is in the
- * sidebar right now — archive state belongs to the Archive page, not here
- * (D17).
+ * Every system dashboard grouped by `group_id`, in list order, deleted
+ * (archived) ones included: a template is a template whether or not it is
+ * in the sidebar right now (D17).
  */
 function systemGroups(dashboards: DashboardInfo[]): SystemGroup[] {
   const groups: SystemGroup[] = []
@@ -29,11 +28,16 @@ function systemGroups(dashboards: DashboardInfo[]): SystemGroup[] {
   return groups
 }
 
+const NOT_IN_SIDEBAR = 'not in the sidebar'
+
+const widgets = (d: DashboardInfo) => `${d.widgets} ${d.widgets === 1 ? 'widget' : 'widgets'}`
+
 /**
- * `/gallery/dashboards`: every system group as a template, one row each
- * (D17). The row opens the group's first tab; its "…" menu duplicates the
- * whole group, and an opened tab's own "…" menu duplicates just that tab.
- * Reporting dev, which takes no writes, shows no menu.
+ * `/gallery/dashboards`: every system group as a template, shown as on the
+ * Archive page (D17): a group of one is a row, a larger group a card with
+ * its tabs. The group's "…" menu duplicates the whole group, and adds a
+ * group deleted from the sidebar back to it; a tab's copies that tab to a
+ * new dashboard. Reporting dev, which takes no writes, shows no menu.
  */
 export default function DashboardsGallery() {
   const { data } = useQuery(dashboardsQuery)
@@ -44,7 +48,7 @@ export default function DashboardsGallery() {
   return (
     <GalleryLayout
       title="Dashboards"
-      description="The dashboards that ship with twillingate. Open one to look at it, or make it your own: duplicate the whole dashboard from its … menu here, or copy one tab to a new dashboard from that tab's … menu."
+      description="The dashboards that ship with twillingate. Open one to look at it, or make it your own: duplicate the whole dashboard from its … menu, or copy one tab to a new dashboard from that tab's … menu."
       sections={sections}
     >
       <section id="system" aria-labelledby="system-heading" className="flex scroll-mt-16 flex-col gap-3">
@@ -54,30 +58,20 @@ export default function DashboardsGallery() {
         <ul className="flex flex-col gap-2">
           {groups.map((g) => {
             const first = g.members[0]
-            const n = g.members.length
-            return (
-              // The title's link stretches over the whole row, so the row
-              // opens the template; the menu sits above it.
-              <li key={g.groupId} className="relative flex items-center gap-3 rounded-lg border p-3 hover:bg-accent/40">
-                <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                  <h3 className="truncate text-sm font-medium">
-                    <Link to={`/dashboards/${first.dashboard_id}`} className="after:absolute after:inset-0 after:rounded-lg">
-                      {first.title}
-                    </Link>
-                  </h3>
-                  {n > 1 && (
-                    <span className="truncate text-xs text-muted-foreground">
-                      {n} tabs · {g.members.map((m) => m.title).join(', ')}
-                    </span>
-                  )}
-                </div>
-                {writable && (
-                  <div className="relative">
-                    <TemplateMenu first={first} />
-                  </div>
-                )}
-              </li>
-            )
+            // A system group is deleted (archived) only whole.
+            const deleted = g.members.every((m) => m.archived_at)
+            const groupMenu = writable && <TemplateMenu dashboard={first} wholeGroup deleted={deleted} />
+            if (g.members.length === 1) {
+              const detail = [widgets(first), deleted && NOT_IN_SIDEBAR].filter(Boolean).join(' · ')
+              return <LoneDashboard key={g.groupId} row={{ ...first, detail, action: groupMenu }} />
+            }
+            const rows: GroupRow[] = g.members.map((d) => ({
+              ...d,
+              detail: widgets(d),
+              action: writable && <TemplateMenu dashboard={d} />,
+            }))
+            const meta = [`${g.members.length} tabs`, deleted && NOT_IN_SIDEBAR].filter(Boolean).join(' · ')
+            return <DashboardGroup key={g.groupId} title={first.title} meta={meta} action={groupMenu} rows={rows} />
           })}
         </ul>
       </section>

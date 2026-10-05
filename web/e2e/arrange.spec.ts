@@ -110,7 +110,7 @@ test.afterEach(async ({ request }) => {
   }
 })
 
-test('duplicates Views from the sidebar without archiving it, then archives and restores it', async ({ page, request }) => {
+test('duplicates Views from the sidebar without deleting it, then deletes it and adds it back from the gallery', async ({ page, request }) => {
   const before = await dashboardIds(request)
   const viewsId = before.get('Views')
   expect(viewsId, 'no dashboard titled Views').toBeDefined()
@@ -138,22 +138,28 @@ test('duplicates Views from the sidebar without archiving it, then archives and 
     page.getByRole('link', { name: 'Views (copy)', exact: true }).and(page.locator(`[href="/app/dashboards/${copyId}"]`))
   ).toHaveCount(1)
 
-  // Replacing it is a second, explicit step: archive the original.
+  // Replacing it is a second, explicit step: delete the original.
   await page.getByRole('link', { name: 'Views', exact: true }).hover()
   await page.getByRole('button', { name: 'Views actions' }).click()
-  await page.getByRole('menuitem', { name: 'Archive' }).click()
+  await page.getByRole('menuitem', { name: 'Delete' }).click()
 
   await expect(page.getByRole('link', { name: 'Views', exact: true })).toHaveCount(0)
 
+  // A deleted system group is not on the Archive page: it comes back from the gallery.
   await page.goto('/app/archive')
   await page.waitForLoadState('networkidle')
-  // The group is one card, its tabs inside; a system group restores whole.
-  const viewsGroup = page.getByRole('main').getByRole('listitem', { name: 'Views', exact: true })
-  await expect(viewsGroup.getByRole('link')).toHaveCount(5)
-  await expect(viewsGroup.getByRole('button', { name: 'Restore', exact: true })).toHaveCount(0)
-  await viewsGroup.getByRole('button', { name: 'Restore group' }).click()
+  await expect(page.getByRole('main').getByRole('link', { name: 'Views', exact: true })).toHaveCount(0)
 
-  await expect(page.getByRole('link', { name: 'Views', exact: true })).toHaveCount(1)
+  await page.goto('/app/gallery/dashboards')
+  await page.waitForLoadState('networkidle')
+  const viewsGroup = page.getByRole('main').getByRole('listitem', { name: 'Views', exact: true })
+  await expect(viewsGroup.getByText('5 tabs · not in the sidebar')).toBeVisible()
+  await viewsGroup.getByRole('button', { name: 'Views actions', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Add to sidebar' }).click()
+
+  // The gallery card links to its Views tab too; count the sidebar's alone.
+  await expect(page.locator('[data-sidebar="sidebar"]').getByRole('link', { name: 'Views', exact: true })).toHaveCount(1)
+  await expect(viewsGroup.getByText('5 tabs', { exact: true })).toBeVisible()
 })
 
 test('archives a user tab and undoes it', async ({ page, request }) => {
@@ -276,10 +282,10 @@ test('copies a system group and one of its tabs from the gallery while it is arc
   await page.waitForLoadState('networkidle')
 
   const main = page.getByRole('main')
-  const viewsRow = main.locator('li').filter({ has: page.getByRole('heading', { level: 3, name: 'Views', exact: true }) })
-  // The Dashboards gallery shows no archive state at all, live or archived (D17).
-  await expect(viewsRow.getByText('Archived', { exact: true })).toHaveCount(0)
-  await viewsRow.getByRole('button', { name: 'Views actions' }).click()
+  const viewsGroup = main.getByRole('listitem', { name: 'Views', exact: true })
+  // The Dashboards gallery shows a deleted group as not in the sidebar, never "archived" (D17).
+  await expect(viewsGroup.getByText(/archived/i)).toHaveCount(0)
+  await viewsGroup.getByRole('button', { name: 'Views actions', exact: true }).click()
   await page.getByRole('menuitem', { name: 'Duplicate dashboard' }).click()
 
   await page.waitForURL(/\/app\/dashboards\/\d+/)
@@ -289,12 +295,9 @@ test('copies a system group and one of its tabs from the gallery while it is arc
   await expect(page.getByRole('heading', { level: 1, name: 'Views (copy)', exact: true })).toBeVisible()
   await expect(page.getByRole('tab')).toHaveCount(7)
 
-  // One tab of the archived template, from that tab's own menu.
+  // One tab of the archived template, from that tab's row in the gallery.
   await page.goto('/app/gallery/dashboards')
-  await main.getByRole('link', { name: 'Views', exact: true }).click()
-  await page.getByRole('tab', { name: 'Users', exact: true }).click()
-  await expect(page.getByRole('heading', { level: 1, name: 'Users', exact: true })).toBeVisible()
-  await page.getByRole('button', { name: 'Tab actions' }).click()
+  await viewsGroup.getByRole('button', { name: 'Users tab actions' }).click()
   await page.getByRole('menuitem', { name: 'Copy to new dashboard' }).click()
 
   await page.waitForURL((url) => /\/app\/dashboards\/\d+/.test(url.pathname) && !url.pathname.endsWith(`/${groupCopyId}`))

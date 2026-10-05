@@ -1,4 +1,4 @@
-import { CopyIcon, MoreHorizontalIcon } from 'lucide-react'
+import { CopyIcon, MoreHorizontalIcon, PanelLeftIcon } from 'lucide-react'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -9,29 +9,49 @@ import { Button } from '@/components/ui/button'
 import { useDashboardActions } from '@/hooks/use-dashboard-actions'
 
 interface Props {
-  /** The template group's first member. */
-  first: { dashboard_id: number; title: string }
+  dashboard: { dashboard_id: number; title: string }
+  /** The group's menu: duplicate all of it. Otherwise one tab's: copy that tab alone. */
+  wholeGroup?: boolean
+  /** The group was deleted from the sidebar: its menu offers "Add to sidebar". */
+  deleted?: boolean
 }
 
 /**
- * A Dashboards gallery row's "…" menu (D17): "Duplicate dashboard" copies the whole system
- * group (`wholeGroup`) and opens the copy, archived or not, never
- * archiving anything. A single tab is duplicated from its own "…" menu
- * once the template is open.
+ * A Dashboards gallery "…" menu (D17), archived or not, never archiving
+ * anything. A group's (on its card, or on a group of one) offers
+ * "Duplicate dashboard", copying the whole system group (`wholeGroup`); a
+ * tab's offers "Copy to new dashboard", that tab as a dashboard of its
+ * own. Either opens the copy. A group deleted from the sidebar (archived
+ * whole) also offers "Add to sidebar", which restores it: the gallery is
+ * where a deleted system dashboard comes back from.
  */
-export default function TemplateMenu({ first }: Props) {
-  const { duplicate, pending } = useDashboardActions()
+export default function TemplateMenu({ dashboard, wholeGroup = false, deleted = false }: Props) {
+  const { duplicate, restore, pending } = useDashboardActions()
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon" className="size-8" aria-label={`${first.title} actions`}>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-8"
+          aria-label={wholeGroup ? `${dashboard.title} actions` : `${dashboard.title} tab actions`}
+        >
           <MoreHorizontalIcon />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
-        <DropdownMenuItem disabled={pending} onClick={() => void duplicate(first, { wholeGroup: true })}>
+        {wholeGroup && deleted && (
+          <DropdownMenuItem disabled={pending} onClick={() => void restore(dashboard.dashboard_id, true)}>
+            <PanelLeftIcon />
+            Add to sidebar
+          </DropdownMenuItem>
+        )}
+        <DropdownMenuItem
+          disabled={pending}
+          onClick={() => void (wholeGroup ? duplicate(dashboard, { wholeGroup: true }) : duplicate(dashboard))}
+        >
           <CopyIcon />
-          Duplicate dashboard
+          {wholeGroup ? 'Duplicate dashboard' : 'Copy to new dashboard'}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
