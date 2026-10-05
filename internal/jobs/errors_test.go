@@ -164,11 +164,11 @@ func (f *faultyStore) IncrementalVacuum(ctx context.Context) error {
 	return f.Store.IncrementalVacuum(ctx)
 }
 
-func (f *faultyStore) MeasureServerStats(ctx context.Context, now time.Time) error {
-	if f.shouldFail("MeasureServerStats") {
+func (f *faultyStore) RecordUsageHistory(ctx context.Context, now time.Time) error {
+	if f.shouldFail("RecordUsageHistory") {
 		return errBoom
 	}
-	return f.Store.MeasureServerStats(ctx, now)
+	return f.Store.RecordUsageHistory(ctx, now)
 }
 
 // setupFaulty is setup, but returns a *Runner built over a faultyStore so
@@ -403,14 +403,14 @@ func TestRunDailyPassLogsIncrementalVacuumFailure(t *testing.T) {
 
 // The measurement is the last step: a failure is logged and the pass still
 // succeeds, and the earlier steps have already run.
-func TestRunDailyPassLogsMeasureServerStatsFailure(t *testing.T) {
+func TestRunDailyPassLogsRecordUsageHistoryFailure(t *testing.T) {
 	_, fst, r, buf := setupFaulty(t, jobsVars, jobsProjectSpecs)
-	fst.failing("MeasureServerStats")
+	fst.failing("RecordUsageHistory")
 	if err := r.RunDailyPass(context.Background()); err != nil {
 		t.Fatalf("RunDailyPass = %v, want nil", err)
 	}
-	if !logged(buf, "measure server stats") || !logged(buf, "boom") {
-		t.Errorf("log output = %q, want mention of measure server stats and boom", buf.String())
+	if !logged(buf, "record usage history") || !logged(buf, "boom") {
+		t.Errorf("log output = %q, want mention of record usage history and boom", buf.String())
 	}
 }
 

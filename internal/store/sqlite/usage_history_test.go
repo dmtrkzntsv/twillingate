@@ -10,17 +10,17 @@ import (
 	"github.com/google/uuid"
 )
 
-// statID names one server_stats row: a stat, a project and a day.
+// statID names one usage_history row: a stat, a project and a day.
 type statID struct {
 	key     string
 	project int64
 	day     string
 }
 
-// readStats answers every server_stats row's value by its key.
+// readStats answers every usage_history row's value by its key.
 func readStats(t *testing.T, db *DB) map[statID]int64 {
 	t.Helper()
-	rows, err := db.db.Query(`SELECT key, project_id, measured_at, value FROM server_stats`)
+	rows, err := db.db.Query(`SELECT key, project_id, measured_at, value FROM usage_history`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,12 +92,12 @@ func bytesOf(t *testing.T, db *DB, table string) int64 {
 // Every project with rows gets a raw and an aggregate size, split by its
 // share of each table's rows, on the UTC day of the run; a project with no
 // aggregate rows has an aggregate size of zero, not a missing one.
-func TestMeasureServerStats(t *testing.T) {
+func TestRecordUsageHistory(t *testing.T) {
 	db := seedStatsDB(t)
 	ctx := context.Background()
 	// 01:00 at +02:00 is still the 21st in UTC.
 	now := time.Date(2026, 8, 22, 1, 0, 7, 0, time.FixedZone("x", 2*3600))
-	if err := db.MeasureServerStats(ctx, now); err != nil {
+	if err := db.RecordUsageHistory(ctx, now); err != nil {
 		t.Fatal(err)
 	}
 	all := readStats(t, db)
@@ -127,17 +127,17 @@ func TestMeasureServerStats(t *testing.T) {
 
 // A second run on the same day (the pass runs at start and at 03:00)
 // replaces that day's values; nothing is added.
-func TestMeasureServerStatsReplacesTheSameDay(t *testing.T) {
+func TestRecordUsageHistoryReplacesTheSameDay(t *testing.T) {
 	db := seedStatsDB(t)
 	ctx := context.Background()
 	first := time.Date(2026, 8, 22, 3, 0, 0, 0, time.UTC)
-	if err := db.MeasureServerStats(ctx, first); err != nil {
+	if err := db.RecordUsageHistory(ctx, first); err != nil {
 		t.Fatal(err)
 	}
 	p2 := statID{store.StatRawBytes, 2, "2026-08-22"}
 	before := readStats(t, db)[p2]
 	growProject2(t, db)
-	if err := db.MeasureServerStats(ctx, first.Add(12*time.Hour)); err != nil {
+	if err := db.RecordUsageHistory(ctx, first.Add(12*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	stats := sizes(readStats(t, db))
@@ -151,16 +151,16 @@ func TestMeasureServerStatsReplacesTheSameDay(t *testing.T) {
 
 // A run on a new day adds that day's rows and leaves the earlier days: the
 // table is a daily history.
-func TestMeasureServerStatsKeepsEarlierDays(t *testing.T) {
+func TestRecordUsageHistoryKeepsEarlierDays(t *testing.T) {
 	db := seedStatsDB(t)
 	ctx := context.Background()
 	first := time.Date(2026, 8, 22, 3, 0, 0, 0, time.UTC)
-	if err := db.MeasureServerStats(ctx, first); err != nil {
+	if err := db.RecordUsageHistory(ctx, first); err != nil {
 		t.Fatal(err)
 	}
 	day1 := sizes(readStats(t, db))
 	growProject2(t, db)
-	if err := db.MeasureServerStats(ctx, first.Add(24*time.Hour)); err != nil {
+	if err := db.RecordUsageHistory(ctx, first.Add(24*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	stats := sizes(readStats(t, db))
@@ -191,17 +191,17 @@ func growProject2(t *testing.T, db *DB) {
 // A project whose rows are all gone has no size on the next run's day,
 // whether that is the same day (its rows for the day go) or a later one
 // (its earlier days stay, as history).
-func TestMeasureServerStatsDropsAProjectWithNoRows(t *testing.T) {
+func TestRecordUsageHistoryDropsAProjectWithNoRows(t *testing.T) {
 	db := seedStatsDB(t)
 	ctx := context.Background()
 	now := time.Date(2026, 8, 22, 3, 0, 0, 0, time.UTC)
-	if err := db.MeasureServerStats(ctx, now); err != nil {
+	if err := db.RecordUsageHistory(ctx, now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.db.Exec(`DELETE FROM events WHERE project_id = 2`); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.MeasureServerStats(ctx, now.Add(time.Hour)); err != nil {
+	if err := db.RecordUsageHistory(ctx, now.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	stats := sizes(readStats(t, db))
@@ -213,7 +213,7 @@ func TestMeasureServerStatsDropsAProjectWithNoRows(t *testing.T) {
 	if len(stats) != 2 {
 		t.Errorf("%d rows, want project 1's two", len(stats))
 	}
-	if err := db.MeasureServerStats(ctx, now.Add(24*time.Hour)); err != nil {
+	if err := db.RecordUsageHistory(ctx, now.Add(24*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	if stats := sizes(readStats(t, db)); len(stats) != 4 {
@@ -223,7 +223,7 @@ func TestMeasureServerStatsDropsAProjectWithNoRows(t *testing.T) {
 
 // A database with no data writes nothing, and a project whose only rows
 // are its registry entry and an ingest key is not a project with data.
-func TestMeasureServerStatsIgnoresTheRegistry(t *testing.T) {
+func TestRecordUsageHistoryIgnoresTheRegistry(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	if _, err := db.CreateProjectWithKey(ctx, store.RegistryProject{Name: "a", AllowedOrigins: "[]", Attributes: "[]"},
@@ -231,7 +231,7 @@ func TestMeasureServerStatsIgnoresTheRegistry(t *testing.T) {
 		store.AuditEntry{Actor: "t", Action: "project.create"}, store.AuditEntry{Actor: "t", Action: "key.issue"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.MeasureServerStats(ctx, time.Now()); err != nil {
+	if err := db.RecordUsageHistory(ctx, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	for id, v := range readStats(t, db) {
@@ -248,7 +248,7 @@ func TestMeasureServerStatsIgnoresTheRegistry(t *testing.T) {
 }
 
 // DeleteProjectData takes the project's sizes with it.
-func TestDeleteProjectDataRemovesServerStats(t *testing.T) {
+func TestDeleteProjectDataRemovesUsageHistory(t *testing.T) {
 	db := seedStatsDB(t)
 	ctx := context.Background()
 	id, err := db.CreateProject(ctx, store.RegistryProject{Name: "a", AllowedOrigins: "[]", Attributes: "[]"},
@@ -259,7 +259,7 @@ func TestDeleteProjectDataRemovesServerStats(t *testing.T) {
 	for _, key := range []string{store.StatRawBytes, store.StatAggregateBytes} {
 		for _, p := range []int64{id, id + 1} {
 			for _, day := range []string{"2026-08-21", "2026-08-22"} {
-				if _, err := db.db.Exec(`INSERT INTO server_stats (key, project_id, measured_at, value) VALUES (?, ?, ?, 5)`, key, p, day); err != nil {
+				if _, err := db.db.Exec(`INSERT INTO usage_history (key, project_id, measured_at, value) VALUES (?, ?, ?, 5)`, key, p, day); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -301,14 +301,14 @@ func TestShareOfBytesDoesNotOverflow(t *testing.T) {
 // Counts: every day before the run's, from the aggregates where rolled up
 // and the raw rows where not, per project and family; today's rows wait
 // for tomorrow's run.
-func TestMeasureServerStatsCountsDays(t *testing.T) {
+func TestRecordUsageHistoryCountsDays(t *testing.T) {
 	db := seedStatsDB(t)
 	ctx := context.Background()
 	if err := db.WriteEvents(ctx, []store.Event{{Family: store.FamilyViews, ID: uuid.NewString(), ProjectID: 1, Kind: "web",
 		ActorKind: store.ActorConnection, TS: ts("2026-08-22T01:00:00Z"), ActorID: "v", Path: "/"}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.MeasureServerStats(ctx, time.Date(2026, 8, 22, 3, 0, 0, 0, time.UTC)); err != nil {
+	if err := db.RecordUsageHistory(ctx, time.Date(2026, 8, 22, 3, 0, 0, 0, time.UTC)); err != nil {
 		t.Fatal(err)
 	}
 	stats := readStats(t, db)
@@ -336,11 +336,11 @@ func TestMeasureServerStatsCountsDays(t *testing.T) {
 
 // A late event on a raw day is counted on the next run; a day whose
 // aggregates are pruned keeps its count.
-func TestMeasureServerStatsRecountsAndOutlivesTheAggregates(t *testing.T) {
+func TestRecordUsageHistoryRecountsAndOutlivesTheAggregates(t *testing.T) {
 	db := seedStatsDB(t)
 	ctx := context.Background()
 	now := time.Date(2026, 8, 22, 3, 0, 0, 0, time.UTC)
-	if err := db.MeasureServerStats(ctx, now); err != nil {
+	if err := db.RecordUsageHistory(ctx, now); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.WriteEvents(ctx, []store.Event{{Family: store.FamilyViews, ID: uuid.NewString(), ProjectID: 1, Kind: "web",
@@ -350,7 +350,7 @@ func TestMeasureServerStatsRecountsAndOutlivesTheAggregates(t *testing.T) {
 	if _, err := db.db.Exec(`DELETE FROM agg_views_daily WHERE day = '2026-07-01'`); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.MeasureServerStats(ctx, now.Add(24*time.Hour)); err != nil {
+	if err := db.RecordUsageHistory(ctx, now.Add(24*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	stats := readStats(t, db)
@@ -397,9 +397,9 @@ func attrsDB(t *testing.T, cap string) (*DB, int64) {
 
 // Attributes: what each project declares, and per raw day the keys and
 // values received (declared or not) and the values folded past the cap.
-func TestMeasureServerStatsCountsAttributes(t *testing.T) {
+func TestRecordUsageHistoryCountsAttributes(t *testing.T) {
 	db, id := attrsDB(t, "1")
-	if err := db.MeasureServerStats(context.Background(), time.Date(2026, 8, 22, 3, 0, 0, 0, time.UTC)); err != nil {
+	if err := db.RecordUsageHistory(context.Background(), time.Date(2026, 8, 22, 3, 0, 0, 0, time.UTC)); err != nil {
 		t.Fatal(err)
 	}
 	stats := readStats(t, db)
@@ -425,9 +425,9 @@ func TestMeasureServerStatsCountsAttributes(t *testing.T) {
 }
 
 // With no cap nothing folds, and the day still gets its row: 0, counted.
-func TestMeasureServerStatsFoldsNothingWithoutACap(t *testing.T) {
+func TestRecordUsageHistoryFoldsNothingWithoutACap(t *testing.T) {
 	db, id := attrsDB(t, "0")
-	if err := db.MeasureServerStats(context.Background(), time.Date(2026, 8, 22, 3, 0, 0, 0, time.UTC)); err != nil {
+	if err := db.RecordUsageHistory(context.Background(), time.Date(2026, 8, 22, 3, 0, 0, 0, time.UTC)); err != nil {
 		t.Fatal(err)
 	}
 	if got, ok := readStats(t, db)[statID{store.StatAttributeValuesFolded, id, "2026-08-10"}]; !ok || got != 0 {
@@ -437,17 +437,17 @@ func TestMeasureServerStatsFoldsNothingWithoutACap(t *testing.T) {
 
 // Once a day's raw rows are gone (rolled up, keeping only what the cap let
 // through), its attribute counts stay as they were counted while raw.
-func TestMeasureServerStatsKeepsAttributeCountsPastTheRawDays(t *testing.T) {
+func TestRecordUsageHistoryKeepsAttributeCountsPastTheRawDays(t *testing.T) {
 	db, id := attrsDB(t, "1")
 	ctx := context.Background()
 	now := time.Date(2026, 8, 22, 3, 0, 0, 0, time.UTC)
-	if err := db.MeasureServerStats(ctx, now); err != nil {
+	if err := db.RecordUsageHistory(ctx, now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.db.Exec(`DELETE FROM events WHERE project_id = ?`, id); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.MeasureServerStats(ctx, now.Add(24*time.Hour)); err != nil {
+	if err := db.RecordUsageHistory(ctx, now.Add(24*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	stats := readStats(t, db)
@@ -460,7 +460,7 @@ func TestMeasureServerStatsKeepsAttributeCountsPastTheRawDays(t *testing.T) {
 
 // The caps in force are recorded for the day, server-wide: the meta value
 // the views read, 0 for no cap, else the default.
-func TestMeasureServerStatsRecordsTheCaps(t *testing.T) {
+func TestRecordUsageHistoryRecordsTheCaps(t *testing.T) {
 	db, _ := attrsDB(t, "0") // product attributes: no cap
 	ctx := context.Background()
 	if _, err := db.db.Exec(`INSERT OR REPLACE INTO meta (key, value) VALUES ('attribute_breakdowns_max', '12')`); err != nil {
@@ -469,7 +469,7 @@ func TestMeasureServerStatsRecordsTheCaps(t *testing.T) {
 	if _, err := db.db.Exec(`DELETE FROM meta WHERE key = 'identities_top_n'`); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.MeasureServerStats(ctx, time.Date(2026, 8, 22, 3, 0, 0, 0, time.UTC)); err != nil {
+	if err := db.RecordUsageHistory(ctx, time.Date(2026, 8, 22, 3, 0, 0, 0, time.UTC)); err != nil {
 		t.Fatal(err)
 	}
 	stats := readStats(t, db)

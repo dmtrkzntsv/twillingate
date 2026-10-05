@@ -11,7 +11,7 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
-// MeasureServerStats writes every server_stats measurement in one
+// RecordUsageHistory writes every usage_history measurement in one
 // transaction, so a reader sees the old values or the new, never a mix:
 //
 //   - sizes, for now's UTC day: each project's estimated disk use, and the
@@ -36,7 +36,7 @@ import (
 //
 // dbstat reads every page of the file, so this runs in the daily pass,
 // never in a request.
-func (d *DB) MeasureServerStats(ctx context.Context, now time.Time) error {
+func (d *DB) RecordUsageHistory(ctx context.Context, now time.Time) error {
 	day := civil.DateOf(now).String()
 	return d.tx(ctx, func(tx *sql.Tx) error {
 		if err := measureSizes(ctx, tx, day); err != nil {
@@ -96,7 +96,7 @@ func measureSizes(ctx context.Context, tx *sql.Tx, day string) error {
 			hasRows[id] = true
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM server_stats WHERE key IN (?, ?, ?) AND measured_at = ?`,
+	if _, err := tx.ExecContext(ctx, `DELETE FROM usage_history WHERE key IN (?, ?, ?) AND measured_at = ?`,
 		store.StatRawBytes, store.StatAggregateBytes, store.StatDatabaseBytes, day); err != nil {
 		return err
 	}
@@ -131,7 +131,7 @@ var dailyCounts = []struct{ key, agg, raw string }{
 // wrote for those days. A day with nothing has no row.
 func countDays(ctx context.Context, tx *sql.Tx, today string) error {
 	for _, c := range dailyCounts {
-		if _, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO server_stats (key, project_id, measured_at, value)
+		if _, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO usage_history (key, project_id, measured_at, value)
 			SELECT ?2, project_id, day, SUM(n) FROM (`+c.agg+` UNION ALL `+c.raw+`) GROUP BY project_id, day`,
 			today, c.key); err != nil {
 			return fmt.Errorf("count %s: %w", c.key, err)
@@ -143,7 +143,7 @@ func countDays(ctx context.Context, tx *sql.Tx, today string) error {
 // countDeclared writes each project's declared attribute count for day,
 // archived projects included.
 func countDeclared(ctx context.Context, tx *sql.Tx, day string) error {
-	_, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO server_stats (key, project_id, measured_at, value)
+	_, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO usage_history (key, project_id, measured_at, value)
 		SELECT ?1, p.id, ?2, (SELECT COUNT(*) FROM json_each(CASE WHEN json_valid(p.attributes) THEN p.attributes ELSE '[]' END) j
 		                      WHERE j.type = 'text')
 		FROM projects p`, store.StatDeclaredAttributes, day)
@@ -165,7 +165,7 @@ func recordCaps(ctx context.Context, tx *sql.Tx, day string) error {
 		{store.StatCapIdentities, defaultIdentitiesTopN},
 		{store.StatCapBreakdowns, 10}, // ATTRIBUTE_BREAKDOWNS_MAX's default
 	} {
-		if _, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO server_stats (key, project_id, measured_at, value)
+		if _, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO usage_history (key, project_id, measured_at, value)
 			VALUES (?1, 0, ?2, COALESCE((SELECT CAST(value AS INTEGER) FROM meta
 			                             WHERE key = ?1 AND (CAST(value AS INTEGER) > 0 OR value = '0')), ?3))`,
 			c.key, day, c.def); err != nil {
@@ -250,7 +250,7 @@ func countAttributes(ctx context.Context, tx *sql.Tx, today string) error {
 		{store.StatAttributeValues, `SELECT project_id, day, COUNT(*) FROM (SELECT DISTINCT project_id, day, k, v FROM (` + received + `)) GROUP BY project_id, day`},
 		{store.StatAttributeValuesFolded, foldedSQL},
 	} {
-		if _, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO server_stats (key, project_id, measured_at, value)
+		if _, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO usage_history (key, project_id, measured_at, value)
 			SELECT ?2, * FROM (`+q.sql+`)`, today, q.key); err != nil {
 			return fmt.Errorf("count %s: %w", q.key, err)
 		}
@@ -259,7 +259,7 @@ func countAttributes(ctx context.Context, tx *sql.Tx, today string) error {
 }
 
 func putStat(ctx context.Context, tx *sql.Tx, key string, project int64, day string, v int64) error {
-	_, err := tx.ExecContext(ctx, `INSERT INTO server_stats (key, project_id, measured_at, value) VALUES (?, ?, ?, ?)`,
+	_, err := tx.ExecContext(ctx, `INSERT INTO usage_history (key, project_id, measured_at, value) VALUES (?, ?, ?, ?)`,
 		key, project, day, v)
 	return err
 }
@@ -298,7 +298,7 @@ func tableBytes(ctx context.Context, tx *sql.Tx) (map[string]int64, error) {
 
 // dataTables lists the tables holding a project's data: its raw rows
 // (events) and every rollup keyed by project_id. The registry, the keys and
-// server_stats are not data.
+// usage_history are not data.
 func dataTables(ctx context.Context, tx *sql.Tx) ([]string, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT m.name FROM sqlite_schema m, pragma_table_info(m.name) c
 		WHERE m.type = 'table' AND c.name = 'project_id'

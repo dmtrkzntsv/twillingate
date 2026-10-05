@@ -160,7 +160,7 @@ func TestReceivedSeenKeepsTheNewestTwoDays(t *testing.T) {
 // with the busiest (event, measure) partition's distinct values, leaves
 // today's row as ingest wrote it (events 0), and drops days whose raw rows
 // are gone.
-func TestMeasureServerStatsRecountsReceivedAttributes(t *testing.T) {
+func TestRecordUsageHistoryRecountsReceivedAttributes(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	var evs []store.Event
@@ -186,7 +186,7 @@ func TestMeasureServerStatsRecountsReceivedAttributes(t *testing.T) {
 	if _, err := db.db.Exec(`UPDATE received_attributes SET events = 99 WHERE day = '2026-08-02'`); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.MeasureServerStats(ctx, ts("2026-08-04T03:00:00Z")); err != nil {
+	if err := db.RecordUsageHistory(ctx, ts("2026-08-04T03:00:00Z")); err != nil {
 		t.Fatal(err)
 	}
 	rows, err := db.db.Query(`SELECT day, attr_key, events, max_values FROM received_attributes ORDER BY day, attr_key`)
@@ -215,7 +215,7 @@ func TestMeasureServerStatsRecountsReceivedAttributes(t *testing.T) {
 // separate partitions, so max_values is the busiest one, never their
 // union; events sum across them. The reserved columns count under their
 // declarable keys ($path, $device_model) next to the custom ones.
-func TestMeasureServerStatsRecountsPartitionsAndReservedColumns(t *testing.T) {
+func TestRecordUsageHistoryRecountsPartitionsAndReservedColumns(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	v := 1.0
@@ -242,7 +242,7 @@ func TestMeasureServerStatsRecountsPartitionsAndReservedColumns(t *testing.T) {
 	if err := db.WriteEvents(ctx, evs); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.MeasureServerStats(ctx, ts("2026-08-04T03:00:00Z")); err != nil {
+	if err := db.RecordUsageHistory(ctx, ts("2026-08-04T03:00:00Z")); err != nil {
 		t.Fatal(err)
 	}
 	rows, err := db.db.Query(`SELECT attr_key, events, max_values FROM received_attributes

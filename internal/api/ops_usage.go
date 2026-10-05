@@ -165,7 +165,7 @@ func (h *host) usageFor(ctx context.Context, p *manage.Project, fromD, toD civil
 		// Not v_views_daily: its live half sessionizes raw rows with window
 		// functions only to yield a count, and this runs per project. A day
 		// is rolled up or raw, never both, and each view counts once either
-		// way, so this sums to the same (TestProjectStatsViewsMatchTheView).
+		// way, so this sums to the same (TestUsageViewsMatchTheView).
 		{`SELECT day, SUM(n) FROM (
 			  SELECT day, SUM(views) AS n FROM agg_views_daily WHERE project_id = ?1 AND day BETWEEN ?2 AND ?3 GROUP BY day
 			  UNION ALL
@@ -208,9 +208,9 @@ func (h *host) usageFor(ctx context.Context, p *manage.Project, fromD, toD civil
 		                        UNION ALL SELECT MIN(day) FROM raw_views WHERE project_id = ?1
 		                        UNION ALL SELECT MIN(day) FROM raw_product WHERE project_id = ?1
 		                        UNION ALL SELECT MIN(day) FROM raw_measures WHERE project_id = ?1
-		                        UNION ALL SELECT MIN(measured_at) FROM server_stats WHERE key = ?2 AND project_id = ?1
-		                        UNION ALL SELECT MIN(measured_at) FROM server_stats WHERE key = ?3 AND project_id = ?1
-		                        UNION ALL SELECT MIN(measured_at) FROM server_stats WHERE key = ?4 AND project_id = ?1)),
+		                        UNION ALL SELECT MIN(measured_at) FROM usage_history WHERE key = ?2 AND project_id = ?1
+		                        UNION ALL SELECT MIN(measured_at) FROM usage_history WHERE key = ?3 AND project_id = ?1
+		                        UNION ALL SELECT MIN(measured_at) FROM usage_history WHERE key = ?4 AND project_id = ?1)),
 		  (SELECT COUNT(*) FROM (SELECT day FROM raw_views WHERE project_id = ?1
 		                          UNION SELECT day FROM raw_product WHERE project_id = ?1
 		                          UNION SELECT day FROM raw_measures WHERE project_id = ?1)),
@@ -255,13 +255,13 @@ func (h *host) usageFor(ctx context.Context, p *manage.Project, fromD, toD civil
 }
 
 // readSizes answers every project's latest size, by project id: the rows
-// the daily pass stored in server_stats on the newest day it measured, read
+// the daily pass stored in usage_history on the newest day it measured, read
 // in one query however many projects there are. A project with no row that
 // day had no data left to measure and is absent, even if an earlier day
 // measured it.
 func (h *host) readSizes(ctx context.Context) (map[int64]*usageSize, error) {
-	res, err := h.run(ctx, `SELECT key, project_id, value, measured_at FROM server_stats
-		WHERE key IN (?1, ?2) AND measured_at = (SELECT MAX(measured_at) FROM server_stats WHERE key IN (?1, ?2))`,
+	res, err := h.run(ctx, `SELECT key, project_id, value, measured_at FROM usage_history
+		WHERE key IN (?1, ?2) AND measured_at = (SELECT MAX(measured_at) FROM usage_history WHERE key IN (?1, ?2))`,
 		store.StatRawBytes, store.StatAggregateBytes)
 	if err != nil {
 		return nil, err
@@ -310,12 +310,12 @@ type stored struct {
 // and the database's size stored for every day of the range.
 func (h *host) readStored(ctx context.Context, fromD, toD civil.Date) (stored, error) {
 	st := stored{days: map[int64]map[string]*storedDay{}, database: map[string]int64{}}
-	res, err := h.run(ctx, `SELECT COALESCE(MAX(measured_at), '') FROM server_stats WHERE key = ? AND project_id = 0`, store.StatDatabaseBytes)
+	res, err := h.run(ctx, `SELECT COALESCE(MAX(measured_at), '') FROM usage_history WHERE key = ? AND project_id = 0`, store.StatDatabaseBytes)
 	if err != nil {
 		return stored{}, err
 	}
 	st.countedBefore = res.Rows[0][0]
-	res, err = h.run(ctx, `SELECT key, project_id, measured_at, value FROM server_stats
+	res, err = h.run(ctx, `SELECT key, project_id, measured_at, value FROM usage_history
 		WHERE key IN (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) AND measured_at BETWEEN ?11 AND ?12`,
 		store.StatViews, store.StatEvents, store.StatMeasures, store.StatRawBytes, store.StatAggregateBytes, store.StatDatabaseBytes,
 		store.StatDeclaredAttributes, store.StatAttributeKeys, store.StatAttributeValues, store.StatAttributeValuesFolded,
