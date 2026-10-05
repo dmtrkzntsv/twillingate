@@ -5,6 +5,11 @@
 -- unique_groups is NULL for days rolled up before the collector measured
 -- it; MAX() skips those, so such a day shows an empty cell, not 0.
 --
+-- Only the project's own attributes: the `$` keys (environment, location)
+-- are counted per event, and summed across events they repeat the Views
+-- dashboard with worse numbers (a floor on users, not a count). They stay
+-- in v_product_attrs for widgets that read them per event.
+--
 -- Every (attribute, day, value) in the range: the table is remote, so the
 -- viewer's filters, sort and page run over all of them in SQL.
 SELECT attr_key AS "Attribute", day AS "Day", attr_value AS "Value", SUM(count) AS "Count",
@@ -12,5 +17,6 @@ SELECT attr_key AS "Attribute", day AS "Day", attr_value AS "Value", SUM(count) 
 FROM v_product_attrs
 WHERE project_id = :project
   AND day BETWEEN :from AND :to
+  AND attr_key NOT LIKE '$%'
 GROUP BY attr_key, day, attr_value
 ORDER BY attr_key, day DESC, "Count" DESC, attr_value

@@ -88,6 +88,8 @@ UTMS = [(("", "", ""), 62), (("twitter", "social", "launch"), 14),
         (("producthunt", "referral", "launch"), 8), (("google", "cpc", "brand"), 6)]
 EVENTS = [("signup", 12), ("activated", 8), ("subscribed", 4), ("invite_sent", 6), ("export", 5)]
 PLANS = [("free", 60), ("pro", 30), ("team", 10)]
+TEAM_SIZES = [("1", 40), ("2-5", 30), ("6-20", 18), ("21-100", 9), ("100+", 3)]
+ROLES = [("member", 55), ("admin", 25), ("owner", 20)]
 
 # Web Vitals: (name, measure, median, log-normal sigma). Mobile page loads
 # are slower (MOBILE_SLOWDOWN on the time vitals). CLS is exactly 0 on
@@ -223,7 +225,7 @@ def seed(cur, pid, name, profile, today, sends_ids):
                          actor_for(name, day, n, sends_ids),
                          "user" if sends_ids else "connection", user,
                          GROUPS[n % len(GROUPS)][0] if sends_ids else "",
-                         "web", pick(OSES), "", json.dumps({"plan": pick(PLANS)}),
+                         "web", pick(OSES), "", json.dumps({"plan": pick(PLANS), "team_size": pick(TEAM_SIZES), "role": pick(ROLES)}),
                          1 if sends_ids else random.choice([0, 0, 1])))
                     events += 1
 

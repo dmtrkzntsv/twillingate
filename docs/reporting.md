@@ -33,9 +33,8 @@ are in [deployment.md](deployment.md).
 `user`:
 
 - **System dashboards** ship with each release, have ids 1–999, and change only
-  when the release does: Views, Product, Users, Groups and Retention (one
-  group, the Views entry), and Web Vitals and Measures (a second group, the
-  Web Vitals entry). A system group is archived and restored whole, with
+  when the release does: Views, Product, Users, Groups, Retention, Web Vitals
+  and Measures, one group (the Views entry). A system group is archived and restored whole, with
   `whole_group`, and is never purged; every other write refuses them. To
   customize one, call `duplicate_dashboard`: the copy is a user dashboard you
   can edit. Duplicating never archives anything; to take a system group out
@@ -48,9 +47,9 @@ dashboard; a group of one is drawn as one tab. A dashboard made on its own
 starts as a group of one, its `group_id` its own id; beyond that, a
 `group_id` is just a number a group's dashboards share — read it from
 `list_dashboards` or `get_dashboard`, never assume it names a member.
-System dashboards are two groups: `group_id` 1, whose sidebar entry reads
-"Views", with tabs Views · Product · Users · Groups · Retention; and
-`group_id` 6, "Web Vitals", with tabs Web Vitals · Measures.
+System dashboards are one group: `group_id` 1, whose sidebar entry reads
+"Views", with tabs Views · Product · Users · Groups · Retention · Web Vitals ·
+Measures.
 
 **A widget** is a component plus a source:
 
@@ -324,7 +323,7 @@ appears. `width` and `height` default to the component's size below.
 | Component | Accepts | Inputs: the columns the query returns | Props | Default width × height |
 | --- | --- | --- | --- | --- |
 | `stat` | `sql` | `value` number; `previous` number, optional (shows the change); `x` day, optional (a sparkline under the number, which becomes the series' `aggregate`) | `format`, `aggregate` (`sum`, `last`, `avg`) | 3 × 3 |
-| `line` | `sql` | `x` day or text; `y` number; `series` text, optional (one line per value) | `format`, `curve` (`linear`, `monotone`, `step`) | 6 × 8 |
+| `line` | `sql` | `x` day or text; `y` number; `series` text, optional (one line per value; keep it to ~8 lines, ranking the rest out in SQL) | `format`, `curve` (`linear`, `monotone`, `step`) | 6 × 8 |
 | `area` | `sql` | as `line` | `format`, `curve`, `stacked` | 6 × 8 |
 | `bar` | `sql` | `x` text or day; `y` number; `series` text, optional | `format`, `horizontal`, `stacked` | 6 × 8 |
 | `bar_list` | `sql` | `label` text; `value` number (a ranked list with an inline bar) | `format` | 6 × 8 |

@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"math"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -127,9 +128,9 @@ func TestSystemDashboards(t *testing.T) {
 }
 
 // TestSystemDashboardGroups is D16: Views (id 1) names no group of its
-// own, so it is group 1; Product, Users, Groups and Retention (ids 2-5)
-// each name "group": 1 in their dashboard.json. Web Vitals (id 6) is a
-// second group, and Measures (id 7) names "group": 6. This release's
+// own, so it is group 1; every other system dashboard (ids 2-7) names
+// "group": 1 in its dashboard.json, so the system dashboards are one
+// sidebar entry. This release's
 // embedded system definition (loaded by the real Migrate, not a test
 // fixture) must give each dashboard exactly that GroupID.
 func TestSystemDashboardGroups(t *testing.T) {
@@ -146,7 +147,7 @@ func TestSystemDashboardGroups(t *testing.T) {
 			got[d.ID] = d.GroupID
 		}
 	}
-	want := map[int64]int64{1: 1, 2: 1, 3: 1, 4: 1, 5: 1, 6: 6, 7: 6}
+	want := map[int64]int64{1: 1, 2: 1, 3: 1, 4: 1, 5: 1, 6: 1, 7: 1}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("system dashboard GroupIDs = %v, want %v", got, want)
 	}
@@ -365,24 +366,32 @@ func TestRetentionMilestonesMatchCurve(t *testing.T) {
 // widget, failing the test when it is missing.
 func attributeValuesWidget(t *testing.T, f systemFixture) int64 {
 	t.Helper()
-	d, err := f.svc.Dashboard(context.Background(), 2)
+	return systemWidget(t, f, 2, "attribute-values")
+}
+
+// systemWidget finds system dashboard id's widget name, failing the test
+// when it is missing.
+func systemWidget(t *testing.T, f systemFixture, id int64, name string) int64 {
+	t.Helper()
+	d, err := f.svc.Dashboard(context.Background(), id)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, w := range d.Widgets {
-		if w.Name == "attribute-values" {
+		if w.Name == name {
 			return w.ID
 		}
 	}
-	t.Fatal("product has no widget attribute-values")
+	t.Fatalf("dashboard %d has no widget %s", id, name)
 	return 0
 }
 
 // TestAttributeValuesKeepEveryDay: "Attribute values by day" is a
-// remote table over every (attribute, day, value) in the range, so a
-// quiet day keeps its own values however busy another day was. Paging
-// through it, for every preset, yields exactly the rows the range holds
-// and the days v_product_attrs holds in it.
+// remote table over every (attribute, day, value) of a declared custom
+// attribute in the range, so a quiet day keeps its own values however
+// busy another day was. Paging through it, for every preset, yields
+// exactly the custom-attribute rows the range holds and the days
+// v_product_attrs holds them on.
 func TestAttributeValuesKeepEveryDay(t *testing.T) {
 	ctx := context.Background()
 	f := newSystemFixture(t)
@@ -418,7 +427,8 @@ func TestAttributeValuesKeepEveryDay(t *testing.T) {
 		}
 		var want int
 		rows, err := f.db.Query(ctx, `SELECT COUNT(*) FROM (SELECT 1 FROM v_product_attrs
-			WHERE project_id = ? AND day BETWEEN ? AND ? GROUP BY attr_key, day, attr_value)`, f.project, from, to)
+			WHERE project_id = ? AND day BETWEEN ? AND ? AND attr_key NOT LIKE '$%'
+			GROUP BY attr_key, day, attr_value)`, f.project, from, to)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -429,7 +439,7 @@ func TestAttributeValuesKeepEveryDay(t *testing.T) {
 			t.Errorf("%s: collected %d rows, Page.Matched %d, v_product_attrs holds %d", preset, collected, matched, want)
 		}
 		all, err := f.db.Query(ctx, `SELECT DISTINCT day FROM v_product_attrs
-			WHERE project_id = ? AND day BETWEEN ? AND ? ORDER BY day`, f.project, from, to)
+			WHERE project_id = ? AND day BETWEEN ? AND ? AND attr_key NOT LIKE '$%' ORDER BY day`, f.project, from, to)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -452,13 +462,16 @@ func TestAttributeValuesFilterByAliases(t *testing.T) {
 	f := newSystemFixture(t)
 	id := attributeValuesWidget(t, f)
 	from, to := presetDates("90d", f.today)
-	// The seed holds only $app_version and plan, which the filter keeps. A
-	// third attribute with the largest user counts must be filtered out,
-	// and would head the sort if the filter were ignored.
+	// The seed holds $app_version and plan, which the filter names; the
+	// table never shows a `$` key, so only plan comes out. A third
+	// attribute with the largest user counts must be filtered out, and
+	// would head the sort if the filter were ignored. A second plan value
+	// with more users than the seed's gives the sort something to order.
 	var extra []string
 	for i := 0; i < 3; i++ {
 		extra = append(extra, fmt.Sprintf("(%d, '%s', 'click', 'ref', 'r%d', 10, 100000, 5)", f.project, f.today.AddDays(-5), i))
 	}
+	extra = append(extra, fmt.Sprintf("(%d, '%s', 'click', 'plan', 'team', 9, 7, NULL)", f.project, f.today.AddDays(-5)))
 	valuesInsert(t, f.st, "agg_product_attrs", "project_id, day, event_name, attr_key, attr_value, count, unique_users, unique_groups", extra)
 	held, err := f.db.Query(ctx, `SELECT COUNT(*) FROM v_product_attrs
 		WHERE project_id = ? AND day BETWEEN ? AND ? AND attr_key = 'ref'`, f.project, from, to)
@@ -478,12 +491,12 @@ func TestAttributeValuesFilterByAliases(t *testing.T) {
 	}
 	res := got.Data.(readsql.Result)
 	if len(res.Rows) == 0 {
-		t.Fatal("no rows for $app_version and plan; the seed does not exercise the filter")
+		t.Fatal("no rows for plan; the seed does not exercise the filter")
 	}
 	prev, numbers, empty := 0.0, 0, false
 	for i := range res.Rows {
-		if a := column(t, res, i, "Attribute"); a != "$app_version" && a != "plan" {
-			t.Errorf("row %d: Attribute %q passed a filter for $app_version and plan", i, a)
+		if a := column(t, res, i, "Attribute"); a != "plan" {
+			t.Errorf("row %d: Attribute %q; a filter for $app_version and plan shows plan alone", i, a)
 		}
 		cell := column(t, res, i, "Users (at least)")
 		if cell == "" { // NULL sorts last in a descending sort
@@ -505,6 +518,109 @@ func TestAttributeValuesFilterByAliases(t *testing.T) {
 	}
 	if numbers < 2 {
 		t.Errorf("%d Users (at least) values; too few to check the sort", numbers)
+	}
+}
+
+// TestTopEventsKeepsTheBusiest: "Top events" draws one line for each of
+// the range's eight busiest events, however many an app sends, so the
+// legend stays readable; a quieter event is left to the Events table.
+func TestTopEventsKeepsTheBusiest(t *testing.T) {
+	ctx := context.Background()
+	f := newSystemFixture(t)
+	id := systemWidget(t, f, 2, "events-by-name")
+	// Twelve more events on one rolled-up day: e00 the busiest of all,
+	// down to e11 below the seed's signup (5 a day) over a week.
+	var extra []string
+	for i := 0; i < 12; i++ {
+		extra = append(extra, fmt.Sprintf("(%d, '%s', 'e%02d', %d, 1)", f.project, f.today.AddDays(-5), i, 400-45*i))
+	}
+	valuesInsert(t, f.st, "agg_product_daily", "project_id, day, event_name, count, unique_users", extra)
+	from, to := presetDates("7d", f.today)
+	got, err := f.svc.WidgetData(ctx, DataRequest{WidgetID: id, ProjectID: f.project, From: from, To: to})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := got.Data.(readsql.Result)
+	series := map[string]bool{}
+	for i := range res.Rows {
+		series[column(t, res, i, "series")] = true
+	}
+	// e00-e06 (400 down to 130) and click (20 a day) are the eight busiest;
+	// e07 (85) is next.
+	want := map[string]bool{"click": true}
+	for i := 0; i < 7; i++ {
+		want[fmt.Sprintf("e%02d", i)] = true
+	}
+	if !reflect.DeepEqual(series, want) {
+		t.Errorf("series = %v, want %v", series, want)
+	}
+}
+
+// TestBrowsersAndSystemsByName: the Browsers and Operating systems pies
+// name each browser or system without its version, summing its versions'
+// visitors, and fold everything past the six busiest into Other.
+func TestBrowsersAndSystemsByName(t *testing.T) {
+	ctx := context.Background()
+	f := newSystemFixture(t)
+	day := f.today.AddDays(-5) // rolled up: the seed's raw rows are the last three days
+	// A second chrome version, and five more browsers, the quietest of
+	// which falls past the six slices.
+	extra := []string{fmt.Sprintf("(%d, '%s', 'chrome', '125', 3, 3)", f.project, day)}
+	for i, b := range []string{"firefox", "edge", "opera", "brave", "vivaldi"} {
+		extra = append(extra, fmt.Sprintf("(%d, '%s', '%s', '1', %d, %d)", f.project, day, b, 5-i, 5-i))
+	}
+	valuesInsert(t, f.st, "agg_views_browsers", "project_id, day, browser, browser_version, visitors, views", extra)
+	from, to := presetDates("7d", f.today)
+	sum := func(sql string) int {
+		t.Helper()
+		r, err := f.db.Query(ctx, sql, f.project, from, to)
+		if err != nil {
+			t.Fatal(err)
+		}
+		n, err := strconv.Atoi(r.Rows[0][0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	for _, c := range []struct {
+		widget, view, col string
+		want              []string
+	}{
+		{"browsers", "v_views_browsers", "browser", []string{"chrome", "safari", "firefox", "edge", "opera", "brave", "Other"}},
+		{"operating-systems", "v_views_os", "os", []string{"macos", "windows", "ios"}},
+	} {
+		got, err := f.svc.WidgetData(ctx, DataRequest{WidgetID: systemWidget(t, f, 1, c.widget), ProjectID: f.project, From: from, To: to})
+		if err != nil {
+			t.Fatal(err)
+		}
+		res := got.Data.(readsql.Result)
+		var labels []string
+		total, prev := 0, 0
+		for i := range res.Rows {
+			label := column(t, res, i, "label")
+			labels = append(labels, label)
+			n, err := strconv.Atoi(column(t, res, i, "value"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if label != "Other" && i > 0 && n > prev {
+				t.Errorf("%s: %s (%d) follows %d; slices are not busiest first", c.widget, label, n, prev)
+			}
+			if label == "Other" && i != len(res.Rows)-1 {
+				t.Errorf("%s: Other is slice %d of %d, not the last", c.widget, i+1, len(res.Rows))
+			}
+			total, prev = total+n, n
+		}
+		slices.Sort(labels)
+		slices.Sort(c.want)
+		if !reflect.DeepEqual(labels, c.want) {
+			t.Errorf("%s: labels %v, want %v", c.widget, labels, c.want)
+		}
+		want := sum(`SELECT SUM(visitors) FROM ` + c.view + ` WHERE project_id = ? AND day BETWEEN ? AND ? AND ` + c.col + ` != ''`)
+		if total != want {
+			t.Errorf("%s: slices add up to %d visitors, the view holds %d", c.widget, total, want)
+		}
 	}
 }
 

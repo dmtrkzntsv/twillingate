@@ -130,7 +130,7 @@ test('duplicates Views from the sidebar without archiving it, then archives and 
   toArchive.push({ id: copyId, wholeGroup: true })
 
   // Duplicating is only a copy: Views is still in the sidebar alongside it.
-  await expect(page.getByRole('tab')).toHaveCount(5)
+  await expect(page.getByRole('tab')).toHaveCount(7)
   await expect(page.getByRole('link', { name: 'Views', exact: true })).toHaveCount(1)
   // By id: app.spec.ts runs first on the same server and leaves its own
   // "Views (copy)" behind, so the title alone is not this test's copy.
@@ -284,7 +284,7 @@ test('copies a system group and one of its tabs from the gallery while it is arc
   const groupCopyId = Number(page.url().match(/dashboards\/(\d+)/)?.[1])
   toArchive.push({ id: groupCopyId, wholeGroup: true })
   await expect(page.getByRole('heading', { level: 1, name: 'Views (copy)', exact: true })).toBeVisible()
-  await expect(page.getByRole('tab')).toHaveCount(5)
+  await expect(page.getByRole('tab')).toHaveCount(7)
 
   // One tab of the archived template, from that tab's own menu.
   await page.goto('/app/gallery/dashboards')

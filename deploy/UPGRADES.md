@@ -553,3 +553,17 @@ raised. After upgrading, the project dialog's Breakdowns header shows
 "N of 10 in use", and the `received_attributes` tool (or
 `GET /api/received-attributes` without `project_id`) answers
 `breakdowns_used` and `breakdowns_max`.
+
+### Upgrading to one group of system dashboards (no migration)
+
+Web Vitals and Measures become the last two tabs of the Views group, so the
+sidebar's separate Web Vitals entry goes; agents that stored `group_id` 6
+should use 1. A server that archived one of the two old groups but not the
+other keeps each dashboard as it was: the group's one entry shows the live tabs,
+and `restore_dashboard` (or `archive_dashboard`) with `whole_group` on any
+of them restores (or archives) all seven.
+
+On the same release the Product dashboard's "Attribute values by day"
+lists declared custom attributes only, "Events by name" becomes "Top
+events" (the range's eight busiest), and the Views dashboard's Browsers
+and Operating systems are pies by name, versions summed in.
