@@ -17,6 +17,7 @@ package reporting
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
 
@@ -45,6 +46,12 @@ type Store interface {
 	SetWidgetArchived(ctx context.Context, id int64, archived bool, a store.AuditEntry) error
 	ReportingHash(ctx context.Context) (string, error)
 	SyncReporting(ctx context.Context, s store.ReportingSync) error
+	InsertWidgetShare(ctx context.Context, n store.NewWidgetShare, a store.AuditEntry) (store.WidgetShare, error)
+	GetWidgetShare(ctx context.Context, id string) (store.WidgetShare, error)
+	WidgetShareImage(ctx context.Context, id string, twoX bool) ([]byte, error)
+	ListWidgetShares(ctx context.Context, f store.WidgetShareFilter) ([]store.WidgetShare, error)
+	SetWidgetShareArchiveAt(ctx context.Context, id, archiveAt, now string, a store.AuditEntry) (store.WidgetShare, error)
+	SetWidgetShareArchived(ctx context.Context, id string, archived bool, archiveAt string, a store.AuditEntry) (store.WidgetShare, error)
 }
 
 // Options configures a Service.
@@ -61,6 +68,9 @@ type Options struct {
 	// as purge_after_days so a client can show when an archived user
 	// dashboard will be deleted. 0 means kept forever.
 	ArchivedDays int
+	// ShareBaseURL is CONSOLE_URL without a trailing slash: the origin the
+	// public share links are built on. Empty turns CreateWidgetShare off.
+	ShareBaseURL string
 	// Now stands in for time.Now in tests; nil means time.Now.
 	Now func() time.Time
 }
@@ -76,6 +86,7 @@ type Service struct {
 	now          func() time.Time
 	cache        *cache
 	archivedDays int
+	shareBase    string
 
 	parsedMu sync.Mutex
 	parsed   map[store.Component]Component // Components' memo
@@ -105,5 +116,6 @@ func New(st Store, db *readsql.DB, opt Options) *Service {
 		now:          now,
 		cache:        newCache(opt.CacheAge, opt.RefreshAge, now),
 		archivedDays: opt.ArchivedDays,
+		shareBase:    strings.TrimRight(opt.ShareBaseURL, "/"),
 	}
 }
