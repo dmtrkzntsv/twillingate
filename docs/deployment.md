@@ -4,8 +4,8 @@ The operator's runbook: getting twillingate onto a host, keeping it backed
 up, getting it back after the host is gone. Using it is
 [twillingate.md](twillingate.md); both are served over MCP, this one as
 `docs://deployment`. One process serves two surfaces — ingest, and the
-console (MCP, REST, the login and the dashboards at `/app/`) — and its
-whole state is one SQLite file.
+console (MCP, REST, the login, the dashboards at `/app/` and shared
+widgets at `/share/`) — and its whole state is one SQLite file.
 
 - [Install](#install)
 - [Configure the collector](#configure-the-collector)
@@ -107,7 +107,7 @@ to it.
 | `IDENTITIES_TOP_N` | Users, and groups, kept per (project, day) in `v_identity_daily`, busiest first; the rest are dropped. 0 keeps them all. Default 500. |
 | `CONSOLE_AUTH_DSN` | Authentication for the console (MCP, REST and the dashboards' data): `token://<token>?password=…` for the built-in browser login (see [The console](#the-console)), or `oauth://<issuer-host>` for your own identity provider. Unset, bare `serve` skips the console with a warning. |
 | `CONSOLE_ADDR` | Give the console its own listener. Defaults to `INGEST_ADDR` (shared). |
-| `CONSOLE_URL` | The console's public origin when it has a hostname of its own (`https://console.example.com`), no path. The login's resource, issuer and the dashboards' callback follow it, so that host needs no `redirect=` entry. Defaults to `PUBLIC_URL`. |
+| `CONSOLE_URL` | The console's public origin when it has a hostname of its own (`https://console.example.com`), no path. The login's resource, issuer and the dashboards' callback follow it, so that host needs no `redirect=` entry, and share links are built on it. Defaults to `PUBLIC_URL`. |
 | `CONSOLE_DB_PATH` | Database the console reads for queries. Defaults to the `DATABASE_DSN` path. |
 | `CONSOLE_QUERY_TIMEOUT` | Per-query guard on reads and the `query` operation; also bounds a reporting widget's sql. Default `10s`. |
 | `CONSOLE_QUERY_MAX_ROWS` | Row cap on the `query` operation; also bounds a reporting widget's sql. Default 1000. |
@@ -335,22 +335,34 @@ their results are cached for `REPORTING_CACHE_SECONDS`
 
 A shared widget is public at `CONSOLE_URL/share/<id>`: a page and two
 images that need no token ([reporting.md](reporting.md#sharing-a-widget)).
-When the console otherwise stays on a LAN or tailnet, expose only `/share/*`
-to the internet, on the hostname `CONSOLE_URL` names, so the links work for
-everyone while `/app/`, `/api/`, `/mcp` and the login stay private. With
-Caddy in front of a console on `127.0.0.1:8080`:
+`CONSOLE_URL` is also the login's origin (its resource, issuer and the
+dashboards' callback), so a console on a LAN or tailnet keeps one public
+hostname for both: `CONSOLE_URL` names it, the internet reaches only
+`/share/*` there, and `/app/`, `/api/`, `/mcp` and the login answer under
+the same hostname only to private addresses. Your own machines must then
+reach the proxy over the private network: split DNS, or the proxy's
+tailnet address for that name. With Caddy in front of a console on
+`127.0.0.1:8080`:
 
 ```
 console.example.com {
-    @share path /share/*
-    handle @share {
-        reverse_proxy 127.0.0.1:8080
-    }
-    respond 404
+	@private remote_ip private_ranges 100.64.0.0/10
+	handle /share/* {
+		reverse_proxy 127.0.0.1:8080
+	}
+	handle @private {
+		reverse_proxy 127.0.0.1:8080
+	}
+	handle {
+		respond 404
+	}
 }
 ```
 
-A console that is already public needs nothing.
+`private_ranges` covers the loopback and private IPv4 and IPv6 ranges;
+`100.64.0.0/10` adds a tailnet. `remote_ip` reads the connection's own
+address, so behind a further proxy or CDN use `client_ip` with
+`trusted_proxies` instead. A console that is already public needs nothing.
 
 ### Previewing dashboard files
 

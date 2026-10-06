@@ -90,11 +90,17 @@ out of scope.
   changes. On a shared listener, only the console registers `/share/`.
 
   **A private console.** When the console sits on a LAN or tailnet, links
-  open only there. The fix is a proxy rule, not code: expose only `/share/*`
-  of the console listener to the internet and keep `/app`, `/api`, `/mcp`
-  and the login private. `docs/deployment.md` shows it as a Caddy
-  `handle /share/*` block. A console that is already public (one claude.ai
-  reaches over MCP, or a hosted plan) needs nothing.
+  open only there. The fix is a proxy rule, not code, and still no new
+  setting. `CONSOLE_URL` is both the share links' origin and the login's
+  (resource, issuer, the dashboards' callback), so one public hostname
+  serves both: `CONSOLE_URL` names it, the public side of the proxy
+  answers only `/share/*`, and `/app`, `/api`, `/mcp` and the login answer
+  under the same hostname only to private addresses (split DNS, or the
+  proxy's tailnet address). `docs/deployment.md` shows it as a Caddy site
+  with a `handle /share/*` block, a `handle` for a `remote_ip
+  private_ranges 100.64.0.0/10` matcher, and a 404 for the rest. A console
+  that is already public (one claude.ai reaches over MCP, or a hosted
+  plan) needs nothing.
 
 - **D3. Embedding is an image link, not an iframe.** The Share dialog's
   "Copy embed code" gives:
@@ -328,7 +334,7 @@ out of scope.
 - `docs/twillingate.md`: the three `/share/` routes in the `serve -console` row,
   as the console's one unauthenticated content, with the footer credit.
 - `docs/deployment.md`: the Caddy example that exposes only `/share/*` of
-  a private console, and that `RETENTION_ARCHIVED_DAYS` covers shares.
+  a private console to the internet under `CONSOLE_URL`'s hostname, and that `RETENTION_ARCHIVED_DAYS` covers shares.
 - `deploy/UPGRADES.md`: migration 032, which only adds a table and needs
   no pre-check.
 
