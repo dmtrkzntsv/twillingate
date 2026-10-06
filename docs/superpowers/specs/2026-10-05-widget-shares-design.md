@@ -172,7 +172,7 @@ out of scope.
   `<widget-name>-<from>-<to>.png` and stores nothing. **Share…** opens a
   small dialog:
   - a preview of the card, an **Archive after** choice (D7: 1 week,
-    **1 month** (the default), 3 months, 1 year, Never) and a **Create
+    **1 month** (the default), 3 months, 1 year, Project lifetime) and a **Create
     link** button,
   - after creation: **Copy link**, **Copy embed code** and **Open**,
   - a line, "This widget has N other links", leading to the Shares page
@@ -187,7 +187,7 @@ out of scope.
   CREATE TABLE shares (
       id         TEXT PRIMARY KEY,   -- UUIDv7, canonical form
       widget_id  INTEGER NOT NULL REFERENCES widgets(id) ON DELETE CASCADE,
-      project_id INTEGER NOT NULL,
+      project_id INTEGER NOT NULL REFERENCES projects(id),
       range_from TEXT NOT NULL,          -- YYYY-MM-DD
       range_to   TEXT NOT NULL,          -- YYYY-MM-DD
       title      TEXT NOT NULL,
@@ -195,19 +195,32 @@ out of scope.
       image      BLOB NOT NULL,          -- 1200×630, og:image
       image_2x   BLOB NOT NULL,          -- 2400×1260
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      archive_at  TEXT,                  -- NULL = never (D7)
+      archive_at  TEXT,                  -- NULL = project lifetime (D7)
       archived_at TEXT                   -- NULL = live
   );
   CREATE INDEX idx_shares_widget ON shares(widget_id);
   CREATE INDEX idx_shares_archive ON shares(archive_at) WHERE archive_at IS NOT NULL;
   ```
 
-  `project_id` is the project the chart shows. It has no foreign key: the
-  picture outlives a deleted project, as a post does. Archiving a widget,
-  dashboard or project leaves its shares up. The daily pass's purge of a
-  long-archived widget cascades and takes them down. `title` and
-  `project_name` are copied at capture, so the page shows what the
-  picture shows, even after a rename.
+  `project_id` is the project the chart shows. **A share never outlives
+  its project or its widget:**
+  - **Project deleted.** `shares` joins `projectTables`
+    (`internal/store/sqlite/registry.go:228`), so `deleteProject` removes a
+    project's shares, live and archived, in the transaction that deletes
+    the project. That covers both ways a project goes: the CLI's
+    `project delete`, and the daily pass's purge of a project archived
+    longer than `RETENTION_ARCHIVED_DAYS`. The foreign key backs this up.
+  - **Widget purged.** The daily pass's purge of a long-archived widget
+    takes its shares through `ON DELETE CASCADE`. The same goes for a
+    purged dashboard's widgets.
+  - **Archived, not deleted.** Archiving a project, dashboard or widget
+    leaves its shares up, since archiving is reversible. They come down
+    when the purge deletes it. On the Shares page (D8), such a share
+    carries a muted note, "project archived" or "widget archived", with
+    the date the purge takes it down.
+
+  `title` and `project_name` are copied at capture, so the page shows
+  what the picture shows, even after a rename.
 
   The daily pass purges a share archived longer than
   `RETENTION_ARCHIVED_DAYS` (audit `share.purge`, actor `retention`), as
@@ -219,8 +232,8 @@ out of scope.
 
   | Operation | MCP tool | REST | Notes |
   | --- | --- | --- | --- |
-  | Create | none | `POST /api/widgets/{widget_id}/shares` | `multipart/form-data`: `image` (1200×630 PNG), `image_2x` (2400×1260 PNG), `project_id`, `from`, `to`, `archive_after` (`7d`, `30d`, `90d`, `365d` or `never`; default `30d`). REST only, since an agent has no browser to capture with. Answers 201 with `{id, url, image_url, ...}` |
-  | List | `list_shares` | `GET /api/shares?widget_id=&archived=` | `widget_id` optional; every share without it. Each row: `id`, `url`, `image_url`, `image_2x_url`, `widget_id`, `dashboard_id`, `dashboard_title`, `project_id`, `project_name`, `from`, `to`, `title`, `created_at`, `archive_at` (`null` = never), `archived_at` (`null` = live). `archived: false` lists live shares only (the Shares page), `true` archived ones only (the Archive page); omitted, both |
+  | Create | none | `POST /api/widgets/{widget_id}/shares` | `multipart/form-data`: `image` (1200×630 PNG), `image_2x` (2400×1260 PNG), `project_id`, `from`, `to`, `archive_after` (`7d`, `30d`, `90d`, `365d` or `project`; default `30d`). REST only, since an agent has no browser to capture with. Answers 201 with `{id, url, image_url, ...}` |
+  | List | `list_shares` | `GET /api/shares?widget_id=&archived=` | `widget_id` optional; every share without it. Each row: `id`, `url`, `image_url`, `image_2x_url`, `widget_id`, `dashboard_id`, `dashboard_title`, `project_id`, `project_name`, `from`, `to`, `title`, `created_at`, `archive_at` (`null` = project lifetime), `archived_at` (`null` = live). `archived: false` lists live shares only (the Shares page), `true` archived ones only (the Archive page); omitted, both |
   | Change its archive date | `update_share` | `PATCH /api/shares/{id}` | body: `archive_after` (as in Create), counted from now. Live shares only |
   | Archive | `archive_share` | `POST /api/shares/{id}/archive` | Takes it down at once (404). Answers the share |
   | Restore | `restore_share` | `POST /api/shares/{id}/restore` | body: `archive_after`, default `30d` from now, since the old date has usually passed. Answers the share |
@@ -247,8 +260,11 @@ out of scope.
 
 - **D7. A share archives itself after a month unless the user says
   otherwise.** The dialog asks **Archive after** with 1 week, **1 month**
-  (default), 3 months, 1 year or Never, and Create stores `archive_at =
-  created_at + the period`, or `NULL` for never.
+  (default), 3 months, 1 year or **Project lifetime**, and Create stores
+  `archive_at = created_at + the period`, or `NULL` for project lifetime.
+  There is no "forever": a share with no date lives exactly as long as
+  its project and widget do (D5), and goes with them. The API calls that
+  choice `project`.
   - **It can be changed.** On a live share, the same choice on the Shares
     page (D8, `update_share`) sets `archive_at` to now + the period,
     or `NULL`. On an archived share, **Restore** on the Archive page
@@ -277,7 +293,7 @@ out of scope.
   | Widget | The share's title, and under it the dashboard and project it came from, linking to the dashboard |
   | Range | The range in words |
   | Created | The date |
-  | Archive after | "Nov 4" or "Never", changeable in place (D7, `update_share`) |
+  | Archive after | "Nov 4" or "Project lifetime", changeable in place (D7, `update_share`) |
   | Actions | **Copy link**, **Copy embed code**, **Archive** |
 
   `?widget=<id>` narrows it to one widget, with a chip to clear the
@@ -313,12 +329,16 @@ out of scope.
 ## Tests
 
 - **Store.** Insert, get, list by widget, update `archive_at`, archive,
-  restore. The cascade from a hard widget delete.
+  restore. The cascade from a hard widget delete. `deleteProject` removes
+  the project's shares, live and archived, through both the CLI's
+  `project delete` and the purge of an archived project, and leaves
+  other projects' shares alone.
 - **Daily pass.** It archives live shares past `archive_at`, and only
   those. It purges shares archived longer than `RETENTION_ARCHIVED_DAYS`,
   and none when it is 0. Purging an archived widget takes its shares.
 - **Reporting.** Each refusal in D6. Each `archive_after` value gives the
-  right `archive_at` on create, change and restore, and an unknown one is
+  right `archive_at` on create, change and restore (`project` gives
+  `NULL`), and an unknown one is
   refused. Changing an archived share is a conflict.
 - **Share routes** (`reporting`, mounted through `api`). They answer
   without a token while `/api/` still answers 401. The page's meta tags,
@@ -333,7 +353,8 @@ out of scope.
   - the Share dialog: create, copy, open, the choice defaulting to 1
     month, and the "N other links" line;
   - the Shares page: list, the widget filter, changing Archive after,
-    archive, the empty state, the folded columns below `sm`;
+    archive, the "project archived" and "widget archived" notes, the
+    empty state, the folded columns below `sm`;
   - the Archive page's Shares section: the purge date, and Restore asking
     Archive after;
   - the card layout of each component, in both themes, and the capture
