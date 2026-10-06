@@ -217,13 +217,13 @@ func mapMoveDashboardConflict(k store.DashboardKey, err error) error {
 	return fmt.Errorf("move dashboard %d: %w", k.ID, err)
 }
 
-// UpdateDashboard updates title, sort_key and group_id: the caller passes
-// the row it read, with any change.
+// UpdateDashboard updates title, sort_key, group_id and sidebar: the
+// caller passes the row it read, with any change.
 func (d *DB) UpdateDashboard(ctx context.Context, dash store.Dashboard, a store.AuditEntry) error {
 	return d.tx(ctx, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx,
-			`UPDATE dashboards SET title=?, sort_key=?, group_id=?, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')
-			 WHERE id=?`, dash.Title, dash.SortKey, dash.GroupID, dash.ID)
+			`UPDATE dashboards SET title=?, sort_key=?, group_id=?, sidebar=?, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')
+			 WHERE id=?`, dash.Title, dash.SortKey, dash.GroupID, dash.Sidebar, dash.ID)
 		if err != nil {
 			return mapDashboardConflict(dash, err)
 		}

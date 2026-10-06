@@ -278,6 +278,9 @@ type Store interface {
 	ListWidgets(ctx context.Context, dashboardID int64) ([]Widget, error)
 	GetWidget(ctx context.Context, id int64) (Widget, error)
 	InsertDashboard(ctx context.Context, d Dashboard, ws []Widget, a AuditEntry) (int64, error)
+	// UpdateDashboard writes d's title, sort_key, group_id and sidebar: a
+	// row read from the store keeps its sidebar; a move into or out of a
+	// group sets the one it takes (spec 2026-10-05 D3).
 	UpdateDashboard(ctx context.Context, d Dashboard, a AuditEntry) error
 	SetDashboardView(ctx context.Context, d Dashboard) error
 	SetDashboardArchived(ctx context.Context, id int64, archived bool, a AuditEntry) error

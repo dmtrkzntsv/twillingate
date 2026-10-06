@@ -95,6 +95,29 @@ func refuseGroup(o order, g int64) error {
 	return store.Refuse(store.ErrInvalid, "group %d has no live user dashboard", g)
 }
 
+// groupInSidebar is user group g's sidebar flag, which its tabs share
+// (spec 2026-10-05 D3): the first live member's. A group refuseGroup let
+// through has one; one without reads as in the sidebar.
+func groupInSidebar(o order, g int64) bool {
+	for _, d := range o {
+		if d.GroupID == g && d.ArchivedAt == "" {
+			return d.Sidebar
+		}
+	}
+	return true
+}
+
+// refuseNewTab refuses a new dashboard as a tab of g while g is out of
+// the sidebar: the new one is on no project's tabs yet, so it would be
+// unreachable (spec 2026-10-05 D5).
+func refuseNewTab(o order, g int64) error {
+	if !groupInSidebar(o, g) {
+		return store.Refuse(store.ErrInvalid,
+			"group %d is hidden from the sidebar, and a new dashboard is on no project's tabs; show the group first", g)
+	}
+	return nil
+}
+
 // insertWidget places w on its dashboard after `after` and writes it,
 // returning what was written.
 func (s *Service) insertWidget(ctx context.Context, w store.Widget, after *int64, a store.AuditEntry) (WidgetInfo, error) {

@@ -175,6 +175,27 @@ func TestSetDashboardsSidebar(t *testing.T) {
 	}
 }
 
+// UpdateDashboard writes the row's sidebar: a row read back keeps its
+// value, and a move sets the one its new group has.
+func TestUpdateDashboardWritesSidebar(t *testing.T) {
+	ctx := context.Background()
+	db := tabsDB(t)
+	upd := store.AuditEntry{Actor: "test", Action: "dashboard.update"}
+	for _, want := range []bool{false, true} {
+		d, err := db.GetDashboard(ctx, 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		d.Sidebar = want
+		if err := db.UpdateDashboard(ctx, d, upd); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := db.GetDashboard(ctx, 10); err != nil || got.Sidebar != want || got.Title != "A" {
+			t.Errorf("after update: %+v, %v; want sidebar %v, title kept", got, err, want)
+		}
+	}
+}
+
 func TestSetDashboardProjectTab(t *testing.T) {
 	ctx := context.Background()
 	db := tabsDB(t)

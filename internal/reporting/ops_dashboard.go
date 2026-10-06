@@ -110,7 +110,9 @@ func (s *Service) CreateDashboard(ctx context.Context, actor string, in CreateDa
 		if in.GroupID == 0 {
 			key, err = o.keyAfterGroup(0, in.After)
 		} else if err = refuseGroup(o, in.GroupID); err == nil {
-			key, err = o.keyInGroup(0, in.GroupID, in.After)
+			if err = refuseNewTab(o, in.GroupID); err == nil {
+				key, err = o.keyInGroup(0, in.GroupID, in.After)
+			}
 		}
 		if err != nil {
 			return err
@@ -174,59 +176,67 @@ func (s *Service) UpdateDashboard(ctx context.Context, actor string, in UpdateDa
 }
 
 // setPlacement writes the placement flags (spec 2026-10-05 D3, D5, D7):
-// sidebar for the dashboard's whole group, project_tab for a user
-// dashboard alone. A user group leaving the sidebar must keep a way in:
-// each member needs a project tab, or it would be unreachable. WholeGroup
-// is ignored, since sidebar always applies to the whole group.
+// sidebar for every member of the dashboard's group, archived ones
+// included so a restored tab comes back with its group's flag, and
+// project_tab for a user dashboard alone. A user group leaving the
+// sidebar must keep a way in: each live member needs a project tab, or
+// it would be unreachable. WholeGroup is ignored, since sidebar always
+// applies to the whole group. The group is read and written under
+// placeMu, so no move changes its membership in between.
 func (s *Service) setPlacement(ctx context.Context, actor string, in UpdateDashboard) (DashboardInfo, error) {
 	if in.Title != "" || in.After != nil || in.GroupID != nil {
 		return DashboardInfo{}, store.Refuse(store.ErrInvalid, "sidebar and project_tab go on their own; give title, after or group_id in another call")
 	}
-	d, err := s.st.GetDashboard(ctx, in.ID)
+	var d store.Dashboard
+	err := s.placeDashboards(func() error {
+		var err error
+		if d, err = s.st.GetDashboard(ctx, in.ID); err != nil {
+			return err
+		}
+		if d.ArchivedAt != "" {
+			return store.Refuse(store.ErrInvalid, "dashboard %d is archived; restore_dashboard first", d.ID)
+		}
+		system := d.Owner == store.OwnerSystem
+		if in.ProjectTab != nil && system {
+			return store.Refuse(store.ErrInvalid, "project_tab of a built-in dashboard is the release's")
+		}
+		if in.Sidebar != nil {
+			all, err := s.st.ListDashboards(ctx)
+			if err != nil {
+				return err
+			}
+			var ids []int64
+			for _, m := range all {
+				if m.Owner != d.Owner || m.GroupID != d.GroupID {
+					continue
+				}
+				if !*in.Sidebar && !system && m.ArchivedAt == "" {
+					ps, err := s.st.ListDashboardProjects(ctx, m.ID)
+					if err != nil {
+						return err
+					}
+					if len(ps) == 0 {
+						return store.Refuse(store.ErrInvalid,
+							"dashboard %d would be unreachable: not in the sidebar and on no project's tabs; add it to a project first, or archive it", m.ID)
+					}
+				}
+				ids = append(ids, m.ID)
+			}
+			action := "dashboard.sidebar.show"
+			if !*in.Sidebar {
+				action = "dashboard.sidebar.hide"
+			}
+			if err := s.st.SetDashboardsSidebar(ctx, ids, *in.Sidebar, store.AuditEntry{Actor: actor, Action: action}); err != nil {
+				return err
+			}
+		}
+		if in.ProjectTab != nil {
+			return s.st.SetDashboardProjectTab(ctx, d.ID, *in.ProjectTab, store.AuditEntry{Actor: actor, Action: "dashboard.project_tab"})
+		}
+		return nil
+	})
 	if err != nil {
 		return DashboardInfo{}, err
-	}
-	if d.ArchivedAt != "" {
-		return DashboardInfo{}, store.Refuse(store.ErrInvalid, "dashboard %d is archived; restore_dashboard first", d.ID)
-	}
-	system := d.Owner == store.OwnerSystem
-	if in.ProjectTab != nil && system {
-		return DashboardInfo{}, store.Refuse(store.ErrInvalid, "project_tab of a built-in dashboard is the release's")
-	}
-	if in.Sidebar != nil {
-		all, err := s.st.ListDashboards(ctx)
-		if err != nil {
-			return DashboardInfo{}, err
-		}
-		var ids []int64
-		for _, m := range all {
-			if m.Owner != d.Owner || m.GroupID != d.GroupID || m.ArchivedAt != "" {
-				continue
-			}
-			if !*in.Sidebar && !system {
-				ps, err := s.st.ListDashboardProjects(ctx, m.ID)
-				if err != nil {
-					return DashboardInfo{}, err
-				}
-				if len(ps) == 0 {
-					return DashboardInfo{}, store.Refuse(store.ErrInvalid,
-						"dashboard %d would be unreachable: not in the sidebar and on no project's tabs; add it to a project first, or archive it", m.ID)
-				}
-			}
-			ids = append(ids, m.ID)
-		}
-		action := "dashboard.sidebar.show"
-		if !*in.Sidebar {
-			action = "dashboard.sidebar.hide"
-		}
-		if err := s.st.SetDashboardsSidebar(ctx, ids, *in.Sidebar, store.AuditEntry{Actor: actor, Action: action}); err != nil {
-			return DashboardInfo{}, err
-		}
-	}
-	if in.ProjectTab != nil {
-		if err := s.st.SetDashboardProjectTab(ctx, d.ID, *in.ProjectTab, store.AuditEntry{Actor: actor, Action: "dashboard.project_tab"}); err != nil {
-			return DashboardInfo{}, err
-		}
 	}
 	d, err = s.st.GetDashboard(ctx, d.ID)
 	return dashboardInfo(d), err
@@ -287,8 +297,22 @@ func (s *Service) placeDashboard(ctx context.Context, o order, row store.Dashboa
 			return err
 		}
 		if g != row.GroupID {
+			// The row takes its new group's sidebar flag (spec
+			// 2026-10-05 D3); out of the sidebar, it needs a project
+			// tab to stay reachable (D5).
+			sidebar := groupInSidebar(o, g)
+			if !sidebar {
+				ps, err := s.st.ListDashboardProjects(ctx, row.ID)
+				if err != nil {
+					return err
+				}
+				if len(ps) == 0 {
+					return store.Refuse(store.ErrInvalid,
+						"group %d is hidden from the sidebar; add dashboard %d to a project first, or show the group", g, row.ID)
+				}
+			}
 			heirs := o.handOver(row)
-			row.GroupID, row.SortKey = g, key
+			row.GroupID, row.SortKey, row.Sidebar = g, key, sidebar
 			return s.writePlaced(ctx, row, heirs, a)
 		}
 		row.SortKey = key
@@ -334,7 +358,9 @@ func (s *Service) placeDashboard(ctx context.Context, o order, row store.Dashboa
 // A dashboard already alone is a group of one: it keeps its group id and
 // moves only if after says so. One with others takes its own id as its
 // group id: that id is free, because a group whose id it was is handed
-// to another member as row leaves (order.handOver, spec decision 2).
+// to another member as row leaves (order.handOver, spec decision 2). It
+// lands in the sidebar whatever its old group's flag, so it is never
+// left unreachable on its own (spec 2026-10-05 D5).
 func (s *Service) leaveGroup(ctx context.Context, o order, row store.Dashboard, after *int64, a store.AuditEntry) error {
 	if after != nil && *after == row.ID {
 		after = nil // after itself: no place of its own to name
@@ -343,7 +369,7 @@ func (s *Service) leaveGroup(ctx context.Context, o order, row store.Dashboard, 
 	var heirs []store.DashboardKey
 	if len(others) > 0 {
 		heirs = o.handOver(row)
-		row.GroupID = row.ID
+		row.GroupID, row.Sidebar = row.ID, true
 		if after == nil {
 			after = &others[len(others)-1].ID
 		}
@@ -443,12 +469,16 @@ func (s *Service) duplicateOne(ctx context.Context, actor string, src store.Dash
 		case group == 0:
 			copyOf.SortKey, err = o.keyAfterGroup(0, nil)
 		case src.Owner == store.OwnerUser && group == src.GroupID:
-			copyOf.GroupID = group
-			copyOf.SortKey, err = o.keyInGroup(0, group, &src.ID)
+			if err = refuseNewTab(o, group); err == nil {
+				copyOf.GroupID = group
+				copyOf.SortKey, err = o.keyInGroup(0, group, &src.ID)
+			}
 		default:
 			if err = refuseGroup(o, group); err == nil {
-				copyOf.GroupID = group
-				copyOf.SortKey, err = o.keyInGroup(0, group, nil)
+				if err = refuseNewTab(o, group); err == nil {
+					copyOf.GroupID = group
+					copyOf.SortKey, err = o.keyInGroup(0, group, nil)
+				}
 			}
 		}
 		if err != nil {
@@ -586,7 +616,11 @@ func (s *Service) RestoreDashboard(ctx context.Context, actor string, id int64, 
 // live member (archiving) or archived member (restoring) of its group,
 // in one call to the store (D12–D14). A built-in is never archived or
 // restored, alone or with its group: hiding one is sidebar = false
-// (spec 2026-10-05 D5).
+// (spec 2026-10-05 D5). A restore that would bring back a dashboard out
+// of the sidebar and on no project's tabs first puts its whole group
+// back in the sidebar (showIfUnreachable). It runs under placeMu, like
+// setPlacement, so a hide can't check the live members while one is
+// being restored.
 func (s *Service) setDashboardArchived(ctx context.Context, actor string, id int64, archived, wholeGroup bool) error {
 	d, err := s.st.GetDashboard(ctx, id)
 	if err != nil {
@@ -596,21 +630,69 @@ func (s *Service) setDashboardArchived(ctx context.Context, actor string, id int
 		return store.Refuse(store.ErrInvalid,
 			"dashboard %d is a built-in dashboard and is never archived; update_dashboard {sidebar: false} takes its group out of the sidebar", d.ID)
 	}
-	ids := []int64{id}
-	if wholeGroup {
+	return s.placeDashboards(func() error {
 		all, err := s.st.ListDashboards(ctx)
 		if err != nil {
 			return err
 		}
-		ids = nil
+		cur := d // re-read under placeMu: a move may have changed its group
 		for _, m := range all {
-			if m.Owner == d.Owner && m.GroupID == d.GroupID && (m.ArchivedAt == "") == archived {
-				ids = append(ids, m.ID)
+			if m.ID == id {
+				cur = m
 			}
 		}
+		var members, targets []store.Dashboard
+		for _, m := range all {
+			if m.Owner != cur.Owner || m.GroupID != cur.GroupID {
+				continue
+			}
+			members = append(members, m)
+			if wholeGroup && (m.ArchivedAt == "") == archived || !wholeGroup && m.ID == id {
+				targets = append(targets, m)
+			}
+		}
+		if !archived {
+			if err := s.showIfUnreachable(ctx, actor, members, targets); err != nil {
+				return err
+			}
+		}
+		ids := make([]int64, 0, len(targets))
+		for _, m := range targets {
+			ids = append(ids, m.ID)
+		}
+		if !wholeGroup && len(ids) == 0 {
+			ids = []int64{id} // purged since the first read: the store answers for it
+		}
+		return s.st.SetDashboardsArchived(ctx, ids, archived,
+			store.AuditEntry{Actor: actor, Action: archiveAction("dashboard", archived)})
+	})
+}
+
+// showIfUnreachable puts every member of a group back in the sidebar when
+// one of restoring, the dashboards about to be restored, is out of it and
+// on no project's tabs (spec 2026-10-05 D5), so it is reachable and the
+// group's tabs still share one flag (D3). It writes before the restore:
+// a group shown early is never unreachable, a dashboard restored first
+// could be.
+func (s *Service) showIfUnreachable(ctx context.Context, actor string, members, restoring []store.Dashboard) error {
+	for _, m := range restoring {
+		if m.Sidebar {
+			continue
+		}
+		ps, err := s.st.ListDashboardProjects(ctx, m.ID)
+		if err != nil {
+			return err
+		}
+		if len(ps) > 0 {
+			continue
+		}
+		ids := make([]int64, 0, len(members))
+		for _, x := range members {
+			ids = append(ids, x.ID)
+		}
+		return s.st.SetDashboardsSidebar(ctx, ids, true, store.AuditEntry{Actor: actor, Action: "dashboard.sidebar.show"})
 	}
-	return s.st.SetDashboardsArchived(ctx, ids, archived,
-		store.AuditEntry{Actor: actor, Action: archiveAction("dashboard", archived)})
+	return nil
 }
 
 // SetView stores a viewer's selection. Which parts it takes follows from
