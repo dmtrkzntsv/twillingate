@@ -129,11 +129,11 @@ func TestMigration032Cascades(t *testing.T) {
 }
 
 // TestMigration032ArchivesOrphanedUserDashboard: a user dashboard is
-// always in the sidebar (D5), so one left with sidebar 0 and project_tab
-// 0 (direct SQL, a future bug) is archived instead of left unreachable,
-// with sidebar back at 1 so a restore brings it into the sidebar. One
-// with project_tab 1, a built-in and a row already archived keep what
-// they have.
+// always in the sidebar (D5), so one left with sidebar 0 (direct SQL, a
+// future bug), by an update or an insert, is archived instead, whatever
+// its project_tab, with sidebar back at 1 so a restore brings it into the
+// sidebar. A built-in and a row already archived keep what they have, and
+// a project_tab write alone archives nothing.
 func TestMigration032ArchivesOrphanedUserDashboard(t *testing.T) {
 	const old = "2026-09-01T00:00:00Z"
 	db := newTestDBAt(t, 32)
@@ -141,14 +141,15 @@ func TestMigration032ArchivesOrphanedUserDashboard(t *testing.T) {
 		`INSERT INTO dashboards (id, owner, title, sort_key, group_id, sidebar, project_tab, archived_at, updated_at) VALUES
 			(1, 'system', 'Views', 'a0', 1, 1, 0, NULL, '`+old+`'),
 			(1001, 'user', 'Sidebar off', 'a0', 1001, 1, 0, NULL, '`+old+`'),
-			(1002, 'user', 'Tab off', 'a1', 1002, 0, 1, NULL, '`+old+`'),
-			(1003, 'user', 'Still a tab', 'a2', 1003, 1, 1, NULL, '`+old+`'),
+			(1002, 'user', 'Tab off', 'a1', 1002, 1, 1, NULL, '`+old+`'),
+			(1003, 'user', 'A tab, sidebar off', 'a2', 1003, 1, 1, NULL, '`+old+`'),
 			(1004, 'user', 'Archived', 'a3', 1004, 1, 0, '`+old+`', '`+old+`')`,
 		`UPDATE dashboards SET sidebar=0 WHERE id IN (1, 1001, 1003, 1004)`,
 		`UPDATE dashboards SET project_tab=0 WHERE id=1002`,
-		// Inserted with both off: archived the same way.
+		// Inserted out of the sidebar: archived the same way.
 		`INSERT INTO dashboards (id, owner, title, sort_key, group_id, sidebar, project_tab) VALUES
-			(1005, 'user', 'Born orphaned', 'a4', 1005, 0, 0),
+			(1005, 'user', 'Born hidden', 'a4', 1005, 0, 0),
+			(1006, 'user', 'Born hidden, a tab', 'a5', 1006, 0, 1),
 			(2, 'system', 'Hidden built-in', 'a1', 2, 0, 0)`)
 
 	type row struct {
@@ -159,10 +160,11 @@ func TestMigration032ArchivesOrphanedUserDashboard(t *testing.T) {
 	want := map[int64]row{
 		1:    {0, "", false},
 		1001: {1, "now", true},
-		1002: {1, "now", true},
-		1003: {0, "", false},
+		1002: {1, "", false},
+		1003: {1, "now", true},
 		1004: {0, old, false},
 		1005: {1, "now", true},
+		1006: {1, "now", true},
 		2:    {0, "", false},
 	}
 	for id, w := range want {

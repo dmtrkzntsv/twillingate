@@ -270,7 +270,7 @@ func devGetDashboard(dirs []string, svc *Service, comps map[string]Component) ht
 		out := DashboardDetail{
 			DashboardInfo:  dashboardInfo(row),
 			FollowsProject: followsProject, FollowsRange: followsRange,
-			Tabs: tabs, Widgets: widgets, ProjectIDs: []int64{},
+			Tabs: tabs, Widgets: widgets,
 		}
 		writeJSON(w, http.StatusOK, out)
 	}

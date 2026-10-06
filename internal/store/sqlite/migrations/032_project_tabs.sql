@@ -3,16 +3,17 @@
 -- the sidebar (sidebar) and whether a new project gets it as a tab
 -- (project_tab); a built-in dashboard is never archived any more: hiding
 -- one from the sidebar is sidebar = 0 (D5). Your own dashboards are
--- always in the sidebar: the service refuses sidebar on them.
+-- always in the sidebar (the service refuses sidebar on them) and never
+-- project_tab: only a release sets that, on built-ins; your own are added
+-- one project at a time.
 --
 -- The triggers below seed rows (D4): a new project gets every live
 -- dashboard with project_tab = 1, and a new built-in (an INSERT, which
 -- the release sync's upsert does only the first time) goes onto every
 -- existing project. A safety net keeps D5 when a write goes outside the
 -- service's checks (direct SQL, a future bug): a live user dashboard
--- with sidebar = 0 and project_tab = 0 is archived rather than left
--- orphaned, with sidebar back at 1 so a restore brings it into the
--- sidebar. One with project_tab = 1 stays as it is. A rebuild of
+-- with sidebar = 0 is archived rather than left out of the sidebar, with
+-- sidebar back at 1 so a restore brings it into the sidebar. A rebuild of
 -- projects, dashboards or project_tabs must recreate them, as it must
 -- 022's dashboards_own_group and 031's triggers.
 ALTER TABLE dashboards ADD COLUMN sidebar INTEGER NOT NULL DEFAULT 1;
@@ -48,8 +49,8 @@ BEGIN
     SELECT p.id, NEW.id, NEW.sort_key FROM projects p;
 END;
 
-CREATE TRIGGER dashboards_user_orphaned AFTER UPDATE OF sidebar, project_tab ON dashboards
-WHEN NEW.owner = 'user' AND NEW.sidebar = 0 AND NEW.project_tab = 0 AND NEW.archived_at IS NULL
+CREATE TRIGGER dashboards_user_orphaned AFTER UPDATE OF sidebar ON dashboards
+WHEN NEW.owner = 'user' AND NEW.sidebar = 0 AND NEW.archived_at IS NULL
 BEGIN
   UPDATE dashboards SET archived_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'), sidebar = 1,
       updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
@@ -57,7 +58,7 @@ BEGIN
 END;
 
 CREATE TRIGGER dashboards_user_orphaned_insert AFTER INSERT ON dashboards
-WHEN NEW.owner = 'user' AND NEW.sidebar = 0 AND NEW.project_tab = 0 AND NEW.archived_at IS NULL
+WHEN NEW.owner = 'user' AND NEW.sidebar = 0 AND NEW.archived_at IS NULL
 BEGIN
   UPDATE dashboards SET archived_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'), sidebar = 1,
       updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')

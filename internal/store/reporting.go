@@ -32,8 +32,8 @@ type Dashboard struct {
 	CreatedAt, UpdatedAt        string
 	ArchivedAt                  string // "" = live
 	LiveWidgets                 int    // filled by reads: widgets not archived
-	Sidebar                     bool   // in the sidebar (migration 032); a built-in's Hide sets it false. A user row inserted with it and ProjectTab false is archived by 032's trigger
-	ProjectTab                  bool   // a new project gets this dashboard as a tab (032 D3)
+	Sidebar                     bool   // in the sidebar (migration 032); a built-in's Hide sets it false. A user row inserted or set with it false is archived by 032's trigger
+	ProjectTab                  bool   // a new project gets this dashboard as a tab (032 D3); built-ins only, from the release
 }
 
 // DashboardKey is one dashboard row's place: which group it belongs to

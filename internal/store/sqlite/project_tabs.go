@@ -39,24 +39,6 @@ func (d *DB) ListProjectTabs(ctx context.Context, projectID int64) ([]store.Proj
 	return out, rows.Err()
 }
 
-func (d *DB) ListDashboardProjects(ctx context.Context, dashboardID int64) ([]int64, error) {
-	rows, err := d.db.QueryContext(ctx,
-		`SELECT project_id FROM project_tabs WHERE dashboard_id=? ORDER BY project_id`, dashboardID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []int64{}
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		out = append(out, id)
-	}
-	return out, rows.Err()
-}
-
 func (d *DB) InsertProjectTab(ctx context.Context, r store.ProjectTabRow, a store.AuditEntry) error {
 	return d.tx(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx,
@@ -151,21 +133,5 @@ func (d *DB) SetDashboardsSidebar(ctx context.Context, ids []int64, sidebar bool
 			}
 		}
 		return nil
-	})
-}
-
-func (d *DB) SetDashboardProjectTab(ctx context.Context, id int64, on bool, a store.AuditEntry) error {
-	return d.tx(ctx, func(tx *sql.Tx) error {
-		res, err := tx.ExecContext(ctx,
-			`UPDATE dashboards SET project_tab=?, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=?`,
-			on, id)
-		if err != nil {
-			return err
-		}
-		if n, _ := res.RowsAffected(); n == 0 {
-			return store.Refuse(store.ErrNotFound, "set project tab: unknown dashboard %d", id)
-		}
-		a.Subject = fmt.Sprintf("dashboard/%d", id)
-		return audit(ctx, tx, a)
 	})
 }

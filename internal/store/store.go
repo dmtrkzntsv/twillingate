@@ -305,18 +305,14 @@ type Store interface {
 	UpdateWidget(ctx context.Context, w Widget, a AuditEntry) error
 	SetWidgetArchived(ctx context.Context, id int64, archived bool, a AuditEntry) error
 	// Project tabs and dashboard placement (migration 032).
-	// ListProjectTabs is ErrNotFound for an unknown project;
-	// ListDashboardProjects is the ids of the projects that have
-	// dashboardID as a tab, ascending, never nil. SetDashboardsSidebar
-	// writes one audit row per id; unknown ids are ErrNotFound and nothing
-	// is written.
+	// ListProjectTabs is ErrNotFound for an unknown project.
+	// SetDashboardsSidebar writes one audit row per id; unknown ids are
+	// ErrNotFound and nothing is written.
 	ListProjectTabs(ctx context.Context, projectID int64) ([]ProjectTabRow, error)
-	ListDashboardProjects(ctx context.Context, dashboardID int64) ([]int64, error)
 	InsertProjectTab(ctx context.Context, r ProjectTabRow, a AuditEntry) error
 	DeleteProjectTab(ctx context.Context, projectID, dashboardID int64, a AuditEntry) error
 	MoveProjectTab(ctx context.Context, r ProjectTabRow, a AuditEntry) error
 	SetDashboardsSidebar(ctx context.Context, ids []int64, sidebar bool, a AuditEntry) error
-	SetDashboardProjectTab(ctx context.Context, id int64, on bool, a AuditEntry) error
 	// ReportingHash is the hash of the latest reporting_migrations row, ""
 	// if none has run yet. SyncReporting makes components and system
 	// dashboards (with their widgets) match s in one transaction.

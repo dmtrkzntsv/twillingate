@@ -44,12 +44,10 @@ type Store interface {
 	UpdateWidget(ctx context.Context, w store.Widget, a store.AuditEntry) error
 	SetWidgetArchived(ctx context.Context, id int64, archived bool, a store.AuditEntry) error
 	ListProjectTabs(ctx context.Context, projectID int64) ([]store.ProjectTabRow, error)
-	ListDashboardProjects(ctx context.Context, dashboardID int64) ([]int64, error)
 	InsertProjectTab(ctx context.Context, r store.ProjectTabRow, a store.AuditEntry) error
 	DeleteProjectTab(ctx context.Context, projectID, dashboardID int64, a store.AuditEntry) error
 	MoveProjectTab(ctx context.Context, r store.ProjectTabRow, a store.AuditEntry) error
 	SetDashboardsSidebar(ctx context.Context, ids []int64, sidebar bool, a store.AuditEntry) error
-	SetDashboardProjectTab(ctx context.Context, id int64, on bool, a store.AuditEntry) error
 	ReportingHash(ctx context.Context) (string, error)
 	SyncReporting(ctx context.Context, s store.ReportingSync) error
 }

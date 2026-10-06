@@ -33,8 +33,8 @@ type CreateDashboard struct {
 // UpdateDashboard changes the title when Title is not "", and moves the
 // dashboard when After or GroupID is not nil. GroupID nil keeps its
 // group; 0 takes it out as a group of one (its own id; one already alone
-// keeps the id it has); G makes it a tab of G. Sidebar and ProjectTab
-// set the placement flags instead, in a call of their own (setPlacement).
+// keeps the id it has); G makes it a tab of G. Sidebar sets a built-in
+// group's placement instead, in a call of its own (setPlacement).
 type UpdateDashboard struct {
 	ID      int64
 	Title   string
@@ -44,7 +44,6 @@ type UpdateDashboard struct {
 	// (D5); it takes no After or GroupID.
 	WholeGroup bool
 	Sidebar    *bool // the whole group in or out of the sidebar; built-in dashboards only, refused on your own (spec 2026-10-05 D5, D7)
-	ProjectTab *bool // a new project gets it as a tab; user dashboards only (spec 2026-10-05 D3)
 }
 
 // DuplicateDashboard copies dashboard ID: alone, or with WholeGroup its
@@ -128,10 +127,10 @@ func (s *Service) CreateDashboard(ctx context.Context, actor string, in CreateDa
 
 // UpdateDashboard retitles and/or moves a user dashboard: among its
 // group's tabs, with its whole group in the sidebar, into another group,
-// or out of its group (spec decisions 6 and 7). Sidebar or ProjectTab
-// sets the placement flags instead (setPlacement).
+// or out of its group (spec decisions 6 and 7). Sidebar puts a built-in
+// group in or out of the sidebar instead (setPlacement).
 func (s *Service) UpdateDashboard(ctx context.Context, actor string, in UpdateDashboard) (DashboardInfo, error) {
-	if in.Sidebar != nil || in.ProjectTab != nil {
+	if in.Sidebar != nil {
 		return s.setPlacement(ctx, actor, in)
 	}
 	if in.WholeGroup {
@@ -173,53 +172,43 @@ func (s *Service) UpdateDashboard(ctx context.Context, actor string, in UpdateDa
 	return dashboardInfo(d), err
 }
 
-// setPlacement writes the placement flags (spec 2026-10-05 D3, D5, D7):
-// sidebar for a built-in's whole group, archived members included (only
-// an older binary archives one) so its tabs share the flag, and
-// project_tab for a user dashboard alone. Your own dashboards are always
-// in the sidebar, so sidebar is refused on one, and a built-in's
-// project_tab is the release's. WholeGroup is ignored, since sidebar
-// always applies to the whole group. A built-in group's membership
-// changes only with a release, so no lock is needed between the read
-// and the write.
+// setPlacement puts a built-in dashboard's whole group in or out of the
+// sidebar (spec 2026-10-05 D3, D5, D7), archived members included (only
+// an older binary archives one) so its tabs share the flag. Your own
+// dashboards are always in the sidebar, so it is refused on one.
+// WholeGroup is ignored, since sidebar always applies to the whole group.
+// A built-in group's membership changes only with a release, so no lock
+// is needed between the read and the write.
 func (s *Service) setPlacement(ctx context.Context, actor string, in UpdateDashboard) (DashboardInfo, error) {
 	if in.Title != "" || in.After != nil || in.GroupID != nil {
-		return DashboardInfo{}, store.Refuse(store.ErrInvalid, "sidebar and project_tab go on their own; give title, after or group_id in another call")
+		return DashboardInfo{}, store.Refuse(store.ErrInvalid, "sidebar goes on its own; give title, after or group_id in another call")
 	}
 	d, err := s.st.GetDashboard(ctx, in.ID)
 	if err != nil {
 		return DashboardInfo{}, err
 	}
-	system := d.Owner == store.OwnerSystem
-	switch {
-	case in.Sidebar != nil && !system:
+	if d.Owner != store.OwnerSystem {
 		return DashboardInfo{}, store.Refuse(store.ErrInvalid,
 			"dashboard %d is your own: your own dashboards are always in the sidebar; archive_dashboard takes one away", d.ID)
-	case in.ProjectTab != nil && system:
-		return DashboardInfo{}, store.Refuse(store.ErrInvalid, "project_tab of a built-in dashboard is the release's")
-	case d.ArchivedAt != "":
+	}
+	if d.ArchivedAt != "" {
 		return DashboardInfo{}, store.Refuse(store.ErrInvalid, "dashboard %d is archived; restore_dashboard first", d.ID)
 	}
-	if in.Sidebar != nil {
-		all, err := s.st.ListDashboards(ctx)
-		if err != nil {
-			return DashboardInfo{}, err
-		}
-		var ids []int64
-		for _, m := range all {
-			if m.Owner == d.Owner && m.GroupID == d.GroupID {
-				ids = append(ids, m.ID)
-			}
-		}
-		action := "dashboard.sidebar.show"
-		if !*in.Sidebar {
-			action = "dashboard.sidebar.hide"
-		}
-		err = s.st.SetDashboardsSidebar(ctx, ids, *in.Sidebar, store.AuditEntry{Actor: actor, Action: action})
-	} else {
-		err = s.st.SetDashboardProjectTab(ctx, d.ID, *in.ProjectTab, store.AuditEntry{Actor: actor, Action: "dashboard.project_tab"})
-	}
+	all, err := s.st.ListDashboards(ctx)
 	if err != nil {
+		return DashboardInfo{}, err
+	}
+	var ids []int64
+	for _, m := range all {
+		if m.Owner == d.Owner && m.GroupID == d.GroupID {
+			ids = append(ids, m.ID)
+		}
+	}
+	action := "dashboard.sidebar.show"
+	if !*in.Sidebar {
+		action = "dashboard.sidebar.hide"
+	}
+	if err := s.st.SetDashboardsSidebar(ctx, ids, *in.Sidebar, store.AuditEntry{Actor: actor, Action: action}); err != nil {
 		return DashboardInfo{}, err
 	}
 	d, err = s.st.GetDashboard(ctx, d.ID)

@@ -23,7 +23,7 @@ type DashboardInfo struct {
 	Widgets    int    `json:"widgets"` // live widgets
 	ArchivedAt string `json:"archived_at,omitempty"`
 	Sidebar    bool   `json:"sidebar"`     // its group is in the sidebar (spec 2026-10-05 D3)
-	ProjectTab bool   `json:"project_tab"` // a new project gets it as a tab
+	ProjectTab bool   `json:"project_tab"` // a new project gets it as a tab; built-ins only, from the release
 }
 
 // Dashboards is list_dashboards' answer: every dashboard in sidebar
@@ -65,9 +65,8 @@ type DashboardDetail struct {
 	DashboardInfo
 	FollowsProject bool         `json:"follows_project"` // any live widget does: show the project switcher
 	FollowsRange   bool         `json:"follows_range"`
-	Tabs           []Tab        `json:"tabs"`        // the group's live members in order, the same from every member; always non-nil
-	Widgets        []WidgetInfo `json:"widgets"`     // live, in order; each carries width and height (the layout)
-	ProjectIDs     []int64      `json:"project_ids"` // the projects that have it as a tab, ascending; always non-nil
+	Tabs           []Tab        `json:"tabs"`    // the group's live members in order, the same from every member; always non-nil
+	Widgets        []WidgetInfo `json:"widgets"` // live, in order; each carries width and height (the layout)
 }
 
 // Tab is one entry of a group's tab bar.
@@ -162,14 +161,7 @@ func (s *Service) Dashboard(ctx context.Context, id int64) (DashboardDetail, err
 	if err != nil {
 		return DashboardDetail{}, err
 	}
-	projects, err := s.st.ListDashboardProjects(ctx, id)
-	if err != nil {
-		return DashboardDetail{}, err
-	}
-	if projects == nil {
-		projects = []int64{}
-	}
-	out := DashboardDetail{DashboardInfo: dashboardInfo(d), Tabs: []Tab{}, Widgets: []WidgetInfo{}, ProjectIDs: projects}
+	out := DashboardDetail{DashboardInfo: dashboardInfo(d), Tabs: []Tab{}, Widgets: []WidgetInfo{}}
 	// An archived dashboard is not a tab, but its detail still shows the
 	// tabs of the group it belongs to.
 	for _, x := range ds {

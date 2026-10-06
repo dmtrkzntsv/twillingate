@@ -62,7 +62,10 @@ Date: 2026-10-05
     members included, since the sidebar shows groups, so every tab in a
     group has the same value. Your own dashboards always have `sidebar = 1`.
   - `project_tab`: a **new** project gets this dashboard as a tab (D4).
-    It does not add or remove tabs on existing projects.
+    It does not add or remove tabs on existing projects. It is built-in
+    only, set by the release (D6); your own dashboards always have
+    `project_tab = 0` and are added one project at a time, from that
+    project's **+** (D8).
 
 - **D4. Rows are seeded by triggers, so every surface (console, MCP,
   CLI) gets them.**
@@ -85,8 +88,8 @@ Date: 2026-10-05
   - A built-in that a release adds is inserted once, when the release
     sync first writes it. Later boots never insert it again, so a tab you
     removed stays removed.
-  - Your own dashboard with `project_tab = 1` is seeded into new projects
-    only. To put it on existing projects, use the checklist in D8.
+  - Your own dashboards are never seeded: no write sets their
+    `project_tab`.
   - The migration comment notes that a rebuild of `projects` or
     `dashboards` must recreate these triggers, as it must 031's.
 
@@ -109,18 +112,16 @@ Date: 2026-10-05
     removing its last one is allowed.
   - A safety net in migration 032 covers writes outside the service
     (direct SQL, a future bug). A live user dashboard left with
-    `sidebar = 0` and `project_tab = 0`, by an update or an insert, is
-    archived rather than left orphaned. The trigger also sets
-    `sidebar = 1`, so a restore brings it back into the sidebar. A user
-    dashboard with `sidebar = 0` and `project_tab = 1` stays live: that is
-    a deliberate choice.
+    `sidebar = 0`, by an update or an insert, is archived rather than
+    left out of the sidebar. The trigger also sets `sidebar = 1`, so a
+    restore brings it back into the sidebar.
   - Restoring a user dashboard (the store's `SetDashboardsArchived`)
     sets `sidebar = 1`, so one hidden while it was archived, where the
     trigger does not look, comes back in the sidebar.
 
     ```sql
-    CREATE TRIGGER dashboards_user_orphaned AFTER UPDATE OF sidebar, project_tab ON dashboards
-    WHEN NEW.owner = 'user' AND NEW.sidebar = 0 AND NEW.project_tab = 0 AND NEW.archived_at IS NULL
+    CREATE TRIGGER dashboards_user_orphaned AFTER UPDATE OF sidebar ON dashboards
+    WHEN NEW.owner = 'user' AND NEW.sidebar = 0 AND NEW.archived_at IS NULL
     BEGIN
       UPDATE dashboards SET archived_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'), sidebar = 1,
           updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
@@ -160,8 +161,8 @@ Date: 2026-10-05
     tabs only; a built-in is refused (`ErrInvalid`). Moves are after-only,
     as dashboard moves are.
   - `update_dashboard` gains `sidebar` (built-in dashboards only, always
-    applied to the whole group; refused on your own, D5) and `project_tab`
-    (your own dashboards only).
+    applied to the whole group; refused on your own, D5). It takes no
+    `project_tab`: that is the release's, on built-ins (D6).
   - `remove_project_tab` always succeeds for a tab the project has; your
     own dashboard keeps its place in the sidebar.
   - `list_dashboards` and `get_dashboard` return `sidebar` and
@@ -200,10 +201,9 @@ Date: 2026-10-05
     - **Remove from this project.**
     - **Open as dashboard**, which goes to `/dashboards/:id?project=:id`.
     - **Move left / right**, for your own tabs on phones.
-  - **On the dashboard page,** your own dashboard's tab menu gains
-    **Project tabs…**: a checklist of projects (checked = the project has
-    the tab) and an **Add to new projects** toggle (`project_tab`).
-    Built-ins have no such entry; they are managed from each project page.
+  - Your own dashboards, like built-ins, are added and removed from each
+    project's page: **+** and the tab's **Remove from this project**.
+    The dashboard page has no project checklist.
 
 - **D9. Elsewhere in the app.**
   - **Sidebar:** shows groups with `sidebar = 1` that aren't archived.
@@ -247,9 +247,9 @@ Date: 2026-10-05
     - the backfill;
     - hidden built-ins becoming `sidebar = 0`;
     - both seeding triggers;
-    - the safety net: archived when both flags go 0 (update or insert),
-      left live with `project_tab = 1`, built-ins and archived rows
-      untouched, `sidebar` back at 1;
+    - the safety net: a user dashboard archived when `sidebar` goes 0
+      (update or insert), built-ins and archived rows untouched,
+      `sidebar` back at 1;
     - rows removed with their project or dashboard.
   - The release sync: `sidebar` applied on insert only, `project_tab`
     re-synced, and a release adding a built-in seeding it into existing
@@ -259,8 +259,7 @@ Date: 2026-10-05
     - moving a built-in tab, or adding one with `after`;
     - a duplicate add;
     - adding an archived dashboard;
-    - `sidebar` on your own dashboard, `true` and `false`;
-    - `project_tab` on a built-in.
+    - `sidebar` on your own dashboard, `true` and `false`.
   - `docs_sync` for the new tools.
   - `TestSystemDashboards` still passes.
 - **Vitest**
@@ -269,7 +268,6 @@ Date: 2026-10-05
   - The fixed prefix in `ReportTabs`.
   - The picker's two sections.
   - The sidebar filter, and the gallery's Add to sidebar.
-  - The Project tabs… checklist.
 - **e2e**
   - `phone.spec` visits a project's dashboard tab and its Setup tab, with
     its long-name project.

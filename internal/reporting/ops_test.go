@@ -2023,48 +2023,14 @@ func TestUpdateDashboardSidebarRefusedOnUser(t *testing.T) {
 	}
 }
 
-func TestUpdateDashboardProjectTabRefusedOnBuiltin(t *testing.T) {
-	svc := newTestService(t)
-	syncReporting(t, svc, nil, systemDashboard())
-	for _, on := range []bool{false, true} {
-		_, err := svc.UpdateDashboard(context.Background(), "test", UpdateDashboard{ID: 3, ProjectTab: ptr(on)})
-		wantRefusal(t, err, store.ErrInvalid, "project_tab of a built-in dashboard is the release's")
-	}
-}
-
-func TestUpdateDashboardProjectTabOnUser(t *testing.T) {
-	svc := newTestService(t)
-	ctx := context.Background()
-	a := mustCreate(t, svc, "AA")
-	b := mustJoin(t, svc, "BB", a.ID)
-	if a.ProjectTab {
-		t.Fatalf("new dashboard ProjectTab = true, want false")
-	}
-	info, err := svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: a.ID, ProjectTab: ptr(true)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !info.ProjectTab || !info.Sidebar {
-		t.Errorf("info = %+v, want ProjectTab and Sidebar true", info)
-	}
-	// project_tab is the dashboard's own, not its group's.
-	if d, _ := svc.st.GetDashboard(ctx, b.ID); d.ProjectTab {
-		t.Errorf("group member BB ProjectTab = true, want false")
-	}
-	got := auditRows(t, svc)
-	if last := got[len(got)-1]; last != "test dashboard.project_tab" {
-		t.Errorf("last audit row = %q, want \"test dashboard.project_tab\"", last)
-	}
-}
-
 func TestUpdateDashboardPlacementTakesNoTitle(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 	a := mustCreate(t, svc, "AA")
-	const alone = "sidebar and project_tab go on their own; give title, after or group_id in another call"
+	const alone = "sidebar goes on its own; give title, after or group_id in another call"
 	for _, in := range []UpdateDashboard{
 		{ID: a.ID, Sidebar: ptr(true), Title: "x"},
-		{ID: a.ID, ProjectTab: ptr(true), After: ptr[int64](0)},
+		{ID: a.ID, Sidebar: ptr(false), After: ptr[int64](0)},
 		{ID: a.ID, Sidebar: ptr(true), GroupID: ptr[int64](0)},
 	} {
 		_, err := svc.UpdateDashboard(ctx, "test", in)
@@ -2072,15 +2038,17 @@ func TestUpdateDashboardPlacementTakesNoTitle(t *testing.T) {
 	}
 }
 
+// A built-in an older binary archived takes no sidebar write until the
+// release sync brings it back.
 func TestUpdateDashboardPlacementRefusesArchived(t *testing.T) {
 	svc := newTestService(t)
+	syncReporting(t, svc, nil, systemDashboard())
 	ctx := context.Background()
-	a := mustCreate(t, svc, "AA")
-	if err := svc.ArchiveDashboard(ctx, "test", a.ID, false); err != nil {
+	if err := svc.st.SetDashboardsArchived(ctx, []int64{3}, true, store.AuditEntry{Actor: "older binary", Action: "dashboard.archive"}); err != nil {
 		t.Fatal(err)
 	}
-	_, err := svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: a.ID, ProjectTab: ptr(true)})
-	wantRefusal(t, err, store.ErrInvalid, "dashboard "+itoa(a.ID)+" is archived; restore_dashboard first")
+	_, err := svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: 3, Sidebar: ptr(true)})
+	wantRefusal(t, err, store.ErrInvalid, "dashboard 3 is archived; restore_dashboard first")
 }
 
 // D9: a copy, of a built-in or of one's own, is in the sidebar, is no
@@ -2089,7 +2057,7 @@ func TestDuplicateIsInSidebar(t *testing.T) {
 	svc, st := newTestServiceOpts(t, Options{}, 1000)
 	syncReporting(t, svc, nil, systemGroup()...)
 	ctx := context.Background()
-	mustCreateProject(t, st, "demo") // takes every built-in as a tab
+	p := mustCreateProject(t, st, "demo") // takes every built-in as a tab
 
 	one, err := svc.DuplicateDashboard(ctx, "test", DuplicateDashboard{ID: 10})
 	if err != nil {
@@ -2108,36 +2076,17 @@ func TestDuplicateIsInSidebar(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !d.Sidebar || d.ProjectTab || len(d.ProjectIDs) != 0 {
-			t.Errorf("copy %d: sidebar %v project_tab %v project_ids %v, want true, false, none", id, d.Sidebar, d.ProjectTab, d.ProjectIDs)
+		if !d.Sidebar || d.ProjectTab {
+			t.Errorf("copy %d: sidebar %v project_tab %v, want true, false", id, d.Sidebar, d.ProjectTab)
 		}
 	}
-}
-
-func TestDashboardDetailProjectIDs(t *testing.T) {
-	svc, st := newTestServiceOpts(t, Options{}, 1000)
-	ctx := context.Background()
-	a := mustCreate(t, svc, "AA")
-	if a.ProjectIDs == nil || len(a.ProjectIDs) != 0 {
-		t.Errorf("ProjectIDs = %#v, want empty and non-nil", a.ProjectIDs)
-	}
-	b, err := json.Marshal(a)
+	tabs, err := svc.ProjectTabs(ctx, p)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(b), `"project_ids":[]`) {
-		t.Errorf("JSON = %s, want \"project_ids\":[]", b)
-	}
-
-	p1 := mustCreateProject(t, st, "one")
-	p2 := mustCreateProject(t, st, "two")
-	mustAddTab(t, svc, p2, a.ID)
-	mustAddTab(t, svc, p1, a.ID)
-	d, err := svc.Dashboard(ctx, a.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := []int64{p1, p2}; !reflect.DeepEqual(d.ProjectIDs, want) {
-		t.Errorf("ProjectIDs = %v, want %v", d.ProjectIDs, want)
+	for _, tab := range tabs {
+		if tab.Owner != store.OwnerSystem {
+			t.Errorf("project tab %+v, want built-ins only: a copy is no project's tab", tab)
+		}
 	}
 }

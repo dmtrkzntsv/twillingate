@@ -334,8 +334,10 @@ func TestProjectTabRoutes(t *testing.T) {
 			t.Errorf("%s %s: last tab %d, want %d", c.method, c.target, got, c.last)
 		}
 	}
-	if rec := serveREST(t, r, "PATCH", fmt.Sprintf("/api/dashboards/%d", a), `{"project_tab":true}`); rec.Code != http.StatusOK ||
-		!strings.Contains(rec.Body.String(), `"project_tab":true`) {
-		t.Errorf("PATCH project_tab = %d %s", rec.Code, rec.Body.String())
+	// project_tab is the release's, on built-ins: a dashboard of your own
+	// is added one project at a time, so the field is not taken.
+	if rec := serveREST(t, r, "PATCH", fmt.Sprintf("/api/dashboards/%d", a), `{"project_tab":true}`); rec.Code != http.StatusBadRequest ||
+		!strings.Contains(rec.Body.String(), `unknown field \"project_tab\"`) {
+		t.Errorf("PATCH project_tab = %d %s, want 400 for an unknown field", rec.Code, rec.Body.String())
 	}
 }

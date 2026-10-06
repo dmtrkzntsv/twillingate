@@ -258,12 +258,12 @@ widget_data {"widget_id": 42, "project_id": 7, "from": "2026-09-01", "to": "2026
 | --- | --- | --- |
 | `reporting_guide` | none | markdown: the running version and its release notes, the source types and components, the views, the active projects and the dashboards, and this document's [Workflow](#workflow) and [Rules](#rules). MCP only |
 | `list_components` | none | `source_types` and `components`: each one's `description`, `accepts`, `inputs`, `props` schema, `default_width` and `default_height` |
-| `list_dashboards` | none | `timezone` and `dashboards` in sidebar order (system, then user), archived ones included: `dashboard_id`, `title`, `owner`, `group_id`, `group_title` (the group's name; absent when it has none, and the first live tab's title stands in), stored `project_id` and `range`, live `widgets` count, `archived_at`, `sidebar` (its group is in the sidebar; only a system group is ever out of it) and `project_tab` (projects created from now on get it as a tab); plus `purge_after_days`, how long an archived user dashboard is kept before it is deleted (absent: kept forever), and `auto_refresh_seconds`, how often the page reloads a dashboard with auto-refresh on (absent: never) |
-| `get_dashboard` | `dashboard_id` | the dashboard, its `group_id` and `group_title` (the group's name; absent when it has none), its `follows_project` and `follows_range`, its `tabs` (the group's live dashboards, this one included, in tab order), its `project_ids` (the projects that have it as a tab, ascending), and its live `widgets` in order |
+| `list_dashboards` | none | `timezone` and `dashboards` in sidebar order (system, then user), archived ones included: `dashboard_id`, `title`, `owner`, `group_id`, `group_title` (the group's name; absent when it has none, and the first live tab's title stands in), stored `project_id` and `range`, live `widgets` count, `archived_at`, `sidebar` (its group is in the sidebar; only a system group is ever out of it) and `project_tab` (a system dashboard that projects created from now on get as a tab; always false on your own); plus `purge_after_days`, how long an archived user dashboard is kept before it is deleted (absent: kept forever), and `auto_refresh_seconds`, how often the page reloads a dashboard with auto-refresh on (absent: never) |
+| `get_dashboard` | `dashboard_id` | the dashboard, its `group_id` and `group_title` (the group's name; absent when it has none), its `follows_project` and `follows_range`, its `tabs` (the group's live dashboards, this one included, in tab order), and its live `widgets` in order |
 | `list_widgets` | `dashboard_id`, `component` (both optional; they combine) | `widgets`, archived ones included, each with its `dashboard` and 1-based `position` there |
 | `widget_data` | `widget_id`, `project_id`, `from`, `to`, `fresh`; for a remote table `filters`, `sort`, `distinct`, `offset`, `limit` | the envelope above |
 | `create_dashboard` | `title` (at least 2 characters), `range` (default `7d`), `group_id`, `after`, `widgets` | the new dashboard, as `get_dashboard` returns it; one invalid widget creates nothing |
-| `update_dashboard` | `dashboard_id`, `title`, `whole_group`, `group_id`, `after`; or, in a call of their own, `sidebar`, `project_tab` | the dashboard, as `list_dashboards` lists it. `sidebar` (system dashboards only) puts the whole group in or out of the sidebar, and is refused on your own, which are always in it; `project_tab` (user dashboards only) gives every project created from now on this dashboard as a tab. See [Project tabs and the sidebar](#project-tabs-and-the-sidebar) |
+| `update_dashboard` | `dashboard_id`, `title`, `whole_group`, `group_id`, `after`; or, in a call of its own, `sidebar` | the dashboard, as `list_dashboards` lists it. `sidebar` (system dashboards only) puts the whole group in or out of the sidebar, and is refused on your own, which are always in it. See [Project tabs and the sidebar](#project-tabs-and-the-sidebar) |
 | `duplicate_dashboard` | `dashboard_id`, `whole_group`, `group_id` | a user copy with copies of its live widgets: a new dashboard last in the sidebar, or with `group_id` a tab of that user group (right after the source when it is the source's own group, last otherwise). A system dashboard is copied too, also one out of the sidebar. An archived user dashboard is refused (restore it first). `whole_group` copies the group as a new dashboard with the same tabs: a system group whole, a user group's live tabs; it takes no `group_id`. The copy is in the sidebar, on no project's page, with `project_tab` false. Duplicating never hides the source: to replace a system group, `update_dashboard` it with `sidebar: false` |
 | `archive_dashboard` | `dashboard_id`, `whole_group` | archives a user dashboard (`whole_group`: every live member of its group): out of the sidebar and off every project page; see [Archiving and the purge](#archiving-and-the-purge). A system dashboard is refused |
 | `restore_dashboard` | `dashboard_id`, `whole_group` | unhides a user dashboard (`whole_group`: every archived member of its group), in the sidebar and on project pages where it was. A system dashboard is refused |
@@ -303,7 +303,7 @@ audited.
 | `GET` | `/api/widgets` | `list_widgets` | query: `dashboard_id`, `component` |
 | `GET` | `/api/widgets/{widget_id}/data` | `widget_data` | query: `project_id`, `from`, `to`, `fresh`, and for a remote table `filters`, `sort`, `distinct`, `offset`, `limit` |
 | `POST` | `/api/dashboards` | `create_dashboard` | body: `title`, `range`, `group_id`, `after`, `widgets` → 201 |
-| `PATCH` | `/api/dashboards/{dashboard_id}` | `update_dashboard` | body: `title`, `whole_group`, `group_id`, `after`; or `sidebar`, `project_tab` |
+| `PATCH` | `/api/dashboards/{dashboard_id}` | `update_dashboard` | body: `title`, `whole_group`, `group_id`, `after`; or `sidebar` |
 | `POST` | `/api/dashboards/{dashboard_id}/duplicate` | `duplicate_dashboard` | optional body `{whole_group}` or `{group_id}` → 201 |
 | `POST` | `/api/dashboards/{dashboard_id}/archive` | `archive_dashboard` | body: `whole_group` (optional) |
 | `POST` | `/api/dashboards/{dashboard_id}/restore` | `restore_dashboard` | body: `whole_group` (optional) |
@@ -835,19 +835,19 @@ a tab of a project's page (`/app/projects/{project_id}`).
     archived ones included, so every tab has the same value. Your own
     dashboards are always in the sidebar, and `update_dashboard` refuses
     `sidebar` on one, `true` or `false`.
-  - `project_tab`: a project created from now on gets this dashboard as a
-    tab. It never adds or removes tabs on existing projects; that is
-    `add_project_tab`. System dashboards ship with it, and only a release
-    changes it (`update_dashboard` refuses `project_tab` on one). A user
-    dashboard, a copy included, starts without it.
+  - `project_tab`: a project created from now on gets this system
+    dashboard as a tab. It never adds or removes tabs on existing
+    projects. Only a release sets it, from the dashboard's
+    `dashboard.json`; it is always false on your own dashboards.
 - **How tabs appear:**
-  - a new project gets every live dashboard with `project_tab`;
+  - a new project gets every system dashboard with `project_tab`, and
+    none of your own: `add_project_tab` adds one of yours to one project
+    at a time (the project page's **+**);
   - a system dashboard a release adds goes onto every existing project
     once, when it first ships; a system tab you removed stays removed
     across releases and restarts;
   - archiving a user dashboard takes it off every project page, and
-    restoring it puts it back where it was;
-  - `get_dashboard`'s `project_ids` names the projects that have it.
+    restoring it puts it back where it was.
 - **System dashboards are never archived.** To take a system group out of
   the sidebar, `update_dashboard` with `sidebar: false`; its tabs stay on
   project pages. `sidebar: true` shows it again.
@@ -945,8 +945,7 @@ widget's name (`widget visitors: …`), and nothing is created.
 | dashboard 1 is a system dashboard and changes only with a release; duplicate_dashboard makes an editable copy | `duplicate_dashboard`, then change the copy. |
 | dashboard 1 is a built-in dashboard and is never archived; update_dashboard {sidebar: false} takes its group out of the sidebar | `archive_dashboard` and `restore_dashboard` take user dashboards only. Hide a system group with `update_dashboard` `{sidebar: false}`, show it with `{sidebar: true}`. |
 | dashboard 1001 is your own: your own dashboards are always in the sidebar; archive_dashboard takes one away | `update_dashboard` takes `sidebar` for system dashboards only. To take one of your own out of the sidebar, `archive_dashboard` it. |
-| sidebar and project_tab go on their own; give title, after or group_id in another call | Send `sidebar` and `project_tab` without `title`, `after` or `group_id`. |
-| project_tab of a built-in dashboard is the release's | A system dashboard's `project_tab` ships with the release; `add_project_tab` and `remove_project_tab` change one project's page. |
+| sidebar goes on its own; give title, after or group_id in another call | Send `sidebar` without `title`, `after` or `group_id`. |
 | project 1 already has dashboard 1001 as a tab (`409 conflict`) | It is there already; `list_project_tabs` lists the page. |
 | a built-in tab goes back to its own place; drop after | Call `add_project_tab` without `after` for a system dashboard. |
 | built-in tabs keep the release's order | `move_project_tab` moves user tabs only. |

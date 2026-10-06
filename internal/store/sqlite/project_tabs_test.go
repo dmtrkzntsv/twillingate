@@ -25,6 +25,10 @@ func tabsDB(t *testing.T) *DB {
 	return db
 }
 
+// builtins inserts system dashboards 1 and 2 (one group) and 3.
+const builtins = `INSERT INTO dashboards (id, owner, title, sort_key, group_id) VALUES
+	(1, 'system', 'S1', 'a0', 1), (2, 'system', 'S2', 'a1', 1), (3, 'system', 'S3', 'a2', 3)`
+
 var tabAudit = store.AuditEntry{Actor: "test", Action: "project.tab.add"}
 
 func countAudit(t *testing.T, db *DB, action string) int {
@@ -127,53 +131,38 @@ func TestMoveProjectTab(t *testing.T) {
 	}
 }
 
-func TestListDashboardProjects(t *testing.T) {
-	ctx := context.Background()
-	db := tabsDB(t)
-	execAll(t, db, `INSERT INTO project_tabs (project_id, dashboard_id, sort_key) VALUES
-		(2, 10, 'a0'), (1, 10, 'a0'), (1, 11, 'a1')`)
-	got, err := db.ListDashboardProjects(ctx, 10)
-	if err != nil || !slices.Equal(got, []int64{1, 2}) {
-		t.Errorf("got %v, %v; want [1 2]", got, err)
-	}
-	got, err = db.ListDashboardProjects(ctx, 12)
-	if err != nil || got == nil || len(got) != 0 {
-		t.Errorf("none: got %v, %v; want empty non-nil", got, err)
-	}
-}
-
 func TestSetDashboardsSidebar(t *testing.T) {
 	ctx := context.Background()
 	db := tabsDB(t)
-	// Given to new projects, so 032's safety net leaves them live out of
-	// the sidebar.
-	execAll(t, db, `UPDATE dashboards SET project_tab=1 WHERE id IN (10, 11)`)
+	// Built-ins: 032's safety net archives a user dashboard out of the
+	// sidebar.
+	execAll(t, db, builtins)
 	sidebar := func(id int64) int {
 		var v int
 		execScan(t, db, `SELECT sidebar FROM dashboards WHERE id=`+strconv.FormatInt(id, 10), &v)
 		return v
 	}
 	hide := store.AuditEntry{Actor: "test", Action: "dashboard.sidebar.hide"}
-	if err := db.SetDashboardsSidebar(ctx, []int64{10, 99}, false, hide); !errors.Is(err, store.ErrNotFound) {
+	if err := db.SetDashboardsSidebar(ctx, []int64{1, 99}, false, hide); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("unknown id: err = %v, want ErrNotFound", err)
 	}
-	if sidebar(10) != 1 || countAudit(t, db, "dashboard.sidebar.hide") != 0 {
+	if sidebar(1) != 1 || countAudit(t, db, "dashboard.sidebar.hide") != 0 {
 		t.Error("an unknown id must leave every row and the audit log untouched")
 	}
-	if err := db.SetDashboardsSidebar(ctx, []int64{10, 11}, false, hide); err != nil {
+	if err := db.SetDashboardsSidebar(ctx, []int64{1, 2}, false, hide); err != nil {
 		t.Fatal(err)
 	}
-	if sidebar(10) != 0 || sidebar(11) != 0 || sidebar(12) != 1 {
-		t.Errorf("sidebar = %d %d %d, want 0 0 1", sidebar(10), sidebar(11), sidebar(12))
+	if sidebar(1) != 0 || sidebar(2) != 0 || sidebar(3) != 1 {
+		t.Errorf("sidebar = %d %d %d, want 0 0 1", sidebar(1), sidebar(2), sidebar(3))
 	}
 	if n := countAudit(t, db, "dashboard.sidebar.hide"); n != 2 {
 		t.Errorf("audit rows = %d, want 2", n)
 	}
 	show := store.AuditEntry{Actor: "test", Action: "dashboard.sidebar.show"}
-	if err := db.SetDashboardsSidebar(ctx, []int64{10}, true, show); err != nil {
+	if err := db.SetDashboardsSidebar(ctx, []int64{1}, true, show); err != nil {
 		t.Fatal(err)
 	}
-	if sidebar(10) != 1 {
+	if sidebar(1) != 1 {
 		t.Error("show did not set sidebar 1")
 	}
 }
@@ -183,10 +172,10 @@ func TestSetDashboardsSidebar(t *testing.T) {
 func TestUpdateDashboardWritesSidebar(t *testing.T) {
 	ctx := context.Background()
 	db := tabsDB(t)
-	execAll(t, db, `UPDATE dashboards SET project_tab=1 WHERE id=10`) // see TestSetDashboardsSidebar
+	execAll(t, db, builtins) // see TestSetDashboardsSidebar
 	upd := store.AuditEntry{Actor: "test", Action: "dashboard.update"}
 	for _, want := range []bool{false, true} {
-		d, err := db.GetDashboard(ctx, 10)
+		d, err := db.GetDashboard(ctx, 1)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -194,31 +183,9 @@ func TestUpdateDashboardWritesSidebar(t *testing.T) {
 		if err := db.UpdateDashboard(ctx, d, upd); err != nil {
 			t.Fatal(err)
 		}
-		if got, err := db.GetDashboard(ctx, 10); err != nil || got.Sidebar != want || got.Title != "A" {
+		if got, err := db.GetDashboard(ctx, 1); err != nil || got.Sidebar != want || got.Title != "S1" {
 			t.Errorf("after update: %+v, %v; want sidebar %v, title kept", got, err, want)
 		}
-	}
-}
-
-func TestSetDashboardProjectTab(t *testing.T) {
-	ctx := context.Background()
-	db := tabsDB(t)
-	a := store.AuditEntry{Actor: "test", Action: "dashboard.project_tab"}
-	if err := db.SetDashboardProjectTab(ctx, 99, true, a); !errors.Is(err, store.ErrNotFound) {
-		t.Errorf("unknown id: err = %v, want ErrNotFound", err)
-	}
-	for _, on := range []bool{true, false} {
-		if err := db.SetDashboardProjectTab(ctx, 10, on, a); err != nil {
-			t.Fatal(err)
-		}
-		var v int
-		execScan(t, db, `SELECT project_tab FROM dashboards WHERE id=10`, &v)
-		if (v == 1) != on {
-			t.Errorf("project_tab = %d after on=%v", v, on)
-		}
-	}
-	if n := countAudit(t, db, "dashboard.project_tab"); n != 2 {
-		t.Errorf("audit rows = %d, want 2", n)
 	}
 }
 
@@ -228,26 +195,22 @@ func TestProjectTabRefusalsWriteNoAudit(t *testing.T) {
 	db := tabsDB(t)
 	_ = db.DeleteProjectTab(ctx, 1, 10, store.AuditEntry{Actor: "test", Action: "project.tab.remove"})
 	_ = db.MoveProjectTab(ctx, store.ProjectTabRow{ProjectID: 1, DashboardID: 10, SortKey: "b"}, store.AuditEntry{Actor: "test", Action: "project.tab.move"})
-	_ = db.SetDashboardProjectTab(ctx, 99, true, store.AuditEntry{Actor: "test", Action: "dashboard.project_tab"})
 	_ = db.InsertProjectTab(ctx, store.ProjectTabRow{ProjectID: 99, DashboardID: 10}, tabAudit)
 	var n int
-	execScan(t, db, `SELECT count(*) FROM audit_log WHERE action LIKE 'project.tab.%' OR action='dashboard.project_tab'`, &n)
+	execScan(t, db, `SELECT count(*) FROM audit_log WHERE action LIKE 'project.tab.%'`, &n)
 	if n != 0 {
 		t.Errorf("%d audit rows after refused writes, want 0", n)
 	}
 }
 
-// Sidebar and project_tab writes are audited under the dashboard, one row
-// per id; the actor and detail the caller passed are kept.
+// Sidebar writes are audited under the dashboard, one row per id; the
+// actor and detail the caller passed are kept.
 func TestPlacementAuditSubjects(t *testing.T) {
 	ctx := context.Background()
 	db := tabsDB(t)
-	if err := db.SetDashboardsSidebar(ctx, []int64{10, 11}, false,
+	execAll(t, db, builtins)
+	if err := db.SetDashboardsSidebar(ctx, []int64{1, 2}, false,
 		store.AuditEntry{Actor: "me", Action: "dashboard.sidebar.hide", Detail: "d"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.SetDashboardProjectTab(ctx, 12, true,
-		store.AuditEntry{Actor: "me", Action: "dashboard.project_tab"}); err != nil {
 		t.Fatal(err)
 	}
 	rows, err := db.db.QueryContext(ctx, `SELECT action, subject, actor, detail FROM audit_log ORDER BY rowid`)
@@ -264,9 +227,8 @@ func TestPlacementAuditSubjects(t *testing.T) {
 		got = append(got, action+" "+subject+" "+actor+" "+detail)
 	}
 	want := []string{
-		"dashboard.sidebar.hide dashboard/10 me d",
-		"dashboard.sidebar.hide dashboard/11 me d",
-		"dashboard.project_tab dashboard/12 me ",
+		"dashboard.sidebar.hide dashboard/1 me d",
+		"dashboard.sidebar.hide dashboard/2 me d",
 	}
 	if !slices.Equal(got, want) {
 		t.Errorf("audit rows = %q, want %q", got, want)
@@ -301,13 +263,11 @@ func TestProjectTabOperationsOnClosedDB(t *testing.T) {
 	a := store.AuditEntry{Actor: "test", Action: "x"}
 	r := store.ProjectTabRow{ProjectID: 1, DashboardID: 10, SortKey: "a"}
 	for name, op := range map[string]func() error{
-		"ListProjectTabs":        func() error { _, err := db.ListProjectTabs(ctx, 1); return err },
-		"ListDashboardProjects":  func() error { _, err := db.ListDashboardProjects(ctx, 10); return err },
-		"InsertProjectTab":       func() error { return db.InsertProjectTab(ctx, r, a) },
-		"DeleteProjectTab":       func() error { return db.DeleteProjectTab(ctx, 1, 10, a) },
-		"MoveProjectTab":         func() error { return db.MoveProjectTab(ctx, r, a) },
-		"SetDashboardsSidebar":   func() error { return db.SetDashboardsSidebar(ctx, []int64{10}, true, a) },
-		"SetDashboardProjectTab": func() error { return db.SetDashboardProjectTab(ctx, 10, true, a) },
+		"ListProjectTabs":      func() error { _, err := db.ListProjectTabs(ctx, 1); return err },
+		"InsertProjectTab":     func() error { return db.InsertProjectTab(ctx, r, a) },
+		"DeleteProjectTab":     func() error { return db.DeleteProjectTab(ctx, 1, 10, a) },
+		"MoveProjectTab":       func() error { return db.MoveProjectTab(ctx, r, a) },
+		"SetDashboardsSidebar": func() error { return db.SetDashboardsSidebar(ctx, []int64{10}, true, a) },
 	} {
 		err := op()
 		if err == nil {
@@ -323,7 +283,7 @@ func TestProjectTabOperationsOnClosedDB(t *testing.T) {
 func TestProjectTabWriteRollsBackWhenAuditFails(t *testing.T) {
 	ctx := context.Background()
 	db := tabsDB(t)
-	execAll(t, db,
+	execAll(t, db, builtins,
 		`INSERT INTO project_tabs (project_id, dashboard_id, sort_key) VALUES (1, 10, 'a0')`,
 		`CREATE TRIGGER audit_refuses BEFORE INSERT ON audit_log BEGIN SELECT RAISE(ABORT, 'audit down'); END`)
 	a := store.AuditEntry{Actor: "test", Action: "x"}
@@ -345,10 +305,8 @@ func TestProjectTabWriteRollsBackWhenAuditFails(t *testing.T) {
 		`SELECT count(*) FROM project_tabs WHERE sort_key='b0'`, 0)
 	check("Delete", db.DeleteProjectTab(ctx, 1, 10, a),
 		`SELECT count(*) FROM project_tabs WHERE dashboard_id=10`, 1)
-	check("Sidebar", db.SetDashboardsSidebar(ctx, []int64{10}, false, a),
-		`SELECT count(*) FROM dashboards WHERE id=10 AND sidebar=0`, 0)
-	check("ProjectTab", db.SetDashboardProjectTab(ctx, 10, true, a),
-		`SELECT count(*) FROM dashboards WHERE id=10 AND project_tab=1`, 0)
+	check("Sidebar", db.SetDashboardsSidebar(ctx, []int64{1}, false, a),
+		`SELECT count(*) FROM dashboards WHERE id=1 AND sidebar=0`, 0)
 }
 
 // A statement that fails for a reason other than a missing row or a
@@ -364,11 +322,10 @@ func TestProjectTabWriteErrorsAreNotRefusals(t *testing.T) {
 		`CREATE TRIGGER dash_no_update BEFORE UPDATE ON dashboards BEGIN SELECT RAISE(ABORT, 'disk full'); END`)
 	a := store.AuditEntry{Actor: "test", Action: "x"}
 	for name, err := range map[string]error{
-		"Insert":     db.InsertProjectTab(ctx, store.ProjectTabRow{ProjectID: 1, DashboardID: 11, SortKey: "a1"}, a),
-		"Move":       db.MoveProjectTab(ctx, store.ProjectTabRow{ProjectID: 1, DashboardID: 10, SortKey: "b0"}, a),
-		"Delete":     db.DeleteProjectTab(ctx, 1, 10, a),
-		"Sidebar":    db.SetDashboardsSidebar(ctx, []int64{10}, false, a),
-		"ProjectTab": db.SetDashboardProjectTab(ctx, 10, true, a),
+		"Insert":  db.InsertProjectTab(ctx, store.ProjectTabRow{ProjectID: 1, DashboardID: 11, SortKey: "a1"}, a),
+		"Move":    db.MoveProjectTab(ctx, store.ProjectTabRow{ProjectID: 1, DashboardID: 10, SortKey: "b0"}, a),
+		"Delete":  db.DeleteProjectTab(ctx, 1, 10, a),
+		"Sidebar": db.SetDashboardsSidebar(ctx, []int64{10}, false, a),
 	} {
 		if err == nil {
 			t.Errorf("%s: want the statement's error, got nil", name)
@@ -390,8 +347,7 @@ func TestRestoreDashboardsPutsUserBackInSidebar(t *testing.T) {
 	execAll(t, db,
 		`INSERT INTO dashboards (id, owner, title, sort_key, group_id, sidebar, project_tab) VALUES (1, 'system', 'Views', 'a0', 1, 0, 1)`,
 		`UPDATE dashboards SET archived_at='2026-09-01T00:00:00Z' WHERE id IN (1, 10, 11)`,
-		`UPDATE dashboards SET sidebar=0 WHERE id IN (10, 11)`,
-		`UPDATE dashboards SET project_tab=1 WHERE id=11`)
+		`UPDATE dashboards SET sidebar=0 WHERE id IN (10, 11)`)
 	if err := db.SetDashboardsArchived(ctx, []int64{1, 10, 11}, false, store.AuditEntry{Actor: "test", Action: "dashboard.restore"}); err != nil {
 		t.Fatal(err)
 	}
