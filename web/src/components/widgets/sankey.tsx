@@ -4,6 +4,7 @@ import { HoverCard, useHover, type HoverRow } from '@/components/chart-parts'
 import { seriesColor } from '@/lib/chart'
 import { formatExact, formatValue, type Format } from '@/lib/format'
 import { toRecords } from '@/lib/records'
+import { useCardMode } from '@/components/share/card-mode'
 import type { Contract, Example, SqlData, WidgetProps } from './types'
 
 interface SankeyProps {
@@ -174,6 +175,8 @@ type Link = { i: number }
 
 export default function Sankey({ data, props }: WidgetProps<SankeyProps>) {
   const { hovered, bind } = useHover<Hovered>()
+  // A share card's labels are larger, for a card seen small in a feed.
+  const cardMode = useCardMode()
   const records = toRecords(data as SqlData, contract)
   const { nodes, links, loops } = graph(records)
   if (links.length === 0) return null
@@ -201,11 +204,11 @@ export default function Sankey({ data, props }: WidgetProps<SankeyProps>) {
       <g data-sankey-node data-node-name={node.name} {...bind({ kind: 'node', index })}>
         <rect x={x} y={y} width={width} height={Math.max(height, 1)} rx={2} fill={colorOf(index)} />
         <text
-          x={sink ? x - 6 : x + width + 6}
+          x={sink ? x - 8 : x + width + 8}
           y={y + height / 2}
           dominantBaseline="middle"
           textAnchor={sink ? 'end' : 'start'}
-          fontSize={11}
+          fontSize={cardMode ? 16 : 11}
           className="pointer-events-none fill-foreground"
         >
           <tspan fontWeight={500}>{name}</tspan>
@@ -260,8 +263,8 @@ export default function Sankey({ data, props }: WidgetProps<SankeyProps>) {
       <ChartContainer config={{ value: { label: 'value' } }} className="aspect-auto min-h-0 w-full flex-1">
         <RechartsSankey
           data={{ nodes: nodes.map((name, i) => ({ name, i })), links: links.map((l, i) => ({ ...l, i })) }}
-          nodeWidth={10}
-          nodePadding={14}
+          nodeWidth={cardMode ? 14 : 10}
+          nodePadding={cardMode ? 24 : 14}
           margin={{ top: 4, right: 4, bottom: 4, left: 4 }}
           node={drawNode}
           link={drawLink}

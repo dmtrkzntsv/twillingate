@@ -7,6 +7,7 @@ import { activeDot, axis, formatTick, grid, niceTicks, seriesColor, seriesConfig
 import { formatValue, type Format } from '@/lib/format'
 import { pivot, toRecords } from '@/lib/records'
 import { legend, tooltip } from '@/components/chart-parts'
+import { useCardMode } from '@/components/share/card-mode'
 import type { Contract, Example, SqlData, WidgetProps } from './types'
 
 interface LineProps {
@@ -95,6 +96,8 @@ const DOTTED = 14
 export default function Line({ data, props }: WidgetProps<LineProps>) {
   const sql = data as SqlData
   const records = toRecords(sql, contract)
+  // A share card's line is 3px (index.css): its dots grow with it.
+  const card = useCardMode()
   if (records.length === 0) return null
 
   const format = props.format ?? 'number'
@@ -122,7 +125,7 @@ export default function Line({ data, props }: WidgetProps<LineProps>) {
             strokeWidth={2}
             strokeLinecap="round"
             strokeLinejoin="round"
-            dot={dotted ? { r: 3, fill: seriesColor(i), stroke: 'var(--card)', strokeWidth: 2 } : false}
+            dot={dotted ? { r: card ? 4.5 : 3, fill: seriesColor(i), stroke: 'var(--card)', strokeWidth: 2 } : false}
             activeDot={activeDot(seriesColor(i))}
             isAnimationActive={false}
           />

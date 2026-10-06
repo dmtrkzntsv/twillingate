@@ -5,6 +5,7 @@ import { seriesColor } from '@/lib/chart'
 import { formatValue, type Format } from '@/lib/format'
 import { toRecords } from '@/lib/records'
 import { tooltip } from '@/components/chart-parts'
+import { useCardMode } from '@/components/share/card-mode'
 import type { Contract, Example, SqlData, WidgetProps } from './types'
 
 interface TreemapProps {
@@ -76,12 +77,18 @@ type Cell = TreemapNode & { index: number; parentName?: string; colorIndex?: num
  * Draws one node. A group (a `parent` with children) draws nothing of its
  * own: its leaves carry its color and name, so no label sits on another.
  */
-function cell(format: Format) {
+/** A label's type: a share card's is larger, for a card seen small in a feed. */
+const TYPE = { tile: { name: 12, value: 11, line: 16 }, card: { name: 17, value: 15, line: 22 } }
+
+function cell(format: Format, card: boolean) {
   return function Cell({ x, y, width, height, name, depth, index, value, parentName, colorIndex }: Cell) {
     const grouped = parentName !== undefined
     if (depth !== (grouped ? 2 : 1)) return <g data-treemap-node data-node-name={name} data-node-depth={depth} />
     const color = grouped ? (colorIndex ?? 0) : index
     const label = grouped ? `${parentName} ${name}` : name
+    const type = card ? TYPE.card : TYPE.tile
+    // On a card nothing may run past its cell: a label shows only where it fits, about 0.6em a character.
+    const fits = !card || width > label.length * type.name * 0.6 + 16
     return (
       <g data-treemap-node data-node-name={name} data-node-depth={depth}>
         <rect
@@ -95,13 +102,13 @@ function cell(format: Format) {
           stroke="var(--card)"
           strokeWidth={2}
         />
-        {width > 48 && height > 28 && (
-          <text x={x + 8} y={y + 18} fontSize={12} fontWeight={500} fill={labelInk(color)}>
+        {width > 48 && height > type.line + 12 && fits && (
+          <text x={x + 8} y={y + 6 + type.line * 0.75} fontSize={type.name} fontWeight={500} fill={labelInk(color)}>
             {label}
           </text>
         )}
-        {width > 48 && height > 46 && (
-          <text x={x + 8} y={y + 34} fontSize={11} fill={labelInk(color)} fillOpacity={0.8}>
+        {width > 48 && height > type.line * 2 + 14 && fits && (
+          <text x={x + 8} y={y + 6 + type.line * 1.75} fontSize={type.value} fill={labelInk(color)} fillOpacity={0.8}>
             {formatValue(Number(value), format)}
           </text>
         )}
@@ -113,6 +120,7 @@ function cell(format: Format) {
 export default function Treemap({ data, props }: WidgetProps<TreemapProps>) {
   const sql = data as SqlData
   const records = toRecords(sql, contract)
+  const card = useCardMode()
   if (records.length === 0) return null
 
   const format = props.format ?? 'number'
@@ -149,7 +157,7 @@ export default function Treemap({ data, props }: WidgetProps<TreemapProps>) {
         dataKey="value"
         nameKey="name"
         isAnimationActive={false}
-        content={cell(format) as never}
+        content={cell(format, card) as never}
       >
         <ChartTooltip content={tooltip(format)} />
       </RechartsTreemap>

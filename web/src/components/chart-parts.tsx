@@ -1,5 +1,6 @@
 import { useEffect, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
+import { useCardMode } from '@/components/share/card-mode'
 import { ChartLegend, ChartLegendContent, ChartTooltipContent } from '@/components/ui/chart'
 import { formatHeading, ramp } from '@/lib/chart'
 import { formatValue, type Format } from '@/lib/format'
@@ -37,12 +38,16 @@ export function legend(nameKey?: string) {
 
 /** The key to a shaded chart: its smallest and largest value either side of the ramp's steps. */
 export function ScaleLegend({ min, max, base }: { min: string; max: string; base?: string }) {
+  const card = useCardMode()
   return (
-    <div data-scale-legend className="flex items-center justify-end gap-1.5 text-[10px] text-muted-foreground tabular-nums">
+    <div
+      data-scale-legend
+      className={`flex items-center justify-end text-muted-foreground tabular-nums ${card ? 'gap-2.5 text-[15px]' : 'gap-1.5 text-[10px]'}`}
+    >
       <span>{min}</span>
-      <span className="flex gap-0.5">
+      <span className={`flex ${card ? 'gap-1' : 'gap-0.5'}`}>
         {[0, 0.25, 0.5, 0.75, 1].map((t) => (
-          <span key={t} className="size-2.5 rounded-[3px]" style={{ backgroundColor: ramp(t, base) }} />
+          <span key={t} className={`rounded-[3px] ${card ? 'size-4' : 'size-2.5'}`} style={{ backgroundColor: ramp(t, base) }} />
         ))}
       </span>
       <span>{max}</span>

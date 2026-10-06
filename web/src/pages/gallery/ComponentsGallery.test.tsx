@@ -93,6 +93,28 @@ describe(
       expect(within(pie).getByText(/"component": "pie"/)).toBeInTheDocument()
     })
 
+    it('draws each example as its share card in ?view=cards, with PNG downloads', () => {
+      const { container } = renderAt('/gallery/components?view=cards')
+      expect(screen.getByRole('radio', { name: 'Share cards' })).toHaveAttribute('aria-checked', 'true')
+      const line = container.querySelector('#component-line') as HTMLElement
+      expect(line.querySelectorAll('[data-share-card]')).toHaveLength(widgets.line.examples.length)
+      expect(line.querySelectorAll('[data-slot="widget-card"]')).toHaveLength(0)
+      expect(within(line).getAllByTestId('card-png-1x')).toHaveLength(widgets.line.examples.length)
+      expect(within(line).getAllByTestId('card-png-2x')).toHaveLength(widgets.line.examples.length)
+      expect(within(line).getByRole('img', { name: `${widgets.line.examples[0].title}, as a share card` })).toBeInTheDocument()
+    })
+
+    it('switches between tiles and share cards', async () => {
+      const user = userEvent.setup()
+      const { container } = renderAt('/gallery/components')
+      expect(screen.getByRole('radio', { name: 'Tiles' })).toHaveAttribute('aria-checked', 'true')
+      expect(container.querySelectorAll('[data-share-card]')).toHaveLength(0)
+      await user.click(screen.getByRole('radio', { name: 'Share cards' }))
+      expect(container.querySelectorAll('[data-share-card]').length).toBeGreaterThan(0)
+      await user.click(screen.getByRole('radio', { name: 'Tiles' }))
+      expect(container.querySelectorAll('[data-share-card]')).toHaveLength(0)
+    })
+
     it('redirects /gallery and unknown gallery paths to the components page', () => {
       for (const path of ['/gallery', '/gallery/templates']) {
         const { unmount } = renderAt(path)

@@ -1,6 +1,7 @@
 import { HoverCard, useHover, type HoverRow } from '@/components/chart-parts'
 import { formatExact, formatValue, type Format } from '@/lib/format'
 import { toRecords } from '@/lib/records'
+import { useCardMode } from '@/components/share/card-mode'
 import type { Contract, Example, SqlData, WidgetProps } from './types'
 
 interface FunnelProps {
@@ -47,6 +48,7 @@ export const examples: Example[] = [
 
 export default function Funnel({ data, props }: WidgetProps<FunnelProps>) {
   const { hovered, bind } = useHover<number>()
+  const card = useCardMode()
   const records = toRecords(data as SqlData, contract)
   if (records.length === 0) return null
 
@@ -70,7 +72,7 @@ export default function Funnel({ data, props }: WidgetProps<FunnelProps>) {
 
   return (
     <>
-      <ol className="flex h-full flex-col justify-center gap-3 px-1 py-1">
+      <ol className={`flex h-full flex-col justify-center px-1 py-1 ${card ? 'gap-5' : 'gap-3'}`}>
         {records.map((r, i) => {
           const value = values[i]
           const share = value / first
@@ -82,14 +84,14 @@ export default function Funnel({ data, props }: WidgetProps<FunnelProps>) {
               {...bind(i)}
               className="-mx-1.5 -my-1 flex flex-col gap-1.5 rounded-md px-1.5 py-1 hover:bg-muted/60"
             >
-              <div className="flex items-baseline justify-between gap-3 text-sm">
+              <div className={`flex items-baseline justify-between gap-3 ${card ? 'text-[20px]' : 'text-sm'}`}>
                 <span className="truncate font-medium">{String(r.step)}</span>
                 <span className="flex shrink-0 items-baseline gap-2 tabular-nums">
                   <span className="text-muted-foreground">{formatValue(value, format)}</span>
-                  <span className="w-12 text-right font-medium">{formatValue(share, 'percent')}</span>
+                  <span className={`text-right font-medium ${card ? 'w-20' : 'w-12'}`}>{formatValue(share, 'percent')}</span>
                 </span>
               </div>
-              <div className="h-2 overflow-hidden rounded-full bg-muted">
+              <div className={`overflow-hidden rounded-full bg-muted ${card ? 'h-3' : 'h-2'}`}>
                 <div
                   data-bar-fill
                   className="h-full rounded-full"
@@ -101,7 +103,7 @@ export default function Funnel({ data, props }: WidgetProps<FunnelProps>) {
                 />
               </div>
               {fromPrevious !== null && (
-                <span className="text-[11px] text-muted-foreground">
+                <span className={`text-muted-foreground ${card ? 'text-[15px]' : 'text-[11px]'}`}>
                   {`${formatValue(fromPrevious, 'percent')} of the step before`}
                 </span>
               )}

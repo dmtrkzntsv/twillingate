@@ -7,6 +7,7 @@ import { axis, formatTick, grid, MAX_BAR, niceTicks, seriesColor, seriesConfig, 
 import { formatValue, type Format } from '@/lib/format'
 import { pivot, toRecords } from '@/lib/records'
 import { legend, tooltip } from '@/components/chart-parts'
+import { useCardMode } from '@/components/share/card-mode'
 import type { Contract, Example, SqlData, WidgetProps } from './types'
 
 interface BarProps {
@@ -86,15 +87,17 @@ export const examples: Example[] = [
 /** At most this many bars of one series, each also prints its value. */
 const LABELLED = 12
 
-/** Room for the longest category label on a horizontal chart's axis, within reason. */
-function categoryWidth(labels: string[]): number {
+/** Room for the longest category label on a horizontal chart's axis, within reason; `scale` for a card's larger type. */
+function categoryWidth(labels: string[], scale = 1): number {
   const longest = Math.max(...labels.map((l) => l.length))
-  return Math.min(160, Math.max(40, Math.round(longest * 6.4) + 8))
+  return Math.min(160 * scale, Math.max(40, Math.round(longest * 6.4 * scale) + 8))
 }
 
 export default function Bar({ data, props }: WidgetProps<BarProps>) {
   const sql = data as SqlData
   const records = toRecords(sql, contract)
+  // A share card's labels are larger (15px, index.css): room and type to match.
+  const card = useCardMode()
   if (records.length === 0) return null
 
   const format = props.format ?? 'number'
@@ -115,7 +118,7 @@ export default function Bar({ data, props }: WidgetProps<BarProps>) {
       <BarChart
         data={rows}
         layout={horizontal ? 'vertical' : 'horizontal'}
-        margin={{ top: labelled && !horizontal ? 20 : 8, right: labelled && horizontal ? 48 : 8, bottom: 0, left: 0 }}
+        margin={{ top: labelled && !horizontal ? 20 : 8, right: labelled && horizontal ? (card ? 72 : 48) : 8, bottom: 0, left: 0 }}
         barGap={3}
         barCategoryGap="24%"
       >
@@ -133,7 +136,7 @@ export default function Bar({ data, props }: WidgetProps<BarProps>) {
               dataKey="x"
               type="category"
               {...axis}
-              width={categoryWidth(rows.map((r) => formatTick(r.x)))}
+              width={categoryWidth(rows.map((r) => formatTick(r.x)), card ? 15 / 11 : 1)}
               tickFormatter={formatTick}
               interval={0}
             />
@@ -169,7 +172,7 @@ export default function Bar({ data, props }: WidgetProps<BarProps>) {
                 dataKey={key}
                 position={horizontal ? 'right' : 'top'}
                 offset={8}
-                fontSize={11}
+                fontSize={card ? 15 : 11}
                 className="fill-muted-foreground"
                 formatter={show}
               />

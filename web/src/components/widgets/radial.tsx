@@ -8,6 +8,7 @@ import { seriesColor } from '@/lib/chart'
 import { formatValue, type Format } from '@/lib/format'
 import { toRecords } from '@/lib/records'
 import { legend, tooltip } from '@/components/chart-parts'
+import { useCardMode } from '@/components/share/card-mode'
 import type { Contract, Example, SqlData, WidgetProps } from './types'
 
 interface RadialProps {
@@ -55,6 +56,7 @@ export const examples: Example[] = [
 export default function Radial({ data, props }: WidgetProps<RadialProps>) {
   const sql = data as SqlData
   const records = toRecords(sql, contract)
+  const card = useCardMode()
   if (records.length === 0) return null
 
   const format = props.format ?? 'number'
@@ -95,10 +97,10 @@ export default function Radial({ data, props }: WidgetProps<RadialProps>) {
         <RadialBar dataKey="display" background cornerRadius={999} isAnimationActive={false} />
         {single && (
           <text x="50%" y="50%" textAnchor="middle" dominantBaseline="middle">
-            <tspan x="50%" dy="-0.3em" className="fill-foreground text-2xl font-semibold">
+            <tspan x="50%" dy="-0.3em" className={`fill-foreground font-semibold ${card ? 'text-[40px]' : 'text-2xl'}`}>
               {formatValue(rows[0].value, format)}
             </tspan>
-            <tspan x="50%" dy="1.6em" className="fill-muted-foreground text-xs">
+            <tspan x="50%" dy="1.6em" className={`fill-muted-foreground ${card ? 'text-[16px]' : 'text-xs'}`}>
               {hasMax ? `${Math.round(rows[0].display)}% of ${formatValue(Number(records[0].max), format)}` : rows[0].label}
             </tspan>
           </text>

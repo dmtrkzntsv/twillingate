@@ -8,6 +8,7 @@ import { seriesColor } from '@/lib/chart'
 import { formatValue, type Format } from '@/lib/format'
 import { toRecords } from '@/lib/records'
 import { legend, tooltip } from '@/components/chart-parts'
+import { useCardMode } from '@/components/share/card-mode'
 import type { Contract, Example, SqlData, WidgetProps } from './types'
 
 interface PieProps {
@@ -56,6 +57,7 @@ export const examples: Example[] = [
 
 export default function Pie({ data, props }: WidgetProps<PieProps>) {
   const records = toRecords(data as SqlData, contract)
+  const card = useCardMode()
   if (records.length === 0) return null
 
   const format = props.format ?? 'number'
@@ -92,10 +94,10 @@ export default function Pie({ data, props }: WidgetProps<PieProps>) {
                 const { cx, cy } = viewBox as { cx: number; cy: number }
                 return (
                   <text x={cx} y={cy} textAnchor="middle" dominantBaseline="middle">
-                    <tspan x={cx} y={cy - 4} className="fill-foreground text-xl font-semibold">
+                    <tspan x={cx} y={card ? cy - 8 : cy - 4} className={`fill-foreground font-semibold ${card ? 'text-[36px]' : 'text-xl'}`}>
                       {formatValue(total, format)}
                     </tspan>
-                    <tspan x={cx} y={cy + 16} className="fill-muted-foreground text-xs">
+                    <tspan x={cx} y={card ? cy + 26 : cy + 16} className={`fill-muted-foreground ${card ? 'text-[16px]' : 'text-xs'}`}>
                       Total
                     </tspan>
                   </text>

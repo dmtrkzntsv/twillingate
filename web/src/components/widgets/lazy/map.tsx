@@ -8,6 +8,7 @@ import { formatExact, formatValue, type Format } from '@/lib/format'
 import { toRecords } from '@/lib/records'
 import { ramp } from '@/lib/chart'
 import { HoverCard, ScaleLegend, useHover, type HoverRow } from '@/components/chart-parts'
+import { useCardMode } from '@/components/share/card-mode'
 import { contract } from '../map'
 import type { SqlData, WidgetProps } from '../types'
 
@@ -29,6 +30,7 @@ const path = geoPath(projection)
 
 export default function MapWidget({ data, props }: WidgetProps<MapProps>) {
   const { hovered, bind } = useHover<{ name: string; value?: number }>()
+  const card = useCardMode()
   const records = toRecords(data as SqlData, contract)
   if (records.length === 0) return null
 
@@ -67,7 +69,7 @@ export default function MapWidget({ data, props }: WidgetProps<MapProps>) {
         ]
 
   return (
-    <div className="flex h-full w-full flex-col gap-2 overflow-auto p-1">
+    <div className={`flex h-full w-full flex-col gap-2 p-1 ${card ? 'overflow-hidden' : 'overflow-auto'}`}>
       <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} className="w-full flex-1" preserveAspectRatio="xMidYMid meet">
         {countries.features.map((f: Feature<Geometry, { name?: string }>, i: number) => {
           const id = f.id === undefined ? undefined : String(f.id)
@@ -92,7 +94,7 @@ export default function MapWidget({ data, props }: WidgetProps<MapProps>) {
         <ScaleLegend min={formatValue(min, format)} max={formatValue(max, format)} base="var(--muted)" />
       )}
       {unmatched.length > 0 && (
-        <div data-not-on-map className="text-xs text-muted-foreground">
+        <div data-not-on-map className={`text-muted-foreground ${card ? 'text-[15px]' : 'text-xs'}`}>
           Not on the map:{' '}
           {unmatched.map((u) => (u.value === null ? u.code : `${u.code} ${formatValue(u.value, format)}`)).join(', ')}
         </div>
