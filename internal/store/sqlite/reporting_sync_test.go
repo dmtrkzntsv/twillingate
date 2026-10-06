@@ -626,9 +626,17 @@ func TestSyncReportingFailingSyncRollsBackEverything(t *testing.T) {
 	}
 }
 
-// D3: archiving a system group survives a sync, and a dashboard the
-// release adds to that group arrives archived too.
-func TestSyncKeepsArchivedSystemGroup(t *testing.T) {
+// hideDashboards is a user's Hide of built-in dashboards: sidebar 0.
+func hideDashboards(t *testing.T, db *DB, ids ...int64) {
+	t.Helper()
+	for _, id := range ids {
+		execAll(t, db, fmt.Sprintf(`UPDATE dashboards SET sidebar=0 WHERE id=%d`, id))
+	}
+}
+
+// D3: hiding a system group survives a sync, and a dashboard the release
+// adds to that group arrives hidden too (sidebar 0), never archived.
+func TestSyncKeepsHiddenSystemGroup(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	group := func(n int) []store.SystemDashboard {
@@ -639,7 +647,7 @@ func TestSyncKeepsArchivedSystemGroup(t *testing.T) {
 				g = 10
 			}
 			out[i] = store.SystemDashboard{ID: int64(10 + i), Title: fmt.Sprintf("T%d", i),
-				SortKey: fmt.Sprintf("a%d", i), GroupID: g, Range: "7d"}
+				SortKey: fmt.Sprintf("a%d", i), GroupID: g, Range: "7d", Sidebar: true}
 		}
 		return out
 	}
@@ -650,41 +658,39 @@ func TestSyncKeepsArchivedSystemGroup(t *testing.T) {
 		}
 	}
 	sync("h1", group(2))
-	// A fresh install: nothing has been archived yet, so both arrive live.
+	// A fresh install: nothing has been hidden yet, so both arrive as the fixture says.
 	for _, id := range []int64{10, 11} {
 		d, err := db.GetDashboard(ctx, id)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if d.ArchivedAt != "" {
-			t.Errorf("dashboard %d archived after first sync, want live", id)
+		if !d.Sidebar || d.ArchivedAt != "" {
+			t.Errorf("dashboard %d after first sync = sidebar %v archived %q, want sidebar, live", id, d.Sidebar, d.ArchivedAt)
 		}
 	}
-	if err := db.SetDashboardsArchived(ctx, []int64{10, 11}, true, store.AuditEntry{Actor: "t", Action: "dashboard.archive"}); err != nil {
-		t.Fatal(err)
-	}
-	sync("h2", append(group(3), store.SystemDashboard{ID: 20, Title: "Alone", SortKey: "b0", Range: "7d"}))
+	hideDashboards(t, db, 10, 11)
+	sync("h2", append(group(3), store.SystemDashboard{ID: 20, Title: "Alone", SortKey: "b0", Range: "7d", Sidebar: true}))
 	for _, id := range []int64{10, 11, 12} {
 		d, err := db.GetDashboard(ctx, id)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if d.ArchivedAt == "" {
-			t.Errorf("dashboard %d live after sync, want archived (its group is archived)", id)
+		if d.Sidebar || d.ArchivedAt != "" {
+			t.Errorf("dashboard %d after resync = sidebar %v archived %q, want hidden (its group is hidden) and live", id, d.Sidebar, d.ArchivedAt)
 		}
 	}
-	if d, _ := db.GetDashboard(ctx, 20); d.ArchivedAt != "" {
-		t.Errorf("new dashboard 20 in its own group archived, want live")
+	if d, _ := db.GetDashboard(ctx, 20); !d.Sidebar {
+		t.Errorf("new dashboard 20 in its own group hidden, want the fixture's sidebar")
 	}
 }
 
-// D3: a dashboard regrouped onto an archived group by the same sync that
-// introduces its new leader arrives archived too. Manifest rows arrive
+// D3: a dashboard regrouped onto a hidden group by the same sync that
+// introduces its new leader arrives hidden too. Manifest rows arrive
 // sorted by id (internal/reporting/files.go), so the new leader L (lower
-// id) is upserted before the pre-existing, archived M (higher id) that is
-// joining it — a per-row check couldn't see M's archived state yet, which
-// is exactly the bug this whole-sync pass fixes.
-func TestSyncArchivesDashboardRegroupedOntoArchivedGroup(t *testing.T) {
+// id) is upserted before the pre-existing, hidden M (higher id) that is
+// joining it: a per-row check couldn't see M's state yet, which is
+// exactly the bug this whole-sync pass fixes.
+func TestSyncHidesDashboardRegroupedOntoHiddenGroup(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	sync := func(hash string, ds []store.SystemDashboard) {
@@ -694,35 +700,34 @@ func TestSyncArchivesDashboardRegroupedOntoArchivedGroup(t *testing.T) {
 		}
 	}
 	sync("h1", []store.SystemDashboard{
-		{ID: 15, Title: "M", SortKey: "a0", Range: "7d"},
+		{ID: 15, Title: "M", SortKey: "a0", Range: "7d", Sidebar: true},
 	})
-	if err := db.SetDashboardsArchived(ctx, []int64{15}, true, store.AuditEntry{Actor: "t", Action: "dashboard.archive"}); err != nil {
-		t.Fatal(err)
-	}
+	hideDashboards(t, db, 15)
 	sync("h2", []store.SystemDashboard{
-		{ID: 10, Title: "L", SortKey: "a0", Range: "7d"},
-		{ID: 15, Title: "M", SortKey: "a1", GroupID: 10, Range: "7d"},
+		{ID: 10, Title: "L", SortKey: "a0", Range: "7d", Sidebar: true},
+		{ID: 15, Title: "M", SortKey: "a1", GroupID: 10, Range: "7d", Sidebar: true},
 	})
 	for _, id := range []int64{10, 15} {
 		d, err := db.GetDashboard(ctx, id)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if d.ArchivedAt == "" {
-			t.Errorf("dashboard %d live after regroup sync, want archived (joined an archived group)", id)
+		if d.Sidebar {
+			t.Errorf("dashboard %d in the sidebar after regroup sync, want hidden (joined a hidden group)", id)
 		}
 	}
 }
 
-// D3: a group that is entirely new in this sync — leader and tab both
-// unseen before — arrives live, even though its tab is upserted after its
-// leader; new siblings never count as "pre-existing members" either way.
-func TestSyncEntirelyNewGroupStaysLive(t *testing.T) {
+// D3: a group that is entirely new in this sync (leader and tab both
+// unseen before) arrives as its fixture says, even though its tab is
+// upserted after its leader; new siblings never count as "pre-existing
+// members" either way.
+func TestSyncEntirelyNewGroupKeepsFixtureSidebar(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	if err := db.SyncReporting(ctx, store.ReportingSync{Hash: "h1", Version: "test", Dashboards: []store.SystemDashboard{
-		{ID: 30, Title: "Leader", SortKey: "a0", Range: "7d"},
-		{ID: 31, Title: "Tab", SortKey: "a1", GroupID: 30, Range: "7d"},
+		{ID: 30, Title: "Leader", SortKey: "a0", Range: "7d", Sidebar: true},
+		{ID: 31, Title: "Tab", SortKey: "a1", GroupID: 30, Range: "7d", Sidebar: true},
 	}}); err != nil {
 		t.Fatal(err)
 	}
@@ -731,9 +736,85 @@ func TestSyncEntirelyNewGroupStaysLive(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if d.ArchivedAt != "" {
-			t.Errorf("dashboard %d in an entirely new group archived, want live", id)
+		if !d.Sidebar || d.ArchivedAt != "" {
+			t.Errorf("dashboard %d in an entirely new group = sidebar %v archived %q, want sidebar, live", id, d.Sidebar, d.ArchivedAt)
 		}
+	}
+}
+
+// D6: the fixture's sidebar is written on insert only; a later resync
+// leaves the install's value alone.
+func TestSyncReportingSidebarOnInsertOnly(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	sync := func(hash string, sidebar bool) {
+		t.Helper()
+		if err := db.SyncReporting(ctx, store.ReportingSync{Hash: hash, Version: "test", Dashboards: []store.SystemDashboard{
+			{ID: 40, Title: "D", SortKey: "a0", Range: "7d", Sidebar: sidebar, ProjectTab: true},
+		}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sync("h1", false)
+	if d, err := db.GetDashboard(ctx, 40); err != nil || d.Sidebar {
+		t.Fatalf("after insert: sidebar %v err %v, want false", d.Sidebar, err)
+	}
+	execAll(t, db, `UPDATE dashboards SET sidebar=1 WHERE id=40`)
+	sync("h2", false)
+	if d, err := db.GetDashboard(ctx, 40); err != nil || !d.Sidebar {
+		t.Fatalf("after resync: sidebar %v err %v, want the install's true", d.Sidebar, err)
+	}
+}
+
+// D6: the fixture's project_tab is the release's, re-synced every time.
+func TestSyncReportingProjectTabResyncs(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	sync := func(hash string, tab bool) {
+		t.Helper()
+		if err := db.SyncReporting(ctx, store.ReportingSync{Hash: hash, Version: "test", Dashboards: []store.SystemDashboard{
+			{ID: 41, Title: "D", SortKey: "a0", Range: "7d", Sidebar: true, ProjectTab: tab},
+		}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sync("h1", true)
+	if d, err := db.GetDashboard(ctx, 41); err != nil || !d.ProjectTab {
+		t.Fatalf("after insert: project_tab %v err %v, want true", d.ProjectTab, err)
+	}
+	sync("h2", false)
+	if d, err := db.GetDashboard(ctx, 41); err != nil || d.ProjectTab {
+		t.Fatalf("after resync: project_tab %v err %v, want false", d.ProjectTab, err)
+	}
+}
+
+// D4: a built-in the release adds with project_tab lands on every existing
+// project once; a tab a user removed stays removed over later syncs.
+func TestSyncReportingNewBuiltinSeedsProjectsOnce(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	execAll(t, db, `INSERT INTO projects (name) VALUES ('A'), ('B')`)
+	var a, b int64
+	execScan(t, db, `SELECT id FROM projects WHERE name='A'`, &a)
+	execScan(t, db, `SELECT id FROM projects WHERE name='B'`, &b)
+	sync := func(hash string) {
+		t.Helper()
+		if err := db.SyncReporting(ctx, store.ReportingSync{Hash: hash, Version: "test", Dashboards: []store.SystemDashboard{
+			{ID: 42, Title: "D", SortKey: "a0", Range: "7d", Sidebar: true, ProjectTab: true},
+		}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sync("h1")
+	got := projectTabRows(t, db)
+	if len(got) != 2 || !got[[2]int64{a, 42}] || !got[[2]int64{b, 42}] {
+		t.Fatalf("tabs after first sync = %v, want both projects", got)
+	}
+	execAll(t, db, fmt.Sprintf(`DELETE FROM project_tabs WHERE project_id=%d AND dashboard_id=42`, a))
+	sync("h2")
+	got = projectTabRows(t, db)
+	if len(got) != 1 || got[[2]int64{a, 42}] || !got[[2]int64{b, 42}] {
+		t.Fatalf("tabs after resync = %v, want only B's", got)
 	}
 }
 

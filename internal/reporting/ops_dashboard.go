@@ -113,7 +113,7 @@ func (s *Service) CreateDashboard(ctx context.Context, actor string, in CreateDa
 			return err
 		}
 		id, err = s.st.InsertDashboard(ctx,
-			store.Dashboard{Owner: store.OwnerUser, Title: in.Title, SortKey: key, GroupID: in.GroupID, LastRange: rng},
+			store.Dashboard{Owner: store.OwnerUser, Title: in.Title, SortKey: key, GroupID: in.GroupID, LastRange: rng, Sidebar: true},
 			ws, store.AuditEntry{Actor: actor, Action: "dashboard.create"})
 		return err
 	})
@@ -366,7 +366,7 @@ func (s *Service) duplicateOne(ctx context.Context, actor string, src store.Dash
 		return DashboardDetail{}, err
 	}
 	copyOf := store.Dashboard{
-		Owner: store.OwnerUser, Title: src.Title + " (copy)",
+		Owner: store.OwnerUser, Title: src.Title + " (copy)", Sidebar: true,
 		LastProjectID: src.LastProjectID, LastRange: src.LastRange, LastFrom: src.LastFrom, LastTo: src.LastTo,
 	}
 	var newID int64
@@ -450,7 +450,7 @@ func (s *Service) duplicateGroup(ctx context.Context, actor string, src store.Da
 				title += " (copy)"
 			}
 			ds[i] = store.Dashboard{
-				Owner: store.OwnerUser, Title: title,
+				Owner: store.OwnerUser, Title: title, Sidebar: true,
 				LastProjectID: m.LastProjectID, LastRange: m.LastRange, LastFrom: m.LastFrom, LastTo: m.LastTo,
 			}
 		}
