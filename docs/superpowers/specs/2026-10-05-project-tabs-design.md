@@ -27,8 +27,8 @@ Date: 2026-10-05
   - **Your own tabs** come after the built-ins. You can reorder them per
     project.
   - The **+** button is last. It adds an existing dashboard (D7).
-  - Opening a project lands on its first dashboard tab, or on Setup
-    when it has none. A project with data opens on its analytics.
+  - Opening a project lands on Setup. The analytics are one click away,
+    in the tabs next to it.
 
 - **D2. Each project keeps its own list of tabs.** In migration 032:
 
@@ -143,8 +143,7 @@ Date: 2026-10-05
     original with update_dashboard".
 
 - **D8. Routes and the page** (under `/app`).
-  - `/projects/:id` redirects to the first dashboard tab, or to Setup
-    (D1).
+  - `/projects/:id` redirects to `/projects/:id/setup` (D1).
   - `/projects/:id/setup` is the Setup tab.
   - `/projects/:id/dashboards/:dashId` is a dashboard tab with the project
     pinned. There is no project switcher, and every widget that follows
@@ -186,8 +185,8 @@ Date: 2026-10-05
     sidebar** appears on those with `sidebar = 0`.
   - **Duplicating** a dashboard (built-in or your own) gives a copy with
     `sidebar = 1`, `project_tab = 0` and no project tabs.
-  - **Projects list:** cards still link to `/projects/:id`, which now
-    opens on analytics.
+  - **Projects list:** cards still link to `/projects/:id`, which opens
+    on Setup, the same content as today.
 
 ## Upgrade (migration 032)
 
@@ -197,7 +196,7 @@ Date: 2026-10-05
 - Built-ins that are archived today (hidden) become `archived_at = NULL,
   sidebar = 0`. The sidebar looks the same as before the upgrade.
 - Create the D4 triggers last, after the backfill.
-- `deploy/UPGRADES.md`: project pages now open on analytics. Hidden
+- `deploy/UPGRADES.md`: project pages gain dashboard tabs next to Setup. Hidden
   built-in groups stay hidden, and the Archive page no longer lists them;
   "Add to sidebar" in the gallery brings them back.
 - 032 is the next free number on `main` today. If another branch merges a
