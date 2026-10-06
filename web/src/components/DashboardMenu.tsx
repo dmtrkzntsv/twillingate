@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import {
   ArchiveIcon,
   ArrowLeftIcon,
@@ -5,6 +6,7 @@ import {
   CopyIcon,
   CopyPlusIcon,
   FolderInputIcon,
+  LayoutListIcon,
   MoreHorizontalIcon,
   RefreshCwIcon,
   EyeOffIcon,
@@ -21,6 +23,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Button } from '@/components/ui/button'
+import ProjectTabsDialog from '@/components/ProjectTabsDialog'
 import { useDashboardActions, type DashboardActions } from '@/hooks/use-dashboard-actions'
 import type { DashboardDetail, DashboardInfo } from '@/lib/api'
 import { groupName, liveGroups, moveTabBody, nextAfterArchive } from '@/lib/arrange'
@@ -151,7 +154,8 @@ export function GroupMenu({ dashboard, editable, refresh, autoRefresh }: GroupMe
  * same for a group of one tab as of several. Every tab offers "Copy to
  * new dashboard", its copy a dashboard of its own (no `groupId`). A live
  * user tab adds "Duplicate tab", whose copy joins this group right after
- * it, "Archive tab", Move left/right and "Move to". A system tab
+ * it, "Archive tab", Move left/right, "Move to" and "Project tabs…" (the
+ * projects it is a tab of, in a dialog). A system tab
  * is only copied out: its group takes no new tabs, and it is never
  * archived or moved on its own.
  */
@@ -162,6 +166,7 @@ export function TabMenu({ dashboard, list }: Props) {
   const n = tabs.length
   const i = tabs.findIndex((t) => t.dashboard_id === id)
   const editable = dashboard.owner === 'user' && !dashboard.archived_at
+  const [projectTabsOpen, setProjectTabsOpen] = useState(false)
 
   const moveTo = (to: number) => {
     const body = moveTabBody(tabs, id, groupId, to)
@@ -169,45 +174,53 @@ export function TabMenu({ dashboard, list }: Props) {
   }
 
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon" className="size-7" aria-label="Tab actions">
-          <MoreHorizontalIcon />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start">
-        {editable && (
-          <DropdownMenuItem disabled={pending} onClick={() => void duplicate(dashboard, { groupId })}>
-            <CopyIcon />
-            Duplicate tab
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" size="icon" className="size-7" aria-label="Tab actions">
+            <MoreHorizontalIcon />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start">
+          {editable && (
+            <DropdownMenuItem disabled={pending} onClick={() => void duplicate(dashboard, { groupId })}>
+              <CopyIcon />
+              Duplicate tab
+            </DropdownMenuItem>
+          )}
+          <DropdownMenuItem disabled={pending} onClick={() => void duplicate(dashboard)}>
+            <CopyPlusIcon />
+            Copy to new dashboard
           </DropdownMenuItem>
-        )}
-        <DropdownMenuItem disabled={pending} onClick={() => void duplicate(dashboard)}>
-          <CopyPlusIcon />
-          Copy to new dashboard
-        </DropdownMenuItem>
-        {editable && (
-          <>
-            <DropdownMenuItem
-              disabled={pending}
-              onClick={() => void archive(dashboard, { navigateTo: nextAfterArchive(tabs, id) })}
-            >
-              <ArchiveIcon />
-              Archive tab
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem disabled={pending || i <= 0} onClick={() => moveTo(i - 1)}>
-              <ArrowLeftIcon />
-              Move left
-            </DropdownMenuItem>
-            <DropdownMenuItem disabled={pending || i === n - 1} onClick={() => moveTo(i + 1)}>
-              <ArrowRightIcon />
-              Move right
-            </DropdownMenuItem>
-            <MoveTo dashboard={dashboard} list={list} actions={actions} />
-          </>
-        )}
-      </DropdownMenuContent>
-    </DropdownMenu>
+          {editable && (
+            <>
+              <DropdownMenuItem
+                disabled={pending}
+                onClick={() => void archive(dashboard, { navigateTo: nextAfterArchive(tabs, id) })}
+              >
+                <ArchiveIcon />
+                Archive tab
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem disabled={pending || i <= 0} onClick={() => moveTo(i - 1)}>
+                <ArrowLeftIcon />
+                Move left
+              </DropdownMenuItem>
+              <DropdownMenuItem disabled={pending || i === n - 1} onClick={() => moveTo(i + 1)}>
+                <ArrowRightIcon />
+                Move right
+              </DropdownMenuItem>
+              <MoveTo dashboard={dashboard} list={list} actions={actions} />
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={() => setProjectTabsOpen(true)}>
+                <LayoutListIcon />
+                Project tabs…
+              </DropdownMenuItem>
+            </>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
+      {editable && <ProjectTabsDialog dashboard={dashboard} open={projectTabsOpen} onOpenChange={setProjectTabsOpen} />}
+    </>
   )
 }

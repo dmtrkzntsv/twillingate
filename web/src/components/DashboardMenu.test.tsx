@@ -11,6 +11,11 @@ vi.mock('@/hooks/use-dashboard-actions', () => ({
   useDashboardActions: vi.fn(),
 }))
 
+vi.mock('./ProjectTabsDialog', () => ({
+  default: ({ dashboard, open }: { dashboard: DashboardDetail; open: boolean }) =>
+    open ? <div role="dialog" aria-label="Project tabs">{dashboard.title}</div> : null,
+}))
+
 const duplicate = vi.fn()
 const archive = vi.fn()
 const setSidebar = vi.fn()
@@ -104,7 +109,7 @@ describe('TabMenu, a user tab among others', () => {
     renderTabMenu(marketing)
     await openTabMenu()
 
-    expect(items()).toEqual(['Duplicate tab', 'Copy to new dashboard', 'Archive tab', 'Move left', 'Move right', 'Move to'])
+    expect(items()).toEqual(['Duplicate tab', 'Copy to new dashboard', 'Archive tab', 'Move left', 'Move right', 'Move to', 'Project tabs…'])
     expect(screen.getByText('Move left').closest('[role="menuitem"]')).toHaveAttribute('data-disabled')
     expect(screen.getByText('Move right').closest('[role="menuitem"]')).not.toHaveAttribute('data-disabled')
   })
@@ -193,7 +198,7 @@ describe('TabMenu, the one tab of a lone user dashboard', () => {
     renderTabMenu(launchWeek)
     await openTabMenu()
 
-    expect(items()).toEqual(['Duplicate tab', 'Copy to new dashboard', 'Archive tab', 'Move left', 'Move right', 'Move to'])
+    expect(items()).toEqual(['Duplicate tab', 'Copy to new dashboard', 'Archive tab', 'Move left', 'Move right', 'Move to', 'Project tabs…'])
     expect(screen.getByText('Move left').closest('[role="menuitem"]')).toHaveAttribute('data-disabled')
     expect(screen.getByText('Move right').closest('[role="menuitem"]')).toHaveAttribute('data-disabled')
   })
@@ -233,6 +238,31 @@ describe('TabMenu, a system tab', () => {
 
     await userEvent.click(screen.getByText('Copy to new dashboard'))
     expect(duplicate).toHaveBeenCalledWith(product)
+  })
+})
+
+describe('TabMenu, Project tabs…', () => {
+  it('opens the dialog for the tab on a live user dashboard', async () => {
+    renderTabMenu(marketing)
+    await openTabMenu()
+    expect(screen.queryByRole('dialog', { name: 'Project tabs' })).not.toBeInTheDocument()
+    await userEvent.click(screen.getByText('Project tabs…'))
+
+    expect(await screen.findByRole('dialog', { name: 'Project tabs' })).toHaveTextContent('Marketing')
+  })
+
+  it('is not offered on a system tab', async () => {
+    renderTabMenu(product)
+    await openTabMenu()
+
+    expect(screen.queryByText('Project tabs…')).not.toBeInTheDocument()
+  })
+
+  it('is not offered on an archived user dashboard', async () => {
+    renderTabMenu({ ...marketing, archived_at: '2026-10-01T00:00:00Z' })
+    await openTabMenu()
+
+    expect(screen.queryByText('Project tabs…')).not.toBeInTheDocument()
   })
 })
 
