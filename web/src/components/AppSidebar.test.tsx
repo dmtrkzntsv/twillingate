@@ -275,6 +275,33 @@ describe('Projects group', () => {
   })
 })
 
+describe('Shares link', () => {
+  it('follows Projects and is active on /shares', () => {
+    renderWithProviders(
+      <MemoryRouter initialEntries={['/shares']}>
+        <SidebarProvider>
+          <AppSidebar dashboards={[]} currentId={0} />
+        </SidebarProvider>
+      </MemoryRouter>
+    )
+    const shares = screen.getByRole('link', { name: 'Shares' })
+    expect(shares).toHaveAttribute('href', '/shares')
+    expect(shares).toHaveAttribute('data-active', 'true')
+    expect(screen.getByRole('link', { name: 'Projects' }).compareDocumentPosition(shares) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('is absent in dev mode, as Projects is', () => {
+    renderWithProviders(
+      <MemoryRouter>
+        <SidebarProvider>
+          <AppSidebar dashboards={[]} currentId={0} readOnly />
+        </SidebarProvider>
+      </MemoryRouter>
+    )
+    expect(screen.queryByRole('link', { name: 'Shares' })).not.toBeInTheDocument()
+  })
+})
+
 describe('Dashboards group', () => {
   const dashboards = [
     { dashboard_id: 1, title: 'Views', owner: 'system' as const, group_id: 1, widgets: 1 },

@@ -6,6 +6,7 @@ import {
   LayoutDashboardIcon,
   LayoutGridIcon,
   LogOutIcon,
+  Share2Icon,
   ChartColumnIcon,
   ChevronRightIcon,
   ShapesIcon,
@@ -126,6 +127,14 @@ export default function AppSidebar({ dashboards, currentId, readOnly = false }: 
                     <Link to="/projects" onClick={close}>
                       <FolderIcon />
                       <span>Projects</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={pathname.startsWith('/shares')} tooltip="Shares" className={item}>
+                    <Link to="/shares" onClick={close}>
+                      <Share2Icon />
+                      <span>Shares</span>
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
