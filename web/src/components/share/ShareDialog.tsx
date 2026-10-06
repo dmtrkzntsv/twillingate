@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { CodeIcon, LinkIcon } from 'lucide-react'
 import { Link } from 'react-router'
 import CopyButton from '@/components/projects/CopyButton'
 import { Button } from '@/components/ui/button'
@@ -126,7 +127,7 @@ export function ShareDialog({ open, onOpenChange, widget, data, share }: Props) 
             <div className="flex flex-col gap-3">
               <div className="flex items-center gap-2">
                 <Input readOnly aria-label="Share link" value={created.url} onFocus={(e) => e.target.select()} className="min-w-0 flex-1" />
-                <CopyButton value={created.url} label="Copy link" />
+                <CopyButton value={created.url} label="Copy link" icon={<LinkIcon />} />
               </div>
               <div className="flex items-center gap-2">
                 <Input
@@ -136,7 +137,7 @@ export function ShareDialog({ open, onOpenChange, widget, data, share }: Props) 
                   onFocus={(e) => e.target.select()}
                   className="min-w-0 flex-1 font-mono text-xs"
                 />
-                <CopyButton value={embedCode(created)} label="Copy embed code" />
+                <CopyButton value={embedCode(created)} label="Copy embed code" icon={<CodeIcon />} />
               </div>
               <DialogFooter>
                 <Button asChild variant="outline">

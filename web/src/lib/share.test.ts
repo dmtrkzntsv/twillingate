@@ -44,9 +44,16 @@ describe('archiveLabel', () => {
     expect(archiveLabel(share({ archive_at: null }))).toBe('Project lifetime')
   })
 
+  const now = new Date('2026-10-06T12:00:00Z')
+
   it('writes the archive date in UTC', () => {
-    expect(archiveLabel(share({ archive_at: '2026-11-04T10:00:00Z' }))).toBe('Nov 4')
-    expect(archiveLabel(share({ archive_at: '2026-11-04T23:30:00Z' }))).toBe('Nov 4')
+    expect(archiveLabel(share({ archive_at: '2026-11-04T10:00:00Z' }), now)).toBe('Nov 4')
+    expect(archiveLabel(share({ archive_at: '2026-11-04T23:30:00Z' }), now)).toBe('Nov 4')
+  })
+
+  it('adds the year when it is not this year', () => {
+    expect(archiveLabel(share({ archive_at: '2027-01-04T10:00:00Z' }), now)).toBe('Jan 4, 2027')
+    expect(archiveLabel(share({ archive_at: '2027-10-06T10:00:00Z' }), now)).toBe('Oct 6, 2027')
   })
 })
 

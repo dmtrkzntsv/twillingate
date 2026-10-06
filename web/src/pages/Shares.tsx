@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
+import { CodeIcon, LinkIcon } from 'lucide-react'
 import { Link, useSearchParams } from 'react-router'
 import AppShell, { TopBar } from '@/components/AppShell'
 import Crumbs from '@/components/Crumbs'
@@ -90,8 +91,8 @@ export default function Shares() {
         </TableCell>
         <TableCell>
           <div className="flex flex-wrap justify-end gap-1">
-            <CopyButton value={s.url} label="Copy link" />
-            <CopyButton value={embedCode(s)} label="Copy embed code" />
+            <CopyButton value={s.url} label="Copy link" icon={<LinkIcon />} />
+            <CopyButton value={embedCode(s)} label="Copy embed code" icon={<CodeIcon />} />
             <Button variant="outline" size="sm" disabled={pending} onClick={() => void archive(s.id)}>
               Archive
             </Button>

@@ -108,10 +108,15 @@ export default function Archive() {
     )
   }
 
-  /** A share's status line: archived, and when it goes. */
+  /** A share's status line: archived, and when it goes, the date kept on one line. */
   const shareStatus = (s: WidgetShare) => {
     const purged = s.archived_at ? purgeDate(s.archived_at, purgeDays) : undefined
-    return purged ? `archived · deleted on ${formatPurgeDate(purged)}` : 'archived'
+    if (!purged) return 'archived'
+    return (
+      <>
+        archived · deleted on <span className="whitespace-nowrap">{formatPurgeDate(purged)}</span>
+      </>
+    )
   }
 
   return (

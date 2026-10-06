@@ -144,8 +144,9 @@ describe('Shares', () => {
   it('has a copy button for the link and one for the embed code', async () => {
     renderShares()
     const r = await row('Visitors')
-    expect(within(r).getByRole('button', { name: 'Copy link' })).toBeInTheDocument()
-    expect(within(r).getByRole('button', { name: 'Copy embed code' })).toBeInTheDocument()
+    // Told apart at a glance: a link icon and a code icon, not two copy icons.
+    expect(within(r).getByRole('button', { name: 'Copy link' }).querySelector('svg')).toHaveClass('lucide-link')
+    expect(within(r).getByRole('button', { name: 'Copy embed code' }).querySelector('svg')).toHaveClass('lucide-code')
   })
 
   it('narrows to one widget with ?widget=, and a chip clears the filter', async () => {

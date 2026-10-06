@@ -68,9 +68,14 @@ export function rangeInWords(from: string, to: string): string {
   return `${format(f, true)} – ${format(t, true)}`
 }
 
-/** When a share archives itself: "Nov 4" (UTC), or "Project lifetime" when it never does. */
-export function archiveLabel(share: WidgetShare): string {
-  return share.archive_at ? format(new Date(share.archive_at), false) : 'Project lifetime'
+/**
+ * When a share archives itself: "Nov 4" (UTC), with the year when it is not
+ * this one ("Jan 4, 2027"), or "Project lifetime" when it never does.
+ */
+export function archiveLabel(share: WidgetShare, now: Date = new Date()): string {
+  if (!share.archive_at) return 'Project lifetime'
+  const d = new Date(share.archive_at)
+  return format(d, d.getUTCFullYear() !== now.getUTCFullYear())
 }
 
 function escapeAttr(s: string): string {

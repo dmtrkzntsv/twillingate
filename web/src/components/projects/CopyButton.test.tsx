@@ -20,6 +20,17 @@ describe('CopyButton', () => {
     expect(await screen.findByRole('button', { name: 'Copied' })).toBeInTheDocument()
   })
 
+  it('shows the icon it is given while idle, the copy icon otherwise', () => {
+    render(
+      <>
+        <CopyButton value="a" label="Plain" />
+        <CopyButton value="b" label="Linked" icon={<svg data-testid="own" />} />
+      </>
+    )
+    expect(screen.getByRole('button', { name: 'Plain' }).querySelector('svg')).toHaveClass('lucide-copy')
+    expect(screen.getByRole('button', { name: 'Linked' })).toContainElement(screen.getByTestId('own'))
+  })
+
   it("says it couldn't copy when there is no clipboard", async () => {
     const user = userEvent.setup()
     setClipboard(undefined)

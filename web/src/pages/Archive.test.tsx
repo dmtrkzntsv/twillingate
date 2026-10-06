@@ -316,13 +316,15 @@ describe('Archive, shares', () => {
     expect(rows).toHaveLength(2)
     expect(within(rows[0]).getByText('Visitors')).toBeInTheDocument()
     expect(within(rows[0]).getByText('blog')).toBeInTheDocument()
-    expect(within(rows[0]).getByText('archived · deleted on 4 Nov')).toBeInTheDocument()
+    expect(within(rows[0]).getByText(/^archived · deleted on/)).toHaveTextContent('archived · deleted on 4 Nov')
+    // The date stays on one line: never "4" at one line's end and "Nov" at the next's start.
+    expect(within(rows[0]).getByText('4 Nov')).toHaveClass('whitespace-nowrap')
     const thumb = await within(rows[0]).findByRole('img', { name: 'Shared image of Visitors' })
     expect(thumb).toHaveAttribute('src', 'blob:thumb-3')
     expect(endpoints.widgetShareImage).toHaveBeenCalledWith(archivedShares[0].id)
     expect(within(rows[1]).getByText('Top pages')).toBeInTheDocument()
     expect(within(rows[1]).getByText('docs')).toBeInTheDocument()
-    expect(within(rows[1]).getByText('archived · deleted on 31 Oct')).toBeInTheDocument()
+    expect(within(rows[1]).getByText(/^archived · deleted on/)).toHaveTextContent('archived · deleted on 31 Oct')
   })
 
   it('keeps a blank tile for a thumbnail that cannot be fetched', async () => {
