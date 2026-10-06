@@ -47,7 +47,7 @@ out of scope.
   stored and shown in canonical form (36 characters). If `NewV7` fails
   (entropy exhaustion only), it falls back to a v4, as `newID` does.
 
-- **D2. Shares live on the console, at `CONSOLE_URL/s/<id>`.** Shares
+- **D2. Shares live on the console, at `CONSOLE_URL/share/<id>`.** Shares
   are a reporting feature: the console creates, lists and deletes them,
   and `reporting` already embeds the app's icon and look. The ingest
   surface stays a pure collector (`POST` events, serve the SDK), and it can
@@ -60,8 +60,8 @@ out of scope.
 
   | Route | Answers |
   | --- | --- |
-  | `GET /s/{id}` | An HTML page: the image, the widget title, the project name and the range in words, and a "Made with twillingate" link. Head: `og:title`, `og:type=website`, `og:url`, `og:image` (absolute `CONSOLE_URL/s/{id}.png`), `og:image:width`, `og:image:height`, `og:image:alt`, `twitter:card=summary_large_image`, `<meta name="robots" content="noindex">`. Inline CSS and the app's icon, no app bundle. It loads `twillingate.js` (D7). |
-  | `GET /s/{id}.png` | The image, `Content-Type: image/png`, `Cache-Control: public, max-age=3600`, plus `X-Robots-Tag: noindex`. |
+  | `GET /share/{id}` | An HTML page: the image, the widget title, the project name and the range in words, and a "Made with twillingate" link. Head: `og:title`, `og:type=website`, `og:url`, `og:image` (absolute `CONSOLE_URL/share/{id}.png`), `og:image:width`, `og:image:height`, `og:image:alt`, `twitter:card=summary_large_image`, `<meta name="robots" content="noindex">`. Inline CSS and the app's icon, no app bundle. It loads `twillingate.js` (D7). |
+  | `GET /share/{id}.png` | The image, `Content-Type: image/png`, `Cache-Control: public, max-age=3600`, plus `X-Robots-Tag: noindex`. |
 
   An unknown or deleted id answers 404 on both routes. The page
   answers `Cache-Control: public, max-age=300`. The hour on the image
@@ -74,20 +74,20 @@ out of scope.
   `reporting` serves both routes (`reporting.Shares()`), and `api.RegisterOn`
   mounts them unauthenticated beside `/app/`, `/healthz` and the login
   routes (`internal/api/server.go:106`). Nothing in `internal/server`
-  changes. On a shared listener, only the console registers `/s/`.
+  changes. On a shared listener, only the console registers `/share/`.
 
   **A private console.** When the console sits on a LAN or tailnet, links
-  open only there. The fix is a proxy rule, not code: expose only `/s/*`
+  open only there. The fix is a proxy rule, not code: expose only `/share/*`
   of the console listener to the internet and keep `/app`, `/api`, `/mcp`
   and the login private. `docs/deployment.md` shows it as a Caddy
-  `handle /s/*` block. A console that is already public (one claude.ai
+  `handle /share/*` block. A console that is already public (one claude.ai
   reaches over MCP, or a hosted plan) needs nothing.
 
 - **D3. Embedding is an image link, not an iframe.** The Share dialog's
   "Copy embed code" gives:
 
   ```html
-  <a href="CONSOLE_URL/s/<id>"><img src="CONSOLE_URL/s/<id>.png"
+  <a href="CONSOLE_URL/share/<id>"><img src="CONSOLE_URL/share/<id>.png"
      alt="<title>" width="600" height="315"></a>
   ```
 
@@ -170,7 +170,7 @@ out of scope.
   ```
 
   A click-through is then an ordinary page view of
-  `CONSOLE_URL/s/<id>`, with its referrer (t.co, lnkd.in, a Mastodon
+  `CONSOLE_URL/share/<id>`, with its referrer (t.co, lnkd.in, a Mastodon
   instance), country and browser, and the visitor counts twillingate
   already computes. Unfurlers run no JavaScript, and the collector's
   `IsBot` check drops the rest, so preview fetches do not count. An
@@ -200,7 +200,7 @@ out of scope.
   loads no script and the server logs one warning per process.
 
   **Opens in the dialog** are the share project's page views whose path
-  is `/s/<id>`. They are counted from the share's creation to today,
+  is `/share/<id>`. They are counted from the share's creation to today,
   capped at the last 365 days, through the same views the dashboards
   read. `list_shares` returns the number as `opens`, or `null` when
   counting is off.
@@ -209,10 +209,10 @@ out of scope.
 
 - `docs/reporting.md`: the Share dialog, Download PNG, and the
   `list_shares` and `delete_share` tools with their REST routes.
-- `docs/twillingate.md`: the `/s/` routes in the `serve -console` row, as
+- `docs/twillingate.md`: the `/share/` routes in the `serve -console` row, as
   the console's one unauthenticated content.
 - `docs/deployment.md`: `SHARE_PROJECT_ID`, the auto-created `Shares`
-  project, and the Caddy example that exposes only `/s/*` of a private
+  project, and the Caddy example that exposes only `/share/*` of a private
   console.
 - `deploy/UPGRADES.md`: migration 032, which only adds a table and needs
   no pre-check.
@@ -224,7 +224,7 @@ out of scope.
 - **Reporting.** Each refusal in D6. The first share creates the `Shares`
   project, its key and the meta row in one transaction, and a second
   share reuses them. `SHARE_PROJECT_ID=0` creates nothing. `opens` counts
-  only `/s/<id>` views of the share project.
+  only `/share/<id>` views of the share project.
 - **Share routes** (`reporting`, mounted through `api`). They answer
   without a token while `/api/` still answers 401. The page's meta tags, `noindex`, the CSP, and the script tag
   present or absent (counting on, off, or no active key). The PNG's type
@@ -234,7 +234,7 @@ out of scope.
   picks up the new tools, routes and env var.
 - **Web.** A vitest for the Share dialog (create, copy, list, delete) and
   one for the capture card layout. A Playwright e2e that shares a seeded
-  widget, opens `/s/<id>`, checks the meta tags and that the image
+  widget, opens `/share/<id>`, checks the meta tags and that the image
   loads, deletes the share and gets a 404. The cursor and phone specs
   cover the dialog.
 
