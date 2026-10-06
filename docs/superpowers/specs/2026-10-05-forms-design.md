@@ -39,6 +39,16 @@ Date: 2026-10-05
   submission missing an expected field is stored as it is. The console
   picks expected fields from the names submissions actually sent.
 
+- **D3a. A submission is flat text: one string per field name, no
+  attachments.** `fields` is a JSON object of string to string, never
+  nested. A field repeated in the form (a checkbox group, a multi-select)
+  is joined into one string with `", "`. Over JSON, numbers and booleans
+  become their string form; an array, object or `null` value drops that
+  field. Files are never stored: multipart file parts are discarded
+  unread, and they still count toward the body limit (D10), so a form
+  carrying a large file is refused as too large. The docs say not to put
+  file inputs in a twillingate form.
+
 - **D4. Migration 031 adds two tables.**
 
   ```sql
@@ -61,7 +71,7 @@ Date: 2026-10-05
       id          TEXT    NOT NULL,   -- client UUID when sent, else server-made
       form        TEXT    NOT NULL,
       received_at TEXT    NOT NULL,
-      fields      TEXT    NOT NULL,   -- JSON object of strings / arrays of strings
+      fields      TEXT    NOT NULL,   -- flat JSON object, string to string (D3a)
       actor_kind  TEXT    NOT NULL,   -- as events: user | install | connection
       actor_id    TEXT    NOT NULL,
       host        TEXT    NOT NULL DEFAULT '',
@@ -83,8 +93,8 @@ Date: 2026-10-05
   - **Plain HTML form** (`application/x-www-form-urlencoded`,
     `multipart/form-data`). The key comes from `?key=` in the action URL
     (the `X-Analytics-Key` header also works). Every field not starting
-    with `$` is a submission field; multipart file parts are dropped. The
-    answer is a redirect (D6).
+    with `$` is a submission field; multipart file parts are discarded
+    (D3a). The answer is a redirect (D6).
 
     ```html
     <form method="post" action="https://t.example.com/ingest/forms/contact?key=tw_…">
@@ -95,20 +105,20 @@ Date: 2026-10-05
 
   - **JSON** (any other content type, so the SDK's `text/plain` body is
     a simple request with no preflight). The key comes from the header,
-    `?key=`, or `key` in the body. Values may be strings, numbers,
-    booleans or arrays of those; all are stored as strings or arrays of
-    strings. The answer is `201 {"id": "…"}`.
+    `?key=`, or `key` in the body. Values are strings, numbers or
+    booleans, stored as strings; anything else drops the field (D3a).
+    The answer is `201 {"id": "…"}`.
 
     ```json
     { "id": "uuid",
-      "fields": { "email": "a@b.c", "plan": ["pro", "team"] },
+      "fields": { "email": "a@b.c", "plan": "pro", "seats": 5 },
       "attributes": { "$install_id": "…", "$host": "site.com", "$path": "/pricing" } }
     ```
 
   Context keys, as `$` fields on the form path or in `attributes` on
   JSON: `$id`, `$user_id`, `$install_id`, `$host`, `$path`, and on the
   form path `$redirect`. Their meanings match events; any other `$` key
-  is dropped. A repeated form field (a multi-select) becomes an array.
+  is dropped.
   The actor follows the events rules: `$user_id`, else `$install_id`,
   else the daily connection hash, so a no-JS form POST from the browser
   that sent the visit's views gets the same actor as those views.
@@ -162,8 +172,8 @@ Date: 2026-10-05
 
   The runtime's capture-phase `submit` listener (the one
   `data-twillingate-event` uses) handles a tagged form: it calls
-  `preventDefault()`, reads `FormData` (file parts and `$` fields other
-  than `$redirect` skipped), and posts the JSON body of D5 with a fresh
+  `preventDefault()`, reads `FormData` (file entries and `$` fields
+  other than `$redirect` skipped, repeated names joined as in D3a), and posts the JSON body of D5 with a fresh
   `$id`, `$host`, `$path` and the identity keys the identity mode allows.
   While in flight the form has `aria-busy="true"` and a second submit is
   ignored. On the outcome:
@@ -177,10 +187,10 @@ Date: 2026-10-05
   An `action` pointing at twillingate on the same form keeps it working
   where the SDK did not load.
 
-  `twillingate.submitForm(name, fields)` takes a plain object, a
-  `FormData` or an `HTMLFormElement` and returns
-  `Promise<{id}>`, rejecting on a `4xx` or once retries run out. It
-  neither navigates nor touches the hash.
+  `twillingate.submitForm(name, fields)` takes a flat object (string,
+  number or boolean values), a `FormData` or an `HTMLFormElement` and
+  returns `Promise<{id}>`, rejecting on a `4xx` or once retries run out.
+  It neither navigates nor touches the hash.
 
   Delivery is `fetch` with `keepalive` and three in-memory retries (1 s,
   5 s, 25 s) reusing the same `$id`. **A submission never enters the
@@ -274,7 +284,7 @@ No new package; the archtest rank table is unchanged.
 - Spam checks (honeypot, timing, rate limits, CAPTCHA). The limits (D10),
   `expected_fields` and `accepting` are the controls in this version.
 - Required fields and field types.
-- File uploads.
+- File uploads and nested or list values (D3a).
 
 ## Docs
 
