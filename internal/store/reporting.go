@@ -60,6 +60,40 @@ type Widget struct {
 	ArchivedAt           string
 }
 
+// WidgetShare is a widget_shares row without its images, joined to its
+// widget's dashboard while the widget exists.
+type WidgetShare struct {
+	ID             string
+	WidgetID       int64  // 0 once the widget is deleted
+	DashboardID    int64  // 0 once the widget is deleted
+	DashboardTitle string // "" once the widget is deleted
+	ProjectID      int64
+	ProjectName    string // copied at capture
+	From, To       string // YYYY-MM-DD
+	Title          string // copied at capture
+	CreatedAt      string // 2006-01-02T15:04:05Z
+	ArchiveAt      string // "" = project lifetime
+	ArchivedAt     string // "" = not archived by hand or by the daily pass
+}
+
+// NewWidgetShare is what InsertWidgetShare writes; the project's name is
+// copied from the projects row in the same statement.
+type NewWidgetShare struct {
+	ID                  string
+	WidgetID, ProjectID int64
+	From, To, Title     string
+	Image, Image2x      []byte
+	ArchiveAt           string // "" = project lifetime
+}
+
+// WidgetShareFilter: State "" lists every share, "live" those with no
+// archived_at and no archive_at at or before Now, "archived" the rest.
+type WidgetShareFilter struct {
+	WidgetID int64 // 0 = every widget
+	State    string
+	Now      string // 2006-01-02T15:04:05Z
+}
+
 // ReportingSync is the system state a release carries; SyncReporting
 // makes the database match it in one transaction (spec D23).
 type ReportingSync struct {
@@ -72,7 +106,10 @@ type ReportingSync struct {
 // with it (DeleteProjectData's table list), a purged dashboard takes its
 // widgets by cascade, and a widget can also be purged on its own once it
 // (not its dashboard) has aged out.
-type PurgeResult struct{ Projects, Dashboards, Widgets []int64 }
+type PurgeResult struct {
+	Projects, Dashboards, Widgets []int64
+	WidgetShares                  []string
+}
 
 // SystemDashboard is one system dashboard a release migrates in. GroupID
 // is the group it is a tab of; 0 means its own id, same as Dashboard.

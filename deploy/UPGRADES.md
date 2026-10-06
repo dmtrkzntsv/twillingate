@@ -579,3 +579,10 @@ at least 2 characters when set; existing one-character titles are kept.
 Rollback: an older binary keeps the names, but it does not move them. If a
 group's first tab leaves its group under the older binary, its new group of
 one takes the name with it.
+
+### Upgrading to widget shares (migration 032)
+
+No pre-checks. Migration 032 adds `widget_shares`, where a shared
+widget's two PNGs and the text they show are kept. Nothing existing
+changes. Rollback: an older binary ignores the table, and share links
+answer 404 until the newer binary is back.

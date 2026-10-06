@@ -111,6 +111,26 @@ func (d *DB) PurgeArchived(ctx context.Context, days int) (store.PurgeResult, er
 		res.Widgets = append(res.Widgets, id)
 	}
 
+	shareIDs, err := d.purgeableStrings(ctx,
+		`SELECT id FROM widget_shares
+		 WHERE archived_at IS NOT NULL AND julianday(archived_at) < julianday('now') - ?`, days)
+	if err != nil {
+		errs = errors.Join(errs, fmt.Errorf("select archived widget shares: %w", err))
+	}
+	for _, id := range shareIDs {
+		if err := d.tx(ctx, func(tx *sql.Tx) error {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM widget_shares WHERE id=?`, id); err != nil {
+				return fmt.Errorf("delete widget share %s: %w", id, err)
+			}
+			return audit(ctx, tx, store.AuditEntry{
+				Actor: "retention", Action: "widget_share.purge", Subject: "widget_share/" + id})
+		}); err != nil {
+			errs = errors.Join(errs, fmt.Errorf("purge widget share %s: %w", id, err))
+			continue
+		}
+		res.WidgetShares = append(res.WidgetShares, id)
+	}
+
 	return res, errs
 }
 
@@ -125,6 +145,24 @@ func (d *DB) purgeableIDs(ctx context.Context, q string, args ...any) ([]int64, 
 	var ids []int64
 	for rows.Next() {
 		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// purgeableStrings is purgeableIDs for a single string column.
+func (d *DB) purgeableStrings(ctx context.Context, q string, args ...any) ([]string, error) {
+	rows, err := d.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
 		if err := rows.Scan(&id); err != nil {
 			return nil, err
 		}
