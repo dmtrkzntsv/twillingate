@@ -6,6 +6,7 @@ import { DashboardGroup, LoneDashboard, type GroupRow } from '@/components/Dashb
 import { RestoreShareDialog } from '@/components/share/RestoreShareDialog'
 import { Button } from '@/components/ui/button'
 import { useDashboardActions } from '@/hooks/use-dashboard-actions'
+import { useShareImage } from '@/hooks/use-share-image'
 import type { DashboardInfo, WidgetShare } from '@/lib/api'
 import { groupName, purgeDate } from '@/lib/arrange'
 import { dashboardsQuery, widgetSharesQuery } from '@/lib/queries'
@@ -35,23 +36,16 @@ function archivedGroups(dashboards: DashboardInfo[]): Group[] {
 }
 
 /**
- * An archived share's image, 1x. The share's own URLs answer 404 while it is
- * archived, so the image is usually gone: a blank tile of the same size
- * keeps the row's layout instead of a broken-image icon.
+ * An archived share's image, 1x. Its public URL answers 404 while it is
+ * archived, so it is read through the console's authenticated image route;
+ * until that arrives, or if it fails, a blank tile of the same size holds
+ * the row's layout.
  */
 function ShareThumb({ share }: { share: WidgetShare }) {
-  const [failed, setFailed] = useState(false)
+  const { url } = useShareImage(share.id)
   const size = 'aspect-[1200/630] w-20 rounded border sm:w-24'
-  if (failed) return <div aria-hidden className={`${size} bg-muted`} />
-  return (
-    <img
-      src={share.image_url}
-      alt={`Shared image of ${share.title}`}
-      loading="lazy"
-      onError={() => setFailed(true)}
-      className={`${size} object-cover`}
-    />
-  )
+  if (!url) return <div aria-hidden className={`${size} bg-muted`} />
+  return <img src={url} alt={`Shared image of ${share.title}`} className={`${size} object-cover`} />
 }
 
 /**
@@ -134,7 +128,7 @@ export default function Archive() {
             Archived shares answer 404 until restored.
           </p>
         </header>
-        {groups.length === 0 && shares.length === 0 && <p className="text-sm text-muted-foreground">Nothing archived.</p>}
+        {groups.length === 0 && shares.length === 0 && !sharesQ.isLoading && <p className="text-sm text-muted-foreground">Nothing archived.</p>}
         {groups.length > 0 && <ul className="flex flex-col gap-2">{groups.map(renderGroup)}</ul>}
         {shares.length > 0 && (
           <section aria-labelledby="archived-shares" className="flex flex-col gap-3">
@@ -152,7 +146,7 @@ export default function Archive() {
                     <div className="truncate text-xs text-muted-foreground" title={s.project_name}>
                       {s.project_name}
                     </div>
-                    <div className="truncate text-xs text-muted-foreground">{shareStatus(s)}</div>
+                    <div className="text-xs break-words text-muted-foreground">{shareStatus(s)}</div>
                   </div>
                   {writable && (
                     <Button variant="outline" size="sm" onClick={() => setRestoring(s)}>

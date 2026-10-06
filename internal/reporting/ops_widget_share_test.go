@@ -308,6 +308,30 @@ func TestArchiveRestoreWidgetShare(t *testing.T) {
 	}
 }
 
+func TestWidgetShareImageAnswersInAnyState(t *testing.T) {
+	ctx := context.Background()
+	e := newShareEnv(t)
+	s := e.create(t, "7d")
+	live, err := e.svc.WidgetShareImage(ctx, s.ID)
+	if err != nil || !bytes.HasPrefix(live, []byte("\x89PNG")) {
+		t.Fatalf("live: %d bytes, %v", len(live), err)
+	}
+	cfg, err := png.DecodeConfig(bytes.NewReader(live))
+	if err != nil || cfg.Width != 1200 || cfg.Height != 630 {
+		t.Errorf("live image is %dx%d, %v; want the 1x 1200x630", cfg.Width, cfg.Height, err)
+	}
+	if _, err := e.svc.ArchiveWidgetShare(ctx, "test", s.ID); err != nil {
+		t.Fatal(err)
+	}
+	archived, err := e.svc.WidgetShareImage(ctx, s.ID)
+	if err != nil || !bytes.Equal(archived, live) {
+		t.Errorf("archived: %d bytes, %v; want the same %d bytes", len(archived), err, len(live))
+	}
+	if _, err := e.svc.WidgetShareImage(ctx, uuid.NewString()); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("unknown id: err = %v, want ErrNotFound", err)
+	}
+}
+
 func TestListWidgetSharesReportsDueAsArchived(t *testing.T) {
 	ctx := context.Background()
 	e := newShareEnv(t)

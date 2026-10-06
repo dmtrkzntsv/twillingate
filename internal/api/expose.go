@@ -24,6 +24,7 @@ type spec struct {
 	Status      int    // REST success status; 0 = 200
 	RESTOnly    bool   // set by restOnly and restRaw: a route with no MCP tool
 	Multipart   bool   // set by restRaw: the body is multipart/form-data
+	Image       bool   // set by restImage: the response is image/png, not JSON
 
 	// constrain, when set, tightens the inferred input schema before the
 	// tool is registered and the OpenAPI document reads it: what a Go
@@ -100,6 +101,33 @@ func restRaw[In, Out any](r *registrar, s spec, h http.HandlerFunc) {
 	r.specs = append(r.specs, s)
 	if r.rest != nil {
 		r.rest.HandleFunc(s.Method+" "+s.Path, h)
+	}
+}
+
+// restImage registers a REST-only GET route that answers a PNG: `fn` gets
+// the path wildcards as In, and its bytes are written as image/png, kept
+// by the browser (not by a shared cache: the route is authenticated) for
+// an hour. A refusal is the usual JSON error.
+func restImage[In any](r *registrar, s spec, fn func(context.Context, In) ([]byte, error)) {
+	s.RESTOnly, s.Image = true, true
+	s.in = schemaFor[In]()
+	r.specs = append(r.specs, s)
+	if r.rest != nil {
+		r.rest.HandleFunc(s.Method+" "+s.Path, func(w http.ResponseWriter, req *http.Request) {
+			var in In
+			if err := decodeRequest(req, &in); err != nil {
+				writeError(w, r.logger, req, err)
+				return
+			}
+			b, err := fn(withActor(req.Context(), "api"), in)
+			if err != nil {
+				writeError(w, r.logger, req, err)
+				return
+			}
+			w.Header().Set("Content-Type", "image/png")
+			w.Header().Set("Cache-Control", "private, max-age=3600")
+			_, _ = w.Write(b)
+		})
 	}
 }
 

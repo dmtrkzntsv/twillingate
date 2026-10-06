@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { ArchiveAfterSelect } from '@/components/share/ArchiveAfterSelect'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -21,6 +21,11 @@ interface Props {
 export function RestoreShareDialog({ share, onClose }: Props) {
   const { restore, pending } = useWidgetShareActions()
   const [archiveAfter, setArchiveAfter] = useState<ArchiveAfter>(DEFAULT_ARCHIVE_AFTER)
+  // The title outlives `share` while the dialog fades out, instead of going blank.
+  const [title, setTitle] = useState('')
+  useEffect(() => {
+    if (share) setTitle(share.title)
+  }, [share])
 
   const close = () => {
     setArchiveAfter(DEFAULT_ARCHIVE_AFTER)
@@ -39,7 +44,7 @@ export function RestoreShareDialog({ share, onClose }: Props) {
         <DialogHeader>
           <DialogTitle>Restore share</DialogTitle>
           <DialogDescription className="break-words">
-            {share?.title} answers at its old link again, until the date you pick.
+            {title} answers at its old link again.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={submit} className="flex flex-col gap-4">

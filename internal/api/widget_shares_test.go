@@ -271,6 +271,32 @@ func TestWidgetShareRoutes(t *testing.T) {
 	must("POST", "/api/widget-shares/00000000-0000-7000-8000-000000000000/archive", "", http.StatusNotFound)
 }
 
+func TestWidgetShareImageREST(t *testing.T) {
+	h, wid := shareFixture(t)
+	s := createShare(t, h, wid)
+	img := "/api/widget-shares/" + s.ID + "/image"
+	if rec := call(h, "GET", img, nil, "", false); rec.Code != http.StatusUnauthorized {
+		t.Errorf("without a token = %d, want 401", rec.Code)
+	}
+	if rec := call(h, "POST", "/api/widget-shares/"+s.ID+"/archive", strings.NewReader("{}"), "application/json", true); rec.Code != 200 {
+		t.Fatalf("archive = %d %s", rec.Code, rec.Body.String())
+	}
+	// The public image is gone with the share; this one is not.
+	if rec := call(h, "GET", "/share/"+s.ID+".png", nil, "", false); rec.Code != http.StatusNotFound {
+		t.Errorf("public image of an archived share = %d, want 404", rec.Code)
+	}
+	rec := call(h, "GET", img, nil, "", true)
+	if rec.Code != 200 || rec.Header().Get("Content-Type") != "image/png" || rec.Header().Get("Cache-Control") != "private, max-age=3600" {
+		t.Fatalf("archived = %d %q %q, want 200 image/png private, max-age=3600", rec.Code, rec.Header().Get("Content-Type"), rec.Header().Get("Cache-Control"))
+	}
+	if cfg, err := png.DecodeConfig(rec.Body); err != nil || cfg.Width != 1200 || cfg.Height != 630 {
+		t.Errorf("body is %dx%d, %v; want the 1x 1200x630 png", cfg.Width, cfg.Height, err)
+	}
+	if rec := call(h, "GET", "/api/widget-shares/00000000-0000-7000-8000-000000000000/image", nil, "", true); rec.Code != http.StatusNotFound {
+		t.Errorf("unknown id = %d, want 404", rec.Code)
+	}
+}
+
 func TestWidgetShareToolsOverMCP(t *testing.T) {
 	h, cs := newTestHost(t)
 	r := newTestRegistrar(t, h)

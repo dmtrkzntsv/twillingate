@@ -42,6 +42,10 @@ type widgetShareIn struct {
 	ID string `json:"id" jsonschema:"share id (a UUID)"`
 }
 
+func (h *host) widgetShareImage(ctx context.Context, in widgetShareIn) ([]byte, error) {
+	return h.rep.WidgetShareImage(ctx, in.ID)
+}
+
 type widgetShareDateIn struct {
 	ID           string `json:"id" jsonschema:"share id (a UUID)"`
 	ArchiveAfter string `json:"archive_after" jsonschema:"7d, 30d, 90d, 365d or project (no date: the share lives as long as its project)"`
@@ -152,7 +156,8 @@ func (h *host) restoreWidgetShare(ctx context.Context, in widgetShareRestoreIn) 
 }
 
 // registerWidgetShares exposes the share operations: create as a REST-only
-// multipart upload, the rest on both transports.
+// multipart upload, the image as a REST-only PNG, the rest on both
+// transports.
 func (h *host) registerWidgetShares(r *registrar) {
 	ro := &mcp.ToolAnnotations{ReadOnlyHint: true}
 	no := false
@@ -165,6 +170,9 @@ func (h *host) registerWidgetShares(r *registrar) {
 	expose(r, spec{Name: "list_widget_shares", Annotations: ro, Method: "GET", Path: p,
 		Description: "Widget shares, newest first: each one's id, its public page url (/share/<id>) and image URLs, the widget and dashboard it came from (null once the widget is gone), the project, range and title it shows, created_at, archive_at (when it archives itself; null: it lives as long as its project) and archived_at (null: live). Filter by widget_id, and by state: live, or archived (which includes a share whose archive_at has passed and that the daily pass has not yet archived)."},
 		h.listWidgetShares)
+	restImage(r, spec{Name: "widget_share_image", Method: "GET", Path: p + "/{id}/image",
+		Description: "A share's 1200×630 picture as image/png, whatever its state: unlike the public /share/<id>.png, it still answers once the share is archived. Authenticated, so the console's Archive page can show it. REST only: it is a picture, not data."},
+		h.widgetShareImage)
 	expose(r, spec{Name: "update_widget_share", Annotations: idem, Method: "PATCH", Path: p + "/{id}",
 		Description: "Change when a live share archives itself: archive_after is 7d, 30d, 90d or 365d from now, or project for no date (it then lives as long as its project). An archived share is a conflict: restore_widget_share it instead. The picture itself never changes; a new one is a new share."},
 		h.updateWidgetShare)

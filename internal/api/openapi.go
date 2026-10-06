@@ -63,7 +63,7 @@ func openAPI(specs []spec) ([]byte, error) {
 			"title":       "Twillingate API",
 			"version":     version.Version,
 			"license":     map[string]string{"name": "GNU Affero General Public License v3.0 only", "identifier": "AGPL-3.0-only"},
-			"description": "Every route but PUT /api/dashboards/{dashboard_id}/view and POST /api/widget-shares mirrors the MCP tool its operationId names. Reference: docs://twillingate and docs://reporting.",
+			"description": "Every route but PUT /api/dashboards/{dashboard_id}/view, POST /api/widget-shares and GET /api/widget-shares/{id}/image mirrors the MCP tool its operationId names. Reference: docs://twillingate and docs://reporting.",
 		},
 		// Relative: the routes are wherever this document was fetched from.
 		"servers":  []map[string]string{{"url": "/"}},
@@ -104,14 +104,18 @@ func operation(s spec) (map[string]any, error) {
 	if status == 0 {
 		status = http.StatusOK
 	}
+	success := map[string]any{"description": http.StatusText(status),
+		"content": map[string]any{"application/json": map[string]any{"schema": s.out}}}
+	if s.Image {
+		success["content"] = map[string]any{"image/png": map[string]any{"schema": map[string]string{"type": "string", "format": "binary"}}}
+	}
 	op := map[string]any{
 		"operationId": s.Name,
 		"tags":        []string{tagOf(s.Path)},
 		"summary":     summaryOf(s.Description),
 		"description": s.Description,
 		"responses": map[string]any{
-			strconv.Itoa(status): map[string]any{"description": http.StatusText(status),
-				"content": map[string]any{"application/json": map[string]any{"schema": s.out}}},
+			strconv.Itoa(status): success,
 			"401":     unauthorized,
 			"default": errorResponse,
 		},

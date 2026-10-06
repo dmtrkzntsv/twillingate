@@ -54,6 +54,31 @@ describe('endpoints.createWidgetShare', () => {
   })
 })
 
+describe('endpoints.widgetShareImage', () => {
+  it('GETs the share image route with the token and returns the PNG as a Blob', async () => {
+    vi.spyOn(auth, 'getAuthHeader').mockReturnValue('Bearer token-1')
+    vi.mocked(fetch).mockResolvedValueOnce(new Response('png', { status: 200, headers: { 'Content-Type': 'image/png' } }))
+
+    const blob = await endpoints.widgetShareImage('abc')
+
+    const [url, init] = vi.mocked(fetch).mock.calls[0]
+    expect(urlOf(url)).toBe('/api/widget-shares/abc/image')
+    expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer token-1')
+    expect(blob.size).toBe(3)
+    expect(blob.type).toBe('image/png')
+  })
+
+  it('refreshes once on a 401, like every API call, and throws an ApiError on a 404', async () => {
+    vi.spyOn(auth, 'refreshAccess').mockResolvedValue(true)
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(jsonResponse({ error: { code: 'unauthorized', message: 'no' } }, 401))
+      .mockResolvedValueOnce(jsonResponse({ error: { code: 'not_found', message: 'share not found' } }, 404))
+
+    await expect(endpoints.widgetShareImage('abc')).rejects.toMatchObject({ status: 404, code: 'not_found' })
+    expect(fetch).toHaveBeenCalledTimes(2)
+  })
+})
+
 describe('api', () => {
   it('adds the Authorization header when there is one', async () => {
     vi.spyOn(auth, 'getAuthHeader').mockReturnValue('Bearer token-1')

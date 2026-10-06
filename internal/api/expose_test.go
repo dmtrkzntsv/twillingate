@@ -21,7 +21,7 @@ func TestEveryToolChoosesATransport(t *testing.T) {
 	h, cs := newTestHost(t)
 	r := newTestRegistrar(t, h)
 	mcpOnly := map[string]bool{"integration_guide": true, "reporting_guide": true}
-	restOnly := map[string]bool{"view": true, "create_widget_share": true} // the web app's own selection and upload
+	restOnly := map[string]bool{"view": true, "create_widget_share": true, "widget_share_image": true} // the web app's own selection, upload and picture
 	seen := map[string]string{}
 	tools := 0
 	for _, s := range r.specs {

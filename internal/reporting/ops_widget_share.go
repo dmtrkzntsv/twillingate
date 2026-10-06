@@ -171,6 +171,13 @@ func (s *Service) UpdateWidgetShare(ctx context.Context, actor, id, archiveAfter
 	return s.shareOut(row), nil
 }
 
+// WidgetShareImage is a share's 1x PNG in any state, live, due or archived,
+// for the console's own pages: unlike /share/<id>.png, which answers 404 once
+// a share is archived. An unknown id is ErrNotFound.
+func (s *Service) WidgetShareImage(ctx context.Context, id string) ([]byte, error) {
+	return s.st.WidgetShareImage(ctx, id, false)
+}
+
 // ArchiveWidgetShare archives a share now; archiving one again is a no-op.
 func (s *Service) ArchiveWidgetShare(ctx context.Context, actor, id string) (WidgetShareOut, error) {
 	row, err := s.st.SetWidgetShareArchived(ctx, id, true, "",

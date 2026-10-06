@@ -283,12 +283,15 @@ snapshots built on each read by the same code as their list tool:
 
 Every tool above except `reporting_guide`, which is MCP-only, is also a REST
 route under `/api/`, with the same bearer token, JSON and error shape as the
-routes in [twillingate.md](twillingate.md#http-api). Two routes have no
-tool, `view` and `create_widget_share`. The page stores the viewer's
-selection with `PUT …/view`, which is viewer state rather than a definition,
-so it is allowed on system dashboards and not audited. It uploads a share
-with `POST /api/widget-shares`, since only a browser can capture the
-picture ([Sharing a widget](#sharing-a-widget)).
+routes in [twillingate.md](twillingate.md#http-api). Three routes have no
+tool, `view`, `create_widget_share` and `widget_share_image`. The page stores
+the viewer's selection with `PUT …/view`, which is viewer state rather than a
+definition, so it is allowed on system dashboards and not audited. It uploads
+a share with `POST /api/widget-shares`, since only a browser can capture the
+picture, and reads a share's picture back with
+`GET /api/widget-shares/{id}/image`, which answers in any state, where the
+public `/share/<id>.png` stops at archiving
+([Sharing a widget](#sharing-a-widget)).
 
 | Method | Path | Mirrors | Input |
 |---|---|---|---|
@@ -313,6 +316,7 @@ picture ([Sharing a widget](#sharing-a-widget)).
 | `PATCH` | `/api/widget-shares/{id}` | `update_widget_share` | body: `archive_after` |
 | `POST` | `/api/widget-shares/{id}/archive` | `archive_widget_share` | — |
 | `POST` | `/api/widget-shares/{id}/restore` | `restore_widget_share` | body: `archive_after` (optional) |
+| `GET` | `/api/widget-shares/{id}/image` | `widget_share_image`, REST only: no MCP tool | — (image/png, any state) |
 
 The view route takes `project_id` exactly when the dashboard has a project
 switcher and `range` exactly when it has a range switcher, and refuses either
@@ -933,10 +937,11 @@ Archiving is how to undo, and the only way to remove anything:
   puts it back at its old URL with a new archive date. A share whose date
   has passed is archived by the daily pass. The Archive page has a
   **Shares** section under the dashboards, left out when there are none:
-  archived shares, most recently archived first, each with its image,
-  title, project and "archived · deleted on <date>", and Restore, which asks
-  Archive after (default 1 month). Archived shares answer 404 until
-  restored.
+  archived shares, most recently archived first, each with its image
+  (read from `GET /api/widget-shares/{id}/image`, since the public image
+  answers 404 once archived), title, project and "archived · deleted on
+  <date>", and Restore, which asks Archive after (default 1 month).
+  Archived shares answer 404 until restored.
 
 Archived projects, dashboards, widgets and widget shares are **deleted
 `RETENTION_ARCHIVED_DAYS` after archiving** (default 30; `0` keeps them
