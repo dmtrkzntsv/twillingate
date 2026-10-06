@@ -63,10 +63,11 @@ out of scope.
 
   | Route | Answers |
   | --- | --- |
-  | `GET /share/{id}` | An HTML page: the image, the widget title, the project name and the range in words, and the footer link "Built with twillingate.dev" (below). Head: `og:title`, `og:type=website`, `og:url`, `og:image` (absolute `CONSOLE_URL/share/{id}.png`), `og:image:width`, `og:image:height`, `og:image:alt`, `twitter:card=summary_large_image`, `<meta name="robots" content="noindex">`. Inline CSS and the app's icon, no app bundle and no script. |
-  | `GET /share/{id}.png` | The image, `Content-Type: image/png`, `Cache-Control: public, max-age=3600`, plus `X-Robots-Tag: noindex`. |
+  | `GET /share/{id}` | An HTML page (D4): the image, the widget title, the project name and the range in words, and the footer link "Built with twillingate.dev" (below). Head: `og:title`, `og:type=website`, `og:url`, `og:image` (absolute `CONSOLE_URL/share/{id}.png`), `og:image:width` 1200, `og:image:height` 630, `og:image:alt`, `twitter:card=summary_large_image`, `<meta name="robots" content="noindex">`. Inline CSS and the app's icon, no app bundle and no script. |
+  | `GET /share/{id}.png` | The 1200×630 rendition (D4), the one `og:image` names. `Content-Type: image/png`, `Cache-Control: public, max-age=3600`, `X-Robots-Tag: noindex`. |
+  | `GET /share/{id}@2x.png` | The 2400×1260 rendition, for the page's `srcset`, the embed and Download PNG. Same headers. |
 
-  An unknown or archived id answers 404 on both routes, and so does one
+  An unknown or archived id answers 404 on all three routes, and so does one
   whose `archive_at` has passed (D7). The page
   answers `Cache-Control: public, max-age=300`. The hour on the image
   bounds how long a CDN keeps serving an archived share. The page carries
@@ -100,34 +101,74 @@ out of scope.
 
   ```html
   <a href="CONSOLE_URL/share/<id>"><img src="CONSOLE_URL/share/<id>.png"
+     srcset="CONSOLE_URL/share/<id>@2x.png 2x"
      alt="<title>" width="600" height="315"></a>
   ```
 
   Nothing anywhere needs to allow framing.
 
-- **D4. Capture in the browser, on a fixed social card.** The widget card
-  menu (`web/src/components/WidgetCard.tsx`) gains **Share…** and
-  **Download PNG**. Both render the widget off-screen into a 1200×630
-  card at a pixel ratio of 2 (a 2400×1260 PNG). The card holds:
-  - the widget title,
-  - the chart, drawn from the data the console already loaded for it,
-  - the project name and the range in words (`Sep 5 – Oct 4, 2026`),
-  - a small twillingate mark in the footer.
+- **D4. The images are designed, not screenshots.** A share's images are
+  what strangers see in a feed, so they get the same care as the console.
+  The widget card menu (`web/src/components/WidgetCard.tsx`) gains
+  **Share…** and **Download PNG**. Both lay the widget out afresh on a
+  social card. They never screenshot the dashboard tile.
 
-  The card always uses the light theme, whatever theme the console shows.
-  The capture uses `html-to-image` (a frontend library, so allowed).
-  **Download PNG** saves `<widget-name>-<from>-<to>.png` and stores
-  nothing. **Share…** opens a dialog with:
+  **The card.** 1200×630 CSS pixels, captured twice: at pixel ratio 1 for
+  `og:image` (`/share/{id}.png`) and at 2 for the page, the embed and
+  Download PNG (`/share/{id}@2x.png`). The layout:
+  - 56px padding all round, which also keeps everything inside the
+    1200×600 band that X crops a large card to.
+  - The widget title at the top, 44px semibold, at most two lines, then
+    truncated with an ellipsis.
+  - Below it, the project name and the range in words (`Sep 5 – Oct 4,
+    2026`), 22px, muted.
+  - The chart fills the rest, about 1088×420. It is drawn at that size
+    rather than scaled from a tile, so lines and text stay sharp. Its type
+    is scaled for a card seen small in a feed: axis labels and legends at
+    about 1.4 times the dashboard's size, with fewer ticks.
+  - **The watermark:** the twillingate iceberg logo (`IcebergLogo`, 20px)
+    and `twillingate.dev` in 16px type, bottom right inside the padding,
+    at about 55% opacity. It never sits over the chart. It is the only
+    branding on the image.
+  - A white background, always in the light theme, whatever theme the
+    console shows.
+
+  **Every machine draws the same card.** The console uses the system font
+  stack, which differs from one OS to the next. The card instead uses one
+  bundled font (Inter, through `@fontsource`, a frontend library and so
+  allowed), loaded only by the card. The capture waits for
+  `document.fonts.ready` and inlines the font. It uses `html-to-image`.
+
+  **Per component.** Each component gets a card mode with no interactive
+  chrome: no tooltips, menus, filters, pagination or scrollbars. A table
+  shows the rows that fit, with "and N more" under the last one. A stat
+  shows its number large and centred. Markdown is set in the card's type.
+  A component whose content cannot fit (a sankey with hundreds of nodes)
+  draws what fits, as its dashboard tile does.
+
+  **Where "great" gets judged.** The components gallery
+  (`/app/gallery/components`) gains a **Share card** view that renders
+  every component's fixtures as cards, at their real size. That is the
+  review surface for the look, and the PR that ships this feature
+  includes those cards for review. A Playwright test captures each
+  component's card and checks the two renditions' dimensions and that the
+  1x PNG stays under 300 KB, the size above which WhatsApp drops the
+  preview.
+
+  **The share page** is designed too: the 2x image centred at up to 1200px
+  wide, the title as `<h1>`, the project and range under it, and the
+  footer credit. It follows `prefers-color-scheme` for the page (the image
+  stays light) and does not scroll sideways at 360px.
+
+  **Download PNG** saves the 2x rendition as
+  `<widget-name>-<from>-<to>.png` and stores nothing. **Share…** opens a
+  small dialog:
   - a preview of the card, an **Archive after** choice (D7: 1 week,
     **1 month** (the default), 3 months, 1 year, Never) and a **Create
     link** button,
-  - after creation: **Copy link** and **Copy embed code**,
-  - this widget's existing shares, newest first, each with its range, its
-    creation date, its **Archive after** ("archives Nov 4" or "never
-    archives"; changeable in place, D7) and **Archive**.
-  - this widget's archived shares, below the live ones and folded by
-    default, each with **Restore** and the date the daily pass deletes
-    it.
+  - after creation: **Copy link**, **Copy embed code** and **Open**,
+  - a line, "This widget has N other links", leading to the Shares page
+    filtered to the widget (D8), when there are any.
 
   The dialog follows the web rules: buttons get the pointer cursor from
   `index.css`, and it does not scroll sideways at 360px.
@@ -143,9 +184,8 @@ out of scope.
       range_to   TEXT NOT NULL,          -- YYYY-MM-DD
       title      TEXT NOT NULL,
       project_name TEXT NOT NULL,
-      image      BLOB NOT NULL,
-      width      INTEGER NOT NULL,
-      height     INTEGER NOT NULL,
+      image      BLOB NOT NULL,          -- 1200×630, og:image
+      image_2x   BLOB NOT NULL,          -- 2400×1260
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       archive_at  TEXT,                  -- NULL = never (D7)
       archived_at TEXT                   -- NULL = live
@@ -171,8 +211,8 @@ out of scope.
 
   | Operation | MCP tool | REST | Notes |
   | --- | --- | --- | --- |
-  | Create | none | `POST /api/widgets/{widget_id}/shares` | `multipart/form-data`: `image` (the PNG), `project_id`, `from`, `to`, `archive_after` (`7d`, `30d`, `90d`, `365d` or `never`; default `30d`). REST only, since an agent has no browser to capture with. Answers 201 with `{id, url, image_url, ...}` |
-  | List | `list_shares` | `GET /api/shares?widget_id=` | `widget_id` optional; every share without it. Each row: `id`, `url`, `image_url`, `widget_id`, `project_id`, `from`, `to`, `title`, `created_at`, `archive_at` (`null` = never), `archived_at` (`null` = live). Archived shares are included; `archived: false` leaves them out |
+  | Create | none | `POST /api/widgets/{widget_id}/shares` | `multipart/form-data`: `image` (1200×630 PNG), `image_2x` (2400×1260 PNG), `project_id`, `from`, `to`, `archive_after` (`7d`, `30d`, `90d`, `365d` or `never`; default `30d`). REST only, since an agent has no browser to capture with. Answers 201 with `{id, url, image_url, ...}` |
+  | List | `list_shares` | `GET /api/shares?widget_id=&archived=` | `widget_id` optional; every share without it. Each row: `id`, `url`, `image_url`, `image_2x_url`, `widget_id`, `dashboard_id`, `dashboard_title`, `project_id`, `project_name`, `from`, `to`, `title`, `created_at`, `archive_at` (`null` = never), `archived_at` (`null` = live). `archived: false` lists live shares only (the Shares page), `true` archived ones only (the Archive page); omitted, both |
   | Change its archive date | `update_share` | `PATCH /api/shares/{id}` | body: `archive_after` (as in Create), counted from now. Live shares only |
   | Archive | `archive_share` | `POST /api/shares/{id}/archive` | Takes it down at once (404). Answers the share |
   | Restore | `restore_share` | `POST /api/shares/{id}/restore` | body: `archive_after`, default `30d` from now, since the old date has usually passed. Answers the share |
@@ -184,8 +224,8 @@ out of scope.
   - The widget is unknown or archived: `ErrNotFound`.
   - Neither `CONSOLE_URL` nor `PUBLIC_URL` is set: `ErrInvalid` with "set
     CONSOLE_URL to share widgets".
-  - The upload is not a PNG (magic bytes plus `image/png.DecodeConfig`), is
-    over 5 MB, or is not 1200×630 in shape (at pixel ratio 1, 2 or 3):
+  - Either upload is not a PNG (magic bytes plus `image/png.DecodeConfig`),
+    is not exactly its size (1200×630 and 2400×1260), or is over 5 MB:
     `ErrInvalid`.
   - The range is more than 365 days or ends in the future: `ErrInvalid`.
   - `archive_after` is not one of the five values: `ErrInvalid`. The same
@@ -201,10 +241,10 @@ out of scope.
   otherwise.** The dialog asks **Archive after** with 1 week, **1 month**
   (default), 3 months, 1 year or Never, and Create stores `archive_at =
   created_at + the period`, or `NULL` for never.
-  - **It can be changed.** On a live share, the same choice in the
-    dialog's list (`update_share`) sets `archive_at` to now + the period,
-    or `NULL`. On an archived share, **Restore** asks for it again
-    (`restore_share`).
+  - **It can be changed.** On a live share, the same choice on the Shares
+    page (D8, `update_share`) sets `archive_at` to now + the period,
+    or `NULL`. On an archived share, **Restore** on the Archive page
+    (D9) asks for it again (`restore_share`).
   - **The page stops at `archive_at`, not at the next daily pass.** Both
     `/share/` routes compare `archive_at` with the clock on each request
     and answer 404 once it has passed, as for an archived share. With
@@ -213,18 +253,49 @@ out of scope.
   - **The daily pass archives** each live share whose `archive_at` has
     passed: it sets `archived_at = archive_at`, writing `share.archive`
     with actor `retention`. From then on the share is like one archived
-    by hand. It shows under the dialog's archived shares, it can be
-    restored, and it is purged `RETENTION_ARCHIVED_DAYS` later (D5).
+    by hand. It shows on the Archive page (D9), it can be restored, and it
+    is purged `RETENTION_ARCHIVED_DAYS` later (D5).
   - **Feeds keep their copy.** A platform that already unfurled the link
     keeps the card image in its own cache, and the click-through then
     gives a 404. The dialog says so beside the choice.
 
+- **D8. A Shares page in the console.** `/app/shares`, in the sidebar
+  under Projects (left out in read-only mode, as Projects is). It lists
+  every live share, newest first:
+
+  | Column | Shows |
+  | --- | --- |
+  | Image | The 1x image as a thumbnail, linking to the share page |
+  | Widget | The share's title, and under it the dashboard and project it came from, linking to the dashboard |
+  | Range | The range in words |
+  | Created | The date |
+  | Archive after | "Nov 4" or "Never", changeable in place (D7, `update_share`) |
+  | Actions | **Copy link**, **Copy embed code**, **Archive** |
+
+  `?widget=<id>` narrows it to one widget, with a chip to clear the
+  filter. That is where the Share dialog's "N other links" leads. Empty,
+  the page says how to share: "Share… in a widget's menu". Below `sm` the
+  table folds: the thumbnail, the widget and the actions stay, and range,
+  created and Archive after move into a line under the widget. Archiving
+  asks no confirmation, since Restore undoes it.
+
+- **D9. Archived shares on the Archive page.** The Archive page gains a
+  **Shares** section under the dashboards. It lists archived shares,
+  most recently archived first, each with its thumbnail, title, project,
+  and "archived · deleted on <date>", using the `purge_after_days` and
+  `purgeDate` the page already uses for dashboards. Each has **Restore**,
+  which asks **Archive after** (default 1 month) before restoring
+  (`restore_share`). The page's intro gains "Archived shares answer 404
+  until restored." With nothing archived, the section is left out.
+
 ## Docs
 
-- `docs/reporting.md`: the Share dialog, Download PNG, Archive after, and
+- `docs/reporting.md`: the Share dialog, Download PNG, the card and its
+  watermark, the Shares page, archived shares on the Archive page,
+  Archive after, and
   the `list_shares`, `update_share`, `archive_share` and `restore_share`
   tools with their REST routes.
-- `docs/twillingate.md`: the `/share/` routes in the `serve -console` row,
+- `docs/twillingate.md`: the three `/share/` routes in the `serve -console` row,
   as the console's one unauthenticated content, with the footer credit.
 - `docs/deployment.md`: the Caddy example that exposes only `/share/*` of
   a private console, and that `RETENTION_ARCHIVED_DAYS` covers shares.
@@ -244,19 +315,29 @@ out of scope.
 - **Share routes** (`reporting`, mounted through `api`). They answer
   without a token while `/api/` still answers 401. The page's meta tags,
   `noindex`, the CSP, no `<script>`, and the footer link to
-  `https://twillingate.dev`. The PNG's type and cache headers. Both routes
-  answer 404 for an unknown id, for an archived one, and once
+  `https://twillingate.dev`, the `og:image` size tags and the `srcset`.
+  The PNGs' types and cache headers. All three routes answer 404 for an unknown id, for an archived one, and once
   `archive_at` has passed (before the daily pass runs), and answer again
   after a restore.
 - **API.** The multipart create route, and the list, change, archive and
   restore routes. `docs_sync` picks up the new tools and routes.
-- **Web.** A vitest for the Share dialog (create, copy, list, change
-  Archive after, archive, restore, the choice defaulting to 1 month) and
-  one for the capture card layout. A Playwright e2e that shares a seeded
-  widget, opens `/share/<id>`, checks the meta tags, the footer link and
-  that the image loads, archives the share and gets a 404, then restores
-  it and gets the page back. The cursor and phone specs cover the dialog
-  and the share page.
+- **Web.** Vitests for:
+  - the Share dialog: create, copy, open, the choice defaulting to 1
+    month, and the "N other links" line;
+  - the Shares page: list, the widget filter, changing Archive after,
+    archive, the empty state, the folded columns below `sm`;
+  - the Archive page's Shares section: the purge date, and Restore asking
+    Archive after;
+  - the card layout of each component.
+
+  The gallery's Share card view renders every component. A Playwright
+  test captures each card and checks both renditions' sizes and the
+  300 KB budget of the 1x one. A Playwright e2e that shares a seeded
+  widget, finds it on the Shares page, opens `/share/<id>`, checks the
+  meta tags, the footer link and that both images load, archives it and
+  gets a 404, finds it on the Archive page, restores it and gets the page
+  back. The cursor and phone specs cover the dialog, the Shares page, the
+  Archive page's section and the share page.
 
 ## Out of scope
 
