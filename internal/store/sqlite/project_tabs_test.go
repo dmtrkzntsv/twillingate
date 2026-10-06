@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"testing"
@@ -193,5 +194,164 @@ func TestSetDashboardProjectTab(t *testing.T) {
 	}
 	if n := countAudit(t, db, "dashboard.project_tab"); n != 2 {
 		t.Errorf("audit rows = %d, want 2", n)
+	}
+}
+
+// A refused write must leave the audit log alone: nothing happened.
+func TestProjectTabRefusalsWriteNoAudit(t *testing.T) {
+	ctx := context.Background()
+	db := tabsDB(t)
+	_ = db.DeleteProjectTab(ctx, 1, 10, store.AuditEntry{Actor: "test", Action: "project.tab.remove"})
+	_ = db.MoveProjectTab(ctx, store.ProjectTabRow{ProjectID: 1, DashboardID: 10, SortKey: "b"}, store.AuditEntry{Actor: "test", Action: "project.tab.move"})
+	_ = db.SetDashboardProjectTab(ctx, 99, true, store.AuditEntry{Actor: "test", Action: "dashboard.project_tab"})
+	_ = db.InsertProjectTab(ctx, store.ProjectTabRow{ProjectID: 99, DashboardID: 10}, tabAudit)
+	var n int
+	execScan(t, db, `SELECT count(*) FROM audit_log WHERE action LIKE 'project.tab.%' OR action='dashboard.project_tab'`, &n)
+	if n != 0 {
+		t.Errorf("%d audit rows after refused writes, want 0", n)
+	}
+}
+
+// Sidebar and project_tab writes are audited under the dashboard, one row
+// per id; the actor and detail the caller passed are kept.
+func TestPlacementAuditSubjects(t *testing.T) {
+	ctx := context.Background()
+	db := tabsDB(t)
+	if err := db.SetDashboardsSidebar(ctx, []int64{10, 11}, false,
+		store.AuditEntry{Actor: "me", Action: "dashboard.sidebar.hide", Detail: "d"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetDashboardProjectTab(ctx, 12, true,
+		store.AuditEntry{Actor: "me", Action: "dashboard.project_tab"}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := db.db.QueryContext(ctx, `SELECT action, subject, actor, detail FROM audit_log ORDER BY rowid`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var got []string
+	for rows.Next() {
+		var action, subject, actor, detail string
+		if err := rows.Scan(&action, &subject, &actor, &detail); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, action+" "+subject+" "+actor+" "+detail)
+	}
+	want := []string{
+		"dashboard.sidebar.hide dashboard/10 me d",
+		"dashboard.sidebar.hide dashboard/11 me d",
+		"dashboard.project_tab dashboard/12 me ",
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("audit rows = %q, want %q", got, want)
+	}
+}
+
+func TestSetDashboardsSidebarEmptyIDsIsANoop(t *testing.T) {
+	db := tabsDB(t)
+	if err := db.SetDashboardsSidebar(context.Background(), nil, false,
+		store.AuditEntry{Actor: "test", Action: "dashboard.sidebar.hide"}); err != nil {
+		t.Fatal(err)
+	}
+	if n := countAudit(t, db, "dashboard.sidebar.hide"); n != 0 {
+		t.Errorf("audit rows = %d, want 0", n)
+	}
+}
+
+// After Close every project-tab operation must return an error that is
+// neither nil nor a typed refusal: a dead database is not "not found".
+func TestProjectTabOperationsOnClosedDB(t *testing.T) {
+	db, err := openAt(filepath.Join(t.TempDir(), "closed.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if err := db.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	a := store.AuditEntry{Actor: "test", Action: "x"}
+	r := store.ProjectTabRow{ProjectID: 1, DashboardID: 10, SortKey: "a"}
+	for name, op := range map[string]func() error{
+		"ListProjectTabs":        func() error { _, err := db.ListProjectTabs(ctx, 1); return err },
+		"ListDashboardProjects":  func() error { _, err := db.ListDashboardProjects(ctx, 10); return err },
+		"InsertProjectTab":       func() error { return db.InsertProjectTab(ctx, r, a) },
+		"DeleteProjectTab":       func() error { return db.DeleteProjectTab(ctx, 1, 10, a) },
+		"MoveProjectTab":         func() error { return db.MoveProjectTab(ctx, r, a) },
+		"SetDashboardsSidebar":   func() error { return db.SetDashboardsSidebar(ctx, []int64{10}, true, a) },
+		"SetDashboardProjectTab": func() error { return db.SetDashboardProjectTab(ctx, 10, true, a) },
+	} {
+		err := op()
+		if err == nil {
+			t.Errorf("%s on a closed DB returned nil, want error", name)
+		} else if errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrConflict) {
+			t.Errorf("%s on a closed DB returned a typed refusal: %v", name, err)
+		}
+	}
+}
+
+// The write and its audit row are one transaction: when the audit insert
+// fails, the write is rolled back and the error surfaces.
+func TestProjectTabWriteRollsBackWhenAuditFails(t *testing.T) {
+	ctx := context.Background()
+	db := tabsDB(t)
+	execAll(t, db,
+		`INSERT INTO project_tabs (project_id, dashboard_id, sort_key) VALUES (1, 10, 'a0')`,
+		`CREATE TRIGGER audit_refuses BEFORE INSERT ON audit_log BEGIN SELECT RAISE(ABORT, 'audit down'); END`)
+	a := store.AuditEntry{Actor: "test", Action: "x"}
+
+	check := func(name string, err error, query string, want int) {
+		t.Helper()
+		if err == nil {
+			t.Errorf("%s: want the audit error, got nil", name)
+		}
+		var got int
+		execScan(t, db, query, &got)
+		if got != want {
+			t.Errorf("%s: %s = %d after the failed write, want %d", name, query, got, want)
+		}
+	}
+	check("Insert", db.InsertProjectTab(ctx, store.ProjectTabRow{ProjectID: 1, DashboardID: 11, SortKey: "a1"}, a),
+		`SELECT count(*) FROM project_tabs WHERE dashboard_id=11`, 0)
+	check("Move", db.MoveProjectTab(ctx, store.ProjectTabRow{ProjectID: 1, DashboardID: 10, SortKey: "b0"}, a),
+		`SELECT count(*) FROM project_tabs WHERE sort_key='b0'`, 0)
+	check("Delete", db.DeleteProjectTab(ctx, 1, 10, a),
+		`SELECT count(*) FROM project_tabs WHERE dashboard_id=10`, 1)
+	check("Sidebar", db.SetDashboardsSidebar(ctx, []int64{10}, false, a),
+		`SELECT count(*) FROM dashboards WHERE id=10 AND sidebar=0`, 0)
+	check("ProjectTab", db.SetDashboardProjectTab(ctx, 10, true, a),
+		`SELECT count(*) FROM dashboards WHERE id=10 AND project_tab=1`, 0)
+}
+
+// A statement that fails for a reason other than a missing row or a
+// duplicate is a plain error, not a typed refusal, and nothing is audited.
+func TestProjectTabWriteErrorsAreNotRefusals(t *testing.T) {
+	ctx := context.Background()
+	db := tabsDB(t)
+	execAll(t, db,
+		`INSERT INTO project_tabs (project_id, dashboard_id, sort_key) VALUES (1, 10, 'a0')`,
+		`CREATE TRIGGER tabs_no_insert BEFORE INSERT ON project_tabs BEGIN SELECT RAISE(ABORT, 'disk full'); END`,
+		`CREATE TRIGGER tabs_no_update BEFORE UPDATE ON project_tabs BEGIN SELECT RAISE(ABORT, 'disk full'); END`,
+		`CREATE TRIGGER tabs_no_delete BEFORE DELETE ON project_tabs BEGIN SELECT RAISE(ABORT, 'disk full'); END`,
+		`CREATE TRIGGER dash_no_update BEFORE UPDATE ON dashboards BEGIN SELECT RAISE(ABORT, 'disk full'); END`)
+	a := store.AuditEntry{Actor: "test", Action: "x"}
+	for name, err := range map[string]error{
+		"Insert":     db.InsertProjectTab(ctx, store.ProjectTabRow{ProjectID: 1, DashboardID: 11, SortKey: "a1"}, a),
+		"Move":       db.MoveProjectTab(ctx, store.ProjectTabRow{ProjectID: 1, DashboardID: 10, SortKey: "b0"}, a),
+		"Delete":     db.DeleteProjectTab(ctx, 1, 10, a),
+		"Sidebar":    db.SetDashboardsSidebar(ctx, []int64{10}, false, a),
+		"ProjectTab": db.SetDashboardProjectTab(ctx, 10, true, a),
+	} {
+		if err == nil {
+			t.Errorf("%s: want the statement's error, got nil", name)
+		} else if errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrConflict) {
+			t.Errorf("%s: a failing statement came back as a typed refusal: %v", name, err)
+		}
+	}
+	if n := countAudit(t, db, "x"); n != 0 {
+		t.Errorf("audit rows = %d, want 0", n)
 	}
 }
