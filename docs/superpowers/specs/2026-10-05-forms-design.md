@@ -1,0 +1,317 @@
+# Forms
+
+Status: draft
+Date: 2026-10-05
+
+## Problem
+
+- **A landing page has nowhere to send its form.** Contact forms,
+  waitlists, feedback and RSVPs end up in a third-party form service or
+  a spreadsheet, apart from the analytics that already see the visit.
+- **The visit and the submission never meet.** twillingate knows that a
+  visitor came from a search engine to `/pricing`; the form service knows
+  their email. Nobody holds both, so "which source brings signups" is a
+  manual join, if anyone does it at all.
+- **twillingate stores no personal data today, and a form is personal
+  data.** It must stay out of the analytics surfaces (the `query` tool,
+  aggregates, dashboards) and leave only by deletion: one at a time, by
+  search for an erasure request, or with its form or project.
+
+## Decisions
+
+- **D1. Each submission is a record and a conversion.** An accepted
+  submission writes a row in a new `submissions` table (the fields, kept
+  until deleted) and a `$form_submit` product event in `events` (the form
+  name, the page and the actor, no field values). The event makes
+  conversions show in dashboards, funnels and retention like any product
+  event; the row is what the owner reads and exports.
+
+- **D2. Forms are created by their first submission and are open.** A
+  submission naming an unknown form creates its row and is stored. There
+  is no approval step and no project-level setting. The owner restricts a
+  form afterwards (D3), stops it (`accepting`), or archives it.
+
+- **D3. Fields are free-form; expected fields only narrow what is kept.**
+  Every field a submission sends is stored, as JSON, until the form has
+  `expected_fields`. Then fields outside the list are dropped from the
+  row (their names are still recorded in `forms.fields`, so the console
+  can show "arriving, not kept"). Expected never means required: a
+  submission missing an expected field is stored as it is. The console
+  picks expected fields from the names submissions actually sent.
+
+- **D4. Migration 031 adds two tables.**
+
+  ```sql
+  CREATE TABLE forms (
+      project_id        INTEGER NOT NULL,
+      name              TEXT    NOT NULL,   -- [a-z0-9_-]{1,64}
+      purpose           TEXT    NOT NULL DEFAULT '',
+      return_url        TEXT    NOT NULL DEFAULT '',
+      fields            TEXT    NOT NULL DEFAULT '[]',  -- every field name seen, sorted
+      expected_fields   TEXT,                           -- JSON list; NULL keeps every field
+      accepting         INTEGER NOT NULL DEFAULT 1,
+      created_at        TEXT    NOT NULL,
+      last_submitted_at TEXT,
+      archived_at       TEXT,                           -- NULL = active
+      PRIMARY KEY (project_id, name)
+  ) WITHOUT ROWID;
+
+  CREATE TABLE submissions (
+      project_id  INTEGER NOT NULL,
+      id          TEXT    NOT NULL,   -- client UUID when sent, else server-made
+      form        TEXT    NOT NULL,
+      received_at TEXT    NOT NULL,
+      fields      TEXT    NOT NULL,   -- JSON object of strings / arrays of strings
+      actor_kind  TEXT    NOT NULL,   -- as events: user | install | connection
+      actor_id    TEXT    NOT NULL,
+      host        TEXT    NOT NULL DEFAULT '',
+      path        TEXT    NOT NULL DEFAULT '',
+      via         TEXT    NOT NULL,   -- form | json
+      visit       TEXT,               -- JSON snapshot (D9); NULL when unmatched
+      PRIMARY KEY (project_id, id)
+  );
+  CREATE INDEX submissions_form ON submissions (project_id, form, received_at);
+  ```
+
+  Both tables join `projectTables`, so a purged project takes them with
+  it (`TestProjectTablesMatchesSchema` enforces the listing). The
+  migration is additive: no data step, no pre-check.
+
+- **D5. One endpoint, `POST /ingest/forms/{name}`, two body styles.**
+  `{name}` outside `[a-z0-9_-]{1,64}` is a plain `400`.
+
+  - **Plain HTML form** (`application/x-www-form-urlencoded`,
+    `multipart/form-data`). The key comes from `?key=` in the action URL
+    (the `X-Analytics-Key` header also works). Every field not starting
+    with `$` is a submission field; multipart file parts are dropped. The
+    answer is a redirect (D6).
+
+    ```html
+    <form method="post" action="https://t.example.com/ingest/forms/contact?key=tw_…">
+      <input name="email"> <textarea name="message"></textarea>
+      <input type="hidden" name="$redirect" value="https://site.com/thanks">
+    </form>
+    ```
+
+  - **JSON** (any other content type, so the SDK's `text/plain` body is
+    a simple request with no preflight). The key comes from the header,
+    `?key=`, or `key` in the body. Values may be strings, numbers,
+    booleans or arrays of those; all are stored as strings or arrays of
+    strings. The answer is `201 {"id": "…"}`.
+
+    ```json
+    { "id": "uuid",
+      "fields": { "email": "a@b.c", "plan": ["pro", "team"] },
+      "attributes": { "$install_id": "…", "$host": "site.com", "$path": "/pricing" } }
+    ```
+
+  Context keys, as `$` fields on the form path or in `attributes` on
+  JSON: `$id`, `$user_id`, `$install_id`, `$host`, `$path`, and on the
+  form path `$redirect`. Their meanings match events; any other `$` key
+  is dropped. A repeated form field (a multi-select) becomes an array.
+  The actor follows the events rules: `$user_id`, else `$install_id`,
+  else the daily connection hash, so a no-JS form POST from the browser
+  that sent the visit's views gets the same actor as those views.
+
+  Checks, in order, on both styles:
+
+  1. The key resolves to an active project, else a plain `401` (no
+     redirect: without a project nothing can vouch for a target).
+  2. A present `Origin` passes `allowed_origins`, else a plain `403`.
+     Browsers send `Origin` on a cross-origin form POST.
+  3. The body is within the limits (D10), else `-error` / `413`.
+  4. The form row is read or created. An archived form, or one with
+     `accepting` off, is `-error` / `409`, and nothing is written.
+  5. The submission is written: the form's `fields` merged, then the row
+     (`INSERT OR IGNORE` on `id`, so a retried `$id` stores once), in one
+     transaction **written directly, not through `pipeline.Buffer`**,
+     which drops its oldest entries when full. `$form_submit` then goes
+     through the buffer like any event.
+
+- **D6. The form path redirects; twillingate renders no page.** The
+  target is the first one allowed of:
+
+  1. `$redirect` from the submission;
+  2. the form's `return_url`;
+  3. the `Referer`.
+
+  A target is allowed when it is an absolute `http(s)` URL whose origin
+  passes the project's `allowed_origins`; when it passes only through a
+  bare `*` entry, it must also equal the request's `Origin`, so `*`
+  never makes an open redirect. The answer is `303` with
+  `#twillingate-form-success-{name}` or `#twillingate-form-error-{name}`
+  in place of any fragment the target had. When no target is allowed,
+  the submission is still stored (if it got that far) and the answer is
+  a plain `400` saying the form has no return URL.
+
+  The `Referer` usually carries only the origin on a cross-origin POST
+  (the default `strict-origin-when-cross-origin` policy), so "back to the
+  page" lands on the site's root. The docs tell JS-free pages to set
+  `$redirect` or the form's return URL; the SDK path (D7) does not need
+  either.
+
+- **D7. The SDK: `data-twillingate-form` and `submitForm`.**
+
+  ```html
+  <form data-twillingate-form="contact">
+    <input name="email"> <textarea name="message"></textarea>
+  </form>
+  <p id="twillingate-form-success-contact">Thanks, we'll be in touch.</p>
+  <style>#twillingate-form-success-contact:not(:target){display:none}</style>
+  ```
+
+  The runtime's capture-phase `submit` listener (the one
+  `data-twillingate-event` uses) handles a tagged form: it calls
+  `preventDefault()`, reads `FormData` (file parts and `$` fields other
+  than `$redirect` skipped), and posts the JSON body of D5 with a fresh
+  `$id`, `$host`, `$path` and the identity keys the identity mode allows.
+  While in flight the form has `aria-busy="true"` and a second submit is
+  ignored. On the outcome:
+
+  - with a `$redirect` field, it navigates there with the D6 fragment;
+  - without one, it resets the form on success and sets `location.hash`
+    to the fragment, so the same `:target` element serves both paths;
+  - either way it dispatches a `twillingate:form` `CustomEvent` on the
+    form, `detail: {name, status: "success" | "error", id}`.
+
+  An `action` pointing at twillingate on the same form keeps it working
+  where the SDK did not load.
+
+  `twillingate.submitForm(name, fields)` takes a plain object, a
+  `FormData` or an `HTMLFormElement` and returns
+  `Promise<{id}>`, rejecting on a `4xx` or once retries run out. It
+  neither navigates nor touches the hash.
+
+  Delivery is `fetch` with `keepalive` and three in-memory retries (1 s,
+  5 s, 25 s) reusing the same `$id`. **A submission never enters the
+  retry queue's storage driver**: personal data is not written to the
+  visitor's device, whatever the consent. An opted-out visitor's
+  submission is still sent (it is the one thing they asked to send),
+  without identity keys. A tagged form fires no `data-twillingate-event`;
+  the server's `$form_submit` is the one conversion.
+
+- **D8. Tools, routes, CLI.** Through `expose`, addressed by
+  `{project_id, name}`:
+
+  | Tool | Route | Does |
+  | --- | --- | --- |
+  | `list_forms` | `GET /api/projects/{project_id}/forms` | every form with `purpose`, `return_url`, `fields`, `expected_fields`, `accepting`, submission count, `last_submitted_at`, `archived` |
+  | `update_form` | `PATCH /api/projects/{project_id}/forms/{name}` | merges `purpose`, `return_url`, `expected_fields` (`null` keeps every field), `accepting`; `return_url` must be an allowed target (D6) or `ErrInvalid` |
+  | `archive_form` / `restore_form` | `POST …/forms/{name}/archive` / `restore` | hides or restores the form and its submissions |
+  | `list_submissions` | `GET /api/projects/{project_id}/submissions` | `form`, `from`, `to`, `search`, `limit`, `cursor`; newest first; archived forms' submissions left out |
+  | `delete_submissions` | `POST /api/projects/{project_id}/submissions/delete` | `ids`, or `search` (with optional `form`); destructive; the audit row holds the count and the search, never the contents |
+  | REST only | `GET …/forms/{name}/submissions.csv` | `id`, `received_at`, the expected fields (or every field seen), `host`, `path`, the `visit` columns |
+
+  `search` is a case-insensitive substring match over every field value
+  (`json_each`): preview with `list_submissions`, then delete with the
+  same search. There is no `create_form`. `integration_guide` gains a
+  forms section.
+
+  CLI, one noun: `twillingate form list | update | archive | restore |
+  export | erase`; `export` writes the CSV to stdout, `erase` deletes
+  submissions by `-id` or `-search`.
+
+  Submissions get **no queryable view**: `query` and `schemaViews` never
+  reach them. `$form_submit` events are queryable through `raw_product`
+  like any product event.
+
+- **D9. The visit is snapshotted onto the submission.** At write time the
+  handler reads the actor's current session from `events` (the 30-minute
+  gap rule the session views use) and stores `visit` as JSON:
+  `landing_path`, `referrer`, `utm_source`, `utm_medium`, `utm_campaign`,
+  `views`. A join at read time would vanish after
+  `RETENTION_EVENTS_RAW_DAYS` while the submission is kept forever.
+  `visit` is NULL when nothing matches (a server-side API call, a page
+  without the SDK). Views still in the pipeline buffer (up to the flush
+  interval) are missed; a visitor who filled a form landed earlier.
+
+- **D10. Fixed limits**, in `internal/wire` and listed by `limits` under
+  `ingest`: body 64 KiB, 100 fields, field name 64 characters, value
+  8 KiB (longer values are truncated, as event values are). No cap on
+  forms per project or submissions per form.
+
+- **D11. Archiving and purging.** Archiving a form hides it and its
+  submissions from lists, export and counts and refuses new submissions;
+  restoring brings all back. The daily pass purges a form archived longer
+  than `RETENTION_ARCHIVED_DAYS` with its submissions (in
+  `PurgeArchived`, beside dashboards), one transaction and audit row per
+  form. Submissions are otherwise kept until deleted. Archiving the
+  project hides its forms; purging it deletes them.
+
+- **D12. Console.** Under the project:
+
+  - **Forms** (`/projects/:id/forms`): one row per form with its
+    submission count, last submission, the `accepting` switch and a menu
+    (archive). Archived forms appear on the Archive page.
+  - **A form** (`/projects/:id/forms/:name`): the submissions table
+    (newest first, search, the remote table mode, a CSV button, per-row
+    delete, "delete all matching" with a confirm; a row opens a drawer
+    with every field and the visit), and settings: purpose, return URL,
+    and the expected-fields picker, one checkbox per field seen, with
+    "not kept" on fields arriving outside the list.
+
+## Where the code goes
+
+No new package; the archtest rank table is unchanged.
+
+| Package | Change |
+| --- | --- |
+| `store` | `Form`, `Submission` row types and their methods |
+| `store/sqlite` | `031_forms.sql`; `projectTables`; `PurgeArchived` |
+| `server` | `forms.go`: the endpoint, decoding, D6, field filtering; takes a `server.FormStore` (as `NameStore` today), passed by `app`; `$form_submit` through `Enqueuer` |
+| `wire` | the D10 limits |
+| `manage` | audited `update_form`, archive, restore, erase; `manage.Store` grows by those. Forms stay out of the registry snapshot: ingest reads the row per submission |
+| `api` | `ops_forms.go`: tools and the CSV route |
+| `cmd` | `twillingate form` |
+| `sdk`, `web` | D7, D12 |
+
+`$form_submit` becomes a reserved event name.
+
+## Out of scope
+
+- Outbound delivery: email, webhooks. The `submissions` row is shaped so
+  a webhook can be added later without a migration.
+- Spam checks (honeypot, timing, rate limits, CAPTCHA). The limits (D10),
+  `expected_fields` and `accepting` are the controls in this version.
+- Required fields and field types.
+- File uploads.
+
+## Docs
+
+- `docs/twillingate.md`: the endpoint and both body styles, the redirect
+  and fragment rules with the `Referer` caveat, `$form_submit` among the
+  reserved event names, the SDK attribute, method and event, the tools,
+  routes and CLI, the limits.
+- `integration_guide`: a forms section.
+- `deploy/UPGRADES.md`: 031, additive.
+- No environment variables change.
+
+## Tests
+
+- `migration031_test.go`; store tests for idempotent ids, `fields`
+  merging, project purge and archived-form purge.
+- Server: both body styles and multipart; key from the query; the
+  Origin check; the D6 order and every open-redirect case (foreign
+  origin, `javascript:`, relative URL, bare `*`, empty
+  `allowed_origins`); the fragments; `accepting` off; archived form;
+  expected-field filtering; the limits; `$form_submit` queued; the
+  `visit` snapshot.
+- API: tool tests; `docs_sync_test`, `coverage_test`, `openapi_test`
+  pick up the new tools.
+- SDK (vitest): `preventDefault`, the hash and redirect, the
+  `CustomEvent`, double submit ignored, retries reuse `$id`, nothing
+  written to storage.
+- Web: vitest; Playwright `forms.spec.ts` against the built binary
+  (submit a plain form, see it in the console, set expected fields,
+  export CSV, erase by search); the cursor and phone specs cover the
+  new pages.
+
+## Delivery
+
+Four stacked pull requests:
+
+1. `feat(server)`: migration, store, endpoint, `$form_submit`, `visit`,
+   docs. Works for plain HTML forms and the JSON API on its own.
+2. `feat(sdk)`: `data-twillingate-form`, `submitForm`.
+3. `feat(api)`: tools, CSV, CLI.
+4. `feat(web)`: the Forms pages.
