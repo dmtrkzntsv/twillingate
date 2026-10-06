@@ -118,6 +118,22 @@ func refuseNewTab(o order, g int64) error {
 	return nil
 }
 
+// refuseUnreachable refuses leaving live user dashboard id out of the
+// sidebar unless a project other than except (0: none) has it as a tab
+// (spec 2026-10-05 D5). The caller holds placeMu, so no concurrent hide
+// or tab removal changes that in between.
+func (s *Service) refuseUnreachable(ctx context.Context, id, except int64) error {
+	ps, err := s.st.ListDashboardProjects(ctx, id)
+	if err != nil {
+		return err
+	}
+	if slices.ContainsFunc(ps, func(p int64) bool { return p != except }) {
+		return nil
+	}
+	return store.Refuse(store.ErrInvalid,
+		"dashboard %d would be unreachable: not in the sidebar and on no project's tabs; add it to a project first, or archive it", id)
+}
+
 // insertWidget places w on its dashboard after `after` and writes it,
 // returning what was written.
 func (s *Service) insertWidget(ctx context.Context, w store.Widget, after *int64, a store.AuditEntry) (WidgetInfo, error) {

@@ -211,13 +211,8 @@ func (s *Service) setPlacement(ctx context.Context, actor string, in UpdateDashb
 					continue
 				}
 				if !*in.Sidebar && !system && m.ArchivedAt == "" {
-					ps, err := s.st.ListDashboardProjects(ctx, m.ID)
-					if err != nil {
+					if err := s.refuseUnreachable(ctx, m.ID, 0); err != nil {
 						return err
-					}
-					if len(ps) == 0 {
-						return store.Refuse(store.ErrInvalid,
-							"dashboard %d would be unreachable: not in the sidebar and on no project's tabs; add it to a project first, or archive it", m.ID)
 					}
 				}
 				ids = append(ids, m.ID)
