@@ -424,7 +424,7 @@ func TestUpdateDashboardWritesGroupID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.UpdateDashboard(ctx, store.Dashboard{ID: id, Title: "D", SortKey: "a", GroupID: 4242},
+	if err := db.UpdateDashboard(ctx, store.Dashboard{ID: id, Title: "D", SortKey: "a", GroupID: 4242, Sidebar: true},
 		store.AuditEntry{Actor: "agent", Action: "dashboard.update"}); err != nil {
 		t.Fatal(err)
 	}
@@ -609,7 +609,7 @@ func TestReportingWritesDoNotBumpConfigVersion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.UpdateDashboard(ctx, store.Dashboard{ID: id, Title: "D2", SortKey: "a"},
+	if err := db.UpdateDashboard(ctx, store.Dashboard{ID: id, Title: "D2", SortKey: "a", Sidebar: true},
 		store.AuditEntry{Actor: "agent", Action: "dashboard.update"}); err != nil {
 		t.Fatal(err)
 	}

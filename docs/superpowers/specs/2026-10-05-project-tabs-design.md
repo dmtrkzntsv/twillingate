@@ -143,7 +143,8 @@ Date: 2026-10-05
     install (Hide / Add to sidebar). `false` ships a built-in that appears
     only on project pages.
   - `project_tab` is **release-owned**, re-synced on every release like
-    `title`, and can't be changed for a built-in (`ErrInvalid`).
+    `title`; only a release changes it; `update_dashboard` takes no
+    `project_tab`.
   - All seven built-ins ship with `true` / `true`.
 
 - **D7. Operations.** Each is one `reporting.Service` method, exposed over

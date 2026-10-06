@@ -297,7 +297,8 @@ type Store interface {
 	// order.
 	InsertDashboardGroup(ctx context.Context, ds []Dashboard, ws [][]Widget, a AuditEntry) ([]int64, error)
 	// SetDashboardsArchived archives (only rows currently live) or
-	// restores (only rows currently archived) ids in one transaction,
+	// restores (only rows currently archived, a user row back in the
+	// sidebar) ids in one transaction,
 	// one audit row per id. Unknown ids are ErrNotFound and nothing is
 	// written.
 	SetDashboardsArchived(ctx context.Context, ids []int64, archived bool, a AuditEntry) error
