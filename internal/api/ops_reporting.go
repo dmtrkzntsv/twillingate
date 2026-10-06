@@ -287,4 +287,5 @@ func (h *host) registerReporting(r *registrar) {
 	restOnly(r, spec{Name: "view", Method: "PUT", Path: d + "/view",
 		Description: "Store the viewer's project and range selection for a dashboard."},
 		h.setView)
+	h.registerWidgetShares(r)
 }

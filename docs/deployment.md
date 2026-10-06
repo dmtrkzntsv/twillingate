@@ -101,7 +101,7 @@ to it.
 | `BUFFER_CAPACITY` | Bounded queue size; excess is dropped rather than growing memory. Default 10000. |
 | `RETENTION_EVENTS_RAW_DAYS` | Days raw events of every family are kept before rollup. Also the oldest client timestamp accepted: older events are clamped to this edge. Default 30. |
 | `RETENTION_EVENTS_AGGREGATE_DAYS` | Days aggregates of every family (and actors, cohorts, identities) are kept. Default 365. |
-| `RETENTION_ARCHIVED_DAYS` | Days after archiving that a project (with all its data), a dashboard or a widget is deleted by the daily pass. 0 keeps archived items forever. Default 30. |
+| `RETENTION_ARCHIVED_DAYS` | Days after archiving that a project (with all its data and its widget shares), a dashboard, a widget or a widget share is deleted by the daily pass. 0 keeps archived items forever. Default 30. |
 | `ATTRIBUTE_VALUES_TOP_N` | Values kept per (project, day) in each views breakdown (paths, referrers, browsers, …) and kinds in `v_views_daily`, and distinct attribute values per (project, day, event, key), before the rest collapse into `(other)`. 0 keeps every value. Default 100. |
 | `ATTRIBUTE_BREAKDOWNS_MAX` | Attributes all active projects may declare together; each is a breakdown with its own aggregate rows, kept `RETENTION_EVENTS_AGGREGATE_DAYS`. A create or update that adds attributes past it is refused; saves that add none always pass. 0 is no limit. Default 10. |
 | `IDENTITIES_TOP_N` | Users, and groups, kept per (project, day) in `v_identity_daily`, busiest first; the rest are dropped. 0 keeps them all. Default 500. |
@@ -330,6 +330,27 @@ on every load, so a proxy or CDN in front needs no rules of its own.
 Widget queries run under `CONSOLE_QUERY_TIMEOUT` and `CONSOLE_QUERY_MAX_ROWS`, and
 their results are cached for `REPORTING_CACHE_SECONDS`
 ([Configure the collector](#configure-the-collector)).
+
+### Shared widgets on a private console
+
+A shared widget is public at `CONSOLE_URL/share/<id>`: a page and two
+images that need no token ([reporting.md](reporting.md#sharing-a-widget)).
+When the console otherwise stays on a LAN or tailnet, expose only `/share/*`
+to the internet, on the hostname `CONSOLE_URL` names, so the links work for
+everyone while `/app/`, `/api/`, `/mcp` and the login stay private. With
+Caddy in front of a console on `127.0.0.1:8080`:
+
+```
+console.example.com {
+    @share path /share/*
+    handle @share {
+        reverse_proxy 127.0.0.1:8080
+    }
+    respond 404
+}
+```
+
+A console that is already public needs nothing.
 
 ### Previewing dashboard files
 

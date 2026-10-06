@@ -34,7 +34,7 @@ discarded.
 | Command | Does |
 | --- | --- |
 | `twillingate serve -ingest` | Ingestion: `POST /ingest/events`, the SDK at `/js/twillingate.js` (and its Web Vitals add-on at `/js/twillingate-vitals.js`), `/healthz` |
-| `twillingate serve -console` | The console: MCP at `/mcp`, REST at `/api/`, the login, the dashboards at `/app/` |
+| `twillingate serve -console` | The console: MCP at `/mcp`, REST at `/api/`, the login, the dashboards at `/app/`, and shared widgets at `/share/` (public) |
 | `twillingate serve` | Both, on one listener unless `CONSOLE_ADDR` says otherwise |
 | `twillingate project`, `key`, `config` | Registry management |
 | `twillingate migrate` | Applies schema migrations and exits |
@@ -902,7 +902,7 @@ CORS-simple.
 
 ## Answer questions with the data
 
-A connected session gets thirty-eight tools: the twenty-two below, and sixteen
+A connected session gets forty-two tools: the twenty-two below, and twenty
 that build the dashboards served at `/app/`, which are documented in
 `docs://reporting` ([reporting.md](reporting.md)). To build or change a
 dashboard, call `reporting_guide` first.
@@ -954,6 +954,13 @@ routes, with each operation's `operationId` naming the tool it mirrors.
 `/api/docs` renders it in Swagger UI; signed in to the dashboards, Try it
 out uses that login. Neither needs a
 token: they describe routes and fields, never data.
+
+Shared widgets need no token either: `/share/<id>` (a page with no script),
+`/share/<id>.png` (1200×630) and `/share/<id>@2x.png` (2400×1260) serve the
+frozen images of a widget someone shared, which are public by design. Each
+page ends with the credit "Built with twillingate.dev", on every install. An
+unknown or archived share answers 404 on all three. See
+[reporting.md](reporting.md#sharing-a-widget).
 
 ```bash
 curl -H "Authorization: Bearer $TOKEN" \

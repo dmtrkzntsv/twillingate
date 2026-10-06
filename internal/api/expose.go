@@ -22,7 +22,8 @@ type spec struct {
 	Method      string // HTTP method; "" = MCP only
 	Path        string // ServeMux pattern path, e.g. "/api/projects/{project_id}/views/overview"
 	Status      int    // REST success status; 0 = 200
-	RESTOnly    bool   // set by restOnly: a route with no MCP tool
+	RESTOnly    bool   // set by restOnly and restRaw: a route with no MCP tool
+	Multipart   bool   // set by restRaw: the body is multipart/form-data
 
 	// constrain, when set, tightens the inferred input schema before the
 	// tool is registered and the OpenAPI document reads it: what a Go
@@ -87,6 +88,18 @@ func restOnly[In, Out any](r *registrar, s spec, fn func(context.Context, In) (O
 	r.specs = append(r.specs, s)
 	if r.rest != nil {
 		r.rest.HandleFunc(s.Method+" "+s.Path, restHandler(r, s, fn))
+	}
+}
+
+// restRaw registers a REST-only route whose handler reads the request
+// itself (a multipart upload). In and Out still describe it, for the
+// OpenAPI document and the docs tests.
+func restRaw[In, Out any](r *registrar, s spec, h http.HandlerFunc) {
+	s.RESTOnly, s.Multipart = true, true
+	s.in, s.out = schemaFor[In](), schemaFor[Out]()
+	r.specs = append(r.specs, s)
+	if r.rest != nil {
+		r.rest.HandleFunc(s.Method+" "+s.Path, h)
 	}
 }
 
