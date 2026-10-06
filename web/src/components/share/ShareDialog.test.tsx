@@ -1,5 +1,6 @@
-import { screen, waitFor } from '@testing-library/react'
+import { act, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { useState } from 'react'
 import { MemoryRouter } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { endpoints, type Widget, type WidgetShare } from '@/lib/api'
@@ -143,5 +144,33 @@ describe('ShareDialog', () => {
       name: /This widget has 2 other links/,
     })
     expect(link).toHaveAttribute('href', '/shares?widget=42')
+  })
+
+  it('shows a fresh form, not the old link, when reopened after closing mid-create', async () => {
+    const user = userEvent.setup()
+    let sent!: (s: WidgetShare) => void
+    vi.spyOn(endpoints, 'createWidgetShare').mockReturnValue(new Promise((r) => (sent = r)))
+    function Harness() {
+      const [open, setOpen] = useState(true)
+      return (
+        <MemoryRouter>
+          <button onClick={() => setOpen(true)}>Reopen</button>
+          <ShareDialog open={open} onOpenChange={setOpen} widget={widget} data={widgets.stat.examples[0].data} share={share} />
+        </MemoryRouter>
+      )
+    }
+    renderWithProviders(<Harness />)
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Create link' })).toBeEnabled())
+    await user.click(screen.getByRole('button', { name: 'Create link' }))
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    await act(async () => sent(created))
+
+    await user.click(screen.getByRole('button', { name: 'Reopen' }))
+    await screen.findByRole('img', { name: 'Preview of the share card' })
+    expect(screen.queryByDisplayValue(created.url)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Create link' })).toBeInTheDocument()
+    // Drawn and captured again for this opening.
+    expect(captureCard).toHaveBeenCalledTimes(2)
   })
 })

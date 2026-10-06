@@ -1,7 +1,8 @@
 import { memo } from 'react'
 import type { Widget, WidgetDataQuery } from '@/lib/api'
+import type { ShareContext } from '@/lib/share'
 import LayoutGrid from './LayoutGrid'
-import WidgetCard, { type ShareContext } from './WidgetCard'
+import WidgetCard from './WidgetCard'
 
 interface Props {
   widgets: Widget[]
@@ -9,7 +10,7 @@ interface Props {
   paramsFor: (widget: Widget) => WidgetDataQuery
   /** Show what is cached, but load nothing (the page is about to change). */
   idle?: boolean
-  /** The project and range to share under; absent with no project or range to share. */
+  /** The project and range to share under; absent with no project to share from. */
   share?: ShareContext
 }
 

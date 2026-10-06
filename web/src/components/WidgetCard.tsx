@@ -15,8 +15,8 @@ import {
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { OffscreenCard } from '@/components/share/OffscreenCard'
 import { ShareDialog } from '@/components/share/ShareDialog'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -24,29 +24,19 @@ import { useNow } from '@/hooks/use-now'
 import { useStoredState } from '@/hooks/use-stored-state'
 import { ApiError, endpoints, type SqlData, type Widget, type WidgetData, type WidgetDataQuery } from '@/lib/api'
 import { captureCard, downloadBlob } from '@/lib/capture'
+import type { ShareContext } from '@/lib/share'
 import { liveFilters, parseView, type Filter, type TableView } from '@/lib/table-view'
 import { formatDuration } from '@/lib/time'
 import { canRefresh, componentOf, isRemoteTable, refreshWidget, viewQuery, widgetQuery } from '@/lib/widget-query'
 import WidgetFrame from './WidgetFrame'
 import WidgetSkeleton from './WidgetSkeleton'
 
-/** What a widget needs to be shared or downloaded: the page's project and range, and whether it may write. */
-export interface ShareContext {
-  projectId: number
-  projectName: string
-  /** The range's first and last day, YYYY-MM-DD. */
-  from: string
-  to: string
-  /** False in reporting dev, which serves only reads: Share… is not offered there, Download PNG is. */
-  writable: boolean
-}
-
 interface Props {
   widget: Widget
   params: WidgetDataQuery
   /** Show what is cached, but ask for nothing (the page is about to change). */
   idle?: boolean
-  /** Absent when there is no project or range to share under: the card has no menu. */
+  /** Absent with no project to share from: the card has no menu. */
   share?: ShareContext
 }
 
@@ -93,13 +83,17 @@ export default function WidgetCard({ widget, params, idle = false, share }: Prop
   // answer is the whole result, whatever its filters.
   const filtered = remote && liveFilters(view, columns).length > 0
 
-  // The card out of sight, for Download PNG: a new one per click (key), gone once captured.
-  const [downloads, setDownloads] = useState(0)
-  const [downloading, setDownloading] = useState(false)
-  const [sharing, setSharing] = useState(false)
   // Only what is on screen can be shared: not a loading card, a failed one or a removed component.
   const drawable = answer?.data != null && !removed
   const shareable = drawable && !query.isError
+  const [sharing, setSharing] = useState(false)
+  // Download PNG draws the card out of sight: a new one per click (the key), gone once captured.
+  const [downloads, setDownloads] = useState(0)
+  const [downloading, setDownloading] = useState(false)
+  useEffect(() => {
+    // The answer went before the card was drawn: nothing left to capture.
+    if (downloading && !drawable) setDownloading(false)
+  }, [downloading, drawable])
   const download = async (node: HTMLDivElement) => {
     try {
       const { image2x } = await captureCard(node)
@@ -125,31 +119,31 @@ export default function WidgetCard({ widget, params, idle = false, share }: Prop
   }
 
   return (
-    <>
-      <WidgetFrame
-        title={widget.title}
-        wideActions={share !== undefined}
-        badge={
-          truncated &&
-          !remote && (
-            <Badge variant="outline" className="min-w-0 shrink text-muted-foreground">
-              <span className="truncate">partial: narrow the range or group the query</span>
-            </Badge>
-          )
-        }
-        actions={
-          (refreshable || share) && (
-            <>
-              {refreshable && answer && query.isError && !viewError && <StaleWarning error={query.error} />}
-              {refreshable && (
-                <RefreshButton
-                  label={`Refresh ${label}`}
-                  data={answer}
-                  busy={query.isFetching}
-                  onRefresh={() => void refreshWidget(client, widget, params, viewArgs).catch(() => {})}
-                />
-              )}
-              {share && (
+    <WidgetFrame
+      title={widget.title}
+      wideActions={share !== undefined}
+      badge={
+        truncated &&
+        !remote && (
+          <Badge variant="outline" className="min-w-0 shrink text-muted-foreground">
+            <span className="truncate">partial: narrow the range or group the query</span>
+          </Badge>
+        )
+      }
+      actions={
+        (refreshable || share) && (
+          <>
+            {refreshable && answer && query.isError && !viewError && <StaleWarning error={query.error} />}
+            {refreshable && (
+              <RefreshButton
+                label={`Refresh ${label}`}
+                data={answer}
+                busy={query.isFetching}
+                onRefresh={() => void refreshWidget(client, widget, params, viewArgs).catch(() => {})}
+              />
+            )}
+            {share && (
+              <>
                 <WidgetMenu
                   canShare={share.writable}
                   disabled={!shareable}
@@ -160,57 +154,58 @@ export default function WidgetCard({ widget, params, idle = false, share }: Prop
                     setDownloading(true)
                   }}
                 />
-              )}
-            </>
-          )
-        }
-      >
-        {removed ? (
-          <CardState icon={<CircleOffIcon />} title="Component removed" />
-        ) : answer ? (
-          // Data already on screen stays there when a later refetch fails.
-          // A remote table filtered to nothing still shows its filters.
-          isEmpty(answer) && !filtered ? (
-            <CardState icon={<InboxIcon />} title={answer.source_type === 'md' ? 'Nothing to show' : 'No data for this range'} />
-          ) : (
-            // A lazy component (the map, markdown) keeps the skeleton up while its code loads.
-            <Suspense fallback={<WidgetSkeleton widget={widget} />}>
-              <Component
-                data={answer.data!}
-                props={widget.props}
-                stateKey={stateKey}
-                view={view}
-                onView={setView}
-                fetchDistinct={remote ? fetchDistinct : undefined}
-                page={remote ? answer.page : undefined}
-                viewError={viewError}
-                reloading={query.isPlaceholderData || (query.isFetching && !!answer)}
-              />
-            </Suspense>
-          )
-        ) : query.isError ? (
-          <FailedState error={query.error} onRetry={() => query.refetch()} />
+                {/* Both draw into portals: they take no room in the corner. */}
+                {share.writable && drawable && (
+                  <ShareDialog open={sharing} onOpenChange={setSharing} widget={widget} data={answer?.data} share={share} />
+                )}
+                {downloading && drawable && (
+                  <OffscreenCard
+                    key={downloads}
+                    component={widget.component ?? ''}
+                    data={answer?.data}
+                    props={widget.props}
+                    title={label}
+                    projectName={share.projectName}
+                    from={share.from}
+                    to={share.to}
+                    onNode={(node) => void download(node)}
+                  />
+                )}
+              </>
+            )}
+          </>
+        )
+      }
+    >
+      {removed ? (
+        <CardState icon={<CircleOffIcon />} title="Component removed" />
+      ) : answer ? (
+        // Data already on screen stays there when a later refetch fails.
+        // A remote table filtered to nothing still shows its filters.
+        isEmpty(answer) && !filtered ? (
+          <CardState icon={<InboxIcon />} title={answer.source_type === 'md' ? 'Nothing to show' : 'No data for this range'} />
         ) : (
-          <WidgetSkeleton widget={widget} />
-        )}
-      </WidgetFrame>
-      {share?.writable && drawable && (
-        <ShareDialog open={sharing} onOpenChange={setSharing} widget={widget} data={answer?.data} share={share} />
+          // A lazy component (the map, markdown) keeps the skeleton up while its code loads.
+          <Suspense fallback={<WidgetSkeleton widget={widget} />}>
+            <Component
+              data={answer.data!}
+              props={widget.props}
+              stateKey={stateKey}
+              view={view}
+              onView={setView}
+              fetchDistinct={remote ? fetchDistinct : undefined}
+              page={remote ? answer.page : undefined}
+              viewError={viewError}
+              reloading={query.isPlaceholderData || (query.isFetching && !!answer)}
+            />
+          </Suspense>
+        )
+      ) : query.isError ? (
+        <FailedState error={query.error} onRetry={() => query.refetch()} />
+      ) : (
+        <WidgetSkeleton widget={widget} />
       )}
-      {share && downloading && drawable && (
-        <OffscreenCard
-          key={downloads}
-          component={widget.component ?? ''}
-          data={answer?.data}
-          props={widget.props}
-          title={label}
-          projectName={share.projectName}
-          from={share.from}
-          to={share.to}
-          onNode={(node) => void download(node)}
-        />
-      )}
-    </>
+    </WidgetFrame>
   )
 }
 

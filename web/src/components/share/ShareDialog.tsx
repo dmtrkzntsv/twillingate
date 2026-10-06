@@ -6,12 +6,11 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import type { ShareContext } from '@/components/WidgetCard'
 import { useWidgetShareActions } from '@/hooks/use-widget-share-actions'
 import type { ArchiveAfter, Widget, WidgetShare } from '@/lib/api'
 import { captureCard } from '@/lib/capture'
 import { widgetSharesQuery } from '@/lib/queries'
-import { DEFAULT_ARCHIVE_AFTER, embedCode } from '@/lib/share'
+import { DEFAULT_ARCHIVE_AFTER, embedCode, type ShareContext } from '@/lib/share'
 import { ArchiveAfterSelect } from './ArchiveAfterSelect'
 import { OffscreenCard } from './OffscreenCard'
 
@@ -83,8 +82,10 @@ export function ShareDialog({ open, onOpenChange, widget, data, share }: Props) 
     form.set('archive_after', archiveAfter)
     form.set('image', png(captured.image))
     form.set('image_2x', png(captured.image2x))
+    const mine = opening.current
     const out = await actions.create(form)
-    if (out) setCreated(out)
+    // Closed while it was sent: the link belongs to an opening that is over.
+    if (out && mine === opening.current) setCreated(out)
   }
 
   const capture = async (node: HTMLDivElement) => {

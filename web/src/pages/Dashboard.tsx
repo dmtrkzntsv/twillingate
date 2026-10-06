@@ -16,12 +16,11 @@ import { useDashboardSelection } from '@/hooks/use-dashboard-selection'
 import { useDevReload } from '@/hooks/use-dev-reload'
 import { useFreshness } from '@/hooks/use-freshness'
 import { useStoredState } from '@/hooks/use-stored-state'
-import type { ShareContext } from '@/components/WidgetCard'
 import type { DashboardDetail, DashboardInfo, DashboardsResponse, DashboardTab } from '@/lib/api'
 import { moveTabBody } from '@/lib/arrange'
 import { rememberDashboard } from '@/lib/last-dashboard'
 import { dashboardQuery, dashboardsQuery, projectsQuery } from '@/lib/queries'
-import { resolve } from '@/lib/ranges'
+import type { ShareContext } from '@/lib/share'
 import { refreshWidget, shownViews } from '@/lib/widget-query'
 
 /** `/dashboards/:id`: one dashboard in the app shell, as a report tab or a page of its own (D36). */
@@ -83,7 +82,7 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
   const client = useQueryClient()
   const projects = useQuery({ ...projectsQuery, enabled: dashboard.follows_project })
   const all = projects.data?.projects ?? []
-  const { sel, switchers, paramsFor, change, openTab } = useDashboardSelection(dashboard, all, list.timezone, frozen)
+  const { sel, switchers, range, paramsFor, change, openTab } = useDashboardSelection(dashboard, all, list.timezone, frozen)
 
   const waiting = switchers.project && !projects.data
   const noProjects = switchers.project && projects.data !== undefined && all.every((p) => p.archived)
@@ -95,19 +94,12 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
   // writes there: every one of them would answer 405.
   const writable = !list.dev
   // What a card needs to be shared or downloaded: the project and range
-  // shown. Without both there is nothing to say the picture is of.
-  const range = sel.range
-    ? resolve(sel.range, list.timezone, new Date(), sel.from && sel.to ? { from: sel.from, to: sel.to } : undefined)
-    : undefined
+  // shown. With no project there is nothing to say the picture is of.
   const project = all.find((p) => p.project_id === sel.projectId)
-  const shareFrom = range?.from
-  const shareTo = range?.to
+  const { from, to } = range
   const share = useMemo<ShareContext | undefined>(
-    () =>
-      project && shareFrom && shareTo
-        ? { projectId: project.project_id, projectName: project.name, from: shareFrom, to: shareTo, writable }
-        : undefined,
-    [project, shareFrom, shareTo, writable]
+    () => (project ? { projectId: project.project_id, projectName: project.name, from, to, writable } : undefined),
+    [project, from, to, writable]
   )
   // Only a live user dashboard's group is arranged from the page (D11,
   // D14), and never while frozen: the dashboard on screen is being left.

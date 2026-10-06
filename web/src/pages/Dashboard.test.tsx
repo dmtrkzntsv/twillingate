@@ -165,6 +165,23 @@ describe('Dashboard', () => {
     expect(screen.getByRole('button', { name: 'Tab actions' })).toBeInTheDocument()
   })
 
+  it('still offers Share… and Download PNG on a dashboard with a project but no range switcher', async () => {
+    const user = userEvent.setup()
+    const widgetData = mockApi()
+    const noRange = { ...product, follows_range: false, widgets: product.widgets.map((w) => ({ ...w, follows_range: false })) }
+    vi.spyOn(endpoints, 'dashboard').mockResolvedValue(noRange)
+    renderAt('/dashboards/2')
+
+    expect(await screen.findByRole('button', { name: /^Project/ })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Range/ })).not.toBeInTheDocument()
+    await waitFor(() => expect(widgetData).toHaveBeenCalled())
+    // The widgets are not asked for a range they do not follow.
+    for (const call of widgetData.mock.calls) expect(call[1]).not.toHaveProperty('from')
+    await user.click((await screen.findAllByRole('button', { name: 'Widget actions' }))[0])
+    expect(await screen.findByRole('menuitem', { name: 'Share…' })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: 'Download PNG' })).toBeInTheDocument()
+  })
+
   it('shows a tablist for a two-tab user group, its tabs sortable', async () => {
     mockApi()
     renderAt('/dashboards/13')

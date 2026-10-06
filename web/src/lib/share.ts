@@ -1,5 +1,16 @@
 import type { ArchiveAfter, WidgetShare } from './api'
 
+/** What a widget needs to be shared or downloaded: the page's project and range, and whether it may write. */
+export interface ShareContext {
+  projectId: number
+  projectName: string
+  /** The range's first and last day, YYYY-MM-DD. */
+  from: string
+  to: string
+  /** False in reporting dev, which serves only reads: Share… is not offered there, Download PNG is. */
+  writable: boolean
+}
+
 /** The archive-after choices, in the order the pickers list them. */
 export const ARCHIVE_AFTER: { value: ArchiveAfter; label: string }[] = [
   { value: '7d', label: '1 week' },
