@@ -381,6 +381,53 @@ describe('Project tabs', () => {
     await vi.waitFor(() => expect(location()).toBe('/projects/7/dashboards/1?range=7d'))
   })
 
+  it('moves your own tab right or left from its menu on a phone, naming the tab it goes after', async () => {
+    const width = window.innerWidth
+    window.innerWidth = 390
+    try {
+      const user = userEvent.setup()
+      const ours: ProjectTab = { dashboard_id: 21, title: 'Ours', owner: 'user', group_id: 21 }
+      vi.mocked(endpoints.projectTabs).mockResolvedValue({ tabs: [...tabs, ours] })
+      const move = vi.spyOn(endpoints, 'moveProjectTab').mockResolvedValue({ tabs: [tabs[0], tabs[1], ours, tabs[2]] })
+      renderAt('/projects/7/dashboards/20')
+      await screen.findByRole('heading', { name: 'Mine', level: 1 })
+
+      await user.click(screen.getByRole('button', { name: 'Tab actions' }))
+      expect(screen.getByRole('menuitem', { name: 'Move left' })).toHaveAttribute('data-disabled')
+      await user.click(screen.getByRole('menuitem', { name: 'Move right' }))
+      expect(move).toHaveBeenCalledWith(7, 20, 21)
+      await vi.waitFor(() =>
+        expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Setup', 'Views', 'Product', 'Ours', 'Mine'])
+      )
+
+      move.mockResolvedValue({ tabs: [...tabs, ours] })
+      await user.click(screen.getByRole('button', { name: 'Tab actions' }))
+      expect(screen.getByRole('menuitem', { name: 'Move right' })).toHaveAttribute('data-disabled')
+      await user.click(screen.getByRole('menuitem', { name: 'Move left' }))
+      expect(move).toHaveBeenLastCalledWith(7, 20, 0)
+      await vi.waitFor(() =>
+        expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Setup', 'Views', 'Product', 'Mine', 'Ours'])
+      )
+    } finally {
+      window.innerWidth = width
+    }
+  })
+
+  it('offers no move on a built-in tab', async () => {
+    const width = window.innerWidth
+    window.innerWidth = 390
+    try {
+      const user = userEvent.setup()
+      renderAt('/projects/7/dashboards/2')
+      await screen.findByRole('heading', { name: 'Product', level: 1 })
+      await user.click(screen.getByRole('button', { name: 'Tab actions' }))
+      expect(screen.queryByRole('menuitem', { name: 'Move left' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('menuitem', { name: 'Move right' })).not.toBeInTheDocument()
+    } finally {
+      window.innerWidth = width
+    }
+  })
+
   it('in reporting dev, which serves no project tabs, asks for none and offers no tab writes', async () => {
     vi.mocked(endpoints.dashboards).mockResolvedValue(dashboardsList({ dev: true }))
     vi.mocked(endpoints.projectTabs).mockRejectedValue(new ApiError(404, 'not found'))

@@ -35,6 +35,13 @@ test('a project opens on Setup with the built-in tabs beside it; tabs are remove
   const title = `E2E project tab ${Date.now()}`
   const renamed = await request.patch(`/api/dashboards/${mineId}`, { headers, data: { title } })
   expect(renamed.ok(), await renamed.text()).toBeTruthy()
+  // A second one, to reorder against the first.
+  const copy2 = await request.post('/api/dashboards/1/duplicate', { headers, data: {} })
+  expect(copy2.ok(), await copy2.text()).toBeTruthy()
+  const { dashboard_id: secondId } = (await copy2.json()) as { dashboard_id: number }
+  const second = `${title} second`
+  const renamed2 = await request.patch(`/api/dashboards/${secondId}`, { headers, data: { title: second } })
+  expect(renamed2.ok(), await renamed2.text()).toBeTruthy()
 
   await login(page)
   await page.getByRole('article', { name: 'dev' }).getByRole('link', { name: 'dev' }).click()
@@ -68,6 +75,25 @@ test('a project opens on Setup with the built-in tabs beside it; tabs are remove
   await page.getByRole('dialog').getByRole('group', { name: 'Your dashboards' }).getByRole('button', { name: title, exact: true }).click()
   await expect(tabs.getByRole('tab')).toHaveText(['Setup', ...BUILT_INS, title])
   await expect(page.getByRole('heading', { level: 1, name: title, exact: true })).toBeVisible()
+
+  // Your own tabs reorder; a phone does it from the tab's menu (a wide
+  // screen drags), and the new order is the project's, after a reload too.
+  await page.getByRole('button', { name: 'Add tab' }).click()
+  await page.getByRole('dialog').getByRole('group', { name: 'Your dashboards' }).getByRole('button', { name: second, exact: true }).click()
+  await expect(tabs.getByRole('tab')).toHaveText(['Setup', ...BUILT_INS, title, second])
+  await expect(page.getByRole('heading', { level: 1, name: second, exact: true })).toBeVisible()
+  await page.setViewportSize({ width: 390, height: 800 })
+  await page.getByRole('button', { name: 'Tab actions' }).click()
+  await page.getByRole('menuitem', { name: 'Move left' }).click()
+  await page.setViewportSize({ width: 1280, height: 800 })
+  await expect(tabs.getByRole('tab')).toHaveText(['Setup', ...BUILT_INS, second, title])
+  await page.reload()
+  await expect(tabs.getByRole('tab')).toHaveText(['Setup', ...BUILT_INS, second, title])
+  // Back to one tab of our own for the rest of the flow.
+  await page.getByRole('button', { name: 'Tab actions' }).click()
+  await page.getByRole('menuitem', { name: 'Remove from this project' }).click()
+  await expect(page.getByText(`Removed '${second}'`)).toBeVisible()
+  await expect(tabs.getByRole('tab')).toHaveText(['Setup', ...BUILT_INS, title])
 
   await tabs.getByRole('tab', { name: 'Setup', exact: true }).click()
   await expect(page).toHaveURL(/\/setup$/)
@@ -106,9 +132,12 @@ test('a project opens on Setup with the built-in tabs beside it; tabs are remove
   await page.getByRole('article', { name: 'dev' }).getByRole('link', { name: 'dev' }).click()
   await expect(tabs.getByRole('tab')).toHaveText(['Setup', ...BUILT_INS, title])
 
-  // Archiving our own dashboard takes its tab away.
+  // Archiving our own dashboard takes its tab away. The second goes too:
+  // arrange.spec.ts expects no dashboards of ours left in the sidebar.
   const archived = await request.post(`/api/dashboards/${mineId}/archive`, { headers, data: {} })
   expect(archived.ok(), await archived.text()).toBeTruthy()
+  const archived2 = await request.post(`/api/dashboards/${secondId}/archive`, { headers, data: {} })
+  expect(archived2.ok(), await archived2.text()).toBeTruthy()
   await page.reload()
   await expect(tabs.getByRole('tab', { name: 'Setup', exact: true })).toBeVisible()
   await expect(tabs.getByRole('tab', { name: title, exact: true })).toHaveCount(0)
