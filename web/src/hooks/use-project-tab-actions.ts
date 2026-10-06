@@ -18,9 +18,10 @@ export interface ProjectTabActions {
  * The actions the project page and its "Project tabs…" dialog write a
  * project's tabs with. Each is the existing audited route and answers with
  * the page's tabs after the call, which go straight into the
- * `['project-tabs', id]` cache; the dashboards' `project_ids` are
- * refetched. A refusal shows its message in a toast and resolves false, as
- * does a dropped connection, so callers never see a rejection.
+ * `['project-tabs', id]` cache (any fetch of it in flight cancelled); the
+ * dashboards' `project_ids` are refetched. A refusal shows its message in
+ * a toast and resolves false, as does a dropped connection, so callers
+ * never see a rejection.
  */
 export function useProjectTabActions(): ProjectTabActions {
   const queryClient = useQueryClient()
@@ -31,6 +32,9 @@ export function useProjectTabActions(): ProjectTabActions {
       setPending(true)
       try {
         const { tabs } = await fn()
+        // A fetch of the tabs begun before the write would answer with the
+        // old list after this one and put a removed tab back.
+        await queryClient.cancelQueries({ queryKey: ['project-tabs', projectId] })
         queryClient.setQueryData(['project-tabs', projectId], { tabs })
         void queryClient.invalidateQueries({ queryKey: ['dashboard'] })
         return true

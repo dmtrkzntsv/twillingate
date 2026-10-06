@@ -98,6 +98,22 @@ describe('useProjectTabActions', () => {
     expect(client.getQueryData(['project-tabs', 7])).toEqual({ tabs })
   })
 
+  it('a fetch of the tabs still in flight when the answer comes cannot put a removed tab back', async () => {
+    let answerStale!: (v: { tabs: ProjectTab[] }) => void
+    const stale = client.fetchQuery({
+      queryKey: ['project-tabs', 7],
+      queryFn: () => new Promise<{ tabs: ProjectTab[] }>((resolve) => (answerStale = resolve)),
+    })
+    vi.mocked(endpoints.removeProjectTab).mockResolvedValue({ tabs: tabs.slice(0, 1) })
+    const { result } = renderHook(() => useProjectTabActions(), { wrapper })
+
+    await expect(act(() => result.current.remove(7, { dashboard_id: 13, title: 'Marketing' }))).resolves.toBe(true)
+    answerStale({ tabs })
+    await stale.catch(() => undefined)
+
+    expect(client.getQueryData(['project-tabs', 7])).toEqual({ tabs: tabs.slice(0, 1) })
+  })
+
   it('a refused remove shows no Removed toast', async () => {
     vi.mocked(endpoints.removeProjectTab).mockRejectedValue(new ApiError(400, 'would be unreachable'))
     const { result } = renderHook(() => useProjectTabActions(), { wrapper })
