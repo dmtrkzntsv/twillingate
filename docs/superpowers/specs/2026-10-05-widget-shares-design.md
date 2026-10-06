@@ -109,7 +109,9 @@ out of scope.
   - a preview of the card and a **Create link** button,
   - after creation: **Copy link** and **Copy embed code**,
   - this widget's existing shares, newest first, each with its range, its
-    creation date, its opens (D7) and **Delete** (with confirmation).
+    creation date, its opens (D7) and **Delete** (with confirmation). On
+    the widget's last link, the confirmation says that the widget's share
+    analytics are deleted with it.
 
   The dialog follows the web rules: buttons get the pointer cursor from
   `index.css`, and it does not scroll sideways at 360px.
@@ -152,11 +154,21 @@ out of scope.
   copied at capture, and so is `project_name`: the page shows what the
   picture shows, even after a rename.
 
-  Deleting a widget's last share keeps its share project, so the
-  history survives. The daily pass's purge of the widget removes the
-  `widget_share_projects` row and archives the project in the same
-  transaction, and the normal `RETENTION_ARCHIVED_DAYS` purge then deletes
-  it and its data.
+  **A share project lives exactly as long as its widget has shares.**
+  Deleting a widget's last share deletes its share project in the same
+  transaction: the project row, its key, its events and aggregates
+  (through the store's `deleteProject`, the one the CLI's project delete
+  and the retention purge use), and the `widget_share_projects` row. The
+  audit row is `project.delete` with actor `share`. The registry is then
+  reloaded, so the collector refuses the key at once. Shares are hard
+  deleted, so their analytics have nothing to outlive. The daily pass's
+  purge of a long-archived widget does the same for its shares and their
+  project, in one transaction per widget.
+
+  Events still in the write buffer for a deleted project (up to one
+  flush, 10s) are a case the CLI's project delete already has. The plan
+  checks what the flush does with them and makes sure no orphan rows are
+  left.
 
 - **D6. Console operations.** In `internal/reporting` (`ops_share.go`),
   exposed by `internal/api/ops_reporting.go`:
@@ -165,7 +177,7 @@ out of scope.
   | --- | --- | --- | --- |
   | Create | none | `POST /api/widgets/{widget_id}/shares` | `multipart/form-data`: `image` (the PNG), `project_id`, `from`, `to`. REST only, since an agent has no browser to capture with. Answers 201 with `{id, url, image_url, ...}` |
   | List | `list_shares` | `GET /api/shares?widget_id=` | `widget_id` optional; every share without it. Each row: `id`, `url`, `image_url`, `widget_id`, `project_id`, `from`, `to`, `title`, `created_at`, `opens`, `analytics_url` |
-  | Delete | `delete_share` | `DELETE /api/shares/{id}` | Hard delete. Answers 204 |
+  | Delete | `delete_share` | `DELETE /api/shares/{id}` | Hard delete. If it was the widget's last share, its share project and that project's data go with it (D5). Answers 204 |
 
   Create validates and refuses with typed errors:
   - The widget is unknown or archived: `ErrNotFound`.
@@ -225,8 +237,8 @@ out of scope.
 
   **The operator can turn counting off.** `SHARE_ANALYTICS=off` (env, read
   in `internal/config`; default `on`). The page loads no script, and Create
-  makes no project. Existing share projects keep their data, and are
-  archived and purged by the daily pass as usual.
+  makes no project. Existing share projects keep their data until their
+  widget's last share is deleted, as usual.
 
   **Opens in the dialog** are the share project's page views, per link:
   the views of path `/share/<id>`, from the share's creation to today,
@@ -272,10 +284,13 @@ out of scope.
 
 ## Tests
 
-- **Store.** Insert, get, list by widget, delete. The cascade from a hard
-  widget delete. `InsertShare` creates the project, key, link row and
-  audit rows once per widget, and rolls all of it back when the share
-  fails. The purge of a widget archives its share project.
+- **Store.** Insert, get, list by widget, delete. `InsertShare` creates
+  the project, key, link row and audit rows once per widget, and rolls
+  all of it back when the share fails. Deleting a share that isn't the
+  widget's last keeps the project. Deleting the last one deletes the
+  project, its key, events and aggregates and the link row, in one
+  transaction. Purging an archived widget does the same. No orphan rows
+  are left by events buffered for a deleted share project.
 - **Reporting.** Each refusal in D6. A second share of a widget reuses
   its project, and two widgets get two projects. The registry is reloaded,
   so an event sent with the new key is accepted. `SHARE_ANALYTICS=off`
