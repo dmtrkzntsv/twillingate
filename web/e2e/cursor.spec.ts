@@ -70,4 +70,20 @@ test('every link and button shows the pointer', async ({ page, request }) => {
     await expect(page.locator('main, [data-slot="sidebar-inset"]').first()).toBeVisible()
     expect(await withoutPointer(page), path).toEqual([])
   }
+
+  // The Share dialog's controls, before and after the link is made (Copy link, Copy embed code, Open).
+  await page.goto('/app/dashboards/1')
+  await page.waitForLoadState('networkidle')
+  const card = page.locator('[data-slot="widget-card"]').first()
+  await card.hover()
+  await card.getByRole('button', { name: 'Widget actions' }).click()
+  await expect(page.getByRole('menuitem', { name: 'Share…' })).toBeEnabled()
+  expect(await withoutPointer(page), 'widget menu').toEqual([])
+  await page.getByRole('menuitem', { name: 'Share…' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Share widget' })
+  await expect(dialog.getByRole('button', { name: 'Create link' })).toBeEnabled({ timeout: 30_000 })
+  expect(await withoutPointer(page), 'Share dialog').toEqual([])
+  await dialog.getByRole('button', { name: 'Create link' }).click()
+  await expect(dialog.getByRole('link', { name: 'Open' })).toBeVisible()
+  expect(await withoutPointer(page), 'Share dialog, link made').toEqual([])
 })

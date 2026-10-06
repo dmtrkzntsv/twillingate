@@ -56,9 +56,14 @@ async function clipped(page: Page, text: RegExp, within: string): Promise<string
   return page.evaluate(
     ({ source, flags, within }) => {
       const re = new RegExp(source, flags)
-      // Only inside the list item that holds `within`: another spec's rows are not this one's.
+      // The innermost element whose text matches (a line may hold a span, as
+      // the purge date does), only inside the list item that holds `within`:
+      // another spec's rows are not this one's.
       const el = Array.from(document.querySelectorAll<HTMLElement>('li *')).find(
-        (e) => e.children.length === 0 && re.test(e.textContent ?? '') && e.closest('li')?.textContent?.includes(within)
+        (e) =>
+          re.test(e.textContent ?? '') &&
+          !Array.from(e.children).some((c) => re.test(c.textContent ?? '')) &&
+          e.closest('li')?.textContent?.includes(within)
       )
       if (!el) return ['not on the page']
       const out: string[] = []
@@ -75,6 +80,25 @@ async function clipped(page: Page, text: RegExp, within: string): Promise<string
     },
     { source: text.source, flags: text.flags, within }
   )
+}
+
+/**
+ * What of an open dialog does not fit the viewport: the dialog's own box past
+ * an edge, or content wider than it. A dialog is fixed, so the page's own
+ * scroll width never shows it.
+ */
+async function dialogOverflow(page: Page): Promise<string[]> {
+  return page.evaluate(() => {
+    const out: string[] = []
+    const vw = document.documentElement.clientWidth
+    for (const d of Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"]'))) {
+      const r = d.getBoundingClientRect()
+      const name = d.getAttribute('aria-label') ?? d.querySelector('h2')?.textContent ?? 'dialog'
+      if (r.left < -0.5 || r.right > vw + 0.5) out.push(`"${name}": ${r.left}..${r.right} in ${vw}px`)
+      if (d.scrollWidth > d.clientWidth + 1) out.push(`"${name}": ${d.scrollWidth}px of content in ${d.clientWidth}px`)
+    }
+    return out
+  })
 }
 
 /** A week ending today, as the YYYY-MM-DD range a share is made over. */
@@ -163,6 +187,35 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
   const archivedRow = page.getByRole('listitem').filter({ hasText: stamp })
   await expect(archivedRow.getByText(/^archived · deleted on /)).toBeVisible()
   expect(await clipped(page, /^archived · deleted on /, stamp), 'archived share status').toEqual([])
+
+  // Its Restore dialog fits the phone.
+  await archivedRow.getByRole('button', { name: 'Restore' }).click()
+  const restore = page.getByRole('dialog', { name: 'Restore share' })
+  await expect(restore.getByLabel('Archive after')).toBeVisible()
+  expect(await sidewaysScroll(page), 'Restore share dialog').toEqual([])
+  expect(await dialogOverflow(page), 'Restore share dialog').toEqual([])
+  await page.keyboard.press('Escape')
+  await expect(restore).toHaveCount(0)
+
+  // The Share dialog, from the first widget of dashboard 1: with its preview,
+  // then with the link and embed code it makes.
+  await page.goto('/app/dashboards/1')
+  await page.waitForLoadState('networkidle')
+  const card = page.locator('[data-slot="widget-card"]').first()
+  await card.hover()
+  await card.getByRole('button', { name: 'Widget actions' }).click()
+  await expect(page.getByRole('menuitem', { name: 'Share…' })).toBeEnabled()
+  await page.getByRole('menuitem', { name: 'Share…' }).click()
+  const shareDialog = page.getByRole('dialog', { name: 'Share widget' })
+  await expect(shareDialog.getByRole('img', { name: 'Preview of the share card' })).toBeVisible({ timeout: 30_000 })
+  expect(await sidewaysScroll(page), 'Share dialog').toEqual([])
+  expect(await dialogOverflow(page), 'Share dialog').toEqual([])
+  await shareDialog.getByRole('button', { name: 'Create link' }).click()
+  await expect(shareDialog.getByRole('textbox', { name: 'Embed code' })).toBeVisible()
+  expect(await sidewaysScroll(page), 'Share dialog, link made').toEqual([])
+  expect(await dialogOverflow(page), 'Share dialog, link made').toEqual([])
+  await page.keyboard.press('Escape')
+  await expect(shareDialog).toHaveCount(0)
 
   // The archived projects' grid, opened.
   const archived = await request.post(`/api/projects/${id}/archive`, { headers: authHeaders() })
