@@ -12,13 +12,14 @@ const BASE_URL = `http://127.0.0.1:${PORT}`
  * e2e/arrange.spec.ts hides the whole system group 1 (Reports) from the
  * sidebar and shows it again as part of its flow, which every other spec
  * file assumes stays in the sidebar throughout (app.spec.ts's "Reports
- * renders" tests, for one). With `fullyParallel`, those files run concurrently against this one shared
- * server, so a mid-run hide would make them flaky. The `arrange`
- * project depends on `chromium` finishing first — Playwright runs a
- * dependency project to completion before starting the dependent one, even
- * under `fullyParallel` — so arrange.spec.ts only runs once nothing else
- * is touching the server; `chromium` excludes it via `testIgnore` so it is
- * not also run there. `npm run e2e` still exercises both projects.
+ * renders" tests, for one). With `fullyParallel`, those files run
+ * concurrently against this one shared server, so a mid-run hide would
+ * make them flaky. The `arrange` project depends on `chromium` finishing
+ * first — Playwright runs a dependency project to completion before
+ * starting the dependent one, even under `fullyParallel` — so
+ * arrange.spec.ts only runs once nothing else is touching the server;
+ * `chromium` excludes it via `testIgnore` so it is not also run there.
+ * `npm run e2e` still exercises both projects.
  */
 export default defineConfig({
   testDir: './e2e',

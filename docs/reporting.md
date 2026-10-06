@@ -901,13 +901,14 @@ Archiving is how to undo, and the only way to remove anything:
   gallery lists each system group as a template, laid out as on the
   Archive page: a card per group with a row per tab. A hidden one is
   marked "hidden", and its "…" menu offers "Show in sidebar"
-  (`update_dashboard` with `sidebar: true`); every group's "…" menu duplicates the whole group, and a
-  tab's copies that tab to a new dashboard. On any
-  dashboard, the "…" menu at the top right of the tab bar acts on the whole
-  dashboard ("Duplicate dashboard", `whole_group`), and the one beside the
-  title on that tab: "Duplicate tab" adds its copy as the next tab
-  (`group_id` its own group), "Copy to new dashboard" makes it a dashboard
-  of its own (no `group_id`); a system tab offers only the latter.
+  (`update_dashboard` with `sidebar: true`); every group's "…" menu
+  duplicates the whole group, and a tab's copies that tab to a new
+  dashboard. On any dashboard, the "…" menu at the top right of the tab
+  bar acts on the whole dashboard ("Duplicate dashboard", `whole_group`),
+  and the one beside the title on that tab: "Duplicate tab" adds its copy
+  as the next tab (`group_id` its own group), "Copy to new dashboard"
+  makes it a dashboard of its own (no `group_id`); a system tab offers
+  only the latter.
 - `archive_dashboard` and `restore_dashboard` refuse a system dashboard,
   with or without `whole_group`; system widgets cannot be archived.
 
@@ -952,7 +953,8 @@ widget's name (`widget visitors: …`), and nothing is created.
 | dashboard 1 is a system dashboard and changes only with a release; duplicate_dashboard makes an editable copy | `duplicate_dashboard`, then change the copy. |
 | dashboard 1 is a built-in dashboard and is never archived; update_dashboard {sidebar: false} takes its group out of the sidebar | `archive_dashboard` and `restore_dashboard` take user dashboards only. Hide a system group with `update_dashboard` `{sidebar: false}`, show it with `{sidebar: true}`. |
 | dashboard 1001 would be unreachable: not in the sidebar and on no project's tabs; add it to a project first, or archive it | A user dashboard must stay in the sidebar or on a project's page: `add_project_tab` first, or `archive_dashboard` it. |
-| group 1001 is hidden from the sidebar; add dashboard 1002 to a project first, or show the group | Joining a group out of the sidebar needs a project tab: `add_project_tab` first, or `update_dashboard` the group with `sidebar: true`. A new dashboard or a copy has none, so it cannot be created as a tab of such a group. |
+| group 1001 is hidden from the sidebar; add dashboard 1002 to a project first, or show the group | Joining a group out of the sidebar needs a project tab: `add_project_tab` first, or `update_dashboard` the group with `sidebar: true`. |
+| group 1001 is hidden from the sidebar, and a new dashboard is on no project's tabs; show the group first | `create_dashboard` or `duplicate_dashboard` with the `group_id` of a group out of the sidebar: `update_dashboard` the group with `sidebar: true` first, or leave `group_id` out and move the new dashboard in once it is on a project's tabs. |
 | sidebar and project_tab go on their own; give title, after or group_id in another call | Send `sidebar` and `project_tab` without `title`, `after` or `group_id`. |
 | project_tab of a built-in dashboard is the release's | A system dashboard's `project_tab` ships with the release; `add_project_tab` and `remove_project_tab` change one project's page. |
 | project 1 already has dashboard 1001 as a tab (`409 conflict`) | It is there already; `list_project_tabs` lists the page. |
