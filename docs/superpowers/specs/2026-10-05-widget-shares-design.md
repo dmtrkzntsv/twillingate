@@ -114,7 +114,7 @@ out of scope.
   The dialog follows the web rules: buttons get the pointer cursor from
   `index.css`, and it does not scroll sideways at 360px.
 
-- **D5. Table `shares`, migration 032.**
+- **D5. Migration 032: table `shares`, share projects.**
 
   ```sql
   CREATE TABLE shares (
@@ -131,7 +131,19 @@ out of scope.
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
   CREATE INDEX idx_shares_widget ON shares(widget_id);
+
+  ALTER TABLE projects ADD COLUMN kind TEXT NOT NULL DEFAULT 'regular';
+
+  CREATE TABLE widget_share_projects (
+      widget_id  INTEGER PRIMARY KEY REFERENCES widgets(id) ON DELETE CASCADE,
+      project_id INTEGER NOT NULL UNIQUE REFERENCES projects(id)
+  );
   ```
+
+  `shares.project_id` is the project the chart shows. The share project
+  that counts its opens (D7) is found through `widget_share_projects`.
+  `kind` is `regular` or `share`, with no `CHECK`, since the database does
+  no validation: `manage` writes it and nothing else does.
 
   `project_id` has no foreign key: the picture outlives a deleted
   project, as a post does. Archiving a widget, dashboard or project
@@ -140,13 +152,19 @@ out of scope.
   copied at capture, and so is `project_name`: the page shows what the
   picture shows, even after a rename.
 
+  Deleting a widget's last share keeps its share project, so the
+  history survives. The daily pass's purge of the widget removes the
+  `widget_share_projects` row and archives the project in the same
+  transaction, and the normal `RETENTION_ARCHIVED_DAYS` purge then deletes
+  it and its data.
+
 - **D6. Console operations.** In `internal/reporting` (`ops_share.go`),
   exposed by `internal/api/ops_reporting.go`:
 
   | Operation | MCP tool | REST | Notes |
   | --- | --- | --- | --- |
   | Create | none | `POST /api/widgets/{widget_id}/shares` | `multipart/form-data`: `image` (the PNG), `project_id`, `from`, `to`. REST only, since an agent has no browser to capture with. Answers 201 with `{id, url, image_url, ...}` |
-  | List | `list_shares` | `GET /api/shares?widget_id=` | `widget_id` optional; every share without it. Each row: `id`, `url`, `image_url`, `widget_id`, `project_id`, `from`, `to`, `title`, `created_at`, `opens` |
+  | List | `list_shares` | `GET /api/shares?widget_id=` | `widget_id` optional; every share without it. Each row: `id`, `url`, `image_url`, `widget_id`, `project_id`, `from`, `to`, `title`, `created_at`, `opens`, `analytics_url` |
   | Delete | `delete_share` | `DELETE /api/shares/{id}` | Hard delete. Answers 204 |
 
   Create validates and refuses with typed errors:
@@ -161,9 +179,9 @@ out of scope.
   Only the stdlib decodes the PNG; there is no new Go dependency. Create
   and delete each write an audit row, as other console writes do.
 
-- **D7. Opens are page views sent by `twillingate.js` to a share project.**
-  The share page loads the collector's own SDK, cross-origin, as any site
-  does:
+- **D7. Opens are page views sent by `twillingate.js` to the widget's own
+  share project.** The share page loads the collector's own SDK,
+  cross-origin, as any site does:
 
   ```html
   <script defer src="PUBLIC_URL/js/twillingate.js" data-key="<key>"></script>
@@ -176,55 +194,97 @@ out of scope.
   `IsBot` check drops the rest, so preview fetches do not count. An
   `<img>` embed runs no script: it counts only when someone clicks
   through. A visitor whose blocker drops the script still sees the share;
-  only their open goes uncounted. The views dashboards, filtered to the share project, serve as
-  the share analytics, and need no new reporting code.
+  only their open goes uncounted.
 
-  **Which project.** The share project's id is the `meta` row
-  `share_project_id`.
-  - **Created automatically by the first share.** If the row is absent,
-    Create (D6) makes a project named `Shares` with
-    `allowed_origins = [<CONSOLE_URL's origin>]`, issues it an ingest key
-    labelled `shares`, and writes the row. All of this runs in the same
-    transaction as the first share.
-  - **The operator can change it.** `SHARE_PROJECT_ID` (env, read in
-    `internal/config`) names an existing project and, when set, is written
-    to the row at start-up, as the caps are (`internal/app/app.go:97-108`).
-    `SHARE_PROJECT_ID=0` turns counting off: the page loads no script and
-    nothing is created. Unset leaves the row as it is.
-  - The operator owns that project's `allowed_origins`. If they point
-    `SHARE_PROJECT_ID` at a project, they must add `CONSOLE_URL`'s origin
-    to it, and `docs/deployment.md` says so.
+  **One project per shared widget, not per link and not one for all.** A
+  dashboard takes three parameters, `:project`, `:from` and `:to`
+  (`internal/reporting/source.go:127`). A project per widget is what lets
+  the built-in Views dashboard serve as a widget's share analytics
+  unchanged: its top pages list the widget's links side by side, and its
+  sources, countries, browsers and visitors need no new code. One project
+  for all shares would need a path filter added to every views widget
+  instead.
 
-  **The page picks its key** as the share project's first active ingest
-  key, by label. If the project is archived or has no active key, the page
-  loads no script and the server logs one warning per process.
+  **Created by the widget's first share,** in the same transaction:
+  - a project with `kind = 'share'`, named `Share: <widget title>`
+    (`#<widget id>` appended if the name is taken), with
+    `allowed_origins = [<CONSOLE_URL's origin>]`,
+  - its ingest key, labelled `share`,
+  - the `widget_share_projects` row,
+  - the audit rows, as the console's project operations write them.
 
-  **Opens in the dialog** are the share project's page views whose path
-  is `/share/<id>`. They are counted from the share's creation to today,
+  Later shares of the widget reuse all of it. A store method does the
+  whole transaction (`InsertShare`), since `reporting` and `manage` share
+  a rank and cannot import each other. `reporting` then reloads the
+  registry through an interface `app` satisfies with
+  `manage.Registry.Reload`, so the collector accepts the new key at once.
+
+  **The page picks its key** as the share project's first active key, by
+  label. If the project is archived or has no active key, the page loads
+  no script and the server logs one warning per process.
+
+  **The operator can turn counting off.** `SHARE_ANALYTICS=off` (env, read
+  in `internal/config`; default `on`). The page loads no script, and Create
+  makes no project. Existing share projects keep their data, and are
+  archived and purged by the daily pass as usual.
+
+  **Opens in the dialog** are the share project's page views, per link:
+  the views of path `/share/<id>`, from the share's creation to today,
   capped at the last 365 days, through the same views the dashboards
   read. `list_shares` returns the number as `opens`, or `null` when
   counting is off.
 
+- **D8. Share projects stay out of the project lists, and count as usage.**
+  - **Hidden** from the project switcher, the Projects page, `list_projects`
+    and `twillingate project list`. Each of these lists only `regular`
+    projects unless asked for share projects with `list_projects {kind:
+    "share"}`, `GET /api/projects?kind=share` or
+    `project list -kind share`. `update_project`, `archive_project` and
+    the key operations refuse a share project with `ErrInvalid`: share
+    projects are managed only through their widget.
+  - **Counted.** Their events are real rows that the server stores and
+    aggregates, so they count toward `usage`, `limits` and `cap_usage`, and
+    so toward a hosted plan's monthly events. Those surfaces show them as
+    one `Shares` line, the sum over every share project, rather than one
+    row per widget. A viral share is then visible without cluttering the
+    list.
+  - **The analytics view.** The Share dialog's **View analytics** opens
+    `analytics_url`, the Views dashboard at
+    `?project=<share project>&range=…`. On a share project, the dashboard
+    page shows only the Views tab, since Product, Retention and the rest
+    mean nothing for a share. The page heading shows `Share: <widget
+    title>` in place of the project switcher, and the range switcher
+    works as usual.
+
 ## Docs
 
-- `docs/reporting.md`: the Share dialog, Download PNG, and the
-  `list_shares` and `delete_share` tools with their REST routes.
+- `docs/reporting.md`: the Share dialog, Download PNG, View analytics, and
+  the `list_shares` and `delete_share` tools with their REST routes.
 - `docs/twillingate.md`: the `/share/` routes in the `serve -console` row, as
-  the console's one unauthenticated content.
-- `docs/deployment.md`: `SHARE_PROJECT_ID`, the auto-created `Shares`
-  project, and the Caddy example that exposes only `/share/*` of a private
+  the console's one unauthenticated content. Project `kind`, the `kind`
+  argument of `list_projects` and `project list`, and the refusals for
+  share projects. The `Shares` line in `usage`, `limits` and `cap_usage`.
+- `docs/deployment.md`: `SHARE_ANALYTICS`, the share projects that
+  sharing creates, and the Caddy example that exposes only `/share/*` of a private
   console.
-- `deploy/UPGRADES.md`: migration 032, which only adds a table and needs
-  no pre-check.
+- `deploy/UPGRADES.md`: migration 032, which adds two tables and a column
+  defaulting to `regular`, and needs no pre-check.
 
 ## Tests
 
 - **Store.** Insert, get, list by widget, delete. The cascade from a hard
-  widget delete. Reading `share_project_id` from `meta`.
-- **Reporting.** Each refusal in D6. The first share creates the `Shares`
-  project, its key and the meta row in one transaction, and a second
-  share reuses them. `SHARE_PROJECT_ID=0` creates nothing. `opens` counts
-  only `/share/<id>` views of the share project.
+  widget delete. `InsertShare` creates the project, key, link row and
+  audit rows once per widget, and rolls all of it back when the share
+  fails. The purge of a widget archives its share project.
+- **Reporting.** Each refusal in D6. A second share of a widget reuses
+  its project, and two widgets get two projects. The registry is reloaded,
+  so an event sent with the new key is accepted. `SHARE_ANALYTICS=off`
+  creates nothing. `opens` counts only that link's views.
+- **Manage and API.** Share projects are absent from `list_projects`,
+  `project list` and `GET /api/projects`, and present with `kind=share`.
+  The refusals of D8. `usage`, `limits` and `cap_usage` sum them into one
+  `Shares` line. `TestSystemDashboards` still passes, and the Views
+  dashboard runs on a share project.
 - **Share routes** (`reporting`, mounted through `api`). They answer
   without a token while `/api/` still answers 401. The page's meta tags, `noindex`, the CSP, and the script tag
   present or absent (counting on, off, or no active key). The PNG's type
@@ -232,8 +292,10 @@ out of scope.
   after delete.
 - **API.** The multipart create, list and delete routes. `docs_sync`
   picks up the new tools, routes and env var.
-- **Web.** A vitest for the Share dialog (create, copy, list, delete) and
-  one for the capture card layout. A Playwright e2e that shares a seeded
+- **Web.** A vitest for the Share dialog (create, copy, list, delete,
+  View analytics) and one for the capture card layout. The project
+  switcher leaves share projects out, and a dashboard opened on one shows
+  only the Views tab under the share's heading. A Playwright e2e that shares a seeded
   widget, opens `/share/<id>`, checks the meta tags and that the image
   loads, deletes the share and gets a 404. The cursor and phone specs
   cover the dialog.
