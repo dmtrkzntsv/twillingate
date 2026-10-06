@@ -43,7 +43,7 @@ type UpdateDashboard struct {
 	// WholeGroup renames ID's group with Title instead of the dashboard
 	// (D5); it takes no After or GroupID.
 	WholeGroup bool
-	Sidebar    *bool // the whole group in or out of the sidebar; allowed on a built-in (spec 2026-10-05 D5, D7)
+	Sidebar    *bool // the whole group in or out of the sidebar; built-in dashboards only, refused on your own (spec 2026-10-05 D5, D7)
 	ProjectTab *bool // a new project gets it as a tab; user dashboards only (spec 2026-10-05 D3)
 }
 

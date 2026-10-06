@@ -114,6 +114,9 @@ Date: 2026-10-05
     `sidebar = 1`, so a restore brings it back into the sidebar. A user
     dashboard with `sidebar = 0` and `project_tab = 1` stays live: that is
     a deliberate choice.
+  - Restoring a user dashboard (the store's `SetDashboardsArchived`)
+    sets `sidebar = 1`, so one hidden while it was archived, where the
+    trigger does not look, comes back in the sidebar.
 
     ```sql
     CREATE TRIGGER dashboards_user_orphaned AFTER UPDATE OF sidebar, project_tab ON dashboards

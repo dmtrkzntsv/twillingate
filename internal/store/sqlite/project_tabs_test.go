@@ -380,3 +380,27 @@ func TestProjectTabWriteErrorsAreNotRefusals(t *testing.T) {
 		t.Errorf("audit rows = %d, want 0", n)
 	}
 }
+
+// Restoring puts a user dashboard back in the sidebar (spec 2026-10-05
+// D5), even one hidden while it was archived, where 032's safety net does
+// not look; a built-in restored keeps its own flag.
+func TestRestoreDashboardsPutsUserBackInSidebar(t *testing.T) {
+	ctx := context.Background()
+	db := tabsDB(t)
+	execAll(t, db,
+		`INSERT INTO dashboards (id, owner, title, sort_key, group_id, sidebar, project_tab) VALUES (1, 'system', 'Views', 'a0', 1, 0, 1)`,
+		`UPDATE dashboards SET archived_at='2026-09-01T00:00:00Z' WHERE id IN (1, 10, 11)`,
+		`UPDATE dashboards SET sidebar=0 WHERE id IN (10, 11)`,
+		`UPDATE dashboards SET project_tab=1 WHERE id=11`)
+	if err := db.SetDashboardsArchived(ctx, []int64{1, 10, 11}, false, store.AuditEntry{Actor: "test", Action: "dashboard.restore"}); err != nil {
+		t.Fatal(err)
+	}
+	for id, want := range map[int64]int{1: 0, 10: 1, 11: 1} {
+		var sidebar int
+		var archived string
+		execScan(t, db, `SELECT sidebar, COALESCE(archived_at,'') FROM dashboards WHERE id=`+strconv.FormatInt(id, 10), &sidebar, &archived)
+		if sidebar != want || archived != "" {
+			t.Errorf("dashboard %d after restore: sidebar %d archived %q, want sidebar %d, live", id, sidebar, archived, want)
+		}
+	}
+}

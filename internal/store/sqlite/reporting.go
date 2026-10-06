@@ -260,7 +260,8 @@ func (d *DB) SetDashboardArchived(ctx context.Context, id int64, archived bool, 
 }
 
 // SetDashboardsArchived archives (only rows currently live) or restores
-// (only rows currently archived) every id in ids, in one transaction,
+// (only rows currently archived, a user one back in the sidebar) every id
+// in ids, in one transaction,
 // one audit row per id (idempotent no-op rows are still audited, mirroring
 // SetProjectArchived's shape). Every id must exist first — checked up
 // front, against the whole list, so an unknown id anywhere in ids leaves
@@ -298,7 +299,10 @@ func (d *DB) SetDashboardsArchived(ctx context.Context, ids []int64, archived bo
 		q := `UPDATE dashboards SET archived_at=strftime('%Y-%m-%dT%H:%M:%SZ','now'),
 			updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=? AND archived_at IS NULL`
 		if !archived {
+			// A user dashboard comes back in the sidebar, where it always
+			// is (spec 2026-10-05 D5), even one hidden while archived.
 			q = `UPDATE dashboards SET archived_at=NULL,
+				sidebar=CASE WHEN owner='user' THEN 1 ELSE sidebar END,
 				updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=?`
 		}
 		for _, id := range ids {
