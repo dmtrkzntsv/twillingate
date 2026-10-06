@@ -24,7 +24,8 @@ for (const scheme of ['light', 'dark'] as const) {
     const sections = page.locator('section[id^="component-"]')
     await expect(sections.first()).toBeVisible()
     const names = (await sections.evaluateAll((els) => els.map((el) => el.id.replace(/^component-/, '')))).filter(Boolean)
-    expect(names.length).toBeGreaterThan(0)
+    // Every component the gallery lists (gallery.spec.ts's NAMES has eighteen); a missing section fails here.
+    expect(names.length).toBeGreaterThanOrEqual(18)
 
     for (const name of names) {
       const section = page.locator(`#component-${name}`)

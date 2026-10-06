@@ -50,13 +50,15 @@ async function dashboardIds(request: APIRequestContext): Promise<number[]> {
  * Whether the element whose own text matches is cut off: wider than its own
  * box, past the viewport's edge, or outside an ancestor that clips (overflow
  * other than visible). Returns what is wrong, empty when it shows whole.
+ * `within` is text of the row to look in.
  */
-async function clipped(page: Page, text: RegExp): Promise<string[]> {
+async function clipped(page: Page, text: RegExp, within: string): Promise<string[]> {
   return page.evaluate(
-    ({ source, flags }) => {
+    ({ source, flags, within }) => {
       const re = new RegExp(source, flags)
-      const el = Array.from(document.querySelectorAll<HTMLElement>('body *')).find(
-        (e) => e.children.length === 0 && re.test(e.textContent ?? '')
+      // Only inside the list item that holds `within`: another spec's rows are not this one's.
+      const el = Array.from(document.querySelectorAll<HTMLElement>('li *')).find(
+        (e) => e.children.length === 0 && re.test(e.textContent ?? '') && e.closest('li')?.textContent?.includes(within)
       )
       if (!el) return ['not on the page']
       const out: string[] = []
@@ -71,7 +73,7 @@ async function clipped(page: Page, text: RegExp): Promise<string[]> {
       }
       return out
     },
-    { source: text.source, flags: text.flags }
+    { source: text.source, flags: text.flags, within }
   )
 }
 
@@ -113,7 +115,8 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
   const { dashboard_id: dashboardId } = (await dashboard.json()) as { dashboard_id: number }
   const dashboardBody = await request.get(`/api/dashboards/${dashboardId}`, { headers: authHeaders() })
   const widgetId = ((await dashboardBody.json()) as { widgets: { widget_id: number }[] }).widgets[0].widget_id
-  const title = `${Date.now()} ${'a long widget title that goes on and on '.repeat(4)}`.slice(0, 120).replace(/ $/, 'x')
+  const stamp = String(Date.now())
+  const title = `${stamp} ${'a long widget title that goes on and on '.repeat(4)}`.slice(0, 120).replace(/ $/, 'x')
   const renamed = await request.patch(`/api/widgets/${widgetId}`, { headers: authHeaders(), data: { title } })
   expect(renamed.ok(), await renamed.text()).toBeTruthy()
   const shares = [
@@ -128,15 +131,18 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
   await page.getByRole('button', { name: 'Connect' }).click()
   await page.waitForURL(/\/app\/projects$/)
 
-  for (const path of ['/app/projects', '/app/projects/1', `/app/projects/${id}`, '/app/archive', '/app/shares', '/app/gallery/components', '/app/gallery/dashboards']) {
+  for (const path of ['/app/projects', '/app/projects/1', `/app/projects/${id}`, '/app/archive', '/app/gallery/components', '/app/gallery/dashboards']) {
     await check(page, path)
   }
   for (const d of await dashboardIds(request)) await check(page, `/app/dashboards/${d}`)
 
-  // The Shares table folds below xl: beside the 256px sidebar it fits at 1024 and 1280 too.
-  for (const width of [1024, 1280]) {
-    await page.setViewportSize({ width, height: 800 })
+  // The Shares page, with the long-title share's row on it: at the phone and,
+  // since the table folds below xl, beside the 256px sidebar at 1024 and 1280 too.
+  for (const width of [PHONE.width, 1024, 1280]) {
+    await page.setViewportSize({ width, height: PHONE.height })
     await check(page, '/app/shares')
+    await expect(page.locator(`a[href="${shares[0].url}"]`), `share row at ${width}px`).toBeVisible()
+    await expect(page.getByRole('row').filter({ has: page.locator(`a[href="${shares[0].url}"]`) })).toContainText(stamp)
   }
   await page.setViewportSize(PHONE)
 
@@ -154,8 +160,9 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
   const archivedShare = await request.post(`/api/widget-shares/${shares[1].id}/archive`, { headers: authHeaders() })
   expect(archivedShare.ok(), await archivedShare.text()).toBeTruthy()
   await check(page, '/app/archive')
-  await expect(page.getByText(/^archived · deleted on /).first()).toBeVisible()
-  expect(await clipped(page, /^archived · deleted on /), 'archived share status').toEqual([])
+  const archivedRow = page.getByRole('listitem').filter({ hasText: stamp })
+  await expect(archivedRow.getByText(/^archived · deleted on /)).toBeVisible()
+  expect(await clipped(page, /^archived · deleted on /, stamp), 'archived share status').toEqual([])
 
   // The archived projects' grid, opened.
   const archived = await request.post(`/api/projects/${id}/archive`, { headers: authHeaders() })

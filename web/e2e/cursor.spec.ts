@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
+import { createShare } from './png'
 
 // Matches web/e2e/serve.sh's CONSOLE_AUTH_DSN (token://e2e-token?password=e2e-pass&...).
 const PASSWORD = 'e2e-pass'
@@ -52,7 +53,16 @@ async function withoutPointer(page: Page): Promise<string[]> {
   )
 }
 
-test('every link and button shows the pointer', async ({ page }) => {
+test('every link and button shows the pointer', async ({ page, request }) => {
+  // A share of Views' first widget, so the Shares page always has a row's controls to check.
+  const headers = { Authorization: 'Bearer e2e-token' }
+  const views = await request.get('/api/dashboards/1', { headers })
+  expect(views.ok(), await views.text()).toBeTruthy()
+  const { widgets } = (await views.json()) as { widgets: { widget_id: number }[] }
+  const to = new Date().toISOString().slice(0, 10)
+  const from = new Date(Date.now() - 6 * 86_400_000).toISOString().slice(0, 10)
+  await createShare(request, { widgetId: widgets[0].widget_id, projectId: 1, from, to })
+
   await login(page)
   for (const path of ['/app/projects', '/app/projects/1', '/app/dashboards', '/app/archive', '/app/shares', '/app/gallery/components', '/app/gallery/dashboards']) {
     await page.goto(path)

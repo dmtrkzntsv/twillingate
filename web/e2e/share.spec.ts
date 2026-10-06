@@ -89,7 +89,7 @@ test('share a widget, see its public page, archive it, restore it, download it',
   await expect(row).toContainText(title)
   await row.getByRole('button', { name: 'Archive' }).click()
   await expect(row).toHaveCount(0)
-  expect((await request.get(link)).status()).toBe(404)
+  await expect.poll(async () => (await request.get(link)).status()).toBe(404)
 
   // Archive page: restore it with the default date, and the link answers again.
   await page.goto('/app/archive')
