@@ -147,9 +147,18 @@ export default function Table({
   })
 
   const loaded = local ? local.rows : sql.rows
-  // A card has no pager: its first rows, then how many it leaves out.
+  // A card has no pager: its first rows, then how many it leaves out. A
+  // cut-short answer with no server count (sql.truncated, no page.matched)
+  // has more rows than were loaded, so the count is only a floor: "and N+
+  // more", or "and more" when every loaded row is shown.
   const rows = card ? loaded.slice(0, fit) : loaded
   const more = card ? (page?.matched ?? local?.matched ?? sql.rows.length) - rows.length : 0
+  const moreUnknown = card && sql.truncated === true && page?.matched === undefined
+  const moreText = moreUnknown
+    ? more > 0
+      ? `and ${more.toLocaleString('en-US')}+ more`
+      : 'and more'
+    : `and ${more.toLocaleString('en-US')} more`
   const options: OptionLoader =
     remote && fetchDistinct
       ? fetchDistinct
@@ -245,10 +254,10 @@ export default function Table({
                   })}
                 </TableRow>
               ))}
-              {more > 0 && (
+              {(more > 0 || moreUnknown) && (
                 <TableRow className="hover:bg-transparent">
                   <TableCell colSpan={sql.columns.length} className="py-1.5 text-[length:var(--card-type)] text-muted-foreground">
-                    and {more.toLocaleString('en-US')} more
+                    {moreText}
                   </TableCell>
                 </TableRow>
               )}

@@ -173,7 +173,9 @@ out of scope.
 
   **Per component.** Each component gets a card mode with no interactive
   chrome: no tooltips, menus, filters, pagination or scrollbars. A table
-  shows the rows that fit, with "and N more" under the last one. A stat
+  shows the rows that fit, with "and N more" under the last one ("and N+
+  more", or "and more", when the answer was cut short and its total is
+  unknown). A stat
   shows its number large and centred. Markdown is set in the card's type.
   A component whose content cannot fit (a sankey with hundreds of nodes)
   draws what fits, as its dashboard tile does.

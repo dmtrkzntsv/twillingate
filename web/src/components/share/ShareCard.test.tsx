@@ -75,6 +75,14 @@ describe('ShareCard', () => {
     expect(screen.queryByRole('button')).toBeNull()
   })
 
+  it('says how many more only when it knows: a cut-short answer is "N+ more", or "and more"', () => {
+    const { unmount } = card({ component: 'table', data: { ...twelve, truncated: true }, props: {} })
+    expect(screen.getByText('and 4+ more')).toBeInTheDocument()
+    unmount()
+    card({ component: 'table', data: { ...twelve, rows: twelve.rows.slice(0, 3), truncated: true }, props: {} })
+    expect(screen.getByText('and more')).toBeInTheDocument()
+  })
+
   it('adds no "more" row when every row fits', () => {
     card({ component: 'table', data: table.data, props: table.props })
     expect(screen.queryByText(/and \d+ more/)).toBeNull()

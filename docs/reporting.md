@@ -840,7 +840,8 @@ widget pinned to its own project (`follows_project: false`) or range
 captioned without it, on the card and on the page; with neither, there is
 no caption line. The chart is drawn at the card's size with larger type and fewer
 ticks than on the dashboard, and without tooltips, menus, filters,
-pagination or scrollbars. A table shows the rows that fit and "and N more";
+pagination or scrollbars. A table shows the rows that fit and "and N more"
+("and N+ more", or "and more", when its answer was cut short at the row cap);
 a stat shows its number large and centred; a component whose content cannot
 fit draws what fits. The watermark, the twillingate iceberg and
 `twillingate.dev` at the bottom right in the theme's muted colour, is the
