@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, useLocation } from 'react-router'
@@ -54,11 +54,20 @@ function renderShares(path = '/shares') {
 }
 
 beforeEach(() => {
+  // The archive date shows its year only when it is not this one: "now" is
+  // pinned in 2026, the fixtures' year. Only Date is faked, so the queries'
+  // and userEvent's timers still run.
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(new Date('2026-10-06T12:00:00Z'))
   vi.restoreAllMocks()
   setArchiveAfter.mockReset()
   archive.mockReset()
   vi.spyOn(endpoints, 'dashboards').mockResolvedValue(dashboardsList())
   vi.spyOn(endpoints, 'widgetShares').mockResolvedValue({ shares: [newer, older] })
+})
+
+afterEach(() => {
+  vi.useRealTimers()
 })
 
 /** The body row holding `title`. */
@@ -96,6 +105,14 @@ describe('Shares', () => {
     expect(select).toHaveDisplayValue('Nov 4')
     expect(within(select).getAllByRole('option').map((o) => o.textContent)).toEqual(['Nov 4', '1 week', '1 month', '3 months', '1 year', 'Project lifetime'])
     expect(within(r).getByText('archives Nov 4')).toBeInTheDocument()
+  })
+
+  it('adds the year to an archive date in another year', async () => {
+    vi.spyOn(endpoints, 'widgetShares').mockResolvedValue({ shares: [{ ...older, archive_at: '2027-01-04T09:30:00Z' }] })
+    renderShares()
+    const r = await row('Visitors')
+    expect(within(r).getAllByRole('combobox')[1]).toHaveDisplayValue('Jan 4, 2027')
+    expect(within(r).getByText('archives Jan 4, 2027')).toBeInTheDocument()
   })
 
   it('shows Project lifetime with no date note for a share that never archives', async () => {

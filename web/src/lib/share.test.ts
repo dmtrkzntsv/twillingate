@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { WidgetShare } from './api'
 import { archiveLabel, embedCode, rangeInWords, shareCaption, type ShareContext } from './share'
 
@@ -49,6 +49,17 @@ describe('archiveLabel', () => {
   it('writes the archive date in UTC', () => {
     expect(archiveLabel(share({ archive_at: '2026-11-04T10:00:00Z' }), now)).toBe('Nov 4')
     expect(archiveLabel(share({ archive_at: '2026-11-04T23:30:00Z' }), now)).toBe('Nov 4')
+  })
+
+  it('compares with the current year when not given one', () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      vi.setSystemTime(new Date('2026-10-06T12:00:00Z'))
+      expect(archiveLabel(share({ archive_at: '2026-11-04T10:00:00Z' }))).toBe('Nov 4')
+      expect(archiveLabel(share({ archive_at: '2027-01-04T10:00:00Z' }))).toBe('Jan 4, 2027')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('adds the year when it is not this year', () => {
