@@ -42,7 +42,7 @@ export function ScaleLegend({ min, max, base }: { min: string; max: string; base
   return (
     <div
       data-scale-legend
-      className={`flex items-center justify-end text-muted-foreground tabular-nums ${card ? 'gap-2.5 text-[15px]' : 'gap-1.5 text-[10px]'}`}
+      className={`flex items-center justify-end text-muted-foreground tabular-nums ${card ? 'gap-2.5 text-[length:var(--card-type)]' : 'gap-1.5 text-[10px]'}`}
     >
       <span>{min}</span>
       <span className={`flex ${card ? 'gap-1' : 'gap-0.5'}`}>

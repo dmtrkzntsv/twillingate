@@ -84,7 +84,7 @@ export default function Funnel({ data, props }: WidgetProps<FunnelProps>) {
               {...bind(i)}
               className="-mx-1.5 -my-1 flex flex-col gap-1.5 rounded-md px-1.5 py-1 hover:bg-muted/60"
             >
-              <div className={`flex items-baseline justify-between gap-3 ${card ? 'text-[20px]' : 'text-sm'}`}>
+              <div className={`flex items-baseline justify-between gap-3 ${card ? 'text-[22px]' : 'text-sm'}`}>
                 <span className="truncate font-medium">{String(r.step)}</span>
                 <span className="flex shrink-0 items-baseline gap-2 tabular-nums">
                   <span className="text-muted-foreground">{formatValue(value, format)}</span>
@@ -103,7 +103,7 @@ export default function Funnel({ data, props }: WidgetProps<FunnelProps>) {
                 />
               </div>
               {fromPrevious !== null && (
-                <span className={`text-muted-foreground ${card ? 'text-[15px]' : 'text-[11px]'}`}>
+                <span className={`text-muted-foreground ${card ? 'text-[length:var(--card-type)]' : 'text-[11px]'}`}>
                   {`${formatValue(fromPrevious, 'percent')} of the step before`}
                 </span>
               )}

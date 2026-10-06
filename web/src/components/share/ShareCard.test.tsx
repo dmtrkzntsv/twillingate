@@ -1,5 +1,6 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { StrictMode } from 'react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { widgets } from '@/components/widgets'
 import type { SqlData } from '@/components/widgets/types'
 import { CARD_ROWS } from '@/components/widgets/table'
@@ -101,5 +102,55 @@ describe('OffscreenCard', () => {
     render(<OffscreenCard component="markdown" data={md.data} props={md.props} {...meta} onNode={onNode} />)
     await waitFor(() => expect(onNode).toHaveBeenCalledOnce())
     expect((onNode.mock.calls[0][0] as HTMLElement).textContent).toContain('Weekly notes')
+  })
+})
+
+describe('ShareCard fonts', () => {
+  afterEach(() => {
+    // jsdom has no Font Loading API; the tests below lend it one.
+    delete (document as { fonts?: unknown }).fonts
+  })
+
+  it('draws the widget, and reports ready, only once Inter has loaded', async () => {
+    let loaded!: () => void
+    const faces = new Promise<void>((resolve) => (loaded = resolve))
+    const load = vi.fn(() => faces.then(() => []))
+    Object.defineProperty(document, 'fonts', { value: { load, ready: Promise.resolve() }, configurable: true })
+    const onReady = vi.fn()
+    const { container } = render(
+      <ShareCard component="table" data={twelve} props={{}} title="Pages" projectName="blog" from="2026-09-05" to="2026-10-04" onReady={onReady} />
+    )
+    expect(load).toHaveBeenCalledWith('600 44px Inter', 'Pages')
+    expect(load).toHaveBeenCalledWith('400 22px Inter', expect.stringContaining('blog · Sep 5 – Oct 4, 2026'))
+    // The title is there to measure; the widget, which measures itself, waits.
+    expect(screen.getByRole('heading', { name: 'Pages' })).toBeInTheDocument()
+    expect(container.querySelector('table')).toBeNull()
+    expect(onReady).not.toHaveBeenCalled()
+    await act(async () => loaded())
+    expect(container.querySelector('table')).not.toBeNull()
+    expect(onReady).toHaveBeenCalledOnce()
+  })
+
+  it('draws with the fallback font when a face fails to load', async () => {
+    Object.defineProperty(document, 'fonts', {
+      value: { load: vi.fn(() => Promise.reject(new Error('offline'))), ready: Promise.resolve() },
+      configurable: true,
+    })
+    const onReady = vi.fn()
+    render(<ShareCard component="table" data={twelve} props={{}} title="Pages" projectName="blog" from="2026-09-05" to="2026-10-04" onReady={onReady} />)
+    await waitFor(() => expect(onReady).toHaveBeenCalledOnce())
+  })
+})
+
+describe('OffscreenCard under StrictMode', () => {
+  it('hands the card over once, though effects mount twice', () => {
+    const onNode = vi.fn()
+    const stat = widgets.stat.examples[0]
+    render(
+      <StrictMode>
+        <OffscreenCard component="stat" data={stat.data} props={stat.props} title="Visitors" projectName="blog" from="2026-09-05" to="2026-10-04" onNode={onNode} />
+      </StrictMode>
+    )
+    expect(onNode).toHaveBeenCalledOnce()
   })
 })

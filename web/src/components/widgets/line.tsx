@@ -7,7 +7,7 @@ import { activeDot, axis, formatTick, grid, niceTicks, seriesColor, seriesConfig
 import { formatValue, type Format } from '@/lib/format'
 import { pivot, toRecords } from '@/lib/records'
 import { legend, tooltip } from '@/components/chart-parts'
-import { useCardMode } from '@/components/share/card-mode'
+import { CARD_TICK_GAP, useCardMode } from '@/components/share/card-mode'
 import type { Contract, Example, SqlData, WidgetProps } from './types'
 
 interface LineProps {
@@ -96,7 +96,7 @@ const DOTTED = 14
 export default function Line({ data, props }: WidgetProps<LineProps>) {
   const sql = data as SqlData
   const records = toRecords(sql, contract)
-  // A share card's line is 3px (index.css): its dots grow with it.
+  // On a share card the line is 3px (index.css), so its dots grow with it, and ticks thin out for the larger type.
   const card = useCardMode()
   if (records.length === 0) return null
 
@@ -112,7 +112,7 @@ export default function Line({ data, props }: WidgetProps<LineProps>) {
     <ChartContainer config={config} className="h-full w-full">
       <LineChart data={rows} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
         <CartesianGrid {...grid} />
-        <XAxis dataKey="x" {...axis} interval="preserveStartEnd" minTickGap={24} tickFormatter={formatTick} />
+        <XAxis dataKey="x" {...axis} interval="preserveStartEnd" minTickGap={card ? CARD_TICK_GAP : 24} tickFormatter={formatTick} />
         <YAxis {...valueAxis} ticks={ticks} domain={[ticks[0], ticks[ticks.length - 1]]} tickFormatter={(v: number) => formatValue(v, format)} />
         <ChartTooltip cursor={{ strokeWidth: 1 }} content={tooltip(format, { indicator: 'line', heading: 'x' })} />
         {hasSeries && legend()}

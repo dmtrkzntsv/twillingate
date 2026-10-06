@@ -7,7 +7,7 @@ import { axis, formatTick, grid, MAX_BAR, niceTicks, seriesColor, seriesConfig, 
 import { formatValue, type Format } from '@/lib/format'
 import { pivot, toRecords } from '@/lib/records'
 import { legend, tooltip } from '@/components/chart-parts'
-import { useCardMode } from '@/components/share/card-mode'
+import { CARD_TICK_GAP, CARD_TYPE, useCardMode } from '@/components/share/card-mode'
 import type { Contract, Example, SqlData, WidgetProps } from './types'
 
 interface BarProps {
@@ -96,7 +96,7 @@ function categoryWidth(labels: string[], scale = 1): number {
 export default function Bar({ data, props }: WidgetProps<BarProps>) {
   const sql = data as SqlData
   const records = toRecords(sql, contract)
-  // A share card's labels are larger (15px, index.css): room and type to match.
+  // A share card's labels are larger (CARD_TYPE): room, type and tick spacing to match.
   const card = useCardMode()
   if (records.length === 0) return null
 
@@ -118,7 +118,7 @@ export default function Bar({ data, props }: WidgetProps<BarProps>) {
       <BarChart
         data={rows}
         layout={horizontal ? 'vertical' : 'horizontal'}
-        margin={{ top: labelled && !horizontal ? 20 : 8, right: labelled && horizontal ? (card ? 72 : 48) : 8, bottom: 0, left: 0 }}
+        margin={{ top: labelled && !horizontal ? 20 : 8, right: labelled && horizontal ? (card ? 80 : 48) : 8, bottom: 0, left: 0 }}
         barGap={3}
         barCategoryGap="24%"
       >
@@ -136,7 +136,7 @@ export default function Bar({ data, props }: WidgetProps<BarProps>) {
               dataKey="x"
               type="category"
               {...axis}
-              width={categoryWidth(rows.map((r) => formatTick(r.x)), card ? 15 / 11 : 1)}
+              width={categoryWidth(rows.map((r) => formatTick(r.x)), card ? CARD_TYPE / 11 : 1)}
               tickFormatter={formatTick}
               interval={0}
             />
@@ -145,7 +145,7 @@ export default function Bar({ data, props }: WidgetProps<BarProps>) {
         ) : (
           <>
             <CartesianGrid {...grid} />
-            <XAxis dataKey="x" {...axis} interval="preserveStartEnd" minTickGap={16} tickFormatter={formatTick} />
+            <XAxis dataKey="x" {...axis} interval="preserveStartEnd" minTickGap={card ? CARD_TICK_GAP : 16} tickFormatter={formatTick} />
             <YAxis {...valueAxis} ticks={ticks} domain={[ticks[0], ticks[ticks.length - 1]]} tickFormatter={show} />
           </>
         )}
@@ -172,7 +172,7 @@ export default function Bar({ data, props }: WidgetProps<BarProps>) {
                 dataKey={key}
                 position={horizontal ? 'right' : 'top'}
                 offset={8}
-                fontSize={card ? 15 : 11}
+                fontSize={card ? CARD_TYPE : 11}
                 className="fill-muted-foreground"
                 formatter={show}
               />

@@ -1,6 +1,7 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
+import { CardMode } from '@/components/share/card-mode'
 import type { SqlData, WidgetProps } from './types'
 import Calendar, { contract } from './calendar'
 
@@ -84,5 +85,24 @@ describe('calendar', () => {
     expect(contract.accepts).toEqual(['sql'])
     expect(contract.defaultWidth).toBe(12)
     expect(contract.defaultHeight).toBe(4)
+  })
+
+  it('on a share card, draws only the weeks the data reaches, at least 13', () => {
+    const days = (n: number, end: string) =>
+      Array.from({ length: n }, (_, i) => [new Date(Date.parse(`${end}T00:00:00Z`) - i * 86400000).toISOString().slice(0, 10), '5'])
+    const weeks = (rows: string[][]) => {
+      const { container, unmount } = render(
+        <CardMode.Provider value={true}>
+          <Calendar data={{ columns: ['day', 'value'], rows, truncated: false }} props={{}} />
+        </CardMode.Provider>
+      )
+      const n = container.querySelectorAll('rect[data-day]').length / 7
+      unmount()
+      return n
+    }
+    // 2026-09-27 is a Sunday: 120 days reach back into the 18th week.
+    expect(weeks(days(120, '2026-09-27'))).toBe(18)
+    expect(weeks(days(10, '2026-09-27'))).toBe(13)
+    expect(weeks(days(400, '2026-09-27'))).toBe(53)
   })
 })

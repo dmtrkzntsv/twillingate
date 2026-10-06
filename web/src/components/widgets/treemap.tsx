@@ -5,7 +5,7 @@ import { seriesColor } from '@/lib/chart'
 import { formatValue, type Format } from '@/lib/format'
 import { toRecords } from '@/lib/records'
 import { tooltip } from '@/components/chart-parts'
-import { useCardMode } from '@/components/share/card-mode'
+import { CARD_TYPE, useCardMode } from '@/components/share/card-mode'
 import type { Contract, Example, SqlData, WidgetProps } from './types'
 
 interface TreemapProps {
@@ -78,7 +78,7 @@ type Cell = TreemapNode & { index: number; parentName?: string; colorIndex?: num
  * own: its leaves carry its color and name, so no label sits on another.
  */
 /** A label's type: a share card's is larger, for a card seen small in a feed. */
-const TYPE = { tile: { name: 12, value: 11, line: 16 }, card: { name: 17, value: 15, line: 22 } }
+const TYPE = { tile: { name: 12, value: 11, line: 16 }, card: { name: 21, value: CARD_TYPE, line: 26 } }
 
 function cell(format: Format, card: boolean) {
   return function Cell({ x, y, width, height, name, depth, index, value, parentName, colorIndex }: Cell) {
@@ -87,8 +87,11 @@ function cell(format: Format, card: boolean) {
     const color = grouped ? (colorIndex ?? 0) : index
     const label = grouped ? `${parentName} ${name}` : name
     const type = card ? TYPE.card : TYPE.tile
-    // On a card nothing may run past its cell: a label shows only where it fits, about 0.6em a character.
-    const fits = !card || width > label.length * type.name * 0.6 + 16
+    // On a card nothing may run past its cell: a name too long at its size
+    // steps down to the value's, and shows only where it fits (about 0.6em a character).
+    const fitsAt = (size: number) => width > label.length * size * 0.6 + 16
+    const nameSize = !card || fitsAt(type.name) ? type.name : type.value
+    const fits = !card || fitsAt(nameSize)
     return (
       <g data-treemap-node data-node-name={name} data-node-depth={depth}>
         <rect
@@ -103,7 +106,7 @@ function cell(format: Format, card: boolean) {
           strokeWidth={2}
         />
         {width > 48 && height > type.line + 12 && fits && (
-          <text x={x + 8} y={y + 6 + type.line * 0.75} fontSize={type.name} fontWeight={500} fill={labelInk(color)}>
+          <text x={x + 8} y={y + 6 + type.line * 0.75} fontSize={nameSize} fontWeight={500} fill={labelInk(color)}>
             {label}
           </text>
         )}

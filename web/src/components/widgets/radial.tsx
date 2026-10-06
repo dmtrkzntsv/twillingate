@@ -100,7 +100,7 @@ export default function Radial({ data, props }: WidgetProps<RadialProps>) {
             <tspan x="50%" dy="-0.3em" className={`fill-foreground font-semibold ${card ? 'text-[40px]' : 'text-2xl'}`}>
               {formatValue(rows[0].value, format)}
             </tspan>
-            <tspan x="50%" dy="1.6em" className={`fill-muted-foreground ${card ? 'text-[16px]' : 'text-xs'}`}>
+            <tspan x="50%" dy="1.6em" className={`fill-muted-foreground ${card ? 'text-[length:var(--card-type)]' : 'text-xs'}`}>
               {hasMax ? `${Math.round(rows[0].display)}% of ${formatValue(Number(records[0].max), format)}` : rows[0].label}
             </tspan>
           </text>

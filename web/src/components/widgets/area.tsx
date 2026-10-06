@@ -8,6 +8,7 @@ import { activeDot, axis, formatTick, grid, niceTicks, seriesColor, seriesConfig
 import { formatValue, type Format } from '@/lib/format'
 import { pivot, toRecords } from '@/lib/records'
 import { legend, tooltip } from '@/components/chart-parts'
+import { CARD_TICK_GAP, useCardMode } from '@/components/share/card-mode'
 import type { Contract, Example, SqlData, WidgetProps } from './types'
 
 interface AreaProps {
@@ -79,6 +80,8 @@ export const examples: Example[] = [
 export default function Area({ data, props }: WidgetProps<AreaProps>) {
   const sql = data as SqlData
   const records = toRecords(sql, contract)
+  // Fewer x ticks on a share card, for its larger type.
+  const card = useCardMode()
   // An SVG id, so only characters url(#...) takes as they are.
   const fade = 'area' + useId().replace(/[^a-zA-Z0-9_-]/g, '')
   if (records.length === 0) return null
@@ -105,7 +108,7 @@ export default function Area({ data, props }: WidgetProps<AreaProps>) {
           ))}
         </defs>
         <CartesianGrid {...grid} />
-        <XAxis dataKey="x" {...axis} interval="preserveStartEnd" minTickGap={24} tickFormatter={formatTick} />
+        <XAxis dataKey="x" {...axis} interval="preserveStartEnd" minTickGap={card ? CARD_TICK_GAP : 24} tickFormatter={formatTick} />
         <YAxis {...valueAxis} ticks={ticks} domain={[ticks[0], ticks[ticks.length - 1]]} tickFormatter={(v: number) => formatValue(v, format)} />
         <ChartTooltip
           cursor={{ strokeWidth: 1 }}

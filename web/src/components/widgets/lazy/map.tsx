@@ -94,7 +94,7 @@ export default function MapWidget({ data, props }: WidgetProps<MapProps>) {
         <ScaleLegend min={formatValue(min, format)} max={formatValue(max, format)} base="var(--muted)" />
       )}
       {unmatched.length > 0 && (
-        <div data-not-on-map className={`text-muted-foreground ${card ? 'text-[15px]' : 'text-xs'}`}>
+        <div data-not-on-map className={`text-muted-foreground ${card ? 'text-[length:var(--card-type)]' : 'text-xs'}`}>
           Not on the map:{' '}
           {unmatched.map((u) => (u.value === null ? u.code : `${u.code} ${formatValue(u.value, format)}`)).join(', ')}
         </div>

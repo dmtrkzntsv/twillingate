@@ -195,7 +195,7 @@ export default function Table({
                     <TableHead
                       key={col}
                       aria-sort={dir && (dir === 'asc' ? 'ascending' : 'descending')}
-                      className={`${card ? 'h-10 text-[15px]' : 'h-8 text-xs'} font-medium text-muted-foreground ${numericColumns.has(col) ? 'text-right' : ''}`}
+                      className={`${card ? 'h-11 text-[length:var(--card-type)]' : 'h-8 text-xs'} font-medium text-muted-foreground ${numericColumns.has(col) ? 'text-right' : ''}`}
                     >
                       {card ? (
                         col
@@ -236,7 +236,7 @@ export default function Table({
                     return (
                       <TableCell
                         key={col}
-                        className={`${card ? 'py-1.5 text-[18px]' : 'py-1.5'} ${numericColumns.has(col) ? 'text-right tabular-nums' : ''}`}
+                        className={`${card ? 'py-1 text-[19px]' : 'py-1.5'} ${numericColumns.has(col) ? 'text-right tabular-nums' : ''}`}
                         style={style}
                       >
                         {text}
@@ -247,7 +247,7 @@ export default function Table({
               ))}
               {more > 0 && (
                 <TableRow className="hover:bg-transparent">
-                  <TableCell colSpan={sql.columns.length} className="py-1.5 text-[16px] text-muted-foreground">
+                  <TableCell colSpan={sql.columns.length} className="py-1.5 text-[length:var(--card-type)] text-muted-foreground">
                     and {more.toLocaleString('en-US')} more
                   </TableCell>
                 </TableRow>

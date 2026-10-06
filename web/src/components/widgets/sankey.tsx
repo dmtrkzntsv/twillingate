@@ -4,7 +4,7 @@ import { HoverCard, useHover, type HoverRow } from '@/components/chart-parts'
 import { seriesColor } from '@/lib/chart'
 import { formatExact, formatValue, type Format } from '@/lib/format'
 import { toRecords } from '@/lib/records'
-import { useCardMode } from '@/components/share/card-mode'
+import { CARD_TYPE, useCardMode } from '@/components/share/card-mode'
 import type { Contract, Example, SqlData, WidgetProps } from './types'
 
 interface SankeyProps {
@@ -208,7 +208,7 @@ export default function Sankey({ data, props }: WidgetProps<SankeyProps>) {
           y={y + height / 2}
           dominantBaseline="middle"
           textAnchor={sink ? 'end' : 'start'}
-          fontSize={cardMode ? 16 : 11}
+          fontSize={cardMode ? CARD_TYPE : 11}
           className="pointer-events-none fill-foreground"
         >
           <tspan fontWeight={500}>{name}</tspan>

@@ -124,14 +124,14 @@ export default function Heatmap({ data, props }: WidgetProps<HeatmapProps>) {
           <div
             key={x}
             data-col-header
-            className={`truncate px-1 text-center text-muted-foreground ${card ? 'text-[15px]' : 'text-xs'}`}
+            className={`truncate px-1 text-center text-muted-foreground ${card ? 'text-[length:var(--card-type)]' : 'text-xs'}`}
           >
             {formatTick(x)}
           </div>
         ))}
         {ys.map((y) => (
           <div key={y} className="contents">
-            <div data-row-header className={`flex items-center truncate pr-1.5 text-muted-foreground ${card ? 'text-[15px]' : 'text-xs'}`}>
+            <div data-row-header className={`flex items-center truncate pr-1.5 text-muted-foreground ${card ? 'text-[length:var(--card-type)]' : 'text-xs'}`}>
               {formatTick(y)}
             </div>
             {xs.map((x) => {
@@ -143,7 +143,7 @@ export default function Heatmap({ data, props }: WidgetProps<HeatmapProps>) {
                   key={x}
                   data-cell
                   {...(hasValue ? bind({ x, y, value, t }) : {})}
-                  className={`flex min-h-6 items-center justify-center rounded-[3px] tabular-nums ${card ? 'text-[15px]' : 'text-[11px]'} ${
+                  className={`flex min-h-6 items-center justify-center rounded-[3px] tabular-nums ${card ? 'text-[length:var(--card-type)]' : 'text-[11px]'} ${
                     hasValue && onRamp(t) ? 'text-white' : 'text-foreground'
                   } ${hasValue ? 'hover:ring-2 hover:ring-foreground/50 hover:ring-inset' : ''}`}
                   style={hasValue ? { backgroundColor: ramp(t) } : undefined}

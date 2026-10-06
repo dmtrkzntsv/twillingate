@@ -97,7 +97,7 @@ export default function Pie({ data, props }: WidgetProps<PieProps>) {
                     <tspan x={cx} y={card ? cy - 8 : cy - 4} className={`fill-foreground font-semibold ${card ? 'text-[36px]' : 'text-xl'}`}>
                       {formatValue(total, format)}
                     </tspan>
-                    <tspan x={cx} y={card ? cy + 26 : cy + 16} className={`fill-muted-foreground ${card ? 'text-[16px]' : 'text-xs'}`}>
+                    <tspan x={cx} y={card ? cy + 26 : cy + 16} className={`fill-muted-foreground ${card ? 'text-[length:var(--card-type)]' : 'text-xs'}`}>
                       Total
                     </tspan>
                   </text>

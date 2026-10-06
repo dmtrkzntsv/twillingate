@@ -197,8 +197,9 @@
   }
 
   /* A share card (components/share/ShareCard.tsx): one bundled font, so
-     every machine draws the same image, and chart type at about 1.4 times
-     the dashboard's 11px, for a card seen small in a feed. Recharts keeps
+     every machine draws the same image, and chart type at --card-type
+     (CARD_TYPE in components/share/card-mode.ts, set by ShareCard), for a
+     card seen small in a feed. Recharts keeps
      its tooltip hidden until a pointer hovers, which a capture never does. */
   .share-card {
     font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
@@ -210,7 +211,7 @@
   .share-card .recharts-polar-angle-axis-tick-value,
   .share-card .recharts-legend-wrapper,
   .share-card .recharts-label {
-    font-size: 15px;
+    font-size: var(--card-type);
   }
   .share-card .recharts-cartesian-axis-tick-value,
   .share-card .recharts-polar-angle-axis-tick-value {
