@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useParams } from 'react-router'
 import AppShell, { TopBar } from '@/components/AppShell'
@@ -16,10 +16,12 @@ import { useDashboardSelection } from '@/hooks/use-dashboard-selection'
 import { useDevReload } from '@/hooks/use-dev-reload'
 import { useFreshness } from '@/hooks/use-freshness'
 import { useStoredState } from '@/hooks/use-stored-state'
+import type { ShareContext } from '@/components/WidgetCard'
 import type { DashboardDetail, DashboardInfo, DashboardsResponse, DashboardTab } from '@/lib/api'
 import { moveTabBody } from '@/lib/arrange'
 import { rememberDashboard } from '@/lib/last-dashboard'
 import { dashboardQuery, dashboardsQuery, projectsQuery } from '@/lib/queries'
+import { resolve } from '@/lib/ranges'
 import { refreshWidget, shownViews } from '@/lib/widget-query'
 
 /** `/dashboards/:id`: one dashboard in the app shell, as a report tab or a page of its own (D36). */
@@ -92,6 +94,21 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
   // Reporting dev serves only reads (and the view), so the page offers no
   // writes there: every one of them would answer 405.
   const writable = !list.dev
+  // What a card needs to be shared or downloaded: the project and range
+  // shown. Without both there is nothing to say the picture is of.
+  const range = sel.range
+    ? resolve(sel.range, list.timezone, new Date(), sel.from && sel.to ? { from: sel.from, to: sel.to } : undefined)
+    : undefined
+  const project = all.find((p) => p.project_id === sel.projectId)
+  const shareFrom = range?.from
+  const shareTo = range?.to
+  const share = useMemo<ShareContext | undefined>(
+    () =>
+      project && shareFrom && shareTo
+        ? { projectId: project.project_id, projectName: project.name, from: shareFrom, to: shareTo, writable }
+        : undefined,
+    [project, shareFrom, shareTo, writable]
+  )
   // Only a live user dashboard's group is arranged from the page (D11,
   // D14), and never while frozen: the dashboard on screen is being left.
   // Its tabs stay sortable while frozen, only without moves, so the tab
@@ -206,7 +223,7 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
         ) : dashboard.widgets.length === 0 ? (
           <NoWidgets />
         ) : (
-          <WidgetGrid widgets={dashboard.widgets} paramsFor={paramsFor} idle={frozen} />
+          <WidgetGrid widgets={dashboard.widgets} paramsFor={paramsFor} idle={frozen} share={share} />
         )}
       </div>
     </>

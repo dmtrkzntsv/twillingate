@@ -1,0 +1,147 @@
+import { screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { MemoryRouter } from 'react-router'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { endpoints, type Widget, type WidgetShare } from '@/lib/api'
+import { widgets } from '@/components/widgets'
+import { renderWithProviders } from '@/test/render'
+import { ShareDialog } from './ShareDialog'
+
+vi.mock('@/lib/capture', () => ({
+  captureCard: vi.fn(),
+  downloadBlob: vi.fn(),
+}))
+import { captureCard } from '@/lib/capture'
+
+const widget: Widget = {
+  widget_id: 42,
+  dashboard_id: 1,
+  name: 'visitors',
+  component: 'stat',
+  title: 'Visitors',
+  width: 3,
+  height: 3,
+  props: widgets.stat.examples[0].props,
+  source: { type: 'sql', content: 'SELECT 1' },
+  follows_project: true,
+  follows_range: true,
+}
+const share = {
+  projectId: 7,
+  projectName: 'blog',
+  from: '2026-09-05',
+  to: '2026-10-04',
+  writable: true,
+}
+
+const created: WidgetShare = {
+  id: '0190a0a0-0000-7000-8000-000000000001',
+  url: 'https://t.example/share/0190a0a0-0000-7000-8000-000000000001',
+  image_url: 'https://t.example/share/0190a0a0-0000-7000-8000-000000000001.png',
+  image_2x_url: 'https://t.example/share/0190a0a0-0000-7000-8000-000000000001@2x.png',
+  widget_id: 42,
+  dashboard_id: 1,
+  dashboard_title: 'Overview',
+  project_id: 7,
+  project_name: 'blog',
+  from: '2026-09-05',
+  to: '2026-10-04',
+  title: 'Visitors',
+  created_at: '2026-10-06T10:00:00Z',
+  archive_at: '2026-11-05T10:00:00Z',
+  archived_at: null,
+}
+
+function dialog() {
+  return renderWithProviders(
+    <MemoryRouter>
+      <ShareDialog open onOpenChange={() => {}} widget={widget} data={widgets.stat.examples[0].data} share={share} />
+    </MemoryRouter>,
+  )
+}
+
+beforeEach(() => {
+  vi.mocked(captureCard).mockResolvedValue({
+    image: new Blob(['1x'], { type: 'image/png' }),
+    image2x: new Blob(['2x'], { type: 'image/png' }),
+  })
+  URL.createObjectURL = vi.fn(() => 'blob:preview')
+  URL.revokeObjectURL = vi.fn()
+  vi.spyOn(endpoints, 'widgetShares').mockResolvedValue({ shares: [] })
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
+  vi.mocked(captureCard).mockReset()
+})
+
+describe('ShareDialog', () => {
+  it('previews the captured card and defaults to one month', async () => {
+    dialog()
+    const img = await screen.findByRole('img')
+    expect(img).toHaveAttribute('src', 'blob:preview')
+    expect(screen.getByLabelText('Archive after')).toHaveValue('30d')
+    expect(screen.getByRole('option', { name: '1 month' })).toBeInTheDocument()
+    expect(screen.getByText('Feeds keep the preview they already fetched.')).toBeInTheDocument()
+  })
+
+  it('waits for the capture before Create link is enabled', async () => {
+    let done!: (v: { image: Blob; image2x: Blob }) => void
+    vi.mocked(captureCard).mockReturnValue(new Promise((r) => (done = r)))
+    dialog()
+    expect(screen.getByRole('button', { name: 'Create link' })).toBeDisabled()
+    done({ image: new Blob(['1x']), image2x: new Blob(['2x']) })
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Create link' })).toBeEnabled())
+  })
+
+  it('creates the link from the form and shows it with its actions', async () => {
+    const user = userEvent.setup()
+    const create = vi.spyOn(endpoints, 'createWidgetShare').mockResolvedValue(created)
+    dialog()
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Create link' })).toBeEnabled())
+    await user.click(screen.getByRole('button', { name: 'Create link' }))
+
+    const form = create.mock.calls[0][0]
+    expect(form.get('widget_id')).toBe('42')
+    expect(form.get('project_id')).toBe('7')
+    expect(form.get('from')).toBe('2026-09-05')
+    expect(form.get('to')).toBe('2026-10-04')
+    expect(form.get('archive_after')).toBe('30d')
+    expect((form.get('image') as File).name).toBe('image.png')
+    expect((form.get('image') as File).type).toBe('image/png')
+    expect(form.get('image_2x')).toBeInstanceOf(File)
+
+    expect(await screen.findByDisplayValue(created.url)).toHaveAttribute('readonly')
+    expect(screen.getByRole('button', { name: 'Copy link' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Copy embed code' })).toBeInTheDocument()
+    const open = screen.getByRole('link', { name: 'Open' })
+    expect(open).toHaveAttribute('href', created.url)
+    expect(open).toHaveAttribute('target', '_blank')
+    expect(open).toHaveAttribute('rel', 'noopener')
+    expect(screen.queryByRole('button', { name: 'Create link' })).not.toBeInTheDocument()
+  })
+
+  it('sends the archive choice', async () => {
+    const user = userEvent.setup()
+    const create = vi.spyOn(endpoints, 'createWidgetShare').mockResolvedValue(created)
+    dialog()
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Create link' })).toBeEnabled())
+    await user.selectOptions(screen.getByLabelText('Archive after'), 'project')
+    await user.click(screen.getByRole('button', { name: 'Create link' }))
+    expect(create.mock.calls[0][0].get('archive_after')).toBe('project')
+  })
+
+  it("links to the widget's other shares", async () => {
+    vi.spyOn(endpoints, 'widgetShares').mockResolvedValue({
+      shares: [
+        { ...created, id: 'a' },
+        { ...created, id: 'b' },
+      ],
+    })
+    dialog()
+    const link = await screen.findByRole('link', {
+      name: /This widget has 2 other links/,
+    })
+    expect(link).toHaveAttribute('href', '/shares?widget=42')
+  })
+})

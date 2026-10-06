@@ -285,6 +285,7 @@
 }
 [data-slot='widget-card']:hover .hover-reveal,
 .hover-reveal:focus-within,
+.hover-reveal[data-open],
 .hover-reveal[data-busy] {
   opacity: 1;
 }

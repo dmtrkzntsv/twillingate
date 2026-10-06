@@ -6,7 +6,11 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import { ApiError, endpoints, type PageInfo, type Widget, type WidgetData, type WidgetDataQuery } from '@/lib/api'
 import type { Filter } from '@/lib/table-view'
 import { renderWithProviders } from '@/test/render'
+import type { ShareContext } from './WidgetCard'
 import WidgetCard from './WidgetCard'
+
+vi.mock('@/lib/capture', () => ({ captureCard: vi.fn(), downloadBlob: vi.fn() }))
+import { captureCard, downloadBlob } from '@/lib/capture'
 
 const HOUR = 3_600_000
 
@@ -167,9 +171,7 @@ describe('WidgetCard', () => {
   })
 
   it('disables the refresh icon before refresh_after, and ignores clicks', async () => {
-    const spy = vi
-      .spyOn(endpoints, 'widgetData')
-      .mockResolvedValue(sqlAnswer({ refresh_after: new Date(Date.now() + HOUR).toISOString() }))
+    const spy = vi.spyOn(endpoints, 'widgetData').mockResolvedValue(sqlAnswer({ refresh_after: new Date(Date.now() + HOUR).toISOString() }))
     renderCard()
     await screen.findByText('12.3K')
     await userEvent.click(screen.getByRole('button', { name: 'Refresh Visitors' }))
@@ -202,7 +204,7 @@ describe('WidgetCard', () => {
         source: { type: 'md', content: '# Read me' },
         follows_project: false,
         follows_range: false,
-      })
+      }),
     )
     expect(await screen.findByRole('heading', { name: 'Read me' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /^Refresh/ })).not.toBeInTheDocument()
@@ -264,9 +266,14 @@ function cardIn(client: ReturnType<typeof renderWithProviders>['client'], widget
 describe('WidgetCard with a remote table', () => {
   it('asks for the first page with no view, then sends a new filter as JSON on the first page', async () => {
     const user = userEvent.setup()
-    const spy = vi
-      .spyOn(endpoints, 'widgetData')
-      .mockImplementation(async (_, q) => (q.distinct ? distinctAnswer([['$os', '12'], ['plan', '7']]) : remoteAnswer(q)))
+    const spy = vi.spyOn(endpoints, 'widgetData').mockImplementation(async (_, q) =>
+      q.distinct
+        ? distinctAnswer([
+            ['$os', '12'],
+            ['plan', '7'],
+          ])
+        : remoteAnswer(q),
+    )
     renderCard(remoteWidget())
     expect(await screen.findByText('iOS')).toBeInTheDocument()
     expect(spy).toHaveBeenCalledTimes(1)
@@ -284,9 +291,7 @@ describe('WidgetCard with a remote table', () => {
   it('goes back to the first page, keeping the filters, when the range changes', async () => {
     const user = userEvent.setup()
     storeView([PLAN])
-    const spy = vi
-      .spyOn(endpoints, 'widgetData')
-      .mockImplementation(async (_, q) => remoteAnswer(q, ATTR_ROWS, { matched: 2500 }))
+    const spy = vi.spyOn(endpoints, 'widgetData').mockImplementation(async (_, q) => remoteAnswer(q, ATTR_ROWS, { matched: 2500 }))
     const { client, rerender } = renderCard(remoteWidget())
     await screen.findByText('1–1,000 of 2,500')
     await user.click(screen.getByRole('button', { name: 'Next page' }))
@@ -307,7 +312,7 @@ describe('WidgetCard with a remote table', () => {
 
   it("shows the skeleton, not the last project's rows, while another project loads", async () => {
     vi.spyOn(endpoints, 'widgetData').mockImplementation(async (_, q) =>
-      q.project_id === 8 ? new Promise<never>(() => {}) : remoteAnswer(q)
+      q.project_id === 8 ? new Promise<never>(() => {}) : remoteAnswer(q),
     )
     const { client, container, rerender } = renderCard(remoteWidget())
     await screen.findByText('iOS')
@@ -331,9 +336,7 @@ describe('WidgetCard with a remote table', () => {
   it('refreshes with the filters, sort and page on screen', async () => {
     const user = userEvent.setup()
     storeView([PLAN], { column: 'Count', dir: 'desc' })
-    const spy = vi
-      .spyOn(endpoints, 'widgetData')
-      .mockImplementation(async (_, q) => remoteAnswer(q, ATTR_ROWS, { matched: 2500 }))
+    const spy = vi.spyOn(endpoints, 'widgetData').mockImplementation(async (_, q) => remoteAnswer(q, ATTR_ROWS, { matched: 2500 }))
     renderCard(remoteWidget())
     await screen.findByText('1–1,000 of 2,500')
     await user.click(screen.getByRole('button', { name: 'Next page' }))
@@ -346,7 +349,7 @@ describe('WidgetCard with a remote table', () => {
         sort: 'Count:desc',
         offset: 1000,
         fresh: true,
-      })
+      }),
     )
   })
 
@@ -413,5 +416,74 @@ describe('WidgetCard with a remote table', () => {
     await user.click(screen.getByRole('button', { name: 'Refresh Attributes' }))
     await waitFor(() => expect(spy).toHaveBeenCalledTimes(2))
     expect(spy.mock.calls.map(([, q]) => q)).toEqual([params, { ...params, fresh: true }])
+  })
+
+  describe('widget menu', () => {
+    const shareCtx: ShareContext = { projectId: 7, projectName: 'blog', from: '2026-09-20', to: '2026-09-26', writable: true }
+    const withShare = (share?: ShareContext) => renderWithProviders(<WidgetCard widget={statWidget()} params={params} share={share} />)
+
+    it('offers Share… and Download PNG when writable', async () => {
+      const user = userEvent.setup()
+      vi.spyOn(endpoints, 'widgetData').mockResolvedValue(sqlAnswer())
+      withShare(shareCtx)
+      await screen.findByText('12.3K')
+      await user.click(screen.getByRole('button', { name: 'Widget actions' }))
+      expect(await screen.findByRole('menuitem', { name: 'Share…' })).toBeEnabled()
+      expect(screen.getByRole('menuitem', { name: 'Download PNG' })).toBeEnabled()
+    })
+
+    it('offers only Download PNG in read-only mode', async () => {
+      const user = userEvent.setup()
+      vi.spyOn(endpoints, 'widgetData').mockResolvedValue(sqlAnswer())
+      withShare({ ...shareCtx, writable: false })
+      await screen.findByText('12.3K')
+      await user.click(screen.getByRole('button', { name: 'Widget actions' }))
+      expect(await screen.findByRole('menuitem', { name: 'Download PNG' })).toBeInTheDocument()
+      expect(screen.queryByRole('menuitem', { name: 'Share…' })).not.toBeInTheDocument()
+    })
+
+    it('has no menu without a share context', async () => {
+      vi.spyOn(endpoints, 'widgetData').mockResolvedValue(sqlAnswer())
+      withShare(undefined)
+      await screen.findByText('12.3K')
+      expect(screen.queryByRole('button', { name: 'Widget actions' })).not.toBeInTheDocument()
+    })
+
+    it('waits for data before offering either action', async () => {
+      const user = userEvent.setup()
+      vi.spyOn(endpoints, 'widgetData').mockReturnValue(new Promise(() => {}))
+      withShare(shareCtx)
+      await user.click(screen.getByRole('button', { name: 'Widget actions' }))
+      expect(await screen.findByRole('menuitem', { name: 'Share…' })).toHaveAttribute('aria-disabled', 'true')
+      expect(screen.getByRole('menuitem', { name: 'Download PNG' })).toHaveAttribute('aria-disabled', 'true')
+    })
+
+    it('captures the card and downloads the 2x image', async () => {
+      const user = userEvent.setup()
+      const image2x = new Blob(['2x'])
+      vi.mocked(captureCard).mockResolvedValue({ image: new Blob(['1x']), image2x })
+      vi.spyOn(endpoints, 'widgetData').mockResolvedValue(sqlAnswer())
+      withShare(shareCtx)
+      await screen.findByText('12.3K')
+      await user.click(screen.getByRole('button', { name: 'Widget actions' }))
+      await user.click(await screen.findByRole('menuitem', { name: 'Download PNG' }))
+      await waitFor(() => expect(downloadBlob).toHaveBeenCalledWith(image2x, 'visitors-2026-09-20-2026-09-26.png'))
+      expect(captureCard).toHaveBeenCalledTimes(1)
+      // The card for the capture is gone again.
+      expect(document.querySelector('[data-share-card]')).toBeNull()
+    })
+
+    it('says so when the capture fails', async () => {
+      const user = userEvent.setup()
+      vi.mocked(captureCard).mockRejectedValue(new Error('boom'))
+      vi.mocked(downloadBlob).mockClear()
+      vi.spyOn(endpoints, 'widgetData').mockResolvedValue(sqlAnswer())
+      withShare(shareCtx)
+      await screen.findByText('12.3K')
+      await user.click(screen.getByRole('button', { name: 'Widget actions' }))
+      await user.click(await screen.findByRole('menuitem', { name: 'Download PNG' }))
+      await waitFor(() => expect(document.querySelector('[data-share-card]')).toBeNull())
+      expect(downloadBlob).not.toHaveBeenCalled()
+    })
   })
 })
