@@ -265,7 +265,7 @@ widget_data {"widget_id": 42, "project_id": 7, "from": "2026-09-01", "to": "2026
 | `copy_widget` | `widget_id`, `dashboard_id`, `after` | the independent copy, same size; the original may be on a system dashboard |
 | `archive_widget` | `widget_id` | hides it in place |
 | `restore_widget` | `widget_id` | puts it back where it was |
-| `list_widget_shares` | `widget_id`?, `state`? (`live`/`archived`) | every share, newest first, with its URLs and archive date |
+| `list_widget_shares` | `widget_id`?, `state`? (`live`/`archived`) | every share, live ones newest first, archived ones most recently archived first, with its URLs and archive date |
 | `update_widget_share` | `id`, `archive_after` | the share, its `archive_at` counted from now (`null` for `project`); an archived share is a `409 conflict` |
 | `archive_widget_share` | `id` | the share, taken down at once: its page and images answer 404 |
 | `restore_widget_share` | `id`, `archive_after`? (default `30d`) | the share, live again at its old URL |

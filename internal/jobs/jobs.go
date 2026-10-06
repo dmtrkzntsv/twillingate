@@ -44,8 +44,8 @@ type Store interface {
 	// RecordUsageHistory stores the usage_history measurements (each
 	// project's disk use) as of now.
 	RecordUsageHistory(ctx context.Context, now time.Time) error
-	// PurgeArchived deletes every project, dashboard and widget archived
-	// more than days ago. days <= 0 purges nothing.
+	// PurgeArchived deletes every project, dashboard, widget and widget
+	// share archived more than days ago. days <= 0 purges nothing.
 	PurgeArchived(ctx context.Context, days int) (store.PurgeResult, error)
 	// ArchiveDueWidgetShares archives every live share whose archive_at is
 	// at or before now (a "2006-01-02T15:04:05Z" UTC timestamp) and returns
