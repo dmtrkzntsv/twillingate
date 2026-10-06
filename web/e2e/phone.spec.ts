@@ -1,4 +1,5 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test'
+import { createShare } from './png'
 
 // Matches web/e2e/serve.sh's CONSOLE_AUTH_DSN (token://e2e-token?password=e2e-pass&...).
 const PASSWORD = 'e2e-pass'
@@ -45,6 +46,42 @@ async function dashboardIds(request: APIRequestContext): Promise<number[]> {
   return body.dashboards.map((d) => d.dashboard_id)
 }
 
+/**
+ * Whether the element whose own text matches is cut off: wider than its own
+ * box, past the viewport's edge, or outside an ancestor that clips (overflow
+ * other than visible). Returns what is wrong, empty when it shows whole.
+ */
+async function clipped(page: Page, text: RegExp): Promise<string[]> {
+  return page.evaluate(
+    ({ source, flags }) => {
+      const re = new RegExp(source, flags)
+      const el = Array.from(document.querySelectorAll<HTMLElement>('body *')).find(
+        (e) => e.children.length === 0 && re.test(e.textContent ?? '')
+      )
+      if (!el) return ['not on the page']
+      const out: string[] = []
+      const r = el.getBoundingClientRect()
+      if (el.scrollWidth > el.clientWidth + 1) out.push(`${el.scrollWidth}px of text in ${el.clientWidth}px`)
+      if (r.left < 0 || r.right > document.documentElement.clientWidth + 0.5) out.push(`box ${r.left}..${r.right} outside the viewport`)
+      for (let a = el.parentElement; a && a !== document.body; a = a.parentElement) {
+        const s = getComputedStyle(a)
+        if (s.overflowX === 'visible' && s.overflowY === 'visible') continue
+        const b = a.getBoundingClientRect()
+        if (r.left < b.left - 0.5 || r.right > b.right + 0.5 || r.bottom > b.bottom + 0.5) out.push(`clipped by <${a.tagName.toLowerCase()}> ${b.left}..${b.right}`)
+      }
+      return out
+    },
+    { source: text.source, flags: text.flags }
+  )
+}
+
+/** A week ending today, as the YYYY-MM-DD range a share is made over. */
+function lastWeek(): { from: string; to: string } {
+  const day = (d: Date) => d.toISOString().slice(0, 10)
+  const now = new Date()
+  return { from: day(new Date(now.getTime() - 6 * 86_400_000)), to: day(now) }
+}
+
 test.use({ viewport: PHONE })
 
 test('no page scrolls sideways on a phone', async ({ page, request }) => {
@@ -62,6 +99,28 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
   expect(created.ok(), await created.text()).toBeTruthy()
   const { project_id: id } = (await created.json()) as { project_id: number }
 
+  // Two shares of one widget with a 120-character title, over the long-named
+  // project: the Shares page and, once one is archived, the Archive page show them.
+  const dashboard = await request.post('/api/dashboards', {
+    headers: authHeaders(),
+    data: {
+      title: 'Phone shares',
+      range: '7d',
+      widgets: [{ component: 'stat', title: 'short', source: { type: 'sql', content: 'SELECT 42 AS value' }, width: 6, height: 4 }],
+    },
+  })
+  expect(dashboard.ok(), await dashboard.text()).toBeTruthy()
+  const { dashboard_id: dashboardId } = (await dashboard.json()) as { dashboard_id: number }
+  const dashboardBody = await request.get(`/api/dashboards/${dashboardId}`, { headers: authHeaders() })
+  const widgetId = ((await dashboardBody.json()) as { widgets: { widget_id: number }[] }).widgets[0].widget_id
+  const title = `${Date.now()} ${'a long widget title that goes on and on '.repeat(4)}`.slice(0, 120).replace(/ $/, 'x')
+  const renamed = await request.patch(`/api/widgets/${widgetId}`, { headers: authHeaders(), data: { title } })
+  expect(renamed.ok(), await renamed.text()).toBeTruthy()
+  const shares = [
+    await createShare(request, { widgetId, projectId: id, ...lastWeek() }),
+    await createShare(request, { widgetId, projectId: id, ...lastWeek() }),
+  ]
+
   await page.goto('/app/')
   await page.waitForURL(/\/oauth\/authorize\?/)
   expect(await sidewaysScroll(page), 'login').toEqual([])
@@ -69,10 +128,34 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
   await page.getByRole('button', { name: 'Connect' }).click()
   await page.waitForURL(/\/app\/projects$/)
 
-  for (const path of ['/app/projects', '/app/projects/1', `/app/projects/${id}`, '/app/archive', '/app/gallery/components', '/app/gallery/dashboards']) {
+  for (const path of ['/app/projects', '/app/projects/1', `/app/projects/${id}`, '/app/archive', '/app/shares', '/app/gallery/components', '/app/gallery/dashboards']) {
     await check(page, path)
   }
   for (const d of await dashboardIds(request)) await check(page, `/app/dashboards/${d}`)
+
+  // The Shares table folds below xl: beside the 256px sidebar it fits at 1024 and 1280 too.
+  for (const width of [1024, 1280]) {
+    await page.setViewportSize({ width, height: 800 })
+    await check(page, '/app/shares')
+  }
+  await page.setViewportSize(PHONE)
+
+  // The public share page, in both colour schemes.
+  for (const colorScheme of ['light', 'dark'] as const) {
+    await page.emulateMedia({ colorScheme })
+    await page.goto(shares[0].url)
+    await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
+    await page.waitForLoadState('networkidle')
+    expect(await sidewaysScroll(page), `share page (${colorScheme})`).toEqual([])
+  }
+  await page.emulateMedia({ colorScheme: null })
+
+  // An archived share: its "archived · deleted on <date>" line shows whole, and nothing scrolls.
+  const archivedShare = await request.post(`/api/widget-shares/${shares[1].id}/archive`, { headers: authHeaders() })
+  expect(archivedShare.ok(), await archivedShare.text()).toBeTruthy()
+  await check(page, '/app/archive')
+  await expect(page.getByText(/^archived · deleted on /).first()).toBeVisible()
+  expect(await clipped(page, /^archived · deleted on /), 'archived share status').toEqual([])
 
   // The archived projects' grid, opened.
   const archived = await request.post(`/api/projects/${id}/archive`, { headers: authHeaders() })

@@ -54,7 +54,7 @@ async function withoutPointer(page: Page): Promise<string[]> {
 
 test('every link and button shows the pointer', async ({ page }) => {
   await login(page)
-  for (const path of ['/app/projects', '/app/projects/1', '/app/dashboards', '/app/archive', '/app/gallery/components', '/app/gallery/dashboards']) {
+  for (const path of ['/app/projects', '/app/projects/1', '/app/dashboards', '/app/archive', '/app/shares', '/app/gallery/components', '/app/gallery/dashboards']) {
     await page.goto(path)
     await page.waitForLoadState('networkidle')
     await expect(page.locator('main, [data-slot="sidebar-inset"]').first()).toBeVisible()
