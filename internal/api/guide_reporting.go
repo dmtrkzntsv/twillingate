@@ -67,13 +67,16 @@ func (h *host) reportingGuide(ctx context.Context, _ struct{}) (guideOut, error)
 		b.WriteString("\nNone yet: a widget following the project has nothing to show until create_project makes one.\n")
 	}
 
-	b.WriteString("\n## Dashboards\n\nIn sidebar order. A system group is archived and restored whole (whole_group) and is otherwise read-only; duplicate_dashboard makes an editable copy; archive the system group whole to take it out of the sidebar. Rows sharing a group_id are the tabs of one sidebar entry.\n\n| dashboard_id | title | owner | group_id | archived |\n| --- | --- | --- | --- | --- |\n")
+	b.WriteString("\n## Dashboards\n\nIn sidebar order. System dashboards are never archived and are otherwise read-only: update_dashboard {sidebar: false} takes a system group out of the sidebar, and duplicate_dashboard makes an editable copy. Rows sharing a group_id are the tabs of one sidebar entry; sidebar says whether that entry is shown.\n\n| dashboard_id | title | owner | group_id | sidebar | archived |\n| --- | --- | --- | --- | --- | --- |\n")
 	for _, d := range dashboards.Dashboards {
-		archived := "no"
+		sidebar, archived := "no", "no"
+		if d.Sidebar {
+			sidebar = "yes"
+		}
 		if d.ArchivedAt != "" {
 			archived = d.ArchivedAt
 		}
-		fmt.Fprintf(&b, "| %d | %s | %s | %d | %s |\n", d.ID, tableCell(d.Title), d.Owner, d.GroupID, archived)
+		fmt.Fprintf(&b, "| %d | %s | %s | %d | %s | %s |\n", d.ID, tableCell(d.Title), d.Owner, d.GroupID, sidebar, archived)
 	}
 	fmt.Fprintf(&b, "\nDays are grouped in %s.\n", dashboards.Timezone)
 
