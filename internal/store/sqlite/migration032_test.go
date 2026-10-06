@@ -4,8 +4,6 @@ import (
 	"context"
 	"strconv"
 	"testing"
-
-	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
 func execScan(t *testing.T, db *DB, q string, dest ...any) {
@@ -130,39 +128,57 @@ func TestMigration032Cascades(t *testing.T) {
 	}
 }
 
-// TestMigration032ShowsUnreachableGroup: when a project goes, a live user
-// dashboard out of the sidebar whose only tab was on it would be
-// unreachable (D5), so its whole group goes back in the sidebar (D3).
-// One still on another project's tabs, an archived one and a built-in
-// keep sidebar 0. It holds for the FK cascade and for DeleteProjectData.
-func TestMigration032ShowsUnreachableGroup(t *testing.T) {
-	for _, path := range []string{"cascade", "DeleteProjectData"} {
-		t.Run(path, func(t *testing.T) {
-			db := newTestDBAt(t, 32)
-			execAll(t, db,
-				`INSERT INTO projects (id, name) VALUES (1, 'A'), (2, 'B')`,
-				`INSERT INTO dashboards (id, owner, title, sort_key, group_id, sidebar, archived_at) VALUES
-					(1, 'system', 'Views', 'a0', 1, 0, NULL),
-					(1001, 'user', 'Only A', 'a0', 1001, 0, NULL),
-					(1002, 'user', 'Archived member', 'a1', 1001, 0, '2026-09-01T00:00:00Z'),
-					(1003, 'user', 'On B', 'a2', 1001, 0, NULL),
-					(1004, 'user', 'A and B', 'a3', 1004, 0, NULL),
-					(1005, 'user', 'Archived, only A', 'a4', 1005, 0, '2026-09-01T00:00:00Z')`,
-				`INSERT INTO project_tabs (project_id, dashboard_id, sort_key) VALUES
-					(1, 1, 'a0'), (1, 1001, 'a0'), (2, 1003, 'a0'), (1, 1004, 'a1'), (2, 1004, 'a1'), (1, 1005, 'a2')`)
-			if path == "cascade" {
-				execAll(t, db, `DELETE FROM projects WHERE id=1`)
-			} else if err := db.DeleteProjectData(context.Background(), 1, store.AuditEntry{Actor: "test", Action: "project.delete"}); err != nil {
-				t.Fatal(err)
-			}
-			want := map[int64]int{1: 0, 1001: 1, 1002: 1, 1003: 1, 1004: 0, 1005: 0}
-			for id, w := range want {
-				var got int
-				execScan(t, db, `SELECT sidebar FROM dashboards WHERE id=`+strconv.FormatInt(id, 10), &got)
-				if got != w {
-					t.Errorf("dashboard %d sidebar = %d, want %d", id, got, w)
-				}
-			}
-		})
+// TestMigration032ArchivesOrphanedUserDashboard: a user dashboard is
+// always in the sidebar (D5), so one left with sidebar 0 and project_tab
+// 0 (direct SQL, a future bug) is archived instead of left unreachable,
+// with sidebar back at 1 so a restore brings it into the sidebar. One
+// with project_tab 1, a built-in and a row already archived keep what
+// they have.
+func TestMigration032ArchivesOrphanedUserDashboard(t *testing.T) {
+	const old = "2026-09-01T00:00:00Z"
+	db := newTestDBAt(t, 32)
+	execAll(t, db,
+		`INSERT INTO dashboards (id, owner, title, sort_key, group_id, sidebar, project_tab, archived_at, updated_at) VALUES
+			(1, 'system', 'Views', 'a0', 1, 1, 0, NULL, '`+old+`'),
+			(1001, 'user', 'Sidebar off', 'a0', 1001, 1, 0, NULL, '`+old+`'),
+			(1002, 'user', 'Tab off', 'a1', 1002, 0, 1, NULL, '`+old+`'),
+			(1003, 'user', 'Still a tab', 'a2', 1003, 1, 1, NULL, '`+old+`'),
+			(1004, 'user', 'Archived', 'a3', 1004, 1, 0, '`+old+`', '`+old+`')`,
+		`UPDATE dashboards SET sidebar=0 WHERE id IN (1, 1001, 1003, 1004)`,
+		`UPDATE dashboards SET project_tab=0 WHERE id=1002`,
+		// Inserted with both off: archived the same way.
+		`INSERT INTO dashboards (id, owner, title, sort_key, group_id, sidebar, project_tab) VALUES
+			(1005, 'user', 'Born orphaned', 'a4', 1005, 0, 0),
+			(2, 'system', 'Hidden built-in', 'a1', 2, 0, 0)`)
+
+	type row struct {
+		sidebar  int
+		archived string
+		touched  bool
+	}
+	want := map[int64]row{
+		1:    {0, "", false},
+		1001: {1, "now", true},
+		1002: {1, "now", true},
+		1003: {0, "", false},
+		1004: {0, old, false},
+		1005: {1, "now", true},
+		2:    {0, "", false},
+	}
+	for id, w := range want {
+		var sidebar int
+		var archived, updated string
+		execScan(t, db, `SELECT sidebar, COALESCE(archived_at,''), updated_at FROM dashboards WHERE id=`+strconv.FormatInt(id, 10),
+			&sidebar, &archived, &updated)
+		gotArchived := archived
+		if archived != "" && archived != old {
+			gotArchived = "now"
+		}
+		if sidebar != w.sidebar || gotArchived != w.archived {
+			t.Errorf("dashboard %d: sidebar %d archived %q, want sidebar %d archived %q", id, sidebar, archived, w.sidebar, w.archived)
+		}
+		if id >= 1001 && id <= 1004 && (updated != old) != w.touched {
+			t.Errorf("dashboard %d: updated_at %q, touched want %v", id, updated, w.touched)
+		}
 	}
 }

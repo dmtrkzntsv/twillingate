@@ -145,6 +145,9 @@ func TestListDashboardProjects(t *testing.T) {
 func TestSetDashboardsSidebar(t *testing.T) {
 	ctx := context.Background()
 	db := tabsDB(t)
+	// Given to new projects, so 032's safety net leaves them live out of
+	// the sidebar.
+	execAll(t, db, `UPDATE dashboards SET project_tab=1 WHERE id IN (10, 11)`)
 	sidebar := func(id int64) int {
 		var v int
 		execScan(t, db, `SELECT sidebar FROM dashboards WHERE id=`+strconv.FormatInt(id, 10), &v)
@@ -176,10 +179,11 @@ func TestSetDashboardsSidebar(t *testing.T) {
 }
 
 // UpdateDashboard writes the row's sidebar: a row read back keeps its
-// value, and a move sets the one its new group has.
+// value.
 func TestUpdateDashboardWritesSidebar(t *testing.T) {
 	ctx := context.Background()
 	db := tabsDB(t)
+	execAll(t, db, `UPDATE dashboards SET project_tab=1 WHERE id=10`) // see TestSetDashboardsSidebar
 	upd := store.AuditEntry{Actor: "test", Action: "dashboard.update"}
 	for _, want := range []bool{false, true} {
 		d, err := db.GetDashboard(ctx, 10)

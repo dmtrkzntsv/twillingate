@@ -94,6 +94,7 @@ type Service struct {
 	// change putting back the key a concurrent group move just replaced)
 	// and split a group without any key colliding, which retryConflict
 	// cannot see. Other processes (the CLI) are still caught only by it.
+	// Project tab writes take it too (placeTabs in project_tabs.go).
 	placeMu sync.Mutex
 }
 

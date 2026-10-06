@@ -44,7 +44,7 @@ func TestInsertDashboardRoundTripsEveryField(t *testing.T) {
 		t.Fatal(err)
 	}
 	dash := store.Dashboard{
-		Owner: store.OwnerUser, Title: "Marketing", SortKey: "a",
+		Owner: store.OwnerUser, Title: "Marketing", SortKey: "a", Sidebar: true,
 		LastProjectID: 7, LastRange: "30d", LastFrom: "2026-08-01", LastTo: "2026-08-31",
 	}
 	ws := []store.Widget{{
@@ -62,7 +62,7 @@ func TestInsertDashboardRoundTripsEveryField(t *testing.T) {
 	}
 	if got.Owner != dash.Owner || got.Title != dash.Title || got.SortKey != dash.SortKey ||
 		got.LastProjectID != dash.LastProjectID || got.LastRange != dash.LastRange ||
-		got.LastFrom != dash.LastFrom || got.LastTo != dash.LastTo {
+		got.LastFrom != dash.LastFrom || got.LastTo != dash.LastTo || got.Sidebar != dash.Sidebar {
 		t.Fatalf("GetDashboard round-trip = %+v, want fields matching %+v", got, dash)
 	}
 	if got.CreatedAt == "" || got.UpdatedAt == "" {
@@ -552,11 +552,11 @@ func TestSetDashboardsArchivedUnknownIDArchivesNone(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	audit := store.AuditEntry{Actor: "agent", Action: "dashboard.create"}
-	id1, err := db.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "D1", SortKey: "a"}, nil, audit)
+	id1, err := db.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "D1", SortKey: "a", Sidebar: true}, nil, audit)
 	if err != nil {
 		t.Fatal(err)
 	}
-	id2, err := db.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "D2", SortKey: "b"}, nil, audit)
+	id2, err := db.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "D2", SortKey: "b", Sidebar: true}, nil, audit)
 	if err != nil {
 		t.Fatal(err)
 	}

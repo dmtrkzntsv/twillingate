@@ -595,8 +595,8 @@ gallery brings it back. `archive_dashboard` and `restore_dashboard` on a
 built-in are now refused; scripts or agents that hid a built-in group with
 `archive_dashboard {whole_group: true}` should call `update_dashboard`
 with `sidebar: false` instead (and `sidebar: true` to show it). Rollback:
-an older binary ignores the new columns and table, so every group hidden
-from the sidebar, a built-in one included, shows there again under it.
+an older binary ignores the new columns and table, so a built-in group
+hidden from the sidebar shows there again under it.
 A built-in group hidden under the older binary comes back hidden (out of
 the sidebar) on this version; "Show in sidebar" in the Dashboards gallery
 shows it again.

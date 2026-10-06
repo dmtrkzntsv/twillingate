@@ -2002,38 +2002,24 @@ func TestUpdateDashboardSidebarHidesBuiltinGroup(t *testing.T) {
 	}
 }
 
-// D5: a user group leaves the sidebar only when every member is still
-// reachable from a project page.
-func TestUpdateDashboardSidebarRefusesUnreachableUserGroup(t *testing.T) {
-	svc, st := newTestServiceOpts(t, Options{}, 1000)
+// D5: your own dashboards are always in the sidebar, so sidebar is
+// refused on one, true or false: the field is for built-ins only.
+func TestUpdateDashboardSidebarRefusedOnUser(t *testing.T) {
+	svc := newTestService(t)
 	ctx := context.Background()
 	a := mustCreate(t, svc, "AA")
 	b := mustJoin(t, svc, "BB", a.ID)
-	other := mustCreate(t, svc, "Other")
-	p := mustCreateProject(t, st, "demo")
-
-	unreachable := func(id int64) string {
-		return "dashboard " + itoa(id) + " would be unreachable: not in the sidebar and on no project's tabs; add it to a project first, or archive it"
+	before := len(auditRows(t, svc))
+	for _, on := range []bool{false, true} {
+		_, err := svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: b.ID, Sidebar: ptr(on)})
+		wantRefusal(t, err, store.ErrInvalid,
+			"dashboard "+itoa(b.ID)+" is your own: your own dashboards are always in the sidebar; archive_dashboard takes one away")
 	}
-	_, err := svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: b.ID, Sidebar: ptr(false)})
-	wantRefusal(t, err, store.ErrInvalid, unreachable(a.ID))
-	mustAddTab(t, svc, p, a.ID)
-	_, err = svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: b.ID, Sidebar: ptr(false)})
-	wantRefusal(t, err, store.ErrInvalid, unreachable(b.ID))
 	if got := sidebarOf(t, svc, a.ID, b.ID); !reflect.DeepEqual(got, []bool{true, true}) {
 		t.Errorf("sidebar after refusals = %v, want both still true", got)
 	}
-
-	mustAddTab(t, svc, p, b.ID)
-	if _, err := svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: b.ID, Sidebar: ptr(false)}); err != nil {
-		t.Fatal(err)
-	}
-	if got := sidebarOf(t, svc, a.ID, b.ID, other.ID); !reflect.DeepEqual(got, []bool{false, false, true}) {
-		t.Errorf("sidebar = %v, want the group out and the other dashboard in", got)
-	}
-	// Showing needs no tabs.
-	if _, err := svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: other.ID, Sidebar: ptr(true)}); err != nil {
-		t.Fatal(err)
+	if after := len(auditRows(t, svc)); after != before {
+		t.Errorf("audit rows = %d, want %d (nothing written)", after, before)
 	}
 }
 
@@ -2093,10 +2079,8 @@ func TestUpdateDashboardPlacementRefusesArchived(t *testing.T) {
 	if err := svc.ArchiveDashboard(ctx, "test", a.ID, false); err != nil {
 		t.Fatal(err)
 	}
-	for _, in := range []UpdateDashboard{{ID: a.ID, Sidebar: ptr(true)}, {ID: a.ID, ProjectTab: ptr(true)}} {
-		_, err := svc.UpdateDashboard(ctx, "test", in)
-		wantRefusal(t, err, store.ErrInvalid, "dashboard "+itoa(a.ID)+" is archived; restore_dashboard first")
-	}
+	_, err := svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: a.ID, ProjectTab: ptr(true)})
+	wantRefusal(t, err, store.ErrInvalid, "dashboard "+itoa(a.ID)+" is archived; restore_dashboard first")
 }
 
 // D9: a copy, of a built-in or of one's own, is in the sidebar, is no

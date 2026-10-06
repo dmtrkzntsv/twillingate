@@ -95,45 +95,6 @@ func refuseGroup(o order, g int64) error {
 	return store.Refuse(store.ErrInvalid, "group %d has no live user dashboard", g)
 }
 
-// groupInSidebar is user group g's sidebar flag, which its tabs share
-// (spec 2026-10-05 D3): the first live member's. A group refuseGroup let
-// through has one; one without reads as in the sidebar.
-func groupInSidebar(o order, g int64) bool {
-	for _, d := range o {
-		if d.GroupID == g && d.ArchivedAt == "" {
-			return d.Sidebar
-		}
-	}
-	return true
-}
-
-// refuseNewTab refuses a new dashboard as a tab of g while g is out of
-// the sidebar: the new one is on no project's tabs yet, so it would be
-// unreachable (spec 2026-10-05 D5).
-func refuseNewTab(o order, g int64) error {
-	if !groupInSidebar(o, g) {
-		return store.Refuse(store.ErrInvalid,
-			"group %d is hidden from the sidebar, and a new dashboard is on no project's tabs; show the group first", g)
-	}
-	return nil
-}
-
-// refuseUnreachable refuses leaving live user dashboard id out of the
-// sidebar unless a project other than except (0: none) has it as a tab
-// (spec 2026-10-05 D5). The caller holds placeMu, so no concurrent hide
-// or tab removal changes that in between.
-func (s *Service) refuseUnreachable(ctx context.Context, id, except int64) error {
-	ps, err := s.st.ListDashboardProjects(ctx, id)
-	if err != nil {
-		return err
-	}
-	if slices.ContainsFunc(ps, func(p int64) bool { return p != except }) {
-		return nil
-	}
-	return store.Refuse(store.ErrInvalid,
-		"dashboard %d would be unreachable: not in the sidebar and on no project's tabs; add it to a project first, or archive it", id)
-}
-
 // insertWidget places w on its dashboard after `after` and writes it,
 // returning what was written.
 func (s *Service) insertWidget(ctx context.Context, w store.Widget, after *int64, a store.AuditEntry) (WidgetInfo, error) {

@@ -73,19 +73,13 @@ func (s *Service) AddProjectTab(ctx context.Context, actor string, in AddProject
 	return s.ProjectTabs(ctx, in.ProjectID)
 }
 
-// RemoveProjectTab takes a dashboard off a project's tabs, unless that
-// would leave a live user dashboard out of the sidebar with no project
-// tab (spec 2026-10-05 D5).
+// RemoveProjectTab takes a dashboard off a project's tabs. Your own
+// dashboard may lose its last tab: it is always in the sidebar (spec
+// 2026-10-05 D5).
 func (s *Service) RemoveProjectTab(ctx context.Context, actor string, projectID, dashboardID int64) ([]ProjectTab, error) {
 	err := s.placeTabs(func() error {
-		_, _, ds, err := s.shownTabs(ctx, projectID)
-		if err != nil {
-			return err
-		}
-		if d, ok := ds[dashboardID]; ok && d.Owner == store.OwnerUser && d.ArchivedAt == "" && !d.Sidebar {
-			if err := s.refuseUnreachable(ctx, d.ID, projectID); err != nil {
-				return err
-			}
+		if _, err := s.st.ListProjectTabs(ctx, projectID); err != nil {
+			return err // an unknown project is named as such
 		}
 		return s.st.DeleteProjectTab(ctx, projectID, dashboardID,
 			store.AuditEntry{Actor: actor, Action: "project.tab.remove"})
@@ -133,10 +127,12 @@ func (s *Service) MoveProjectTab(ctx context.Context, actor string, in MoveProje
 }
 
 // placeTabs runs place, a tab write and the reads it decides on, under
-// placeMu, so a concurrent hide (setPlacement) and a tab removal can't
-// together leave a dashboard unreachable. Unlike placeDashboards it does
-// not retry on ErrConflict: a tab row's only conflict is a duplicate tab,
-// which a retry can't cure and lostDashboardRace would misname.
+// placeMu, so tab writes in this process don't interleave: ownTabKey's
+// respread rewrites every user row of a project, and a removal or
+// another placement between its read and its writes would make it fail
+// or place from a stale order. Unlike placeDashboards it does not retry
+// on ErrConflict: a tab row's only conflict is a duplicate tab, which a
+// retry can't cure and lostDashboardRace would misname.
 func (s *Service) placeTabs(place func() error) error {
 	s.placeMu.Lock()
 	defer s.placeMu.Unlock()

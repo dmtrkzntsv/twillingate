@@ -227,29 +227,22 @@ func TestAddProjectTabRefusals(t *testing.T) {
 	}
 }
 
-func TestRemoveProjectTabUnreachable(t *testing.T) {
-	svc, st, p := tabsProject(t)
+// Your own dashboard may lose its last tab: it is always in the sidebar
+// (spec 2026-10-05 D5), so it stays live and reachable.
+func TestRemoveProjectTabLastOfOwn(t *testing.T) {
+	svc, _, p := tabsProject(t)
 	ctx := context.Background()
 	u := mustCreate(t, svc, "Mine")
 	mustAddProjectTab(t, svc, p, u.ID, nil)
-	if _, err := svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: u.ID, Sidebar: ptr(false)}); err != nil {
-		t.Fatal(err)
-	}
-	_, err := svc.RemoveProjectTab(ctx, "test", p, u.ID)
-	wantRefusal(t, err, store.ErrInvalid, "dashboard "+itoa(u.ID)+
-		" would be unreachable: not in the sidebar and on no project's tabs; add it to a project first, or archive it")
-	if got, want := shownTabIDs(t, svc, p), []int64{1, 2, u.ID}; !reflect.DeepEqual(got, want) {
-		t.Errorf("after refusal = %v, want %v", got, want)
-	}
-
-	q := mustCreateProject(t, st, "Q")
-	mustAddProjectTab(t, svc, q, u.ID, nil)
 	tabs, err := svc.RemoveProjectTab(ctx, "test", p, u.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got, want := ids(tabs), []int64{1, 2}; !reflect.DeepEqual(got, want) {
 		t.Errorf("removed = %v, want %v", got, want)
+	}
+	if d, err := svc.st.GetDashboard(ctx, u.ID); err != nil || d.ArchivedAt != "" || !d.Sidebar {
+		t.Errorf("after removing its last tab: %+v, %v; want live, in the sidebar", d, err)
 	}
 
 	_, err = svc.RemoveProjectTab(ctx, "test", p, u.ID)
@@ -258,16 +251,12 @@ func TestRemoveProjectTabUnreachable(t *testing.T) {
 	wantRefusal(t, err, store.ErrNotFound, "project 9999: not found")
 }
 
-// An archived dashboard's last tab can go: restoring it puts its group
-// back in the sidebar (showIfUnreachable).
+// An archived dashboard's tab can go too.
 func TestRemoveProjectTabOfArchived(t *testing.T) {
 	svc, _, p := tabsProject(t)
 	ctx := context.Background()
 	u := mustCreate(t, svc, "Mine")
 	mustAddProjectTab(t, svc, p, u.ID, nil)
-	if _, err := svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: u.ID, Sidebar: ptr(false)}); err != nil {
-		t.Fatal(err)
-	}
 	if err := svc.ArchiveDashboard(ctx, "test", u.ID, false); err != nil {
 		t.Fatal(err)
 	}
@@ -371,9 +360,8 @@ func TestProjectTabsUnknownProject(t *testing.T) {
 	}
 }
 
-// lockCheck wraps a Store and records, at each project tab write and at
-// the reachability read a removal decides on, whether placeMu is held:
-// TryLock fails only while someone holds it.
+// lockCheck wraps a Store and records, at each project tab write,
+// whether placeMu is held: TryLock fails only while someone holds it.
 type lockCheck struct {
 	Store
 	svc      *Service
@@ -385,11 +373,6 @@ func (l *lockCheck) check(what string) {
 		l.svc.placeMu.Unlock()
 		l.unlocked = append(l.unlocked, what)
 	}
-}
-
-func (l *lockCheck) ListDashboardProjects(ctx context.Context, id int64) ([]int64, error) {
-	l.check("ListDashboardProjects")
-	return l.Store.ListDashboardProjects(ctx, id)
 }
 
 func (l *lockCheck) InsertProjectTab(ctx context.Context, r store.ProjectTabRow, a store.AuditEntry) error {
@@ -407,15 +390,14 @@ func (l *lockCheck) MoveProjectTab(ctx context.Context, r store.ProjectTabRow, a
 	return l.Store.MoveProjectTab(ctx, r, a)
 }
 
-// Every project tab write, and the reachability read a removal decides
-// on, runs under placeMu, so a concurrent hide can't leave a dashboard
-// unreachable.
+// Every project tab write runs under placeMu, so a respread never
+// interleaves with another tab write.
 func TestProjectTabWritesHoldPlaceMu(t *testing.T) {
 	svc, st, p := tabsProject(t)
 	ctx := context.Background()
 	u1 := mustCreate(t, svc, "U1")
 	u2 := mustCreate(t, svc, "U2")
-	u3 := mustCreate(t, svc, "U3") // before the wrap: a dashboard read lists its projects unlocked
+	u3 := mustCreate(t, svc, "U3")
 	l := &lockCheck{Store: svc.st, svc: svc}
 	svc.st = l
 	mustAddProjectTab(t, svc, p, u1.ID, nil)
@@ -429,12 +411,6 @@ func TestProjectTabWritesHoldPlaceMu(t *testing.T) {
 	}
 	if _, err := svc.RemoveProjectTab(ctx, "test", p, u1.ID); err != nil {
 		t.Fatal(err)
-	}
-	if _, err := svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: u2.ID, Sidebar: ptr(false)}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := svc.RemoveProjectTab(ctx, "test", p, u2.ID); !errors.Is(err, store.ErrInvalid) {
-		t.Fatalf("removing the last way in: err = %v, want ErrInvalid", err)
 	}
 	if len(l.unlocked) != 0 {
 		t.Errorf("ran without placeMu: %v", l.unlocked)
