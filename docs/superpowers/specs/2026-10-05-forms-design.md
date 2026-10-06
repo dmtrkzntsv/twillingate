@@ -208,22 +208,33 @@ Date: 2026-10-05
   | `list_forms` | `GET /api/projects/{project_id}/forms` | every form with `purpose`, `return_url`, `fields`, `expected_fields`, `accepting`, submission count, `last_submitted_at`, `archived` |
   | `update_form` | `PATCH /api/projects/{project_id}/forms/{name}` | merges `purpose`, `return_url`, `expected_fields` (`null` keeps every field), `accepting`; `return_url` must be an allowed target (D6) or `ErrInvalid` |
   | `archive_form` / `restore_form` | `POST …/forms/{name}/archive` / `restore` | hides or restores the form and its submissions |
-  | `list_submissions` | `GET /api/projects/{project_id}/submissions` | `form`, `from`, `to`, `search`, `limit`, `cursor`; newest first; archived forms' submissions left out |
-  | `delete_submissions` | `POST /api/projects/{project_id}/submissions/delete` | `ids`, or `search` (with optional `form`); destructive; the audit row holds the count and the search, never the contents |
-  | REST only | `GET …/forms/{name}/submissions.csv` | `id`, `received_at`, the expected fields (or every field seen), `host`, `path`, the `visit` columns |
+  | `list_submissions` | `GET /api/projects/{project_id}/forms/{name}/submissions` | one form's submissions as a table (D12a): `columns`, `rows`, `matched`, `total`; takes `filters`, `sort`, `offset`, `limit`, `distinct`, the arguments `widget_data` takes for a remote table; newest first without a sort |
+  | `find_submissions` | `GET /api/projects/{project_id}/submissions` | `search` (required), `limit`, `cursor`: every active form's submissions with a field value containing `search`, case-insensitive (`json_each`), for an erasure request; each with its form and fields |
+  | `delete_submissions` | `POST /api/projects/{project_id}/submissions/delete` | exactly one of `ids`; `form` with `filters` (the table's filters); or `search` (as `find_submissions`); destructive; the audit row holds the count and the selector, never the contents |
+  | REST only | `GET …/forms/{name}/submissions.csv` | the D12a columns, with the same `filters` and `sort`, every matching row (no paging) |
 
-  `search` is a case-insensitive substring match over every field value
-  (`json_each`): preview with `list_submissions`, then delete with the
-  same search. There is no `create_form`. `integration_guide` gains a
-  forms section.
+  Filtering a form's table and then deleting with the same `filters`
+  removes exactly what the table showed; `find_submissions` then
+  `delete_submissions` with the same `search` does the same across forms.
+  Submissions of archived forms are left out of all of them. There is no
+  `create_form`. `integration_guide` gains a forms section.
 
   CLI, one noun: `twillingate form list | update | archive | restore |
   export | erase`; `export` writes the CSV to stdout, `erase` deletes
   submissions by `-id` or `-search`.
 
-  Submissions get **no queryable view**: `query` and `schemaViews` never
-  reach them. `$form_submit` events are queryable through `raw_product`
-  like any product event.
+- **D8a. Custom SQL cannot read submissions.** Today `readsql.Check`
+  refuses only `meta` and SQLite's internals, so every table, `events`
+  included, is readable from `query` and widget SQL; a new `submissions`
+  table would be too. `readsql.Open` gains a list of further names to
+  refuse (so `readsql` stays free of twillingate's domain), and the
+  console's custom-SQL handle passes `submissions`: `query`, widgets and
+  `schemaViews` never reach a submission, and a test pins that each of
+  them refuses it. The submissions table (D12a) runs SQL the server
+  builds, not user text, on a second handle opened without that name, so
+  it reuses `QueryPage`'s filters, sort and paging unchanged.
+  `$form_submit` events stay queryable through `raw_product` like any
+  product event.
 
 - **D9. The visit is snapshotted onto the submission.** At write time the
   handler reads the actor's current session from `events` (the 30-minute
@@ -254,11 +265,33 @@ Date: 2026-10-05
     submission count, last submission, the `accepting` switch and a menu
     (archive). Archived forms appear on the Archive page.
   - **A form** (`/projects/:id/forms/:name`): the submissions table
-    (newest first, search, the remote table mode, a CSV button, per-row
-    delete, "delete all matching" with a confirm; a row opens a drawer
-    with every field and the visit), and settings: purpose, return URL,
-    and the expected-fields picker, one checkbox per field seen, with
-    "not kept" on fields arriving outside the list.
+    (D12a), and settings: purpose, return URL, and the expected-fields
+    picker, one checkbox per field seen, with "not kept" on fields
+    arriving outside the list.
+  - **Find a person** on the Forms page: a search across every form
+    (`find_submissions`) with "delete all" and a confirm, for erasure
+    requests.
+
+- **D12a. Submissions are a table with filters.** The form page shows
+  the dashboards' `table` component in remote mode, the same filter bar
+  (one chip per filter, `=`, `!=`, `<`, `>`, `in`, `not in`, values
+  picked from `distinct`), sort cycle, paging footer and per-viewer state
+  in localStorage, so filters mean the same here as on a widget. Its rows
+  come from `list_submissions` rather than `widget_data`. Columns, in
+  order:
+
+  - `Received` (`received_at`);
+  - one per field: the expected fields in their order, or every field in
+    `forms.fields` when none are set (`json_extract(fields, '$."<name>"')`,
+    the name quoted, so a field named like a column is safe);
+  - `Page` (`host` + `path`), `Referrer`, `UTM source`, `UTM medium`,
+    `UTM campaign` (from `visit`).
+
+  A field name that collides with one of the fixed columns is shown as
+  `<name> (field)`. Selecting rows enables **Delete**; with filters set,
+  **Delete all matching** sends the same `filters`. **CSV** downloads
+  what the filters match. A row opens a drawer with every stored field
+  (including ones no longer expected) and the full visit.
 
 ## Where the code goes
 
@@ -271,7 +304,8 @@ No new package; the archtest rank table is unchanged.
 | `server` | `forms.go`: the endpoint, decoding, D6, field filtering; takes a `server.FormStore` (as `NameStore` today), passed by `app`; `$form_submit` through `Enqueuer` |
 | `wire` | the D10 limits |
 | `manage` | audited `update_form`, archive, restore, erase; `manage.Store` grows by those. Forms stay out of the registry snapshot: ingest reads the row per submission |
-| `api` | `ops_forms.go`: tools and the CSV route |
+| `api` | `ops_forms.go`: tools and the CSV route; the second `readsql` handle (D8a) |
+| `shared/readsql` | `Open` takes further refused names (D8a) |
 | `cmd` | `twillingate form` |
 | `sdk`, `web` | D7, D12 |
 
@@ -300,6 +334,9 @@ No new package; the archtest rank table is unchanged.
 
 - `migration031_test.go`; store tests for idempotent ids, `fields`
   merging, project purge and archived-form purge.
+- `readsql`: a refused name passed to `Open` is refused by `Check` in
+  every form `meta` is (bare, quoted, as a string); `query` and widget
+  SQL reading `submissions` are refused.
 - Server: both body styles and multipart; key from the query; the
   Origin check; the D6 order and every open-redirect case (foreign
   origin, `javascript:`, relative URL, bare `*`, empty
@@ -313,7 +350,7 @@ No new package; the archtest rank table is unchanged.
   written to storage.
 - Web: vitest; Playwright `forms.spec.ts` against the built binary
   (submit a plain form, see it in the console, set expected fields,
-  export CSV, erase by search); the cursor and phone specs cover the
+  filter the table, export CSV, erase by search); the cursor and phone specs cover the
   new pages.
 
 ## Delivery
@@ -321,7 +358,8 @@ No new package; the archtest rank table is unchanged.
 Four stacked pull requests:
 
 1. `feat(server)`: migration, store, endpoint, `$form_submit`, `visit`,
-   docs. Works for plain HTML forms and the JSON API on its own.
+   the `readsql` refusal (D8a, so the table is never queryable, not even
+   for one release), docs. Works for plain HTML forms and the JSON API on its own.
 2. `feat(sdk)`: `data-twillingate-form`, `submitForm`.
 3. `feat(api)`: tools, CSV, CLI.
 4. `feat(web)`: the Forms pages.
