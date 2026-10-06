@@ -63,7 +63,7 @@ export interface DashboardInfo {
   widgets: number
   /** The dashboard's group is in the sidebar; the same on every member. */
   sidebar: boolean
-  /** Every project created from now on gets this dashboard as a tab. */
+  /** Every project created from now on gets this built-in as a tab; set by the release, always false on the user's own. */
   project_tab: boolean
   archived_at?: string
 }
@@ -106,8 +106,6 @@ export interface DashboardDetail extends Omit<DashboardInfo, 'widgets'> {
   widgets: Widget[]
   /** The group's live members, in order, this dashboard included; always an array (tabs D18). */
   tabs: DashboardTab[]
-  /** The projects that have this dashboard as a tab. */
-  project_ids: number[]
 }
 
 /** One tab of a project's page after Setup. */
@@ -391,10 +389,8 @@ export const endpoints = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ whole_group: true, title }),
     }),
-  /** Puts a dashboard's whole group in or out of the sidebar; a built-in group too, which is never archived (project tabs D5). */
+  /** Puts a built-in dashboard's whole group in or out of the sidebar; a built-in is never archived, and your own are always in it (project tabs D5). */
   setSidebar: (id: number, sidebar: boolean) => api<DashboardInfo>(`/api/dashboards/${id}`, json('PATCH', { sidebar })),
-  /** Whether projects created from now on get this dashboard of the user's as a tab. */
-  setProjectTab: (id: number, on: boolean) => api<DashboardInfo>(`/api/dashboards/${id}`, json('PATCH', { project_tab: on })),
   /** A project page's tabs after Setup, in order. */
   projectTabs: (projectId: number) => api<{ tabs: ProjectTab[] }>(`/api/projects/${projectId}/tabs`),
   /** Shows a dashboard as a tab of the project; `after` places one of the user's own, omitted puts it last. */

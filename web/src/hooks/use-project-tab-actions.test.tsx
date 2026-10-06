@@ -40,16 +40,14 @@ beforeEach(() => {
 })
 
 describe('useProjectTabActions', () => {
-  it('add sends the dashboard and where it goes, caches the returned tabs and refreshes the dashboards', async () => {
+  it('add sends the dashboard and where it goes, and caches the returned tabs', async () => {
     vi.mocked(endpoints.addProjectTab).mockResolvedValue({ tabs })
-    const invalidate = vi.spyOn(client, 'invalidateQueries')
     const { result } = renderHook(() => useProjectTabActions(), { wrapper })
 
     await expect(act(() => result.current.add(7, 13, 1))).resolves.toBe(true)
 
     expect(endpoints.addProjectTab).toHaveBeenCalledWith(7, { dashboard_id: 13, after: 1 })
     expect(client.getQueryData(['project-tabs', 7])).toEqual({ tabs })
-    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['dashboard'] })
     expect(result.current.pending).toBe(false)
   })
 

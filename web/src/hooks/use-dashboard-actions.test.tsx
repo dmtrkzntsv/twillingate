@@ -209,7 +209,6 @@ describe('useDashboardActions', () => {
       follows_project: true,
       follows_range: true,
       tabs: [],
-      project_ids: [],
       sidebar: true,
       project_tab: false,
     }

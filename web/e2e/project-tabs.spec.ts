@@ -21,7 +21,7 @@ async function login(page: Page): Promise<void> {
   await page.waitForURL(/\/app\/projects$/)
 }
 
-test('a project opens on Setup with the built-in tabs beside it; tabs are removed, re-added and chosen from the dashboard', async ({
+test('a project opens on Setup with the built-in tabs beside it; tabs are removed and re-added from the project page', async ({
   page,
   request,
 }) => {
@@ -95,41 +95,25 @@ test('a project opens on Setup with the built-in tabs beside it; tabs are remove
   await expect(page.getByText(`Removed '${second}'`)).toBeVisible()
   await expect(tabs.getByRole('tab')).toHaveText(['Setup', ...BUILT_INS, title])
 
+  // Our own dashboard's last project tab can go: it stays in the sidebar,
+  // and "+" brings the tab back. Projects are chosen one at a time, here.
+  await tabs.getByRole('tab', { name: title, exact: true }).click()
+  await expect(page.getByRole('heading', { level: 1, name: title, exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Tab actions' }).click()
+  await page.getByRole('menuitem', { name: 'Remove from this project' }).click()
+  await expect(page.getByText(`Removed '${title}'`)).toBeVisible()
+  await expect(tabs.getByRole('tab')).toHaveText(['Setup', ...BUILT_INS])
+  await expect(page.locator('[data-sidebar="sidebar"]').getByRole('link', { name: title, exact: true })).toBeVisible()
+  await page.reload()
+  await expect(tabs.getByRole('tab')).toHaveText(['Setup', ...BUILT_INS])
+  await page.getByRole('button', { name: 'Add tab' }).click()
+  await page.getByRole('dialog').getByRole('group', { name: 'Your dashboards' }).getByRole('button', { name: title, exact: true }).click()
+  await expect(tabs.getByRole('tab')).toHaveText(['Setup', ...BUILT_INS, title])
+
   await tabs.getByRole('tab', { name: 'Setup', exact: true }).click()
   await expect(page).toHaveURL(/\/setup$/)
   await expect(page.getByRole('region', { name: 'Allowed origins' })).toBeVisible()
-
-  // The dashboard page chooses the projects it is a tab of.
-  await page.goto(`/app/dashboards/${mineId}`)
-  await page.waitForLoadState('networkidle')
-  await page.getByRole('button', { name: 'Tab actions' }).click()
-  await page.getByRole('menuitem', { name: 'Project tabs…' }).click()
-  const dialog = page.getByRole('dialog', { name: 'Project tabs' })
-  const dev = dialog.getByRole('checkbox', { name: 'dev', exact: true })
-  await expect(dev).toBeChecked()
-  await dev.click()
-  await expect(dev).not.toBeChecked()
-  await page.keyboard.press('Escape')
-  await expect(dialog).toHaveCount(0)
-  // Closing the dialog leaves the page usable: the tab menu opens again.
-  await page.getByRole('button', { name: 'Tab actions' }).click()
-  await expect(page.getByRole('menuitem', { name: 'Project tabs…' })).toBeVisible()
-  await page.keyboard.press('Escape')
-  await expect(page.getByRole('menuitem', { name: 'Project tabs…' })).toHaveCount(0)
-
   await page.goto(`${projectURL}/setup`)
-  await expect(tabs.getByRole('tab')).toHaveText(['Setup', ...BUILT_INS])
-
-  await page.goto(`/app/dashboards/${mineId}`)
-  await page.waitForLoadState('networkidle')
-  await page.getByRole('button', { name: 'Tab actions' }).click()
-  await page.getByRole('menuitem', { name: 'Project tabs…' }).click()
-  await dev.click()
-  await expect(dev).toBeChecked()
-  await page.keyboard.press('Escape')
-  await expect(dialog).toHaveCount(0)
-  await page.getByRole('link', { name: 'Projects', exact: true }).click()
-  await page.getByRole('article', { name: 'dev' }).getByRole('link', { name: 'dev' }).click()
   await expect(tabs.getByRole('tab')).toHaveText(['Setup', ...BUILT_INS, title])
 
   // Archiving our own dashboard takes its tab away. The second goes too:
