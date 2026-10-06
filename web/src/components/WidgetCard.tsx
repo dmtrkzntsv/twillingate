@@ -24,7 +24,7 @@ import { useNow } from '@/hooks/use-now'
 import { useStoredState } from '@/hooks/use-stored-state'
 import { ApiError, endpoints, type SqlData, type Widget, type WidgetData, type WidgetDataQuery } from '@/lib/api'
 import { captureCard, downloadBlob } from '@/lib/capture'
-import type { ShareContext } from '@/lib/share'
+import { shareCaption, type ShareContext } from '@/lib/share'
 import { liveFilters, parseView, type Filter, type TableView } from '@/lib/table-view'
 import { formatDuration } from '@/lib/time'
 import { canRefresh, componentOf, isRemoteTable, refreshWidget, viewQuery, widgetQuery } from '@/lib/widget-query'
@@ -36,7 +36,7 @@ interface Props {
   params: WidgetDataQuery
   /** Show what is cached, but ask for nothing (the page is about to change). */
   idle?: boolean
-  /** Absent with no project to share from: the card has no menu. */
+  /** Absent: the card has no menu (Share… and Download PNG). */
   share?: ShareContext
 }
 
@@ -145,7 +145,7 @@ export default function WidgetCard({ widget, params, idle = false, share }: Prop
             {share && (
               <>
                 <WidgetMenu
-                  canShare={share.writable}
+                  canShare={share.writable && share.project !== undefined}
                   disabled={!shareable}
                   downloading={downloading}
                   onShare={() => setSharing(true)}
@@ -155,8 +155,14 @@ export default function WidgetCard({ widget, params, idle = false, share }: Prop
                   }}
                 />
                 {/* Both draw into portals: they take no room in the corner. */}
-                {share.writable && drawable && (
-                  <ShareDialog open={sharing} onOpenChange={setSharing} widget={widget} data={answer?.data} share={share} />
+                {share.writable && share.project && drawable && (
+                  <ShareDialog
+                    open={sharing}
+                    onOpenChange={setSharing}
+                    widget={widget}
+                    data={answer?.data}
+                    share={{ ...share, project: share.project }}
+                  />
                 )}
                 {downloading && drawable && (
                   <OffscreenCard
@@ -165,9 +171,7 @@ export default function WidgetCard({ widget, params, idle = false, share }: Prop
                     data={answer?.data}
                     props={widget.props}
                     title={label}
-                    projectName={share.projectName}
-                    from={share.from}
-                    to={share.to}
+                    {...shareCaption(widget, share)}
                     onNode={(node) => void download(node)}
                   />
                 )}

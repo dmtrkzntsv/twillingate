@@ -423,7 +423,7 @@ describe('WidgetCard with a remote table', () => {
 })
 
 describe('WidgetCard menu', () => {
-  const shareCtx: ShareContext = { projectId: 7, projectName: 'blog', from: '2026-09-20', to: '2026-09-26', writable: true }
+  const shareCtx: ShareContext = { project: { id: 7, name: 'blog' }, from: '2026-09-20', to: '2026-09-26', rangeShown: true, writable: true }
   const withShare = (share?: ShareContext) => renderWithProviders(<WidgetCard widget={statWidget()} params={params} share={share} />)
   const openMenu = async (user: ReturnType<typeof userEvent.setup>) => {
     await screen.findByText('12.3K')
@@ -445,6 +445,15 @@ describe('WidgetCard menu', () => {
     withShare({ ...shareCtx, writable: false })
     await openMenu(user)
     expect(await screen.findByRole('menuitem', { name: 'Download PNG' })).toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: 'Share…' })).not.toBeInTheDocument()
+  })
+
+  it('offers only Download PNG with no project to share from', async () => {
+    const user = userEvent.setup()
+    vi.spyOn(endpoints, 'widgetData').mockResolvedValue(sqlAnswer())
+    withShare({ ...shareCtx, project: undefined })
+    await openMenu(user)
+    expect(await screen.findByRole('menuitem', { name: 'Download PNG' })).toBeEnabled()
     expect(screen.queryByRole('menuitem', { name: 'Share…' })).not.toBeInTheDocument()
   })
 

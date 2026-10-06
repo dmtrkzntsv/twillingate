@@ -71,6 +71,8 @@ type WidgetShare struct {
 	ProjectName    string // copied at capture
 	From, To       string // YYYY-MM-DD
 	Title          string // copied at capture
+	CaptionProject bool   // the page names the project
+	CaptionRange   bool   // the page names the range
 	CreatedAt      string // 2006-01-02T15:04:05Z
 	ArchiveAt      string // "" = project lifetime
 	ArchivedAt     string // "" = not archived by hand or by the daily pass
@@ -84,6 +86,9 @@ type NewWidgetShare struct {
 	From, To, Title     string
 	Image, Image2x      []byte
 	ArchiveAt           string // "" = project lifetime
+	// CaptionProject and CaptionRange: whether the page names the project
+	// and the range, which it does only for what the widget follows.
+	CaptionProject, CaptionRange bool
 }
 
 // WidgetShareFilter: State "" lists every share, "live" those with no

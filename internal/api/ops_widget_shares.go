@@ -27,6 +27,9 @@ type createWidgetShareIn struct {
 	ArchiveAfter string `json:"archive_after,omitempty" jsonschema:"7d, 30d, 90d, 365d or project; default 30d"`
 	Image        string `json:"image" jsonschema:"1200×630 PNG file, at most 5 MB"`
 	Image2x      string `json:"image_2x" jsonschema:"2400×1260 PNG file, at most 5 MB"`
+	// Strings, as multipart fields are: 1, 0, true or false.
+	CaptionProject string `json:"caption_project,omitempty" jsonschema:"whether the share page names the project: 1 (default) or 0; 0 when the widget does not follow the dashboard's project"`
+	CaptionRange   string `json:"caption_range,omitempty" jsonschema:"whether the share page names the range: 1 (default) or 0; 0 when the widget does not follow the dashboard's range"`
 }
 
 type widgetSharesIn struct {
@@ -60,7 +63,8 @@ type widgetShareRestoreIn struct {
 // multipart body may hold; anything else is refused, as decodeRequest
 // refuses an unknown field.
 var (
-	shareTextParts = map[string]bool{"widget_id": true, "project_id": true, "from": true, "to": true, "archive_after": true}
+	shareTextParts = map[string]bool{"widget_id": true, "project_id": true, "from": true, "to": true, "archive_after": true,
+		"caption_project": true, "caption_range": true}
 	shareFileParts = map[string]bool{"image": true, "image_2x": true}
 )
 
@@ -110,6 +114,21 @@ func readShareUpload(w http.ResponseWriter, r *http.Request) (reporting.NewShare
 		*dst = n
 	}
 	in.From, in.To, in.ArchiveAfter = r.FormValue("from"), r.FormValue("to"), r.FormValue("archive_after")
+	for name, dst := range map[string]**bool{"caption_project": &in.CaptionProject, "caption_range": &in.CaptionRange} {
+		v, ok := form.Value[name]
+		if !ok {
+			continue // nil: captioned
+		}
+		var b bool
+		switch v[0] {
+		case "1", "true":
+			b = true
+		case "0", "false":
+		default:
+			return reporting.NewShare{}, invalidf("%s must be 1, 0, true or false, got %q", name, v[0])
+		}
+		*dst = &b
+	}
 	for name, dst := range map[string]*[]byte{"image": &in.Image, "image_2x": &in.Image2x} {
 		f, _, err := r.FormFile(name)
 		if err != nil {
@@ -165,7 +184,7 @@ func (h *host) registerWidgetShares(r *registrar) {
 	const p = "/api/widget-shares"
 
 	restRaw[createWidgetShareIn, reporting.WidgetShareOut](r, spec{Name: "create_widget_share", Method: "POST", Path: p, Status: http.StatusCreated,
-		Description: "Share a widget: store the two PNGs the web app captured of it (image 1200×630, image_2x 2400×1260, each at most 5 MB) as a public, frozen picture at /share/<id>, with the widget's title, the project and the range they show. multipart/form-data. archive_after (7d, 30d, 90d, 365d or project; default 30d) sets when the share archives itself; project gives it no date, so it lives as long as its project. Needs CONSOLE_URL (or PUBLIC_URL) for its links. REST only: an agent has no browser to capture with."},
+		Description: "Share a widget: store the two PNGs the web app captured of it (image 1200×630, image_2x 2400×1260, each at most 5 MB) as a public, frozen picture at /share/<id>, with the widget's title, the project and the range they show. multipart/form-data. caption_project and caption_range (1 or 0, default 1) say whether the page names the project and the range; the web sends 0 for what the widget does not follow. archive_after (7d, 30d, 90d, 365d or project; default 30d) sets when the share archives itself; project gives it no date, so it lives as long as its project. Needs CONSOLE_URL (or PUBLIC_URL) for its links. REST only: an agent has no browser to capture with."},
 		h.createWidgetShare)
 	expose(r, spec{Name: "list_widget_shares", Annotations: ro, Method: "GET", Path: p,
 		Description: "Widget shares, newest first: each one's id, its public page url (/share/<id>) and image URLs, the widget and dashboard it came from (null once the widget is gone), the project, range and title it shows, created_at, archive_at (when it archives itself; null: it lives as long as its project) and archived_at (null: live). Filter by widget_id, and by state: live, or archived (which includes a share whose archive_at has passed and that the daily pass has not yet archived)."},

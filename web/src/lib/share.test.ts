@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { WidgetShare } from './api'
-import { archiveLabel, embedCode, rangeInWords } from './share'
+import { archiveLabel, embedCode, rangeInWords, shareCaption, type ShareContext } from './share'
 
 function share(over: Partial<WidgetShare> = {}): WidgetShare {
   return {
@@ -19,6 +19,8 @@ function share(over: Partial<WidgetShare> = {}): WidgetShare {
     created_at: '2026-10-05T10:00:00Z',
     archive_at: '2026-11-04T10:00:00Z',
     archived_at: null,
+    caption_project: true,
+    caption_range: true,
     ...over,
   }
 }
@@ -59,5 +61,25 @@ describe('embedCode', () => {
     const code = embedCode(share({ title: '<b>"q" & co' }))
     expect(code).toContain('alt="&lt;b&gt;&quot;q&quot; &amp; co"')
     expect(code).not.toContain('<b>')
+  })
+})
+
+describe('shareCaption', () => {
+  const ctx: ShareContext = { project: { id: 7, name: 'blog' }, from: '2026-09-05', to: '2026-10-04', rangeShown: true, writable: true }
+  const follows = (follows_project: boolean, follows_range: boolean) => ({ follows_project, follows_range })
+
+  it('names the project and the range the widget follows', () => {
+    expect(shareCaption(follows(true, true), ctx)).toEqual({ projectName: 'blog', from: '2026-09-05', to: '2026-10-04' })
+  })
+
+  it('leaves out what the widget does not follow', () => {
+    expect(shareCaption(follows(false, true), ctx)).toEqual({ from: '2026-09-05', to: '2026-10-04' })
+    expect(shareCaption(follows(true, false), ctx)).toEqual({ projectName: 'blog' })
+    expect(shareCaption(follows(false, false), ctx)).toEqual({})
+  })
+
+  it('leaves out what the page does not hand down: no project, no range switcher', () => {
+    expect(shareCaption(follows(true, true), { ...ctx, project: undefined })).toEqual({ from: '2026-09-05', to: '2026-10-04' })
+    expect(shareCaption(follows(true, true), { ...ctx, rangeShown: false })).toEqual({ projectName: 'blog' })
   })
 })

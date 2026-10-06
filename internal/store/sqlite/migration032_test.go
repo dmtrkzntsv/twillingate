@@ -26,7 +26,7 @@ func TestMigration032WidgetShares(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{"id", "widget_id", "project_id", "range_from", "range_to", "title",
-		"project_name", "image", "image_2x", "created_at", "archive_at", "archived_at"}
+		"project_name", "caption_project", "caption_range", "image", "image_2x", "created_at", "archive_at", "archived_at"}
 	sort.Strings(got)
 	sort.Strings(want)
 	if !reflect.DeepEqual(got, want) {

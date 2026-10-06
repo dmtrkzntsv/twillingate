@@ -91,6 +91,37 @@ func TestInsertWidgetShareProjectLifetime(t *testing.T) {
 	}
 }
 
+func TestInsertWidgetShareCaptions(t *testing.T) {
+	db, pid, wid := shareFixture(t)
+	for i, c := range []struct{ project, rng bool }{{true, true}, {true, false}, {false, true}, {false, false}} {
+		id := shareID(i + 1)
+		got, err := db.InsertWidgetShare(context.Background(), store.NewWidgetShare{ID: id,
+			WidgetID: wid, ProjectID: pid, From: "2026-09-01", To: "2026-09-30", Title: "T",
+			Image: png1(), Image2x: png2(), CaptionProject: c.project, CaptionRange: c.rng},
+			store.AuditEntry{Actor: "api", Action: "widget_share.create"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		again, err := db.GetWidgetShare(context.Background(), id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, r := range []store.WidgetShare{got, again} {
+			if r.CaptionProject != c.project || r.CaptionRange != c.rng {
+				t.Errorf("%+v: captions project=%v range=%v, want %v %v", c, r.CaptionProject, r.CaptionRange, c.project, c.rng)
+			}
+		}
+	}
+	// A row written without them (as by hand) captions both.
+	if _, err := db.ExecForTest(`INSERT INTO widget_shares (id, project_id, range_from, range_to, title, project_name, image, image_2x)
+		VALUES (?, ?, '2026-09-01', '2026-09-30', 'T', 'blog', x'00', x'00')`, shareID(9), pid); err != nil {
+		t.Fatal(err)
+	}
+	if r, err := db.GetWidgetShare(context.Background(), shareID(9)); err != nil || !r.CaptionProject || !r.CaptionRange {
+		t.Fatalf("defaults = %+v, %v; want both captions", r, err)
+	}
+}
+
 func TestInsertWidgetShareUnknownProject(t *testing.T) {
 	db, _, wid := shareFixture(t)
 	_, err := db.InsertWidgetShare(context.Background(), store.NewWidgetShare{ID: shareID(1),

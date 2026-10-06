@@ -13,7 +13,8 @@ export interface DashboardSelection {
   /**
    * The range the selection names, resolved to days; the default one (7 days)
    * on a dashboard with no range switcher. Widgets follow it only when the
-   * dashboard has the switcher, so it is what a share is captioned with.
+   * dashboard has the switcher, so only then does a share's caption name it
+   * (shareCaption); without one it still dates the share and names its file.
    */
   range: { from: string; to: string }
   /** What each widget is asked for under the current selection; stable while it holds. */

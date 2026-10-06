@@ -14,7 +14,7 @@ import (
 )
 
 const shareCols = `s.id, COALESCE(s.widget_id,0), COALESCE(w.dashboard_id,0), COALESCE(d.title,''),
-	s.project_id, s.project_name, s.range_from, s.range_to, s.title, s.created_at,
+	s.project_id, s.project_name, s.range_from, s.range_to, s.title, s.caption_project, s.caption_range, s.created_at,
 	COALESCE(s.archive_at,''), COALESCE(s.archived_at,'')`
 
 const shareFrom = ` FROM widget_shares s
@@ -24,7 +24,7 @@ const shareFrom = ` FROM widget_shares s
 func scanShare(r rowScanner) (store.WidgetShare, error) {
 	var s store.WidgetShare
 	err := r.Scan(&s.ID, &s.WidgetID, &s.DashboardID, &s.DashboardTitle, &s.ProjectID, &s.ProjectName,
-		&s.From, &s.To, &s.Title, &s.CreatedAt, &s.ArchiveAt, &s.ArchivedAt)
+		&s.From, &s.To, &s.Title, &s.CaptionProject, &s.CaptionRange, &s.CreatedAt, &s.ArchiveAt, &s.ArchivedAt)
 	return s, err
 }
 
@@ -49,9 +49,11 @@ func (d *DB) InsertWidgetShare(ctx context.Context, n store.NewWidgetShare, a st
 		// widget_id 0 would break the foreign key; a share is always taken
 		// of a widget that exists, so it is passed as-is.
 		res, err := tx.ExecContext(ctx, `INSERT INTO widget_shares
-			(id, widget_id, project_id, range_from, range_to, title, project_name, image, image_2x, archive_at)
-			SELECT ?, ?, id, ?, ?, ?, name, ?, ?, NULLIF(?, '') FROM projects WHERE id = ?`,
-			n.ID, n.WidgetID, n.From, n.To, n.Title, n.Image, n.Image2x, n.ArchiveAt, n.ProjectID)
+			(id, widget_id, project_id, range_from, range_to, title, project_name, caption_project, caption_range,
+			 image, image_2x, archive_at)
+			SELECT ?, ?, id, ?, ?, ?, name, ?, ?, ?, ?, NULLIF(?, '') FROM projects WHERE id = ?`,
+			n.ID, n.WidgetID, n.From, n.To, n.Title, n.CaptionProject, n.CaptionRange,
+			n.Image, n.Image2x, n.ArchiveAt, n.ProjectID)
 		if err != nil {
 			return err
 		}

@@ -10,7 +10,7 @@ import { useWidgetShareActions } from '@/hooks/use-widget-share-actions'
 import type { ArchiveAfter, Widget, WidgetShare } from '@/lib/api'
 import { captureCard } from '@/lib/capture'
 import { widgetSharesQuery } from '@/lib/queries'
-import { DEFAULT_ARCHIVE_AFTER, embedCode, type ShareContext } from '@/lib/share'
+import { DEFAULT_ARCHIVE_AFTER, embedCode, shareCaption, type ShareContext } from '@/lib/share'
 import { ArchiveAfterSelect } from './ArchiveAfterSelect'
 import { OffscreenCard } from './OffscreenCard'
 
@@ -20,7 +20,8 @@ interface Props {
   widget: Widget
   /** The widget's current answer, drawn on the card. */
   data: unknown
-  share: ShareContext
+  /** With its project: only a page that shows one offers Share…. */
+  share: ShareContext & { project: NonNullable<ShareContext['project']> }
 }
 
 type Captured = { image: Blob; image2x: Blob }
@@ -54,6 +55,8 @@ export function ShareDialog({ open, onOpenChange, widget, data, share }: Props) 
     }
   }, [captured])
 
+  const caption = shareCaption(widget, share)
+
   const others = useQuery({
     ...widgetSharesQuery({ widget_id: widget.widget_id, state: 'live' }),
     enabled: open,
@@ -76,10 +79,13 @@ export function ShareDialog({ open, onOpenChange, widget, data, share }: Props) 
     if (!captured) return
     const form = new FormData()
     form.set('widget_id', String(widget.widget_id))
-    form.set('project_id', String(share.projectId))
+    form.set('project_id', String(share.project.id))
     form.set('from', share.from)
     form.set('to', share.to)
     form.set('archive_after', archiveAfter)
+    // The page names only what the card does.
+    form.set('caption_project', caption.projectName !== undefined ? '1' : '0')
+    form.set('caption_range', caption.from !== undefined ? '1' : '0')
     form.set('image', png(captured.image))
     form.set('image_2x', png(captured.image2x))
     const mine = opening.current
@@ -167,9 +173,7 @@ export function ShareDialog({ open, onOpenChange, widget, data, share }: Props) 
           data={data}
           props={widget.props}
           title={widget.title ?? widget.name}
-          projectName={share.projectName}
-          from={share.from}
-          to={share.to}
+          {...caption}
           onNode={(node) => void capture(node)}
         />
       )}

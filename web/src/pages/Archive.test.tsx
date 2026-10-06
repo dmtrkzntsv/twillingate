@@ -62,6 +62,8 @@ function share(id: string, title: string, extra: Partial<WidgetShare> = {}): Wid
     created_at: '2026-09-01T10:00:00Z',
     archive_at: '2026-10-05T10:00:00Z',
     archived_at: '2026-10-05T10:00:00Z',
+    caption_project: true,
+    caption_range: true,
     ...extra,
   }
 }

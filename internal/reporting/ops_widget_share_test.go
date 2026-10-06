@@ -113,6 +113,34 @@ func TestCreateWidgetShare(t *testing.T) {
 	}
 }
 
+func TestCreateWidgetShareCaptions(t *testing.T) {
+	e := newShareEnv(t)
+	f, tr := false, true
+	for _, c := range []struct {
+		project, rng *bool
+		want         [2]bool
+	}{
+		{nil, nil, [2]bool{true, true}}, // both by default
+		{&tr, &f, [2]bool{true, false}},
+		{&f, &tr, [2]bool{false, true}},
+		{&f, &f, [2]bool{false, false}},
+	} {
+		in := e.input(t)
+		in.CaptionProject, in.CaptionRange = c.project, c.rng
+		got, err := e.svc.CreateWidgetShare(context.Background(), "test", in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.CaptionProject != c.want[0] || got.CaptionRange != c.want[1] {
+			t.Errorf("captions = %v %v, want %v", got.CaptionProject, got.CaptionRange, c.want)
+		}
+		// The owner's view still has the project and range either way.
+		if got.ProjectName != "Acme" || got.From != "2026-09-01" {
+			t.Errorf("project/range = %q %s", got.ProjectName, got.From)
+		}
+	}
+}
+
 func TestCreateWidgetShareTitleFallsBackToName(t *testing.T) {
 	e := newShareEnv(t)
 	d := mustCreate(t, e.svc, "Untitled board", WidgetSpec{Component: "markdown", Source: md("x")})

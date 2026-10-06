@@ -1,14 +1,35 @@
-import type { ArchiveAfter, WidgetShare } from './api'
+import type { ArchiveAfter, Widget, WidgetShare } from './api'
 
 /** What a widget needs to be shared or downloaded: the page's project and range, and whether it may write. */
 export interface ShareContext {
-  projectId: number
-  projectName: string
-  /** The range's first and last day, YYYY-MM-DD. */
+  /**
+   * The project the page shows; absent on a dashboard with no project
+   * switcher. A share belongs to a project, so Share… is not offered
+   * without one; Download PNG, which stores nothing, is.
+   */
+  project?: { id: number; name: string }
+  /** The range's first and last day, YYYY-MM-DD: the page's, or the default 7 days with no range switcher. */
   from: string
   to: string
+  /** Whether the page hands its range to its widgets (it has a range switcher). */
+  rangeShown: boolean
   /** False in reporting dev, which serves only reads: Share… is not offered there, Download PNG is. */
   writable: boolean
+}
+
+/**
+ * What a widget's card and share page name: the project and the range only
+ * when the widget follows them, so a widget pinned to its own project or
+ * range is never captioned with the page's. Spread into a ShareCard.
+ */
+export function shareCaption(
+  widget: Pick<Widget, 'follows_project' | 'follows_range'>,
+  ctx: ShareContext
+): { projectName?: string; from?: string; to?: string } {
+  return {
+    ...(ctx.project && widget.follows_project ? { projectName: ctx.project.name } : {}),
+    ...(ctx.rangeShown && widget.follows_range ? { from: ctx.from, to: ctx.to } : {}),
+  }
 }
 
 /** The archive-after choices, in the order the pickers list them. */

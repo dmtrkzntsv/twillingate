@@ -4,6 +4,8 @@
 -- rename. It lives as long as its project (deleteProject removes it, via
 -- projectTables) and outlives its widget (widget_id goes NULL). archive_at
 -- NULL = project lifetime; archived_at NULL = not archived yet.
+-- caption_project and caption_range say whether the page names the project
+-- and the range: only what the widget follows, so never a false caption.
 CREATE TABLE widget_shares (
     id           TEXT PRIMARY KEY,
     widget_id    INTEGER REFERENCES widgets(id) ON DELETE SET NULL,
@@ -12,6 +14,8 @@ CREATE TABLE widget_shares (
     range_to     TEXT NOT NULL,
     title        TEXT NOT NULL,
     project_name TEXT NOT NULL,
+    caption_project INTEGER NOT NULL DEFAULT 1,
+    caption_range   INTEGER NOT NULL DEFAULT 1,
     image        BLOB NOT NULL,
     image_2x     BLOB NOT NULL,
     created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),

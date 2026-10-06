@@ -37,6 +37,18 @@ describe('ShareCard', () => {
     expect(container.querySelector('[data-share-meta]')).toHaveTextContent(/^blog · Sep 5 – Oct 4, 2026$/)
   })
 
+  it('names only what it is given: the project, the range, or neither', () => {
+    const meta = (over: Partial<ShareCardProps>) => {
+      const { container, unmount } = card({ component: 'stat', data: stat.data, props: stat.props, ...over })
+      const text = container.querySelector('[data-share-meta]')?.textContent ?? null
+      unmount()
+      return text
+    }
+    expect(meta({ from: undefined, to: undefined })).toBe('blog')
+    expect(meta({ projectName: undefined })).toBe('Sep 5 – Oct 4, 2026')
+    expect(meta({ projectName: undefined, from: undefined, to: undefined })).toBeNull()
+  })
+
   it('carries the watermark: the iceberg and twillingate.dev', () => {
     const { container } = card({ component: 'table', data: table.data, props: table.props })
     const mark = screen.getByText('twillingate.dev')

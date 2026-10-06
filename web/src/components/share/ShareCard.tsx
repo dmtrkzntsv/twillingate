@@ -11,10 +11,11 @@ export interface ShareCardProps {
   data: unknown
   props: Record<string, unknown>
   title: string
-  projectName: string
-  /** The range's first and last day, YYYY-MM-DD. */
-  from: string
-  to: string
+  /** The project named under the title; left out for a widget that does not follow the page's (shareCaption). */
+  projectName?: string
+  /** The range's first and last day, YYYY-MM-DD; left out, like the project, when the widget does not follow it. */
+  from?: string
+  to?: string
   /** Called once the widget has drawn, under Inter, after a lazy one (map, markdown) has loaded. */
   onReady?: () => void
 }
@@ -86,17 +87,17 @@ function useTwoLineTitle(title: string, fontsReady: boolean) {
 
 /**
  * A widget laid out afresh as a social card (D4): the title, the project
- * and range in words, the widget drawn at card size in card mode, and the
+ * and range in words (whichever the widget follows), the widget drawn at card size in card mode, and the
  * small twillingate mark in its own row below, never over the chart. It
  * takes the console's theme, light or dark, from the `dark` class on <html>.
  */
 export const ShareCard = forwardRef<HTMLDivElement, ShareCardProps>(function ShareCard(p, ref) {
   const Component = widgets[p.component]?.default
-  const range = rangeInWords(p.from, p.to)
+  const range = p.from && p.to ? rangeInWords(p.from, p.to) : undefined
   const fontsReady = useCardFonts({
     bold: p.title,
     // The data's own text too (labels, markdown), so a non-Latin label's subset is in before the widget draws.
-    regular: `${p.projectName} · ${range} twillingate.dev 0123456789 ${JSON.stringify(p.data ?? '').slice(0, 2000)}`,
+    regular: `${p.projectName ?? ''} · ${range ?? ''} twillingate.dev 0123456789 ${JSON.stringify(p.data ?? '').slice(0, 2000)}`,
   })
   const title = useTwoLineTitle(p.title, fontsReady)
   return (
@@ -112,11 +113,13 @@ export const ShareCard = forwardRef<HTMLDivElement, ShareCardProps>(function Sha
       >
         {title.shown}
       </h2>
-      {/* A long project name gives way; the range always shows. */}
-      <p data-share-meta className="mt-2 flex min-w-0 text-[22px] whitespace-pre text-muted-foreground">
-        <span className="truncate">{p.projectName}</span>
-        <span className="shrink-0"> · {range}</span>
-      </p>
+      {/* Only what the widget follows; with neither, no line at all. A long project name gives way to the range. */}
+      {(p.projectName || range) && (
+        <p data-share-meta className="mt-2 flex min-w-0 text-[22px] whitespace-pre text-muted-foreground">
+          {p.projectName && <span className="truncate">{p.projectName}</span>}
+          {range && <span className="shrink-0">{p.projectName ? ` · ${range}` : range}</span>}
+        </p>
+      )}
       <div className="relative mt-6 min-h-0 flex-1">
         {/* The widget measures itself as it mounts (a table's rows, recharts'
             axes), so it mounts only once Inter is in and the title, which

@@ -150,6 +150,48 @@ func TestCreateWidgetShareREST(t *testing.T) {
 	}
 }
 
+func TestCreateWidgetShareRESTCaptions(t *testing.T) {
+	h, wid := shareFixture(t)
+	for _, c := range []struct {
+		project, rng string // "" = left out
+		wantP, wantR bool
+	}{
+		{"", "", true, true},
+		{"0", "1", false, true},
+		{"true", "false", true, false},
+		{"false", "0", false, false},
+	} {
+		f := shareFields(wid)
+		if c.project != "" {
+			f["caption_project"] = c.project
+		}
+		if c.rng != "" {
+			f["caption_range"] = c.rng
+		}
+		body, ct := shareForm(t, f, shareFiles(t))
+		rec := call(h, "POST", "/api/widget-shares", body, ct, true)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("%+v: %d %s", c, rec.Code, rec.Body.String())
+		}
+		var got struct {
+			CaptionProject bool `json:"caption_project"`
+			CaptionRange   bool `json:"caption_range"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		if got.CaptionProject != c.wantP || got.CaptionRange != c.wantR {
+			t.Errorf("%+v: got %+v", c, got)
+		}
+	}
+	f := shareFields(wid)
+	f["caption_range"] = "maybe"
+	body, ct := shareForm(t, f, shareFiles(t))
+	if rec := call(h, "POST", "/api/widget-shares", body, ct, true); rec.Code != 400 || errorCode(t, rec) != "invalid" {
+		t.Errorf("caption_range=maybe: %d %s, want 400 invalid", rec.Code, rec.Body.String())
+	}
+}
+
 func TestCreateWidgetShareRESTRefusals(t *testing.T) {
 	h, wid := shareFixture(t)
 	with := func(edit func(f map[string]string, files map[string][]byte)) (*bytes.Buffer, string) {

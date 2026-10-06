@@ -80,6 +80,65 @@ func TestSharePage(t *testing.T) {
 	}
 }
 
+func TestSharePageCaptions(t *testing.T) {
+	e, h := sharePagesEnv(t)
+	esc := `&lt;script&gt;alert(1)&lt;/script&gt; &#34;q&#34; &amp; co`
+	f, tr := false, true
+	for _, c := range []struct {
+		name         string
+		project, rng *bool
+		has, lacks   []string
+	}{
+		{"both", &tr, &tr, []string{
+			`<title>` + esc + ` · blog</title>`,
+			`<meta property="og:description" content="blog · Sep 1 – Sep 30, 2026">`,
+			`<meta property="og:image:alt" content="` + esc + `, blog, Sep 1 – Sep 30, 2026">`,
+			`<p class="meta">blog · Sep 1 – Sep 30, 2026</p>`,
+		}, nil},
+		{"project only", &tr, &f, []string{
+			`<title>` + esc + ` · blog</title>`,
+			`<meta property="og:description" content="blog">`,
+			`<meta property="og:image:alt" content="` + esc + `, blog">`,
+			`<p class="meta">blog</p>`,
+		}, []string{"Sep 1"}},
+		{"range only", &f, &tr, []string{
+			`<title>` + esc + `</title>`,
+			`<meta property="og:description" content="Sep 1 – Sep 30, 2026">`,
+			`<meta property="og:image:alt" content="` + esc + `, Sep 1 – Sep 30, 2026">`,
+			`<p class="meta">Sep 1 – Sep 30, 2026</p>`,
+		}, []string{"blog"}},
+		{"neither", &f, &f, []string{
+			`<title>` + esc + `</title>`,
+			`<meta property="og:image:alt" content="` + esc + `">`,
+		}, []string{"blog", "Sep 1", "og:description", `class="meta"`}},
+	} {
+		in := e.input(t)
+		in.CaptionProject, in.CaptionRange = c.project, c.rng
+		sh, err := e.svc.CreateWidgetShare(context.Background(), "test", in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rec := getShare(h, sh.ID)
+		if rec.Code != 200 {
+			t.Fatalf("%s: status %d", c.name, rec.Code)
+		}
+		body := rec.Body.String()
+		for _, want := range c.has {
+			if !strings.Contains(body, want) {
+				t.Errorf("%s: page lacks %s", c.name, want)
+			}
+		}
+		for _, bad := range c.lacks {
+			if strings.Contains(body, bad) {
+				t.Errorf("%s: page holds %s", c.name, bad)
+			}
+		}
+		if strings.Contains(strings.ToLower(body), "<script") || strings.Contains(body, `"q"`) {
+			t.Errorf("%s: the title is not escaped", c.name)
+		}
+	}
+}
+
 func TestShareImages(t *testing.T) {
 	e, h := sharePagesEnv(t)
 	sh := e.create(t, "")

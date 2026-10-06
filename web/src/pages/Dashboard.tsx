@@ -94,12 +94,22 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
   // writes there: every one of them would answer 405.
   const writable = !list.dev
   // What a card needs to be shared or downloaded: the project and range
-  // shown. With no project there is nothing to say the picture is of.
-  const project = all.find((p) => p.project_id === sel.projectId)
+  // shown. With no project, Download PNG is still offered; Share… is not,
+  // since a share belongs to a project.
+  const shown = all.find((p) => p.project_id === sel.projectId)
+  const projectId = shown?.project_id
+  const projectName = shown?.name
   const { from, to } = range
-  const share = useMemo<ShareContext | undefined>(
-    () => (project ? { projectId: project.project_id, projectName: project.name, from, to, writable } : undefined),
-    [project, from, to, writable]
+  const rangeShown = sel.range !== undefined
+  const share = useMemo<ShareContext>(
+    () => ({
+      project: projectId !== undefined && projectName !== undefined ? { id: projectId, name: projectName } : undefined,
+      from,
+      to,
+      rangeShown,
+      writable,
+    }),
+    [projectId, projectName, from, to, rangeShown, writable]
   )
   // Only a live user dashboard's group is arranged from the page (D11,
   // D14), and never while frozen: the dashboard on screen is being left.

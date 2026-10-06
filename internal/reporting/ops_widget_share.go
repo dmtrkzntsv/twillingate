@@ -23,13 +23,17 @@ const (
 var archivePeriods = map[string]int{"7d": 7, "30d": 30, "90d": 90, "365d": 365}
 
 // NewShare is what CreateWidgetShare takes: the widget and project the
-// picture shows, the days it covers, when it archives, and its two PNGs
-// (1200×630 and 2400×1260).
+// picture shows, the days it covers, when it archives, its two PNGs
+// (1200×630 and 2400×1260), and whether its captions name the project and
+// the range (nil = yes). The web names only what the widget follows, so a
+// widget pinned to its own project or range is never captioned with the
+// dashboard's.
 type NewShare struct {
-	WidgetID, ProjectID int64
-	From, To            string // YYYY-MM-DD
-	ArchiveAfter        string // 7d|30d|90d|365d|project; "" = 30d
-	Image, Image2x      []byte
+	WidgetID, ProjectID          int64
+	From, To                     string // YYYY-MM-DD
+	ArchiveAfter                 string // 7d|30d|90d|365d|project; "" = 30d
+	Image, Image2x               []byte
+	CaptionProject, CaptionRange *bool
 }
 
 // WidgetShareOut is a share as the surfaces above report it. ArchivedAt
@@ -48,6 +52,8 @@ type WidgetShareOut struct {
 	From           string  `json:"from"`
 	To             string  `json:"to"`
 	Title          string  `json:"title"`
+	CaptionProject bool    `json:"caption_project"`
+	CaptionRange   bool    `json:"caption_range"`
 	CreatedAt      string  `json:"created_at"`
 	ArchiveAt      *string `json:"archive_at"`
 	ArchivedAt     *string `json:"archived_at"`
@@ -130,6 +136,8 @@ func (s *Service) CreateWidgetShare(ctx context.Context, actor string, in NewSha
 		ID: newShareID(), WidgetID: in.WidgetID, ProjectID: in.ProjectID,
 		From: in.From, To: in.To, Title: title,
 		Image: in.Image, Image2x: in.Image2x, ArchiveAt: archiveAt,
+		CaptionProject: in.CaptionProject == nil || *in.CaptionProject,
+		CaptionRange:   in.CaptionRange == nil || *in.CaptionRange,
 	}, store.AuditEntry{Actor: actor, Action: "widget_share.create"})
 	if err != nil {
 		return WidgetShareOut{}, err
@@ -230,6 +238,7 @@ func (s *Service) shareOut(r store.WidgetShare) WidgetShareOut {
 		ID: r.ID, URL: url, ImageURL: url + ".png", Image2xURL: url + "@2x.png",
 		ProjectID: r.ProjectID, ProjectName: r.ProjectName,
 		From: r.From, To: r.To, Title: r.Title, CreatedAt: r.CreatedAt,
+		CaptionProject: r.CaptionProject, CaptionRange: r.CaptionRange,
 	}
 	if r.WidgetID != 0 {
 		out.WidgetID = &r.WidgetID

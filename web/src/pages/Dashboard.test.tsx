@@ -182,6 +182,20 @@ describe('Dashboard', () => {
     expect(screen.getByRole('menuitem', { name: 'Download PNG' })).toBeInTheDocument()
   })
 
+  it('offers only Download PNG on a dashboard with no project switcher', async () => {
+    const user = userEvent.setup()
+    const widgetData = mockApi()
+    const noProject = { ...product, follows_project: false, widgets: product.widgets.map((w) => ({ ...w, follows_project: false })) }
+    vi.spyOn(endpoints, 'dashboard').mockResolvedValue(noProject)
+    renderAt('/dashboards/2')
+
+    await waitFor(() => expect(widgetData).toHaveBeenCalled())
+    expect(screen.queryByRole('button', { name: /^Project/ })).not.toBeInTheDocument()
+    await user.click((await screen.findAllByRole('button', { name: 'Widget actions' }))[0])
+    expect(await screen.findByRole('menuitem', { name: 'Download PNG' })).toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: 'Share…' })).not.toBeInTheDocument()
+  })
+
   it('shows a tablist for a two-tab user group, its tabs sortable', async () => {
     mockApi()
     renderAt('/dashboards/13')

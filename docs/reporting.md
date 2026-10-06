@@ -311,7 +311,7 @@ public `/share/<id>.png` stops at archiving
 | `POST` | `/api/widgets/{widget_id}/archive` | `archive_widget` | — |
 | `POST` | `/api/widgets/{widget_id}/restore` | `restore_widget` | — |
 | `PUT` | `/api/dashboards/{dashboard_id}/view` | `view`, REST only: no MCP tool | body: `project_id`, `range`, and `from`/`to` for `custom` → `{"status":"saved"}` |
-| `POST` | `/api/widget-shares` | `create_widget_share`, REST only: no MCP tool | multipart: `widget_id`, `project_id`, `from`, `to`, `archive_after`, `image`, `image_2x` → 201 |
+| `POST` | `/api/widget-shares` | `create_widget_share`, REST only: no MCP tool | multipart: `widget_id`, `project_id`, `from`, `to`, `archive_after`, `caption_project`, `caption_range`, `image`, `image_2x` → 201 |
 | `GET` | `/api/widget-shares` | `list_widget_shares` | query: `widget_id`, `state` |
 | `PATCH` | `/api/widget-shares/{id}` | `update_widget_share` | body: `archive_after` |
 | `POST` | `/api/widget-shares/{id}/archive` | `archive_widget_share` | — |
@@ -825,7 +825,7 @@ Three routes serve a share, with no token:
 
 | Route | Answers |
 | --- | --- |
-| `/share/<id>` | A page with no script: the image, the widget's title as its heading, the project and the range in words (`Sep 5 – Oct 4, 2026`), and the footer "Built with twillingate.dev", on every install. Its `og:` and `twitter:` tags unfurl the link as a large image card; `noindex` keeps it out of search. The page follows the visitor's light or dark theme; the image keeps the theme it was shared in |
+| `/share/<id>` | A page with no script: the image, the widget's title as its heading, the project and the range in words (`Sep 5 – Oct 4, 2026`) when the widget follows them, and the footer "Built with twillingate.dev", on every install. Its `og:` and `twitter:` tags unfurl the link as a large image card; `noindex` keeps it out of search. The page follows the visitor's light or dark theme; the image keeps the theme it was shared in |
 | `/share/<id>.png` | The 1200×630 image, the one `og:image` names |
 | `/share/<id>@2x.png` | The 2400×1260 image, for the page, the embed and Download PNG |
 
@@ -834,7 +834,11 @@ archive date has passed.
 
 **The card.** 1200×630, with 56px of padding: the widget's title at the top
 (two lines at most, then an ellipsis), the project and the range under it,
-and the chart below, drawn at the card's size with larger type and fewer
+and the chart below. The captions name only what the widget follows: a
+widget pinned to its own project (`follows_project: false`) or range
+(`follows_range: false`, or a dashboard without a range switcher) is
+captioned without it, on the card and on the page; with neither, there is
+no caption line. The chart is drawn at the card's size with larger type and fewer
 ticks than on the dashboard, and without tooltips, menus, filters,
 pagination or scrollbars. A table shows the rows that fit and "and N more";
 a stat shows its number large and centred; a component whose content cannot
@@ -849,7 +853,8 @@ view.
 
 **Share… and Download PNG** are in a widget card's "…" menu. Download PNG
 saves the 2400×1260 card as `<widget-name>-<from>-<to>.png` and stores
-nothing. Share… opens a dialog: a preview, which is the captured image
+nothing; it is there on a dashboard without a project switcher too, where
+Share… is not, since a share needs a project. Share… opens a dialog: a preview, which is the captured image
 itself, an **Archive after** choice and **Create link**; once the link
 exists, **Copy link**, **Copy embed code** and **Open**. When the widget
 already has other links, "This widget has N other links" leads to the
@@ -894,7 +899,9 @@ Creating a share is REST only (`POST /api/widget-shares`, multipart). It is
 refused (`400 invalid`) when an image is not a PNG of exactly its size or is
 over 5 MB, when the range spans more than 365 days or ends after today, and
 when `archive_after` is not one of the five values; an unknown or archived
-widget is a `404`.
+widget is a `404`. `caption_project` and `caption_range` (`1` or `0`,
+default `1`) say whether the page names the project and the range; each
+share in `list_widget_shares` reports them as booleans.
 
 ## Archiving and the purge
 

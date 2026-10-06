@@ -212,6 +212,9 @@ export interface WidgetShare {
   from: string
   to: string
   title: string
+  /** Whether the share's page names the project, and the range: only what the widget followed. */
+  caption_project: boolean
+  caption_range: boolean
   created_at: string
   /** Null for a share that lives as long as its project. */
   archive_at: string | null

@@ -30,6 +30,8 @@ function share(id: string, over: Partial<WidgetShare> = {}): WidgetShare {
     created_at: '2026-10-05T09:30:00Z',
     archive_at: '2026-11-04T09:30:00Z',
     archived_at: null,
+    caption_project: true,
+    caption_range: true,
     ...over,
   }
 }

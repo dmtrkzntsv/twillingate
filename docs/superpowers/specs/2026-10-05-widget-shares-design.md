@@ -63,7 +63,7 @@ out of scope.
 
   | Route | Answers |
   | --- | --- |
-  | `GET /share/{id}` | An HTML page (D4): the image, the widget title, the project name and the range in words, and the footer link "Built with twillingate.dev" (below). Head: `og:title`, `og:type=website`, `og:url`, `og:image` (absolute `CONSOLE_URL/share/{id}.png`), `og:image:width` 1200, `og:image:height` 630, `og:image:alt`, `twitter:card=summary_large_image`, `<meta name="robots" content="noindex">`. Inline CSS and the app's icon, no app bundle and no script. |
+  | `GET /share/{id}` | An HTML page (D4): the image, the widget title, the project name and the range in words (each only when the widget follows it, D4), and the footer link "Built with twillingate.dev" (below). Head: `og:title`, `og:type=website`, `og:url`, `og:image` (absolute `CONSOLE_URL/share/{id}.png`), `og:image:width` 1200, `og:image:height` 630, `og:image:alt`, `twitter:card=summary_large_image`, `<meta name="robots" content="noindex">`. Inline CSS and the app's icon, no app bundle and no script. |
   | `GET /share/{id}.png` | The 1200×630 rendition (D4), the one `og:image` names. `Content-Type: image/png`, `Cache-Control: public, max-age=3600`, `X-Robots-Tag: noindex`. |
   | `GET /share/{id}@2x.png` | The 2400×1260 rendition, for the page's `srcset`, the embed and Download PNG. Same headers. |
 
@@ -138,7 +138,15 @@ out of scope.
   - The widget title at the top, 44px semibold, at most two lines, then
     truncated with an ellipsis.
   - Below it, the project name and the range in words (`Sep 5 – Oct 4,
-    2026`), 22px, muted.
+    2026`), 22px, muted. **Only what the widget follows:** a widget with
+    `follows_project: false` is captioned without the project, and one
+    with `follows_range: false`, or on a dashboard without a range
+    switcher, without the range, since the picture does not show the
+    dashboard's. With neither, there is no caption line. The share stores
+    the choice (`caption_project`, `caption_range`, D5), and the page's
+    title, meta line, `og:description` and `og:image:alt` follow it. A
+    dashboard without a project switcher offers Download PNG only: it
+    stores nothing, but a share needs a project.
   - The chart fills the rest, about 1088×420. It is drawn at that size
     rather than scaled from a tile, so lines and text stay sharp. Its type
     is scaled for a card seen small in a feed: axis labels and legends at
@@ -210,6 +218,8 @@ out of scope.
       range_to   TEXT NOT NULL,          -- YYYY-MM-DD
       title      TEXT NOT NULL,
       project_name TEXT NOT NULL,
+      caption_project INTEGER NOT NULL DEFAULT 1,  -- the page names the project
+      caption_range   INTEGER NOT NULL DEFAULT 1,  -- the page names the range
       image      BLOB NOT NULL,          -- 1200×630, og:image
       image_2x   BLOB NOT NULL,          -- 2400×1260
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -255,8 +265,8 @@ out of scope.
 
   | Operation | MCP tool | REST | Notes |
   | --- | --- | --- | --- |
-  | Create | none | `POST /api/widget-shares` | `multipart/form-data`: `widget_id`, `image` (1200×630 PNG), `image_2x` (2400×1260 PNG), `project_id`, `from`, `to`, `archive_after` (`7d`, `30d`, `90d`, `365d` or `project`; default `30d`). REST only, since an agent has no browser to capture with. Answers 201 with `{id, url, image_url, ...}` |
-  | List | `list_widget_shares` | `GET /api/widget-shares?widget_id=&state=` | `widget_id` optional; every share without it. Each row: `id`, `url`, `image_url`, `image_2x_url`, `widget_id`, `dashboard_id`, `dashboard_title`, `project_id`, `project_name`, `from`, `to`, `title`, `created_at`, `archive_at` (`null` = project lifetime), `archived_at` (`null` = live). `widget_id`, `dashboard_id` and `dashboard_title` are `null` once the widget is gone. `state: "live"` lists live shares only (the Shares page), `"archived"` archived ones only (the Archive page); omitted, both. A share whose `archive_at` has passed but the daily pass has not yet archived counts as archived |
+  | Create | none | `POST /api/widget-shares` | `multipart/form-data`: `widget_id`, `image` (1200×630 PNG), `image_2x` (2400×1260 PNG), `project_id`, `from`, `to`, `archive_after` (`7d`, `30d`, `90d`, `365d` or `project`; default `30d`), `caption_project` and `caption_range` (`1`/`0`/`true`/`false`; default `1`: whether the page names the project and the range, D4). REST only, since an agent has no browser to capture with. Answers 201 with `{id, url, image_url, ...}` |
+  | List | `list_widget_shares` | `GET /api/widget-shares?widget_id=&state=` | `widget_id` optional; every share without it. Each row: `id`, `url`, `image_url`, `image_2x_url`, `widget_id`, `dashboard_id`, `dashboard_title`, `project_id`, `project_name`, `from`, `to`, `title`, `caption_project`, `caption_range`, `created_at`, `archive_at` (`null` = project lifetime), `archived_at` (`null` = live). `widget_id`, `dashboard_id` and `dashboard_title` are `null` once the widget is gone. `state: "live"` lists live shares only (the Shares page), `"archived"` archived ones only (the Archive page); omitted, both. A share whose `archive_at` has passed but the daily pass has not yet archived counts as archived |
   | Change its archive date | `update_widget_share` | `PATCH /api/widget-shares/{id}` | body: `archive_after` (as in Create), counted from now. Live shares only |
   | Archive | `archive_widget_share` | `POST /api/widget-shares/{id}/archive` | Takes it down at once (404). Answers the share |
   | Restore | `restore_widget_share` | `POST /api/widget-shares/{id}/restore` | body: `archive_after`, default `30d` from now, since the old date has usually passed. Answers the share |
