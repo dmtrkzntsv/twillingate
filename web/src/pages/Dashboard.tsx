@@ -158,10 +158,10 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
         className={`mx-auto flex w-full max-w-[1600px] flex-1 flex-col gap-4 p-3 transition-opacity sm:p-4 lg:p-6 ${frozen ? 'opacity-60' : ''}`}
       >
         {list.dev && list.errors && list.errors.length > 0 && <DevErrors errors={list.errors} />}
-        {!dashboard.sidebar && !dashboard.archived_at && (
-          // A live dashboard hidden from the sidebar (a built-in by Hide, a
-          // user one over MCP or REST): this line is the page's hint, with
-          // the way back.
+        {dashboard.owner === 'system' && !dashboard.sidebar && (
+          // A built-in is never archived; hidden, it is out of the sidebar
+          // and this line is the page's hint, with the way back. Your own
+          // dashboards are always in the sidebar.
           <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border/70 bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
             <span>Hidden from the sidebar</span>
             {writable && (

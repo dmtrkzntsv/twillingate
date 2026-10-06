@@ -98,19 +98,19 @@ describe('ProjectTabsDialog', () => {
     await waitFor(() => expect(endpoints.addProjectTab).toHaveBeenCalledWith(1, { dashboard_id: 13 }))
   })
 
-  it('unchecking a checked box removes the dashboard from that project', async () => {
-    renderDialog()
+  it('unchecking a checked box removes the dashboard from that project, even its last one', async () => {
+    renderDialog() // Shop is its only project: a dashboard of your own stays in the sidebar
     await userEvent.click(await screen.findByRole('checkbox', { name: 'Shop' }))
 
     await waitFor(() => expect(endpoints.removeProjectTab).toHaveBeenCalledWith(2, 13))
   })
 
   it('shows a refusal as a toast and leaves the box as the server has it', async () => {
-    vi.mocked(endpoints.removeProjectTab).mockRejectedValue(new ApiError(400, 'would be unreachable'))
+    vi.mocked(endpoints.removeProjectTab).mockRejectedValue(new ApiError(404, 'project 2 has no tab for dashboard 13'))
     renderDialog()
     await userEvent.click(await screen.findByRole('checkbox', { name: 'Shop' }))
 
-    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('would be unreachable'))
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('project 2 has no tab for dashboard 13'))
     expect(screen.getByRole('checkbox', { name: 'Shop' })).toBeChecked()
   })
 

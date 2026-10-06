@@ -18,9 +18,10 @@ interface Props {
  * "Project tabs…" on a dashboard of the user's own: one checkbox per
  * project (active ones first, then archived) saying whether the dashboard
  * is a tab of it, and "Add to new projects", the dashboard's `project_tab`
- * flag. The boxes and the switch show what the server has: a refusal (the
- * last project tab of a dashboard out of the sidebar is "unreachable")
- * toasts, and the control goes back once the dashboard is refetched.
+ * flag. Any box can be unchecked, the last one too: the dashboard stays in
+ * the sidebar. The boxes and the switch show what the server has: a
+ * refusal toasts, and the control goes back once the dashboard is
+ * refetched.
  */
 export default function ProjectTabsDialog({ dashboard, open, onOpenChange }: Props) {
   const { data } = useQuery({ ...projectsQuery, enabled: open })

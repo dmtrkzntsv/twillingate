@@ -495,18 +495,17 @@ describe('Dashboard', () => {
     expect(endpoints.restore).not.toHaveBeenCalled()
   })
 
-  it('offers Show in sidebar on a live user dashboard hidden from the sidebar', async () => {
+  it('offers no Show in sidebar on a user dashboard, which is always in it', async () => {
     mockApi()
-    // Hidden over MCP or REST (`update_dashboard` with `sidebar: false`): the
-    // page is the only way back to the sidebar from the app.
+    // Out of the sidebar only by a write outside the app (a project tab
+    // keeps it live); the server refuses `sidebar` on your own dashboards,
+    // so the page offers no way to write it.
     vi.mocked(endpoints.dashboard).mockResolvedValue({ ...launchWeek, sidebar: false })
-    vi.spyOn(endpoints, 'setSidebar').mockResolvedValue({} as never)
     renderAt('/dashboards/10')
 
-    expect(await screen.findByText('Hidden from the sidebar')).toBeInTheDocument()
-    expect(screen.queryByText('Archived: not in the sidebar')).not.toBeInTheDocument()
-    await userEvent.click(screen.getByRole('button', { name: 'Show in sidebar' }))
-    await waitFor(() => expect(endpoints.setSidebar).toHaveBeenCalledWith(10, true))
+    expect(await screen.findByText('Signups during launch')).toBeInTheDocument()
+    expect(screen.queryByText('Hidden from the sidebar')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Show in sidebar' })).not.toBeInTheDocument()
   })
 
   it('shows no hidden line on an archived dashboard, only the archived one', async () => {

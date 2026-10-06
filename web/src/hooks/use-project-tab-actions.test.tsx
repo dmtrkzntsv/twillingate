@@ -119,12 +119,12 @@ describe('useProjectTabActions', () => {
   })
 
   it('a refused remove shows no Removed toast', async () => {
-    vi.mocked(endpoints.removeProjectTab).mockRejectedValue(new ApiError(400, 'would be unreachable'))
+    vi.mocked(endpoints.removeProjectTab).mockRejectedValue(new ApiError(404, 'project 7 has no tab for dashboard 13'))
     const { result } = renderHook(() => useProjectTabActions(), { wrapper })
 
     await expect(act(() => result.current.remove(7, { dashboard_id: 13, title: 'Marketing' }))).resolves.toBe(false)
 
-    expect(toast.error).toHaveBeenCalledWith('would be unreachable')
+    expect(toast.error).toHaveBeenCalledWith('project 7 has no tab for dashboard 13')
     expect(toast).not.toHaveBeenCalled()
   })
 })

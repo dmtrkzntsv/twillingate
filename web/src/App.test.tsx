@@ -180,24 +180,6 @@ describe('App', () => {
     expect(screen.getByRole('link', { name: 'Open the archive' })).toHaveAttribute('href', '/app/archive')
   })
 
-  it('opens a hidden dashboard of your own from "/dashboards" when nothing else is left', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue(
-        dashboardsResponse([
-          { dashboard_id: 2, title: 'Mine', owner: 'user', group_id: 2, widgets: 1, sidebar: false, project_tab: false },
-        ])
-      )
-    )
-    window.history.pushState({}, '', '/app/dashboards')
-
-    renderApp()
-
-    expect(await screen.findByText('Everything is hidden from the sidebar')).toBeInTheDocument()
-    expect(screen.queryByRole('link', { name: 'Open Gallery › Dashboards' })).not.toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Open Mine' })).toHaveAttribute('href', '/app/dashboards/2')
-  })
-
   it('offers a retry on "/dashboards" when the dashboards fail to load', async () => {
     const fetch = vi
       .fn()

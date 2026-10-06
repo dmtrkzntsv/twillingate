@@ -17,9 +17,9 @@ export function pickDashboard(dashboards: DashboardInfo[], last?: number): Dashb
 /**
  * "/dashboards" itself shows nothing: it picks a dashboard and redirects to it. With
  * none in the sidebar it says why: an empty install has nothing yet; a
- * hidden built-in comes back from Gallery › Dashboards, a hidden dashboard
- * of your own from its page, and an archived one from the archive, the
- * only way back once the Undo toast is gone (D17a).
+ * hidden built-in comes back from Gallery › Dashboards, and an archived
+ * dashboard from the archive, the only way back once the Undo toast is
+ * gone (D17a).
  */
 export default function Home() {
   const navigate = useNavigate()
@@ -42,23 +42,19 @@ export default function Home() {
     )
   }
   if (data && !target) {
-    const hidden = data.dashboards.filter((d) => !d.archived_at && !d.sidebar)
+    // Only a built-in group is ever out of the sidebar: your own
+    // dashboards are always in it, or archived.
+    const hidden = data.dashboards.some((d) => d.owner === 'system' && !d.archived_at && !d.sidebar)
     const archived = data.dashboards.some((d) => d.archived_at)
-    if (hidden.length > 0) {
-      const builtIn = hidden.some((d) => d.owner === 'system')
-      const from = builtIn ? 'from Gallery › Dashboards' : 'from its page'
+    if (hidden) {
       return (
         <StatusCard
           title="Everything is hidden from the sidebar"
-          description={`Show a dashboard in the sidebar again ${from}${archived ? ', or restore one from the archive' : ''}.`}
+          description={`Show a dashboard in the sidebar again from Gallery › Dashboards${archived ? ', or restore one from the archive' : ''}.`}
         >
           <div className="flex flex-col gap-2">
             <Button asChild variant="outline" className="w-full">
-              {builtIn ? (
-                <Link to="/gallery/dashboards">Open Gallery › Dashboards</Link>
-              ) : (
-                <Link to={`/dashboards/${hidden[0].dashboard_id}`}>Open {hidden[0].title}</Link>
-              )}
+              <Link to="/gallery/dashboards">Open Gallery › Dashboards</Link>
             </Button>
             {archived && (
               <Button asChild variant="outline" className="w-full">

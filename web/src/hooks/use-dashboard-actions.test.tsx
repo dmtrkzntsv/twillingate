@@ -102,12 +102,13 @@ describe('useDashboardActions', () => {
   })
 
   it('a refused setSidebar toasts the server\'s message and no success toast', async () => {
-    vi.mocked(endpoints.setSidebar).mockRejectedValue(new ApiError(400, 'hiding it would be unreachable'))
+    const refusal = 'dashboard 20 is your own: your own dashboards are always in the sidebar; archive_dashboard takes one away'
+    vi.mocked(endpoints.setSidebar).mockRejectedValue(new ApiError(400, refusal))
     const { result } = renderHook(() => useDashboardActions(), { wrapper })
 
     await act(() => result.current.setSidebar({ dashboard_id: 20, title: 'Mine' }, false))
 
-    expect(toast.error).toHaveBeenCalledWith('hiding it would be unreachable')
+    expect(toast.error).toHaveBeenCalledWith(refusal)
     expect(toast).not.toHaveBeenCalled()
   })
 

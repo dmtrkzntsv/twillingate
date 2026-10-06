@@ -92,8 +92,8 @@ interface GroupMenuProps {
  * opens the copy, never archiving anything; "Archive dashboard" takes the
  * whole group out of the sidebar and lands on "/dashboards" ("Hide
  * dashboard" on a system group, which sets `sidebar` off instead and comes
- * back from the gallery). A group out of the sidebar offers neither, since
- * its banner already brings it back.
+ * back from the gallery). A hidden system group offers no Hide, since its
+ * banner already brings it back.
  */
 export function GroupMenu({ dashboard, editable, refresh, autoRefresh }: GroupMenuProps) {
   const { duplicate, archive, setSidebar, pending } = useDashboardActions()
