@@ -183,6 +183,30 @@ export interface IngestKey {
   state: 'active' | 'disabled'
 }
 
+export type ArchiveAfter = '7d' | '30d' | '90d' | '365d' | 'project'
+export type ShareState = 'live' | 'archived'
+
+/** A public link to one widget's image over a range: its page, its two images, and when it archives itself. */
+export interface WidgetShare {
+  id: string
+  url: string
+  image_url: string
+  image_2x_url: string
+  /** Null once the widget is purged; the share keeps its title and range. */
+  widget_id: number | null
+  dashboard_id: number | null
+  dashboard_title: string | null
+  project_id: number
+  project_name: string
+  from: string
+  to: string
+  title: string
+  created_at: string
+  /** Null for a share that lives as long as its project. */
+  archive_at: string | null
+  archived_at: string | null
+}
+
 export type CapSetting = 'ATTRIBUTE_VALUES_TOP_N' | 'IDENTITIES_TOP_N'
 
 /** A limit in force: a setting (with its environment variable and default) or one of the wire format's fixed limits. */
@@ -393,5 +417,13 @@ export const endpoints = {
   receivedAttributes: (q: RangeQuery & { project_id?: number }) =>
     api<ReceivedAttributes>(`/api/received-attributes${toQuery(q)}`),
   capUsage: (id: number, q: RangeQuery) => api<CapUsage>(`/api/projects/${id}/cap-usage${toQuery(q)}`),
+  widgetShares: (q: { widget_id?: number; state?: ShareState }) => api<{ shares: WidgetShare[] }>(`/api/widget-shares${toQuery(q)}`),
+  // No Content-Type here: the browser sets multipart/form-data with its boundary for a FormData body.
+  createWidgetShare: (form: FormData) => api<WidgetShare>('/api/widget-shares', { method: 'POST', body: form }),
+  updateWidgetShare: (id: string, archive_after: ArchiveAfter) =>
+    api<WidgetShare>(`/api/widget-shares/${id}`, json('PATCH', { archive_after })),
+  archiveWidgetShare: (id: string) => api<WidgetShare>(`/api/widget-shares/${id}/archive`, json('POST', {})),
+  restoreWidgetShare: (id: string, archive_after: ArchiveAfter) =>
+    api<WidgetShare>(`/api/widget-shares/${id}/restore`, json('POST', { archive_after })),
   devVersion: () => api<{ version: string }>('/api/dev/version'),
 }

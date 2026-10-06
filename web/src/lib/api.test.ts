@@ -35,6 +35,25 @@ describe('endpoints.renameGroup', () => {
   })
 })
 
+describe('endpoints.createWidgetShare', () => {
+  it('POSTs the form as it is, with no Content-Type so the browser adds the multipart boundary', async () => {
+    vi.spyOn(auth, 'getAuthHeader').mockReturnValue('Bearer token-1')
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse({ id: 'abc' }))
+    const form = new FormData()
+    form.set('widget_id', '7')
+
+    await endpoints.createWidgetShare(form)
+
+    const [url, init] = vi.mocked(fetch).mock.calls[0]
+    expect(urlOf(url)).toBe('/api/widget-shares')
+    expect(init?.method).toBe('POST')
+    expect(init?.body).toBe(form)
+    const headers = new Headers(init?.headers)
+    expect(headers.get('Content-Type')).toBeNull()
+    expect(headers.get('Authorization')).toBe('Bearer token-1')
+  })
+})
+
 describe('api', () => {
   it('adds the Authorization header when there is one', async () => {
     vi.spyOn(auth, 'getAuthHeader').mockReturnValue('Bearer token-1')

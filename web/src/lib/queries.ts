@@ -1,4 +1,4 @@
-import { endpoints, type RangeQuery } from './api'
+import { endpoints, type RangeQuery, type ShareState } from './api'
 
 /** The dashboards list: the sidebar, the timezone, dev mode. */
 export const dashboardsQuery = { queryKey: ['dashboards'], queryFn: () => endpoints.dashboards() }
@@ -41,4 +41,10 @@ export const receivedAttributesQuery = (q: RangeQuery & { project_id?: number })
 export const capUsageQuery = (id: number, q: RangeQuery) => ({
   queryKey: ['cap-usage', id, q.from ?? '', q.to ?? ''],
   queryFn: () => endpoints.capUsage(id, q),
+})
+
+/** Widget shares, live or archived, of one widget or of all of them. */
+export const widgetSharesQuery = (q: { widget_id?: number; state?: ShareState }) => ({
+  queryKey: ['widget-shares', q.state ?? 'all', q.widget_id ?? 'all'] as const,
+  queryFn: () => endpoints.widgetShares(q),
 })
