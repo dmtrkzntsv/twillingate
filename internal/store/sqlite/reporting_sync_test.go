@@ -388,7 +388,7 @@ func TestSyncReportingDroppedComponentNullsUserWidget(t *testing.T) {
 
 	// An agent builds a user dashboard/widget referencing the component.
 	userDashID, err := db.InsertDashboard(ctx,
-		store.Dashboard{Owner: store.OwnerUser, Title: "Mine", SortKey: "a"},
+		store.Dashboard{Owner: store.OwnerUser, Title: "Mine", SortKey: "a", Sidebar: true},
 		[]store.Widget{{Component: "chart", SortKey: "a", Width: 1, Height: 1,
 			Name: "w1", SourceType: "events", Source: "a"}},
 		store.AuditEntry{Actor: "agent", Action: "dashboard.create"})
@@ -427,7 +427,7 @@ func TestSyncReportingComponentReappearingDoesNotRestoreWidgetLink(t *testing.T)
 		t.Fatal(err)
 	}
 	userDashID, err := db.InsertDashboard(ctx,
-		store.Dashboard{Owner: store.OwnerUser, Title: "Mine", SortKey: "a"},
+		store.Dashboard{Owner: store.OwnerUser, Title: "Mine", SortKey: "a", Sidebar: true},
 		[]store.Widget{{Component: "chart", SortKey: "a", Width: 1, Height: 1,
 			Name: "w1", SourceType: "events", Source: "a"}},
 		store.AuditEntry{Actor: "agent", Action: "dashboard.create"})
@@ -497,7 +497,7 @@ func TestSyncReportingRefusesSystemIDOwnedByUserDashboard(t *testing.T) {
 	// might use (nothing at the DB level stops an explicit low id; the
 	// 1-999 reservation is convention, not a constraint).
 	userID, err := db.InsertDashboard(ctx,
-		store.Dashboard{ID: 5, Owner: store.OwnerUser, Title: "Mine", SortKey: "a"},
+		store.Dashboard{ID: 5, Owner: store.OwnerUser, Title: "Mine", SortKey: "a", Sidebar: true},
 		nil, store.AuditEntry{Actor: "agent", Action: "dashboard.create"})
 	if err != nil {
 		t.Fatal(err)
@@ -554,7 +554,7 @@ func TestSyncReportingUserDashboardsNeverTouched(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	userID, err := db.InsertDashboard(ctx,
-		store.Dashboard{Owner: store.OwnerUser, Title: "Mine", SortKey: "a"},
+		store.Dashboard{Owner: store.OwnerUser, Title: "Mine", SortKey: "a", Sidebar: true},
 		[]store.Widget{{SortKey: "a", Width: 1, Height: 1, Name: "w1", SourceType: "events", Source: "a"}},
 		store.AuditEntry{Actor: "agent", Action: "dashboard.create"})
 	if err != nil {

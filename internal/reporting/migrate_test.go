@@ -259,7 +259,7 @@ func TestMigrateFromRemovedComponentNullsUserWidget(t *testing.T) {
 	}
 
 	userDashID, err := st.InsertDashboard(ctx,
-		store.Dashboard{Owner: store.OwnerUser, Title: "Mine", SortKey: "z"},
+		store.Dashboard{Owner: store.OwnerUser, Title: "Mine", SortKey: "z", Sidebar: true},
 		[]store.Widget{{
 			Component: "pie", SortKey: "a", Width: 4, Height: 8,
 			Name: "w1", SourceType: "sql", Source: "select 'a' as label, 1 as value",
