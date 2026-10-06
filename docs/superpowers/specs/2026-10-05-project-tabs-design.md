@@ -18,16 +18,16 @@ Date: 2026-10-05
 
 ## Decisions
 
-- **D1. A project page is tabs: Settings, then built-ins, then your own,
+- **D1. A project page is tabs: Setup, then built-ins, then your own,
   then +.**
-  - **Settings** is always first and can't be removed. It holds what
+  - **Setup** is always first and can't be removed. It holds what
     `/projects/:id` shows today, plus the Archive / Restore button.
   - **Built-in tabs** come next, in release order. They can be removed
     from a project and added back, but not reordered.
   - **Your own tabs** come after the built-ins. You can reorder them per
     project.
   - The **+** button is last. It adds an existing dashboard (D7).
-  - Opening a project lands on its first dashboard tab, or on Settings
+  - Opening a project lands on its first dashboard tab, or on Setup
     when it has none. A project with data opens on its analytics.
 
 - **D2. Each project keeps its own list of tabs.** In migration 032:
@@ -124,7 +124,7 @@ Date: 2026-10-05
   MCP and REST like the existing dashboard operations.
   - `list_project_tabs(project_id)` lists the tabs in shown order. Each
     item carries `dashboard_id`, `title`, `owner` and `group_id`.
-    Settings is not a row and is not listed.
+    Setup is not a row and is not listed.
   - `add_project_tab(project_id, dashboard_id, after?)`. A built-in goes
     back to its fixed place, and `after` is refused for it. Your own
     dashboard goes after `after`, or last when `after` is omitted. Adding
@@ -143,15 +143,15 @@ Date: 2026-10-05
     original with update_dashboard".
 
 - **D8. Routes and the page** (under `/app`).
-  - `/projects/:id` redirects to the first dashboard tab, or to Settings
+  - `/projects/:id` redirects to the first dashboard tab, or to Setup
     (D1).
-  - `/projects/:id/settings` is the Settings tab.
+  - `/projects/:id/setup` is the Setup tab.
   - `/projects/:id/dashboards/:dashId` is a dashboard tab with the project
     pinned. There is no project switcher, and every widget that follows
     `:project` gets `project_id = :id`. A widget that doesn't follow it
     shows the same data on every project page; `docs/reporting.md` says
     so.
-  - `?range=&from=&to=` stays in the URL across tabs, Settings included.
+  - `?range=&from=&to=` stays in the URL across tabs, Setup included.
     A tab opened without it uses that dashboard's own range.
   - Viewing a project never writes a dashboard's saved view (`PUT …/view`).
   - A `:dashId` that isn't one of the project's tabs shows "*Title* isn't
@@ -161,7 +161,7 @@ Date: 2026-10-05
     - The header has the project name (rename in place) and the Archived
       badge.
     - Then the tab row: `ReportTabs` reused, a row on wide screens and a
-      select on phones. It gains a fixed prefix (Settings and the
+      select on phones. It gains a fixed prefix (Setup and the
       built-ins, not draggable) and a trailing **+**.
     - A dashboard tab's body is `DashboardHeader` (title, freshness,
       refresh, range switcher) plus `WidgetGrid`. Auto-refresh works as
@@ -236,18 +236,18 @@ Date: 2026-10-05
   - `TestSystemDashboards` still passes.
 - **Vitest**
   - The `/projects/:id` redirect.
-  - Tab order: Settings, built-ins, your own, then +.
+  - Tab order: Setup, built-ins, your own, then +.
   - The fixed prefix in `ReportTabs`.
   - The picker's two sections.
   - The sidebar filter, and the gallery's Add to sidebar.
   - The Project tabs… checklist.
 - **e2e**
-  - `phone.spec` visits a project's dashboard tab and its Settings, with
+  - `phone.spec` visits a project's dashboard tab and its Setup tab, with
     its long-name project.
   - `cursor.spec` covers **+** and the picker items.
   - A new `project-tabs.spec`:
     - remove a built-in tab and add it back (it returns to its place);
-    - add your own dashboard, reorder it, open Settings;
+    - add your own dashboard, reorder it, open the Setup tab;
     - archive your own dashboard and see its tab go.
 
 ## Out of scope
