@@ -459,6 +459,90 @@ func TestRunDailyPassSkipsPurgeWhenArchivedDaysIsZero(t *testing.T) {
 	}
 }
 
+// seedShare inserts a widget share of project 1 with the given dates (nil
+// leaves the column NULL); the image bytes are placeholders, since the
+// daily pass never reads them.
+func seedShare(t *testing.T, id string, archiveAt, archivedAt any) {
+	t.Helper()
+	if _, err := rawExec(t, `INSERT INTO widget_shares
+		(id, project_id, range_from, range_to, title, project_name, image, image_2x, archive_at, archived_at)
+		VALUES (?, 1, '2026-08-01', '2026-08-21', 'Visitors', 'App', x'00', x'00', ?, ?)`,
+		id, archiveAt, archivedAt); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The pass archives every share whose archive_at has come, whatever
+// RETENTION_ARCHIVED_DAYS is, and leaves dated-later and
+// project-lifetime shares alone. archived_at takes the share's own date,
+// not the pass's clock.
+func TestRunDailyPassArchivesDueWidgetShares(t *testing.T) {
+	// The purge ages archived rows by the database's clock, which is years
+	// past the pass's fixed one; keep it from taking the share just archived.
+	vars := map[string]string{}
+	for k, v := range jobsVars {
+		vars[k] = v
+	}
+	vars["RETENTION_ARCHIVED_DAYS"] = "36500"
+	_, _, r := setup(t, vars, jobsProjectSpecs)
+	seedShare(t, "due", "2026-08-21T00:00:00Z", nil)
+	seedShare(t, "future", "2026-09-01T00:00:00Z", nil)
+	seedShare(t, "project", nil, nil)
+
+	if err := r.RunDailyPass(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	got := queryDays(t, `SELECT id || ' ' || COALESCE(archived_at, '-') FROM widget_shares ORDER BY id`)
+	want := []string{"due 2026-08-21T00:00:00Z", "future -", "project -"}
+	if !slices.Equal(got, want) {
+		t.Errorf("shares after the pass = %v, want %v", got, want)
+	}
+}
+
+// Archived shares past RETENTION_ARCHIVED_DAYS go with the rest of the
+// archive; younger ones stay.
+func TestRunDailyPassPurgesOldArchivedWidgetShares(t *testing.T) {
+	vars := map[string]string{}
+	for k, v := range jobsVars {
+		vars[k] = v
+	}
+	vars["RETENTION_ARCHIVED_DAYS"] = "30"
+	_, _, r := setup(t, vars, jobsProjectSpecs)
+	seedShare(t, "old", "2026-07-01T00:00:00Z", "2026-07-01T00:00:00Z")
+	// The purge measures age against the database's clock, not the pass's.
+	yesterday := time.Now().UTC().Add(-24 * time.Hour).Format("2006-01-02T15:04:05Z")
+	seedShare(t, "recent", yesterday, yesterday)
+
+	if err := r.RunDailyPass(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := queryDays(t, `SELECT id FROM widget_shares ORDER BY id`); !slices.Equal(got, []string{"recent"}) {
+		t.Errorf("shares after the pass = %v, want only recent", got)
+	}
+}
+
+// RETENTION_ARCHIVED_DAYS=0 keeps archived shares forever, but archiving
+// due ones does not depend on the purge.
+func TestRunDailyPassKeepsArchivedWidgetSharesWhenArchivedDaysIsZero(t *testing.T) {
+	vars := map[string]string{}
+	for k, v := range jobsVars {
+		vars[k] = v
+	}
+	vars["RETENTION_ARCHIVED_DAYS"] = "0"
+	_, _, r := setup(t, vars, jobsProjectSpecs)
+	seedShare(t, "old", "2026-07-01T00:00:00Z", "2026-07-01T00:00:00Z")
+	seedShare(t, "due", "2026-08-21T00:00:00Z", nil)
+
+	if err := r.RunDailyPass(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	got := queryDays(t, `SELECT id || ' ' || COALESCE(archived_at, '-') FROM widget_shares ORDER BY id`)
+	want := []string{"due 2026-08-21T00:00:00Z", "old 2026-07-01T00:00:00Z"}
+	if !slices.Equal(got, want) {
+		t.Errorf("shares after the pass = %v, want %v", got, want)
+	}
+}
+
 // PurgeArchived can return a partial result alongside an error (one item
 // among several failed, but it kept going for the rest — see
 // internal/store/sqlite/purge.go). The pass must still reload the registry

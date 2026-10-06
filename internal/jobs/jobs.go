@@ -47,6 +47,10 @@ type Store interface {
 	// PurgeArchived deletes every project, dashboard and widget archived
 	// more than days ago. days <= 0 purges nothing.
 	PurgeArchived(ctx context.Context, days int) (store.PurgeResult, error)
+	// ArchiveDueWidgetShares archives every live share whose archive_at is
+	// at or before now (a "2006-01-02T15:04:05Z" UTC timestamp) and returns
+	// how many.
+	ArchiveDueWidgetShares(ctx context.Context, now string) (int, error)
 }
 
 type Runner struct {
@@ -86,6 +90,14 @@ func (r *Runner) RunDailyPass(ctx context.Context) error {
 	// Retention is global: the same windows apply to every project.
 	ret := r.cfg.Retention
 
+	// Shares past their date are archived on every pass, whatever
+	// RETENTION_ARCHIVED_DAYS is: that setting only gates the purge below.
+	if n, err := r.store.ArchiveDueWidgetShares(ctx, r.now().UTC().Format("2006-01-02T15:04:05Z")); err != nil {
+		r.logger.Error("archive due widget shares failed", "error", err)
+	} else if n > 0 {
+		r.logger.Info("archive due widget shares", "shares", n)
+	}
+
 	// Purge first: a project purged this pass must not then be rolled up
 	// or pruned below, and the registry (which still lists it until this
 	// reloads) must not hand it out to a request arriving mid-pass.
@@ -102,7 +114,7 @@ func (r *Runner) RunDailyPass(ctx context.Context) error {
 		}
 		r.logger.Info("purge archived",
 			"projects", len(purged.Projects), "dashboards", len(purged.Dashboards),
-			"widgets", len(purged.Widgets))
+			"widgets", len(purged.Widgets), "widget_shares", len(purged.WidgetShares))
 		if len(purged.Projects) > 0 {
 			if err := r.reg.Reload(ctx); err != nil {
 				r.logger.Error("registry reload after purge failed", "error", err)
