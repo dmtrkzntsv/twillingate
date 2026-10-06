@@ -259,18 +259,22 @@ Date: 2026-10-05
   form. Submissions are otherwise kept until deleted. Archiving the
   project hides its forms; purging it deletes them.
 
-- **D12. Console.** Under the project:
+- **D12. Console.** Forms live on the project page and open a page of
+  their own:
 
-  - **Forms** (`/projects/:id/forms`): one row per form with its
-    submission count, last submission, the `accepting` switch and a menu
-    (archive). Archived forms appear on the Archive page.
-  - **A form** (`/projects/:id/forms/:name`): the submissions table
-    (D12a), and settings: purpose, return URL, and the expected-fields
-    picker, one checkbox per field seen, with "not kept" on fields
-    arriving outside the list.
-  - **Find a person** on the Forms page: a search across every form
+  - **A Forms section on the project page** (`/projects/:id`), beside
+    Usage, Origins, Breakdowns and Keys: one row per form with its
+    purpose, submission count, last submission, the `accepting` switch
+    and a menu (archive). Archived forms appear on the Archive page. The
+    section header holds **Find a person**, a search across every form
     (`find_submissions`) with "delete all" and a confirm, for erasure
-    requests.
+    requests. With no forms yet, the section shows a short "add a form"
+    hint with a snippet, as the Keys section shows its own.
+  - **A form's page** (`/projects/:id/forms/:name`), opened by clicking
+    its row: the submissions table (D12a), and settings (purpose, return
+    URL, and the expected-fields picker, one checkbox per field seen,
+    with "not kept" on fields arriving outside the list). A back link
+    returns to the project.
 
 - **D12a. Submissions are a table with filters.** The form page shows
   the dashboards' `table` component in remote mode, the same filter bar
