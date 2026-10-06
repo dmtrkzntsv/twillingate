@@ -766,6 +766,34 @@ func TestSyncReportingSidebarOnInsertOnly(t *testing.T) {
 	}
 }
 
+// After a rollback, an older binary's Hide archives a system row. Back on
+// this version the sync makes it live again, out of the sidebar (hidden is
+// what its user asked for); a live system row keeps its sidebar.
+func TestSyncReportingUnarchivesSystemRows(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	sync := func(hash string) {
+		t.Helper()
+		if err := db.SyncReporting(ctx, store.ReportingSync{Hash: hash, Version: "test", Dashboards: []store.SystemDashboard{
+			{ID: 42, Title: "Archived", SortKey: "a0", Range: "7d", Sidebar: true},
+			{ID: 43, Title: "Live", SortKey: "a1", Range: "7d", Sidebar: true},
+		}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sync("h1")
+	execAll(t, db, `UPDATE dashboards SET archived_at='2026-10-01T00:00:00Z' WHERE id=42`)
+	sync("h2")
+	if d, err := db.GetDashboard(ctx, 42); err != nil || d.ArchivedAt != "" || d.Sidebar {
+		t.Errorf("archived system row after sync: archived %q sidebar %v err %v, want live, out of the sidebar",
+			d.ArchivedAt, d.Sidebar, err)
+	}
+	if d, err := db.GetDashboard(ctx, 43); err != nil || d.ArchivedAt != "" || !d.Sidebar {
+		t.Errorf("live system row after sync: archived %q sidebar %v err %v, want live, in the sidebar",
+			d.ArchivedAt, d.Sidebar, err)
+	}
+}
+
 // D6: the fixture's project_tab is the release's, re-synced every time.
 func TestSyncReportingProjectTabResyncs(t *testing.T) {
 	db := newTestDB(t)

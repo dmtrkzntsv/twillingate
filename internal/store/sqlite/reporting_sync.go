@@ -129,13 +129,16 @@ func syncComponents(ctx context.Context, tx *sql.Tx, components []store.Componen
 // syncDashboards upserts every system dashboard by id (title, sort_key,
 // group_id and project_tab; last_range and sidebar are written on insert
 // alone, so a viewer's later SetDashboardView and a user's Hide survive a
-// resync), then deletes any system dashboard not named in the list. A manifest id that already names a row owned by
-// someone other than 'system' is refused outright — the upsert's WHERE
-// clause would otherwise silently no-op the update and leave the row
-// exactly as a plain INSERT ... ON CONFLICT DO UPDATE ... WHERE false
-// does (verified by hand against SQLite: no error, no change), which
-// would then let the per-dashboard widget sync attach the release's
-// widgets onto that unrelated row.
+// resync), then deletes any system dashboard not named in the list. The
+// update also makes an archived system row live again, out of the
+// sidebar: only an older binary, after a rollback, archives one (its
+// Hide), and this version has no way back from that. A manifest id that
+// already names a row owned by someone other than 'system' is refused
+// outright — the upsert's WHERE clause would otherwise silently no-op the
+// update and leave the row exactly as a plain INSERT ... ON CONFLICT DO
+// UPDATE ... WHERE false does (verified by hand against SQLite: no error,
+// no change), which would then let the per-dashboard widget sync attach
+// the release's widgets onto that unrelated row.
 //
 // Deleting a dropped system dashboard cascades to its widgets (ON DELETE
 // CASCADE), so those never reach the per-dashboard syncWidgets loop; this
@@ -175,6 +178,8 @@ func syncDashboards(ctx context.Context, tx *sql.Tx, dashboards []store.SystemDa
 			VALUES (?,?,?,?,?,?,?,?)
 			ON CONFLICT(id) DO UPDATE SET title=excluded.title, sort_key=excluded.sort_key,
 				group_id=excluded.group_id, project_tab=excluded.project_tab,
+				sidebar=CASE WHEN dashboards.archived_at IS NULL THEN dashboards.sidebar ELSE 0 END,
+				archived_at=NULL,
 				updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')
 			WHERE dashboards.owner=?`,
 			dash.ID, store.OwnerSystem, dash.Title, dash.SortKey, groupID, dash.Range,
