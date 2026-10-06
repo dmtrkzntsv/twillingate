@@ -27,14 +27,27 @@ out of scope.
 
 ## Decisions
 
-- **D1. A share is a frozen image under an unlisted token.** The browser
+- **D1. A share is a frozen image under an unlisted UUIDv7.** The browser
   captures one widget as a PNG and uploads it. The server stores the PNG
-  under 128 random bits and never queries the widget again. Neither the
-  project nor the range can change after capture, since both are part of
-  the picture. A share is immutable: a new picture means a new link.
-  Deleting a share is the only way to take it down.
+  under a UUIDv7 and never queries the widget again. Neither the project
+  nor the range can change after capture, since both are part of the
+  picture. A share is immutable: a new picture means a new link. Deleting
+  a share is the only way to take it down.
 
-- **D2. Shares live on the console, at `CONSOLE_URL/s/<token>`.** Shares
+  The id is also what keeps an unlisted link unlisted, so how much of it
+  is random matters. `google/uuid` (already a dependency, and the
+  generator of event ids in `internal/server/handlers.go:27`) fills
+  `rand_a` with a sub-millisecond sequence, which leaves 62 random bits in
+  `rand_b`. Even with the millisecond known, a guess is one in 2^62
+  (4.6·10^18): a year of 1,000 guesses a second finds a given share with
+  odds below 10^-8. The 48-bit timestamp tells a holder of the link when
+  the share was made, which the page does not hide anyway. In return, the
+  id sorts by creation time, so the primary key appends instead of
+  scattering, and it is one id scheme across the codebase. The id is
+  stored and shown in canonical form (36 characters). If `NewV7` fails
+  (entropy exhaustion only), it falls back to a v4, as `newID` does.
+
+- **D2. Shares live on the console, at `CONSOLE_URL/s/<id>`.** Shares
   are a reporting feature: the console creates, lists and deletes them,
   and `reporting` already embeds the app's icon and look. The ingest
   surface stays a pure collector (`POST` events, serve the SDK), and it can
@@ -47,10 +60,10 @@ out of scope.
 
   | Route | Answers |
   | --- | --- |
-  | `GET /s/{token}` | An HTML page: the image, the widget title, the project name and the range in words, and a "Made with twillingate" link. Head: `og:title`, `og:type=website`, `og:url`, `og:image` (absolute `CONSOLE_URL/s/{token}.png`), `og:image:width`, `og:image:height`, `og:image:alt`, `twitter:card=summary_large_image`, `<meta name="robots" content="noindex">`. Inline CSS and the app's icon, no app bundle. It loads `twillingate.js` (D7). |
-  | `GET /s/{token}.png` | The image, `Content-Type: image/png`, `Cache-Control: public, max-age=3600`, plus `X-Robots-Tag: noindex`. |
+  | `GET /s/{id}` | An HTML page: the image, the widget title, the project name and the range in words, and a "Made with twillingate" link. Head: `og:title`, `og:type=website`, `og:url`, `og:image` (absolute `CONSOLE_URL/s/{id}.png`), `og:image:width`, `og:image:height`, `og:image:alt`, `twitter:card=summary_large_image`, `<meta name="robots" content="noindex">`. Inline CSS and the app's icon, no app bundle. It loads `twillingate.js` (D7). |
+  | `GET /s/{id}.png` | The image, `Content-Type: image/png`, `Cache-Control: public, max-age=3600`, plus `X-Robots-Tag: noindex`. |
 
-  An unknown or deleted token answers 404 on both routes. The page
+  An unknown or deleted id answers 404 on both routes. The page
   answers `Cache-Control: public, max-age=300`. The hour on the image
   bounds how long a CDN keeps serving a deleted share. The page carries
   `Content-Security-Policy: default-src 'none'; img-src 'self';
@@ -74,7 +87,7 @@ out of scope.
   "Copy embed code" gives:
 
   ```html
-  <a href="CONSOLE_URL/s/<token>"><img src="CONSOLE_URL/s/<token>.png"
+  <a href="CONSOLE_URL/s/<id>"><img src="CONSOLE_URL/s/<id>.png"
      alt="<title>" width="600" height="315"></a>
   ```
 
@@ -105,7 +118,7 @@ out of scope.
 
   ```sql
   CREATE TABLE shares (
-      token      TEXT PRIMARY KEY,
+      id         TEXT PRIMARY KEY,   -- UUIDv7, canonical form
       widget_id  INTEGER NOT NULL REFERENCES widgets(id) ON DELETE CASCADE,
       project_id INTEGER NOT NULL,
       range_from TEXT NOT NULL,          -- YYYY-MM-DD
@@ -132,9 +145,9 @@ out of scope.
 
   | Operation | MCP tool | REST | Notes |
   | --- | --- | --- | --- |
-  | Create | none | `POST /api/widgets/{widget_id}/shares` | `multipart/form-data`: `image` (the PNG), `project_id`, `from`, `to`. REST only, since an agent has no browser to capture with. Answers 201 with `{token, url, image_url, ...}` |
-  | List | `list_shares` | `GET /api/shares?widget_id=` | `widget_id` optional; every share without it. Each row: `token`, `url`, `image_url`, `widget_id`, `project_id`, `from`, `to`, `title`, `created_at`, `opens` |
-  | Delete | `delete_share` | `DELETE /api/shares/{token}` | Hard delete. Answers 204 |
+  | Create | none | `POST /api/widgets/{widget_id}/shares` | `multipart/form-data`: `image` (the PNG), `project_id`, `from`, `to`. REST only, since an agent has no browser to capture with. Answers 201 with `{id, url, image_url, ...}` |
+  | List | `list_shares` | `GET /api/shares?widget_id=` | `widget_id` optional; every share without it. Each row: `id`, `url`, `image_url`, `widget_id`, `project_id`, `from`, `to`, `title`, `created_at`, `opens` |
+  | Delete | `delete_share` | `DELETE /api/shares/{id}` | Hard delete. Answers 204 |
 
   Create validates and refuses with typed errors:
   - The widget is unknown or archived: `ErrNotFound`.
@@ -157,7 +170,7 @@ out of scope.
   ```
 
   A click-through is then an ordinary page view of
-  `CONSOLE_URL/s/<token>`, with its referrer (t.co, lnkd.in, a Mastodon
+  `CONSOLE_URL/s/<id>`, with its referrer (t.co, lnkd.in, a Mastodon
   instance), country and browser, and the visitor counts twillingate
   already computes. Unfurlers run no JavaScript, and the collector's
   `IsBot` check drops the rest, so preview fetches do not count. An
@@ -187,7 +200,7 @@ out of scope.
   loads no script and the server logs one warning per process.
 
   **Opens in the dialog** are the share project's page views whose path
-  is `/s/<token>`. They are counted from the share's creation to today,
+  is `/s/<id>`. They are counted from the share's creation to today,
   capped at the last 365 days, through the same views the dashboards
   read. `list_shares` returns the number as `opens`, or `null` when
   counting is off.
@@ -211,17 +224,17 @@ out of scope.
 - **Reporting.** Each refusal in D6. The first share creates the `Shares`
   project, its key and the meta row in one transaction, and a second
   share reuses them. `SHARE_PROJECT_ID=0` creates nothing. `opens` counts
-  only `/s/<token>` views of the share project.
+  only `/s/<id>` views of the share project.
 - **Share routes** (`reporting`, mounted through `api`). They answer
   without a token while `/api/` still answers 401. The page's meta tags, `noindex`, the CSP, and the script tag
   present or absent (counting on, off, or no active key). The PNG's type
-  and cache headers. Both routes answer 404 for an unknown token and
+  and cache headers. Both routes answer 404 for an unknown id and
   after delete.
 - **API.** The multipart create, list and delete routes. `docs_sync`
   picks up the new tools, routes and env var.
 - **Web.** A vitest for the Share dialog (create, copy, list, delete) and
   one for the capture card layout. A Playwright e2e that shares a seeded
-  widget, opens `/s/<token>`, checks the meta tags and that the image
+  widget, opens `/s/<id>`, checks the meta tags and that the image
   loads, deletes the share and gets a 404. The cursor and phone specs
   cover the dialog.
 
