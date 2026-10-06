@@ -44,6 +44,13 @@ type DashboardKey struct {
 	SortKey     string
 }
 
+// ProjectTabRow is one dashboard shown as a tab on a project's page
+// (migration 032), with its position among that project's tabs.
+type ProjectTabRow struct {
+	ProjectID, DashboardID int64
+	SortKey                string
+}
+
 // GroupRekey moves a group's name from one group id to another, in the
 // same transaction as the rows that change group (spec 2026-10-04 D3):
 // order.handOver gives a group a new id when the dashboard whose id it
