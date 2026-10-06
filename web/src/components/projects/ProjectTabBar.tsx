@@ -17,6 +17,8 @@ interface Props {
   /** Every dashboard, for the "+" picker. */
   dashboards: DashboardInfo[]
   actions: ProjectTabActions
+  /** Reporting dev, which takes no writes: no "+" and no dragging. */
+  readOnly?: boolean
 }
 
 /**
@@ -24,7 +26,7 @@ interface Props {
  * fixed in front, the user's own tabs after them, dragged to a new order,
  * and "+" last. Switching tabs keeps the range in the URL.
  */
-export default function ProjectTabBar({ projectId, currentId, tabs, dashboards, actions }: Props) {
+export default function ProjectTabBar({ projectId, currentId, tabs, dashboards, actions, readOnly = false }: Props) {
   const navigate = useNavigate()
   const [url] = useSearchParams()
   const [adding, setAdding] = useState(false)
@@ -45,12 +47,14 @@ export default function ProjectTabBar({ projectId, currentId, tabs, dashboards, 
         currentId={currentId}
         onSelect={open}
         fixedIds={fixedIds}
-        sortable
-        onMove={(id, to) => actions.move(projectId, id, userAfter(tabs, id, to))}
+        sortable={!readOnly}
+        onMove={readOnly ? undefined : (id, to) => actions.move(projectId, id, userAfter(tabs, id, to))}
         trailing={
-          <Button variant="ghost" size="icon" className="size-8 shrink-0" aria-label="Add tab" onClick={() => setAdding(true)}>
-            <PlusIcon />
-          </Button>
+          !readOnly && (
+            <Button variant="ghost" size="icon" className="size-8 shrink-0" aria-label="Add tab" onClick={() => setAdding(true)}>
+              <PlusIcon />
+            </Button>
+          )
         }
       />
       <AddTabDialog

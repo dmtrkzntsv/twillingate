@@ -1,8 +1,9 @@
 import { useQuery } from '@tanstack/react-query'
+import { LayoutGridIcon } from 'lucide-react'
 import { Navigate, useLocation, useParams } from 'react-router'
 import AppShell, { TopBar } from '@/components/AppShell'
 import Crumbs from '@/components/Crumbs'
-import { PageError } from '@/components/PageStates'
+import { Notice, PageError } from '@/components/PageStates'
 import ProjectDashboardTab from '@/components/projects/ProjectDashboardTab'
 import ProjectName from '@/components/projects/ProjectName'
 import ProjectTabBar from '@/components/projects/ProjectTabBar'
@@ -32,13 +33,16 @@ export default function Project() {
   const dashId = params.dashId === undefined ? SETUP_ID : Number(params.dashId)
   const { data: dash } = useQuery(dashboardsQuery)
   const { data: projectsData, isLoading } = useQuery(projectsQuery)
-  const tabsQ = useQuery({ ...projectTabsQuery(id), enabled: valid })
+  // Reporting dev serves no project tabs and takes no writes: the page asks
+  // for none once the list says it is dev, and shows Setup alone.
+  const dev = dash?.dev === true
+  const tabsQ = useQuery({ ...projectTabsQuery(id), enabled: valid && dash !== undefined && !dev })
   const actions = useProjectActions()
   const tabActions = useProjectTabActions()
   const project = valid ? projectsData?.projects?.find((p) => p.project_id === id) : undefined
 
   return (
-    <AppShell dashboards={dash?.dashboards ?? []} currentId={0} readOnly={dash?.dev === true}>
+    <AppShell dashboards={dash?.dashboards ?? []} currentId={0} readOnly={dev}>
       <TopBar>
         <Crumbs items={[{ label: 'Projects', to: '/projects' }, { label: project?.name ?? String(param) }]} />
       </TopBar>
@@ -60,10 +64,15 @@ export default function Project() {
                 tabs={tabsQ.data?.tabs ?? []}
                 dashboards={dash?.dashboards ?? []}
                 actions={tabActions}
+                readOnly={dev}
               />
             </div>
             {dashId === SETUP_ID ? (
               <SetupTab project={project} dash={dash} actions={actions} />
+            ) : dev ? (
+              <Notice icon={<LayoutGridIcon />} title="No project tabs in reporting dev">
+                Reporting dev serves the dashboards alone: open one from the sidebar.
+              </Notice>
             ) : tabsQ.error ? (
               <PageError error={tabsQ.error} onRetry={() => void tabsQ.refetch()} bare />
             ) : (

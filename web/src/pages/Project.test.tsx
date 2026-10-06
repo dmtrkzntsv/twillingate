@@ -381,6 +381,26 @@ describe('Project tabs', () => {
     await vi.waitFor(() => expect(location()).toBe('/projects/7/dashboards/1?range=7d'))
   })
 
+  it('in reporting dev, which serves no project tabs, asks for none and offers no tab writes', async () => {
+    vi.mocked(endpoints.dashboards).mockResolvedValue(dashboardsList({ dev: true }))
+    vi.mocked(endpoints.projectTabs).mockRejectedValue(new ApiError(404, 'not found'))
+    renderAt('/projects/7/setup')
+    expect(await screen.findByRole('region', { name: 'Usage' })).toBeInTheDocument()
+    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Setup'])
+    expect(screen.queryByRole('button', { name: 'Add tab' })).not.toBeInTheDocument()
+    expect(endpoints.projectTabs).not.toHaveBeenCalled()
+  })
+
+  it('in reporting dev, says a dashboard tab is not served there rather than failing', async () => {
+    vi.mocked(endpoints.dashboards).mockResolvedValue(dashboardsList({ dev: true }))
+    vi.mocked(endpoints.projectTabs).mockRejectedValue(new ApiError(404, 'not found'))
+    renderAt('/projects/7/dashboards/1')
+    expect(await screen.findByText('No project tabs in reporting dev')).toBeInTheDocument()
+    expect(screen.queryByText('No such dashboard')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Tab actions' })).not.toBeInTheDocument()
+    expect(endpoints.projectTabs).not.toHaveBeenCalled()
+  })
+
   it('never saves a dashboard view, whatever the range or tab', async () => {
     const user = userEvent.setup()
     renderAt('/projects/7/dashboards/1')
