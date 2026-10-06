@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -27,6 +27,7 @@ export default function ProjectTabsDialog({ dashboard, open, onOpenChange }: Pro
   const actions = useProjectTabActions()
   const queryClient = useQueryClient()
   const [savingFlag, setSavingFlag] = useState(false)
+  const flagId = useId()
   const projects = data?.projects ?? []
   const ordered = [...projects.filter((p) => !p.archived), ...projects.filter((p) => p.archived)]
   const on = new Set(dashboard.project_ids)
@@ -58,8 +59,9 @@ export default function ProjectTabsDialog({ dashboard, open, onOpenChange }: Pro
         </DialogHeader>
         <div className="grid max-h-[50vh] min-w-0 grid-cols-1 gap-2 overflow-y-auto">
           {ordered.map((p) => (
-            <label key={p.project_id} className="flex min-w-0 items-center gap-2 text-sm">
+            <label key={p.project_id} htmlFor={`project-tab-${p.project_id}`} className="flex min-w-0 items-center gap-2 text-sm">
               <Checkbox
+                id={`project-tab-${p.project_id}`}
                 checked={on.has(p.project_id)}
                 disabled={actions.pending}
                 onCheckedChange={(checked) => toggle(p.project_id, checked === true)}
@@ -71,8 +73,8 @@ export default function ProjectTabsDialog({ dashboard, open, onOpenChange }: Pro
             </label>
           ))}
         </div>
-        <label className="flex min-w-0 items-center gap-2 border-t pt-4 text-sm">
-          <Switch checked={dashboard.project_tab} disabled={savingFlag} onCheckedChange={(checked) => void setFlag(checked)} />
+        <label htmlFor={flagId} className="flex min-w-0 items-center gap-2 border-t pt-4 text-sm">
+          <Switch id={flagId} checked={dashboard.project_tab} disabled={savingFlag} onCheckedChange={(checked) => void setFlag(checked)} />
           <span>Add to new projects</span>
         </label>
       </DialogContent>

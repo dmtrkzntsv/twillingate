@@ -80,6 +80,17 @@ describe('ProjectTabsDialog', () => {
     ])
   })
 
+  it('points each label at its control, so the pointer rule for label[for] applies', async () => {
+    renderDialog()
+    await screen.findByRole('checkbox', { name: 'Shop' })
+
+    for (const control of [...screen.getAllByRole('checkbox'), screen.getByRole('switch')]) {
+      const label = control.closest('label')
+      expect(control.id).not.toBe('')
+      expect(label).toHaveAttribute('for', control.id)
+    }
+  })
+
   it('checking an unchecked box adds the dashboard to that project', async () => {
     renderDialog()
     await userEvent.click(await screen.findByRole('checkbox', { name: 'Blog' }))
