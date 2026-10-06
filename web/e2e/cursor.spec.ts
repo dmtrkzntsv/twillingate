@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test'
 
 // Matches web/e2e/serve.sh's CONSOLE_AUTH_DSN (token://e2e-token?password=e2e-pass&...).
 const PASSWORD = 'e2e-pass'
+const TOKEN = 'e2e-token'
 
 // Every clickable thing shows the hand: src/index.css sets it once for
 // these, in the base layer, and this fails on a visible, enabled control
@@ -52,12 +53,29 @@ async function withoutPointer(page: Page): Promise<string[]> {
   )
 }
 
-test('every link and button shows the pointer', async ({ page }) => {
+test('every link and button shows the pointer', async ({ page, request }) => {
   await login(page)
-  for (const path of ['/app/projects', '/app/projects/1', '/app/dashboards', '/app/archive', '/app/gallery/components', '/app/gallery/dashboards']) {
+  for (const path of ['/app/projects', '/app/projects/1/setup', '/app/dashboards', '/app/archive', '/app/gallery/components', '/app/gallery/dashboards']) {
     await page.goto(path)
     await page.waitForLoadState('networkidle')
     await expect(page.locator('main, [data-slot="sidebar-inset"]').first()).toBeVisible()
     expect(await withoutPointer(page), path).toEqual([])
+  }
+
+  // A project's "+" and the dashboards its picker offers, on a dashboard
+  // tab; one of our own, so the picker is never empty.
+  const headers = { Authorization: `Bearer ${TOKEN}` }
+  const title = `E2E cursor ${Date.now()}`
+  const created = await request.post('/api/dashboards', { headers, data: { title, range: '7d' } })
+  expect(created.ok(), await created.text()).toBeTruthy()
+  const { dashboard_id: id } = (await created.json()) as { dashboard_id: number }
+  try {
+    await page.goto('/app/projects/1/dashboards/1')
+    await page.waitForLoadState('networkidle')
+    await page.getByRole('button', { name: 'Add tab' }).click()
+    await expect(page.getByRole('dialog', { name: 'Add tab' }).getByRole('button', { name: title })).toBeVisible()
+    expect(await withoutPointer(page), 'add tab').toEqual([])
+  } finally {
+    await request.post(`/api/dashboards/${id}/archive`, { headers, data: {} })
   }
 })
