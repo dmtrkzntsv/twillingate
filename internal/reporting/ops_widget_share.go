@@ -165,6 +165,7 @@ func (s *Service) UpdateWidgetShare(ctx context.Context, actor, id, archiveAfter
 	}
 	row, err := s.st.SetWidgetShareArchiveAt(ctx, id, at, s.now().UTC().Format(shareStamp),
 		store.AuditEntry{Actor: actor, Action: "widget_share.update"})
+	s.shares.invalidate(id)
 	if err != nil {
 		return WidgetShareOut{}, err
 	}
@@ -182,6 +183,7 @@ func (s *Service) WidgetShareImage(ctx context.Context, id string) ([]byte, erro
 func (s *Service) ArchiveWidgetShare(ctx context.Context, actor, id string) (WidgetShareOut, error) {
 	row, err := s.st.SetWidgetShareArchived(ctx, id, true, "",
 		store.AuditEntry{Actor: actor, Action: "widget_share.archive"})
+	s.shares.invalidate(id)
 	if err != nil {
 		return WidgetShareOut{}, err
 	}
@@ -200,17 +202,18 @@ func (s *Service) RestoreWidgetShare(ctx context.Context, actor, id, archiveAfte
 	}
 	row, err := s.st.SetWidgetShareArchived(ctx, id, false, at,
 		store.AuditEntry{Actor: actor, Action: "widget_share.restore"})
+	s.shares.invalidate(id)
 	if err != nil {
 		return WidgetShareOut{}, err
 	}
 	return s.shareOut(row), nil
 }
 
-// LiveWidgetShare reads a share and whether it is live: not archived and
-// not past its archive_at. A due share is not live even before the daily
-// pass has archived it.
+// LiveWidgetShare reads a share, through the public routes' cache, and
+// whether it is live: not archived and not past its archive_at. A due
+// share is not live even before the daily pass has archived it.
 func (s *Service) LiveWidgetShare(ctx context.Context, id string) (store.WidgetShare, bool, error) {
-	row, err := s.st.GetWidgetShare(ctx, id)
+	row, err := s.shares.row(ctx, id, s.st.GetWidgetShare)
 	if err != nil {
 		return store.WidgetShare{}, false, err
 	}

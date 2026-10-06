@@ -87,6 +87,7 @@ type Service struct {
 	cache        *cache
 	archivedDays int
 	shareBase    string
+	shares       *shareCache // the public /share/ routes' reads (share_cache.go)
 
 	parsedMu sync.Mutex
 	parsed   map[store.Component]Component // Components' memo
@@ -117,5 +118,6 @@ func New(st Store, db *readsql.DB, opt Options) *Service {
 		cache:        newCache(opt.CacheAge, opt.RefreshAge, now),
 		archivedDays: opt.ArchivedDays,
 		shareBase:    strings.TrimRight(opt.ShareBaseURL, "/"),
+		shares:       newShareCache(now, shareImageBytes),
 	}
 }

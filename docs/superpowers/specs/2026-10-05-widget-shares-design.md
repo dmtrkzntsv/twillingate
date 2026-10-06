@@ -73,7 +73,18 @@ out of scope.
   bounds how long a CDN keeps serving an archived share. The page carries
   `Content-Security-Policy: default-src 'none'; img-src 'self';
   style-src 'unsafe-inline'; base-uri 'none'; form-action 'none';
-  frame-ancestors 'none'`. The page runs no script at all.
+  frame-ancestors 'none'`. The page runs no script at all. A store error
+  other than not-found answers 503 with `Cache-Control: no-store` and a
+  fixed body, never the error's text.
+
+  The routes are public, and the store has one connection, shared with
+  ingest and the daily pass, so they read through an in-process cache in
+  `reporting.Service`: a share's row for 60 s (an unknown id for 10 s),
+  and the images, which never change for an id and size, in an LRU of at
+  most 64 MB. Liveness is still worked out from the row against the clock
+  on every request. The Service's own archive, restore and change drop
+  the row at once; a write from another process (the CLI's `project
+  delete`) shows within the 60 s.
 
   **"Built with twillingate.dev".** Every share page ends with a footer
   line, `Built with <a href="https://twillingate.dev">twillingate.dev</a>`,

@@ -2,6 +2,7 @@ package reporting
 
 import (
 	_ "embed"
+	"errors"
 	"html/template"
 	"net/http"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
+	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
 // The public face of a widget share: GET /share/{file} is the page for
@@ -51,14 +53,14 @@ func (s *Service) SharePages() http.Handler {
 		}
 		sh, live, err := s.LiveWidgetShare(r.Context(), id)
 		if err != nil || !live {
-			shareNotFound(w)
+			shareFailed(w, err)
 			return
 		}
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		if kind != "page" {
-			b, err := s.st.WidgetShareImage(r.Context(), id, kind == "2x")
+			b, err := s.shares.image(r.Context(), id, kind == "2x", s.st.WidgetShareImage)
 			if err != nil {
-				shareNotFound(w)
+				shareFailed(w, err)
 				return
 			}
 			w.Header().Set("Content-Type", "image/png")
@@ -85,6 +87,18 @@ func (s *Service) SharePages() http.Handler {
 func shareNotFound(w http.ResponseWriter) {
 	w.Header().Set("Cache-Control", "no-store")
 	http.Error(w, "not found", http.StatusNotFound)
+}
+
+// shareFailed answers a failed read: 404 for a share that is not there
+// (err nil means it is there but not live), 503 for anything else, a
+// busy or broken store, whose text is not for strangers.
+func shareFailed(w http.ResponseWriter, err error) {
+	if err == nil || errors.Is(err, store.ErrNotFound) {
+		shareNotFound(w)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	http.Error(w, "temporarily unavailable", http.StatusServiceUnavailable)
 }
 
 // rangeInWords writes two YYYY-MM-DD days as "Sep 5 – Oct 4, 2026", with
