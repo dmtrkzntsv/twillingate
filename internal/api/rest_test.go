@@ -175,6 +175,7 @@ func TestRESTMatchesMCP(t *testing.T) {
 		{"measures", "/api/projects/1/measures?" + rng, args},
 		{"identities", "/api/projects/1/identities?kind=user&" + rng, with(map[string]any{"kind": "user"})},
 		{"list_ingest_keys", "/api/keys", map[string]any{}},
+		{"list_project_tabs", "/api/projects/1/tabs", map[string]any{"project_id": 1}},
 	} {
 		rec := serveREST(t, r, "GET", c.target, "")
 		if rec.Code != 200 {
@@ -277,5 +278,64 @@ func TestPathProjectIdBindsAsInt64(t *testing.T) {
 	rec := serveREST(t, r, "GET", "/api/projects/blog/views/overview?from=2026-08-20&to=2026-08-21", "")
 	if rec.Code != 400 || !strings.Contains(rec.Body.String(), "project_id must be an integer") {
 		t.Fatalf("alias in the path: %d %s, want 400 project_id must be an integer", rec.Code, rec.Body.String())
+	}
+}
+
+// TestProjectTabRoutes: each project tab route answers with the project's
+// tabs, in order, after the write.
+func TestProjectTabRoutes(t *testing.T) {
+	h, _ := newTestHost(t)
+	r := newTestRegistrar(t, h)
+	newDashboard := func() int64 {
+		t.Helper()
+		rec := serveREST(t, r, "POST", "/api/dashboards", `{"title":"Mine"}`)
+		var d struct {
+			ID int64 `json:"dashboard_id"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &d); err != nil || rec.Code != http.StatusCreated {
+			t.Fatalf("create = %d %s", rec.Code, rec.Body.String())
+		}
+		return d.ID
+	}
+	a, b := newDashboard(), newDashboard()
+	const pt = "/api/projects/1/tabs"
+	for _, c := range []struct {
+		method, target, body string
+		want                 int
+		last                 int64 // the last tab's dashboard_id after the call
+	}{
+		{"GET", pt, "", http.StatusOK, 0},
+		{"POST", pt, fmt.Sprintf(`{"dashboard_id":%d}`, a), http.StatusCreated, a},
+		{"POST", pt, fmt.Sprintf(`{"dashboard_id":%d,"after":0}`, b), http.StatusCreated, a},
+		{"POST", fmt.Sprintf("%s/%d/move", pt, b), fmt.Sprintf(`{"after":%d}`, a), http.StatusOK, b},
+		{"POST", fmt.Sprintf("%s/%d/remove", pt, b), "{}", http.StatusOK, a},
+		{"POST", pt, fmt.Sprintf(`{"dashboard_id":%d}`, a), http.StatusConflict, 0},
+		{"POST", fmt.Sprintf("%s/1/move", pt), `{"after":0}`, http.StatusBadRequest, 0},
+		{"POST", fmt.Sprintf("/api/projects/99/tabs/%d/remove", a), "", http.StatusNotFound, 0},
+	} {
+		rec := serveREST(t, r, c.method, c.target, c.body)
+		if rec.Code != c.want {
+			t.Errorf("%s %s %s = %d %s, want %d", c.method, c.target, c.body, rec.Code, rec.Body.String(), c.want)
+			continue
+		}
+		if c.want >= 300 {
+			continue
+		}
+		var out struct {
+			Tabs []struct {
+				ID int64 `json:"dashboard_id"`
+			} `json:"tabs"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || len(out.Tabs) == 0 {
+			t.Errorf("%s %s = %s, want tabs (%v)", c.method, c.target, rec.Body.String(), err)
+			continue
+		}
+		if got := out.Tabs[len(out.Tabs)-1].ID; c.last != 0 && got != c.last {
+			t.Errorf("%s %s: last tab %d, want %d", c.method, c.target, got, c.last)
+		}
+	}
+	if rec := serveREST(t, r, "PATCH", fmt.Sprintf("/api/dashboards/%d", a), `{"project_tab":true}`); rec.Code != http.StatusOK ||
+		!strings.Contains(rec.Body.String(), `"project_tab":true`) {
+		t.Errorf("PATCH project_tab = %d %s", rec.Code, rec.Body.String())
 	}
 }

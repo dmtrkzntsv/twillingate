@@ -579,3 +579,21 @@ at least 2 characters when set; existing one-character titles are kept.
 Rollback: an older binary keeps the names, but it does not move them. If a
 group's first tab leaves its group under the older binary, its new group of
 one takes the name with it.
+
+### Upgrading to project tabs (migration 032)
+
+No pre-checks. Migration 032 adds `project_tabs`, each project's list of
+dashboard tabs, and two flags on every dashboard, `sidebar` and
+`project_tab`. After the upgrade a project's page opens on Setup, with the
+built-in dashboards as tabs next to it: every existing project gets every
+built-in.
+
+Built-in dashboards are no longer archived. A built-in group hidden before
+the upgrade stays hidden from the sidebar, but it is no longer archived, so
+the Archive page no longer lists it; "Show in sidebar" in the Dashboards
+gallery brings it back. `archive_dashboard` and `restore_dashboard` on a
+built-in are now refused; scripts or agents that hid a built-in group with
+`archive_dashboard {whole_group: true}` should call `update_dashboard`
+with `sidebar: false` instead (and `sidebar: true` to show it). Rollback:
+an older binary ignores the new columns and table, so every group hidden
+from the sidebar, a built-in one included, shows there again under it.
