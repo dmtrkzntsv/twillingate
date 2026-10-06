@@ -181,10 +181,10 @@ out of scope.
   The dialog follows the web rules: buttons get the pointer cursor from
   `index.css`, and it does not scroll sideways at 360px.
 
-- **D5. Migration 032: table `shares`.**
+- **D5. Migration 032: table `widget_shares`.**
 
   ```sql
-  CREATE TABLE shares (
+  CREATE TABLE widget_shares (
       id         TEXT PRIMARY KEY,   -- UUIDv7, canonical form
       widget_id  INTEGER REFERENCES widgets(id) ON DELETE SET NULL,  -- NULL once the widget is gone
       project_id INTEGER NOT NULL REFERENCES projects(id),
@@ -198,13 +198,17 @@ out of scope.
       archive_at  TEXT,                  -- NULL = project lifetime (D7)
       archived_at TEXT                   -- NULL = live
   );
-  CREATE INDEX idx_shares_widget ON shares(widget_id);
-  CREATE INDEX idx_shares_archive ON shares(archive_at) WHERE archive_at IS NOT NULL;
+  CREATE INDEX idx_widget_shares_widget ON widget_shares(widget_id);
+  CREATE INDEX idx_widget_shares_archive ON widget_shares(archive_at) WHERE archive_at IS NOT NULL;
   ```
+
+  The name leaves room for a later `dashboard_shares`. The API keeps the
+  shorter `shares` (`list_shares`, `/api/shares`) since a share's kind
+  shows in its fields.
 
   `project_id` is the project the chart shows. **A share lives as long
   as its project, and no longer:**
-  - **Project deleted.** `shares` joins `projectTables`
+  - **Project deleted.** `widget_shares` joins `projectTables`
     (`internal/store/sqlite/registry.go:228`), so `deleteProject` removes a
     project's shares, live and archived, in the transaction that deletes
     the project. That covers both ways a project goes: the CLI's
