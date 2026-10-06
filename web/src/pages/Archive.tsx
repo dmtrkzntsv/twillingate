@@ -1,12 +1,14 @@
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import AppShell, { TopBar } from '@/components/AppShell'
 import Crumbs from '@/components/Crumbs'
 import { DashboardGroup, LoneDashboard, type GroupRow } from '@/components/DashboardGroup'
+import { RestoreShareDialog } from '@/components/share/RestoreShareDialog'
 import { Button } from '@/components/ui/button'
 import { useDashboardActions } from '@/hooks/use-dashboard-actions'
-import type { DashboardInfo } from '@/lib/api'
+import type { DashboardInfo, WidgetShare } from '@/lib/api'
 import { groupName, purgeDate } from '@/lib/arrange'
-import { dashboardsQuery } from '@/lib/queries'
+import { dashboardsQuery, widgetSharesQuery } from '@/lib/queries'
 import { formatPurgeDate } from '@/lib/time'
 
 interface Group {
@@ -33,6 +35,26 @@ function archivedGroups(dashboards: DashboardInfo[]): Group[] {
 }
 
 /**
+ * An archived share's image, 1x. The share's own URLs answer 404 while it is
+ * archived, so the image is usually gone: a blank tile of the same size
+ * keeps the row's layout instead of a broken-image icon.
+ */
+function ShareThumb({ share }: { share: WidgetShare }) {
+  const [failed, setFailed] = useState(false)
+  const size = 'aspect-[1200/630] w-20 rounded border sm:w-24'
+  if (failed) return <div aria-hidden className={`${size} bg-muted`} />
+  return (
+    <img
+      src={share.image_url}
+      alt={`Shared image of ${share.title}`}
+      loading="lazy"
+      onError={() => setFailed(true)}
+      className={`${size} object-cover`}
+    />
+  )
+}
+
+/**
  * `/archive`: every group of the user's with a dashboard out of the
  * sidebar, the only page that reaches one once it is archived (D17a). A
  * group of one is a single row; a larger group is a card listing its
@@ -40,6 +62,11 @@ function archivedGroups(dashboards: DashboardInfo[]): Group[] {
  * sidebar. Each archived tab restores on its own, and "Restore all"
  * brings back every archived tab at once. Its buttons wait while one
  * action runs; reporting dev, which takes no writes, shows none.
+ *
+ * Below the dashboards, a Shares section lists the archived widget shares,
+ * most recently archived first, each restorable with a new archive date
+ * (D9). It is left out when there are none, and in reporting dev, which has
+ * no shares.
  */
 export default function Archive() {
   const { data } = useQuery(dashboardsQuery)
@@ -48,6 +75,9 @@ export default function Archive() {
   const purgeDays = data?.purge_after_days
   const { restore, pending } = useDashboardActions()
   const groups = archivedGroups(dashboards)
+  const sharesQ = useQuery({ ...widgetSharesQuery({ state: 'archived' }), enabled: data !== undefined && writable })
+  const shares = sharesQ.data?.shares ?? []
+  const [restoring, setRestoring] = useState<WidgetShare>()
 
   /** A tab's status line: archived (and when it goes) or still in the sidebar. */
   const status = (d: DashboardInfo) => {
@@ -84,6 +114,12 @@ export default function Archive() {
     )
   }
 
+  /** A share's status line: archived, and when it goes. */
+  const shareStatus = (s: WidgetShare) => {
+    const purged = s.archived_at ? purgeDate(s.archived_at, purgeDays) : undefined
+    return purged ? `archived · deleted on ${formatPurgeDate(purged)}` : 'archived'
+  }
+
   return (
     <AppShell dashboards={dashboards} currentId={0} readOnly={data?.dev === true}>
       <TopBar>
@@ -95,13 +131,40 @@ export default function Archive() {
           <p className="max-w-prose text-sm text-muted-foreground">
             Archived dashboards are out of the sidebar. Restore one to put it back.
             {purgeDays ? ` They are deleted after ${purgeDays} days.` : ''} A hidden built-in dashboard comes back from Gallery › Dashboards.
+            Archived shares answer 404 until restored.
           </p>
         </header>
-        {groups.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Nothing archived.</p>
-        ) : (
-          <ul className="flex flex-col gap-2">{groups.map(renderGroup)}</ul>
+        {groups.length === 0 && shares.length === 0 && <p className="text-sm text-muted-foreground">Nothing archived.</p>}
+        {groups.length > 0 && <ul className="flex flex-col gap-2">{groups.map(renderGroup)}</ul>}
+        {shares.length > 0 && (
+          <section aria-labelledby="archived-shares" className="flex flex-col gap-3">
+            <h2 id="archived-shares" className="text-base font-semibold">
+              Shares
+            </h2>
+            <ul className="flex flex-col gap-2">
+              {shares.map((s) => (
+                <li key={s.id} className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-lg border p-3">
+                  <ShareThumb share={s} />
+                  <div className="min-w-0">
+                    <div className="truncate font-medium" title={s.title}>
+                      {s.title}
+                    </div>
+                    <div className="truncate text-xs text-muted-foreground" title={s.project_name}>
+                      {s.project_name}
+                    </div>
+                    <div className="truncate text-xs text-muted-foreground">{shareStatus(s)}</div>
+                  </div>
+                  {writable && (
+                    <Button variant="outline" size="sm" onClick={() => setRestoring(s)}>
+                      Restore
+                    </Button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </section>
         )}
+        <RestoreShareDialog share={restoring} onClose={() => setRestoring(undefined)} />
       </div>
     </AppShell>
   )
