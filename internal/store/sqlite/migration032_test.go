@@ -2,7 +2,10 @@ package sqlite
 
 import (
 	"context"
+	"strconv"
 	"testing"
+
+	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
 func execScan(t *testing.T, db *DB, q string, dest ...any) {
@@ -124,5 +127,42 @@ func TestMigration032Cascades(t *testing.T) {
 	got := projectTabRows(t, db)
 	if len(got) != 1 {
 		t.Fatalf("rows = %v, want only B's tab of dashboard 1", got)
+	}
+}
+
+// TestMigration032ShowsUnreachableGroup: when a project goes, a live user
+// dashboard out of the sidebar whose only tab was on it would be
+// unreachable (D5), so its whole group goes back in the sidebar (D3).
+// One still on another project's tabs, an archived one and a built-in
+// keep sidebar 0. It holds for the FK cascade and for DeleteProjectData.
+func TestMigration032ShowsUnreachableGroup(t *testing.T) {
+	for _, path := range []string{"cascade", "DeleteProjectData"} {
+		t.Run(path, func(t *testing.T) {
+			db := newTestDBAt(t, 32)
+			execAll(t, db,
+				`INSERT INTO projects (id, name) VALUES (1, 'A'), (2, 'B')`,
+				`INSERT INTO dashboards (id, owner, title, sort_key, group_id, sidebar, archived_at) VALUES
+					(1, 'system', 'Views', 'a0', 1, 0, NULL),
+					(1001, 'user', 'Only A', 'a0', 1001, 0, NULL),
+					(1002, 'user', 'Archived member', 'a1', 1001, 0, '2026-09-01T00:00:00Z'),
+					(1003, 'user', 'On B', 'a2', 1001, 0, NULL),
+					(1004, 'user', 'A and B', 'a3', 1004, 0, NULL),
+					(1005, 'user', 'Archived, only A', 'a4', 1005, 0, '2026-09-01T00:00:00Z')`,
+				`INSERT INTO project_tabs (project_id, dashboard_id, sort_key) VALUES
+					(1, 1, 'a0'), (1, 1001, 'a0'), (2, 1003, 'a0'), (1, 1004, 'a1'), (2, 1004, 'a1'), (1, 1005, 'a2')`)
+			if path == "cascade" {
+				execAll(t, db, `DELETE FROM projects WHERE id=1`)
+			} else if err := db.DeleteProjectData(context.Background(), 1, store.AuditEntry{Actor: "test", Action: "project.delete"}); err != nil {
+				t.Fatal(err)
+			}
+			want := map[int64]int{1: 0, 1001: 1, 1002: 1, 1003: 1, 1004: 0, 1005: 0}
+			for id, w := range want {
+				var got int
+				execScan(t, db, `SELECT sidebar FROM dashboards WHERE id=`+strconv.FormatInt(id, 10), &got)
+				if got != w {
+					t.Errorf("dashboard %d sidebar = %d, want %d", id, got, w)
+				}
+			}
+		})
 	}
 }

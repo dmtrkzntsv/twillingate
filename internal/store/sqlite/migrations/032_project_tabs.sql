@@ -7,8 +7,13 @@
 -- The triggers below seed rows (D4): a new project gets every live
 -- dashboard with project_tab = 1, and a new built-in (an INSERT, which
 -- the release sync's upsert does only the first time) goes onto every
--- existing project. A rebuild of projects or dashboards must recreate
--- them, as it must 022's dashboards_own_group and 031's triggers.
+-- existing project. A safety net keeps D5 when a tab row goes outside
+-- the service's checks (a project deleted, its rows dropped): a live user
+-- dashboard left out of the sidebar with no project tab would be
+-- unreachable, so its whole user group goes back in the sidebar (the
+-- group's tabs share the flag, D3). A rebuild of projects, dashboards or
+-- project_tabs must recreate them, as it must 022's dashboards_own_group
+-- and 031's triggers.
 ALTER TABLE dashboards ADD COLUMN sidebar INTEGER NOT NULL DEFAULT 1;
 ALTER TABLE dashboards ADD COLUMN project_tab INTEGER NOT NULL DEFAULT 0;
 
@@ -40,4 +45,15 @@ WHEN NEW.owner = 'system' AND NEW.project_tab = 1
 BEGIN
   INSERT INTO project_tabs (project_id, dashboard_id, sort_key)
     SELECT p.id, NEW.id, NEW.sort_key FROM projects p;
+END;
+
+CREATE TRIGGER project_tabs_last_tab_gone AFTER DELETE ON project_tabs
+WHEN EXISTS (SELECT 1 FROM dashboards d
+             WHERE d.id = OLD.dashboard_id AND d.owner = 'user'
+               AND d.archived_at IS NULL AND d.sidebar = 0)
+ AND NOT EXISTS (SELECT 1 FROM project_tabs t WHERE t.dashboard_id = OLD.dashboard_id)
+BEGIN
+  UPDATE dashboards SET sidebar = 1, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+    WHERE owner = 'user'
+      AND group_id = (SELECT group_id FROM dashboards WHERE id = OLD.dashboard_id);
 END;
