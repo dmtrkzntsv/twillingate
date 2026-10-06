@@ -1,9 +1,9 @@
 // The system directory format a release ships (D20): one directory per
-// dashboard, holding dashboard.json (its title, starting range and
-// widget layout) plus one $name.json/$name.(sql|md) pair per widget the
-// layout places. LoadDashboard reads one such directory; LoadDashboards
-// reads every one under a filesystem root and orders them by id, for
-// migrate.go to hash and sync.
+// dashboard, holding dashboard.json (its title, starting range,
+// placement flags and widget layout) plus one $name.json/$name.(sql|md)
+// pair per widget the layout places. LoadDashboard reads one such
+// directory; LoadDashboards reads every one under a filesystem root and
+// orders them by id, for migrate.go to hash and sync.
 package reporting
 
 import (
@@ -34,6 +34,8 @@ type FileDashboard struct {
 	Title, Range string
 	Group        int64        // the group this dashboard is a tab of; 0 = its own id (D16)
 	GroupTitle   string       // the group's name; only on a group's founding dashboard (D6)
+	Sidebar      bool         // in the sidebar on first install; the same across a group (spec 2026-10-05 D6)
+	ProjectTab   bool         // a new project gets it as a tab; re-synced every release (spec 2026-10-05 D6)
 	Widgets      []FileWidget // layout order
 }
 
@@ -53,6 +55,8 @@ type fileDashboardDoc struct {
 	Range      string           `json:"range"`
 	Group      int64            `json:"group"`
 	GroupTitle string           `json:"group_title"`
+	Sidebar    *bool            `json:"sidebar"`     // required: nil is a file that left it out
+	ProjectTab *bool            `json:"project_tab"` // required, as sidebar
 	Layout     []fileLayoutItem `json:"layout"`
 }
 
@@ -108,6 +112,11 @@ func LoadDashboard(fsys fs.FS, dir string) (FileDashboard, error) {
 
 	if _, err := checkName("title", doc.Title); err != nil {
 		return FileDashboard{}, fmt.Errorf("reporting: %s: %w", dashPath, err)
+	}
+	// Required, like range: the release states its choice rather than
+	// relying on a default (spec 2026-10-05 D6).
+	if doc.Sidebar == nil || doc.ProjectTab == nil {
+		return FileDashboard{}, fmt.Errorf("reporting: %s: needs \"sidebar\" and \"project_tab\" (true or false)", dashPath)
 	}
 	if doc.GroupTitle != "" {
 		if _, err := checkName("group_title", doc.GroupTitle); err != nil {
@@ -196,7 +205,10 @@ func LoadDashboard(fsys fs.FS, dir string) (FileDashboard, error) {
 		}
 	}
 
-	return FileDashboard{ID: doc.ID, Title: doc.Title, Range: doc.Range, Group: doc.Group, GroupTitle: doc.GroupTitle, Widgets: widgets}, nil
+	return FileDashboard{
+		ID: doc.ID, Title: doc.Title, Range: doc.Range, Group: doc.Group, GroupTitle: doc.GroupTitle,
+		Sidebar: *doc.Sidebar, ProjectTab: *doc.ProjectTab, Widgets: widgets,
+	}, nil
 }
 
 // LoadDashboards loads every top-level directory in fsys as a

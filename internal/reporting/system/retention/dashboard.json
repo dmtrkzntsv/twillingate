@@ -2,6 +2,8 @@
   "id": 5,
   "title": "Retention",
   "range": "90d",
+  "sidebar": true,
+  "project_tab": true,
   "group": 1,
   "layout": [
     {"widget": "about", "width": 12, "height": 5},

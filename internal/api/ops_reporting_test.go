@@ -205,7 +205,7 @@ func TestReportingRefusals(t *testing.T) {
 	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), system) {
 		t.Errorf("PATCH system dashboard = %d %s", rec.Code, rec.Body.String())
 	}
-	const archiveSystem = "dashboard 1 is a system dashboard, archived and restored with its group; pass whole_group"
+	const archiveSystem = "dashboard 1 is a built-in dashboard and is never archived; update_dashboard {sidebar: false} takes its group out of the sidebar"
 	res := callTool(t, cs, "archive_dashboard", map[string]any{"dashboard_id": 1})
 	if !res.IsError || !strings.Contains(textOf(res), archiveSystem) {
 		t.Errorf("archive_dashboard(1) = %s", textOf(res))

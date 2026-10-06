@@ -22,6 +22,8 @@ type DashboardInfo struct {
 	To         string `json:"to,omitempty"`
 	Widgets    int    `json:"widgets"` // live widgets
 	ArchivedAt string `json:"archived_at,omitempty"`
+	Sidebar    bool   `json:"sidebar"`     // its group is in the sidebar (spec 2026-10-05 D3)
+	ProjectTab bool   `json:"project_tab"` // a new project gets it as a tab
 }
 
 // Dashboards is list_dashboards' answer: every dashboard in sidebar
@@ -63,8 +65,9 @@ type DashboardDetail struct {
 	DashboardInfo
 	FollowsProject bool         `json:"follows_project"` // any live widget does: show the project switcher
 	FollowsRange   bool         `json:"follows_range"`
-	Tabs           []Tab        `json:"tabs"`    // the group's live members in order, the same from every member; always non-nil
-	Widgets        []WidgetInfo `json:"widgets"` // live, in order; each carries width and height (the layout)
+	Tabs           []Tab        `json:"tabs"`        // the group's live members in order, the same from every member; always non-nil
+	Widgets        []WidgetInfo `json:"widgets"`     // live, in order; each carries width and height (the layout)
+	ProjectIDs     []int64      `json:"project_ids"` // the projects that have it as a tab, ascending; always non-nil
 }
 
 // Tab is one entry of a group's tab bar.
@@ -144,8 +147,8 @@ func (s *Service) Dashboards(ctx context.Context) (Dashboards, error) {
 	return out, nil
 }
 
-// Dashboard returns dashboard id with its group's tabs and its live
-// widgets in order.
+// Dashboard returns dashboard id with its group's tabs, its live
+// widgets in order, and the projects that have it as a tab.
 func (s *Service) Dashboard(ctx context.Context, id int64) (DashboardDetail, error) {
 	d, err := s.st.GetDashboard(ctx, id)
 	if err != nil {
@@ -159,7 +162,14 @@ func (s *Service) Dashboard(ctx context.Context, id int64) (DashboardDetail, err
 	if err != nil {
 		return DashboardDetail{}, err
 	}
-	out := DashboardDetail{DashboardInfo: dashboardInfo(d), Tabs: []Tab{}, Widgets: []WidgetInfo{}}
+	projects, err := s.st.ListDashboardProjects(ctx, id)
+	if err != nil {
+		return DashboardDetail{}, err
+	}
+	if projects == nil {
+		projects = []int64{}
+	}
+	out := DashboardDetail{DashboardInfo: dashboardInfo(d), Tabs: []Tab{}, Widgets: []WidgetInfo{}, ProjectIDs: projects}
 	// An archived dashboard is not a tab, but its detail still shows the
 	// tabs of the group it belongs to.
 	for _, x := range ds {
@@ -220,7 +230,7 @@ func dashboardInfo(d store.Dashboard) DashboardInfo {
 	return DashboardInfo{
 		ID: d.ID, Title: d.Title, Owner: d.Owner, GroupID: d.GroupID, GroupTitle: d.GroupTitle,
 		ProjectID: d.LastProjectID, Range: d.LastRange, From: d.LastFrom, To: d.LastTo,
-		Widgets: d.LiveWidgets, ArchivedAt: d.ArchivedAt,
+		Widgets: d.LiveWidgets, ArchivedAt: d.ArchivedAt, Sidebar: d.Sidebar, ProjectTab: d.ProjectTab,
 	}
 }
 

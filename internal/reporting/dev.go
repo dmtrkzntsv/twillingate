@@ -194,13 +194,18 @@ func devWidgetRow(fd FileDashboard, i int, comps map[string]Component) store.Wid
 // echo back (SetDashboardView is a no-op), so Last* stay unset. An id in
 // the system range (1–999) is owned by "system", so a system directory
 // previews in its group as it will ship. GroupID mirrors D16: fd.Group,
-// or fd.ID when the file names none (its own sidebar entry).
+// or fd.ID when the file names none (its own sidebar entry). Sidebar is
+// always true whatever the file says: dev has no project pages, so the
+// sidebar is a preview's only way in.
 func devDashboardRow(fd FileDashboard, groupTitles map[int64]string) store.Dashboard {
 	owner := store.OwnerUser
 	if fd.ID >= 1 && fd.ID <= 999 {
 		owner = store.OwnerSystem
 	}
-	return store.Dashboard{ID: fd.ID, Owner: owner, GroupID: fd.groupID(), GroupTitle: groupTitles[fd.groupID()], Title: fd.Title, LastRange: fd.Range, LiveWidgets: len(fd.Widgets)}
+	return store.Dashboard{
+		ID: fd.ID, Owner: owner, GroupID: fd.groupID(), GroupTitle: groupTitles[fd.groupID()], Title: fd.Title,
+		LastRange: fd.Range, LiveWidgets: len(fd.Widgets), Sidebar: true, ProjectTab: fd.ProjectTab,
+	}
 }
 
 // devGroupTitles maps each group id to the name its founding file gives
@@ -265,7 +270,7 @@ func devGetDashboard(dirs []string, svc *Service, comps map[string]Component) ht
 		out := DashboardDetail{
 			DashboardInfo:  dashboardInfo(row),
 			FollowsProject: followsProject, FollowsRange: followsRange,
-			Tabs: tabs, Widgets: widgets,
+			Tabs: tabs, Widgets: widgets, ProjectIDs: []int64{},
 		}
 		writeJSON(w, http.StatusOK, out)
 	}

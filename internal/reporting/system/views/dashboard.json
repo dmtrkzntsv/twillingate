@@ -3,6 +3,8 @@
   "title": "Views",
   "group_title": "Reports",
   "range": "7d",
+  "sidebar": true,
+  "project_tab": true,
   "layout": [
     {"widget": "visitors", "width": 3, "height": 3},
     {"widget": "views", "width": 3, "height": 3},

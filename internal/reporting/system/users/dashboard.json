@@ -2,6 +2,8 @@
   "id": 3,
   "title": "Users",
   "range": "7d",
+  "sidebar": true,
+  "project_tab": true,
   "group": 1,
   "layout": [
     {"widget": "about", "width": 12, "height": 2},

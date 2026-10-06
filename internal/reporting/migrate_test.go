@@ -121,8 +121,39 @@ func TestMigrateFromFirstRunInsertsDashboards(t *testing.T) {
 		t.Errorf("dashboard 2 widgets = %+v", ws2)
 	}
 
+	// Each file's placement flags land on its row (testdata's overview
+	// ships out of the sidebar and off new projects).
+	for _, d := range sys {
+		if want := d.ID == 1; d.Sidebar != want || d.ProjectTab != want {
+			t.Errorf("dashboard %d sidebar %v project_tab %v, want %v, %v", d.ID, d.Sidebar, d.ProjectTab, want, want)
+		}
+	}
+
 	if reportingMigrationCount(t, db) != 1 {
 		t.Errorf("reporting_migrations rows = %d, want 1", reportingMigrationCount(t, db))
+	}
+}
+
+// The release's own system directory lands every built-in in the sidebar
+// and on new projects' tabs (spec 2026-10-05 D6).
+func TestMigrateReleaseBuiltinsInSidebarAndProjectTabs(t *testing.T) {
+	st, db := newTestStoreAndReadDB(t)
+	ctx := context.Background()
+	if err := Migrate(ctx, st, db); err != nil {
+		t.Fatal(err)
+	}
+	ds, err := st.ListDashboards(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sys := systemDashboardsOf(ds)
+	if len(sys) == 0 {
+		t.Fatal("no system dashboards")
+	}
+	for _, d := range sys {
+		if !d.Sidebar || !d.ProjectTab {
+			t.Errorf("built-in %d sidebar %v project_tab %v, want both true", d.ID, d.Sidebar, d.ProjectTab)
+		}
 	}
 }
 
@@ -392,7 +423,7 @@ func TestMigrateFromGroupNamingMissingIDFails(t *testing.T) {
 	system, dir := systemFSCopy(t)
 
 	if err := os.WriteFile(filepath.Join(dir, "retention", "dashboard.json"),
-		[]byte(`{"id":1,"title":"Retention","range":"30d","group":99,"layout":[{"widget":"users"}]}`), 0o644); err != nil {
+		[]byte(`{"id":1,"title":"Retention","range":"30d","sidebar":true,"project_tab":true,"group":99,"layout":[{"widget":"users"}]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -415,13 +446,13 @@ func TestMigrateFromGroupNamingATabFails(t *testing.T) {
 
 	// overview (id 2) joins retention's group (id 1)...
 	if err := os.WriteFile(filepath.Join(dir, "overview", "dashboard.json"),
-		[]byte(`{"id":2,"title":"Overview","range":"7d","group":1,"layout":[{"widget":"note"}]}`), 0o644); err != nil {
+		[]byte(`{"id":2,"title":"Overview","range":"7d","sidebar":true,"project_tab":true,"group":1,"layout":[{"widget":"note"}]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	// ...and retention (id 1) tries to join overview's group instead of
 	// naming its own: retention is no longer a valid group name.
 	if err := os.WriteFile(filepath.Join(dir, "retention", "dashboard.json"),
-		[]byte(`{"id":1,"title":"Retention","range":"30d","group":2,"layout":[{"widget":"users"}]}`), 0o644); err != nil {
+		[]byte(`{"id":1,"title":"Retention","range":"30d","sidebar":true,"project_tab":true,"group":2,"layout":[{"widget":"users"}]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -452,7 +483,7 @@ func TestMigrateFromNonContiguousGroupFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(third, "dashboard.json"),
-		[]byte(`{"id":3,"title":"Third","range":"7d","group":1,"layout":[]}`), 0o644); err != nil {
+		[]byte(`{"id":3,"title":"Third","range":"7d","sidebar":true,"project_tab":true,"group":1,"layout":[]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -475,7 +506,7 @@ func TestMigrateFromRefusesEmptyRange(t *testing.T) {
 	system, dir := systemFSCopy(t)
 
 	if err := os.WriteFile(filepath.Join(dir, "retention", "dashboard.json"),
-		[]byte(`{"id":1,"title":"Retention","layout":[{"widget":"users"}]}`), 0o644); err != nil {
+		[]byte(`{"id":1,"title":"Retention","sidebar":true,"project_tab":true,"layout":[{"widget":"users"}]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -485,6 +516,26 @@ func TestMigrateFromRefusesEmptyRange(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "dashboard.json needs range") {
 		t.Errorf("error = %q, want it to say dashboard.json needs range", err)
+	}
+}
+
+// TestCheckGroupsRefusesSidebarMismatch: the sidebar shows groups, so a
+// group's members agree on sidebar (spec 2026-10-05 D3).
+func TestCheckGroupsRefusesSidebarMismatch(t *testing.T) {
+	founder := FileDashboard{ID: 1, Title: "Views", Sidebar: true}
+	tab := FileDashboard{ID: 2, Title: "Product", Group: 1, Sidebar: true}
+	if err := checkGroups([]FileDashboard{founder, tab}); err != nil {
+		t.Errorf("agreeing members: err = %v, want nil", err)
+	}
+	tab.Sidebar = false
+	err := checkGroups([]FileDashboard{founder, tab})
+	if err == nil || err.Error() != "reporting: system dashboard 2: sidebar differs from its group's (1)" {
+		t.Errorf("err = %v, want the sidebar mismatch", err)
+	}
+	// project_tab is each dashboard's own.
+	tab.Sidebar, tab.ProjectTab = true, true
+	if err := checkGroups([]FileDashboard{founder, tab}); err != nil {
+		t.Errorf("differing project_tab: err = %v, want nil", err)
 	}
 }
 

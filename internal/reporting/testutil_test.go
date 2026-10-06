@@ -60,10 +60,11 @@ func syncReporting(t *testing.T, svc *Service, drop []string, sys ...store.Syste
 	}
 }
 
-// systemDashboard is system dashboard 3 with one markdown widget, "note".
+// systemDashboard is system dashboard 3 with one markdown widget, "note",
+// in the sidebar and a project tab, as the release ships its own.
 func systemDashboard() store.SystemDashboard {
 	return store.SystemDashboard{
-		ID: 3, Title: "Users", SortKey: "a0", Range: "7d",
+		ID: 3, Title: "Users", SortKey: "a0", Range: "7d", Sidebar: true, ProjectTab: true,
 		Widgets: []store.Widget{{
 			Name: "note", Component: "markdown", SortKey: "a0", Width: 12, Height: 2,
 			Props: "{}", SourceType: "md", Source: "system text",
@@ -74,7 +75,8 @@ func systemDashboard() store.SystemDashboard {
 // systemGroup is a system group of five dashboards, Reports' shape
 // (D16): Views first (names the sidebar entry), then Product, Users,
 // Groups and Retention, ids 10-14, each with one live markdown widget
-// "note". The group is named "Reports".
+// "note". The group is named "Reports"; every member is in the sidebar
+// and a project tab, as the release ships its own.
 func systemGroup() []store.SystemDashboard {
 	names := []string{"Views", "Product", "Users", "Groups", "Retention"}
 	keys := []string{"a0", "a1", "a2", "a3", "a4"}
@@ -86,6 +88,7 @@ func systemGroup() []store.SystemDashboard {
 		}
 		out[i] = store.SystemDashboard{
 			ID: int64(10 + i), Title: name, SortKey: keys[i], GroupID: group, Range: "7d",
+			Sidebar: true, ProjectTab: true,
 			Widgets: []store.Widget{{
 				Name: "note", Component: "markdown", SortKey: "a0", Width: 12, Height: 2,
 				Props: "{}", SourceType: "md", Source: "system text",

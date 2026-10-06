@@ -2,6 +2,8 @@
   "id": 7,
   "title": "Measures",
   "range": "7d",
+  "sidebar": true,
+  "project_tab": true,
   "group": 1,
   "layout": [
     {"widget": "metrics", "width": 12, "height": 10},

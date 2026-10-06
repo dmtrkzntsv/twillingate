@@ -2,6 +2,8 @@
   "id": 6,
   "title": "Web Vitals",
   "range": "30d",
+  "sidebar": true,
+  "project_tab": true,
   "group": 1,
   "layout": [
     {"widget": "lcp", "width": 3, "height": 3},
