@@ -100,16 +100,20 @@ describe('useProjectTabActions', () => {
 
   it('a fetch of the tabs still in flight when the answer comes cannot put a removed tab back', async () => {
     let answerStale!: (v: { tabs: ProjectTab[] }) => void
-    const stale = client.fetchQuery({
-      queryKey: ['project-tabs', 7],
-      queryFn: () => new Promise<{ tabs: ProjectTab[] }>((resolve) => (answerStale = resolve)),
-    })
+    // The write cancels this fetch, which rejects it: caught here, at once,
+    // so the rejection is never unhandled.
+    const stale = client
+      .fetchQuery({
+        queryKey: ['project-tabs', 7],
+        queryFn: () => new Promise<{ tabs: ProjectTab[] }>((resolve) => (answerStale = resolve)),
+      })
+      .catch(() => undefined)
     vi.mocked(endpoints.removeProjectTab).mockResolvedValue({ tabs: tabs.slice(0, 1) })
     const { result } = renderHook(() => useProjectTabActions(), { wrapper })
 
     await expect(act(() => result.current.remove(7, { dashboard_id: 13, title: 'Marketing' }))).resolves.toBe(true)
     answerStale({ tabs })
-    await stale.catch(() => undefined)
+    await stale
 
     expect(client.getQueryData(['project-tabs', 7])).toEqual({ tabs: tabs.slice(0, 1) })
   })
