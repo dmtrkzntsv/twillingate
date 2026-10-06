@@ -214,7 +214,7 @@ describe('Archive, system groups', () => {
     const main = within(screen.getByRole('main'))
     for (const name of ['Views', 'Product', 'Reports']) expect(main.queryByRole('link', { name })).not.toBeInTheDocument()
     expect(main.queryByText('System')).not.toBeInTheDocument()
-    expect(main.queryByText(/Gallery/)).not.toBeInTheDocument()
+    expect(main.getByText(/A hidden built-in dashboard comes back from Gallery › Dashboards/)).toBeInTheDocument()
   })
 
   it('reads "Nothing archived." when only a system group is', async () => {

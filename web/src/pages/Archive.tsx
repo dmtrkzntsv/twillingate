@@ -94,7 +94,8 @@ export default function Archive() {
           <h1 className="text-xl font-semibold tracking-tight">Archive</h1>
           <p className="max-w-prose text-sm text-muted-foreground">
             Archived dashboards are out of the sidebar. Restore one to put it back.
-            {purgeDays ? ` They are deleted after ${purgeDays} days.` : ''}
+            {purgeDays ? ` They are deleted after ${purgeDays} days.` : ''} A hidden built-in dashboard comes back from
+            Gallery › Dashboards.
           </p>
         </header>
         {groups.length === 0 ? (

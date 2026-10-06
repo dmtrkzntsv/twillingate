@@ -140,6 +140,64 @@ describe('App', () => {
     await waitFor(() => expect(window.location.pathname).toBe('/app/archive'))
   })
 
+  it('points to the dashboards gallery on "/dashboards" when every built-in is hidden from the sidebar', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        dashboardsResponse([
+          { dashboard_id: 1, title: 'Views', owner: 'system', group_id: 1, widgets: 1, sidebar: false, project_tab: true },
+          { dashboard_id: 2, title: 'Product', owner: 'system', group_id: 1, widgets: 1, sidebar: false, project_tab: true },
+        ])
+      )
+    )
+    window.history.pushState({}, '', '/app/dashboards')
+
+    renderApp()
+
+    expect(await screen.findByText('Everything is hidden from the sidebar')).toBeInTheDocument()
+    expect(screen.queryByText('Everything is archived')).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Open the archive' })).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('link', { name: 'Open Gallery › Dashboards' }))
+    await waitFor(() => expect(window.location.pathname).toBe('/app/gallery/dashboards'))
+  })
+
+  it('offers both the gallery and the archive on "/dashboards" when the rest is hidden or archived', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        dashboardsResponse([
+          { dashboard_id: 1, title: 'Views', owner: 'system', group_id: 1, widgets: 1, sidebar: false, project_tab: true },
+          { dashboard_id: 2, title: 'Mine', owner: 'user', group_id: 2, widgets: 1, sidebar: true, project_tab: false, archived_at: '2026-09-01T00:00:00Z' },
+        ])
+      )
+    )
+    window.history.pushState({}, '', '/app/dashboards')
+
+    renderApp()
+
+    expect(await screen.findByText('Everything is hidden from the sidebar')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Open Gallery › Dashboards' })).toHaveAttribute('href', '/app/gallery/dashboards')
+    expect(screen.getByRole('link', { name: 'Open the archive' })).toHaveAttribute('href', '/app/archive')
+  })
+
+  it('opens a hidden dashboard of your own from "/dashboards" when nothing else is left', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        dashboardsResponse([
+          { dashboard_id: 2, title: 'Mine', owner: 'user', group_id: 2, widgets: 1, sidebar: false, project_tab: false },
+        ])
+      )
+    )
+    window.history.pushState({}, '', '/app/dashboards')
+
+    renderApp()
+
+    expect(await screen.findByText('Everything is hidden from the sidebar')).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Open Gallery › Dashboards' })).not.toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Open Mine' })).toHaveAttribute('href', '/app/dashboards/2')
+  })
+
   it('offers a retry on "/dashboards" when the dashboards fail to load', async () => {
     const fetch = vi
       .fn()
