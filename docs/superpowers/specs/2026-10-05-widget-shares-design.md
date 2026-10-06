@@ -202,9 +202,8 @@ out of scope.
   CREATE INDEX idx_widget_shares_archive ON widget_shares(archive_at) WHERE archive_at IS NOT NULL;
   ```
 
-  The name leaves room for a later `dashboard_shares`. The API keeps the
-  shorter `shares` (`list_shares`, `/api/shares`) since a share's kind
-  shows in its fields.
+  The name leaves room for a later `dashboard_shares`, and the tools and
+  routes follow it (D6).
 
   `project_id` is the project the chart shows. **A share lives as long
   as its project, and no longer:**
@@ -227,20 +226,22 @@ out of scope.
   what the picture shows, even after a rename.
 
   The daily pass purges a share archived longer than
-  `RETENTION_ARCHIVED_DAYS` (audit `share.purge`, actor `retention`), as
+  `RETENTION_ARCHIVED_DAYS` (audit `widget_share.purge`, actor `retention`), as
   it purges dashboards and widgets. `RETENTION_ARCHIVED_DAYS=0` keeps
   archived shares forever.
 
-- **D6. Console operations.** In `internal/reporting` (`ops_share.go`),
-  exposed by `internal/api/ops_reporting.go`:
+- **D6. Console operations.** In `internal/reporting` (`ops_widget_share.go`),
+  exposed by `internal/api/ops_reporting.go`. Tools and routes are named
+  after the table, as `received_attributes` is served at
+  `/api/received-attributes`:
 
   | Operation | MCP tool | REST | Notes |
   | --- | --- | --- | --- |
-  | Create | none | `POST /api/widgets/{widget_id}/shares` | `multipart/form-data`: `image` (1200×630 PNG), `image_2x` (2400×1260 PNG), `project_id`, `from`, `to`, `archive_after` (`7d`, `30d`, `90d`, `365d` or `project`; default `30d`). REST only, since an agent has no browser to capture with. Answers 201 with `{id, url, image_url, ...}` |
-  | List | `list_shares` | `GET /api/shares?widget_id=&archived=` | `widget_id` optional; every share without it. Each row: `id`, `url`, `image_url`, `image_2x_url`, `widget_id`, `dashboard_id`, `dashboard_title`, `project_id`, `project_name`, `from`, `to`, `title`, `created_at`, `archive_at` (`null` = project lifetime), `archived_at` (`null` = live). `widget_id`, `dashboard_id` and `dashboard_title` are `null` once the widget is gone. `archived: false` lists live shares only (the Shares page), `true` archived ones only (the Archive page); omitted, both |
-  | Change its archive date | `update_share` | `PATCH /api/shares/{id}` | body: `archive_after` (as in Create), counted from now. Live shares only |
-  | Archive | `archive_share` | `POST /api/shares/{id}/archive` | Takes it down at once (404). Answers the share |
-  | Restore | `restore_share` | `POST /api/shares/{id}/restore` | body: `archive_after`, default `30d` from now, since the old date has usually passed. Answers the share |
+  | Create | none | `POST /api/widget-shares` | `multipart/form-data`: `widget_id`, `image` (1200×630 PNG), `image_2x` (2400×1260 PNG), `project_id`, `from`, `to`, `archive_after` (`7d`, `30d`, `90d`, `365d` or `project`; default `30d`). REST only, since an agent has no browser to capture with. Answers 201 with `{id, url, image_url, ...}` |
+  | List | `list_widget_shares` | `GET /api/widget-shares?widget_id=&archived=` | `widget_id` optional; every share without it. Each row: `id`, `url`, `image_url`, `image_2x_url`, `widget_id`, `dashboard_id`, `dashboard_title`, `project_id`, `project_name`, `from`, `to`, `title`, `created_at`, `archive_at` (`null` = project lifetime), `archived_at` (`null` = live). `widget_id`, `dashboard_id` and `dashboard_title` are `null` once the widget is gone. `archived: false` lists live shares only (the Shares page), `true` archived ones only (the Archive page); omitted, both |
+  | Change its archive date | `update_widget_share` | `PATCH /api/widget-shares/{id}` | body: `archive_after` (as in Create), counted from now. Live shares only |
+  | Archive | `archive_widget_share` | `POST /api/widget-shares/{id}/archive` | Takes it down at once (404). Answers the share |
+  | Restore | `restore_widget_share` | `POST /api/widget-shares/{id}/restore` | body: `archive_after`, default `30d` from now, since the old date has usually passed. Answers the share |
 
   There is no delete over the API, as for dashboards and widgets: the
   daily pass deletes a share archived for `RETENTION_ARCHIVED_DAYS` (D5).
@@ -257,8 +258,8 @@ out of scope.
     goes for Change and Restore.
 
   Only the stdlib decodes the PNG; there is no new Go dependency. Create,
-  change, archive and restore each write an audit row (`share.create`,
-  `share.update`, `share.archive`, `share.restore`), as other console
+  change, archive and restore each write an audit row (`widget_share.create`,
+  `widget_share.update`, `widget_share.archive`, `widget_share.restore`), as other console
   writes do. An unknown share is `ErrNotFound`, and changing an archived
   one is `ErrConflict`.
 
@@ -270,16 +271,16 @@ out of scope.
   its project does (D5), and goes with it. The API calls that
   choice `project`.
   - **It can be changed.** On a live share, the same choice on the Shares
-    page (D8, `update_share`) sets `archive_at` to now + the period,
+    page (D8, `update_widget_share`) sets `archive_at` to now + the period,
     or `NULL`. On an archived share, **Restore** on the Archive page
-    (D9) asks for it again (`restore_share`).
+    (D9) asks for it again (`restore_widget_share`).
   - **The page stops at `archive_at`, not at the next daily pass.** Both
     `/share/` routes compare `archive_at` with the clock on each request
     and answer 404 once it has passed, as for an archived share. With
     `max-age=3600` on the image, a CDN may serve it for up to an hour
     longer.
   - **The daily pass archives** each live share whose `archive_at` has
-    passed: it sets `archived_at = archive_at`, writing `share.archive`
+    passed: it sets `archived_at = archive_at`, writing `widget_share.archive`
     with actor `retention`. From then on the share is like one archived
     by hand. It shows on the Archive page (D9), it can be restored, and it
     is purged `RETENTION_ARCHIVED_DAYS` later (D5).
@@ -297,7 +298,7 @@ out of scope.
   | Widget | The share's title, and under it the dashboard and project it came from, linking to the dashboard. Once the widget is gone, the copied title and project name, without a link |
   | Range | The range in words |
   | Created | The date |
-  | Archive after | "Nov 4" or "Project lifetime", changeable in place (D7, `update_share`) |
+  | Archive after | "Nov 4" or "Project lifetime", changeable in place (D7, `update_widget_share`) |
   | Actions | **Copy link**, **Copy embed code**, **Archive** |
 
   `?widget=<id>` narrows it to one widget, with a chip to clear the
@@ -313,7 +314,7 @@ out of scope.
   and "archived · deleted on <date>", using the `purge_after_days` and
   `purgeDate` the page already uses for dashboards. Each has **Restore**,
   which asks **Archive after** (default 1 month) before restoring
-  (`restore_share`). The page's intro gains "Archived shares answer 404
+  (`restore_widget_share`). The page's intro gains "Archived shares answer 404
   until restored." With nothing archived, the section is left out.
 
 ## Docs
@@ -321,7 +322,7 @@ out of scope.
 - `docs/reporting.md`: the Share dialog, Download PNG, the card and its
   watermark, the Shares page, archived shares on the Archive page,
   Archive after, and
-  the `list_shares`, `update_share`, `archive_share` and `restore_share`
+  the `list_widget_shares`, `update_widget_share`, `archive_widget_share` and `restore_widget_share`
   tools with their REST routes.
 - `docs/twillingate.md`: the three `/share/` routes in the `serve -console` row,
   as the console's one unauthenticated content, with the footer credit.
