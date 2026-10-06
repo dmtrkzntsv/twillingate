@@ -130,10 +130,16 @@ out of scope.
     and `twillingate.dev` in 16px type, bottom right inside the padding,
     at about 55% opacity. It never sits over the chart. It is the only
     branding on the image.
-  - A white background, always in the light theme, whatever theme the
-    console shows.
+  - **The sharer's theme.** The card is drawn in the theme the console
+    shows when Share… or Download PNG is clicked, light or dark, with the
+    console's own background, text and chart colours for that theme. The
+    watermark takes the theme's muted foreground. The dialog's preview is
+    the captured image itself, so what you see is what is posted. A social
+    preview is one image for every reader, so it cannot follow each
+    reader's theme; to post the other theme, switch the console's theme
+    and share again.
 
-  **Every machine draws the same card.** The console uses the system font
+  **Every machine draws the same card** for a given theme. The console uses the system font
   stack, which differs from one OS to the next. The card instead uses one
   bundled font (Inter, through `@fontsource`, a frontend library and so
   allowed), loaded only by the card. The capture waits for
@@ -149,16 +155,18 @@ out of scope.
   **Where "great" gets judged.** The components gallery
   (`/app/gallery/components`) gains a **Share card** view that renders
   every component's fixtures as cards, at their real size. That is the
-  review surface for the look, and the PR that ships this feature
-  includes those cards for review. A Playwright test captures each
+  review surface for the look, and it follows the gallery's theme, so both
+  themes get reviewed. The PR that ships this feature includes every
+  card in both themes for review. A Playwright test captures each
   component's card and checks the two renditions' dimensions and that the
   1x PNG stays under 300 KB, the size above which WhatsApp drops the
   preview.
 
   **The share page** is designed too: the 2x image centred at up to 1200px
   wide, the title as `<h1>`, the project and range under it, and the
-  footer credit. It follows `prefers-color-scheme` for the page (the image
-  stays light) and does not scroll sideways at 360px.
+  footer credit. The page around the image follows the visitor's
+  `prefers-color-scheme`. The image keeps the theme it was shared in.
+  The page does not scroll sideways at 360px.
 
   **Download PNG** saves the 2x rendition as
   `<widget-name>-<from>-<to>.png` and stores nothing. **Share…** opens a
@@ -328,11 +336,12 @@ out of scope.
     archive, the empty state, the folded columns below `sm`;
   - the Archive page's Shares section: the purge date, and Restore asking
     Archive after;
-  - the card layout of each component.
+  - the card layout of each component, in both themes, and the capture
+    taking the console's current theme.
 
   The gallery's Share card view renders every component. A Playwright
-  test captures each card and checks both renditions' sizes and the
-  300 KB budget of the 1x one. A Playwright e2e that shares a seeded
+  test captures each card in both themes and checks both renditions'
+  sizes and the 300 KB budget of the 1x one. A Playwright e2e that shares a seeded
   widget, finds it on the Shares page, opens `/share/<id>`, checks the
   meta tags, the footer link and that both images load, archives it and
   gets a 404, finds it on the Archive page, restores it and gets the page
