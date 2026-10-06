@@ -29,7 +29,7 @@ function widgetFilter(param: string | null): number | undefined {
  * it archives, copy its link or embed code, archive now. `?widget=<id>`
  * narrows it to one widget (where the Share dialog's "other links" leads).
  * Archiving asks no confirmation, since Restore on the Archive page undoes
- * it. Below `sm` range, created and archive-after fold into a line under
+ * it. Below `xl` range, created and archive-after fold into a line under
  * the widget.
  */
 export default function Shares() {
@@ -40,41 +40,52 @@ export default function Shares() {
   const { setArchiveAfter, archive, pending } = useWidgetShareActions()
   const shares = sharesQ.data?.shares
 
+  /** The archive-after choice; the folded line's copy is the small one. */
+  const select = (s: WidgetShare, archives: string | undefined, small: boolean) => (
+    <ArchiveAfterSelect
+      small={small}
+      aria-label={`Archive ${s.title} after`}
+      value="project"
+      current={archives}
+      onChange={(v) => void setArchiveAfter(s.id, v)}
+    />
+  )
+
   const row = (s: WidgetShare) => {
     const archives = s.archive_at ? archiveLabel(s) : undefined
     return (
       <TableRow key={s.id}>
-        <TableCell className="w-28">
+        <TableCell className="w-24 sm:w-28">
           <a href={s.url} target="_blank" rel="noopener" className="block">
-            <img src={s.image_url} alt={`Shared image of ${s.title}`} loading="lazy" className="aspect-[1200/630] w-24 rounded border object-cover" />
+            <img src={s.image_url} alt={`Shared image of ${s.title}`} loading="lazy" className="aspect-[1200/630] w-20 rounded border object-cover sm:w-24" />
           </a>
         </TableCell>
         <TableCell className="min-w-0">
-          <div className="truncate font-medium">{s.title}</div>
-          <div className="truncate text-xs text-muted-foreground">
-            {s.dashboard_id !== null && s.dashboard_title ? (
-              <>
-                <Link to={`/dashboards/${s.dashboard_id}`} className="underline underline-offset-2">
-                  {s.dashboard_title}
-                </Link>
-                {' · '}
-              </>
-            ) : null}
+          <div className="truncate font-medium" title={s.title}>
+            {s.title}
+          </div>
+          {s.dashboard_id !== null && s.dashboard_title && (
+            <div className="truncate text-xs text-muted-foreground" title={s.dashboard_title}>
+              <Link to={`/dashboards/${s.dashboard_id}`} className="underline underline-offset-2">
+                {s.dashboard_title}
+              </Link>
+            </div>
+          )}
+          <div className="truncate text-xs text-muted-foreground" title={s.project_name}>
             {s.project_name}
           </div>
-          <div className="mt-1 text-xs whitespace-normal text-muted-foreground sm:hidden">
-            {rangeInWords(s.from, s.to)} · {createdOn(s)} · {archives ? `archives ${archives}` : archiveLabel(s)}
+          {/* Below xl the persistent sidebar leaves no room for the three columns: they fold into this line. */}
+          <div className="mt-1 flex flex-col items-start gap-1 text-xs whitespace-normal text-muted-foreground xl:hidden">
+            <span>
+              {rangeInWords(s.from, s.to)} · {createdOn(s)}
+            </span>
+            {select(s, archives, true)}
           </div>
         </TableCell>
-        <TableCell className="hidden sm:table-cell">{rangeInWords(s.from, s.to)}</TableCell>
-        <TableCell className="hidden sm:table-cell">{createdOn(s)}</TableCell>
-        <TableCell className="hidden sm:table-cell">
-          <ArchiveAfterSelect
-            aria-label={`Archive ${s.title} after`}
-            value="project"
-            current={archives}
-            onChange={(v) => void setArchiveAfter(s.id, v)}
-          />
+        <TableCell className="hidden whitespace-normal xl:table-cell">{rangeInWords(s.from, s.to)}</TableCell>
+        <TableCell className="hidden xl:table-cell">{createdOn(s)}</TableCell>
+        <TableCell className="hidden xl:table-cell">
+          {select(s, archives, false)}
           {archives && <div className="mt-1 text-xs text-muted-foreground">archives {archives}</div>}
         </TableCell>
         <TableCell>
@@ -116,13 +127,13 @@ export default function Shares() {
             <Table className="table-fixed">
               <TableHeader>
                 <TableRow>
-                  <TableHead className="w-28">
+                  <TableHead className="w-24 sm:w-28">
                     <span className="sr-only">Image</span>
                   </TableHead>
                   <TableHead>Widget</TableHead>
-                  <TableHead className="hidden w-40 sm:table-cell">Range</TableHead>
-                  <TableHead className="hidden w-28 sm:table-cell">Created</TableHead>
-                  <TableHead className="hidden w-40 sm:table-cell">Archive after</TableHead>
+                  <TableHead className="hidden w-40 xl:table-cell">Range</TableHead>
+                  <TableHead className="hidden w-28 xl:table-cell">Created</TableHead>
+                  <TableHead className="hidden w-40 xl:table-cell">Archive after</TableHead>
                   <TableHead className="w-24 text-right sm:w-44">Actions</TableHead>
                 </TableRow>
               </TableHeader>

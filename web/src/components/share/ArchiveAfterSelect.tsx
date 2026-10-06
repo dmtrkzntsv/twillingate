@@ -11,6 +11,8 @@ interface Props {
    * selected; `value` is then ignored.
    */
   current?: string
+  /** The compact select, for a tight spot (the Shares page's folded line). */
+  small?: boolean
   id?: string
   'aria-label'?: string
 }
@@ -18,11 +20,13 @@ interface Props {
 const CURRENT = 'current'
 
 /** When a share archives itself: a native select over the archive-after choices. */
-export function ArchiveAfterSelect({ value, onChange, current, id, 'aria-label': label }: Props) {
+export function ArchiveAfterSelect({ value, onChange, current, small, id, 'aria-label': label }: Props) {
   return (
     <NativeSelect
       id={id}
       aria-label={label}
+      size={small ? 'sm' : 'default'}
+      className={small ? 'pr-7 pl-2 text-xs' : undefined}
       value={current ? CURRENT : value}
       onChange={(e) => {
         if (e.target.value !== CURRENT) onChange(e.target.value as ArchiveAfter)

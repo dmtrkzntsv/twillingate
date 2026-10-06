@@ -90,7 +90,7 @@ describe('Shares', () => {
     expect(within(r).getAllByText('Sep 5 – Oct 4, 2026').length).toBeGreaterThan(0)
     expect(within(r).getAllByText('Oct 5, 2026').length).toBeGreaterThan(0)
     // A dated share's select stands on its date, then offers the periods.
-    const select = within(r).getByRole('combobox')
+    const select = within(r).getAllByRole('combobox')[1]
     expect(select).toHaveDisplayValue('Nov 4')
     expect(within(select).getAllByRole('option').map((o) => o.textContent)).toEqual(['Nov 4', '1 week', '1 month', '3 months', '1 year', 'Project lifetime'])
     expect(within(r).getByText('archives Nov 4')).toBeInTheDocument()
@@ -99,9 +99,9 @@ describe('Shares', () => {
   it('shows Project lifetime with no date note for a share that never archives', async () => {
     renderShares()
     const r = await row('Top pages')
-    expect(within(r).getByRole('combobox')).toHaveDisplayValue('Project lifetime')
+    for (const select of within(r).getAllByRole('combobox')) expect(select).toHaveDisplayValue('Project lifetime')
     expect(within(r).queryByText(/^archives /)).not.toBeInTheDocument()
-    expect(within(r).getAllByRole('option')).toHaveLength(5)
+    expect(within(r).getAllByRole('option')).toHaveLength(10)
   })
 
   it('shows the copied title and project, with no dashboard link, once the widget is gone', async () => {
@@ -118,8 +118,16 @@ describe('Shares', () => {
   it('changes the archive date from the select', async () => {
     renderShares()
     const r = await row('Visitors')
-    await userEvent.selectOptions(within(r).getByRole('combobox'), '90d')
+    await userEvent.selectOptions(within(r).getAllByRole('combobox')[1], '90d')
     expect(setArchiveAfter).toHaveBeenCalledWith(older.id, '90d')
+  })
+
+  it('changes it from the folded line too, which a phone shows instead of the column', async () => {
+    renderShares()
+    const r = await row('Visitors')
+    const folded = r.querySelector('.xl\\:hidden') as HTMLElement
+    await userEvent.selectOptions(within(folded).getByRole('combobox'), '365d')
+    expect(setArchiveAfter).toHaveBeenCalledWith(older.id, '365d')
   })
 
   it('archives with no confirmation', async () => {
@@ -169,24 +177,38 @@ describe('Shares', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent("Couldn't load shares. boom")
   })
 
-  it('folds range, created and archive-after below sm into a line under the widget', async () => {
+  it('folds range, created and archive-after below xl into a line under the widget', async () => {
     renderShares()
     const r = await row('Visitors')
     const heads = screen.getAllByRole('columnheader')
     for (const name of ['Range', 'Created', 'Archive after']) {
-      expect(heads.find((h) => h.textContent === name)).toHaveClass('hidden', 'sm:table-cell')
+      expect(heads.find((h) => h.textContent === name)).toHaveClass('hidden', 'xl:table-cell')
     }
     const cells = within(r).getAllByRole('cell')
-    expect(cells.filter((c) => c.classList.contains('hidden') && c.classList.contains('sm:table-cell'))).toHaveLength(3)
-    const folded = r.querySelector('.sm\\:hidden')!
+    expect(cells.filter((c) => c.classList.contains('hidden') && c.classList.contains('xl:table-cell'))).toHaveLength(3)
+    const folded = r.querySelector('.xl\\:hidden') as HTMLElement
     expect(folded).toHaveTextContent('Sep 5 – Oct 4, 2026')
     expect(folded).toHaveTextContent('Oct 5, 2026')
-    expect(folded).toHaveTextContent('archives Nov 4')
+    expect(within(folded).getByRole('combobox')).toHaveDisplayValue('Nov 4')
+  })
+
+  it('shows the dashboard and the project on their own lines, with the full text in a title', async () => {
+    const long = 'A dashboard with a very long name that will be cut short on a phone'
+    vi.spyOn(endpoints, 'widgetShares').mockResolvedValue({ shares: [share('0194a000-0000-7000-8000-000000000004', { dashboard_title: long, project_name: 'long.example.com' })] })
+    renderShares()
+    const r = await row('Visitors')
+    const dash = within(r).getByRole('link', { name: long })
+    expect(dash.parentElement).toHaveAttribute('title', long)
+    expect(dash.parentElement).toHaveClass('truncate')
+    const project = within(r).getByText('long.example.com')
+    expect(project).toHaveAttribute('title', 'long.example.com')
+    expect(project).toHaveClass('truncate')
+    expect(project).not.toBe(dash.parentElement)
   })
 
   it('folds a never-archiving share to Project lifetime', async () => {
     renderShares()
     const r = await row('Top pages')
-    expect(r.querySelector('.sm\\:hidden')).toHaveTextContent('Project lifetime')
+    expect(within(r.querySelector('.xl\\:hidden') as HTMLElement).getByRole('combobox')).toHaveDisplayValue('Project lifetime')
   })
 })
