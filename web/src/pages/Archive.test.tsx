@@ -15,22 +15,23 @@ vi.mock('@/hooks/use-dashboard-actions', () => ({
 const duplicate = vi.fn()
 const archive = vi.fn()
 const restore = vi.fn()
+const setSidebar = vi.fn()
 
 function info(dashboard_id: number, title: string, owner: 'system' | 'user', group_id: number, extra: Partial<DashboardInfo> = {}): DashboardInfo {
-  return { dashboard_id, title, owner, group_id, widgets: 1, ...extra }
+  return { dashboard_id, title, owner, group_id, widgets: 1, sidebar: true, project_tab: false, ...extra }
 }
 
-// Views/Product/Users/Groups/Retention: a 5-tab system group, archived
-// whole. Reports: a live system group, uninvolved. Launch week: a live
+// Views/Product/Users/Groups/Retention: a 5-tab system group, hidden
+// from the sidebar. Reports: a live system group, uninvolved. Launch week: a live
 // user dashboard, uninvolved. Old experiment: an archived, lone user
 // dashboard. Marketing/Funnel: a user group where Funnel alone is
 // archived, Marketing stays live.
 const dashboards: DashboardInfo[] = [
-  info(1, 'Views', 'system', 1, { archived_at: '2026-09-15T00:00:00Z' }),
-  info(2, 'Product', 'system', 1, { archived_at: '2026-09-15T00:00:00Z' }),
-  info(3, 'Users', 'system', 1, { archived_at: '2026-09-15T00:00:00Z' }),
-  info(4, 'Groups', 'system', 1, { archived_at: '2026-09-15T00:00:00Z' }),
-  info(5, 'Retention', 'system', 1, { archived_at: '2026-09-15T00:00:00Z' }),
+  info(1, 'Views', 'system', 1, { sidebar: false }),
+  info(2, 'Product', 'system', 1, { sidebar: false }),
+  info(3, 'Users', 'system', 1, { sidebar: false }),
+  info(4, 'Groups', 'system', 1, { sidebar: false }),
+  info(5, 'Retention', 'system', 1, { sidebar: false }),
   info(6, 'Reports', 'system', 6),
   info(10, 'Launch week', 'user', 10),
   info(11, 'Old experiment', 'user', 11, { archived_at: '2026-09-01T00:00:00Z' }),
@@ -52,6 +53,7 @@ beforeEach(() => {
     duplicate,
     archive,
     restore,
+    setSidebar,
     move: vi.fn(),
     renameGroup: vi.fn(),
     pending: false,
@@ -212,11 +214,11 @@ describe('Archive, system groups', () => {
     const main = within(screen.getByRole('main'))
     for (const name of ['Views', 'Product', 'Reports']) expect(main.queryByRole('link', { name })).not.toBeInTheDocument()
     expect(main.queryByText('System')).not.toBeInTheDocument()
-    expect(main.getByText(/comes back from Gallery › Dashboards/)).toBeInTheDocument()
+    expect(main.queryByText(/Gallery/)).not.toBeInTheDocument()
   })
 
   it('reads "Nothing archived." when only a system group is', async () => {
-    mockApiWith([info(1, 'Views', 'system', 1, { archived_at: '2026-09-15T00:00:00Z' })])
+    mockApiWith([info(1, 'Views', 'system', 1, { sidebar: false })])
     renderArchive()
 
     expect(await screen.findByText('Nothing archived.')).toBeInTheDocument()

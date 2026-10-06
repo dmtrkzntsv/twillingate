@@ -76,7 +76,7 @@ async function yoursOrder(page: Page): Promise<string[]> {
 
 // Runs every test in this file one at a time: several tests act on the
 // same system group (1, "Reports"/"Views"), so running them concurrently
-// would race each other's archive/restore. The isolation that matters
+// would race each other's hide/show. The isolation that matters
 // against *other* spec files (app.spec.ts assumes Reports stays live) is
 // handled in playwright.config.ts's `arrange` project, which only starts
 // once the main project has finished.
@@ -101,12 +101,12 @@ test.afterEach(async ({ request }) => {
   }
   toArchive = []
 
-  // Always restore group 1 (Reports/Views), whatever this test did to it:
-  // a no-op when it is already live.
+  // Always put group 1 (Reports/Views) back in the sidebar, whatever this
+  // test did to it: a no-op when it is already there.
   const ids = await dashboardIds(request)
   const viewsId = ids.get('Views')
   if (viewsId !== undefined) {
-    await request.post(`/api/dashboards/${viewsId}/restore`, { headers: authHeaders(), data: { whole_group: true } })
+    await request.patch(`/api/dashboards/${viewsId}`, { headers: authHeaders(), data: { sidebar: true } })
   }
 })
 
@@ -293,20 +293,20 @@ test('drag reorder persists across a reload', async ({ page, request }) => {
   await expect.poll(() => yoursOrder(page)).toEqual(['E2E Y', 'E2E X'])
 })
 
-test('copies a system group and one of its tabs from the gallery while it is archived', async ({ page, request }) => {
+test('copies a system group and one of its tabs from the gallery while it is hidden', async ({ page, request }) => {
   // Logging in first, while Views is still live, so the post-login
-  // redirect ("/") has a live dashboard to land on; it is archived only
+  // redirect ("/") has a live dashboard to land on; it is hidden only
   // after we are already signed in.
   await login(page)
 
   const ids = await dashboardIds(request)
   const viewsId = ids.get('Views')
   expect(viewsId, 'no dashboard titled Views').toBeDefined()
-  const archived = await request.post(`/api/dashboards/${viewsId}/archive`, {
+  const hidden = await request.patch(`/api/dashboards/${viewsId}`, {
     headers: authHeaders(),
-    data: { whole_group: true },
+    data: { sidebar: false },
   })
-  expect(archived.ok(), await archived.text()).toBeTruthy()
+  expect(hidden.ok(), await hidden.text()).toBeTruthy()
 
   await page.goto('/app/gallery/dashboards')
   await page.waitForLoadState('networkidle')
@@ -325,7 +325,7 @@ test('copies a system group and one of its tabs from the gallery while it is arc
   await expect(page.getByRole('heading', { level: 1, name: 'Views (copy)', exact: true })).toBeVisible()
   await expect(page.getByRole('tab')).toHaveCount(7)
 
-  // One tab of the archived template, from that tab's row in the gallery.
+  // One tab of the hidden template, from that tab's row in the gallery.
   await page.goto('/app/gallery/dashboards')
   await viewsGroup.getByRole('button', { name: 'Users tab actions' }).click()
   await page.getByRole('menuitem', { name: 'Copy to new dashboard' }).click()

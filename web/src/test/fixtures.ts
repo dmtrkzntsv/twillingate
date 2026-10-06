@@ -8,7 +8,7 @@ import type { DashboardDetail, DashboardInfo, DashboardsResponse, DashboardTab, 
 const DAYS = ['2026-09-20', '2026-09-21', '2026-09-22', '2026-09-23', '2026-09-24', '2026-09-25', '2026-09-26']
 
 function info(dashboard_id: number, title: string, owner: 'system' | 'user', widgets: number, extra: Partial<DashboardInfo> = {}): DashboardInfo {
-  return { dashboard_id, title, owner, group_id: dashboard_id, widgets, ...extra }
+  return { dashboard_id, title, owner, group_id: dashboard_id, widgets, sidebar: true, project_tab: false, ...extra }
 }
 
 export function dashboardsList(over: Partial<DashboardsResponse> = {}): DashboardsResponse {
@@ -57,7 +57,7 @@ function widget(dashboard_id: number, component: string, title: string, width: n
 function detail(info: DashboardInfo, widgets: Widget[], opts: { tabs?: DashboardTab[]; follows?: boolean } = {}): DashboardDetail {
   const tabs = opts.tabs ?? [{ dashboard_id: info.dashboard_id, title: info.title }]
   const follows = opts.follows ?? true
-  return { ...info, follows_project: follows, follows_range: follows, widgets, tabs }
+  return { ...info, follows_project: follows, follows_range: follows, widgets, tabs, project_ids: [] }
 }
 
 const list = dashboardsList().dashboards

@@ -8,9 +8,9 @@ import { ApiError, type DashboardInfo } from '@/lib/api'
 import { lastDashboard } from '@/lib/last-dashboard'
 import { dashboardsQuery } from '@/lib/queries'
 
-/** The last dashboard opened on this device, else the first system one, never an archived one (D34). */
+/** The last dashboard opened on this device, else the first system one, never an archived one or one out of the sidebar (D34). */
 export function pickDashboard(dashboards: DashboardInfo[], last?: number): DashboardInfo | undefined {
-  const live = dashboards.filter((d) => !d.archived_at)
+  const live = dashboards.filter((d) => !d.archived_at && d.sidebar)
   return live.find((d) => d.dashboard_id === last) ?? live.find((d) => d.owner === 'system') ?? live[0]
 }
 

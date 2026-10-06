@@ -37,7 +37,7 @@ describe('App', () => {
   it('opens the projects on "/"', async () => {
     vi.stubGlobal('fetch', vi.fn((url: string) =>
       Promise.resolve(url.startsWith('/api/dashboards')
-        ? dashboardsResponse([{ dashboard_id: 3, title: 'Views', owner: 'system', group_id: 3, widgets: 1 }])
+        ? dashboardsResponse([{ dashboard_id: 3, title: 'Views', owner: 'system', group_id: 3, widgets: 1, sidebar: true, project_tab: false }])
         : json({ projects: [], keys: [], limits: [] }))))
     window.history.pushState({}, '', '/app/')
 
@@ -48,7 +48,7 @@ describe('App', () => {
 
   it('opens the dashboards on "/" in a dashboards preview, which has no projects', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
-      json({ timezone: 'UTC', dev: true, dashboards: [{ dashboard_id: 3, title: 'Views', owner: 'system', group_id: 3, widgets: 1 }] })))
+      json({ timezone: 'UTC', dev: true, dashboards: [{ dashboard_id: 3, title: 'Views', owner: 'system', group_id: 3, widgets: 1, sidebar: true, project_tab: false }] })))
     window.history.pushState({}, '', '/app/')
 
     renderApp()
@@ -62,8 +62,8 @@ describe('App', () => {
       'fetch',
       vi.fn().mockResolvedValue(
         dashboardsResponse([
-          { dashboard_id: 1, title: 'Views', owner: 'system', group_id: 1, widgets: 1 },
-          { dashboard_id: 2, title: 'Mine', owner: 'user', group_id: 2, widgets: 1 },
+          { dashboard_id: 1, title: 'Views', owner: 'system', group_id: 1, widgets: 1, sidebar: true, project_tab: false },
+          { dashboard_id: 2, title: 'Mine', owner: 'user', group_id: 2, widgets: 1, sidebar: true, project_tab: false },
         ])
       )
     )
@@ -79,8 +79,8 @@ describe('App', () => {
       'fetch',
       vi.fn().mockResolvedValue(
         dashboardsResponse([
-          { dashboard_id: 9, title: 'Mine', owner: 'user', group_id: 9, widgets: 1 },
-          { dashboard_id: 3, title: 'Views', owner: 'system', group_id: 3, widgets: 1 },
+          { dashboard_id: 9, title: 'Mine', owner: 'user', group_id: 9, widgets: 1, sidebar: true, project_tab: false },
+          { dashboard_id: 3, title: 'Views', owner: 'system', group_id: 3, widgets: 1, sidebar: true, project_tab: false },
         ])
       )
     )
@@ -97,9 +97,9 @@ describe('App', () => {
       'fetch',
       vi.fn().mockResolvedValue(
         dashboardsResponse([
-          { dashboard_id: 1, title: 'Old views', owner: 'system', group_id: 1, widgets: 1, archived_at: '2026-09-01T00:00:00Z' },
-          { dashboard_id: 2, title: 'Mine', owner: 'user', group_id: 2, widgets: 1, archived_at: '2026-09-01T00:00:00Z' },
-          { dashboard_id: 4, title: 'Views', owner: 'system', group_id: 4, widgets: 1 },
+          { dashboard_id: 1, title: 'Old views', owner: 'system', group_id: 1, widgets: 1, sidebar: true, project_tab: false, archived_at: '2026-09-01T00:00:00Z' },
+          { dashboard_id: 2, title: 'Mine', owner: 'user', group_id: 2, widgets: 1, sidebar: true, project_tab: false, archived_at: '2026-09-01T00:00:00Z' },
+          { dashboard_id: 4, title: 'Views', owner: 'system', group_id: 4, widgets: 1, sidebar: true, project_tab: false },
         ])
       )
     )
@@ -125,8 +125,8 @@ describe('App', () => {
       'fetch',
       vi.fn().mockResolvedValue(
         dashboardsResponse([
-          { dashboard_id: 1, title: 'Views', owner: 'system', group_id: 1, widgets: 1, archived_at: '2026-09-01T00:00:00Z' },
-          { dashboard_id: 2, title: 'Mine', owner: 'user', group_id: 2, widgets: 1, archived_at: '2026-09-01T00:00:00Z' },
+          { dashboard_id: 1, title: 'Views', owner: 'system', group_id: 1, widgets: 1, sidebar: true, project_tab: false, archived_at: '2026-09-01T00:00:00Z' },
+          { dashboard_id: 2, title: 'Mine', owner: 'user', group_id: 2, widgets: 1, sidebar: true, project_tab: false, archived_at: '2026-09-01T00:00:00Z' },
         ])
       )
     )
@@ -144,7 +144,7 @@ describe('App', () => {
     const fetch = vi
       .fn()
       .mockResolvedValueOnce(json({ error: { code: 'internal', message: 'database is locked' } }, 500))
-      .mockResolvedValue(dashboardsResponse([{ dashboard_id: 3, title: 'Views', owner: 'system', group_id: 3, widgets: 1 }]))
+      .mockResolvedValue(dashboardsResponse([{ dashboard_id: 3, title: 'Views', owner: 'system', group_id: 3, widgets: 1, sidebar: true, project_tab: false }]))
     vi.stubGlobal('fetch', fetch)
     window.history.pushState({}, '', '/app/dashboards')
 

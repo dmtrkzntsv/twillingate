@@ -27,14 +27,14 @@ interface Props {
  * and Hide on a system one, Move up and Move down added for a user
  * group. Duplicate always copies the whole group (`wholeGroup`) and never
  * archives anything — to replace a system group in the sidebar, Duplicate
- * it, then Hide the original. Hide archives the system group whole
- * (a system dashboard refuses to archive alone); it stays off the Archive
- * page and comes back from the Dashboards gallery's "Show in sidebar".
+ * it, then Hide the original. Hide takes the system group out of the
+ * sidebar whole (`setSidebar`; a built-in is never archived) and it comes
+ * back from the Dashboards gallery's "Show in sidebar".
  * `showOnHover` keeps the trigger out of the way until hovered on
  * desktop; the sidebar shows it unconditionally on phones.
  */
 export default function SidebarGroupMenu({ group, userGroups, currentId, onRename }: Props) {
-  const { duplicate, archive, move, pending } = useDashboardActions()
+  const { duplicate, archive, setSidebar, move, pending } = useDashboardActions()
   const { isMobile, setOpenMobile } = useSidebar()
   const first = group.members[0]
   const name = groupName(group.members)
@@ -84,7 +84,9 @@ export default function SidebarGroupMenu({ group, userGroups, currentId, onRenam
           disabled={pending}
           onClick={() => {
             if (navigateTo) close()
-            void archive({ dashboard_id: first.dashboard_id, title: name }, { wholeGroup: true, navigateTo, hidden: group.owner === 'system' })
+            const d = { dashboard_id: first.dashboard_id, title: name }
+            if (group.owner === 'system') void setSidebar(d, false, { navigateTo })
+            else void archive(d, { wholeGroup: true, navigateTo })
           }}
         >
           {group.owner === 'system' ? <EyeOffIcon /> : <ArchiveIcon />}

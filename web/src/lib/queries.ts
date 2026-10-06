@@ -9,6 +9,12 @@ export const dashboardQuery = (id: number) => ({
   queryFn: () => endpoints.dashboard(id),
 })
 
+/** A project page's tabs after Setup, in order. */
+export const projectTabsQuery = (projectId: number) => ({
+  queryKey: ['project-tabs', projectId],
+  queryFn: () => endpoints.projectTabs(projectId),
+})
+
 /**
  * The project switcher's list. Projects change through this app, MCP and
  * the CLI; the project actions invalidate it, so a dashboard switch or a

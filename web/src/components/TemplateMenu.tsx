@@ -19,16 +19,16 @@ interface Props {
 }
 
 /**
- * A Dashboards gallery "…" menu (D17), archived or not, never archiving
- * anything. A group's (on its card, or on a group of one) offers
+ * A Dashboards gallery "…" menu (D17), hidden from the sidebar or not,
+ * never archiving anything. A group's (on its card, or on a group of one) offers
  * "Duplicate dashboard", copying the whole system group (`wholeGroup`); a
  * tab's offers "Copy to new dashboard", that tab as a dashboard of its
- * own. Either opens the copy. A group hidden from the sidebar (archived
- * whole) also offers "Show in sidebar", which restores it: the gallery is
- * where a hidden system dashboard comes back from.
+ * own. Either opens the copy. A group hidden from the sidebar also
+ * offers "Show in sidebar", which puts it back: the gallery is where a
+ * hidden system dashboard comes back from.
  */
 export default function TemplateMenu({ dashboard, wholeGroup = false, hidden = false, name = dashboard.title }: Props) {
-  const { duplicate, restore, pending } = useDashboardActions()
+  const { duplicate, setSidebar, pending } = useDashboardActions()
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -43,7 +43,7 @@ export default function TemplateMenu({ dashboard, wholeGroup = false, hidden = f
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
         {wholeGroup && hidden && (
-          <DropdownMenuItem disabled={pending} onClick={() => void restore(dashboard.dashboard_id, true)}>
+          <DropdownMenuItem disabled={pending} onClick={() => void setSidebar({ dashboard_id: dashboard.dashboard_id, title: name }, true)}>
             <EyeIcon />
             Show in sidebar
           </DropdownMenuItem>

@@ -469,16 +469,15 @@ describe('Dashboard', () => {
     expect(screen.queryByRole('menuitemcheckbox')).not.toBeInTheDocument()
   })
 
-  it('opens a system group hidden whole with all its tabs, its menus, and Show in sidebar', async () => {
+  it('opens a system group out of the sidebar with all its tabs, its menus, and Show in sidebar', async () => {
     mockApi()
-    const archived = dashboardsList()
-    archived.dashboards = archived.dashboards.map((d) =>
-      d.owner === 'system' ? { ...d, archived_at: '2026-09-30T00:00:00Z' } : d
-    )
-    vi.mocked(endpoints.dashboards).mockResolvedValue(archived)
-    // get_dashboard lists only live tabs: none, the whole group being archived.
-    vi.mocked(endpoints.dashboard).mockResolvedValue({ ...product, tabs: [], archived_at: '2026-09-30T00:00:00Z' })
-    vi.spyOn(endpoints, 'restore').mockResolvedValue({ status: 'ok' })
+    const hidden = dashboardsList()
+    hidden.dashboards = hidden.dashboards.map((d) => (d.owner === 'system' ? { ...d, sidebar: false } : d))
+    vi.mocked(endpoints.dashboards).mockResolvedValue(hidden)
+    // A built-in is never archived: its tabs are live, only the sidebar flag is off.
+    vi.mocked(endpoints.dashboard).mockResolvedValue({ ...product, sidebar: false })
+    vi.spyOn(endpoints, 'setSidebar').mockResolvedValue({} as never)
+    vi.spyOn(endpoints, 'restore')
     renderAt('/dashboards/2')
 
     expect(await screen.findByText('Hidden from the sidebar')).toBeInTheDocument()
@@ -492,7 +491,8 @@ describe('Dashboard', () => {
     await userEvent.keyboard('{Escape}')
 
     await userEvent.click(screen.getByRole('button', { name: 'Show in sidebar' }))
-    await waitFor(() => expect(endpoints.restore).toHaveBeenCalledWith(2, true))
+    await waitFor(() => expect(endpoints.setSidebar).toHaveBeenCalledWith(2, true))
+    expect(endpoints.restore).not.toHaveBeenCalled()
   })
 
   it('offers no Restore on an archived dashboard in reporting dev', async () => {

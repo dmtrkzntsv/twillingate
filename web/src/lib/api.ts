@@ -61,6 +61,10 @@ export interface DashboardInfo {
   from?: string
   to?: string
   widgets: number
+  /** The dashboard's group is in the sidebar; the same on every member. */
+  sidebar: boolean
+  /** Every project created from now on gets this dashboard as a tab. */
+  project_tab: boolean
   archived_at?: string
 }
 
@@ -102,6 +106,16 @@ export interface DashboardDetail extends Omit<DashboardInfo, 'widgets'> {
   widgets: Widget[]
   /** The group's live members, in order, this dashboard included; always an array (tabs D18). */
   tabs: DashboardTab[]
+  /** The projects that have this dashboard as a tab. */
+  project_ids: number[]
+}
+
+/** One tab of a project's page after Setup. */
+export interface ProjectTab {
+  dashboard_id: number
+  title: string
+  owner: 'system' | 'user'
+  group_id: number
 }
 
 export interface SqlData {
@@ -349,7 +363,7 @@ export const endpoints = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     }),
-  /** Archives a dashboard, or its whole group (a system one needs `wholeGroup`) (D1). */
+  /** Archives a dashboard of the user's, or its whole group (D1); a built-in one is refused (see `setSidebar`). */
   archive: (id: number, wholeGroup = false) =>
     api<{ status: string }>(`/api/dashboards/${id}/archive`, {
       method: 'POST',
@@ -377,6 +391,20 @@ export const endpoints = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ whole_group: true, title }),
     }),
+  /** Puts a dashboard's whole group in or out of the sidebar; a built-in group too, which is never archived (project tabs D5). */
+  setSidebar: (id: number, sidebar: boolean) => api<DashboardInfo>(`/api/dashboards/${id}`, json('PATCH', { sidebar })),
+  /** Whether projects created from now on get this dashboard of the user's as a tab. */
+  setProjectTab: (id: number, on: boolean) => api<DashboardInfo>(`/api/dashboards/${id}`, json('PATCH', { project_tab: on })),
+  /** A project page's tabs after Setup, in order. */
+  projectTabs: (projectId: number) => api<{ tabs: ProjectTab[] }>(`/api/projects/${projectId}/tabs`),
+  /** Shows a dashboard as a tab of the project; `after` places one of the user's own, omitted puts it last. */
+  addProjectTab: (projectId: number, body: { dashboard_id: number; after?: number }) =>
+    api<{ tabs: ProjectTab[] }>(`/api/projects/${projectId}/tabs`, json('POST', body)),
+  removeProjectTab: (projectId: number, dashboardId: number) =>
+    api<{ tabs: ProjectTab[] }>(`/api/projects/${projectId}/tabs/${dashboardId}/remove`, json('POST', {})),
+  /** Reorders the user's own tabs: after `after` (one of the project's own tabs), 0 first. */
+  moveProjectTab: (projectId: number, dashboardId: number, after: number) =>
+    api<{ tabs: ProjectTab[] }>(`/api/projects/${projectId}/tabs/${dashboardId}/move`, json('POST', { after })),
   projects: () => api<ProjectsResponse>('/api/projects'),
   keys: (projectId?: number) => api<{ keys: IngestKey[] }>(`/api/keys${toQuery({ project_id: projectId })}`),
   createProject: (body: CreateProjectBody) => api<CreatedProject>('/api/projects', json('POST', body)),

@@ -14,18 +14,19 @@ vi.mock('@/hooks/use-dashboard-actions', () => ({
 
 const duplicate = vi.fn()
 const restore = vi.fn()
+const setSidebar = vi.fn()
 
 function info(dashboard_id: number, title: string, owner: 'system' | 'user', group_id: number, extra: Partial<DashboardInfo> = {}): DashboardInfo {
-  return { dashboard_id, title, owner, group_id, widgets: 1, ...extra }
+  return { dashboard_id, title, owner, group_id, widgets: 1, sidebar: true, project_tab: false, ...extra }
 }
 
-// Views/Product: a live system group. Reach: an archived, lone system
-// group — still a template here, archive state is irrelevant. Launch
+// Views/Product: a system group in the sidebar. Reach: a lone system
+// group hidden from it — still a template here. Launch
 // week: a live user dashboard, left out entirely (not a template).
 const dashboards: DashboardInfo[] = [
   info(1, 'Views', 'system', 1),
   info(2, 'Product', 'system', 1),
-  info(20, 'Reach', 'system', 20, { archived_at: '2026-09-15T00:00:00Z' }),
+  info(20, 'Reach', 'system', 20, { sidebar: false }),
   info(10, 'Launch week', 'user', 10),
 ]
 
@@ -39,6 +40,7 @@ beforeEach(() => {
     duplicate,
     archive: vi.fn(),
     restore,
+    setSidebar,
     move: vi.fn(),
     renameGroup: vi.fn(),
     pending: false,
@@ -81,7 +83,21 @@ describe('DashboardsGallery, templates', () => {
     expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Show in sidebar', 'Duplicate dashboard'])
     await userEvent.click(screen.getByRole('menuitem', { name: 'Show in sidebar' }))
 
-    expect(restore).toHaveBeenCalledWith(20, true)
+    expect(setSidebar).toHaveBeenCalledWith(expect.objectContaining({ dashboard_id: 20 }), true)
+    expect(restore).not.toHaveBeenCalled()
+  })
+
+  it('marks a group hidden by its sidebar flag, not by archived_at', async () => {
+    vi.spyOn(endpoints, 'dashboards').mockResolvedValue({
+      timezone: 'UTC',
+      dashboards: dashboards.map((d) => (d.group_id === 1 ? { ...d, sidebar: false } : d.dashboard_id === 20 ? { ...d, sidebar: true, archived_at: '2026-09-15T00:00:00Z' } : d)),
+    })
+    renderGallery()
+
+    const views = (await screen.findByRole('heading', { name: 'Views' })).closest('li')!
+    expect(within(views).getByText('2 tabs · hidden')).toBeInTheDocument()
+    const reach = screen.getByRole('heading', { name: 'Reach' }).closest('li')!
+    expect(within(reach).queryByText(/hidden/)).not.toBeInTheDocument()
   })
 
   it('leaves out a live user dashboard: not a template', async () => {
@@ -191,6 +207,7 @@ describe('DashboardsGallery, templates', () => {
       duplicate,
       archive: vi.fn(),
       restore,
+      setSidebar,
       move: vi.fn(),
       renameGroup: vi.fn(),
       pending: true,
