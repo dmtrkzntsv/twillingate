@@ -136,8 +136,9 @@ out of scope.
     watermark takes the theme's muted foreground. The dialog's preview is
     the captured image itself, so what you see is what is posted. A social
     preview is one image for every reader, so it cannot follow each
-    reader's theme; to post the other theme, switch the console's theme
-    and share again.
+    reader's theme. The console follows the system's theme
+    (`web/src/lib/theme.ts`), so to post the other theme, switch the
+    system's appearance and share again.
 
   **Every machine draws the same card** for a given theme. The console uses the system font
   stack, which differs from one OS to the next. The card instead uses one
@@ -238,7 +239,7 @@ out of scope.
   | Operation | MCP tool | REST | Notes |
   | --- | --- | --- | --- |
   | Create | none | `POST /api/widget-shares` | `multipart/form-data`: `widget_id`, `image` (1200×630 PNG), `image_2x` (2400×1260 PNG), `project_id`, `from`, `to`, `archive_after` (`7d`, `30d`, `90d`, `365d` or `project`; default `30d`). REST only, since an agent has no browser to capture with. Answers 201 with `{id, url, image_url, ...}` |
-  | List | `list_widget_shares` | `GET /api/widget-shares?widget_id=&archived=` | `widget_id` optional; every share without it. Each row: `id`, `url`, `image_url`, `image_2x_url`, `widget_id`, `dashboard_id`, `dashboard_title`, `project_id`, `project_name`, `from`, `to`, `title`, `created_at`, `archive_at` (`null` = project lifetime), `archived_at` (`null` = live). `widget_id`, `dashboard_id` and `dashboard_title` are `null` once the widget is gone. `archived: false` lists live shares only (the Shares page), `true` archived ones only (the Archive page); omitted, both |
+  | List | `list_widget_shares` | `GET /api/widget-shares?widget_id=&state=` | `widget_id` optional; every share without it. Each row: `id`, `url`, `image_url`, `image_2x_url`, `widget_id`, `dashboard_id`, `dashboard_title`, `project_id`, `project_name`, `from`, `to`, `title`, `created_at`, `archive_at` (`null` = project lifetime), `archived_at` (`null` = live). `widget_id`, `dashboard_id` and `dashboard_title` are `null` once the widget is gone. `state: "live"` lists live shares only (the Shares page), `"archived"` archived ones only (the Archive page); omitted, both. A share whose `archive_at` has passed but the daily pass has not yet archived counts as archived |
   | Change its archive date | `update_widget_share` | `PATCH /api/widget-shares/{id}` | body: `archive_after` (as in Create), counted from now. Live shares only |
   | Archive | `archive_widget_share` | `POST /api/widget-shares/{id}/archive` | Takes it down at once (404). Answers the share |
   | Restore | `restore_widget_share` | `POST /api/widget-shares/{id}/restore` | body: `archive_after`, default `30d` from now, since the old date has usually passed. Answers the share |
