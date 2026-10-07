@@ -203,15 +203,18 @@ describe('Project', () => {
     expect(await screen.findByText('No project 77')).toBeInTheDocument()
   })
 
-  it('shows usage and cap impact and refetches both when the range changes', async () => {
+  it('shows usage and cap impact over the last 7 days and refetches both when the range changes', async () => {
     const user = userEvent.setup()
     renderAt('/projects/4')
     expect(await screen.findByRole('region', { name: 'Usage' })).toBeInTheDocument()
     expect(await screen.findByRole('region', { name: 'Cap impact' })).toBeInTheDocument()
     const first = vi.mocked(endpoints.usage).mock.calls.at(-1)![0]
     expect(first).toMatchObject({ project_id: 4 })
+    // Opens on the last 7 days, today included.
+    expect(screen.getByRole('button', { name: 'Range: Last week' })).toBeInTheDocument()
+    expect((Date.parse(first.to!) - Date.parse(first.from!)) / 86_400_000).toBe(6)
     await user.click(screen.getByRole('button', { name: /^Range:/ }))
-    await user.click(await screen.findByRole('menuitemradio', { name: 'Last week' }))
+    await user.click(await screen.findByRole('menuitemradio', { name: 'Last month' }))
     await vi.waitFor(() => expect(vi.mocked(endpoints.usage).mock.calls.at(-1)![0]).not.toEqual(first))
     await vi.waitFor(() => expect(vi.mocked(endpoints.capUsage).mock.calls.at(-1)![1]).toEqual({
       from: vi.mocked(endpoints.usage).mock.calls.at(-1)![0].from, to: vi.mocked(endpoints.usage).mock.calls.at(-1)![0].to,
