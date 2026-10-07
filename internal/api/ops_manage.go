@@ -101,6 +101,23 @@ type okOut struct {
 	Status string `json:"status"`
 }
 
+type moveProjectIn struct {
+	ProjectID int64 `json:"project_id" jsonschema:"project id; call list_projects first"`
+	After     int64 `json:"after" jsonschema:"the project to go right after, archived ones included; 0 first"`
+}
+
+func (h *host) moveProject(ctx context.Context, in moveProjectIn) (okOut, error) {
+	if err := h.ops.MoveProject(ctx, actorFrom(ctx), in.ProjectID, in.After); err != nil {
+		// Either id may be the unknown one; name the one that is.
+		missing := in.ProjectID
+		if h.reg.Snapshot(ctx).Project(missing) != nil {
+			missing = in.After
+		}
+		return okOut{}, h.projectErr(ctx, missing, err)
+	}
+	return okOut{Status: "moved"}, nil
+}
+
 func (h *host) archiveProject(ctx context.Context, in idIn) (okOut, error) {
 	if err := h.ops.ArchiveProject(ctx, actorFrom(ctx), in.ProjectID); err != nil {
 		return okOut{}, h.projectErr(ctx, in.ProjectID, err)

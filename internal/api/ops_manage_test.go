@@ -67,6 +67,25 @@ func TestArchiveRestoreTools(t *testing.T) {
 	}
 }
 
+// move_project reorders list_projects, and a refusal names the unknown
+// project, whichever of the two ids it is.
+func TestMoveProjectTool(t *testing.T) {
+	_, cs := newTestHost(t)
+	if res := callTool(t, cs, "move_project", map[string]any{"project_id": 2, "after": 0}); res.IsError {
+		t.Fatalf("move: %s", textOf(res))
+	}
+	list := textOf(callTool(t, cs, "list_projects", nil))
+	if i, j := strings.Index(list, `"project_id":2`), strings.Index(list, `"project_id":1`); i < 0 || j < 0 || i > j {
+		t.Errorf("project 2 not listed before 1: %s", list)
+	}
+	for _, in := range []map[string]any{{"project_id": 99, "after": 1}, {"project_id": 1, "after": 99}} {
+		res := callTool(t, cs, "move_project", in)
+		if !res.IsError || !strings.Contains(textOf(res), "unknown project 99") {
+			t.Errorf("move %v = %s, want unknown project 99", in, textOf(res))
+		}
+	}
+}
+
 func TestKeyToolsLifecycle(t *testing.T) {
 	_, cs := newTestHost(t)
 	res := callTool(t, cs, "issue_ingest_key", map[string]any{
@@ -119,14 +138,14 @@ func TestManagementToolsAnnotatedNonReadOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	writers := map[string]bool{"create_project": true, "update_project": true,
-		"archive_project": true, "restore_project": true, "issue_ingest_key": true,
+		"archive_project": true, "restore_project": true, "move_project": true, "issue_ingest_key": true,
 		"disable_ingest_key": true, "enable_ingest_key": true,
 		"create_dashboard": true, "update_dashboard": true, "duplicate_dashboard": true,
 		"archive_dashboard": true, "restore_dashboard": true, "add_widget": true,
 		"update_widget": true, "copy_widget": true, "archive_widget": true, "restore_widget": true,
 		"add_project_tab": true, "remove_project_tab": true, "move_project_tab": true,
 		"update_widget_share": true, "archive_widget_share": true, "restore_widget_share": true}
-	idempotent := map[string]bool{"archive_project": true, "restore_project": true,
+	idempotent := map[string]bool{"archive_project": true, "restore_project": true, "move_project": true,
 		"disable_ingest_key": true, "enable_ingest_key": true,
 		"archive_dashboard": true, "restore_dashboard": true, "archive_widget": true, "restore_widget": true,
 		"remove_project_tab": true,

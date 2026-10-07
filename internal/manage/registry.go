@@ -35,7 +35,7 @@ type keyOwner struct {
 // load; every mutation builds a fresh one.
 type Snapshot struct {
 	byID    map[int64]*Project
-	ordered []*Project // ascending id
+	ordered []*Project // in the projects' order (position, then id)
 	keys    []keyOwner // active keys of non-archived projects only
 	origins map[int64]originSet
 }
@@ -226,6 +226,8 @@ func trimSlash(o string) string {
 
 func (s *Snapshot) Project(id int64) *Project { return s.byID[id] }
 
+// Projects is every project, archived ones included, in the order the
+// console shows them (MoveProject).
 func (s *Snapshot) Projects() []*Project { return s.ordered }
 
 // ProjectByKey preserves the constant-time contract of the old

@@ -267,6 +267,10 @@ type Store interface {
 	CreateProjectWithKey(ctx context.Context, p RegistryProject, k RegistryKey, projectAudit, keyAudit AuditEntry) (int64, error)
 	UpdateProject(ctx context.Context, p RegistryProject, a AuditEntry) error // p.ID selects the row
 	SetProjectArchived(ctx context.Context, id int64, archived bool, a AuditEntry) error
+	// SetProjectOrder puts the projects in ids first, in that order, in
+	// one transaction; one not listed (created meanwhile) keeps its place
+	// after them. An unknown id is ErrNotFound and changes nothing.
+	SetProjectOrder(ctx context.Context, ids []int64, a AuditEntry) error
 	InsertIngestKey(ctx context.Context, k RegistryKey, a AuditEntry) error
 	SetIngestKeyDisabled(ctx context.Context, projectID int64, label string, disabled bool, a AuditEntry) error
 	DeleteProjectData(ctx context.Context, id int64, a AuditEntry) error

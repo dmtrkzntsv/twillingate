@@ -87,7 +87,7 @@ func openOps(stdout io.Writer, envFile string) (*manage.Ops, *config.Config, fun
 	return ops, cfg, func() { st.Close() }, 0
 }
 
-const projectUsage = "usage: twillingate project <create|update|list|archive|restore|delete> [flags]"
+const projectUsage = "usage: twillingate project <create|update|list|move|archive|restore|delete> [flags]"
 
 func cmdProject(args []string, stdout io.Writer) int {
 	fs := flag.NewFlagSet("project", flag.ContinueOnError)
@@ -103,7 +103,7 @@ func cmdProject(args []string, stdout io.Writer) int {
 	}
 	sub, subArgs := rest[0], rest[1:]
 	switch sub {
-	case "create", "update", "list", "archive", "restore", "delete":
+	case "create", "update", "list", "move", "archive", "restore", "delete":
 	default:
 		fmt.Fprintf(stdout, "unknown subcommand %q\n%s\n", sub, projectUsage)
 		return 2
@@ -180,6 +180,24 @@ func cmdProject(args []string, stdout io.Writer) int {
 			}
 			fmt.Fprintf(stdout, "%d\t%s%s\n", p.ID, p.Name, state)
 		}
+		return 0
+	case "move":
+		sf := flag.NewFlagSet("project move", flag.ContinueOnError)
+		sf.SetOutput(stdout)
+		id := sf.Int64("id", 0, "project id (required)")
+		after := sf.Int64("after", 0, "the project to go after; 0 puts it first")
+		if err := sf.Parse(subArgs); err != nil {
+			return 2
+		}
+		if *id == 0 {
+			fmt.Fprintln(stdout, "usage: twillingate project move -id <id> [-after <id>]")
+			return 2
+		}
+		if err := ops.MoveProject(ctx, "cli", *id, *after); err != nil {
+			fmt.Fprintln(stdout, err)
+			return 1
+		}
+		fmt.Fprintf(stdout, "project %d moved\n", *id)
 		return 0
 	case "archive", "restore":
 		sf := flag.NewFlagSet("project "+sub, flag.ContinueOnError)

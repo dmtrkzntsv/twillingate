@@ -313,6 +313,41 @@ func (o *Ops) RestoreProject(ctx context.Context, actor string, id int64) error 
 	return nil
 }
 
+// MoveProject puts project id right after project after in the order
+// every listing shows, archived projects included (0: first). Moving a
+// project after itself changes nothing.
+func (o *Ops) MoveProject(ctx context.Context, actor string, id, after int64) error {
+	snap := o.Reg.Snapshot(ctx)
+	if snap.Project(id) == nil {
+		return store.Refuse(ErrNotFound, "unknown project %d", id)
+	}
+	if after == id {
+		return nil
+	}
+	if after != 0 && snap.Project(after) == nil {
+		return store.Refuse(ErrNotFound, "unknown project %d to put project %d after", after, id)
+	}
+	order := make([]int64, 0, len(snap.Projects()))
+	if after == 0 {
+		order = append(order, id)
+	}
+	for _, p := range snap.Projects() {
+		if p.ID == id {
+			continue
+		}
+		order = append(order, p.ID)
+		if p.ID == after {
+			order = append(order, id)
+		}
+	}
+	if err := o.St.SetProjectOrder(ctx, order, store.AuditEntry{Actor: actor, Action: "project.move",
+		Subject: idSubject(id), Detail: fmt.Sprintf("after %d", after)}); err != nil {
+		return err
+	}
+	o.afterWrite(ctx, false)
+	return nil
+}
+
 func (o *Ops) IssueIngestKey(ctx context.Context, actor string, projectID int64, label string) (string, error) {
 	if o.Reg.Snapshot(ctx).Project(projectID) == nil {
 		return "", fmt.Errorf("unknown project %d: %w", projectID, ErrNotFound)

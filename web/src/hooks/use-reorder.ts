@@ -23,7 +23,7 @@ export interface Reorder {
 }
 
 /**
- * Drag to reorder `ids` along one axis (D14). A pointer drag starts after
+ * Drag to reorder `ids` along one axis (D14), or in a grid with `'xy'`. A pointer drag starts after
  * 6px, so a click still navigates or selects. The keyboard picks an item
  * up with Space only, since Enter must keep following a link and
  * selecting a tab; arrows move it, Space, Enter or Tab drops it, Escape
@@ -40,7 +40,7 @@ export interface Reorder {
 export function useReorder(
   ids: number[],
   onMove: (id: number, to: number) => Promise<boolean>,
-  axis: 'x' | 'y',
+  axis: 'x' | 'y' | 'xy',
   titleOf: (id: number) => string
 ): Reorder {
   const key = ids.join(',')
@@ -75,7 +75,7 @@ export function useReorder(
     busy: shown !== null,
     context: {
       sensors,
-      modifiers: [axis === 'x' ? alongX : alongY],
+      modifiers: axis === 'xy' ? [] : [axis === 'x' ? alongX : alongY],
       accessibility: { announcements: announcements(titleOf, ids) },
       onDragStart: swallowClicks,
       onDragEnd,

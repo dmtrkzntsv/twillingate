@@ -443,6 +443,7 @@ export const endpoints = {
   keys: (projectId?: number) => api<{ keys: IngestKey[] }>(`/api/keys${toQuery({ project_id: projectId })}`),
   createProject: (body: CreateProjectBody) => api<CreatedProject>('/api/projects', json('POST', body)),
   updateProject: (id: number, body: Partial<CreateProjectBody>) => api<{ project_id: number }>(`/api/projects/${id}`, json('PATCH', body)),
+  moveProject: (id: number, after: number) => api<{ status: string }>(`/api/projects/${id}/move`, json('POST', { after })),
   archiveProject: (id: number) => api<{ status: string }>(`/api/projects/${id}/archive`, json('POST', {})),
   restoreProject: (id: number) => api<{ status: string }>(`/api/projects/${id}/restore`, json('POST', {})),
   issueKey: (id: number, label: string) => api<IssuedKey>(`/api/projects/${id}/keys`, json('POST', { label })),

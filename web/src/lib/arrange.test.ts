@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { DashboardInfo, DashboardTab } from './api'
-import { groupName, liveGroups, moveGroupBody, moveTabBody, nameTooShort, nextAfterArchive, purgeDate, reorder } from './arrange'
+import { afterAt, groupName, liveGroups, moveGroupBody, moveTabBody, nameTooShort, nextAfterArchive, purgeDate, reorder } from './arrange'
 
 function mkInfo(dashboard_id: number, title: string, owner: 'system' | 'user', group_id: number, extra: Partial<DashboardInfo> = {}): DashboardInfo {
   return { dashboard_id, title, owner, group_id, widgets: 1, sidebar: true, project_tab: false, ...extra }
@@ -149,5 +149,14 @@ describe('nameTooShort', () => {
   it('is false from 2 characters', () => {
     expect(nameTooShort('ab')).toBe(false)
     expect(nameTooShort(' ab ')).toBe(false)
+  })
+})
+
+describe('afterAt', () => {
+  it('names the id before the drop place once the moved one is out, 0 for first', () => {
+    expect(afterAt([1, 2, 3, 4], 4, 0)).toBe(0)
+    expect(afterAt([1, 2, 3, 4], 4, 1)).toBe(1)
+    expect(afterAt([1, 2, 3, 4], 1, 3)).toBe(4)
+    expect(afterAt([1, 2, 3, 4], 1, 9)).toBe(4)
   })
 })

@@ -8,6 +8,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -38,7 +39,7 @@ func (d *DB) ConfigVersion(ctx context.Context) (int64, error) {
 
 func (d *DB) LoadRegistry(ctx context.Context) ([]store.RegistryProject, []store.RegistryKey, error) {
 	rows, err := d.db.QueryContext(ctx, `SELECT id, name,
-		allowed_origins, attributes, archived_at IS NOT NULL FROM projects ORDER BY id`)
+		allowed_origins, attributes, archived_at IS NOT NULL FROM projects ORDER BY position, id`)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -80,7 +81,8 @@ func ks2(ps []store.RegistryProject, ks []store.RegistryKey, err error) ([]store
 	return ps, ks, nil
 }
 
-// CreateProject lets SQLite assign the id and returns it. The audit subject
+// CreateProject lets SQLite assign the id and returns it; migration 034's
+// trigger puts the project last in the order. The audit subject
 // is the new id, written here because only the store knows it.
 func (d *DB) CreateProject(ctx context.Context, p store.RegistryProject, a store.AuditEntry) (int64, error) {
 	var id int64
@@ -172,6 +174,54 @@ func (d *DB) SetProjectArchived(ctx context.Context, id int64, archived bool, a 
 			}
 			if c == 0 {
 				return fmt.Errorf("unknown project %d: %w", id, store.ErrNotFound)
+			}
+		}
+		return auditAndBump(ctx, tx, a)
+	})
+}
+
+// SetProjectOrder numbers ids 1, 2, … and the projects not in ids after
+// them, in their current order, so an order read before a project was
+// created never shares a position with it. An unknown id is ErrNotFound,
+// a repeated one ErrInvalid; either leaves the order untouched.
+func (d *DB) SetProjectOrder(ctx context.Context, ids []int64, a store.AuditEntry) error {
+	return d.tx(ctx, func(tx *sql.Tx) error {
+		rows, err := tx.QueryContext(ctx, `SELECT id FROM projects ORDER BY position, id`)
+		if err != nil {
+			return err
+		}
+		var current []int64
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return err
+			}
+			current = append(current, id)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		listed := make(map[int64]bool, len(ids))
+		for _, id := range ids {
+			if !slices.Contains(current, id) {
+				return fmt.Errorf("project order: unknown project %d: %w", id, store.ErrNotFound)
+			}
+			if listed[id] {
+				return fmt.Errorf("project order: project %d listed twice: %w", id, store.ErrInvalid)
+			}
+			listed[id] = true
+		}
+		order := slices.Clone(ids)
+		for _, id := range current {
+			if !listed[id] {
+				order = append(order, id)
+			}
+		}
+		for i, id := range order {
+			if _, err := tx.ExecContext(ctx, `UPDATE projects SET position = ? WHERE id = ?`, i+1, id); err != nil {
+				return err
 			}
 		}
 		return auditAndBump(ctx, tx, a)
