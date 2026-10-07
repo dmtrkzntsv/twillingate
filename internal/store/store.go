@@ -278,6 +278,8 @@ type Store interface {
 	ListWidgets(ctx context.Context, dashboardID int64) ([]Widget, error)
 	GetWidget(ctx context.Context, id int64) (Widget, error)
 	InsertDashboard(ctx context.Context, d Dashboard, ws []Widget, a AuditEntry) (int64, error)
+	// UpdateDashboard writes d's title, sort_key, group_id and sidebar: a
+	// row read from the store keeps its sidebar.
 	UpdateDashboard(ctx context.Context, d Dashboard, a AuditEntry) error
 	SetDashboardView(ctx context.Context, d Dashboard) error
 	SetDashboardArchived(ctx context.Context, id int64, archived bool, a AuditEntry) error
@@ -295,13 +297,23 @@ type Store interface {
 	// order.
 	InsertDashboardGroup(ctx context.Context, ds []Dashboard, ws [][]Widget, a AuditEntry) ([]int64, error)
 	// SetDashboardsArchived archives (only rows currently live) or
-	// restores (only rows currently archived) ids in one transaction,
+	// restores (only rows currently archived, a user row back in the
+	// sidebar) ids in one transaction,
 	// one audit row per id. Unknown ids are ErrNotFound and nothing is
 	// written.
 	SetDashboardsArchived(ctx context.Context, ids []int64, archived bool, a AuditEntry) error
 	InsertWidget(ctx context.Context, w Widget, a AuditEntry) (int64, error)
 	UpdateWidget(ctx context.Context, w Widget, a AuditEntry) error
 	SetWidgetArchived(ctx context.Context, id int64, archived bool, a AuditEntry) error
+	// Project tabs and dashboard placement (migration 032).
+	// ListProjectTabs is ErrNotFound for an unknown project.
+	// SetDashboardsSidebar writes one audit row per id; unknown ids are
+	// ErrNotFound and nothing is written.
+	ListProjectTabs(ctx context.Context, projectID int64) ([]ProjectTabRow, error)
+	InsertProjectTab(ctx context.Context, r ProjectTabRow, a AuditEntry) error
+	DeleteProjectTab(ctx context.Context, projectID, dashboardID int64, a AuditEntry) error
+	MoveProjectTab(ctx context.Context, r ProjectTabRow, a AuditEntry) error
+	SetDashboardsSidebar(ctx context.Context, ids []int64, sidebar bool, a AuditEntry) error
 	// InsertWidgetShare writes a share, copying the project's name, and
 	// audits it under Subject "widget_share/<id>". An unknown project is
 	// ErrNotFound and nothing is written.

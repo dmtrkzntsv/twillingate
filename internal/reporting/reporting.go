@@ -26,8 +26,8 @@ import (
 )
 
 // Store is the slice of store.Store reporting reads and writes:
-// components, dashboards and widgets, plus the sync that keeps the
-// system definition current.
+// components, dashboards and widgets, project tabs, plus the sync that
+// keeps the system definition current.
 type Store interface {
 	ListComponents(ctx context.Context) ([]store.Component, error)
 	ListDashboards(ctx context.Context) ([]store.Dashboard, error)
@@ -44,6 +44,11 @@ type Store interface {
 	InsertWidget(ctx context.Context, w store.Widget, a store.AuditEntry) (int64, error)
 	UpdateWidget(ctx context.Context, w store.Widget, a store.AuditEntry) error
 	SetWidgetArchived(ctx context.Context, id int64, archived bool, a store.AuditEntry) error
+	ListProjectTabs(ctx context.Context, projectID int64) ([]store.ProjectTabRow, error)
+	InsertProjectTab(ctx context.Context, r store.ProjectTabRow, a store.AuditEntry) error
+	DeleteProjectTab(ctx context.Context, projectID, dashboardID int64, a store.AuditEntry) error
+	MoveProjectTab(ctx context.Context, r store.ProjectTabRow, a store.AuditEntry) error
+	SetDashboardsSidebar(ctx context.Context, ids []int64, sidebar bool, a store.AuditEntry) error
 	ReportingHash(ctx context.Context) (string, error)
 	SyncReporting(ctx context.Context, s store.ReportingSync) error
 	InsertWidgetShare(ctx context.Context, n store.NewWidgetShare, a store.AuditEntry) (store.WidgetShare, error)
@@ -99,6 +104,7 @@ type Service struct {
 	// change putting back the key a concurrent group move just replaced)
 	// and split a group without any key colliding, which retryConflict
 	// cannot see. Other processes (the CLI) are still caught only by it.
+	// Project tab writes take it too (placeTabs in project_tabs.go).
 	placeMu sync.Mutex
 }
 

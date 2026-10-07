@@ -32,6 +32,8 @@ type Dashboard struct {
 	CreatedAt, UpdatedAt        string
 	ArchivedAt                  string // "" = live
 	LiveWidgets                 int    // filled by reads: widgets not archived
+	Sidebar                     bool   // in the sidebar (migration 032); a built-in's Hide sets it false. A user row inserted or set with it false is archived by 032's trigger
+	ProjectTab                  bool   // a new project gets this dashboard as a tab (032 D3); built-ins only, from the release
 }
 
 // DashboardKey is one dashboard row's place: which group it belongs to
@@ -40,6 +42,13 @@ type Dashboard struct {
 type DashboardKey struct {
 	ID, GroupID int64
 	SortKey     string
+}
+
+// ProjectTabRow is one dashboard shown as a tab on a project's page
+// (migration 032), with its position among that project's tabs.
+type ProjectTabRow struct {
+	ProjectID, DashboardID int64
+	SortKey                string
 }
 
 // GroupRekey moves a group's name from one group id to another, in the
@@ -128,4 +137,6 @@ type SystemDashboard struct {
 	GroupTitle     string   // the group's name from the founding dashboard's fixture; "" = none
 	Range          string   // the starting selection; written on insert only
 	Widgets        []Widget // Name identifies the row; SortKey, sizes and content as in the files
+	Sidebar        bool     // the fixture's "sidebar": written on insert only, then the install's (D6)
+	ProjectTab     bool     // the fixture's "project_tab": the release's, re-synced every time (D6)
 }

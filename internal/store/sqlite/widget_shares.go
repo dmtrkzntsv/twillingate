@@ -1,4 +1,4 @@
-// Widget shares (migration 032): a frozen picture of one widget, two PNGs
+// Widget shares (migration 033): a frozen picture of one widget, two PNGs
 // and the text they show, served publicly by id. A share lives as long as
 // its project (projectTables) and outlives its widget (widget_id goes
 // NULL). Like the other reporting writers these audit without bumping

@@ -308,9 +308,9 @@ func TestSystemDashboardRefusesWrites(t *testing.T) {
 	syncReporting(t, svc, nil, systemDashboard())
 	ctx := context.Background()
 	sysWidget := widgetRows(t, svc, 3)[0].ID
-	const soloGroup = "dashboard 3 is a system dashboard, archived and restored with its group; pass whole_group"
-	wantRefusal(t, svc.ArchiveDashboard(ctx, "test", 3, false), store.ErrInvalid, soloGroup)
-	wantRefusal(t, svc.RestoreDashboard(ctx, "test", 3, false), store.ErrInvalid, soloGroup)
+	const builtin = "dashboard 3 is a built-in dashboard and is never archived; update_dashboard {sidebar: false} takes its group out of the sidebar"
+	wantRefusal(t, svc.ArchiveDashboard(ctx, "test", 3, false), store.ErrInvalid, builtin)
+	wantRefusal(t, svc.RestoreDashboard(ctx, "test", 3, false), store.ErrInvalid, builtin)
 	for name, op := range map[string]func() error{
 		"update": func() error {
 			_, err := svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: 3, Title: "XX"})
@@ -1587,8 +1587,7 @@ func TestDuplicateArchivedDashboardRefused(t *testing.T) {
 
 // Duplicating a system tab copies just that tab, as a standalone user
 // dashboard (the gallery's "Copy as a dashboard"); whole_group copies
-// all five, archived ones included (an archived system source is
-// accepted); neither ever archives the source.
+// all five; neither ever archives the source.
 func TestDuplicateSystemTab(t *testing.T) {
 	svc := newTestService(t)
 	syncReporting(t, svc, nil, systemGroup()...)
@@ -1607,12 +1606,9 @@ func TestDuplicateSystemTab(t *testing.T) {
 		}
 	}
 
-	if err := svc.ArchiveDashboard(ctx, "test", 10, true); err != nil {
-		t.Fatal(err)
-	}
-	whole, err := svc.DuplicateDashboard(ctx, "test", DuplicateDashboard{ID: 12, WholeGroup: true}) // whole_group, group archived
+	whole, err := svc.DuplicateDashboard(ctx, "test", DuplicateDashboard{ID: 12, WholeGroup: true})
 	if err != nil {
-		t.Fatalf("duplicate of an archived system group: %v", err)
+		t.Fatal(err)
 	}
 	if whole.Owner != store.OwnerUser || whole.Title != "Users" || whole.ArchivedAt != "" {
 		t.Errorf("whole_group copy = %s %q archived %q, want a live user copy of Users", whole.Owner, whole.Title, whole.ArchivedAt)
@@ -1622,11 +1618,11 @@ func TestDuplicateSystemTab(t *testing.T) {
 		titles = append(titles, tab.Title)
 	}
 	if want := []string{"Views (copy)", "Product", "Users", "Groups", "Retention"}; !reflect.DeepEqual(titles, want) {
-		t.Errorf("whole_group copy's tabs = %v, want %v (archived tabs included)", titles, want)
+		t.Errorf("whole_group copy's tabs = %v, want %v", titles, want)
 	}
 	for id := int64(10); id <= 14; id++ {
-		if d, _ := svc.st.GetDashboard(ctx, id); d.ArchivedAt == "" {
-			t.Errorf("system dashboard %d live after duplicating an archived group, want still archived", id)
+		if d, _ := svc.st.GetDashboard(ctx, id); d.ArchivedAt != "" {
+			t.Errorf("system dashboard %d archived by a whole_group duplicate, want live", id)
 		}
 	}
 	// The whole_group copy's group is placed last in the sidebar, after
@@ -1745,60 +1741,24 @@ func TestArchiveRestoreWholeGroup(t *testing.T) {
 	}
 }
 
-// D1: a system group is archived and restored whole; one system
-// dashboard alone is refused.
-func TestArchiveRestoreSystemGroup(t *testing.T) {
+// Spec 2026-10-05 D5: a built-in is never archived or restored, alone
+// or with its group; update_dashboard sidebar hides it instead.
+func TestArchiveDashboardRefusesBuiltin(t *testing.T) {
 	svc := newTestService(t)
 	syncReporting(t, svc, nil, systemGroup()...)
 	ctx := context.Background()
-	const one = "dashboard 12 is a system dashboard, archived and restored with its group; pass whole_group"
-	wantRefusal(t, svc.ArchiveDashboard(ctx, "test", 12, false), store.ErrInvalid, one)
-
-	if err := svc.ArchiveDashboard(ctx, "test", 12, true); err != nil {
-		t.Fatal(err)
-	}
-	for id := int64(10); id <= 14; id++ {
-		d, err := svc.st.GetDashboard(ctx, id)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if d.ArchivedAt == "" {
-			t.Errorf("system dashboard %d live after archive whole_group, want archived", id)
-		}
-	}
-	wantRefusal(t, svc.RestoreDashboard(ctx, "test", 12, false), store.ErrInvalid, one)
-	if err := svc.RestoreDashboard(ctx, "test", 10, true); err != nil {
-		t.Fatal(err)
+	const builtin = "dashboard 12 is a built-in dashboard and is never archived; update_dashboard {sidebar: false} takes its group out of the sidebar"
+	for _, whole := range []bool{false, true} {
+		wantRefusal(t, svc.ArchiveDashboard(ctx, "test", 12, whole), store.ErrInvalid, builtin)
+		wantRefusal(t, svc.RestoreDashboard(ctx, "test", 12, whole), store.ErrInvalid, builtin)
 	}
 	for id := int64(10); id <= 14; id++ {
 		if d, _ := svc.st.GetDashboard(ctx, id); d.ArchivedAt != "" {
-			t.Errorf("system dashboard %d archived after restore whole_group, want live", id)
+			t.Errorf("system dashboard %d archived, want live", id)
 		}
 	}
-	// Writes other than archive/restore stay refused.
-	_, err := svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: 10, Title: "XX"})
-	if !errors.Is(err, store.ErrInvalid) {
-		t.Errorf("update on a system dashboard: err = %v, want ErrInvalid", err)
-	}
-
-	// D5: one audit row per member each way, the refusals writing none.
-	res, err := svc.db.Run(ctx,
-		`SELECT actor, action, subject FROM audit_log WHERE action LIKE 'dashboard.%' ORDER BY rowid`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var got []string
-	for _, r := range res.Rows {
-		got = append(got, strings.Join(r, " "))
-	}
-	var want []string
-	for _, action := range []string{"dashboard.archive", "dashboard.restore"} {
-		for id := 10; id <= 14; id++ {
-			want = append(want, fmt.Sprintf("test %s dashboard/%d", action, id))
-		}
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("audit =\n%v\nwant\n%v", got, want)
+	if got := auditRows(t, svc); len(got) != 0 {
+		t.Errorf("audit = %v, want none (every call refused)", got)
 	}
 }
 
@@ -1972,5 +1932,161 @@ func TestRenameGroupRefusals(t *testing.T) {
 	}
 	if _, err := renameGroup(svc, 9999, "Nope"); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("unknown dashboard: err = %v, want ErrNotFound", err)
+	}
+}
+
+// --- Sidebar and project tabs (spec 2026-10-05 D3, D5, D7) ---
+
+// mustAddTab gives project projectID a tab for dashboardID, straight
+// through the store.
+func mustAddTab(t *testing.T, svc *Service, projectID, dashboardID int64) {
+	t.Helper()
+	if err := svc.st.InsertProjectTab(context.Background(),
+		store.ProjectTabRow{ProjectID: projectID, DashboardID: dashboardID, SortKey: "a0"},
+		store.AuditEntry{Actor: "test", Action: "project.tab.add"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// sidebarOf reads each of ids' sidebar flag from the store, and fails on
+// one that is archived: hiding never archives.
+func sidebarOf(t *testing.T, svc *Service, ids ...int64) []bool {
+	t.Helper()
+	out := make([]bool, len(ids))
+	for i, id := range ids {
+		d, err := svc.st.GetDashboard(context.Background(), id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if d.ArchivedAt != "" {
+			t.Errorf("dashboard %d archived, want live", id)
+		}
+		out[i] = d.Sidebar
+	}
+	return out
+}
+
+func TestUpdateDashboardSidebarHidesBuiltinGroup(t *testing.T) {
+	svc := newTestService(t)
+	syncReporting(t, svc, nil, systemGroup()...)
+	ctx := context.Background()
+	ids := []int64{10, 11, 12, 13, 14}
+
+	info, err := svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: 12, Sidebar: ptr(false)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.ID != 12 || info.Sidebar || !info.ProjectTab {
+		t.Errorf("info = %+v, want dashboard 12 out of the sidebar, still a project tab", info)
+	}
+	if got := sidebarOf(t, svc, ids...); !reflect.DeepEqual(got, []bool{false, false, false, false, false}) {
+		t.Errorf("sidebar after hide = %v, want every member false", got)
+	}
+
+	// WholeGroup is accepted and ignored: sidebar is always the group's.
+	if _, err := svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: 10, Sidebar: ptr(true), WholeGroup: true}); err != nil {
+		t.Fatal(err)
+	}
+	if got := sidebarOf(t, svc, ids...); !reflect.DeepEqual(got, []bool{true, true, true, true, true}) {
+		t.Errorf("sidebar after show = %v, want every member true", got)
+	}
+
+	var want []string
+	for _, action := range []string{"dashboard.sidebar.hide", "dashboard.sidebar.show"} {
+		for range ids {
+			want = append(want, "test "+action)
+		}
+	}
+	if got := auditRows(t, svc); !reflect.DeepEqual(got, want) {
+		t.Errorf("audit =\n%v\nwant\n%v", got, want)
+	}
+}
+
+// D5: your own dashboards are always in the sidebar, so sidebar is
+// refused on one, true or false: the field is for built-ins only.
+func TestUpdateDashboardSidebarRefusedOnUser(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	a := mustCreate(t, svc, "AA")
+	b := mustJoin(t, svc, "BB", a.ID)
+	before := len(auditRows(t, svc))
+	for _, on := range []bool{false, true} {
+		_, err := svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: b.ID, Sidebar: ptr(on)})
+		wantRefusal(t, err, store.ErrInvalid,
+			"dashboard "+itoa(b.ID)+" is your own: your own dashboards are always in the sidebar; archive_dashboard takes one away")
+	}
+	if got := sidebarOf(t, svc, a.ID, b.ID); !reflect.DeepEqual(got, []bool{true, true}) {
+		t.Errorf("sidebar after refusals = %v, want both still true", got)
+	}
+	if after := len(auditRows(t, svc)); after != before {
+		t.Errorf("audit rows = %d, want %d (nothing written)", after, before)
+	}
+}
+
+func TestUpdateDashboardPlacementTakesNoTitle(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	a := mustCreate(t, svc, "AA")
+	const alone = "sidebar goes on its own; give title, after or group_id in another call"
+	for _, in := range []UpdateDashboard{
+		{ID: a.ID, Sidebar: ptr(true), Title: "x"},
+		{ID: a.ID, Sidebar: ptr(false), After: ptr[int64](0)},
+		{ID: a.ID, Sidebar: ptr(true), GroupID: ptr[int64](0)},
+	} {
+		_, err := svc.UpdateDashboard(ctx, "test", in)
+		wantRefusal(t, err, store.ErrInvalid, alone)
+	}
+}
+
+// A built-in an older binary archived takes no sidebar write until the
+// release sync brings it back.
+func TestUpdateDashboardPlacementRefusesArchived(t *testing.T) {
+	svc := newTestService(t)
+	syncReporting(t, svc, nil, systemDashboard())
+	ctx := context.Background()
+	if err := svc.st.SetDashboardsArchived(ctx, []int64{3}, true, store.AuditEntry{Actor: "older binary", Action: "dashboard.archive"}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: 3, Sidebar: ptr(true)})
+	wantRefusal(t, err, store.ErrInvalid, "dashboard 3 is archived; restore_dashboard first")
+}
+
+// D9: a copy, of a built-in or of one's own, is in the sidebar, is no
+// project's tab, and is not given to new projects.
+func TestDuplicateIsInSidebar(t *testing.T) {
+	svc, st := newTestServiceOpts(t, Options{}, 1000)
+	syncReporting(t, svc, nil, systemGroup()...)
+	ctx := context.Background()
+	p := mustCreateProject(t, st, "demo") // takes every built-in as a tab
+
+	one, err := svc.DuplicateDashboard(ctx, "test", DuplicateDashboard{ID: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	whole, err := svc.DuplicateDashboard(ctx, "test", DuplicateDashboard{ID: 10, WholeGroup: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := []int64{one.ID}
+	for _, tab := range whole.Tabs {
+		ids = append(ids, tab.ID)
+	}
+	for _, id := range ids {
+		d, err := svc.Dashboard(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !d.Sidebar || d.ProjectTab {
+			t.Errorf("copy %d: sidebar %v project_tab %v, want true, false", id, d.Sidebar, d.ProjectTab)
+		}
+	}
+	tabs, err := svc.ProjectTabs(ctx, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tab := range tabs {
+		if tab.Owner != store.OwnerSystem {
+			t.Errorf("project tab %+v, want built-ins only: a copy is no project's tab", tab)
+		}
 	}
 }

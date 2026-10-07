@@ -32,13 +32,14 @@ const dashboardCols = `d.id, d.owner, d.title, d.sort_key, d.group_id, COALESCE(
 	COALESCE(d.last_range,''), COALESCE(d.last_from,''), COALESCE(d.last_to,''),
 	d.created_at, d.updated_at, COALESCE(d.archived_at,''),
 	(SELECT COUNT(*) FROM widgets w WHERE w.dashboard_id=d.id AND w.archived_at IS NULL),
-	COALESCE((SELECT g.title FROM dashboard_groups g WHERE g.group_id=d.group_id),'')`
+	COALESCE((SELECT g.title FROM dashboard_groups g WHERE g.group_id=d.group_id),''),
+	d.sidebar, d.project_tab`
 
 func scanDashboard(s rowScanner) (store.Dashboard, error) {
 	var d store.Dashboard
 	err := s.Scan(&d.ID, &d.Owner, &d.Title, &d.SortKey, &d.GroupID, &d.LastProjectID,
 		&d.LastRange, &d.LastFrom, &d.LastTo, &d.CreatedAt, &d.UpdatedAt,
-		&d.ArchivedAt, &d.LiveWidgets, &d.GroupTitle)
+		&d.ArchivedAt, &d.LiveWidgets, &d.GroupTitle, &d.Sidebar, &d.ProjectTab)
 	return d, err
 }
 
@@ -172,16 +173,16 @@ func insertDashboardRow(ctx context.Context, tx *sql.Tx, dash store.Dashboard) (
 	var err error
 	if dash.ID != 0 {
 		res, err = tx.ExecContext(ctx, `INSERT INTO dashboards
-			(id, owner, title, sort_key, group_id, last_project_id, last_range, last_from, last_to)
-			VALUES (?,?,?,?,?,NULLIF(?,0),?,?,?)`,
+			(id, owner, title, sort_key, group_id, last_project_id, last_range, last_from, last_to, sidebar, project_tab)
+			VALUES (?,?,?,?,?,NULLIF(?,0),?,?,?,?,?)`,
 			dash.ID, dash.Owner, dash.Title, dash.SortKey, dash.GroupID, dash.LastProjectID,
-			dash.LastRange, dash.LastFrom, dash.LastTo)
+			dash.LastRange, dash.LastFrom, dash.LastTo, dash.Sidebar, dash.ProjectTab)
 	} else {
 		res, err = tx.ExecContext(ctx, `INSERT INTO dashboards
-			(owner, title, sort_key, group_id, last_project_id, last_range, last_from, last_to)
-			VALUES (?,?,?,?,NULLIF(?,0),?,?,?)`,
+			(owner, title, sort_key, group_id, last_project_id, last_range, last_from, last_to, sidebar, project_tab)
+			VALUES (?,?,?,?,NULLIF(?,0),?,?,?,?,?)`,
 			dash.Owner, dash.Title, dash.SortKey, dash.GroupID, dash.LastProjectID,
-			dash.LastRange, dash.LastFrom, dash.LastTo)
+			dash.LastRange, dash.LastFrom, dash.LastTo, dash.Sidebar, dash.ProjectTab)
 	}
 	if err != nil {
 		return 0, mapDashboardConflict(dash, err)
@@ -216,13 +217,13 @@ func mapMoveDashboardConflict(k store.DashboardKey, err error) error {
 	return fmt.Errorf("move dashboard %d: %w", k.ID, err)
 }
 
-// UpdateDashboard updates title, sort_key and group_id: the caller passes
-// the row it read, with any change.
+// UpdateDashboard updates title, sort_key, group_id and sidebar: the
+// caller passes the row it read, with any change.
 func (d *DB) UpdateDashboard(ctx context.Context, dash store.Dashboard, a store.AuditEntry) error {
 	return d.tx(ctx, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx,
-			`UPDATE dashboards SET title=?, sort_key=?, group_id=?, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')
-			 WHERE id=?`, dash.Title, dash.SortKey, dash.GroupID, dash.ID)
+			`UPDATE dashboards SET title=?, sort_key=?, group_id=?, sidebar=?, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')
+			 WHERE id=?`, dash.Title, dash.SortKey, dash.GroupID, dash.Sidebar, dash.ID)
 		if err != nil {
 			return mapDashboardConflict(dash, err)
 		}
@@ -259,7 +260,8 @@ func (d *DB) SetDashboardArchived(ctx context.Context, id int64, archived bool, 
 }
 
 // SetDashboardsArchived archives (only rows currently live) or restores
-// (only rows currently archived) every id in ids, in one transaction,
+// (only rows currently archived, a user one back in the sidebar) every id
+// in ids, in one transaction,
 // one audit row per id (idempotent no-op rows are still audited, mirroring
 // SetProjectArchived's shape). Every id must exist first — checked up
 // front, against the whole list, so an unknown id anywhere in ids leaves
@@ -297,7 +299,10 @@ func (d *DB) SetDashboardsArchived(ctx context.Context, ids []int64, archived bo
 		q := `UPDATE dashboards SET archived_at=strftime('%Y-%m-%dT%H:%M:%SZ','now'),
 			updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=? AND archived_at IS NULL`
 		if !archived {
+			// A user dashboard comes back in the sidebar, where it always
+			// is (spec 2026-10-05 D5), even one hidden while archived.
 			q = `UPDATE dashboards SET archived_at=NULL,
+				sidebar=CASE WHEN owner='user' THEN 1 ELSE sidebar END,
 				updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=?`
 		}
 		for _, id := range ids {

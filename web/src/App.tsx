@@ -14,7 +14,7 @@ import DashboardsGallery from '@/pages/gallery/DashboardsGallery'
 import Home from '@/pages/Home'
 import Landing from '@/pages/Landing'
 import Login from '@/pages/Login'
-import Project from '@/pages/Project'
+import Project, { ProjectIndex } from '@/pages/Project'
 import Projects from '@/pages/Projects'
 import Shares from '@/pages/Shares'
 
@@ -91,8 +91,17 @@ function App() {
               </OnlineOnly>
             }
           />
+          <Route path="/projects/:id" element={<ProjectIndex />} />
           <Route
-            path="/projects/:id"
+            path="/projects/:id/setup"
+            element={
+              <OnlineOnly>
+                <Project />
+              </OnlineOnly>
+            }
+          />
+          <Route
+            path="/projects/:id/dashboards/:dashId"
             element={
               <OnlineOnly>
                 <Project />

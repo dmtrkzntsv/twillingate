@@ -8,17 +8,18 @@ import { ApiError, type DashboardInfo } from '@/lib/api'
 import { lastDashboard } from '@/lib/last-dashboard'
 import { dashboardsQuery } from '@/lib/queries'
 
-/** The last dashboard opened on this device, else the first system one, never an archived one (D34). */
+/** The last dashboard opened on this device, else the first system one, never an archived one or one out of the sidebar (D34). */
 export function pickDashboard(dashboards: DashboardInfo[], last?: number): DashboardInfo | undefined {
-  const live = dashboards.filter((d) => !d.archived_at)
+  const live = dashboards.filter((d) => !d.archived_at && d.sidebar)
   return live.find((d) => d.dashboard_id === last) ?? live.find((d) => d.owner === 'system') ?? live[0]
 }
 
 /**
  * "/dashboards" itself shows nothing: it picks a dashboard and redirects to it. With
- * none live it says why: an empty install has nothing yet, but one where
- * everything is archived links to the archive, the only way back once the
- * Undo toast is gone (D17a).
+ * none in the sidebar it says why: an empty install has nothing yet; a
+ * hidden built-in comes back from Gallery › Dashboards, and an archived
+ * dashboard from the archive, the only way back once the Undo toast is
+ * gone (D17a).
  */
 export default function Home() {
   const navigate = useNavigate()
@@ -41,7 +42,30 @@ export default function Home() {
     )
   }
   if (data && !target) {
-    if (data.dashboards.length > 0) {
+    // Only a built-in group is ever out of the sidebar: your own
+    // dashboards are always in it, or archived.
+    const hidden = data.dashboards.some((d) => d.owner === 'system' && !d.archived_at && !d.sidebar)
+    const archived = data.dashboards.some((d) => d.archived_at)
+    if (hidden) {
+      return (
+        <StatusCard
+          title="Everything is hidden from the sidebar"
+          description={`Show a dashboard in the sidebar again from Gallery › Dashboards${archived ? ', or restore one from the archive' : ''}.`}
+        >
+          <div className="flex flex-col gap-2">
+            <Button asChild variant="outline" className="w-full">
+              <Link to="/gallery/dashboards">Open Gallery › Dashboards</Link>
+            </Button>
+            {archived && (
+              <Button asChild variant="outline" className="w-full">
+                <Link to="/archive">Open the archive</Link>
+              </Button>
+            )}
+          </div>
+        </StatusCard>
+      )
+    }
+    if (archived) {
       return (
         <StatusCard title="Everything is archived" description="Restore a dashboard from the archive to put it back in the sidebar.">
           <Button asChild variant="outline" className="w-full">

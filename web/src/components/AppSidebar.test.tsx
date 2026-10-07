@@ -256,7 +256,7 @@ describe('Projects group', () => {
   })
 
   it('comes first, above the dashboards', async () => {
-    renderSidebar([{ dashboard_id: 1, title: 'Views', owner: 'system', group_id: 1, widgets: 1 }])
+    renderSidebar([{ dashboard_id: 1, title: 'Views', owner: 'system', group_id: 1, widgets: 1, sidebar: true, project_tab: false }])
     const projects = await screen.findByRole('link', { name: 'Projects' })
     const views = screen.getByRole('link', { name: 'Views' })
     expect(projects.compareDocumentPosition(views) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
@@ -304,9 +304,9 @@ describe('Shares link', () => {
 
 describe('Dashboards group', () => {
   const dashboards = [
-    { dashboard_id: 1, title: 'Views', owner: 'system' as const, group_id: 1, widgets: 1 },
-    { dashboard_id: 2, title: 'Web Vitals', owner: 'system' as const, group_id: 2, widgets: 1 },
-    { dashboard_id: 7, title: 'Launch week', owner: 'user' as const, group_id: 7, widgets: 1 },
+    { dashboard_id: 1, title: 'Views', owner: 'system' as const, group_id: 1, widgets: 1, sidebar: true, project_tab: false },
+    { dashboard_id: 2, title: 'Web Vitals', owner: 'system' as const, group_id: 2, widgets: 1, sidebar: true, project_tab: false },
+    { dashboard_id: 7, title: 'Launch week', owner: 'user' as const, group_id: 7, widgets: 1, sidebar: true, project_tab: false },
   ]
 
   it('lists every dashboard under one heading, the built-in ones first with a badge', () => {
@@ -327,6 +327,15 @@ describe('Dashboards group', () => {
     expect(screen.getByRole('link', { name: 'Web Vitals' }).compareDocumentPosition(mine) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
+  it('leaves out a group whose sidebar flag is off, system or your own', () => {
+    renderSidebar(
+      dashboards.map((d) => (d.dashboard_id === 2 || d.dashboard_id === 7 ? { ...d, sidebar: false } : d))
+    )
+    expect(screen.getByRole('link', { name: 'Views' })).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Web Vitals' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Launch week' })).not.toBeInTheDocument()
+  })
+
   it('says how to get one of your own when there is none', () => {
     renderSidebar(dashboards.slice(0, 2))
     expect(screen.getByText('None of your own yet. Ask your agent to make one.')).toBeInTheDocument()
@@ -336,7 +345,7 @@ describe('Dashboards group', () => {
 describe('AppSidebar footer', () => {
   it('holds Archive, above Log out', () => {
     localStorage.setItem('twillingate.token', 'pasted')
-    renderSidebar([{ dashboard_id: 1, title: 'Views', owner: 'system', group_id: 1, widgets: 1 }])
+    renderSidebar([{ dashboard_id: 1, title: 'Views', owner: 'system', group_id: 1, widgets: 1, sidebar: true, project_tab: false }])
     const footer = document.querySelector('[data-sidebar="footer"]') as HTMLElement
     const archive = within(footer).getByRole('link', { name: 'Archive' })
     const logOut = within(footer).getByRole('button', { name: 'Log out' })

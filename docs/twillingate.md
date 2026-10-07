@@ -902,7 +902,7 @@ CORS-simple.
 
 ## Answer questions with the data
 
-A connected session gets forty-two tools: the twenty-two below, and twenty
+A connected session gets forty-six tools: the twenty-two below, and twenty-four
 that build the dashboards served at `/app/`, which are documented in
 `docs://reporting` ([reporting.md](reporting.md)). To build or change a
 dashboard, call `reporting_guide` first.
@@ -945,7 +945,8 @@ a client at it are in [deployment.md](deployment.md#the-console).
 Every tool above except `integration_guide` is also a REST route under `/api/`,
 guarded by the same bearer token (`Authorization: Bearer …`) as MCP. Send and
 receive JSON. `integration_guide`, `reporting_guide` and the `docs://`
-resources are MCP-only. The dashboard routes are listed in
+resources are MCP-only. The dashboard routes, a project's tabs
+(`/api/projects/{project_id}/tabs`) among them, are listed in
 [reporting.md](reporting.md#http-api).
 
 Every route is also described by an OpenAPI 3.1 document at

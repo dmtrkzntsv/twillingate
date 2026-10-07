@@ -33,7 +33,8 @@ type CreateDashboard struct {
 // UpdateDashboard changes the title when Title is not "", and moves the
 // dashboard when After or GroupID is not nil. GroupID nil keeps its
 // group; 0 takes it out as a group of one (its own id; one already alone
-// keeps the id it has); G makes it a tab of G.
+// keeps the id it has); G makes it a tab of G. Sidebar sets a built-in
+// group's placement instead, in a call of its own (setPlacement).
 type UpdateDashboard struct {
 	ID      int64
 	Title   string
@@ -42,6 +43,7 @@ type UpdateDashboard struct {
 	// WholeGroup renames ID's group with Title instead of the dashboard
 	// (D5); it takes no After or GroupID.
 	WholeGroup bool
+	Sidebar    *bool // the whole group in or out of the sidebar; built-in dashboards only, refused on your own (spec 2026-10-05 D5, D7)
 }
 
 // DuplicateDashboard copies dashboard ID: alone, or with WholeGroup its
@@ -113,7 +115,7 @@ func (s *Service) CreateDashboard(ctx context.Context, actor string, in CreateDa
 			return err
 		}
 		id, err = s.st.InsertDashboard(ctx,
-			store.Dashboard{Owner: store.OwnerUser, Title: in.Title, SortKey: key, GroupID: in.GroupID, LastRange: rng},
+			store.Dashboard{Owner: store.OwnerUser, Title: in.Title, SortKey: key, GroupID: in.GroupID, LastRange: rng, Sidebar: true},
 			ws, store.AuditEntry{Actor: actor, Action: "dashboard.create"})
 		return err
 	})
@@ -125,8 +127,12 @@ func (s *Service) CreateDashboard(ctx context.Context, actor string, in CreateDa
 
 // UpdateDashboard retitles and/or moves a user dashboard: among its
 // group's tabs, with its whole group in the sidebar, into another group,
-// or out of its group (spec decisions 6 and 7).
+// or out of its group (spec decisions 6 and 7). Sidebar puts a built-in
+// group in or out of the sidebar instead (setPlacement).
 func (s *Service) UpdateDashboard(ctx context.Context, actor string, in UpdateDashboard) (DashboardInfo, error) {
+	if in.Sidebar != nil {
+		return s.setPlacement(ctx, actor, in)
+	}
 	if in.WholeGroup {
 		return s.renameGroup(ctx, actor, in)
 	}
@@ -160,6 +166,49 @@ func (s *Service) UpdateDashboard(ctx context.Context, actor string, in UpdateDa
 		return s.placeDashboard(ctx, o, row, in, a)
 	})
 	if err != nil {
+		return DashboardInfo{}, err
+	}
+	d, err = s.st.GetDashboard(ctx, d.ID)
+	return dashboardInfo(d), err
+}
+
+// setPlacement puts a built-in dashboard's whole group in or out of the
+// sidebar (spec 2026-10-05 D3, D5, D7), archived members included (only
+// an older binary archives one) so its tabs share the flag. Your own
+// dashboards are always in the sidebar, so it is refused on one.
+// WholeGroup is ignored, since sidebar always applies to the whole group.
+// A built-in group's membership changes only with a release, so no lock
+// is needed between the read and the write.
+func (s *Service) setPlacement(ctx context.Context, actor string, in UpdateDashboard) (DashboardInfo, error) {
+	if in.Title != "" || in.After != nil || in.GroupID != nil {
+		return DashboardInfo{}, store.Refuse(store.ErrInvalid, "sidebar goes on its own; give title, after or group_id in another call")
+	}
+	d, err := s.st.GetDashboard(ctx, in.ID)
+	if err != nil {
+		return DashboardInfo{}, err
+	}
+	if d.Owner != store.OwnerSystem {
+		return DashboardInfo{}, store.Refuse(store.ErrInvalid,
+			"dashboard %d is your own: your own dashboards are always in the sidebar; archive_dashboard takes one away", d.ID)
+	}
+	if d.ArchivedAt != "" {
+		return DashboardInfo{}, store.Refuse(store.ErrInvalid, "dashboard %d is archived; restore_dashboard first", d.ID)
+	}
+	all, err := s.st.ListDashboards(ctx)
+	if err != nil {
+		return DashboardInfo{}, err
+	}
+	var ids []int64
+	for _, m := range all {
+		if m.Owner == d.Owner && m.GroupID == d.GroupID {
+			ids = append(ids, m.ID)
+		}
+	}
+	action := "dashboard.sidebar.show"
+	if !*in.Sidebar {
+		action = "dashboard.sidebar.hide"
+	}
+	if err := s.st.SetDashboardsSidebar(ctx, ids, *in.Sidebar, store.AuditEntry{Actor: actor, Action: action}); err != nil {
 		return DashboardInfo{}, err
 	}
 	d, err = s.st.GetDashboard(ctx, d.ID)
@@ -328,17 +377,15 @@ func (s *Service) writePlaced(ctx context.Context, row store.Dashboard, heirs []
 // copies every
 // member of id's group, each with its live widgets, as one new user
 // group placed last, in the same tab order; the first copy is titled
-// "… (copy)", the rest keep their titles. For a system source with
-// wholeGroup, every member is copied, archived ones included, since a
-// system group is archived and restored only as a unit (D1); for a user
-// source, only the live members are copied.
+// "… (copy)", the rest keep their titles. For a user source only the
+// live members are copied; a built-in is never archived (spec
+// 2026-10-05 D5), so a system source's members all are. Every copy is
+// in the sidebar, is no project's tab and is not given to new projects
+// (spec 2026-10-05 D9).
 //
 // An archived user source is refused: its copy would otherwise land in
 // a group that may have no live dashboard left, bringing that group
-// back into the sidebar through the copy. An archived system source is
-// accepted: the gallery copies a tab of a group already archived to
-// make room for its replacement (archive_dashboard whole_group, then
-// duplicate_dashboard).
+// back into the sidebar through the copy.
 func (s *Service) DuplicateDashboard(ctx context.Context, actor string, in DuplicateDashboard) (DashboardDetail, error) {
 	id := in.ID
 	src, err := s.st.GetDashboard(ctx, id)
@@ -366,7 +413,7 @@ func (s *Service) duplicateOne(ctx context.Context, actor string, src store.Dash
 		return DashboardDetail{}, err
 	}
 	copyOf := store.Dashboard{
-		Owner: store.OwnerUser, Title: src.Title + " (copy)",
+		Owner: store.OwnerUser, Title: src.Title + " (copy)", Sidebar: true,
 		LastProjectID: src.LastProjectID, LastRange: src.LastRange, LastFrom: src.LastFrom, LastTo: src.LastTo,
 	}
 	var newID int64
@@ -404,9 +451,8 @@ func (s *Service) duplicateOne(ctx context.Context, actor string, src store.Dash
 // duplicateGroup is DuplicateDashboard for id's whole group, as one new
 // user group placed last among the user dashboards, in the same tab
 // order. For a system source, every member of src.GroupID owned by the
-// system is copied, archived members included: the system group is a
-// unit, so Reports' widget-free "Groups" tab (say) copies even while
-// archived. For a user source, only the live members are copied.
+// system is copied (none is ever archived, spec 2026-10-05 D5). For a
+// user source, only the live members are copied.
 // Returns the copy at src's own position among the copied members, not
 // always the group's first (that one is always titled "… (copy)").
 //
@@ -450,7 +496,7 @@ func (s *Service) duplicateGroup(ctx context.Context, actor string, src store.Da
 				title += " (copy)"
 			}
 			ds[i] = store.Dashboard{
-				Owner: store.OwnerUser, Title: title,
+				Owner: store.OwnerUser, Title: title, Sidebar: true,
 				LastProjectID: m.LastProjectID, LastRange: m.LastRange, LastFrom: m.LastFrom, LastTo: m.LastTo,
 			}
 		}
@@ -521,17 +567,17 @@ func (s *Service) RestoreDashboard(ctx context.Context, actor string, id int64, 
 
 // setDashboardArchived archives or restores id, or (wholeGroup) every
 // live member (archiving) or archived member (restoring) of its group,
-// in one call to the store (D12–D14). A system dashboard is archived and
-// restored only with its whole group (D1); every other write to one
-// stays refused.
+// in one call to the store (D12–D14). A built-in is never archived or
+// restored, alone or with its group: hiding one is sidebar = false
+// (spec 2026-10-05 D5).
 func (s *Service) setDashboardArchived(ctx context.Context, actor string, id int64, archived, wholeGroup bool) error {
 	d, err := s.st.GetDashboard(ctx, id)
 	if err != nil {
 		return err
 	}
-	if d.Owner == store.OwnerSystem && !wholeGroup {
+	if d.Owner == store.OwnerSystem {
 		return store.Refuse(store.ErrInvalid,
-			"dashboard %d is a system dashboard, archived and restored with its group; pass whole_group", d.ID)
+			"dashboard %d is a built-in dashboard and is never archived; update_dashboard {sidebar: false} takes its group out of the sidebar", d.ID)
 	}
 	ids := []int64{id}
 	if wholeGroup {

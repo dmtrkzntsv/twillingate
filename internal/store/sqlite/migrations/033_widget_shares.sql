@@ -1,4 +1,4 @@
--- 032: widget shares (docs/superpowers/specs/2026-10-05-widget-shares-design.md).
+-- 033: widget shares (docs/superpowers/specs/2026-10-05-widget-shares-design.md).
 -- A share is a frozen picture of one widget: two PNGs and the text they
 -- show, copied at capture so the public page matches the picture after a
 -- rename. It lives as long as its project (deleteProject removes it, via

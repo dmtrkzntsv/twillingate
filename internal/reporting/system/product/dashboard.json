@@ -2,6 +2,8 @@
   "id": 2,
   "title": "Product",
   "range": "7d",
+  "sidebar": true,
+  "project_tab": true,
   "group": 1,
   "layout": [
     {"widget": "total-events", "width": 4, "height": 3},

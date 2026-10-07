@@ -15,11 +15,12 @@ vi.mock('@/hooks/use-dashboard-actions', () => ({
 
 const duplicate = vi.fn()
 const archive = vi.fn()
+const setSidebar = vi.fn()
 const move = vi.fn()
 const renameGroup = vi.fn()
 
 function member(dashboard_id: number, title: string, owner: 'system' | 'user', group_id: number) {
-  return { dashboard_id, title, owner, group_id, widgets: 1 }
+  return { dashboard_id, title, owner, group_id, widgets: 1, sidebar: true, project_tab: false }
 }
 
 const systemGroup: Group = {
@@ -48,6 +49,7 @@ beforeEach(() => {
     duplicate,
     archive,
     restore: vi.fn(),
+    setSidebar,
     move,
     renameGroup,
     pending: false,
@@ -78,12 +80,13 @@ describe('SidebarGroupMenu, system group', () => {
     expect(duplicate).toHaveBeenCalledWith(systemGroup.members[0], { wholeGroup: true })
   })
 
-  it('hide while viewing one of its tabs archives the whole group and navigates to /', async () => {
+  it('hide while viewing one of its tabs takes the whole group out of the sidebar and navigates to /dashboards', async () => {
     renderMenu(systemGroup, 2)
     await userEvent.click(screen.getByRole('button', { name: 'Views actions' }))
     await userEvent.click(screen.getByText('Hide'))
 
-    expect(archive).toHaveBeenCalledWith({ dashboard_id: 1, title: 'Views' }, { wholeGroup: true, navigateTo: '/dashboards', hidden: true })
+    expect(setSidebar).toHaveBeenCalledWith({ dashboard_id: 1, title: 'Views' }, false, { navigateTo: '/dashboards' })
+    expect(archive).not.toHaveBeenCalled()
   })
 
   it('hide while elsewhere does not navigate', async () => {
@@ -91,7 +94,7 @@ describe('SidebarGroupMenu, system group', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Views actions' }))
     await userEvent.click(screen.getByText('Hide'))
 
-    expect(archive).toHaveBeenCalledWith({ dashboard_id: 1, title: 'Views' }, { wholeGroup: true, navigateTo: undefined, hidden: true })
+    expect(setSidebar).toHaveBeenCalledWith({ dashboard_id: 1, title: 'Views' }, false, { navigateTo: undefined })
   })
 })
 
@@ -162,7 +165,7 @@ describe('SidebarGroupMenu, user group', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Marketing actions' }))
     await userEvent.click(screen.getByText('Archive'))
 
-    expect(archive).toHaveBeenCalledWith({ dashboard_id: 13, title: 'Marketing' }, { wholeGroup: true, navigateTo: '/dashboards', hidden: false })
+    expect(archive).toHaveBeenCalledWith({ dashboard_id: 13, title: 'Marketing' }, { wholeGroup: true, navigateTo: '/dashboards' })
   })
 
   it('clicking Move down on the first group calls move with the second group as after', async () => {

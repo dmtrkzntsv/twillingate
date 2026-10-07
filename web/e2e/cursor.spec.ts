@@ -3,6 +3,7 @@ import { createShare } from './png'
 
 // Matches web/e2e/serve.sh's CONSOLE_AUTH_DSN (token://e2e-token?password=e2e-pass&...).
 const PASSWORD = 'e2e-pass'
+const TOKEN = 'e2e-token'
 
 // Every clickable thing shows the hand: src/index.css sets it once for
 // these, in the base layer, and this fails on a visible, enabled control
@@ -55,7 +56,7 @@ async function withoutPointer(page: Page): Promise<string[]> {
 
 test('every link and button shows the pointer', async ({ page, request }) => {
   // A share of Views' first widget, so the Shares page always has a row's controls to check.
-  const headers = { Authorization: 'Bearer e2e-token' }
+  const headers = { Authorization: `Bearer ${TOKEN}` }
   const views = await request.get('/api/dashboards/1', { headers })
   expect(views.ok(), await views.text()).toBeTruthy()
   const { widgets } = (await views.json()) as { widgets: { widget_id: number }[] }
@@ -64,7 +65,7 @@ test('every link and button shows the pointer', async ({ page, request }) => {
   await createShare(request, { widgetId: widgets[0].widget_id, projectId: 1, from, to })
 
   await login(page)
-  for (const path of ['/app/projects', '/app/projects/1', '/app/dashboards', '/app/archive', '/app/shares', '/app/gallery/components', '/app/gallery/dashboards']) {
+  for (const path of ['/app/projects', '/app/projects/1/setup', '/app/dashboards', '/app/archive', '/app/shares', '/app/gallery/components', '/app/gallery/dashboards']) {
     await page.goto(path)
     await page.waitForLoadState('networkidle')
     await expect(page.locator('main, [data-slot="sidebar-inset"]').first()).toBeVisible()
@@ -86,4 +87,19 @@ test('every link and button shows the pointer', async ({ page, request }) => {
   await dialog.getByRole('button', { name: 'Create link' }).click()
   await expect(dialog.getByRole('link', { name: 'Open' })).toBeVisible()
   expect(await withoutPointer(page), 'Share dialog, link made').toEqual([])
+  // A project's "+" and the dashboards its picker offers, on a dashboard
+  // tab; one of our own, so the picker is never empty.
+  const title = `E2E cursor ${Date.now()}`
+  const created = await request.post('/api/dashboards', { headers, data: { title, range: '7d' } })
+  expect(created.ok(), await created.text()).toBeTruthy()
+  const { dashboard_id: id } = (await created.json()) as { dashboard_id: number }
+  try {
+    await page.goto('/app/projects/1/dashboards/1')
+    await page.waitForLoadState('networkidle')
+    await page.getByRole('button', { name: 'Add tab' }).click()
+    await expect(page.getByRole('dialog', { name: 'Add tab' }).getByRole('button', { name: title })).toBeVisible()
+    expect(await withoutPointer(page), 'add tab').toEqual([])
+  } finally {
+    await request.post(`/api/dashboards/${id}/archive`, { headers, data: {} })
+  }
 })

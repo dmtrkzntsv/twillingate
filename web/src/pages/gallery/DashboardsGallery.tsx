@@ -14,8 +14,8 @@ interface SystemGroup {
 }
 
 /**
- * Every system dashboard grouped by `group_id`, in list order, hidden
- * (archived) ones included: a template is a template whether or not it is
+ * Every system dashboard grouped by `group_id`, in list order, those
+ * hidden from the sidebar included: a template is a template whether or not it is
  * in the sidebar right now (D17).
  */
 function systemGroups(dashboards: DashboardInfo[]): SystemGroup[] {
@@ -59,8 +59,8 @@ export default function DashboardsGallery() {
         <ul className="flex flex-col gap-2">
           {groups.map((g) => {
             const first = g.members[0]
-            // A system group is hidden (archived) only whole.
-            const hidden = g.members.every((m) => m.archived_at)
+            // `sidebar` is the group's, the same on every member.
+            const hidden = g.members.every((m) => !m.sidebar)
             const name = groupName(g.members)
             const groupMenu = writable && <TemplateMenu dashboard={first} name={name} wholeGroup hidden={hidden} />
             if (g.members.length === 1) {

@@ -44,7 +44,7 @@ func TestInsertDashboardRoundTripsEveryField(t *testing.T) {
 		t.Fatal(err)
 	}
 	dash := store.Dashboard{
-		Owner: store.OwnerUser, Title: "Marketing", SortKey: "a",
+		Owner: store.OwnerUser, Title: "Marketing", SortKey: "a", Sidebar: true,
 		LastProjectID: 7, LastRange: "30d", LastFrom: "2026-08-01", LastTo: "2026-08-31",
 	}
 	ws := []store.Widget{{
@@ -62,7 +62,7 @@ func TestInsertDashboardRoundTripsEveryField(t *testing.T) {
 	}
 	if got.Owner != dash.Owner || got.Title != dash.Title || got.SortKey != dash.SortKey ||
 		got.LastProjectID != dash.LastProjectID || got.LastRange != dash.LastRange ||
-		got.LastFrom != dash.LastFrom || got.LastTo != dash.LastTo {
+		got.LastFrom != dash.LastFrom || got.LastTo != dash.LastTo || got.Sidebar != dash.Sidebar {
 		t.Fatalf("GetDashboard round-trip = %+v, want fields matching %+v", got, dash)
 	}
 	if got.CreatedAt == "" || got.UpdatedAt == "" {
@@ -108,7 +108,7 @@ func TestListDashboardsSystemGroupFirst(t *testing.T) {
 	mk := func(owner, title, sortKey string) {
 		t.Helper()
 		if _, err := db.InsertDashboard(ctx,
-			store.Dashboard{Owner: owner, Title: title, SortKey: sortKey}, nil, audit); err != nil {
+			store.Dashboard{Owner: owner, Title: title, SortKey: sortKey, Sidebar: true}, nil, audit); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -145,7 +145,7 @@ func TestLiveWidgetsCountsOnlyUnarchived(t *testing.T) {
 		{SortKey: "a", Width: 1, Height: 1, Name: "w1", SourceType: "events", Source: "a"},
 		{SortKey: "b", Width: 1, Height: 1, Name: "w2", SourceType: "events", Source: "b"},
 	}
-	id, err := db.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "D", SortKey: "a"}, ws, audit)
+	id, err := db.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "D", SortKey: "a", Sidebar: true}, ws, audit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,7 +178,7 @@ func TestDuplicateWidgetNameIsConflict(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	audit := store.AuditEntry{Actor: "agent", Action: "dashboard.create"}
-	id, err := db.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "D", SortKey: "a"}, nil, audit)
+	id, err := db.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "D", SortKey: "a", Sidebar: true}, nil, audit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,7 +202,7 @@ func TestDuplicateWidgetNameIsConflict(t *testing.T) {
 func TestDashboardArchiveRestoreRoundTripsAndIsIdempotent(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	id, err := db.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "D", SortKey: "a"},
+	id, err := db.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "D", SortKey: "a", Sidebar: true},
 		nil, store.AuditEntry{Actor: "agent", Action: "dashboard.create"})
 	if err != nil {
 		t.Fatal(err)
@@ -253,7 +253,7 @@ func TestDashboardArchiveRestoreRoundTripsAndIsIdempotent(t *testing.T) {
 func TestSetDashboardViewWritesOnlyLastFieldsNoAudit(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	id, err := db.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "D", SortKey: "a"},
+	id, err := db.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "D", SortKey: "a", Sidebar: true},
 		nil, store.AuditEntry{Actor: "agent", Action: "dashboard.create"})
 	if err != nil {
 		t.Fatal(err)
@@ -322,7 +322,7 @@ func TestReportingUnknownIDIsNotFound(t *testing.T) {
 func TestWidgetComponentEmptyStoresNull(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	id, err := db.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "D", SortKey: "a"},
+	id, err := db.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "D", SortKey: "a", Sidebar: true},
 		nil, store.AuditEntry{Actor: "agent", Action: "dashboard.create"})
 	if err != nil {
 		t.Fatal(err)
@@ -353,7 +353,7 @@ func TestWidgetComponentEmptyStoresNull(t *testing.T) {
 func TestReportingAuditSubjects(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	id, err := db.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "D", SortKey: "a"},
+	id, err := db.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "D", SortKey: "a", Sidebar: true},
 		nil, store.AuditEntry{Actor: "agent", Action: "dashboard.create"})
 	if err != nil {
 		t.Fatal(err)
@@ -390,7 +390,7 @@ func TestInsertDashboardGroupIDDefaultsToOwnID(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	audit := store.AuditEntry{Actor: "agent", Action: "dashboard.create"}
-	id, err := db.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "D", SortKey: "a"}, nil, audit)
+	id, err := db.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "D", SortKey: "a", Sidebar: true}, nil, audit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -403,7 +403,7 @@ func TestInsertDashboardGroupIDDefaultsToOwnID(t *testing.T) {
 	}
 
 	id2, err := db.InsertDashboard(ctx,
-		store.Dashboard{Owner: store.OwnerUser, Title: "D2", SortKey: "b", GroupID: 1001}, nil, audit)
+		store.Dashboard{Owner: store.OwnerUser, Title: "D2", SortKey: "b", GroupID: 1001, Sidebar: true}, nil, audit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -420,11 +420,11 @@ func TestUpdateDashboardWritesGroupID(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	audit := store.AuditEntry{Actor: "agent", Action: "dashboard.create"}
-	id, err := db.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "D", SortKey: "a"}, nil, audit)
+	id, err := db.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "D", SortKey: "a", Sidebar: true}, nil, audit)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.UpdateDashboard(ctx, store.Dashboard{ID: id, Title: "D", SortKey: "a", GroupID: 4242},
+	if err := db.UpdateDashboard(ctx, store.Dashboard{ID: id, Title: "D", SortKey: "a", GroupID: 4242, Sidebar: true},
 		store.AuditEntry{Actor: "agent", Action: "dashboard.update"}); err != nil {
 		t.Fatal(err)
 	}
@@ -444,11 +444,11 @@ func TestMoveDashboardsSwapsSortKeysWithoutConflict(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	audit := store.AuditEntry{Actor: "agent", Action: "dashboard.create"}
-	id1, err := db.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "D1", SortKey: "a"}, nil, audit)
+	id1, err := db.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "D1", SortKey: "a", Sidebar: true}, nil, audit)
 	if err != nil {
 		t.Fatal(err)
 	}
-	id2, err := db.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "D2", SortKey: "b"}, nil, audit)
+	id2, err := db.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "D2", SortKey: "b", Sidebar: true}, nil, audit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -497,9 +497,9 @@ func TestInsertDashboardGroupAttachesWidgetsAndSharesGroupID(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	ds := []store.Dashboard{
-		{Owner: store.OwnerUser, Title: "D1", SortKey: "a"},
-		{Owner: store.OwnerUser, Title: "D2", SortKey: "b"},
-		{Owner: store.OwnerUser, Title: "D3", SortKey: "c"},
+		{Owner: store.OwnerUser, Title: "D1", SortKey: "a", Sidebar: true},
+		{Owner: store.OwnerUser, Title: "D2", SortKey: "b", Sidebar: true},
+		{Owner: store.OwnerUser, Title: "D3", SortKey: "c", Sidebar: true},
 	}
 	ws := [][]store.Widget{
 		{{SortKey: "a", Width: 1, Height: 1, Name: "w1", SourceType: "events", Source: "a"}},
@@ -552,11 +552,11 @@ func TestSetDashboardsArchivedUnknownIDArchivesNone(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	audit := store.AuditEntry{Actor: "agent", Action: "dashboard.create"}
-	id1, err := db.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "D1", SortKey: "a"}, nil, audit)
+	id1, err := db.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "D1", SortKey: "a", Sidebar: true}, nil, audit)
 	if err != nil {
 		t.Fatal(err)
 	}
-	id2, err := db.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "D2", SortKey: "b"}, nil, audit)
+	id2, err := db.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "D2", SortKey: "b", Sidebar: true}, nil, audit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -603,13 +603,13 @@ func TestReportingWritesDoNotBumpConfigVersion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	id, err := db.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "D", SortKey: "a"},
+	id, err := db.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "D", SortKey: "a", Sidebar: true},
 		[]store.Widget{{SortKey: "a", Width: 1, Height: 1, Name: "w1", SourceType: "events", Source: "a"}},
 		store.AuditEntry{Actor: "agent", Action: "dashboard.create"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.UpdateDashboard(ctx, store.Dashboard{ID: id, Title: "D2", SortKey: "a"},
+	if err := db.UpdateDashboard(ctx, store.Dashboard{ID: id, Title: "D2", SortKey: "a", Sidebar: true},
 		store.AuditEntry{Actor: "agent", Action: "dashboard.update"}); err != nil {
 		t.Fatal(err)
 	}
@@ -630,11 +630,11 @@ func TestInsertDashboardSortKeyConflictIsErrConflict(t *testing.T) {
 	ctx := context.Background()
 	audit := store.AuditEntry{Actor: "agent", Action: "dashboard.create"}
 	if _, err := db.InsertDashboard(ctx,
-		store.Dashboard{Owner: store.OwnerUser, Title: "D1", SortKey: "a"}, nil, audit); err != nil {
+		store.Dashboard{Owner: store.OwnerUser, Title: "D1", SortKey: "a", Sidebar: true}, nil, audit); err != nil {
 		t.Fatal(err)
 	}
 	_, err := db.InsertDashboard(ctx,
-		store.Dashboard{Owner: store.OwnerUser, Title: "D2", SortKey: "a"}, nil, audit)
+		store.Dashboard{Owner: store.OwnerUser, Title: "D2", SortKey: "a", Sidebar: true}, nil, audit)
 	if !errors.Is(err, store.ErrConflict) {
 		t.Fatalf("InsertDashboard duplicate (owner, sort_key) = %v, want ErrConflict", err)
 	}
@@ -651,12 +651,12 @@ func TestInsertDashboardIDConflictNamesTheID(t *testing.T) {
 	ctx := context.Background()
 	audit := store.AuditEntry{Actor: "agent", Action: "dashboard.create"}
 	id, err := db.InsertDashboard(ctx,
-		store.Dashboard{Owner: store.OwnerUser, Title: "D1", SortKey: "a"}, nil, audit)
+		store.Dashboard{Owner: store.OwnerUser, Title: "D1", SortKey: "a", Sidebar: true}, nil, audit)
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, err = db.InsertDashboard(ctx,
-		store.Dashboard{ID: id, Owner: store.OwnerUser, Title: "D2", SortKey: "b"}, nil, audit)
+		store.Dashboard{ID: id, Owner: store.OwnerUser, Title: "D2", SortKey: "b", Sidebar: true}, nil, audit)
 	if !errors.Is(err, store.ErrConflict) {
 		t.Fatalf("InsertDashboard with a taken id = %v, want ErrConflict", err)
 	}
@@ -669,11 +669,11 @@ func TestUpdateDashboardSortKeyConflictIsErrConflict(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	audit := store.AuditEntry{Actor: "agent", Action: "dashboard.create"}
-	id1, err := db.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "D1", SortKey: "a"}, nil, audit)
+	id1, err := db.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "D1", SortKey: "a", Sidebar: true}, nil, audit)
 	if err != nil {
 		t.Fatal(err)
 	}
-	id2, err := db.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "D2", SortKey: "b"}, nil, audit)
+	id2, err := db.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "D2", SortKey: "b", Sidebar: true}, nil, audit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -703,11 +703,11 @@ func TestMoveDashboardsConflictWritesNothing(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	audit := store.AuditEntry{Actor: "agent", Action: "dashboard.create"}
-	id1, err := db.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "D1", SortKey: "a"}, nil, audit)
+	id1, err := db.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "D1", SortKey: "a", Sidebar: true}, nil, audit)
 	if err != nil {
 		t.Fatal(err)
 	}
-	id2, err := db.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "D2", SortKey: "b"}, nil, audit)
+	id2, err := db.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "D2", SortKey: "b", Sidebar: true}, nil, audit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -795,11 +795,11 @@ func TestSetDashboardsArchivedRestoresMixedIDs(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	audit := store.AuditEntry{Actor: "agent", Action: "dashboard.create"}
-	id1, err := db.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "D1", SortKey: "a"}, nil, audit)
+	id1, err := db.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "D1", SortKey: "a", Sidebar: true}, nil, audit)
 	if err != nil {
 		t.Fatal(err)
 	}
-	id2, err := db.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "D2", SortKey: "b"}, nil, audit)
+	id2, err := db.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "D2", SortKey: "b", Sidebar: true}, nil, audit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -876,8 +876,8 @@ func TestInsertDashboardGroupRefusesMismatchedWidgetSlices(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	ds := []store.Dashboard{
-		{Owner: store.OwnerUser, Title: "D1", SortKey: "a"},
-		{Owner: store.OwnerUser, Title: "D2", SortKey: "b"},
+		{Owner: store.OwnerUser, Title: "D1", SortKey: "a", Sidebar: true},
+		{Owner: store.OwnerUser, Title: "D2", SortKey: "b", Sidebar: true},
 	}
 	ws := [][]store.Widget{
 		{{SortKey: "a", Width: 1, Height: 1, Name: "w1", SourceType: "events", Source: "a"}},
@@ -902,7 +902,7 @@ func userGroup(t *testing.T, db *DB, n int) []int64 {
 	t.Helper()
 	ds := make([]store.Dashboard, n)
 	for i := range ds {
-		ds[i] = store.Dashboard{Owner: store.OwnerUser, Title: fmt.Sprintf("T%d", i), SortKey: fmt.Sprintf("k%d", i)}
+		ds[i] = store.Dashboard{Owner: store.OwnerUser, Title: fmt.Sprintf("T%d", i), SortKey: fmt.Sprintf("k%d", i), Sidebar: true}
 	}
 	ids, err := db.InsertDashboardGroup(context.Background(), ds, nil,
 		store.AuditEntry{Actor: "agent", Action: "dashboard.group.create"})
@@ -1015,8 +1015,8 @@ func TestInsertDashboardGroupWritesName(t *testing.T) {
 	ctx := context.Background()
 	a := store.AuditEntry{Actor: "agent", Action: "dashboard.group.create"}
 	ids, err := db.InsertDashboardGroup(ctx, []store.Dashboard{
-		{Owner: store.OwnerUser, Title: "A", SortKey: "a", GroupTitle: "Ops (copy)"},
-		{Owner: store.OwnerUser, Title: "B", SortKey: "b"},
+		{Owner: store.OwnerUser, Title: "A", SortKey: "a", GroupTitle: "Ops (copy)", Sidebar: true},
+		{Owner: store.OwnerUser, Title: "B", SortKey: "b", Sidebar: true},
 	}, nil, a)
 	if err != nil {
 		t.Fatal(err)
@@ -1027,7 +1027,7 @@ func TestInsertDashboardGroupWritesName(t *testing.T) {
 		}
 	}
 	more, err := db.InsertDashboardGroup(ctx, []store.Dashboard{
-		{Owner: store.OwnerUser, Title: "C", SortKey: "c"},
+		{Owner: store.OwnerUser, Title: "C", SortKey: "c", Sidebar: true},
 	}, nil, a)
 	if err != nil {
 		t.Fatal(err)

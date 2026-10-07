@@ -68,6 +68,30 @@ describe('ReportTabs', () => {
     expect(onSelect).not.toHaveBeenCalled()
   })
 
+  it('keeps fixedIds first and unsortable, drags only the rest, and renders trailing', () => {
+    const projectTabs: DashboardTab[] = [
+      { dashboard_id: 0, title: 'Setup' },
+      { dashboard_id: 1, title: 'Views' },
+      { dashboard_id: 1001, title: 'Mine' },
+      { dashboard_id: 1002, title: 'Ours' },
+    ]
+    render(
+      <ReportTabs
+        tabs={projectTabs}
+        currentId={0}
+        onSelect={() => {}}
+        fixedIds={[0, 1]}
+        sortable
+        onMove={async () => true}
+        trailing={<button type="button">Add tab</button>}
+      />
+    )
+    const all = screen.getAllByRole('tab')
+    expect(all.map((t) => t.textContent)).toEqual(['Setup', 'Views', 'Mine', 'Ours'])
+    expect(all.map((t) => t.getAttribute('aria-roledescription'))).toEqual([null, null, 'sortable', 'sortable'])
+    expect(screen.getByRole('button', { name: 'Add tab' })).toBeInTheDocument()
+  })
+
   it('still selects on a virtual click after Space picked a tab up and Escape put it back', async () => {
     const onSelect = vi.fn()
     render(<ReportTabs tabs={tabs} currentId={13} onSelect={onSelect} sortable onMove={async () => true} />)

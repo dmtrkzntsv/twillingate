@@ -36,7 +36,7 @@ func devDir(t *testing.T, widgets ...struct{ name, component, ext, content strin
 			t.Fatal(err)
 		}
 	}
-	dash := `{"title":"Views","range":"7d","layout":[` + strings.Join(layout, ",") + `]}`
+	dash := `{"title":"Views","range":"7d","sidebar":true,"project_tab":true,"layout":[` + strings.Join(layout, ",") + `]}`
 	if err := os.WriteFile(filepath.Join(ok, "dashboard.json"), []byte(dash), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +270,7 @@ func TestDevHandlerSystemRangeIdsPreviewAsSystem(t *testing.T) {
 	if err := os.MkdirAll(sys, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(sys, "dashboard.json"), []byte(`{"id":5,"title":"Sys","range":"7d","layout":[]}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(sys, "dashboard.json"), []byte(`{"id":5,"title":"Sys","range":"7d","sidebar":true,"project_tab":true,"layout":[]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	h := DevHandler([]string{root}, newTestReadDB(t))
@@ -300,9 +300,9 @@ func TestDevHandlerGroupTabs(t *testing.T) {
 	root := t.TempDir()
 	dash := func(id int64, title string, group int64) string {
 		if group == 0 {
-			return fmt.Sprintf(`{"id":%d,"title":%q,"range":"7d","layout":[]}`, id, title)
+			return fmt.Sprintf(`{"id":%d,"title":%q,"range":"7d","sidebar":true,"project_tab":true,"layout":[]}`, id, title)
 		}
-		return fmt.Sprintf(`{"id":%d,"title":%q,"range":"7d","group":%d,"layout":[]}`, id, title, group)
+		return fmt.Sprintf(`{"id":%d,"title":%q,"range":"7d","sidebar":true,"project_tab":true,"group":%d,"layout":[]}`, id, title, group)
 	}
 	dirs := []struct {
 		name  string
@@ -369,10 +369,10 @@ func TestDevHandlerGroupTabs(t *testing.T) {
 func TestDevHandlerGroupTitleFromFounderOnly(t *testing.T) {
 	root := t.TempDir()
 	files := map[string]string{
-		"views":   `{"id":1,"title":"Views","group_title":"Reports","range":"7d","layout":[]}`,
-		"product": `{"id":2,"title":"Product","group":1,"group_title":"Sneaky","range":"7d","layout":[]}`,
-		"solo":    `{"id":7,"title":"Solo","group":8,"group_title":"Stray","range":"7d","layout":[]}`,
-		"eight":   `{"id":8,"title":"Eight","range":"7d","layout":[]}`,
+		"views":   `{"id":1,"title":"Views","group_title":"Reports","range":"7d","sidebar":true,"project_tab":true,"layout":[]}`,
+		"product": `{"id":2,"title":"Product","group":1,"group_title":"Sneaky","range":"7d","sidebar":true,"project_tab":true,"layout":[]}`,
+		"solo":    `{"id":7,"title":"Solo","group":8,"group_title":"Stray","range":"7d","sidebar":true,"project_tab":true,"layout":[]}`,
+		"eight":   `{"id":8,"title":"Eight","range":"7d","sidebar":true,"project_tab":true,"layout":[]}`,
 	}
 	for name, body := range files {
 		dir := filepath.Join(root, name)

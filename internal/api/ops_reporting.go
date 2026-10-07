@@ -81,6 +81,34 @@ type updateDashboardIn struct {
 	WholeGroup  bool   `json:"whole_group,omitempty" jsonschema:"true renames this dashboard's group with title (required, at least 2 characters) and leaves every dashboard's own title alone; takes no after or group_id"`
 	GroupID     *int64 `json:"group_id,omitempty" jsonschema:"move it into this group as a tab (after then names a tab there; 0 first); 0 takes it out as a dashboard of its own; omit to stay"`
 	After       *int64 `json:"after,omitempty" jsonschema:"a dashboard id: one in the same group moves this tab after it; one in another group moves the whole group after that group (with group_id, it names a tab of that group; with group_id 0, the dashboard goes after that group on its own). 0: without group_id, moves the whole group to the top of the sidebar; with group_id, makes it the first tab (group_id 0: the top of the sidebar)"`
+	Sidebar     *bool  `json:"sidebar,omitempty" jsonschema:"built-in dashboards only: true or false puts its whole group in or out of the sidebar. Your own dashboards are always in the sidebar, so it is refused on one (archive_dashboard takes one away). Not with title, after or group_id"`
+}
+
+type projectTabsIn struct {
+	ProjectID int64 `json:"project_id" jsonschema:"project id; call list_projects first"`
+}
+
+type addProjectTabIn struct {
+	ProjectID   int64  `json:"project_id" jsonschema:"project id; call list_projects first"`
+	DashboardID int64  `json:"dashboard_id" jsonschema:"the dashboard to show on this project's page; list_dashboards names them"`
+	After       *int64 `json:"after,omitempty" jsonschema:"your own dashboards only: after this tab of the project (one of your own), 0 first among your own; omit to put it last. A built-in goes back to its own place and takes no after"`
+}
+
+type projectTabIn struct {
+	ProjectID   int64 `json:"project_id" jsonschema:"project id"`
+	DashboardID int64 `json:"dashboard_id" jsonschema:"a tab of this project"`
+}
+
+type moveProjectTabIn struct {
+	ProjectID   int64 `json:"project_id" jsonschema:"project id"`
+	DashboardID int64 `json:"dashboard_id" jsonschema:"one of your own tabs of this project"`
+	After       int64 `json:"after" jsonschema:"one of your own tabs of this project to go after, 0 first among your own; built-in tabs keep the release's order"`
+}
+
+// projectTabsOut is every project tab tool's answer: the page's tabs
+// after the call, in order.
+type projectTabsOut struct {
+	Tabs []reporting.ProjectTab `json:"tabs"`
 }
 
 type addWidgetIn struct {
@@ -145,7 +173,8 @@ func (h *host) createDashboard(ctx context.Context, in createDashboardIn) (repor
 
 func (h *host) updateDashboard(ctx context.Context, in updateDashboardIn) (reporting.DashboardInfo, error) {
 	return h.rep.UpdateDashboard(ctx, actorFrom(ctx), reporting.UpdateDashboard{
-		ID: in.DashboardID, Title: in.Title, WholeGroup: in.WholeGroup, GroupID: in.GroupID, After: in.After})
+		ID: in.DashboardID, Title: in.Title, WholeGroup: in.WholeGroup, GroupID: in.GroupID, After: in.After,
+		Sidebar: in.Sidebar})
 }
 
 func (h *host) duplicateDashboard(ctx context.Context, in duplicateDashboardIn) (reporting.DashboardDetail, error) {
@@ -165,6 +194,28 @@ func (h *host) restoreDashboard(ctx context.Context, in dashboardGroupIn) (okOut
 		return okOut{}, err
 	}
 	return okOut{Status: "restored"}, nil
+}
+
+func (h *host) listProjectTabs(ctx context.Context, in projectTabsIn) (projectTabsOut, error) {
+	ts, err := h.rep.ProjectTabs(ctx, in.ProjectID)
+	return projectTabsOut{Tabs: ts}, err
+}
+
+func (h *host) addProjectTab(ctx context.Context, in addProjectTabIn) (projectTabsOut, error) {
+	ts, err := h.rep.AddProjectTab(ctx, actorFrom(ctx), reporting.AddProjectTab{
+		ProjectID: in.ProjectID, DashboardID: in.DashboardID, After: in.After})
+	return projectTabsOut{Tabs: ts}, err
+}
+
+func (h *host) removeProjectTab(ctx context.Context, in projectTabIn) (projectTabsOut, error) {
+	ts, err := h.rep.RemoveProjectTab(ctx, actorFrom(ctx), in.ProjectID, in.DashboardID)
+	return projectTabsOut{Tabs: ts}, err
+}
+
+func (h *host) moveProjectTab(ctx context.Context, in moveProjectTabIn) (projectTabsOut, error) {
+	ts, err := h.rep.MoveProjectTab(ctx, actorFrom(ctx), reporting.MoveProjectTab{
+		ProjectID: in.ProjectID, DashboardID: in.DashboardID, After: in.After})
+	return projectTabsOut{Tabs: ts}, err
 }
 
 func (h *host) addWidget(ctx context.Context, in addWidgetIn) (reporting.WidgetInfo, error) {
@@ -241,7 +292,7 @@ func (h *host) registerReporting(r *registrar) {
 		Description: "The source types (sql, md) and the components a widget can use: each one's description, the source types it accepts, the columns its query must return (inputs), its props schema and its default width and height."},
 		h.listComponents)
 	expose(r, spec{Name: "list_dashboards", Annotations: ro, Method: "GET", Path: "/api/dashboards",
-		Description: "Every dashboard in sidebar order (system first, then user), archived ones included: id, title, owner (system or user), group_id (the group it is a tab of; it changes when the dashboard whose id it is leaves the group, so read it here before using it), stored project and range, live widget count, archived_at; plus the timezone days are grouped in, purge_after_days, how long an archived user dashboard is kept before it is deleted (absent: kept forever), and auto_refresh_seconds, how often the page reloads a dashboard whose viewer turned auto-refresh on (absent: never)."},
+		Description: "Every dashboard in sidebar order (system first, then user), archived ones included: id, title, owner (system or user), group_id (the group it is a tab of; it changes when the dashboard whose id it is leaves the group, so read it here before using it), stored project and range, live widget count, archived_at, sidebar (its group is in the sidebar; only a built-in group is ever out of it) and project_tab (a built-in that projects created from now on get as a tab; always false for your own); plus the timezone days are grouped in, purge_after_days, how long an archived user dashboard is kept before it is deleted (absent: kept forever), and auto_refresh_seconds, how often the page reloads a dashboard whose viewer turned auto-refresh on (absent: never)."},
 		h.listDashboards)
 	expose(r, spec{Name: "get_dashboard", Annotations: ro, Method: "GET", Path: d,
 		Description: "One dashboard with its group's tabs and its live widgets in order: tabs (the group's live dashboards, this one included, in tab order) and each widget's id, name, component, title, width, height, props, source, and whether it follows the project and range switchers."},
@@ -257,17 +308,30 @@ func (h *host) registerReporting(r *registrar) {
 		Description: "Call reporting_guide first. Create a user dashboard: title (at least 2 characters), optional starting range (default 7d), optional group_id to add it as a tab of that group, optional after (a dashboard id; 0 first), and optional widgets in order. All or nothing: one invalid widget creates nothing."},
 		h.createDashboard)
 	expose(r, spec{Name: "update_dashboard", Annotations: write, Method: "PATCH", Path: d,
-		Description: "Rename a user dashboard (title, at least 2 characters) and/or move it with group_id (join a group as a tab, or 0 to leave one) and/or after (a dashboard id; 0 first). whole_group with title renames its group instead: the sidebar name, which otherwise is the first tab's title; a group name can be replaced, never cleared. System dashboards are read-only."},
+		Description: "Rename a user dashboard (title, at least 2 characters) and/or move it with group_id (join a group as a tab, or 0 to leave one) and/or after (a dashboard id; 0 first). whole_group with title renames its group instead: the sidebar name, which otherwise is the first tab's title; a group name can be replaced, never cleared. sidebar, in a call of its own and for built-in dashboards only, puts the whole group in or out of the sidebar; your own dashboards are always in the sidebar, so it is refused on one (archive_dashboard takes one away). Your own dashboards are added to projects one at a time with add_project_tab. Otherwise system dashboards are read-only."},
 		h.updateDashboard)
 	expose(r, spec{Name: "duplicate_dashboard", Annotations: write, Method: "POST", Path: d + "/duplicate", Status: http.StatusCreated,
-		Description: "Copy any dashboard with copies of its live widgets; the copy is a user dashboard. The copy is a new dashboard last in the sidebar; with group_id it joins that user group as a tab instead (right after the source when that is the source's own group, last otherwise). A system dashboard is copied too, also an archived one. An archived user dashboard is refused (restore it first). whole_group copies the group as a new dashboard with the same tabs: a system group whole, a user group's live tabs; it takes no group_id. Duplicating never archives: to replace a system group, archive it with archive_dashboard {whole_group: true}."},
+		Description: "Copy any dashboard with copies of its live widgets; the copy is a user dashboard. The copy is a new dashboard last in the sidebar; with group_id it joins that user group as a tab instead (right after the source when that is the source's own group, last otherwise). A system dashboard is copied too, also one out of the sidebar. An archived user dashboard is refused (restore it first). whole_group copies the group as a new dashboard with the same tabs: a system group whole, a user group's live tabs; it takes no group_id. The copy is in the sidebar and on no project's tabs. Duplicating never hides the source: to replace a system group, take it out of the sidebar with update_dashboard {sidebar: false}, and add your copy to projects with add_project_tab."},
 		h.duplicateDashboard)
 	expose(r, spec{Name: "archive_dashboard", Annotations: idem, Method: "POST", Path: d + "/archive",
-		Description: "Hide a dashboard and its widgets. Reversible with restore_dashboard; a user dashboard is purged, with its widgets, RETENTION_ARCHIVED_DAYS (default 30) after archiving unless restored. whole_group archives every tab of its group. A system dashboard is archived only with whole_group, is never purged, and keeps its archive across releases."},
+		Description: "Archive one of your own dashboards: it leaves the sidebar and every project page, with its widgets. Reversible with restore_dashboard, which brings its project tabs back; purged, with its widgets, RETENTION_ARCHIVED_DAYS (default 30) after archiving unless restored. whole_group archives every tab of its group. A built-in dashboard is never archived: update_dashboard {sidebar: false} takes its group out of the sidebar."},
 		h.archiveDashboard)
 	expose(r, spec{Name: "restore_dashboard", Annotations: idem, Method: "POST", Path: d + "/restore",
-		Description: "Unhide an archived dashboard, where it was in the sidebar. whole_group restores every archived tab of its group; a system dashboard is restored only with whole_group."},
+		Description: "Unhide an archived dashboard of your own, where it was in the sidebar and on project pages. whole_group restores every archived tab of its group. A built-in dashboard is never archived, so it is refused."},
 		h.restoreDashboard)
+	const pt = "/api/projects/{project_id}/tabs"
+	expose(r, spec{Name: "list_project_tabs", Annotations: ro, Method: "GET", Path: pt,
+		Description: "A project page's tabs after Setup, in order: built-in dashboards (release order), then your own (ordered per project). Each: dashboard_id, title, owner, group_id."},
+		h.listProjectTabs)
+	expose(r, spec{Name: "add_project_tab", Annotations: write, Method: "POST", Path: pt, Status: http.StatusCreated,
+		Description: "Show a dashboard as a tab of a project's page. A built-in goes back to its own place; your own goes after `after`, or last. A dashboard already there is refused."},
+		h.addProjectTab)
+	expose(r, spec{Name: "remove_project_tab", Annotations: idem, Method: "POST", Path: pt + "/{dashboard_id}/remove",
+		Description: "Take a tab off a project's page. The dashboard is kept, and add_project_tab brings the tab back. Your own dashboard is always in the sidebar, so its last tab can go too."},
+		h.removeProjectTab)
+	expose(r, spec{Name: "move_project_tab", Annotations: write, Method: "POST", Path: pt + "/{dashboard_id}/move",
+		Description: "Reorder your own tabs on a project's page; built-in tabs keep the release's order."},
+		h.moveProjectTab)
 	expose(r, spec{Name: "add_widget", Annotations: write, Method: "POST", Path: d + "/widgets", Status: http.StatusCreated, constrain: widget(self),
 		Description: "Call reporting_guide first. Add a widget to a user dashboard: a component, a source ({type: sql|md, content}), optional title, props, width and height (default from the component), name (derived from the title when omitted) and after (a widget id; 0 first; omitted, last). The SQL is run once to check its columns against the component's inputs."},
 		h.addWidget)

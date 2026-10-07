@@ -12,12 +12,18 @@ export interface DashboardActions {
    */
   duplicate(d: { dashboard_id: number; title: string }, opts?: { wholeGroup?: boolean; groupId?: number }): Promise<void>
   /**
-   * Archives the dashboard (or its group with `wholeGroup`); shows an Undo toast and navigates when asked (D1, D12-D13).
-   * With `hidden`, the toast says "Hidden": the page's word for archiving a system group, which comes back from the gallery.
+   * Archives the user's dashboard (or its group with `wholeGroup`); shows an Undo toast and navigates when asked (D1, D12-D13).
+   * A built-in dashboard is never archived: `setSidebar` hides it.
    */
-  archive(d: { dashboard_id: number; title: string }, opts: { wholeGroup?: boolean; navigateTo?: string; hidden?: boolean }): Promise<void>
+  archive(d: { dashboard_id: number; title: string }, opts: { wholeGroup?: boolean; navigateTo?: string }): Promise<void>
   /** Restores the dashboard, or its whole group (D1, tabs D14). */
   restore(id: number, wholeGroup?: boolean): Promise<void>
+  /**
+   * Puts the dashboard's whole group in or out of the sidebar, a built-in
+   * group's way of being hidden and shown; an Undo toast says "Hidden 'X'"
+   * or "Shown in the sidebar", and `navigateTo` follows a hide.
+   */
+  setSidebar(d: { dashboard_id: number; title: string }, sidebar: boolean, opts?: { navigateTo?: string }): Promise<void>
   /**
    * Moves a tab or a group by naming the dashboard it goes after (D15).
    * Resolves true when the server took it and false when it did not (after
@@ -31,8 +37,8 @@ export interface DashboardActions {
 }
 
 /**
- * The actions the page writes dashboards with: duplicate, archive, restore
- * and move, each the existing audited route, with the page's own bearer
+ * The actions the page writes dashboards with: duplicate, archive, restore,
+ * the sidebar flag and move, each the existing audited route, with the page's own bearer
  * token (D19). Every action refetches the dashboard list and the
  * dashboard shown so the sidebar and the tabs follow, and navigates only
  * once the list is back: "/dashboards" picks from that list, and before the
@@ -82,16 +88,29 @@ export function useDashboardActions(): DashboardActions {
   )
 
   const archive = useCallback(
-    (d: { dashboard_id: number; title: string }, opts: { wholeGroup?: boolean; navigateTo?: string; hidden?: boolean }) =>
+    (d: { dashboard_id: number; title: string }, opts: { wholeGroup?: boolean; navigateTo?: string }) =>
       run(async () => {
         await endpoints.archive(d.dashboard_id, opts.wholeGroup)
-        toast(`${opts.hidden ? 'Hidden' : 'Archived'} '${d.title}'`, {
+        toast(`Archived '${d.title}'`, {
           action: { label: 'Undo', onClick: () => void restore(d.dashboard_id, opts.wholeGroup) },
         })
         const to = opts.navigateTo
         if (to) return () => navigate(to)
       }),
     [run, restore, navigate]
+  )
+
+  const setSidebar = useCallback(
+    (d: { dashboard_id: number; title: string }, sidebar: boolean, opts: { navigateTo?: string } = {}): Promise<void> =>
+      run(async () => {
+        await endpoints.setSidebar(d.dashboard_id, sidebar)
+        toast(sidebar ? 'Shown in the sidebar' : `Hidden '${d.title}'`, {
+          action: { label: 'Undo', onClick: () => void setSidebar(d, !sidebar) },
+        })
+        const to = opts.navigateTo
+        if (to) return () => navigate(to)
+      }),
+    [run, navigate]
   )
 
   const duplicate = useCallback(
@@ -127,5 +146,5 @@ export function useDashboardActions(): DashboardActions {
     [run]
   )
 
-  return { duplicate, archive, restore, move, renameGroup, pending }
+  return { duplicate, archive, restore, setSidebar, move, renameGroup, pending }
 }

@@ -52,13 +52,27 @@ func TestReportingGuideIsLive(t *testing.T) {
 		"Source types: md, sql",
 		"v_views_daily(project_id, day",
 		"| 1 | blog |", "| 2 | docs |",
-		"| 1001 | Signups this quarter | user | 1001 | no |", "| 1 | Views | system | 1 | no |",
-		"| 2 | Product | system | 1 | no |", // a tab of Views' group
+		"| 1001 | Signups this quarter | user | 1001 | yes | no |", "| 1 | Views | system | 1 | yes | no |",
+		"| 2 | Product | system | 1 | yes | no |", // a tab of Views' group
 		`"format"`,                          // props schemas, verbatim
 		"default 6 × 8",
-		"A system group is archived and restored whole", // the Dashboards intro
+		"System dashboards are never archived", // the Dashboards intro
 	} {
 		if !strings.Contains(md, want) {
+			t.Errorf("the guide lacks %q", want)
+		}
+	}
+}
+
+// TestReportingGuideShowsHiddenGroups: a system group taken out of the
+// sidebar stays listed, with sidebar "no", so an agent can tell it apart.
+func TestReportingGuideShowsHiddenGroups(t *testing.T) {
+	_, cs := newTestHost(t)
+	toolJSON(t, cs, "update_dashboard", map[string]any{"dashboard_id": 1, "sidebar": false}, nil)
+	var out guideOut
+	toolJSON(t, cs, "reporting_guide", map[string]any{}, &out)
+	for _, want := range []string{"| 1 | Views | system | 1 | no | no |", "| 2 | Product | system | 1 | no | no |"} {
+		if !strings.Contains(out.Markdown, want) {
 			t.Errorf("the guide lacks %q", want)
 		}
 	}

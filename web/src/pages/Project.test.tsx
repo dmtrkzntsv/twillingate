@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter, Route, Routes } from 'react-router'
-import { endpoints } from '@/lib/api'
-import { dashboardsList } from '@/test/fixtures'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
+import { ApiError, endpoints, type DashboardDetail, type ProjectTab } from '@/lib/api'
+import { answerFor, dashboardsList, details, launchWeek, widgetsById } from '@/test/fixtures'
 import { renderWithProviders } from '@/test/render'
-import Project from './Project'
+import Project, { ProjectIndex } from './Project'
 
 const actions = {
   update: vi.fn(), archive: vi.fn(), restore: vi.fn(), issueKey: vi.fn(),
@@ -13,12 +13,24 @@ const actions = {
 }
 vi.mock('@/hooks/use-project-actions', () => ({ useProjectActions: () => actions }))
 
+const tabs: ProjectTab[] = [
+  { dashboard_id: 1, title: 'Views', owner: 'system', group_id: 1 },
+  { dashboard_id: 2, title: 'Product', owner: 'system', group_id: 1 },
+  { dashboard_id: 20, title: 'Mine', owner: 'user', group_id: 20 },
+]
+
+// A dashboard of the user's that no project has as a tab.
+const spare: DashboardDetail = { ...launchWeek, dashboard_id: 1001, title: 'Spare', group_id: 1001, tabs: [{ dashboard_id: 1001, title: 'Spare' }] }
+const mine: DashboardDetail = { ...launchWeek, dashboard_id: 20, title: 'Mine', group_id: 20, tabs: [{ dashboard_id: 20, title: 'Mine' }] }
+
 beforeEach(() => {
   vi.restoreAllMocks()
+  localStorage.clear()
   Object.values(actions).forEach((f) => typeof f === 'function' && f.mockReset())
   vi.spyOn(endpoints, 'dashboards').mockResolvedValue(dashboardsList({ purge_after_days: 30 }))
   vi.spyOn(endpoints, 'projects').mockResolvedValue({ projects: [
     { project_id: 4, name: 'econumo.com', allowed_origins: ['https://econumo.com'], attributes: ['plan'] },
+    { project_id: 7, name: 'shop', allowed_origins: ['https://shop.example'] },
     { project_id: 3, name: 'legacy', archived: true, allowed_origins: [] },
   ] })
   vi.spyOn(endpoints, 'keys').mockResolvedValue({ keys: [
@@ -31,12 +43,32 @@ beforeEach(() => {
     keys: [{ key: 'plan', events: 900, max_values: 3, received: true, declared: true }],
   })
   vi.spyOn(endpoints, 'capUsage').mockResolvedValue({ project_id: 4, from: 'a', to: 'b', dimensions: [] })
+  vi.spyOn(endpoints, 'projectTabs').mockResolvedValue({ tabs })
+  vi.spyOn(endpoints, 'dashboard').mockImplementation(async (id) => {
+    const d = { ...details, 20: mine, 1001: spare }[id]
+    if (!d) throw new ApiError(404, 'no such dashboard', 'not_found')
+    return d
+  })
+  vi.spyOn(endpoints, 'widgetData').mockImplementation(async (id) => answerFor(widgetsById.get(id)!))
+  vi.spyOn(endpoints, 'saveView').mockResolvedValue({ status: 'saved' })
 })
+
+function LocationProbe() {
+  const location = useLocation()
+  return <output data-testid="location">{location.pathname + location.search}</output>
+}
+
+const location = () => screen.getByTestId('location').textContent
 
 function renderAt(path: string) {
   return renderWithProviders(
     <MemoryRouter initialEntries={[path]}>
-      <Routes><Route path="/projects/:id" element={<Project />} /></Routes>
+      <Routes>
+        <Route path="/projects/:id" element={<ProjectIndex />} />
+        <Route path="/projects/:id/setup" element={<Project />} />
+        <Route path="/projects/:id/dashboards/:dashId" element={<Project />} />
+      </Routes>
+      <LocationProbe />
     </MemoryRouter>
   )
 }
@@ -118,7 +150,7 @@ describe('Project', () => {
     actions.disableKey.mockResolvedValue(true)
     renderAt('/projects/4')
     const keys = await screen.findByRole('region', { name: 'Ingest keys' })
-    const row = within(keys).getByRole('row', { name: /web/ })
+    const row = await within(keys).findByRole('row', { name: /web/ })
     expect(within(row).getByText('active')).toBeInTheDocument()
     await user.click(within(row).getByRole('button', { name: 'Disable web' }))
     expect(actions.disableKey).not.toHaveBeenCalled()
@@ -132,7 +164,7 @@ describe('Project', () => {
     actions.enableKey.mockResolvedValue(true)
     renderAt('/projects/4')
     const keys = await screen.findByRole('region', { name: 'Ingest keys' })
-    await user.click(within(keys).getByRole('button', { name: 'Enable old' }))
+    await user.click(await within(keys).findByRole('button', { name: 'Enable old' }))
     expect(actions.enableKey).toHaveBeenCalledWith(4, 'old')
   })
 
@@ -243,9 +275,197 @@ describe('Project', () => {
     const user = userEvent.setup()
     renderAt('/projects/4')
     const keys = await screen.findByRole('region', { name: 'Ingest keys' })
-    await user.click(within(keys).getByRole('button', { name: 'Disable web' }))
+    await user.click(await within(keys).findByRole('button', { name: 'Disable web' }))
     expect(await screen.findByText('Disable web?')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Cancel' }))
     expect(screen.queryByText('Disable null?')).not.toBeInTheDocument()
+  })
+})
+
+describe('Project tabs', () => {
+  it('opens a project on Setup, keeping the range', async () => {
+    renderAt('/projects/7?range=30d')
+    expect(await screen.findByRole('region', { name: 'Usage' })).toBeInTheDocument()
+    expect(location()).toBe('/projects/7/setup?range=30d')
+  })
+
+  it('redirects /projects/:id to its Setup tab', async () => {
+    renderAt('/projects/7')
+    expect(await screen.findByRole('region', { name: 'Usage' })).toBeInTheDocument()
+    expect(location()).toBe('/projects/7/setup')
+  })
+
+  it('reads Setup, the built-ins, your own, then Add tab', async () => {
+    renderAt('/projects/7/setup')
+    await screen.findByRole('tab', { name: 'Mine' })
+    const row = screen.getAllByRole('tab')
+    expect(row.map((t) => t.textContent)).toEqual(['Setup', 'Views', 'Product', 'Mine'])
+    const add = screen.getByRole('button', { name: 'Add tab' })
+    expect(row.at(-1)!.compareDocumentPosition(add) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('shows a dashboard tab with the project pinned on every widget that follows one', async () => {
+    // The dashboard's own saved view names another project: the page ignores it.
+    vi.mocked(endpoints.dashboard).mockImplementation(async (id) => ({ ...details[id], project_id: 1 }))
+    renderAt('/projects/7/dashboards/1')
+    expect(await screen.findByRole('heading', { name: 'Views', level: 1 })).toBeInTheDocument()
+    expect(await screen.findByText('Visitors per day')).toBeInTheDocument()
+    await vi.waitFor(() => expect(endpoints.widgetData).toHaveBeenCalled())
+    const asked = vi.mocked(endpoints.widgetData).mock.calls
+    for (const [id, q] of asked) {
+      if (widgetsById.get(id)!.follows_project) expect(q.project_id).toBe(7)
+    }
+    expect(screen.queryByRole('button', { name: /^Project:/ })).not.toBeInTheDocument()
+  })
+
+  it("offers Share… and Download PNG on a dashboard tab's widgets, under the pinned project", async () => {
+    const user = userEvent.setup()
+    renderAt('/projects/7/dashboards/1')
+    await vi.waitFor(() => expect(endpoints.widgetData).toHaveBeenCalled())
+    await user.click((await screen.findAllByRole('button', { name: 'Widget actions' }))[0])
+    expect(await screen.findByRole('menuitem', { name: 'Share…' })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: 'Download PNG' })).toBeInTheDocument()
+  })
+
+  it('keeps the range when switching tabs', async () => {
+    const user = userEvent.setup()
+    renderAt('/projects/7/dashboards/1?range=30d')
+    await user.click(await screen.findByRole('tab', { name: 'Product' }))
+    expect(await screen.findByRole('heading', { name: 'Product' })).toBeInTheDocument()
+    expect(location()).toBe('/projects/7/dashboards/2?range=30d')
+    await user.click(screen.getByRole('tab', { name: 'Setup' }))
+    expect(await screen.findByRole('region', { name: 'Usage' })).toBeInTheDocument()
+    expect(location()).toBe('/projects/7/setup?range=30d')
+  })
+
+  it("says a dashboard isn't a tab of the project, and adds it", async () => {
+    const user = userEvent.setup()
+    const add = vi.spyOn(endpoints, 'addProjectTab').mockResolvedValue({
+      tabs: [...tabs, { dashboard_id: 1001, title: 'Spare', owner: 'user', group_id: 1001 }],
+    })
+    renderAt('/projects/7/dashboards/1001')
+    expect(await screen.findByText("Spare isn't a tab of shop")).toBeInTheDocument()
+    await user.click(screen.getByText('Add tab', { selector: 'button' }))
+    expect(add).toHaveBeenCalledWith(7, { dashboard_id: 1001 })
+    expect(await screen.findByRole('heading', { name: 'Spare' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Spare' })).toBeInTheDocument()
+  })
+
+  it('lists a removed built-in under Built-in, and adds it as a tab', async () => {
+    const user = userEvent.setup()
+    const add = vi.spyOn(endpoints, 'addProjectTab').mockResolvedValue({
+      tabs: [tabs[0], tabs[1], { dashboard_id: 3, title: 'Users', owner: 'system', group_id: 1 }, tabs[2]],
+    })
+    renderAt('/projects/7/setup')
+    await user.click(await screen.findByRole('button', { name: 'Add tab' }))
+    const builtin = await screen.findByRole('group', { name: 'Built-in' })
+    expect(within(builtin).getAllByRole('button').map((b) => b.textContent)).toEqual(['Users', 'Groups', 'Retention'])
+    const own = screen.getByRole('group', { name: 'Your dashboards' })
+    expect(within(own).getAllByRole('button').map((b) => b.textContent)).toEqual(['Launch week', 'Marketing', 'Funnel'])
+    await user.click(within(builtin).getByRole('button', { name: 'Users' }))
+    expect(add).toHaveBeenCalledWith(7, { dashboard_id: 3 })
+    await vi.waitFor(() => expect(location()).toBe('/projects/7/dashboards/3'))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('says when every dashboard is already a tab', async () => {
+    const user = userEvent.setup()
+    const all = dashboardsList().dashboards.filter((d) => !d.archived_at)
+    vi.mocked(endpoints.projectTabs).mockResolvedValue({
+      tabs: all.map((d) => ({ dashboard_id: d.dashboard_id, title: d.title, owner: d.owner, group_id: d.group_id })),
+    })
+    renderAt('/projects/7/setup')
+    await user.click(await screen.findByRole('button', { name: 'Add tab' }))
+    expect(await screen.findByText('Every dashboard is already a tab of this project')).toBeInTheDocument()
+  })
+
+  it('removes a tab from the project and lands on the one before it', async () => {
+    const user = userEvent.setup()
+    const remove = vi.spyOn(endpoints, 'removeProjectTab').mockResolvedValue({ tabs: [tabs[0], tabs[2]] })
+    renderAt('/projects/7/dashboards/2?range=7d')
+    await user.click(await screen.findByRole('button', { name: 'Tab actions' }))
+    expect(screen.getByRole('menuitem', { name: 'Open as dashboard' })).toHaveAttribute('href', '/dashboards/2?project=7')
+    await user.click(screen.getByRole('menuitem', { name: 'Remove from this project' }))
+    expect(remove).toHaveBeenCalledWith(7, 2)
+    await vi.waitFor(() => expect(location()).toBe('/projects/7/dashboards/1?range=7d'))
+  })
+
+  it('moves your own tab right or left from its menu on a phone, naming the tab it goes after', async () => {
+    const width = window.innerWidth
+    window.innerWidth = 390
+    try {
+      const user = userEvent.setup()
+      const ours: ProjectTab = { dashboard_id: 21, title: 'Ours', owner: 'user', group_id: 21 }
+      vi.mocked(endpoints.projectTabs).mockResolvedValue({ tabs: [...tabs, ours] })
+      const move = vi.spyOn(endpoints, 'moveProjectTab').mockResolvedValue({ tabs: [tabs[0], tabs[1], ours, tabs[2]] })
+      renderAt('/projects/7/dashboards/20')
+      await screen.findByRole('heading', { name: 'Mine', level: 1 })
+
+      await user.click(screen.getByRole('button', { name: 'Tab actions' }))
+      expect(screen.getByRole('menuitem', { name: 'Move left' })).toHaveAttribute('data-disabled')
+      await user.click(screen.getByRole('menuitem', { name: 'Move right' }))
+      expect(move).toHaveBeenCalledWith(7, 20, 21)
+      await vi.waitFor(() =>
+        expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Setup', 'Views', 'Product', 'Ours', 'Mine'])
+      )
+
+      move.mockResolvedValue({ tabs: [...tabs, ours] })
+      await user.click(screen.getByRole('button', { name: 'Tab actions' }))
+      expect(screen.getByRole('menuitem', { name: 'Move right' })).toHaveAttribute('data-disabled')
+      await user.click(screen.getByRole('menuitem', { name: 'Move left' }))
+      expect(move).toHaveBeenLastCalledWith(7, 20, 0)
+      await vi.waitFor(() =>
+        expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Setup', 'Views', 'Product', 'Mine', 'Ours'])
+      )
+    } finally {
+      window.innerWidth = width
+    }
+  })
+
+  it('offers no move on a built-in tab', async () => {
+    const width = window.innerWidth
+    window.innerWidth = 390
+    try {
+      const user = userEvent.setup()
+      renderAt('/projects/7/dashboards/2')
+      await screen.findByRole('heading', { name: 'Product', level: 1 })
+      await user.click(screen.getByRole('button', { name: 'Tab actions' }))
+      expect(screen.queryByRole('menuitem', { name: 'Move left' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('menuitem', { name: 'Move right' })).not.toBeInTheDocument()
+    } finally {
+      window.innerWidth = width
+    }
+  })
+
+  it('in reporting dev, which serves no project tabs, asks for none and offers no tab writes', async () => {
+    vi.mocked(endpoints.dashboards).mockResolvedValue(dashboardsList({ dev: true }))
+    vi.mocked(endpoints.projectTabs).mockRejectedValue(new ApiError(404, 'not found'))
+    renderAt('/projects/7/setup')
+    expect(await screen.findByRole('region', { name: 'Usage' })).toBeInTheDocument()
+    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Setup'])
+    expect(screen.queryByRole('button', { name: 'Add tab' })).not.toBeInTheDocument()
+    expect(endpoints.projectTabs).not.toHaveBeenCalled()
+  })
+
+  it('in reporting dev, says a dashboard tab is not served there rather than failing', async () => {
+    vi.mocked(endpoints.dashboards).mockResolvedValue(dashboardsList({ dev: true }))
+    vi.mocked(endpoints.projectTabs).mockRejectedValue(new ApiError(404, 'not found'))
+    renderAt('/projects/7/dashboards/1')
+    expect(await screen.findByText('No project tabs in reporting dev')).toBeInTheDocument()
+    expect(screen.queryByText('No such dashboard')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Tab actions' })).not.toBeInTheDocument()
+    expect(endpoints.projectTabs).not.toHaveBeenCalled()
+  })
+
+  it('never saves a dashboard view, whatever the range or tab', async () => {
+    const user = userEvent.setup()
+    renderAt('/projects/7/dashboards/1')
+    await screen.findByRole('heading', { name: 'Views', level: 1 })
+    await user.click(screen.getByRole('button', { name: /^Range:/ }))
+    await user.click(await screen.findByRole('menuitemradio', { name: 'Last month' }))
+    await vi.waitFor(() => expect(location()).toBe('/projects/7/dashboards/1?range=30d'))
+    await user.click(screen.getByRole('tab', { name: 'Product' }))
+    await screen.findByRole('heading', { name: 'Product' })
+    expect(endpoints.saveView).not.toHaveBeenCalled()
   })
 })

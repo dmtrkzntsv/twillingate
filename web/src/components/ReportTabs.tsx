@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { DndContext, closestCenter } from '@dnd-kit/core'
 import { SortableContext, horizontalListSortingStrategy } from '@dnd-kit/sortable'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -23,6 +24,13 @@ interface Props {
    * refused, which snaps the tab back.
    */
   onMove?: (id: number, to: number) => Promise<boolean>
+  /**
+   * Tabs that lead the row and never move (a project's Setup and its
+   * built-ins); `onMove`'s `to` counts only the tabs after them.
+   */
+  fixedIds?: number[]
+  /** After the row on wide screens, beside the select on phones (a project's "+"). */
+  trailing?: ReactNode
 }
 
 /**
@@ -31,13 +39,16 @@ interface Props {
  * for every dashboard, a group of one tab included, system or user. With
  * `sortable` and `onMove`, the row's tabs drag to a new order (D14);
  * phones reorder from the header menu's Move left/right instead.
+ * `fixedIds` lead the row as plain tabs, whatever `sortable` says.
  */
-export default function ReportTabs({ tabs, currentId, onSelect, sortable = false, onMove }: Props) {
+export default function ReportTabs({ tabs, currentId, onSelect, sortable = false, onMove, fixedIds = [], trailing }: Props) {
   const value = String(currentId)
   const select = (v: string) => onSelect(Number(v))
   const byId = new Map(tabs.map((t) => [t.dashboard_id, t]))
+  const fixed = tabs.filter((t) => fixedIds.includes(t.dashboard_id))
+  const movable = tabs.filter((t) => !fixedIds.includes(t.dashboard_id))
   const { order, busy, context } = useReorder(
-    tabs.map((t) => t.dashboard_id),
+    movable.map((t) => t.dashboard_id),
     onMove ?? noMove,
     'x',
     (id) => byId.get(id)?.title ?? String(id)
@@ -46,6 +57,11 @@ export default function ReportTabs({ tabs, currentId, onSelect, sortable = false
 
   const list = (
     <TabsList variant="line" aria-label="Tabs" className="w-max">
+      {fixed.map((d) => (
+        <TabsTrigger key={d.dashboard_id} value={String(d.dashboard_id)} className={trigger}>
+          {d.title}
+        </TabsTrigger>
+      ))}
       {sortable
         ? order.map((id) => (
             <SortableTab
@@ -58,7 +74,7 @@ export default function ReportTabs({ tabs, currentId, onSelect, sortable = false
               onSelect={onSelect}
             />
           ))
-        : tabs.map((d) => (
+        : movable.map((d) => (
             <TabsTrigger key={d.dashboard_id} value={String(d.dashboard_id)} className={trigger}>
               {d.title}
             </TabsTrigger>
@@ -96,6 +112,7 @@ export default function ReportTabs({ tabs, currentId, onSelect, sortable = false
           ))}
         </SelectContent>
       </Select>
+      {trailing}
     </>
   )
 }

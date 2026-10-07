@@ -21,7 +21,7 @@ import (
 
 // serverInstructions are sent on connect (MCP's initialize result): the
 // two guides are where an agent starts, whatever it came to do.
-const serverInstructions = "To integrate a site or app, call integration_guide. To build or change dashboards, call reporting_guide. To customize a system dashboard, duplicate it with whole_group, then archive the original with archive_dashboard whole_group to take it out of the sidebar. If widgets broke after an update, read the release notes at https://github.com/dmtrkzntsv/twillingate/releases."
+const serverInstructions = "To integrate a site or app, call integration_guide. To build or change dashboards, call reporting_guide. To customize a system dashboard, duplicate it with whole_group, then take the original out of the sidebar with update_dashboard {sidebar: false}; add your copy to projects with add_project_tab. If widgets broke after an update, read the release notes at https://github.com/dmtrkzntsv/twillingate/releases."
 
 // guideSections are the parts of docs/reporting.md the guide carries.
 var guideSections = []string{"## Workflow", "## Rules"}
@@ -67,13 +67,16 @@ func (h *host) reportingGuide(ctx context.Context, _ struct{}) (guideOut, error)
 		b.WriteString("\nNone yet: a widget following the project has nothing to show until create_project makes one.\n")
 	}
 
-	b.WriteString("\n## Dashboards\n\nIn sidebar order. A system group is archived and restored whole (whole_group) and is otherwise read-only; duplicate_dashboard makes an editable copy; archive the system group whole to take it out of the sidebar. Rows sharing a group_id are the tabs of one sidebar entry.\n\n| dashboard_id | title | owner | group_id | archived |\n| --- | --- | --- | --- | --- |\n")
+	b.WriteString("\n## Dashboards\n\nIn sidebar order. System dashboards are never archived and are otherwise read-only: update_dashboard {sidebar: false} takes a system group out of the sidebar, and duplicate_dashboard makes an editable copy. Rows sharing a group_id are the tabs of one sidebar entry; sidebar says whether that entry is shown.\n\n| dashboard_id | title | owner | group_id | sidebar | archived |\n| --- | --- | --- | --- | --- | --- |\n")
 	for _, d := range dashboards.Dashboards {
-		archived := "no"
+		sidebar, archived := "no", "no"
+		if d.Sidebar {
+			sidebar = "yes"
+		}
 		if d.ArchivedAt != "" {
 			archived = d.ArchivedAt
 		}
-		fmt.Fprintf(&b, "| %d | %s | %s | %d | %s |\n", d.ID, tableCell(d.Title), d.Owner, d.GroupID, archived)
+		fmt.Fprintf(&b, "| %d | %s | %s | %d | %s | %s |\n", d.ID, tableCell(d.Title), d.Owner, d.GroupID, sidebar, archived)
 	}
 	fmt.Fprintf(&b, "\nDays are grouped in %s.\n", dashboards.Timezone)
 

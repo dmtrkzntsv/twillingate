@@ -126,16 +126,19 @@ func syncComponents(ctx context.Context, tx *sql.Tx, components []store.Componen
 	return int(removed), err
 }
 
-// syncDashboards upserts every system dashboard by id (title and sort_key
-// only; last_range is written on insert alone, so a viewer's later
-// SetDashboardView survives a resync), then deletes any system dashboard
-// not named in the list. A manifest id that already names a row owned by
-// someone other than 'system' is refused outright — the upsert's WHERE
-// clause would otherwise silently no-op the update and leave the row
-// exactly as a plain INSERT ... ON CONFLICT DO UPDATE ... WHERE false
-// does (verified by hand against SQLite: no error, no change), which
-// would then let the per-dashboard widget sync attach the release's
-// widgets onto that unrelated row.
+// syncDashboards upserts every system dashboard by id (title, sort_key,
+// group_id and project_tab; last_range and sidebar are written on insert
+// alone, so a viewer's later SetDashboardView and a user's Hide survive a
+// resync), then deletes any system dashboard not named in the list. The
+// update also makes an archived system row live again, out of the
+// sidebar: only an older binary, after a rollback, archives one (its
+// Hide), and this version has no way back from that. A manifest id that
+// already names a row owned by someone other than 'system' is refused
+// outright — the upsert's WHERE clause would otherwise silently no-op the
+// update and leave the row exactly as a plain INSERT ... ON CONFLICT DO
+// UPDATE ... WHERE false does (verified by hand against SQLite: no error,
+// no change), which would then let the per-dashboard widget sync attach
+// the release's widgets onto that unrelated row.
 //
 // Deleting a dropped system dashboard cascades to its widgets (ON DELETE
 // CASCADE), so those never reach the per-dashboard syncWidgets loop; this
@@ -171,21 +174,25 @@ func syncDashboards(ctx context.Context, tx *sql.Tx, dashboards []store.SystemDa
 		if groupID == 0 {
 			groupID = dash.ID
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO dashboards (id, owner, title, sort_key, group_id, last_range)
-			VALUES (?,?,?,?,?,?)
+		if _, err := tx.ExecContext(ctx, `INSERT INTO dashboards (id, owner, title, sort_key, group_id, last_range, sidebar, project_tab)
+			VALUES (?,?,?,?,?,?,?,?)
 			ON CONFLICT(id) DO UPDATE SET title=excluded.title, sort_key=excluded.sort_key,
-				group_id=excluded.group_id, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')
+				group_id=excluded.group_id, project_tab=excluded.project_tab,
+				sidebar=CASE WHEN dashboards.archived_at IS NULL THEN dashboards.sidebar ELSE 0 END,
+				archived_at=NULL,
+				updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')
 			WHERE dashboards.owner=?`,
-			dash.ID, store.OwnerSystem, dash.Title, dash.SortKey, groupID, dash.Range, store.OwnerSystem,
+			dash.ID, store.OwnerSystem, dash.Title, dash.SortKey, groupID, dash.Range,
+			dash.Sidebar, dash.ProjectTab, store.OwnerSystem,
 		); err != nil {
 			return 0, 0, fmt.Errorf("reporting sync: system dashboard %d: %w", dash.ID, err)
 		}
 	}
 
 	// D3: a dashboard a release adds to a group whose pre-existing members
-	// are all archived arrives archived itself, rather than resurrecting a
-	// group the user archived whole. This runs once, after every upsert
-	// above, and judges each new id (one that didn't exist before this
+	// are all hidden (sidebar 0) arrives hidden itself, rather than
+	// resurrecting a group the user hid whole. This runs once, after every
+	// upsert above, and judges each new id (one that didn't exist before this
 	// sync) by its final group_id: manifest rows arrive sorted by id
 	// (internal/reporting/files.go), not grouped by leader, so a new
 	// group's leader can have a higher id than a pre-existing member that
@@ -201,16 +208,15 @@ func syncDashboards(ctx context.Context, tx *sql.Tx, dashboards []store.SystemDa
 		args = append(args, toArgs(newIDs)...)
 		args = append(args, store.OwnerSystem)
 		args = append(args, toArgs(newIDs)...)
-		if _, err := tx.ExecContext(ctx, `UPDATE dashboards
-			SET archived_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')
+		if _, err := tx.ExecContext(ctx, `UPDATE dashboards SET sidebar=0
 			WHERE owner=? AND id IN (`+placeholders(len(newIDs))+`)
 			  AND EXISTS (SELECT 1 FROM dashboards other WHERE other.group_id=dashboards.group_id
 					AND other.owner=? AND other.id<>dashboards.id AND other.id NOT IN (`+placeholders(len(newIDs))+`))
 			  AND NOT EXISTS (SELECT 1 FROM dashboards other WHERE other.group_id=dashboards.group_id
 					AND other.owner=? AND other.id<>dashboards.id AND other.id NOT IN (`+placeholders(len(newIDs))+`)
-					AND other.archived_at IS NULL)`,
+					AND other.sidebar=1)`,
 			args...); err != nil {
-			return 0, 0, fmt.Errorf("reporting sync: archive new dashboards of an archived group: %w", err)
+			return 0, 0, fmt.Errorf("reporting sync: hide new dashboards of a hidden group: %w", err)
 		}
 	}
 

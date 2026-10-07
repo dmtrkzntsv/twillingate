@@ -209,7 +209,7 @@ out of scope.
   The dialog follows the web rules: buttons get the pointer cursor from
   `index.css`, and it does not scroll sideways at 360px.
 
-- **D5. Migration 032: table `widget_shares`.**
+- **D5. Migration 033: table `widget_shares`.**
 
   ```sql
   CREATE TABLE widget_shares (
@@ -358,7 +358,7 @@ out of scope.
   as the console's one unauthenticated content, with the footer credit.
 - `docs/deployment.md`: the Caddy example that exposes only `/share/*` of
   a private console to the internet under `CONSOLE_URL`'s hostname, and that `RETENTION_ARCHIVED_DAYS` covers shares.
-- `deploy/UPGRADES.md`: migration 032, which only adds a table and needs
+- `deploy/UPGRADES.md`: migration 033, which only adds a table and needs
   no pre-check.
 
 ## Tests

@@ -205,7 +205,7 @@ func TestReportingRefusals(t *testing.T) {
 	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), system) {
 		t.Errorf("PATCH system dashboard = %d %s", rec.Code, rec.Body.String())
 	}
-	const archiveSystem = "dashboard 1 is a system dashboard, archived and restored with its group; pass whole_group"
+	const archiveSystem = "dashboard 1 is a built-in dashboard and is never archived; update_dashboard {sidebar: false} takes its group out of the sidebar"
 	res := callTool(t, cs, "archive_dashboard", map[string]any{"dashboard_id": 1})
 	if !res.IsError || !strings.Contains(textOf(res), archiveSystem) {
 		t.Errorf("archive_dashboard(1) = %s", textOf(res))
@@ -690,5 +690,101 @@ func TestUpdateDashboardWholeGroup(t *testing.T) {
 	}
 	if res := callTool(t, cs, "create_dashboard", map[string]any{"title": "a"}); !res.IsError {
 		t.Errorf("create_dashboard with a 1-character title succeeded")
+	}
+}
+
+// projectTabs is list_project_tabs' answer, decoded.
+type projectTabs struct {
+	Tabs []struct {
+		ID      int64  `json:"dashboard_id"`
+		Title   string `json:"title"`
+		Owner   string `json:"owner"`
+		GroupID int64  `json:"group_id"`
+	} `json:"tabs"`
+}
+
+// TestProjectTabTools drives the four project tab tools over MCP: a copy
+// of a built-in added to a project's page, moved, then removed, leaves
+// the page as it was.
+func TestProjectTabTools(t *testing.T) {
+	_, cs := newTestHost(t)
+	var before, tabs projectTabs
+	toolJSON(t, cs, "list_project_tabs", map[string]any{"project_id": 1}, &before)
+	if len(before.Tabs) == 0 || before.Tabs[0].Owner != "system" {
+		t.Fatalf("list_project_tabs = %+v, want the built-ins first", before)
+	}
+
+	var a, b struct {
+		ID int64 `json:"dashboard_id"`
+	}
+	toolJSON(t, cs, "duplicate_dashboard", map[string]any{"dashboard_id": 1}, &a)
+	toolJSON(t, cs, "duplicate_dashboard", map[string]any{"dashboard_id": 1}, &b)
+	toolJSON(t, cs, "add_project_tab", map[string]any{"project_id": 1, "dashboard_id": a.ID}, nil)
+	toolJSON(t, cs, "add_project_tab", map[string]any{"project_id": 1, "dashboard_id": b.ID}, &tabs)
+	n := len(before.Tabs)
+	if len(tabs.Tabs) != n+2 || tabs.Tabs[n].ID != a.ID || tabs.Tabs[n+1].ID != b.ID || tabs.Tabs[n].Owner != "user" {
+		t.Fatalf("add_project_tab = %+v, want the copies last, in the order added", tabs)
+	}
+	if res := callTool(t, cs, "add_project_tab", map[string]any{"project_id": 1, "dashboard_id": a.ID}); !res.IsError {
+		t.Errorf("adding a tab twice succeeded")
+	}
+	toolJSON(t, cs, "move_project_tab", map[string]any{"project_id": 1, "dashboard_id": b.ID, "after": 0}, &tabs)
+	if tabs.Tabs[n].ID != b.ID || tabs.Tabs[n+1].ID != a.ID {
+		t.Errorf("move_project_tab = %+v, want %d first among the user's own, after the built-ins", tabs, b.ID)
+	}
+	toolJSON(t, cs, "remove_project_tab", map[string]any{"project_id": 1, "dashboard_id": a.ID}, nil)
+	toolJSON(t, cs, "remove_project_tab", map[string]any{"project_id": 1, "dashboard_id": b.ID}, &tabs)
+	if fmt.Sprint(tabs) != fmt.Sprint(before) {
+		t.Errorf("after remove_project_tab = %+v, want %+v", tabs, before)
+	}
+}
+
+// TestUpdateDashboardSidebarTool: sidebar on update_dashboard takes a
+// built-in's whole group out of the sidebar.
+func TestUpdateDashboardSidebarTool(t *testing.T) {
+	_, cs := newTestHost(t)
+	var info struct {
+		Sidebar *bool `json:"sidebar"`
+	}
+	toolJSON(t, cs, "update_dashboard", map[string]any{"dashboard_id": 1, "sidebar": false}, &info)
+	if info.Sidebar == nil || *info.Sidebar {
+		t.Fatalf("update_dashboard sidebar = %v, want false", info.Sidebar)
+	}
+	var list struct {
+		Dashboards []struct {
+			ID      int64 `json:"dashboard_id"`
+			GroupID int64 `json:"group_id"`
+			Owner   string
+			Sidebar bool `json:"sidebar"`
+		} `json:"dashboards"`
+	}
+	toolJSON(t, cs, "list_dashboards", map[string]any{}, &list)
+	members := 0
+	for _, d := range list.Dashboards {
+		if d.Owner == "system" && d.GroupID == 1 {
+			members++
+			if d.Sidebar {
+				t.Errorf("dashboard %d is still in the sidebar", d.ID)
+			}
+		}
+	}
+	if members < 2 {
+		t.Errorf("group 1 has %d members, want the built-ins", members)
+	}
+}
+
+// TestArchiveBuiltinRefused: a built-in is never archived, not even with
+// its whole group; over REST that is a 400.
+func TestArchiveBuiltinRefused(t *testing.T) {
+	h, cs := newTestHost(t)
+	r := newTestRegistrar(t, h)
+	if res := callTool(t, cs, "archive_dashboard", map[string]any{"dashboard_id": 1, "whole_group": true}); !res.IsError {
+		t.Errorf("archive_dashboard(1, whole_group) = %s, want a refusal", textOf(res))
+	}
+	if rec := serveREST(t, r, "POST", "/api/dashboards/1/archive", `{"whole_group":true}`); rec.Code != http.StatusBadRequest {
+		t.Errorf("POST archive whole_group = %d %s, want 400", rec.Code, rec.Body.String())
+	}
+	if archivedAt := dashboardArchivedAt(t, cs); archivedAt[1] != "" {
+		t.Errorf("dashboard 1 archived_at = %q, want live", archivedAt[1])
 	}
 }

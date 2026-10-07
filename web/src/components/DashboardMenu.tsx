@@ -88,12 +88,14 @@ interface GroupMenuProps {
  * while the window has focus. "Duplicate dashboard" copies every tab and
  * opens the copy, never archiving anything; "Archive dashboard" takes the
  * whole group out of the sidebar and lands on "/dashboards" ("Hide
- * dashboard" on a system group, which comes back from the gallery). An
- * archived group offers neither, since its banner already brings it back.
+ * dashboard" on a system group, which sets `sidebar` off instead and comes
+ * back from the gallery). A hidden system group offers no Hide, since its
+ * banner already brings it back.
  */
 export function GroupMenu({ dashboard, editable, refresh, autoRefresh }: GroupMenuProps) {
-  const { duplicate, archive, pending } = useDashboardActions()
+  const { duplicate, archive, setSidebar, pending } = useDashboardActions()
   const first = dashboard.tabs[0] ?? dashboard
+  const groupTitle = dashboard.group_title ?? first.title
 
   return (
     <DropdownMenu>
@@ -119,18 +121,22 @@ export function GroupMenu({ dashboard, editable, refresh, autoRefresh }: GroupMe
               <CopyIcon />
               Duplicate dashboard
             </DropdownMenuItem>
-            {!dashboard.archived_at && (
+            {dashboard.owner === 'system' && dashboard.sidebar && (
               <DropdownMenuItem
                 disabled={pending}
-                onClick={() =>
-                  void archive(
-                    { dashboard_id: first.dashboard_id, title: dashboard.group_title ?? first.title },
-                    { wholeGroup: true, navigateTo: '/dashboards', hidden: dashboard.owner === 'system' }
-                  )
-                }
+                onClick={() => void setSidebar({ dashboard_id: first.dashboard_id, title: groupTitle }, false, { navigateTo: '/dashboards' })}
               >
-                {dashboard.owner === 'system' ? <EyeOffIcon /> : <ArchiveIcon />}
-                {dashboard.owner === 'system' ? 'Hide dashboard' : 'Archive dashboard'}
+                <EyeOffIcon />
+                Hide dashboard
+              </DropdownMenuItem>
+            )}
+            {dashboard.owner === 'user' && !dashboard.archived_at && (
+              <DropdownMenuItem
+                disabled={pending}
+                onClick={() => void archive({ dashboard_id: first.dashboard_id, title: groupTitle }, { wholeGroup: true, navigateTo: '/dashboards' })}
+              >
+                <ArchiveIcon />
+                Archive dashboard
               </DropdownMenuItem>
             )}
           </>

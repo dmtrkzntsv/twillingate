@@ -225,7 +225,7 @@ func documentedTools() map[string]bool {
 // outside it returns "" so the assertion above fails loudly rather than
 // silently passing on a substring that happens to match.
 func spellOut(n int) string {
-	if n < 15 || n > 50 {
+	if n < 15 || n > 59 {
 		return ""
 	}
 	teens := map[int]string{15: "fifteen", 16: "sixteen", 17: "seventeen", 18: "eighteen", 19: "nineteen"}
