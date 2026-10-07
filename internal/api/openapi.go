@@ -30,8 +30,8 @@ var pathParam = regexp.MustCompile(`\{([a-z_]+)\}`)
 // what the routes accept. 3.1 because its schemas are JSON Schema 2020-12,
 // which is what jsonschema.For infers: they go in unchanged. A GET's input
 // becomes query parameters and any other method's a JSON body, as
-// decodeRequest reads them; a field named by a path wildcard is a path
-// parameter on both.
+// decodeRequest reads them (a multipart one for a restRaw upload); a field
+// named by a path wildcard is a path parameter on both.
 func openAPI(specs []spec) ([]byte, error) {
 	paths := map[string]map[string]any{}
 	for _, s := range specs {
@@ -63,7 +63,7 @@ func openAPI(specs []spec) ([]byte, error) {
 			"title":       "Twillingate API",
 			"version":     version.Version,
 			"license":     map[string]string{"name": "GNU Affero General Public License v3.0 only", "identifier": "AGPL-3.0-only"},
-			"description": "Every route but PUT /api/dashboards/{dashboard_id}/view mirrors the MCP tool its operationId names. Reference: docs://twillingate and docs://reporting.",
+			"description": "Every route but PUT /api/dashboards/{dashboard_id}/view, POST /api/widget-shares and GET /api/widget-shares/{id}/image mirrors the MCP tool its operationId names. Reference: docs://twillingate and docs://reporting.",
 		},
 		// Relative: the routes are wherever this document was fetched from.
 		"servers":  []map[string]string{{"url": "/"}},
@@ -95,10 +95,19 @@ var (
 	unauthorized = map[string]any{"description": "Missing or bad bearer token."}
 )
 
+// fileParts are the fields of a multipart body that are files, not text:
+// the two PNGs of create_widget_share.
+var fileParts = []string{"image", "image_2x"}
+
 func operation(s spec) (map[string]any, error) {
 	status := s.Status
 	if status == 0 {
 		status = http.StatusOK
+	}
+	success := map[string]any{"description": http.StatusText(status),
+		"content": map[string]any{"application/json": map[string]any{"schema": s.out}}}
+	if s.Image {
+		success["content"] = map[string]any{"image/png": map[string]any{"schema": map[string]string{"type": "string", "format": "binary"}}}
 	}
 	op := map[string]any{
 		"operationId": s.Name,
@@ -106,8 +115,7 @@ func operation(s spec) (map[string]any, error) {
 		"summary":     summaryOf(s.Description),
 		"description": s.Description,
 		"responses": map[string]any{
-			strconv.Itoa(status): map[string]any{"description": http.StatusText(status),
-				"content": map[string]any{"application/json": map[string]any{"schema": s.out}}},
+			strconv.Itoa(status): success,
 			"401":     unauthorized,
 			"default": errorResponse,
 		},
@@ -146,9 +154,20 @@ func operation(s spec) (map[string]any, error) {
 		op["parameters"] = params
 	}
 	if len(body.Properties) > 0 {
+		contentType := "application/json"
+		if s.Multipart {
+			contentType = "multipart/form-data"
+			for _, name := range fileParts {
+				if prop, ok := body.Properties[name]; ok {
+					file := *prop
+					file.Format = "binary"
+					body.Properties[name] = &file
+				}
+			}
+		}
 		op["requestBody"] = map[string]any{
 			"required": len(body.Required) > 0,
-			"content":  map[string]any{"application/json": map[string]any{"schema": &body}},
+			"content":  map[string]any{contentType: map[string]any{"schema": &body}},
 		}
 	}
 	return op, nil

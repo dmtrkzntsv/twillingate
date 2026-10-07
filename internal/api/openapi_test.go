@@ -190,3 +190,37 @@ func TestSummaryOf(t *testing.T) {
 		}
 	}
 }
+
+// The share upload is described as the multipart body it is, with its two
+// images as files.
+func TestOpenAPIDescribesTheShareUpload(t *testing.T) {
+	h, _ := newTestHost(t)
+	raw, err := openAPI(newTestRegistrar(t, h).specs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc openAPIDoc
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	op := doc.Paths["/api/widget-shares"]["post"]
+	if op.RequestBody == nil {
+		t.Fatal("create_widget_share has no request body")
+	}
+	body, ok := op.RequestBody.Content["multipart/form-data"]
+	if !ok || len(op.RequestBody.Content) != 1 {
+		t.Fatalf("create_widget_share body content = %v, want multipart/form-data only", op.RequestBody.Content)
+	}
+	for _, name := range []string{"image", "image_2x"} {
+		var prop struct{ Type, Format string }
+		if err := json.Unmarshal(body.Schema.Properties[name], &prop); err != nil || prop.Type != "string" || prop.Format != "binary" {
+			t.Errorf("%s = %s, want a binary string", name, body.Schema.Properties[name])
+		}
+	}
+	if _, ok := body.Schema.Properties["widget_id"]; !ok {
+		t.Errorf("multipart body lacks widget_id: %v", body.Schema.Properties)
+	}
+	if op := doc.Paths["/api/widget-shares/{id}"]["patch"]; op.RequestBody == nil || op.RequestBody.Content["application/json"].Schema.Properties == nil {
+		t.Error("update_widget_share's body is not JSON")
+	}
+}

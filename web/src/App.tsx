@@ -16,6 +16,7 @@ import Landing from '@/pages/Landing'
 import Login from '@/pages/Login'
 import Project, { ProjectIndex } from '@/pages/Project'
 import Projects from '@/pages/Projects'
+import Shares from '@/pages/Shares'
 
 /** Sends a request the API refused with 401 to the login page, in-app, coming back here after. */
 function LoginOnUnauthorized() {
@@ -104,6 +105,14 @@ function App() {
             element={
               <OnlineOnly>
                 <Project />
+              </OnlineOnly>
+            }
+          />
+          <Route
+            path="/shares"
+            element={
+              <OnlineOnly>
+                <Shares />
               </OnlineOnly>
             }
           />

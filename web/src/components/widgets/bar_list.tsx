@@ -1,6 +1,8 @@
+import { useLayoutEffect, useRef, useState } from 'react'
 import { HoverCard, useHover, type HoverRow } from '@/components/chart-parts'
 import { formatExact, formatValue, type Format } from '@/lib/format'
 import { toRecords } from '@/lib/records'
+import { useCardMode } from '@/components/share/card-mode'
 import type { Contract, Example, SqlData, WidgetProps } from './types'
 
 interface BarListProps {
@@ -51,6 +53,15 @@ export const examples: Example[] = [
 
 export default function BarList({ data, props }: WidgetProps<BarListProps>) {
   const { hovered, bind } = useHover<number>()
+  const card = useCardMode()
+  // A card has no scrolling: the top rows that fit, one dropped per pass
+  // before paint (jsdom measures nothing and keeps them all).
+  const list = useRef<HTMLUListElement>(null)
+  const [fit, setFit] = useState(Infinity)
+  useLayoutEffect(() => {
+    const el = list.current
+    if (card && el && el.childElementCount > 1 && el.scrollHeight > el.clientHeight + 1) setFit(el.childElementCount - 1)
+  })
   const records = toRecords(data as SqlData, contract)
   if (records.length === 0) return null
 
@@ -69,12 +80,14 @@ export default function BarList({ data, props }: WidgetProps<BarListProps>) {
 
   return (
     <>
-      <ul className="flex h-full flex-col gap-1 overflow-y-auto py-1">
-        {records.map((r, i) => (
+      <ul ref={list} className={`flex h-full flex-col gap-1 py-1 ${card ? 'overflow-hidden' : 'overflow-y-auto'}`}>
+        {(card ? records.slice(0, fit) : records).map((r, i) => (
           <li
             key={i}
             {...bind(i)}
-            className="group relative flex min-h-8 items-center justify-between gap-3 overflow-hidden rounded-sm px-2.5 text-sm hover:bg-muted/60"
+            className={`group relative flex items-center justify-between gap-3 overflow-hidden rounded-sm hover:bg-muted/60 ${
+              card ? 'min-h-10 px-3.5 text-[20px]' : 'min-h-8 px-2.5 text-sm'
+            }`}
           >
             <div
               data-bar-fill

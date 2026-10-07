@@ -1,6 +1,7 @@
 import { useId } from 'react'
 import { ArrowDownRightIcon, ArrowUpRightIcon } from 'lucide-react'
 import { Area, AreaChart, ResponsiveContainer, YAxis } from 'recharts'
+import { useCardMode } from '@/components/share/card-mode'
 import { formatValue, type Format } from '@/lib/format'
 import { toRecords } from '@/lib/records'
 import type { Contract, Example, SqlData, WidgetProps } from './types'
@@ -77,6 +78,8 @@ export default function Stat({ data, props }: WidgetProps<StatProps>) {
   const sql = data as SqlData
   const format = props.format ?? 'number'
   const records = toRecords(sql, contract)
+  // On a share card the number is the picture: large and centred.
+  const card = useCardMode()
   // An SVG id, so only characters url(#...) takes as they are.
   const fade = 'spark' + useId().replace(/[^a-zA-Z0-9_-]/g, '')
   if (records.length === 0) return null
@@ -86,9 +89,9 @@ export default function Stat({ data, props }: WidgetProps<StatProps>) {
     const value = aggregate(values, props.aggregate ?? 'sum')
     const series = records.map((r, i) => ({ x: String(r.x ?? i), value: Number(r.value ?? 0) }))
     return (
-      <div className="flex h-full flex-col justify-between gap-1 pt-1">
-        <Figure>{formatValue(value, format)}</Figure>
-        <div className="-mx-1 min-h-8 flex-1">
+      <div className={`flex h-full flex-col justify-between gap-1 pt-1 ${card ? 'items-center gap-6' : ''}`}>
+        <Figure card={card}>{formatValue(value, format)}</Figure>
+        <div className={`-mx-1 min-h-8 flex-1 ${card ? 'w-full' : ''}`}>
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart data={series} margin={{ top: 4, right: 4, bottom: 2, left: 4 }}>
               <defs>
@@ -104,7 +107,7 @@ export default function Stat({ data, props }: WidgetProps<StatProps>) {
                 baseValue="dataMin"
                 dataKey="value"
                 stroke="var(--chart-1)"
-                strokeWidth={2}
+                strokeWidth={card ? 3 : 2}
                 fill={`url(#${fade})`}
                 // Only the latest point gets a dot: where the number above stands now.
                 dot={(p: { index: number; cx?: number; cy?: number }) =>
@@ -113,7 +116,7 @@ export default function Stat({ data, props }: WidgetProps<StatProps>) {
                       key="last"
                       cx={p.cx}
                       cy={p.cy}
-                      r={3}
+                      r={card ? 5 : 3}
                       fill="var(--chart-1)"
                       stroke="var(--card)"
                       strokeWidth={2}
@@ -136,15 +139,15 @@ export default function Stat({ data, props }: WidgetProps<StatProps>) {
   const delta = typeof previous === 'number' && previous !== 0 ? (value - previous) / previous : null
 
   return (
-    <div className="flex h-full flex-col items-start justify-center gap-2 pt-1">
-      <Figure>{formatValue(value, format)}</Figure>
+    <div className={`flex h-full flex-col justify-center pt-1 ${card ? 'items-center gap-6' : 'items-start gap-2'}`}>
+      <Figure card={card}>{formatValue(value, format)}</Figure>
       {delta !== null && (
-        <div className="flex items-center gap-1.5 text-xs">
+        <div className={`flex items-center ${card ? 'gap-3 text-[22px] [&_svg]:size-5' : 'gap-1.5 text-xs'}`}>
           <span
             className={
               delta >= 0
-                ? 'inline-flex items-center gap-0.5 rounded-full bg-emerald-500/12 px-1.5 py-0.5 font-medium text-emerald-700 dark:text-emerald-400'
-                : 'inline-flex items-center gap-0.5 rounded-full bg-red-500/12 px-1.5 py-0.5 font-medium text-red-700 dark:text-red-400'
+                ? `inline-flex items-center gap-0.5 rounded-full bg-emerald-500/12 font-medium text-emerald-700 dark:text-emerald-400 ${card ? 'px-3 py-1' : 'px-1.5 py-0.5'}`
+                : `inline-flex items-center gap-0.5 rounded-full bg-red-500/12 font-medium text-red-700 dark:text-red-400 ${card ? 'px-3 py-1' : 'px-1.5 py-0.5'}`
             }
           >
             {delta >= 0 ? <ArrowUpRightIcon className="size-3" /> : <ArrowDownRightIcon className="size-3" />}
@@ -159,6 +162,8 @@ export default function Stat({ data, props }: WidgetProps<StatProps>) {
 }
 
 /** The headline number: large, proportional figures, never the series color. */
-function Figure({ children }: { children: string }) {
-  return <span className="text-3xl leading-none font-semibold tracking-tight">{children}</span>
+function Figure({ children, card }: { children: string; card: boolean }) {
+  return (
+    <span className={`${card ? 'text-[96px]' : 'text-3xl'} leading-none font-semibold tracking-tight`}>{children}</span>
+  )
 }

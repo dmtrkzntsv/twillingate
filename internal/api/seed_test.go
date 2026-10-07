@@ -205,7 +205,7 @@ func newTestHost(t *testing.T) (*host, *mcp.ClientSession) {
 		t.Fatal(err)
 	}
 	h := &host{db: db, reg: reg, ops: manage.NewOps(reg, st),
-		rep:       reporting.New(st, db, reporting.Options{CacheAge: time.Minute, RefreshAge: time.Second}),
+		rep:       reporting.New(st, db, reporting.Options{CacheAge: time.Minute, RefreshAge: time.Second, ShareBaseURL: "https://c.example"}),
 		publicURL: "https://collector.test", logger: logger,
 		limits: limitsFrom(&config.Config{AttributeValuesTopN: config.DefaultAttributeValuesTopN, IdentitiesTopN: config.DefaultIdentitiesTopN})}
 	// host itself carries no path (production has no need for one once

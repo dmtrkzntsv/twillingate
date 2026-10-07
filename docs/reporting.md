@@ -20,6 +20,7 @@ are in [deployment.md](deployment.md).
 - [Examples](#examples)
 - [Parameters and ranges](#parameters-and-ranges)
 - [Layout](#layout)
+- [Sharing a widget](#sharing-a-widget)
 - [Project tabs and the sidebar](#project-tabs-and-the-sidebar)
 - [Archiving and the purge](#archiving-and-the-purge)
 - [Refusals and fixes](#refusals-and-fixes)
@@ -276,6 +277,10 @@ widget_data {"widget_id": 42, "project_id": 7, "from": "2026-09-01", "to": "2026
 | `copy_widget` | `widget_id`, `dashboard_id`, `after` | the independent copy, same size; the original may be on a system dashboard |
 | `archive_widget` | `widget_id` | hides it in place |
 | `restore_widget` | `widget_id` | puts it back where it was |
+| `list_widget_shares` | `widget_id`?, `state`? (`live`/`archived`) | every share, live ones newest first, archived ones most recently archived first, with its URLs and archive date |
+| `update_widget_share` | `id`, `archive_after` | the share, its `archive_at` counted from now (`null` for `project`); an archived share is a `409 conflict` |
+| `archive_widget_share` | `id` | the share, taken down at once: its page and images answer 404 |
+| `restore_widget_share` | `id`, `archive_after`? (default `30d`) | the share, live again at its old URL |
 
 `create_dashboard`, `add_widget`, `update_widget` and `copy_widget` expect you
 to have read `reporting_guide` first: it names the components, the views and
@@ -290,10 +295,15 @@ snapshots built on each read by the same code as their list tool:
 
 Every tool above except `reporting_guide`, which is MCP-only, is also a REST
 route under `/api/`, with the same bearer token, JSON and error shape as the
-routes in [twillingate.md](twillingate.md#http-api). One route has no tool:
-the page stores the viewer's selection with `PUT …/view`, which is viewer
-state rather than a definition, so it is allowed on system dashboards and not
-audited.
+routes in [twillingate.md](twillingate.md#http-api). Three routes have no
+tool, `view`, `create_widget_share` and `widget_share_image`. The page stores
+the viewer's selection with `PUT …/view`, which is viewer state rather than a
+definition, so it is allowed on system dashboards and not audited. It uploads
+a share with `POST /api/widget-shares`, since only a browser can capture the
+picture, and reads a share's picture back with
+`GET /api/widget-shares/{id}/image`, which answers in any state, where the
+public `/share/<id>.png` stops at archiving
+([Sharing a widget](#sharing-a-widget)).
 
 | Method | Path | Mirrors | Input |
 |---|---|---|---|
@@ -317,6 +327,12 @@ audited.
 | `POST` | `/api/widgets/{widget_id}/archive` | `archive_widget` | — |
 | `POST` | `/api/widgets/{widget_id}/restore` | `restore_widget` | — |
 | `PUT` | `/api/dashboards/{dashboard_id}/view` | `view`, REST only: no MCP tool | body: `project_id`, `range`, and `from`/`to` for `custom` → `{"status":"saved"}` |
+| `POST` | `/api/widget-shares` | `create_widget_share`, REST only: no MCP tool | multipart: `widget_id`, `project_id`, `from`, `to`, `archive_after`, `caption_project`, `caption_range`, `image`, `image_2x` → 201 |
+| `GET` | `/api/widget-shares` | `list_widget_shares` | query: `widget_id`, `state` |
+| `PATCH` | `/api/widget-shares/{id}` | `update_widget_share` | body: `archive_after` |
+| `POST` | `/api/widget-shares/{id}/archive` | `archive_widget_share` | — |
+| `POST` | `/api/widget-shares/{id}/restore` | `restore_widget_share` | body: `archive_after` (optional) |
+| `GET` | `/api/widget-shares/{id}/image` | `widget_share_image`, REST only: no MCP tool | — (image/png, any state) |
 
 The view route takes `project_id` exactly when the dashboard has a project
 switcher and `range` exactly when it has a range switcher, and refuses either
@@ -811,6 +827,103 @@ named group with `whole_group` names the copy with the same name and
 " (copy)". A dashboard title and a group name need at least 2 characters
 (trimmed); `create_dashboard` and `update_dashboard` refuse fewer.
 
+## Sharing a widget
+
+A share is a frozen picture of one widget, public at
+`CONSOLE_URL/share/<id>`. The page lays the widget out afresh on a card,
+captures it as two PNGs and uploads them; the server stores them under a new
+UUIDv7 and never runs the widget's query again. The project and the range
+are part of the picture, so neither changes afterwards: a new picture is a
+new link. The id is unlisted, not secret: anyone with the link can open it,
+and nothing lists shares publicly. Links are built from `CONSOLE_URL`
+(default `PUBLIC_URL`); with neither set, creating a share is refused with
+"set CONSOLE_URL to share widgets". A console on a LAN or tailnet exposes
+only `/share/*` to the internet with a proxy rule
+([deployment.md](deployment.md#shared-widgets-on-a-private-console)).
+
+Three routes serve a share, with no token:
+
+| Route | Answers |
+| --- | --- |
+| `/share/<id>` | A page with no script: the image, the widget's title as its heading, the project and the range in words (`Sep 5 – Oct 4, 2026`) when the widget follows them, and the footer "Built with twillingate.dev", on every install. Its `og:` and `twitter:` tags unfurl the link as a large image card; `noindex` keeps it out of search. The page follows the visitor's light or dark theme; the image keeps the theme it was shared in |
+| `/share/<id>.png` | The 1200×630 image, the one `og:image` names |
+| `/share/<id>@2x.png` | The 2400×1260 image, for the page, the embed and Download PNG |
+
+An unknown or archived share answers 404 on all three, and so does one whose
+archive date has passed.
+
+**The card.** 1200×630, with 56px of padding: the widget's title at the top
+(two lines at most, then an ellipsis), the project and the range under it,
+and the chart below. The captions name only what the widget follows: a
+widget pinned to its own project (`follows_project: false`) or range
+(`follows_range: false`, or a dashboard without a range switcher) is
+captioned without it, on the card and on the page; with neither, there is
+no caption line. The chart is drawn at the card's size with larger type and fewer
+ticks than on the dashboard, and without tooltips, menus, filters,
+pagination or scrollbars. A table shows the rows that fit and "and N more"
+("and N+ more", or "and more", when its answer was cut short at the row cap);
+a stat shows its number large and centred; a component whose content cannot
+fit draws what fits. The watermark, the twillingate iceberg and
+`twillingate.dev` at the bottom right in the theme's muted colour, is the
+only branding and never covers the chart. The card is drawn in the theme the
+console shows when you click, light or dark; to share the other theme,
+switch the system's appearance and share again. It is set in one bundled
+font (Inter), so every machine draws the same card. The components gallery
+(`/app/gallery/components`) shows every component's card in its Share card
+view.
+
+**Share… and Download PNG** are in a widget card's "…" menu. Download PNG
+saves the 2400×1260 card as `<widget-name>-<from>-<to>.png` and stores
+nothing; it is there on a dashboard without a project switcher too, where
+Share… is not, since a share needs a project. Share… opens a dialog: a preview, which is the captured image
+itself, an **Archive after** choice and **Create link**; once the link
+exists, **Copy link**, **Copy embed code** and **Open**. When the widget
+already has other links, "This widget has N other links" leads to the
+Shares page, filtered to the widget. The embed code is an image link, not an
+iframe:
+
+```html
+<a href="https://console.example.com/share/<id>"><img src="https://console.example.com/share/<id>.png"
+   srcset="https://console.example.com/share/<id>@2x.png 2x"
+   alt="<title>" width="600" height="315"></a>
+```
+
+**Archive after** is 1 week, 1 month (the default), 3 months, 1 year or
+Project lifetime: `archive_after` `7d`, `30d`, `90d`, `365d` or `project`.
+A dated share answers 404 from its `archive_at` on, at once; the next daily
+pass then archives it, with `archived_at` set to that date. Project lifetime
+sets no date. The date can be changed on a live share
+(`update_widget_share`, counted from now), and is asked again on restore
+(`restore_widget_share`, default `30d`). Feeds keep their copy: a platform
+that already unfurled the link keeps the card image in its own cache, and
+its click-through then gets a 404; a CDN may serve a cached image for up to
+an hour.
+
+**A share outlives its widget, not its project.** It keeps its own copy of
+the title, the project name and the images, so archiving, purging or
+deleting the widget or its dashboard leaves it up; `list_widget_shares`
+then gives `widget_id`, `dashboard_id` and `dashboard_title` as `null`.
+Archiving the project leaves its shares up too. Deleting the project, with
+`project delete` or by the purge, deletes its shares, live and archived.
+
+**The Shares page** (`/app/shares`, in the sidebar under Projects; not in
+the read-only preview of `reporting dev`) lists live shares, newest first: the 1x image,
+linking to the share's page; the title, with the dashboard and project it
+came from, linking to the dashboard (plain text once the widget is gone);
+the range; the day it was created; Archive after, changeable in place; and
+**Copy link**, **Copy embed code** and **Archive**. `?widget=<id>` narrows it
+to one widget. Archive asks no confirmation, since Restore undoes it;
+archived shares are on the Archive page
+([Archiving and the purge](#archiving-and-the-purge)).
+
+Creating a share is REST only (`POST /api/widget-shares`, multipart). It is
+refused (`400 invalid`) when an image is not a PNG of exactly its size or is
+over 5 MB, when the range spans more than 365 days or ends after today, and
+when `archive_after` is not one of the five values; an unknown or archived
+widget is a `404`. `caption_project` and `caption_range` (`1` or `0`,
+default `1`) say whether the page names the project and the range; each
+share in `list_widget_shares` reports them as booleans.
+
 ## Project tabs and the sidebar
 
 A dashboard is reached two ways: by its group's entry in the sidebar, and as
@@ -903,14 +1016,23 @@ Archiving is how to undo, and the only way to remove anything:
   only the latter.
 - `archive_dashboard` and `restore_dashboard` refuse a system dashboard,
   with or without `whole_group`; system widgets cannot be archived.
+- `archive_widget_share` takes a share down at once; `restore_widget_share`
+  puts it back at its old URL with a new archive date. A share whose date
+  has passed is archived by the daily pass. The Archive page has a
+  **Shares** section under the dashboards, left out when there are none:
+  archived shares, most recently archived first, each with its image
+  (read from `GET /api/widget-shares/{id}/image`, since the public image
+  answers 404 once archived), title, project and "archived · deleted on
+  <date>", and Restore, which asks Archive after (default 1 month).
+  Archived shares answer 404 until restored.
 
-Archived projects, dashboards and widgets are **deleted
+Archived projects, dashboards, widgets and widget shares are **deleted
 `RETENTION_ARCHIVED_DAYS` after archiving** (default 30; `0` keeps them
 forever), by the daily pass: on the first start after upgrading, then daily
 at 03:00 UTC. A purged dashboard takes its widgets
-with it. A purged project takes all of its data: its events, aggregates and
-ingest keys are gone, and so is anything a widget's SQL could have shown of
-it. Nothing returns the purge date; it follows from `archived_at`.
+with it, and leaves their shares up. A purged project takes all of its
+data: its events, aggregates, ingest keys and widget shares are gone, and
+so is anything a widget's SQL could have shown of it. Nothing returns the purge date; it follows from `archived_at`.
 
 ## Refusals and fixes
 

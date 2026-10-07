@@ -10,6 +10,13 @@ import { selectionParams, viewBody, widgetParams, withSavedView, type Switchers 
 export interface DashboardSelection {
   sel: Selection
   switchers: Switchers
+  /**
+   * The range the selection names, resolved to days; the default one (7 days)
+   * on a dashboard with no range switcher. Widgets follow it only when the
+   * dashboard has the switcher, so only then does a share's caption name it
+   * (shareCaption); without one it still dates the share and names its file.
+   */
+  range: { from: string; to: string }
   /** What each widget is asked for under the current selection; stable while it holds. */
   paramsFor: (w: Widget) => WidgetDataQuery
   /** Switches the project or range: into the URL, and saved as the dashboard's view (D35). */
@@ -38,13 +45,17 @@ export function useDashboardSelection(
   const active = projects.filter((p) => !p.archived).map((p) => p.project_id)
   const archived = projects.filter((p) => p.archived).map((p) => p.project_id)
   const sel = chooseSelection(url, dashboard, active, switchers, archived)
-  const range = sel.range
-    ? resolve(sel.range, timezone, new Date(), sel.from && sel.to ? { from: sel.from, to: sel.to } : undefined)
-    : undefined
+  const range = resolve(
+    sel.range ?? '7d',
+    timezone,
+    new Date(),
+    sel.from && sel.to ? { from: sel.from, to: sel.to } : undefined
+  )
 
   const { projectId } = sel
-  const from = range?.from
-  const to = range?.to
+  // Only a dashboard with a range switcher hands its range to its widgets.
+  const from = sel.range ? range.from : undefined
+  const to = sel.range ? range.to : undefined
   const paramsFor = useCallback(
     (w: Widget) => widgetParams(w, { projectId }, from && to ? { from, to } : undefined),
     [projectId, from, to]
@@ -75,5 +86,5 @@ export function useDashboardSelection(
       .catch(() => {})
   }
 
-  return { sel, switchers, paramsFor, change, openTab }
+  return { sel, switchers, range, paramsFor, change, openTab }
 }

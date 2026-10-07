@@ -1,7 +1,9 @@
+import { useLayoutEffect, useRef, useState } from 'react'
 import { formatExact, formatValue, type Format } from '@/lib/format'
 import { toRecords } from '@/lib/records'
 import { formatHeading, ramp } from '@/lib/chart'
 import { HoverCard, ScaleLegend, useHover, type HoverRow } from '@/components/chart-parts'
+import { CARD_TYPE, useCardMode } from '@/components/share/card-mode'
 import type { Contract, Example, SqlData, WidgetProps } from './types'
 
 interface CalendarProps {
@@ -83,8 +85,33 @@ const STEP = 13
 /** Room above the squares for the month labels. */
 const TOP = 14
 
+/** The fewest weeks a share card shows: a short series still reads as a calendar, not a few huge squares. */
+const CARD_WEEKS = 13
+
+/**
+ * Where the squares and labels go, in SVG units. A tile draws a year in
+ * fixed units and lets the drawing scale to the card. A share card draws
+ * only the weeks the data reaches (at least CARD_WEEKS), in px of the box
+ * it measured, so the squares fill the room and the labels are CARD_TYPE.
+ */
+function layout(weeks: number, box: { w: number; h: number } | null) {
+  if (!box) return { step: STEP, cell: CELL, top: TOP, label: 9 }
+  const top = CARD_TYPE * 1.6
+  const step = Math.min(box.w / weeks, (box.h - top) / 7)
+  return { step, cell: step * (CELL / STEP), top, label: CARD_TYPE }
+}
+
 export default function Calendar({ data, props }: WidgetProps<CalendarProps>) {
   const { hovered, bind } = useHover<string>()
+  const card = useCardMode()
+  // On a card, the drawing's box in px, measured once before paint (jsdom measures nothing: units then).
+  const svg = useRef<SVGSVGElement>(null)
+  const [box, setBox] = useState<{ w: number; h: number } | null>(null)
+  useLayoutEffect(() => {
+    if (!card || box || !svg.current) return
+    const r = svg.current.getBoundingClientRect()
+    if (r.width > 0 && r.height > 0) setBox({ w: r.width, h: r.height })
+  })
   const records = toRecords(data as SqlData, contract)
   if (records.length === 0) return null
 
@@ -95,7 +122,11 @@ export default function Calendar({ data, props }: WidgetProps<CalendarProps>) {
   }
 
   const maxDay = records.reduce((max, r) => (String(r.day) > max ? String(r.day) : max), records[0].day as string)
-  const columns = grid(parseDay(maxDay))
+  const year = grid(parseDay(maxDay))
+  const minDay = records.reduce((min, r) => (String(r.day) < min ? String(r.day) : min), records[0].day as string)
+  const firstWeek = Math.max(0, year.findIndex((week) => formatDay(week[6]) >= minDay))
+  const columns = card ? year.slice(Math.min(firstWeek, WEEKS - CARD_WEEKS)) : year
+  const { step, cell, top, label } = layout(columns.length, card ? box : null)
 
   const present = [...values.values()]
   const min = Math.min(...present)
@@ -115,7 +146,8 @@ export default function Calendar({ data, props }: WidgetProps<CalendarProps>) {
     <div className="flex h-full w-full flex-col gap-1.5 p-1">
       {/* An SVG rather than a CSS grid: it keeps the squares square at any card size. */}
       <svg
-        viewBox={`0 0 ${columns.length * STEP - (STEP - CELL)} ${TOP + 7 * STEP - (STEP - CELL)}`}
+        ref={svg}
+        viewBox={`0 0 ${columns.length * step - (step - cell)} ${top + 7 * step - (step - cell)}`}
         className="min-h-0 w-full flex-1"
         preserveAspectRatio="xMidYMid meet"
       >
@@ -125,9 +157,9 @@ export default function Calendar({ data, props }: WidgetProps<CalendarProps>) {
             <text
               key={`label-${ci}`}
               data-month-label
-              x={ci * STEP}
-              y={9}
-              fontSize={9}
+              x={ci * step}
+              y={label}
+              fontSize={label}
               className="fill-muted-foreground"
             >
               {monthStart ? monthFormatter.format(monthStart) : ''}
@@ -142,11 +174,11 @@ export default function Calendar({ data, props }: WidgetProps<CalendarProps>) {
                 key={day}
                 data-day={day}
                 {...bind(day)}
-                x={ci * STEP}
-                y={TOP + ri * STEP}
-                width={CELL}
-                height={CELL}
-                rx={2.5}
+                x={ci * step}
+                y={top + ri * step}
+                width={cell}
+                height={cell}
+                rx={cell * (2.5 / CELL)}
                 strokeWidth={1}
                 className="stroke-transparent hover:stroke-foreground/60"
                 style={{ fill: fillOf(values.get(day)) }}

@@ -195,6 +195,46 @@
   .prose-widget hr {
     @apply my-4 border-border;
   }
+
+  /* A share card (components/share/ShareCard.tsx): one bundled font, so
+     every machine draws the same image, and chart type at --card-type
+     (CARD_TYPE in components/share/card-mode.ts, set by ShareCard), for a
+     card seen small in a feed. Recharts keeps
+     its tooltip hidden until a pointer hovers, which a capture never does. */
+  .share-card {
+    font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
+    /* The gaps a chart draws in the card's colour (between slices, cells,
+       countries) take the share card's own background. */
+    --card: var(--background);
+  }
+  .share-card .recharts-cartesian-axis-tick-value,
+  .share-card .recharts-polar-angle-axis-tick-value,
+  .share-card .recharts-legend-wrapper,
+  .share-card .recharts-label {
+    font-size: var(--card-type);
+  }
+  .share-card .recharts-cartesian-axis-tick-value,
+  .share-card .recharts-polar-angle-axis-tick-value {
+    fill: var(--muted-foreground);
+  }
+  /* Markdown set in the card's type (the body size is the widget's). */
+  .share-card .prose-widget h1 {
+    font-size: 40px;
+  }
+  .share-card .prose-widget h2 {
+    font-size: 32px;
+  }
+  .share-card .prose-widget h3 {
+    font-size: 28px;
+  }
+  .share-card .prose-widget code {
+    font-size: 0.85em;
+  }
+  /* Lines drawn for a 1200px card are read at a third of that in a feed. */
+  .share-card .recharts-line-curve,
+  .share-card .recharts-area-curve {
+    stroke-width: 3px;
+  }
 }
 
 /* The sidebar is the sea below the logo's waterline, as on the sign-in
@@ -245,6 +285,7 @@
 }
 [data-slot='widget-card']:hover .hover-reveal,
 .hover-reveal:focus-within,
+.hover-reveal[data-open],
 .hover-reveal[data-busy] {
   opacity: 1;
 }

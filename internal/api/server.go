@@ -28,19 +28,21 @@ const (
 // returning one handler that serves the console surface: the MCP streamable
 // endpoint at /mcp and the REST routes under /api/ (unmatched /api/ paths
 // answer a JSON 404), plus, unauthenticated, their OpenAPI document at
-// /api/openapi.json and its Swagger UI at /api/docs. Each prefix is auth-wrapped on its own so its 401
-// challenge names metadata whose resource is that prefix's URL. It mounts
-// nothing itself: NewHandler wraps it with its own mux for the standalone
-// listener, and app calls it directly to mount on the ingest surface's mux
-// via RegisterOn. rst is the store reporting reads and writes; widget
-// queries run on the same read-only handle, and so under the same
-// CONSOLE_QUERY_TIMEOUT and CONSOLE_QUERY_MAX_ROWS, as the query tool.
+// /api/openapi.json, its Swagger UI at /api/docs, and the shared widgets'
+// pages and images at /share/. Each prefix is auth-wrapped on its own so
+// its 401 challenge names metadata whose resource is that prefix's URL. It
+// mounts nothing itself: NewHandler wraps it with its own mux for the
+// standalone listener, and app calls it directly to mount on the ingest
+// surface's mux via RegisterOn. rst is the store reporting reads and
+// writes; widget queries run on the same read-only handle, and so under the
+// same CONSOLE_QUERY_TIMEOUT and CONSOLE_QUERY_MAX_ROWS, as the query tool.
 func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *manage.Ops, rst reporting.Store, logger *slog.Logger) (http.Handler, func() error, error) {
 	db, err := readsql.Open(cfg.Console.DBPath, cfg.Console.QueryTimeout, cfg.Console.QueryMaxRows)
 	if err != nil {
 		return nil, nil, err
 	}
-	rep := reporting.New(rst, db, reporting.Options{CacheAge: cfg.Reporting.CacheAge, RefreshAge: cfg.Reporting.RefreshAge, ArchivedDays: cfg.Retention.ArchivedDays})
+	rep := reporting.New(rst, db, reporting.Options{CacheAge: cfg.Reporting.CacheAge, RefreshAge: cfg.Reporting.RefreshAge,
+		ArchivedDays: cfg.Retention.ArchivedDays, ShareBaseURL: cfg.Console.URL})
 	h := &host{db: db, reg: reg, ops: ops, rep: rep,
 		publicURL: cfg.PublicURL, logger: logger, limits: limitsFrom(cfg)}
 	srv := mcp.NewServer(&mcp.Implementation{Name: "twillingate", Version: "1.0.0"},
@@ -75,13 +77,20 @@ func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *m
 		w.Write(doc)
 	})
 	protected.Handle("GET "+docsPath, reporting.APIDocs())
+	// Shared widgets are public by design: unlisted frozen images
+	// (docs/superpowers/specs/2026-10-05-widget-shares-design.md, D2).
+	// "GET /share/" catches what {file} does not match (/share/ itself,
+	// deeper paths); with no file, SharePages answers its own 404.
+	shares := rep.SharePages()
+	protected.Handle("GET /share/{file}", shares)
+	protected.Handle("GET /share/", shares)
 	return protected, db.Close, nil
 }
 
 // NewHandler assembles the console surface: tool host, both transports, auth
 // middleware, and (mode-dependent) the RFC 9728 metadata route, mounted
 // on its own mux. Routes registered on the returned mux: /mcp, /api/,
-// /app/, /healthz, and
+// /app/, /share/, /healthz, and
 // /.well-known/oauth-protected-resource[/mcp] in oauth mode, and the login
 // server's routes in token mode with a password configured.
 // The func() error closes the read DB.
@@ -96,16 +105,17 @@ func NewHandler(ctx context.Context, cfg *config.Config, reg *manage.Registry, o
 }
 
 // RegisterOn mounts the console surface on a mux: protected (from Build) at
-// /mcp and /api/, plus the unauthenticated metadata, login and health
-// routes, and the dashboards at /app/ (GET / and GET /app redirect there,
-// so the console's address opens the app; an ingest-only listener keeps
-// answering 404 at /). The dashboards' page is public like the login page:
+// /mcp, /api/ and /share/ (shared widgets, public by design), plus the
+// unauthenticated metadata, login and health routes, and the dashboards
+// at /app/ (GET / and GET /app redirect there, so the console's address
+// opens the app; an ingest-only listener keeps answering 404 at /). The dashboards' page is public like the login page:
 // it holds no data, and reads everything through /api/ with the login's
 // token. withHealthz=false when the mux is shared with the ingest surface,
 // whose /healthz already exists (ServeMux panics on duplicate patterns).
 func RegisterOn(mux *http.ServeMux, protected http.Handler, cfg *config.Config, withHealthz bool, logger *slog.Logger) {
 	mux.Handle("/mcp", protected)
 	mux.Handle("/api/", protected)
+	mux.Handle("GET /share/", protected)
 	mux.Handle("GET /app/", reporting.UI())
 	mux.Handle("GET /app", http.RedirectHandler("/app/", http.StatusMovedPermanently))
 	// 302, not 301: browsers cache a permanent redirect of the root forever,

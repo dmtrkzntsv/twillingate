@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { screen, within } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 import type { DashboardActions } from '@/hooks/use-dashboard-actions'
 import { useDashboardActions } from '@/hooks/use-dashboard-actions'
-import { endpoints, type DashboardInfo } from '@/lib/api'
+import type { WidgetShareActions } from '@/hooks/use-widget-share-actions'
+import { useWidgetShareActions } from '@/hooks/use-widget-share-actions'
+import { endpoints, type DashboardInfo, type WidgetShare } from '@/lib/api'
 import { renderWithProviders } from '@/test/render'
 import Archive from './Archive'
 
@@ -12,6 +14,11 @@ vi.mock('@/hooks/use-dashboard-actions', () => ({
   useDashboardActions: vi.fn(),
 }))
 
+vi.mock('@/hooks/use-widget-share-actions', () => ({
+  useWidgetShareActions: vi.fn(),
+}))
+
+const restoreShare = vi.fn()
 const duplicate = vi.fn()
 const archive = vi.fn()
 const restore = vi.fn()
@@ -39,6 +46,39 @@ const dashboards: DashboardInfo[] = [
   info(14, 'Funnel', 'user', 13, { archived_at: '2026-09-01T00:00:00Z' }),
 ]
 
+function share(id: string, title: string, extra: Partial<WidgetShare> = {}): WidgetShare {
+  return {
+    id,
+    url: `https://t.example/share/${id}`,
+    image_url: `https://t.example/share/${id}.png`,
+    image_2x_url: `https://t.example/share/${id}@2x.png`,
+    widget_id: 42,
+    dashboard_id: 1,
+    dashboard_title: 'Overview',
+    project_id: 7,
+    project_name: 'blog',
+    from: '2026-09-05',
+    to: '2026-10-04',
+    title,
+    created_at: '2026-09-01T10:00:00Z',
+    archive_at: '2026-10-05T10:00:00Z',
+    archived_at: '2026-10-05T10:00:00Z',
+    caption_project: true,
+    caption_range: true,
+    ...extra,
+  }
+}
+
+const archivedShares: WidgetShare[] = [
+  share('0190a0a0-0000-7000-8000-000000000001', 'Visitors', { archived_at: '2026-10-05T10:00:00Z' }),
+  share('0190a0a0-0000-7000-8000-000000000002', 'Top pages', { project_name: 'docs', archived_at: '2026-10-01T10:00:00Z' }),
+]
+
+function mockShares(shares: WidgetShare[] = []) {
+  vi.spyOn(endpoints, 'widgetShares').mockResolvedValue({ shares })
+  vi.spyOn(endpoints, 'widgetShareImage').mockResolvedValue(new Blob(['png'], { type: 'image/png' }))
+}
+
 function mockApi(purge_after_days?: number) {
   vi.spyOn(endpoints, 'dashboards').mockResolvedValue({ timezone: 'UTC', dashboards, purge_after_days })
 }
@@ -49,6 +89,16 @@ function mockApiWith(list: DashboardInfo[], purge_after_days?: number) {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  URL.createObjectURL = vi.fn((b: Blob) => `blob:thumb-${b.size}`)
+  URL.revokeObjectURL = vi.fn()
+  mockShares()
+  vi.mocked(useWidgetShareActions).mockReturnValue({
+    create: vi.fn(),
+    setArchiveAfter: vi.fn(),
+    archive: vi.fn(),
+    restore: restoreShare,
+    pending: false,
+  } satisfies WidgetShareActions)
   vi.mocked(useDashboardActions).mockReturnValue({
     duplicate,
     archive,
@@ -244,6 +294,183 @@ describe('Archive, writes', () => {
     renderArchive()
 
     await screen.findByText('Old experiment')
+    expect(within(screen.getByRole('main')).queryByRole('button', { name: /Restore/ })).not.toBeInTheDocument()
+  })
+})
+
+describe('Archive, shares', () => {
+  it('asks only for the archived ones', async () => {
+    mockApi()
+    renderArchive()
+
+    await screen.findByText('Old experiment')
+    expect(endpoints.widgetShares).toHaveBeenCalledWith({ state: 'archived' })
+  })
+
+  it('lists each with its thumbnail, title, project and purge date from archived_at', async () => {
+    mockApi(30)
+    mockShares(archivedShares)
+    renderArchive()
+
+    const heading = await screen.findByRole('heading', { level: 2, name: 'Shares' })
+    const section = heading.closest('section')!
+    const rows = within(section).getAllByRole('listitem')
+    expect(rows).toHaveLength(2)
+    expect(within(rows[0]).getByText('Visitors')).toBeInTheDocument()
+    expect(within(rows[0]).getByText('blog')).toBeInTheDocument()
+    expect(within(rows[0]).getByText(/^archived · deleted on/)).toHaveTextContent('archived · deleted on 4 Nov')
+    // The date stays on one line: never "4" at one line's end and "Nov" at the next's start.
+    expect(within(rows[0]).getByText('4 Nov')).toHaveClass('whitespace-nowrap')
+    const thumb = await within(rows[0]).findByRole('img', { name: 'Shared image of Visitors' })
+    expect(thumb).toHaveAttribute('src', 'blob:thumb-3')
+    expect(endpoints.widgetShareImage).toHaveBeenCalledWith(archivedShares[0].id)
+    expect(within(rows[1]).getByText('Top pages')).toBeInTheDocument()
+    expect(within(rows[1]).getByText('docs')).toBeInTheDocument()
+    expect(within(rows[1]).getByText(/^archived · deleted on/)).toHaveTextContent('archived · deleted on 31 Oct')
+  })
+
+  it('keeps a blank tile for a thumbnail that cannot be fetched', async () => {
+    mockApi(30)
+    mockShares(archivedShares)
+    vi.mocked(endpoints.widgetShareImage).mockImplementation(async (id) => {
+      if (id === archivedShares[0].id) throw new Error('gone')
+      return new Blob(['png'])
+    })
+    renderArchive()
+
+    expect(await screen.findByRole('img', { name: 'Shared image of Top pages' })).toBeInTheDocument()
+    expect(screen.queryByRole('img', { name: 'Shared image of Visitors' })).not.toBeInTheDocument()
+  })
+
+  it('says just "archived" without purge_after_days', async () => {
+    mockApi()
+    mockShares(archivedShares)
+    renderArchive()
+
+    const rows = within((await screen.findByRole('heading', { name: 'Shares' })).closest('section')!).getAllByRole('listitem')
+    expect(within(rows[0]).getByText('archived')).toBeInTheDocument()
+    expect(within(rows[0]).queryByText(/deleted on/)).not.toBeInTheDocument()
+  })
+
+  it('Restore asks Archive after, one month by default, and restores with it', async () => {
+    mockApi(30)
+    mockShares(archivedShares)
+    restoreShare.mockResolvedValue(archivedShares[0])
+    renderArchive()
+    const row = (await screen.findByText('Visitors')).closest('li')!
+
+    await userEvent.click(within(row).getByRole('button', { name: 'Restore' }))
+
+    const dialog = await screen.findByRole('dialog', { name: 'Restore share' })
+    expect(within(dialog).getByRole('combobox', { name: 'Archive after' })).toHaveValue('30d')
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Restore' }))
+
+    expect(restoreShare).toHaveBeenCalledWith(archivedShares[0].id, '30d')
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  })
+
+  it('names the share in the dialog, and keeps its title while the dialog closes', async () => {
+    mockApi(30)
+    mockShares(archivedShares)
+    restoreShare.mockResolvedValue(archivedShares[0])
+    renderArchive()
+    const row = (await screen.findByText('Visitors')).closest('li')!
+
+    await userEvent.click(within(row).getByRole('button', { name: 'Restore' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Restore share' })
+    expect(within(dialog).getByText('Visitors answers at its old link again.')).toBeInTheDocument()
+  })
+
+  it('restores with the date picked', async () => {
+    mockApi(30)
+    mockShares(archivedShares)
+    restoreShare.mockResolvedValue(archivedShares[1])
+    renderArchive()
+    const row = (await screen.findByText('Top pages')).closest('li')!
+
+    await userEvent.click(within(row).getByRole('button', { name: 'Restore' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Restore share' })
+    await userEvent.selectOptions(within(dialog).getByRole('combobox', { name: 'Archive after' }), 'project')
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Restore' }))
+
+    expect(restoreShare).toHaveBeenCalledWith(archivedShares[1].id, 'project')
+  })
+
+  it('keeps the dialog open when the restore fails', async () => {
+    mockApi(30)
+    mockShares(archivedShares)
+    restoreShare.mockResolvedValue(undefined)
+    renderArchive()
+    const row = (await screen.findByText('Visitors')).closest('li')!
+
+    await userEvent.click(within(row).getByRole('button', { name: 'Restore' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Restore share' })
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Restore' }))
+
+    expect(restoreShare).toHaveBeenCalled()
+    expect(screen.getByRole('dialog', { name: 'Restore share' })).toBeInTheDocument()
+  })
+
+  it('opens a fresh dialog at one month after a cancelled one', async () => {
+    mockApi(30)
+    mockShares(archivedShares)
+    renderArchive()
+    const row = (await screen.findByText('Visitors')).closest('li')!
+
+    await userEvent.click(within(row).getByRole('button', { name: 'Restore' }))
+    await userEvent.selectOptions(await screen.findByRole('combobox', { name: 'Archive after' }), '7d')
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    await userEvent.click(within(row).getByRole('button', { name: 'Restore' }))
+
+    expect(await screen.findByRole('combobox', { name: 'Archive after' })).toHaveValue('30d')
+  })
+
+  it('has no Shares heading when none is archived', async () => {
+    mockApi()
+    renderArchive()
+
+    await screen.findByText('Old experiment')
+    expect(screen.queryByRole('heading', { name: 'Shares' })).not.toBeInTheDocument()
+  })
+
+  it('does not flash "Nothing archived." while the shares are loading', async () => {
+    mockApiWith([info(10, 'Launch week', 'user', 10)])
+    let resolve: (v: { shares: WidgetShare[] }) => void = () => {}
+    vi.spyOn(endpoints, 'widgetShares').mockReturnValue(new Promise((r) => (resolve = r)))
+    renderArchive()
+
+    await screen.findByRole('heading', { name: 'Archive' })
+    await waitFor(() => expect(endpoints.widgetShares).toHaveBeenCalled())
+    expect(screen.queryByText('Nothing archived.')).not.toBeInTheDocument()
+    resolve({ shares: [] })
+    expect(await screen.findByText('Nothing archived.')).toBeInTheDocument()
+  })
+
+  it('says archived shares answer 404 until restored', async () => {
+    mockApi()
+    renderArchive()
+
+    expect(await screen.findByText(/Archived shares answer 404 until restored\./)).toBeInTheDocument()
+  })
+
+  it('reads "Nothing archived." only when no dashboard and no share is', async () => {
+    mockApiWith([info(10, 'Launch week', 'user', 10)])
+    mockShares(archivedShares)
+    renderArchive()
+
+    await screen.findByRole('heading', { name: 'Shares' })
+    expect(screen.queryByText('Nothing archived.')).not.toBeInTheDocument()
+  })
+
+  it('asks for no shares in reporting dev, which serves none, and offers no Restore', async () => {
+    vi.spyOn(endpoints, 'dashboards').mockResolvedValue({ timezone: 'UTC', dashboards, dev: true })
+    mockShares(archivedShares)
+    renderArchive()
+
+    await screen.findByText('Old experiment')
+    expect(endpoints.widgetShares).not.toHaveBeenCalled()
+    expect(screen.queryByRole('heading', { name: 'Shares' })).not.toBeInTheDocument()
     expect(within(screen.getByRole('main')).queryByRole('button', { name: /Restore/ })).not.toBeInTheDocument()
   })
 })

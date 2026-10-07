@@ -314,14 +314,37 @@ type Store interface {
 	DeleteProjectTab(ctx context.Context, projectID, dashboardID int64, a AuditEntry) error
 	MoveProjectTab(ctx context.Context, r ProjectTabRow, a AuditEntry) error
 	SetDashboardsSidebar(ctx context.Context, ids []int64, sidebar bool, a AuditEntry) error
+	// InsertWidgetShare writes a share, copying the project's name, and
+	// audits it under Subject "widget_share/<id>". An unknown project is
+	// ErrNotFound and nothing is written.
+	InsertWidgetShare(ctx context.Context, n NewWidgetShare, a AuditEntry) (WidgetShare, error)
+	GetWidgetShare(ctx context.Context, id string) (WidgetShare, error)
+	// WidgetShareImage is the 1x (or, with twoX, the 2x) PNG. Unknown id
+	// is ErrNotFound.
+	WidgetShareImage(ctx context.Context, id string, twoX bool) ([]byte, error)
+	// ListWidgetShares: live shares newest created first, archived ones
+	// most recently archived first. An unknown State is ErrInvalid.
+	ListWidgetShares(ctx context.Context, f WidgetShareFilter) ([]WidgetShare, error)
+	// SetWidgetShareArchiveAt changes when a live share archives ("" =
+	// project lifetime). An archived or already due share (archive_at at
+	// or before now) is ErrConflict.
+	SetWidgetShareArchiveAt(ctx context.Context, id, archiveAt, now string, a AuditEntry) (WidgetShare, error)
+	// SetWidgetShareArchived archives (idempotent, no audit row when
+	// already archived) or restores a share; a restore also sets
+	// archive_at to archiveAt ("" = project lifetime).
+	SetWidgetShareArchived(ctx context.Context, id string, archived bool, archiveAt string, a AuditEntry) (WidgetShare, error)
+	// ArchiveDueWidgetShares archives every share whose archive_at is at
+	// or before now, one widget_share.archive audit row each (actor
+	// "retention"), and returns how many.
+	ArchiveDueWidgetShares(ctx context.Context, now string) (int, error)
 	// ReportingHash is the hash of the latest reporting_migrations row, ""
 	// if none has run yet. SyncReporting makes components and system
 	// dashboards (with their widgets) match s in one transaction.
 	ReportingHash(ctx context.Context) (string, error)
 	SyncReporting(ctx context.Context, s ReportingSync) error
-	// PurgeArchived deletes every project, dashboard and widget archived
-	// more than days ago, each in its own transaction with an audit row
-	// (actor "retention"). days <= 0 purges nothing.
+	// PurgeArchived deletes every project, dashboard, widget and widget
+	// share archived more than days ago, each in its own transaction with
+	// an audit row (actor "retention"). days <= 0 purges nothing.
 	PurgeArchived(ctx context.Context, days int) (PurgeResult, error)
 
 	Close() error

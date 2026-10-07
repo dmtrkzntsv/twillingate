@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}}{{with .ProjectName}} · {{.}}{{end}}</title>
+<meta name="robots" content="noindex">
+<meta name="color-scheme" content="light dark">
+<meta property="og:type" content="website">
+<meta property="og:title" content="{{.Title}}">
+{{with .Meta}}<meta property="og:description" content="{{.}}">
+{{end}}<meta property="og:url" content="{{.URL}}">
+<meta property="og:image" content="{{.ImageURL}}">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="{{.Alt}}">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="{{.Title}}">
+<meta name="twitter:image" content="{{.ImageURL}}">
+<style>
+*, *::before, *::after { box-sizing: border-box; }
+html { background: #f4f7fb; color: #0f1b2d; }
+body { margin: 0 auto; max-width: 1200px; min-height: 100vh; padding: 16px; font: 400 1rem/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; display: flex; flex-direction: column; }
+main { flex: 1; padding-top: 8px; }
+h1 { margin: 0 0 4px; font: 600 1.5rem/1.3 system-ui, -apple-system, "Segoe UI", sans-serif; overflow-wrap: anywhere; }
+.meta { margin: 0 0 20px; color: #5b6b82; overflow-wrap: anywhere; }
+h1 + img { margin-top: 16px; }
+img { display: block; width: 100%; max-width: 100%; height: auto; border-radius: 12px; background: #fff; box-shadow: 0 1px 3px rgba(15, 27, 45, .12), 0 8px 24px rgba(15, 27, 45, .08); }
+footer { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 32px 0 8px; color: #5b6b82; font-size: .875rem; }
+footer svg { flex: none; width: 20px; height: 20px; border-radius: 4px; }
+a { color: #1478c9; }
+@media (prefers-color-scheme: dark) {
+  html { background: #0b1220; color: #e8eef7; }
+  .meta, footer { color: #93a3b8; }
+  a { color: #62c3f3; }
+  img { box-shadow: 0 0 0 1px rgba(255, 255, 255, .08), 0 8px 24px rgba(0, 0, 0, .5); }
+}
+@media (min-width: 640px) { body { padding: 32px; } h1 { font-size: 1.875rem; } }
+</style>
+</head>
+<body>
+<main>
+<h1>{{.Title}}</h1>
+{{with .Meta}}<p class="meta">{{.}}</p>
+{{end}}<img src="{{.Image2xPath}}" width="1200" height="630" alt="{{.Alt}}">
+</main>
+<footer>{{.Icon}}<span>Built with <a href="https://twillingate.dev" rel="noopener">twillingate.dev</a></span></footer>
+</body>
+</html>

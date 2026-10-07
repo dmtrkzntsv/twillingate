@@ -318,6 +318,15 @@ describe('Project tabs', () => {
     expect(screen.queryByRole('button', { name: /^Project:/ })).not.toBeInTheDocument()
   })
 
+  it("offers Share… and Download PNG on a dashboard tab's widgets, under the pinned project", async () => {
+    const user = userEvent.setup()
+    renderAt('/projects/7/dashboards/1')
+    await vi.waitFor(() => expect(endpoints.widgetData).toHaveBeenCalled())
+    await user.click((await screen.findAllByRole('button', { name: 'Widget actions' }))[0])
+    expect(await screen.findByRole('menuitem', { name: 'Share…' })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: 'Download PNG' })).toBeInTheDocument()
+  })
+
   it('keeps the range when switching tabs', async () => {
     const user = userEvent.setup()
     renderAt('/projects/7/dashboards/1?range=30d')

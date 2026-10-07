@@ -1,5 +1,6 @@
-// Purge of archived projects, dashboards and widgets past
-// RETENTION_ARCHIVED_DAYS (spec 2026-09-25, migration 021 onward). Run by
+// Purge of archived projects, dashboards, widgets and widget shares past
+// RETENTION_ARCHIVED_DAYS (spec 2026-09-25, migration 021 onward; shares
+// from migration 032, spec 2026-10-05). Run by
 // the daily pass (internal/jobs), never by a request handler: there is no
 // tool or route for it.
 package sqlite
@@ -14,12 +15,14 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
-// PurgeArchived deletes every project, dashboard and widget archived more
-// than days ago, each in its own transaction with an audit row (actor
-// "retention"). days <= 0 purges nothing.
+// PurgeArchived deletes every project, dashboard, widget and widget share
+// archived more than days ago, each in its own transaction with an audit
+// row (actor "retention"). days <= 0 purges nothing. A share purged with
+// its project (deleteProject) gets no widget_share.purge row of its own.
 //
 // A project's archived_at is written with datetime('now') ("YYYY-MM-DD
-// HH:MM:SS"); dashboards' and widgets' with strftime(...,'Z') (RFC3339).
+// HH:MM:SS"); dashboards', widgets' and shares' with strftime(...,'Z')
+// (RFC3339).
 // julianday() parses both, so one predicate shape serves every kind.
 //
 // Dashboards (and, transitively, widgets) are restricted to owner='user':
@@ -111,6 +114,26 @@ func (d *DB) PurgeArchived(ctx context.Context, days int) (store.PurgeResult, er
 		res.Widgets = append(res.Widgets, id)
 	}
 
+	shareIDs, err := d.purgeableStrings(ctx,
+		`SELECT id FROM widget_shares
+		 WHERE archived_at IS NOT NULL AND julianday(archived_at) < julianday('now') - ?`, days)
+	if err != nil {
+		errs = errors.Join(errs, fmt.Errorf("select archived widget shares: %w", err))
+	}
+	for _, id := range shareIDs {
+		if err := d.tx(ctx, func(tx *sql.Tx) error {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM widget_shares WHERE id=?`, id); err != nil {
+				return fmt.Errorf("delete widget share %s: %w", id, err)
+			}
+			return audit(ctx, tx, store.AuditEntry{
+				Actor: "retention", Action: "widget_share.purge", Subject: "widget_share/" + id})
+		}); err != nil {
+			errs = errors.Join(errs, fmt.Errorf("purge widget share %s: %w", id, err))
+			continue
+		}
+		res.WidgetShares = append(res.WidgetShares, id)
+	}
+
 	return res, errs
 }
 
@@ -125,6 +148,24 @@ func (d *DB) purgeableIDs(ctx context.Context, q string, args ...any) ([]int64, 
 	var ids []int64
 	for rows.Next() {
 		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// purgeableStrings is purgeableIDs for a single string column.
+func (d *DB) purgeableStrings(ctx context.Context, q string, args ...any) ([]string, error) {
+	rows, err := d.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
 		if err := rows.Scan(&id); err != nil {
 			return nil, err
 		}

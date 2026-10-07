@@ -4,6 +4,7 @@ import { activeDot, axis, formatHeading, formatTick, grid, MAX_BAR, niceTicks, s
 import { formatValue, type Format } from '@/lib/format'
 import { toRecords } from '@/lib/records'
 import { legend } from '@/components/chart-parts'
+import { CARD_TICK_GAP, useCardMode } from '@/components/share/card-mode'
 import type { Contract, Example, SqlData, WidgetProps } from './types'
 
 interface ComboProps {
@@ -64,6 +65,8 @@ export const examples: Example[] = [
 
 export default function Combo({ data, props }: WidgetProps<ComboProps>) {
   const records = toRecords(data as SqlData, contract)
+  // Fewer x ticks on a share card, for its larger type.
+  const card = useCardMode()
   if (records.length === 0) return null
 
   const barFormat = props.bar_format ?? 'number'
@@ -80,7 +83,7 @@ export default function Combo({ data, props }: WidgetProps<ComboProps>) {
     <ChartContainer config={config} className="h-full w-full">
       <ComposedChart data={records} margin={{ top: 8, right: 0, bottom: 0, left: 0 }} barCategoryGap="24%">
         <CartesianGrid {...grid} />
-        <XAxis dataKey="x" {...axis} interval="preserveStartEnd" minTickGap={24} tickFormatter={formatTick} />
+        <XAxis dataKey="x" {...axis} interval="preserveStartEnd" minTickGap={card ? CARD_TICK_GAP : 24} tickFormatter={formatTick} />
         <YAxis
           yAxisId="bar"
           {...valueAxis}

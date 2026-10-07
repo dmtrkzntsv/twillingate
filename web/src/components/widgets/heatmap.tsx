@@ -2,6 +2,7 @@ import { HoverCard, useHover } from '@/components/chart-parts'
 import { formatExact, formatValue, type Format } from '@/lib/format'
 import { toRecords } from '@/lib/records'
 import { formatTick, onRamp, ramp } from '@/lib/chart'
+import { useCardMode } from '@/components/share/card-mode'
 import type { Contract, Example, SqlData, WidgetProps } from './types'
 
 interface HeatmapProps {
@@ -82,6 +83,7 @@ function firstSeen(values: string[]): string[] {
 
 export default function Heatmap({ data, props }: WidgetProps<HeatmapProps>) {
   const { hovered, bind } = useHover<{ x: string; y: string; value: number; t: number }>()
+  const card = useCardMode()
   const records = toRecords(data as SqlData, contract)
   if (records.length === 0) return null
 
@@ -102,7 +104,7 @@ export default function Heatmap({ data, props }: WidgetProps<HeatmapProps>) {
   const span = max - min || 1
 
   return (
-    <div className="h-full w-full overflow-auto p-1">
+    <div className={`h-full w-full p-1 ${card ? 'overflow-hidden' : 'overflow-auto'}`}>
       {hovered && (
         <HoverCard
           at={hovered}
@@ -122,14 +124,14 @@ export default function Heatmap({ data, props }: WidgetProps<HeatmapProps>) {
           <div
             key={x}
             data-col-header
-            className="truncate px-1 text-center text-xs text-muted-foreground"
+            className={`truncate px-1 text-center text-muted-foreground ${card ? 'text-[length:var(--card-type)]' : 'text-xs'}`}
           >
             {formatTick(x)}
           </div>
         ))}
         {ys.map((y) => (
           <div key={y} className="contents">
-            <div data-row-header className="flex items-center truncate pr-1.5 text-xs text-muted-foreground">
+            <div data-row-header className={`flex items-center truncate pr-1.5 text-muted-foreground ${card ? 'text-[length:var(--card-type)]' : 'text-xs'}`}>
               {formatTick(y)}
             </div>
             {xs.map((x) => {
@@ -141,7 +143,7 @@ export default function Heatmap({ data, props }: WidgetProps<HeatmapProps>) {
                   key={x}
                   data-cell
                   {...(hasValue ? bind({ x, y, value, t }) : {})}
-                  className={`flex min-h-6 items-center justify-center rounded-[3px] text-[11px] tabular-nums ${
+                  className={`flex min-h-6 items-center justify-center rounded-[3px] tabular-nums ${card ? 'text-[length:var(--card-type)]' : 'text-[11px]'} ${
                     hasValue && onRamp(t) ? 'text-white' : 'text-foreground'
                   } ${hasValue ? 'hover:ring-2 hover:ring-foreground/50 hover:ring-inset' : ''}`}
                   style={hasValue ? { backgroundColor: ramp(t) } : undefined}

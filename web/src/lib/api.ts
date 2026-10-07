@@ -31,12 +31,12 @@ function request(path: string, init?: RequestInit): Promise<Response> {
 }
 
 /**
- * Calls an API route, adding the Authorization header when there is one.
- * On a 401 it refreshes the access token once and retries; if that also
- * fails (or there was nothing to refresh with) it reports the failure and
- * throws an `ApiError`.
+ * Sends a request to an API route, adding the Authorization header when
+ * there is one. On a 401 it refreshes the access token once and retries; if
+ * that also fails (or there was nothing to refresh with) it reports the
+ * failure. A non-2xx answer throws an `ApiError`.
  */
-export async function api<T>(path: string, init?: RequestInit): Promise<T> {
+async function send(path: string, init?: RequestInit): Promise<Response> {
   let res = await request(path, init)
   if (res.status === 401 && (await refreshAccess())) {
     res = await request(path, init)
@@ -45,8 +45,19 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
     if (res.status === 401) reportUnauthorized()
     throw await errorFrom(res)
   }
+  return res
+}
+
+/** Calls an API route and reads its JSON answer (see `send` for auth and refusals). */
+export async function api<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await send(path, init)
   if (res.status === 204) return undefined as T
   return (await res.json()) as T
+}
+
+/** Calls an API route that answers a file, such as a PNG, and returns it as a Blob. */
+async function apiBlob(path: string): Promise<Blob> {
+  return (await send(path)).blob()
 }
 
 export interface DashboardInfo {
@@ -193,6 +204,33 @@ export interface IngestKey {
   label: string
   key: string
   state: 'active' | 'disabled'
+}
+
+export type ArchiveAfter = '7d' | '30d' | '90d' | '365d' | 'project'
+export type ShareState = 'live' | 'archived'
+
+/** A public link to one widget's image over a range: its page, its two images, and when it archives itself. */
+export interface WidgetShare {
+  id: string
+  url: string
+  image_url: string
+  image_2x_url: string
+  /** Null once the widget is purged; the share keeps its title and range. */
+  widget_id: number | null
+  dashboard_id: number | null
+  dashboard_title: string | null
+  project_id: number
+  project_name: string
+  from: string
+  to: string
+  title: string
+  /** Whether the share's page names the project, and the range: only what the widget followed. */
+  caption_project: boolean
+  caption_range: boolean
+  created_at: string
+  /** Null for a share that lives as long as its project. */
+  archive_at: string | null
+  archived_at: string | null
 }
 
 export type CapSetting = 'ATTRIBUTE_VALUES_TOP_N' | 'IDENTITIES_TOP_N'
@@ -417,5 +455,15 @@ export const endpoints = {
   receivedAttributes: (q: RangeQuery & { project_id?: number }) =>
     api<ReceivedAttributes>(`/api/received-attributes${toQuery(q)}`),
   capUsage: (id: number, q: RangeQuery) => api<CapUsage>(`/api/projects/${id}/cap-usage${toQuery(q)}`),
+  widgetShares: (q: { widget_id?: number; state?: ShareState }) => api<{ shares: WidgetShare[] }>(`/api/widget-shares${toQuery(q)}`),
+  // No Content-Type here: the browser sets multipart/form-data with its boundary for a FormData body.
+  createWidgetShare: (form: FormData) => api<WidgetShare>('/api/widget-shares', { method: 'POST', body: form }),
+  updateWidgetShare: (id: string, archive_after: ArchiveAfter) =>
+    api<WidgetShare>(`/api/widget-shares/${id}`, json('PATCH', { archive_after })),
+  archiveWidgetShare: (id: string) => api<WidgetShare>(`/api/widget-shares/${id}/archive`, json('POST', {})),
+  restoreWidgetShare: (id: string, archive_after: ArchiveAfter) =>
+    api<WidgetShare>(`/api/widget-shares/${id}/restore`, json('POST', { archive_after })),
+  /** A share's 1x PNG in any state; the public image URL answers 404 once the share is archived. */
+  widgetShareImage: (id: string) => apiBlob(`/api/widget-shares/${id}/image`),
   devVersion: () => api<{ version: string }>('/api/dev/version'),
 }

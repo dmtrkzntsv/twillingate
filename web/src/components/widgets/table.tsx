@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { ArrowDownIcon, ArrowUpIcon } from 'lucide-react'
+import { useCardMode } from '@/components/share/card-mode'
 import { FilterBar, PageFooter, type OptionLoader } from '@/components/table-filters'
 import { Table as ShadcnTable, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { formatValue, type Format } from '@/lib/format'
@@ -77,6 +78,9 @@ export const examples: Example[] = [
 
 const LOCAL_PAGE = 1000
 
+/** The most rows a share card shows before "and N more"; fewer when fewer fit. */
+export const CARD_ROWS = 8
+
 export default function Table({
   data,
   props,
@@ -88,6 +92,16 @@ export default function Table({
   reloading,
 }: WidgetProps<TableProps>) {
   const sql = data as SqlData
+  const card = useCardMode()
+  // On a card, drop a row at a time until the table fits its box: each
+  // pass runs before paint, so only the fitted table is ever drawn. jsdom
+  // measures nothing, so a test sees all CARD_ROWS.
+  const box = useRef<HTMLDivElement>(null)
+  const [fit, setFit] = useState(CARD_ROWS)
+  useLayoutEffect(() => {
+    const el = box.current
+    if (card && el && fit > 1 && el.scrollHeight > el.clientHeight + 1) setFit(fit - 1)
+  })
   // Without view and onView (the gallery), the table keeps its own, in memory.
   const [ownView, setOwnView] = useState<TableView>(emptyView)
   const [view, setView] = controlled !== undefined && onView !== undefined ? [controlled, onView] : [ownView, setOwnView]
@@ -132,7 +146,19 @@ export default function Table({
     ranges.set(col, { min: Math.min(...values), max: Math.max(...values) })
   })
 
-  const rows = local ? local.rows : sql.rows
+  const loaded = local ? local.rows : sql.rows
+  // A card has no pager: its first rows, then how many it leaves out. A
+  // cut-short answer with no server count (sql.truncated, no page.matched)
+  // has more rows than were loaded, so the count is only a floor: "and N+
+  // more", or "and more" when every loaded row is shown.
+  const rows = card ? loaded.slice(0, fit) : loaded
+  const more = card ? (page?.matched ?? local?.matched ?? sql.rows.length) - rows.length : 0
+  const moreUnknown = card && sql.truncated === true && page?.matched === undefined
+  const moreText = moreUnknown
+    ? more > 0
+      ? `and ${more.toLocaleString('en-US')}+ more`
+      : 'and more'
+    : `and ${more.toLocaleString('en-US')} more`
   const options: OptionLoader =
     remote && fetchDistinct
       ? fetchDistinct
@@ -153,19 +179,21 @@ export default function Table({
 
   return (
     <div className="flex h-full flex-col">
-      <FilterBar
-        columns={sql.columns}
-        numeric={numericColumns}
-        formats={formats}
-        view={view}
-        onView={setView}
-        options={options}
-        error={viewError}
-      />
+      {!card && (
+        <FilterBar
+          columns={sql.columns}
+          numeric={numericColumns}
+          formats={formats}
+          view={view}
+          onView={setView}
+          options={options}
+          error={viewError}
+        />
+      )}
       {rows.length === 0 ? (
         <p className="py-6 text-center text-sm text-muted-foreground">No rows match these filters</p>
       ) : (
-        <div className="min-h-0 flex-1 overflow-auto">
+        <div ref={box} className={`min-h-0 flex-1 ${card ? 'overflow-hidden' : 'overflow-auto'}`}>
           <ShadcnTable>
             <TableHeader>
               <TableRow>
@@ -176,18 +204,22 @@ export default function Table({
                     <TableHead
                       key={col}
                       aria-sort={dir && (dir === 'asc' ? 'ascending' : 'descending')}
-                      className={`h-8 text-xs font-medium text-muted-foreground ${numericColumns.has(col) ? 'text-right' : ''}`}
+                      className={`${card ? 'h-11 text-[length:var(--card-type)]' : 'h-8 text-xs'} font-medium text-muted-foreground ${numericColumns.has(col) ? 'text-right' : ''}`}
                     >
-                      <button
-                        type="button"
-                        onClick={() => cycle(col)}
-                        className={`inline-flex items-center gap-1 rounded-sm outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring ${
-                          numericColumns.has(col) ? 'flex-row-reverse' : ''
-                        } ${dir ? 'text-foreground' : ''}`}
-                      >
-                        {col}
-                        <Arrow aria-hidden className={`size-3 ${dir ? '' : 'invisible'}`} />
-                      </button>
+                      {card ? (
+                        col
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => cycle(col)}
+                          className={`inline-flex items-center gap-1 rounded-sm outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring ${
+                            numericColumns.has(col) ? 'flex-row-reverse' : ''
+                          } ${dir ? 'text-foreground' : ''}`}
+                        >
+                          {col}
+                          <Arrow aria-hidden className={`size-3 ${dir ? '' : 'invisible'}`} />
+                        </button>
+                      )}
                     </TableHead>
                   )
                 })}
@@ -213,7 +245,7 @@ export default function Table({
                     return (
                       <TableCell
                         key={col}
-                        className={`py-1.5 ${numericColumns.has(col) ? 'text-right tabular-nums' : ''}`}
+                        className={`${card ? 'py-1 text-[19px]' : 'py-1.5'} ${numericColumns.has(col) ? 'text-right tabular-nums' : ''}`}
                         style={style}
                       >
                         {text}
@@ -222,11 +254,18 @@ export default function Table({
                   })}
                 </TableRow>
               ))}
+              {(more > 0 || moreUnknown) && (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={sql.columns.length} className="py-1.5 text-[length:var(--card-type)] text-muted-foreground">
+                    {moreText}
+                  </TableCell>
+                </TableRow>
+              )}
             </TableBody>
           </ShadcnTable>
         </div>
       )}
-      {local ? (
+      {card ? null : local ? (
         <PageFooter
           offset={view.offset}
           limit={LOCAL_PAGE}

@@ -1,13 +1,30 @@
 import { Suspense, useEffect, useState, type ReactNode } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { ChevronDownIcon, CircleAlertIcon, CircleOffIcon, CloudOffIcon, InboxIcon, RefreshCwIcon, TriangleAlertIcon } from 'lucide-react'
+import {
+  ChevronDownIcon,
+  CircleAlertIcon,
+  CircleOffIcon,
+  CloudOffIcon,
+  DownloadIcon,
+  InboxIcon,
+  MoreHorizontalIcon,
+  RefreshCwIcon,
+  Share2Icon,
+  TriangleAlertIcon,
+} from 'lucide-react'
+import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import { OffscreenCard } from '@/components/share/OffscreenCard'
+import { ShareDialog } from '@/components/share/ShareDialog'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useNow } from '@/hooks/use-now'
 import { useStoredState } from '@/hooks/use-stored-state'
 import { ApiError, endpoints, type SqlData, type Widget, type WidgetData, type WidgetDataQuery } from '@/lib/api'
+import { captureCard, downloadBlob } from '@/lib/capture'
+import { shareCaption, type ShareContext } from '@/lib/share'
 import { liveFilters, parseView, type Filter, type TableView } from '@/lib/table-view'
 import { formatDuration } from '@/lib/time'
 import { canRefresh, componentOf, isRemoteTable, refreshWidget, viewQuery, widgetQuery } from '@/lib/widget-query'
@@ -19,10 +36,12 @@ interface Props {
   params: WidgetDataQuery
   /** Show what is cached, but ask for nothing (the page is about to change). */
   idle?: boolean
+  /** Absent: the card has no menu (Share… and Download PNG). */
+  share?: ShareContext
 }
 
 /** One widget in its card, loading on its own and showing its own state (D38). */
-export default function WidgetCard({ widget, params, idle = false }: Props) {
+export default function WidgetCard({ widget, params, idle = false, share }: Props) {
   const client = useQueryClient()
   const stateKey = `twillingate.widget.${widget.dashboard_id}.${widget.widget_id}`
   // The project and range: a view's page, and the answers below, belong to one.
@@ -64,6 +83,28 @@ export default function WidgetCard({ widget, params, idle = false }: Props) {
   // answer is the whole result, whatever its filters.
   const filtered = remote && liveFilters(view, columns).length > 0
 
+  // Only what is on screen can be shared: not a loading card, a failed one or a removed component.
+  const drawable = answer?.data != null && !removed
+  const shareable = drawable && !query.isError
+  const [sharing, setSharing] = useState(false)
+  // Download PNG draws the card out of sight: a new one per click (the key), gone once captured.
+  const [downloads, setDownloads] = useState(0)
+  const [downloading, setDownloading] = useState(false)
+  useEffect(() => {
+    // The answer went before the card was drawn: nothing left to capture.
+    if (downloading && !drawable) setDownloading(false)
+  }, [downloading, drawable])
+  const download = async (node: HTMLDivElement) => {
+    try {
+      const { image2x } = await captureCard(node)
+      downloadBlob(image2x, `${widget.name}-${share?.from}-${share?.to}.png`)
+    } catch {
+      toast.error("Couldn't draw the card")
+    } finally {
+      setDownloading(false)
+    }
+  }
+
   const fetchDistinct = async (column: string, filters: Filter[]) => {
     const others = liveFilters({ ...view, filters }, columns)
     const res = await endpoints.widgetData(widget.widget_id, {
@@ -80,6 +121,7 @@ export default function WidgetCard({ widget, params, idle = false }: Props) {
   return (
     <WidgetFrame
       title={widget.title}
+      wideActions={share !== undefined}
       badge={
         truncated &&
         !remote && (
@@ -89,15 +131,52 @@ export default function WidgetCard({ widget, params, idle = false }: Props) {
         )
       }
       actions={
-        refreshable && (
+        (refreshable || share) && (
           <>
-            {answer && query.isError && !viewError && <StaleWarning error={query.error} />}
-            <RefreshButton
-              label={`Refresh ${label}`}
-              data={answer}
-              busy={query.isFetching}
-              onRefresh={() => void refreshWidget(client, widget, params, viewArgs).catch(() => {})}
-            />
+            {refreshable && answer && query.isError && !viewError && <StaleWarning error={query.error} />}
+            {refreshable && (
+              <RefreshButton
+                label={`Refresh ${label}`}
+                data={answer}
+                busy={query.isFetching}
+                onRefresh={() => void refreshWidget(client, widget, params, viewArgs).catch(() => {})}
+              />
+            )}
+            {share && (
+              <>
+                <WidgetMenu
+                  canShare={share.writable && share.project !== undefined}
+                  disabled={!shareable}
+                  downloading={downloading}
+                  onShare={() => setSharing(true)}
+                  onDownload={() => {
+                    setDownloads((n) => n + 1)
+                    setDownloading(true)
+                  }}
+                />
+                {/* Both draw into portals: they take no room in the corner. */}
+                {share.writable && share.project && drawable && (
+                  <ShareDialog
+                    open={sharing}
+                    onOpenChange={setSharing}
+                    widget={widget}
+                    data={answer?.data}
+                    share={{ ...share, project: share.project }}
+                  />
+                )}
+                {downloading && drawable && (
+                  <OffscreenCard
+                    key={downloads}
+                    component={widget.component ?? ''}
+                    data={answer?.data}
+                    props={widget.props}
+                    title={label}
+                    {...shareCaption(widget, share)}
+                    onNode={(node) => void download(node)}
+                  />
+                )}
+              </>
+            )}
           </>
         )
       }
@@ -247,6 +326,44 @@ function StaleWarning({ error }: { error: Error }) {
       </TooltipTrigger>
       <TooltipContent>{text}</TooltipContent>
     </Tooltip>
+  )
+}
+
+interface MenuProps {
+  /** Whether Share… is offered (not in reporting dev). */
+  canShare: boolean
+  /** No answer to draw yet, or none that can be: both actions wait. */
+  disabled: boolean
+  downloading: boolean
+  onShare: () => void
+  onDownload: () => void
+}
+
+/** The card's "…": Share… (a public link to its picture) and Download PNG. Revealed like the refresh button. */
+function WidgetMenu({ canShare, disabled, downloading, onShare, onDownload }: MenuProps) {
+  const [open, setOpen] = useState(false)
+  return (
+    <span className="hover-reveal" data-open={open || undefined}>
+      <DropdownMenu open={open} onOpenChange={setOpen}>
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" size="icon" className="size-7" aria-label="Widget actions">
+            <MoreHorizontalIcon />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          {canShare && (
+            <DropdownMenuItem disabled={disabled} onClick={onShare}>
+              <Share2Icon />
+              Share…
+            </DropdownMenuItem>
+          )}
+          <DropdownMenuItem disabled={disabled || downloading} onClick={onDownload}>
+            <DownloadIcon />
+            Download PNG
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </span>
   )
 }
 

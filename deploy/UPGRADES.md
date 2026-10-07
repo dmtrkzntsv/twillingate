@@ -600,3 +600,10 @@ hidden from the sidebar shows there again under it.
 A built-in group hidden under the older binary comes back hidden (out of
 the sidebar) on this version; "Show in sidebar" in the Dashboards gallery
 shows it again.
+
+### Upgrading to widget shares (migration 033)
+
+No pre-checks. Migration 033 adds `widget_shares`, where a shared
+widget's two PNGs and the text they show are kept. Nothing existing
+changes. Rollback: an older binary ignores the table, and share links
+answer 404 until the newer binary is back.

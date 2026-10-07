@@ -7,6 +7,7 @@ import { seriesColor, seriesConfig } from '@/lib/chart'
 import type { Format } from '@/lib/format'
 import { pivot, toRecords } from '@/lib/records'
 import { legend, tooltip } from '@/components/chart-parts'
+import { useCardMode } from '@/components/share/card-mode'
 import type { Contract, Example, SqlData, WidgetProps } from './types'
 
 interface RadarProps {
@@ -66,6 +67,7 @@ export const examples: Example[] = [
 export default function Radar({ data, props }: WidgetProps<RadarProps>) {
   const sql = data as SqlData
   const records = toRecords(sql, contract)
+  const card = useCardMode()
   if (records.length === 0) return null
 
   const format = props.format ?? 'number'
@@ -79,7 +81,7 @@ export default function Radar({ data, props }: WidgetProps<RadarProps>) {
 
   return (
     <ChartContainer config={config} className="h-full w-full">
-      <RadarChart data={rows} outerRadius="72%">
+      <RadarChart data={rows} outerRadius={card ? '80%' : '72%'}>
         <PolarGrid gridType="circle" radialLines={false} />
         <PolarAngleAxis dataKey="axis" tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }} />
         {/* The largest value reaches the outer ring. */}

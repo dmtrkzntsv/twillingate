@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { LayoutGridIcon } from 'lucide-react'
 import { useSearchParams } from 'react-router'
@@ -15,6 +15,7 @@ import type { DashboardDetail, DashboardsResponse, Project, ProjectTab, Widget }
 import { rangeParams } from '@/lib/project-tabs'
 import { dashboardQuery } from '@/lib/queries'
 import { resolve } from '@/lib/ranges'
+import type { ShareContext } from '@/lib/share'
 import { chooseSelection } from '@/lib/selection'
 import { selectionParams, widgetParams } from '@/lib/view'
 import { refreshWidget, shownViews } from '@/lib/widget-query'
@@ -81,6 +82,22 @@ function TabView({ project, dashboard, tab, tabs, list, actions }: ViewProps) {
     [projectId, from, to]
   )
 
+  // What a card needs to be shared or downloaded: the pinned project and
+  // the range shown, else the default 7 days, as on the dashboard page.
+  const shareRange = range ?? resolve('7d', list.timezone, new Date())
+  const rangeShown = sel.range !== undefined
+  const writable = !list.dev
+  const share = useMemo<ShareContext>(
+    () => ({
+      project: { id: projectId, name: project.name },
+      from: shareRange.from,
+      to: shareRange.to,
+      rangeShown,
+      writable,
+    }),
+    [projectId, project.name, shareRange.from, shareRange.to, rangeShown, writable]
+  )
+
   const showGrid = dashboard.widgets.length > 0
   const freshness = useFreshness(dashboard.widgets, paramsFor, showGrid)
   const [refreshing, setRefreshing] = useState(false)
@@ -131,7 +148,7 @@ function TabView({ project, dashboard, tab, tabs, list, actions }: ViewProps) {
           />
         )}
       </DashboardHeader>
-      {showGrid ? <WidgetGrid widgets={dashboard.widgets} paramsFor={paramsFor} /> : <NoWidgets />}
+      {showGrid ? <WidgetGrid widgets={dashboard.widgets} paramsFor={paramsFor} share={share} /> : <NoWidgets />}
     </>
   )
 }
