@@ -217,9 +217,16 @@ func (f *fakeForms) SessionVisit(_ context.Context, _ int64, actorKind, actorID 
 // testKey) whose FormStore is forms, logging to logger.
 func formServer(t *testing.T, forms *fakeForms, logger *slog.Logger) *Server {
 	t.Helper()
+	return formServerAllowing(t, forms, logger, testOrigin)
+}
+
+// formServerAllowing is formServer with the project's allowed_origins set
+// to origins.
+func formServerAllowing(t *testing.T, forms *fakeForms, logger *slog.Logger, origins ...string) *Server {
+	t.Helper()
 	cfg := configtest.Load(t, nil)
 	reg := newTestRegistry(t,
-		[]manage.ProjectSpec{{Name: "App", AllowedOrigins: []string{testOrigin}}},
+		[]manage.ProjectSpec{{Name: "App", AllowedOrigins: origins}},
 		map[int][2]string{0: {testKey, "web"}})
 	g, _ := geo.New("cloudflare://", t.TempDir(), slog.Default())
 	q := &fakeQueue{}
@@ -553,4 +560,55 @@ func TestClientFormSubmitRejected(t *testing.T) {
 			t.Errorf("reason %q does not name $form_submit", e.Reason)
 		}
 	}
+}
+
+// JSON takes its key from ?key= as well as the header and the body.
+func TestFormJSONKeyFromQuery(t *testing.T) {
+	forms := newFakeForms()
+	h := formServer(t, forms, slog.Default())
+	w := postForm(h, "contact", "?key="+testKey, "text/plain", strings.NewReader(`{"fields":{"a":"b"}}`), nil)
+	if w.Code != http.StatusCreated || len(forms.subs) != 1 {
+		t.Fatalf("got %d %q, stored %d; want 201 and one stored", w.Code, w.Body.String(), len(forms.subs))
+	}
+}
+
+// A $id that is not a UUID is refused before anything is stored: the error
+// fragment on $redirect when it is allowed, else a plain 400.
+func TestFormBadIDRedirectsWithError(t *testing.T) {
+	forms := newFakeForms()
+	h := formServer(t, forms, slog.Default())
+	w := postURLEncoded(h, "contact", url.Values{"$id": {"nope"}, "$redirect": {"https://app.com/thanks"}}, nil)
+	wantRedirect(t, w, "https://app.com/thanks#twillingate-form-error-contact")
+	w = postURLEncoded(h, "contact", url.Values{"$id": {"nope"}}, nil)
+	wantPlain(t, w, http.StatusBadRequest)
+	if len(forms.calls) != 0 {
+		t.Errorf("store called %d times for a bad id", len(forms.calls))
+	}
+}
+
+// On a project allowing a bare "*", $redirect is a target only when it is
+// on the request's own Origin, so "*" never makes an open redirect.
+func TestFormBareStarRedirectsOnlyToTheRequestOrigin(t *testing.T) {
+	forms := newFakeForms()
+	h := formServerAllowing(t, forms, slog.Default(), "*")
+	v := url.Values{"email": {"a"}, "$redirect": {"https://site.com/thanks"}}
+	w := postURLEncoded(h, "contact", v, map[string]string{"Origin": "https://site.com"})
+	wantRedirect(t, w, "https://site.com/thanks#twillingate-form-success-contact")
+	w = postURLEncoded(h, "contact", v, map[string]string{"Origin": "https://other.com"})
+	wantPlain(t, w, http.StatusBadRequest)
+	if len(forms.subs) != 2 {
+		t.Errorf("stored %d, want both stored (the target only decides the answer)", len(forms.subs))
+	}
+}
+
+// A closed form's error fragment goes to $redirect first, before the
+// form's return_url, in the same order as a success.
+func TestFormClosedPrefersRedirect(t *testing.T) {
+	forms := newFakeForms()
+	forms.closed = true
+	forms.forms["contact"] = store.Form{ProjectID: 1, Name: "contact", Status: store.FormApproved, ReturnURL: "https://app.com/back"}
+	h := formServer(t, forms, slog.Default())
+	w := postURLEncoded(h, "contact", url.Values{"email": {"a"}, "$redirect": {"https://app.com/thanks"}},
+		map[string]string{"Referer": "https://app.com/contact"})
+	wantRedirect(t, w, "https://app.com/thanks#twillingate-form-error-contact")
 }

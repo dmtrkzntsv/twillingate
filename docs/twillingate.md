@@ -945,9 +945,10 @@ Two body styles, chosen by `Content-Type`:
 
 A submission is flat text, one string per field name: a repeated name (a
 checkbox group, a multi-select) is joined with `", "`. Files are never
-stored. A multipart file part is discarded unread but counts toward the body
-limit, so a form carrying a file is refused as too large: leave file inputs
-out of a twillingate form.
+stored. A multipart file part is discarded unread, but it counts toward the
+body limit: a small file is dropped and the submission stored without it,
+and a file that takes the body past 64 KB gets the whole submission refused as
+too large. Leave file inputs out of a twillingate form.
 
 Context keys, as `$` fields on a plain form or in `attributes` on JSON, mean
 what they mean on events:
@@ -966,9 +967,13 @@ The checks run in order. The key must resolve to an active project, else a
 plain `401`; a present `Origin` must pass `allowed_origins`, else a plain
 `403`; the body must be within the limits below, else `413`; the form must be
 open, else `409`: an archived form, a draft past its window or a form past
-its closing time refuses, and nothing is written. `Origin: null` (a sandboxed
-frame, a page sent with `Referrer-Policy: no-referrer`) is an origin like any
-other: refused unless `allowed_origins` lists `null`, as on events. Preflight
+its closing time refuses, and nothing is written. The exception is a JSON
+body that carries its key only as `key` inside it. That body has to be read
+before the key is known, so its size and syntax are checked first (`413`,
+`400`), and those answers carry no CORS headers, as on `/ingest/events`.
+`Origin: null` (a sandboxed frame, a page sent with
+`Referrer-Policy: no-referrer`) is an origin like any other: refused unless
+`allowed_origins` lists `null` or a bare `*`, as on events. Preflight
 is answered as for `/ingest/events`. A JSON client retries only on `5xx` and
 network failure, reusing its `id`.
 
@@ -981,8 +986,9 @@ open redirect. The target's fragment is replaced by
 `#twillingate-form-success-{name}`, or by `#twillingate-form-error-{name}`
 for a refusal after the key and `Origin` checks (a body too large goes back
 to the `Referer` only, since nothing of the form was read). With no allowed
-target a submission is still stored, and answered with a plain `400` saying
-the form has no return URL; a refusal is answered with its plain status. One
+target, a stored submission is answered with a plain `400` saying the form
+has no return URL (the submission is kept), and a refusal is answered with
+its own plain status (`409`, `413` or `400`). One
 element per outcome, shown with `:target`, makes the thank-you note:
 
 ```html

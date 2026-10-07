@@ -19,7 +19,6 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 	"github.com/dmtrkzntsv/twillingate/internal/wire"
-	"github.com/google/uuid"
 )
 
 // formName bounds a form's name, which is a path segment, the suffix of
@@ -354,14 +353,13 @@ func (s *Server) handleForm(w http.ResponseWriter, r *http.Request) {
 	}
 	fc := body.ctx
 
-	id := body.id
-	if id == "" {
-		id = fc.ID
+	sent := body.id
+	if sent == "" {
+		sent = fc.ID
 	}
-	if id == "" {
-		id = newID()
-	} else if _, err := uuid.Parse(id); err != nil {
-		refuse(http.StatusBadRequest, "id is not a valid UUID", fc.Redirect, r.Referer())
+	id, err := eventID(sent) // the submission's id is its event's: same rule
+	if err != nil {
+		refuse(http.StatusBadRequest, err.Error(), fc.Redirect, r.Referer())
 		return
 	}
 
