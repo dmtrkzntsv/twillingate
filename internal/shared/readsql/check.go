@@ -66,7 +66,17 @@ import (
 //
 // It returns the named parameters the text uses, sigil included, in
 // order of first use, so a caller can refuse ones it does not bind.
-func Check(q string) ([]string, error) {
+//
+// Check applies the base rules only; (*DB).Check adds the table names its
+// handle was opened to refuse, which the caller of Open chooses.
+func Check(q string) ([]string, error) { return check(q, nil) }
+
+// Check is the package Check plus the names this handle was opened to
+// refuse (see Open), matched case-insensitively wherever a name can
+// appear: bare, quoted, bracketed or schema-qualified.
+func (d *DB) Check(q string) ([]string, error) { return check(q, d.refused) }
+
+func check(q string, refused map[string]bool) ([]string, error) {
 	// Checked once, up front, over the whole string: a NUL can sit inside
 	// a span (a quoted string, a comment) that the loop below jumps over
 	// in one step without visiting each byte, but SQLite's C-string-based
@@ -109,7 +119,7 @@ func Check(q string) ([]string, error) {
 		case c == '\'':
 			end := skipQuoted(q, i, '\'')
 			inner := q[i+1 : max(i+1, end-1)]
-			if err := checkName(strings.ReplaceAll(inner, "''", "'")); err != nil {
+			if err := checkName(strings.ReplaceAll(inner, "''", "'"), refused); err != nil {
 				return nil, err
 			}
 			i = end
@@ -124,7 +134,7 @@ func Check(q string) ([]string, error) {
 		case c == '"' || c == '`':
 			end := skipQuoted(q, i, c)
 			inner := q[i+1 : max(i+1, end-1)]
-			if err := checkName(strings.ReplaceAll(inner, string([]byte{c, c}), string(c))); err != nil {
+			if err := checkName(strings.ReplaceAll(inner, string([]byte{c, c}), string(c)), refused); err != nil {
 				return nil, err
 			}
 			i = end
@@ -133,7 +143,7 @@ func Check(q string) ([]string, error) {
 			if j := strings.IndexByte(q[i:], ']'); j >= 0 {
 				end = i + j + 1
 			}
-			if err := checkName(q[i+1 : max(i+1, end-1)]); err != nil {
+			if err := checkName(q[i+1:max(i+1, end-1)], refused); err != nil {
 				return nil, err
 			}
 			i = end
@@ -182,7 +192,7 @@ func Check(q string) ([]string, error) {
 			if strings.EqualFold(word, "attach") {
 				return nil, fmt.Errorf("%w: ATTACH is not allowed", ErrRefused)
 			}
-			if err := checkName(word); err != nil {
+			if err := checkName(word, refused); err != nil {
 				return nil, err
 			}
 			i = j
@@ -287,9 +297,9 @@ func isHexDigit(c byte) bool {
 	return (c >= '0' && c <= '9') || (c|0x20 >= 'a' && c|0x20 <= 'f')
 }
 
-func checkName(name string) error {
+func checkName(name string, refused map[string]bool) error {
 	n := strings.ToLower(name)
-	if n == "meta" || n == "dbstat" || strings.HasPrefix(n, "sqlite_") || strings.HasPrefix(n, "pragma_") {
+	if refused[n] || n == "meta" || n == "dbstat" || strings.HasPrefix(n, "sqlite_") || strings.HasPrefix(n, "pragma_") {
 		return fmt.Errorf("%w: sql reads %s, which custom SQL may not read", ErrRefused, name)
 	}
 	return nil

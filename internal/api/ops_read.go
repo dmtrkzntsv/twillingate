@@ -17,10 +17,13 @@ import (
 )
 
 type host struct {
-	db  *readsql.DB
-	reg *manage.Registry
-	ops *manage.Ops
-	rep *reporting.Service
+	db *readsql.DB
+	// subs reads the tables db refuses (customSQLRefused), for SQL the
+	// server builds; never given user-written SQL.
+	subs *readsql.DB
+	reg  *manage.Registry
+	ops  *manage.Ops
+	rep  *reporting.Service
 	// publicURL is the collector's public base (PUBLIC_URL); snippets and
 	// the integration guide are built from it. Empty means "unknown —
 	// placeholder + tell the operator".

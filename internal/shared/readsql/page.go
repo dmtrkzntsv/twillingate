@@ -76,7 +76,7 @@ func (d *DB) QueryPage(ctx context.Context, q string, p Page, args ...any) (Page
 	// use: the driver binds a plain ? by its position among all the
 	// arguments, so a caller passing named arguments q does not use (which
 	// plain Query accepts) would shift every value this wrap adds.
-	params, err := Check(q)
+	params, err := d.Check(q)
 	if err != nil {
 		return PageResult{}, err
 	}

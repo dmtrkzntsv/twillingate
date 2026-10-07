@@ -1,9 +1,11 @@
 package readsql
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestCheckRefusesReadsOfMetaAndSQLiteInternals(t *testing.T) {
@@ -331,5 +333,63 @@ func TestCheckReturnsNamedParametersInFirstUseOrder(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("params = %v, want %v", got, want)
 		}
+	}
+}
+
+// TestHandleRefusesItsExtraNames pins the names a handle is opened to
+// refuse: every spelling of one is refused by Check, Query and QueryPage
+// on that handle (before SQLite sees the text, so the table need not
+// exist), while the package-level Check and a handle opened without the
+// name still accept them. Another name on the same handle stays readable.
+func TestHandleRefusesItsExtraNames(t *testing.T) {
+	_, path := newTestDB(t, 2*time.Second, 1000)
+	strict, err := Open(path, 2*time.Second, 1000, "secrets")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer strict.Close()
+	plain, err := Open(path, 2*time.Second, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer plain.Close()
+
+	for _, q := range []string{
+		`select * from secrets`,
+		`select * from "secrets"`,
+		`select * from 'secrets'`,
+		`select * from SECRETS`,
+		`select * from main.secrets`,
+		`select * from (select * from [Secrets])`,
+	} {
+		t.Run(q, func(t *testing.T) {
+			ctx := context.Background()
+			if _, err := strict.Check(q); !errors.Is(err, ErrRefused) || !strings.Contains(strings.ToLower(err.Error()), "secrets") {
+				t.Errorf("strict.Check = %v, want ErrRefused naming secrets", err)
+			}
+			if _, err := strict.Query(ctx, q); !errors.Is(err, ErrRefused) {
+				t.Errorf("strict.Query = %v, want ErrRefused", err)
+			}
+			if _, err := strict.QueryLimit(ctx, q, 0); !errors.Is(err, ErrRefused) {
+				t.Errorf("strict.QueryLimit = %v, want ErrRefused", err)
+			}
+			if _, err := strict.QueryPage(ctx, q, Page{}); !errors.Is(err, ErrRefused) {
+				t.Errorf("strict.QueryPage = %v, want ErrRefused", err)
+			}
+			if _, err := Check(q); err != nil {
+				t.Errorf("package Check = %v, want it to accept (base rules only)", err)
+			}
+			if _, err := plain.Check(q); err != nil {
+				t.Errorf("plain.Check = %v, want it to accept", err)
+			}
+		})
+	}
+
+	if _, err := strict.Check(`select * from events`); err != nil {
+		t.Errorf("strict.Check(events) = %v, want it to accept", err)
+	}
+	// The base rules still hold on a handle with extras.
+	if _, err := strict.Check(`select * from meta`); !errors.Is(err, ErrRefused) {
+		t.Errorf("strict.Check(meta) = %v, want ErrRefused", err)
 	}
 }
