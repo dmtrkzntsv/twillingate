@@ -278,6 +278,11 @@ export type FormFields = Record<string, string | number | boolean>;
 
 const FORM_NAME_RE = /^[a-z0-9_-]{1,64}$/;
 const FORM_RETRY_MS = [1000, 5000, 25000];
+const FORM_KEEPALIVE_MAX = 60000; // bytes; the browsers' keepalive limit is 64 KiB
+
+function byteLength(s: string): number {
+  return typeof TextEncoder !== "undefined" ? new TextEncoder().encode(s).length : s.length * 3;
+}
 
 // The submission's fields: text entries only (files are never sent), a
 // repeated name joined with ", ", and no name starting with "$" (those are
@@ -929,6 +934,9 @@ export class Twillingate implements Subscriber {
     if (made) made(id);
     const body = JSON.stringify({ key: this.key, id, fields, attributes: this.formAttributes() });
     const endpoint = `${this.url}/ingest/forms/${name}`;
+    // Browsers throw a TypeError for a keepalive body over 64 KB, which would
+    // read as a network error and be retried to no end: a big one goes without.
+    const keepalive = byteLength(body) < FORM_KEEPALIVE_MAX;
     return new Promise((resolve, reject) => {
       const attempt = (n: number): void => {
         const retry = (why: string): void => {
@@ -938,7 +946,7 @@ export class Twillingate implements Subscriber {
         };
         let req: Promise<{ status: number }>;
         try {
-          req = fetch(endpoint, { method: "POST", body, keepalive: true });
+          req = fetch(endpoint, keepalive ? { method: "POST", body, keepalive: true } : { method: "POST", body });
         } catch (e) {
           return retry(String(e));
         }
@@ -963,7 +971,7 @@ export class Twillingate implements Subscriber {
     const where = this.eventContext();
     if (typeof where.$host === "string") out.$host = where.$host;
     if (typeof where.$path === "string") out.$path = where.$path;
-    if (readFlag(IGNORE_FLAG) || this.optOutSpec()) return out;
+    if (this.optOut()) return out;
     const who = this.batchAttributes();
     for (const key of ["$user_id", "$install_id"]) if (typeof who[key] === "string") out[key] = who[key];
     return out;

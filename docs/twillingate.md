@@ -176,10 +176,10 @@ options with no `data-*` form, and identity is set from code (`identify`,
 `group`, `installId`), never in markup. Views are automatic, including on
 `history.pushState` and `popstate`; elements carrying `data-twillingate-event`
 are tracked on click or submit, and a `<form data-twillingate-form>` is sent as
-a [form submission](#tagged-forms). Include each tag once: a duplicate with the same
-`data-key` or with none is ignored with a warning, one with a different key
-replaces the default instance, also with a warning, and a second project uses
-`data-instance`. The collector also serves `/js/plausible-shim.js`, which fires
+a [form submission](#tagged-forms). Include each tag once: a duplicate with the
+same `data-key` or with none is ignored with a warning, one with a different
+key replaces the default instance, also with a warning, and a second project
+uses `data-instance`. The collector also serves `/js/plausible-shim.js`, which fires
 events from Plausible's `plausible-event-*` classes — see
 [docs/plausible/](plausible/).
 
@@ -248,7 +248,7 @@ twillingate.measure("checkout_api", 340, "time", { endpoint: "/api/checkout" });
 | `consent(granted?)` | `true` / `false` pins storage consent over whatever was declared, `null` hands control back, no argument reads it. See [Consent and storage](#consent-and-storage). |
 | `optOut(flag?)` | `true` writes `twillingate_ignore`, `false` clears it, no argument reads. Returns the effective state, the `optOut` callback included. |
 | `debug(flag?)` | `true` writes `twillingate_debug`, `false` clears it, no argument reads. Returns the effective state. See [Debugging](#debugging). |
-| `submitForm(name, fields)` | Send a submission to the project's form `name`. `fields` is a flat object (string, number or boolean values), a `FormData` or a `<form>`; resolves to `{ id }`, rejects on a `4xx` or once the retries run out (also for a name outside `^[a-z0-9_-]{1,64}$`, without a request). It neither navigates nor sets the hash. See [Tagged forms](#tagged-forms). |
+| `submitForm(name, fields)` | Send a submission to the project's form `name`. `fields` is a flat object, a `FormData` or a `<form>`; in an object, `$`-prefixed keys and values that are not a string, number or boolean are skipped, as `$` names and files are for a form; resolves to `{ id }`, rejects on a `4xx` or once the retries run out (also for a name outside `^[a-z0-9_-]{1,64}$`, without a request). It neither navigates nor sets the hash. See [Tagged forms](#tagged-forms). |
 | `twillingate.create(name, opts?)` | A second instance; with options it also initialises it. See [Two projects on one page](#two-projects-on-one-page). |
 | `twillingate.get(name?)` | Look an instance up from anywhere; no name is the default instance. |
 | `util.maskIds(value, opts?)` | Mask ids in a path or URL. See [Masking](#masking-urls). |
@@ -475,13 +475,16 @@ instance, the `$user_id` and `$install_id` events carry. An opted-out visitor
 for, without those two keys.
 
 While the request is in flight the form has `aria-busy="true"` and a second
-submit is ignored. Delivery is `fetch` with `keepalive`, as `text/plain`
-so it needs no preflight, and retries a network error or a `5xx` at 1, 5 and
+submit is ignored. Delivery is `fetch` as `text/plain` so it needs no
+preflight, with `keepalive` unless the body is 60 000 bytes or more (browsers
+refuse a larger keepalive body), and retries a network error or a `5xx` at 1, 5 and
 25 seconds with the same `id`, which the collector stores once. A `4xx`
 (a closed or archived form, a draft past its window, a refused origin or key)
 is an error at once. The retries live in memory only: **a submission is never
 written to the storage driver**, whatever the consent, and a visitor who
-closes the page before delivery loses it.
+closes the page before delivery loses it. The one thing an identified instance
+with consent may still store is its visitor id, created the way any event
+flush creates it: identity bookkeeping, never submission data.
 
 On the outcome:
 

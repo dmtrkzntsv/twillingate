@@ -403,6 +403,30 @@ describe("submitForm", () => {
     expect(calls).toHaveLength(4);
   });
 
+  it("sends keepalive for a small body and none above 60000 bytes", async () => {
+    const t = tg();
+    const small = t.submitForm("contact", { a: "x".repeat(1000) });
+    await settle();
+    await small;
+    expect(calls[0].init.keepalive).toBe(true);
+    // fetch throws a TypeError for a keepalive body over 64 KB; this one
+    // is 70 000 bytes of multi-byte text, counted in bytes not characters.
+    const big = t.submitForm("contact", { a: "é".repeat(35000) });
+    await settle();
+    await big;
+    expect(calls).toHaveLength(2);
+    expect(calls[1].init.keepalive).toBeUndefined();
+    expect(calls[1].init.method).toBe("POST");
+  });
+
+  it("skips $ keys and non-primitive values of a plain object", async () => {
+    const t = tg();
+    const p = t.submitForm("contact", { a: "1", $redirect: "https://x.y/", n: null, o: { x: 1 }, l: [1] } as never);
+    await settle();
+    await p;
+    expect(calls[0].body.fields).toEqual({ a: "1" });
+  });
+
   it("rejects an invalid name without a request", async () => {
     const t = tg();
     await expect(t.submitForm("Bad Name", { a: "1" })).rejects.toThrow(/name/);
