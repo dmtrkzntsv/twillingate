@@ -37,7 +37,7 @@ discarded.
 | `twillingate serve -ingest` | Ingestion: `POST /ingest/events`, `POST /ingest/forms/{name}`, the SDK at `/js/twillingate.js` (and its Web Vitals add-on at `/js/twillingate-vitals.js`), `/healthz` |
 | `twillingate serve -console` | The console: MCP at `/mcp`, REST at `/api/`, the login, the dashboards at `/app/`, and shared widgets at `/share/` (public) |
 | `twillingate serve` | Both, on one listener unless `CONSOLE_ADDR` says otherwise |
-| `twillingate project`, `key`, `config` | Registry management |
+| `twillingate project`, `key`, `form`, `config` | Registry management |
 | `twillingate migrate` | Applies schema migrations and exits |
 
 Which of those run, and how, is the operator's choice — see [Configure the
@@ -567,16 +567,28 @@ tools below do.
    text a field holds) lists what every active form has of them, and
    `delete_submissions` with the same `search` deletes exactly that.
 
-| Operation | MCP tool | Tool arguments |
-| --- | --- | --- |
-| List forms | `list_forms` | `{project_id, archived}`; drafts first; each with `status` (`draft` or `approved`), `purpose`, `return_url`, `fields`, `expected_fields`, `draft_until`, `approved_at`, `closes_at`, `submissions` (count), `last_submitted_at`, `archived`. `archived: true` lists the archived forms instead |
-| Approve a draft | `approve_form` | `{project_id, name, expected_fields}`; one or more fields; an approved form is a `conflict` |
-| Change one | `update_form` | `{project_id, name, purpose, return_url, closes_at, expected_fields}`; merges; `closes_at: null` reopens; `expected_fields` only on an approved form, never empty |
-| Archive / restore | `archive_form` / `restore_form` | `{project_id, name}`; archiving refuses submissions and hides the form and its submissions everywhere; a restored draft gets another `FORMS_DRAFT_DAYS` |
-| Read a form's table | `list_submissions` | `{project_id, name, filters, sort, distinct, offset, limit}`; returns `columns`, `rows`, `ids`, `matched`, `total`, `offset`, `limit` |
-| Read one submission | `get_submission` | `{project_id, name, id}`; every stored field (ones no longer expected too), `received_at`, `host`, `path`, `via`, `visit` |
-| Find a person | `find_submissions` | `{project_id, search, limit, cursor}`; `search` at least 2 characters; returns `submissions` (each with its `form`) and `next_cursor` |
-| Delete submissions | `delete_submissions` | `{project_id}` with exactly one of `ids`, `form` with `filters`, or `search`; returns `deleted` |
+| Operation | CLI | MCP tool | Tool arguments |
+| --- | --- | --- | --- |
+| List forms | `twillingate form list` | `list_forms` | `{project_id, archived}`; drafts first; each with `status` (`draft` or `approved`), `purpose`, `return_url`, `fields`, `expected_fields`, `draft_until`, `approved_at`, `closes_at`, `submissions` (count), `last_submitted_at`, `archived`. `archived: true` lists the archived forms instead |
+| Approve a draft | `twillingate form approve` | `approve_form` | `{project_id, name, expected_fields}`; one or more fields; an approved form is a `conflict` |
+| Change one | `twillingate form update` | `update_form` | `{project_id, name, purpose, return_url, closes_at, expected_fields}`; merges; `closes_at: null` reopens; `expected_fields` only on an approved form, never empty |
+| Archive / restore | `twillingate form archive` / `restore` | `archive_form` / `restore_form` | `{project_id, name}`; archiving refuses submissions and hides the form and its submissions everywhere; a restored draft gets another `FORMS_DRAFT_DAYS` |
+| Read a form's table | `twillingate form export` (CSV) | `list_submissions` | `{project_id, name, filters, sort, distinct, offset, limit}`; returns `columns`, `rows`, `ids`, `matched`, `total`, `offset`, `limit` |
+| Read one submission | — | `get_submission` | `{project_id, name, id}`; every stored field (ones no longer expected too), `received_at`, `host`, `path`, `via`, `visit` |
+| Find a person | — | `find_submissions` | `{project_id, search, limit, cursor}`; `search` at least 2 characters; returns `submissions` (each with its `form`) and `next_cursor` |
+| Delete submissions | `twillingate form erase` | `delete_submissions` | `{project_id}` with exactly one of `ids`, `form` with `filters`, or `search`; returns `deleted` |
+
+The CLI works on the database directly, with every flag naming a project by
+`-project <id>` and a form by `-name`. `form list -project N [-archived]`
+prints one tab-separated line per form (name, status, submissions, `closes_at`
+or `-`, fields). `form approve -fields a,b` keeps those fields; `form update`
+takes `-purpose`, `-return-url` (empty clears it), `-closes-at` (an RFC 3339
+time, `now` to close it at once, or `never` to reopen it) and, on an approved
+form, `-fields`; a flag left out keeps the value. `form export` writes the
+form's whole table as CSV to standard output (see below). `form erase -project N`
+takes `-id` (repeatable) or `-search`, never both, deletes exactly as
+`delete_submissions` does and prints only a count: it never echoes the search
+text or the ids.
 
 **The table.** `list_submissions` answers one form's submissions with the
 columns `Received`, one per field (an approved form's expected fields in
@@ -591,8 +603,10 @@ and paging a table](reporting.md#filtering-and-paging-a-table)): `filters`
 (`email:asc`), `distinct` (then `columns` are `value` and `rows`, and there
 are no `ids`), `offset` and `limit`. Without a `sort` it is newest first. It
 lists every submission whatever the date; filter `Received` to narrow it.
-The CSV export (`GET /api/projects/{project_id}/forms/{name}/submissions.csv`,
-REST only) takes the same `filters` and `sort` and writes every matching row,
+The CSV export (`GET /api/projects/{project_id}/forms/{name}/submissions.csv`
+over REST, `twillingate form export` from the CLI) takes the same `filters` and
+`sort` over REST (the CLI exports every row, newest first) and writes every
+matching row,
 the header being the columns. A cell (header included) that starts with `=`,
 `+`, `-`, `@`, a tab or a carriage return is prefixed with `'`, so a
 spreadsheet shows what a visitor typed as text instead of running it as a

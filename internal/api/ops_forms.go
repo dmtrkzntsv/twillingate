@@ -240,11 +240,10 @@ func (h *host) subsErr(err error) error {
 
 // formTable is an active form's submissions query, run by page.
 type formTable struct {
-	h         *host
-	projectID int64
-	name      string
-	query     string
-	columns   []string // the display columns, without id
+	h       *host
+	form    store.Form
+	query   string
+	columns []string // the display columns, without id
 }
 
 // submissionsTable reads the form once and builds its query.
@@ -254,42 +253,26 @@ func (h *host) submissionsTable(ctx context.Context, projectID int64, name strin
 		return formTable{}, err
 	}
 	q, cols := manage.SubmissionsQuery(f)
-	return formTable{h: h, projectID: projectID, name: name, query: q, columns: cols}, nil
+	return formTable{h: h, form: f, query: q, columns: cols}, nil
 }
 
 // page runs one page of the table; its first column is the id.
 func (t formTable) page(ctx context.Context, pg readsql.Page) (readsql.PageResult, error) {
-	res, err := t.h.subs.QueryPage(ctx, t.query, pg, t.projectID, t.name)
+	res, err := t.h.subs.QueryPage(ctx, t.query, pg, t.form.ProjectID, t.form.Name)
 	if err != nil {
 		return readsql.PageResult{}, t.h.subsErr(err)
 	}
 	return res, nil
 }
 
-// all pages through every row pg's filters match, a page of MaxRows at a
-// time, and returns the ids and the rows without them. Without a sort it
-// sorts by Received, newest first: a sorted page breaks ties by every
-// column, so the pages neither overlap nor skip a row.
+// all returns the ids and the rows (without them) of every row pg's
+// filters match, newest first unless pg sorts (manage.AllSubmissions).
 func (t formTable) all(ctx context.Context, pg readsql.Page) ([]string, [][]string, error) {
-	var ids []string
-	var rows [][]string
-	if pg.Sort == nil {
-		pg.Sort = &readsql.Sort{Column: manage.ReceivedColumn, Desc: true}
+	ids, _, rows, err := manage.AllSubmissions(ctx, t.h.subs, t.form, pg)
+	if err != nil {
+		return nil, nil, t.h.subsErr(err)
 	}
-	pg.Limit = t.h.subs.MaxRows()
-	for pg.Offset = 0; ; pg.Offset += pg.Limit {
-		res, err := t.page(ctx, pg)
-		if err != nil {
-			return nil, nil, err
-		}
-		for _, r := range res.Rows {
-			ids = append(ids, r[0])
-			rows = append(rows, r[1:])
-		}
-		if !res.Truncated || len(res.Rows) == 0 {
-			return ids, rows, nil
-		}
-	}
+	return ids, rows, nil
 }
 
 func (h *host) listSubmissions(ctx context.Context, in listSubmissionsIn) (submissionsOut, error) {

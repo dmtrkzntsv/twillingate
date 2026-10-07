@@ -1,8 +1,10 @@
 package manage
 
 import (
+	"context"
 	"strings"
 
+	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
@@ -82,4 +84,32 @@ func CSVSafe(cell string) string {
 		return "'" + cell
 	}
 	return cell
+}
+
+// AllSubmissions pages through every row of f's submissions table that pg's
+// filters match, a page of db.MaxRows() at a time, and returns the ids, the
+// display columns and the rows without their ids. db must be a handle that
+// can read submissions (opened without that name refused). Without a sort
+// it sorts by Received, newest first: a sorted page breaks ties by every
+// column, so the pages neither overlap nor skip a row. Errors are
+// readsql's, unwrapped.
+func AllSubmissions(ctx context.Context, db *readsql.DB, f store.Form, pg readsql.Page) (ids, columns []string, rows [][]string, err error) {
+	q, columns := SubmissionsQuery(f)
+	if pg.Sort == nil {
+		pg.Sort = &readsql.Sort{Column: ReceivedColumn, Desc: true}
+	}
+	pg.Limit = db.MaxRows()
+	for pg.Offset = 0; ; pg.Offset += pg.Limit {
+		res, err := db.QueryPage(ctx, q, pg, f.ProjectID, f.Name)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		for _, r := range res.Rows {
+			ids = append(ids, r[0])
+			rows = append(rows, r[1:])
+		}
+		if !res.Truncated || len(res.Rows) == 0 {
+			return ids, columns, rows, nil
+		}
+	}
 }
