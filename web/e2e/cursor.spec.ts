@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
+import { createProject, submitJSON } from './forms'
 import { createShare } from './png'
 
 // Matches web/e2e/serve.sh's CONSOLE_AUTH_DSN (token://e2e-token?password=e2e-pass&...).
@@ -55,6 +56,7 @@ async function withoutPointer(page: Page): Promise<string[]> {
 }
 
 test('every link and button shows the pointer', async ({ page, request }) => {
+  test.setTimeout(90_000)
   // A share of Views' first widget, so the Shares page always has a row's controls to check.
   const headers = { Authorization: `Bearer ${TOKEN}` }
   const views = await request.get('/api/dashboards/1', { headers })
@@ -64,13 +66,47 @@ test('every link and button shows the pointer', async ({ page, request }) => {
   const from = new Date(Date.now() - 6 * 86_400_000).toISOString().slice(0, 10)
   await createShare(request, { widgetId: widgets[0].widget_id, projectId: 1, from, to })
 
+  // A project with a draft form, for the Forms tab's rows and a form's page and table.
+  const forms = await createProject(request, `cursor-forms-${Date.now()}`, [])
+  await submitJSON(request, forms.key, 'contact', { email: 'ann@example.com', message: 'Hello' })
+
   await login(page)
-  for (const path of ['/app/projects', '/app/projects/1/setup', '/app/dashboards', '/app/archive', '/app/shares', '/app/gallery/components', '/app/gallery/dashboards']) {
+  for (const path of [
+    '/app/projects',
+    '/app/projects/1/setup',
+    `/app/projects/${forms.id}/forms`,
+    `/app/projects/${forms.id}/forms/contact`,
+    '/app/dashboards',
+    '/app/archive',
+    '/app/shares',
+    '/app/gallery/components',
+    '/app/gallery/dashboards',
+  ]) {
     await page.goto(path)
     await page.waitForLoadState('networkidle')
     await expect(page.locator('main, [data-slot="sidebar-inset"]').first()).toBeVisible()
     expect(await withoutPointer(page), path).toEqual([])
   }
+
+  // The empty Forms tab's copy buttons, a form row's menu, the Approve
+  // dialog's checkboxes, and a submission's drawer.
+  const empty = await createProject(request, `cursor-no-forms-${Date.now()}`, [])
+  await page.goto(`/app/projects/${empty.id}/forms`)
+  await expect(page.getByRole('region', { name: 'Add a form' })).toBeVisible()
+  expect(await withoutPointer(page), 'no forms').toEqual([])
+  await page.goto(`/app/projects/${forms.id}/forms`)
+  await page.getByRole('button', { name: 'Actions for contact' }).click()
+  await expect(page.getByRole('menuitem', { name: 'Approve…' })).toBeVisible()
+  expect(await withoutPointer(page), 'form menu').toEqual([])
+  await page.getByRole('menuitem', { name: 'Approve…' }).click()
+  await expect(page.getByRole('dialog', { name: 'Approve contact' }).getByRole('checkbox', { name: 'email' })).toBeVisible()
+  expect(await withoutPointer(page), 'approve dialog').toEqual([])
+  await page.keyboard.press('Escape')
+  await page.goto(`/app/projects/${forms.id}/forms/contact`)
+  await page.locator('tbody tr').first().click()
+  await expect(page.getByRole('dialog', { name: 'Submission' }).getByText('ann@example.com')).toBeVisible()
+  expect(await withoutPointer(page), 'submission drawer').toEqual([])
+  await page.keyboard.press('Escape')
 
   // The Share dialog's controls, before and after the link is made (Copy link, Copy embed code, Open).
   await page.goto('/app/dashboards/1')

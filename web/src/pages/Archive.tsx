@@ -1,15 +1,16 @@
 import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQueries, useQuery } from '@tanstack/react-query'
 import AppShell, { TopBar } from '@/components/AppShell'
 import Crumbs from '@/components/Crumbs'
 import { DashboardGroup, LoneDashboard, type GroupRow } from '@/components/DashboardGroup'
 import { RestoreShareDialog } from '@/components/share/RestoreShareDialog'
 import { Button } from '@/components/ui/button'
 import { useDashboardActions } from '@/hooks/use-dashboard-actions'
+import { useFormActions } from '@/hooks/use-form-actions'
 import { useShareImage } from '@/hooks/use-share-image'
-import type { DashboardInfo, WidgetShare } from '@/lib/api'
+import type { DashboardInfo, Form, Project, WidgetShare } from '@/lib/api'
 import { groupName, purgeDate } from '@/lib/arrange'
-import { dashboardsQuery, widgetSharesQuery } from '@/lib/queries'
+import { dashboardsQuery, formsQuery, projectsQuery, widgetSharesQuery } from '@/lib/queries'
 import { formatPurgeDate } from '@/lib/time'
 
 interface Group {
@@ -61,6 +62,10 @@ function ShareThumb({ share }: { share: WidgetShare }) {
  * most recently archived first, each restorable with a new archive date
  * (D9). It is left out when there are none, and in reporting dev, which has
  * no shares.
+ *
+ * Last, a Forms section lists each live project's archived forms with
+ * Restore (forms D11, D12); an archived project hides its forms, so its
+ * own are not asked for. Reporting dev serves no forms.
  */
 export default function Archive() {
   const { data } = useQuery(dashboardsQuery)
@@ -72,6 +77,14 @@ export default function Archive() {
   const sharesQ = useQuery({ ...widgetSharesQuery({ state: 'archived' }), enabled: data !== undefined && writable })
   const shares = sharesQ.data?.shares ?? []
   const [restoring, setRestoring] = useState<WidgetShare>()
+  const projectsQ = useQuery({ ...projectsQuery, enabled: data !== undefined && writable })
+  const live: Project[] = (projectsQ.data?.projects ?? []).filter((p) => !p.archived)
+  const formsQs = useQueries({ queries: live.map((p) => ({ ...formsQuery(p.project_id, true), enabled: writable })) })
+  const archivedForms: { project: Project; form: Form }[] = live.flatMap((p, i) =>
+    (formsQs[i]?.data?.forms ?? []).map((form) => ({ project: p, form }))
+  )
+  const formsLoading = projectsQ.isLoading || formsQs.some((q) => q.isLoading)
+  const formActions = useFormActions()
 
   /** A tab's status line: archived (and when it goes) or still in the sidebar. */
   const status = (d: DashboardInfo) => {
@@ -119,6 +132,18 @@ export default function Archive() {
     )
   }
 
+  /** An archived form's status line: its submissions, and when it goes with them. */
+  const formStatusLine = (f: Form) => {
+    const purged = f.archived_at ? purgeDate(f.archived_at, purgeDays) : undefined
+    const count = `${f.submissions} ${f.submissions === 1 ? 'submission' : 'submissions'}`
+    if (!purged) return `${count} · archived`
+    return (
+      <>
+        {count} · archived · deleted on <span className="whitespace-nowrap">{formatPurgeDate(purged)}</span>
+      </>
+    )
+  }
+
   return (
     <AppShell dashboards={dashboards} currentId={0} readOnly={data?.dev === true}>
       <TopBar>
@@ -131,10 +156,12 @@ export default function Archive() {
             Archived dashboards are out of the sidebar. Restore one to put it back.
             {purgeDays ? ` They are deleted after ${purgeDays} days.` : ''} A hidden built-in dashboard comes back from
             Gallery › Dashboards.
-            Archived shares answer 404 until restored.
+            Archived shares answer 404 until restored. Archived forms refuse submissions.
           </p>
         </header>
-        {groups.length === 0 && shares.length === 0 && !sharesQ.isLoading && <p className="text-sm text-muted-foreground">Nothing archived.</p>}
+        {groups.length === 0 && shares.length === 0 && archivedForms.length === 0 && !sharesQ.isLoading && !formsLoading && (
+          <p className="text-sm text-muted-foreground">Nothing archived.</p>
+        )}
         {groups.length > 0 && <ul className="flex flex-col gap-2">{groups.map(renderGroup)}</ul>}
         {shares.length > 0 && (
           <section aria-labelledby="archived-shares" className="flex flex-col gap-3">
@@ -159,6 +186,34 @@ export default function Archive() {
                       Restore
                     </Button>
                   )}
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+        {archivedForms.length > 0 && (
+          <section aria-labelledby="archived-forms" className="flex flex-col gap-3">
+            <h2 id="archived-forms" className="text-base font-semibold">
+              Forms
+            </h2>
+            <ul className="flex flex-col gap-2">
+              {archivedForms.map(({ project, form }) => (
+                <li key={`${project.project_id}/${form.name}`} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-lg border p-3">
+                  <div className="min-w-0">
+                    <div className="font-mono text-sm font-medium break-all">{form.name}</div>
+                    <div className="truncate text-xs text-muted-foreground" title={project.name}>
+                      {project.name}
+                    </div>
+                    <div className="text-xs break-words text-muted-foreground">{formStatusLine(form)}</div>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={formActions.pending}
+                    onClick={() => void formActions.restore(project.project_id, form.name)}
+                  >
+                    Restore
+                  </Button>
                 </li>
               ))}
             </ul>

@@ -11,7 +11,9 @@ import SetupTab from '@/components/projects/SetupTab'
 import { Badge } from '@/components/ui/badge'
 import { useProjectActions } from '@/hooks/use-project-actions'
 import { useProjectTabActions } from '@/hooks/use-project-tab-actions'
-import { SETUP_ID } from '@/lib/project-tabs'
+import FormPage from '@/components/forms/FormPage'
+import FormsTab from '@/components/forms/FormsTab'
+import { FORMS_ID, SETUP_ID } from '@/lib/project-tabs'
 import { dashboardsQuery, projectsQuery, projectTabsQuery } from '@/lib/queries'
 
 /** `/projects/:id`: opens on the Setup tab, keeping the URL's range (project tabs D8). */
@@ -21,16 +23,17 @@ export function ProjectIndex() {
 }
 
 /**
- * `/projects/:id/setup` and `/projects/:id/dashboards/:dashId`: one
- * project, renamed in place, with its tabs (project tabs D1, D8): Setup,
- * then the dashboards shown with the project pinned.
+ * `/projects/:id/setup`, `/projects/:id/forms` (with `tab="forms"`, and
+ * `/forms/:name` for one form) and `/projects/:id/dashboards/:dashId`: one
+ * project, renamed in place, with its tabs (project tabs D1, D8; forms
+ * D12): Setup, Forms, then the dashboards shown with the project pinned.
  */
-export default function Project() {
+export default function Project({ tab }: { tab?: 'forms' } = {}) {
   const params = useParams()
   const param = params.id
   const id = Number(param)
   const valid = Number.isInteger(id) && id > 0
-  const dashId = params.dashId === undefined ? SETUP_ID : Number(params.dashId)
+  const dashId = tab === 'forms' ? FORMS_ID : params.dashId === undefined ? SETUP_ID : Number(params.dashId)
   const { data: dash } = useQuery(dashboardsQuery)
   const { data: projectsData, isLoading } = useQuery(projectsQuery)
   // Reporting dev serves no project tabs and takes no writes: the page asks
@@ -47,7 +50,7 @@ export default function Project() {
         <Crumbs items={[{ label: 'Projects', to: '/projects' }, { label: project?.name ?? String(param) }]} />
       </TopBar>
       <div
-        className={`mx-auto flex w-full flex-1 flex-col gap-6 p-3 sm:p-4 lg:p-6 ${dashId === SETUP_ID ? 'max-w-[1200px]' : 'max-w-[1600px]'}`}
+        className={`mx-auto flex w-full flex-1 flex-col gap-6 p-3 sm:p-4 lg:p-6 ${dashId === SETUP_ID || (dashId === FORMS_ID && params.name === undefined) ? 'max-w-[1200px]' : 'max-w-[1600px]'}`}
       >
         {!project ? (
           (!valid || !isLoading) && <p className="text-sm text-muted-foreground">No project {param}</p>
@@ -73,6 +76,12 @@ export default function Project() {
               <Notice icon={<LayoutGridIcon />} title="No project tabs in reporting dev">
                 Reporting dev serves the dashboards alone: open one from the sidebar.
               </Notice>
+            ) : dashId === FORMS_ID ? (
+              params.name === undefined ? (
+                <FormsTab project={project} />
+              ) : (
+                <FormPage key={params.name} project={project} name={params.name} />
+              )
             ) : tabsQ.error ? (
               <PageError error={tabsQ.error} onRetry={() => void tabsQ.refetch()} bare />
             ) : (

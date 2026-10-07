@@ -363,6 +363,80 @@ export interface ProjectsResponse {
   projects: Project[]
 }
 
+/** A form as list_forms answers it (forms D8, D12): a draft until approved with the fields it keeps. */
+export interface Form {
+  name: string
+  status: 'draft' | 'approved'
+  purpose: string
+  return_url: string
+  /** Every field name submissions have sent, sorted. */
+  fields: string[]
+  /** What an approved form keeps, in column order; absent on a draft. */
+  expected_fields?: string[]
+  created_at: string
+  /** A draft is archived at this time unless approved. */
+  draft_until?: string
+  approved_at?: string
+  /** Submissions from this time on are refused. */
+  closes_at?: string
+  submissions: number
+  last_submitted_at?: string
+  archived: boolean
+  archived_at?: string
+}
+
+/** update_form's body: an omitted field is kept; `closes_at` null reopens. */
+export interface FormUpdate {
+  purpose?: string
+  return_url?: string
+  closes_at?: string | null
+  expected_fields?: string[]
+}
+
+/** One page of a form's submissions table (D12a); `ids` holds each row's submission id, in row order. */
+export interface SubmissionsPage {
+  columns: string[]
+  rows: string[][]
+  ids: string[]
+  matched: number
+  total: number
+  offset: number
+  limit: number
+}
+
+/** list_submissions' arguments, a remote table's as widget_data takes them. */
+export interface SubmissionsQuery {
+  filters?: string
+  sort?: string
+  distinct?: string
+  offset?: number
+  limit?: number
+}
+
+/** The session a submission came in, snapshotted when it arrived (D9). */
+export interface Visit {
+  landing_path: string
+  referrer: string
+  utm_source: string
+  utm_medium: string
+  utm_campaign: string
+  views: number
+}
+
+export interface Submission {
+  id: string
+  form: string
+  received_at: string
+  fields: Record<string, string>
+  host: string
+  path: string
+  via: 'form' | 'json'
+  visit?: Visit
+}
+
+/** delete_submissions takes exactly one selector: ids, a form's table filters, or a search. */
+export type DeleteSubmissionsBody = { ids: string[] } | { form: string; filters: string } | { search: string }
+
 export interface ComponentsResponse {
   source_types: ('md' | 'sql')[]
   components: unknown[]
@@ -379,6 +453,10 @@ function toQuery(q: object): string {
 
 function json(method: string, body: unknown): RequestInit {
   return { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
+}
+
+function formPath(projectId: number, name: string): string {
+  return `/api/projects/${projectId}/forms/${encodeURIComponent(name)}`
 }
 
 export const endpoints = {
@@ -466,4 +544,25 @@ export const endpoints = {
   /** A share's 1x PNG in any state; the public image URL answers 404 once the share is archived. */
   widgetShareImage: (id: string) => apiBlob(`/api/widget-shares/${id}/image`),
   devVersion: () => api<{ version: string }>('/api/dev/version'),
+  /** A project's forms, drafts first; `archived` lists the archived ones instead. */
+  forms: (projectId: number, archived = false) =>
+    api<{ forms: Form[] }>(`/api/projects/${projectId}/forms${toQuery({ archived: archived || undefined })}`),
+  approveForm: (projectId: number, name: string, expected_fields: string[]) =>
+    api<{ status: string }>(`${formPath(projectId, name)}/approve`, json('POST', { expected_fields })),
+  updateForm: (projectId: number, name: string, body: FormUpdate) =>
+    api<{ status: string }>(formPath(projectId, name), json('PATCH', body)),
+  archiveForm: (projectId: number, name: string) => api<{ status: string }>(`${formPath(projectId, name)}/archive`, json('POST', {})),
+  restoreForm: (projectId: number, name: string) => api<{ status: string }>(`${formPath(projectId, name)}/restore`, json('POST', {})),
+  submissions: (projectId: number, name: string, q: SubmissionsQuery) =>
+    api<SubmissionsPage>(`${formPath(projectId, name)}/submissions${toQuery(q)}`),
+  submission: (projectId: number, name: string, id: string) =>
+    api<Submission>(`${formPath(projectId, name)}/submissions/${encodeURIComponent(id)}`),
+  /** Every active form's submissions with a field value containing `search`, for an erasure request. */
+  findSubmissions: (projectId: number, q: { search: string; limit?: number; cursor?: string }) =>
+    api<{ submissions: Submission[]; next_cursor?: string }>(`/api/projects/${projectId}/submissions${toQuery(q)}`),
+  deleteSubmissions: (projectId: number, body: DeleteSubmissionsBody) =>
+    api<{ deleted: number }>(`/api/projects/${projectId}/submissions/delete`, json('POST', body)),
+  /** The submissions table as CSV, every row the filters match, read with the console's auth. */
+  exportSubmissions: (projectId: number, name: string, q: { filters?: string; sort?: string }) =>
+    apiBlob(`${formPath(projectId, name)}/submissions.csv${toQuery(q)}`),
 }

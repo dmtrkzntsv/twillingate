@@ -45,6 +45,12 @@ export interface WidgetProps<P = Record<string, unknown>> {
   viewError?: string
   /** A later load is in flight: the current rows stay, dimmed. */
   reloading?: boolean
+  /**
+   * Makes each body row a button that calls this with the row's index in
+   * the page shown (a form's submissions open their drawer). Not part of
+   * any widget's contract: a dashboard never sets it.
+   */
+  onRow?: (index: number) => void
 }
 
 /**
