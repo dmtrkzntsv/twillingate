@@ -58,3 +58,14 @@ func TestSubmissionsQueryQuotesNames(t *testing.T) {
 		t.Errorf("columns = %q", cols)
 	}
 }
+
+func TestCSVSafe(t *testing.T) {
+	for in, want := range map[string]string{
+		"=1+1": "'=1+1", "+x": "'+x", "-y": "'-y", "@z": "'@z", "\tt": "'\tt", "\rr": "'\rr",
+		"plain": "plain", "": "", "a=b": "a=b", " =x": " =x",
+	} {
+		if got := CSVSafe(in); got != want {
+			t.Errorf("CSVSafe(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

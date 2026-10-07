@@ -16,7 +16,9 @@ var submissionsFixed = []struct{ name, expr string }{
 	{"UTM campaign", "json_extract(visit, '$.utm_campaign')"},
 }
 
-const receivedColumn = "Received"
+// ReceivedColumn is the submissions table's first display column, the
+// time a submission arrived.
+const ReceivedColumn = "Received"
 
 // SubmissionsQuery builds the SQL of a form's submissions table (spec
 // D12a). The query takes two arguments, the project id and the form's
@@ -33,12 +35,12 @@ func SubmissionsQuery(f store.Form) (query string, columns []string) {
 	if f.Status == store.FormApproved {
 		fields = f.ExpectedFields
 	}
-	used := map[string]bool{"id": true, strings.ToLower(receivedColumn): true}
+	used := map[string]bool{"id": true, strings.ToLower(ReceivedColumn): true}
 	for _, c := range submissionsFixed {
 		used[strings.ToLower(c.name)] = true
 	}
-	sel := []string{"id", "received_at AS " + quoteIdent(receivedColumn)}
-	columns = []string{receivedColumn}
+	sel := []string{"id", "received_at AS " + quoteIdent(ReceivedColumn)}
+	columns = []string{ReceivedColumn}
 	for _, name := range fields {
 		shown := name
 		for used[strings.ToLower(shown)] {
@@ -70,3 +72,14 @@ func fieldValue(name string) string {
 
 func quoteIdent(s string) string  { return `"` + strings.ReplaceAll(s, `"`, `""`) + `"` }
 func quoteString(s string) string { return "'" + strings.ReplaceAll(s, "'", "''") + "'" }
+
+// CSVSafe makes one cell of a CSV export inert in a spreadsheet: a cell
+// starting with =, +, -, @, a tab or a carriage return is prefixed with
+// ', so what a visitor typed is shown as text rather than run as a
+// formula. Every other cell is returned as it is.
+func CSVSafe(cell string) string {
+	if cell != "" && strings.ContainsRune("=+-@\t\r", rune(cell[0])) {
+		return "'" + cell
+	}
+	return cell
+}

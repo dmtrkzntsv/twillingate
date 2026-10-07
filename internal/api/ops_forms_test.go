@@ -290,8 +290,16 @@ func TestListSubmissionsPagingAndRefusals(t *testing.T) {
 	}
 	// Past the end: an empty page, still counted.
 	tab = callAs[submissionsTable](t, cs, "list_submissions", args("offset", 10))
-	if len(tab.Rows) != 0 || tab.Rows == nil || tab.Matched != 3 {
+	if len(tab.Rows) != 0 || tab.Rows == nil || tab.IDs == nil || len(tab.IDs) != 0 || tab.Matched != 3 {
 		t.Fatalf("past the end = %+v", tab)
+	}
+	// An empty page still says "ids": [], so a caller indexes it as it does rows.
+	res := callTool(t, cs, "list_submissions", args("offset", 10))
+	if !strings.Contains(textOf(res), `"ids":[]`) {
+		t.Errorf("empty page lacks ids: []: %s", textOf(res))
+	}
+	if res := callTool(t, cs, "list_submissions", args("distinct", "plan")); strings.Contains(textOf(res), `"ids"`) {
+		t.Errorf("distinct carries ids: %s", textOf(res))
 	}
 	for _, bad := range []map[string]any{
 		args("filters", "not json"),
@@ -426,11 +434,16 @@ func TestDeleteSubmissionsSelectors(t *testing.T) {
 	for _, r := range res.Rows {
 		details = append(details, r[0])
 	}
-	want := []string{"ids (2 ids requested)",
-		`filters: contact [{"column":"plan","op":"=","value":"pro"}] (3 ids requested)`,
-		"search: alice (2 ids requested)"}
+	// The selector's kind and the form, never the search text or the
+	// filter values: they are usually the erased person's email.
+	want := []string{"ids (2 ids requested)", "filters: contact (3 ids requested)", "search (2 ids requested)"}
 	if !reflect.DeepEqual(details, want) {
 		t.Fatalf("audit details = %q", details)
+	}
+	for _, d := range details {
+		if strings.Contains(d, "alice") || strings.Contains(d, "pro") || strings.Contains(d, "plan") {
+			t.Errorf("audit detail %q holds a search or filter value", d)
+		}
 	}
 	// The custom-SQL handle still cannot read the table.
 	if msg := refused(t, cs, "query", map[string]any{"sql": "select * from submissions"}); !strings.Contains(msg, "submissions") {
@@ -489,6 +502,26 @@ func TestExportSubmissionsCSV(t *testing.T) {
 	if rec := get("/api/projects/1/forms/contact/submissions.csv?filters=nope"); rec.Code != http.StatusBadRequest {
 		t.Errorf("bad filters: %d", rec.Code)
 	}
+	// A cell starting like a formula is made inert, header cells too.
+	for i, v := range []string{"=1+1", "+x", "-y", "@z", "\tt", "\rr", "plain", ""} {
+		seed.add("inj", "i"+string(rune('0'+i)), map[string]string{"=sum": v}, nil)
+	}
+	rec = get("/api/projects/1/forms/inj/submissions.csv?sort=" + url.QueryEscape("Received:asc"))
+	records, err = csv.NewReader(rec.Body).ReadAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if records[0][1] != "'=sum" {
+		t.Errorf("header cell = %q", records[0][1])
+	}
+	var cells []string
+	for _, r := range records[1:] {
+		cells = append(cells, r[1])
+	}
+	if want := []string{"'=1+1", "'+x", "'-y", "'@z", "'\tt", "'\rr", "plain", ""}; !reflect.DeepEqual(cells, want) {
+		t.Errorf("cells = %q, want %q", cells, want)
+	}
+
 	// The JSON routes answer too.
 	if rec := get("/api/projects/1/forms/contact/submissions?limit=1"); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"ids":["s3"]`) {
 		t.Errorf("list route: %d %s", rec.Code, rec.Body)

@@ -593,7 +593,10 @@ are no `ids`), `offset` and `limit`. Without a `sort` it is newest first. It
 lists every submission whatever the date; filter `Received` to narrow it.
 The CSV export (`GET /api/projects/{project_id}/forms/{name}/submissions.csv`,
 REST only) takes the same `filters` and `sort` and writes every matching row,
-the header being the columns.
+the header being the columns. A cell (header included) that starts with `=`,
+`+`, `-`, `@`, a tab or a carriage return is prefixed with `'`, so a
+spreadsheet shows what a visitor typed as text instead of running it as a
+formula.
 
 **Deleting.** `delete_submissions` is the one tool that deletes, and it
 cannot be undone. `ids` deletes those submissions (ids that match nothing are
@@ -603,7 +606,9 @@ with those filters (at least one; to remove a whole form, archive it); and
 value anywhere in it, case-insensitively for ASCII letters only (`É` and `é`
 differ). A deleted submission's `$form_submit` event is removed from the raw
 window only: days already rolled up keep their counts. The audit log records
-the selector and the count, never the submissions' contents.
+the selector's kind (`ids`, `search`, or `filters` with the form's name) and
+the count, never the search text, the filter values or the submissions'
+contents: those are usually the erased person's email.
 
 An archived form's submissions are left out of every table, search and
 export (so of a delete by filters or search too) until it is restored, and

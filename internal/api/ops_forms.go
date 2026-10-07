@@ -102,7 +102,7 @@ type listSubmissionsIn struct {
 type submissionsOut struct {
 	Columns []string   `json:"columns"`
 	Rows    [][]string `json:"rows"`
-	IDs     []string   `json:"ids,omitempty" jsonschema:"each row's submission id, in row order; absent with distinct"`
+	IDs     []string   `json:"ids,omitzero" jsonschema:"each row's submission id, in row order; absent with distinct"`
 	Matched int        `json:"matched" jsonschema:"rows (with distinct, values) passing the filters"`
 	Total   int        `json:"total" jsonschema:"the form's submissions before any filter"`
 	Offset  int        `json:"offset"`
@@ -238,40 +238,56 @@ func (h *host) subsErr(err error) error {
 	return err
 }
 
-// submissionsPage runs one page of an active form's submissions table.
-// Its first column is the id.
-func (h *host) submissionsPage(ctx context.Context, projectID int64, name string, pg readsql.Page) (readsql.PageResult, error) {
+// formTable is an active form's submissions query, run by page.
+type formTable struct {
+	h         *host
+	projectID int64
+	name      string
+	query     string
+	columns   []string // the display columns, without id
+}
+
+// submissionsTable reads the form once and builds its query.
+func (h *host) submissionsTable(ctx context.Context, projectID int64, name string) (formTable, error) {
 	f, err := h.ops.ActiveForm(ctx, projectID, name)
 	if err != nil {
-		return readsql.PageResult{}, err
+		return formTable{}, err
 	}
-	q, _ := manage.SubmissionsQuery(f)
-	res, err := h.subs.QueryPage(ctx, q, pg, projectID, name)
+	q, cols := manage.SubmissionsQuery(f)
+	return formTable{h: h, projectID: projectID, name: name, query: q, columns: cols}, nil
+}
+
+// page runs one page of the table; its first column is the id.
+func (t formTable) page(ctx context.Context, pg readsql.Page) (readsql.PageResult, error) {
+	res, err := t.h.subs.QueryPage(ctx, t.query, pg, t.projectID, t.name)
 	if err != nil {
-		return readsql.PageResult{}, h.subsErr(err)
+		return readsql.PageResult{}, t.h.subsErr(err)
 	}
 	return res, nil
 }
 
-// allSubmissions pages through every row pg's filters and sort match, a
-// page of MaxRows at a time, and returns the display columns, the ids and
-// the rows without them.
-func (h *host) allSubmissions(ctx context.Context, projectID int64, name string, pg readsql.Page) ([]string, []string, [][]string, error) {
-	var cols, ids []string
+// all pages through every row pg's filters match, a page of MaxRows at a
+// time, and returns the ids and the rows without them. Without a sort it
+// sorts by Received, newest first: a sorted page breaks ties by every
+// column, so the pages neither overlap nor skip a row.
+func (t formTable) all(ctx context.Context, pg readsql.Page) ([]string, [][]string, error) {
+	var ids []string
 	var rows [][]string
-	pg.Limit = h.subs.MaxRows()
+	if pg.Sort == nil {
+		pg.Sort = &readsql.Sort{Column: manage.ReceivedColumn, Desc: true}
+	}
+	pg.Limit = t.h.subs.MaxRows()
 	for pg.Offset = 0; ; pg.Offset += pg.Limit {
-		res, err := h.submissionsPage(ctx, projectID, name, pg)
+		res, err := t.page(ctx, pg)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, err
 		}
-		cols = res.Columns[1:]
 		for _, r := range res.Rows {
 			ids = append(ids, r[0])
 			rows = append(rows, r[1:])
 		}
 		if !res.Truncated || len(res.Rows) == 0 {
-			return cols, ids, rows, nil
+			return ids, rows, nil
 		}
 	}
 }
@@ -281,7 +297,11 @@ func (h *host) listSubmissions(ctx context.Context, in listSubmissionsIn) (submi
 	if err != nil {
 		return submissionsOut{}, err
 	}
-	res, err := h.submissionsPage(ctx, in.ProjectID, in.Name, pg)
+	t, err := h.submissionsTable(ctx, in.ProjectID, in.Name)
+	if err != nil {
+		return submissionsOut{}, err
+	}
+	res, err := t.page(ctx, pg)
 	if err != nil {
 		return submissionsOut{}, err
 	}
@@ -321,7 +341,10 @@ func (h *host) findSubmissions(ctx context.Context, in findSubmissionsIn) (findS
 
 // deleteSubmissions resolves exactly one selector to ids and deletes
 // them. Filters are a form table's: every row they match, paged through,
-// so the delete removes exactly what the table showed.
+// so the delete removes exactly what the table showed. The audit names
+// the selector's kind ("ids", "search", "filters: <form>"), never the
+// search text or filter values: they are usually the erased person's
+// email.
 func (h *host) deleteSubmissions(ctx context.Context, in deleteSubmissionsIn) (deleteSubmissionsOut, error) {
 	given := 0
 	for _, g := range []bool{len(in.IDs) > 0, in.Form != "" || in.Filters != "", in.Search != ""} {
@@ -343,7 +366,7 @@ func (h *host) deleteSubmissions(ctx context.Context, in deleteSubmissionsIn) (d
 		if ids, err = h.ops.SubmissionIDsMatching(ctx, in.ProjectID, search); err != nil {
 			return deleteSubmissionsOut{}, err
 		}
-		selector = "search: " + search
+		selector = "search"
 	default:
 		if in.Form == "" || in.Filters == "" {
 			return deleteSubmissionsOut{}, invalidf("form and filters go together: the filters of that form's table")
@@ -355,10 +378,14 @@ func (h *host) deleteSubmissions(ctx context.Context, in deleteSubmissionsIn) (d
 		if len(pg.Filters) == 0 {
 			return deleteSubmissionsOut{}, invalidf("filters must hold at least one filter; to remove a whole form, archive it (purged after RETENTION_ARCHIVED_DAYS)")
 		}
-		if _, ids, _, err = h.allSubmissions(ctx, in.ProjectID, in.Form, pg); err != nil {
+		t, err := h.submissionsTable(ctx, in.ProjectID, in.Form)
+		if err != nil {
 			return deleteSubmissionsOut{}, err
 		}
-		selector = "filters: " + in.Form + " " + in.Filters
+		if ids, _, err = t.all(ctx, pg); err != nil {
+			return deleteSubmissionsOut{}, err
+		}
+		selector = "filters: " + in.Form
 	}
 	n, err := h.ops.DeleteSubmissions(ctx, actorFrom(ctx), in.ProjectID, ids, selector)
 	if err != nil {
@@ -372,11 +399,25 @@ func (h *host) exportSubmissions(ctx context.Context, in exportSubmissionsIn) (c
 	if err != nil {
 		return csvFile{}, err
 	}
-	cols, _, rows, err := h.allSubmissions(ctx, in.ProjectID, in.Name, pg)
+	t, err := h.submissionsTable(ctx, in.ProjectID, in.Name)
 	if err != nil {
 		return csvFile{}, err
 	}
-	return csvFile{Name: in.Name + "-submissions.csv", Header: cols, Rows: rows}, nil
+	_, rows, err := t.all(ctx, pg)
+	if err != nil {
+		return csvFile{}, err
+	}
+	// What visitors typed must not run as a spreadsheet formula.
+	header := make([]string, len(t.columns))
+	for i, c := range t.columns {
+		header[i] = manage.CSVSafe(c)
+	}
+	for _, r := range rows {
+		for i, c := range r {
+			r[i] = manage.CSVSafe(c)
+		}
+	}
+	return csvFile{Name: in.Name + "-submissions.csv", Header: header, Rows: rows}, nil
 }
 
 func (h *host) registerForms(r *registrar) {
@@ -413,7 +454,7 @@ func (h *host) registerForms(r *registrar) {
 		Description: "Find one person's submissions across every active form of a project, for an access or erasure request: each submission with a field value containing search (at least 2 characters; ASCII case-insensitive, so É and é differ), newest first, with its form, fields and visit. Pages of limit (default 100, at most 500); pass next_cursor back as cursor. Personal data. delete_submissions with the same search deletes exactly these."},
 		h.findSubmissions)
 	expose(r, spec{Name: "delete_submissions", Annotations: destroy, Method: "POST", Path: p + "/submissions/delete",
-		Description: "Permanently delete submissions chosen by exactly one of: ids; form with filters (list_submissions' filters, deleting every row that table shows); or search (as find_submissions, across active forms). Irreversible. A deleted submission's $form_submit conversion is removed from the raw window only: days already rolled up keep their counts. A draft's submissions never had one. The audit log records the selector and the count, never the submissions' contents. Returns how many were deleted."},
+		Description: "Permanently delete submissions chosen by exactly one of: ids; form with filters (list_submissions' filters, deleting every row that table shows); or search (as find_submissions, across active forms). Irreversible. A deleted submission's $form_submit conversion is removed from the raw window only: days already rolled up keep their counts. A draft's submissions never had one. The audit log records the selector's kind (ids, search, or filters with the form's name) and the count, never the search text, the filter values or the submissions' contents. Returns how many were deleted."},
 		h.deleteSubmissions)
 	restCSV(r, spec{Name: "export_submissions", Method: "GET", Path: f + "/submissions.csv",
 		Description: "One active form's submissions table as CSV: list_submissions' columns without ids, with its filters and sort, every matching row."},
