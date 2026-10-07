@@ -75,7 +75,7 @@ test('shows usage and cap impact for the seeded project', async ({ page }) => {
   const usage = page.getByRole('region', { name: 'Usage' })
   await expect(usage.getByText('Events', { exact: true })).toBeVisible()
   await expect(usage.locator('.recharts-bar-rectangle').first()).toBeVisible()
-  // cap_usage scans the dimension tables for the range: about 6s on the seeded 180 days.
+  // cap_usage reads every capped view for the range: the slowest card on the page.
   await expect(page.getByRole('region', { name: 'Cap impact' }).getByRole('row').nth(1)).toBeVisible({ timeout: 20_000 })
 })
 

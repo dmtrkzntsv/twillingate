@@ -30,14 +30,14 @@ interface Props {
 /**
  * A project's Setup tab (project tabs D1): its usage, allowed origins,
  * breakdowns, keys and cap impact, with Archive or Restore. The range is
- * the URL's, which every tab of the project shares (D8), else 30 days.
+ * the URL's, which every tab of the project shares (D8), else 7 days.
  */
 export default function SetupTab({ project, dash, actions }: Props) {
   const id = project.project_id
   const keysQ = useQuery(keysQuery(id))
   const [url, setURL] = useSearchParams()
   const [archiving, setArchiving] = useState(false)
-  const sel = chooseSelection(url, { range: '30d' }, [], { project: false, range: true })
+  const sel = chooseSelection(url, { range: '7d' }, [], { project: false, range: true })
   const tz = dash?.timezone ?? 'UTC'
   const range = resolve(sel.range!, tz, new Date(), sel.from && sel.to ? { from: sel.from, to: sel.to } : undefined)
   const purgeDays = dash?.purge_after_days
