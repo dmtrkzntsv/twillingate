@@ -399,6 +399,25 @@ func TestFormJSON(t *testing.T) {
 	}
 }
 
+// A JSON body without $host or $path stores them empty: the SDK leaves
+// them out on purpose (masking failed, autoAttributes off), so the
+// Referer, which the plain form path falls back to, must not fill them.
+func TestFormJSONIgnoresReferer(t *testing.T) {
+	forms := newFakeForms()
+	h := formServer(t, forms, slog.Default())
+	w := postJSON(h, "contact", `{"key":"`+testKey+`","fields":{"email":"a@b.c"}}`,
+		map[string]string{"Origin": testOrigin, "Referer": testOrigin + "/account/123/secret"})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d body %q", w.Code, w.Body.String())
+	}
+	if sub := forms.calls[0].Submission; sub.Host != "" || sub.Path != "" {
+		t.Errorf("host %q path %q, want both empty", sub.Host, sub.Path)
+	}
+	if ev := forms.calls[0].Event; ev.Host != "" || ev.Path != "" {
+		t.Errorf("event host %q path %q, want both empty", ev.Host, ev.Path)
+	}
+}
+
 // A retried id answers 201 with the same id and is stored once; the id
 // may come as the top-level id or the $id attribute.
 func TestFormJSONRetryStoresOnce(t *testing.T) {

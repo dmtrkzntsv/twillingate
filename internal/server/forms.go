@@ -264,7 +264,7 @@ func multipartValues(raw []byte, boundary string) (url.Values, error) {
 }
 
 // pageOf is the submission's host and path: the $host and $path context
-// keys, each falling back to the Referer's.
+// keys, each falling back to the Referer's (pass "" for no fallback).
 func pageOf(ctx formContext, referer string) (host, path string) {
 	host, path = ctx.Host, ctx.Path
 	if host != "" && path != "" {
@@ -381,7 +381,14 @@ func (s *Server) handleForm(w http.ResponseWriter, r *http.Request) {
 	ip := clientIP(r)
 	actor, actorKind, user, _ := resolveIdentity(resolved{UserID: fc.UserID, InstallID: fc.InstallID},
 		salt, ip, r.UserAgent(), strconv.FormatInt(p.ID, 10))
-	host, path := pageOf(fc, r.Referer())
+	// Only a plain form falls back to the Referer: the SDK leaves $host
+	// and $path out on purpose (masking failed, autoAttributes off), and
+	// the Referer would put back the URL it kept out.
+	referer := ""
+	if via == viaForm {
+		referer = r.Referer()
+	}
+	host, path := pageOf(fc, referer)
 	visit, err := s.forms.SessionVisit(ctx, p.ID, actorKind, actor, received)
 	if err != nil {
 		// The visit is context, not the submission: store it without one.

@@ -403,6 +403,9 @@ Date: 2026-10-05
 - A field name holding a control character (U+0000 to U+001F, U+007F) is
   dropped at ingest and refused in `expected_fields`: a NUL would end the
   SQL that reads it.
+- Only the plain form path falls back to the `Referer` for `host` and
+  `path`. On JSON an absent `$host`/`$path` stays empty: the SDK leaves
+  them out on purpose (masking failed, `autoAttributes: false`).
 
 ## Where the code goes
 

@@ -1127,7 +1127,7 @@ what they mean on events:
 | --- | --- |
 | `$id` | The submission's UUID. A retry with the same id is stored once and answered as a success, even if the form closed in between; omitted, the collector makes one |
 | `$user_id`, `$install_id` | The actor, resolved as on events: `$user_id`, else `$install_id`, else the connection hash, so a JS-free post from the browser that sent the visit's views gets the same actor as those views |
-| `$host`, `$path` | The page the form is on; each defaults to the `Referer`'s |
+| `$host`, `$path` | The page the form is on; on a plain form each defaults to the `Referer`'s, on JSON an absent one stays empty |
 | `$redirect` | Plain form only: where to send the visitor back |
 
 Any other `$` key is dropped, and a field named like a context key without
