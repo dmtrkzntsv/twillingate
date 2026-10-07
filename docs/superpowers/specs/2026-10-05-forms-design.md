@@ -406,6 +406,10 @@ Date: 2026-10-05
 - Only the plain form path falls back to the `Referer` for `host` and
   `path`. On JSON an absent `$host`/`$path` stays empty: the SDK leaves
   them out on purpose (masking failed, `autoAttributes: false`).
+- The SDK sends the key as `?key=` on the endpoint URL as well as in the
+  body, so the collector authorises before reading the body and its `413`
+  and `400` carry CORS headers: the SDK sees a real `4xx` and does not
+  retry it.
 
 ## Where the code goes
 

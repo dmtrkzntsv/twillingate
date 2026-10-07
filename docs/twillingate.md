@@ -475,8 +475,10 @@ instance, the `$user_id` and `$install_id` events carry. An opted-out visitor
 for, without those two keys.
 
 While the request is in flight the form has `aria-busy="true"` and a second
-submit is ignored. Delivery is `fetch` as `text/plain` so it needs no
-preflight, with `keepalive` unless the body is 60 000 bytes or more (browsers
+submit is ignored. Delivery is `fetch` to `/ingest/forms/{name}?key=…` (the
+key in the URL as well as the body, so the collector checks it before reading
+the body and a `413` or `400` reaches the page as that status) as
+`text/plain` so it needs no preflight, with `keepalive` unless the body is 60 000 bytes or more (browsers
 refuse a larger keepalive body), and retries a network error or a `5xx` at 1, 5 and
 25 seconds with the same `id`, which the collector stores once. A `4xx`
 (a closed or archived form, a draft past its window, a refused origin or key)
@@ -1140,7 +1142,8 @@ open, else `409`: an archived form, a draft past its window or a form past
 its closing time refuses, and nothing is written. The exception is a JSON
 body that carries its key only as `key` inside it. That body has to be read
 before the key is known, so its size and syntax are checked first (`413`,
-`400`), and those answers carry no CORS headers, as on `/ingest/events`.
+`400`), and those answers carry no CORS headers, as on `/ingest/events`; the
+SDK sends `?key=` as well, so its posts never take this path.
 `Origin: null` (a sandboxed frame, a page sent with
 `Referrer-Policy: no-referrer`) is an origin like any other: refused unless
 `allowed_origins` lists `null` or a bare `*`, as on events. Preflight

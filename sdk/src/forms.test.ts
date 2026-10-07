@@ -76,7 +76,10 @@ describe("a tagged form", () => {
     await settle();
     expect(ev.defaultPrevented).toBe(true);
     expect(calls).toHaveLength(1);
-    expect(calls[0].url).toBe("https://collector.example.com/ingest/forms/contact");
+    // The key rides in the URL too, so the collector authorises before it
+    // reads the body: its 413 and 400 then carry CORS headers and read as
+    // the 4xx they are, not as network errors to retry.
+    expect(calls[0].url).toBe("https://collector.example.com/ingest/forms/contact?key=ak_test");
     expect(calls[0].init.method).toBe("POST");
     expect(calls[0].init.keepalive).toBe(true);
     expect(calls[0].init.headers).toBeUndefined(); // no Content-Type: text/plain, CORS-simple
@@ -236,7 +239,7 @@ describe("a tagged form", () => {
     await settle();
     t.flush();
     await settle();
-    expect(calls.map((c) => c.url)).toEqual(["https://collector.example.com/ingest/forms/contact"]);
+    expect(calls.map((c) => c.url)).toEqual(["https://collector.example.com/ingest/forms/contact?key=ak_test"]);
   });
 
   it("sends once with several instances: the first registered one", async () => {
@@ -247,6 +250,13 @@ describe("a tagged form", () => {
     await settle();
     expect(calls).toHaveLength(1);
     expect(calls[0].body.key).toBe("ak_first");
+  });
+
+  it("escapes the key in the URL", async () => {
+    tg({ key: "ak_a+b/c" });
+    submit(formEl(CONTACT));
+    await settle();
+    expect(calls[0].url).toBe("https://collector.example.com/ingest/forms/contact?key=ak_a%2Bb%2Fc");
   });
 
   it("an untagged form is left alone", async () => {
@@ -345,7 +355,7 @@ describe("submitForm", () => {
     await settle();
     const r = await p;
     expect(r).toEqual({ id: calls[0].body.id });
-    expect(calls[0].url).toBe("https://collector.example.com/ingest/forms/contact");
+    expect(calls[0].url).toBe("https://collector.example.com/ingest/forms/contact?key=ak_test");
     expect(calls[0].body.fields).toEqual({ email: "a@b.c", seats: 5, trial: true });
     expect(location.hash).toBe("");
   });

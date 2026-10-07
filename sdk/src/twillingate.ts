@@ -933,7 +933,10 @@ export class Twillingate implements Subscriber {
     const id = uuid();
     if (made) made(id);
     const body = JSON.stringify({ key: this.key, id, fields, attributes: this.formAttributes() });
-    const endpoint = `${this.url}/ingest/forms/${name}`;
+    // The key goes in the URL as well as the body, so the collector
+    // authorises before reading the body: a 413 or 400 then carries CORS
+    // headers and reads as the 4xx it is rather than a network error.
+    const endpoint = `${this.url}/ingest/forms/${name}?key=${encodeURIComponent(this.key)}`;
     // Browsers throw a TypeError for a keepalive body over 64 KB, which would
     // read as a network error and be retried to no end: a big one goes without.
     const keepalive = byteLength(body) < FORM_KEEPALIVE_MAX;
