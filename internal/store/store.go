@@ -337,6 +337,19 @@ type Store interface {
 	// or before now, one widget_share.archive audit row each (actor
 	// "retention"), and returns how many.
 	ArchiveDueWidgetShares(ctx context.Context, now string) (int, error)
+	// WriteSubmission records a form submission, creating the form as a
+	// draft on its first one, and on an approved form writes n.Event in
+	// the same transaction. It returns the form as it stands after the
+	// write and whether a row was inserted (false for an id already
+	// stored: nothing changes, no second event). A form that is archived,
+	// a draft past draft_until or past closes_at at the submission's
+	// ReceivedAt refuses with ErrFormClosed and writes nothing.
+	WriteSubmission(ctx context.Context, n NewSubmission) (Form, bool, error)
+	// SessionVisit snapshots the actor's session at `at` (views gapped by
+	// at most 30 minutes, looking back at most a day): its landing page,
+	// referrer, UTM source, medium and campaign, and view count. Nil when
+	// no view matches.
+	SessionVisit(ctx context.Context, projectID int64, actorKind, actorID string, at time.Time) (*Visit, error)
 	// ReportingHash is the hash of the latest reporting_migrations row, ""
 	// if none has run yet. SyncReporting makes components and system
 	// dashboards (with their widgets) match s in one transaction.
