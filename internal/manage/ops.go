@@ -6,9 +6,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
+	"sync"
 
+	"github.com/dmtrkzntsv/twillingate/internal/shared/sortkey"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
@@ -20,6 +23,9 @@ import (
 type Ops struct {
 	Reg *Registry
 	St  Store
+	// moveMu keeps two moves in this process from placing against the
+	// same snapshot.
+	moveMu sync.Mutex
 	// BreakdownsMax is ATTRIBUTE_BREAKDOWNS_MAX: the attributes all active
 	// projects may declare together; 0 is no limit. Set by the caller
 	// after NewOps.
@@ -315,8 +321,13 @@ func (o *Ops) RestoreProject(ctx context.Context, actor string, id int64) error 
 
 // MoveProject puts project id right after project after in the order
 // every listing shows, archived projects included (0: first). Moving a
-// project after itself changes nothing.
+// project after itself changes nothing. The project takes a fractional key
+// between its new neighbours, so one row changes; while any project is
+// still unkeyed (none was moved since migration 034, or one was created
+// since), every project is keyed first in the order shown, as one write.
 func (o *Ops) MoveProject(ctx context.Context, actor string, id, after int64) error {
+	o.moveMu.Lock()
+	defer o.moveMu.Unlock()
 	snap := o.Reg.Snapshot(ctx)
 	if snap.Project(id) == nil {
 		return store.Refuse(ErrNotFound, "unknown project %d", id)
@@ -327,25 +338,59 @@ func (o *Ops) MoveProject(ctx context.Context, actor string, id, after int64) er
 	if after != 0 && snap.Project(after) == nil {
 		return store.Refuse(ErrNotFound, "unknown project %d to put project %d after", after, id)
 	}
-	order := make([]int64, 0, len(snap.Projects()))
-	if after == 0 {
-		order = append(order, id)
+	rest := slices.DeleteFunc(slices.Clone(snap.Projects()), func(p *Project) bool { return p.ID == id })
+	i := 0 // the project goes before rest[i]
+	if after != 0 {
+		i = slices.IndexFunc(rest, func(p *Project) bool { return p.ID == after }) + 1
 	}
-	for _, p := range snap.Projects() {
-		if p.ID == id {
-			continue
-		}
-		order = append(order, p.ID)
-		if p.ID == after {
-			order = append(order, id)
-		}
+	keys, err := moveKeys(rest, i, id)
+	if err != nil {
+		return err
 	}
-	if err := o.St.SetProjectOrder(ctx, order, store.AuditEntry{Actor: actor, Action: "project.move",
+	if err := o.St.SetProjectSortKeys(ctx, keys, store.AuditEntry{Actor: actor, Action: "project.move",
 		Subject: idSubject(id), Detail: fmt.Sprintf("after %d", after)}); err != nil {
 		return err
 	}
 	o.afterWrite(ctx, false)
 	return nil
+}
+
+// moveKeys is the keys that put project id before rest[i]: one key
+// between its neighbours, or, when a neighbour is unkeyed or the two
+// leave no key between them, fresh keys for the whole new order.
+func moveKeys(rest []*Project, i int, id int64) ([]store.ProjectSortKey, error) {
+	var prev, next string
+	if i > 0 {
+		prev = rest[i-1].SortKey
+	}
+	if i < len(rest) {
+		next = rest[i].SortKey
+	}
+	keyed := !slices.ContainsFunc(rest, func(p *Project) bool { return p.SortKey == "" })
+	if keyed {
+		if k, err := sortkey.Between(prev, next); err == nil {
+			return []store.ProjectSortKey{{ID: id, SortKey: k}}, nil
+		}
+	}
+	order := make([]int64, 0, len(rest)+1)
+	for j, p := range rest {
+		if j == i {
+			order = append(order, id)
+		}
+		order = append(order, p.ID)
+	}
+	if i == len(rest) {
+		order = append(order, id)
+	}
+	fresh, err := sortkey.Spread("", "", len(order))
+	if err != nil {
+		return nil, err
+	}
+	keys := make([]store.ProjectSortKey, len(order))
+	for j, pid := range order {
+		keys[j] = store.ProjectSortKey{ID: pid, SortKey: fresh[j]}
+	}
+	return keys, nil
 }
 
 func (o *Ops) IssueIngestKey(ctx context.Context, actor string, projectID int64, label string) (string, error) {

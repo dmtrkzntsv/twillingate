@@ -37,20 +37,20 @@ func createProjects(t *testing.T, d *DB, names ...string) []int64 {
 	return ids
 }
 
-// A new project comes last; SetProjectOrder puts the listed projects
-// first in that order, audits and bumps the version, and a project it
-// does not list (created after the order was read) keeps its place after
-// them.
-func TestSetProjectOrder(t *testing.T) {
+// Keyed projects list by key, then unkeyed ones by id: a new project,
+// created unkeyed, comes last. SetProjectSortKeys audits and bumps the
+// version once.
+func TestProjectSortKeys(t *testing.T) {
 	d := openRegistryDB(t)
 	ctx := context.Background()
 	ids := createProjects(t, d, "a", "b", "c")
 	if got := registryOrder(t, d); !reflect.DeepEqual(got, ids) {
 		t.Fatalf("order after create = %v, want %v", got, ids)
 	}
-	v0, _ := d.ConfigVersion(ctx)
 	a, b, c := ids[0], ids[1], ids[2]
-	if err := d.SetProjectOrder(ctx, []int64{c, a, b}, store.AuditEntry{Actor: "api", Action: "project.move", Subject: "3"}); err != nil {
+	v0, _ := d.ConfigVersion(ctx)
+	if err := d.SetProjectSortKeys(ctx, []store.ProjectSortKey{{ID: c, SortKey: "a0"}, {ID: a, SortKey: "a1"}, {ID: b, SortKey: "a2"}},
+		store.AuditEntry{Actor: "api", Action: "project.move"}); err != nil {
 		t.Fatal(err)
 	}
 	if got := registryOrder(t, d); !reflect.DeepEqual(got, []int64{c, a, b}) {
@@ -63,40 +63,33 @@ func TestSetProjectOrder(t *testing.T) {
 	if err := d.db.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE action = 'project.move'`).Scan(&n); err != nil || n != 1 {
 		t.Errorf("audit rows = %d, %v; want 1", n, err)
 	}
+	ps, _, err := d.LoadRegistry(ctx)
+	if err != nil || ps[0].SortKey != "a0" {
+		t.Errorf("first project's key = %q, %v; want a0", ps[0].SortKey, err)
+	}
 
-	// d arrives after the order was read: the stale order moves b first
-	// and d stays after the three listed.
+	// A new project is unkeyed: last, after every keyed one.
 	dd := createProjects(t, d, "d")[0]
 	if got := registryOrder(t, d); !reflect.DeepEqual(got, []int64{c, a, b, dd}) {
-		t.Fatalf("order after create = %v, want d last", got)
-	}
-	if err := d.SetProjectOrder(ctx, []int64{b, c, a}, store.AuditEntry{Actor: "api", Action: "project.move"}); err != nil {
-		t.Fatal(err)
-	}
-	if got := registryOrder(t, d); !reflect.DeepEqual(got, []int64{b, c, a, dd}) {
-		t.Errorf("order = %v, want %v", got, []int64{b, c, a, dd})
+		t.Errorf("order after create = %v, want d last", got)
 	}
 }
 
-// An unknown id is not_found and a repeated one invalid; neither moves
-// anything.
-func TestSetProjectOrderRefusals(t *testing.T) {
+// An unknown id is not_found and writes no key, the known ones included.
+func TestProjectSortKeysUnknown(t *testing.T) {
 	d := openRegistryDB(t)
 	ctx := context.Background()
 	ids := createProjects(t, d, "a", "b")
-	if err := d.SetProjectOrder(ctx, []int64{ids[1], 999}, store.AuditEntry{}); !errors.Is(err, store.ErrNotFound) {
+	err := d.SetProjectSortKeys(ctx, []store.ProjectSortKey{{ID: ids[1], SortKey: "a0"}, {ID: 999, SortKey: "a1"}}, store.AuditEntry{})
+	if !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("unknown id: %v, want ErrNotFound", err)
-	}
-	if err := d.SetProjectOrder(ctx, []int64{ids[1], ids[1]}, store.AuditEntry{}); !errors.Is(err, store.ErrInvalid) {
-		t.Errorf("repeated id: %v, want ErrInvalid", err)
 	}
 	if got := registryOrder(t, d); !reflect.DeepEqual(got, ids) {
 		t.Errorf("order = %v, want %v untouched", got, ids)
 	}
 }
 
-// 034 keeps today's order, projects by id, and its trigger puts a
-// project inserted afterwards last, whoever inserts it.
+// After 034 every project is unkeyed, so the order stays by id.
 func TestMigration034ProjectOrder(t *testing.T) {
 	db := newTestDBAt(t, 33)
 	execAll(t, db,
@@ -104,22 +97,7 @@ func TestMigration034ProjectOrder(t *testing.T) {
 	if err := db.migrateThrough(context.Background(), 34); err != nil {
 		t.Fatal(err)
 	}
-	execAll(t, db, `UPDATE projects SET position = 100 WHERE id = 3`,
-		`INSERT INTO projects (id, name, allowed_origins) VALUES (4, 'w', '[]')`)
-	rows, err := db.db.Query(`SELECT id FROM projects ORDER BY position, id`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rows.Close()
-	var got []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			t.Fatal(err)
-		}
-		got = append(got, id)
-	}
-	if !reflect.DeepEqual(got, []int64{5, 7, 3, 4}) {
-		t.Errorf("order = %v, want 5 7 (by id), 3 (moved to 100), then the new 4", got)
+	if got := registryOrder(t, db); !reflect.DeepEqual(got, []int64{3, 5, 7}) {
+		t.Errorf("order = %v, want by id", got)
 	}
 }
