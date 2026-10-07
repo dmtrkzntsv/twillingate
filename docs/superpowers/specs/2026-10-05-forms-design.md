@@ -1,6 +1,6 @@
 # Forms
 
-Status: draft
+Status: implemented
 Date: 2026-10-05
 
 ## Problem
@@ -364,6 +364,32 @@ Date: 2026-10-05
   (including ones no longer expected), the full visit, and **Delete**;
   with filters set, **Delete all matching** sends the same `filters`.
   **CSV** downloads what the filters match.
+
+## Revised during implementation
+
+- A retry of an already-stored submission `id` is idempotent success
+  (`201`, same id, no second event) even after the form closed or was
+  archived; the id is checked before the form's state.
+- `visit` needs a view of the actor within 30 minutes of the submission;
+  an older newest view gives no visit.
+- A refusal with no allowed redirect target answers its own status
+  (`409` closed, `413` too large, `400` bad body); the plain `400` of D6
+  applies only after a stored submission has nowhere to go.
+- The delete audit row holds the selector kind, the form (for filters)
+  and the count, never search text or filter values: those are usually
+  the erased person's email.
+- CSV cells starting with `=`, `+`, `-`, `@`, tab or CR get a leading `'`.
+- Delete by ids may reach an archived form's submissions; lists, find and
+  filters stay active-only.
+- Approving needs expected fields (`ErrInvalid` when empty) and refuses an
+  archived form ("restore it first"); the store itself accepts both.
+- The CLI flag is `-project-id`, as on `key`, not `-project`.
+- `list_forms` carries `action_base` (`PUBLIC_URL` + `/ingest/forms`, empty
+  when unset), which the console's snippet uses.
+- A draft's submissions never write `$form_submit`, not even after the
+  form is approved.
+- The redirect check is `Snapshot.RedirectAllowed`; `return_url` is
+  validated with it. The config field is `cfg.Forms.DraftDays`.
 
 ## Where the code goes
 
