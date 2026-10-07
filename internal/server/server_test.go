@@ -133,7 +133,7 @@ func newServerWithLogger(t *testing.T, logger *slog.Logger) (*fakeQueue, *Server
 		map[int][2]string{0: {testKey, "web"}})
 	g, _ := geo.New("cloudflare://", t.TempDir(), slog.Default())
 	q := &fakeQueue{}
-	return q, New(cfg, reg, q, g, fixedSalt{}, q, logger)
+	return q, New(cfg, reg, q, g, fixedSalt{}, q, newFakeForms(), logger)
 }
 
 // newTestServer is newServer for a test that only needs the server.
@@ -778,7 +778,7 @@ func TestEventAgeClampUsesGlobalRawWindow(t *testing.T) {
 		map[int][2]string{0: {"ak_clamped", "web"}, 1: {"ak_normal", "web"}})
 	g, _ := geo.New("cloudflare://", t.TempDir(), slog.Default())
 	q := &fakeQueue{}
-	h := New(cfg, reg, q, g, fixedSalt{}, q, slog.Default())
+	h := New(cfg, reg, q, g, fixedSalt{}, q, newFakeForms(), slog.Default())
 
 	oldTS := time.Now().UTC().AddDate(0, 0, -10).Format(time.RFC3339)
 	recentTS := time.Now().UTC().AddDate(0, 0, -1).Format(time.RFC3339)

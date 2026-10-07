@@ -75,7 +75,8 @@ func closedReason(f store.Form, now time.Time) string {
 // WriteSubmission records a submission, creating its form as a draft, and
 // on an approved form its $form_submit event, in one transaction. The
 // refusal and the duplicate id are decided before anything else is
-// written, so neither changes the form. The event's id, ts and project
+// written, so neither changes the form; a refusal returns the form beside
+// ErrFormClosed. The event's id, ts and project
 // are the submission's, whatever n.Event carries, so a later delete finds
 // it by (family product, project_id, day, id).
 func (d *DB) WriteSubmission(ctx context.Context, n store.NewSubmission) (store.Form, bool, error) {
@@ -180,6 +181,12 @@ func (d *DB) WriteSubmission(ctx context.Context, n store.NewSubmission) (store.
 		fresh = d.seen.unseen(keys)
 		return writeReceived(ctx, tx, fresh)
 	})
+	if errors.Is(err, store.ErrFormClosed) {
+		// The form as the transaction read it (a row it created is
+		// rolled back with it): ingest reads its return_url to send the
+		// visitor back with the error fragment.
+		return form, false, err
+	}
 	if err != nil {
 		return store.Form{}, false, err
 	}

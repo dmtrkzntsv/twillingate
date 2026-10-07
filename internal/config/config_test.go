@@ -41,6 +41,9 @@ func TestDefaultsApplied(t *testing.T) {
 	if c.Retention.ArchivedDays != 30 {
 		t.Errorf("Retention.ArchivedDays = %d, want 30", c.Retention.ArchivedDays)
 	}
+	if c.Forms.DraftDays != DefaultFormDraftDays || DefaultFormDraftDays != 7 {
+		t.Errorf("Forms.DraftDays = %d (default %d), want 7", c.Forms.DraftDays, DefaultFormDraftDays)
+	}
 	if c.AttributeValuesTopN != 100 || c.IdentitiesTopN != 500 {
 		t.Errorf("caps = %d/%d, want 100/500", c.AttributeValuesTopN, c.IdentitiesTopN)
 	}
@@ -71,6 +74,7 @@ func TestEnvOverrides(t *testing.T) {
 		"ATTRIBUTE_VALUES_TOP_N":          "200",
 		"IDENTITIES_TOP_N":                "2000",
 		"ATTRIBUTE_BREAKDOWNS_MAX":        "7",
+		"FORMS_DRAFT_DAYS":                "14",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -96,6 +100,9 @@ func TestEnvOverrides(t *testing.T) {
 	if c.Retention.ArchivedDays != 7 {
 		t.Errorf("Retention.ArchivedDays = %d, want 7", c.Retention.ArchivedDays)
 	}
+	if c.Forms.DraftDays != 14 {
+		t.Errorf("Forms.DraftDays = %d, want 14", c.Forms.DraftDays)
+	}
 	if c.Reporting.CacheAge != 120*time.Second || c.Reporting.RefreshAge != 30*time.Second {
 		t.Errorf("Reporting = %+v", c.Reporting)
 	}
@@ -117,6 +124,8 @@ func TestValidationErrors(t *testing.T) {
 		"negative attributes cap":  base(map[string]string{"ATTRIBUTE_VALUES_TOP_N": "-1"}),
 		"negative identities cap":  base(map[string]string{"IDENTITIES_TOP_N": "-1"}),
 		"negative breakdowns max":  base(map[string]string{"ATTRIBUTE_BREAKDOWNS_MAX": "-1"}),
+		"zero form draft days":     base(map[string]string{"FORMS_DRAFT_DAYS": "0"}),
+		"negative form draft days": base(map[string]string{"FORMS_DRAFT_DAYS": "-3"}),
 		"bad integer":              base(map[string]string{"BUFFER_CAPACITY": "many"}),
 		"invalid duration":         base(map[string]string{"BUFFER_FLUSH_INTERVAL": "fast"}),
 		"negative cache seconds":   base(map[string]string{"REPORTING_CACHE_SECONDS": "-1"}),
@@ -128,6 +137,15 @@ func TestValidationErrors(t *testing.T) {
 		if _, err := FromEnv(func(k string) (string, bool) { v, ok := vars[k]; return v, ok }); err == nil {
 			t.Errorf("%s: expected error", name)
 		}
+	}
+}
+
+// A draft needs a window of at least a day: 0 would archive every new
+// form on the next pass, so it is refused, naming the variable.
+func TestFormDraftDaysMessage(t *testing.T) {
+	_, err := load(t, map[string]string{"FORMS_DRAFT_DAYS": "0"})
+	if err == nil || !strings.Contains(err.Error(), "FORMS_DRAFT_DAYS") {
+		t.Errorf("err = %v, want a refusal naming FORMS_DRAFT_DAYS", err)
 	}
 }
 

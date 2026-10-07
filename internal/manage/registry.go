@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -250,6 +251,60 @@ func (s *Snapshot) ProjectByKey(key string) (*Project, string, bool) {
 func (s *Snapshot) OriginAllowed(id int64, origin string) bool {
 	set, ok := s.origins[id]
 	return ok && set.match(trimSlash(origin))
+}
+
+// RedirectAllowed reports whether target may be where a form submission is
+// sent back to: an absolute http(s) URL with a host and no userinfo, whose
+// origin passes the project's allowed_origins. An origin that passes only
+// through a bare "*" entry must also equal reqOrigin (the request's Origin
+// header), so "*" admits the page the post came from but never makes the
+// collector an open redirect.
+func (s *Snapshot) RedirectAllowed(projectID int64, target, reqOrigin string) bool {
+	origin, ok := urlOrigin(target)
+	if !ok {
+		return false
+	}
+	set, ok := s.origins[projectID]
+	if !ok {
+		return false
+	}
+	if set.exact[origin] {
+		return true
+	}
+	bare := false
+	for _, g := range set.globs {
+		if g == "*" {
+			bare = true
+			continue
+		}
+		if matchOrigin(g, origin) {
+			return true
+		}
+	}
+	return bare && origin == trimSlash(reqOrigin)
+}
+
+// urlOrigin is target's origin as a browser writes it in an Origin header
+// (scheme://host[:port], host lowercased, the default port dropped), or
+// false when target is not an absolute http(s) URL with a host. A
+// backslash anywhere is refused: browsers read it as a slash, Go does not,
+// so the two could disagree about the host.
+func urlOrigin(target string) (string, bool) {
+	if strings.ContainsRune(target, '\\') {
+		return "", false
+	}
+	u, err := url.Parse(target)
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Opaque != "" || u.User != nil || u.Hostname() == "" {
+		return "", false
+	}
+	host := strings.ToLower(u.Hostname())
+	if strings.Contains(host, ":") { // IPv6; Hostname() strips the brackets
+		host = "[" + host + "]"
+	}
+	if port := u.Port(); port != "" && !((u.Scheme == "https" && port == "443") || (u.Scheme == "http" && port == "80")) {
+		host += ":" + port
+	}
+	return u.Scheme + "://" + host, true
 }
 
 func (s *Snapshot) AnyOriginAllowed(origin string) bool {

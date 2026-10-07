@@ -33,7 +33,7 @@ discarded.
 
 | Command | Does |
 | --- | --- |
-| `twillingate serve -ingest` | Ingestion: `POST /ingest/events`, the SDK at `/js/twillingate.js` (and its Web Vitals add-on at `/js/twillingate-vitals.js`), `/healthz` |
+| `twillingate serve -ingest` | Ingestion: `POST /ingest/events`, `POST /ingest/forms/{name}`, the SDK at `/js/twillingate.js` (and its Web Vitals add-on at `/js/twillingate-vitals.js`), `/healthz` |
 | `twillingate serve -console` | The console: MCP at `/mcp`, REST at `/api/`, the login, the dashboards at `/app/`, and shared widgets at `/share/` (public) |
 | `twillingate serve` | Both, on one listener unless `CONSOLE_ADDR` says otherwise |
 | `twillingate project`, `key`, `config` | Registry management |
@@ -543,6 +543,7 @@ decides instead:
 | `$page_view` | views | `web` | the views dashboard, `views_overview`, `views_breakdown`, retention |
 | `$screen_view` | views | `app` | same |
 | anything else | product | — | `product_events`, `product_attributes` |
+| `$form_submit` | product | — | written by the collector beside an approved form's submission ([Form submissions](#form-submissions)); a client sending it is rejected |
 | any name, with `family: "measures"` | measures | — | `measures`, the Web Vitals and Measures dashboards |
 
 All three families are stored in one raw table, `events`, whose `family`
@@ -552,6 +553,8 @@ of each family read only its own rows.
 The `$` prefix is reserved for the system. An unrecognized `$` **name** is
 stored as an ordinary custom event with a warning; an unrecognized `$`
 **attribute key** is dropped, with a warning in the response body.
+`$form_submit` is the one name a client may never send: it is a form's
+conversion, and only the form endpoint writes it.
 
 ### Views (`$page_view`, `$screen_view`)
 
@@ -707,8 +710,10 @@ behave identically from this section alone.
 
 ### Endpoint
 
-`POST /ingest/events` is the only ingest endpoint. There is no separate
-pageview, event or batch path — a single event is a batch of one.
+`POST /ingest/events` is the only events endpoint. There is no separate
+pageview, event or batch path — a single event is a batch of one. Form
+submissions have an endpoint of their own,
+[`POST /ingest/forms/{name}`](#form-submissions).
 
 ### Authentication
 
@@ -779,6 +784,8 @@ reads as undeclared and a custom key is absent.
 before this change keeps working unchanged.
 
 A per-event rejection (the batch's other events are still stored):
+- **`$form_submit`**, in any family: only the [form endpoint](#form-submissions)
+  writes it.
 - **An unknown `family`** (anything but `views`, `product` or `measures`) is
   rejected, not stored as `product`.
 - **A contradiction is rejected:** `family: "views"` with a name that is not
@@ -882,7 +889,8 @@ is a poison batch to drop**; the `202` is returned **before** the write, so
 | Measure value | `0` to `1e15` (else the event is rejected) |
 | `$sample_rate` | `0.0001` to `1` (else stored as `1`) |
 
-The `limits` tool lists these beside the retention and cap settings in force.
+The `limits` tool lists these, and the [form limits](#form-submissions),
+beside the retention and cap settings in force.
 
 ### Origin and CORS
 
@@ -897,6 +905,102 @@ matches every subdomain (not the apex, not `http://`) and
 X-Analytics-Key` and echoes the matched origin. Send the key in the body with
 `Content-Type: text/plain` to skip preflight entirely, which makes the request
 CORS-simple.
+
+### Form submissions
+
+`POST /ingest/forms/{name}` takes one submission to the project's form
+`{name}`, which matches `^[a-z0-9_-]{1,64}$` (anything else is a plain
+`400`). The first submission creates the form as a draft: it accepts
+submissions for `FORMS_DRAFT_DAYS` (default 7) and keeps every field they
+send. An approved form keeps only its expected fields and writes, beside each
+submission, a `$form_submit` product event with the submission's `id`, its
+time as `ts` and the form's name as its one attribute, `form`; a draft's
+submissions write none. Both are written before the answer, never buffered.
+
+Two body styles, chosen by `Content-Type`:
+
+- **A plain HTML form** (`application/x-www-form-urlencoded` or
+  `multipart/form-data`), which needs no JavaScript. The key travels in the
+  action URL as `?key=` (or as the `X-Analytics-Key` header); every field not
+  starting with `$` is a submission field. The answer is a redirect.
+
+  ```html
+  <form method="post" action="https://t.example.com/ingest/forms/contact?key=ak_…">
+    <input name="email"> <textarea name="message"></textarea>
+    <input type="hidden" name="$redirect" value="https://example.com/thanks">
+  </form>
+  ```
+
+- **JSON**, any other content type (`text/plain` keeps a browser's request
+  CORS-simple). The key travels as the header, `?key=` or `key` in the body.
+  A `fields` value is a string, number or boolean, stored as a string; an
+  array, object or `null` drops that field. The answer is `201 {"id": "…"}`.
+
+  ```jsonc
+  { "key": "ak_…",               // omit when using the header or ?key=
+    "id": "018f1e5c-…",          // optional, or $id in attributes
+    "fields": { "email": "a@b.c", "plan": "pro", "seats": 5 },
+    "attributes": { "$install_id": "018f1e5a-…", "$host": "example.com", "$path": "/pricing" } }
+  ```
+
+A submission is flat text, one string per field name: a repeated name (a
+checkbox group, a multi-select) is joined with `", "`. Files are never
+stored. A multipart file part is discarded unread but counts toward the body
+limit, so a form carrying a file is refused as too large: leave file inputs
+out of a twillingate form.
+
+Context keys, as `$` fields on a plain form or in `attributes` on JSON, mean
+what they mean on events:
+
+| Key | Meaning |
+| --- | --- |
+| `$id` | The submission's UUID. A retry with the same id is stored once and answered as a success, even if the form closed in between; omitted, the collector makes one |
+| `$user_id`, `$install_id` | The actor, resolved as on events: `$user_id`, else `$install_id`, else the connection hash, so a JS-free post from the browser that sent the visit's views gets the same actor as those views |
+| `$host`, `$path` | The page the form is on; each defaults to the `Referer`'s |
+| `$redirect` | Plain form only: where to send the visitor back |
+
+Any other `$` key is dropped, and a field named like a context key without
+the `$` (`redirect`, `id`, `host`) is an ordinary field.
+
+The checks run in order. The key must resolve to an active project, else a
+plain `401`; a present `Origin` must pass `allowed_origins`, else a plain
+`403`; the body must be within the limits below, else `413`; the form must be
+open, else `409`: an archived form, a draft past its window or a form past
+its closing time refuses, and nothing is written. `Origin: null` (a sandboxed
+frame, a page sent with `Referrer-Policy: no-referrer`) is an origin like any
+other: refused unless `allowed_origins` lists `null`, as on events. Preflight
+is answered as for `/ingest/events`. A JSON client retries only on `5xx` and
+network failure, reusing its `id`.
+
+**The redirect.** twillingate renders no page. A plain form is answered with
+a `303` to the first allowed of `$redirect`, the form's return URL and the
+`Referer`. A target is allowed when it is an absolute `http(s)` URL whose
+origin passes `allowed_origins`; one that passes only through a bare `*`
+must also be the request's own `Origin`, so `*` never makes the collector an
+open redirect. The target's fragment is replaced by
+`#twillingate-form-success-{name}`, or by `#twillingate-form-error-{name}`
+for a refusal after the key and `Origin` checks (a body too large goes back
+to the `Referer` only, since nothing of the form was read). With no allowed
+target a submission is still stored, and answered with a plain `400` saying
+the form has no return URL; a refusal is answered with its plain status. One
+element per outcome, shown with `:target`, makes the thank-you note:
+
+```html
+<p id="twillingate-form-success-contact">Thanks, we'll be in touch.</p>
+<style>#twillingate-form-success-contact:not(:target){display:none}</style>
+```
+
+The `Referer` usually carries only the origin on a cross-origin post (the
+browsers' default `strict-origin-when-cross-origin` policy), so "back to the
+page" lands on the site's root: a page without JavaScript sets `$redirect`
+or the form's return URL.
+
+| Limit | Value |
+| --- | --- |
+| Body | 64 KB, file parts included (else `413`, or the error redirect) |
+| Fields | 100; past that, the rest in name order are dropped |
+| Field name length | 64 characters (a longer name dropped) |
+| Field value length | 8 KB (truncated, not rejected) |
 
 ---
 
@@ -914,7 +1018,7 @@ take `project_id`, `from` and `to` as `YYYY-MM-DD` unless noted.
 | Tool | Extra parameters | Returns |
 | --- | --- | --- |
 | `list_projects` | none | Every project with its `project_id`, name, `archived`, `allowed_origins` and declared `attributes`. Call this first — every other tool needs a `project_id` |
-| `limits` | none (no `project_id`) | The limits in force, each with a `group`, `name`, `value`, `unit` (`days`, `bytes`, `characters`, `seconds`; absent for a count) and `description`, in three groups: `retention` (`RETENTION_EVENTS_RAW_DAYS`, `RETENTION_EVENTS_AGGREGATE_DAYS`, `RETENTION_ARCHIVED_DAYS`), `caps` (`ATTRIBUTE_VALUES_TOP_N`, which caps views breakdowns and attribute values alike, `ATTRIBUTE_BREAKDOWNS_MAX`, `IDENTITIES_TOP_N`) and `ingest`, the wire format's fixed [limits](#limits). A setting carries its `setting` and `default`; a fixed limit neither. `zero` says what 0 means where it is not the number (`no cap`, `kept forever`) |
+| `limits` | none (no `project_id`) | The limits in force, each with a `group`, `name`, `value`, `unit` (`days`, `bytes`, `characters`, `seconds`; absent for a count) and `description`, in three groups: `retention` (`RETENTION_EVENTS_RAW_DAYS`, `RETENTION_EVENTS_AGGREGATE_DAYS`, `RETENTION_ARCHIVED_DAYS`, `FORMS_DRAFT_DAYS`), `caps` (`ATTRIBUTE_VALUES_TOP_N`, which caps views breakdowns and attribute values alike, `ATTRIBUTE_BREAKDOWNS_MAX`, `IDENTITIES_TOP_N`) and `ingest`, the wire format's fixed [limits](#limits) and [form limits](#form-submissions). A setting carries its `setting` and `default`; a fixed limit neither. `zero` says what 0 means where it is not the number (`no cap`, `kept forever`) |
 | `cap_usage` | `from`, `to` (optional: the last 30 days) | Per capped dimension — views breakdowns and kinds, attribute keys, `users`/`groups` — the busiest day's values against the `cap`, `days` with data, `days_capped` (an `(other)` row; for users and groups, the cap reached) and `folded_share` |
 | `received_attributes` | `project_id` (optional), `from`, `to` (optional: the last 30 days) | The keys the project's product events and measures carried — each key's `events` and `max_values` (the busiest event's distinct values on one day, against `ATTRIBUTE_VALUES_TOP_N`), counted by the daily pass so today's arrive the night after (a key first received today has `events` 0 and `max_values` `null`), `received` and `declared` — for the 500 busiest keys plus every declared key (declared keys none carried with `received` false), `keys_total` (the distinct keys received), `values_cap`, `breakdowns_used` and `breakdowns_max` (`ATTRIBUTE_BREAKDOWNS_MAX`). Kept for the raw window only. Without `project_id`, the budget only |
 | `usage` | `project_id` (optional: every project), `from`, `to` (optional: the last 30 days) | Per project: `views`, product `events` and measure `samples` per day and in total, `last_received_at`, `first_day` (the oldest day with data, stored counts included), `raw_days`, `rolled_up_days`, an estimated `size` (raw rows and aggregates, measured daily by the daily pass, which also runs at start: the newest, with the day it was `measured_at`; `null` until the first measurement) and each day's measured `total_bytes` in the series (`null` on days not measured), `unused_attributes` (declared keys no event carried; computed only with `project_id`, `null` for the all-projects answer); plus the database's size on disk now and per day (`database_series`). Days before the newest daily pass read the counts it stored, which outlive the aggregates' retention. Each series day also carries `declared_attributes` and, counted the night after while the day's rows are raw and kept once rolled up, the distinct `attribute_keys` and `attribute_values` received and the `attribute_values_folded` into `(other)` (`null` on days not stored) |

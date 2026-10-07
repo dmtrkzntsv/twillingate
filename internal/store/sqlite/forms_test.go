@@ -267,7 +267,7 @@ func TestWriteSubmissionRefusedWhenClosed(t *testing.T) {
 			if _, _, err := db.WriteSubmission(ctx, newSub("s0", map[string]string{"a": "1"})); err != nil {
 				t.Fatal(err)
 			}
-			execAll(t, db, c.setup)
+			execAll(t, db, c.setup, `UPDATE forms SET return_url='https://site.com/back'`)
 			subs := countRows(t, db, `SELECT COUNT(*) FROM submissions`)
 			evs := countRows(t, db, `SELECT COUNT(*) FROM events`)
 			var fieldsBefore, lastBefore string
@@ -276,9 +276,14 @@ func TestWriteSubmissionRefusedWhenClosed(t *testing.T) {
 			}
 
 			n := newSub("s1", map[string]string{"a": "1", "new": "x"})
-			_, inserted, err := db.WriteSubmission(ctx, n)
+			form, inserted, err := db.WriteSubmission(ctx, n)
 			if !errors.Is(err, store.ErrFormClosed) || inserted {
 				t.Fatalf("inserted=%v err=%v, want ErrFormClosed", inserted, err)
+			}
+			// The refusal hands back the form, so ingest can send the
+			// visitor to its return_url with the error fragment.
+			if form.Name != "contact" || form.ReturnURL != "https://site.com/back" {
+				t.Fatalf("refused with form %+v, want the form as it stands", form)
 			}
 			if countRows(t, db, `SELECT COUNT(*) FROM submissions`) != subs ||
 				countRows(t, db, `SELECT COUNT(*) FROM events`) != evs {

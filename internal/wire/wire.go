@@ -20,6 +20,18 @@ const (
 	FutureSkew = 5 * time.Minute
 )
 
+// The form endpoint's limits (POST /ingest/forms/{name}). A larger body is
+// refused, multipart file parts included, which are read only to be
+// discarded; past MaxFormFields names the rest are dropped (in sorted
+// order), a name longer than MaxFormFieldName is dropped, and a value is
+// truncated to MaxFormValue bytes on a rune boundary, never refused.
+const (
+	MaxFormBody      = 64 << 10
+	MaxFormFields    = 100
+	MaxFormFieldName = 64
+	MaxFormValue     = 8 << 10
+)
+
 // MaxMeasureValue bounds a measure's value: 1e15 is about 31,000 years in
 // milliseconds and 1 PB in bytes, beyond anything a time, size or count can
 // honestly be. A larger value is a bug on the client; accepted, it would

@@ -41,6 +41,14 @@ type Retention struct {
 	ArchivedDays int `json:"archived_days"`
 }
 
+// FormsConfig carries the forms settings. DraftDays (FORMS_DRAFT_DAYS) is
+// how long a form created by its first submission accepts submissions as a
+// draft before the daily pass archives it unapproved; it is read when a
+// draft is created or restored, so a change moves no existing window.
+type FormsConfig struct {
+	DraftDays int
+}
+
 // ReportingConfig sizes the two-age cache a sql widget's loaded value is
 // served from (internal/reporting): an ordinary request reuses a value up
 // to CacheAge old; a fresh=true request reuses one younger than this
@@ -121,6 +129,10 @@ const (
 	DefaultArchivedDays  = 30
 )
 
+// DefaultFormDraftDays is FORMS_DRAFT_DAYS's default: a week to see what a
+// new form sends and approve it.
+const DefaultFormDraftDays = 7
+
 type Config struct {
 	IngestAddr          string
 	Database            string
@@ -134,6 +146,7 @@ type Config struct {
 	// declare together; 0 is no limit.
 	AttributeBreakdownsMax int
 	IdentitiesTopN         int
+	Forms                  FormsConfig
 	Reporting              ReportingConfig
 	Console                ConsoleConfig
 }
@@ -227,6 +240,7 @@ func FromEnv(lookup func(string) (string, bool)) (*Config, error) {
 		AttributeValuesTopN:    e.num("ATTRIBUTE_VALUES_TOP_N", DefaultAttributeValuesTopN),
 		AttributeBreakdownsMax: e.num("ATTRIBUTE_BREAKDOWNS_MAX", DefaultAttributeBreakdownsMax),
 		IdentitiesTopN:         e.num("IDENTITIES_TOP_N", DefaultIdentitiesTopN),
+		Forms:                  FormsConfig{DraftDays: e.num("FORMS_DRAFT_DAYS", DefaultFormDraftDays)},
 		Reporting: ReportingConfig{
 			CacheAge:   time.Duration(e.num("REPORTING_CACHE_SECONDS", 900)) * time.Second,
 			RefreshAge: time.Duration(e.num("REPORTING_REFRESH_SECONDS", 60)) * time.Second,
@@ -309,6 +323,9 @@ func (c *Config) validate() error {
 	}
 	if c.Retention.ArchivedDays < 0 {
 		return fmt.Errorf("config: RETENTION_ARCHIVED_DAYS must not be negative: %d", c.Retention.ArchivedDays)
+	}
+	if c.Forms.DraftDays < 1 {
+		return fmt.Errorf("config: FORMS_DRAFT_DAYS must be at least 1: %d", c.Forms.DraftDays)
 	}
 	if c.Reporting.CacheAge < 0 {
 		return fmt.Errorf("config: REPORTING_CACHE_SECONDS must not be negative")

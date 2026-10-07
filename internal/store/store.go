@@ -343,7 +343,8 @@ type Store interface {
 	// write and whether a row was inserted (false for an id already
 	// stored: nothing changes, no second event). A form that is archived,
 	// a draft past draft_until or past closes_at at the submission's
-	// ReceivedAt refuses with ErrFormClosed and writes nothing.
+	// ReceivedAt refuses with ErrFormClosed, returned beside the form as
+	// it stands, and writes nothing.
 	WriteSubmission(ctx context.Context, n NewSubmission) (Form, bool, error)
 	// ListForms lists a project's active forms (archived false) or its
 	// archived ones (true), drafts first, then by name, each with its
