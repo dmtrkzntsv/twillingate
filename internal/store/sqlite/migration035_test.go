@@ -29,8 +29,8 @@ func columnsOf(t *testing.T, db *DB, table string) []string {
 	return got
 }
 
-func TestMigration034FormsColumns(t *testing.T) {
-	db := newTestDBAt(t, 34)
+func TestMigration035FormsColumns(t *testing.T) {
+	db := newTestDBAt(t, 35)
 	for table, want := range map[string][]string{
 		"forms": {"project_id", "name", "purpose", "return_url", "fields", "status", "expected_fields",
 			"created_at", "draft_until", "approved_at", "closes_at", "last_submitted_at", "archived_at"},
@@ -44,10 +44,10 @@ func TestMigration034FormsColumns(t *testing.T) {
 	}
 }
 
-// TestMigration034FormDefaults checks a form inserted with only its key and
+// TestMigration035FormDefaults checks a form inserted with only its key and
 // creation time is a draft with no fields recorded and no purpose.
-func TestMigration034FormDefaults(t *testing.T) {
-	db := newTestDBAt(t, 34)
+func TestMigration035FormDefaults(t *testing.T) {
+	db := newTestDBAt(t, 35)
 	execAll(t, db, `INSERT INTO forms (project_id, name, created_at) VALUES (1, 'contact', '2026-10-06T10:00:00Z')`)
 	var status, fields, purpose, returnURL string
 	var expected, draftUntil *string
@@ -60,8 +60,8 @@ func TestMigration034FormDefaults(t *testing.T) {
 	}
 }
 
-func TestMigration034SubmissionKeyIsPerProject(t *testing.T) {
-	db := newTestDBAt(t, 34)
+func TestMigration035SubmissionKeyIsPerProject(t *testing.T) {
+	db := newTestDBAt(t, 35)
 	ins := `INSERT INTO submissions (project_id, id, form, received_at, fields, actor_kind, actor_id, via)
 		VALUES (?, 'a', 'contact', '2026-10-06T10:00:00Z', '{}', 'user', 'u', 'form')`
 	if _, err := db.db.Exec(ins, 1); err != nil {

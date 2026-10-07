@@ -608,9 +608,9 @@ widget's two PNGs and the text they show are kept. Nothing existing
 changes. Rollback: an older binary ignores the table, and share links
 answer 404 until the newer binary is back.
 
-### Upgrading to forms (migration 034)
+### Upgrading to forms (migration 035)
 
-No pre-checks and no data step. Migration 034 adds `forms` and
+No pre-checks and no data step. Migration 035 adds `forms` and
 `submissions`; nothing existing changes, and nothing happens until a page
 posts a form. `FORMS_DRAFT_DAYS` is new and optional (default 7: how long
 a form created by its first submission accepts submissions as a draft

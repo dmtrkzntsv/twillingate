@@ -88,7 +88,7 @@ Date: 2026-10-05
   carrying a large file is refused as too large. The docs say not to put
   file inputs in a twillingate form.
 
-- **D4. Migration 034 adds two tables.**
+- **D4. Migration 035 adds two tables.**
 
   ```sql
   CREATE TABLE forms (
@@ -430,7 +430,7 @@ No new package; the archtest rank table is unchanged.
 | Package | Change |
 | --- | --- |
 | `store` | `Form`, `Submission` row types and their methods |
-| `store/sqlite` | `034_forms.sql`; `projectTables`; `PurgeArchived` |
+| `store/sqlite` | `035_forms.sql`; `projectTables`; `PurgeArchived` |
 | `server` | `forms.go`: the endpoint, decoding, D6, field filtering; takes a `server.FormStore` (as `NameStore` today), passed by `app`, which writes the submission and, on an approved form, its `$form_submit` in one transaction |
 | `wire` | the D10 limits |
 | `config` | `FORMS_DRAFT_DAYS` (D10a) |
@@ -462,12 +462,12 @@ No new package; the archtest rank table is unchanged.
   conversions, and that deleting a submission removes its conversion
   from the raw window only.
 - `integration_guide`: a forms section.
-- `deploy/UPGRADES.md`: 034, additive.
+- `deploy/UPGRADES.md`: 035, additive.
 - `docs/deployment.md`: `FORMS_DRAFT_DAYS`.
 
 ## Tests
 
-- `migration034_test.go`; store tests for idempotent ids, `fields`
+- `migration035_test.go`; store tests for idempotent ids, `fields`
   merging, project purge and archived-form purge.
 - Jobs: a draft past `draft_until` is archived by the daily pass and
   purged `RETENTION_ARCHIVED_DAYS` later with its submissions; an

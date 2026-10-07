@@ -1,6 +1,6 @@
 // Purge of archived projects, dashboards, widgets, widget shares and forms
 // past RETENTION_ARCHIVED_DAYS (spec 2026-09-25, migration 021 onward;
-// shares from migration 032, spec 2026-10-05; forms from migration 034). Run by
+// shares from migration 032, spec 2026-10-05; forms from migration 035). Run by
 // the daily pass (internal/jobs), never by a request handler: there is no
 // tool or route for it.
 package sqlite
