@@ -29,6 +29,7 @@ test('creates a project, edits it, manages a key, archives and restores it', asy
   await page.keyboard.press('Escape')
 
   await page.getByRole('article', { name }).getByRole('link', { name }).click()
+  await expect(page).toHaveURL(/\/projects\/\d+\/setup$/)
   await expect(page.getByRole('heading', { name })).toBeVisible()
 
   await page.getByRole('button', { name: 'Rename' }).click()

@@ -18,6 +18,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
       restore: vi.fn(),
       move: vi.fn(),
       renameGroup: vi.fn(),
+      setSidebar: vi.fn(),
     },
   }
 })
@@ -73,6 +74,42 @@ describe('useDashboardActions', () => {
     expect(toast).toHaveBeenCalledWith("Archived 'Marketing'", {
       action: { label: 'Undo', onClick: expect.any(Function) },
     })
+  })
+
+  it('setSidebar(false) hides the group, shows an Undo toast, and Undo shows it again', async () => {
+    vi.mocked(endpoints.setSidebar).mockResolvedValue({} as never)
+    const { result } = renderHook(() => useDashboardActions(), { wrapper })
+
+    await act(() => result.current.setSidebar({ dashboard_id: 1, title: 'Reports' }, false, { navigateTo: '/dashboards' }))
+
+    expect(endpoints.setSidebar).toHaveBeenCalledWith(1, false)
+    expect(endpoints.archive).not.toHaveBeenCalled()
+    expect(toast).toHaveBeenCalledWith("Hidden 'Reports'", { action: { label: 'Undo', onClick: expect.any(Function) } })
+    expect(location).toBe('/dashboards')
+
+    const { action } = vi.mocked(toast).mock.calls[0][1] as unknown as { action: { onClick: () => void } }
+    await act(async () => action.onClick())
+    expect(endpoints.setSidebar).toHaveBeenLastCalledWith(1, true)
+  })
+
+  it('setSidebar(true) says "Shown in the sidebar"', async () => {
+    vi.mocked(endpoints.setSidebar).mockResolvedValue({} as never)
+    const { result } = renderHook(() => useDashboardActions(), { wrapper })
+
+    await act(() => result.current.setSidebar({ dashboard_id: 1, title: 'Reports' }, true))
+
+    expect(toast).toHaveBeenCalledWith('Shown in the sidebar', { action: { label: 'Undo', onClick: expect.any(Function) } })
+  })
+
+  it('a refused setSidebar toasts the server\'s message and no success toast', async () => {
+    const refusal = 'dashboard 20 is your own: your own dashboards are always in the sidebar; archive_dashboard takes one away'
+    vi.mocked(endpoints.setSidebar).mockRejectedValue(new ApiError(400, refusal))
+    const { result } = renderHook(() => useDashboardActions(), { wrapper })
+
+    await act(() => result.current.setSidebar({ dashboard_id: 20, title: 'Mine' }, false))
+
+    expect(toast.error).toHaveBeenCalledWith(refusal)
+    expect(toast).not.toHaveBeenCalled()
   })
 
   it('a move the server takes resolves true and refetches', async () => {
@@ -172,6 +209,8 @@ describe('useDashboardActions', () => {
       follows_project: true,
       follows_range: true,
       tabs: [],
+      sidebar: true,
+      project_tab: false,
     }
     vi.mocked(endpoints.duplicate).mockResolvedValue(copy)
     const { result } = renderHook(() => useDashboardActions(), { wrapper })

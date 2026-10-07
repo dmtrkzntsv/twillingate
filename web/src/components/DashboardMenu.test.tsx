@@ -13,10 +13,11 @@ vi.mock('@/hooks/use-dashboard-actions', () => ({
 
 const duplicate = vi.fn()
 const archive = vi.fn()
+const setSidebar = vi.fn()
 const move = vi.fn()
 
 function info(dashboard_id: number, title: string, owner: 'system' | 'user', group_id: number): DashboardInfo {
-  return { dashboard_id, title, owner, group_id, widgets: 1 }
+  return { dashboard_id, title, owner, group_id, widgets: 1, sidebar: true, project_tab: false }
 }
 
 function tab(dashboard_id: number, title: string): DashboardTab {
@@ -30,7 +31,7 @@ function detail(
   tabs: DashboardTab[],
   extra: Partial<DashboardDetail> = {}
 ): DashboardDetail {
-  return { dashboard_id, title, owner: 'user', group_id, widgets: [], follows_project: false, follows_range: false, tabs, ...extra }
+  return { dashboard_id, title, owner: 'user', group_id, widgets: [], follows_project: false, follows_range: false, tabs, sidebar: true, project_tab: false, ...extra }
 }
 
 // Views/Product: a system group, uninvolved in these tests other than
@@ -59,6 +60,7 @@ beforeEach(() => {
     duplicate,
     archive,
     restore: vi.fn(),
+    setSidebar,
     move,
     renameGroup: vi.fn(),
     pending: false,
@@ -247,7 +249,7 @@ describe('GroupMenu', () => {
     await userEvent.click(screen.getByText('Archive dashboard'))
     expect(archive).toHaveBeenCalledWith(
       { dashboard_id: 13, title: 'Marketing' },
-      { wholeGroup: true, navigateTo: '/dashboards', hidden: false }
+      { wholeGroup: true, navigateTo: '/dashboards' }
     )
   })
 
@@ -257,7 +259,7 @@ describe('GroupMenu', () => {
     await userEvent.click(screen.getByText('Archive dashboard'))
     expect(archive).toHaveBeenCalledWith(
       { dashboard_id: 13, title: 'Growth' },
-      { wholeGroup: true, navigateTo: '/dashboards', hidden: false }
+      { wholeGroup: true, navigateTo: '/dashboards' }
     )
   })
 
@@ -267,15 +269,21 @@ describe('GroupMenu', () => {
     expect(items()).toEqual(['Refresh', 'Duplicate dashboard', 'Hide dashboard'])
 
     await userEvent.click(screen.getByText('Hide dashboard'))
-    expect(archive).toHaveBeenCalledWith(expect.objectContaining({ dashboard_id: product.tabs[0].dashboard_id }), {
-      wholeGroup: true,
+    expect(setSidebar).toHaveBeenCalledWith(expect.objectContaining({ dashboard_id: product.tabs[0].dashboard_id }), false, {
       navigateTo: '/dashboards',
-      hidden: true,
     })
+    expect(archive).not.toHaveBeenCalled()
   })
 
-  it('offers only Duplicate on an archived group, whose banner brings it back', async () => {
-    renderGroupMenu({ ...product, archived_at: '2026-09-30T00:00:00Z' })
+  it('offers only Duplicate on a system group out of the sidebar, whose banner brings it back', async () => {
+    renderGroupMenu({ ...product, sidebar: false })
+    await openGroupMenu()
+
+    expect(items()).toEqual(['Refresh', 'Duplicate dashboard'])
+  })
+
+  it('offers only Duplicate on an archived group of your own, whose banner brings it back', async () => {
+    renderGroupMenu({ ...reach, archived_at: '2026-09-30T00:00:00Z' })
     await openGroupMenu()
 
     expect(items()).toEqual(['Refresh', 'Duplicate dashboard'])

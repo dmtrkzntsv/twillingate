@@ -88,7 +88,7 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
   const showGrid = !waiting && !noProjects && dashboard.widgets.length > 0
   const freshness = useFreshness(dashboard.widgets, paramsFor, showGrid && !frozen)
   const [refreshing, setRefreshing] = useState(false)
-  const { move, restore, pending } = useDashboardActions()
+  const { move, restore, setSidebar, pending } = useDashboardActions()
   // Reporting dev serves only reads (and the view), so the page offers no
   // writes there: every one of them would answer 405.
   const writable = !list.dev
@@ -100,8 +100,8 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
   const arrangeable = userGroup && !frozen
   // The group's "…" sits top right, a tab's own one beside its title
   // (D11), never while frozen. The group's always offers its refreshes;
-  // both offer writes on a system group (a template, archived or not,
-  // which can still be duplicated) and on a live user one.
+  // both offer writes on a system group (a template, in the sidebar or
+  // not, which can still be duplicated) and on a live user one.
   const menus = writable && !frozen && (dashboard.owner === 'system' || !dashboard.archived_at)
   const tabs = shownTabs(dashboard, list.dashboards)
   const moveTab = async (id: number, to: number) => {
@@ -158,20 +158,33 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
         className={`mx-auto flex w-full max-w-[1600px] flex-1 flex-col gap-4 p-3 transition-opacity sm:p-4 lg:p-6 ${frozen ? 'opacity-60' : ''}`}
       >
         {list.dev && list.errors && list.errors.length > 0 && <DevErrors errors={list.errors} />}
-        {dashboard.archived_at && (
-          // `get_dashboard` and widget data still serve an archived
-          // dashboard opened by its URL; this line is the only hint on the
-          // page itself that it is gone from the sidebar (D18).
+        {dashboard.owner === 'system' && !dashboard.sidebar && (
+          // A built-in is never archived; hidden, it is out of the sidebar
+          // and this line is the page's hint, with the way back. Your own
+          // dashboards are always in the sidebar.
           <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border/70 bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
-            <span>{dashboard.owner === 'system' ? 'Hidden from the sidebar' : 'Archived: not in the sidebar'}</span>
+            <span>Hidden from the sidebar</span>
             {writable && (
               <Button
                 variant="outline"
                 size="sm"
                 disabled={pending}
-                onClick={() => void restore(dashboard.dashboard_id, dashboard.owner === 'system')}
+                onClick={() => void setSidebar({ dashboard_id: dashboard.dashboard_id, title: dashboard.group_title ?? dashboard.title }, true)}
               >
-                {dashboard.owner === 'system' ? 'Show in sidebar' : 'Restore'}
+                Show in sidebar
+              </Button>
+            )}
+          </div>
+        )}
+        {dashboard.owner === 'user' && dashboard.archived_at && (
+          // `get_dashboard` and widget data still serve an archived
+          // dashboard opened by its URL; this line is the only hint on the
+          // page itself that it is gone from the sidebar (D18).
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border/70 bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
+            <span>Archived: not in the sidebar</span>
+            {writable && (
+              <Button variant="outline" size="sm" disabled={pending} onClick={() => void restore(dashboard.dashboard_id)}>
+                Restore
               </Button>
             )}
           </div>

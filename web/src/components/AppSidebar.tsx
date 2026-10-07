@@ -38,7 +38,7 @@ import SidebarGroupMenu from './SidebarGroupMenu'
 import SortableGroupItem from './SortableGroupItem'
 
 interface Props {
-  /** Every dashboard, in sidebar order: system ones, then the user's. */
+  /** Every dashboard, in sidebar order: system ones, then the user's. Those with `sidebar` off are left out. */
   dashboards: DashboardInfo[]
   currentId: number
   /** Reporting dev, which takes no writes: no "…" menus and no dragging. */
@@ -47,7 +47,7 @@ interface Props {
 
 /**
  * Projects (a link to the list) first, then "Dashboards": one entry per
- * dashboard group (tabs D20), the system groups first with a "Built-in"
+ * dashboard group in the sidebar (`sidebar`, tabs D20), the system groups first with a "Built-in"
  * badge, then the user's. Then Gallery (the components playground and the
  * Dashboards gallery of templates, D17), closed until opened or on a gallery page. At
  * the bottom, Archive (every user group with an archived dashboard, D17a)
@@ -67,7 +67,7 @@ export default function AppSidebar({ dashboards, currentId, readOnly = false }: 
   // With the sidebar down to icons its heading is hidden, so it stays open.
   const [galleryOpen, setGalleryOpen] = useState(() => pathname.startsWith('/gallery'))
   const galleryShown = galleryOpen || (state === 'collapsed' && !isMobile)
-  const groups = liveGroups(dashboards)
+  const groups = liveGroups(dashboards.filter((d) => d.sidebar))
   const system = groups.filter((g) => g.owner === 'system')
   const serverYours = groups.filter((g) => g.owner === 'user')
   const { move, renameGroup, pending } = useDashboardActions()

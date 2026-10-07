@@ -123,10 +123,12 @@ func TestManagementToolsAnnotatedNonReadOnly(t *testing.T) {
 		"disable_ingest_key": true, "enable_ingest_key": true,
 		"create_dashboard": true, "update_dashboard": true, "duplicate_dashboard": true,
 		"archive_dashboard": true, "restore_dashboard": true, "add_widget": true,
-		"update_widget": true, "copy_widget": true, "archive_widget": true, "restore_widget": true}
+		"update_widget": true, "copy_widget": true, "archive_widget": true, "restore_widget": true,
+		"add_project_tab": true, "remove_project_tab": true, "move_project_tab": true}
 	idempotent := map[string]bool{"archive_project": true, "restore_project": true,
 		"disable_ingest_key": true, "enable_ingest_key": true,
-		"archive_dashboard": true, "restore_dashboard": true, "archive_widget": true, "restore_widget": true}
+		"archive_dashboard": true, "restore_dashboard": true, "archive_widget": true, "restore_widget": true,
+		"remove_project_tab": true}
 	for _, tool := range tools.Tools {
 		if writers[tool.Name] && tool.Annotations.ReadOnlyHint {
 			t.Errorf("%s marked read-only", tool.Name)

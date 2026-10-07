@@ -22,6 +22,8 @@ type DashboardInfo struct {
 	To         string `json:"to,omitempty"`
 	Widgets    int    `json:"widgets"` // live widgets
 	ArchivedAt string `json:"archived_at,omitempty"`
+	Sidebar    bool   `json:"sidebar"`     // its group is in the sidebar (spec 2026-10-05 D3)
+	ProjectTab bool   `json:"project_tab"` // a new project gets it as a tab; built-ins only, from the release
 }
 
 // Dashboards is list_dashboards' answer: every dashboard in sidebar
@@ -144,8 +146,8 @@ func (s *Service) Dashboards(ctx context.Context) (Dashboards, error) {
 	return out, nil
 }
 
-// Dashboard returns dashboard id with its group's tabs and its live
-// widgets in order.
+// Dashboard returns dashboard id with its group's tabs, its live
+// widgets in order, and the projects that have it as a tab.
 func (s *Service) Dashboard(ctx context.Context, id int64) (DashboardDetail, error) {
 	d, err := s.st.GetDashboard(ctx, id)
 	if err != nil {
@@ -220,7 +222,7 @@ func dashboardInfo(d store.Dashboard) DashboardInfo {
 	return DashboardInfo{
 		ID: d.ID, Title: d.Title, Owner: d.Owner, GroupID: d.GroupID, GroupTitle: d.GroupTitle,
 		ProjectID: d.LastProjectID, Range: d.LastRange, From: d.LastFrom, To: d.LastTo,
-		Widgets: d.LiveWidgets, ArchivedAt: d.ArchivedAt,
+		Widgets: d.LiveWidgets, ArchivedAt: d.ArchivedAt, Sidebar: d.Sidebar, ProjectTab: d.ProjectTab,
 	}
 }
 

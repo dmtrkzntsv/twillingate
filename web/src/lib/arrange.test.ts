@@ -3,7 +3,7 @@ import type { DashboardInfo, DashboardTab } from './api'
 import { groupName, liveGroups, moveGroupBody, moveTabBody, nameTooShort, nextAfterArchive, purgeDate, reorder } from './arrange'
 
 function mkInfo(dashboard_id: number, title: string, owner: 'system' | 'user', group_id: number, extra: Partial<DashboardInfo> = {}): DashboardInfo {
-  return { dashboard_id, title, owner, group_id, widgets: 1, ...extra }
+  return { dashboard_id, title, owner, group_id, widgets: 1, sidebar: true, project_tab: false, ...extra }
 }
 
 function tab(dashboard_id: number, title: string): DashboardTab {

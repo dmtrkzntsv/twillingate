@@ -118,7 +118,8 @@ func migrateFrom(ctx context.Context, st Store, db *readsql.DB, system fs.FS, ma
 			}
 			dashboards = append(dashboards, store.SystemDashboard{
 				ID: fd.ID, Title: fd.Title, SortKey: dashKeys[i], Range: fd.Range,
-				GroupID: fd.Group, GroupTitle: fd.GroupTitle, Widgets: widgets,
+				GroupID: fd.Group, GroupTitle: fd.GroupTitle, Sidebar: fd.Sidebar, ProjectTab: fd.ProjectTab,
+				Widgets: widgets,
 			})
 		}
 	}
@@ -167,7 +168,8 @@ func storeWidget(fw FileWidget, sortKey string, comps map[string]Component) stor
 // something else). It also refuses a release whose groups are not
 // contiguous in files' order (LoadDashboards' id order, the same order
 // sortkey.Spread assigns keys in), since a gap there could never close
-// up into a contiguous run of sort keys either.
+// up into a contiguous run of sort keys either, and one whose members
+// disagree on sidebar: the sidebar shows groups (spec 2026-10-05 D3).
 func checkGroups(files []FileDashboard) error {
 	byID := make(map[int64]FileDashboard, len(files))
 	for _, fd := range files {
@@ -186,6 +188,9 @@ func checkGroups(files []FileDashboard) error {
 		}
 		if target.Group != 0 && target.Group != target.ID {
 			return fmt.Errorf("reporting: system dashboard %d: group %d is itself in another group", fd.ID, fd.Group)
+		}
+		if fd.Sidebar != target.Sidebar {
+			return fmt.Errorf("reporting: system dashboard %d: sidebar differs from its group's (%d)", fd.ID, fd.Group)
 		}
 	}
 

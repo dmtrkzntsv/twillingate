@@ -39,7 +39,7 @@ func archiveProjectDaysAgo(t *testing.T, db *DB, id int64, n int) {
 func createPurgeableDashboard(t *testing.T, db *DB, owner, sortKey string, ws []store.Widget) int64 {
 	t.Helper()
 	id, err := db.InsertDashboard(context.Background(),
-		store.Dashboard{Owner: owner, Title: "D " + sortKey, SortKey: sortKey}, ws,
+		store.Dashboard{Owner: owner, Title: "D " + sortKey, SortKey: sortKey, Sidebar: true}, ws,
 		store.AuditEntry{Actor: "agent", Action: "dashboard.create"})
 	if err != nil {
 		t.Fatal(err)
@@ -432,7 +432,7 @@ func TestPurgeArchivedDeletesGroupNameWithLastDashboard(t *testing.T) {
 		t.Helper()
 		ds := make([]store.Dashboard, len(sortKeys))
 		for i, k := range sortKeys {
-			ds[i] = store.Dashboard{Owner: store.OwnerUser, Title: "D " + k, SortKey: k}
+			ds[i] = store.Dashboard{Owner: store.OwnerUser, Title: "D " + k, SortKey: k, Sidebar: true}
 		}
 		ds[0].GroupTitle = "Named " + sortKeys[0]
 		ids, err := db.InsertDashboardGroup(ctx, ds, nil, a)

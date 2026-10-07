@@ -69,10 +69,32 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
   await page.getByRole('button', { name: 'Connect' }).click()
   await page.waitForURL(/\/app\/projects$/)
 
-  for (const path of ['/app/projects', '/app/projects/1', `/app/projects/${id}`, '/app/archive', '/app/gallery/components', '/app/gallery/dashboards']) {
+  // A dashboard of our own whose title is longer than a phone is wide, as a
+  // tab of that project: the tab select fits the phone however long its value.
+  const long = await request.post('/api/dashboards', {
+    headers: authHeaders(),
+    data: { title: 'A dashboard of our own whose title is longer than a phone is wide', range: '7d' },
+  })
+  expect(long.ok(), await long.text()).toBeTruthy()
+  const { dashboard_id: longId } = (await long.json()) as { dashboard_id: number }
+  const tab = await request.post(`/api/projects/${id}/tabs`, { headers: authHeaders(), data: { dashboard_id: longId } })
+  expect(tab.ok(), await tab.text()).toBeTruthy()
+
+  for (const path of [
+    '/app/projects',
+    '/app/projects/1/setup',
+    `/app/projects/${id}/setup`,
+    `/app/projects/${id}/dashboards/1`,
+    `/app/projects/${id}/dashboards/${longId}`,
+    '/app/archive',
+    '/app/gallery/components',
+    '/app/gallery/dashboards',
+  ]) {
     await check(page, path)
   }
   for (const d of await dashboardIds(request)) await check(page, `/app/dashboards/${d}`)
+  const archivedDash = await request.post(`/api/dashboards/${longId}/archive`, { headers: authHeaders(), data: {} })
+  expect(archivedDash.ok(), await archivedDash.text()).toBeTruthy()
 
   // The archived projects' grid, opened.
   const archived = await request.post(`/api/projects/${id}/archive`, { headers: authHeaders() })
