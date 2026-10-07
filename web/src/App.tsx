@@ -109,6 +109,22 @@ function App() {
             }
           />
           <Route
+            path="/projects/:id/forms"
+            element={
+              <OnlineOnly>
+                <Project tab="forms" />
+              </OnlineOnly>
+            }
+          />
+          <Route
+            path="/projects/:id/forms/:name"
+            element={
+              <OnlineOnly>
+                <Project tab="forms" />
+              </OnlineOnly>
+            }
+          />
+          <Route
             path="/shares"
             element={
               <OnlineOnly>

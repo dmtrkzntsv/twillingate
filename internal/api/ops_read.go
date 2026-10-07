@@ -17,10 +17,13 @@ import (
 )
 
 type host struct {
-	db  *readsql.DB
-	reg *manage.Registry
-	ops *manage.Ops
-	rep *reporting.Service
+	db *readsql.DB
+	// subs reads the tables db refuses (CustomSQLRefused), for SQL the
+	// server builds; never given user-written SQL.
+	subs *readsql.DB
+	reg  *manage.Registry
+	ops  *manage.Ops
+	rep  *reporting.Service
 	// publicURL is the collector's public base (PUBLIC_URL); snippets and
 	// the integration guide are built from it. Empty means "unknown —
 	// placeholder + tell the operator".
@@ -285,6 +288,7 @@ func (h *host) register(r *registrar) {
 		Description: "Tailored integration instructions for one project and platform (web, spa, server, mobile), with the project's real ingest key, collector URL and event examples baked in. Confirm the collector hostname with the user. Call after create_project; read docs://twillingate for depth."},
 		h.integrationGuide)
 
+	h.registerForms(r)
 	h.registerReporting(r)
 	registerSchemaRoute(r)
 }

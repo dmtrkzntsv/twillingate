@@ -6,7 +6,8 @@
 //     _defensive pragmas, so a write cannot succeed even through a bug
 //     elsewhere in this package;
 //  2. Check tokenizes the text and refuses ATTACH, any read of meta or a
-//     SQLite internal table or pragma view, and a second statement —
+//     SQLite internal table or pragma view (and any further table names
+//     the handle was opened to refuse), and a second statement —
 //     the driver runs every statement it is given, so Check tracks paren
 //     depth and statement boundaries itself rather than relying on the
 //     wrap below to contain one;
@@ -53,13 +54,19 @@ type DB struct {
 	db      *sql.DB
 	timeout time.Duration
 	maxRows int
+	// refused holds the lower-cased table names Check refuses on this
+	// handle beyond its base rules; nil for none.
+	refused map[string]bool
 }
 
 // Open opens path read-only with its own connection pool, independent of
 // any single-writer connection to the same file. query_only and
 // _defensive are belt over the mode=ro brace: even a bug that finds a
-// writable path is refused by the connection itself.
-func Open(path string, timeout time.Duration, maxRows int) (*DB, error) {
+// writable path is refused by the connection itself. refused names
+// further tables this handle's Check refuses, on top of the base rules
+// (meta and SQLite's internals), so a caller can keep a table out of
+// custom SQL without this package knowing about it.
+func Open(path string, timeout time.Duration, maxRows int, refused ...string) (*DB, error) {
 	dsn := "file:" + path + "?mode=ro" +
 		"&_pragma=query_only(1)" +
 		"&_pragma=busy_timeout(5000)" +
@@ -69,7 +76,14 @@ func Open(path string, timeout time.Duration, maxRows int) (*DB, error) {
 		return nil, fmt.Errorf("readsql: open %s: %w", path, err)
 	}
 	db.SetMaxOpenConns(4)
-	return &DB{db: db, timeout: timeout, maxRows: maxRows}, nil
+	var names map[string]bool
+	for _, n := range refused {
+		if names == nil {
+			names = map[string]bool{}
+		}
+		names[strings.ToLower(n)] = true
+	}
+	return &DB{db: db, timeout: timeout, maxRows: maxRows, refused: names}, nil
 }
 
 // Close closes the underlying connection pool.
@@ -155,7 +169,7 @@ func (d *DB) QueryLimit(ctx context.Context, q string, limit int, args ...any) (
 	if limit < 0 {
 		return Result{}, fmt.Errorf("%w: limit must not be negative", ErrRefused)
 	}
-	if _, err := Check(q); err != nil {
+	if _, err := d.Check(q); err != nil {
 		return Result{}, err
 	}
 	// Exactly the set Check accepts after a statement's end: ASCII only,

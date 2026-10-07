@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { ArrowDownIcon, ArrowUpIcon } from 'lucide-react'
 import { useCardMode } from '@/components/share/card-mode'
 import { FilterBar, PageFooter, type OptionLoader } from '@/components/table-filters'
@@ -90,6 +90,7 @@ export default function Table({
   page,
   viewError,
   reloading,
+  onRow,
 }: WidgetProps<TableProps>) {
   const sql = data as SqlData
   const card = useCardMode()
@@ -227,7 +228,22 @@ export default function Table({
             </TableHeader>
             <TableBody className={`transition-opacity ${reloading ? 'opacity-60' : ''}`}>
               {rows.map((row, ri) => (
-                <TableRow key={ri}>
+                <TableRow
+                  key={ri}
+                  {...(onRow && remote && !card
+                    ? {
+                        role: 'button',
+                        tabIndex: 0,
+                        className: 'outline-none focus-visible:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset',
+                        onClick: () => onRow(ri),
+                        onKeyDown: (e: KeyboardEvent<HTMLTableRowElement>) => {
+                          if (e.key !== 'Enter' && e.key !== ' ') return
+                          e.preventDefault()
+                          onRow(ri)
+                        },
+                      }
+                    : {})}
+                >
                   {sql.columns.map((col, ci) => {
                     const raw = row[ci] ?? ''
                     const format = formats[col]

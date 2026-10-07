@@ -45,6 +45,15 @@ export interface WidgetProps<P = Record<string, unknown>> {
   viewError?: string
   /** A later load is in flight: the current rows stay, dimmed. */
   reloading?: boolean
+  /**
+   * Remote mode only (`props.mode === 'remote'`; ignored otherwise): makes
+   * each body row a button that calls this with the row's index in the
+   * page the server answered, the index of its id beside the rows (a
+   * form's submissions open their drawer). A local table re-sorts and
+   * filters in the browser, so its index would name no server row. Not
+   * part of any widget's contract: a dashboard never sets it.
+   */
+  onRow?: (index: number) => void
 }
 
 /**

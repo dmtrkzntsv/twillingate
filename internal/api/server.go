@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -24,6 +25,12 @@ const (
 	mcpPath      = "/mcp"
 )
 
+// CustomSQLRefused names the tables every handle that runs custom SQL (the
+// query tool, widget SQL, and `reporting dev`'s previews) refuses to read:
+// submissions hold what visitors typed into forms, and only the server's
+// own SQL, on the second handle, reads them. A fresh slice each call.
+func CustomSQLRefused() []string { return []string{"submissions"} }
+
 // Build assembles the tool host, both transports and the auth middleware,
 // returning one handler that serves the console surface: the MCP streamable
 // endpoint at /mcp and the REST routes under /api/ (unmatched /api/ paths
@@ -37,13 +44,19 @@ const (
 // writes; widget queries run on the same read-only handle, and so under the
 // same CONSOLE_QUERY_TIMEOUT and CONSOLE_QUERY_MAX_ROWS, as the query tool.
 func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *manage.Ops, rst reporting.Store, logger *slog.Logger) (http.Handler, func() error, error) {
-	db, err := readsql.Open(cfg.Console.DBPath, cfg.Console.QueryTimeout, cfg.Console.QueryMaxRows)
+	db, err := readsql.Open(cfg.Console.DBPath, cfg.Console.QueryTimeout, cfg.Console.QueryMaxRows, CustomSQLRefused()...)
 	if err != nil {
 		return nil, nil, err
 	}
+	subs, err := readsql.Open(cfg.Console.DBPath, cfg.Console.QueryTimeout, cfg.Console.QueryMaxRows)
+	if err != nil {
+		db.Close()
+		return nil, nil, err
+	}
+	closeAll := func() error { return errors.Join(db.Close(), subs.Close()) }
 	rep := reporting.New(rst, db, reporting.Options{CacheAge: cfg.Reporting.CacheAge, RefreshAge: cfg.Reporting.RefreshAge,
 		ArchivedDays: cfg.Retention.ArchivedDays, ShareBaseURL: cfg.Console.URL})
-	h := &host{db: db, reg: reg, ops: ops, rep: rep,
+	h := &host{db: db, subs: subs, reg: reg, ops: ops, rep: rep,
 		publicURL: cfg.PublicURL, logger: logger, limits: limitsFrom(cfg)}
 	srv := mcp.NewServer(&mcp.Implementation{Name: "twillingate", Version: "1.0.0"},
 		&mcp.ServerOptions{Instructions: serverInstructions})
@@ -53,7 +66,7 @@ func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *m
 	h.registerResources(srv)
 	doc, err := openAPI(r.specs)
 	if err != nil {
-		db.Close()
+		closeAll()
 		return nil, nil, err
 	}
 	rest.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
@@ -62,7 +75,7 @@ func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *m
 
 	requireAuth, err := wrapAuth(ctx, cfg.Console)
 	if err != nil {
-		db.Close()
+		closeAll()
 		return nil, nil, err
 	}
 	resource := cfg.Console.ResourceURL
@@ -84,7 +97,7 @@ func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *m
 	shares := rep.SharePages()
 	protected.Handle("GET /share/{file}", shares)
 	protected.Handle("GET /share/", shares)
-	return protected, db.Close, nil
+	return protected, closeAll, nil
 }
 
 // NewHandler assembles the console surface: tool host, both transports, auth

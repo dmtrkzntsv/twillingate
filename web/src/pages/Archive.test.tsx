@@ -7,6 +7,7 @@ import { useDashboardActions } from '@/hooks/use-dashboard-actions'
 import type { WidgetShareActions } from '@/hooks/use-widget-share-actions'
 import { useWidgetShareActions } from '@/hooks/use-widget-share-actions'
 import { endpoints, type DashboardInfo, type WidgetShare } from '@/lib/api'
+import { form } from '@/test/forms'
 import { renderWithProviders } from '@/test/render'
 import Archive from './Archive'
 
@@ -92,6 +93,8 @@ beforeEach(() => {
   URL.createObjectURL = vi.fn((b: Blob) => `blob:thumb-${b.size}`)
   URL.revokeObjectURL = vi.fn()
   mockShares()
+  vi.spyOn(endpoints, 'projects').mockResolvedValue({ projects: [] })
+  vi.spyOn(endpoints, 'forms').mockResolvedValue({ action_base: '', forms: [] })
   vi.mocked(useWidgetShareActions).mockReturnValue({
     create: vi.fn(),
     setArchiveAfter: vi.fn(),
@@ -472,5 +475,42 @@ describe('Archive, shares', () => {
     expect(endpoints.widgetShares).not.toHaveBeenCalled()
     expect(screen.queryByRole('heading', { name: 'Shares' })).not.toBeInTheDocument()
     expect(within(screen.getByRole('main')).queryByRole('button', { name: /Restore/ })).not.toBeInTheDocument()
+  })
+})
+
+describe('Archive, forms', () => {
+  it("lists each live project's archived forms with the project, the purge date and Restore", async () => {
+    const user = userEvent.setup()
+    mockApi(30)
+    vi.mocked(endpoints.projects).mockResolvedValue({ projects: [
+      { project_id: 4, name: 'shop', allowed_origins: [] },
+      { project_id: 5, name: 'blog', allowed_origins: [] },
+      { project_id: 3, name: 'legacy', archived: true, allowed_origins: [] },
+    ] })
+    vi.mocked(endpoints.forms).mockImplementation(async (id, archived) => ({
+      action_base: '',
+      forms: id === 4 && archived ? [form('contact', { archived: true, archived_at: '2026-09-01T00:00:00Z' })] : [],
+    }))
+    const restoreForm = vi.spyOn(endpoints, 'restoreForm').mockResolvedValue({ status: 'restored' })
+    renderArchive()
+    const section = await screen.findByRole('region', { name: 'Forms' })
+    const row = within(section).getByRole('listitem')
+    expect(within(row).getByText('contact')).toBeInTheDocument()
+    expect(within(row).getByText('shop')).toBeInTheDocument()
+    expect(within(row).getByText(/archived · deleted on/)).toBeInTheDocument()
+    expect(within(row).getByText('1 Oct')).toBeInTheDocument()
+    expect(endpoints.forms).toHaveBeenCalledWith(4, true)
+    expect(endpoints.forms).toHaveBeenCalledWith(5, true)
+    expect(endpoints.forms).not.toHaveBeenCalledWith(3, true)
+    await user.click(within(row).getByRole('button', { name: 'Restore' }))
+    await waitFor(() => expect(restoreForm).toHaveBeenCalledWith(4, 'contact'))
+  })
+
+  it('has no Forms section when none is archived', async () => {
+    mockApi()
+    vi.mocked(endpoints.projects).mockResolvedValue({ projects: [{ project_id: 4, name: 'shop', allowed_origins: [] }] })
+    renderArchive()
+    await screen.findByText('Nothing archived.')
+    expect(screen.queryByRole('region', { name: 'Forms' })).toBeNull()
   })
 })

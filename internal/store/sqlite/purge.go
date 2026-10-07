@@ -1,6 +1,6 @@
-// Purge of archived projects, dashboards, widgets and widget shares past
-// RETENTION_ARCHIVED_DAYS (spec 2026-09-25, migration 021 onward; shares
-// from migration 032, spec 2026-10-05). Run by
+// Purge of archived projects, dashboards, widgets, widget shares and forms
+// past RETENTION_ARCHIVED_DAYS (spec 2026-09-25, migration 021 onward;
+// shares from migration 032, spec 2026-10-05; forms from migration 035). Run by
 // the daily pass (internal/jobs), never by a request handler: there is no
 // tool or route for it.
 package sqlite
@@ -15,10 +15,11 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
-// PurgeArchived deletes every project, dashboard, widget and widget share
-// archived more than days ago, each in its own transaction with an audit
-// row (actor "retention"). days <= 0 purges nothing. A share purged with
-// its project (deleteProject) gets no widget_share.purge row of its own.
+// PurgeArchived deletes every project, dashboard, widget, widget share and
+// form archived more than days ago, each in its own transaction with an
+// audit row (actor "retention"). days <= 0 purges nothing. A share or form
+// purged with its project (deleteProject) gets no row of its own. A form
+// goes with its submissions and their raw events (deleteFormData).
 //
 // A project's archived_at is written with datetime('now') ("YYYY-MM-DD
 // HH:MM:SS"); dashboards', widgets' and shares' with strftime(...,'Z')
@@ -132,6 +133,44 @@ func (d *DB) PurgeArchived(ctx context.Context, days int) (store.PurgeResult, er
 			continue
 		}
 		res.WidgetShares = append(res.WidgetShares, id)
+	}
+
+	formRows, err := d.db.QueryContext(ctx,
+		`SELECT project_id, name FROM forms
+		 WHERE archived_at IS NOT NULL AND julianday(archived_at) < julianday('now') - ?
+		 ORDER BY project_id, name`, days)
+	type formKey struct {
+		project int64
+		name    string
+	}
+	var forms []formKey
+	if err != nil {
+		errs = errors.Join(errs, fmt.Errorf("select archived forms: %w", err))
+	} else {
+		for formRows.Next() {
+			var k formKey
+			if err := formRows.Scan(&k.project, &k.name); err != nil {
+				errs = errors.Join(errs, fmt.Errorf("select archived forms: %w", err))
+				break
+			}
+			forms = append(forms, k)
+		}
+		errs = errors.Join(errs, formRows.Err(), formRows.Close())
+	}
+	for _, k := range forms {
+		// A form purged with its project above is already gone; its rows
+		// were deleted with the project's, so it is not selected here.
+		if err := d.tx(ctx, func(tx *sql.Tx) error {
+			if err := deleteFormData(ctx, tx, k.project, k.name); err != nil {
+				return err
+			}
+			return audit(ctx, tx, store.AuditEntry{
+				Actor: "retention", Action: "form.purge", Subject: formSubject(k.project, k.name)})
+		}); err != nil {
+			errs = errors.Join(errs, fmt.Errorf("purge form %d/%s: %w", k.project, k.name, err))
+			continue
+		}
+		res.Forms = append(res.Forms, fmt.Sprintf("%d/%s", k.project, k.name))
 	}
 
 	return res, errs

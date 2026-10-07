@@ -456,3 +456,102 @@ func TestPurgeArchivedDeletesGroupNameWithLastDashboard(t *testing.T) {
 		t.Errorf("names after purge = %v, want only %d=Named c", got, partial[0])
 	}
 }
+
+func TestPurgeArchivedDeletesAgedFormsWithSubmissionsAndRawEvents(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	mk := func(projectID int64, form, id string) {
+		n := newSub(id, map[string]string{"email": id + "@x.io"})
+		n.Submission.ProjectID, n.Event.ProjectID, n.Submission.Form = projectID, projectID, form
+		n.Event.Attributes = map[string]string{"form": form}
+		if _, _, err := db.WriteSubmission(ctx, n); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, f := range []struct {
+		project int64
+		form    string
+	}{{1, "old"}, {1, "recent"}, {1, "active"}, {2, "old"}} {
+		mk(f.project, f.form, fmt.Sprintf("%d-%s", f.project, f.form))
+		if err := db.ApproveForm(ctx, f.project, f.form, []string{"email"}, formsNow, store.AuditEntry{Action: "form.approve"}); err != nil {
+			t.Fatal(err)
+		}
+		mk(f.project, f.form, fmt.Sprintf("%d-%s-2", f.project, f.form))
+	}
+	archive := func(project int64, form string, days int) {
+		if _, err := db.ExecForTest(
+			`UPDATE forms SET archived_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ?) WHERE project_id=? AND name=?`,
+			daysAgoModifier(days), project, form); err != nil {
+			t.Fatal(err)
+		}
+	}
+	archive(1, "old", 40)
+	archive(2, "old", 40)
+	archive(1, "recent", 5)
+
+	res, err := db.PurgeArchived(ctx, 30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"1/old", "2/old"}; len(res.Forms) != 2 || !(res.Forms[0] == want[0] && res.Forms[1] == want[1] || res.Forms[0] == want[1] && res.Forms[1] == want[0]) {
+		t.Fatalf("Forms = %v, want %v", res.Forms, want)
+	}
+	if c := countRows(t, db, `SELECT COUNT(*) FROM forms`); c != 2 {
+		t.Fatalf("%d forms left", c)
+	}
+	if c := countRows(t, db, `SELECT COUNT(*) FROM submissions WHERE form='old'`); c != 0 {
+		t.Fatalf("%d submissions of purged forms left", c)
+	}
+	if c := countRows(t, db, `SELECT COUNT(*) FROM submissions`); c != 4 {
+		t.Fatalf("%d submissions left, want 4", c)
+	}
+	// The purged forms' raw events went too; the other two forms' stay.
+	if c := countRows(t, db, `SELECT COUNT(*) FROM events WHERE event_name='$form_submit'`); c != 2 {
+		t.Fatalf("%d form events left, want 2", c)
+	}
+	if c := countRows(t, db, `SELECT COUNT(*) FROM events WHERE id LIKE '%-old%'`); c != 0 {
+		t.Fatalf("%d events of purged forms left", c)
+	}
+	rows := auditRows(t, db, "form.purge")
+	if len(rows) != 2 {
+		t.Fatalf("audit = %+v", rows)
+	}
+	for _, r := range rows {
+		if r.Actor != "retention" || (r.Subject != "form/1/old" && r.Subject != "form/2/old") {
+			t.Fatalf("audit row = %+v", r)
+		}
+	}
+	// days <= 0 purges nothing, and a second pass finds nothing.
+	if res, err := db.PurgeArchived(ctx, 30); err != nil || len(res.Forms) != 0 {
+		t.Fatalf("second pass: %+v %v", res, err)
+	}
+}
+
+// A purged project takes its forms and submissions (projectTables) and
+// reports no form of its own: the project row is the one purge.
+func TestPurgeArchivedProjectTakesItsForms(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	id := createPurgeableProject(t, db, "forms-project")
+	n := newSub("p1", map[string]string{"email": "a@x.io"})
+	n.Submission.ProjectID, n.Event.ProjectID = id, id
+	if _, _, err := db.WriteSubmission(ctx, n); err != nil {
+		t.Fatal(err)
+	}
+	archiveProjectDaysAgo(t, db, id, 40)
+	if _, err := db.ExecForTest(
+		`UPDATE forms SET archived_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-40 days') WHERE project_id=?`, id); err != nil {
+		t.Fatal(err)
+	}
+	res, err := db.PurgeArchived(ctx, 30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !contains(res.Projects, id) || len(res.Forms) != 0 {
+		t.Fatalf("result = %+v", res)
+	}
+	if c := countRows(t, db, `SELECT COUNT(*) FROM forms WHERE project_id=?`, id) +
+		countRows(t, db, `SELECT COUNT(*) FROM submissions WHERE project_id=?`, id); c != 0 {
+		t.Fatalf("%d form rows left", c)
+	}
+}

@@ -26,7 +26,7 @@ func serverWithPublicURL(t *testing.T, publicURL string) *Server {
 		map[int][2]string{0: {testKey, "web"}})
 	g, _ := geo.New("cloudflare://", t.TempDir(), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	q := &fakeQueue{}
-	return New(cfg, reg, q, g, fixedSalt{}, q, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	return New(cfg, reg, q, g, fixedSalt{}, q, newFakeForms(), slog.New(slog.NewTextHandler(io.Discard, nil)))
 }
 
 func TestTwillingateSDKServed(t *testing.T) {

@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/shared/sortkey"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
@@ -30,9 +31,15 @@ type Ops struct {
 	// projects may declare together; 0 is no limit. Set by the caller
 	// after NewOps.
 	BreakdownsMax int
+	// FormDraftDays is FORMS_DRAFT_DAYS: how long a restored draft form
+	// accepts submissions. Set by the caller after NewOps; below 1 means
+	// the default of 7.
+	FormDraftDays int
+
+	now func() time.Time
 }
 
-func NewOps(reg *Registry, st Store) *Ops { return &Ops{Reg: reg, St: st} }
+func NewOps(reg *Registry, st Store) *Ops { return &Ops{Reg: reg, St: st, now: time.Now} }
 
 // rebuildFlatView refreshes v_events_flat from the registry's CURRENT
 // snapshot, so a config edit (a new or changed attribute list) reaches BI

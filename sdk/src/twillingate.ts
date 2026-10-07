@@ -274,6 +274,55 @@ export function expandNulls(layer: Record<string, unknown> | undefined | null): 
   return out;
 }
 
+export type FormFields = Record<string, string | number | boolean>;
+
+const FORM_NAME_RE = /^[a-z0-9_-]{1,64}$/;
+const FORM_RETRY_MS = [1000, 5000, 25000];
+const FORM_KEEPALIVE_MAX = 60000; // bytes; the browsers' keepalive limit is 64 KiB
+
+function byteLength(s: string): number {
+  return typeof TextEncoder !== "undefined" ? new TextEncoder().encode(s).length : s.length * 3;
+}
+
+// The submission's fields: text entries only (files are never sent), a
+// repeated name joined with ", ", and no name starting with "$" (those are
+// the form's own controls, $redirect among them). Built through a Map so a
+// field called __proto__ stays a field.
+function formFields(fd: FormData): FormFields {
+  const out = new Map<string, string>();
+  fd.forEach((v, k) => {
+    if (typeof v !== "string" || k.charAt(0) === "$") return;
+    out.set(k, out.has(k) ? out.get(k) + ", " + v : v);
+  });
+  return Object.fromEntries(out);
+}
+
+function normalizeFields(f: FormFields | FormData | HTMLFormElement): FormFields {
+  if (typeof HTMLFormElement !== "undefined" && f instanceof HTMLFormElement) return formFields(new FormData(f));
+  if (typeof FormData !== "undefined" && f instanceof FormData) return formFields(f);
+  const out = new Map<string, string | number | boolean>();
+  for (const k of Object.keys(f || {})) {
+    const v = (f as FormFields)[k];
+    if (k.charAt(0) === "$" || (typeof v !== "string" && typeof v !== "number" && typeof v !== "boolean")) continue;
+    out.set(k, v);
+  }
+  return Object.fromEntries(out);
+}
+
+// A $redirect the SDK will navigate to: an http(s) URL (resolved against
+// the page) with its fragment replaced; anything else is not followed.
+function navigable(redirect: string, fragment: string): string | null {
+  if (!redirect) return null;
+  try {
+    const u = new URL(redirect, location.href);
+    if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+    u.hash = fragment;
+    return u.href;
+  } catch {
+    return null;
+  }
+}
+
 function uuid(): string {
   if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
   return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
@@ -821,6 +870,116 @@ export class Twillingate implements Subscriber {
 
   onTagged(name: string, path: string): void {
     if (this.ready && this.taggedEvents) this.track(name, { path });
+  }
+
+  /**
+   * A tagged form was submitted: send it, then show the outcome the way
+   * the page's markup asks for (see settleForm). Returns false, leaving
+   * the form to the browser, when this instance cannot take it.
+   */
+  onForm(form: HTMLFormElement, name: string): boolean {
+    if (!this.ready || this.retired) return false;
+    const fd = new FormData(form);
+    const redirect = fd.get("$redirect");
+    form.setAttribute("aria-busy", "true");
+    let id = "";
+    const sent = this.postForm(name, formFields(fd), (made) => (id = made));
+    sent.then(
+      (r) => this.settleForm(form, name, "success", r.id, redirect),
+      (e) => {
+        this.log(`form ${name} failed`, e);
+        this.settleForm(form, name, "error", id, redirect);
+      },
+    );
+    return true;
+  }
+
+  // The outcome of a tagged form: with a $redirect the visitor goes there
+  // with the fragment, otherwise the form resets (on success) and the same
+  // fragment is set here, so one :target element serves both. The
+  // CustomEvent goes out either way, before the page can unload.
+  private settleForm(form: HTMLFormElement, name: string, status: "success" | "error", id: string, redirect: unknown): void {
+    form.removeAttribute("aria-busy");
+    const fragment = `twillingate-form-${status}-${name}`;
+    const target = typeof redirect === "string" ? navigable(redirect, fragment) : null;
+    if (!target) {
+      if (status === "success") form.reset();
+      location.hash = fragment;
+    }
+    form.dispatchEvent(new CustomEvent("twillingate:form", { bubbles: true, detail: { name, status, id } }));
+    if (target) location.assign(target);
+  }
+
+  /**
+   * Send a submission to the project's form `name`: a flat object, a
+   * FormData or a <form>. Resolves to {id}; rejects on a 4xx or once the
+   * retries run out. It neither navigates nor touches the hash.
+   */
+  submitForm(name: string, fields: FormFields | FormData | HTMLFormElement): Promise<{ id: string }> {
+    if (!this.ready) {
+      return new Promise((resolve, reject) => this.hold(() => this.submitForm(name, fields).then(resolve, reject)));
+    }
+    return this.postForm(name, normalizeFields(fields));
+  }
+
+  // One submission: a fresh id kept across the retries, delivered with
+  // fetch + keepalive as text/plain (no preflight). Retries live in memory
+  // only: what a visitor typed is never written to the device, whatever
+  // the consent. 5xx and network errors retry at FORM_RETRY_MS; any other
+  // status refuses at once. The server stores a repeated id once.
+  private postForm(name: string, fields: FormFields, made?: (id: string) => void): Promise<{ id: string }> {
+    if (!FORM_NAME_RE.test(String(name))) {
+      return Promise.reject(new Error(`twillingate: form name ${JSON.stringify(name)} must match ${FORM_NAME_RE.source}`));
+    }
+    if (this.retired) return Promise.reject(new Error("twillingate: this instance is retired"));
+    const id = uuid();
+    if (made) made(id);
+    const body = JSON.stringify({ key: this.key, id, fields, attributes: this.formAttributes() });
+    // The key goes in the URL as well as the body, so the collector
+    // authorises before reading the body: a 413 or 400 then carries CORS
+    // headers and reads as the 4xx it is rather than a network error.
+    const endpoint = `${this.url}/ingest/forms/${name}?key=${encodeURIComponent(this.key)}`;
+    // Browsers throw a TypeError for a keepalive body over 64 KB, which would
+    // read as a network error and be retried to no end: a big one goes without.
+    const keepalive = byteLength(body) < FORM_KEEPALIVE_MAX;
+    return new Promise((resolve, reject) => {
+      const attempt = (n: number): void => {
+        const retry = (why: string): void => {
+          if (n >= FORM_RETRY_MS.length) return reject(new Error(`twillingate: form ${name} not delivered (${why})`));
+          this.log(`form ${name}: ${why}, retrying`);
+          setTimeout(() => attempt(n + 1), FORM_RETRY_MS[n]);
+        };
+        let req: Promise<{ status: number }>;
+        try {
+          req = fetch(endpoint, keepalive ? { method: "POST", body, keepalive: true } : { method: "POST", body });
+        } catch (e) {
+          return retry(String(e));
+        }
+        req.then(
+          (res) => {
+            this.log(`form ${name} → ${res.status}`);
+            if (res.status >= 200 && res.status < 300) resolve({ id });
+            else if (res.status >= 500) retry(String(res.status));
+            else reject(new Error(`twillingate: form ${name} refused (${res.status})`));
+          },
+          (e) => retry(String(e)),
+        );
+      };
+      attempt(0);
+    });
+  }
+
+  // Where the form is and, unless the visitor opted out, who sent it:
+  // $user_id and $install_id exactly as events carry them.
+  private formAttributes(): Record<string, unknown> {
+    const out: Record<string, unknown> = {};
+    const where = this.eventContext();
+    if (typeof where.$host === "string") out.$host = where.$host;
+    if (typeof where.$path === "string") out.$path = where.$path;
+    if (this.optOut()) return out;
+    const who = this.batchAttributes();
+    for (const key of ["$user_id", "$install_id"]) if (typeof who[key] === "string") out[key] = who[key];
+    return out;
   }
 
   /**

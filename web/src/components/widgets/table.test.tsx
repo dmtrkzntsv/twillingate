@@ -320,6 +320,34 @@ describe('table', () => {
     expect(container.querySelector('tbody')).toHaveClass('opacity-60')
   })
 
+  it('makes each body row a button calling onRow with its index in the page, by click, Enter or Space', async () => {
+    const onRow = vi.fn()
+    render(<Table data={pages} props={{ mode: 'remote' }} view={emptyView} onView={() => {}} onRow={onRow} />)
+    const rows = screen.getAllByRole('button', { name: /^\/(b|page10|a|page2)/ })
+    expect(rows).toHaveLength(4)
+    expect(rows[0]).toHaveAttribute('tabindex', '0')
+    await userEvent.click(rows[1])
+    expect(onRow).toHaveBeenLastCalledWith(1)
+    rows[2].focus()
+    await userEvent.keyboard('{Enter}')
+    expect(onRow).toHaveBeenLastCalledWith(2)
+    rows[3].focus()
+    await userEvent.keyboard(' ')
+    expect(onRow).toHaveBeenLastCalledWith(3)
+    expect(onRow).toHaveBeenCalledTimes(3)
+  })
+
+  it('leaves rows plain in local mode, where the index would not name a server row, even with onRow', () => {
+    const { container } = render(<Table data={pages} props={{}} onRow={vi.fn()} />)
+    expect(container.querySelector('tbody tr[role="button"]')).toBeNull()
+    expect(container.querySelector('tbody tr[tabindex]')).toBeNull()
+  })
+
+  it('leaves rows plain without onRow', () => {
+    const { container } = render(<Table data={pages} props={{}} />)
+    expect(container.querySelector('tbody tr[role="button"]')).toBeNull()
+  })
+
   it('exposes its contract', () => {
     expect(contract.accepts).toEqual(['sql'])
     expect(contract.inputs).toEqual({ open: true, columns: [] })

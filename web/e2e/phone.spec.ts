@@ -1,4 +1,5 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test'
+import { submitJSON } from './forms'
 import { createShare } from './png'
 
 // Matches web/e2e/serve.sh's CONSOLE_AUTH_DSN (token://e2e-token?password=e2e-pass&...).
@@ -123,7 +124,15 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
     },
   })
   expect(created.ok(), await created.text()).toBeTruthy()
-  const { project_id: id } = (await created.json()) as { project_id: number }
+  const { project_id: id, key } = (await created.json()) as { project_id: number; key: string }
+  // A draft form with a name and values longer than a phone is wide: its
+  // row, its page and its table wrap or scroll inside their card.
+  const formName = 'a-contact-form-whose-name-is-longer-than-a-phone-is-wide-on-one'
+  await submitJSON(request, key, formName, {
+    email: 'someone.with.a.long.address@a-long-subdomain.example.com',
+    message: 'A message that goes on and on, longer than a phone is wide, as people write them',
+    a_field_with_a_long_name_that_does_not_fit: 'x',
+  })
 
   // Two shares of one widget with a 120-character title, over the long-named
   // project: the Shares page and, once one is archived, the Archive page show them.
@@ -170,6 +179,8 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
     '/app/projects',
     '/app/projects/1/setup',
     `/app/projects/${id}/setup`,
+    `/app/projects/${id}/forms`,
+    `/app/projects/${id}/forms/${formName}`,
     `/app/projects/${id}/dashboards/1`,
     `/app/projects/${id}/dashboards/${longId}`,
     '/app/archive',
@@ -179,6 +190,20 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
     await check(page, path)
   }
   for (const d of await dashboardIds(request)) await check(page, `/app/dashboards/${d}`)
+
+  // A form's Approve dialog and a submission's drawer fit the phone.
+  await check(page, `/app/projects/${id}/forms/${formName}`)
+  await page.getByRole('button', { name: 'Approve', exact: true }).click()
+  await expect(page.getByRole('dialog', { name: `Approve ${formName}` })).toBeVisible()
+  // Polled: the dialog zooms in, and its box fits once it has.
+  await expect.poll(() => dialogOverflow(page), { message: 'Approve dialog' }).toEqual([])
+  await page.keyboard.press('Escape')
+  await page.locator('tbody tr').first().click()
+  await expect(page.getByRole('dialog', { name: 'Submission' }).getByText('x', { exact: true })).toBeVisible()
+  // Polled: the drawer slides in from the right edge, and its box fits once it has.
+  await expect.poll(() => dialogOverflow(page), { message: 'submission drawer' }).toEqual([])
+  expect(await sidewaysScroll(page), 'submission drawer').toEqual([])
+  await page.keyboard.press('Escape')
   const archivedDash = await request.post(`/api/dashboards/${longId}/archive`, { headers: authHeaders(), data: {} })
   expect(archivedDash.ok(), await archivedDash.text()).toBeTruthy()
 

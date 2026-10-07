@@ -51,6 +51,9 @@ type Store interface {
 	// at or before now (a "2006-01-02T15:04:05Z" UTC timestamp) and returns
 	// how many.
 	ArchiveDueWidgetShares(ctx context.Context, now string) (int, error)
+	// ExpireDrafts archives every active draft form whose draft_until is
+	// at or before now and returns how many.
+	ExpireDrafts(ctx context.Context, now time.Time) (int, error)
 }
 
 type Runner struct {
@@ -98,6 +101,15 @@ func (r *Runner) RunDailyPass(ctx context.Context) error {
 		r.logger.Info("archive due widget shares", "shares", n)
 	}
 
+	// Drafts past their date are archived on every pass, whatever
+	// RETENTION_ARCHIVED_DAYS is, and before the purge below, which then
+	// ages them like any archived form.
+	if n, err := r.store.ExpireDrafts(ctx, r.now()); err != nil {
+		r.logger.Error("expire draft forms failed", "error", err)
+	} else if n > 0 {
+		r.logger.Info("expire draft forms", "forms", n)
+	}
+
 	// Purge first: a project purged this pass must not then be rolled up
 	// or pruned below, and the registry (which still lists it until this
 	// reloads) must not hand it out to a request arriving mid-pass.
@@ -114,7 +126,8 @@ func (r *Runner) RunDailyPass(ctx context.Context) error {
 		}
 		r.logger.Info("purge archived",
 			"projects", len(purged.Projects), "dashboards", len(purged.Dashboards),
-			"widgets", len(purged.Widgets), "widget_shares", len(purged.WidgetShares))
+			"widgets", len(purged.Widgets), "widget_shares", len(purged.WidgetShares),
+			"forms", len(purged.Forms))
 		if len(purged.Projects) > 0 {
 			if err := r.reg.Reload(ctx); err != nil {
 				r.logger.Error("registry reload after purge failed", "error", err)

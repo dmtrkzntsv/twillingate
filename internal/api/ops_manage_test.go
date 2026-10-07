@@ -103,6 +103,9 @@ func TestKeyToolsLifecycle(t *testing.T) {
 	}
 }
 
+// TestNoDeleteToolExists: nothing over MCP deletes, except
+// delete_submissions, which an erasure request needs (spec D8); it is the
+// one tool announcing DestructiveHint true, so a client asks the operator.
 func TestNoDeleteToolExists(t *testing.T) {
 	_, cs := newTestHost(t)
 	tools, err := cs.ListTools(context.Background(), &mcp.ListToolsParams{})
@@ -110,6 +113,12 @@ func TestNoDeleteToolExists(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tool := range tools.Tools {
+		if tool.Name == "delete_submissions" {
+			if d := tool.Annotations.DestructiveHint; d == nil || !*d {
+				t.Errorf("delete_submissions: DestructiveHint must be true, got %v", d)
+			}
+			continue
+		}
 		if strings.Contains(tool.Name, "delete") {
 			t.Errorf("irreversible tool exposed over MCP: %s", tool.Name)
 		}
@@ -144,13 +153,21 @@ func TestManagementToolsAnnotatedNonReadOnly(t *testing.T) {
 		"archive_dashboard": true, "restore_dashboard": true, "add_widget": true,
 		"update_widget": true, "copy_widget": true, "archive_widget": true, "restore_widget": true,
 		"add_project_tab": true, "remove_project_tab": true, "move_project_tab": true,
-		"update_widget_share": true, "archive_widget_share": true, "restore_widget_share": true}
+		"update_widget_share": true, "archive_widget_share": true, "restore_widget_share": true,
+		"approve_form": true, "update_form": true, "archive_form": true, "restore_form": true}
 	idempotent := map[string]bool{"archive_project": true, "restore_project": true, "move_project": true,
 		"disable_ingest_key": true, "enable_ingest_key": true,
 		"archive_dashboard": true, "restore_dashboard": true, "archive_widget": true, "restore_widget": true,
 		"remove_project_tab": true,
-		"update_widget_share": true, "archive_widget_share": true, "restore_widget_share": true}
+		"update_widget_share": true, "archive_widget_share": true, "restore_widget_share": true,
+		"archive_form": true, "restore_form": true}
 	for _, tool := range tools.Tools {
+		if tool.Name == "delete_submissions" { // destructive by design: TestNoDeleteToolExists
+			if tool.Annotations.ReadOnlyHint {
+				t.Errorf("%s marked read-only", tool.Name)
+			}
+			continue
+		}
 		if writers[tool.Name] && tool.Annotations.ReadOnlyHint {
 			t.Errorf("%s marked read-only", tool.Name)
 		}

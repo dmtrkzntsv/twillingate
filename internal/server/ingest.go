@@ -25,6 +25,8 @@ const maxNotices = 10
 // mean a client shipping a future reserved name against a not-yet-upgraded
 // server receives a 4xx, which clients treat as a poison batch to drop —
 // permanent data loss in exactly the window forward compatibility matters.
+// The exception is store.FormSubmitEvent ($form_submit), which only the
+// form endpoint writes: resolveFamily rejects it from a client.
 const (
 	namePageView   = "$page_view"
 	nameScreenView = "$screen_view"
@@ -363,6 +365,12 @@ func jsonString(raw json.RawMessage) (s string, ok bool) {
 // a JSON string (or absent) is a per-event rejection, never a decode
 // failure for the whole batch.
 func resolveFamily(ev rawEvent) (family store.Family, name, warn, reject string) {
+	// The one reserved name a client may never send: $form_submit is the
+	// conversion an approved form's submission writes, and accepting it
+	// here would let any key forge conversions.
+	if ev.Name == store.FormSubmitEvent {
+		return "", "", "", fmt.Sprintf("%s is written by the server for a form submission; post the form to /ingest/forms/{name}", ev.Name)
+	}
 	fam, ok := jsonString(ev.Family)
 	if !ok {
 		return "", "", "", fmt.Sprintf("unknown family %s", ev.Family)

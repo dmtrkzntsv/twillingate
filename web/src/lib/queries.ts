@@ -1,4 +1,4 @@
-import { endpoints, type RangeQuery, type ShareState } from './api'
+import { endpoints, type RangeQuery, type ShareState, type SubmissionsQuery } from './api'
 
 /** The dashboards list: the sidebar, the timezone, dev mode. */
 export const dashboardsQuery = { queryKey: ['dashboards'], queryFn: () => endpoints.dashboards() }
@@ -53,4 +53,28 @@ export const capUsageQuery = (id: number, q: RangeQuery) => ({
 export const widgetSharesQuery = (q: { widget_id?: number; state?: ShareState }) => ({
   queryKey: ['widget-shares', q.state ?? 'all', q.widget_id ?? 'all'] as const,
   queryFn: () => endpoints.widgetShares(q),
+})
+
+/** A project's forms, the active ones or the archived ones. */
+export const formsQuery = (projectId: number, archived = false) => ({
+  queryKey: ['forms', projectId, archived ? 'archived' : 'active'] as const,
+  queryFn: () => endpoints.forms(projectId, archived),
+})
+
+/** One page (or a column's distinct values) of a form's submissions table. */
+export const submissionsQuery = (projectId: number, name: string, q: SubmissionsQuery) => ({
+  queryKey: ['submissions', projectId, name, q] as const,
+  queryFn: () => endpoints.submissions(projectId, name, q),
+})
+
+/** One submission, every stored field and its visit. */
+export const submissionQuery = (projectId: number, name: string, id: string) => ({
+  queryKey: ['submission', projectId, name, id] as const,
+  queryFn: () => endpoints.submission(projectId, name, id),
+})
+
+/** A project's submissions with a field value containing `search`, across its active forms. */
+export const findSubmissionsQuery = (projectId: number, search: string) => ({
+  queryKey: ['find-submissions', projectId, search] as const,
+  queryFn: () => endpoints.findSubmissions(projectId, { search }),
 })

@@ -144,6 +144,17 @@ func parseView(in DataRequest, maxRows int) (view, error) {
 	return v, nil
 }
 
+// ParsePage parses a remote table's paging arguments exactly as
+// widget_data does (parseView), for a table the server builds itself
+// rather than a widget's: list_submissions takes the same arguments and
+// refuses the same malformed ones. It returns the page for
+// readsql.QueryPage and the block echoing it (Matched and Total left for
+// the caller to fill).
+func ParsePage(filters, sort, distinct string, offset, limit, maxRows int) (readsql.Page, PageInfo, error) {
+	v, err := parseView(DataRequest{Filters: filters, Sort: sort, Distinct: distinct, Offset: offset, Limit: limit}, maxRows)
+	return v.page, v.echo, err
+}
+
 // cacheSuffix is a remote table's part of its cache key. It hashes the
 // parsed values rather than the raw arguments, so the same filters
 // spelled with different whitespace share one entry, and an absent limit

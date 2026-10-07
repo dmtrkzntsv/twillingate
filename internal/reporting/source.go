@@ -127,7 +127,7 @@ func (s *sqlSource) clock() time.Time {
 var allowedParams = map[string]bool{":project": true, ":from": true, ":to": true}
 
 func (s *sqlSource) Follows(content string) (project, rng bool) {
-	params, err := readsql.Check(content)
+	params, err := s.db.Check(content)
 	if err != nil {
 		return false, false
 	}
@@ -143,7 +143,7 @@ func (s *sqlSource) Follows(content string) (project, rng bool) {
 }
 
 func (s *sqlSource) Validate(ctx context.Context, content string, c Component) error {
-	params, err := readsql.Check(content)
+	params, err := s.db.Check(content)
 	if err != nil {
 		return store.Refuse(store.ErrInvalid, "%s", err)
 	}
@@ -200,7 +200,7 @@ func (s *sqlSource) Validate(ctx context.Context, content string, c Component) e
 }
 
 func (s *sqlSource) Load(ctx context.Context, content string, p Params) (any, error) {
-	params, err := readsql.Check(content)
+	params, err := s.db.Check(content)
 	if err != nil {
 		return nil, store.Refuse(store.ErrInvalid, "%s", err)
 	}
@@ -227,7 +227,7 @@ func (e viewRefusal) Unwrap() error { return e.error }
 // LoadPage is Load for a remote table: content filtered, sorted and paged
 // by pg in the database, with the matched and total counts.
 func (s *sqlSource) LoadPage(ctx context.Context, content string, p Params, pg readsql.Page) (readsql.PageResult, error) {
-	params, err := readsql.Check(content)
+	params, err := s.db.Check(content)
 	if err != nil {
 		return readsql.PageResult{}, store.Refuse(store.ErrInvalid, "%s", err)
 	}

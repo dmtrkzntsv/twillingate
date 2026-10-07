@@ -194,17 +194,22 @@ func newTestHost(t *testing.T) (*host, *mcp.ClientSession) {
 	}
 	t.Cleanup(func() { st.Close() })
 	ctx := context.Background()
-	db, err := readsql.Open(path, 5*time.Second, 1000)
+	db, err := readsql.Open(path, 5*time.Second, 1000, CustomSQLRefused()...)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
+	subs, err := readsql.Open(path, 5*time.Second, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { subs.Close() })
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	reg := manage.New(st, logger)
 	if err := reg.Reload(ctx); err != nil {
 		t.Fatal(err)
 	}
-	h := &host{db: db, reg: reg, ops: manage.NewOps(reg, st),
+	h := &host{db: db, subs: subs, reg: reg, ops: manage.NewOps(reg, st),
 		rep:       reporting.New(st, db, reporting.Options{CacheAge: time.Minute, RefreshAge: time.Second, ShareBaseURL: "https://c.example"}),
 		publicURL: "https://collector.test", logger: logger,
 		limits: limitsFrom(&config.Config{AttributeValuesTopN: config.DefaultAttributeValuesTopN, IdentitiesTopN: config.DefaultIdentitiesTopN})}
@@ -267,7 +272,7 @@ func setGuards(t *testing.T, h *host, timeout time.Duration, maxRows int) {
 	if !ok {
 		t.Fatal("setGuards: h was not built by newTestHost")
 	}
-	db, err := readsql.Open(path, timeout, maxRows)
+	db, err := readsql.Open(path, timeout, maxRows, CustomSQLRefused()...)
 	if err != nil {
 		t.Fatal(err)
 	}

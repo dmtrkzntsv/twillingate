@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ProjectTab } from './api'
-import { pickerSections, rangeParams, SETUP_ID, tabPath, userAfter } from './project-tabs'
+import { FORMS_ID, pickerSections, rangeParams, SETUP_ID, tabPath, userAfter } from './project-tabs'
 import { dashboardsList } from '@/test/fixtures'
 
 const tabs: ProjectTab[] = [
@@ -15,6 +15,13 @@ describe('tabPath', () => {
   it('opens Setup at /setup and a dashboard under /dashboards', () => {
     expect(tabPath(7, SETUP_ID)).toBe('/projects/7/setup')
     expect(tabPath(7, 13)).toBe('/projects/7/dashboards/13')
+  })
+
+  it('opens Forms at /forms, an id no dashboard or Setup has', () => {
+    expect(FORMS_ID).not.toBe(SETUP_ID)
+    expect(FORMS_ID).toBeLessThan(1)
+    expect(tabPath(7, FORMS_ID)).toBe('/projects/7/forms')
+    expect(tabPath(7, FORMS_ID, 'range=30d')).toBe('/projects/7/forms?range=30d')
   })
 
   it('appends a search when there is one', () => {

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/dmtrkzntsv/twillingate/internal/api"
 	"github.com/dmtrkzntsv/twillingate/internal/reporting"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
 )
@@ -26,7 +27,9 @@ const (
 // store, no registry and no auth here — cmd/twillingate/reporting.go has
 // already refused a non-loopback addr before this is called.
 func ReportingDev(ctx context.Context, dirs []string, dbPath, addr string, logger *slog.Logger) error {
-	db, err := readsql.Open(dbPath, devQueryTimeout, devQueryMaxRows)
+	// Widget SQL here is as custom as in the console: it may not read
+	// what the console's custom SQL may not.
+	db, err := readsql.Open(dbPath, devQueryTimeout, devQueryMaxRows, api.CustomSQLRefused()...)
 	if err != nil {
 		return err
 	}

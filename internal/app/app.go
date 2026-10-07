@@ -113,6 +113,7 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 	}
 	ops := manage.NewOps(reg, st)
 	ops.BreakdownsMax = cfg.AttributeBreakdownsMax
+	ops.FormDraftDays = cfg.Forms.DraftDays
 	if len(reg.Snapshot(ctx).Projects()) == 0 {
 		logger.Warn("no projects configured; create one with `twillingate project create` or an API management operation")
 	}
@@ -123,7 +124,7 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 	}
 
 	salter := identity.NewSalter(st, time.Now)
-	dataDir := filepath.Dir(databasePath(cfg.Database))
+	dataDir := filepath.Dir(DatabasePath(cfg.Database))
 	geoProvider, err := geo.New(cfg.Geo, dataDir, logger)
 	if err != nil {
 		return err
@@ -159,7 +160,7 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 
 	var ingestHandler *server.Server
 	if runIngest {
-		ingestHandler = server.New(cfg, reg, buf, geoProvider, salter, st, logger)
+		ingestHandler = server.New(cfg, reg, buf, geoProvider, salter, st, st, logger)
 	}
 
 	// Assemble the HTTP surface(s). When both -ingest and -console target the
@@ -274,9 +275,10 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 	return listenErr
 }
 
-// databasePath extracts the filesystem path from a sqlite DSN for use as
-// the data dir (GeoLite2 DB lives next to the database).
-func databasePath(dsn string) string {
+// DatabasePath extracts the filesystem path from a sqlite DSN: the data dir
+// (the GeoLite2 DB lives next to the database) and the CLI's read handle
+// both start from it.
+func DatabasePath(dsn string) string {
 	return strings.TrimPrefix(dsn, "sqlite://")
 }
 

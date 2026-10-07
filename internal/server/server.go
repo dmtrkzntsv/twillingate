@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/config"
 	"github.com/dmtrkzntsv/twillingate/internal/geo"
@@ -26,6 +27,15 @@ type Enqueuer interface {
 // idempotent, and must be readable by the next daily pass.
 type NameStore interface {
 	UpsertIdentities(ctx context.Context, ids []store.Identity) error
+}
+
+// FormStore is the slice of store.Store the form endpoint needs. A
+// submission is written straight through, never through the Enqueuer: the
+// buffer drops its oldest entries when full and flushes later, and a
+// submission (and its $form_submit) must be there when the answer says so.
+type FormStore interface {
+	WriteSubmission(ctx context.Context, n store.NewSubmission) (store.Form, bool, error)
+	SessionVisit(ctx context.Context, projectID int64, actorKind, actorID string, at time.Time) (*store.Visit, error)
 }
 
 // keyCounters accumulates per-key-label ingest counts for the per-minute
@@ -66,6 +76,7 @@ type Server struct {
 	geo      geo.Provider
 	salt     Salt
 	names    NameStore
+	forms    FormStore
 	counters *keyCounters
 	// idsSeen holds "<project id>/<actor kind>" for every project and kind
 	// that has sent an id since the process started. Nothing on the server
@@ -90,8 +101,8 @@ func (s *Server) noteIDs(projectID int64, kind string) {
 	}
 }
 
-func New(cfg *config.Config, reg *manage.Registry, q Enqueuer, g geo.Provider, salt Salt, names NameStore, logger *slog.Logger) *Server {
-	s := &Server{cfg: cfg, reg: reg, queue: q, geo: g, salt: salt, names: names,
+func New(cfg *config.Config, reg *manage.Registry, q Enqueuer, g geo.Provider, salt Salt, names NameStore, forms FormStore, logger *slog.Logger) *Server {
+	s := &Server{cfg: cfg, reg: reg, queue: q, geo: g, salt: salt, names: names, forms: forms,
 		counters: newKeyCounters(), logger: logger, mux: http.NewServeMux()}
 	s.Mount(s.mux)
 	return s
@@ -109,6 +120,8 @@ func (s *Server) Mount(mux *http.ServeMux) {
 	// more specific than the console's /api/ prefix, so they never reach its auth.
 	mux.HandleFunc("POST /api/events", s.handleEvents)
 	mux.HandleFunc("OPTIONS /api/events", s.handlePreflight)
+	mux.HandleFunc("POST /ingest/forms/{name}", s.handleForm)
+	mux.HandleFunc("OPTIONS /ingest/forms/{name}", s.handlePreflight)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"status":"ok"}`))

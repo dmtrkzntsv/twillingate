@@ -18,7 +18,8 @@ import (
 // fixed limits from internal/wire with neither setting nor default.
 func TestLimitsReportsTheLimitsInForce(t *testing.T) {
 	h, cs := newTestHost(t)
-	cfg := &config.Config{AttributeValuesTopN: 7, IdentitiesTopN: 2000, AttributeBreakdownsMax: 12}
+	cfg := &config.Config{AttributeValuesTopN: 7, IdentitiesTopN: 2000, AttributeBreakdownsMax: 12,
+		Forms: config.FormsConfig{DraftDays: 3}}
 	cfg.Retention.Events = config.RetentionClass{RawDays: 7, AggregateDays: 90}
 	h.limits = limitsFrom(cfg)
 	out, err := h.listLimits(context.Background(), struct{}{})
@@ -33,6 +34,7 @@ func TestLimitsReportsTheLimitsInForce(t *testing.T) {
 		{groupRetention, "RETENTION_EVENTS_RAW_DAYS", 7, config.DefaultRawDays},
 		{groupRetention, "RETENTION_EVENTS_AGGREGATE_DAYS", 90, config.DefaultAggregateDays},
 		{groupRetention, "RETENTION_ARCHIVED_DAYS", 0, config.DefaultArchivedDays},
+		{groupRetention, "FORMS_DRAFT_DAYS", 3, config.DefaultFormDraftDays},
 		{groupCaps, "ATTRIBUTE_VALUES_TOP_N", 7, config.DefaultAttributeValuesTopN},
 		{groupCaps, "ATTRIBUTE_BREAKDOWNS_MAX", 12, config.DefaultAttributeBreakdownsMax},
 		{groupCaps, "IDENTITIES_TOP_N", 2000, config.DefaultIdentitiesTopN},
@@ -58,6 +60,7 @@ func TestLimitsReportsTheLimitsInForce(t *testing.T) {
 		"Request body": wire.MaxBody, "Events per batch": wire.MaxBatchEvents,
 		"Attribute value length": wire.MaxAttrValue, "Timestamp ahead of the server": 300,
 		"Measure value": wire.MaxMeasureValue, "Lowest sample rate": wire.MinSampleRate,
+		"Form body": 64 << 10, "Form fields": 100, "Form field name length": 64, "Form value length": 8 << 10,
 	} {
 		if fixedByName[name].Value != v {
 			t.Errorf("%s = %+v, want %v", name, fixedByName[name], v)

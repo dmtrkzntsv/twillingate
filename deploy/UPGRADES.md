@@ -607,3 +607,14 @@ No pre-checks. Migration 033 adds `widget_shares`, where a shared
 widget's two PNGs and the text they show are kept. Nothing existing
 changes. Rollback: an older binary ignores the table, and share links
 answer 404 until the newer binary is back.
+
+### Upgrading to forms (migration 035)
+
+No pre-checks and no data step. Migration 035 adds `forms` and
+`submissions`; nothing existing changes, and nothing happens until a page
+posts a form. `FORMS_DRAFT_DAYS` is new and optional (default 7: how long
+a form created by its first submission accepts submissions as a draft
+before it must be approved). Submissions are personal data, kept until
+deleted or until their project is; they are never readable through
+`query`. Rollback: an older binary ignores both tables, and form posts
+answer 404 until the newer binary is back.

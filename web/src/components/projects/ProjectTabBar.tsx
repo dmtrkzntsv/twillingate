@@ -5,25 +5,25 @@ import ReportTabs from '@/components/ReportTabs'
 import { Button } from '@/components/ui/button'
 import type { ProjectTabActions } from '@/hooks/use-project-tab-actions'
 import type { DashboardInfo, ProjectTab } from '@/lib/api'
-import { rangeParams, SETUP_ID, tabPath, userAfter } from '@/lib/project-tabs'
+import { FORMS_ID, rangeParams, SETUP_ID, tabPath, userAfter } from '@/lib/project-tabs'
 import AddTabDialog from './AddTabDialog'
 
 interface Props {
   projectId: number
-  /** The tab on screen: `SETUP_ID` or a dashboard id. */
+  /** The tab on screen: `SETUP_ID`, `FORMS_ID` or a dashboard id. */
   currentId: number
   /** The project's tabs after Setup, in order: built-ins, then the user's own. */
   tabs: ProjectTab[]
   /** Every dashboard, for the "+" picker. */
   dashboards: DashboardInfo[]
   actions: ProjectTabActions
-  /** Reporting dev, which takes no writes: no "+" and no dragging. */
+  /** Reporting dev, which takes no writes and serves no forms: no Forms tab, no "+" and no dragging. */
   readOnly?: boolean
 }
 
 /**
- * A project page's tab row (project tabs D1, D8): Setup and the built-ins
- * fixed in front, the user's own tabs after them, dragged to a new order,
+ * A project page's tab row (project tabs D1, D8; forms D12): Setup, Forms
+ * and the built-ins fixed in front, the user's own tabs after them, dragged to a new order,
  * and "+" last. Switching tabs keeps the range in the URL.
  */
 export default function ProjectTabBar({ projectId, currentId, tabs, dashboards, actions, readOnly = false }: Props) {
@@ -32,7 +32,8 @@ export default function ProjectTabBar({ projectId, currentId, tabs, dashboards, 
   const [adding, setAdding] = useState(false)
   const search = rangeParams(url).toString()
   const open = (id: number) => navigate(tabPath(projectId, id, search))
-  const fixedIds = [SETUP_ID, ...tabs.filter((t) => t.owner === 'system').map((t) => t.dashboard_id)]
+  const fixed = readOnly ? [{ dashboard_id: SETUP_ID, title: 'Setup' }] : [{ dashboard_id: SETUP_ID, title: 'Setup' }, { dashboard_id: FORMS_ID, title: 'Forms' }]
+  const fixedIds = [...fixed.map((t) => t.dashboard_id), ...tabs.filter((t) => t.owner === 'system').map((t) => t.dashboard_id)]
 
   const add = async (id: number) => {
     const ok = await actions.add(projectId, id)
@@ -43,7 +44,7 @@ export default function ProjectTabBar({ projectId, currentId, tabs, dashboards, 
   return (
     <div className="flex h-10 min-w-0 items-center gap-1 border-b border-border/70">
       <ReportTabs
-        tabs={[{ dashboard_id: SETUP_ID, title: 'Setup' }, ...tabs]}
+        tabs={[...fixed, ...tabs]}
         currentId={currentId}
         onSelect={open}
         fixedIds={fixedIds}

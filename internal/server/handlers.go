@@ -32,9 +32,10 @@ func newID() string {
 	return id.String()
 }
 
-// handleEvents is the only ingest endpoint. It demultiplexes by the event's
-// declared or inferred family (resolveFamily): views, product events and
-// measures all land in the one raw table under their family.
+// handleEvents is the events endpoint (forms have their own, forms.go). It
+// demultiplexes by the event's declared or inferred family
+// (resolveFamily): views, product events and measures all land in the one
+// raw table under their family.
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	var env envelope
 	if !decode(w, r, &env) {

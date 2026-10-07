@@ -3,9 +3,17 @@ import type { DashboardInfo, ProjectTab } from './api'
 /** The Setup tab's id in `ReportTabs`; no dashboard has id 0. */
 export const SETUP_ID = 0
 
-/** Where a project's tab lives: Setup at `/setup`, a dashboard under `/dashboards/:id` (D8). */
+/** The Forms tab's id in `ReportTabs`: fixed after Setup, never a dashboard's (forms D12). */
+export const FORMS_ID = -1
+
+/** Where a project's tab lives: Setup at `/setup`, Forms at `/forms`, a dashboard under `/dashboards/:id` (D8). */
 export function tabPath(projectId: number, dashboardId: number, search = ''): string {
-  const path = dashboardId === SETUP_ID ? `/projects/${projectId}/setup` : `/projects/${projectId}/dashboards/${dashboardId}`
+  const path =
+    dashboardId === SETUP_ID
+      ? `/projects/${projectId}/setup`
+      : dashboardId === FORMS_ID
+        ? `/projects/${projectId}/forms`
+        : `/projects/${projectId}/dashboards/${dashboardId}`
   return search ? `${path}?${search}` : path
 }
 

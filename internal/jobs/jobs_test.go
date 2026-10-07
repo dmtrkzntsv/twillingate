@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -1001,5 +1002,63 @@ func TestRunDailyPassLeavesTodaysIdentityActivityLive(t *testing.T) {
 	// Retention still covers today: it has no live half to fall back on.
 	if n := count(t, db, `SELECT COUNT(*) FROM agg_retention WHERE cohort_day='2026-08-21' AND day_offset=1`); n != 1 {
 		t.Errorf("retention rows owned by today = %d, want 1", n)
+	}
+}
+
+// orderStore records the order of the calls the expiry test cares about and
+// the time ExpireDrafts was given.
+type orderStore struct {
+	store.Store
+	mu       sync.Mutex
+	calls    []string
+	expireAt time.Time
+}
+
+func (o *orderStore) ExpireDrafts(ctx context.Context, now time.Time) (int, error) {
+	o.mu.Lock()
+	o.calls = append(o.calls, "expire")
+	o.expireAt = now
+	o.mu.Unlock()
+	return o.Store.ExpireDrafts(ctx, now)
+}
+
+func (o *orderStore) PurgeArchived(ctx context.Context, days int) (store.PurgeResult, error) {
+	o.mu.Lock()
+	o.calls = append(o.calls, "purge")
+	o.mu.Unlock()
+	return o.Store.PurgeArchived(ctx, days)
+}
+
+// Draft forms past their date are archived on every pass, before the purge
+// that could then take them, and whether or not RETENTION_ARCHIVED_DAYS
+// enables the purge.
+func TestRunDailyPassExpiresDraftsBeforePurge(t *testing.T) {
+	for _, days := range []string{"30", "0"} {
+		vars := map[string]string{}
+		for k, v := range jobsVars {
+			vars[k] = v
+		}
+		vars["RETENTION_ARCHIVED_DAYS"] = days
+		cfg := configtest.Load(t, vars)
+		raw, path := openStoreAt(t)
+		t.Setenv("JOBS_TEST_DB", path)
+		st := &orderStore{Store: raw}
+		reg := newRegistry(t, st, cfg, jobsProjectSpecs)
+		now := func() time.Time { return time.Date(2026, 8, 22, 4, 0, 0, 0, time.UTC) }
+		r := New(st, cfg, reg, identity.NewSalter(st, now), slog.Default(), now)
+
+		if err := r.RunDailyPass(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		want := []string{"expire", "purge"}
+		if days == "0" {
+			want = []string{"expire"}
+		}
+		if !slices.Equal(st.calls, want) {
+			t.Errorf("RETENTION_ARCHIVED_DAYS=%s: calls = %v, want %v", days, st.calls, want)
+		}
+		if !st.expireAt.Equal(now()) {
+			t.Errorf("RETENTION_ARCHIVED_DAYS=%s: ExpireDrafts now = %v, want %v", days, st.expireAt, now())
+		}
 	}
 }

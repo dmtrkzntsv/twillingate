@@ -11,6 +11,7 @@ and backing up the database are the operator's job, in
 - [What twillingate is](#what-twillingate-is)
 - [Set up a project](#set-up-a-project)
 - [Instrument a website](#instrument-a-website)
+- [Collect form submissions](#collect-form-submissions)
 - [The event model](#the-event-model)
 - [The wire format](#the-wire-format)
 - [Answer questions with the data](#answer-questions-with-the-data)
@@ -33,10 +34,10 @@ discarded.
 
 | Command | Does |
 | --- | --- |
-| `twillingate serve -ingest` | Ingestion: `POST /ingest/events`, the SDK at `/js/twillingate.js` (and its Web Vitals add-on at `/js/twillingate-vitals.js`), `/healthz` |
+| `twillingate serve -ingest` | Ingestion: `POST /ingest/events`, `POST /ingest/forms/{name}`, the SDK at `/js/twillingate.js` (and its Web Vitals add-on at `/js/twillingate-vitals.js`), `/healthz` |
 | `twillingate serve -console` | The console: MCP at `/mcp`, REST at `/api/`, the login, the dashboards at `/app/`, and shared widgets at `/share/` (public) |
 | `twillingate serve` | Both, on one listener unless `CONSOLE_ADDR` says otherwise |
-| `twillingate project`, `key`, `config` | Registry management |
+| `twillingate project`, `key`, `form`, `config` | Registry management |
 | `twillingate migrate` | Applies schema migrations and exits |
 
 Which of those run, and how, is the operator's choice — see [Configure the
@@ -176,10 +177,11 @@ Every `data-*` has an `init()` equivalent except `data-instance`, which maps to
 options with no `data-*` form, and identity is set from code (`identify`,
 `group`, `installId`), never in markup. Views are automatic, including on
 `history.pushState` and `popstate`; elements carrying `data-twillingate-event`
-are tracked on click or submit. Include each tag once: a duplicate with the same
-`data-key` or with none is ignored with a warning, one with a different key
-replaces the default instance, also with a warning, and a second project uses
-`data-instance`. The collector also serves `/js/plausible-shim.js`, which fires
+are tracked on click or submit, and a `<form data-twillingate-form>` is sent as
+a [form submission](#tagged-forms). Include each tag once: a duplicate with the
+same `data-key` or with none is ignored with a warning, one with a different
+key replaces the default instance, also with a warning, and a second project
+uses `data-instance`. The collector also serves `/js/plausible-shim.js`, which fires
 events from Plausible's `plausible-event-*` classes — see
 [docs/plausible/](plausible/).
 
@@ -248,6 +250,7 @@ twillingate.measure("checkout_api", 340, "time", { endpoint: "/api/checkout" });
 | `consent(granted?)` | `true` / `false` pins storage consent over whatever was declared, `null` hands control back, no argument reads it. See [Consent and storage](#consent-and-storage). |
 | `optOut(flag?)` | `true` writes `twillingate_ignore`, `false` clears it, no argument reads. Returns the effective state, the `optOut` callback included. |
 | `debug(flag?)` | `true` writes `twillingate_debug`, `false` clears it, no argument reads. Returns the effective state. See [Debugging](#debugging). |
+| `submitForm(name, fields)` | Send a submission to the project's form `name`. `fields` is a flat object, a `FormData` or a `<form>`; in an object, `$`-prefixed keys and values that are not a string, number or boolean are skipped, as `$` names and files are for a form; resolves to `{ id }`, rejects on a `4xx` or once the retries run out (also for a name outside `^[a-z0-9_-]{1,64}$`, without a request). It neither navigates nor sets the hash. See [Tagged forms](#tagged-forms). |
 | `twillingate.create(name, opts?)` | A second instance; with options it also initialises it. See [Two projects on one page](#two-projects-on-one-page). |
 | `twillingate.get(name?)` | Look an instance up from anywhere; no name is the default instance. |
 | `util.maskIds(value, opts?)` | Mask ids in a path or URL. See [Masking](#masking-urls). |
@@ -447,6 +450,76 @@ attribute and nothing else is read off the element. The listeners run in the
 capture phase, so a handler that stops propagation cannot eat the event. Every
 instance with `taggedEvents` on (the default) tracks it.
 
+### Tagged forms
+
+```html
+<form data-twillingate-form="contact">
+  <input name="email"> <textarea name="message"></textarea>
+</form>
+<p id="twillingate-form-success-contact">Thanks, we'll be in touch.</p>
+<p id="twillingate-form-error-contact">That did not go through; please try again.</p>
+<style>[id^="twillingate-form-"]:not(:target){display:none}</style>
+```
+
+A `<form>` carrying `data-twillingate-form="{name}"` is sent to the project's
+form `{name}` (`^[a-z0-9_-]{1,64}$`; see [Form submissions](#form-submissions))
+instead of being submitted. The same capture-phase listener that serves
+`data-twillingate-event` hands it to the first ready instance, which posts the
+form's fields as JSON; only then is `preventDefault()` called, so with no
+ready instance (none initialised yet, or retired) the browser submits the form
+itself, to its `action` if it has one; a form carrying both attributes is a form submission only, and a
+tagged form tracks no event of its own (the server's `$form_submit` is the
+conversion once the form is approved). `taggedEvents: false` does not turn it
+off. The SDK reads the form like the browser would: a `File` entry and every
+name starting with `$` are left out, and a repeated name is joined with `", "`.
+The body carries a fresh `id`, the page's `$host` and `$path` (as the
+instance's `maskUrl` and routing have it for events) and, on an identified
+instance, the `$user_id` and `$install_id` events carry. An opted-out visitor
+(`optOut`, `twillingate_ignore`) still sends the submission, which they asked
+for, without those two keys.
+
+While the request is in flight the form has `aria-busy="true"` and a second
+submit is ignored. Delivery is `fetch` to `/ingest/forms/{name}?key=…` (the
+key in the URL as well as the body, so the collector checks it before reading
+the body and a `413` or `400` reaches the page as that status) as
+`text/plain` so it needs no preflight, with `keepalive` unless the body is 60 000 bytes or more (browsers
+refuse a larger keepalive body), and retries a network error or a `5xx` at 1, 5 and
+25 seconds with the same `id`, which the collector stores once. A `4xx`
+(a closed or archived form, a draft past its window, a refused origin or key)
+is an error at once. The retries live in memory only: **a submission is never
+written to the storage driver**, whatever the consent, and a visitor who
+closes the page before delivery loses it. The one thing an identified instance
+with consent may still store is its visitor id, created the way any event
+flush creates it: identity bookkeeping, never submission data.
+
+On the outcome:
+
+- A `$redirect` field (a hidden input with an `http(s)` URL; it is read for
+  this and never sent) sends the visitor there, `location.assign`, with the
+  fragment `#twillingate-form-success-{name}` or `#twillingate-form-error-{name}`
+  replacing the URL's own. A `$redirect` that is not `http(s)` is ignored.
+- Without one the visitor stays: on success the form is reset, and in both
+  cases `location.hash` is set to the same fragment. One `:target` element per
+  outcome, as above, is the thank-you note, shared with the no-JavaScript path
+  of [Form submissions](#form-submissions), which gives the form an `action`
+  for pages where the SDK did not load.
+- Either way a `twillingate:form` `CustomEvent` is dispatched on the form
+  (it bubbles), with `detail: { name, status, id }`: `status` is `"success"` or
+  `"error"`, `id` the submission's id (empty when the name was invalid and
+  nothing was sent).
+
+```js
+document.addEventListener("twillingate:form", (e) => {
+  if (e.detail.status === "success") console.log("sent", e.detail.name, e.detail.id);
+});
+```
+
+With several instances on a page only the first one registered (normally the
+script tag's own) sends a tagged form; every instance sending it would store
+the submission once each. From code, `twillingate.submitForm("contact", { email,
+message })` (or a `FormData` or a form element) sends the same submission and
+resolves to `{ id }`.
+
 ### Routing
 
 ```
@@ -532,6 +605,108 @@ server-side by event id; a 4xx drops the batch instead.
 `debug` option logs every event and every send of every instance, prefixed with
 the instance name, without changing what is sent.
 
+## Collect form submissions
+
+A form on a site posts its fields to the collector, which keeps them as a
+submission and, once the form is approved, counts each one as a conversion.
+The endpoint, its two body styles, the context keys, the checks and the
+redirect back are in [Form submissions](#form-submissions); this is what
+happens to a form afterwards. **Submissions hold personal data** (what
+visitors typed): custom SQL, `query` and widgets never read them, only the
+tools below do.
+
+1. **Point the form at the collector.** A plain HTML form posts to
+   `https://t.example.com/ingest/forms/{name}?key=ak_…`, the SDK sends a
+   [tagged form](#tagged-forms), a backend posts JSON there. The page picks the name (`^[a-z0-9_-]{1,64}$`); the first
+   submission creates the form.
+2. **It starts as a draft.** A draft keeps every field it is sent and
+   accepts submissions for `FORMS_DRAFT_DAYS` (default 7), after which the
+   daily pass archives it. Its submissions **never count as conversions**,
+   not even once the form is approved. `list_forms` shows its `fields`, every
+   name submissions sent.
+3. **Approve it** with the fields to keep: `approve_form {project_id, name,
+   expected_fields}`. From then on a field outside the list is dropped on
+   arrival, and every submission writes a `$form_submit` product event with
+   the attribute `form` (the form's name): count conversions with
+   `product_events`, and per form with `product_attributes` once `form` is
+   declared in the project's `attributes`.
+4. **Settle it** with `update_form`: a `purpose`; a `return_url` (where a
+   plain form sends the visitor back without `$redirect`, an allowed target
+   as for the redirect); `closes_at`, after which submissions are refused
+   (`null` reopens; approving never reopens); and the approved form's
+   `expected_fields`.
+5. **Read the submissions** as a table with `list_submissions`, one in full
+   with `get_submission`, or as CSV from the export route.
+6. **Erase a person** on request: `find_submissions` with their email (or any
+   text a field holds) lists what every form has of them, archived forms
+   included, and `delete_submissions` with the same `search` deletes exactly
+   that.
+
+| Operation | CLI | MCP tool | Tool arguments |
+| --- | --- | --- | --- |
+| List forms | `twillingate form list` | `list_forms` | `{project_id, archived}`; drafts first; each with `status` (`draft` or `approved`), `purpose`, `return_url`, `fields`, `expected_fields`, `draft_until`, `approved_at`, `closes_at`, `submissions` (count), `last_submitted_at`, `archived`. `archived: true` lists the archived forms instead. Beside `forms`, `action_base` is `PUBLIC_URL` + `/ingest/forms` (empty without `PUBLIC_URL`), so a plain form's action is `<action_base>/{name}?key=…` |
+| Approve a draft | `twillingate form approve` | `approve_form` | `{project_id, name, expected_fields}`; one or more fields; an approved form is a `conflict` |
+| Change one | `twillingate form update` | `update_form` | `{project_id, name, purpose, return_url, closes_at, expected_fields}`; merges; `closes_at: null` reopens; `expected_fields` only on an approved form, never empty |
+| Archive / restore | `twillingate form archive` / `restore` | `archive_form` / `restore_form` | `{project_id, name}`; archiving refuses submissions and hides the form and its submissions from every list, table and export (a search still finds them); a restored draft gets another `FORMS_DRAFT_DAYS` |
+| Read a form's table | `twillingate form export` (CSV) | `list_submissions` | `{project_id, name, filters, sort, distinct, offset, limit}`; returns `columns`, `rows`, `ids`, `matched`, `total`, `offset`, `limit` |
+| Read one submission | — | `get_submission` | `{project_id, name, id}`; every stored field (ones no longer expected too), `received_at`, `host`, `path`, `via`, `visit` |
+| Find a person | — | `find_submissions` | `{project_id, search, limit, cursor}`; `search` at least 2 characters; returns `submissions` (each with its `form` and `archived`, true when that form is archived) and `next_cursor` |
+| Delete submissions | `twillingate form erase` | `delete_submissions` | `{project_id}` with exactly one of `ids`, `form` with `filters`, or `search`; returns `deleted` |
+
+The CLI works on the database directly, with every flag naming a project by
+`-project-id <id>` and a form by `-name`. `form list -project-id N [-archived]`
+prints one tab-separated line per form (name, status, submissions, `closes_at`
+or `-`, fields). `form approve -fields a,b` keeps those fields; `form update`
+takes `-purpose`, `-return-url` (empty clears it), `-closes-at` (an RFC 3339
+time, `now` to close it at once, or `never` to reopen it) and, on an approved
+form, `-fields`; a flag left out keeps the value. `form export` writes the
+form's whole table as CSV to standard output (see below). `form erase -project-id N`
+takes `-id` (repeatable) or `-search`, never both, deletes exactly as
+`delete_submissions` does and prints only a count: it never echoes the search
+text or the ids.
+
+**The table.** `list_submissions` answers one form's submissions with the
+columns `Received`, one per field (an approved form's expected fields in
+their order, a draft's every field), then `Page` (host and path),
+`Referrer`, `UTM source`, `UTM medium` and `UTM campaign` (from the visit the
+submission arrived in). A field named like one of those, or `id`, ignoring
+case, is shown as `<name> (field)`, and filters and sorts under that name.
+`ids` holds each row's submission id, in row order; it is not a column. The
+table takes the arguments `widget_data` takes for a remote table ([Filtering
+and paging a table](reporting.md#filtering-and-paging-a-table)): `filters`
+(`[{"column":"Received","op":">","value":"2026-10-01"}]`), `sort`
+(`email:asc`), `distinct` (then `columns` are `value` and `rows`, and there
+are no `ids`), `offset` and `limit`. Without a `sort` it is newest first. It
+lists every submission whatever the date; filter `Received` to narrow it.
+The CSV export (`GET /api/projects/{project_id}/forms/{name}/submissions.csv`
+over REST, `twillingate form export` from the CLI) writes every matching row,
+newest first unless sorted; over REST it takes the same `filters` and `sort`,
+the CLI exports every row. The header is the columns. A cell (header included)
+that starts with `=`, `+`, `-`, `@`, a tab or a carriage return is prefixed
+with `'`, so a spreadsheet shows what a visitor typed as text instead of
+running it as a formula.
+
+**Deleting.** `delete_submissions` is the one tool that deletes, and it
+cannot be undone. `ids` deletes those submissions (ids that match nothing are
+skipped); `form` with `filters` deletes every row that form's table shows
+with those filters (at least one; to remove a whole form, archive it); and
+`search` deletes what `find_submissions` finds. Search reaches archived
+forms too, so an erasure request leaves no copy behind; each submission it
+finds says `archived: true` when its form is archived. Search matches a field's
+value anywhere in it, case-insensitively for ASCII letters only (`É` and `é`
+differ). A deleted submission's `$form_submit` event is removed from the raw
+window only: days already rolled up keep their counts. The audit log records
+the selector's kind (`ids`, `search`, or `filters` with the form's name) and
+the number of submissions actually deleted (a delete that removes nothing is
+recorded too, with 0), never the search text, the filter values or the submissions'
+contents: those are usually the erased person's email.
+
+An archived form's submissions are left out of every list, table and
+export (so of a delete by filters too) until it is restored, and are purged
+with it
+`RETENTION_ARCHIVED_DAYS` after archiving, with their events still in the raw
+window. Deleting the project deletes its forms and submissions.
+
 ---
 
 ## The event model
@@ -545,6 +720,7 @@ decides instead:
 | `$page_view` | views | `web` | the views dashboard, `views_overview`, `views_breakdown`, retention |
 | `$screen_view` | views | `app` | same |
 | anything else | product | — | `product_events`, `product_attributes` |
+| `$form_submit` | product | — | written by the collector beside an approved form's submission ([Form submissions](#form-submissions)); a client sending it is rejected |
 | any name, with `family: "measures"` | measures | — | `measures`, the Web Vitals and Measures dashboards |
 
 All three families are stored in one raw table, `events`, whose `family`
@@ -554,6 +730,8 @@ of each family read only its own rows.
 The `$` prefix is reserved for the system. An unrecognized `$` **name** is
 stored as an ordinary custom event with a warning; an unrecognized `$`
 **attribute key** is dropped, with a warning in the response body.
+`$form_submit` is the one name a client may never send: it is a form's
+conversion, and only the form endpoint writes it.
 
 ### Views (`$page_view`, `$screen_view`)
 
@@ -709,8 +887,10 @@ behave identically from this section alone.
 
 ### Endpoint
 
-`POST /ingest/events` is the only ingest endpoint. There is no separate
-pageview, event or batch path — a single event is a batch of one.
+`POST /ingest/events` is the only events endpoint. There is no separate
+pageview, event or batch path — a single event is a batch of one. Form
+submissions have an endpoint of their own,
+[`POST /ingest/forms/{name}`](#form-submissions).
 
 ### Authentication
 
@@ -781,6 +961,8 @@ reads as undeclared and a custom key is absent.
 before this change keeps working unchanged.
 
 A per-event rejection (the batch's other events are still stored):
+- **`$form_submit`**, in any family: only the [form endpoint](#form-submissions)
+  writes it.
 - **An unknown `family`** (anything but `views`, `product` or `measures`) is
   rejected, not stored as `product`.
 - **A contradiction is rejected:** `family: "views"` with a name that is not
@@ -884,7 +1066,8 @@ is a poison batch to drop**; the `202` is returned **before** the write, so
 | Measure value | `0` to `1e15` (else the event is rejected) |
 | `$sample_rate` | `0.0001` to `1` (else stored as `1`) |
 
-The `limits` tool lists these beside the retention and cap settings in force.
+The `limits` tool lists these, and the [form limits](#form-submissions),
+beside the retention and cap settings in force.
 
 ### Origin and CORS
 
@@ -900,11 +1083,119 @@ X-Analytics-Key` and echoes the matched origin. Send the key in the body with
 `Content-Type: text/plain` to skip preflight entirely, which makes the request
 CORS-simple.
 
+### Form submissions
+
+`POST /ingest/forms/{name}` takes one submission to the project's form
+`{name}`, which matches `^[a-z0-9_-]{1,64}$` (anything else is a plain
+`400`). The first submission creates the form as a draft: it accepts
+submissions for `FORMS_DRAFT_DAYS` (default 7) and keeps every field they
+send. An approved form keeps only its expected fields and writes, beside each
+submission, a `$form_submit` product event with the submission's `id`, its
+time as `ts` and the form's name as its one attribute, `form`; a draft's
+submissions write none. Both are written before the answer, never buffered.
+
+Two body styles, chosen by `Content-Type`:
+
+- **A plain HTML form** (`application/x-www-form-urlencoded` or
+  `multipart/form-data`), which needs no JavaScript. The key travels in the
+  action URL as `?key=` (or as the `X-Analytics-Key` header); every field not
+  starting with `$` is a submission field. The answer is a redirect.
+
+  ```html
+  <form method="post" action="https://t.example.com/ingest/forms/contact?key=ak_…">
+    <input name="email"> <textarea name="message"></textarea>
+    <input type="hidden" name="$redirect" value="https://example.com/thanks">
+  </form>
+  ```
+
+- **JSON**, any other content type (`text/plain` keeps a browser's request
+  CORS-simple). The key travels as the header, `?key=` or `key` in the body.
+  A `fields` value is a string, number or boolean, stored as a string; an
+  array, object or `null` drops that field. The answer is `201 {"id": "…"}`.
+
+  ```jsonc
+  { "key": "ak_…",               // omit when using the header or ?key=
+    "id": "018f1e5c-…",          // optional, or $id in attributes
+    "fields": { "email": "a@b.c", "plan": "pro", "seats": 5 },
+    "attributes": { "$install_id": "018f1e5a-…", "$host": "example.com", "$path": "/pricing" } }
+  ```
+
+A submission is flat text, one string per field name: a repeated name (a
+checkbox group, a multi-select) is joined with `", "`. Files are never
+stored. A multipart file part is discarded unread, but it counts toward the
+body limit: a small file is dropped and the submission stored without it,
+and a file that takes the body past 64 KB gets the whole submission refused as
+too large. Leave file inputs out of a twillingate form.
+
+Context keys, as `$` fields on a plain form or in `attributes` on JSON, mean
+what they mean on events:
+
+| Key | Meaning |
+| --- | --- |
+| `$id` | The submission's UUID. A retry with the same id is stored once and answered as a success, even if the form closed in between; omitted, the collector makes one |
+| `$user_id`, `$install_id` | The actor, resolved as on events: `$user_id`, else `$install_id`, else the connection hash, so a JS-free post from the browser that sent the visit's views gets the same actor as those views |
+| `$host`, `$path` | The page the form is on; on a plain form each defaults to the `Referer`'s, on JSON an absent one stays empty |
+| `$redirect` | Plain form only: where to send the visitor back |
+
+Any other `$` key is dropped, and a field named like a context key without
+the `$` (`redirect`, `id`, `host`) is an ordinary field.
+
+The checks run in order. The key must resolve to an active project, else a
+plain `401`; a present `Origin` must pass `allowed_origins`, else a plain
+`403`; the body must be within the limits below, else `413`; the form must be
+open, else `409`: an archived form, a draft past its window or a form past
+its closing time refuses, and nothing is written. The exception is a JSON
+body that carries its key only as `key` inside it. That body has to be read
+before the key is known, so its size and syntax are checked first (`413`,
+`400`), and those answers carry no CORS headers, as on `/ingest/events`; the
+SDK sends `?key=` as well, so its posts never take this path.
+`Origin: null` (a sandboxed frame, a page sent with
+`Referrer-Policy: no-referrer`) is an origin like any other: refused unless
+`allowed_origins` lists `null` or a bare `*`, as on events. Preflight
+is answered as for `/ingest/events`. A JSON client retries only on `5xx` and
+network failure, reusing its `id`.
+
+**The redirect.** twillingate renders no page. A plain form is answered with
+a `303` to the first allowed of `$redirect`, the form's return URL and the
+`Referer`. A target is allowed when it is an absolute `http(s)` URL whose
+origin passes `allowed_origins`; one that passes only through a bare `*`
+must also be the request's own `Origin`, so `*` never makes the collector an
+open redirect. The target's fragment is replaced by
+`#twillingate-form-success-{name}`, or by `#twillingate-form-error-{name}`
+for a refusal after the key and `Origin` checks (a body too large goes back
+to the `Referer` only, since nothing of the form was read). With no allowed
+target, a stored submission is answered with a plain `400` saying the form
+has no return URL (the submission is kept), and a refusal is answered with
+its own plain status (`409`, `413` or `400`). One
+element per outcome, shown with `:target`, makes the thank-you note:
+
+```html
+<p id="twillingate-form-success-contact">Thanks, we'll be in touch.</p>
+<style>#twillingate-form-success-contact:not(:target){display:none}</style>
+```
+
+The `Referer` usually carries only the origin on a cross-origin post (the
+browsers' default `strict-origin-when-cross-origin` policy), so "back to the
+page" lands on the site's root: a page without JavaScript sets `$redirect`
+or the form's return URL.
+
+| Limit | Value |
+| --- | --- |
+| Body | 64 KB, file parts included (else `413`, or the error redirect) |
+| Fields | 100; past that, the rest in name order are dropped |
+| Field name length | 64 characters (a longer name dropped) |
+| Field name characters | no control character, U+0000 to U+001F or U+007F (such a name dropped, and refused in `expected_fields`) |
+| Field value length | 8 KB (truncated, not rejected) |
+
+Approving a form, reading its submissions and erasing them are in [Collect
+form submissions](#collect-form-submissions).
+
 ---
 
 ## Answer questions with the data
 
-A connected session gets forty-seven tools: the twenty-three below, and twenty-four
+A connected session gets fifty-six tools: the twenty-three below, the nine
+in [Collect form submissions](#collect-form-submissions), and twenty-four
 that build the dashboards served at `/app/`, which are documented in
 `docs://reporting` ([reporting.md](reporting.md)). To build or change a
 dashboard, call `reporting_guide` first.
@@ -916,7 +1207,7 @@ take `project_id`, `from` and `to` as `YYYY-MM-DD` unless noted.
 | Tool | Extra parameters | Returns |
 | --- | --- | --- |
 | `list_projects` | none | Every project with its `project_id`, name, `archived`, `allowed_origins` and declared `attributes`, in the order `move_project` sets. Call this first — every other tool needs a `project_id` |
-| `limits` | none (no `project_id`) | The limits in force, each with a `group`, `name`, `value`, `unit` (`days`, `bytes`, `characters`, `seconds`; absent for a count) and `description`, in three groups: `retention` (`RETENTION_EVENTS_RAW_DAYS`, `RETENTION_EVENTS_AGGREGATE_DAYS`, `RETENTION_ARCHIVED_DAYS`), `caps` (`ATTRIBUTE_VALUES_TOP_N`, which caps views breakdowns and attribute values alike, `ATTRIBUTE_BREAKDOWNS_MAX`, `IDENTITIES_TOP_N`) and `ingest`, the wire format's fixed [limits](#limits). A setting carries its `setting` and `default`; a fixed limit neither. `zero` says what 0 means where it is not the number (`no cap`, `kept forever`) |
+| `limits` | none (no `project_id`) | The limits in force, each with a `group`, `name`, `value`, `unit` (`days`, `bytes`, `characters`, `seconds`; absent for a count) and `description`, in three groups: `retention` (`RETENTION_EVENTS_RAW_DAYS`, `RETENTION_EVENTS_AGGREGATE_DAYS`, `RETENTION_ARCHIVED_DAYS`, `FORMS_DRAFT_DAYS`), `caps` (`ATTRIBUTE_VALUES_TOP_N`, which caps views breakdowns and attribute values alike, `ATTRIBUTE_BREAKDOWNS_MAX`, `IDENTITIES_TOP_N`) and `ingest`, the wire format's fixed [limits](#limits) and [form limits](#form-submissions). A setting carries its `setting` and `default`; a fixed limit neither. `zero` says what 0 means where it is not the number (`no cap`, `kept forever`) |
 | `cap_usage` | `from`, `to` (optional: the last 30 days) | Per capped dimension — views breakdowns and kinds, attribute keys, `users`/`groups` — the busiest day's values against the `cap`, `days` with data, `days_capped` (an `(other)` row; for users and groups, the cap reached) and `folded_share` |
 | `received_attributes` | `project_id` (optional), `from`, `to` (optional: the last 30 days) | The keys the project's product events and measures carried — each key's `events` and `max_values` (the busiest event's distinct values on one day, against `ATTRIBUTE_VALUES_TOP_N`), counted by the daily pass so today's arrive the night after (a key first received today has `events` 0 and `max_values` `null`), `received` and `declared` — for the 500 busiest keys plus every declared key (declared keys none carried with `received` false), `keys_total` (the distinct keys received), `values_cap`, `breakdowns_used` and `breakdowns_max` (`ATTRIBUTE_BREAKDOWNS_MAX`). Kept for the raw window only. Without `project_id`, the budget only |
 | `usage` | `project_id` (optional: every project), `from`, `to` (optional: the last 30 days) | Per project: `views`, product `events` and measure `samples` per day and in total, `last_received_at`, `first_day` (the oldest day with data, stored counts included), `raw_days`, `rolled_up_days`, an estimated `size` (raw rows and aggregates, measured daily by the daily pass, which also runs at start: the newest, with the day it was `measured_at`; `null` until the first measurement) and each day's measured `total_bytes` in the series (`null` on days not measured), `unused_attributes` (declared keys no event carried; computed only with `project_id`, `null` for the all-projects answer); plus the database's size on disk now and per day (`database_series`). Days before the newest daily pass read the counts it stored, which outlive the aggregates' retention. Each series day also carries `declared_attributes` and, counted the night after while the day's rows are raw and kept once rolled up, the distinct `attribute_keys` and `attribute_values` received and the `attribute_values_folded` into `(other)` (`null` on days not stored) |
@@ -986,6 +1277,16 @@ curl -H "Authorization: Bearer $TOKEN" \
 | `POST` | `/api/projects/{project_id}/keys` | `issue_ingest_key` | body: `label` → 201 |
 | `POST` | `/api/projects/{project_id}/keys/{label}/disable` | `disable_ingest_key` | — |
 | `POST` | `/api/projects/{project_id}/keys/{label}/enable` | `enable_ingest_key` | — |
+| `GET` | `/api/projects/{project_id}/forms` | `list_forms` | query: `archived` |
+| `POST` | `/api/projects/{project_id}/forms/{name}/approve` | `approve_form` | body: `expected_fields` |
+| `PATCH` | `/api/projects/{project_id}/forms/{name}` | `update_form` | body: fields to change (merge); `closes_at: null` reopens |
+| `POST` | `/api/projects/{project_id}/forms/{name}/archive` | `archive_form` | — |
+| `POST` | `/api/projects/{project_id}/forms/{name}/restore` | `restore_form` | — |
+| `GET` | `/api/projects/{project_id}/forms/{name}/submissions` | `list_submissions` | query: `filters`, `sort`, `distinct`, `offset`, `limit` |
+| `GET` | `/api/projects/{project_id}/forms/{name}/submissions/{id}` | `get_submission` | — |
+| `GET` | `/api/projects/{project_id}/forms/{name}/submissions.csv` | `export_submissions`, REST only: no MCP tool | query: `filters`, `sort` (text/csv, every matching row) |
+| `GET` | `/api/projects/{project_id}/submissions` | `find_submissions` | query: `search`, `limit`, `cursor` |
+| `POST` | `/api/projects/{project_id}/submissions/delete` | `delete_submissions` | body: one of `ids`, `form` with `filters`, `search` |
 | `GET` | `/api/projects/{project_id}/views/overview` | `views_overview` | query: `from`, `to`, `kind` |
 | `GET` | `/api/projects/{project_id}/views/breakdown` | `views_breakdown` | query: `from`, `to`, `dimension`, `limit` |
 | `GET` | `/api/projects/{project_id}/product/events` | `product_events` | query: `from`, `to`, `event` |

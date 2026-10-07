@@ -119,10 +119,11 @@ type ReportingSync struct {
 // PurgeResult is what PurgeArchived deleted, by id: a project's data goes
 // with it (DeleteProjectData's table list), a purged dashboard takes its
 // widgets by cascade, and a widget can also be purged on its own once it
-// (not its dashboard) has aged out.
+// (not its dashboard) has aged out. Forms are "<project_id>/<name>".
 type PurgeResult struct {
 	Projects, Dashboards, Widgets []int64
 	WidgetShares                  []string
+	Forms                         []string
 }
 
 // SystemDashboard is one system dashboard a release migrates in. GroupID

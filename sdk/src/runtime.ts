@@ -16,9 +16,15 @@ export interface Subscriber {
   onOnline(): void;
   onUnload(): void;
   onTagged(name: string, path: string): void;
+  /**
+   * A submitted <form data-twillingate-form>. Returns whether this
+   * subscriber took it; subscribers are asked in order until one does.
+   */
+  onForm(form: HTMLFormElement, name: string): boolean;
 }
 
 const TAG_ATTR = "data-twillingate-event";
+export const FORM_ATTR = "data-twillingate-form";
 
 type Listener = [EventTarget, string, EventListener, boolean];
 
@@ -98,7 +104,30 @@ class Runtime {
     this.on(document, "submit", handle, true);
   }
 
+  // A tagged form is sent once, whatever the number of instances: a
+  // submission is stored per post, so every instance sending it would
+  // store it several times. The first one registered that takes it sends
+  // it. Only then is the browser's own submit stopped: with no taker the
+  // form posts natively (to its action, if it has one) rather than going
+  // nowhere.
+  private handleForm(e: Event, form: HTMLFormElement, name: string): void {
+    if (form.getAttribute("aria-busy") === "true") {
+      e.preventDefault(); // a second submit while the first is in flight
+      return;
+    }
+    let taken = false;
+    this.each((s) => {
+      if (!taken) taken = s.onForm(form, name);
+    });
+    if (taken) e.preventDefault();
+  }
+
   private handleTagged(e: Event): void {
+    if (e.type === "submit") {
+      const form = e.target as Element | null;
+      const formName = form && form.nodeType === 1 && form.tagName === "FORM" ? form.getAttribute(FORM_ATTR) : null;
+      if (formName) return this.handleForm(e, form as HTMLFormElement, formName);
+    }
     if (e.type !== "submit" && (e as MouseEvent).button > 1) return; // main and middle click only
     const target = e.target as Node | null;
     let el: Element | null = target && target.nodeType === 1 ? (target as Element) : target ? target.parentElement : null;

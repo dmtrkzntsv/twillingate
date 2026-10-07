@@ -12,7 +12,7 @@ import (
 )
 
 func TestSQLFollows(t *testing.T) {
-	s := &sqlSource{}
+	s := &sqlSource{db: newTestReadDB(t)}
 	for _, tt := range []struct {
 		content     string
 		wantProject bool
@@ -30,7 +30,7 @@ func TestSQLFollows(t *testing.T) {
 }
 
 func TestSQLValidateRefusesUnsupportedParams(t *testing.T) {
-	s := &sqlSource{} // no db: refused before it would ever be reached
+	s := &sqlSource{db: newTestReadDB(t)} // refused by Check before the query would run
 	comps := testComponents(t)
 	line := comps["line"]
 
@@ -49,7 +49,7 @@ func TestSQLValidateRefusesUnsupportedParams(t *testing.T) {
 }
 
 func TestSQLValidateRefusesReadOfMeta(t *testing.T) {
-	s := &sqlSource{}
+	s := &sqlSource{db: newTestReadDB(t)}
 	comps := testComponents(t)
 	err := s.Validate(context.Background(), "select * from meta", comps["table"])
 	if !errors.Is(err, store.ErrInvalid) {

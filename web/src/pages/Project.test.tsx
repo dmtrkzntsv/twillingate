@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { ApiError, endpoints, type DashboardDetail, type ProjectTab } from '@/lib/api'
 import { answerFor, dashboardsList, details, launchWeek, widgetsById } from '@/test/fixtures'
+import { contactPage, form } from '@/test/forms'
 import { renderWithProviders } from '@/test/render'
 import Project, { ProjectIndex } from './Project'
 
@@ -67,6 +68,8 @@ function renderAt(path: string) {
         <Route path="/projects/:id" element={<ProjectIndex />} />
         <Route path="/projects/:id/setup" element={<Project />} />
         <Route path="/projects/:id/dashboards/:dashId" element={<Project />} />
+        <Route path="/projects/:id/forms" element={<Project tab="forms" />} />
+        <Route path="/projects/:id/forms/:name" element={<Project tab="forms" />} />
       </Routes>
       <LocationProbe />
     </MemoryRouter>
@@ -298,13 +301,29 @@ describe('Project tabs', () => {
     expect(location()).toBe('/projects/7/setup')
   })
 
-  it('reads Setup, the built-ins, your own, then Add tab', async () => {
+  it('reads Setup, Forms, the built-ins, your own, then Add tab', async () => {
     renderAt('/projects/7/setup')
     await screen.findByRole('tab', { name: 'Mine' })
     const row = screen.getAllByRole('tab')
-    expect(row.map((t) => t.textContent)).toEqual(['Setup', 'Views', 'Product', 'Mine'])
+    expect(row.map((t) => t.textContent)).toEqual(['Setup', 'Forms', 'Views', 'Product', 'Mine'])
     const add = screen.getByRole('button', { name: 'Add tab' })
     expect(row.at(-1)!.compareDocumentPosition(add) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('opens the Forms tab at /forms, keeping the range, and a form inside it', async () => {
+    const user = userEvent.setup()
+    vi.spyOn(endpoints, 'forms').mockResolvedValue({ action_base: '', forms: [form('contact')] })
+    vi.spyOn(endpoints, 'submissions').mockResolvedValue(contactPage)
+    renderAt('/projects/7/setup?range=30d')
+    await user.click(await screen.findByRole('tab', { name: 'Forms' }))
+    expect(location()).toBe('/projects/7/forms?range=30d')
+    expect(await screen.findByRole('list', { name: 'Forms' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Forms' })).toHaveAttribute('aria-selected', 'true')
+    await user.click(screen.getByRole('link', { name: /contact/ }))
+    expect(location()).toBe('/projects/7/forms/contact?range=30d')
+    expect(await screen.findByRole('table')).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Forms' })).toHaveAttribute('aria-selected', 'true')
+    expect(endpoints.forms).toHaveBeenCalledWith(7, false)
   })
 
   it('shows a dashboard tab with the project pinned on every widget that follows one', async () => {
@@ -409,7 +428,7 @@ describe('Project tabs', () => {
       await user.click(screen.getByRole('menuitem', { name: 'Move right' }))
       expect(move).toHaveBeenCalledWith(7, 20, 21)
       await vi.waitFor(() =>
-        expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Setup', 'Views', 'Product', 'Ours', 'Mine'])
+        expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Setup', 'Forms', 'Views', 'Product', 'Ours', 'Mine'])
       )
 
       move.mockResolvedValue({ tabs: [...tabs, ours] })
@@ -418,7 +437,7 @@ describe('Project tabs', () => {
       await user.click(screen.getByRole('menuitem', { name: 'Move left' }))
       expect(move).toHaveBeenLastCalledWith(7, 20, 0)
       await vi.waitFor(() =>
-        expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Setup', 'Views', 'Product', 'Mine', 'Ours'])
+        expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Setup', 'Forms', 'Views', 'Product', 'Mine', 'Ours'])
       )
     } finally {
       window.innerWidth = width

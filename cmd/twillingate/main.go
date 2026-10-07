@@ -14,6 +14,8 @@ import (
 
 var version = internalversion.Version
 
+const usage = "usage: twillingate <serve|reporting|migrate|keygen|project|key|form|version> [flags]"
+
 var commands = map[string]func(args []string, stdout io.Writer) int{}
 
 func init() {
@@ -25,12 +27,12 @@ func init() {
 
 func run(args []string, stdout io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stdout, "usage: twillingate <serve|reporting|migrate|keygen|project|key|version> [flags]")
+		fmt.Fprintln(stdout, usage)
 		return 2
 	}
 	cmd, ok := commands[args[0]]
 	if !ok {
-		fmt.Fprintf(stdout, "unknown command %q\nusage: twillingate <serve|reporting|migrate|keygen|project|key|version> [flags]\n", args[0])
+		fmt.Fprintf(stdout, "unknown command %q\n%s\n", args[0], usage)
 		return 2
 	}
 	return cmd(args[1:], stdout)

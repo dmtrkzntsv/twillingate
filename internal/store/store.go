@@ -347,6 +347,67 @@ type Store interface {
 	// or before now, one widget_share.archive audit row each (actor
 	// "retention"), and returns how many.
 	ArchiveDueWidgetShares(ctx context.Context, now string) (int, error)
+	// WriteSubmission records a form submission, creating the form as a
+	// draft on its first one, and on an approved form writes n.Event in
+	// the same transaction. It returns the form as it stands after the
+	// write and whether a row was inserted (false for an id already
+	// stored: nothing changes, no second event). A form that is archived,
+	// a draft past draft_until or past closes_at at the submission's
+	// ReceivedAt refuses with ErrFormClosed, returned beside the form as
+	// it stands, and writes nothing.
+	WriteSubmission(ctx context.Context, n NewSubmission) (Form, bool, error)
+	// ListForms lists a project's active forms (archived false) or its
+	// archived ones (true), drafts first, then by name, each with its
+	// submission count.
+	ListForms(ctx context.Context, projectID int64, archived bool) ([]Form, error)
+	// GetForm reads one form (Submissions is not filled); ErrNotFound for
+	// an unknown (project, name).
+	GetForm(ctx context.Context, projectID int64, name string) (Form, error)
+	// ApproveForm turns a draft into an approved form keeping expected,
+	// stamped now, and clears draft_until. ErrConflict when it is already
+	// approved, ErrNotFound when unknown.
+	ApproveForm(ctx context.Context, projectID int64, name string, expected []string, now time.Time, a AuditEntry) error
+	// UpdateForm writes f's Purpose, ReturnURL and ClosesAt exactly as
+	// given (merging is the caller's), and ExpectedFields when non-nil
+	// (nil keeps the stored list); ErrNotFound when the row is absent.
+	UpdateForm(ctx context.Context, f Form, a AuditEntry) error
+	// SetFormArchived archives or restores a form. Archiving an archived
+	// form and restoring an active one change nothing and write no audit
+	// row. Restoring a draft sets draft_until to draftUntil; an approved
+	// form ignores it.
+	SetFormArchived(ctx context.Context, projectID int64, name string, archived bool, draftUntil time.Time, a AuditEntry) error
+	// ExpireDrafts archives every active draft whose draft_until is at or
+	// before now, one audit row each (actor "retention", action
+	// "form.expire", subject "form/<project_id>/<name>"), and returns how
+	// many.
+	ExpireDrafts(ctx context.Context, now time.Time) (int, error)
+	// DeleteSubmissions deletes the project's submissions with these ids
+	// and, in the same transaction, their raw $form_submit events, and
+	// returns how many submissions it deleted. Ids that match nothing are
+	// skipped. Aggregates are not touched. The audit row's detail is
+	// a.Detail (how the ids were chosen) followed by " (<n> deleted)", the
+	// count actually deleted, written even when it is 0.
+	DeleteSubmissions(ctx context.Context, projectID int64, ids []string, a AuditEntry) (int, error)
+	// FindSubmissions returns, newest first, the project's submissions with
+	// a field value containing search, archived forms' included and marked
+	// Archived (an erasure request must reach them) (case-insensitive;
+	// % _ and \ are literal). after is the cursor a previous page returned
+	// ("" starts); the cursor returned is the last id of a page that has
+	// more after it, "" at the end. limit <= 0 means 100. An empty search
+	// is ErrInvalid; an unknown cursor is ErrNotFound.
+	FindSubmissions(ctx context.Context, projectID int64, search string, limit int, after string) ([]Submission, string, error)
+	// GetSubmission reads one submission of the project's form, every
+	// stored field and its visit; ErrNotFound when absent or when the form
+	// is archived.
+	GetSubmission(ctx context.Context, projectID int64, form, id string) (Submission, error)
+	// SubmissionIDsMatching returns every id FindSubmissions would, newest
+	// first, for delete-by-search.
+	SubmissionIDsMatching(ctx context.Context, projectID int64, search string) ([]string, error)
+	// SessionVisit snapshots the actor's session at `at` (views gapped by
+	// at most 30 minutes, looking back at most a day): its landing page,
+	// referrer, UTM source, medium and campaign, and view count. Nil when
+	// no view matches.
+	SessionVisit(ctx context.Context, projectID int64, actorKind, actorID string, at time.Time) (*Visit, error)
 	// ReportingHash is the hash of the latest reporting_migrations row, ""
 	// if none has run yet. SyncReporting makes components and system
 	// dashboards (with their widgets) match s in one transaction.
@@ -354,7 +415,8 @@ type Store interface {
 	SyncReporting(ctx context.Context, s ReportingSync) error
 	// PurgeArchived deletes every project, dashboard, widget and widget
 	// share archived more than days ago, each in its own transaction with
-	// an audit row (actor "retention"). days <= 0 purges nothing.
+	// an audit row (actor "retention"). days <= 0 purges nothing. An
+	// archived form goes with its submissions and their raw events.
 	PurgeArchived(ctx context.Context, days int) (PurgeResult, error)
 
 	Close() error

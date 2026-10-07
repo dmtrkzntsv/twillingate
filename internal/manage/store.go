@@ -2,6 +2,7 @@ package manage
 
 import (
 	"context"
+	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
@@ -24,4 +25,16 @@ type Store interface {
 	DeleteProjectData(ctx context.Context, id int64, a store.AuditEntry) error
 	RebuildFlatView(ctx context.Context, keys []string) error
 	IncrementalVacuum(ctx context.Context) error
+
+	// Forms: audited by the store from the AuditEntry passed, no config
+	// bump (forms are not in the registry snapshot).
+	ListForms(ctx context.Context, projectID int64, archived bool) ([]store.Form, error)
+	GetForm(ctx context.Context, projectID int64, name string) (store.Form, error)
+	ApproveForm(ctx context.Context, projectID int64, name string, expected []string, now time.Time, a store.AuditEntry) error
+	UpdateForm(ctx context.Context, f store.Form, a store.AuditEntry) error
+	SetFormArchived(ctx context.Context, projectID int64, name string, archived bool, draftUntil time.Time, a store.AuditEntry) error
+	DeleteSubmissions(ctx context.Context, projectID int64, ids []string, a store.AuditEntry) (int, error)
+	FindSubmissions(ctx context.Context, projectID int64, search string, limit int, after string) ([]store.Submission, string, error)
+	SubmissionIDsMatching(ctx context.Context, projectID int64, search string) ([]string, error)
+	GetSubmission(ctx context.Context, projectID int64, form, id string) (store.Submission, error)
 }

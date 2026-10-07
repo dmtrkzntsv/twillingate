@@ -71,6 +71,31 @@ func TestQueryToolRefusesMeta(t *testing.T) {
 	}
 }
 
+// TestQueryToolRefusesSubmissions pins that custom SQL never reaches the
+// submissions table. Check refuses the name before SQLite sees the text,
+// so this holds whether or not the table exists in the test database; the
+// same refusal covers every spelling, a join and a subquery.
+func TestQueryToolRefusesSubmissions(t *testing.T) {
+	_, cs := newTestHost(t)
+	for _, q := range []string{
+		"select count(*) from submissions",
+		`select * from "Submissions"`,
+		"select * from main.submissions",
+		"select 1 from events e join submissions s on s.id = e.id",
+		"select * from (select * from submissions)",
+	} {
+		res := callTool(t, cs, "query", map[string]any{"sql": q})
+		if !res.IsError {
+			t.Errorf("%q was accepted", q)
+			continue
+		}
+		msg := textOf(res)
+		if !strings.Contains(strings.ToLower(msg), "may not read") || strings.Contains(msg, "refused:") {
+			t.Errorf("%q: error = %q, want the refusal text and no sentinel prefix", q, msg)
+		}
+	}
+}
+
 func TestQueryToolCapsRows(t *testing.T) {
 	h, cs := newTestHost(t)
 	setGuards(t, h, h.db.Timeout(), 1)

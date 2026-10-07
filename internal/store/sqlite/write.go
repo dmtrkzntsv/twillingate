@@ -46,49 +46,9 @@ func (d *DB) WriteEvents(ctx context.Context, evs []store.Event) error {
 	}
 	var fresh []receivedKey
 	err := d.tx(ctx, func(tx *sql.Tx) error {
-		stmt, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO events
-			(id, project_id, family, event_name, ts, day, received_at, kind,
-			 actor_id, actor_kind, user_id, group_id, session_id,
-			 host, path, referrer_source, utm_source, utm_medium, utm_campaign,
-			 platform, os, os_version, os_name, browser, browser_version, browser_locale,
-			 app_version, app_locale, device, device_model, display_width, display_height,
-			 country, consent, attributes, value, measure, sample_rate)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+		received, err := insertEvents(ctx, tx, evs)
 		if err != nil {
 			return err
-		}
-		defer stmt.Close()
-		received := receivedKeys{}
-		for _, e := range evs {
-			attrs := e.Attributes
-			if attrs == nil {
-				attrs = map[string]string{}
-			}
-			blob, err := json.Marshal(attrs)
-			if err != nil {
-				return fmt.Errorf("event %s attributes: %w", e.ID, err)
-			}
-			rate := e.SampleRate
-			if rate == 0 {
-				rate = 1
-			}
-			day := e.TS.UTC().Format("2006-01-02")
-			res, err := stmt.ExecContext(ctx, e.ID, e.ProjectID, string(e.Family), e.EventName,
-				e.TS.UTC().Format(tsFormat), day,
-				e.ReceivedAt.UTC().Format(tsFormat), e.Kind,
-				e.ActorID, e.ActorKind, e.UserID, e.GroupID, e.SessionID,
-				e.Host, e.Path, e.ReferrerSource, e.UTMSource, e.UTMMedium, e.UTMCampaign,
-				e.Platform, e.OS, e.OSVersion, e.OSName, e.Browser, e.BrowserVersion, e.BrowserLocale,
-				e.AppVersion, e.AppLocale, e.Device, e.DeviceModel, e.DisplayWidth, e.DisplayHeight,
-				e.Country, e.Consent, string(blob), e.Value, e.Measure, rate)
-			if err != nil {
-				return fmt.Errorf("event %s: %w", e.ID, err)
-			}
-			// INSERT OR IGNORE: a duplicate id (a retried batch) inserts
-			// nothing and so records nothing.
-			if n, err := res.RowsAffected(); err == nil && n == 1 {
-				received.add(e, day)
-			}
 		}
 		fresh = d.seen.unseen(received)
 		return writeReceived(ctx, tx, fresh)
@@ -98,6 +58,58 @@ func (d *DB) WriteEvents(ctx context.Context, evs []store.Event) error {
 		d.seen.remember(fresh)
 	}
 	return err
+}
+
+// insertEvents inserts evs, INSERT OR IGNORE, into the events table within
+// tx and returns the attribute keys the inserted rows carried. The caller
+// has checked the families, and records the keys (writeReceived) in the
+// same transaction: WriteEvents and WriteSubmission share this body.
+func insertEvents(ctx context.Context, tx *sql.Tx, evs []store.Event) (receivedKeys, error) {
+	stmt, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO events
+		(id, project_id, family, event_name, ts, day, received_at, kind,
+		 actor_id, actor_kind, user_id, group_id, session_id,
+		 host, path, referrer_source, utm_source, utm_medium, utm_campaign,
+		 platform, os, os_version, os_name, browser, browser_version, browser_locale,
+		 app_version, app_locale, device, device_model, display_width, display_height,
+		 country, consent, attributes, value, measure, sample_rate)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+	if err != nil {
+		return nil, err
+	}
+	defer stmt.Close()
+	received := receivedKeys{}
+	for _, e := range evs {
+		attrs := e.Attributes
+		if attrs == nil {
+			attrs = map[string]string{}
+		}
+		blob, err := json.Marshal(attrs)
+		if err != nil {
+			return nil, fmt.Errorf("event %s attributes: %w", e.ID, err)
+		}
+		rate := e.SampleRate
+		if rate == 0 {
+			rate = 1
+		}
+		day := e.TS.UTC().Format("2006-01-02")
+		res, err := stmt.ExecContext(ctx, e.ID, e.ProjectID, string(e.Family), e.EventName,
+			e.TS.UTC().Format(tsFormat), day,
+			e.ReceivedAt.UTC().Format(tsFormat), e.Kind,
+			e.ActorID, e.ActorKind, e.UserID, e.GroupID, e.SessionID,
+			e.Host, e.Path, e.ReferrerSource, e.UTMSource, e.UTMMedium, e.UTMCampaign,
+			e.Platform, e.OS, e.OSVersion, e.OSName, e.Browser, e.BrowserVersion, e.BrowserLocale,
+			e.AppVersion, e.AppLocale, e.Device, e.DeviceModel, e.DisplayWidth, e.DisplayHeight,
+			e.Country, e.Consent, string(blob), e.Value, e.Measure, rate)
+		if err != nil {
+			return nil, fmt.Errorf("event %s: %w", e.ID, err)
+		}
+		// INSERT OR IGNORE: a duplicate id (a retried batch) inserts
+		// nothing and so records nothing.
+		if n, err := res.RowsAffected(); err == nil && n == 1 {
+			received.add(e, day)
+		}
+	}
+	return received, nil
 }
 
 // UpsertIdentities records display names, latest write wins.

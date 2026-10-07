@@ -207,3 +207,66 @@ func TestSnapshotWildcardOrigins(t *testing.T) {
 		t.Error("AnyOriginAllowed matched an origin nobody allows")
 	}
 }
+
+// A redirect target is allowed when it is an absolute http(s) URL whose
+// origin passes allowed_origins; an origin that passes only through a bare
+// "*" must also be the request's own Origin, so "*" never makes an open
+// redirect. Anything that is not plainly scheme://host[:port]/… is refused.
+func TestRedirectAllowed(t *testing.T) {
+	st := testStore(t)
+	ctx := context.Background()
+	mk := func(name, origins string) int64 {
+		id, err := st.CreateProject(ctx, store.RegistryProject{Name: name, AllowedOrigins: origins},
+			store.AuditEntry{Actor: "test", Action: "project.create"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	site := mk("site", `["https://site.com", "https://*.example.com"]`)
+	star := mk("star", `["*"]`)
+	both := mk("both", `["*", "https://site.com/"]`)
+	none := mk("none", `[]`)
+	reg := New(st, discard())
+	if err := reg.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	s := reg.Snapshot(ctx)
+	for _, c := range []struct {
+		project           int64
+		target, reqOrigin string
+		want              bool
+	}{
+		{site, "https://site.com/thanks", "", true},
+		{site, "https://site.com", "https://evil.com", true},
+		{site, "HTTPS://Site.COM:443/thanks?x=1#old", "", true},
+		{site, "https://shop.example.com/a", "", true},
+		{site, "https://site.com:8443/thanks", "", false},
+		{site, "http://site.com/thanks", "", false},
+		{site, "https://evil.com/thanks", "https://evil.com", false},
+		{site, "https://site.com.evil.com/", "", false},
+		{site, "javascript:alert(1)", "", false},
+		{site, "/thanks", "", false},
+		{site, "//site.com/thanks", "", false},
+		{site, "site.com/thanks", "", false},
+		{site, "ftp://site.com/", "", false},
+		{site, "https://user@site.com/", "", false},
+		{site, `https://evil.com\@site.com/`, "", false},
+		{site, `https://site.com\evil.com`, "", false},
+		{site, "https:///thanks", "", false},
+		{site, "", "", false},
+		{star, "https://site.com/thanks", "https://site.com", true},
+		{star, "https://site.com/thanks", "https://site.com/", true},
+		{star, "https://site.com/thanks", "https://other.com", false},
+		{star, "https://site.com/thanks", "", false},
+		{both, "https://site.com/thanks", "", true},
+		{both, "https://foo.com/thanks", "https://foo.com", true},
+		{both, "https://foo.com/thanks", "", false},
+		{none, "https://site.com/thanks", "https://site.com", false},
+		{999, "https://site.com/thanks", "https://site.com", false},
+	} {
+		if got := s.RedirectAllowed(c.project, c.target, c.reqOrigin); got != c.want {
+			t.Errorf("RedirectAllowed(%d, %q, %q) = %v, want %v", c.project, c.target, c.reqOrigin, got, c.want)
+		}
+	}
+}
