@@ -113,3 +113,18 @@ func AllSubmissions(ctx context.Context, db *readsql.DB, f store.Form, pg readsq
 		}
 	}
 }
+
+// CSVSafeTable applies CSVSafe to every header cell and every row cell, in
+// place, and returns them: what visitors typed must not run as a
+// spreadsheet formula.
+func CSVSafeTable(header []string, rows [][]string) ([]string, [][]string) {
+	for i, c := range header {
+		header[i] = CSVSafe(c)
+	}
+	for _, r := range rows {
+		for i, c := range r {
+			r[i] = CSVSafe(c)
+		}
+	}
+	return header, rows
+}

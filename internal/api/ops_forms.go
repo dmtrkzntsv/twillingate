@@ -390,16 +390,7 @@ func (h *host) exportSubmissions(ctx context.Context, in exportSubmissionsIn) (c
 	if err != nil {
 		return csvFile{}, err
 	}
-	// What visitors typed must not run as a spreadsheet formula.
-	header := make([]string, len(t.columns))
-	for i, c := range t.columns {
-		header[i] = manage.CSVSafe(c)
-	}
-	for _, r := range rows {
-		for i, c := range r {
-			r[i] = manage.CSVSafe(c)
-		}
-	}
+	header, rows := manage.CSVSafeTable(append([]string(nil), t.columns...), rows)
 	return csvFile{Name: in.Name + "-submissions.csv", Header: header, Rows: rows}, nil
 }
 

@@ -579,13 +579,13 @@ tools below do.
 | Delete submissions | `twillingate form erase` | `delete_submissions` | `{project_id}` with exactly one of `ids`, `form` with `filters`, or `search`; returns `deleted` |
 
 The CLI works on the database directly, with every flag naming a project by
-`-project <id>` and a form by `-name`. `form list -project N [-archived]`
+`-project-id <id>` and a form by `-name`. `form list -project-id N [-archived]`
 prints one tab-separated line per form (name, status, submissions, `closes_at`
 or `-`, fields). `form approve -fields a,b` keeps those fields; `form update`
 takes `-purpose`, `-return-url` (empty clears it), `-closes-at` (an RFC 3339
 time, `now` to close it at once, or `never` to reopen it) and, on an approved
 form, `-fields`; a flag left out keeps the value. `form export` writes the
-form's whole table as CSV to standard output (see below). `form erase -project N`
+form's whole table as CSV to standard output (see below). `form erase -project-id N`
 takes `-id` (repeatable) or `-search`, never both, deletes exactly as
 `delete_submissions` does and prints only a count: it never echoes the search
 text or the ids.
@@ -604,13 +604,12 @@ and paging a table](reporting.md#filtering-and-paging-a-table)): `filters`
 are no `ids`), `offset` and `limit`. Without a `sort` it is newest first. It
 lists every submission whatever the date; filter `Received` to narrow it.
 The CSV export (`GET /api/projects/{project_id}/forms/{name}/submissions.csv`
-over REST, `twillingate form export` from the CLI) takes the same `filters` and
-`sort` over REST (the CLI exports every row, newest first) and writes every
-matching row,
-the header being the columns. A cell (header included) that starts with `=`,
-`+`, `-`, `@`, a tab or a carriage return is prefixed with `'`, so a
-spreadsheet shows what a visitor typed as text instead of running it as a
-formula.
+over REST, `twillingate form export` from the CLI) writes every matching row,
+newest first unless sorted; over REST it takes the same `filters` and `sort`,
+the CLI exports every row. The header is the columns. A cell (header included)
+that starts with `=`, `+`, `-`, `@`, a tab or a carriage return is prefixed
+with `'`, so a spreadsheet shows what a visitor typed as text instead of
+running it as a formula.
 
 **Deleting.** `delete_submissions` is the one tool that deletes, and it
 cannot be undone. `ids` deletes those submissions (ids that match nothing are

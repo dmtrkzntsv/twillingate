@@ -69,3 +69,11 @@ func TestCSVSafe(t *testing.T) {
 		}
 	}
 }
+
+func TestCSVSafeTable(t *testing.T) {
+	h, rows := CSVSafeTable([]string{"=a", "b"}, [][]string{{"x", "@y"}, {"-z", ""}})
+	if !reflect.DeepEqual(h, []string{"'=a", "b"}) ||
+		!reflect.DeepEqual(rows, [][]string{{"x", "'@y"}, {"'-z", ""}}) {
+		t.Fatalf("got %q %q", h, rows)
+	}
+}

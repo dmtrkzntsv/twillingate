@@ -81,23 +81,23 @@ func runForm(t *testing.T, want int, args ...string) string {
 
 func TestFormList(t *testing.T) {
 	formDB(t)
-	out := runForm(t, 0, "list", "-project", "1")
+	out := runForm(t, 0, "list", "-project-id", "1")
 	if !strings.HasPrefix(out, "contact\tdraft\t2\t") || !strings.Contains(out, "email,message") {
 		t.Fatalf("list output: %q", out)
 	}
-	if out := runForm(t, 0, "list", "-project", "1", "-archived"); out != "" {
+	if out := runForm(t, 0, "list", "-project-id", "1", "-archived"); out != "" {
 		t.Fatalf("archived list of an unarchived project: %q", out)
 	}
 	runForm(t, 2, "list")
-	if out := runForm(t, 1, "list", "-project", "9"); !strings.Contains(out, "unknown project 9") {
+	if out := runForm(t, 1, "list", "-project-id", "9"); !strings.Contains(out, "unknown project 9") {
 		t.Fatalf("unknown project: %q", out)
 	}
 }
 
 func TestFormApproveKeepsExpectedFields(t *testing.T) {
 	formDB(t)
-	runForm(t, 2, "approve", "-project", "1", "-name", "contact") // -fields required
-	out := runForm(t, 0, "approve", "-project", "1", "-name", "contact", "-fields", "email, message")
+	runForm(t, 2, "approve", "-project-id", "1", "-name", "contact") // -fields required
+	out := runForm(t, 0, "approve", "-project-id", "1", "-name", "contact", "-fields", "email, message")
 	if !strings.Contains(out, `form "contact" approved`) {
 		t.Fatalf("approve output: %q", out)
 	}
@@ -106,17 +106,17 @@ func TestFormApproveKeepsExpectedFields(t *testing.T) {
 		t.Fatalf("form after approve: %+v", f)
 	}
 	// An approved form cannot be approved again.
-	if out := runForm(t, 1, "approve", "-project", "1", "-name", "contact", "-fields", "email"); out == "" {
+	if out := runForm(t, 1, "approve", "-project-id", "1", "-name", "contact", "-fields", "email"); out == "" {
 		t.Fatal("refusal printed nothing")
 	}
-	if out := runForm(t, 1, "approve", "-project", "1", "-name", "nope", "-fields", "email"); !strings.Contains(out, "not found") {
+	if out := runForm(t, 1, "approve", "-project-id", "1", "-name", "nope", "-fields", "email"); !strings.Contains(out, "not found") {
 		t.Fatalf("unknown form: %q", out)
 	}
 }
 
 func TestFormUpdate(t *testing.T) {
 	formDB(t)
-	runForm(t, 0, "update", "-project", "1", "-name", "contact",
+	runForm(t, 0, "update", "-project-id", "1", "-name", "contact",
 		"-purpose", "Sales enquiries", "-return-url", "https://shop.example.com/thanks",
 		"-closes-at", "2031-01-02T03:04:05Z")
 	f := getForm(t)
@@ -126,25 +126,25 @@ func TestFormUpdate(t *testing.T) {
 	}
 
 	// A flag left out keeps the value; an empty one clears it.
-	runForm(t, 0, "update", "-project", "1", "-name", "contact", "-return-url", "")
+	runForm(t, 0, "update", "-project-id", "1", "-name", "contact", "-return-url", "")
 	f = getForm(t)
 	if f.ReturnURL != "" || f.Purpose != "Sales enquiries" || f.ClosesAt == nil {
 		t.Fatalf("after clearing return_url: %+v", f)
 	}
 
-	runForm(t, 0, "update", "-project", "1", "-name", "contact", "-closes-at", "never")
+	runForm(t, 0, "update", "-project-id", "1", "-name", "contact", "-closes-at", "never")
 	if f = getForm(t); f.ClosesAt != nil {
 		t.Fatalf("never did not reopen: %v", f.ClosesAt)
 	}
 	before := time.Now().UTC().Add(-time.Second)
-	runForm(t, 0, "update", "-project", "1", "-name", "contact", "-closes-at", "now")
+	runForm(t, 0, "update", "-project-id", "1", "-name", "contact", "-closes-at", "now")
 	if f = getForm(t); f.ClosesAt == nil || f.ClosesAt.Before(before) || f.Open(time.Now().Add(time.Second)) {
 		t.Fatalf("now did not close the form: %v", f.ClosesAt)
 	}
 
 	// -fields on an approved form.
-	runForm(t, 0, "approve", "-project", "1", "-name", "contact", "-fields", "email")
-	runForm(t, 0, "update", "-project", "1", "-name", "contact", "-fields", "email,message")
+	runForm(t, 0, "approve", "-project-id", "1", "-name", "contact", "-fields", "email")
+	runForm(t, 0, "update", "-project-id", "1", "-name", "contact", "-fields", "email,message")
 	if f = getForm(t); strings.Join(f.ExpectedFields, ",") != "email,message" {
 		t.Fatalf("expected fields: %v", f.ExpectedFields)
 	}
@@ -152,42 +152,42 @@ func TestFormUpdate(t *testing.T) {
 
 func TestFormUpdateRefusals(t *testing.T) {
 	formDB(t)
-	if out := runForm(t, 1, "update", "-project", "1", "-name", "contact",
+	if out := runForm(t, 1, "update", "-project-id", "1", "-name", "contact",
 		"-return-url", "https://evil.example.org/"); !strings.Contains(out, "return_url") {
 		t.Fatalf("return_url refusal: %q", out)
 	}
-	if out := runForm(t, 1, "update", "-project", "1", "-name", "contact", "-fields", "email"); !strings.Contains(out, "draft") {
+	if out := runForm(t, 1, "update", "-project-id", "1", "-name", "contact", "-fields", "email"); !strings.Contains(out, "draft") {
 		t.Fatalf("-fields on a draft: %q", out)
 	}
-	if out := runForm(t, 2, "update", "-project", "1", "-name", "contact", "-closes-at", "tomorrow"); !strings.Contains(out, "-closes-at") {
+	if out := runForm(t, 2, "update", "-project-id", "1", "-name", "contact", "-closes-at", "tomorrow"); !strings.Contains(out, "-closes-at") {
 		t.Fatalf("bad -closes-at: %q", out)
 	}
-	if out := runForm(t, 2, "update", "-project", "1", "-name", "contact"); !strings.Contains(out, "nothing to update") {
+	if out := runForm(t, 2, "update", "-project-id", "1", "-name", "contact"); !strings.Contains(out, "nothing to update") {
 		t.Fatalf("no changes: %q", out)
 	}
-	runForm(t, 1, "update", "-project", "1", "-name", "nope", "-purpose", "x")
+	runForm(t, 1, "update", "-project-id", "1", "-name", "nope", "-purpose", "x")
 }
 
 func TestFormArchiveRestore(t *testing.T) {
 	formDB(t)
-	runForm(t, 0, "archive", "-project", "1", "-name", "contact")
+	runForm(t, 0, "archive", "-project-id", "1", "-name", "contact")
 	if f := getForm(t); f.ArchivedAt == nil {
 		t.Fatal("not archived")
 	}
-	if out := runForm(t, 0, "list", "-project", "1", "-archived"); !strings.HasPrefix(out, "contact\t") {
+	if out := runForm(t, 0, "list", "-project-id", "1", "-archived"); !strings.HasPrefix(out, "contact\t") {
 		t.Fatalf("archived list: %q", out)
 	}
-	runForm(t, 0, "restore", "-project", "1", "-name", "contact")
+	runForm(t, 0, "restore", "-project-id", "1", "-name", "contact")
 	if f := getForm(t); f.ArchivedAt != nil {
 		t.Fatal("not restored")
 	}
-	runForm(t, 2, "archive", "-project", "1")
-	runForm(t, 1, "restore", "-project", "1", "-name", "nope")
+	runForm(t, 2, "archive", "-project-id", "1")
+	runForm(t, 1, "restore", "-project-id", "1", "-name", "nope")
 }
 
 func TestFormExportWritesInertCSV(t *testing.T) {
 	formDB(t)
-	out := runForm(t, 0, "export", "-project", "1", "-name", "contact")
+	out := runForm(t, 0, "export", "-project-id", "1", "-name", "contact")
 	recs, err := csv.NewReader(strings.NewReader(out)).ReadAll()
 	if err != nil {
 		t.Fatalf("not CSV: %v\n%s", err, out)
@@ -206,38 +206,38 @@ func TestFormExportWritesInertCSV(t *testing.T) {
 		t.Fatalf("row: %q", recs[2])
 	}
 
-	runForm(t, 0, "archive", "-project", "1", "-name", "contact")
-	if out := runForm(t, 1, "export", "-project", "1", "-name", "contact"); !strings.Contains(out, "archived") {
+	runForm(t, 0, "archive", "-project-id", "1", "-name", "contact")
+	if out := runForm(t, 1, "export", "-project-id", "1", "-name", "contact"); !strings.Contains(out, "archived") {
 		t.Fatalf("archived export: %q", out)
 	}
-	runForm(t, 2, "export", "-project", "1")
+	runForm(t, 2, "export", "-project-id", "1")
 }
 
 func TestFormEraseByIDAndSearch(t *testing.T) {
 	formDB(t)
-	runForm(t, 2, "erase", "-project", "1")
-	runForm(t, 2, "erase", "-project", "1", "-id", "s1", "-search", "ann@")
-	if out := runForm(t, 1, "erase", "-project", "1", "-search", "a"); !strings.Contains(out, "at least 2") {
+	runForm(t, 2, "erase", "-project-id", "1")
+	runForm(t, 2, "erase", "-project-id", "1", "-id", "s1", "-search", "ann@")
+	if out := runForm(t, 1, "erase", "-project-id", "1", "-search", "a"); !strings.Contains(out, "at least 2") {
 		t.Fatalf("short search: %q", out)
 	}
 
-	out := runForm(t, 0, "erase", "-project", "1", "-search", "ANN@example")
+	out := runForm(t, 0, "erase", "-project-id", "1", "-search", "ANN@example")
 	if !strings.Contains(out, "1 submission erased") || strings.Contains(strings.ToLower(out), "ann@") {
 		t.Fatalf("search erase output: %q", out)
 	}
-	list := runForm(t, 0, "list", "-project", "1")
+	list := runForm(t, 0, "list", "-project-id", "1")
 	if !strings.HasPrefix(list, "contact\tdraft\t1\t") {
 		t.Fatalf("after search erase: %q", list)
 	}
 
-	out = runForm(t, 0, "erase", "-project", "1", "-id", "s2", "-id", "unknown")
+	out = runForm(t, 0, "erase", "-project-id", "1", "-id", "s2", "-id", "unknown")
 	if !strings.Contains(out, "1 submission erased") {
 		t.Fatalf("id erase output: %q", out)
 	}
-	if list := runForm(t, 0, "list", "-project", "1"); !strings.HasPrefix(list, "contact\tdraft\t0\t") {
+	if list := runForm(t, 0, "list", "-project-id", "1"); !strings.HasPrefix(list, "contact\tdraft\t0\t") {
 		t.Fatalf("after id erase: %q", list)
 	}
-	if out := runForm(t, 0, "erase", "-project", "1", "-search", "nobody@"); !strings.Contains(out, "0 submissions erased") {
+	if out := runForm(t, 0, "erase", "-project-id", "1", "-search", "nobody@"); !strings.Contains(out, "0 submissions erased") {
 		t.Fatalf("nothing matched: %q", out)
 	}
 }

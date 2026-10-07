@@ -79,7 +79,7 @@ func cmdForm(args []string, stdout io.Writer) int {
 
 	sf := flag.NewFlagSet("form "+sub, flag.ContinueOnError)
 	sf.SetOutput(stdout)
-	project := sf.Int64("project", 0, "project id (required)")
+	project := sf.Int64("project-id", 0, "project id (required)")
 	var name, fields, purpose, returnURL, closesAt, search *string
 	var archived *bool
 	var ids multiFlag
@@ -104,7 +104,7 @@ func cmdForm(args []string, stdout io.Writer) int {
 	if err := sf.Parse(subArgs); err != nil {
 		return 2
 	}
-	usageLine := "usage: twillingate form " + sub + " -project <id>"
+	usageLine := "usage: twillingate form " + sub + " -project-id <id>"
 	switch sub {
 	case "approve":
 		usageLine += " -name <name> -fields a,b"
@@ -226,16 +226,10 @@ func cmdForm(args []string, stdout io.Writer) int {
 		if err != nil {
 			return fail(err)
 		}
-		// What visitors typed must not run as a spreadsheet formula.
-		for i, c := range header {
-			header[i] = manage.CSVSafe(c)
-		}
+		header, rows = manage.CSVSafeTable(header, rows)
 		w := csv.NewWriter(stdout)
 		w.Write(header)
 		for _, r := range rows {
-			for i, c := range r {
-				r[i] = manage.CSVSafe(c)
-			}
 			w.Write(r)
 		}
 		w.Flush()
