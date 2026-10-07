@@ -11,6 +11,7 @@ and backing up the database are the operator's job, in
 - [What twillingate is](#what-twillingate-is)
 - [Set up a project](#set-up-a-project)
 - [Instrument a website](#instrument-a-website)
+- [Collect form submissions](#collect-form-submissions)
 - [The event model](#the-event-model)
 - [The wire format](#the-wire-format)
 - [Answer questions with the data](#answer-questions-with-the-data)
@@ -530,6 +531,86 @@ server-side by event id; a 4xx drops the batch instead.
 `debug` option logs every event and every send of every instance, prefixed with
 the instance name, without changing what is sent.
 
+## Collect form submissions
+
+A form on a site posts its fields to the collector, which keeps them as a
+submission and, once the form is approved, counts each one as a conversion.
+The endpoint, its two body styles, the context keys, the checks and the
+redirect back are in [Form submissions](#form-submissions); this is what
+happens to a form afterwards. **Submissions hold personal data** (what
+visitors typed): custom SQL, `query` and widgets never read them, only the
+tools below do.
+
+1. **Point the form at the collector.** A plain HTML form posts to
+   `https://t.example.com/ingest/forms/{name}?key=ak_…`, a backend posts
+   JSON there. The page picks the name (`^[a-z0-9_-]{1,64}$`); the first
+   submission creates the form.
+2. **It starts as a draft.** A draft keeps every field it is sent and
+   accepts submissions for `FORMS_DRAFT_DAYS` (default 7), after which the
+   daily pass archives it. Its submissions **never count as conversions**,
+   not even once the form is approved. `list_forms` shows its `fields`, every
+   name submissions sent.
+3. **Approve it** with the fields to keep: `approve_form {project_id, name,
+   expected_fields}`. From then on a field outside the list is dropped on
+   arrival, and every submission writes a `$form_submit` product event with
+   the attribute `form` (the form's name): count conversions with
+   `product_events`, and per form with `product_attributes` once `form` is
+   declared in the project's `attributes`.
+4. **Settle it** with `update_form`: a `purpose`; a `return_url` (where a
+   plain form sends the visitor back without `$redirect`, an allowed target
+   as for the redirect); `closes_at`, after which submissions are refused
+   (`null` reopens; approving never reopens); and the approved form's
+   `expected_fields`.
+5. **Read the submissions** as a table with `list_submissions`, one in full
+   with `get_submission`, or as CSV from the export route.
+6. **Erase a person** on request: `find_submissions` with their email (or any
+   text a field holds) lists what every active form has of them, and
+   `delete_submissions` with the same `search` deletes exactly that.
+
+| Operation | MCP tool | Tool arguments |
+| --- | --- | --- |
+| List forms | `list_forms` | `{project_id, archived}`; drafts first; each with `status` (`draft` or `approved`), `purpose`, `return_url`, `fields`, `expected_fields`, `draft_until`, `approved_at`, `closes_at`, `submissions` (count), `last_submitted_at`, `archived`. `archived: true` lists the archived forms instead |
+| Approve a draft | `approve_form` | `{project_id, name, expected_fields}`; one or more fields; an approved form is a `conflict` |
+| Change one | `update_form` | `{project_id, name, purpose, return_url, closes_at, expected_fields}`; merges; `closes_at: null` reopens; `expected_fields` only on an approved form, never empty |
+| Archive / restore | `archive_form` / `restore_form` | `{project_id, name}`; archiving refuses submissions and hides the form and its submissions everywhere; a restored draft gets another `FORMS_DRAFT_DAYS` |
+| Read a form's table | `list_submissions` | `{project_id, name, filters, sort, distinct, offset, limit}`; returns `columns`, `rows`, `ids`, `matched`, `total`, `offset`, `limit` |
+| Read one submission | `get_submission` | `{project_id, name, id}`; every stored field (ones no longer expected too), `received_at`, `host`, `path`, `via`, `visit` |
+| Find a person | `find_submissions` | `{project_id, search, limit, cursor}`; `search` at least 2 characters; returns `submissions` (each with its `form`) and `next_cursor` |
+| Delete submissions | `delete_submissions` | `{project_id}` with exactly one of `ids`, `form` with `filters`, or `search`; returns `deleted` |
+
+**The table.** `list_submissions` answers one form's submissions with the
+columns `Received`, one per field (an approved form's expected fields in
+their order, a draft's every field), then `Page` (host and path),
+`Referrer`, `UTM source`, `UTM medium` and `UTM campaign` (from the visit the
+submission arrived in). A field named like one of those, or `id`, ignoring
+case, is shown as `<name> (field)`, and filters and sorts under that name.
+`ids` holds each row's submission id, in row order; it is not a column. The
+table takes the arguments `widget_data` takes for a remote table ([Filtering
+and paging a table](reporting.md#filtering-and-paging-a-table)): `filters`
+(`[{"column":"Received","op":">","value":"2026-10-01"}]`), `sort`
+(`email:asc`), `distinct` (then `columns` are `value` and `rows`, and there
+are no `ids`), `offset` and `limit`. Without a `sort` it is newest first. It
+lists every submission whatever the date; filter `Received` to narrow it.
+The CSV export (`GET /api/projects/{project_id}/forms/{name}/submissions.csv`,
+REST only) takes the same `filters` and `sort` and writes every matching row,
+the header being the columns.
+
+**Deleting.** `delete_submissions` is the one tool that deletes, and it
+cannot be undone. `ids` deletes those submissions (ids that match nothing are
+skipped); `form` with `filters` deletes every row that form's table shows
+with those filters (at least one; to remove a whole form, archive it); and
+`search` deletes what `find_submissions` finds. Search matches a field's
+value anywhere in it, case-insensitively for ASCII letters only (`É` and `é`
+differ). A deleted submission's `$form_submit` event is removed from the raw
+window only: days already rolled up keep their counts. The audit log records
+the selector and the count, never the submissions' contents.
+
+An archived form's submissions are left out of every table, search and
+export (so of a delete by filters or search too) until it is restored, and
+are purged with it
+`RETENTION_ARCHIVED_DAYS` after archiving, with their events still in the raw
+window. Deleting the project deletes its forms and submissions.
+
 ---
 
 ## The event model
@@ -1008,11 +1089,15 @@ or the form's return URL.
 | Field name length | 64 characters (a longer name dropped) |
 | Field value length | 8 KB (truncated, not rejected) |
 
+Approving a form, reading its submissions and erasing them are in [Collect
+form submissions](#collect-form-submissions).
+
 ---
 
 ## Answer questions with the data
 
-A connected session gets forty-six tools: the twenty-two below, and twenty-four
+A connected session gets fifty-five tools: the twenty-two below, the nine
+in [Collect form submissions](#collect-form-submissions), and twenty-four
 that build the dashboards served at `/app/`, which are documented in
 `docs://reporting` ([reporting.md](reporting.md)). To build or change a
 dashboard, call `reporting_guide` first.
@@ -1093,6 +1178,16 @@ curl -H "Authorization: Bearer $TOKEN" \
 | `POST` | `/api/projects/{project_id}/keys` | `issue_ingest_key` | body: `label` → 201 |
 | `POST` | `/api/projects/{project_id}/keys/{label}/disable` | `disable_ingest_key` | — |
 | `POST` | `/api/projects/{project_id}/keys/{label}/enable` | `enable_ingest_key` | — |
+| `GET` | `/api/projects/{project_id}/forms` | `list_forms` | query: `archived` |
+| `POST` | `/api/projects/{project_id}/forms/{name}/approve` | `approve_form` | body: `expected_fields` |
+| `PATCH` | `/api/projects/{project_id}/forms/{name}` | `update_form` | body: fields to change (merge); `closes_at: null` reopens |
+| `POST` | `/api/projects/{project_id}/forms/{name}/archive` | `archive_form` | — |
+| `POST` | `/api/projects/{project_id}/forms/{name}/restore` | `restore_form` | — |
+| `GET` | `/api/projects/{project_id}/forms/{name}/submissions` | `list_submissions` | query: `filters`, `sort`, `distinct`, `offset`, `limit` |
+| `GET` | `/api/projects/{project_id}/forms/{name}/submissions/{id}` | `get_submission` | — |
+| `GET` | `/api/projects/{project_id}/forms/{name}/submissions.csv` | `export_submissions`, REST only: no MCP tool | query: `filters`, `sort` (text/csv, every matching row) |
+| `GET` | `/api/projects/{project_id}/submissions` | `find_submissions` | query: `search`, `limit`, `cursor` |
+| `POST` | `/api/projects/{project_id}/submissions/delete` | `delete_submissions` | body: one of `ids`, `form` with `filters`, `search` |
 | `GET` | `/api/projects/{project_id}/views/overview` | `views_overview` | query: `from`, `to`, `kind` |
 | `GET` | `/api/projects/{project_id}/views/breakdown` | `views_breakdown` | query: `from`, `to`, `dimension`, `limit` |
 | `GET` | `/api/projects/{project_id}/product/events` | `product_events` | query: `from`, `to`, `event` |

@@ -940,3 +940,39 @@ func TestFindSubmissions(t *testing.T) {
 		t.Fatalf("empty search = %v", err)
 	}
 }
+
+func TestGetSubmission(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	n := newSub("s1", map[string]string{"email": "a@x.io", "note": "hi"})
+	n.Submission.Visit = &store.Visit{LandingPath: "/pricing", Referrer: "news.example", UTMSource: "nl", Views: 3}
+	mustWrite(t, db, n)
+
+	s, err := db.GetSubmission(ctx, 1, "contact", "s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := store.Submission{ProjectID: 1, ID: "s1", Form: "contact", ReceivedAt: formsNow,
+		Fields: map[string]string{"email": "a@x.io", "note": "hi"}, ActorKind: "user", ActorID: "a1",
+		Host: "example.com", Path: "/contact", Via: "form",
+		Visit: &store.Visit{LandingPath: "/pricing", Referrer: "news.example", UTMSource: "nl", Views: 3}}
+	if !reflect.DeepEqual(s, want) {
+		t.Fatalf("submission = %+v\nwant %+v", s, want)
+	}
+	// Another form's name, another project, an unknown id: not found.
+	for _, c := range []struct {
+		project  int64
+		form, id string
+	}{{1, "other", "s1"}, {2, "contact", "s1"}, {1, "contact", "nope"}} {
+		if _, err := db.GetSubmission(ctx, c.project, c.form, c.id); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("%+v: err = %v, want ErrNotFound", c, err)
+		}
+	}
+	// An archived form hides its submissions.
+	if err := db.SetFormArchived(ctx, 1, "contact", true, time.Time{}, formAudit); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.GetSubmission(ctx, 1, "contact", "s1"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("archived: err = %v, want ErrNotFound", err)
+	}
+}

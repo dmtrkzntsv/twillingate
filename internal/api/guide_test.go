@@ -174,3 +174,28 @@ func TestUpdateProjectSetsAttributes(t *testing.T) {
 		t.Fatal("attributes lost on unrelated update")
 	}
 }
+
+// TestIntegrationGuideForms: every platform's guide says how to send a
+// form, where the visitor goes back, and that a form needs approving.
+func TestIntegrationGuideForms(t *testing.T) {
+	_, cs := newTestHost(t)
+	issued := callTool(t, cs, "issue_ingest_key", map[string]any{"project_id": 1, "label": "web"})
+	if issued.IsError {
+		t.Fatal(textOf(issued))
+	}
+	common := []string{"approve_form", "expected_fields", "FORMS_DRAFT_DAYS", "never count as conversions", "personal data"}
+	for platform, want := range map[string][]string{
+		"web":    {`data-twillingate-form=\"contact\"`, "https://collector.test/ingest/forms/contact?key=ak_", "twillingate-form-success-contact", "twillingate-form-error-contact", "$redirect", "return_url"},
+		"spa":    {`data-twillingate-form=\"contact\"`, "twillingate.submitForm"},
+		"server": {"https://collector.test/ingest/forms/contact", `\"fields\"`, "201", "Content-Type: application/json"},
+		"mobile": {"https://collector.test/ingest/forms/contact", `\"fields\"`},
+	} {
+		res := callTool(t, cs, "integration_guide", map[string]any{"project_id": 1, "platform": platform})
+		out := textOf(res)
+		for _, w := range append(want, common...) {
+			if !strings.Contains(out, w) {
+				t.Errorf("%s guide missing %q", platform, w)
+			}
+		}
+	}
+}

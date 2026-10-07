@@ -21,7 +21,8 @@ func TestEveryToolChoosesATransport(t *testing.T) {
 	h, cs := newTestHost(t)
 	r := newTestRegistrar(t, h)
 	mcpOnly := map[string]bool{"integration_guide": true, "reporting_guide": true}
-	restOnly := map[string]bool{"view": true, "create_widget_share": true, "widget_share_image": true} // the web app's own selection, upload and picture
+	restOnly := map[string]bool{"view": true, "create_widget_share": true, "widget_share_image": true, // the web app's own selection, upload and picture
+		"export_submissions": true} // a CSV download
 	seen := map[string]string{}
 	tools := 0
 	for _, s := range r.specs {
@@ -46,8 +47,8 @@ func TestEveryToolChoosesATransport(t *testing.T) {
 		}
 		seen[key] = s.Name
 	}
-	if tools != 46 {
-		t.Errorf("registered %d tools, want 46", tools)
+	if tools != 55 {
+		t.Errorf("registered %d tools, want 55", tools)
 	}
 	listed, err := cs.ListTools(context.Background(), nil)
 	if err != nil {

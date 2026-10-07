@@ -35,4 +35,5 @@ type Store interface {
 	DeleteSubmissions(ctx context.Context, projectID int64, ids []string, a store.AuditEntry) (int, error)
 	FindSubmissions(ctx context.Context, projectID int64, search string, limit int, after string) ([]store.Submission, string, error)
 	SubmissionIDsMatching(ctx context.Context, projectID int64, search string) ([]string, error)
+	GetSubmission(ctx context.Context, projectID int64, form, id string) (store.Submission, error)
 }

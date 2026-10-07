@@ -222,3 +222,28 @@ func (o *Ops) SubmissionIDsMatching(ctx context.Context, projectID int64, search
 	}
 	return o.St.SubmissionIDsMatching(ctx, projectID, search)
 }
+
+// ActiveForm reads one form that is not archived: an unknown or archived
+// form is ErrNotFound, since its submissions are hidden everywhere.
+func (o *Ops) ActiveForm(ctx context.Context, projectID int64, name string) (store.Form, error) {
+	if err := o.requireProject(ctx, projectID); err != nil {
+		return store.Form{}, err
+	}
+	f, err := o.St.GetForm(ctx, projectID, name)
+	if err != nil {
+		return store.Form{}, err
+	}
+	if f.ArchivedAt != nil {
+		return store.Form{}, fmt.Errorf("form %q is archived; restore it first: %w", name, ErrNotFound)
+	}
+	return f, nil
+}
+
+// GetSubmission reads one submission of an active form, every stored
+// field included (also ones the form no longer expects).
+func (o *Ops) GetSubmission(ctx context.Context, projectID int64, form, id string) (store.Submission, error) {
+	if err := o.requireProject(ctx, projectID); err != nil {
+		return store.Submission{}, err
+	}
+	return o.St.GetSubmission(ctx, projectID, form, id)
+}

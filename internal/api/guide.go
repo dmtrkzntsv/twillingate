@@ -97,6 +97,8 @@ func (h *host) integrationGuide(ctx context.Context, in guideIn) (guideOut, erro
 			"- $install_id: generate once per install, store locally, send on every\n  batch. It is stored as sent and is what install cohorts are built on.\n- $consent: 1 once the user agreed to on-device storage, 0 if not; omit\n  it and the consent breakdown reads unknown.\n- Send $screen_view per screen; custom names for product events.\n- Queue offline, replay with original ts and stable UUIDv7 ids —\n  docs://twillingate (Transport, Responses and retry) states the retry rules.\n\n")
 	}
 
+	writeFormsGuide(&b, in.Platform, base, key)
+
 	if len(p.Attributes) > 0 {
 		fmt.Fprintf(&b, "Declared product attributes (broken down in v_events_flat and product_attributes): %v.\n", p.Attributes)
 	} else {
@@ -104,4 +106,34 @@ func (h *host) integrationGuide(ctx context.Context, in guideIn) (guideOut, erro
 	}
 	b.WriteString("\nDeeper reference: docs://twillingate — The event model (semantics),\nInstrument a website (snippet API), The wire format (batching, retries,\noffline replay).\n")
 	return guideOut{Markdown: b.String()}, nil
+}
+
+// writeFormsGuide is the guide's forms section: how this platform sends a
+// submission to a form (here "contact"), and what the form needs after.
+func writeFormsGuide(b *strings.Builder, platform, base, key string) {
+	b.WriteString("## Forms\n\n")
+	switch platform {
+	case "web", "spa":
+		fmt.Fprintf(b, "A form posts its fields to the collector. Tag it for the SDK, and give it an\naction so it still works where the script did not load:\n\n"+
+			"    <form data-twillingate-form=\"contact\" method=\"post\"\n"+
+			"          action=\"%s/ingest/forms/contact?key=%s\">\n"+
+			"      <input name=\"email\"> <textarea name=\"message\"></textarea>\n"+
+			"      <input type=\"hidden\" name=\"$redirect\" value=\"https://example.com/thanks\">\n"+
+			"    </form>\n"+
+			"    <p id=\"twillingate-form-success-contact\">Thanks, we'll be in touch.</p>\n"+
+			"    <p id=\"twillingate-form-error-contact\">That did not go through; please try again.</p>\n"+
+			"    <style>[id^=\"twillingate-form-\"]:not(:target){display:none}</style>\n\n", base, key)
+		b.WriteString("The name (here contact; a-z, 0-9, _ and -) is the page's choice. The\nvisitor lands on $redirect, else the form's return_url (update_form), else\nthe Referer (often just the site's root), with #twillingate-form-success-contact\nor #twillingate-form-error-contact, so one :target element per outcome\nshows the result. Without $redirect the SDK stays on the page and sets the\nfragment. Each redirect target's origin must be in allowed_origins.\n")
+		if platform == "spa" {
+			b.WriteString("\nFrom code, twillingate.submitForm(\"contact\", { email, message }) sends the\nsame submission and resolves to {id} without navigating.\n")
+		}
+		b.WriteString("\n")
+	default:
+		fmt.Fprintf(b, "Post a submission to a form (here contact; a-z, 0-9, _ and -) as JSON:\n\n"+
+			"    curl -X POST %s/ingest/forms/contact \\\n      -H 'Content-Type: application/json' \\\n      -H 'X-Analytics-Key: %s' \\\n"+
+			"      -d '{\"id\":\"<uuid>\",\"fields\":{\"email\":\"a@example.com\",\"plan\":\"pro\"},\n"+
+			"           \"attributes\":{\"$user_id\":\"u_123\"}}'\n\n"+
+			"It answers 201 {\"id\"}; retry on 5xx with the same id, which is stored once.\n\n", base, key)
+	}
+	b.WriteString("Submissions hold personal data. The first one creates the form as a draft:\nit keeps every field for FORMS_DRAFT_DAYS, then is archived unless\napproved, and draft submissions never count as conversions. Review what\narrived with list_forms and list_submissions, then call approve_form with\nexpected_fields (the fields to keep): from then on each submission writes a\n$form_submit product event (attribute form). docs://twillingate, Collect\nform submissions, has the rest.\n\n")
 }

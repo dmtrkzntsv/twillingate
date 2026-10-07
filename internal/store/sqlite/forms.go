@@ -536,6 +536,48 @@ func matchSubmissions(projectID int64, search string) (string, []any, error) {
 
 const defaultFindLimit = 100
 
+// submissionColumns is the select list scanSubmission reads, from
+// submissions aliased s.
+const submissionColumns = `s.project_id, s.id, s.form, s.received_at, s.fields,
+	s.actor_kind, s.actor_id, s.host, s.path, s.via, s.visit`
+
+// scanSubmission reads one row selected with submissionColumns.
+func scanSubmission(row interface{ Scan(...any) error }) (store.Submission, error) {
+	var s store.Submission
+	var received, fields string
+	var visit sql.NullString
+	if err := row.Scan(&s.ProjectID, &s.ID, &s.Form, &received, &fields,
+		&s.ActorKind, &s.ActorID, &s.Host, &s.Path, &s.Via, &visit); err != nil {
+		return store.Submission{}, err
+	}
+	var err error
+	if s.ReceivedAt, err = time.Parse(tsFormat, received); err != nil {
+		return store.Submission{}, fmt.Errorf("submission %s received_at: %w", s.ID, err)
+	}
+	if err := json.Unmarshal([]byte(fields), &s.Fields); err != nil {
+		return store.Submission{}, fmt.Errorf("submission %s fields: %w", s.ID, err)
+	}
+	if visit.Valid {
+		s.Visit = &store.Visit{}
+		if err := json.Unmarshal([]byte(visit.String), s.Visit); err != nil {
+			return store.Submission{}, fmt.Errorf("submission %s visit: %w", s.ID, err)
+		}
+	}
+	return s, nil
+}
+
+// GetSubmission reads one submission of an active form.
+func (d *DB) GetSubmission(ctx context.Context, projectID int64, form, id string) (store.Submission, error) {
+	s, err := scanSubmission(d.db.QueryRowContext(ctx, `SELECT `+submissionColumns+`
+		FROM submissions s JOIN forms f ON f.project_id=s.project_id AND f.name=s.form
+		WHERE s.project_id=? AND s.form=? AND s.id=? AND f.archived_at IS NULL`, projectID, form, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return store.Submission{}, store.Refuse(store.ErrNotFound,
+			"no submission %q in form %q of project %d (an archived form's submissions are hidden)", id, form, projectID)
+	}
+	return s, err
+}
+
 // FindSubmissions pages the submissions matching search, newest first.
 func (d *DB) FindSubmissions(ctx context.Context, projectID int64, search string, limit int, after string) ([]store.Submission, string, error) {
 	from, args, err := matchSubmissions(projectID, search)
@@ -557,8 +599,7 @@ func (d *DB) FindSubmissions(ctx context.Context, projectID int64, search string
 		from += ` AND (s.received_at < ? OR (s.received_at = ? AND s.id < ?))`
 		args = append(args, at, at, after)
 	}
-	rows, err := d.db.QueryContext(ctx, `SELECT s.project_id, s.id, s.form, s.received_at, s.fields,
-		s.actor_kind, s.actor_id, s.host, s.path, s.via, s.visit `+from+`
+	rows, err := d.db.QueryContext(ctx, `SELECT `+submissionColumns+` `+from+`
 		ORDER BY s.received_at DESC, s.id DESC LIMIT ?`, append(args, limit+1)...)
 	if err != nil {
 		return nil, "", err
@@ -566,24 +607,9 @@ func (d *DB) FindSubmissions(ctx context.Context, projectID int64, search string
 	defer rows.Close()
 	var out []store.Submission
 	for rows.Next() {
-		var s store.Submission
-		var received, fields string
-		var visit sql.NullString
-		if err := rows.Scan(&s.ProjectID, &s.ID, &s.Form, &received, &fields,
-			&s.ActorKind, &s.ActorID, &s.Host, &s.Path, &s.Via, &visit); err != nil {
+		s, err := scanSubmission(rows)
+		if err != nil {
 			return nil, "", err
-		}
-		if s.ReceivedAt, err = time.Parse(tsFormat, received); err != nil {
-			return nil, "", fmt.Errorf("submission %s received_at: %w", s.ID, err)
-		}
-		if err := json.Unmarshal([]byte(fields), &s.Fields); err != nil {
-			return nil, "", fmt.Errorf("submission %s fields: %w", s.ID, err)
-		}
-		if visit.Valid {
-			s.Visit = &store.Visit{}
-			if err := json.Unmarshal([]byte(visit.String), s.Visit); err != nil {
-				return nil, "", fmt.Errorf("submission %s visit: %w", s.ID, err)
-			}
 		}
 		out = append(out, s)
 	}

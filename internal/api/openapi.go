@@ -109,6 +109,9 @@ func operation(s spec) (map[string]any, error) {
 	if s.Image {
 		success["content"] = map[string]any{"image/png": map[string]any{"schema": map[string]string{"type": "string", "format": "binary"}}}
 	}
+	if s.CSV {
+		success["content"] = map[string]any{"text/csv": map[string]any{"schema": map[string]string{"type": "string"}}}
+	}
 	op := map[string]any{
 		"operationId": s.Name,
 		"tags":        []string{tagOf(s.Path)},

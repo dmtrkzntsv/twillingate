@@ -285,6 +285,7 @@ func (h *host) register(r *registrar) {
 		Description: "Tailored integration instructions for one project and platform (web, spa, server, mobile), with the project's real ingest key, collector URL and event examples baked in. Confirm the collector hostname with the user. Call after create_project; read docs://twillingate for depth."},
 		h.integrationGuide)
 
+	h.registerForms(r)
 	h.registerReporting(r)
 	registerSchemaRoute(r)
 }

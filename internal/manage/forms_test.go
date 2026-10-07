@@ -387,3 +387,25 @@ func TestDeleteSubmissionsAuditsSelectorNotContents(t *testing.T) {
 		t.Fatalf("empty delete = %d, %v, audits %d", n, err, len(fc.audits))
 	}
 }
+
+func TestActiveFormRefusesArchivedAndUnknown(t *testing.T) {
+	ops, fc, pid := newFormOps(t)
+	ctx := context.Background()
+	at := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	fc.forms["live"] = store.Form{ProjectID: pid, Name: "live", Status: store.FormDraft}
+	fc.forms["old"] = store.Form{ProjectID: pid, Name: "old", Status: store.FormDraft, ArchivedAt: &at}
+	if f, err := ops.ActiveForm(ctx, pid, "live"); err != nil || f.Name != "live" {
+		t.Fatalf("live = %+v, %v", f, err)
+	}
+	for _, c := range []struct {
+		pid  int64
+		name string
+	}{{pid, "old"}, {pid, "nope"}, {pid + 99, "live"}} {
+		if _, err := ops.ActiveForm(ctx, c.pid, c.name); !errors.Is(err, ErrNotFound) {
+			t.Errorf("%+v: err = %v, want ErrNotFound", c, err)
+		}
+	}
+	if _, err := ops.GetSubmission(ctx, pid+99, "live", "x"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("unknown project: %v", err)
+	}
+}

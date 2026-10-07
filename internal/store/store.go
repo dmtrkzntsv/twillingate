@@ -383,6 +383,10 @@ type Store interface {
 	// more after it, "" at the end. limit <= 0 means 100. An empty search
 	// is ErrInvalid; an unknown cursor is ErrNotFound.
 	FindSubmissions(ctx context.Context, projectID int64, search string, limit int, after string) ([]Submission, string, error)
+	// GetSubmission reads one submission of the project's form, every
+	// stored field and its visit; ErrNotFound when absent or when the form
+	// is archived.
+	GetSubmission(ctx context.Context, projectID int64, form, id string) (Submission, error)
 	// SubmissionIDsMatching returns every id FindSubmissions would, newest
 	// first, for delete-by-search.
 	SubmissionIDsMatching(ctx context.Context, projectID int64, search string) ([]string, error)

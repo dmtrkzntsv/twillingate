@@ -308,3 +308,22 @@ func TestDevWidgetDataPagesRemoteTables(t *testing.T) {
 		t.Errorf("limit=ten: status = %d, want 400", res.StatusCode)
 	}
 }
+
+// TestParsePageIsParseView: the exported parser reads the same arguments
+// widget_data does, and refuses the same malformed ones.
+func TestParsePageIsParseView(t *testing.T) {
+	pg, echo, err := ParsePage(`[{"column":"plan","op":"in","value":["pro"]}]`, "email:desc", "", 2, 5, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pg.Filters) != 1 || pg.Filters[0].Column != "plan" || pg.Sort == nil || !pg.Sort.Desc ||
+		pg.Offset != 2 || pg.Limit != 5 || echo.Limit != 5 || echo.Sort != "email:desc" {
+		t.Fatalf("page = %+v, echo = %+v", pg, echo)
+	}
+	if _, echo, _ := ParsePage("", "", "plan", 0, 0, 100); echo.Limit != 100 || echo.Distinct != "plan" {
+		t.Fatalf("default limit echo = %+v", echo)
+	}
+	if _, _, err := ParsePage("nope", "", "", 0, 0, 100); !errors.Is(err, store.ErrInvalid) {
+		t.Fatalf("bad filters = %v", err)
+	}
+}
