@@ -87,4 +87,30 @@ describe('useProjectActions', () => {
     expect(out).toBeUndefined()
     expect(toast.error).toHaveBeenCalledWith('project is already archived')
   })
+
+  it('moves a project without a success toast and refetches the list', async () => {
+    const moveProject = vi.spyOn(endpoints, 'moveProject').mockResolvedValue({ status: 'moved' })
+    const { client, wrapper: w } = wrapper()
+    const invalidate = vi.spyOn(client, 'invalidateQueries')
+    const { result } = renderHook(() => useProjectActions(), { wrapper: w })
+    let ok: boolean | undefined
+    await act(async () => {
+      ok = await result.current.move(7, 3)
+    })
+    expect(ok).toBe(true)
+    expect(moveProject).toHaveBeenCalledWith(7, 3)
+    expect(toast.success).not.toHaveBeenCalled()
+    expect(invalidate.mock.calls.map((c) => (c[0] as { queryKey: string[] }).queryKey[0])).toEqual(['projects'])
+  })
+
+  it('toasts a refused move and resolves false', async () => {
+    vi.spyOn(endpoints, 'moveProject').mockRejectedValue(new ApiError(404, 'unknown project 3', 'not_found'))
+    const { result } = renderHook(() => useProjectActions(), { wrapper: wrapper().wrapper })
+    let ok: boolean | undefined
+    await act(async () => {
+      ok = await result.current.move(7, 3)
+    })
+    expect(ok).toBe(false)
+    expect(toast.error).toHaveBeenCalledWith('unknown project 3')
+  })
 })

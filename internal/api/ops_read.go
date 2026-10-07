@@ -214,7 +214,7 @@ func (h *host) register(r *registrar) {
 	const p = "/api/projects/{project_id}"
 
 	expose(r, spec{Name: "list_projects", Annotations: ro, Method: "GET", Path: "/api/projects",
-		Description: "List projects with id, name, allowed origins and declared attributes. Call this first: every other tool takes a project_id from here."},
+		Description: "List projects with id, name, allowed origins and declared attributes, in the order move_project sets. Call this first: every other tool takes a project_id from here."},
 		h.listProjects)
 	expose(r, spec{Name: "limits", Annotations: ro, Method: "GET", Path: "/api/limits",
 		Description: "The limits in force, grouped: retention (days raw events, aggregates and archived items are kept), caps (ATTRIBUTE_VALUES_TOP_N, the values kept per views breakdown and day and per attribute key, event and day; users and groups per day; and ATTRIBUTE_BREAKDOWNS_MAX, the attributes all active projects declare together; 0 means no cap) and ingest (the wire format's fixed limits: body, batch, attributes, timestamps, measures). Each has a name, value, unit and description; settings also carry the environment variable and its default. Set in the server's environment, not here."},
@@ -259,6 +259,9 @@ func (h *host) register(r *registrar) {
 	expose(r, spec{Name: "update_project", Annotations: write, Method: "PATCH", Path: "/api/projects/{project_id}",
 		Description: "Update a project's name, allowed origins and/or declared product-event attributes (breakdown keys for flat-view columns and attribute rollups). Fields you omit are left unchanged; allowed_origins and attributes replace the whole list when given, and an explicit empty allowed_origins clears it. Each declared attribute is a breakdown, counted against ATTRIBUTE_BREAKDOWNS_MAX across active projects; pick keys from received_attributes."},
 		h.updateProject)
+	expose(r, spec{Name: "move_project", Annotations: idem, Method: "POST", Path: "/api/projects/{project_id}/move",
+		Description: "Put a project right after another (after: a project id, archived ones included; 0 first) in the order list_projects, the console and the CLI show. A new project comes last."},
+		h.moveProject)
 	expose(r, spec{Name: "archive_project", Annotations: idem, Method: "POST", Path: "/api/projects/{project_id}/archive",
 		Description: "Archive a project: ingestion stops, data and dashboards keep working. Reversible with restore_project — data kept, purged after RETENTION_ARCHIVED_DAYS (default 30) unless restored. There is no delete over the API — deletion requires the CLI."},
 		h.archiveProject)

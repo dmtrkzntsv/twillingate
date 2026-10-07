@@ -104,6 +104,34 @@ func TestProjectUpdateClearsOriginsOnlyWhenAsked(t *testing.T) {
 	}
 }
 
+// project move reorders project list; -id is required and an unknown
+// project fails.
+func TestProjectMove(t *testing.T) {
+	withDB(t)
+	var out bytes.Buffer
+	for _, n := range []string{"a", "b", "c"} {
+		if code := run([]string{"project", "create", "-name", n}, &out); code != 0 {
+			t.Fatalf("create %s: exit %d: %s", n, code, out.String())
+		}
+	}
+	out.Reset()
+	if code := run([]string{"project", "move", "-id", "3", "-after", "1"}, &out); code != 0 || !strings.Contains(out.String(), "project 3 moved") {
+		t.Fatalf("move: exit %d: %s", code, out.String())
+	}
+	out.Reset()
+	if code := run([]string{"project", "list"}, &out); code != 0 || out.String() != "1\ta\n3\tc\n2\tb\n" {
+		t.Fatalf("list after move: exit %d: %q", code, out.String())
+	}
+	out.Reset()
+	if code := run([]string{"project", "move"}, &out); code != 2 {
+		t.Errorf("move without -id: exit %d, want 2", code)
+	}
+	out.Reset()
+	if code := run([]string{"project", "move", "-id", "9"}, &out); code != 1 {
+		t.Errorf("move unknown: exit %d, want 1: %s", code, out.String())
+	}
+}
+
 func TestProjectCreateUnknownSubcommand(t *testing.T) {
 	withDB(t)
 	var out bytes.Buffer

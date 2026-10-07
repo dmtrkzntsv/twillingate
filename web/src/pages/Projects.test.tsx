@@ -9,7 +9,7 @@ import Projects from './Projects'
 
 const create = vi.fn()
 vi.mock('@/hooks/use-project-actions', () => ({
-  useProjectActions: () => ({ create, restore: vi.fn(), pending: false }),
+  useProjectActions: () => ({ create, restore: vi.fn(), move: vi.fn(), pending: false }),
 }))
 
 function stats(project_id: number, over: Partial<ProjectUsage> = {}): ProjectUsage {
@@ -88,6 +88,27 @@ describe('Projects', () => {
     expect(within(card).getByRole('link', { name: 'econumo.com' })).toHaveAttribute('href', '/projects/4')
     expect(within(card).queryByText(/econumo\.com\//)).not.toBeInTheDocument()
     expect(within(card).queryByText('No origins')).not.toBeInTheDocument()
+  })
+
+  it('shows active cards in the list order, each sortable but for archived ones', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await screen.findByRole('article', { name: 'econumo.com' })
+    expect(screen.getAllByRole('article').map((a) => a.getAttribute('aria-label'))).toEqual(['econumo.com', 'quiet.dev'])
+    for (const name of ['econumo.com', 'quiet.dev']) {
+      expect(screen.getByRole('article', { name }).parentElement).toHaveAttribute('aria-roledescription', 'sortable')
+    }
+    await user.click(screen.getByRole('button', { name: /Archived \(1\)/ }))
+    expect(screen.getByRole('article', { name: 'legacy' }).parentElement).not.toHaveAttribute('aria-roledescription')
+  })
+
+  it('does not drag cards in reporting dev, which takes no writes', async () => {
+    vi.spyOn(endpoints, 'dashboards').mockResolvedValue({ ...dashboardsList(), dev: true })
+    renderPage()
+    await screen.findByRole('article', { name: 'econumo.com' })
+    await vi.waitFor(() =>
+      expect(screen.getByRole('article', { name: 'econumo.com' }).parentElement).not.toHaveAttribute('aria-roledescription')
+    )
   })
 
   it('keeps archived projects in a collapsed group', async () => {

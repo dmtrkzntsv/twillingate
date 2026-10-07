@@ -77,19 +77,16 @@ func TestMigrationViolationFails(t *testing.T) {
 	}
 }
 
-// TestExistingDatabasePassesCheck seeds projects and keys through the
-// store, then migrates to latest: no dangling FK should ever come out of
-// ordinary use.
+// TestExistingDatabasePassesCheck seeds a project and its key as the
+// store wrote them at schema 19 (plain SQL: today's store writes columns
+// later migrations add), then migrates to latest: no dangling FK should
+// ever come out of ordinary use.
 func TestExistingDatabasePassesCheck(t *testing.T) {
 	db := newTestDBAt(t, 19)
 	ctx := context.Background()
-	audit := store.AuditEntry{Actor: "seed", Action: "project.create"}
-	if _, err := db.CreateProjectWithKey(ctx,
-		store.RegistryProject{Name: "app", AllowedOrigins: "[]"},
-		store.RegistryKey{Label: "web"},
-		audit, store.AuditEntry{Actor: "seed", Action: "key.create"}); err != nil {
-		t.Fatal(err)
-	}
+	execAll(t, db,
+		`INSERT INTO projects (id, name, allowed_origins) VALUES (1, 'app', '[]')`,
+		`INSERT INTO ingest_keys (key, project_id, label) VALUES ('ak_seed', 1, 'web')`)
 	if err := db.Migrate(ctx); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}

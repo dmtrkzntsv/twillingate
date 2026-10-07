@@ -1,4 +1,6 @@
 import { useState } from 'react'
+import { DndContext, closestCenter } from '@dnd-kit/core'
+import { SortableContext, rectSortingStrategy } from '@dnd-kit/sortable'
 import { useQuery } from '@tanstack/react-query'
 import { ChevronRightIcon, PlusIcon } from 'lucide-react'
 import AppShell, { TopBar } from '@/components/AppShell'
@@ -8,15 +10,22 @@ import LimitsPanel from '@/components/projects/LimitsPanel'
 import LoadError from '@/components/projects/LoadError'
 import ProjectCard from '@/components/projects/ProjectCard'
 import ProjectFormDialog from '@/components/projects/ProjectFormDialog'
+import SortableProjectCard from '@/components/projects/SortableProjectCard'
 import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { useProjectActions } from '@/hooks/use-project-actions'
+import { useReorder } from '@/hooks/use-reorder'
 import type { CreatedProject } from '@/lib/api'
+import { afterAt } from '@/lib/arrange'
 import { dashboardsQuery, keysQuery, limitsQuery, projectsQuery, usageQuery } from '@/lib/queries'
 import { formatBytes, formatGrowth } from '@/lib/units'
 
-/** `/projects`: every project as a card with its last 30 days, the caps, archived projects, and New project. */
+/**
+ * `/projects`: every project as a card with its last 30 days, the caps,
+ * archived projects, and New project. Active cards drag to a new order,
+ * the one every project list shows; archived ones keep their place in it.
+ */
 export default function Projects() {
   const { data: dash } = useQuery(dashboardsQuery)
   const projectsQ = useQuery(projectsQuery)
@@ -26,13 +35,22 @@ export default function Projects() {
   const { data: statsData } = statsQ
   const { data: keysData } = keysQ
   const { data: limitsData } = useQuery(limitsQuery)
-  const { create, restore, pending } = useProjectActions()
+  const { create, restore, move, pending } = useProjectActions()
   const [creating, setCreating] = useState(false)
   const [created, setCreated] = useState<CreatedProject | null>(null)
 
   const projects = projectsData?.projects ?? []
   const active = projects.filter((p) => !p.archived)
   const archived = projects.filter((p) => p.archived)
+  const activeIds = active.map((p) => p.project_id)
+  const readOnly = dash?.dev === true
+  const { order, busy, context } = useReorder(
+    activeIds,
+    (id, to) => move(id, afterAt(activeIds, id, to)),
+    'xy',
+    (id) => projects.find((p) => p.project_id === id)?.name ?? String(id)
+  )
+  const byId = new Map(active.map((p) => [p.project_id, p]))
   const statsOf = (id: number) => statsData?.projects.find((s) => s.project_id === id)
   const keysOf = (id: number) => keysData?.keys.filter((k) => k.project_id === id)
   // A failed refetch behind data already on screen is not an error line.
@@ -73,17 +91,17 @@ export default function Projects() {
           <LoadError what={statsFailed ? 'usage' : 'keys'} error={(statsFailed ? statsQ.error : keysQ.error)!} onRetry={retryUsage} />
         )}
         {projectsData && active.length === 0 && <p className="text-sm text-muted-foreground">No projects yet. Create one to get an ingest key.</p>}
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-          {active.map((p) => (
-            <ProjectCard
-              key={p.project_id}
-              project={p}
-              stats={statsOf(p.project_id)}
-              keys={keysOf(p.project_id)}
-              statsFailed={statsFailed}
-            />
-          ))}
-        </div>
+        <DndContext collisionDetection={closestCenter} {...context}>
+          <SortableContext items={order} strategy={rectSortingStrategy}>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              {order.map((id) => byId.get(id)).filter((p) => p !== undefined).map((p) => (
+                <SortableProjectCard key={p.project_id} id={p.project_id} movable={!readOnly} disabled={busy}>
+                  <ProjectCard project={p} stats={statsOf(p.project_id)} keys={keysOf(p.project_id)} statsFailed={statsFailed} />
+                </SortableProjectCard>
+              ))}
+            </div>
+          </SortableContext>
+        </DndContext>
         {limitsData && <LimitsPanel limits={limitsData.limits} />}
         {archived.length > 0 && (
           <Collapsible className="flex flex-col gap-3">

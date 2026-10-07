@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/dmtrkzntsv/twillingate/internal/shared/sortkey"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
@@ -38,7 +39,8 @@ func (d *DB) ConfigVersion(ctx context.Context) (int64, error) {
 
 func (d *DB) LoadRegistry(ctx context.Context) ([]store.RegistryProject, []store.RegistryKey, error) {
 	rows, err := d.db.QueryContext(ctx, `SELECT id, name,
-		allowed_origins, attributes, archived_at IS NOT NULL FROM projects ORDER BY id`)
+		allowed_origins, attributes, archived_at IS NOT NULL, sort_key
+		FROM projects ORDER BY sort_key, id`)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -47,7 +49,7 @@ func (d *DB) LoadRegistry(ctx context.Context) ([]store.RegistryProject, []store
 	for rows.Next() {
 		var p store.RegistryProject
 		if err := rows.Scan(&p.ID, &p.Name,
-			&p.AllowedOrigins, &p.Attributes, &p.Archived); err != nil {
+			&p.AllowedOrigins, &p.Attributes, &p.Archived, &p.SortKey); err != nil {
 			return nil, nil, err
 		}
 		ps = append(ps, p)
@@ -80,7 +82,8 @@ func ks2(ps []store.RegistryProject, ks []store.RegistryKey, err error) ([]store
 	return ps, ks, nil
 }
 
-// CreateProject lets SQLite assign the id and returns it. The audit subject
+// CreateProject lets SQLite assign the id and returns it. The project
+// comes last in the order (insertProject). The audit subject
 // is the new id, written here because only the store knows it.
 func (d *DB) CreateProject(ctx context.Context, p store.RegistryProject, a store.AuditEntry) (int64, error) {
 	var id int64
@@ -125,10 +128,20 @@ func keySubject(projectID int64, label string) string {
 	return strconv.FormatInt(projectID, 10) + "/" + label
 }
 
+// insertProject gives the project the sort key after the largest, read in
+// the same transaction, so it comes last.
 func insertProject(ctx context.Context, tx *sql.Tx, p store.RegistryProject) (int64, error) {
+	var last string
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(sort_key), '') FROM projects`).Scan(&last); err != nil {
+		return 0, err
+	}
+	key, err := sortkey.Between(last, "")
+	if err != nil {
+		return 0, fmt.Errorf("create project %q: %w", p.Name, err)
+	}
 	res, err := tx.ExecContext(ctx, `INSERT INTO projects
-		(name, allowed_origins, attributes) VALUES (?,?,?)`,
-		p.Name, p.AllowedOrigins, p.Attributes)
+		(name, allowed_origins, attributes, sort_key) VALUES (?,?,?,?)`,
+		p.Name, p.AllowedOrigins, p.Attributes, key)
 	if err != nil {
 		return 0, fmt.Errorf("create project %q: %w", p.Name, err)
 	}
@@ -172,6 +185,23 @@ func (d *DB) SetProjectArchived(ctx context.Context, id int64, archived bool, a 
 			}
 			if c == 0 {
 				return fmt.Errorf("unknown project %d: %w", id, store.ErrNotFound)
+			}
+		}
+		return auditAndBump(ctx, tx, a)
+	})
+}
+
+// SetProjectSortKeys writes the given keys in one transaction. Every id
+// must exist: an unknown one leaves every key untouched.
+func (d *DB) SetProjectSortKeys(ctx context.Context, keys []store.ProjectSortKey, a store.AuditEntry) error {
+	return d.tx(ctx, func(tx *sql.Tx) error {
+		for _, k := range keys {
+			res, err := tx.ExecContext(ctx, `UPDATE projects SET sort_key = ? WHERE id = ?`, k.SortKey, k.ID)
+			if err != nil {
+				return err
+			}
+			if n, _ := res.RowsAffected(); n == 0 {
+				return fmt.Errorf("project order: unknown project %d: %w", k.ID, store.ErrNotFound)
 			}
 		}
 		return auditAndBump(ctx, tx, a)
