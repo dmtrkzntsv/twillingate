@@ -24,6 +24,7 @@ type Project struct {
 	AllowedOrigins []string
 	Attributes     []string
 	Archived       bool
+	SortKey        string // its place in the order
 }
 
 type keyOwner struct {
@@ -36,7 +37,7 @@ type keyOwner struct {
 // load; every mutation builds a fresh one.
 type Snapshot struct {
 	byID    map[int64]*Project
-	ordered []*Project // ascending id
+	ordered []*Project // by sort key, then id
 	keys    []keyOwner // active keys of non-archived projects only
 	origins map[int64]originSet
 }
@@ -84,7 +85,7 @@ func (r *Registry) Reload(ctx context.Context) error {
 		origins: make(map[int64]originSet, len(ps)),
 	}
 	for _, rp := range ps {
-		p := &Project{ID: rp.ID, Name: rp.Name, Archived: rp.Archived}
+		p := &Project{ID: rp.ID, Name: rp.Name, Archived: rp.Archived, SortKey: rp.SortKey}
 		if rp.AllowedOrigins != "" {
 			if err := json.Unmarshal([]byte(rp.AllowedOrigins), &p.AllowedOrigins); err != nil {
 				return fmt.Errorf("manage: project %d allowed_origins: %w", rp.ID, err)
@@ -227,6 +228,8 @@ func trimSlash(o string) string {
 
 func (s *Snapshot) Project(id int64) *Project { return s.byID[id] }
 
+// Projects is every project, archived ones included, in the order the
+// console shows them (MoveProject).
 func (s *Snapshot) Projects() []*Project { return s.ordered }
 
 // ProjectByKey preserves the constant-time contract of the old

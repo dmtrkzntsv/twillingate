@@ -5,6 +5,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import type { CapUsageRow } from '@/lib/api'
 import { capUsageQuery } from '@/lib/queries'
+import { formatSpan } from '@/lib/units'
 import { cn } from '@/lib/utils'
 
 /** Capped first (most capped days first), then by name. */
@@ -12,13 +13,24 @@ function order(rows: CapUsageRow[]): CapUsageRow[] {
   return [...rows].sort((a, b) => b.days_capped - a.days_capped || a.dimension.localeCompare(b.dimension))
 }
 
-/** Per capped dimension: the busiest day against the cap, days capped, and the share folded into (other). */
+/**
+ * Per capped dimension: the busiest day against the cap, days capped, and
+ * the share folded into (other), over the page's range. The heading names
+ * the range the rows are for; while another range loads, the previous rows
+ * stay, dimmed, and the heading says which range is coming.
+ */
 export default function CapImpactSection({ projectId, range }: { projectId: number; range: { from: string; to: string } }) {
   const { data, error, isError, isPlaceholderData, refetch } = useQuery({ ...capUsageQuery(projectId, range), placeholderData: keepPreviousData })
   return (
     <section aria-label="Cap impact" className="flex flex-col gap-3 rounded-lg border p-4">
       <header>
-        <h2 className="text-base font-semibold">Cap impact</h2>
+        <h2 className="text-base font-semibold">
+          Cap impact
+          {data && !isError && <span className="font-normal text-muted-foreground"> · {formatSpan(data.from, data.to)}</span>}
+        </h2>
+        {isPlaceholderData && !isError && (
+          <p role="status" className="text-sm text-muted-foreground">Loading {formatSpan(range.from, range.to)}…</p>
+        )}
         <p className="text-sm text-muted-foreground">
           Days already rolled up keep only the kept values and their (other) rows, so their values stay near the cap.
         </p>

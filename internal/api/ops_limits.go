@@ -260,33 +260,46 @@ func (h *host) capUsage(ctx context.Context, in capUsageIn) (capUsageOut, error)
 	}
 
 	// Attributes: the cap is per event (and per measure), so a day's values
-	// are its busiest event's; it folded if any event did. One query per
-	// key keeps each answer to one row a day, whatever the number of keys.
-	keys, err := h.run(ctx, `SELECT attr_key FROM v_product_attrs WHERE project_id = ? AND day BETWEEN ? AND ?
-		UNION
-		SELECT attr_key FROM v_measures_attrs WHERE project_id = ? AND day BETWEEN ? AND ?
-		ORDER BY attr_key`,
+	// are its busiest event's; it folded if any event did. Each view is
+	// read once for every key (a read of the measures view costs about a
+	// second a month of raw data), and the days fold into one row per key
+	// in SQL, so the answer is one row a key whatever the range. The
+	// busiest day is the earliest of equals, as summarize picks it.
+	attrs, err := h.run(ctx, `SELECT attr_key, MAX(n), MIN(CASE WHEN n = top THEN day END),
+		       COUNT(*), SUM(other), SUM(c), SUM(oc)
+		FROM (
+		  SELECT attr_key, day, n, other, c, oc, MAX(n) OVER (PARTITION BY attr_key) AS top
+		  FROM (
+		    SELECT attr_key, day, MAX(n) AS n, MAX(other) AS other, SUM(c) AS c, SUM(oc) AS oc FROM (
+		      SELECT attr_key, day, COUNT(*) AS n, MAX(attr_value = '(other)') AS other,
+		             SUM(count) AS c, SUM(CASE WHEN attr_value = '(other)' THEN count ELSE 0 END) AS oc
+		      FROM v_product_attrs WHERE project_id = ? AND day BETWEEN ? AND ?
+		      GROUP BY attr_key, day, event_name
+		      UNION ALL
+		      SELECT attr_key, day, COUNT(DISTINCT attr_value), MAX(attr_value = '(other)'),
+		             SUM(samples), SUM(CASE WHEN attr_value = '(other)' THEN samples ELSE 0 END)
+		      FROM v_measures_attrs WHERE project_id = ? AND day BETWEEN ? AND ?
+		      GROUP BY attr_key, day, event_name, measure
+		    ) GROUP BY attr_key, day
+		  )
+		) GROUP BY attr_key ORDER BY attr_key`,
 		in.ProjectID, from, to, in.ProjectID, from, to)
 	if err != nil {
 		return capUsageOut{}, err
 	}
-	for _, k := range keys.Rows {
-		res, err := h.run(ctx, `SELECT day, MAX(n), MAX(other), SUM(c), SUM(oc) FROM (
-			  SELECT day, COUNT(*) AS n, MAX(attr_value = '(other)') AS other,
-			         SUM(count) AS c, SUM(CASE WHEN attr_value = '(other)' THEN count ELSE 0 END) AS oc
-			  FROM v_product_attrs WHERE project_id = ? AND day BETWEEN ? AND ? AND attr_key = ?
-			  GROUP BY day, event_name
-			  UNION ALL
-			  SELECT day, COUNT(DISTINCT attr_value), MAX(attr_value = '(other)'),
-			         SUM(samples), SUM(CASE WHEN attr_value = '(other)' THEN samples ELSE 0 END)
-			  FROM v_measures_attrs WHERE project_id = ? AND day BETWEEN ? AND ? AND attr_key = ?
-			  GROUP BY day, event_name, measure
-			) GROUP BY day ORDER BY day`,
-			in.ProjectID, from, to, k[0], in.ProjectID, from, to, k[0])
-		if err != nil {
-			return capUsageOut{}, err
+	attrCap := h.capOf(settingAttrs)
+	for _, r := range attrs.Rows {
+		row := capUsageRow{Setting: settingAttrs, Dimension: r[0], Cap: attrCap, MaxDay: r[2]}
+		row.MaxValuesPerDay, _ = strconv.Atoi(r[1])
+		row.Days, _ = strconv.Atoi(r[3])
+		row.DaysCapped, _ = strconv.Atoi(r[4])
+		total, _ := strconv.ParseFloat(r[5], 64)
+		folded, _ := strconv.ParseFloat(r[6], 64)
+		if total > 0 {
+			s := folded / total
+			row.FoldedShare = &s
 		}
-		out.Dimensions = append(out.Dimensions, summarize(settingAttrs, k[0], h.capOf(settingAttrs), daysOf(res.Rows), true))
+		out.Dimensions = append(out.Dimensions, row)
 	}
 
 	// Identities keep no (other) row: a day is capped when it reached the cap.

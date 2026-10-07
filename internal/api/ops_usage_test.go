@@ -115,6 +115,28 @@ func TestUsageUnusedAttributesMixed(t *testing.T) {
 	}
 }
 
+// A key carried only on a raw day counts as carried: ingest records it in
+// received_attributes (the seed writes raw rows directly, so this writes
+// the row ingest would have), before any rollup has seen it.
+func TestUsageUnusedAttributesReadsRawDays(t *testing.T) {
+	h, cs := newTestHost(t)
+	res := callTool(t, cs, "update_project", map[string]any{"project_id": 1, "attributes": []string{"plan", "tier"}})
+	if res.IsError {
+		t.Fatal(textOf(res))
+	}
+	if _, err := rawExec(h.ops.St, `INSERT INTO received_attributes (project_id, day, attr_key, events) VALUES (1, '2026-08-26', 'tier', 0)`); err != nil {
+		t.Fatal(err)
+	}
+	out, err := h.usage(context.Background(), usageIn{ProjectID: 1,
+		usageRangeIn: usageRangeIn{From: "2026-08-19", To: "2026-08-27"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u := out.Projects[0].UnusedAttributes; u == nil || len(*u) != 0 {
+		t.Errorf("unused = %v, want none (tier arrived on a raw day)", u)
+	}
+}
+
 // The views series skips v_views_daily's sessionizing live half; this pins
 // that it still equals the view, day by day, across rolled-up and raw days.
 func TestUsageViewsMatchTheView(t *testing.T) {

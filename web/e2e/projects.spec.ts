@@ -1,7 +1,8 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type APIRequestContext, type Page } from '@playwright/test'
 
 // Matches web/e2e/serve.sh's CONSOLE_AUTH_DSN (token://e2e-token?password=e2e-pass&...).
 const PASSWORD = 'e2e-pass'
+const TOKEN = 'e2e-token'
 
 // Signs in from the console's address, which opens the projects.
 async function login(page: Page): Promise<void> {
@@ -75,7 +76,7 @@ test('shows usage and cap impact for the seeded project', async ({ page }) => {
   const usage = page.getByRole('region', { name: 'Usage' })
   await expect(usage.getByText('Events', { exact: true })).toBeVisible()
   await expect(usage.locator('.recharts-bar-rectangle').first()).toBeVisible()
-  // cap_usage scans the dimension tables for the range: about 6s on the seeded 180 days.
+  // cap_usage reads every capped view for the range: the slowest card on the page.
   await expect(page.getByRole('region', { name: 'Cap impact' }).getByRole('row').nth(1)).toBeVisible({ timeout: 20_000 })
 })
 
@@ -119,4 +120,44 @@ test('adds a breakdown from the attributes the seeded project received, then rem
   await breakdowns.getByRole('button', { name: 'Remove plan' }).click()
   await page.getByRole('button', { name: 'Remove breakdown' }).click()
   await expect(breakdowns.getByRole('row', { name: /plan/ })).toHaveCount(0)
+})
+
+/** Creates a project over REST, archived afterwards so it leaves the grid to the other specs. */
+async function createProject(request: APIRequestContext, name: string): Promise<number> {
+  const res = await request.post('/api/projects', { headers: { Authorization: `Bearer ${TOKEN}` }, data: { name, skip_key: true } })
+  expect(res.ok(), await res.text()).toBeTruthy()
+  return ((await res.json()) as { project_id: number }).project_id
+}
+
+test('drags a project card to a new place, which a reload keeps', async ({ page, request }) => {
+  const stamp = Date.now()
+  const names = [`order-a-${stamp}`, `order-b-${stamp}`]
+  const ids = [await createProject(request, names[0]), await createProject(request, names[1])]
+  try {
+    await login(page)
+    await page.goto('/app/projects')
+    const mine = async () =>
+      (await page.getByRole('article').evaluateAll((els) => els.map((e) => e.getAttribute('aria-label')))).filter((n) =>
+        names.includes(n ?? '')
+      )
+    await expect.poll(mine).toEqual(names)
+
+    // Raw mouse moves: dnd-kit reads pointer events, and the first move
+    // clears its 6px activation distance.
+    const from = (await page.getByRole('article', { name: names[1] }).boundingBox())!
+    const to = (await page.getByRole('article', { name: names[0] }).boundingBox())!
+    await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(from.x + from.width / 2 - 15, from.y + from.height / 2, { steps: 5 })
+    await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 10 })
+    await page.mouse.up()
+    await expect.poll(mine).toEqual([names[1], names[0]])
+    // The drop opened nothing.
+    await expect(page).toHaveURL(/\/app\/projects$/)
+
+    await page.reload()
+    await expect.poll(mine).toEqual([names[1], names[0]])
+  } finally {
+    for (const id of ids) await request.post(`/api/projects/${id}/archive`, { headers: { Authorization: `Bearer ${TOKEN}` } })
+  }
 })

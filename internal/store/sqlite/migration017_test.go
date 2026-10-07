@@ -56,13 +56,16 @@ INSERT INTO agg_identity_daily (project_id, day, kind, id, actors, users, views,
 	if hasColumn(t, db, "projects", "identity") {
 		t.Fatal("projects.identity survived migration 017")
 	}
-	ps, _, err := db.LoadRegistry(ctx)
-	if err != nil {
+	// The registry's columns, read as LoadRegistry read them at 017
+	// (LoadRegistry itself now orders by 034's position).
+	var count int
+	var name, origins, attrs string
+	if err := db.db.QueryRow(`SELECT (SELECT COUNT(*) FROM projects), name, allowed_origins, attributes
+		FROM projects WHERE id = 1`).Scan(&count, &name, &origins, &attrs); err != nil {
 		t.Fatal(err)
 	}
-	if len(ps) != 2 || ps[0].ID != 1 || ps[0].Name != "Blog" ||
-		ps[0].AllowedOrigins != `["https://blog.example.com"]` || ps[0].Attributes != `["plan"]` {
-		t.Fatalf("registry after 017 = %+v", ps)
+	if count != 2 || name != "Blog" || origins != `["https://blog.example.com"]` || attrs != `["plan"]` {
+		t.Fatalf("registry after 017 = %d projects, 1: %q %s %s", count, name, origins, attrs)
 	}
 
 	var n int

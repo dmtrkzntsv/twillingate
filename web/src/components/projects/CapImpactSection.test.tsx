@@ -44,22 +44,30 @@ describe('CapImpactSection', () => {
     expect(spy).toHaveBeenCalledTimes(2)
   })
 
-  it('shows a skeleton first, then keeps the previous rows while a new range loads', async () => {
-    const mk = (dimension: string) => ({ project_id: 6, from: 'a', to: 'b', dimensions: [
+  it('shows a skeleton first, then keeps the previous rows while a new range loads, naming each range', async () => {
+    const mk = (dimension: string, from: string, to: string) => ({ project_id: 6, from, to, dimensions: [
       { setting: 'ATTRIBUTE_VALUES_TOP_N' as const, dimension, cap: 10, max_values_per_day: 5, max_day: '2026-09-01', days: 3, days_capped: 0, folded_share: 0 },
     ] })
     let release!: () => void
-    const second = new Promise<ReturnType<typeof mk>>((res) => { release = () => res(mk('browsers')) })
-    vi.spyOn(endpoints, 'capUsage').mockResolvedValueOnce(mk('paths')).mockReturnValueOnce(second)
-    const { client, rerender } = renderWithProviders(<CapImpactSection projectId={6} range={{ from: 'a', to: 'b' }} />)
+    const second = new Promise<ReturnType<typeof mk>>((res) => { release = () => res(mk('browsers', '2026-08-01', '2026-08-30')) })
+    vi.spyOn(endpoints, 'capUsage').mockResolvedValueOnce(mk('paths', '2026-08-24', '2026-08-30')).mockReturnValueOnce(second)
+    const { client, rerender } = renderWithProviders(<CapImpactSection projectId={6} range={{ from: '2026-08-24', to: '2026-08-30' }} />)
     const region = screen.getByRole('region', { name: 'Cap impact' })
     expect(region.querySelector('[data-slot="skeleton"]')).not.toBeNull()
     expect(screen.queryByText(/Couldn't load/)).not.toBeInTheDocument()
     expect(await screen.findByText('paths')).toBeInTheDocument()
-    rerender(<QueryClientProvider client={client}><TooltipProvider><CapImpactSection projectId={6} range={{ from: 'c', to: 'd' }} /></TooltipProvider></QueryClientProvider>)
+    const heading = screen.getByRole('heading', { name: /Cap impact/ })
+    expect(heading).toHaveTextContent(/Aug 24 – Aug 30/)
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    rerender(<QueryClientProvider client={client}><TooltipProvider><CapImpactSection projectId={6} range={{ from: '2026-08-01', to: '2026-08-30' }} /></TooltipProvider></QueryClientProvider>)
     await waitFor(() => expect(endpoints.capUsage).toHaveBeenCalledTimes(2))
+    // The old rows stay under the old range's name; the new range is on its way.
     expect(screen.getByText('paths')).toBeInTheDocument()
+    expect(heading).toHaveTextContent(/Aug 24 – Aug 30/)
+    expect(screen.getByRole('status')).toHaveTextContent(/Loading Aug 1 – Aug 30/)
     release()
     expect(await screen.findByText('browsers')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /Cap impact/ })).toHaveTextContent(/Aug 1 – Aug 30/)
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
   })
 })

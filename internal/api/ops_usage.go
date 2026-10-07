@@ -236,8 +236,13 @@ func (h *host) usageFor(ctx context.Context, p *manage.Project, fromD, toD civil
 		ps.UnusedAttributes = &unused
 	}
 	if withUnused && len(p.Attributes) > 0 {
-		res, err := h.run(ctx, `SELECT attr_key FROM v_product_attrs WHERE project_id = ?1 AND day BETWEEN ?2 AND ?3
-			UNION SELECT attr_key FROM v_measures_attrs WHERE project_id = ?1 AND day BETWEEN ?2 AND ?3`, p.ID, from, to)
+		// Not v_product_attrs and v_measures_attrs, which rank every raw
+		// value only to yield the keys: received_attributes holds every key
+		// the raw days carried (written at ingest), and the aggregates the
+		// declared keys of the days rolled up.
+		res, err := h.run(ctx, `SELECT attr_key FROM received_attributes WHERE project_id = ?1 AND day BETWEEN ?2 AND ?3
+			UNION SELECT attr_key FROM agg_product_attrs WHERE project_id = ?1 AND day BETWEEN ?2 AND ?3
+			UNION SELECT attr_key FROM agg_measures_attrs WHERE project_id = ?1 AND day BETWEEN ?2 AND ?3`, p.ID, from, to)
 		if err != nil {
 			return projectUsage{}, err
 		}

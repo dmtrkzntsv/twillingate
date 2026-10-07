@@ -33,6 +33,16 @@ export function formatDay(day: string, now: Date = new Date()): string {
 }
 
 /**
+ * A range of UTC days as a person says it: "Sep 30 – Oct 6", "Oct 6" for
+ * one day, years shown when the range leaves `now`'s year.
+ */
+export function formatSpan(from: string, to: string, now: Date = new Date()): string {
+  const year = now.toISOString().slice(0, 4)
+  const fmt = from.slice(0, 4) === year && to.slice(0, 4) === year ? formatTick : formatHeading
+  return from === to ? fmt(from) : `${fmt(from)} – ${fmt(to)}`
+}
+
+/**
  * How much the database grew over the measured days of a series:
  * "+12.3 MB since Sep 4", "−1.0 MB since Sep 4". Null with fewer than two
  * measured days, or none of them changed.

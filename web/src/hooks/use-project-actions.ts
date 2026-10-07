@@ -11,6 +11,8 @@ export interface ProjectActions {
   issueKey(id: number, label: string): Promise<IssuedKey | undefined>
   disableKey(id: number, label: string): Promise<boolean | undefined>
   enableKey(id: number, label: string): Promise<boolean | undefined>
+  /** Puts project `id` right after project `after` (0 first); no toast unless refused. Resolves true once the list has the new order. */
+  move(id: number, after: number): Promise<boolean>
   /** True while an action runs; buttons wait on it. */
   pending: boolean
 }
@@ -46,13 +48,28 @@ export function useProjectActions(): ProjectActions {
         if (changed.includes('projects')) await refetches[changed.indexOf('projects')]
         return out
       } catch (err) {
-        if (err instanceof ApiError) toast.error(err.message)
-        else if (err instanceof TypeError) toast.error("Couldn't reach the server")
-        else toast.error(err instanceof Error ? err.message : String(err))
+        toastError(err)
         return undefined
       } finally {
         setPending(false)
       }
+    },
+    [client]
+  )
+
+  // A drag's drop: the dropped order shows (useReorder) until the list
+  // refetches, so a success says nothing, and pending stays off, leaving
+  // the page's buttons alone.
+  const move = useCallback(
+    async (id: number, after: number) => {
+      try {
+        await endpoints.moveProject(id, after)
+      } catch (err) {
+        toastError(err)
+        return false
+      }
+      await client.invalidateQueries({ queryKey: ['projects'] })
+      return true
     },
     [client]
   )
@@ -66,5 +83,12 @@ export function useProjectActions(): ProjectActions {
     issueKey: (id, label) => run(() => endpoints.issueKey(id, label), `Issued ${label}`, KEY_WRITE),
     disableKey: (id, label) => run(async () => (await endpoints.disableKey(id, label), true), `Disabled ${label}`, KEY_WRITE),
     enableKey: (id, label) => run(async () => (await endpoints.enableKey(id, label), true), `Enabled ${label}`, KEY_WRITE),
+    move,
   }
+}
+
+function toastError(err: unknown) {
+  if (err instanceof ApiError) toast.error(err.message)
+  else if (err instanceof TypeError) toast.error("Couldn't reach the server")
+  else toast.error(err instanceof Error ? err.message : String(err))
 }

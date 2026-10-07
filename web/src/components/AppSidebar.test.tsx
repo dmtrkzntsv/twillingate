@@ -276,7 +276,7 @@ describe('Projects group', () => {
 })
 
 describe('Shares link', () => {
-  it('follows Projects and is active on /shares', () => {
+  it('sits in the footer under Archive and is active on /shares', () => {
     renderWithProviders(
       <MemoryRouter initialEntries={['/shares']}>
         <SidebarProvider>
@@ -287,7 +287,9 @@ describe('Shares link', () => {
     const shares = screen.getByRole('link', { name: 'Shares' })
     expect(shares).toHaveAttribute('href', '/shares')
     expect(shares).toHaveAttribute('data-active', 'true')
-    expect(screen.getByRole('link', { name: 'Projects' }).compareDocumentPosition(shares) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    const footer = document.querySelector('[data-sidebar="footer"]') as HTMLElement
+    expect(footer).toContainElement(shares)
+    expect(within(footer).getByRole('link', { name: 'Archive' }).compareDocumentPosition(shares) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
   it('is absent in dev mode, as Projects is', () => {
@@ -343,13 +345,15 @@ describe('Dashboards group', () => {
 })
 
 describe('AppSidebar footer', () => {
-  it('holds Archive, above Log out', () => {
+  it('holds Archive, then Shares, above Log out', () => {
     localStorage.setItem('twillingate.token', 'pasted')
     renderSidebar([{ dashboard_id: 1, title: 'Views', owner: 'system', group_id: 1, widgets: 1, sidebar: true, project_tab: false }])
     const footer = document.querySelector('[data-sidebar="footer"]') as HTMLElement
     const archive = within(footer).getByRole('link', { name: 'Archive' })
+    const shares = within(footer).getByRole('link', { name: 'Shares' })
     const logOut = within(footer).getByRole('button', { name: 'Log out' })
-    expect(archive.compareDocumentPosition(logOut) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(archive.compareDocumentPosition(shares) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(shares.compareDocumentPosition(logOut) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
   it('keeps Archive without a login to forget', () => {

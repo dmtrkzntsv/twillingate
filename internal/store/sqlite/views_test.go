@@ -568,9 +568,13 @@ func seedDeclaredProject(t *testing.T, db *DB, attrs []string) int64 {
 	if err != nil {
 		t.Fatal(err)
 	}
-	id, err := db.CreateProject(context.Background(), store.RegistryProject{
-		Name: "Blog", AllowedOrigins: "[]", Attributes: string(b)},
-		store.AuditEntry{Actor: "test", Action: "project.create"})
+	// Plain SQL, not CreateProject: the migration tests call this on
+	// schemas before 034's sort_key, which the store now writes.
+	res, err := db.db.Exec(`INSERT INTO projects (name, allowed_origins, attributes) VALUES ('Blog', '[]', ?)`, string(b))
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := res.LastInsertId()
 	if err != nil {
 		t.Fatal(err)
 	}

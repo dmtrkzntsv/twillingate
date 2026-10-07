@@ -85,6 +85,16 @@ export function reorder(ids: number[], activeId: number, overId: number): { to: 
   return { to }
 }
 
+/**
+ * The `after` that moves `id` to index `to` of `ids` (the index after
+ * removing it, as `reorder` gives it): 0 for first, else the id before
+ * that place.
+ */
+export function afterAt(ids: number[], id: number, to: number): number {
+  const rest = ids.filter((x) => x !== id)
+  return to <= 0 ? 0 : (rest[Math.min(to, rest.length) - 1] ?? 0)
+}
+
 /** Where to go after archiving `id`: the next live tab, else the previous, else '/dashboards' (D12). */
 export function nextAfterArchive(tabs: DashboardTab[], id: number): string {
   const idx = tabs.findIndex((t) => t.dashboard_id === id)

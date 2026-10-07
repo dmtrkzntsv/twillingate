@@ -54,7 +54,8 @@ Projects live in a registry table, managed through the CLI or, over the API
 | --- | --- | --- | --- |
 | Create a project | `twillingate project create` | `create_project` | `{name, allowed_origins, attributes}`; `name` required; `skip_key: true` issues no first key; returns the new `project_id` |
 | Change one | `twillingate project update` | `update_project` | `{project_id, …}`; merges, so an omitted field keeps its value and `allowed_origins: []` clears the list |
-| List them | `twillingate project list` | `list_projects` | none |
+| List them | `twillingate project list` | `list_projects` | none; in the order you set, a new project last |
+| Reorder them | `twillingate project move` | `move_project` | `{project_id, after}`; `after` is the project to follow, archived ones included, `0` puts it first. The console's Projects page does the same by dragging a card |
 | Archive / restore | `twillingate project archive` / `restore` | `archive_project` / `restore_project` | `{project_id}` |
 | Issue an ingest key | `twillingate key issue` | `issue_ingest_key` | `{project_id, label}`; returns the key **and** a paste-ready snippet |
 | List keys | `twillingate key list` | `list_ingest_keys` | `{project_id}` |
@@ -76,6 +77,7 @@ twillingate project create -name "My App" \
 twillingate project list                                 # id  name
 twillingate project update -id 1 -origin https://myapp.com -origin https://www.myapp.com
 twillingate project update -id 1 -clear-origins
+twillingate project move -id 3 -after 1                  # 3 right after 1; -after 0: first
 twillingate project archive -id 1                        # reversible: `project restore`
 twillingate key issue -project-id 1 -label web
 twillingate key list -project-id 1
@@ -1192,7 +1194,7 @@ form submissions](#collect-form-submissions).
 
 ## Answer questions with the data
 
-A connected session gets fifty-five tools: the twenty-two below, the nine
+A connected session gets fifty-six tools: the twenty-three below, the nine
 in [Collect form submissions](#collect-form-submissions), and twenty-four
 that build the dashboards served at `/app/`, which are documented in
 `docs://reporting` ([reporting.md](reporting.md)). To build or change a
@@ -1204,7 +1206,7 @@ take `project_id`, `from` and `to` as `YYYY-MM-DD` unless noted.
 
 | Tool | Extra parameters | Returns |
 | --- | --- | --- |
-| `list_projects` | none | Every project with its `project_id`, name, `archived`, `allowed_origins` and declared `attributes`. Call this first — every other tool needs a `project_id` |
+| `list_projects` | none | Every project with its `project_id`, name, `archived`, `allowed_origins` and declared `attributes`, in the order `move_project` sets. Call this first — every other tool needs a `project_id` |
 | `limits` | none (no `project_id`) | The limits in force, each with a `group`, `name`, `value`, `unit` (`days`, `bytes`, `characters`, `seconds`; absent for a count) and `description`, in three groups: `retention` (`RETENTION_EVENTS_RAW_DAYS`, `RETENTION_EVENTS_AGGREGATE_DAYS`, `RETENTION_ARCHIVED_DAYS`, `FORMS_DRAFT_DAYS`), `caps` (`ATTRIBUTE_VALUES_TOP_N`, which caps views breakdowns and attribute values alike, `ATTRIBUTE_BREAKDOWNS_MAX`, `IDENTITIES_TOP_N`) and `ingest`, the wire format's fixed [limits](#limits) and [form limits](#form-submissions). A setting carries its `setting` and `default`; a fixed limit neither. `zero` says what 0 means where it is not the number (`no cap`, `kept forever`) |
 | `cap_usage` | `from`, `to` (optional: the last 30 days) | Per capped dimension — views breakdowns and kinds, attribute keys, `users`/`groups` — the busiest day's values against the `cap`, `days` with data, `days_capped` (an `(other)` row; for users and groups, the cap reached) and `folded_share` |
 | `received_attributes` | `project_id` (optional), `from`, `to` (optional: the last 30 days) | The keys the project's product events and measures carried — each key's `events` and `max_values` (the busiest event's distinct values on one day, against `ATTRIBUTE_VALUES_TOP_N`), counted by the daily pass so today's arrive the night after (a key first received today has `events` 0 and `max_values` `null`), `received` and `declared` — for the 500 busiest keys plus every declared key (declared keys none carried with `received` false), `keys_total` (the distinct keys received), `values_cap`, `breakdowns_used` and `breakdowns_max` (`ATTRIBUTE_BREAKDOWNS_MAX`). Kept for the raw window only. Without `project_id`, the budget only |
@@ -1218,10 +1220,10 @@ take `project_id`, `from` and `to` as `YYYY-MM-DD` unless noted.
 | `identities` | `kind` (`user` or `group`), `limit` | Per-user or per-group activity with display names. **Surfaces personal data on projects whose clients send ids** |
 | `query` | `sql` | A single read-only `SELECT`/`WITH` against the views. Row-capped and time-limited; `meta` and SQLite's internal tables (`sqlite_master`, `dbstat`, …) are refused, whether named directly or as a quoted or single-quoted string. Non-ASCII names must be quoted |
 
-**Managing** — `create_project`, `update_project`, `archive_project`,
-`restore_project`, `issue_ingest_key`, `list_ingest_keys`, `enable_ingest_key`,
-`disable_ingest_key` and `integration_guide`, all described in [Set up a
-project](#set-up-a-project).
+**Managing** — `create_project`, `update_project`, `move_project`,
+`archive_project`, `restore_project`, `issue_ingest_key`, `list_ingest_keys`,
+`enable_ingest_key`, `disable_ingest_key` and `integration_guide`, all
+described in [Set up a project](#set-up-a-project).
 
 **Resources:** `docs://twillingate` (this document), `docs://deployment`
 (installing and configuring the collector), `docs://reporting` (building
@@ -1268,6 +1270,7 @@ curl -H "Authorization: Bearer $TOKEN" \
 | `GET` | `/api/received-attributes` | `received_attributes` | query: `project_id`, `from`, `to` |
 | `POST` | `/api/projects` | `create_project` | body: `name`, `allowed_origins`, `attributes`, `skip_key` → 201 |
 | `PATCH` | `/api/projects/{project_id}` | `update_project` | body: fields to change (merge); `allowed_origins: []` clears |
+| `POST` | `/api/projects/{project_id}/move` | `move_project` | body: `after` |
 | `POST` | `/api/projects/{project_id}/archive` | `archive_project` | — |
 | `POST` | `/api/projects/{project_id}/restore` | `restore_project` | — |
 | `GET` | `/api/keys` | `list_ingest_keys` | query: `project_id` |

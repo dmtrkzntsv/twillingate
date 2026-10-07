@@ -49,9 +49,7 @@ export default function Project({ tab }: { tab?: 'forms' } = {}) {
       <TopBar>
         <Crumbs items={[{ label: 'Projects', to: '/projects' }, { label: project?.name ?? String(param) }]} />
       </TopBar>
-      <div
-        className={`mx-auto flex w-full flex-1 flex-col gap-6 p-3 sm:p-4 lg:p-6 ${dashId === SETUP_ID || (dashId === FORMS_ID && params.name === undefined) ? 'max-w-[1200px]' : 'max-w-[1600px]'}`}
-      >
+      <div className="mx-auto flex w-full max-w-[1600px] flex-1 flex-col gap-6 p-3 sm:p-4 lg:p-6">
         {!project ? (
           (!valid || !isLoading) && <p className="text-sm text-muted-foreground">No project {param}</p>
         ) : (
