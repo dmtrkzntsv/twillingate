@@ -19,15 +19,17 @@ Date: 2026-10-05
 
 ## Decisions
 
-- **D1. Each submission is a record and a conversion, deleted
-  together.** An accepted submission, on a draft or an approved form,
-  writes a row in a new `submissions` table (the fields, kept until
-  deleted) and a `$form_submit` product event in `events` (the form
-  name, the page and the actor, no field values), so conversions show in
-  dashboards, funnels and retention like any product event; the row is
-  what the owner reads and exports. The event carries the submission's
-  `id` and `day`, so `events`' key `(family, project_id, day, id)` finds
-  it exactly.
+- **D1. Each submission is a record; an approved form's is also a
+  conversion, deleted with it.** An accepted submission writes a row in
+  a new `submissions` table (the fields, kept until deleted). On an
+  approved form (D2) it also writes a `$form_submit` product event in
+  `events` (the form name, the page and the actor, no field values), so
+  conversions show in dashboards, funnels and retention like any product
+  event; the row is what the owner reads and exports. A draft's
+  submissions write no event, even once the form is approved: spam stays
+  out of the analytics, at the cost of a new form's first days. The
+  event carries the submission's `id` and `day`, so `events`' key
+  `(family, project_id, day, id)` finds it exactly.
 
   Deleting a submission (by id, filters or search, or with its purged
   form) deletes its event in the same transaction while the event is
@@ -37,17 +39,6 @@ Date: 2026-10-05
   stays one higher. The aggregates are not decremented: a count could
   be, the day's distinct actors could not, and two numbers that
   disagree are harder to explain than "older totals are final".
-
-- **D1a. Archiving a draft deletes its events at once.** Whether it
-  expired (D2) or was archived by hand, a draft's `$form_submit` events
-  are deleted when it is archived; its submissions stay until the purge
-  (D11). This is what keeps a spam draft out of the analytics: its
-  conversions show for at most `FORMS_DRAFT_DAYS`, then disappear, so
-  the last week's conversion counts can drop. Restoring the draft brings
-  back its submissions, not their events. Approving keeps them: a new
-  form's first days count. For every expiring draft's events to still be
-  raw, `FORMS_DRAFT_DAYS` must be below `RETENTION_EVENTS_RAW_DAYS`
-  (D10a).
 
 - **D2. A form is captured as a draft and must be approved.** The first
   submission naming an unknown form creates its row as a `draft` and is
@@ -185,10 +176,11 @@ Date: 2026-10-05
      `409`, and nothing is written.
   5. The submission is written: the form's `fields` merged, then the row
      (`INSERT OR IGNORE` on `id`, so a retried `$id` stores once), in one
-     transaction with its `$form_submit` event, **written directly, not
-     through `pipeline.Buffer`**, which drops its oldest entries when
-     full and flushes later: a submission deleted seconds after it
-     arrived must find its event already there.
+     transaction, with its `$form_submit` event on an approved form,
+     **written directly, not through `pipeline.Buffer`**, which drops
+     its oldest entries when full and flushes later: a submission
+     deleted seconds after it arrived must find its event already
+     there.
 
 - **D6. The form path redirects; twillingate renders no page.** The
   target is the first one allowed of:
@@ -305,18 +297,16 @@ Date: 2026-10-05
   forms per project or submissions per form.
 
 - **D10a. `FORMS_DRAFT_DAYS`** (default 7, at least 1) sets a draft's
-  window. It must be below `RETENTION_EVENTS_RAW_DAYS` (D1a); config
-  refuses to start otherwise, naming both. It is read when a draft is
+  window. It is read when a draft is
   created or restored, so changing it moves no existing `draft_until`.
   `limits` lists it under `retention`.
 
 - **D11. Archiving and purging.** Archiving a form hides it and its
   submissions from lists, export and counts and refuses new submissions;
   restoring brings all back. The daily pass first archives every draft
-  past `draft_until` and deletes its events (D1a; audit actor
-  `retention`, `form.expire`), then purges a form archived longer than
-  `RETENTION_ARCHIVED_DAYS` with its submissions and whatever of their
-  events is still raw (in
+  past `draft_until` (audit actor `retention`, `form.expire`), then
+  purges a form archived longer than `RETENTION_ARCHIVED_DAYS` with its
+  submissions and whatever of their events is still raw (in
   `PurgeArchived`, beside dashboards), one transaction and audit row per
   form. Submissions are otherwise kept until deleted. Archiving the
   project hides its forms; purging it deletes them.
@@ -381,7 +371,7 @@ No new package; the archtest rank table is unchanged.
 | --- | --- |
 | `store` | `Form`, `Submission` row types and their methods |
 | `store/sqlite` | `031_forms.sql`; `projectTables`; `PurgeArchived` |
-| `server` | `forms.go`: the endpoint, decoding, D6, field filtering; takes a `server.FormStore` (as `NameStore` today), passed by `app`, which writes the submission and its `$form_submit` in one transaction |
+| `server` | `forms.go`: the endpoint, decoding, D6, field filtering; takes a `server.FormStore` (as `NameStore` today), passed by `app`, which writes the submission and, on an approved form, its `$form_submit` in one transaction |
 | `wire` | the D10 limits |
 | `config` | `FORMS_DRAFT_DAYS` (D10a) |
 | `jobs` | expire drafts before `PurgeArchived` (D11) |
@@ -408,9 +398,9 @@ No new package; the archtest rank table is unchanged.
 - `docs/twillingate.md`: the endpoint and both body styles, the redirect
   and fragment rules with the `Referer` caveat, `$form_submit` among the
   reserved event names, the SDK attribute, method and event, the tools,
-  routes and CLI, the limits; that deleting a submission removes its
-  conversion from the raw window only, and that an expired draft's
-  conversions disappear from the last `FORMS_DRAFT_DAYS`.
+  routes and CLI, the limits; that a draft's submissions never count as
+  conversions, and that deleting a submission removes its conversion
+  from the raw window only.
 - `integration_guide`: a forms section.
 - `deploy/UPGRADES.md`: 031, additive.
 - `docs/deployment.md`: `FORMS_DRAFT_DAYS`.
@@ -419,22 +409,22 @@ No new package; the archtest rank table is unchanged.
 
 - `migration031_test.go`; store tests for idempotent ids, `fields`
   merging, project purge and archived-form purge.
-- Jobs: a draft past `draft_until` is archived by the daily pass, its
-  events deleted at once, and purged `RETENTION_ARCHIVED_DAYS` later
-  with its submissions; an approved form is never expired; restore gives
-  a fresh window and no events back.
+- Jobs: a draft past `draft_until` is archived by the daily pass and
+  purged `RETENTION_ARCHIVED_DAYS` later with its submissions; an
+  approved form is never expired; restore gives a fresh window.
 - Store: deleting a submission deletes its raw event; a rolled-up day's
-  aggregates are untouched; a manual draft archive deletes its events.
-- Config: `FORMS_DRAFT_DAYS` ≥ `RETENTION_EVENTS_RAW_DAYS` refused.
+  aggregates are untouched.
 - `readsql`: a refused name passed to `Open` is refused by `Check` in
   every form `meta` is (bare, quoted, as a string); `query` and widget
   SQL reading `submissions` are refused.
 - Server: both body styles and multipart; key from the query; the
   Origin check; the D6 order and every open-redirect case (foreign
   origin, `javascript:`, relative URL, bare `*`, empty
-  `allowed_origins`); the fragments; a draft keeps every field; a draft past `draft_until`, a form past
+  `allowed_origins`); the fragments; a draft keeps every field and
+  writes no `$form_submit`; a draft past `draft_until`, a form past
   `closes_at` and an archived form refused; approved-form field
-  filtering; the limits; `$form_submit` written with the submission, same `id`; the
+  filtering; the limits; on an approved form `$form_submit` written with the
+  submission, same `id`; the
   `visit` snapshot.
 - API: tool tests, including `approve_form` without fields refused and
   `expected_fields` on a draft refused; `docs_sync_test`, `coverage_test`, `openapi_test`
