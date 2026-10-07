@@ -23,7 +23,7 @@ type Project struct {
 	AllowedOrigins []string
 	Attributes     []string
 	Archived       bool
-	SortKey        string // its place in the order; "" until the first move
+	SortKey        string // its place in the order
 }
 
 type keyOwner struct {
@@ -36,7 +36,7 @@ type keyOwner struct {
 // load; every mutation builds a fresh one.
 type Snapshot struct {
 	byID    map[int64]*Project
-	ordered []*Project // keyed by sort key, then unkeyed by id
+	ordered []*Project // by sort key, then id
 	keys    []keyOwner // active keys of non-archived projects only
 	origins map[int64]originSet
 }

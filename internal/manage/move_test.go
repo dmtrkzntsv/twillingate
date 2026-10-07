@@ -66,9 +66,8 @@ func keysOf(ctx context.Context, reg *Registry) map[int64]string {
 	return out
 }
 
-// The first move keys every project; once all are keyed a move rewrites
-// only the moved one. A project created later is unkeyed, last, and the
-// next move keys everyone again in the order shown.
+// Every project is keyed from its creation, and a move rewrites only the
+// moved project's key; a project created afterwards comes last.
 func TestMoveProjectKeys(t *testing.T) {
 	ops, _, reg := newOps(t)
 	ctx := context.Background()
@@ -81,41 +80,28 @@ func TestMoveProjectKeys(t *testing.T) {
 		ids = append(ids, p.ID)
 	}
 	a, b, c := ids[0], ids[1], ids[2]
-	if err := ops.MoveProject(ctx, "api", c, a); err != nil {
-		t.Fatal(err)
-	}
 	before := keysOf(ctx, reg)
 	for id, k := range before {
 		if k == "" {
-			t.Fatalf("project %d unkeyed after the first move: %v", id, before)
+			t.Fatalf("project %d created unkeyed: %v", id, before)
 		}
 	}
-	if err := ops.MoveProject(ctx, "api", b, 0); err != nil {
+	if err := ops.MoveProject(ctx, "api", c, 0); err != nil {
 		t.Fatal(err)
 	}
 	after := keysOf(ctx, reg)
-	if after[a] != before[a] || after[c] != before[c] || after[b] == before[b] {
-		t.Errorf("keys %v -> %v; want only b's to change", before, after)
+	if after[a] != before[a] || after[b] != before[b] || after[c] == before[c] {
+		t.Errorf("keys %v -> %v; want only c's to change", before, after)
 	}
-	if got := snapshotOrder(ctx, reg); !reflect.DeepEqual(got, []int64{b, a, c}) {
-		t.Errorf("order = %v, want %v", got, []int64{b, a, c})
+	if got := snapshotOrder(ctx, reg); !reflect.DeepEqual(got, []int64{c, a, b}) {
+		t.Errorf("order = %v, want %v", got, []int64{c, a, b})
 	}
-
 	d, err := ops.CreateProject(ctx, "cli", ProjectSpec{Name: "d"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := snapshotOrder(ctx, reg); !reflect.DeepEqual(got, []int64{b, a, c, d.ID}) {
-		t.Fatalf("order = %v, want the new project last", got)
-	}
-	if err := ops.MoveProject(ctx, "api", a, c); err != nil {
-		t.Fatal(err)
-	}
-	if got := snapshotOrder(ctx, reg); !reflect.DeepEqual(got, []int64{b, c, a, d.ID}) {
-		t.Errorf("order = %v, want %v", got, []int64{b, c, a, d.ID})
-	}
-	if k := keysOf(ctx, reg)[d.ID]; k == "" {
-		t.Error("the new project is still unkeyed after a move")
+	if got := snapshotOrder(ctx, reg); !reflect.DeepEqual(got, []int64{c, a, b, d.ID}) {
+		t.Errorf("order = %v, want the new project last", got)
 	}
 }
 

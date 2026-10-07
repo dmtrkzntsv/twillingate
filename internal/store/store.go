@@ -218,7 +218,7 @@ type RegistryProject struct {
 	AllowedOrigins string // JSON array, "[]" if none
 	Attributes     string // JSON array, "[]" if none declared
 	Archived       bool
-	SortKey        string // "" until the first move (migration 034)
+	SortKey        string // its place in the order (migration 034)
 }
 
 // ProjectSortKey is one project's place in the order (migration 034).

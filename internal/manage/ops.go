@@ -322,9 +322,7 @@ func (o *Ops) RestoreProject(ctx context.Context, actor string, id int64) error 
 // MoveProject puts project id right after project after in the order
 // every listing shows, archived projects included (0: first). Moving a
 // project after itself changes nothing. The project takes a fractional key
-// between its new neighbours, so one row changes; while any project is
-// still unkeyed (none was moved since migration 034, or one was created
-// since), every project is keyed first in the order shown, as one write.
+// between its new neighbours, so one row changes.
 func (o *Ops) MoveProject(ctx context.Context, actor string, id, after int64) error {
 	o.moveMu.Lock()
 	defer o.moveMu.Unlock()
@@ -356,8 +354,9 @@ func (o *Ops) MoveProject(ctx context.Context, actor string, id, after int64) er
 }
 
 // moveKeys is the keys that put project id before rest[i]: one key
-// between its neighbours, or, when a neighbour is unkeyed or the two
-// leave no key between them, fresh keys for the whole new order.
+// between its neighbours or, when they leave none between them (equal
+// keys, written by hand or by two processes at once), fresh keys for the
+// whole new order.
 func moveKeys(rest []*Project, i int, id int64) ([]store.ProjectSortKey, error) {
 	var prev, next string
 	if i > 0 {
@@ -366,11 +365,8 @@ func moveKeys(rest []*Project, i int, id int64) ([]store.ProjectSortKey, error) 
 	if i < len(rest) {
 		next = rest[i].SortKey
 	}
-	keyed := !slices.ContainsFunc(rest, func(p *Project) bool { return p.SortKey == "" })
-	if keyed {
-		if k, err := sortkey.Between(prev, next); err == nil {
-			return []store.ProjectSortKey{{ID: id, SortKey: k}}, nil
-		}
+	if k, err := sortkey.Between(prev, next); err == nil {
+		return []store.ProjectSortKey{{ID: id, SortKey: k}}, nil
 	}
 	order := make([]int64, 0, len(rest)+1)
 	for j, p := range rest {
