@@ -212,7 +212,9 @@ func TestWriteSubmissionApprovedKeepsExpectedAndWritesEvent(t *testing.T) {
 	// The event is found by the key a later delete uses, and its ts is the
 	// submission's received_at.
 	var recv string
-	db.db.QueryRow(`SELECT received_at FROM submissions WHERE project_id=1 AND id='s1'`).Scan(&recv)
+	if err := db.db.QueryRow(`SELECT received_at FROM submissions WHERE project_id=1 AND id='s1'`).Scan(&recv); err != nil {
+		t.Fatal(err)
+	}
 	if recv != ts {
 		t.Fatalf("received_at %q != event ts %q", recv, ts)
 	}
@@ -230,7 +232,7 @@ func TestWriteSubmissionApprovedKeepsExpectedAndWritesEvent(t *testing.T) {
 	}
 }
 
-// TestWriteSubmissionEventSurvivesRetryAfterApproval covers a JSON retry
+// TestWriteSubmissionRetryAfterApprovalWritesNoEvent covers a JSON retry
 // whose first attempt was stored as a draft: one row, still no event.
 func TestWriteSubmissionRetryAfterApprovalWritesNoEvent(t *testing.T) {
 	db := newTestDB(t)
@@ -269,7 +271,9 @@ func TestWriteSubmissionRefusedWhenClosed(t *testing.T) {
 			subs := countRows(t, db, `SELECT COUNT(*) FROM submissions`)
 			evs := countRows(t, db, `SELECT COUNT(*) FROM events`)
 			var fieldsBefore, lastBefore string
-			db.db.QueryRow(`SELECT fields, COALESCE(last_submitted_at,'') FROM forms`).Scan(&fieldsBefore, &lastBefore)
+			if err := db.db.QueryRow(`SELECT fields, COALESCE(last_submitted_at,'') FROM forms`).Scan(&fieldsBefore, &lastBefore); err != nil {
+				t.Fatal(err)
+			}
 
 			n := newSub("s1", map[string]string{"a": "1", "new": "x"})
 			_, inserted, err := db.WriteSubmission(ctx, n)
@@ -281,7 +285,9 @@ func TestWriteSubmissionRefusedWhenClosed(t *testing.T) {
 				t.Fatal("a refused submission wrote rows")
 			}
 			var fieldsAfter, lastAfter string
-			db.db.QueryRow(`SELECT fields, COALESCE(last_submitted_at,'') FROM forms`).Scan(&fieldsAfter, &lastAfter)
+			if err := db.db.QueryRow(`SELECT fields, COALESCE(last_submitted_at,'') FROM forms`).Scan(&fieldsAfter, &lastAfter); err != nil {
+				t.Fatal(err)
+			}
 			if fieldsAfter != fieldsBefore || lastAfter != lastBefore {
 				t.Fatal("a refused submission changed the form")
 			}
@@ -289,7 +295,7 @@ func TestWriteSubmissionRefusedWhenClosed(t *testing.T) {
 	}
 }
 
-// TestWriteSubmissionRefusedFirstSubmissionLeavesNoForm: a brand-new form
+// TestWriteSubmissionDraftUntilInPastRefusesAndRollsBack: a brand-new form
 // is never refused (its draft_until is in the future), but a refusal must
 // not leave a half-created row either way: the transaction rolls back.
 func TestWriteSubmissionDraftUntilInPastRefusesAndRollsBack(t *testing.T) {
@@ -395,5 +401,100 @@ func TestSessionVisitGapIsInclusive(t *testing.T) {
 	got, err = db.SessionVisit(ctx, 1, "user", "a2", formsNow)
 	if err != nil || got == nil || got.LandingPath != "/edge" || got.Views != 2 {
 		t.Fatalf("30m gap: %+v, %v", got, err)
+	}
+}
+
+func TestWriteSubmissionNilFieldsStoreAnObject(t *testing.T) {
+	db := newTestDB(t)
+	if _, _, err := db.WriteSubmission(context.Background(), newSub("s1", nil)); err != nil {
+		t.Fatal(err)
+	}
+	var blob string
+	if err := db.db.QueryRow(`SELECT fields FROM submissions WHERE id='s1'`).Scan(&blob); err != nil {
+		t.Fatal(err)
+	}
+	if blob != "{}" {
+		t.Fatalf("fields = %q, want {}", blob)
+	}
+	if names := formFieldNames(t, db); len(names) != 0 {
+		t.Fatalf("form fields = %v", names)
+	}
+}
+
+// TestWriteSubmissionEventShapeIsTheStores: whatever family, name,
+// attributes, id, project and ts the caller put on the event, the one
+// written is the submission's $form_submit.
+func TestWriteSubmissionEventShapeIsTheStores(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	if _, _, err := db.WriteSubmission(ctx, newSub("s0", map[string]string{"name": "Ann"})); err != nil {
+		t.Fatal(err)
+	}
+	approve(t, db, `["name"]`)
+	n := newSub("s1", map[string]string{"name": "Bob"})
+	n.Event.Family = store.FamilyViews
+	n.Event.EventName = "other"
+	n.Event.Attributes = map[string]string{"form": "wrong", "extra": "x"}
+	n.Event.ID, n.Event.ProjectID, n.Event.TS = "zzz", 9, formsNow.Add(48*time.Hour)
+	if _, _, err := db.WriteSubmission(ctx, n); err != nil {
+		t.Fatal(err)
+	}
+	var id, name, ts, attrs string
+	var project int64
+	if err := db.db.QueryRow(`SELECT id, project_id, event_name, ts, attributes FROM raw_product`).
+		Scan(&id, &project, &name, &ts, &attrs); err != nil {
+		t.Fatal(err)
+	}
+	if id != "s1" || project != 1 || name != "$form_submit" || ts != "2026-10-06T12:00:00Z" || attrs != `{"form":"contact"}` {
+		t.Fatalf("event = %q %d %q %q %q", id, project, name, ts, attrs)
+	}
+	if c := countRows(t, db, `SELECT COUNT(*) FROM raw_views`); c != 0 {
+		t.Fatalf("%d view rows", c)
+	}
+}
+
+// TestWriteSubmissionRetryOfStoredIDSucceedsAfterClose: the retry of an
+// id already stored is a success, not a refusal, once the form has closed.
+func TestWriteSubmissionRetryOfStoredIDSucceedsAfterClose(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	n := newSub("s1", map[string]string{"a": "1"})
+	if _, _, err := db.WriteSubmission(ctx, n); err != nil {
+		t.Fatal(err)
+	}
+	for _, closer := range []string{
+		`UPDATE forms SET archived_at='2026-10-06T11:00:00Z'`,
+		`UPDATE forms SET archived_at=NULL, closes_at='2026-10-06T11:00:00Z'`,
+		`UPDATE forms SET closes_at=NULL, draft_until='2026-10-06T11:00:00Z'`,
+	} {
+		execAll(t, db, closer)
+		form, inserted, err := db.WriteSubmission(ctx, n)
+		if err != nil || inserted || form.Name != "contact" {
+			t.Fatalf("%s: form=%+v inserted=%v err=%v", closer, form, inserted, err)
+		}
+		// A new id is still refused.
+		if _, _, err := db.WriteSubmission(ctx, newSub("fresh", nil)); !errors.Is(err, store.ErrFormClosed) {
+			t.Fatalf("%s: new id err = %v", closer, err)
+		}
+	}
+	if c := countRows(t, db, `SELECT COUNT(*) FROM submissions`); c != 1 {
+		t.Fatalf("%d submissions", c)
+	}
+}
+
+// TestSessionVisitNeedsACurrentSession: the newest view must be within
+// 30 minutes of `at`, the gap rule's own boundary.
+func TestSessionVisitNeedsACurrentSession(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	addView(t, db, "v1", 1, "a1", formsNow.Add(-31*time.Minute), "/old", "", "", "", "")
+	addView(t, db, "v2", 1, "a2", formsNow.Add(-30*time.Minute), "/edge", "", "", "", "")
+	got, err := db.SessionVisit(ctx, 1, "user", "a1", formsNow)
+	if err != nil || got != nil {
+		t.Fatalf("31m: %+v, %v", got, err)
+	}
+	got, err = db.SessionVisit(ctx, 1, "user", "a2", formsNow)
+	if err != nil || got == nil || got.LandingPath != "/edge" || got.Views != 1 {
+		t.Fatalf("30m: %+v, %v", got, err)
 	}
 }
