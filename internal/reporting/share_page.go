@@ -1,6 +1,7 @@
 package reporting
 
 import (
+	"bytes"
 	_ "embed"
 	"errors"
 	"html/template"
@@ -23,6 +24,23 @@ var sharePageSrc string
 
 var sharePage = template.Must(template.New("share").Parse(sharePageSrc))
 
+// The page for a share that is not there: the same frame as a live one,
+// the picture's place taken by a drawing. It names no id and says the
+// same for unknown, archived and due shares and for a malformed link, so
+// it never tells a stranger that an id once existed.
+//
+//go:embed share_missing.html
+var shareMissingSrc string
+
+var shareMissing = func() []byte {
+	var b bytes.Buffer
+	t := template.Must(template.New("missing").Parse(shareMissingSrc))
+	if err := t.Execute(&b, struct{ Icon template.HTML }{template.HTML(shareIcon)}); err != nil { //nolint:gosec // a constant
+		panic("reporting: share_missing.html: " + err.Error())
+	}
+	return b.Bytes()
+}()
+
 const shareCSP = "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 
 // shareIcon is the iceberg tile of the OAuth page (internal/api/oauth_page.html),
@@ -39,7 +57,8 @@ type sharePageData struct {
 }
 
 // SharePages serves a live share's page and images, and 404 for anything
-// else: a malformed path, an unknown, archived or due share.
+// else: a malformed path, an unknown, archived or due share. A page's 404
+// is shareMissing; an image's is plain text, which no one reads.
 func (s *Service) SharePages() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, kind := r.PathValue("file"), "page"
@@ -49,20 +68,21 @@ func (s *Service) SharePages() http.Handler {
 			id, kind = v, "1x"
 		}
 		// Only the canonical lower-case form: anything else cannot be an id.
+		page := kind == "page"
 		if u, err := uuid.Parse(id); err != nil || u.String() != id {
-			shareNotFound(w)
+			shareNotFound(w, page)
 			return
 		}
 		sh, live, err := s.LiveWidgetShare(r.Context(), id)
 		if err != nil || !live {
-			shareFailed(w, err)
+			shareFailed(w, err, page)
 			return
 		}
 		w.Header().Set("X-Content-Type-Options", "nosniff")
-		if kind != "page" {
+		if !page {
 			b, err := s.shares.image(r.Context(), id, kind == "2x", s.st.WidgetShareImage)
 			if err != nil {
-				shareFailed(w, err)
+				shareFailed(w, err, false)
 				return
 			}
 			w.Header().Set("Content-Type", "image/png")
@@ -97,17 +117,27 @@ func (s *Service) SharePages() http.Handler {
 	})
 }
 
-func shareNotFound(w http.ResponseWriter) {
+// shareNotFound answers 404: shareMissing for a page, plain text for an
+// image.
+func shareNotFound(w http.ResponseWriter, page bool) {
 	w.Header().Set("Cache-Control", "no-store")
-	http.Error(w, "not found", http.StatusNotFound)
+	if !page {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Content-Security-Policy", shareCSP)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(http.StatusNotFound)
+	_, _ = w.Write(shareMissing)
 }
 
 // shareFailed answers a failed read: 404 for a share that is not there
 // (err nil means it is there but not live), 503 for anything else, a
 // busy or broken store, whose text is not for strangers.
-func shareFailed(w http.ResponseWriter, err error) {
+func shareFailed(w http.ResponseWriter, err error, page bool) {
 	if err == nil || errors.Is(err, store.ErrNotFound) {
-		shareNotFound(w)
+		shareNotFound(w, page)
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")

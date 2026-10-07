@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nothing is shared here</title>
+<meta name="robots" content="noindex">
+<meta name="color-scheme" content="light dark">
+<style>
+*, *::before, *::after { box-sizing: border-box; }
+html { background: #f4f7fb; color: #0f1b2d; }
+body { margin: 0 auto; max-width: 1200px; min-height: 100vh; padding: 16px; font: 400 1rem/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; display: flex; flex-direction: column; }
+main { flex: 1; padding-top: 8px; }
+h1 { margin: 0 0 4px; font: 600 1.5rem/1.3 system-ui, -apple-system, "Segoe UI", sans-serif; }
+p { margin: 0 0 20px; max-width: 34em; color: #5b6b82; }
+.sea { display: block; width: 100%; height: auto; border-radius: 12px; box-shadow: 0 1px 3px rgba(15, 27, 45, .12), 0 8px 24px rgba(15, 27, 45, .08); }
+.sky-top { stop-color: #eef8ff; } .sky-low { stop-color: #a9dbfa; }
+.sea-top { stop-color: #1478c9; } .sea-low { stop-color: #062f5e; }
+.grid { stroke: #8fd3ff; stroke-opacity: .45; }
+.contour { fill: none; stroke: #8fd3ff; stroke-opacity: .55; stroke-dasharray: 2 7; stroke-linecap: round; stroke-width: 2; }
+.sounding { fill: #b9e4ff; font: 500 26px/1 system-ui, -apple-system, "Segoe UI", sans-serif; letter-spacing: .02em; }
+.waterline { fill: none; stroke: #f8fcff; stroke-opacity: .8; stroke-width: 2; }
+@media (prefers-reduced-motion: no-preference) {
+  .berg { animation: bob 7s ease-in-out infinite alternate; }
+  @keyframes bob { to { transform: translateY(9px); } }
+}
+footer { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 32px 0 8px; color: #5b6b82; font-size: .875rem; }
+footer svg { flex: none; width: 20px; height: 20px; border-radius: 4px; }
+a { color: #1478c9; }
+@media (prefers-color-scheme: dark) {
+  html { background: #0b1220; color: #e8eef7; }
+  p, footer { color: #93a3b8; }
+  a { color: #62c3f3; }
+  .sea { box-shadow: 0 0 0 1px rgba(255, 255, 255, .08), 0 8px 24px rgba(0, 0, 0, .5); }
+  .sky-top { stop-color: #0d1f38; } .sky-low { stop-color: #1b3f69; }
+  .sea-top { stop-color: #0d4f91; } .sea-low { stop-color: #020c1a; }
+  .grid { stroke-opacity: .12; }
+}
+@media (min-width: 640px) { body { padding: 32px; } h1 { font-size: 1.875rem; } }
+</style>
+</head>
+<body>
+<main>
+<h1>Nothing is shared at this link</h1>
+<p>Whoever shared it may have taken it down, or the share expired. If someone sent you this link, ask them for a new one. If you copied it, check that none of it was cut off.</p>
+<svg class="sea" viewBox="0 0 1200 630" width="1200" height="630" role="img" aria-label="An iceberg, almost all of it under water">
+<defs>
+<linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" class="sky-top"/><stop offset="1" class="sky-low"/></linearGradient>
+<linearGradient id="sea" x1="0" y1="0" x2="0" y2="1"><stop offset="0" class="sea-top"/><stop offset="1" class="sea-low"/></linearGradient>
+<linearGradient id="deep" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#54c8f7" stop-opacity=".75"/><stop offset="1" stop-color="#1478c9" stop-opacity="0"/></linearGradient>
+<linearGradient id="deeper" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#073f7c" stop-opacity=".45"/><stop offset="1" stop-color="#073f7c" stop-opacity="0"/></linearGradient>
+</defs>
+<rect width="1200" height="260" fill="url(#sky)"/>
+<path class="grid" d="M0 70H1200M0 135H1200M0 200H1200"/>
+<rect y="260" width="1200" height="370" fill="url(#sea)"/>
+<path class="contour" d="M372 300C330 380 380 520 520 588C640 640 790 600 850 500C905 410 880 320 840 280"/>
+<text class="sounding" x="862" y="438">404</text>
+<g class="berg">
+<path d="M450 260H760L812 360L738 500L612 590L494 528L414 390Z" fill="url(#deep)"/>
+<path d="M600 260L760 260L812 360L738 500L612 590Z" fill="url(#deeper)"/>
+<path d="M528 260L567 226L588 236L612 182L636 218L654 208L694 260Z" fill="#f8fcff"/>
+<path d="M528 260L567 226L588 236L562 260Z" fill="#cfe9fb"/>
+<path d="M588 236L612 182L620 240L604 260H562Z" fill="#d5f1ff"/>
+<path d="M612 182L636 218L620 240Z" fill="#2e9fe5"/>
+<path d="M636 218L654 208L672 260H620Z" fill="#62c3f3"/>
+</g>
+<path class="waterline" d="M0 260C40 254 80 266 120 260S200 254 240 260S320 266 360 260S440 254 480 260S560 266 600 260S680 254 720 260S800 266 840 260S920 254 960 260S1040 266 1080 260S1160 254 1200 260"/>
+</svg>
+</main>
+<footer>{{.Icon}}<span>Built with <a href="https://twillingate.dev" rel="noopener">twillingate.dev</a></span></footer>
+</body>
+</html>

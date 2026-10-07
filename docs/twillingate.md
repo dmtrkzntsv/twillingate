@@ -962,7 +962,8 @@ Shared widgets need no token either: `/share/<id>` (a page with no script),
 `/share/<id>.png` (1200×630) and `/share/<id>@2x.png` (2400×1260) serve the
 frozen images of a widget someone shared, which are public by design. Each
 page ends with the credit "Built with twillingate.dev", on every install. An
-unknown or archived share answers 404 on all three. See
+unknown or archived share answers 404 on all three; on the page, with a page
+that says nothing is shared at the link, the same whatever the link was. See
 [reporting.md](reporting.md#sharing-a-widget).
 
 ```bash
