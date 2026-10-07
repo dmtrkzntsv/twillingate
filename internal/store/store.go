@@ -357,9 +357,9 @@ type Store interface {
 	// stamped now, and clears draft_until. ErrConflict when it is already
 	// approved, ErrNotFound when unknown.
 	ApproveForm(ctx context.Context, projectID int64, name string, expected []string, now time.Time, a AuditEntry) error
-	// UpdateForm writes f's Purpose, ReturnURL, ClosesAt and
-	// ExpectedFields exactly as given (merging is the caller's); ErrNotFound
-	// when the row is absent.
+	// UpdateForm writes f's Purpose, ReturnURL and ClosesAt exactly as
+	// given (merging is the caller's), and ExpectedFields when non-nil
+	// (nil keeps the stored list); ErrNotFound when the row is absent.
 	UpdateForm(ctx context.Context, f Form, a AuditEntry) error
 	// SetFormArchived archives or restores a form. Archiving an archived
 	// form and restoring an active one change nothing and write no audit

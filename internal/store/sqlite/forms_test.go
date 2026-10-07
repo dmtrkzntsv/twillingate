@@ -652,6 +652,27 @@ func TestUpdateFormWritesAsGiven(t *testing.T) {
 	}
 }
 
+func TestUpdateFormNilExpectedKeepsList(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	mustWrite(t, db, newSub("s1", map[string]string{"email": "a@x.io"}))
+	if err := db.ApproveForm(ctx, 1, "contact", []string{"email"}, formsNow, formAudit); err != nil {
+		t.Fatal(err)
+	}
+	// A caller holding a stale draft read: no expected list.
+	stale := store.Form{ProjectID: 1, Name: "contact", Purpose: "leads"}
+	if err := db.UpdateForm(ctx, stale, formAudit); err != nil {
+		t.Fatal(err)
+	}
+	g, err := db.GetForm(ctx, 1, "contact")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g.Purpose != "leads" || !reflect.DeepEqual(g.ExpectedFields, []string{"email"}) {
+		t.Fatalf("form = %+v, want purpose set and expected_fields kept", g)
+	}
+}
+
 func TestSetFormArchived(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()

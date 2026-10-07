@@ -109,6 +109,9 @@ func (o *Ops) UpdateForm(ctx context.Context, actor string, projectID int64, nam
 	if err != nil {
 		return err
 	}
+	// Nil leaves the stored list alone, so an approval that lands between
+	// the read above and the write below is not overwritten.
+	f.ExpectedFields = nil
 	var changed []string
 	if spec.Purpose != nil {
 		f.Purpose = *spec.Purpose
@@ -175,14 +178,17 @@ func (o *Ops) DeleteSubmissions(ctx context.Context, actor string, projectID int
 	}
 	return o.St.DeleteSubmissions(ctx, projectID, ids, store.AuditEntry{
 		Actor: actor, Action: "submission.delete", Subject: "project/" + idSubject(projectID),
-		Detail: fmt.Sprintf("%s (%d ids)", selector, len(ids))})
+		Detail: fmt.Sprintf("%s (%d ids requested)", selector, len(ids))})
 }
 
-func checkSearch(search string) error {
-	if len([]rune(strings.TrimSpace(search))) < minSearchLen {
-		return fmt.Errorf("%w: search needs at least %d characters", ErrInvalid, minSearchLen)
+// checkSearch trims search and refuses one shorter than two characters;
+// the trimmed value is what reaches the store.
+func checkSearch(search string) (string, error) {
+	search = strings.TrimSpace(search)
+	if len([]rune(search)) < minSearchLen {
+		return "", fmt.Errorf("%w: search needs at least %d characters", ErrInvalid, minSearchLen)
 	}
-	return nil
+	return search, nil
 }
 
 // FindSubmissions pages the project's submissions of active forms whose
@@ -191,7 +197,8 @@ func (o *Ops) FindSubmissions(ctx context.Context, projectID int64, search strin
 	if err := o.requireProject(ctx, projectID); err != nil {
 		return nil, "", err
 	}
-	if err := checkSearch(search); err != nil {
+	search, err := checkSearch(search)
+	if err != nil {
 		return nil, "", err
 	}
 	switch {
@@ -209,7 +216,8 @@ func (o *Ops) SubmissionIDsMatching(ctx context.Context, projectID int64, search
 	if err := o.requireProject(ctx, projectID); err != nil {
 		return nil, err
 	}
-	if err := checkSearch(search); err != nil {
+	search, err := checkSearch(search)
+	if err != nil {
 		return nil, err
 	}
 	return o.St.SubmissionIDsMatching(ctx, projectID, search)

@@ -332,8 +332,10 @@ func (d *DB) ApproveForm(ctx context.Context, projectID int64, name string, expe
 	})
 }
 
-// UpdateForm writes the form's purpose, return URL, closing time and
-// expected fields as given.
+// UpdateForm writes the form's purpose, return URL and closing time as
+// given, and its expected fields when f.ExpectedFields is non-nil; nil
+// leaves the stored list alone, so a caller that read the form before an
+// approval cannot wipe the list the approval set.
 func (d *DB) UpdateForm(ctx context.Context, f store.Form, a store.AuditEntry) error {
 	var expected any
 	if f.ExpectedFields != nil {
@@ -344,7 +346,7 @@ func (d *DB) UpdateForm(ctx context.Context, f store.Form, a store.AuditEntry) e
 		expected = string(b)
 	}
 	return d.tx(ctx, func(tx *sql.Tx) error {
-		res, err := tx.ExecContext(ctx, `UPDATE forms SET purpose=?, return_url=?, closes_at=?, expected_fields=?
+		res, err := tx.ExecContext(ctx, `UPDATE forms SET purpose=?, return_url=?, closes_at=?, expected_fields=COALESCE(?, expected_fields)
 			WHERE project_id=? AND name=?`,
 			f.Purpose, f.ReturnURL, nullTime(f.ClosesAt), expected, f.ProjectID, f.Name)
 		if err != nil {

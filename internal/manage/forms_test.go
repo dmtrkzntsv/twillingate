@@ -80,8 +80,11 @@ func (f *formCalls) ApproveForm(_ context.Context, pid int64, name string, expec
 }
 
 func (f *formCalls) UpdateForm(_ context.Context, fm store.Form, a store.AuditEntry) error {
+	f.updated = append(f.updated, fm) // as passed
+	if fm.ExpectedFields == nil {     // as the store: nil keeps the stored list
+		fm.ExpectedFields = f.forms[fm.Name].ExpectedFields
+	}
 	f.forms[fm.Name] = fm
-	f.updated = append(f.updated, fm)
 	f.audits = append(f.audits, a)
 	return nil
 }
@@ -245,6 +248,9 @@ func TestUpdateFormMergesAndValidates(t *testing.T) {
 	if got.Purpose != "Contact us" || len(got.ExpectedFields) != 1 || got.ExpectedFields[0] != "email" {
 		t.Fatalf("after purpose update: %+v", got)
 	}
+	if fc.updated[0].ExpectedFields != nil {
+		t.Fatalf("a purpose-only update passed expected_fields %v to the store, want nil (keep)", fc.updated[0].ExpectedFields)
+	}
 	a := fc.audits[0]
 	if a.Actor != "api" || a.Action != "form.update" || a.Subject != "form/1/live" {
 		t.Fatalf("audit = %+v", a)
@@ -342,6 +348,20 @@ func TestSubmissionSearchRules(t *testing.T) {
 	if ids, err := ops.SubmissionIDsMatching(ctx, pid, "ann"); err != nil || len(ids) != 1 {
 		t.Fatalf("match = %v, %v", ids, err)
 	}
+	// The trimmed value is validated and searched.
+	fc.found = nil
+	if _, _, err := ops.FindSubmissions(ctx, pid, "  ab", 10, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ops.SubmissionIDsMatching(ctx, pid, "ab  "); err != nil {
+		t.Fatal(err)
+	}
+	if len(fc.found) != 2 || fc.found[0] != "ab" || fc.found[1] != "ab" {
+		t.Fatalf("store searched %q, want trimmed ab twice", fc.found)
+	}
+	if _, _, err := ops.FindSubmissions(ctx, pid, " a ", 10, ""); !errors.Is(err, ErrInvalid) {
+		t.Fatalf(`" a ": %v, want ErrInvalid`, err)
+	}
 }
 
 func TestDeleteSubmissionsAuditsSelectorNotContents(t *testing.T) {
@@ -355,7 +375,7 @@ func TestDeleteSubmissionsAuditsSelectorNotContents(t *testing.T) {
 	if a.Actor != "mcp" || a.Action != "submission.delete" || a.Subject != "project/1" {
 		t.Fatalf("audit = %+v", a)
 	}
-	if !strings.Contains(a.Detail, "search: ann@example.com") || !strings.Contains(a.Detail, "2") {
+	if !strings.Contains(a.Detail, "search: ann@example.com") || !strings.Contains(a.Detail, "(2 ids requested)") {
 		t.Fatalf("detail = %q, want selector and count", a.Detail)
 	}
 	if _, err := ops.DeleteSubmissions(ctx, "cli", 99, []string{"x"}, "ids"); !errors.Is(err, ErrNotFound) {
