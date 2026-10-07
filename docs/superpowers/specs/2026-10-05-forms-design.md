@@ -259,22 +259,28 @@ Date: 2026-10-05
   form. Submissions are otherwise kept until deleted. Archiving the
   project hides its forms; purging it deletes them.
 
-- **D12. Console.** Forms live on the project page and open a page of
-  their own:
+- **D12. Console.** Since #138 a project page is a row of tabs: Setup,
+  then the dashboards pinned to the project. Forms become a fixed tab
+  after Setup, so the list sits on the project page and a form opens
+  inside it:
 
-  - **A Forms section on the project page** (`/projects/:id`), beside
-    Usage, Origins, Breakdowns and Keys: one row per form with its
+  - **The Forms tab** (`/projects/:id/forms`): one row per form with its
     purpose, submission count, last submission, the `accepting` switch
     and a menu (archive). Archived forms appear on the Archive page. The
-    section header holds **Find a person**, a search across every form
+    tab's header holds **Find a person**, a search across every form
     (`find_submissions`) with "delete all" and a confirm, for erasure
-    requests. With no forms yet, the section shows a short "add a form"
-    hint with a snippet, as the Keys section shows its own.
-  - **A form's page** (`/projects/:id/forms/:name`), opened by clicking
-    its row: the submissions table (D12a), and settings (purpose, return
-    URL, and the expected-fields picker, one checkbox per field seen,
-    with "not kept" on fields arriving outside the list). A back link
-    returns to the project.
+    requests. With no forms yet, the tab shows a short "add a form" hint
+    with a snippet, as the Keys section shows its own.
+  - **A form** (`/projects/:id/forms/:name`), opened by clicking its row,
+    with the Forms tab still selected and a crumb back to the list: the
+    submissions table (D12a), and settings (purpose, return URL, and the
+    expected-fields picker, one checkbox per field seen, with "not kept"
+    on fields arriving outside the list).
+
+  Like Setup, the Forms tab is not a dashboard: it cannot be moved,
+  removed or duplicated, and `tabPath` gains its two paths. It keeps the
+  URL's range for the other tabs, but the table ignores it: it lists
+  every submission, and a `Received` filter narrows by date.
 
 - **D12a. Submissions are a table with filters.** The form page shows
   the dashboards' `table` component in remote mode, the same filter bar
