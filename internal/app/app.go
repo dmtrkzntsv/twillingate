@@ -113,6 +113,7 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 	}
 	ops := manage.NewOps(reg, st)
 	ops.BreakdownsMax = cfg.AttributeBreakdownsMax
+	ops.FormDraftDays = cfg.Forms.DraftDays
 	if len(reg.Snapshot(ctx).Projects()) == 0 {
 		logger.Warn("no projects configured; create one with `twillingate project create` or an API management operation")
 	}

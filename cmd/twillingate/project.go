@@ -84,6 +84,7 @@ func openOps(stdout io.Writer, envFile string) (*manage.Ops, *config.Config, fun
 	}
 	ops := manage.NewOps(reg, st)
 	ops.BreakdownsMax = cfg.AttributeBreakdownsMax
+	ops.FormDraftDays = cfg.Forms.DraftDays
 	return ops, cfg, func() { st.Close() }, 0
 }
 
