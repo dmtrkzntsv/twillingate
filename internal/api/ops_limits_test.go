@@ -108,9 +108,10 @@ func TestUsageRange(t *testing.T) {
 // data, the days that folded into (other) and the share folded. The test
 // host has blog (1) with aggregated days 2026-08-20/21 and a raw view on
 // 2026-08-26 (path /live, user u1); this adds a folded paths day and a
-// folded plan day, a values cap of 2 (views breakdowns and attributes
-// alike) and an identities cap of 1 so the identity days (u1 on 2026-08-20
-// aggregated, and again on 2026-08-26 from the raw view) reach theirs.
+// folded plan day, a tier key with a folded measure day and a product day,
+// a values cap of 2 (views breakdowns and attributes alike) and an
+// identities cap of 1 so the identity days (u1 on 2026-08-20 aggregated,
+// and again on 2026-08-26 from the raw view) reach theirs.
 func TestCapUsage(t *testing.T) {
 	h, _ := newTestHost(t)
 	h.limits = limitsFrom(&config.Config{AttributeValuesTopN: 2, IdentitiesTopN: 1})
@@ -118,7 +119,11 @@ func TestCapUsage(t *testing.T) {
 		`INSERT INTO agg_views_paths (project_id, day, path, visitors, views) VALUES
 		 (1,'2026-08-22','/a',3,10), (1,'2026-08-22','/b',2,5), (1,'2026-08-22','(other)',4,15)`,
 		`INSERT INTO agg_product_attrs (project_id, day, event_name, attr_key, attr_value, count, unique_users, unique_groups) VALUES
-		 (1,'2026-08-22','signup','plan','basic',6,5,1), (1,'2026-08-22','signup','plan','(other)',4,3,1)`,
+		 (1,'2026-08-22','signup','plan','basic',6,5,1), (1,'2026-08-22','signup','plan','(other)',4,3,1),
+		 (1,'2026-08-24','signup','tier','x',5,5,0), (1,'2026-08-24','signup','tier','y',5,5,0)`,
+		`INSERT INTO agg_measures_attrs (project_id, day, event_name, measure, attr_key, attr_value, bucket, samples, weight, sum) VALUES
+		 (1,'2026-08-23','load','ms','tier','a',1,2,2,4), (1,'2026-08-23','load','ms','tier','a',2,1,1,3),
+		 (1,'2026-08-23','load','ms','tier','(other)',1,1,1,2)`,
 	} {
 		if _, err := rawExec(h.ops.St, q); err != nil {
 			t.Fatal(err)
@@ -144,6 +149,14 @@ func TestCapUsage(t *testing.T) {
 	if plan.Setting != settingAttrs || plan.Cap != 2 || plan.MaxValuesPerDay != 2 || plan.MaxDay != "2026-08-22" ||
 		plan.Days != 3 || plan.DaysCapped != 1 || plan.FoldedShare == nil || math.Abs(*plan.FoldedShare-4.0/15) > 1e-9 {
 		t.Errorf("plan = %+v (share %v)", plan, plan.FoldedShare)
+	}
+	tier := byDim["tier"]
+	// a (3 samples over two buckets) + (other) (1) on 08-23 from the
+	// measure, x + y (10) on 08-24 from the event: two values a day, the
+	// busiest the earlier; the measure's buckets count one value.
+	if tier.Setting != settingAttrs || tier.MaxValuesPerDay != 2 || tier.MaxDay != "2026-08-23" ||
+		tier.Days != 2 || tier.DaysCapped != 1 || tier.FoldedShare == nil || math.Abs(*tier.FoldedShare-1.0/14) > 1e-9 {
+		t.Errorf("tier = %+v (share %v)", tier, tier.FoldedShare)
 	}
 	users := byDim["users"]
 	// u1 on 08-20 (aggregated) and u1 again on 08-26 (the raw /live view
