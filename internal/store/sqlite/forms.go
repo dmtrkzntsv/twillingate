@@ -455,7 +455,8 @@ func deleteEvent(ctx context.Context, tx *sql.Tx, projectID int64, day, id strin
 }
 
 // DeleteSubmissions deletes the submissions with these ids and their raw
-// events in one transaction.
+// events in one transaction, and audits it with a.Detail plus the count
+// it deleted, " (<n> deleted)", 0 included.
 func (d *DB) DeleteSubmissions(ctx context.Context, projectID int64, ids []string, a store.AuditEntry) (int, error) {
 	var deleted int
 	err := d.tx(ctx, func(tx *sql.Tx) error {
@@ -476,6 +477,7 @@ func (d *DB) DeleteSubmissions(ctx context.Context, projectID int64, ids []strin
 			}
 			deleted++
 		}
+		a.Detail += fmt.Sprintf(" (%d deleted)", deleted)
 		return audit(ctx, tx, a)
 	})
 	if err != nil {

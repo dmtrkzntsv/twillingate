@@ -374,7 +374,9 @@ type Store interface {
 	// DeleteSubmissions deletes the project's submissions with these ids
 	// and, in the same transaction, their raw $form_submit events, and
 	// returns how many submissions it deleted. Ids that match nothing are
-	// skipped. Aggregates are not touched.
+	// skipped. Aggregates are not touched. The audit row's detail is
+	// a.Detail (how the ids were chosen) followed by " (<n> deleted)", the
+	// count actually deleted, written even when it is 0.
 	DeleteSubmissions(ctx context.Context, projectID int64, ids []string, a AuditEntry) (int, error)
 	// FindSubmissions returns, newest first, the project's submissions with
 	// a field value containing search, archived forms' included and marked

@@ -695,7 +695,8 @@ value anywhere in it, case-insensitively for ASCII letters only (`É` and `é`
 differ). A deleted submission's `$form_submit` event is removed from the raw
 window only: days already rolled up keep their counts. The audit log records
 the selector's kind (`ids`, `search`, or `filters` with the form's name) and
-the count, never the search text, the filter values or the submissions'
+the number of submissions actually deleted (a delete that removes nothing is
+recorded too, with 0), never the search text, the filter values or the submissions'
 contents: those are usually the erased person's email.
 
 An archived form's submissions are left out of every list, table and

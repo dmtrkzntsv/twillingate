@@ -146,7 +146,7 @@ type foundSubmission struct {
 
 type findSubmissionsOut struct {
 	Submissions []foundSubmission `json:"submissions"`
-	NextCursor  string          `json:"next_cursor,omitempty" jsonschema:"pass as cursor for the next page; absent on the last"`
+	NextCursor  string            `json:"next_cursor,omitempty" jsonschema:"pass as cursor for the next page; absent on the last"`
 }
 
 type deleteSubmissionsIn struct {
@@ -441,7 +441,7 @@ func (h *host) registerForms(r *registrar) {
 		Description: "Find one person's submissions across every form of a project, archived ones included, for an access or erasure request: each submission with a field value containing search (at least 2 characters; ASCII case-insensitive, so É and é differ), newest first, with its form, fields, visit and archived (true when its form is archived). Pages of limit (default 100, at most 500); pass next_cursor back as cursor. Personal data. delete_submissions with the same search deletes exactly these."},
 		h.findSubmissions)
 	expose(r, spec{Name: "delete_submissions", Annotations: destroy, Method: "POST", Path: p + "/submissions/delete",
-		Description: "Permanently delete submissions chosen by exactly one of: ids; form with filters (list_submissions' filters, deleting every row that table shows); or search (as find_submissions, across every form, archived ones included). Irreversible. A deleted submission's $form_submit conversion is removed from the raw window only: days already rolled up keep their counts. A draft's submissions never had one. The audit log records the selector's kind (ids, search, or filters with the form's name) and the count, never the search text, the filter values or the submissions' contents. Returns how many were deleted."},
+		Description: "Permanently delete submissions chosen by exactly one of: ids; form with filters (list_submissions' filters, deleting every row that table shows); or search (as find_submissions, across every form, archived ones included). Irreversible. A deleted submission's $form_submit conversion is removed from the raw window only: days already rolled up keep their counts. A draft's submissions never had one. The audit log records the selector's kind (ids, search, or filters with the form's name) and the number actually deleted (0 included), never the search text, the filter values or the submissions' contents. Returns how many were deleted."},
 		h.deleteSubmissions)
 	restCSV(r, spec{Name: "export_submissions", Method: "GET", Path: f + "/submissions.csv",
 		Description: "One active form's submissions table as CSV: list_submissions' columns without ids, with its filters and sort, every matching row."},

@@ -3,6 +3,7 @@ package manage
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -96,10 +97,18 @@ func (f *formCalls) SetFormArchived(_ context.Context, pid int64, name string, a
 	return nil
 }
 
+// DeleteSubmissions deletes every id but "gone", which is already gone.
 func (f *formCalls) DeleteSubmissions(_ context.Context, pid int64, ids []string, a store.AuditEntry) (int, error) {
 	f.deleted = append(f.deleted, ids)
+	n := 0
+	for _, id := range ids {
+		if id != "gone" {
+			n++
+		}
+	}
+	a.Detail += fmt.Sprintf(" (%d deleted)", n)
 	f.audits = append(f.audits, a)
-	return len(ids), nil
+	return n, nil
 }
 
 func (f *formCalls) FindSubmissions(_ context.Context, pid int64, search string, limit int, after string) ([]store.Submission, string, error) {
@@ -370,7 +379,7 @@ func TestSubmissionSearchRules(t *testing.T) {
 func TestDeleteSubmissionsAuditsSelectorNotContents(t *testing.T) {
 	ctx := context.Background()
 	ops, fc, pid := newFormOps(t)
-	n, err := ops.DeleteSubmissions(ctx, "mcp", pid, []string{"s1", "s2"}, "search: ann@example.com")
+	n, err := ops.DeleteSubmissions(ctx, "mcp", pid, []string{"s1", "s2", "gone"}, "search")
 	if err != nil || n != 2 {
 		t.Fatalf("delete = %d, %v", n, err)
 	}
@@ -378,16 +387,17 @@ func TestDeleteSubmissionsAuditsSelectorNotContents(t *testing.T) {
 	if a.Actor != "mcp" || a.Action != "submission.delete" || a.Subject != "project/1" {
 		t.Fatalf("audit = %+v", a)
 	}
-	if !strings.Contains(a.Detail, "search: ann@example.com") || !strings.Contains(a.Detail, "(2 ids requested)") {
-		t.Fatalf("detail = %q, want selector and count", a.Detail)
+	// The selector alone; the store appends the count it deleted.
+	if a.Detail != "search (2 deleted)" {
+		t.Fatalf("detail = %q, want the selector and the count deleted", a.Detail)
 	}
 	if _, err := ops.DeleteSubmissions(ctx, "cli", 99, []string{"x"}, "ids"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("unknown project: %v", err)
 	}
-	// Nothing to delete: no store call, no audit row.
-	before := len(fc.audits)
-	if n, err := ops.DeleteSubmissions(ctx, "cli", pid, nil, "ids"); err != nil || n != 0 || len(fc.audits) != before {
-		t.Fatalf("empty delete = %d, %v, audits %d", n, err, len(fc.audits))
+	// Nothing to delete is still an erasure attempt: audited, with 0.
+	if n, err := ops.DeleteSubmissions(ctx, "cli", pid, nil, "search"); err != nil || n != 0 ||
+		fc.audits[len(fc.audits)-1].Detail != "search (0 deleted)" {
+		t.Fatalf("empty delete = %d, %v, audits %+v", n, err, fc.audits)
 	}
 }
 

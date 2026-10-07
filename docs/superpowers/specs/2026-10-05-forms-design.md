@@ -378,6 +378,10 @@ Date: 2026-10-05
 - The delete audit row holds the selector kind, the form (for filters)
   and the count, never search text or filter values: those are usually
   the erased person's email.
+  The count is the number the store deleted, which it appends to the
+  selector in the same transaction (`search (2 deleted)`), not the
+  number of ids asked for; a delete that removes nothing is audited with
+  0.
 - CSV cells starting with `=`, `+`, `-`, `@`, tab or CR get a leading `'`.
 - Delete by ids may reach an archived form's submissions; lists, the
   table and delete by filters stay active-only.

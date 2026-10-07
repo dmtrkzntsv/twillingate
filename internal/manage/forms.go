@@ -170,18 +170,16 @@ func (o *Ops) RestoreForm(ctx context.Context, actor string, projectID int64, na
 }
 
 // DeleteSubmissions erases the submissions with these ids and their raw
-// events. selector says how the caller chose them ("ids", "filters: ...",
-// "search: ..."); it and the count go in the audit detail, never contents.
+// events. selector says how the caller chose them ("ids", "search",
+// "filters: <form>"), never what it matched on; the store adds the count it
+// deleted to the audit detail. Deleting nothing (no ids, or ids already
+// gone) is audited too, with 0: it is still an erasure request answered.
 func (o *Ops) DeleteSubmissions(ctx context.Context, actor string, projectID int64, ids []string, selector string) (int, error) {
 	if err := o.requireProject(ctx, projectID); err != nil {
 		return 0, err
 	}
-	if len(ids) == 0 {
-		return 0, nil
-	}
 	return o.St.DeleteSubmissions(ctx, projectID, ids, store.AuditEntry{
-		Actor: actor, Action: "submission.delete", Subject: "project/" + idSubject(projectID),
-		Detail: fmt.Sprintf("%s (%d ids requested)", selector, len(ids))})
+		Actor: actor, Action: "submission.delete", Subject: "project/" + idSubject(projectID), Detail: selector})
 }
 
 // checkSearch trims search and refuses one shorter than two characters;

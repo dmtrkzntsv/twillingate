@@ -466,7 +466,8 @@ func TestDeleteSubmissionsSelectors(t *testing.T) {
 	}
 	// The selector's kind and the form, never the search text or the
 	// filter values: they are usually the erased person's email.
-	want := []string{"ids (2 ids requested)", "filters: contact (3 ids requested)", "search (2 ids requested)"}
+	// The count is what was deleted ("nope" matched nothing), not what was asked for.
+	want := []string{"ids (1 deleted)", "filters: contact (3 deleted)", "search (2 deleted)"}
 	if !reflect.DeepEqual(details, want) {
 		t.Fatalf("audit details = %q", details)
 	}

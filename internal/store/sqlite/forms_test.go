@@ -832,7 +832,7 @@ func TestDeleteSubmissionsRemovesRowAndRawEvent(t *testing.T) {
 	}
 
 	n, err := db.DeleteSubmissions(ctx, 1, []string{"s1", "s3", "s0", "missing"},
-		store.AuditEntry{Actor: "agent", Action: "submission.delete", Subject: "project/1", Detail: `{"count":3}`})
+		store.AuditEntry{Actor: "agent", Action: "submission.delete", Subject: "project/1", Detail: "ids"})
 	if err != nil || n != 3 {
 		t.Fatalf("deleted %d, err %v", n, err)
 	}
@@ -855,11 +855,38 @@ func TestDeleteSubmissionsRemovesRowAndRawEvent(t *testing.T) {
 	if c := countRows(t, db, `SELECT COUNT(*) FROM submissions WHERE project_id=2`); c != 2 {
 		t.Fatal("another project's submission was deleted")
 	}
-	if c := countRows(t, db, `SELECT COUNT(*) FROM audit_log WHERE action='submission.delete'`); c != 1 {
-		t.Fatalf("%d audit rows", c)
+	// The audit row counts what was deleted, not what was asked for.
+	details := func() []string {
+		t.Helper()
+		rows, err := db.db.Query(`SELECT detail FROM audit_log WHERE action='submission.delete' ORDER BY rowid`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		var out []string
+		for rows.Next() {
+			var d string
+			if err := rows.Scan(&d); err != nil {
+				t.Fatal(err)
+			}
+			out = append(out, d)
+		}
+		return out
 	}
-	if n, err := db.DeleteSubmissions(ctx, 1, nil, formAudit); err != nil || n != 0 {
+	if got := details(); !reflect.DeepEqual(got, []string{"ids (3 deleted)"}) {
+		t.Fatalf("audit details = %q", got)
+	}
+	// Deleting nothing is still audited, with 0.
+	if n, err := db.DeleteSubmissions(ctx, 1, []string{"s1"}, store.AuditEntry{Actor: "agent", Action: "submission.delete",
+		Subject: "project/1", Detail: "search"}); err != nil || n != 0 {
+		t.Fatalf("already deleted: %d, %v", n, err)
+	}
+	if n, err := db.DeleteSubmissions(ctx, 1, nil, store.AuditEntry{Actor: "agent", Action: "submission.delete",
+		Subject: "project/1", Detail: "filters: contact"}); err != nil || n != 0 {
 		t.Fatalf("empty ids: %d, %v", n, err)
+	}
+	if got := details(); !reflect.DeepEqual(got, []string{"ids (3 deleted)", "search (0 deleted)", "filters: contact (0 deleted)"}) {
+		t.Fatalf("audit details = %q", got)
 	}
 }
 
