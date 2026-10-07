@@ -523,13 +523,14 @@ func deleteFormData(ctx context.Context, tx *sql.Tx, projectID int64, name strin
 var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 
 // matchSubmissions is the FROM/WHERE that selects the project's
-// submissions of active forms with a field value containing search.
+// submissions with a field value containing search, archived forms' too:
+// an erasure request must reach every copy of a person's data.
 func matchSubmissions(projectID int64, search string) (string, []any, error) {
 	if search == "" {
 		return "", nil, store.Refuse(store.ErrInvalid, "search must not be empty")
 	}
 	return `FROM submissions s JOIN forms f ON f.project_id=s.project_id AND f.name=s.form
-		WHERE s.project_id=? AND f.archived_at IS NULL
+		WHERE s.project_id=?
 		  AND EXISTS (SELECT 1 FROM json_each(s.fields) j WHERE j.value LIKE ? ESCAPE '\')`,
 		[]any{projectID, "%" + likeEscaper.Replace(search) + "%"}, nil
 }
@@ -541,13 +542,14 @@ const defaultFindLimit = 100
 const submissionColumns = `s.project_id, s.id, s.form, s.received_at, s.fields,
 	s.actor_kind, s.actor_id, s.host, s.path, s.via, s.visit`
 
-// scanSubmission reads one row selected with submissionColumns.
-func scanSubmission(row interface{ Scan(...any) error }) (store.Submission, error) {
+// scanSubmission reads one row selected with submissionColumns, then
+// into extra any columns selected after them.
+func scanSubmission(row interface{ Scan(...any) error }, extra ...any) (store.Submission, error) {
 	var s store.Submission
 	var received, fields string
 	var visit sql.NullString
-	if err := row.Scan(&s.ProjectID, &s.ID, &s.Form, &received, &fields,
-		&s.ActorKind, &s.ActorID, &s.Host, &s.Path, &s.Via, &visit); err != nil {
+	if err := row.Scan(append([]any{&s.ProjectID, &s.ID, &s.Form, &received, &fields,
+		&s.ActorKind, &s.ActorID, &s.Host, &s.Path, &s.Via, &visit}, extra...)...); err != nil {
 		return store.Submission{}, err
 	}
 	var err error
@@ -578,7 +580,8 @@ func (d *DB) GetSubmission(ctx context.Context, projectID int64, form, id string
 	return s, err
 }
 
-// FindSubmissions pages the submissions matching search, newest first.
+// FindSubmissions pages the submissions matching search, newest first,
+// archived forms' included and marked Archived.
 func (d *DB) FindSubmissions(ctx context.Context, projectID int64, search string, limit int, after string) ([]store.Submission, string, error) {
 	from, args, err := matchSubmissions(projectID, search)
 	if err != nil {
@@ -599,7 +602,7 @@ func (d *DB) FindSubmissions(ctx context.Context, projectID int64, search string
 		from += ` AND (s.received_at < ? OR (s.received_at = ? AND s.id < ?))`
 		args = append(args, at, at, after)
 	}
-	rows, err := d.db.QueryContext(ctx, `SELECT `+submissionColumns+` `+from+`
+	rows, err := d.db.QueryContext(ctx, `SELECT `+submissionColumns+`, f.archived_at IS NOT NULL `+from+`
 		ORDER BY s.received_at DESC, s.id DESC LIMIT ?`, append(args, limit+1)...)
 	if err != nil {
 		return nil, "", err
@@ -607,10 +610,12 @@ func (d *DB) FindSubmissions(ctx context.Context, projectID int64, search string
 	defer rows.Close()
 	var out []store.Submission
 	for rows.Next() {
-		s, err := scanSubmission(rows)
+		var archived bool
+		s, err := scanSubmission(rows, &archived)
 		if err != nil {
 			return nil, "", err
 		}
+		s.Archived = archived
 		out = append(out, s)
 	}
 	if err := rows.Err(); err != nil {

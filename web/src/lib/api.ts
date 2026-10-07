@@ -441,6 +441,11 @@ export interface Submission {
   visit?: Visit
 }
 
+/** A submission find_submissions found; the search reaches archived forms too. */
+export interface FoundSubmission extends Submission {
+  archived: boolean
+}
+
 /** delete_submissions takes exactly one selector: ids, a form's table filters, or a search. */
 export type DeleteSubmissionsBody = { ids: string[] } | { form: string; filters: string } | { search: string }
 
@@ -566,7 +571,7 @@ export const endpoints = {
     api<Submission>(`${formPath(projectId, name)}/submissions/${encodeURIComponent(id)}`),
   /** Every active form's submissions with a field value containing `search`, for an erasure request. */
   findSubmissions: (projectId: number, q: { search: string; limit?: number; cursor?: string }) =>
-    api<{ submissions: Submission[]; next_cursor?: string }>(`/api/projects/${projectId}/submissions${toQuery(q)}`),
+    api<{ submissions: FoundSubmission[]; next_cursor?: string }>(`/api/projects/${projectId}/submissions${toQuery(q)}`),
   deleteSubmissions: (projectId: number, body: DeleteSubmissionsBody) =>
     api<{ deleted: number }>(`/api/projects/${projectId}/submissions/delete`, json('POST', body)),
   /** The submissions table as CSV, every row the filters match, read with the console's auth. */

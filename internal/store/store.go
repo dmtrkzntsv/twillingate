@@ -376,8 +376,9 @@ type Store interface {
 	// returns how many submissions it deleted. Ids that match nothing are
 	// skipped. Aggregates are not touched.
 	DeleteSubmissions(ctx context.Context, projectID int64, ids []string, a AuditEntry) (int, error)
-	// FindSubmissions returns, newest first, the project's submissions of
-	// active forms with a field value containing search (case-insensitive;
+	// FindSubmissions returns, newest first, the project's submissions with
+	// a field value containing search, archived forms' included and marked
+	// Archived (an erasure request must reach them) (case-insensitive;
 	// % _ and \ are literal). after is the cursor a previous page returned
 	// ("" starts); the cursor returned is the last id of a page that has
 	// more after it, "" at the end. limit <= 0 means 100. An empty search

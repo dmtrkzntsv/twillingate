@@ -364,20 +364,28 @@ func TestFindSubmissionsAcrossForms(t *testing.T) {
 	seed.add("newsletter", "s2", map[string]string{"email": "alice@example.com"}, nil)
 	seed.add("contact", "s3", map[string]string{"email": "bob@example.com"}, nil)
 	seed.addTo(2, "contact", "s4", map[string]string{"email": "alice@example.com"}, nil)
+	seed.add("old", "s5", map[string]string{"email": "alice@example.com"}, nil)
+	callAs[okOut](t, cs, "archive_form", map[string]any{"project_id": 1, "name": "old"})
 
 	type found struct {
 		Submissions []struct {
-			ID     string            `json:"id"`
-			Form   string            `json:"form"`
-			Fields map[string]string `json:"fields"`
+			ID       string            `json:"id"`
+			Form     string            `json:"form"`
+			Fields   map[string]string `json:"fields"`
+			Archived *bool             `json:"archived"`
 		} `json:"submissions"`
 		NextCursor string `json:"next_cursor"`
 	}
+	// An archived form's submissions are found too, marked archived: an
+	// erasure request reaches them.
 	out := callAs[found](t, cs, "find_submissions", map[string]any{"project_id": 1, "search": "ALICE"})
-	if len(out.Submissions) != 2 || out.Submissions[0].ID != "s2" || out.Submissions[0].Form != "newsletter" ||
-		out.Submissions[1].ID != "s1" || out.Submissions[1].Fields["email"] != "Alice@Example.com" || out.NextCursor != "" {
+	if len(out.Submissions) != 3 || out.Submissions[0].ID != "s5" || out.Submissions[0].Archived == nil || !*out.Submissions[0].Archived ||
+		out.Submissions[1].ID != "s2" || out.Submissions[1].Form != "newsletter" || out.Submissions[1].Archived == nil || *out.Submissions[1].Archived ||
+		out.Submissions[2].ID != "s1" || out.Submissions[2].Fields["email"] != "Alice@Example.com" || out.NextCursor != "" {
 		t.Fatalf("found = %+v", out)
 	}
+	callAs[okOut](t, cs, "restore_form", map[string]any{"project_id": 1, "name": "old"})
+	callAs[struct{}](t, cs, "delete_submissions", map[string]any{"project_id": 1, "ids": []string{"s5"}})
 	out = callAs[found](t, cs, "find_submissions", map[string]any{"project_id": 1, "search": "alice", "limit": 1})
 	if len(out.Submissions) != 1 || out.NextCursor != "s2" {
 		t.Fatalf("page 1 = %+v", out)

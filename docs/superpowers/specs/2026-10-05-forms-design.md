@@ -379,8 +379,12 @@ Date: 2026-10-05
   and the count, never search text or filter values: those are usually
   the erased person's email.
 - CSV cells starting with `=`, `+`, `-`, `@`, tab or CR get a leading `'`.
-- Delete by ids may reach an archived form's submissions; lists, find and
-  filters stay active-only.
+- Delete by ids may reach an archived form's submissions; lists, the
+  table and delete by filters stay active-only.
+- `find_submissions` and delete by search reach archived forms too (D8
+  revised): an erasure request must leave no copy behind. Each found
+  submission carries `archived`, and the console's Find a person marks
+  those results "Archived"; **Delete all** covers them.
 - Approving needs expected fields (`ErrInvalid` when empty) and refuses an
   archived form ("restore it first"); the store itself accepts both.
 - The CLI flag is `-project-id`, as on `key`, not `-project`.

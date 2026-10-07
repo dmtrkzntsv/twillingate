@@ -137,8 +137,15 @@ type findSubmissionsIn struct {
 	Cursor    string `json:"cursor,omitempty" jsonschema:"next_cursor from the previous page; omit for the first"`
 }
 
+// foundSubmission is a submission find_submissions found, with whether
+// its form is archived: a search reaches archived forms too.
+type foundSubmission struct {
+	submissionOut
+	Archived bool `json:"archived" jsonschema:"its form is archived: hidden from the tables, purged with the form unless restored"`
+}
+
 type findSubmissionsOut struct {
-	Submissions []submissionOut `json:"submissions"`
+	Submissions []foundSubmission `json:"submissions"`
 	NextCursor  string          `json:"next_cursor,omitempty" jsonschema:"pass as cursor for the next page; absent on the last"`
 }
 
@@ -321,9 +328,9 @@ func (h *host) findSubmissions(ctx context.Context, in findSubmissionsIn) (findS
 	if err != nil {
 		return findSubmissionsOut{}, err
 	}
-	out := findSubmissionsOut{Submissions: []submissionOut{}, NextCursor: next}
+	out := findSubmissionsOut{Submissions: []foundSubmission{}, NextCursor: next}
 	for _, s := range subs {
-		out.Submissions = append(out.Submissions, toSubmissionOut(s))
+		out.Submissions = append(out.Submissions, foundSubmission{toSubmissionOut(s), s.Archived})
 	}
 	return out, nil
 }
@@ -419,7 +426,7 @@ func (h *host) registerForms(r *registrar) {
 		Description: "Change a form: purpose; return_url (where a plain HTML form sends the visitor back without $redirect: an absolute http(s) URL whose origin is in the project's allowed_origins; empty clears it); closes_at (RFC 3339; submissions from then on are refused; null reopens); and, on an approved form, expected_fields (never empty). Fields you omit are kept. expected_fields on a draft is refused: approve it instead."},
 		h.updateForm)
 	expose(r, spec{Name: "archive_form", Annotations: idem, Method: "POST", Path: f + "/archive",
-		Description: "Archive a form: it refuses submissions, and it and its submissions leave every list, search and export. Reversible with restore_form; purged with its submissions and their conversions still in the raw window RETENTION_ARCHIVED_DAYS (default 30) after archiving unless restored."},
+		Description: "Archive a form: it refuses submissions, and it and its submissions leave every list, table and export (find_submissions still finds them, marked archived, for an erasure request). Reversible with restore_form; purged with its submissions and their conversions still in the raw window RETENTION_ARCHIVED_DAYS (default 30) after archiving unless restored."},
 		h.archiveForm)
 	expose(r, spec{Name: "restore_form", Annotations: idem, Method: "POST", Path: f + "/restore",
 		Description: "Restore an archived form with its submissions. A restored draft accepts submissions for another FORMS_DRAFT_DAYS."},
@@ -431,10 +438,10 @@ func (h *host) registerForms(r *registrar) {
 		Description: "One submission of an active form: every stored field (also ones the form no longer expects), received_at, host, path, via (form or json) and visit (the session it arrived in: landing_path, referrer, UTM source, medium and campaign, views; absent when none matched). Personal data."},
 		h.getSubmission)
 	expose(r, spec{Name: "find_submissions", Annotations: ro, Method: "GET", Path: p + "/submissions",
-		Description: "Find one person's submissions across every active form of a project, for an access or erasure request: each submission with a field value containing search (at least 2 characters; ASCII case-insensitive, so É and é differ), newest first, with its form, fields and visit. Pages of limit (default 100, at most 500); pass next_cursor back as cursor. Personal data. delete_submissions with the same search deletes exactly these."},
+		Description: "Find one person's submissions across every form of a project, archived ones included, for an access or erasure request: each submission with a field value containing search (at least 2 characters; ASCII case-insensitive, so É and é differ), newest first, with its form, fields, visit and archived (true when its form is archived). Pages of limit (default 100, at most 500); pass next_cursor back as cursor. Personal data. delete_submissions with the same search deletes exactly these."},
 		h.findSubmissions)
 	expose(r, spec{Name: "delete_submissions", Annotations: destroy, Method: "POST", Path: p + "/submissions/delete",
-		Description: "Permanently delete submissions chosen by exactly one of: ids; form with filters (list_submissions' filters, deleting every row that table shows); or search (as find_submissions, across active forms). Irreversible. A deleted submission's $form_submit conversion is removed from the raw window only: days already rolled up keep their counts. A draft's submissions never had one. The audit log records the selector's kind (ids, search, or filters with the form's name) and the count, never the search text, the filter values or the submissions' contents. Returns how many were deleted."},
+		Description: "Permanently delete submissions chosen by exactly one of: ids; form with filters (list_submissions' filters, deleting every row that table shows); or search (as find_submissions, across every form, archived ones included). Irreversible. A deleted submission's $form_submit conversion is removed from the raw window only: days already rolled up keep their counts. A draft's submissions never had one. The audit log records the selector's kind (ids, search, or filters with the form's name) and the count, never the search text, the filter values or the submissions' contents. Returns how many were deleted."},
 		h.deleteSubmissions)
 	restCSV(r, spec{Name: "export_submissions", Method: "GET", Path: f + "/submissions.csv",
 		Description: "One active form's submissions table as CSV: list_submissions' columns without ids, with its filters and sort, every matching row."},

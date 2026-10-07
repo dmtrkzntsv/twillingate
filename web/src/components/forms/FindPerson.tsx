@@ -5,12 +5,13 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import LoadError from '@/components/projects/LoadError'
 import { useFormActions } from '@/hooks/use-form-actions'
-import type { Submission } from '@/lib/api'
+import type { FoundSubmission } from '@/lib/api'
 import { formatDayTime } from '@/lib/forms'
 import { findSubmissionsQuery } from '@/lib/queries'
 
@@ -18,24 +19,24 @@ import { findSubmissionsQuery } from '@/lib/queries'
 const MIN = 2
 
 /** Submissions by form, the forms in the order they first appear (newest first). */
-function byForm(subs: Submission[]): [string, Submission[]][] {
-  const groups = new Map<string, Submission[]>()
+function byForm(subs: FoundSubmission[]): [string, FoundSubmission[]][] {
+  const groups = new Map<string, FoundSubmission[]>()
   for (const s of subs) groups.set(s.form, [...(groups.get(s.form) ?? []), s])
   return [...groups]
 }
 
 /** A submission's fields on one line, as "name: value", for telling them apart. */
-function summary(s: Submission): string {
+function summary(s: FoundSubmission): string {
   return Object.entries(s.fields)
     .map(([k, v]) => `${k}: ${v}`)
     .join(' · ')
 }
 
 /**
- * Find a person (D12): every active form's submissions with a field value
- * containing the search, for an access or erasure request, grouped by
- * form, and **Delete all** behind a confirm, which deletes exactly what the
- * same search finds.
+ * Find a person (D12): every form's submissions with a field value
+ * containing the search, archived forms' too (marked Archived), for an
+ * access or erasure request, grouped by form, and **Delete all** behind a
+ * confirm, which deletes exactly what the same search finds.
  */
 export default function FindPerson({ projectId }: { projectId: number }) {
   const id = useId()
@@ -108,7 +109,14 @@ export default function FindPerson({ projectId }: { projectId: number }) {
               </div>
               {byForm(found).map(([form, subs]) => (
                 <div key={form} className="flex min-w-0 flex-col gap-1">
-                  <h3 className="font-mono text-xs font-medium break-all">{form}</h3>
+                  <h3 className="flex min-w-0 flex-wrap items-center gap-2 font-mono text-xs font-medium break-all">
+                    {form}
+                    {subs[0].archived && (
+                      <Badge variant="outline" className="font-sans text-muted-foreground">
+                        Archived
+                      </Badge>
+                    )}
+                  </h3>
                   <ul className="flex flex-col gap-1">
                     {subs.map((s) => (
                       <li key={s.id} className="min-w-0 text-sm">
@@ -132,8 +140,8 @@ export default function FindPerson({ projectId }: { projectId: number }) {
               Delete {count} containing “{search}”?
             </AlertDialogTitle>
             <AlertDialogDescription>
-              Every submission of the project's active forms with a field containing it is deleted for good, with its conversion while that
-              is still in the raw window.
+              Every submission of the project's forms, archived ones included, with a field containing it is deleted for good, with its
+              conversion while that is still in the raw window.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

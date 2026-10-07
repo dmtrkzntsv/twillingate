@@ -1,4 +1,4 @@
-import type { Form, Submission, SubmissionsPage } from '@/lib/api'
+import type { FoundSubmission, Form, Submission, SubmissionsPage } from '@/lib/api'
 
 const DAY = 86_400_000
 
@@ -55,4 +55,9 @@ export function submission(id: string, over: Partial<Submission> = {}): Submissi
     visit: { landing_path: '/pricing', referrer: 'google.com', utm_source: 'news', utm_medium: 'email', utm_campaign: 'fall', views: 4 },
     ...over,
   }
+}
+
+/** A submission as find_submissions answers it: of an active form unless `over` says otherwise. */
+export function found(id: string, over: Partial<FoundSubmission> = {}): FoundSubmission {
+  return { ...submission(id), archived: false, ...over }
 }

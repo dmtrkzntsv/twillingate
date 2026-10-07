@@ -632,18 +632,19 @@ tools below do.
 5. **Read the submissions** as a table with `list_submissions`, one in full
    with `get_submission`, or as CSV from the export route.
 6. **Erase a person** on request: `find_submissions` with their email (or any
-   text a field holds) lists what every active form has of them, and
-   `delete_submissions` with the same `search` deletes exactly that.
+   text a field holds) lists what every form has of them, archived forms
+   included, and `delete_submissions` with the same `search` deletes exactly
+   that.
 
 | Operation | CLI | MCP tool | Tool arguments |
 | --- | --- | --- | --- |
 | List forms | `twillingate form list` | `list_forms` | `{project_id, archived}`; drafts first; each with `status` (`draft` or `approved`), `purpose`, `return_url`, `fields`, `expected_fields`, `draft_until`, `approved_at`, `closes_at`, `submissions` (count), `last_submitted_at`, `archived`. `archived: true` lists the archived forms instead. Beside `forms`, `action_base` is `PUBLIC_URL` + `/ingest/forms` (empty without `PUBLIC_URL`), so a plain form's action is `<action_base>/{name}?key=…` |
 | Approve a draft | `twillingate form approve` | `approve_form` | `{project_id, name, expected_fields}`; one or more fields; an approved form is a `conflict` |
 | Change one | `twillingate form update` | `update_form` | `{project_id, name, purpose, return_url, closes_at, expected_fields}`; merges; `closes_at: null` reopens; `expected_fields` only on an approved form, never empty |
-| Archive / restore | `twillingate form archive` / `restore` | `archive_form` / `restore_form` | `{project_id, name}`; archiving refuses submissions and hides the form and its submissions everywhere; a restored draft gets another `FORMS_DRAFT_DAYS` |
+| Archive / restore | `twillingate form archive` / `restore` | `archive_form` / `restore_form` | `{project_id, name}`; archiving refuses submissions and hides the form and its submissions from every list, table and export (a search still finds them); a restored draft gets another `FORMS_DRAFT_DAYS` |
 | Read a form's table | `twillingate form export` (CSV) | `list_submissions` | `{project_id, name, filters, sort, distinct, offset, limit}`; returns `columns`, `rows`, `ids`, `matched`, `total`, `offset`, `limit` |
 | Read one submission | — | `get_submission` | `{project_id, name, id}`; every stored field (ones no longer expected too), `received_at`, `host`, `path`, `via`, `visit` |
-| Find a person | — | `find_submissions` | `{project_id, search, limit, cursor}`; `search` at least 2 characters; returns `submissions` (each with its `form`) and `next_cursor` |
+| Find a person | — | `find_submissions` | `{project_id, search, limit, cursor}`; `search` at least 2 characters; returns `submissions` (each with its `form` and `archived`, true when that form is archived) and `next_cursor` |
 | Delete submissions | `twillingate form erase` | `delete_submissions` | `{project_id}` with exactly one of `ids`, `form` with `filters`, or `search`; returns `deleted` |
 
 The CLI works on the database directly, with every flag naming a project by
@@ -683,7 +684,9 @@ running it as a formula.
 cannot be undone. `ids` deletes those submissions (ids that match nothing are
 skipped); `form` with `filters` deletes every row that form's table shows
 with those filters (at least one; to remove a whole form, archive it); and
-`search` deletes what `find_submissions` finds. Search matches a field's
+`search` deletes what `find_submissions` finds. Search reaches archived
+forms too, so an erasure request leaves no copy behind; each submission it
+finds says `archived: true` when its form is archived. Search matches a field's
 value anywhere in it, case-insensitively for ASCII letters only (`É` and `é`
 differ). A deleted submission's `$form_submit` event is removed from the raw
 window only: days already rolled up keep their counts. The audit log records
@@ -691,9 +694,9 @@ the selector's kind (`ids`, `search`, or `filters` with the form's name) and
 the count, never the search text, the filter values or the submissions'
 contents: those are usually the erased person's email.
 
-An archived form's submissions are left out of every table, search and
-export (so of a delete by filters or search too) until it is restored, and
-are purged with it
+An archived form's submissions are left out of every list, table and
+export (so of a delete by filters too) until it is restored, and are purged
+with it
 `RETENTION_ARCHIVED_DAYS` after archiving, with their events still in the raw
 window. Deleting the project deletes its forms and submissions.
 

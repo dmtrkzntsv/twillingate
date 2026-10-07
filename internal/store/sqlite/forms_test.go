@@ -895,12 +895,17 @@ func TestFindSubmissions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(ids(subs), []string{"b", "a"}) || next != "" {
+	// An archived form's submissions are found too, and marked: an
+	// erasure request reaches them (D8, revised).
+	if !reflect.DeepEqual(ids(subs), []string{"e", "b", "a"}) || next != "" {
 		t.Fatalf("alice = %v next %q", ids(subs), next)
 	}
-	if subs[1].Form != "contact" || subs[1].Fields["email"] != "Alice@Example.com" || subs[1].ProjectID != 1 ||
-		!subs[1].ReceivedAt.Equal(formsNow.Add(-3*time.Hour)) {
-		t.Fatalf("submission = %+v", subs[1])
+	if subs[2].Form != "contact" || subs[2].Fields["email"] != "Alice@Example.com" || subs[2].ProjectID != 1 ||
+		!subs[2].ReceivedAt.Equal(formsNow.Add(-3*time.Hour)) || subs[2].Archived {
+		t.Fatalf("submission = %+v", subs[2])
+	}
+	if subs[0].Form != "hidden" || !subs[0].Archived || subs[1].Archived {
+		t.Fatalf("archived marks = %+v", subs)
 	}
 	// LIKE wildcards in the search are literal.
 	if subs, _, _ = db.FindSubmissions(ctx, 1, "100%", 10, ""); !reflect.DeepEqual(ids(subs), []string{"c"}) {
@@ -933,7 +938,7 @@ func TestFindSubmissions(t *testing.T) {
 	}
 
 	all, err := db.SubmissionIDsMatching(ctx, 1, "alice")
-	if err != nil || !reflect.DeepEqual(all, []string{"b", "a"}) {
+	if err != nil || !reflect.DeepEqual(all, []string{"e", "b", "a"}) {
 		t.Fatalf("SubmissionIDsMatching = %v, %v", all, err)
 	}
 	if _, err := db.SubmissionIDsMatching(ctx, 1, ""); !errors.Is(err, store.ErrInvalid) {

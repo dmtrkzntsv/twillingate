@@ -86,6 +86,7 @@ type Submission struct {
 	Host, Path string
 	Via        string // "form" | "json"
 	Visit      *Visit
+	Archived   bool // its form is archived; set by FindSubmissions only
 }
 
 // NewSubmission is what ingest hands the store: the submission, the

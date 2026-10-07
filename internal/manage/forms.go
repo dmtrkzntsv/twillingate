@@ -194,8 +194,8 @@ func checkSearch(search string) (string, error) {
 	return search, nil
 }
 
-// FindSubmissions pages the project's submissions of active forms whose
-// field values contain search. limit is clamped to 1..500 (100 when unset).
+// FindSubmissions pages the project's submissions whose field values
+// contain search, archived forms' included (marked Archived). limit is clamped to 1..500 (100 when unset).
 func (o *Ops) FindSubmissions(ctx context.Context, projectID int64, search string, limit int, after string) ([]store.Submission, string, error) {
 	if err := o.requireProject(ctx, projectID); err != nil {
 		return nil, "", err
