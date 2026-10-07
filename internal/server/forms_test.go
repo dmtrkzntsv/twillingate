@@ -97,6 +97,26 @@ func TestFlattenFormCapsFieldCount(t *testing.T) {
 	}
 }
 
+// A field name holding a control character (U+0000 to U+001F, U+007F) is
+// dropped, on both paths: a NUL would cut the SQL that reads the field
+// short, and none of them names a real form control.
+func TestFlattenDropsControlCharacterNames(t *testing.T) {
+	bad := []string{"a\x00b", "\x00", "tab\there", "new\nline", "del\x7f", "esc\x1b"}
+	v := url.Values{"ok": {"1"}}
+	j := map[string]any{"ok": "1"}
+	for _, n := range bad {
+		v.Set(n, "x")
+		j[n] = "x"
+	}
+	want := map[string]string{"ok": "1"}
+	if fields, _ := flattenForm(v); !maps.Equal(fields, want) {
+		t.Errorf("form fields = %q, want %q", fields, want)
+	}
+	if fields, _ := flattenJSON(j, nil); !maps.Equal(fields, want) {
+		t.Errorf("json fields = %q, want %q", fields, want)
+	}
+}
+
 func TestFlattenJSON(t *testing.T) {
 	var body struct {
 		Fields     map[string]any `json:"fields"`

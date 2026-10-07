@@ -1173,6 +1173,7 @@ or the form's return URL.
 | Body | 64 KB, file parts included (else `413`, or the error redirect) |
 | Fields | 100; past that, the rest in name order are dropped |
 | Field name length | 64 characters (a longer name dropped) |
+| Field name characters | no control character, U+0000 to U+001F or U+007F (such a name dropped, and refused in `expected_fields`) |
 | Field value length | 8 KB (truncated, not rejected) |
 
 Approving a form, reading its submissions and erasing them are in [Collect

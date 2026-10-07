@@ -390,6 +390,15 @@ Date: 2026-10-05
   form is approved.
 - The redirect check is `Snapshot.RedirectAllowed`; `return_url` is
   validated with it. The config field is `cfg.Forms.DraftDays`.
+- The submissions query names its columns by position (`c0` is the id,
+  `c1`… the display columns); a field name reaches the SQL only inside a
+  quoted JSON path. `manage.QuerySubmissions` translates filter, sort and
+  distinct columns from display names and the result's back, so a field
+  called `meta`, `dbstat`, `sqlite_*` or `pragma_*` (names readsql refuses
+  as identifiers) reads like any other.
+- A field name holding a control character (U+0000 to U+001F, U+007F) is
+  dropped at ingest and refused in `expected_fields`: a NUL would end the
+  SQL that reads it.
 
 ## Where the code goes
 

@@ -43,8 +43,9 @@ func (o *Ops) requireProject(ctx context.Context, projectID int64) error {
 }
 
 // checkExpected validates a field list kept by an approved form: every name
-// non-empty, at most 64 characters and not starting with "$" (the context
-// keys). Duplicates collapse. An empty list is the caller's to refuse.
+// non-empty, at most 64 characters, free of control characters (U+0000 to
+// U+001F, U+007F, which ingest drops) and not starting with "$" (the
+// context keys). Duplicates collapse. An empty list is the caller's to refuse.
 func checkExpected(expected []string) ([]string, error) {
 	for _, n := range expected {
 		switch {
@@ -52,6 +53,8 @@ func checkExpected(expected []string) ([]string, error) {
 			return nil, fmt.Errorf("%w: expected fields must not contain an empty name", ErrInvalid)
 		case len([]rune(n)) > maxFieldName:
 			return nil, fmt.Errorf("%w: expected field %q is longer than %d characters", ErrInvalid, n, maxFieldName)
+		case strings.ContainsFunc(n, func(r rune) bool { return r < 0x20 || r == 0x7f }):
+			return nil, fmt.Errorf("%w: expected field %q holds a control character; no submitted field does", ErrInvalid, n)
 		case strings.HasPrefix(n, "$"):
 			return nil, fmt.Errorf("%w: expected field %q starts with $, which is reserved for context keys; drop it", ErrInvalid, n)
 		}

@@ -139,6 +139,9 @@ func TestApproveFormValidates(t *testing.T) {
 		"empty name":      {pid, "contact", []string{"email", ""}, ErrInvalid},
 		"too long":        {pid, "contact", []string{long}, ErrInvalid},
 		"dollar":          {pid, "contact", []string{"$redirect"}, ErrInvalid},
+		"nul":             {pid, "contact", []string{"a\x00b"}, ErrInvalid},
+		"tab":             {pid, "contact", []string{"a\tb"}, ErrInvalid},
+		"del":             {pid, "contact", []string{"a\x7f"}, ErrInvalid},
 		"unknown project": {99, "contact", []string{"email"}, ErrNotFound},
 		"unknown form":    {pid, "nope", []string{"email"}, ErrNotFound},
 	} {
