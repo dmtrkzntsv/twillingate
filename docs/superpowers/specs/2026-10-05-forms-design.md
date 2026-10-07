@@ -23,7 +23,8 @@ Date: 2026-10-05
   conversion, deleted with it.** An accepted submission writes a row in
   a new `submissions` table (the fields, kept until deleted). On an
   approved form (D2) it also writes a `$form_submit` product event in
-  `events` (the form name, the page and the actor, no field values), so
+  `events` (the form name as its one attribute, `form`; the page and the
+  actor; no field values), so
   conversions show in dashboards, funnels and retention like any product
   event; the row is what the owner reads and exports. A draft's
   submissions write no event, even once the form is approved: spam stays
@@ -87,7 +88,7 @@ Date: 2026-10-05
   carrying a large file is refused as too large. The docs say not to put
   file inputs in a twillingate form.
 
-- **D4. Migration 031 adds two tables.**
+- **D4. Migration 034 adds two tables.**
 
   ```sql
   CREATE TABLE forms (
@@ -358,10 +359,11 @@ Date: 2026-10-05
     `UTM campaign` (from `visit`).
 
   A field name that collides with one of the fixed columns is shown as
-  `<name> (field)`. Selecting rows enables **Delete**; with filters set,
-  **Delete all matching** sends the same `filters`. **CSV** downloads
-  what the filters match. A row opens a drawer with every stored field
-  (including ones no longer expected) and the full visit.
+  `<name> (field)`. The rows' ids come back beside them (`ids`, one per
+  row), not as a column. A row opens a drawer with every stored field
+  (including ones no longer expected), the full visit, and **Delete**;
+  with filters set, **Delete all matching** sends the same `filters`.
+  **CSV** downloads what the filters match.
 
 ## Where the code goes
 
@@ -370,7 +372,7 @@ No new package; the archtest rank table is unchanged.
 | Package | Change |
 | --- | --- |
 | `store` | `Form`, `Submission` row types and their methods |
-| `store/sqlite` | `031_forms.sql`; `projectTables`; `PurgeArchived` |
+| `store/sqlite` | `034_forms.sql`; `projectTables`; `PurgeArchived` |
 | `server` | `forms.go`: the endpoint, decoding, D6, field filtering; takes a `server.FormStore` (as `NameStore` today), passed by `app`, which writes the submission and, on an approved form, its `$form_submit` in one transaction |
 | `wire` | the D10 limits |
 | `config` | `FORMS_DRAFT_DAYS` (D10a) |
@@ -402,12 +404,12 @@ No new package; the archtest rank table is unchanged.
   conversions, and that deleting a submission removes its conversion
   from the raw window only.
 - `integration_guide`: a forms section.
-- `deploy/UPGRADES.md`: 031, additive.
+- `deploy/UPGRADES.md`: 034, additive.
 - `docs/deployment.md`: `FORMS_DRAFT_DAYS`.
 
 ## Tests
 
-- `migration031_test.go`; store tests for idempotent ids, `fields`
+- `migration034_test.go`; store tests for idempotent ids, `fields`
   merging, project purge and archived-form purge.
 - Jobs: a draft past `draft_until` is archived by the daily pass and
   purged `RETENTION_ARCHIVED_DAYS` later with its submissions; an
