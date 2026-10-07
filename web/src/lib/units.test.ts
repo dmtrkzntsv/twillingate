@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatAgo, formatBytes, formatDay, formatGrowth } from './units'
+import { formatAgo, formatBytes, formatDay, formatGrowth, formatSpan } from './units'
 
 describe('formatBytes', () => {
   it('uses binary-free decimal units, one decimal past the first', () => {
@@ -47,5 +47,16 @@ describe('formatGrowth', () => {
     expect(formatGrowth([], now)).toBeNull()
     expect(formatGrowth([{ day: '2026-10-03', bytes: 5 }, { day: '2026-10-02', bytes: null }], now)).toBeNull()
     expect(formatGrowth([{ day: '2026-10-02', bytes: 5 }, { day: '2026-10-03', bytes: 5 }], now)).toBeNull()
+  })
+})
+
+describe('formatSpan', () => {
+  const now = new Date('2026-10-06T12:00:00Z')
+  it('says a range in the current year without years, one day once', () => {
+    expect(formatSpan('2026-09-30', '2026-10-06', now)).toBe('Sep 30 – Oct 6')
+    expect(formatSpan('2026-10-06', '2026-10-06', now)).toBe('Oct 6')
+  })
+  it('names the years when the range leaves the current year', () => {
+    expect(formatSpan('2025-12-30', '2026-01-05', now)).toBe('Dec 30, 2025 – Jan 5, 2026')
   })
 })
