@@ -178,6 +178,28 @@ func TestFormToolsRoundTrip(t *testing.T) {
 	refused(t, cs, "restore_form", map[string]any{"project_id": 99, "name": "contact"})
 }
 
+func TestListFormsActionBase(t *testing.T) {
+	h, cs := newTestHost(t)
+	type answer struct {
+		ActionBase string `json:"action_base"`
+	}
+	if got := callAs[answer](t, cs, "list_forms", map[string]any{"project_id": 1}).ActionBase; got != "https://collector.test/ingest/forms" {
+		t.Errorf("action_base with PUBLIC_URL = %q", got)
+	}
+	h.publicURL = ""
+	res := callTool(t, cs, "list_forms", map[string]any{"project_id": 1})
+	if res.IsError {
+		t.Fatal(textOf(res))
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(textOf(res)), &raw); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := raw["action_base"]; !ok || string(got) != `""` {
+		t.Errorf("action_base without PUBLIC_URL = %s (present %v), want \"\"", got, ok)
+	}
+}
+
 var fixedCols = []string{"Page", "Referrer", "UTM source", "UTM medium", "UTM campaign"}
 
 func TestListSubmissionsColumnsDraftAndApproved(t *testing.T) {

@@ -337,6 +337,12 @@ describe('table', () => {
     expect(onRow).toHaveBeenCalledTimes(3)
   })
 
+  it('leaves rows plain in local mode, where the index would not name a server row, even with onRow', () => {
+    const { container } = render(<Table data={pages} props={{}} onRow={vi.fn()} />)
+    expect(container.querySelector('tbody tr[role="button"]')).toBeNull()
+    expect(container.querySelector('tbody tr[tabindex]')).toBeNull()
+  })
+
   it('leaves rows plain without onRow', () => {
     const { container } = render(<Table data={pages} props={{}} />)
     expect(container.querySelector('tbody tr[role="button"]')).toBeNull()

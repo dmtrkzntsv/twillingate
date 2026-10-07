@@ -309,7 +309,7 @@ describe('Project tabs', () => {
 
   it('opens the Forms tab at /forms, keeping the range, and a form inside it', async () => {
     const user = userEvent.setup()
-    vi.spyOn(endpoints, 'forms').mockResolvedValue({ forms: [form('contact')] })
+    vi.spyOn(endpoints, 'forms').mockResolvedValue({ action_base: '', forms: [form('contact')] })
     vi.spyOn(endpoints, 'submissions').mockResolvedValue(contactPage)
     renderAt('/projects/7/setup?range=30d')
     await user.click(await screen.findByRole('tab', { name: 'Forms' }))

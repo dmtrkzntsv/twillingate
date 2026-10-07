@@ -94,7 +94,7 @@ beforeEach(() => {
   URL.revokeObjectURL = vi.fn()
   mockShares()
   vi.spyOn(endpoints, 'projects').mockResolvedValue({ projects: [] })
-  vi.spyOn(endpoints, 'forms').mockResolvedValue({ forms: [] })
+  vi.spyOn(endpoints, 'forms').mockResolvedValue({ action_base: '', forms: [] })
   vi.mocked(useWidgetShareActions).mockReturnValue({
     create: vi.fn(),
     setArchiveAfter: vi.fn(),
@@ -488,6 +488,7 @@ describe('Archive, forms', () => {
       { project_id: 3, name: 'legacy', archived: true, allowed_origins: [] },
     ] })
     vi.mocked(endpoints.forms).mockImplementation(async (id, archived) => ({
+      action_base: '',
       forms: id === 4 && archived ? [form('contact', { archived: true, archived_at: '2026-09-01T00:00:00Z' })] : [],
     }))
     const restoreForm = vi.spyOn(endpoints, 'restoreForm').mockResolvedValue({ status: 'restored' })

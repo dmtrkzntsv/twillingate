@@ -230,7 +230,7 @@ export default function Table({
               {rows.map((row, ri) => (
                 <TableRow
                   key={ri}
-                  {...(onRow && !card
+                  {...(onRow && remote && !card
                     ? {
                         role: 'button',
                         tabIndex: 0,

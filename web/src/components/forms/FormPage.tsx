@@ -98,6 +98,9 @@ function Submissions({ projectId, form }: { projectId: number; form: Form }) {
   const columns = answer?.columns ?? []
   const live = liveFilters(view, columns)
   const matched = answer?.matched ?? 0
+  // While a new view loads, the count on screen is the old view's: deleting
+  // then would confirm one number and send another view's filters.
+  const deletable = !actions.pending && !q.isPlaceholderData && live.length > 0 && matched > 0
 
   const fetchDistinct = async (column: string, filters: Filter[]) => {
     const others = liveFilters({ ...view, filters }, columns)
@@ -142,7 +145,7 @@ function Submissions({ projectId, form }: { projectId: number; form: Form }) {
             type="button"
             variant="outline"
             size="sm"
-            disabled={actions.pending || live.length === 0 || matched === 0}
+            disabled={!deletable}
             onClick={() => setConfirming(true)}
           >
             <Trash2Icon />
@@ -193,7 +196,9 @@ function Submissions({ projectId, form }: { projectId: number; form: Form }) {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={() => void deleteMatching()}>Delete submissions</AlertDialogAction>
+            <AlertDialogAction disabled={!deletable} onClick={() => void deleteMatching()}>
+              Delete submissions
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

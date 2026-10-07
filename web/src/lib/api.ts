@@ -385,6 +385,13 @@ export interface Form {
   archived_at?: string
 }
 
+/** list_forms' answer: the forms, and where a plain HTML form posts. */
+export interface FormsResponse {
+  forms: Form[]
+  /** PUBLIC_URL + `/ingest/forms`, so a form's action is `<action_base>/<name>?key=…`; empty without PUBLIC_URL. */
+  action_base: string
+}
+
 /** update_form's body: an omitted field is kept; `closes_at` null reopens. */
 export interface FormUpdate {
   purpose?: string
@@ -546,7 +553,7 @@ export const endpoints = {
   devVersion: () => api<{ version: string }>('/api/dev/version'),
   /** A project's forms, drafts first; `archived` lists the archived ones instead. */
   forms: (projectId: number, archived = false) =>
-    api<{ forms: Form[] }>(`/api/projects/${projectId}/forms${toQuery({ archived: archived || undefined })}`),
+    api<FormsResponse>(`/api/projects/${projectId}/forms${toQuery({ archived: archived || undefined })}`),
   approveForm: (projectId: number, name: string, expected_fields: string[]) =>
     api<{ status: string }>(`${formPath(projectId, name)}/approve`, json('POST', { expected_fields })),
   updateForm: (projectId: number, name: string, body: FormUpdate) =>

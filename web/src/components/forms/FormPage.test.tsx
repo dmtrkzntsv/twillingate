@@ -15,6 +15,7 @@ beforeEach(() => {
   vi.restoreAllMocks()
   localStorage.clear()
   vi.spyOn(endpoints, 'forms').mockResolvedValue({
+    action_base: '',
     forms: [form('contact', { fields: ['email', 'message', 'phone'], expected_fields: ['email', 'message'], submissions: 2, purpose: 'Sales' })],
   })
   vi.spyOn(endpoints, 'submissions').mockResolvedValue(contactPage)
@@ -71,6 +72,25 @@ describe('FormPage', () => {
     await waitFor(() => expect(del).toHaveBeenCalledWith(4, { form: 'contact', filters: JSON.stringify(filters) }))
   })
 
+  it('keeps Delete all matching off while a new view loads, so the count and the filters sent agree', async () => {
+    const user = userEvent.setup()
+    const filters = [{ column: 'email', op: '=', value: 'bob@example.com' }]
+    localStorage.setItem(KEY, JSON.stringify({ filters, sort: null }))
+    let resolve: (p: typeof contactPage) => void = () => {}
+    vi.mocked(endpoints.submissions)
+      .mockResolvedValueOnce({ ...contactPage, rows: [contactPage.rows[1]], ids: ['s2'], matched: 1 })
+      .mockImplementationOnce(() => new Promise((r) => (resolve = r)))
+    renderPage()
+    const button = await screen.findByRole('button', { name: 'Delete all matching' })
+    await waitFor(() => expect(button).toBeEnabled())
+    // A new sort asks again: until it answers, the rows and count on screen are the old view's.
+    await user.click(screen.getByRole('button', { name: 'Received' }))
+    await waitFor(() => expect(endpoints.submissions).toHaveBeenCalledTimes(2))
+    expect(button).toBeDisabled()
+    resolve({ ...contactPage, rows: [contactPage.rows[1]], ids: ['s2'], matched: 1 })
+    await waitFor(() => expect(button).toBeEnabled())
+  })
+
   it('keeps Delete all matching off without filters', async () => {
     renderPage()
     await screen.findByRole('table')
@@ -122,7 +142,7 @@ describe('FormPage', () => {
   it('shows a draft banner with Approve', async () => {
     const user = userEvent.setup()
     const until = new Date(Date.now() + 3 * 86_400_000).toISOString()
-    vi.mocked(endpoints.forms).mockResolvedValue({ forms: [draft('contact', 3, { draft_until: until, fields: ['email', 'message'] })] })
+    vi.mocked(endpoints.forms).mockResolvedValue({ action_base: '', forms: [draft('contact', 3, { draft_until: until, fields: ['email', 'message'] })] })
     const approve = vi.spyOn(endpoints, 'approveForm').mockResolvedValue({ status: 'approved' })
     renderPage()
     expect(await screen.findByText(`Draft: accepting until ${formatDay(new Date(until))}, then archived`)).toBeInTheDocument()
@@ -142,7 +162,7 @@ describe('FormPage', () => {
   })
 
   it('says when the form is not among the active ones', async () => {
-    vi.mocked(endpoints.forms).mockResolvedValue({ forms: [] })
+    vi.mocked(endpoints.forms).mockResolvedValue({ action_base: '', forms: [] })
     renderPage('gone')
     expect(await screen.findByText(/No form gone/)).toBeInTheDocument()
   })

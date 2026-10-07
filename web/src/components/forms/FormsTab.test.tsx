@@ -27,6 +27,7 @@ describe('FormsTab', () => {
   it('lists the forms in the order the API gives, drafts first, each with its status', async () => {
     const closes = fromNow(3)
     vi.spyOn(endpoints, 'forms').mockResolvedValue({
+      action_base: '',
       forms: [
         draft('signup', 2.5, { purpose: 'Beta list', submissions: 3, last_submitted_at: fromNow(-1) }),
         draft('late', 5 / 24),
@@ -56,7 +57,7 @@ describe('FormsTab', () => {
   })
 
   it("opens a form's page from its row, keeping the range", async () => {
-    vi.spyOn(endpoints, 'forms').mockResolvedValue({ forms: [form('contact')] })
+    vi.spyOn(endpoints, 'forms').mockResolvedValue({ action_base: '', forms: [form('contact')] })
     renderTab()
     const link = await screen.findByRole('link', { name: /contact/ })
     expect(link).toHaveAttribute('href', '/projects/4/forms/contact?range=7d')
@@ -64,7 +65,7 @@ describe('FormsTab', () => {
 
   it('stops a form now and archives one from its menu', async () => {
     const user = userEvent.setup()
-    vi.spyOn(endpoints, 'forms').mockResolvedValue({ forms: [form('contact')] })
+    vi.spyOn(endpoints, 'forms').mockResolvedValue({ action_base: '', forms: [form('contact')] })
     const update = vi.spyOn(endpoints, 'updateForm').mockResolvedValue({ status: 'updated' })
     const archive = vi.spyOn(endpoints, 'archiveForm').mockResolvedValue({ status: 'archived' })
     renderTab()
@@ -84,7 +85,7 @@ describe('FormsTab', () => {
 
   it('approves a draft from its menu with the fields picked', async () => {
     const user = userEvent.setup()
-    vi.spyOn(endpoints, 'forms').mockResolvedValue({ forms: [draft('signup', 3, { fields: ['email', 'name'] })] })
+    vi.spyOn(endpoints, 'forms').mockResolvedValue({ action_base: '', forms: [draft('signup', 3, { fields: ['email', 'name'] })] })
     const approve = vi.spyOn(endpoints, 'approveForm').mockResolvedValue({ status: 'approved' })
     renderTab()
     await user.click(await screen.findByRole('button', { name: 'Actions for signup' }))
@@ -97,7 +98,7 @@ describe('FormsTab', () => {
 
   it('offers no Approve… on an approved form, and no Stop now on a closed one', async () => {
     const user = userEvent.setup()
-    vi.spyOn(endpoints, 'forms').mockResolvedValue({ forms: [form('survey', { closes_at: fromNow(-1) })] })
+    vi.spyOn(endpoints, 'forms').mockResolvedValue({ action_base: '', forms: [form('survey', { closes_at: fromNow(-1) })] })
     renderTab()
     await user.click(await screen.findByRole('button', { name: 'Actions for survey' }))
     await screen.findByRole('menuitem', { name: 'Archive' })
@@ -105,17 +106,24 @@ describe('FormsTab', () => {
     expect(screen.queryByRole('menuitem', { name: 'Stop now' })).toBeNull()
   })
 
-  it('shows a hint with a copyable form snippet and its action URL when there are no forms', async () => {
-    vi.spyOn(endpoints, 'forms').mockResolvedValue({ forms: [] })
+  it('shows a hint with a copyable form snippet and the action URL on the collector the API names', async () => {
+    vi.spyOn(endpoints, 'forms').mockResolvedValue({ forms: [], action_base: 'https://t.example.com/ingest/forms' })
     renderTab()
     expect(await screen.findByText(/No forms yet/)).toBeInTheDocument()
     expect(screen.getByText(/<form data-twillingate-form="contact">/)).toBeInTheDocument()
-    expect(await screen.findByText(/\/ingest\/forms\/contact\?key=ak_web_123/)).toBeInTheDocument()
+    expect(await screen.findByText('https://t.example.com/ingest/forms/contact?key=ak_web_123')).toBeInTheDocument()
+    expect(screen.queryByText(/<collector>/)).toBeNull()
     expect(screen.getAllByRole('button', { name: /^Copy/ }).length).toBeGreaterThanOrEqual(2)
   })
 
+  it('falls back to a placeholder collector when the server has no PUBLIC_URL', async () => {
+    vi.spyOn(endpoints, 'forms').mockResolvedValue({ forms: [], action_base: '' })
+    renderTab()
+    expect(await screen.findByText('https://<collector>/ingest/forms/contact?key=ak_web_123')).toBeInTheDocument()
+  })
+
   it('heads the tab with Find a person', async () => {
-    vi.spyOn(endpoints, 'forms').mockResolvedValue({ forms: [form('contact')] })
+    vi.spyOn(endpoints, 'forms').mockResolvedValue({ action_base: '', forms: [form('contact')] })
     renderTab()
     expect(await screen.findByRole('searchbox', { name: 'Find a person' })).toBeInTheDocument()
   })

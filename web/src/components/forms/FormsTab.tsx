@@ -35,12 +35,14 @@ function Code({ value, label }: { value: string; label: string }) {
 /**
  * No forms yet: how to add one. A form is created by its first submission,
  * so the hint is a tagged form for a page with the SDK, and the URL a plain
- * HTML form posts to, with one of the project's keys.
+ * HTML form posts to (on the collector list_forms' action_base names), with
+ * one of the project's keys.
  */
-function AddFormHint({ projectId }: { projectId: number }) {
+function AddFormHint({ projectId, actionBase }: { projectId: number; actionBase: string }) {
   const keysQ = useQuery(keysQuery(projectId))
   const key = keysQ.data?.keys.find((k) => k.state === 'active')?.key ?? 'ak_…'
-  const action = `https://<collector>/ingest/forms/contact?key=${key}`
+  // Without PUBLIC_URL the server cannot name the collector: a placeholder the text explains.
+  const action = `${actionBase || 'https://<collector>/ingest/forms'}/contact?key=${key}`
   return (
     <section aria-label="Add a form" className="flex flex-col gap-3 rounded-lg border p-4">
       <h3 className="text-base font-semibold">No forms yet</h3>
@@ -133,7 +135,7 @@ export default function FormsTab({ project }: { project: Project }) {
       ) : !forms ? (
         <Skeleton aria-hidden className="h-24 w-full" />
       ) : forms.length === 0 ? (
-        <AddFormHint projectId={id} />
+        <AddFormHint projectId={id} actionBase={q.data?.action_base ?? ''} />
       ) : (
         <ul aria-label="Forms" className="flex flex-col gap-2">
           {forms.map((f) => (
