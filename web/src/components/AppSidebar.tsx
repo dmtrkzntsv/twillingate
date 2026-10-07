@@ -51,8 +51,8 @@ interface Props {
  * dashboard group in the sidebar (`sidebar`, tabs D20), the system groups first with a "Built-in"
  * badge, then the user's. Then Gallery (the components playground and the
  * Dashboards gallery of templates, D17), closed until opened or on a gallery page. At
- * the bottom, Archive (every user group with an archived dashboard, D17a)
- * above Log out. Each entry links to its group's first live
+ * the bottom, Archive (every user group with an archived dashboard, D17a),
+ * then Shares (not in reporting dev), above Log out. Each entry links to its group's first live
  * member and is named by its group's name (`groupName`); it is active on any live member of
  * the group. The user's entries drag to a new order (D14, D15); built-in
  * ones do not, and since the sortable list holds only user groups,
@@ -127,14 +127,6 @@ export default function AppSidebar({ dashboards, currentId, readOnly = false }: 
                     <Link to="/projects" onClick={close}>
                       <FolderIcon />
                       <span>Projects</span>
-                    </Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-                <SidebarMenuItem>
-                  <SidebarMenuButton asChild isActive={pathname.startsWith('/shares')} tooltip="Shares" className={item}>
-                    <Link to="/shares" onClick={close}>
-                      <Share2Icon />
-                      <span>Shares</span>
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
@@ -277,6 +269,16 @@ export default function AppSidebar({ dashboards, currentId, readOnly = false }: 
               </Link>
             </SidebarMenuButton>
           </SidebarMenuItem>
+          {!readOnly && (
+            <SidebarMenuItem>
+              <SidebarMenuButton asChild isActive={pathname.startsWith('/shares')} tooltip="Shares" className={item}>
+                <Link to="/shares" onClick={close}>
+                  <Share2Icon />
+                  <span>Shares</span>
+                </Link>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          )}
           {currentAuthState().kind !== 'none' && (
             <SidebarMenuItem>
               <SidebarMenuButton tooltip="Log out" onClick={logOut}>
