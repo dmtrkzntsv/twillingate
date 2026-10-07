@@ -19,25 +19,52 @@ Date: 2026-10-05
 
 ## Decisions
 
-- **D1. Each submission is a record and a conversion.** An accepted
-  submission writes a row in a new `submissions` table (the fields, kept
-  until deleted) and a `$form_submit` product event in `events` (the form
-  name, the page and the actor, no field values). The event makes
+- **D1. Each submission is a record; an approved form's is also a
+  conversion.** An accepted submission writes a row in a new
+  `submissions` table (the fields, kept until deleted). On an approved
+  form (D2) it also writes a `$form_submit` product event in `events`
+  (the form name, the page and the actor, no field values), so
   conversions show in dashboards, funnels and retention like any product
-  event; the row is what the owner reads and exports.
+  event; the row is what the owner reads and exports. A draft's
+  submissions write no event, even once the form is approved: spam stays
+  out of the analytics, at the cost of a new form's first days.
 
-- **D2. Forms are created by their first submission and are open.** A
-  submission naming an unknown form creates its row and is stored. There
-  is no approval step and no project-level setting. The owner restricts a
-  form afterwards (D3), stops it (`accepting`), or archives it.
+- **D2. A form is captured as a draft and must be approved.** The first
+  submission naming an unknown form creates its row as a `draft` and is
+  stored. A draft accepts submissions until `draft_until` (its creation
+  plus `FORMS_DRAFT_DAYS`, default 7); after that ingest refuses them, the
+  next daily pass archives the form, and the archived-items purge deletes
+  it with its submissions (D11). This is the spam protection: a form name
+  nobody approves expires with everything sent to it.
 
-- **D3. Fields are free-form; expected fields only narrow what is kept.**
-  Every field a submission sends is stored, as JSON, until the form has
-  `expected_fields`. Then fields outside the list are dropped from the
-  row (their names are still recorded in `forms.fields`, so the console
-  can show "arriving, not kept"). Expected never means required: a
-  submission missing an expected field is stored as it is. The console
-  picks expected fields from the names submissions actually sent.
+  | State | Reached by | Accepts | Keeps |
+  | --- | --- | --- | --- |
+  | `draft` | the first submission to an unknown name | until `draft_until` | every field |
+  | `approved` | `approve_form`, which **requires** `expected_fields` | until `closes_at` | the expected fields |
+  | archived | archiving by hand, or a draft past `draft_until` | nothing | (purged later) |
+
+  Approving sets `expected_fields` (one or more), `approved_at`, and
+  clears `draft_until`. An approved form never returns to draft; its
+  `expected_fields` can change (`update_form`) but never become empty.
+  Restoring an archived draft makes it a draft again with a fresh
+  `draft_until`, or the next pass would archive it at once; restoring an
+  approved form keeps it approved. There is no project-level setting and
+  no cap on drafts.
+
+- **D2a. `closes_at` stops submissions, now or at a set time.** On a
+  draft or an approved form, `closes_at` NULL is open; a time in the
+  future closes the form then ("the waitlist closes Friday"); setting it
+  to the present stops it now; clearing it or moving it later reopens
+  it. A closed form refuses new submissions (D5) and keeps its own.
+
+- **D3. Fields are free-form until approval; then expected fields narrow
+  what is kept.** A draft stores every field a submission sends, so the
+  owner can see what the form really sends before approving. An approved
+  form drops fields outside `expected_fields` from the row (their names
+  are still recorded in `forms.fields`, so the console can show
+  "arriving, not kept"). Expected never means required: a submission
+  missing an expected field is stored as it is. The approval picker
+  preselects the fields the draft's submissions actually sent.
 
 - **D3a. A submission is flat text: one string per field name, no
   attachments.** `fields` is a JSON object of string to string, never
@@ -58,9 +85,12 @@ Date: 2026-10-05
       purpose           TEXT    NOT NULL DEFAULT '',
       return_url        TEXT    NOT NULL DEFAULT '',
       fields            TEXT    NOT NULL DEFAULT '[]',  -- every field name seen, sorted
-      expected_fields   TEXT,                           -- JSON list; NULL keeps every field
-      accepting         INTEGER NOT NULL DEFAULT 1,
+      status            TEXT    NOT NULL DEFAULT 'draft',  -- draft | approved
+      expected_fields   TEXT,                           -- JSON list; NULL only while draft
       created_at        TEXT    NOT NULL,
+      draft_until       TEXT,                           -- NULL once approved
+      approved_at       TEXT,
+      closes_at         TEXT,                           -- NULL = open
       last_submitted_at TEXT,
       archived_at       TEXT,                           -- NULL = active
       PRIMARY KEY (project_id, name)
@@ -130,13 +160,14 @@ Date: 2026-10-05
   2. A present `Origin` passes `allowed_origins`, else a plain `403`.
      Browsers send `Origin` on a cross-origin form POST.
   3. The body is within the limits (D10), else `-error` / `413`.
-  4. The form row is read or created. An archived form, or one with
-     `accepting` off, is `-error` / `409`, and nothing is written.
+  4. The form row is read, or created as a draft. An archived form, a
+     draft past `draft_until`, or a form past `closes_at` is `-error` /
+     `409`, and nothing is written.
   5. The submission is written: the form's `fields` merged, then the row
      (`INSERT OR IGNORE` on `id`, so a retried `$id` stores once), in one
      transaction **written directly, not through `pipeline.Buffer`**,
-     which drops its oldest entries when full. `$form_submit` then goes
-     through the buffer like any event.
+     which drops its oldest entries when full. On an approved form,
+     `$form_submit` then goes through the buffer like any event.
 
 - **D6. The form path redirects; twillingate renders no page.** The
   target is the first one allowed of:
@@ -205,9 +236,10 @@ Date: 2026-10-05
 
   | Tool | Route | Does |
   | --- | --- | --- |
-  | `list_forms` | `GET /api/projects/{project_id}/forms` | every form with `purpose`, `return_url`, `fields`, `expected_fields`, `accepting`, submission count, `last_submitted_at`, `archived` |
-  | `update_form` | `PATCH /api/projects/{project_id}/forms/{name}` | merges `purpose`, `return_url`, `expected_fields` (`null` keeps every field), `accepting`; `return_url` must be an allowed target (D6) or `ErrInvalid` |
-  | `archive_form` / `restore_form` | `POST …/forms/{name}/archive` / `restore` | hides or restores the form and its submissions |
+  | `list_forms` | `GET /api/projects/{project_id}/forms` | every form with `status`, `purpose`, `return_url`, `fields`, `expected_fields`, `draft_until`, `approved_at`, `closes_at`, submission count, `last_submitted_at`, `archived` |
+  | `approve_form` | `POST …/forms/{name}/approve` | `expected_fields` (required, one or more); a draft becomes approved (D2); approving an approved form is `ErrConflict` |
+  | `update_form` | `PATCH /api/projects/{project_id}/forms/{name}` | merges `purpose`, `return_url`, `closes_at` (`null` reopens), and on an approved form `expected_fields` (never empty); `return_url` must be an allowed target (D6), else `ErrInvalid`; `expected_fields` on a draft is `ErrInvalid` (approve it instead) |
+  | `archive_form` / `restore_form` | `POST …/forms/{name}/archive` / `restore` | hides or restores the form and its submissions; restoring a draft gives it a fresh `draft_until` |
   | `list_submissions` | `GET /api/projects/{project_id}/forms/{name}/submissions` | one form's submissions as a table (D12a): `columns`, `rows`, `matched`, `total`; takes `filters`, `sort`, `offset`, `limit`, `distinct`, the arguments `widget_data` takes for a remote table; newest first without a sort |
   | `find_submissions` | `GET /api/projects/{project_id}/submissions` | `search` (required), `limit`, `cursor`: every active form's submissions with a field value containing `search`, case-insensitive (`json_each`), for an erasure request; each with its form and fields |
   | `delete_submissions` | `POST /api/projects/{project_id}/submissions/delete` | exactly one of `ids`; `form` with `filters` (the table's filters); or `search` (as `find_submissions`); destructive; the audit row holds the count and the selector, never the contents |
@@ -219,7 +251,7 @@ Date: 2026-10-05
   Submissions of archived forms are left out of all of them. There is no
   `create_form`. `integration_guide` gains a forms section.
 
-  CLI, one noun: `twillingate form list | update | archive | restore |
+  CLI, one noun: `twillingate form list | approve | update | archive | restore |
   export | erase`; `export` writes the CSV to stdout, `erase` deletes
   submissions by `-id` or `-search`.
 
@@ -251,9 +283,15 @@ Date: 2026-10-05
   8 KiB (longer values are truncated, as event values are). No cap on
   forms per project or submissions per form.
 
+- **D10a. `FORMS_DRAFT_DAYS`** (default 7, at least 1) sets a draft's
+  window. It is read when a draft is created or restored, so changing it
+  moves no existing `draft_until`. `limits` lists it under `retention`.
+
 - **D11. Archiving and purging.** Archiving a form hides it and its
   submissions from lists, export and counts and refuses new submissions;
-  restoring brings all back. The daily pass purges a form archived longer
+  restoring brings all back. The daily pass first archives every draft
+  past `draft_until` (audit actor `retention`, `form.expire`), then
+  purges a form archived longer
   than `RETENTION_ARCHIVED_DAYS` with its submissions (in
   `PurgeArchived`, beside dashboards), one transaction and audit row per
   form. Submissions are otherwise kept until deleted. Archiving the
@@ -265,17 +303,25 @@ Date: 2026-10-05
   inside it:
 
   - **The Forms tab** (`/projects/:id/forms`): one row per form with its
-    purpose, submission count, last submission, the `accepting` switch
-    and a menu (archive). Archived forms appear on the Archive page. The
+    status (`Draft · expires in 5 days`, `Approved`, `Closes Oct 9`,
+    `Closed`), purpose, submission count, last submission, and a menu
+    (Approve…, Stop now, archive). Drafts sort first. Archived forms appear on the Archive page. The
     tab's header holds **Find a person**, a search across every form
     (`find_submissions`) with "delete all" and a confirm, for erasure
     requests. With no forms yet, the tab shows a short "add a form" hint
     with a snippet, as the Keys section shows its own.
   - **A form** (`/projects/:id/forms/:name`), opened by clicking its row,
     with the Forms tab still selected and a crumb back to the list: the
-    submissions table (D12a), and settings (purpose, return URL, and the
-    expected-fields picker, one checkbox per field seen, with "not kept"
-    on fields arriving outside the list).
+    submissions table (D12a), and settings:
+    - on a draft, a banner (`Draft: accepting until Oct 12, then
+      archived`) with **Approve**, which opens the expected-fields picker
+      (one checkbox per field seen, preselected from what submissions
+      sent) and approves with the chosen fields;
+    - on an approved form, the same picker to change the fields, with
+      "not kept" on fields arriving outside the list;
+    - purpose and return URL;
+    - **Closing**: `Open`, or a date and time it closes, with **Stop
+      now** and **Reopen**.
 
   Like Setup, the Forms tab is not a dashboard: it cannot be moved,
   removed or duplicated, and `tabPath` gains its two paths. It keeps the
@@ -291,8 +337,8 @@ Date: 2026-10-05
   order:
 
   - `Received` (`received_at`);
-  - one per field: the expected fields in their order, or every field in
-    `forms.fields` when none are set (`json_extract(fields, '$."<name>"')`,
+  - one per field: on an approved form the expected fields in their
+    order, on a draft every field in `forms.fields` (`json_extract(fields, '$."<name>"')`,
     the name quoted, so a field named like a column is safe);
   - `Page` (`host` + `path`), `Referrer`, `UTM source`, `UTM medium`,
     `UTM campaign` (from `visit`).
@@ -313,7 +359,9 @@ No new package; the archtest rank table is unchanged.
 | `store/sqlite` | `031_forms.sql`; `projectTables`; `PurgeArchived` |
 | `server` | `forms.go`: the endpoint, decoding, D6, field filtering; takes a `server.FormStore` (as `NameStore` today), passed by `app`; `$form_submit` through `Enqueuer` |
 | `wire` | the D10 limits |
-| `manage` | audited `update_form`, archive, restore, erase; `manage.Store` grows by those. Forms stay out of the registry snapshot: ingest reads the row per submission |
+| `config` | `FORMS_DRAFT_DAYS` (D10a) |
+| `jobs` | expire drafts before `PurgeArchived` (D11) |
+| `manage` | audited `approve_form`, `update_form`, archive, restore, erase; `manage.Store` grows by those. Forms stay out of the registry snapshot: ingest reads the row per submission |
 | `api` | `ops_forms.go`: tools and the CSV route; the second `readsql` handle (D8a) |
 | `shared/readsql` | `Open` takes further refused names (D8a) |
 | `cmd` | `twillingate form` |
@@ -325,8 +373,9 @@ No new package; the archtest rank table is unchanged.
 
 - Outbound delivery: email, webhooks. The `submissions` row is shaped so
   a webhook can be added later without a migration.
-- Spam checks (honeypot, timing, rate limits, CAPTCHA). The limits (D10),
-  `expected_fields` and `accepting` are the controls in this version.
+- Spam checks on a submission (honeypot, timing, rate limits, CAPTCHA).
+  Drafts that expire unapproved (D2), `expected_fields`, `closes_at` and
+  the limits (D10) are the controls in this version.
 - Required fields and field types.
 - File uploads and nested or list values (D3a).
 
@@ -338,29 +387,35 @@ No new package; the archtest rank table is unchanged.
   routes and CLI, the limits.
 - `integration_guide`: a forms section.
 - `deploy/UPGRADES.md`: 031, additive.
-- No environment variables change.
+- `docs/deployment.md`: `FORMS_DRAFT_DAYS`.
 
 ## Tests
 
 - `migration031_test.go`; store tests for idempotent ids, `fields`
   merging, project purge and archived-form purge.
+- Jobs: a draft past `draft_until` is archived by the daily pass and
+  purged `RETENTION_ARCHIVED_DAYS` later with its submissions; an
+  approved form is never expired; restore gives a fresh window.
 - `readsql`: a refused name passed to `Open` is refused by `Check` in
   every form `meta` is (bare, quoted, as a string); `query` and widget
   SQL reading `submissions` are refused.
 - Server: both body styles and multipart; key from the query; the
   Origin check; the D6 order and every open-redirect case (foreign
   origin, `javascript:`, relative URL, bare `*`, empty
-  `allowed_origins`); the fragments; `accepting` off; archived form;
-  expected-field filtering; the limits; `$form_submit` queued; the
+  `allowed_origins`); the fragments; a draft keeps every field and
+  queues no `$form_submit`; a draft past `draft_until`, a form past
+  `closes_at` and an archived form refused; approved-form field
+  filtering; the limits; `$form_submit` queued; the
   `visit` snapshot.
-- API: tool tests; `docs_sync_test`, `coverage_test`, `openapi_test`
+- API: tool tests, including `approve_form` without fields refused and
+  `expected_fields` on a draft refused; `docs_sync_test`, `coverage_test`, `openapi_test`
   pick up the new tools.
 - SDK (vitest): `preventDefault`, the hash and redirect, the
   `CustomEvent`, double submit ignored, retries reuse `$id`, nothing
   written to storage.
 - Web: vitest; Playwright `forms.spec.ts` against the built binary
-  (submit a plain form, see it in the console, set expected fields,
-  filter the table, export CSV, erase by search); the cursor and phone specs cover the
+  (submit a plain form, see the draft in the console, approve it with
+  expected fields, filter the table, stop it, export CSV, erase by search); the cursor and phone specs cover the
   new pages.
 
 ## Delivery
