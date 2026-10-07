@@ -11,9 +11,10 @@ interface Props {
   /** The oldest `cached_at` on screen. */
   asOf?: Date
   /** How many cards are past their `refresh_after`. */
-  refreshable: number
-  refreshing: boolean
-  onRefresh: () => void
+  refreshable?: number
+  refreshing?: boolean
+  /** Absent on a page with no cards to refresh (a project's Setup tab): the quiet line stays, empty, so the title sits as on a dashboard. */
+  onRefresh?: () => void
   /** The tab's own "…" menu (`TabMenu`), beside the title; the group's sits in the top bar (D11). */
   menu?: ReactNode
 }
@@ -23,7 +24,7 @@ interface Props {
  * every card that allows one on a quiet line beneath, and the switchers
  * on the right.
  */
-export default function DashboardHeader({ title, children, asOf, refreshable, refreshing, onRefresh, menu }: Props) {
+export default function DashboardHeader({ title, children, asOf, refreshable = 0, refreshing = false, onRefresh, menu }: Props) {
   const hasSwitchers = Children.toArray(children).length > 0
   const idle = refreshable === 0 || refreshing
   return (
@@ -33,32 +34,34 @@ export default function DashboardHeader({ title, children, asOf, refreshable, re
           <h1 className="min-w-0 truncate text-2xl font-semibold tracking-tight">{title}</h1>
           {menu}
         </div>
-        <div className="flex items-center gap-1 text-xs text-muted-foreground">
+        <div className="flex min-h-6 items-center gap-1 text-xs text-muted-foreground">
           {asOf && (
             <span className="whitespace-nowrap tabular-nums" title={asOf.toLocaleString()}>
               Data as of {formatAsOf(asOf)}
             </span>
           )}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              {/* aria-disabled rather than disabled, so it keeps its focus and its tooltip. */}
-              <Button
-                variant="ghost"
-                size="icon"
-                className="size-6 aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
-                aria-label="Refresh all"
-                aria-disabled={idle || undefined}
-                onClick={idle ? undefined : onRefresh}
-              >
-                <RefreshCwIcon className={`size-3.5 ${refreshing ? 'animate-spin' : ''}`} />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>
-              {refreshable === 0
-                ? 'Nothing to refresh yet'
-                : `Refresh ${refreshable} ${refreshable === 1 ? 'widget' : 'widgets'}`}
-            </TooltipContent>
-          </Tooltip>
+          {onRefresh && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                {/* aria-disabled rather than disabled, so it keeps its focus and its tooltip. */}
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-6 aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
+                  aria-label="Refresh all"
+                  aria-disabled={idle || undefined}
+                  onClick={idle ? undefined : onRefresh}
+                >
+                  <RefreshCwIcon className={`size-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                {refreshable === 0
+                  ? 'Nothing to refresh yet'
+                  : `Refresh ${refreshable} ${refreshable === 1 ? 'widget' : 'widgets'}`}
+              </TooltipContent>
+            </Tooltip>
+          )}
         </div>
       </div>
       {hasSwitchers && <div className="grid min-w-0 auto-cols-fr grid-flow-col gap-2 sm:flex">{children}</div>}

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router'
+import DashboardHeader from '@/components/DashboardHeader'
 import RangeSwitcher from '@/components/RangeSwitcher'
 import BreakdownsSection from '@/components/projects/BreakdownsSection'
 import CapImpactSection from '@/components/projects/CapImpactSection'
@@ -45,14 +46,15 @@ export default function SetupTab({ project, dash, actions }: Props) {
 
   return (
     <>
-      <div className="flex flex-wrap items-center justify-end gap-2">
+      {/* The same header as a dashboard tab, so switching tabs moves nothing above the cards. */}
+      <DashboardHeader title="Setup">
         <RangeSwitcher value={{ range: sel.range!, from: sel.from, to: sel.to }} timezone={tz} onChange={(r) => setURL(selectionParams(r))} />
         {project.archived ? (
-          <Button variant="outline" disabled={actions.pending} onClick={() => void actions.restore(id)}>Restore</Button>
+          <Button variant="outline" size="sm" disabled={actions.pending} onClick={() => void actions.restore(id)}>Restore</Button>
         ) : (
-          <Button variant="outline" disabled={actions.pending} onClick={() => setArchiving(true)}>Archive</Button>
+          <Button variant="outline" size="sm" disabled={actions.pending} onClick={() => setArchiving(true)}>Archive</Button>
         )}
-      </div>
+      </DashboardHeader>
       <UsageSection projectId={id} range={range} />
       <OriginsSection project={project} pending={actions.pending} onSave={(body) => actions.update(id, body)} />
       <BreakdownsSection project={project} range={range} pending={actions.pending} onSave={(attributes) => actions.update(id, { attributes })} />
