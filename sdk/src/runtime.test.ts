@@ -3,13 +3,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { runtime, type NavigationSource, type Subscriber } from "./runtime";
 
-function sub(): Subscriber & { nav: NavigationSource[]; online: number; unload: number; tagged: Array<[string, string]> } {
+function sub(): Subscriber & { nav: NavigationSource[]; online: number; unload: number; tagged: Array<[string, string]>; forms: string[] } {
   const s = {
-    nav: [] as NavigationSource[], online: 0, unload: 0, tagged: [] as Array<[string, string]>,
+    nav: [] as NavigationSource[], online: 0, unload: 0, tagged: [] as Array<[string, string]>, forms: [] as string[],
     onNavigate(source: NavigationSource) { s.nav.push(source); },
     onOnline() { s.online++; },
     onUnload() { s.unload++; },
     onTagged(name: string, path: string) { s.tagged.push([name, path]); },
+    onForm(_form: HTMLFormElement, name: string) { s.forms.push(name); },
   };
   return s;
 }
@@ -125,5 +126,20 @@ describe("runtime", () => {
     window.dispatchEvent(new Event("online"));
     expect(a.nav).toEqual([]);
     expect(a.online).toBe(0);
+  });
+
+  it("hands a tagged form to the first subscriber alone and never as a tagged event", () => {
+    const a = sub();
+    const b = sub();
+    runtime.subscribe(a);
+    runtime.subscribe(b);
+    document.body.innerHTML = '<form data-twillingate-form="contact" data-twillingate-event="x"><button>go</button></form>';
+    const ev = new Event("submit", { bubbles: true, cancelable: true });
+    document.querySelector("form")!.dispatchEvent(ev);
+    expect(ev.defaultPrevented).toBe(true);
+    expect(a.forms).toEqual(["contact"]);
+    expect(b.forms).toEqual([]);
+    expect(a.tagged).toEqual([]);
+    expect(b.tagged).toEqual([]);
   });
 });

@@ -175,7 +175,8 @@ Every `data-*` has an `init()` equivalent except `data-instance`, which maps to
 options with no `data-*` form, and identity is set from code (`identify`,
 `group`, `installId`), never in markup. Views are automatic, including on
 `history.pushState` and `popstate`; elements carrying `data-twillingate-event`
-are tracked on click or submit. Include each tag once: a duplicate with the same
+are tracked on click or submit, and a `<form data-twillingate-form>` is sent as
+a [form submission](#tagged-forms). Include each tag once: a duplicate with the same
 `data-key` or with none is ignored with a warning, one with a different key
 replaces the default instance, also with a warning, and a second project uses
 `data-instance`. The collector also serves `/js/plausible-shim.js`, which fires
@@ -247,6 +248,7 @@ twillingate.measure("checkout_api", 340, "time", { endpoint: "/api/checkout" });
 | `consent(granted?)` | `true` / `false` pins storage consent over whatever was declared, `null` hands control back, no argument reads it. See [Consent and storage](#consent-and-storage). |
 | `optOut(flag?)` | `true` writes `twillingate_ignore`, `false` clears it, no argument reads. Returns the effective state, the `optOut` callback included. |
 | `debug(flag?)` | `true` writes `twillingate_debug`, `false` clears it, no argument reads. Returns the effective state. See [Debugging](#debugging). |
+| `submitForm(name, fields)` | Send a submission to the project's form `name`. `fields` is a flat object (string, number or boolean values), a `FormData` or a `<form>`; resolves to `{ id }`, rejects on a `4xx` or once the retries run out (also for a name outside `^[a-z0-9_-]{1,64}$`, without a request). It neither navigates nor sets the hash. See [Tagged forms](#tagged-forms). |
 | `twillingate.create(name, opts?)` | A second instance; with options it also initialises it. See [Two projects on one page](#two-projects-on-one-page). |
 | `twillingate.get(name?)` | Look an instance up from anywhere; no name is the default instance. |
 | `util.maskIds(value, opts?)` | Mask ids in a path or URL. See [Masking](#masking-urls). |
@@ -446,6 +448,69 @@ attribute and nothing else is read off the element. The listeners run in the
 capture phase, so a handler that stops propagation cannot eat the event. Every
 instance with `taggedEvents` on (the default) tracks it.
 
+### Tagged forms
+
+```html
+<form data-twillingate-form="contact">
+  <input name="email"> <textarea name="message"></textarea>
+</form>
+<p id="twillingate-form-success-contact">Thanks, we'll be in touch.</p>
+<p id="twillingate-form-error-contact">That did not go through; please try again.</p>
+<style>[id^="twillingate-form-"]:not(:target){display:none}</style>
+```
+
+A `<form>` carrying `data-twillingate-form="{name}"` is sent to the project's
+form `{name}` (`^[a-z0-9_-]{1,64}$`; see [Form submissions](#form-submissions))
+instead of being submitted. The same capture-phase listener that serves
+`data-twillingate-event` calls `preventDefault()` and posts the form's fields
+as JSON; a form carrying both attributes is a form submission only, and a
+tagged form tracks no event of its own (the server's `$form_submit` is the
+conversion once the form is approved). `taggedEvents: false` does not turn it
+off. The SDK reads the form like the browser would: a `File` entry and every
+name starting with `$` are left out, and a repeated name is joined with `", "`.
+The body carries a fresh `id`, the page's `$host` and `$path` (as the
+instance's `maskUrl` and routing have it for events) and, on an identified
+instance, the `$user_id` and `$install_id` events carry. An opted-out visitor
+(`optOut`, `twillingate_ignore`) still sends the submission, which they asked
+for, without those two keys.
+
+While the request is in flight the form has `aria-busy="true"` and a second
+submit is ignored. Delivery is `fetch` with `keepalive`, as `text/plain`
+so it needs no preflight, and retries a network error or a `5xx` at 1, 5 and
+25 seconds with the same `id`, which the collector stores once. A `4xx`
+(a closed or archived form, a draft past its window, a refused origin or key)
+is an error at once. The retries live in memory only: **a submission is never
+written to the storage driver**, whatever the consent, and a visitor who
+closes the page before delivery loses it.
+
+On the outcome:
+
+- A `$redirect` field (a hidden input with an `http(s)` URL; it is read for
+  this and never sent) sends the visitor there, `location.assign`, with the
+  fragment `#twillingate-form-success-{name}` or `#twillingate-form-error-{name}`
+  replacing the URL's own. A `$redirect` that is not `http(s)` is ignored.
+- Without one the visitor stays: on success the form is reset, and in both
+  cases `location.hash` is set to the same fragment. One `:target` element per
+  outcome, as above, is the thank-you note, shared with the no-JavaScript path
+  of [Form submissions](#form-submissions), which gives the form an `action`
+  for pages where the SDK did not load.
+- Either way a `twillingate:form` `CustomEvent` is dispatched on the form
+  (it bubbles), with `detail: { name, status, id }`: `status` is `"success"` or
+  `"error"`, `id` the submission's id (empty when the name was invalid and
+  nothing was sent).
+
+```js
+document.addEventListener("twillingate:form", (e) => {
+  if (e.detail.status === "success") console.log("sent", e.detail.name, e.detail.id);
+});
+```
+
+With several instances on a page only the first one registered (normally the
+script tag's own) sends a tagged form; every instance sending it would store
+the submission once each. From code, `twillingate.submitForm("contact", { email,
+message })` (or a `FormData` or a form element) sends the same submission and
+resolves to `{ id }`.
+
 ### Routing
 
 ```
@@ -542,8 +607,8 @@ visitors typed): custom SQL, `query` and widgets never read them, only the
 tools below do.
 
 1. **Point the form at the collector.** A plain HTML form posts to
-   `https://t.example.com/ingest/forms/{name}?key=ak_…`, a backend posts
-   JSON there. The page picks the name (`^[a-z0-9_-]{1,64}$`); the first
+   `https://t.example.com/ingest/forms/{name}?key=ak_…`, the SDK sends a
+   [tagged form](#tagged-forms), a backend posts JSON there. The page picks the name (`^[a-z0-9_-]{1,64}$`); the first
    submission creates the form.
 2. **It starts as a draft.** A draft keeps every field it is sent and
    accepts submissions for `FORMS_DRAFT_DAYS` (default 7), after which the
