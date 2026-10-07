@@ -25,11 +25,11 @@ const (
 	mcpPath      = "/mcp"
 )
 
-// customSQLRefused names the tables the custom-SQL handle (the query tool
-// and widget SQL) refuses to read: submissions hold what visitors typed
-// into forms, and only the server's own SQL, on the second handle, reads
-// them.
-var customSQLRefused = []string{"submissions"}
+// CustomSQLRefused names the tables every handle that runs custom SQL (the
+// query tool, widget SQL, and `reporting dev`'s previews) refuses to read:
+// submissions hold what visitors typed into forms, and only the server's
+// own SQL, on the second handle, reads them. A fresh slice each call.
+func CustomSQLRefused() []string { return []string{"submissions"} }
 
 // Build assembles the tool host, both transports and the auth middleware,
 // returning one handler that serves the console surface: the MCP streamable
@@ -44,7 +44,7 @@ var customSQLRefused = []string{"submissions"}
 // writes; widget queries run on the same read-only handle, and so under the
 // same CONSOLE_QUERY_TIMEOUT and CONSOLE_QUERY_MAX_ROWS, as the query tool.
 func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *manage.Ops, rst reporting.Store, logger *slog.Logger) (http.Handler, func() error, error) {
-	db, err := readsql.Open(cfg.Console.DBPath, cfg.Console.QueryTimeout, cfg.Console.QueryMaxRows, customSQLRefused...)
+	db, err := readsql.Open(cfg.Console.DBPath, cfg.Console.QueryTimeout, cfg.Console.QueryMaxRows, CustomSQLRefused()...)
 	if err != nil {
 		return nil, nil, err
 	}

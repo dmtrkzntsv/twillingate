@@ -194,7 +194,7 @@ func newTestHost(t *testing.T) (*host, *mcp.ClientSession) {
 	}
 	t.Cleanup(func() { st.Close() })
 	ctx := context.Background()
-	db, err := readsql.Open(path, 5*time.Second, 1000, customSQLRefused...)
+	db, err := readsql.Open(path, 5*time.Second, 1000, CustomSQLRefused()...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -272,7 +272,7 @@ func setGuards(t *testing.T, h *host, timeout time.Duration, maxRows int) {
 	if !ok {
 		t.Fatal("setGuards: h was not built by newTestHost")
 	}
-	db, err := readsql.Open(path, timeout, maxRows, customSQLRefused...)
+	db, err := readsql.Open(path, timeout, maxRows, CustomSQLRefused()...)
 	if err != nil {
 		t.Fatal(err)
 	}

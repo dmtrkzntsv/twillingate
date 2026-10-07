@@ -412,6 +412,9 @@ Date: 2026-10-05
   retry it.
 - A tagged form's submit is prevented only once a subscribed, ready
   instance takes it; with no taker the browser submits it natively.
+- `twillingate reporting dev` opens its handle with the console's refused
+  list (`api.CustomSQLRefused`), so a previewed widget cannot read
+  submissions either.
 
 ## Where the code goes
 

@@ -18,7 +18,7 @@ import (
 
 type host struct {
 	db *readsql.DB
-	// subs reads the tables db refuses (customSQLRefused), for SQL the
+	// subs reads the tables db refuses (CustomSQLRefused), for SQL the
 	// server builds; never given user-written SQL.
 	subs *readsql.DB
 	reg  *manage.Registry
