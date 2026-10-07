@@ -3,14 +3,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { runtime, type NavigationSource, type Subscriber } from "./runtime";
 
-function sub(): Subscriber & { nav: NavigationSource[]; online: number; unload: number; tagged: Array<[string, string]>; forms: string[] } {
+function sub(takes = true): Subscriber & { nav: NavigationSource[]; online: number; unload: number; tagged: Array<[string, string]>; forms: string[] } {
   const s = {
     nav: [] as NavigationSource[], online: 0, unload: 0, tagged: [] as Array<[string, string]>, forms: [] as string[],
     onNavigate(source: NavigationSource) { s.nav.push(source); },
     onOnline() { s.online++; },
     onUnload() { s.unload++; },
     onTagged(name: string, path: string) { s.tagged.push([name, path]); },
-    onForm(_form: HTMLFormElement, name: string) { s.forms.push(name); },
+    onForm(_form: HTMLFormElement, name: string) { s.forms.push(name); return takes; },
   };
   return s;
 }
@@ -141,5 +141,23 @@ describe("runtime", () => {
     expect(b.forms).toEqual([]);
     expect(a.tagged).toEqual([]);
     expect(b.tagged).toEqual([]);
+  });
+
+  it("asks the next subscriber when one declines, and leaves the submit alone when none takes it", () => {
+    const a = sub(false);
+    const b = sub();
+    runtime.subscribe(a);
+    runtime.subscribe(b);
+    document.body.innerHTML = '<form data-twillingate-form="contact"></form>';
+    const form = document.querySelector("form")!;
+    let ev = new Event("submit", { bubbles: true, cancelable: true });
+    form.dispatchEvent(ev);
+    expect(ev.defaultPrevented).toBe(true);
+    expect([a.forms, b.forms]).toEqual([["contact"], ["contact"]]);
+
+    runtime.unsubscribe(b);
+    ev = new Event("submit", { bubbles: true, cancelable: true });
+    form.dispatchEvent(ev);
+    expect(ev.defaultPrevented).toBe(false);
   });
 });

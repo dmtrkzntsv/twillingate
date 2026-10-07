@@ -259,6 +259,27 @@ describe("a tagged form", () => {
     expect(calls[0].url).toBe("https://collector.example.com/ingest/forms/contact?key=ak_a%2Bb%2Fc");
   });
 
+  it("with no instance to take it, the browser submits the form natively", async () => {
+    const t = tg();
+    t.retire();
+    const form = formEl(CONTACT);
+    const ev = submit(form);
+    await settle();
+    expect(ev.defaultPrevented).toBe(false);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("a later instance takes the form when the first cannot", async () => {
+    const first = tg({ key: "ak_first" });
+    tg({ key: "ak_second" }, "second");
+    first.retire();
+    const ev = submit(formEl(CONTACT));
+    await settle();
+    expect(ev.defaultPrevented).toBe(true);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].body.key).toBe("ak_second");
+  });
+
   it("an untagged form is left alone", async () => {
     tg();
     const form = formEl('<form><input name="a" value="1"></form>');

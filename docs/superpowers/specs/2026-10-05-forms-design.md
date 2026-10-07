@@ -410,6 +410,8 @@ Date: 2026-10-05
   body, so the collector authorises before reading the body and its `413`
   and `400` carry CORS headers: the SDK sees a real `4xx` and does not
   retry it.
+- A tagged form's submit is prevented only once a subscribed, ready
+  instance takes it; with no taker the browser submits it natively.
 
 ## Where the code goes
 

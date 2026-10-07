@@ -874,10 +874,11 @@ export class Twillingate implements Subscriber {
 
   /**
    * A tagged form was submitted: send it, then show the outcome the way
-   * the page's markup asks for (see settleForm).
+   * the page's markup asks for (see settleForm). Returns false, leaving
+   * the form to the browser, when this instance cannot take it.
    */
-  onForm(form: HTMLFormElement, name: string): void {
-    if (!this.ready || this.retired) return;
+  onForm(form: HTMLFormElement, name: string): boolean {
+    if (!this.ready || this.retired) return false;
     const fd = new FormData(form);
     const redirect = fd.get("$redirect");
     form.setAttribute("aria-busy", "true");
@@ -890,6 +891,7 @@ export class Twillingate implements Subscriber {
         this.settleForm(form, name, "error", id, redirect);
       },
     );
+    return true;
   }
 
   // The outcome of a tagged form: with a $redirect the visitor goes there

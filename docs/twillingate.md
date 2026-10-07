@@ -462,8 +462,10 @@ instance with `taggedEvents` on (the default) tracks it.
 A `<form>` carrying `data-twillingate-form="{name}"` is sent to the project's
 form `{name}` (`^[a-z0-9_-]{1,64}$`; see [Form submissions](#form-submissions))
 instead of being submitted. The same capture-phase listener that serves
-`data-twillingate-event` calls `preventDefault()` and posts the form's fields
-as JSON; a form carrying both attributes is a form submission only, and a
+`data-twillingate-event` hands it to the first ready instance, which posts the
+form's fields as JSON; only then is `preventDefault()` called, so with no
+ready instance (none initialised yet, or retired) the browser submits the form
+itself, to its `action` if it has one; a form carrying both attributes is a form submission only, and a
 tagged form tracks no event of its own (the server's `$form_submit` is the
 conversion once the form is approved). `taggedEvents: false` does not turn it
 off. The SDK reads the form like the browser would: a `File` entry and every
