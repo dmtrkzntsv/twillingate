@@ -245,11 +245,10 @@ func (h *host) subsErr(err error) error {
 	return err
 }
 
-// formTable is an active form's submissions query, run by page.
+// formTable is an active form's submissions table, run by page.
 type formTable struct {
 	h       *host
 	form    store.Form
-	query   string
 	columns []string // the display columns, without id
 }
 
@@ -259,13 +258,13 @@ func (h *host) submissionsTable(ctx context.Context, projectID int64, name strin
 	if err != nil {
 		return formTable{}, err
 	}
-	q, cols := manage.SubmissionsQuery(f)
-	return formTable{h: h, form: f, query: q, columns: cols}, nil
+	_, cols := manage.SubmissionsQuery(f)
+	return formTable{h: h, form: f, columns: cols}, nil
 }
 
 // page runs one page of the table; its first column is the id.
 func (t formTable) page(ctx context.Context, pg readsql.Page) (readsql.PageResult, error) {
-	res, err := t.h.subs.QueryPage(ctx, t.query, pg, t.form.ProjectID, t.form.Name)
+	res, err := manage.QuerySubmissions(ctx, t.h.subs, t.form, pg)
 	if err != nil {
 		return readsql.PageResult{}, t.h.subsErr(err)
 	}

@@ -566,3 +566,69 @@ func TestListSubmissionsTimeout(t *testing.T) {
 		t.Errorf("timeout: %s", msg)
 	}
 }
+
+// TestSubmissionsFieldsNamedLikeRefusedTables: a field named like a table
+// readsql refuses (meta, dbstat, sqlite_*, pragma_*, any case) never
+// reaches the SQL as a name, so its form lists, filters, sorts, counts,
+// exports and deletes by filters like any other.
+func TestSubmissionsFieldsNamedLikeRefusedTables(t *testing.T) {
+	h, cs := newTestHost(t)
+	seed := newFormSeeder(t, h)
+	row := func(v string) map[string]string {
+		return map[string]string{"meta": v, "Meta": "M" + v, "dbstat": "d" + v, "sqlite_x": "s" + v, "pragma_y": "p" + v}
+	}
+	seed.add("odd", "s1", row("1"), nil)
+	seed.add("odd", "s2", row("2"), nil)
+	seed.add("odd", "s3", row("3"), nil)
+	args := func(kv ...any) map[string]any {
+		m := map[string]any{"project_id": 1, "name": "odd"}
+		for i := 0; i < len(kv); i += 2 {
+			m[kv[i].(string)] = kv[i+1]
+		}
+		return m
+	}
+
+	tab := callAs[submissionsTable](t, cs, "list_submissions", args())
+	want := append([]string{"Received", "Meta", "dbstat", "meta (field)", "pragma_y", "sqlite_x"}, fixedCols...)
+	if !reflect.DeepEqual(tab.Columns, want) {
+		t.Fatalf("columns = %q, want %q", tab.Columns, want)
+	}
+	if !reflect.DeepEqual(tab.IDs, []string{"s3", "s2", "s1"}) || tab.Rows[0][1] != "M3" || tab.Rows[0][3] != "3" ||
+		tab.Rows[0][5] != "s3" {
+		t.Fatalf("table = %+v", tab)
+	}
+	tab = callAs[submissionsTable](t, cs, "list_submissions", args("filters", `[{"column":"meta (field)","op":"in","value":["1","2"]}]`,
+		"sort", "dbstat:asc"))
+	if !reflect.DeepEqual(tab.IDs, []string{"s1", "s2"}) || tab.Matched != 2 || tab.Total != 3 {
+		t.Fatalf("filtered and sorted = %+v", tab)
+	}
+	tab = callAs[submissionsTable](t, cs, "list_submissions", args("distinct", "pragma_y"))
+	if !reflect.DeepEqual(tab.Columns, []string{"value", "rows"}) || len(tab.Rows) != 3 {
+		t.Fatalf("distinct = %+v", tab)
+	}
+	if msg := refused(t, cs, "list_submissions", args("sort", "nope:asc")); !strings.Contains(msg, "sqlite_x") {
+		t.Errorf("unknown column refusal does not name the columns: %s", msg)
+	}
+
+	rec := httptest.NewRecorder()
+	newTestRegistrar(t, h).rest.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
+		"/api/projects/1/forms/odd/submissions.csv?sort="+url.QueryEscape("sqlite_x:asc"), nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("export: %d %s", rec.Code, rec.Body)
+	}
+	records, err := csv.NewReader(rec.Body).ReadAll()
+	if err != nil || !reflect.DeepEqual(records[0], want) || len(records) != 4 || records[1][5] != "s1" {
+		t.Fatalf("export = %q, %v", records, err)
+	}
+
+	d := callAs[struct {
+		Deleted int `json:"deleted"`
+	}](t, cs, "delete_submissions", map[string]any{"project_id": 1, "form": "odd",
+		"filters": `[{"column":"Meta","op":"=","value":"M2"}]`})
+	if d.Deleted != 1 {
+		t.Fatalf("deleted %d", d.Deleted)
+	}
+	if tab := callAs[submissionsTable](t, cs, "list_submissions", args()); !reflect.DeepEqual(tab.IDs, []string{"s3", "s1"}) {
+		t.Fatalf("left = %v", tab.IDs)
+	}
+}

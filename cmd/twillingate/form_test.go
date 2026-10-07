@@ -213,6 +213,21 @@ func TestFormExportWritesInertCSV(t *testing.T) {
 	runForm(t, 2, "export", "-project-id", "1")
 }
 
+// TestFormExportFieldsNamedLikeRefusedTables: a field called meta or
+// sqlite_x exports like any other.
+func TestFormExportFieldsNamedLikeRefusedTables(t *testing.T) {
+	formDB(t)
+	seedSubmission(t, "s3", map[string]string{"meta": "m", "sqlite_x": "s"})
+	out := runForm(t, 0, "export", "-project-id", "1", "-name", "contact")
+	recs, err := csv.NewReader(strings.NewReader(out)).ReadAll()
+	if err != nil || len(recs) != 4 {
+		t.Fatalf("export = %q, %v", out, err)
+	}
+	if got := strings.Join(recs[0][:5], ","); got != "Received,email,message,meta,sqlite_x" {
+		t.Fatalf("header: %q", recs[0])
+	}
+}
+
 func TestFormEraseByIDAndSearch(t *testing.T) {
 	formDB(t)
 	runForm(t, 2, "erase", "-project-id", "1")

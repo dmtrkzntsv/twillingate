@@ -1,6 +1,7 @@
 package manage
 
 import (
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -41,7 +42,7 @@ func TestSubmissionsQueryColumns(t *testing.T) {
 			t.Errorf("%q: columns %q, want %q", c.fields, got, c.want)
 		}
 	}
-	if !strings.HasPrefix(q, "SELECT id,") || !strings.Contains(q, "WHERE project_id = ? AND form = ?") {
+	if !strings.HasPrefix(q, "SELECT id AS c0,") || !strings.Contains(q, "WHERE project_id = ? AND form = ?") {
 		t.Errorf("query shape: %s", q)
 	}
 }
@@ -49,7 +50,7 @@ func TestSubmissionsQueryColumns(t *testing.T) {
 func TestSubmissionsQueryQuotesNames(t *testing.T) {
 	f := store.Form{Status: store.FormDraft, Fields: []string{`a"b`, "it's", "x.y"}}
 	q, cols := SubmissionsQuery(f)
-	for _, want := range []string{`AS "a""b"`, `AS "it's"`, `'$."x.y"'`, `key = 'a"b'`, `'$."it''s"'`} {
+	for _, want := range []string{`AS c2`, `AS c3`, `'$."x.y"'`, `key = 'a"b'`, `'$."it''s"'`} {
 		if !strings.Contains(q, want) {
 			t.Errorf("query lacks %s:\n%s", want, q)
 		}
@@ -75,5 +76,30 @@ func TestCSVSafeTable(t *testing.T) {
 	if !reflect.DeepEqual(h, []string{"'=a", "b"}) ||
 		!reflect.DeepEqual(rows, [][]string{{"x", "'@y"}, {"'-z", ""}}) {
 		t.Fatalf("got %q %q", h, rows)
+	}
+}
+
+// TestSubmissionsQueryNamesColumnsByPosition: no display name, and so no
+// field name, is ever an SQL identifier; a field reaches the SQL only in
+// a quoted JSON path. readsql refuses meta, dbstat, sqlite_* and pragma_*
+// as names, so a field called that would otherwise break its table.
+func TestSubmissionsQueryNamesColumnsByPosition(t *testing.T) {
+	f := store.Form{Status: store.FormDraft, Fields: []string{"Meta", "dbstat", "meta", "pragma_y", "sqlite_x"}}
+	q, cols := SubmissionsQuery(f)
+	if want := []string{"Received", "Meta", "dbstat", "meta (field)", "pragma_y", "sqlite_x"}; !reflect.DeepEqual(cols[:6], want) {
+		t.Fatalf("columns = %q", cols)
+	}
+	for i := range len(cols) + 1 {
+		if want := fmt.Sprintf(" AS c%d", i); !strings.Contains(q, want) {
+			t.Errorf("query lacks %q:\n%s", want, q)
+		}
+	}
+	for _, c := range cols {
+		if strings.Contains(q, `"`+c+`"`) && !strings.Contains(q, `'$."`+c+`"'`) {
+			t.Errorf("query names %q outside a JSON path:\n%s", c, q)
+		}
+	}
+	if strings.Contains(q, "AS \"") {
+		t.Errorf("query quotes an identifier:\n%s", q)
 	}
 }
