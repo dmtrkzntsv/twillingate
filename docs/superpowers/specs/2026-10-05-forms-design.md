@@ -415,6 +415,9 @@ Date: 2026-10-05
 - `twillingate reporting dev` opens its handle with the console's refused
   list (`api.CustomSQLRefused`), so a previewed widget cannot read
   submissions either.
+- The form page's table keeps only its sort in localStorage (D12a said
+  per-viewer state); filters live in memory, since a filter value is
+  usually a person's email.
 
 ## Where the code goes
 

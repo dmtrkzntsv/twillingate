@@ -42,18 +42,27 @@ function viewArgs(view: TableView, columns: string[] | undefined): SubmissionsQu
   return q
 }
 
+/** The stored part of a form's view: the sort alone, read with parseView's rules. */
+function parseSort(stored: unknown): Pick<TableView, 'sort'> | null {
+  const sort = parseView(stored)?.sort
+  return sort ? { sort } : null
+}
+
 /**
- * The submissions table's view: filters and sort kept in this browser per
- * form, under `twillingate:forms:<project>:<name>`; the page in memory only.
+ * The submissions table's view. Only the sort is kept in this browser, per
+ * form, under `twillingate:forms:<project>:<name>`; the filters and the page
+ * live in memory only, since a filter value is usually a person's email.
  * A change of filters or sort returns to the first page.
  */
 function useFormView(key: string): [TableView, (next: TableView) => void] {
-  const [stored, setStored] = useStoredState(key, parseView)
+  const [stored, setStored] = useStoredState(key, parseSort)
+  const [filters, setFilters] = useState<Filter[]>([])
   const [offset, setOffset] = useState(0)
-  const view: TableView = { filters: stored?.filters ?? [], sort: stored?.sort ?? null, offset }
+  const view: TableView = { filters, sort: stored?.sort ?? null, offset }
   const setView = (next: TableView) => {
     const changed = JSON.stringify([next.filters, next.sort]) !== JSON.stringify([view.filters, view.sort])
-    if (changed) setStored(next.filters.length === 0 && next.sort === null ? null : { ...next, offset: 0 })
+    if (JSON.stringify(next.sort) !== JSON.stringify(view.sort)) setStored(next.sort === null ? null : { sort: next.sort })
+    setFilters(next.filters)
     setOffset(changed ? 0 : next.offset)
   }
   return [view, setView]

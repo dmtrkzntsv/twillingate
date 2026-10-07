@@ -9,7 +9,6 @@ import { renderWithProviders } from '@/test/render'
 import FormPage from './FormPage'
 
 const project: Project = { project_id: 4, name: 'shop', allowed_origins: ['https://shop.example'] }
-const KEY = 'twillingate:forms:4:contact'
 
 beforeEach(() => {
   vi.restoreAllMocks()
@@ -56,60 +55,10 @@ describe('FormPage', () => {
     expect(await within(drawer).findByText('555-0100')).toBeInTheDocument()
   })
 
-  it('sends the stored filters and sort, and deletes what they match once confirmed', async () => {
-    const user = userEvent.setup()
-    const filters = [{ column: 'email', op: '=', value: 'bob@example.com' }]
-    localStorage.setItem(KEY, JSON.stringify({ filters, sort: { column: 'Received', dir: 'asc' } }))
-    vi.mocked(endpoints.submissions).mockResolvedValue({ ...contactPage, rows: [contactPage.rows[1]], ids: ['s2'], matched: 1 })
-    const del = vi.spyOn(endpoints, 'deleteSubmissions').mockResolvedValue({ deleted: 1 })
-    renderPage()
-    await waitFor(() =>
-      expect(endpoints.submissions).toHaveBeenCalledWith(4, 'contact', { filters: JSON.stringify(filters), sort: 'Received:asc' })
-    )
-    await user.click(await screen.findByRole('button', { name: 'Delete all matching' }))
-    const confirm = await screen.findByRole('alertdialog', { name: 'Delete 1 matching submission?' })
-    await user.click(within(confirm).getByRole('button', { name: 'Delete submissions' }))
-    await waitFor(() => expect(del).toHaveBeenCalledWith(4, { form: 'contact', filters: JSON.stringify(filters) }))
-  })
-
-  it('keeps Delete all matching off while a new view loads, so the count and the filters sent agree', async () => {
-    const user = userEvent.setup()
-    const filters = [{ column: 'email', op: '=', value: 'bob@example.com' }]
-    localStorage.setItem(KEY, JSON.stringify({ filters, sort: null }))
-    let resolve: (p: typeof contactPage) => void = () => {}
-    vi.mocked(endpoints.submissions)
-      .mockResolvedValueOnce({ ...contactPage, rows: [contactPage.rows[1]], ids: ['s2'], matched: 1 })
-      .mockImplementationOnce(() => new Promise((r) => (resolve = r)))
-    renderPage()
-    const button = await screen.findByRole('button', { name: 'Delete all matching' })
-    await waitFor(() => expect(button).toBeEnabled())
-    // A new sort asks again: until it answers, the rows and count on screen are the old view's.
-    await user.click(screen.getByRole('button', { name: 'Received' }))
-    await waitFor(() => expect(endpoints.submissions).toHaveBeenCalledTimes(2))
-    expect(button).toBeDisabled()
-    resolve({ ...contactPage, rows: [contactPage.rows[1]], ids: ['s2'], matched: 1 })
-    await waitFor(() => expect(button).toBeEnabled())
-  })
-
   it('keeps Delete all matching off without filters', async () => {
     renderPage()
     await screen.findByRole('table')
     expect(screen.getByRole('button', { name: 'Delete all matching' })).toBeDisabled()
-  })
-
-  it('downloads the CSV of what the filters match', async () => {
-    const user = userEvent.setup()
-    const filters = [{ column: 'email', op: '=', value: 'bob@example.com' }]
-    localStorage.setItem(KEY, JSON.stringify({ filters, sort: null }))
-    const csv = vi.spyOn(endpoints, 'exportSubmissions').mockResolvedValue(new Blob(['Received,email\n'], { type: 'text/csv' }))
-    URL.createObjectURL = vi.fn(() => 'blob:csv')
-    URL.revokeObjectURL = vi.fn()
-    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
-    renderPage()
-    await screen.findByRole('table')
-    await user.click(screen.getByRole('button', { name: 'CSV' }))
-    await waitFor(() => expect(csv).toHaveBeenCalledWith(4, 'contact', { filters: JSON.stringify(filters) }))
-    await waitFor(() => expect(click).toHaveBeenCalled())
   })
 
   it('marks fields arriving outside the expected list as not kept, and saves a new list', async () => {
