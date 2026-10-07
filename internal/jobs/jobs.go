@@ -114,7 +114,8 @@ func (r *Runner) RunDailyPass(ctx context.Context) error {
 		}
 		r.logger.Info("purge archived",
 			"projects", len(purged.Projects), "dashboards", len(purged.Dashboards),
-			"widgets", len(purged.Widgets), "widget_shares", len(purged.WidgetShares))
+			"widgets", len(purged.Widgets), "widget_shares", len(purged.WidgetShares),
+			"forms", len(purged.Forms))
 		if len(purged.Projects) > 0 {
 			if err := r.reg.Reload(ctx); err != nil {
 				r.logger.Error("registry reload after purge failed", "error", err)

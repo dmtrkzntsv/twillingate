@@ -498,3 +498,419 @@ func TestSessionVisitNeedsACurrentSession(t *testing.T) {
 		t.Fatalf("30m: %+v, %v", got, err)
 	}
 }
+
+var formAudit = store.AuditEntry{Actor: "test", Action: "form.test", Subject: "form/1/contact"}
+
+func mustWrite(t *testing.T, db *DB, n store.NewSubmission) {
+	t.Helper()
+	if _, _, err := db.WriteSubmission(context.Background(), n); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestApproveForm(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	mustWrite(t, db, newSub("s1", map[string]string{"name": "Ann", "email": "a@x.io"}))
+
+	later := formsNow.Add(time.Hour)
+	if err := db.ApproveForm(ctx, 1, "contact", []string{"email"}, later,
+		store.AuditEntry{Actor: "agent", Action: "form.approve", Subject: "form/1/contact"}); err != nil {
+		t.Fatal(err)
+	}
+	f, err := db.GetForm(ctx, 1, "contact")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.Status != store.FormApproved || f.DraftUntil != nil ||
+		f.ApprovedAt == nil || !f.ApprovedAt.Equal(later) ||
+		!reflect.DeepEqual(f.ExpectedFields, []string{"email"}) {
+		t.Fatalf("form = %+v", f)
+	}
+	if n := countRows(t, db, `SELECT COUNT(*) FROM audit_log WHERE action='form.approve' AND actor='agent'`); n != 1 {
+		t.Fatalf("%d approve audit rows", n)
+	}
+	if err := db.ApproveForm(ctx, 1, "contact", []string{"email"}, later, formAudit); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("second approve = %v, want ErrConflict", err)
+	}
+	if err := db.ApproveForm(ctx, 1, "nope", []string{"email"}, later, formAudit); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("unknown approve = %v, want ErrNotFound", err)
+	}
+	if n := countRows(t, db, `SELECT COUNT(*) FROM audit_log WHERE action='form.test'`); n != 0 {
+		t.Fatalf("a refused approve wrote %d audit rows", n)
+	}
+}
+
+func TestGetFormUnknown(t *testing.T) {
+	db := newTestDB(t)
+	if _, err := db.GetForm(context.Background(), 1, "nope"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestListFormsOrderCountsAndArchivedSplit(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	for _, name := range []string{"zeta", "alpha", "mid", "gone"} {
+		n := newSub("s-"+name, map[string]string{"k": "v"})
+		n.Submission.Form = name
+		mustWrite(t, db, n)
+	}
+	n := newSub("s-alpha-2", map[string]string{"k": "v"})
+	n.Submission.Form = "alpha"
+	mustWrite(t, db, n)
+	// Another project's form never shows.
+	other := newSub("o1", map[string]string{"k": "v"})
+	other.Submission.ProjectID, other.Event.ProjectID = 2, 2
+	mustWrite(t, db, other)
+
+	for _, name := range []string{"zeta", "mid"} {
+		if err := db.ApproveForm(ctx, 1, name, []string{"k"}, formsNow, formAudit); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.SetFormArchived(ctx, 1, "gone", true, time.Time{}, formAudit); err != nil {
+		t.Fatal(err)
+	}
+
+	active, err := db.ListForms(ctx, 1, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	counts := map[string]int{}
+	for _, f := range active {
+		got = append(got, f.Name)
+		counts[f.Name] = f.Submissions
+	}
+	// Drafts first (alpha), then approved by name (mid, zeta).
+	if !reflect.DeepEqual(got, []string{"alpha", "mid", "zeta"}) {
+		t.Fatalf("active order = %v", got)
+	}
+	if counts["alpha"] != 2 || counts["mid"] != 1 {
+		t.Fatalf("counts = %v", counts)
+	}
+	archived, err := db.ListForms(ctx, 1, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(archived) != 1 || archived[0].Name != "gone" || archived[0].ArchivedAt == nil {
+		t.Fatalf("archived = %+v", archived)
+	}
+	none, err := db.ListForms(ctx, 3, false)
+	if err != nil || len(none) != 0 {
+		t.Fatalf("empty project: %v %v", none, err)
+	}
+}
+
+func TestUpdateFormWritesAsGiven(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	mustWrite(t, db, newSub("s1", map[string]string{"email": "a@x.io"}))
+	if err := db.ApproveForm(ctx, 1, "contact", []string{"email"}, formsNow, formAudit); err != nil {
+		t.Fatal(err)
+	}
+	f, err := db.GetForm(ctx, 1, "contact")
+	if err != nil {
+		t.Fatal(err)
+	}
+	closes := formsNow.Add(48 * time.Hour)
+	f.Purpose, f.ReturnURL, f.ClosesAt, f.ExpectedFields = "leads", "https://example.com/thanks", &closes, []string{"email", "name"}
+	if err := db.UpdateForm(ctx, f, store.AuditEntry{Actor: "agent", Action: "form.update", Subject: "form/1/contact"}); err != nil {
+		t.Fatal(err)
+	}
+	g, err := db.GetForm(ctx, 1, "contact")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g.Purpose != "leads" || g.ReturnURL != "https://example.com/thanks" ||
+		g.ClosesAt == nil || !g.ClosesAt.Equal(closes) || !reflect.DeepEqual(g.ExpectedFields, []string{"email", "name"}) {
+		t.Fatalf("form = %+v", g)
+	}
+	if g.Status != store.FormApproved || g.ApprovedAt == nil {
+		t.Fatalf("update changed the state: %+v", g)
+	}
+	// nil clears closes_at.
+	g.ClosesAt = nil
+	if err := db.UpdateForm(ctx, g, formAudit); err != nil {
+		t.Fatal(err)
+	}
+	if h, _ := db.GetForm(ctx, 1, "contact"); h.ClosesAt != nil {
+		t.Fatalf("closes_at = %v", h.ClosesAt)
+	}
+	if n := countRows(t, db, `SELECT COUNT(*) FROM audit_log WHERE action='form.update'`); n != 1 {
+		t.Fatalf("%d update audit rows", n)
+	}
+	g.Name = "nope"
+	if err := db.UpdateForm(ctx, g, formAudit); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("unknown update = %v", err)
+	}
+}
+
+func TestSetFormArchived(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	mustWrite(t, db, newSub("s1", map[string]string{"email": "a@x.io"}))
+	fresh := formsNow.Add(30 * 24 * time.Hour)
+
+	// Restoring an active form and archiving twice are no-ops.
+	if err := db.SetFormArchived(ctx, 1, "contact", false, fresh, formAudit); err != nil {
+		t.Fatal(err)
+	}
+	if f, _ := db.GetForm(ctx, 1, "contact"); f.ArchivedAt != nil || !f.DraftUntil.Equal(formsNow.Add(7*24*time.Hour)) {
+		t.Fatalf("restore of an active draft changed it: %+v", f)
+	}
+	if err := db.SetFormArchived(ctx, 1, "contact", true, time.Time{}, formAudit); err != nil {
+		t.Fatal(err)
+	}
+	f, _ := db.GetForm(ctx, 1, "contact")
+	if f.ArchivedAt == nil {
+		t.Fatal("not archived")
+	}
+	first := *f.ArchivedAt
+	if err := db.SetFormArchived(ctx, 1, "contact", true, time.Time{}, formAudit); err != nil {
+		t.Fatal(err)
+	}
+	if f, _ := db.GetForm(ctx, 1, "contact"); !f.ArchivedAt.Equal(first) {
+		t.Fatalf("second archive moved archived_at: %v -> %v", first, f.ArchivedAt)
+	}
+	// Restore of a draft: draft_until is the passed value.
+	if err := db.SetFormArchived(ctx, 1, "contact", false, fresh, formAudit); err != nil {
+		t.Fatal(err)
+	}
+	f, _ = db.GetForm(ctx, 1, "contact")
+	if f.ArchivedAt != nil || f.DraftUntil == nil || !f.DraftUntil.Equal(fresh) {
+		t.Fatalf("restored draft = %+v", f)
+	}
+	if err := db.SetFormArchived(ctx, 1, "nope", true, time.Time{}, formAudit); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("unknown = %v", err)
+	}
+
+	// An approved form keeps no draft_until whatever is passed.
+	if err := db.ApproveForm(ctx, 1, "contact", []string{"email"}, formsNow, formAudit); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetFormArchived(ctx, 1, "contact", true, time.Time{}, formAudit); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetFormArchived(ctx, 1, "contact", false, fresh, formAudit); err != nil {
+		t.Fatal(err)
+	}
+	f, _ = db.GetForm(ctx, 1, "contact")
+	if f.ArchivedAt != nil || f.DraftUntil != nil || f.Status != store.FormApproved {
+		t.Fatalf("restored approved form = %+v", f)
+	}
+}
+
+func TestExpireDrafts(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	mk := func(name string, created time.Time, draftDays int) {
+		n := newSub("s-"+name, map[string]string{"k": "v"})
+		n.Submission.Form = name
+		n.Submission.ReceivedAt = created
+		n.DraftUntil = created.Add(time.Duration(draftDays) * 24 * time.Hour)
+		n.Event.TS, n.Event.ReceivedAt = created, created
+		mustWrite(t, db, n)
+	}
+	old := formsNow.Add(-10 * 24 * time.Hour)
+	mk("stale", old, 7)
+	mk("fresh", formsNow.Add(-24*time.Hour), 7)
+	mk("approved-old", old, 7)
+	mk("already", old, 7)
+	if err := db.ApproveForm(ctx, 1, "approved-old", []string{"k"}, old, formAudit); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetFormArchived(ctx, 1, "already", true, time.Time{}, formAudit); err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := db.ExpireDrafts(ctx, formsNow)
+	if err != nil || n != 1 {
+		t.Fatalf("expired %d, err %v", n, err)
+	}
+	for name, want := range map[string]bool{"stale": true, "fresh": false, "approved-old": false, "already": true} {
+		f, err := db.GetForm(ctx, 1, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if (f.ArchivedAt != nil) != want {
+			t.Errorf("%s archived = %v, want %v", name, f.ArchivedAt, want)
+		}
+	}
+	if f, _ := db.GetForm(ctx, 1, "stale"); !f.ArchivedAt.Equal(formsNow) {
+		t.Errorf("archived_at = %v, want %v", f.ArchivedAt, formsNow)
+	}
+	rows := auditRows(t, db, "form.expire")
+	if len(rows) != 1 || rows[0].Actor != "retention" || rows[0].Subject != "form/1/stale" {
+		t.Fatalf("audit = %+v", rows)
+	}
+	if n, err := db.ExpireDrafts(ctx, formsNow); err != nil || n != 0 {
+		t.Fatalf("second pass expired %d, err %v", n, err)
+	}
+	// draft_until == now is past (Open uses After).
+	mk("edge", formsNow.Add(-7*24*time.Hour), 7)
+	if n, err := db.ExpireDrafts(ctx, formsNow); err != nil || n != 1 {
+		t.Fatalf("edge: expired %d, err %v", n, err)
+	}
+}
+
+func rawProductIDs(t *testing.T, db *DB) map[string]bool {
+	t.Helper()
+	rows, err := db.db.Query(`SELECT id FROM raw_product`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	ids := map[string]bool{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		ids[id] = true
+	}
+	return ids
+}
+
+func TestDeleteSubmissionsRemovesRowAndRawEvent(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	mustWrite(t, db, newSub("s0", map[string]string{"email": "draft@x.io"})) // draft: no event
+	if err := db.ApproveForm(ctx, 1, "contact", []string{"email"}, formsNow, formAudit); err != nil {
+		t.Fatal(err)
+	}
+	// Different days, so the event key's day part matters.
+	for i, id := range []string{"s1", "s2", "s3"} {
+		n := newSub(id, map[string]string{"email": id + "@x.io"})
+		at := formsNow.Add(time.Duration(i) * 24 * time.Hour)
+		n.Submission.ReceivedAt, n.Event.TS, n.Event.ReceivedAt = at, at, at
+		mustWrite(t, db, n)
+	}
+	// An unrelated product event with the same id on another project, and
+	// one on this project.
+	other := newSub("x0", map[string]string{"email": "o@x.io"})
+	other.Submission.ProjectID, other.Event.ProjectID = 2, 2
+	mustWrite(t, db, other)
+	if err := db.ApproveForm(ctx, 2, "contact", []string{"email"}, formsNow, formAudit); err != nil {
+		t.Fatal(err)
+	}
+	other = newSub("s1", map[string]string{"email": "o@x.io"})
+	other.Submission.ProjectID, other.Event.ProjectID = 2, 2
+	mustWrite(t, db, other)
+	if c := countRows(t, db, `SELECT COUNT(*) FROM events`); c != 4 {
+		t.Fatalf("setup: %d events, want 4", c)
+	}
+	if ids := rawProductIDs(t, db); len(ids) != 3 {
+		t.Fatalf("setup: raw product ids = %v", ids)
+	}
+
+	n, err := db.DeleteSubmissions(ctx, 1, []string{"s1", "s3", "s0", "missing"},
+		store.AuditEntry{Actor: "agent", Action: "submission.delete", Subject: "project/1", Detail: `{"count":3}`})
+	if err != nil || n != 3 {
+		t.Fatalf("deleted %d, err %v", n, err)
+	}
+	if c := countRows(t, db, `SELECT COUNT(*) FROM submissions WHERE project_id=1`); c != 1 {
+		t.Fatalf("%d submissions left on project 1", c)
+	}
+	if c := countRows(t, db, `SELECT COUNT(*) FROM submissions WHERE project_id=1 AND id='s2'`); c != 1 {
+		t.Fatal("s2 was deleted")
+	}
+	// s2 (project 1) and s1 (project 2) keep their events.
+	if c := countRows(t, db, `SELECT COUNT(*) FROM events`); c != 2 {
+		t.Fatalf("%d events left, want 2", c)
+	}
+	if c := countRows(t, db, `SELECT COUNT(*) FROM events WHERE project_id=1 AND id='s2'`); c != 1 {
+		t.Fatal("s2's event was deleted")
+	}
+	if c := countRows(t, db, `SELECT COUNT(*) FROM events WHERE project_id=2 AND id='s1'`); c != 1 {
+		t.Fatal("another project's event was deleted")
+	}
+	if c := countRows(t, db, `SELECT COUNT(*) FROM submissions WHERE project_id=2`); c != 2 {
+		t.Fatal("another project's submission was deleted")
+	}
+	if c := countRows(t, db, `SELECT COUNT(*) FROM audit_log WHERE action='submission.delete'`); c != 1 {
+		t.Fatalf("%d audit rows", c)
+	}
+	if n, err := db.DeleteSubmissions(ctx, 1, nil, formAudit); err != nil || n != 0 {
+		t.Fatalf("empty ids: %d, %v", n, err)
+	}
+}
+
+func TestFindSubmissions(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	add := func(form, id string, at time.Time, fields map[string]string) {
+		n := newSub(id, fields)
+		n.Submission.Form, n.Submission.ReceivedAt, n.Event.ReceivedAt, n.Event.TS = form, at, at, at
+		mustWrite(t, db, n)
+	}
+	add("contact", "a", formsNow.Add(-3*time.Hour), map[string]string{"name": "Ann", "email": "Alice@Example.com"})
+	add("contact", "b", formsNow.Add(-2*time.Hour), map[string]string{"note": "ask ALICE again"})
+	add("contact", "c", formsNow.Add(-1*time.Hour), map[string]string{"note": "100% sure", "x": "no match"})
+	add("contact", "d", formsNow, map[string]string{"note": "1000 sure"})
+	add("hidden", "e", formsNow, map[string]string{"email": "alice@example.com"})
+	add("contact", "f", formsNow.Add(-4*time.Hour), map[string]string{"under": "a_b", "plain": "axb"})
+	if err := db.SetFormArchived(ctx, 1, "hidden", true, time.Time{}, formAudit); err != nil {
+		t.Fatal(err)
+	}
+	other := newSub("o", map[string]string{"email": "alice@other.com"})
+	other.Submission.ProjectID, other.Event.ProjectID = 2, 2
+	mustWrite(t, db, other)
+
+	ids := func(subs []store.Submission) []string {
+		var out []string
+		for _, s := range subs {
+			out = append(out, s.ID)
+		}
+		return out
+	}
+	subs, next, err := db.FindSubmissions(ctx, 1, "alice", 10, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(ids(subs), []string{"b", "a"}) || next != "" {
+		t.Fatalf("alice = %v next %q", ids(subs), next)
+	}
+	if subs[1].Form != "contact" || subs[1].Fields["email"] != "Alice@Example.com" || subs[1].ProjectID != 1 ||
+		!subs[1].ReceivedAt.Equal(formsNow.Add(-3*time.Hour)) {
+		t.Fatalf("submission = %+v", subs[1])
+	}
+	// LIKE wildcards in the search are literal.
+	if subs, _, _ = db.FindSubmissions(ctx, 1, "100%", 10, ""); !reflect.DeepEqual(ids(subs), []string{"c"}) {
+		t.Fatalf("100%% = %v", ids(subs))
+	}
+	if subs, _, _ = db.FindSubmissions(ctx, 1, "a_b", 10, ""); !reflect.DeepEqual(ids(subs), []string{"f"}) {
+		t.Fatalf("a_b = %v", ids(subs))
+	}
+	if subs, _, _ = db.FindSubmissions(ctx, 1, `\`, 10, ""); len(subs) != 0 {
+		t.Fatalf(`\ = %v`, ids(subs))
+	}
+	// Keys are not searched, only values.
+	if subs, _, _ = db.FindSubmissions(ctx, 1, "note", 10, ""); len(subs) != 0 {
+		t.Fatalf("a key matched: %v", ids(subs))
+	}
+	// Paging: newest first, cursor = last id of a page that has more.
+	subs, next, err = db.FindSubmissions(ctx, 1, "sure", 1, "")
+	if err != nil || !reflect.DeepEqual(ids(subs), []string{"d"}) || next != "d" {
+		t.Fatalf("page 1 = %v next %q err %v", ids(subs), next, err)
+	}
+	subs, next, err = db.FindSubmissions(ctx, 1, "sure", 1, next)
+	if err != nil || !reflect.DeepEqual(ids(subs), []string{"c"}) || next != "" {
+		t.Fatalf("page 2 = %v next %q err %v", ids(subs), next, err)
+	}
+	if _, _, err = db.FindSubmissions(ctx, 1, "sure", 1, "gone"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("unknown cursor = %v", err)
+	}
+	if _, _, err = db.FindSubmissions(ctx, 1, "", 10, ""); !errors.Is(err, store.ErrInvalid) {
+		t.Fatalf("empty search = %v", err)
+	}
+
+	all, err := db.SubmissionIDsMatching(ctx, 1, "alice")
+	if err != nil || !reflect.DeepEqual(all, []string{"b", "a"}) {
+		t.Fatalf("SubmissionIDsMatching = %v, %v", all, err)
+	}
+	if _, err := db.SubmissionIDsMatching(ctx, 1, ""); !errors.Is(err, store.ErrInvalid) {
+		t.Fatalf("empty search = %v", err)
+	}
+}

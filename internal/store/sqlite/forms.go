@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/store"
@@ -17,13 +18,15 @@ import (
 const formColumns = `project_id, name, status, purpose, return_url, fields, expected_fields,
 	created_at, draft_until, approved_at, closes_at, last_submitted_at, archived_at`
 
-// scanForm reads one forms row selected with formColumns.
-func scanForm(row interface{ Scan(...any) error }) (store.Form, error) {
+// scanForm reads one forms row selected with formColumns; extra receives
+// any columns selected after them.
+func scanForm(row interface{ Scan(...any) error }, extra ...any) (store.Form, error) {
 	var f store.Form
 	var fields string
 	var expected, created, draft, approved, closes, last, archived sql.NullString
-	if err := row.Scan(&f.ProjectID, &f.Name, &f.Status, &f.Purpose, &f.ReturnURL, &fields, &expected,
-		&created, &draft, &approved, &closes, &last, &archived); err != nil {
+	dest := append([]any{&f.ProjectID, &f.Name, &f.Status, &f.Purpose, &f.ReturnURL, &fields, &expected,
+		&created, &draft, &approved, &closes, &last, &archived}, extra...)
+	if err := row.Scan(dest...); err != nil {
 		return store.Form{}, err
 	}
 	if err := json.Unmarshal([]byte(fields), &f.Fields); err != nil {
@@ -230,4 +233,380 @@ func (d *DB) SessionVisit(ctx context.Context, projectID int64, actorKind, actor
 		v.LandingPath, v.Referrer, v.UTMSource, v.UTMMedium, v.UTMCampaign = path, ref, src, med, camp
 	}
 	return v, rows.Err()
+}
+
+// fmtTime is t as the text the forms tables store.
+func fmtTime(t time.Time) string { return t.UTC().Format(tsFormat) }
+
+// nullTime is t as a text column value, NULL for nil.
+func nullTime(t *time.Time) any {
+	if t == nil {
+		return nil
+	}
+	return fmtTime(*t)
+}
+
+func unknownForm(projectID int64, name string) error {
+	return fmt.Errorf("form %d/%s: %w", projectID, name, store.ErrNotFound)
+}
+
+func formSubject(projectID int64, name string) string {
+	return fmt.Sprintf("form/%d/%s", projectID, name)
+}
+
+// ListForms lists the project's active or archived forms, drafts first,
+// then by name, with their submission counts.
+func (d *DB) ListForms(ctx context.Context, projectID int64, archived bool) ([]store.Form, error) {
+	where := `f.archived_at IS NULL`
+	if archived {
+		where = `f.archived_at IS NOT NULL`
+	}
+	rows, err := d.db.QueryContext(ctx, `SELECT `+formColumns+`,
+		(SELECT COUNT(*) FROM submissions s WHERE s.project_id=f.project_id AND s.form=f.name)
+		FROM forms f WHERE f.project_id=? AND `+where+`
+		ORDER BY f.status='draft' DESC, f.name`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []store.Form
+	for rows.Next() {
+		var n int
+		f, err := scanForm(rows, &n)
+		if err != nil {
+			return nil, err
+		}
+		f.Submissions = n
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
+// GetForm reads one form, active or archived.
+func (d *DB) GetForm(ctx context.Context, projectID int64, name string) (store.Form, error) {
+	f, err := scanForm(d.db.QueryRowContext(ctx,
+		`SELECT `+formColumns+` FROM forms WHERE project_id=? AND name=?`, projectID, name))
+	if errors.Is(err, sql.ErrNoRows) {
+		return store.Form{}, unknownForm(projectID, name)
+	}
+	return f, err
+}
+
+// ApproveForm makes a draft approved: expected_fields and approved_at
+// set, draft_until cleared.
+func (d *DB) ApproveForm(ctx context.Context, projectID int64, name string, expected []string, now time.Time, a store.AuditEntry) error {
+	if expected == nil {
+		expected = []string{}
+	}
+	blob, err := json.Marshal(expected)
+	if err != nil {
+		return err
+	}
+	return d.tx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx, `UPDATE forms SET status='approved', expected_fields=?, approved_at=?, draft_until=NULL
+			WHERE project_id=? AND name=? AND status='draft'`, string(blob), fmtTime(now), projectID, name)
+		if err != nil {
+			return err
+		}
+		if n, err := res.RowsAffected(); err != nil {
+			return err
+		} else if n == 0 {
+			var status string
+			switch err := tx.QueryRowContext(ctx, `SELECT status FROM forms WHERE project_id=? AND name=?`,
+				projectID, name).Scan(&status); {
+			case errors.Is(err, sql.ErrNoRows):
+				return unknownForm(projectID, name)
+			case err != nil:
+				return err
+			}
+			return fmt.Errorf("form %d/%s is already approved: %w", projectID, name, store.ErrConflict)
+		}
+		return audit(ctx, tx, a)
+	})
+}
+
+// UpdateForm writes the form's purpose, return URL, closing time and
+// expected fields as given.
+func (d *DB) UpdateForm(ctx context.Context, f store.Form, a store.AuditEntry) error {
+	var expected any
+	if f.ExpectedFields != nil {
+		b, err := json.Marshal(f.ExpectedFields)
+		if err != nil {
+			return err
+		}
+		expected = string(b)
+	}
+	return d.tx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx, `UPDATE forms SET purpose=?, return_url=?, closes_at=?, expected_fields=?
+			WHERE project_id=? AND name=?`,
+			f.Purpose, f.ReturnURL, nullTime(f.ClosesAt), expected, f.ProjectID, f.Name)
+		if err != nil {
+			return err
+		}
+		if n, err := res.RowsAffected(); err != nil {
+			return err
+		} else if n == 0 {
+			return unknownForm(f.ProjectID, f.Name)
+		}
+		return audit(ctx, tx, a)
+	})
+}
+
+// SetFormArchived archives or restores a form. A call that changes
+// nothing (archiving an archived form, restoring an active one) is not
+// an error and writes no audit row.
+func (d *DB) SetFormArchived(ctx context.Context, projectID int64, name string, archived bool, draftUntil time.Time, a store.AuditEntry) error {
+	return d.tx(ctx, func(tx *sql.Tx) error {
+		var res sql.Result
+		var err error
+		if archived {
+			res, err = tx.ExecContext(ctx, `UPDATE forms SET archived_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')
+				WHERE project_id=? AND name=? AND archived_at IS NULL`, projectID, name)
+		} else {
+			res, err = tx.ExecContext(ctx, `UPDATE forms SET archived_at=NULL,
+				draft_until = CASE WHEN status='draft' THEN ? END
+				WHERE project_id=? AND name=? AND archived_at IS NOT NULL`, fmtTime(draftUntil), projectID, name)
+		}
+		if err != nil {
+			return err
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			var c int
+			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM forms WHERE project_id=? AND name=?`,
+				projectID, name).Scan(&c); err != nil {
+				return err
+			}
+			if c == 0 {
+				return unknownForm(projectID, name)
+			}
+			return nil
+		}
+		return audit(ctx, tx, a)
+	})
+}
+
+// ExpireDrafts archives every active draft past its draft_until, in one
+// transaction, with one audit row each.
+func (d *DB) ExpireDrafts(ctx context.Context, now time.Time) (int, error) {
+	var expired int
+	err := d.tx(ctx, func(tx *sql.Tx) error {
+		type key struct {
+			project int64
+			name    string
+		}
+		rows, err := tx.QueryContext(ctx, `SELECT project_id, name FROM forms
+			WHERE status='draft' AND archived_at IS NULL AND draft_until <= ?
+			ORDER BY project_id, name`, fmtTime(now))
+		if err != nil {
+			return err
+		}
+		var due []key
+		for rows.Next() {
+			var k key
+			if err := rows.Scan(&k.project, &k.name); err != nil {
+				rows.Close()
+				return err
+			}
+			due = append(due, k)
+		}
+		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+			return err
+		}
+		for _, k := range due {
+			if _, err := tx.ExecContext(ctx, `UPDATE forms SET archived_at=? WHERE project_id=? AND name=?`,
+				fmtTime(now), k.project, k.name); err != nil {
+				return err
+			}
+			if err := audit(ctx, tx, store.AuditEntry{
+				Actor: "retention", Action: "form.expire", Subject: formSubject(k.project, k.name)}); err != nil {
+				return err
+			}
+		}
+		expired = len(due)
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return expired, nil
+}
+
+// deleteEvent deletes the raw $form_submit event of the submission id
+// received on day (its key is family, project, day, id), if it is still
+// raw: a day already rolled up keeps its aggregates.
+func deleteEvent(ctx context.Context, tx *sql.Tx, projectID int64, day, id string) error {
+	_, err := tx.ExecContext(ctx,
+		`DELETE FROM events WHERE family='product' AND project_id=? AND day=? AND id=? AND event_name=?`,
+		projectID, day, id, store.FormSubmitEvent)
+	return err
+}
+
+// DeleteSubmissions deletes the submissions with these ids and their raw
+// events in one transaction.
+func (d *DB) DeleteSubmissions(ctx context.Context, projectID int64, ids []string, a store.AuditEntry) (int, error) {
+	var deleted int
+	err := d.tx(ctx, func(tx *sql.Tx) error {
+		for _, id := range ids {
+			var day string
+			switch err := tx.QueryRowContext(ctx, `SELECT substr(received_at,1,10) FROM submissions WHERE project_id=? AND id=?`,
+				projectID, id).Scan(&day); {
+			case errors.Is(err, sql.ErrNoRows):
+				continue
+			case err != nil:
+				return err
+			}
+			if err := deleteEvent(ctx, tx, projectID, day, id); err != nil {
+				return fmt.Errorf("delete event of submission %s: %w", id, err)
+			}
+			if _, err := tx.ExecContext(ctx, `DELETE FROM submissions WHERE project_id=? AND id=?`, projectID, id); err != nil {
+				return fmt.Errorf("delete submission %s: %w", id, err)
+			}
+			deleted++
+		}
+		return audit(ctx, tx, a)
+	})
+	if err != nil {
+		return 0, err
+	}
+	return deleted, nil
+}
+
+// deleteFormData deletes the form's submissions with their raw events,
+// then the form row, within tx. The caller audits.
+func deleteFormData(ctx context.Context, tx *sql.Tx, projectID int64, name string) error {
+	rows, err := tx.QueryContext(ctx, `SELECT id, substr(received_at,1,10) FROM submissions WHERE project_id=? AND form=?`,
+		projectID, name)
+	if err != nil {
+		return err
+	}
+	type sub struct{ id, day string }
+	var subs []sub
+	for rows.Next() {
+		var s sub
+		if err := rows.Scan(&s.id, &s.day); err != nil {
+			rows.Close()
+			return err
+		}
+		subs = append(subs, s)
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return err
+	}
+	for _, s := range subs {
+		if err := deleteEvent(ctx, tx, projectID, s.day, s.id); err != nil {
+			return fmt.Errorf("delete event of submission %s: %w", s.id, err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM submissions WHERE project_id=? AND form=?`, projectID, name); err != nil {
+		return fmt.Errorf("delete submissions: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM forms WHERE project_id=? AND name=?`, projectID, name); err != nil {
+		return fmt.Errorf("delete form: %w", err)
+	}
+	return nil
+}
+
+// likeEscaper makes a search string literal inside LIKE ... ESCAPE '\'.
+var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+
+// matchSubmissions is the FROM/WHERE that selects the project's
+// submissions of active forms with a field value containing search.
+func matchSubmissions(projectID int64, search string) (string, []any, error) {
+	if search == "" {
+		return "", nil, store.Refuse(store.ErrInvalid, "search must not be empty")
+	}
+	return `FROM submissions s JOIN forms f ON f.project_id=s.project_id AND f.name=s.form
+		WHERE s.project_id=? AND f.archived_at IS NULL
+		  AND EXISTS (SELECT 1 FROM json_each(s.fields) j WHERE j.value LIKE ? ESCAPE '\')`,
+		[]any{projectID, "%" + likeEscaper.Replace(search) + "%"}, nil
+}
+
+const defaultFindLimit = 100
+
+// FindSubmissions pages the submissions matching search, newest first.
+func (d *DB) FindSubmissions(ctx context.Context, projectID int64, search string, limit int, after string) ([]store.Submission, string, error) {
+	from, args, err := matchSubmissions(projectID, search)
+	if err != nil {
+		return nil, "", err
+	}
+	if limit <= 0 {
+		limit = defaultFindLimit
+	}
+	if after != "" {
+		var at string
+		switch err := d.db.QueryRowContext(ctx, `SELECT received_at FROM submissions WHERE project_id=? AND id=?`,
+			projectID, after).Scan(&at); {
+		case errors.Is(err, sql.ErrNoRows):
+			return nil, "", store.Refuse(store.ErrNotFound, "unknown cursor %q", after)
+		case err != nil:
+			return nil, "", err
+		}
+		from += ` AND (s.received_at < ? OR (s.received_at = ? AND s.id < ?))`
+		args = append(args, at, at, after)
+	}
+	rows, err := d.db.QueryContext(ctx, `SELECT s.project_id, s.id, s.form, s.received_at, s.fields,
+		s.actor_kind, s.actor_id, s.host, s.path, s.via, s.visit `+from+`
+		ORDER BY s.received_at DESC, s.id DESC LIMIT ?`, append(args, limit+1)...)
+	if err != nil {
+		return nil, "", err
+	}
+	defer rows.Close()
+	var out []store.Submission
+	for rows.Next() {
+		var s store.Submission
+		var received, fields string
+		var visit sql.NullString
+		if err := rows.Scan(&s.ProjectID, &s.ID, &s.Form, &received, &fields,
+			&s.ActorKind, &s.ActorID, &s.Host, &s.Path, &s.Via, &visit); err != nil {
+			return nil, "", err
+		}
+		if s.ReceivedAt, err = time.Parse(tsFormat, received); err != nil {
+			return nil, "", fmt.Errorf("submission %s received_at: %w", s.ID, err)
+		}
+		if err := json.Unmarshal([]byte(fields), &s.Fields); err != nil {
+			return nil, "", fmt.Errorf("submission %s fields: %w", s.ID, err)
+		}
+		if visit.Valid {
+			s.Visit = &store.Visit{}
+			if err := json.Unmarshal([]byte(visit.String), s.Visit); err != nil {
+				return nil, "", fmt.Errorf("submission %s visit: %w", s.ID, err)
+			}
+		}
+		out = append(out, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, "", err
+	}
+	var next string
+	if len(out) > limit {
+		out = out[:limit]
+		next = out[limit-1].ID
+	}
+	return out, next, nil
+}
+
+// SubmissionIDsMatching returns every id FindSubmissions would, newest first.
+func (d *DB) SubmissionIDsMatching(ctx context.Context, projectID int64, search string) ([]string, error) {
+	from, args, err := matchSubmissions(projectID, search)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.db.QueryContext(ctx, `SELECT s.id `+from+` ORDER BY s.received_at DESC, s.id DESC`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
