@@ -629,7 +629,10 @@ tools below do.
    arrival, and every submission writes a `$form_submit` product event with
    the attribute `form` (the form's name): count conversions with
    `product_events`, and per form with `product_attributes` once `form` is
-   declared in the project's `attributes`.
+   declared in the project's `attributes`. The event carries what is known
+   about the visitor (the page, the visit's referrer and UTMs, its session
+   and environment), so declaring `$utm_source` and the rest breaks
+   conversions down by campaign too, also once the days are rolled up.
 4. **Settle it** with `update_form`: a `purpose`; a `return_url` (where a
    plain form sends the visitor back without `$redirect`, an allowed target
    as for the redirect); `closes_at`, after which submissions are refused
@@ -649,8 +652,8 @@ tools below do.
 | Change one | `twillingate form update` | `update_form` | `{project_id, name, purpose, return_url, closes_at, expected_fields}`; merges; `closes_at: null` reopens; `expected_fields` only on an approved form, never empty |
 | Archive / restore | `twillingate form archive` / `restore` | `archive_form` / `restore_form` | `{project_id, name}`; archiving refuses submissions and hides the form and its submissions from every list, table and export (a search still finds them); a restored draft gets another `FORMS_DRAFT_DAYS` |
 | Read a form's table | `twillingate form export` (CSV) | `list_submissions` | `{project_id, name, filters, sort, distinct, offset, limit}`; returns `columns`, `rows`, `ids`, `matched`, `total`, `offset`, `limit` |
-| Read one submission | — | `get_submission` | `{project_id, name, id}`; every stored field (ones no longer expected too), `received_at`, `host`, `path`, `via`, `visit` |
-| Find a person | — | `find_submissions` | `{project_id, search, limit, cursor}`; `search` at least 2 characters; returns `submissions` (each with its `form` and `archived`, true when that form is archived) and `next_cursor` |
+| Read one submission | — | `get_submission` | `{project_id, name, id}`; every stored field (ones no longer expected too), `received_at`, `attribution` (`referrer`, `utm_source`, `utm_medium`, `utm_campaign`, each left out when empty; `{}` when no visit matched) |
+| Find a person | — | `find_submissions` | `{project_id, search, limit, cursor}`; `search` at least 2 characters; returns `submissions` (each as `get_submission` answers it, with its `form` and `archived`, true when that form is archived) and `next_cursor` |
 | Delete submissions | `twillingate form erase` | `delete_submissions` | `{project_id}` with exactly one of `ids`, `form` with `filters`, or `search`; returns `deleted` |
 
 The CLI works on the database directly, with every flag naming a project by
@@ -666,14 +669,12 @@ takes `-id` (repeatable) or `-search`, never both, deletes exactly as
 text or the ids.
 
 **The table.** `list_submissions` answers one form's submissions with the
-columns `Received`, one per field (an approved form's expected fields in
-their order, a draft's every field), then `Page` (host and path),
-`Referrer`, `UTM source`, `UTM medium` and `UTM campaign` (from the visit the
-submission arrived in). A field named like one of those, or `id`, ignoring
-case, is shown as `<name> (field)`, and filters and sorts under that name.
-`ids` holds each row's submission id, in row order; it is not a column. The
-table takes the arguments `widget_data` takes for a remote table ([Filtering
-and paging a table](reporting.md#filtering-and-paging-a-table)): `filters`
+columns `Received`, then one per field (an approved form's expected fields
+in their order, a draft's every field). A field named `Received` or `id`,
+ignoring case, is shown as `<name> (field)`, and filters and sorts under
+that name. `ids` holds each row's submission id, in row order; it is not
+a column. The table takes the arguments `widget_data` takes for a remote
+table ([Filtering and paging a table](reporting.md#filtering-and-paging-a-table)): `filters`
 (`[{"column":"Received","op":">","value":"2026-10-01"}]`), `sort`
 (`email:asc`), `distinct` (then `columns` are `value` and `rows`, and there
 are no `ids`), `offset` and `limit`. Without a `sort` it is newest first. It
@@ -1094,6 +1095,17 @@ submission, a `$form_submit` product event with the submission's `id`, its
 time as `ts` and the form's name as its one attribute, `form`; a draft's
 submissions write none. Both are written before the answer, never buffered.
 
+**A submission and its event.** The submission keeps what the visitor
+typed, when it arrived and where the visit came from: its `attribution`,
+a JSON object of the referrer and UTM source, medium and campaign of the
+first view of the visitor's current session (views at most 30 minutes
+apart, looking back a day), each left out when empty, `{}` when no view of
+the actor matches. Everything else is on the event, which has the
+submission's id: the actor, the page (`$host`, `$path`), the country, the
+same referrer and UTMs, and the newest view's `$kind`, group, session id,
+environment and consent. So the submission's attribution outlives the raw
+window, and the event's details are counted like any product event's.
+
 Two body styles, chosen by `Content-Type`:
 
 - **A plain HTML form** (`application/x-www-form-urlencoded` or
@@ -1133,8 +1145,8 @@ what they mean on events:
 | Key | Meaning |
 | --- | --- |
 | `$id` | The submission's UUID. A retry with the same id is stored once and answered as a success, even if the form closed in between; omitted, the collector makes one |
-| `$user_id`, `$install_id` | The actor, resolved as on events: `$user_id`, else `$install_id`, else the connection hash, so a JS-free post from the browser that sent the visit's views gets the same actor as those views |
-| `$host`, `$path` | The page the form is on; on a plain form each defaults to the `Referer`'s, on JSON an absent one stays empty |
+| `$user_id`, `$install_id` | The event's actor, resolved as on events: `$user_id`, else `$install_id`, else the connection hash, so a JS-free post from the browser that sent the visit's views gets the same actor as those views, and their session |
+| `$host`, `$path` | The page the form is on, the event's; on a plain form each defaults to the `Referer`'s, on JSON an absent one stays empty |
 | `$redirect` | Plain form only: where to send the visitor back |
 
 Any other `$` key is dropped, and a field named like a context key without

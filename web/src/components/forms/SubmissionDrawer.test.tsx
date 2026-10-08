@@ -9,7 +9,7 @@ import SubmissionDrawer from './SubmissionDrawer'
 beforeEach(() => vi.restoreAllMocks())
 
 describe('SubmissionDrawer', () => {
-  it('shows every stored field, then the visit, the time and the page', async () => {
+  it('shows every stored field, then when it arrived and where from', async () => {
     const get = vi.spyOn(endpoints, 'submission').mockResolvedValue(submission('s2'))
     renderWithProviders(<SubmissionDrawer projectId={4} form="contact" id="s2" onClose={() => {}} />)
     const drawer = await screen.findByRole('dialog', { name: 'Submission' })
@@ -17,16 +17,22 @@ describe('SubmissionDrawer', () => {
     const fields = await within(drawer).findByRole('region', { name: 'Fields' })
     // phone is stored though no longer expected: the drawer shows it too.
     for (const v of ['bob@example.com', 'Hi there', '555-0100']) expect(within(fields).getByText(v)).toBeInTheDocument()
-    const visit = within(drawer).getByRole('region', { name: 'Visit' })
-    for (const v of ['/pricing', 'google.com', 'news', 'email', 'fall', '4']) expect(within(visit).getByText(v)).toBeInTheDocument()
-    expect(within(drawer).getByText('shop.example/contact')).toBeInTheDocument()
-    expect(drawer.querySelector('time[datetime="2026-10-04T09:00:00Z"]')).not.toBeNull()
+    const arrival = within(drawer).getByRole('region', { name: 'Arrival' })
+    expect(within(arrival).getByText('news / email / fall · google.com')).toBeInTheDocument()
+    expect(arrival.querySelector('time[datetime="2026-10-04T09:00:00Z"]')).not.toBeNull()
   })
 
-  it('says when no visit matched', async () => {
-    vi.spyOn(endpoints, 'submission').mockResolvedValue(submission('s2', { visit: undefined }))
-    renderWithProviders(<SubmissionDrawer projectId={4} form="contact" id="s2" onClose={() => {}} />)
-    expect(await screen.findByText(/No visit matched/)).toBeInTheDocument()
+  it('shows the parts of the source it has, a dash with none', async () => {
+    vi.spyOn(endpoints, 'submission').mockResolvedValue(submission('s2', { attribution: { utm_source: 'news' } }))
+    const { unmount } = renderWithProviders(<SubmissionDrawer projectId={4} form="contact" id="s2" onClose={() => {}} />)
+    expect(await screen.findByText('news')).toBeInTheDocument()
+    unmount()
+    vi.spyOn(endpoints, 'submission').mockResolvedValue(
+      submission('s3', { attribution: {} }),
+    )
+    renderWithProviders(<SubmissionDrawer projectId={4} form="contact" id="s3" onClose={() => {}} />)
+    const arrival = await screen.findByRole('region', { name: 'Arrival' })
+    expect(within(arrival).getByText('—')).toBeInTheDocument()
   })
 
   it('deletes the submission once confirmed, then closes', async () => {

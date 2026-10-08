@@ -25,7 +25,7 @@ import (
 // the redirect fragments and a key in the console's URLs.
 var formName = regexp.MustCompile(`^[a-z0-9_-]{1,64}$`)
 
-// How a submission arrived, stored in submissions.via.
+// How a submission arrived, which decides how it is answered.
 const (
 	viaForm = "form" // a plain HTML form post, answered with a redirect
 	viaJSON = "json" // anything else, answered with 201 {"id"}
@@ -389,26 +389,32 @@ func (s *Server) handleForm(w http.ResponseWriter, r *http.Request) {
 		referer = r.Referer()
 	}
 	host, path := pageOf(fc, referer)
-	visit, err := s.forms.SessionVisit(ctx, p.ID, actorKind, actor, received)
-	if err != nil {
-		// The visit is context, not the submission: store it without one.
-		s.logger.Warn("form session visit failed", "project", p.ID, "form", name, "error", err)
-		visit = nil
+	// The event carries everything known about the visitor: the newest
+	// view of the visit it arrived in gives the kind, group, session and
+	// environment, the visit's first view the referrer and UTMs. The
+	// submission keeps only the attribution beside the fields.
+	var ev store.Event
+	sess, err := s.forms.SessionAt(ctx, p.ID, actorKind, actor, received)
+	switch {
+	case err != nil:
+		// The session is context, not the submission: store it without one.
+		s.logger.Warn("form session lookup failed", "project", p.ID, "form", name, "error", err)
+	case sess != nil:
+		ev = *sess
 	}
+	ev.ID, ev.ProjectID, ev.Family, ev.EventName = id, p.ID, store.FamilyProduct, store.FormSubmitEvent
+	ev.TS, ev.ReceivedAt = received, received
+	ev.ActorID, ev.ActorKind, ev.UserID = actor, actorKind, user
+	ev.Host, ev.Path, ev.Country = host, path, s.geo.Country(r, ip)
+	ev.Attributes = map[string]string{"form": name}
 	form, inserted, err := s.forms.WriteSubmission(ctx, store.NewSubmission{
 		Submission: store.Submission{
 			ProjectID: p.ID, ID: id, Form: name, ReceivedAt: received, Fields: body.fields,
-			ActorKind: actorKind, ActorID: actor, Host: host, Path: path, Via: via, Visit: visit,
+			Attribution: store.Attribution{Referrer: ev.ReferrerSource,
+				UTMSource: ev.UTMSource, UTMMedium: ev.UTMMedium, UTMCampaign: ev.UTMCampaign},
 		},
 		DraftUntil: received.AddDate(0, 0, s.cfg.Forms.DraftDays),
-		// Written by the store only when the form is approved.
-		Event: store.Event{
-			ID: id, ProjectID: p.ID, Family: store.FamilyProduct, EventName: store.FormSubmitEvent,
-			TS: received, ReceivedAt: received,
-			ActorID: actor, ActorKind: actorKind, UserID: user,
-			Host: host, Path: path, Country: s.geo.Country(r, ip),
-			Attributes: map[string]string{"form": name},
-		},
+		Event:      ev, // written by the store only when the form is approved
 	})
 	switch {
 	case errors.Is(err, store.ErrFormClosed):

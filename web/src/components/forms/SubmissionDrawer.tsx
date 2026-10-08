@@ -10,7 +10,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import LoadError from '@/components/projects/LoadError'
 import { useFormActions } from '@/hooks/use-form-actions'
 import type { Submission } from '@/lib/api'
-import { formatDayTime } from '@/lib/forms'
+import { formatDayTime, formatSource } from '@/lib/forms'
 import { submissionQuery } from '@/lib/queries'
 
 interface Props {
@@ -51,28 +51,11 @@ function Details({ s }: { s: Submission }) {
       <Section title="Fields">
         {fields.length === 0 ? <p className="text-sm text-muted-foreground">No fields kept.</p> : <Pairs rows={fields} mono />}
       </Section>
-      <Section title="Visit">
-        {s.visit ? (
-          <Pairs
-            rows={[
-              ['Landing page', s.visit.landing_path],
-              ['Referrer', s.visit.referrer],
-              ['UTM source', s.visit.utm_source],
-              ['UTM medium', s.visit.utm_medium],
-              ['UTM campaign', s.visit.utm_campaign],
-              ['Views', String(s.visit.views)],
-            ]}
-          />
-        ) : (
-          <p className="text-sm text-muted-foreground">No visit matched: the page had no SDK, or the submission came from a server.</p>
-        )}
-      </Section>
       <Section title="Arrival">
         <Pairs
           rows={[
             ['Received', <time dateTime={s.received_at} title={s.received_at}>{formatDayTime(new Date(s.received_at))}</time>],
-            ['Page', `${s.host}${s.path}`],
-            ['Sent as', s.via === 'json' ? 'JSON' : 'an HTML form'],
+            ['Source', formatSource(s.attribution)],
           ]}
         />
       </Section>
@@ -82,7 +65,7 @@ function Details({ s }: { s: Submission }) {
 
 /**
  * One submission (D12a): every stored field, the ones the form no longer
- * expects too, then the visit it came in, when and where it arrived, and
+ * expects too, then when it arrived and where its visit came from, and
  * **Delete** behind a confirm.
  */
 export default function SubmissionDrawer({ projectId, form, id, onClose }: Props) {

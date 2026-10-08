@@ -67,7 +67,7 @@ export const submissionsQuery = (projectId: number, name: string, q: Submissions
   queryFn: () => endpoints.submissions(projectId, name, q),
 })
 
-/** One submission, every stored field and its visit. */
+/** One submission, every stored field and where its visit came from. */
 export const submissionQuery = (projectId: number, name: string, id: string) => ({
   queryKey: ['submission', projectId, name, id] as const,
   queryFn: () => endpoints.submission(projectId, name, id),

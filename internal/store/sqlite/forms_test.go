@@ -18,8 +18,7 @@ func newSub(id string, fields map[string]string) store.NewSubmission {
 	return store.NewSubmission{
 		Submission: store.Submission{
 			ProjectID: 1, ID: id, Form: "contact", ReceivedAt: formsNow,
-			Fields: fields, ActorKind: "user", ActorID: "a1",
-			Host: "example.com", Path: "/contact", Via: "form",
+			Fields: fields,
 		},
 		DraftUntil: formsNow.Add(7 * 24 * time.Hour),
 		Event: store.Event{
@@ -100,32 +99,32 @@ func TestWriteSubmissionFirstCreatesDraft(t *testing.T) {
 	if n := countRows(t, db, `SELECT COUNT(*) FROM events`); n != 0 {
 		t.Fatalf("a draft wrote %d events", n)
 	}
-	var recv, actorKind, actorID, host, path, via string
-	var visit *string
-	if err := db.db.QueryRow(`SELECT received_at, actor_kind, actor_id, host, path, via, visit FROM submissions
-		WHERE project_id=1 AND id='s1'`).Scan(&recv, &actorKind, &actorID, &host, &path, &via, &visit); err != nil {
+	var recv string
+	var attribution *string
+	if err := db.db.QueryRow(`SELECT received_at, attribution FROM submissions
+		WHERE project_id=1 AND id='s1'`).Scan(&recv, &attribution); err != nil {
 		t.Fatal(err)
 	}
-	if recv != "2026-10-06T12:00:00Z" || actorKind != "user" || actorID != "a1" ||
-		host != "example.com" || path != "/contact" || via != "form" || visit != nil {
-		t.Fatalf("row = %q %q %q %q %q %q %v", recv, actorKind, actorID, host, path, via, visit)
+	if recv != "2026-10-06T12:00:00Z" || attribution != nil {
+		t.Fatalf("row = %q %v, want no attribution stored as NULL", recv, attribution)
 	}
 }
 
-func TestWriteSubmissionStoresVisit(t *testing.T) {
+// TestWriteSubmissionStoresAttribution: the attribution is a JSON object
+// that leaves empty values out.
+func TestWriteSubmissionStoresAttribution(t *testing.T) {
 	db := newTestDB(t)
 	n := newSub("s1", map[string]string{"a": "1"})
-	n.Submission.Visit = &store.Visit{LandingPath: "/pricing", Referrer: "google", UTMSource: "x", Views: 3}
+	n.Submission.Attribution = store.Attribution{Referrer: "google", UTMSource: "x", UTMCampaign: "oct"}
 	if _, _, err := db.WriteSubmission(context.Background(), n); err != nil {
 		t.Fatal(err)
 	}
 	var blob string
-	if err := db.db.QueryRow(`SELECT visit FROM submissions WHERE id='s1'`).Scan(&blob); err != nil {
+	if err := db.db.QueryRow(`SELECT attribution FROM submissions WHERE id='s1'`).Scan(&blob); err != nil {
 		t.Fatal(err)
 	}
-	var v store.Visit
-	if err := json.Unmarshal([]byte(blob), &v); err != nil || v != *n.Submission.Visit {
-		t.Fatalf("visit = %+v, %v", v, err)
+	if want := `{"referrer":"google","utm_source":"x","utm_campaign":"oct"}`; blob != want {
+		t.Fatalf("attribution = %s, want %s", blob, want)
 	}
 }
 
@@ -345,66 +344,78 @@ func addView(t *testing.T, db *DB, id string, project int64, actor string, at ti
 	}
 }
 
-func TestSessionVisit(t *testing.T) {
+func TestSessionAt(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	at := formsNow
 	// t-60m is a session of its own (40 minutes before the next view);
 	// t-20m and t-5m are one session.
-	addView(t, db, "v1", 1, "a1", at.Add(-60*time.Minute), "/old", "", "", "", "")
+	addView(t, db, "v1", 1, "a1", at.Add(-60*time.Minute), "/old", "old", "", "", "")
 	addView(t, db, "v2", 1, "a1", at.Add(-20*time.Minute), "/landing", "google", "news", "email", "launch")
-	addView(t, db, "v3", 1, "a1", at.Add(-5*time.Minute), "/contact", "", "", "", "")
+	if err := db.WriteEvents(ctx, []store.Event{{
+		ID: "v3", ProjectID: 1, Family: store.FamilyViews, TS: at.Add(-5 * time.Minute), ReceivedAt: at,
+		Kind: "web", ActorKind: "user", ActorID: "a1", GroupID: "g1", SessionID: "s1", Path: "/contact",
+		ReferrerSource: "example.com", Platform: "web", OS: "macos", OSVersion: "15", OSName: "macOS",
+		Browser: "safari", BrowserVersion: "18", BrowserLocale: "en-US", AppVersion: "1.2", AppLocale: "en",
+		Device: "desktop", DeviceModel: "mac", DisplayWidth: 1440, DisplayHeight: 900, Consent: store.ConsentGiven,
+	}}); err != nil {
+		t.Fatal(err)
+	}
 	addView(t, db, "v4", 1, "other", at.Add(-10*time.Minute), "/elsewhere", "", "", "", "")
 	addView(t, db, "v5", 2, "a1", at.Add(-10*time.Minute), "/project2", "", "", "", "")
 
-	got, err := db.SessionVisit(ctx, 1, "user", "a1", at)
+	got, err := db.SessionAt(ctx, 1, "user", "a1", at)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := &store.Visit{LandingPath: "/landing", Referrer: "google", UTMSource: "news",
-		UTMMedium: "email", UTMCampaign: "launch", Views: 2}
+	// The newest view's environment, the landing view's attribution.
+	want := &store.Event{Kind: "web", GroupID: "g1", SessionID: "s1",
+		ReferrerSource: "google", UTMSource: "news", UTMMedium: "email", UTMCampaign: "launch",
+		Platform: "web", OS: "macos", OSVersion: "15", OSName: "macOS",
+		Browser: "safari", BrowserVersion: "18", BrowserLocale: "en-US", AppVersion: "1.2", AppLocale: "en",
+		Device: "desktop", DeviceModel: "mac", DisplayWidth: 1440, DisplayHeight: 900, Consent: store.ConsentGiven}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("visit = %+v, want %+v", got, want)
+		t.Fatalf("session = %+v\nwant %+v", got, want)
 	}
 
 	// A view after `at` is not part of the session so far.
-	addView(t, db, "v6", 1, "a1", at.Add(time.Minute), "/later", "", "", "", "")
-	if got, _ = db.SessionVisit(ctx, 1, "user", "a1", at); got == nil || got.Views != 2 {
-		t.Fatalf("visit = %+v", got)
+	addView(t, db, "v6", 1, "a1", at.Add(time.Minute), "/later", "later", "", "", "")
+	if got, _ = db.SessionAt(ctx, 1, "user", "a1", at); got == nil || got.SessionID != "s1" || got.ReferrerSource != "google" {
+		t.Fatalf("session = %+v", got)
 	}
 
-	got, err = db.SessionVisit(ctx, 1, "user", "nobody", at)
+	got, err = db.SessionAt(ctx, 1, "user", "nobody", at)
 	if err != nil || got != nil {
 		t.Fatalf("no views: %+v, %v", got, err)
 	}
 }
 
-func TestSessionVisitReachesBackAcrossMidnight(t *testing.T) {
+func TestSessionAtReachesBackAcrossMidnight(t *testing.T) {
 	db := newTestDB(t)
 	at := time.Date(2026, 10, 6, 0, 10, 0, 0, time.UTC)
-	addView(t, db, "v1", 1, "a1", at.Add(-20*time.Minute), "/late", "", "", "", "")
-	addView(t, db, "v2", 1, "a1", at.Add(-5*time.Minute), "/later", "", "", "", "")
-	got, err := db.SessionVisit(context.Background(), 1, "user", "a1", at)
-	if err != nil || got == nil || got.LandingPath != "/late" || got.Views != 2 {
-		t.Fatalf("visit = %+v, %v", got, err)
+	addView(t, db, "v1", 1, "a1", at.Add(-20*time.Minute), "/late", "late", "", "", "")
+	addView(t, db, "v2", 1, "a1", at.Add(-5*time.Minute), "/later", "later", "", "", "")
+	got, err := db.SessionAt(context.Background(), 1, "user", "a1", at)
+	if err != nil || got == nil || got.ReferrerSource != "late" {
+		t.Fatalf("session = %+v, %v", got, err)
 	}
 }
 
-// TestSessionVisitGapIsInclusive: a view exactly 30 minutes before the next
+// TestSessionAtGapIsInclusive: a view exactly 30 minutes before the next
 // is the same session; one second more starts another.
-func TestSessionVisitGapIsInclusive(t *testing.T) {
+func TestSessionAtGapIsInclusive(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	addView(t, db, "v1", 1, "a1", formsNow.Add(-40*time.Minute-time.Second), "/first", "", "", "", "")
-	addView(t, db, "v2", 1, "a1", formsNow.Add(-10*time.Minute), "/second", "", "", "", "")
-	got, err := db.SessionVisit(ctx, 1, "user", "a1", formsNow)
-	if err != nil || got == nil || got.LandingPath != "/second" || got.Views != 1 {
+	addView(t, db, "v1", 1, "a1", formsNow.Add(-40*time.Minute-time.Second), "/first", "first", "", "", "")
+	addView(t, db, "v2", 1, "a1", formsNow.Add(-10*time.Minute), "/second", "second", "", "", "")
+	got, err := db.SessionAt(ctx, 1, "user", "a1", formsNow)
+	if err != nil || got == nil || got.ReferrerSource != "second" {
 		t.Fatalf("31m gap: %+v, %v", got, err)
 	}
-	addView(t, db, "v0", 1, "a2", formsNow.Add(-40*time.Minute), "/edge", "", "", "", "")
-	addView(t, db, "v3", 1, "a2", formsNow.Add(-10*time.Minute), "/second", "", "", "", "")
-	got, err = db.SessionVisit(ctx, 1, "user", "a2", formsNow)
-	if err != nil || got == nil || got.LandingPath != "/edge" || got.Views != 2 {
+	addView(t, db, "v0", 1, "a2", formsNow.Add(-40*time.Minute), "/edge", "edge", "", "", "")
+	addView(t, db, "v3", 1, "a2", formsNow.Add(-10*time.Minute), "/second", "second", "", "", "")
+	got, err = db.SessionAt(ctx, 1, "user", "a2", formsNow)
+	if err != nil || got == nil || got.ReferrerSource != "edge" {
 		t.Fatalf("30m gap: %+v, %v", got, err)
 	}
 }
@@ -487,19 +498,19 @@ func TestWriteSubmissionRetryOfStoredIDSucceedsAfterClose(t *testing.T) {
 	}
 }
 
-// TestSessionVisitNeedsACurrentSession: the newest view must be within
+// TestSessionAtNeedsACurrentSession: the newest view must be within
 // 30 minutes of `at`, the gap rule's own boundary.
-func TestSessionVisitNeedsACurrentSession(t *testing.T) {
+func TestSessionAtNeedsACurrentSession(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	addView(t, db, "v1", 1, "a1", formsNow.Add(-31*time.Minute), "/old", "", "", "", "")
-	addView(t, db, "v2", 1, "a2", formsNow.Add(-30*time.Minute), "/edge", "", "", "", "")
-	got, err := db.SessionVisit(ctx, 1, "user", "a1", formsNow)
+	addView(t, db, "v1", 1, "a1", formsNow.Add(-31*time.Minute), "/old", "old", "", "", "")
+	addView(t, db, "v2", 1, "a2", formsNow.Add(-30*time.Minute), "/edge", "edge", "", "", "")
+	got, err := db.SessionAt(ctx, 1, "user", "a1", formsNow)
 	if err != nil || got != nil {
 		t.Fatalf("31m: %+v, %v", got, err)
 	}
-	got, err = db.SessionVisit(ctx, 1, "user", "a2", formsNow)
-	if err != nil || got == nil || got.LandingPath != "/edge" || got.Views != 1 {
+	got, err = db.SessionAt(ctx, 1, "user", "a2", formsNow)
+	if err != nil || got == nil || got.ReferrerSource != "edge" {
 		t.Fatalf("30m: %+v, %v", got, err)
 	}
 }
@@ -977,7 +988,7 @@ func TestGetSubmission(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	n := newSub("s1", map[string]string{"email": "a@x.io", "note": "hi"})
-	n.Submission.Visit = &store.Visit{LandingPath: "/pricing", Referrer: "news.example", UTMSource: "nl", Views: 3}
+	n.Submission.Attribution = store.Attribution{Referrer: "news.example", UTMSource: "nl"}
 	mustWrite(t, db, n)
 
 	s, err := db.GetSubmission(ctx, 1, "contact", "s1")
@@ -985,9 +996,8 @@ func TestGetSubmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := store.Submission{ProjectID: 1, ID: "s1", Form: "contact", ReceivedAt: formsNow,
-		Fields: map[string]string{"email": "a@x.io", "note": "hi"}, ActorKind: "user", ActorID: "a1",
-		Host: "example.com", Path: "/contact", Via: "form",
-		Visit: &store.Visit{LandingPath: "/pricing", Referrer: "news.example", UTMSource: "nl", Views: 3}}
+		Fields:      map[string]string{"email": "a@x.io", "note": "hi"},
+		Attribution: store.Attribution{Referrer: "news.example", UTMSource: "nl"}}
 	if !reflect.DeepEqual(s, want) {
 		t.Fatalf("submission = %+v\nwant %+v", s, want)
 	}

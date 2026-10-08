@@ -35,19 +35,23 @@ func newFormSeeder(t *testing.T, h *host) *formSeeder {
 }
 
 // add writes one submission to form on project 1, each a minute after the
-// last, from example.com/contact.
-func (s *formSeeder) add(form, id string, fields map[string]string, visit *store.Visit) {
+// last, from example.com/contact, with attr as its attribution (nil for
+// none).
+func (s *formSeeder) add(form, id string, fields map[string]string, attr *store.Attribution) {
 	s.t.Helper()
-	s.addTo(1, form, id, fields, visit)
+	s.addTo(1, form, id, fields, attr)
 }
 
-func (s *formSeeder) addTo(project int64, form, id string, fields map[string]string, visit *store.Visit) {
+func (s *formSeeder) addTo(project int64, form, id string, fields map[string]string, attr *store.Attribution) {
 	s.t.Helper()
 	s.n++
 	at := s.base.Add(time.Duration(s.n) * time.Minute)
+	sub := store.Submission{ProjectID: project, ID: id, Form: form, ReceivedAt: at, Fields: fields}
+	if attr != nil {
+		sub.Attribution = *attr
+	}
 	_, _, err := s.st.WriteSubmission(context.Background(), store.NewSubmission{
-		Submission: store.Submission{ProjectID: project, ID: id, Form: form, ReceivedAt: at, Fields: fields,
-			ActorKind: "user", ActorID: "a1", Host: "example.com", Path: "/contact", Via: "form", Visit: visit},
+		Submission: sub,
 		DraftUntil: at.Add(7 * 24 * time.Hour),
 		Event: store.Event{ID: id, ProjectID: project, Family: store.FamilyProduct, EventName: store.FormSubmitEvent,
 			TS: at, ReceivedAt: at, Kind: "web", ActorKind: "user", ActorID: "a1", Host: "example.com", Path: "/contact"},
@@ -200,17 +204,15 @@ func TestListFormsActionBase(t *testing.T) {
 	}
 }
 
-var fixedCols = []string{"Page", "Referrer", "UTM source", "UTM medium", "UTM campaign"}
-
 func TestListSubmissionsColumnsDraftAndApproved(t *testing.T) {
 	h, cs := newTestHost(t)
 	seed := newFormSeeder(t, h)
 	seed.add("contact", "s1", map[string]string{"email": "a@x.io", "note": "hi"},
-		&store.Visit{LandingPath: "/", Referrer: "news.example", UTMSource: "nl", UTMMedium: "email", UTMCampaign: "oct", Views: 2})
+		&store.Attribution{Referrer: "news.example", UTMSource: "nl", UTMMedium: "email", UTMCampaign: "oct"})
 	seed.add("contact", "s2", map[string]string{"email": "b@x.io"}, nil)
 
 	tab := callAs[submissionsTable](t, cs, "list_submissions", map[string]any{"project_id": 1, "name": "contact"})
-	if want := append([]string{"Received", "email", "note"}, fixedCols...); !reflect.DeepEqual(tab.Columns, want) {
+	if want := []string{"Received", "email", "note"}; !reflect.DeepEqual(tab.Columns, want) {
 		t.Fatalf("draft columns = %q", tab.Columns)
 	}
 	// Newest first; ids align with rows.
@@ -218,64 +220,57 @@ func TestListSubmissionsColumnsDraftAndApproved(t *testing.T) {
 		tab.Offset != 0 || tab.Limit != 1000 {
 		t.Fatalf("table = %+v", tab)
 	}
-	if got := tab.Rows[1]; got[1] != "a@x.io" || got[2] != "hi" || got[3] != "example.com/contact" ||
-		got[4] != "news.example" || got[5] != "nl" || got[6] != "email" || got[7] != "oct" {
+	if got := tab.Rows[1]; len(got) != 3 || got[1] != "a@x.io" || got[2] != "hi" {
 		t.Fatalf("s1 row = %q", got)
 	}
-	if got := tab.Rows[0]; got[1] != "b@x.io" || got[2] != "" || got[4] != "" {
+	if got := tab.Rows[0]; got[1] != "b@x.io" || got[2] != "" {
 		t.Fatalf("s2 row = %q", got)
 	}
 
 	callAs[okOut](t, cs, "approve_form", map[string]any{"project_id": 1, "name": "contact", "expected_fields": []string{"email"}})
 	tab = callAs[submissionsTable](t, cs, "list_submissions", map[string]any{"project_id": 1, "name": "contact"})
-	if want := append([]string{"Received", "email"}, fixedCols...); !reflect.DeepEqual(tab.Columns, want) {
+	if want := []string{"Received", "email"}; !reflect.DeepEqual(tab.Columns, want) {
 		t.Fatalf("approved columns = %q", tab.Columns)
 	}
 
-	// get_submission still shows the field the form no longer expects, and the visit.
-	sub := callAs[struct {
-		ID         string            `json:"id"`
-		Form       string            `json:"form"`
-		ReceivedAt string            `json:"received_at"`
-		Fields     map[string]string `json:"fields"`
-		Host       string            `json:"host"`
-		Path       string            `json:"path"`
-		Via        string            `json:"via"`
-		Visit      *store.Visit      `json:"visit"`
-	}](t, cs, "get_submission", map[string]any{"project_id": 1, "name": "contact", "id": "s1"})
-	if sub.ID != "s1" || sub.Form != "contact" || sub.Fields["note"] != "hi" || sub.Host != "example.com" ||
-		sub.Path != "/contact" || sub.Via != "form" || sub.Visit == nil || sub.Visit.Views != 2 || sub.ReceivedAt == "" {
-		t.Fatalf("submission = %+v", sub)
+	// get_submission still shows the field the form no longer expects, and
+	// the attribution.
+	sub := callAs[map[string]any](t, cs, "get_submission", map[string]any{"project_id": 1, "name": "contact", "id": "s1"})
+	want := map[string]any{"id": "s1", "form": "contact", "received_at": sub["received_at"],
+		"fields":   map[string]any{"email": "a@x.io", "note": "hi"},
+		"attribution": map[string]any{"referrer": "news.example", "utm_source": "nl", "utm_medium": "email", "utm_campaign": "oct"}}
+	if !reflect.DeepEqual(sub, want) || sub["received_at"] == "" {
+		t.Fatalf("submission = %v", sub)
 	}
 	if msg := refused(t, cs, "get_submission", map[string]any{"project_id": 1, "name": "contact", "id": "nope"}); !strings.Contains(msg, "no submission") {
 		t.Errorf("unknown id: %s", msg)
 	}
 }
 
-// TestListSubmissionsFieldNamedLikeAColumn: a field named Page shows as
-// "Page (field)" and filters and sorts as itself (Review Focus).
+// TestListSubmissionsFieldNamedLikeAColumn: a field named received shows as
+// "received (field)" and filters and sorts as itself (Review Focus).
 func TestListSubmissionsFieldNamedLikeAColumn(t *testing.T) {
 	h, cs := newTestHost(t)
 	seed := newFormSeeder(t, h)
-	seed.add("contact", "s1", map[string]string{"Page": "x", "id": "7"}, nil)
-	seed.add("contact", "s2", map[string]string{"Page": "y", "id": "8"}, nil)
+	seed.add("contact", "s1", map[string]string{"received": "x", "id": "7"}, nil)
+	seed.add("contact", "s2", map[string]string{"received": "y", "id": "8"}, nil)
 
 	tab := callAs[submissionsTable](t, cs, "list_submissions", map[string]any{"project_id": 1, "name": "contact",
-		"filters": `[{"column":"Page (field)","op":"=","value":"x"}]`})
-	if want := append([]string{"Received", "Page (field)", "id (field)"}, fixedCols...); !reflect.DeepEqual(tab.Columns, want) {
+		"filters": `[{"column":"received (field)","op":"=","value":"x"}]`})
+	if want := []string{"Received", "id (field)", "received (field)"}; !reflect.DeepEqual(tab.Columns, want) {
 		t.Fatalf("columns = %q", tab.Columns)
 	}
-	if !reflect.DeepEqual(tab.IDs, []string{"s1"}) || tab.Rows[0][1] != "x" || tab.Rows[0][2] != "7" ||
-		tab.Rows[0][3] != "example.com/contact" || tab.Matched != 1 || tab.Total != 2 {
+	if !reflect.DeepEqual(tab.IDs, []string{"s1"}) || tab.Rows[0][1] != "7" || tab.Rows[0][2] != "x" ||
+		tab.Matched != 1 || tab.Total != 2 {
 		t.Fatalf("filtered = %+v", tab)
 	}
 	tab = callAs[submissionsTable](t, cs, "list_submissions", map[string]any{"project_id": 1, "name": "contact",
-		"sort": "Page (field):desc"})
+		"sort": "received (field):desc"})
 	if !reflect.DeepEqual(tab.IDs, []string{"s2", "s1"}) {
 		t.Fatalf("sorted desc = %v", tab.IDs)
 	}
 	tab = callAs[submissionsTable](t, cs, "list_submissions", map[string]any{"project_id": 1, "name": "contact",
-		"sort": "Page (field):asc"})
+		"sort": "received (field):asc"})
 	if !reflect.DeepEqual(tab.IDs, []string{"s1", "s2"}) {
 		t.Fatalf("sorted asc = %v", tab.IDs)
 	}
@@ -515,7 +510,7 @@ func TestExportSubmissionsCSV(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := append([]string{"Received", "email", "note"}, fixedCols...); !reflect.DeepEqual(records[0], want) {
+	if want := []string{"Received", "email", "note"}; !reflect.DeepEqual(records[0], want) {
 		t.Fatalf("header = %q", records[0])
 	}
 	if len(records) != 4 || records[1][1] != "a@x.io" || records[1][2] != "line one\nline, two" || records[3][1] != "c@x.io" {
@@ -598,7 +593,7 @@ func TestSubmissionsFieldsNamedLikeRefusedTables(t *testing.T) {
 	}
 
 	tab := callAs[submissionsTable](t, cs, "list_submissions", args())
-	want := append([]string{"Received", "Meta", "dbstat", "meta (field)", "pragma_y", "sqlite_x"}, fixedCols...)
+	want := []string{"Received", "Meta", "dbstat", "meta (field)", "pragma_y", "sqlite_x"}
 	if !reflect.DeepEqual(tab.Columns, want) {
 		t.Fatalf("columns = %q, want %q", tab.Columns, want)
 	}

@@ -31,10 +31,10 @@ export function draft(name: string, days: number, over: Partial<Form> = {}): For
 
 /** Two submissions of an approved contact form (expected email, message), newest first. */
 export const contactPage: SubmissionsPage = {
-  columns: ['Received', 'email', 'message', 'Page', 'Referrer', 'UTM source', 'UTM medium', 'UTM campaign'],
+  columns: ['Received', 'email', 'message'],
   rows: [
-    ['2026-10-05T10:00:00Z', 'ann@example.com', 'Hello', 'shop.example/contact', 'google.com', 'news', 'email', 'fall'],
-    ['2026-10-04T09:00:00Z', 'bob@example.com', 'Hi there', 'shop.example/contact', '', '', '', ''],
+    ['2026-10-05T10:00:00Z', 'ann@example.com', 'Hello'],
+    ['2026-10-04T09:00:00Z', 'bob@example.com', 'Hi there'],
   ],
   ids: ['s1', 's2'],
   matched: 2,
@@ -49,10 +49,7 @@ export function submission(id: string, over: Partial<Submission> = {}): Submissi
     form: 'contact',
     received_at: '2026-10-04T09:00:00Z',
     fields: { email: 'bob@example.com', message: 'Hi there', phone: '555-0100' },
-    host: 'shop.example',
-    path: '/contact',
-    via: 'form',
-    visit: { landing_path: '/pricing', referrer: 'google.com', utm_source: 'news', utm_medium: 'email', utm_campaign: 'fall', views: 4 },
+    attribution: { referrer: 'google.com', utm_source: 'news', utm_medium: 'email', utm_campaign: 'fall' },
     ...over,
   }
 }

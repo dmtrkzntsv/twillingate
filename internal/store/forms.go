@@ -64,29 +64,29 @@ func KeepFields(f Form, fields map[string]string) map[string]string {
 	return kept
 }
 
-// Visit is the session snapshot a submission carries (spec D9).
-type Visit struct {
-	LandingPath string `json:"landing_path"`
-	Referrer    string `json:"referrer"`
-	UTMSource   string `json:"utm_source"`
-	UTMMedium   string `json:"utm_medium"`
-	UTMCampaign string `json:"utm_campaign"`
-	Views       int    `json:"views"`
+// Attribution is where the visit a submission arrived in came from: its
+// first view's referrer and campaign. The submission keeps it, as a JSON
+// object with empty values left out, for as long as it is kept, so a new
+// key is a new field here and no migration; its $form_submit event carries
+// the same values.
+type Attribution struct {
+	Referrer    string `json:"referrer,omitempty"`
+	UTMSource   string `json:"utm_source,omitempty"`
+	UTMMedium   string `json:"utm_medium,omitempty"`
+	UTMCampaign string `json:"utm_campaign,omitempty"`
 }
 
-// Submission is a row of submissions.
+// Submission is a row of submissions: what the visitor typed and where the
+// visit came from. Everything else about it (the page, the visitor, the
+// environment) is on its $form_submit event, which has the same id.
 type Submission struct {
-	ProjectID  int64
-	ID         string
-	Form       string
-	ReceivedAt time.Time
-	Fields     map[string]string // as sent (after flattening); WriteSubmission applies KeepFields
-	ActorKind  string
-	ActorID    string
-	Host, Path string
-	Via        string // "form" | "json"
-	Visit      *Visit
-	Archived   bool // its form is archived; set by FindSubmissions only
+	ProjectID   int64
+	ID          string
+	Form        string
+	ReceivedAt  time.Time
+	Fields      map[string]string // as sent (after flattening); WriteSubmission applies KeepFields
+	Attribution Attribution
+	Archived    bool // its form is archived; set by FindSubmissions only
 }
 
 // NewSubmission is what ingest hands the store: the submission, the

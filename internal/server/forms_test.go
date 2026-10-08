@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -194,8 +195,8 @@ type fakeForms struct {
 	calls  []store.NewSubmission
 	closed bool  // every new submission is refused with ErrFormClosed
 	err    error // every call fails with err
-	visit  *store.Visit
-	visits [][2]string // (actor kind, actor id) per SessionVisit call
+	session  *store.Event
+	sessions [][2]string // (actor kind, actor id) per SessionAt call
 }
 
 func newFakeForms() *fakeForms {
@@ -226,11 +227,15 @@ func (f *fakeForms) WriteSubmission(_ context.Context, n store.NewSubmission) (s
 	return form, true, nil
 }
 
-func (f *fakeForms) SessionVisit(_ context.Context, _ int64, actorKind, actorID string, _ time.Time) (*store.Visit, error) {
+func (f *fakeForms) SessionAt(_ context.Context, _ int64, actorKind, actorID string, _ time.Time) (*store.Event, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.visits = append(f.visits, [2]string{actorKind, actorID})
-	return f.visit, nil
+	f.sessions = append(f.sessions, [2]string{actorKind, actorID})
+	if f.session == nil {
+		return nil, nil
+	}
+	e := *f.session
+	return &e, nil
 }
 
 // formServer is a server over one project (allowed origin testOrigin, key
@@ -305,16 +310,17 @@ func TestFormURLEncodedRedirectsWithSuccess(t *testing.T) {
 		t.Fatalf("store called %d times, want 1", len(forms.calls))
 	}
 	sub := forms.calls[0].Submission
-	if sub.Form != "contact" || sub.Via != "form" || sub.ProjectID != 1 ||
+	if sub.Form != "contact" || sub.ProjectID != 1 ||
 		!maps.Equal(sub.Fields, map[string]string{"email": "a@b.c", "topics": "x, y"}) {
 		t.Errorf("submission = %+v", sub)
 	}
 	if _, err := uuid.Parse(sub.ID); err != nil {
 		t.Errorf("server-made id %q is not a UUID", sub.ID)
 	}
-	// host and path come from the Referer when no context key names them.
-	if sub.Host != "app.com" || sub.Path != "/contact" {
-		t.Errorf("host/path = %q %q, want app.com /contact from the Referer", sub.Host, sub.Path)
+	// The event's host and path come from the Referer when no context key
+	// names them.
+	if ev := forms.calls[0].Event; ev.Host != "app.com" || ev.Path != "/contact" {
+		t.Errorf("host/path = %q %q, want app.com /contact from the Referer", ev.Host, ev.Path)
 	}
 }
 
@@ -391,11 +397,13 @@ func TestFormJSON(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
 	}
-	sub := forms.calls[0].Submission
-	if out.ID == "" || out.ID != sub.ID || sub.Via != "json" || sub.Host != "app.com" || sub.Path != "/pricing" ||
-		sub.ActorKind != store.ActorInstall || sub.ActorID != "i1" ||
+	sub, ev := forms.calls[0].Submission, forms.calls[0].Event
+	if out.ID == "" || out.ID != sub.ID ||
 		!maps.Equal(sub.Fields, map[string]string{"email": "a@b.c", "seats": "5"}) {
 		t.Errorf("answer %q, submission %+v", out.ID, sub)
+	}
+	if ev.Host != "app.com" || ev.Path != "/pricing" || ev.ActorKind != store.ActorInstall || ev.ActorID != "i1" {
+		t.Errorf("event = %+v", ev)
 	}
 }
 
@@ -409,9 +417,6 @@ func TestFormJSONIgnoresReferer(t *testing.T) {
 		map[string]string{"Origin": testOrigin, "Referer": testOrigin + "/account/123/secret"})
 	if w.Code != http.StatusCreated {
 		t.Fatalf("status = %d body %q", w.Code, w.Body.String())
-	}
-	if sub := forms.calls[0].Submission; sub.Host != "" || sub.Path != "" {
-		t.Errorf("host %q path %q, want both empty", sub.Host, sub.Path)
 	}
 	if ev := forms.calls[0].Event; ev.Host != "" || ev.Path != "" {
 		t.Errorf("event host %q path %q, want both empty", ev.Host, ev.Path)
@@ -499,11 +504,18 @@ func TestFormBodyTooLarge(t *testing.T) {
 
 // The handler fills the event the store writes on an approved form: the
 // submission's id, instant and actor, family product, $form_submit, the
-// page, the country and only the form's name as attribute.
+// page, the country and only the form's name as attribute, over what the
+// visit's session says about the visitor. The submission keeps the
+// session's attribution beside the fields.
 func TestFormEventPrefilled(t *testing.T) {
 	forms := newFakeForms()
 	forms.forms["contact"] = store.Form{ProjectID: 1, Name: "contact", Status: store.FormApproved}
-	forms.visit = &store.Visit{LandingPath: "/", Views: 3}
+	forms.session = &store.Event{Kind: "web", GroupID: "g1", SessionID: "s1",
+		ReferrerSource: "google", UTMSource: "nl", UTMMedium: "email", UTMCampaign: "oct",
+		Platform: "web", OS: "macos", Browser: "safari", BrowserLocale: "en-US", Device: "desktop",
+		DisplayWidth: 1440, DisplayHeight: 900, Consent: store.ConsentGiven,
+		// The session's own location and time never reach the event.
+		Host: "landing.app.com", Path: "/landing", ActorID: "someone", Attributes: map[string]string{"x": "y"}}
 	h := formServer(t, forms, slog.Default())
 	before := time.Now().UTC()
 	w := postURLEncoded(h, "contact", url.Values{
@@ -513,22 +525,43 @@ func TestFormEventPrefilled(t *testing.T) {
 	wantRedirect(t, w, "https://app.com/thanks#twillingate-form-success-contact")
 	n := forms.calls[0]
 	sub, ev := n.Submission, n.Event
-	if sub.ID != "018f1e5c-0000-7000-8000-000000000002" || sub.ActorKind != store.ActorUser || sub.ActorID != "u1" ||
-		sub.Host != "app.com" || sub.Path != "/contact" || sub.Visit == nil || sub.Visit.Views != 3 {
+	wantAttr := store.Attribution{Referrer: "google", UTMSource: "nl", UTMMedium: "email", UTMCampaign: "oct"}
+	if sub.ID != "018f1e5c-0000-7000-8000-000000000002" || sub.Attribution != wantAttr {
 		t.Errorf("submission = %+v", sub)
 	}
-	if ev.ID != sub.ID || ev.ProjectID != 1 || ev.Family != store.FamilyProduct || ev.EventName != store.FormSubmitEvent ||
-		!ev.TS.Equal(sub.ReceivedAt) || !ev.ReceivedAt.Equal(sub.ReceivedAt) || sub.ReceivedAt.Before(before) ||
-		ev.ActorKind != store.ActorUser || ev.ActorID != "u1" || ev.UserID != "u1" ||
-		ev.Host != "app.com" || ev.Path != "/contact" || ev.Country != "DE" ||
-		!maps.Equal(ev.Attributes, map[string]string{"form": "contact"}) {
-		t.Errorf("event = %+v", ev)
+	want := store.Event{ID: sub.ID, ProjectID: 1, Family: store.FamilyProduct, EventName: store.FormSubmitEvent,
+		TS: sub.ReceivedAt, ReceivedAt: sub.ReceivedAt, Kind: "web",
+		ActorID: "u1", ActorKind: store.ActorUser, UserID: "u1", GroupID: "g1", SessionID: "s1",
+		Host: "app.com", Path: "/contact",
+		ReferrerSource: "google", UTMSource: "nl", UTMMedium: "email", UTMCampaign: "oct",
+		Platform: "web", OS: "macos", Browser: "safari", BrowserLocale: "en-US", Device: "desktop",
+		DisplayWidth: 1440, DisplayHeight: 900, Country: "DE", Consent: store.ConsentGiven,
+		Attributes: map[string]string{"form": "contact"}}
+	if !reflect.DeepEqual(ev, want) || sub.ReceivedAt.Before(before) {
+		t.Errorf("event = %+v\nwant    %+v", ev, want)
 	}
 	if d := n.DraftUntil.Sub(sub.ReceivedAt); d != 7*24*time.Hour {
 		t.Errorf("draft_until is %v after received, want FORMS_DRAFT_DAYS (7 days)", d)
 	}
-	if len(forms.visits) != 1 || forms.visits[0] != [2]string{store.ActorUser, "u1"} {
-		t.Errorf("SessionVisit calls = %v", forms.visits)
+	if len(forms.sessions) != 1 || forms.sessions[0] != [2]string{store.ActorUser, "u1"} {
+		t.Errorf("SessionAt calls = %v", forms.sessions)
+	}
+}
+
+// With no session the event still has the submission's id, actor and page,
+// and the submission no attribution.
+func TestFormEventWithoutSession(t *testing.T) {
+	forms := newFakeForms()
+	h := formServer(t, forms, slog.Default())
+	postURLEncoded(h, "contact", url.Values{"email": {"a"}, "$redirect": {"https://app.com/"}},
+		map[string]string{"Referer": "https://app.com/contact"})
+	n := forms.calls[0]
+	if n.Submission.Attribution != (store.Attribution{}) {
+		t.Errorf("attribution = %+v", n.Submission.Attribution)
+	}
+	if ev := n.Event; ev.ID != n.Submission.ID || ev.Host != "app.com" || ev.Path != "/contact" ||
+		ev.ActorKind != store.ActorConnection || ev.Kind != "" || ev.ReferrerSource != "" {
+		t.Errorf("event = %+v", ev)
 	}
 }
 
@@ -547,9 +580,9 @@ func TestFormConnectionActorMatchesViews(t *testing.T) {
 	if len(q.views) != 1 || len(forms.calls) != 1 {
 		t.Fatalf("views %d, submissions %d", len(q.views), len(forms.calls))
 	}
-	sub := forms.calls[0].Submission
-	if sub.ActorKind != store.ActorConnection || sub.ActorID != q.views[0].ActorID {
-		t.Errorf("submission actor %s/%s, view actor %s/%s", sub.ActorKind, sub.ActorID, q.views[0].ActorKind, q.views[0].ActorID)
+	ev := forms.calls[0].Event
+	if ev.ActorKind != store.ActorConnection || ev.ActorID != q.views[0].ActorID {
+		t.Errorf("event actor %s/%s, view actor %s/%s", ev.ActorKind, ev.ActorID, q.views[0].ActorKind, q.views[0].ActorID)
 	}
 }
 

@@ -10,31 +10,31 @@ import (
 )
 
 func TestSubmissionsQueryColumns(t *testing.T) {
-	fixed := []string{"Page", "Referrer", "UTM source", "UTM medium", "UTM campaign"}
 	draft := store.Form{Status: store.FormDraft, Fields: []string{"email", "note"}}
 	_, cols := SubmissionsQuery(draft)
-	if want := append([]string{"Received", "email", "note"}, fixed...); !reflect.DeepEqual(cols, want) {
+	if want := []string{"Received", "email", "note"}; !reflect.DeepEqual(cols, want) {
 		t.Errorf("draft columns = %q, want %q", cols, want)
 	}
 	// An approved form shows its expected fields, in their order, not every field seen.
 	approved := store.Form{Status: store.FormApproved, Fields: []string{"email", "note", "spam"},
 		ExpectedFields: []string{"note", "email"}}
 	_, cols = SubmissionsQuery(approved)
-	if want := append([]string{"Received", "note", "email"}, fixed...); !reflect.DeepEqual(cols, want) {
+	if want := []string{"Received", "note", "email"}; !reflect.DeepEqual(cols, want) {
 		t.Errorf("approved columns = %q, want %q", cols, want)
 	}
-	// A field named like a fixed column, or id, is shown as "<name> (field)";
-	// so is one that differs only in case, since SQLite's column names are
-	// case-insensitive and the two would read one column.
-	clash := store.Form{Status: store.FormDraft, Fields: []string{"Page", "id", "utm source", "received"}}
+	// A field named Received or id is shown as "<name> (field)"; so is one
+	// that differs only in case, since SQLite's column names are
+	// case-insensitive and the two would read one column. Page or a UTM
+	// name is a field like any other.
+	clash := store.Form{Status: store.FormDraft, Fields: []string{"Page", "ID", "utm source", "received"}}
 	q, cols := SubmissionsQuery(clash)
-	want := append([]string{"Received", "Page (field)", "id (field)", "utm source (field)", "received (field)"}, fixed...)
+	want := []string{"Received", "Page", "ID (field)", "utm source", "received (field)"}
 	if !reflect.DeepEqual(cols, want) {
 		t.Errorf("clash columns = %q, want %q", cols, want)
 	}
 	// Renamed names stay unique too.
 	for _, c := range []struct{ fields, want []string }{
-		{[]string{"Page", "Page (field)"}, []string{"Page (field)", "Page (field) (field)"}},
+		{[]string{"id", "id (field)"}, []string{"id (field)", "id (field) (field)"}},
 		{[]string{"Email", "email"}, []string{"Email", "email (field)"}},
 	} {
 		_, cols := SubmissionsQuery(store.Form{Status: store.FormDraft, Fields: c.fields})

@@ -397,17 +397,18 @@ type Store interface {
 	// is ErrInvalid; an unknown cursor is ErrNotFound.
 	FindSubmissions(ctx context.Context, projectID int64, search string, limit int, after string) ([]Submission, string, error)
 	// GetSubmission reads one submission of the project's form, every
-	// stored field and its visit; ErrNotFound when absent or when the form
-	// is archived.
+	// stored field and its attribution; ErrNotFound when absent or when
+	// the form is archived.
 	GetSubmission(ctx context.Context, projectID int64, form, id string) (Submission, error)
 	// SubmissionIDsMatching returns every id FindSubmissions would, newest
 	// first, for delete-by-search.
 	SubmissionIDsMatching(ctx context.Context, projectID int64, search string) ([]string, error)
-	// SessionVisit snapshots the actor's session at `at` (views gapped by
-	// at most 30 minutes, looking back at most a day): its landing page,
-	// referrer, UTM source, medium and campaign, and view count. Nil when
-	// no view matches.
-	SessionVisit(ctx context.Context, projectID int64, actorKind, actorID string, at time.Time) (*Visit, error)
+	// SessionAt reads the actor's session at `at` (views gapped by at most
+	// 30 minutes, looking back at most a day) as the event a form
+	// submission writes: the newest view's kind, group, session id,
+	// environment and consent, with the session's first view's referrer and
+	// UTMs. Only those are set; nil when no view matches.
+	SessionAt(ctx context.Context, projectID int64, actorKind, actorID string, at time.Time) (*Event, error)
 	// ReportingHash is the hash of the latest reporting_migrations row, ""
 	// if none has run yet. SyncReporting makes components and system
 	// dashboards (with their widgets) match s in one transaction.

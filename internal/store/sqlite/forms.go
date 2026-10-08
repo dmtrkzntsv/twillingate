@@ -119,20 +119,19 @@ func (d *DB) WriteSubmission(ctx context.Context, n store.NewSubmission) (store.
 		if err != nil {
 			return fmt.Errorf("submission %s fields: %w", sub.ID, err)
 		}
-		var visit any
-		if sub.Visit != nil {
-			v, err := json.Marshal(sub.Visit)
+		var attribution any // NULL when no visit matched
+		if sub.Attribution != (store.Attribution{}) {
+			a, err := json.Marshal(sub.Attribution)
 			if err != nil {
-				return fmt.Errorf("submission %s visit: %w", sub.ID, err)
+				return fmt.Errorf("submission %s attribution: %w", sub.ID, err)
 			}
-			visit = string(v)
+			attribution = string(a)
 		}
 		received := sub.ReceivedAt.UTC().Format(tsFormat)
 		res, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO submissions
-			(project_id, id, form, received_at, fields, actor_kind, actor_id, host, path, via, visit)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-			sub.ProjectID, sub.ID, sub.Form, received, string(blob),
-			sub.ActorKind, sub.ActorID, sub.Host, sub.Path, sub.Via, visit)
+			(project_id, id, form, received_at, fields, attribution)
+			VALUES (?,?,?,?,?,?)`,
+			sub.ProjectID, sub.ID, sub.Form, received, string(blob), attribution)
 		if err != nil {
 			return fmt.Errorf("submission %s: %w", sub.ID, err)
 		}
@@ -197,14 +196,19 @@ func (d *DB) WriteSubmission(ctx context.Context, n store.NewSubmission) (store.
 // sessionGap is the idle time that ends a session, as in the session views.
 const sessionGap = 30 * time.Minute
 
-// SessionVisit snapshots the actor's current session at `at` from the raw
-// views of at's day and the day before: the views, newest first, are
-// walked back while each is within sessionGap of the next newer one, and
-// the oldest reached is the landing view. A session whose newest view is
-// more than sessionGap before `at` has ended and is nil.
-func (d *DB) SessionVisit(ctx context.Context, projectID int64, actorKind, actorID string, at time.Time) (*store.Visit, error) {
+// SessionAt reads the actor's current session at `at` from the raw views
+// of at's day and the day before: the views, newest first, are walked
+// back while each is within sessionGap of the next newer one. The newest
+// gives the event its kind, group, session id, environment and consent;
+// the oldest reached, the landing view, its referrer and UTMs. A session
+// whose newest view is more than sessionGap before `at` has ended and is
+// nil.
+func (d *DB) SessionAt(ctx context.Context, projectID int64, actorKind, actorID string, at time.Time) (*store.Event, error) {
 	at = at.UTC()
-	rows, err := d.db.QueryContext(ctx, `SELECT ts, path, referrer_source, utm_source, utm_medium, utm_campaign
+	rows, err := d.db.QueryContext(ctx, `SELECT ts, kind, group_id, session_id,
+		  platform, os, os_version, os_name, browser, browser_version, browser_locale,
+		  app_version, app_locale, device, device_model, display_width, display_height, consent,
+		  referrer_source, utm_source, utm_medium, utm_campaign
 		FROM raw_views
 		WHERE project_id=? AND actor_kind=? AND actor_id=?
 		  AND day IN (?, ?) AND ts <= ?
@@ -215,31 +219,46 @@ func (d *DB) SessionVisit(ctx context.Context, projectID int64, actorKind, actor
 		return nil, err
 	}
 	defer rows.Close()
-	var v *store.Visit
-	var newer time.Time
+	var e *store.Event
+	newer := at // the newest view must be within the gap of `at` too
 	for rows.Next() {
-		var ts, path, ref, src, med, camp string
-		if err := rows.Scan(&ts, &path, &ref, &src, &med, &camp); err != nil {
+		var v store.Event
+		var ts string
+		var consent sql.NullInt64
+		if err := rows.Scan(&ts, &v.Kind, &v.GroupID, &v.SessionID,
+			&v.Platform, &v.OS, &v.OSVersion, &v.OSName, &v.Browser, &v.BrowserVersion, &v.BrowserLocale,
+			&v.AppVersion, &v.AppLocale, &v.Device, &v.DeviceModel, &v.DisplayWidth, &v.DisplayHeight, &consent,
+			&v.ReferrerSource, &v.UTMSource, &v.UTMMedium, &v.UTMCampaign); err != nil {
 			return nil, err
 		}
 		t, err := time.Parse(tsFormat, ts)
 		if err != nil {
 			return nil, fmt.Errorf("view ts %q: %w", ts, err)
 		}
-		if v == nil {
-			newer = at // the newest view must be within the gap of `at` too
-		}
 		if newer.Sub(t) > sessionGap {
 			break
 		}
 		newer = t
-		if v == nil {
-			v = &store.Visit{}
+		if e == nil {
+			v.Consent = scanConsent(consent)
+			e = &v
 		}
-		v.Views++
-		v.LandingPath, v.Referrer, v.UTMSource, v.UTMMedium, v.UTMCampaign = path, ref, src, med, camp
+		e.ReferrerSource, e.UTMSource, e.UTMMedium, e.UTMCampaign = v.ReferrerSource, v.UTMSource, v.UTMMedium, v.UTMCampaign
 	}
-	return v, rows.Err()
+	return e, rows.Err()
+}
+
+// scanConsent is the store.Consent a consent column holds: NULL is
+// unknown, 1 given and 0 none.
+func scanConsent(c sql.NullInt64) store.Consent {
+	switch {
+	case !c.Valid:
+		return store.ConsentUnknown
+	case c.Int64 == 1:
+		return store.ConsentGiven
+	default:
+		return store.ConsentNone
+	}
 }
 
 // fmtTime is t as the text the forms tables store.
@@ -541,17 +560,16 @@ const defaultFindLimit = 100
 
 // submissionColumns is the select list scanSubmission reads, from
 // submissions aliased s.
-const submissionColumns = `s.project_id, s.id, s.form, s.received_at, s.fields,
-	s.actor_kind, s.actor_id, s.host, s.path, s.via, s.visit`
+const submissionColumns = `s.project_id, s.id, s.form, s.received_at, s.fields, s.attribution`
 
 // scanSubmission reads one row selected with submissionColumns, then
 // into extra any columns selected after them.
 func scanSubmission(row interface{ Scan(...any) error }, extra ...any) (store.Submission, error) {
 	var s store.Submission
 	var received, fields string
-	var visit sql.NullString
+	var attribution sql.NullString
 	if err := row.Scan(append([]any{&s.ProjectID, &s.ID, &s.Form, &received, &fields,
-		&s.ActorKind, &s.ActorID, &s.Host, &s.Path, &s.Via, &visit}, extra...)...); err != nil {
+		&attribution}, extra...)...); err != nil {
 		return store.Submission{}, err
 	}
 	var err error
@@ -561,10 +579,9 @@ func scanSubmission(row interface{ Scan(...any) error }, extra ...any) (store.Su
 	if err := json.Unmarshal([]byte(fields), &s.Fields); err != nil {
 		return store.Submission{}, fmt.Errorf("submission %s fields: %w", s.ID, err)
 	}
-	if visit.Valid {
-		s.Visit = &store.Visit{}
-		if err := json.Unmarshal([]byte(visit.String), s.Visit); err != nil {
-			return store.Submission{}, fmt.Errorf("submission %s visit: %w", s.ID, err)
+	if attribution.Valid {
+		if err := json.Unmarshal([]byte(attribution.String), &s.Attribution); err != nil {
+			return store.Submission{}, fmt.Errorf("submission %s attribution: %w", s.ID, err)
 		}
 	}
 	return s, nil
