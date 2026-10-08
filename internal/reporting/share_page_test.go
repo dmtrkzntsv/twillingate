@@ -191,6 +191,47 @@ func TestShareNotFound(t *testing.T) {
 		if got := rec.Header().Get("Cache-Control"); got != "no-store" {
 			t.Errorf("/share/%s: Cache-Control %q, want no-store", f, got)
 		}
+		// An image's 404 is plain text; a page's is the page that says
+		// nothing is shared there, the same whatever the link was.
+		if strings.HasSuffix(f, ".png") {
+			if got := rec.Header().Get("Content-Type"); !strings.HasPrefix(got, "text/plain") {
+				t.Errorf("/share/%s: Content-Type %q, want text/plain", f, got)
+			}
+			continue
+		}
+		for k, want := range map[string]string{
+			"Content-Type":            "text/html; charset=utf-8",
+			"Content-Security-Policy": shareCSP,
+			"X-Content-Type-Options":  "nosniff",
+		} {
+			if got := rec.Header().Get(k); got != want {
+				t.Errorf("/share/%s: %s = %q, want %q", f, k, got, want)
+			}
+		}
+		if !bytes.Equal(rec.Body.Bytes(), shareMissing) {
+			t.Errorf("/share/%s: body is not the missing-share page", f)
+		}
+	}
+	page := string(shareMissing)
+	for _, want := range []string{
+		"<h1>Nothing is shared at this link</h1>", `<meta name="robots" content="noindex">`,
+		`<a href="https://twillingate.dev" rel="noopener">twillingate.dev</a>`, shareIcon,
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("missing-share page lacks %s", want)
+		}
+	}
+	if strings.Contains(strings.ToLower(page), "<script") {
+		t.Errorf("missing-share page contains a script tag")
+	}
+	// A stranger cannot open the console: the share's page leads nowhere in it.
+	if strings.Contains(page, `class="go"`) {
+		t.Errorf("missing-share page links into the console")
+	}
+	rec := httptest.NewRecorder()
+	ServeNotFound(rec)
+	if rec.Code != 404 || !strings.Contains(rec.Body.String(), `<a class="go" href="/app/">Go to your projects</a>`) {
+		t.Errorf("ServeNotFound = %d %s", rec.Code, rec.Body)
 	}
 	if rec := getShare(h, sh.ID); rec.Code != 200 {
 		t.Errorf("the live share: status %d, want 200", rec.Code)

@@ -14,6 +14,7 @@ import DashboardsGallery from '@/pages/gallery/DashboardsGallery'
 import Home from '@/pages/Home'
 import Landing from '@/pages/Landing'
 import Login from '@/pages/Login'
+import NoSuchPage from '@/pages/NoSuchPage'
 import Project, { ProjectIndex } from '@/pages/Project'
 import Projects from '@/pages/Projects'
 import Shares from '@/pages/Shares'
@@ -145,6 +146,7 @@ function App() {
           <Route path="/gallery/*" element={<Navigate to="/gallery/components" replace />} />
           <Route path="/callback" element={<Callback />} />
           <Route path="/login" element={<Login />} />
+          <Route path="*" element={<NoSuchPage />} />
         </Routes>
       </TooltipProvider>
     </BrowserRouter>

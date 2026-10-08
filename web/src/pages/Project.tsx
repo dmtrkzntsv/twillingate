@@ -1,14 +1,16 @@
 import { useQuery } from '@tanstack/react-query'
 import { LayoutGridIcon } from 'lucide-react'
-import { Navigate, useLocation, useParams } from 'react-router'
+import { Link, Navigate, useLocation, useParams } from 'react-router'
 import AppShell, { TopBar } from '@/components/AppShell'
 import Crumbs from '@/components/Crumbs'
+import NotFound from '@/components/NotFound'
 import { Notice, PageError } from '@/components/PageStates'
 import ProjectDashboardTab from '@/components/projects/ProjectDashboardTab'
 import ProjectName from '@/components/projects/ProjectName'
 import ProjectTabBar from '@/components/projects/ProjectTabBar'
 import SetupTab from '@/components/projects/SetupTab'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { useProjectActions } from '@/hooks/use-project-actions'
 import { useProjectTabActions } from '@/hooks/use-project-tab-actions'
 import FormPage from '@/components/forms/FormPage'
@@ -51,7 +53,18 @@ export default function Project({ tab }: { tab?: 'forms' } = {}) {
       </TopBar>
       <div className="mx-auto flex w-full max-w-[1600px] flex-1 flex-col gap-6 p-3 sm:p-4 lg:p-6">
         {!project ? (
-          (!valid || !isLoading) && <p className="text-sm text-muted-foreground">No project {param}</p>
+          (!valid || !isLoading) && (
+            <NotFound
+              title="No project at this address"
+              actions={
+                <Button asChild variant="outline">
+                  <Link to="/projects">Go to your projects</Link>
+                </Button>
+              }
+            >
+              There is no project {param}. It may have been deleted, or the link may be wrong.
+            </NotFound>
+          )
         ) : (
           <>
             <div className="flex min-w-0 flex-col gap-3">

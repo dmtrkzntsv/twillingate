@@ -343,7 +343,20 @@
   }
 }
 
+/* The sunken iceberg of a 404 (NotFound.tsx), riding the swell. */
+.berg-bob {
+  animation: berg-bob 7s ease-in-out infinite alternate;
+}
+@keyframes berg-bob {
+  to {
+    transform: translateY(9px);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
+  .berg-bob {
+    animation: none;
+  }
   .frost {
     animation: none;
   }
