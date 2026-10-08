@@ -4,12 +4,12 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import type { DashboardInfo } from '@/lib/api'
-import { endpoints, type Project, type ProjectTab } from '@/lib/api'
+import { endpoints, type Project } from '@/lib/api'
 import { _resetForTests, getAuthHeader } from '@/lib/auth'
 import { dashboardsList } from '@/test/fixtures'
 import { renderWithProviders } from '@/test/render'
 import AppSidebar from './AppSidebar'
-import { LIST_KEY, OPEN_KEY } from './SidebarProjects'
+import { LIST_KEY } from './SidebarProjects'
 
 function renderSidebar(dashboards: DashboardInfo[] = [], currentId = 0) {
   renderWithProviders(
@@ -247,11 +247,6 @@ describe('Projects group', () => {
     )
   }
 
-  const tabs: ProjectTab[] = [
-    { dashboard_id: 1, title: 'Views', owner: 'system', group_id: 1 },
-    { dashboard_id: 7, title: 'Launch week', owner: 'user', group_id: 7 },
-  ]
-
   it('lists the live projects under the link, open by default', async () => {
     renderSidebar()
     expect(await screen.findByRole('link', { name: 'Projects' })).toHaveAttribute('href', '/projects')
@@ -278,42 +273,13 @@ describe('Projects group', () => {
     expect(endpoints.projects).not.toHaveBeenCalled()
   })
 
-  it("opens a project to its dashboards, each one click away, and remembers it", async () => {
-    const projectTabs = vi.spyOn(endpoints, 'projectTabs').mockResolvedValue({ tabs })
-    const first = renderAt('/')
-    await userEvent.click(await screen.findByRole('button', { name: 'site-2 dashboards' }))
-
-    const dashboards = await screen.findByRole('list', { name: 'site-2 dashboards' })
-    expect(within(dashboards).getByRole('link', { name: 'Views' })).toHaveAttribute('href', '/projects/2/dashboards/1')
-    expect(within(dashboards).getByRole('link', { name: 'Launch week' })).toHaveAttribute('href', '/projects/2/dashboards/7')
-    expect(projectTabs.mock.calls).toEqual([[2]])
-    expect(localStorage.getItem(OPEN_KEY)).toBe('[2]')
-    first.unmount()
-
-    renderAt('/')
-    expect(await screen.findByRole('list', { name: 'site-2 dashboards' })).toBeInTheDocument()
-    await userEvent.click(screen.getByRole('button', { name: 'site-2 dashboards' }))
-    expect(screen.queryByRole('list', { name: 'site-2 dashboards' })).not.toBeInTheDocument()
-    expect(localStorage.getItem(OPEN_KEY)).toBeNull()
-  })
-
-  it("marks the dashboard on screen, and keeps the project's range in its links", async () => {
-    vi.spyOn(endpoints, 'projectTabs').mockResolvedValue({ tabs })
-    localStorage.setItem(OPEN_KEY, '[2]')
+  it("marks the project on any of its pages, keeping the range in its link", async () => {
     renderAt('/projects/2/dashboards/7?range=7d&foo=1')
-
-    const launch = await screen.findByRole('link', { name: 'Launch week' })
-    expect(launch).toHaveAttribute('data-active', 'true')
-    expect(launch).toHaveAttribute('href', '/projects/2/dashboards/7?range=7d')
-    expect(screen.getByRole('link', { name: 'site-2' })).toHaveAttribute('data-active', 'false')
-    expect(screen.getByRole('link', { name: 'site-2' })).toHaveAttribute('href', '/projects/2/setup?range=7d')
-    expect(screen.getByRole('link', { name: 'Projects' })).toHaveAttribute('data-active', 'false')
+    const site2 = await screen.findByRole('link', { name: 'site-2' })
+    expect(site2).toHaveAttribute('data-active', 'true')
+    expect(site2).toHaveAttribute('href', '/projects/2/setup?range=7d')
+    expect(screen.getByRole('link', { name: 'site-3' })).toHaveAttribute('data-active', 'false')
     expect(screen.getByRole('link', { name: 'site-3' })).toHaveAttribute('href', '/projects/3/setup')
-  })
-
-  it('marks the project on its Setup tab, and "Projects" on the list', async () => {
-    renderAt('/projects/4/setup')
-    expect(await screen.findByRole('link', { name: 'site-4' })).toHaveAttribute('data-active', 'true')
     expect(screen.getByRole('link', { name: 'Projects' })).toHaveAttribute('data-active', 'false')
   })
 

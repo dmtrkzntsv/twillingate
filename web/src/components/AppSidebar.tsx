@@ -47,8 +47,8 @@ interface Props {
 }
 
 /**
- * Projects (a link to the list, opening to every project and its
- * dashboard tabs, see `SidebarProjects`) first, then "Dashboards": one entry per
+ * Projects (a link to the list, opening to every live project, see
+ * `SidebarProjects`) first, then "Dashboards": one entry per
  * dashboard group in the sidebar (`sidebar`, tabs D20), the system groups first with a "Built-in"
  * badge, then the user's. Then Gallery (the components playground and the
  * Dashboards gallery of templates, D17), closed until opened or on a gallery page. At
