@@ -9,6 +9,7 @@ import { _resetForTests, getAuthHeader } from '@/lib/auth'
 import { dashboardsList } from '@/test/fixtures'
 import { renderWithProviders } from '@/test/render'
 import AppSidebar from './AppSidebar'
+import { LIST_KEY } from './SidebarProjects'
 
 function renderSidebar(dashboards: DashboardInfo[] = [], currentId = 0) {
   renderWithProviders(
@@ -236,22 +237,60 @@ describe('Projects group', () => {
     vi.spyOn(endpoints, 'projects').mockResolvedValue({ projects })
   })
 
-  it('is a link to the list, with no projects listed under it', async () => {
-    renderSidebar()
-    expect(await screen.findByRole('link', { name: 'Projects' })).toHaveAttribute('href', '/projects')
-    expect(screen.queryByRole('link', { name: 'site-1' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /projects/i })).not.toBeInTheDocument()
-    expect(endpoints.projects).not.toHaveBeenCalled()
-  })
-
-  it('is active on the list and on a project', () => {
-    renderWithProviders(
-      <MemoryRouter initialEntries={['/projects/4']}>
+  function renderAt(path: string) {
+    return renderWithProviders(
+      <MemoryRouter initialEntries={[path]}>
         <SidebarProvider>
           <AppSidebar dashboards={[]} currentId={0} />
         </SidebarProvider>
       </MemoryRouter>
     )
+  }
+
+  it('lists the live projects under the link, open by default', async () => {
+    renderSidebar()
+    expect(await screen.findByRole('link', { name: 'Projects' })).toHaveAttribute('href', '/projects')
+    const list = await screen.findByRole('list', { name: 'Projects' })
+    const names = within(list).getAllByRole('link').map((l) => l.textContent)
+    expect(names).toEqual(Array.from({ length: 40 }, (_, i) => `site-${i + 1}`))
+    expect(screen.getByRole('link', { name: 'site-3' })).toHaveAttribute('href', '/projects/3/setup')
+    expect(screen.queryByRole('link', { name: 'gone' })).not.toBeInTheDocument()
+  })
+
+  it('closes, stays closed on the next page, and asks for no projects while closed', async () => {
+    const first = renderAt('/')
+    await screen.findByRole('list', { name: 'Projects' })
+    await userEvent.click(screen.getByRole('button', { name: 'Show projects' }))
+
+    expect(screen.queryByRole('list', { name: 'Projects' })).not.toBeInTheDocument()
+    expect(localStorage.getItem(LIST_KEY)).toBe('false')
+    first.unmount()
+    vi.mocked(endpoints.projects).mockClear()
+
+    renderAt('/')
+    expect(screen.getByRole('button', { name: 'Show projects' })).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByRole('link', { name: 'site-1' })).not.toBeInTheDocument()
+    expect(endpoints.projects).not.toHaveBeenCalled()
+  })
+
+  it("marks the project on any of its pages, keeping the range in its link", async () => {
+    renderAt('/projects/2/dashboards/7?range=7d&foo=1')
+    const site2 = await screen.findByRole('link', { name: 'site-2' })
+    expect(site2).toHaveAttribute('data-active', 'true')
+    expect(site2).toHaveAttribute('href', '/projects/2/setup?range=7d')
+    expect(screen.getByRole('link', { name: 'site-3' })).toHaveAttribute('data-active', 'false')
+    expect(screen.getByRole('link', { name: 'site-3' })).toHaveAttribute('href', '/projects/3/setup')
+    expect(screen.getByRole('link', { name: 'Projects' })).toHaveAttribute('data-active', 'false')
+  })
+
+  it('marks "Projects" on a project page while the list is closed', () => {
+    localStorage.setItem(LIST_KEY, 'false')
+    renderAt('/projects/4')
+    expect(screen.getByRole('link', { name: 'Projects' })).toHaveAttribute('data-active', 'true')
+  })
+
+  it('marks "Projects" on the list page', () => {
+    renderAt('/projects')
     expect(screen.getByRole('link', { name: 'Projects' })).toHaveAttribute('data-active', 'true')
   })
 

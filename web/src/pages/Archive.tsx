@@ -159,7 +159,7 @@ export default function Archive() {
             Archived shares answer 404 until restored. Archived forms refuse submissions.
           </p>
         </header>
-        {groups.length === 0 && shares.length === 0 && archivedForms.length === 0 && !sharesQ.isLoading && !formsLoading && (
+        {data !== undefined && groups.length === 0 && shares.length === 0 && archivedForms.length === 0 && !sharesQ.isLoading && !formsLoading && (
           <p className="text-sm text-muted-foreground">Nothing archived.</p>
         )}
         {groups.length > 0 && <ul className="flex flex-col gap-2">{groups.map(renderGroup)}</ul>}

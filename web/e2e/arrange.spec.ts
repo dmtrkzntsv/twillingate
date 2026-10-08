@@ -50,6 +50,8 @@ async function createDashboard(
  * before heading toward the target.
  */
 async function dragAbove(page: Page, source: Locator, target: Locator): Promise<void> {
+  // The projects above can push the dashboards below the fold of the sidebar.
+  await source.scrollIntoViewIfNeeded()
   const from = await source.boundingBox()
   const to = await target.boundingBox()
   if (!from || !to) throw new Error('drag source or target has no bounding box')

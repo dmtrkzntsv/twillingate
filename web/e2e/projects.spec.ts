@@ -80,13 +80,24 @@ test('shows usage and cap impact for the seeded project', async ({ page }) => {
   await expect(page.getByRole('region', { name: 'Cap impact' }).getByRole('row').nth(1)).toBeVisible({ timeout: 20_000 })
 })
 
-test('lists Projects first in the sidebar, as a plain link', async ({ page }) => {
+test('lists Projects first in the sidebar, with the projects under it, closed state remembered', async ({ page }) => {
   await login(page)
   const sidebar = page.locator('[data-sidebar="sidebar"]')
   await expect(sidebar.getByRole('link', { name: 'Projects' })).toHaveAttribute('href', '/app/projects')
-  await expect(sidebar.getByRole('link', { name: 'dev', exact: true })).toHaveCount(0)
   await expect(sidebar.getByText('Dashboards', { exact: true })).toBeVisible()
   await expect(sidebar.getByRole('list', { name: 'Built-in dashboards' }).getByRole('link', { name: 'Reports', exact: true })).toBeVisible()
+
+  const projects = sidebar.getByRole('list', { name: 'Projects' })
+  const dev = projects.getByRole('link', { name: 'dev', exact: true })
+  await dev.click()
+  await expect(page).toHaveURL(/\/app\/projects\/\d+\/setup$/)
+  await expect(dev).toHaveAttribute('data-active', 'true')
+
+  await sidebar.getByRole('button', { name: 'Show projects' }).click()
+  await expect(projects).toHaveCount(0)
+  await page.reload()
+  await expect(sidebar.getByRole('link', { name: 'Projects' })).toHaveAttribute('data-active', 'true')
+  await expect(projects).toHaveCount(0)
 })
 
 test('adds a breakdown from the attributes the seeded project received, then removes it', async ({ page }) => {

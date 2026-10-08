@@ -2,7 +2,6 @@ import { DndContext, closestCenter } from '@dnd-kit/core'
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import {
   ArchiveIcon,
-  FolderIcon,
   LayoutDashboardIcon,
   LayoutGridIcon,
   LogOutIcon,
@@ -36,6 +35,7 @@ import { currentAuthState, logout } from '@/lib/auth'
 import GroupNameField from './GroupNameField'
 import IcebergLogo from './IcebergLogo'
 import SidebarGroupMenu from './SidebarGroupMenu'
+import SidebarProjects from './SidebarProjects'
 import SortableGroupItem from './SortableGroupItem'
 
 interface Props {
@@ -47,7 +47,8 @@ interface Props {
 }
 
 /**
- * Projects (a link to the list) first, then "Dashboards": one entry per
+ * Projects (a link to the list, opening to every live project, see
+ * `SidebarProjects`) first, then "Dashboards": one entry per
  * dashboard group in the sidebar (`sidebar`, tabs D20), the system groups first with a "Built-in"
  * badge, then the user's. Then Gallery (the components playground and the
  * Dashboards gallery of templates, D17), closed until opened or on a gallery page. At
@@ -122,14 +123,7 @@ export default function AppSidebar({ dashboards, currentId, readOnly = false }: 
           <SidebarGroup>
             <SidebarGroupContent>
               <SidebarMenu>
-                <SidebarMenuItem>
-                  <SidebarMenuButton asChild isActive={pathname.startsWith('/projects')} tooltip="Projects" className={item}>
-                    <Link to="/projects" onClick={close}>
-                      <FolderIcon />
-                      <span>Projects</span>
-                    </Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
+                <SidebarProjects onNavigate={close} iconOnly={state === 'collapsed' && !isMobile} className={item} />
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
