@@ -47,7 +47,6 @@ func seedSubmission(t *testing.T, id string, fields map[string]string) {
 	_, _, err := openStore(t).WriteSubmission(context.Background(), store.NewSubmission{
 		Submission: store.Submission{
 			ProjectID: 1, ID: id, Form: "contact", ReceivedAt: at, Fields: fields,
-			ActorKind: "user", ActorID: "a1", Host: "shop.example.com", Path: "/contact", Via: "form",
 		},
 		DraftUntil: at.Add(7 * 24 * time.Hour),
 		Event: store.Event{
@@ -195,14 +194,14 @@ func TestFormExportWritesInertCSV(t *testing.T) {
 	if len(recs) != 3 {
 		t.Fatalf("records = %d, want header and two rows: %q", len(recs), out)
 	}
-	if strings.Join(recs[0], ",") != "Received,email,message,Page,Referrer,UTM source,UTM medium,UTM campaign" {
+	if strings.Join(recs[0], ",") != "Received,email,message" {
 		t.Fatalf("header: %q", recs[0])
 	}
 	// Newest first; a cell that would run as a formula is made text.
 	if recs[1][1] != "bob@example.com" || recs[2][1] != "ann@example.com" {
 		t.Fatalf("order: %q", recs)
 	}
-	if recs[2][2] != `'=HYPERLINK("x")` || recs[2][3] != "shop.example.com/contact" {
+	if recs[2][2] != `'=HYPERLINK("x")` || len(recs[2]) != 3 {
 		t.Fatalf("row: %q", recs[2])
 	}
 

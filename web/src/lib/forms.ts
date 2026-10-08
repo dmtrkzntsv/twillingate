@@ -1,4 +1,4 @@
-import type { Form } from './api'
+import type { Form, Submission } from './api'
 
 const DAY = 86_400_000
 
@@ -10,6 +10,16 @@ export function formatDay(d: Date): string {
 /** A day and time, in the viewer's time: "Oct 9, 5:00 PM". */
 export function formatDayTime(d: Date): string {
   return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(d)
+}
+
+/**
+ * Where a submission's visit came from, on one line: its UTM source,
+ * medium and campaign as "news / email / fall", then the referrer after a
+ * dot; the parts it has, "" with none.
+ */
+export function formatSource(s: Pick<Submission, 'referrer' | 'utm_source' | 'utm_medium' | 'utm_campaign'>): string {
+  const utm = [s.utm_source, s.utm_medium, s.utm_campaign].filter((v) => v !== '').join(' / ')
+  return [utm, s.referrer].filter((v) => v !== '').join(' · ')
 }
 
 /** A time as the API takes it: RFC 3339 in UTC, whole seconds. */

@@ -420,25 +420,20 @@ export interface SubmissionsQuery {
   limit?: number
 }
 
-/** The session a submission came in, snapshotted when it arrived (D9). */
-export interface Visit {
-  landing_path: string
-  referrer: string
-  utm_source: string
-  utm_medium: string
-  utm_campaign: string
-  views: number
-}
-
+/**
+ * What a visitor typed, and where the visit it arrived in came from (its
+ * first view's referrer and UTMs; empty when no visit matched). The page,
+ * the visitor and their environment are on its `$form_submit` event.
+ */
 export interface Submission {
   id: string
   form: string
   received_at: string
   fields: Record<string, string>
-  host: string
-  path: string
-  via: 'form' | 'json'
-  visit?: Visit
+  referrer: string
+  utm_source: string
+  utm_medium: string
+  utm_campaign: string
 }
 
 /** A submission find_submissions found; the search reaches archived forms too. */

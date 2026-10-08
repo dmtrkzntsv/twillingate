@@ -10,16 +10,6 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
-// submissionsFixed are the display columns after a form's fields, each
-// with the expression that fills it.
-var submissionsFixed = []struct{ name, expr string }{
-	{"Page", "host || path"},
-	{"Referrer", "json_extract(visit, '$.referrer')"},
-	{"UTM source", "json_extract(visit, '$.utm_source')"},
-	{"UTM medium", "json_extract(visit, '$.utm_medium')"},
-	{"UTM campaign", "json_extract(visit, '$.utm_campaign')"},
-}
-
 // ReceivedColumn is the submissions table's first display column, the
 // time a submission arrived.
 const ReceivedColumn = "Received"
@@ -28,11 +18,10 @@ const ReceivedColumn = "Received"
 // D12a). The query takes two arguments, the project id and the form's
 // name, in that order; it selects id first, then the display columns,
 // newest first. columns are the display columns, without id: Received,
-// one per field (an approved form's expected fields in their order, a
-// draft's every field seen), then Page, Referrer and the three UTM
-// columns. A field whose name matches a fixed column or id, ignoring
-// ASCII case, is shown as "<name> (field)" (again until the name is
-// free), so every column filters and sorts as itself.
+// then one per field (an approved form's expected fields in their order,
+// a draft's every field seen). A field whose name matches Received or
+// id, ignoring ASCII case, is shown as "<name> (field)" (again until the
+// name is free), so every column filters and sorts as itself.
 //
 // The query names its columns by position, never by display name: c0 is
 // id and c<i> is columns[i-1]. A field name reaches the SQL only inside a
@@ -45,9 +34,6 @@ func SubmissionsQuery(f store.Form) (query string, columns []string) {
 		fields = f.ExpectedFields
 	}
 	used := map[string]bool{"id": true, strings.ToLower(ReceivedColumn): true}
-	for _, c := range submissionsFixed {
-		used[strings.ToLower(c.name)] = true
-	}
 	sel := []string{"id AS " + submissionsAlias(0), "received_at AS " + submissionsAlias(1)}
 	columns = []string{ReceivedColumn}
 	for _, name := range fields {
@@ -58,10 +44,6 @@ func SubmissionsQuery(f store.Form) (query string, columns []string) {
 		used[strings.ToLower(shown)] = true
 		columns = append(columns, shown)
 		sel = append(sel, fieldValue(name)+" AS "+submissionsAlias(len(columns)))
-	}
-	for _, c := range submissionsFixed {
-		columns = append(columns, c.name)
-		sel = append(sel, c.expr+" AS "+submissionsAlias(len(columns)))
 	}
 	query = "SELECT " + strings.Join(sel, ",\n       ") +
 		"\nFROM submissions\nWHERE project_id = ? AND form = ?\nORDER BY received_at DESC, id DESC"

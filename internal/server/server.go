@@ -35,7 +35,7 @@ type NameStore interface {
 // submission (and its $form_submit) must be there when the answer says so.
 type FormStore interface {
 	WriteSubmission(ctx context.Context, n store.NewSubmission) (store.Form, bool, error)
-	SessionVisit(ctx context.Context, projectID int64, actorKind, actorID string, at time.Time) (*store.Visit, error)
+	SessionAt(ctx context.Context, projectID int64, actorKind, actorID string, at time.Time) (*store.Event, error)
 }
 
 // keyCounters accumulates per-key-label ingest counts for the per-minute
