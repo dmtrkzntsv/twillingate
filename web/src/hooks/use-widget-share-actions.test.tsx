@@ -26,7 +26,7 @@ const invalidated = (invalidate: ReturnType<typeof setup>['invalidate']) =>
 beforeEach(() => vi.restoreAllMocks())
 
 describe('useWidgetShareActions', () => {
-  it('creates a share, toasts and invalidates the shares', async () => {
+  it('creates a share without a toast, its button says so, and invalidates the shares', async () => {
     const create = vi.spyOn(endpoints, 'createWidgetShare').mockResolvedValue(SHARE)
     const { result, invalidate } = setup()
     const form = new FormData()
@@ -36,7 +36,7 @@ describe('useWidgetShareActions', () => {
     })
     expect(create).toHaveBeenCalledWith(form)
     expect(out).toBe(SHARE)
-    expect(toast.success).toHaveBeenCalledWith('Link created')
+    expect(toast.success).not.toHaveBeenCalled()
     expect(invalidated(invalidate)).toEqual([['widget-shares']])
     expect(result.current.pending).toBe(false)
   })

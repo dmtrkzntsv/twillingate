@@ -14,19 +14,20 @@ export interface WidgetShareActions {
 
 /**
  * Every widget share write, each the existing audited route. A success
- * toasts and refetches every share list; a failure toasts its message,
- * refetches nothing and resolves undefined instead of throwing.
+ * toasts (but create, whose button says so) and refetches every share list;
+ * a failure toasts its message, refetches nothing and resolves undefined
+ * instead of throwing.
  */
 export function useWidgetShareActions(): WidgetShareActions {
   const client = useQueryClient()
   const [pending, setPending] = useState(false)
 
   const run = useCallback(
-    async (fn: () => Promise<WidgetShare>, done: string): Promise<WidgetShare | undefined> => {
+    async (fn: () => Promise<WidgetShare>, done?: string): Promise<WidgetShare | undefined> => {
       setPending(true)
       try {
         const out = await fn()
-        toast.success(done)
+        if (done) toast.success(done)
         await client.invalidateQueries({ queryKey: ['widget-shares'] })
         return out
       } catch (err) {
@@ -43,7 +44,7 @@ export function useWidgetShareActions(): WidgetShareActions {
 
   return {
     pending,
-    create: (form) => run(() => endpoints.createWidgetShare(form), 'Link created'),
+    create: (form) => run(() => endpoints.createWidgetShare(form)),
     setArchiveAfter: (id, v) => run(() => endpoints.updateWidgetShare(id, v), 'Archive date changed'),
     archive: (id) => run(() => endpoints.archiveWidgetShare(id), 'Share archived'),
     restore: (id, v) => run(() => endpoints.restoreWidgetShare(id, v), 'Share restored'),

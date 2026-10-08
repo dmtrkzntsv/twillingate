@@ -253,7 +253,8 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
   await expect(restore).toHaveCount(0)
 
   // The Share dialog, from the first widget of dashboard 1: with its preview,
-  // then with the link and embed code it makes.
+  // then with the link it makes. With no clipboard, so the link and embed
+  // code show as text, its widest state.
   await page.goto('/app/dashboards/1')
   await page.waitForLoadState('networkidle')
   const card = page.locator('[data-slot="widget-card"]').first()
@@ -265,7 +266,8 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
   await expect(shareDialog.getByRole('img', { name: 'Preview of the share card' })).toBeVisible({ timeout: 30_000 })
   expect(await sidewaysScroll(page), 'Share dialog').toEqual([])
   expect(await dialogOverflow(page), 'Share dialog').toEqual([])
-  await shareDialog.getByRole('button', { name: 'Create link' }).click()
+  await page.evaluate(() => Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true }))
+  await shareDialog.getByRole('button', { name: 'Create and copy link' }).click()
   await expect(shareDialog.getByRole('textbox', { name: 'Embed code' })).toBeVisible()
   expect(await sidewaysScroll(page), 'Share dialog, link made').toEqual([])
   expect(await dialogOverflow(page), 'Share dialog, link made').toEqual([])
