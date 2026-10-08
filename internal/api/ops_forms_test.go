@@ -238,7 +238,7 @@ func TestListSubmissionsColumnsDraftAndApproved(t *testing.T) {
 	sub := callAs[map[string]any](t, cs, "get_submission", map[string]any{"project_id": 1, "name": "contact", "id": "s1"})
 	want := map[string]any{"id": "s1", "form": "contact", "received_at": sub["received_at"],
 		"fields":   map[string]any{"email": "a@x.io", "note": "hi"},
-		"referrer": "news.example", "utm_source": "nl", "utm_medium": "email", "utm_campaign": "oct"}
+		"attribution": map[string]any{"referrer": "news.example", "utm_source": "nl", "utm_medium": "email", "utm_campaign": "oct"}}
 	if !reflect.DeepEqual(sub, want) || sub["received_at"] == "" {
 		t.Fatalf("submission = %v", sub)
 	}

@@ -49,10 +49,7 @@ export function submission(id: string, over: Partial<Submission> = {}): Submissi
     form: 'contact',
     received_at: '2026-10-04T09:00:00Z',
     fields: { email: 'bob@example.com', message: 'Hi there', phone: '555-0100' },
-    referrer: 'google.com',
-    utm_source: 'news',
-    utm_medium: 'email',
-    utm_campaign: 'fall',
+    attribution: { referrer: 'google.com', utm_source: 'news', utm_medium: 'email', utm_campaign: 'fall' },
     ...over,
   }
 }

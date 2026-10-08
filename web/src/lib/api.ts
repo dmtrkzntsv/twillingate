@@ -421,19 +421,26 @@ export interface SubmissionsQuery {
 }
 
 /**
- * What a visitor typed, and where the visit it arrived in came from (its
- * first view's referrer and UTMs; empty when no visit matched). The page,
- * the visitor and their environment are on its `$form_submit` event.
+ * Where the visit a submission arrived in came from, its first view's:
+ * each key left out when empty, `{}` when no visit matched.
+ */
+export interface Attribution {
+  referrer?: string
+  utm_source?: string
+  utm_medium?: string
+  utm_campaign?: string
+}
+
+/**
+ * What a visitor typed, and where the visit it arrived in came from. The
+ * page, the visitor and their environment are on its `$form_submit` event.
  */
 export interface Submission {
   id: string
   form: string
   received_at: string
   fields: Record<string, string>
-  referrer: string
-  utm_source: string
-  utm_medium: string
-  utm_campaign: string
+  attribution: Attribution
 }
 
 /** A submission find_submissions found; the search reaches archived forms too. */

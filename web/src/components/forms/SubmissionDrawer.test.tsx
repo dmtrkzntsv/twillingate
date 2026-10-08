@@ -23,12 +23,12 @@ describe('SubmissionDrawer', () => {
   })
 
   it('shows the parts of the source it has, a dash with none', async () => {
-    vi.spyOn(endpoints, 'submission').mockResolvedValue(submission('s2', { utm_medium: '', utm_campaign: '', referrer: '' }))
+    vi.spyOn(endpoints, 'submission').mockResolvedValue(submission('s2', { attribution: { utm_source: 'news' } }))
     const { unmount } = renderWithProviders(<SubmissionDrawer projectId={4} form="contact" id="s2" onClose={() => {}} />)
     expect(await screen.findByText('news')).toBeInTheDocument()
     unmount()
     vi.spyOn(endpoints, 'submission').mockResolvedValue(
-      submission('s3', { utm_source: '', utm_medium: '', utm_campaign: '', referrer: '' }),
+      submission('s3', { attribution: {} }),
     )
     renderWithProviders(<SubmissionDrawer projectId={4} form="contact" id="s3" onClose={() => {}} />)
     const arrival = await screen.findByRole('region', { name: 'Arrival' })

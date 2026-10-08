@@ -625,10 +625,11 @@ No pre-checks. A submission now keeps only what the visitor typed, when it
 arrived and where its visit came from (referrer and UTM source, medium and
 campaign); the page, the visitor and the environment are on its
 `$form_submit` event. Migration 036 copies each stored visit's referrer
-and UTMs into the submission's new columns and onto its `$form_submit`
-event while that is still in the raw window, then drops `visit`, `host`,
-`path`, `via`, `actor_kind` and `actor_id` from `submissions`: a visit's
-landing path and view count, and a submission's page, are gone for good.
+and UTMs onto its `$form_submit` event while that is still in the raw
+window, renames `visit` to `attribution` keeping only those four values
+(empty ones left out), and drops `host`, `path`, `via`, `actor_kind` and
+`actor_id` from `submissions`: a visit's landing path and view count, and
+a submission's page, are gone for good.
 Events written before the upgrade keep the environment they had (none
 beyond the page and country); new ones take it from the visit. Tables and
 CSV exports lose the `Page`, `Referrer` and `UTM` columns. Rollback: an

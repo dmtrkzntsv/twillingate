@@ -9,24 +9,28 @@ import (
 
 func TestMigration036SubmissionColumns(t *testing.T) {
 	db := newTestDBAt(t, 36)
-	want := []string{"project_id", "id", "form", "received_at", "fields",
-		"referrer", "utm_source", "utm_medium", "utm_campaign"}
+	want := []string{"project_id", "id", "form", "received_at", "fields", "attribution"}
 	sort.Strings(want)
 	if got := columnsOf(t, db, "submissions"); !reflect.DeepEqual(got, want) {
 		t.Errorf("submissions columns = %v, want %v", got, want)
 	}
 }
 
-// TestMigration036MovesAttribution checks a visit's referrer and UTMs land
-// in the submission's own columns and on its $form_submit event, and that
-// a submission without a visit, and every other event, are left alone.
+// TestMigration036MovesAttribution checks a visit keeps only its non-empty
+// referrer and UTMs as the submission's attribution, which also land on
+// its $form_submit event, and that a submission without a visit, and every
+// other event, are left alone.
 func TestMigration036MovesAttribution(t *testing.T) {
 	db := newTestDBAt(t, 35)
 	execAll(t, db,
 		`INSERT INTO submissions (project_id, id, form, received_at, fields, actor_kind, actor_id, host, path, via, visit) VALUES
 		 (1, 's1', 'contact', '2026-10-06T10:00:00Z', '{}', 'user', 'u', 'x.com', '/c', 'form',
 		  '{"landing_path":"/p","referrer":"google","utm_source":"nl","utm_medium":"email","utm_campaign":"oct","views":3}'),
-		 (1, 's2', 'contact', '2026-10-06T10:00:00Z', '{}', 'user', 'u', 'x.com', '/c', 'form', NULL)`,
+		 (1, 's2', 'contact', '2026-10-06T10:00:00Z', '{}', 'user', 'u', 'x.com', '/c', 'form', NULL),
+		 (1, 's3', 'contact', '2026-10-06T10:00:00Z', '{}', 'user', 'u', 'x.com', '/c', 'form',
+		  '{"landing_path":"/p","referrer":"","utm_source":"nl","utm_medium":"","utm_campaign":"","views":1}'),
+		 (1, 's4', 'contact', '2026-10-06T10:00:00Z', '{}', 'user', 'u', 'x.com', '/c', 'form',
+		  '{"landing_path":"/p","referrer":"","utm_source":"","utm_medium":"","utm_campaign":"","views":1}')`,
 		`INSERT INTO events (family, project_id, day, id, event_name, ts, actor_id, attributes) VALUES
 		 ('product', 1, '2026-10-06', 's1', '$form_submit', '2026-10-06T10:00:00Z', 'u', '{"form":"contact"}'),
 		 ('product', 1, '2026-10-06', 's2', '$form_submit', '2026-10-06T10:00:00Z', 'u', '{"form":"contact"}'),
@@ -43,12 +47,16 @@ func TestMigration036MovesAttribution(t *testing.T) {
 		}
 		return s
 	}
-	const sub = `SELECT referrer || '|' || utm_source || '|' || utm_medium || '|' || utm_campaign FROM submissions WHERE id=?`
-	if got := row(sub, "s1"); got != "google|nl|email|oct" {
-		t.Errorf("s1 = %q", got)
-	}
-	if got := row(sub, "s2"); got != "|||" {
-		t.Errorf("s2 = %q", got)
+	const sub = `SELECT COALESCE(attribution, 'NULL') FROM submissions WHERE id=?`
+	for id, want := range map[string]string{
+		"s1": `{"referrer":"google","utm_source":"nl","utm_medium":"email","utm_campaign":"oct"}`,
+		"s2": "NULL",
+		"s3": `{"utm_source":"nl"}`,
+		"s4": "NULL",
+	} {
+		if got := row(sub, id); got != want {
+			t.Errorf("%s = %s, want %s", id, got, want)
+		}
 	}
 	const ev = `SELECT referrer_source || '|' || utm_source || '|' || utm_medium || '|' || utm_campaign
 		FROM events WHERE family=? AND project_id=? AND id=?`

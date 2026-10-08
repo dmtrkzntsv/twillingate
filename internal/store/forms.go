@@ -65,10 +65,15 @@ func KeepFields(f Form, fields map[string]string) map[string]string {
 }
 
 // Attribution is where the visit a submission arrived in came from: its
-// first view's referrer and campaign. The submission keeps it for as long
-// as it is kept; its $form_submit event carries the same values.
+// first view's referrer and campaign. The submission keeps it, as a JSON
+// object with empty values left out, for as long as it is kept, so a new
+// key is a new field here and no migration; its $form_submit event carries
+// the same values.
 type Attribution struct {
-	Referrer, UTMSource, UTMMedium, UTMCampaign string
+	Referrer    string `json:"referrer,omitempty"`
+	UTMSource   string `json:"utm_source,omitempty"`
+	UTMMedium   string `json:"utm_medium,omitempty"`
+	UTMCampaign string `json:"utm_campaign,omitempty"`
 }
 
 // Submission is a row of submissions: what the visitor typed and where the

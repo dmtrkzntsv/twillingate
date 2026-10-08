@@ -99,30 +99,32 @@ func TestWriteSubmissionFirstCreatesDraft(t *testing.T) {
 	if n := countRows(t, db, `SELECT COUNT(*) FROM events`); n != 0 {
 		t.Fatalf("a draft wrote %d events", n)
 	}
-	var recv, ref, src, med, camp string
-	if err := db.db.QueryRow(`SELECT received_at, referrer, utm_source, utm_medium, utm_campaign FROM submissions
-		WHERE project_id=1 AND id='s1'`).Scan(&recv, &ref, &src, &med, &camp); err != nil {
+	var recv string
+	var attribution *string
+	if err := db.db.QueryRow(`SELECT received_at, attribution FROM submissions
+		WHERE project_id=1 AND id='s1'`).Scan(&recv, &attribution); err != nil {
 		t.Fatal(err)
 	}
-	if recv != "2026-10-06T12:00:00Z" || ref != "" || src != "" || med != "" || camp != "" {
-		t.Fatalf("row = %q %q %q %q %q", recv, ref, src, med, camp)
+	if recv != "2026-10-06T12:00:00Z" || attribution != nil {
+		t.Fatalf("row = %q %v, want no attribution stored as NULL", recv, attribution)
 	}
 }
 
+// TestWriteSubmissionStoresAttribution: the attribution is a JSON object
+// that leaves empty values out.
 func TestWriteSubmissionStoresAttribution(t *testing.T) {
 	db := newTestDB(t)
 	n := newSub("s1", map[string]string{"a": "1"})
-	n.Submission.Attribution = store.Attribution{Referrer: "google", UTMSource: "x", UTMMedium: "cpc", UTMCampaign: "oct"}
+	n.Submission.Attribution = store.Attribution{Referrer: "google", UTMSource: "x", UTMCampaign: "oct"}
 	if _, _, err := db.WriteSubmission(context.Background(), n); err != nil {
 		t.Fatal(err)
 	}
-	var got store.Attribution
-	if err := db.db.QueryRow(`SELECT referrer, utm_source, utm_medium, utm_campaign FROM submissions WHERE id='s1'`).
-		Scan(&got.Referrer, &got.UTMSource, &got.UTMMedium, &got.UTMCampaign); err != nil {
+	var blob string
+	if err := db.db.QueryRow(`SELECT attribution FROM submissions WHERE id='s1'`).Scan(&blob); err != nil {
 		t.Fatal(err)
 	}
-	if got != n.Submission.Attribution {
-		t.Fatalf("attribution = %+v, want %+v", got, n.Submission.Attribution)
+	if want := `{"referrer":"google","utm_source":"x","utm_campaign":"oct"}`; blob != want {
+		t.Fatalf("attribution = %s, want %s", blob, want)
 	}
 }
 

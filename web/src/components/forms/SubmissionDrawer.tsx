@@ -55,7 +55,7 @@ function Details({ s }: { s: Submission }) {
         <Pairs
           rows={[
             ['Received', <time dateTime={s.received_at} title={s.received_at}>{formatDayTime(new Date(s.received_at))}</time>],
-            ['Source', formatSource(s)],
+            ['Source', formatSource(s.attribution)],
           ]}
         />
       </Section>

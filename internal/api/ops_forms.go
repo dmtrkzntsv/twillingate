@@ -124,13 +124,9 @@ type submissionOut struct {
 	Form       string            `json:"form"`
 	ReceivedAt string            `json:"received_at"`
 	Fields     map[string]string `json:"fields"`
-	// Where the visit the submission arrived in came from (its first
-	// view's); empty when no visit matched. The page, the visitor and the
-	// environment are on the $form_submit event, which has the same id.
-	Referrer    string `json:"referrer"`
-	UTMSource   string `json:"utm_source"`
-	UTMMedium   string `json:"utm_medium"`
-	UTMCampaign string `json:"utm_campaign"`
+	// The page, the visitor and the environment are on the $form_submit
+	// event, which has the same id.
+	Attribution store.Attribution `json:"attribution" jsonschema:"where the visit the submission arrived in came from, its first view's: referrer, utm_source, utm_medium, utm_campaign, each left out when empty; {} when no visit matched"`
 }
 
 type findSubmissionsIn struct {
@@ -192,9 +188,8 @@ func toFormOut(f store.Form) formOut {
 }
 
 func toSubmissionOut(s store.Submission) submissionOut {
-	a := s.Attribution
 	return submissionOut{ID: s.ID, Form: s.Form, ReceivedAt: fmtTime(s.ReceivedAt), Fields: s.Fields,
-		Referrer: a.Referrer, UTMSource: a.UTMSource, UTMMedium: a.UTMMedium, UTMCampaign: a.UTMCampaign}
+		Attribution: s.Attribution}
 }
 
 func (h *host) listForms(ctx context.Context, in listFormsIn) (listFormsOut, error) {
@@ -439,7 +434,7 @@ func (h *host) registerForms(r *registrar) {
 		Description: "One active form's submissions as a table. Submissions hold personal data visitors typed. Columns: Received, then one per field (an approved form's expected fields in order, a draft's every field); a field named Received or id is shown as \"<name> (field)\". ids are the rows' submission ids, in order, for get_submission and delete_submissions. Takes widget_data's remote-table arguments (filters, sort, distinct, offset, limit), applied in SQL: matched counts the rows passing the filters, total the form's submissions. Newest first without a sort; every submission regardless of date (filter Received to narrow). A draft's submissions never count as conversions."},
 		h.listSubmissions)
 	expose(r, spec{Name: "get_submission", Annotations: ro, Method: "GET", Path: f + "/submissions/{id}",
-		Description: "One submission of an active form: every stored field (also ones the form no longer expects), received_at, and referrer, utm_source, utm_medium and utm_campaign (where the visit it arrived in came from; empty when no visit matched). The page, the visitor and their environment are on its $form_submit event, which has the submission's id (approved forms only). Personal data."},
+		Description: "One submission of an active form: every stored field (also ones the form no longer expects), received_at, and attribution (where the visit it arrived in came from: referrer, utm_source, utm_medium, utm_campaign, each left out when empty; {} when no visit matched). The page, the visitor and their environment are on its $form_submit event, which has the submission's id (approved forms only). Personal data."},
 		h.getSubmission)
 	expose(r, spec{Name: "find_submissions", Annotations: ro, Method: "GET", Path: p + "/submissions",
 		Description: "Find one person's submissions across every form of a project, archived ones included, for an access or erasure request: each submission with a field value containing search (at least 2 characters; ASCII case-insensitive, so É and é differ), newest first, with its form, fields, attribution and archived (true when its form is archived). Pages of limit (default 100, at most 500); pass next_cursor back as cursor. Personal data. delete_submissions with the same search deletes exactly these."},

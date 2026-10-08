@@ -119,13 +119,19 @@ func (d *DB) WriteSubmission(ctx context.Context, n store.NewSubmission) (store.
 		if err != nil {
 			return fmt.Errorf("submission %s fields: %w", sub.ID, err)
 		}
+		var attribution any // NULL when no visit matched
+		if sub.Attribution != (store.Attribution{}) {
+			a, err := json.Marshal(sub.Attribution)
+			if err != nil {
+				return fmt.Errorf("submission %s attribution: %w", sub.ID, err)
+			}
+			attribution = string(a)
+		}
 		received := sub.ReceivedAt.UTC().Format(tsFormat)
-		a := sub.Attribution
 		res, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO submissions
-			(project_id, id, form, received_at, fields, referrer, utm_source, utm_medium, utm_campaign)
-			VALUES (?,?,?,?,?,?,?,?,?)`,
-			sub.ProjectID, sub.ID, sub.Form, received, string(blob),
-			a.Referrer, a.UTMSource, a.UTMMedium, a.UTMCampaign)
+			(project_id, id, form, received_at, fields, attribution)
+			VALUES (?,?,?,?,?,?)`,
+			sub.ProjectID, sub.ID, sub.Form, received, string(blob), attribution)
 		if err != nil {
 			return fmt.Errorf("submission %s: %w", sub.ID, err)
 		}
@@ -554,17 +560,16 @@ const defaultFindLimit = 100
 
 // submissionColumns is the select list scanSubmission reads, from
 // submissions aliased s.
-const submissionColumns = `s.project_id, s.id, s.form, s.received_at, s.fields,
-	s.referrer, s.utm_source, s.utm_medium, s.utm_campaign`
+const submissionColumns = `s.project_id, s.id, s.form, s.received_at, s.fields, s.attribution`
 
 // scanSubmission reads one row selected with submissionColumns, then
 // into extra any columns selected after them.
 func scanSubmission(row interface{ Scan(...any) error }, extra ...any) (store.Submission, error) {
 	var s store.Submission
 	var received, fields string
-	a := &s.Attribution
+	var attribution sql.NullString
 	if err := row.Scan(append([]any{&s.ProjectID, &s.ID, &s.Form, &received, &fields,
-		&a.Referrer, &a.UTMSource, &a.UTMMedium, &a.UTMCampaign}, extra...)...); err != nil {
+		&attribution}, extra...)...); err != nil {
 		return store.Submission{}, err
 	}
 	var err error
@@ -573,6 +578,11 @@ func scanSubmission(row interface{ Scan(...any) error }, extra ...any) (store.Su
 	}
 	if err := json.Unmarshal([]byte(fields), &s.Fields); err != nil {
 		return store.Submission{}, fmt.Errorf("submission %s fields: %w", s.ID, err)
+	}
+	if attribution.Valid {
+		if err := json.Unmarshal([]byte(attribution.String), &s.Attribution); err != nil {
+			return store.Submission{}, fmt.Errorf("submission %s attribution: %w", s.ID, err)
+		}
 	}
 	return s, nil
 }

@@ -652,7 +652,7 @@ tools below do.
 | Change one | `twillingate form update` | `update_form` | `{project_id, name, purpose, return_url, closes_at, expected_fields}`; merges; `closes_at: null` reopens; `expected_fields` only on an approved form, never empty |
 | Archive / restore | `twillingate form archive` / `restore` | `archive_form` / `restore_form` | `{project_id, name}`; archiving refuses submissions and hides the form and its submissions from every list, table and export (a search still finds them); a restored draft gets another `FORMS_DRAFT_DAYS` |
 | Read a form's table | `twillingate form export` (CSV) | `list_submissions` | `{project_id, name, filters, sort, distinct, offset, limit}`; returns `columns`, `rows`, `ids`, `matched`, `total`, `offset`, `limit` |
-| Read one submission | — | `get_submission` | `{project_id, name, id}`; every stored field (ones no longer expected too), `received_at`, `referrer`, `utm_source`, `utm_medium`, `utm_campaign` |
+| Read one submission | — | `get_submission` | `{project_id, name, id}`; every stored field (ones no longer expected too), `received_at`, `attribution` (`referrer`, `utm_source`, `utm_medium`, `utm_campaign`, each left out when empty; `{}` when no visit matched) |
 | Find a person | — | `find_submissions` | `{project_id, search, limit, cursor}`; `search` at least 2 characters; returns `submissions` (each as `get_submission` answers it, with its `form` and `archived`, true when that form is archived) and `next_cursor` |
 | Delete submissions | `twillingate form erase` | `delete_submissions` | `{project_id}` with exactly one of `ids`, `form` with `filters`, or `search`; returns `deleted` |
 
@@ -1096,10 +1096,11 @@ time as `ts` and the form's name as its one attribute, `form`; a draft's
 submissions write none. Both are written before the answer, never buffered.
 
 **A submission and its event.** The submission keeps what the visitor
-typed, when it arrived and where the visit came from: the referrer and UTM
-source, medium and campaign of the first view of the visitor's current
-session (views at most 30 minutes apart, looking back a day), empty when no
-view of the actor matches. Everything else is on the event, which has the
+typed, when it arrived and where the visit came from: its `attribution`,
+a JSON object of the referrer and UTM source, medium and campaign of the
+first view of the visitor's current session (views at most 30 minutes
+apart, looking back a day), each left out when empty, `{}` when no view of
+the actor matches. Everything else is on the event, which has the
 submission's id: the actor, the page (`$host`, `$path`), the country, the
 same referrer and UTMs, and the newest view's `$kind`, group, session id,
 environment and consent. So the submission's attribution outlives the raw
