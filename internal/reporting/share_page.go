@@ -6,6 +6,7 @@ import (
 	"html/template"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -31,10 +32,16 @@ const shareIcon = `<svg viewBox="0 0 30 30" aria-hidden="true"><path d="M0 0H30V
 
 // sharePageData: ProjectName is "" when the share does not caption the
 // project, Meta is the caption line ("" for none), Alt the image's text.
+// The picture already carries the title and the caption, so the page shows
+// them only to the link preview and to a screen reader; what it adds under
+// the picture is the day it was taken (Taken, TakenInWords "" when the
+// stamp does not parse), since a picture that never updates should say how
+// old it is.
 type sharePageData struct {
 	Title, ProjectName, Meta string
 	URL, ImageURL            string
 	Image2xPath, Alt         string
+	Taken, TakenInWords      string
 	Icon                     template.HTML
 }
 
@@ -84,6 +91,10 @@ func (s *Service) SharePages() http.Handler {
 			caption = append(caption, rangeInWords(sh.From, sh.To))
 		}
 		url := s.shareBase + "/share/" + sh.ID
+		taken, takenInWords := "", ""
+		if t, err := time.Parse(shareStamp, sh.CreatedAt); err == nil {
+			taken, takenInWords = sh.CreatedAt, t.Format("Jan 2, 2006")
+		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "public, max-age=300")
 		w.Header().Set("Content-Security-Policy", shareCSP)
@@ -92,7 +103,8 @@ func (s *Service) SharePages() http.Handler {
 			URL: url, ImageURL: url + ".png",
 			Image2xPath: "/share/" + sh.ID + "@2x.png",
 			Alt:         strings.Join(append([]string{sh.Title}, caption...), ", "),
-			Icon:        template.HTML(shareIcon), //nolint:gosec // a constant
+			Taken:       taken, TakenInWords: takenInWords,
+			Icon: template.HTML(shareIcon), //nolint:gosec // a constant
 		})
 	})
 }
