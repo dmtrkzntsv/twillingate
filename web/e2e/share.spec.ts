@@ -39,15 +39,19 @@ async function chooseAction(page: Page, card: ReturnType<Page['locator']>, item:
   await entry.click()
 }
 
-/** From the open Share dialog: waits for the preview, keeps one month, creates the link and returns it. */
+/** From the open Share dialog: waits for the preview, keeps one month, creates and copies the link and returns it. */
 async function createLink(page: Page): Promise<string> {
   const dialog = page.getByRole('dialog', { name: 'Share widget' })
   await expect(dialog.getByRole('img', { name: 'Preview of the share card' })).toBeVisible({ timeout: 30_000 })
   await expect(dialog.getByLabel('Archive after')).toHaveValue('30d')
-  await dialog.getByRole('button', { name: 'Create link' }).click()
-  const link = dialog.getByRole('textbox', { name: 'Share link' })
-  await expect(link).toBeVisible()
-  return link.inputValue()
+  // To read back what the button copied.
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin: ORIGIN })
+  await dialog.getByRole('button', { name: 'Create and copy link' }).click()
+  const open = dialog.getByRole('link', { name: 'Open' })
+  await expect(open).toBeVisible()
+  const link = (await open.getAttribute('href'))!
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(link)
+  return link
 }
 
 test('share a widget, see its public page, archive it, restore it, download it', async ({ page, browser, request }) => {
@@ -87,7 +91,8 @@ test('share a widget, see its public page, archive it, restore it, download it',
   const row = page.getByRole('row').filter({ has: page.locator(`a[href="${link}"]`) })
   await expect(row).toBeVisible()
   await expect(row).toContainText(title)
-  await row.getByRole('button', { name: 'Archive' }).click()
+  await row.getByRole('button', { name: `Actions for ${title}` }).click()
+  await page.getByRole('menuitem', { name: 'Archive' }).click()
   await expect(row).toHaveCount(0)
   await expect.poll(async () => (await request.get(link)).status()).toBe(404)
 

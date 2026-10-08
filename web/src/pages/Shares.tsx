@@ -1,13 +1,16 @@
 import { useQuery } from '@tanstack/react-query'
-import { CodeIcon, LinkIcon } from 'lucide-react'
+import { ArchiveIcon, CodeIcon, ExternalLinkIcon, LinkIcon, MoreHorizontalIcon } from 'lucide-react'
 import { Link, useSearchParams } from 'react-router'
+import { toast } from 'sonner'
 import AppShell, { TopBar } from '@/components/AppShell'
 import Crumbs from '@/components/Crumbs'
 import CopyButton from '@/components/projects/CopyButton'
 import LoadError from '@/components/projects/LoadError'
-import { ArchiveAfterSelect } from '@/components/share/ArchiveAfterSelect'
+import { ArchiveAfterMenu } from '@/components/share/ArchiveAfterMenu'
 import { Button } from '@/components/ui/button'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { useCopy } from '@/hooks/use-copy'
 import { useWidgetShareActions } from '@/hooks/use-widget-share-actions'
 import type { WidgetShare } from '@/lib/api'
 import { dashboardsQuery, widgetSharesQuery } from '@/lib/queries'
@@ -26,12 +29,12 @@ function widgetFilter(param: string | null): number | undefined {
 
 /**
  * `/shares`: the live links to shared widgets, newest first, each with its
- * thumbnail, the widget it came from, and what it can still do: change when
- * it archives, copy its link or embed code, archive now. `?widget=<id>`
- * narrows it to one widget (where the Share dialog's "other links" leads).
- * Archiving asks no confirmation, since Restore on the Archive page undoes
- * it. Below `xl` range, created and archive-after fold into a line under
- * the widget.
+ * thumbnail, the widget it came from, its range (the day it was made on
+ * hover), when it archives, a copy of its link, and a menu for the rest:
+ * the embed code, Open, Archive. `?widget=<id>` narrows it to one widget
+ * (where the Share dialog's "other links" leads). Archiving asks no
+ * confirmation, since Restore on the Archive page undoes it. Below `lg` the
+ * range and archive date fold into a line under the widget.
  */
 export default function Shares() {
   const { data: dash } = useQuery(dashboardsQuery)
@@ -39,21 +42,20 @@ export default function Shares() {
   const widgetId = widgetFilter(params.get('widget'))
   const sharesQ = useQuery(widgetSharesQuery({ ...(widgetId ? { widget_id: widgetId } : {}), state: 'live' }))
   const { setArchiveAfter, archive, pending } = useWidgetShareActions()
+  const { copy } = useCopy()
   const shares = sharesQ.data?.shares
 
-  /** The archive-after choice; the folded line's copy is the small one. */
-  const select = (s: WidgetShare, archives: string | undefined, small: boolean) => (
-    <ArchiveAfterSelect
-      small={small}
-      aria-label={`Archive ${s.title} after`}
-      value="project"
-      current={archives}
-      onChange={(v) => void setArchiveAfter(s.id, v)}
-    />
+  // The menu closes as it copies, so a toast says how it went.
+  const copyEmbed = (s: WidgetShare) =>
+    void copy(embedCode(s)).then((out) => (out === 'copied' ? toast.success('Embed code copied') : toast.error("Couldn't copy the embed code")))
+
+  const range = (s: WidgetShare) => <span title={`Created ${createdOn(s)}`}>{rangeInWords(s.from, s.to)}</span>
+  const archiveDate = (s: WidgetShare, small: boolean) => (
+    <ArchiveAfterMenu current={archiveLabel(s)} small={small} disabled={pending} onChange={(v) => void setArchiveAfter(s.id, v)} />
   )
 
   const row = (s: WidgetShare) => {
-    const archives = s.archive_at ? archiveLabel(s) : undefined
+    const from = [s.dashboard_title, s.project_name].filter(Boolean).join(' · ')
     return (
       <TableRow key={s.id}>
         <TableCell className="w-24 sm:w-28">
@@ -65,37 +67,55 @@ export default function Shares() {
           <div className="truncate font-medium" title={s.title}>
             {s.title}
           </div>
-          {s.dashboard_id !== null && s.dashboard_title && (
-            <div className="truncate text-xs text-muted-foreground" title={s.dashboard_title}>
-              <Link to={`/dashboards/${s.dashboard_id}`} className="underline underline-offset-2">
-                {s.dashboard_title}
-              </Link>
-            </div>
-          )}
-          <div className="truncate text-xs text-muted-foreground" title={s.project_name}>
-            {s.project_name}
+          <div className="truncate text-xs text-muted-foreground" title={from}>
+            {s.dashboard_id !== null && s.dashboard_title ? (
+              <>
+                <Link to={`/dashboards/${s.dashboard_id}`} className="underline underline-offset-2">
+                  {s.dashboard_title}
+                </Link>
+                {' · '}
+                {s.project_name}
+              </>
+            ) : (
+              from
+            )}
           </div>
-          {/* Below xl the persistent sidebar leaves no room for the three columns: they fold into this line. */}
-          <div className="mt-1 flex flex-col items-start gap-1 text-xs whitespace-normal text-muted-foreground xl:hidden">
-            <span>
-              {rangeInWords(s.from, s.to)} · {createdOn(s)}
-            </span>
-            {select(s, archives, true)}
+          {/* Below lg the persistent sidebar leaves no room for the two columns: they fold into this line. */}
+          <div className="flex flex-col items-start text-xs whitespace-normal text-muted-foreground lg:hidden">
+            {range(s)}
+            {/* With no column header to say what the date is. */}
+            <span className="flex items-center">archives {archiveDate(s, true)}</span>
           </div>
         </TableCell>
-        <TableCell className="hidden whitespace-normal xl:table-cell">{rangeInWords(s.from, s.to)}</TableCell>
-        <TableCell className="hidden xl:table-cell">{createdOn(s)}</TableCell>
-        <TableCell className="hidden xl:table-cell">
-          {select(s, archives, false)}
-          {archives && <div className="mt-1 text-xs text-muted-foreground">archives {archives}</div>}
-        </TableCell>
+        <TableCell className="hidden whitespace-normal lg:table-cell">{range(s)}</TableCell>
+        <TableCell className="hidden lg:table-cell">{archiveDate(s, false)}</TableCell>
         <TableCell>
-          <div className="flex flex-wrap justify-end gap-1">
+          <div className="flex justify-end gap-1">
             <CopyButton value={s.url} label="Copy link" icon={<LinkIcon />} />
-            <CopyButton value={embedCode(s)} label="Copy embed code" icon={<CodeIcon />} />
-            <Button variant="outline" size="sm" disabled={pending} onClick={() => void archive(s.id)}>
-              Archive
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon" aria-label={`Actions for ${s.title}`}>
+                  <MoreHorizontalIcon />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => copyEmbed(s)}>
+                  <CodeIcon />
+                  Copy embed code
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <a href={s.url} target="_blank" rel="noopener">
+                    <ExternalLinkIcon />
+                    Open
+                  </a>
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem disabled={pending} onClick={() => void archive(s.id)}>
+                  <ArchiveIcon />
+                  Archive
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </TableCell>
       </TableRow>
@@ -132,10 +152,11 @@ export default function Shares() {
                     <span className="sr-only">Image</span>
                   </TableHead>
                   <TableHead>Widget</TableHead>
-                  <TableHead className="hidden w-40 xl:table-cell">Range</TableHead>
-                  <TableHead className="hidden w-28 xl:table-cell">Created</TableHead>
-                  <TableHead className="hidden w-40 xl:table-cell">Archive after</TableHead>
-                  <TableHead className="w-24 text-right sm:w-44">Actions</TableHead>
+                  <TableHead className="hidden w-44 lg:table-cell">Range</TableHead>
+                  <TableHead className="hidden w-40 lg:table-cell">Archives</TableHead>
+                  <TableHead className="w-24">
+                    <span className="sr-only">Actions</span>
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>{shares.map(row)}</TableBody>

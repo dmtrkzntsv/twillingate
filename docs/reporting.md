@@ -876,11 +876,14 @@ view.
 saves the 2400×1260 card as `<widget-name>-<from>-<to>.png` and stores
 nothing; it is there on a dashboard without a project switcher too, where
 Share… is not, since a share needs a project. Share… opens a dialog: a preview, which is the captured image
-itself, an **Archive after** choice and **Create link**; once the link
-exists, **Copy link**, **Copy embed code** and **Open**. When the widget
-already has other links, "This widget has N other links" leads to the
-Shares page, filtered to the widget. The embed code is an image link, not an
-iframe:
+itself, an **Archive after** choice and **Create and copy link**, which makes
+the link and copies it in one click. The dialog then keeps its layout: the
+button copies the link again, **Copy embed code** and **Open** join it, and
+Archive after changes the new link's date. Where the browser has no
+clipboard (the console over plain http), the link and embed code show as
+text to select. When the widget already has other links, "N other links"
+leads to the Shares page, filtered to the widget. The embed code is an image
+link, not an iframe:
 
 ```html
 <a href="https://console.example.com/share/<id>"><img src="https://console.example.com/share/<id>.png"
@@ -910,8 +913,9 @@ Archiving the project leaves its shares up too. Deleting the project, with
 the read-only preview of `reporting dev`) lists live shares, newest first: the 1x image,
 linking to the share's page; the title, with the dashboard and project it
 came from, linking to the dashboard (plain text once the widget is gone);
-the range; the day it was created; Archive after, changeable in place; and
-**Copy link**, **Copy embed code** and **Archive**. `?widget=<id>` narrows it
+the range, with the day it was created on hover; when it archives, changeable
+in place from the date's pencil; **Copy link**; and a "…" menu with **Copy
+embed code**, **Open** and **Archive**. `?widget=<id>` narrows it
 to one widget. Archive asks no confirmation, since Restore undoes it;
 archived shares are on the Archive page
 ([Archiving and the purge](#archiving-and-the-purge)).

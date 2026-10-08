@@ -108,7 +108,7 @@ test('every link and button shows the pointer', async ({ page, request }) => {
   expect(await withoutPointer(page), 'submission drawer').toEqual([])
   await page.keyboard.press('Escape')
 
-  // The Share dialog's controls, before and after the link is made (Copy link, Copy embed code, Open).
+  // The Share dialog's controls, before and after the link is made (Copy link, Copy embed code, Open, Archive after).
   await page.goto('/app/dashboards/1')
   await page.waitForLoadState('networkidle')
   const card = page.locator('[data-slot="widget-card"]').first()
@@ -118,9 +118,9 @@ test('every link and button shows the pointer', async ({ page, request }) => {
   expect(await withoutPointer(page), 'widget menu').toEqual([])
   await page.getByRole('menuitem', { name: 'Share…' }).click()
   const dialog = page.getByRole('dialog', { name: 'Share widget' })
-  await expect(dialog.getByRole('button', { name: 'Create link' })).toBeEnabled({ timeout: 30_000 })
+  await expect(dialog.getByRole('button', { name: 'Create and copy link' })).toBeEnabled({ timeout: 30_000 })
   expect(await withoutPointer(page), 'Share dialog').toEqual([])
-  await dialog.getByRole('button', { name: 'Create link' }).click()
+  await dialog.getByRole('button', { name: 'Create and copy link' }).click()
   await expect(dialog.getByRole('link', { name: 'Open' })).toBeVisible()
   expect(await withoutPointer(page), 'Share dialog, link made').toEqual([])
   // A project's "+" and the dashboards its picker offers, on a dashboard
