@@ -963,7 +963,9 @@ Shared widgets need no token either: `/share/<id>` (a page with no script),
 frozen images of a widget someone shared, which are public by design. Each
 page ends with the credit "Built with twillingate.dev", on every install. An
 unknown or archived share answers 404 on all three; on the page, with a page
-that says nothing is shared at the link, the same whatever the link was. See
+that says nothing is shared at the link, the same whatever the link was. A
+browser opening any other address the console does not serve gets a 404
+page leading to `/app/`; API clients keep the plain 404. See
 [reporting.md](reporting.md#sharing-a-widget).
 
 ```bash

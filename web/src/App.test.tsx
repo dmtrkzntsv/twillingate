@@ -218,4 +218,30 @@ describe('App', () => {
     expect(screen.getByText('Offline — showing nothing until the connection is back')).toBeInTheDocument()
     expect(fetch).not.toHaveBeenCalled()
   })
+
+  it('shows the not-found page, with the sidebar, at an address no route answers', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      dashboardsResponse([{ dashboard_id: 3, title: 'Views', owner: 'system', group_id: 3, widgets: 1, sidebar: true, project_tab: false }])))
+    window.history.pushState({}, '', '/app/nowhere/at/all')
+
+    renderApp()
+
+    expect(await screen.findByRole('heading', { name: 'No page at this address' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Go to your projects' })).toHaveAttribute('href', '/app/projects')
+    expect(await screen.findByRole('link', { name: /Views/ })).toBeInTheDocument()
+  })
+
+  it('shows the not-found page for a dashboard the server does not have', async () => {
+    vi.stubGlobal('fetch', vi.fn((url: string) =>
+      Promise.resolve(url.startsWith('/api/dashboards/99')
+        ? json({ error: { code: 'not_found', message: 'dashboard 99: not found' } }, 404)
+        : dashboardsResponse([{ dashboard_id: 3, title: 'Views', owner: 'system', group_id: 3, widgets: 1, sidebar: true, project_tab: false }]))))
+    window.history.pushState({}, '', '/app/dashboards/99')
+
+    renderApp()
+
+    expect(await screen.findByRole('heading', { name: 'No dashboard at this address' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Go to your dashboards' })).toHaveAttribute('href', '/app/dashboards')
+    expect(screen.getByRole('img', { name: 'An iceberg, almost all of it under water' })).toBeInTheDocument()
+  })
 })

@@ -224,6 +224,15 @@ func TestShareNotFound(t *testing.T) {
 	if strings.Contains(strings.ToLower(page), "<script") {
 		t.Errorf("missing-share page contains a script tag")
 	}
+	// A stranger cannot open the console: the share's page leads nowhere in it.
+	if strings.Contains(page, `class="go"`) {
+		t.Errorf("missing-share page links into the console")
+	}
+	rec := httptest.NewRecorder()
+	ServeNotFound(rec)
+	if rec.Code != 404 || !strings.Contains(rec.Body.String(), `<a class="go" href="/app/">Go to your projects</a>`) {
+		t.Errorf("ServeNotFound = %d %s", rec.Code, rec.Body)
+	}
 	if rec := getShare(h, sh.ID); rec.Code != 200 {
 		t.Errorf("the live share: status %d, want 200", rec.Code)
 	}

@@ -200,7 +200,7 @@ describe('Project', () => {
 
   it('says so for an unknown project', async () => {
     renderAt('/projects/77')
-    expect(await screen.findByText('No project 77')).toBeInTheDocument()
+    expect(await screen.findByText(/There is no project 77\./)).toBeInTheDocument()
   })
 
   it('shows usage and cap impact over the last 7 days and refetches both when the range changes', async () => {
@@ -231,15 +231,15 @@ describe('Project', () => {
 
   it('says so for a non-numeric id and asks for no keys', async () => {
     renderAt('/projects/abc')
-    expect(await screen.findByText('No project abc')).toBeInTheDocument()
+    expect(await screen.findByText(/There is no project abc\./)).toBeInTheDocument()
     expect(endpoints.keys).not.toHaveBeenCalled()
   })
 
   it('treats 0 and a fractional id the same way', async () => {
     renderAt('/projects/0')
-    expect(await screen.findByText('No project 0')).toBeInTheDocument()
+    expect(await screen.findByText(/There is no project 0\./)).toBeInTheDocument()
     renderAt('/projects/4.5')
-    expect(await screen.findByText('No project 4.5')).toBeInTheDocument()
+    expect(await screen.findByText(/There is no project 4\.5\./)).toBeInTheDocument()
     expect(endpoints.keys).not.toHaveBeenCalled()
   })
 
@@ -271,7 +271,7 @@ describe('Project', () => {
   it('tolerates a registry answering no projects list', async () => {
     vi.spyOn(endpoints, 'projects').mockResolvedValue({ projects: null } as never)
     renderAt('/projects/4')
-    expect(await screen.findByText('No project 4')).toBeInTheDocument()
+    expect(await screen.findByText(/There is no project 4\./)).toBeInTheDocument()
   })
 
   it('keeps the key label in the disable dialog while it closes', async () => {

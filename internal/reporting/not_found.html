@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Nothing is shared here</title>
+<title>{{.Title}}</title>
 <meta name="robots" content="noindex">
 <meta name="color-scheme" content="light dark">
 <style>
@@ -27,10 +27,15 @@ p { margin: 0 0 20px; max-width: 34em; color: #5b6b82; }
 footer { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 32px 0 8px; color: #5b6b82; font-size: .875rem; }
 footer svg { flex: none; width: 20px; height: 20px; border-radius: 4px; }
 a { color: #1478c9; }
+.go { display: inline-block; margin: 0 0 20px; padding: 7px 14px; border: 1px solid #c9d6e6; border-radius: 8px; background: #fff; color: #0f1b2d; font-weight: 500; font-size: .875rem; text-decoration: none; }
+.go:hover { background: #eef4fb; }
+.go:focus-visible { outline: 2px solid #1478c9; outline-offset: 2px; }
 @media (prefers-color-scheme: dark) {
   html { background: #0b1220; color: #e8eef7; }
   p, footer { color: #93a3b8; }
   a { color: #62c3f3; }
+  .go { background: #111b2e; border-color: #26364f; color: #e8eef7; }
+  .go:hover { background: #18253c; }
   .sea { box-shadow: 0 0 0 1px rgba(255, 255, 255, .08), 0 8px 24px rgba(0, 0, 0, .5); }
   .sky-top { stop-color: #0d1f38; } .sky-low { stop-color: #1b3f69; }
   .sea-top { stop-color: #0d4f91; } .sea-low { stop-color: #020c1a; }
@@ -41,8 +46,10 @@ a { color: #1478c9; }
 </head>
 <body>
 <main>
-<h1>Nothing is shared at this link</h1>
-<p>Whoever shared it may have taken it down, or the share expired. If someone sent you this link, ask them for a new one. If you copied it, check that none of it was cut off.</p>
+<h1>{{.Title}}</h1>
+<p>{{.Text}}</p>
+{{with .LinkHref}}<a class="go" href="{{.}}">{{$.LinkLabel}}</a>
+{{end}}
 <svg class="sea" viewBox="0 0 1200 630" width="1200" height="630" role="img" aria-label="An iceberg, almost all of it under water">
 <defs>
 <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" class="sky-top"/><stop offset="1" class="sky-low"/></linearGradient>

@@ -92,7 +92,8 @@ func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *m
 // on its own mux. Routes registered on the returned mux: /mcp, /api/,
 // /app/, /share/, /healthz, and
 // /.well-known/oauth-protected-resource[/mcp] in oauth mode, and the login
-// server's routes in token mode with a password configured.
+// server's routes in token mode with a password configured; a browser
+// opening any other address gets the console's 404 page (NotFoundPages).
 // The func() error closes the read DB.
 func NewHandler(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *manage.Ops, rst reporting.Store, logger *slog.Logger) (http.Handler, func() error, error) {
 	protected, closeDB, err := Build(ctx, cfg, reg, ops, rst, logger)
@@ -101,7 +102,24 @@ func NewHandler(ctx context.Context, cfg *config.Config, reg *manage.Registry, o
 	}
 	mux := http.NewServeMux()
 	RegisterOn(mux, protected, cfg, true, logger)
-	return mux, closeDB, nil
+	return NotFoundPages(mux), closeDB, nil
+}
+
+// NotFoundPages serves mux, but answers a browser asking for an address
+// nothing on mux answers with the console's 404 page
+// (reporting.ServeNotFound) rather than the mux's plain text: a GET or HEAD
+// that accepts text/html, the way a browser opens a page. An API client,
+// a script or an image keeps the mux's own answer.
+func NotFoundPages(mux *http.ServeMux) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if (r.Method == http.MethodGet || r.Method == http.MethodHead) && strings.Contains(r.Header.Get("Accept"), "text/html") {
+			if _, pattern := mux.Handler(r); pattern == "" {
+				reporting.ServeNotFound(w)
+				return
+			}
+		}
+		mux.ServeHTTP(w, r)
+	})
 }
 
 // RegisterOn mounts the console surface on a mux: protected (from Build) at

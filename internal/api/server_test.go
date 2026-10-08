@@ -102,6 +102,53 @@ func TestAPIRequiresAuth(t *testing.T) {
 	}
 }
 
+// A browser opening an address nothing answers gets the console's 404
+// page; an API client, a script, another method and every route that
+// exists keep their own answers.
+func TestNotFoundPages(t *testing.T) {
+	h := newHandlerFixture(t, nil)
+	get := func(method, target, accept string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, target, nil)
+		if accept != "" {
+			req.Header.Set("Accept", accept)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+	const browser = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+	for _, target := range []string{"/nope", "/app.php", "/healthz/x", "/.well-known/oauth-protected-resource"} {
+		rec := get("GET", target, browser)
+		if rec.Code != http.StatusNotFound || rec.Header().Get("Content-Type") != "text/html; charset=utf-8" ||
+			!strings.Contains(rec.Body.String(), "<h1>No page at this address</h1>") || !strings.Contains(rec.Body.String(), `href="/app/"`) {
+			t.Errorf("browser GET %s = %d %q", target, rec.Code, rec.Header().Get("Content-Type"))
+		}
+		if rec.Header().Get("Cache-Control") != "no-store" || !strings.HasPrefix(rec.Header().Get("Content-Security-Policy"), "default-src 'none'") {
+			t.Errorf("browser GET %s: headers %v", target, rec.Header())
+		}
+	}
+	if rec := get("HEAD", "/nope", browser); rec.Code != http.StatusNotFound {
+		t.Errorf("browser HEAD /nope = %d", rec.Code)
+	}
+	for _, c := range []struct{ method, target, accept string }{
+		{"GET", "/nope", ""}, {"GET", "/nope", "*/*"}, {"GET", "/nope", "application/json"}, {"POST", "/nope", browser},
+	} {
+		rec := get(c.method, c.target, c.accept)
+		if rec.Code != http.StatusNotFound || strings.Contains(rec.Body.String(), "<html") {
+			t.Errorf("%s %s Accept %q = %d %s, want the plain 404", c.method, c.target, c.accept, rec.Code, rec.Body)
+		}
+	}
+	if rec := get("GET", "/api/nope", browser); rec.Code != http.StatusUnauthorized {
+		t.Errorf("browser GET /api/nope = %d, want the API's own 401", rec.Code)
+	}
+	if rec := get("GET", "/", browser); rec.Code != http.StatusFound {
+		t.Errorf("browser GET / = %d, want the redirect to /app/", rec.Code)
+	}
+	if rec := get("GET", "/healthz", browser); rec.Code != http.StatusOK {
+		t.Errorf("browser GET /healthz = %d", rec.Code)
+	}
+}
+
 func TestMCPTokenAuthPasses(t *testing.T) {
 	h := newHandlerFixture(t, nil)
 	req := httptest.NewRequest("POST", "/mcp", strings.NewReader(

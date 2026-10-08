@@ -175,6 +175,11 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
     '/app/archive',
     '/app/gallery/components',
     '/app/gallery/dashboards',
+    // The not-found pages: an unknown address, dashboard, project and project tab.
+    '/app/nowhere',
+    '/app/dashboards/999999',
+    '/app/projects/999999/setup',
+    `/app/projects/${id}/dashboards/999999`,
   ]) {
     await check(page, path)
   }
@@ -192,13 +197,16 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
   }
   await page.setViewportSize(PHONE)
 
-  // The public share page, in both colour schemes.
+  // The public share page and the server's 404 pages (a dead share, any
+  // other address), in both colour schemes.
   for (const colorScheme of ['light', 'dark'] as const) {
     await page.emulateMedia({ colorScheme })
-    await page.goto(shares[0].url)
-    await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
-    await page.waitForLoadState('networkidle')
-    expect(await sidewaysScroll(page), `share page (${colorScheme})`).toEqual([])
+    for (const url of [shares[0].url, '/share/00000000-0000-7000-8000-000000000000', '/nowhere']) {
+      await page.goto(url)
+      await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
+      await page.waitForLoadState('networkidle')
+      expect(await sidewaysScroll(page), `${url} (${colorScheme})`).toEqual([])
+    }
   }
   await page.emulateMedia({ colorScheme: null })
 

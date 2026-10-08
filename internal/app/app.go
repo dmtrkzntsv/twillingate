@@ -180,7 +180,7 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 		mux := http.NewServeMux()
 		ingestHandler.Mount(mux)
 		api.RegisterOn(mux, protected, cfg, false, logger)
-		surfaces = append(surfaces, httpSurface{cfg.IngestAddr, mux, "ingest,console"})
+		surfaces = append(surfaces, httpSurface{cfg.IngestAddr, api.NotFoundPages(mux), "ingest,console"})
 	case runConsole:
 		h, closeDB, err := api.NewHandler(ctx, cfg, reg, ops, st, logger)
 		if err != nil {

@@ -7,6 +7,7 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/
 import { Skeleton } from '@/components/ui/skeleton'
 import { ApiError } from '@/lib/api'
 import { TopBar } from './AppShell'
+import NotFound from './NotFound'
 
 // What a dashboard page shows instead of (or above) its grid.
 
@@ -55,33 +56,45 @@ export function DevErrors({ errors }: { errors: { dir: string; message: string }
   )
 }
 
-/** A failed load: "no such dashboard" for a 404, else the error with a retry. `bare` leaves out the page chrome. */
+/** A failed load: the not-found page for a 404, else the error with a retry. `bare` leaves out the page chrome. */
 export function PageError({ error, onRetry, bare }: { error: Error; onRetry: () => void; bare?: boolean }) {
   // A 401 is already on its way to the login page.
   if (error instanceof ApiError && error.status === 401) return null
-  const notFound = error instanceof ApiError && error.status === 404
-  const body = (
-    <Notice icon={<TriangleAlertIcon />} title={notFound ? 'No such dashboard' : "Couldn't load this dashboard"}>
-      <span className="flex flex-col items-center gap-3">
-        {notFound ? 'It may have been deleted.' : error.message}
-        {notFound ? (
-          <Button asChild variant="outline" size="sm">
-            <Link to="/dashboards">Go to your dashboards</Link>
-          </Button>
-        ) : (
+  const body =
+    error instanceof ApiError && error.status === 404 ? (
+      <NoSuchDashboard inPage={bare} />
+    ) : (
+      <Notice icon={<TriangleAlertIcon />} title="Couldn't load this dashboard">
+        <span className="flex flex-col items-center gap-3">
+          {error.message}
           <Button variant="outline" size="sm" onClick={onRetry}>
             Retry
           </Button>
-        )}
-      </span>
-    </Notice>
-  )
+        </span>
+      </Notice>
+    )
   if (bare) return body
   return (
     <>
       <TopBar />
       <div className="p-3 sm:p-4 lg:p-6">{body}</div>
     </>
+  )
+}
+
+function NoSuchDashboard({ inPage }: { inPage?: boolean }) {
+  return (
+    <NotFound
+      title="No dashboard at this address"
+      inPage={inPage}
+      actions={
+        <Button asChild variant="outline">
+          <Link to="/dashboards">Go to your dashboards</Link>
+        </Button>
+      }
+    >
+      It may have been deleted, or the link may be wrong.
+    </NotFound>
   )
 }
 

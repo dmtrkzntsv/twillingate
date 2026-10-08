@@ -24,28 +24,66 @@ var sharePageSrc string
 
 var sharePage = template.Must(template.New("share").Parse(sharePageSrc))
 
-// The page for a share that is not there: the same frame as a live one,
-// the picture's place taken by a drawing. It names no id and says the
-// same for unknown, archived and due shares and for a malformed link, so
-// it never tells a stranger that an id once existed.
-//
-//go:embed share_missing.html
-var shareMissingSrc string
-
-var shareMissing = func() []byte {
-	var b bytes.Buffer
-	t := template.Must(template.New("missing").Parse(shareMissingSrc))
-	if err := t.Execute(&b, struct{ Icon template.HTML }{template.HTML(shareIcon)}); err != nil { //nolint:gosec // a constant
-		panic("reporting: share_missing.html: " + err.Error())
-	}
-	return b.Bytes()
-}()
-
 const shareCSP = "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 
 // shareIcon is the iceberg tile of the OAuth page (internal/api/oauth_page.html),
 // copied because reporting cannot import api.
 const shareIcon = `<svg viewBox="0 0 30 30" aria-hidden="true"><path d="M0 0H30V30H0Z" fill="#0A4D8C"/><path d="M0 0H30V13H0Z" fill="#8FD3FF"/><path d="M5.5 13L10.2 9.1L12.2 10.2L15.5 4L18 8.1L20 7L24.5 13H5.5Z" fill="#F8FCFF"/><path d="M12.2 10.2L15.5 4L16.3 10L14.4 13H9.2L12.2 10.2Z" fill="#D5F1FF"/><path d="M15.5 4L18 8.1L16.3 10Z" fill="#2E9FE5"/><path d="M18 8.1L20 7L22 13H16.3Z" fill="#62C3F3"/><path d="M5.5 13H24.5L20 20.5L15 27L10 20.5L5.5 13Z" fill="#1478C9"/><path d="M5.5 13L12.5 16L10 20.5Z" fill="#54C8F7"/><path d="M12.5 16L15 27L10 20.5Z" fill="#249FE3"/><path d="M12.5 16L17 13L20 20.5L15 27Z" fill="#0D61AD"/><path d="M17 13H24.5L20 20.5Z" fill="#073F7C"/></svg>`
+
+// The console's 404 pages: the same frame as a live share, the picture's
+// place taken by a drawing of the sea (web/src/components/NotFound.tsx
+// draws it in the app). No script, and nothing from the request in it.
+//
+//go:embed not_found.html
+var notFoundSrc string
+
+type notFoundData struct {
+	Title, Text, LinkHref, LinkLabel string
+	Icon                             template.HTML
+}
+
+func renderNotFound(d notFoundData) []byte {
+	var b bytes.Buffer
+	d.Icon = template.HTML(shareIcon) //nolint:gosec // a constant
+	if err := template.Must(template.New("not_found").Parse(notFoundSrc)).Execute(&b, d); err != nil {
+		panic("reporting: not_found.html: " + err.Error())
+	}
+	return b.Bytes()
+}
+
+// shareMissing is the page for a share that is not there. It names no id
+// and says the same for unknown, archived and due shares and for a
+// malformed link, so it never tells a stranger that an id once existed,
+// and it leads nowhere in the console, which a stranger cannot open.
+var shareMissing = renderNotFound(notFoundData{
+	Title: "Nothing is shared at this link",
+	Text: "Whoever shared it may have taken it down, or the share expired. If someone sent you this link, " +
+		"ask them for a new one. If you copied it, check that none of it was cut off.",
+})
+
+// pageMissing is the page for any other console address nothing answers.
+var pageMissing = renderNotFound(notFoundData{
+	Title:     "No page at this address",
+	Text:      "Check the address for a typo, or start again from your projects.",
+	LinkHref:  "/app/",
+	LinkLabel: "Go to your projects",
+})
+
+// ServeNotFound answers 404 with the console's page for an address
+// nothing answers.
+func ServeNotFound(w http.ResponseWriter) {
+	writeNotFoundPage(w, pageMissing)
+}
+
+func writeNotFoundPage(w http.ResponseWriter, page []byte) {
+	h := w.Header()
+	h.Set("Cache-Control", "no-store")
+	h.Set("Content-Type", "text/html; charset=utf-8")
+	h.Set("Content-Security-Policy", shareCSP)
+	h.Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(http.StatusNotFound)
+	_, _ = w.Write(page)
+}
 
 // sharePageData: ProjectName is "" when the share does not caption the
 // project, Meta is the caption line ("" for none), Alt the image's text.
@@ -120,16 +158,12 @@ func (s *Service) SharePages() http.Handler {
 // shareNotFound answers 404: shareMissing for a page, plain text for an
 // image.
 func shareNotFound(w http.ResponseWriter, page bool) {
-	w.Header().Set("Cache-Control", "no-store")
-	if !page {
-		http.Error(w, "not found", http.StatusNotFound)
+	if page {
+		writeNotFoundPage(w, shareMissing)
 		return
 	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Content-Security-Policy", shareCSP)
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.WriteHeader(http.StatusNotFound)
-	_, _ = w.Write(shareMissing)
+	w.Header().Set("Cache-Control", "no-store")
+	http.Error(w, "not found", http.StatusNotFound)
 }
 
 // shareFailed answers a failed read: 404 for a share that is not there
