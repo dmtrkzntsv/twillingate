@@ -845,7 +845,7 @@ Three routes serve a share, with no token:
 
 | Route | Answers |
 | --- | --- |
-| `/share/<id>` | A page with no script: the image, the widget's title as its heading, the project and the range in words (`Sep 5 – Oct 4, 2026`) when the widget follows them, and the footer "Built with twillingate.dev", on every install. Its `og:` and `twitter:` tags unfurl the link as a large image card; `noindex` keeps it out of search. The page follows the visitor's light or dark theme; the image keeps the theme it was shared in |
+| `/share/<id>` | A page with no script: the image, sized to fit the window and linked to its 2x file, and under it the day the snapshot was taken and "Built with twillingate.dev", on every install. The image carries the title, project and range, so the page repeats them only in its `<title>`, its heading for screen readers, the image's alt text and the link preview. Its `og:` and `twitter:` tags unfurl the link as a large image card, with the project and the range in words (`Sep 5 – Oct 4, 2026`) as the description when the widget follows them; `noindex` keeps it out of search. The page follows the visitor's light or dark theme; the image keeps the theme it was shared in |
 | `/share/<id>.png` | The 1200×630 image, the one `og:image` names |
 | `/share/<id>@2x.png` | The 2400×1260 image, for the page, the embed and Download PNG |
 

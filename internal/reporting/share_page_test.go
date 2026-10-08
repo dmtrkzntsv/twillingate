@@ -5,6 +5,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -67,10 +68,17 @@ func TestSharePage(t *testing.T) {
 		"Sep 1 – Sep 30, 2026",
 		`<a href="https://twillingate.dev" rel="noopener">twillingate.dev</a>`,
 		"blog",
+		// The picture holds the title and caption; the page names them to a screen reader only.
+		`<h1 class="sr">` + esc + `</h1>`,
+		`<a class="pic" href="/share/` + sh.ID + `@2x.png"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("page lacks %s", want)
 		}
+	}
+	// The store stamps created_at itself, on the real clock.
+	if !regexp.MustCompile(`Snapshot taken <time datetime="\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ">[A-Z][a-z]{2} \d{1,2}, \d{4}</time>`).MatchString(body) {
+		t.Errorf("page lacks the day the snapshot was taken:\n%s", body)
 	}
 	if strings.Contains(strings.ToLower(body), "<script") {
 		t.Errorf("page contains a script tag:\n%s", body)
@@ -93,24 +101,21 @@ func TestSharePageCaptions(t *testing.T) {
 			`<title>` + esc + ` · blog</title>`,
 			`<meta property="og:description" content="blog · Sep 1 – Sep 30, 2026">`,
 			`<meta property="og:image:alt" content="` + esc + `, blog, Sep 1 – Sep 30, 2026">`,
-			`<p class="meta">blog · Sep 1 – Sep 30, 2026</p>`,
 		}, nil},
 		{"project only", &tr, &f, []string{
 			`<title>` + esc + ` · blog</title>`,
 			`<meta property="og:description" content="blog">`,
 			`<meta property="og:image:alt" content="` + esc + `, blog">`,
-			`<p class="meta">blog</p>`,
 		}, []string{"Sep 1"}},
 		{"range only", &f, &tr, []string{
 			`<title>` + esc + `</title>`,
 			`<meta property="og:description" content="Sep 1 – Sep 30, 2026">`,
 			`<meta property="og:image:alt" content="` + esc + `, Sep 1 – Sep 30, 2026">`,
-			`<p class="meta">Sep 1 – Sep 30, 2026</p>`,
 		}, []string{"blog"}},
 		{"neither", &f, &f, []string{
 			`<title>` + esc + `</title>`,
 			`<meta property="og:image:alt" content="` + esc + `">`,
-		}, []string{"blog", "Sep 1", "og:description", `class="meta"`}},
+		}, []string{"blog", "Sep 1", "og:description"}},
 	} {
 		in := e.input(t)
 		in.CaptionProject, in.CaptionRange = c.project, c.rng
