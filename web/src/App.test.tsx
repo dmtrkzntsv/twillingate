@@ -220,8 +220,9 @@ describe('App', () => {
   })
 
   it('shows the not-found page, with the sidebar, at an address no route answers', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
-      dashboardsResponse([{ dashboard_id: 3, title: 'Views', owner: 'system', group_id: 3, widgets: 1, sidebar: true, project_tab: false }])))
+    // A fresh response per request: the sidebar asks for the projects too.
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(
+      dashboardsResponse([{ dashboard_id: 3, title: 'Views', owner: 'system', group_id: 3, widgets: 1, sidebar: true, project_tab: false }]))))
     window.history.pushState({}, '', '/app/nowhere/at/all')
 
     renderApp()

@@ -437,6 +437,15 @@ describe('Archive, shares', () => {
     expect(screen.queryByRole('heading', { name: 'Shares' })).not.toBeInTheDocument()
   })
 
+  it('does not flash "Nothing archived." while the dashboards are loading', async () => {
+    vi.spyOn(endpoints, 'dashboards').mockReturnValue(new Promise(() => {}))
+    renderArchive()
+
+    await screen.findByRole('heading', { name: 'Archive' })
+    await waitFor(() => expect(endpoints.dashboards).toHaveBeenCalled())
+    expect(screen.queryByText('Nothing archived.')).not.toBeInTheDocument()
+  })
+
   it('does not flash "Nothing archived." while the shares are loading', async () => {
     mockApiWith([info(10, 'Launch week', 'user', 10)])
     let resolve: (v: { shares: WidgetShare[] }) => void = () => {}
@@ -507,7 +516,7 @@ describe('Archive, forms', () => {
   })
 
   it('has no Forms section when none is archived', async () => {
-    mockApi()
+    mockApiWith([info(10, 'Launch week', 'user', 10)])
     vi.mocked(endpoints.projects).mockResolvedValue({ projects: [{ project_id: 4, name: 'shop', allowed_origins: [] }] })
     renderArchive()
     await screen.findByText('Nothing archived.')

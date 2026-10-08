@@ -469,12 +469,15 @@ describe('Dashboard', () => {
     for (const tab of tabs) expect(tab).not.toHaveAttribute('aria-roledescription')
     expect(screen.getByRole('link', { name: 'Marketing' })).not.toHaveAttribute('aria-roledescription')
     // No "Tab actions", and no sidebar "… actions": only the dashboard's
-    // own menu, whose refreshes are reads.
-    expect(screen.getAllByRole('button', { name: /actions$/ }).map((b) => b.getAttribute('aria-label'))).toEqual([
-      'Dashboard actions',
-    ])
+    // own menu and the widgets', which hold reads alone.
+    const widgetMenus = await screen.findAllByRole('button', { name: 'Widget actions' })
+    const labels = screen.getAllByRole('button', { name: /actions$/ }).map((b) => b.getAttribute('aria-label'))
+    expect(new Set(labels)).toEqual(new Set(['Dashboard actions', 'Widget actions']))
     await userEvent.click(screen.getByRole('button', { name: 'Dashboard actions' }))
     expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Refresh'])
+    await userEvent.keyboard('{Escape}')
+    await userEvent.click(widgetMenus[0])
+    expect((await screen.findAllByRole('menuitem')).map((i) => i.textContent)).toEqual(['Download PNG'])
   })
 
   it('offers auto-refresh at the server\'s interval, remembered per dashboard in this browser', async () => {

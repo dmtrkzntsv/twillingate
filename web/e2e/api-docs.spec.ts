@@ -33,7 +33,8 @@ test('the version in the footer opens /api/docs in a new tab', async ({ page }) 
   // serve.sh builds without a version, so the footer reads dev.
   const [docs] = await Promise.all([
     page.waitForEvent('popup'),
-    page.getByRole('link', { name: 'dev', exact: true }).click(),
+    // The seeded project is called dev too, in the sidebar.
+    page.getByRole('link', { name: 'dev', exact: true, description: 'API reference' }).click(),
   ])
   await expect(docs).toHaveURL(/\/api\/docs$/)
   await expect(docs.getByRole('heading', { name: /Twillingate API/ })).toBeVisible()
