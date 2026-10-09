@@ -1,18 +1,8 @@
 import { DndContext, closestCenter } from '@dnd-kit/core'
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
-import {
-  ArchiveIcon,
-  LayoutDashboardIcon,
-  LayoutGridIcon,
-  LogOutIcon,
-  Share2Icon,
-  ChartColumnIcon,
-  ChevronRightIcon,
-  ShapesIcon,
-} from 'lucide-react'
+import { ArchiveIcon, ChartColumnIcon, LayoutDashboardIcon, LogOutIcon, Share2Icon } from 'lucide-react'
 import { useState } from 'react'
 import { Link, useLocation } from 'react-router'
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import {
   Sidebar,
   SidebarContent,
@@ -34,6 +24,7 @@ import type { DashboardInfo } from '@/lib/api'
 import { currentAuthState, logout } from '@/lib/auth'
 import GroupNameField from './GroupNameField'
 import IcebergLogo from './IcebergLogo'
+import SidebarGallery from './SidebarGallery'
 import SidebarGroupMenu from './SidebarGroupMenu'
 import SidebarProjects from './SidebarProjects'
 import SortableGroupItem from './SortableGroupItem'
@@ -50,10 +41,10 @@ interface Props {
  * Projects (a link to the list, opening to every live project, see
  * `SidebarProjects`) first, then "Dashboards": one entry per
  * dashboard group in the sidebar (`sidebar`, tabs D20), the system groups first with a "Built-in"
- * badge, then the user's. Then Gallery (the components playground and the
- * Dashboards gallery of templates, D17), closed until opened or on a gallery page. At
- * the bottom, Archive (every user group with an archived dashboard, D17a),
- * then Shares (not in reporting dev), above Log out. Each entry links to its group's first live
+ * badge, then the user's. At the bottom, Shares (not in reporting dev),
+ * Gallery (a menu of the components playground and the Dashboards gallery
+ * of templates, D17, see `SidebarGallery`), then Archive (every user group
+ * with an archived dashboard, D17a), above Log out. Each entry links to its group's first live
  * member and is named by its group's name (`groupName`); it is active on any live member of
  * the group. The user's entries drag to a new order (D14, D15); built-in
  * ones do not, and since the sortable list holds only user groups,
@@ -65,10 +56,6 @@ interface Props {
 export default function AppSidebar({ dashboards, currentId, readOnly = false }: Props) {
   const { isMobile, setOpenMobile, state } = useSidebar()
   const { pathname } = useLocation()
-  // Gallery starts closed, and open on a gallery page so its entry shows.
-  // With the sidebar down to icons its heading is hidden, so it stays open.
-  const [galleryOpen, setGalleryOpen] = useState(() => pathname.startsWith('/gallery'))
-  const galleryShown = galleryOpen || (state === 'collapsed' && !isMobile)
   const groups = liveGroups(dashboards.filter((d) => d.sidebar))
   const system = groups.filter((g) => g.owner === 'system')
   const serverYours = groups.filter((g) => g.owner === 'user')
@@ -210,59 +197,9 @@ export default function AppSidebar({ dashboards, currentId, readOnly = false }: 
             )}
           </SidebarGroupContent>
         </SidebarGroup>
-        <Collapsible open={galleryShown} onOpenChange={setGalleryOpen} className="group/gallery">
-          <SidebarGroup>
-            <SidebarGroupLabel asChild className="text-sidebar-foreground/60">
-              <CollapsibleTrigger>
-                Gallery
-                <ChevronRightIcon className="ml-auto transition-transform group-data-[state=open]/gallery:rotate-90" />
-              </CollapsibleTrigger>
-            </SidebarGroupLabel>
-            <CollapsibleContent>
-              <SidebarGroupContent>
-                <SidebarMenu>
-                  <SidebarMenuItem>
-                    <SidebarMenuButton
-                      asChild
-                      isActive={pathname.startsWith('/gallery/components')}
-                      tooltip="Components"
-                      className={item}
-                    >
-                      <Link to="/gallery/components" onClick={close}>
-                        <ShapesIcon />
-                        <span>Components</span>
-                      </Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                  <SidebarMenuItem>
-                    <SidebarMenuButton
-                      asChild
-                      isActive={pathname.startsWith('/gallery/dashboards')}
-                      tooltip="Dashboards"
-                      className={item}
-                    >
-                      <Link to="/gallery/dashboards" onClick={close}>
-                        <LayoutGridIcon />
-                        <span>Dashboards</span>
-                      </Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                </SidebarMenu>
-              </SidebarGroupContent>
-            </CollapsibleContent>
-          </SidebarGroup>
-        </Collapsible>
       </SidebarContent>
       <SidebarFooter>
         <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton asChild isActive={pathname === '/archive'} tooltip="Archive" className={item}>
-              <Link to="/archive" onClick={close}>
-                <ArchiveIcon />
-                <span>Archive</span>
-              </Link>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
           {!readOnly && (
             <SidebarMenuItem>
               <SidebarMenuButton asChild isActive={pathname.startsWith('/shares')} tooltip="Shares" className={item}>
@@ -273,6 +210,15 @@ export default function AppSidebar({ dashboards, currentId, readOnly = false }: 
               </SidebarMenuButton>
             </SidebarMenuItem>
           )}
+          <SidebarGallery onNavigate={close} className={item} />
+          <SidebarMenuItem>
+            <SidebarMenuButton asChild isActive={pathname === '/archive'} tooltip="Archive" className={item}>
+              <Link to="/archive" onClick={close}>
+                <ArchiveIcon />
+                <span>Archive</span>
+              </Link>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
           {currentAuthState().kind !== 'none' && (
             <SidebarMenuItem>
               <SidebarMenuButton tooltip="Log out" onClick={logOut}>

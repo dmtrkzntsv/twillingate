@@ -909,7 +909,7 @@ then gives `widget_id`, `dashboard_id` and `dashboard_title` as `null`.
 Archiving the project leaves its shares up too. Deleting the project, with
 `project delete` or by the purge, deletes its shares, live and archived.
 
-**The Shares page** (`/app/shares`, at the bottom of the sidebar under Archive; not in
+**The Shares page** (`/app/shares`, at the bottom of the sidebar above Gallery and Archive; not in
 the read-only preview of `reporting dev`) lists live shares, newest first: the 1x image,
 linking to the share's page; the title, with the dashboard and project it
 came from, linking to the dashboard (plain text once the widget is gone);

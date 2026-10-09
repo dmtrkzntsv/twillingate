@@ -52,63 +52,62 @@ describe('AppSidebar log out', () => {
 })
 
 describe('AppSidebar gallery', () => {
-  it('links to the components gallery, active on a gallery page', () => {
+  function renderAt(path: string, defaultOpen = true) {
     renderWithProviders(
-      <MemoryRouter initialEntries={['/gallery/components']}>
-        <SidebarProvider>
+      <MemoryRouter initialEntries={[path]}>
+        <SidebarProvider defaultOpen={defaultOpen}>
           <AppSidebar dashboards={[]} currentId={0} />
         </SidebarProvider>
       </MemoryRouter>
     )
-    const link = screen.getByRole('link', { name: 'Components' })
-    expect(link).toHaveAttribute('href', '/gallery/components')
-    expect(link).toHaveAttribute('data-active', 'true')
-    expect(screen.getByText('Gallery')).toBeInTheDocument()
+  }
+
+  it('is one entry in the footer, its menu closed until opened, active on a gallery page', () => {
+    renderAt('/gallery/components')
+    const footer = document.querySelector('[data-sidebar="footer"]') as HTMLElement
+    const entry = within(footer).getByRole('button', { name: 'Gallery' })
+    expect(entry).toHaveAttribute('aria-expanded', 'false')
+    expect(entry).toHaveAttribute('data-active', 'true')
+    expect(screen.queryByRole('menuitem', { name: 'Components' })).not.toBeInTheDocument()
   })
 
-  it('is closed elsewhere, and opens to links that are not active there', async () => {
-    renderWithProviders(
-      <MemoryRouter initialEntries={['/dashboards/1']}>
-        <SidebarProvider>
-          <AppSidebar dashboards={[]} currentId={1} />
-        </SidebarProvider>
-      </MemoryRouter>
-    )
-    const toggle = screen.getByRole('button', { name: 'Gallery' })
-    expect(toggle).toHaveAttribute('aria-expanded', 'false')
-    expect(screen.queryByRole('link', { name: 'Components' })).not.toBeInTheDocument()
-    await userEvent.click(toggle)
-    expect(screen.getByRole('link', { name: 'Components' })).not.toHaveAttribute('data-active', 'true')
+  it('is not active elsewhere', () => {
+    renderAt('/dashboards/1')
+    expect(screen.getByRole('button', { name: 'Gallery' })).toHaveAttribute('data-active', 'false')
   })
 
-  it('stays open with the sidebar down to icons, where its heading is hidden', () => {
-    renderWithProviders(
-      <MemoryRouter initialEntries={['/dashboards/1']}>
-        <SidebarProvider defaultOpen={false}>
-          <AppSidebar dashboards={[]} currentId={1} />
-        </SidebarProvider>
-      </MemoryRouter>
-    )
-    expect(screen.getByRole('link', { name: 'Components' })).toBeInTheDocument()
+  it('opens on a click to the components and the dashboards galleries, marking the one shown (D17)', async () => {
+    renderAt('/gallery/dashboards')
+    await userEvent.click(screen.getByRole('button', { name: 'Gallery' }))
+    const components = screen.getByRole('menuitem', { name: 'Components' })
+    const dashboards = screen.getByRole('menuitem', { name: 'Dashboards' })
+    expect(components).toHaveAttribute('href', '/gallery/components')
+    expect(dashboards).toHaveAttribute('href', '/gallery/dashboards')
+    expect(dashboards).toHaveAttribute('aria-current', 'page')
+    expect(components).not.toHaveAttribute('aria-current')
   })
 
-  it('links to the dashboards gallery, labelled "Dashboards", active there and not on Components (D17)', () => {
-    renderWithProviders(
-      <MemoryRouter initialEntries={['/gallery/dashboards']}>
-        <SidebarProvider>
-          <AppSidebar dashboards={[]} currentId={0} />
-        </SidebarProvider>
-      </MemoryRouter>
-    )
-    const link = screen.getByRole('link', { name: 'Dashboards' })
-    expect(link).toHaveAttribute('href', '/gallery/dashboards')
-    expect(link).toHaveAttribute('data-active', 'true')
-    expect(screen.getByRole('link', { name: 'Components' })).not.toHaveAttribute('data-active', 'true')
+  it('opens when the mouse hovers it and closes once the mouse has left', async () => {
+    renderAt('/dashboards/1')
+    const entry = screen.getByRole('button', { name: 'Gallery' })
+    await userEvent.hover(entry)
+    expect(await screen.findByRole('menuitem', { name: 'Components' })).toBeInTheDocument()
+    // A click after the hover keeps it open rather than toggling it shut.
+    await userEvent.click(entry)
+    expect(screen.getByRole('menuitem', { name: 'Components' })).toBeInTheDocument()
+    await userEvent.unhover(entry)
+    await waitFor(() => expect(screen.queryByRole('menuitem', { name: 'Components' })).not.toBeInTheDocument())
+  })
+
+  it('still opens with the sidebar down to icons', async () => {
+    renderAt('/dashboards/1', false)
+    await userEvent.click(screen.getByRole('button', { name: 'Gallery' }))
+    expect(screen.getByRole('menuitem', { name: 'Dashboards' })).toBeInTheDocument()
   })
 })
 
 describe('AppSidebar archive', () => {
-  it('links to the archive, between Yours and Gallery, shown with nothing archived', () => {
+  it('links to the archive, shown with nothing archived', () => {
     renderWithProviders(
       <MemoryRouter initialEntries={['/']}>
         <SidebarProvider>
@@ -257,6 +256,12 @@ describe('Projects group', () => {
     expect(screen.queryByRole('link', { name: 'gone' })).not.toBeInTheDocument()
   })
 
+  it('makes each project sortable, its link the handle', async () => {
+    renderSidebar()
+    expect(await screen.findByRole('link', { name: 'site-1' })).toHaveAttribute('aria-roledescription', 'sortable')
+    expect(screen.getByRole('link', { name: 'Projects' })).not.toHaveAttribute('aria-roledescription')
+  })
+
   it('closes, stays closed on the next page, and asks for no projects while closed', async () => {
     const first = renderAt('/')
     await screen.findByRole('list', { name: 'Projects' })
@@ -315,7 +320,7 @@ describe('Projects group', () => {
 })
 
 describe('Shares link', () => {
-  it('sits in the footer under Archive and is active on /shares', () => {
+  it('sits in the footer above Archive and is active on /shares', () => {
     renderWithProviders(
       <MemoryRouter initialEntries={['/shares']}>
         <SidebarProvider>
@@ -328,7 +333,7 @@ describe('Shares link', () => {
     expect(shares).toHaveAttribute('data-active', 'true')
     const footer = document.querySelector('[data-sidebar="footer"]') as HTMLElement
     expect(footer).toContainElement(shares)
-    expect(within(footer).getByRole('link', { name: 'Archive' }).compareDocumentPosition(shares) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(shares.compareDocumentPosition(within(footer).getByRole('link', { name: 'Archive' })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
   it('is absent in dev mode, as Projects is', () => {
@@ -384,15 +389,19 @@ describe('Dashboards group', () => {
 })
 
 describe('AppSidebar footer', () => {
-  it('holds Archive, then Shares, above Log out', () => {
+  it('holds Shares, Gallery, then Archive, above Log out', () => {
     localStorage.setItem('twillingate.token', 'pasted')
     renderSidebar([{ dashboard_id: 1, title: 'Views', owner: 'system', group_id: 1, widgets: 1, sidebar: true, project_tab: false }])
     const footer = document.querySelector('[data-sidebar="footer"]') as HTMLElement
-    const archive = within(footer).getByRole('link', { name: 'Archive' })
-    const shares = within(footer).getByRole('link', { name: 'Shares' })
-    const logOut = within(footer).getByRole('button', { name: 'Log out' })
-    expect(archive.compareDocumentPosition(shares) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(shares.compareDocumentPosition(logOut) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    const entries = [
+      within(footer).getByRole('link', { name: 'Shares' }),
+      within(footer).getByRole('button', { name: 'Gallery' }),
+      within(footer).getByRole('link', { name: 'Archive' }),
+      within(footer).getByRole('button', { name: 'Log out' }),
+    ]
+    for (let i = 1; i < entries.length; i++) {
+      expect(entries[i - 1].compareDocumentPosition(entries[i]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    }
   })
 
   it('keeps Archive without a login to forget', () => {

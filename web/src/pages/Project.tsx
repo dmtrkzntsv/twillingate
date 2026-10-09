@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { LayoutGridIcon } from 'lucide-react'
 import { Link, Navigate, useLocation, useParams, useSearchParams } from 'react-router'
@@ -13,11 +14,16 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useProjectActions } from '@/hooks/use-project-actions'
 import { useProjectTabActions } from '@/hooks/use-project-tab-actions'
+import { useStuck } from '@/hooks/use-stuck'
 import FormPage from '@/components/forms/FormPage'
 import FormsTab from '@/components/forms/FormsTab'
 import { readLastTab } from '@/lib/last-tab'
 import { FORMS_ID, landingPath, rangeParams, SETTINGS_ID, tabPath } from '@/lib/project-tabs'
 import { dashboardsQuery, projectActivityQuery, projectsQuery, projectTabsQuery } from '@/lib/queries'
+import { cn } from '@/lib/utils'
+
+/** The top bar's height (h-12), where the tab row pins. */
+const TOP_BAR = 48
 
 /** `/projects/:id`: the last tab used here, else the first, else Settings (project landing D3). */
 export function ProjectIndex() {
@@ -59,6 +65,9 @@ export default function Project({ tab }: { tab?: 'forms' } = {}) {
   const actions = useProjectActions()
   const tabActions = useProjectTabActions()
   const project = valid ? projectsData?.projects?.find((p) => p.project_id === id) : undefined
+  // The tab row's backdrop shows only while it is pinned, so at rest the sky wash shows through.
+  const [tabBar, setTabBar] = useState<HTMLDivElement | null>(null)
+  const stuck = useStuck(tabBar, TOP_BAR)
 
   return (
     <AppShell dashboards={dash?.dashboards ?? []} currentId={0} readOnly={dev}>
@@ -81,11 +90,21 @@ export default function Project({ tab }: { tab?: 'forms' } = {}) {
           )
         ) : (
           <>
-            <div className="flex min-w-0 flex-col gap-3">
-              <header className="flex min-w-0 items-center gap-2">
-                <ProjectName key={project.name} name={project.name} pending={actions.pending} onRename={(name) => actions.update(id, { name })} />
-                {project.archived && <Badge variant="outline">Archived</Badge>}
-              </header>
+            <header className="flex min-w-0 items-center gap-2">
+              <ProjectName key={project.name} name={project.name} pending={actions.pending} onRename={(name) => actions.update(id, { name })} />
+              {project.archived && <Badge variant="outline">Archived</Badge>}
+            </header>
+            {/* Pinned under the top bar (h-12) on wide screens, and as wide as
+                the page's padding, so the cards scroll out of sight beneath it.
+                A child of the whole page rather than of the header block, which
+                would let it go with the header. */}
+            <div
+              ref={setTabBar}
+              className={cn(
+                '-mx-3 -mt-3 px-3 sm:sticky sm:top-12 sm:z-10 sm:-mx-4 sm:px-4 lg:-mx-6 lg:px-6',
+                stuck && 'sm:bg-background/55 sm:backdrop-blur-md'
+              )}
+            >
               <ProjectTabBar
                 projectId={id}
                 currentId={dashId}
