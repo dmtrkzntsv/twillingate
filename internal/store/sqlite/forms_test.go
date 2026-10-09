@@ -1018,3 +1018,62 @@ func TestGetSubmission(t *testing.T) {
 		t.Fatalf("archived: err = %v, want ErrNotFound", err)
 	}
 }
+
+// submitAt writes a submission to "contact" on project 1 received at at.
+func submitAt(t *testing.T, db *DB, id string, at time.Time) {
+	t.Helper()
+	n := newSub(id, map[string]string{"k": "v"})
+	n.Submission.ReceivedAt, n.Event.TS, n.Event.ReceivedAt = at, at, at
+	n.DraftUntil = at.Add(7 * 24 * time.Hour)
+	mustWrite(t, db, n)
+}
+
+func TestListFormsNewSubmissions(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	t0 := time.Date(2026, 10, 8, 10, 0, 0, 0, time.UTC)
+	submitAt(t, db, "s1", t0)
+	submitAt(t, db, "s2", t0.Add(time.Minute))
+	fs, err := db.ListForms(ctx, 1, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fs[0].SeenAt != nil || fs[0].NewSubmissions != 2 {
+		t.Fatalf("unseen form: seen %v new %d, want nil 2", fs[0].SeenAt, fs[0].NewSubmissions)
+	}
+	if err := db.MarkFormSeen(ctx, 1, "contact", t0); err != nil {
+		t.Fatal(err)
+	}
+	fs, _ = db.ListForms(ctx, 1, false)
+	if fs[0].NewSubmissions != 1 || fs[0].SeenAt == nil || !fs[0].SeenAt.Equal(t0) {
+		t.Fatalf("after seen at t0: seen %v new %d, want t0 1", fs[0].SeenAt, fs[0].NewSubmissions)
+	}
+}
+
+func TestMarkFormSeenNeverMovesBack(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	t0 := time.Date(2026, 10, 8, 10, 0, 0, 0, time.UTC)
+	submitAt(t, db, "s1", t0)
+	if err := db.MarkFormSeen(ctx, 1, "contact", t0.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.MarkFormSeen(ctx, 1, "contact", t0); err != nil {
+		t.Fatal(err)
+	}
+	f, err := db.GetForm(ctx, 1, "contact")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.SeenAt == nil || !f.SeenAt.Equal(t0.Add(time.Hour)) {
+		t.Fatalf("seen_at = %v, want t0+1h", f.SeenAt)
+	}
+}
+
+func TestMarkFormSeenUnknownForm(t *testing.T) {
+	db := newTestDB(t)
+	err := db.MarkFormSeen(context.Background(), 1, "nope", time.Now())
+	if !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("err = %v, want ErrNotFound", err)
+	}
+}

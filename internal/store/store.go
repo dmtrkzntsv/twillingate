@@ -363,6 +363,9 @@ type Store interface {
 	// GetForm reads one form (Submissions is not filled); ErrNotFound for
 	// an unknown (project, name).
 	GetForm(ctx context.Context, projectID int64, name string) (Form, error)
+	// MarkFormSeen moves a form's seen_at forward to until (never back);
+	// ErrNotFound for an unknown form. Not audited.
+	MarkFormSeen(ctx context.Context, projectID int64, name string, until time.Time) error
 	// ApproveForm turns a draft into an approved form keeping expected,
 	// stamped now, and clears draft_until. ErrConflict when it is already
 	// approved, ErrNotFound when unknown.

@@ -16,16 +16,16 @@ import (
 
 // formColumns is the select list scanForm reads, in order.
 const formColumns = `project_id, name, status, purpose, return_url, fields, expected_fields,
-	created_at, draft_until, approved_at, closes_at, last_submitted_at, archived_at`
+	created_at, draft_until, approved_at, closes_at, last_submitted_at, archived_at, seen_at`
 
 // scanForm reads one forms row selected with formColumns; extra receives
 // any columns selected after them.
 func scanForm(row interface{ Scan(...any) error }, extra ...any) (store.Form, error) {
 	var f store.Form
 	var fields string
-	var expected, created, draft, approved, closes, last, archived sql.NullString
+	var expected, created, draft, approved, closes, last, archived, seen sql.NullString
 	dest := append([]any{&f.ProjectID, &f.Name, &f.Status, &f.Purpose, &f.ReturnURL, &fields, &expected,
-		&created, &draft, &approved, &closes, &last, &archived}, extra...)
+		&created, &draft, &approved, &closes, &last, &archived, &seen}, extra...)
 	if err := row.Scan(dest...); err != nil {
 		return store.Form{}, err
 	}
@@ -45,7 +45,7 @@ func scanForm(row interface{ Scan(...any) error }, extra ...any) (store.Form, er
 		src sql.NullString
 		dst **time.Time
 	}{{draft, &f.DraftUntil}, {approved, &f.ApprovedAt}, {closes, &f.ClosesAt},
-		{last, &f.LastSubmittedAt}, {archived, &f.ArchivedAt}} {
+		{last, &f.LastSubmittedAt}, {archived, &f.ArchivedAt}, {seen, &f.SeenAt}} {
 		if !t.src.Valid {
 			continue
 		}
@@ -288,7 +288,9 @@ func (d *DB) ListForms(ctx context.Context, projectID int64, archived bool) ([]s
 		where = `f.archived_at IS NOT NULL`
 	}
 	rows, err := d.db.QueryContext(ctx, `SELECT `+formColumns+`,
-		(SELECT COUNT(*) FROM submissions s WHERE s.project_id=f.project_id AND s.form=f.name)
+		(SELECT COUNT(*) FROM submissions s WHERE s.project_id=f.project_id AND s.form=f.name),
+		(SELECT COUNT(*) FROM submissions s WHERE s.project_id=f.project_id AND s.form=f.name
+		   AND s.received_at > COALESCE(f.seen_at, ''))
 		FROM forms f WHERE f.project_id=? AND `+where+`
 		ORDER BY f.status='draft' DESC, f.name`, projectID)
 	if err != nil {
@@ -297,15 +299,32 @@ func (d *DB) ListForms(ctx context.Context, projectID int64, archived bool) ([]s
 	defer rows.Close()
 	var out []store.Form
 	for rows.Next() {
-		var n int
-		f, err := scanForm(rows, &n)
+		var n, fresh int
+		f, err := scanForm(rows, &n, &fresh)
 		if err != nil {
 			return nil, err
 		}
-		f.Submissions = n
+		f.Submissions, f.NewSubmissions = n, fresh
 		out = append(out, f)
 	}
 	return out, rows.Err()
+}
+
+// MarkFormSeen records that the console has read a form's submissions up
+// to until (spec 2026-10-08 D5). seen_at only moves forward, so a page
+// opened earlier can't unread what a later one read. Console state: not
+// audited.
+func (d *DB) MarkFormSeen(ctx context.Context, projectID int64, name string, until time.Time) error {
+	res, err := d.db.ExecContext(ctx,
+		`UPDATE forms SET seen_at = MAX(COALESCE(seen_at, ''), ?) WHERE project_id=? AND name=?`,
+		until.UTC().Format(tsFormat), projectID, name)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return unknownForm(projectID, name)
+	}
+	return nil
 }
 
 // GetForm reads one form, active or archived.

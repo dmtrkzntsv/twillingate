@@ -634,3 +634,13 @@ Events written before the upgrade keep the environment they had (none
 beyond the page and country); new ones take it from the visit. Tables and
 CSV exports lose the `Page`, `Referrer` and `UTM` columns. Rollback: an
 older binary fails on the missing columns; restore the snapshot.
+
+### Upgrading to project landing (migration 037)
+
+No pre-checks. Every existing form is marked seen as of the upgrade, so
+the new Forms badge starts at 0 and counts submissions received after it.
+Each project's tab order is unchanged on screen; migration 037 rewrites
+the tab keys into one order for all of a project's tabs, so built-in tabs
+can now be moved like your own. A built-in a later release adds goes last
+on every project. Rollback: an older binary ignores `forms.seen_at`;
+restore the snapshot to get the old tab keys back.
