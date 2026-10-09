@@ -128,3 +128,20 @@ test('a project opens on Setup with the built-in tabs beside it; tabs are remove
   await expect(tabs.getByRole('tab', { name: 'Setup', exact: true })).toBeVisible()
   await expect(tabs.getByRole('tab', { name: title, exact: true })).toHaveCount(0)
 })
+
+test("a project's tab row stays under the top bar while its page scrolls", async ({ page }) => {
+  await login(page)
+  await page.getByRole('article', { name: 'dev' }).getByRole('link', { name: 'dev' }).click()
+  const tabs = page.getByRole('tablist', { name: 'Tabs' })
+  await tabs.getByRole('tab', { name: 'Views', exact: true }).click()
+  await expect(page.getByRole('heading', { level: 1, name: 'Views', exact: true })).toBeVisible()
+
+  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight))
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(300)
+  const bar = (await page.locator('header').first().boundingBox())!
+  // The tab's title has gone up with the page; the tab row has not.
+  await expect.poll(async () => (await page.getByRole('heading', { level: 1, name: 'Views', exact: true }).boundingBox())!.y).toBeLessThan(0)
+  const row = (await tabs.boundingBox())!
+  expect(row.y).toBeGreaterThanOrEqual(bar.y + bar.height - 1)
+  expect(row.y + row.height).toBeLessThan(bar.y + bar.height + 48)
+})
