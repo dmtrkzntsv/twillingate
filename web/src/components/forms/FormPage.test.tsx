@@ -30,6 +30,40 @@ function renderPage(name = 'contact') {
 }
 
 describe('FormPage', () => {
+  it('marks a form with new submissions seen up to its last one, once', async () => {
+    const last = '2026-10-05T10:00:00Z'
+    vi.spyOn(endpoints, 'forms').mockResolvedValue({
+      action_base: '',
+      forms: [form('contact', { submissions: 2, new_submissions: 2, last_submitted_at: last })],
+    })
+    const seen = vi.spyOn(endpoints, 'markFormSeen').mockResolvedValue({ status: 'seen' })
+    const { client } = renderPage()
+    await screen.findByRole('table')
+    await waitFor(() => expect(seen).toHaveBeenCalledWith(4, 'contact', last))
+    // The refetch that follows still says 2 new (a stub): the same `until` is not sent again.
+    await waitFor(() => expect(client.isFetching({ queryKey: ['forms', 4] })).toBe(0))
+    expect(seen).toHaveBeenCalledTimes(1)
+  })
+
+  it('refreshes the forms and the activity counts after marking seen', async () => {
+    vi.spyOn(endpoints, 'forms').mockResolvedValue({
+      action_base: '',
+      forms: [form('contact', { submissions: 2, new_submissions: 2, last_submitted_at: '2026-10-05T10:00:00Z' })],
+    })
+    vi.spyOn(endpoints, 'markFormSeen').mockResolvedValue({ status: 'seen' })
+    const { client } = renderPage()
+    const invalidate = vi.spyOn(client, 'invalidateQueries')
+    await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ['project-activity'] }))
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['forms', 4] })
+  })
+
+  it('marks nothing seen when no submission is new', async () => {
+    const seen = vi.spyOn(endpoints, 'markFormSeen').mockResolvedValue({ status: 'seen' })
+    renderPage()
+    await screen.findByRole('table')
+    expect(seen).not.toHaveBeenCalled()
+  })
+
   it('links back to the forms, keeping the range', async () => {
     renderPage()
     expect(await screen.findByRole('link', { name: /Forms/ })).toHaveAttribute('href', '/projects/4/forms?range=7d')

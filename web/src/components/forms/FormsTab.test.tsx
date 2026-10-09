@@ -56,6 +56,17 @@ describe('FormsTab', () => {
     expect(within(rows[4]).getByText('Closed')).toBeInTheDocument()
   })
 
+  it('shows an N new chip on a form with unread submissions, and none without', async () => {
+    vi.spyOn(endpoints, 'forms').mockResolvedValue({
+      action_base: '',
+      forms: [form('contact', { submissions: 12, new_submissions: 1200 }), form('event', { submissions: 2 })],
+    })
+    renderTab()
+    const rows = within(await screen.findByRole('list', { name: 'Forms' })).getAllByRole('listitem')
+    expect(within(rows[0]).getByText('1,200 new')).toBeInTheDocument()
+    expect(within(rows[1]).queryByText(/new$/)).not.toBeInTheDocument()
+  })
+
   it("opens a form's page from its row, keeping the range", async () => {
     vi.spyOn(endpoints, 'forms').mockResolvedValue({ action_base: '', forms: [form('contact')] })
     renderTab()

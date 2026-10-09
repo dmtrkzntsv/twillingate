@@ -16,6 +16,7 @@ import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import Table from '@/components/widgets/table'
 import { useFormActions, type FormActions } from '@/hooks/use-form-actions'
+import { useMarkFormSeen } from '@/hooks/use-mark-seen'
 import { useStoredState } from '@/hooks/use-stored-state'
 import { ApiError, endpoints, type Form, type Project, type SubmissionsPage, type SubmissionsQuery } from '@/lib/api'
 import { downloadBlob } from '@/lib/capture'
@@ -300,6 +301,15 @@ export default function FormPage({ project, name }: { project: Project; name: st
   const actions = useFormActions()
   const [approving, setApproving] = useState(false)
   const form = q.data?.forms.find((f) => f.name === name)
+
+  // Opening a form reads it: up to the last submission the list showed, so
+  // one that arrives meanwhile stays new. Once per value, not per refetch.
+  const markSeen = useMarkFormSeen()
+  const until = form?.last_submitted_at
+  const unseen = form !== undefined && form.new_submissions > 0
+  useEffect(() => {
+    if (until && unseen) markSeen(id, name, until)
+  }, [id, name, until, unseen, markSeen])
 
   return (
     <div className="flex min-w-0 flex-col gap-4">

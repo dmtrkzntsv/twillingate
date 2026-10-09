@@ -13,7 +13,7 @@ interface Props {
   /** How many cards are past their `refresh_after`. */
   refreshable?: number
   refreshing?: boolean
-  /** Absent on a page with no cards to refresh (a project's Setup tab): the quiet line stays, empty, so the title sits as on a dashboard. */
+  /** Absent on a page with no cards to refresh (a project's Settings page): the quiet line stays, empty, so the title sits as on a dashboard. */
   onRefresh?: () => void
   /** The tab's own "…" menu (`TabMenu`), beside the title; the group's sits in the top bar (D11). */
   menu?: ReactNode

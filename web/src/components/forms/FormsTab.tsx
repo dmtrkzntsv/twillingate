@@ -84,6 +84,11 @@ function FormRow({ form, projectId, search, pending, onApprove, onStop, onArchiv
         <span className="text-xs text-muted-foreground">
           {count}
           {last}
+          {form.new_submissions > 0 && (
+            <Badge variant="secondary" className="ml-2">
+              {form.new_submissions.toLocaleString('en-US')} new
+            </Badge>
+          )}
         </span>
       </Link>
       <DropdownMenu>

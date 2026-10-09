@@ -119,7 +119,7 @@ export interface DashboardDetail extends Omit<DashboardInfo, 'widgets'> {
   tabs: DashboardTab[]
 }
 
-/** One tab of a project's page after Setup. */
+/** One tab of a project's page (a dashboard shown with the project pinned). */
 export interface ProjectTab {
   dashboard_id: number
   title: string
@@ -381,8 +381,19 @@ export interface Form {
   closes_at?: string
   submissions: number
   last_submitted_at?: string
+  /** Submissions that arrived after `seen_at` (project landing D5). */
+  new_submissions: number
+  /** The time up to which the console marked this form read; absent until it has. */
+  seen_at?: string
   archived: boolean
   archived_at?: string
+}
+
+/** project_activity's row (project landing D6): the newest day with data and the unread submissions. */
+export interface ProjectActivity {
+  project_id: number
+  last_event_day: string | null
+  new_submissions: number
 }
 
 /** list_forms' answer: the forms, and where a plain HTML form posts. */
@@ -521,7 +532,7 @@ export const endpoints = {
     }),
   /** Puts a built-in dashboard's whole group in or out of the sidebar; a built-in is never archived, and your own are always in it (project tabs D5). */
   setSidebar: (id: number, sidebar: boolean) => api<DashboardInfo>(`/api/dashboards/${id}`, json('PATCH', { sidebar })),
-  /** A project page's tabs after Setup, in order. */
+  /** A project page's tabs, in order. */
   projectTabs: (projectId: number) => api<{ tabs: ProjectTab[] }>(`/api/projects/${projectId}/tabs`),
   /** Shows a dashboard as a tab of the project; `after` places one of the user's own, omitted puts it last. */
   addProjectTab: (projectId: number, body: { dashboard_id: number; after?: number }) =>
@@ -566,6 +577,9 @@ export const endpoints = {
     api<{ status: string }>(`${formPath(projectId, name)}/approve`, json('POST', { expected_fields })),
   updateForm: (projectId: number, name: string, body: FormUpdate) =>
     api<{ status: string }>(formPath(projectId, name), json('PATCH', body)),
+  projectActivity: () => api<{ projects: ProjectActivity[] }>('/api/project-activity'),
+  markFormSeen: (projectId: number, name: string, until: string) =>
+    api<{ status: string }>(`${formPath(projectId, name)}/seen`, json('POST', { until })),
   archiveForm: (projectId: number, name: string) => api<{ status: string }>(`${formPath(projectId, name)}/archive`, json('POST', {})),
   restoreForm: (projectId: number, name: string) => api<{ status: string }>(`${formPath(projectId, name)}/restore`, json('POST', {})),
   submissions: (projectId: number, name: string, q: SubmissionsQuery) =>

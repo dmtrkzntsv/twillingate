@@ -46,6 +46,12 @@ beforeEach(() => {
   })
   vi.spyOn(endpoints, 'capUsage').mockResolvedValue({ project_id: 4, from: 'a', to: 'b', dimensions: [] })
   vi.spyOn(endpoints, 'projectTabs').mockResolvedValue({ tabs })
+  vi.spyOn(endpoints, 'projectActivity').mockResolvedValue({
+    projects: [
+      { project_id: 4, last_event_day: '2026-10-08', new_submissions: 0 },
+      { project_id: 7, last_event_day: '2026-10-08', new_submissions: 3 },
+    ],
+  })
   vi.spyOn(endpoints, 'dashboard').mockImplementation(async (id) => {
     const d = { ...details, 20: mine, 1001: spare }[id]
     if (!d) throw new ApiError(404, 'no such dashboard', 'not_found')
@@ -341,29 +347,65 @@ describe('Project tabs', () => {
     expect(location()).toBe('/projects/7/settings?range=30d')
   })
 
-  it('reads Settings, Forms, the built-ins, your own, then Add tab', async () => {
-    renderAt('/projects/7/settings')
+  it('reads the built-ins and your own as tabs, then Add tab, with Forms and Settings as buttons after them', async () => {
+    renderAt('/projects/7/dashboards/1')
     await screen.findByRole('tab', { name: 'Mine' })
     const row = screen.getAllByRole('tab')
-    expect(row.map((t) => t.textContent)).toEqual(['Settings', 'Forms', 'Views', 'Product', 'Mine'])
+    expect(row.map((t) => t.textContent)).toEqual(['Views', 'Product', 'Mine'])
     const add = screen.getByRole('button', { name: 'Add tab' })
     expect(row.at(-1)!.compareDocumentPosition(add) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    const forms = await screen.findByRole('link', { name: 'Forms, 3 new' })
+    expect(add.compareDocumentPosition(forms) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(forms.compareDocumentPosition(screen.getByRole('link', { name: 'Settings' })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
-  it('opens the Forms tab at /forms, keeping the range, and a form inside it', async () => {
+  it('titles the Settings page Settings', async () => {
+    renderAt('/projects/7/settings')
+    expect(await screen.findByRole('heading', { name: 'Settings', level: 1 })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Settings' })).toHaveAttribute('aria-current', 'page')
+  })
+
+  it('opens the Forms page at /forms, keeping the range, and a form inside it', async () => {
     const user = userEvent.setup()
     vi.spyOn(endpoints, 'forms').mockResolvedValue({ action_base: '', forms: [form('contact')] })
     vi.spyOn(endpoints, 'submissions').mockResolvedValue(contactPage)
     renderAt('/projects/7/settings?range=30d')
-    await user.click(await screen.findByRole('tab', { name: 'Forms' }))
+    await user.click(await screen.findByRole('link', { name: /^Forms/ }))
     expect(location()).toBe('/projects/7/forms?range=30d')
     expect(await screen.findByRole('list', { name: 'Forms' })).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: 'Forms' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('link', { name: /^Forms/ })).toHaveAttribute('aria-current', 'page')
+    expect(screen.queryByRole('tab', { selected: true })).toBeNull()
     await user.click(screen.getByRole('link', { name: /contact/ }))
     expect(location()).toBe('/projects/7/forms/contact?range=30d')
     expect(await screen.findByRole('table')).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: 'Forms' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getAllByRole('link', { name: /^Forms/ }).some((l) => l.getAttribute('aria-current') === 'page')).toBe(true)
     expect(endpoints.forms).toHaveBeenCalledWith(7, false)
+  })
+
+  it('says a project with no events yet has none, and links to its Settings', async () => {
+    vi.mocked(endpoints.projectActivity).mockResolvedValue({ projects: [{ project_id: 7, last_event_day: null, new_submissions: 0 }] })
+    renderAt('/projects/7/dashboards/1?range=30d')
+    const notice = (await screen.findByText('No events received yet')).closest('[role=status]') as HTMLElement
+    expect(notice).not.toBeNull()
+    expect(within(notice).getByRole('link', { name: 'Set up this project' })).toHaveAttribute('href', '/projects/7/settings?range=30d')
+  })
+
+  it('shows no notice on Settings itself, nor for a project that has data', async () => {
+    vi.mocked(endpoints.projectActivity).mockResolvedValue({
+      projects: [
+        { project_id: 7, last_event_day: null, new_submissions: 0 },
+        { project_id: 4, last_event_day: '2026-10-08', new_submissions: 0 },
+      ],
+    })
+    const { unmount } = renderAt('/projects/7/settings')
+    await screen.findByRole('region', { name: 'Usage' })
+    await vi.waitFor(() => expect(endpoints.projectActivity).toHaveBeenCalled())
+    expect(screen.queryByText('No events received yet')).not.toBeInTheDocument()
+    unmount()
+    renderAt('/projects/4/dashboards/1')
+    await screen.findByRole('heading', { name: 'Views', level: 1 })
+    await vi.waitFor(() => expect(endpoints.projectActivity).toHaveBeenCalledTimes(2))
+    expect(screen.queryByText('No events received yet')).not.toBeInTheDocument()
   })
 
   it('shows a dashboard tab with the project pinned on every widget that follows one', async () => {
@@ -395,7 +437,7 @@ describe('Project tabs', () => {
     await user.click(await screen.findByRole('tab', { name: 'Product' }))
     expect(await screen.findByRole('heading', { name: 'Product' })).toBeInTheDocument()
     expect(location()).toBe('/projects/7/dashboards/2?range=30d')
-    await user.click(screen.getByRole('tab', { name: 'Settings' }))
+    await user.click(screen.getByRole('link', { name: 'Settings' }))
     expect(await screen.findByRole('region', { name: 'Usage' })).toBeInTheDocument()
     expect(location()).toBe('/projects/7/settings?range=30d')
   })
@@ -468,7 +510,7 @@ describe('Project tabs', () => {
       await user.click(screen.getByRole('menuitem', { name: 'Move right' }))
       expect(move).toHaveBeenCalledWith(7, 20, 21)
       await vi.waitFor(() =>
-        expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Settings', 'Forms', 'Views', 'Product', 'Ours', 'Mine'])
+        expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Views', 'Product', 'Ours', 'Mine'])
       )
 
       move.mockResolvedValue({ tabs: [...tabs, ours] })
@@ -477,7 +519,7 @@ describe('Project tabs', () => {
       await user.click(screen.getByRole('menuitem', { name: 'Move left' }))
       expect(move).toHaveBeenLastCalledWith(7, 20, 2)
       await vi.waitFor(() =>
-        expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Settings', 'Forms', 'Views', 'Product', 'Mine', 'Ours'])
+        expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Views', 'Product', 'Mine', 'Ours'])
       )
     } finally {
       window.innerWidth = width
@@ -530,7 +572,10 @@ describe('Project tabs', () => {
     vi.mocked(endpoints.projectTabs).mockRejectedValue(new ApiError(404, 'not found'))
     renderAt('/projects/7/settings')
     expect(await screen.findByRole('region', { name: 'Usage' })).toBeInTheDocument()
-    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Settings'])
+    expect(screen.queryAllByRole('tab')).toEqual([])
+    expect(screen.getByRole('link', { name: 'Settings' })).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Forms' })).not.toBeInTheDocument()
+    expect(endpoints.projectActivity).not.toHaveBeenCalled()
     expect(screen.queryByRole('button', { name: 'Add tab' })).not.toBeInTheDocument()
     expect(endpoints.projectTabs).not.toHaveBeenCalled()
   })

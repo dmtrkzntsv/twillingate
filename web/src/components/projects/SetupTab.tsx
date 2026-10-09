@@ -29,7 +29,7 @@ interface Props {
 }
 
 /**
- * A project's Setup tab (project tabs D1): its usage, allowed origins,
+ * A project's Settings page (project landing D4): its usage, allowed origins,
  * breakdowns, keys and cap impact, with Archive or Restore. The range is
  * the URL's, which every tab of the project shares (D8), else 7 days.
  */
@@ -47,7 +47,7 @@ export default function SetupTab({ project, dash, actions }: Props) {
   return (
     <>
       {/* The same header as a dashboard tab, so switching tabs moves nothing above the cards. */}
-      <DashboardHeader title="Setup">
+      <DashboardHeader title="Settings">
         <RangeSwitcher value={{ range: sel.range!, from: sel.from, to: sel.to }} timezone={tz} onChange={(r) => setURL(selectionParams(r))} />
         {project.archived ? (
           <Button variant="outline" size="sm" disabled={actions.pending} onClick={() => void actions.restore(id)}>Restore</Button>
