@@ -15,27 +15,42 @@ import { useProjectActions } from '@/hooks/use-project-actions'
 import { useProjectTabActions } from '@/hooks/use-project-tab-actions'
 import FormPage from '@/components/forms/FormPage'
 import FormsTab from '@/components/forms/FormsTab'
-import { FORMS_ID, SETUP_ID } from '@/lib/project-tabs'
+import { readLastTab } from '@/lib/last-tab'
+import { FORMS_ID, landingPath, rangeParams, SETTINGS_ID } from '@/lib/project-tabs'
 import { dashboardsQuery, projectsQuery, projectTabsQuery } from '@/lib/queries'
 
-/** `/projects/:id`: opens on the Setup tab, keeping the URL's range (project tabs D8). */
+/** `/projects/:id`: the last tab used here, else the first, else Settings (project landing D3). */
 export function ProjectIndex() {
   const { search } = useLocation()
-  return <Navigate to={`setup${search}`} replace />
+  const id = Number(useParams().id)
+  const valid = Number.isInteger(id) && id > 0
+  const { data: dash, error: dashError } = useQuery(dashboardsQuery)
+  const dev = dash?.dev === true
+  const tabsQ = useQuery({ ...projectTabsQuery(id), enabled: valid && dash !== undefined && !dev })
+  const range = rangeParams(new URLSearchParams(search)).toString()
+  if (!valid || dev || dashError || tabsQ.error) return <Navigate to={`settings${search}`} replace />
+  if (!tabsQ.data) return null
+  return <Navigate to={landingPath(id, tabsQ.data.tabs, readLastTab(id), range)} replace />
+}
+
+/** `/projects/:id/setup`, the old address of Settings: kept for links and bookmarks. */
+export function SetupRedirect() {
+  const { search } = useLocation()
+  return <Navigate to={`../settings${search}`} relative="path" replace />
 }
 
 /**
- * `/projects/:id/setup`, `/projects/:id/forms` (with `tab="forms"`, and
+ * `/projects/:id/settings`, `/projects/:id/forms` (with `tab="forms"`, and
  * `/forms/:name` for one form) and `/projects/:id/dashboards/:dashId`: one
  * project, renamed in place, with its tabs (project tabs D1, D8; forms
- * D12): Setup, Forms, then the dashboards shown with the project pinned.
+ * D12): Settings, Forms, then the dashboards shown with the project pinned.
  */
 export default function Project({ tab }: { tab?: 'forms' } = {}) {
   const params = useParams()
   const param = params.id
   const id = Number(param)
   const valid = Number.isInteger(id) && id > 0
-  const dashId = tab === 'forms' ? FORMS_ID : params.dashId === undefined ? SETUP_ID : Number(params.dashId)
+  const dashId = tab === 'forms' ? FORMS_ID : params.dashId === undefined ? SETTINGS_ID : Number(params.dashId)
   const { data: dash } = useQuery(dashboardsQuery)
   const { data: projectsData, isLoading } = useQuery(projectsQuery)
   // Reporting dev serves no project tabs and takes no writes: the page asks
@@ -81,7 +96,7 @@ export default function Project({ tab }: { tab?: 'forms' } = {}) {
                 readOnly={dev}
               />
             </div>
-            {dashId === SETUP_ID ? (
+            {dashId === SETTINGS_ID ? (
               <SetupTab project={project} dash={dash} actions={actions} />
             ) : dev ? (
               <Notice icon={<LayoutGridIcon />} title="No project tabs in reporting dev">

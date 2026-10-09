@@ -12,7 +12,7 @@ import {
   SidebarMenuSubItem,
 } from '@/components/ui/sidebar'
 import { useStoredState } from '@/hooks/use-stored-state'
-import { rangeParams, SETUP_ID, tabPath } from '@/lib/project-tabs'
+import { rangeParams } from '@/lib/project-tabs'
 import { projectsQuery } from '@/lib/queries'
 
 /** Whether the project list under "Projects" is open; absent means open. */
@@ -82,7 +82,7 @@ function ProjectList({ onNavigate }: { onNavigate: () => void }) {
         return (
           <SidebarMenuSubItem key={p.project_id}>
             <SidebarMenuSubButton asChild isActive={here}>
-              <Link to={tabPath(p.project_id, SETUP_ID, range)} onClick={onNavigate} title={p.name}>
+              <Link to={`/projects/${p.project_id}${range ? `?${range}` : ''}`} onClick={onNavigate} title={p.name}>
                 <span>{p.name}</span>
               </Link>
             </SidebarMenuSubButton>

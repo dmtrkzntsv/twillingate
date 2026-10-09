@@ -5,14 +5,14 @@ import ReportTabs from '@/components/ReportTabs'
 import { Button } from '@/components/ui/button'
 import type { ProjectTabActions } from '@/hooks/use-project-tab-actions'
 import type { DashboardInfo, ProjectTab } from '@/lib/api'
-import { FORMS_ID, rangeParams, SETUP_ID, tabPath, userAfter } from '@/lib/project-tabs'
+import { FORMS_ID, rangeParams, SETTINGS_ID, tabAfter, tabPath } from '@/lib/project-tabs'
 import AddTabDialog from './AddTabDialog'
 
 interface Props {
   projectId: number
-  /** The tab on screen: `SETUP_ID`, `FORMS_ID` or a dashboard id. */
+  /** The tab on screen: `SETTINGS_ID`, `FORMS_ID` or a dashboard id. */
   currentId: number
-  /** The project's tabs after Setup, in order: built-ins, then the user's own. */
+  /** The project's tabs, in order. */
   tabs: ProjectTab[]
   /** Every dashboard, for the "+" picker. */
   dashboards: DashboardInfo[]
@@ -32,8 +32,15 @@ export default function ProjectTabBar({ projectId, currentId, tabs, dashboards, 
   const [adding, setAdding] = useState(false)
   const search = rangeParams(url).toString()
   const open = (id: number) => navigate(tabPath(projectId, id, search))
-  const fixed = readOnly ? [{ dashboard_id: SETUP_ID, title: 'Setup' }] : [{ dashboard_id: SETUP_ID, title: 'Setup' }, { dashboard_id: FORMS_ID, title: 'Forms' }]
+  const fixed = readOnly ? [{ dashboard_id: SETTINGS_ID, title: 'Settings' }] : [{ dashboard_id: SETTINGS_ID, title: 'Settings' }, { dashboard_id: FORMS_ID, title: 'Forms' }]
   const fixedIds = [...fixed.map((t) => t.dashboard_id), ...tabs.filter((t) => t.owner === 'system').map((t) => t.dashboard_id)]
+
+  // The row still fixes the built-ins, so `to` counts the user's own tabs: find the tab it lands on.
+  const move = (id: number, to: number) => {
+    const own = tabs.filter((t) => t.owner === 'user')
+    const target = own[Math.min(to, own.length - 1)]
+    return actions.move(projectId, id, tabAfter(tabs, id, tabs.findIndex((t) => t.dashboard_id === target.dashboard_id)))
+  }
 
   const add = async (id: number) => {
     const ok = await actions.add(projectId, id)
@@ -49,7 +56,7 @@ export default function ProjectTabBar({ projectId, currentId, tabs, dashboards, 
         onSelect={open}
         fixedIds={fixedIds}
         sortable={!readOnly}
-        onMove={readOnly ? undefined : (id, to) => actions.move(projectId, id, userAfter(tabs, id, to))}
+        onMove={readOnly ? undefined : move}
         trailing={
           !readOnly && (
             <Button variant="ghost" size="icon" className="size-8 shrink-0" aria-label="Add tab" onClick={() => setAdding(true)}>
