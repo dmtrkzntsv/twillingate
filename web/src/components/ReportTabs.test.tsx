@@ -68,9 +68,8 @@ describe('ReportTabs', () => {
     expect(onSelect).not.toHaveBeenCalled()
   })
 
-  it('keeps fixedIds first and unsortable, drags only the rest, and renders trailing', () => {
+  it('drags every tab and renders trailing', () => {
     const projectTabs: DashboardTab[] = [
-      { dashboard_id: 0, title: 'Setup' },
       { dashboard_id: 1, title: 'Views' },
       { dashboard_id: 1001, title: 'Mine' },
       { dashboard_id: 1002, title: 'Ours' },
@@ -78,17 +77,28 @@ describe('ReportTabs', () => {
     render(
       <ReportTabs
         tabs={projectTabs}
-        currentId={0}
+        currentId={1}
         onSelect={() => {}}
-        fixedIds={[0, 1]}
         sortable
         onMove={async () => true}
         trailing={<button type="button">Add tab</button>}
       />
     )
     const all = screen.getAllByRole('tab')
-    expect(all.map((t) => t.textContent)).toEqual(['Setup', 'Views', 'Mine', 'Ours'])
-    expect(all.map((t) => t.getAttribute('aria-roledescription'))).toEqual([null, null, 'sortable', 'sortable'])
+    expect(all.map((t) => t.textContent)).toEqual(['Views', 'Mine', 'Ours'])
+    expect(all.map((t) => t.getAttribute('aria-roledescription'))).toEqual(['sortable', 'sortable', 'sortable'])
+    expect(screen.getByRole('button', { name: 'Add tab' })).toBeInTheDocument()
+  })
+
+  it('selects no tab, and the phone select says "Tabs", when the current id is none of them', () => {
+    render(<ReportTabs tabs={tabs} currentId={0} onSelect={() => {}} />)
+    expect(screen.queryByRole('tab', { selected: true })).toBeNull()
+    expect(screen.getByRole('combobox', { name: 'Tab' })).toHaveTextContent('Tabs')
+  })
+
+  it('offers no phone select when there are no tabs, only the trailing control', () => {
+    render(<ReportTabs tabs={[]} currentId={0} onSelect={() => {}} trailing={<button type="button">Add tab</button>} />)
+    expect(screen.queryByRole('combobox', { name: 'Tab' })).toBeNull()
     expect(screen.getByRole('button', { name: 'Add tab' })).toBeInTheDocument()
   })
 

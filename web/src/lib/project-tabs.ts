@@ -1,16 +1,16 @@
 import type { DashboardInfo, ProjectTab } from './api'
 
-/** The Setup tab's id in `ReportTabs`; no dashboard has id 0. */
-export const SETUP_ID = 0
+/** Settings, behind the gear; no dashboard has id 0. */
+export const SETTINGS_ID = 0
 
-/** The Forms tab's id in `ReportTabs`: fixed after Setup, never a dashboard's (forms D12). */
+/** The Forms tab's id in `ReportTabs`: never a dashboard's (forms D12). */
 export const FORMS_ID = -1
 
-/** Where a project's tab lives: Setup at `/setup`, Forms at `/forms`, a dashboard under `/dashboards/:id` (D8). */
+/** Where a project's tab lives: Settings at `/settings`, Forms at `/forms`, a dashboard under `/dashboards/:id` (D8). */
 export function tabPath(projectId: number, dashboardId: number, search = ''): string {
   const path =
-    dashboardId === SETUP_ID
-      ? `/projects/${projectId}/setup`
+    dashboardId === SETTINGS_ID
+      ? `/projects/${projectId}/settings`
       : dashboardId === FORMS_ID
         ? `/projects/${projectId}/forms`
         : `/projects/${projectId}/dashboards/${dashboardId}`
@@ -41,11 +41,17 @@ export function pickerSections(dashboards: DashboardInfo[], tabs: ProjectTab[]):
 }
 
 /**
- * The `after` that moves the user's tab `id` to index `to` among the
- * user's tabs: 0 for first, else the user tab before that place once `id`
- * is taken out.
+ * The `after` that moves tab `id` to index `to` among all of a project's
+ * tabs (one order, built-ins included: project landing D1): 0 for first,
+ * else the tab before that place once `id` is taken out.
  */
-export function userAfter(tabs: ProjectTab[], id: number, to: number): number {
-  const rest = tabs.filter((t) => t.owner === 'user' && t.dashboard_id !== id)
+export function tabAfter(tabs: ProjectTab[], id: number, to: number): number {
+  const rest = tabs.filter((t) => t.dashboard_id !== id)
   return to <= 0 ? 0 : (rest[Math.min(to, rest.length) - 1]?.dashboard_id ?? 0)
+}
+
+/** Where opening project `projectId` lands (D3): the remembered tab while it is one, else the first, else Settings. */
+export function landingPath(projectId: number, tabs: ProjectTab[], remembered: number | null, search: string): string {
+  const id = tabs.some((t) => t.dashboard_id === remembered) ? remembered! : (tabs[0]?.dashboard_id ?? SETTINGS_ID)
+  return tabPath(projectId, id, search)
 }

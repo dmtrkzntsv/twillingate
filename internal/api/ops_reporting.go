@@ -91,7 +91,7 @@ type projectTabsIn struct {
 type addProjectTabIn struct {
 	ProjectID   int64  `json:"project_id" jsonschema:"project id; call list_projects first"`
 	DashboardID int64  `json:"dashboard_id" jsonschema:"the dashboard to show on this project's page; list_dashboards names them"`
-	After       *int64 `json:"after,omitempty" jsonschema:"your own dashboards only: after this tab of the project (one of your own), 0 first among your own; omit to put it last. A built-in goes back to its own place and takes no after"`
+	After       *int64 `json:"after,omitempty" jsonschema:"after this tab of the project, 0 first; omit to put it last. Built-in or your own"`
 }
 
 type projectTabIn struct {
@@ -101,8 +101,8 @@ type projectTabIn struct {
 
 type moveProjectTabIn struct {
 	ProjectID   int64 `json:"project_id" jsonschema:"project id"`
-	DashboardID int64 `json:"dashboard_id" jsonschema:"one of your own tabs of this project"`
-	After       int64 `json:"after" jsonschema:"one of your own tabs of this project to go after, 0 first among your own; built-in tabs keep the release's order"`
+	DashboardID int64 `json:"dashboard_id" jsonschema:"a tab of this project"`
+	After       int64 `json:"after" jsonschema:"a tab of this project to go after, 0 first. Built-in or your own"`
 }
 
 // projectTabsOut is every project tab tool's answer: the page's tabs
@@ -321,16 +321,16 @@ func (h *host) registerReporting(r *registrar) {
 		h.restoreDashboard)
 	const pt = "/api/projects/{project_id}/tabs"
 	expose(r, spec{Name: "list_project_tabs", Annotations: ro, Method: "GET", Path: pt,
-		Description: "A project page's tabs after Setup, in order: built-in dashboards (release order), then your own (ordered per project). Each: dashboard_id, title, owner, group_id."},
+		Description: "A project page's tabs, in order, one order per project for built-in and your own alike. Each: dashboard_id, title, owner, group_id."},
 		h.listProjectTabs)
 	expose(r, spec{Name: "add_project_tab", Annotations: write, Method: "POST", Path: pt, Status: http.StatusCreated,
-		Description: "Show a dashboard as a tab of a project's page. A built-in goes back to its own place; your own goes after `after`, or last. A dashboard already there is refused."},
+		Description: "Show a dashboard, built-in or your own, as a tab of a project's page: last, or right after `after` (a tab of the project; 0 first). A dashboard already there is refused."},
 		h.addProjectTab)
 	expose(r, spec{Name: "remove_project_tab", Annotations: idem, Method: "POST", Path: pt + "/{dashboard_id}/remove",
 		Description: "Take a tab off a project's page. The dashboard is kept, and add_project_tab brings the tab back. Your own dashboard is always in the sidebar, so its last tab can go too."},
 		h.removeProjectTab)
 	expose(r, spec{Name: "move_project_tab", Annotations: write, Method: "POST", Path: pt + "/{dashboard_id}/move",
-		Description: "Reorder your own tabs on a project's page; built-in tabs keep the release's order."},
+		Description: "Move any tab of a project's page, built-in or your own, after another tab of it (`after`; 0 first)."},
 		h.moveProjectTab)
 	expose(r, spec{Name: "add_widget", Annotations: write, Method: "POST", Path: d + "/widgets", Status: http.StatusCreated, constrain: widget(self),
 		Description: "Call reporting_guide first. Add a widget to a user dashboard: a component, a source ({type: sql|md, content}), optional title, props, width and height (default from the component), name (derived from the title when omitted) and after (a widget id; 0 first; omitted, last). The SQL is run once to check its columns against the component's inputs."},

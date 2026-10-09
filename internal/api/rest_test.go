@@ -310,7 +310,7 @@ func TestProjectTabRoutes(t *testing.T) {
 		{"POST", fmt.Sprintf("%s/%d/move", pt, b), fmt.Sprintf(`{"after":%d}`, a), http.StatusOK, b},
 		{"POST", fmt.Sprintf("%s/%d/remove", pt, b), "{}", http.StatusOK, a},
 		{"POST", pt, fmt.Sprintf(`{"dashboard_id":%d}`, a), http.StatusConflict, 0},
-		{"POST", fmt.Sprintf("%s/1/move", pt), `{"after":0}`, http.StatusBadRequest, 0},
+		{"POST", fmt.Sprintf("%s/1/move", pt), `{"after":9999}`, http.StatusBadRequest, 0},
 		{"POST", fmt.Sprintf("/api/projects/99/tabs/%d/remove", a), "", http.StatusNotFound, 0},
 	} {
 		rec := serveREST(t, r, c.method, c.target, c.body)

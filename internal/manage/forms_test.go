@@ -422,3 +422,19 @@ func TestActiveFormRefusesArchivedAndUnknown(t *testing.T) {
 		t.Errorf("unknown project: %v", err)
 	}
 }
+
+// TestMarkFormSeenRefusesUnknown: console state, so nothing is audited, but
+// an unknown project or form is the typed not-found.
+func TestMarkFormSeenRefusesUnknown(t *testing.T) {
+	ops, fc, pid := newFormOps(t)
+	until := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
+	if err := ops.MarkFormSeen(context.Background(), 999, "contact", until); !errors.Is(err, ErrNotFound) {
+		t.Errorf("unknown project: %v", err)
+	}
+	if err := ops.MarkFormSeen(context.Background(), pid, "nope", until); !errors.Is(err, ErrNotFound) {
+		t.Errorf("unknown form: %v", err)
+	}
+	if len(fc.audits) != 0 {
+		t.Errorf("audited %v", fc.audits)
+	}
+}

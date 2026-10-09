@@ -15,11 +15,12 @@ export interface FormActions {
 }
 
 /**
- * What a form write changes: the lists (and their counts), the tables and
- * Find a person. A stored submission never changes, and refetching one just
- * deleted would only fail, so the drawer's query is left alone.
+ * What a form write changes: the lists (and their counts), the tables, Find
+ * a person and the Forms badge (project activity). A stored submission
+ * never changes, and refetching one just deleted would only fail, so the
+ * drawer's query is left alone.
  */
-const FORM_WRITE = ['forms', 'submissions', 'find-submissions']
+const FORM_WRITE = ['forms', 'submissions', 'find-submissions', 'project-activity']
 
 /**
  * Every form write, each the audited route, as `useProjectActions` does

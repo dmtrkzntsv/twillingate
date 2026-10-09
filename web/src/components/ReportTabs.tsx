@@ -24,11 +24,6 @@ interface Props {
    * refused, which snaps the tab back.
    */
   onMove?: (id: number, to: number) => Promise<boolean>
-  /**
-   * Tabs that lead the row and never move (a project's Setup and its
-   * built-ins); `onMove`'s `to` counts only the tabs after them.
-   */
-  fixedIds?: number[]
   /** After the row on wide screens, beside the select on phones (a project's "+"). */
   trailing?: ReactNode
 }
@@ -38,17 +33,16 @@ interface Props {
  * scrolls sideways when it runs out of room, and a select on phones. Shown
  * for every dashboard, a group of one tab included, system or user. With
  * `sortable` and `onMove`, the row's tabs drag to a new order (D14);
- * phones reorder from the header menu's Move left/right instead.
- * `fixedIds` lead the row as plain tabs, whatever `sortable` says.
+ * phones reorder from the header menu's Move left/right instead. When
+ * `currentId` is none of the tabs (a project's Settings or Forms page) no
+ * tab is selected, and the phone select shows "Tabs".
  */
-export default function ReportTabs({ tabs, currentId, onSelect, sortable = false, onMove, fixedIds = [], trailing }: Props) {
-  const value = String(currentId)
+export default function ReportTabs({ tabs, currentId, onSelect, sortable = false, onMove, trailing }: Props) {
+  const value = tabs.some((t) => t.dashboard_id === currentId) ? String(currentId) : ''
   const select = (v: string) => onSelect(Number(v))
   const byId = new Map(tabs.map((t) => [t.dashboard_id, t]))
-  const fixed = tabs.filter((t) => fixedIds.includes(t.dashboard_id))
-  const movable = tabs.filter((t) => !fixedIds.includes(t.dashboard_id))
   const { order, busy, context } = useReorder(
-    movable.map((t) => t.dashboard_id),
+    tabs.map((t) => t.dashboard_id),
     onMove ?? noMove,
     'x',
     (id) => byId.get(id)?.title ?? String(id)
@@ -57,11 +51,6 @@ export default function ReportTabs({ tabs, currentId, onSelect, sortable = false
 
   const list = (
     <TabsList variant="line" aria-label="Tabs" className="w-max">
-      {fixed.map((d) => (
-        <TabsTrigger key={d.dashboard_id} value={String(d.dashboard_id)} className={trigger}>
-          {d.title}
-        </TabsTrigger>
-      ))}
       {sortable
         ? order.map((id) => (
             <SortableTab
@@ -74,7 +63,7 @@ export default function ReportTabs({ tabs, currentId, onSelect, sortable = false
               onSelect={onSelect}
             />
           ))
-        : movable.map((d) => (
+        : tabs.map((d) => (
             <TabsTrigger key={d.dashboard_id} value={String(d.dashboard_id)} className={trigger}>
               {d.title}
             </TabsTrigger>
@@ -100,18 +89,21 @@ export default function ReportTabs({ tabs, currentId, onSelect, sortable = false
           )}
         </div>
       </Tabs>
-      <Select value={value} onValueChange={select}>
-        <SelectTrigger size="sm" aria-label="Tab" className="min-w-36 sm:hidden">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent position="popper" align="start">
-          {tabs.map((d) => (
-            <SelectItem key={d.dashboard_id} value={String(d.dashboard_id)}>
-              {d.title}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+      {/* An empty list would open as a blank menu (a project with no tabs). */}
+      {tabs.length > 0 && (
+        <Select value={value} onValueChange={select}>
+          <SelectTrigger size="sm" aria-label="Tab" className="min-w-36 sm:hidden">
+            <SelectValue placeholder="Tabs" />
+          </SelectTrigger>
+          <SelectContent position="popper" align="start">
+            {tabs.map((d) => (
+              <SelectItem key={d.dashboard_id} value={String(d.dashboard_id)}>
+                {d.title}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      )}
       {trailing}
     </>
   )

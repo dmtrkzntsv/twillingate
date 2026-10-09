@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"slices"
 	"testing"
 
 	"github.com/dmtrkzntsv/twillingate/internal/store"
@@ -78,7 +79,7 @@ func TestProjectTabsOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := ids(tabs), []int64{1, 2, u2.ID, u1.ID}; !reflect.DeepEqual(got, want) {
+	if got, want := ids(tabs), []int64{u2.ID, 1, 2, u1.ID}; !reflect.DeepEqual(got, want) {
 		t.Errorf("after move first = %v, want %v", got, want)
 	}
 	tabs, err = svc.MoveProjectTab(ctx, "test", MoveProjectTab{ProjectID: p, DashboardID: u2.ID, After: u1.ID})
@@ -94,7 +95,7 @@ func TestProjectTabsOrder(t *testing.T) {
 		t.Errorf("after add after u1 = %v, want %v", got, want)
 	}
 	tabs = mustAddProjectTab(t, svc, mustCreateProject(t, st, "Q"), u3.ID, ptr(int64(0)))
-	if got, want := ids(tabs), []int64{1, 2, u3.ID}; !reflect.DeepEqual(got, want) {
+	if got, want := ids(tabs), []int64{u3.ID, 1, 2}; !reflect.DeepEqual(got, want) {
 		t.Errorf("Q after add first = %v, want %v", got, want)
 	}
 	if got := auditRowsLike(t, svc, "project.tab.%"); len(got) != 6 || got[0] != "test project.tab.add" || got[2] != "test project.tab.move" {
@@ -163,7 +164,7 @@ func TestRemoveAndReAddBuiltin(t *testing.T) {
 		t.Errorf("removed = %v, want %v", got, want)
 	}
 	tabs = mustAddProjectTab(t, svc, p, 2, nil)
-	if got, want := ids(tabs), []int64{1, 2, u.ID}; !reflect.DeepEqual(got, want) {
+	if got, want := ids(tabs), []int64{1, u.ID, 2}; !reflect.DeepEqual(got, want) {
 		t.Errorf("re-added = %v, want %v", got, want)
 	}
 	tabs, err = svc.RemoveProjectTab(ctx, "test", p, u.ID)
@@ -208,14 +209,12 @@ func TestAddProjectTabRefusals(t *testing.T) {
 			"project " + itoa(p) + " already has dashboard " + itoa(u.ID) + " as a tab"},
 		{"built-in already a tab", AddProjectTab{ProjectID: p, DashboardID: 1}, store.ErrConflict,
 			"project " + itoa(p) + " already has dashboard 1 as a tab"},
-		{"after on a built-in", AddProjectTab{ProjectID: p, DashboardID: 2, After: ptr(int64(0))}, store.ErrInvalid,
-			"a built-in tab goes back to its own place; drop after"},
-		{"after a built-in tab", AddProjectTab{ProjectID: p, DashboardID: fresh.ID, After: ptr(int64(1))}, store.ErrInvalid,
-			"after 1 is not one of project " + itoa(p) + "'s own tabs"},
+		{"after a removed built-in", AddProjectTab{ProjectID: p, DashboardID: fresh.ID, After: ptr(int64(2))}, store.ErrInvalid,
+			"after 2 is not one of project " + itoa(p) + "'s tabs"},
 		{"after another project's tab", AddProjectTab{ProjectID: p, DashboardID: fresh.ID, After: &other.ID}, store.ErrInvalid,
-			"after " + itoa(other.ID) + " is not one of project " + itoa(p) + "'s own tabs"},
+			"after " + itoa(other.ID) + " is not one of project " + itoa(p) + "'s tabs"},
 		{"after an unknown id", AddProjectTab{ProjectID: p, DashboardID: fresh.ID, After: ptr(int64(9999))}, store.ErrInvalid,
-			"after 9999 is not one of project " + itoa(p) + "'s own tabs"},
+			"after 9999 is not one of project " + itoa(p) + "'s tabs"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			_, err := svc.AddProjectTab(ctx, "test", c.in)
@@ -265,10 +264,85 @@ func TestRemoveProjectTabOfArchived(t *testing.T) {
 	}
 }
 
-func TestMoveProjectTabRefusesBuiltin(t *testing.T) {
-	svc, _, p := tabsProject(t)
-	_, err := svc.MoveProjectTab(context.Background(), "test", MoveProjectTab{ProjectID: p, DashboardID: 2, After: 0})
-	wantRefusal(t, err, store.ErrInvalid, "built-in tabs keep the release's order")
+// tabsFixture is tabsProject plus two user dashboards added as tabs: the
+// service, the project, the built-in tab ids and the user's, in shown order.
+func tabsFixture(t *testing.T) (svc *Service, project int64, builtins, own []int64) {
+	t.Helper()
+	svc, _, project = tabsProject(t)
+	u1 := mustCreate(t, svc, "U1")
+	u2 := mustCreate(t, svc, "U2")
+	mustAddProjectTab(t, svc, project, u1.ID, nil)
+	mustAddProjectTab(t, svc, project, u2.ID, nil)
+	return svc, project, []int64{1, 2}, []int64{u1.ID, u2.ID}
+}
+
+func TestMoveBuiltinTab(t *testing.T) {
+	ctx := context.Background()
+	s, project, builtins, own := tabsFixture(t)
+	first := builtins[0]
+	// Built-in to the end, after the user's last tab.
+	tabs, err := s.MoveProjectTab(ctx, "t", MoveProjectTab{ProjectID: project, DashboardID: first, After: own[len(own)-1]})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := tabs[len(tabs)-1].ID; got != first {
+		t.Fatalf("last tab = %d, want %d", got, first)
+	}
+	// A user tab to the front, before every built-in.
+	tabs, err = s.MoveProjectTab(ctx, "t", MoveProjectTab{ProjectID: project, DashboardID: own[0], After: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tabs[0].ID != own[0] {
+		t.Fatalf("first tab = %d, want %d", tabs[0].ID, own[0])
+	}
+	if got, want := ids(tabs), []int64{own[0], builtins[1], own[1], first}; !reflect.DeepEqual(got, want) {
+		t.Errorf("order = %v, want %v", got, want)
+	}
+}
+
+func TestAddBuiltinBackWithAfter(t *testing.T) {
+	ctx := context.Background()
+	s, project, builtins, own := tabsFixture(t)
+	b := builtins[1]
+	if _, err := s.RemoveProjectTab(ctx, "t", project, b); err != nil {
+		t.Fatal(err)
+	}
+	after := own[0]
+	tabs, err := s.AddProjectTab(ctx, "t", AddProjectTab{ProjectID: project, DashboardID: b, After: &after})
+	if err != nil {
+		t.Fatal(err)
+	}
+	i := slices.IndexFunc(tabs, func(x ProjectTab) bool { return x.ID == own[0] })
+	if tabs[i+1].ID != b {
+		t.Fatalf("tab after %d = %d, want %d", own[0], tabs[i+1].ID, b)
+	}
+}
+
+func TestAddBuiltinBackGoesLast(t *testing.T) {
+	ctx := context.Background()
+	s, project, builtins, _ := tabsFixture(t)
+	b := builtins[0]
+	if _, err := s.RemoveProjectTab(ctx, "t", project, b); err != nil {
+		t.Fatal(err)
+	}
+	tabs, err := s.AddProjectTab(ctx, "t", AddProjectTab{ProjectID: project, DashboardID: b})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tabs[len(tabs)-1].ID != b {
+		t.Fatalf("last = %d, want %d", tabs[len(tabs)-1].ID, b)
+	}
+}
+
+// A user's tab added with after 0 goes before the built-ins too.
+func TestAddUserTabFirst(t *testing.T) {
+	s, project, builtins, own := tabsFixture(t)
+	u3 := mustCreate(t, s, "U3")
+	tabs := mustAddProjectTab(t, s, project, u3.ID, ptr(int64(0)))
+	if got, want := ids(tabs), []int64{u3.ID, builtins[0], builtins[1], own[0], own[1]}; !reflect.DeepEqual(got, want) {
+		t.Errorf("order = %v, want %v", got, want)
+	}
 }
 
 func TestMoveProjectTabRefusals(t *testing.T) {
@@ -293,10 +367,8 @@ func TestMoveProjectTabRefusals(t *testing.T) {
 			"dashboard 9999: not found"},
 		{"unknown project", MoveProjectTab{ProjectID: 9999, DashboardID: u1.ID}, store.ErrNotFound,
 			"project 9999: not found"},
-		{"after a built-in", MoveProjectTab{ProjectID: p, DashboardID: u2.ID, After: 1}, store.ErrInvalid,
-			"after 1 is not one of project " + itoa(p) + "'s own tabs"},
 		{"after another project's tab", MoveProjectTab{ProjectID: p, DashboardID: u2.ID, After: elsewhere.ID}, store.ErrInvalid,
-			"after " + itoa(elsewhere.ID) + " is not one of project " + itoa(p) + "'s own tabs"},
+			"after " + itoa(elsewhere.ID) + " is not one of project " + itoa(p) + "'s tabs"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			_, err := svc.MoveProjectTab(ctx, "test", c.in)
@@ -325,7 +397,7 @@ func TestMoveProjectTabRespreadsEqualKeys(t *testing.T) {
 	for _, u := range []int64{u1.ID, u2.ID, u3.ID} {
 		mustAddProjectTab(t, svc, p, u, nil)
 	}
-	rawExec(t, st, `UPDATE project_tabs SET sort_key='a0' WHERE project_id=? AND dashboard_id IN (?,?)`, p, u1.ID, u2.ID)
+	rawExec(t, st, `UPDATE project_tabs SET sort_key='a2' WHERE project_id=? AND dashboard_id IN (?,?)`, p, u1.ID, u2.ID)
 	if got, want := shownTabIDs(t, svc, p), []int64{1, 2, u1.ID, u2.ID, u3.ID}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("tied = %v, want %v", got, want)
 	}
@@ -342,11 +414,8 @@ func TestMoveProjectTabRespreadsEqualKeys(t *testing.T) {
 	}
 	seen := map[string]bool{}
 	for _, r := range rows {
-		if r.DashboardID <= 2 {
-			continue // a built-in's row key is another namespace, and unused
-		}
 		if seen[r.SortKey] {
-			t.Errorf("user key %q still shared: %v", r.SortKey, rows)
+			t.Errorf("key %q still shared: %v", r.SortKey, rows)
 		}
 		seen[r.SortKey] = true
 	}
@@ -402,9 +471,9 @@ func TestProjectTabWritesHoldPlaceMu(t *testing.T) {
 	svc.st = l
 	mustAddProjectTab(t, svc, p, u1.ID, nil)
 	mustAddProjectTab(t, svc, p, u2.ID, nil)
-	rawExec(t, st, `UPDATE project_tabs SET sort_key='a0' WHERE project_id=? AND dashboard_id IN (?,?)`, p, u1.ID, u2.ID)
-	if _, err := svc.MoveProjectTab(ctx, "test", MoveProjectTab{ProjectID: p, DashboardID: 2, After: 0}); err == nil {
-		t.Fatal("moving a built-in: want a refusal")
+	rawExec(t, st, `UPDATE project_tabs SET sort_key='a2' WHERE project_id=? AND dashboard_id IN (?,?)`, p, u1.ID, u2.ID)
+	if _, err := svc.MoveProjectTab(ctx, "test", MoveProjectTab{ProjectID: p, DashboardID: 2, After: 0}); err != nil {
+		t.Fatal(err)
 	}
 	if _, err := svc.AddProjectTab(ctx, "test", AddProjectTab{ProjectID: p, DashboardID: u3.ID, After: &u1.ID}); err != nil {
 		t.Fatal(err)

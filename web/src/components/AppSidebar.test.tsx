@@ -252,7 +252,7 @@ describe('Projects group', () => {
     const list = await screen.findByRole('list', { name: 'Projects' })
     const names = within(list).getAllByRole('link').map((l) => l.textContent)
     expect(names).toEqual(Array.from({ length: 40 }, (_, i) => `site-${i + 1}`))
-    expect(screen.getByRole('link', { name: 'site-3' })).toHaveAttribute('href', '/projects/3/setup')
+    expect(screen.getByRole('link', { name: 'site-3' })).toHaveAttribute('href', '/projects/3')
     expect(screen.queryByRole('link', { name: 'gone' })).not.toBeInTheDocument()
   })
 
@@ -282,9 +282,9 @@ describe('Projects group', () => {
     renderAt('/projects/2/dashboards/7?range=7d&foo=1')
     const site2 = await screen.findByRole('link', { name: 'site-2' })
     expect(site2).toHaveAttribute('data-active', 'true')
-    expect(site2).toHaveAttribute('href', '/projects/2/setup?range=7d')
+    expect(site2).toHaveAttribute('href', '/projects/2?range=7d')
     expect(screen.getByRole('link', { name: 'site-3' })).toHaveAttribute('data-active', 'false')
-    expect(screen.getByRole('link', { name: 'site-3' })).toHaveAttribute('href', '/projects/3/setup')
+    expect(screen.getByRole('link', { name: 'site-3' })).toHaveAttribute('href', '/projects/3')
     expect(screen.getByRole('link', { name: 'Projects' })).toHaveAttribute('data-active', 'false')
   })
 

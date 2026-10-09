@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ProjectTab } from './api'
-import { FORMS_ID, pickerSections, rangeParams, SETUP_ID, tabPath, userAfter } from './project-tabs'
+import { FORMS_ID, landingPath, pickerSections, rangeParams, SETTINGS_ID, tabAfter, tabPath } from './project-tabs'
 import { dashboardsList } from '@/test/fixtures'
 
 const tabs: ProjectTab[] = [
@@ -12,20 +12,20 @@ const tabs: ProjectTab[] = [
 ]
 
 describe('tabPath', () => {
-  it('opens Setup at /setup and a dashboard under /dashboards', () => {
-    expect(tabPath(7, SETUP_ID)).toBe('/projects/7/setup')
+  it('opens Settings at /settings and a dashboard under /dashboards', () => {
+    expect(tabPath(7, SETTINGS_ID)).toBe('/projects/7/settings')
     expect(tabPath(7, 13)).toBe('/projects/7/dashboards/13')
   })
 
-  it('opens Forms at /forms, an id no dashboard or Setup has', () => {
-    expect(FORMS_ID).not.toBe(SETUP_ID)
+  it('opens Forms at /forms, an id no dashboard or Settings has', () => {
+    expect(FORMS_ID).not.toBe(SETTINGS_ID)
     expect(FORMS_ID).toBeLessThan(1)
     expect(tabPath(7, FORMS_ID)).toBe('/projects/7/forms')
     expect(tabPath(7, FORMS_ID, 'range=30d')).toBe('/projects/7/forms?range=30d')
   })
 
   it('appends a search when there is one', () => {
-    expect(tabPath(7, SETUP_ID, 'range=30d')).toBe('/projects/7/setup?range=30d')
+    expect(tabPath(7, SETTINGS_ID, 'range=30d')).toBe('/projects/7/settings?range=30d')
     expect(tabPath(7, 13, 'range=custom&from=2026-09-01&to=2026-09-10')).toBe(
       '/projects/7/dashboards/13?range=custom&from=2026-09-01&to=2026-09-10'
     )
@@ -54,17 +54,37 @@ describe('pickerSections', () => {
   })
 })
 
-describe('userAfter', () => {
-  it('gives 0 for the first place among the user tabs', () => {
-    expect(userAfter(tabs, 14, 0)).toBe(0)
+describe('landingPath', () => {
+  const list = [tabs[0], tabs[1], tabs[2]]
+  it('opens the remembered tab while it is a tab', () => {
+    expect(landingPath(3, list, 13, '')).toBe('/projects/3/dashboards/13')
+  })
+  it('falls back to the first tab when the remembered one is gone', () => {
+    expect(landingPath(3, list, 42, 'range=30d')).toBe('/projects/3/dashboards/1?range=30d')
+  })
+  it('opens the first tab with nothing remembered', () => {
+    expect(landingPath(3, list, null, '')).toBe('/projects/3/dashboards/1')
+  })
+  it('opens Settings with no tabs', () => {
+    expect(landingPath(3, [], 9, '')).toBe('/projects/3/settings')
+  })
+})
+
+describe('tabAfter', () => {
+  it('gives 0 for the first place', () => {
+    expect(tabAfter(tabs, 14, 0)).toBe(0)
   })
 
-  it('gives the user tab before the new place once the moving one is taken out', () => {
-    // Marketing, Launch week, Funnel: Marketing to the end goes after Funnel.
-    expect(userAfter(tabs, 13, 2)).toBe(14)
-    // Funnel to the middle goes after Marketing.
-    expect(userAfter(tabs, 14, 1)).toBe(13)
+  it('gives the tab before the new place once the moving one is taken out', () => {
+    // Views, Product, Marketing, Launch week, Funnel: Views to the end goes after Funnel.
+    expect(tabAfter(tabs, 1, 4)).toBe(14)
+    // Funnel to second goes after Views.
+    expect(tabAfter(tabs, 14, 1)).toBe(1)
     // Marketing one right goes after Launch week.
-    expect(userAfter(tabs, 13, 1)).toBe(10)
+    expect(tabAfter(tabs, 13, 3)).toBe(10)
+  })
+
+  it('clamps past the end', () => {
+    expect(tabAfter(tabs, 1, 99)).toBe(14)
   })
 })

@@ -19,7 +19,7 @@ import { useReorder } from '@/hooks/use-reorder'
 import { useStoredState } from '@/hooks/use-stored-state'
 import type { Project } from '@/lib/api'
 import { afterAt } from '@/lib/arrange'
-import { rangeParams, SETUP_ID, tabPath } from '@/lib/project-tabs'
+import { rangeParams } from '@/lib/project-tabs'
 import { projectsQuery } from '@/lib/queries'
 import { cn } from '@/lib/utils'
 
@@ -141,7 +141,7 @@ function SortableProject({ project, here, range, disabled, onNavigate }: Sortabl
         aria-describedby={attributes['aria-describedby']}
         {...listeners}
       >
-        <Link to={tabPath(project.project_id, SETUP_ID, range)} onClick={onNavigate} title={project.name}>
+        <Link to={`/projects/${project.project_id}${range ? `?${range}` : ''}`} onClick={onNavigate} title={project.name}>
           <span>{project.name}</span>
         </Link>
       </SidebarMenuSubButton>

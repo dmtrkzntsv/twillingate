@@ -647,7 +647,7 @@ tools below do.
 
 | Operation | CLI | MCP tool | Tool arguments |
 | --- | --- | --- | --- |
-| List forms | `twillingate form list` | `list_forms` | `{project_id, archived}`; drafts first; each with `status` (`draft` or `approved`), `purpose`, `return_url`, `fields`, `expected_fields`, `draft_until`, `approved_at`, `closes_at`, `submissions` (count), `last_submitted_at`, `archived`. `archived: true` lists the archived forms instead. Beside `forms`, `action_base` is `PUBLIC_URL` + `/ingest/forms` (empty without `PUBLIC_URL`), so a plain form's action is `<action_base>/{name}?key=…` |
+| List forms | `twillingate form list` | `list_forms` | `{project_id, archived}`; drafts first; each with `status` (`draft` or `approved`), `purpose`, `return_url`, `fields`, `expected_fields`, `draft_until`, `approved_at`, `closes_at`, `submissions` (count), `last_submitted_at`, `new_submissions` (received after `seen_at`), `seen_at` (how far the console has read the form; reading over MCP never moves it), `archived`. `archived: true` lists the archived forms instead. Beside `forms`, `action_base` is `PUBLIC_URL` + `/ingest/forms` (empty without `PUBLIC_URL`), so a plain form's action is `<action_base>/{name}?key=…` |
 | Approve a draft | `twillingate form approve` | `approve_form` | `{project_id, name, expected_fields}`; one or more fields; an approved form is a `conflict` |
 | Change one | `twillingate form update` | `update_form` | `{project_id, name, purpose, return_url, closes_at, expected_fields}`; merges; `closes_at: null` reopens; `expected_fields` only on an approved form, never empty |
 | Archive / restore | `twillingate form archive` / `restore` | `archive_form` / `restore_form` | `{project_id, name}`; archiving refuses submissions and hides the form and its submissions from every list, table and export (a search still finds them); a restored draft gets another `FORMS_DRAFT_DAYS` |
@@ -1279,6 +1279,7 @@ curl -H "Authorization: Bearer $TOKEN" \
 | Method | Path | Mirrors | Input |
 |---|---|---|---|
 | `GET` | `/api/projects` | `list_projects` | — |
+| `GET` | `/api/project-activity` | `project_activity`, REST only: no MCP tool | — → `{"projects":[{"project_id","last_event_day","new_submissions"}]}` for every live project: the newest day with data (null with none) and the submissions to live forms the console has not read |
 | `GET` | `/api/limits` | `limits` | — |
 | `GET` | `/api/usage` | `usage` | query: `project_id`, `from`, `to` |
 | `GET` | `/api/projects/{project_id}/cap-usage` | `cap_usage` | query: `from`, `to` |
@@ -1297,6 +1298,7 @@ curl -H "Authorization: Bearer $TOKEN" \
 | `PATCH` | `/api/projects/{project_id}/forms/{name}` | `update_form` | body: fields to change (merge); `closes_at: null` reopens |
 | `POST` | `/api/projects/{project_id}/forms/{name}/archive` | `archive_form` | — |
 | `POST` | `/api/projects/{project_id}/forms/{name}/restore` | `restore_form` | — |
+| `POST` | `/api/projects/{project_id}/forms/{name}/seen` | `mark_form_seen`, REST only: no MCP tool | body: `until` (RFC 3339, the form's `last_submitted_at` as the page loaded it) → `{"status":"seen"}`; moves `seen_at` forward only |
 | `GET` | `/api/projects/{project_id}/forms/{name}/submissions` | `list_submissions` | query: `filters`, `sort`, `distinct`, `offset`, `limit` |
 | `GET` | `/api/projects/{project_id}/forms/{name}/submissions/{id}` | `get_submission` | — |
 | `GET` | `/api/projects/{project_id}/forms/{name}/submissions.csv` | `export_submissions`, REST only: no MCP tool | query: `filters`, `sort` (text/csv, every matching row) |

@@ -30,7 +30,10 @@ test('creates a project, edits it, manages a key, archives and restores it', asy
   await page.keyboard.press('Escape')
 
   await page.getByRole('article', { name }).getByRole('link', { name }).click()
-  await expect(page).toHaveURL(/\/projects\/\d+\/setup$/)
+  // A project opens on its first dashboard tab; its settings are behind the gear.
+  await expect(page).toHaveURL(/\/projects\/\d+\/dashboards\/\d+$/)
+  await page.getByRole('link', { name: 'Settings', exact: true }).click()
+  await expect(page).toHaveURL(/\/projects\/\d+\/settings$/)
   await expect(page.getByRole('heading', { name })).toBeVisible()
 
   await page.getByRole('button', { name: 'Rename' }).click()
@@ -73,6 +76,7 @@ test('shows usage and cap impact for the seeded project', async ({ page }) => {
   await login(page)
   await page.goto('/app/projects')
   await page.getByRole('article', { name: 'dev' }).getByRole('link', { name: 'dev' }).click()
+  await page.getByRole('link', { name: 'Settings', exact: true }).click()
   const usage = page.getByRole('region', { name: 'Usage' })
   await expect(usage.getByText('Events', { exact: true })).toBeVisible()
   await expect(usage.locator('.recharts-bar-rectangle').first()).toBeVisible()
@@ -90,7 +94,7 @@ test('lists Projects first in the sidebar, with the projects under it, closed st
   const projects = sidebar.getByRole('list', { name: 'Projects' })
   const dev = projects.getByRole('link', { name: 'dev', exact: true })
   await dev.click()
-  await expect(page).toHaveURL(/\/app\/projects\/\d+\/setup$/)
+  await expect(page).toHaveURL(/\/app\/projects\/\d+\/dashboards\/\d+$/)
   await expect(dev).toHaveAttribute('data-active', 'true')
 
   await sidebar.getByRole('button', { name: 'Show projects' }).click()
@@ -107,6 +111,7 @@ test('adds a breakdown from the attributes the seeded project received, then rem
   await login(page)
   await page.goto('/app/projects')
   await page.getByRole('article', { name: 'dev' }).getByRole('link', { name: 'dev' }).click()
+  await page.getByRole('link', { name: 'Settings', exact: true }).click()
   const breakdowns = page.getByRole('region', { name: 'Breakdowns' })
   // The pass that counts the seeded days runs after the server starts listening
   // (about 20s on a loaded host), so reopen the dialog, which refetches the keys,
@@ -162,7 +167,8 @@ test('drags a project card to a new place, which a reload keeps', async ({ page,
     await page.mouse.move(from.x + from.width / 2 - 15, from.y + from.height / 2, { steps: 5 })
     await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 10 })
     await page.mouse.up()
-    await expect.poll(mine).toEqual([names[1], names[0]])
+    // The write waits behind the other spec files' on a loaded host.
+    await expect.poll(mine, { timeout: 15_000 }).toEqual([names[1], names[0]])
     // The drop opened nothing.
     await expect(page).toHaveURL(/\/app\/projects$/)
 

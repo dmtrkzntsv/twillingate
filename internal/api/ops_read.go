@@ -219,6 +219,9 @@ func (h *host) register(r *registrar) {
 	expose(r, spec{Name: "list_projects", Annotations: ro, Method: "GET", Path: "/api/projects",
 		Description: "List projects with id, name, allowed origins and declared attributes, in the order move_project sets. Call this first: every other tool takes a project_id from here."},
 		h.listProjects)
+	restOnly(r, spec{Name: "project_activity", Method: "GET", Path: "/api/project-activity",
+		Description: "Per live project: last_event_day (the newest day with views, product events or measures, raw or rolled up; null with none) and new_submissions (submissions to live forms the console hasn't read). For the console's badges; not an MCP tool."},
+		h.projectActivity)
 	expose(r, spec{Name: "limits", Annotations: ro, Method: "GET", Path: "/api/limits",
 		Description: "The limits in force, grouped: retention (days raw events, aggregates and archived items are kept), caps (ATTRIBUTE_VALUES_TOP_N, the values kept per views breakdown and day and per attribute key, event and day; users and groups per day; and ATTRIBUTE_BREAKDOWNS_MAX, the attributes all active projects declare together; 0 means no cap) and ingest (the wire format's fixed limits: body, batch, attributes, timestamps, measures). Each has a name, value, unit and description; settings also carry the environment variable and its default. Set in the server's environment, not here."},
 		h.listLimits)

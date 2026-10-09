@@ -9,7 +9,15 @@ export const dashboardQuery = (id: number) => ({
   queryFn: () => endpoints.dashboard(id),
 })
 
-/** A project page's tabs after Setup, in order. */
+/** Each live project's newest day with data and its unread form submissions (project landing D5, D6). */
+export const projectActivityQuery = {
+  queryKey: ['project-activity'],
+  queryFn: () => endpoints.projectActivity(),
+  staleTime: 60_000,
+  refetchInterval: 60_000,
+}
+
+/** A project page's tabs, in order. */
 export const projectTabsQuery = (projectId: number) => ({
   queryKey: ['project-tabs', projectId],
   queryFn: () => endpoints.projectTabs(projectId),

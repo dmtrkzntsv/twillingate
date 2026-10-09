@@ -8,7 +8,7 @@ export interface ProjectTabActions {
   add(projectId: number, dashboardId: number, after?: number): Promise<boolean>
   /** Takes a tab off the project's page; the toast "Removed 'X'" has an Undo that adds it back. */
   remove(projectId: number, tab: { dashboard_id: number; title: string }): Promise<boolean>
-  /** Reorders one of the user's own tabs after another (0 first among them). */
+  /** Reorders a tab after another (0 first). */
   move(projectId: number, dashboardId: number, after: number): Promise<boolean>
   /** True while a call runs; buttons wait on it. Per hook call. */
   pending: boolean

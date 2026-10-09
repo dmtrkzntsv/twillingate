@@ -34,7 +34,9 @@ type Form struct {
 	ClosesAt        *time.Time
 	LastSubmittedAt *time.Time
 	ArchivedAt      *time.Time
-	Submissions     int // filled by ListForms only
+	SeenAt          *time.Time // how far the console has read; nil: never
+	Submissions     int        // filled by ListForms only
+	NewSubmissions  int        // received after SeenAt; filled by ListForms only
 }
 
 // Open reports whether the form accepts a submission at now: not archived,

@@ -12,14 +12,14 @@ import {
 import { useIsMobile } from '@/hooks/use-mobile'
 import type { ProjectTabActions } from '@/hooks/use-project-tab-actions'
 import type { ProjectTab } from '@/lib/api'
-import { SETUP_ID, tabPath, userAfter } from '@/lib/project-tabs'
+import { SETTINGS_ID, tabAfter, tabPath } from '@/lib/project-tabs'
 import { formatInterval } from '@/lib/time'
 
 interface Props {
   projectId: number
   /** The tab on screen. */
   tab: ProjectTab
-  /** The project's tabs after Setup, in order. */
+  /** The project's tabs, in order. */
   tabs: ProjectTab[]
   actions: ProjectTabActions
   /** The range part of the URL, carried to the tab shown after a removal. */
@@ -30,22 +30,21 @@ interface Props {
 
 /**
  * The "…" beside a project tab's title (project tabs D8): Remove from this
- * project (landing on the tab before it, else Setup), Open as dashboard
- * with the project chosen, and on phones Move left/right for the user's
- * own tabs, which the row drags on wide screens.
+ * project (landing on the tab before it, else the one after, else
+ * Settings), Open as dashboard with the project chosen, and on phones Move
+ * left/right for any tab, which the row drags on wide screens.
  */
 export default function ProjectTabMenu({ projectId, tab, tabs, actions, search, autoRefresh }: Props) {
   const navigate = useNavigate()
   const mobile = useIsMobile()
   const id = tab.dashboard_id
-  const before = tabs[tabs.findIndex((t) => t.dashboard_id === id) - 1]
-  const own = tabs.filter((t) => t.owner === 'user')
-  const i = own.findIndex((t) => t.dashboard_id === id)
+  const i = tabs.findIndex((t) => t.dashboard_id === id)
+  const next = tabs[i - 1] ?? tabs[i + 1]
 
   const remove = async () => {
-    if (await actions.remove(projectId, tab)) navigate(tabPath(projectId, before?.dashboard_id ?? SETUP_ID, search))
+    if (await actions.remove(projectId, tab)) navigate(tabPath(projectId, next?.dashboard_id ?? SETTINGS_ID, search))
   }
-  const moveTo = (to: number) => void actions.move(projectId, id, userAfter(tabs, id, to))
+  const moveTo = (to: number) => void actions.move(projectId, id, tabAfter(tabs, id, to))
 
   return (
     <DropdownMenu>
@@ -65,14 +64,14 @@ export default function ProjectTabMenu({ projectId, tab, tabs, actions, search, 
             Open as dashboard
           </Link>
         </DropdownMenuItem>
-        {mobile && i !== -1 && (
+        {mobile && (
           <>
             <DropdownMenuSeparator />
             <DropdownMenuItem disabled={actions.pending || i === 0} onClick={() => moveTo(i - 1)}>
               <ArrowLeftIcon />
               Move left
             </DropdownMenuItem>
-            <DropdownMenuItem disabled={actions.pending || i === own.length - 1} onClick={() => moveTo(i + 1)}>
+            <DropdownMenuItem disabled={actions.pending || i === tabs.length - 1} onClick={() => moveTo(i + 1)}>
               <ArrowRightIcon />
               Move right
             </DropdownMenuItem>

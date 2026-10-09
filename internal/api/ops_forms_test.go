@@ -98,6 +98,8 @@ type listedForm struct {
 	Submissions    int      `json:"submissions"`
 	LastSubmitted  string   `json:"last_submitted_at"`
 	Archived       bool     `json:"archived"`
+	NewSubmissions int      `json:"new_submissions"`
+	SeenAt         string   `json:"seen_at"`
 }
 
 type submissionsTable struct {
@@ -634,5 +636,58 @@ func TestSubmissionsFieldsNamedLikeRefusedTables(t *testing.T) {
 	}
 	if tab := callAs[submissionsTable](t, cs, "list_submissions", args()); !reflect.DeepEqual(tab.IDs, []string{"s3", "s1"}) {
 		t.Fatalf("left = %v", tab.IDs)
+	}
+}
+
+// TestListFormsSeenFields: a form never seen counts every submission as new
+// and has no seen_at; marking it seen up to a submission's time leaves the
+// later ones new, and list_forms shows how far it was read.
+func TestListFormsSeenFields(t *testing.T) {
+	h, cs := newTestHost(t)
+	r := newTestRegistrar(t, h)
+	seed := newFormSeeder(t, h)
+	seed.add("contact", "s1", map[string]string{"email": "a@x.io"}, nil)
+	seed.add("contact", "s2", map[string]string{"email": "b@x.io"}, nil)
+	first := seed.base.Add(time.Minute)
+
+	f := listForms(t, cs, false)["contact"]
+	if f.NewSubmissions != 2 || f.SeenAt != "" || f.Submissions != 2 {
+		t.Fatalf("never seen = %+v", f)
+	}
+	rec := serveREST(t, r, "POST", "/api/projects/1/forms/contact/seen", `{"until":"`+first.Format(time.RFC3339)+`"}`)
+	if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != `{"status":"seen"}` {
+		t.Fatalf("POST seen = %d %s", rec.Code, rec.Body)
+	}
+	f = listForms(t, cs, false)["contact"]
+	if f.NewSubmissions != 1 || f.SeenAt != first.Format(time.RFC3339) {
+		t.Fatalf("after seen = %+v, want 1 new, seen_at %s", f, first.Format(time.RFC3339))
+	}
+	// seen_at only moves forward: an older page can't unread what a later one read.
+	serveREST(t, r, "POST", "/api/projects/1/forms/contact/seen", `{"until":"`+first.Add(-time.Hour).Format(time.RFC3339)+`"}`)
+	if f = listForms(t, cs, false)["contact"]; f.NewSubmissions != 1 || f.SeenAt != first.Format(time.RFC3339) {
+		t.Fatalf("after an older until = %+v", f)
+	}
+	serveREST(t, r, "POST", "/api/projects/1/forms/contact/seen", `{"until":"`+seed.base.Add(time.Hour).Format(time.RFC3339)+`"}`)
+	if f = listForms(t, cs, false)["contact"]; f.NewSubmissions != 0 {
+		t.Fatalf("after reading all = %+v", f)
+	}
+}
+
+func TestMarkFormSeenRefusals(t *testing.T) {
+	h, _ := newTestHost(t)
+	r := newTestRegistrar(t, h)
+	newFormSeeder(t, h).add("contact", "s1", map[string]string{"email": "a@x.io"}, nil)
+	for _, c := range []struct {
+		target, body string
+		code         int
+	}{
+		{"/api/projects/1/forms/nope/seen", `{"until":"2026-10-08T10:00:00Z"}`, http.StatusNotFound},
+		{"/api/projects/99/forms/contact/seen", `{"until":"2026-10-08T10:00:00Z"}`, http.StatusNotFound},
+		{"/api/projects/1/forms/contact/seen", `{"until":"yesterday"}`, http.StatusBadRequest},
+		{"/api/projects/1/forms/contact/seen", `{}`, http.StatusBadRequest},
+	} {
+		if rec := serveREST(t, r, "POST", c.target, c.body); rec.Code != c.code {
+			t.Errorf("POST %s %s = %d %s, want %d", c.target, c.body, rec.Code, rec.Body, c.code)
+		}
 	}
 }

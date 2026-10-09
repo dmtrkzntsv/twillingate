@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { LayoutGridIcon } from 'lucide-react'
 import { useSearchParams } from 'react-router'
@@ -12,6 +12,7 @@ import { useFreshness } from '@/hooks/use-freshness'
 import type { ProjectTabActions } from '@/hooks/use-project-tab-actions'
 import { useStoredState } from '@/hooks/use-stored-state'
 import type { DashboardDetail, DashboardsResponse, Project, ProjectTab, Widget } from '@/lib/api'
+import { writeLastTab } from '@/lib/last-tab'
 import { rangeParams } from '@/lib/project-tabs'
 import { dashboardQuery } from '@/lib/queries'
 import { resolve } from '@/lib/ranges'
@@ -24,7 +25,7 @@ import ProjectTabMenu from './ProjectTabMenu'
 interface Props {
   project: Project
   dashId: number
-  /** The project's tabs after Setup; undefined while they load. */
+  /** The project's tabs, in order; undefined while they load. */
   tabs?: ProjectTab[]
   /** The dashboards list, for the timezone and the auto-refresh interval; undefined while it loads. */
   list?: DashboardsResponse
@@ -68,6 +69,8 @@ function TabView({ project, dashboard, tab, tabs, list, actions }: ViewProps) {
   const client = useQueryClient()
   const [url, setURL] = useSearchParams()
   const projectId = project.project_id
+  // Opening the project later lands here (project landing D3).
+  useEffect(() => writeLastTab(projectId, tab.dashboard_id), [projectId, tab.dashboard_id])
   const sel = chooseSelection(url, { range: dashboard.range, from: dashboard.from, to: dashboard.to }, [projectId], {
     project: false,
     range: dashboard.follows_range,

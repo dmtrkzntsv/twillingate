@@ -5,8 +5,9 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { ApiError, endpoints, type DashboardDetail, type ProjectTab } from '@/lib/api'
 import { answerFor, dashboardsList, details, launchWeek, widgetsById } from '@/test/fixtures'
 import { contactPage, form } from '@/test/forms'
-import { renderWithProviders } from '@/test/render'
+import { renderWithProviders, testClient } from '@/test/render'
 import Project, { ProjectIndex } from './Project'
+import { readLastTab, writeLastTab } from '@/lib/last-tab'
 
 const actions = {
   update: vi.fn(), archive: vi.fn(), restore: vi.fn(), issueKey: vi.fn(),
@@ -45,6 +46,12 @@ beforeEach(() => {
   })
   vi.spyOn(endpoints, 'capUsage').mockResolvedValue({ project_id: 4, from: 'a', to: 'b', dimensions: [] })
   vi.spyOn(endpoints, 'projectTabs').mockResolvedValue({ tabs })
+  vi.spyOn(endpoints, 'projectActivity').mockResolvedValue({
+    projects: [
+      { project_id: 4, last_event_day: '2026-10-08', new_submissions: 0 },
+      { project_id: 7, last_event_day: '2026-10-08', new_submissions: 3 },
+    ],
+  })
   vi.spyOn(endpoints, 'dashboard').mockImplementation(async (id) => {
     const d = { ...details, 20: mine, 1001: spare }[id]
     if (!d) throw new ApiError(404, 'no such dashboard', 'not_found')
@@ -61,24 +68,25 @@ function LocationProbe() {
 
 const location = () => screen.getByTestId('location').textContent
 
-function renderAt(path: string) {
+function renderAt(path: string, client = testClient()) {
   return renderWithProviders(
     <MemoryRouter initialEntries={[path]}>
       <Routes>
         <Route path="/projects/:id" element={<ProjectIndex />} />
-        <Route path="/projects/:id/setup" element={<Project />} />
+        <Route path="/projects/:id/settings" element={<Project />} />
         <Route path="/projects/:id/dashboards/:dashId" element={<Project />} />
         <Route path="/projects/:id/forms" element={<Project tab="forms" />} />
         <Route path="/projects/:id/forms/:name" element={<Project tab="forms" />} />
       </Routes>
       <LocationProbe />
-    </MemoryRouter>
+    </MemoryRouter>,
+    client
   )
 }
 
 describe('Project', () => {
   it('heads the page with a breadcrumb back to the projects', async () => {
-    renderAt('/projects/4')
+    renderAt('/projects/4/settings')
     const nav = await screen.findByRole('navigation', { name: 'breadcrumb' })
     expect(within(nav).getByRole('link', { name: 'Projects' })).toHaveAttribute('href', '/projects')
     expect(await within(nav).findByText('econumo.com')).toHaveAttribute('aria-current', 'page')
@@ -87,7 +95,7 @@ describe('Project', () => {
   it('renames the project in place through PATCH, the name alone', async () => {
     const user = userEvent.setup()
     actions.update.mockResolvedValue(true)
-    renderAt('/projects/4')
+    renderAt('/projects/4/settings')
     await user.click(await screen.findByRole('button', { name: 'Rename' }))
     const field = screen.getByRole('textbox', { name: 'Project name' })
     await user.clear(field)
@@ -98,7 +106,7 @@ describe('Project', () => {
   it('shows the allowed origins and adds one through PATCH, never the name or attributes', async () => {
     const user = userEvent.setup()
     actions.update.mockResolvedValue(true)
-    renderAt('/projects/4')
+    renderAt('/projects/4/settings')
     const origins = await screen.findByRole('region', { name: 'Allowed origins' })
     expect(within(origins).getByText('https://econumo.com')).toBeInTheDocument()
     expect(within(origins).queryByText('plan')).not.toBeInTheDocument()
@@ -110,7 +118,7 @@ describe('Project', () => {
   })
 
   it('places Breakdowns between Allowed origins and Ingest keys', async () => {
-    renderAt('/projects/4')
+    renderAt('/projects/4/settings')
     await screen.findByRole('region', { name: 'Breakdowns' })
     const names = screen.getAllByRole('region').map((r) => r.getAttribute('aria-label'))
     expect(names.indexOf('Allowed origins')).toBeGreaterThan(-1)
@@ -121,7 +129,7 @@ describe('Project', () => {
   it('lists the breakdowns and removes one through PATCH after confirming', async () => {
     const user = userEvent.setup()
     actions.update.mockResolvedValue(true)
-    renderAt('/projects/4')
+    renderAt('/projects/4/settings')
     const section = await screen.findByRole('region', { name: 'Breakdowns' })
     expect(await within(section).findByText('900 events · 3 values')).toBeInTheDocument()
     await user.click(within(section).getByRole('button', { name: 'Remove plan' }))
@@ -140,7 +148,7 @@ describe('Project', () => {
         { key: 'tier', events: 20, max_values: 2, received: true, declared: false },
       ],
     })
-    renderAt('/projects/4')
+    renderAt('/projects/4/settings')
     const section = await screen.findByRole('region', { name: 'Breakdowns' })
     await user.click(within(section).getByRole('button', { name: 'Add breakdown' }))
     await user.click(await screen.findByRole('radio', { name: /tier/ }))
@@ -151,7 +159,7 @@ describe('Project', () => {
   it('lists keys and disables one after confirming', async () => {
     const user = userEvent.setup()
     actions.disableKey.mockResolvedValue(true)
-    renderAt('/projects/4')
+    renderAt('/projects/4/settings')
     const keys = await screen.findByRole('region', { name: 'Ingest keys' })
     const row = await within(keys).findByRole('row', { name: /web/ })
     expect(within(row).getByText('active')).toBeInTheDocument()
@@ -165,7 +173,7 @@ describe('Project', () => {
   it('enables a disabled key without asking', async () => {
     const user = userEvent.setup()
     actions.enableKey.mockResolvedValue(true)
-    renderAt('/projects/4')
+    renderAt('/projects/4/settings')
     const keys = await screen.findByRole('region', { name: 'Ingest keys' })
     await user.click(await within(keys).findByRole('button', { name: 'Enable old' }))
     expect(actions.enableKey).toHaveBeenCalledWith(4, 'old')
@@ -174,7 +182,7 @@ describe('Project', () => {
   it('issues a key and shows it with its snippet', async () => {
     const user = userEvent.setup()
     actions.issueKey.mockResolvedValue({ key: 'ak_ios', snippet: 'twillingate.init(…)', status: 'issued' })
-    renderAt('/projects/4')
+    renderAt('/projects/4/settings')
     await user.click(await screen.findByRole('button', { name: 'Issue key' }))
     await user.type(screen.getByLabelText('Label'), 'ios')
     await user.click(screen.getByRole('button', { name: 'Issue' }))
@@ -186,7 +194,7 @@ describe('Project', () => {
   it('archives after a confirmation naming the purge window', async () => {
     const user = userEvent.setup()
     actions.archive.mockResolvedValue(true)
-    renderAt('/projects/4')
+    renderAt('/projects/4/settings')
     await user.click(await screen.findByRole('button', { name: 'Archive' }))
     const purge = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' }).format(new Date(Date.now() + 30 * 86_400_000))
     expect(screen.getByText(new RegExp(`deleted on ${purge} \\(30 days\\)`))).toBeInTheDocument()
@@ -195,20 +203,20 @@ describe('Project', () => {
   })
 
   it('offers Restore on an archived project and still shows it', async () => {
-    renderAt('/projects/3')
+    renderAt('/projects/3/settings')
     expect(await screen.findByRole('button', { name: 'Restore' })).toBeInTheDocument()
     expect(screen.getByText('Archived')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Archive' })).not.toBeInTheDocument()
   })
 
   it('says so for an unknown project', async () => {
-    renderAt('/projects/77')
+    renderAt('/projects/77/settings')
     expect(await screen.findByText(/There is no project 77\./)).toBeInTheDocument()
   })
 
   it('shows usage and cap impact over the last 7 days and refetches both when the range changes', async () => {
     const user = userEvent.setup()
-    renderAt('/projects/4')
+    renderAt('/projects/4/settings')
     expect(await screen.findByRole('region', { name: 'Usage' })).toBeInTheDocument()
     expect(await screen.findByRole('region', { name: 'Cap impact' })).toBeInTheDocument()
     const first = vi.mocked(endpoints.usage).mock.calls.at(-1)![0]
@@ -227,28 +235,28 @@ describe('Project', () => {
   it('keeps "kept until restored" when the server names no purge window', async () => {
     const user = userEvent.setup()
     vi.spyOn(endpoints, 'dashboards').mockResolvedValue(dashboardsList())
-    renderAt('/projects/4')
+    renderAt('/projects/4/settings')
     await user.click(await screen.findByRole('button', { name: 'Archive' }))
     expect(screen.getByText(/It is kept until restored/)).toBeInTheDocument()
   })
 
   it('says so for a non-numeric id and asks for no keys', async () => {
-    renderAt('/projects/abc')
+    renderAt('/projects/abc/settings')
     expect(await screen.findByText(/There is no project abc\./)).toBeInTheDocument()
     expect(endpoints.keys).not.toHaveBeenCalled()
   })
 
   it('treats 0 and a fractional id the same way', async () => {
-    renderAt('/projects/0')
+    renderAt('/projects/0/settings')
     expect(await screen.findByText(/There is no project 0\./)).toBeInTheDocument()
-    renderAt('/projects/4.5')
+    renderAt('/projects/4.5/settings')
     expect(await screen.findByText(/There is no project 4\.5\./)).toBeInTheDocument()
     expect(endpoints.keys).not.toHaveBeenCalled()
   })
 
   it('shows a skeleton, not "No keys", while keys load', async () => {
     vi.spyOn(endpoints, 'keys').mockReturnValue(new Promise(() => {}))
-    renderAt('/projects/4')
+    renderAt('/projects/4/settings')
     const keys = await screen.findByRole('region', { name: 'Ingest keys' })
     expect(within(keys).queryByText(/No keys/)).not.toBeInTheDocument()
   })
@@ -256,7 +264,7 @@ describe('Project', () => {
   it('says why keys did not load, with Retry, not "No keys"', async () => {
     const user = userEvent.setup()
     const keysSpy = vi.spyOn(endpoints, 'keys').mockRejectedValueOnce(new Error('keys exploded'))
-    renderAt('/projects/4')
+    renderAt('/projects/4/settings')
     const keys = await screen.findByRole('region', { name: 'Ingest keys' })
     expect(await within(keys).findByText(/Couldn't load keys\. keys exploded/)).toBeInTheDocument()
     expect(within(keys).queryByText(/No keys/)).not.toBeInTheDocument()
@@ -267,19 +275,19 @@ describe('Project', () => {
 
   it('says "No keys" only once loaded and empty', async () => {
     vi.spyOn(endpoints, 'keys').mockResolvedValue({ keys: [] })
-    renderAt('/projects/4')
+    renderAt('/projects/4/settings')
     expect(await screen.findByText(/No keys: this project can receive nothing/)).toBeInTheDocument()
   })
 
   it('tolerates a registry answering no projects list', async () => {
     vi.spyOn(endpoints, 'projects').mockResolvedValue({ projects: null } as never)
-    renderAt('/projects/4')
+    renderAt('/projects/4/settings')
     expect(await screen.findByText(/There is no project 4\./)).toBeInTheDocument()
   })
 
   it('keeps the key label in the disable dialog while it closes', async () => {
     const user = userEvent.setup()
-    renderAt('/projects/4')
+    renderAt('/projects/4/settings')
     const keys = await screen.findByRole('region', { name: 'Ingest keys' })
     await user.click(await within(keys).findByRole('button', { name: 'Disable web' }))
     expect(await screen.findByText('Disable web?')).toBeInTheDocument()
@@ -289,41 +297,128 @@ describe('Project', () => {
 })
 
 describe('Project tabs', () => {
-  it('opens a project on Setup, keeping the range', async () => {
+  it('opens a project on its first tab, keeping the range', async () => {
     renderAt('/projects/7?range=30d')
-    expect(await screen.findByRole('region', { name: 'Usage' })).toBeInTheDocument()
-    expect(location()).toBe('/projects/7/setup?range=30d')
+    expect(await screen.findByRole('heading', { name: 'Views', level: 1 })).toBeInTheDocument()
+    expect(location()).toBe('/projects/7/dashboards/1?range=30d')
   })
 
-  it('redirects /projects/:id to its Setup tab', async () => {
+  it('opens the remembered tab', async () => {
+    writeLastTab(7, 2)
+    renderAt('/projects/7')
+    expect(await screen.findByRole('heading', { name: 'Product', level: 1 })).toBeInTheDocument()
+    expect(location()).toBe('/projects/7/dashboards/2')
+  })
+
+  it('remembers the tab it shows, per project', async () => {
+    const user = userEvent.setup()
+    renderAt('/projects/7/dashboards/1')
+    await user.click(await screen.findByRole('tab', { name: 'Product' }))
+    await screen.findByRole('heading', { name: 'Product', level: 1 })
+    expect(readLastTab(7)).toBe(2)
+    expect(readLastTab(4)).toBeNull()
+  })
+
+  it('falls back to the first tab when the remembered one is no longer a tab', async () => {
+    writeLastTab(7, 999)
+    renderAt('/projects/7')
+    expect(await screen.findByRole('heading', { name: 'Views', level: 1 })).toBeInTheDocument()
+    expect(location()).toBe('/projects/7/dashboards/1')
+  })
+
+  it('decides on fresh tabs, not the ones cached from earlier in the session', async () => {
+    // Tab 999 was removed elsewhere since the cache was filled.
+    const client = testClient()
+    client.setQueryData(['project-tabs', 7], { tabs: [...tabs, { dashboard_id: 999, title: 'Gone', owner: 'user', group_id: 999 }] })
+    writeLastTab(7, 999)
+    renderAt('/projects/7', client)
+    expect(await screen.findByRole('heading', { name: 'Views', level: 1 })).toBeInTheDocument()
+    expect(location()).toBe('/projects/7/dashboards/1')
+  })
+
+  it('opens Settings when the project has no tabs', async () => {
+    vi.mocked(endpoints.projectTabs).mockResolvedValue({ tabs: [] })
     renderAt('/projects/7')
     expect(await screen.findByRole('region', { name: 'Usage' })).toBeInTheDocument()
-    expect(location()).toBe('/projects/7/setup')
+    expect(location()).toBe('/projects/7/settings')
   })
 
-  it('reads Setup, Forms, the built-ins, your own, then Add tab', async () => {
-    renderAt('/projects/7/setup')
+  it('opens Settings in reporting dev, which serves no project tabs', async () => {
+    vi.mocked(endpoints.dashboards).mockResolvedValue(dashboardsList({ dev: true }))
+    renderAt('/projects/7?range=30d')
+    expect(await screen.findByRole('region', { name: 'Usage' })).toBeInTheDocument()
+    expect(location()).toBe('/projects/7/settings?range=30d')
+    expect(endpoints.projectTabs).not.toHaveBeenCalled()
+  })
+
+  it('reads the built-ins and your own as tabs, then Add tab, with Forms and Settings as buttons after them', async () => {
+    renderAt('/projects/7/dashboards/1')
     await screen.findByRole('tab', { name: 'Mine' })
     const row = screen.getAllByRole('tab')
-    expect(row.map((t) => t.textContent)).toEqual(['Setup', 'Forms', 'Views', 'Product', 'Mine'])
+    expect(row.map((t) => t.textContent)).toEqual(['Views', 'Product', 'Mine'])
     const add = screen.getByRole('button', { name: 'Add tab' })
     expect(row.at(-1)!.compareDocumentPosition(add) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    const forms = await screen.findByRole('link', { name: 'Forms, 3 new' })
+    expect(add.compareDocumentPosition(forms) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(forms.compareDocumentPosition(screen.getByRole('link', { name: 'Settings' })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
-  it('opens the Forms tab at /forms, keeping the range, and a form inside it', async () => {
+  it('titles the Settings page Settings', async () => {
+    renderAt('/projects/7/settings')
+    expect(await screen.findByRole('heading', { name: 'Settings', level: 1 })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Settings' })).toHaveAttribute('aria-current', 'page')
+  })
+
+  it('opens the Forms page at /forms, keeping the range, and a form inside it', async () => {
     const user = userEvent.setup()
     vi.spyOn(endpoints, 'forms').mockResolvedValue({ action_base: '', forms: [form('contact')] })
     vi.spyOn(endpoints, 'submissions').mockResolvedValue(contactPage)
-    renderAt('/projects/7/setup?range=30d')
-    await user.click(await screen.findByRole('tab', { name: 'Forms' }))
+    renderAt('/projects/7/settings?range=30d')
+    await user.click(await screen.findByRole('link', { name: /^Forms/ }))
     expect(location()).toBe('/projects/7/forms?range=30d')
     expect(await screen.findByRole('list', { name: 'Forms' })).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: 'Forms' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('link', { name: /^Forms/ })).toHaveAttribute('aria-current', 'page')
+    expect(screen.queryByRole('tab', { selected: true })).toBeNull()
     await user.click(screen.getByRole('link', { name: /contact/ }))
     expect(location()).toBe('/projects/7/forms/contact?range=30d')
     expect(await screen.findByRole('table')).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: 'Forms' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getAllByRole('link', { name: /^Forms/ }).some((l) => l.getAttribute('aria-current') === 'page')).toBe(true)
     expect(endpoints.forms).toHaveBeenCalledWith(7, false)
+  })
+
+  it('says a project with no events yet has none, and links to its Settings', async () => {
+    vi.mocked(endpoints.projectActivity).mockResolvedValue({ projects: [{ project_id: 7, last_event_day: null, new_submissions: 0 }] })
+    renderAt('/projects/7/dashboards/1?range=30d')
+    const notice = (await screen.findByText('No events received yet')).closest('[role=status]') as HTMLElement
+    expect(notice).not.toBeNull()
+    expect(within(notice).getByRole('link', { name: 'Set up this project' })).toHaveAttribute('href', '/projects/7/settings?range=30d')
+  })
+
+  it('shows no notice on the Forms pages, where a forms-only project has its work', async () => {
+    vi.mocked(endpoints.projectActivity).mockResolvedValue({ projects: [{ project_id: 7, last_event_day: null, new_submissions: 0 }] })
+    vi.spyOn(endpoints, 'forms').mockResolvedValue({ action_base: '', forms: [form('contact')] })
+    renderAt('/projects/7/forms')
+    await screen.findByRole('list', { name: 'Forms' })
+    await vi.waitFor(() => expect(endpoints.projectActivity).toHaveBeenCalled())
+    expect(screen.queryByText('No events received yet')).not.toBeInTheDocument()
+  })
+
+  it('shows no notice on Settings itself, nor for a project that has data', async () => {
+    vi.mocked(endpoints.projectActivity).mockResolvedValue({
+      projects: [
+        { project_id: 7, last_event_day: null, new_submissions: 0 },
+        { project_id: 4, last_event_day: '2026-10-08', new_submissions: 0 },
+      ],
+    })
+    const { unmount } = renderAt('/projects/7/settings')
+    await screen.findByRole('region', { name: 'Usage' })
+    await vi.waitFor(() => expect(endpoints.projectActivity).toHaveBeenCalled())
+    expect(screen.queryByText('No events received yet')).not.toBeInTheDocument()
+    unmount()
+    renderAt('/projects/4/dashboards/1')
+    await screen.findByRole('heading', { name: 'Views', level: 1 })
+    await vi.waitFor(() => expect(endpoints.projectActivity).toHaveBeenCalledTimes(2))
+    expect(screen.queryByText('No events received yet')).not.toBeInTheDocument()
   })
 
   it('shows a dashboard tab with the project pinned on every widget that follows one', async () => {
@@ -355,9 +450,9 @@ describe('Project tabs', () => {
     await user.click(await screen.findByRole('tab', { name: 'Product' }))
     expect(await screen.findByRole('heading', { name: 'Product' })).toBeInTheDocument()
     expect(location()).toBe('/projects/7/dashboards/2?range=30d')
-    await user.click(screen.getByRole('tab', { name: 'Setup' }))
+    await user.click(screen.getByRole('link', { name: 'Settings' }))
     expect(await screen.findByRole('region', { name: 'Usage' })).toBeInTheDocument()
-    expect(location()).toBe('/projects/7/setup?range=30d')
+    expect(location()).toBe('/projects/7/settings?range=30d')
   })
 
   it("says a dashboard isn't a tab of the project, and adds it", async () => {
@@ -378,7 +473,7 @@ describe('Project tabs', () => {
     const add = vi.spyOn(endpoints, 'addProjectTab').mockResolvedValue({
       tabs: [tabs[0], tabs[1], { dashboard_id: 3, title: 'Users', owner: 'system', group_id: 1 }, tabs[2]],
     })
-    renderAt('/projects/7/setup')
+    renderAt('/projects/7/settings')
     await user.click(await screen.findByRole('button', { name: 'Add tab' }))
     const builtin = await screen.findByRole('group', { name: 'Built-in' })
     expect(within(builtin).getAllByRole('button').map((b) => b.textContent)).toEqual(['Users', 'Groups', 'Retention'])
@@ -396,7 +491,7 @@ describe('Project tabs', () => {
     vi.mocked(endpoints.projectTabs).mockResolvedValue({
       tabs: all.map((d) => ({ dashboard_id: d.dashboard_id, title: d.title, owner: d.owner, group_id: d.group_id })),
     })
-    renderAt('/projects/7/setup')
+    renderAt('/projects/7/settings')
     await user.click(await screen.findByRole('button', { name: 'Add tab' }))
     expect(await screen.findByText('Every dashboard is already a tab of this project')).toBeInTheDocument()
   })
@@ -412,7 +507,7 @@ describe('Project tabs', () => {
     await vi.waitFor(() => expect(location()).toBe('/projects/7/dashboards/1?range=7d'))
   })
 
-  it('moves your own tab right or left from its menu on a phone, naming the tab it goes after', async () => {
+  it('moves a tab right or left from its menu on a phone, naming the tab it goes after', async () => {
     const width = window.innerWidth
     window.innerWidth = 390
     try {
@@ -424,47 +519,76 @@ describe('Project tabs', () => {
       await screen.findByRole('heading', { name: 'Mine', level: 1 })
 
       await user.click(screen.getByRole('button', { name: 'Tab actions' }))
-      expect(screen.getByRole('menuitem', { name: 'Move left' })).toHaveAttribute('data-disabled')
+      expect(screen.getByRole('menuitem', { name: 'Move left' })).not.toHaveAttribute('data-disabled')
       await user.click(screen.getByRole('menuitem', { name: 'Move right' }))
       expect(move).toHaveBeenCalledWith(7, 20, 21)
       await vi.waitFor(() =>
-        expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Setup', 'Forms', 'Views', 'Product', 'Ours', 'Mine'])
+        expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Views', 'Product', 'Ours', 'Mine'])
       )
 
       move.mockResolvedValue({ tabs: [...tabs, ours] })
       await user.click(screen.getByRole('button', { name: 'Tab actions' }))
       expect(screen.getByRole('menuitem', { name: 'Move right' })).toHaveAttribute('data-disabled')
       await user.click(screen.getByRole('menuitem', { name: 'Move left' }))
-      expect(move).toHaveBeenLastCalledWith(7, 20, 0)
+      expect(move).toHaveBeenLastCalledWith(7, 20, 2)
       await vi.waitFor(() =>
-        expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Setup', 'Forms', 'Views', 'Product', 'Mine', 'Ours'])
+        expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Views', 'Product', 'Mine', 'Ours'])
       )
     } finally {
       window.innerWidth = width
     }
   })
 
-  it('offers no move on a built-in tab', async () => {
+  it('moves a built-in tab too, first or after the last', async () => {
     const width = window.innerWidth
     window.innerWidth = 390
     try {
       const user = userEvent.setup()
+      const move = vi.spyOn(endpoints, 'moveProjectTab').mockResolvedValue({ tabs })
       renderAt('/projects/7/dashboards/2')
       await screen.findByRole('heading', { name: 'Product', level: 1 })
+
       await user.click(screen.getByRole('button', { name: 'Tab actions' }))
-      expect(screen.queryByRole('menuitem', { name: 'Move left' })).not.toBeInTheDocument()
-      expect(screen.queryByRole('menuitem', { name: 'Move right' })).not.toBeInTheDocument()
+      expect(screen.getByRole('menuitem', { name: 'Move right' })).not.toHaveAttribute('data-disabled')
+      await user.click(screen.getByRole('menuitem', { name: 'Move left' }))
+      expect(move).toHaveBeenCalledWith(7, 2, 0)
+
+      await user.click(screen.getByRole('button', { name: 'Tab actions' }))
+      await user.click(screen.getByRole('menuitem', { name: 'Move right' }))
+      expect(move).toHaveBeenLastCalledWith(7, 2, 20)
     } finally {
       window.innerWidth = width
     }
   })
 
+  it('removes the first tab and lands on the one after it', async () => {
+    const user = userEvent.setup()
+    vi.spyOn(endpoints, 'removeProjectTab').mockResolvedValue({ tabs: [tabs[1], tabs[2]] })
+    renderAt('/projects/7/dashboards/1')
+    await user.click(await screen.findByRole('button', { name: 'Tab actions' }))
+    await user.click(screen.getByRole('menuitem', { name: 'Remove from this project' }))
+    await vi.waitFor(() => expect(location()).toBe('/projects/7/dashboards/2'))
+  })
+
+  it('removes the only tab and lands on Settings', async () => {
+    const user = userEvent.setup()
+    vi.mocked(endpoints.projectTabs).mockResolvedValue({ tabs: [tabs[0]] })
+    vi.spyOn(endpoints, 'removeProjectTab').mockResolvedValue({ tabs: [] })
+    renderAt('/projects/7/dashboards/1?range=7d')
+    await user.click(await screen.findByRole('button', { name: 'Tab actions' }))
+    await user.click(screen.getByRole('menuitem', { name: 'Remove from this project' }))
+    await vi.waitFor(() => expect(location()).toBe('/projects/7/settings?range=7d'))
+  })
+
   it('in reporting dev, which serves no project tabs, asks for none and offers no tab writes', async () => {
     vi.mocked(endpoints.dashboards).mockResolvedValue(dashboardsList({ dev: true }))
     vi.mocked(endpoints.projectTabs).mockRejectedValue(new ApiError(404, 'not found'))
-    renderAt('/projects/7/setup')
+    renderAt('/projects/7/settings')
     expect(await screen.findByRole('region', { name: 'Usage' })).toBeInTheDocument()
-    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Setup'])
+    expect(screen.queryAllByRole('tab')).toEqual([])
+    expect(screen.getByRole('link', { name: 'Settings' })).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Forms' })).not.toBeInTheDocument()
+    expect(endpoints.projectActivity).not.toHaveBeenCalled()
     expect(screen.queryByRole('button', { name: 'Add tab' })).not.toBeInTheDocument()
     expect(endpoints.projectTabs).not.toHaveBeenCalled()
   })

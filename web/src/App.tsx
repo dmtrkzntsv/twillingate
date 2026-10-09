@@ -92,9 +92,16 @@ function App() {
               </OnlineOnly>
             }
           />
-          <Route path="/projects/:id" element={<ProjectIndex />} />
           <Route
-            path="/projects/:id/setup"
+            path="/projects/:id"
+            element={
+              <OnlineOnly>
+                <ProjectIndex />
+              </OnlineOnly>
+            }
+          />
+          <Route
+            path="/projects/:id/settings"
             element={
               <OnlineOnly>
                 <Project />

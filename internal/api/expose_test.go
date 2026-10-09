@@ -22,7 +22,9 @@ func TestEveryToolChoosesATransport(t *testing.T) {
 	r := newTestRegistrar(t, h)
 	mcpOnly := map[string]bool{"integration_guide": true, "reporting_guide": true}
 	restOnly := map[string]bool{"view": true, "create_widget_share": true, "widget_share_image": true, // the web app's own selection, upload and picture
-		"export_submissions": true} // a CSV download
+		"export_submissions": true,                           // a CSV download
+		"mark_form_seen":     true, "project_activity": true, // the console's own read mark and badges
+	}
 	seen := map[string]string{}
 	tools := 0
 	for _, s := range r.specs {
