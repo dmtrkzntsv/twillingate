@@ -45,7 +45,7 @@ are in [deployment.md](deployment.md).
 - **User dashboards** are what agents create. Their ids start at 1001.
 
 **A dashboard is shown in two places:** in the sidebar, by its group, and as
-a tab of a project's page, next to Setup. See
+a tab of a project's page. See
 [Project tabs and the sidebar](#project-tabs-and-the-sidebar).
 
 **A dashboard is in a group.** Dashboards sharing a `group_id` are one
@@ -268,7 +268,7 @@ widget_data {"widget_id": 42, "project_id": 7, "from": "2026-09-01", "to": "2026
 | `duplicate_dashboard` | `dashboard_id`, `whole_group`, `group_id` | a user copy with copies of its live widgets: a new dashboard last in the sidebar, or with `group_id` a tab of that user group (right after the source when it is the source's own group, last otherwise). A system dashboard is copied too, also one out of the sidebar. An archived user dashboard is refused (restore it first). `whole_group` copies the group as a new dashboard with the same tabs: a system group whole, a user group's live tabs; it takes no `group_id`. The copy is in the sidebar, on no project's page, with `project_tab` false. Duplicating never hides the source: to replace a system group, `update_dashboard` it with `sidebar: false` |
 | `archive_dashboard` | `dashboard_id`, `whole_group` | archives a user dashboard (`whole_group`: every live member of its group): out of the sidebar and off every project page; see [Archiving and the purge](#archiving-and-the-purge). A system dashboard is refused |
 | `restore_dashboard` | `dashboard_id`, `whole_group` | unhides a user dashboard (`whole_group`: every archived member of its group), in the sidebar and on project pages where it was. A system dashboard is refused |
-| `list_project_tabs` | `project_id` | `tabs`: the project page's tabs after Setup, in order, one order per project, built-in and user tabs alike; each `dashboard_id`, `title`, `owner`, `group_id` |
+| `list_project_tabs` | `project_id` | `tabs`: the project page's tabs, in order, one order per project, built-in and user tabs alike; each `dashboard_id`, `title`, `owner`, `group_id` |
 | `add_project_tab` | `project_id`, `dashboard_id`, `after` | `tabs`, as `list_project_tabs`. Any dashboard, system or user, goes last, or right after `after` (a tab of the project; `0` first); a system dashboard added back goes last too. One already there is refused (`409 conflict`), and so is an archived one |
 | `remove_project_tab` | `project_id`, `dashboard_id` | `tabs`; the dashboard is kept. A user dashboard's last tab can go too: it stays in the sidebar |
 | `move_project_tab` | `project_id`, `dashboard_id`, `after` | `tabs`; moves any tab, system or user, after another tab of the project (`0` first) |
@@ -933,10 +933,12 @@ share in `list_widget_shares` reports them as booleans.
 A dashboard is reached two ways: by its group's entry in the sidebar, and as
 a tab of a project's page (`/app/projects/{project_id}`).
 
-- **A project page is tabs.** Setup comes first: the project's usage,
-  origins, breakdowns and keys. It is not a dashboard and is never listed. The
-  dashboards follow in one order per project, then **+**, which adds one. `list_project_tabs`
-  lists the tabs after Setup.
+- **A project page is tabs.** The dashboards are the tabs, in one order per
+  project, then **+**, which adds one. `list_project_tabs` lists them. The
+  page opens on the tab last used for that project in the browser, else the
+  first. Settings (the project's usage, origins, breakdowns and keys) and
+  Forms are not dashboards and are never listed: they are buttons beside the
+  tabs, Settings behind the gear.
   - Each project keeps its own list: `add_project_tab`,
     `remove_project_tab` and `move_project_tab` change one project's page
     and no other.

@@ -38,8 +38,8 @@ test('a form arrives as a draft, is approved, filtered, closed, exported, and a 
   await postForm(request, key, { email: 'bob@example.com', message: 'Hi there' })
 
   await login(page)
-  await page.goto(`/app/projects/${id}/setup`)
-  await page.getByRole('tab', { name: 'Forms' }).click()
+  await page.goto(`/app/projects/${id}/settings`)
+  await page.getByRole('link', { name: /^Forms/ }).click()
   await expect(page).toHaveURL(new RegExp(`/app/projects/${id}/forms$`))
   const row = page.getByRole('list', { name: 'Forms' }).getByRole('listitem').filter({ hasText: 'contact' })
   await expect(row.getByText(/^Draft · expires in \d+ days?$/)).toBeVisible()
@@ -48,7 +48,8 @@ test('a form arrives as a draft, is approved, filtered, closed, exported, and a 
   // The draft's page: its banner, and every field it saw as a column.
   await row.getByRole('link').click()
   await expect(page).toHaveURL(new RegExp(`/app/projects/${id}/forms/contact$`))
-  await expect(page.getByRole('tab', { name: 'Forms' })).toHaveAttribute('aria-selected', 'true')
+  // The Forms button leads the page; the form's own "Forms" back link follows it.
+  await expect(page.getByRole('link', { name: /^Forms/ }).first()).toHaveAttribute('aria-current', 'page')
   await expect(page.getByText(/^Draft: accepting until .+, then archived$/)).toBeVisible()
   const table = page.getByRole('region', { name: 'Submissions' })
   await expect(table.getByRole('columnheader', { name: 'phone' })).toBeVisible()
@@ -106,7 +107,7 @@ test('a form arrives as a draft, is approved, filtered, closed, exported, and a 
   await expect(page.getByRole('group', { name: 'Closing' }).getByRole('button', { name: 'Reopen' })).toBeVisible()
 
   // Find a person across the forms, and delete everything found.
-  await page.getByRole('link', { name: 'Forms', exact: true }).click()
+  await page.getByRole('link', { name: /^Forms(, \d+ new)?$/ }).last().click()
   await expect(page).toHaveURL(new RegExp(`/app/projects/${id}/forms$`))
   await page.getByRole('searchbox', { name: 'Find a person' }).fill('bob@')
   await page.getByRole('button', { name: 'Find', exact: true }).click()
@@ -117,4 +118,26 @@ test('a form arrives as a draft, is approved, filtered, closed, exported, and a 
   await page.getByRole('alertdialog').getByRole('button', { name: 'Delete submissions' }).click()
   await expect(page.getByText('Deleted 1 submission')).toBeVisible()
   await expect(row.getByText(/^1 submission\b/)).toBeVisible()
+})
+
+test('the Forms button counts new submissions until a form is opened', async ({ page, request }) => {
+  test.setTimeout(120_000)
+  const { id, key } = await createProject(request, `forms-count-${Date.now()}`, [SITE])
+  await postForm(request, key, { email: 'ann@example.com', message: 'Hello' })
+
+  await login(page)
+  await page.goto(`/app/projects/${id}/settings`)
+  const forms = page.getByRole('link', { name: /^Forms/ })
+  await expect(forms).toHaveAccessibleName('Forms, 1 new')
+
+  await forms.click()
+  await expect(page).toHaveURL(new RegExp(`/app/projects/${id}/forms$`))
+  await page.getByRole('list', { name: 'Forms' }).getByRole('listitem').filter({ hasText: 'contact' }).getByRole('link').click()
+  await expect(page).toHaveURL(new RegExp(`/app/projects/${id}/forms/contact$`))
+  await expect(page.getByRole('region', { name: 'Submissions' })).toBeVisible()
+
+  // Opening the form marked it seen: back on the project, the count is gone.
+  await page.getByRole('link', { name: 'Settings', exact: true }).click()
+  await expect(page).toHaveURL(new RegExp(`/app/projects/${id}/settings$`))
+  await expect(page.getByRole('link', { name: 'Forms', exact: true })).toBeVisible()
 })

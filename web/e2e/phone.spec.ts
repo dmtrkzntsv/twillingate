@@ -177,8 +177,8 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
 
   for (const path of [
     '/app/projects',
-    '/app/projects/1/setup',
-    `/app/projects/${id}/setup`,
+    '/app/projects/1/settings',
+    `/app/projects/${id}/settings`,
     `/app/projects/${id}/forms`,
     `/app/projects/${id}/forms/${formName}`,
     `/app/projects/${id}/dashboards/1`,
@@ -189,7 +189,7 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
     // The not-found pages: an unknown address, dashboard, project and project tab.
     '/app/nowhere',
     '/app/dashboards/999999',
-    '/app/projects/999999/setup',
+    '/app/projects/999999/settings',
     `/app/projects/${id}/dashboards/999999`,
   ]) {
     await check(page, path)

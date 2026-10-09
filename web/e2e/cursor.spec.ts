@@ -73,7 +73,7 @@ test('every link and button shows the pointer', async ({ page, request }) => {
   await login(page)
   for (const path of [
     '/app/projects',
-    '/app/projects/1/setup',
+    '/app/projects/1/settings',
     `/app/projects/${forms.id}/forms`,
     `/app/projects/${forms.id}/forms/contact`,
     '/app/dashboards',

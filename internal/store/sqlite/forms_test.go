@@ -1070,6 +1070,16 @@ func TestMarkFormSeenNeverMovesBack(t *testing.T) {
 	}
 }
 
+func TestMarkFormSeenOnClosedDB(t *testing.T) {
+	db := newTestDB(t)
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.MarkFormSeen(context.Background(), 1, "contact", time.Now()); err == nil {
+		t.Fatal("MarkFormSeen on a closed database: want an error")
+	}
+}
+
 func TestMarkFormSeenUnknownForm(t *testing.T) {
 	db := newTestDB(t)
 	err := db.MarkFormSeen(context.Background(), 1, "nope", time.Now())
