@@ -6,7 +6,7 @@ import { ApiError, endpoints, type DashboardDetail, type ProjectTab } from '@/li
 import { answerFor, dashboardsList, details, launchWeek, widgetsById } from '@/test/fixtures'
 import { contactPage, form } from '@/test/forms'
 import { renderWithProviders, testClient } from '@/test/render'
-import Project, { ProjectIndex, SetupRedirect } from './Project'
+import Project, { ProjectIndex } from './Project'
 import { readLastTab, writeLastTab } from '@/lib/last-tab'
 
 const actions = {
@@ -74,7 +74,6 @@ function renderAt(path: string, client = testClient()) {
       <Routes>
         <Route path="/projects/:id" element={<ProjectIndex />} />
         <Route path="/projects/:id/settings" element={<Project />} />
-        <Route path="/projects/:id/setup" element={<SetupRedirect />} />
         <Route path="/projects/:id/dashboards/:dashId" element={<Project />} />
         <Route path="/projects/:id/forms" element={<Project tab="forms" />} />
         <Route path="/projects/:id/forms/:name" element={<Project tab="forms" />} />
@@ -350,12 +349,6 @@ describe('Project tabs', () => {
     expect(await screen.findByRole('region', { name: 'Usage' })).toBeInTheDocument()
     expect(location()).toBe('/projects/7/settings?range=30d')
     expect(endpoints.projectTabs).not.toHaveBeenCalled()
-  })
-
-  it('redirects /setup to /settings keeping the range', async () => {
-    renderAt('/projects/7/setup?range=30d')
-    expect(await screen.findByRole('region', { name: 'Usage' })).toBeInTheDocument()
-    expect(location()).toBe('/projects/7/settings?range=30d')
   })
 
   it('reads the built-ins and your own as tabs, then Add tab, with Forms and Settings as buttons after them', async () => {

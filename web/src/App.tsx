@@ -15,7 +15,7 @@ import Home from '@/pages/Home'
 import Landing from '@/pages/Landing'
 import Login from '@/pages/Login'
 import NoSuchPage from '@/pages/NoSuchPage'
-import Project, { ProjectIndex, SetupRedirect } from '@/pages/Project'
+import Project, { ProjectIndex } from '@/pages/Project'
 import Projects from '@/pages/Projects'
 import Shares from '@/pages/Shares'
 
@@ -100,7 +100,6 @@ function App() {
               </OnlineOnly>
             }
           />
-          <Route path="/projects/:id/setup" element={<SetupRedirect />} />
           <Route
             path="/projects/:id/settings"
             element={

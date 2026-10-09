@@ -124,14 +124,12 @@ test('a project opens on its first dashboard tab; tabs are removed and re-added 
     await page.getByRole('dialog').getByRole('group', { name: 'Your dashboards' }).getByRole('button', { name: title, exact: true }).click()
     await expect(tabs.getByRole('tab')).toHaveText([...READDED, title])
 
-    // Settings is a button beside the tabs, not a tab; the old /setup address still reaches it.
+    // Settings is a button beside the tabs, not a tab.
     await expect(tabs.getByRole('tab', { name: 'Settings' })).toHaveCount(0)
     await page.getByRole('link', { name: 'Settings', exact: true }).click()
     await expect(page).toHaveURL(/\/settings$/)
     await expect(page.getByRole('link', { name: 'Settings', exact: true })).toHaveAttribute('aria-current', 'page')
     await expect(page.getByRole('region', { name: 'Allowed origins' })).toBeVisible()
-    await page.goto(`${projectURL}/setup`)
-    await expect(page).toHaveURL(/\/settings$/)
     await expect(tabs.getByRole('tab')).toHaveText([...READDED, title])
   } finally {
     // Whatever failed above, the shared dev project goes back as the other

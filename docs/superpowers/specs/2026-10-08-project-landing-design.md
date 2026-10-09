@@ -74,8 +74,8 @@ Date: 2026-10-08
   - It leaves the tab row. A gear button on the right of the tab row,
     outside the scrolling tabs, opens it; tooltip and aria-label
     "Settings". Its content is unchanged.
-  - The route is `/projects/:id/settings`. `/projects/:id/setup` redirects
-    there, keeping the query string, so old links and bookmarks work.
+  - The route is `/projects/:id/settings`. `/projects/:id/setup` is gone
+    (no redirect): it answers the console's page-not-found.
   - `SETUP_ID` is renamed `SETTINGS_ID`; `tabPath` maps it to
     `/settings`.
   - The gear shows as current (`aria-current="page"`, the active style)
@@ -165,7 +165,7 @@ In the same commit as the change (CLAUDE.md's table):
   - `docs_sync_test.go` passes with the new route and fields.
 - **Vitest.** `landingPath`: a remembered live tab, a remembered tab that
   was removed, no memory, no tabs. Tab bar: gear and inbox outside the
-  tabs, badge hidden at 0 and capped at 99+. `/setup` redirects.
+  tabs, badge hidden at 0 and capped at 99+.
 - **E2E.** `project-tabs.spec.ts` (drag a built-in, land on the last
   tab), `cursor.spec.ts` (the two buttons), `phone.spec.ts` (the icons
   fit at 360px with the long project name).

@@ -35,12 +35,6 @@ export function ProjectIndex() {
   return <Navigate to={landingPath(id, tabsQ.data.tabs, readLastTab(id), range)} replace />
 }
 
-/** `/projects/:id/setup`, the old address of Settings: kept for links and bookmarks. */
-export function SetupRedirect() {
-  const { search } = useLocation()
-  return <Navigate to={`../settings${search}`} relative="path" replace />
-}
-
 /**
  * `/projects/:id/settings`, `/projects/:id/forms` (with `tab="forms"`, and
  * `/forms/:name` for one form) and `/projects/:id/dashboards/:dashId`: one
