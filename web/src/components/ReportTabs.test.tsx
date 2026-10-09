@@ -96,6 +96,12 @@ describe('ReportTabs', () => {
     expect(screen.getByRole('combobox', { name: 'Tab' })).toHaveTextContent('Tabs')
   })
 
+  it('offers no phone select when there are no tabs, only the trailing control', () => {
+    render(<ReportTabs tabs={[]} currentId={0} onSelect={() => {}} trailing={<button type="button">Add tab</button>} />)
+    expect(screen.queryByRole('combobox', { name: 'Tab' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Add tab' })).toBeInTheDocument()
+  })
+
   it('still selects on a virtual click after Space picked a tab up and Escape put it back', async () => {
     const onSelect = vi.fn()
     render(<ReportTabs tabs={tabs} currentId={13} onSelect={onSelect} sortable onMove={async () => true} />)

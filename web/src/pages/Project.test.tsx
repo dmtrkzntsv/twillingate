@@ -5,7 +5,7 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { ApiError, endpoints, type DashboardDetail, type ProjectTab } from '@/lib/api'
 import { answerFor, dashboardsList, details, launchWeek, widgetsById } from '@/test/fixtures'
 import { contactPage, form } from '@/test/forms'
-import { renderWithProviders } from '@/test/render'
+import { renderWithProviders, testClient } from '@/test/render'
 import Project, { ProjectIndex, SetupRedirect } from './Project'
 import { readLastTab, writeLastTab } from '@/lib/last-tab'
 
@@ -68,7 +68,7 @@ function LocationProbe() {
 
 const location = () => screen.getByTestId('location').textContent
 
-function renderAt(path: string) {
+function renderAt(path: string, client = testClient()) {
   return renderWithProviders(
     <MemoryRouter initialEntries={[path]}>
       <Routes>
@@ -80,7 +80,8 @@ function renderAt(path: string) {
         <Route path="/projects/:id/forms/:name" element={<Project tab="forms" />} />
       </Routes>
       <LocationProbe />
-    </MemoryRouter>
+    </MemoryRouter>,
+    client
   )
 }
 
@@ -326,6 +327,16 @@ describe('Project tabs', () => {
     expect(location()).toBe('/projects/7/dashboards/1')
   })
 
+  it('decides on fresh tabs, not the ones cached from earlier in the session', async () => {
+    // Tab 999 was removed elsewhere since the cache was filled.
+    const client = testClient()
+    client.setQueryData(['project-tabs', 7], { tabs: [...tabs, { dashboard_id: 999, title: 'Gone', owner: 'user', group_id: 999 }] })
+    writeLastTab(7, 999)
+    renderAt('/projects/7', client)
+    expect(await screen.findByRole('heading', { name: 'Views', level: 1 })).toBeInTheDocument()
+    expect(location()).toBe('/projects/7/dashboards/1')
+  })
+
   it('opens Settings when the project has no tabs', async () => {
     vi.mocked(endpoints.projectTabs).mockResolvedValue({ tabs: [] })
     renderAt('/projects/7')
@@ -388,6 +399,15 @@ describe('Project tabs', () => {
     const notice = (await screen.findByText('No events received yet')).closest('[role=status]') as HTMLElement
     expect(notice).not.toBeNull()
     expect(within(notice).getByRole('link', { name: 'Set up this project' })).toHaveAttribute('href', '/projects/7/settings?range=30d')
+  })
+
+  it('shows no notice on the Forms pages, where a forms-only project has its work', async () => {
+    vi.mocked(endpoints.projectActivity).mockResolvedValue({ projects: [{ project_id: 7, last_event_day: null, new_submissions: 0 }] })
+    vi.spyOn(endpoints, 'forms').mockResolvedValue({ action_base: '', forms: [form('contact')] })
+    renderAt('/projects/7/forms')
+    await screen.findByRole('list', { name: 'Forms' })
+    await vi.waitFor(() => expect(endpoints.projectActivity).toHaveBeenCalled())
+    expect(screen.queryByText('No events received yet')).not.toBeInTheDocument()
   })
 
   it('shows no notice on Settings itself, nor for a project that has data', async () => {

@@ -26,10 +26,12 @@ export function ProjectIndex() {
   const valid = Number.isInteger(id) && id > 0
   const { data: dash, error: dashError } = useQuery(dashboardsQuery)
   const dev = dash?.dev === true
-  const tabsQ = useQuery({ ...projectTabsQuery(id), enabled: valid && dash !== undefined && !dev })
+  // Fresh data decides where to land: a tab removed elsewhere since the
+  // cache was filled would otherwise land on the "isn't a tab" notice.
+  const tabsQ = useQuery({ ...projectTabsQuery(id), enabled: valid && dash !== undefined && !dev, refetchOnMount: 'always' })
   const range = rangeParams(new URLSearchParams(search)).toString()
   if (!valid || dev || dashError || tabsQ.error) return <Navigate to={`settings${search}`} replace />
-  if (!tabsQ.data) return null
+  if (!tabsQ.data || !tabsQ.isFetchedAfterMount) return null
   return <Navigate to={landingPath(id, tabsQ.data.tabs, readLastTab(id), range)} replace />
 }
 
@@ -100,7 +102,7 @@ export default function Project({ tab }: { tab?: 'forms' } = {}) {
                 readOnly={dev}
               />
             </div>
-            {mine && mine.last_event_day === null && dashId !== SETTINGS_ID && (
+            {mine && mine.last_event_day === null && dashId !== SETTINGS_ID && dashId !== FORMS_ID && (
               <div role="status" className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-dashed p-3 text-sm">
                 <span>No events received yet</span>
                 <Link to={tabPath(id, SETTINGS_ID, rangeParams(url).toString())} className="font-medium underline-offset-2 hover:underline">

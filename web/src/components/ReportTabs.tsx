@@ -89,18 +89,21 @@ export default function ReportTabs({ tabs, currentId, onSelect, sortable = false
           )}
         </div>
       </Tabs>
-      <Select value={value} onValueChange={select}>
-        <SelectTrigger size="sm" aria-label="Tab" className="min-w-36 sm:hidden">
-          <SelectValue placeholder="Tabs" />
-        </SelectTrigger>
-        <SelectContent position="popper" align="start">
-          {tabs.map((d) => (
-            <SelectItem key={d.dashboard_id} value={String(d.dashboard_id)}>
-              {d.title}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+      {/* An empty list would open as a blank menu (a project with no tabs). */}
+      {tabs.length > 0 && (
+        <Select value={value} onValueChange={select}>
+          <SelectTrigger size="sm" aria-label="Tab" className="min-w-36 sm:hidden">
+            <SelectValue placeholder="Tabs" />
+          </SelectTrigger>
+          <SelectContent position="popper" align="start">
+            {tabs.map((d) => (
+              <SelectItem key={d.dashboard_id} value={String(d.dashboard_id)}>
+                {d.title}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      )}
       {trailing}
     </>
   )

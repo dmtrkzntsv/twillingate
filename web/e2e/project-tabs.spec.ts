@@ -35,119 +35,125 @@ test('a project opens on its first dashboard tab; tabs are removed and re-added 
 }) => {
   test.setTimeout(120_000)
   const headers = authHeaders()
-  // A dashboard of our own to add: a copy of Views, made over the API and
-  // renamed, so the dashboards other spec files leave behind never share its title.
-  const copy = await request.post('/api/dashboards/1/duplicate', { headers, data: {} })
-  expect(copy.ok(), await copy.text()).toBeTruthy()
-  const { dashboard_id: mineId } = (await copy.json()) as { dashboard_id: number }
   const title = `E2E project tab ${Date.now()}`
-  const renamed = await request.patch(`/api/dashboards/${mineId}`, { headers, data: { title } })
-  expect(renamed.ok(), await renamed.text()).toBeTruthy()
-  // A second one, to reorder against the first.
-  const copy2 = await request.post('/api/dashboards/1/duplicate', { headers, data: {} })
-  expect(copy2.ok(), await copy2.text()).toBeTruthy()
-  const { dashboard_id: secondId } = (await copy2.json()) as { dashboard_id: number }
-  const second = `${title} second`
-  const renamed2 = await request.patch(`/api/dashboards/${secondId}`, { headers, data: { title: second } })
-  expect(renamed2.ok(), await renamed2.text()).toBeTruthy()
-
-  await login(page)
-  await page.getByRole('article', { name: 'dev' }).getByRole('link', { name: 'dev' }).click()
-  await expect(page).toHaveURL(/\/app\/projects\/\d+\/dashboards\/\d+$/)
-  const projectURL = new URL(page.url()).pathname.replace(/\/dashboards\/\d+$/, '')
   const tabs = page.getByRole('tablist', { name: 'Tabs' })
-  await expect(tabs.getByRole('tab')).toHaveText([...BUILT_INS])
+  const created: number[] = []
+  let projectId: number | undefined
+  try {
+    // A dashboard of our own to add: a copy of Views, made over the API and
+    // renamed, so the dashboards other spec files leave behind never share its title.
+    const copy = await request.post('/api/dashboards/1/duplicate', { headers, data: {} })
+    expect(copy.ok(), await copy.text()).toBeTruthy()
+    const { dashboard_id: mineId } = (await copy.json()) as { dashboard_id: number }
+    created.push(mineId)
+      const renamed = await request.patch(`/api/dashboards/${mineId}`, { headers, data: { title } })
+    expect(renamed.ok(), await renamed.text()).toBeTruthy()
+    // A second one, to reorder against the first.
+    const copy2 = await request.post('/api/dashboards/1/duplicate', { headers, data: {} })
+    expect(copy2.ok(), await copy2.text()).toBeTruthy()
+    const { dashboard_id: secondId } = (await copy2.json()) as { dashboard_id: number }
+    created.push(secondId)
+    const second = `${title} second`
+    const renamed2 = await request.patch(`/api/dashboards/${secondId}`, { headers, data: { title: second } })
+    expect(renamed2.ok(), await renamed2.text()).toBeTruthy()
 
-  // A built-in tab, removed from its own menu, comes back from "+", last.
-  await tabs.getByRole('tab', { name: 'Product', exact: true }).click()
-  await expect(page).toHaveURL(/\/projects\/\d+\/dashboards\/\d+$/)
-  await expect(page.getByRole('heading', { level: 1, name: 'Product', exact: true })).toBeVisible()
-  await page.getByRole('button', { name: 'Tab actions' }).click()
-  await page.getByRole('menuitem', { name: 'Remove from this project' }).click()
-  // The toast first: until the menu has closed, the tab row is hidden from
-  // the accessibility tree and would count no tabs at all.
-  await expect(page.getByText("Removed 'Product'")).toBeVisible()
-  await expect(tabs.getByRole('tab', { name: 'Product', exact: true })).toHaveCount(0)
-  // It lands on the tab before it.
-  await expect(tabs.getByRole('tab', { name: 'Views', exact: true })).toHaveAttribute('data-state', 'active')
+    await login(page)
+    await page.getByRole('article', { name: 'dev' }).getByRole('link', { name: 'dev' }).click()
+    await expect(page).toHaveURL(/\/app\/projects\/\d+\/dashboards\/\d+$/)
+    const projectURL = new URL(page.url()).pathname.replace(/\/dashboards\/\d+$/, '')
+    projectId = Number(projectURL.split('/').pop())
+      await expect(tabs.getByRole('tab')).toHaveText([...BUILT_INS])
 
-  await page.getByRole('button', { name: 'Add tab' }).click()
-  // Whole-group copies other spec files make have a "Product" of their own.
-  await page.getByRole('dialog').getByRole('group', { name: 'Built-in' }).getByRole('button', { name: 'Product', exact: true }).click()
-  await expect(page.getByRole('dialog')).toHaveCount(0)
-  await expect(tabs.getByRole('tab')).toHaveText([...READDED])
-  await expect(tabs.getByRole('tab', { name: 'Product', exact: true })).toHaveAttribute('data-state', 'active')
+    // A built-in tab, removed from its own menu, comes back from "+", last.
+    await tabs.getByRole('tab', { name: 'Product', exact: true }).click()
+    await expect(page).toHaveURL(/\/projects\/\d+\/dashboards\/\d+$/)
+    await expect(page.getByRole('heading', { level: 1, name: 'Product', exact: true })).toBeVisible()
+    await page.getByRole('button', { name: 'Tab actions' }).click()
+    await page.getByRole('menuitem', { name: 'Remove from this project' }).click()
+    // The toast first: until the menu has closed, the tab row is hidden from
+    // the accessibility tree and would count no tabs at all.
+    await expect(page.getByText("Removed 'Product'")).toBeVisible()
+    await expect(tabs.getByRole('tab', { name: 'Product', exact: true })).toHaveCount(0)
+    // It lands on the tab before it.
+    await expect(tabs.getByRole('tab', { name: 'Views', exact: true })).toHaveAttribute('data-state', 'active')
 
-  // A dashboard of our own joins after the built-ins.
-  await page.getByRole('button', { name: 'Add tab' }).click()
-  await page.getByRole('dialog').getByRole('group', { name: 'Your dashboards' }).getByRole('button', { name: title, exact: true }).click()
-  await expect(tabs.getByRole('tab')).toHaveText([...READDED, title])
-  await expect(page.getByRole('heading', { level: 1, name: title, exact: true })).toBeVisible()
+    await page.getByRole('button', { name: 'Add tab' }).click()
+    // Whole-group copies other spec files make have a "Product" of their own.
+    await page.getByRole('dialog').getByRole('group', { name: 'Built-in' }).getByRole('button', { name: 'Product', exact: true }).click()
+    await expect(page.getByRole('dialog')).toHaveCount(0)
+    await expect(tabs.getByRole('tab')).toHaveText([...READDED])
+    await expect(tabs.getByRole('tab', { name: 'Product', exact: true })).toHaveAttribute('data-state', 'active')
 
-  // Your own tabs reorder; a phone does it from the tab's menu (a wide
-  // screen drags), and the new order is the project's, after a reload too.
-  await page.getByRole('button', { name: 'Add tab' }).click()
-  await page.getByRole('dialog').getByRole('group', { name: 'Your dashboards' }).getByRole('button', { name: second, exact: true }).click()
-  await expect(tabs.getByRole('tab')).toHaveText([...READDED, title, second])
-  await expect(page.getByRole('heading', { level: 1, name: second, exact: true })).toBeVisible()
-  await page.setViewportSize({ width: 390, height: 800 })
-  await page.getByRole('button', { name: 'Tab actions' }).click()
-  await page.getByRole('menuitem', { name: 'Move left' }).click()
-  await page.setViewportSize({ width: 1280, height: 800 })
-  await expect(tabs.getByRole('tab')).toHaveText([...READDED, second, title])
-  await page.reload()
-  await expect(tabs.getByRole('tab')).toHaveText([...READDED, second, title])
-  // Back to one tab of our own for the rest of the flow.
-  await page.getByRole('button', { name: 'Tab actions' }).click()
-  await page.getByRole('menuitem', { name: 'Remove from this project' }).click()
-  await expect(page.getByText(`Removed '${second}'`)).toBeVisible()
-  await expect(tabs.getByRole('tab')).toHaveText([...READDED, title])
+    // A dashboard of our own joins after the built-ins.
+    await page.getByRole('button', { name: 'Add tab' }).click()
+    await page.getByRole('dialog').getByRole('group', { name: 'Your dashboards' }).getByRole('button', { name: title, exact: true }).click()
+    await expect(tabs.getByRole('tab')).toHaveText([...READDED, title])
+    await expect(page.getByRole('heading', { level: 1, name: title, exact: true })).toBeVisible()
 
-  // Our own dashboard's last project tab can go: it stays in the sidebar,
-  // and "+" brings the tab back. Projects are chosen one at a time, here.
-  await tabs.getByRole('tab', { name: title, exact: true }).click()
-  await expect(page.getByRole('heading', { level: 1, name: title, exact: true })).toBeVisible()
-  await page.getByRole('button', { name: 'Tab actions' }).click()
-  await page.getByRole('menuitem', { name: 'Remove from this project' }).click()
-  await expect(page.getByText(`Removed '${title}'`)).toBeVisible()
-  await expect(tabs.getByRole('tab')).toHaveText([...READDED])
-  await expect(page.locator('[data-sidebar="sidebar"]').getByRole('link', { name: title, exact: true })).toBeVisible()
-  await page.reload()
-  await expect(tabs.getByRole('tab')).toHaveText([...READDED])
-  await page.getByRole('button', { name: 'Add tab' }).click()
-  await page.getByRole('dialog').getByRole('group', { name: 'Your dashboards' }).getByRole('button', { name: title, exact: true }).click()
-  await expect(tabs.getByRole('tab')).toHaveText([...READDED, title])
+    // Your own tabs reorder; a phone does it from the tab's menu (a wide
+    // screen drags), and the new order is the project's, after a reload too.
+    await page.getByRole('button', { name: 'Add tab' }).click()
+    await page.getByRole('dialog').getByRole('group', { name: 'Your dashboards' }).getByRole('button', { name: second, exact: true }).click()
+    await expect(tabs.getByRole('tab')).toHaveText([...READDED, title, second])
+    await expect(page.getByRole('heading', { level: 1, name: second, exact: true })).toBeVisible()
+    await page.setViewportSize({ width: 390, height: 800 })
+    await page.getByRole('button', { name: 'Tab actions' }).click()
+    await page.getByRole('menuitem', { name: 'Move left' }).click()
+    await page.setViewportSize({ width: 1280, height: 800 })
+    await expect(tabs.getByRole('tab')).toHaveText([...READDED, second, title])
+    await page.reload()
+    await expect(tabs.getByRole('tab')).toHaveText([...READDED, second, title])
+    // Back to one tab of our own for the rest of the flow.
+    await page.getByRole('button', { name: 'Tab actions' }).click()
+    await page.getByRole('menuitem', { name: 'Remove from this project' }).click()
+    await expect(page.getByText(`Removed '${second}'`)).toBeVisible()
+    await expect(tabs.getByRole('tab')).toHaveText([...READDED, title])
 
-  // Settings is a button beside the tabs, not a tab; the old /setup address still reaches it.
-  await expect(tabs.getByRole('tab', { name: 'Settings' })).toHaveCount(0)
-  await page.getByRole('link', { name: 'Settings', exact: true }).click()
-  await expect(page).toHaveURL(/\/settings$/)
-  await expect(page.getByRole('link', { name: 'Settings', exact: true })).toHaveAttribute('aria-current', 'page')
-  await expect(page.getByRole('region', { name: 'Allowed origins' })).toBeVisible()
-  await page.goto(`${projectURL}/setup`)
-  await expect(page).toHaveURL(/\/settings$/)
-  await expect(tabs.getByRole('tab')).toHaveText([...READDED, title])
+    // Our own dashboard's last project tab can go: it stays in the sidebar,
+    // and "+" brings the tab back. Projects are chosen one at a time, here.
+    await tabs.getByRole('tab', { name: title, exact: true }).click()
+    await expect(page.getByRole('heading', { level: 1, name: title, exact: true })).toBeVisible()
+    await page.getByRole('button', { name: 'Tab actions' }).click()
+    await page.getByRole('menuitem', { name: 'Remove from this project' }).click()
+    await expect(page.getByText(`Removed '${title}'`)).toBeVisible()
+    await expect(tabs.getByRole('tab')).toHaveText([...READDED])
+    await expect(page.locator('[data-sidebar="sidebar"]').getByRole('link', { name: title, exact: true })).toBeVisible()
+    await page.reload()
+    await expect(tabs.getByRole('tab')).toHaveText([...READDED])
+    await page.getByRole('button', { name: 'Add tab' }).click()
+    await page.getByRole('dialog').getByRole('group', { name: 'Your dashboards' }).getByRole('button', { name: title, exact: true }).click()
+    await expect(tabs.getByRole('tab')).toHaveText([...READDED, title])
 
-  // Product goes back after Views, where the other specs expect to find it.
-  const projectId = Number(projectURL.split('/').pop())
-  const listed = await request.get(`/api/projects/${projectId}/tabs`, { headers })
-  expect(listed.ok(), await listed.text()).toBeTruthy()
-  const listedTabs = ((await listed.json()) as { tabs: { dashboard_id: number; title: string }[] }).tabs
-  const viewsTab = listedTabs.find((t) => t.title === 'Views')
-  const productTab = listedTabs.find((t) => t.title === 'Product')
-  expect(viewsTab && productTab, 'Views and Product tabs').toBeTruthy()
-  const restored = await request.post(`/api/projects/${projectId}/tabs/${productTab!.dashboard_id}/move`, {
-    headers,
-    data: { after: viewsTab!.dashboard_id },
-  })
-  expect(restored.ok(), await restored.text()).toBeTruthy()
+    // Settings is a button beside the tabs, not a tab; the old /setup address still reaches it.
+    await expect(tabs.getByRole('tab', { name: 'Settings' })).toHaveCount(0)
+    await page.getByRole('link', { name: 'Settings', exact: true }).click()
+    await expect(page).toHaveURL(/\/settings$/)
+    await expect(page.getByRole('link', { name: 'Settings', exact: true })).toHaveAttribute('aria-current', 'page')
+    await expect(page.getByRole('region', { name: 'Allowed origins' })).toBeVisible()
+    await page.goto(`${projectURL}/setup`)
+    await expect(page).toHaveURL(/\/settings$/)
+    await expect(tabs.getByRole('tab')).toHaveText([...READDED, title])
+  } finally {
+    // Whatever failed above, the shared dev project goes back as the other
+    // specs and the CI retry expect it: Product right after Views, and none
+    // of our own dashboards left in the sidebar (arrange.spec.ts expects that).
+    if (projectId !== undefined) {
+      const listed = await request.get(`/api/projects/${projectId}/tabs`, { headers })
+      const listedTabs = listed.ok() ? ((await listed.json()) as { tabs: { dashboard_id: number; title: string }[] }).tabs : []
+      const viewsTab = listedTabs.find((t) => t.title === 'Views')
+      const productTab = listedTabs.find((t) => t.title === 'Product')
+      if (viewsTab) {
+        if (productTab) {
+          await request.post(`/api/projects/${projectId}/tabs/${productTab.dashboard_id}/move`, { headers, data: { after: viewsTab.dashboard_id } })
+        } else {
+          // Removed and not yet re-added: Product is the built-in dashboard 2.
+          await request.post(`/api/projects/${projectId}/tabs`, { headers, data: { dashboard_id: 2, after: viewsTab.dashboard_id } })
+        }
+      }
+    }
+    for (const id of created) await request.post(`/api/dashboards/${id}/archive`, { headers, data: {} })
+  }
 
-  // Archiving our own dashboard takes its tab away. The second goes too:
-  // arrange.spec.ts expects no dashboards of ours left in the sidebar.
-  const archived = await request.post(`/api/dashboards/${mineId}/archive`, { headers, data: {} })
-  expect(archived.ok(), await archived.text()).toBeTruthy()
-  const archived2 = await request.post(`/api/dashboards/${secondId}/archive`, { headers, data: {} })
-  expect(archived2.ok(), await archived2.text()).toBeTruthy()
   await page.reload()
   await expect(page.getByRole('link', { name: 'Settings', exact: true })).toBeVisible()
   await expect(tabs.getByRole('tab', { name: title, exact: true })).toHaveCount(0)
