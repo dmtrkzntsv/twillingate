@@ -9,19 +9,10 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
-// openRegistryDB creates a migrated store in t.TempDir. Mirrors the
-// helper style used across this package's tests.
+// openRegistryDB creates a migrated store in t.TempDir.
 func openRegistryDB(t *testing.T) *DB {
 	t.Helper()
-	d, err := openAt(t.TempDir() + "/test.db")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { d.Close() })
-	if err := d.Migrate(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	return d
+	return newTestDB(t)
 }
 
 func TestCreateProjectWritesAuditAndBumpsVersion(t *testing.T) {

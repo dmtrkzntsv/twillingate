@@ -79,15 +79,7 @@ func (c *countingRotator) Rotate(ctx context.Context) error {
 func openStoreAt(t *testing.T) (store.Store, string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "jobs.db")
-	st, err := store.Open("sqlite://" + path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { st.Close() })
-	if err := st.Migrate(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	return st, path
+	return openMigratedStore(t, path), path
 }
 
 func openStore(t *testing.T) store.Store {

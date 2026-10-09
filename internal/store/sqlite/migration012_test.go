@@ -2,22 +2,13 @@ package sqlite
 
 import (
 	"context"
-	"path/filepath"
 	"testing"
 )
 
 // newTestDBAt opens a temp database migrated only through version v.
 func newTestDBAt(t *testing.T, v int) *DB {
 	t.Helper()
-	db, err := openAt(filepath.Join(t.TempDir(), "at.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { db.Close() })
-	if err := db.migrateThrough(context.Background(), v); err != nil {
-		t.Fatal(err)
-	}
-	return db
+	return openSnapshot(t, v)
 }
 
 func TestMigration012Folds(t *testing.T) {
