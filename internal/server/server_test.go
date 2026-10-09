@@ -73,15 +73,8 @@ func testServer(t *testing.T) (*fakeQueue, http.Handler) {
 // specs to {key, label}.
 func newTestRegistry(t *testing.T, projects []manage.ProjectSpec, keys map[int][2]string) *manage.Registry {
 	t.Helper()
-	st, err := store.Open("sqlite://" + t.TempDir() + "/reg.db")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { st.Close() })
+	st := openMigratedStore(t, t.TempDir()+"/reg.db")
 	ctx := context.Background()
-	if err := st.Migrate(ctx); err != nil {
-		t.Fatal(err)
-	}
 	reg := manage.New(st, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err := reg.Reload(ctx); err != nil {
 		t.Fatal(err)
