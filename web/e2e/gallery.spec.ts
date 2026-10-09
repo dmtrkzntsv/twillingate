@@ -132,9 +132,23 @@ test('the sidebar opens the gallery', async ({ page }) => {
   await page.goto('/app/dashboards')
   await signIn(page)
   await page.waitForURL(/\/app\/dashboards\/\d+/)
-  // Gallery is closed until opened.
-  await expect(page.getByRole('link', { name: 'Components' })).toHaveCount(0)
-  await page.getByRole('button', { name: 'Gallery' }).click()
-  await page.getByRole('link', { name: 'Components' }).click()
+  // Gallery is a menu, closed until the mouse hovers its entry.
+  await expect(page.getByRole('menuitem', { name: 'Components' })).toHaveCount(0)
+  await page.getByRole('button', { name: 'Gallery' }).hover()
+  await page.getByRole('menuitem', { name: 'Components' }).click()
   await page.waitForURL(/\/app\/gallery\/components/)
+  await expect(page.getByRole('menuitem', { name: 'Components' })).toHaveCount(0)
+})
+
+test('a tap on a phone opens the gallery menu inside the drawer', async ({ page }) => {
+  await page.setViewportSize({ width: 360, height: 740 })
+  await page.goto('/app/dashboards')
+  await signIn(page)
+  await page.waitForURL(/\/app\/dashboards\/\d+/)
+  await page.getByRole('button', { name: 'Toggle Sidebar' }).click()
+  await page.getByRole('button', { name: 'Gallery' }).click()
+  await page.getByRole('menuitem', { name: 'Dashboards' }).click()
+  await page.waitForURL(/\/app\/gallery\/dashboards/)
+  // The drawer closed behind the link.
+  await expect(page.getByRole('button', { name: 'Gallery' })).toBeHidden()
 })

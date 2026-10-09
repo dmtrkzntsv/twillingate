@@ -55,7 +55,7 @@ Projects live in a registry table, managed through the CLI or, over the API
 | Create a project | `twillingate project create` | `create_project` | `{name, allowed_origins, attributes}`; `name` required; `skip_key: true` issues no first key; returns the new `project_id` |
 | Change one | `twillingate project update` | `update_project` | `{project_id, …}`; merges, so an omitted field keeps its value and `allowed_origins: []` clears the list |
 | List them | `twillingate project list` | `list_projects` | none; in the order you set, a new project last |
-| Reorder them | `twillingate project move` | `move_project` | `{project_id, after}`; `after` is the project to follow, archived ones included, `0` puts it first. The console's Projects page does the same by dragging a card |
+| Reorder them | `twillingate project move` | `move_project` | `{project_id, after}`; `after` is the project to follow, archived ones included, `0` puts it first. The console does the same by dragging a card on the Projects page or a project in the sidebar |
 | Archive / restore | `twillingate project archive` / `restore` | `archive_project` / `restore_project` | `{project_id}` |
 | Issue an ingest key | `twillingate key issue` | `issue_ingest_key` | `{project_id, label}`; returns the key **and** a paste-ready snippet |
 | List keys | `twillingate key list` | `list_ingest_keys` | `{project_id}` |
