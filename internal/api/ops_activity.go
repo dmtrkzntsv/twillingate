@@ -42,10 +42,12 @@ func (h *host) projectActivity(ctx context.Context, _ struct{}) (projectActivity
 			a.LastEventDay = &d
 		}
 		// Submissions are read through h.subs, the handle that may.
-		sub, err := h.runSubs(ctx, `SELECT COUNT(*) FROM submissions s JOIN forms f
-			ON f.project_id = s.project_id AND f.name = s.form
-			WHERE s.project_id = ?1 AND f.archived_at IS NULL
-			  AND s.received_at > COALESCE(f.seen_at, '')`, p.ID)
+		// One seek per live form on (project_id, form, received_at), not a
+		// scan of every submission the project holds.
+		sub, err := h.runSubs(ctx, `SELECT COALESCE(SUM((SELECT COUNT(*) FROM submissions s
+			WHERE s.project_id = f.project_id AND s.form = f.name
+			  AND s.received_at > COALESCE(f.seen_at, ''))), 0)
+			FROM forms f WHERE f.project_id = ?1 AND f.archived_at IS NULL`, p.ID)
 		if err != nil {
 			return out, err
 		}

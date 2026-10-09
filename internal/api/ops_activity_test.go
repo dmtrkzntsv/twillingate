@@ -92,6 +92,27 @@ func TestProjectActivity(t *testing.T) {
 	}
 }
 
+// TestMarkFormSeenClampsFuture: a read mark far in the future must not hide
+// the submissions that arrive after it; seen_at never passes now.
+func TestMarkFormSeenClampsFuture(t *testing.T) {
+	h, _ := newTestHost(t)
+	ctx := t.Context()
+	seed := newFormSeeder(t, h)
+	seed.add("contact", "s1", map[string]string{"email": "a@x.io"}, nil)
+	if err := h.ops.MarkFormSeen(ctx, 1, "contact", time.Date(2999, 1, 1, 0, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	if got := getActivity(t, h); got[0].NewSubmissions != 0 {
+		t.Fatalf("after reading, project 1 = %+v", got[0])
+	}
+	// A submission an hour from now (the seeder's clock moved on).
+	seed.base = time.Now().UTC().Add(time.Hour)
+	seed.add("contact", "s2", map[string]string{"email": "b@x.io"}, nil)
+	if got := getActivity(t, h); got[0].NewSubmissions != 1 {
+		t.Errorf("a later submission = %+v, want it counted as new", got[0])
+	}
+}
+
 func deref(s *string) string {
 	if s == nil {
 		return "null"

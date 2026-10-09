@@ -321,7 +321,7 @@ func (h *host) registerReporting(r *registrar) {
 		h.restoreDashboard)
 	const pt = "/api/projects/{project_id}/tabs"
 	expose(r, spec{Name: "list_project_tabs", Annotations: ro, Method: "GET", Path: pt,
-		Description: "A project page's tabs after Setup, in order, one order per project for built-in and your own alike. Each: dashboard_id, title, owner, group_id."},
+		Description: "A project page's tabs, in order, one order per project for built-in and your own alike. Each: dashboard_id, title, owner, group_id."},
 		h.listProjectTabs)
 	expose(r, spec{Name: "add_project_tab", Annotations: write, Method: "POST", Path: pt, Status: http.StatusCreated,
 		Description: "Show a dashboard, built-in or your own, as a tab of a project's page: last, or right after `after` (a tab of the project; 0 first). A dashboard already there is refused."},
