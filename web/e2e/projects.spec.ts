@@ -172,3 +172,38 @@ test('drags a project card to a new place, which a reload keeps', async ({ page,
     for (const id of ids) await request.post(`/api/projects/${id}/archive`, { headers: { Authorization: `Bearer ${TOKEN}` } })
   }
 })
+
+test('drags a project in the sidebar to a new place, which the Projects page and a reload keep', async ({ page, request }) => {
+  const stamp = Date.now()
+  const names = [`side-a-${stamp}`, `side-b-${stamp}`]
+  const ids = [await createProject(request, names[0]), await createProject(request, names[1])]
+  try {
+    await login(page)
+    const list = page.locator('[data-sidebar="sidebar"]').getByRole('list', { name: 'Projects' })
+    const mine = async () => (await list.getByRole('link').allTextContents()).filter((n) => names.includes(n))
+    await expect.poll(mine).toEqual(names)
+
+    const fromLink = list.getByRole('link', { name: names[1], exact: true })
+    await fromLink.scrollIntoViewIfNeeded()
+    const from = (await fromLink.boundingBox())!
+    const to = (await list.getByRole('link', { name: names[0], exact: true }).boundingBox())!
+    await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2 - 8, { steps: 5 })
+    await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2 - 4, { steps: 10 })
+    await page.mouse.up()
+    await expect.poll(mine).toEqual([names[1], names[0]])
+    // The drop opened nothing.
+    await expect(page).toHaveURL(/\/app\/projects$/)
+
+    await page.reload()
+    await expect.poll(mine).toEqual([names[1], names[0]])
+    const cards = async () =>
+      (await page.getByRole('article').evaluateAll((els) => els.map((e) => e.getAttribute('aria-label')))).filter((n) =>
+        names.includes(n ?? '')
+      )
+    await expect.poll(cards).toEqual([names[1], names[0]])
+  } finally {
+    for (const id of ids) await request.post(`/api/projects/${id}/archive`, { headers: { Authorization: `Bearer ${TOKEN}` } })
+  }
+})
