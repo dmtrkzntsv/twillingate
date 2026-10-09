@@ -268,10 +268,10 @@ widget_data {"widget_id": 42, "project_id": 7, "from": "2026-09-01", "to": "2026
 | `duplicate_dashboard` | `dashboard_id`, `whole_group`, `group_id` | a user copy with copies of its live widgets: a new dashboard last in the sidebar, or with `group_id` a tab of that user group (right after the source when it is the source's own group, last otherwise). A system dashboard is copied too, also one out of the sidebar. An archived user dashboard is refused (restore it first). `whole_group` copies the group as a new dashboard with the same tabs: a system group whole, a user group's live tabs; it takes no `group_id`. The copy is in the sidebar, on no project's page, with `project_tab` false. Duplicating never hides the source: to replace a system group, `update_dashboard` it with `sidebar: false` |
 | `archive_dashboard` | `dashboard_id`, `whole_group` | archives a user dashboard (`whole_group`: every live member of its group): out of the sidebar and off every project page; see [Archiving and the purge](#archiving-and-the-purge). A system dashboard is refused |
 | `restore_dashboard` | `dashboard_id`, `whole_group` | unhides a user dashboard (`whole_group`: every archived member of its group), in the sidebar and on project pages where it was. A system dashboard is refused |
-| `list_project_tabs` | `project_id` | `tabs`: the project page's tabs after Setup, in order, system dashboards first (release order), then user dashboards (ordered per project); each `dashboard_id`, `title`, `owner`, `group_id` |
-| `add_project_tab` | `project_id`, `dashboard_id`, `after` | `tabs`, as `list_project_tabs`. A system dashboard goes back to its own place and takes no `after`; a user dashboard goes after `after` (one of the project's user tabs; `0` first among them), or last. One already there is refused (`409 conflict`), and so is an archived one |
+| `list_project_tabs` | `project_id` | `tabs`: the project page's tabs after Setup, in order, one order per project, built-in and user tabs alike; each `dashboard_id`, `title`, `owner`, `group_id` |
+| `add_project_tab` | `project_id`, `dashboard_id`, `after` | `tabs`, as `list_project_tabs`. Any dashboard, system or user, goes last, or right after `after` (a tab of the project; `0` first); a system dashboard added back goes last too. One already there is refused (`409 conflict`), and so is an archived one |
 | `remove_project_tab` | `project_id`, `dashboard_id` | `tabs`; the dashboard is kept. A user dashboard's last tab can go too: it stays in the sidebar |
-| `move_project_tab` | `project_id`, `dashboard_id`, `after` | `tabs`; moves a user tab after another user tab of the project (`0` first among them). System tabs keep the release's order |
+| `move_project_tab` | `project_id`, `dashboard_id`, `after` | `tabs`; moves any tab, system or user, after another tab of the project (`0` first) |
 | `add_widget` | `dashboard_id`, `component`, `source`, `title`, `name`, `props`, `width`, `height`, `after` | the widget |
 | `update_widget` | `widget_id` and any of `name`, `component`, `title`, `props`, `source`, `width`, `height` | the widget; omitted fields are kept |
 | `copy_widget` | `widget_id`, `dashboard_id`, `after` | the independent copy, same size; the original may be on a system dashboard |
@@ -934,16 +934,15 @@ A dashboard is reached two ways: by its group's entry in the sidebar, and as
 a tab of a project's page (`/app/projects/{project_id}`).
 
 - **A project page is tabs.** Setup comes first: the project's usage,
-  origins, breakdowns and keys. It is not a dashboard and is never listed. System
-  dashboards follow, in release order, then user dashboards, in the order
-  set for that project, then **+**, which adds one. `list_project_tabs`
+  origins, breakdowns and keys. It is not a dashboard and is never listed. The
+  dashboards follow in one order per project, then **+**, which adds one. `list_project_tabs`
   lists the tabs after Setup.
   - Each project keeps its own list: `add_project_tab`,
     `remove_project_tab` and `move_project_tab` change one project's page
     and no other.
-  - A system tab can be removed and added back, and it returns to its own
-    place; it is never reordered. User tabs always come after the system
-    ones.
+  - Every tab, system or your own, can be moved anywhere with
+    `move_project_tab`. A system tab can be removed and added back; it goes
+    last, like one a release adds, unless `add_project_tab` says `after`.
   - The project is fixed on its page: see
     [Parameters and ranges](#parameters-and-ranges).
 - **Every dashboard has two flags,** listed by `list_dashboards`:
@@ -961,7 +960,7 @@ a tab of a project's page (`/app/projects/{project_id}`).
     none of your own: `add_project_tab` adds one of yours to one project
     at a time (the project page's **+**);
   - a system dashboard a release adds goes onto every existing project
-    once, when it first ships; a system tab you removed stays removed
+    once, when it first ships, as its last tab; a system tab you removed stays removed
     across releases and restarts;
   - archiving a user dashboard takes it off every project page, and
     restoring it puts it back where it was.
@@ -977,7 +976,7 @@ Replacing a system dashboard on a project's pages, in four calls:
 ```
 duplicate_dashboard {"dashboard_id": 1, "whole_group": true}   → id 1001, a user group
 update_dashboard {"dashboard_id": 1, "sidebar": false}          → Reports leaves the sidebar
-add_project_tab {"project_id": 3, "dashboard_id": 1001}         → project 3 gains the copy, after its system tabs
+add_project_tab {"project_id": 3, "dashboard_id": 1001}         → project 3 gains the copy, last
 remove_project_tab {"project_id": 3, "dashboard_id": 1}         → and loses the system Views tab
 ```
 
@@ -1073,9 +1072,7 @@ widget's name (`widget visitors: …`), and nothing is created.
 | dashboard 1001 is your own: your own dashboards are always in the sidebar; archive_dashboard takes one away | `update_dashboard` takes `sidebar` for system dashboards only. To take one of your own out of the sidebar, `archive_dashboard` it. |
 | sidebar goes on its own; give title, after or group_id in another call | Send `sidebar` without `title`, `after` or `group_id`. |
 | project 1 already has dashboard 1001 as a tab (`409 conflict`) | It is there already; `list_project_tabs` lists the page. |
-| a built-in tab goes back to its own place; drop after | Call `add_project_tab` without `after` for a system dashboard. |
-| built-in tabs keep the release's order | `move_project_tab` moves user tabs only. |
-| after 7 is not one of project 1's own tabs | Name a user tab of that project, `0` for the first of them, or (in `add_project_tab`) leave `after` out for last. |
+| after 7 is not one of project 1's tabs | Name a tab of that project, `0` for the first, or (in `add_project_tab`) leave `after` out for last. |
 | dashboard 1001 is archived; restore_dashboard first | `restore_dashboard` (updating, adding to or duplicating an archived dashboard is refused). For a widget: widget 42 is archived; restore_widget first. |
 | widget 42's component was removed; set component first | `update_widget` with a `component` (and resize or archive as needed); see [When widgets break after an update](#when-widgets-break-after-an-update). |
 | widget 42 follows the project switcher; pass project_id | Pass `project_id` to `widget_data`. For the range: widget 42 follows the date range; pass from and to. |

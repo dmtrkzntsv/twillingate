@@ -729,9 +729,14 @@ func TestProjectTabTools(t *testing.T) {
 		t.Errorf("adding a tab twice succeeded")
 	}
 	toolJSON(t, cs, "move_project_tab", map[string]any{"project_id": 1, "dashboard_id": b.ID, "after": 0}, &tabs)
-	if tabs.Tabs[n].ID != b.ID || tabs.Tabs[n+1].ID != a.ID {
-		t.Errorf("move_project_tab = %+v, want %d first among the user's own, after the built-ins", tabs, b.ID)
+	if len(tabs.Tabs) != n+2 || tabs.Tabs[0].ID != b.ID || tabs.Tabs[n+1].ID != a.ID {
+		t.Errorf("move_project_tab = %+v, want %d first of all, before the built-ins", tabs, b.ID)
 	}
+	toolJSON(t, cs, "move_project_tab", map[string]any{"project_id": 1, "dashboard_id": 1, "after": a.ID}, &tabs)
+	if tabs.Tabs[n+1].ID != 1 || tabs.Tabs[n].ID != a.ID {
+		t.Errorf("moving built-in 1 after %d = %+v, want it last", a.ID, tabs)
+	}
+	toolJSON(t, cs, "move_project_tab", map[string]any{"project_id": 1, "dashboard_id": 1, "after": 0}, nil)
 	toolJSON(t, cs, "remove_project_tab", map[string]any{"project_id": 1, "dashboard_id": a.ID}, nil)
 	toolJSON(t, cs, "remove_project_tab", map[string]any{"project_id": 1, "dashboard_id": b.ID}, &tabs)
 	if fmt.Sprint(tabs) != fmt.Sprint(before) {
