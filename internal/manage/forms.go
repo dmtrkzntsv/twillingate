@@ -150,6 +150,16 @@ func (o *Ops) UpdateForm(ctx context.Context, actor string, projectID int64, nam
 		Detail: strings.Join(changed, ", ")})
 }
 
+// MarkFormSeen moves how far the console has read a form forward to until
+// (spec 2026-10-08 D5). Console state, not a change to the project: no
+// actor, no audit.
+func (o *Ops) MarkFormSeen(ctx context.Context, projectID int64, name string, until time.Time) error {
+	if err := o.requireProject(ctx, projectID); err != nil {
+		return err
+	}
+	return o.St.MarkFormSeen(ctx, projectID, name, until)
+}
+
 func (o *Ops) ArchiveForm(ctx context.Context, actor string, projectID int64, name string) error {
 	if err := o.requireProject(ctx, projectID); err != nil {
 		return err

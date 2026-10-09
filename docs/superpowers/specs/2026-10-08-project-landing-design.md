@@ -94,7 +94,9 @@ Date: 2026-10-08
     don't.
   - Opening a form's page (`/projects/:id/forms/:name`) marks it seen up
     to the newest submission that page loaded: `POST
-    /api/projects/:id/forms/:name/seen` with `{"until": "<received_at>"}`.
+    /api/projects/:id/forms/:name/seen` with `{"until": "<last_submitted_at>"}`,
+    the form's `last_submitted_at` as `list_forms` gave it to the page
+    (not a row of the submissions table).
     The server sets `seen_at = MAX(COALESCE(seen_at, ''), until)`, so a
     submission arriving while the page is open stays new, and an older
     tab can't move `seen_at` back. With no submissions there is no call.
@@ -104,19 +106,28 @@ Date: 2026-10-08
     tool. Reading submissions over MCP (`list_submissions`,
     `get_submission`, `find_submissions`) never clears the badge.
 
-- **D6. The projects list says how much is new and whether data arrives.**
-  Each project in `GET /api/projects` and `list_projects` gains:
+- **D6. A new route says how much is new and whether data arrives.**
+  `GET /api/projects` and `list_projects` read the registry snapshot and
+  nothing else on purpose: the web app waits on them before loading any
+  widget. The two numbers go on a REST-only route, `GET
+  /api/project-activity`, answering `{"projects": [{"project_id",
+  "last_event_day", "new_submissions"}]}` for every live project, in list
+  order:
   - `new_submissions`: the sum of D5's count over its live forms.
-  - `last_event_day`: `MAX(actors.last_seen_day)` for the project
-    (`idx_actors_last_seen`), or null. Retention prunes actors, so null
-    means "nothing within retention", not strictly "never".
+  - `last_event_day`: the newest day across `raw_views`, `raw_product`,
+    `raw_measures`, `agg_views_daily`, `agg_product_totals` and
+    `agg_measures_daily` for the project (the pattern `usage` uses), or
+    null with none. Not from `actors`, which holds only user- and
+    install-identified actors and is filled by the nightly pass: a
+    web-only project would never show data.
 
   `list_forms` gains `seen_at` and `new_submissions` on each form.
 
-- **D7. A project with no data says so.** While `last_event_day` is null
-  the project page shows a notice above the tabs: "No events received
-  yet" with a "Set up this project" link to Settings. It goes away with
-  the first event (the projects query is refetched as today).
+- **D7. A project with no data says so.** While `last_event_day` (from
+  `GET /api/project-activity`) is null the project page shows a notice
+  above the tabs: "No events received yet" with a "Set up this project"
+  link to Settings. It goes away with the first event (the activity
+  query is refetched).
 
 ## Out of scope
 
@@ -131,9 +142,9 @@ Date: 2026-10-08
 
 In the same commit as the change (CLAUDE.md's table):
 
-- `docs/twillingate.md`: `list_projects` and `list_forms` fields, the
-  `POST /api/projects/:id/forms/:name/seen` route, `move_project_tab` and
-  `add_project_tab` taking built-ins.
+- `docs/twillingate.md`: `list_forms` fields, the `GET
+  /api/project-activity` and `POST /api/projects/:id/forms/:name/seen`
+  routes, `move_project_tab` and `add_project_tab` taking built-ins.
 - `docs/reporting.md`: the project tab order (one order, any tab
   movable, a new built-in goes last).
 - `deploy/UPGRADES.md`: migration 037 marks every existing form seen;
@@ -150,7 +161,7 @@ In the same commit as the change (CLAUDE.md's table):
     valid `sortkey`, existing forms seen.
   - Store tests: `new_submissions` per form and per project (drafts in,
     archived out); `seen` never moves back; `last_event_day` from
-    actors.
+    the raw and rolled-up tables (a web-only project has a day).
   - `docs_sync_test.go` passes with the new route and fields.
 - **Vitest.** `landingPath`: a remembered live tab, a remembered tab that
   was removed, no memory, no tabs. Tab bar: gear and inbox outside the

@@ -222,10 +222,19 @@ func summarize(setting, dimension string, cap int, days []dayUsage, share bool) 
 // range), never a partial answer. Each query must be shaped so its rows fit
 // the row cap for any allowed range.
 func (h *host) run(ctx context.Context, q string, args ...any) (readsql.Result, error) {
-	res, err := h.db.Run(ctx, q, args...)
+	return runOn(ctx, h.db, q, args...)
+}
+
+// runSubs is run on h.subs, the handle that may read submissions.
+func (h *host) runSubs(ctx context.Context, q string, args ...any) (readsql.Result, error) {
+	return runOn(ctx, h.subs, q, args...)
+}
+
+func runOn(ctx context.Context, db *readsql.DB, q string, args ...any) (readsql.Result, error) {
+	res, err := db.Run(ctx, q, args...)
 	if err != nil {
 		if errors.Is(err, readsql.ErrTimeout) {
-			return readsql.Result{}, invalidf("query exceeded %s; narrow the date range", h.db.Timeout())
+			return readsql.Result{}, invalidf("query exceeded %s; narrow the date range", db.Timeout())
 		}
 		return readsql.Result{}, err
 	}
