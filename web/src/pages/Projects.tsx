@@ -84,6 +84,11 @@ export default function Projects() {
             <PlusIcon /> New project
           </Button>
         </header>
+        {limitsData?.ingest_disabled && (
+          <p role="status" className="rounded-lg border border-destructive/50 px-4 py-3 text-sm text-destructive">
+            Ingest is disabled on this server: new events and form submissions are refused.
+          </p>
+        )}
         {projectsQ.isError && !projectsData && (
           <LoadError what="projects" error={projectsQ.error} onRetry={() => void projectsQ.refetch()} />
         )}
@@ -102,7 +107,7 @@ export default function Projects() {
             </div>
           </SortableContext>
         </DndContext>
-        {limitsData && <LimitsPanel limits={limitsData.limits} />}
+        {limitsData && <LimitsPanel limits={limitsData.limits} rawEvents={limitsData.raw_events} />}
         {archived.length > 0 && (
           <Collapsible className="flex flex-col gap-3">
             <CollapsibleTrigger asChild>

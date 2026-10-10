@@ -40,8 +40,19 @@ type limitOut struct {
 	Description string   `json:"description"`
 }
 
+// rawEventsOut is what the server holds raw: the number its disk and every
+// dashboard's scan of the raw window follow.
+type rawEventsOut struct {
+	Held       int64 `json:"held" jsonschema:"raw events stored now, of every family and project, as of the last write to the database"`
+	WindowDays int   `json:"window_days" jsonschema:"the raw window they fall in, RETENTION_EVENTS_RAW_DAYS"`
+}
+
 type limitsOut struct {
-	Limits []limitOut `json:"limits"`
+	Limits    []limitOut    `json:"limits"`
+	RawEvents *rawEventsOut `json:"raw_events,omitempty" jsonschema:"the raw events held, to read against retention; absent when they cannot be counted"`
+	// IngestDisabled is a switch, not a limit: no value, unit or cap to
+	// read against, so a field of its own rather than a row of limits.
+	IngestDisabled bool `json:"ingest_disabled" jsonschema:"INGEST_DISABLED: true when every ingest route refuses events and form submissions with 429"`
 }
 
 // setting is a limit the environment sets.
@@ -90,8 +101,16 @@ func limitsFrom(cfg *config.Config) []limitOut {
 	}
 }
 
-func (h *host) listLimits(_ context.Context, _ struct{}) (limitsOut, error) {
-	return limitsOut{Limits: h.limits}, nil
+// listLimits answers the limits in force and the raw events held, counted
+// at most every rawCountTTL (rawcount.go). A count that cannot be read, a
+// timeout included, is left out (and was logged when it failed); the
+// limits still answer.
+func (h *host) listLimits(ctx context.Context, _ struct{}) (limitsOut, error) {
+	out := limitsOut{Limits: h.limits, IngestDisabled: h.ingestDisabled}
+	if n, err := h.raw.get(ctx); err == nil {
+		out.RawEvents = &rawEventsOut{Held: n, WindowDays: h.rawDays}
+	}
+	return out, nil
 }
 
 // capOf is the cap in force for a setting; 0 (no cap) for an unknown one.

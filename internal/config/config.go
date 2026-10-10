@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -134,7 +135,9 @@ const (
 const DefaultFormDraftDays = 7
 
 type Config struct {
-	IngestAddr          string
+	IngestAddr string
+	// IngestDisabled (INGEST_DISABLED) refuses every ingest route.
+	IngestDisabled      bool
 	Database            string
 	Geo                 string
 	PublicURL           string
@@ -199,6 +202,24 @@ func (e *env) dur(key string, def time.Duration) time.Duration {
 	return d
 }
 
+// bool reads Go's boolean spellings (strconv.ParseBool: 1, t, true, TRUE,
+// True and the 0/f/false counterparts); anything else is an error rather
+// than a guess at which way a typo was meant.
+func (e *env) bool(key string, def bool) bool {
+	v, ok := e.lookup(key)
+	if !ok || v == "" {
+		return def
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		if e.err == nil {
+			e.err = fmt.Errorf("config: %s: invalid boolean %q (true or false, 1 or 0)", key, v)
+		}
+		return def
+	}
+	return b
+}
+
 // FromEnv parses the environment via lookup (os.LookupEnv in production,
 // a map lookup in tests).
 func FromEnv(lookup func(string) (string, bool)) (*Config, error) {
@@ -208,8 +229,11 @@ func FromEnv(lookup func(string) (string, bool)) (*Config, error) {
 	e := &env{lookup: lookup}
 	c := &Config{
 		IngestAddr: e.str("INGEST_ADDR", "127.0.0.1:8080"),
-		Database:   e.str("DATABASE_DSN", ""),
-		Geo:        e.str("GEO_DSN", "cloudflare://"),
+		// A complete stop of ingest: every route that takes events or
+		// form submissions refuses with 429; the console is unaffected.
+		IngestDisabled: e.bool("INGEST_DISABLED", false),
+		Database:       e.str("DATABASE_DSN", ""),
+		Geo:            e.str("GEO_DSN", "cloudflare://"),
 		// The collector's public base URL (https://twillingate.example.com).
 		// Embed snippets and MCP integration guidance are built from it;
 		// unset, they carry a placeholder and tell the model to ask.

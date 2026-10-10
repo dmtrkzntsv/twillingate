@@ -1,4 +1,4 @@
-import type { Limit } from '@/lib/api'
+import type { Limit, RawEvents } from '@/lib/api'
 
 const GROUPS: { group: Limit['group']; title: string; note: string }[] = [
   { group: 'retention', title: 'Retention', note: 'How long data is kept.' },
@@ -25,13 +25,30 @@ export function formatLimit(l: Pick<Limit, 'value' | 'unit' | 'zero'>, value = l
   return Number.isInteger(value) ? value.toLocaleString() : String(value)
 }
 
-/** The limits in force by group: retention and caps (set in the environment, each with its default), then the fixed ingest limits. */
-export default function LimitsPanel({ limits }: { limits: Limit[] }) {
+/**
+ * The raw window the held count falls in. RETENTION_EVENTS_RAW_DAYS 0 keeps only today's rows raw: the daily pass
+ * rolls up every earlier day, and ingest clamps older timestamps to the time received.
+ */
+function rawWindow(days: number): string {
+  if (days === 0) return 'today'
+  return days === 1 ? 'the last day' : `the last ${days.toLocaleString()} days`
+}
+
+/**
+ * The limits in force by group: retention and caps (set in the environment, each with its default), then the fixed
+ * ingest limits; and, when the server could count them, the raw events it holds in its raw window.
+ */
+export default function LimitsPanel({ limits, rawEvents }: { limits: Limit[]; rawEvents?: RawEvents }) {
   return (
     <section aria-label="Limits" className="flex flex-col gap-4 rounded-lg border p-4">
       <header>
         <h2 className="text-base font-semibold">Limits</h2>
         <p className="text-sm text-muted-foreground">Retention and caps are set in twillingate.env.</p>
+        {rawEvents && (
+          <p className="text-sm">
+            Raw events held: {rawEvents.held.toLocaleString()} ({rawWindow(rawEvents.window_days)})
+          </p>
+        )}
       </header>
       {GROUPS.map(({ group, title, note }) => {
         const items = limits.filter((l) => l.group === group)

@@ -528,3 +528,33 @@ func TestOAuthAudienceDefaultsToOriginOrMCP(t *testing.T) {
 		}
 	}
 }
+
+// GET /api/limits answers from the running config: ingest_disabled is
+// INGEST_DISABLED and raw_events carries RETENTION_EVENTS_RAW_DAYS (the
+// seeded database holds no raw rows).
+func TestRESTLimitsFromTheConfig(t *testing.T) {
+	for _, on := range []bool{false, true} {
+		over := map[string]string{"RETENTION_EVENTS_RAW_DAYS": "7"}
+		if on {
+			over["INGEST_DISABLED"] = "true"
+		}
+		h := newHandlerFixture(t, over)
+		req := httptest.NewRequest("GET", "/api/limits", nil)
+		req.Header.Set("Authorization", "Bearer ar_testtoken")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET /api/limits = %d: %s", rec.Code, rec.Body.String())
+		}
+		var out limitsOut
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		if out.IngestDisabled != on {
+			t.Errorf("ingest_disabled = %v, want %v", out.IngestDisabled, on)
+		}
+		if out.RawEvents == nil || out.RawEvents.WindowDays != 7 || out.RawEvents.Held != 0 {
+			t.Errorf("raw_events = %+v, want 0 held in 7 days", out.RawEvents)
+		}
+	}
+}

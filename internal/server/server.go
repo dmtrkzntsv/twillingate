@@ -112,21 +112,48 @@ func New(cfg *config.Config, reg *manage.Registry, q Enqueuer, g geo.Provider, s
 // surface has a listener to itself, the shared one beside the console
 // otherwise.
 func (s *Server) Mount(mux *http.ServeMux) {
-	mux.HandleFunc("POST /ingest/events", s.handleEvents)
+	mux.HandleFunc("POST /ingest/events", s.unlessDisabled(s.handleEvents))
 	mux.HandleFunc("OPTIONS /ingest/events", s.handlePreflight)
 	// /api/events is where events went before the console took /api/.
 	// Native apps ship it compiled in and browsers keep cached SDKs posting
 	// there, so it stays an alias. On a shared listener these patterns are
 	// more specific than the console's /api/ prefix, so they never reach its auth.
-	mux.HandleFunc("POST /api/events", s.handleEvents)
+	mux.HandleFunc("POST /api/events", s.unlessDisabled(s.handleEvents))
 	mux.HandleFunc("OPTIONS /api/events", s.handlePreflight)
-	mux.HandleFunc("POST /ingest/forms/{name}", s.handleForm)
+	mux.HandleFunc("POST /ingest/forms/{name}", s.unlessDisabled(s.handleForm))
 	mux.HandleFunc("OPTIONS /ingest/forms/{name}", s.handlePreflight)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"status":"ok"}`))
 	})
 	s.registerScript(mux)
+}
+
+// disabledRetryAfter is the Retry-After a disabled server answers with: an
+// hour, since ingest stays off until an operator turns it back on.
+const disabledRetryAfter = "3600"
+
+// unlessDisabled wraps a route that takes events or form submissions so
+// that, with INGEST_DISABLED set, it refuses every request with 429 before
+// reading the body or resolving the key: nothing is parsed, enqueued or
+// written, and the refusal costs no lookup. A 4xx on purpose: the SDK
+// drops a batch on a 4xx, while a 5xx would queue it in localStorage on
+// every visitor's device. With no key read there is no project to check
+// the Origin against, so CORS is answered as for a preflight: an Origin
+// any project allows gets its headers, so the browser can read the 429.
+func (s *Server) unlessDisabled(next http.HandlerFunc) http.HandlerFunc {
+	if !s.cfg.IngestDisabled {
+		return next
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		if origin := r.Header.Get("Origin"); origin != "" && s.reg.Snapshot(r.Context()).AnyOriginAllowed(origin) {
+			h := w.Header()
+			h.Set("Access-Control-Allow-Origin", origin)
+			h.Set("Vary", "Origin")
+		}
+		w.Header().Set("Retry-After", disabledRetryAfter)
+		http.Error(w, "ingest is disabled", http.StatusTooManyRequests)
+	}
 }
 
 // originAllowed reports whether the request origin is allowed for the

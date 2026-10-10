@@ -1,15 +1,21 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"math"
+	"regexp"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/config"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
+	"github.com/dmtrkzntsv/twillingate/internal/store"
 	"github.com/dmtrkzntsv/twillingate/internal/wire"
 )
 
@@ -76,6 +82,162 @@ func TestLimitsReportsTheLimitsInForce(t *testing.T) {
 	}
 	if len(mcpOut.Limits) != len(out.Limits) || mcpOut.Limits[0].Group != groupRetention {
 		t.Errorf("MCP limits = %+v", mcpOut.Limits)
+	}
+}
+
+// ingest_disabled says whether INGEST_DISABLED is on, false included, in
+// the host's answer and over MCP.
+func TestLimitsReportsTheIngestSwitch(t *testing.T) {
+	h, cs := newTestHost(t)
+	for _, on := range []bool{false, true} {
+		h.ingestDisabled = on
+		out, err := h.listLimits(context.Background(), struct{}{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if out.IngestDisabled != on {
+			t.Errorf("ingest_disabled = %v, want %v", out.IngestDisabled, on)
+		}
+		raw := textOf(callTool(t, cs, "limits", map[string]any{}))
+		var viaMCP map[string]any
+		if err := json.Unmarshal([]byte(raw), &viaMCP); err != nil {
+			t.Fatal(err)
+		}
+		if got, ok := viaMCP["ingest_disabled"].(bool); !ok || got != on {
+			t.Errorf("MCP ingest_disabled = %v (present %v), want %v: %s", viaMCP["ingest_disabled"], ok, on, raw)
+		}
+	}
+}
+
+// heldByFamily counts the stored raw rows family by family, through the
+// raw_* views, so the expectation does not share listLimits' query.
+func heldByFamily(t *testing.T, h *host) int64 {
+	t.Helper()
+	var n int64
+	for _, v := range []string{"raw_views", "raw_product", "raw_measures"} {
+		res, err := h.subs.Run(context.Background(), "SELECT COUNT(*) FROM "+v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		k, err := strconv.ParseInt(res.Rows[0][0], 10, 64)
+		if err != nil {
+			t.Fatal(err)
+		}
+		n += k
+	}
+	return n
+}
+
+// raw_events is the raw rows stored, of every family and project, counted
+// through the console's read handle at most every rawCountTTL, beside the
+// raw window it is read against; the MCP tool answers it too.
+func TestLimitsReportsTheRawEventsHeld(t *testing.T) {
+	h, cs := newTestHost(t)
+	h.rawDays = 7
+	clock := time.Now()
+	h.raw.now = func() time.Time { return clock }
+	out, err := h.listLimits(context.Background(), struct{}{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := heldByFamily(t, h)
+	if base == 0 {
+		t.Fatal("the template database holds no raw rows; the test needs some")
+	}
+	if out.RawEvents == nil || out.RawEvents.Held != base || out.RawEvents.WindowDays != 7 {
+		t.Fatalf("raw_events = %+v, want %d held in 7 days", out.RawEvents, base)
+	}
+
+	st, err := store.Open("sqlite://" + testDBPaths[h])
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	one := 1.0
+	now := time.Now().UTC()
+	evs := []store.Event{
+		{Family: store.FamilyViews, ProjectID: 1, Kind: "web", Path: "/"},
+		{Family: store.FamilyProduct, ProjectID: 1, EventName: "signup"},
+		{Family: store.FamilyMeasures, ProjectID: 2, EventName: "lcp", Value: &one},
+	}
+	for i := range evs {
+		evs[i].ID = "0190eeee-0000-7000-8000-00000000000" + strconv.Itoa(i)
+		evs[i].TS, evs[i].ActorID = now, "a"
+	}
+	if err := st.WriteEvents(context.Background(), evs); err != nil {
+		t.Fatal(err)
+	}
+	// Within the TTL the count is the cached one; past it, the stale count
+	// answers while a refresh runs, and the next read has the new rows.
+	out, err = h.listLimits(context.Background(), struct{}{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.RawEvents == nil || out.RawEvents.Held != base {
+		t.Errorf("raw_events within the TTL = %+v, want the cached %d", out.RawEvents, base)
+	}
+	clock = clock.Add(rawCountTTL)
+	if out, _ = h.listLimits(context.Background(), struct{}{}); out.RawEvents == nil || out.RawEvents.Held != base {
+		t.Errorf("raw_events while refreshing = %+v, want the stale %d", out.RawEvents, base)
+	}
+	h.raw.settle()
+	out, err = h.listLimits(context.Background(), struct{}{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.RawEvents == nil || out.RawEvents.Held != base+3 || heldByFamily(t, h) != base+3 {
+		t.Errorf("raw_events after one row of each family = %+v, want %d held", out.RawEvents, base+3)
+	}
+
+	var viaMCP struct {
+		RawEvents struct {
+			Held       int64 `json:"held"`
+			WindowDays int   `json:"window_days"`
+		} `json:"raw_events"`
+	}
+	if err := json.Unmarshal([]byte(textOf(callTool(t, cs, "limits", map[string]any{}))), &viaMCP); err != nil {
+		t.Fatal(err)
+	}
+	if viaMCP.RawEvents.Held != base+3 || viaMCP.RawEvents.WindowDays != 7 {
+		t.Errorf("MCP raw_events = %+v", viaMCP.RawEvents)
+	}
+}
+
+// A count that cannot be read costs the answer its raw_events, not the
+// whole tool: the limits still come back, and the failure is logged.
+func TestLimitsWithoutRawEventsWhenTheCountCannotBeRead(t *testing.T) {
+	h, cs := newTestHost(t)
+	var logs bytes.Buffer
+	h.logger = slog.New(slog.NewTextHandler(&logs, nil))
+	if err := h.db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	out, err := h.listLimits(context.Background(), struct{}{})
+	if err != nil {
+		t.Fatalf("listLimits = %v, want the limits without raw_events", err)
+	}
+	if out.RawEvents != nil || len(out.Limits) == 0 {
+		t.Errorf("out = %+v, want limits and no raw_events", out)
+	}
+	if !strings.Contains(logs.String(), "level=ERROR") || !strings.Contains(logs.String(), "raw_events") {
+		t.Errorf("failure not logged: %q", logs.String())
+	}
+	if raw := textOf(callTool(t, cs, "limits", map[string]any{})); strings.Contains(raw, "raw_events") {
+		t.Errorf("MCP answer carries raw_events: %s", raw)
+	}
+	// The failure is cached for the TTL: the second call did not log again.
+	if n := strings.Count(logs.String(), "level=ERROR"); n != 1 {
+		t.Errorf("logged %d errors over two calls within the TTL, want 1: %q", n, logs.String())
+	}
+}
+
+// The count reads the raw rows through v_events_flat, the view of every
+// raw row, never the events table (TestRawTableIsReadOnlyThroughFamilyViews
+// holds the store to that).
+func TestRawEventsCountReadsTheFlatView(t *testing.T) {
+	rawRead := regexp.MustCompile(`\b(FROM|JOIN)\s+events\b`)
+	if rawRead.MatchString(rawEventsSQL) || !strings.Contains(rawEventsSQL, "FROM v_events_flat") {
+		t.Errorf("rawEventsSQL = %s, want a count of v_events_flat", rawEventsSQL)
 	}
 }
 
