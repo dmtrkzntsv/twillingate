@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/store"
-	_ "github.com/dmtrkzntsv/twillingate/internal/store/sqlite"
+	"github.com/dmtrkzntsv/twillingate/internal/store/storetest"
 )
 
 func discard() *slog.Logger {
@@ -17,15 +17,7 @@ func discard() *slog.Logger {
 
 func testStore(t *testing.T) store.Store {
 	t.Helper()
-	st, err := store.Open("sqlite://" + t.TempDir() + "/test.db")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { st.Close() })
-	if err := st.Migrate(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	return st
+	return storetest.Open(t, t.TempDir()+"/test.db")
 }
 
 // seedProject creates a project called name with one active key

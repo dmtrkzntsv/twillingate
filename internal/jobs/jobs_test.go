@@ -19,7 +19,7 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
-	_ "github.com/dmtrkzntsv/twillingate/internal/store/sqlite"
+	"github.com/dmtrkzntsv/twillingate/internal/store/storetest"
 	_ "modernc.org/sqlite"
 )
 
@@ -79,7 +79,7 @@ func (c *countingRotator) Rotate(ctx context.Context) error {
 func openStoreAt(t *testing.T) (store.Store, string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "jobs.db")
-	return openMigratedStore(t, path), path
+	return storetest.Open(t, path), path
 }
 
 func openStore(t *testing.T) store.Store {

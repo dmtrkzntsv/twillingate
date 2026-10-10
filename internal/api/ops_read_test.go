@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
-	"github.com/dmtrkzntsv/twillingate/internal/store"
+	"github.com/dmtrkzntsv/twillingate/internal/store/storetest"
 )
 
 func TestListProjects(t *testing.T) {
@@ -32,14 +32,7 @@ func TestListProjects(t *testing.T) {
 // .projects.filter on it.
 func TestListProjectsEmptyRegistryIsAnArray(t *testing.T) {
 	h, _ := newTestHost(t)
-	st, err := store.Open("sqlite://" + t.TempDir() + "/empty.db")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { st.Close() })
-	if err := st.Migrate(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	st := storetest.Open(t, t.TempDir()+"/empty.db")
 	h.reg = manage.New(st, h.logger)
 	if err := h.reg.Reload(context.Background()); err != nil {
 		t.Fatal(err)
