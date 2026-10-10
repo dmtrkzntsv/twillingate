@@ -105,12 +105,7 @@ func scanFiles(src map[string]string) ([]site, error) {
 	passThrough := discoverSinks(pkgs, sinks)
 
 	var out []site
-	dirs := make([]string, 0, len(pkgs))
-	for dir := range pkgs {
-		dirs = append(dirs, dir)
-	}
-	sort.Strings(dirs)
-	for _, dir := range dirs {
+	for _, dir := range sortedDirs(pkgs) {
 		files := pkgs[dir]
 		consts, types := packageDecls(files)
 		for _, f := range files {
@@ -158,16 +153,27 @@ func paramList(fn *ast.FuncDecl) (names []string, isString []bool, variadic bool
 	return names, isString, variadic
 }
 
+// sortedDirs returns the directories of pkgs in order.
+func sortedDirs(pkgs map[string][]file) []string {
+	dirs := make([]string, 0, len(pkgs))
+	for dir := range pkgs {
+		dirs = append(dirs, dir)
+	}
+	sort.Strings(dirs)
+	return dirs
+}
+
 // discoverSinks adds to sinks every function that hands one of its own
 // string parameters to a sink as the SQL, repeating until nothing
 // changes, and returns, per such function, the parameter that carries it:
 // a call inside it on that parameter is not a site, its callers' are.
 func discoverSinks(pkgs map[string][]file, sinks map[string]sink) map[*ast.FuncDecl]string {
 	through := map[*ast.FuncDecl]string{}
+	dirs := sortedDirs(pkgs)
 	for changed := true; changed; {
 		changed = false
-		for _, files := range pkgs {
-			for _, f := range files {
+		for _, dir := range dirs { // in order, so the first of two wrappers with a name is always the same
+			for _, f := range pkgs[dir] {
 				for _, d := range f.ast.Decls {
 					fn, ok := d.(*ast.FuncDecl)
 					if !ok || fn.Body == nil {

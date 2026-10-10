@@ -185,6 +185,26 @@ func TestRangeNameReusedIsDynamic(t *testing.T) {
 	}
 }
 
+func TestLocalDeclaredTwiceIsDynamic(t *testing.T) {
+	sites := scanOne(t, `func F(ctx context.Context, db *sql.DB, x bool) {
+	if x {
+		q := "UPDATE t SET a = ? WHERE b = ?"
+		db.ExecContext(ctx, q, 1, 2)
+	} else {
+		q := "DELETE FROM t WHERE b = ?"
+		db.ExecContext(ctx, q, 1)
+	}
+}`)
+	if len(sites) != 2 {
+		t.Fatalf("got %d sites, want 2", len(sites))
+	}
+	for i, s := range sites {
+		if s.sqls != nil || !strings.Contains(s.why, "declared more than once") {
+			t.Errorf("site %d: got %+v, want dynamic: the name is declared twice", i, s)
+		}
+	}
+}
+
 func TestDynamicSitesSayWhy(t *testing.T) {
 	sites := scanOne(t, `var name = "SELECT 1"
 func init() { name = "SELECT 2" }

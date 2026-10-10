@@ -11,9 +11,11 @@ import (
 	"database/sql"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 
+	_ "github.com/dmtrkzntsv/twillingate/internal/shared/readsql" // registers tw_cell and tw_num, which fixed SQL may call
 	"github.com/dmtrkzntsv/twillingate/internal/store/storetest"
 )
 
@@ -111,21 +113,36 @@ func TestEverySQLStringPrepares(t *testing.T) {
 	}
 }
 
-func TestDynamicSitesAreListed(t *testing.T) {
+// unlisted compares the dynamic sites with the listed functions: missing
+// holds the sites whose function has no entry, stale the entries (sorted)
+// whose function builds no SQL at run time.
+func unlisted(sites []site, listed map[string]string) (missing []site, stale []string) {
 	found := map[string]bool{}
-	for _, s := range scanInternal(t) {
+	for _, s := range sites {
 		if s.sqls != nil {
 			continue
 		}
 		found[s.key] = true
-		if _, ok := dynamic[s.key]; !ok {
-			t.Errorf("%s: SQL built at run time (%s). Make it resolve (a constant, a local, placeholders) or add %q to dynamic with the reason", s.pos, s.why, s.key)
+		if _, ok := listed[s.key]; !ok {
+			missing = append(missing, s)
 		}
 	}
-	for key := range dynamic {
+	for key := range listed {
 		if !found[key] {
-			t.Errorf("dynamic lists %s, which builds no SQL at run time any more: remove the entry", key)
+			stale = append(stale, key)
 		}
+	}
+	sort.Strings(stale)
+	return missing, stale
+}
+
+func TestDynamicSitesAreListed(t *testing.T) {
+	missing, stale := unlisted(scanInternal(t), dynamic)
+	for _, s := range missing {
+		t.Errorf("%s: SQL built at run time (%s). Make it resolve (a constant, a local, placeholders), add %q to dynamic with the reason, or, if the call is not SQL at all, rename the function so it does not share a SQL wrapper's name", s.pos, s.why, s.key)
+	}
+	for _, key := range stale {
+		t.Errorf("dynamic lists %s, which builds no SQL at run time any more: remove the entry", key)
 	}
 }
 

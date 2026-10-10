@@ -5,7 +5,12 @@ import (
 	"database/sql"
 	"fmt"
 	"strconv"
+	"time"
 )
+
+// queryTimeout bounds each run of a read, so a statement that does not
+// finish fails the test at once rather than at go test's deadline.
+const queryTimeout = 10 * time.Second
 
 // problems checks one site's SQL against db: every statement prepares
 // (D4), a lone statement binds as many parameters as each call passes
@@ -71,6 +76,8 @@ func problems(ctx context.Context, db *sql.DB, s site) []string {
 // NULL, then to 0 if that fails (LIMIT NULL is a datatype mismatch).
 func columns(ctx context.Context, db *sql.DB, stmt string, p params) (int, error) {
 	try := func(zero any) (int, error) {
+		ctx, cancel := context.WithTimeout(ctx, queryTimeout)
+		defer cancel()
 		tx, err := db.BeginTx(ctx, nil)
 		if err != nil {
 			return 0, err

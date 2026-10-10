@@ -58,6 +58,8 @@ func TestBindings(t *testing.T) {
 		"quoted and remark": {"SELECT '?' || \"a?\" -- ?\n FROM t /* :x */ WHERE b = ?", 1, nil},
 		"escaped quote":     {"SELECT 'it''s ?'", 0, nil},
 		"dollar in name":    {"SELECT a$b FROM t", 0, nil},
+		"limit flush":       {"SELECT a FROM t LIMIT?", 1, nil},
+		"equals flush":      {"SELECT a FROM t WHERE a=?", 1, nil},
 		"like escape":       {`SELECT a FROM t WHERE b LIKE ? ESCAPE '\'`, 1, nil},
 	}
 	for name, c := range cases {

@@ -124,7 +124,7 @@ func bindings(stmt string) (params, error) {
 	byName := map[string]int{}
 	err := lex(stmt, func(i int) int {
 		c := stmt[i]
-		if i > 0 && isIdent(stmt[i-1]) { // inside an identifier such as a$b
+		if c == '$' && i > 0 && isIdent(stmt[i-1]) { // inside an identifier such as a$b
 			return i + 1
 		}
 		switch c {

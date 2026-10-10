@@ -3,6 +3,7 @@ package sqlcheck
 import (
 	"context"
 	"database/sql"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -30,16 +31,17 @@ func TestProblems(t *testing.T) {
 		site site
 		want string // a substring of the one problem expected; "" for none
 	}{
-		"clean":            {site{sqls: []string{"SELECT a, b FROM t WHERE a = ?"}, nargs: []int{1}, read: true, scans: []int{2}}, ""},
-		"unknown column":   {site{sqls: []string{"SELECT c FROM t"}}, "no such column"},
-		"unknown table":    {site{sqls: []string{"DELETE FROM u"}}, "no such table"},
-		"second statement": {site{sqls: []string{"SELECT a FROM t; SELECT z FROM t"}}, "no such column"},
-		"too few args":     {site{sqls: []string{"UPDATE t SET b = ? WHERE a = ?"}, nargs: []int{1}}, "passes 1 arguments; the statement binds 2"},
-		"too many args":    {site{sqls: []string{"SELECT a FROM t WHERE a = ?1 OR b = ?1"}, nargs: []int{2}}, "passes 2 arguments; the statement binds 1"},
-		"scan short":       {site{sqls: []string{"SELECT a, b FROM t"}, read: true, scans: []int{1}}, "scans 1 values; the statement returns 2 columns"},
-		"limit param":      {site{sqls: []string{"SELECT a FROM t LIMIT ?"}, nargs: []int{1}, read: true, scans: []int{1}}, ""},
-		"named params":     {site{sqls: []string{"SELECT a FROM t WHERE a = :n OR a = :n LIMIT :m"}, nargs: []int{2}, read: true, scans: []int{1}}, ""},
-		"no statement":     {site{sqls: []string{"-- nothing"}}, "no statement"},
+		"clean":             {site{sqls: []string{"SELECT a, b FROM t WHERE a = ?"}, nargs: []int{1}, read: true, scans: []int{2}}, ""},
+		"unknown column":    {site{sqls: []string{"SELECT c FROM t"}}, "no such column"},
+		"unknown table":     {site{sqls: []string{"DELETE FROM u"}}, "no such table"},
+		"second statement":  {site{sqls: []string{"SELECT a FROM t; SELECT z FROM t"}}, "no such column"},
+		"too few args":      {site{sqls: []string{"UPDATE t SET b = ? WHERE a = ?"}, nargs: []int{1}}, "passes 1 arguments; the statement binds 2"},
+		"too many args":     {site{sqls: []string{"SELECT a FROM t WHERE a = ?1 OR b = ?1"}, nargs: []int{2}}, "passes 2 arguments; the statement binds 1"},
+		"scan short":        {site{sqls: []string{"SELECT a, b FROM t"}, read: true, scans: []int{1}}, "scans 1 values; the statement returns 2 columns"},
+		"limit param":       {site{sqls: []string{"SELECT a FROM t LIMIT ?"}, nargs: []int{1}, read: true, scans: []int{1}}, ""},
+		"named params":      {site{sqls: []string{"SELECT a FROM t WHERE a = :n OR a = :n LIMIT :m"}, nargs: []int{2}, read: true, scans: []int{1}}, ""},
+		"no statement":      {site{sqls: []string{"-- nothing"}}, "no statement"},
+		"readsql functions": {site{sqls: []string{"SELECT tw_num(a) FROM t"}}, ""},
 	}
 	for name, c := range cases {
 		got := problems(context.Background(), db, c.site)
@@ -69,5 +71,26 @@ func TestColumnsRollsBack(t *testing.T) {
 	db.QueryRow(`SELECT COUNT(*) FROM t`).Scan(&after)
 	if after != n {
 		t.Fatalf("columns wrote a row: %d before, %d after", n, after)
+	}
+}
+
+func TestUnlisted(t *testing.T) {
+	sites := []site{
+		{key: "a/a.go:Listed"},                               // dynamic and listed
+		{key: "a/a.go:Unlisted", pos: "a/a.go:9"},            // dynamic, no entry
+		{key: "a/a.go:Resolved", sqls: []string{"SELECT 1"}}, // resolved, but listed
+	}
+	listed := map[string]string{
+		"a/a.go:Listed":   "why",
+		"a/a.go:Resolved": "why",
+		"a/a.go:Zebra":    "why",
+		"a/a.go:Gone":     "why",
+	}
+	missing, stale := unlisted(sites, listed)
+	if len(missing) != 1 || missing[0].key != "a/a.go:Unlisted" {
+		t.Errorf("missing: got %+v, want only Unlisted", missing)
+	}
+	if want := []string{"a/a.go:Gone", "a/a.go:Resolved", "a/a.go:Zebra"}; !reflect.DeepEqual(stale, want) {
+		t.Errorf("stale: got %q, want %q", stale, want)
 	}
 }

@@ -25,12 +25,13 @@ type resolver struct {
 	unresolved map[string]string     // local name → why its values cannot be known
 	ranges     map[string]ast.Expr   // range value name → what is ranged over
 	busy       map[string]bool       // names being resolved, to stop a cycle
+	declared   map[string]int        // local name → how many times it is declared
 }
 
 func newResolver(fn *ast.FuncDecl, consts map[string]ast.Expr, types map[string]*ast.StructType) *resolver {
 	r := &resolver{consts: consts, types: types, params: map[string]bool{},
 		assigns: map[string][]ast.Expr{}, unresolved: map[string]string{},
-		ranges: map[string]ast.Expr{}, busy: map[string]bool{}}
+		ranges: map[string]ast.Expr{}, busy: map[string]bool{}, declared: map[string]int{}}
 	names, _, _ := paramList(fn)
 	for _, n := range names {
 		r.params[n] = true
@@ -43,6 +44,9 @@ func newResolver(fn *ast.FuncDecl, consts map[string]ast.Expr, types map[string]
 				if !ok || id.Name == "_" {
 					continue
 				}
+				if n.Tok == token.DEFINE {
+					r.declare(id.Name)
+				}
 				switch {
 				case n.Tok != token.DEFINE && n.Tok != token.ASSIGN:
 					r.unresolved[id.Name] = id.Name + " is changed with " + n.Tok.String()
@@ -54,6 +58,7 @@ func newResolver(fn *ast.FuncDecl, consts map[string]ast.Expr, types map[string]
 			}
 		case *ast.ValueSpec:
 			for i, id := range n.Names {
+				r.declare(id.Name)
 				if i < len(n.Values) {
 					r.assigns[id.Name] = append(r.assigns[id.Name], n.Values[i])
 				}
@@ -69,6 +74,19 @@ func newResolver(fn *ast.FuncDecl, consts map[string]ast.Expr, types map[string]
 		return true
 	})
 	return r
+}
+
+// declare counts one declaration of name. Two declarations are two
+// variables that share a name, and the scan cannot tell which one a call
+// reads, so the name is unresolved.
+func (r *resolver) declare(name string) {
+	if name == "_" {
+		return
+	}
+	r.declared[name]++
+	if r.declared[name] == 2 {
+		r.unresolved[name] = name + " is declared more than once in this function; rename one"
+	}
 }
 
 // resolve returns the strings e can hold, or why it cannot be known.
