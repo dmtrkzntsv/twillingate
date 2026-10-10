@@ -341,18 +341,29 @@ test('copies a system group and one of its tabs from the gallery while it is hid
   await expect(page.getByRole('tab')).toHaveText(['Users (copy)'])
 })
 
-/** Creates a user dashboard over REST holding three 4 × 3 markdown widgets, E2E W1 to W3 in order. */
-async function createWidgetDashboard(request: APIRequestContext, title: string): Promise<number> {
-  const widget = (n: number) => ({
+/**
+ * Creates a user dashboard over REST holding markdown widgets E2E W1, W2, …
+ * in order, one per [width, height] in `sizes` (three 4 × 3 ones by default).
+ */
+async function createWidgetDashboard(
+  request: APIRequestContext,
+  title: string,
+  sizes: [number, number][] = [
+    [4, 3],
+    [4, 3],
+    [4, 3],
+  ]
+): Promise<number> {
+  const widgets = sizes.map(([width, height], i) => ({
     component: 'markdown',
-    title: `E2E W${n}`,
-    source: { type: 'md', content: `Widget ${n}` },
-    width: 4,
-    height: 3,
-  })
+    title: `E2E W${i + 1}`,
+    source: { type: 'md', content: `Widget ${i + 1}` },
+    width,
+    height,
+  }))
   const res = await request.post('/api/dashboards', {
     headers: authHeaders(),
-    data: { title, range: '7d', widgets: [widget(1), widget(2), widget(3)] },
+    data: { title, range: '7d', widgets },
   })
   expect(res.ok(), await res.text()).toBeTruthy()
   return ((await res.json()) as { dashboard_id: number }).dashboard_id
@@ -435,4 +446,31 @@ test('moves a widget from the keyboard', async ({ page, request }) => {
   await announced('E2E W1 moved to position 2 of 3')
   await page.keyboard.press('Space')
   await expect.poll(() => widgetLayout(request, id)).toEqual(['E2E W2 4x3', 'E2E W1 4x3', 'E2E W3 4x3'])
+})
+
+test('moves a wide widget from the keyboard past narrower ones', async ({ page, request }) => {
+  await page.setViewportSize({ width: 1600, height: 1000 })
+  // A half-width card beside three narrow, shorter ones: one arrow moves
+  // it one card along, not by its own width.
+  const id = await createWidgetDashboard(request, 'E2E Mixed', [
+    [6, 4],
+    [2, 3],
+    [2, 3],
+    [2, 3],
+  ])
+  toArchive.push({ id })
+
+  await login(page)
+  await page.goto(`/app/dashboards/${id}`)
+  await page.waitForLoadState('networkidle')
+
+  // As in the test above, each step waits for the announcement of the one before.
+  const announced = (text: string) => expect(page.getByRole('status').filter({ hasText: text })).toHaveCount(1)
+  await page.getByRole('button', { name: 'Move E2E W1' }).focus()
+  await page.keyboard.press('Space')
+  await announced('E2E W1')
+  await page.keyboard.press('ArrowRight')
+  await announced('E2E W1 moved to position 2 of 4')
+  await page.keyboard.press('Space')
+  await expect.poll(() => widgetLayout(request, id)).toEqual(['E2E W2 2x3', 'E2E W1 6x4', 'E2E W3 2x3', 'E2E W4 2x3'])
 })

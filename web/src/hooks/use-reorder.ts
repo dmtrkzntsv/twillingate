@@ -1,12 +1,16 @@
 import { useEffect, useState } from 'react'
 import {
+  closestCorners,
+  getFirstCollision,
   KeyboardSensor,
   PointerSensor,
   useSensor,
   useSensors,
   type Announcements,
+  type ClientRect,
   type DndContextProps,
   type DragEndEvent,
+  type KeyboardCoordinateGetter,
   type Modifier,
   type UniqueIdentifier,
 } from '@dnd-kit/core'
@@ -52,7 +56,10 @@ export function useReorder(
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates, keyboardCodes })
+    useSensor(KeyboardSensor, {
+      coordinateGetter: axis === 'xy' ? gridKeyboardCoordinates : sortableKeyboardCoordinates,
+      keyboardCodes,
+    })
   )
   useEffect(() => releaseClicks, [])
 
@@ -99,6 +106,59 @@ export function announcements(titleOf: (id: number) => string, order: number[]):
 }
 
 const keyboardCodes = { start: ['Space'], cancel: ['Escape'], end: ['Space', 'Enter', 'Tab'] }
+
+/**
+ * Where an arrow key takes an item in a grid of items of different sizes
+ * that stay in place while one moves (WidgetGrid). The next item is the
+ * one dnd-kit's sortable getter picks, measured from the item the moving
+ * one is over with their top-left corners lined up, as that getter
+ * leaves them; the moving item is then centred on it. Lined up by a
+ * corner, as that getter does for items that shift out of the way, a
+ * wide item's centre fell nearer the item beyond, which the grid's
+ * closest-centre collision then took: one arrow skipped an item.
+ */
+export const gridKeyboardCoordinates: KeyboardCoordinateGetter = (event, { context }) => {
+  const ahead = AHEAD[event.code]
+  if (!ahead) return undefined
+  event.preventDefault()
+  const { active, collisionRect, droppableRects, droppableContainers, over } = context
+  if (!active || !collisionRect) return undefined
+  const at = (over && droppableRects.get(over.id)) ?? collisionRect
+  const from: ClientRect = {
+    ...collisionRect,
+    left: at.left,
+    top: at.top,
+    right: at.left + collisionRect.width,
+    bottom: at.top + collisionRect.height,
+  }
+  const candidates = droppableContainers.getEnabled().filter((entry) => {
+    const rect = droppableRects.get(entry.id)
+    return !entry.disabled && rect !== undefined && ahead(from, rect)
+  })
+  const collisions = closestCorners({
+    active,
+    collisionRect: from,
+    droppableRects,
+    droppableContainers: candidates,
+    pointerCoordinates: null,
+  })
+  let id = getFirstCollision(collisions, 'id')
+  if (id === over?.id && collisions.length > 1) id = collisions[1].id
+  const rect = id == null ? undefined : droppableRects.get(id)
+  if (!rect) return undefined
+  return {
+    x: rect.left + (rect.width - collisionRect.width) / 2,
+    y: rect.top + (rect.height - collisionRect.height) / 2,
+  }
+}
+
+/** Whether `to` lies ahead of `from` for each arrow key, as dnd-kit's sortable getter decides it. */
+const AHEAD: Record<string, (from: ClientRect, to: ClientRect) => boolean> = {
+  ArrowDown: (from, to) => from.top < to.top,
+  ArrowUp: (from, to) => from.top > to.top,
+  ArrowLeft: (from, to) => from.left > to.left,
+  ArrowRight: (from, to) => from.left < to.left,
+}
 
 const alongX: Modifier = ({ transform }) => ({ ...transform, y: 0 })
 const alongY: Modifier = ({ transform }) => ({ ...transform, x: 0 })
