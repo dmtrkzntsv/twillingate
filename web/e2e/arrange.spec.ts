@@ -413,8 +413,9 @@ test('moves a widget by its grip and resizes it by its corner', async ({ page, r
   const body = await cell('E2E W1').locator('[data-slot="widget-body"]').boundingBox()
   if (!corner || !body) throw new Error('corner or body has no bounding box')
   // The corner sits in the card's padding, over none of its body (a
-  // table's next-page button, the scrollbars' corner).
-  expect(corner.x >= body.x + body.width || corner.y >= body.y + body.height).toBe(true)
+  // table's next-page button, the scrollbars' corner). Layout values are
+  // fractional, so the edges compare with half a pixel of room.
+  expect(corner.x >= body.x + body.width - 0.5 || corner.y >= body.y + body.height - 0.5).toBe(true)
   const cx = corner.x + corner.width / 2
   const cy = corner.y + corner.height / 2
   await page.mouse.move(cx, cy)

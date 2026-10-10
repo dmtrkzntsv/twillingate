@@ -49,12 +49,13 @@ export default function WidgetCell({ widget, params, idle, share, gridPx, movabl
   const label = widget.title ?? widget.name
 
   const stored = { width: widget.width, height: widget.height }
-  const storedKey = `${stored.width}x${stored.height}`
   // The size being chosen (a pointer down on the corner, or keys pressed).
   const [draft, setDraft] = useState<WidgetSize | null>(null)
-  // A size sent and not yet back: kept over the stored one it replaces.
-  const [saving, setSaving] = useState<{ from: string; size: WidgetSize } | null>(null)
-  if (saving && saving.from !== storedKey) setSaving(null)
+  // The last size sent and not yet settled: kept over the stored one until
+  // its own save resolves, which the hook does after the refetch. It is not
+  // dropped when the stored size changes, or an older save's refetch
+  // landing first would show its size again on the way to this one.
+  const [saving, setSaving] = useState<{ size: WidgetSize } | null>(null)
   const shown = saving?.size ?? stored
   const size = draft ?? shown
 
@@ -63,12 +64,11 @@ export default function WidgetCell({ widget, params, idle, share, gridPx, movabl
   // sent, or the one on its way would win.
   const save = (next: WidgetSize) => {
     if (!onResize || (next.width === shown.width && next.height === shown.height)) return
-    const mine = { from: storedKey, size: next }
+    const mine = { size: next }
     setSaving(mine)
-    // A late refusal clears only its own size, never a newer one.
-    void onResize(widget.dashboard_id, id, next).then((ok) => {
-      if (!ok) setSaving((s) => (s === mine ? null : s))
-    })
+    // A save settling clears only its own size, never a newer one: on
+    // success the server's size is in by now, on a refusal it snaps back.
+    void onResize(widget.dashboard_id, id, next).then(() => setSaving((s) => (s === mine ? null : s)))
   }
 
   const resizer = useResizer(size, gridPx, onResize !== undefined, setDraft, save)

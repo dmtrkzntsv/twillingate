@@ -74,7 +74,7 @@ describe('WidgetGrid', () => {
 
   it('resizes by the arrow keys and saves once they pause', async () => {
     vi.useFakeTimers()
-    const arrange = actions()
+    const arrange = actions({ resize: vi.fn().mockReturnValue(new Promise(() => {})) })
     renderGrid([note(1)], arrange)
     const corner = screen.getByRole('button', { name: 'Resize Note 1' })
     corner.focus()
@@ -228,8 +228,62 @@ describe('WidgetGrid', () => {
     expect(cell('Note 1').style.gridColumn).toBe('span 6 / span 6')
   })
 
-  it('shows the server size once it comes back', () => {
-    const arrange = actions({ resize: vi.fn().mockReturnValue(new Promise(() => {})) })
+  it('keeps the last size asked for while older saves come back with theirs', async () => {
+    // Two saves in flight: 6 to 8, then back to 6.
+    const settle: ((ok: boolean) => void)[] = []
+    const resize = vi.fn(() => new Promise<boolean>((resolve) => settle.push(resolve)))
+    const arrange = actions({ resize })
+    const { client, rerender } = renderGrid([note(1)], arrange)
+    const serverHas = (width: number) =>
+      rerender(
+        <QueryClientProvider client={client}>
+          <TooltipProvider>
+            <WidgetGrid widgets={[note(1, { width })]} paramsFor={() => ({})} arrange={arrange} />
+          </TooltipProvider>
+        </QueryClientProvider>
+      )
+    const corner = screen.getByRole('button', { name: 'Resize Note 1' })
+    fireEvent.pointerDown(corner, { button: 0, pointerId: 1, clientX: 0, clientY: 0 })
+    fireEvent.pointerUp(corner, { pointerId: 1, clientX: 202, clientY: 0 })
+    fireEvent.pointerDown(corner, { button: 0, pointerId: 2, clientX: 202, clientY: 0 })
+    fireEvent.pointerUp(corner, { pointerId: 2, clientX: 0, clientY: 0 })
+    expect(resize).toHaveBeenCalledTimes(2)
+    expect(cell('Note 1').style.gridColumn).toBe('span 6 / span 6')
+
+    // The first save's refetch lands with 8, and the first resolves: the
+    // second is still on its way, so 8 must not show.
+    serverHas(8)
+    expect(cell('Note 1').style.gridColumn).toBe('span 6 / span 6')
+    await act(async () => settle[0](true))
+    expect(cell('Note 1').style.gridColumn).toBe('span 6 / span 6')
+
+    // The second one's refetch lands with 6, and it resolves.
+    serverHas(6)
+    await act(async () => settle[1](true))
+    expect(cell('Note 1').style.gridColumn).toBe('span 6 / span 6')
+
+    // Nothing is held over the server's size any more.
+    serverHas(3)
+    expect(cell('Note 1').style.gridColumn).toBe('span 3 / span 3')
+  })
+
+  it('snaps back at once when the newest save is refused, whatever the older one does', async () => {
+    const settle: ((ok: boolean) => void)[] = []
+    const resize = vi.fn(() => new Promise<boolean>((resolve) => settle.push(resolve)))
+    renderGrid([note(1)], actions({ resize }))
+    const corner = screen.getByRole('button', { name: 'Resize Note 1' })
+    fireEvent.pointerDown(corner, { button: 0, pointerId: 1, clientX: 0, clientY: 0 })
+    fireEvent.pointerUp(corner, { pointerId: 1, clientX: 202, clientY: 0 })
+    fireEvent.pointerDown(corner, { button: 0, pointerId: 2, clientX: 202, clientY: 0 })
+    fireEvent.pointerUp(corner, { pointerId: 2, clientX: 303, clientY: 0 })
+    expect(cell('Note 1').style.gridColumn).toBe('span 9 / span 9')
+    await act(async () => settle[1](false))
+    expect(cell('Note 1').style.gridColumn).toBe('span 6 / span 6')
+  })
+
+  it('shows the server size once the save and its refetch are done', async () => {
+    let settle: (ok: boolean) => void = () => {}
+    const arrange = actions({ resize: vi.fn(() => new Promise<boolean>((resolve) => (settle = resolve))) })
     const { client, rerender } = renderGrid([note(1)], arrange)
     const corner = screen.getByRole('button', { name: 'Resize Note 1' })
     fireEvent.pointerDown(corner, { button: 0, pointerId: 1, clientX: 0, clientY: 0 })
@@ -242,6 +296,9 @@ describe('WidgetGrid', () => {
         </TooltipProvider>
       </QueryClientProvider>
     )
+    // The size asked for stays until its own save has resolved.
+    expect(cell('Note 1').style.gridColumn).toBe('span 8 / span 8')
+    await act(async () => settle(true))
     expect(cell('Note 1').style.gridColumn).toBe('span 3 / span 3')
   })
 })
