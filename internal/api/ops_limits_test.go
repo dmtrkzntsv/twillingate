@@ -85,6 +85,30 @@ func TestLimitsReportsTheLimitsInForce(t *testing.T) {
 	}
 }
 
+// ingest_disabled says whether INGEST_DISABLED is on, false included, in
+// the host's answer and over MCP.
+func TestLimitsReportsTheIngestSwitch(t *testing.T) {
+	h, cs := newTestHost(t)
+	for _, on := range []bool{false, true} {
+		h.ingestDisabled = on
+		out, err := h.listLimits(context.Background(), struct{}{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if out.IngestDisabled != on {
+			t.Errorf("ingest_disabled = %v, want %v", out.IngestDisabled, on)
+		}
+		raw := textOf(callTool(t, cs, "limits", map[string]any{}))
+		var viaMCP map[string]any
+		if err := json.Unmarshal([]byte(raw), &viaMCP); err != nil {
+			t.Fatal(err)
+		}
+		if got, ok := viaMCP["ingest_disabled"].(bool); !ok || got != on {
+			t.Errorf("MCP ingest_disabled = %v (present %v), want %v: %s", viaMCP["ingest_disabled"], ok, on, raw)
+		}
+	}
+}
+
 // heldByFamily counts the stored raw rows family by family, through the
 // raw_* views, so the expectation does not share listLimits' query.
 func heldByFamily(t *testing.T, h *host) int64 {

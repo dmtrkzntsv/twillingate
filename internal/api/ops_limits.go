@@ -50,6 +50,9 @@ type rawEventsOut struct {
 type limitsOut struct {
 	Limits    []limitOut    `json:"limits"`
 	RawEvents *rawEventsOut `json:"raw_events,omitempty" jsonschema:"the raw events held, to read against retention; absent when they cannot be counted"`
+	// IngestDisabled is a switch, not a limit: no value, unit or cap to
+	// read against, so a field of its own rather than a row of limits.
+	IngestDisabled bool `json:"ingest_disabled" jsonschema:"INGEST_DISABLED: true when every ingest route refuses events and form submissions with 429"`
 }
 
 // setting is a limit the environment sets.
@@ -103,7 +106,7 @@ func limitsFrom(cfg *config.Config) []limitOut {
 // timeout included, is left out (and was logged when it failed); the
 // limits still answer.
 func (h *host) listLimits(ctx context.Context, _ struct{}) (limitsOut, error) {
-	out := limitsOut{Limits: h.limits}
+	out := limitsOut{Limits: h.limits, IngestDisabled: h.ingestDisabled}
 	if n, err := h.raw.get(ctx); err == nil {
 		out.RawEvents = &rawEventsOut{Held: n, WindowDays: h.rawDays}
 	}

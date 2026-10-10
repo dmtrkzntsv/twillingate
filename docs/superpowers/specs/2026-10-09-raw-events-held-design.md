@@ -1,4 +1,4 @@
-# Raw events held
+# Raw events held and an ingest switch
 
 Status: proposed
 Date: 2026-10-09 (replaces the monthly events cap of 2026-10-08)
@@ -15,14 +15,24 @@ Date: 2026-10-09 (replaces the monthly events cap of 2026-10-08)
   self-hoster reads it to size the box. Both read it from outside, through
   the console API, without SQL.
 
-A count per calendar month (the first version of this design) answered
-neither: it needed a table of its own, kept apart from the data to survive
-rollup, and measured what arrived rather than what is held.
+- **Nobody can stop a server taking data without stopping its console.**
+  An operator pausing ingest for a migration, a restore or an abuse
+  incident, or a hosting portal putting a customer's server read-only, has
+  only the proxy. Doing it there duplicates twillingate's ingest routes
+  (three, one of them legacy) and its CORS answers, gets the status wrong
+  easily (a 5xx makes the SDK queue every batch in each visitor's
+  localStorage), and hides the reason from the console: the operator's own
+  Projects page says nothing while every event is refused.
 
-Quotas and refusing ingest are out of scope. twillingate adds no setting
-and never refuses events for volume: a quota to show or a ceiling to
-enforce is for whoever runs the server, outside it (a portal reading
-`limits`, a proxy in front of the ingest surface).
+A count per calendar month (the first version of this design) answered
+the first two problems poorly: it needed a table of its own, kept apart
+from the data to survive rollup, and measured what arrived rather than
+what is held.
+
+Quotas and refusing ingest for volume are out of scope. twillingate adds no
+quota and never decides by itself to refuse events: a quota to show or a
+ceiling to enforce is for whoever runs the server, reading `limits` from
+outside, and the ingest switch (D5) is what they turn when they decide.
 
 ## Decisions
 
@@ -58,6 +68,29 @@ enforce is for whoever runs the server, outside it (a portal reading
   ingest clamping older timestamps to the time received), and nothing when
   the count is absent.
 
+- **D5. `INGEST_DISABLED` stops ingest completely.** A boolean (Go's
+  spellings: `true`/`false`, `1`/`0`, `t`/`f`; anything else refuses the
+  boot rather than guessing), default off. When on, every route that takes
+  data refuses: `POST /ingest/events`, the legacy `POST /api/events` and
+  `POST /ingest/forms/{name}` (the Plausible shim posts to
+  `/ingest/events`; it has no route of its own). The answer is **429**,
+  the body `ingest is disabled` and `Retry-After: 3600`: a 4xx on purpose,
+  since the SDK drops a batch refused with a 4xx and queues one refused
+  with a 5xx in localStorage on every visitor's device. The refusal comes
+  first, before the body is read or the key looked up: it is cheap, writes
+  nothing, and a disabled server has nothing to protect a key check for (a
+  bad key gets the 429 too). With no key there is no project to check the
+  `Origin` against, so CORS is answered as for a preflight: an `Origin`
+  any project allows gets `Access-Control-Allow-Origin`, so the browser can
+  read the 429. A form post gets the plain 429, not the error redirect,
+  for the same reason. Preflights, the SDK scripts and `/healthz` answer as
+  usual. The boot logs a warning. `limits` reports it as
+  `ingest_disabled: true|false`, a field of its own rather than a row of
+  `limits`: it is a switch with no value, unit or default to read against,
+  and the `ingest` group is the wire format's fixed limits, the same on
+  every server. The console's Projects page says, at the top: "Ingest is
+  disabled on this server: new events and form submissions are refused."
+
 ## Cost
 
 A count of every raw row reads every page of the clustered `events` table
@@ -82,10 +115,14 @@ minutes (D3).
 
 - `internal/api/ops_limits.go`: `raw_events` (D1); `internal/api/rawcount.go`:
   the cached count (D2, D3).
-- `web/`: the line in the limits panel (D4).
+- `web/`: the line in the limits panel (D4) and the ingest banner (D5).
+- `internal/config`: `INGEST_DISABLED`; `internal/server`: the refusal on
+  every ingest route; `internal/api`: `ingest_disabled` (D5).
 
-Docs in the same commit: `docs/twillingate.md` (the `limits` fields). No
-`deploy/UPGRADES.md` entry: there is no migration and no setting.
+Docs in the same commit: `docs/twillingate.md` (the `limits` fields, the
+429 for events and forms) and `docs/deployment.md` (`INGEST_DISABLED`). No
+`deploy/UPGRADES.md` entry: there is no migration, and the one setting is
+off by default.
 
 ## Testing
 
@@ -100,3 +137,9 @@ Docs in the same commit: `docs/twillingate.md` (the `limits` fields). No
   TTL, a reader that gives up does not cancel the count.
 - The console: the line with the count and window ("today" for 0), none
   without a count.
+- The switch: each ingest route refused with 429, the body, `Retry-After`
+  and CORS for an allowed `Origin` (none for another), the body never read,
+  nothing enqueued or written, a bad key refused the same; preflights, the
+  scripts and `/healthz` unchanged; off (unset, `false`, `0`) unchanged;
+  config's spellings and refusal; `limits` and `GET /api/limits` report
+  it; the console banner shows only when it is on.
