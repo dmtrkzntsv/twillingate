@@ -53,6 +53,12 @@ describe('usesParams', () => {
   it('ignores them in strings, quoted names and comments', () => {
     expect(usesParams("SELECT ':project' AS x, \":from\" -- :to\n/* :project */ FROM v")).toEqual({ project: false, range: false })
   })
+  it('finds one beside a string that names it', () => {
+    expect(usesParams("SELECT ':project', :project")).toEqual({ project: true, range: false })
+  })
+  it('reads past an escaped quote to the end of the string', () => {
+    expect(usesParams("SELECT 'it''s :project'")).toEqual({ project: false, range: false })
+  })
   it('does not match a longer name', () => {
     expect(usesParams('SELECT :projects, :fromage')).toEqual({ project: false, range: false })
   })
