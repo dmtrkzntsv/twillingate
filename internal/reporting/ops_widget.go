@@ -28,7 +28,9 @@ type AddWidget struct {
 	WidgetSpec
 }
 
-// UpdateWidget changes the fields that are set (non-nil).
+// UpdateWidget changes the fields that are set (non-nil). After moves
+// the widget: after that live widget of its dashboard, 0 first; naming
+// the widget itself leaves it where it is.
 type UpdateWidget struct {
 	ID        int64
 	Name      *string
@@ -38,6 +40,7 @@ type UpdateWidget struct {
 	Source    *Source
 	Width     *int
 	Height    *int
+	After     *int64
 }
 
 type CopyWidget struct {
@@ -73,7 +76,12 @@ func (s *Service) AddWidget(ctx context.Context, actor string, in AddWidget) (Wi
 
 // UpdateWidget changes the fields in that are set and checks the whole
 // resulting widget. A widget whose component was removed takes only a
-// new component and a size until it has one again (D15).
+// new component, a size and a place until it has one again (D15). A
+// change of only the size or the place (the page's drag) checks the size
+// alone and writes only those: the content is unchanged, so its query is
+// not run again. Every update writes only the columns it changes, since
+// the widget was read before the checks, which may take seconds, and
+// writing the rest back would undo what another writer saved meanwhile.
 func (s *Service) UpdateWidget(ctx context.Context, actor string, in UpdateWidget) (WidgetInfo, error) {
 	w, err := s.liveWidget(ctx, in.ID)
 	if err != nil {
@@ -126,7 +134,17 @@ func (s *Service) UpdateWidget(ctx context.Context, actor string, in UpdateWidge
 	if in.Height != nil {
 		w.Height = *in.Height
 	}
-	if in.Component == nil && w.Component == "" { // still removed: only resized
+	cols := store.WidgetColumns{
+		Content: in.Component != nil || in.Name != nil || in.Title != nil || in.Props != nil || in.Source != nil,
+		SortKey: in.After != nil && *in.After != w.ID, // after itself: it stays where it is
+		Width:   in.Width != nil,
+		Height:  in.Height != nil,
+	}
+	if cols == (store.WidgetColumns{}) { // nothing to change: no check, no write, no audit row
+		return s.widgetInfo(w), nil
+	}
+	layoutOnly := !cols.Content
+	if layoutOnly || (in.Component == nil && w.Component == "") {
 		err = checkSize(w.Width, w.Height)
 	} else {
 		var comps map[string]Component
@@ -137,10 +155,26 @@ func (s *Service) UpdateWidget(ctx context.Context, actor string, in UpdateWidge
 	if err != nil {
 		return WidgetInfo{}, err
 	}
-	if err := s.st.UpdateWidget(ctx, w, store.AuditEntry{Actor: actor, Action: "widget.update"}); err != nil {
-		if errors.Is(err, store.ErrConflict) { // the key is unchanged: a rename lost a race
-			return WidgetInfo{}, refuseNameTaken(w.Name)
+	a := store.AuditEntry{Actor: actor, Action: "widget.update"}
+	write := func() error { return s.st.UpdateWidget(ctx, w, cols, a) }
+	if !cols.SortKey {
+		if err := write(); err != nil {
+			if errors.Is(err, store.ErrConflict) { // the key is unchanged: a rename lost a race
+				return WidgetInfo{}, refuseNameTaken(w.Name)
+			}
+			return WidgetInfo{}, err
 		}
+		return s.readWidget(ctx, w.ID)
+	}
+	err = retryConflict(func() error {
+		key, err := s.widgetKeyAfter(ctx, w, in.After)
+		if err != nil {
+			return err
+		}
+		w.SortKey = key
+		return write()
+	}, func() error { return s.lostWidgetRace(ctx, w) })
+	if err != nil {
 		return WidgetInfo{}, err
 	}
 	return s.readWidget(ctx, w.ID)

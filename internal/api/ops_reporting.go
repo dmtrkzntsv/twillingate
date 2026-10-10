@@ -126,6 +126,7 @@ type updateWidgetIn struct {
 	Source    *reporting.Source `json:"source,omitempty" jsonschema:"replaces the source; omit to keep"`
 	Width     *int              `json:"width,omitempty" jsonschema:"columns out of 12 (1–12); omit to keep"`
 	Height    *int              `json:"height,omitempty" jsonschema:"rows of 40px (1–12); omit to keep"`
+	After     *int64            `json:"after,omitempty" jsonschema:"move it after this widget id on its dashboard; 0 puts it first; omit to keep its place"`
 }
 
 type copyWidgetIn struct {
@@ -226,7 +227,7 @@ func (h *host) addWidget(ctx context.Context, in addWidgetIn) (reporting.WidgetI
 func (h *host) updateWidget(ctx context.Context, in updateWidgetIn) (reporting.WidgetInfo, error) {
 	return h.rep.UpdateWidget(ctx, actorFrom(ctx), reporting.UpdateWidget{
 		ID: in.WidgetID, Name: in.Name, Component: in.Component, Title: in.Title,
-		Props: in.Props, Source: in.Source, Width: in.Width, Height: in.Height})
+		Props: in.Props, Source: in.Source, Width: in.Width, Height: in.Height, After: in.After})
 }
 
 func (h *host) copyWidget(ctx context.Context, in copyWidgetIn) (reporting.WidgetInfo, error) {
@@ -336,7 +337,7 @@ func (h *host) registerReporting(r *registrar) {
 		Description: "Call reporting_guide first. Add a widget to a user dashboard: a component, a source ({type: sql|md, content}), optional title, props, width and height (default from the component), name (derived from the title when omitted) and after (a widget id; 0 first; omitted, last). The SQL is run once to check its columns against the component's inputs."},
 		h.addWidget)
 	expose(r, spec{Name: "update_widget", Annotations: write, Method: "PATCH", Path: w, constrain: widget(self),
-		Description: "Call reporting_guide first. Change a widget on a user dashboard: name, component, title, props, source, width or height. Fields you omit are kept; the result is validated whole."},
+		Description: "Call reporting_guide first. Change a widget on a user dashboard: name, component, title, props, source, width or height, or move it with after (a widget id there; 0 first). Fields you omit are kept; the result is validated whole, but a change of only width, height or after runs no query."},
 		h.updateWidget)
 	expose(r, spec{Name: "copy_widget", Annotations: write, Method: "POST", Path: w + "/copy", Status: http.StatusCreated,
 		Description: "Call reporting_guide first. Copy a widget, a system one included, onto a user dashboard (dashboard_id), keeping its size; optional after (a widget id there; 0 first; omitted, last). The copy is independent of the original."},

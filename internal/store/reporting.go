@@ -69,6 +69,14 @@ type Widget struct {
 	ArchivedAt           string
 }
 
+// WidgetColumns names what a widget update writes. Content is the
+// component, name, title, props and source, written together since they
+// are validated together; the layout columns go one by one, so a move
+// never writes a size back and a resize never writes a place back.
+type WidgetColumns struct {
+	Content, SortKey, Width, Height bool
+}
+
 // WidgetShare is a widget_shares row without its images, joined to its
 // widget's dashboard while the widget exists.
 type WidgetShare struct {

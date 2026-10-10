@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { span } from './grid'
+import { FULL_GRID_PX, span } from './grid'
 
 describe('span (D37)', () => {
   it('keeps every width as defined at 1200px', () => {
@@ -14,9 +14,14 @@ describe('span (D37)', () => {
     expect([1, 2, 3, 4, 6, 8, 12].map((w) => span(w, 400))).toEqual([6, 6, 6, 12, 12, 12, 12])
   })
 
-  it('switches exactly at 640 and 1024', () => {
-    expect(span(4, 1024)).toBe(4)
-    expect(span(4, 1023)).toBe(6)
+  it('keeps every width at 976px, a 1280px screen beside the sidebar', () => {
+    for (let w = 1; w <= 12; w++) expect(span(w, 976)).toBe(w)
+  })
+
+  it('switches exactly at 640 and FULL_GRID_PX (900)', () => {
+    expect(FULL_GRID_PX).toBe(900)
+    expect(span(4, 900)).toBe(4)
+    expect(span(4, 899)).toBe(6)
     expect(span(4, 640)).toBe(6)
     expect(span(4, 639)).toBe(12)
   })

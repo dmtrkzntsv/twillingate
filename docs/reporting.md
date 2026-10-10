@@ -246,9 +246,8 @@ widget_data {"widget_id": 42, "project_id": 7, "from": "2026-09-01", "to": "2026
   and a line chart to five lines: the palette has five colors.
 - A widget that follows neither switcher says in its title what it is fixed
   to.
-- Widgets are not reordered once placed: to move one, `copy_widget` it with
-  the `after` you want and archive the original. Names are unique on a
-  dashboard, archived widgets included.
+- To move a widget, `update_widget` it with the `after` you want. Names are
+  unique on a dashboard, archived widgets included.
 - Markdown renders without raw HTML.
 - Undo is archiving. Archived user dashboards and widgets are deleted
   `RETENTION_ARCHIVED_DAYS` after archiving (default 30).
@@ -273,7 +272,7 @@ widget_data {"widget_id": 42, "project_id": 7, "from": "2026-09-01", "to": "2026
 | `remove_project_tab` | `project_id`, `dashboard_id` | `tabs`; the dashboard is kept. A user dashboard's last tab can go too: it stays in the sidebar |
 | `move_project_tab` | `project_id`, `dashboard_id`, `after` | `tabs`; moves any tab, system or user, after another tab of the project (`0` first) |
 | `add_widget` | `dashboard_id`, `component`, `source`, `title`, `name`, `props`, `width`, `height`, `after` | the widget |
-| `update_widget` | `widget_id` and any of `name`, `component`, `title`, `props`, `source`, `width`, `height` | the widget; omitted fields are kept |
+| `update_widget` | `widget_id` and any of `name`, `component`, `title`, `props`, `source`, `width`, `height`, `after` | the widget; omitted fields are kept. `after` moves it after that widget of its dashboard (`0` first). A change of only `width`, `height` and `after` runs no query |
 | `copy_widget` | `widget_id`, `dashboard_id`, `after` | the independent copy, same size; the original may be on a system dashboard |
 | `archive_widget` | `widget_id` | hides it in place |
 | `restore_widget` | `widget_id` | puts it back where it was |
@@ -392,7 +391,7 @@ The dashboard app draws every component with sample data at
 **When a release removes a component,** its widgets stay, with `component`
 null: the card says "component removed" and `widget_data` answers
 `removed: true`. Such a widget can be switched to another component with
-`update_widget`, resized or archived; nothing else about it can change, and it
+`update_widget`, resized, moved or archived; nothing else about it can change, and it
 cannot be copied, until it has a component again. A component that comes back
 in a later release does not reattach itself.
 
@@ -773,13 +772,20 @@ gap, so a 6 × 8 chart followed by four 3 × 3 stats puts the stats in a 2 × 2
 block beside the chart.
 
 - **`width`** is columns out of 12, from 1 to 12: 3 is a quarter, 4 a third, 6
-  a half, 12 the full width.
+  a half, 12 the full width. The page draws widths as defined when its grid is
+  at least 900px wide (a 1280px screen with the sidebar open); narrower, a
+  widget up to 6 wide takes half the row and a wider one the whole row, and
+  below 640px two widgets up to 3 wide share a row and others take the whole
+  row.
 - **`height`** is rows of 40px, from 1 to 12: 3 is about 120px, 8 about 320px.
   Heights keep their pixels at every width, so charts stay readable on a phone.
-- **`after`** places a new widget: a widget id on the same dashboard puts it
-  right after that one, `0` puts it first, and leaving it out puts it last.
-  Widgets are not reordered once placed; to move one, `copy_widget` it with
-  the `after` you want and archive the original.
+- **`after`** places a widget: a widget id on the same dashboard puts it
+  right after that one, `0` puts it first, and leaving it out puts it last
+  (`add_widget`, `copy_widget`) or where it is (`update_widget`, which moves
+  a widget with it; naming the widget itself is a no-op). On the page, the
+  owner drags a card of their own dashboard by its grip to move it, at any
+  width, and by its bottom-right corner to resize it, a corner shown only
+  while the grid is at least 900px wide; both are saved as `update_widget`.
 - Dashboards sit in groups, drawn as tabs of one sidebar entry (see
   [Concepts](#concepts)). `after`, on `create_dashboard` and
   `update_dashboard`, follows what the id it names is: a dashboard in the

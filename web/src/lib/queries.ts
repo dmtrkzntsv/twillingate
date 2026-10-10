@@ -1,4 +1,5 @@
-import { endpoints, type RangeQuery, type ShareState, type SubmissionsQuery } from './api'
+import { replaceEqualDeep } from '@tanstack/react-query'
+import { endpoints, type DashboardDetail, type RangeQuery, type ShareState, type SubmissionsQuery } from './api'
 
 /** The dashboards list: the sidebar, the timezone, dev mode. */
 export const dashboardsQuery = { queryKey: ['dashboards'], queryFn: () => endpoints.dashboards() }
@@ -7,7 +8,29 @@ export const dashboardsQuery = { queryKey: ['dashboards'], queryFn: () => endpoi
 export const dashboardQuery = (id: number) => ({
   queryKey: ['dashboard', id],
   queryFn: () => endpoints.dashboard(id),
+  structuralSharing: shareWidgetsById,
 })
+
+/**
+ * TanStack's structural sharing, with the widgets matched by id rather than
+ * by place. A drop reorders the array, and sharing by place would hand
+ * every widget that shifted a new object, equal as it is, which its card's
+ * memo takes for a change (D11).
+ */
+function shareWidgetsById(old: unknown, next: unknown): unknown {
+  const shared = replaceEqualDeep(old, next)
+  if (shared === old || !isDetail(old) || !isDetail(shared)) return shared
+  const before = new Map(old.widgets.map((w) => [w.widget_id, w]))
+  const widgets = shared.widgets.map((w) => {
+    const prev = before.get(w.widget_id)
+    return prev !== undefined && replaceEqualDeep(prev, w) === prev ? prev : w
+  })
+  return widgets.every((w, i) => w === shared.widgets[i]) ? shared : { ...shared, widgets }
+}
+
+function isDetail(data: unknown): data is DashboardDetail {
+  return typeof data === 'object' && data !== null && Array.isArray((data as DashboardDetail).widgets)
+}
 
 /** Each live project's newest day with data and its unread form submissions (project landing D5, D6). */
 export const projectActivityQuery = {
