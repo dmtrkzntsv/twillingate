@@ -110,6 +110,20 @@ export default function Archive() {
   const widgetsQ = useQuery({ ...archivedWidgetsQuery, enabled: data !== undefined && writable })
   const widgetGroups = archivedWidgetGroups(widgetsQ.data?.widgets ?? [])
   const widgetEdits = useWidgetEdits()
+  // The widgets whose restore is out: their Restore waits, so a double click restores once.
+  const [restoringWidgets, setRestoringWidgets] = useState<ReadonlySet<number>>(new Set())
+  const restoreWidget = async (w: ListedWidget) => {
+    setRestoringWidgets((s) => new Set(s).add(w.widget_id))
+    try {
+      await widgetEdits.restore({ widget_id: w.widget_id, dashboard_id: w.dashboard_id })
+    } finally {
+      setRestoringWidgets((s) => {
+        const next = new Set(s)
+        next.delete(w.widget_id)
+        return next
+      })
+    }
+  }
   const [restoring, setRestoring] = useState<WidgetShare>()
   const projectsQ = useQuery({ ...projectsQuery, enabled: data !== undefined && writable })
   const live: Project[] = (projectsQ.data?.projects ?? []).filter((p) => !p.archived)
@@ -212,7 +226,7 @@ export default function Archive() {
                           </span>
                           <span className="text-xs text-muted-foreground">{archivedStatus(w.archived_at)}</span>
                         </div>
-                        <Button variant="outline" size="sm" onClick={() => void widgetEdits.restore({ widget_id: w.widget_id, dashboard_id: w.dashboard_id })}>
+                        <Button variant="outline" size="sm" disabled={restoringWidgets.has(w.widget_id)} onClick={() => void restoreWidget(w)}>
                           Restore
                         </Button>
                       </li>

@@ -583,6 +583,27 @@ describe('Archive, widgets', () => {
     expect(restoreWidget).toHaveBeenCalledWith({ widget_id: 22, dashboard_id: 10 })
   })
 
+  it("disables a widget's Restore while its restore is out, so a double click restores once", async () => {
+    const user = userEvent.setup()
+    mockApiWith([launch], 30)
+    vi.spyOn(endpoints, 'listWidgets').mockResolvedValue({
+      widgets: [listed(21, launch, { name: 'first_try', ...gone, position: 1 }), listed(22, launch, { name: 'second', ...gone, position: 2 })],
+    })
+    let resolve: (ok: boolean) => void = () => {}
+    restoreWidget.mockReturnValue(new Promise<boolean>((r) => (resolve = r)))
+    renderArchive()
+    const section = await screen.findByRole('region', { name: 'Archived widgets' })
+    const [first, second] = within(section).getAllByRole('listitem').slice(1)
+
+    await user.click(within(first).getByRole('button', { name: 'Restore' }))
+    expect(within(first).getByRole('button', { name: 'Restore' })).toBeDisabled()
+    expect(within(second).getByRole('button', { name: 'Restore' })).toBeEnabled()
+    await user.click(within(first).getByRole('button', { name: 'Restore' }))
+    expect(restoreWidget).toHaveBeenCalledTimes(1)
+    resolve(true)
+    await waitFor(() => expect(within(first).getByRole('button', { name: 'Restore' })).toBeEnabled())
+  })
+
   it('leaves out live widgets, widgets of an archived dashboard and widgets of a system dashboard', async () => {
     mockApiWith([launch, old, reports])
     vi.spyOn(endpoints, 'listWidgets').mockResolvedValue({
