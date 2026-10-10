@@ -112,3 +112,9 @@ export const findSubmissionsQuery = (projectId: number, search: string) => ({
   queryKey: ['find-submissions', projectId, search] as const,
   queryFn: () => endpoints.findSubmissions(projectId, { search }),
 })
+
+/** The query schema reference, for the SQL editor's completion; it changes only with a release. */
+export const schemaViewsQuery = { queryKey: ['schema-views'], queryFn: () => endpoints.schemaViews(), staleTime: Infinity }
+
+/** Every widget, archived ones included, for the Archive page's widget list. */
+export const archivedWidgetsQuery = { queryKey: ['widgets'], queryFn: () => endpoints.listWidgets() }

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useQueries, useQuery } from '@tanstack/react-query'
+import { Link } from 'react-router'
 import AppShell, { TopBar } from '@/components/AppShell'
 import Crumbs from '@/components/Crumbs'
 import { DashboardGroup, LoneDashboard, type GroupRow } from '@/components/DashboardGroup'
@@ -8,9 +9,10 @@ import { Button } from '@/components/ui/button'
 import { useDashboardActions } from '@/hooks/use-dashboard-actions'
 import { useFormActions } from '@/hooks/use-form-actions'
 import { useShareImage } from '@/hooks/use-share-image'
-import type { DashboardInfo, Form, Project, WidgetShare } from '@/lib/api'
+import { useWidgetEdits } from '@/hooks/use-widget-edits'
+import type { DashboardInfo, Form, ListedWidget, Project, WidgetShare } from '@/lib/api'
 import { groupName, purgeDate } from '@/lib/arrange'
-import { dashboardsQuery, formsQuery, projectsQuery, widgetSharesQuery } from '@/lib/queries'
+import { archivedWidgetsQuery, dashboardsQuery, formsQuery, projectsQuery, widgetSharesQuery } from '@/lib/queries'
 import { formatPurgeDate } from '@/lib/time'
 
 interface Group {
@@ -36,6 +38,30 @@ function archivedGroups(dashboards: DashboardInfo[]): Group[] {
   return [...groups.values()].filter((g) => g.members.some((m) => m.archived_at))
 }
 
+/** An archived widget's dashboard and the widgets archived out of it. */
+interface WidgetGroup {
+  dashboard: DashboardInfo
+  widgets: ListedWidget[]
+}
+
+/**
+ * The archived widgets of the user's live dashboards, grouped by dashboard in
+ * first-seen order, each group's widgets in their page order. A widget of an
+ * archived dashboard comes back with the dashboard, and a system dashboard's
+ * are never archived, so neither is listed.
+ */
+function archivedWidgetGroups(widgets: ListedWidget[]): WidgetGroup[] {
+  const groups = new Map<number, WidgetGroup>()
+  for (const w of widgets) {
+    if (!w.archived_at || w.dashboard.archived_at || w.dashboard.owner !== 'user') continue
+    const g = groups.get(w.dashboard.dashboard_id)
+    if (g) g.widgets.push(w)
+    else groups.set(w.dashboard.dashboard_id, { dashboard: w.dashboard, widgets: [w] })
+  }
+  for (const g of groups.values()) g.widgets.sort((a, b) => a.position - b.position)
+  return [...groups.values()]
+}
+
 /**
  * An archived share's image, 1x. Its public URL answers 404 while it is
  * archived, so it is read through the console's authenticated image route;
@@ -58,7 +84,12 @@ function ShareThumb({ share }: { share: WidgetShare }) {
  * brings back every archived tab at once. Its buttons wait while one
  * action runs; reporting dev, which takes no writes, shows none.
  *
- * Below the dashboards, a Shares section lists the archived widget shares,
+ * Below the dashboards, an Archived widgets section lists the widgets
+ * archived out of the user's live dashboards, grouped under each one with
+ * Restore. It is left out when there are none, and in reporting dev, which
+ * takes no writes.
+ *
+ * Then a Shares section lists the archived widget shares,
  * most recently archived first, each restorable with a new archive date
  * (D9). It is left out when there are none, and in reporting dev, which has
  * no shares.
@@ -76,6 +107,23 @@ export default function Archive() {
   const groups = archivedGroups(dashboards)
   const sharesQ = useQuery({ ...widgetSharesQuery({ state: 'archived' }), enabled: data !== undefined && writable })
   const shares = sharesQ.data?.shares ?? []
+  const widgetsQ = useQuery({ ...archivedWidgetsQuery, enabled: data !== undefined && writable })
+  const widgetGroups = archivedWidgetGroups(widgetsQ.data?.widgets ?? [])
+  const widgetEdits = useWidgetEdits()
+  // The widgets whose restore is out: their Restore waits, so a double click restores once.
+  const [restoringWidgets, setRestoringWidgets] = useState<ReadonlySet<number>>(new Set())
+  const restoreWidget = async (w: ListedWidget) => {
+    setRestoringWidgets((s) => new Set(s).add(w.widget_id))
+    try {
+      await widgetEdits.restore({ widget_id: w.widget_id, dashboard_id: w.dashboard_id })
+    } finally {
+      setRestoringWidgets((s) => {
+        const next = new Set(s)
+        next.delete(w.widget_id)
+        return next
+      })
+    }
+  }
   const [restoring, setRestoring] = useState<WidgetShare>()
   const projectsQ = useQuery({ ...projectsQuery, enabled: data !== undefined && writable })
   const live: Project[] = (projectsQ.data?.projects ?? []).filter((p) => !p.archived)
@@ -121,25 +169,16 @@ export default function Archive() {
     )
   }
 
-  /** A share's status line: archived, and when it goes, the date kept on one line. */
-  const shareStatus = (s: WidgetShare) => {
-    const purged = s.archived_at ? purgeDate(s.archived_at, purgeDays) : undefined
-    if (!purged) return 'archived'
-    return (
-      <>
-        archived · deleted on <span className="whitespace-nowrap">{formatPurgeDate(purged)}</span>
-      </>
-    )
-  }
+  /** An archived form's lead-in to its status line: how many submissions go with it. */
+  const submissionCount = (f: Form) => `${f.submissions} ${f.submissions === 1 ? 'submission' : 'submissions'} · `
 
-  /** An archived form's status line: its submissions, and when it goes with them. */
-  const formStatusLine = (f: Form) => {
-    const purged = f.archived_at ? purgeDate(f.archived_at, purgeDays) : undefined
-    const count = `${f.submissions} ${f.submissions === 1 ? 'submission' : 'submissions'}`
-    if (!purged) return `${count} · archived`
+  /** An archived row's status line: archived, and when it goes, the date kept on one line. */
+  const archivedStatus = (archived_at: string | null | undefined, prefix = '') => {
+    const purged = archived_at ? purgeDate(archived_at, purgeDays) : undefined
+    if (!purged) return `${prefix}archived`
     return (
       <>
-        {count} · archived · deleted on <span className="whitespace-nowrap">{formatPurgeDate(purged)}</span>
+        {prefix}archived · deleted on <span className="whitespace-nowrap">{formatPurgeDate(purged)}</span>
       </>
     )
   }
@@ -159,10 +198,45 @@ export default function Archive() {
             Archived shares answer 404 until restored. Archived forms refuse submissions.
           </p>
         </header>
-        {data !== undefined && groups.length === 0 && shares.length === 0 && archivedForms.length === 0 && !sharesQ.isLoading && !formsLoading && (
+        {data !== undefined && groups.length === 0 && widgetGroups.length === 0 && shares.length === 0 && archivedForms.length === 0 && !widgetsQ.isLoading && !sharesQ.isLoading && !formsLoading && (
           <p className="text-sm text-muted-foreground">Nothing archived.</p>
         )}
         {groups.length > 0 && <ul className="flex flex-col gap-2">{groups.map(renderGroup)}</ul>}
+        {widgetGroups.length > 0 && (
+          <section aria-labelledby="archived-widgets" className="flex flex-col gap-3">
+            <h2 id="archived-widgets" className="text-base font-semibold">
+              Archived widgets
+            </h2>
+            <ul className="flex flex-col gap-2">
+              {widgetGroups.map(({ dashboard, widgets }) => (
+                <li key={dashboard.dashboard_id} aria-label={dashboard.title} className="flex flex-col rounded-lg border">
+                  <div className="border-b bg-muted/40 p-3">
+                    <h3 className="truncate font-medium">
+                      <Link to={`/dashboards/${dashboard.dashboard_id}`} className="underline-offset-2 hover:underline">
+                        {dashboard.title}
+                      </Link>
+                    </h3>
+                  </div>
+                  <ul className="flex flex-col divide-y">
+                    {widgets.map((w) => (
+                      <li key={w.widget_id} className="flex items-center justify-between gap-3 px-3 py-2">
+                        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                          <span className="truncate text-sm font-medium" title={w.title ?? w.name}>
+                            {w.title ?? w.name}
+                          </span>
+                          <span className="text-xs text-muted-foreground">{archivedStatus(w.archived_at)}</span>
+                        </div>
+                        <Button variant="outline" size="sm" disabled={restoringWidgets.has(w.widget_id)} onClick={() => void restoreWidget(w)}>
+                          Restore
+                        </Button>
+                      </li>
+                    ))}
+                  </ul>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
         {shares.length > 0 && (
           <section aria-labelledby="archived-shares" className="flex flex-col gap-3">
             <h2 id="archived-shares" className="text-base font-semibold">
@@ -179,7 +253,7 @@ export default function Archive() {
                     <div className="truncate text-xs text-muted-foreground" title={s.project_name}>
                       {s.project_name}
                     </div>
-                    <div className="text-xs break-words text-muted-foreground">{shareStatus(s)}</div>
+                    <div className="text-xs break-words text-muted-foreground">{archivedStatus(s.archived_at)}</div>
                   </div>
                   {writable && (
                     <Button variant="outline" size="sm" onClick={() => setRestoring(s)}>
@@ -204,7 +278,7 @@ export default function Archive() {
                     <div className="truncate text-xs text-muted-foreground" title={project.name}>
                       {project.name}
                     </div>
-                    <div className="text-xs break-words text-muted-foreground">{formStatusLine(form)}</div>
+                    <div className="text-xs break-words text-muted-foreground">{archivedStatus(form.archived_at, submissionCount(form))}</div>
                   </div>
                   <Button
                     variant="outline"

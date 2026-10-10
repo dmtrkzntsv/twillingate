@@ -3,6 +3,8 @@ import { Card } from '@/components/ui/card'
 
 interface Props {
   title?: string | null
+  /** In place of the title, e.g. the field that renames it. */
+  titleSlot?: ReactNode
   /** Beside the title, e.g. the "partial" badge. */
   badge?: ReactNode
   /** Top-right controls, e.g. refresh. */
@@ -17,15 +19,15 @@ interface Props {
 const titleRoom = ['', 'pr-8', 'pr-16', 'pr-24']
 
 /** A widget's card: the title row, the body, and controls in the corners. */
-export default function WidgetFrame({ title, badge, actions, slots = 1, corner, children }: Props) {
+export default function WidgetFrame({ title, titleSlot, badge, actions, slots = 1, corner, children }: Props) {
   return (
     <Card
       data-slot="widget-card"
       className="relative h-full min-w-0 gap-1.5 overflow-hidden p-3.5 shadow-[0_1px_2px_rgb(11_31_54/0.04),0_6px_16px_-10px_rgb(11_31_54/0.14)] dark:shadow-none"
     >
-      {(title || badge) && (
+      {(title || titleSlot || badge) && (
         <div className={`flex min-h-7 min-w-0 items-center gap-2 ${actions ? titleRoom[slots] : ''}`}>
-          {title && <h3 className="truncate text-sm font-medium text-muted-foreground">{title}</h3>}
+          {titleSlot || (title && <h3 className="truncate text-sm font-medium text-muted-foreground">{title}</h3>)}
           {badge}
         </div>
       )}

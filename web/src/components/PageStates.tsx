@@ -33,8 +33,14 @@ export function NoProjects() {
   )
 }
 
-export function NoWidgets() {
-  return <Notice icon={<LayoutGridIcon />} title="No widgets yet — ask your agent to add some" />
+/** An empty dashboard; with `action` (Add widget, where the page can add one) instead of asking the agent. */
+export function NoWidgets({ action }: { action?: ReactNode }) {
+  if (!action) return <Notice icon={<LayoutGridIcon />} title="No widgets yet — ask your agent to add some" />
+  return (
+    <Notice icon={<LayoutGridIcon />} title="No widgets yet">
+      {action}
+    </Notice>
+  )
 }
 
 /** `reporting dev`: the dashboard directories that failed to load. */

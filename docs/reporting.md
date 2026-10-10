@@ -272,7 +272,7 @@ widget_data {"widget_id": 42, "project_id": 7, "from": "2026-09-01", "to": "2026
 | `remove_project_tab` | `project_id`, `dashboard_id` | `tabs`; the dashboard is kept. A user dashboard's last tab can go too: it stays in the sidebar |
 | `move_project_tab` | `project_id`, `dashboard_id`, `after` | `tabs`; moves any tab, system or user, after another tab of the project (`0` first) |
 | `add_widget` | `dashboard_id`, `component`, `source`, `title`, `name`, `props`, `width`, `height`, `after` | the widget |
-| `update_widget` | `widget_id` and any of `name`, `component`, `title`, `props`, `source`, `width`, `height`, `after` | the widget; omitted fields are kept. `after` moves it after that widget of its dashboard (`0` first). A change of only `width`, `height` and `after` runs no query |
+| `update_widget` | `widget_id` and any of `name`, `component`, `title`, `props`, `source`, `width`, `height`, `after` | the widget; omitted fields are kept. `after` moves it after that widget of its dashboard (`0` first). A change of only `width`, `height`, `after`, `title` and `name` runs no query |
 | `copy_widget` | `widget_id`, `dashboard_id`, `after` | the independent copy, same size; the original may be on a system dashboard |
 | `archive_widget` | `widget_id` | hides it in place |
 | `restore_widget` | `widget_id` | puts it back where it was |
@@ -294,8 +294,12 @@ snapshots built on each read by the same code as their list tool:
 
 Every tool above except `reporting_guide`, which is MCP-only, is also a REST
 route under `/api/`, with the same bearer token, JSON and error shape as the
-routes in [twillingate.md](twillingate.md#http-api). Three routes have no
-tool, `view`, `create_widget_share` and `widget_share_image`. The page stores
+routes in [twillingate.md](twillingate.md#http-api). Four routes have no
+tool, `view`, `preview_widget`, `create_widget_share` and
+`widget_share_image`. The console's widget editor runs unsaved SQL with
+`POST /api/widgets/preview`, which binds the project and range given and
+returns the rows with the first way they do not fit the component; agents
+call `add_widget`, which validates. The page stores
 the viewer's selection with `PUT …/view`, which is viewer state rather than a
 definition, so it is allowed on system dashboards and not audited. It uploads
 a share with `POST /api/widget-shares`, since only a browser can capture the
@@ -326,6 +330,7 @@ public `/share/<id>.png` stops at archiving
 | `POST` | `/api/widgets/{widget_id}/archive` | `archive_widget` | — |
 | `POST` | `/api/widgets/{widget_id}/restore` | `restore_widget` | — |
 | `PUT` | `/api/dashboards/{dashboard_id}/view` | `view`, REST only: no MCP tool | body: `project_id`, `range`, and `from`/`to` for `custom` → `{"status":"saved"}` |
+| `POST` | `/api/widgets/preview` | `preview_widget`, REST only: no MCP tool | body: `component`, `props`, `source`, `project_id`, `from`, `to` → `{columns, rows, truncated, problem, elapsed_ms}` |
 | `POST` | `/api/widget-shares` | `create_widget_share`, REST only: no MCP tool | multipart: `widget_id`, `project_id`, `from`, `to`, `archive_after`, `caption_project`, `caption_range`, `image`, `image_2x` → 201 |
 | `GET` | `/api/widget-shares` | `list_widget_shares` | query: `widget_id`, `state` |
 | `PATCH` | `/api/widget-shares/{id}` | `update_widget_share` | body: `archive_after` |
@@ -391,9 +396,11 @@ The dashboard app draws every component with sample data at
 **When a release removes a component,** its widgets stay, with `component`
 null: the card says "component removed" and `widget_data` answers
 `removed: true`. Such a widget can be switched to another component with
-`update_widget`, resized, moved or archived; nothing else about it can change, and it
-cannot be copied, until it has a component again. A component that comes back
-in a later release does not reattach itself.
+`update_widget`, resized, moved or archived. The new `component` may come with
+`title`, `props` and `source` in the same call, and the whole widget is checked
+against it; without a `component`, only `width`, `height` and `after` can
+change, and it cannot be copied until it has a component again. A component
+that comes back in a later release does not reattach itself.
 
 ## Examples
 
@@ -1083,6 +1090,9 @@ widget's name (`widget visitors: …`), and nothing is created.
 | after 7 is not one of project 1's tabs | Name a tab of that project, `0` for the first, or (in `add_project_tab`) leave `after` out for last. |
 | dashboard 1001 is archived; restore_dashboard first | `restore_dashboard` (updating, adding to or duplicating an archived dashboard is refused). For a widget: widget 42 is archived; restore_widget first. |
 | widget 42's component was removed; set component first | `update_widget` with a `component` (and resize or archive as needed); see [When widgets break after an update](#when-widgets-break-after-an-update). |
+| the sql uses :project; pass project_id | `preview_widget` only: pass `project_id`. |
+| the sql uses :from or :to; pass from and to | `preview_widget` only: pass `from` and `to`. |
+| preview runs sql only; markdown is drawn as it is typed | `preview_widget` takes a `sql` source; a `md` widget needs no query to preview. |
 | widget 42 follows the project switcher; pass project_id | Pass `project_id` to `widget_data`. For the range: widget 42 follows the date range; pass from and to. |
 | from 2026-09-10 is after to 2026-09-01; from 2026-01-01 to 2027-02-01 spans more than 365 days; from 2026-10-01 is after today | Pass `from` ≤ `to`, at most 365 days apart, `from` no later than today. |
 | range must be one of today, yesterday, 7d, 30d, 90d, custom | Use a preset id. `create_dashboard` refuses `custom`: create with a preset; the viewer picks custom dates. |

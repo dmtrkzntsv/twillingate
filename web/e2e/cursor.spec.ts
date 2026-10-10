@@ -23,6 +23,7 @@ const CLICKABLE = [
   "[role='button']:not([aria-disabled='true'])",
   "[role='tab']:not([aria-disabled='true'])",
   "[role='menuitem']:not([data-disabled])",
+  "[role='option']:not([data-disabled])",
   "[role='switch']:not([aria-disabled='true'])",
   "[role='checkbox']:not([aria-disabled='true'])",
   "[role='combobox']:not([aria-disabled='true'])",
@@ -125,7 +126,8 @@ test('every link and button shows the pointer', async ({ page, request }) => {
   await expect(dialog.getByRole('link', { name: 'Open' })).toBeVisible()
   expect(await withoutPointer(page), 'Share dialog, link made').toEqual([])
   // A project's "+" and the dashboards its picker offers, on a dashboard
-  // tab; one of our own, so the picker is never empty.
+  // tab; one of our own, so the picker is never empty. Then that
+  // dashboard's widget editor, and the visualizations its select offers.
   const title = `E2E cursor ${Date.now()}`
   const created = await request.post('/api/dashboards', { headers, data: { title, range: '7d' } })
   expect(created.ok(), await created.text()).toBeTruthy()
@@ -136,6 +138,14 @@ test('every link and button shows the pointer', async ({ page, request }) => {
     await page.getByRole('button', { name: 'Add tab' }).click()
     await expect(page.getByRole('dialog', { name: 'Add tab' }).getByRole('button', { name: title })).toBeVisible()
     expect(await withoutPointer(page), 'add tab').toEqual([])
+    await page.goto(`/app/dashboards/${id}`)
+    await page.getByRole('button', { name: 'Add widget' }).first().click()
+    const editor = page.getByRole('dialog', { name: 'Add widget' })
+    await expect(editor.getByRole('combobox', { name: 'Visualization' })).toBeVisible()
+    expect(await withoutPointer(page), 'widget editor').toEqual([])
+    await editor.getByRole('combobox', { name: 'Visualization' }).click()
+    await expect(page.getByRole('option', { name: 'line', exact: true })).toBeVisible()
+    expect(await withoutPointer(page), 'visualization options').toEqual([])
   } finally {
     await request.post(`/api/dashboards/${id}/archive`, { headers, data: {} })
   }

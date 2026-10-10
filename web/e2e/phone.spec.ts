@@ -15,14 +15,19 @@ function authHeaders() {
   return { Authorization: `Bearer ${TOKEN}` }
 }
 
-/** What scrolls sideways: the page itself, or any element outside a widget card. */
-async function sidewaysScroll(page: Page): Promise<string[]> {
-  return page.evaluate(() => {
+/**
+ * What scrolls sideways: the page itself, or any element outside a widget
+ * card. `allowed` is a selector for other boxes that may, as a widget's own
+ * content does (the editor's result table).
+ */
+async function sidewaysScroll(page: Page, allowed?: string): Promise<string[]> {
+  return page.evaluate((allowed) => {
     const out: string[] = []
     const root = document.documentElement
     if (root.scrollWidth > root.clientWidth) out.push(`page: ${root.scrollWidth}px wide in ${root.clientWidth}px`)
     for (const el of Array.from(document.querySelectorAll<HTMLElement>('body *'))) {
       if (el.closest('[data-slot="widget-card"]')) continue
+      if (allowed && el.matches(allowed)) continue
       const x = getComputedStyle(el).overflowX
       if ((x === 'auto' || x === 'scroll') && el.scrollWidth > el.clientWidth + 1) {
         const name = el.getAttribute('aria-label') ?? el.closest('[aria-label]')?.getAttribute('aria-label') ?? ''
@@ -30,7 +35,7 @@ async function sidewaysScroll(page: Page): Promise<string[]> {
       }
     }
     return out
-  })
+  }, allowed)
 }
 
 async function check(page: Page, path: string): Promise<void> {
@@ -112,7 +117,7 @@ function lastWeek(): { from: string; to: string } {
 test.use({ viewport: PHONE })
 
 test('no page scrolls sideways on a phone', async ({ page, request }) => {
-  test.setTimeout(120_000)
+  test.setTimeout(180_000)
   // A long name and origins that do not fit a phone's width on one line,
   // as real projects have: they wrap or truncate, never widen the page.
   const created = await request.post('/api/projects', {
@@ -273,6 +278,58 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
   expect(await dialogOverflow(page), 'Share dialog, link made').toEqual([])
   await page.keyboard.press('Escape')
   await expect(shareDialog).toHaveCount(0)
+
+  // A user dashboard whose one widget reads :project and :from/:to: its
+  // header holds Add widget beside both switchers, and they fit the phone.
+  // Its table answers 20 columns of long text: in the editor, after a run,
+  // that table scrolls inside its own box and nothing else scrolls sideways.
+  const wide = Array.from({ length: 20 }, (_, i) => `'a long text value that does not fit a phone, column ${i + 1}' AS column_${i + 1}_with_a_long_name`)
+  const editable = await request.post('/api/dashboards', {
+    headers: authHeaders(),
+    data: {
+      title: 'Phone editor',
+      range: '7d',
+      widgets: [
+        {
+          component: 'table',
+          title: 'Twenty long columns',
+          source: { type: 'sql', content: `SELECT ${wide.join(', ')} FROM (SELECT :project AS p, :from AS f, :to AS t)` },
+          width: 12,
+          height: 8,
+        },
+      ],
+    },
+  })
+  expect(editable.ok(), await editable.text()).toBeTruthy()
+  const { dashboard_id: editableId } = (await editable.json()) as { dashboard_id: number }
+  await check(page, `/app/dashboards/${editableId}`)
+  await expect(page.getByRole('button', { name: 'Add widget' })).toBeVisible()
+  await expect(page.getByRole('button', { name: /^Project: / })).toBeVisible()
+  await expect(page.getByRole('button', { name: /^Range: / })).toBeVisible()
+  const wideCard = page.locator('[data-slot="widget-card"]', { hasText: 'Twenty long columns' })
+  await wideCard.hover()
+  await wideCard.getByRole('button', { name: 'Widget actions' }).click()
+  await page.getByRole('menuitem', { name: 'Edit…' }).click()
+  const editor = page.getByRole('dialog', { name: 'Edit widget' })
+  await expect(editor.getByRole('combobox', { name: 'Project' })).toBeVisible()
+  await expect(editor.getByRole('button', { name: /^Range: / })).toBeVisible()
+  await editor.getByRole('button', { name: /Run query/ }).click()
+  await expect(editor.getByText(/^1 row · \d+ ms/)).toBeVisible()
+  // The preview draws the table in a widget card; the Table tab draws the rows bare.
+  for (const tab of ['Preview', 'Table']) {
+    await editor.getByRole('tab', { name: tab }).click()
+    await expect(editor.getByRole('tab', { name: tab })).toHaveAttribute('aria-selected', 'true')
+    const results = editor.getByRole('tabpanel', { name: tab }).locator('[data-slot="table-container"]')
+    await expect(results).toBeVisible()
+    // The rows are wider than the phone: they scroll, inside their own box.
+    expect(await results.evaluate((el) => el.scrollWidth > el.clientWidth), `${tab} rows wider than their box`).toBe(true)
+    const own = '[role="dialog"] [role="tabpanel"] [data-slot="table-container"]'
+    // Polled: the dialog zooms in, and its box fits once it has.
+    await expect.poll(() => dialogOverflow(page), { message: `editor, ${tab}` }).toEqual([])
+    expect(await sidewaysScroll(page, own), `editor, ${tab}`).toEqual([])
+  }
+  await page.keyboard.press('Escape')
+  await expect(editor).toHaveCount(0)
 
   // The archived projects' grid, opened.
   const archived = await request.post(`/api/projects/${id}/archive`, { headers: authHeaders() })

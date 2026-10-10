@@ -101,6 +101,7 @@ export default function ProjectTabBar({ projectId, currentId, tabs, dashboards, 
         tabs={tabs}
         pending={actions.pending}
         onAdd={add}
+        onCreate={(title) => actions.create(projectId, title)}
       />
     </div>
   )

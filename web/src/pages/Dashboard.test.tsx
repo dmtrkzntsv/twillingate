@@ -431,10 +431,92 @@ describe('Dashboard', () => {
     expect(widgetData).not.toHaveBeenCalled()
   })
 
-  it('says so when a dashboard has no widgets', async () => {
-    mockApi()
+  it('says so when a dashboard has no widgets, asking the agent where the page cannot add one', async () => {
+    mockApi({ dev: true })
     renderAt('/dashboards/12')
     expect(await screen.findByText('No widgets yet — ask your agent to add some')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Add widget' })).not.toBeInTheDocument()
+  })
+
+  it('offers Add widget in the header and in the empty state of an empty user dashboard', async () => {
+    mockApi()
+    renderAt('/dashboards/12')
+    expect(await screen.findByText('No widgets yet')).toBeInTheDocument()
+    expect(screen.queryByText(/ask your agent/)).not.toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: 'Add widget' })).toHaveLength(2)
+  })
+
+  it('offers Add widget and the card edits on a user dashboard', async () => {
+    const user = userEvent.setup()
+    mockApi()
+    renderAt('/dashboards/10')
+
+    expect(await screen.findByRole('button', { name: 'Add widget' })).toBeInTheDocument()
+    await user.click((await screen.findAllByRole('button', { name: 'Widget actions' }))[0])
+    expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Edit…', 'Rename', 'Download PNG', 'Archive'])
+  })
+
+  it.each([
+    ['a system dashboard', '/dashboards/2?project=7&range=7d', false],
+    ['reporting dev', '/dashboards/10', true],
+  ])('offers no Add widget and no card edits on %s', async (_, url, dev) => {
+    const user = userEvent.setup()
+    const widgetData = mockApi({ dev })
+    renderAt(url)
+
+    await waitFor(() => expect(widgetData).toHaveBeenCalled())
+    expect(screen.queryByRole('button', { name: 'Add widget' })).not.toBeInTheDocument()
+    await user.click((await screen.findAllByRole('button', { name: 'Widget actions' }))[0])
+    const items = screen.getAllByRole('menuitem').map((i) => i.textContent)
+    expect(items).toContain('Download PNG')
+    for (const edit of ['Edit…', 'Rename', 'Archive']) expect(items).not.toContain(edit)
+  })
+
+  it('opens the editor from Add widget, and from Edit… on the widget', async () => {
+    const user = userEvent.setup()
+    mockApi()
+    vi.spyOn(endpoints, 'schemaViews').mockResolvedValue('')
+    renderAt('/dashboards/10')
+
+    await user.click(await screen.findByRole('button', { name: 'Add widget' }))
+    // The editor's chunk loads on this first open, slowly under the test runner.
+    expect(await screen.findByRole('dialog', { name: 'Add widget' }, { timeout: 15_000 })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+
+    await user.click((await screen.findAllByRole('button', { name: 'Widget actions' }))[0])
+    await user.click(screen.getByRole('menuitem', { name: 'Edit…' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Edit widget' })
+    expect(within(dialog).getByRole('textbox', { name: 'Title' })).toHaveValue('Signups during launch')
+  }, 20_000)
+
+  it('renames a widget in place, sending its title alone', async () => {
+    const user = userEvent.setup()
+    mockApi()
+    const update = vi.spyOn(endpoints, 'updateWidget').mockResolvedValue(launchWeek.widgets[0])
+    renderAt('/dashboards/10')
+
+    await user.click((await screen.findAllByRole('button', { name: 'Widget actions' }))[0])
+    await user.click(screen.getByRole('menuitem', { name: 'Rename' }))
+    const field = await screen.findByRole('textbox', { name: 'Widget title' })
+    expect(field).toHaveValue('Signups during launch')
+    await user.clear(field)
+    await user.type(field, 'Launch signups{Enter}')
+
+    expect(update).toHaveBeenCalledWith(launchWeek.widgets[0].widget_id, { title: 'Launch signups' })
+    await waitFor(() => expect(screen.queryByRole('textbox', { name: 'Widget title' })).not.toBeInTheDocument())
+  })
+
+  it('archives a widget at once from its menu', async () => {
+    const user = userEvent.setup()
+    mockApi()
+    const archive = vi.spyOn(endpoints, 'archiveWidget').mockResolvedValue({ status: 'archived' })
+    renderAt('/dashboards/10')
+
+    await user.click((await screen.findAllByRole('button', { name: 'Widget actions' }))[0])
+    await user.click(screen.getByRole('menuitem', { name: 'Archive' }))
+
+    expect(archive).toHaveBeenCalledWith(launchWeek.widgets[0].widget_id)
   })
 
   it('shows the oldest data time on screen', async () => {

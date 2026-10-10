@@ -4,6 +4,7 @@ import { useParams } from 'react-router'
 import AppShell, { TopBar } from '@/components/AppShell'
 import DashboardHeader from '@/components/DashboardHeader'
 import { GroupMenu, TabMenu } from '@/components/DashboardMenu'
+import { AddWidgetButton, WidgetEditingProvider } from '@/components/editor/WidgetEditing'
 import { DevErrors, GridSkeleton, NoProjects, NoWidgets, PageError, PageLoading } from '@/components/PageStates'
 import ProjectSwitcher from '@/components/ProjectSwitcher'
 import RangeSwitcher from '@/components/RangeSwitcher'
@@ -118,6 +119,7 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
   // being left.
   // Its tabs stay sortable while frozen, only without moves, so the tab
   // list is not rebuilt under the focus of the tab just chosen.
+  // Its widgets are edited from the page under the same rule (widget editor D8).
   const userGroup = writable && dashboard.owner === 'user' && !dashboard.archived_at
   const arrangeable = userGroup && !frozen
   // The group's "…" sits top right, a tab's own one beside its title
@@ -211,44 +213,51 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
             )}
           </div>
         )}
-        <DashboardHeader
-          title={dashboard.title}
-          asOf={showGrid ? freshness.asOf : undefined}
-          refreshable={showGrid && !frozen ? freshness.refreshable.length : 0}
-          refreshing={refreshing}
-          onRefresh={refreshAll}
-          menu={menus ? <TabMenu dashboard={dashboard} list={list.dashboards} /> : undefined}
+        <WidgetEditingProvider
+          dashboardId={dashboard.dashboard_id}
+          enabled={arrangeable}
+          defaults={{ projectId, range: { range: sel.range ?? '7d', from, to }, timezone: list.timezone }}
         >
-          {switchers.project && !noProjects && projects.data && (
-            <ProjectSwitcher projects={all} value={sel.projectId} onChange={(projectId) => change({ ...sel, projectId })} />
-          )}
-          {switchers.range && sel.range && (
-            <RangeSwitcher
-              value={{ range: sel.range, from: sel.from, to: sel.to }}
-              timezone={list.timezone}
-              onChange={(r) => change({ ...sel, range: r.range, from: r.from, to: r.to })}
+          <DashboardHeader
+            title={dashboard.title}
+            asOf={showGrid ? freshness.asOf : undefined}
+            refreshable={showGrid && !frozen ? freshness.refreshable.length : 0}
+            refreshing={refreshing}
+            onRefresh={refreshAll}
+            menu={menus ? <TabMenu dashboard={dashboard} list={list.dashboards} /> : undefined}
+          >
+            {arrangeable && <AddWidgetButton />}
+            {switchers.project && !noProjects && projects.data && (
+              <ProjectSwitcher projects={all} value={sel.projectId} onChange={(projectId) => change({ ...sel, projectId })} />
+            )}
+            {switchers.range && sel.range && (
+              <RangeSwitcher
+                value={{ range: sel.range, from: sel.from, to: sel.to }}
+                timezone={list.timezone}
+                onChange={(r) => change({ ...sel, range: r.range, from: r.from, to: r.to })}
+              />
+            )}
+          </DashboardHeader>
+          {waiting ? (
+            projects.error ? (
+              <PageError error={projects.error} onRetry={() => projects.refetch()} bare />
+            ) : (
+              <GridSkeleton />
+            )
+          ) : noProjects ? (
+            <NoProjects />
+          ) : dashboard.widgets.length === 0 ? (
+            <NoWidgets action={arrangeable ? <AddWidgetButton /> : undefined} />
+          ) : (
+            <WidgetGrid
+              widgets={dashboard.widgets}
+              paramsFor={paramsFor}
+              idle={frozen}
+              share={share}
+              arrange={arrangeable ? widgetActions : undefined}
             />
           )}
-        </DashboardHeader>
-        {waiting ? (
-          projects.error ? (
-            <PageError error={projects.error} onRetry={() => projects.refetch()} bare />
-          ) : (
-            <GridSkeleton />
-          )
-        ) : noProjects ? (
-          <NoProjects />
-        ) : dashboard.widgets.length === 0 ? (
-          <NoWidgets />
-        ) : (
-          <WidgetGrid
-            widgets={dashboard.widgets}
-            paramsFor={paramsFor}
-            idle={frozen}
-            share={share}
-            arrange={arrangeable ? widgetActions : undefined}
-          />
-        )}
+        </WidgetEditingProvider>
       </div>
     </>
   )

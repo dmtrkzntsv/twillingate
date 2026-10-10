@@ -1,6 +1,7 @@
-import { memo, Suspense, useEffect, useState, type ReactNode } from 'react'
+import { memo, Suspense, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
+  ArchiveIcon,
   ChevronDownIcon,
   CircleAlertIcon,
   CircleOffIcon,
@@ -8,15 +9,24 @@ import {
   DownloadIcon,
   InboxIcon,
   MoreHorizontalIcon,
+  PencilIcon,
   RefreshCwIcon,
   Share2Icon,
+  TextCursorInputIcon,
   TriangleAlertIcon,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import { useWidgetEditing } from '@/components/editor/WidgetEditing'
 import { OffscreenCard } from '@/components/share/OffscreenCard'
 import { ShareDialog } from '@/components/share/ShareDialog'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -28,7 +38,9 @@ import { shareCaption, type ShareContext } from '@/lib/share'
 import { liveFilters, parseView, type Filter, type TableView } from '@/lib/table-view'
 import { formatDuration } from '@/lib/time'
 import { canRefresh, componentOf, isRemoteTable, refreshWidget, viewQuery, widgetQuery } from '@/lib/widget-query'
+import WidgetErrorBoundary from './WidgetErrorBoundary'
 import WidgetFrame from './WidgetFrame'
+import WidgetTitleField from './WidgetTitleField'
 import WidgetSkeleton from './WidgetSkeleton'
 
 interface Props {
@@ -36,7 +48,7 @@ interface Props {
   params: WidgetDataQuery
   /** Show what is cached, but ask for nothing (the page is about to change). */
   idle?: boolean
-  /** Absent: the card has no menu (Share… and Download PNG). */
+  /** Absent: the card has no Share… or Download PNG (it still has the edits of an editable dashboard). */
   share?: ShareContext
   /**
    * The handle that drags the card to a new place, first among its
@@ -52,10 +64,13 @@ interface Props {
 /**
  * One widget in its card, loading on its own and showing its own state
  * (D38). Memoized: it redraws when its own props or state change, not
- * when its cell's handles do, as they do all through a drag (D11).
+ * when its cell's handles do, as they do all through a drag (D11). On an
+ * editable dashboard its menu also edits, renames and archives it.
  */
 function WidgetCard({ widget, params, idle = false, share, grip, corner }: Props) {
   const client = useQueryClient()
+  const editing = useWidgetEditing()
+  const [renaming, setRenaming] = useState(false)
   const stateKey = `twillingate.widget.${widget.dashboard_id}.${widget.widget_id}`
   // The project and range: a view's page, and the answers below, belong to one.
   const selection = JSON.stringify([params.project_id, params.from, params.to])
@@ -134,7 +149,12 @@ function WidgetCard({ widget, params, idle = false, share, grip, corner }: Props
   return (
     <WidgetFrame
       title={widget.title}
-      slots={(share ? 2 : 1) + (grip ? 1 : 0)}
+      titleSlot={
+        editing && renaming ? (
+          <WidgetTitleField title={widget.title ?? ''} onSave={(t) => editing.rename(widget, t)} onDone={() => setRenaming(false)} />
+        ) : undefined
+      }
+      slots={(share || editing ? 2 : 1) + (grip ? 1 : 0)}
       corner={corner}
       badge={
         truncated &&
@@ -145,7 +165,7 @@ function WidgetCard({ widget, params, idle = false, share, grip, corner }: Props
         )
       }
       actions={
-        (refreshable || share || grip) && (
+        (refreshable || share || editing || grip) && (
           <>
             {grip}
             {refreshable && answer && query.isError && !viewError && <StaleWarning error={query.error} />}
@@ -157,18 +177,24 @@ function WidgetCard({ widget, params, idle = false, share, grip, corner }: Props
                 onRefresh={() => void refreshWidget(client, widget, params, viewArgs).catch(() => {})}
               />
             )}
+            {(share || editing) && (
+              <WidgetMenu
+                canShare={share !== undefined && share.writable && share.project !== undefined}
+                canDownload={share !== undefined}
+                disabled={!shareable}
+                downloading={downloading}
+                onShare={() => setSharing(true)}
+                onDownload={() => {
+                  setDownloads((n) => n + 1)
+                  setDownloading(true)
+                }}
+                onEdit={editing ? () => editing.edit(widget) : undefined}
+                onRename={editing ? () => setRenaming(true) : undefined}
+                onArchive={editing ? () => editing.archive(widget) : undefined}
+              />
+            )}
             {share && (
               <>
-                <WidgetMenu
-                  canShare={share.writable && share.project !== undefined}
-                  disabled={!shareable}
-                  downloading={downloading}
-                  onShare={() => setSharing(true)}
-                  onDownload={() => {
-                    setDownloads((n) => n + 1)
-                    setDownloading(true)
-                  }}
-                />
                 {/* Both draw into portals: they take no room in the corner. */}
                 {share.writable && share.project && drawable && (
                   <ShareDialog
@@ -205,19 +231,25 @@ function WidgetCard({ widget, params, idle = false, share, grip, corner }: Props
           <CardState icon={<InboxIcon />} title={answer.source_type === 'md' ? 'Nothing to show' : 'No data for this range'} />
         ) : (
           // A lazy component (the map, markdown) keeps the skeleton up while its code loads.
-          <Suspense fallback={<WidgetSkeleton widget={widget} />}>
-            <Component
-              data={answer.data!}
-              props={widget.props}
-              stateKey={stateKey}
-              view={view}
-              onView={setView}
-              fetchDistinct={remote ? fetchDistinct : undefined}
-              page={remote ? answer.page : undefined}
-              viewError={viewError}
-              reloading={query.isPlaceholderData || (query.isFetching && !!answer)}
-            />
-          </Suspense>
+          // One that throws on these rows (a release changed what it reads) fails alone, in its card.
+          <WidgetErrorBoundary
+            resetKeys={[Component, answer.data, widget.props]}
+            fallback={<CardState icon={<TriangleAlertIcon />} title="This visualization can't draw these rows" />}
+          >
+            <Suspense fallback={<WidgetSkeleton widget={widget} />}>
+              <Component
+                data={answer.data!}
+                props={widget.props}
+                stateKey={stateKey}
+                view={view}
+                onView={setView}
+                fetchDistinct={remote ? fetchDistinct : undefined}
+                page={remote ? answer.page : undefined}
+                viewError={viewError}
+                reloading={query.isPlaceholderData || (query.isFetching && !!answer)}
+              />
+            </Suspense>
+          </WidgetErrorBoundary>
         )
       ) : query.isError ? (
         <FailedState error={query.error} onRetry={() => query.refetch()} />
@@ -349,16 +381,28 @@ function StaleWarning({ error }: { error: Error }) {
 interface MenuProps {
   /** Whether Share… is offered (not in reporting dev). */
   canShare: boolean
+  /** Whether Download PNG is offered (the card knows the project and range it shows). */
+  canDownload: boolean
   /** No answer to draw yet, or none that can be: both actions wait. */
   disabled: boolean
   downloading: boolean
   onShare: () => void
   onDownload: () => void
+  /** The edits of an editable dashboard (spec D8), each offered when given; never disabled, as a broken query is what Edit… fixes. */
+  onEdit?: () => void
+  onRename?: () => void
+  onArchive?: () => void
 }
 
-/** The card's "…": Share… (a public link to its picture) and Download PNG. Revealed like the refresh button. */
-function WidgetMenu({ canShare, disabled, downloading, onShare, onDownload }: MenuProps) {
+/**
+ * The card's "…": on an editable dashboard Edit… and Rename, then Share…
+ * (a public link to its picture) and Download PNG, then Archive. Revealed
+ * like the refresh button.
+ */
+function WidgetMenu({ canShare, canDownload, disabled, downloading, onShare, onDownload, onEdit, onRename, onArchive }: MenuProps) {
   const [open, setOpen] = useState(false)
+  // Rename's field takes the focus: the menu must not hand it back to its button.
+  const renaming = useRef(false)
   return (
     <span className="hover-reveal" data-open={open || undefined}>
       <DropdownMenu open={open} onOpenChange={setOpen}>
@@ -367,17 +411,51 @@ function WidgetMenu({ canShare, disabled, downloading, onShare, onDownload }: Me
             <MoreHorizontalIcon />
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
+        <DropdownMenuContent
+          align="end"
+          onCloseAutoFocus={(e) => {
+            if (renaming.current) e.preventDefault()
+            renaming.current = false
+          }}
+        >
+          {onEdit && (
+            <DropdownMenuItem onClick={onEdit}>
+              <PencilIcon />
+              Edit…
+            </DropdownMenuItem>
+          )}
+          {onRename && (
+            <DropdownMenuItem
+              onClick={() => {
+                renaming.current = true
+                onRename()
+              }}
+            >
+              <TextCursorInputIcon />
+              Rename
+            </DropdownMenuItem>
+          )}
           {canShare && (
             <DropdownMenuItem disabled={disabled} onClick={onShare}>
               <Share2Icon />
               Share…
             </DropdownMenuItem>
           )}
-          <DropdownMenuItem disabled={disabled || downloading} onClick={onDownload}>
-            <DownloadIcon />
-            Download PNG
-          </DropdownMenuItem>
+          {canDownload && (
+            <DropdownMenuItem disabled={disabled || downloading} onClick={onDownload}>
+              <DownloadIcon />
+              Download PNG
+            </DropdownMenuItem>
+          )}
+          {onArchive && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem variant="destructive" onClick={onArchive}>
+                <ArchiveIcon />
+                Archive
+              </DropdownMenuItem>
+            </>
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
     </span>

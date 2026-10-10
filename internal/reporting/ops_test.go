@@ -545,18 +545,35 @@ func TestInsertNextToArchivedWidget(t *testing.T) {
 // pie from the components, leaving the widget with none.
 func removedWidget(t *testing.T, svc *Service) (DashboardDetail, int64) {
 	t.Helper()
-	d := mustCreate(t, svc, "DD", WidgetSpec{
-		Component: "pie", Title: "Share",
-		Source: Source{Type: "sql", Content: "SELECT 'a' AS label, 1 AS value"},
-	})
+	ds := removedWidgets(t, svc, 1)
+	return ds[0], ds[0].Widgets[0].ID
+}
+
+// removedWidgets makes one dashboard of one pie widget per n, then drops
+// the component, so each dashboard holds a widget to repair. The
+// component is gone after the first sync, hence all are made first.
+func removedWidgets(t *testing.T, svc *Service, n int) []DashboardDetail {
+	t.Helper()
+	var ds []DashboardDetail
+	for i := range n {
+		title := "DD"
+		if i > 0 {
+			title += itoa(int64(i))
+		}
+		ds = append(ds, mustCreate(t, svc, title, WidgetSpec{
+			Component: "pie", Title: "Share",
+			Source: Source{Type: "sql", Content: "SELECT 'a' AS label, 1 AS value"},
+		}))
+	}
 	syncReporting(t, svc, []string{"pie"})
-	return d, d.Widgets[0].ID
+	return ds
 }
 
 func TestRemovedComponentUpdate(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
-	_, id := removedWidget(t, svc)
+	ds := removedWidgets(t, svc, 3)
+	id := ds[0].Widgets[0].ID
 	msg := "widget " + itoa(id) + "'s component was removed; set component first"
 	for name, in := range map[string]UpdateWidget{
 		"name":   {ID: id, Name: ptr("x")},
@@ -577,6 +594,17 @@ func TestRemovedComponentUpdate(t *testing.T) {
 	if err != nil || w.Component == nil || *w.Component != "table" {
 		t.Errorf("set component = %+v, %v", w, err)
 	}
+
+	id2 := ds[1].Widgets[0].ID
+	w, err = svc.UpdateWidget(ctx, "test", UpdateWidget{ID: id2, Component: ptr("table"), Title: ptr("Fixed"),
+		Props: json.RawMessage(`{}`), Source: &Source{Type: "sql", Content: "SELECT 1 AS n"}})
+	if err != nil || w.Component == nil || *w.Component != "table" || w.Title != "Fixed" {
+		t.Errorf("repair in one call = %+v, %v", w, err)
+	}
+	id3 := ds[2].Widgets[0].ID
+	_, err = svc.UpdateWidget(ctx, "test", UpdateWidget{ID: id3, Component: ptr("stat"),
+		Source: &Source{Type: "sql", Content: "SELECT 'x' AS label"}})
+	wantRefusal(t, err, store.ErrInvalid, "stat needs value (number); columns are label")
 }
 
 func TestRemovedComponentCopyRefused(t *testing.T) {
@@ -679,9 +707,9 @@ func TestUpdateWidgetMoves(t *testing.T) {
 	}
 }
 
-// A change of only the size or the place runs no query: a widget whose
-// SQL no longer runs can still be moved and resized, though any other
-// change to it is refused.
+// A change of only the size, the place, the title or the name runs no
+// query: a widget whose SQL no longer runs can still be moved, resized
+// and renamed, though a change to what it draws is refused.
 func TestUpdateWidgetLayoutRunsNoQuery(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -702,8 +730,21 @@ func TestUpdateWidgetLayoutRunsNoQuery(t *testing.T) {
 	if got, want := liveNames(t, svc, d.ID), []string{"t", "a"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("order = %v, want %v", got, want)
 	}
-	if _, err := svc.UpdateWidget(ctx, "test", UpdateWidget{ID: id, Title: ptr("New")}); !errors.Is(err, store.ErrInvalid) {
-		t.Errorf("title change of a broken widget: err = %v, want ErrInvalid", err)
+	got, err := svc.UpdateWidget(ctx, "test", UpdateWidget{ID: id, Title: ptr("New")})
+	if err != nil {
+		t.Errorf("title change of a broken widget: %v", err)
+	} else if got.Title != "New" || got.Source.Content != "SELECT n FROM nowhere" {
+		t.Errorf("after the rename: title %q, source %q", got.Title, got.Source.Content)
+	}
+	if got, err := svc.UpdateWidget(ctx, "test", UpdateWidget{ID: id, Name: ptr("fresh"), Title: ptr("Newer")}); err != nil {
+		t.Errorf("name and title change of a broken widget: %v", err)
+	} else if got.Name != "fresh" || got.Title != "Newer" {
+		t.Errorf("after the rename: name %q, title %q", got.Name, got.Title)
+	}
+	_, err = svc.UpdateWidget(ctx, "test", UpdateWidget{ID: id, Name: ptr("a")})
+	wantRefusal(t, err, store.ErrConflict, "widget name a is already used on this dashboard")
+	if _, err := svc.UpdateWidget(ctx, "test", UpdateWidget{ID: id, Title: ptr("T"), Props: json.RawMessage(`{}`)}); !errors.Is(err, store.ErrInvalid) {
+		t.Errorf("props change of a broken widget: err = %v, want ErrInvalid", err)
 	}
 	_, err = svc.UpdateWidget(ctx, "test", UpdateWidget{ID: id, Width: ptr(0)})
 	wantRefusal(t, err, store.ErrInvalid, "width is columns out of 12, from 1 to 12")

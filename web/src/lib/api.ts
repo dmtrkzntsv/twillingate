@@ -96,6 +96,12 @@ export interface DashboardsResponse {
   auto_refresh_seconds?: number
 }
 
+/** A widget's source: SQL for the chart components, Markdown for the markdown one. */
+export interface WidgetSource {
+  type: 'sql' | 'md'
+  content: string
+}
+
 export interface Widget {
   widget_id: number
   dashboard_id: number
@@ -105,7 +111,7 @@ export interface Widget {
   width: number
   height: number
   props: Record<string, unknown>
-  source: { type: 'sql' | 'md'; content: string }
+  source: WidgetSource
   follows_project: boolean
   follows_range: boolean
   archived_at?: string
@@ -199,6 +205,44 @@ export interface WidgetLayoutBody {
   after?: number
   width?: number
   height?: number
+}
+
+/** The add_widget body: the server validates it whole. */
+export interface WidgetBody {
+  component: string
+  title?: string
+  props?: Record<string, unknown>
+  source: WidgetSource
+}
+
+/** The update_widget body an edit sends: only the fields that changed. A component alone fills a removed widget's. */
+export interface WidgetContentBody {
+  component?: string
+  title?: string
+  props?: Record<string, unknown>
+  source?: WidgetSource
+}
+
+/** The preview body: an unsaved widget's SQL run with the project and range the editor holds. */
+export interface PreviewBody {
+  component: string
+  props?: Record<string, unknown>
+  source: { type: 'sql'; content: string }
+  project_id?: number
+  from?: string
+  to?: string
+}
+
+/** What a preview answers: the rows, or the problem that kept them (the widget's own, not the request's). */
+export interface PreviewResult extends SqlData {
+  problem?: string
+  elapsed_ms: number
+}
+
+/** A widget as GET /api/widgets lists it: with its dashboard and place, archived ones included. */
+export interface ListedWidget extends Widget {
+  dashboard: DashboardInfo
+  position: number
 }
 
 export interface Project {
@@ -515,8 +559,20 @@ export const endpoints = {
   dashboard: (id: number) => api<DashboardDetail>(`/api/dashboards/${id}`),
   widgetData: (id: number, q: WidgetDataQuery) => api<WidgetData>(`/api/widgets/${id}/data${toQuery(q)}`),
   components: () => api<ComponentsResponse>('/api/components'),
-  /** Moves or resizes a widget of the user's own dashboard. */
-  updateWidget: (id: number, body: WidgetLayoutBody) => api<Widget>(`/api/widgets/${id}`, json('PATCH', body)),
+  /** Moves, resizes or edits a widget of the user's own dashboard. */
+  updateWidget: (id: number, body: WidgetLayoutBody | WidgetContentBody) => api<Widget>(`/api/widgets/${id}`, json('PATCH', body)),
+  /** Creates a user dashboard of its own group, empty (widget editor D20). */
+  createDashboard: (body: { title: string }) => api<DashboardDetail>('/api/dashboards', json('POST', body)),
+  /** Adds a widget last on a user dashboard; the server validates it whole. */
+  addWidget: (dashboardId: number, body: WidgetBody) => api<Widget>(`/api/dashboards/${dashboardId}/widgets`, json('POST', body)),
+  archiveWidget: (id: number) => api<{ status: string }>(`/api/widgets/${id}/archive`, json('POST', {})),
+  restoreWidget: (id: number) => api<{ status: string }>(`/api/widgets/${id}/restore`, json('POST', {})),
+  /** Every widget, archived ones included, with its dashboard. */
+  listWidgets: () => api<{ widgets: ListedWidget[] }>('/api/widgets'),
+  /** Runs an unsaved widget's SQL with the project and range given (the editor's Run query). */
+  previewWidget: (body: PreviewBody) => api<PreviewResult>('/api/widgets/preview', json('POST', body)),
+  /** The query schema reference as text; parseSchemaViews reads the views out of it. */
+  schemaViews: async () => (await apiBlob('/api/schema/views')).text(),
   saveView: (id: number, sel: SaveViewBody) =>
     api<{ status: string }>(`/api/dashboards/${id}/view`, {
       method: 'PUT',

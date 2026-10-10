@@ -143,6 +143,15 @@ type viewIn struct {
 	To          string `json:"to,omitempty"`
 }
 
+type previewWidgetIn struct {
+	Component string           `json:"component" jsonschema:"a component from list_components that accepts sql"`
+	Props     json.RawMessage  `json:"props,omitempty" jsonschema:"the props to check against the component; default {}"`
+	Source    reporting.Source `json:"source" jsonschema:"{type: sql, content}"`
+	ProjectID int64            `json:"project_id,omitempty" jsonschema:"bound to :project; required when the sql uses it"`
+	From      string           `json:"from,omitempty" jsonschema:"YYYY-MM-DD, bound to :from; with to, required when the sql uses :from or :to"`
+	To        string           `json:"to,omitempty" jsonschema:"YYYY-MM-DD, bound to :to; a day after today is clamped to today"`
+}
+
 func (h *host) listComponents(ctx context.Context, _ struct{}) (listComponentsOut, error) {
 	cs, err := h.rep.Components(ctx)
 	return listComponentsOut{SourceTypes: h.rep.SourceTypes(), Components: cs}, err
@@ -259,6 +268,13 @@ func (h *host) setView(ctx context.Context, in viewIn) (okOut, error) {
 	return okOut{Status: "saved"}, nil
 }
 
+func (h *host) previewWidget(ctx context.Context, in previewWidgetIn) (reporting.Preview, error) {
+	return h.rep.Preview(ctx, reporting.PreviewIn{
+		Component: in.Component, Props: in.Props, Source: in.Source,
+		ProjectID: in.ProjectID, From: in.From, To: in.To,
+	})
+}
+
 // registerReporting exposes the reporting operations. Every write is
 // refused on system dashboards; each one's description says how to undo
 // it or where to start.
@@ -337,7 +353,7 @@ func (h *host) registerReporting(r *registrar) {
 		Description: "Call reporting_guide first. Add a widget to a user dashboard: a component, a source ({type: sql|md, content}), optional title, props, width and height (default from the component), name (derived from the title when omitted) and after (a widget id; 0 first; omitted, last). The SQL is run once to check its columns against the component's inputs."},
 		h.addWidget)
 	expose(r, spec{Name: "update_widget", Annotations: write, Method: "PATCH", Path: w, constrain: widget(self),
-		Description: "Call reporting_guide first. Change a widget on a user dashboard: name, component, title, props, source, width or height, or move it with after (a widget id there; 0 first). Fields you omit are kept; the result is validated whole, but a change of only width, height or after runs no query."},
+		Description: "Call reporting_guide first. Change a widget on a user dashboard: name, component, title, props, source, width or height, or move it with after (a widget id there; 0 first). Fields you omit are kept; the result is validated whole, but a change of only width, height, after, title or name runs no query."},
 		h.updateWidget)
 	expose(r, spec{Name: "copy_widget", Annotations: write, Method: "POST", Path: w + "/copy", Status: http.StatusCreated,
 		Description: "Call reporting_guide first. Copy a widget, a system one included, onto a user dashboard (dashboard_id), keeping its size; optional after (a widget id there; 0 first; omitted, last). The copy is independent of the original."},
@@ -352,5 +368,8 @@ func (h *host) registerReporting(r *registrar) {
 	restOnly(r, spec{Name: "view", Method: "PUT", Path: d + "/view",
 		Description: "Store the viewer's project and range selection for a dashboard."},
 		h.setView)
+	restOnly(r, spec{Name: "preview_widget", Method: "POST", Path: "/api/widgets/preview",
+		Description: "The console editor's Run query: run an unsaved widget's sql with the given project and range, uncached and saving nothing. Answers the rows and, in problem, the first way they do not fit the component; agents call add_widget, which validates."},
+		h.previewWidget)
 	h.registerWidgetShares(r)
 }

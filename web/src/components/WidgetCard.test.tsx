@@ -9,6 +9,7 @@ import type { Filter } from '@/lib/table-view'
 import type { ShareContext } from '@/lib/share'
 import { widgetQuery } from '@/lib/widget-query'
 import { renderWithProviders } from '@/test/render'
+import { widgets } from '@/components/widgets'
 import WidgetCard from './WidgetCard'
 
 vi.mock('@/lib/capture', () => ({ captureCard: vi.fn(), downloadBlob: vi.fn() }))
@@ -120,6 +121,24 @@ describe('WidgetCard', () => {
     renderCard(statWidget({ component: 'sparkle' }))
     expect(screen.getByText('Component removed')).toBeInTheDocument()
     expect(spy).not.toHaveBeenCalled()
+  })
+
+  it("says the visualization can't draw the rows when its component throws, and keeps the console up", async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    widgets.boom = {
+      ...widgets.stat,
+      default: () => {
+        throw new RangeError('Invalid time value')
+      },
+    }
+    try {
+      vi.spyOn(endpoints, 'widgetData').mockResolvedValue(sqlAnswer())
+      renderCard(statWidget({ component: 'boom' }))
+      expect(await screen.findByText("This visualization can't draw these rows")).toBeInTheDocument()
+      expect(screen.getByText('Visitors')).toBeInTheDocument()
+    } finally {
+      delete widgets.boom
+    }
   })
 
   it('asks for nothing while idle', () => {
