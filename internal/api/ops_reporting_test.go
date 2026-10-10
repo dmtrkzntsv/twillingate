@@ -253,6 +253,49 @@ func TestViewRouteIsRESTOnly(t *testing.T) {
 	}
 }
 
+// TestPreviewWidgetRoute: the console runs unsaved SQL with its own
+// project and range; rows come back with the reason they do not fit, and
+// what cannot run is a 400. No MCP tool previews.
+func TestPreviewWidgetRoute(t *testing.T) {
+	h, cs := newTestHost(t)
+	r := newTestRegistrar(t, h)
+
+	rec := serveREST(t, r, "POST", "/api/widgets/preview",
+		`{"component":"stat","source":{"type":"sql","content":"SELECT 'x' AS value"}}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST preview = %d %s", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		Columns   []string   `json:"columns"`
+		Rows      [][]string `json:"rows"`
+		Truncated bool       `json:"truncated"`
+		Problem   string     `json:"problem"`
+		ElapsedMS *int64     `json:"elapsed_ms"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Rows) != 1 || got.Problem == "" || got.ElapsedMS == nil {
+		t.Errorf("preview = %+v", got)
+	}
+
+	rec = serveREST(t, r, "POST", "/api/widgets/preview",
+		`{"component":"table","source":{"type":"sql","content":"SELECT :project AS p"}}`)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "pass project_id") {
+		t.Errorf("no project = %d %s", rec.Code, rec.Body.String())
+	}
+
+	tools, err := cs.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range tools.Tools {
+		if tool.Name == "preview_widget" {
+			t.Error("MCP lists preview_widget; the route is REST only")
+		}
+	}
+}
+
 // TestReportingResourcesMatchTools: each schema:// resource is what its
 // list tool returns, built on the read — a write made just before shows.
 func TestReportingResourcesMatchTools(t *testing.T) {

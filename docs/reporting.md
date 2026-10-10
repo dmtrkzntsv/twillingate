@@ -294,8 +294,12 @@ snapshots built on each read by the same code as their list tool:
 
 Every tool above except `reporting_guide`, which is MCP-only, is also a REST
 route under `/api/`, with the same bearer token, JSON and error shape as the
-routes in [twillingate.md](twillingate.md#http-api). Three routes have no
-tool, `view`, `create_widget_share` and `widget_share_image`. The page stores
+routes in [twillingate.md](twillingate.md#http-api). Four routes have no
+tool, `view`, `preview_widget`, `create_widget_share` and
+`widget_share_image`. The console's widget editor runs unsaved SQL with
+`POST /api/widgets/preview`, which binds the project and range given and
+returns the rows with the first way they do not fit the component; agents
+call `add_widget`, which validates. The page stores
 the viewer's selection with `PUT …/view`, which is viewer state rather than a
 definition, so it is allowed on system dashboards and not audited. It uploads
 a share with `POST /api/widget-shares`, since only a browser can capture the
@@ -326,6 +330,7 @@ public `/share/<id>.png` stops at archiving
 | `POST` | `/api/widgets/{widget_id}/archive` | `archive_widget` | — |
 | `POST` | `/api/widgets/{widget_id}/restore` | `restore_widget` | — |
 | `PUT` | `/api/dashboards/{dashboard_id}/view` | `view`, REST only: no MCP tool | body: `project_id`, `range`, and `from`/`to` for `custom` → `{"status":"saved"}` |
+| `POST` | `/api/widgets/preview` | `preview_widget`, REST only: no MCP tool | body: `component`, `props`, `source`, `project_id`, `from`, `to` → `{columns, rows, truncated, problem, elapsed_ms}` |
 | `POST` | `/api/widget-shares` | `create_widget_share`, REST only: no MCP tool | multipart: `widget_id`, `project_id`, `from`, `to`, `archive_after`, `caption_project`, `caption_range`, `image`, `image_2x` → 201 |
 | `GET` | `/api/widget-shares` | `list_widget_shares` | query: `widget_id`, `state` |
 | `PATCH` | `/api/widget-shares/{id}` | `update_widget_share` | body: `archive_after` |
@@ -1085,6 +1090,9 @@ widget's name (`widget visitors: …`), and nothing is created.
 | after 7 is not one of project 1's tabs | Name a tab of that project, `0` for the first, or (in `add_project_tab`) leave `after` out for last. |
 | dashboard 1001 is archived; restore_dashboard first | `restore_dashboard` (updating, adding to or duplicating an archived dashboard is refused). For a widget: widget 42 is archived; restore_widget first. |
 | widget 42's component was removed; set component first | `update_widget` with a `component` (and resize or archive as needed); see [When widgets break after an update](#when-widgets-break-after-an-update). |
+| the sql uses :project; pass project_id | `preview_widget` only: pass `project_id`. |
+| the sql uses :from or :to; pass from and to | `preview_widget` only: pass `from` and `to`. |
+| preview runs sql only; markdown is drawn as it is typed | `preview_widget` takes a `sql` source; a `md` widget needs no query to preview. |
 | widget 42 follows the project switcher; pass project_id | Pass `project_id` to `widget_data`. For the range: widget 42 follows the date range; pass from and to. |
 | from 2026-09-10 is after to 2026-09-01; from 2026-01-01 to 2027-02-01 spans more than 365 days; from 2026-10-01 is after today | Pass `from` ≤ `to`, at most 365 days apart, `from` no later than today. |
 | range must be one of today, yesterday, 7d, 30d, 90d, custom | Use a preset id. `create_dashboard` refuses `custom`: create with a preset; the viewer picks custom dates. |
