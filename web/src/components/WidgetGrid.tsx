@@ -69,7 +69,9 @@ function WidgetGrid({ widgets, paramsFor, idle = false, share, arrange }: Props)
     return same
   }
   // Once the render is on screen, not during it: a render React drops
-  // must not replace what the cards shown were given.
+  // must not replace what the cards shown were given. No dependency list
+  // on purpose: every committed render has a map of its own, and the next
+  // render must start from the one now on screen.
   useEffect(() => {
     shown.current = used
   })
