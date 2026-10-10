@@ -3,8 +3,16 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ReactNode } from 'react'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { ApiError, endpoints, type ProjectTab } from '@/lib/api'
+import { ApiError, endpoints, type DashboardDetail, type ProjectTab } from '@/lib/api'
+import { tabPath } from '@/lib/project-tabs'
 import { useProjectTabActions } from './use-project-tab-actions'
+
+const navigate = vi.fn()
+
+vi.mock('react-router', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('react-router')>()),
+  useNavigate: () => navigate,
+}))
 
 vi.mock('@/lib/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/api')>()
@@ -12,6 +20,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
     ...actual,
     endpoints: {
       ...actual.endpoints,
+      createDashboard: vi.fn(),
       addProjectTab: vi.fn(),
       removeProjectTab: vi.fn(),
       moveProjectTab: vi.fn(),
@@ -124,5 +133,49 @@ describe('useProjectTabActions', () => {
 
     expect(toast.error).toHaveBeenCalledWith('project 7 has no tab for dashboard 13')
     expect(toast).not.toHaveBeenCalled()
+  })
+
+  describe('create', () => {
+    const created = { dashboard_id: 21, title: 'Launch' } as DashboardDetail
+
+    it('makes the dashboard, adds it as the project\'s tab, refreshes the lists and opens it', async () => {
+      vi.mocked(endpoints.createDashboard).mockResolvedValue(created)
+      vi.mocked(endpoints.addProjectTab).mockResolvedValue({ tabs })
+      const invalidate = vi.spyOn(client, 'invalidateQueries')
+      const { result } = renderHook(() => useProjectTabActions(), { wrapper })
+
+      await expect(act(() => result.current.create(4, 'Launch'))).resolves.toBe(true)
+
+      expect(endpoints.createDashboard).toHaveBeenCalledWith({ title: 'Launch' })
+      expect(endpoints.addProjectTab).toHaveBeenCalledWith(4, { dashboard_id: 21 })
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: ['dashboards'] })
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: ['project-tabs', 4] })
+      expect(navigate).toHaveBeenCalledWith(tabPath(4, 21))
+      expect(result.current.pending).toBe(false)
+    })
+
+    it('a refused create toasts the message, adds no tab and opens nothing', async () => {
+      vi.mocked(endpoints.createDashboard).mockRejectedValue(new ApiError(400, 'title must be at least 2 characters'))
+      const { result } = renderHook(() => useProjectTabActions(), { wrapper })
+
+      await expect(act(() => result.current.create(4, 'L'))).resolves.toBe(false)
+
+      expect(toast.error).toHaveBeenCalledWith('title must be at least 2 characters')
+      expect(endpoints.addProjectTab).not.toHaveBeenCalled()
+      expect(navigate).not.toHaveBeenCalled()
+    })
+
+    it('a refused tab says the dashboard was made, and still refreshes the dashboards', async () => {
+      vi.mocked(endpoints.createDashboard).mockResolvedValue(created)
+      vi.mocked(endpoints.addProjectTab).mockRejectedValue(new ApiError(400, 'project is archived'))
+      const invalidate = vi.spyOn(client, 'invalidateQueries')
+      const { result } = renderHook(() => useProjectTabActions(), { wrapper })
+
+      await expect(act(() => result.current.create(4, 'Launch'))).resolves.toBe(false)
+
+      expect(toast.error).toHaveBeenCalledWith("Created 'Launch' but couldn't add it as a tab: project is archived")
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: ['dashboards'] })
+      expect(navigate).not.toHaveBeenCalled()
+    })
   })
 })

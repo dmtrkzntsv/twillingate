@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import type { ProjectTabActions } from '@/hooks/use-project-tab-actions'
@@ -13,7 +14,7 @@ const tabs: ProjectTab[] = [
   { dashboard_id: 9, title: 'Mine', owner: 'user', group_id: 9 },
 ]
 
-const actions: ProjectTabActions = { add: vi.fn(), remove: vi.fn(), move: vi.fn(), pending: false }
+const actions: ProjectTabActions = { add: vi.fn(), create: vi.fn(), remove: vi.fn(), move: vi.fn(), pending: false }
 
 function renderBar({ currentId, newSubmissions, readOnly }: { currentId: number; newSubmissions: number; readOnly?: boolean }) {
   return render(
@@ -83,5 +84,51 @@ describe('ProjectTabBar', () => {
     expect(screen.queryByRole('link', { name: 'Forms' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Add tab' })).toBeNull()
     expect(screen.getByRole('link', { name: 'Settings' })).toBeInTheDocument()
+  })
+
+  describe('New dashboard…', () => {
+    async function openForm() {
+      const user = userEvent.setup()
+      renderBar({ currentId: 1, newSubmissions: 0 })
+      await user.click(screen.getByRole('button', { name: 'Add tab' }))
+      await user.click(await screen.findByRole('button', { name: 'New dashboard…' }))
+      return { user, field: await screen.findByRole('textbox', { name: 'Dashboard title' }) }
+    }
+
+    it('asks for two characters before Create is enabled', async () => {
+      const { user, field } = await openForm()
+      await user.type(field, 'A')
+      expect(screen.getByText('At least 2 characters')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Create' })).toBeDisabled()
+      await user.type(field, 'B')
+      expect(screen.getByRole('button', { name: 'Create' })).toBeEnabled()
+    })
+
+    it('creates on Enter for the project and closes when it resolves true', async () => {
+      vi.mocked(actions.create).mockResolvedValue(true)
+      const { user, field } = await openForm()
+      await user.type(field, ' Launch {Enter}')
+      expect(actions.create).toHaveBeenCalledWith(7, 'Launch')
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    })
+
+    it('stays open with the title when the create is refused', async () => {
+      vi.mocked(actions.create).mockResolvedValue(false)
+      const { user, field } = await openForm()
+      await user.type(field, 'Launch{Enter}')
+      await waitFor(() => expect(actions.create).toHaveBeenCalled())
+      expect(screen.getByRole('textbox', { name: 'Dashboard title' })).toHaveValue('Launch')
+    })
+
+    it('Back returns to the picker, and a closed dialog opens at the picker again', async () => {
+      const { user } = await openForm()
+      await user.click(screen.getByRole('button', { name: 'Back' }))
+      expect(screen.getByRole('button', { name: 'New dashboard…' })).toBeInTheDocument()
+      await user.click(screen.getByRole('button', { name: 'New dashboard…' }))
+      await user.keyboard('{Escape}')
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+      await user.click(screen.getByRole('button', { name: 'Add tab' }))
+      expect(await screen.findByRole('button', { name: 'New dashboard…' })).toBeInTheDocument()
+    })
   })
 })
