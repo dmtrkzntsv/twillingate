@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap } from '@codemirror/autocomplete'
+import { autocompletion, closeBrackets, closeBracketsKeymap, closeCompletion, completionKeymap } from '@codemirror/autocomplete'
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
 import { markdown } from '@codemirror/lang-markdown'
 import { sql, SQLite } from '@codemirror/lang-sql'
@@ -89,7 +89,17 @@ export default function CodeEditor({ language, value, onChange, onRun, tables, l
       }),
     })
     view.current = v
-    return () => v.destroy()
+    // A dialog around the editor takes Escape first (radix listens on the
+    // document, capturing) and prevents its default, after which the editor
+    // ignores the event, keymap and all: the open list is closed here.
+    const escape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && e.defaultPrevented) closeCompletion(v)
+    }
+    v.contentDOM.addEventListener('keydown', escape)
+    return () => {
+      v.contentDOM.removeEventListener('keydown', escape)
+      v.destroy()
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- created once; value, language and tables follow below
   }, [])
 

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
-import { render } from '@testing-library/react'
+import { render, waitFor } from '@testing-library/react'
 import { EditorView, runScopeHandlers } from '@codemirror/view'
-import { CompletionContext } from '@codemirror/autocomplete'
+import { CompletionContext, completionStatus, startCompletion } from '@codemirror/autocomplete'
 import CodeEditor from './CodeEditor'
 
 function viewOf(container: HTMLElement) {
@@ -78,5 +78,21 @@ describe('CodeEditor', () => {
       runScopeHandlers(v, new KeyboardEvent('keydown', { key: 'Enter', ...mod }), 'editor')
     }
     expect(onRun).toHaveBeenCalled()
+  })
+
+  it('closes its completion list on an Escape a dialog around it already took', async () => {
+    const tables = [{ name: 'v_hits', columns: ['day'] }]
+    const { container } = render(<CodeEditor language="sql" label="SQL" value="SELECT * FROM v_h" onChange={() => {}} tables={tables} />)
+    const v = viewOf(container)
+    v.dispatch({ selection: { anchor: v.state.doc.length } })
+    startCompletion(v)
+    await waitFor(() => expect(completionStatus(v.state)).toBe('active'))
+    // A radix dialog listens on the document in the capture phase and
+    // prevents the default, which keeps the editor's own keymap from it.
+    const take = (e: Event) => e.preventDefault()
+    document.addEventListener('keydown', take, { capture: true })
+    v.contentDOM.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true, cancelable: true }))
+    document.removeEventListener('keydown', take, { capture: true })
+    expect(completionStatus(v.state)).toBeNull()
   })
 })

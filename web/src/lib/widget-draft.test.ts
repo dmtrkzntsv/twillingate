@@ -23,6 +23,12 @@ describe('draft', () => {
       component: 'area', source: { type: 'sql', content: 'SELECT 1' },
     })
   })
+  it('compares props whatever their key order', () => {
+    const w = { ...line, props: { curve: 'step', format: 'percent', formats: { a: 'number', b: 'percent' } } }
+    const d = { ...draftOf(w), props: { formats: { b: 'percent', a: 'number' }, format: 'percent', curve: 'step' } }
+    expect(changedFields(w, d)).toEqual({})
+    expect(isDirty(w, d)).toBe(false)
+  })
   it('keeps sql and markdown apart, picking by the component', () => {
     const d = { ...draftOf(line), component: 'markdown', markdown: '# Hi' }
     expect(sourceOf(d)).toEqual({ type: 'md', content: '# Hi' })

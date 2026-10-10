@@ -44,7 +44,14 @@ export function addBody(d: Draft): WidgetBody {
   return { component: d.component, ...(title ? { title } : {}), props: d.props, source }
 }
 
-const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
+// Objects with their keys sorted, at every depth: the server answers props
+// with sorted keys, the form keeps the order it was edited in.
+const sorted = (_key: string, v: unknown) =>
+  typeof v === 'object' && v !== null && !Array.isArray(v)
+    ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+    : v
+
+const same = (a: unknown, b: unknown) => JSON.stringify(a, sorted) === JSON.stringify(b, sorted)
 
 /** The update_widget body for what the draft changed, and nothing else (spec D14). */
 export function changedFields(w: Widget, d: Draft): WidgetContentBody {
