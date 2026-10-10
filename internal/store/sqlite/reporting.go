@@ -466,7 +466,7 @@ func mapWidgetConflict(w store.Widget, err error) error {
 		return store.Refuse(store.ErrConflict,
 			"widget: name %q or sort key %q already used on dashboard %d", w.Name, w.SortKey, w.DashboardID)
 	}
-	return fmt.Errorf("insert widget %q: %w", w.Name, err)
+	return fmt.Errorf("write widget %q: %w", w.Name, err)
 }
 
 // UpdateWidget writes the columns cols names and updated_at, never the
