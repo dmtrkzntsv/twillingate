@@ -444,6 +444,24 @@ describe('Project tabs', () => {
     expect(screen.getByRole('menuitem', { name: 'Download PNG' })).toBeInTheDocument()
   })
 
+  it('offers Add widget and the card edits on a tab showing your own dashboard', async () => {
+    const user = userEvent.setup()
+    renderAt('/projects/7/dashboards/20')
+    // The whole project page loads first: slow when the suite runs in parallel.
+    expect(await screen.findByRole('button', { name: 'Add widget' }, { timeout: 5000 })).toBeInTheDocument()
+    await user.click((await screen.findAllByRole('button', { name: 'Widget actions' }))[0])
+    expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Edit…', 'Rename', 'Share…', 'Download PNG', 'Archive'])
+  })
+
+  it('offers no Add widget and no card edits on a built-in tab', async () => {
+    const user = userEvent.setup()
+    renderAt('/projects/7/dashboards/1')
+    await vi.waitFor(() => expect(endpoints.widgetData).toHaveBeenCalled(), { timeout: 5000 })
+    expect(screen.queryByRole('button', { name: 'Add widget' })).not.toBeInTheDocument()
+    await user.click((await screen.findAllByRole('button', { name: 'Widget actions' }))[0])
+    expect(screen.queryByRole('menuitem', { name: 'Edit…' })).not.toBeInTheDocument()
+  })
+
   it('keeps the range when switching tabs', async () => {
     const user = userEvent.setup()
     renderAt('/projects/7/dashboards/1?range=30d')

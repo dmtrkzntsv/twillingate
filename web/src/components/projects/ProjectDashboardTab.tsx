@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { LayoutGridIcon } from 'lucide-react'
 import { useSearchParams } from 'react-router'
 import DashboardHeader from '@/components/DashboardHeader'
+import { AddWidgetButton, WidgetEditingProvider } from '@/components/editor/WidgetEditing'
 import { GridSkeleton, Notice, NoWidgets, PageError } from '@/components/PageStates'
 import RangeSwitcher from '@/components/RangeSwitcher'
 import { Button } from '@/components/ui/button'
@@ -102,8 +103,8 @@ function TabView({ project, dashboard, tab, tabs, list, actions }: ViewProps) {
     [projectId, project.name, shareRange.from, shareRange.to, rangeShown, writable]
   )
 
-  // The user's own dashboard is arranged here as on its own page; a
-  // project page shows only live dashboards.
+  // The user's own dashboard is arranged and edited here as on its own
+  // page; a project page shows only live dashboards.
   const widgetActions = useWidgetActions()
   const arrange = writable && dashboard.owner === 'user' ? widgetActions : undefined
 
@@ -126,7 +127,11 @@ function TabView({ project, dashboard, tab, tabs, list, actions }: ViewProps) {
   })
 
   return (
-    <>
+    <WidgetEditingProvider
+      dashboardId={dashboard.dashboard_id}
+      enabled={arrange !== undefined}
+      defaults={{ projectId, range: { range: sel.range ?? '7d', from: shareRange.from, to: shareRange.to }, timezone: list.timezone }}
+    >
       <DashboardHeader
         title={dashboard.title}
         asOf={showGrid ? freshness.asOf : undefined}
@@ -148,6 +153,7 @@ function TabView({ project, dashboard, tab, tabs, list, actions }: ViewProps) {
           />
         }
       >
+        {arrange && <AddWidgetButton />}
         {dashboard.follows_range && sel.range && (
           <RangeSwitcher
             value={{ range: sel.range, from: sel.from, to: sel.to }}
@@ -157,7 +163,11 @@ function TabView({ project, dashboard, tab, tabs, list, actions }: ViewProps) {
           />
         )}
       </DashboardHeader>
-      {showGrid ? <WidgetGrid widgets={dashboard.widgets} paramsFor={paramsFor} share={share} arrange={arrange} /> : <NoWidgets />}
-    </>
+      {showGrid ? (
+        <WidgetGrid widgets={dashboard.widgets} paramsFor={paramsFor} share={share} arrange={arrange} />
+      ) : (
+        <NoWidgets action={arrange && <AddWidgetButton />} />
+      )}
+    </WidgetEditingProvider>
   )
 }
