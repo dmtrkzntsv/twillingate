@@ -120,6 +120,19 @@ describe('ProjectTabBar', () => {
       expect(screen.getByRole('textbox', { name: 'Dashboard title' })).toHaveValue('Launch')
     })
 
+    it('makes one dashboard however often it is submitted while the first is in flight', async () => {
+      let finish: (ok: boolean) => void = () => {}
+      vi.mocked(actions.create).mockClear()
+      vi.mocked(actions.create).mockReturnValue(new Promise((r) => (finish = r)))
+      const { user, field } = await openForm()
+      await user.type(field, 'Launch{Enter}{Enter}')
+      await user.click(screen.getByRole('button', { name: 'Create' }))
+      expect(screen.getByRole('button', { name: 'Create' })).toBeDisabled()
+      finish(false)
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Create' })).toBeEnabled())
+      expect(actions.create).toHaveBeenCalledTimes(1)
+    })
+
     it('Back returns to the picker, and a closed dialog opens at the picker again', async () => {
       const { user } = await openForm()
       await user.click(screen.getByRole('button', { name: 'Back' }))

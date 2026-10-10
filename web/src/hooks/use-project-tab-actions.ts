@@ -79,9 +79,10 @@ export function useProjectTabActions(): ProjectTabActions {
         }
       })
       // The new dashboard is in the list even when it did not become a tab.
-      if (id) await queryClient.invalidateQueries({ queryKey: ['dashboards'] })
+      // Not awaited: each waits for a refetch, and the dialog must not sit open (and submit again) meanwhile.
+      if (id) void queryClient.invalidateQueries({ queryKey: ['dashboards'] })
       if (!ok) return false
-      await queryClient.invalidateQueries({ queryKey: ['project-tabs', projectId] })
+      void queryClient.invalidateQueries({ queryKey: ['project-tabs', projectId] })
       navigate(tabPath(projectId, id))
       return true
     },

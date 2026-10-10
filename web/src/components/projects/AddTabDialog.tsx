@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type FormEvent } from 'react'
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
 import { PlusIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -32,6 +32,9 @@ export default function AddTabDialog({ open, onOpenChange, dashboards, tabs, pen
   const { builtin, own } = pickerSections(dashboards, tabs)
   const [creating, setCreating] = useState(false)
   const [title, setTitle] = useState('')
+  // Held from the submit until the create resolves; a ref, as a second Enter can land before a re-render.
+  const submitting = useRef(false)
+  const [busy, setBusy] = useState(false)
   // Open at the picker with an empty field, whichever way it was last closed.
   useEffect(() => {
     if (!open) {
@@ -45,8 +48,15 @@ export default function AddTabDialog({ open, onOpenChange, dashboards, tabs, pen
   const tooShort = title.trim().length < MIN_TITLE
   const create = async (e: FormEvent) => {
     e.preventDefault()
-    if (tooShort || pending) return
-    if (await onCreate(title.trim())) onOpenChange(false)
+    if (tooShort || pending || submitting.current) return
+    submitting.current = true
+    setBusy(true)
+    try {
+      if (await onCreate(title.trim())) onOpenChange(false)
+    } finally {
+      submitting.current = false
+      setBusy(false)
+    }
   }
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -65,7 +75,7 @@ export default function AddTabDialog({ open, onOpenChange, dashboards, tabs, pen
               <Button type="button" variant="ghost" onClick={() => setCreating(false)}>
                 Back
               </Button>
-              <Button type="submit" disabled={pending || tooShort}>
+              <Button type="submit" disabled={pending || busy || tooShort}>
                 Create
               </Button>
             </DialogFooter>
