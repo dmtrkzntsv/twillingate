@@ -502,7 +502,11 @@ On the outcome:
   cases `location.hash` is set to the same fragment. One `:target` element per
   outcome, as above, is the thank-you note, shared with the no-JavaScript path
   of [Form submissions](#form-submissions), which gives the form an `action`
-  for pages where the SDK did not load.
+  for pages where the SDK did not load. A server with ingest disabled
+  (`INGEST_DISABLED`) answers that no-JavaScript post with a plain `429`
+  directly, never a redirect, so the visitor sees the collector's plain error
+  instead of returning to the site; through the SDK the `429` is an error at
+  once, like any other `4xx`.
 - Either way a `twillingate:form` `CustomEvent` is dispatched on the form
   (it bubbles), with `detail: { name, status, id }`: `status` is `"success"` or
   `"error"`, `id` the submission's id (empty when the name was invalid and
