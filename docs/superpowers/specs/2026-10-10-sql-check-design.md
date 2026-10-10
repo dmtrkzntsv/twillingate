@@ -64,13 +64,19 @@ written, and every one prepares cleanly today.
   has an argument at the SQL position. Every non-test `.go` file under
   `internal/` is scanned. A call that only shares a sink's name would fail
   loudly at prepare time, at its own `file:line`, so nothing narrower is
-  needed.
+  needed. Calls without a context (`Exec`, `Query`, `QueryRow`, `Prepare`)
+  are not sinks: the code uses the `…Context` methods throughout, the two
+  PRAGMAs in `store/sqlite/sqlite.go` aside.
   - **Pass-through wrappers count as sinks.** A function whose SQL
     argument is one of its own parameters becomes a sink itself, at that
     parameter's position, and its callers are checked instead. This is
-    repeated until nothing changes, so `readsql`'s `Run`, `Query`,
-    `QueryLimit` and `QueryPage`, and `api`'s `host.run`, are found
-    without a list to maintain.
+    repeated until nothing changes, so `readsql.Run`, `api`'s `host.run`
+    and `runOn` are found without a list to maintain. Functions that
+    rewrite the caller's SQL (`readsql`'s `Query`, `QueryLimit` and
+    `QueryPage`) hand on a different string, so they are not sinks. The
+    wrappers are found in directory order, so the result does not depend
+    on map order; a function that shares a wrapper's name is taken for
+    one.
 
 - **D3. The SQL argument resolves to one or more strings, or the site is
   dynamic.** Resolution, using only the AST:
@@ -86,6 +92,13 @@ written, and every one prepares cleanly today.
   4. a call to a known fragment helper is replaced by a stand-in:
      `placeholders(n)` becomes `?`. The map of stand-ins lives in the
      test.
+
+  Two names are never resolved: one declared more than once in a
+  function (each `:=` that introduces it, each `var` that names it), and
+  one that a function's `range` loops bind to more than one slice. The
+  scan cannot tell which value a call reads, so the site is dynamic, with
+  the reason. Plain `=` reassignments of a name declared once still give
+  every value.
 
   Each resolved candidate is checked (D4–D6).
 
@@ -113,9 +126,10 @@ written, and every one prepares cleanly today.
     `stmt.ExecContext`, `stmt.QueryContext` or `stmt.QueryRowContext` on
     that local in the same function. This covers the ingest insert.
 
-- **D6. Scan targets must match the columns.** For a read site
-  (`QueryContext`, `QueryRowContext`, or a sink found through them), the
-  test runs each statement once on the empty migrated database, inside a
+- **D6. Scan targets must match the columns.** A read site is a
+  database/sql `QueryContext` or `QueryRowContext` call. Callers of a
+  wrapper get no column check: the wrapper returns a `readsql.Result`,
+  not rows. The test runs each statement once on the empty migrated database, inside a
   transaction it rolls back, with every parameter bound to `NULL`, and
   reads `rows.Columns()`. Statement text is not used to decide what is a
   read: `WITH … INSERT` starts like a query. The number of Scan
@@ -124,8 +138,8 @@ written, and every one prepares cleanly today.
   - `rows.Scan(…)` on the local that received the site's rows, in the same
     function.
 
-  Scans that spread `dest...`, and rows handed to another function, are
-  not counted. Running a query on an empty database touches no data and
+  Scans that spread `dest...`, and rows handed to another function (a
+  `scanX` helper), are not counted. Running a query on an empty database touches no data and
   takes about a millisecond.
 
 - **D7. A dynamic site must be listed, with a reason.** A site whose SQL
@@ -133,13 +147,13 @@ written, and every one prepares cleanly today.
   test keyed `file.go:FuncName` (the file path relative to `internal/`)
   whose value is the reason. The map is checked in both directions, like
   `docs_sync_test.go`: an entry that matches no dynamic site fails too, so
-  the list cannot rot. A prototype of the scanner leaves 25 functions, in
-  these groups:
+  the list cannot rot. The scanner leaves 24 functions, in these
+  groups:
   - table or column names from code: `prune`, `retention`, `identities`,
     `aggregate_views`, the attribute rollups, `ops_limits` (a dimension),
     `usage_history`'s table sizes;
-  - SQL built from data or options: `flatview` (the attributes view), the
-    `migration015` data step, `UpdateWidget`'s set list, filters appended
+  - SQL built from data or options: `flatview` (the attributes view),
+    `UpdateWidget`'s set list, filters appended
     in `ListWidgets`, the forms search and the `ops_*` reads;
   - `readsql`'s wrappers (`QueryLimit`, `QueryPage`, the empty count),
     which rewrite the caller's SQL rather than pass it on. They are
@@ -151,6 +165,18 @@ written, and every one prepares cleanly today.
     migrates.
 
   Adding a new dynamic site is therefore a reviewed, one-line decision.
+  An entry covers its whole function, so functions that build SQL should
+  stay small.
+
+  **Migration steps.** A Go migration step (`dataSteps` in
+  `store/sqlite/migrate.go`) runs inside its migration, against that
+  version's schema, not the current one: migration 015's step reads
+  `agg_views_app_versions_old`, which the same migration drops. Its file
+  is exempt from the checks and listed in `migrationSteps`, a second map
+  in the test, checked both ways like `dynamic`: a
+  `store/sqlite/migrationNNN.go` that holds SQL and is not listed fails,
+  and so does a listed file that holds none. Every test that migrates
+  already runs these steps.
 
 - **D8. CLAUDE.md says so.** The Checks section gains one paragraph:
   every SQL string is prepared against the migrated schema by
@@ -189,7 +215,7 @@ written, and every one prepares cleanly today.
 
 | File | Change |
 | --- | --- |
-| `internal/sqlcheck/*_test.go` | new: tokenizer, scanner and resolver, the three checks, the run over `internal/` with its `dynamic` list |
+| `internal/sqlcheck/*_test.go` | new: tokenizer, scanner and resolver, the three checks, the run over `internal/` with its `dynamic` and `migrationSteps` lists; a blank import of `internal/shared/readsql` registers `tw_cell` and `tw_num`, which fixed SQL may call |
 | `internal/archtest/archtest_test.go` | `unconstrained` includes `internal/sqlcheck` |
 | `CLAUDE.md` | Checks: one paragraph (D8) |
 | production code | none, unless the first run finds a real defect, fixed in its own `fix:` commit |
