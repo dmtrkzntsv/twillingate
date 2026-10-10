@@ -78,7 +78,8 @@ func (s *Service) AddWidget(ctx context.Context, actor string, in AddWidget) (Wi
 // resulting widget. A widget whose component was removed takes only a
 // new component, a size and a place until it has one again (D15). A
 // change of only the size or the place (the page's drag) checks the size
-// alone: the content is unchanged, so its query is not run again.
+// alone and writes only those: the content is unchanged, so its query is
+// not run again.
 func (s *Service) UpdateWidget(ctx context.Context, actor string, in UpdateWidget) (WidgetInfo, error) {
 	w, err := s.liveWidget(ctx, in.ID)
 	if err != nil {
@@ -131,8 +132,8 @@ func (s *Service) UpdateWidget(ctx context.Context, actor string, in UpdateWidge
 	if in.Height != nil {
 		w.Height = *in.Height
 	}
-	layoutOnly := in.Name == nil && in.Title == nil && in.Props == nil && in.Source == nil
-	if in.Component == nil && (layoutOnly || w.Component == "") {
+	layoutOnly := in.Component == nil && in.Name == nil && in.Title == nil && in.Props == nil && in.Source == nil
+	if layoutOnly || (in.Component == nil && w.Component == "") {
 		err = checkSize(w.Width, w.Height)
 	} else {
 		var comps map[string]Component
@@ -144,8 +145,17 @@ func (s *Service) UpdateWidget(ctx context.Context, actor string, in UpdateWidge
 		return WidgetInfo{}, err
 	}
 	a := store.AuditEntry{Actor: actor, Action: "widget.update"}
+	// A layout change writes only the layout columns: w was read before
+	// the checks above, and writing all of it back would undo an edit
+	// that landed in between (the page's drag racing an agent's edit).
+	write := func() error {
+		if layoutOnly {
+			return s.st.SetWidgetLayout(ctx, w.ID, w.SortKey, w.Width, w.Height, a)
+		}
+		return s.st.UpdateWidget(ctx, w, a)
+	}
 	if in.After == nil || *in.After == w.ID { // after itself: it stays where it is
-		if err := s.st.UpdateWidget(ctx, w, a); err != nil {
+		if err := write(); err != nil {
 			if errors.Is(err, store.ErrConflict) { // the key is unchanged: a rename lost a race
 				return WidgetInfo{}, refuseNameTaken(w.Name)
 			}
@@ -159,7 +169,7 @@ func (s *Service) UpdateWidget(ctx context.Context, actor string, in UpdateWidge
 			return err
 		}
 		w.SortKey = key
-		return s.st.UpdateWidget(ctx, w, a)
+		return write()
 	}, func() error { return s.lostWidgetRace(ctx, w) })
 	if err != nil {
 		return WidgetInfo{}, err

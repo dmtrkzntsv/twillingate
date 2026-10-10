@@ -709,6 +709,65 @@ func TestUpdateWidgetLayoutRunsNoQuery(t *testing.T) {
 	wantRefusal(t, err, store.ErrInvalid, "width is columns out of 12, from 1 to 12")
 }
 
+// editingStore lets an agent's edit land between UpdateWidget's read of
+// the widget and its write: before any widget write passes through, the
+// widget's title is changed straight in the store.
+type editingStore struct {
+	Store
+	title string
+}
+
+func (e *editingStore) rivalEdit(ctx context.Context, id int64) error {
+	w, err := e.Store.GetWidget(ctx, id)
+	if err != nil {
+		return err
+	}
+	w.Title = e.title
+	return e.Store.UpdateWidget(ctx, w, store.AuditEntry{Actor: "rival", Action: "rival.edit"})
+}
+
+func (e *editingStore) UpdateWidget(ctx context.Context, w store.Widget, a store.AuditEntry) error {
+	if err := e.rivalEdit(ctx, w.ID); err != nil {
+		return err
+	}
+	return e.Store.UpdateWidget(ctx, w, a)
+}
+
+func (e *editingStore) SetWidgetLayout(ctx context.Context, id int64, sortKey string, width, height int, a store.AuditEntry) error {
+	if err := e.rivalEdit(ctx, id); err != nil {
+		return err
+	}
+	return e.Store.SetWidgetLayout(ctx, id, sortKey, width, height, a)
+}
+
+// A move or resize writes only the layout, so an edit that landed after
+// the widget was read survives it (the page's drag racing an agent).
+func TestUpdateWidgetLayoutKeepsAConcurrentEdit(t *testing.T) {
+	base := newTestService(t)
+	ctx := context.Background()
+	d := mustCreate(t, base, "DD", note("A"), note("B"))
+	a, b := d.Widgets[0].ID, d.Widgets[1].ID
+	svc := New(&editingStore{Store: base.st, title: "Edited"}, base.db, Options{})
+
+	w, err := svc.UpdateWidget(ctx, "test", UpdateWidget{ID: a, Width: ptr(6), Height: ptr(4)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.Title != "Edited" || w.Width != 6 || w.Height != 4 {
+		t.Errorf("resized = %q %dx%d, want the edited title at 6x4", w.Title, w.Width, w.Height)
+	}
+	w, err = svc.UpdateWidget(ctx, "test", UpdateWidget{ID: b, After: ptr(int64(0))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.Title != "Edited" {
+		t.Errorf("moved: title = %q, want the edited one", w.Title)
+	}
+	if got, want := liveNames(t, base, d.ID), []string{"b", "a"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("order = %v, want %v", got, want)
+	}
+}
+
 // --- Copy ---
 
 func TestCopyWidget(t *testing.T) {

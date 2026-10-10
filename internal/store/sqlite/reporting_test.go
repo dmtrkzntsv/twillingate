@@ -199,6 +199,61 @@ func TestDuplicateWidgetNameIsConflict(t *testing.T) {
 	}
 }
 
+// SetWidgetLayout writes the place and the size and nothing else; a key
+// another widget holds is ErrConflict, an unknown id ErrNotFound.
+func TestSetWidgetLayoutWritesOnlyLayout(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	id, err := db.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "D", SortKey: "a", Sidebar: true},
+		nil, store.AuditEntry{Actor: "agent", Action: "dashboard.create"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	add := func(name, key string) int64 {
+		wID, err := db.InsertWidget(ctx, store.Widget{DashboardID: id, SortKey: key, Width: 12, Height: 2,
+			Name: name, Title: "T " + name, Props: `{"k":1}`, SourceType: "md", Source: "text " + name},
+			store.AuditEntry{Actor: "agent", Action: "widget.add"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return wID
+	}
+	a := add("a", "a")
+	add("b", "b")
+
+	if err := db.SetWidgetLayout(ctx, a, "c", 6, 4, store.AuditEntry{Actor: "agent", Action: "widget.update"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := db.GetWidget(ctx, a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SortKey != "c" || got.Width != 6 || got.Height != 4 {
+		t.Errorf("layout = %q %dx%d, want c 6x4", got.SortKey, got.Width, got.Height)
+	}
+	if got.Name != "a" || got.Title != "T a" || got.Props != `{"k":1}` ||
+		got.SourceType != "md" || got.Source != "text a" {
+		t.Errorf("SetWidgetLayout touched content columns: %+v", got)
+	}
+	var subject string
+	if err := db.db.QueryRowContext(ctx,
+		`SELECT subject FROM audit_log WHERE action='widget.update' ORDER BY rowid DESC LIMIT 1`).Scan(&subject); err != nil {
+		t.Fatal(err)
+	}
+	if want := fmt.Sprintf("widget/%d", a); subject != want {
+		t.Errorf("audit subject = %q, want %q", subject, want)
+	}
+
+	err = db.SetWidgetLayout(ctx, a, "b", 6, 4, store.AuditEntry{Actor: "agent", Action: "widget.update"})
+	if !errors.Is(err, store.ErrConflict) {
+		t.Errorf("taken sort key = %v, want ErrConflict", err)
+	}
+	err = db.SetWidgetLayout(ctx, 999999, "z", 1, 1, store.AuditEntry{Actor: "agent", Action: "widget.update"})
+	if !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("unknown id = %v, want ErrNotFound", err)
+	}
+}
+
 func TestDashboardArchiveRestoreRoundTripsAndIsIdempotent(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()

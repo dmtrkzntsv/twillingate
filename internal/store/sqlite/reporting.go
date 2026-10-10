@@ -491,6 +491,29 @@ func (d *DB) UpdateWidget(ctx context.Context, w store.Widget, a store.AuditEntr
 	})
 }
 
+// SetWidgetLayout writes only a widget's place and size. A drag that
+// rewrote the whole row would put back whatever an agent changed in the
+// widget since the page read it, so the layout columns go alone.
+func (d *DB) SetWidgetLayout(ctx context.Context, id int64, sortKey string, width, height int, a store.AuditEntry) error {
+	return d.tx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx,
+			`UPDATE widgets SET sort_key=?, width=?, height=?,
+			 updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')
+			 WHERE id=?`, sortKey, width, height, id)
+		if err != nil {
+			if strings.Contains(err.Error(), "UNIQUE constraint failed: widgets.") {
+				return store.Refuse(store.ErrConflict, "widget %d: sort key %q already used on its dashboard", id, sortKey)
+			}
+			return fmt.Errorf("set widget %d layout: %w", id, err)
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return store.Refuse(store.ErrNotFound, "set widget layout: unknown id %d", id)
+		}
+		a.Subject = fmt.Sprintf("widget/%d", id)
+		return audit(ctx, tx, a)
+	})
+}
+
 // SetWidgetArchived is SetDashboardArchived's twin for widgets.
 func (d *DB) SetWidgetArchived(ctx context.Context, id int64, archived bool, a store.AuditEntry) error {
 	return d.tx(ctx, func(tx *sql.Tx) error {
