@@ -1,4 +1,4 @@
-import type { Limit } from '@/lib/api'
+import type { Limit, RawEvents } from '@/lib/api'
 
 const GROUPS: { group: Limit['group']; title: string; note: string }[] = [
   { group: 'retention', title: 'Retention', note: 'How long data is kept.' },
@@ -25,13 +25,22 @@ export function formatLimit(l: Pick<Limit, 'value' | 'unit' | 'zero'>, value = l
   return Number.isInteger(value) ? value.toLocaleString() : String(value)
 }
 
-/** The limits in force by group: retention and caps (set in the environment, each with its default), then the fixed ingest limits. */
-export default function LimitsPanel({ limits }: { limits: Limit[] }) {
+/**
+ * The limits in force by group: retention and caps (set in the environment, each with its default), then the fixed
+ * ingest limits; and, when the server could count them, the raw events it holds in its raw window.
+ */
+export default function LimitsPanel({ limits, rawEvents }: { limits: Limit[]; rawEvents?: RawEvents }) {
   return (
     <section aria-label="Limits" className="flex flex-col gap-4 rounded-lg border p-4">
       <header>
         <h2 className="text-base font-semibold">Limits</h2>
         <p className="text-sm text-muted-foreground">Retention and caps are set in twillingate.env.</p>
+        {rawEvents && (
+          <p className="text-sm">
+            Raw events held: {rawEvents.held.toLocaleString()} (the last{' '}
+            {rawEvents.window_days === 1 ? 'day' : `${rawEvents.window_days.toLocaleString()} days`})
+          </p>
+        )}
       </header>
       {GROUPS.map(({ group, title, note }) => {
         const items = limits.filter((l) => l.group === group)

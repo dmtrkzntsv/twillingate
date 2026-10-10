@@ -102,7 +102,7 @@ export default function Projects() {
             </div>
           </SortableContext>
         </DndContext>
-        {limitsData && <LimitsPanel limits={limitsData.limits} />}
+        {limitsData && <LimitsPanel limits={limitsData.limits} rawEvents={limitsData.raw_events} />}
         {archived.length > 0 && (
           <Collapsible className="flex flex-col gap-3">
             <CollapsibleTrigger asChild>

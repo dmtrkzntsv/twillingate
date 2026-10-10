@@ -46,7 +46,7 @@ beforeEach(() => {
     { group: 'retention', name: 'Raw events', setting: 'RETENTION_EVENTS_RAW_DAYS', value: 7, default: 30, unit: 'days', description: 'raw events are kept this long' },
     { group: 'caps', name: 'Attribute values', setting: 'ATTRIBUTE_VALUES_TOP_N', value: 0, default: 100, zero: 'no cap', description: 'values per views breakdown and per attribute key' },
     { group: 'ingest', name: 'Request body', value: 262144, unit: 'bytes', description: 'a larger request is refused with 413' },
-  ] })
+  ], raw_events: { held: 48210, window_days: 7 } })
 })
 
 function renderPage() {
@@ -137,6 +137,7 @@ describe('Projects', () => {
     const ingest = within(panel).getByRole('region', { name: 'Ingest' })
     expect(within(ingest).getByText('256 KiB')).toBeInTheDocument()
     expect(within(ingest).queryByText(/default/)).not.toBeInTheDocument()
+    expect(within(panel).getByText('Raw events held: 48,210 (the last 7 days)')).toBeInTheDocument()
   })
 
   it('creates a project and shows its key and snippet once', async () => {

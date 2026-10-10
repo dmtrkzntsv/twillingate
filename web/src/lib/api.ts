@@ -252,6 +252,18 @@ export interface Limit {
   description: string
 }
 
+/** The raw events the server stores now, of every family and project, in its raw window (RETENTION_EVENTS_RAW_DAYS). */
+export interface RawEvents {
+  held: number
+  window_days: number
+}
+
+/** The limits answer: the limits in force, and the raw events held (absent when the server could not count them). */
+export interface LimitsResponse {
+  limits: Limit[]
+  raw_events?: RawEvents
+}
+
 export interface CapUsageRow {
   setting: CapSetting
   dimension: string
@@ -554,7 +566,7 @@ export const endpoints = {
     api<{ status: string }>(`/api/projects/${id}/keys/${encodeURIComponent(label)}/disable`, json('POST', {})),
   enableKey: (id: number, label: string) =>
     api<{ status: string }>(`/api/projects/${id}/keys/${encodeURIComponent(label)}/enable`, json('POST', {})),
-  limits: () => api<{ limits: Limit[] }>('/api/limits'),
+  limits: () => api<LimitsResponse>('/api/limits'),
   usage: (q: RangeQuery & { project_id?: number }) => api<UsageResponse>(`/api/usage${toQuery(q)}`),
   receivedAttributes: (q: RangeQuery & { project_id?: number }) =>
     api<ReceivedAttributes>(`/api/received-attributes${toQuery(q)}`),
