@@ -1,4 +1,4 @@
-import type { ReactElement } from 'react'
+import type { ComponentProps, ReactElement } from 'react'
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClientProvider } from '@tanstack/react-query'
@@ -22,6 +22,20 @@ vi.mock('@/components/widgets/stat', async (importOriginal) => ({
     return <div data-testid="stat-body" />
   },
 }))
+
+// The query each card is handed, by widget id, in the order handed: what
+// the grid keeps the same object, or lets go of.
+const cardParams = vi.hoisted(() => new Map<number, WidgetDataQuery[]>())
+vi.mock('./WidgetCard', async (importOriginal) => {
+  const { default: Card } = await importOriginal<typeof import('./WidgetCard')>()
+  return {
+    default: (props: ComponentProps<typeof Card>) => {
+      const id = props.widget.widget_id
+      cardParams.set(id, [...(cardParams.get(id) ?? []), props.params])
+      return <Card {...props} />
+    },
+  }
+})
 
 function note(id: number, over: Partial<Widget> = {}): Widget {
   return {
@@ -82,6 +96,7 @@ function cell(title: string): HTMLElement {
 beforeEach(() => {
   gridPx = 1200
   statRenders.clear()
+  cardParams.clear()
   vi.spyOn(endpoints, 'widgetData').mockReturnValue(new Promise(() => {}))
 })
 
@@ -490,5 +505,31 @@ describe('WidgetGrid', () => {
     expect(spy).toHaveBeenCalledWith(2, { project_id: 8 })
     await waitFor(() => expect(statRenders.get('twillingate.widget.1.2')).toBeGreaterThan(before.get('twillingate.widget.1.2')!))
     expect(statRenders.get('twillingate.widget.1.1')).toBe(before.get('twillingate.widget.1.1'))
+  })
+
+  it('hands a card the same query while it is used, and lets go of one no card uses any more', () => {
+    const widgets = [note(1, { follows_project: true })]
+    const forProject = (project: number) => (w: Widget): WidgetDataQuery => (w.follows_project ? { project_id: project } : {})
+    // A new array each time, so the memoized grid redraws.
+    const grid = (project: number) => <WidgetGrid widgets={[...widgets]} paramsFor={forProject(project)} />
+    const { client, rerender } = renderWithProviders(grid(7))
+    const again = (project: number) =>
+      rerender(
+        <QueryClientProvider client={client}>
+          <TooltipProvider>{grid(project)}</TooltipProvider>
+        </QueryClientProvider>
+      )
+    const handed = () => cardParams.get(1)!.at(-1)!
+    const first = handed()
+
+    again(7)
+    expect(handed()).toBe(first)
+    again(8)
+    expect(handed()).toEqual({ project_id: 8 })
+    // Project 7's query went unused for a render, so it is not kept: asked
+    // again, it is a new object, equal as it is.
+    again(7)
+    expect(handed()).toEqual(first)
+    expect(handed()).not.toBe(first)
   })
 })
