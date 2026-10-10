@@ -18,7 +18,7 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/identity"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
-	_ "github.com/dmtrkzntsv/twillingate/internal/store/sqlite"
+	"github.com/dmtrkzntsv/twillingate/internal/store/storetest"
 	"github.com/dmtrkzntsv/twillingate/internal/wire"
 )
 
@@ -73,7 +73,7 @@ func testServer(t *testing.T) (*fakeQueue, http.Handler) {
 // specs to {key, label}.
 func newTestRegistry(t *testing.T, projects []manage.ProjectSpec, keys map[int][2]string) *manage.Registry {
 	t.Helper()
-	st := openMigratedStore(t, t.TempDir()+"/reg.db")
+	st := storetest.Open(t, t.TempDir()+"/reg.db")
 	ctx := context.Background()
 	reg := manage.New(st, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err := reg.Reload(ctx); err != nil {

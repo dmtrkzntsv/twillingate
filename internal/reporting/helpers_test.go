@@ -5,13 +5,12 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
-	_ "github.com/dmtrkzntsv/twillingate/internal/store/sqlite"
+	"github.com/dmtrkzntsv/twillingate/internal/store/storetest"
 )
 
 // testComponents parses testdata/components.json and returns its five
@@ -49,79 +48,13 @@ func oneComponent(t *testing.T, entryJSON string) Component {
 	return cs[0]
 }
 
-// TestMain runs the package's tests, then removes the template
-// database's temp dir (see templateDB) once every test has finished
-// with it.
-func TestMain(m *testing.M) {
-	code := m.Run()
-	if templateDir != "" {
-		os.RemoveAll(templateDir)
-	}
-	os.Exit(code)
-}
-
-var (
-	templateOnce sync.Once
-	templateDir  string
-	templatePath string
-)
-
-// templateDB migrates a database to the current schema version once per
-// test binary and returns its path, as internal/store/sqlite's tests do.
-// Under -race, running every migration for every test service pushed
-// this package past go test's 10-minute default timeout; newTestStore
-// copies this file instead.
-func templateDB(t *testing.T) string {
-	t.Helper()
-	templateOnce.Do(func() {
-		dir, err := os.MkdirTemp("", "twillingate-reporting-template-")
-		if err != nil {
-			t.Fatal(err)
-		}
-		templateDir = dir
-		path := filepath.Join(dir, "template.db")
-		st, err := store.Open("sqlite://" + path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := st.Migrate(context.Background()); err != nil {
-			t.Fatal(err)
-		}
-		// Close checkpoints the WAL into the main file, so the copy below
-		// only ever needs the one file.
-		if err := st.Close(); err != nil {
-			t.Fatal(err)
-		}
-		templatePath = path
-	})
-	if templatePath == "" {
-		t.Fatal("template database was not built")
-	}
-	return templatePath
-}
-
 // newTestStore opens a fresh, migrated store at a temp path and returns
 // both it and the path, so a test can also open a read-only readsql.DB
-// on the same file. The file is a copy of templateDB's.
+// on the same file. The file is a copy of storetest's.
 func newTestStore(t *testing.T) (store.Store, string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "reporting.db")
-	data, err := os.ReadFile(templateDB(t))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	st, err := store.Open("sqlite://" + path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := st.Migrate(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { st.Close() })
-	return st, path
+	return storetest.Open(t, path), path
 }
 
 // newTestReadDB opens a migrated store and a read-only readsql.DB on the

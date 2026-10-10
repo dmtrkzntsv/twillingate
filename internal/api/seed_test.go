@@ -19,6 +19,7 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 	"github.com/dmtrkzntsv/twillingate/internal/store/sqlite"
+	"github.com/dmtrkzntsv/twillingate/internal/store/storetest"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -53,14 +54,12 @@ func hostTemplate(t *testing.T) string {
 		}
 		hostTemplateDir = dir
 		path := filepath.Join(dir, "template.db")
+		storetest.Copy(t, path)
 		st, err := store.Open("sqlite://" + path)
 		if err != nil {
 			t.Fatal(err)
 		}
 		ctx := context.Background()
-		if err := st.Migrate(ctx); err != nil {
-			t.Fatal(err)
-		}
 		for _, name := range []string{"blog", "docs"} {
 			if _, err := st.CreateProject(ctx, store.RegistryProject{
 				Name: name, AllowedOrigins: "[]", Attributes: "[]"},
@@ -234,17 +233,15 @@ func newTestHost(t *testing.T) (*host, *mcp.ClientSession) {
 	return h, cs
 }
 
-// seedDB migrates a fresh database and returns its path, with one project
-// (My blog) and no data: the minimal fixture for tests that only need a
-// database file to open, not seeded aggregates.
+// seedDB copies a migrated database (see storetest) and returns its
+// path, with one project (My blog) and no data: the minimal fixture for
+// tests that only need a database file to open, not seeded aggregates.
 func seedDB(t *testing.T) string {
 	t.Helper()
 	path := t.TempDir() + "/read.db"
+	storetest.Copy(t, path)
 	st, err := store.Open("sqlite://" + path)
 	if err != nil {
-		t.Fatal(err)
-	}
-	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := st.CreateProject(context.Background(), store.RegistryProject{

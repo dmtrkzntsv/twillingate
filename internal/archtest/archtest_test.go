@@ -36,6 +36,7 @@ var rank = map[string]int{
 	"internal/shared/version":    0,
 	"internal/store":             0,
 	"internal/store/sqlite":      0,
+	"internal/store/storetest":   0,
 	"internal/wire":              0,
 	"internal/manage":            1,
 	"internal/reporting":         1,

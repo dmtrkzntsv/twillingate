@@ -90,7 +90,10 @@ can ship under one version; notes are not hand-edited.
 with it) is what pull request CI runs; run it before pushing.
 `make build` compiles; `make test` runs the whole suite under `-race`, about
 ten times slower because modernc SQLite is instrumented too, so CI runs it only
-in the release workflow. CI runs on pull requests only (nothing on push to
+in the release workflow. Each package must stay under go test's 10-minute
+default there: a test that needs a migrated database copies one from
+`internal/store/storetest` (or `snapshotAt` inside `store/sqlite`), never
+migrates its own, which costs about 9s under `-race`. CI runs on pull requests only (nothing on push to
 `main`) and skips jobs whose inputs a pull request does not touch: the path
 rules are in the `changes` job of `.github/workflows/ci.yml`. The
 SDK bundle `internal/server/twillingate.js` is committed: after any change in

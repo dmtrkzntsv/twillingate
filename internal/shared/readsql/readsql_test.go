@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/store"
-	_ "github.com/dmtrkzntsv/twillingate/internal/store/sqlite"
+	"github.com/dmtrkzntsv/twillingate/internal/store/storetest"
 )
 
 // newTestDB builds a database at the current schema with the writer
@@ -26,14 +26,12 @@ import (
 func newTestDB(t testing.TB, timeout time.Duration, maxRows int) (*DB, string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "readsql.db")
+	storetest.Copy(t, path)
 	st, err := store.Open("sqlite://" + path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	if err := st.Migrate(ctx); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := st.CreateProject(ctx, store.RegistryProject{
 		Name: "blog", AllowedOrigins: "[]", Attributes: "[]"},
 		store.AuditEntry{Actor: "test", Action: "project.create"}); err != nil {
