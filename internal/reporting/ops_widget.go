@@ -79,7 +79,9 @@ func (s *Service) AddWidget(ctx context.Context, actor string, in AddWidget) (Wi
 // new component, a size and a place until it has one again (D15). A
 // change of only the size or the place (the page's drag) checks the size
 // alone and writes only those: the content is unchanged, so its query is
-// not run again.
+// not run again. Every update writes only the columns it changes, since
+// the widget was read before the checks, which may take seconds, and
+// writing the rest back would undo what another writer saved meanwhile.
 func (s *Service) UpdateWidget(ctx context.Context, actor string, in UpdateWidget) (WidgetInfo, error) {
 	w, err := s.liveWidget(ctx, in.ID)
 	if err != nil {
@@ -132,7 +134,16 @@ func (s *Service) UpdateWidget(ctx context.Context, actor string, in UpdateWidge
 	if in.Height != nil {
 		w.Height = *in.Height
 	}
-	layoutOnly := in.Component == nil && in.Name == nil && in.Title == nil && in.Props == nil && in.Source == nil
+	cols := store.WidgetColumns{
+		Content: in.Component != nil || in.Name != nil || in.Title != nil || in.Props != nil || in.Source != nil,
+		SortKey: in.After != nil && *in.After != w.ID, // after itself: it stays where it is
+		Width:   in.Width != nil,
+		Height:  in.Height != nil,
+	}
+	if cols == (store.WidgetColumns{}) { // nothing to change: no check, no write, no audit row
+		return s.widgetInfo(w), nil
+	}
+	layoutOnly := !cols.Content
 	if layoutOnly || (in.Component == nil && w.Component == "") {
 		err = checkSize(w.Width, w.Height)
 	} else {
@@ -145,16 +156,8 @@ func (s *Service) UpdateWidget(ctx context.Context, actor string, in UpdateWidge
 		return WidgetInfo{}, err
 	}
 	a := store.AuditEntry{Actor: actor, Action: "widget.update"}
-	// A layout change writes only the layout columns: w was read before
-	// the checks above, and writing all of it back would undo an edit
-	// that landed in between (the page's drag racing an agent's edit).
-	write := func() error {
-		if layoutOnly {
-			return s.st.SetWidgetLayout(ctx, w.ID, w.SortKey, w.Width, w.Height, a)
-		}
-		return s.st.UpdateWidget(ctx, w, a)
-	}
-	if in.After == nil || *in.After == w.ID { // after itself: it stays where it is
+	write := func() error { return s.st.UpdateWidget(ctx, w, cols, a) }
+	if !cols.SortKey {
 		if err := write(); err != nil {
 			if errors.Is(err, store.ErrConflict) { // the key is unchanged: a rename lost a race
 				return WidgetInfo{}, refuseNameTaken(w.Name)

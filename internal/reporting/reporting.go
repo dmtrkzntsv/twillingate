@@ -42,8 +42,7 @@ type Store interface {
 	InsertDashboardGroup(ctx context.Context, ds []store.Dashboard, ws [][]store.Widget, a store.AuditEntry) ([]int64, error)
 	SetDashboardsArchived(ctx context.Context, ids []int64, archived bool, a store.AuditEntry) error
 	InsertWidget(ctx context.Context, w store.Widget, a store.AuditEntry) (int64, error)
-	UpdateWidget(ctx context.Context, w store.Widget, a store.AuditEntry) error
-	SetWidgetLayout(ctx context.Context, id int64, sortKey string, width, height int, a store.AuditEntry) error
+	UpdateWidget(ctx context.Context, w store.Widget, cols store.WidgetColumns, a store.AuditEntry) error
 	SetWidgetArchived(ctx context.Context, id int64, archived bool, a store.AuditEntry) error
 	ListProjectTabs(ctx context.Context, projectID int64) ([]store.ProjectTabRow, error)
 	InsertProjectTab(ctx context.Context, r store.ProjectTabRow, a store.AuditEntry) error

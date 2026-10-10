@@ -692,7 +692,7 @@ func TestUpdateWidgetLayoutRunsNoQuery(t *testing.T) {
 		t.Fatal(err)
 	}
 	w.Source = "SELECT n FROM nowhere"
-	if err := svc.st.UpdateWidget(ctx, w, store.AuditEntry{Actor: "test", Action: "test.break"}); err != nil {
+	if err := svc.st.UpdateWidget(ctx, w, store.WidgetColumns{Content: true}, store.AuditEntry{Actor: "test", Action: "test.break"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -709,35 +709,29 @@ func TestUpdateWidgetLayoutRunsNoQuery(t *testing.T) {
 	wantRefusal(t, err, store.ErrInvalid, "width is columns out of 12, from 1 to 12")
 }
 
-// editingStore lets an agent's edit land between UpdateWidget's read of
-// the widget and its write: before any widget write passes through, the
-// widget's title is changed straight in the store.
+// editingStore lets a rival write land between UpdateWidget's read of the
+// widget and its write: before any widget write passes through, edit
+// runs against the store, once, as another writer would.
 type editingStore struct {
 	Store
-	title string
+	edit func(ctx context.Context, w store.Widget) store.Widget
+	cols store.WidgetColumns // what the rival writes
+	done bool
 }
 
-func (e *editingStore) rivalEdit(ctx context.Context, id int64) error {
-	w, err := e.Store.GetWidget(ctx, id)
-	if err != nil {
-		return err
+func (e *editingStore) UpdateWidget(ctx context.Context, w store.Widget, cols store.WidgetColumns, a store.AuditEntry) error {
+	if !e.done {
+		e.done = true
+		cur, err := e.Store.GetWidget(ctx, w.ID)
+		if err != nil {
+			return err
+		}
+		err = e.Store.UpdateWidget(ctx, e.edit(ctx, cur), e.cols, store.AuditEntry{Actor: "rival", Action: "rival.edit"})
+		if err != nil {
+			return err
+		}
 	}
-	w.Title = e.title
-	return e.Store.UpdateWidget(ctx, w, store.AuditEntry{Actor: "rival", Action: "rival.edit"})
-}
-
-func (e *editingStore) UpdateWidget(ctx context.Context, w store.Widget, a store.AuditEntry) error {
-	if err := e.rivalEdit(ctx, w.ID); err != nil {
-		return err
-	}
-	return e.Store.UpdateWidget(ctx, w, a)
-}
-
-func (e *editingStore) SetWidgetLayout(ctx context.Context, id int64, sortKey string, width, height int, a store.AuditEntry) error {
-	if err := e.rivalEdit(ctx, id); err != nil {
-		return err
-	}
-	return e.Store.SetWidgetLayout(ctx, id, sortKey, width, height, a)
+	return e.Store.UpdateWidget(ctx, w, cols, a)
 }
 
 // A move or resize writes only the layout, so an edit that landed after
@@ -747,7 +741,8 @@ func TestUpdateWidgetLayoutKeepsAConcurrentEdit(t *testing.T) {
 	ctx := context.Background()
 	d := mustCreate(t, base, "DD", note("A"), note("B"))
 	a, b := d.Widgets[0].ID, d.Widgets[1].ID
-	svc := New(&editingStore{Store: base.st, title: "Edited"}, base.db, Options{})
+	retitle := func(_ context.Context, w store.Widget) store.Widget { w.Title = "Edited"; return w }
+	svc := New(&editingStore{Store: base.st, edit: retitle, cols: store.WidgetColumns{Content: true}}, base.db, Options{})
 
 	w, err := svc.UpdateWidget(ctx, "test", UpdateWidget{ID: a, Width: ptr(6), Height: ptr(4)})
 	if err != nil {
@@ -756,6 +751,7 @@ func TestUpdateWidgetLayoutKeepsAConcurrentEdit(t *testing.T) {
 	if w.Title != "Edited" || w.Width != 6 || w.Height != 4 {
 		t.Errorf("resized = %q %dx%d, want the edited title at 6x4", w.Title, w.Width, w.Height)
 	}
+	svc = New(&editingStore{Store: base.st, edit: retitle, cols: store.WidgetColumns{Content: true}}, base.db, Options{})
 	w, err = svc.UpdateWidget(ctx, "test", UpdateWidget{ID: b, After: ptr(int64(0))})
 	if err != nil {
 		t.Fatal(err)
@@ -765,6 +761,72 @@ func TestUpdateWidgetLayoutKeepsAConcurrentEdit(t *testing.T) {
 	}
 	if got, want := liveNames(t, base, d.ID), []string{"b", "a"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("order = %v, want %v", got, want)
+	}
+}
+
+// The mirror: a content change writes only the content, so a drag that
+// landed while the new content was being validated is not reverted.
+func TestUpdateWidgetContentKeepsAConcurrentLayout(t *testing.T) {
+	base := newTestService(t)
+	ctx := context.Background()
+	d := mustCreate(t, base, "DD", note("A"), note("B"))
+	a := d.Widgets[0].ID
+	drag := func(_ context.Context, w store.Widget) store.Widget {
+		w.Width, w.Height, w.SortKey = 5, 3, "zz"
+		return w
+	}
+	svc := New(&editingStore{Store: base.st, edit: drag,
+		cols: store.WidgetColumns{SortKey: true, Width: true, Height: true}}, base.db, Options{})
+
+	w, err := svc.UpdateWidget(ctx, "test", UpdateWidget{ID: a, Title: ptr("New")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.Title != "New" || w.Width != 5 || w.Height != 3 {
+		t.Errorf("retitled = %q %dx%d, want the new title at the dragged 5x3", w.Title, w.Width, w.Height)
+	}
+	if got, want := liveNames(t, base, d.ID), []string{"b", "a"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("order = %v, want the dragged place kept (%v)", got, want)
+	}
+}
+
+// A resize of one side leaves the other as a concurrent save made it.
+func TestUpdateWidgetWidthKeepsAConcurrentHeight(t *testing.T) {
+	base := newTestService(t)
+	ctx := context.Background()
+	d := mustCreate(t, base, "DD", note("A"))
+	a := d.Widgets[0].ID
+	taller := func(_ context.Context, w store.Widget) store.Widget { w.Height = 7; return w }
+	svc := New(&editingStore{Store: base.st, edit: taller, cols: store.WidgetColumns{Height: true}}, base.db, Options{})
+
+	w, err := svc.UpdateWidget(ctx, "test", UpdateWidget{ID: a, Width: ptr(4)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.Width != 4 || w.Height != 7 {
+		t.Errorf("resized = %dx%d, want 4x7", w.Width, w.Height)
+	}
+}
+
+// An update that names nothing writes nothing: the widget comes back as
+// it is and no audit row is made.
+func TestUpdateWidgetWithNothingToChangeWritesNothing(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	d := mustCreate(t, svc, "DD", note("A"))
+	a := d.Widgets[0].ID
+	before := auditRows(t, svc)
+	for _, in := range []UpdateWidget{{ID: a}, {ID: a, After: ptr(a)}} {
+		w, err := svc.UpdateWidget(ctx, "test", in)
+		if err != nil {
+			t.Fatalf("%+v: %v", in, err)
+		}
+		if w.ID != a || w.Name != "a" {
+			t.Errorf("%+v returned %+v", in, w)
+		}
+	}
+	if got := auditRows(t, svc); !reflect.DeepEqual(got, before) {
+		t.Errorf("an empty update changed the audit log: %v -> %v", before, got)
 	}
 }
 

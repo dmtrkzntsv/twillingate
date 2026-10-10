@@ -313,12 +313,11 @@ type Store interface {
 	// written.
 	SetDashboardsArchived(ctx context.Context, ids []int64, archived bool, a AuditEntry) error
 	InsertWidget(ctx context.Context, w Widget, a AuditEntry) (int64, error)
-	UpdateWidget(ctx context.Context, w Widget, a AuditEntry) error
-	// SetWidgetLayout writes only sort_key, width and height, so a move
-	// or resize never puts back a content column changed meanwhile. A
-	// sort key taken on the dashboard is ErrConflict, an unknown id
-	// ErrNotFound.
-	SetWidgetLayout(ctx context.Context, id int64, sortKey string, width, height int, a AuditEntry) error
+	// UpdateWidget writes only the columns cols names (and updated_at), so
+	// an update never puts back a column another writer changed since w
+	// was read. An empty selection is ErrInvalid, a name or sort key
+	// taken on the dashboard ErrConflict, an unknown id ErrNotFound.
+	UpdateWidget(ctx context.Context, w Widget, cols WidgetColumns, a AuditEntry) error
 	SetWidgetArchived(ctx context.Context, id int64, archived bool, a AuditEntry) error
 	// Project tabs and dashboard placement (migration 032).
 	// ListProjectTabs is ErrNotFound for an unknown project.

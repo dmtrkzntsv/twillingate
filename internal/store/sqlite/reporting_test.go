@@ -199,11 +199,19 @@ func TestDuplicateWidgetNameIsConflict(t *testing.T) {
 	}
 }
 
-// SetWidgetLayout writes the place and the size and nothing else; a key
-// another widget holds is ErrConflict, an unknown id ErrNotFound.
-func TestSetWidgetLayoutWritesOnlyLayout(t *testing.T) {
+// UpdateWidget writes the columns it is asked for and nothing else: a
+// width alone leaves the content, the height and the place as they were,
+// content leaves the layout alone. Refusals are typed.
+func TestUpdateWidgetWritesOnlyTheColumnsAsked(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
+	for _, name := range []string{"note", "table"} {
+		if _, err := db.db.ExecContext(ctx, `INSERT INTO components
+			(name, description, accepts, inputs, props, default_width, default_height)
+			VALUES (?, 'c', '[]', '{}', '{}', 4, 3)`, name); err != nil {
+			t.Fatal(err)
+		}
+	}
 	id, err := db.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "D", SortKey: "a", Sidebar: true},
 		nil, store.AuditEntry{Actor: "agent", Action: "dashboard.create"})
 	if err != nil {
@@ -211,7 +219,7 @@ func TestSetWidgetLayoutWritesOnlyLayout(t *testing.T) {
 	}
 	add := func(name, key string) int64 {
 		wID, err := db.InsertWidget(ctx, store.Widget{DashboardID: id, SortKey: key, Width: 12, Height: 2,
-			Name: name, Title: "T " + name, Props: `{"k":1}`, SourceType: "md", Source: "text " + name},
+			Component: "note", Name: name, Title: "T " + name, Props: `{"k":1}`, SourceType: "md", Source: "text " + name},
 			store.AuditEntry{Actor: "agent", Action: "widget.add"})
 		if err != nil {
 			t.Fatal(err)
@@ -220,21 +228,51 @@ func TestSetWidgetLayoutWritesOnlyLayout(t *testing.T) {
 	}
 	a := add("a", "a")
 	add("b", "b")
+	audit := store.AuditEntry{Actor: "agent", Action: "widget.update"}
+	get := func() store.Widget {
+		t.Helper()
+		w, err := db.GetWidget(ctx, a)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return w
+	}
+	// Every column of the argument differs from the row, so a column
+	// written without being asked for shows.
+	changed := store.Widget{ID: a, Component: "table", SortKey: "c", Width: 6, Height: 4,
+		Name: "n", Title: "T n", Props: `{"k":2}`, SourceType: "sql", Source: "SELECT 1"}
 
-	if err := db.SetWidgetLayout(ctx, a, "c", 6, 4, store.AuditEntry{Actor: "agent", Action: "widget.update"}); err != nil {
+	if err := db.UpdateWidget(ctx, changed, store.WidgetColumns{Width: true}, audit); err != nil {
 		t.Fatal(err)
 	}
-	got, err := db.GetWidget(ctx, a)
-	if err != nil {
+	got := get()
+	if got.Width != 6 {
+		t.Errorf("width = %d, want 6", got.Width)
+	}
+	if got.Height != 2 || got.SortKey != "a" || got.Component != "note" || got.Name != "a" ||
+		got.Title != "T a" || got.Props != `{"k":1}` || got.SourceType != "md" || got.Source != "text a" {
+		t.Errorf("a width update touched other columns: %+v", got)
+	}
+
+	if err := db.UpdateWidget(ctx, changed, store.WidgetColumns{Content: true}, audit); err != nil {
 		t.Fatal(err)
 	}
-	if got.SortKey != "c" || got.Width != 6 || got.Height != 4 {
-		t.Errorf("layout = %q %dx%d, want c 6x4", got.SortKey, got.Width, got.Height)
+	got = get()
+	if got.Component != "table" || got.Name != "n" || got.Title != "T n" || got.Props != `{"k":2}` ||
+		got.SourceType != "sql" || got.Source != "SELECT 1" {
+		t.Errorf("content = %+v, want the changed content", got)
 	}
-	if got.Name != "a" || got.Title != "T a" || got.Props != `{"k":1}` ||
-		got.SourceType != "md" || got.Source != "text a" {
-		t.Errorf("SetWidgetLayout touched content columns: %+v", got)
+	if got.Width != 6 || got.Height != 2 || got.SortKey != "a" {
+		t.Errorf("a content update touched the layout: %q %dx%d", got.SortKey, got.Width, got.Height)
 	}
+
+	if err := db.UpdateWidget(ctx, changed, store.WidgetColumns{SortKey: true, Height: true}, audit); err != nil {
+		t.Fatal(err)
+	}
+	if got = get(); got.SortKey != "c" || got.Height != 4 || got.Width != 6 || got.Name != "n" {
+		t.Errorf("place and height = %q %dx%d (name %q), want c 6x4", got.SortKey, got.Width, got.Height, got.Name)
+	}
+
 	var subject string
 	if err := db.db.QueryRowContext(ctx,
 		`SELECT subject FROM audit_log WHERE action='widget.update' ORDER BY rowid DESC LIMIT 1`).Scan(&subject); err != nil {
@@ -244,11 +282,35 @@ func TestSetWidgetLayoutWritesOnlyLayout(t *testing.T) {
 		t.Errorf("audit subject = %q, want %q", subject, want)
 	}
 
-	err = db.SetWidgetLayout(ctx, a, "b", 6, 4, store.AuditEntry{Actor: "agent", Action: "widget.update"})
+	var rows int
+	if err := db.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_log WHERE action='widget.update'`).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	err = db.UpdateWidget(ctx, changed, store.WidgetColumns{}, audit)
+	if !errors.Is(err, store.ErrInvalid) {
+		t.Errorf("no column = %v, want ErrInvalid", err)
+	}
+	var after int
+	if err := db.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_log WHERE action='widget.update'`).Scan(&after); err != nil {
+		t.Fatal(err)
+	}
+	if after != rows {
+		t.Errorf("a refused empty update wrote %d audit rows", after-rows)
+	}
+
+	taken := changed
+	taken.SortKey = "b"
+	err = db.UpdateWidget(ctx, taken, store.WidgetColumns{SortKey: true}, audit)
 	if !errors.Is(err, store.ErrConflict) {
 		t.Errorf("taken sort key = %v, want ErrConflict", err)
 	}
-	err = db.SetWidgetLayout(ctx, 999999, "z", 1, 1, store.AuditEntry{Actor: "agent", Action: "widget.update"})
+	taken = changed
+	taken.Name = "b"
+	err = db.UpdateWidget(ctx, taken, store.WidgetColumns{Content: true}, audit)
+	if !errors.Is(err, store.ErrConflict) {
+		t.Errorf("taken name = %v, want ErrConflict", err)
+	}
+	err = db.UpdateWidget(ctx, store.Widget{ID: 999999, Width: 1}, store.WidgetColumns{Width: true}, audit)
 	if !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("unknown id = %v, want ErrNotFound", err)
 	}
@@ -356,7 +418,7 @@ func TestReportingUnknownIDIsNotFound(t *testing.T) {
 		t.Errorf("UpdateDashboard unknown id = %v, want ErrNotFound", err)
 	}
 	err = db.UpdateWidget(ctx, store.Widget{ID: 999999, Name: "x", SortKey: "y", SourceType: "events", Source: "a"},
-		store.AuditEntry{Actor: "agent", Action: "widget.update"})
+		store.WidgetColumns{Content: true}, store.AuditEntry{Actor: "agent", Action: "widget.update"})
 	if !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("UpdateWidget unknown id = %v, want ErrNotFound", err)
 	}

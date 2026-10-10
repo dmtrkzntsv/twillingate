@@ -469,17 +469,39 @@ func mapWidgetConflict(w store.Widget, err error) error {
 	return fmt.Errorf("insert widget %q: %w", w.Name, err)
 }
 
-// UpdateWidget updates every editable column (not dashboard_id: a widget
-// does not move between dashboards).
-func (d *DB) UpdateWidget(ctx context.Context, w store.Widget, a store.AuditEntry) error {
+// UpdateWidget writes the columns cols names and updated_at, never the
+// whole row: the caller read w some time ago, and writing a column it did
+// not change would undo another writer's edit made since (a drag saved
+// while an agent's edit was being validated). dashboard_id is never
+// written: a widget does not move between dashboards.
+func (d *DB) UpdateWidget(ctx context.Context, w store.Widget, cols store.WidgetColumns, a store.AuditEntry) error {
+	// The column names are fixed here; only values travel as parameters.
+	var sets []string
+	var args []any
+	if cols.Content {
+		sets = append(sets, "component=NULLIF(?,'')", "name=?", "title=?", "props=?", "source_type=?", "source=?")
+		args = append(args, w.Component, w.Name, w.Title, w.Props, w.SourceType, w.Source)
+	}
+	if cols.SortKey {
+		sets = append(sets, "sort_key=?")
+		args = append(args, w.SortKey)
+	}
+	if cols.Width {
+		sets = append(sets, "width=?")
+		args = append(args, w.Width)
+	}
+	if cols.Height {
+		sets = append(sets, "height=?")
+		args = append(args, w.Height)
+	}
+	if len(sets) == 0 {
+		return store.Refuse(store.ErrInvalid, "update widget %d: no column to write", w.ID)
+	}
+	sets = append(sets, "updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')")
+	args = append(args, w.ID)
 	return d.tx(ctx, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx,
-			`UPDATE widgets SET component=NULLIF(?,''), sort_key=?, width=?, height=?,
-			 name=?, title=?, props=?, source_type=?, source=?,
-			 updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')
-			 WHERE id=?`,
-			w.Component, w.SortKey, w.Width, w.Height, w.Name, w.Title, w.Props,
-			w.SourceType, w.Source, w.ID)
+			"UPDATE widgets SET "+strings.Join(sets, ", ")+" WHERE id=?", args...)
 		if err != nil {
 			return mapWidgetConflict(w, err)
 		}
@@ -487,29 +509,6 @@ func (d *DB) UpdateWidget(ctx context.Context, w store.Widget, a store.AuditEntr
 			return store.Refuse(store.ErrNotFound, "update widget: unknown id %d", w.ID)
 		}
 		a.Subject = fmt.Sprintf("widget/%d", w.ID)
-		return audit(ctx, tx, a)
-	})
-}
-
-// SetWidgetLayout writes only a widget's place and size. A drag that
-// rewrote the whole row would put back whatever an agent changed in the
-// widget since the page read it, so the layout columns go alone.
-func (d *DB) SetWidgetLayout(ctx context.Context, id int64, sortKey string, width, height int, a store.AuditEntry) error {
-	return d.tx(ctx, func(tx *sql.Tx) error {
-		res, err := tx.ExecContext(ctx,
-			`UPDATE widgets SET sort_key=?, width=?, height=?,
-			 updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')
-			 WHERE id=?`, sortKey, width, height, id)
-		if err != nil {
-			if strings.Contains(err.Error(), "UNIQUE constraint failed: widgets.") {
-				return store.Refuse(store.ErrConflict, "widget %d: sort key %q already used on its dashboard", id, sortKey)
-			}
-			return fmt.Errorf("set widget %d layout: %w", id, err)
-		}
-		if n, _ := res.RowsAffected(); n == 0 {
-			return store.Refuse(store.ErrNotFound, "set widget layout: unknown id %d", id)
-		}
-		a.Subject = fmt.Sprintf("widget/%d", id)
 		return audit(ctx, tx, a)
 	})
 }
