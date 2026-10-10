@@ -47,11 +47,11 @@ var rank = map[string]int{
 	"internal/app":               3,
 }
 
-// unconstrained packages may import anything: the binary, this test, and
-// the smoke tooling.
+// unconstrained packages may import anything: the binary, this test, the
+// SQL check (tests only), and the smoke tooling.
 func unconstrained(rel string) bool {
 	return strings.HasPrefix(rel, "cmd/") || strings.HasPrefix(rel, "scripts/") ||
-		rel == "internal/archtest"
+		rel == "internal/archtest" || rel == "internal/sqlcheck"
 }
 
 // violations applies the rule to a production import graph keyed by
