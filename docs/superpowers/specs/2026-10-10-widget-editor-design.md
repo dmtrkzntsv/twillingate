@@ -95,8 +95,8 @@ read-only, as the server already enforces.
   parses), and of `:project`, `:from`, `:to`. ⌘/Ctrl+Enter runs.
 - **D13. Run query** calls the preview route. Project and range controls
   show only when the SQL uses `:project` or `:from`/`:to`; they default to
-  the dashboard's current values, else the most recent project and the last
-  7 days. Results have two tabs: **Preview** (the chosen component drawn
+  the dashboard's current values, else the first live project in the
+  projects list and the last 7 days. Results have two tabs: **Preview** (the chosen component drawn
   from the rows in a frame of the widget's size; the default after a run)
   and **Table** (the raw rows, row count, elapsed ms, truncated note).
   `problem` is a warning above both; a 400 shows its message in place of
