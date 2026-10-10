@@ -258,10 +258,14 @@ export interface RawEvents {
   window_days: number
 }
 
-/** The limits answer: the limits in force, and the raw events held (absent when the server could not count them). */
+/**
+ * The limits answer: the limits in force, the raw events held (absent when the server could not count them), and
+ * whether INGEST_DISABLED refuses every ingest route (absent from a server older than the switch).
+ */
 export interface LimitsResponse {
   limits: Limit[]
   raw_events?: RawEvents
+  ingest_disabled?: boolean
 }
 
 export interface CapUsageRow {

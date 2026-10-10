@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { screen, within } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 import { endpoints, type ProjectUsage } from '@/lib/api'
@@ -118,6 +118,32 @@ describe('Projects', () => {
     expect(screen.queryByRole('article', { name: 'legacy' })).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: /Archived \(1\)/ }))
     expect(screen.getByRole('article', { name: 'legacy' })).toBeInTheDocument()
+  })
+
+  describe('the ingest switch', () => {
+    const banner = 'Ingest is disabled on this server: new events and form submissions are refused.'
+
+    it('says ingest is disabled at the top of the page, under the header, above the cards', async () => {
+      vi.spyOn(endpoints, 'limits').mockResolvedValue({ limits: [], ingest_disabled: true })
+      renderPage()
+      const notice = await screen.findByText(banner)
+      expect(notice).toHaveAttribute('role', 'status')
+      const heading = screen.getByRole('heading', { name: 'Projects' })
+      const card = await screen.findByRole('article', { name: 'econumo.com' })
+      expect(heading.compareDocumentPosition(notice) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+      expect(notice.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    })
+
+    it.each([
+      ['off', { limits: [], ingest_disabled: false }],
+      ['not reported (an older server)', { limits: [] }],
+    ])('says nothing when the switch is %s', async (_name, answer) => {
+      vi.spyOn(endpoints, 'limits').mockResolvedValue(answer)
+      renderPage()
+      await screen.findByRole('article', { name: 'econumo.com' })
+      await waitFor(() => expect(endpoints.limits).toHaveBeenCalled())
+      expect(screen.queryByText(banner)).not.toBeInTheDocument()
+    })
   })
 
   it('shows the limits by group, retention first, 0 as what it means', async () => {
