@@ -1,4 +1,4 @@
-import { act, fireEvent, screen } from '@testing-library/react'
+import { act, fireEvent, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -104,6 +104,22 @@ describe('WidgetGrid', () => {
     await act(() => vi.advanceTimersByTimeAsync(1000))
     expect(arrange.resize).not.toHaveBeenCalled()
     expect(cell('Note 1').style.gridColumn).toBe('span 12 / span 12')
+  })
+
+  it('announces the size while it is being chosen, and clears it on Escape', () => {
+    renderGrid([note(1)], actions())
+    const corner = screen.getByRole('button', { name: 'Resize Note 1' })
+    // The card's loading skeleton is a status too, with no text of its own.
+    const announced = () =>
+      within(cell('Note 1'))
+        .getAllByRole('status')
+        .map((el) => el.textContent)
+        .join('')
+    expect(announced()).toBe('')
+    fireEvent.keyDown(corner, { key: 'ArrowRight' })
+    expect(announced()).toBe('Note 1: 7 of 12 columns wide, 4 rows tall')
+    fireEvent.keyDown(corner, { key: 'Escape' })
+    expect(announced()).toBe('')
   })
 
   it('resizes by dragging the corner a column and a row at a time', async () => {

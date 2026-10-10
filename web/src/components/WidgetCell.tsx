@@ -124,6 +124,13 @@ export default function WidgetCell({ widget, params, idle, share, gridPx, movabl
           )
         }
       />
+      {onResize && (
+        // Beside the card, not in it, so the card's re-renders leave it
+        // alone; it exists before its text does, or nothing is announced.
+        <span role="status" aria-live="polite" className="sr-only">
+          {draft && `${label}: ${draft.width} of ${COLUMNS} columns wide, ${draft.height} rows tall`}
+        </span>
+      )}
       {draft && (
         <span className="pointer-events-none absolute right-7 bottom-1.5 rounded bg-foreground px-1.5 py-0.5 text-xs text-background tabular-nums">
           {size.width} × {size.height}
