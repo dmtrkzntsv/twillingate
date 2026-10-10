@@ -11,25 +11,27 @@ export interface WidgetSize {
 
 export interface WidgetActions {
   /**
-   * Moves widget `id` after widget `after` (0: first). Resolves true when
-   * the server took it and false when it did not (after the toast), so a
-   * drag can drop its optimistic order at once.
+   * Moves widget `id` of dashboard `dashboardId` after widget `after` (0:
+   * first). Resolves, once that dashboard is refetched, true when the
+   * server took it and false when it did not (after the toast), so a drag
+   * can drop its optimistic order at once.
    */
-  move(id: number, after: number): Promise<boolean>
-  /** Resizes widget `id`; resolves as `move` does. */
-  resize(id: number, size: WidgetSize): Promise<boolean>
+  move(dashboardId: number, id: number, after: number): Promise<boolean>
+  /** Resizes widget `id` of dashboard `dashboardId`; resolves as `move` does. */
+  resize(dashboardId: number, id: number, size: WidgetSize): Promise<boolean>
 }
 
 /**
  * The page's own layout writes for the widgets of a user dashboard: each
  * an update_widget with only a place or a size, which runs no query. Both
- * refetch the dashboards shown, so the grid takes the server's layout;
- * a refusal or a dropped connection shows a toast instead of throwing.
+ * refetch the widget's own dashboard (the other cached ones are not
+ * touched), so the grid takes the server's layout; a refusal or a dropped
+ * connection shows a toast instead of throwing.
  */
 export function useWidgetActions(): WidgetActions {
   const client = useQueryClient()
   const save = useCallback(
-    async (id: number, body: WidgetLayoutBody) => {
+    async (dashboardId: number, id: number, body: WidgetLayoutBody) => {
       try {
         await endpoints.updateWidget(id, body)
         return true
@@ -39,15 +41,15 @@ export function useWidgetActions(): WidgetActions {
         else toast.error(err instanceof Error ? err.message : String(err))
         return false
       } finally {
-        await client.invalidateQueries({ queryKey: ['dashboard'] })
+        await client.invalidateQueries({ queryKey: ['dashboard', dashboardId] })
       }
     },
     [client]
   )
   return useMemo(
     () => ({
-      move: (id, after) => save(id, { after }),
-      resize: (id, size) => save(id, size),
+      move: (dashboardId, id, after) => save(dashboardId, id, { after }),
+      resize: (dashboardId, id, size) => save(dashboardId, id, size),
     }),
     [save]
   )

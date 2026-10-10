@@ -47,7 +47,10 @@ function WidgetGrid({ widgets, paramsFor, idle = false, share, arrange }: Props)
   const ids = widgets.map((w) => w.widget_id)
   const byId = new Map(widgets.map((w) => [w.widget_id, w]))
   const titleOf = (id: number) => label(byId.get(id))
-  const onMove = (id: number, to: number) => (arrange ? arrange.move(id, afterAt(ids, id, to)) : Promise.resolve(false))
+  const onMove = (id: number, to: number) => {
+    const widget = byId.get(id)
+    return arrange && widget ? arrange.move(widget.dashboard_id, id, afterAt(ids, id, to)) : Promise.resolve(false)
+  }
   const { order, busy, context } = useReorder(ids, onMove, 'xy', titleOf)
   // Resizing needs the widths drawn as saved; moving works at every width.
   const resizable = gridPx >= FULL_GRID_PX

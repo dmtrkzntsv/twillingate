@@ -86,7 +86,7 @@ describe('WidgetGrid', () => {
     expect(screen.getByText('8 × 5')).toBeInTheDocument()
     expect(arrange.resize).not.toHaveBeenCalled()
     await act(() => vi.advanceTimersByTimeAsync(600))
-    expect(arrange.resize).toHaveBeenCalledWith(1, { width: 8, height: 5 })
+    expect(arrange.resize).toHaveBeenCalledWith(1, 1, { width: 8, height: 5 })
     // The new size stays while the server's is on its way.
     expect(cell('Note 1').style.gridColumn).toBe('span 8 / span 8')
   })
@@ -133,7 +133,7 @@ describe('WidgetGrid', () => {
     fireEvent.pointerMove(corner, { pointerId: 1, clientX: 500 - 40, clientY: 300 + 2 * 52 + 30 })
     expect(screen.getByText('6 × 7')).toBeInTheDocument()
     fireEvent.pointerUp(corner, { pointerId: 1, clientX: 500 - 60, clientY: 300 + 2 * 52 + 30 })
-    expect(arrange.resize).toHaveBeenCalledWith(1, { width: 5, height: 7 })
+    expect(arrange.resize).toHaveBeenCalledWith(1, 1, { width: 5, height: 7 })
   })
 
   it('saves nothing when the corner is let go where it started', () => {
@@ -157,7 +157,7 @@ describe('WidgetGrid', () => {
     fireEvent.pointerDown(corner, { button: 0, pointerId: 2, clientX: 202, clientY: 0 })
     fireEvent.pointerUp(corner, { pointerId: 2, clientX: 0, clientY: 0 })
     expect(arrange.resize).toHaveBeenCalledTimes(2)
-    expect(arrange.resize).toHaveBeenLastCalledWith(1, { width: 6, height: 4 })
+    expect(arrange.resize).toHaveBeenLastCalledWith(1, 1, { width: 6, height: 4 })
     expect(cell('Note 1').style.gridColumn).toBe('span 6 / span 6')
     // Let go where it was picked up: the size shown is unchanged, nothing is sent.
     fireEvent.pointerDown(corner, { button: 0, pointerId: 3, clientX: 0, clientY: 0 })
@@ -223,7 +223,7 @@ describe('WidgetGrid', () => {
     const corner = screen.getByRole('button', { name: 'Resize Note 1' })
     fireEvent.pointerDown(corner, { button: 0, pointerId: 1, clientX: 0, clientY: 0 })
     fireEvent.pointerUp(corner, { pointerId: 1, clientX: 202, clientY: 0 })
-    expect(arrange.resize).toHaveBeenCalledWith(1, { width: 8, height: 4 })
+    expect(arrange.resize).toHaveBeenCalledWith(1, 1, { width: 8, height: 4 })
     await user.hover(corner) // lets the refusal settle
     expect(cell('Note 1').style.gridColumn).toBe('span 6 / span 6')
   })

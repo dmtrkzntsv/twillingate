@@ -22,7 +22,7 @@ interface Props {
   /** A dropped order waits for the server's: the grip stays, but nothing drags until it is back. */
   busy: boolean
   /** The card resizes by its corner; absent, it has no corner. */
-  onResize?: (id: number, size: WidgetSize) => Promise<boolean>
+  onResize?: (dashboardId: number, id: number, size: WidgetSize) => Promise<boolean>
 }
 
 /** The most rows and columns a widget spans (validate.go's checkSize). */
@@ -66,7 +66,7 @@ export default function WidgetCell({ widget, params, idle, share, gridPx, movabl
     const mine = { from: storedKey, size: next }
     setSaving(mine)
     // A late refusal clears only its own size, never a newer one.
-    void onResize(id, next).then((ok) => {
+    void onResize(widget.dashboard_id, id, next).then((ok) => {
       if (!ok) setSaving((s) => (s === mine ? null : s))
     })
   }
