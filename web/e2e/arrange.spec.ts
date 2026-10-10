@@ -414,3 +414,25 @@ test('moves a widget by its grip and resizes it by its corner', async ({ page, r
   await expect(cell('E2E W1')).toHaveAttribute('data-span', '6')
   await expect(page.getByRole('heading', { level: 3 })).toHaveText(['E2E W3', 'E2E W1', 'E2E W2'])
 })
+
+test('moves a widget from the keyboard', async ({ page, request }) => {
+  await page.setViewportSize({ width: 1600, height: 1000 })
+  const id = await createWidgetDashboard(request, 'E2E Keys')
+  toArchive.push({ id })
+
+  await login(page)
+  await page.goto(`/app/dashboards/${id}`)
+  await page.waitForLoadState('networkidle')
+
+  // Space picks the card up, an arrow moves it one card along, Space drops it.
+  // Each step waits for dnd-kit's announcement of the one before: it listens
+  // for the next key only once it has started, which is slower than a script.
+  const announced = (text: string) => expect(page.getByRole('status').filter({ hasText: text })).toHaveCount(1)
+  await page.getByRole('button', { name: 'Move E2E W1' }).focus()
+  await page.keyboard.press('Space')
+  await announced('E2E W1')
+  await page.keyboard.press('ArrowRight')
+  await announced('E2E W1 moved to position 2 of 3')
+  await page.keyboard.press('Space')
+  await expect.poll(() => widgetLayout(request, id)).toEqual(['E2E W2 4x3', 'E2E W1 4x3', 'E2E W3 4x3'])
+})
