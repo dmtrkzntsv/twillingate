@@ -399,8 +399,8 @@ null: the card says "component removed" and `widget_data` answers
 `update_widget`, resized, moved or archived. The new `component` may come with
 `title`, `props` and `source` in the same call, and the whole widget is checked
 against it; without a `component`, only `width`, `height` and `after` can
-change, and it cannot be copied, until it has a component again. A component that comes back
-in a later release does not reattach itself.
+change, and it cannot be copied until it has a component again. A component
+that comes back in a later release does not reattach itself.
 
 ## Examples
 
