@@ -36,7 +36,10 @@ export const keysQuery = (projectId?: number) => ({
   queryFn: () => endpoints.keys(projectId),
 })
 
-/** The limits in force and the settings' defaults, which change only with the server's environment, and the raw events held, which a full count answers (seconds on a large server) and a few minutes' staleness does not hurt; so a long stale time. */
+/**
+ * The limits in force and the settings' defaults, which change only with the server's environment, and the raw
+ * events held, which the server itself counts at most every five minutes; so a long stale time.
+ */
 export const limitsQuery = { queryKey: ['limits'], queryFn: () => endpoints.limits(), staleTime: 5 * 60_000 }
 
 /** Per-project usage over a range (the last 30 days when empty). */

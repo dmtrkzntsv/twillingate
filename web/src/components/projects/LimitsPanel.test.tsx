@@ -44,6 +44,11 @@ describe('LimitsPanel', () => {
     expect(screen.getByText('Raw events held: 0 (the last day)')).toBeInTheDocument()
   })
 
+  it('says today for a raw window of 0 days, which keeps only today raw', () => {
+    render(<LimitsPanel limits={limits} rawEvents={{ held: 12, window_days: 0 }} />)
+    expect(screen.getByText('Raw events held: 12 (today)')).toBeInTheDocument()
+  })
+
   it('says nothing about raw events when the server could not count them', () => {
     render(<LimitsPanel limits={limits} />)
     expect(screen.queryByText(/Raw events held/)).not.toBeInTheDocument()

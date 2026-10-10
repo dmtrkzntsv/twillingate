@@ -26,6 +26,15 @@ export function formatLimit(l: Pick<Limit, 'value' | 'unit' | 'zero'>, value = l
 }
 
 /**
+ * The raw window the held count falls in. RETENTION_EVENTS_RAW_DAYS 0 keeps only today's rows raw: the daily pass
+ * rolls up every earlier day, and ingest clamps older timestamps to the time received.
+ */
+function rawWindow(days: number): string {
+  if (days === 0) return 'today'
+  return days === 1 ? 'the last day' : `the last ${days.toLocaleString()} days`
+}
+
+/**
  * The limits in force by group: retention and caps (set in the environment, each with its default), then the fixed
  * ingest limits; and, when the server could count them, the raw events it holds in its raw window.
  */
@@ -37,8 +46,7 @@ export default function LimitsPanel({ limits, rawEvents }: { limits: Limit[]; ra
         <p className="text-sm text-muted-foreground">Retention and caps are set in twillingate.env.</p>
         {rawEvents && (
           <p className="text-sm">
-            Raw events held: {rawEvents.held.toLocaleString()} (the last{' '}
-            {rawEvents.window_days === 1 ? 'day' : `${rawEvents.window_days.toLocaleString()} days`})
+            Raw events held: {rawEvents.held.toLocaleString()} ({rawWindow(rawEvents.window_days)})
           </p>
         )}
       </header>
