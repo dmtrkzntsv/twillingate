@@ -211,12 +211,13 @@ func newTestHost(t *testing.T) (*host, *mcp.ClientSession) {
 	}
 	h := &host{db: db, subs: subs, reg: reg, ops: manage.NewOps(reg, st),
 		rep:       reporting.New(st, db, reporting.Options{CacheAge: time.Minute, RefreshAge: time.Second, ShareBaseURL: "https://c.example"}),
-		publicURL: "https://collector.test", logger: logger,
+		publicURL: "https://collector.test", logger: logger, rawDays: config.DefaultRawDays,
 		limits: limitsFrom(&config.Config{AttributeValuesTopN: config.DefaultAttributeValuesTopN, IdentitiesTopN: config.DefaultIdentitiesTopN})}
 	// host itself carries no path (production has no need for one once
 	// opened); setGuards needs it to reopen with different guards, so the
 	// test side remembers it here, keyed by the host it belongs to.
 	testDBPaths[h] = path
+	h.raw = h.newHostRawCount()
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "analytics", Version: "test"},
 		&mcp.ServerOptions{Instructions: serverInstructions})

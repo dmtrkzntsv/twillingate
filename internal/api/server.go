@@ -57,7 +57,12 @@ func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *m
 	rep := reporting.New(rst, db, reporting.Options{CacheAge: cfg.Reporting.CacheAge, RefreshAge: cfg.Reporting.RefreshAge,
 		ArchivedDays: cfg.Retention.ArchivedDays, ShareBaseURL: cfg.Console.URL})
 	h := &host{db: db, subs: subs, reg: reg, ops: ops, rep: rep,
-		publicURL: cfg.PublicURL, logger: logger, limits: limitsFrom(cfg)}
+		publicURL: cfg.PublicURL, logger: logger, limits: limitsFrom(cfg), rawDays: cfg.Retention.Events.RawDays,
+		ingestDisabled: cfg.IngestDisabled}
+	h.raw = h.newHostRawCount()
+	// Counted from the start, so the first limits read (the Projects
+	// page) does not wait for a scan of every raw row.
+	h.raw.warm()
 	srv := mcp.NewServer(&mcp.Implementation{Name: "twillingate", Version: "1.0.0"},
 		&mcp.ServerOptions{Instructions: serverInstructions})
 	rest := http.NewServeMux()

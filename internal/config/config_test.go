@@ -53,6 +53,31 @@ func TestDefaultsApplied(t *testing.T) {
 	if c.Reporting.CacheAge != 900*time.Second || c.Reporting.RefreshAge != 60*time.Second {
 		t.Errorf("Reporting = %+v", c.Reporting)
 	}
+	if c.IngestDisabled {
+		t.Error("IngestDisabled is on by default")
+	}
+}
+
+// INGEST_DISABLED takes Go's boolean spellings (1, t, true, TRUE, True and
+// their 0/f/false counterparts); anything else refuses the boot, naming
+// the variable, rather than guessing which way a typo was meant.
+func TestIngestDisabled(t *testing.T) {
+	for v, want := range map[string]bool{"1": true, "true": true, "TRUE": true, "t": true,
+		"0": false, "false": false, "False": false, "": false} {
+		c, err := load(t, map[string]string{"INGEST_DISABLED": v})
+		if err != nil {
+			t.Errorf("INGEST_DISABLED=%q: %v", v, err)
+			continue
+		}
+		if c.IngestDisabled != want {
+			t.Errorf("INGEST_DISABLED=%q: IngestDisabled = %v, want %v", v, c.IngestDisabled, want)
+		}
+	}
+	for _, v := range []string{"yes", "on", "2"} {
+		if _, err := load(t, map[string]string{"INGEST_DISABLED": v}); err == nil || !strings.Contains(err.Error(), "INGEST_DISABLED") {
+			t.Errorf("INGEST_DISABLED=%q: err = %v, want a refusal naming the variable", v, err)
+		}
+	}
 }
 
 func TestEnvOverrides(t *testing.T) {

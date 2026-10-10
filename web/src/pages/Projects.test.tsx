@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { screen, within } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 import { endpoints, type ProjectUsage } from '@/lib/api'
@@ -46,7 +46,7 @@ beforeEach(() => {
     { group: 'retention', name: 'Raw events', setting: 'RETENTION_EVENTS_RAW_DAYS', value: 7, default: 30, unit: 'days', description: 'raw events are kept this long' },
     { group: 'caps', name: 'Attribute values', setting: 'ATTRIBUTE_VALUES_TOP_N', value: 0, default: 100, zero: 'no cap', description: 'values per views breakdown and per attribute key' },
     { group: 'ingest', name: 'Request body', value: 262144, unit: 'bytes', description: 'a larger request is refused with 413' },
-  ] })
+  ], raw_events: { held: 48210, window_days: 7 } })
 })
 
 function renderPage() {
@@ -120,6 +120,32 @@ describe('Projects', () => {
     expect(screen.getByRole('article', { name: 'legacy' })).toBeInTheDocument()
   })
 
+  describe('the ingest switch', () => {
+    const banner = 'Ingest is disabled on this server: new events and form submissions are refused.'
+
+    it('says ingest is disabled at the top of the page, under the header, above the cards', async () => {
+      vi.spyOn(endpoints, 'limits').mockResolvedValue({ limits: [], ingest_disabled: true })
+      renderPage()
+      const notice = await screen.findByText(banner)
+      expect(notice).toHaveAttribute('role', 'status')
+      const heading = screen.getByRole('heading', { name: 'Projects' })
+      const card = await screen.findByRole('article', { name: 'econumo.com' })
+      expect(heading.compareDocumentPosition(notice) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+      expect(notice.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    })
+
+    it.each([
+      ['off', { limits: [], ingest_disabled: false }],
+      ['not reported (an older server)', { limits: [] }],
+    ])('says nothing when the switch is %s', async (_name, answer) => {
+      vi.spyOn(endpoints, 'limits').mockResolvedValue(answer)
+      renderPage()
+      await screen.findByRole('article', { name: 'econumo.com' })
+      await waitFor(() => expect(endpoints.limits).toHaveBeenCalled())
+      expect(screen.queryByText(banner)).not.toBeInTheDocument()
+    })
+  })
+
   it('shows the limits by group, retention first, 0 as what it means', async () => {
     renderPage()
     const panel = await screen.findByRole('region', { name: 'Limits' })
@@ -137,6 +163,7 @@ describe('Projects', () => {
     const ingest = within(panel).getByRole('region', { name: 'Ingest' })
     expect(within(ingest).getByText('256 KiB')).toBeInTheDocument()
     expect(within(ingest).queryByText(/default/)).not.toBeInTheDocument()
+    expect(within(panel).getByText('Raw events held: 48,210 (the last 7 days)')).toBeInTheDocument()
   })
 
   it('creates a project and shows its key and snippet once', async () => {
