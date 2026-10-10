@@ -75,8 +75,9 @@ func (s *Service) AddWidget(ctx context.Context, actor string, in AddWidget) (Wi
 }
 
 // UpdateWidget changes the fields in that are set and checks the whole
-// resulting widget. A widget whose component was removed takes only a
-// new component, a size and a place until it has one again (D15). A
+// resulting widget. A widget whose component was removed takes a new
+// component, alone or with its content in the same call, and otherwise
+// only a size and a place until it has one again (D15). A
 // change of only the size or the place (the page's drag) checks the size
 // alone and writes only those: the content is unchanged, so its query is
 // not run again. Every update writes only the columns it changes, since
@@ -90,7 +91,10 @@ func (s *Service) UpdateWidget(ctx context.Context, actor string, in UpdateWidge
 	if _, err := s.editableDashboard(ctx, w.DashboardID); err != nil {
 		return WidgetInfo{}, err
 	}
-	if w.Component == "" && (in.Name != nil || in.Title != nil || in.Props != nil || in.Source != nil) {
+	// A removed component (D14) leaves nothing to check content against,
+	// so content alone is refused; with a new component in the same call
+	// the whole widget is validated against it below (widget editor D7).
+	if w.Component == "" && in.Component == nil && (in.Name != nil || in.Title != nil || in.Props != nil || in.Source != nil) {
 		return WidgetInfo{}, refuseRemoved(w.ID)
 	}
 	if in.Name != nil {
