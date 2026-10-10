@@ -60,6 +60,9 @@ func newResolver(fn *ast.FuncDecl, consts map[string]ast.Expr, types map[string]
 			}
 		case *ast.RangeStmt:
 			if id, ok := n.Value.(*ast.Ident); ok {
+				if _, seen := r.ranges[id.Name]; seen {
+					r.unresolved[id.Name] = id.Name + " ranges over more than one slice in this function"
+				}
 				r.ranges[id.Name] = n.X
 			}
 		}
@@ -139,6 +142,9 @@ func (r *resolver) resolve(e ast.Expr) ([]string, string) {
 		return nil, "built by a call to " + exprString(e.Fun)
 	case *ast.SelectorExpr:
 		if x, ok := e.X.(*ast.Ident); ok {
+			if why, ok := r.unresolved[x.Name]; ok {
+				return nil, why
+			}
 			if over, ok := r.ranges[x.Name]; ok {
 				return r.field(over, e.Sel.Name)
 			}

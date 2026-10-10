@@ -160,6 +160,31 @@ func F(ctx context.Context) error {
 	}
 }
 
+func TestRangeNameReusedIsDynamic(t *testing.T) {
+	sites := scanOne(t, `func F(ctx context.Context, db *sql.DB) {
+	for _, t := range []string{"a"} {
+		db.ExecContext(ctx, "DELETE FROM "+t)
+	}
+	for _, t := range []string{"b"} {
+		db.ExecContext(ctx, "DELETE FROM "+t)
+	}
+	for _, s := range []struct{ q string }{{"SELECT 1"}} {
+		db.QueryContext(ctx, s.q)
+	}
+	for _, s := range []struct{ q string }{{"SELECT 2"}} {
+		db.QueryContext(ctx, s.q)
+	}
+}`)
+	if len(sites) != 4 {
+		t.Fatalf("got %d sites, want 4", len(sites))
+	}
+	for i, s := range sites {
+		if s.sqls != nil || !strings.Contains(s.why, "more than one slice") {
+			t.Errorf("site %d: got %+v, want dynamic: the name ranges over two slices", i, s)
+		}
+	}
+}
+
 func TestDynamicSitesSayWhy(t *testing.T) {
 	sites := scanOne(t, `var name = "SELECT 1"
 func init() { name = "SELECT 2" }
