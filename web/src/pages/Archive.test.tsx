@@ -4,9 +4,11 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 import type { DashboardActions } from '@/hooks/use-dashboard-actions'
 import { useDashboardActions } from '@/hooks/use-dashboard-actions'
+import type { WidgetEdits } from '@/hooks/use-widget-edits'
+import { useWidgetEdits } from '@/hooks/use-widget-edits'
 import type { WidgetShareActions } from '@/hooks/use-widget-share-actions'
 import { useWidgetShareActions } from '@/hooks/use-widget-share-actions'
-import { endpoints, type DashboardInfo, type WidgetShare } from '@/lib/api'
+import { endpoints, type DashboardInfo, type ListedWidget, type WidgetShare } from '@/lib/api'
 import { form } from '@/test/forms'
 import { renderWithProviders } from '@/test/render'
 import Archive from './Archive'
@@ -15,11 +17,16 @@ vi.mock('@/hooks/use-dashboard-actions', () => ({
   useDashboardActions: vi.fn(),
 }))
 
+vi.mock('@/hooks/use-widget-edits', () => ({
+  useWidgetEdits: vi.fn(),
+}))
+
 vi.mock('@/hooks/use-widget-share-actions', () => ({
   useWidgetShareActions: vi.fn(),
 }))
 
 const restoreShare = vi.fn()
+const restoreWidget = vi.fn()
 const duplicate = vi.fn()
 const archive = vi.fn()
 const restore = vi.fn()
@@ -93,6 +100,14 @@ beforeEach(() => {
   URL.createObjectURL = vi.fn((b: Blob) => `blob:thumb-${b.size}`)
   URL.revokeObjectURL = vi.fn()
   mockShares()
+  vi.spyOn(endpoints, 'listWidgets').mockResolvedValue({ widgets: [] })
+  vi.mocked(useWidgetEdits).mockReturnValue({
+    add: vi.fn(),
+    update: vi.fn(),
+    rename: vi.fn(),
+    archive: vi.fn(),
+    restore: restoreWidget,
+  } satisfies WidgetEdits)
   vi.spyOn(endpoints, 'projects').mockResolvedValue({ projects: [] })
   vi.spyOn(endpoints, 'forms').mockResolvedValue({ action_base: '', forms: [] })
   vi.mocked(useWidgetShareActions).mockReturnValue({
@@ -521,5 +536,99 @@ describe('Archive, forms', () => {
     renderArchive()
     await screen.findByText('Nothing archived.')
     expect(screen.queryByRole('region', { name: 'Forms' })).toBeNull()
+  })
+})
+
+function listed(widget_id: number, dashboard: DashboardInfo, extra: Partial<ListedWidget> = {}): ListedWidget {
+  return {
+    widget_id,
+    dashboard_id: dashboard.dashboard_id,
+    name: `widget_${widget_id}`,
+    component: 'stat',
+    width: 4,
+    height: 2,
+    props: {},
+    source: { type: 'sql', sql: 'SELECT 1' },
+    follows_project: true,
+    follows_range: true,
+    dashboard,
+    position: widget_id,
+    ...extra,
+  } as ListedWidget
+}
+
+describe('Archive, widgets', () => {
+  const launch = info(10, 'Launch week', 'user', 10)
+  const old = info(11, 'Old experiment', 'user', 11, { archived_at: '2026-09-01T00:00:00Z' })
+  const reports = info(6, 'Reports', 'system', 6)
+  const gone = { archived_at: '2026-09-01T00:00:00Z' }
+
+  it("lists a live user dashboard's archived widgets under its title with Restore", async () => {
+    const user = userEvent.setup()
+    mockApiWith([launch, old, reports], 30)
+    vi.spyOn(endpoints, 'listWidgets').mockResolvedValue({
+      widgets: [
+        listed(22, launch, { name: 'second', title: 'Second try', ...gone, position: 2 }),
+        listed(21, launch, { name: 'first_try', ...gone, position: 1 }),
+      ],
+    })
+    renderArchive()
+    const section = await screen.findByRole('region', { name: 'Archived widgets' })
+    const card = within(section).getByRole('listitem', { name: 'Launch week' })
+    const rows = within(card).getAllByRole('listitem')
+
+    expect(rows.map((r) => within(r).getByText(/first_try|Second try/).textContent)).toEqual(['first_try', 'Second try'])
+    expect(within(rows[0]).getByText(/archived · deleted on/)).toBeInTheDocument()
+    await user.click(within(rows[1]).getByRole('button', { name: 'Restore' }))
+    expect(restoreWidget).toHaveBeenCalledWith({ widget_id: 22, dashboard_id: 10 })
+  })
+
+  it('leaves out live widgets, widgets of an archived dashboard and widgets of a system dashboard', async () => {
+    mockApiWith([launch, old, reports])
+    vi.spyOn(endpoints, 'listWidgets').mockResolvedValue({
+      widgets: [
+        listed(1, launch, { name: 'live_one' }),
+        listed(2, old, { name: 'in_archived_dashboard', ...gone }),
+        listed(3, reports, { name: 'in_system_dashboard', ...gone }),
+        listed(4, launch, { name: 'listed_one', ...gone }),
+      ],
+    })
+    renderArchive()
+    const section = await screen.findByRole('region', { name: 'Archived widgets' })
+
+    expect(within(section).getByText('listed_one')).toBeInTheDocument()
+    expect(screen.queryByText('live_one')).not.toBeInTheDocument()
+    expect(screen.queryByText('in_archived_dashboard')).not.toBeInTheDocument()
+    expect(screen.queryByText('in_system_dashboard')).not.toBeInTheDocument()
+  })
+
+  it('has no section with none, and still reads "Nothing archived."', async () => {
+    mockApiWith([launch, reports])
+    vi.spyOn(endpoints, 'listWidgets').mockResolvedValue({ widgets: [listed(1, launch)] })
+    renderArchive()
+
+    expect(await screen.findByText('Nothing archived.')).toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Archived widgets' })).not.toBeInTheDocument()
+  })
+
+  it('does not read "Nothing archived." while the widgets are loading, or when only widgets are archived', async () => {
+    mockApiWith([launch])
+    let resolve: (v: { widgets: ListedWidget[] }) => void = () => {}
+    vi.spyOn(endpoints, 'listWidgets').mockReturnValue(new Promise((r) => (resolve = r)))
+    renderArchive()
+
+    await waitFor(() => expect(endpoints.listWidgets).toHaveBeenCalled())
+    expect(screen.queryByText('Nothing archived.')).not.toBeInTheDocument()
+    resolve({ widgets: [listed(4, launch, { name: 'listed_one', ...gone })] })
+    await screen.findByText('listed_one')
+    expect(screen.queryByText('Nothing archived.')).not.toBeInTheDocument()
+  })
+
+  it('asks for no widgets in reporting dev', async () => {
+    vi.spyOn(endpoints, 'dashboards').mockResolvedValue({ timezone: 'UTC', dashboards, dev: true })
+    renderArchive()
+
+    await screen.findByText('Old experiment')
+    expect(endpoints.listWidgets).not.toHaveBeenCalled()
   })
 })
