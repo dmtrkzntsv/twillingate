@@ -1,4 +1,4 @@
-import { memo, useRef, useState } from 'react'
+import { memo, useEffect, useRef } from 'react'
 import {
   closestCenter,
   DndContext,
@@ -55,16 +55,24 @@ function WidgetGrid({ widgets, paramsFor, idle = false, share, arrange }: Props)
   // A card redraws only when its props change, but paramsFor makes a new
   // object per call: equal queries are handed over as the same object, so
   // the grid redrawing (a drop, another selection) redraws only the cards
-  // whose widget or query changed. A few small objects per selection shown.
-  const [queries] = useState(() => new Map<string, WidgetDataQuery>())
+  // whose widget or query changed. Each render keeps only the queries it
+  // used, so the map never outgrows the cards on screen. The key is the
+  // query's JSON, which leaves out undefined fields: right, since the
+  // request leaves them out too, and absent and undefined ask the same.
+  const shown = useRef(new Map<string, WidgetDataQuery>())
+  const used = new Map<string, WidgetDataQuery>()
   const paramsOf = (widget: Widget) => {
     const params = paramsFor(widget)
     const key = JSON.stringify(params)
-    const same = queries.get(key)
-    if (same) return same
-    queries.set(key, params)
-    return params
+    const same = used.get(key) ?? shown.current.get(key) ?? params
+    used.set(key, same)
+    return same
   }
+  // Once the render is on screen, not during it: a render React drops
+  // must not replace what the cards shown were given.
+  useEffect(() => {
+    shown.current = used
+  })
   // Resizing needs the widths drawn as saved; moving works at every width.
   const resizable = gridPx >= FULL_GRID_PX
 
