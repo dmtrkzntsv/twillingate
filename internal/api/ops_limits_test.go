@@ -1,15 +1,20 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"math"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/config"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
+	"github.com/dmtrkzntsv/twillingate/internal/store"
 	"github.com/dmtrkzntsv/twillingate/internal/wire"
 )
 
@@ -76,6 +81,108 @@ func TestLimitsReportsTheLimitsInForce(t *testing.T) {
 	}
 	if len(mcpOut.Limits) != len(out.Limits) || mcpOut.Limits[0].Group != groupRetention {
 		t.Errorf("MCP limits = %+v", mcpOut.Limits)
+	}
+}
+
+// heldByFamily counts the stored raw rows family by family, through the
+// raw_* views, so the expectation does not share listLimits' query.
+func heldByFamily(t *testing.T, h *host) int64 {
+	t.Helper()
+	var n int64
+	for _, v := range []string{"raw_views", "raw_product", "raw_measures"} {
+		res, err := h.subs.Run(context.Background(), "SELECT COUNT(*) FROM "+v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		k, err := strconv.ParseInt(res.Rows[0][0], 10, 64)
+		if err != nil {
+			t.Fatal(err)
+		}
+		n += k
+	}
+	return n
+}
+
+// raw_events is the raw rows stored now, of every family and project,
+// counted on request through the console's read handle, beside the raw
+// window it is read against; the MCP tool answers it too.
+func TestLimitsReportsTheRawEventsHeld(t *testing.T) {
+	h, cs := newTestHost(t)
+	h.rawDays = 7
+	out, err := h.listLimits(context.Background(), struct{}{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := heldByFamily(t, h)
+	if base == 0 {
+		t.Fatal("the template database holds no raw rows; the test needs some")
+	}
+	if out.RawEvents == nil || out.RawEvents.Held != base || out.RawEvents.WindowDays != 7 {
+		t.Fatalf("raw_events = %+v, want %d held in 7 days", out.RawEvents, base)
+	}
+
+	st, err := store.Open("sqlite://" + testDBPaths[h])
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	one := 1.0
+	now := time.Now().UTC()
+	evs := []store.Event{
+		{Family: store.FamilyViews, ProjectID: 1, Kind: "web", Path: "/"},
+		{Family: store.FamilyProduct, ProjectID: 1, EventName: "signup"},
+		{Family: store.FamilyMeasures, ProjectID: 2, EventName: "lcp", Value: &one},
+	}
+	for i := range evs {
+		evs[i].ID = "0190eeee-0000-7000-8000-00000000000" + strconv.Itoa(i)
+		evs[i].TS, evs[i].ActorID = now, "a"
+	}
+	if err := st.WriteEvents(context.Background(), evs); err != nil {
+		t.Fatal(err)
+	}
+	out, err = h.listLimits(context.Background(), struct{}{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.RawEvents == nil || out.RawEvents.Held != base+3 || heldByFamily(t, h) != base+3 {
+		t.Errorf("raw_events after one row of each family = %+v, want %d held", out.RawEvents, base+3)
+	}
+
+	var viaMCP struct {
+		RawEvents struct {
+			Held       int64 `json:"held"`
+			WindowDays int   `json:"window_days"`
+		} `json:"raw_events"`
+	}
+	if err := json.Unmarshal([]byte(textOf(callTool(t, cs, "limits", map[string]any{}))), &viaMCP); err != nil {
+		t.Fatal(err)
+	}
+	if viaMCP.RawEvents.Held != base+3 || viaMCP.RawEvents.WindowDays != 7 {
+		t.Errorf("MCP raw_events = %+v", viaMCP.RawEvents)
+	}
+}
+
+// A count that cannot be read costs the answer its raw_events, not the
+// whole tool: the limits still come back, and the failure is logged.
+func TestLimitsWithoutRawEventsWhenTheCountCannotBeRead(t *testing.T) {
+	h, cs := newTestHost(t)
+	var logs bytes.Buffer
+	h.logger = slog.New(slog.NewTextHandler(&logs, nil))
+	if err := h.db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	out, err := h.listLimits(context.Background(), struct{}{})
+	if err != nil {
+		t.Fatalf("listLimits = %v, want the limits without raw_events", err)
+	}
+	if out.RawEvents != nil || len(out.Limits) == 0 {
+		t.Errorf("out = %+v, want limits and no raw_events", out)
+	}
+	if !strings.Contains(logs.String(), "level=ERROR") || !strings.Contains(logs.String(), "raw_events") {
+		t.Errorf("failure not logged: %q", logs.String())
+	}
+	if raw := textOf(callTool(t, cs, "limits", map[string]any{})); strings.Contains(raw, "raw_events") {
+		t.Errorf("MCP answer carries raw_events: %s", raw)
 	}
 }
 

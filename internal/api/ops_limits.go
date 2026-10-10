@@ -40,8 +40,16 @@ type limitOut struct {
 	Description string   `json:"description"`
 }
 
+// rawEventsOut is what the server holds raw: the number its disk and every
+// dashboard's scan of the raw window follow.
+type rawEventsOut struct {
+	Held       int64 `json:"held" jsonschema:"raw events stored now, of every family and project, as of the last write to the database"`
+	WindowDays int   `json:"window_days" jsonschema:"the raw window they fall in, RETENTION_EVENTS_RAW_DAYS"`
+}
+
 type limitsOut struct {
-	Limits []limitOut `json:"limits"`
+	Limits    []limitOut    `json:"limits"`
+	RawEvents *rawEventsOut `json:"raw_events,omitempty" jsonschema:"the raw events held, to read against retention; absent when they cannot be counted"`
 }
 
 // setting is a limit the environment sets.
@@ -90,8 +98,25 @@ func limitsFrom(cfg *config.Config) []limitOut {
 	}
 }
 
-func (h *host) listLimits(_ context.Context, _ struct{}) (limitsOut, error) {
-	return limitsOut{Limits: h.limits}, nil
+// listLimits answers the limits in force and the raw events held, counted
+// now through the console's read handle (so at most one pipeline flush
+// behind ingest): a full scan of the raw events table, 1.7 to 2.1 s on
+// 5 million rows (see the raw events held spec). A count that cannot be
+// read, a timeout included, is logged and left out; the limits still
+// answer.
+func (h *host) listLimits(ctx context.Context, _ struct{}) (limitsOut, error) {
+	out := limitsOut{Limits: h.limits}
+	res, err := h.db.Run(ctx, `SELECT COUNT(*) FROM events`)
+	if err == nil {
+		var n int64
+		if n, err = strconv.ParseInt(res.Rows[0][0], 10, 64); err == nil {
+			out.RawEvents = &rawEventsOut{Held: n, WindowDays: h.rawDays}
+		}
+	}
+	if err != nil {
+		h.logger.Error("limits: raw_events left out, the raw events cannot be counted", "error", err)
+	}
+	return out, nil
 }
 
 // capOf is the cap in force for a setting; 0 (no cap) for an unknown one.
