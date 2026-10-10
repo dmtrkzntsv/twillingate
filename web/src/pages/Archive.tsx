@@ -155,36 +155,16 @@ export default function Archive() {
     )
   }
 
-  /** A share's status line: archived, and when it goes, the date kept on one line. */
-  const shareStatus = (s: WidgetShare) => {
-    const purged = s.archived_at ? purgeDate(s.archived_at, purgeDays) : undefined
-    if (!purged) return 'archived'
-    return (
-      <>
-        archived · deleted on <span className="whitespace-nowrap">{formatPurgeDate(purged)}</span>
-      </>
-    )
-  }
+  /** An archived form's lead-in to its status line: how many submissions go with it. */
+  const submissionCount = (f: Form) => `${f.submissions} ${f.submissions === 1 ? 'submission' : 'submissions'} · `
 
-  /** An archived widget's status line: archived, and when it goes, the date kept on one line. */
-  const widgetStatus = (w: ListedWidget) => {
-    const purged = w.archived_at ? purgeDate(w.archived_at, purgeDays) : undefined
-    if (!purged) return 'archived'
+  /** An archived row's status line: archived, and when it goes, the date kept on one line. */
+  const archivedStatus = (archived_at: string | null | undefined, prefix = '') => {
+    const purged = archived_at ? purgeDate(archived_at, purgeDays) : undefined
+    if (!purged) return `${prefix}archived`
     return (
       <>
-        archived · deleted on <span className="whitespace-nowrap">{formatPurgeDate(purged)}</span>
-      </>
-    )
-  }
-
-  /** An archived form's status line: its submissions, and when it goes with them. */
-  const formStatusLine = (f: Form) => {
-    const purged = f.archived_at ? purgeDate(f.archived_at, purgeDays) : undefined
-    const count = `${f.submissions} ${f.submissions === 1 ? 'submission' : 'submissions'}`
-    if (!purged) return `${count} · archived`
-    return (
-      <>
-        {count} · archived · deleted on <span className="whitespace-nowrap">{formatPurgeDate(purged)}</span>
+        {prefix}archived · deleted on <span className="whitespace-nowrap">{formatPurgeDate(purged)}</span>
       </>
     )
   }
@@ -230,7 +210,7 @@ export default function Archive() {
                           <span className="truncate text-sm font-medium" title={w.title ?? w.name}>
                             {w.title ?? w.name}
                           </span>
-                          <span className="text-xs text-muted-foreground">{widgetStatus(w)}</span>
+                          <span className="text-xs text-muted-foreground">{archivedStatus(w.archived_at)}</span>
                         </div>
                         <Button variant="outline" size="sm" onClick={() => void widgetEdits.restore({ widget_id: w.widget_id, dashboard_id: w.dashboard_id })}>
                           Restore
@@ -259,7 +239,7 @@ export default function Archive() {
                     <div className="truncate text-xs text-muted-foreground" title={s.project_name}>
                       {s.project_name}
                     </div>
-                    <div className="text-xs break-words text-muted-foreground">{shareStatus(s)}</div>
+                    <div className="text-xs break-words text-muted-foreground">{archivedStatus(s.archived_at)}</div>
                   </div>
                   {writable && (
                     <Button variant="outline" size="sm" onClick={() => setRestoring(s)}>
@@ -284,7 +264,7 @@ export default function Archive() {
                     <div className="truncate text-xs text-muted-foreground" title={project.name}>
                       {project.name}
                     </div>
-                    <div className="text-xs break-words text-muted-foreground">{formStatusLine(form)}</div>
+                    <div className="text-xs break-words text-muted-foreground">{archivedStatus(form.archived_at, submissionCount(form))}</div>
                   </div>
                   <Button
                     variant="outline"
