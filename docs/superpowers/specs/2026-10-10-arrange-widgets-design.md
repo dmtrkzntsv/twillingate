@@ -72,6 +72,28 @@ Added by this spec:
   if dnd-kit's sortable coordinates do not reach the next card in a grid
   whose cards do not shift, that is fixed rather than the test dropped.
 
+Follow-ups (fast and accurate):
+
+- **D10. An update writes only what it changes.** The store's widget
+  update names its columns: the content (component, name, title, props,
+  source) is written together, as it was validated together; `sort_key`,
+  `width` and `height` are each written only when the call set them. So an
+  agent's content edit never puts back a place or size a drag saved while
+  its query ran, a move never puts back a size, and a resize never puts
+  back a place. `SetWidgetLayout` folds into this one method.
+- **D11. A drag redraws only the cards it touches.** While a card is
+  dragged or resized, a card that is neither the dragged one, nor under
+  it, nor the one it just left does not re-render its body (the chart or
+  table); only its handles and outline may. Measured on a dashboard of 20
+  chart widgets in the production build: before and after numbers for
+  body renders and the longest task during a drag go in the PR.
+- **D12. A save refetches only its own dashboard, and the shown size is the
+  last one asked for.** A move or resize invalidates `['dashboard', id]`
+  for the widget's dashboard, not every dashboard cached in the session. A
+  size being saved stays shown until its own save has come back (the
+  refetch included), so 6 → 8 → 6 never shows 8 again on the way; a
+  refused save still snaps back at once.
+
 Not done, on purpose:
 
 - **No Undo toast** after a move or resize: dragging back undoes it, and a
