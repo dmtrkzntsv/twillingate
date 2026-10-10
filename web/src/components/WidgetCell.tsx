@@ -49,13 +49,29 @@ export default function WidgetCell({ widget, params, idle, share, gridPx, movabl
   const label = widget.title ?? widget.name
 
   const stored = { width: widget.width, height: widget.height }
+  const storedKey = `${stored.width}x${stored.height}`
   // The size being chosen (a pointer down on the corner, or keys pressed).
   const [draft, setDraft] = useState<WidgetSize | null>(null)
-  // The last size sent and not yet settled: kept over the stored one until
-  // its own save resolves, which the hook does after the refetch. It is not
-  // dropped when the stored size changes, or an older save's refetch
-  // landing first would show its size again on the way to this one.
-  const [saving, setSaving] = useState<{ size: WidgetSize } | null>(null)
+  // The last size sent, kept over the stored one until the server's has
+  // reached the props. Its save resolving is not enough: the hook resolves
+  // after the refetch, but the cache hands the new widgets to the page a
+  // tick later, and the old size would show for a frame in between. So a
+  // save that succeeded is only marked `settled`, and dropped in render
+  // once the stored size is the one asked for or has moved on from what it
+  // was at that moment. Dropping it when the stored size merely changed
+  // would let an older save's refetch show its size on the way to this
+  // one, so it is the newest save's own settling that counts. If the
+  // refetch itself fails, the asked size stays until a later one brings
+  // the server's, which is what the save just made it.
+  const [saving, setSaving] = useState<{ size: WidgetSize; token: object; settled: boolean; settledAt?: string } | null>(null)
+  if (saving?.settled) {
+    if (saving.settledAt === undefined) {
+      const arrived = stored.width === saving.size.width && stored.height === saving.size.height
+      setSaving(arrived ? null : { ...saving, settledAt: storedKey })
+    } else if (saving.settledAt !== storedKey) {
+      setSaving(null)
+    }
+  }
   const shown = saving?.size ?? stored
   const size = draft ?? shown
 
@@ -64,11 +80,14 @@ export default function WidgetCell({ widget, params, idle, share, gridPx, movabl
   // sent, or the one on its way would win.
   const save = (next: WidgetSize) => {
     if (!onResize || (next.width === shown.width && next.height === shown.height)) return
-    const mine = { size: next }
-    setSaving(mine)
-    // A save settling clears only its own size, never a newer one: on
-    // success the server's size is in by now, on a refusal it snaps back.
-    void onResize(widget.dashboard_id, id, next).then(() => setSaving((s) => (s === mine ? null : s)))
+    const token = {}
+    setSaving({ size: next, token, settled: false })
+    // A save settling touches only its own entry, never a newer one's: a
+    // refusal snaps back to the stored size at once, a success waits for
+    // the server's to arrive (above).
+    void onResize(widget.dashboard_id, id, next).then((ok) =>
+      setSaving((s) => (s?.token !== token ? s : ok ? { ...s, settled: true } : null))
+    )
   }
 
   const resizer = useResizer(size, gridPx, onResize !== undefined, setDraft, save)
