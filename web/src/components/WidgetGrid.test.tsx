@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TooltipProvider } from '@/components/ui/tooltip'
-import type { WidgetActions } from '@/hooks/use-widget-actions'
+import type { WidgetActions, WidgetSize } from '@/hooks/use-widget-actions'
 import { endpoints, type Widget, type WidgetData, type WidgetDataQuery } from '@/lib/api'
 import { renderWithProviders } from '@/test/render'
 import WidgetGrid from './WidgetGrid'
@@ -58,9 +58,17 @@ function statAnswer(id: number): WidgetData {
   }
 }
 
+/** Saves that the server takes, its size then the one asked for. */
 function actions(over: Partial<WidgetActions> = {}): WidgetActions {
-  return { move: vi.fn().mockResolvedValue(true), resize: vi.fn().mockResolvedValue(true), ...over }
+  return {
+    move: vi.fn().mockResolvedValue(true),
+    resize: vi.fn(async (_dashboardId: number, _id: number, size: WidgetSize) => size),
+    ...over,
+  }
 }
+
+/** The server's size after a save: `width` columns by the notes' 4 rows. */
+const wide = (width: number): WidgetSize => ({ width, height: 4 })
 
 function renderGrid(widgets: Widget[], arrange?: WidgetActions) {
   return renderWithProviders(<WidgetGrid widgets={widgets} paramsFor={() => ({})} arrange={arrange} />)
@@ -248,7 +256,7 @@ describe('WidgetGrid', () => {
 
   it('snaps back when the server refuses the size', async () => {
     const user = userEvent.setup()
-    const arrange = actions({ resize: vi.fn().mockResolvedValue(false) })
+    const arrange = actions({ resize: vi.fn().mockResolvedValue(null) })
     renderGrid([note(1)], arrange)
     const corner = screen.getByRole('button', { name: 'Resize Note 1' })
     fireEvent.pointerDown(corner, { button: 0, pointerId: 1, clientX: 0, clientY: 0 })
@@ -260,8 +268,8 @@ describe('WidgetGrid', () => {
 
   it('keeps the last size asked for while older saves come back with theirs', async () => {
     // Two saves in flight: 6 to 8, then back to 6.
-    const settle: ((ok: boolean) => void)[] = []
-    const resize = vi.fn(() => new Promise<boolean>((resolve) => settle.push(resolve)))
+    const settle: ((size: WidgetSize | null) => void)[] = []
+    const resize = vi.fn(() => new Promise<WidgetSize | null>((resolve) => settle.push(resolve)))
     const arrange = actions({ resize })
     const { client, rerender } = renderGrid([note(1)], arrange)
     const serverHas = (width: number) =>
@@ -284,12 +292,12 @@ describe('WidgetGrid', () => {
     // second is still on its way, so 8 must not show.
     serverHas(8)
     expect(cell('Note 1').style.gridColumn).toBe('span 6 / span 6')
-    await act(async () => settle[0](true))
+    await act(async () => settle[0](wide(8)))
     expect(cell('Note 1').style.gridColumn).toBe('span 6 / span 6')
 
     // The second one's refetch lands with 6, and it resolves.
     serverHas(6)
-    await act(async () => settle[1](true))
+    await act(async () => settle[1](wide(6)))
     expect(cell('Note 1').style.gridColumn).toBe('span 6 / span 6')
 
     // Nothing is held over the server's size any more.
@@ -300,8 +308,8 @@ describe('WidgetGrid', () => {
   it('keeps the size asked for between the save resolving and the new props arriving', async () => {
     // The hook resolves after the refetch, but the cache hands the page its
     // new widgets a tick later: the old size must not show in between.
-    let settle: (ok: boolean) => void = () => {}
-    const arrange = actions({ resize: vi.fn(() => new Promise<boolean>((resolve) => (settle = resolve))) })
+    let settle: (size: WidgetSize | null) => void = () => {}
+    const arrange = actions({ resize: vi.fn(() => new Promise<WidgetSize | null>((resolve) => (settle = resolve))) })
     const { client, rerender } = renderGrid([note(1)], arrange)
     const serverHas = (width: number) =>
       rerender(
@@ -314,7 +322,7 @@ describe('WidgetGrid', () => {
     const corner = screen.getByRole('button', { name: 'Resize Note 1' })
     fireEvent.pointerDown(corner, { button: 0, pointerId: 1, clientX: 0, clientY: 0 })
     fireEvent.pointerUp(corner, { pointerId: 1, clientX: 202, clientY: 0 })
-    await act(async () => settle(true))
+    await act(async () => settle(wide(8)))
     expect(cell('Note 1').style.gridColumn).toBe('span 8 / span 8')
     serverHas(8)
     expect(cell('Note 1').style.gridColumn).toBe('span 8 / span 8')
@@ -323,15 +331,17 @@ describe('WidgetGrid', () => {
     expect(cell('Note 1').style.gridColumn).toBe('span 3 / span 3')
   })
 
-  it('shows the server size when it differs from the one asked for, once it arrives', async () => {
-    let settle: (ok: boolean) => void = () => {}
-    const arrange = actions({ resize: vi.fn(() => new Promise<boolean>((resolve) => (settle = resolve))) })
+  it('shows the server size when it differs from the one asked for, before and after it reaches the props', async () => {
+    let settle: (size: WidgetSize | null) => void = () => {}
+    const arrange = actions({ resize: vi.fn(() => new Promise<WidgetSize | null>((resolve) => (settle = resolve))) })
     const { client, rerender } = renderGrid([note(1)], arrange)
     const corner = screen.getByRole('button', { name: 'Resize Note 1' })
     fireEvent.pointerDown(corner, { button: 0, pointerId: 1, clientX: 0, clientY: 0 })
     fireEvent.pointerUp(corner, { pointerId: 1, clientX: 202, clientY: 0 })
-    await act(async () => settle(true))
-    expect(cell('Note 1').style.gridColumn).toBe('span 8 / span 8')
+    // Another writer set 5 before the save's refetch: the save resolves
+    // with 5 while the props still carry 6, and 5 shows at once.
+    await act(async () => settle(wide(5)))
+    expect(cell('Note 1').style.gridColumn).toBe('span 5 / span 5')
     rerender(
       <QueryClientProvider client={client}>
         <TooltipProvider>
@@ -342,9 +352,23 @@ describe('WidgetGrid', () => {
     expect(cell('Note 1').style.gridColumn).toBe('span 5 / span 5')
   })
 
+  it('shows the stored size when another writer put it back before the refetch', async () => {
+    // 6 to 8, then an agent sets 6 again before the save's refetch: the
+    // refetch brings 6, so the props' widget does not change at all.
+    let settle: (size: WidgetSize | null) => void = () => {}
+    const arrange = actions({ resize: vi.fn(() => new Promise<WidgetSize | null>((resolve) => (settle = resolve))) })
+    renderGrid([note(1)], arrange)
+    const corner = screen.getByRole('button', { name: 'Resize Note 1' })
+    fireEvent.pointerDown(corner, { button: 0, pointerId: 1, clientX: 0, clientY: 0 })
+    fireEvent.pointerUp(corner, { pointerId: 1, clientX: 202, clientY: 0 })
+    expect(cell('Note 1').style.gridColumn).toBe('span 8 / span 8')
+    await act(async () => settle(wide(6)))
+    expect(cell('Note 1').style.gridColumn).toBe('span 6 / span 6')
+  })
+
   it('keeps the newest size when an older save settles after it', async () => {
-    const settle: ((ok: boolean) => void)[] = []
-    const resize = vi.fn(() => new Promise<boolean>((resolve) => settle.push(resolve)))
+    const settle: ((size: WidgetSize | null) => void)[] = []
+    const resize = vi.fn(() => new Promise<WidgetSize | null>((resolve) => settle.push(resolve)))
     const arrange = actions({ resize })
     const { client, rerender } = renderGrid([note(1)], arrange)
     const serverHas = (width: number) =>
@@ -359,20 +383,22 @@ describe('WidgetGrid', () => {
     fireEvent.pointerDown(corner, { button: 0, pointerId: 1, clientX: 0, clientY: 0 })
     fireEvent.pointerUp(corner, { pointerId: 1, clientX: 202, clientY: 0 })
     fireEvent.pointerDown(corner, { button: 0, pointerId: 2, clientX: 202, clientY: 0 })
-    fireEvent.pointerUp(corner, { pointerId: 2, clientX: 0, clientY: 0 })
-    // The newer one (back to 6) settles first, the older (8) after it.
-    await act(async () => settle[1](true))
-    await act(async () => settle[0](true))
-    expect(cell('Note 1').style.gridColumn).toBe('span 6 / span 6')
-    serverHas(6)
-    expect(cell('Note 1').style.gridColumn).toBe('span 6 / span 6')
+    fireEvent.pointerUp(corner, { pointerId: 2, clientX: 303, clientY: 0 })
+    // The newer one (9) settles first, while the props still carry 6, so it
+    // is still held when the older one (8) settles after it with its own.
+    await act(async () => settle[1](wide(9)))
+    expect(cell('Note 1').style.gridColumn).toBe('span 9 / span 9')
+    await act(async () => settle[0](wide(8)))
+    expect(cell('Note 1').style.gridColumn).toBe('span 9 / span 9')
+    serverHas(9)
+    expect(cell('Note 1').style.gridColumn).toBe('span 9 / span 9')
     serverHas(3)
     expect(cell('Note 1').style.gridColumn).toBe('span 3 / span 3')
   })
 
   it('snaps back at once when the newest save is refused, whatever the older one does', async () => {
-    const settle: ((ok: boolean) => void)[] = []
-    const resize = vi.fn(() => new Promise<boolean>((resolve) => settle.push(resolve)))
+    const settle: ((size: WidgetSize | null) => void)[] = []
+    const resize = vi.fn(() => new Promise<WidgetSize | null>((resolve) => settle.push(resolve)))
     renderGrid([note(1)], actions({ resize }))
     const corner = screen.getByRole('button', { name: 'Resize Note 1' })
     fireEvent.pointerDown(corner, { button: 0, pointerId: 1, clientX: 0, clientY: 0 })
@@ -380,13 +406,13 @@ describe('WidgetGrid', () => {
     fireEvent.pointerDown(corner, { button: 0, pointerId: 2, clientX: 202, clientY: 0 })
     fireEvent.pointerUp(corner, { pointerId: 2, clientX: 303, clientY: 0 })
     expect(cell('Note 1').style.gridColumn).toBe('span 9 / span 9')
-    await act(async () => settle[1](false))
+    await act(async () => settle[1](null))
     expect(cell('Note 1').style.gridColumn).toBe('span 6 / span 6')
   })
 
   it('shows the server size once the save and its refetch are done', async () => {
-    let settle: (ok: boolean) => void = () => {}
-    const arrange = actions({ resize: vi.fn(() => new Promise<boolean>((resolve) => (settle = resolve))) })
+    let settle: (size: WidgetSize | null) => void = () => {}
+    const arrange = actions({ resize: vi.fn(() => new Promise<WidgetSize | null>((resolve) => (settle = resolve))) })
     const { client, rerender } = renderGrid([note(1)], arrange)
     const corner = screen.getByRole('button', { name: 'Resize Note 1' })
     fireEvent.pointerDown(corner, { button: 0, pointerId: 1, clientX: 0, clientY: 0 })
@@ -402,9 +428,11 @@ describe('WidgetGrid', () => {
       </QueryClientProvider>
     )
     expect(cell('Note 1').style.gridColumn).toBe('span 8 / span 8')
-    // Resolved with the props already carrying a size other than the one
-    // asked for: that one is the server's, and it shows once it changes.
-    await act(async () => settle(true))
+    // Resolved with the server's size, which is neither the one asked for
+    // nor the one the props carry: it shows at once, and stays when the
+    // props bring it.
+    await act(async () => settle(wide(5)))
+    expect(cell('Note 1').style.gridColumn).toBe('span 5 / span 5')
     rerender(
       <QueryClientProvider client={client}>
         <TooltipProvider>
@@ -414,6 +442,7 @@ describe('WidgetGrid', () => {
     )
     expect(cell('Note 1').style.gridColumn).toBe('span 5 / span 5')
   })
+
   it('redraws no card body while a card is picked up, moved and put back', async () => {
     vi.spyOn(endpoints, 'widgetData').mockImplementation(async (id) => statAnswer(id))
     renderGrid([stat(1), stat(2)], actions())

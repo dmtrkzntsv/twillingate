@@ -32,7 +32,7 @@ interface Props {
   /** A dropped order waits for the server's: the grip stays, but nothing drags until it is back. */
   busy: boolean
   /** The card resizes by its corner; absent, it has no corner. */
-  onResize?: (dashboardId: number, id: number, size: WidgetSize) => Promise<boolean>
+  onResize?: (dashboardId: number, id: number, size: WidgetSize) => Promise<WidgetSize | null>
 }
 
 /** The most rows and columns a widget spans (validate.go's checkSize). */
@@ -69,7 +69,8 @@ const corner = <Corner />
  * and a row at a time; the arrow keys resize it from the corner too. The
  * new size shows as it changes and is saved when the pointer lets go (or
  * the keys pause), then stays until the server's comes back, or snaps
- * back if it is refused.
+ * back if it is refused. The server's is what shows then, even when it is
+ * not the one asked for (another writer changed it in between).
  */
 export default function WidgetCell({ widget, params, idle, share, gridPx, movable, busy, onResize }: Props) {
   const id = widget.widget_id
@@ -87,13 +88,16 @@ export default function WidgetCell({ widget, params, idle, share, gridPx, movabl
   // reached the props. Its save resolving is not enough: the hook resolves
   // after the refetch, but the cache hands the new widgets to the page a
   // tick later, and the old size would show for a frame in between. So a
-  // save that succeeded is only marked `settled`, and dropped in render
-  // once the stored size is the one asked for or has moved on from what it
-  // was at that moment. Dropping it when the stored size merely changed
-  // would let an older save's refetch show its size on the way to this
-  // one, so it is the newest save's own settling that counts. If the
-  // refetch itself fails, the asked size stays until a later one brings
-  // the server's, which is what the save just made it.
+  // save that succeeded is only marked `settled`, with the size the server
+  // held after its refetch (not always the one asked for: another writer
+  // may have changed it in between), and dropped in render once the stored
+  // size is that one or has moved on from what it was at that moment. A
+  // size another writer put back may be in the props already, with nothing
+  // left to change them, so it is dropped at once then. Dropping it when
+  // the stored size merely changed would let an older save's refetch show
+  // its size on the way to this one, so it is the newest save's own
+  // settling that counts. If the refetch itself fails, the hook answers
+  // with the size the save wrote.
   const [saving, setSaving] = useState<{ size: WidgetSize; token: object; settled: boolean; settledAt?: string } | null>(null)
   if (saving?.settled) {
     if (saving.settledAt === undefined) {
@@ -114,10 +118,10 @@ export default function WidgetCell({ widget, params, idle, share, gridPx, movabl
     const token = {}
     setSaving({ size: next, token, settled: false })
     // A save settling touches only its own entry, never a newer one's: a
-    // refusal snaps back to the stored size at once, a success waits for
-    // the server's to arrive (above).
-    void onResize(widget.dashboard_id, id, next).then((ok) =>
-      setSaving((s) => (s?.token !== token ? s : ok ? { ...s, settled: true } : null))
+    // refusal snaps back to the stored size at once, a success shows the
+    // server's size until the props carry it (above).
+    void onResize(widget.dashboard_id, id, next).then((held) =>
+      setSaving((s) => (s?.token !== token ? s : held ? { ...s, size: held, settled: true } : null))
     )
   }
 

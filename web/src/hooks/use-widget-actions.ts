@@ -1,7 +1,7 @@
 import { useCallback, useMemo } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { ApiError, endpoints, type WidgetLayoutBody } from '@/lib/api'
+import { ApiError, endpoints, type DashboardDetail, type Widget, type WidgetLayoutBody } from '@/lib/api'
 
 /** A widget's size on the grid: columns out of 12 and 40px rows. */
 export interface WidgetSize {
@@ -17,8 +17,14 @@ export interface WidgetActions {
    * can drop its optimistic order at once.
    */
   move(dashboardId: number, id: number, after: number): Promise<boolean>
-  /** Resizes widget `id` of dashboard `dashboardId`; resolves as `move` does. */
-  resize(dashboardId: number, id: number, size: WidgetSize): Promise<boolean>
+  /**
+   * Resizes widget `id` of dashboard `dashboardId`. Resolves, once that
+   * dashboard is refetched, with the size the server holds then, or null
+   * when it refused (after the toast). The size held is not always the one
+   * asked for: another writer may have changed it between the save and the
+   * refetch, and the cell must settle on what the server has.
+   */
+  resize(dashboardId: number, id: number, size: WidgetSize): Promise<WidgetSize | null>
 }
 
 /**
@@ -30,26 +36,41 @@ export interface WidgetActions {
  */
 export function useWidgetActions(): WidgetActions {
   const client = useQueryClient()
+  // The widget as the server holds it once its dashboard is refetched, or
+  // null when the write was refused. The refetched one is read from the
+  // cache only if a fetch landed after the write: one that failed, or none
+  // at all (no page shows that dashboard), leaves what was there before
+  // the write, and the write's own answer is newer then.
   const save = useCallback(
-    async (dashboardId: number, id: number, body: WidgetLayoutBody) => {
+    async (dashboardId: number, id: number, body: WidgetLayoutBody): Promise<Widget | null> => {
+      const queryKey = ['dashboard', dashboardId]
+      let saved: Widget | null = null
       try {
-        await endpoints.updateWidget(id, body)
-        return true
+        saved = await endpoints.updateWidget(id, body)
       } catch (err) {
         if (err instanceof ApiError) toast.error(err.message)
         else if (err instanceof TypeError) toast.error("Couldn't reach the server")
         else toast.error(err instanceof Error ? err.message : String(err))
-        return false
-      } finally {
-        await client.invalidateQueries({ queryKey: ['dashboard', dashboardId] })
       }
+      // Counted after the write, and in the same tick as the invalidation,
+      // which cancels a fetch the page's query already has running: any
+      // data counted from here on was read after the write.
+      const landed = client.getQueryState(queryKey)?.dataUpdateCount ?? 0
+      await client.invalidateQueries({ queryKey })
+      if (!saved) return null
+      const state = client.getQueryState<DashboardDetail>(queryKey)
+      if (!state || state.dataUpdateCount === landed) return saved
+      return state.data?.widgets.find((w) => w.widget_id === id) ?? saved
     },
     [client]
   )
   return useMemo(
     () => ({
-      move: (dashboardId, id, after) => save(dashboardId, id, { after }),
-      resize: (dashboardId, id, size) => save(dashboardId, id, size),
+      move: async (dashboardId, id, after) => (await save(dashboardId, id, { after })) !== null,
+      resize: async (dashboardId, id, size) => {
+        const held = await save(dashboardId, id, size)
+        return held && { width: held.width, height: held.height }
+      },
     }),
     [save]
   )
