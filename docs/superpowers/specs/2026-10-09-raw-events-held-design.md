@@ -33,34 +33,55 @@ enforce is for whoever runs the server, outside it (a portal reading
   can say "in the last D days". MCP's `limits` and REST's `GET /api/limits`
   answer it for anyone with console access. It sits beside the limits it is
   read against (retention), not in a tool of its own.
-- **D2. The count is derived, on request.** No migration, no setting and no
-  in-memory state: a `COUNT(*)` of the raw events table, taken per request
-  through the console's own read handle, so it is at most one pipeline
-  flush behind ingest, the nightly rollup shows in the next read, and the
-  ingest surface is untouched.
+- **D2. The count is derived, counted at most every 5 minutes.** No
+  migration, no setting, nothing on the ingest surface. The count is a
+  `COUNT(*)` of `v_events_flat`, the view of every raw row (raw rows are
+  read only through the family views and `v_events_flat`, never the
+  `events` table; SQLite flattens the view to one scan of the table),
+  through the console's own read handle, so at most one pipeline flush
+  behind ingest. The console host caches it for 5 minutes: concurrent reads
+  share one count in flight, a read past the 5 minutes answers the previous
+  count at once while a refresh runs in the background, and the console
+  starts the first count when it boots, so a read that arrives before that
+  first count ends waits for it. A count older than 10 minutes (nobody read
+  for a while) is not answered: that read waits for the refresh too, so a
+  reader polling rarely never gets an hours-old number. The nightly rollup
+  shows within 10 minutes of the pass.
 - **D3. A count that cannot be read costs only itself.** `raw_events` is
-  then left out and the failure logged at error; the limits still answer.
+  then left out; the failure is logged at error once and kept for the same
+  5 minutes, so a count that times out logs once per window, not per read.
+  The limits still answer.
 - **D4. The console shows it as one line.** The Projects page's limits
-  panel says "Raw events held: N (the last D days)" under its heading, and
-  nothing when the count is absent.
+  panel says "Raw events held: N (the last D days)" under its heading
+  ("the last day" for 1, "today" for 0: `RETENTION_EVENTS_RAW_DAYS=0` keeps
+  only today's rows raw, the daily pass rolling up every earlier day and
+  ingest clamping older timestamps to the time received), and nothing when
+  the count is absent.
 
 ## Cost
 
-`COUNT(*)` on the clustered `events` table (`WITHOUT ROWID`, no secondary
-index since 023) reads every page of it. Measured on a synthetic table of
-5 million rows (1.7 GB; six projects, three families, 30 days), warm cache:
-1.7 to 2.1 s through the console's read handle (modernc), 1.1 to 1.5 s with
-the sqlite3 CLI. A covering index on `day` brings the CLI count to 0.1 s but
-adds 330 MB (about 20 %) to the file and a write to every insert; for a
-count read only when someone opens the Projects page or calls `limits`, on
-read connections that do not block the writer (WAL), that is the wrong
-trade, so no index is added. Past roughly 25 million rows the count can
-outrun `CONSOLE_QUERY_TIMEOUT` (10 s by default); `raw_events` is then left
-out and the failure logged (D3).
+A count of every raw row reads every page of the clustered `events` table
+(`WITHOUT ROWID`, no secondary index since 023). Measured on a synthetic
+table of 5 million rows (1.7 GB; six projects, three families, 30 days)
+through the console's read handle (modernc), warm cache, on a shared
+machine (load average about 15, so the figures are noisy): `COUNT(*)` of
+`v_events_flat` 2.0 to 2.6 s, the same as a bare `COUNT(*)` of `events`
+(2.2 to 3.0 s in the same run); summing `raw_views`, `raw_product` and
+`raw_measures` 3.3 to 4.0 s. An earlier, quieter run timed the bare count
+at 1.7 to 2.1 s, and 1.1 to 1.5 s with the sqlite3 CLI. A covering index
+on `day` brings the CLI count to 0.1 s but adds 330 MB (about 20 %) to the
+file and a write to every insert. With the count cached for 5 minutes
+(D2) the scan runs at most 12 times an hour, on a read connection that
+does not block the writer (WAL), and a read waits for it only on the
+first count or after 10 minutes without a read; no index is added. By extrapolation (not measured), the count reaches
+`CONSOLE_QUERY_TIMEOUT` (10 s by default) somewhere past 20 to 25 million
+rows; `raw_events` is then left out and the timeout logged once per 5
+minutes (D3).
 
 ## Changes
 
-- `internal/api/ops_limits.go`: `raw_events` (D1-D3).
+- `internal/api/ops_limits.go`: `raw_events` (D1); `internal/api/rawcount.go`:
+  the cached count (D2, D3).
 - `web/`: the line in the limits panel (D4).
 
 Docs in the same commit: `docs/twillingate.md` (the `limits` fields). No
@@ -69,7 +90,13 @@ Docs in the same commit: `docs/twillingate.md` (the `limits` fields). No
 ## Testing
 
 - `limits`: `raw_events.held` matches the stored rows across families and
-  moves with a write, through MCP too; `window_days` is the raw window;
-  without a readable count it is left out, the error logged and the limits
-  still answered.
-- The console: the line with the count and window, none without a count.
+  moves with a write once the cached count is past its 5 minutes, through
+  MCP too; `window_days` is the raw window; without a readable count it is
+  left out, the error logged once over two calls, the limits still
+  answered; the count reads `v_events_flat`, not `events`.
+- The cache: two reads within the TTL run one count, concurrent first
+  reads share one, a stale count answers while a refresh runs, one older
+  than twice the TTL waits for the refresh, a failure is reported once per
+  TTL, a reader that gives up does not cancel the count.
+- The console: the line with the count and window ("today" for 0), none
+  without a count.

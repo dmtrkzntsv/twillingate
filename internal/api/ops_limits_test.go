@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log/slog"
 	"math"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -103,12 +104,14 @@ func heldByFamily(t *testing.T, h *host) int64 {
 	return n
 }
 
-// raw_events is the raw rows stored now, of every family and project,
-// counted on request through the console's read handle, beside the raw
-// window it is read against; the MCP tool answers it too.
+// raw_events is the raw rows stored, of every family and project, counted
+// through the console's read handle at most every rawCountTTL, beside the
+// raw window it is read against; the MCP tool answers it too.
 func TestLimitsReportsTheRawEventsHeld(t *testing.T) {
 	h, cs := newTestHost(t)
 	h.rawDays = 7
+	clock := time.Now()
+	h.raw.now = func() time.Time { return clock }
 	out, err := h.listLimits(context.Background(), struct{}{})
 	if err != nil {
 		t.Fatal(err)
@@ -140,6 +143,20 @@ func TestLimitsReportsTheRawEventsHeld(t *testing.T) {
 	if err := st.WriteEvents(context.Background(), evs); err != nil {
 		t.Fatal(err)
 	}
+	// Within the TTL the count is the cached one; past it, the stale count
+	// answers while a refresh runs, and the next read has the new rows.
+	out, err = h.listLimits(context.Background(), struct{}{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.RawEvents == nil || out.RawEvents.Held != base {
+		t.Errorf("raw_events within the TTL = %+v, want the cached %d", out.RawEvents, base)
+	}
+	clock = clock.Add(rawCountTTL)
+	if out, _ = h.listLimits(context.Background(), struct{}{}); out.RawEvents == nil || out.RawEvents.Held != base {
+		t.Errorf("raw_events while refreshing = %+v, want the stale %d", out.RawEvents, base)
+	}
+	h.raw.settle()
 	out, err = h.listLimits(context.Background(), struct{}{})
 	if err != nil {
 		t.Fatal(err)
@@ -183,6 +200,20 @@ func TestLimitsWithoutRawEventsWhenTheCountCannotBeRead(t *testing.T) {
 	}
 	if raw := textOf(callTool(t, cs, "limits", map[string]any{})); strings.Contains(raw, "raw_events") {
 		t.Errorf("MCP answer carries raw_events: %s", raw)
+	}
+	// The failure is cached for the TTL: the second call did not log again.
+	if n := strings.Count(logs.String(), "level=ERROR"); n != 1 {
+		t.Errorf("logged %d errors over two calls within the TTL, want 1: %q", n, logs.String())
+	}
+}
+
+// The count reads the raw rows through v_events_flat, the view of every
+// raw row, never the events table (TestRawTableIsReadOnlyThroughFamilyViews
+// holds the store to that).
+func TestRawEventsCountReadsTheFlatView(t *testing.T) {
+	rawRead := regexp.MustCompile(`\b(FROM|JOIN)\s+events\b`)
+	if rawRead.MatchString(rawEventsSQL) || !strings.Contains(rawEventsSQL, "FROM v_events_flat") {
+		t.Errorf("rawEventsSQL = %s, want a count of v_events_flat", rawEventsSQL)
 	}
 }
 

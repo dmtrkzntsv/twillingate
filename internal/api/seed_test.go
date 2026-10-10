@@ -217,6 +217,7 @@ func newTestHost(t *testing.T) (*host, *mcp.ClientSession) {
 	// opened); setGuards needs it to reopen with different guards, so the
 	// test side remembers it here, keyed by the host it belongs to.
 	testDBPaths[h] = path
+	h.raw = h.newHostRawCount()
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "analytics", Version: "test"},
 		&mcp.ServerOptions{Instructions: serverInstructions})

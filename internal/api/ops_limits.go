@@ -99,22 +99,13 @@ func limitsFrom(cfg *config.Config) []limitOut {
 }
 
 // listLimits answers the limits in force and the raw events held, counted
-// now through the console's read handle (so at most one pipeline flush
-// behind ingest): a full scan of the raw events table, 1.7 to 2.1 s on
-// 5 million rows (see the raw events held spec). A count that cannot be
-// read, a timeout included, is logged and left out; the limits still
-// answer.
+// at most every rawCountTTL (rawcount.go). A count that cannot be read, a
+// timeout included, is left out (and was logged when it failed); the
+// limits still answer.
 func (h *host) listLimits(ctx context.Context, _ struct{}) (limitsOut, error) {
 	out := limitsOut{Limits: h.limits}
-	res, err := h.db.Run(ctx, `SELECT COUNT(*) FROM events`)
-	if err == nil {
-		var n int64
-		if n, err = strconv.ParseInt(res.Rows[0][0], 10, 64); err == nil {
-			out.RawEvents = &rawEventsOut{Held: n, WindowDays: h.rawDays}
-		}
-	}
-	if err != nil {
-		h.logger.Error("limits: raw_events left out, the raw events cannot be counted", "error", err)
+	if n, err := h.raw.get(ctx); err == nil {
+		out.RawEvents = &rawEventsOut{Held: n, WindowDays: h.rawDays}
 	}
 	return out, nil
 }

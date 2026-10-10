@@ -34,6 +34,8 @@ type host struct {
 	// rawDays is RETENTION_EVENTS_RAW_DAYS, the window limits' raw_events
 	// count falls in.
 	rawDays int
+	// raw caches the raw events held (rawcount.go).
+	raw *rawCount
 }
 
 var dayRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
@@ -226,7 +228,7 @@ func (h *host) register(r *registrar) {
 		Description: "Per live project: last_event_day (the newest day with views, product events or measures, raw or rolled up; null with none) and new_submissions (submissions to live forms the console hasn't read). For the console's badges; not an MCP tool."},
 		h.projectActivity)
 	expose(r, spec{Name: "limits", Annotations: ro, Method: "GET", Path: "/api/limits",
-		Description: "The limits in force, grouped: retention (days raw events, aggregates and archived items are kept), caps (ATTRIBUTE_VALUES_TOP_N, the values kept per views breakdown and day and per attribute key, event and day; users and groups per day; and ATTRIBUTE_BREAKDOWNS_MAX, the attributes all active projects declare together; 0 means no cap) and ingest (the wire format's fixed limits: body, batch, attributes, timestamps, measures). Each has a name, value, unit and description; settings also carry the environment variable and its default. Set in the server's environment, not here. Also raw_events: held, the raw events stored now across every project and family (what the server's disk and dashboard scans follow), and window_days, the raw window they fall in; absent when they cannot be counted."},
+		Description: "The limits in force, grouped: retention (days raw events, aggregates and archived items are kept), caps (ATTRIBUTE_VALUES_TOP_N, the values kept per views breakdown and day and per attribute key, event and day; users and groups per day; and ATTRIBUTE_BREAKDOWNS_MAX, the attributes all active projects declare together; 0 means no cap) and ingest (the wire format's fixed limits: body, batch, attributes, timestamps, measures). Each has a name, value, unit and description; settings also carry the environment variable and its default. Set in the server's environment, not here. Also raw_events: held, the raw events stored across every project and family (what the server's disk and dashboard scans follow), counted at most every 5 minutes (never more than 10 minutes old), and window_days, the raw window they fall in (RETENTION_EVENTS_RAW_DAYS; 0 keeps only today raw); absent when the last count failed."},
 		h.listLimits)
 	expose(r, spec{Name: "cap_usage", Annotations: ro, Method: "GET", Path: p + "/cap-usage",
 		Description: "How a project's data meets the caps over a range (default the last 30 days, at most 400): per views breakdown, attribute key, and users/groups, the busiest day's values against the cap, days with data, days folded into (other) (users and groups: days that reached the cap), and the share of views, counts or samples folded. Days already rolled up keep only the kept values and their (other) rows, so values per day stay near the cap there (cap + 1 for single-key breakdowns and attributes, cap plus one per leading key for two-key breakdowns)."},
