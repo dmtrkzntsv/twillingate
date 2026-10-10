@@ -51,7 +51,8 @@ written, and every one prepares cleanly today.
 ## Decisions
 
 - **D1. One test package, `internal/sqlcheck`.** It holds only
-  `sqlcheck_test.go`, reads the source tree with `go/parser`, and runs in
+  `_test.go` files (tokenizer, scanner, checks, and the run over the tree),
+  reads the source tree with `go/parser`, and runs in
   `make check` and `make test` like any other package. It uses only the
   standard library and `internal/store/storetest`, adds no Go dependency
   and no generated code, and changes no production file. archtest treats
@@ -59,9 +60,11 @@ written, and every one prepares cleanly today.
 
 - **D2. A site is a call that carries SQL.** The sinks are the
   `database/sql` methods `ExecContext`, `QueryContext`, `QueryRowContext`
-  and `PrepareContext`, matched by name on any receiver, when the first
-  argument is a context and a second argument exists. Every non-test `.go`
-  file under `internal/` is scanned.
+  and `PrepareContext`, matched by name on any receiver, when the call
+  has an argument at the SQL position. Every non-test `.go` file under
+  `internal/` is scanned. A call that only shares a sink's name would fail
+  loudly at prepare time, at its own `file:line`, so nothing narrower is
+  needed.
   - **Pass-through wrappers count as sinks.** A function whose SQL
     argument is one of its own parameters becomes a sink itself, at that
     parameter's position, and its callers are checked instead. This is
@@ -71,13 +74,15 @@ written, and every one prepares cleanly today.
 
 - **D3. The SQL argument resolves to one or more strings, or the site is
   dynamic.** Resolution, using only the AST:
-  1. string literals, `+`, and `const`s at package or function scope;
+  1. string literals, `+`, `const`s at package or function scope, and
+     package variables that nothing in the package assigns again;
   2. a local variable whose every assignment in the enclosing function
      resolves gives one candidate per assignment (a `switch` that picks a
      query gives every branch);
-  3. a table-driven loop, `for _, s := range <composite literal, or a
-     local bound to one>`, with `s.field` as the SQL gives each element's
-     field (`ops_usage`, `usage_history`);
+  3. a table-driven loop, `for _, s := range <slice literal, held inline,
+     by a local or by an unchanged package variable>`, gives each element:
+     `s.field` for a slice of structs (`ops_usage`, `usage_history`), `s`
+     itself for a slice of strings (`registry`'s project tables);
   4. a call to a known fragment helper is replaced by a stand-in:
      `placeholders(n)` becomes `?`. The map of stand-ins lives in the
      test.
@@ -128,17 +133,20 @@ written, and every one prepares cleanly today.
   test keyed `file.go:FuncName` (the file path relative to `internal/`)
   whose value is the reason. The map is checked in both directions, like
   `docs_sync_test.go`: an entry that matches no dynamic site fails too, so
-  the list cannot rot. The probe suggests about twenty entries, in these
-  groups:
+  the list cannot rot. A prototype of the scanner leaves 25 functions, in
+  these groups:
   - table or column names from code: `prune`, `retention`, `identities`,
-    `aggregate_views`, `registry` (purging a project's tables),
-    `widget_shares` (picking a column), `ops_limits` (a dimension);
-  - SQL built from data: `flatview` (the attributes view), the
-    `migration015` data step, and `UpdateWidget`'s set list;
-  - fragments returned by functions: forms filters, `ops_received`'s
-    `where`;
-  - user SQL: widget content in `reporting/source.go` and `query` in
-    `ops_query.go`, which `readsql` validates when it runs;
+    `aggregate_views`, the attribute rollups, `ops_limits` (a dimension),
+    `usage_history`'s table sizes;
+  - SQL built from data or options: `flatview` (the attributes view), the
+    `migration015` data step, `UpdateWidget`'s set list, filters appended
+    in `ListWidgets`, the forms search and the `ops_*` reads;
+  - `readsql`'s wrappers (`QueryLimit`, `QueryPage`, the empty count),
+    which rewrite the caller's SQL rather than pass it on. They are
+    therefore not sinks, and user SQL (widget content, `query`) never
+    becomes a site: `readsql` validates it when it runs;
+  - SQL assembled once at startup by a function (`receivedSQL`,
+    `foldedSQL`);
   - migration bodies in `migrate.go`, already compiled by every test that
     migrates.
 
@@ -181,7 +189,7 @@ written, and every one prepares cleanly today.
 
 | File | Change |
 | --- | --- |
-| `internal/sqlcheck/sqlcheck_test.go` | new: scanner, resolver, tokenizer, the three checks, `dynamic` list |
+| `internal/sqlcheck/*_test.go` | new: tokenizer, scanner and resolver, the three checks, the run over `internal/` with its `dynamic` list |
 | `internal/archtest/archtest_test.go` | `unconstrained` includes `internal/sqlcheck` |
 | `CLAUDE.md` | Checks: one paragraph (D8) |
 | production code | none, unless the first run finds a real defect, fixed in its own `fix:` commit |
