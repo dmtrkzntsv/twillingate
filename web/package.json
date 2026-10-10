@@ -27,6 +27,7 @@
     "@dnd-kit/utilities": "^3.2.2",
     "@fontsource/inter": "^5.3.0",
     "@hookform/resolvers": "^5.9.1",
+    "@lezer/highlight": "^1.2.5",
     "@noble/hashes": "^2.4.0",
     "@shadcn/react": "^0.3.1",
     "@tailwindcss/vite": "^4.3.3",

@@ -23,7 +23,7 @@ describe('CodeEditor', () => {
     expect(onChange).toHaveBeenLastCalledWith('# hi')
   })
 
-  it('replaces the text when value changes, without echoing it back', () => {
+  it('replaces the text when value changes, reporting it once', () => {
     const onChange = vi.fn()
     const { container, rerender } = render(<CodeEditor language="sql" label="SQL" value="a" onChange={onChange} />)
     rerender(<CodeEditor language="sql" label="SQL" value="b" onChange={onChange} />)
@@ -50,6 +50,24 @@ describe('CodeEditor', () => {
     expect(await labels('SELECT * FROM v_h')).toContain('v_hits')
     expect(await labels('SELECT v_hits.')).toContain('visitors')
     expect(await labels('WHERE project_id = :pr')).toContain(':project')
+  })
+
+  it('keeps its configuration when tables is an equal new array', () => {
+    const t = () => [{ name: 'v_hits', columns: ['day'] }]
+    const { container, rerender } = render(<CodeEditor language="sql" label="SQL" value="" onChange={() => {}} tables={t()} />)
+    const dispatch = vi.spyOn(viewOf(container), 'dispatch')
+    rerender(<CodeEditor language="sql" label="SQL" value="" onChange={() => {}} tables={t()} />)
+    expect(dispatch).not.toHaveBeenCalled()
+    rerender(<CodeEditor language="sql" label="SQL" value="" onChange={() => {}} tables={[{ name: 'v_hits', columns: ['day', 'n'] }]} />)
+    expect(dispatch).toHaveBeenCalledTimes(1)
+  })
+
+  it('colors its highlighting from css tokens', () => {
+    const { container } = render(<CodeEditor language="sql" label="SQL" value="SELECT 1 -- hi" onChange={() => {}} />)
+    const css = Array.from(document.querySelectorAll('style')).map((s) => s.textContent).join('\n')
+    expect(css).toContain('var(--code-keyword')
+    expect(css).not.toMatch(/#708|#a11/)
+    expect(container.querySelector('.cm-editor')).not.toBeNull()
   })
 
   it('runs on Mod-Enter', () => {

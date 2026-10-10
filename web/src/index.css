@@ -86,6 +86,13 @@
     --sidebar-accent-foreground: #f8fcff;
     --sidebar-border: rgb(143 211 255 / 12%);
     --sidebar-ring: #62c3f3;
+    /* The code editor's syntax colours (components/editor/CodeEditor.tsx). */
+    --code-keyword: #6d3fc4;
+    --code-string: #0b7a5c;
+    --code-number: #a84a00;
+    --code-comment: #587089;
+    --code-type: #b4235a;
+    --code-name: #0a4d8c;
 }
 
 .dark {
@@ -118,6 +125,12 @@
     --skeleton: #11304f;
     --skeleton-shine: #1a4169;
     --sidebar: #030d19;
+    --code-keyword: #b9a6ff;
+    --code-string: #6fd9b8;
+    --code-number: #f0b45a;
+    --code-comment: #8aa6c1;
+    --code-type: #f08cb0;
+    --code-name: #8fd3ff;
 }
 
 @layer base {
