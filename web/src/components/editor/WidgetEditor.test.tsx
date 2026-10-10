@@ -107,6 +107,36 @@ describe('WidgetEditor', () => {
     expect(screen.getByText('Changed since last run')).toBeInTheDocument()
   })
 
+  it("drops the run's warning once the visualization changes, asking for another run", async () => {
+    vi.spyOn(endpoints, 'previewWidget').mockResolvedValue({
+      columns: ['x'],
+      rows: [['2026-09-01']],
+      truncated: false,
+      problem: 'line needs y (number); columns are x',
+      elapsed_ms: 4,
+    })
+    open({ widget: line })
+    await userEvent.click(await screen.findByRole('button', { name: /Run query/ }))
+    await screen.findByText('line needs y (number); columns are x')
+    await userEvent.click(screen.getByRole('combobox', { name: 'Visualization' }))
+    await userEvent.click(await screen.findByRole('option', { name: /bar_list/ }))
+    expect(screen.queryByText('line needs y (number); columns are x')).toBeNull()
+    expect(screen.getByText('Run again to check the rows against bar_list')).toBeInTheDocument()
+  })
+
+  it('asks for another run after a clean one when the visualization changes', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.spyOn(endpoints, 'previewWidget').mockResolvedValue({ columns: ['x', 'y'], rows: [['a', '1']], truncated: false, elapsed_ms: 1 })
+    open({ widget: line })
+    await userEvent.click(await screen.findByRole('button', { name: /Run query/ }))
+    await screen.findByText(/1 row/)
+    expect(screen.queryByText(/Run again to check/)).toBeNull()
+    await userEvent.click(screen.getByRole('combobox', { name: 'Visualization' }))
+    await userEvent.click(await screen.findByRole('option', { name: /calendar/ }))
+    expect(screen.getByText('Run again to check the rows against calendar')).toBeInTheDocument()
+    expect(screen.getByText("This visualization can't draw these rows")).toBeInTheDocument()
+  })
+
   it('saves once, then closes', async () => {
     let resolve!: () => void
     const onSave = vi.fn(() => new Promise<void>((r) => (resolve = r)))

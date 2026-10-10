@@ -102,7 +102,11 @@ read-only, as the server already enforces.
   `problem` is a warning above both; a 400 shows its message in place of
   the results. Editing the SQL after a run dims the results and marks them
   "Changed since last run"; editing the component or props re-renders the
-  preview from the same rows. Running is never required to save.
+  preview from the same rows, drops `problem` (it was checked against the
+  run's component) and says "Run again to check the rows against
+  <component>". A component that throws on the rows shows "This
+  visualization can't draw these rows" in the preview, never taking the
+  console down. Running is never required to save.
 - **D14. Save.** Add: `add_widget` at the end of the dashboard, with the
   component's default size (resizing is on the grid). Edit: `update_widget`
   with only the fields that changed. A refusal shows as a banner in the

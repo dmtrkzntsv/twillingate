@@ -14,12 +14,25 @@ import type { PreviewResult } from '@/lib/api'
 import { rowsPx } from '@/lib/grid'
 import { cn } from '@/lib/utils'
 
+/** A run's rows, with the visualization and props the server checked them against. */
+export interface Ran {
+  result: PreviewResult
+  component: string
+  props: Record<string, unknown>
+}
+
 /** Where the editor's query stands: never run, running (over the last answer), answered, or refused. */
 export type RunState =
   | { kind: 'idle' }
-  | { kind: 'running'; last?: PreviewResult }
-  | { kind: 'done'; result: PreviewResult }
+  | { kind: 'running'; last?: Ran }
+  | ({ kind: 'done' } & Ran)
   | { kind: 'failed'; message: string }
+
+/** The answer on screen: the last one, kept while the next run is out. */
+export function ranOf(state: RunState): Ran | undefined {
+  if (state.kind === 'done') return { result: state.result, component: state.component, props: state.props }
+  return state.kind === 'running' ? state.last : undefined
+}
 
 /** The keys that run the query, as this platform names them. */
 export const RUN_KEYS = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌘↵' : 'Ctrl ↵'
@@ -38,7 +51,8 @@ const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`
 
 /** The last run's rows: the chosen component drawn from them, and the rows as a table (spec D13). */
 export default function ResultsPane({ component, props, height, state, stale }: Props) {
-  const result = state.kind === 'done' ? state.result : state.kind === 'running' ? state.last : undefined
+  const ran = ranOf(state)
+  const result = ran?.result
   // Each new answer opens on Preview.
   const [tab, setTab] = useState('preview')
   const [shown, setShown] = useState(result)
@@ -69,6 +83,10 @@ export default function ResultsPane({ component, props, height, state, stale }: 
   // A remote table pages through the server; here it has only these rows.
   const drawn = component === 'table' ? { ...props, mode: undefined } : props
   const dim = running || stale ? 'opacity-60' : ''
+  // The run's warning is about the visualization it was checked against: another one waits for the next run.
+  const unchecked =
+    ran !== undefined && component !== null && (ran.component !== component || JSON.stringify(ran.props) !== JSON.stringify(props))
+  const problem = unchecked ? undefined : result?.problem
 
   return (
     <div className="flex min-w-0 flex-col gap-2">
@@ -83,11 +101,12 @@ export default function ResultsPane({ component, props, height, state, stale }: 
           <span>Running…</span>
         )}
         {stale && <span className="font-medium text-foreground">Changed since last run</span>}
+        {unchecked && <span className="font-medium text-foreground">Run again to check the rows against {component}</span>}
       </div>
-      {result?.problem && (
+      {problem && (
         <Alert>
           <TriangleAlertIcon />
-          <AlertDescription className="break-words">{result.problem}</AlertDescription>
+          <AlertDescription className="break-words">{problem}</AlertDescription>
         </Alert>
       )}
       {result && (
@@ -103,7 +122,7 @@ export default function ResultsPane({ component, props, height, state, stale }: 
                   {/* Rows that do not fit the component can make it throw: that stays in the preview. */}
                   <WidgetErrorBoundary
                     resetKeys={[component, result, props]}
-                    fallback={<CannotDraw problem={result.problem} onTable={() => setTab('table')} />}
+                    fallback={<CannotDraw problem={problem} onTable={() => setTab('table')} />}
                   >
                     <Suspense fallback={<WidgetSkeleton widget={{ component, props: drawn }} />}>
                       <Component data={result} props={drawn} />

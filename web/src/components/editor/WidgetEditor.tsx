@@ -30,7 +30,7 @@ import { parseSchemaViews } from '@/lib/schema-views'
 import { draftOf, isDirty, sourceOf, sourceTypeOf, usesParams, type Draft } from '@/lib/widget-draft'
 import { iconOf } from './component-icons'
 import PropsForm from './PropsForm'
-import ResultsPane, { RUN_KEYS, type RunState } from './ResultsPane'
+import ResultsPane, { ranOf, RUN_KEYS, type RunState } from './ResultsPane'
 
 /**
  * Whether Escape belongs to the SQL editor rather than the dialog: with
@@ -113,22 +113,23 @@ function Editor({ open, onOpenChange, widget, defaults, onSave }: WidgetEditorPr
   // What a run reads: a change to any of it after the run dims its rows.
   const runKey = JSON.stringify([draft.sql, uses.project ? projectId : null, uses.range ? span : null])
   const stale = ranWith !== null && ranWith !== runKey
-  const last = run.kind === 'done' ? run.result : run.kind === 'running' ? run.last : undefined
+  const last = ranOf(run)?.result
 
   const runQuery = async () => {
     if (!component || markdown || running.current) return
     running.current = true
     setRanWith(runKey)
-    setRun((r) => ({ kind: 'running', last: r.kind === 'done' ? r.result : r.kind === 'running' ? r.last : undefined }))
+    setRun((r) => ({ kind: 'running', last: ranOf(r) }))
+    const props = draft.props
     try {
       const result = await endpoints.previewWidget({
         component,
-        props: draft.props,
+        props,
         source: { type: 'sql', content: draft.sql },
         ...(uses.project && projectId !== undefined ? { project_id: projectId } : {}),
         ...(uses.range ? span : {}),
       })
-      setRun({ kind: 'done', result })
+      setRun({ kind: 'done', result, component, props })
     } catch (err) {
       setRun({ kind: 'failed', message: messageOf(err) })
     } finally {
