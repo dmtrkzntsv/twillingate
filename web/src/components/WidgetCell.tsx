@@ -55,10 +55,14 @@ export default function WidgetCell({ widget, params, idle, share, gridPx, movabl
   // A size sent and not yet back: kept over the stored one it replaces.
   const [saving, setSaving] = useState<{ from: string; size: WidgetSize } | null>(null)
   if (saving && saving.from !== storedKey) setSaving(null)
-  const size = draft ?? saving?.size ?? stored
+  const shown = saving?.size ?? stored
+  const size = draft ?? shown
 
+  // Against the size shown, not the stored one: a resize back to the
+  // stored size while another is on its way is a change too, and must be
+  // sent, or the one on its way would win.
   const save = (next: WidgetSize) => {
-    if (!onResize || (next.width === stored.width && next.height === stored.height)) return
+    if (!onResize || (next.width === shown.width && next.height === shown.height)) return
     const mine = { from: storedKey, size: next }
     setSaving(mine)
     // A late refusal clears only its own size, never a newer one.
@@ -67,7 +71,7 @@ export default function WidgetCell({ widget, params, idle, share, gridPx, movabl
     })
   }
 
-  const resizer = useResizer(size, gridPx, setDraft, save)
+  const resizer = useResizer(size, gridPx, onResize !== undefined, setDraft, save)
   const describedBy = useId()
   const target = isOver && !isDragging && activeIndex >= 0
   const columns = span(size.width, gridPx)
@@ -105,12 +109,15 @@ export default function WidgetCell({ widget, params, idle, share, gridPx, movabl
         corner={
           onResize && (
             <>
+              {/* Within the card's 14px padding, at its very corner: any
+                  larger, it would cover the body's last pixels, a table's
+                  next-page button or the scrollbars' corner. */}
               <button
                 type="button"
                 aria-label={`Resize ${label}`}
                 aria-describedby={describedBy}
                 data-open={draft ? true : undefined}
-                className="hover-reveal absolute right-0.5 bottom-0.5 flex size-5 cursor-nwse-resize touch-none items-center justify-center rounded-sm text-muted-foreground hover:text-foreground"
+                className="hover-reveal absolute right-0 bottom-0 flex size-3.5 cursor-nwse-resize touch-none items-center justify-center rounded-sm text-muted-foreground hover:text-foreground"
                 {...resizer}
               >
                 <svg viewBox="0 0 10 10" className="size-2.5" aria-hidden>
@@ -157,11 +164,13 @@ export default function WidgetCell({ widget, params, idle, share, gridPx, movabl
  * enough) and saves it on release; a cancelled pointer drops it. Each
  * arrow key changes the width (left, right) or the height (up, down) by
  * one, saved once the keys pause or the corner loses focus; Escape drops
- * what is not saved yet.
+ * what is not saved yet. A corner that goes away (`enabled` false) drops
+ * what it was choosing.
  */
 function useResizer(
   size: WidgetSize,
   gridPx: number,
+  enabled: boolean,
   setDraft: (size: WidgetSize | null) => void,
   save: (size: WidgetSize) => void
 ) {
@@ -169,6 +178,16 @@ function useResizer(
   const keyed = useRef<WidgetSize | null>(null)
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined)
   useEffect(() => () => clearTimeout(timer.current), [])
+  // The corner can go while it is held (the grid narrowing below the full
+  // width): no pointer will let go of it then, so the size it was showing
+  // would stay on the card for good.
+  useEffect(() => {
+    if (enabled) return
+    clearTimeout(timer.current)
+    start.current = null
+    keyed.current = null
+    setDraft(null)
+  }, [enabled, setDraft])
 
   // A column is its share of the grid less the gaps, plus one gap.
   const columnPx = (gridPx + GAP_PX) / COLUMNS

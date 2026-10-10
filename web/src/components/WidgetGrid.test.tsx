@@ -146,6 +146,76 @@ describe('WidgetGrid', () => {
     expect(arrange.resize).not.toHaveBeenCalled()
   })
 
+  it('sends a resize back to the stored size while another is on its way', () => {
+    const arrange = actions({ resize: vi.fn().mockReturnValue(new Promise(() => {})) })
+    renderGrid([note(1)], arrange)
+    const corner = screen.getByRole('button', { name: 'Resize Note 1' })
+    // 6 to 8 wide, then, before the server's 8 is back, to 6 again.
+    fireEvent.pointerDown(corner, { button: 0, pointerId: 1, clientX: 0, clientY: 0 })
+    fireEvent.pointerUp(corner, { pointerId: 1, clientX: 202, clientY: 0 })
+    expect(cell('Note 1').style.gridColumn).toBe('span 8 / span 8')
+    fireEvent.pointerDown(corner, { button: 0, pointerId: 2, clientX: 202, clientY: 0 })
+    fireEvent.pointerUp(corner, { pointerId: 2, clientX: 0, clientY: 0 })
+    expect(arrange.resize).toHaveBeenCalledTimes(2)
+    expect(arrange.resize).toHaveBeenLastCalledWith(1, { width: 6, height: 4 })
+    expect(cell('Note 1').style.gridColumn).toBe('span 6 / span 6')
+    // Let go where it was picked up: the size shown is unchanged, nothing is sent.
+    fireEvent.pointerDown(corner, { button: 0, pointerId: 3, clientX: 0, clientY: 0 })
+    fireEvent.pointerUp(corner, { pointerId: 3, clientX: 0, clientY: 0 })
+    expect(arrange.resize).toHaveBeenCalledTimes(2)
+  })
+
+  it('drops the size being chosen when the corner goes mid-resize', () => {
+    const arrange = actions()
+    const { client, rerender } = renderGrid([note(1)], arrange)
+    const again = () =>
+      rerender(
+        <QueryClientProvider client={client}>
+          <TooltipProvider>
+            <WidgetGrid widgets={[note(1)]} paramsFor={() => ({})} arrange={arrange} />
+          </TooltipProvider>
+        </QueryClientProvider>
+      )
+    const corner = screen.getByRole('button', { name: 'Resize Note 1' })
+    fireEvent.pointerDown(corner, { button: 0, pointerId: 1, clientX: 500, clientY: 300 })
+    fireEvent.pointerMove(corner, { pointerId: 1, clientX: 500 + 3 * 101, clientY: 300 - 52 })
+    expect(screen.getByText('9 × 3')).toBeInTheDocument()
+
+    // The grid narrows below the full width while the corner is held.
+    gridPx = 899
+    again()
+    expect(screen.queryByRole('button', { name: /^Resize / })).toBeNull()
+    expect(screen.queryByText('9 × 3')).toBeNull()
+    const moving = screen.getByRole('button', { name: 'Move Note 1' })
+    expect((moving.closest('[data-slot="widget-cell"]') as HTMLElement).className).not.toContain('ring-2')
+
+    // Back at the full width, the card has its stored size and a fresh corner.
+    gridPx = 1200
+    again()
+    expect(cell('Note 1').style.gridColumn).toBe('span 6 / span 6')
+    expect(screen.queryByText(/ × /)).toBeNull()
+    expect(arrange.resize).not.toHaveBeenCalled()
+  })
+
+  it('drops the keys pressed when the corner goes before they are saved', async () => {
+    vi.useFakeTimers()
+    const arrange = actions()
+    const { client, rerender } = renderGrid([note(1)], arrange)
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Resize Note 1' }), { key: 'ArrowRight' })
+    expect(screen.getByText('7 × 4')).toBeInTheDocument()
+    gridPx = 899
+    rerender(
+      <QueryClientProvider client={client}>
+        <TooltipProvider>
+          <WidgetGrid widgets={[note(1)]} paramsFor={() => ({})} arrange={arrange} />
+        </TooltipProvider>
+      </QueryClientProvider>
+    )
+    expect(screen.queryByText('7 × 4')).toBeNull()
+    await act(() => vi.advanceTimersByTimeAsync(1000))
+    expect(arrange.resize).not.toHaveBeenCalled()
+  })
+
   it('snaps back when the server refuses the size', async () => {
     const user = userEvent.setup()
     const arrange = actions({ resize: vi.fn().mockResolvedValue(false) })
