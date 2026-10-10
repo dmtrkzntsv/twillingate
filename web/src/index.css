@@ -295,33 +295,6 @@
   }
 }
 
-/* Sign-in page: snow falls from above the top edge to below the bottom one,
-   fading at both ends. Negative delays start the screen already snowing;
-   with reduced motion each flake stays paused at that frame, so the snow
-   is still there, just not moving. */
-.snowflake {
-  position: absolute;
-  top: 0;
-  color: #f8fcff;
-  opacity: 0;
-  animation: snowfall linear infinite;
-  will-change: transform, opacity;
-}
-@keyframes snowfall {
-  0% {
-    transform: translate3d(var(--flake-drift), -10vh, 0) rotate(0deg);
-    opacity: 0;
-  }
-  8%,
-  88% {
-    opacity: var(--flake-opacity);
-  }
-  100% {
-    transform: translate3d(calc(var(--flake-drift) * -1), 105vh, 0) rotate(var(--flake-spin));
-    opacity: 0;
-  }
-}
-
 /* A loading note that stays hidden through a quick hop and shows on a slow one. */
 .fade-in-late {
   animation: fade-in-late 300ms ease-out 400ms both;
@@ -359,9 +332,6 @@
   }
   .frost {
     animation: none;
-  }
-  .snowflake {
-    animation-play-state: paused;
   }
   .surface-in {
     animation: none;

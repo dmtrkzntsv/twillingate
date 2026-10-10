@@ -3,7 +3,6 @@ import { useNavigate, useSearchParams } from 'react-router'
 import { ArrowRightIcon } from 'lucide-react'
 import IcebergLogo, { WATERLINE } from '@/components/IcebergLogo'
 import SeaLoading, { SEA } from '@/components/SeaLoading'
-import Snowfall from '@/components/Snowfall'
 import { authProviderHint, beginLogin, detectAuth, sanitizeReturnTo, setPastedToken } from '@/lib/auth'
 
 type Mode = 'checking' | 'redirecting' | 'paste' | 'error'
@@ -70,8 +69,6 @@ function Login() {
 
   return (
     <main className={`relative isolate flex min-h-svh flex-col items-center justify-center overflow-hidden p-6 text-[#f8fcff] ${SEA}`}>
-      <Snowfall className="absolute inset-0 z-20" />
-
       <div className="flex flex-col items-center gap-8">
         <div className="relative size-[min(78vw,19rem)]">
           <div className="absolute -inset-[45%] bg-[radial-gradient(closest-side,rgba(46,159,229,0.4),transparent)]" />
