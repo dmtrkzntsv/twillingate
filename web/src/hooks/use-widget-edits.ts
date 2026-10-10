@@ -58,8 +58,10 @@ export function useWidgetEdits(): WidgetEdits {
       const body = changedFields(widget, draft)
       if (Object.keys(body).length === 0) return
       await endpoints.updateWidget(widget.widget_id, body)
-      // The card's cached answers were read with the old query.
-      await refetch(widget.dashboard_id, [['widget', widget.widget_id]])
+      // The card's cached answers were read with the old query or drawn
+      // for the old component; a new title alone leaves them good.
+      const answers = body.source || body.component || body.props ? [['widget', widget.widget_id]] : []
+      await refetch(widget.dashboard_id, answers)
     },
     [refetch]
   )

@@ -74,6 +74,35 @@ describe('useWidgetEdits', () => {
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['widget', 7] })
   })
 
+  it('update of the title alone keeps the widget\'s cached answers', async () => {
+    const update = vi.spyOn(endpoints, 'updateWidget').mockResolvedValue(visits)
+    const invalidate = vi.spyOn(client, 'invalidateQueries')
+    const { result } = renderHook(() => useWidgetEdits(), { wrapper })
+
+    await act(() =>
+      result.current.update(visits, { title: 'Daily visits', component: 'line', props: {}, sql: visits.source.content, markdown: '' })
+    )
+
+    expect(update).toHaveBeenCalledWith(7, { title: 'Daily visits' })
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['dashboard', 3] })
+    expect(invalidate).not.toHaveBeenCalledWith({ queryKey: ['widget', 7] })
+  })
+
+  it.each([
+    ['component', { component: 'bar' }],
+    ['props', { props: { stacked: true } }],
+  ])('update of the %s refetches the widget\'s answers', async (_, patch) => {
+    vi.spyOn(endpoints, 'updateWidget').mockResolvedValue(visits)
+    const invalidate = vi.spyOn(client, 'invalidateQueries')
+    const { result } = renderHook(() => useWidgetEdits(), { wrapper })
+
+    await act(() =>
+      result.current.update(visits, { title: 'Visits', component: 'line', props: {}, sql: visits.source.content, markdown: '', ...patch })
+    )
+
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['widget', 7] })
+  })
+
   it('update makes no request when nothing changed', async () => {
     const update = vi.spyOn(endpoints, 'updateWidget')
     const { result } = renderHook(() => useWidgetEdits(), { wrapper })

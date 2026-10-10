@@ -85,6 +85,13 @@ describe('WidgetTitleField', () => {
     expect(onDone).toHaveBeenCalled()
   })
 
+  it('saves once when Enter is pressed again while saving', async () => {
+    const { onSave, field } = setup(vi.fn(() => new Promise<boolean>(() => {})))
+    await userEvent.clear(field)
+    await userEvent.type(field, 'Daily visits{Enter}{Enter}')
+    expect(onSave).toHaveBeenCalledTimes(1)
+  })
+
   it('stays open, keeping the input, when the save is refused', async () => {
     const { onSave, onDone, field } = setup(vi.fn().mockResolvedValue(false))
     await userEvent.clear(field)

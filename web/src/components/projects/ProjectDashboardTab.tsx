@@ -166,7 +166,7 @@ function TabView({ project, dashboard, tab, tabs, list, actions }: ViewProps) {
       {showGrid ? (
         <WidgetGrid widgets={dashboard.widgets} paramsFor={paramsFor} share={share} arrange={arrange} />
       ) : (
-        <NoWidgets action={arrange && <AddWidgetButton />} />
+        <NoWidgets action={arrange ? <AddWidgetButton /> : undefined} />
       )}
     </WidgetEditingProvider>
   )

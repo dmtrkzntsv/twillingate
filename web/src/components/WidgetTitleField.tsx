@@ -22,6 +22,7 @@ export default function WidgetTitleField({ title, onSave, onDone }: Props) {
   const [saving, setSaving] = useState(false)
   const submit = async (e: FormEvent) => {
     e.preventDefault()
+    if (saving) return
     const next = draft.trim()
     if (next === '' || next === title) return onDone()
     setSaving(true)
