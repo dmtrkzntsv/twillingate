@@ -191,6 +191,16 @@ export interface MoveBody {
   after?: number
 }
 
+/**
+ * The update_widget body a drag sends: a new place (`after` a live widget
+ * of the same dashboard, 0 for first) or a new size. Either runs no query.
+ */
+export interface WidgetLayoutBody {
+  after?: number
+  width?: number
+  height?: number
+}
+
 export interface Project {
   project_id: number
   name: string
@@ -489,6 +499,8 @@ export const endpoints = {
   dashboard: (id: number) => api<DashboardDetail>(`/api/dashboards/${id}`),
   widgetData: (id: number, q: WidgetDataQuery) => api<WidgetData>(`/api/widgets/${id}/data${toQuery(q)}`),
   components: () => api<ComponentsResponse>('/api/components'),
+  /** Moves or resizes a widget of the user's own dashboard. */
+  updateWidget: (id: number, body: WidgetLayoutBody) => api<Widget>(`/api/widgets/${id}`, json('PATCH', body)),
   saveView: (id: number, sel: SaveViewBody) =>
     api<{ status: string }>(`/api/dashboards/${id}/view`, {
       method: 'PUT',

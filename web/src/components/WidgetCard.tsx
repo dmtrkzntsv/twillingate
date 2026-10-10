@@ -38,10 +38,14 @@ interface Props {
   idle?: boolean
   /** Absent: the card has no menu (Share… and Download PNG). */
   share?: ShareContext
+  /** The handle that drags the card to a new place, first among its controls; absent where it does not move. */
+  grip?: ReactNode
+  /** The handle in the bottom-right corner that resizes the card. */
+  corner?: ReactNode
 }
 
 /** One widget in its card, loading on its own and showing its own state (D38). */
-export default function WidgetCard({ widget, params, idle = false, share }: Props) {
+export default function WidgetCard({ widget, params, idle = false, share, grip, corner }: Props) {
   const client = useQueryClient()
   const stateKey = `twillingate.widget.${widget.dashboard_id}.${widget.widget_id}`
   // The project and range: a view's page, and the answers below, belong to one.
@@ -121,7 +125,8 @@ export default function WidgetCard({ widget, params, idle = false, share }: Prop
   return (
     <WidgetFrame
       title={widget.title}
-      wideActions={share !== undefined}
+      slots={(share ? 2 : 1) + (grip ? 1 : 0)}
+      corner={corner}
       badge={
         truncated &&
         !remote && (
@@ -131,8 +136,9 @@ export default function WidgetCard({ widget, params, idle = false, share }: Prop
         )
       }
       actions={
-        (refreshable || share) && (
+        (refreshable || share || grip) && (
           <>
+            {grip}
             {refreshable && answer && query.isError && !viewError && <StaleWarning error={query.error} />}
             {refreshable && (
               <RefreshButton

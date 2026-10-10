@@ -100,26 +100,11 @@ func refuseGroup(o order, g int64) error {
 func (s *Service) insertWidget(ctx context.Context, w store.Widget, after *int64, a store.AuditEntry) (WidgetInfo, error) {
 	var id int64
 	err := retryConflict(func() error {
-		ws, err := s.st.ListWidgets(ctx, w.DashboardID)
+		key, err := s.widgetKeyAfter(ctx, w, after)
 		if err != nil {
 			return err
 		}
-		order := make([]placed, len(ws))
-		for i, x := range ws {
-			// An archived widget still holds its key (order keeps it so a
-			// new key never takes it), but after may not name one: the
-			// page shows nothing to place the new widget by.
-			if after != nil && x.ID == *after && x.ArchivedAt != "" {
-				return store.Refuse(store.ErrInvalid, "after %d is archived; name a live widget", x.ID)
-			}
-			order[i] = placed{x.ID, x.SortKey}
-		}
-		w.SortKey, err = keyAfter(order, after, func(id int64) error {
-			return store.Refuse(store.ErrInvalid, "after %d is not a widget on dashboard %d", id, w.DashboardID)
-		})
-		if err != nil {
-			return err
-		}
+		w.SortKey = key
 		id, err = s.st.InsertWidget(ctx, w, a)
 		return err
 	}, func() error { return s.lostWidgetRace(ctx, w) })
@@ -127,6 +112,32 @@ func (s *Service) insertWidget(ctx context.Context, w store.Widget, after *int64
 		return WidgetInfo{}, err
 	}
 	return s.readWidget(ctx, id)
+}
+
+// widgetKeyAfter reads w's dashboard's order afresh and returns a key
+// that places w after `after` (keyAfter's nil, 0 or id). w itself is left
+// out of the order, so a widget being moved is placed among the others.
+func (s *Service) widgetKeyAfter(ctx context.Context, w store.Widget, after *int64) (string, error) {
+	ws, err := s.st.ListWidgets(ctx, w.DashboardID)
+	if err != nil {
+		return "", err
+	}
+	order := make([]placed, 0, len(ws))
+	for _, x := range ws {
+		if x.ID == w.ID {
+			continue
+		}
+		// An archived widget still holds its key (order keeps it so a
+		// new key never takes it), but after may not name one: the
+		// page shows nothing to place the widget by.
+		if after != nil && x.ID == *after && x.ArchivedAt != "" {
+			return "", store.Refuse(store.ErrInvalid, "after %d is archived; name a live widget", x.ID)
+		}
+		order = append(order, placed{x.ID, x.SortKey})
+	}
+	return keyAfter(order, after, func(id int64) error {
+		return store.Refuse(store.ErrInvalid, "after %d is not a widget on dashboard %d", id, w.DashboardID)
+	})
 }
 
 // lostWidgetRace explains a widget write that kept conflicting: the name

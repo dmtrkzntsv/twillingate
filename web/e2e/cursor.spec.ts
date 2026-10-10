@@ -9,8 +9,9 @@ const TOKEN = 'e2e-token'
 // Every clickable thing shows the hand: src/index.css sets it once for
 // these, in the base layer, and this fails on a visible, enabled control
 // that ends up with another cursor. A deliberate exception goes in ALLOWED
-// with the reason: a drag handle's grab, and the sidebar's edge rail, whose
-// resize cursor says it toggles the sidebar by its edge.
+// with the reason: a drag handle's grab, the sidebar's edge rail, whose
+// resize cursor says it toggles the sidebar by its edge, and a widget's
+// resize corner, whose cursor says it drags the corner.
 const CLICKABLE = [
   "button:not(:disabled):not([aria-disabled='true'])",
   "a[href]:not([aria-disabled='true'])",
@@ -26,7 +27,7 @@ const CLICKABLE = [
   "[role='checkbox']:not([aria-disabled='true'])",
   "[role='combobox']:not([aria-disabled='true'])",
 ].join(', ')
-const ALLOWED = new Set(['grab', 'grabbing', 'w-resize', 'e-resize', 'ew-resize', 'col-resize'])
+const ALLOWED = new Set(['grab', 'grabbing', 'w-resize', 'e-resize', 'ew-resize', 'col-resize', 'nwse-resize'])
 
 async function login(page: Page): Promise<void> {
   await page.goto('/app/')

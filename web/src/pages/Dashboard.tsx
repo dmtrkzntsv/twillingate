@@ -16,6 +16,7 @@ import { useDashboardSelection } from '@/hooks/use-dashboard-selection'
 import { useDevReload } from '@/hooks/use-dev-reload'
 import { useFreshness } from '@/hooks/use-freshness'
 import { useStoredState } from '@/hooks/use-stored-state'
+import { useWidgetActions } from '@/hooks/use-widget-actions'
 import type { DashboardDetail, DashboardInfo, DashboardsResponse, DashboardTab } from '@/lib/api'
 import { moveTabBody } from '@/lib/arrange'
 import { rememberDashboard } from '@/lib/last-dashboard'
@@ -90,6 +91,7 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
   const freshness = useFreshness(dashboard.widgets, paramsFor, showGrid && !frozen)
   const [refreshing, setRefreshing] = useState(false)
   const { move, restore, setSidebar, pending } = useDashboardActions()
+  const widgetActions = useWidgetActions()
   // Reporting dev serves only reads (and the view), so the page offers no
   // writes there: every one of them would answer 405.
   const writable = !list.dev
@@ -111,8 +113,9 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
     }),
     [projectId, projectName, from, to, rangeShown, writable]
   )
-  // Only a live user dashboard's group is arranged from the page (D11,
-  // D14), and never while frozen: the dashboard on screen is being left.
+  // Only a live user dashboard's group and widgets are arranged from the
+  // page (D11, D14), and never while frozen: the dashboard on screen is
+  // being left.
   // Its tabs stay sortable while frozen, only without moves, so the tab
   // list is not rebuilt under the focus of the tab just chosen.
   const userGroup = writable && dashboard.owner === 'user' && !dashboard.archived_at
@@ -238,7 +241,13 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
         ) : dashboard.widgets.length === 0 ? (
           <NoWidgets />
         ) : (
-          <WidgetGrid widgets={dashboard.widgets} paramsFor={paramsFor} idle={frozen} share={share} />
+          <WidgetGrid
+            widgets={dashboard.widgets}
+            paramsFor={paramsFor}
+            idle={frozen}
+            share={share}
+            arrange={arrangeable ? widgetActions : undefined}
+          />
         )}
       </div>
     </>

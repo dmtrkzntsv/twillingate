@@ -11,6 +11,7 @@ import { useAutoRefresh } from '@/hooks/use-auto-refresh'
 import { useFreshness } from '@/hooks/use-freshness'
 import type { ProjectTabActions } from '@/hooks/use-project-tab-actions'
 import { useStoredState } from '@/hooks/use-stored-state'
+import { useWidgetActions } from '@/hooks/use-widget-actions'
 import type { DashboardDetail, DashboardsResponse, Project, ProjectTab, Widget } from '@/lib/api'
 import { writeLastTab } from '@/lib/last-tab'
 import { rangeParams } from '@/lib/project-tabs'
@@ -101,6 +102,11 @@ function TabView({ project, dashboard, tab, tabs, list, actions }: ViewProps) {
     [projectId, project.name, shareRange.from, shareRange.to, rangeShown, writable]
   )
 
+  // The user's own dashboard is arranged here as on its own page; a
+  // project page shows only live dashboards.
+  const widgetActions = useWidgetActions()
+  const arrange = writable && dashboard.owner === 'user' ? widgetActions : undefined
+
   const showGrid = dashboard.widgets.length > 0
   const freshness = useFreshness(dashboard.widgets, paramsFor, showGrid)
   const [refreshing, setRefreshing] = useState(false)
@@ -151,7 +157,7 @@ function TabView({ project, dashboard, tab, tabs, list, actions }: ViewProps) {
           />
         )}
       </DashboardHeader>
-      {showGrid ? <WidgetGrid widgets={dashboard.widgets} paramsFor={paramsFor} share={share} /> : <NoWidgets />}
+      {showGrid ? <WidgetGrid widgets={dashboard.widgets} paramsFor={paramsFor} share={share} arrange={arrange} /> : <NoWidgets />}
     </>
   )
 }

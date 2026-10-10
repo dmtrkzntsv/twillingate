@@ -340,3 +340,77 @@ test('copies a system group and one of its tabs from the gallery while it is hid
   await expect(page.getByRole('heading', { level: 1, name: 'Users (copy)', exact: true })).toBeVisible()
   await expect(page.getByRole('tab')).toHaveText(['Users (copy)'])
 })
+
+/** Creates a user dashboard over REST holding three 4 × 3 markdown widgets, E2E W1 to W3 in order. */
+async function createWidgetDashboard(request: APIRequestContext, title: string): Promise<number> {
+  const widget = (n: number) => ({
+    component: 'markdown',
+    title: `E2E W${n}`,
+    source: { type: 'md', content: `Widget ${n}` },
+    width: 4,
+    height: 3,
+  })
+  const res = await request.post('/api/dashboards', {
+    headers: authHeaders(),
+    data: { title, range: '7d', widgets: [widget(1), widget(2), widget(3)] },
+  })
+  expect(res.ok(), await res.text()).toBeTruthy()
+  return ((await res.json()) as { dashboard_id: number }).dashboard_id
+}
+
+/** A dashboard's live widgets in order, read with the API token: title and size. */
+async function widgetLayout(request: APIRequestContext, id: number): Promise<string[]> {
+  const res = await request.get(`/api/dashboards/${id}`, { headers: authHeaders() })
+  expect(res.ok(), await res.text()).toBeTruthy()
+  const body = (await res.json()) as { widgets: { title: string; width: number; height: number }[] }
+  return body.widgets.map((w) => `${w.title} ${w.width}x${w.height}`)
+}
+
+test('moves a widget by its grip and resizes it by its corner', async ({ page, request }) => {
+  // Wide enough for the full 12-column grid beside the sidebar: only there
+  // does a card resize.
+  await page.setViewportSize({ width: 1600, height: 1000 })
+  const id = await createWidgetDashboard(request, 'E2E Widgets')
+  toArchive.push({ id })
+
+  await login(page)
+  await page.goto(`/app/dashboards/${id}`)
+  await page.waitForLoadState('networkidle')
+  const cell = (title: string) =>
+    page.locator('[data-slot="widget-cell"]').filter({ has: page.getByRole('heading', { name: title, exact: true }) })
+
+  // W3's grip onto W1: W3 goes first.
+  await cell('E2E W3').hover()
+  const grip = page.getByRole('button', { name: 'Move E2E W3' })
+  const from = await grip.boundingBox()
+  const to = await cell('E2E W1').boundingBox()
+  if (!from || !to) throw new Error('grip or target has no bounding box')
+  await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(from.x, from.y + 15, { steps: 5 })
+  await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 10 })
+  await page.mouse.up()
+  await expect.poll(() => widgetLayout(request, id)).toEqual(['E2E W3 4x3', 'E2E W1 4x3', 'E2E W2 4x3'])
+
+  // W1's corner two columns right and two rows down.
+  const grid = await page.locator('[data-slot="widget-grid"]').boundingBox()
+  if (!grid) throw new Error('grid has no bounding box')
+  const column = (grid.width + 12) / 12
+  const row = 40 + 12
+  await cell('E2E W1').hover()
+  const corner = await page.getByRole('button', { name: 'Resize E2E W1' }).boundingBox()
+  if (!corner) throw new Error('corner has no bounding box')
+  const cx = corner.x + corner.width / 2
+  const cy = corner.y + corner.height / 2
+  await page.mouse.move(cx, cy)
+  await page.mouse.down()
+  await page.mouse.move(cx + 2 * column, cy + 2 * row, { steps: 10 })
+  await expect(page.getByText('6 × 5', { exact: true })).toBeVisible()
+  await page.mouse.up()
+  await expect.poll(() => widgetLayout(request, id)).toEqual(['E2E W3 4x3', 'E2E W1 6x5', 'E2E W2 4x3'])
+
+  await page.reload()
+  await page.waitForLoadState('networkidle')
+  await expect(cell('E2E W1')).toHaveAttribute('data-span', '6')
+  await expect(page.getByRole('heading', { level: 3 })).toHaveText(['E2E W3', 'E2E W1', 'E2E W2'])
+})
