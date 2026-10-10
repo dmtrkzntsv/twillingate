@@ -66,7 +66,7 @@ describe('WidgetGrid', () => {
   })
 
   it('keeps the grip but drops the corner below the full width, where the spans are narrowed', () => {
-    gridPx = 900
+    gridPx = 899
     renderGrid([note(1)], actions())
     expect(screen.getByRole('button', { name: 'Move Note 1' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /^Resize / })).toBeNull()

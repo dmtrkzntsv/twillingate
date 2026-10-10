@@ -13,6 +13,7 @@ import { useReorder } from '@/hooks/use-reorder'
 import type { WidgetActions } from '@/hooks/use-widget-actions'
 import type { Widget, WidgetDataQuery } from '@/lib/api'
 import { afterAt } from '@/lib/arrange'
+import { FULL_GRID_PX } from '@/lib/grid'
 import type { ShareContext } from '@/lib/share'
 import { gridClass } from './LayoutGrid'
 import WidgetCell from './WidgetCell'
@@ -35,13 +36,6 @@ interface Props {
 }
 
 /**
- * Where resizing starts: below this the grid narrows the spans (`span`),
- * so a card would not show the width it is saved with. Moving works at
- * every width, the order being the same.
- */
-const FULL_GRID_PX = 1024
-
-/**
  * A dashboard's widgets on the grid, in order. The cards do not shift
  * while one is dragged, since they differ in size: the dragged card
  * follows the pointer as an outline, and a bar beside the card under it
@@ -55,6 +49,7 @@ function WidgetGrid({ widgets, paramsFor, idle = false, share, arrange }: Props)
   const titleOf = (id: number) => label(byId.get(id))
   const onMove = (id: number, to: number) => (arrange ? arrange.move(id, afterAt(ids, id, to)) : Promise.resolve(false))
   const { order, busy, context } = useReorder(ids, onMove, 'xy', titleOf)
+  // Resizing needs the widths drawn as saved; moving works at every width.
   const resizable = gridPx >= FULL_GRID_PX
 
   return (

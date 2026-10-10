@@ -773,7 +773,11 @@ gap, so a 6 × 8 chart followed by four 3 × 3 stats puts the stats in a 2 × 2
 block beside the chart.
 
 - **`width`** is columns out of 12, from 1 to 12: 3 is a quarter, 4 a third, 6
-  a half, 12 the full width.
+  a half, 12 the full width. The page draws widths as defined when its grid is
+  at least 900px wide (a 1280px screen with the sidebar open); narrower, a
+  widget up to 6 wide takes half the row and a wider one the whole row, and
+  below 640px two widgets up to 3 wide share a row and others take the whole
+  row.
 - **`height`** is rows of 40px, from 1 to 12: 3 is about 120px, 8 about 320px.
   Heights keep their pixels at every width, so charts stay readable on a phone.
 - **`after`** places a widget: a widget id on the same dashboard puts it
