@@ -76,6 +76,16 @@ func joinAnd(items []string) string {
 	}
 }
 
+// accepts reports whether c takes source type t.
+func accepts(c Component, t string) bool {
+	for _, a := range c.Accepts {
+		if a == t {
+			return true
+		}
+	}
+	return false
+}
+
 // validateWidget refuses a widget that names a component that does not
 // exist, a source type that does not exist, a component/source-type pair
 // the component does not accept, a size outside the grid, props that do
@@ -92,14 +102,7 @@ func (s *Service) validateWidget(ctx context.Context, comps map[string]Component
 		return store.Refuse(store.ErrInvalid,
 			"source type %s does not exist; there are %s", w.SourceType, joinAnd(sortedSourceNames(s.sources)))
 	}
-	accepted := false
-	for _, a := range comp.Accepts {
-		if a == w.SourceType {
-			accepted = true
-			break
-		}
-	}
-	if !accepted {
+	if !accepts(comp, w.SourceType) {
 		return store.Refuse(store.ErrInvalid,
 			"%s does not accept %s; it accepts %s", comp.Name, w.SourceType, joinAnd(comp.Accepts))
 	}

@@ -142,16 +142,27 @@ func (s *sqlSource) Follows(content string) (project, rng bool) {
 	return
 }
 
-func (s *sqlSource) Validate(ctx context.Context, content string, c Component) error {
-	params, err := s.db.Check(content)
+// checkSQLParams runs Check on content and refuses any named parameter
+// outside allowedParams, returning the ones it uses. Shared by a widget's
+// Validate and Preview, so the two refuse the same SQL the same way.
+func checkSQLParams(db *readsql.DB, content string) ([]string, error) {
+	params, err := db.Check(content)
 	if err != nil {
-		return store.Refuse(store.ErrInvalid, "%s", err)
+		return nil, store.Refuse(store.ErrInvalid, "%s", err)
 	}
 	for _, p := range params {
 		if !allowedParams[p] {
-			return store.Refuse(store.ErrInvalid,
+			return nil, store.Refuse(store.ErrInvalid,
 				"sql uses %s; widgets get only :project, :from and :to", p)
 		}
+	}
+	return params, nil
+}
+
+func (s *sqlSource) Validate(ctx context.Context, content string, c Component) error {
+	params, err := checkSQLParams(s.db, content)
+	if err != nil {
+		return err
 	}
 
 	// The sample values must be computed — and bound — before the very
