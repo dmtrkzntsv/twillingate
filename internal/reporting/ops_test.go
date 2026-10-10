@@ -808,6 +808,29 @@ func TestUpdateWidgetWidthKeepsAConcurrentHeight(t *testing.T) {
 	}
 }
 
+// A move writes only the place, so a resize saved between the move's read
+// and its write keeps both sides (the page's drag racing an agent).
+func TestUpdateWidgetMoveKeepsAConcurrentSize(t *testing.T) {
+	base := newTestService(t)
+	ctx := context.Background()
+	d := mustCreate(t, base, "DD", note("A"), note("B"))
+	b := d.Widgets[1].ID
+	resize := func(_ context.Context, w store.Widget) store.Widget { w.Width, w.Height = 5, 7; return w }
+	svc := New(&editingStore{Store: base.st, edit: resize,
+		cols: store.WidgetColumns{Width: true, Height: true}}, base.db, Options{})
+
+	w, err := svc.UpdateWidget(ctx, "test", UpdateWidget{ID: b, After: ptr(int64(0))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.Width != 5 || w.Height != 7 {
+		t.Errorf("moved = %dx%d, want the rival's 5x7", w.Width, w.Height)
+	}
+	if got, want := liveNames(t, base, d.ID), []string{"b", "a"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("order = %v, want %v", got, want)
+	}
+}
+
 // An update that names nothing writes nothing: the widget comes back as
 // it is and no audit row is made.
 func TestUpdateWidgetWithNothingToChangeWritesNothing(t *testing.T) {
