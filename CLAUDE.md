@@ -107,6 +107,16 @@ widget contract, commit the regenerated file, or CI's `web` job (typecheck,
 tests, build, then the drift check on that file) fails. Its `e2e` job runs
 the Playwright suite against a built binary (`cd web && npm run e2e`).
 
+`internal/sqlcheck` (tests only) reads every SQL string the code under
+`internal/` passes to `database/sql` or to a wrapper that hands it on,
+and prepares it against a migrated database: an unknown column, a wrong
+argument count or a Scan that reads the wrong number of columns fails
+`make check`. A query built at run time cannot be read from the source,
+so its function goes in that package's `dynamic` list with the reason;
+prefer constants, locals and `placeholders(n)`, which it resolves. A Go
+migration step runs against its own version's schema, so its file goes
+in `migrationSteps` instead.
+
 ## Documentation
 
 Three pages, all served over MCP, all the contract rather than a summary:
