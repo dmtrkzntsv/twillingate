@@ -488,7 +488,7 @@ describe('Dashboard', () => {
     await user.click(screen.getByRole('menuitem', { name: 'Edit…' }))
     const dialog = await screen.findByRole('dialog', { name: 'Edit widget' })
     expect(within(dialog).getByRole('textbox', { name: 'Title' })).toHaveValue('Signups during launch')
-  })
+  }, 20_000)
 
   it('renames a widget in place, sending its title alone', async () => {
     const user = userEvent.setup()

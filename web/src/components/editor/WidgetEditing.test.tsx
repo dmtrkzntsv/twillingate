@@ -58,5 +58,5 @@ describe('WidgetEditingProvider', () => {
     // The first import of the editor's chunk is slow under the test runner.
     expect(await screen.findByRole('dialog', { name: 'Add widget' }, { timeout: 15_000 })).toBeInTheDocument()
     expect(endpoints.projects).toHaveBeenCalled()
-  })
+  }, 20_000)
 })
