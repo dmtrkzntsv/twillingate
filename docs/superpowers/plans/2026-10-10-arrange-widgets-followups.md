@@ -91,3 +91,17 @@ and the interface method becomes `UpdateWidget(ctx context.Context, w Widget, co
 - [ ] **Step 4: Measure again** with the same script and record the after numbers next to the before ones. Target: during the drag, only the dragged card, the card under it and the card it left re-render their bodies (ideally none of them re-renders its body at all); the longest task during the drag drops measurably.
 
 - [ ] **Step 5: Verify and commit.** The full vitest suite, typecheck and the Playwright arrange project pass. Commit: `perf(web): redraw only the cards a drag touches`.
+
+### Task 4: A drop redraws only the card that moved (D11, added after Task 3)
+
+Task 3 measured that a drop still redraws every card whose index shifted (15–16 of 20; longest task ~370 ms): TanStack Query's structural sharing matches `dashboard.widgets` by index, so after a reorder each shifted widget is a new object and fails the card's memo.
+
+**Files:**
+- Modify: `web/src/lib/queries.ts` (`dashboardQuery`), its test (create `web/src/lib/queries.test.ts` if none)
+- Modify: `web/src/components/WidgetGrid.tsx` (the interned params map)
+
+- [ ] **Step 1: Failing test.** Given old and new dashboard details whose widgets are the same set reordered (one widget's content also changed), the dashboard query's structural sharing returns a new detail whose unchanged widgets are the *same objects* as before (by `widget_id`), the changed widget is a new object, and the order is the new one; equal data returns the old detail object itself.
+- [ ] **Step 2: Implement** a `structuralSharing` for `dashboardQuery` that runs TanStack's `replaceEqualDeep` on the detail, then replaces each widget with the previous widget of the same `widget_id` when `replaceEqualDeep(prev, next) === prev`. Keep it small, typed and commented (why: a drop reorders the array, and index-based sharing would hand every shifted card a new widget).
+- [ ] **Step 3: Prune the params map** in `WidgetGrid`: keep only the entries used in the current render (rebuild from the previous map each render), and note in its comment that keys come from `JSON.stringify`, which drops `undefined` fields (correct because absent and undefined mean the same query).
+- [ ] **Step 4: Measure** the drop with the same method as Task 3 (body renders on drop, longest task) before and after, and record both.
+- [ ] **Step 5: Verify and commit.** Touched vitest files, the full vitest suite, typecheck, and the Playwright arrange project pass. Commit: `perf(web): keep unchanged widgets when a dashboard is reordered`.
