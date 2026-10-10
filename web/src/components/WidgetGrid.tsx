@@ -1,4 +1,4 @@
-import { memo, useRef } from 'react'
+import { memo, useRef, useState } from 'react'
 import {
   closestCenter,
   DndContext,
@@ -52,6 +52,19 @@ function WidgetGrid({ widgets, paramsFor, idle = false, share, arrange }: Props)
     return arrange && widget ? arrange.move(widget.dashboard_id, id, afterAt(ids, id, to)) : Promise.resolve(false)
   }
   const { order, busy, context } = useReorder(ids, onMove, 'xy', titleOf)
+  // A card redraws only when its props change, but paramsFor makes a new
+  // object per call: equal queries are handed over as the same object, so
+  // the grid redrawing (a drop, another selection) redraws only the cards
+  // whose widget or query changed. A few small objects per selection shown.
+  const [queries] = useState(() => new Map<string, WidgetDataQuery>())
+  const paramsOf = (widget: Widget) => {
+    const params = paramsFor(widget)
+    const key = JSON.stringify(params)
+    const same = queries.get(key)
+    if (same) return same
+    queries.set(key, params)
+    return params
+  }
   // Resizing needs the widths drawn as saved; moving works at every width.
   const resizable = gridPx >= FULL_GRID_PX
 
@@ -68,7 +81,7 @@ function WidgetGrid({ widgets, paramsFor, idle = false, share, arrange }: Props)
               <WidgetCell
                 key={id}
                 widget={widget}
-                params={paramsFor(widget)}
+                params={paramsOf(widget)}
                 idle={idle}
                 share={share}
                 gridPx={gridPx}

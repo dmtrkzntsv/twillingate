@@ -1,16 +1,27 @@
-import { act, fireEvent, screen, within } from '@testing-library/react'
+import type { ReactElement } from 'react'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import type { WidgetActions } from '@/hooks/use-widget-actions'
-import { endpoints, type Widget } from '@/lib/api'
+import { endpoints, type Widget, type WidgetData, type WidgetDataQuery } from '@/lib/api'
 import { renderWithProviders } from '@/test/render'
 import WidgetGrid from './WidgetGrid'
 
 // jsdom lays nothing out: the grid is as wide as each test says.
 let gridPx = 1200
 vi.mock('@/hooks/use-element-width', () => ({ useElementWidth: () => gridPx }))
+
+// Each stat card's body renders, by its stateKey: what a drag must leave alone.
+const statRenders = vi.hoisted(() => new Map<string, number>())
+vi.mock('@/components/widgets/stat', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/components/widgets/stat')>()),
+  default: ({ stateKey }: { stateKey: string }) => {
+    statRenders.set(stateKey, (statRenders.get(stateKey) ?? 0) + 1)
+    return <div data-testid="stat-body" />
+  },
+}))
 
 function note(id: number, over: Partial<Widget> = {}): Widget {
   return {
@@ -29,6 +40,24 @@ function note(id: number, over: Partial<Widget> = {}): Widget {
   }
 }
 
+function stat(id: number): Widget {
+  return note(id, {
+    name: `stat-${id}`,
+    component: 'stat',
+    title: `Stat ${id}`,
+    source: { type: 'sql', content: 'SELECT 1 AS value' },
+  })
+}
+
+function statAnswer(id: number): WidgetData {
+  return {
+    widget_id: id,
+    source_type: 'sql',
+    removed: false,
+    data: { columns: ['value'], rows: [['1']], truncated: false },
+  }
+}
+
 function actions(over: Partial<WidgetActions> = {}): WidgetActions {
   return { move: vi.fn().mockResolvedValue(true), resize: vi.fn().mockResolvedValue(true), ...over }
 }
@@ -44,6 +73,7 @@ function cell(title: string): HTMLElement {
 
 beforeEach(() => {
   gridPx = 1200
+  statRenders.clear()
   vi.spyOn(endpoints, 'widgetData').mockReturnValue(new Promise(() => {}))
 })
 
@@ -383,5 +413,53 @@ describe('WidgetGrid', () => {
       </QueryClientProvider>
     )
     expect(cell('Note 1').style.gridColumn).toBe('span 5 / span 5')
+  })
+  it('redraws no card body while a card is picked up, moved and put back', async () => {
+    vi.spyOn(endpoints, 'widgetData').mockImplementation(async (id) => statAnswer(id))
+    renderGrid([stat(1), stat(2)], actions())
+    await waitFor(() => expect(screen.getAllByTestId('stat-body')).toHaveLength(2))
+    const before = new Map(statRenders)
+
+    // Every sortable cell redraws on each change of dnd-kit's context: the
+    // pick-up, each step and the drop. The cards' bodies must not.
+    const grip = screen.getByRole('button', { name: 'Move Stat 1' })
+    grip.focus()
+    await userEvent.keyboard(' ')
+    await waitFor(() => expect(grip.closest('[data-slot="widget-cell"]')).toHaveClass('opacity-40'))
+    await userEvent.keyboard('{ArrowRight}')
+    await userEvent.keyboard('{Escape}')
+    await waitFor(() => expect(grip.closest('[data-slot="widget-cell"]')).not.toHaveClass('opacity-40'))
+
+    expect(statRenders).toEqual(before)
+  })
+
+  it('redraws no card body when the grid redraws with the same parameters, and each one whose parameters change', async () => {
+    const spy = vi.spyOn(endpoints, 'widgetData').mockImplementation(async (id) => statAnswer(id))
+    const widgets = [stat(1), { ...stat(2), follows_project: true }]
+    // One function per selection, as the pages' useCallback makes it, and
+    // a new object per call, as their widgetParams does.
+    const for7 = (w: Widget): WidgetDataQuery => (w.follows_project ? { project_id: 7 } : {})
+    const for8 = (w: Widget): WidgetDataQuery => (w.follows_project ? { project_id: 8 } : {})
+    const arrange = actions()
+    const grid = (project: number) => (
+      <WidgetGrid widgets={[...widgets]} paramsFor={project === 7 ? for7 : for8} arrange={arrange} />
+    )
+    const { client, rerender } = renderWithProviders(grid(7))
+    const wrap = (ui: ReactElement) => (
+      <QueryClientProvider client={client}>
+        <TooltipProvider>{ui}</TooltipProvider>
+      </QueryClientProvider>
+    )
+    await waitFor(() => expect(screen.getAllByTestId('stat-body')).toHaveLength(2))
+    const before = new Map(statRenders)
+
+    rerender(wrap(grid(7)))
+    expect(statRenders).toEqual(before)
+
+    // Another project: only the card that follows it asks again.
+    rerender(wrap(grid(8)))
+    expect(spy).toHaveBeenCalledWith(2, { project_id: 8 })
+    await waitFor(() => expect(statRenders.get('twillingate.widget.1.2')).toBeGreaterThan(before.get('twillingate.widget.1.2')!))
+    expect(statRenders.get('twillingate.widget.1.1')).toBe(before.get('twillingate.widget.1.1'))
   })
 })

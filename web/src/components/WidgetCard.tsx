@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useState, type ReactNode } from 'react'
+import { memo, Suspense, useEffect, useState, type ReactNode } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   ChevronDownIcon,
@@ -38,14 +38,23 @@ interface Props {
   idle?: boolean
   /** Absent: the card has no menu (Share… and Download PNG). */
   share?: ShareContext
-  /** The handle that drags the card to a new place, first among its controls; absent where it does not move. */
+  /**
+   * The handle that drags the card to a new place, first among its
+   * controls; absent where it does not move. The card is memoized, so a
+   * handle that changes as it is used is passed as the same element every
+   * time, reading its state from a context (WidgetCell).
+   */
   grip?: ReactNode
-  /** The handle in the bottom-right corner that resizes the card. */
+  /** The handle in the bottom-right corner that resizes the card, passed as the grip is. */
   corner?: ReactNode
 }
 
-/** One widget in its card, loading on its own and showing its own state (D38). */
-export default function WidgetCard({ widget, params, idle = false, share, grip, corner }: Props) {
+/**
+ * One widget in its card, loading on its own and showing its own state
+ * (D38). Memoized: it redraws when its own props or state change, not
+ * when its cell's handles do, as they do all through a drag (D11).
+ */
+function WidgetCard({ widget, params, idle = false, share, grip, corner }: Props) {
   const client = useQueryClient()
   const stateKey = `twillingate.widget.${widget.dashboard_id}.${widget.widget_id}`
   // The project and range: a view's page, and the answers below, belong to one.
@@ -218,6 +227,8 @@ export default function WidgetCard({ widget, params, idle = false, share, grip, 
     </WidgetFrame>
   )
 }
+
+export default memo(WidgetCard)
 
 /**
  * A table's view: filters and sort kept in this browser per widget, the page

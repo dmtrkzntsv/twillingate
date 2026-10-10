@@ -1,4 +1,14 @@
-import { useEffect, useId, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react'
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type PointerEvent,
+  type ReactNode,
+} from 'react'
 import { useSortable } from '@dnd-kit/sortable'
 import { GripVerticalIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -30,6 +40,27 @@ const MAX_ROWS = 12
 
 /** How long the arrow keys' last change waits before it is saved. */
 const KEY_SAVE_MS = 600
+
+/**
+ * The handles a cell draws on its card. Every sortable cell redraws on
+ * each change of dnd-kit's context during a drag, and the dragged one on
+ * every pointer move, while the card's body (its query, its chart or
+ * table) is what costs; so the card is memoized and is handed the same two
+ * elements every time, which read the cell's handles from here as they
+ * are now: a drag redraws only them (D11).
+ */
+const Handles = createContext<{ grip: ReactNode; corner: ReactNode }>({ grip: null, corner: null })
+
+function Grip() {
+  return useContext(Handles).grip
+}
+
+function Corner() {
+  return useContext(Handles).corner
+}
+
+const grip = <Grip />
+const corner = <Corner />
 
 /**
  * One widget's place on the grid. On the user's own dashboard the card
@@ -103,13 +134,9 @@ export default function WidgetCell({ widget, params, idle, share, gridPx, movabl
       className={cn('relative min-w-0 rounded-xl', isDragging && 'opacity-40', draft && 'ring-2 ring-primary/50')}
       style={cellStyle(columns, size.height)}
     >
-      <WidgetCard
-        widget={widget}
-        params={params}
-        idle={idle}
-        share={share}
-        grip={
-          movable && (
+      <Handles.Provider
+        value={{
+          grip: movable && (
             <span className="hover-reveal" data-open={isDragging || undefined}>
               <Button
                 ref={setActivatorNodeRef}
@@ -123,10 +150,8 @@ export default function WidgetCell({ widget, params, idle, share, gridPx, movabl
                 <GripVerticalIcon />
               </Button>
             </span>
-          )
-        }
-        corner={
-          onResize && (
+          ),
+          corner: onResize && (
             <>
               {/* Within the card's 14px padding, at its very corner: any
                   larger, it would cover the body's last pixels, a table's
@@ -147,9 +172,18 @@ export default function WidgetCell({ widget, params, idle, share, gridPx, movabl
                 {`${size.width} of ${COLUMNS} columns wide, ${size.height} rows tall. Drag, or use the arrow keys, to resize.`}
               </span>
             </>
-          )
-        }
-      />
+          ),
+        }}
+      >
+        <WidgetCard
+          widget={widget}
+          params={params}
+          idle={idle}
+          share={share}
+          grip={movable ? grip : undefined}
+          corner={onResize ? corner : undefined}
+        />
+      </Handles.Provider>
       {onResize && (
         // Beside the card, not in it, so the card's re-renders leave it
         // alone; it exists before its text does, or nothing is announced.
