@@ -1,8 +1,10 @@
 import { Suspense, useState } from 'react'
 import { TriangleAlertIcon } from 'lucide-react'
+import WidgetErrorBoundary from '@/components/WidgetErrorBoundary'
 import WidgetFrame from '@/components/WidgetFrame'
 import WidgetSkeleton from '@/components/WidgetSkeleton'
 import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Button } from '@/components/ui/button'
 import { Kbd } from '@/components/ui/kbd'
 import { Spinner } from '@/components/ui/spinner'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -98,9 +100,15 @@ export default function ResultsPane({ component, props, height, state, stale }: 
             {Component ? (
               <div className="min-w-0" style={{ height: rowsPx(height) }}>
                 <WidgetFrame>
-                  <Suspense fallback={<WidgetSkeleton widget={{ component, props: drawn }} />}>
-                    <Component data={result} props={drawn} />
-                  </Suspense>
+                  {/* Rows that do not fit the component can make it throw: that stays in the preview. */}
+                  <WidgetErrorBoundary
+                    resetKeys={[component, result, props]}
+                    fallback={<CannotDraw problem={result.problem} onTable={() => setTab('table')} />}
+                  >
+                    <Suspense fallback={<WidgetSkeleton widget={{ component, props: drawn }} />}>
+                      <Component data={result} props={drawn} />
+                    </Suspense>
+                  </WidgetErrorBoundary>
                 </WidgetFrame>
               </div>
             ) : (
@@ -133,6 +141,20 @@ export default function ResultsPane({ component, props, height, state, stale }: 
           </TabsContent>
         </Tabs>
       )}
+    </div>
+  )
+}
+
+/** In place of a preview that threw on these rows. */
+function CannotDraw({ problem, onTable }: { problem?: string; onTable: () => void }) {
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-1.5 p-2 text-center text-muted-foreground [&>svg]:size-5 [&>svg]:shrink-0">
+      <TriangleAlertIcon />
+      <p className="text-sm font-medium">This visualization can't draw these rows</p>
+      {problem && <p className="text-xs break-words">{problem}</p>}
+      <Button type="button" variant="link" size="sm" className="h-6" onClick={onTable}>
+        See them as a table
+      </Button>
     </div>
   )
 }

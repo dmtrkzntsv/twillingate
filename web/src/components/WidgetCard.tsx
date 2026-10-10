@@ -38,6 +38,7 @@ import { shareCaption, type ShareContext } from '@/lib/share'
 import { liveFilters, parseView, type Filter, type TableView } from '@/lib/table-view'
 import { formatDuration } from '@/lib/time'
 import { canRefresh, componentOf, isRemoteTable, refreshWidget, viewQuery, widgetQuery } from '@/lib/widget-query'
+import WidgetErrorBoundary from './WidgetErrorBoundary'
 import WidgetFrame from './WidgetFrame'
 import WidgetTitleField from './WidgetTitleField'
 import WidgetSkeleton from './WidgetSkeleton'
@@ -230,19 +231,25 @@ function WidgetCard({ widget, params, idle = false, share, grip, corner }: Props
           <CardState icon={<InboxIcon />} title={answer.source_type === 'md' ? 'Nothing to show' : 'No data for this range'} />
         ) : (
           // A lazy component (the map, markdown) keeps the skeleton up while its code loads.
-          <Suspense fallback={<WidgetSkeleton widget={widget} />}>
-            <Component
-              data={answer.data!}
-              props={widget.props}
-              stateKey={stateKey}
-              view={view}
-              onView={setView}
-              fetchDistinct={remote ? fetchDistinct : undefined}
-              page={remote ? answer.page : undefined}
-              viewError={viewError}
-              reloading={query.isPlaceholderData || (query.isFetching && !!answer)}
-            />
-          </Suspense>
+          // One that throws on these rows (a release changed what it reads) fails alone, in its card.
+          <WidgetErrorBoundary
+            resetKeys={[Component, answer.data, widget.props]}
+            fallback={<CardState icon={<TriangleAlertIcon />} title="This visualization can't draw these rows" />}
+          >
+            <Suspense fallback={<WidgetSkeleton widget={widget} />}>
+              <Component
+                data={answer.data!}
+                props={widget.props}
+                stateKey={stateKey}
+                view={view}
+                onView={setView}
+                fetchDistinct={remote ? fetchDistinct : undefined}
+                page={remote ? answer.page : undefined}
+                viewError={viewError}
+                reloading={query.isPlaceholderData || (query.isFetching && !!answer)}
+              />
+            </Suspense>
+          </WidgetErrorBoundary>
         )
       ) : query.isError ? (
         <FailedState error={query.error} onRetry={() => query.refetch()} />
