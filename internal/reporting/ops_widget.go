@@ -147,8 +147,11 @@ func (s *Service) UpdateWidget(ctx context.Context, actor string, in UpdateWidge
 	if cols == (store.WidgetColumns{}) { // nothing to change: no check, no write, no audit row
 		return s.widgetInfo(w), nil
 	}
-	layoutOnly := !cols.Content
-	if layoutOnly || (in.Component == nil && w.Component == "") {
+	// Only a new component, props or source changes what the widget
+	// draws: a move, a resize or a rename (title, name, checked above)
+	// runs no query, so a widget whose SQL broke can still be renamed.
+	drawn := in.Component != nil || in.Props != nil || in.Source != nil
+	if !drawn {
 		err = checkSize(w.Width, w.Height)
 	} else {
 		var comps map[string]Component

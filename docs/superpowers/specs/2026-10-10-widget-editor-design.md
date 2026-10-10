@@ -119,7 +119,9 @@ read-only, as the server already enforces.
 - **D17. Rename** turns the card title into an inline field (the
   `ProjectName` pattern): Enter or ✓ saves `update_widget {title}`; Esc, ×,
   or blur without a change cancels. An empty field cancels; clearing a title
-  is a modal edit. `name`, the agents' handle, never changes.
+  is a modal edit. `name`, the agents' handle, never changes. A change of
+  only `title` and `name` runs no query (as layout changes do), so a widget
+  whose SQL broke can still be renamed.
 - **D18. Archive** calls `archive_widget` at once, refetches the dashboard,
   and toasts "Widget archived" with Undo (`restore_widget`), as dashboards
   do.
