@@ -144,6 +144,8 @@ export default function PropsForm({ component, value, onChange, columns, onValid
   const report = useRef(onValidity)
   report.current = onValidity
   useEffect(() => report.current(ok), [ok])
+  // A form that is gone has nothing invalid left to block Save.
+  useEffect(() => () => report.current(true), [])
 
   const markBad = (key: string) => (bad: boolean) =>
     setBadKeys((prev) => {
@@ -202,11 +204,13 @@ export default function PropsForm({ component, value, onChange, columns, onValid
     <div className="grid min-w-0 grid-cols-1 gap-3">
       {fields.length === 0 && <p className="text-xs text-muted-foreground">No props</p>}
       {fields.map((f) => {
+        // Keyed by component too: a switch in place starts every field afresh.
+        const key = `${component}:${f.key}`
         const set = (v: unknown) => onChange(put(value, f.key, v))
         switch (f.kind) {
           case 'enum':
             return (
-              <div key={f.key} className="grid min-w-0 grid-cols-1 gap-1.5">
+              <div key={key} className="grid min-w-0 grid-cols-1 gap-1.5">
                 <Label htmlFor={`prop-${f.key}`}>{f.key}</Label>
                 <Default
                   id={`prop-${f.key}`}
@@ -219,7 +223,7 @@ export default function PropsForm({ component, value, onChange, columns, onValid
             )
           case 'boolean':
             return (
-              <div key={f.key} className="flex min-w-0 items-center gap-2">
+              <div key={key} className="flex min-w-0 items-center gap-2">
                 <Switch
                   id={`prop-${f.key}`}
                   aria-label={f.key}
@@ -230,9 +234,9 @@ export default function PropsForm({ component, value, onChange, columns, onValid
               </div>
             )
           case 'enum-map':
-            return <EnumMap key={f.key} field={f} value={value[f.key]} columns={columns} onValue={set} />
+            return <EnumMap key={key} field={f} value={value[f.key]} columns={columns} onValue={set} />
           case 'json':
-            return <JsonField key={f.key} name={f.key} value={value[f.key]} onValue={set} onBad={markBad(f.key)} />
+            return <JsonField key={key} name={f.key} value={value[f.key]} onValue={set} onBad={markBad(f.key)} />
         }
       })}
       {toggle}

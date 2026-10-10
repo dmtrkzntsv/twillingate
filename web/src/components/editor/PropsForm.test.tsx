@@ -58,4 +58,23 @@ describe('PropsForm', () => {
     render(<PropsForm component="markdown" value={{}} columns={[]} onChange={() => {}} onValidity={() => {}} />)
     expect(screen.getByText('No props')).toBeInTheDocument()
   })
+  it('reports valid when it unmounts with bad json', async () => {
+    const onValidity = vi.fn()
+    const { unmount } = render(<PropsForm component="table" value={{}} columns={[]} onChange={() => {}} onValidity={onValidity} />)
+    await userEvent.type(screen.getByLabelText('colorscale'), '[[oops')
+    expect(onValidity).toHaveBeenLastCalledWith(false)
+    unmount()
+    expect(onValidity).toHaveBeenLastCalledWith(true)
+  })
+  it('drops stale json text and validity when the component changes in place', async () => {
+    const onValidity = vi.fn()
+    const props = { value: {}, columns: [], onChange: () => {}, onValidity }
+    const { rerender } = render(<PropsForm component="table" {...props} />)
+    await userEvent.type(screen.getByLabelText('colorscale'), '[[oops')
+    rerender(<PropsForm component="line" {...props} />)
+    expect(screen.queryByLabelText('colorscale')).toBeNull()
+    expect(onValidity).toHaveBeenLastCalledWith(true)
+    rerender(<PropsForm component="table" {...props} />)
+    expect(screen.getByLabelText('colorscale')).toHaveValue('')
+  })
 })
