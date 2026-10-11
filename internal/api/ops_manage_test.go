@@ -113,9 +113,15 @@ func TestKeyToolsLifecycle(t *testing.T) {
 	}
 }
 
+// destructiveWriters are the write tools announcing DestructiveHint true
+// besides delete_submissions.
+var destructiveWriters = map[string]bool{"rename_event": true, "block_event": true}
+
 // TestNoDeleteToolExists: nothing over MCP deletes, except
-// delete_submissions, which an erasure request needs (spec D8); it is the
-// one tool announcing DestructiveHint true, so a client asks the operator.
+// delete_submissions, which an erasure request needs (spec D8); it and the
+// two event-rule tools that lose data (rename_event, whose merge cannot be
+// split, and block_event, whose daily pass deletes aggregates) are the
+// tools announcing DestructiveHint true, so a client asks the operator.
 func TestNoDeleteToolExists(t *testing.T) {
 	_, cs := newTestHost(t)
 	tools, err := cs.ListTools(context.Background(), &mcp.ListToolsParams{})
@@ -126,6 +132,12 @@ func TestNoDeleteToolExists(t *testing.T) {
 		if tool.Name == "delete_submissions" {
 			if d := tool.Annotations.DestructiveHint; d == nil || !*d {
 				t.Errorf("delete_submissions: DestructiveHint must be true, got %v", d)
+			}
+			continue
+		}
+		if destructiveWriters[tool.Name] {
+			if d := tool.Annotations.DestructiveHint; d == nil || !*d {
+				t.Errorf("%s: DestructiveHint must be true, got %v", tool.Name, d)
 			}
 			continue
 		}
@@ -146,8 +158,9 @@ func TestNoDeleteToolExists(t *testing.T) {
 //
 // It also checks the two guardrails the write annotations exist to
 // encode (spec §6): every writer explicitly asserts DestructiveHint ==
-// false (never left at the SDK's true default, which would tell a client
-// this tool might destroy data), and the reversible-but-not-idempotent-
+// false, or true for destructiveWriters (never left at the SDK's true
+// default, which would tell a client every tool might destroy data), and the
+// reversible-but-not-idempotent-
 // by-nature ones (archive/restore/disable/enable) assert IdempotentHint
 // == true, since calling them twice with the same arguments is a no-op.
 func TestManagementToolsAnnotatedNonReadOnly(t *testing.T) {
@@ -164,13 +177,15 @@ func TestManagementToolsAnnotatedNonReadOnly(t *testing.T) {
 		"update_widget": true, "copy_widget": true, "archive_widget": true, "restore_widget": true,
 		"add_project_tab": true, "remove_project_tab": true, "move_project_tab": true,
 		"update_widget_share": true, "archive_widget_share": true, "restore_widget_share": true,
-		"approve_form": true, "update_form": true, "archive_form": true, "restore_form": true}
+		"approve_form": true, "update_form": true, "archive_form": true, "restore_form": true,
+		"rename_event": true, "block_event": true, "remove_event_rule": true}
 	idempotent := map[string]bool{"archive_project": true, "restore_project": true, "move_project": true,
 		"disable_ingest_key": true, "enable_ingest_key": true,
 		"archive_dashboard": true, "restore_dashboard": true, "archive_widget": true, "restore_widget": true,
 		"remove_project_tab": true,
 		"update_widget_share": true, "archive_widget_share": true, "restore_widget_share": true,
-		"archive_form": true, "restore_form": true}
+		"archive_form": true, "restore_form": true,
+		"block_event": true, "remove_event_rule": true}
 	for _, tool := range tools.Tools {
 		if tool.Name == "delete_submissions" { // destructive by design: TestNoDeleteToolExists
 			if tool.Annotations.ReadOnlyHint {
@@ -186,8 +201,8 @@ func TestManagementToolsAnnotatedNonReadOnly(t *testing.T) {
 		}
 		if writers[tool.Name] {
 			d := tool.Annotations.DestructiveHint
-			if d == nil || *d != false {
-				t.Errorf("%s: DestructiveHint must be explicitly false, got %v", tool.Name, d)
+			if want := destructiveWriters[tool.Name]; d == nil || *d != want {
+				t.Errorf("%s: DestructiveHint must be explicitly %v, got %v", tool.Name, destructiveWriters[tool.Name], d)
 			}
 		}
 		if idempotent[tool.Name] && !tool.Annotations.IdempotentHint {

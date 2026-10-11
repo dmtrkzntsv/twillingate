@@ -139,6 +139,34 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
     a_field_with_a_long_name_that_does_not_fit: 'x',
   })
 
+  // Product events with names longer than a phone is wide, one renamed and
+  // one blocked: the Settings page's Events table and its alias chips wrap.
+  const longEvent = 'an_event_whose_name_is_longer_than_a_phone_is_wide_on_one_line'
+  const renamedEvent = 'the_new_name_of_that_event_which_is_longer_than_a_phone_is_wide'
+  const blockedEvent = 'another_event_that_is_blocked_with_a_name_longer_than_a_phone'
+  const ingested = await request.post('/ingest/events', {
+    headers: { 'X-Analytics-Key': key },
+    data: {
+      events: [longEvent, blockedEvent].map((name) => ({ id: crypto.randomUUID(), ts: new Date().toISOString(), name, family: 'product' })),
+    },
+  })
+  expect(ingested.status(), await ingested.text()).toBe(202)
+  // The write buffer flushes every few seconds; rules apply to what is stored.
+  const today = new Date().toISOString().slice(0, 10)
+  await expect
+    .poll(async () => {
+      const res = await request.get(`/api/projects/${id}/event-names?from=${today}&to=${today}`, { headers: authHeaders() })
+      return ((await res.json()) as { events: unknown[] }).events.length
+    }, { timeout: 30_000 })
+    .toBe(2)
+  for (const [action, body] of [
+    ['rename', { family: 'product', from: longEvent, to: renamedEvent }],
+    ['block', { family: 'product', name: blockedEvent }],
+  ] as const) {
+    const rule = await request.post(`/api/projects/${id}/event-rules/${action}`, { headers: authHeaders(), data: body })
+    expect(rule.ok(), await rule.text()).toBeTruthy()
+  }
+
   // Two shares of one widget with a 120-character title, over the long-named
   // project: the Shares page and, once one is archived, the Archive page show them.
   const dashboard = await request.post('/api/dashboards', {
@@ -184,6 +212,8 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
     '/app/projects',
     '/app/projects/1/settings',
     `/app/projects/${id}/settings`,
+    // Today, where the events above were received (the default range ends yesterday).
+    `/app/projects/${id}/settings?range=today`,
     `/app/projects/${id}/forms`,
     `/app/projects/${id}/forms/${formName}`,
     `/app/projects/${id}/dashboards/1`,
@@ -198,6 +228,11 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
     `/app/projects/${id}/dashboards/999999`,
   ]) {
     await check(page, path)
+    // The check above means nothing for the Events section unless it is drawn.
+    if (path.endsWith('?range=today')) {
+      await expect(page.getByRole('button', { name: `Remove alias ${longEvent}` })).toBeVisible()
+      await expect(page.getByText('Blocked', { exact: true })).toBeVisible()
+    }
   }
   for (const d of await dashboardIds(request)) await check(page, `/app/dashboards/${d}`)
 

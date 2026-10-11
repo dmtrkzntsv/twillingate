@@ -219,9 +219,14 @@ func (h *host) viewsBreakdown(ctx context.Context, in breakdownIn) (tableOut, er
 // operations (ops_manage.go) do not.
 func (h *host) register(r *registrar) {
 	ro := &mcp.ToolAnnotations{ReadOnlyHint: true}
-	no := false // DestructiveHint is *bool in the SDK; nothing here destroys
+	// DestructiveHint is *bool in the SDK. Nothing here is destructive but
+	// rename_event (a merge cannot be split again) and block_event (the next
+	// daily pass deletes the name's aggregates), which ask the operator.
+	no, yes := false, true
 	write := &mcp.ToolAnnotations{DestructiveHint: &no}
 	idem := &mcp.ToolAnnotations{DestructiveHint: &no, IdempotentHint: true}
+	destroy := &mcp.ToolAnnotations{DestructiveHint: &yes}
+	destroyIdem := &mcp.ToolAnnotations{DestructiveHint: &yes, IdempotentHint: true}
 	const p = "/api/projects/{project_id}"
 
 	expose(r, spec{Name: "list_projects", Annotations: ro, Method: "GET", Path: "/api/projects",
@@ -294,6 +299,21 @@ func (h *host) register(r *registrar) {
 	expose(r, spec{Name: "enable_ingest_key", Annotations: idem, Method: "POST", Path: p + "/keys/{label}/enable",
 		Description: "Re-enable a disabled ingest key."},
 		h.enableKey)
+	expose(r, spec{Name: "list_event_rules", Annotations: ro, Method: "GET", Path: p + "/event-rules",
+		Description: "List a project's event rules: renames (name → to) and blocks, product and measures families."},
+		h.listEventRules)
+	expose(r, spec{Name: "rename_event", Annotations: destroy, Method: "POST", Path: p + "/event-rules/rename",
+		Description: "Rename a product or measures event: rewrites its stored events and aggregates, and stores later events sent under the old name under the new one. Refused onto a name with events, or a blocked name, unless merge is true (a merge cannot be undone; onto a blocked name the renamed history is deleted at the next daily pass). Widget SQL naming the old event is not rewritten."},
+		h.renameEvent)
+	expose(r, spec{Name: "block_event", Annotations: destroyIdem, Method: "POST", Path: p + "/event-rules/block",
+		Description: "Block a product or measures event: ingest accepts and drops it (with a warning), the next daily pass deletes its aggregates, and its stored raw events expire with the raw window. Nothing else is deleted. remove_event_rule unblocks."},
+		h.blockEvent)
+	expose(r, spec{Name: "remove_event_rule", Annotations: idem, Method: "POST", Path: p + "/event-rules/remove",
+		Description: "Remove a project's rule for an event name: a rename stops mapping (history stays renamed), a block lets the event be stored again."},
+		h.removeEventRule)
+	restOnly(r, spec{Name: "event_names", Method: "GET", Path: p + "/event-names",
+		Description: "A project's product and measures event names in a range with their event counts, the busiest 200, busiest first. For the console's Settings page; not an MCP tool (product_events and measures answer agents)."},
+		h.eventNames)
 
 	expose(r, spec{Name: "integration_guide", Annotations: ro, // MCP only
 		Description: "Tailored integration instructions for one project and platform (web, spa, server, mobile), with the project's real ingest key, collector URL and event examples baked in. Confirm the collector hostname with the user. Call after create_project; read docs://twillingate for depth."},

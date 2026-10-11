@@ -73,6 +73,14 @@ func testServer(t *testing.T) (*fakeQueue, http.Handler) {
 // specs to {key, label}.
 func newTestRegistry(t *testing.T, projects []manage.ProjectSpec, keys map[int][2]string) *manage.Registry {
 	t.Helper()
+	reg, _ := newTestRegistryStore(t, projects, keys)
+	return reg
+}
+
+// newTestRegistryStore is newTestRegistry that also hands back the store,
+// for a test that writes through manage.NewOps.
+func newTestRegistryStore(t *testing.T, projects []manage.ProjectSpec, keys map[int][2]string) (*manage.Registry, store.Store) {
+	t.Helper()
 	st := storetest.Open(t, t.TempDir()+"/reg.db")
 	ctx := context.Background()
 	reg := manage.New(st, slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -98,7 +106,7 @@ func newTestRegistry(t *testing.T, projects []manage.ProjectSpec, keys map[int][
 	if err := reg.Reload(ctx); err != nil {
 		t.Fatal(err)
 	}
-	return reg
+	return reg, st
 }
 
 // newServer builds a *Server over one project with one key, logging to
@@ -1459,5 +1467,59 @@ func TestConsentPerEventOverridesBatch(t *testing.T) {
 		if e.Consent != want[i] {
 			t.Errorf("event %s consent = %v, want %v", e.EventName, e.Consent, want[i])
 		}
+	}
+}
+
+// Event rules (spec 2026-10-11, D9): a renamed product event is stored under
+// its new name, a blocked one is accepted (so the client does not retry),
+// not stored and warned about. The block is per family: the same name as a
+// measure is kept.
+func TestIngestAppliesEventRules(t *testing.T) {
+	reg, st := newTestRegistryStore(t,
+		[]manage.ProjectSpec{{Name: "App"}},
+		map[int][2]string{0: {testKey, "web"}})
+	ctx := context.Background()
+	ops := manage.NewOps(reg, st)
+	pid := reg.Snapshot(ctx).Projects()[0].ID
+	if _, _, err := ops.RenameEvent(ctx, "t", pid, "product", "old", "new", false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ops.BlockEvent(ctx, "t", pid, "product", "spam"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ops.RenameEvent(ctx, "t", pid, "product", "x", "spam", true); err != nil {
+		t.Fatal(err)
+	}
+	g, _ := geo.New("cloudflare://", t.TempDir(), slog.Default())
+	q := &fakeQueue{}
+	s := New(configtest.Load(t, nil), reg, q, g, fixedSalt{}, q, newFakeForms(), slog.Default())
+
+	w := post(s, envelopeOf(`{"name":"old"},{"name":"spam"},{"name":"keep"},
+		{"name":"spam","family":"measures","value":1,"measure":"number"}`), nil)
+	if w.Code != 202 {
+		t.Fatalf("status = %d, body %s", w.Code, w.Body)
+	}
+	res := decodeResult(t, w)
+	if res.Accepted != 4 || res.Rejected != 0 {
+		t.Errorf("result = %+v, want 4 accepted, 0 rejected", res)
+	}
+	if len(res.Warnings) != 1 || res.Warnings[0].Index != 1 ||
+		res.Warnings[0].Reason != `event "spam" is blocked in this project, dropped` {
+		t.Errorf("warnings = %+v, want the block warning at index 1", res.Warnings)
+	}
+	if len(q.events) != 2 || q.events[0].EventName != "new" || q.events[1].EventName != "keep" {
+		t.Errorf("product events = %+v, want new and keep", q.events)
+	}
+	if len(q.measures) != 1 || q.measures[0].EventName != "spam" {
+		t.Errorf("measures = %+v, want the spam measure kept", q.measures)
+	}
+
+	// A name renamed onto a blocked one is mapped, then dropped.
+	q.events = nil
+	res = decodeResult(t, post(s, envelopeOf(`{"name":"x"}`), nil))
+	if res.Accepted != 1 || len(q.events) != 0 || len(res.Warnings) != 1 {
+		t.Errorf("rename onto a block: result %+v, enqueued %+v", res, q.events)
+	} else if want := `event "x" (renamed to "spam") is blocked in this project, dropped`; res.Warnings[0].Reason != want {
+		t.Errorf("rename onto a block: warning %q, want %q", res.Warnings[0].Reason, want)
 	}
 }

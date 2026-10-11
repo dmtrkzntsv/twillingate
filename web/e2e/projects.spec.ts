@@ -177,6 +177,10 @@ test('drags a project card to a new place, which a reload keeps', async ({ page,
       )
     await expect.poll(mine).toEqual(names)
 
+    // Other spec files add projects, so the two new cards can sit below
+    // the fold: bring them into view, or the mouse moves off-screen.
+    await page.getByRole('article', { name: names[1] }).scrollIntoViewIfNeeded()
+
     // Raw mouse moves: dnd-kit reads pointer events, and the first move
     // clears its 6px activation distance.
     const from = (await page.getByRole('article', { name: names[1] }).boundingBox())!

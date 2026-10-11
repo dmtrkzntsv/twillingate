@@ -16,6 +16,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
 type Project struct {
@@ -41,6 +43,12 @@ type Snapshot struct {
 	ordered []*Project // by sort key, then id
 	keys    []keyOwner // active keys of non-archived projects only
 	origins map[int64]originSet
+	rules   map[int64]map[ruleKey]store.EventRule // event rules by project (event rules D9)
+}
+
+type ruleKey struct {
+	family store.Family
+	name   string
 }
 
 // pollInterval bounds how often the hot path re-reads config_version to
@@ -66,7 +74,8 @@ const unknownVersion = -1
 
 func New(st Store, logger *slog.Logger) *Registry {
 	r := &Registry{st: st, logger: logger}
-	r.snap.Store(&Snapshot{byID: map[int64]*Project{}, origins: map[int64]originSet{}})
+	r.snap.Store(&Snapshot{byID: map[int64]*Project{}, origins: map[int64]originSet{},
+		rules: map[int64]map[ruleKey]store.EventRule{}})
 	return r
 }
 
@@ -77,6 +86,10 @@ func (r *Registry) Reload(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("manage: load registry: %w", err)
 	}
+	rules, err := r.st.LoadEventRules(ctx)
+	if err != nil {
+		return fmt.Errorf("manage: load event rules: %w", err)
+	}
 	v, err := r.st.ConfigVersion(ctx)
 	if err != nil {
 		return fmt.Errorf("manage: config version: %w", err)
@@ -84,6 +97,13 @@ func (r *Registry) Reload(ctx context.Context) error {
 	s := &Snapshot{
 		byID:    make(map[int64]*Project, len(ps)),
 		origins: make(map[int64]originSet, len(ps)),
+		rules:   make(map[int64]map[ruleKey]store.EventRule),
+	}
+	for _, er := range rules {
+		if s.rules[er.ProjectID] == nil {
+			s.rules[er.ProjectID] = map[ruleKey]store.EventRule{}
+		}
+		s.rules[er.ProjectID][ruleKey{er.Family, er.Name}] = er
 	}
 	for _, rp := range ps {
 		p := &Project{ID: rp.ID, Name: rp.Name, Archived: rp.Archived, ArchivedAt: rp.ArchivedAt, SortKey: rp.SortKey}
@@ -225,6 +245,19 @@ func trimSlash(o string) string {
 		return o[:len(o)-1]
 	}
 	return o
+}
+
+// ResolveEvent is the name an event is stored under and whether it is
+// dropped (event rules D9): a rename rule maps the name once (targets are
+// never renamed again, the store keeps chains collapsed), then a block on
+// the result drops it.
+func (s *Snapshot) ResolveEvent(projectID int64, family store.Family, name string) (string, bool) {
+	rs := s.rules[projectID]
+	if r, ok := rs[ruleKey{family, name}]; ok && r.Action == store.EventRuleRename {
+		name = r.To
+	}
+	r, ok := rs[ruleKey{family, name}]
+	return name, ok && r.Action == store.EventRuleBlock
 }
 
 func (s *Snapshot) Project(id int64) *Project { return s.byID[id] }

@@ -11,7 +11,7 @@ import { readLastTab, writeLastTab } from '@/lib/last-tab'
 
 const actions = {
   update: vi.fn(), archive: vi.fn(), restore: vi.fn(), issueKey: vi.fn(),
-  disableKey: vi.fn(), enableKey: vi.fn(), create: vi.fn(), pending: false,
+  disableKey: vi.fn(), enableKey: vi.fn(), create: vi.fn(), renameEvent: vi.fn(), blockEvent: vi.fn(), removeEventRule: vi.fn(), addEventAlias: vi.fn(), pending: false,
 }
 vi.mock('@/hooks/use-project-actions', () => ({ useProjectActions: () => actions }))
 
@@ -45,6 +45,9 @@ beforeEach(() => {
     keys: [{ key: 'plan', events: 900, max_values: 3, received: true, declared: true }],
   })
   vi.spyOn(endpoints, 'capUsage').mockResolvedValue({ project_id: 4, from: 'a', to: 'b', dimensions: [] })
+  vi.spyOn(endpoints, 'eventNames').mockResolvedValue({ events: [{ family: 'product', name: 'checkout', events: 120 }] })
+  vi.spyOn(endpoints, 'eventRules').mockResolvedValue({ rules: [{ family: 'product', name: 'a', action: 'rename', to: 'b' }] })
+  vi.spyOn(endpoints, 'limits').mockResolvedValue({ limits: [], raw_events: { held: 10, window_days: 9 } })
   vi.spyOn(endpoints, 'projectTabs').mockResolvedValue({ tabs })
   vi.spyOn(endpoints, 'projectActivity').mockResolvedValue({
     projects: [
@@ -177,6 +180,25 @@ describe('Project', () => {
     const keys = await screen.findByRole('region', { name: 'Ingest keys' })
     await user.click(await within(keys).findByRole('button', { name: 'Enable old' }))
     expect(actions.enableKey).toHaveBeenCalledWith(4, 'old')
+  })
+
+  it('lists the events between Breakdowns and the keys, and blocks one naming the raw retention days', async () => {
+    const user = userEvent.setup()
+    actions.blockEvent.mockResolvedValue(true)
+    actions.removeEventRule.mockResolvedValue(true)
+    renderAt('/projects/4/settings')
+    const events = await screen.findByRole('region', { name: 'Events' })
+    const regions = screen.getAllByRole('region').map((r) => r.getAttribute('aria-label'))
+    expect(regions.indexOf('Events')).toBe(regions.indexOf('Breakdowns') + 1)
+    expect(regions.indexOf('Events')).toBeLessThan(regions.indexOf('Ingest keys'))
+    await user.click(await within(events).findByRole('button', { name: 'Actions for checkout (product)' }))
+    await user.click(await screen.findByRole('menuitem', { name: 'Block…' }))
+    expect(await screen.findByText(/stored raw events expire within 9 days/)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Block event' }))
+    expect(actions.blockEvent).toHaveBeenCalledWith(4, { family: 'product', name: 'checkout' })
+    await user.click(await within(events).findByRole('button', { name: 'Remove alias a' }))
+    await user.click(await screen.findByRole('button', { name: 'Remove alias' }))
+    expect(actions.removeEventRule).toHaveBeenCalledWith(4, { family: 'product', name: 'a' })
   })
 
   it('issues a key and shows it with its snippet', async () => {

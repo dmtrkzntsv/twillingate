@@ -224,6 +224,22 @@ type RegistryProject struct {
 	SortKey        string // its place in the order (migration 034)
 }
 
+// EventRule is one row of event_rules (migration 039): a rename (To set)
+// or a block of one event name in one project and family.
+type EventRule struct {
+	ProjectID int64
+	Family    Family // FamilyProduct or FamilyMeasures
+	Name      string
+	Action    string // EventRuleRename or EventRuleBlock
+	To        string // the new name; "" for a block
+	CreatedAt string // RFC 3339 UTC
+}
+
+const (
+	EventRuleRename = "rename"
+	EventRuleBlock  = "block"
+)
+
 // ProjectSortKey is one project's place in the order (migration 034).
 type ProjectSortKey struct {
 	ID      int64
@@ -254,6 +270,15 @@ type Store interface {
 	AggregateViewDay(ctx context.Context, projectID int64, day civil.Date, topN int) error
 	AggregateProductDay(ctx context.Context, projectID int64, day civil.Date, attrs []string, topN int) error
 	AggregateMeasureDay(ctx context.Context, projectID int64, day civil.Date, attrs []string, topN int) error
+	// DropBlockedAggregates deletes the project's per-event aggregates of
+	// every blocked event name (event rules D11).
+	DropBlockedAggregates(ctx context.Context, projectID int64) error
+	// Event rules (migration 039): LoadEventRules reads them all; the
+	// three mutations are audited from a in the same transaction.
+	LoadEventRules(ctx context.Context) ([]EventRule, error)
+	RenameEvent(ctx context.Context, projectID int64, family Family, from, to string, merge bool, a AuditEntry) (map[string]int64, error)
+	BlockEvent(ctx context.Context, projectID int64, family Family, name string, a AuditEntry) error
+	RemoveEventRule(ctx context.Context, projectID int64, family Family, name string, a AuditEntry) error
 	UpsertActors(ctx context.Context, projectID int64, day civil.Date) error
 	AggregateRetentionDay(ctx context.Context, projectID int64, day civil.Date) error
 	PruneActors(ctx context.Context, projectID int64, before civil.Date) error

@@ -14,6 +14,7 @@ import (
 // after it, and every row the views held before is still there.
 func TestMigration038BreaksDownCountry(t *testing.T) {
 	db := newTestDBAt(t, 37)
+	withEventRules(t, db)
 	ctx := context.Background()
 	id := seedDeclaredProject(t, db, []string{"plan"})
 	boot := 120.0

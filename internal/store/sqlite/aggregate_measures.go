@@ -19,6 +19,14 @@ import (
 func (d *DB) AggregateMeasureDay(ctx context.Context, projectID int64, day civil.Date, attrs []string, topN int) error {
 	keep := capRows(topN, defaultAttrsTopN)
 	return d.tx(ctx, func(tx *sql.Tx) error {
+		// Blocked names (event rules D10) leave with the day before it is
+		// rolled up: the same transaction deletes every raw row of the day
+		// below, so this deletes nothing that would have stayed.
+		if _, err := tx.ExecContext(ctx, `DELETE FROM events WHERE family='measures' AND project_id=? AND day=?
+			AND event_name IN (SELECT name FROM event_rules WHERE project_id=? AND family='measures' AND action='block')`,
+			projectID, day.String(), projectID); err != nil {
+			return err
+		}
 		var n int
 		if err := tx.QueryRowContext(ctx,
 			`SELECT COUNT(*) FROM raw_measures WHERE project_id=? AND day=?`,
