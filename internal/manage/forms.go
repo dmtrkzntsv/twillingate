@@ -10,7 +10,7 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
-// defaultFormDraftDays is FORMS_DRAFT_DAYS' default, used when the caller
+// defaultFormDraftDays is RETENTION_FORMS_DRAFT_DAYS' default, used when the caller
 // left Ops.FormDraftDays unset.
 const defaultFormDraftDays = 7
 
@@ -174,7 +174,7 @@ func (o *Ops) ArchiveForm(ctx context.Context, actor string, projectID int64, na
 }
 
 // RestoreForm un-archives a form. A draft gets a fresh draft_until of now
-// plus FORMS_DRAFT_DAYS.
+// plus RETENTION_FORMS_DRAFT_DAYS.
 func (o *Ops) RestoreForm(ctx context.Context, actor string, projectID int64, name string) error {
 	if err := o.requireProject(ctx, projectID); err != nil {
 		return err

@@ -43,7 +43,7 @@ beforeEach(() => {
   ] })
   vi.spyOn(endpoints, 'keys').mockResolvedValue({ keys: [{ project_id: 4, label: 'web', key: 'ak_1', state: 'active' }] })
   vi.spyOn(endpoints, 'limits').mockResolvedValue({ limits: [
-    { group: 'retention', name: 'Raw events', setting: 'RETENTION_EVENTS_RAW_DAYS', value: 7, default: 30, unit: 'days', description: 'raw events are kept this long' },
+    { group: 'retention', name: 'Raw events', setting: 'RETENTION_RAW_DAYS', value: 7, default: 30, unit: 'days', description: 'raw events are kept this long' },
     { group: 'caps', name: 'Attribute values', setting: 'ATTRIBUTE_VALUES_TOP_N', value: 0, default: 100, zero: 'no cap', description: 'values per views breakdown and per attribute key' },
     { group: 'ingest', name: 'Request body', value: 262144, unit: 'bytes', description: 'a larger request is refused with 413' },
   ], raw_events: { held: 48210, window_days: 7 } })
@@ -148,10 +148,10 @@ describe('Projects', () => {
     expect(groups).toEqual(['Retention', 'Caps', 'Ingest'])
     const retention = within(panel).getByRole('region', { name: 'Retention' })
     expect(within(retention).getByText('7 days')).toBeInTheDocument()
-    expect(within(retention).getByText('RETENTION_EVENTS_RAW_DAYS')).toBeInTheDocument()
+    expect(within(retention).getByText('RETENTION_RAW_DAYS')).toBeInTheDocument()
     expect(within(retention).getByText(/default 30 days/)).toBeInTheDocument()
     // The variable sits under the value, above the description.
-    const variable = within(retention).getByText('RETENTION_EVENTS_RAW_DAYS').closest('dd')!
+    const variable = within(retention).getByText('RETENTION_RAW_DAYS').closest('dd')!
     const description = within(retention).getByText('raw events are kept this long')
     expect(variable.compareDocumentPosition(description) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(within(panel).getByText('no cap')).toBeInTheDocument()

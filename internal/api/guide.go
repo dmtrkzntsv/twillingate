@@ -9,7 +9,7 @@ import (
 )
 
 // integration_guide stitches the project's live registry state (keys,
-// attributes, PUBLIC_URL) together with the right slice of the static
+// attributes, INGEST_URL) together with the right slice of the static
 // docs, so a model can integrate a site or app in one read.
 
 type guideIn struct {
@@ -33,11 +33,11 @@ func (h *host) integrationGuide(ctx context.Context, in guideIn) (guideOut, erro
 		return guideOut{}, h.unknownProjectErr(ctx, in.ProjectID)
 	}
 
-	base := h.publicURL
+	base := h.ingestURL
 	baseNote := ""
 	if base == "" {
 		base = manage.SnippetPlaceholderBase
-		baseNote = "\n> PUBLIC_URL is not configured on the server, so the URLs below use the\n> placeholder " + manage.SnippetPlaceholderBase + ". Ask the operator for the collector's\n> real public URL and substitute it.\n"
+		baseNote = "\n> INGEST_URL is not configured on the server, so the URLs below use the\n> placeholder " + manage.SnippetPlaceholderBase + ". Ask the operator for the collector's\n> real public URL and substitute it.\n"
 	}
 
 	// An active key, if the project has one.
@@ -64,7 +64,7 @@ func (h *host) integrationGuide(ctx context.Context, in guideIn) (guideOut, erro
 	switch in.Platform {
 	case "web", "spa":
 		fmt.Fprintf(&b, "Add to every page (before </head>):\n\n    %s\n\n",
-			strings.ReplaceAll(manage.Snippet(h.publicURL, key), "\n", "\n    "))
+			strings.ReplaceAll(manage.Snippet(h.ingestURL, key), "\n", "\n    "))
 		b.WriteString("Pageviews are automatic")
 		if in.Platform == "spa" {
 			b.WriteString(", including SPA route changes (pushState/popstate are hooked) — no router integration needed")
@@ -135,5 +135,5 @@ func writeFormsGuide(b *strings.Builder, platform, base, key string) {
 			"           \"attributes\":{\"$user_id\":\"u_123\"}}'\n\n"+
 			"It answers 201 {\"id\"}; retry on 5xx with the same id, which is stored once.\n\n", base, key)
 	}
-	b.WriteString("Submissions hold personal data. The first one creates the form as a draft:\nit keeps every field for FORMS_DRAFT_DAYS, then is archived unless\napproved, and draft submissions never count as conversions. Review what\narrived with list_forms and list_submissions, then call approve_form with\nexpected_fields (the fields to keep): from then on each submission writes a\n$form_submit product event (attribute form). docs://twillingate, Collect\nform submissions, has the rest.\n\n")
+	b.WriteString("Submissions hold personal data. The first one creates the form as a draft:\nit keeps every field for RETENTION_FORMS_DRAFT_DAYS, then is archived unless\napproved, and draft submissions never count as conversions. Review what\narrived with list_forms and list_submissions, then call approve_form with\nexpected_fields (the fields to keep): from then on each submission writes a\n$form_submit product event (attribute form). docs://twillingate, Collect\nform submissions, has the rest.\n\n")
 }

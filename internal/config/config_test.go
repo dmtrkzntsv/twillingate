@@ -82,24 +82,24 @@ func TestIngestDisabled(t *testing.T) {
 
 func TestEnvOverrides(t *testing.T) {
 	c, err := load(t, map[string]string{
-		"DATABASE_DSN":                    "sqlite:///tmp/a.db",
-		"INGEST_ADDR":                     "0.0.0.0:9999",
-		"GEO_DSN":                         "none://",
-		"LOG_LEVEL":                       "debug",
-		"LOG_FORMAT":                      "text",
-		"LOG_FILE":                        "/tmp/a.log",
-		"BUFFER_FLUSH_MAX_EVENTS":         "5",
-		"BUFFER_FLUSH_INTERVAL":           "250ms",
-		"BUFFER_CAPACITY":                 "42",
-		"RETENTION_EVENTS_RAW_DAYS":       "3",
-		"RETENTION_EVENTS_AGGREGATE_DAYS": "60",
-		"RETENTION_ARCHIVED_DAYS":         "7",
-		"REPORTING_CACHE_SECONDS":         "120",
-		"REPORTING_REFRESH_SECONDS":       "30",
-		"ATTRIBUTE_VALUES_TOP_N":          "200",
-		"IDENTITIES_TOP_N":                "2000",
-		"ATTRIBUTE_BREAKDOWNS_MAX":        "7",
-		"FORMS_DRAFT_DAYS":                "14",
+		"DATABASE_DSN":               "sqlite:///tmp/a.db",
+		"INGEST_ADDR":                "0.0.0.0:9999",
+		"GEO_DSN":                    "none://",
+		"LOG_LEVEL":                  "debug",
+		"LOG_FORMAT":                 "text",
+		"LOG_FILE":                   "/tmp/a.log",
+		"BUFFER_FLUSH_MAX_EVENTS":    "5",
+		"BUFFER_FLUSH_INTERVAL":      "250ms",
+		"BUFFER_CAPACITY":            "42",
+		"RETENTION_RAW_DAYS":         "3",
+		"RETENTION_AGGREGATE_DAYS":   "60",
+		"RETENTION_ARCHIVED_DAYS":    "7",
+		"REPORTING_CACHE_MAX_AGE":    "2m",
+		"REPORTING_REFRESH_MAX_AGE":  "30s",
+		"ATTRIBUTE_VALUES_TOP_N":     "200",
+		"IDENTITIES_TOP_N":           "2000",
+		"ATTRIBUTE_BREAKDOWNS_MAX":   "7",
+		"RETENTION_FORMS_DRAFT_DAYS": "14",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -144,19 +144,21 @@ func TestValidationErrors(t *testing.T) {
 	cases := map[string]map[string]string{
 		"no database":              {"DATABASE_DSN": ""},
 		"bad geo scheme":           base(map[string]string{"GEO_DSN": "???"}),
-		"negative raw_days":        base(map[string]string{"RETENTION_EVENTS_RAW_DAYS": "-1"}),
+		"negative raw_days":        base(map[string]string{"RETENTION_RAW_DAYS": "-1"}),
 		"negative archived_days":   base(map[string]string{"RETENTION_ARCHIVED_DAYS": "-1"}),
 		"negative attributes cap":  base(map[string]string{"ATTRIBUTE_VALUES_TOP_N": "-1"}),
 		"negative identities cap":  base(map[string]string{"IDENTITIES_TOP_N": "-1"}),
 		"negative breakdowns max":  base(map[string]string{"ATTRIBUTE_BREAKDOWNS_MAX": "-1"}),
-		"zero form draft days":     base(map[string]string{"FORMS_DRAFT_DAYS": "0"}),
-		"negative form draft days": base(map[string]string{"FORMS_DRAFT_DAYS": "-3"}),
+		"zero form draft days":     base(map[string]string{"RETENTION_FORMS_DRAFT_DAYS": "0"}),
+		"negative form draft days": base(map[string]string{"RETENTION_FORMS_DRAFT_DAYS": "-3"}),
 		"bad integer":              base(map[string]string{"BUFFER_CAPACITY": "many"}),
 		"invalid duration":         base(map[string]string{"BUFFER_FLUSH_INTERVAL": "fast"}),
-		"negative cache seconds":   base(map[string]string{"REPORTING_CACHE_SECONDS": "-1"}),
-		"negative refresh seconds": base(map[string]string{"REPORTING_REFRESH_SECONDS": "-1"}),
+		"negative cache age":       base(map[string]string{"REPORTING_CACHE_MAX_AGE": "-1s"}),
+		"negative refresh age":     base(map[string]string{"REPORTING_REFRESH_MAX_AGE": "-1s"}),
+		"cache age without a unit": base(map[string]string{"REPORTING_CACHE_MAX_AGE": "900"}),
 		"refresh exceeds cache": base(map[string]string{
-			"REPORTING_CACHE_SECONDS": "60", "REPORTING_REFRESH_SECONDS": "120"}),
+			"REPORTING_CACHE_MAX_AGE": "1m", "REPORTING_REFRESH_MAX_AGE": "2m"}),
+		"console database not sqlite": base(map[string]string{"CONSOLE_DATABASE_DSN": "/tmp/x.db"}),
 	}
 	for name, vars := range cases {
 		if _, err := FromEnv(func(k string) (string, bool) { v, ok := vars[k]; return v, ok }); err == nil {
@@ -168,9 +170,9 @@ func TestValidationErrors(t *testing.T) {
 // A draft needs a window of at least a day: 0 would archive every new
 // form on the next pass, so it is refused, naming the variable.
 func TestFormDraftDaysMessage(t *testing.T) {
-	_, err := load(t, map[string]string{"FORMS_DRAFT_DAYS": "0"})
-	if err == nil || !strings.Contains(err.Error(), "FORMS_DRAFT_DAYS") {
-		t.Errorf("err = %v, want a refusal naming FORMS_DRAFT_DAYS", err)
+	_, err := load(t, map[string]string{"RETENTION_FORMS_DRAFT_DAYS": "0"})
+	if err == nil || !strings.Contains(err.Error(), "RETENTION_FORMS_DRAFT_DAYS") {
+		t.Errorf("err = %v, want a refusal naming RETENTION_FORMS_DRAFT_DAYS", err)
 	}
 }
 
@@ -178,8 +180,8 @@ func TestFormDraftDaysMessage(t *testing.T) {
 // names both variables and their values so a person can fix the .env
 // without hunting for which one to change.
 func TestRefreshExceedsCacheMessage(t *testing.T) {
-	_, err := load(t, map[string]string{"REPORTING_CACHE_SECONDS": "60", "REPORTING_REFRESH_SECONDS": "120"})
-	if err == nil || err.Error() != "config: REPORTING_REFRESH_SECONDS (120) exceeds REPORTING_CACHE_SECONDS (60)" {
+	_, err := load(t, map[string]string{"REPORTING_CACHE_MAX_AGE": "1m", "REPORTING_REFRESH_MAX_AGE": "2m"})
+	if err == nil || err.Error() != "config: REPORTING_REFRESH_MAX_AGE (2m0s) exceeds REPORTING_CACHE_MAX_AGE (1m0s)" {
 		t.Errorf("err = %v", err)
 	}
 }
@@ -188,7 +190,7 @@ func TestRefreshExceedsCacheMessage(t *testing.T) {
 // cache outright (every request recomputes), so a refresh age longer
 // than it is meaningless to refuse.
 func TestReportingCacheZeroAllowsAnyRefresh(t *testing.T) {
-	c, err := load(t, map[string]string{"REPORTING_CACHE_SECONDS": "0", "REPORTING_REFRESH_SECONDS": "120"})
+	c, err := load(t, map[string]string{"REPORTING_CACHE_MAX_AGE": "0", "REPORTING_REFRESH_MAX_AGE": "2m"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,7 +234,7 @@ func TestEventsRetentionDefaultsAndMaxEventAge(t *testing.T) {
 
 func TestEventsRetentionFromEnv(t *testing.T) {
 	c, err := load(t, map[string]string{
-		"RETENTION_EVENTS_RAW_DAYS": "14", "RETENTION_EVENTS_AGGREGATE_DAYS": "90"})
+		"RETENTION_RAW_DAYS": "14", "RETENTION_AGGREGATE_DAYS": "90"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -245,7 +247,7 @@ func TestEventsRetentionFromEnv(t *testing.T) {
 }
 
 func TestRejectsNegativeEventsRetention(t *testing.T) {
-	for _, k := range []string{"RETENTION_EVENTS_RAW_DAYS", "RETENTION_EVENTS_AGGREGATE_DAYS"} {
+	for _, k := range []string{"RETENTION_RAW_DAYS", "RETENTION_AGGREGATE_DAYS"} {
 		if _, err := load(t, map[string]string{k: "-1"}); err == nil {
 			t.Errorf("%s=-1 accepted", k)
 		}
@@ -309,10 +311,10 @@ func TestValidateConsole(t *testing.T) {
 		{"empty token", map[string]string{"CONSOLE_AUTH_DSN": "token://"}, false},
 		{"oauth ok", map[string]string{
 			"CONSOLE_AUTH_DSN": "oauth://idp.example.com?resource=https://twillingate.example.com"}, true},
-		{"oauth resource from PUBLIC_URL", map[string]string{
+		{"oauth resource from INGEST_URL", map[string]string{
 			"CONSOLE_AUTH_DSN": "oauth://idp.example.com",
-			"PUBLIC_URL":       "https://twillingate.example.com"}, true},
-		{"oauth no resource and no PUBLIC_URL", map[string]string{
+			"INGEST_URL":       "https://twillingate.example.com"}, true},
+		{"oauth no resource and no INGEST_URL", map[string]string{
 			"CONSOLE_AUTH_DSN": "oauth://idp.example.com"}, false},
 		{"oauth empty issuer", map[string]string{
 			"CONSOLE_AUTH_DSN": "oauth://?resource=https://twillingate.example.com"}, false},
@@ -320,14 +322,14 @@ func TestValidateConsole(t *testing.T) {
 			"CONSOLE_AUTH_DSN": "cloudflare://team.cloudflareaccess.com?aud=aud123"}, false},
 		{"token login ok", map[string]string{
 			"CONSOLE_AUTH_DSN": "token://ar_x?password=pw&redirect=https://claude.ai/api/mcp/auth_callback&resource=https://mcp.example.com"}, true},
-		{"token login resource from PUBLIC_URL", map[string]string{
+		{"token login resource from INGEST_URL", map[string]string{
 			"CONSOLE_AUTH_DSN": "token://ar_x?password=pw&redirect=https://claude.ai/api/mcp/auth_callback",
-			"PUBLIC_URL":       "https://mcp.example.com"}, true},
+			"INGEST_URL":       "https://mcp.example.com"}, true},
 		{"token login one-character password", map[string]string{
 			"CONSOLE_AUTH_DSN": "token://ar_x?password=a&redirect=http://localhost/callback&resource=https://mcp.example.com"}, true},
 		{"token login http loopback redirect", map[string]string{
 			"CONSOLE_AUTH_DSN": "token://ar_x?password=pw&redirect=http://127.0.0.1/callback&resource=https://mcp.example.com"}, true},
-		{"token login no resource and no PUBLIC_URL", map[string]string{
+		{"token login no resource and no INGEST_URL", map[string]string{
 			"CONSOLE_AUTH_DSN": "token://ar_x?password=pw&redirect=https://claude.ai/cb"}, false},
 		{"token login no password", map[string]string{
 			"CONSOLE_AUTH_DSN": "token://ar_x?redirect=https://claude.ai/cb&resource=https://mcp.example.com"}, false},
@@ -404,10 +406,10 @@ func TestMCPAuthDSNParsing(t *testing.T) {
 			t.Errorf("resource = %q audience = %q", m.ResourceURL, m.Audience)
 		}
 	})
-	t.Run("oauth defaults resource to PUBLIC_URL and audience to resource", func(t *testing.T) {
+	t.Run("oauth defaults resource to INGEST_URL and audience to resource", func(t *testing.T) {
 		cfg, err := FromEnv(mcpEnv(map[string]string{
 			"CONSOLE_AUTH_DSN": "oauth://idp.example.com",
-			"PUBLIC_URL":       "https://twillingate.example.com"}))
+			"INGEST_URL":       "https://twillingate.example.com"}))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -470,7 +472,7 @@ func TestMCPAudienceDefaultsToResource(t *testing.T) {
 func TestTokenLoginDSNParsing(t *testing.T) {
 	cfg, err := FromEnv(mcpEnv(map[string]string{
 		"CONSOLE_AUTH_DSN": "token://ar_x?redirect=https://claude.ai/api/mcp/auth_callback&password=a%2Bb%26c&redirect=App.Example.com",
-		"PUBLIC_URL":       "https://mcp.example.com"}))
+		"INGEST_URL":       "https://mcp.example.com"}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -490,7 +492,7 @@ func TestTokenLoginDSNParsing(t *testing.T) {
 		t.Errorf("redirect hosts = %v, want %v in DSN order", m.RedirectHosts, want)
 	}
 	if m.ResourceURL != "https://mcp.example.com" {
-		t.Errorf("resource = %q, want PUBLIC_URL", m.ResourceURL)
+		t.Errorf("resource = %q, want INGEST_URL", m.ResourceURL)
 	}
 
 	plain, err := FromEnv(mcpEnv(nil))
@@ -513,22 +515,22 @@ func TestTokenLoginDSNParsing(t *testing.T) {
 // encrypts the link itself); without it only loopback may. It widens the
 // origin only: a redirect= URL stays https-only, and the value must be 1.
 func TestTokenLoginInsecure(t *testing.T) {
-	load := func(dsn, publicURL string) (ConsoleConfig, error) {
-		cfg, err := FromEnv(mcpEnv(map[string]string{"CONSOLE_AUTH_DSN": dsn, "PUBLIC_URL": publicURL}))
+	load := func(dsn, ingestURL string) (ConsoleConfig, error) {
+		cfg, err := FromEnv(mcpEnv(map[string]string{"CONSOLE_AUTH_DSN": dsn, "INGEST_URL": ingestURL}))
 		if err != nil {
 			return ConsoleConfig{}, err
 		}
 		return cfg.Console, cfg.ValidateConsole()
 	}
 	for _, tc := range []struct {
-		name, dsn, publicURL string
+		name, dsn, ingestURL string
 		wantErr              string // substring; "" accepts
 		wantResource         string
 	}{
 		{"http without insecure", "token://ar_x?password=p&resource=http://homelab:8290", "", "insecure=1", ""},
-		{"http PUBLIC_URL without insecure", "token://ar_x?password=p", "http://homelab:8290", "insecure=1", ""},
+		{"http INGEST_URL without insecure", "token://ar_x?password=p", "http://homelab:8290", "insecure=1", ""},
 		{"http with insecure", "token://ar_x?password=p&resource=http://homelab:8290&insecure=1", "", "", "http://homelab:8290"},
-		{"http PUBLIC_URL with insecure", "token://ar_x?password=p&insecure=1", "http://Homelab:8290", "", "http://homelab:8290"},
+		{"http INGEST_URL with insecure", "token://ar_x?password=p&insecure=1", "http://Homelab:8290", "", "http://homelab:8290"},
 		{"https with insecure", "token://ar_x?password=p&insecure=1", "https://console.example.com", "", "https://console.example.com"},
 		{"insecure=0", "token://ar_x?password=p&resource=http://homelab:8290&insecure=0", "", `insecure="0" must be 1`, ""},
 		{"insecure=true", "token://ar_x?password=p&resource=http://homelab:8290&insecure=true", "", `insecure="true" must be 1`, ""},
@@ -536,7 +538,7 @@ func TestTokenLoginInsecure(t *testing.T) {
 		{"http redirect stays refused", "token://ar_x?password=p&insecure=1&redirect=http://app.example.com/cb", "http://homelab:8290", "may only use http", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			m, err := load(tc.dsn, tc.publicURL)
+			m, err := load(tc.dsn, tc.ingestURL)
 			switch {
 			case tc.wantErr != "":
 				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
@@ -556,13 +558,21 @@ func TestTokenLoginInsecure(t *testing.T) {
 
 func TestRenamedVariablesRefuse(t *testing.T) {
 	for old, repl := range map[string]string{
-		"LISTEN_ADDR":        "INGEST_ADDR",
-		"API_ADDR":           "CONSOLE_ADDR",
-		"API_URL":            "CONSOLE_URL",
-		"API_AUTH_DSN":       "CONSOLE_AUTH_DSN",
-		"API_DB_PATH":        "CONSOLE_DB_PATH",
-		"API_QUERY_TIMEOUT":  "CONSOLE_QUERY_TIMEOUT",
-		"API_QUERY_MAX_ROWS": "CONSOLE_QUERY_MAX_ROWS",
+		"LISTEN_ADDR":                     "INGEST_ADDR",
+		"PUBLIC_URL":                      "INGEST_URL",
+		"API_ADDR":                        "CONSOLE_ADDR",
+		"API_URL":                         "CONSOLE_URL",
+		"API_AUTH_DSN":                    "CONSOLE_AUTH_DSN",
+		"API_DB_PATH":                     "CONSOLE_DATABASE_DSN (sqlite://<path>)",
+		"CONSOLE_DB_PATH":                 "CONSOLE_DATABASE_DSN (sqlite://<path>)",
+		"API_QUERY_TIMEOUT":               "CONSOLE_QUERY_TIMEOUT",
+		"API_QUERY_MAX_ROWS":              "CONSOLE_QUERY_ROWS_MAX",
+		"CONSOLE_QUERY_MAX_ROWS":          "CONSOLE_QUERY_ROWS_MAX",
+		"RETENTION_EVENTS_RAW_DAYS":       "RETENTION_RAW_DAYS",
+		"RETENTION_EVENTS_AGGREGATE_DAYS": "RETENTION_AGGREGATE_DAYS",
+		"FORMS_DRAFT_DAYS":                "RETENTION_FORMS_DRAFT_DAYS",
+		"REPORTING_CACHE_SECONDS":         "REPORTING_CACHE_MAX_AGE (a duration: 900 is 15m)",
+		"REPORTING_REFRESH_SECONDS":       "REPORTING_REFRESH_MAX_AGE (a duration: 60 is 1m)",
 	} {
 		env := map[string]string{"DATABASE_DSN": "sqlite:///tmp/x.db", old: "x"}
 		_, err := FromEnv(func(k string) (string, bool) { v, ok := env[k]; return v, ok })
@@ -570,6 +580,22 @@ func TestRenamedVariablesRefuse(t *testing.T) {
 		if err == nil || err.Error() != want {
 			t.Errorf("%s set: err = %v, want %q", old, err, want)
 		}
+	}
+}
+
+// CONSOLE_DATABASE_DSN names the database the console reads in the
+// DATABASE_DSN form; the read handles open its path.
+func TestConsoleDatabaseDSN(t *testing.T) {
+	c, err := load(t, map[string]string{"CONSOLE_DATABASE_DSN": "sqlite:///var/lib/replica.db"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Console.Database != "sqlite:///var/lib/replica.db" || c.Console.DBPath != "/var/lib/replica.db" {
+		t.Errorf("Database/DBPath = %q/%q", c.Console.Database, c.Console.DBPath)
+	}
+	if _, err := load(t, map[string]string{"CONSOLE_DATABASE_DSN": "/var/lib/replica.db"}); err == nil ||
+		!strings.Contains(err.Error(), "CONSOLE_DATABASE_DSN must be sqlite://<path>") {
+		t.Errorf("bare path: err = %v", err)
 	}
 }
 
@@ -597,11 +623,11 @@ func TestResourceIsTheAPIOrigin(t *testing.T) {
 		}
 		return c, c.ValidateConsole()
 	}
-	c, err := load(map[string]string{"PUBLIC_URL": "https://t.example.com/", "CONSOLE_AUTH_DSN": "token://ar_x?password=pw"})
+	c, err := load(map[string]string{"INGEST_URL": "https://t.example.com/", "CONSOLE_AUTH_DSN": "token://ar_x?password=pw"})
 	if err != nil || c.Console.ResourceURL != "https://t.example.com" {
 		t.Errorf("token login default resource = %q, %v", c.Console.ResourceURL, err)
 	}
-	c, err = load(map[string]string{"PUBLIC_URL": "https://t.example.com", "CONSOLE_AUTH_DSN": "oauth://idp.example.com"})
+	c, err = load(map[string]string{"INGEST_URL": "https://t.example.com", "CONSOLE_AUTH_DSN": "oauth://idp.example.com"})
 	if err != nil || c.Console.ResourceURL != "https://t.example.com" || c.Console.Audience != "https://t.example.com" {
 		t.Errorf("oauth default resource/audience = %q/%q, %v", c.Console.ResourceURL, c.Console.Audience, err)
 	}
@@ -617,8 +643,8 @@ func TestResourceIsTheAPIOrigin(t *testing.T) {
 		}
 	}
 	for _, dsn := range []string{"token://ar_x?password=pw", "oauth://idp.example.com"} {
-		if _, err := load(map[string]string{"PUBLIC_URL": "https://t.example.com/analytics", "CONSOLE_AUTH_DSN": dsn}); err == nil || !strings.Contains(err.Error(), "origin") {
-			t.Errorf("%s with a PUBLIC_URL path: err = %v, want an origin-only refusal", dsn, err)
+		if _, err := load(map[string]string{"INGEST_URL": "https://t.example.com/analytics", "CONSOLE_AUTH_DSN": dsn}); err == nil || !strings.Contains(err.Error(), "origin") {
+			t.Errorf("%s with a INGEST_URL path: err = %v, want an origin-only refusal", dsn, err)
 		}
 	}
 	if c, err := load(map[string]string{"CONSOLE_AUTH_DSN": "token://ar_x?password=pw&resource=https://api.example.com/"}); err != nil || c.Console.ResourceURL != "https://api.example.com" {
@@ -657,7 +683,7 @@ func TestAudienceGivenOnlyWhenExplicit(t *testing.T) {
 
 // TestConsoleURLIsTheResourceDefault: CONSOLE_URL names the console's own public
 // address; the login's resource (so its issuer and the dashboards'
-// callback) follows it, falling back to PUBLIC_URL, and resource= still
+// callback) follows it, falling back to INGEST_URL, and resource= still
 // wins when given.
 func TestConsoleURLIsTheResourceDefault(t *testing.T) {
 	load := func(env map[string]string) (*Config, error) {
@@ -673,11 +699,11 @@ func TestConsoleURLIsTheResourceDefault(t *testing.T) {
 		env  map[string]string
 		want string
 	}{
-		{"CONSOLE_URL beside an ingest PUBLIC_URL", map[string]string{
-			"PUBLIC_URL": "https://t.example.com", "CONSOLE_URL": "https://tapi.example.com/",
+		{"CONSOLE_URL beside an ingest INGEST_URL", map[string]string{
+			"INGEST_URL": "https://t.example.com", "CONSOLE_URL": "https://tapi.example.com/",
 			"CONSOLE_AUTH_DSN": "token://ar_x?password=pw"}, "https://tapi.example.com"},
-		{"CONSOLE_URL defaults to PUBLIC_URL", map[string]string{
-			"PUBLIC_URL": "https://t.example.com", "CONSOLE_AUTH_DSN": "token://ar_x?password=pw"}, "https://t.example.com"},
+		{"CONSOLE_URL defaults to INGEST_URL", map[string]string{
+			"INGEST_URL": "https://t.example.com", "CONSOLE_AUTH_DSN": "token://ar_x?password=pw"}, "https://t.example.com"},
 		{"CONSOLE_URL alone", map[string]string{
 			"CONSOLE_URL": "https://tapi.example.com", "CONSOLE_AUTH_DSN": "oauth://idp.example.com"}, "https://tapi.example.com"},
 		{"resource= wins over CONSOLE_URL", map[string]string{
@@ -689,8 +715,8 @@ func TestConsoleURLIsTheResourceDefault(t *testing.T) {
 			t.Errorf("%s: resource = %q, %v; want %q", tc.name, c.Console.ResourceURL, err, tc.want)
 		}
 	}
-	if c, _ := load(map[string]string{"PUBLIC_URL": "https://t.example.com"}); c.Console.URL != "https://t.example.com" {
-		t.Errorf("CONSOLE_URL default = %q, want PUBLIC_URL", c.Console.URL)
+	if c, _ := load(map[string]string{"INGEST_URL": "https://t.example.com"}); c.Console.URL != "https://t.example.com" {
+		t.Errorf("CONSOLE_URL default = %q, want INGEST_URL", c.Console.URL)
 	}
 
 	// A bad value names the variable it came from.
@@ -698,8 +724,8 @@ func TestConsoleURLIsTheResourceDefault(t *testing.T) {
 		"CONSOLE_AUTH_DSN": "token://ar_x?password=pw"}); err == nil || !strings.Contains(err.Error(), "CONSOLE_URL=") {
 		t.Errorf("CONSOLE_URL with a path: %v, want a refusal naming CONSOLE_URL", err)
 	}
-	if _, err := load(map[string]string{"PUBLIC_URL": "https://t.example.com/site",
-		"CONSOLE_AUTH_DSN": "token://ar_x?password=pw"}); err == nil || !strings.Contains(err.Error(), "PUBLIC_URL (CONSOLE_URL's default)") {
-		t.Errorf("PUBLIC_URL with a path: %v, want a refusal naming PUBLIC_URL as CONSOLE_URL's default", err)
+	if _, err := load(map[string]string{"INGEST_URL": "https://t.example.com/site",
+		"CONSOLE_AUTH_DSN": "token://ar_x?password=pw"}); err == nil || !strings.Contains(err.Error(), "INGEST_URL (CONSOLE_URL's default)") {
+		t.Errorf("INGEST_URL with a path: %v, want a refusal naming INGEST_URL as CONSOLE_URL's default", err)
 	}
 }

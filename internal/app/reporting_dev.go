@@ -13,7 +13,7 @@ import (
 )
 
 // devQueryTimeout and devQueryMaxRows mirror CONSOLE_QUERY_TIMEOUT and
-// CONSOLE_QUERY_MAX_ROWS' own defaults (config.go): `reporting dev` has no
+// CONSOLE_QUERY_ROWS_MAX' own defaults (config.go): `reporting dev` has no
 // config of its own to read them from, and is a local preview tool
 // rather than something an operator tunes.
 const (

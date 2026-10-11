@@ -11,7 +11,7 @@ import (
 // ---- received_attributes ----
 
 // receivedKeysLimit is how many received keys an answer lists, the
-// busiest over the range, below CONSOLE_QUERY_MAX_ROWS' default (1000):
+// busiest over the range, below CONSOLE_QUERY_ROWS_MAX' default (1000):
 // a project sending ids as keys can carry more than any row cap. The
 // declared keys are listed beyond it. A variable so a test can lower it.
 var receivedKeysLimit = 500

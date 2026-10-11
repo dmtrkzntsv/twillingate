@@ -54,9 +54,9 @@ func cmdKey(args []string, stdout io.Writer) int {
 			return 1
 		}
 		fmt.Fprintf(stdout, "issued %s (label %q)\n\nWeb snippet:\n\n%s\n",
-			key, *label, manage.Snippet(cfg.PublicURL, key))
-		if cfg.PublicURL == "" {
-			fmt.Fprintln(stdout, "\nnote: PUBLIC_URL is not set; replace "+manage.SnippetPlaceholderBase+" with your collector URL")
+			key, *label, manage.Snippet(cfg.IngestURL, key))
+		if cfg.IngestURL == "" {
+			fmt.Fprintln(stdout, "\nnote: INGEST_URL is not set; replace "+manage.SnippetPlaceholderBase+" with your collector URL")
 		}
 		return 0
 	case "list":

@@ -26,7 +26,7 @@ export function formatLimit(l: Pick<Limit, 'value' | 'unit' | 'zero'>, value = l
 }
 
 /**
- * The raw window the held count falls in. RETENTION_EVENTS_RAW_DAYS 0 keeps only today's rows raw: the daily pass
+ * The raw window the held count falls in. RETENTION_RAW_DAYS 0 keeps only today's rows raw: the daily pass
  * rolls up every earlier day, and ingest clamps older timestamps to the time received.
  */
 function rawWindow(days: number): string {

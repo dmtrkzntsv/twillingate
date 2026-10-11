@@ -78,10 +78,10 @@ t.example.com, t.example.org {
 The proxy must pass `Host` through and set `X-Forwarded-Proto` (Caddy and
 cloudflared do; nginx needs `proxy_set_header Host $host;` and
 `proxy_set_header X-Forwarded-Proto $scheme;`). Without a forwarded scheme
-the collector falls back to the scheme of `PUBLIC_URL`, so a single-hostname
-install with `PUBLIC_URL=https://…` works unconfigured. A `Host` that is not
+the collector falls back to the scheme of `INGEST_URL`, so a single-hostname
+install with `INGEST_URL=https://…` works unconfigured. A `Host` that is not
 a plain hostname (optional port aside) leaves the file originless and the
-SDK dormant with a console warning. Snippets use `PUBLIC_URL`; change the
+SDK dormant with a console warning. Snippets use `INGEST_URL`; change the
 `src` per hostname, and keep the console on one — OAuth and `cloudflare://` bind
 to it.
 
@@ -91,7 +91,7 @@ to it.
 | --- | --- |
 | `INGEST_ADDR` | Address to bind. Default `127.0.0.1:8080` (the docker image sets `0.0.0.0:8080`). |
 | `INGEST_DISABLED` | `true` (or `1`) stops ingest completely while the console keeps running: `POST /ingest/events`, the legacy `POST /api/events` and `POST /ingest/forms/{name}` refuse every request with `429`, `ingest is disabled` and `Retry-After: 3600`, before the body is read or the key looked up, so nothing is written. The SDK drops a batch refused with a 4xx rather than queueing it. Preflights, the SDK scripts and `/healthz` answer as usual; `limits` reports `ingest_disabled` and the console's Projects page says so. For a migration, a restore or an abuse incident. When the ingest and console surfaces run as separate processes, set it for both: the refusal is the ingest process's setting, while the console's banner and `limits` read the console process's own. Takes `true`/`false`, `1`/`0`; anything else refuses the boot. Default `false`. |
-| `PUBLIC_URL` | The collector's public base URL (`https://twillingate.example.com`). Embed snippets and MCP integration guidance are built from it; unset, they carry a placeholder. Also the default for `CONSOLE_URL`. With [several hostnames](#one-collector-several-hostnames), the default one. |
+| `INGEST_URL` | The collector's public base URL (`https://twillingate.example.com`). Embed snippets and MCP integration guidance are built from it; unset, they carry a placeholder. Also the default for `CONSOLE_URL`. With [several hostnames](#one-collector-several-hostnames), the default one. |
 | `DATABASE_DSN` | Store DSN. Only `sqlite://<path>` today. Required. |
 | `GEO_DSN` | Country lookup: `cloudflare://` (header), `maxmind://<license-key>`, or `none://`. |
 | `LOG_LEVEL` | `debug`, `info`, `warn`, `error`. Default `info`. |
@@ -100,33 +100,40 @@ to it.
 | `BUFFER_FLUSH_MAX_EVENTS` | Flush once this many events are buffered. Default 1000. |
 | `BUFFER_FLUSH_INTERVAL` | Flush at least this often. Default `5s`. |
 | `BUFFER_CAPACITY` | Bounded queue size; excess is dropped rather than growing memory. Default 10000. |
-| `RETENTION_EVENTS_RAW_DAYS` | Days raw events of every family are kept before rollup. Also the oldest client timestamp accepted: older events are clamped to this edge. Default 30. |
-| `RETENTION_EVENTS_AGGREGATE_DAYS` | Days aggregates of every family (and actors, cohorts, identities) are kept. Default 365. |
+| `RETENTION_RAW_DAYS` | Days raw events of every family are kept before rollup. Also the oldest client timestamp accepted: older events are clamped to this edge. Default 30. |
+| `RETENTION_AGGREGATE_DAYS` | Days aggregates of every family (and actors, cohorts, identities) are kept. Default 365. |
+| `RETENTION_FORMS_DRAFT_DAYS` | Days a form created by its first submission accepts submissions as a draft; unless approved by then, it refuses them and the daily pass archives it. Read when a draft is created or restored, so a change moves no existing draft's window. At least 1. Default 7. |
 | `RETENTION_ARCHIVED_DAYS` | Days after archiving that a project (with all its data and its widget shares), a dashboard, a widget or a widget share is deleted by the daily pass. 0 keeps archived items forever. Default 30. |
-| `FORMS_DRAFT_DAYS` | Days a form created by its first submission accepts submissions as a draft; unless approved by then, it refuses them and the daily pass archives it. Read when a draft is created or restored, so a change moves no existing draft's window. At least 1. Default 7. |
 | `ATTRIBUTE_VALUES_TOP_N` | Values kept per (project, day) in each views breakdown (paths, referrers, browsers, …) and kinds in `v_views_daily`, and distinct attribute values per (project, day, event, key), before the rest collapse into `(other)`. 0 keeps every value. Default 100. |
-| `ATTRIBUTE_BREAKDOWNS_MAX` | Attributes all active projects may declare together; each is a breakdown with its own aggregate rows, kept `RETENTION_EVENTS_AGGREGATE_DAYS`. A create or update that adds attributes past it is refused; saves that add none always pass. 0 is no limit. Default 10. |
+| `ATTRIBUTE_BREAKDOWNS_MAX` | Attributes all active projects may declare together; each is a breakdown with its own aggregate rows, kept `RETENTION_AGGREGATE_DAYS`. A create or update that adds attributes past it is refused; saves that add none always pass. 0 is no limit. Default 10. |
 | `IDENTITIES_TOP_N` | Users, and groups, kept per (project, day) in `v_identity_daily`, busiest first; the rest are dropped. 0 keeps them all. Default 500. |
 | `CONSOLE_AUTH_DSN` | Authentication for the console (MCP, REST and the dashboards' data): `token://<token>?password=…` for the built-in browser login (see [The console](#the-console)), or `oauth://<issuer-host>` for your own identity provider. Unset, bare `serve` skips the console with a warning. |
 | `CONSOLE_ADDR` | Give the console its own listener. Defaults to `INGEST_ADDR` (shared). |
-| `CONSOLE_URL` | The console's public origin when it has a hostname of its own (`https://console.example.com`), no path. The login's resource, issuer and the dashboards' callback follow it, so that host needs no `redirect=` entry, and share links are built on it. Defaults to `PUBLIC_URL`. |
-| `CONSOLE_DB_PATH` | Database the console reads for queries. Defaults to the `DATABASE_DSN` path. |
+| `CONSOLE_URL` | The console's public origin when it has a hostname of its own (`https://console.example.com`), no path. The login's resource, issuer and the dashboards' callback follow it, so that host needs no `redirect=` entry, and share links are built on it. Defaults to `INGEST_URL`. |
+| `CONSOLE_DATABASE_DSN` | Database the console reads for queries, as `sqlite://<path>` (a copy or replica of the store, say). Defaults to `DATABASE_DSN`. |
 | `CONSOLE_QUERY_TIMEOUT` | Per-query guard on reads and the `query` operation; also bounds a reporting widget's sql. Default `10s`. |
-| `CONSOLE_QUERY_MAX_ROWS` | Row cap on the `query` operation; also bounds a reporting widget's sql. Default 1000. |
-| `REPORTING_CACHE_SECONDS` | How long an ordinary widget data request reuses a sql widget's loaded value before loading again. 0 turns the cache off: every request loads again. Default 900. |
-| `REPORTING_REFRESH_SECONDS` | A `fresh=true` request reuses a result younger than this instead of `REPORTING_CACHE_SECONDS`; must not exceed it when that is non-zero. Default 60. A dashboard with auto-refresh on reloads every max(`REPORTING_CACHE_SECONDS`, `REPORTING_REFRESH_SECONDS`) seconds while its window has focus; both 0 removes the option. |
+| `CONSOLE_QUERY_ROWS_MAX` | Row cap on the `query` operation; also bounds a reporting widget's sql. Default 1000. |
+| `REPORTING_CACHE_MAX_AGE` | How long an ordinary widget data request reuses a sql widget's loaded value before loading again. 0 turns the cache off: every request loads again. Default `15m`. |
+| `REPORTING_REFRESH_MAX_AGE` | A `fresh=true` request reuses a result younger than this instead of `REPORTING_CACHE_MAX_AGE`; must not exceed it when that is non-zero. Default `1m`. A dashboard with auto-refresh on reloads every max(`REPORTING_CACHE_MAX_AGE`, `REPORTING_REFRESH_MAX_AGE`) while its window has focus; both 0 removes the option. |
+
+Day counts end in `_DAYS` and take a whole number; every other time
+(`BUFFER_FLUSH_INTERVAL`, `CONSOLE_QUERY_TIMEOUT`, `REPORTING_*_MAX_AGE`)
+is a duration with a unit: `90s`, `15m`, `1h`.
 
 The old names refuse the boot, naming their replacement: `LISTEN_ADDR`
-(now `INGEST_ADDR`) and the six `API_*` names (now `CONSOLE_*`, same
-suffix). The older `MCP_*` names are no longer checked; a leftover one is
-ignored, so rename any still in `twillingate.env`.
+(now `INGEST_ADDR`), the six `API_*` names (now `CONSOLE_*`), and
+`PUBLIC_URL`, `RETENTION_EVENTS_RAW_DAYS`, `RETENTION_EVENTS_AGGREGATE_DAYS`,
+`FORMS_DRAFT_DAYS`, `CONSOLE_DB_PATH`, `CONSOLE_QUERY_MAX_ROWS`,
+`REPORTING_CACHE_SECONDS` and `REPORTING_REFRESH_SECONDS` (see
+`deploy/UPGRADES.md`). The older `MCP_*` names are no longer checked; a
+leftover one is ignored, so rename any still in `twillingate.env`.
 
 ### Raspberry Pi and low-resource hosts
 
 - Raise `BUFFER_FLUSH_INTERVAL` (say `30s`): fewer, larger writes.
 - Set `GOMEMLIMIT` (unit and compose files ship `128MiB`) and keep `GEO_DSN` off `maxmind://`, which holds a database in memory.
-- Lower `RETENTION_EVENTS_RAW_DAYS` (say `7`): raw events are the largest table in the file, and the live halves of the `v_*` views scan the raw days each query's range covers.
-- Keep `ATTRIBUTE_VALUES_TOP_N` and `IDENTITIES_TOP_N` on (not 0). Aggregates are kept `RETENTION_EVENTS_AGGREGATE_DAYS` (a year by default), and a breakdown that carries ids (a path like `/orders/81723`) grows them by a row per id per day once its cap is 0.
+- Lower `RETENTION_RAW_DAYS` (say `7`): raw events are the largest table in the file, and the live halves of the `v_*` views scan the raw days each query's range covers.
+- Keep `ATTRIBUTE_VALUES_TOP_N` and `IDENTITIES_TOP_N` on (not 0). Aggregates are kept `RETENTION_AGGREGATE_DAYS` (a year by default), and a breakdown that carries ids (a path like `/orders/81723`) grows them by a row per id per day once its cap is 0.
 
 ## The console
 
@@ -169,9 +176,9 @@ client connects through a browser page that asks for a password.
 | Parameter | Meaning |
 | --- | --- |
 | `password` | What the login page asks for. Setting it turns the login on. Five wrong ones in a minute lock the page for everyone until the minute ends; connected clients are unaffected. No minimum length is enforced. In the DSN, percent-encode `&` as `%26`, `#` as `%23`, `%` as `%25`, `;` as `%3B` and `+` as `%2B` — an unencoded `+` becomes a space. |
-| `resource` | The console origin, with no path (`resource=https://console.example.com`); one login covers `/mcp` and `/api/`. Defaults to `CONSOLE_URL`, which defaults to `PUBLIC_URL`: set `CONSOLE_URL` when the console has its own hostname, and keep `resource=` for the rare case where the two must differ. MCP clients read `/.well-known/oauth-protected-resource/mcp`, which names `<origin>/mcp`; `/api/` clients read `/.well-known/oauth-protected-resource`, which names the origin. A value carrying a path refuses the boot, in both `token://` and `oauth://` mode. |
+| `resource` | The console origin, with no path (`resource=https://console.example.com`); one login covers `/mcp` and `/api/`. Defaults to `CONSOLE_URL`, which defaults to `INGEST_URL`: set `CONSOLE_URL` when the console has its own hostname, and keep `resource=` for the rare case where the two must differ. MCP clients read `/.well-known/oauth-protected-resource/mcp`, which names `<origin>/mcp`; `/api/` clients read `/.well-known/oauth-protected-resource`, which names the origin. A value carrying a path refuses the boot, in both `token://` and `oauth://` mode. |
 | `redirect` | An extra host clients may return to, such as `redirect=app.example.com`; repeat once per host. |
-| `insecure` | `insecure=1` lets the console origin (`resource`, or the `CONSOLE_URL`/`PUBLIC_URL` it defaults to) be plain `http` on any host, such as `http://homelab:8290` on a tailnet; without it, `http` refuses the boot except on `localhost`, `127.0.0.1` and `[::1]`. The password and tokens then cross the network as sent, so use it only where the link encrypts them itself (Tailscale, WireGuard, a VPN), never on an open network. The boot logs a warning. MCP web connectors such as claude.ai still need `https`. |
+| `insecure` | `insecure=1` lets the console origin (`resource`, or the `CONSOLE_URL`/`INGEST_URL` it defaults to) be plain `http` on any host, such as `http://homelab:8290` on a tailnet; without it, `http` refuses the boot except on `localhost`, `127.0.0.1` and `[::1]`. The password and tokens then cross the network as sent, so use it only where the link encrypts them itself (Tailscale, WireGuard, a VPN), never on an open network. The boot logs a warning. MCP web connectors such as claude.ai still need `https`. |
 
 Accepted without `redirect=`, at any port and path: `localhost`,
 `127.0.0.1` and `[::1]` over `http` or `https`, plus `claude.ai` and
@@ -249,7 +256,7 @@ running instances and leaves the bare unit disabled; reverse to go back.
 
 > **A console-only process still runs the daily aggregation pass against
 > `DATABASE_DSN`** — `-console` only makes the HTTP listener conditional,
-> not the background jobs. Set `CONSOLE_DB_PATH` (what the console reads)
+> not the background jobs. Set `CONSOLE_DATABASE_DSN` (what the console reads)
 > and `DATABASE_DSN` (what the pass writes) deliberately: aimed at a copy of
 > the database, a console-only unit writes to that copy on every pass — or
 > accept that a two-process topology runs the idempotent daily aggregation
@@ -263,7 +270,7 @@ CONSOLE_AUTH_DSN='oauth://auth.example.com[?resource=<origin>][&audience=<aud>]'
 
 For an IdP you already run or rent (Keycloak, Auth0, Authentik, …): the
 server validates the JWTs it issues and serves no login page. `resource`
-defaults to `CONSOLE_URL` (then `PUBLIC_URL`) and must be an origin with no path;
+defaults to `CONSOLE_URL` (then `INGEST_URL`) and must be an origin with no path;
 `oauth+insecure://` allows a plain-http IdP in development. It must provide:
 
 1. **RFC 8414 metadata** at `<issuer>/.well-known/oauth-authorization-server`
@@ -302,7 +309,7 @@ client:
 
 - **`token://` with a password:** the page shows the login page on its own
   host and returns to `/app/callback` there. On the console's host, `CONSOLE_URL`
-  (default `PUBLIC_URL`), that needs no entry: the login accepts exactly
+  (default `INGEST_URL`), that needs no entry: the login accepts exactly
   `<CONSOLE_URL>/app/callback`, whatever `Host` a proxy passes on. So when the
   console has its own hostname, set `CONSOLE_URL=https://console.example.com` and open
   the dashboards there. Any further name needs `redirect=<host>` in
@@ -329,8 +336,8 @@ Files under `/app/assets/` are cached for a year (their names change with
 their content); the page, `sw.js` and `manifest.webmanifest` are revalidated
 on every load, so a proxy or CDN in front needs no rules of its own.
 
-Widget queries run under `CONSOLE_QUERY_TIMEOUT` and `CONSOLE_QUERY_MAX_ROWS`, and
-their results are cached for `REPORTING_CACHE_SECONDS`
+Widget queries run under `CONSOLE_QUERY_TIMEOUT` and `CONSOLE_QUERY_ROWS_MAX`, and
+their results are cached for `REPORTING_CACHE_MAX_AGE`
 ([Configure the collector](#configure-the-collector)).
 
 ### Shared widgets on a private console

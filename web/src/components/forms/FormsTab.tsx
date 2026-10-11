@@ -41,7 +41,7 @@ function Code({ value, label }: { value: string; label: string }) {
 function AddFormHint({ projectId, actionBase }: { projectId: number; actionBase: string }) {
   const keysQ = useQuery(keysQuery(projectId))
   const key = keysQ.data?.keys.find((k) => k.state === 'active')?.key ?? 'ak_…'
-  // Without PUBLIC_URL the server cannot name the collector: a placeholder the text explains.
+  // Without INGEST_URL the server cannot name the collector: a placeholder the text explains.
   const action = `${actionBase || 'https://<collector>/ingest/forms'}/contact?key=${key}`
   return (
     <section aria-label="Add a form" className="flex flex-col gap-3 rounded-lg border p-4">

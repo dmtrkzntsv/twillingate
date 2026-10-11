@@ -190,9 +190,9 @@ func TestListFormsActionBase(t *testing.T) {
 		ActionBase string `json:"action_base"`
 	}
 	if got := callAs[answer](t, cs, "list_forms", map[string]any{"project_id": 1}).ActionBase; got != "https://collector.test/ingest/forms" {
-		t.Errorf("action_base with PUBLIC_URL = %q", got)
+		t.Errorf("action_base with INGEST_URL = %q", got)
 	}
-	h.publicURL = ""
+	h.ingestURL = ""
 	res := callTool(t, cs, "list_forms", map[string]any{"project_id": 1})
 	if res.IsError {
 		t.Fatal(textOf(res))
@@ -202,7 +202,7 @@ func TestListFormsActionBase(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got, ok := raw["action_base"]; !ok || string(got) != `""` {
-		t.Errorf("action_base without PUBLIC_URL = %s (present %v), want \"\"", got, ok)
+		t.Errorf("action_base without INGEST_URL = %s (present %v), want \"\"", got, ok)
 	}
 }
 

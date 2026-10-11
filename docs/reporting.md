@@ -105,7 +105,7 @@ component:
   `to` only for one that follows the range; both echo the values applied.
 - `data` is `{columns, rows, truncated}` for `sql` (every value a string, as
   `query` returns them) and `{markdown}` for `md`.
-- `truncated: true` means the result hit `CONSOLE_QUERY_MAX_ROWS`: group the query
+- `truncated: true` means the result hit `CONSOLE_QUERY_ROWS_MAX`: group the query
   or narrow it.
 - `page` appears only for a remote table: `{offset, limit, matched, total,
   sort, distinct, filters}`, what was applied. `data.truncated` is then
@@ -118,19 +118,19 @@ component:
 
 `sql` results are cached per widget and per value it follows (for a remote
 table, per page: its filters, sort, distinct, offset and limit). An ordinary load
-reuses a result up to `REPORTING_CACHE_SECONDS` old (default 900); `fresh=true`
-reuses one only up to `REPORTING_REFRESH_SECONDS` old (default 60), and
+reuses a result up to `REPORTING_CACHE_MAX_AGE` old (default `15m`); `fresh=true`
+reuses one only up to `REPORTING_REFRESH_MAX_AGE` old (default `1m`), and
 `refresh_after` says when a fresh load would run the query again. A viewer
 can turn on auto-refresh from a dashboard's top-right "…" menu: the page
 then reloads it every `auto_refresh_seconds` (the longer of the two, so
 each reload runs the queries again), only while its window has focus. Changing a
 widget's source starts it on new entries. Widget queries run under the same
-guards as `query`: read-only, `CONSOLE_QUERY_TIMEOUT` and `CONSOLE_QUERY_MAX_ROWS`.
+guards as `query`: read-only, `CONSOLE_QUERY_TIMEOUT` and `CONSOLE_QUERY_ROWS_MAX`.
 
 ### Filtering and paging a table
 
 Viewers filter a `table` by column. By default (`mode` `local`) the page
-filters and sorts the rows it loaded, up to `CONSOLE_QUERY_MAX_ROWS`; with
+filters and sorts the rows it loaded, up to `CONSOLE_QUERY_ROWS_MAX`; with
 props `{"mode": "remote"}` the server filters, sorts and pages the whole
 result in SQL, and `widget_data` takes `filters`, `sort`, `distinct`,
 `offset` and `limit` for it. On any other widget each of them is refused.
@@ -157,8 +157,8 @@ result in SQL, and `widget_data` takes `filters`, `sort`, `distinct`,
   before text, numbers by value, text by code point, empty cells last in
   both directions; ties break by every column in order, so pages never
   overlap or skip a row. Without it, the query's own order.
-- `offset` (default 0) and `limit` (up to `CONSOLE_QUERY_MAX_ROWS`; 0 or
-  absent means `CONSOLE_QUERY_MAX_ROWS`) pick the page; `page.matched`
+- `offset` (default 0) and `limit` (up to `CONSOLE_QUERY_ROWS_MAX`; 0 or
+  absent means `CONSOLE_QUERY_ROWS_MAX`) pick the page; `page.matched`
   counts the rows the filters keep and `page.total` the rows the query
   returns.
 - `distinct` names a column and returns `data` with columns `value` and
@@ -172,7 +172,7 @@ result in SQL, and `widget_data` takes `filters`, `sort`, `distinct`,
   single-value `op` or one value to `in`/`not in`, an unquoted number,
   an empty list, malformed `filters` JSON, a `sort` direction other than `asc` or
   `desc`, a negative `offset`, a negative `limit` or one over
-  `CONSOLE_QUERY_MAX_ROWS`, and any of these
+  `CONSOLE_QUERY_ROWS_MAX`, and any of these
   arguments on a widget that is not a remote table. A filter that matches
   nothing is not refused: no rows, `matched: 0`.
 
@@ -240,7 +240,7 @@ widget_data {"widget_id": 42, "project_id": 7, "from": "2026-09-01", "to": "2026
   and `'%meta%'` pass.
 - Unquoted names are ASCII: quote any other (`"визиты"`). Strings and
   comments may hold any text.
-- Group in SQL: a widget gets at most `CONSOLE_QUERY_MAX_ROWS` rows (default
+- Group in SQL: a widget gets at most `CONSOLE_QUERY_ROWS_MAX` rows (default
   1000) and `CONSOLE_QUERY_TIMEOUT` (default 10s). A result cut at the cap draws
   as "partial". A pie keeps to five slices, the rest summed as `Other`,
   and a line chart to five lines: the palette has five colors.
@@ -645,7 +645,7 @@ Props: `{"format": "number"}`
 Arrivals by referrer and landing page, then events by the page they were sent
 from. The two kinds of row share the page names, so each page is one node in
 the middle. It reads raw rows, so it reaches back only as far as
-`RETENTION_EVENTS_RAW_DAYS`; each stage keeps its top rows, since a ribbon
+`RETENTION_RAW_DAYS`; each stage keeps its top rows, since a ribbon
 too thin to see is noise:
 
 ```sql
@@ -676,7 +676,7 @@ restores query order), and that browser remembers the viewer's filters and
 sort per widget. A remote table (`"mode": "remote"`) runs the viewer's
 filters, sort and page in SQL over every row the query returns, so leave
 the `LIMIT` off. A local table, like this one, filters and sorts only the
-rows returned (at most `CONSOLE_QUERY_MAX_ROWS`), so a `LIMIT`ed query
+rows returned (at most `CONSOLE_QUERY_ROWS_MAX`), so a `LIMIT`ed query
 decides which rows those are:
 
 ```sql
@@ -849,7 +849,7 @@ UUIDv7 and never runs the widget's query again. The project and the range
 are part of the picture, so neither changes afterwards: a new picture is a
 new link. The id is unlisted, not secret: anyone with the link can open it,
 and nothing lists shares publicly. Links are built from `CONSOLE_URL`
-(default `PUBLIC_URL`); with neither set, creating a share is refused with
+(default `INGEST_URL`); with neither set, creating a share is refused with
 "set CONSOLE_URL to share widgets". A console on a LAN or tailnet exposes
 only `/share/*` to the internet with a proxy rule
 ([deployment.md](deployment.md#shared-widgets-on-a-private-console)).

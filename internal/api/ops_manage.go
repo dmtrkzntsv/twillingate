@@ -60,9 +60,9 @@ func (h *host) createProject(ctx context.Context, in createProjectIn) (projectTo
 	}
 	out := projectToolOut{ProjectID: p.ID, Key: key}
 	if key != "" {
-		out.Snippet = manage.Snippet(h.publicURL, key)
-		if h.publicURL == "" {
-			out.Note = "PUBLIC_URL is not configured; the snippet uses the placeholder " + manage.SnippetPlaceholderBase + " — ask the operator for the collector's public URL"
+		out.Snippet = manage.Snippet(h.ingestURL, key)
+		if h.ingestURL == "" {
+			out.Note = "INGEST_URL is not configured; the snippet uses the placeholder " + manage.SnippetPlaceholderBase + " — ask the operator for the collector's public URL"
 		}
 	}
 	return out, nil
@@ -153,9 +153,9 @@ func (h *host) issueKey(ctx context.Context, in keyIn) (keyOut, error) {
 	// otherwise), but guard the lookup anyway: don't fail an
 	// already-issued key just because enrichment can't find the project.
 	if p := h.reg.Snapshot(ctx).Project(in.ProjectID); p != nil {
-		out.Snippet = manage.Snippet(h.publicURL, key)
-		if h.publicURL == "" {
-			out.Note = "PUBLIC_URL is not configured; the snippet uses the placeholder " + manage.SnippetPlaceholderBase + " — ask the operator for the collector's public URL"
+		out.Snippet = manage.Snippet(h.ingestURL, key)
+		if h.ingestURL == "" {
+			out.Note = "INGEST_URL is not configured; the snippet uses the placeholder " + manage.SnippetPlaceholderBase + " — ask the operator for the collector's public URL"
 		}
 	}
 	return out, nil

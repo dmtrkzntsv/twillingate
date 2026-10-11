@@ -56,9 +56,9 @@ type markSeenIn struct {
 type listFormsOut struct {
 	Forms []formOut `json:"forms"`
 	// ActionBase is where a plain HTML form posts: the collector's public
-	// URL (PUBLIC_URL) + /ingest/forms, so a form's action is
-	// <action_base>/<name>?key=<key>. Empty when PUBLIC_URL is not set.
-	ActionBase string `json:"action_base" jsonschema:"PUBLIC_URL + /ingest/forms, where a plain HTML form posts (<action_base>/<name>?key=<key>); empty when PUBLIC_URL is not configured"`
+	// URL (INGEST_URL) + /ingest/forms, so a form's action is
+	// <action_base>/<name>?key=<key>. Empty when INGEST_URL is not set.
+	ActionBase string `json:"action_base" jsonschema:"INGEST_URL + /ingest/forms, where a plain HTML form posts (<action_base>/<name>?key=<key>); empty when INGEST_URL is not configured"`
 }
 
 type approveFormIn struct {
@@ -108,7 +108,7 @@ type listSubmissionsIn struct {
 	Sort      string `json:"sort,omitempty" jsonschema:"<column>:asc or <column>:desc; newest first without one"`
 	Distinct  string `json:"distinct,omitempty" jsonschema:"return [value, rows] for this column among rows matching the other filters, most frequent first, instead of the rows"`
 	Offset    int    `json:"offset,omitempty" jsonschema:"rows to skip"`
-	Limit     int    `json:"limit,omitempty" jsonschema:"page size, 1 to CONSOLE_QUERY_MAX_ROWS (the default)"`
+	Limit     int    `json:"limit,omitempty" jsonschema:"page size, 1 to CONSOLE_QUERY_ROWS_MAX (the default)"`
 }
 
 type submissionsOut struct {
@@ -207,8 +207,8 @@ func (h *host) listForms(ctx context.Context, in listFormsIn) (listFormsOut, err
 		return listFormsOut{}, h.projectErr(ctx, in.ProjectID, err)
 	}
 	out := listFormsOut{Forms: []formOut{}}
-	if h.publicURL != "" {
-		out.ActionBase = h.publicURL + "/ingest/forms"
+	if h.ingestURL != "" {
+		out.ActionBase = h.ingestURL + "/ingest/forms"
 	}
 	for _, f := range fs {
 		out.Forms = append(out.Forms, toFormOut(f))
@@ -438,7 +438,7 @@ func (h *host) registerForms(r *registrar) {
 	const f = p + "/forms/{name}"
 
 	expose(r, spec{Name: "list_forms", Annotations: ro, Method: "GET", Path: p + "/forms",
-		Description: "A project's forms, drafts first (archived: true lists the archived ones instead): name, status (draft or approved), purpose, return_url, fields (every field name sent), expected_fields (what an approved form keeps), draft_until, approved_at, closes_at, submissions (count), last_submitted_at, new_submissions (received after seen_at), seen_at (how far the console has read the form; reading over MCP never moves it), archived; and action_base, PUBLIC_URL + /ingest/forms (empty when PUBLIC_URL is not configured), so a plain HTML form's action is <action_base>/<name>?key=<key>. A form is created as a draft by its first submission to POST /ingest/forms/{name}; a draft keeps every field for FORMS_DRAFT_DAYS, then is archived unless approved, and its submissions never count as conversions. Approve one with approve_form."},
+		Description: "A project's forms, drafts first (archived: true lists the archived ones instead): name, status (draft or approved), purpose, return_url, fields (every field name sent), expected_fields (what an approved form keeps), draft_until, approved_at, closes_at, submissions (count), last_submitted_at, new_submissions (received after seen_at), seen_at (how far the console has read the form; reading over MCP never moves it), archived; and action_base, INGEST_URL + /ingest/forms (empty when INGEST_URL is not configured), so a plain HTML form's action is <action_base>/<name>?key=<key>. A form is created as a draft by its first submission to POST /ingest/forms/{name}; a draft keeps every field for RETENTION_FORMS_DRAFT_DAYS, then is archived unless approved, and its submissions never count as conversions. Approve one with approve_form."},
 		h.listForms)
 	expose(r, spec{Name: "approve_form", Annotations: write, Method: "POST", Path: f + "/approve",
 		Description: "Approve a draft form with expected_fields (one or more, from list_forms' fields): from now on its submissions keep only those fields, and each writes a $form_submit product event (attribute form = the name), its conversion. Submissions taken while it was a draft never count as conversions. Approving an approved form is refused (conflict; change its fields with update_form), and approval does not reopen a closed form."},
@@ -450,7 +450,7 @@ func (h *host) registerForms(r *registrar) {
 		Description: "Archive a form: it refuses submissions, and it and its submissions leave every list, table and export (find_submissions still finds them, marked archived, for an erasure request). Reversible with restore_form; purged with its submissions and their conversions still in the raw window RETENTION_ARCHIVED_DAYS (default 30) after archiving unless restored."},
 		h.archiveForm)
 	expose(r, spec{Name: "restore_form", Annotations: idem, Method: "POST", Path: f + "/restore",
-		Description: "Restore an archived form with its submissions. A restored draft accepts submissions for another FORMS_DRAFT_DAYS."},
+		Description: "Restore an archived form with its submissions. A restored draft accepts submissions for another RETENTION_FORMS_DRAFT_DAYS."},
 		h.restoreForm)
 	restOnly(r, spec{Name: "mark_form_seen", Method: "POST", Path: f + "/seen",
 		Description: "The console has read this form's submissions up to until (RFC 3339; the form's last_submitted_at as the page loaded it). seen_at only moves forward. Console state: not audited, not an MCP tool."},

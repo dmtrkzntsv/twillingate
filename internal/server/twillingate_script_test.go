@@ -13,11 +13,11 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/shared/version"
 )
 
-// serverWithPublicURL builds a *Server like newServerWithLogger, but with
-// PUBLIC_URL set, so a test can exercise the scheme fallback that reads it.
-func serverWithPublicURL(t *testing.T, publicURL string) *Server {
+// serverWithIngestURL builds a *Server like newServerWithLogger, but with
+// INGEST_URL set, so a test can exercise the scheme fallback that reads it.
+func serverWithIngestURL(t *testing.T, ingestURL string) *Server {
 	t.Helper()
-	cfg := configtest.Load(t, map[string]string{"PUBLIC_URL": publicURL})
+	cfg := configtest.Load(t, map[string]string{"INGEST_URL": ingestURL})
 	reg := newTestRegistry(t,
 		[]manage.ProjectSpec{{
 			Name:           "App",
@@ -144,14 +144,14 @@ func TestTwillingateSDKCarriesRequestOrigin(t *testing.T) {
 		}
 	}
 	// Without a forwarded scheme and without TLS, the scheme falls back to
-	// the one PUBLIC_URL is configured with.
-	fallbackServer := serverWithPublicURL(t, "https://t.example.com")
+	// the one INGEST_URL is configured with.
+	fallbackServer := serverWithIngestURL(t, "https://t.example.com")
 	r := httptest.NewRequest("GET", "/js/twillingate.js", nil)
 	r.Host = "t.example.com"
 	w := httptest.NewRecorder()
 	fallbackServer.ServeHTTP(w, r)
 	if fbBody := w.Body.String(); !strings.Contains(fbBody, `"https://t.example.com"`) {
-		t.Errorf("PUBLIC_URL fallback: served bundle does not carry %q", `"https://t.example.com"`)
+		t.Errorf("INGEST_URL fallback: served bundle does not carry %q", `"https://t.example.com"`)
 	}
 
 	// A host that cannot be an origin is not written into the script.

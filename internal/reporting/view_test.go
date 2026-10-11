@@ -148,8 +148,8 @@ func TestViewRefusals(t *testing.T) {
 		{"no direction", DataRequest{Sort: "N"}, "<column>:asc"},
 		{"unknown sort column", DataRequest{Sort: "Zed:asc"}, "Key, N"},
 		{"negative offset", DataRequest{Offset: -1}, "offset"},
-		{"negative limit", DataRequest{Limit: -1}, "CONSOLE_QUERY_MAX_ROWS"},
-		{"limit over the cap", DataRequest{Limit: svc.db.MaxRows() + 1}, "CONSOLE_QUERY_MAX_ROWS"},
+		{"negative limit", DataRequest{Limit: -1}, "CONSOLE_QUERY_ROWS_MAX"},
+		{"limit over the cap", DataRequest{Limit: svc.db.MaxRows() + 1}, "CONSOLE_QUERY_ROWS_MAX"},
 		{"distinct with sort", DataRequest{Distinct: "N", Sort: "N:asc"}, "distinct"},
 		{"unknown distinct column", DataRequest{Distinct: "Zed"}, "Key, N"},
 	} {

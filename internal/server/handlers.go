@@ -84,7 +84,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	// the web kind only. Applying it to app traffic would drop every client
 	// whose HTTP library sends a non-browser User-Agent.
 	botUA := enrich.IsBot(ua)
-	// The clamp is the raw window (RETENTION_EVENTS_RAW_DAYS): a clamped
+	// The clamp is the raw window (RETENTION_RAW_DAYS): a clamped
 	// event can never target a day the daily pass already aggregated and
 	// deleted.
 	maxAge := s.cfg.MaxEventAge()

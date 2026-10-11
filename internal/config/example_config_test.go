@@ -32,7 +32,7 @@ func TestExamplesLoad(t *testing.T) {
 	if err := sc.Err(); err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{"DATABASE_DSN", "INGEST_ADDR", "BUFFER_FLUSH_INTERVAL", "REPORTING_CACHE_SECONDS"} {
+	for _, key := range []string{"DATABASE_DSN", "INGEST_ADDR", "BUFFER_FLUSH_INTERVAL", "REPORTING_CACHE_MAX_AGE"} {
 		if _, ok := vars[key]; !ok {
 			t.Fatalf("example env must document %s", key)
 		}

@@ -144,7 +144,7 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
 
   // Auto-refresh is the viewer's own choice per dashboard, kept in this
   // browser and off until turned on. Each reload is an ordinary one: the
-  // interval is at least REPORTING_CACHE_SECONDS, so it runs the queries
+  // interval is at least REPORTING_CACHE_MAX_AGE, so it runs the queries
   // again rather than being served the answers already on screen.
   const autoSeconds = list.auto_refresh_seconds ?? 0
   const [autoOn, setAutoOn] = useStoredState(`twillingate.auto_refresh.${dashboard.group_id}`, (v) => (v === true ? true : null))
