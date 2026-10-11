@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/dmtrkzntsv/twillingate/internal/store"
@@ -298,7 +299,7 @@ func TestRenameEventReplacesBlockAndKeepsTargetBlock(t *testing.T) {
 	if err := db.BlockEvent(ctx, 1, p, "Z", ruleAudit); err != nil {
 		t.Fatal(err)
 	}
-	rename(t, db, 1, p, "W", "Z", false)
+	rename(t, db, 1, p, "W", "Z", true)
 	want := []store.EventRule{
 		rule(1, p, "W", store.EventRuleRename, "Z"),
 		rule(1, p, "X", store.EventRuleRename, "Y"),
@@ -306,6 +307,64 @@ func TestRenameEventReplacesBlockAndKeepsTargetBlock(t *testing.T) {
 	}
 	if got := loadRules(t, db); !reflect.DeepEqual(got, want) {
 		t.Errorf("rules = %v, want %v", got, want)
+	}
+}
+
+// A blocked target with no stored rows would pass the existing-rows check,
+// and the next daily pass would delete the renamed history with it: refused
+// unless merge says so, and then the block stays.
+func TestRenameEventRefusesBlockedTargetWithoutMerge(t *testing.T) {
+	db := ruleDB(t)
+	p := store.FamilyProduct
+	ctx := context.Background()
+	writeNamed(t, db, 1, p, "a", 2)
+	execAll(t, db, `INSERT INTO agg_product_daily (project_id, day, event_name, count, unique_users) VALUES (1, '2026-01-01', 'a', 5, 2)`)
+	if err := db.BlockEvent(ctx, 1, p, "b", ruleAudit); err != nil {
+		t.Fatal(err)
+	}
+	wantRules := loadRules(t, db)
+	wantRaw := rawNames(t, db, 1, p)
+	auditRows := count(t, db, `SELECT COUNT(*) FROM audit_log WHERE action='event.rename'`)
+
+	_, err := db.RenameEvent(ctx, 1, p, "a", "b", false, ruleAudit)
+	if !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("err = %v, want ErrConflict", err)
+	}
+	if !strings.Contains(err.Error(), "b is blocked") {
+		t.Errorf("err = %q, want it to say the target is blocked", err)
+	}
+	if got := rawNames(t, db, 1, p); !reflect.DeepEqual(got, wantRaw) {
+		t.Errorf("raw = %v, want unchanged %v", got, wantRaw)
+	}
+	if n := count(t, db, `SELECT COUNT(*) FROM agg_product_daily WHERE event_name='a'`); n != 1 {
+		t.Errorf("aggregate a rows = %d, want 1", n)
+	}
+	if got := loadRules(t, db); !reflect.DeepEqual(got, wantRules) {
+		t.Errorf("rules = %v, want unchanged %v", got, wantRules)
+	}
+	if n := count(t, db, `SELECT COUNT(*) FROM audit_log WHERE action='event.rename'`); n != auditRows {
+		t.Errorf("audit rows = %d, want %d", n, auditRows)
+	}
+
+	// Another family's block does not count.
+	if _, err := db.RenameEvent(ctx, 1, store.FamilyMeasures, "a", "b", false, ruleAudit); err != nil {
+		t.Errorf("measures rename with only a product block: %v", err)
+	}
+
+	if _, err := db.RenameEvent(ctx, 1, p, "a", "b", true, ruleAudit); err != nil {
+		t.Fatalf("merge: %v", err)
+	}
+	if got := rawNames(t, db, 1, p); got["b"] != 2 || got["a"] != 0 {
+		t.Errorf("raw = %v, want a's two events under b", got)
+	}
+	var blocks int
+	for _, r := range loadRules(t, db) {
+		if r.Family == p && r.Name == "b" && r.Action == store.EventRuleBlock {
+			blocks++
+		}
+	}
+	if blocks != 1 {
+		t.Errorf("block on b kept = %d, want 1", blocks)
 	}
 }
 

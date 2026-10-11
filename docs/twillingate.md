@@ -151,9 +151,9 @@ A project can rename an event or block it. Rules cover the `product` and
 `$form_submit`, the Web Vitals) belong to the server and are refused (`invalid`),
 as are an empty name and a rename to itself. An unknown project or removing a
 rule that does not exist is `not_found`; renaming onto a name that already has
-events without `merge` is `conflict`. A name has at most one rule: blocking a
-renamed name replaces the rename, and renaming a blocked name replaces the
-block. Every rule operation is audited.
+events, or onto a blocked one, without `merge` is `conflict`. A name has at
+most one rule: blocking a renamed name replaces the rename, and renaming a
+blocked name replaces the block. Every rule operation is audited.
 
 `rename_event {project_id, family, from, to, merge}` rewrites the stored events
 and the family's aggregates from `from` to `to` in one transaction, keeps a
@@ -171,8 +171,9 @@ alone is written.
 - **Chains and renaming back.** Renaming B to C retargets every rule `A → B` to
   `A → C`, so a rule's target is never another rule's source. Renaming `B` to
   `A` while `A → B` exists deletes that rule first, so `A` is no longer mapped
-  away. Renaming onto a blocked name keeps the block: the renamed events are
-  dropped from then on.
+  away. Renaming onto a blocked name is refused (`conflict`) unless `merge` is
+  `true`: the block stays, so the renamed events are dropped from then on and
+  the next daily pass deletes their aggregated history with the block's.
 - **Widget SQL is not rewritten.** A widget or `query` that names the old event
   finds nothing from the rename on; edit it.
 

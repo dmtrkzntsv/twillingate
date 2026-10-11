@@ -53,8 +53,10 @@ REST route each.
   every rule `X→B` to `X→C`, so a rule's target is never itself a rule's
   source. Renaming onto a name that is a rule's source (`A→B` exists, then
   `B→A`) deletes that rule first, so A is no longer mapped away. A rename
-  onto a blocked name keeps the block: the renamed events are dropped from
-  then on, as D9 says.
+  onto a blocked name is refused (`ErrConflict`) unless `merge: true`: the
+  block stays, so the renamed events are dropped from then on (D9) and the
+  next daily pass deletes their aggregated history (D11), which the caller
+  must ask for by merging.
 - **D6. Renaming onto an existing name merges, only when asked.** If `to`
   has stored rows in `events` or the family's aggregates, the rename is
   refused (`ErrConflict`) unless `merge: true`: a merge cannot be split

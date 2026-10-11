@@ -34,8 +34,9 @@ func (d *DB) LoadEventRules(ctx context.Context) ([]store.EventRule, error) {
 // and the family's aggregates are rewritten from `from` to `to`, and a
 // rename rule is kept so later writes land under `to` (D4, D7). Chains are
 // collapsed (D5): no rule's target is itself a rename rule's name. A `to`
-// that already has rows is store.ErrConflict unless merge is set; merged
-// aggregate rows are summed (D6). It returns the rows rewritten per table
+// that already has rows, or that is blocked, is store.ErrConflict unless
+// merge is set (a blocked target drops the renamed history with it at the
+// next daily pass); merged aggregate rows are summed (D6). It returns the rows rewritten per table
 // ("events" and the aggregate tables of the family).
 func (d *DB) RenameEvent(ctx context.Context, projectID int64, family store.Family,
 	from, to string, merge bool, a store.AuditEntry) (map[string]int64, error) {
@@ -45,6 +46,16 @@ func (d *DB) RenameEvent(ctx context.Context, projectID int64, family store.Fami
 	rewritten := map[string]int64{}
 	err := d.tx(ctx, func(tx *sql.Tx) error {
 		if !merge {
+			var blocked bool
+			if err := tx.QueryRowContext(ctx,
+				`SELECT EXISTS(SELECT 1 FROM event_rules WHERE project_id=?1 AND family=?2 AND name=?3 AND action='block')`,
+				projectID, string(family), to).Scan(&blocked); err != nil {
+				return fmt.Errorf("rename: look for a block on %s: %w", to, err)
+			}
+			if blocked {
+				return fmt.Errorf("rename %s to %s: %s is blocked; pass merge to drop %s's history with it: %w",
+					from, to, to, from, store.ErrConflict)
+			}
 			has, err := hasEventRows(ctx, tx, projectID, family, to)
 			if err != nil {
 				return err

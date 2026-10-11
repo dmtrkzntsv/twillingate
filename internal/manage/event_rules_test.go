@@ -167,8 +167,12 @@ func TestBlockEventReachesSnapshot(t *testing.T) {
 	if got, blocked := reg.Snapshot(ctx).ResolveEvent(p, store.FamilyProduct, "b"); got != "b" || !blocked {
 		t.Errorf("b resolves to %q blocked=%v, want b, true", got, blocked)
 	}
-	// A rename into a blocked name: the name is mapped, then dropped.
-	if _, _, err := ops.RenameEvent(ctx, "t", p, "product", "a", "b", false); err != nil {
+	// A rename into a blocked name is refused without merge; with it the
+	// name is mapped, then dropped.
+	if _, _, err := ops.RenameEvent(ctx, "t", p, "product", "a", "b", false); !errors.Is(err, ErrConflict) {
+		t.Fatalf("rename onto a blocked name: err = %v, want ErrConflict", err)
+	}
+	if _, _, err := ops.RenameEvent(ctx, "t", p, "product", "a", "b", true); err != nil {
 		t.Fatal(err)
 	}
 	if got, blocked := reg.Snapshot(ctx).ResolveEvent(p, store.FamilyProduct, "a"); got != "b" || !blocked {

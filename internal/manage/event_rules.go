@@ -66,8 +66,8 @@ func (o *Ops) ListEventRules(ctx context.Context, projectID int64) ([]store.Even
 
 // RenameEvent renames an event of one family and keeps a rule so later
 // writes land under the new name. It returns the rule and the rows
-// rewritten per table. Renaming onto a name that has events is ErrConflict
-// unless merge is set.
+// rewritten per table. Renaming onto a name that has events, or is blocked,
+// is ErrConflict unless merge is set.
 func (o *Ops) RenameEvent(ctx context.Context, actor string, projectID int64, family, from, to string, merge bool) (store.EventRule, map[string]int64, error) {
 	f, err := o.ruleTarget(ctx, projectID, family, from)
 	if err != nil {

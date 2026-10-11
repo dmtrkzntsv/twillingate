@@ -298,7 +298,7 @@ func (h *host) register(r *registrar) {
 		Description: "List a project's event rules: renames (name → to) and blocks, product and measures families."},
 		h.listEventRules)
 	expose(r, spec{Name: "rename_event", Annotations: write, Method: "POST", Path: p + "/event-rules/rename",
-		Description: "Rename a product or measures event: rewrites its stored events and aggregates, and stores later events sent under the old name under the new one. Refused onto a name with events unless merge is true (a merge cannot be undone). Widget SQL naming the old event is not rewritten."},
+		Description: "Rename a product or measures event: rewrites its stored events and aggregates, and stores later events sent under the old name under the new one. Refused onto a name with events, or a blocked name, unless merge is true (a merge cannot be undone; onto a blocked name the renamed history is deleted at the next daily pass). Widget SQL naming the old event is not rewritten."},
 		h.renameEvent)
 	expose(r, spec{Name: "block_event", Annotations: idem, Method: "POST", Path: p + "/event-rules/block",
 		Description: "Block a product or measures event: ingest accepts and drops it (with a warning), the next daily pass deletes its aggregates, and its stored raw events expire with the raw window. Nothing else is deleted. remove_event_rule unblocks."},
