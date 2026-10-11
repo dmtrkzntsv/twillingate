@@ -54,7 +54,9 @@ func TestMigrateDropsProcessOwnedViews(t *testing.T) {
 	if !viewColumns(t, db, "v_events_flat")["attr_plan"] {
 		t.Fatal("fixture: no attr_plan before migrating")
 	}
-	if err := db.migrateThrough(ctx, 37); err != nil {
+	// Through the latest, not a pinned version: the second half needs
+	// nothing left pending.
+	if err := db.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if def, err := db.flatViewDefinition(ctx); err != nil || def != "" {
