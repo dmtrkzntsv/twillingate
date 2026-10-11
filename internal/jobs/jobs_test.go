@@ -32,7 +32,7 @@ var jobsProjectSpecs = []manage.ProjectSpec{
 // 7-day raw window puts the fixed 2026-08-10 fixture day outside it relative
 // to the fake now of 2026-08-22.
 var jobsVars = map[string]string{
-	"RETENTION_EVENTS_RAW_DAYS": "7", "RETENTION_EVENTS_AGGREGATE_DAYS": "365",
+	"RETENTION_RAW_DAYS": "7", "RETENTION_AGGREGATE_DAYS": "365",
 }
 
 // countingStore counts daily passes; IncrementalVacuum runs exactly once per
@@ -217,7 +217,7 @@ func TestRunDailyPassAggregatesOldDays(t *testing.T) {
 // is rolled up and its raw rows deleted for both families, and a day still
 // inside it stays raw for both.
 func TestRunDailyPassAggregatesEveryFamilyByOneWindow(t *testing.T) {
-	st, _, r := setup(t, jobsVars, jobsProjectSpecs) // RETENTION_EVENTS_RAW_DAYS=7
+	st, _, r := setup(t, jobsVars, jobsProjectSpecs) // RETENTION_RAW_DAYS=7
 	ctx := context.Background()
 	// 2026-08-12 is 10 days before the fake now (2026-08-22): outside the
 	// 7-day window. 2026-08-19 is 3 days before: inside it.
@@ -260,7 +260,7 @@ func TestRunDailyPassAggregatesEveryFamilyByOneWindow(t *testing.T) {
 }
 
 // Measures roll up on the same shared raw window as views and product: a
-// day older than RETENTION_EVENTS_RAW_DAYS is aggregated into
+// day older than RETENTION_RAW_DAYS is aggregated into
 // agg_measures_daily and its raw rows deleted; a day still inside it stays
 // raw.
 func TestRunDailyPassRollsUpMeasures(t *testing.T) {

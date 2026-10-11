@@ -42,10 +42,11 @@ type Retention struct {
 	ArchivedDays int `json:"archived_days"`
 }
 
-// FormsConfig carries the forms settings. DraftDays (FORMS_DRAFT_DAYS) is
-// how long a form created by its first submission accepts submissions as a
-// draft before the daily pass archives it unapproved; it is read when a
-// draft is created or restored, so a change moves no existing window.
+// FormsConfig carries the forms settings. DraftDays
+// (RETENTION_FORMS_DRAFT_DAYS) is how long a form created by its first
+// submission accepts submissions as a draft before the daily pass archives
+// it unapproved; it is read when a draft is created or restored, so a
+// change moves no existing window.
 type FormsConfig struct {
 	DraftDays int
 }
@@ -54,7 +55,7 @@ type FormsConfig struct {
 // served from (internal/reporting): an ordinary request reuses a value up
 // to CacheAge old; a fresh=true request reuses one younger than this
 // (RefreshAge instead), which must not exceed CacheAge when that is
-// non-zero. REPORTING_CACHE_SECONDS 0 turns the cache off outright: every
+// non-zero. REPORTING_CACHE_MAX_AGE 0 turns the cache off outright: every
 // request, fresh or not, loads again.
 type ReportingConfig struct {
 	CacheAge, RefreshAge time.Duration
@@ -70,14 +71,15 @@ type ReportingConfig struct {
 // password= on token:// turns on the browser login server, which needs a
 // resource URL. Callbacks are allowed by host: loopback, claude.ai and
 // chatgpt.com always, and each redirect= adds one more. In token and oauth
-// modes resource defaults to CONSOLE_URL (itself defaulting to PUBLIC_URL)
+// modes resource defaults to CONSOLE_URL (itself defaulting to INGEST_URL)
 // and must be an origin (scheme://host[:port], no path): one identifier covers /mcp and /api/.
 // The oauth issuer is https://<host>[/path] and audience defaults to the
 // resource. oauth+insecure produces an http issuer for local IdPs and tests.
 type ConsoleConfig struct {
 	Addr          string // CONSOLE_ADDR, defaults to IngestAddr
-	URL           string // CONSOLE_URL, the console's public origin; defaults to PUBLIC_URL
-	DBPath        string // CONSOLE_DB_PATH, defaults to DATABASE_DSN path
+	URL           string // CONSOLE_URL, the console's public origin; defaults to INGEST_URL
+	Database      string // CONSOLE_DATABASE_DSN, sqlite:// only; defaults to DATABASE_DSN
+	DBPath        string // Database's file path, what the console's read handles open
 	AuthDSN       string // CONSOLE_AUTH_DSN, verbatim
 	AuthMode      string // "oauth" | "token", from the DSN scheme
 	ResourceURL   string
@@ -87,7 +89,7 @@ type ConsoleConfig struct {
 	RedirectHosts []string      // token:// redirect=, callback hosts beyond loopback, claude.ai and chatgpt.com
 	Password      string        // token:// password=; set, it turns on the login server
 	QueryTimeout  time.Duration // CONSOLE_QUERY_TIMEOUT, default 10s
-	QueryMaxRows  int           // CONSOLE_QUERY_MAX_ROWS, default 1000
+	QueryMaxRows  int           // CONSOLE_QUERY_ROWS_MAX, default 1000
 
 	// Insecure is token:// insecure=1: the console origin (resource) may
 	// be plain http on any host, for a network that encrypts the link
@@ -121,8 +123,8 @@ const (
 	DefaultIdentitiesTopN         = 500
 )
 
-// The retention defaults (RETENTION_EVENTS_RAW_DAYS,
-// RETENTION_EVENTS_AGGREGATE_DAYS, RETENTION_ARCHIVED_DAYS), reported by the
+// The retention defaults (RETENTION_RAW_DAYS,
+// RETENTION_AGGREGATE_DAYS, RETENTION_ARCHIVED_DAYS), reported by the
 // limits tool beside the values in force like the caps'.
 const (
 	DefaultRawDays       = 30
@@ -130,8 +132,8 @@ const (
 	DefaultArchivedDays  = 30
 )
 
-// DefaultFormDraftDays is FORMS_DRAFT_DAYS's default: a week to see what a
-// new form sends and approve it.
+// DefaultFormDraftDays is RETENTION_FORMS_DRAFT_DAYS's default: a week to
+// see what a new form sends and approve it.
 const DefaultFormDraftDays = 7
 
 type Config struct {
@@ -140,7 +142,7 @@ type Config struct {
 	IngestDisabled      bool
 	Database            string
 	Geo                 string
-	PublicURL           string
+	IngestURL           string
 	Log                 LogConfig
 	Buffer              BufferConfig
 	Retention           Retention
@@ -237,7 +239,7 @@ func FromEnv(lookup func(string) (string, bool)) (*Config, error) {
 		// The collector's public base URL (https://twillingate.example.com).
 		// Embed snippets and MCP integration guidance are built from it;
 		// unset, they carry a placeholder and tell the model to ask.
-		PublicURL: strings.TrimSuffix(e.str("PUBLIC_URL", ""), "/"),
+		IngestURL: strings.TrimSuffix(e.str("INGEST_URL", ""), "/"),
 		Log: LogConfig{
 			Level:  e.str("LOG_LEVEL", "info"),
 			Format: e.str("LOG_FORMAT", "json"),
@@ -250,8 +252,8 @@ func FromEnv(lookup func(string) (string, bool)) (*Config, error) {
 		},
 		Retention: Retention{
 			Events: RetentionClass{
-				RawDays:       e.num("RETENTION_EVENTS_RAW_DAYS", DefaultRawDays),
-				AggregateDays: e.num("RETENTION_EVENTS_AGGREGATE_DAYS", DefaultAggregateDays),
+				RawDays:       e.num("RETENTION_RAW_DAYS", DefaultRawDays),
+				AggregateDays: e.num("RETENTION_AGGREGATE_DAYS", DefaultAggregateDays),
 			},
 			ArchivedDays: e.num("RETENTION_ARCHIVED_DAYS", DefaultArchivedDays),
 		},
@@ -264,24 +266,25 @@ func FromEnv(lookup func(string) (string, bool)) (*Config, error) {
 		AttributeValuesTopN:    e.num("ATTRIBUTE_VALUES_TOP_N", DefaultAttributeValuesTopN),
 		AttributeBreakdownsMax: e.num("ATTRIBUTE_BREAKDOWNS_MAX", DefaultAttributeBreakdownsMax),
 		IdentitiesTopN:         e.num("IDENTITIES_TOP_N", DefaultIdentitiesTopN),
-		Forms:                  FormsConfig{DraftDays: e.num("FORMS_DRAFT_DAYS", DefaultFormDraftDays)},
+		Forms:                  FormsConfig{DraftDays: e.num("RETENTION_FORMS_DRAFT_DAYS", DefaultFormDraftDays)},
 		Reporting: ReportingConfig{
-			CacheAge:   time.Duration(e.num("REPORTING_CACHE_SECONDS", 900)) * time.Second,
-			RefreshAge: time.Duration(e.num("REPORTING_REFRESH_SECONDS", 60)) * time.Second,
+			CacheAge:   e.dur("REPORTING_CACHE_MAX_AGE", 15*time.Minute),
+			RefreshAge: e.dur("REPORTING_REFRESH_MAX_AGE", time.Minute),
 		},
 	}
 	c.Console = ConsoleConfig{
 		Addr: e.str("CONSOLE_ADDR", c.IngestAddr),
 		// The console's public address, when it has a hostname of its own
-		// (https://console.example.com beside an ingest-only PUBLIC_URL). The
+		// (https://console.example.com beside an ingest-only INGEST_URL). The
 		// login's resource, issuer and dashboards callback follow it, so the
 		// console's own host needs no redirect= entry.
-		URL:          strings.TrimSuffix(e.str("CONSOLE_URL", c.PublicURL), "/"),
-		DBPath:       e.str("CONSOLE_DB_PATH", strings.TrimPrefix(c.Database, "sqlite://")),
+		URL:          strings.TrimSuffix(e.str("CONSOLE_URL", c.IngestURL), "/"),
+		Database:     e.str("CONSOLE_DATABASE_DSN", c.Database),
 		AuthDSN:      e.str("CONSOLE_AUTH_DSN", ""),
 		QueryTimeout: e.dur("CONSOLE_QUERY_TIMEOUT", 10*time.Second),
-		QueryMaxRows: e.num("CONSOLE_QUERY_MAX_ROWS", 1000),
+		QueryMaxRows: e.num("CONSOLE_QUERY_ROWS_MAX", 1000),
 	}
+	c.Console.DBPath = strings.TrimPrefix(c.Console.Database, "sqlite://")
 	if c.Console.AuthDSN != "" {
 		c.Console.authErr = c.parseConsoleAuthDSN()
 	}
@@ -294,16 +297,26 @@ func FromEnv(lookup func(string) (string, bool)) (*Config, error) {
 	return c, nil
 }
 
-// renamed maps each retired variable to its replacement. A set old name
+// renamed maps each retired variable to its current name. A set old name
 // refuses the boot, so a leftover one cannot silently stop taking effect.
+// A name retired twice points at the latest, and a replacement that takes
+// its value in another form says so.
 var renamed = []struct{ old, repl string }{
 	{"LISTEN_ADDR", "INGEST_ADDR"},
+	{"PUBLIC_URL", "INGEST_URL"},
 	{"API_ADDR", "CONSOLE_ADDR"},
 	{"API_URL", "CONSOLE_URL"},
 	{"API_AUTH_DSN", "CONSOLE_AUTH_DSN"},
-	{"API_DB_PATH", "CONSOLE_DB_PATH"},
+	{"API_DB_PATH", "CONSOLE_DATABASE_DSN (sqlite://<path>)"},
+	{"CONSOLE_DB_PATH", "CONSOLE_DATABASE_DSN (sqlite://<path>)"},
 	{"API_QUERY_TIMEOUT", "CONSOLE_QUERY_TIMEOUT"},
-	{"API_QUERY_MAX_ROWS", "CONSOLE_QUERY_MAX_ROWS"},
+	{"API_QUERY_MAX_ROWS", "CONSOLE_QUERY_ROWS_MAX"},
+	{"CONSOLE_QUERY_MAX_ROWS", "CONSOLE_QUERY_ROWS_MAX"},
+	{"RETENTION_EVENTS_RAW_DAYS", "RETENTION_RAW_DAYS"},
+	{"RETENTION_EVENTS_AGGREGATE_DAYS", "RETENTION_AGGREGATE_DAYS"},
+	{"FORMS_DRAFT_DAYS", "RETENTION_FORMS_DRAFT_DAYS"},
+	{"REPORTING_CACHE_SECONDS", "REPORTING_CACHE_MAX_AGE (a duration: 900 is 15m)"},
+	{"REPORTING_REFRESH_SECONDS", "REPORTING_REFRESH_MAX_AGE (a duration: 60 is 1m)"},
 }
 
 // refuseRenamed treats an empty value as unset, as env.str does, so a
@@ -327,6 +340,10 @@ func (c *Config) validate() error {
 			return fmt.Errorf("config: invalid DSN %q", dsn)
 		}
 	}
+	// The console reads with its own SQLite handles, whatever the store.
+	if !strings.HasPrefix(c.Console.Database, "sqlite://") {
+		return fmt.Errorf("config: CONSOLE_DATABASE_DSN must be sqlite://<path>: %q", c.Console.Database)
+	}
 	// Validate global retention (negative values only)
 	if rc := c.Retention.Events; rc.RawDays < 0 || rc.AggregateDays < 0 {
 		return fmt.Errorf("config: retention days must not be negative: %+v", rc)
@@ -349,17 +366,17 @@ func (c *Config) validate() error {
 		return fmt.Errorf("config: RETENTION_ARCHIVED_DAYS must not be negative: %d", c.Retention.ArchivedDays)
 	}
 	if c.Forms.DraftDays < 1 {
-		return fmt.Errorf("config: FORMS_DRAFT_DAYS must be at least 1: %d", c.Forms.DraftDays)
+		return fmt.Errorf("config: RETENTION_FORMS_DRAFT_DAYS must be at least 1: %d", c.Forms.DraftDays)
 	}
 	if c.Reporting.CacheAge < 0 {
-		return fmt.Errorf("config: REPORTING_CACHE_SECONDS must not be negative")
+		return fmt.Errorf("config: REPORTING_CACHE_MAX_AGE must not be negative")
 	}
 	if c.Reporting.RefreshAge < 0 {
-		return fmt.Errorf("config: REPORTING_REFRESH_SECONDS must not be negative")
+		return fmt.Errorf("config: REPORTING_REFRESH_MAX_AGE must not be negative")
 	}
 	if c.Reporting.CacheAge > 0 && c.Reporting.RefreshAge > c.Reporting.CacheAge {
-		return fmt.Errorf("config: REPORTING_REFRESH_SECONDS (%d) exceeds REPORTING_CACHE_SECONDS (%d)",
-			int(c.Reporting.RefreshAge/time.Second), int(c.Reporting.CacheAge/time.Second))
+		return fmt.Errorf("config: REPORTING_REFRESH_MAX_AGE (%s) exceeds REPORTING_CACHE_MAX_AGE (%s)",
+			c.Reporting.RefreshAge, c.Reporting.CacheAge)
 	}
 	return nil
 }
@@ -371,7 +388,7 @@ func (c *Config) MaxEventAge() time.Duration {
 }
 
 // parseConsoleAuthDSN fans CONSOLE_AUTH_DSN out into the mode-specific ConsoleConfig
-// fields. Called from parse once the rest of the config (PUBLIC_URL for
+// fields. Called from parse once the rest of the config (INGEST_URL for
 // the oauth resource default) is known.
 func (c *Config) parseConsoleAuthDSN() error {
 	m := &c.Console
@@ -411,7 +428,7 @@ func (c *Config) parseConsoleAuthDSN() error {
 			return err
 		}
 		if m.ResourceURL == "" {
-			return fmt.Errorf("config: CONSOLE_AUTH_DSN oauth:// requires CONSOLE_URL, PUBLIC_URL or ?resource=<origin> to derive the resource from")
+			return fmt.Errorf("config: CONSOLE_AUTH_DSN oauth:// requires CONSOLE_URL, INGEST_URL or ?resource=<origin> to derive the resource from")
 		}
 		m.Audience = q.Get("audience")
 		m.audienceGiven = m.Audience != ""
@@ -458,7 +475,7 @@ func (c *Config) parseTokenLogin(query string) error {
 		return err
 	}
 	if m.ResourceURL == "" {
-		return fmt.Errorf("config: CONSOLE_AUTH_DSN token:// password= requires CONSOLE_URL, PUBLIC_URL or resource=<origin> to derive the resource from")
+		return fmt.Errorf("config: CONSOLE_AUTH_DSN token:// password= requires CONSOLE_URL, INGEST_URL or resource=<origin> to derive the resource from")
 	}
 	if err := checkLoginURL(m.ResourceURL, m.Insecure); err != nil {
 		return fmt.Errorf("config: CONSOLE_AUTH_DSN token:// resource=%q %v", m.ResourceURL, err)
@@ -467,7 +484,7 @@ func (c *Config) parseTokenLogin(query string) error {
 }
 
 // resource resolves the console resource identifier: resource= when given,
-// else CONSOLE_URL (which defaults to PUBLIC_URL), either way read as an
+// else CONSOLE_URL (which defaults to INGEST_URL), either way read as an
 // origin. Empty when none is set.
 func (c *Config) resource(scheme, given string) (string, error) {
 	switch {
@@ -481,8 +498,8 @@ func (c *Config) resource(scheme, given string) (string, error) {
 		r, err := resourceOrigin(c.Console.URL)
 		if err != nil {
 			name := "CONSOLE_URL"
-			if c.Console.URL == c.PublicURL {
-				name = "PUBLIC_URL (CONSOLE_URL's default)"
+			if c.Console.URL == c.IngestURL {
+				name = "INGEST_URL (CONSOLE_URL's default)"
 			}
 			return "", fmt.Errorf("config: %s=%q %v, or set CONSOLE_URL", name, c.Console.URL, err)
 		}

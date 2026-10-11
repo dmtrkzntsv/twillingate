@@ -254,7 +254,7 @@ test('the attribute table filters and pages on the server', async ({ page, reque
   await login(page)
   // The seed fills 180 days with two declared attributes, team_size (five
   // values) and role (three), so over all of them the table holds about 1,400
-  // rows: two pages of CONSOLE_QUERY_MAX_ROWS (1,000). The table leaves out the
+  // rows: two pages of CONSOLE_QUERY_ROWS_MAX (1,000). The table leaves out the
   // `$` keys. A `to` past today is cut to today by the server.
   const day = (n: number) => new Date(Date.now() + n * 86_400_000).toISOString().slice(0, 10)
   await page.goto(`/app/dashboards/${id}?range=custom&from=${day(-200)}&to=${day(1)}`)

@@ -22,7 +22,7 @@ type loadResult struct {
 }
 
 // cache is the two-age cache a Service's widget reads share (Options.
-// CacheAge/RefreshAge, REPORTING_CACHE_SECONDS/REPORTING_REFRESH_SECONDS):
+// CacheAge/RefreshAge, REPORTING_CACHE_MAX_AGE/REPORTING_REFRESH_MAX_AGE):
 // an entry younger than cacheAge is served as-is; a "fresh" request
 // instead requires one younger than the shorter refreshAge. cacheAge 0
 // turns the cache off outright (get's own comment) rather than merely

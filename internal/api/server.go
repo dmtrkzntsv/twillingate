@@ -42,7 +42,7 @@ func CustomSQLRefused() []string { return []string{"submissions"} }
 // standalone listener, and app calls it directly to mount on the ingest
 // surface's mux via RegisterOn. rst is the store reporting reads and
 // writes; widget queries run on the same read-only handle, and so under the
-// same CONSOLE_QUERY_TIMEOUT and CONSOLE_QUERY_MAX_ROWS, as the query tool.
+// same CONSOLE_QUERY_TIMEOUT and CONSOLE_QUERY_ROWS_MAX, as the query tool.
 func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *manage.Ops, rst reporting.Store, logger *slog.Logger) (http.Handler, func() error, error) {
 	db, err := readsql.Open(cfg.Console.DBPath, cfg.Console.QueryTimeout, cfg.Console.QueryMaxRows, CustomSQLRefused()...)
 	if err != nil {
@@ -57,7 +57,7 @@ func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *m
 	rep := reporting.New(rst, db, reporting.Options{CacheAge: cfg.Reporting.CacheAge, RefreshAge: cfg.Reporting.RefreshAge,
 		ArchivedDays: cfg.Retention.ArchivedDays, ShareBaseURL: cfg.Console.URL})
 	h := &host{db: db, subs: subs, reg: reg, ops: ops, rep: rep,
-		publicURL: cfg.PublicURL, logger: logger, limits: limitsFrom(cfg), rawDays: cfg.Retention.Events.RawDays,
+		ingestURL: cfg.IngestURL, logger: logger, limits: limitsFrom(cfg), rawDays: cfg.Retention.Events.RawDays,
 		ingestDisabled: cfg.IngestDisabled}
 	h.raw = h.newHostRawCount()
 	// Counted from the start, so the first limits read (the Projects

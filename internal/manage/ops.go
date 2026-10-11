@@ -31,7 +31,7 @@ type Ops struct {
 	// projects may declare together; 0 is no limit. Set by the caller
 	// after NewOps.
 	BreakdownsMax int
-	// FormDraftDays is FORMS_DRAFT_DAYS: how long a restored draft form
+	// FormDraftDays is RETENTION_FORMS_DRAFT_DAYS: how long a restored draft form
 	// accepts submissions. Set by the caller after NewOps; below 1 means
 	// the default of 7.
 	FormDraftDays int
@@ -464,7 +464,7 @@ func mint(prefix string, n int) (string, error) {
 	return prefix + hex.EncodeToString(buf), nil
 }
 
-// SnippetPlaceholderBase is what Snippet falls back to when PUBLIC_URL is
+// SnippetPlaceholderBase is what Snippet falls back to when INGEST_URL is
 // not configured. Callers that surface a snippet built on it should say so
 // (the operator must substitute the real collector URL).
 const SnippetPlaceholderBase = "https://twillingate.example.com"

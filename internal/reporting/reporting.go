@@ -61,8 +61,8 @@ type Store interface {
 
 // Options configures a Service.
 type Options struct {
-	// CacheAge and RefreshAge come from REPORTING_CACHE_SECONDS and
-	// REPORTING_REFRESH_SECONDS: an ordinary request reuses a sql widget's
+	// CacheAge and RefreshAge come from REPORTING_CACHE_MAX_AGE and
+	// REPORTING_REFRESH_MAX_AGE: an ordinary request reuses a sql widget's
 	// loaded value up to CacheAge old; a fresh=true request instead
 	// reuses one only up to the (normally shorter) RefreshAge old. There
 	// is no background refresh and nothing is ever served stale past its

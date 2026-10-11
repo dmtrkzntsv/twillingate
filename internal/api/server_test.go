@@ -530,11 +530,11 @@ func TestOAuthAudienceDefaultsToOriginOrMCP(t *testing.T) {
 }
 
 // GET /api/limits answers from the running config: ingest_disabled is
-// INGEST_DISABLED and raw_events carries RETENTION_EVENTS_RAW_DAYS (the
+// INGEST_DISABLED and raw_events carries RETENTION_RAW_DAYS (the
 // seeded database holds no raw rows).
 func TestRESTLimitsFromTheConfig(t *testing.T) {
 	for _, on := range []bool{false, true} {
-		over := map[string]string{"RETENTION_EVENTS_RAW_DAYS": "7"}
+		over := map[string]string{"RETENTION_RAW_DAYS": "7"}
 		if on {
 			over["INGEST_DISABLED"] = "true"
 		}

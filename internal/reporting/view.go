@@ -19,7 +19,7 @@ type FilterSpec struct {
 }
 
 // PageInfo is a remote table's page block: what was applied (Limit is
-// the applied size, CONSOLE_QUERY_MAX_ROWS when none was asked for), and
+// the applied size, CONSOLE_QUERY_ROWS_MAX when none was asked for), and
 // how many rows matched the filters out of how many the query returns.
 // Filters is always a list, empty when there are none, so a caller can
 // read it without a nil check.
@@ -135,7 +135,7 @@ func parseView(in DataRequest, maxRows int) (view, error) {
 		return view{}, store.Refuse(store.ErrInvalid, "offset must not be negative")
 	}
 	if in.Limit < 0 || in.Limit > maxRows {
-		return view{}, store.Refuse(store.ErrInvalid, "limit must be between 1 and %d (CONSOLE_QUERY_MAX_ROWS)", maxRows)
+		return view{}, store.Refuse(store.ErrInvalid, "limit must be between 1 and %d (CONSOLE_QUERY_ROWS_MAX)", maxRows)
 	}
 	if v.echo.Limit == 0 {
 		v.echo.Limit = maxRows

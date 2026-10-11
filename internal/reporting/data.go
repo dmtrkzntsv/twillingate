@@ -25,7 +25,7 @@ const ReleasesURL = "https://github.com/dmtrkzntsv/twillingate/releases"
 // Options.CacheAge — a manual refresh. Filters, Sort, Distinct, Offset
 // and Limit are a remote table's paging arguments (view.go), refused on
 // any other widget; zero means absent, and Limit 0 the
-// CONSOLE_QUERY_MAX_ROWS cap.
+// CONSOLE_QUERY_ROWS_MAX cap.
 type DataRequest struct {
 	WidgetID  int64
 	ProjectID int64

@@ -92,7 +92,7 @@ export interface DashboardsResponse {
   dashboards: DashboardInfo[]
   /** Days until an archived dashboard is purged; absent when retention is off (D17a). */
   purge_after_days?: number
-  /** How often a dashboard with auto-refresh on reloads: max(REPORTING_CACHE_SECONDS, REPORTING_REFRESH_SECONDS); absent when both are 0. */
+  /** How often a dashboard with auto-refresh on reloads: max(REPORTING_CACHE_MAX_AGE, REPORTING_REFRESH_MAX_AGE); absent when both are 0. */
   auto_refresh_seconds?: number
 }
 
@@ -308,7 +308,7 @@ export interface Limit {
   description: string
 }
 
-/** The raw events the server stores now, of every family and project, in its raw window (RETENTION_EVENTS_RAW_DAYS). */
+/** The raw events the server stores now, of every family and project, in its raw window (RETENTION_RAW_DAYS). */
 export interface RawEvents {
   held: number
   window_days: number
@@ -471,7 +471,7 @@ export interface ProjectActivity {
 /** list_forms' answer: the forms, and where a plain HTML form posts. */
 export interface FormsResponse {
   forms: Form[]
-  /** PUBLIC_URL + `/ingest/forms`, so a form's action is `<action_base>/<name>?key=…`; empty without PUBLIC_URL. */
+  /** INGEST_URL + `/ingest/forms`, so a form's action is `<action_base>/<name>?key=…`; empty without INGEST_URL. */
   action_base: string
 }
 

@@ -82,7 +82,7 @@ func call(h http.Handler, method, target string, body io.Reader, contentType str
 	return rec
 }
 
-// shareFixture is the full console handler with PUBLIC_URL set, on a copy
+// shareFixture is the full console handler with INGEST_URL set, on a copy
 // of newTestHost's database (which has the components installed), and the
 // id of a markdown widget on a user dashboard.
 func shareFixture(t *testing.T) (http.Handler, int64) {
@@ -95,7 +95,7 @@ func shareFixture(t *testing.T) (http.Handler, int64) {
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	h := newHandlerFixture(t, map[string]string{"DATABASE_DSN": "sqlite://" + path, "PUBLIC_URL": "https://c.example"})
+	h := newHandlerFixture(t, map[string]string{"DATABASE_DSN": "sqlite://" + path, "INGEST_URL": "https://c.example"})
 	rec := call(h, "POST", "/api/dashboards", strings.NewReader(
 		`{"title":"Notes","widgets":[{"component":"markdown","title":"Read me","source":{"type":"md","content":"Hi."}}]}`),
 		"application/json", true)

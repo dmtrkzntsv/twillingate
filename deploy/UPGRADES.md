@@ -644,3 +644,42 @@ the tab keys into one order for all of a project's tabs, so built-in tabs
 can now be moved like your own. A built-in a later release adds goes last
 on every project. Rollback: an older binary ignores `forms.seen_at`;
 restore the snapshot to get the old tab keys back.
+
+### Upgrading to consistent variable names (no migration)
+
+Eight environment variables are renamed so each group reads alike: the
+ingest pair matches the console pair (`INGEST_ADDR`/`INGEST_URL` beside
+`CONSOLE_ADDR`/`CONSOLE_URL`), every retention clock starts `RETENTION_`,
+both databases are DSNs, and every time that is not a day count is a
+duration with a unit. Before upgrading, rename in `twillingate.env`
+(compose: `.env`):
+
+| Before | After |
+| --- | --- |
+| `PUBLIC_URL` | `INGEST_URL` |
+| `RETENTION_EVENTS_RAW_DAYS` | `RETENTION_RAW_DAYS` |
+| `RETENTION_EVENTS_AGGREGATE_DAYS` | `RETENTION_AGGREGATE_DAYS` |
+| `FORMS_DRAFT_DAYS` | `RETENTION_FORMS_DRAFT_DAYS` |
+| `CONSOLE_DB_PATH=/path/to.db` | `CONSOLE_DATABASE_DSN=sqlite:///path/to.db` |
+| `CONSOLE_QUERY_MAX_ROWS` | `CONSOLE_QUERY_ROWS_MAX` |
+| `REPORTING_CACHE_SECONDS=900` | `REPORTING_CACHE_MAX_AGE=900s` (or `15m`) |
+| `REPORTING_REFRESH_SECONDS=60` | `REPORTING_REFRESH_MAX_AGE=60s` (or `1m`) |
+
+```sh
+sudo sed -i -E \
+  -e 's/^(#?)PUBLIC_URL=/\1INGEST_URL=/' \
+  -e 's/^(#?)RETENTION_EVENTS_(RAW|AGGREGATE)_DAYS=/\1RETENTION_\2_DAYS=/' \
+  -e 's/^(#?)FORMS_DRAFT_DAYS=/\1RETENTION_FORMS_DRAFT_DAYS=/' \
+  -e 's/^(#?)CONSOLE_QUERY_MAX_ROWS=/\1CONSOLE_QUERY_ROWS_MAX=/' \
+  -e 's|^(#?)CONSOLE_DB_PATH=/|\1CONSOLE_DATABASE_DSN=sqlite:///|' \
+  -e 's/^(#?)CONSOLE_DB_PATH=/\1CONSOLE_DATABASE_DSN=/' \
+  -e 's/^(#?)REPORTING_(CACHE|REFRESH)_SECONDS=([0-9]+)$/\1REPORTING_\2_MAX_AGE=\3s/' \
+  -e 's/^(#?)REPORTING_(CACHE|REFRESH)_SECONDS=/\1REPORTING_\2_MAX_AGE=/' \
+  /etc/twillingate/twillingate.env
+```
+
+A leftover old name refuses the boot, naming its replacement, so a missed
+one shows up at once rather than silently falling back to a default. A
+bare number in `REPORTING_*_MAX_AGE` refuses the boot too (`900` has no
+unit). Nothing else changes: `limits` reports the new names in `setting`,
+and connected clients, keys and data are untouched.

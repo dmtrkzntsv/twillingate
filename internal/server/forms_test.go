@@ -541,7 +541,7 @@ func TestFormEventPrefilled(t *testing.T) {
 		t.Errorf("event = %+v\nwant    %+v", ev, want)
 	}
 	if d := n.DraftUntil.Sub(sub.ReceivedAt); d != 7*24*time.Hour {
-		t.Errorf("draft_until is %v after received, want FORMS_DRAFT_DAYS (7 days)", d)
+		t.Errorf("draft_until is %v after received, want RETENTION_FORMS_DRAFT_DAYS (7 days)", d)
 	}
 	if len(forms.sessions) != 1 || forms.sessions[0] != [2]string{store.ActorUser, "u1"} {
 		t.Errorf("SessionAt calls = %v", forms.sessions)

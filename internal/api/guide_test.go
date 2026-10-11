@@ -183,7 +183,7 @@ func TestIntegrationGuideForms(t *testing.T) {
 	if issued.IsError {
 		t.Fatal(textOf(issued))
 	}
-	common := []string{"approve_form", "expected_fields", "FORMS_DRAFT_DAYS", "never count as conversions", "personal data"}
+	common := []string{"approve_form", "expected_fields", "RETENTION_FORMS_DRAFT_DAYS", "never count as conversions", "personal data"}
 	for platform, want := range map[string][]string{
 		"web":    {`data-twillingate-form=\"contact\"`, "https://collector.test/ingest/forms/contact?key=ak_", "twillingate-form-success-contact", "twillingate-form-error-contact", "$redirect", "return_url"},
 		"spa":    {`data-twillingate-form=\"contact\"`, "twillingate.submitForm"},

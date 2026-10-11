@@ -20,7 +20,7 @@ var _ reporting.Store = store.Store(nil)
 // with the release too.
 //
 // The reporting migrator gets its own read-only handle on the writer's
-// own database file (DatabasePath(cfg.Database)), not CONSOLE_DB_PATH, which
+// own database file (DatabasePath(cfg.Database)), not CONSOLE_DATABASE_DSN, which
 // may point at a copy that lags the write this migration itself just made.
 func Migrate(ctx context.Context, cfg *config.Config, st store.Store) error {
 	if err := st.Migrate(ctx); err != nil {

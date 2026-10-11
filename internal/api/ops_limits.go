@@ -44,7 +44,7 @@ type limitOut struct {
 // dashboard's scan of the raw window follow.
 type rawEventsOut struct {
 	Held       int64 `json:"held" jsonschema:"raw events stored now, of every family and project, as of the last write to the database"`
-	WindowDays int   `json:"window_days" jsonschema:"the raw window they fall in, RETENTION_EVENTS_RAW_DAYS"`
+	WindowDays int   `json:"window_days" jsonschema:"the raw window they fall in, RETENTION_RAW_DAYS"`
 }
 
 type limitsOut struct {
@@ -73,13 +73,13 @@ func fixed(name string, value float64, unit, description string) limitOut {
 func limitsFrom(cfg *config.Config) []limitOut {
 	ret := cfg.Retention
 	return []limitOut{
-		setting(groupRetention, "Raw events", "RETENTION_EVENTS_RAW_DAYS", ret.Events.RawDays, config.DefaultRawDays, "days", "",
+		setting(groupRetention, "Raw events", "RETENTION_RAW_DAYS", ret.Events.RawDays, config.DefaultRawDays, "days", "",
 			"raw events are kept this long, then rolled up into aggregates; also the oldest client timestamp accepted, older ones are clamped to it"),
-		setting(groupRetention, "Aggregates", "RETENTION_EVENTS_AGGREGATE_DAYS", ret.Events.AggregateDays, config.DefaultAggregateDays, "days", "",
+		setting(groupRetention, "Aggregates", "RETENTION_AGGREGATE_DAYS", ret.Events.AggregateDays, config.DefaultAggregateDays, "days", "",
 			"aggregates, actors, cohorts and identities are kept this long, then deleted"),
 		setting(groupRetention, "Archived items", "RETENTION_ARCHIVED_DAYS", ret.ArchivedDays, config.DefaultArchivedDays, "days", "kept forever",
 			"an archived project (with its data), dashboard or widget is deleted this long after archiving"),
-		setting(groupRetention, "Form drafts", "FORMS_DRAFT_DAYS", cfg.Forms.DraftDays, config.DefaultFormDraftDays, "days", "",
+		setting(groupRetention, "Form drafts", "RETENTION_FORMS_DRAFT_DAYS", cfg.Forms.DraftDays, config.DefaultFormDraftDays, "days", "",
 			"a form created by its first submission accepts submissions as a draft this long, then is archived unless approved"),
 		setting(groupCaps, "Attribute values", settingAttrs, cfg.AttributeValuesTopN, config.DefaultAttributeValuesTopN, "", "no cap",
 			"values per views breakdown and kinds per project and day, and per attribute key per project, day and event; the rest fold into (other)"),

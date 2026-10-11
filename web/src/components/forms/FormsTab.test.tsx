@@ -127,7 +127,7 @@ describe('FormsTab', () => {
     expect(screen.getAllByRole('button', { name: /^Copy/ }).length).toBeGreaterThanOrEqual(2)
   })
 
-  it('falls back to a placeholder collector when the server has no PUBLIC_URL', async () => {
+  it('falls back to a placeholder collector when the server has no INGEST_URL', async () => {
     vi.spyOn(endpoints, 'forms').mockResolvedValue({ forms: [], action_base: '' })
     renderTab()
     expect(await screen.findByText('https://<collector>/ingest/forms/contact?key=ak_web_123')).toBeInTheDocument()

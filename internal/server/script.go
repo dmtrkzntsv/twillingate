@@ -35,7 +35,7 @@ var vitalsScript []byte
 // trusted the same way clientIP trusts X-Forwarded-For: a reverse proxy
 // in front of the collector is assumed to set it. Absent a forwarded
 // scheme, a TLS connection settles it; absent that too, the scheme falls
-// back to PUBLIC_URL's, then to plain http. Vary keeps a shared cache
+// back to INGEST_URL's, then to plain http. Vary keeps a shared cache
 // that forwards a client-supplied X-Forwarded-Proto unchanged from
 // serving one scheme's copy for another.
 const (
@@ -52,7 +52,7 @@ var originHost = regexp.MustCompile(`^[A-Za-z0-9.-]+(:[0-9]+)?$`)
 // script. The host is the Host header; the scheme is the proxy's
 // forwarded scheme when it is exactly "http" or "https", else "https"
 // when the connection itself is TLS, else the scheme of the configured
-// PUBLIC_URL when that parses and has one, else "http". The PUBLIC_URL
+// INGEST_URL when that parses and has one, else "http". The INGEST_URL
 // fallback covers a single-hostname install sitting behind a proxy that
 // does not forward the scheme.
 func (s *Server) requestOrigin(r *http.Request) string {
@@ -67,7 +67,7 @@ func (s *Server) requestOrigin(r *http.Request) string {
 		scheme = "https"
 	default:
 		scheme = "http"
-		if u, err := url.Parse(s.cfg.PublicURL); err == nil && u.Scheme != "" {
+		if u, err := url.Parse(s.cfg.IngestURL); err == nil && u.Scheme != "" {
 			scheme = u.Scheme
 		}
 	}

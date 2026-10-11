@@ -37,10 +37,10 @@ func TestLimitsReportsTheLimitsInForce(t *testing.T) {
 		value, df      float64
 	}
 	settings := []want{
-		{groupRetention, "RETENTION_EVENTS_RAW_DAYS", 7, config.DefaultRawDays},
-		{groupRetention, "RETENTION_EVENTS_AGGREGATE_DAYS", 90, config.DefaultAggregateDays},
+		{groupRetention, "RETENTION_RAW_DAYS", 7, config.DefaultRawDays},
+		{groupRetention, "RETENTION_AGGREGATE_DAYS", 90, config.DefaultAggregateDays},
 		{groupRetention, "RETENTION_ARCHIVED_DAYS", 0, config.DefaultArchivedDays},
-		{groupRetention, "FORMS_DRAFT_DAYS", 3, config.DefaultFormDraftDays},
+		{groupRetention, "RETENTION_FORMS_DRAFT_DAYS", 3, config.DefaultFormDraftDays},
 		{groupCaps, "ATTRIBUTE_VALUES_TOP_N", 7, config.DefaultAttributeValuesTopN},
 		{groupCaps, "ATTRIBUTE_BREAKDOWNS_MAX", 12, config.DefaultAttributeBreakdownsMax},
 		{groupCaps, "IDENTITIES_TOP_N", 2000, config.DefaultIdentitiesTopN},
