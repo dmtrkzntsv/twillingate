@@ -33,6 +33,29 @@ export function groupName(members: DashboardInfo[]): string {
   return (members.find((m) => !m.archived_at) ?? members[0]).title
 }
 
+/** A group of the user's own live dashboards that a widget can be copied to, by its name. */
+export interface CopyTarget {
+  groupId: number
+  name: string
+  tabs: DashboardInfo[]
+}
+
+/**
+ * Where a widget of dashboard `from` can be copied: the user's own live
+ * dashboards by group, `from`'s group first and without `from` itself
+ * (Duplicate copies there), then the others in sidebar order. A built-in
+ * group takes no widgets, so from one the list starts with the user's.
+ */
+export function copyTargets(list: DashboardInfo[], from: number): CopyTarget[] {
+  const source = list.find((d) => d.dashboard_id === from)
+  const targets = liveGroups(list)
+    .filter((g) => g.owner === 'user')
+    .map((g) => ({ groupId: g.groupId, name: groupName(g.members), tabs: g.members.filter((d) => d.dashboard_id !== from) }))
+    .filter((t) => t.tabs.length > 0)
+  const own = source?.owner === 'user' ? targets.findIndex((t) => t.groupId === source.group_id) : -1
+  return own > 0 ? [targets[own], ...targets.slice(0, own), ...targets.slice(own + 1)] : targets
+}
+
 /** True when a dashboard title or group name has fewer than 2 characters once trimmed (D5, D11). */
 export function nameTooShort(s: string): boolean {
   return [...s.trim()].length < 2

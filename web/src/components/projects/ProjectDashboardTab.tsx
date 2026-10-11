@@ -131,6 +131,7 @@ function TabView({ project, dashboard, tab, tabs, list, actions }: ViewProps) {
       dashboardId={dashboard.dashboard_id}
       enabled={arrange !== undefined}
       defaults={{ projectId, range: { range: sel.range ?? '7d', from: shareRange.from, to: shareRange.to }, timezone: list.timezone }}
+      copyTo={writable ? list.dashboards : undefined}
     >
       <DashboardHeader
         title={dashboard.title}

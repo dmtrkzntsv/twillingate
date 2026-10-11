@@ -450,7 +450,15 @@ describe('Project tabs', () => {
     // The whole project page loads first: slow when the suite runs in parallel.
     expect(await screen.findByRole('button', { name: 'Add widget' }, { timeout: 5000 })).toBeInTheDocument()
     await user.click((await screen.findAllByRole('button', { name: 'Widget actions' }))[0])
-    expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Edit…', 'Rename', 'Share…', 'Download PNG', 'Archive'])
+    expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual([
+      'Edit…',
+      'Rename',
+      'Duplicate',
+      'Copy to dashboard…',
+      'Share…',
+      'Download PNG',
+      'Archive',
+    ])
   }, 20_000)
 
   it('offers no Add widget and no card edits on a built-in tab', async () => {
@@ -460,6 +468,8 @@ describe('Project tabs', () => {
     expect(screen.queryByRole('button', { name: 'Add widget' })).not.toBeInTheDocument()
     await user.click((await screen.findAllByRole('button', { name: 'Widget actions' }))[0])
     expect(screen.queryByRole('menuitem', { name: 'Edit…' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: 'Duplicate' })).not.toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: 'Copy to dashboard…' })).toBeInTheDocument()
   }, 20_000)
 
   it('keeps the range when switching tabs', async () => {

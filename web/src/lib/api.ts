@@ -567,6 +567,8 @@ export const endpoints = {
   createDashboard: (body: { title: string }) => api<DashboardDetail>('/api/dashboards', json('POST', body)),
   /** Adds a widget last on a user dashboard; the server validates it whole. */
   addWidget: (dashboardId: number, body: WidgetBody) => api<Widget>(`/api/dashboards/${dashboardId}/widgets`, json('POST', body)),
+  /** Copies a widget, a built-in one included, onto a user dashboard: nil `after` last, an id right after that widget. */
+  copyWidget: (id: number, body: { dashboard_id: number; after?: number }) => api<Widget>(`/api/widgets/${id}/copy`, json('POST', body)),
   archiveWidget: (id: number) => api<{ status: string }>(`/api/widgets/${id}/archive`, json('POST', {})),
   restoreWidget: (id: number) => api<{ status: string }>(`/api/widgets/${id}/restore`, json('POST', {})),
   /** Every widget, archived ones included, with its dashboard. */

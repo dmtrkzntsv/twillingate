@@ -453,13 +453,20 @@ describe('Dashboard', () => {
 
     expect(await screen.findByRole('button', { name: 'Add widget' })).toBeInTheDocument()
     await user.click((await screen.findAllByRole('button', { name: 'Widget actions' }))[0])
-    expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Edit…', 'Rename', 'Download PNG', 'Archive'])
+    expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual([
+      'Edit…',
+      'Rename',
+      'Duplicate',
+      'Copy to dashboard…',
+      'Download PNG',
+      'Archive',
+    ])
   })
 
   it.each([
-    ['a system dashboard', '/dashboards/2?project=7&range=7d', false],
-    ['reporting dev', '/dashboards/10', true],
-  ])('offers no Add widget and no card edits on %s', async (_, url, dev) => {
+    ['a system dashboard', '/dashboards/2?project=7&range=7d', false, true],
+    ['reporting dev', '/dashboards/10', true, false],
+  ])('offers no Add widget and no card edits on %s', async (_, url, dev, copies) => {
     const user = userEvent.setup()
     const widgetData = mockApi({ dev })
     renderAt(url)
@@ -469,7 +476,58 @@ describe('Dashboard', () => {
     await user.click((await screen.findAllByRole('button', { name: 'Widget actions' }))[0])
     const items = screen.getAllByRole('menuitem').map((i) => i.textContent)
     expect(items).toContain('Download PNG')
-    for (const edit of ['Edit…', 'Rename', 'Archive']) expect(items).not.toContain(edit)
+    for (const edit of ['Edit…', 'Rename', 'Duplicate', 'Archive']) expect(items).not.toContain(edit)
+    // A built-in widget is still copied out; reporting dev writes nothing.
+    expect(items.includes('Copy to dashboard…')).toBe(copies)
+  })
+
+  it('duplicates a widget right after itself', async () => {
+    const user = userEvent.setup()
+    mockApi()
+    const copy = vi.spyOn(endpoints, 'copyWidget').mockResolvedValue(launchWeek.widgets[0])
+    renderAt('/dashboards/10')
+
+    await user.click((await screen.findAllByRole('button', { name: 'Widget actions' }))[0])
+    await user.click(screen.getByRole('menuitem', { name: 'Duplicate' }))
+
+    const id = launchWeek.widgets[0].widget_id
+    expect(copy).toHaveBeenCalledWith(id, { dashboard_id: 10, after: id })
+  })
+
+  it("copies a built-in widget onto one of the user's dashboards, listing only those", async () => {
+    const user = userEvent.setup()
+    mockApi()
+    const copy = vi.spyOn(endpoints, 'copyWidget').mockResolvedValue(launchWeek.widgets[0])
+    renderAt('/dashboards/2?project=7&range=7d')
+
+    await user.click((await screen.findAllByRole('button', { name: 'Widget actions' }))[0])
+    await user.click(screen.getByRole('menuitem', { name: 'Copy to dashboard…' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Copy to dashboard' })
+    // Live user dashboards only: no built-in tab, no archived one.
+    expect(
+      within(dialog)
+        .getAllByRole('button')
+        .map((b) => b.textContent)
+    ).toEqual(['New dashboard…', 'Launch week', 'Marketing', 'Funnel', 'Close'])
+    await user.click(within(dialog).getByRole('button', { name: 'Funnel' }))
+
+    expect(copy).toHaveBeenCalledWith(details[2].widgets[0].widget_id, { dashboard_id: 14 })
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  })
+
+  it("lists the widget's own group first, without the dashboard it is on", async () => {
+    const user = userEvent.setup()
+    mockApi()
+    renderAt('/dashboards/14')
+
+    await user.click((await screen.findAllByRole('button', { name: 'Widget actions' }))[0])
+    await user.click(screen.getByRole('menuitem', { name: 'Copy to dashboard…' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Copy to dashboard' })
+    expect(
+      within(dialog)
+        .getAllByRole('button')
+        .map((b) => b.textContent)
+    ).toEqual(['New dashboard…', 'Marketing', 'Launch week', 'Close'])
   })
 
   it('opens the editor from Add widget, and from Edit… on the widget', async () => {

@@ -4,6 +4,8 @@ import {
   ArchiveIcon,
   ChevronDownIcon,
   CircleAlertIcon,
+  CopyIcon,
+  CopyPlusIcon,
   CircleOffIcon,
   CloudOffIcon,
   DownloadIcon,
@@ -26,7 +28,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { useWidgetEditing } from '@/components/editor/WidgetEditing'
+import { useWidgetCopying, useWidgetEditing } from '@/components/editor/WidgetEditing'
 import { OffscreenCard } from '@/components/share/OffscreenCard'
 import { ShareDialog } from '@/components/share/ShareDialog'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -65,11 +67,13 @@ interface Props {
  * One widget in its card, loading on its own and showing its own state
  * (D38). Memoized: it redraws when its own props or state change, not
  * when its cell's handles do, as they do all through a drag (D11). On an
- * editable dashboard its menu also edits, renames and archives it.
+ * editable dashboard its menu also edits, renames, duplicates and
+ * archives it; wherever the page writes, it copies it to another dashboard.
  */
 function WidgetCard({ widget, params, idle = false, share, grip, corner }: Props) {
   const client = useQueryClient()
   const editing = useWidgetEditing()
+  const copying = useWidgetCopying()
   const [renaming, setRenaming] = useState(false)
   const stateKey = `twillingate.widget.${widget.dashboard_id}.${widget.widget_id}`
   // The project and range: a view's page, and the answers below, belong to one.
@@ -154,7 +158,7 @@ function WidgetCard({ widget, params, idle = false, share, grip, corner }: Props
           <WidgetTitleField title={widget.title ?? ''} onSave={(t) => editing.rename(widget, t)} onDone={() => setRenaming(false)} />
         ) : undefined
       }
-      slots={(share || editing ? 2 : 1) + (grip ? 1 : 0)}
+      slots={(share || editing || copying ? 2 : 1) + (grip ? 1 : 0)}
       corner={corner}
       badge={
         truncated &&
@@ -165,7 +169,7 @@ function WidgetCard({ widget, params, idle = false, share, grip, corner }: Props
         )
       }
       actions={
-        (refreshable || share || editing || grip) && (
+        (refreshable || share || editing || copying || grip) && (
           <>
             {grip}
             {refreshable && answer && query.isError && !viewError && <StaleWarning error={query.error} />}
@@ -177,7 +181,7 @@ function WidgetCard({ widget, params, idle = false, share, grip, corner }: Props
                 onRefresh={() => void refreshWidget(client, widget, params, viewArgs).catch(() => {})}
               />
             )}
-            {(share || editing) && (
+            {(share || editing || copying) && (
               <WidgetMenu
                 canShare={share !== undefined && share.writable && share.project !== undefined}
                 canDownload={share !== undefined}
@@ -190,6 +194,8 @@ function WidgetCard({ widget, params, idle = false, share, grip, corner }: Props
                 }}
                 onEdit={editing ? () => editing.edit(widget) : undefined}
                 onRename={editing ? () => setRenaming(true) : undefined}
+                onDuplicate={editing ? () => editing.duplicate(widget) : undefined}
+                onCopy={copying ? () => copying.copy(widget) : undefined}
                 onArchive={editing ? () => editing.archive(widget) : undefined}
               />
             )}
@@ -391,15 +397,31 @@ interface MenuProps {
   /** The edits of an editable dashboard (spec D8), each offered when given; never disabled, as a broken query is what Edit… fixes. */
   onEdit?: () => void
   onRename?: () => void
+  /** Copies it on its own dashboard, right after itself; a user dashboard's only. */
+  onDuplicate?: () => void
+  /** Opens "Copy to dashboard…", on a built-in dashboard too. */
+  onCopy?: () => void
   onArchive?: () => void
 }
 
 /**
- * The card's "…": on an editable dashboard Edit… and Rename, then Share…
- * (a public link to its picture) and Download PNG, then Archive. Revealed
- * like the refresh button.
+ * The card's "…": on an editable dashboard Edit…, Rename and Duplicate,
+ * then Copy to dashboard…, Share… (a public link to its picture) and
+ * Download PNG, then Archive. Revealed like the refresh button.
  */
-function WidgetMenu({ canShare, canDownload, disabled, downloading, onShare, onDownload, onEdit, onRename, onArchive }: MenuProps) {
+function WidgetMenu({
+  canShare,
+  canDownload,
+  disabled,
+  downloading,
+  onShare,
+  onDownload,
+  onEdit,
+  onRename,
+  onDuplicate,
+  onCopy,
+  onArchive,
+}: MenuProps) {
   const [open, setOpen] = useState(false)
   // Rename's field takes the focus: the menu must not hand it back to its button.
   const renaming = useRef(false)
@@ -433,6 +455,18 @@ function WidgetMenu({ canShare, canDownload, disabled, downloading, onShare, onD
             >
               <TextCursorInputIcon />
               Rename
+            </DropdownMenuItem>
+          )}
+          {onDuplicate && (
+            <DropdownMenuItem onClick={onDuplicate}>
+              <CopyIcon />
+              Duplicate
+            </DropdownMenuItem>
+          )}
+          {onCopy && (
+            <DropdownMenuItem onClick={onCopy}>
+              <CopyPlusIcon />
+              Copy to dashboard…
             </DropdownMenuItem>
           )}
           {canShare && (

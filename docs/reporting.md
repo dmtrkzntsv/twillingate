@@ -226,7 +226,8 @@ widget_data {"widget_id": 42, "project_id": 7, "from": "2026-09-01", "to": "2026
   archived: `update_dashboard` with `sidebar` hides or shows a system group,
   `add_project_tab`/`remove_project_tab` put one on a project's page or take
   it off, `duplicate_dashboard` makes an editable copy (it never hides the
-  source), and `copy_widget` copies one system widget onto a user dashboard.
+  source), and `copy_widget` copies one widget, a system one included, onto a
+  user dashboard (the console's Duplicate and Copy to dashboard… call it).
 - Your own dashboards are always in the sidebar: `update_dashboard` refuses
   `sidebar` on one. `archive_dashboard` takes one away.
 - A query returns exactly the columns the component reads, named by alias; a

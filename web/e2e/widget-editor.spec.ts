@@ -147,3 +147,52 @@ test('builds a dashboard from a project and edits its widget', async ({ page, re
     await request.post(`/api/projects/${projectId}/archive`, { headers: authHeaders() })
   }
 })
+
+test('duplicates a widget and copies a built-in one onto a dashboard of its own', async ({ page, request }) => {
+  test.setTimeout(60_000)
+  const stamp = Date.now()
+  const title = `Copies ${stamp}`
+  const note = `Note ${stamp}`
+  const res = await request.post('/api/dashboards', {
+    headers: authHeaders(),
+    data: { title, range: '7d', widgets: [{ component: 'markdown', title: note, source: { type: 'md', content: 'Hello' }, width: 6, height: 3 }] },
+  })
+  expect(res.ok(), await res.text()).toBeTruthy()
+  const id = ((await res.json()) as { dashboard_id: number }).dashboard_id
+  const widgets = async () => {
+    const r = await request.get(`/api/dashboards/${id}`, { headers: authHeaders() })
+    return ((await r.json()) as { widgets: { name: string }[] }).widgets.map((w) => w.name)
+  }
+  try {
+    const list = await request.get('/api/dashboards', { headers: authHeaders() })
+    const builtIn = ((await list.json()) as { dashboards: { dashboard_id: number; owner: string; widgets: number }[] }).dashboards.find(
+      (d) => d.owner === 'system' && d.widgets > 0
+    )!
+
+    await login(page)
+    await page.goto(`/app/dashboards/${builtIn.dashboard_id}`)
+    const first = page.locator('[data-slot="widget-card"]').first()
+    await first.hover()
+    await first.getByRole('button', { name: 'Widget actions' }).click()
+    // A built-in widget is copied out, never duplicated in place.
+    await expect(page.getByRole('menuitem', { name: 'Duplicate' })).toHaveCount(0)
+    await page.getByRole('menuitem', { name: 'Copy to dashboard…' }).click()
+    const dialog = page.getByRole('dialog', { name: 'Copy to dashboard' })
+    await dialog.getByRole('button', { name: title, exact: true }).click()
+    await expect(dialog).toBeHidden()
+    await expect(page.getByText(`Copied to ${title}`)).toBeVisible()
+    await page.getByRole('button', { name: 'Open' }).click()
+    await expect(page).toHaveURL(new RegExp(`/dashboards/${id}$`))
+    await expect(page.locator('[data-slot="widget-card"]')).toHaveCount(2)
+
+    // The duplicate lands right after the original, under a name of its own.
+    await cardMenu(page, note)
+    await page.getByRole('menuitem', { name: 'Duplicate' }).click()
+    await expect(page.locator('[data-slot="widget-card"]', { hasText: note })).toHaveCount(2)
+    const names = await widgets()
+    expect(names).toHaveLength(3)
+    expect(names[1]).toMatch(new RegExp(`^${names[0]}-2$`))
+  } finally {
+    await request.post(`/api/dashboards/${id}/archive`, { headers: authHeaders() })
+  }
+})
