@@ -23,6 +23,16 @@ var dataSteps = map[int]func(context.Context, *sql.Tx) error{
 	15: foldEnvironment,
 }
 
+// processOwned are the schema objects the running process builds, not
+// the migrations: their shape follows the data (v_events_flat has one
+// column per declared attribute, RebuildFlatView), so a migration's fixed
+// text would be stale the day it ships. The migrator drops each one before
+// every pending migration, so a migration never sees one (SQLite refuses to
+// rebuild a table a view still reads) and never has to recreate it, and
+// TestMigrationsNeverNameProcessOwnedObjects refuses a migration that names
+// one. After migrating, the caller rebuilds them (app.Migrate).
+var processOwned = []string{"v_events_flat"}
+
 func (d *DB) Migrate(ctx context.Context) error {
 	return d.migrateThrough(ctx, math.MaxInt)
 }
@@ -105,6 +115,12 @@ func (d *DB) migrateThrough(ctx context.Context, maxVersion int) (err error) {
 		tx, err := conn.BeginTx(ctx, nil)
 		if err != nil {
 			return err
+		}
+		for _, view := range processOwned {
+			if _, err := tx.ExecContext(ctx, `DROP VIEW IF EXISTS `+view); err != nil {
+				tx.Rollback()
+				return fmt.Errorf("sqlite: migration %s: drop %s: %w", name, view, err)
+			}
 		}
 		if _, err := tx.ExecContext(ctx, string(body)); err != nil {
 			tx.Rollback()

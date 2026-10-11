@@ -2,6 +2,8 @@ package sqlite
 
 import (
 	"context"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
@@ -333,26 +335,28 @@ func TestFlatViewSkipsSystemKeys(t *testing.T) {
 	}
 }
 
-// The latest migration to write v_events_flat (024) creates the base view
-// with exactly the statement RebuildFlatView builds for no declared keys,
-// so the first boot's rebuild finds nothing to change. The same held for
-// 020 and 023 until 024 added the measure columns to flatViewBaseColumns;
-// only the latest migration's text can match the current list.
-func TestMigration024FlatViewMatchesTheBaseRebuild(t *testing.T) {
-	db := newTestDBAt(t, 24)
-	ctx := context.Background()
-	before, err := db.flatViewDefinition(ctx)
+// Every events column is in v_events_flat or left out on purpose: a
+// migration adding one to events fails here until flatViewBaseColumns
+// carries it or flatViewOmitted says why not.
+func TestFlatViewCoversEveryEventsColumn(t *testing.T) {
+	flatViewOmitted := []string{"day", "received_at", "actor_kind"}
+	db := newTestDB(t)
+	rows, err := db.db.Query(`SELECT name FROM pragma_table_info('events') ORDER BY name`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.RebuildFlatView(ctx, nil); err != nil {
-		t.Fatal(err)
+	defer rows.Close()
+	var events []string
+	for rows.Next() {
+		var c string
+		if err := rows.Scan(&c); err != nil {
+			t.Fatal(err)
+		}
+		events = append(events, c)
 	}
-	after, err := db.flatViewDefinition(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if before != after {
-		t.Fatalf("migration 024 v_events_flat differs from the base rebuild:\n migration: %s\n rebuild:   %s", before, after)
+	covered := append(append([]string(nil), flatViewBaseColumns...), flatViewOmitted...)
+	sort.Strings(covered)
+	if !reflect.DeepEqual(events, covered) {
+		t.Fatalf("events columns %v\nflatViewBaseColumns + omitted %v", events, covered)
 	}
 }

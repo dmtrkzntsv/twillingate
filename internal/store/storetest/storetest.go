@@ -59,7 +59,10 @@ func migrated(path string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := errors.Join(st.Migrate(context.Background()), st.Close()); err != nil {
+	// As app.Migrate does: the flat view is the process's to build, with
+	// no attribute declared yet.
+	ctx := context.Background()
+	if err := errors.Join(st.Migrate(ctx), st.RebuildFlatView(ctx, nil), st.Close()); err != nil {
 		return nil, err
 	}
 	return os.ReadFile(path)
