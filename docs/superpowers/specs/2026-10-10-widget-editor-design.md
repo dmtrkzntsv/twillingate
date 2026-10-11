@@ -70,15 +70,18 @@ read-only, as the server already enforces.
     Share… and Download PNG, a separator, **Archive**. It still takes one
     top-right slot. System dashboards keep today's menu.
 - **D9. The editor is one full-screen modal for add and edit.** A header
-  bar with the heading, Cancel and Save. From 1024px, two halves, each
-  scrolling on its own: the left holds the preview (a widget card at the
-  widget's height, its title row being the title field), then the
-  visualization select with a one-line hint of what the component needs
-  (from the contract's `inputs`, e.g. "needs: day, ≥1 number"), then the
-  props form; the right holds the SQL editor, Run query with the run's
-  status, and the rows as a table filling what is left. Phone: the same
-  blocks stacked, the whole scrolling; nothing scrolls sideways at 360px,
-  the result table and chart scroll inside their own box.
+  bar with the heading, Cancel and Save. From 1024px, two halves of one
+  shape, each scrolling on its own: a work surface on the dashboard's own
+  background above, its details on white below. Left: the preview (the
+  widget card at the widget's height, on a faint grid), then the settings
+  as one aligned list (label column, then controls of one width): Title,
+  Visualization with a one-line hint of what the component needs (from
+  the contract's `inputs`, e.g. "needs: day, ≥1 number"), then the props.
+  Right: a toolbar (project, range, Run query), the SQL editor, a Rows
+  bar with the run's status, and the rows filling what is left. Phone:
+  the same blocks stacked, the whole scrolling, labels above controls;
+  nothing scrolls sideways at 360px, the result table and chart scroll
+  inside their own box.
 - **D10. Visualization select** lists every component with its icon. Add
   starts with none chosen; Save is disabled until one is. Switching keeps
   the props whose key and value the new schema accepts and drops the rest;

@@ -40,8 +40,8 @@ const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`
 interface PreviewProps {
   component: string | null
   props: Record<string, unknown>
-  /** The card's title row: the editor puts its title field there. */
-  titleSlot: ReactNode
+  /** The draft's title, shown as the dashboard shows it. */
+  title: string
   /** The widget's height in grid rows: the preview is drawn in a frame that tall. */
   height: number
   state: RunState
@@ -55,7 +55,7 @@ interface PreviewProps {
  * component or props redraws from the same rows at once; the warning
  * waits for the run that checks them.
  */
-export function Preview({ component, props, titleSlot, height, state, stale }: PreviewProps) {
+export function Preview({ component, props, title, height, state, stale }: PreviewProps) {
   const ran = ranOf(state)
   const result = ran?.result
   const module = component && Object.hasOwn(widgets, component) ? widgets[component] : undefined
@@ -104,9 +104,9 @@ export function Preview({ component, props, titleSlot, height, state, stale }: P
     )
 
   return (
-    <section aria-label="Preview" className="flex min-w-0 flex-col gap-2">
+    <section aria-label="Preview" className="flex min-w-0 flex-col gap-3">
       <div className="min-w-0" style={{ height: rowsPx(height) }}>
-        <WidgetFrame titleSlot={titleSlot}>{body}</WidgetFrame>
+        <WidgetFrame title={title}>{body}</WidgetFrame>
       </div>
       {problem && (
         <Alert>
@@ -144,7 +144,7 @@ export function RunStatus({ state, stale }: { state: RunState; stale: boolean })
   const result = ranOf(state)?.result
   if (state.kind === 'idle' || state.kind === 'failed') return null
   return (
-    <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
+    <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
       {state.kind === 'running' && <Spinner />}
       {result ? (
         <span>
@@ -164,40 +164,46 @@ export function Rows({ state, stale }: { state: RunState; stale: boolean }) {
   const result = ranOf(state)?.result
   if (state.kind === 'idle') {
     return (
-      <p className="text-sm text-muted-foreground">
+      <p className="p-4 text-sm text-muted-foreground">
         Run the query to see its rows <Kbd>{RUN_KEYS}</Kbd>
       </p>
     )
   }
   if (state.kind === 'failed') {
     return (
-      <Alert variant="destructive">
-        <TriangleAlertIcon />
-        <AlertDescription className="break-words whitespace-pre-wrap">{state.message}</AlertDescription>
-      </Alert>
+      <div className="p-4">
+        <Alert variant="destructive">
+          <TriangleAlertIcon />
+          <AlertDescription className="break-words whitespace-pre-wrap">{state.message}</AlertDescription>
+        </Alert>
+      </div>
     )
   }
   if (!result) return null
   return (
     <section
       aria-label="Rows"
+      // The table's own box scrolls both ways, so its header row stays in view.
       className={cn(
-        'max-h-80 min-h-0 min-w-0 overflow-auto rounded-md border transition-opacity lg:max-h-none lg:flex-1',
+        'flex max-h-80 min-h-0 min-w-0 flex-col transition-opacity lg:max-h-none lg:flex-1',
+        '[&_[data-slot=table-container]]:min-h-0 [&_[data-slot=table-container]]:flex-1 [&_[data-slot=table-container]]:overflow-auto',
         (state.kind === 'running' || stale) && 'opacity-60'
       )}
     >
       <Table>
-        <TableHeader>
+        <TableHeader className="sticky top-0 z-10 bg-card shadow-[inset_0_-1px_0_var(--border)]">
           <TableRow>
             {result.columns.map((c, i) => (
-              <TableHead key={i}>{c}</TableHead>
+              <TableHead key={i} className="px-4 text-muted-foreground">
+                {c}
+              </TableHead>
             ))}
           </TableRow>
         </TableHeader>
         <TableBody>
           {result.rows.length === 0 && (
             <TableRow>
-              <TableCell colSpan={Math.max(result.columns.length, 1)} className="text-muted-foreground">
+              <TableCell colSpan={Math.max(result.columns.length, 1)} className="px-4 text-muted-foreground">
                 No rows
               </TableCell>
             </TableRow>
@@ -205,7 +211,7 @@ export function Rows({ state, stale }: { state: RunState; stale: boolean }) {
           {result.rows.map((row, r) => (
             <TableRow key={r}>
               {row.map((cell, i) => (
-                <TableCell key={i} className="whitespace-nowrap">
+                <TableCell key={i} className="px-4 whitespace-nowrap tabular-nums">
                   {cell}
                 </TableCell>
               ))}

@@ -12,18 +12,18 @@ afterEach(() => vi.restoreAllMocks())
 
 describe('Preview', () => {
   it("says the visualization can't draw rows it throws on", () => {
-    render(<Preview component="calendar" props={{}} titleSlot="Days" height={4} state={onCalendar(xy)} stale={false} />)
+    render(<Preview component="calendar" props={{}} title="Days" height={4} state={onCalendar(xy)} stale={false} />)
     expect(screen.getByText("This visualization can't draw these rows")).toBeInTheDocument()
   })
 
   it('catches a day that is not one', () => {
     const result: PreviewResult = { columns: ['day', 'value'], rows: [['x', '1']], truncated: false, elapsed_ms: 2 }
-    render(<Preview component="calendar" props={{}} titleSlot="Days" height={4} state={onCalendar(result)} stale={false} />)
+    render(<Preview component="calendar" props={{}} title="Days" height={4} state={onCalendar(result)} stale={false} />)
     expect(screen.getByText("This visualization can't draw these rows")).toBeInTheDocument()
   })
 
   it('draws in a card with the title row it is given', () => {
-    render(<Preview component="calendar" props={{}} titleSlot="Days" height={4} state={{ kind: 'idle' }} stale={false} />)
+    render(<Preview component="calendar" props={{}} title="Days" height={4} state={{ kind: 'idle' }} stale={false} />)
     expect(screen.getByRole('region', { name: 'Preview' })).toHaveTextContent('Days')
     expect(screen.getByText(/Run the query to see the preview/)).toBeInTheDocument()
   })
@@ -31,7 +31,7 @@ describe('Preview', () => {
   it('says so when the query returned no rows', () => {
     const empty: PreviewResult = { columns: ['x', 'y'], rows: [], truncated: false, elapsed_ms: 2 }
     const state: RunState = { kind: 'done', result: empty, component: 'line', props: {} }
-    render(<Preview component="line" props={{}} titleSlot="Days" height={4} state={state} stale={false} />)
+    render(<Preview component="line" props={{}} title="Days" height={4} state={state} stale={false} />)
     expect(screen.getByText('The query returned no rows')).toBeInTheDocument()
   })
 })

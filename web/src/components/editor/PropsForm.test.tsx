@@ -56,7 +56,7 @@ describe('PropsForm', () => {
     expect(onValidity).toHaveBeenLastCalledWith(true)
     unmount()
     render(<PropsForm component="markdown" value={{}} columns={[]} onChange={() => {}} onValidity={() => {}} />)
-    expect(screen.getByText('No props')).toBeInTheDocument()
+    expect(screen.getByText('This visualization has none')).toBeInTheDocument()
   })
   it('reports valid when it unmounts with bad json', async () => {
     const onValidity = vi.fn()

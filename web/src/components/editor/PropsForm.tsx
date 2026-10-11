@@ -34,6 +34,32 @@ function parse(text: string): { ok: true; value: unknown } | { ok: false } {
   }
 }
 
+/** A prop key as a label: `bar_format` reads "Bar format". */
+export function labelOf(key: string): string {
+  const words = key.replace(/_/g, ' ')
+  return words.charAt(0).toUpperCase() + words.slice(1)
+}
+
+/**
+ * One line of the editor's settings: the label in the first column, the
+ * control in the second (stacked on a phone). The editor lays these out in
+ * a two-column grid that PropsForm's rows join.
+ */
+export function SettingRow({ label, htmlFor, children }: { label: React.ReactNode; htmlFor?: string; children: React.ReactNode }) {
+  return (
+    <div className="grid min-w-0 grid-cols-1 gap-1.5 sm:col-span-2 sm:grid-cols-subgrid">
+      {label === null ? (
+        <span className="max-sm:hidden" />
+      ) : (
+        <Label htmlFor={htmlFor} className="text-muted-foreground sm:h-9">
+          {label}
+        </Label>
+      )}
+      <div className="min-w-0 sm:max-w-md [&_[data-slot=native-select-wrapper]]:w-full">{children}</div>
+    </div>
+  )
+}
+
 const isObject = (v: unknown): v is Props => typeof v === 'object' && v !== null && !Array.isArray(v)
 
 function Default({ options, ...rest }: { options: string[] } & React.ComponentProps<typeof NativeSelect>) {
@@ -67,8 +93,7 @@ function JsonField({
   leave.current = onBad
   useEffect(() => () => leave.current(false), [])
   return (
-    <div className="grid min-w-0 grid-cols-1 gap-1.5">
-      <Label htmlFor={`prop-${name}`}>{name}</Label>
+    <SettingRow label={labelOf(name)} htmlFor={`prop-${name}`}>
       <Textarea
         id={`prop-${name}`}
         aria-label={name}
@@ -90,8 +115,8 @@ function JsonField({
           if (r.ok) onValue(r.value)
         }}
       />
-      {bad && <p className="text-xs text-destructive">not valid JSON</p>}
-    </div>
+      {bad && <p className="mt-1.5 text-xs text-destructive">not valid JSON</p>}
+    </SettingRow>
   )
 }
 
@@ -109,26 +134,27 @@ function EnumMap({
   const map = isObject(value) ? value : {}
   const names = [...new Set([...columns, ...Object.keys(map)])]
   return (
-    <div className="grid min-w-0 grid-cols-1 gap-1.5">
-      <span className="text-sm leading-none font-medium">{field.key}</span>
-      {names.length === 0 && <p className="text-xs text-muted-foreground">Run the query to list columns</p>}
-      {names.map((col) => (
-        <div key={col} className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,1fr)] items-center gap-2">
-          <span className="truncate text-sm" title={col}>
-            {col}
-          </span>
-          <Default
-            aria-label={`${field.key}: ${col}`}
-            options={field.options}
-            value={typeof map[col] === 'string' ? (map[col] as string) : ''}
-            onChange={(e) => {
-              const next = put(map, col, e.target.value || undefined)
-              onValue(Object.keys(next).length === 0 ? undefined : next)
-            }}
-          />
-        </div>
-      ))}
-    </div>
+    <SettingRow label={labelOf(field.key)}>
+      <div className="grid min-w-0 grid-cols-1 gap-2">
+        {names.length === 0 && <p className="flex min-h-9 items-center text-sm text-muted-foreground">Run the query to list columns</p>}
+        {names.map((col) => (
+          <div key={col} className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,1fr)] items-center gap-2">
+            <span className="truncate text-sm" title={col}>
+              {col}
+            </span>
+            <Default
+              aria-label={`${field.key}: ${col}`}
+              options={field.options}
+              value={typeof map[col] === 'string' ? (map[col] as string) : ''}
+              onChange={(e) => {
+                const next = put(map, col, e.target.value || undefined)
+                onValue(Object.keys(next).length === 0 ? undefined : next)
+              }}
+            />
+          </div>
+        ))}
+      </div>
+    </SettingRow>
   )
 }
 
@@ -161,7 +187,7 @@ export default function PropsForm({ component, value, onChange, columns, onValid
       type="button"
       variant="link"
       size="sm"
-      className="h-auto justify-self-start p-0"
+      className="h-auto p-0"
       onClick={() => {
         setRawText(JSON.stringify(value, null, 2))
         setRawBad(false)
@@ -175,9 +201,8 @@ export default function PropsForm({ component, value, onChange, columns, onValid
 
   if (raw) {
     return (
-      <div className="grid min-w-0 grid-cols-1 gap-3">
-        <div className="grid min-w-0 grid-cols-1 gap-1.5">
-          <Label htmlFor="props-json">Props JSON</Label>
+      <div className="contents">
+        <SettingRow label="Props JSON" htmlFor="props-json">
           <Textarea
             id="props-json"
             aria-label="Props JSON"
@@ -193,16 +218,20 @@ export default function PropsForm({ component, value, onChange, columns, onValid
               if (r.ok && isObject(r.value)) onChange(r.value)
             }}
           />
-          {rawBad && <p className="text-xs text-destructive">not valid JSON (an object is expected)</p>}
-        </div>
-        {toggle}
+          {rawBad && <p className="mt-1.5 text-xs text-destructive">not valid JSON (an object is expected)</p>}
+        </SettingRow>
+        <SettingRow label={null}>{toggle}</SettingRow>
       </div>
     )
   }
 
   return (
-    <div className="grid min-w-0 grid-cols-1 gap-3">
-      {fields.length === 0 && <p className="text-xs text-muted-foreground">No props</p>}
+    <div className="contents">
+      {fields.length === 0 && (
+        <SettingRow label="Props">
+          <p className="flex min-h-9 items-center text-sm text-muted-foreground">This visualization has none</p>
+        </SettingRow>
+      )}
       {fields.map((f) => {
         // Keyed by component too: a switch in place starts every field afresh.
         const key = `${component}:${f.key}`
@@ -210,8 +239,7 @@ export default function PropsForm({ component, value, onChange, columns, onValid
         switch (f.kind) {
           case 'enum':
             return (
-              <div key={key} className="grid min-w-0 grid-cols-1 gap-1.5">
-                <Label htmlFor={`prop-${f.key}`}>{f.key}</Label>
+              <SettingRow key={key} label={labelOf(f.key)} htmlFor={`prop-${f.key}`}>
                 <Default
                   id={`prop-${f.key}`}
                   aria-label={f.key}
@@ -219,19 +247,20 @@ export default function PropsForm({ component, value, onChange, columns, onValid
                   value={typeof value[f.key] === 'string' ? (value[f.key] as string) : ''}
                   onChange={(e) => set(e.target.value || undefined)}
                 />
-              </div>
+              </SettingRow>
             )
           case 'boolean':
             return (
-              <div key={key} className="flex min-w-0 items-center gap-2">
-                <Switch
-                  id={`prop-${f.key}`}
-                  aria-label={f.key}
-                  checked={value[f.key] === true}
-                  onCheckedChange={(on) => set(on ? true : undefined)}
-                />
-                <Label htmlFor={`prop-${f.key}`}>{f.key}</Label>
-              </div>
+              <SettingRow key={key} label={labelOf(f.key)} htmlFor={`prop-${f.key}`}>
+                <div className="flex h-9 items-center">
+                  <Switch
+                    id={`prop-${f.key}`}
+                    aria-label={f.key}
+                    checked={value[f.key] === true}
+                    onCheckedChange={(on) => set(on ? true : undefined)}
+                  />
+                </div>
+              </SettingRow>
             )
           case 'enum-map':
             return <EnumMap key={key} field={f} value={value[f.key]} columns={columns} onValue={set} />
@@ -239,7 +268,7 @@ export default function PropsForm({ component, value, onChange, columns, onValid
             return <JsonField key={key} name={f.key} value={value[f.key]} onValue={set} onBad={markBad(f.key)} />
         }
       })}
-      {toggle}
+      {fields.length > 0 && <SettingRow label={null}>{toggle}</SettingRow>}
     </div>
   )
 }

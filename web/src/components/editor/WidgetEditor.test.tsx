@@ -79,7 +79,7 @@ describe('WidgetEditor', () => {
     )
     expect(screen.getByText(/1 row · 4 ms/)).toBeInTheDocument()
     expect(screen.getByRole('cell', { name: '2026-09-01' })).toBeInTheDocument()
-    expect(within(screen.getByRole('region', { name: 'Preview' })).getByLabelText('Title')).toHaveValue('Visits')
+    expect(within(screen.getByRole('region', { name: 'Preview' })).getByRole('heading', { name: 'Visits' })).toBeInTheDocument()
     expect(preview.mock.calls[0][0]).not.toHaveProperty('from') // the sql reads no range
   })
 
