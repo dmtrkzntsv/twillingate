@@ -171,9 +171,12 @@ func TestMeasuresViewsSameAcrossRollup(t *testing.T) {
 	//   $path: /a 3, /b 2, /c 1, absent 3 -> /c goes to (other).
 	//   $browser: Chrome 3, Edge 2, Firefox 2, Safari 2 -> a three-way tie
 	//     at the boundary: Edge is kept, Firefox and Safari fold.
+	//   $country: US 3, DE 3, FR 3 -> a tie over every value: DE and FR
+	//     are kept, US folds. No project declares it.
 	endpoints := []string{"(other)", "(other)", "(other)", "(other)", "b", "b", "c", "c", "d"}
 	paths := []string{"/a", "/b", "", "/a", "/c", "/b", "", "/a", ""}
 	browsers := []string{"Chrome", "Firefox", "Chrome", "Safari", "Edge", "Chrome", "Firefox", "Safari", "Edge"}
+	countries := []string{"US", "DE", "FR", "DE", "US", "FR", "FR", "US", "DE"}
 	values := []float64{100, 340, 0}
 	var evs []store.Event
 	for i := range endpoints {
@@ -186,6 +189,7 @@ func TestMeasuresViewsSameAcrossRollup(t *testing.T) {
 		ev.Attributes = map[string]string{"endpoint": endpoints[i]}
 		ev.Path, ev.Browser = paths[i], browsers[i]
 		ev.Device = []string{"desktop", "mobile"}[i%2]
+		ev.Country = countries[i]
 		switch {
 		case v == 0:
 			ev.SampleRate = 0.5
@@ -221,6 +225,7 @@ func TestMeasuresViewsSameAcrossRollup(t *testing.T) {
 		{"endpoint", "(other)", 7}, {"endpoint", "b", 2}, {"endpoint", "c", 0},
 		{"$path", "(other)", 1}, {"$path", "/a", 3},
 		{"$browser", "Edge", 2}, {"$browser", "(other)", 4}, {"$browser", "Firefox", 0},
+		{"$country", "DE", 3}, {"$country", "(other)", 3}, {"$country", "US", 0},
 	} {
 		var n int
 		if err := db.db.QueryRow(`SELECT COALESCE(SUM(samples), 0) FROM v_measures_attrs

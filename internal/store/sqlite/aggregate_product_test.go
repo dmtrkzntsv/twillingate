@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"reflect"
 	"testing"
 
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
@@ -229,6 +230,44 @@ func TestRollupWritesSystemDimensions(t *testing.T) {
 	}
 	if v != "ios" {
 		t.Fatalf("$os = %q, want ios", v)
+	}
+}
+
+// Country is filled in at ingest from the client's address, not sent as
+// a key, and still breaks down for every project like the other system
+// dimensions; an event without one adds no row.
+func TestRollupWritesCountry(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	var evs []store.Event
+	for i, c := range []string{"DE", "DE", "US", ""} {
+		evs = append(evs, store.Event{Family: store.FamilyProduct, ID: fmt.Sprintf("c%d", i), ProjectID: 1,
+			EventName: "signup", ActorID: fmt.Sprintf("u%d", i), TS: ts("2026-08-01T10:00:00Z"), Country: c})
+	}
+	if err := db.WriteEvents(ctx, evs); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AggregateProductDay(ctx, 1,
+		civil.DateOf(ts("2026-08-01T00:00:00Z")), nil, 50); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := db.db.Query(`SELECT attr_value, count FROM agg_product_attrs
+		WHERE project_id=1 AND attr_key='$country' ORDER BY attr_value`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var got []string
+	for rows.Next() {
+		var v string
+		var n int
+		if err := rows.Scan(&v, &n); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, fmt.Sprintf("%s=%d", v, n))
+	}
+	if want := []string{"DE=2", "US=1"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("$country rows = %v, want %v", got, want)
 	}
 }
 

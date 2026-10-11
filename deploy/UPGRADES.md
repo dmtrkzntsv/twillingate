@@ -645,6 +645,19 @@ can now be moved like your own. A built-in a later release adds goes last
 on every project. Rollback: an older binary ignores `forms.seen_at`;
 restore the snapshot to get the old tab keys back.
 
+### Upgrading to the country breakdown (migration 038)
+
+No pre-checks. `$country` joins the attribute keys every project breaks
+down: `product_attributes`, `measures` and `v_product_attrs` /
+`v_measures_attrs` answer it for every raw day still held, from the
+country already stored on each event. Days rolled up before the upgrade
+have no `$country` rows, so a range reaching past the raw window shows
+the breakdown only for its recent days. Each event name (and each
+measure) gains one more set of rolled-up rows per day, at most
+`ATTRIBUTE_VALUES_TOP_N` plus `(other)`. Rollback: an older binary runs
+on the migrated database, but its daily pass stops rolling `$country`
+up, so rolled-up days lose it again; restore the snapshot instead.
+
 ### Upgrading to consistent variable names (no migration)
 
 Eight environment variables are renamed so each group reads alike: the

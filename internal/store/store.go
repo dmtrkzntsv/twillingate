@@ -91,8 +91,9 @@ type Event struct {
 type SystemAttribute struct{ Key, Column string }
 
 // SystemAttributes are rolled up for every project, declared or not:
-// low-cardinality environment keys. The live halves of v_product_attrs
-// and v_measures_attrs (025_live_halves.sql) list every entry in their
+// low-cardinality environment keys, and the country ingest resolves from
+// the client's address. The live halves of v_product_attrs and
+// v_measures_attrs (038_product_country.sql) list every entry in their
 // keys and their CASE.
 var SystemAttributes = []SystemAttribute{
 	{"$platform", "platform"},
@@ -103,6 +104,7 @@ var SystemAttributes = []SystemAttribute{
 	{"$browser", "browser"},
 	{"$device", "device"},
 	{"$browser_locale", "browser_locale"},
+	{"$country", "country"},
 }
 
 // DeclarableAttributes are the reserved keys a project may declare in its
