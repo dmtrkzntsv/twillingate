@@ -515,7 +515,7 @@ describe('Dashboard', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
   })
 
-  it("lists the widget's own group first, without the dashboard it is on", async () => {
+  it("lists the widget's own group first, marking the dashboard it is on", async () => {
     const user = userEvent.setup()
     mockApi()
     renderAt('/dashboards/14')
@@ -527,7 +527,7 @@ describe('Dashboard', () => {
       within(dialog)
         .getAllByRole('button')
         .map((b) => b.textContent)
-    ).toEqual(['New dashboard…', 'Marketing', 'New tab…', 'Launch week', 'New tab…', 'Close'])
+    ).toEqual(['New dashboard…', 'Marketing', 'FunnelCurrent', 'New tab…', 'Launch week', 'New tab…', 'Close'])
   })
 
   it('copies a widget onto a new tab of its own group', async () => {

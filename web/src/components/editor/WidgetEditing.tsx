@@ -90,6 +90,7 @@ export function WidgetEditingProvider({ dashboardId, enabled, defaults, copyTo, 
           onOpenChange={(open) => !open && setCopying({ ...copying, open: false })}
           label={copying.widget.title ?? copying.widget.name}
           targets={copyTargets(copyTo, copying.widget.dashboard_id)}
+          current={copying.widget.dashboard_id}
           onCopy={async (dashboard) => {
             const ok = await edits.copy(copying.widget, dashboard.dashboard_id)
             if (ok) copied(dashboard)

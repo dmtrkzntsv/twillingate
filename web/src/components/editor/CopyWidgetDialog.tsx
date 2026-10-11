@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
 import { LayersIcon, LayoutDashboardIcon, PlusIcon } from 'lucide-react'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -13,6 +14,8 @@ interface Props {
   label: string
   /** The user's dashboards it can go to, by group, its own group first (copyTargets). */
   targets: CopyTarget[]
+  /** The dashboard the widget is on, marked "Current" in the list. */
+  current: number
   /** Copies onto the dashboard; resolves true when the server took it, so the dialog closes. */
   onCopy: (dashboard: DashboardInfo) => Promise<boolean>
   /**
@@ -29,12 +32,12 @@ type Creating = { target?: CopyTarget }
 /**
  * "Copy to dashboard…": the user's own live dashboards, each a click
  * that copies the widget to its end, one card per group with the
- * widget's own group first. Each card ends with "New tab…", and above
+ * widget's own group first and its own dashboard marked "Current". Each card ends with "New tab…", and above
  * them "New dashboard…": either swaps the list for a title field that
  * makes the dashboard and copies there. From a built-in on a fresh
  * install, New dashboard… is the only way.
  */
-export default function CopyWidgetDialog({ open, onOpenChange, label, targets, onCopy, onCreate }: Props) {
+export default function CopyWidgetDialog({ open, onOpenChange, label, targets, current, onCopy, onCreate }: Props) {
   const [creating, setCreating] = useState<Creating>()
   const [title, setTitle] = useState('')
   // Held from a click or submit until it resolves; a ref, as a second one can land before a re-render.
@@ -101,13 +104,14 @@ export default function CopyWidgetDialog({ open, onOpenChange, label, targets, o
               New dashboard…
             </Button>
             {targets.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No other dashboards of your own yet</p>
+              <p className="text-sm text-muted-foreground">No dashboards of your own yet</p>
             ) : (
               <ul className="flex max-h-[60vh] min-w-0 flex-col gap-2 overflow-y-auto">
                 {targets.map((t) => (
                   <Section
                     key={t.groupId}
                     target={t}
+                    current={current}
                     busy={busy}
                     onPick={(d) => void run(() => onCopy(d))}
                     onNewTab={() => setCreating({ target: t })}
@@ -126,6 +130,7 @@ const rowClass = 'h-auto w-full min-w-0 justify-start rounded-none px-3 py-2 fon
 
 interface SectionProps {
   target: CopyTarget
+  current: number
   busy: boolean
   onPick: (d: DashboardInfo) => void
   onNewTab: () => void
@@ -136,7 +141,7 @@ interface SectionProps {
  * a group's name in a shaded header over its tabs, or, for a dashboard
  * alone in its group, its own row on top. Either ends with "New tab…".
  */
-function Section({ target, busy, onPick, onNewTab }: SectionProps) {
+function Section({ target, current, busy, onPick, onNewTab }: SectionProps) {
   const id = useId()
   const lone = target.tabs.length === 1 && target.tabs[0].title === target.name
   const newTab = (
@@ -151,7 +156,7 @@ function Section({ target, busy, onPick, onNewTab }: SectionProps) {
       <li className="flex min-w-0 shrink-0 flex-col divide-y overflow-hidden rounded-lg border">
         <Button variant="ghost" className={rowClass} disabled={busy} onClick={() => onPick(d)}>
           <LayoutDashboardIcon className="text-muted-foreground" aria-hidden />
-          <span className="truncate">{d.title}</span>
+          <Title dashboard={d} current={current} />
         </Button>
         {newTab}
       </li>
@@ -168,11 +173,25 @@ function Section({ target, busy, onPick, onNewTab }: SectionProps) {
       <div className="flex flex-col divide-y [&>button]:pl-9">
         {target.tabs.map((d) => (
           <Button key={d.dashboard_id} variant="ghost" className={rowClass} disabled={busy} onClick={() => onPick(d)}>
-            <span className="truncate">{d.title}</span>
+            <Title dashboard={d} current={current} />
           </Button>
         ))}
         {newTab}
       </div>
     </li>
+  )
+}
+
+/** A row's title, with "Current" on the dashboard the widget is on. */
+function Title({ dashboard, current }: { dashboard: DashboardInfo; current: number }) {
+  return (
+    <>
+      <span className="truncate">{dashboard.title}</span>
+      {dashboard.dashboard_id === current && (
+        <Badge variant="outline" className="ml-auto h-5 shrink-0 py-0 font-normal text-muted-foreground">
+          Current
+        </Badge>
+      )}
+    </>
   )
 }

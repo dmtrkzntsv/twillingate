@@ -173,19 +173,16 @@ describe('copyTargets', () => {
   ]
   const shape = (from: number) => copyTargets(list, from).map((t) => [t.name, t.tabs.map((d) => d.dashboard_id)])
 
-  it("puts the widget's own group first, without its own dashboard", () => {
+  it("puts the widget's own group first, its own dashboard included", () => {
     expect(shape(14)).toEqual([
-      ['Growth', [13]],
+      ['Growth', [13, 14]],
       ['Launch week', [10]],
       ['Ads', [15]],
     ])
-  })
-
-  it('keeps the own group with no other tab, for a new tab there', () => {
-    expect(shape(10)).toEqual([
-      ['Launch week', []],
-      ['Growth', [13, 14]],
+    expect(shape(15)).toEqual([
       ['Ads', [15]],
+      ['Launch week', [10]],
+      ['Growth', [13, 14]],
     ])
   })
 

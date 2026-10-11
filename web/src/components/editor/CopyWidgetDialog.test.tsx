@@ -20,6 +20,7 @@ function renderDialog(over: Partial<Parameters<typeof CopyWidgetDialog>[0]> = {}
     onOpenChange: vi.fn(),
     label: 'Visitors',
     targets,
+    current: 14,
     onCopy: vi.fn().mockResolvedValue(true),
     onCreate: vi.fn().mockResolvedValue(true),
     ...over,
@@ -32,28 +33,34 @@ describe('CopyWidgetDialog', () => {
   it('heads a group of several tabs with its name, and shows a lone one by itself', () => {
     renderDialog()
     const group = screen.getByRole('group', { name: 'Growth' })
-    expect(within(group).getAllByRole('button').map((b) => b.textContent)).toEqual(['Marketing', 'Funnel', 'New tab…'])
+    expect(within(group).getAllByRole('button').map((b) => b.textContent)).toEqual(['Marketing', 'FunnelCurrent', 'New tab…'])
     expect(screen.queryByRole('group', { name: 'Launch week' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Launch week' })).toBeInTheDocument()
   })
 
+  it('marks the dashboard the widget is on, and copies there too', async () => {
+    const props = renderDialog()
+    await userEvent.click(screen.getByRole('button', { name: /^Funnel/ }))
+    expect(props.onCopy).toHaveBeenCalledWith(targets[0].tabs[1])
+  })
+
   it('copies on a click and closes once the server took it', async () => {
     const props = renderDialog()
-    await userEvent.click(screen.getByRole('button', { name: 'Funnel' }))
-    expect(props.onCopy).toHaveBeenCalledWith(targets[0].tabs[1])
+    await userEvent.click(screen.getByRole('button', { name: 'Marketing' }))
+    expect(props.onCopy).toHaveBeenCalledWith(targets[0].tabs[0])
     await waitFor(() => expect(props.onOpenChange).toHaveBeenCalledWith(false))
   })
 
   it('stays open when the copy is refused', async () => {
     const props = renderDialog({ onCopy: vi.fn().mockResolvedValue(false) })
-    await userEvent.click(screen.getByRole('button', { name: 'Funnel' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Marketing' }))
     await waitFor(() => expect(props.onCopy).toHaveBeenCalled())
     expect(props.onOpenChange).not.toHaveBeenCalled()
   })
 
   it('makes a new dashboard from a title of at least 2 characters', async () => {
     const props = renderDialog({ targets: [] })
-    expect(screen.getByText('No other dashboards of your own yet')).toBeInTheDocument()
+    expect(screen.getByText('No dashboards of your own yet')).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: 'New dashboard…' }))
     const field = screen.getByRole('textbox', { name: 'Dashboard title' })
     await userEvent.type(field, 'W')
