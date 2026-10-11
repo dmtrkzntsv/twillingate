@@ -234,6 +234,8 @@ describe('Projects group', () => {
     const projects: Project[] = Array.from({ length: 40 }, (_, i) => ({ project_id: i + 1, name: `site-${i + 1}`, allowed_origins: [] }))
     projects.push({ project_id: 99, name: 'gone', archived: true, allowed_origins: [] })
     vi.spyOn(endpoints, 'projects').mockResolvedValue({ projects })
+    vi.spyOn(endpoints, 'projectActivity').mockResolvedValue({ projects: [] })
+    vi.spyOn(endpoints, 'dashboards').mockResolvedValue(dashboardsList())
   })
 
   function renderAt(path: string) {
@@ -297,6 +299,40 @@ describe('Projects group', () => {
   it('marks "Projects" on the list page', () => {
     renderAt('/projects')
     expect(screen.getByRole('link', { name: 'Projects' })).toHaveAttribute('data-active', 'true')
+  })
+
+  describe('forms dot', () => {
+    beforeEach(() => {
+      vi.mocked(endpoints.projectActivity).mockResolvedValue({ projects: [
+        { project_id: 1, last_event_day: null, new_submissions: 0, forms: 1, draft_forms: 0 },
+        { project_id: 2, last_event_day: null, new_submissions: 4, forms: 1, draft_forms: 0 },
+        { project_id: 3, last_event_day: null, new_submissions: 0, forms: 2, draft_forms: 1 },
+      ] })
+    })
+
+    it('marks a project with new submissions or a draft form, and no other', async () => {
+      renderAt('/')
+      expect(await screen.findByRole('link', { name: 'site-2, new in Forms' }, { timeout: 5000 })).toHaveAttribute('href', '/projects/2')
+      expect(screen.getByRole('link', { name: 'site-3, new in Forms' })).toBeInTheDocument()
+      expect(screen.getByRole('link', { name: 'site-1' })).toBeInTheDocument()
+      expect(screen.getByRole('link', { name: 'Projects' })).toBeInTheDocument()
+    })
+
+    it('marks "Projects" instead while the list is closed', async () => {
+      localStorage.setItem(LIST_KEY, 'false')
+      renderAt('/')
+      expect(await screen.findByRole('link', { name: 'Projects, new in Forms' })).toHaveAttribute('href', '/projects')
+    })
+
+    it('leaves "Projects" plain while closed with nothing new', async () => {
+      vi.mocked(endpoints.projectActivity).mockResolvedValue({ projects: [
+        { project_id: 1, last_event_day: null, new_submissions: 0, forms: 1, draft_forms: 0 },
+      ] })
+      localStorage.setItem(LIST_KEY, 'false')
+      renderAt('/')
+      await waitFor(() => expect(endpoints.projectActivity).toHaveBeenCalled())
+      expect(screen.getByRole('link', { name: 'Projects' })).toBeInTheDocument()
+    })
   })
 
   it('comes first, above the dashboards', async () => {

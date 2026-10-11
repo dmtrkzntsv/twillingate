@@ -48,8 +48,8 @@ beforeEach(() => {
   vi.spyOn(endpoints, 'projectTabs').mockResolvedValue({ tabs })
   vi.spyOn(endpoints, 'projectActivity').mockResolvedValue({
     projects: [
-      { project_id: 4, last_event_day: '2026-10-08', new_submissions: 0 },
-      { project_id: 7, last_event_day: '2026-10-08', new_submissions: 3 },
+      { project_id: 4, last_event_day: '2026-10-08', new_submissions: 0, forms: 0, draft_forms: 0 },
+      { project_id: 7, last_event_day: '2026-10-08', new_submissions: 3, forms: 0, draft_forms: 0 },
     ],
   })
   vi.spyOn(endpoints, 'dashboard').mockImplementation(async (id) => {
@@ -387,7 +387,7 @@ describe('Project tabs', () => {
   })
 
   it('says a project with no events yet has none, and links to its Settings', async () => {
-    vi.mocked(endpoints.projectActivity).mockResolvedValue({ projects: [{ project_id: 7, last_event_day: null, new_submissions: 0 }] })
+    vi.mocked(endpoints.projectActivity).mockResolvedValue({ projects: [{ project_id: 7, last_event_day: null, new_submissions: 0, forms: 0, draft_forms: 0 }] })
     renderAt('/projects/7/dashboards/1?range=30d')
     const notice = (await screen.findByText('No events received yet')).closest('[role=status]') as HTMLElement
     expect(notice).not.toBeNull()
@@ -395,7 +395,7 @@ describe('Project tabs', () => {
   })
 
   it('shows no notice on the Forms pages, where a forms-only project has its work', async () => {
-    vi.mocked(endpoints.projectActivity).mockResolvedValue({ projects: [{ project_id: 7, last_event_day: null, new_submissions: 0 }] })
+    vi.mocked(endpoints.projectActivity).mockResolvedValue({ projects: [{ project_id: 7, last_event_day: null, new_submissions: 0, forms: 0, draft_forms: 0 }] })
     vi.spyOn(endpoints, 'forms').mockResolvedValue({ action_base: '', forms: [form('contact')] })
     renderAt('/projects/7/forms')
     await screen.findByRole('list', { name: 'Forms' })
@@ -406,8 +406,8 @@ describe('Project tabs', () => {
   it('shows no notice on Settings itself, nor for a project that has data', async () => {
     vi.mocked(endpoints.projectActivity).mockResolvedValue({
       projects: [
-        { project_id: 7, last_event_day: null, new_submissions: 0 },
-        { project_id: 4, last_event_day: '2026-10-08', new_submissions: 0 },
+        { project_id: 7, last_event_day: null, new_submissions: 0, forms: 0, draft_forms: 0 },
+        { project_id: 4, last_event_day: '2026-10-08', new_submissions: 0, forms: 0, draft_forms: 0 },
       ],
     })
     const { unmount } = renderAt('/projects/7/settings')

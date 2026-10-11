@@ -112,6 +112,7 @@ export default function Project({ tab }: { tab?: 'forms' } = {}) {
                 dashboards={dash?.dashboards ?? []}
                 actions={tabActions}
                 newSubmissions={mine?.new_submissions ?? 0}
+                draftForms={mine?.draft_forms ?? 0}
                 readOnly={dev}
               />
             </div>

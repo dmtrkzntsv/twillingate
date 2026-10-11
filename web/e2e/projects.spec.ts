@@ -1,4 +1,5 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test'
+import { createProject as createFormsProject, submitJSON } from './forms'
 
 // Matches web/e2e/serve.sh's CONSOLE_AUTH_DSN (token://e2e-token?password=e2e-pass&...).
 const PASSWORD = 'e2e-pass'
@@ -165,7 +166,11 @@ test('drags a project card to a new place, which a reload keeps', async ({ page,
   const ids = [await createProject(request, names[0]), await createProject(request, names[1])]
   try {
     await login(page)
+    // Cards whose project has forms grow a line when the activity arrives,
+    // which would move the cards under a drag measured before it.
+    const activity = page.waitForResponse((r) => r.url().endsWith('/api/project-activity') && r.ok())
     await page.goto('/app/projects')
+    await activity
     const mine = async () =>
       (await page.getByRole('article').evaluateAll((els) => els.map((e) => e.getAttribute('aria-label')))).filter((n) =>
         names.includes(n ?? '')
@@ -225,5 +230,30 @@ test('drags a project in the sidebar to a new place, which the Projects page and
     await expect.poll(cards).toEqual([names[1], names[0]])
   } finally {
     for (const id of ids) await request.post(`/api/projects/${id}/archive`, { headers: { Authorization: `Bearer ${TOKEN}` } })
+  }
+})
+
+test("shows a project's forms on its card and a dot in the sidebar until they are read", async ({ page, request }) => {
+  const name = `e2e-forms-${Date.now()}`
+  const project = await createFormsProject(request, name, [])
+  try {
+    await submitJSON(request, project.key, 'contact', { email: 'ann@example.com' })
+    await login(page)
+    const sidebar = page.locator('[data-sidebar="sidebar"]')
+    await expect(sidebar.getByRole('link', { name: `${name}, new in Forms`, exact: true })).toBeVisible()
+
+    const line = page.getByRole('article', { name }).getByRole('link', { name: '1 form · 1 draft · 1 new submission', exact: true })
+    await line.click()
+    await expect(page).toHaveURL(new RegExp(`/projects/${project.id}/forms$`))
+
+    // Reading the form clears the new submission; the draft still waits, so the dot stays.
+    const seen = page.waitForResponse((r) => r.url().endsWith('/forms/contact/seen') && r.ok())
+    await page.getByRole('list', { name: 'Forms' }).getByRole('link').filter({ hasText: 'contact' }).click()
+    await seen
+    await page.goto('/app/projects')
+    await expect(page.getByRole('article', { name }).getByRole('link', { name: '1 form · 1 draft', exact: true })).toBeVisible()
+    await expect(sidebar.getByRole('link', { name: `${name}, new in Forms`, exact: true })).toBeVisible()
+  } finally {
+    await request.post(`/api/projects/${project.id}/archive`, { headers: { Authorization: `Bearer ${TOKEN}` } })
   }
 })

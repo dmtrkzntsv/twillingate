@@ -16,7 +16,7 @@ const tabs: ProjectTab[] = [
 
 const actions: ProjectTabActions = { add: vi.fn(), create: vi.fn(), remove: vi.fn(), move: vi.fn(), pending: false }
 
-function renderBar({ currentId, newSubmissions, readOnly }: { currentId: number; newSubmissions: number; readOnly?: boolean }) {
+function renderBar({ currentId, newSubmissions, draftForms = 0, readOnly }: { currentId: number; newSubmissions: number; draftForms?: number; readOnly?: boolean }) {
   return render(
     <MemoryRouter initialEntries={['/projects/7/settings?range=30d']}>
       <TooltipProvider>
@@ -27,6 +27,7 @@ function renderBar({ currentId, newSubmissions, readOnly }: { currentId: number;
           dashboards={[]}
           actions={actions}
           newSubmissions={newSubmissions}
+          draftForms={draftForms}
           readOnly={readOnly}
         />
       </TooltipProvider>
@@ -50,6 +51,20 @@ describe('ProjectTabBar', () => {
   it('counts new submissions on the Forms button', () => {
     renderBar({ currentId: 1, newSubmissions: 3 })
     expect(screen.getByRole('link', { name: 'Forms, 3 new' })).toHaveTextContent('3')
+  })
+
+  it('dots the Forms button for a draft with nothing new', () => {
+    renderBar({ currentId: 1, newSubmissions: 0, draftForms: 2 })
+    const link = screen.getByRole('link', { name: 'Forms, 2 drafts' })
+    expect(link).toHaveTextContent('')
+    expect(link.querySelector('[data-forms-dot]')).toBeInTheDocument()
+  })
+
+  it('counts new submissions over the dot, naming both', () => {
+    renderBar({ currentId: 1, newSubmissions: 3, draftForms: 1 })
+    const link = screen.getByRole('link', { name: 'Forms, 3 new, 1 draft' })
+    expect(link).toHaveTextContent('3')
+    expect(link.querySelector('[data-forms-dot]')).not.toBeInTheDocument()
   })
 
   it('caps the badge at 99+', () => {

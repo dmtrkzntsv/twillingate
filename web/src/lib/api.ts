@@ -461,11 +461,15 @@ export interface Form {
   archived_at?: string
 }
 
-/** project_activity's row (project landing D6): the newest day with data and the unread submissions. */
+/** project_activity's row (project landing D6): the newest day with data, the unread submissions, and the live forms. */
 export interface ProjectActivity {
   project_id: number
   last_event_day: string | null
   new_submissions: number
+  /** Live (not archived) forms. */
+  forms: number
+  /** Live forms still drafts, waiting to be approved. */
+  draft_forms: number
 }
 
 /** list_forms' answer: the forms, and where a plain HTML form posts. */

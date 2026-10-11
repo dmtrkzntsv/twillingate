@@ -14,6 +14,8 @@ type activityRow struct {
 	ProjectID      int64   `json:"project_id"`
 	LastEventDay   *string `json:"last_event_day"`
 	NewSubmissions int     `json:"new_submissions"`
+	Forms          int     `json:"forms"`
+	DraftForms     int     `json:"draft_forms"`
 }
 
 func getActivity(t *testing.T, h *host) []activityRow {
@@ -35,7 +37,8 @@ func dayPtr(s string) *string { return &s }
 
 // TestProjectActivity: every live project in list order with the newest day
 // across the raw and rolled-up tables and the submissions its forms have not
-// been read past. Archived projects are left out.
+// been read past, and how many live forms it has, drafts among them.
+// Archived projects are left out.
 func TestProjectActivity(t *testing.T) {
 	h, _ := newTestHost(t)
 	ctx := t.Context()
@@ -60,7 +63,15 @@ func TestProjectActivity(t *testing.T) {
 	seed := newFormSeeder(t, h)
 	seed.add("contact", "s1", map[string]string{"email": "a@x.io"}, nil)
 	seed.add("contact", "s2", map[string]string{"email": "b@x.io"}, nil)
-	// An archived form's submissions are not new to anyone.
+	// An approved form counts as a form, not a draft.
+	seed.add("signup", "s4", map[string]string{"email": "d@x.io"}, nil)
+	if err := h.ops.ApproveForm(ctx, "test", 1, "signup", []string{"email"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.ops.MarkFormSeen(ctx, 1, "signup", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	// An archived form's submissions are not new to anyone, nor is it a form.
 	seed.add("old", "s3", map[string]string{"email": "c@x.io"}, nil)
 	if err := h.ops.ArchiveForm(ctx, "test", 1, "old"); err != nil {
 		t.Fatal(err)
@@ -68,7 +79,7 @@ func TestProjectActivity(t *testing.T) {
 
 	got := getActivity(t, h)
 	want := []activityRow{
-		{ProjectID: 1, LastEventDay: dayPtr("2026-09-30"), NewSubmissions: 2},
+		{ProjectID: 1, LastEventDay: dayPtr("2026-09-30"), NewSubmissions: 2, Forms: 2, DraftForms: 1},
 		{ProjectID: 2, LastEventDay: dayPtr("2026-07-01")},
 		{ProjectID: 3},
 	}
@@ -77,7 +88,7 @@ func TestProjectActivity(t *testing.T) {
 	}
 	for i := range want {
 		g, w := got[i], want[i]
-		if g.ProjectID != w.ProjectID || g.NewSubmissions != w.NewSubmissions ||
+		if g.ProjectID != w.ProjectID || g.NewSubmissions != w.NewSubmissions || g.Forms != w.Forms || g.DraftForms != w.DraftForms ||
 			(g.LastEventDay == nil) != (w.LastEventDay == nil) || (g.LastEventDay != nil && *g.LastEventDay != *w.LastEventDay) {
 			t.Errorf("row %d = %+v (day %v), want %+v (day %v)", i, g, deref(g.LastEventDay), w, deref(w.LastEventDay))
 		}
@@ -87,8 +98,8 @@ func TestProjectActivity(t *testing.T) {
 	if err := h.ops.MarkFormSeen(ctx, 1, "contact", time.Now().Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	if got := getActivity(t, h); got[0].NewSubmissions != 0 {
-		t.Errorf("after reading, project 1 = %+v", got[0])
+	if got := getActivity(t, h); got[0].NewSubmissions != 0 || got[0].DraftForms != 1 {
+		t.Errorf("after reading, project 1 = %+v, want no new submissions and the draft still waiting", got[0])
 	}
 }
 
@@ -128,7 +139,7 @@ func TestProjectActivityJSONNull(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := serveREST(t, newTestRegistrar(t, h), "GET", "/api/project-activity", "")
-	if !strings.Contains(rec.Body.String(), `{"project_id":3,"last_event_day":null,"new_submissions":0}`) {
+	if !strings.Contains(rec.Body.String(), `{"project_id":3,"last_event_day":null,"new_submissions":0,"forms":0,"draft_forms":0}`) {
 		t.Errorf("body = %s", rec.Body)
 	}
 }

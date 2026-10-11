@@ -19,8 +19,9 @@ import { useReorder } from '@/hooks/use-reorder'
 import { useStoredState } from '@/hooks/use-stored-state'
 import type { Project } from '@/lib/api'
 import { afterAt } from '@/lib/arrange'
+import { formsNeedAttention } from '@/lib/forms'
 import { rangeParams } from '@/lib/project-tabs'
-import { projectsQuery } from '@/lib/queries'
+import { dashboardsQuery, projectActivityQuery, projectsQuery } from '@/lib/queries'
 import { cn } from '@/lib/utils'
 
 /** Whether the project list under "Projects" is open; absent means open. */
@@ -40,13 +41,21 @@ interface Props {
  * list's order, each a link to the project that drags to a new place in
  * that order, the one the Projects page shows too. Whether the list is open stays
  * in localStorage on this device; the projects are asked for only while it
- * is. Down to icons, only the "Projects" link shows.
+ * is. Down to icons, only the "Projects" link shows. A dot marks a project
+ * whose forms have submissions not read yet or a draft waiting to be
+ * approved; while the list is closed or down to icons, "Projects" carries
+ * it for them all.
  */
 export default function SidebarProjects({ onNavigate, iconOnly, className }: Props) {
   const { pathname } = useLocation()
   const [listStored, setListStored] = useStoredState(LIST_KEY, (v) => (typeof v === 'boolean' ? v : null))
   const listOpen = listStored ?? true
   const onProject = pathname.startsWith('/projects/')
+  // Reporting dev serves no forms; the sidebar may mount before the list says it is dev.
+  const { data: dash } = useQuery(dashboardsQuery)
+  const { data: activity } = useQuery({ ...projectActivityQuery, enabled: dash !== undefined && !dash.dev })
+  const marked = new Set((activity?.projects ?? []).filter(formsNeedAttention).map((a) => a.project_id))
+  const dot = (!listOpen || iconOnly) && marked.size > 0
 
   return (
     <Collapsible asChild open={listOpen} onOpenChange={setListStored}>
@@ -55,11 +64,12 @@ export default function SidebarProjects({ onNavigate, iconOnly, className }: Pro
           asChild
           isActive={pathname === '/projects' || (onProject && (!listOpen || iconOnly))}
           tooltip="Projects"
-          className={className}
+          className={cn('relative', className)}
         >
-          <Link to="/projects" onClick={onNavigate}>
+          <Link to="/projects" onClick={onNavigate} aria-label={dot ? `Projects, ${NEW_IN_FORMS}` : undefined}>
             <FolderIcon />
-            <span>Projects</span>
+            <span className="truncate">Projects</span>
+            {dot && <NewDot />}
           </Link>
         </SidebarMenuButton>
         <CollapsibleTrigger asChild>
@@ -68,14 +78,14 @@ export default function SidebarProjects({ onNavigate, iconOnly, className }: Pro
           </SidebarMenuAction>
         </CollapsibleTrigger>
         <CollapsibleContent>
-          <ProjectList onNavigate={onNavigate} />
+          <ProjectList onNavigate={onNavigate} marked={marked} />
         </CollapsibleContent>
       </SidebarMenuItem>
     </Collapsible>
   )
 }
 
-function ProjectList({ onNavigate }: { onNavigate: () => void }) {
+function ProjectList({ onNavigate, marked }: { onNavigate: () => void; marked: Set<number> }) {
   const { pathname, search } = useLocation()
   const { data, error } = useQuery(projectsQuery)
   const { move } = useProjectActions()
@@ -99,7 +109,7 @@ function ProjectList({ onNavigate }: { onNavigate: () => void }) {
             // On the project's own pages the link keeps the range, as its tab bar does.
             const here = pathname.startsWith(`/projects/${p.project_id}/`)
             const range = here ? rangeParams(new URLSearchParams(search)).toString() : ''
-            return <SortableProject key={p.project_id} project={p} here={here} range={range} disabled={busy} onNavigate={onNavigate} />
+            return <SortableProject key={p.project_id} project={p} here={here} range={range} dot={marked.has(p.project_id)} disabled={busy} onNavigate={onNavigate} />
           })}
         </SidebarMenuSub>
       </SortableContext>
@@ -111,6 +121,8 @@ interface SortableProjectProps {
   project: Project
   here: boolean
   range: string
+  /** Its forms have something new: submissions not read yet or a draft. */
+  dot: boolean
   /** True while a dropped order waits for the server's. */
   disabled: boolean
   onNavigate: () => void
@@ -122,7 +134,7 @@ interface SortableProjectProps {
  * role or tab index, so Space picks it up (`useReorder`) and Enter still
  * follows it.
  */
-function SortableProject({ project, here, range, disabled, onNavigate }: SortableProjectProps) {
+function SortableProject({ project, here, range, dot, disabled, onNavigate }: SortableProjectProps) {
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({
     id: project.project_id,
     disabled,
@@ -141,11 +153,29 @@ function SortableProject({ project, here, range, disabled, onNavigate }: Sortabl
         aria-describedby={attributes['aria-describedby']}
         {...listeners}
       >
-        <Link to={`/projects/${project.project_id}${range ? `?${range}` : ''}`} onClick={onNavigate} title={project.name}>
-          <span>{project.name}</span>
+        <Link
+          to={`/projects/${project.project_id}${range ? `?${range}` : ''}`}
+          onClick={onNavigate}
+          title={project.name}
+          aria-label={dot ? `${project.name}, ${NEW_IN_FORMS}` : undefined}
+        >
+          <span className="truncate">{project.name}</span>
+          {dot && <NewDot />}
         </Link>
       </SidebarMenuSubButton>
     </SidebarMenuSubItem>
+  )
+}
+
+const NEW_IN_FORMS = 'new in Forms'
+
+/** The dot after a name; down to icons, at the icon's top right corner instead. */
+function NewDot() {
+  return (
+    <span
+      aria-hidden
+      className="ml-auto size-1.5 shrink-0 rounded-full bg-primary group-data-[collapsible=icon]:absolute group-data-[collapsible=icon]:top-1 group-data-[collapsible=icon]:right-1"
+    />
   )
 }
 
