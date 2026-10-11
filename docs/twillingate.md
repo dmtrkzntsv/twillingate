@@ -1063,6 +1063,11 @@ project allows gets the CORS headers, as a preflight does, so a browser can
 read the answer. It is a `4xx` on purpose: it is dropped like any other, never
 queued for retry (the SDK keeps only `5xx` and network failures).
 
+A product or measures event named in a block rule of its project is accepted
+(it counts in `accepted`, so the client does not retry) but not stored, and
+`warnings` lists it as `event "<name>" is blocked in this project, dropped`. A
+name with a rename rule is stored under its new name, with no warning.
+
 `errors` and `warnings` are capped at 10 entries each, and rejection is **per
 event, not per batch**: one malformed event increments `rejected` and the rest
 still lands. **Normative: retry only on 5xx and network failure — any other 4xx
