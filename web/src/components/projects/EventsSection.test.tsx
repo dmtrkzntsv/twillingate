@@ -135,6 +135,28 @@ describe('EventsSection', () => {
     await vi.waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
   })
 
+  it('warns that renaming onto a blocked name drops the history, and sends merge', async () => {
+    const user = userEvent.setup()
+    // x is blocked in product and has no events listed; fresh is blocked in measures only.
+    vi.spyOn(endpoints, 'eventRules').mockResolvedValue({ rules: [
+      { family: 'product', name: 'x', action: 'block' }, { family: 'measures', name: 'fresh', action: 'block' },
+    ] })
+    const { onRename } = renderSection()
+    await openMenu(user, 'signup', 'Rename…')
+    const dialog = await screen.findByRole('dialog')
+    const input = within(dialog).getByRole('textbox')
+    await user.type(input, 'fresh')
+    expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument()
+    expect(within(dialog).getByRole('button', { name: 'Rename' })).toBeEnabled()
+    await user.clear(input)
+    await user.type(input, ' x ')
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(
+      "x is blocked: signup's events are dropped from now on, and the next daily pass deletes signup's aggregated history.")
+    expect(within(dialog).queryByRole('button', { name: 'Rename' })).not.toBeInTheDocument()
+    await user.click(within(dialog).getByRole('button', { name: 'Rename into blocked x' }))
+    expect(onRename).toHaveBeenCalledWith({ family: 'product', from: 'signup', to: 'x', merge: true })
+  })
+
   it('drops the merge confirmation when the name is typed over', async () => {
     const user = userEvent.setup()
     const { onRename } = renderSection()

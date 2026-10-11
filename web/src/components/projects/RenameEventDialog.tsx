@@ -12,6 +12,8 @@ interface Props {
   target: { family: EventFamily; name: string } | null
   /** The names listed, to tell a rename from a merge. */
   names: EventName[]
+  /** The names the target's family blocks: renaming onto one drops the renamed events, and their history, with it. */
+  blockedNames: readonly string[]
   pending?: boolean
   /**
    * Resolves true when done, so the dialog closes; false keeps it open (the refusal is already toasted); 'conflict'
@@ -20,8 +22,11 @@ interface Props {
   onRename: (to: string, merge: boolean) => Promise<boolean | 'conflict'>
 }
 
-/** Type the new name of an event; a name the family already has makes it a merge, said before it is confirmed. */
-export default function RenameEventDialog({ open, onOpenChange, target, names, pending, onRename }: Props) {
+/**
+ * Type the new name of an event; a name the family already has makes it a merge, and a blocked one drops the renamed
+ * events, each said before it is confirmed.
+ */
+export default function RenameEventDialog({ open, onOpenChange, target, names, blockedNames, pending, onRename }: Props) {
   const [value, setValue] = useState('')
   // The name the server refused as already taken; typing another name clears it.
   const [taken, setTaken] = useState<string | null>(null)
@@ -34,10 +39,11 @@ export default function RenameEventDialog({ open, onOpenChange, target, names, p
   }, [open])
   const to = value.trim()
   const merging = target !== null && to !== '' && (to === taken || names.some((n) => n.family === target.family && n.name === to))
+  const intoBlocked = target !== null && to !== '' && blockedNames.includes(to)
   const valid = target !== null && to !== '' && !to.startsWith('$') && to !== target.name
   const submit = async () => {
     if (!valid) return
-    const out = await onRename(to, merging)
+    const out = await onRename(to, merging || intoBlocked)
     if (out === 'conflict') setTaken(to)
     else if (out) onOpenChange(false)
   }
@@ -60,6 +66,11 @@ export default function RenameEventDialog({ open, onOpenChange, target, names, p
           <div className="flex flex-col gap-2">
             <Label htmlFor="rename-event-to">New name</Label>
             <Input id="rename-event-to" value={value} autoComplete="off" onChange={(e) => setValue(e.target.value)} />
+            {intoBlocked && (
+              <p role="alert" className="text-sm text-destructive">
+                {to} is blocked: {target?.name}&apos;s events are dropped from now on, and the next daily pass deletes {target?.name}&apos;s aggregated history.
+              </p>
+            )}
             {merging && (
               <p role="alert" className="text-sm text-destructive">
                 {to} already has events: this merges {target?.name} into it, and cannot be undone.
@@ -67,7 +78,7 @@ export default function RenameEventDialog({ open, onOpenChange, target, names, p
             )}
           </div>
           <DialogFooter>
-            <Button type="submit" disabled={!valid || pending}>{merging ? `Merge into ${to}` : 'Rename'}</Button>
+            <Button type="submit" disabled={!valid || pending}>{intoBlocked ? `Rename into blocked ${to}` : merging ? `Merge into ${to}` : 'Rename'}</Button>
           </DialogFooter>
         </form>
       </DialogContent>

@@ -105,6 +105,7 @@ export default function EventsSection({ project, range, rawDays, pending, onRena
         onOpenChange={(o) => !o && setRenaming((d) => d && { ...d, open: false })}
         target={renaming?.target ?? null}
         names={list}
+        blockedNames={(rules.data?.rules ?? []).filter((r) => r.action === 'block' && r.family === renaming?.target.family).map((r) => r.name)}
         pending={pending}
         onRename={(to, merge) => onRename({ family: renaming!.target.family, from: renaming!.target.name, to, ...(merge ? { merge: true } : {}) })}
       />
