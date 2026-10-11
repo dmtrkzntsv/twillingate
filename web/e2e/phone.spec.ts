@@ -140,7 +140,7 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
   })
 
   // Product events with names longer than a phone is wide, one renamed and
-  // one blocked: the Settings page's Events table and its rules list wrap.
+  // one blocked: the Settings page's Events table and its alias chips wrap.
   const longEvent = 'an_event_whose_name_is_longer_than_a_phone_is_wide_on_one_line'
   const renamedEvent = 'the_new_name_of_that_event_which_is_longer_than_a_phone_is_wide'
   const blockedEvent = 'another_event_that_is_blocked_with_a_name_longer_than_a_phone'
@@ -229,7 +229,10 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
   ]) {
     await check(page, path)
     // The check above means nothing for the Events section unless it is drawn.
-    if (path.endsWith('?range=today')) await expect(page.getByText(`${blockedEvent} blocked`)).toBeVisible()
+    if (path.endsWith('?range=today')) {
+      await expect(page.getByRole('button', { name: `Remove alias ${longEvent}` })).toBeVisible()
+      await expect(page.getByText('Blocked', { exact: true })).toBeVisible()
+    }
   }
   for (const d of await dashboardIds(request)) await check(page, `/app/dashboards/${d}`)
 

@@ -38,20 +38,84 @@ describe('EventsSection', () => {
     vi.spyOn(endpoints, 'eventRules').mockResolvedValue({ rules: [] })
   })
 
-  it('lists the names with their counts and family, and badges a blocked one', async () => {
-    vi.spyOn(endpoints, 'eventRules').mockResolvedValue({ rules: [{ family: 'product', name: 'signup', action: 'block' }] })
+  it('lists the names with their counts and family', async () => {
     renderSection()
     const section = screen.getByRole('region', { name: 'Events' })
     expect(await within(section).findByText('12,000')).toBeInTheDocument()
     expect(endpoints.eventNames).toHaveBeenCalledWith(1, { from: '2026-09-05', to: '2026-10-04' })
     const rows = within(section).getAllByRole('row').slice(1)
     expect(rows.map((r) => within(r).getAllByRole('cell')[0].textContent)).toEqual([
-      'checkoutproduct', 'signupproductblocked', 'checkoutmeasures', 'old_signupproduct',
+      'checkoutproduct', 'signupproduct', 'checkoutmeasures', 'old_signupproduct',
     ])
-    expect(within(rows[0]).getByText('12,000')).toBeInTheDocument()
     expect(within(rows[1]).getByText('340')).toBeInTheDocument()
-    expect(within(rows[1]).getByText('blocked')).toBeInTheDocument()
-    expect(within(rows[0]).queryByText('blocked')).not.toBeInTheDocument()
+    expect(within(section).queryByText('Blocked')).not.toBeInTheDocument()
+  })
+
+  it('marks a blocked event, and lists every blocked one last, even with nothing in the range', async () => {
+    vi.spyOn(endpoints, 'eventRules').mockResolvedValue({ rules: [
+      { family: 'product', name: 'signup', action: 'block' }, { family: 'product', name: 'x', action: 'block' },
+    ] })
+    renderSection()
+    const section = screen.getByRole('region', { name: 'Events' })
+    await within(section).findAllByText('Blocked')
+    const rows = within(section).getAllByRole('row').slice(1)
+    expect(rows.map((r) => within(r).getAllByRole('cell')[0].querySelector('code')?.textContent)).toEqual([
+      'checkout', 'checkout', 'old_signup', 'signup', 'x',
+    ])
+    for (const row of rows.slice(3)) {
+      expect(within(row).getByText('Blocked')).toBeInTheDocument()
+      expect(within(row).getByText('no longer stored')).toBeInTheDocument()
+      expect(row.querySelector('code')).toHaveClass('line-through')
+    }
+    expect(within(rows[3]).getByText('340')).toBeInTheDocument()
+    expect(within(rows[4]).getByText('0')).toBeInTheDocument()
+    expect(within(rows[0]).queryByText('Blocked')).not.toBeInTheDocument()
+  })
+
+  it('unblocks from a blocked row, which offers no Block', async () => {
+    const user = userEvent.setup()
+    vi.spyOn(endpoints, 'eventRules').mockResolvedValue({ rules: [{ family: 'product', name: 'signup', action: 'block' }] })
+    const { onRemove } = renderSection()
+    await screen.findByText('Blocked')
+    await user.click(screen.getByRole('button', { name: 'Actions for signup (product)' }))
+    expect(await screen.findByRole('menuitem', { name: 'Rename…' })).toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: 'Block…' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('menuitem', { name: 'Unblock' }))
+    expect(onRemove).toHaveBeenCalledWith({ family: 'product', name: 'signup' })
+  })
+
+  it('shows the old names under the event they map to, each removable', async () => {
+    const user = userEvent.setup()
+    vi.spyOn(endpoints, 'eventRules').mockResolvedValue({ rules: [
+      { family: 'product', name: 'a', action: 'rename', to: 'checkout' },
+      { family: 'product', name: 'old', action: 'rename', to: 'checkout' },
+      { family: 'product', name: 'z', action: 'rename', to: 'ghost' },
+    ] })
+    const { onRemove } = renderSection()
+    const section = screen.getByRole('region', { name: 'Events' })
+    await within(section).findByRole('button', { name: 'Remove alias a' })
+    const rows = within(section).getAllByRole('row').slice(1)
+    const checkout = rows.find((r) => r.textContent?.startsWith('checkoutproduct'))!
+    expect(within(checkout).getByText('also from')).toBeInTheDocument()
+    expect(within(checkout).getByRole('button', { name: 'Remove alias a' })).toBeInTheDocument()
+    expect(within(checkout).getByRole('button', { name: 'Remove alias old' })).toBeInTheDocument()
+    // The measure of the same name has none: aliases are per family.
+    const measure = rows.find((r) => r.textContent?.startsWith('checkoutmeasures'))!
+    expect(within(measure).queryByText('also from')).not.toBeInTheDocument()
+    // A target with nothing in the range still shows, with its alias.
+    const ghost = rows.find((r) => r.querySelector('code')?.textContent === 'ghost')!
+    expect(within(ghost).getByText('0')).toBeInTheDocument()
+    expect(within(ghost).getByRole('button', { name: 'Remove alias z' })).toBeInTheDocument()
+    await user.click(within(checkout).getByRole('button', { name: 'Remove alias old' }))
+    expect(onRemove).toHaveBeenCalledWith({ family: 'product', name: 'old' })
+  })
+
+  it('has no separate rules list', async () => {
+    vi.spyOn(endpoints, 'eventRules').mockResolvedValue({ rules })
+    renderSection()
+    await screen.findByRole('button', { name: 'Remove alias a' })
+    expect(screen.queryByText('Rules')).not.toBeInTheDocument()
+    expect(screen.queryByText('a → b')).not.toBeInTheDocument()
   })
 
   it('renames to a new name without merge', async () => {
@@ -179,16 +243,6 @@ describe('EventsSection', () => {
     expect(await screen.findByText(/\(measures\)/)).toBeInTheDocument()
   })
 
-  it('offers no Block for a name that already has a block rule', async () => {
-    const user = userEvent.setup()
-    vi.spyOn(endpoints, 'eventRules').mockResolvedValue({ rules: [{ family: 'product', name: 'signup', action: 'block' }] })
-    renderSection()
-    await screen.findByText('blocked', { selector: 'div *' })
-    await user.click(screen.getByRole('button', { name: 'Actions for signup (product)' }))
-    expect(await screen.findByRole('menuitem', { name: 'Rename…' })).toBeInTheDocument()
-    expect(screen.queryByRole('menuitem', { name: 'Block…' })).not.toBeInTheDocument()
-  })
-
   it('always says widget SQL is not rewritten', async () => {
     const user = userEvent.setup()
     renderSection()
@@ -215,24 +269,6 @@ describe('EventsSection', () => {
     expect(await screen.findByText(/within the raw retention window/)).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Cancel' }))
     expect(onBlock).not.toHaveBeenCalled()
-  })
-
-  it('lists the rules, each removable', async () => {
-    const user = userEvent.setup()
-    vi.spyOn(endpoints, 'eventRules').mockResolvedValue({ rules })
-    const { onRemove } = renderSection()
-    expect(await screen.findByText('a → b')).toBeInTheDocument()
-    expect(screen.getByText('x blocked')).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Remove rule for a' }))
-    expect(onRemove).toHaveBeenCalledWith({ family: 'product', name: 'a' })
-    await user.click(screen.getByRole('button', { name: 'Remove rule for x' }))
-    expect(onRemove).toHaveBeenCalledWith({ family: 'product', name: 'x' })
-  })
-
-  it('shows no Rules heading without rules', async () => {
-    renderSection()
-    await screen.findByText('12,000')
-    expect(screen.queryByText('Rules')).not.toBeInTheDocument()
   })
 
   it('says an empty range has none', async () => {

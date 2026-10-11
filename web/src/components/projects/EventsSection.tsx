@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { MoreHorizontalIcon } from 'lucide-react'
+import { BanIcon, MoreHorizontalIcon, XIcon } from 'lucide-react'
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -9,9 +9,10 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import type { EventFamily, Project } from '@/lib/api'
+import type { EventFamily, EventName, EventRule, Project } from '@/lib/api'
 import { formatExact } from '@/lib/format'
 import { eventNamesQuery, eventRulesQuery } from '@/lib/queries'
+import { cn } from '@/lib/utils'
 import LoadError from './LoadError'
 import RenameEventDialog from './RenameEventDialog'
 
@@ -30,7 +31,37 @@ interface Props {
 
 type Target = { family: EventFamily; name: string }
 
-/** A project's event names with what each received: rename (or merge) and block (confirmed), and the rules in force. */
+/** A listed event with the rules on it: blocked, and the old names renamed to it. */
+type Row = EventName & { blocked: boolean; aliases: string[] }
+
+/**
+ * The range's names with their rules, every rule shown on its event: a
+ * block as the row's state, a rename as an alias under its target. A
+ * blocked name or a rename target with nothing in the range gets a row of
+ * 0, so no rule is out of sight. Blocked rows go last.
+ */
+function eventRows(list: EventName[], rules: EventRule[]): Row[] {
+  const key = (family: EventFamily, name: string) => `${family}/${name}`
+  const blocked = new Set(rules.filter((r) => r.action === 'block').map((r) => key(r.family, r.name)))
+  const aliases = new Map<string, string[]>()
+  for (const r of rules) {
+    if (r.action !== 'rename' || !r.to) continue
+    const k = key(r.family, r.to)
+    aliases.set(k, [...(aliases.get(k) ?? []), r.name])
+  }
+  const row = (e: EventName): Row => ({ ...e, blocked: blocked.has(key(e.family, e.name)), aliases: aliases.get(key(e.family, e.name)) ?? [] })
+  const rows = list.map(row)
+  const seen = new Set(list.map((e) => key(e.family, e.name)))
+  for (const r of rules) {
+    const name = r.action === 'rename' && r.to ? r.to : r.name
+    if (seen.has(key(r.family, name))) continue
+    seen.add(key(r.family, name))
+    rows.push(row({ family: r.family, name, events: 0 }))
+  }
+  return [...rows.filter((r) => !r.blocked), ...rows.filter((r) => r.blocked)]
+}
+
+/** A project's event names with what each received and the rules on each: rename (or merge), block (confirmed) and unblock, aliases removable. */
 export default function EventsSection({ project, range, rawDays, pending, onRename, onBlock, onRemove }: Props) {
   const id = project.project_id
   // The targets outlive their dialogs' close animations, so a title does not flash "Block undefined?".
@@ -39,29 +70,47 @@ export default function EventsSection({ project, range, rawDays, pending, onRena
   const names = useQuery(eventNamesQuery(id, range))
   const rules = useQuery(eventRulesQuery(id))
   const list = names.data?.events ?? []
-  const blocked = new Set((rules.data?.rules ?? []).filter((r) => r.action === 'block').map((r) => `${r.family}/${r.name}`))
+  const rows = names.data ? eventRows(list, rules.data?.rules ?? []) : []
   return (
     <section aria-label="Events" className="flex flex-col gap-3 rounded-lg border p-4">
       <header>
         <h2 className="text-base font-semibold">Events</h2>
       </header>
       {names.data && list.length === 0 && <p className="text-sm text-muted-foreground">No product events or measures in this range.</p>}
-      {list.length > 0 && (
+      {rows.length > 0 && (
         <Table>
           <TableHeader>
             <TableRow><TableHead>Event</TableHead><TableHead>Received</TableHead><TableHead /></TableRow>
           </TableHeader>
           <TableBody>
-            {list.map((e) => (
-              <TableRow key={`${e.family}/${e.name}`}>
+            {rows.map((e) => (
+              <TableRow key={`${e.family}/${e.name}`} className={cn(e.blocked && 'bg-destructive/5 hover:bg-destructive/10')}>
                 <TableCell className="whitespace-normal">
-                  <code className="text-sm break-all">{e.name}</code>
-                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <code className={cn('text-sm break-all', e.blocked && 'text-muted-foreground line-through')}>{e.name}</code>
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                     <span>{e.family}</span>
-                    {blocked.has(`${e.family}/${e.name}`) && <Badge variant="outline">blocked</Badge>}
+                    {e.blocked && <Badge variant="destructive"><BanIcon />Blocked</Badge>}
                   </div>
+                  {e.aliases.length > 0 && (
+                    <div className="mt-1 flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
+                      <span>also from</span>
+                      {e.aliases.map((a) => (
+                        <Badge key={a} variant="outline" className="gap-0.5 pr-0.5 font-mono whitespace-normal">
+                          <span className="break-all">{a}</span>
+                          <Button variant="ghost" size="icon" className="size-4" aria-label={`Remove alias ${a}`} disabled={pending}
+                            onClick={() => void onRemove({ family: e.family, name: a })}>
+                            <XIcon className="size-3" />
+                          </Button>
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
                 </TableCell>
-                <TableCell className="text-sm">{formatExact(e.events)}</TableCell>
+                <TableCell className="text-sm">
+                  {e.blocked ? (
+                    <span className="text-muted-foreground">{formatExact(e.events)}<span className="block text-xs">no longer stored</span></span>
+                  ) : formatExact(e.events)}
+                </TableCell>
                 <TableCell className="text-right">
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
@@ -71,7 +120,9 @@ export default function EventsSection({ project, range, rawDays, pending, onRena
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
                       <DropdownMenuItem disabled={pending} onClick={() => setRenaming({ target: { family: e.family, name: e.name }, open: true })}>Rename…</DropdownMenuItem>
-                      {!blocked.has(`${e.family}/${e.name}`) && (
+                      {e.blocked ? (
+                        <DropdownMenuItem disabled={pending} onClick={() => void onRemove({ family: e.family, name: e.name })}>Unblock</DropdownMenuItem>
+                      ) : (
                         <DropdownMenuItem disabled={pending} onClick={() => setBlocking({ target: { family: e.family, name: e.name }, open: true })}>Block…</DropdownMenuItem>
                       )}
                     </DropdownMenuContent>
@@ -83,22 +134,6 @@ export default function EventsSection({ project, range, rawDays, pending, onRena
         </Table>
       )}
       {names.error && !names.data && <LoadError what="event names" error={names.error} onRetry={() => void names.refetch()} />}
-      {(rules.data?.rules.length ?? 0) > 0 && (
-        <div className="flex flex-col gap-1">
-          <h3 className="text-sm font-medium">Rules</h3>
-          <ul className="flex flex-col">
-            {rules.data!.rules.map((r) => (
-              <li key={`${r.family}/${r.name}`} className="flex items-center justify-between gap-2 text-sm">
-                <span className="min-w-0 break-all">
-                  <span>{r.action === 'rename' ? `${r.name} → ${r.to}` : `${r.name} blocked`}</span>
-                  <span className="text-xs text-muted-foreground"> · {r.family}</span>
-                </span>
-                <Button variant="ghost" size="sm" aria-label={`Remove rule for ${r.name}`} disabled={pending} onClick={() => void onRemove({ family: r.family, name: r.name })}>Remove</Button>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
       {rules.error && !rules.data && <LoadError what="event rules" error={rules.error} onRetry={() => void rules.refetch()} />}
       <RenameEventDialog
         open={renaming?.open === true}

@@ -196,7 +196,7 @@ describe('Project', () => {
     expect(await screen.findByText(/stored raw events expire within 9 days/)).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Block event' }))
     expect(actions.blockEvent).toHaveBeenCalledWith(4, { family: 'product', name: 'checkout' })
-    await user.click(await within(events).findByRole('button', { name: 'Remove rule for a' }))
+    await user.click(await within(events).findByRole('button', { name: 'Remove alias a' }))
     expect(actions.removeEventRule).toHaveBeenCalledWith(4, { family: 'product', name: 'a' })
   })
 

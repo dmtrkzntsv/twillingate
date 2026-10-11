@@ -68,13 +68,13 @@ test('blocks and renames events from a project settings page', async ({ page, re
     await expect(rows.getByRole('row', { name: /signup/ })).toContainText('2')
     await expect(rows.getByRole('row', { name: /spam/ })).toContainText('1')
 
-    // Block spam: confirmed, listed as a rule, and dropped on arrival.
+    // Block spam: confirmed, marked on its row, and dropped on arrival.
     await events.getByRole('button', { name: 'Actions for spam (product)' }).click()
     await page.getByRole('menuitem', { name: 'Block…' }).click()
     await expect(page.getByRole('alertdialog', { name: 'Block spam?' })).toBeVisible()
     await page.getByRole('button', { name: 'Block event' }).click()
     await expect(page.getByText('Blocked spam')).toBeVisible()
-    await expect(events.getByText('spam blocked')).toBeVisible()
+    await expect(rows.getByRole('row', { name: /spam/ }).getByText('Blocked', { exact: true })).toBeVisible()
     await events.getByRole('button', { name: 'Actions for spam (product)' }).click()
     await expect(page.getByRole('menuitem', { name: 'Rename…' })).toBeVisible()
     await expect(page.getByRole('menuitem', { name: 'Block…' })).toHaveCount(0)
@@ -91,15 +91,18 @@ test('blocks and renames events from a project settings page', async ({ page, re
     await page.getByLabel('New name').fill('sign_up')
     await page.getByRole('button', { name: 'Rename', exact: true }).click()
     await expect(page.getByText('Renamed signup to sign_up')).toBeVisible()
-    await expect(events.getByText('signup → sign_up')).toBeVisible()
+    await expect(rows.getByRole('row', { name: /sign_up/ }).getByRole('button', { name: 'Remove alias signup' })).toBeVisible()
     await expect(rows.getByRole('row', { name: /sign_up/ })).toContainText('2')
-    await expect(rows.getByRole('row', { name: /signup/ })).toHaveCount(0)
+    await expect(events.locator('code').filter({ hasText: /^signup$/ })).toHaveCount(0)
 
-    // Remove the block: the rule goes, the row is no longer marked.
-    await events.getByRole('button', { name: 'Remove rule for spam' }).click()
+    // Unblock spam from its row, then remove the alias from under sign_up.
+    await events.getByRole('button', { name: 'Actions for spam (product)' }).click()
+    await page.getByRole('menuitem', { name: 'Unblock' }).click()
     await expect(page.getByText('Removed the rule for spam')).toBeVisible()
-    await expect(events.getByText('spam blocked')).toHaveCount(0)
-    await expect(events.getByRole('button', { name: 'Remove rule for spam' })).toHaveCount(0)
+    await expect(events.getByText('Blocked', { exact: true })).toHaveCount(0)
+    await events.getByRole('button', { name: 'Remove alias signup' }).click()
+    await expect(page.getByText('Removed the rule for signup')).toBeVisible()
+    await expect(events.getByRole('button', { name: 'Remove alias signup' })).toHaveCount(0)
   } finally {
     // Archived, so later specs' Projects page does not grow by one card per run.
     await request.post(`/api/projects/${id}/archive`, { headers: { Authorization: `Bearer ${TOKEN}` } })
