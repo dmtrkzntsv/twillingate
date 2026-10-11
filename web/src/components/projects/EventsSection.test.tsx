@@ -26,8 +26,8 @@ function renderSection(props: Partial<Parameters<typeof EventsSection>[0]> = {})
   return { onRename, onBlock, onRemove }
 }
 
-async function openMenu(user: ReturnType<typeof userEvent.setup>, name: string, item: string) {
-  await user.click(await screen.findByRole('button', { name: `Actions for ${name}` }))
+async function openMenu(user: ReturnType<typeof userEvent.setup>, name: string, item: string, family = 'product') {
+  await user.click(await screen.findByRole('button', { name: `Actions for ${name} (${family})` }))
   await user.click(await screen.findByRole('menuitem', { name: item }))
 }
 
@@ -116,6 +116,55 @@ describe('EventsSection', () => {
     await user.clear(input)
     await user.type(input, ' fresh ')
     expect(button).toBeEnabled()
+  })
+
+  it('turns the dialog into a merge confirmation when the server refuses a name the range does not list', async () => {
+    const user = userEvent.setup()
+    const { onRename } = renderSection()
+    onRename.mockResolvedValueOnce('conflict').mockResolvedValue(true)
+    await openMenu(user, 'signup', 'Rename…')
+    const dialog = await screen.findByRole('dialog')
+    await user.type(within(dialog).getByRole('textbox'), 'older')
+    expect(within(dialog).queryByText(/cannot be undone/)).not.toBeInTheDocument()
+    await user.click(within(dialog).getByRole('button', { name: 'Rename' }))
+    expect(onRename).toHaveBeenLastCalledWith({ family: 'product', from: 'signup', to: 'older' })
+    expect(await within(dialog).findByText(/merges .* cannot be undone/)).toBeInTheDocument()
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    await user.click(within(dialog).getByRole('button', { name: 'Merge into older' }))
+    expect(onRename).toHaveBeenLastCalledWith({ family: 'product', from: 'signup', to: 'older', merge: true })
+    await vi.waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  })
+
+  it('drops the merge confirmation when the name is typed over', async () => {
+    const user = userEvent.setup()
+    const { onRename } = renderSection()
+    onRename.mockResolvedValueOnce('conflict')
+    await openMenu(user, 'signup', 'Rename…')
+    const dialog = await screen.findByRole('dialog')
+    const input = within(dialog).getByRole('textbox')
+    await user.type(input, 'older')
+    await user.click(within(dialog).getByRole('button', { name: 'Rename' }))
+    await within(dialog).findByRole('button', { name: 'Merge into older' })
+    await user.type(input, 'x')
+    expect(within(dialog).getByRole('button', { name: 'Rename' })).toBeEnabled()
+    expect(within(dialog).queryByText(/cannot be undone/)).not.toBeInTheDocument()
+  })
+
+  it('names the family of a measure in the actions label and the dialogs', async () => {
+    const user = userEvent.setup()
+    renderSection()
+    await openMenu(user, 'checkout', 'Rename…', 'measures')
+    expect(await screen.findByText(/\(measures\)/)).toBeInTheDocument()
+  })
+
+  it('offers no Block for a name that already has a block rule', async () => {
+    const user = userEvent.setup()
+    vi.spyOn(endpoints, 'eventRules').mockResolvedValue({ rules: [{ family: 'product', name: 'signup', action: 'block' }] })
+    renderSection()
+    await screen.findByText('blocked', { selector: 'div *' })
+    await user.click(screen.getByRole('button', { name: 'Actions for signup (product)' }))
+    expect(await screen.findByRole('menuitem', { name: 'Rename…' })).toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: 'Block…' })).not.toBeInTheDocument()
   })
 
   it('always says widget SQL is not rewritten', async () => {

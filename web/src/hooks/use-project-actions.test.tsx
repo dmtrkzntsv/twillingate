@@ -121,7 +121,7 @@ describe('useProjectActions', () => {
     const { client, wrapper: w } = wrapper()
     const invalidate = vi.spyOn(client, 'invalidateQueries')
     const { result } = renderHook(() => useProjectActions(), { wrapper: w })
-    const out: boolean[] = []
+    const out: (boolean | string)[] = []
     await act(async () => {
       out.push(await result.current.renameEvent(7, { family: 'product', from: 'a', to: 'b' }))
       out.push(await result.current.renameEvent(7, { family: 'product', from: 'a', to: 'b', merge: true }))
@@ -135,14 +135,35 @@ describe('useProjectActions', () => {
     expect(invalidate.mock.calls.slice(0, 3).map((c) => (c[0] as { queryKey: string[] }).queryKey[0])).toEqual(['event-rules', 'event-names', 'usage'])
   })
 
+  it('resolves conflict without a toast or a refetch on a 409 rename, and toasts a 409 merge', async () => {
+    const spy = vi.spyOn(endpoints, 'renameEvent').mockRejectedValue(new ApiError(409, 'b has events', 'conflict'))
+    const { client, wrapper: w } = wrapper()
+    const invalidate = vi.spyOn(client, 'invalidateQueries')
+    const { result } = renderHook(() => useProjectActions(), { wrapper: w })
+    let out: unknown
+    await act(async () => {
+      out = await result.current.renameEvent(7, { family: 'product', from: 'a', to: 'b' })
+    })
+    expect(out).toBe('conflict')
+    expect(toast.error).not.toHaveBeenCalled()
+    expect(invalidate).not.toHaveBeenCalled()
+    expect(result.current.pending).toBe(false)
+    await act(async () => {
+      out = await result.current.renameEvent(7, { family: 'product', from: 'a', to: 'b', merge: true })
+    })
+    expect(spy).toHaveBeenCalledTimes(2)
+    expect(out).toBe(false)
+    expect(toast.error).toHaveBeenCalledWith('b has events')
+  })
+
   it('resolves false and toasts the refusal when an event rule is refused', async () => {
-    vi.spyOn(endpoints, 'renameEvent').mockRejectedValue(new ApiError(409, 'b has events; merge to combine them', 'conflict'))
+    vi.spyOn(endpoints, 'renameEvent').mockRejectedValue(new ApiError(400, '$b is reserved', 'invalid'))
     const { result } = renderHook(() => useProjectActions(), { wrapper: wrapper().wrapper })
-    let ok: boolean | undefined
+    let ok: boolean | "conflict" | undefined
     await act(async () => {
       ok = await result.current.renameEvent(7, { family: 'product', from: 'a', to: 'b' })
     })
     expect(ok).toBe(false)
-    expect(toast.error).toHaveBeenCalledWith('b has events; merge to combine them')
+    expect(toast.error).toHaveBeenCalledWith('$b is reserved')
   })
 })

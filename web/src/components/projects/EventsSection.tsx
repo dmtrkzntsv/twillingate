@@ -22,8 +22,8 @@ interface Props {
   /** RETENTION_RAW_DAYS, for the block dialog. */
   rawDays?: number
   pending?: boolean
-  /** Each resolves true when done; a refusal is already toasted. */
-  onRename: (body: { family: EventFamily; from: string; to: string; merge?: boolean }) => Promise<boolean>
+  /** Each resolves true when done; a refusal is already toasted (except a rename's 'conflict', which asks to merge). */
+  onRename: (body: { family: EventFamily; from: string; to: string; merge?: boolean }) => Promise<boolean | 'conflict'>
   onBlock: (body: { family: EventFamily; name: string }) => Promise<boolean>
   onRemove: (body: { family: EventFamily; name: string }) => Promise<boolean>
 }
@@ -65,13 +65,15 @@ export default function EventsSection({ project, range, rawDays, pending, onRena
                 <TableCell className="text-right">
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="icon" className="size-7" aria-label={`Actions for ${e.name}`}>
+                      <Button variant="ghost" size="icon" className="size-7" aria-label={`Actions for ${e.name} (${e.family})`}>
                         <MoreHorizontalIcon />
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
                       <DropdownMenuItem disabled={pending} onClick={() => setRenaming({ target: { family: e.family, name: e.name }, open: true })}>Rename…</DropdownMenuItem>
-                      <DropdownMenuItem disabled={pending} onClick={() => setBlocking({ target: { family: e.family, name: e.name }, open: true })}>Block…</DropdownMenuItem>
+                      {!blocked.has(`${e.family}/${e.name}`) && (
+                        <DropdownMenuItem disabled={pending} onClick={() => setBlocking({ target: { family: e.family, name: e.name }, open: true })}>Block…</DropdownMenuItem>
+                      )}
                     </DropdownMenuContent>
                   </DropdownMenu>
                 </TableCell>
@@ -111,7 +113,7 @@ export default function EventsSection({ project, range, rawDays, pending, onRena
           <AlertDialogHeader>
             <AlertDialogTitle className="break-all">Block {blocking?.target.name}?</AlertDialogTitle>
             <AlertDialogDescription>
-              Events named {blocking?.target.name} are dropped when they arrive. The next daily pass (03:00 UTC) deletes its aggregated history;
+              Events named {blocking?.target.name} ({blocking?.target.family}) are dropped when they arrive. The next daily pass (03:00 UTC) deletes its aggregated history;
               stored raw events expire within {rawDays ? `${rawDays} days` : 'the raw retention window'}. Remove the rule to receive it again.
             </AlertDialogDescription>
           </AlertDialogHeader>

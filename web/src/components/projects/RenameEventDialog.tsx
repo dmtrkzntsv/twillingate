@@ -13,22 +13,33 @@ interface Props {
   /** The names listed, to tell a rename from a merge. */
   names: EventName[]
   pending?: boolean
-  /** Resolves true when done, so the dialog closes; false keeps it open (the refusal is already toasted). */
-  onRename: (to: string, merge: boolean) => Promise<boolean>
+  /**
+   * Resolves true when done, so the dialog closes; false keeps it open (the refusal is already toasted); 'conflict'
+   * keeps it open as a merge confirmation: the server knows events under the new name that the listed range does not.
+   */
+  onRename: (to: string, merge: boolean) => Promise<boolean | 'conflict'>
 }
 
 /** Type the new name of an event; a name the family already has makes it a merge, said before it is confirmed. */
 export default function RenameEventDialog({ open, onOpenChange, target, names, pending, onRename }: Props) {
   const [value, setValue] = useState('')
+  // The name the server refused as already taken; typing another name clears it.
+  const [taken, setTaken] = useState<string | null>(null)
   // Start from nothing each time it opens.
   useEffect(() => {
-    if (open) setValue('')
+    if (open) {
+      setValue('')
+      setTaken(null)
+    }
   }, [open])
   const to = value.trim()
-  const merging = target !== null && to !== '' && names.some((n) => n.family === target.family && n.name === to)
+  const merging = target !== null && to !== '' && (to === taken || names.some((n) => n.family === target.family && n.name === to))
   const valid = target !== null && to !== '' && !to.startsWith('$') && to !== target.name
   const submit = async () => {
-    if (valid && (await onRename(to, merging))) onOpenChange(false)
+    if (!valid) return
+    const out = await onRename(to, merging)
+    if (out === 'conflict') setTaken(to)
+    else if (out) onOpenChange(false)
   }
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -43,7 +54,7 @@ export default function RenameEventDialog({ open, onOpenChange, target, names, p
           <DialogHeader>
             <DialogTitle className="break-all">Rename {target?.name}</DialogTitle>
             <DialogDescription>
-              Events arriving as {target?.name} are stored under the new name, and the ones already stored are renamed. Widgets whose SQL names the old event are not changed.
+              Events arriving as {target?.name} ({target?.family}) are stored under the new name, and the ones already stored are renamed. Widgets whose SQL names the old event are not changed.
             </DialogDescription>
           </DialogHeader>
           <div className="flex flex-col gap-2">

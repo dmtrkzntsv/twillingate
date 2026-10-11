@@ -191,7 +191,7 @@ describe('Project', () => {
     const regions = screen.getAllByRole('region').map((r) => r.getAttribute('aria-label'))
     expect(regions.indexOf('Events')).toBe(regions.indexOf('Breakdowns') + 1)
     expect(regions.indexOf('Events')).toBeLessThan(regions.indexOf('Ingest keys'))
-    await user.click(await within(events).findByRole('button', { name: 'Actions for checkout' }))
+    await user.click(await within(events).findByRole('button', { name: 'Actions for checkout (product)' }))
     await user.click(await screen.findByRole('menuitem', { name: 'Block…' }))
     expect(await screen.findByText(/stored raw events expire within 9 days/)).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Block event' }))

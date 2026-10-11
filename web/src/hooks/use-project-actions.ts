@@ -11,8 +11,12 @@ export interface ProjectActions {
   issueKey(id: number, label: string): Promise<IssuedKey | undefined>
   disableKey(id: number, label: string): Promise<boolean | undefined>
   enableKey(id: number, label: string): Promise<boolean | undefined>
-  /** Renames (or, with `merge`, merges) an event as it arrives and in what is stored; resolves true when done. */
-  renameEvent(id: number, body: { family: EventFamily; from: string; to: string; merge?: boolean }): Promise<boolean>
+  /**
+   * Renames (or, with `merge`, merges) an event as it arrives and in what is stored; resolves true when done. A 409
+   * (the new name already has events and `merge` is not set) is not toasted: it resolves 'conflict' so the caller
+   * can ask to merge.
+   */
+  renameEvent(id: number, body: { family: EventFamily; from: string; to: string; merge?: boolean }): Promise<boolean | 'conflict'>
   /** Drops an event as it arrives; the daily pass deletes its aggregates. */
   blockEvent(id: number, body: { family: EventFamily; name: string }): Promise<boolean>
   /** Removes an event's rename or block rule. */
@@ -44,7 +48,7 @@ export function useProjectActions(): ProjectActions {
   const [pending, setPending] = useState(false)
 
   const run = useCallback(
-    async <T,>(fn: () => Promise<T>, done: string, changed: string[]): Promise<T | undefined> => {
+    async <T, R = never>(fn: () => Promise<T>, done: string, changed: string[], refused?: (err: unknown) => R | undefined): Promise<T | R | undefined> => {
       setPending(true)
       try {
         const out = await fn()
@@ -56,6 +60,9 @@ export function useProjectActions(): ProjectActions {
         if (changed.includes('projects')) await refetches[changed.indexOf('projects')]
         return out
       } catch (err) {
+        // A refusal the caller handles itself is handed back instead of toasted.
+        const handled = refused?.(err)
+        if (handled !== undefined) return handled
         toastError(err)
         return undefined
       } finally {
@@ -91,8 +98,15 @@ export function useProjectActions(): ProjectActions {
     issueKey: (id, label) => run(() => endpoints.issueKey(id, label), `Issued ${label}`, KEY_WRITE),
     disableKey: (id, label) => run(async () => (await endpoints.disableKey(id, label), true), `Disabled ${label}`, KEY_WRITE),
     enableKey: (id, label) => run(async () => (await endpoints.enableKey(id, label), true), `Enabled ${label}`, KEY_WRITE),
-    renameEvent: async (id, body) =>
-      (await run(() => endpoints.renameEvent(id, body), body.merge ? `Merged ${body.from} into ${body.to}` : `Renamed ${body.from} to ${body.to}`, EVENT_WRITE)) !== undefined,
+    renameEvent: async (id, body) => {
+      const out = await run(
+        () => endpoints.renameEvent(id, body),
+        body.merge ? `Merged ${body.from} into ${body.to}` : `Renamed ${body.from} to ${body.to}`,
+        EVENT_WRITE,
+        (err) => (!body.merge && err instanceof ApiError && err.status === 409 ? ('conflict' as const) : undefined)
+      )
+      return out === 'conflict' ? out : out !== undefined
+    },
     blockEvent: async (id, body) => (await run(() => endpoints.blockEvent(id, body), `Blocked ${body.name}`, EVENT_WRITE)) !== undefined,
     removeEventRule: async (id, body) =>
       (await run(() => endpoints.removeEventRule(id, body), `Removed the rule for ${body.name}`, EVENT_WRITE)) !== undefined,
