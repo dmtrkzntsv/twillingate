@@ -73,11 +73,15 @@ func TestEventRulesRenameAndRemoveOverREST(t *testing.T) {
 	if got := listRulesREST(t, r, "1"); len(got) != 0 {
 		t.Errorf("rules after remove = %+v", got)
 	}
-	// Removing what is no longer there is a 404, like any missing thing.
+	// Removing what is no longer there is a 404 that names the rule, not
+	// an unknown project.
 	rec = serveREST(t, r, "POST", "/api/projects/1/event-rules/remove",
 		`{"family":"product","name":`+jsonString(name)+`}`)
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("second remove = %d %s, want 404", rec.Code, rec.Body)
+	}
+	if msg := rec.Body.String(); !strings.Contains(msg, "event rule product/") || strings.Contains(msg, "unknown project") {
+		t.Errorf("missing rule message = %s, want it to name the rule, not the project", msg)
 	}
 }
 
@@ -147,8 +151,9 @@ func TestEventRulesRefusalsOverREST(t *testing.T) {
 			t.Errorf("%s = %d %s, want %d", c.name, rec.Code, rec.Body, c.want)
 		}
 	}
-	if rec := serveREST(t, r, "GET", "/api/projects/99/event-rules", ""); rec.Code != http.StatusNotFound {
-		t.Errorf("list of an unknown project = %d %s, want 404", rec.Code, rec.Body)
+	if rec := serveREST(t, r, "GET", "/api/projects/99/event-rules", ""); rec.Code != http.StatusNotFound ||
+		!strings.Contains(rec.Body.String(), "unknown project 99; valid projects") {
+		t.Errorf("list of an unknown project = %d %s, want 404 naming the valid projects", rec.Code, rec.Body)
 	}
 
 	// Renaming onto a name that has events needs merge: "signup" has
@@ -209,6 +214,9 @@ func TestEventNames(t *testing.T) {
 	for _, id := range []string{"m1", "m2", "m3"} {
 		seed(id, "measures", "m", "120.0, 'time', 1")
 	}
+	// $ names belong to the server and take no rule: left out.
+	seed("s1", "product", "$form_submit", "NULL, '', 1")
+	seed("s2", "measures", "$lcp", "900.0, 'time', 1")
 
 	rec := serveREST(t, r, "GET", "/api/projects/"+pid+"/event-names?from=2026-09-01&to=2026-09-30", "")
 	if rec.Code != http.StatusOK {

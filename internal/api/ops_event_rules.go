@@ -61,10 +61,20 @@ type eventNamesOut struct {
 	Events []eventNameOut `json:"events"`
 }
 
+// ruleErr is projectErr for tools where the missing thing may be the rule,
+// not the project: only an unknown project gets the list of valid ones, a
+// missing rule keeps manage's message, which names it. Both are 404.
+func (h *host) ruleErr(ctx context.Context, id int64, err error) error {
+	if h.reg.Snapshot(ctx).Project(id) == nil {
+		return h.unknownProjectErr(ctx, id)
+	}
+	return err
+}
+
 func (h *host) listEventRules(ctx context.Context, in idIn) (listEventRulesOut, error) {
 	rules, err := h.ops.ListEventRules(ctx, in.ProjectID)
 	if err != nil {
-		return listEventRulesOut{}, h.projectErr(ctx, in.ProjectID, err)
+		return listEventRulesOut{}, h.ruleErr(ctx, in.ProjectID, err)
 	}
 	out := listEventRulesOut{Rules: make([]eventRuleOut, 0, len(rules))}
 	for _, r := range rules {
@@ -76,7 +86,7 @@ func (h *host) listEventRules(ctx context.Context, in idIn) (listEventRulesOut, 
 func (h *host) renameEvent(ctx context.Context, in renameEventIn) (renameEventOut, error) {
 	rule, rewritten, err := h.ops.RenameEvent(ctx, actorFrom(ctx), in.ProjectID, in.Family, in.From, in.To, in.Merge)
 	if err != nil {
-		return renameEventOut{}, h.projectErr(ctx, in.ProjectID, err)
+		return renameEventOut{}, h.ruleErr(ctx, in.ProjectID, err)
 	}
 	if rewritten == nil {
 		rewritten = map[string]int64{}
@@ -87,31 +97,31 @@ func (h *host) renameEvent(ctx context.Context, in renameEventIn) (renameEventOu
 func (h *host) blockEvent(ctx context.Context, in eventNameIn) (blockEventOut, error) {
 	rule, err := h.ops.BlockEvent(ctx, actorFrom(ctx), in.ProjectID, in.Family, in.Name)
 	if err != nil {
-		return blockEventOut{}, h.projectErr(ctx, in.ProjectID, err)
+		return blockEventOut{}, h.ruleErr(ctx, in.ProjectID, err)
 	}
 	return blockEventOut{Rule: ruleOut(rule)}, nil
 }
 
 func (h *host) removeEventRule(ctx context.Context, in eventNameIn) (okOut, error) {
 	if err := h.ops.RemoveEventRule(ctx, actorFrom(ctx), in.ProjectID, in.Family, in.Name); err != nil {
-		return okOut{}, h.projectErr(ctx, in.ProjectID, err)
+		return okOut{}, h.ruleErr(ctx, in.ProjectID, err)
 	}
 	return okOut{Status: "removed"}, nil
 }
 
 // eventNames feeds the console's Settings page: every product and measures
 // name with events in the range, busiest first. Product counts events;
-// measures count samples.
+// measures count samples. $ names are left out: rules refuse them.
 func (h *host) eventNames(ctx context.Context, in rangeIn) (eventNamesOut, error) {
 	if err := h.checkRange(ctx, in); err != nil {
 		return eventNamesOut{}, err
 	}
 	res, err := h.run(ctx, `SELECT family, name, events FROM (
 		SELECT 'product' AS family, event_name AS name, SUM(count) AS events
-		  FROM v_product_daily WHERE project_id=?1 AND day BETWEEN ?2 AND ?3 GROUP BY event_name
+		  FROM v_product_daily WHERE project_id=?1 AND day BETWEEN ?2 AND ?3 AND event_name NOT LIKE '$%' GROUP BY event_name
 		UNION ALL
 		SELECT 'measures', event_name, SUM(samples)
-		  FROM v_measures_daily WHERE project_id=?1 AND day BETWEEN ?2 AND ?3 GROUP BY event_name)
+		  FROM v_measures_daily WHERE project_id=?1 AND day BETWEEN ?2 AND ?3 AND event_name NOT LIKE '$%' GROUP BY event_name)
 		ORDER BY events DESC, name`, in.ProjectID, in.From, in.To)
 	if err != nil {
 		return eventNamesOut{}, err
