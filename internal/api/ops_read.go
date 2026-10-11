@@ -102,6 +102,7 @@ type projectOut struct {
 	ProjectID      int64    `json:"project_id"`
 	Name           string   `json:"name"`
 	Archived       bool     `json:"archived,omitempty"`
+	ArchivedAt     string   `json:"archived_at,omitempty"`
 	AllowedOrigins []string `json:"allowed_origins"`
 	Attributes     []string `json:"attributes,omitempty"`
 }
@@ -117,7 +118,7 @@ func (h *host) listProjects(ctx context.Context, _ struct{}) (listProjectsOut, e
 	out := listProjectsOut{Projects: []projectOut{}}
 	for _, p := range h.reg.Snapshot(ctx).Projects() {
 		out.Projects = append(out.Projects, projectOut{
-			ProjectID: p.ID, Name: p.Name, Archived: p.Archived,
+			ProjectID: p.ID, Name: p.Name, Archived: p.Archived, ArchivedAt: p.ArchivedAt,
 			AllowedOrigins: p.AllowedOrigins, Attributes: p.Attributes,
 		})
 	}

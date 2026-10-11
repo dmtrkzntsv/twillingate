@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sort"
 	"testing"
+	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
@@ -157,12 +158,38 @@ func TestArchiveRestoreProject(t *testing.T) {
 	if !ps[0].Archived {
 		t.Fatal("not archived")
 	}
+	// Stored as datetime('now') writes it, read back as RFC 3339.
+	at, err := time.Parse(time.RFC3339, ps[0].ArchivedAt)
+	if err != nil || time.Since(at) < -time.Minute || time.Since(at) > time.Minute {
+		t.Errorf("ArchivedAt = %q (%v), want RFC 3339 about now", ps[0].ArchivedAt, err)
+	}
 	if err := d.SetProjectArchived(ctx, id, false, store.AuditEntry{Actor: "mcp", Action: "project.restore", Subject: "1"}); err != nil {
 		t.Fatal(err)
 	}
 	ps, _, _ = d.LoadRegistry(ctx)
-	if ps[0].Archived {
-		t.Fatal("still archived")
+	if ps[0].Archived || ps[0].ArchivedAt != "" {
+		t.Fatalf("still archived: %+v", ps[0])
+	}
+}
+
+// A project archived before this read existed has archived_at as
+// datetime('now') wrote it; it reads as RFC 3339 like a new one.
+func TestLoadRegistryArchivedAtIsRFC3339(t *testing.T) {
+	d := openRegistryDB(t)
+	ctx := context.Background()
+	id, err := d.CreateProject(ctx, store.RegistryProject{Name: "a", AllowedOrigins: "[]"}, store.AuditEntry{Actor: "cli", Action: "project.create"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.db.ExecContext(ctx, `UPDATE projects SET archived_at='2026-09-01 12:30:00' WHERE id=?`, id); err != nil {
+		t.Fatal(err)
+	}
+	ps, _, err := d.LoadRegistry(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ps[0].Archived || ps[0].ArchivedAt != "2026-09-01T12:30:00Z" {
+		t.Errorf("project = %+v, want archived at 2026-09-01T12:30:00Z", ps[0])
 	}
 }
 

@@ -540,13 +540,13 @@ describe('Archive, forms', () => {
 })
 
 describe('Archive, projects', () => {
-  it('lists the archived projects in list order, each linking to its page, with Restore', async () => {
+  it('lists the archived projects in list order, each linking to its page, with its purge date and Restore', async () => {
     const user = userEvent.setup()
-    mockApiWith([info(10, 'Launch week', 'user', 10)])
+    mockApiWith([info(10, 'Launch week', 'user', 10)], 30)
     vi.mocked(endpoints.projects).mockResolvedValue({ projects: [
       { project_id: 4, name: 'shop', allowed_origins: [] },
-      { project_id: 3, name: 'legacy', archived: true, allowed_origins: [] },
-      { project_id: 7, name: 'old-blog', archived: true, allowed_origins: [] },
+      { project_id: 3, name: 'legacy', archived: true, archived_at: '2026-09-01T12:30:00Z', allowed_origins: [] },
+      { project_id: 7, name: 'old-blog', archived: true, archived_at: '2026-09-05T00:00:00Z', allowed_origins: [] },
     ] })
     const restoreProject = vi.spyOn(endpoints, 'restoreProject').mockResolvedValue({ status: 'restored' })
     renderArchive()
@@ -554,9 +554,21 @@ describe('Archive, projects', () => {
     const rows = within(section).getAllByRole('listitem')
     expect(rows.map((r) => within(r).getByRole('link').textContent)).toEqual(['legacy', 'old-blog'])
     expect(within(rows[0]).getByRole('link', { name: 'legacy' })).toHaveAttribute('href', '/projects/3')
-    expect(within(rows[0]).getByText('archived')).toBeInTheDocument()
+    expect(within(rows[0]).getByText(/archived · deleted on/)).toBeInTheDocument()
+    expect(within(rows[0]).getByText('1 Oct')).toBeInTheDocument()
+    expect(within(rows[1]).getByText('5 Oct')).toBeInTheDocument()
     await user.click(within(rows[0]).getByRole('button', { name: 'Restore' }))
     await waitFor(() => expect(restoreProject).toHaveBeenCalledWith(3))
+  })
+
+  it('says just "archived" without purge_after_days', async () => {
+    mockApiWith([info(10, 'Launch week', 'user', 10)])
+    vi.mocked(endpoints.projects).mockResolvedValue({ projects: [
+      { project_id: 3, name: 'legacy', archived: true, archived_at: '2026-09-01T12:30:00Z', allowed_origins: [] },
+    ] })
+    renderArchive()
+    const section = await screen.findByRole('region', { name: 'Projects' })
+    expect(within(section).getByText('archived')).toBeInTheDocument()
   })
 
   it('has no Projects section when none is archived, and reads "Nothing archived."', async () => {

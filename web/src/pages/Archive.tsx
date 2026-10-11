@@ -91,7 +91,7 @@ function ShareThumb({ share }: { share: WidgetShare }) {
  * takes no writes.
  *
  * Then a Projects section lists the archived projects, in list order, each
- * linking to its page with Restore. It is left out when there are none, and
+ * linking to its page with its purge date and Restore. It is left out when there are none, and
  * in reporting dev, which takes no writes.
  *
  * Then a Shares section lists the archived widget shares,
@@ -224,7 +224,7 @@ export default function Archive() {
                         {p.name}
                       </Link>
                     </div>
-                    <div className="text-xs text-muted-foreground">archived</div>
+                    <div className="text-xs break-words text-muted-foreground">{archivedStatus(p.archived_at)}</div>
                   </div>
                   <Button
                     variant="outline"

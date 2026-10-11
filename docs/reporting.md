@@ -1044,7 +1044,8 @@ Archiving is how to undo, and the only way to remove anything:
   <date>", and Restore, which asks Archive after (default 1 month).
   Archived shares answer 404 until restored.
 - The Archive page lists the archived projects in a **Projects** section,
-  left out when there are none, each linking to its page with Restore
+  left out when there are none, each linking to its page with "archived ·
+  deleted on <date>" (from `list_projects`' `archived_at`) and Restore
   (`restore_project`); the Projects page shows only the live ones.
 
 Archived projects, dashboards, widgets and widget shares are **deleted

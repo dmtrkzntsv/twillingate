@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
@@ -416,6 +417,9 @@ func TestDevHandlerListsArchivedProjects(t *testing.T) {
 	archived := map[int64]bool{}
 	for _, p := range out.Projects {
 		archived[p.ProjectID] = p.Archived
+		if _, err := time.Parse(time.RFC3339, p.ArchivedAt); (err == nil) != p.Archived {
+			t.Errorf("project %d archived_at = %q, want RFC 3339 exactly when archived", p.ProjectID, p.ArchivedAt)
+		}
 	}
 	if len(out.Projects) != 2 || archived[live] || !archived[gone] {
 		t.Errorf("projects = %+v, want %d live and %d archived", out.Projects, live, gone)

@@ -38,13 +38,13 @@ func TestArchiveAndRestoreProjectRoundTrip(t *testing.T) {
 	if err := ops.ArchiveProject(ctx, "cli", p.ID); err != nil {
 		t.Fatal(err)
 	}
-	if got := reg.Snapshot(ctx).Project(p.ID); got == nil || !got.Archived {
+	if got := reg.Snapshot(ctx).Project(p.ID); got == nil || !got.Archived || got.ArchivedAt == "" {
 		t.Fatalf("after archive, Project = %+v", got)
 	}
 	if err := ops.RestoreProject(ctx, "cli", p.ID); err != nil {
 		t.Fatal(err)
 	}
-	if got := reg.Snapshot(ctx).Project(p.ID); got == nil || got.Archived {
+	if got := reg.Snapshot(ctx).Project(p.ID); got == nil || got.Archived || got.ArchivedAt != "" {
 		t.Fatalf("after restore, Project = %+v", got)
 	}
 }
