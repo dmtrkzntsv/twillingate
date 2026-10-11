@@ -156,12 +156,24 @@ describe('EventsSection', () => {
     expect(row('old_signup')).not.toHaveClass('bg-sky-500/5')
   })
 
-  it('offers Rename, Merge into and Block on an event, and no Add alias', async () => {
+  it('offers Rename, Merge into, Add alias and Block on an event', async () => {
     const user = userEvent.setup()
     renderSection()
     await user.click(await screen.findByRole('button', { name: 'Actions for signup (product)' }))
     const items = await screen.findAllByRole('menuitem')
-    expect(items.map((i) => i.textContent)).toEqual(['Rename…', 'Merge into…', 'Block…'])
+    expect(items.map((i) => i.textContent)).toEqual(['Rename…', 'Merge into…', 'Add alias…', 'Block…'])
+  })
+
+  it('adds an alias to an event with none yet from its menu', async () => {
+    const user = userEvent.setup()
+    const { onAddAlias } = renderSection()
+    await openMenu(user, 'signup', 'Add alias…')
+    const dialog = await screen.findByRole('dialog', { name: 'Add an alias to signup' })
+    await user.type(within(dialog).getByLabelText('Old name'), ' sign_up_v1 ')
+    expect(within(dialog).getByText(/Events sent as sign_up_v1 are stored as signup\./)).toBeInTheDocument()
+    await user.click(within(dialog).getByRole('button', { name: 'Add alias' }))
+    expect(onAddAlias).toHaveBeenCalledWith({ family: 'product', alias: 'sign_up_v1', to: 'signup' })
+    await vi.waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
   })
 
   it('warns that an alias with events of its own merges them into the event', async () => {

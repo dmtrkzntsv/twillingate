@@ -135,6 +135,7 @@ export default function EventsSection({ project, range, rawDays, pending, onRena
                     <DropdownMenuContent align="end">
                       <DropdownMenuItem disabled={pending} onClick={() => setRenaming({ target: { family: e.family, name: e.name }, open: true })}>Rename…</DropdownMenuItem>
                       <DropdownMenuItem disabled={pending} onClick={() => setMerging({ target: { family: e.family, name: e.name }, open: true })}>Merge into…</DropdownMenuItem>
+                      <DropdownMenuItem disabled={pending} onClick={() => setAliasing({ target: { family: e.family, name: e.name }, open: true })}>Add alias…</DropdownMenuItem>
                       {e.blocked ? (
                         <DropdownMenuItem disabled={pending} onClick={() => void onRemove({ family: e.family, name: e.name })}>Unblock</DropdownMenuItem>
                       ) : (
