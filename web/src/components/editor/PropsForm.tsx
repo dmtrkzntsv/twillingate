@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react'
-import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { NativeSelect } from '@/components/ui/native-select'
 import { Switch } from '@/components/ui/switch'
@@ -17,6 +16,8 @@ interface FormProps {
   columns: string[]
   /** False while any field holds text that is not valid JSON; the editor disables Save on it. */
   onValidity(ok: boolean): void
+  /** All props as one JSON object instead of a field each; the editor's Settings bar flips it. */
+  raw?: boolean
 }
 
 /** `value` with `key` set in place (kept in order), or removed when `v` is undefined. */
@@ -48,13 +49,9 @@ export function labelOf(key: string): string {
 export function SettingRow({ label, htmlFor, children }: { label: React.ReactNode; htmlFor?: string; children: React.ReactNode }) {
   return (
     <div className="grid min-w-0 grid-cols-1 gap-1.5 sm:col-span-2 sm:grid-cols-subgrid">
-      {label === null ? (
-        <span className="max-sm:hidden" />
-      ) : (
-        <Label htmlFor={htmlFor} className="text-muted-foreground sm:h-9">
-          {label}
-        </Label>
-      )}
+      <Label htmlFor={htmlFor} className="text-muted-foreground sm:h-9">
+        {label}
+      </Label>
       <div className="min-w-0 sm:max-w-md [&_[data-slot=native-select-wrapper]]:w-full">{children}</div>
     </div>
   )
@@ -159,12 +156,19 @@ function EnumMap({
 }
 
 /** The props of one component as a form generated from its contract (spec D11), or as one JSON object. */
-export default function PropsForm({ component, value, onChange, columns, onValidity }: FormProps) {
+export default function PropsForm({ component, value, onChange, columns, onValidity, raw = false }: FormProps) {
   const fields = fieldsOf(widgets[component]?.contract.props ?? {})
-  const [raw, setRaw] = useState(false)
-  const [rawText, setRawText] = useState('')
+  const [rawText, setRawText] = useState(() => JSON.stringify(value, null, 2))
   const [rawBad, setRawBad] = useState(false)
   const [badKeys, setBadKeys] = useState<ReadonlySet<string>>(new Set())
+  // Each flip starts afresh: JSON from the props as they are, the form with nothing marked bad.
+  const [shownRaw, setShownRaw] = useState(raw)
+  if (raw !== shownRaw) {
+    setShownRaw(raw)
+    setRawText(JSON.stringify(value, null, 2))
+    setRawBad(false)
+    setBadKeys(new Set())
+  }
 
   const ok = raw ? !rawBad : badKeys.size === 0
   const report = useRef(onValidity)
@@ -181,23 +185,6 @@ export default function PropsForm({ component, value, onChange, columns, onValid
       else next.delete(key)
       return next
     })
-
-  const toggle = (
-    <Button
-      type="button"
-      variant="link"
-      size="sm"
-      className="h-auto p-0"
-      onClick={() => {
-        setRawText(JSON.stringify(value, null, 2))
-        setRawBad(false)
-        setBadKeys(new Set())
-        setRaw(!raw)
-      }}
-    >
-      {raw ? 'Edit props as a form' : 'Edit props as JSON'}
-    </Button>
-  )
 
   if (raw) {
     return (
@@ -220,7 +207,6 @@ export default function PropsForm({ component, value, onChange, columns, onValid
           />
           {rawBad && <p className="mt-1.5 text-xs text-destructive">not valid JSON (an object is expected)</p>}
         </SettingRow>
-        <SettingRow label={null}>{toggle}</SettingRow>
       </div>
     )
   }
@@ -268,7 +254,6 @@ export default function PropsForm({ component, value, onChange, columns, onValid
             return <JsonField key={key} name={f.key} value={value[f.key]} onValue={set} onBad={markBad(f.key)} />
         }
       })}
-      {fields.length > 0 && <SettingRow label={null}>{toggle}</SettingRow>}
     </div>
   )
 }

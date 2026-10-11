@@ -238,6 +238,22 @@ describe('WidgetEditor', () => {
     expect(screen.getByLabelText('SQL')).toHaveValue(line.source.content)
   })
 
+  it("flips the props between the form and JSON from the Settings bar, and shows the run's warning there", async () => {
+    vi.spyOn(endpoints, 'previewWidget').mockResolvedValue({
+      columns: ['x'],
+      rows: [['2026-09-01']],
+      truncated: false,
+      problem: 'line needs y (number); columns are x',
+      elapsed_ms: 4,
+    })
+    open({ widget: { ...line, props: { curve: 'step' } } })
+    expect(await screen.findByRole('alert')).toHaveTextContent('line needs y')
+    await userEvent.click(screen.getByRole('button', { name: 'Edit props as JSON' }))
+    expect(screen.getByLabelText('Props JSON')).toHaveValue(JSON.stringify({ curve: 'step' }, null, 2))
+    await userEvent.click(screen.getByRole('button', { name: 'Edit props as a form' }))
+    expect(screen.getByLabelText('curve')).toHaveValue('step')
+  })
+
   it('a markdown component has no Run and previews the text', async () => {
     open({ widget: { ...line, component: 'markdown', source: { type: 'md', content: '# Hello' }, props: {} } })
     expect(await screen.findByRole('heading', { name: 'Hello' })).toBeInTheDocument()

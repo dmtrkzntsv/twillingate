@@ -35,6 +35,19 @@ export function ranOf(state: RunState): Ran | undefined {
 /** The keys that run the query, as this platform names them. */
 export const RUN_KEYS = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌘↵' : 'Ctrl ↵'
 
+/**
+ * The run's warning, while it still speaks for what is on screen: it was
+ * checked against the run's component and props, so a change of either
+ * drops it until the run that follows.
+ */
+export function problemOf(state: RunState, component: string | null, props: Record<string, unknown>): string | undefined {
+  const ran = ranOf(state)
+  return ran && checkedAgainst(ran, component, props) ? ran.result.problem : undefined
+}
+
+const checkedAgainst = (ran: Ran, component: string | null, props: Record<string, unknown>) =>
+  ran.component === component && JSON.stringify(ran.props) === JSON.stringify(props)
+
 const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`
 
 interface PreviewProps {
@@ -50,10 +63,9 @@ interface PreviewProps {
 }
 
 /**
- * The chosen component drawn from the last run's rows, as the dashboard
- * draws it (spec D13), with the run's warning beneath. A change of
- * component or props redraws from the same rows at once; the warning
- * waits for the run that checks them.
+ * The chosen component drawn from the last run's rows in its card, as the
+ * dashboard draws it (spec D13). A change of component or props redraws
+ * from the same rows at once, dimmed until the run that checks them.
  */
 export function Preview({ component, props, title, height, state, stale }: PreviewProps) {
   const ran = ranOf(state)
@@ -62,9 +74,8 @@ export function Preview({ component, props, title, height, state, stale }: Previ
   const Component = module?.default
   // A remote table pages through the server; here it has only these rows.
   const drawn = component === 'table' ? { ...props, mode: undefined } : props
-  // The run's warning is about the visualization it was checked against.
-  const checked = ran !== undefined && ran.component === component && JSON.stringify(ran.props) === JSON.stringify(props)
-  const problem = checked ? result?.problem : undefined
+  const checked = ran !== undefined && checkedAgainst(ran, component, props)
+  const problem = problemOf(state, component, props)
   const dim = state.kind === 'running' || stale || !checked
 
   let body
@@ -104,16 +115,8 @@ export function Preview({ component, props, title, height, state, stale }: Previ
     )
 
   return (
-    <section aria-label="Preview" className="flex min-w-0 flex-col gap-3">
-      <div className="min-w-0" style={{ height: rowsPx(height) }}>
-        <WidgetFrame title={title}>{body}</WidgetFrame>
-      </div>
-      {problem && (
-        <Alert>
-          <TriangleAlertIcon />
-          <AlertDescription className="break-words">{problem}</AlertDescription>
-        </Alert>
-      )}
+    <section aria-label="Preview" className="min-w-0" style={{ height: rowsPx(height) }}>
+      <WidgetFrame title={title}>{body}</WidgetFrame>
     </section>
   )
 }
@@ -164,14 +167,14 @@ export function Rows({ state, stale }: { state: RunState; stale: boolean }) {
   const result = ranOf(state)?.result
   if (state.kind === 'idle') {
     return (
-      <p className="p-4 text-sm text-muted-foreground">
+      <p className="px-4 py-4 text-sm text-muted-foreground sm:px-6">
         Run the query to see its rows <Kbd>{RUN_KEYS}</Kbd>
       </p>
     )
   }
   if (state.kind === 'failed') {
     return (
-      <div className="p-4">
+      <div className="p-4 sm:px-6">
         <Alert variant="destructive">
           <TriangleAlertIcon />
           <AlertDescription className="break-words whitespace-pre-wrap">{state.message}</AlertDescription>
@@ -194,7 +197,7 @@ export function Rows({ state, stale }: { state: RunState; stale: boolean }) {
         <TableHeader className="sticky top-0 z-10 bg-card shadow-[inset_0_-1px_0_var(--border)]">
           <TableRow>
             {result.columns.map((c, i) => (
-              <TableHead key={i} className="px-4 text-muted-foreground">
+              <TableHead key={i} className="px-4 text-muted-foreground sm:px-6">
                 {c}
               </TableHead>
             ))}
@@ -203,7 +206,7 @@ export function Rows({ state, stale }: { state: RunState; stale: boolean }) {
         <TableBody>
           {result.rows.length === 0 && (
             <TableRow>
-              <TableCell colSpan={Math.max(result.columns.length, 1)} className="px-4 text-muted-foreground">
+              <TableCell colSpan={Math.max(result.columns.length, 1)} className="px-4 text-muted-foreground sm:px-6">
                 No rows
               </TableCell>
             </TableRow>
@@ -211,7 +214,7 @@ export function Rows({ state, stale }: { state: RunState; stale: boolean }) {
           {result.rows.map((row, r) => (
             <TableRow key={r}>
               {row.map((cell, i) => (
-                <TableCell key={i} className="px-4 whitespace-nowrap tabular-nums">
+                <TableCell key={i} className="px-4 whitespace-nowrap tabular-nums sm:px-6">
                   {cell}
                 </TableCell>
               ))}

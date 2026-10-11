@@ -71,17 +71,23 @@ read-only, as the server already enforces.
     top-right slot. System dashboards keep today's menu.
 - **D9. The editor is one full-screen modal for add and edit.** A header
   bar with the heading, Cancel and Save. From 1024px, two halves of one
-  shape, each scrolling on its own: a work surface on the dashboard's own
-  background above, its details on white below. Left: the preview (the
-  widget card at the widget's height, on a faint grid), then the settings
-  as one aligned list (label column, then controls of one width): Title,
-  Visualization with a one-line hint of what the component needs (from
-  the contract's `inputs`, e.g. "needs: day, ≥1 number"), then the props.
-  Right: a toolbar (project, range, Run query), the SQL editor, a Rows
-  bar with the run's status, and the rows filling what is left. Phone:
-  the same blocks stacked, the whole scrolling, labels above controls;
-  nothing scrolls sideways at 360px, the result table and chart scroll
-  inside their own box.
+  shape, row for row, so every line runs across both: a toolbar; a work
+  surface on the dashboard's own background, one height on both sides
+  (the widget's height plus padding); a bar; the details on white,
+  scrolling on its own. Left: Preview with the visualization select; the
+  widget card on a faint grid; Settings with "Edit props as JSON"; the
+  run's warning, then one aligned list (label column, controls of one
+  width): Title, Columns (what the component needs, from the contract's
+  `inputs`), the props. Right: SQL with project, range and Run query; the
+  SQL editor; Rows with the run's status; the rows. Two lines drag to
+  resize, by pointer or arrow keys, a double click putting them back: the
+  one between the halves (each keeps at least a quarter; the split is kept
+  in localStorage on this device) and the one under the surfaces, which
+  moves on both sides at once (each open starts fitted to the card; a
+  shorter surface scrolls the card). Phone: the same
+  blocks stacked, the whole scrolling, labels above controls; nothing
+  scrolls sideways at 360px, the result table and chart scroll inside
+  their own box.
 - **D10. Visualization select** lists every component with its icon. Add
   starts with none chosen; Save is disabled until one is. Switching keeps
   the props whose key and value the new schema accepts and drops the rest;
@@ -107,8 +113,8 @@ read-only, as the server already enforces.
   Typing SQL never runs it, and no automatic run reads SQL typed since the
   last run (⌘/Ctrl+Enter or Run does). The left half draws the chosen
   component from the rows; the right shows the rows bare, with row count,
-  elapsed ms and truncated note beside Run. `problem` is a warning under
-  the preview; a 400 shows its message in place of the rows. Editing the
+  elapsed ms and truncated note in the Rows bar. `problem` is a warning
+  atop the settings; a 400 shows its message in place of the rows. Editing the
   SQL after a run dims the results and marks them "Changed since last
   run"; editing the component or props redraws the preview from the same
   rows at once, dimmed and without `problem` (it was checked against the

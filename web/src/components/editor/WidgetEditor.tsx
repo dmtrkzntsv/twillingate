@@ -1,6 +1,6 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { PlayIcon, TriangleAlertIcon } from 'lucide-react'
+import { BracesIcon, PlayIcon, TriangleAlertIcon } from 'lucide-react'
 import RangeSwitcher, { type RangeValue } from '@/components/RangeSwitcher'
 import WidgetFrame from '@/components/WidgetFrame'
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -25,12 +25,13 @@ import { ApiError, endpoints, type Widget } from '@/lib/api'
 import { rowsPx } from '@/lib/grid'
 import { projectsQuery, schemaViewsQuery } from '@/lib/queries'
 import { resolve } from '@/lib/ranges'
-import { carryProps, needsHint } from '@/lib/props-form'
+import { carryProps, fieldsOf, needsHint } from '@/lib/props-form'
 import { parseSchemaViews } from '@/lib/schema-views'
 import { draftOf, isDirty, sourceOf, sourceTypeOf, usesParams, type Draft } from '@/lib/widget-draft'
 import { iconOf } from './component-icons'
 import PropsForm, { SettingRow } from './PropsForm'
-import { Preview, ranOf, Rows, RUN_KEYS, RunStatus, type RunState } from './ResultsPane'
+import Splitter from './Splitter'
+import { Preview, problemOf, ranOf, Rows, RUN_KEYS, RunStatus, type RunState } from './ResultsPane'
 
 /**
  * Whether Escape belongs to the SQL editor rather than the dialog: with
@@ -61,6 +62,48 @@ export interface WidgetEditorProps {
   /** Saves the draft; resolves on success (the modal closes), throws ApiError/Error to show its message in the banner. */
   onSave(draft: Draft): Promise<void>
 }
+
+/** The work surfaces' padding around the widget card, from lg (Tailwind's p-8). */
+const SURFACE_PAD_PX = 32
+
+// The heights of a toolbar and a bar (lg:h-12, lg:h-11), and the least the details keep.
+const TOOLBAR_PX = 48
+const BAR_PX = 44
+const DETAILS_MIN_PX = 96
+// The SQL editor's own least height (CodeEditor's min-h-40).
+const SURFACE_MIN_PX = 160
+// Neither half narrower than this share of the width.
+const SPLIT_MIN = 25
+const SPLIT_KEY = 'twillingate.editor.split'
+
+function readSplit(): number {
+  try {
+    const v = Number(localStorage.getItem(SPLIT_KEY))
+    return v >= SPLIT_MIN && v <= 100 - SPLIT_MIN ? v : 50
+  } catch {
+    return 50
+  }
+}
+
+/**
+ * An element's size, kept as it changes. A callback ref, not an object:
+ * the dialog's content mounts a render after the editor does.
+ */
+function useSize(): [(el: HTMLElement | null) => void, { width: number; height: number }] {
+  const [el, setEl] = useState<HTMLElement | null>(null)
+  const [size, setSize] = useState({ width: 0, height: 0 })
+  useEffect(() => {
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(([entry]) => setSize({ width: entry.contentRect.width, height: entry.contentRect.height }))
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [el])
+  return [setEl, size]
+}
+
+// The two halves' header rows: one height each, so their lines meet across the divide.
+const toolbar = 'flex min-h-12 min-w-0 shrink-0 flex-wrap items-center gap-2 border-b px-4 py-2 sm:px-6 lg:h-12 lg:flex-nowrap lg:py-0'
+const bar = 'flex min-h-11 min-w-0 shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b px-4 py-2 sm:px-6 lg:h-11 lg:flex-nowrap lg:py-0'
 
 /** How long a change of visualization, props, project or range waits before it runs the query. */
 const AUTO_RUN_MS = 400
@@ -104,6 +147,19 @@ function Editor({ open, onOpenChange, widget, defaults, onSave }: WidgetEditorPr
   // Runs overlap (a key press while an automatic one is out): only the latest one's answer shows.
   const latest = useRef(0)
   const [propsValid, setPropsValid] = useState(true)
+  const [raw, setRaw] = useState(false)
+  // The panes' sizes from lg: the halves' split (a percentage, kept on this device) and the surfaces' height.
+  const [split, setSplit] = useState(readSplit)
+  const keepSplit = (v: number) => {
+    setSplit(v)
+    try {
+      localStorage.setItem(SPLIT_KEY, String(Math.round(v * 10) / 10))
+    } catch {
+      // Storage blocked: the split lasts until the editor closes.
+    }
+  }
+  const [surfacePx, setSurfacePx] = useState<number | null>(null)
+  const [box, size] = useSize()
   const [saving, setSaving] = useState(false)
   const savingNow = useRef(false)
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -191,6 +247,12 @@ function Editor({ open, onOpenChange, widget, defaults, onSave }: WidgetEditorPr
   // Escape and Cancel both come here.
   const close = () => (dirty ? setConfirmDiscard(true) : onOpenChange(false))
   const height = widget?.height ?? module?.contract.defaultHeight ?? 8
+  // The surfaces fit the card until dragged; the room left keeps a bar and some details below.
+  const fit = rowsPx(height) + 2 * SURFACE_PAD_PX
+  const surfaceMax = Math.max(SURFACE_MIN_PX, size.height - TOOLBAR_PX - BAR_PX - DETAILS_MIN_PX)
+  const surface = Math.min(surfacePx ?? fit, surfaceMax > SURFACE_MIN_PX ? surfaceMax : Infinity)
+  const hasFields = module !== undefined && fieldsOf(module.contract.props).length > 0
+  const problem = markdown ? undefined : problemOf(run, component, draft.props)
 
   const projectPicker = uses.project && (
     <Select value={projectId === undefined ? '' : String(projectId)} onValueChange={(v) => setPicked(Number(v))}>
@@ -243,69 +305,123 @@ function Editor({ open, onOpenChange, widget, defaults, onSave }: WidgetEditorPr
             </Alert>
           )}
           {/*
-            Two halves of one shape: a work surface on the dashboard's own
-            background above (the widget as it will sit there; the code that
-            feeds it), and its details on white below (settings; rows).
-            Phone: stacked, scrolling as a whole. From lg: each half scrolls on its own.
+            Two halves of one shape, row for row: a toolbar, a work surface
+            on the dashboard's own background (the widget as it will sit
+            there; the code that feeds it), a bar, then the details on white
+            (settings; rows). The surfaces share one height, so every line
+            runs across both. Phone: stacked, scrolling as a whole.
           */}
-          <div className="grid min-h-0 flex-1 grid-cols-1 overflow-y-auto lg:grid-cols-2 lg:overflow-hidden">
-            <div className="flex min-w-0 flex-col lg:min-h-0 lg:overflow-y-auto lg:border-r">
-              <div className="shrink-0 border-b bg-background bg-[radial-gradient(var(--border)_1px,transparent_1px)] [background-size:16px_16px] p-4 sm:p-6 lg:p-8">
+          <div
+            ref={box}
+            className="relative grid min-h-0 flex-1 grid-cols-1 overflow-y-auto lg:grid-cols-[var(--left)_minmax(0,1fr)] lg:overflow-hidden"
+            style={{ '--left': `${split}%`, '--surface': `${surface}px` } as CSSProperties}
+          >
+            <Splitter
+              orientation="vertical"
+              label="Resize the halves"
+              value={split}
+              min={SPLIT_MIN}
+              max={100 - SPLIT_MIN}
+              step={2}
+              perPx={size.width ? 100 / size.width : 0}
+              onChange={keepSplit}
+              onReset={() => keepSplit(50)}
+              style={{ left: `${split}%`, top: 0, bottom: 0 }}
+              className="max-lg:hidden"
+            />
+            <Splitter
+              orientation="horizontal"
+              label="Resize the work surfaces"
+              value={surface}
+              min={SURFACE_MIN_PX}
+              max={surfaceMax}
+              step={16}
+              perPx={1}
+              onChange={setSurfacePx}
+              onReset={() => setSurfacePx(null)}
+              style={{ top: TOOLBAR_PX + surface, left: 0, width: markdown ? `${split}%` : '100%' }}
+              className="max-lg:hidden"
+            />
+            <div className="flex min-w-0 flex-col lg:min-h-0 lg:border-r">
+              <div className={toolbar}>
+                <span className="mr-auto text-sm font-medium">Preview</span>
+                <Select
+                  value={component ?? ''}
+                  onValueChange={(next) =>
+                    setDraft((d) => ({ ...d, component: next, props: carryProps(d.props, widgets[next].contract.props) }))
+                  }
+                >
+                  <SelectTrigger size="sm" aria-label="Visualization" className="w-48 min-w-0">
+                    <SelectValue placeholder="Choose a visualization" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {Object.keys(widgets)
+                      .sort()
+                      .map((name) => {
+                        const Icon = iconOf(name)
+                        return (
+                          <SelectItem key={name} value={name}>
+                            <Icon />
+                            {name}
+                          </SelectItem>
+                        )
+                      })}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="shrink-0 overflow-auto border-b bg-background bg-[radial-gradient(var(--border)_1px,transparent_1px)] [background-size:16px_16px] p-4 sm:p-6 lg:h-[var(--surface)] lg:p-8">
                 {markdown ? (
                   <MarkdownPreview title={draft.title} text={draft.markdown} height={height} />
                 ) : (
                   <Preview component={component} props={draft.props} title={draft.title} height={height} state={run} stale={stale} />
                 )}
               </div>
-              <div className="grid min-w-0 grid-cols-1 content-start gap-y-4 p-4 sm:grid-cols-[8rem_minmax(0,1fr)] sm:gap-x-4 sm:gap-y-3 sm:p-6">
-                <SettingRow label="Title" htmlFor="widget-title">
-                  <Input
-                    id="widget-title"
-                    aria-label="Title"
-                    placeholder="Shown on the card"
-                    value={draft.title}
-                    onChange={(e) => edit({ title: e.target.value })}
-                  />
-                </SettingRow>
-                <SettingRow label="Visualization" htmlFor="widget-component">
-                  <Select
-                    value={component ?? ''}
-                    onValueChange={(next) =>
-                      setDraft((d) => ({ ...d, component: next, props: carryProps(d.props, widgets[next].contract.props) }))
-                    }
-                  >
-                    <SelectTrigger id="widget-component" className="w-full min-w-0">
-                      <SelectValue placeholder="Choose a visualization" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {Object.keys(widgets)
-                        .sort()
-                        .map((name) => {
-                          const Icon = iconOf(name)
-                          return (
-                            <SelectItem key={name} value={name}>
-                              <Icon />
-                              {name}
-                            </SelectItem>
-                          )
-                        })}
-                    </SelectContent>
-                  </Select>
-                  {module && <p className="mt-1.5 text-xs text-muted-foreground">{needsHint(module.contract)}</p>}
-                </SettingRow>
-                {component && (
-                  <PropsForm
-                    component={component}
-                    value={draft.props}
-                    onChange={(props) => edit({ props })}
-                    columns={last?.columns ?? []}
-                    onValidity={setPropsValid}
-                  />
+              <div className={bar}>
+                <span className="mr-auto text-sm font-medium">Settings</span>
+                {hasFields && (
+                  <Button type="button" variant="ghost" size="sm" className="-mr-2 h-7 text-muted-foreground" onClick={() => setRaw(!raw)}>
+                    <BracesIcon />
+                    {raw ? 'Edit props as a form' : 'Edit props as JSON'}
+                  </Button>
                 )}
+              </div>
+              <div className="min-w-0 lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
+                {problem && (
+                  <Alert className="rounded-none border-x-0 border-t-0 px-4 sm:px-6">
+                    <TriangleAlertIcon />
+                    <AlertDescription className="break-words">{problem}</AlertDescription>
+                  </Alert>
+                )}
+                <div className="grid min-w-0 grid-cols-1 content-start gap-y-4 p-4 sm:grid-cols-[8rem_minmax(0,1fr)] sm:gap-x-4 sm:gap-y-3 sm:px-6">
+                  <SettingRow label="Title" htmlFor="widget-title">
+                    <Input
+                      id="widget-title"
+                      aria-label="Title"
+                      placeholder="Shown on the card"
+                      value={draft.title}
+                      onChange={(e) => edit({ title: e.target.value })}
+                    />
+                  </SettingRow>
+                  <SettingRow label={markdown ? 'Source' : 'Columns'}>
+                    <p className="flex min-h-9 items-center text-sm text-muted-foreground">
+                      {module ? needsHint(module.contract).replace(/^needs /, '') : 'Choose a visualization above the preview'}
+                    </p>
+                  </SettingRow>
+                  {component && (
+                    <PropsForm
+                      component={component}
+                      value={draft.props}
+                      onChange={(props) => edit({ props })}
+                      columns={last?.columns ?? []}
+                      onValidity={setPropsValid}
+                      raw={raw && hasFields}
+                    />
+                  )}
+                </div>
               </div>
             </div>
             <div className="flex min-w-0 flex-col border-t lg:min-h-0 lg:border-t-0">
-              <div className="flex min-h-12 min-w-0 shrink-0 flex-wrap items-center gap-2 border-b px-4 py-2">
+              <div className={toolbar}>
                 <span className="mr-auto text-sm font-medium">{markdown ? 'Markdown' : 'SQL'}</span>
                 {!markdown && (
                   <>
@@ -318,7 +434,7 @@ function Editor({ open, onOpenChange, widget, defaults, onSave }: WidgetEditorPr
                   </>
                 )}
               </div>
-              <div className={markdown ? 'h-72 min-w-0 lg:h-auto lg:min-h-0 lg:flex-1' : 'h-56 min-w-0 shrink-0 lg:h-[45%]'}>
+              <div className={markdown ? 'h-72 min-w-0 lg:h-auto lg:min-h-0 lg:flex-1' : 'h-56 min-w-0 shrink-0 border-b lg:h-[var(--surface)]'}>
                 <Suspense fallback={<Skeleton className="h-full rounded-none" />}>
                   {markdown ? (
                     <CodeEditor flush language="markdown" label="Markdown" value={draft.markdown} onChange={(md) => edit({ markdown: md })} />
@@ -337,14 +453,14 @@ function Editor({ open, onOpenChange, widget, defaults, onSave }: WidgetEditorPr
               </div>
               {!markdown && (
                 <>
-                  <div className="flex min-h-11 min-w-0 shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-y px-4 py-2">
+                  <div className={bar}>
                     <span className="mr-auto text-sm font-medium">Rows</span>
                     {component && <RunStatus state={run} stale={stale} />}
                   </div>
                   {component ? (
                     <Rows state={run} stale={stale} />
                   ) : (
-                    <p className="p-4 text-sm text-muted-foreground">Choose a visualization to run</p>
+                    <p className="px-4 py-4 text-sm text-muted-foreground sm:px-6">Choose a visualization to run</p>
                   )}
                 </>
               )}
