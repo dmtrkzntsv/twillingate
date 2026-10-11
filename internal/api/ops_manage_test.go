@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -58,12 +59,21 @@ func TestArchiveRestoreTools(t *testing.T) {
 	if res := callTool(t, cs, "archive_project", map[string]any{"project_id": 2}); res.IsError {
 		t.Fatalf("archive: %s", textOf(res))
 	}
-	res := callTool(t, cs, "list_projects", nil)
-	if !strings.Contains(textOf(res), "archived") {
-		t.Errorf("archive not visible: %s", textOf(res))
+	var list listProjectsOut
+	if err := json.Unmarshal([]byte(textOf(callTool(t, cs, "list_projects", nil))), &list); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range list.Projects {
+		_, err := time.Parse(time.RFC3339, p.ArchivedAt)
+		if archived := p.ProjectID == 2; p.Archived != archived || (err == nil) != archived {
+			t.Errorf("project %d = %+v, want archived with an RFC 3339 archived_at only on 2", p.ProjectID, p)
+		}
 	}
 	if res := callTool(t, cs, "restore_project", map[string]any{"project_id": 2}); res.IsError {
 		t.Fatalf("restore: %s", textOf(res))
+	}
+	if out := textOf(callTool(t, cs, "list_projects", nil)); strings.Contains(out, "archived") {
+		t.Errorf("restored project still archived: %s", out)
 	}
 }
 

@@ -328,11 +328,10 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
   await page.keyboard.press('Escape')
   await expect(editor).toHaveCount(0)
 
-  // The archived projects' grid, opened.
+  // The archived project, on the Archive page: its long name stays on one line.
   const archived = await request.post(`/api/projects/${id}/archive`, { headers: authHeaders() })
   expect(archived.ok(), await archived.text()).toBeTruthy()
-  await check(page, '/app/projects')
-  await page.getByRole('button', { name: /^Archived/ }).click()
-  await expect(page.getByRole('article', { name: /^phone-/ })).toBeVisible()
+  await check(page, '/app/archive')
+  await expect(page.getByRole('region', { name: 'Projects' }).getByRole('link', { name: /^phone-/ })).toBeVisible()
   expect(await sidewaysScroll(page), 'archived projects').toEqual([])
 })

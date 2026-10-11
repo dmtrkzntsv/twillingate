@@ -379,6 +379,7 @@ type devProjectOut struct {
 	ProjectID      int64    `json:"project_id"`
 	Name           string   `json:"name"`
 	Archived       bool     `json:"archived,omitempty"`
+	ArchivedAt     string   `json:"archived_at,omitempty"`
 	AllowedOrigins []string `json:"allowed_origins"`
 	Attributes     []string `json:"attributes,omitempty"`
 }
@@ -393,7 +394,8 @@ type devProjectsOut struct {
 // events directly, not a widget's checked custom SQL.
 func devListProjects(ctx context.Context, db *readsql.DB) (devProjectsOut, error) {
 	rows, err := db.Run(ctx,
-		`SELECT id, name, allowed_origins, attributes, archived_at IS NOT NULL FROM projects ORDER BY id`)
+		`SELECT id, name, allowed_origins, attributes, archived_at IS NOT NULL,
+			COALESCE(strftime('%Y-%m-%dT%H:%M:%SZ', archived_at), '') FROM projects ORDER BY id`)
 	if err != nil {
 		return devProjectsOut{}, err
 	}
@@ -403,7 +405,7 @@ func devListProjects(ctx context.Context, db *readsql.DB) (devProjectsOut, error
 		if err != nil {
 			return devProjectsOut{}, fmt.Errorf("reporting: dev: project id %q: %w", row[0], err)
 		}
-		po := devProjectOut{ProjectID: id, Name: row[1], Archived: row[4] == "1", AllowedOrigins: []string{}}
+		po := devProjectOut{ProjectID: id, Name: row[1], Archived: row[4] == "1", ArchivedAt: row[5], AllowedOrigins: []string{}}
 		if row[2] != "" {
 			if err := json.Unmarshal([]byte(row[2]), &po.AllowedOrigins); err != nil {
 				return devProjectsOut{}, fmt.Errorf("reporting: dev: project %d allowed_origins: %w", id, err)

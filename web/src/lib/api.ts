@@ -249,6 +249,8 @@ export interface Project {
   project_id: number
   name: string
   archived?: boolean
+  /** When it was archived (RFC 3339); absent while live. */
+  archived_at?: string
   allowed_origins: string[]
   attributes?: string[]
 }

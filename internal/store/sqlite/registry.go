@@ -38,8 +38,11 @@ func (d *DB) ConfigVersion(ctx context.Context) (int64, error) {
 }
 
 func (d *DB) LoadRegistry(ctx context.Context) ([]store.RegistryProject, []store.RegistryKey, error) {
+	// archived_at is stored as datetime('now') writes it (see purge.go);
+	// it is read as RFC 3339, the form every other archived_at takes.
 	rows, err := d.db.QueryContext(ctx, `SELECT id, name,
-		allowed_origins, attributes, archived_at IS NOT NULL, sort_key
+		allowed_origins, attributes, archived_at IS NOT NULL,
+		COALESCE(strftime('%Y-%m-%dT%H:%M:%SZ', archived_at), ''), sort_key
 		FROM projects ORDER BY sort_key, id`)
 	if err != nil {
 		return nil, nil, err
@@ -49,7 +52,7 @@ func (d *DB) LoadRegistry(ctx context.Context) ([]store.RegistryProject, []store
 	for rows.Next() {
 		var p store.RegistryProject
 		if err := rows.Scan(&p.ID, &p.Name,
-			&p.AllowedOrigins, &p.Attributes, &p.Archived, &p.SortKey); err != nil {
+			&p.AllowedOrigins, &p.Attributes, &p.Archived, &p.ArchivedAt, &p.SortKey); err != nil {
 			return nil, nil, err
 		}
 		ps = append(ps, p)

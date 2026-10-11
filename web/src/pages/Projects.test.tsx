@@ -90,16 +90,13 @@ describe('Projects', () => {
     expect(within(card).queryByText('No origins')).not.toBeInTheDocument()
   })
 
-  it('shows active cards in the list order, each sortable but for archived ones', async () => {
-    const user = userEvent.setup()
+  it('shows the live cards in the list order, each sortable', async () => {
     renderPage()
     await screen.findByRole('article', { name: 'econumo.com' })
     expect(screen.getAllByRole('article').map((a) => a.getAttribute('aria-label'))).toEqual(['econumo.com', 'quiet.dev'])
     for (const name of ['econumo.com', 'quiet.dev']) {
       expect(screen.getByRole('article', { name }).parentElement).toHaveAttribute('aria-roledescription', 'sortable')
     }
-    await user.click(screen.getByRole('button', { name: /Archived \(1\)/ }))
-    expect(screen.getByRole('article', { name: 'legacy' }).parentElement).not.toHaveAttribute('aria-roledescription')
   })
 
   it('does not drag cards in reporting dev, which takes no writes', async () => {
@@ -111,13 +108,11 @@ describe('Projects', () => {
     )
   })
 
-  it('keeps archived projects in a collapsed group', async () => {
-    const user = userEvent.setup()
+  it('leaves archived projects to the Archive page', async () => {
     renderPage()
     await screen.findByRole('article', { name: 'econumo.com' })
     expect(screen.queryByRole('article', { name: 'legacy' })).not.toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: /Archived \(1\)/ }))
-    expect(screen.getByRole('article', { name: 'legacy' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Archived/ })).not.toBeInTheDocument()
   })
 
   describe('the ingest switch', () => {

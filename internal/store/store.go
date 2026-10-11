@@ -218,6 +218,7 @@ type RegistryProject struct {
 	AllowedOrigins string // JSON array, "[]" if none
 	Attributes     string // JSON array, "[]" if none declared
 	Archived       bool
+	ArchivedAt     string // RFC 3339 UTC, "" = live
 	SortKey        string // its place in the order (migration 034)
 }
 

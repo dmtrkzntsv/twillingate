@@ -24,6 +24,7 @@ type Project struct {
 	AllowedOrigins []string
 	Attributes     []string
 	Archived       bool
+	ArchivedAt     string // RFC 3339 UTC, "" = live
 	SortKey        string // its place in the order
 }
 
@@ -85,7 +86,7 @@ func (r *Registry) Reload(ctx context.Context) error {
 		origins: make(map[int64]originSet, len(ps)),
 	}
 	for _, rp := range ps {
-		p := &Project{ID: rp.ID, Name: rp.Name, Archived: rp.Archived, SortKey: rp.SortKey}
+		p := &Project{ID: rp.ID, Name: rp.Name, Archived: rp.Archived, ArchivedAt: rp.ArchivedAt, SortKey: rp.SortKey}
 		if rp.AllowedOrigins != "" {
 			if err := json.Unmarshal([]byte(rp.AllowedOrigins), &p.AllowedOrigins); err != nil {
 				return fmt.Errorf("manage: project %d allowed_origins: %w", rp.ID, err)
