@@ -163,7 +163,7 @@ func recordCaps(ctx context.Context, tx *sql.Tx, day string) error {
 	}{
 		{store.StatCapAttributes, defaultAttrsTopN},
 		{store.StatCapIdentities, defaultIdentitiesTopN},
-		{store.StatCapBreakdowns, 10}, // ATTRIBUTE_BREAKDOWNS_MAX's default
+		{store.StatCapBreakdowns, 50}, // ATTRIBUTE_BREAKDOWNS_MAX's default
 	} {
 		if _, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO usage_history (key, project_id, measured_at, value)
 			VALUES (?1, 0, ?2, COALESCE((SELECT CAST(value AS INTEGER) FROM meta

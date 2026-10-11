@@ -119,16 +119,18 @@ type ConsoleConfig struct {
 // together; each is a breakdown with its own aggregate rows.
 const (
 	DefaultAttributeValuesTopN    = 100
-	DefaultAttributeBreakdownsMax = 10
+	DefaultAttributeBreakdownsMax = 50
 	DefaultIdentitiesTopN         = 500
 )
 
 // The retention defaults (RETENTION_RAW_DAYS,
 // RETENTION_AGGREGATE_DAYS, RETENTION_ARCHIVED_DAYS), reported by the
-// limits tool beside the values in force like the caps'.
+// limits tool beside the values in force like the caps'. Aggregates keep
+// a little over a year, so a year-on-year comparison still has last
+// year's day.
 const (
 	DefaultRawDays       = 30
-	DefaultAggregateDays = 365
+	DefaultAggregateDays = 400
 	DefaultArchivedDays  = 30
 )
 
