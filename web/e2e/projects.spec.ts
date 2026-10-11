@@ -166,7 +166,11 @@ test('drags a project card to a new place, which a reload keeps', async ({ page,
   const ids = [await createProject(request, names[0]), await createProject(request, names[1])]
   try {
     await login(page)
+    // Cards whose project has forms grow a line when the activity arrives,
+    // which would move the cards under a drag measured before it.
+    const activity = page.waitForResponse((r) => r.url().endsWith('/api/project-activity') && r.ok())
     await page.goto('/app/projects')
+    await activity
     const mine = async () =>
       (await page.getByRole('article').evaluateAll((els) => els.map((e) => e.getAttribute('aria-label')))).filter((n) =>
         names.includes(n ?? '')

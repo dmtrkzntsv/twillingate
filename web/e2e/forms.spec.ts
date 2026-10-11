@@ -120,7 +120,7 @@ test('a form arrives as a draft, is approved, filtered, closed, exported, and a 
   await expect(row.getByText(/^1 submission\b/)).toBeVisible()
 })
 
-test('the Forms button counts new submissions until a form is opened', async ({ page, request }) => {
+test('the Forms button counts new submissions until a form is opened, then dots the draft', async ({ page, request }) => {
   test.setTimeout(120_000)
   const { id, key } = await createProject(request, `forms-count-${Date.now()}`, [SITE])
   await postForm(request, key, { email: 'ann@example.com', message: 'Hello' })
@@ -128,7 +128,8 @@ test('the Forms button counts new submissions until a form is opened', async ({ 
   await login(page)
   await page.goto(`/app/projects/${id}/settings`)
   const forms = page.getByRole('link', { name: /^Forms/ })
-  await expect(forms).toHaveAccessibleName('Forms, 1 new')
+  // The first submission made the form a draft.
+  await expect(forms).toHaveAccessibleName('Forms, 1 new, 1 draft')
 
   await forms.click()
   await expect(page).toHaveURL(new RegExp(`/app/projects/${id}/forms$`))
@@ -136,8 +137,9 @@ test('the Forms button counts new submissions until a form is opened', async ({ 
   await expect(page).toHaveURL(new RegExp(`/app/projects/${id}/forms/contact$`))
   await expect(page.getByRole('region', { name: 'Submissions' })).toBeVisible()
 
-  // Opening the form marked it seen: back on the project, the count is gone.
+  // Opening the form marked it seen: back on the project, the count is
+  // gone and the draft, still waiting to be approved, keeps a dot.
   await page.getByRole('link', { name: 'Settings', exact: true }).click()
   await expect(page).toHaveURL(new RegExp(`/app/projects/${id}/settings$`))
-  await expect(page.getByRole('link', { name: 'Forms', exact: true })).toBeVisible()
+  await expect(page.getByRole('link', { name: 'Forms, 1 draft', exact: true })).toBeVisible()
 })
