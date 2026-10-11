@@ -87,13 +87,15 @@ REST route each.
   "event `X` is blocked in this project, dropped". Blocking B therefore
   also drops events renamed to B. No store-side check: events queued in
   the seconds before a block commits may land, which is harmless.
-- **D10. Blocked names are never aggregated.** The rollups in
-  `AggregateProductDay` and `AggregateMeasureDay` (`agg_product_daily`,
-  `agg_product_totals`, `agg_product_attrs`, `agg_measures_daily`,
-  `agg_measures_attrs`) skip blocked names with
-  `NOT EXISTS (SELECT 1 FROM event_rules …)`. The existing end-of-window
-  `DELETE FROM events … day=?` then removes the blocked raw rows with the
-  rest, so they are gone within `RETENTION_RAW_DAYS` (30 by default) without a new delete.
+- **D10. Blocked names are never aggregated.** `AggregateProductDay` and
+  `AggregateMeasureDay` already roll a raw day up and delete it in one
+  transaction. They now delete that day's rows of blocked names first,
+  then roll up and delete the rest as before: every rollup
+  (`agg_product_daily`, `agg_product_totals`, `agg_product_attrs`,
+  `agg_measures_daily`, `agg_measures_attrs`) sees no blocked row, and no
+  row is deleted that the same transaction would not delete anyway. The
+  blocked raw rows are gone within `RETENTION_RAW_DAYS` (30 by default),
+  with no new delete on request.
 - **D11. Existing aggregates of a blocked name go at the next daily pass.**
   A new store step, `DropBlockedAggregates(ctx, projectID)`, deletes rows
   for blocked names from the four per-event aggregate tables; the daily
@@ -121,7 +123,10 @@ REST route each.
   (the `delete_submissions` pattern).
 - **D14. Settings page: an "Events" section** between Breakdowns and Keys.
   It lists the project's product and measure events in the page's range
-  with their counts (from `product_events` and `measures`), each with a
+  with their counts, from a REST-only route `event_names`
+  (`GET /api/projects/{project_id}/event-names?from&to`, like
+  `project_activity`: `{events: [{family, name, events}]}`, product counts
+  from `v_product_daily`, measure samples from `v_measures_daily`), each with a
   menu: **Rename…** and **Block…**. A blocked name that still has rows in
   the range shows a "blocked" badge. Below the list, the rules: `A → B`
   or `X blocked`, each with **Remove**.
