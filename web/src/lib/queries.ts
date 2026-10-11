@@ -77,6 +77,18 @@ export const receivedAttributesQuery = (q: RangeQuery & { project_id?: number })
   queryFn: () => endpoints.receivedAttributes({ project_id: q.project_id, from: q.from, to: q.to }),
 })
 
+/** A project's event rules: the renames and blocks in force. */
+export const eventRulesQuery = (id: number) => ({
+  queryKey: ['event-rules', id],
+  queryFn: () => endpoints.eventRules(id),
+})
+
+/** The event names a project received over a range, busiest first. */
+export const eventNamesQuery = (id: number, q: RangeQuery) => ({
+  queryKey: ['event-names', id, q.from ?? '', q.to ?? ''],
+  queryFn: () => endpoints.eventNames(id, q),
+})
+
 /** How a project's data meets the caps over a range. */
 export const capUsageQuery = (id: number, q: RangeQuery) => ({
   queryKey: ['cap-usage', id, q.from ?? '', q.to ?? ''],

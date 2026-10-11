@@ -113,4 +113,36 @@ describe('useProjectActions', () => {
     expect(ok).toBe(false)
     expect(toast.error).toHaveBeenCalledWith('unknown project 3')
   })
+
+  it('renames, blocks and removes event rules with their toasts, refetching rules, names and usage', async () => {
+    vi.spyOn(endpoints, 'renameEvent').mockResolvedValue({ rule: { family: 'product', name: 'a', action: 'rename', to: 'b' }, rewritten: {} })
+    vi.spyOn(endpoints, 'blockEvent').mockResolvedValue({ rule: { family: 'product', name: 'x', action: 'block' } })
+    vi.spyOn(endpoints, 'removeEventRule').mockResolvedValue({ status: 'removed' })
+    const { client, wrapper: w } = wrapper()
+    const invalidate = vi.spyOn(client, 'invalidateQueries')
+    const { result } = renderHook(() => useProjectActions(), { wrapper: w })
+    const out: boolean[] = []
+    await act(async () => {
+      out.push(await result.current.renameEvent(7, { family: 'product', from: 'a', to: 'b' }))
+      out.push(await result.current.renameEvent(7, { family: 'product', from: 'a', to: 'b', merge: true }))
+      out.push(await result.current.blockEvent(7, { family: 'product', name: 'x' }))
+      out.push(await result.current.removeEventRule(7, { family: 'product', name: 'a' }))
+    })
+    expect(out).toEqual([true, true, true, true])
+    expect(vi.mocked(toast.success).mock.calls.map((c) => c[0])).toEqual([
+      'Renamed a to b', 'Merged a into b', 'Blocked x', 'Removed the rule for a',
+    ])
+    expect(invalidate.mock.calls.slice(0, 3).map((c) => (c[0] as { queryKey: string[] }).queryKey[0])).toEqual(['event-rules', 'event-names', 'usage'])
+  })
+
+  it('resolves false and toasts the refusal when an event rule is refused', async () => {
+    vi.spyOn(endpoints, 'renameEvent').mockRejectedValue(new ApiError(409, 'b has events; merge to combine them', 'conflict'))
+    const { result } = renderHook(() => useProjectActions(), { wrapper: wrapper().wrapper })
+    let ok: boolean | undefined
+    await act(async () => {
+      ok = await result.current.renameEvent(7, { family: 'product', from: 'a', to: 'b' })
+    })
+    expect(ok).toBe(false)
+    expect(toast.error).toHaveBeenCalledWith('b has events; merge to combine them')
+  })
 })

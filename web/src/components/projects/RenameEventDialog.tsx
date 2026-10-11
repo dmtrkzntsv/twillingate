@@ -1,0 +1,65 @@
+import { useEffect, useState } from 'react'
+import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import type { EventFamily, EventName } from '@/lib/api'
+
+interface Props {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  /** The event being renamed; kept by the caller through the close animation. */
+  target: { family: EventFamily; name: string } | null
+  /** The names listed, to tell a rename from a merge. */
+  names: EventName[]
+  pending?: boolean
+  /** Resolves true when done, so the dialog closes; false keeps it open (the refusal is already toasted). */
+  onRename: (to: string, merge: boolean) => Promise<boolean>
+}
+
+/** Type the new name of an event; a name the family already has makes it a merge, said before it is confirmed. */
+export default function RenameEventDialog({ open, onOpenChange, target, names, pending, onRename }: Props) {
+  const [value, setValue] = useState('')
+  // Start from nothing each time it opens.
+  useEffect(() => {
+    if (open) setValue('')
+  }, [open])
+  const to = value.trim()
+  const merging = target !== null && to !== '' && names.some((n) => n.family === target.family && n.name === to)
+  const valid = target !== null && to !== '' && !to.startsWith('$') && to !== target.name
+  const submit = async () => {
+    if (valid && (await onRename(to, merging))) onOpenChange(false)
+  }
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <form
+          className="flex flex-col gap-4"
+          onSubmit={(e) => {
+            e.preventDefault()
+            void submit()
+          }}
+        >
+          <DialogHeader>
+            <DialogTitle className="break-all">Rename {target?.name}</DialogTitle>
+            <DialogDescription>
+              Events arriving as {target?.name} are stored under the new name, and the ones already stored are renamed. Widgets whose SQL names the old event are not changed.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="rename-event-to">New name</Label>
+            <Input id="rename-event-to" value={value} autoComplete="off" onChange={(e) => setValue(e.target.value)} />
+            {merging && (
+              <p role="alert" className="text-sm text-destructive">
+                {to} already has events: this merges {target?.name} into it, and cannot be undone.
+              </p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button type="submit" disabled={!valid || pending}>{merging ? `Merge into ${to}` : 'Rename'}</Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  )
+}

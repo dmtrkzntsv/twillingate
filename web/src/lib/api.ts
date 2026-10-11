@@ -405,6 +405,24 @@ export interface RangeQuery {
   to?: string
 }
 
+export type EventFamily = 'product' | 'measures'
+
+/** An event rule: `name` is renamed to `to` as it arrives, or (a block, no `to`) dropped. */
+export interface EventRule {
+  family: EventFamily
+  name: string
+  action: 'rename' | 'block'
+  to?: string
+  created_at?: string
+}
+
+/** An event name a project received in a range, busiest first; `$` names are left out. */
+export interface EventName {
+  family: EventFamily
+  name: string
+  events: number
+}
+
 /** One attribute key a project received in a range (or declared without receiving). `max_values` is null before the nightly count. */
 export interface ReceivedKey {
   key: string
@@ -650,6 +668,14 @@ export const endpoints = {
   usage: (q: RangeQuery & { project_id?: number }) => api<UsageResponse>(`/api/usage${toQuery(q)}`),
   receivedAttributes: (q: RangeQuery & { project_id?: number }) =>
     api<ReceivedAttributes>(`/api/received-attributes${toQuery(q)}`),
+  eventRules: (id: number) => api<{ rules: EventRule[] }>(`/api/projects/${id}/event-rules`),
+  eventNames: (id: number, q: RangeQuery) => api<{ events: EventName[] }>(`/api/projects/${id}/event-names${toQuery(q)}`),
+  renameEvent: (id: number, body: { family: EventFamily; from: string; to: string; merge?: boolean }) =>
+    api<{ rule: EventRule; rewritten: Record<string, number> }>(`/api/projects/${id}/event-rules/rename`, json('POST', body)),
+  blockEvent: (id: number, body: { family: EventFamily; name: string }) =>
+    api<{ rule: EventRule }>(`/api/projects/${id}/event-rules/block`, json('POST', body)),
+  removeEventRule: (id: number, body: { family: EventFamily; name: string }) =>
+    api<{ status: string }>(`/api/projects/${id}/event-rules/remove`, json('POST', body)),
   capUsage: (id: number, q: RangeQuery) => api<CapUsage>(`/api/projects/${id}/cap-usage${toQuery(q)}`),
   widgetShares: (q: { widget_id?: number; state?: ShareState }) => api<{ shares: WidgetShare[] }>(`/api/widget-shares${toQuery(q)}`),
   // No Content-Type here: the browser sets multipart/form-data with its boundary for a FormData body.

@@ -5,6 +5,7 @@ import DashboardHeader from '@/components/DashboardHeader'
 import RangeSwitcher from '@/components/RangeSwitcher'
 import BreakdownsSection from '@/components/projects/BreakdownsSection'
 import CapImpactSection from '@/components/projects/CapImpactSection'
+import EventsSection from '@/components/projects/EventsSection'
 import KeysSection from '@/components/projects/KeysSection'
 import OriginsSection from '@/components/projects/OriginsSection'
 import UsageSection from '@/components/projects/UsageSection'
@@ -15,7 +16,7 @@ import {
 import { Button } from '@/components/ui/button'
 import type { ProjectActions } from '@/hooks/use-project-actions'
 import type { DashboardsResponse, Project } from '@/lib/api'
-import { keysQuery } from '@/lib/queries'
+import { keysQuery, limitsQuery } from '@/lib/queries'
 import { resolve } from '@/lib/ranges'
 import { chooseSelection } from '@/lib/selection'
 import { formatPurgeDate } from '@/lib/time'
@@ -30,12 +31,13 @@ interface Props {
 
 /**
  * A project's Settings page (project landing D4): its usage, allowed origins,
- * breakdowns, keys and cap impact, with Archive or Restore. The range is
+ * breakdowns, events, keys and cap impact, with Archive or Restore. The range is
  * the URL's, which every tab of the project shares (D8), else 7 days.
  */
 export default function SetupTab({ project, dash, actions }: Props) {
   const id = project.project_id
   const keysQ = useQuery(keysQuery(id))
+  const limits = useQuery(limitsQuery)
   const [url, setURL] = useSearchParams()
   const [archiving, setArchiving] = useState(false)
   const sel = chooseSelection(url, { range: '7d' }, [], { project: false, range: true })
@@ -58,6 +60,15 @@ export default function SetupTab({ project, dash, actions }: Props) {
       <UsageSection projectId={id} range={range} />
       <OriginsSection project={project} pending={actions.pending} onSave={(body) => actions.update(id, body)} />
       <BreakdownsSection project={project} range={range} pending={actions.pending} onSave={(attributes) => actions.update(id, { attributes })} />
+      <EventsSection
+        project={project}
+        range={range}
+        rawDays={limits.data?.raw_events?.window_days}
+        pending={actions.pending}
+        onRename={(body) => actions.renameEvent(id, body)}
+        onBlock={(body) => actions.blockEvent(id, body)}
+        onRemove={(body) => actions.removeEventRule(id, body)}
+      />
       <KeysSection
         keys={keysQ.data?.keys}
         error={keysQ.error}
