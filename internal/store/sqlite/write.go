@@ -68,6 +68,15 @@ func (d *DB) WriteEvents(ctx context.Context, evs []store.Event) error {
 // tx and returns the attribute keys the inserted rows carried. The caller
 // has checked the families, and records the keys (writeReceived) in the
 // same transaction: WriteEvents and WriteSubmission share this body.
+//
+// The event name goes through event_rules here, not only at ingest (which
+// maps from the registry snapshot), so a row queued before a rename
+// commits is stored under the new name: the lookup runs in the flush's own
+// transaction, after or before the rename's, never between its rewrite and
+// a snapshot reload, and a second serve process on the file sees it too.
+// It is a primary-key seek per row; BenchmarkWriteEvents showed no time
+// difference without it (2026-10-11), only ~0.8 KB and 3 allocations per
+// row for the four extra arguments.
 func insertEvents(ctx context.Context, tx *sql.Tx, evs []store.Event) (receivedKeys, error) {
 	stmt, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO events
 		(id, project_id, family, event_name, ts, day, received_at, kind,
