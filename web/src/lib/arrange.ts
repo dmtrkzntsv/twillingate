@@ -43,16 +43,19 @@ export interface CopyTarget {
 /**
  * Where a widget of dashboard `from` can be copied: the user's own live
  * dashboards by group, `from`'s group first and without `from` itself
- * (Duplicate copies there), then the others in sidebar order. A built-in
- * group takes no widgets, so from one the list starts with the user's.
+ * (Duplicate copies there), then the others in sidebar order. `from`'s
+ * group stays even with no other tab, as a new tab can still go there. A
+ * built-in group takes no widgets, so from one the list starts with the
+ * user's.
  */
 export function copyTargets(list: DashboardInfo[], from: number): CopyTarget[] {
   const source = list.find((d) => d.dashboard_id === from)
+  const ownGroup = source?.owner === 'user' ? source.group_id : undefined
   const targets = liveGroups(list)
     .filter((g) => g.owner === 'user')
     .map((g) => ({ groupId: g.groupId, name: groupName(g.members), tabs: g.members.filter((d) => d.dashboard_id !== from) }))
-    .filter((t) => t.tabs.length > 0)
-  const own = source?.owner === 'user' ? targets.findIndex((t) => t.groupId === source.group_id) : -1
+    .filter((t) => t.tabs.length > 0 || t.groupId === ownGroup)
+  const own = targets.findIndex((t) => t.groupId === ownGroup)
   return own > 0 ? [targets[own], ...targets.slice(0, own), ...targets.slice(own + 1)] : targets
 }
 

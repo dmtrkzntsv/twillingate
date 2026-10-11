@@ -563,8 +563,8 @@ export const endpoints = {
   components: () => api<ComponentsResponse>('/api/components'),
   /** Moves, resizes or edits a widget of the user's own dashboard. */
   updateWidget: (id: number, body: WidgetLayoutBody | WidgetContentBody) => api<Widget>(`/api/widgets/${id}`, json('PATCH', body)),
-  /** Creates a user dashboard of its own group, empty (widget editor D20). */
-  createDashboard: (body: { title: string }) => api<DashboardDetail>('/api/dashboards', json('POST', body)),
+  /** Creates an empty user dashboard: a group of its own, or the last tab of group `group_id` (widget editor D20). */
+  createDashboard: (body: { title: string; group_id?: number }) => api<DashboardDetail>('/api/dashboards', json('POST', body)),
   /** Adds a widget last on a user dashboard; the server validates it whole. */
   addWidget: (dashboardId: number, body: WidgetBody) => api<Widget>(`/api/dashboards/${dashboardId}/widgets`, json('POST', body)),
   /** Copies a widget, a built-in one included, onto a user dashboard: nil `after` last, an id right after that widget. */

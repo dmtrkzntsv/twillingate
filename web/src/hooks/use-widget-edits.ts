@@ -28,11 +28,12 @@ export interface WidgetEdits {
    */
   copy(widget: Widget, dashboardId: number): Promise<boolean>
   /**
-   * Makes a user dashboard of its own group titled `title` and copies the
-   * widget onto it. Resolves with the new dashboard's id, or null after the
-   * refusal's toast (the dashboard stays when only the copy was refused).
+   * Makes a user dashboard titled `title`, a group of its own or, given
+   * `groupId`, the last tab of that group, and copies the widget onto it.
+   * Resolves with the new dashboard's id, or null after the refusal's
+   * toast (the dashboard stays when only the copy was refused).
    */
-  copyToNew(widget: Widget, title: string): Promise<number | null>
+  copyToNew(widget: Widget, title: string, groupId?: number): Promise<number | null>
 }
 
 function toastError(err: unknown) {
@@ -155,10 +156,10 @@ export function useWidgetEdits(): WidgetEdits {
   )
 
   const copyToNew = useCallback(
-    async (widget: Widget, title: string) => {
+    async (widget: Widget, title: string, groupId?: number) => {
       let created: number
       try {
-        created = (await endpoints.createDashboard({ title })).dashboard_id
+        created = (await endpoints.createDashboard(groupId ? { title, group_id: groupId } : { title })).dashboard_id
       } catch (err) {
         toastError(err)
         return null

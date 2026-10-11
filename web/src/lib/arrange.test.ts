@@ -181,8 +181,9 @@ describe('copyTargets', () => {
     ])
   })
 
-  it('leaves out a group whose only dashboard is the one copied from', () => {
+  it('keeps the own group with no other tab, for a new tab there', () => {
     expect(shape(10)).toEqual([
+      ['Launch week', []],
       ['Growth', [13, 14]],
       ['Ads', [15]],
     ])

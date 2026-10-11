@@ -95,8 +95,8 @@ export function WidgetEditingProvider({ dashboardId, enabled, defaults, copyTo, 
             if (ok) copied(dashboard)
             return ok
           }}
-          onCreate={async (title) => {
-            const id = await edits.copyToNew(copying.widget, title)
+          onCreate={async (title, groupId) => {
+            const id = await edits.copyToNew(copying.widget, title, groupId)
             if (id !== null) copied({ dashboard_id: id, title })
             return id !== null
           }}

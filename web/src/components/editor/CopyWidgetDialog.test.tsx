@@ -32,7 +32,7 @@ describe('CopyWidgetDialog', () => {
   it('heads a group of several tabs with its name, and shows a lone one by itself', () => {
     renderDialog()
     const group = screen.getByRole('group', { name: 'Growth' })
-    expect(within(group).getAllByRole('button').map((b) => b.textContent)).toEqual(['Marketing', 'Funnel'])
+    expect(within(group).getAllByRole('button').map((b) => b.textContent)).toEqual(['Marketing', 'Funnel', 'New tab…'])
     expect(screen.queryByRole('group', { name: 'Launch week' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Launch week' })).toBeInTheDocument()
   })
@@ -59,7 +59,22 @@ describe('CopyWidgetDialog', () => {
     await userEvent.type(field, 'W')
     expect(screen.getByRole('button', { name: 'Create' })).toBeDisabled()
     await userEvent.type(field, 'eekly {Enter}')
-    expect(props.onCreate).toHaveBeenCalledWith('Weekly')
+    expect(props.onCreate).toHaveBeenCalledWith('Weekly', undefined)
     await waitFor(() => expect(props.onOpenChange).toHaveBeenCalledWith(false))
+  })
+
+  it("makes a new tab at the end of a group, a lone dashboard's too", async () => {
+    const props = renderDialog()
+    await userEvent.click(screen.getByRole('button', { name: 'New tab in Launch week…' }))
+    expect(screen.getByRole('heading', { name: 'New tab in Launch week' })).toBeInTheDocument()
+    await userEvent.type(screen.getByRole('textbox', { name: 'Tab title' }), 'Day two{Enter}')
+    expect(props.onCreate).toHaveBeenCalledWith('Day two', 10)
+  })
+
+  it('goes back to the list from the title field', async () => {
+    renderDialog()
+    await userEvent.click(screen.getByRole('button', { name: 'New tab in Growth…' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Back' }))
+    expect(screen.getByRole('group', { name: 'Growth' })).toBeInTheDocument()
   })
 })

@@ -274,6 +274,16 @@ describe('useWidgetEdits', () => {
     expect(copy).toHaveBeenCalledWith(7, { dashboard_id: 20 })
   })
 
+  it('copyToNew with a group makes the new dashboard its last tab', async () => {
+    const create = vi.spyOn(endpoints, 'createDashboard').mockResolvedValue({ dashboard_id: 21 } as DashboardDetail)
+    vi.spyOn(endpoints, 'copyWidget').mockResolvedValue({ ...visits, widget_id: 8, dashboard_id: 21 })
+    const { result } = renderHook(() => useWidgetEdits(), { wrapper })
+
+    await expect(act(() => result.current.copyToNew(visits, 'Day two', 13))).resolves.toBe(21)
+
+    expect(create).toHaveBeenCalledWith({ title: 'Day two', group_id: 13 })
+  })
+
   it('copyToNew copies nothing when the dashboard is refused', async () => {
     vi.spyOn(endpoints, 'createDashboard').mockRejectedValue(new ApiError(400, 'title too short'))
     const copy = vi.spyOn(endpoints, 'copyWidget')

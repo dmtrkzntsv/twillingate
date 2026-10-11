@@ -508,7 +508,7 @@ describe('Dashboard', () => {
       within(dialog)
         .getAllByRole('button')
         .map((b) => b.textContent)
-    ).toEqual(['New dashboard…', 'Launch week', 'Marketing', 'Funnel', 'Close'])
+    ).toEqual(['New dashboard…', 'Launch week', 'New tab…', 'Marketing', 'Funnel', 'New tab…', 'Close'])
     await user.click(within(dialog).getByRole('button', { name: 'Funnel' }))
 
     expect(copy).toHaveBeenCalledWith(details[2].widgets[0].widget_id, { dashboard_id: 14 })
@@ -527,7 +527,24 @@ describe('Dashboard', () => {
       within(dialog)
         .getAllByRole('button')
         .map((b) => b.textContent)
-    ).toEqual(['New dashboard…', 'Marketing', 'Launch week', 'Close'])
+    ).toEqual(['New dashboard…', 'Marketing', 'New tab…', 'Launch week', 'New tab…', 'Close'])
+  })
+
+  it('copies a widget onto a new tab of its own group', async () => {
+    const user = userEvent.setup()
+    mockApi()
+    const create = vi.spyOn(endpoints, 'createDashboard').mockResolvedValue({ ...details[14], dashboard_id: 20 })
+    const copy = vi.spyOn(endpoints, 'copyWidget').mockResolvedValue(launchWeek.widgets[0])
+    renderAt('/dashboards/14')
+
+    await user.click((await screen.findAllByRole('button', { name: 'Widget actions' }))[0])
+    await user.click(screen.getByRole('menuitem', { name: 'Copy to dashboard…' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Copy to dashboard' })
+    await user.click(within(dialog).getByRole('button', { name: 'New tab in Marketing…' }))
+    await user.type(screen.getByRole('textbox', { name: 'Tab title' }), 'Retargeting{Enter}')
+
+    expect(create).toHaveBeenCalledWith({ title: 'Retargeting', group_id: 13 })
+    await waitFor(() => expect(copy).toHaveBeenCalledWith(details[14].widgets[0].widget_id, { dashboard_id: 20 }))
   })
 
   it('opens the editor from Add widget, and from Edit… on the widget', async () => {
