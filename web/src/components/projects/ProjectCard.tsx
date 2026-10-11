@@ -1,5 +1,4 @@
 import { Link } from 'react-router'
-import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import type { IngestKey, Project, ProjectUsage } from '@/lib/api'
@@ -18,12 +17,10 @@ interface Props {
   keys?: IngestKey[]
   /** The stats read failed (the page says why): no skeleton, which would never resolve. */
   statsFailed?: boolean
-  onRestore?: () => void
-  pending?: boolean
 }
 
 /** One project at a glance: freshness, 30 days of events, size, keys and attributes. */
-export default function ProjectCard({ project, stats, keys, statsFailed, onRestore, pending }: Props) {
+export default function ProjectCard({ project, stats, keys, statsFailed }: Props) {
   const last = stats?.last_received_at
   const live = last !== null && last !== undefined && Date.now() - new Date(last).getTime() < DAY
   const total = stats ? stats.totals.views + stats.totals.events + stats.totals.measures : undefined
@@ -53,11 +50,6 @@ export default function ProjectCard({ project, stats, keys, statsFailed, onResto
             `${attrs} ${attrs === 1 ? 'attribute' : 'attributes'}`,
           ].join(' · ')}
         </p>
-        {onRestore && (
-          <Button variant="outline" size="sm" className="relative z-10 self-start" disabled={pending} onClick={onRestore}>
-            Restore
-          </Button>
-        )}
       </CardContent>
     </Card>
   )

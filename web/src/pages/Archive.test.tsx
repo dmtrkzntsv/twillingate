@@ -539,6 +539,51 @@ describe('Archive, forms', () => {
   })
 })
 
+describe('Archive, projects', () => {
+  it('lists the archived projects in list order, each linking to its page, with Restore', async () => {
+    const user = userEvent.setup()
+    mockApiWith([info(10, 'Launch week', 'user', 10)])
+    vi.mocked(endpoints.projects).mockResolvedValue({ projects: [
+      { project_id: 4, name: 'shop', allowed_origins: [] },
+      { project_id: 3, name: 'legacy', archived: true, allowed_origins: [] },
+      { project_id: 7, name: 'old-blog', archived: true, allowed_origins: [] },
+    ] })
+    const restoreProject = vi.spyOn(endpoints, 'restoreProject').mockResolvedValue({ status: 'restored' })
+    renderArchive()
+    const section = await screen.findByRole('region', { name: 'Projects' })
+    const rows = within(section).getAllByRole('listitem')
+    expect(rows.map((r) => within(r).getByRole('link').textContent)).toEqual(['legacy', 'old-blog'])
+    expect(within(rows[0]).getByRole('link', { name: 'legacy' })).toHaveAttribute('href', '/projects/3')
+    expect(within(rows[0]).getByText('archived')).toBeInTheDocument()
+    await user.click(within(rows[0]).getByRole('button', { name: 'Restore' }))
+    await waitFor(() => expect(restoreProject).toHaveBeenCalledWith(3))
+  })
+
+  it('has no Projects section when none is archived, and reads "Nothing archived."', async () => {
+    mockApiWith([info(10, 'Launch week', 'user', 10)])
+    vi.mocked(endpoints.projects).mockResolvedValue({ projects: [{ project_id: 4, name: 'shop', allowed_origins: [] }] })
+    renderArchive()
+    await screen.findByText('Nothing archived.')
+    expect(screen.queryByRole('region', { name: 'Projects' })).toBeNull()
+  })
+
+  it('does not read "Nothing archived." when only a project is archived', async () => {
+    mockApiWith([info(10, 'Launch week', 'user', 10)])
+    vi.mocked(endpoints.projects).mockResolvedValue({ projects: [{ project_id: 3, name: 'legacy', archived: true, allowed_origins: [] }] })
+    renderArchive()
+    await screen.findByRole('region', { name: 'Projects' })
+    expect(screen.queryByText('Nothing archived.')).toBeNull()
+  })
+
+  it('asks for no projects in reporting dev, which takes no writes', async () => {
+    vi.spyOn(endpoints, 'dashboards').mockResolvedValue({ timezone: 'UTC', dashboards, dev: true })
+    vi.mocked(endpoints.projects).mockResolvedValue({ projects: [{ project_id: 3, name: 'legacy', archived: true, allowed_origins: [] }] })
+    renderArchive()
+    await screen.findByText('Old experiment')
+    expect(screen.queryByRole('region', { name: 'Projects' })).toBeNull()
+  })
+})
+
 function listed(widget_id: number, dashboard: DashboardInfo, extra: Partial<ListedWidget> = {}): ListedWidget {
   return {
     widget_id,

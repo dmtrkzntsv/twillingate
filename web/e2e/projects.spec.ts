@@ -70,6 +70,20 @@ test('creates a project, edits it, manages a key, archives and restores it', asy
   await expect(page.getByRole('main').getByText('Archived', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Restore' }).click()
   await expect(page.getByRole('button', { name: 'Archive', exact: true })).toBeVisible()
+
+  // Archived again, it leaves the Projects page for the Archive page, which restores it too.
+  await page.getByRole('button', { name: 'Archive', exact: true }).click()
+  await page.getByRole('button', { name: 'Archive project' }).click()
+  await expect(page.getByRole('main').getByText('Archived', { exact: true })).toBeVisible()
+  await page.goto('/app/projects')
+  await expect(page.getByRole('article', { name: 'dev' })).toBeVisible()
+  await expect(page.getByRole('article', { name })).toHaveCount(0)
+  await page.goto('/app/archive')
+  const row = page.getByRole('region', { name: 'Projects' }).getByRole('listitem').filter({ hasText: name })
+  await row.getByRole('button', { name: 'Restore' }).click()
+  await expect(row).toHaveCount(0)
+  await page.goto('/app/projects')
+  await expect(page.getByRole('article', { name })).toBeVisible()
 })
 
 test('shows usage and cap impact for the seeded project', async ({ page }) => {

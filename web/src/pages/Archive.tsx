@@ -8,6 +8,7 @@ import { RestoreShareDialog } from '@/components/share/RestoreShareDialog'
 import { Button } from '@/components/ui/button'
 import { useDashboardActions } from '@/hooks/use-dashboard-actions'
 import { useFormActions } from '@/hooks/use-form-actions'
+import { useProjectActions } from '@/hooks/use-project-actions'
 import { useShareImage } from '@/hooks/use-share-image'
 import { useWidgetEdits } from '@/hooks/use-widget-edits'
 import type { DashboardInfo, Form, ListedWidget, Project, WidgetShare } from '@/lib/api'
@@ -89,6 +90,10 @@ function ShareThumb({ share }: { share: WidgetShare }) {
  * Restore. It is left out when there are none, and in reporting dev, which
  * takes no writes.
  *
+ * Then a Projects section lists the archived projects, in list order, each
+ * linking to its page with Restore. It is left out when there are none, and
+ * in reporting dev, which takes no writes.
+ *
  * Then a Shares section lists the archived widget shares,
  * most recently archived first, each restorable with a new archive date
  * (D9). It is left out when there are none, and in reporting dev, which has
@@ -127,6 +132,9 @@ export default function Archive() {
   const [restoring, setRestoring] = useState<WidgetShare>()
   const projectsQ = useQuery({ ...projectsQuery, enabled: data !== undefined && writable })
   const live: Project[] = (projectsQ.data?.projects ?? []).filter((p) => !p.archived)
+  // The sidebar reads the projects in reporting dev too, so the cache can hold them there.
+  const archivedProjects: Project[] = writable ? (projectsQ.data?.projects ?? []).filter((p) => p.archived) : []
+  const projectActions = useProjectActions()
   const formsQs = useQueries({ queries: live.map((p) => ({ ...formsQuery(p.project_id, true), enabled: writable })) })
   const archivedForms: { project: Project; form: Form }[] = live.flatMap((p, i) =>
     (formsQs[i]?.data?.forms ?? []).map((form) => ({ project: p, form }))
@@ -195,13 +203,42 @@ export default function Archive() {
             Archived dashboards are out of the sidebar. Restore one to put it back.
             {purgeDays ? ` They are deleted after ${purgeDays} days.` : ''} A hidden built-in dashboard comes back from
             Gallery › Dashboards.
-            Archived shares answer 404 until restored. Archived forms refuse submissions.
+            Archived projects receive nothing until restored. Archived shares answer 404 until restored. Archived forms refuse submissions.
           </p>
         </header>
-        {data !== undefined && groups.length === 0 && widgetGroups.length === 0 && shares.length === 0 && archivedForms.length === 0 && !widgetsQ.isLoading && !sharesQ.isLoading && !formsLoading && (
+        {data !== undefined && groups.length === 0 && archivedProjects.length === 0 && widgetGroups.length === 0 && shares.length === 0 && archivedForms.length === 0 && !widgetsQ.isLoading && !sharesQ.isLoading && !formsLoading && (
           <p className="text-sm text-muted-foreground">Nothing archived.</p>
         )}
         {groups.length > 0 && <ul className="flex flex-col gap-2">{groups.map(renderGroup)}</ul>}
+        {archivedProjects.length > 0 && (
+          <section aria-labelledby="archived-projects" className="flex flex-col gap-3">
+            <h2 id="archived-projects" className="text-base font-semibold">
+              Projects
+            </h2>
+            <ul className="flex flex-col gap-2">
+              {archivedProjects.map((p) => (
+                <li key={p.project_id} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-lg border p-3">
+                  <div className="min-w-0">
+                    <div className="truncate font-medium" title={p.name}>
+                      <Link to={`/projects/${p.project_id}`} className="underline-offset-2 hover:underline">
+                        {p.name}
+                      </Link>
+                    </div>
+                    <div className="text-xs text-muted-foreground">archived</div>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={projectActions.pending}
+                    onClick={() => void projectActions.restore(p.project_id)}
+                  >
+                    Restore
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
         {widgetGroups.length > 0 && (
           <section aria-labelledby="archived-widgets" className="flex flex-col gap-3">
             <h2 id="archived-widgets" className="text-base font-semibold">

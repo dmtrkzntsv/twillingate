@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { DndContext, closestCenter } from '@dnd-kit/core'
 import { SortableContext, rectSortingStrategy } from '@dnd-kit/sortable'
 import { useQuery } from '@tanstack/react-query'
-import { ChevronRightIcon, PlusIcon } from 'lucide-react'
+import { PlusIcon } from 'lucide-react'
 import AppShell, { TopBar } from '@/components/AppShell'
 import Crumbs from '@/components/Crumbs'
 import IssuedKeyView from '@/components/projects/IssuedKeyView'
@@ -12,7 +12,6 @@ import ProjectCard from '@/components/projects/ProjectCard'
 import ProjectFormDialog from '@/components/projects/ProjectFormDialog'
 import SortableProjectCard from '@/components/projects/SortableProjectCard'
 import { Button } from '@/components/ui/button'
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { useProjectActions } from '@/hooks/use-project-actions'
 import { useReorder } from '@/hooks/use-reorder'
@@ -22,9 +21,10 @@ import { dashboardsQuery, keysQuery, limitsQuery, projectsQuery, usageQuery } fr
 import { formatBytes, formatGrowth } from '@/lib/units'
 
 /**
- * `/projects`: every project as a card with its last 30 days, the caps,
- * archived projects, and New project. Active cards drag to a new order,
- * the one every project list shows; archived ones keep their place in it.
+ * `/projects`: every live project as a card with its last 30 days, the
+ * caps, and New project. Cards drag to a new order, the one every project
+ * list shows; archived projects keep their place in it and are listed on
+ * the Archive page.
  */
 export default function Projects() {
   const { data: dash } = useQuery(dashboardsQuery)
@@ -35,13 +35,12 @@ export default function Projects() {
   const { data: statsData } = statsQ
   const { data: keysData } = keysQ
   const { data: limitsData } = useQuery(limitsQuery)
-  const { create, restore, move, pending } = useProjectActions()
+  const { create, move, pending } = useProjectActions()
   const [creating, setCreating] = useState(false)
   const [created, setCreated] = useState<CreatedProject | null>(null)
 
   const projects = projectsData?.projects ?? []
   const active = projects.filter((p) => !p.archived)
-  const archived = projects.filter((p) => p.archived)
   const activeIds = active.map((p) => p.project_id)
   const readOnly = dash?.dev === true
   const { order, busy, context } = useReorder(
@@ -108,28 +107,6 @@ export default function Projects() {
           </SortableContext>
         </DndContext>
         {limitsData && <LimitsPanel limits={limitsData.limits} rawEvents={limitsData.raw_events} />}
-        {archived.length > 0 && (
-          <Collapsible className="flex flex-col gap-3">
-            <CollapsibleTrigger asChild>
-              <Button variant="ghost" className="self-start data-[state=open]:[&>svg]:rotate-90">
-                <ChevronRightIcon /> Archived ({archived.length})
-              </Button>
-            </CollapsibleTrigger>
-            <CollapsibleContent className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-              {archived.map((p) => (
-                <ProjectCard
-                  key={p.project_id}
-                  project={p}
-                  stats={statsOf(p.project_id)}
-                  keys={keysOf(p.project_id)}
-                  statsFailed={statsFailed}
-                  pending={pending}
-                  onRestore={() => void restore(p.project_id)}
-                />
-              ))}
-            </CollapsibleContent>
-          </Collapsible>
-        )}
       </div>
       <ProjectFormDialog
         open={creating}
