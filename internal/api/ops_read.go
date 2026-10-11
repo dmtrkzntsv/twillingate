@@ -294,6 +294,21 @@ func (h *host) register(r *registrar) {
 	expose(r, spec{Name: "enable_ingest_key", Annotations: idem, Method: "POST", Path: p + "/keys/{label}/enable",
 		Description: "Re-enable a disabled ingest key."},
 		h.enableKey)
+	expose(r, spec{Name: "list_event_rules", Annotations: ro, Method: "GET", Path: p + "/event-rules",
+		Description: "List a project's event rules: renames (name → to) and blocks, product and measures families."},
+		h.listEventRules)
+	expose(r, spec{Name: "rename_event", Annotations: write, Method: "POST", Path: p + "/event-rules/rename",
+		Description: "Rename a product or measures event: rewrites its stored events and aggregates, and stores later events sent under the old name under the new one. Refused onto a name with events unless merge is true (a merge cannot be undone). Widget SQL naming the old event is not rewritten."},
+		h.renameEvent)
+	expose(r, spec{Name: "block_event", Annotations: idem, Method: "POST", Path: p + "/event-rules/block",
+		Description: "Block a product or measures event: ingest accepts and drops it (with a warning), the next daily pass deletes its aggregates, and its stored raw events expire with the raw window. Nothing else is deleted. remove_event_rule unblocks."},
+		h.blockEvent)
+	expose(r, spec{Name: "remove_event_rule", Annotations: idem, Method: "POST", Path: p + "/event-rules/remove",
+		Description: "Remove a project's rule for an event name: a rename stops mapping (history stays renamed), a block lets the event be stored again."},
+		h.removeEventRule)
+	restOnly(r, spec{Name: "event_names", Method: "GET", Path: p + "/event-names",
+		Description: "A project's product and measures event names in a range with their event counts, busiest first. For the console's Settings page; not an MCP tool (product_events and measures answer agents)."},
+		h.eventNames)
 
 	expose(r, spec{Name: "integration_guide", Annotations: ro, // MCP only
 		Description: "Tailored integration instructions for one project and platform (web, spa, server, mobile), with the project's real ingest key, collector URL and event examples baked in. Confirm the collector hostname with the user. Call after create_project; read docs://twillingate for depth."},

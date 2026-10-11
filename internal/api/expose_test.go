@@ -25,6 +25,7 @@ func TestEveryToolChoosesATransport(t *testing.T) {
 		"export_submissions": true,                           // a CSV download
 		"preview_widget":     true,                           // the console editor's Run query
 		"mark_form_seen":     true, "project_activity": true, // the console's own read mark and badges
+		"event_names": true, // the Settings page's event list
 	}
 	seen := map[string]string{}
 	tools := 0
@@ -50,8 +51,8 @@ func TestEveryToolChoosesATransport(t *testing.T) {
 		}
 		seen[key] = s.Name
 	}
-	if tools != 56 {
-		t.Errorf("registered %d tools, want 56", tools)
+	if tools != 60 {
+		t.Errorf("registered %d tools, want 60", tools)
 	}
 	listed, err := cs.ListTools(context.Background(), nil)
 	if err != nil {
