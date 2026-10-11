@@ -60,7 +60,8 @@ Projects live in a registry table, managed through the CLI or, over the API
 | Issue an ingest key | `twillingate key issue` | `issue_ingest_key` | `{project_id, label}`; returns the key **and** a paste-ready snippet |
 | List keys | `twillingate key list` | `list_ingest_keys` | `{project_id}` |
 | Disable / enable a key | `twillingate key disable` / `enable` | `disable_ingest_key` / `enable_ingest_key` | `{project_id, label}` |
-| Rename an event | — | `rename_event` | `{project_id, family, from, to, merge}`; `family` is `product` or `measures`; returns the rule and the rows rewritten per table. See [Event rules](#event-rules) |
+| Rename an event | — | `rename_event` | `{project_id, family, from, to}`; `family` is `product` or `measures`; returns the rule and the rows rewritten per table. See [Event rules](#event-rules) |
+| Merge an event into another | — | `merge_event` | `{project_id, family, from, to}`; returns what `rename_event` does |
 | Block an event | — | `block_event` | `{project_id, family, name}` |
 | List / remove event rules | — | `list_event_rules` / `remove_event_rule` | `{project_id}` / `{project_id, family, name}` |
 | Get paste-ready setup | — | `integration_guide` | `{project_id, platform}` where platform is `web`, `spa`, `server` or `mobile`; returns the whole setup as markdown with the live key filled in. Reach for it before hand-assembling a snippet |
@@ -146,34 +147,37 @@ and `state` (`active` or `disabled`).
 
 ### Event rules
 
-A project can rename an event or block it. Rules cover the `product` and
-`measures` families, per project: views and every `$` name (`$page_view`,
-`$form_submit`, the Web Vitals) belong to the server and are refused (`invalid`),
-as are an empty name and a rename to itself. An unknown project or removing a
-rule that does not exist is `not_found`; renaming onto a name that already has
-events, or onto a blocked one, without `merge` is `conflict`. A name has at
-most one rule: blocking a renamed name replaces the rename, and renaming a
-blocked name replaces the block. Every rule operation is audited.
+A project can rename an event, merge it into another, or block it. Rules cover
+the `product` and `measures` families, per project: views and every `$` name
+(`$page_view`, `$form_submit`, the Web Vitals) belong to the server and are
+refused (`invalid`), as are an empty name and a rename or merge onto itself.
+An unknown project or removing a rule that does not exist is `not_found`;
+renaming onto a name that already has events, or renaming or merging onto a
+blocked one, is `conflict`. A name has at most one rule: blocking a renamed
+name replaces the rename, and renaming a blocked name replaces the block. Every
+rule operation is audited.
 
-`rename_event {project_id, family, from, to, merge}` rewrites the stored events
-and the family's aggregates from `from` to `to` in one transaction, keeps a
-rule, and returns it with `rewritten`, the rows changed per table. Events sent
-later under `from`, by an app version still in the field, are stored under
-`to`; they carry no warning. A name with no stored events is accepted: the rule
-alone is written.
+`rename_event {project_id, family, from, to}` gives an event a name not in use:
+it rewrites the stored events and the family's aggregates from `from` to `to`
+in one transaction, keeps a rule, and returns it with `rewritten`, the rows
+changed per table. Events sent later under `from`, by an app version still in
+the field, are stored under `to`; they carry no warning. A name with no stored
+events is accepted: the rule alone is written. If `to` already has events or
+aggregates, the rename is refused: merge instead.
 
-- **Merging.** If `to` already has events or aggregates, the rename is refused
-  unless `merge` is `true`. A merge cannot be undone. Raw events merge exactly;
-  aggregates meet on their key and their counts, samples and sums add, but
-  `unique_users` and `unique_groups` on merged days become an upper bound
-  (someone who sent both names counts twice), and a merged day's attribute
-  breakdown may hold more than `ATTRIBUTE_VALUES_TOP_N` values.
-- **Chains and renaming back.** Renaming B to C retargets every rule `A → B` to
-  `A → C`, so a rule's target is never another rule's source. Renaming `B` to
-  `A` while `A → B` exists deletes that rule first, so `A` is no longer mapped
-  away. Renaming onto a blocked name is refused (`conflict`) unless `merge` is
-  `true`: the block stays, so the renamed events are dropped from then on and
-  the next daily pass deletes their aggregated history with the block's.
+`merge_event {project_id, family, from, to}` does the same onto an event that
+may already have events, and answers the same. A merge cannot be undone. Raw
+events merge exactly; aggregates meet on their key and their counts, samples
+and sums add, but `unique_users` and `unique_groups` on merged days become an
+upper bound (someone who sent both names counts twice), and a merged day's
+attribute breakdown may hold more than `ATTRIBUTE_VALUES_TOP_N` values.
+
+- **Chains and renaming back.** Renaming or merging B into C retargets every
+  rule `A → B` to `A → C`, so a rule's target is never another rule's source.
+  Renaming `B` to `A` while `A → B` exists deletes that rule first, so `A` is
+  no longer mapped away.
+- **Never onto a blocked name.** Neither a rename nor a merge drops what it
+  moves: to stop receiving an event, block it.
 - **Widget SQL is not rewritten.** A widget or `query` that names the old event
   finds nothing from the rename on; edit it.
 
@@ -191,12 +195,13 @@ alone is written.
 - Events queued in the seconds before the block commits may still be stored.
 
 `remove_event_rule {project_id, family, name}` deletes the rule for `name`. A
-rename stops mapping, and the history it rewrote stays renamed. A block stops
+rename or merge stops mapping, and the history it rewrote stays where it went. A block stops
 dropping: events are stored again, and raw days still inside the window
 aggregate as usual. Removing a block before the next daily pass loses nothing;
 after it, the aggregated history of the name is gone. `list_event_rules
 {project_id}` answers `rules`, each `{family, name, action, to, created_at}`
-with `action` `rename` or `block` and no `to` for a block.
+with `action` `rename` (left by a rename or a merge) or `block`, and no `to`
+for a block.
 
 The console lists a project's event names for these tools on its Settings page,
 from `GET /api/projects/{project_id}/event-names`, a route with no MCP tool
@@ -204,7 +209,7 @@ from `GET /api/projects/{project_id}/event-names`, a route with no MCP tool
 in the range and leaves out `$` names, which take no rule. Each rule shows on
 its event there: a blocked event is marked, and listed even with nothing in the
 range; the names renamed to an event show under it as its aliases. Adding an
-alias is `rename_event` from the alias to the event with `merge`.
+alias is `merge_event` from the alias to the event.
 
 ---
 
@@ -1295,7 +1300,7 @@ form submissions](#collect-form-submissions).
 
 ## Answer questions with the data
 
-A connected session gets sixty tools: the twenty-seven below, the nine
+A connected session gets sixty-one tools: the twenty-eight below, the nine
 in [Collect form submissions](#collect-form-submissions), and twenty-four
 that build the dashboards served at `/app/`, which are documented in
 `docs://reporting` ([reporting.md](reporting.md)). To build or change a
@@ -1323,7 +1328,7 @@ take `project_id`, `from` and `to` as `YYYY-MM-DD` unless noted.
 
 **Managing** — `create_project`, `update_project`, `move_project`,
 `archive_project`, `restore_project`, `issue_ingest_key`, `list_ingest_keys`,
-`enable_ingest_key`, `disable_ingest_key`, `rename_event`, `block_event`,
+`enable_ingest_key`, `disable_ingest_key`, `rename_event`, `merge_event`, `block_event`,
 `list_event_rules`, `remove_event_rule` and `integration_guide`, all
 described in [Set up a project](#set-up-a-project).
 
@@ -1384,7 +1389,8 @@ curl -H "Authorization: Bearer $TOKEN" \
 | `POST` | `/api/projects/{project_id}/keys/{label}/disable` | `disable_ingest_key` | — |
 | `POST` | `/api/projects/{project_id}/keys/{label}/enable` | `enable_ingest_key` | — |
 | `GET` | `/api/projects/{project_id}/event-rules` | `list_event_rules` | — → `{"rules":[{"family","name","action","to","created_at"}]}`; `to` is absent for a block |
-| `POST` | `/api/projects/{project_id}/event-rules/rename` | `rename_event` | body: `family`, `from`, `to`, `merge` → `{"rule":{…},"rewritten":{"events":3,…}}` |
+| `POST` | `/api/projects/{project_id}/event-rules/rename` | `rename_event` | body: `family`, `from`, `to` → `{"rule":{…},"rewritten":{"events":3,…}}` |
+| `POST` | `/api/projects/{project_id}/event-rules/merge` | `merge_event` | body: `family`, `from`, `to` → as `rename_event` |
 | `POST` | `/api/projects/{project_id}/event-rules/block` | `block_event` | body: `family`, `name` → `{"rule":{…}}` |
 | `POST` | `/api/projects/{project_id}/event-rules/remove` | `remove_event_rule` | body: `family`, `name` → `{"status":"removed"}`; a body because names may contain `/` |
 | `GET` | `/api/projects/{project_id}/event-names` | `event_names`, REST only: no MCP tool | query: `from`, `to` → `{"events":[{"family","name","events"}]}`: product events and measure samples in the range, the busiest 200, busiest first; `$` names, which take no rule, are left out |

@@ -20,11 +20,12 @@ const rules: EventRule[] = [
 
 function renderSection(props: Partial<Parameters<typeof EventsSection>[0]> = {}) {
   const onRename = vi.fn().mockResolvedValue(true)
+  const onMerge = vi.fn().mockResolvedValue(true)
   const onBlock = vi.fn().mockResolvedValue(true)
   const onRemove = vi.fn().mockResolvedValue(true)
   const onAddAlias = vi.fn().mockResolvedValue(true)
-  renderWithProviders(<EventsSection project={project} range={range} rawDays={7} onRename={onRename} onBlock={onBlock} onRemove={onRemove} onAddAlias={onAddAlias} {...props} />)
-  return { onRename, onBlock, onRemove, onAddAlias }
+  renderWithProviders(<EventsSection project={project} range={range} rawDays={7} onRename={onRename} onMerge={onMerge} onBlock={onBlock} onRemove={onRemove} onAddAlias={onAddAlias} {...props} />)
+  return { onRename, onMerge, onBlock, onRemove, onAddAlias }
 }
 
 async function openMenu(user: ReturnType<typeof userEvent.setup>, name: string, item: string, family = 'product') {
@@ -155,34 +156,31 @@ describe('EventsSection', () => {
     expect(row('old_signup')).not.toHaveClass('bg-sky-500/5')
   })
 
-  it('adds an alias to an event from its menu', async () => {
+  it('offers Rename, Merge into and Block on an event, and no Add alias', async () => {
     const user = userEvent.setup()
-    const { onAddAlias } = renderSection()
-    await openMenu(user, 'signup', 'Add alias…')
-    const dialog = await screen.findByRole('dialog', { name: 'Add an alias to signup' })
-    await user.type(within(dialog).getByLabelText('Old name'), ' sign_up_v1 ')
-    expect(within(dialog).getByText(/Events sent as sign_up_v1 are stored as signup\./)).toBeInTheDocument()
-    expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument()
-    await user.click(within(dialog).getByRole('button', { name: 'Add alias' }))
-    expect(onAddAlias).toHaveBeenCalledWith({ family: 'product', alias: 'sign_up_v1', to: 'signup' })
-    await vi.waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    renderSection()
+    await user.click(await screen.findByRole('button', { name: 'Actions for signup (product)' }))
+    const items = await screen.findAllByRole('menuitem')
+    expect(items.map((i) => i.textContent)).toEqual(['Rename…', 'Merge into…', 'Block…'])
   })
 
   it('warns that an alias with events of its own merges them into the event', async () => {
     const user = userEvent.setup()
-    renderSection()
-    await openMenu(user, 'signup', 'Add alias…')
+    vi.spyOn(endpoints, 'eventRules').mockResolvedValue({ rules: [{ family: 'product', name: 'a', action: 'rename', to: 'signup' }] })
+    const { onAddAlias } = renderSection()
+    await user.click(await screen.findByRole('button', { name: 'Add alias to signup' }))
     const dialog = await screen.findByRole('dialog', { name: 'Add an alias to signup' })
     await user.type(within(dialog).getByLabelText('Old name'), 'old_signup')
     expect(within(dialog).getByRole('alert')).toHaveTextContent('old_signup already has events: they merge into signup, and this cannot be undone.')
+    await user.click(within(dialog).getByRole('button', { name: 'Add alias' }))
+    expect(onAddAlias).toHaveBeenCalledWith({ family: 'product', alias: 'old_signup', to: 'signup' })
   })
 
   it('refuses an empty alias, a $ name, the event itself and an existing alias', async () => {
     const user = userEvent.setup()
     vi.spyOn(endpoints, 'eventRules').mockResolvedValue({ rules: [{ family: 'product', name: 'a', action: 'rename', to: 'signup' }] })
     renderSection()
-    await screen.findByRole('button', { name: 'Remove alias a' })
-    await openMenu(user, 'signup', 'Add alias…')
+    await user.click(await screen.findByRole('button', { name: 'Add alias to signup' }))
     const dialog = await screen.findByRole('dialog', { name: 'Add an alias to signup' })
     const input = within(dialog).getByLabelText('Old name')
     const button = within(dialog).getByRole('button', { name: 'Add alias' })
@@ -205,41 +203,30 @@ describe('EventsSection', () => {
     expect(screen.queryByText('a → b')).not.toBeInTheDocument()
   })
 
-  it('renames to a new name without merge', async () => {
+  it('renames to a new name', async () => {
     const user = userEvent.setup()
     const { onRename } = renderSection()
     await openMenu(user, 'signup', 'Rename…')
     const dialog = await screen.findByRole('dialog')
-    const input = within(dialog).getByRole('textbox')
-    await user.type(input, 'register')
-    expect(within(dialog).queryByText(/cannot be undone/)).not.toBeInTheDocument()
+    await user.type(within(dialog).getByRole('textbox'), 'register')
+    expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument()
     await user.click(within(dialog).getByRole('button', { name: 'Rename' }))
     expect(onRename).toHaveBeenCalledWith({ family: 'product', from: 'signup', to: 'register' })
-    expect(onRename.mock.calls[0][0]).not.toHaveProperty('merge')
+    await vi.waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
   })
 
-  it('warns and merges when the new name is already in the same family', async () => {
+  it('refuses a name the family already has, pointing to Merge into', async () => {
     const user = userEvent.setup()
     const { onRename } = renderSection()
     await openMenu(user, 'old_signup', 'Rename…')
     const dialog = await screen.findByRole('dialog')
     await user.type(within(dialog).getByRole('textbox'), 'signup')
-    expect(within(dialog).getByText(/merges .* cannot be undone/)).toBeInTheDocument()
-    expect(within(dialog).queryByRole('button', { name: 'Rename' })).not.toBeInTheDocument()
-    await user.click(within(dialog).getByRole('button', { name: 'Merge into signup' }))
-    expect(onRename).toHaveBeenCalledWith({ family: 'product', from: 'old_signup', to: 'signup', merge: true })
+    expect(within(dialog).getByRole('alert')).toHaveTextContent('signup already has events: use Merge into… to fold old_signup into it.')
+    expect(within(dialog).getByRole('button', { name: 'Rename' })).toBeDisabled()
+    expect(onRename).not.toHaveBeenCalled()
   })
 
-  it('merges onto a name the family has even when the other family has it too', async () => {
-    const user = userEvent.setup()
-    renderSection()
-    await openMenu(user, 'signup', 'Rename…')
-    const dialog = await screen.findByRole('dialog')
-    await user.type(within(dialog).getByRole('textbox'), 'checkout')
-    expect(within(dialog).getByRole('button', { name: 'Merge into checkout' })).toBeInTheDocument()
-  })
-
-  it('treats a name that exists only in the other family as a plain rename', async () => {
+  it('treats a name that exists only in the other family as free', async () => {
     const user = userEvent.setup()
     vi.spyOn(endpoints, 'eventNames').mockResolvedValue({ events: [
       { family: 'product', name: 'a', events: 3 }, { family: 'measures', name: 'lcp', events: 9 },
@@ -269,24 +256,23 @@ describe('EventsSection', () => {
     expect(button).toBeEnabled()
   })
 
-  it('turns the dialog into a merge confirmation when the server refuses a name the range does not list', async () => {
+  it('says a name the server refuses as taken has events, until it is typed over', async () => {
     const user = userEvent.setup()
     const { onRename } = renderSection()
-    onRename.mockResolvedValueOnce('conflict').mockResolvedValue(true)
+    onRename.mockResolvedValueOnce('conflict')
     await openMenu(user, 'signup', 'Rename…')
     const dialog = await screen.findByRole('dialog')
-    await user.type(within(dialog).getByRole('textbox'), 'older')
-    expect(within(dialog).queryByText(/cannot be undone/)).not.toBeInTheDocument()
+    const input = within(dialog).getByRole('textbox')
+    await user.type(input, 'older')
     await user.click(within(dialog).getByRole('button', { name: 'Rename' }))
-    expect(onRename).toHaveBeenLastCalledWith({ family: 'product', from: 'signup', to: 'older' })
-    expect(await within(dialog).findByText(/merges .* cannot be undone/)).toBeInTheDocument()
-    expect(screen.getByRole('dialog')).toBeInTheDocument()
-    await user.click(within(dialog).getByRole('button', { name: 'Merge into older' }))
-    expect(onRename).toHaveBeenLastCalledWith({ family: 'product', from: 'signup', to: 'older', merge: true })
-    await vi.waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('older already has events: use Merge into…')
+    expect(within(dialog).getByRole('button', { name: 'Rename' })).toBeDisabled()
+    await user.type(input, 'x')
+    expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument()
+    expect(within(dialog).getByRole('button', { name: 'Rename' })).toBeEnabled()
   })
 
-  it('warns that renaming onto a blocked name drops the history, and sends merge', async () => {
+  it('refuses a name the family blocks', async () => {
     const user = userEvent.setup()
     // x is blocked in product and has no events listed; fresh is blocked in measures only.
     vi.spyOn(endpoints, 'eventRules').mockResolvedValue({ rules: [
@@ -301,26 +287,49 @@ describe('EventsSection', () => {
     expect(within(dialog).getByRole('button', { name: 'Rename' })).toBeEnabled()
     await user.clear(input)
     await user.type(input, ' x ')
-    expect(await within(dialog).findByRole('alert')).toHaveTextContent(
-      "x is blocked: signup's events are dropped from now on, and the next daily pass deletes signup's aggregated history.")
-    expect(within(dialog).queryByRole('button', { name: 'Rename' })).not.toBeInTheDocument()
-    await user.click(within(dialog).getByRole('button', { name: 'Rename into blocked x' }))
-    expect(onRename).toHaveBeenCalledWith({ family: 'product', from: 'signup', to: 'x', merge: true })
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('x is blocked: nothing is renamed onto a blocked event. To stop receiving signup, block it.')
+    expect(within(dialog).getByRole('button', { name: 'Rename' })).toBeDisabled()
+    expect(onRename).not.toHaveBeenCalled()
   })
 
-  it('drops the merge confirmation when the name is typed over', async () => {
+  it('merges into an event picked from the family, never itself or a blocked one', async () => {
     const user = userEvent.setup()
-    const { onRename } = renderSection()
-    onRename.mockResolvedValueOnce('conflict')
-    await openMenu(user, 'signup', 'Rename…')
-    const dialog = await screen.findByRole('dialog')
-    const input = within(dialog).getByRole('textbox')
-    await user.type(input, 'older')
-    await user.click(within(dialog).getByRole('button', { name: 'Rename' }))
-    await within(dialog).findByRole('button', { name: 'Merge into older' })
-    await user.type(input, 'x')
-    expect(within(dialog).getByRole('button', { name: 'Rename' })).toBeEnabled()
-    expect(within(dialog).queryByText(/cannot be undone/)).not.toBeInTheDocument()
+    vi.spyOn(endpoints, 'eventRules').mockResolvedValue({ rules: [{ family: 'product', name: 'x', action: 'block' }] })
+    const { onMerge } = renderSection()
+    await screen.findByText('Blocked')
+    await openMenu(user, 'old_signup', 'Merge into…')
+    const dialog = await screen.findByRole('dialog', { name: 'Merge old_signup into…' })
+    expect(within(dialog).getByText(/cannot be undone/)).toBeInTheDocument()
+    expect(within(dialog).getByText(/Widgets whose SQL names old_signup are not changed\./)).toBeInTheDocument()
+    expect(within(dialog).getAllByRole('option').map((o) => o.querySelector('span')?.textContent)).toEqual(['checkout', 'signup'])
+    expect(within(dialog).getByRole('button', { name: 'Merge' })).toBeDisabled()
+    await user.click(within(dialog).getByRole('option', { name: /signup/ }))
+    await user.click(within(dialog).getByRole('button', { name: 'Merge into signup' }))
+    expect(onMerge).toHaveBeenCalledWith({ family: 'product', from: 'old_signup', to: 'signup' })
+    await vi.waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  })
+
+  it('says when the family has no other event to merge into', async () => {
+    const user = userEvent.setup()
+    const { onMerge } = renderSection()
+    await openMenu(user, 'checkout', 'Merge into…', 'measures')
+    const dialog = await screen.findByRole('dialog', { name: 'Merge checkout into…' })
+    expect(within(dialog).queryAllByRole('option')).toHaveLength(0)
+    expect(within(dialog).getByText('No other measures events.')).toBeInTheDocument()
+    expect(within(dialog).getByRole('button', { name: 'Merge' })).toBeDisabled()
+    expect(onMerge).not.toHaveBeenCalled()
+  })
+
+  it('keeps the merge dialog open when the merge is refused', async () => {
+    const user = userEvent.setup()
+    const { onMerge } = renderSection()
+    onMerge.mockResolvedValueOnce(false)
+    await openMenu(user, 'signup', 'Merge into…')
+    const dialog = await screen.findByRole('dialog', { name: 'Merge signup into…' })
+    await user.click(within(dialog).getByRole('option', { name: /old_signup/ }))
+    await user.click(within(dialog).getByRole('button', { name: 'Merge into old_signup' }))
+    expect(onMerge).toHaveBeenCalledWith({ family: 'product', from: 'signup', to: 'old_signup' })
+    expect(screen.getByRole('dialog', { name: 'Merge signup into…' })).toBeInTheDocument()
   })
 
   it('names the family of a measure in the actions label and the dialogs', async () => {

@@ -115,12 +115,12 @@ func TestKeyToolsLifecycle(t *testing.T) {
 
 // destructiveWriters are the write tools announcing DestructiveHint true
 // besides delete_submissions.
-var destructiveWriters = map[string]bool{"rename_event": true, "block_event": true}
+var destructiveWriters = map[string]bool{"merge_event": true, "block_event": true}
 
 // TestNoDeleteToolExists: nothing over MCP deletes, except
 // delete_submissions, which an erasure request needs (spec D8); it and the
-// two event-rule tools that lose data (rename_event, whose merge cannot be
-// split, and block_event, whose daily pass deletes aggregates) are the
+// two event-rule tools that lose data (merge_event, which cannot be split,
+// and block_event, whose daily pass deletes aggregates) are the
 // tools announcing DestructiveHint true, so a client asks the operator.
 func TestNoDeleteToolExists(t *testing.T) {
 	_, cs := newTestHost(t)
@@ -178,7 +178,7 @@ func TestManagementToolsAnnotatedNonReadOnly(t *testing.T) {
 		"add_project_tab": true, "remove_project_tab": true, "move_project_tab": true,
 		"update_widget_share": true, "archive_widget_share": true, "restore_widget_share": true,
 		"approve_form": true, "update_form": true, "archive_form": true, "restore_form": true,
-		"rename_event": true, "block_event": true, "remove_event_rule": true}
+		"rename_event": true, "merge_event": true, "block_event": true, "remove_event_rule": true}
 	idempotent := map[string]bool{"archive_project": true, "restore_project": true, "move_project": true,
 		"disable_ingest_key": true, "enable_ingest_key": true,
 		"archive_dashboard": true, "restore_dashboard": true, "archive_widget": true, "restore_widget": true,

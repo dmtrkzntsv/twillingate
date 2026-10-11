@@ -12,16 +12,17 @@ export interface ProjectActions {
   disableKey(id: number, label: string): Promise<boolean | undefined>
   enableKey(id: number, label: string): Promise<boolean | undefined>
   /**
-   * Renames (or, with `merge`, merges) an event as it arrives and in what is stored; resolves true when done. A 409
-   * (the new name already has events and `merge` is not set) is not toasted: it resolves 'conflict' so the caller
-   * can ask to merge.
+   * Renames an event as it arrives and in what is stored; resolves true when done. A 409 (the new name already has
+   * events) is not toasted: it resolves 'conflict' so the caller can point to merging.
    */
-  renameEvent(id: number, body: { family: EventFamily; from: string; to: string; merge?: boolean }): Promise<boolean | 'conflict'>
+  renameEvent(id: number, body: { family: EventFamily; from: string; to: string }): Promise<boolean | 'conflict'>
+  /** Merges event `from` into event `to`, as it arrives and in what is stored; resolves true when done. */
+  mergeEvent(id: number, body: { family: EventFamily; from: string; to: string }): Promise<boolean>
   /** Drops an event as it arrives; the daily pass deletes its aggregates. */
   blockEvent(id: number, body: { family: EventFamily; name: string }): Promise<boolean>
   /** Removes an event's rename or block rule. */
   removeEventRule(id: number, body: { family: EventFamily; name: string }): Promise<boolean>
-  /** Maps `alias` to the event `to`: a rename with merge, so the alias's stored events (if any) join it. */
+  /** Maps `alias` to the event `to`: a merge, so the alias's stored events (if any) join it. */
   addEventAlias(id: number, body: { family: EventFamily; alias: string; to: string }): Promise<boolean>
   /** Puts project `id` right after project `after` (0 first); no toast unless refused. Resolves true once the list has the new order. */
   move(id: number, after: number): Promise<boolean>
@@ -103,17 +104,19 @@ export function useProjectActions(): ProjectActions {
     renameEvent: async (id, body) => {
       const out = await run(
         () => endpoints.renameEvent(id, body),
-        body.merge ? `Merged ${body.from} into ${body.to}` : `Renamed ${body.from} to ${body.to}`,
+        `Renamed ${body.from} to ${body.to}`,
         EVENT_WRITE,
-        (err) => (!body.merge && err instanceof ApiError && err.status === 409 ? ('conflict' as const) : undefined)
+        (err) => (err instanceof ApiError && err.status === 409 ? ('conflict' as const) : undefined)
       )
       return out === 'conflict' ? out : out !== undefined
     },
+    mergeEvent: async (id, body) =>
+      (await run(() => endpoints.mergeEvent(id, body), `Merged ${body.from} into ${body.to}`, EVENT_WRITE)) !== undefined,
     blockEvent: async (id, body) => (await run(() => endpoints.blockEvent(id, body), `Blocked ${body.name}`, EVENT_WRITE)) !== undefined,
     removeEventRule: async (id, body) =>
       (await run(() => endpoints.removeEventRule(id, body), `Removed the rule for ${body.name}`, EVENT_WRITE)) !== undefined,
     addEventAlias: async (id, { family, alias, to }) =>
-      (await run(() => endpoints.renameEvent(id, { family, from: alias, to, merge: true }), `Added alias ${alias} to ${to}`, EVENT_WRITE)) !== undefined,
+      (await run(() => endpoints.mergeEvent(id, { family, from: alias, to }), `Added alias ${alias} to ${to}`, EVENT_WRITE)) !== undefined,
     move,
   }
 }

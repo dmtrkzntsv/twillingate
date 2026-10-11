@@ -65,9 +65,12 @@ func TestEventRuleRefusals(t *testing.T) {
 	}
 	for name, c := range renames {
 		t.Run("rename "+name, func(t *testing.T) {
-			_, _, err := ops.RenameEvent(ctx, "t", p, c.family, c.from, c.to, false)
+			_, _, err := ops.RenameEvent(ctx, "t", p, c.family, c.from, c.to)
 			if !errors.Is(err, ErrInvalid) {
 				t.Fatalf("err = %v, want ErrInvalid", err)
+			}
+			if _, _, err := ops.MergeEvent(ctx, "t", p, c.family, c.from, c.to); !errors.Is(err, ErrInvalid) {
+				t.Fatalf("merge err = %v, want ErrInvalid", err)
 			}
 		})
 	}
@@ -88,8 +91,11 @@ func TestEventRuleRefusals(t *testing.T) {
 		})
 	}
 
-	if _, _, err := ops.RenameEvent(ctx, "t", 999, "product", "a", "b", false); !errors.Is(err, ErrNotFound) {
+	if _, _, err := ops.RenameEvent(ctx, "t", 999, "product", "a", "b"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("rename in unknown project: err = %v, want ErrNotFound", err)
+	}
+	if _, _, err := ops.MergeEvent(ctx, "t", 999, "product", "a", "b"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("merge in unknown project: err = %v, want ErrNotFound", err)
 	}
 	if _, err := ops.BlockEvent(ctx, "t", 999, "product", "a"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("block in unknown project: err = %v, want ErrNotFound", err)
@@ -103,7 +109,7 @@ func TestEventRuleRefusals(t *testing.T) {
 	if err := ops.RemoveEventRule(ctx, "t", p, "product", "nothing"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("remove a missing rule: err = %v, want ErrNotFound", err)
 	}
-	if _, _, err := ops.RenameEvent(ctx, "t", p, "product", "a", "taken", false); !errors.Is(err, ErrConflict) {
+	if _, _, err := ops.RenameEvent(ctx, "t", p, "product", "a", "taken"); !errors.Is(err, ErrConflict) {
 		t.Errorf("rename onto an existing name: err = %v, want ErrConflict", err)
 	}
 	if rules, err := ops.ListEventRules(ctx, p); err != nil || len(rules) != 0 {
@@ -116,7 +122,7 @@ func TestRenameEventReachesSnapshot(t *testing.T) {
 	ctx := context.Background()
 	writeProductEvent(t, st, p, "a")
 
-	rule, counts, err := ops.RenameEvent(ctx, "t", p, "product", "a", "b", false)
+	rule, counts, err := ops.RenameEvent(ctx, "t", p, "product", "a", "b")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,13 +148,28 @@ func TestRenameEventReachesSnapshot(t *testing.T) {
 	}
 }
 
-func TestRenameEventMergeOntoExisting(t *testing.T) {
-	ops, st, _, p, _ := ruleOps(t)
+func TestMergeEvent(t *testing.T) {
+	ops, st, reg, p, _ := ruleOps(t)
 	ctx := context.Background()
 	writeProductEvent(t, st, p, "a")
 	writeProductEvent(t, st, p, "b")
-	if _, _, err := ops.RenameEvent(ctx, "t", p, "product", "a", "b", true); err != nil {
+	rule, counts, err := ops.MergeEvent(ctx, "t", p, "product", "a", "b")
+	if err != nil {
 		t.Fatalf("merge: %v", err)
+	}
+	if rule.Name != "a" || rule.Action != store.EventRuleRename || rule.To != "b" {
+		t.Errorf("rule = %+v, want a renamed to b", rule)
+	}
+	if counts["events"] != 1 {
+		t.Errorf("counts = %v, want one event rewritten", counts)
+	}
+	if got, _ := reg.Snapshot(ctx).ResolveEvent(p, store.FamilyProduct, "a"); got != "b" {
+		t.Errorf("a resolves to %q, want b", got)
+	}
+	// A name with no events yet merges too: the alias of an app version
+	// still in the field.
+	if _, _, err := ops.MergeEvent(ctx, "t", p, "product", "old", "b"); err != nil {
+		t.Fatalf("merge a name with no events: %v", err)
 	}
 }
 
@@ -167,16 +188,16 @@ func TestBlockEventReachesSnapshot(t *testing.T) {
 	if got, blocked := reg.Snapshot(ctx).ResolveEvent(p, store.FamilyProduct, "b"); got != "b" || !blocked {
 		t.Errorf("b resolves to %q blocked=%v, want b, true", got, blocked)
 	}
-	// A rename into a blocked name is refused without merge; with it the
-	// name is mapped, then dropped.
-	if _, _, err := ops.RenameEvent(ctx, "t", p, "product", "a", "b", false); !errors.Is(err, ErrConflict) {
+	// Neither a rename nor a merge goes onto a blocked name: neither drops
+	// what it moves.
+	if _, _, err := ops.RenameEvent(ctx, "t", p, "product", "a", "b"); !errors.Is(err, ErrConflict) {
 		t.Fatalf("rename onto a blocked name: err = %v, want ErrConflict", err)
 	}
-	if _, _, err := ops.RenameEvent(ctx, "t", p, "product", "a", "b", true); err != nil {
-		t.Fatal(err)
+	if _, _, err := ops.MergeEvent(ctx, "t", p, "product", "a", "b"); !errors.Is(err, ErrConflict) {
+		t.Fatalf("merge onto a blocked name: err = %v, want ErrConflict", err)
 	}
-	if got, blocked := reg.Snapshot(ctx).ResolveEvent(p, store.FamilyProduct, "a"); got != "b" || !blocked {
-		t.Errorf("a resolves to %q blocked=%v, want b, true", got, blocked)
+	if got, blocked := reg.Snapshot(ctx).ResolveEvent(p, store.FamilyProduct, "a"); got != "a" || blocked {
+		t.Errorf("a resolves to %q blocked=%v, want a, false", got, blocked)
 	}
 }
 
@@ -211,7 +232,7 @@ func TestListEventRules(t *testing.T) {
 	if _, err := ops.BlockEvent(ctx, "t", p, "product", "z"); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := ops.RenameEvent(ctx, "t", p, "product", "a", "b", false); err != nil {
+	if _, _, err := ops.RenameEvent(ctx, "t", p, "product", "a", "b"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := ops.BlockEvent(ctx, "t", p, "measures", "m"); err != nil {
@@ -243,8 +264,8 @@ func TestEventRuleAudit(t *testing.T) {
 	writeProductEvent(t, st, p, "c")
 	writeProductEvent(t, st, p, "d")
 	steps := []func() error{
-		func() error { _, _, err := ops.RenameEvent(ctx, "alice", p, "product", "a", "b", false); return err },
-		func() error { _, _, err := ops.RenameEvent(ctx, "alice", p, "product", "c", "d", true); return err },
+		func() error { _, _, err := ops.RenameEvent(ctx, "alice", p, "product", "a", "b"); return err },
+		func() error { _, _, err := ops.MergeEvent(ctx, "alice", p, "product", "c", "d"); return err },
 		func() error { _, err := ops.BlockEvent(ctx, "bob", p, "measures", "m"); return err },
 		func() error { return ops.RemoveEventRule(ctx, "bob", p, "measures", "m") },
 	}
@@ -278,7 +299,7 @@ func TestEventRuleAudit(t *testing.T) {
 	pid := func(rest string) string { return strconv.FormatInt(p, 10) + rest }
 	want := [][4]string{
 		{"alice", "event.rename", pid("/product/a"), "to b"},
-		{"alice", "event.rename", pid("/product/c"), "to d (merge)"},
+		{"alice", "event.merge", pid("/product/c"), "to d"},
 		{"bob", "event.block", pid("/measures/m"), ""},
 		{"bob", "event.rule_remove", pid("/measures/m"), ""},
 	}

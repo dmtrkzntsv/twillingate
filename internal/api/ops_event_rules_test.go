@@ -127,12 +127,17 @@ func TestEventRulesAuditedByTransport(t *testing.T) {
 		"project_id": 1, "family": "product", "from": "a", "to": "b"}); res.IsError {
 		t.Fatalf("rename: %s", textOf(res))
 	}
-	out, err := h.db.Run(t.Context(), "SELECT actor FROM audit_log WHERE action='event.rename'")
+	if res := callTool(t, cs, "merge_event", map[string]any{
+		"project_id": 1, "family": "product", "from": "c", "to": "b"}); res.IsError {
+		t.Fatalf("merge: %s", textOf(res))
+	}
+	out, err := h.db.Run(t.Context(), "SELECT action, actor FROM audit_log WHERE action LIKE 'event.%' ORDER BY rowid")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(out.Rows) != 1 || out.Rows[0][0] != "mcp" {
-		t.Errorf("audit actor = %v, want one mcp row", out.Rows)
+	if len(out.Rows) != 2 || out.Rows[0][0] != "event.rename" || out.Rows[0][1] != "mcp" ||
+		out.Rows[1][0] != "event.merge" || out.Rows[1][1] != "mcp" {
+		t.Errorf("audit rows = %v, want a rename and a merge by mcp", out.Rows)
 	}
 }
 
@@ -157,8 +162,8 @@ func TestEventRulesRefusalsOverREST(t *testing.T) {
 		t.Errorf("list of an unknown project = %d %s, want 404 naming the valid projects", rec.Code, rec.Body)
 	}
 
-	// Renaming onto a name that has events needs merge: "signup" has
-	// aggregated rows in project 1.
+	// Renaming onto a name that has events is refused, merging is not:
+	// "signup" has aggregated rows in project 1.
 	body := `{"family":"product","from":"old","to":"signup"}`
 	rec := serveREST(t, r, "POST", "/api/projects/1/event-rules/rename", body)
 	if rec.Code != http.StatusConflict {
@@ -168,8 +173,7 @@ func TestEventRulesRefusalsOverREST(t *testing.T) {
 		VALUES (1,'2026-08-19','old',2,1)`); err != nil {
 		t.Fatal(err)
 	}
-	rec = serveREST(t, r, "POST", "/api/projects/1/event-rules/rename",
-		`{"family":"product","from":"old","to":"signup","merge":true}`)
+	rec = serveREST(t, r, "POST", "/api/projects/1/event-rules/merge", body)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("merge = %d %s", rec.Code, rec.Body)
 	}
@@ -185,6 +189,14 @@ func TestEventRulesRefusalsOverREST(t *testing.T) {
 	}
 	if out.Rewritten["agg_product_daily"] != 1 || sum < 1 {
 		t.Errorf("rewritten = %v, want agg_product_daily 1", out.Rewritten)
+	}
+
+	// Nothing merges into a blocked name.
+	if rec := serveREST(t, r, "POST", "/api/projects/1/event-rules/block", `{"family":"product","name":"gone"}`); rec.Code != http.StatusOK {
+		t.Fatalf("block = %d %s", rec.Code, rec.Body)
+	}
+	if rec := serveREST(t, r, "POST", "/api/projects/1/event-rules/merge", `{"family":"product","from":"signup","to":"gone"}`); rec.Code != http.StatusConflict {
+		t.Errorf("merge onto a blocked name = %d %s, want 409", rec.Code, rec.Body)
 	}
 }
 
@@ -313,7 +325,7 @@ func TestEventNamesIsNotAnMCPTool(t *testing.T) {
 	for _, tool := range res.Tools {
 		have[tool.Name] = true
 	}
-	for _, name := range []string{"list_event_rules", "rename_event", "block_event", "remove_event_rule"} {
+	for _, name := range []string{"list_event_rules", "rename_event", "merge_event", "block_event", "remove_event_rule"} {
 		if !have[name] {
 			t.Errorf("tool %s missing", name)
 		}

@@ -51,14 +51,14 @@ async function stored(request: APIRequestContext, id: number, want: Record<strin
     .toEqual(want)
 }
 
-test('blocks and renames events from a project settings page', async ({ page, request }) => {
+test('blocks, renames and merges events from a project settings page', async ({ page, request }) => {
   // A login, a wait for the write buffer's flush and a dozen UI steps.
   test.setTimeout(120_000)
   const { id, key } = await createProject(request, `events-${Date.now()}`, [])
   try {
-    const first = await track(request, key, ['signup', 'signup', 'spam'])
-    expect(first.accepted).toBe(3)
-    await stored(request, id, { signup: 2, spam: 1 })
+    const first = await track(request, key, ['signup', 'signup', 'spam', 'register'])
+    expect(first.accepted).toBe(4)
+    await stored(request, id, { signup: 2, spam: 1, register: 1 })
 
     await login(page)
     // The default range ends yesterday; these events are from today.
@@ -77,6 +77,7 @@ test('blocks and renames events from a project settings page', async ({ page, re
     await expect(rows.getByRole('row', { name: /spam/ }).getByText('Blocked', { exact: true })).toBeVisible()
     await events.getByRole('button', { name: 'Actions for spam (product)' }).click()
     await expect(page.getByRole('menuitem', { name: 'Rename…' })).toBeVisible()
+    await expect(page.getByRole('menuitem', { name: 'Merge into…' })).toBeVisible()
     await expect(page.getByRole('menuitem', { name: 'Block…' })).toHaveCount(0)
     await page.keyboard.press('Escape')
 
@@ -94,6 +95,17 @@ test('blocks and renames events from a project settings page', async ({ page, re
     await expect(rows.getByRole('row', { name: /sign_up/ }).getByRole('button', { name: 'Remove alias signup' })).toBeVisible()
     await expect(rows.getByRole('row', { name: /sign_up/ })).toContainText('2')
     await expect(events.locator('code').filter({ hasText: /^product\/signup$/ })).toHaveCount(0)
+
+    // Merge register into sign_up, picked from the family's events (blocked spam is not offered).
+    await events.getByRole('button', { name: 'Actions for register (product)' }).click()
+    await page.getByRole('menuitem', { name: 'Merge into…' }).click()
+    const merge = page.getByRole('dialog', { name: 'Merge register into…' })
+    await expect(merge.getByRole('option')).toHaveCount(1)
+    await merge.getByRole('option', { name: /sign_up/ }).click()
+    await merge.getByRole('button', { name: 'Merge into sign_up' }).click()
+    await expect(page.getByText('Merged register into sign_up')).toBeVisible()
+    await expect(rows.getByRole('row', { name: /sign_up/ })).toContainText('3')
+    await expect(rows.getByRole('row', { name: /sign_up/ }).getByRole('button', { name: 'Remove alias register' })).toBeVisible()
 
     // Unblock spam from its row, then remove the alias from under sign_up.
     await events.getByRole('button', { name: 'Actions for spam (product)' }).click()

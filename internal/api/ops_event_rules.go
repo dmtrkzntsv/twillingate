@@ -7,7 +7,7 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
-// Event rules (spec 2026-10-11): rename and block product and measures
+// Event rules (spec 2026-10-11): rename, merge and block product and measures
 // events per project. The rules, their audit and their refusals are
 // manage's; these tools carry the typed refusals through unchanged, so
 // REST answers 400, 404 and 409 and MCP tells the model why.
@@ -32,8 +32,14 @@ type renameEventIn struct {
 	ProjectID int64  `json:"project_id" jsonschema:"project id; call list_projects first"`
 	Family    string `json:"family" jsonschema:"product or measures"`
 	From      string `json:"from" jsonschema:"the event name to rename; not a $ name"`
-	To        string `json:"to" jsonschema:"the new name; not a $ name"`
-	Merge     bool   `json:"merge,omitempty" jsonschema:"set true to rename onto a name that already has events: the two merge and cannot be split again; merged days' unique counts become an upper bound"`
+	To        string `json:"to" jsonschema:"the new name, with no events yet; not a $ name"`
+}
+
+type mergeEventIn struct {
+	ProjectID int64  `json:"project_id" jsonschema:"project id; call list_projects first"`
+	Family    string `json:"family" jsonschema:"product or measures"`
+	From      string `json:"from" jsonschema:"the event name merged away; not a $ name"`
+	To        string `json:"to" jsonschema:"the event it merges into; not a $ name, not blocked"`
 }
 
 type eventNameIn struct {
@@ -84,9 +90,19 @@ func (h *host) listEventRules(ctx context.Context, in idIn) (listEventRulesOut, 
 }
 
 func (h *host) renameEvent(ctx context.Context, in renameEventIn) (renameEventOut, error) {
-	rule, rewritten, err := h.ops.RenameEvent(ctx, actorFrom(ctx), in.ProjectID, in.Family, in.From, in.To, in.Merge)
+	rule, rewritten, err := h.ops.RenameEvent(ctx, actorFrom(ctx), in.ProjectID, in.Family, in.From, in.To)
+	return h.movedOut(ctx, in.ProjectID, rule, rewritten, err)
+}
+
+func (h *host) mergeEvent(ctx context.Context, in mergeEventIn) (renameEventOut, error) {
+	rule, rewritten, err := h.ops.MergeEvent(ctx, actorFrom(ctx), in.ProjectID, in.Family, in.From, in.To)
+	return h.movedOut(ctx, in.ProjectID, rule, rewritten, err)
+}
+
+// movedOut answers a rename or a merge: the rule and the rows rewritten.
+func (h *host) movedOut(ctx context.Context, id int64, rule store.EventRule, rewritten map[string]int64, err error) (renameEventOut, error) {
 	if err != nil {
-		return renameEventOut{}, h.ruleErr(ctx, in.ProjectID, err)
+		return renameEventOut{}, h.ruleErr(ctx, id, err)
 	}
 	if rewritten == nil {
 		rewritten = map[string]int64{}

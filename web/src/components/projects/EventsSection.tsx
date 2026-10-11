@@ -15,6 +15,7 @@ import { eventNamesQuery, eventRulesQuery } from '@/lib/queries'
 import { cn } from '@/lib/utils'
 import LoadError from './LoadError'
 import AddAliasDialog from './AddAliasDialog'
+import MergeEventDialog from './MergeEventDialog'
 import RenameEventDialog from './RenameEventDialog'
 
 interface Props {
@@ -24,8 +25,9 @@ interface Props {
   /** RETENTION_RAW_DAYS, for the block dialog. */
   rawDays?: number
   pending?: boolean
-  /** Each resolves true when done; a refusal is already toasted (except a rename's 'conflict', which asks to merge). */
-  onRename: (body: { family: EventFamily; from: string; to: string; merge?: boolean }) => Promise<boolean | 'conflict'>
+  /** Each resolves true when done; a refusal is already toasted (except a rename's 'conflict', which points to merging). */
+  onRename: (body: { family: EventFamily; from: string; to: string }) => Promise<boolean | 'conflict'>
+  onMerge: (body: { family: EventFamily; from: string; to: string }) => Promise<boolean>
   onBlock: (body: { family: EventFamily; name: string }) => Promise<boolean>
   onRemove: (body: { family: EventFamily; name: string }) => Promise<boolean>
   onAddAlias: (body: { family: EventFamily; alias: string; to: string }) => Promise<boolean>
@@ -65,11 +67,12 @@ function eventRows(list: EventName[], rules: EventRule[]): Row[] {
   return rows.sort((a, b) => families.indexOf(a.family) - families.indexOf(b.family) || a.name.localeCompare(b.name))
 }
 
-/** A project's event names with what each received and the rules on each: rename (or merge), block (confirmed) and unblock, aliases added and removed. */
-export default function EventsSection({ project, range, rawDays, pending, onRename, onBlock, onRemove, onAddAlias }: Props) {
+/** A project's event names with what each received and the rules on each: rename, merge and block (both confirmed) and unblock, aliases added and removed. */
+export default function EventsSection({ project, range, rawDays, pending, onRename, onMerge, onBlock, onRemove, onAddAlias }: Props) {
   const id = project.project_id
   // The targets outlive their dialogs' close animations, so a title does not flash "Block undefined?".
   const [renaming, setRenaming] = useState<{ target: Target; open: boolean } | null>(null)
+  const [merging, setMerging] = useState<{ target: Target; open: boolean } | null>(null)
   const [blocking, setBlocking] = useState<{ target: Target; open: boolean } | null>(null)
   const [aliasing, setAliasing] = useState<{ target: Target; open: boolean } | null>(null)
   const [unaliasing, setUnaliasing] = useState<{ target: Target & { to: string }; open: boolean } | null>(null)
@@ -131,7 +134,7 @@ export default function EventsSection({ project, range, rawDays, pending, onRena
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
                       <DropdownMenuItem disabled={pending} onClick={() => setRenaming({ target: { family: e.family, name: e.name }, open: true })}>Rename…</DropdownMenuItem>
-                      <DropdownMenuItem disabled={pending} onClick={() => setAliasing({ target: { family: e.family, name: e.name }, open: true })}>Add alias…</DropdownMenuItem>
+                      <DropdownMenuItem disabled={pending} onClick={() => setMerging({ target: { family: e.family, name: e.name }, open: true })}>Merge into…</DropdownMenuItem>
                       {e.blocked ? (
                         <DropdownMenuItem disabled={pending} onClick={() => void onRemove({ family: e.family, name: e.name })}>Unblock</DropdownMenuItem>
                       ) : (
@@ -154,7 +157,15 @@ export default function EventsSection({ project, range, rawDays, pending, onRena
         names={list}
         blockedNames={(rules.data?.rules ?? []).filter((r) => r.action === 'block' && r.family === renaming?.target.family).map((r) => r.name)}
         pending={pending}
-        onRename={(to, merge) => onRename({ family: renaming!.target.family, from: renaming!.target.name, to, ...(merge ? { merge: true } : {}) })}
+        onRename={(to) => onRename({ family: renaming!.target.family, from: renaming!.target.name, to })}
+      />
+      <MergeEventDialog
+        open={merging?.open === true}
+        onOpenChange={(o) => !o && setMerging((d) => d && { ...d, open: false })}
+        target={merging?.target ?? null}
+        into={rows.filter((r) => r.family === merging?.target.family && r.name !== merging?.target.name && !r.blocked)}
+        pending={pending}
+        onMerge={(to) => onMerge({ family: merging!.target.family, from: merging!.target.name, to })}
       />
       <AddAliasDialog
         open={aliasing?.open === true}

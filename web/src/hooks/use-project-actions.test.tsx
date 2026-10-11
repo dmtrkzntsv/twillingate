@@ -114,8 +114,9 @@ describe('useProjectActions', () => {
     expect(toast.error).toHaveBeenCalledWith('unknown project 3')
   })
 
-  it('renames, blocks and removes event rules with their toasts, refetching rules, names and usage', async () => {
+  it('renames, merges, blocks and removes event rules with their toasts, refetching rules, names and usage', async () => {
     vi.spyOn(endpoints, 'renameEvent').mockResolvedValue({ rule: { family: 'product', name: 'a', action: 'rename', to: 'b' }, rewritten: {} })
+    vi.spyOn(endpoints, 'mergeEvent').mockResolvedValue({ rule: { family: 'product', name: 'a', action: 'rename', to: 'b' }, rewritten: {} })
     vi.spyOn(endpoints, 'blockEvent').mockResolvedValue({ rule: { family: 'product', name: 'x', action: 'block' } })
     vi.spyOn(endpoints, 'removeEventRule').mockResolvedValue({ status: 'removed' })
     const { client, wrapper: w } = wrapper()
@@ -124,7 +125,7 @@ describe('useProjectActions', () => {
     const out: (boolean | string)[] = []
     await act(async () => {
       out.push(await result.current.renameEvent(7, { family: 'product', from: 'a', to: 'b' }))
-      out.push(await result.current.renameEvent(7, { family: 'product', from: 'a', to: 'b', merge: true }))
+      out.push(await result.current.mergeEvent(7, { family: 'product', from: 'a', to: 'b' }))
       out.push(await result.current.blockEvent(7, { family: 'product', name: 'x' }))
       out.push(await result.current.removeEventRule(7, { family: 'product', name: 'a' }))
       out.push(await result.current.addEventAlias(7, { family: 'product', alias: 'c', to: 'b' }))
@@ -133,12 +134,13 @@ describe('useProjectActions', () => {
     expect(vi.mocked(toast.success).mock.calls.map((c) => c[0])).toEqual([
       'Renamed a to b', 'Merged a into b', 'Blocked x', 'Removed the rule for a', 'Added alias c to b',
     ])
-    expect(endpoints.renameEvent).toHaveBeenLastCalledWith(7, { family: 'product', from: 'c', to: 'b', merge: true })
+    expect(endpoints.mergeEvent).toHaveBeenLastCalledWith(7, { family: 'product', from: 'c', to: 'b' })
     expect(invalidate.mock.calls.slice(0, 3).map((c) => (c[0] as { queryKey: string[] }).queryKey[0])).toEqual(['event-rules', 'event-names', 'usage'])
   })
 
   it('resolves conflict without a toast or a refetch on a 409 rename, and toasts a 409 merge', async () => {
-    const spy = vi.spyOn(endpoints, 'renameEvent').mockRejectedValue(new ApiError(409, 'b has events', 'conflict'))
+    vi.spyOn(endpoints, 'renameEvent').mockRejectedValue(new ApiError(409, 'b has events', 'conflict'))
+    vi.spyOn(endpoints, 'mergeEvent').mockRejectedValue(new ApiError(409, 'b is blocked', 'conflict'))
     const { client, wrapper: w } = wrapper()
     const invalidate = vi.spyOn(client, 'invalidateQueries')
     const { result } = renderHook(() => useProjectActions(), { wrapper: w })
@@ -151,11 +153,10 @@ describe('useProjectActions', () => {
     expect(invalidate).not.toHaveBeenCalled()
     expect(result.current.pending).toBe(false)
     await act(async () => {
-      out = await result.current.renameEvent(7, { family: 'product', from: 'a', to: 'b', merge: true })
+      out = await result.current.mergeEvent(7, { family: 'product', from: 'a', to: 'b' })
     })
-    expect(spy).toHaveBeenCalledTimes(2)
     expect(out).toBe(false)
-    expect(toast.error).toHaveBeenCalledWith('b has events')
+    expect(toast.error).toHaveBeenCalledWith('b is blocked')
   })
 
   it('resolves false and toasts the refusal when an event rule is refused', async () => {

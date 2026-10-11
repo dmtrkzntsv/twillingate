@@ -64,11 +64,23 @@ func (o *Ops) ListEventRules(ctx context.Context, projectID int64) ([]store.Even
 	return out, nil
 }
 
-// RenameEvent renames an event of one family and keeps a rule so later
-// writes land under the new name. It returns the rule and the rows
-// rewritten per table. Renaming onto a name that has events, or is blocked,
-// is ErrConflict unless merge is set.
-func (o *Ops) RenameEvent(ctx context.Context, actor string, projectID int64, family, from, to string, merge bool) (store.EventRule, map[string]int64, error) {
+// RenameEvent gives an event of one family a name not in use yet and keeps
+// a rule so later writes land under it. It returns the rule and the rows
+// rewritten per table. A name that has events (merge it instead) or is
+// blocked is ErrConflict.
+func (o *Ops) RenameEvent(ctx context.Context, actor string, projectID int64, family, from, to string) (store.EventRule, map[string]int64, error) {
+	return o.moveEvent(ctx, actor, "event.rename", projectID, family, from, to, false)
+}
+
+// MergeEvent folds an event of one family into another: the same rewrite
+// and rule as RenameEvent, onto a name that may already have events. A
+// merge cannot be split again. A blocked target is ErrConflict: a merge
+// never drops what it moves.
+func (o *Ops) MergeEvent(ctx context.Context, actor string, projectID int64, family, from, to string) (store.EventRule, map[string]int64, error) {
+	return o.moveEvent(ctx, actor, "event.merge", projectID, family, from, to, true)
+}
+
+func (o *Ops) moveEvent(ctx context.Context, actor, action string, projectID int64, family, from, to string, merge bool) (store.EventRule, map[string]int64, error) {
 	f, err := o.ruleTarget(ctx, projectID, family, from)
 	if err != nil {
 		return store.EventRule{}, nil, err
@@ -77,14 +89,10 @@ func (o *Ops) RenameEvent(ctx context.Context, actor string, projectID int64, fa
 		return store.EventRule{}, nil, err
 	}
 	if from == to {
-		return store.EventRule{}, nil, fmt.Errorf("event %q: renaming it to itself: %w", from, ErrInvalid)
-	}
-	detail := "to " + to
-	if merge {
-		detail += " (merge)"
+		return store.EventRule{}, nil, fmt.Errorf("event %q: moving it onto itself: %w", from, ErrInvalid)
 	}
 	counts, err := o.St.RenameEvent(ctx, projectID, f, from, to, merge, store.AuditEntry{
-		Actor: actor, Action: "event.rename", Subject: ruleSubject(projectID, f, from), Detail: detail})
+		Actor: actor, Action: action, Subject: ruleSubject(projectID, f, from), Detail: "to " + to})
 	if err != nil {
 		return store.EventRule{}, nil, err
 	}
