@@ -21,7 +21,7 @@ REST route each.
 
 ### Rules
 
-- **D1. One table, two actions.** Migration 038 adds
+- **D1. One table, two actions.** Migration 039 adds
   `event_rules (project_id, family, name, action, to_name, created_at)`,
   primary key `(project_id, family, name)`, `WITHOUT ROWID`.
   `action` is `rename` (with `to_name`) or `block` (`to_name` NULL). A name
@@ -162,7 +162,7 @@ REST route each.
 
 - `docs/twillingate.md`: the four tools and routes, rename and block
   semantics (D4–D12), the merge upper bound, the ingest warning.
-- `deploy/UPGRADES.md`: nothing; 038 only adds a table.
+- `deploy/UPGRADES.md`: nothing; 039 only adds a table.
 
 ## Testing
 
@@ -170,7 +170,7 @@ REST route each.
   merge sums aggregate rows; chain collapse; renaming back; a write after a
   rename lands under the new name (D7); rollups skip blocked names;
   `DropBlockedAggregates` leaves totals and other names alone; rules go
-  with a purged project. Migration 038 test. `sqlcheck` covers the new SQL.
+  with a purged project. Migration 039 test. `sqlcheck` covers the new SQL.
 - **manage:** refusals (D3), the merge guard, one rule per name.
 - **server:** a blocked event is dropped with the warning and a 2xx; a name
   renamed to a blocked one is dropped; other events in the batch are kept.
