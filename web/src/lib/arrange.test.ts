@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { DashboardInfo, DashboardTab } from './api'
-import { afterAt, groupName, liveGroups, moveGroupBody, moveTabBody, nameTooShort, nextAfterArchive, purgeDate, reorder } from './arrange'
+import { afterAt, copyTargets, groupName, liveGroups, moveGroupBody, moveTabBody, nameTooShort, nextAfterArchive, purgeDate, reorder } from './arrange'
 
 function mkInfo(dashboard_id: number, title: string, owner: 'system' | 'user', group_id: number, extra: Partial<DashboardInfo> = {}): DashboardInfo {
   return { dashboard_id, title, owner, group_id, widgets: 1, sidebar: true, project_tab: false, ...extra }
@@ -158,5 +158,43 @@ describe('afterAt', () => {
     expect(afterAt([1, 2, 3, 4], 4, 1)).toBe(1)
     expect(afterAt([1, 2, 3, 4], 1, 3)).toBe(4)
     expect(afterAt([1, 2, 3, 4], 1, 9)).toBe(4)
+  })
+})
+
+describe('copyTargets', () => {
+  const list = [
+    mkInfo(1, 'Views', 'system', 1, { group_title: 'Reports' }),
+    mkInfo(2, 'Product', 'system', 1, { group_title: 'Reports' }),
+    mkInfo(10, 'Launch week', 'user', 10),
+    mkInfo(11, 'Old experiment', 'user', 11, { archived_at: '2026-09-01T00:00:00Z' }),
+    mkInfo(13, 'Marketing', 'user', 13, { group_title: 'Growth' }),
+    mkInfo(14, 'Funnel', 'user', 13, { group_title: 'Growth' }),
+    mkInfo(15, 'Ads', 'user', 15),
+  ]
+  const shape = (from: number) => copyTargets(list, from).map((t) => [t.name, t.tabs.map((d) => d.dashboard_id)])
+
+  it("puts the widget's own group first, its own dashboard included", () => {
+    expect(shape(14)).toEqual([
+      ['Growth', [13, 14]],
+      ['Launch week', [10]],
+      ['Ads', [15]],
+    ])
+    expect(shape(15)).toEqual([
+      ['Ads', [15]],
+      ['Launch week', [10]],
+      ['Growth', [13, 14]],
+    ])
+  })
+
+  it("starts with the user's groups from a built-in, in sidebar order, never an archived one", () => {
+    expect(shape(2)).toEqual([
+      ['Launch week', [10]],
+      ['Growth', [13, 14]],
+      ['Ads', [15]],
+    ])
+  })
+
+  it('is empty when the user has no dashboards', () => {
+    expect(copyTargets(list.slice(0, 2), 1)).toEqual([])
   })
 })

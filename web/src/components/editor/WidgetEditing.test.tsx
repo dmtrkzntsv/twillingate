@@ -1,6 +1,7 @@
 import { render, screen } from '@testing-library/react'
 import { QueryClientProvider } from '@tanstack/react-query'
 import type { ReactNode } from 'react'
+import { MemoryRouter } from 'react-router'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { endpoints } from '@/lib/api'
@@ -25,7 +26,13 @@ function page(enabled: boolean, from = '2026-10-03') {
 
 function renderWrapped(ui: ReactNode) {
   const client = testClient()
-  return render(ui, { wrapper: ({ children }) => <QueryClientProvider client={client}>{children}</QueryClientProvider> })
+  return render(ui, {
+    wrapper: ({ children }) => (
+      <MemoryRouter>
+        <QueryClientProvider client={client}>{children}</QueryClientProvider>
+      </MemoryRouter>
+    ),
+  })
 }
 
 beforeEach(() => {

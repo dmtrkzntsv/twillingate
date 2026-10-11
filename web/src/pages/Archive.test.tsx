@@ -107,6 +107,9 @@ beforeEach(() => {
     rename: vi.fn(),
     archive: vi.fn(),
     restore: restoreWidget,
+    duplicate: vi.fn(),
+    copy: vi.fn(),
+    copyToNew: vi.fn(),
   } satisfies WidgetEdits)
   vi.spyOn(endpoints, 'projects').mockResolvedValue({ projects: [] })
   vi.spyOn(endpoints, 'forms').mockResolvedValue({ action_base: '', forms: [] })

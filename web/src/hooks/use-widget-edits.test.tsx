@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ReactNode } from 'react'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { ApiError, endpoints, type Widget } from '@/lib/api'
+import { ApiError, endpoints, type DashboardDetail, type Widget } from '@/lib/api'
 import { addBody, type Draft } from '@/lib/widget-draft'
 import { useWidgetEdits } from './use-widget-edits'
 
@@ -216,5 +216,94 @@ describe('useWidgetEdits', () => {
     const first = result.current
     rerender()
     expect(result.current).toBe(first)
+  })
+
+  it('duplicate copies the widget right after itself, refetches, and toasts', async () => {
+    const copy = vi.spyOn(endpoints, 'copyWidget').mockResolvedValue({ ...visits, widget_id: 8, name: 'visits-2' })
+    const invalidate = vi.spyOn(client, 'invalidateQueries')
+    const { result } = renderHook(() => useWidgetEdits(), { wrapper })
+
+    await act(() => result.current.duplicate(visits))
+
+    expect(copy).toHaveBeenCalledWith(7, { dashboard_id: 3, after: 7 })
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['dashboard', 3] })
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['dashboards'] })
+    expect(toast).toHaveBeenCalledWith('Widget duplicated')
+  })
+
+  it('a refused duplicate toasts its message and no success toast', async () => {
+    vi.spyOn(endpoints, 'copyWidget').mockRejectedValue(new ApiError(400, 'widget 7 is archived'))
+    const { result } = renderHook(() => useWidgetEdits(), { wrapper })
+
+    await act(() => result.current.duplicate(visits))
+
+    expect(toast.error).toHaveBeenCalledWith('widget 7 is archived')
+    expect(toast).not.toHaveBeenCalled()
+  })
+
+  it('copy puts the widget last on the other dashboard, refetches that one, and resolves true', async () => {
+    const copy = vi.spyOn(endpoints, 'copyWidget').mockResolvedValue({ ...visits, widget_id: 8, dashboard_id: 13 })
+    const invalidate = vi.spyOn(client, 'invalidateQueries')
+    const { result } = renderHook(() => useWidgetEdits(), { wrapper })
+
+    await expect(act(() => result.current.copy(visits, 13))).resolves.toBe(true)
+
+    expect(copy).toHaveBeenCalledWith(7, { dashboard_id: 13 })
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['dashboard', 13] })
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['dashboards'] })
+    expect(invalidate).not.toHaveBeenCalledWith({ queryKey: ['dashboard', 3] })
+  })
+
+  it('a refused copy toasts its message and resolves false', async () => {
+    vi.spyOn(endpoints, 'copyWidget').mockRejectedValue(new ApiError(409, 'dashboard 13 is archived'))
+    const { result } = renderHook(() => useWidgetEdits(), { wrapper })
+
+    await expect(act(() => result.current.copy(visits, 13))).resolves.toBe(false)
+
+    expect(toast.error).toHaveBeenCalledWith('dashboard 13 is archived')
+  })
+
+  it('copyToNew makes the dashboard, copies onto it, and resolves its id', async () => {
+    const create = vi.spyOn(endpoints, 'createDashboard').mockResolvedValue({ dashboard_id: 20 } as DashboardDetail)
+    const copy = vi.spyOn(endpoints, 'copyWidget').mockResolvedValue({ ...visits, widget_id: 8, dashboard_id: 20 })
+    const { result } = renderHook(() => useWidgetEdits(), { wrapper })
+
+    await expect(act(() => result.current.copyToNew(visits, 'Weekly'))).resolves.toBe(20)
+
+    expect(create).toHaveBeenCalledWith({ title: 'Weekly' })
+    expect(copy).toHaveBeenCalledWith(7, { dashboard_id: 20 })
+  })
+
+  it('copyToNew with a group makes the new dashboard its last tab', async () => {
+    const create = vi.spyOn(endpoints, 'createDashboard').mockResolvedValue({ dashboard_id: 21 } as DashboardDetail)
+    vi.spyOn(endpoints, 'copyWidget').mockResolvedValue({ ...visits, widget_id: 8, dashboard_id: 21 })
+    const { result } = renderHook(() => useWidgetEdits(), { wrapper })
+
+    await expect(act(() => result.current.copyToNew(visits, 'Day two', 13))).resolves.toBe(21)
+
+    expect(create).toHaveBeenCalledWith({ title: 'Day two', group_id: 13 })
+  })
+
+  it('copyToNew copies nothing when the dashboard is refused', async () => {
+    vi.spyOn(endpoints, 'createDashboard').mockRejectedValue(new ApiError(400, 'title too short'))
+    const copy = vi.spyOn(endpoints, 'copyWidget')
+    const { result } = renderHook(() => useWidgetEdits(), { wrapper })
+
+    await expect(act(() => result.current.copyToNew(visits, 'W'))).resolves.toBeNull()
+
+    expect(toast.error).toHaveBeenCalledWith('title too short')
+    expect(copy).not.toHaveBeenCalled()
+  })
+
+  it('copyToNew still refetches the list when only the copy is refused, as the dashboard was made', async () => {
+    vi.spyOn(endpoints, 'createDashboard').mockResolvedValue({ dashboard_id: 20 } as DashboardDetail)
+    vi.spyOn(endpoints, 'copyWidget').mockRejectedValue(new ApiError(400, 'component removed'))
+    const invalidate = vi.spyOn(client, 'invalidateQueries')
+    const { result } = renderHook(() => useWidgetEdits(), { wrapper })
+
+    await expect(act(() => result.current.copyToNew(visits, 'Weekly'))).resolves.toBeNull()
+
+    expect(toast.error).toHaveBeenCalledWith('component removed')
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['dashboards'] })
   })
 })

@@ -217,6 +217,7 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
           dashboardId={dashboard.dashboard_id}
           enabled={arrangeable}
           defaults={{ projectId, range: { range: sel.range ?? '7d', from, to }, timezone: list.timezone }}
+          copyTo={menus ? list.dashboards : undefined}
         >
           <DashboardHeader
             title={dashboard.title}

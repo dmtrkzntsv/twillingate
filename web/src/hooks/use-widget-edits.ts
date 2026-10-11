@@ -19,6 +19,21 @@ export interface WidgetEdits {
   archive(widget: Widget): Promise<void>
   /** Brings an archived widget back; resolves false after the refusal's toast. */
   restore(widget: { widget_id: number; dashboard_id: number }): Promise<boolean>
+  /** Copies the widget right after itself, on its own dashboard, and toasts "Widget duplicated". */
+  duplicate(widget: Widget): Promise<void>
+  /**
+   * Copies the widget, a built-in one included, to the end of user
+   * dashboard `dashboardId`. Resolves true when the server took it, false
+   * after the refusal's toast.
+   */
+  copy(widget: Widget, dashboardId: number): Promise<boolean>
+  /**
+   * Makes a user dashboard titled `title`, a group of its own or, given
+   * `groupId`, the last tab of that group, and copies the widget onto it.
+   * Resolves with the new dashboard's id, or null after the refusal's
+   * toast (the dashboard stays when only the copy was refused).
+   */
+  copyToNew(widget: Widget, title: string, groupId?: number): Promise<number | null>
 }
 
 function toastError(err: unknown) {
@@ -29,7 +44,8 @@ function toastError(err: unknown) {
 
 /**
  * The page's content writes for a user dashboard's widgets: the editor's
- * add and update, a card's rename, archive and restore. Each refetches
+ * add and update, a card's rename, archive, restore and duplicate; and the
+ * copies onto another dashboard, from a built-in one too. Each refetches
  * the widget's dashboard before it resolves, so a closing editor or title
  * field gives way to the saved widget, not the old one. Add and update
  * throw a refusal (the editor keeps the input and shows it); the others
@@ -111,5 +127,53 @@ export function useWidgetEdits(): WidgetEdits {
     [refetch, restore]
   )
 
-  return useMemo(() => ({ add, update, rename, archive, restore }), [add, update, rename, archive, restore])
+  const copy = useCallback(
+    async (widget: Widget, dashboardId: number) => {
+      try {
+        await endpoints.copyWidget(widget.widget_id, { dashboard_id: dashboardId })
+      } catch (err) {
+        toastError(err)
+        return false
+      }
+      // The list counts each dashboard's live widgets.
+      await refetch(dashboardId, [['dashboards'], ['widgets']])
+      return true
+    },
+    [refetch]
+  )
+
+  const duplicate = useCallback(
+    async (widget: Widget) => {
+      try {
+        await endpoints.copyWidget(widget.widget_id, { dashboard_id: widget.dashboard_id, after: widget.widget_id })
+        toast('Widget duplicated')
+      } catch (err) {
+        toastError(err)
+      }
+      await refetch(widget.dashboard_id, [['dashboards'], ['widgets']])
+    },
+    [refetch]
+  )
+
+  const copyToNew = useCallback(
+    async (widget: Widget, title: string, groupId?: number) => {
+      let created: number
+      try {
+        created = (await endpoints.createDashboard(groupId ? { title, group_id: groupId } : { title })).dashboard_id
+      } catch (err) {
+        toastError(err)
+        return null
+      }
+      if (await copy(widget, created)) return created
+      // The new dashboard stays, empty: the sidebar still has to show it.
+      await refetch(created, [['dashboards']])
+      return null
+    },
+    [copy, refetch]
+  )
+
+  return useMemo(
+    () => ({ add, update, rename, archive, restore, duplicate, copy, copyToNew }),
+    [add, update, rename, archive, restore, duplicate, copy, copyToNew]
+  )
 }
