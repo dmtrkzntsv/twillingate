@@ -215,3 +215,34 @@ func (d *DB) RemoveEventRule(ctx context.Context, projectID int64, family store.
 		return auditAndBump(ctx, tx, a)
 	})
 }
+
+// dropBlockedAggregates delete, from each per-event aggregate table, the
+// rows of the names the family blocks. agg_product_totals is left out on
+// purpose (D11): it is the day's true DAU and total, which a name cannot be
+// subtracted from.
+var dropBlockedAggregates = [...]string{
+	`DELETE FROM agg_product_daily WHERE project_id=?1 AND event_name IN
+		(SELECT name FROM event_rules WHERE project_id=?1 AND family='product' AND action='block')`,
+	`DELETE FROM agg_product_attrs WHERE project_id=?1 AND event_name IN
+		(SELECT name FROM event_rules WHERE project_id=?1 AND family='product' AND action='block')`,
+	`DELETE FROM agg_measures_daily WHERE project_id=?1 AND event_name IN
+		(SELECT name FROM event_rules WHERE project_id=?1 AND family='measures' AND action='block')`,
+	`DELETE FROM agg_measures_attrs WHERE project_id=?1 AND event_name IN
+		(SELECT name FROM event_rules WHERE project_id=?1 AND family='measures' AND action='block')`,
+}
+
+// DropBlockedAggregates deletes the project's aggregate rows of every
+// blocked name (D11), for the daily pass: a block set after a day was
+// rolled up takes the name out of the aggregates at the next pass. The
+// totals keep the day's true counts (see dropBlockedAggregates). Nothing
+// to drop is a no-op.
+func (d *DB) DropBlockedAggregates(ctx context.Context, projectID int64) error {
+	return d.tx(ctx, func(tx *sql.Tx) error {
+		for _, q := range dropBlockedAggregates {
+			if _, err := tx.ExecContext(ctx, q, projectID); err != nil {
+				return fmt.Errorf("drop blocked aggregates: %w", err)
+			}
+		}
+		return nil
+	})
+}

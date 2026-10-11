@@ -270,6 +270,9 @@ type Store interface {
 	AggregateViewDay(ctx context.Context, projectID int64, day civil.Date, topN int) error
 	AggregateProductDay(ctx context.Context, projectID int64, day civil.Date, attrs []string, topN int) error
 	AggregateMeasureDay(ctx context.Context, projectID int64, day civil.Date, attrs []string, topN int) error
+	// DropBlockedAggregates deletes the project's per-event aggregates of
+	// every blocked event name (event rules D11).
+	DropBlockedAggregates(ctx context.Context, projectID int64) error
 	UpsertActors(ctx context.Context, projectID int64, day civil.Date) error
 	AggregateRetentionDay(ctx context.Context, projectID int64, day civil.Date) error
 	PruneActors(ctx context.Context, projectID int64, before civil.Date) error

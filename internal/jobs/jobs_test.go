@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -1052,5 +1053,50 @@ func TestRunDailyPassExpiresDraftsBeforePurge(t *testing.T) {
 		if !st.expireAt.Equal(now()) {
 			t.Errorf("RETENTION_ARCHIVED_DAYS=%s: ExpireDrafts now = %v, want %v", days, st.expireAt, now())
 		}
+	}
+}
+
+// dropRecorder records the order of the calls the blocked-name rules care
+// about, around a real store.
+type dropRecorder struct {
+	store.Store
+	calls []string
+}
+
+func (d *dropRecorder) DropBlockedAggregates(ctx context.Context, projectID int64) error {
+	d.calls = append(d.calls, fmt.Sprintf("drop %d", projectID))
+	return d.Store.DropBlockedAggregates(ctx, projectID)
+}
+
+func (d *dropRecorder) AggregateProductDay(ctx context.Context, projectID int64, day civil.Date, attrs []string, topN int) error {
+	d.calls = append(d.calls, fmt.Sprintf("product %d %s", projectID, day))
+	return d.Store.AggregateProductDay(ctx, projectID, day, attrs, topN)
+}
+
+// Aggregates of a blocked name are dropped once per project, before that
+// project's days are rolled up (event rules D11).
+func TestDailyPassDropsBlockedAggregates(t *testing.T) {
+	ctx := context.Background()
+	cfg := configtest.Load(t, jobsVars)
+	st, _ := openStoreAt(t)
+	reg := newRegistry(t, st, cfg, []manage.ProjectSpec{
+		{Name: "A", AllowedOrigins: []string{"https://a.com"}},
+		{Name: "B", AllowedOrigins: []string{"https://b.com"}},
+	})
+	if err := st.WriteEvents(ctx, []store.Event{
+		{Family: store.FamilyProduct, ID: "p1", ProjectID: 1, EventName: "e", UserID: "u", TS: mustTime("2026-08-10T10:00:00Z")},
+		{Family: store.FamilyProduct, ID: "p2", ProjectID: 2, EventName: "e", UserID: "u", TS: mustTime("2026-08-10T10:00:00Z")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rec := &dropRecorder{Store: st}
+	now := func() time.Time { return time.Date(2026, 8, 22, 4, 0, 0, 0, time.UTC) }
+	r := New(rec, cfg, reg, identity.NewSalter(st, now), slog.Default(), now)
+	if err := r.RunDailyPass(ctx); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"drop 1", "product 1 2026-08-10", "drop 2", "product 2 2026-08-10"}
+	if !slices.Equal(rec.calls, want) {
+		t.Errorf("calls = %v, want %v", rec.calls, want)
 	}
 }

@@ -33,6 +33,8 @@ type Store interface {
 	AggregateProductDay(ctx context.Context, projectID int64, day civil.Date, attrs []string, topN int) error
 	MeasureDaysBefore(ctx context.Context, projectID int64, before civil.Date) ([]civil.Date, error)
 	AggregateMeasureDay(ctx context.Context, projectID int64, day civil.Date, attrs []string, topN int) error
+	// DropBlockedAggregates deletes the aggregates of the project's blocked names.
+	DropBlockedAggregates(ctx context.Context, projectID int64) error
 	UpsertActors(ctx context.Context, projectID int64, day civil.Date) error
 	AggregateRetentionDay(ctx context.Context, projectID int64, day civil.Date) error
 	PruneActors(ctx context.Context, projectID int64, before civil.Date) error
@@ -172,6 +174,12 @@ func (r *Runner) RunDailyPass(ctx context.Context) error {
 			if err := r.store.AggregateIdentityDay(ctx, id, day, r.cfg.IdentitiesTopN); err != nil {
 				r.logger.Error("aggregate identity failed", "project", id, "day", day.String(), "error", err)
 			}
+		}
+
+		// Names blocked after their days were rolled up leave the aggregates
+		// here, before the days still to roll up are read.
+		if err := r.store.DropBlockedAggregates(ctx, id); err != nil {
+			r.logger.Error("drop blocked aggregates failed", "project", id, "error", err)
 		}
 
 		days, err := r.store.ViewDaysBefore(ctx, id, today.AddDays(-ret.Events.RawDays))

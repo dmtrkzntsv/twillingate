@@ -408,3 +408,170 @@ func TestDeleteProjectDataRemovesEventRules(t *testing.T) {
 		t.Errorf("rules = %v, want none", rules)
 	}
 }
+
+// writeWithAttr stores n events of one name carrying plan=pro, so the
+// rollup has an attribute breakdown to write.
+func writeWithAttr(t *testing.T, db *DB, family store.Family, name string, n int) {
+	t.Helper()
+	var evs []store.Event
+	for i := 0; i < n; i++ {
+		e := store.Event{Family: family, ID: fmt.Sprintf("%s-%s-%d", family, name, i),
+			ProjectID: 1, EventName: name, TS: ts("2026-10-10T10:00:00Z"),
+			ReceivedAt: ts("2026-10-10T10:00:00Z"), Kind: "app", ActorID: "a", ActorKind: store.ActorConnection,
+			Attributes: map[string]string{"plan": "pro"}}
+		if family == store.FamilyMeasures {
+			v := 1.5
+			e.Value, e.Measure = &v, "m"
+		}
+		evs = append(evs, e)
+	}
+	if err := db.WriteEvents(context.Background(), evs); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func countOf(t *testing.T, db *DB, query string, args ...any) int {
+	t.Helper()
+	var n int
+	if err := db.db.QueryRow(query, args...).Scan(&n); err != nil {
+		t.Fatalf("%s: %v", query, err)
+	}
+	return n
+}
+
+// A blocked name is deleted with the day instead of rolled up (D10): the
+// totals count only what was kept.
+func TestAggregateProductDaySkipsBlocked(t *testing.T) {
+	db := ruleDB(t)
+	ctx := context.Background()
+	writeWithAttr(t, db, store.FamilyProduct, "keep", 2)
+	writeWithAttr(t, db, store.FamilyProduct, "spam", 3)
+	if err := db.BlockEvent(ctx, 1, store.FamilyProduct, "spam", ruleAudit); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AggregateProductDay(ctx, 1, day("2026-10-10"), []string{"plan"}, defaultAttrsTopN); err != nil {
+		t.Fatal(err)
+	}
+	if got := countOf(t, db, `SELECT COUNT(*) FROM agg_product_daily WHERE project_id=1 AND day='2026-10-10' AND event_name='keep' AND count=2`); got != 1 {
+		t.Errorf("keep daily rows = %d, want 1 with count 2", got)
+	}
+	if got := countOf(t, db, `SELECT COUNT(*) FROM agg_product_daily WHERE project_id=1 AND event_name='spam'`); got != 0 {
+		t.Errorf("spam daily rows = %d, want 0", got)
+	}
+	if got := countOf(t, db, `SELECT total_events FROM agg_product_totals WHERE project_id=1 AND day='2026-10-10'`); got != 2 {
+		t.Errorf("total_events = %d, want 2", got)
+	}
+	if got := countOf(t, db, `SELECT COUNT(*) FROM raw_product WHERE project_id=1 AND day='2026-10-10'`); got != 0 {
+		t.Errorf("raw product rows left = %d, want 0", got)
+	}
+	if got := countOf(t, db, `SELECT COUNT(*) FROM agg_product_attrs WHERE project_id=1 AND event_name='spam'`); got != 0 {
+		t.Errorf("spam attr rows = %d, want 0", got)
+	}
+	if got := countOf(t, db, `SELECT COUNT(*) FROM agg_product_attrs WHERE project_id=1 AND event_name='keep'`); got == 0 {
+		t.Error("keep attr rows missing")
+	}
+}
+
+// A day holding only blocked names ends with no raw rows and no totals row
+// (no phantom day of zero events).
+func TestAggregateProductDayAllBlocked(t *testing.T) {
+	db := ruleDB(t)
+	ctx := context.Background()
+	writeNamed(t, db, 1, store.FamilyProduct, "spam", 3)
+	if err := db.BlockEvent(ctx, 1, store.FamilyProduct, "spam", ruleAudit); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AggregateProductDay(ctx, 1, day("2026-10-10"), nil, defaultAttrsTopN); err != nil {
+		t.Fatal(err)
+	}
+	if got := countOf(t, db, `SELECT COUNT(*) FROM raw_product WHERE project_id=1 AND day='2026-10-10'`); got != 0 {
+		t.Errorf("raw product rows left = %d, want 0", got)
+	}
+	if got := countOf(t, db, `SELECT COUNT(*) FROM agg_product_totals WHERE project_id=1 AND day='2026-10-10'`); got != 0 {
+		t.Errorf("totals rows = %d, want 0", got)
+	}
+	if got := countOf(t, db, `SELECT COUNT(*) FROM agg_product_daily WHERE project_id=1`); got != 0 {
+		t.Errorf("daily rows = %d, want 0", got)
+	}
+}
+
+func TestAggregateMeasureDaySkipsBlocked(t *testing.T) {
+	db := ruleDB(t)
+	ctx := context.Background()
+	writeWithAttr(t, db, store.FamilyMeasures, "fast", 2)
+	writeWithAttr(t, db, store.FamilyMeasures, "slow", 3)
+	if err := db.BlockEvent(ctx, 1, store.FamilyMeasures, "slow", ruleAudit); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AggregateMeasureDay(ctx, 1, day("2026-10-10"), []string{"plan"}, defaultAttrsTopN); err != nil {
+		t.Fatal(err)
+	}
+	if got := countOf(t, db, `SELECT SUM(samples) FROM agg_measures_daily WHERE project_id=1 AND event_name='fast'`); got != 2 {
+		t.Errorf("fast samples = %d, want 2", got)
+	}
+	if got := countOf(t, db, `SELECT COUNT(*) FROM agg_measures_daily WHERE project_id=1 AND event_name='slow'`); got != 0 {
+		t.Errorf("slow daily rows = %d, want 0", got)
+	}
+	if got := countOf(t, db, `SELECT COUNT(*) FROM agg_measures_attrs WHERE project_id=1 AND event_name='slow'`); got != 0 {
+		t.Errorf("slow attr rows = %d, want 0", got)
+	}
+	if got := countOf(t, db, `SELECT COUNT(*) FROM raw_measures WHERE project_id=1 AND day='2026-10-10'`); got != 0 {
+		t.Errorf("raw measure rows left = %d, want 0", got)
+	}
+}
+
+// Aggregates of a name blocked after they were written go at the next pass
+// (D11); other names, the totals and other projects stay.
+func TestDropBlockedAggregates(t *testing.T) {
+	db := ruleDB(t)
+	ctx := context.Background()
+	for _, p := range []int{1, 2} {
+		for _, name := range []string{"spam", "keep", "slow", "fast"} {
+			execAll(t, db,
+				fmt.Sprintf(`INSERT INTO agg_product_daily (project_id, day, event_name, count, unique_users) VALUES (%d, '2026-10-01', '%s', 4, 2)`, p, name),
+				fmt.Sprintf(`INSERT INTO agg_product_attrs (project_id, day, event_name, attr_key, attr_value, count, unique_users) VALUES (%d, '2026-10-01', '%s', 'plan', 'pro', 4, 2)`, p, name),
+				fmt.Sprintf(`INSERT INTO agg_measures_daily (project_id, day, event_name, measure, bucket, samples, weight, sum) VALUES (%d, '2026-10-01', '%s', 'm', 1, 4, 4, 6)`, p, name),
+				fmt.Sprintf(`INSERT INTO agg_measures_attrs (project_id, day, event_name, measure, attr_key, attr_value, bucket, samples, weight, sum) VALUES (%d, '2026-10-01', '%s', 'm', 'plan', 'pro', 1, 4, 4, 6)`, p, name))
+		}
+		execAll(t, db, fmt.Sprintf(`INSERT INTO agg_product_totals (project_id, day, total_events, active_users) VALUES (%d, '2026-10-01', 16, 2)`, p))
+	}
+	if err := db.BlockEvent(ctx, 1, store.FamilyProduct, "spam", ruleAudit); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.BlockEvent(ctx, 1, store.FamilyMeasures, "slow", ruleAudit); err != nil {
+		t.Fatal(err)
+	}
+	// Run twice: the second pass is a no-op.
+	for i := 0; i < 2; i++ {
+		if err := db.DropBlockedAggregates(ctx, 1); err != nil {
+			t.Fatal(err)
+		}
+		for _, tc := range []struct {
+			table, name string
+			project     int
+			want        int
+		}{
+			{"agg_product_daily", "spam", 1, 0}, {"agg_product_attrs", "spam", 1, 0},
+			{"agg_measures_daily", "slow", 1, 0}, {"agg_measures_attrs", "slow", 1, 0},
+			{"agg_product_daily", "keep", 1, 1}, {"agg_product_attrs", "keep", 1, 1},
+			{"agg_measures_daily", "fast", 1, 1}, {"agg_measures_attrs", "fast", 1, 1},
+			// The family decides: a product block does not touch a measure
+			// of the same name, nor the reverse.
+			{"agg_measures_daily", "spam", 1, 1}, {"agg_measures_attrs", "spam", 1, 1},
+			{"agg_product_daily", "slow", 1, 1}, {"agg_product_attrs", "slow", 1, 1},
+			// Project 2 has no rules.
+			{"agg_product_daily", "spam", 2, 1}, {"agg_product_attrs", "spam", 2, 1},
+			{"agg_measures_daily", "slow", 2, 1}, {"agg_measures_attrs", "slow", 2, 1},
+		} {
+			got := countOf(t, db, `SELECT COUNT(*) FROM `+tc.table+` WHERE project_id=? AND event_name=?`, tc.project, tc.name)
+			if got != tc.want {
+				t.Errorf("pass %d: %s project %d %s rows = %d, want %d", i+1, tc.table, tc.project, tc.name, got, tc.want)
+			}
+		}
+		for _, p := range []int{1, 2} {
+			if got := countOf(t, db, `SELECT total_events FROM agg_product_totals WHERE project_id=? AND day='2026-10-01'`, p); got != 16 {
+				t.Errorf("pass %d: project %d total_events = %d, want 16", i+1, p, got)
+			}
+		}
+	}
+}
