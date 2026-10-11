@@ -12,13 +12,16 @@ import (
 // flatViewBaseColumns are the non-attribute columns of v_events_flat. The
 // view holds every family, views, product events and measures alike, and
 // family tells them apart. It carries every typed column of the raw row (a
-// reserved key is one of these, never an attr_ column); only day,
-// received_at, actor_kind and the derived bucket are left out. Migration
-// 024 creates the view with exactly this list, so the boot rebuild is a no-op when nothing is
-// declared. attributes carries the raw JSON, so a key that isn't
-// declared (and so gets no attr_ column) stays reachable via json_extract
-// — the view is never a downgrade from the base table. Every attribute column carries an
-// attr_ prefix, so none can collide with these.
+// reserved key is one of these, never an attr_ column) but day (ts's
+// date), received_at and actor_kind (bookkeeping);
+// TestFlatViewCoversEveryEventsColumn makes a new events column join one
+// side or the other. attributes carries the raw JSON, so a
+// key that isn't declared (and so gets no attr_ column) stays reachable via
+// json_extract — the view is never a downgrade from the base table. Every
+// attribute column carries an attr_ prefix, so none can collide with these.
+//
+// The process owns the view (processOwned in migrate.go): no migration
+// creates it, so this list is its only definition.
 var flatViewBaseColumns = []string{
 	"id", "project_id", "family", "event_name", "actor_id",
 	"kind", "session_id", "user_id", "group_id", "host", "path", "referrer_source",

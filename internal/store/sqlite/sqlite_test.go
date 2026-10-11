@@ -97,8 +97,12 @@ func newTestDB(t *testing.T) *DB {
 	t.Helper()
 	db := openSnapshot(t, math.MaxInt)
 	// A no-op at the version the snapshot already carries; kept so this
-	// test path still matches how production opens an existing database.
+	// test path still matches how production opens an existing database,
+	// rebuild of the process-owned flat view included (app.Migrate).
 	if err := db.Migrate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.RebuildFlatView(context.Background(), nil); err != nil {
 		t.Fatal(err)
 	}
 	return db

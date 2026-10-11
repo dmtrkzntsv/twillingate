@@ -118,6 +118,15 @@ An entry covers its whole function, so keep functions that build SQL small.
 A Go migration step runs against its own version's schema, so its file goes
 in `migrationSteps` instead.
 
+Migrations own the schema except the objects in `processOwned`
+(`internal/store/sqlite/migrate.go`), which the process builds from the
+data: today only `v_events_flat`, one `attr_*` column per declared
+attribute. The migrator drops them before every pending migration and
+`app.Migrate` rebuilds them right after (a failed rebuild stops the boot),
+so a migration never names one, even when it rebuilds `events`; a test
+refuses one that does. A new `events` column goes into
+`flatViewBaseColumns` (`flatview.go`) or the test's omitted list.
+
 ## Documentation
 
 Three pages, all served over MCP, all the contract rather than a summary:

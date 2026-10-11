@@ -118,11 +118,6 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 		logger.Warn("no projects configured; create one with `twillingate project create` or an API management operation")
 	}
 
-	// Seed the flat view so it exists before the first daily pass.
-	if err := st.RebuildFlatView(ctx, reg.Snapshot(ctx).DeclaredAttributeKeys()); err != nil {
-		logger.Warn("flat view seed", "error", err)
-	}
-
 	salter := identity.NewSalter(st, time.Now)
 	dataDir := filepath.Dir(DatabasePath(cfg.Database))
 	geoProvider, err := geo.New(cfg.Geo, dataDir, logger)
