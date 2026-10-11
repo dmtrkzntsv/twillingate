@@ -41,6 +41,10 @@ beforeEach(() => {
     stats(5, { last_received_at: null, totals: { views: 0, events: 0, measures: 0 }, size: null }),
     stats(3),
   ] })
+  vi.spyOn(endpoints, 'projectActivity').mockResolvedValue({ projects: [
+    { project_id: 4, last_event_day: '2026-10-02', new_submissions: 3, forms: 2, draft_forms: 1 },
+    { project_id: 5, last_event_day: null, new_submissions: 0, forms: 0, draft_forms: 0 },
+  ] })
   vi.spyOn(endpoints, 'keys').mockResolvedValue({ keys: [{ project_id: 4, label: 'web', key: 'ak_1', state: 'active' }] })
   vi.spyOn(endpoints, 'limits').mockResolvedValue({ limits: [
     { group: 'retention', name: 'Raw events', setting: 'RETENTION_RAW_DAYS', value: 7, default: 30, unit: 'days', description: 'raw events are kept this long' },
@@ -62,6 +66,20 @@ describe('Projects', () => {
     expect(within(card).getByText(/2\.3 MB/)).toBeInTheDocument()
     expect(within(card).getByText(/1 active key/)).toBeInTheDocument()
     expect(screen.getByText(/2 projects · 2\.1 GB on disk · \+100\.0 MB since Sep 3/)).toBeInTheDocument()
+  })
+
+  it("links a project's forms, its drafts and new submissions to its Forms tab", async () => {
+    renderPage()
+    const card = await screen.findByRole('article', { name: 'econumo.com' })
+    const link = await within(card).findByRole('link', { name: '2 forms · 1 draft · 3 new submissions' })
+    expect(link).toHaveAttribute('href', '/projects/4/forms')
+  })
+
+  it('leaves the forms line out for a project with no forms', async () => {
+    renderPage()
+    await screen.findByRole('link', { name: /2 forms/ })
+    const card = screen.getByRole('article', { name: 'quiet.dev' })
+    expect(within(card).queryByRole('link', { name: /form/ })).not.toBeInTheDocument()
   })
 
   it('says a project never sent anything instead of failing', async () => {

@@ -1,6 +1,11 @@
-import type { Attribution, Form } from './api'
+import type { Attribution, Form, ProjectActivity } from './api'
 
 const DAY = 86_400_000
+
+/** Whether a project's forms have something to look at: submissions not read yet, or a draft waiting to be approved. */
+export function formsNeedAttention(a: ProjectActivity | undefined): boolean {
+  return a !== undefined && (a.new_submissions > 0 || a.draft_forms > 0)
+}
 
 /** A day as the forms pages name it, in the viewer's time: "Oct 9". */
 export function formatDay(d: Date): string {

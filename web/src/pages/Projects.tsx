@@ -17,7 +17,7 @@ import { useProjectActions } from '@/hooks/use-project-actions'
 import { useReorder } from '@/hooks/use-reorder'
 import type { CreatedProject } from '@/lib/api'
 import { afterAt } from '@/lib/arrange'
-import { dashboardsQuery, keysQuery, limitsQuery, projectsQuery, usageQuery } from '@/lib/queries'
+import { dashboardsQuery, keysQuery, limitsQuery, projectActivityQuery, projectsQuery, usageQuery } from '@/lib/queries'
 import { formatBytes, formatGrowth } from '@/lib/units'
 
 /**
@@ -35,6 +35,8 @@ export default function Projects() {
   const { data: statsData } = statsQ
   const { data: keysData } = keysQ
   const { data: limitsData } = useQuery(limitsQuery)
+  // Reporting dev serves no forms: the cards ask for no activity there.
+  const { data: activityData } = useQuery({ ...projectActivityQuery, enabled: dash !== undefined && !dash.dev })
   const { create, move, pending } = useProjectActions()
   const [creating, setCreating] = useState(false)
   const [created, setCreated] = useState<CreatedProject | null>(null)
@@ -52,6 +54,7 @@ export default function Projects() {
   const byId = new Map(active.map((p) => [p.project_id, p]))
   const statsOf = (id: number) => statsData?.projects.find((s) => s.project_id === id)
   const keysOf = (id: number) => keysData?.keys.filter((k) => k.project_id === id)
+  const activityOf = (id: number) => activityData?.projects.find((a) => a.project_id === id)
   // A failed refetch behind data already on screen is not an error line.
   const statsFailed = statsQ.isError && !statsData
   const keysFailed = keysQ.isError && !keysData
@@ -100,7 +103,7 @@ export default function Projects() {
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
               {order.map((id) => byId.get(id)).filter((p) => p !== undefined).map((p) => (
                 <SortableProjectCard key={p.project_id} id={p.project_id} movable={!readOnly} disabled={busy}>
-                  <ProjectCard project={p} stats={statsOf(p.project_id)} keys={keysOf(p.project_id)} statsFailed={statsFailed} />
+                  <ProjectCard project={p} stats={statsOf(p.project_id)} keys={keysOf(p.project_id)} statsFailed={statsFailed} activity={activityOf(p.project_id)} />
                 </SortableProjectCard>
               ))}
             </div>
