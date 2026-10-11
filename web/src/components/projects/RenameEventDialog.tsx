@@ -58,8 +58,8 @@ export default function RenameEventDialog({ open, onOpenChange, target, names, b
           }}
         >
           <DialogHeader>
-            <DialogTitle className="break-all">Rename {target?.name}</DialogTitle>
-            <DialogDescription>
+            <DialogTitle className="wrap-anywhere">Rename {target?.name}</DialogTitle>
+            <DialogDescription className="wrap-anywhere">
               Events arriving as {target?.name} ({target?.family}) are stored under the new name, and the ones already stored are renamed. Widgets whose SQL names the old event are not changed.
             </DialogDescription>
           </DialogHeader>
@@ -67,12 +67,12 @@ export default function RenameEventDialog({ open, onOpenChange, target, names, b
             <Label htmlFor="rename-event-to">New name</Label>
             <Input id="rename-event-to" value={value} autoComplete="off" onChange={(e) => setValue(e.target.value)} />
             {intoBlocked && (
-              <p role="alert" className="text-sm text-destructive">
+              <p role="alert" className="text-sm wrap-anywhere text-destructive">
                 {to} is blocked: {target?.name}&apos;s events are dropped from now on, and the next daily pass deletes {target?.name}&apos;s aggregated history.
               </p>
             )}
             {merging && (
-              <p role="alert" className="text-sm text-destructive">
+              <p role="alert" className="text-sm wrap-anywhere text-destructive">
                 {to} already has events: this merges {target?.name} into it, and cannot be undone.
               </p>
             )}

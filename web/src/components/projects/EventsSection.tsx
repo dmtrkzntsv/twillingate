@@ -168,8 +168,8 @@ export default function EventsSection({ project, range, rawDays, pending, onRena
       <AlertDialog open={unaliasing?.open === true} onOpenChange={(o) => !o && setUnaliasing((d) => d && { ...d, open: false })}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle className="break-all">Remove alias {unaliasing?.target.name}?</AlertDialogTitle>
-            <AlertDialogDescription className="break-all">
+            <AlertDialogTitle className="wrap-anywhere">Remove alias {unaliasing?.target.name}?</AlertDialogTitle>
+            <AlertDialogDescription className="wrap-anywhere">
               Events sent as {unaliasing?.target.name} arrive under their own name again; the ones already renamed stay under {unaliasing?.target.to}.
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -182,8 +182,8 @@ export default function EventsSection({ project, range, rawDays, pending, onRena
       <AlertDialog open={blocking?.open === true} onOpenChange={(o) => !o && setBlocking((d) => d && { ...d, open: false })}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle className="break-all">Block {blocking?.target.name}?</AlertDialogTitle>
-            <AlertDialogDescription>
+            <AlertDialogTitle className="wrap-anywhere">Block {blocking?.target.name}?</AlertDialogTitle>
+            <AlertDialogDescription className="wrap-anywhere">
               Events named {blocking?.target.name} ({blocking?.target.family}) are dropped when they arrive. The next daily pass (03:00 UTC) deletes its aggregated history;
               stored raw events expire within {rawDays ? `${rawDays} days` : 'the raw retention window'}. Remove the rule to receive it again.
             </AlertDialogDescription>

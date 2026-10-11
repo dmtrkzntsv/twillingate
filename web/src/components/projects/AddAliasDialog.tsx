@@ -43,8 +43,8 @@ export default function AddAliasDialog({ open, onOpenChange, target, names, alia
           }}
         >
           <DialogHeader>
-            <DialogTitle className="break-all">Add an alias to {target?.name}</DialogTitle>
-            <DialogDescription className="break-all">
+            <DialogTitle className="wrap-anywhere">Add an alias to {target?.name}</DialogTitle>
+            <DialogDescription className="wrap-anywhere">
               {alias && valid ? `Events sent as ${alias} are stored as ${target?.name}.` : `Events sent under the alias are stored as ${target?.name} (${target?.family}).`}
             </DialogDescription>
           </DialogHeader>
@@ -52,7 +52,7 @@ export default function AddAliasDialog({ open, onOpenChange, target, names, alia
             <Label htmlFor="add-event-alias">Old name</Label>
             <Input id="add-event-alias" value={value} autoComplete="off" onChange={(e) => setValue(e.target.value)} />
             {merging && (
-              <p role="alert" className="text-sm break-all text-destructive">
+              <p role="alert" className="text-sm wrap-anywhere text-destructive">
                 {alias} already has events: they merge into {target?.name}, and this cannot be undone.
               </p>
             )}
