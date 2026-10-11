@@ -69,14 +69,16 @@ read-only, as the server already enforces.
   - the widget card's "⋯" menu becomes **Edit…**, **Rename**, then
     Share… and Download PNG, a separator, **Archive**. It still takes one
     top-right slot. System dashboards keep today's menu.
-- **D9. The editor is one modal for add and edit.** Desktop (≥1024px): a
-  large dialog (about 1100px × 85vh): title on top; a left column with the
-  visualization select, the props form and a one-line hint of what the
-  component needs (from the contract's `inputs`, e.g. "needs: day, ≥1
-  number"); a right column with the SQL editor, Run query, and the results.
-  Phone: full screen, the same blocks stacked (title, visualization and
-  props, SQL, Run, results); nothing scrolls sideways at 360px, the result
-  table and chart scroll inside their own box.
+- **D9. The editor is one full-screen modal for add and edit.** A header
+  bar with the heading, Cancel and Save. From 1024px, two halves, each
+  scrolling on its own: the left holds the preview (a widget card at the
+  widget's height, its title row being the title field), then the
+  visualization select with a one-line hint of what the component needs
+  (from the contract's `inputs`, e.g. "needs: day, ≥1 number"), then the
+  props form; the right holds the SQL editor, Run query with the run's
+  status, and the rows as a table filling what is left. Phone: the same
+  blocks stacked, the whole scrolling; nothing scrolls sideways at 360px,
+  the result table and chart scroll inside their own box.
 - **D10. Visualization select** lists every component with its icon. Add
   starts with none chosen; Save is disabled until one is. Switching keeps
   the props whose key and value the new schema accepts and drops the rest;
@@ -96,15 +98,19 @@ read-only, as the server already enforces.
 - **D13. Run query** calls the preview route. Project and range controls
   show only when the SQL uses `:project` or `:from`/`:to`; they default to
   the dashboard's current values, else the first live project in the
-  projects list and the last 7 days. Results have two tabs: **Preview** (the chosen component drawn
-  from the rows in a frame of the widget's size; the default after a run)
-  and **Table** (the raw rows, row count, elapsed ms, truncated note).
-  `problem` is a warning above both; a 400 shows its message in place of
-  the results. Editing the SQL after a run dims the results and marks them
-  "Changed since last run"; editing the component or props re-renders the
-  preview from the same rows, drops `problem` (it was checked against the
-  run's component) and says "Run again to check the rows against
-  <component>". A component that throws on the rows shows "This
+  projects list and the last 7 days. The preview needs no click: an edit
+  runs the stored query as it opens, and once anything has run, a change
+  of visualization, props, project or range runs it again after 400ms.
+  Typing SQL never runs it, and no automatic run reads SQL typed since the
+  last run (⌘/Ctrl+Enter or Run does). The left half draws the chosen
+  component from the rows; the right shows the rows bare, with row count,
+  elapsed ms and truncated note beside Run. `problem` is a warning under
+  the preview; a 400 shows its message in place of the rows. Editing the
+  SQL after a run dims the results and marks them "Changed since last
+  run"; editing the component or props redraws the preview from the same
+  rows at once, dimmed and without `problem` (it was checked against the
+  run's component) until the run that follows. No rows reads "The query
+  returned no rows". A component that throws on the rows shows "This
   visualization can't draw these rows" in the preview, never taking the
   console down. Running is never required to save.
 - **D14. Save.** Add: `add_widget` at the end of the dashboard, with the
@@ -112,8 +118,8 @@ read-only, as the server already enforces.
   with only the fields that changed. A refusal shows as a banner in the
   modal, which keeps the input. Success closes the modal and refetches
   `['dashboard', id]`. Closing with unsaved changes asks "Discard changes?".
-- **D15. Markdown widgets**: the right column is a markdown editor beside the
-  rendered text, live; no Run, no project or range.
+- **D15. Markdown widgets**: the right half is a markdown editor, the
+  left previews the rendered text, live; no Run, no project or range.
 - **D16. Removed component.** Edit opens with the visualization empty;
   saving sends the new component with the rest (D7).
 - **D17. Rename** turns the card title into an inline field (the

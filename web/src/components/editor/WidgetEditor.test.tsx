@@ -1,5 +1,5 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { screen, waitFor } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { widgets } from '@/components/widgets'
 import { ApiError, endpoints, type Widget } from '@/lib/api'
@@ -43,6 +43,8 @@ beforeAll(() => {
 beforeEach(() => {
   vi.restoreAllMocks()
   vi.spyOn(endpoints, 'schemaViews').mockResolvedValue('  v_views_daily(project_id, day, views)\n')
+  // An edit runs its query as it opens: a test that cares about the answer sets its own.
+  vi.spyOn(endpoints, 'previewWidget').mockResolvedValue({ columns: [], rows: [], truncated: false, elapsed_ms: 1 })
   vi.spyOn(endpoints, 'projects').mockResolvedValue({ projects: [{ project_id: 1, name: 'Acme', allowed_origins: [] }] } as never)
 })
 
@@ -61,7 +63,7 @@ describe('WidgetEditor', () => {
     expect(screen.getByRole('button', { name: /Run query/ })).toBeDisabled()
   })
 
-  it('runs the query with the dashboard project and shows preview, table and problem', async () => {
+  it('runs the stored query as an edit opens, showing preview, rows and problem', async () => {
     const preview = vi.spyOn(endpoints, 'previewWidget').mockResolvedValue({
       columns: ['x'],
       rows: [['2026-09-01']],
@@ -70,21 +72,55 @@ describe('WidgetEditor', () => {
       elapsed_ms: 4,
     })
     open({ widget: line })
-    await userEvent.click(await screen.findByRole('button', { name: /Run query/ }))
+    expect(await screen.findByText('line needs y (number); columns are x')).toBeInTheDocument()
+    expect(preview).toHaveBeenCalledTimes(1)
     expect(preview).toHaveBeenCalledWith(
       expect.objectContaining({ component: 'line', project_id: 1, source: { type: 'sql', content: line.source.content } })
     )
-    expect(await screen.findByText('line needs y (number); columns are x')).toBeInTheDocument()
     expect(screen.getByText(/1 row · 4 ms/)).toBeInTheDocument()
-    await userEvent.click(screen.getByRole('tab', { name: 'Table' }))
     expect(screen.getByRole('cell', { name: '2026-09-01' })).toBeInTheDocument()
+    expect(within(screen.getByRole('region', { name: 'Preview' })).getByLabelText('Title')).toHaveValue('Visits')
     expect(preview.mock.calls[0][0]).not.toHaveProperty('from') // the sql reads no range
+  })
+
+  it('runs nothing as an add opens', async () => {
+    const preview = vi.spyOn(endpoints, 'previewWidget').mockResolvedValue({ columns: [], rows: [], truncated: false, elapsed_ms: 1 })
+    open()
+    expect(await screen.findByText(/Choose a visualization to preview/)).toBeInTheDocument()
+    expect(preview).not.toHaveBeenCalled()
+  })
+
+  it('does not run again while the sql is typed', async () => {
+    const answer = { columns: ['x', 'y'], rows: [['a', '1']], truncated: false, elapsed_ms: 1 }
+    const preview = vi.spyOn(endpoints, 'previewWidget').mockResolvedValue(answer)
+    open({ widget: line })
+    await screen.findByText(/1 row/)
+    await userEvent.type(screen.getByLabelText('SQL'), ' LIMIT 1')
+    await new Promise((r) => setTimeout(r, 500))
+    expect(preview).toHaveBeenCalledTimes(1)
+    await userEvent.click(screen.getByRole('button', { name: /Run query/ }))
+    expect(preview).toHaveBeenCalledTimes(2)
+    expect(preview.mock.calls[1][0].source.content).toBe(line.source.content + ' LIMIT 1')
+  })
+
+  it('runs nothing on its own once the sql is edited, even as its parameters or the visualization change', async () => {
+    const answer = { columns: ['x', 'y'], rows: [['a', '1']], truncated: false, elapsed_ms: 1 }
+    const preview = vi.spyOn(endpoints, 'previewWidget').mockResolvedValue(answer)
+    open({ widget: line })
+    await screen.findByText(/1 row/)
+    // Reading :from and :to brings the range in: what an automatic run would read changes.
+    await userEvent.type(screen.getByLabelText('SQL'), ' AND day BETWEEN :from AND :to')
+    await userEvent.click(screen.getByRole('combobox', { name: 'Visualization' }))
+    await userEvent.click(await screen.findByRole('option', { name: /^bar$/ }))
+    await new Promise((r) => setTimeout(r, 500))
+    expect(preview).toHaveBeenCalledTimes(1)
+    expect(screen.getByText('Changed since last run')).toBeInTheDocument()
   })
 
   it('sends the range and shows its switcher when the sql reads :from and :to', async () => {
     const preview = vi.spyOn(endpoints, 'previewWidget').mockResolvedValue({ columns: [], rows: [], truncated: false, elapsed_ms: 1 })
     open({ widget: { ...line, source: { type: 'sql', content: 'SELECT day AS x, 1 AS y FROM v WHERE day BETWEEN :from AND :to' } } })
-    await userEvent.click(await screen.findByRole('button', { name: /Run query/ }))
+    await waitFor(() => expect(preview).toHaveBeenCalled())
     expect(preview.mock.calls[0][0]).toMatchObject({ from: '2026-09-08', to: '2026-09-14' })
     expect(preview.mock.calls[0][0]).not.toHaveProperty('project_id')
     expect(screen.queryByRole('combobox', { name: 'Project' })).toBeNull()
@@ -93,47 +129,51 @@ describe('WidgetEditor', () => {
   it('shows a refusal in place of the results', async () => {
     vi.spyOn(endpoints, 'previewWidget').mockRejectedValue(new ApiError(400, 'no such table: v', 'invalid'))
     open({ widget: line })
-    await userEvent.click(await screen.findByRole('button', { name: /Run query/ }))
     expect(await screen.findByText('no such table: v')).toBeInTheDocument()
+    expect(screen.getByText(/The query was refused/)).toBeInTheDocument()
   })
 
   it('marks results stale when the sql changes after a run', async () => {
     vi.spyOn(endpoints, 'previewWidget').mockResolvedValue({ columns: ['x', 'y'], rows: [['a', '1']], truncated: false, elapsed_ms: 1 })
     open({ widget: line })
-    await userEvent.click(await screen.findByRole('button', { name: /Run query/ }))
     await screen.findByText(/1 row/)
     expect(screen.queryByText('Changed since last run')).toBeNull()
     await userEvent.type(screen.getByLabelText('SQL'), ' ')
     expect(screen.getByText('Changed since last run')).toBeInTheDocument()
   })
 
-  it("drops the run's warning once the visualization changes, asking for another run", async () => {
-    vi.spyOn(endpoints, 'previewWidget').mockResolvedValue({
+  it("drops the run's warning once the visualization changes, then checks the rows against the new one", async () => {
+    const preview = vi.spyOn(endpoints, 'previewWidget').mockResolvedValueOnce({
       columns: ['x'],
       rows: [['2026-09-01']],
       truncated: false,
       problem: 'line needs y (number); columns are x',
       elapsed_ms: 4,
     })
+    preview.mockResolvedValueOnce({
+      columns: ['x'],
+      rows: [['2026-09-01']],
+      truncated: false,
+      problem: 'bar_list needs label (text); columns are x',
+      elapsed_ms: 4,
+    })
     open({ widget: line })
-    await userEvent.click(await screen.findByRole('button', { name: /Run query/ }))
     await screen.findByText('line needs y (number); columns are x')
     await userEvent.click(screen.getByRole('combobox', { name: 'Visualization' }))
     await userEvent.click(await screen.findByRole('option', { name: /bar_list/ }))
     expect(screen.queryByText('line needs y (number); columns are x')).toBeNull()
-    expect(screen.getByText('Run again to check the rows against bar_list')).toBeInTheDocument()
+    expect(await screen.findByText('bar_list needs label (text); columns are x')).toBeInTheDocument()
+    expect(preview).toHaveBeenCalledTimes(2)
+    expect(preview.mock.calls[1][0]).toMatchObject({ component: 'bar_list' })
   })
 
-  it('asks for another run after a clean one when the visualization changes', async () => {
+  it('redraws from the same rows when the visualization changes', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     vi.spyOn(endpoints, 'previewWidget').mockResolvedValue({ columns: ['x', 'y'], rows: [['a', '1']], truncated: false, elapsed_ms: 1 })
     open({ widget: line })
-    await userEvent.click(await screen.findByRole('button', { name: /Run query/ }))
     await screen.findByText(/1 row/)
-    expect(screen.queryByText(/Run again to check/)).toBeNull()
     await userEvent.click(screen.getByRole('combobox', { name: 'Visualization' }))
     await userEvent.click(await screen.findByRole('option', { name: /calendar/ }))
-    expect(screen.getByText('Run again to check the rows against calendar')).toBeInTheDocument()
     expect(screen.getByText("This visualization can't draw these rows")).toBeInTheDocument()
   })
 

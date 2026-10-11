@@ -313,21 +313,18 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
   const editor = page.getByRole('dialog', { name: 'Edit widget' })
   await expect(editor.getByRole('combobox', { name: 'Project' })).toBeVisible()
   await expect(editor.getByRole('button', { name: /^Range: / })).toBeVisible()
-  await editor.getByRole('button', { name: /Run query/ }).click()
+  // The edit runs its query as it opens.
   await expect(editor.getByText(/^1 row · \d+ ms/)).toBeVisible()
-  // The preview draws the table in a widget card; the Table tab draws the rows bare.
-  for (const tab of ['Preview', 'Table']) {
-    await editor.getByRole('tab', { name: tab }).click()
-    await expect(editor.getByRole('tab', { name: tab })).toHaveAttribute('aria-selected', 'true')
-    const results = editor.getByRole('tabpanel', { name: tab }).locator('[data-slot="table-container"]')
+  // The preview draws the table in a widget card; the rows below the SQL are drawn bare.
+  for (const part of ['Preview', 'Rows']) {
+    const results = editor.getByRole('region', { name: part }).locator('[data-slot="table-container"]')
     await expect(results).toBeVisible()
     // The rows are wider than the phone: they scroll, inside their own box.
-    expect(await results.evaluate((el) => el.scrollWidth > el.clientWidth), `${tab} rows wider than their box`).toBe(true)
-    const own = '[role="dialog"] [role="tabpanel"] [data-slot="table-container"]'
-    // Polled: the dialog zooms in, and its box fits once it has.
-    await expect.poll(() => dialogOverflow(page), { message: `editor, ${tab}` }).toEqual([])
-    expect(await sidewaysScroll(page, own), `editor, ${tab}`).toEqual([])
+    expect(await results.evaluate((el) => el.scrollWidth > el.clientWidth), `${part} rows wider than their box`).toBe(true)
   }
+  const own = '[role="dialog"] section[aria-label="Rows"] [data-slot="table-container"]'
+  await expect.poll(() => dialogOverflow(page), { message: 'editor' }).toEqual([])
+  expect(await sidewaysScroll(page, own), 'editor').toEqual([])
   await page.keyboard.press('Escape')
   await expect(editor).toHaveCount(0)
 

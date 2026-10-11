@@ -1,4 +1,4 @@
-import { lazy, Suspense, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { TriangleAlertIcon } from 'lucide-react'
 import RangeSwitcher, { type RangeValue } from '@/components/RangeSwitcher'
@@ -15,7 +15,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Kbd } from '@/components/ui/kbd'
 import { Label } from '@/components/ui/label'
@@ -23,6 +23,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Skeleton } from '@/components/ui/skeleton'
 import { widgets } from '@/components/widgets'
 import { ApiError, endpoints, type Widget } from '@/lib/api'
+import { rowsPx } from '@/lib/grid'
 import { projectsQuery, schemaViewsQuery } from '@/lib/queries'
 import { resolve } from '@/lib/ranges'
 import { carryProps, needsHint } from '@/lib/props-form'
@@ -30,7 +31,7 @@ import { parseSchemaViews } from '@/lib/schema-views'
 import { draftOf, isDirty, sourceOf, sourceTypeOf, usesParams, type Draft } from '@/lib/widget-draft'
 import { iconOf } from './component-icons'
 import PropsForm from './PropsForm'
-import ResultsPane, { ranOf, RUN_KEYS, type RunState } from './ResultsPane'
+import { Preview, ranOf, Rows, RUN_KEYS, RunStatus, type RunState } from './ResultsPane'
 
 /**
  * Whether Escape belongs to the SQL editor rather than the dialog: with
@@ -61,6 +62,9 @@ export interface WidgetEditorProps {
   /** Saves the draft; resolves on success (the modal closes), throws ApiError/Error to show its message in the banner. */
   onSave(draft: Draft): Promise<void>
 }
+
+/** How long a change of visualization, props, project or range waits before it runs the query. */
+const AUTO_RUN_MS = 400
 
 const known = (c: string | null): c is string => c !== null && Object.hasOwn(widgets, c)
 
@@ -96,8 +100,10 @@ function Editor({ open, onOpenChange, widget, defaults, onSave }: WidgetEditorPr
   const [range, setRange] = useState(defaults.range)
 
   const [run, setRun] = useState<RunState>({ kind: 'idle' })
-  const [ranWith, setRanWith] = useState<string | null>(null)
-  const running = useRef(false)
+  // What the last run read, and its SQL.
+  const [ranWith, setRanWith] = useState<{ key: string; sql: string } | null>(null)
+  // Runs overlap (a key press while an automatic one is out): only the latest one's answer shows.
+  const latest = useRef(0)
   const [propsValid, setPropsValid] = useState(true)
   const [saving, setSaving] = useState(false)
   const savingNow = useRef(false)
@@ -112,13 +118,26 @@ function Editor({ open, onOpenChange, widget, defaults, onSave }: WidgetEditorPr
   const span = range.from && range.to ? { from: range.from, to: range.to } : resolve(range.range, defaults.timezone, new Date())
   // What a run reads: a change to any of it after the run dims its rows.
   const runKey = JSON.stringify([draft.sql, uses.project ? projectId : null, uses.range ? span : null])
-  const stale = ranWith !== null && ranWith !== runKey
+  const stale = ranWith !== null && ranWith.key !== runKey
   const last = ranOf(run)?.result
+  // What an automatic run reads; null while there is nothing it could run.
+  const autoKey =
+    component && !markdown && draft.sql.trim() !== '' && (!uses.project || projectId !== undefined)
+      ? JSON.stringify([component, draft.props, uses.project ? projectId : null, uses.range ? span : null])
+      : null
+  const ranAuto = useRef<string | null>(null)
+  const everRan = ranWith !== null
+  const editing = widget !== undefined
+  // An automatic run never runs SQL typed since the last run: that waits for ⌘↵.
+  const autoDue = autoKey !== null && autoKey !== ranAuto.current && (everRan ? ranWith.sql === draft.sql : editing)
 
-  const runQuery = async () => {
-    if (!component || markdown || running.current) return
-    running.current = true
-    setRanWith(runKey)
+  const runQuery = async (auto = false) => {
+    if (!component || markdown) return
+    // Checked again as it fires: a run since it was scheduled may have made it moot.
+    if (auto && !autoDue) return
+    const n = ++latest.current
+    ranAuto.current = autoKey
+    setRanWith({ key: runKey, sql: draft.sql })
     setRun((r) => ({ kind: 'running', last: ranOf(r) }))
     const props = draft.props
     try {
@@ -129,13 +148,26 @@ function Editor({ open, onOpenChange, widget, defaults, onSave }: WidgetEditorPr
         ...(uses.project && projectId !== undefined ? { project_id: projectId } : {}),
         ...(uses.range ? span : {}),
       })
-      setRun({ kind: 'done', result, component, props })
+      if (n === latest.current) setRun({ kind: 'done', result, component, props })
     } catch (err) {
-      setRun({ kind: 'failed', message: messageOf(err) })
-    } finally {
-      running.current = false
+      if (n === latest.current) setRun({ kind: 'failed', message: messageOf(err) })
     }
   }
+
+  // The preview shows without asking: an edit runs the stored query as it
+  // opens, and once anything has run, a change of visualization, props,
+  // project or range runs it again. Typing SQL never does; ⌘↵ does.
+  const runNow = useRef(runQuery)
+  runNow.current = runQuery
+  useEffect(() => {
+    if (!autoDue) return
+    if (!everRan) {
+      void runNow.current(true)
+      return
+    }
+    const t = setTimeout(() => void runNow.current(true), AUTO_RUN_MS)
+    return () => clearTimeout(t)
+  }, [autoDue, autoKey, everRan])
 
   const dirty = isDirty(widget, draft)
   const hasSource = (sourceOf(draft)?.content.trim() ?? '') !== ''
@@ -157,8 +189,21 @@ function Editor({ open, onOpenChange, widget, defaults, onSave }: WidgetEditorPr
     }
   }
 
-  // ✕, Escape, a click outside and Cancel all come here.
+  // Escape and Cancel both come here.
   const close = () => (dirty ? setConfirmDiscard(true) : onOpenChange(false))
+  const height = widget?.height ?? module?.contract.defaultHeight ?? 8
+
+  // The title is edited where the dashboard shows it: in the preview's card.
+  const titleField = (
+    <Input
+      id="widget-title"
+      aria-label="Title"
+      placeholder="Title"
+      className="h-7 min-w-0 flex-1 text-sm font-medium md:text-sm"
+      value={draft.title}
+      onChange={(e) => edit({ title: e.target.value })}
+    />
+  )
 
   const sqlControls = (
     <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -184,7 +229,13 @@ function Editor({ open, onOpenChange, widget, defaults, onSave }: WidgetEditorPr
   return (
     <Dialog open={open} onOpenChange={(o) => !o && close()}>
       <DialogContent
-        className="flex max-h-[85vh] w-full flex-col gap-4 sm:max-w-[1100px] max-sm:h-dvh max-sm:max-h-dvh max-sm:max-w-none max-sm:rounded-none"
+        showCloseButton={false}
+        className="top-0 left-0 flex h-dvh w-full max-w-none translate-x-0 translate-y-0 flex-col gap-0 rounded-none border-0 p-0 sm:max-w-none"
+        // The title field opens focused, as it did above the form; Radix would pick Cancel, first in the header.
+        onOpenAutoFocus={(e) => {
+          e.preventDefault()
+          document.getElementById('widget-title')?.focus()
+        }}
         onEscapeKeyDown={(e) => shouldKeepOpenOnEscape(e.target, document) && e.preventDefault()}
       >
         <form
@@ -194,13 +245,30 @@ function Editor({ open, onOpenChange, widget, defaults, onSave }: WidgetEditorPr
             void save()
           }}
         >
-          <DialogHeader className="min-w-0 pr-8 text-left">
-            <DialogTitle>{widget ? 'Edit widget' : 'Add widget'}</DialogTitle>
+          <DialogHeader className="min-w-0 flex-row items-center gap-2 border-b px-4 py-3 text-left sm:px-6">
+            <DialogTitle className="mr-auto">{widget ? 'Edit widget' : 'Add widget'}</DialogTitle>
             <DialogDescription className="sr-only">Choose a visualization, write its query and save the widget.</DialogDescription>
-            <Input aria-label="Title" placeholder="Title" value={draft.title} onChange={(e) => edit({ title: e.target.value })} />
+            <Button type="button" variant="outline" onClick={close}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={!canSave}>
+              Save
+            </Button>
           </DialogHeader>
-          <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-y-auto lg:grid-cols-[minmax(0,320px)_minmax(0,1fr)]">
-            <div className="flex min-w-0 flex-col gap-4">
+          {saveError && (
+            <Alert variant="destructive" className="rounded-none border-x-0 border-t-0 px-4 sm:px-6">
+              <TriangleAlertIcon />
+              <AlertDescription className="break-words whitespace-pre-wrap">{saveError}</AlertDescription>
+            </Alert>
+          )}
+          {/* Phone: one column, scrolling as a whole. From lg: two halves, each scrolling on its own. */}
+          <div className="grid min-h-0 flex-1 grid-cols-1 overflow-y-auto lg:grid-cols-2 lg:overflow-hidden">
+            <div className="flex min-w-0 flex-col gap-4 p-4 sm:p-6 lg:min-h-0 lg:overflow-y-auto lg:border-r">
+              {markdown ? (
+                <MarkdownPreview titleSlot={titleField} text={draft.markdown} height={height} />
+              ) : (
+                <Preview component={component} props={draft.props} titleSlot={titleField} height={height} state={run} stale={stale} />
+              )}
               <div className="grid min-w-0 grid-cols-1 gap-1.5">
                 <Label htmlFor="widget-component">Visualization</Label>
                 <Select
@@ -209,7 +277,7 @@ function Editor({ open, onOpenChange, widget, defaults, onSave }: WidgetEditorPr
                     setDraft((d) => ({ ...d, component: next, props: carryProps(d.props, widgets[next].contract.props) }))
                   }
                 >
-                  <SelectTrigger id="widget-component" className="w-full min-w-0">
+                  <SelectTrigger id="widget-component" className="w-full min-w-0 sm:max-w-80">
                     <SelectValue placeholder="Choose a visualization" />
                   </SelectTrigger>
                   <SelectContent>
@@ -238,20 +306,20 @@ function Editor({ open, onOpenChange, widget, defaults, onSave }: WidgetEditorPr
                 />
               )}
             </div>
-            <div className="flex min-w-0 flex-col gap-3">
+            <div className="flex min-w-0 flex-col gap-3 border-t p-4 sm:p-6 lg:min-h-0 lg:border-t-0">
               {markdown ? (
-                <div className="grid min-w-0 grid-cols-1 gap-3 lg:grid-cols-2">
-                  <div className="h-48 min-w-0 lg:h-72">
+                <>
+                  <span className="text-sm font-medium">Markdown</span>
+                  <div className="h-72 min-w-0 lg:h-auto lg:min-h-0 lg:flex-1">
                     <Suspense fallback={<Skeleton className="h-full" />}>
                       <CodeEditor language="markdown" label="Markdown" value={draft.markdown} onChange={(md) => edit({ markdown: md })} />
                     </Suspense>
                   </div>
-                  <MarkdownPreview text={draft.markdown} />
-                </div>
+                </>
               ) : (
                 <>
                   {sqlControls}
-                  <div className="h-48 min-w-0 lg:h-56">
+                  <div className="h-56 min-w-0 shrink-0 lg:h-[45%]">
                     <Suspense fallback={<Skeleton className="h-full" />}>
                       <CodeEditor
                         language="sql"
@@ -263,37 +331,21 @@ function Editor({ open, onOpenChange, widget, defaults, onSave }: WidgetEditorPr
                       />
                     </Suspense>
                   </div>
-                  <div className="flex min-w-0 flex-wrap items-center gap-2">
-                    <Button type="button" variant="outline" disabled={!component || run.kind === 'running'} onClick={() => void runQuery()}>
+                  <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
+                    <Button type="button" variant="outline" disabled={!component} onClick={() => void runQuery()}>
                       Run query <Kbd>{RUN_KEYS}</Kbd>
                     </Button>
-                    {!component && <span className="text-xs text-muted-foreground">Choose a visualization to run</span>}
+                    {component ? (
+                      <RunStatus state={run} stale={stale} />
+                    ) : (
+                      <span className="text-xs text-muted-foreground">Choose a visualization to run</span>
+                    )}
                   </div>
-                  <ResultsPane
-                    component={component}
-                    props={draft.props}
-                    height={widget?.height ?? module?.contract.defaultHeight ?? 8}
-                    state={run}
-                    stale={stale}
-                  />
+                  <Rows state={run} stale={stale} />
                 </>
               )}
             </div>
           </div>
-          {saveError && (
-            <Alert variant="destructive">
-              <TriangleAlertIcon />
-              <AlertDescription className="break-words whitespace-pre-wrap">{saveError}</AlertDescription>
-            </Alert>
-          )}
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={close}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={!canSave}>
-              Save
-            </Button>
-          </DialogFooter>
         </form>
       </DialogContent>
       <AlertDialog open={confirmDiscard} onOpenChange={setConfirmDiscard}>
@@ -313,15 +365,15 @@ function Editor({ open, onOpenChange, widget, defaults, onSave }: WidgetEditorPr
 }
 
 /** A markdown widget's text as the dashboard draws it, beside its editor (spec D15). */
-function MarkdownPreview({ text }: { text: string }) {
+function MarkdownPreview({ titleSlot, text, height }: { titleSlot: ReactNode; text: string; height: number }) {
   const Markdown = widgets.markdown.default
   return (
-    <div className="h-48 min-w-0 lg:h-72">
-      <WidgetFrame>
+    <section aria-label="Preview" className="min-w-0" style={{ height: rowsPx(height) }}>
+      <WidgetFrame titleSlot={titleSlot}>
         <Suspense fallback={<Skeleton className="h-full" />}>
           <Markdown data={{ markdown: text }} props={{}} />
         </Suspense>
       </WidgetFrame>
-    </div>
+    </section>
   )
 }

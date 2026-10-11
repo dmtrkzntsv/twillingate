@@ -76,7 +76,9 @@ test('builds a dashboard from a project and edits its widget', async ({ page, re
     await expect(dialog.getByRole('button', { name: /^Range: / })).toBeVisible()
     await page.keyboard.press('ControlOrMeta+Enter')
     await expect(dialog.getByText(/^\d+ rows? · \d+ ms/)).toBeVisible()
-    await expect(dialog.getByRole('tab', { name: 'Preview' })).toHaveAttribute('aria-selected', 'true')
+    // The project is this test's own and holds no views: both halves say so.
+    await expect(dialog.getByRole('region', { name: 'Preview' }).getByText('The query returned no rows')).toBeVisible()
+    await expect(dialog.getByRole('region', { name: 'Rows' }).getByRole('cell', { name: 'No rows' })).toBeVisible()
     await dialog.getByRole('button', { name: 'Save' }).click()
     await expect(dialog).toBeHidden()
     const card = page.locator('[data-slot="widget-card"]', { hasText: 'Daily views' })
@@ -86,6 +88,8 @@ test('builds a dashboard from a project and edits its widget', async ({ page, re
     await cardMenu(page, 'Daily views')
     await page.getByRole('menuitem', { name: 'Edit…' }).click()
     await expect(dialog.getByRole('heading', { name: 'Edit widget' })).toBeVisible()
+    // The stored query runs as the editor opens: the preview needs no click.
+    await expect(dialog.getByText(/^\d+ rows? · \d+ ms/)).toBeVisible()
     await typeSQL(page, 'SELECT day AS x FROM v_views_daily WHERE project_id = :project LIMIT 3')
     await expect(dialog.getByRole('button', { name: /^Range: / })).toHaveCount(0)
     await dialog.getByRole('button', { name: /Run query/ }).click()
