@@ -10,8 +10,9 @@ import (
 // Management tools (managed-config spec §5). One authorization tier: the
 // same token that reads. The guardrails against prompt injection from
 // attacker-writable analytics data (spec §6): every write is annotated so
-// clients interpose the operator, nothing here is irreversible, and every
-// operation lands in audit_log as actor 'mcp' or 'api', by transport.
+// clients interpose the operator, nothing here is irreversible except an event
+// merge and an event block (DestructiveHint true, like delete_submissions),
+// and every operation lands in audit_log as actor 'mcp' or 'api', by transport.
 
 type createProjectIn struct {
 	Name           string   `json:"name" jsonschema:"display name (required); need not be unique"`

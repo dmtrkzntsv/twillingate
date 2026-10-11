@@ -110,8 +110,10 @@ func (h *host) removeEventRule(ctx context.Context, in eventNameIn) (okOut, erro
 }
 
 // eventNames feeds the console's Settings page: every product and measures
-// name with events in the range, busiest first. Product counts events;
-// measures count samples. $ names are left out: rules refuse them.
+// name with events in the range, busiest 200 first (a project sending
+// generated names would otherwise exceed the row cap h.run refuses at).
+// Product counts events; measures count samples. $ names are left out: rules
+// refuse them.
 func (h *host) eventNames(ctx context.Context, in rangeIn) (eventNamesOut, error) {
 	if err := h.checkRange(ctx, in); err != nil {
 		return eventNamesOut{}, err
@@ -122,7 +124,7 @@ func (h *host) eventNames(ctx context.Context, in rangeIn) (eventNamesOut, error
 		UNION ALL
 		SELECT 'measures', event_name, SUM(samples)
 		  FROM v_measures_daily WHERE project_id=?1 AND day BETWEEN ?2 AND ?3 AND event_name NOT LIKE '$%' GROUP BY event_name)
-		ORDER BY events DESC, name`, in.ProjectID, in.From, in.To)
+		ORDER BY events DESC, name LIMIT 200`, in.ProjectID, in.From, in.To)
 	if err != nil {
 		return eventNamesOut{}, err
 	}

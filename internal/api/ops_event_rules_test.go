@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -252,6 +253,52 @@ func TestEventNames(t *testing.T) {
 	rec = serveREST(t, r, "GET", "/api/projects/99/event-names?from=2026-09-01&to=2026-09-30", "")
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("unknown project = %d %s, want 404", rec.Code, rec.Body)
+	}
+}
+
+// A project sending generated names must not turn the Settings page into a
+// 400 at the row cap: the busiest 200 come back, the rest are left out.
+func TestEventNamesKeepsTheBusiest200(t *testing.T) {
+	h, _ := newTestHost(t)
+	r := newTestRegistrar(t, h)
+	if _, err := h.ops.CreateProject(t.Context(), "test", manage.ProjectSpec{Name: "events"}); err != nil {
+		t.Fatal(err)
+	}
+	const pid = "3"
+	// 201 names with one event each, plus a second event for "n000" so the
+	// order has a head; "n200" sorts last and is the one left out.
+	var rows []string
+	var args []any
+	add := func(id, name string) {
+		rows = append(rows, `(?, 3, '2026-09-10T10:00:00Z', '2026-09-10', '2026-09-10T10:00:00Z', 'web', 'a1', 'user', '/', 'product', ?, NULL, '', 1)`)
+		args = append(args, id, name)
+	}
+	for i := 0; i <= 200; i++ {
+		add(fmt.Sprintf("e%d", i), fmt.Sprintf("n%03d", i))
+	}
+	add("extra", "n000")
+	q := `INSERT INTO events (id, project_id, ts, day, received_at, kind, actor_id, actor_kind, path, family, event_name, value, measure, sample_rate) VALUES ` + strings.Join(rows, ",")
+	if _, err := rawExec(h.ops.St, q, args...); err != nil {
+		t.Fatal(err)
+	}
+	rec := serveREST(t, r, "GET", "/api/projects/"+pid+"/event-names?from=2026-09-01&to=2026-09-30", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("event-names = %d %s", rec.Code, rec.Body)
+	}
+	var out struct {
+		Events []nameRow `json:"events"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Events) != 200 {
+		t.Fatalf("rows = %d, want 200", len(out.Events))
+	}
+	if out.Events[0].Name != "n000" || out.Events[0].Events != 2 {
+		t.Errorf("first = %+v, want n000 with 2", out.Events[0])
+	}
+	if last := out.Events[199]; last.Name != "n199" {
+		t.Errorf("last = %+v, want n199 (n200 is the one left out)", last)
 	}
 }
 

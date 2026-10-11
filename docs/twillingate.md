@@ -200,8 +200,8 @@ with `action` `rename` or `block` and no `to` for a block.
 
 The console lists a project's event names for these tools on its Settings page,
 from `GET /api/projects/{project_id}/event-names`, a route with no MCP tool
-(`product_events` and `measures` answer agents). It leaves out `$` names, which
-take no rule.
+(`product_events` and `measures` answer agents). It lists the busiest 200 names
+in the range and leaves out `$` names, which take no rule.
 
 ---
 
@@ -1384,7 +1384,7 @@ curl -H "Authorization: Bearer $TOKEN" \
 | `POST` | `/api/projects/{project_id}/event-rules/rename` | `rename_event` | body: `family`, `from`, `to`, `merge` → `{"rule":{…},"rewritten":{"events":3,…}}` |
 | `POST` | `/api/projects/{project_id}/event-rules/block` | `block_event` | body: `family`, `name` → `{"rule":{…}}` |
 | `POST` | `/api/projects/{project_id}/event-rules/remove` | `remove_event_rule` | body: `family`, `name` → `{"status":"removed"}`; a body because names may contain `/` |
-| `GET` | `/api/projects/{project_id}/event-names` | `event_names`, REST only: no MCP tool | query: `from`, `to` → `{"events":[{"family","name","events"}]}`: product events and measure samples in the range, busiest first; `$` names, which take no rule, are left out |
+| `GET` | `/api/projects/{project_id}/event-names` | `event_names`, REST only: no MCP tool | query: `from`, `to` → `{"events":[{"family","name","events"}]}`: product events and measure samples in the range, the busiest 200, busiest first; `$` names, which take no rule, are left out |
 | `GET` | `/api/projects/{project_id}/forms` | `list_forms` | query: `archived` |
 | `POST` | `/api/projects/{project_id}/forms/{name}/approve` | `approve_form` | body: `expected_fields` |
 | `PATCH` | `/api/projects/{project_id}/forms/{name}` | `update_form` | body: fields to change (merge); `closes_at: null` reopens |
