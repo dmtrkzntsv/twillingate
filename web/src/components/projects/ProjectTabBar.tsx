@@ -24,6 +24,8 @@ interface Props {
   actions: ProjectTabActions
   /** Submissions no one has opened yet, across the project's forms; the Forms button's badge. */
   newSubmissions: number
+  /** Live draft forms, waiting to be approved: a dot on the Forms button while no submission is new. */
+  draftForms: number
   /** Reporting dev, which takes no writes and serves no forms: no Forms button, no "+" and no dragging. */
   readOnly?: boolean
 }
@@ -34,14 +36,20 @@ interface Props {
  * them; then, outside the scrolling tabs, Forms (with the count of new
  * submissions) and Settings. Switching keeps the range in the URL.
  */
-export default function ProjectTabBar({ projectId, currentId, tabs, dashboards, actions, newSubmissions, readOnly = false }: Props) {
+export default function ProjectTabBar({ projectId, currentId, tabs, dashboards, actions, newSubmissions, draftForms, readOnly = false }: Props) {
   const navigate = useNavigate()
   const [url] = useSearchParams()
   const [adding, setAdding] = useState(false)
   const search = rangeParams(url).toString()
   const open = (id: number) => navigate(tabPath(projectId, id, search))
   const badge = newSubmissions > 99 ? '99+' : String(newSubmissions)
-  const formsLabel = newSubmissions > 0 ? `Forms, ${newSubmissions} new` : 'Forms'
+  const formsLabel = [
+    'Forms',
+    newSubmissions > 0 && `${newSubmissions} new`,
+    draftForms > 0 && `${draftForms} ${draftForms === 1 ? 'draft' : 'drafts'}`,
+  ]
+    .filter(Boolean)
+    .join(', ')
 
   const add = async (id: number) => {
     const ok = await actions.add(projectId, id)
@@ -76,6 +84,9 @@ export default function ProjectTabBar({ projectId, currentId, tabs, dashboards, 
                     <span aria-hidden className="absolute -top-0.5 -right-0.5 min-w-4 rounded-full bg-primary px-1 text-center text-[10px] leading-4 font-medium text-primary-foreground">
                       {badge}
                     </span>
+                  )}
+                  {newSubmissions === 0 && draftForms > 0 && (
+                    <span aria-hidden data-forms-dot className="absolute top-1 right-1 size-2 rounded-full bg-primary" />
                   )}
                 </Link>
               </Button>
