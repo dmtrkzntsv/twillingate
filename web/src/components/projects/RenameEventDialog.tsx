@@ -10,22 +10,19 @@ interface Props {
   onOpenChange: (open: boolean) => void
   /** The event being renamed; kept by the caller through the close animation. */
   target: { family: EventFamily; name: string } | null
-  /** The names listed, to tell a rename from a merge. */
+  /** The names listed: one the family has is taken, for Merge into…. */
   names: EventName[]
-  /** The names the target's family blocks: renaming onto one drops the renamed events, and their history, with it. */
+  /** The names the target's family blocks: nothing is renamed onto one. */
   blockedNames: readonly string[]
   pending?: boolean
   /**
    * Resolves true when done, so the dialog closes; false keeps it open (the refusal is already toasted); 'conflict'
-   * keeps it open as a merge confirmation: the server knows events under the new name that the listed range does not.
+   * keeps it open saying the name is taken: the server knows events under it that the listed range does not.
    */
-  onRename: (to: string, merge: boolean) => Promise<boolean | 'conflict'>
+  onRename: (to: string) => Promise<boolean | 'conflict'>
 }
 
-/**
- * Type the new name of an event; a name the family already has makes it a merge, and a blocked one drops the renamed
- * events, each said before it is confirmed.
- */
+/** Type a name not in use yet; one the family has, or blocks, is refused before it is sent, with where to go instead. */
 export default function RenameEventDialog({ open, onOpenChange, target, names, blockedNames, pending, onRename }: Props) {
   const [value, setValue] = useState('')
   // The name the server refused as already taken; typing another name clears it.
@@ -38,12 +35,12 @@ export default function RenameEventDialog({ open, onOpenChange, target, names, b
     }
   }, [open])
   const to = value.trim()
-  const merging = target !== null && to !== '' && (to === taken || names.some((n) => n.family === target.family && n.name === to))
-  const intoBlocked = target !== null && to !== '' && blockedNames.includes(to)
-  const valid = target !== null && to !== '' && !to.startsWith('$') && to !== target.name
+  const blocked = target !== null && to !== '' && blockedNames.includes(to)
+  const inUse = !blocked && target !== null && to !== '' && (to === taken || names.some((n) => n.family === target.family && n.name === to))
+  const valid = target !== null && to !== '' && !to.startsWith('$') && to !== target.name && !blocked && !inUse
   const submit = async () => {
     if (!valid) return
-    const out = await onRename(to, merging || intoBlocked)
+    const out = await onRename(to)
     if (out === 'conflict') setTaken(to)
     else if (out) onOpenChange(false)
   }
@@ -66,19 +63,19 @@ export default function RenameEventDialog({ open, onOpenChange, target, names, b
           <div className="flex flex-col gap-2">
             <Label htmlFor="rename-event-to">New name</Label>
             <Input id="rename-event-to" value={value} autoComplete="off" onChange={(e) => setValue(e.target.value)} />
-            {intoBlocked && (
+            {blocked && (
               <p role="alert" className="text-sm wrap-anywhere text-destructive">
-                {to} is blocked: {target?.name}&apos;s events are dropped from now on, and the next daily pass deletes {target?.name}&apos;s aggregated history.
+                {to} is blocked: nothing is renamed onto a blocked event. To stop receiving {target?.name}, block it.
               </p>
             )}
-            {merging && (
+            {inUse && (
               <p role="alert" className="text-sm wrap-anywhere text-destructive">
-                {to} already has events: this merges {target?.name} into it, and cannot be undone.
+                {to} already has events: use Merge into… to fold {target?.name} into it.
               </p>
             )}
           </div>
           <DialogFooter>
-            <Button type="submit" disabled={!valid || pending}>{intoBlocked ? `Rename into blocked ${to}` : merging ? `Merge into ${to}` : 'Rename'}</Button>
+            <Button type="submit" disabled={!valid || pending}>Rename</Button>
           </DialogFooter>
         </form>
       </DialogContent>

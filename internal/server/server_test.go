@@ -1481,13 +1481,15 @@ func TestIngestAppliesEventRules(t *testing.T) {
 	ctx := context.Background()
 	ops := manage.NewOps(reg, st)
 	pid := reg.Snapshot(ctx).Projects()[0].ID
-	if _, _, err := ops.RenameEvent(ctx, "t", pid, "product", "old", "new", false); err != nil {
+	if _, _, err := ops.RenameEvent(ctx, "t", pid, "product", "old", "new"); err != nil {
+		t.Fatal(err)
+	}
+	// x is renamed to spam before spam is blocked: a block on the target
+	// refuses the rename itself.
+	if _, _, err := ops.RenameEvent(ctx, "t", pid, "product", "x", "spam"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := ops.BlockEvent(ctx, "t", pid, "product", "spam"); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := ops.RenameEvent(ctx, "t", pid, "product", "x", "spam", true); err != nil {
 		t.Fatal(err)
 	}
 	g, _ := geo.New("cloudflare://", t.TempDir(), slog.Default())
@@ -1514,7 +1516,7 @@ func TestIngestAppliesEventRules(t *testing.T) {
 		t.Errorf("measures = %+v, want the spam measure kept", q.measures)
 	}
 
-	// A name renamed onto a blocked one is mapped, then dropped.
+	// A name renamed to one blocked later is mapped, then dropped.
 	q.events = nil
 	res = decodeResult(t, post(s, envelopeOf(`{"name":"x"}`), nil))
 	if res.Accepted != 1 || len(q.events) != 0 || len(res.Warnings) != 1 {

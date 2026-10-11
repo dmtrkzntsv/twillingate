@@ -66,6 +66,7 @@ export default function SetupTab({ project, dash, actions }: Props) {
         rawDays={limits.data?.raw_events?.window_days}
         pending={actions.pending}
         onRename={(body) => actions.renameEvent(id, body)}
+        onMerge={(body) => actions.mergeEvent(id, body)}
         onBlock={(body) => actions.blockEvent(id, body)}
         onRemove={(body) => actions.removeEventRule(id, body)}
         onAddAlias={(body) => actions.addEventAlias(id, body)}

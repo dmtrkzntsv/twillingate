@@ -670,8 +670,10 @@ export const endpoints = {
     api<ReceivedAttributes>(`/api/received-attributes${toQuery(q)}`),
   eventRules: (id: number) => api<{ rules: EventRule[] }>(`/api/projects/${id}/event-rules`),
   eventNames: (id: number, q: RangeQuery) => api<{ events: EventName[] }>(`/api/projects/${id}/event-names${toQuery(q)}`),
-  renameEvent: (id: number, body: { family: EventFamily; from: string; to: string; merge?: boolean }) =>
+  renameEvent: (id: number, body: { family: EventFamily; from: string; to: string }) =>
     api<{ rule: EventRule; rewritten: Record<string, number> }>(`/api/projects/${id}/event-rules/rename`, json('POST', body)),
+  mergeEvent: (id: number, body: { family: EventFamily; from: string; to: string }) =>
+    api<{ rule: EventRule; rewritten: Record<string, number> }>(`/api/projects/${id}/event-rules/merge`, json('POST', body)),
   blockEvent: (id: number, body: { family: EventFamily; name: string }) =>
     api<{ rule: EventRule }>(`/api/projects/${id}/event-rules/block`, json('POST', body)),
   removeEventRule: (id: number, body: { family: EventFamily; name: string }) =>
