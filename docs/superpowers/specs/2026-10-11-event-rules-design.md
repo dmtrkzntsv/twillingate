@@ -86,8 +86,9 @@ REST route each.
   through the rename rules, then drops the event if the result is blocked:
   the batch still answers 2xx (a 4xx is a poison batch to clients), the
   event is not counted as stored, and the response carries a warning
-  "event `X` is blocked in this project, dropped". Blocking B therefore
-  also drops events renamed to B. No store-side check: events queued in
+  "event `X` is blocked in this project, dropped" (for a name renamed onto
+  a blocked one, "event `X` (renamed to `B`) is blocked in this project,
+  dropped"). Blocking B therefore also drops events renamed to B. No store-side check: events queued in
   the seconds before a block commits may land, which is harmless.
 - **D10. Blocked names are never aggregated.** `AggregateProductDay` and
   `AggregateMeasureDay` already roll a raw day up and delete it in one

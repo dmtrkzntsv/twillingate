@@ -1127,8 +1127,10 @@ queued for retry (the SDK keeps only `5xx` and network failures).
 
 A product or measures event named in a block rule of its project (see [event rules](#event-rules)) is accepted
 (it counts in `accepted`, so the client does not retry) but not stored, and
-`warnings` lists it as `event "<name>" is blocked in this project, dropped`. A
-name with a rename rule is stored under its new name, with no warning.
+`warnings` lists it as `event "<name>" is blocked in this project, dropped`; a
+name renamed onto a blocked one reads `event "<name>" (renamed to "<target>")
+is blocked in this project, dropped`. A name with a rename rule is stored under
+its new name, with no warning.
 
 `errors` and `warnings` are capped at 10 entries each, and rejection is **per
 event, not per batch**: one malformed event increments `rejected` and the rest

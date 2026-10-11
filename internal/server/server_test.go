@@ -1487,7 +1487,7 @@ func TestIngestAppliesEventRules(t *testing.T) {
 	if _, err := ops.BlockEvent(ctx, "t", pid, "product", "spam"); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := ops.RenameEvent(ctx, "t", pid, "product", "x", "spam", false); err != nil {
+	if _, _, err := ops.RenameEvent(ctx, "t", pid, "product", "x", "spam", true); err != nil {
 		t.Fatal(err)
 	}
 	g, _ := geo.New("cloudflare://", t.TempDir(), slog.Default())
@@ -1519,5 +1519,7 @@ func TestIngestAppliesEventRules(t *testing.T) {
 	res = decodeResult(t, post(s, envelopeOf(`{"name":"x"}`), nil))
 	if res.Accepted != 1 || len(q.events) != 0 || len(res.Warnings) != 1 {
 		t.Errorf("rename onto a block: result %+v, enqueued %+v", res, q.events)
+	} else if want := `event "x" (renamed to "spam") is blocked in this project, dropped`; res.Warnings[0].Reason != want {
+		t.Errorf("rename onto a block: warning %q, want %q", res.Warnings[0].Reason, want)
 	}
 }

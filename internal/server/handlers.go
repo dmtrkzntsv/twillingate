@@ -157,9 +157,14 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		// Event rules (spec 2026-10-11, D9): a renamed name is stored under
 		// its new one; a blocked one is accepted, so the client does not
 		// retry, and dropped, with a warning for whoever integrates.
+		sent := name
 		name, blocked := snap.ResolveEvent(p.ID, family, name)
 		if blocked {
-			res.warn(i, "event %q is blocked in this project, dropped", name)
+			if name != sent {
+				res.warn(i, "event %q (renamed to %q) is blocked in this project, dropped", sent, name)
+			} else {
+				res.warn(i, "event %q is blocked in this project, dropped", name)
+			}
 			res.Accepted++
 			continue
 		}
