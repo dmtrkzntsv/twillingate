@@ -11,7 +11,7 @@ Date: 2026-10-11
   still in the field sending the old one. Today the only fix is SQL by hand
   against `events` and four aggregate tables.
 - **An event cannot be refused.** A noisy or abandoned event keeps being
-  stored, aggregated and kept for the aggregate retention (`RETENTION_EVENTS_AGGREGATE_DAYS`; `RETENTION_AGGREGATE_DAYS` after #163), and the only
+  stored, aggregated and kept for `RETENTION_AGGREGATE_DAYS`, and the only
   lever is shipping new app code, which old installs never get.
 
 Both are project settings: the console's Settings page, an MCP tool and a
@@ -93,7 +93,7 @@ REST route each.
   `agg_measures_attrs`) skip blocked names with
   `NOT EXISTS (SELECT 1 FROM event_rules …)`. The existing end-of-window
   `DELETE FROM events … day=?` then removes the blocked raw rows with the
-  rest, so they are gone within the raw retention (`RETENTION_EVENTS_RAW_DAYS`, 30 by default) without a new delete.
+  rest, so they are gone within `RETENTION_RAW_DAYS` (30 by default) without a new delete.
 - **D11. Existing aggregates of a blocked name go at the next daily pass.**
   A new store step, `DropBlockedAggregates(ctx, projectID)`, deletes rows
   for blocked names from the four per-event aggregate tables; the daily
