@@ -1,0 +1,410 @@
+package sqlite
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"reflect"
+	"testing"
+
+	"github.com/dmtrkzntsv/twillingate/internal/store"
+)
+
+var ruleAudit = store.AuditEntry{Actor: "cli", Action: "event.rename", Subject: "1/a"}
+
+// ruleDB is a test database with projects 1 and 2 present (event_rules
+// references projects).
+func ruleDB(t *testing.T) *DB {
+	t.Helper()
+	db := newTestDB(t)
+	execAll(t, db,
+		`INSERT OR IGNORE INTO projects (id, name, sort_key) VALUES (1, 'p1', 'a1')`,
+		`INSERT OR IGNORE INTO projects (id, name, sort_key) VALUES (2, 'p2', 'a2')`)
+	return db
+}
+
+// writeNamed stores n events of one name; ids are unique per (project,
+// family, name, i).
+func writeNamed(t *testing.T, db *DB, project int64, family store.Family, name string, n int) {
+	t.Helper()
+	var evs []store.Event
+	for i := 0; i < n; i++ {
+		e := store.Event{Family: family, ID: fmt.Sprintf("%d-%s-%s-%d", project, family, name, i),
+			ProjectID: project, EventName: name, TS: ts("2026-10-10T10:00:00Z"),
+			ReceivedAt: ts("2026-10-10T10:00:00Z"), Kind: "app", ActorID: "a", ActorKind: store.ActorConnection}
+		if family == store.FamilyMeasures {
+			v := 1.5
+			e.Value, e.Measure = &v, "m"
+		}
+		evs = append(evs, e)
+	}
+	if err := db.WriteEvents(context.Background(), evs); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func rawNames(t *testing.T, db *DB, project int64, family store.Family) map[string]int {
+	t.Helper()
+	rows, err := db.db.Query(`SELECT event_name, COUNT(*) FROM events WHERE project_id=? AND family=? GROUP BY event_name`, project, string(family))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var n string
+		var c int
+		if err := rows.Scan(&n, &c); err != nil {
+			t.Fatal(err)
+		}
+		out[n] = c
+	}
+	return out
+}
+
+func loadRules(t *testing.T, db *DB) []store.EventRule {
+	t.Helper()
+	rules, err := db.LoadEventRules(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range rules {
+		rules[i].CreatedAt = ""
+	}
+	return rules
+}
+
+func rule(project int64, family store.Family, name, action, to string) store.EventRule {
+	return store.EventRule{ProjectID: project, Family: family, Name: name, Action: action, To: to}
+}
+
+func rename(t *testing.T, db *DB, project int64, family store.Family, from, to string, merge bool) map[string]int64 {
+	t.Helper()
+	got, err := db.RenameEvent(context.Background(), project, family, from, to, merge, ruleAudit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return got
+}
+
+func count(t *testing.T, db *DB, q string, args ...any) int {
+	t.Helper()
+	var n int
+	if err := db.db.QueryRow(q, args...).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+func TestRenameEventRewritesRawAndAggregates(t *testing.T) {
+	db := ruleDB(t)
+	writeNamed(t, db, 1, store.FamilyProduct, "a", 3)
+	writeNamed(t, db, 1, store.FamilyProduct, "b", 1)
+	writeNamed(t, db, 2, store.FamilyProduct, "a", 1)
+	execAll(t, db,
+		`INSERT INTO agg_product_daily (project_id, day, event_name, count, unique_users) VALUES (1, '2026-01-01', 'a', 5, 2)`,
+		`INSERT INTO agg_product_attrs (project_id, day, event_name, attr_key, attr_value, count, unique_users, unique_groups)
+		 VALUES (1, '2026-01-01', 'a', 'k', 'v', 5, 2, 1)`)
+
+	got := rename(t, db, 1, store.FamilyProduct, "a", "c", false)
+
+	want := map[string]int64{"events": 3, "agg_product_daily": 1, "agg_product_attrs": 1}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("result = %v, want %v", got, want)
+	}
+	if got, want := rawNames(t, db, 1, store.FamilyProduct), map[string]int{"c": 3, "b": 1}; !reflect.DeepEqual(got, want) {
+		t.Errorf("project 1 raw = %v, want %v", got, want)
+	}
+	if got, want := rawNames(t, db, 2, store.FamilyProduct), map[string]int{"a": 1}; !reflect.DeepEqual(got, want) {
+		t.Errorf("project 2 raw = %v, want %v", got, want)
+	}
+	for _, table := range []string{"agg_product_daily", "agg_product_attrs"} {
+		if n := count(t, db, `SELECT COUNT(*) FROM `+table+` WHERE event_name='c'`); n != 1 {
+			t.Errorf("%s has %d rows named c, want 1", table, n)
+		}
+		if n := count(t, db, `SELECT COUNT(*) FROM `+table+` WHERE event_name='a'`); n != 0 {
+			t.Errorf("%s still has %d rows named a", table, n)
+		}
+	}
+	if got, want := loadRules(t, db), []store.EventRule{rule(1, store.FamilyProduct, "a", store.EventRuleRename, "c")}; !reflect.DeepEqual(got, want) {
+		t.Errorf("rules = %v, want %v", got, want)
+	}
+	if n := count(t, db, `SELECT COUNT(*) FROM audit_log WHERE action='event.rename' AND subject='1/a'`); n != 1 {
+		t.Errorf("audit rows = %d, want 1", n)
+	}
+}
+
+func TestRenameEventRefusesExistingTargetWithoutMerge(t *testing.T) {
+	for name, seed := range map[string]string{
+		"raw":       "",
+		"aggregate": `INSERT INTO agg_product_daily (project_id, day, event_name, count, unique_users) VALUES (1, '2026-01-02', 'b', 1, 1)`,
+		"attrs": `INSERT INTO agg_product_attrs (project_id, day, event_name, attr_key, attr_value, count, unique_users, unique_groups)
+			VALUES (1, '2026-01-02', 'b', 'k', 'v', 1, 1, NULL)`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			db := ruleDB(t)
+			writeNamed(t, db, 1, store.FamilyProduct, "a", 2)
+			execAll(t, db, `INSERT INTO agg_product_daily (project_id, day, event_name, count, unique_users) VALUES (1, '2026-01-01', 'a', 5, 2)`)
+			if seed == "" {
+				writeNamed(t, db, 1, store.FamilyProduct, "b", 1)
+			} else {
+				execAll(t, db, seed)
+			}
+			wantRaw := rawNames(t, db, 1, store.FamilyProduct)
+
+			_, err := db.RenameEvent(context.Background(), 1, store.FamilyProduct, "a", "b", false, ruleAudit)
+			if !errors.Is(err, store.ErrConflict) {
+				t.Fatalf("err = %v, want ErrConflict", err)
+			}
+			if got := rawNames(t, db, 1, store.FamilyProduct); !reflect.DeepEqual(got, wantRaw) {
+				t.Errorf("raw = %v, want unchanged %v", got, wantRaw)
+			}
+			if n := count(t, db, `SELECT COUNT(*) FROM agg_product_daily WHERE event_name='a'`); n != 1 {
+				t.Errorf("aggregate a rows = %d, want 1", n)
+			}
+			if rules := loadRules(t, db); len(rules) != 0 {
+				t.Errorf("rules = %v, want none", rules)
+			}
+			if n := count(t, db, `SELECT COUNT(*) FROM audit_log WHERE action='event.rename'`); n != 0 {
+				t.Errorf("audit rows = %d, want none", n)
+			}
+		})
+	}
+}
+
+func TestRenameEventMergeSumsAggregates(t *testing.T) {
+	t.Run("product", func(t *testing.T) {
+		db := ruleDB(t)
+		execAll(t, db,
+			`INSERT INTO agg_product_daily (project_id, day, event_name, count, unique_users) VALUES
+			 (1, '2026-01-01', 'a', 5, 2), (1, '2026-01-01', 'b', 7, 3), (1, '2026-01-02', 'a', 1, 1)`,
+			// k/v: groups on both sides; k/w: NULL on one side; k/x: NULL on both.
+			`INSERT INTO agg_product_attrs (project_id, day, event_name, attr_key, attr_value, count, unique_users, unique_groups) VALUES
+			 (1, '2026-01-01', 'a', 'k', 'v', 5, 2, 1), (1, '2026-01-01', 'b', 'k', 'v', 7, 3, 2),
+			 (1, '2026-01-01', 'a', 'k', 'w', 1, 1, NULL), (1, '2026-01-01', 'b', 'k', 'w', 1, 1, 4),
+			 (1, '2026-01-01', 'a', 'k', 'x', 1, 1, NULL), (1, '2026-01-01', 'b', 'k', 'x', 1, 1, NULL)`)
+
+		got := rename(t, db, 1, store.FamilyProduct, "a", "b", true)
+		if want := map[string]int64{"events": 0, "agg_product_daily": 2, "agg_product_attrs": 3}; !reflect.DeepEqual(got, want) {
+			t.Errorf("result = %v, want %v", got, want)
+		}
+		type row struct{ count, users int }
+		daily := map[string]row{}
+		rows, err := db.db.Query(`SELECT day, count, unique_users FROM agg_product_daily WHERE event_name='b'`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for rows.Next() {
+			var d string
+			var r row
+			_ = rows.Scan(&d, &r.count, &r.users)
+			daily[d] = r
+		}
+		rows.Close()
+		if want := map[string]row{"2026-01-01": {12, 5}, "2026-01-02": {1, 1}}; !reflect.DeepEqual(daily, want) {
+			t.Errorf("daily = %v, want %v", daily, want)
+		}
+		if n := count(t, db, `SELECT COUNT(*) FROM agg_product_daily WHERE event_name='a'`); n != 0 {
+			t.Errorf("a rows left: %d", n)
+		}
+		groups := map[string]*int{}
+		arows, err := db.db.Query(`SELECT attr_value, unique_groups FROM agg_product_attrs WHERE event_name='b'`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for arows.Next() {
+			var v string
+			var g *int
+			_ = arows.Scan(&v, &g)
+			groups[v] = g
+		}
+		arows.Close()
+		if g := groups["v"]; g == nil || *g != 3 {
+			t.Errorf("unique_groups v = %v, want 3", g)
+		}
+		if groups["w"] != nil || groups["x"] != nil {
+			t.Errorf("unique_groups w=%v x=%v, want NULL (not tracked)", groups["w"], groups["x"])
+		}
+		if n := count(t, db, `SELECT COUNT(*) FROM agg_product_attrs WHERE event_name='a'`); n != 0 {
+			t.Errorf("attrs a rows left: %d", n)
+		}
+	})
+	t.Run("measures", func(t *testing.T) {
+		db := ruleDB(t)
+		execAll(t, db,
+			`INSERT INTO agg_measures_daily (project_id, day, event_name, measure, bucket, samples, weight, sum) VALUES
+			 (1, '2026-01-01', 'a', 'm', 3, 2, 2.5, 10), (1, '2026-01-01', 'b', 'm', 3, 4, 4.5, 20), (1, '2026-01-02', 'a', 'm', 3, 1, 1, 1)`,
+			`INSERT INTO agg_measures_attrs (project_id, day, event_name, measure, attr_key, attr_value, bucket, samples, weight, sum) VALUES
+			 (1, '2026-01-01', 'a', 'm', 'k', 'v', 3, 2, 2.5, 10), (1, '2026-01-01', 'b', 'm', 'k', 'v', 3, 4, 4.5, 20)`)
+
+		got := rename(t, db, 1, store.FamilyMeasures, "a", "b", true)
+		if want := map[string]int64{"events": 0, "agg_measures_daily": 2, "agg_measures_attrs": 1}; !reflect.DeepEqual(got, want) {
+			t.Errorf("result = %v, want %v", got, want)
+		}
+		var samples int
+		var weight, sum float64
+		if err := db.db.QueryRow(`SELECT samples, weight, sum FROM agg_measures_daily WHERE event_name='b' AND day='2026-01-01'`).
+			Scan(&samples, &weight, &sum); err != nil {
+			t.Fatal(err)
+		}
+		if samples != 6 || weight != 7 || sum != 30 {
+			t.Errorf("daily = %d/%v/%v, want 6/7/30", samples, weight, sum)
+		}
+		if err := db.db.QueryRow(`SELECT samples, weight, sum FROM agg_measures_attrs WHERE event_name='b'`).
+			Scan(&samples, &weight, &sum); err != nil {
+			t.Fatal(err)
+		}
+		if samples != 6 || weight != 7 || sum != 30 {
+			t.Errorf("attrs = %d/%v/%v, want 6/7/30", samples, weight, sum)
+		}
+		for _, table := range []string{"agg_measures_daily", "agg_measures_attrs"} {
+			if n := count(t, db, `SELECT COUNT(*) FROM `+table+` WHERE event_name='a'`); n != 0 {
+				t.Errorf("%s: a rows left: %d", table, n)
+			}
+		}
+	})
+}
+
+func TestRenameEventChainsCollapseAndRenameBack(t *testing.T) {
+	db := ruleDB(t)
+	p := store.FamilyProduct
+	rename(t, db, 1, p, "A", "B", false)
+	rename(t, db, 1, p, "B", "C", false)
+	want := []store.EventRule{
+		rule(1, p, "A", store.EventRuleRename, "C"),
+		rule(1, p, "B", store.EventRuleRename, "C"),
+	}
+	if got := loadRules(t, db); !reflect.DeepEqual(got, want) {
+		t.Errorf("after A>B, B>C: rules = %v, want %v", got, want)
+	}
+	rename(t, db, 1, p, "C", "A", false)
+	want = []store.EventRule{
+		rule(1, p, "B", store.EventRuleRename, "A"),
+		rule(1, p, "C", store.EventRuleRename, "A"),
+	}
+	if got := loadRules(t, db); !reflect.DeepEqual(got, want) {
+		t.Errorf("after C>A: rules = %v, want %v", got, want)
+	}
+}
+
+func TestRenameEventReplacesBlockAndKeepsTargetBlock(t *testing.T) {
+	db := ruleDB(t)
+	p := store.FamilyProduct
+	ctx := context.Background()
+	if err := db.BlockEvent(ctx, 1, p, "X", ruleAudit); err != nil {
+		t.Fatal(err)
+	}
+	rename(t, db, 1, p, "X", "Y", false)
+	if err := db.BlockEvent(ctx, 1, p, "Z", ruleAudit); err != nil {
+		t.Fatal(err)
+	}
+	rename(t, db, 1, p, "W", "Z", false)
+	want := []store.EventRule{
+		rule(1, p, "W", store.EventRuleRename, "Z"),
+		rule(1, p, "X", store.EventRuleRename, "Y"),
+		rule(1, p, "Z", store.EventRuleBlock, ""),
+	}
+	if got := loadRules(t, db); !reflect.DeepEqual(got, want) {
+		t.Errorf("rules = %v, want %v", got, want)
+	}
+}
+
+func TestBlockEventIsIdempotentAndReplacesRename(t *testing.T) {
+	db := ruleDB(t)
+	p := store.FamilyProduct
+	ctx := context.Background()
+	if err := db.BlockEvent(ctx, 1, p, "N", ruleAudit); err != nil {
+		t.Fatal(err)
+	}
+	execAll(t, db, `UPDATE event_rules SET created_at='2026-01-01T00:00:00Z'`)
+	if err := db.BlockEvent(ctx, 1, p, "N", ruleAudit); err != nil {
+		t.Fatal(err)
+	}
+	var created string
+	if err := db.db.QueryRow(`SELECT created_at FROM event_rules WHERE name='N'`).Scan(&created); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(loadRules(t, db)); n != 1 || created != "2026-01-01T00:00:00Z" {
+		t.Errorf("rules = %d, created_at = %s, want one rule, unchanged", n, created)
+	}
+
+	rename(t, db, 1, p, "P", "Q", false)
+	if err := db.BlockEvent(ctx, 1, p, "P", ruleAudit); err != nil {
+		t.Fatal(err)
+	}
+	want := []store.EventRule{
+		rule(1, p, "N", store.EventRuleBlock, ""),
+		rule(1, p, "P", store.EventRuleBlock, ""),
+	}
+	if got := loadRules(t, db); !reflect.DeepEqual(got, want) {
+		t.Errorf("rules = %v, want %v", got, want)
+	}
+}
+
+func TestRemoveEventRule(t *testing.T) {
+	db := ruleDB(t)
+	p := store.FamilyProduct
+	ctx := context.Background()
+	if err := db.BlockEvent(ctx, 1, p, "N", ruleAudit); err != nil {
+		t.Fatal(err)
+	}
+	before := count(t, db, `SELECT COUNT(*) FROM audit_log WHERE action='event.remove'`)
+	if err := db.RemoveEventRule(ctx, 1, p, "N", store.AuditEntry{Actor: "cli", Action: "event.remove", Subject: "1/N"}); err != nil {
+		t.Fatal(err)
+	}
+	if rules := loadRules(t, db); len(rules) != 0 {
+		t.Errorf("rules = %v, want none", rules)
+	}
+	if n := count(t, db, `SELECT COUNT(*) FROM audit_log WHERE action='event.remove'`); n != before+1 {
+		t.Errorf("audit rows = %d, want %d", n, before+1)
+	}
+	err := db.RemoveEventRule(ctx, 1, p, "N", store.AuditEntry{Actor: "cli", Action: "event.remove", Subject: "1/N"})
+	if !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("err = %v, want ErrNotFound", err)
+	}
+	if n := count(t, db, `SELECT COUNT(*) FROM audit_log WHERE action='event.remove'`); n != before+1 {
+		t.Errorf("a refused removal was audited: %d rows", n)
+	}
+}
+
+func TestWriteEventsAppliesRenameRules(t *testing.T) {
+	db := ruleDB(t)
+	rename(t, db, 1, store.FamilyProduct, "a", "c", false)
+	writeNamed(t, db, 1, store.FamilyProduct, "a", 1)
+	writeNamed(t, db, 1, store.FamilyMeasures, "a", 1)
+	writeNamed(t, db, 2, store.FamilyProduct, "a", 1)
+	if got, want := rawNames(t, db, 1, store.FamilyProduct), map[string]int{"c": 1}; !reflect.DeepEqual(got, want) {
+		t.Errorf("project 1 product = %v, want %v", got, want)
+	}
+	if got, want := rawNames(t, db, 1, store.FamilyMeasures), map[string]int{"a": 1}; !reflect.DeepEqual(got, want) {
+		t.Errorf("project 1 measures = %v, want %v", got, want)
+	}
+	if got, want := rawNames(t, db, 2, store.FamilyProduct), map[string]int{"a": 1}; !reflect.DeepEqual(got, want) {
+		t.Errorf("project 2 product = %v, want %v", got, want)
+	}
+}
+
+func TestRenameEventNoRowsWritesRuleOnly(t *testing.T) {
+	db := ruleDB(t)
+	got := rename(t, db, 1, store.FamilyProduct, "ghost", "spirit", false)
+	if want := map[string]int64{"events": 0, "agg_product_daily": 0, "agg_product_attrs": 0}; !reflect.DeepEqual(got, want) {
+		t.Errorf("result = %v, want %v", got, want)
+	}
+	if got, want := loadRules(t, db), []store.EventRule{rule(1, store.FamilyProduct, "ghost", store.EventRuleRename, "spirit")}; !reflect.DeepEqual(got, want) {
+		t.Errorf("rules = %v, want %v", got, want)
+	}
+}
+
+func TestDeleteProjectDataRemovesEventRules(t *testing.T) {
+	db := ruleDB(t)
+	rename(t, db, 2, store.FamilyProduct, "a", "c", false)
+	if err := db.BlockEvent(context.Background(), 2, store.FamilyMeasures, "z", ruleAudit); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.DeleteProjectData(context.Background(), 2, store.AuditEntry{Actor: "cli", Action: "project.delete", Subject: "2"}); err != nil {
+		t.Fatal(err)
+	}
+	if rules := loadRules(t, db); len(rules) != 0 {
+		t.Errorf("rules = %v, want none", rules)
+	}
+}

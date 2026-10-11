@@ -224,6 +224,22 @@ type RegistryProject struct {
 	SortKey        string // its place in the order (migration 034)
 }
 
+// EventRule is one row of event_rules (migration 039): a rename (To set)
+// or a block of one event name in one project and family.
+type EventRule struct {
+	ProjectID int64
+	Family    Family // FamilyProduct or FamilyMeasures
+	Name      string
+	Action    string // EventRuleRename or EventRuleBlock
+	To        string // the new name; "" for a block
+	CreatedAt string // RFC 3339 UTC
+}
+
+const (
+	EventRuleRename = "rename"
+	EventRuleBlock  = "block"
+)
+
 // ProjectSortKey is one project's place in the order (migration 034).
 type ProjectSortKey struct {
 	ID      int64

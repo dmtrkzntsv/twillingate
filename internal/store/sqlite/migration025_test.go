@@ -58,6 +58,7 @@ func productAttrsRows(t *testing.T, db *DB) []string {
 func TestMigration025KeepsProductAttrsAnswer(t *testing.T) {
 	db := newTestDBAt(t, 24)
 	withReceivedAttributes(t, db)
+	withEventRules(t, db)
 	ctx := context.Background()
 	if err := db.SetMeta(ctx, "product_attributes_top_n", "3"); err != nil {
 		t.Fatal(err)
@@ -137,6 +138,7 @@ func TestMigration025KeepsProductAttrsAnswer(t *testing.T) {
 func TestMigration025KeepsMeasuresAttrsAnswer(t *testing.T) {
 	db := newTestDBAt(t, 24)
 	withReceivedAttributes(t, db)
+	withEventRules(t, db)
 	ctx := context.Background()
 	if err := db.SetMeta(ctx, "product_attributes_top_n", "2"); err != nil {
 		t.Fatal(err)
@@ -224,6 +226,7 @@ func typedViews(t *testing.T, db *DB) map[string][]string {
 // and groups.
 func TestMigration025KeepsViewsAnswers(t *testing.T) {
 	db := newTestDBAt(t, 24)
+	withEventRules(t, db)
 	ctx := context.Background()
 	// 024's views hard-code 500; 025's read the setting, written here as
 	// a boot would write VIEWS_DIMENSIONS_TOP_N=500 and IDENTITIES_TOP_N=500.

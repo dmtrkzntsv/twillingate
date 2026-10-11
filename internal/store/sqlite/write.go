@@ -26,6 +26,10 @@ const tsFormat = "2006-01-02T15:04:05Z"
 // whole batch before anything is written: every raw_* view would miss it,
 // so it would never be read, rolled up or pruned.
 //
+// A product or measures name with a rename rule is stored under its new
+// name (D7 of the event rules spec), so rows queued before a rename are
+// mapped too.
+//
 // value is NULL outside measures (a nil Value), and a SampleRate of 0
 // means unset and is stored as 1.
 //
@@ -72,7 +76,9 @@ func insertEvents(ctx context.Context, tx *sql.Tx, evs []store.Event) (receivedK
 		 platform, os, os_version, os_name, browser, browser_version, browser_locale,
 		 app_version, app_locale, device, device_model, display_width, display_height,
 		 country, consent, attributes, value, measure, sample_rate)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+		VALUES (?,?,?,
+		 COALESCE((SELECT to_name FROM event_rules WHERE project_id=? AND family=? AND name=? AND action='rename'), ?),
+		 ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
 	if err != nil {
 		return nil, err
 	}
@@ -92,7 +98,8 @@ func insertEvents(ctx context.Context, tx *sql.Tx, evs []store.Event) (receivedK
 			rate = 1
 		}
 		day := e.TS.UTC().Format("2006-01-02")
-		res, err := stmt.ExecContext(ctx, e.ID, e.ProjectID, string(e.Family), e.EventName,
+		res, err := stmt.ExecContext(ctx, e.ID, e.ProjectID, string(e.Family),
+			e.ProjectID, string(e.Family), e.EventName, e.EventName,
 			e.TS.UTC().Format(tsFormat), day,
 			e.ReceivedAt.UTC().Format(tsFormat), e.Kind,
 			e.ActorID, e.ActorKind, e.UserID, e.GroupID, e.SessionID,
