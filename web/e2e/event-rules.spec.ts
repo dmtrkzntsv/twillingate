@@ -52,6 +52,8 @@ async function stored(request: APIRequestContext, id: number, want: Record<strin
 }
 
 test('blocks and renames events from a project settings page', async ({ page, request }) => {
+  // A login, a wait for the write buffer's flush and a dozen UI steps.
+  test.setTimeout(120_000)
   const { id, key } = await createProject(request, `events-${Date.now()}`, [])
   const first = await track(request, key, ['signup', 'signup', 'spam'])
   expect(first.accepted).toBe(3)
@@ -77,7 +79,7 @@ test('blocks and renames events from a project settings page', async ({ page, re
   await expect(page.getByRole('menuitem', { name: 'Block…' })).toHaveCount(0)
   await page.keyboard.press('Escape')
 
-  // Accepted, so a client does not retry, with a warning for whoever integrates; the event is not stored.
+  // Accepted, so a client does not retry, with a warning for whoever integrates.
   const again = await track(request, key, ['spam'])
   expect(again.accepted).toBe(1)
   expect(again.warnings?.map((w) => w.reason)).toEqual(['event "spam" is blocked in this project, dropped'])
