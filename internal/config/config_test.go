@@ -35,7 +35,7 @@ func TestDefaultsApplied(t *testing.T) {
 	if c.Buffer.FlushMaxEvents != 1000 || c.Buffer.FlushInterval != 5*time.Second || c.Buffer.Capacity != 10000 {
 		t.Errorf("Buffer = %+v", c.Buffer)
 	}
-	if c.Retention.Events.RawDays != 30 || c.Retention.Events.AggregateDays != 365 {
+	if c.Retention.Events.RawDays != 30 || c.Retention.Events.AggregateDays != 400 {
 		t.Errorf("Retention = %+v", c.Retention)
 	}
 	if c.Retention.ArchivedDays != 30 {
@@ -47,8 +47,8 @@ func TestDefaultsApplied(t *testing.T) {
 	if c.AttributeValuesTopN != 100 || c.IdentitiesTopN != 500 {
 		t.Errorf("caps = %d/%d, want 100/500", c.AttributeValuesTopN, c.IdentitiesTopN)
 	}
-	if c.AttributeBreakdownsMax != 10 {
-		t.Errorf("AttributeBreakdownsMax = %d, want 10", c.AttributeBreakdownsMax)
+	if c.AttributeBreakdownsMax != 50 {
+		t.Errorf("AttributeBreakdownsMax = %d, want 50", c.AttributeBreakdownsMax)
 	}
 	if c.Reporting.CacheAge != 900*time.Second || c.Reporting.RefreshAge != 60*time.Second {
 		t.Errorf("Reporting = %+v", c.Reporting)
@@ -224,8 +224,8 @@ func TestEventsRetentionDefaultsAndMaxEventAge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Retention.Events.RawDays != 30 || c.Retention.Events.AggregateDays != 365 {
-		t.Fatalf("events retention = %+v, want 30/365", c.Retention.Events)
+	if c.Retention.Events.RawDays != 30 || c.Retention.Events.AggregateDays != 400 {
+		t.Fatalf("events retention = %+v, want 30/400", c.Retention.Events)
 	}
 	if got := c.MaxEventAge(); got != 30*24*time.Hour {
 		t.Fatalf("MaxEventAge = %v", got)
@@ -263,7 +263,7 @@ func TestOldRetentionNamesHaveNoEffect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Retention.Events.RawDays != 30 || c.Retention.Events.AggregateDays != 365 {
+	if c.Retention.Events.RawDays != 30 || c.Retention.Events.AggregateDays != 400 {
 		t.Fatalf("old names changed retention: %+v", c.Retention.Events)
 	}
 }

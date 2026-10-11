@@ -683,3 +683,15 @@ one shows up at once rather than silently falling back to a default. A
 bare number in `REPORTING_*_MAX_AGE` refuses the boot too (`900` has no
 unit). Nothing else changes: `limits` reports the new names in `setting`,
 and connected clients, keys and data are untouched.
+
+### Upgrading to longer default limits (no migration)
+
+Two defaults rise; a server that sets the variable keeps its value.
+`RETENTION_AGGREGATE_DAYS` goes from 365 to 400 days, so a
+year-on-year comparison still finds last year's day. Days the old
+default already pruned are gone, so the extra 35 days fill in over the
+five weeks after the upgrade, and the aggregates grow by that much.
+`ATTRIBUTE_BREAKDOWNS_MAX` goes from 10 to 50: the project dialog's
+Breakdowns header reads "N of 50 in use", and a server held at 10 can
+declare more at once. Set either back in `twillingate.env` (compose:
+`.env`) to keep the old limit.
