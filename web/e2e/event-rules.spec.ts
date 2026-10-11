@@ -93,7 +93,7 @@ test('blocks and renames events from a project settings page', async ({ page, re
     await expect(page.getByText('Renamed signup to sign_up')).toBeVisible()
     await expect(rows.getByRole('row', { name: /sign_up/ }).getByRole('button', { name: 'Remove alias signup' })).toBeVisible()
     await expect(rows.getByRole('row', { name: /sign_up/ })).toContainText('2')
-    await expect(events.locator('code').filter({ hasText: /^signup$/ })).toHaveCount(0)
+    await expect(events.locator('code').filter({ hasText: /^product\/signup$/ })).toHaveCount(0)
 
     // Unblock spam from its row, then remove the alias from under sign_up.
     await events.getByRole('button', { name: 'Actions for spam (product)' }).click()
@@ -101,6 +101,7 @@ test('blocks and renames events from a project settings page', async ({ page, re
     await expect(page.getByText('Removed the rule for spam')).toBeVisible()
     await expect(events.getByText('Blocked', { exact: true })).toHaveCount(0)
     await events.getByRole('button', { name: 'Remove alias signup' }).click()
+    await page.getByRole('alertdialog', { name: 'Remove alias signup?' }).getByRole('button', { name: 'Remove alias' }).click()
     await expect(page.getByText('Removed the rule for signup')).toBeVisible()
     await expect(events.getByRole('button', { name: 'Remove alias signup' })).toHaveCount(0)
   } finally {

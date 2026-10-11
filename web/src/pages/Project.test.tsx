@@ -197,6 +197,7 @@ describe('Project', () => {
     await user.click(screen.getByRole('button', { name: 'Block event' }))
     expect(actions.blockEvent).toHaveBeenCalledWith(4, { family: 'product', name: 'checkout' })
     await user.click(await within(events).findByRole('button', { name: 'Remove alias a' }))
+    await user.click(await screen.findByRole('button', { name: 'Remove alias' }))
     expect(actions.removeEventRule).toHaveBeenCalledWith(4, { family: 'product', name: 'a' })
   })
 

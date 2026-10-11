@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { BanIcon, MoreHorizontalIcon, XIcon } from 'lucide-react'
+import { BanIcon, MoreHorizontalIcon, PlusIcon, XIcon } from 'lucide-react'
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -72,6 +72,7 @@ export default function EventsSection({ project, range, rawDays, pending, onRena
   const [renaming, setRenaming] = useState<{ target: Target; open: boolean } | null>(null)
   const [blocking, setBlocking] = useState<{ target: Target; open: boolean } | null>(null)
   const [aliasing, setAliasing] = useState<{ target: Target; open: boolean } | null>(null)
+  const [unaliasing, setUnaliasing] = useState<{ target: Target & { to: string }; open: boolean } | null>(null)
   const names = useQuery(eventNamesQuery(id, range))
   const rules = useQuery(eventRulesQuery(id))
   const list = names.data?.events ?? []
@@ -91,9 +92,10 @@ export default function EventsSection({ project, range, rawDays, pending, onRena
             {rows.map((e) => (
               <TableRow key={`${e.family}/${e.name}`} className={cn(e.blocked ? 'bg-destructive/5 hover:bg-destructive/10' : e.aliases.length > 0 && 'bg-sky-500/5 hover:bg-sky-500/10')}>
                 <TableCell className="whitespace-normal">
-                  <code className={cn('text-sm break-all', e.blocked && 'text-muted-foreground line-through')}>{e.name}</code>
-                  <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                    <span>{e.family}</span>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <code className={cn('text-sm break-all', e.blocked && 'text-muted-foreground line-through')}>
+                      <span className="text-muted-foreground">{e.family}/</span>{e.name}
+                    </code>
                     {e.blocked && <Badge variant="destructive"><BanIcon />Blocked</Badge>}
                   </div>
                   {e.aliases.length > 0 && (
@@ -103,11 +105,15 @@ export default function EventsSection({ project, range, rawDays, pending, onRena
                         <Badge key={a} variant="outline" className="gap-0.5 pr-0.5 font-mono whitespace-normal">
                           <span className="break-all">{a}</span>
                           <Button variant="ghost" size="icon" className="size-4" aria-label={`Remove alias ${a}`} disabled={pending}
-                            onClick={() => void onRemove({ family: e.family, name: a })}>
+                            onClick={() => setUnaliasing({ target: { family: e.family, name: a, to: e.name }, open: true })}>
                             <XIcon className="size-3" />
                           </Button>
                         </Badge>
                       ))}
+                      <Button variant="outline" size="icon" className="size-5 rounded-full" aria-label={`Add alias to ${e.name}`} disabled={pending}
+                        onClick={() => setAliasing({ target: { family: e.family, name: e.name }, open: true })}>
+                        <PlusIcon className="size-3" />
+                      </Button>
                     </div>
                   )}
                 </TableCell>
@@ -159,6 +165,20 @@ export default function EventsSection({ project, range, rawDays, pending, onRena
         pending={pending}
         onAdd={(alias) => onAddAlias({ family: aliasing!.target.family, alias, to: aliasing!.target.name })}
       />
+      <AlertDialog open={unaliasing?.open === true} onOpenChange={(o) => !o && setUnaliasing((d) => d && { ...d, open: false })}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="break-all">Remove alias {unaliasing?.target.name}?</AlertDialogTitle>
+            <AlertDialogDescription className="break-all">
+              Events sent as {unaliasing?.target.name} arrive under their own name again; the ones already renamed stay under {unaliasing?.target.to}.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => { const t = unaliasing!.target; void onRemove({ family: t.family, name: t.name }) }}>Remove alias</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <AlertDialog open={blocking?.open === true} onOpenChange={(o) => !o && setBlocking((d) => d && { ...d, open: false })}>
         <AlertDialogContent>
           <AlertDialogHeader>
