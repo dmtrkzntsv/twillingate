@@ -94,15 +94,15 @@ export default function EventsSection({ project, range, rawDays, pending, onRena
                 <TableCell className="whitespace-normal">
                   <div className="flex flex-wrap items-center gap-2">
                     <code className={cn('text-sm break-all', e.blocked && 'text-muted-foreground line-through')}>
-                      <span className="text-muted-foreground">{e.family}/</span>{e.name}
+                      <span className="text-xs text-muted-foreground">{e.family}/</span>{e.name}
                     </code>
-                    {e.blocked && <Badge variant="destructive"><BanIcon />Blocked</Badge>}
+                    {e.blocked && <Badge variant="outline" className="border-destructive/30 bg-destructive/10 text-destructive"><BanIcon />Blocked</Badge>}
                   </div>
                   {e.aliases.length > 0 && (
                     <div className="mt-1 flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
                       <span>also from</span>
                       {e.aliases.map((a) => (
-                        <Badge key={a} variant="outline" className="gap-0.5 pr-0.5 font-mono whitespace-normal">
+                        <Badge key={a} variant="outline" className="gap-0.5 border-sky-500/30 bg-background pr-0.5 font-mono whitespace-normal">
                           <span className="break-all">{a}</span>
                           <Button variant="ghost" size="icon" className="size-4" aria-label={`Remove alias ${a}`} disabled={pending}
                             onClick={() => setUnaliasing({ target: { family: e.family, name: a, to: e.name }, open: true })}>
