@@ -648,6 +648,7 @@ func seedAttrDay(t *testing.T, db *DB, projectID int64) {
 				Browser:       []string{"chrome", "safari"}[i%2],
 				Device:        "desktop",
 				BrowserLocale: "en-US",
+				Country:       []string{"US", "DE", "FR"}[i%3],
 				Path:          fmt.Sprintf("/p/%03d", i),
 			})
 		}
@@ -754,7 +755,7 @@ func TestProductAttrsViewSystemDimensionsWithoutDeclaredKeys(t *testing.T) {
 	var sys, custom int
 	for _, r := range before {
 		switch r.Key {
-		case "$os", "$platform", "$app_version", "$app_locale", "$kind", "$browser", "$device", "$browser_locale":
+		case "$os", "$platform", "$app_version", "$app_locale", "$kind", "$browser", "$device", "$browser_locale", "$country":
 			sys++
 		default:
 			custom++

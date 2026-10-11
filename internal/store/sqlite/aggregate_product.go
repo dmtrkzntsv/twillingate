@@ -104,8 +104,8 @@ func (d *DB) rollupProduct(ctx context.Context, tx *sql.Tx, projectID int64, day
 		}
 	}
 	// System dimensions: platform, os, app_version, app_locale, kind,
-	// browser, device and browser_locale (store.SystemAttributes) are
-	// typed columns written on every event, not declared custom keys, so
+	// browser, device, browser_locale and country (store.SystemAttributes)
+	// are typed columns written on every event, not declared custom keys, so
 	// they roll up unconditionally under $-prefixed attr_keys. $ is a safe
 	// namespace: resolveAttributes routes every $-prefixed input to a
 	// typed field and drops unrecognised ones, so a custom key can never

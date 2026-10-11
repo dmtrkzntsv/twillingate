@@ -176,17 +176,17 @@ func recordCaps(ctx context.Context, tx *sql.Tx, day string) error {
 }
 
 // attrColumns maps each system attribute key to the column holding it, as
-// the attribute views do (migration 025). The first eight every project
+// the attribute views do (migration 038). The first nine every project
 // aggregates; the rest a project may declare.
 var attrColumns = []struct{ key, col string }{
 	{"$platform", "platform"}, {"$os", "os"}, {"$app_version", "app_version"}, {"$app_locale", "app_locale"},
 	{"$kind", "kind"}, {"$browser", "browser"}, {"$device", "device"}, {"$browser_locale", "browser_locale"},
-	{"$host", "host"}, {"$path", "path"}, {"$referrer", "referrer_source"}, {"$utm_source", "utm_source"},
+	{"$country", "country"}, {"$host", "host"}, {"$path", "path"}, {"$referrer", "referrer_source"}, {"$utm_source", "utm_source"},
 	{"$utm_medium", "utm_medium"}, {"$utm_campaign", "utm_campaign"}, {"$os_version", "os_version"},
 	{"$browser_version", "browser_version"}, {"$device_model", "device_model"},
 }
 
-const attrDefaultKeys = 8
+const attrDefaultKeys = 9
 
 // foldedSQL counts, per project and raw day before ?1, the values the
 // attribute views fold into (other): in every partition they rank (event
