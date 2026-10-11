@@ -141,5 +141,8 @@ test('the Forms button counts new submissions until a form is opened, then dots 
   // gone and the draft, still waiting to be approved, keeps a dot.
   await page.getByRole('link', { name: 'Settings', exact: true }).click()
   await expect(page).toHaveURL(new RegExp(`/app/projects/${id}/settings$`))
+  // The URL moves before the form page is swapped out (navigations render
+  // in a transition), and that page has a second link named Forms.
+  await expect(page.getByRole('region', { name: 'Submissions' })).toHaveCount(0)
   await expect(page.getByRole('link', { name: 'Forms, 1 draft', exact: true })).toBeVisible()
 })
