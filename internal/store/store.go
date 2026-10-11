@@ -273,6 +273,12 @@ type Store interface {
 	// DropBlockedAggregates deletes the project's per-event aggregates of
 	// every blocked event name (event rules D11).
 	DropBlockedAggregates(ctx context.Context, projectID int64) error
+	// Event rules (migration 038): LoadEventRules reads them all; the
+	// three mutations are audited from a in the same transaction.
+	LoadEventRules(ctx context.Context) ([]EventRule, error)
+	RenameEvent(ctx context.Context, projectID int64, family Family, from, to string, merge bool, a AuditEntry) (map[string]int64, error)
+	BlockEvent(ctx context.Context, projectID int64, family Family, name string, a AuditEntry) error
+	RemoveEventRule(ctx context.Context, projectID int64, family Family, name string, a AuditEntry) error
 	UpsertActors(ctx context.Context, projectID int64, day civil.Date) error
 	AggregateRetentionDay(ctx context.Context, projectID int64, day civil.Date) error
 	PruneActors(ctx context.Context, projectID int64, before civil.Date) error

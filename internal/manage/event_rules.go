@@ -1,0 +1,141 @@
+package manage
+
+import (
+	"context"
+	"fmt"
+	"strings"
+
+	"github.com/dmtrkzntsv/twillingate/internal/store"
+)
+
+// ruleFamily is the family a rule may name (event rules D2).
+func ruleFamily(f string) (store.Family, error) {
+	switch store.Family(f) {
+	case store.FamilyProduct, store.FamilyMeasures:
+		return store.Family(f), nil
+	}
+	return "", fmt.Errorf("family %q: rules apply to product and measures events: %w", f, ErrInvalid)
+}
+
+// ruleName refuses a name no rule may carry: empty, or reserved ($
+// belongs to the server).
+func ruleName(n string) error {
+	if strings.TrimSpace(n) == "" {
+		return fmt.Errorf("event name is required: %w", ErrInvalid)
+	}
+	if strings.HasPrefix(n, "$") {
+		return fmt.Errorf("event %q: $ names are reserved: %w", n, ErrInvalid)
+	}
+	return nil
+}
+
+func ruleSubject(id int64, f store.Family, name string) string {
+	return fmt.Sprintf("%d/%s/%s", id, f, name)
+}
+
+// ruleTarget validates what every rule operation names: a known project,
+// a family rules apply to, and an event name.
+func (o *Ops) ruleTarget(ctx context.Context, projectID int64, family, name string) (store.Family, error) {
+	if o.Reg.Snapshot(ctx).Project(projectID) == nil {
+		return "", fmt.Errorf("project %d: %w", projectID, ErrNotFound)
+	}
+	f, err := ruleFamily(family)
+	if err != nil {
+		return "", err
+	}
+	return f, ruleName(name)
+}
+
+// ListEventRules is the project's rules ordered by family, then name.
+func (o *Ops) ListEventRules(ctx context.Context, projectID int64) ([]store.EventRule, error) {
+	if o.Reg.Snapshot(ctx).Project(projectID) == nil {
+		return nil, fmt.Errorf("project %d: %w", projectID, ErrNotFound)
+	}
+	all, err := o.St.LoadEventRules(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := []store.EventRule{}
+	for _, r := range all {
+		if r.ProjectID == projectID {
+			out = append(out, r)
+		}
+	}
+	return out, nil
+}
+
+// RenameEvent renames an event of one family and keeps a rule so later
+// writes land under the new name. It returns the rule and the rows
+// rewritten per table. Renaming onto a name that has events is ErrConflict
+// unless merge is set.
+func (o *Ops) RenameEvent(ctx context.Context, actor string, projectID int64, family, from, to string, merge bool) (store.EventRule, map[string]int64, error) {
+	f, err := o.ruleTarget(ctx, projectID, family, from)
+	if err != nil {
+		return store.EventRule{}, nil, err
+	}
+	if err := ruleName(to); err != nil {
+		return store.EventRule{}, nil, err
+	}
+	if from == to {
+		return store.EventRule{}, nil, fmt.Errorf("event %q: renaming it to itself: %w", from, ErrInvalid)
+	}
+	detail := "to " + to
+	if merge {
+		detail += " (merge)"
+	}
+	counts, err := o.St.RenameEvent(ctx, projectID, f, from, to, merge, store.AuditEntry{
+		Actor: actor, Action: "event.rename", Subject: ruleSubject(projectID, f, from), Detail: detail})
+	if err != nil {
+		return store.EventRule{}, nil, err
+	}
+	o.afterWrite(ctx, false, projectID)
+	return o.writtenRule(ctx, store.EventRule{ProjectID: projectID, Family: f, Name: from,
+		Action: store.EventRuleRename, To: to}), counts, nil
+}
+
+// BlockEvent drops an event name from now on: new events of it are not
+// stored and its aggregates are removed by the daily pass.
+func (o *Ops) BlockEvent(ctx context.Context, actor string, projectID int64, family, name string) (store.EventRule, error) {
+	f, err := o.ruleTarget(ctx, projectID, family, name)
+	if err != nil {
+		return store.EventRule{}, err
+	}
+	if err := o.St.BlockEvent(ctx, projectID, f, name, store.AuditEntry{
+		Actor: actor, Action: "event.block", Subject: ruleSubject(projectID, f, name)}); err != nil {
+		return store.EventRule{}, err
+	}
+	o.afterWrite(ctx, false, projectID)
+	return o.writtenRule(ctx, store.EventRule{ProjectID: projectID, Family: f, Name: name,
+		Action: store.EventRuleBlock}), nil
+}
+
+// RemoveEventRule lifts a rename or block. Events already rewritten or
+// dropped stay as they are.
+func (o *Ops) RemoveEventRule(ctx context.Context, actor string, projectID int64, family, name string) error {
+	f, err := o.ruleTarget(ctx, projectID, family, name)
+	if err != nil {
+		return err
+	}
+	if err := o.St.RemoveEventRule(ctx, projectID, f, name, store.AuditEntry{
+		Actor: actor, Action: "event.rule_remove", Subject: ruleSubject(projectID, f, name)}); err != nil {
+		return err
+	}
+	o.afterWrite(ctx, false, projectID)
+	return nil
+}
+
+// writtenRule is r with the CreatedAt the store gave it; if the read-back
+// fails the rule is returned without it, the write having committed.
+func (o *Ops) writtenRule(ctx context.Context, r store.EventRule) store.EventRule {
+	all, err := o.St.LoadEventRules(ctx)
+	if err != nil {
+		return r
+	}
+	for _, got := range all {
+		if got.ProjectID == r.ProjectID && got.Family == r.Family && got.Name == r.Name {
+			r.CreatedAt = got.CreatedAt
+			break
+		}
+	}
+	return r
+}
