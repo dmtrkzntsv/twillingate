@@ -22,8 +22,9 @@ function renderSection(props: Partial<Parameters<typeof EventsSection>[0]> = {})
   const onRename = vi.fn().mockResolvedValue(true)
   const onBlock = vi.fn().mockResolvedValue(true)
   const onRemove = vi.fn().mockResolvedValue(true)
-  renderWithProviders(<EventsSection project={project} range={range} rawDays={7} onRename={onRename} onBlock={onBlock} onRemove={onRemove} {...props} />)
-  return { onRename, onBlock, onRemove }
+  const onAddAlias = vi.fn().mockResolvedValue(true)
+  renderWithProviders(<EventsSection project={project} range={range} rawDays={7} onRename={onRename} onBlock={onBlock} onRemove={onRemove} onAddAlias={onAddAlias} {...props} />)
+  return { onRename, onBlock, onRemove, onAddAlias }
 }
 
 async function openMenu(user: ReturnType<typeof userEvent.setup>, name: string, item: string, family = 'product') {
@@ -38,20 +39,20 @@ describe('EventsSection', () => {
     vi.spyOn(endpoints, 'eventRules').mockResolvedValue({ rules: [] })
   })
 
-  it('lists the names with their counts and family', async () => {
+  it('lists the names with their counts and family, by family and then name', async () => {
     renderSection()
     const section = screen.getByRole('region', { name: 'Events' })
     expect(await within(section).findByText('12,000')).toBeInTheDocument()
     expect(endpoints.eventNames).toHaveBeenCalledWith(1, { from: '2026-09-05', to: '2026-10-04' })
     const rows = within(section).getAllByRole('row').slice(1)
     expect(rows.map((r) => within(r).getAllByRole('cell')[0].textContent)).toEqual([
-      'checkoutproduct', 'signupproduct', 'checkoutmeasures', 'old_signupproduct',
+      'checkoutproduct', 'old_signupproduct', 'signupproduct', 'checkoutmeasures',
     ])
-    expect(within(rows[1]).getByText('340')).toBeInTheDocument()
+    expect(within(rows[2]).getByText('340')).toBeInTheDocument()
     expect(within(section).queryByText('Blocked')).not.toBeInTheDocument()
   })
 
-  it('marks a blocked event, and lists every blocked one last, even with nothing in the range', async () => {
+  it('marks a blocked event, and lists every blocked one in its place, even with nothing in the range', async () => {
     vi.spyOn(endpoints, 'eventRules').mockResolvedValue({ rules: [
       { family: 'product', name: 'signup', action: 'block' }, { family: 'product', name: 'x', action: 'block' },
     ] })
@@ -60,15 +61,15 @@ describe('EventsSection', () => {
     await within(section).findAllByText('Blocked')
     const rows = within(section).getAllByRole('row').slice(1)
     expect(rows.map((r) => within(r).getAllByRole('cell')[0].querySelector('code')?.textContent)).toEqual([
-      'checkout', 'checkout', 'old_signup', 'signup', 'x',
+      'checkout', 'old_signup', 'signup', 'x', 'checkout',
     ])
-    for (const row of rows.slice(3)) {
+    for (const row of rows.slice(2, 4)) {
       expect(within(row).getByText('Blocked')).toBeInTheDocument()
       expect(within(row).getByText('no longer stored')).toBeInTheDocument()
       expect(row.querySelector('code')).toHaveClass('line-through')
     }
-    expect(within(rows[3]).getByText('340')).toBeInTheDocument()
-    expect(within(rows[4]).getByText('0')).toBeInTheDocument()
+    expect(within(rows[2]).getByText('340')).toBeInTheDocument()
+    expect(within(rows[3]).getByText('0')).toBeInTheDocument()
     expect(within(rows[0]).queryByText('Blocked')).not.toBeInTheDocument()
   })
 
@@ -108,6 +109,64 @@ describe('EventsSection', () => {
     expect(within(ghost).getByRole('button', { name: 'Remove alias z' })).toBeInTheDocument()
     await user.click(within(checkout).getByRole('button', { name: 'Remove alias old' }))
     expect(onRemove).toHaveBeenCalledWith({ family: 'product', name: 'old' })
+  })
+
+  it('tints a row with aliases, unless it is blocked', async () => {
+    vi.spyOn(endpoints, 'eventRules').mockResolvedValue({ rules: [
+      { family: 'product', name: 'a', action: 'rename', to: 'checkout' },
+      { family: 'product', name: 'b', action: 'rename', to: 'signup' },
+      { family: 'product', name: 'signup', action: 'block' },
+    ] })
+    renderSection()
+    const section = screen.getByRole('region', { name: 'Events' })
+    await within(section).findByRole('button', { name: 'Remove alias a' })
+    const row = (name: string) => within(section).getAllByRole('row').find((r) => r.textContent?.startsWith(`${name}product`))!
+    expect(row('checkout')).toHaveClass('bg-sky-500/5')
+    expect(row('signup')).not.toHaveClass('bg-sky-500/5')
+    expect(row('signup')).toHaveClass('bg-destructive/5')
+    expect(row('old_signup')).not.toHaveClass('bg-sky-500/5')
+  })
+
+  it('adds an alias to an event from its menu', async () => {
+    const user = userEvent.setup()
+    const { onAddAlias } = renderSection()
+    await openMenu(user, 'signup', 'Add alias…')
+    const dialog = await screen.findByRole('dialog', { name: 'Add an alias to signup' })
+    await user.type(within(dialog).getByLabelText('Old name'), ' sign_up_v1 ')
+    expect(within(dialog).getByText(/Events sent as sign_up_v1 are stored as signup\./)).toBeInTheDocument()
+    expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument()
+    await user.click(within(dialog).getByRole('button', { name: 'Add alias' }))
+    expect(onAddAlias).toHaveBeenCalledWith({ family: 'product', alias: 'sign_up_v1', to: 'signup' })
+    await vi.waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  })
+
+  it('warns that an alias with events of its own merges them into the event', async () => {
+    const user = userEvent.setup()
+    renderSection()
+    await openMenu(user, 'signup', 'Add alias…')
+    const dialog = await screen.findByRole('dialog', { name: 'Add an alias to signup' })
+    await user.type(within(dialog).getByLabelText('Old name'), 'old_signup')
+    expect(within(dialog).getByRole('alert')).toHaveTextContent('old_signup already has events: they merge into signup, and this cannot be undone.')
+  })
+
+  it('refuses an empty alias, a $ name, the event itself and an existing alias', async () => {
+    const user = userEvent.setup()
+    vi.spyOn(endpoints, 'eventRules').mockResolvedValue({ rules: [{ family: 'product', name: 'a', action: 'rename', to: 'signup' }] })
+    renderSection()
+    await screen.findByRole('button', { name: 'Remove alias a' })
+    await openMenu(user, 'signup', 'Add alias…')
+    const dialog = await screen.findByRole('dialog', { name: 'Add an alias to signup' })
+    const input = within(dialog).getByLabelText('Old name')
+    const button = within(dialog).getByRole('button', { name: 'Add alias' })
+    expect(button).toBeDisabled()
+    for (const bad of ['$x', 'signup', 'a']) {
+      await user.clear(input)
+      await user.type(input, bad)
+      expect(button).toBeDisabled()
+    }
+    await user.clear(input)
+    await user.type(input, 'b')
+    expect(button).toBeEnabled()
   })
 
   it('has no separate rules list', async () => {

@@ -68,6 +68,7 @@ export default function SetupTab({ project, dash, actions }: Props) {
         onRename={(body) => actions.renameEvent(id, body)}
         onBlock={(body) => actions.blockEvent(id, body)}
         onRemove={(body) => actions.removeEventRule(id, body)}
+        onAddAlias={(body) => actions.addEventAlias(id, body)}
       />
       <KeysSection
         keys={keysQ.data?.keys}

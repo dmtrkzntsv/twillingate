@@ -14,6 +14,7 @@ import { formatExact } from '@/lib/format'
 import { eventNamesQuery, eventRulesQuery } from '@/lib/queries'
 import { cn } from '@/lib/utils'
 import LoadError from './LoadError'
+import AddAliasDialog from './AddAliasDialog'
 import RenameEventDialog from './RenameEventDialog'
 
 interface Props {
@@ -27,6 +28,7 @@ interface Props {
   onRename: (body: { family: EventFamily; from: string; to: string; merge?: boolean }) => Promise<boolean | 'conflict'>
   onBlock: (body: { family: EventFamily; name: string }) => Promise<boolean>
   onRemove: (body: { family: EventFamily; name: string }) => Promise<boolean>
+  onAddAlias: (body: { family: EventFamily; alias: string; to: string }) => Promise<boolean>
 }
 
 type Target = { family: EventFamily; name: string }
@@ -38,7 +40,8 @@ type Row = EventName & { blocked: boolean; aliases: string[] }
  * The range's names with their rules, every rule shown on its event: a
  * block as the row's state, a rename as an alias under its target. A
  * blocked name or a rename target with nothing in the range gets a row of
- * 0, so no rule is out of sight. Blocked rows go last.
+ * 0, so no rule is out of sight. Ordered by family (product first), then
+ * name.
  */
 function eventRows(list: EventName[], rules: EventRule[]): Row[] {
   const key = (family: EventFamily, name: string) => `${family}/${name}`
@@ -58,15 +61,17 @@ function eventRows(list: EventName[], rules: EventRule[]): Row[] {
     seen.add(key(r.family, name))
     rows.push(row({ family: r.family, name, events: 0 }))
   }
-  return [...rows.filter((r) => !r.blocked), ...rows.filter((r) => r.blocked)]
+  const families: EventFamily[] = ['product', 'measures']
+  return rows.sort((a, b) => families.indexOf(a.family) - families.indexOf(b.family) || a.name.localeCompare(b.name))
 }
 
-/** A project's event names with what each received and the rules on each: rename (or merge), block (confirmed) and unblock, aliases removable. */
-export default function EventsSection({ project, range, rawDays, pending, onRename, onBlock, onRemove }: Props) {
+/** A project's event names with what each received and the rules on each: rename (or merge), block (confirmed) and unblock, aliases added and removed. */
+export default function EventsSection({ project, range, rawDays, pending, onRename, onBlock, onRemove, onAddAlias }: Props) {
   const id = project.project_id
   // The targets outlive their dialogs' close animations, so a title does not flash "Block undefined?".
   const [renaming, setRenaming] = useState<{ target: Target; open: boolean } | null>(null)
   const [blocking, setBlocking] = useState<{ target: Target; open: boolean } | null>(null)
+  const [aliasing, setAliasing] = useState<{ target: Target; open: boolean } | null>(null)
   const names = useQuery(eventNamesQuery(id, range))
   const rules = useQuery(eventRulesQuery(id))
   const list = names.data?.events ?? []
@@ -84,7 +89,7 @@ export default function EventsSection({ project, range, rawDays, pending, onRena
           </TableHeader>
           <TableBody>
             {rows.map((e) => (
-              <TableRow key={`${e.family}/${e.name}`} className={cn(e.blocked && 'bg-destructive/5 hover:bg-destructive/10')}>
+              <TableRow key={`${e.family}/${e.name}`} className={cn(e.blocked ? 'bg-destructive/5 hover:bg-destructive/10' : e.aliases.length > 0 && 'bg-sky-500/5 hover:bg-sky-500/10')}>
                 <TableCell className="whitespace-normal">
                   <code className={cn('text-sm break-all', e.blocked && 'text-muted-foreground line-through')}>{e.name}</code>
                   <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
@@ -120,6 +125,7 @@ export default function EventsSection({ project, range, rawDays, pending, onRena
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
                       <DropdownMenuItem disabled={pending} onClick={() => setRenaming({ target: { family: e.family, name: e.name }, open: true })}>Rename…</DropdownMenuItem>
+                      <DropdownMenuItem disabled={pending} onClick={() => setAliasing({ target: { family: e.family, name: e.name }, open: true })}>Add alias…</DropdownMenuItem>
                       {e.blocked ? (
                         <DropdownMenuItem disabled={pending} onClick={() => void onRemove({ family: e.family, name: e.name })}>Unblock</DropdownMenuItem>
                       ) : (
@@ -143,6 +149,15 @@ export default function EventsSection({ project, range, rawDays, pending, onRena
         blockedNames={(rules.data?.rules ?? []).filter((r) => r.action === 'block' && r.family === renaming?.target.family).map((r) => r.name)}
         pending={pending}
         onRename={(to, merge) => onRename({ family: renaming!.target.family, from: renaming!.target.name, to, ...(merge ? { merge: true } : {}) })}
+      />
+      <AddAliasDialog
+        open={aliasing?.open === true}
+        onOpenChange={(o) => !o && setAliasing((d) => d && { ...d, open: false })}
+        target={aliasing?.target ?? null}
+        names={list}
+        aliases={rows.find((r) => r.family === aliasing?.target.family && r.name === aliasing?.target.name)?.aliases ?? []}
+        pending={pending}
+        onAdd={(alias) => onAddAlias({ family: aliasing!.target.family, alias, to: aliasing!.target.name })}
       />
       <AlertDialog open={blocking?.open === true} onOpenChange={(o) => !o && setBlocking((d) => d && { ...d, open: false })}>
         <AlertDialogContent>

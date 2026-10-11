@@ -21,6 +21,8 @@ export interface ProjectActions {
   blockEvent(id: number, body: { family: EventFamily; name: string }): Promise<boolean>
   /** Removes an event's rename or block rule. */
   removeEventRule(id: number, body: { family: EventFamily; name: string }): Promise<boolean>
+  /** Maps `alias` to the event `to`: a rename with merge, so the alias's stored events (if any) join it. */
+  addEventAlias(id: number, body: { family: EventFamily; alias: string; to: string }): Promise<boolean>
   /** Puts project `id` right after project `after` (0 first); no toast unless refused. Resolves true once the list has the new order. */
   move(id: number, after: number): Promise<boolean>
   /** True while an action runs; buttons wait on it. */
@@ -110,6 +112,8 @@ export function useProjectActions(): ProjectActions {
     blockEvent: async (id, body) => (await run(() => endpoints.blockEvent(id, body), `Blocked ${body.name}`, EVENT_WRITE)) !== undefined,
     removeEventRule: async (id, body) =>
       (await run(() => endpoints.removeEventRule(id, body), `Removed the rule for ${body.name}`, EVENT_WRITE)) !== undefined,
+    addEventAlias: async (id, { family, alias, to }) =>
+      (await run(() => endpoints.renameEvent(id, { family, from: alias, to, merge: true }), `Added alias ${alias} to ${to}`, EVENT_WRITE)) !== undefined,
     move,
   }
 }

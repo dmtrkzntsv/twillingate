@@ -127,11 +127,13 @@ describe('useProjectActions', () => {
       out.push(await result.current.renameEvent(7, { family: 'product', from: 'a', to: 'b', merge: true }))
       out.push(await result.current.blockEvent(7, { family: 'product', name: 'x' }))
       out.push(await result.current.removeEventRule(7, { family: 'product', name: 'a' }))
+      out.push(await result.current.addEventAlias(7, { family: 'product', alias: 'c', to: 'b' }))
     })
-    expect(out).toEqual([true, true, true, true])
+    expect(out).toEqual([true, true, true, true, true])
     expect(vi.mocked(toast.success).mock.calls.map((c) => c[0])).toEqual([
-      'Renamed a to b', 'Merged a into b', 'Blocked x', 'Removed the rule for a',
+      'Renamed a to b', 'Merged a into b', 'Blocked x', 'Removed the rule for a', 'Added alias c to b',
     ])
+    expect(endpoints.renameEvent).toHaveBeenLastCalledWith(7, { family: 'product', from: 'c', to: 'b', merge: true })
     expect(invalidate.mock.calls.slice(0, 3).map((c) => (c[0] as { queryKey: string[] }).queryKey[0])).toEqual(['event-rules', 'event-names', 'usage'])
   })
 

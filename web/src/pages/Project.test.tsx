@@ -11,7 +11,7 @@ import { readLastTab, writeLastTab } from '@/lib/last-tab'
 
 const actions = {
   update: vi.fn(), archive: vi.fn(), restore: vi.fn(), issueKey: vi.fn(),
-  disableKey: vi.fn(), enableKey: vi.fn(), create: vi.fn(), renameEvent: vi.fn(), blockEvent: vi.fn(), removeEventRule: vi.fn(), pending: false,
+  disableKey: vi.fn(), enableKey: vi.fn(), create: vi.fn(), renameEvent: vi.fn(), blockEvent: vi.fn(), removeEventRule: vi.fn(), addEventAlias: vi.fn(), pending: false,
 }
 vi.mock('@/hooks/use-project-actions', () => ({ useProjectActions: () => actions }))
 

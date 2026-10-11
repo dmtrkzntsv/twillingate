@@ -201,7 +201,10 @@ with `action` `rename` or `block` and no `to` for a block.
 The console lists a project's event names for these tools on its Settings page,
 from `GET /api/projects/{project_id}/event-names`, a route with no MCP tool
 (`product_events` and `measures` answer agents). It lists the busiest 200 names
-in the range and leaves out `$` names, which take no rule.
+in the range and leaves out `$` names, which take no rule. Each rule shows on
+its event there: a blocked event is marked, and listed even with nothing in the
+range; the names renamed to an event show under it as its aliases. Adding an
+alias is `rename_event` from the alias to the event with `merge`.
 
 ---
 
