@@ -33,9 +33,11 @@ describe('PropsForm', () => {
   })
   it('edits everything as one JSON object', async () => {
     const onChange = vi.fn()
-    render(<PropsForm component="line" value={{ curve: 'step' }} columns={[]} onChange={onChange} onValidity={() => {}} />)
-    await userEvent.click(screen.getByRole('button', { name: 'Edit props as JSON' }))
+    const props = { component: 'line', value: { curve: 'step' }, columns: [], onChange, onValidity: () => {} }
+    const { rerender } = render(<PropsForm {...props} />)
+    rerender(<PropsForm {...props} raw />)
     const box = screen.getByLabelText('Props JSON')
+    expect(box).toHaveValue(JSON.stringify({ curve: 'step' }, null, 2))
     await userEvent.clear(box)
     await userEvent.type(box, '{{"format":"percent"}')
     expect(onChange).toHaveBeenLastCalledWith({ format: 'percent' })
@@ -56,7 +58,7 @@ describe('PropsForm', () => {
     expect(onValidity).toHaveBeenLastCalledWith(true)
     unmount()
     render(<PropsForm component="markdown" value={{}} columns={[]} onChange={() => {}} onValidity={() => {}} />)
-    expect(screen.getByText('No props')).toBeInTheDocument()
+    expect(screen.getByText('This visualization has none')).toBeInTheDocument()
   })
   it('reports valid when it unmounts with bad json', async () => {
     const onValidity = vi.fn()

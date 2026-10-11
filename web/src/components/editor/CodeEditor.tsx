@@ -20,6 +20,8 @@ export interface CodeEditorProps {
   tables?: SchemaTable[]
   /** The aria-label of the editable area. */
   label: string
+  /** Edge to edge in a panel: no border or rounding of its own. */
+  flush?: boolean
 }
 
 // Colors from the app's tokens, so light and dark both follow the theme.
@@ -54,7 +56,7 @@ const highlight = HighlightStyle.define([
  * differs from what the editor holds (a reset), so the text typed in does not
  * come back through the prop as a second change.
  */
-export default function CodeEditor({ language, value, onChange, onRun, tables, label }: CodeEditorProps) {
+export default function CodeEditor({ language, value, onChange, onRun, tables, label, flush }: CodeEditorProps) {
   const host = useRef<HTMLDivElement>(null)
   const view = useRef<EditorView | null>(null)
   const [lang] = useState(() => new Compartment())
@@ -124,5 +126,8 @@ export default function CodeEditor({ language, value, onChange, onRun, tables, l
     }
   }, [value])
 
-  return <div ref={host} data-slot="code-editor" className="h-full min-h-40 min-w-0 overflow-hidden rounded-md border border-input focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50" />
+  const frame = flush
+    ? 'h-full min-h-40 min-w-0 overflow-hidden'
+    : 'h-full min-h-40 min-w-0 overflow-hidden rounded-md border border-input focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50'
+  return <div ref={host} data-slot="code-editor" className={frame} />
 }
