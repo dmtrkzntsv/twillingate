@@ -93,10 +93,16 @@ func (d *DB) writeTextEvents(ctx context.Context, evs []store.Event) error {
 
 // writeTestEvents is WriteEvents for tests that write events of project
 // ids they never registered: ingest drops the rows of a project that does
-// not exist (insertEvents), so it adds a projects row for each id first.
+// not exist (insertEvents), so it adds a projects row for each distinct id
+// first.
 // A test of that drop calls WriteEvents itself.
 func (d *DB) writeTestEvents(ctx context.Context, evs []store.Event) error {
+	added := map[int64]bool{}
 	for _, e := range evs {
+		if added[e.ProjectID] {
+			continue
+		}
+		added[e.ProjectID] = true
 		if _, err := d.db.ExecContext(ctx, `INSERT OR IGNORE INTO projects (id, name) VALUES (?, ?)`,
 			e.ProjectID, fmt.Sprintf("project %d", e.ProjectID)); err != nil {
 			return err
