@@ -5,6 +5,15 @@ For dashboard development only -- writes straight to SQLite, bypassing the
 HTTP API. Deterministic (fixed seed), with per-project traffic profiles, a
 growth trend and weekend dips so the charts show a believable shape.
 
+Rows are written as ingest stores them (migration 041, encode.go and
+dict.go): the script generates plain text rows into a TEMP staging table
+shaped like the events table before 041, then one SQL pass per project
+encodes them -- text columns become strings ids, attributes become catalog
+key ids and value numbers, ids become tagged bytes, timestamps become Unix
+seconds -- creating the dictionary rows the way ingest does (with their
+last_seen_day). That pass is the copy block of 041 written as an upsert, and
+needs SQLite 3.41 for unhex() (Python 3.12 ships newer).
+
 Covers 180 days so the widest dashboard range has data to plot. Idempotent:
 seeded rows are cleared before reinsertion, so re-running refreshes the window
 rather than stacking another copy on top.
@@ -157,9 +166,120 @@ def growing_pool(elapsed, final):
     return random.randint(1, max(1, final * (elapsed + 1) // DAYS))
 
 
+# The text columns of an events row (each stored as a strings id, '' being 0)
+# and the id columns (stored as tagged bytes when they are UUIDs or hex).
+TEXT_COLS = ["event_name", "measure", "kind", "actor_kind", "host", "path", "referrer_source",
+             "utm_source", "utm_medium", "utm_campaign", "platform", "os", "os_version",
+             "os_name", "browser", "browser_version", "browser_locale", "app_version",
+             "app_locale", "device", "device_model", "country"]
+ID_COLS = ["actor_id", "user_id", "group_id", "session_id"]
+
+# The rows as the script generates them: the events table as it was before
+# migration 041, text throughout, so the generators below stay readable.
+STAGING_SQL = f"""
+CREATE TEMP TABLE IF NOT EXISTS seed_events (
+    family TEXT NOT NULL, project_id INTEGER NOT NULL, day TEXT NOT NULL,
+    id TEXT NOT NULL, ts TEXT NOT NULL, received_at TEXT NOT NULL DEFAULT '',
+    actor_id TEXT NOT NULL, user_id TEXT NOT NULL DEFAULT '',
+    group_id TEXT NOT NULL DEFAULT '', session_id TEXT NOT NULL DEFAULT '',
+    {', '.join(f"{c} TEXT NOT NULL DEFAULT ''" for c in TEXT_COLS if c != 'platform')},
+    platform TEXT NOT NULL DEFAULT 'unknown',
+    display_width INTEGER NOT NULL DEFAULT 0, display_height INTEGER NOT NULL DEFAULT 0,
+    consent INTEGER, attributes TEXT NOT NULL DEFAULT '{{}}',
+    value REAL, sample_rate REAL NOT NULL DEFAULT 1)
+"""
+
+
+def _is_uuid(col):
+    """SQL: col is a lowercase canonical UUID (encode.go uuidBytes)."""
+    return (f"(length({col}) = 36 AND substr({col}, 9, 1) = '-' AND substr({col}, 14, 1) = '-'"
+            f" AND substr({col}, 19, 1) = '-' AND substr({col}, 24, 1) = '-'"
+            f" AND length(replace({col}, '-', '')) = 32 AND replace({col}, '-', '') NOT GLOB '*[^0-9a-f]*')")
+
+
+def _enc_event_id(col):
+    return f"CASE WHEN {_is_uuid(col)} THEN unhex(replace({col}, '-', '')) ELSE {col} END"
+
+
+def _enc_id(col):
+    """encode.go encodeID: x'01'+16 bytes for a UUID, x'02'+bytes for
+    non-empty even-length lowercase hex, the text otherwise."""
+    return (f"CASE WHEN {_is_uuid(col)} THEN unhex('01' || replace({col}, '-', ''))"
+            f" WHEN {col} <> '' AND length({col}) % 2 = 0 AND {col} NOT GLOB '*[^0-9a-f]*'"
+            f" THEN unhex('02' || {col}) ELSE {col} END")
+
+
+def _enc_str(col):
+    return f"COALESCE((SELECT id FROM strings WHERE value = s.{col}), 0)"
+
+
+def encode_staged(cur):
+    """Move the staged rows into events, encoded, and empty the staging table.
+
+    The dictionary rows go first, as dict.go resolves them: a new text, key or
+    value takes the next id (or number), a known one only raises
+    last_seen_day. Inserting only the new ones, then raising the rest, keeps
+    a re-run from burning AUTOINCREMENT ids on upserts that only update.
+    Then the rows, which look every id up.
+    """
+    strings = " UNION ALL ".join(f"SELECT {c} AS v, day FROM seed_events" for c in TEXT_COLS)
+    cur.execute("CREATE TEMP TABLE seed_dict (key_id INTEGER NOT NULL, value TEXT NOT NULL, day TEXT NOT NULL,"
+                " PRIMARY KEY (key_id, value))")
+    # strings (key_id 0), then catalog keys, then each key's values.
+    cur.execute(f"INSERT INTO seed_dict SELECT 0, v, MAX(day) FROM ({strings}) WHERE v <> '' GROUP BY v")
+    cur.execute("""INSERT INTO strings (value, last_seen_day)
+        SELECT value, day FROM seed_dict t
+        WHERE NOT EXISTS (SELECT 1 FROM strings x WHERE x.value = t.value) ORDER BY value""")
+    cur.execute("""UPDATE strings SET last_seen_day = max(last_seen_day, t.day)
+        FROM seed_dict t WHERE strings.value = t.value""")
+    cur.execute("DELETE FROM seed_dict")
+
+    cur.execute("""INSERT INTO project_attributes (project_id, key, last_seen_day)
+        SELECT s.project_id, j.key, MAX(s.day) FROM seed_events s, json_each(s.attributes) j
+        WHERE NOT EXISTS (SELECT 1 FROM project_attributes k WHERE k.project_id = s.project_id AND k.key = j.key)
+        GROUP BY s.project_id, j.key ORDER BY s.project_id, j.key""")
+    cur.execute("""UPDATE project_attributes SET last_seen_day = max(last_seen_day, t.day)
+        FROM (SELECT s.project_id, j.key, MAX(s.day) AS day FROM seed_events s, json_each(s.attributes) j
+              GROUP BY s.project_id, j.key) t
+        WHERE project_attributes.project_id = t.project_id AND project_attributes.key = t.key""")
+
+    cur.execute("""INSERT INTO seed_dict SELECT k.id, j.value, MAX(s.day)
+        FROM seed_events s, json_each(s.attributes) j
+        JOIN project_attributes k ON k.project_id = s.project_id AND k.key = j.key
+        GROUP BY k.id, j.value""")
+    cur.execute("""UPDATE attribute_values SET last_seen_day = max(last_seen_day, t.day)
+        FROM seed_dict t WHERE attribute_values.key_id = t.key_id AND attribute_values.value = t.value""")
+    # A new value takes the key's counter, which the attribute_values_next
+    # trigger raises past it.
+    cur.execute("""INSERT INTO attribute_values (key_id, n, value, last_seen_day)
+        SELECT t.key_id, k.values_next + ROW_NUMBER() OVER (PARTITION BY t.key_id ORDER BY t.value) - 1,
+               t.value, t.day
+        FROM seed_dict t JOIN project_attributes k ON k.id = t.key_id
+        WHERE NOT EXISTS (SELECT 1 FROM attribute_values v WHERE v.key_id = t.key_id AND v.value = t.value)""")
+    cur.execute("DROP TABLE seed_dict")
+
+    ids = ", ".join(_enc_id(f"s.{c}") for c in ID_COLS)
+    texts = ", ".join(_enc_str(c) for c in TEXT_COLS)
+    cur.execute(f"""INSERT INTO events (family, project_id, day, id, ts, received_at, actor_id, user_id,
+        group_id, session_id, {', '.join(TEXT_COLS)}, display_width, display_height, consent,
+        attributes, value, sample_rate)
+        SELECT CASE s.family WHEN 'views' THEN 1 WHEN 'product' THEN 2 WHEN 'measures' THEN 3 END,
+               s.project_id, s.day, {_enc_event_id('s.id')}, unixepoch(s.ts),
+               CASE WHEN s.received_at = '' THEN 0 ELSE unixepoch(s.received_at) END,
+               {ids}, {texts}, s.display_width, s.display_height, s.consent,
+               (SELECT COALESCE(json_group_object(CAST(k.id AS TEXT), v.n), '{{}}')
+                  FROM json_each(s.attributes) j
+                  JOIN project_attributes k ON k.project_id = s.project_id AND k.key = j.key
+                  JOIN attribute_values v ON v.key_id = k.id AND v.value = j.value),
+               s.value, s.sample_rate
+        FROM seed_events s""")
+    cur.execute("DELETE FROM seed_events")
+
+
 def seed(cur, pid, name, profile, today, sends_ids):
     for table in ("events", "actors", "identities"):
         cur.execute(f"DELETE FROM {table} WHERE project_id = ?", (pid,))
+    cur.execute(STAGING_SQL)
 
     hits = 0
     for back in range(DAYS - 1, -1, -1):
@@ -186,7 +306,7 @@ def seed(cur, pid, name, profile, today, sends_ids):
                     seconds=start + p * random.randint(20, 600))
                 path = pick(profile["pages"])
                 cur.execute(
-                    "INSERT INTO events (id, project_id, ts, received_at, kind, actor_id, actor_kind,"
+                    "INSERT INTO seed_events (id, project_id, ts, received_at, kind, actor_id, actor_kind,"
                     " user_id, group_id, path, referrer_source, country, device, browser,"
                     " browser_version, platform, os, utm_source, utm_medium, utm_campaign,"
                     " display_width, display_height, consent, day, family, event_name)"
@@ -217,7 +337,7 @@ def seed(cur, pid, name, profile, today, sends_ids):
                     # views above, so every product event is web-originated:
                     # platform web, and an OS drawn from the same web mix.
                     cur.execute(
-                        "INSERT INTO events (id, project_id, ts, day, received_at, event_name,"
+                        "INSERT INTO seed_events (id, project_id, ts, day, received_at, event_name,"
                         " actor_id, actor_kind, user_id, group_id, platform, os, app_version,"
                         " attributes, consent, family) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'product')",
                         (str(uuid.uuid4()), pid, ts.strftime("%Y-%m-%dT%H:%M:%SZ"), day.isoformat(),
@@ -232,6 +352,7 @@ def seed(cur, pid, name, profile, today, sends_ids):
     if profile.get("measures"):
         seed_backend(cur, pid, profile, today)
     views = hits + (seed_app(cur, pid, name, profile, today, sends_ids) if profile.get("app") else 0)
+    encode_staged(cur)
     if sends_ids:
         seed_identities(cur, pid, name)
     return views, events
@@ -246,7 +367,7 @@ def insert_measure(cur, pid, ts, name, measure, value, actor, actor_kind, **dims
     stamp = ts.strftime("%Y-%m-%dT%H:%M:%SZ")
     vals = [str(uuid.uuid4()), pid, stamp, stamp, ts.date().isoformat(), "measures", name,
             value, measure, 1, actor, actor_kind, *dims.values()]
-    cur.execute(f"INSERT INTO events ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})", vals)
+    cur.execute(f"INSERT INTO seed_events ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})", vals)
 
 
 def seed_vitals(cur, pid, ts, actor, sends_ids, path, country, device, browser, osname):
@@ -316,7 +437,7 @@ def seed_app(cur, pid, name, profile, today, sends_ids):
                 ts = datetime.datetime.combine(day, datetime.time()) + datetime.timedelta(
                     seconds=start + s * random.randint(15, 240))
                 cur.execute(
-                    "INSERT INTO events (id, project_id, ts, received_at, kind, actor_id, actor_kind, user_id,"
+                    "INSERT INTO seed_events (id, project_id, ts, received_at, kind, actor_id, actor_kind, user_id,"
                     " group_id, session_id, path, platform, os, app_version, os_version,"
                     " browser, device, device_model, browser_locale, app_locale, country, consent,"
                     " day, family, event_name)"
