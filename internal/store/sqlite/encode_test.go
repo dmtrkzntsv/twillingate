@@ -2,11 +2,38 @@ package sqlite
 
 import (
 	"database/sql"
+	"encoding/hex"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
+
+// The inverse of encodeID and encodeEventID, which only the tests need: the
+// raw_* views decode in SQL.
+func formatUUID(b []byte) string {
+	h := hex.EncodeToString(b)
+	return h[0:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:32]
+}
+
+func decodeEventID(v any) string {
+	if b, ok := v.([]byte); ok {
+		return formatUUID(b)
+	}
+	return fmt.Sprint(v)
+}
+
+func decodeID(v any) string {
+	b, ok := v.([]byte)
+	if !ok {
+		return fmt.Sprint(v)
+	}
+	if b[0] == tagUUID {
+		return formatUUID(b[1:])
+	}
+	return hex.EncodeToString(b[1:])
+}
 
 var idCases = []string{
 	"0192f1a2-7c3b-7d4e-8f90-a1b2c3d4e5f6", // lowercase UUID

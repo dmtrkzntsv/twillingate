@@ -76,29 +76,6 @@ func encodeID(s string) any {
 	return s
 }
 
-func formatUUID(b []byte) string {
-	h := hex.EncodeToString(b)
-	return h[0:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:32]
-}
-
-func decodeEventID(v any) string {
-	if b, ok := v.([]byte); ok {
-		return formatUUID(b)
-	}
-	return fmt.Sprint(v)
-}
-
-func decodeID(v any) string {
-	b, ok := v.([]byte)
-	if !ok {
-		return fmt.Sprint(v)
-	}
-	if b[0] == tagUUID {
-		return formatUUID(b[1:])
-	}
-	return hex.EncodeToString(b[1:])
-}
-
 func unixSeconds(t time.Time) int64 { return t.UTC().Unix() }
 
 // sqlUUIDText formats a 32-character lowercase hex expression with dashes.
