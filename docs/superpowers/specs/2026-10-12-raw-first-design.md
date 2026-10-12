@@ -1,8 +1,8 @@
 # Raw first: raw events as the only source of truth
 
-Status: draft. Decisions are proposed; the design (D10: A, B or C, C
-favoured) is chosen by measurement (Next steps, step 1). Numbers marked
-*estimate* are unmeasured.
+Status: draft. D10 is settled by measurement (C, over Parquet files);
+the storage and ingest design (D2–D3, D7–D8) was rewritten 2026-10-12 after
+it. Numbers marked *estimate* are unmeasured.
 Date: 2026-10-12
 
 ## Requirements
@@ -109,35 +109,64 @@ One server takes up to **1M events a month** and keeps raw events for up to
   (aggregates, caches, counters, actors, cohorts) is derived from them and
   can be dropped and rebuilt. No step deletes information that a later
   question might need, except retention and erasure.
-- **D2. Two tiers: a SQLite buffer, then Parquet.**
-  - **Hot:** ingest keeps writing `events` in SQLite. A day stays there
-    until it is closed and past the late window (D3).
-  - **Parquet:** each closed day past the late window is written to a
-    Parquet file, then its rows are deleted from `events` in one
-    transaction (write to a temp file, fsync, verify the row count, rename,
-    delete). Files are merged into one file per project, family and month
-    once the month is complete (Q2).
-  - Layout: `<data dir>/raw/<project_id>/<family>/<YYYY-MM>.parquet`
-    (plus daily files until the month is merged).
-  - Hot holds about the late window plus today: ~8 days, ~0.2 GB at the cap
-    in today's row format. Raw storage effort goes into Parquet (D4's
-    columns, dictionary encoding, zstd); #175's SQLite encoding stays dropped.
+- **D2. Events never enter SQLite. An append-only log per project and
+  day, then Parquet.** SQLite keeps everything else (projects, dashboards,
+  forms, submissions) and nothing about events. Everything on the event
+  path is an append or a new file; nothing is rewritten in place until the
+  two merges, and both merge data that is already final. The whole event
+  side is four scheduled actions: fsync the log at each flush, dump at day
+  close, merge at month close, delete at retention.
+  - **Log:** ingest appends each event as one NDJSON line to
+    `<data dir>/raw/<project_id>/<YYYY-MM-DD>.log` and fsyncs at every
+    pipeline flush (~10 s, the window the in-memory buffer already has
+    today). Rules (rename, merge, block) are applied in Go from the
+    registry snapshot before the write, dedup by id against an in-memory
+    set for the day, rebuilt from the log and the day's files at boot.
+    About 1.3 KB a line, ~40 MB a day at the cap, deleted once dumped.
+  - **Dump:** at day close the engine (D8) writes the day's log as
+    `<YYYY-MM-DD>.parquet` (one `COPY … ORDER BY family, ts`; 0.2 s for a
+    cap day) and deletes the log. Until then queries read the log directly
+    (`read_ndjson`): 150 ms per query for a full cap day of one project
+    (25 MB), proportionally less below the cap. If that shows in a
+    project's dashboards, the same dump can run earlier, on a size or time
+    threshold, writing the lines since the last dump as a new segment
+    `<YYYY-MM-DD>.<n>.parquet` and rotating the log; segments merge into the
+    day file at day close. Per project, if ever needed; not in the first
+    version.
+  - **Merge:** once a month is complete and past the late window (D3), its
+    day files merge into `<YYYY-MM>.parquet`, rows ordered by family then
+    time (~1 s per 1M rows). One file per project and month, no family
+    split: measured the same speed as per-family files with a quarter of
+    the files and a smaller archive, provided the sort order is kept.
+  - **No index.** The directory is the list of files (about 100 per
+    project at 3 years), a file's name is its day or month, and its Parquet
+    footer holds its row count, which is what `usage`, `limits` and the
+    hosted allowance (Q7) read. A manifest table in SQLite would be a cache
+    of this; add it only if directory scans or footer reads show up.
+  - Each event is written four times in its life (log, segment or day
+    file, day file, month file), about 4 × 1.5 KB. Rewriting the day file at
+    every flush, considered first, costs up to 14 GB a day at the cap and
+    is rejected.
 - **D3. A late window, separate from retention.** `clampTS`'s lower bound
   becomes a late window (proposed 7 days; name to settle, e.g.
   `INGEST_LATE_DAYS`), no longer `RETENTION_RAW_DAYS`. An event older than
-  that is clamped into the window's first day, as today. Late events always
-  land in Hot, so a Parquet file never changes because of one, and a day in
-  Parquet is final.
-- **D4. One wide table per project and family, with every attribute.** Each
-  project exposes `views`, `product` and `measures` (names to settle, Q1):
-  today's typed columns plus **one column per attribute key the project's
-  catalog has seen**, declared or not. Parquet stores each key as a real,
-  dictionary-encoded column, so a wide, sparse table costs little; a file
-  written before a key existed reads it as null. Hot exposes the same
-  columns over its JSON (as `v_events_flat` does today, but for every key).
-  Key sanitizing and collisions follow `flatview.go`'s rules.
+  that is clamped into the window's first day, as today. A late event for a
+  closed day is appended to that day's log (reopened, or a new one) and
+  dumped as a new segment of that day; nothing is rewritten. A month merges
+  only after its last day's late window has passed, so a month file is
+  final.
+- **D4. One wide table per project, with every attribute.** Each project
+  exposes `events` (and `views`, `product`, `measures` as views on it, names
+  to settle, Q1): today's typed columns plus **one column per attribute key
+  the project's catalog has seen**, declared or not. Parquet stores each key
+  as a real, dictionary-encoded column, so a wide, sparse table costs
+  little; a column that is null for a whole family costs bytes. A file
+  written before a key existed reads it as null (`union_by_name`). The
+  mapping from the log's JSON to the columns is one SQL statement in the
+  dump (D2), the only place the schema is spelled out. Key sanitizing and
+  collisions follow `flatview.go`'s rules.
 - **D5. Retention deletes whole files.** `RETENTION_RAW_DAYS` keeps its
-  name, means raw kept (Hot + Parquet), and goes up to 1095 days. The pass
+  name, means raw kept, and goes up to 1095 days. The pass
   deletes month files entirely older than it. No `DELETE` over millions of
   rows, no free pages, no `VACUUM`.
 - **D6. Files are immutable; rules apply when read.** Event and attribute
@@ -146,30 +175,48 @@ One server takes up to **1M events a month** and keeps raw events for up to
   rewritten. Data that must really go (a user's erasure, a submission, a
   project) is removed by rewriting the affected files: copy without the
   rows, fsync, rename. A purged project deletes its directory.
-- **D7. Backups.** Litestream keeps covering the SQLite file. Parquet files
-  are written once (D6's rewrites aside) and uploaded once next to the
-  Litestream replica; restore copies them back. `docs/litestream.md` and
-  `docs/deployment.md` describe it.
+- **D7. Backups.** Litestream keeps covering the SQLite file. Day and month
+  files are written once (D6's rewrites aside) and uploaded once next to
+  the Litestream replica; today's log is exposed until its dump unless it
+  is uploaded on a timer too. Restore copies the files back; there is nothing
+  else to restore. `docs/litestream.md` and `docs/deployment.md` describe
+  it.
 
 ### Reports and queries
 
-- **D8. Dashboards query raw.** Widgets, system dashboards and the `query`
-  tool read D4's tables over Hot + Parquet through the query engine (D10).
-  Exact distinct users over any range, combinations of any keys and keys
-  nobody declared all come from the same rows.
+- **D8. Dashboards query raw, through an engine that is a child process.**
+  Widgets, system dashboards and the `query` tool read D4's tables through
+  DuckDB (D10), which the server runs as a child process of its own binary
+  (`twillingate engine`), started on the first query or dump and exited
+  after a few idle minutes. One query sees month files, day files, today's
+  segments and the open log as one table: `read_parquet(…) UNION ALL
+  read_ndjson(…)`, the engine layer building the file list from the
+  directory for the project and range. Exact distinct users over any range,
+  combinations of any keys and keys nobody declared all come from the same
+  rows. The child, not the driver in-process, because the measurements
+  showed: DuckDB open and idle holds 37 MB and keeps what it used up to its
+  limit until the limit is lowered (never returned on macOS), so a process
+  that exits gives everything back, which matters to a hosting operator
+  with many idle customers; a crash or out-of-memory error in a user's
+  widget SQL cannot take ingest down; and the child can read the files and
+  nothing else, so widget SQL never has a path to the SQLite file. The
+  ingest process never initializes DuckDB and stays at today's footprint.
+  Settings: `memory_limit=512MB` (at 256 MB a `COUNT(DISTINCT)` over 3
+  years fails, at 128 MB from 1 year), `threads` equal to the CPUs, a
+  spill directory. Unmeasured: the child's time from spawn to first result.
 - **D9. Aggregates become a cache, if the engine needs one.** If the engine
   is not fast enough at the cap (D10's targets), closed days' results are
   cached per widget query and per day:
   - the first load computes each day and stores it; later loads read the
-    stored days and compute only Hot;
+    stored days and compute only today's log;
   - only days in Parquet are cached, and they are final (D3), so the cache
     is invalidated only by rules changes and erasure;
   - it works for anything that adds up across days (counts, sums,
     histograms); distinct users over a range are recomputed from raw, shown
     per day, or estimated with a per-day HyperLogLog sketch (Q5).
   Nothing is declared: the widget's own query defines what is cached.
-- **D10. Three designs, chosen by measurement; C is favoured.** Go has no
-  columnar SQL engine without cgo. Against the Requirements:
+- **D10. Three designs, chosen by measurement: C, over Parquet files.** Go
+  has no columnar SQL engine without cgo. Against the Requirements:
 
   | | A. SQLite only, raw kept | B. SQLite + Parquet, pure Go | C. SQLite for metadata + DuckDB for events |
   |---|---|---|---|
@@ -208,8 +255,11 @@ One server takes up to **1M events a month** and keeps raw events for up to
   of widgets run one after another (sessions alone 1.75 s), under 1 s at 10
   threads. A meets none.
 
-  D2–D7 describe B's storage (and C's, if C reads Parquet: Q9). Under A,
-  raw stays in `events` and D2, D5–D7 don't apply.
+  Within C, the Parquet files win over a DuckDB file (Q9, measured): a
+  smaller archive, the same speed, memory that falls back after queries,
+  retention by deleting files, backups by copying files that never change,
+  and no process lock (a DuckDB file admits one process, which breaks the
+  CLI against a live server and the split install). D2–D8 describe it.
 
 ### What goes away
 
@@ -223,11 +273,13 @@ One server takes up to **1M events a month** and keeps raw events for up to
 - **D12. Superseded work.** #175's encoding is dropped; its widget-SQL
   allowlist becomes its own change, adjusted to D4's tables. #173 (kept
   events) is closed: every event is kept.
-- **D13. New dependencies.** C: DuckDB and its Go driver
-  (`github.com/duckdb/duckdb-go`, cgo). B: `github.com/parquet-go/parquet-go`
-  (pure Go, pulls `klauspost/compress`). CLAUDE.md allows a third-party
-  dependency only from a very reputable vendor; confirm the chosen one
-  qualifies. With 32-bit ARM dropped, the release targets become
+- **D13. New dependencies.** DuckDB's Go driver
+  (`github.com/duckdb/duckdb-go/v2`, cgo; prebuilt static libraries for
+  linux amd64/arm64, macOS and Windows, glibc only, so the image leaves
+  Alpine; `parquet`, `json` and `icu` compiled in, `sqlite_scanner` not).
+  No Parquet writer of our own: DuckDB writes the files. CLAUDE.md allows a
+  third-party dependency only from a very reputable vendor; the DuckDB
+  Foundation qualifies. With 32-bit ARM dropped, the release targets become
   linux/amd64 and linux/arm64 (`Makefile` `dist`, `vet`'s `GOARCH=arm`
   check, `release.yml`, the installer and `docs/deployment.md`).
 
@@ -258,16 +310,16 @@ raw-first.
 | First event of an actor or an event name | `actors` day; `MIN(day)` from aggregates; the event itself only in the window | query |
 | "When did user X unsubscribe", combinations, undeclared keys | raw window only | query |
 | Ad hoc SQL (`query`, widget SQL) | anything, `events` included | D4's tables over Hot + Parquet |
-| Form submission → visit linking (`forms.go:SessionAt`) | raw views of today and yesterday | Hot, unchanged |
+| Form submission → visit linking (`forms.go:SessionAt`) | raw views of today and yesterday | today's and yesterday's day files or log, or linked lazily (Q9) |
 
 ### Writes and maintenance
 
 | Use case | Today | Raw-first |
 |---|---|---|
-| Ingest, `$form_submit` | `INSERT OR IGNORE` into `events` | Hot, unchanged |
-| Rename/merge an event or attribute | rewrites raw rows and moves aggregates | Hot rewrite; Parquet maps on read (D6) |
-| Block an event | rows dropped at rollup | Hot delete; Parquet filters on read (D6) |
-| Delete a submission, a project, a user's data | point delete; deleting a project is a full table scan | Hot delete; Parquet file rewrite (D6) |
+| Ingest, `$form_submit` | `INSERT OR IGNORE` into `events` | append to the project's day log, dedup in memory (D2) |
+| Rename/merge an event or attribute | rewrites raw rows and moves aggregates | applied to the log at write; files map on read (D6) |
+| Block an event | rows dropped at rollup | dropped at write; files filter on read (D6) |
+| Delete a submission, a project, a user's data | point delete; deleting a project is a full table scan | rewrite the affected files (D6) |
 | Rollups, actors, cohorts, identities, attribute stats | nightly over the raw window | gone, or D9's cache (D11) |
 | Day lists, sizes, raw counts (`allRawDays`, `usage`, `measureSizes`, `limits`) | full scans of `events` | file metadata (Parquet footers hold row counts) |
 
@@ -287,8 +339,9 @@ At the cap (1M a month, 3 years):
 
 | | Today, 3-year raw window | Raw-first |
 |---|---|---|
-| SQLite | 22.1 GB (measured) | Hot ~8 days (~0.2 GB) + metadata, flat |
-| Parquet | — | 1.45 GB (measured) |
+| SQLite | 22.1 GB (measured) | metadata only, flat |
+| Logs | — | today's, ~40 MB at the cap, deleted when dumped |
+| Parquet | — | 1.36 GB, one file per project and month (measured) |
 | Views dashboard, 1-year range | ~13 min CPU | ~3 s at 2 threads, measured (C) |
 
 ## Measurements (2026-10-12)
@@ -338,6 +391,18 @@ Over 30 days A takes 0.14–1.8 s per query, C 3–120 ms. C's DuckDB file at
   file does not shrink, `VACUUM` included; space comes back only by
   rewriting the file (37 s at 2.5 GB). Retention by deleting monthly
   Parquet files has no such cost (Q9).
+- **Layouts (3 years, 2 threads, 256 MB):** one file per project and month
+  with no family split, rows ordered by family then time, is 1.36 GB (74
+  files) against 1.45 GB for per-family files (268 files) and the same
+  speed on every query (two attributes 0.31 vs 0.28 s). Ordered by time
+  alone it is 1.43 GB and ~1.3× slower on product queries (0.38 s), since
+  a family filter cannot skip row groups. One file for everything is
+  1.60 GB and 1.3–4× slower.
+- **Log and dump (one project's cap day, ~20k events):** the NDJSON log is
+  25 MB and DuckDB aggregates it in 0.15 s (CSV: 7.5 MB, 0.25 s); `COPY`
+  of the log to a 1.0 MB day file takes 0.20 s; a full day's rows rewrite
+  as Parquet in 52 ms. A 30-day query over month files takes 9 ms alone,
+  162 ms with the whole day's log unioned in.
 - **Backups (DuckDB file):** from inside the process holding it, `COPY
   FROM DATABASE` to a new file takes 151 s at 2 threads; `EXPORT DATABASE`
   to Parquet runs out of memory at 256 MB. A second process cannot open the
@@ -433,10 +498,11 @@ meets D10's targets:
 
 - **Q1.** Names of D4's tables, and whether a widget sees only its own
   project's tables or every project's with a `project_id` column.
-- **Q2.** Daily files merged into monthly ones, or monthly files only (Hot
-  then holds the current month + the late window, ~38 days)?
-- **Q3.** Parquet sort order and row-group size: `(actor_id, ts)` serves
-  timelines; `(ts)` serves date ranges. Measure both.
+- **Q2.** Settled: day files, merged into one file per project and month
+  (D2).
+- **Q3.** Settled for the file order: `(family, ts)` (Measurements).
+  Row-group size and `(actor_id, ts)` for timelines are unmeasured; the
+  timeline already meets its target at `(family, ts)`.
 - **Q4.** Late window length (7 days?) and its variable name.
 - **Q5.** Distinct users over a range with D9's cache: recompute, per-day
   only, or HyperLogLog sketches (our own code in `internal/shared/`)?
@@ -448,16 +514,21 @@ meets D10's targets:
   server whose raw window was raised, check step 0's damage first.
   `deploy/UPGRADES.md` gets the runbook.
 - **Q7.** Does the "raw events held" allowance (2026-10-09 spec, hosted
-  plans) count Hot only or Hot + Parquet?
+  plans) count the archive's footer row counts plus the open logs' lines?
+  (Hot no longer exists.)
 - **Q8.** Should `query` allow an unfiltered 3-year scan, or require a range
   or a filter, under its timeout?
 
-- **Q9.** Under C, where events live: one DuckDB file (closest to "a
-  single file"; ingest appends to it, retention and erasure are `DELETE`s,
-  so check that space is reclaimed), or the SQLite buffer + monthly Parquet
-  files that DuckDB queries (D2–D7: retention deletes files, immutable files
-  are easy to back up, but more files and our own writer). And how the
-  events data is backed up, since Litestream covers only SQLite.
+- **Q9.** Settled by measurement: Parquet files, not a DuckDB file (D10).
+  Still open from it: how the event files are backed up (D7), and the
+  `forms.go:SessionAt` link from a submission to a visit, which read
+  today's and yesterday's views in SQLite: a query over two day files, or
+  linking lazily when the submission is viewed.
+- **Q10.** The log's exact line format and whether the dedup set needs a
+  ceiling above the envelope (a cap day's ids are ~1 MB).
+- **Q11.** Whether widget SQL sees any SQLite table at all. Metadata lives
+  in SQLite and events in the engine, so a widget cannot join them unless a
+  few small tables (projects) are handed to the child.
 
 ## Next steps
 
@@ -486,15 +557,20 @@ meets D10's targets:
      and the file size after.
    Fill the *estimates* and compare against D10's targets. Measure B (the
    pure-Go path) only if C is ruled out.
-2. **Choose the design** (D10), settle Q1–Q9, then write the implementation
-   plan.
+2. **Measure the child engine** (D8): spawn to first result, and a
+   dashboard of 8 widgets through it at 2 threads. Then settle Q1, Q4–Q8,
+   Q10–Q11 and write the implementation plan.
 3. **Implementation order** (each its own PR; detail after step 2):
    1. Late window (D3). Fixes step 0's risk on its own.
-   2. Parquet writer, Hot cut, retention by file, backups (D2, D5, D7). With
-      today's aggregates untouched, this alone gives 3 years of raw history.
-   3. D4's tables over Hot + Parquet, the engine, `query` on them (D8, D10).
-   4. Dashboards on raw, D9's cache if needed, the upgrade path (Q6).
-   5. Remove what D11 lists; close #173; reduce #175 to the allowlist (D12).
+   2. The log and the dump beside today's ingest: events written to both
+      SQLite and the log, day files produced by the engine, retention by
+      file, backups (D2, D5, D7). With today's aggregates
+      untouched, this alone gives 3 years of raw history.
+   3. D4's tables, the engine child, `query` on them (D8, D10).
+   4. Dashboards on raw, the sessions table or D9's cache if needed, the
+      upgrade path (Q6).
+   5. Stop writing events to SQLite; remove what D11 lists; close #173;
+      reduce #175 to the allowlist (D12).
 
 ## Found along the way
 
