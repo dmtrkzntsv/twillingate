@@ -290,13 +290,15 @@ func (s *Snapshot) ResolveEvent(projectID int64, family store.Family, name strin
 }
 
 // AttributeRules is the project's attribute rules as the write path applies
-// them; the zero value (maps nothing) when it has none.
+// them; the zero value (maps nothing) when it has none. The maps are the
+// snapshot's own, shared by every reader: callers must not modify them.
 func (s *Snapshot) AttributeRules(projectID int64) store.AttributeRuleSet {
 	return s.attrRules[projectID]
 }
 
 // AttributeRuleList is the project's attribute rules ordered by key, nil
-// when it has none.
+// when it has none. The slice is the snapshot's own, shared by every
+// reader: callers must not modify it or its elements.
 func (s *Snapshot) AttributeRuleList(projectID int64) []store.AttributeRule {
 	return s.attrRuleList[projectID]
 }

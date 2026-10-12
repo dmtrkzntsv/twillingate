@@ -23,7 +23,9 @@ func jsonPath(key string) string {
 var jsonPathEscaper = strings.NewReplacer(`\`, `\\`, `"`, `\"`)
 
 // LoadAttributeRules is every attribute rule (rules with kind 'attribute'),
-// for the registry snapshot and list_attribute_rules, by project and key.
+// by project and key: the registry snapshot loads them (list_attributes
+// reads its rules from there), and manage reads a written rule's
+// created_at back.
 func (d *DB) LoadAttributeRules(ctx context.Context) ([]store.AttributeRule, error) {
 	rows, err := d.db.QueryContext(ctx, `SELECT project_id, name, action, COALESCE(to_name, ''), created_at
 		FROM rules WHERE kind='attribute' AND family='event' ORDER BY project_id, name`)

@@ -370,7 +370,7 @@ func BenchmarkRenameAttribute(b *testing.B) {
 	}
 }
 
-// BenchmarkCountReceived runs the nightly received-attributes recount
+// BenchmarkCountReceived runs the nightly usage_attributes recount
 // (countReceived, inside RecordUsageHistory' transaction, while ingest
 // waits) over a raw window of 30 days x 2,000 web product events as the SDK
 // sends them (5 custom attributes, host, path, OS and browser versions, and
