@@ -1201,8 +1201,8 @@ happened, not at flush time. The server clamps it to `[received − max_event_ag
 received + 5 minutes]`, records the server clock separately, and **clamps and
 counts, never drops**, out-of-range values; `max_event_age` equals
 `RETENTION_RAW_DAYS` (30 days by default), so a clamped event can never
-target a day already rolled up. **`id`** is a client-generated UUID (v7
-recommended, so ids sort by time) and is what makes at-least-once delivery safe:
+target a day already rolled up. **`id`** is a client-generated UUID (the SDK
+makes v7, so ids sort by time; any version is accepted) and is what makes at-least-once delivery safe:
 the write ignores a duplicate primary key, so a batch retried after a timeout
 that actually succeeded is a no-op. **Omit `id` and a replayed batch
 double-counts.**

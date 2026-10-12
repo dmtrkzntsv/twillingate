@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { maskIds, withQuery } from "./util";
+import { maskIds, uuid7, withQuery } from "./util";
 
 describe("maskIds", () => {
   it("masks uuid segments", () => {
@@ -75,5 +75,26 @@ describe("withQuery", () => {
   it("escapes values", () => {
     expect(withQuery("/s", "https://a.example.com/s?tab=a%20b", ["tab"]))
       .toBe("/s?tab=a%20b");
+  });
+});
+
+describe("uuid7", () => {
+  const V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+  it("is a version 7, variant 1 UUID", () => {
+    expect(uuid7()).toMatch(V7);
+  });
+
+  it("carries the millisecond it was made in its first 48 bits", () => {
+    const id = uuid7(0x018f1e5a1234);
+    expect(id.slice(0, 13)).toBe("018f1e5a-1234");
+  });
+
+  it("sorts by time, and is unique within a millisecond", () => {
+    const a = uuid7(1_700_000_000_000);
+    const b = uuid7(1_700_000_000_001);
+    expect(a < b).toBe(true);
+    const same = new Set(Array.from({ length: 1000 }, () => uuid7(1_700_000_000_000)));
+    expect(same.size).toBe(1000);
   });
 });
