@@ -84,11 +84,22 @@ describe('AttributesSection', () => {
     expect(onSaveBreakdowns).toHaveBeenCalledWith(['plan', 'never_sent', '$host'])
   })
 
-  it('treats a project with no attributes list as having no breakdowns', async () => {
+  it('saves from the listed breakdowns, not the project row, which may lag', async () => {
     const user = userEvent.setup()
-    const { onSaveBreakdowns } = renderSection({ project: { project_id: 1, name: 'dev', allowed_origins: [] } as Project })
+    const { onSaveBreakdowns } = renderSection({ project: { project_id: 1, name: 'dev', allowed_origins: [], attributes: ['stale'] } as Project })
     await user.click(await screen.findByRole('switch', { name: 'Break down tier' }))
-    expect(onSaveBreakdowns).toHaveBeenCalledWith(['tier'])
+    expect(onSaveBreakdowns).toHaveBeenCalledWith(['plan', 'never_sent', 'tier'])
+  })
+
+  it('sends a key once when switched on again while the list still shows it off', async () => {
+    // The first save already reached the project row; the attributes list has not refetched.
+    const user = userEvent.setup()
+    const { onSaveBreakdowns } = renderSection({ project: { ...project, attributes: ['plan', 'never_sent', 'tier'] } })
+    const tier = await screen.findByRole('switch', { name: 'Break down tier' })
+    await user.click(tier)
+    await user.click(tier)
+    expect(onSaveBreakdowns).toHaveBeenCalledTimes(2)
+    for (const call of onSaveBreakdowns.mock.calls) expect(call[0]).toEqual(['plan', 'never_sent', 'tier'])
   })
 
   it('asks before switching a key off, then saves the list without it', async () => {

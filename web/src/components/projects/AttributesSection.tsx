@@ -55,7 +55,10 @@ export default function AttributesSection({ project, range, rawDays, pending, on
   const [unbreaking, setUnbreaking] = useState<{ key: string; open: boolean } | null>(null)
   const { data, error, refetch } = useQuery(attributesQuery(project.project_id, range))
   const rows = data?.attributes ?? []
-  const breakdowns = project.attributes ?? []
+  // The saved list is built from what the switches show: every breakdown key
+  // is always listed, so the rows hold them all, and a key switched on twice
+  // before the list refetches is sent once.
+  const breakdowns = rows.filter((r) => r.breakdown).map((r) => r.key)
   const atLimit = data !== undefined && data.breakdowns_max > 0 && data.breakdowns_used >= data.breakdowns_max
   const budget = data ? usedLabel(data.breakdowns_used, data.breakdowns_max) : ''
   // The server lists only the busiest received keys; say so when it left some out.
@@ -65,7 +68,7 @@ export default function AttributesSection({ project, range, rawDays, pending, on
   const blocked = rows.filter((r) => r.blocked).map((r) => r.key)
   const target = (k: string | undefined) => (k === undefined ? null : { name: k })
   const toggle = (key: string, on: boolean) => {
-    if (on) void onSaveBreakdowns([...breakdowns, key])
+    if (on) void onSaveBreakdowns([...new Set([...breakdowns, key])])
     else setUnbreaking({ key, open: true })
   }
   return (
