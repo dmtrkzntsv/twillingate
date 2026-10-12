@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -1523,5 +1524,63 @@ func TestIngestAppliesEventRules(t *testing.T) {
 		t.Errorf("rename onto a block: result %+v, enqueued %+v", res, q.events)
 	} else if want := `event "x" (renamed to "spam") is blocked in this project, dropped`; res.Warnings[0].Reason != want {
 		t.Errorf("rename onto a block: warning %q, want %q", res.Warnings[0].Reason, want)
+	}
+}
+
+// Attribute rules (spec 2026-10-11, D9, D10): a renamed key is stored under
+// its target (the target's own value wins), a blocked key is stripped with
+// one warning per key per batch, and a project without rules is untouched.
+func TestIngestAppliesAttributeRules(t *testing.T) {
+	const otherKey = "ak_other"
+	reg, st := newTestRegistryStore(t,
+		[]manage.ProjectSpec{{Name: "App"}, {Name: "Plain"}},
+		map[int][2]string{0: {testKey, "web"}, 1: {otherKey, "web"}})
+	ctx := context.Background()
+	ops := manage.NewOps(reg, st)
+	pid := reg.Snapshot(ctx).Projects()[0].ID
+	if _, _, err := ops.RenameAttribute(ctx, "t", pid, "a", "b"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ops.BlockAttribute(ctx, "t", pid, "x"); err != nil {
+		t.Fatal(err)
+	}
+	g, _ := geo.New("cloudflare://", t.TempDir(), slog.Default())
+	q := &fakeQueue{}
+	s := New(configtest.Load(t, nil), reg, q, g, fixedSalt{}, q, newFakeForms(), slog.Default())
+
+	w := post(s, envelopeOf(`
+		{"name":"e0","attributes":{"a":"1","b":"2"}},
+		{"name":"e1","attributes":{"a":"3"}},
+		{"name":"e2","attributes":{"x":"4","y":"5"}},
+		{"name":"e3","attributes":{"x":"6"}}`), nil)
+	if w.Code != 202 {
+		t.Fatalf("status = %d, body %s", w.Code, w.Body)
+	}
+	res := decodeResult(t, w)
+	if res.Accepted != 4 || res.Rejected != 0 {
+		t.Errorf("result = %+v, want 4 accepted, 0 rejected", res)
+	}
+	if len(res.Warnings) != 1 || res.Warnings[0].Index != 2 ||
+		res.Warnings[0].Reason != `attribute "x" is blocked in this project, dropped` {
+		t.Errorf("warnings = %+v, want one block warning at index 2", res.Warnings)
+	}
+	want := []map[string]string{{"b": "2"}, {"b": "3"}, {"y": "5"}, {}}
+	if len(q.events) != len(want) {
+		t.Fatalf("events = %+v, want %d", q.events, len(want))
+	}
+	for i, e := range q.events {
+		if !reflect.DeepEqual(e.Attributes, want[i]) {
+			t.Errorf("event %d attributes = %v, want %v", i, e.Attributes, want[i])
+		}
+	}
+
+	// Another project keeps what it sends.
+	q.events = nil
+	w = post(s, `{"key":"`+otherKey+`","events":[{"name":"e","attributes":{"a":"1","x":"2"}}]}`, nil)
+	if res = decodeResult(t, w); res.Accepted != 1 || len(res.Warnings) != 0 {
+		t.Errorf("plain project: result %+v", res)
+	}
+	if len(q.events) != 1 || !reflect.DeepEqual(q.events[0].Attributes, map[string]string{"a": "1", "x": "2"}) {
+		t.Errorf("plain project events = %+v, want attributes unchanged", q.events)
 	}
 }
