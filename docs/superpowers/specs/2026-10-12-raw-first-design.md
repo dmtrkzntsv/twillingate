@@ -1,8 +1,21 @@
 # Raw first: raw events as the only source of truth
 
-Status: draft. Decisions are proposed; the query engine (D5) is chosen by
-measurement (Next steps, step 1). Numbers marked *estimate* are unmeasured.
+Status: draft. Decisions are proposed; the design (D10: A, B or C, C
+favoured) is chosen by measurement (Next steps, step 1). Numbers marked
+*estimate* are unmeasured.
 Date: 2026-10-12
+
+## Requirements
+
+twillingate is positioned as a simple analytics solution for builders.
+
+- **Product analytics, filtering and grouping by several attributes at
+  once.**
+- **Performant:** most dashboard queries are fast; some (a complex
+  aggregation, a 3-year question) may be slower.
+- **Easy to install and maintain**, as SQLite is: one binary, a file or
+  two, nothing else to run.
+- **Boundary:** up to about 1M events a month per server.
 
 ## Envelope
 
@@ -155,20 +168,44 @@ One server takes up to **1M events a month** and keeps raw events for up to
     histograms); distinct users over a range are recomputed from raw, shown
     per day, or estimated with a per-day HyperLogLog sketch (Q5).
   Nothing is declared: the widget's own query defines what is cached.
-- **D10. The query engine is chosen by measurement.** Go has no columnar
-  SQL engine without cgo. The two candidates:
+- **D10. Three designs, chosen by measurement; C is favoured.** Go has no
+  columnar SQL engine without cgo. Against the Requirements:
 
-  | | Pure Go (`parquet-go` + our code) | DuckDB |
-  |---|---|---|
-  | How | read only the needed columns, skip row groups by min/max and dictionaries, load matching rows into in-memory SQLite, run the SQL there | SQL directly over Parquet and the SQLite buffer, vectorized, multi-core |
-  | Broad scan of 36M rows | about minutes; loading into SQLite is the bottleneck *estimate* | under a second for a typical group-by on 4 cores *estimate* |
-  | Dashboards | need D9's cache | likely query raw directly, no cache |
-  | Build | keeps `CGO_ENABLED=0` and `linux/arm` | cgo; drops 32-bit ARM; binary +40–60 MB; needs a per-process memory limit |
-  | Widget SQL | stays SQLite | becomes DuckDB SQL: breaking for user widgets, softened because real attribute columns replace `json_extract` |
+  | | A. SQLite only, raw kept | B. SQLite + Parquet, pure Go | C. SQLite for metadata + DuckDB for events |
+  |---|---|---|---|
+  | Multi-attribute queries | yes, every filter a `json_extract` per row | yes, through our own Parquet reader + in-memory SQLite | yes, real columns, any combination |
+  | Dashboard over 30 days (~1M rows) | ~1–2 s per widget *estimate* | needs D9's cache | well under 1 s *estimate* |
+  | Dashboard over 1 year (~12M rows) | 10–25 s per widget *estimate*; needs D9's cache | needs D9's cache | ~1 s or less *estimate* |
+  | Complex query over 3 years | minutes | minutes; loading into SQLite is the bottleneck *estimate* | seconds |
+  | Size at 36M events | 16–22 GB (7.6 GB with #175) | ~1–2 GB *estimate* | ~1–2 GB *estimate* |
+  | Install | one binary, one file | one binary, a file + a directory of Parquet | one binary, two files (or a file + Parquet, Q9) |
+  | Backups | Litestream | Litestream + uploading files | Litestream for metadata; events need their own (Q9) |
+  | Code we maintain | D9's cache | the most: Parquet writer, compaction, pushdown, cache | the least: SQL straight on the data, likely no aggregates |
+  | Cost | file size, slow long ranges | a small analytics engine of our own | cgo; no 32-bit ARM; binary +40–60 MB; a per-process memory limit; widget SQL becomes DuckDB SQL (close to Postgres; breaking for user widgets, softened because real attribute columns replace `json_extract`) |
+
+  - **A** fails "SQLite stays small" and still needs a cache for long
+    ranges.
+  - **B** keeps a pure-Go build, but moves the maintenance onto us: a
+    columnar query layer, compaction and caching to own, for a product
+    positioned as simple.
+  - **C** fits the Requirements most directly. DuckDB is to analytics what
+    SQLite is to transactions: embedded, one file, no server. At 36M rows it
+    should answer dashboards and combinations straight from raw, with no
+    aggregates, caps or declarations. Users still download one binary.
+  - **Decided 2026-10-12: 32-bit ARM (`linux/arm`) can be dropped.** Its
+    users are Raspberry Pi Zero/1/2, Pis on the 32-bit OS (the 64-bit OS
+    is recommended), older ARMv7 NAS boxes, cheap boards and OpenWrt
+    routers. Still to accept for C: cgo in the release build (DuckDB ships
+    static libraries for linux amd64/arm64 and macOS; arm64 builds on an
+    arm64 runner or with a cross C toolchain), the widget SQL dialect, and
+    backups of the events data.
 
   Targets at the cap, warm: a system dashboard over 1 year loads in under
   2 s; an agent's question over 3 years answers in under 30 s; a
   timeline over 3 years in under 1 s. Settle the targets with the numbers.
+
+  D2–D7 describe B's storage (and C's, if C reads Parquet: Q9). Under A,
+  raw stays in `events` and D2, D5–D7 don't apply.
 
 ### What goes away
 
@@ -182,10 +219,13 @@ One server takes up to **1M events a month** and keeps raw events for up to
 - **D12. Superseded work.** #175's encoding is dropped; its widget-SQL
   allowlist becomes its own change, adjusted to D4's tables. #173 (kept
   events) is closed: every event is kept.
-- **D13. New dependencies.** `github.com/parquet-go/parquet-go` (pure Go,
-  pulls `klauspost/compress`), and DuckDB if D10 picks it. CLAUDE.md allows
-  a third-party dependency only from a very reputable vendor; confirm both
-  qualify, and that parquet-go builds with `CGO_ENABLED=0` for `linux/arm`.
+- **D13. New dependencies.** C: DuckDB and its Go driver
+  (`github.com/duckdb/duckdb-go`, cgo). B: `github.com/parquet-go/parquet-go`
+  (pure Go, pulls `klauspost/compress`). CLAUDE.md allows a third-party
+  dependency only from a very reputable vendor; confirm the chosen one
+  qualifies. With 32-bit ARM dropped, the release targets become
+  linux/amd64 and linux/arm64 (`Makefile` `dist`, `vet`'s `GOARCH=arm`
+  check, `release.yml`, the installer and `docs/deployment.md`).
 
 ## Use cases
 
@@ -258,7 +298,7 @@ stands.
 | SQLite as is, longer raw window | raise `RETENTION_RAW_DAYS` to 1–3 years | rejected: 16–22 GB at the cap, reports scan raw, step 0's risk |
 | SQLite + #175 encoding | 491 → 211 B/row (benchmarked), pure Go, Litestream keeps working | rejected (D12): halves the size but keeps every other problem; mixed speed (system widgets 1.3–2× faster, `json_extract` and text filters slower); irreversible migration |
 | DuckDB, whole store | embedded columnar SQL, one file, Postgres-like dialect | rejected as the whole store: no triggers (`project_tabs`, `dashboard_groups` rely on them), cgo, no Litestream |
-| SQLite for metadata + DuckDB for events | DuckDB can `ATTACH` the SQLite file for joins | kept as D10's DuckDB candidate, reading Parquet rather than its own file |
+| SQLite for metadata + DuckDB for events | DuckDB can `ATTACH` the SQLite file for joins | favoured: design C (D10); its own file or Parquet is Q9 |
 | chDB | ClickHouse engine in-process | rejected: Python-first, thin Go bindings, several hundred MB, cgo |
 | FrostDB (Polar Signals) | pure-Go embeddable columnar store on Arrow/Parquet | rejected: niche, experimental, no SQL |
 | DataFusion | Rust query engine library | rejected: a toolkit, not a database; Rust |
@@ -333,6 +373,13 @@ meets D10's targets:
 - **Q8.** Should `query` allow an unfiltered 3-year scan, or require a range
   or a filter, under its timeout?
 
+- **Q9.** Under C, where events live: one DuckDB file (closest to "a
+  single file"; ingest appends to it, retention and erasure are `DELETE`s,
+  so check that space is reclaimed), or the SQLite buffer + monthly Parquet
+  files that DuckDB queries (D2–D7: retention deletes files, immutable files
+  are easy to back up, but more files and our own writer). And how the
+  events data is backed up, since Litestream covers only SQLite.
+
 ## Next steps
 
 0. **Verify the raw-window risk** (Problem, last item) with a test: raise
@@ -340,24 +387,27 @@ meets D10's targets:
    day, age it out, and compare the day's aggregates. If confirmed, check
    prod (days whose aggregates dropped after the raise) and decide whether
    to lower the window until D3 ships. Independent of everything else.
-1. **Measure both engines** with `scripts/archive-bench` (generator done;
-   write the rest) on 36M rows (1M a month × 36 months, 2023-10-13 →
-   2026-10-12):
-   - Parquet bytes per row and write time per month, for each sort order
-     (Q3), with D4's wide attribute columns;
+1. **Measure A against C first** (about an hour) with
+   `scripts/archive-bench` (generator done; write the rest) on 36M rows
+   (1M a month × 36 months, 2023-10-13 → 2026-10-12):
+   - generate the rows into SQLite (A's data);
+   - load the same rows into DuckDB with D4's wide attribute columns, both
+     as a DuckDB file and as monthly Parquet files (Q9); record sizes and
+     load times. The DuckDB command-line tool is enough: no cgo in
+     twillingate is needed to measure;
    - a query set, each over 30 days, 1 year and 3 years: views and visitors
      per day; sessions and bounce rate; top pages; product events per name
      per day; DAU; exact distinct users over the range; a two-attribute
      combination (`status` × `reason`); a key × `$country`; a retention
      cohort; one actor's timeline; first occurrence of a common and a rare
      event name;
-   - run each with the DuckDB command-line tool over the Parquet files (no
-     cgo in twillingate needed to measure), with the pure-Go path (column
-     pushdown + in-memory SQLite), and on today's SQLite as the baseline;
-   - DuckDB's memory at a fixed limit; a file rewrite without one actor's
-     rows (D6); `CGO_ENABLED=0 GOARCH=arm go build` with parquet-go (D13).
-   Fill the *estimates* and compare against D10's targets.
-2. **Choose the engine** (D10), settle Q1–Q8, then write the implementation
+   - DuckDB's memory at a fixed limit (e.g. 256 MB, one process per
+     customer); appending a 10-second batch while queries run; deleting a
+     month (retention) and one actor's rows (erasure) from the DuckDB file,
+     and the file size after.
+   Fill the *estimates* and compare against D10's targets. Measure B (the
+   pure-Go path) only if C is ruled out.
+2. **Choose the design** (D10), settle Q1–Q9, then write the implementation
    plan.
 3. **Implementation order** (each its own PR; detail after step 2):
    1. Late window (D3). Fixes step 0's risk on its own.
