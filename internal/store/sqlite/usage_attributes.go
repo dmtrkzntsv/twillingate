@@ -221,10 +221,50 @@ func countReceived(ctx context.Context, tx *sql.Tx, today string) error {
 		WHERE project_id IN (SELECT id FROM projects)`); err != nil {
 		return fmt.Errorf("attribute catalog: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM project_attributes WHERE breakdown = 0
-		AND NOT EXISTS (SELECT 1 FROM usage_attributes u
-		                WHERE u.project_id = project_attributes.project_id AND u.attr_key = project_attributes.key)`); err != nil {
+	if err := pruneCatalogs(ctx, tx); err != nil {
 		return fmt.Errorf("attribute catalog: %w", err)
 	}
 	return nil
+}
+
+// pruneCatalogs runs pruneCatalog for every project. The ids are read
+// first: the transaction's one connection cannot run the deletes while a
+// result set is open on it.
+func pruneCatalogs(ctx context.Context, tx *sql.Tx) error {
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM projects`)
+	if err != nil {
+		return err
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if err := pruneCatalog(ctx, tx, id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// pruneCatalog drops the project's catalog rows that are no breakdown and
+// that no usage_attributes row holds any more (spec D3). The subquery is
+// uncorrelated: SQLite reads the project's usage keys once into a set,
+// where a correlated NOT EXISTS probes usage_attributes per catalog row by
+// its project_id prefix alone (the key comes after day in its primary
+// key), which is quadratic in the key count on a database never analyzed.
+func pruneCatalog(ctx context.Context, tx *sql.Tx, projectID int64) error {
+	_, err := tx.ExecContext(ctx, `DELETE FROM project_attributes
+		WHERE project_id = ?1 AND breakdown = 0
+		AND key NOT IN (SELECT attr_key FROM usage_attributes WHERE project_id = ?1)`, projectID)
+	return err
 }

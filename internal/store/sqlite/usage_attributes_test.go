@@ -302,14 +302,20 @@ func TestWriteEventsAddsCatalogRows(t *testing.T) {
 
 // The daily pass adds the keys usage_attributes holds that the catalog
 // misses (never for a project that no longer exists), and drops the
-// non-breakdown rows with no usage row; a breakdown row stays.
+// non-breakdown rows with no usage row; a breakdown row stays. Each
+// project's prune reads its own usage rows only: project 2's a goes,
+// though project 1 received an a.
 func TestCountReceivedHealsAndPrunesCatalog(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	if id := seedDeclaredProject(t, db, nil); id != 1 {
 		t.Fatalf("project id %d, want 1", id)
 	}
+	if id := seedDeclaredProject(t, db, nil); id != 2 {
+		t.Fatalf("project id %d, want 2", id)
+	}
 	for _, q := range []string{
+		`INSERT INTO project_attributes (project_id, key, breakdown) VALUES (2, 'a', 0)`,
 		`INSERT INTO usage_attributes (project_id, day, attr_key, events) VALUES (1, '2026-08-04', 'a', 0)`,
 		// A project deleted since: usage_attributes has no foreign key.
 		`INSERT INTO usage_attributes (project_id, day, attr_key, events) VALUES (9999, '2026-08-04', 'orphan', 0)`,
