@@ -237,8 +237,9 @@ rename, and renaming a blocked key replaces the block. Every rule operation is
 audited.
 
 `rename_attribute {project_id, from, to}` gives a key a name not in use. In
-one transaction it rewrites everything that names `from`, keeps a rule, and
-returns it with `rewritten`, the rows changed per table:
+one transaction it rewrites everything that names `from` and keeps a rule; it
+returns the rule with `rewritten`, the rows changed in `events`,
+`agg_product_attrs`, `agg_measures_attrs` and `usage_attributes`:
 
 - **Raw events** of the project's product and measures families that carry
   `from`: its value moves to `to`. Where an event carries both, **the target
@@ -247,8 +248,15 @@ returns it with `rewritten`, the rows changed per table:
   rows for `to`.
 - **Usage**: the per-day key counts `list_attributes` reads
   (`usage_attributes`).
-- **The catalog**: `from`'s row goes, and `to` is a breakdown if either was,
-  so the `attr_*` column follows the key and the breakdown budget never grows.
+- **The catalog** (not counted in `rewritten`): `from`'s row goes, and `to`
+  is a breakdown if either was, so the `attr_*` column follows the key and the
+  breakdown budget never grows.
+
+A rename or a merge rewrites the project's raw product and measures rows in
+that one transaction, so its time grows with them: about 20 µs a raw row on
+modest hardware, some 1.5 s per 66,000 rows. Ingest is buffered meanwhile: events wait in the write buffer, and a very long rewrite
+on a huge project can fill it (`BUFFER_CAPACITY`), past which events are
+dropped.
 
 Events sent later with `from`, by an app version still in the field, are
 stored with `to`, with no warning. The target wins there too: an event that
@@ -297,8 +305,9 @@ events:
 `remove_attribute_rule {project_id, key}` deletes the rule for `key`. A rename
 or merge stops mapping, and the history it rewrote stays where it went. A
 block stops stripping: the key is stored again. Removing a block before the
-next daily pass loses nothing; after it, the key's aggregated breakdown is
-gone for good.
+next daily pass keeps the key's aggregates; after it, the key's aggregated
+breakdown is gone for good. Either way, events stored while the key was
+blocked stay without it.
 
 `list_attributes` shows each rule on the keys it touches, so every rule can be
 found there: a blocked key is marked `blocked`; the keys renamed or merged into
@@ -1416,7 +1425,7 @@ take `project_id`, `from` and `to` as `YYYY-MM-DD` unless noted.
 | `limits` | none (no `project_id`) | The limits in force, each with a `group`, `name`, `value`, `unit` (`days`, `bytes`, `characters`, `seconds`; absent for a count) and `description`, in three groups: `retention` (`RETENTION_RAW_DAYS`, `RETENTION_AGGREGATE_DAYS`, `RETENTION_ARCHIVED_DAYS`, `RETENTION_FORMS_DRAFT_DAYS`), `caps` (`ATTRIBUTE_VALUES_TOP_N`, which caps views breakdowns and attribute values alike, `ATTRIBUTE_BREAKDOWNS_MAX`, `IDENTITIES_TOP_N`) and `ingest`, the wire format's fixed [limits](#limits) and [form limits](#form-submissions). A setting carries its `setting` and `default`; a fixed limit neither. `zero` says what 0 means where it is not the number (`no cap`, `kept forever`). The output also carries `raw_events`, `{held, window_days}`: the raw events stored, of every family and project (what the server's disk and its dashboards' scans of the raw window follow), counted at most every 5 minutes (a full scan of the raw rows, seconds on a server holding millions): a call past the 5 minutes answers the previous count and starts the next, one past 10 waits for it, so the count is never more than 10 minutes old; and `window_days`, `RETENTION_RAW_DAYS` (0 keeps only today's rows raw). Absent when the last count failed, `CONSOLE_QUERY_TIMEOUT` included; a failure is logged once and kept for the same 5 minutes. And `ingest_disabled`, `true` when `INGEST_DISABLED` is set and every ingest route refuses with `429` |
 | `cap_usage` | `from`, `to` (optional: the last 30 days) | Per capped dimension — views breakdowns and kinds, attribute keys, `users`/`groups` — the busiest day's values against the `cap`, `days` with data, `days_capped` (an `(other)` row; for users and groups, the cap reached) and `folded_share` |
 | `list_attributes` | `from`, `to` (optional: the last 30 days) | The project's attributes, busiest first: each key's `events` and `max_values` (the busiest event's distinct values on one day, against `ATTRIBUTE_VALUES_TOP_N`), counted by the daily pass so today's arrive the night after (a key first received today has `events` 0 and `max_values` `null`), `received`, `breakdown`, `blocked` and `aliases` (the keys renamed or merged into it; absent when none) — for the 500 busiest keys plus every breakdown key, every blocked key and every key with aliases (`received` false when none carried it); a key renamed away is listed only in its target's `aliases`. Also `keys_total` (the distinct keys received, keys renamed away left out), `values_cap`, `breakdowns_used` and `breakdowns_max` (`ATTRIBUTE_BREAKDOWNS_MAX`). Kept for the raw window only |
-| `usage` | `project_id` (optional: every project), `from`, `to` (optional: the last 30 days) | Per project: `views`, product `events` and measure `samples` per day and in total, `last_received_at`, `first_day` (the oldest day with data, stored counts included), `raw_days`, `rolled_up_days`, an estimated `size` (raw rows and aggregates, measured daily by the daily pass, which also runs at start: the newest, with the day it was `measured_at`; `null` until the first measurement) and each day's measured `total_bytes` in the series (`null` on days not measured), `unused_attributes` (declared keys no event carried; computed only with `project_id`, `null` for the all-projects answer); plus the database's size on disk now and per day (`database_series`). Days before the newest daily pass read the counts it stored, which outlive the aggregates' retention. Each series day also carries `declared_attributes` and, counted the night after while the day's rows are raw and kept once rolled up, the distinct `attribute_keys` and `attribute_values` received and the `attribute_values_folded` into `(other)` (`null` on days not stored) |
+| `usage` | `project_id` (optional: every project), `from`, `to` (optional: the last 30 days) | Per project: `views`, product `events` and measure `samples` per day and in total, `last_received_at`, `first_day` (the oldest day with data, stored counts included), `raw_days`, `rolled_up_days`, an estimated `size` (raw rows and aggregates, measured daily by the daily pass, which also runs at start: the newest, with the day it was `measured_at`; `null` until the first measurement) and each day's measured `total_bytes` in the series (`null` on days not measured), `unused_attributes` (breakdown keys no event carried; computed only with `project_id`, `null` for the all-projects answer); plus the database's size on disk now and per day (`database_series`). Days before the newest daily pass read the counts it stored, which outlive the aggregates' retention. Each series day also carries `declared_attributes` and, counted the night after while the day's rows are raw and kept once rolled up, the distinct `attribute_keys` and `attribute_values` received and the `attribute_values_folded` into `(other)` (`null` on days not stored) |
 | `views_overview` | `kind` (optional) | Visitors, views, sessions, bounces, average session length per day, summed across kinds unless `kind` filters one |
 | `views_breakdown` | `dimension`, `limit` (default 20) | Top rows for one of `kinds`, `paths`, `hosts`, `referrers`, `utm`, `countries`, `platforms`, `os`, `browsers`, `app_versions`, `devices`, `displays`, `consent`, `locales`. Two-key dimensions return both columns. `consent` is `given`, `none` or `unknown`. `locales` pairs `browser_locale` with `app_locale`, either empty when not sent. |
 | `product_events` | `event` (optional filter) | Count and unique users per event name, plus daily totals |
@@ -1479,7 +1488,7 @@ curl -H "Authorization: Bearer $TOKEN" \
 | `GET` | `/api/limits` | `limits` | — |
 | `GET` | `/api/usage` | `usage` | query: `project_id`, `from`, `to` |
 | `GET` | `/api/projects/{project_id}/cap-usage` | `cap_usage` | query: `from`, `to` |
-| `GET` | `/api/projects/{project_id}/attributes` | `list_attributes` | query: `from`, `to` → `{"project_id","from","to","attributes":[{"key","events","max_values","received","breakdown","blocked","aliases"}],"keys_total","values_cap","breakdowns_used","breakdowns_max"}` |
+| `GET` | `/api/projects/{project_id}/attributes` | `list_attributes` | query: `from`, `to` → `{"project_id","from","to","attributes":[{"key","events","max_values","received","breakdown","blocked","aliases"}],"keys_total","values_cap","breakdowns_used","breakdowns_max"}`; `aliases` is absent when empty |
 | `POST` | `/api/projects` | `create_project` | body: `name`, `allowed_origins`, `attributes`, `skip_key` → 201 |
 | `PATCH` | `/api/projects/{project_id}` | `update_project` | body: fields to change (merge); `allowed_origins: []` clears |
 | `POST` | `/api/projects/{project_id}/move` | `move_project` | body: `after` |

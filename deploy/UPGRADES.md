@@ -714,13 +714,16 @@ declare more at once. Set either back in `twillingate.env` (compose:
 No pre-checks. The `received_attributes` tool becomes `list_attributes`,
 and its route `GET /api/received-attributes` becomes
 `GET /api/projects/{project_id}/attributes`, where `project_id` is
-required; the old tool is gone and the old route answers 404. Its list is `attributes`
-instead of `keys`, each key's `declared` is `breakdown`, and each key also
-carries `blocked` and `aliases`. Migration 040 renames the table
-`received_attributes` to `usage_attributes`, replaces `event_rules` by
-`rules` (event rules keep their behaviour, with `kind = 'event'`) and
-`projects.attributes` by `project_attributes`, one row per key a project
-has, with its breakdown flag. `list_projects` and `schema://projects`
-answer `attributes` ordered by key. SQL or scripts naming any of the
-old names must follow. Rollback: an older binary reads
-the old table names; restore the snapshot.
+required; the old tool is gone and the old route answers 404. Its list
+is `attributes` instead of `keys`, each key's `declared` is `breakdown`,
+and each key also carries `blocked` and `aliases`. Migration 040 renames
+the table `received_attributes` to `usage_attributes`, replaces
+`event_rules` by `rules` (event rules keep their behaviour, with
+`kind = 'event'`) and `projects.attributes` by `project_attributes`,
+one row per key a project has, with its breakdown flag. `list_projects`
+and `schema://projects` answer `attributes` ordered by key. SQL or
+scripts naming any of the old names must follow.
+
+Rollback: an older binary cannot run on schema 040, since it reads the
+old table names and the dropped column. Roll back by restoring the
+backup taken before the upgrade; events ingested since are lost.
