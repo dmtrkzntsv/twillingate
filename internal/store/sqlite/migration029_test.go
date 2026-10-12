@@ -16,7 +16,7 @@ import (
 // No view reads the old key any more.
 func TestMigration029ViewsReadTheAttributeCap(t *testing.T) {
 	db := newTestDBAt(t, 28)
-	withEventRules(t, db)
+	withWriteTables(t, db)
 	ctx := context.Background()
 	for key, value := range map[string]string{"views_dimensions_top_n": "1", "attributes_top_n": "2"} {
 		if err := db.SetMeta(ctx, key, value); err != nil {

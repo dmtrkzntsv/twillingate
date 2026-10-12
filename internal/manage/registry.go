@@ -44,6 +44,11 @@ type Snapshot struct {
 	keys    []keyOwner // active keys of non-archived projects only
 	origins map[int64]originSet
 	rules   map[int64]map[ruleKey]store.EventRule // event rules by project (event rules D9)
+	// attrRules and attrRuleList are the attribute rules by project: the
+	// maps the write path applies, and the rules in key order. A project
+	// without rules has no entry in either.
+	attrRules    map[int64]store.AttributeRuleSet
+	attrRuleList map[int64][]store.AttributeRule
 }
 
 type ruleKey struct {
@@ -75,7 +80,8 @@ const unknownVersion = -1
 func New(st Store, logger *slog.Logger) *Registry {
 	r := &Registry{st: st, logger: logger}
 	r.snap.Store(&Snapshot{byID: map[int64]*Project{}, origins: map[int64]originSet{},
-		rules: map[int64]map[ruleKey]store.EventRule{}})
+		rules: map[int64]map[ruleKey]store.EventRule{}, attrRules: map[int64]store.AttributeRuleSet{},
+		attrRuleList: map[int64][]store.AttributeRule{}})
 	return r
 }
 
@@ -90,14 +96,37 @@ func (r *Registry) Reload(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("manage: load event rules: %w", err)
 	}
+	attrRules, err := r.st.LoadAttributeRules(ctx)
+	if err != nil {
+		return fmt.Errorf("manage: load attribute rules: %w", err)
+	}
 	v, err := r.st.ConfigVersion(ctx)
 	if err != nil {
 		return fmt.Errorf("manage: config version: %w", err)
 	}
 	s := &Snapshot{
-		byID:    make(map[int64]*Project, len(ps)),
-		origins: make(map[int64]originSet, len(ps)),
-		rules:   make(map[int64]map[ruleKey]store.EventRule),
+		byID:         make(map[int64]*Project, len(ps)),
+		origins:      make(map[int64]originSet, len(ps)),
+		rules:        make(map[int64]map[ruleKey]store.EventRule),
+		attrRules:    make(map[int64]store.AttributeRuleSet),
+		attrRuleList: make(map[int64][]store.AttributeRule),
+	}
+	for _, ar := range attrRules {
+		set := s.attrRules[ar.ProjectID]
+		switch ar.Action {
+		case store.EventRuleRename:
+			if set.Renamed == nil {
+				set.Renamed = map[string]string{}
+			}
+			set.Renamed[ar.Key] = ar.To
+		case store.EventRuleBlock:
+			if set.Blocked == nil {
+				set.Blocked = map[string]bool{}
+			}
+			set.Blocked[ar.Key] = true
+		}
+		s.attrRules[ar.ProjectID] = set
+		s.attrRuleList[ar.ProjectID] = append(s.attrRuleList[ar.ProjectID], ar)
 	}
 	for _, er := range rules {
 		if s.rules[er.ProjectID] == nil {
@@ -258,6 +287,20 @@ func (s *Snapshot) ResolveEvent(projectID int64, family store.Family, name strin
 	}
 	r, ok := rs[ruleKey{family, name}]
 	return name, ok && r.Action == store.EventRuleBlock
+}
+
+// AttributeRules is the project's attribute rules as the write path applies
+// them; the zero value (maps nothing) when it has none. The maps are the
+// snapshot's own, shared by every reader: callers must not modify them.
+func (s *Snapshot) AttributeRules(projectID int64) store.AttributeRuleSet {
+	return s.attrRules[projectID]
+}
+
+// AttributeRuleList is the project's attribute rules ordered by key, nil
+// when it has none. The slice is the snapshot's own, shared by every
+// reader: callers must not modify it or its elements.
+func (s *Snapshot) AttributeRuleList(projectID int64) []store.AttributeRule {
+	return s.attrRuleList[projectID]
 }
 
 func (s *Snapshot) Project(id int64) *Project { return s.byID[id] }

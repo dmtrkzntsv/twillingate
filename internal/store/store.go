@@ -218,13 +218,18 @@ type RegistryProject struct {
 	ID             int64 // 0 on create; assigned by the store
 	Name           string
 	AllowedOrigins string // JSON array, "[]" if none
-	Attributes     string // JSON array, "[]" if none declared
+	Attributes     string // JSON array of the breakdown keys (project_attributes), by key; "[]" if none
 	Archived       bool
 	ArchivedAt     string // RFC 3339 UTC, "" = live
 	SortKey        string // its place in the order (migration 034)
+	// KeepBreakdowns tells UpdateProject to leave the catalog's breakdown
+	// flags as they are and ignore Attributes: the caller did not send a
+	// list, so a stale copy of the current one must not be written back
+	// over a rule that changed it since. Never set on a loaded row.
+	KeepBreakdowns bool
 }
 
-// EventRule is one row of event_rules (migration 039): a rename (To set)
+// EventRule is one event rule (rules with kind 'event', migration 040): a rename (To set)
 // or a block of one event name in one project and family.
 type EventRule struct {
 	ProjectID int64
@@ -239,6 +244,27 @@ const (
 	EventRuleRename = "rename"
 	EventRuleBlock  = "block"
 )
+
+// AttributeRule is an attribute rule (rules.kind = 'attribute', family
+// 'event'): a rename of Key to To, or a block of Key (To "").
+type AttributeRule struct {
+	ProjectID int64
+	Key       string
+	Action    string // EventRuleRename or EventRuleBlock: the same two actions
+	To        string
+	CreatedAt string // RFC 3339 UTC
+}
+
+// AttributeRuleSet is one project's attribute rules as the write path
+// applies them: Renamed maps a key to its target, Blocked holds the
+// blocked keys. The zero value maps nothing.
+type AttributeRuleSet struct {
+	Renamed map[string]string
+	Blocked map[string]bool
+}
+
+// Empty reports whether the set maps nothing, the fast path.
+func (r AttributeRuleSet) Empty() bool { return len(r.Renamed) == 0 && len(r.Blocked) == 0 }
 
 // ProjectSortKey is one project's place in the order (migration 034).
 type ProjectSortKey struct {
@@ -271,7 +297,8 @@ type Store interface {
 	AggregateProductDay(ctx context.Context, projectID int64, day civil.Date, attrs []string, topN int) error
 	AggregateMeasureDay(ctx context.Context, projectID int64, day civil.Date, attrs []string, topN int) error
 	// DropBlockedAggregates deletes the project's per-event aggregates of
-	// every blocked event name (event rules D11).
+	// every blocked event name (event rules D11), and the attribute
+	// aggregates of every blocked attribute key (project attributes D12).
 	DropBlockedAggregates(ctx context.Context, projectID int64) error
 	// Event rules (migration 039): LoadEventRules reads them all; the
 	// three mutations are audited from a in the same transaction.
@@ -279,6 +306,12 @@ type Store interface {
 	RenameEvent(ctx context.Context, projectID int64, family Family, from, to string, merge bool, a AuditEntry) (map[string]int64, error)
 	BlockEvent(ctx context.Context, projectID int64, family Family, name string, a AuditEntry) error
 	RemoveEventRule(ctx context.Context, projectID int64, family Family, name string, a AuditEntry) error
+	// Attribute rules: the same two actions on custom attribute keys,
+	// audited the same way.
+	LoadAttributeRules(ctx context.Context) ([]AttributeRule, error)
+	RenameAttribute(ctx context.Context, projectID int64, from, to string, merge bool, a AuditEntry) (map[string]int64, error)
+	BlockAttribute(ctx context.Context, projectID int64, key string, a AuditEntry) error
+	RemoveAttributeRule(ctx context.Context, projectID int64, key string, a AuditEntry) error
 	UpsertActors(ctx context.Context, projectID int64, day civil.Date) error
 	AggregateRetentionDay(ctx context.Context, projectID int64, day civil.Date) error
 	PruneActors(ctx context.Context, projectID int64, before civil.Date) error

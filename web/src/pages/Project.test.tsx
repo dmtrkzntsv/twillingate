@@ -11,7 +11,8 @@ import { readLastTab, writeLastTab } from '@/lib/last-tab'
 
 const actions = {
   update: vi.fn(), archive: vi.fn(), restore: vi.fn(), issueKey: vi.fn(),
-  disableKey: vi.fn(), enableKey: vi.fn(), create: vi.fn(), renameEvent: vi.fn(), blockEvent: vi.fn(), removeEventRule: vi.fn(), addEventAlias: vi.fn(), pending: false,
+  disableKey: vi.fn(), enableKey: vi.fn(), create: vi.fn(), renameEvent: vi.fn(), blockEvent: vi.fn(), removeEventRule: vi.fn(), addEventAlias: vi.fn(),
+  renameAttribute: vi.fn(), mergeAttribute: vi.fn(), blockAttribute: vi.fn(), removeAttributeRule: vi.fn(), addAttributeAlias: vi.fn(), pending: false,
 }
 vi.mock('@/hooks/use-project-actions', () => ({ useProjectActions: () => actions }))
 
@@ -40,9 +41,12 @@ beforeEach(() => {
     { project_id: 4, label: 'old', key: 'ak_old_123456789', state: 'disabled' },
   ] })
   vi.spyOn(endpoints, 'usage').mockResolvedValue({ from: 'a', to: 'b', database_bytes: 0, database_series: [], projects: [] })
-  vi.spyOn(endpoints, 'receivedAttributes').mockResolvedValue({
-    project_id: 4, from: 'a', to: 'b', values_cap: 50, breakdowns_used: 1, breakdowns_max: 50, keys_total: 1,
-    keys: [{ key: 'plan', events: 900, max_values: 3, received: true, declared: true }],
+  vi.spyOn(endpoints, 'listAttributes').mockResolvedValue({
+    project_id: 4, from: 'a', to: 'b', values_cap: 50, breakdowns_used: 1, breakdowns_max: 50, keys_total: 2,
+    attributes: [
+      { key: 'plan', events: 900, max_values: 3, received: true, breakdown: true, blocked: false },
+      { key: 'tier', events: 20, max_values: 2, received: true, breakdown: false, blocked: false },
+    ],
   })
   vi.spyOn(endpoints, 'capUsage').mockResolvedValue({ project_id: 4, from: 'a', to: 'b', dimensions: [] })
   vi.spyOn(endpoints, 'eventNames').mockResolvedValue({ events: [{ family: 'product', name: 'checkout', events: 120 }] })
@@ -120,43 +124,48 @@ describe('Project', () => {
     expect(actions.update).toHaveBeenCalledWith(4, { allowed_origins: ['https://econumo.com', 'https://app.econumo.com'] })
   })
 
-  it('places Breakdowns between Allowed origins and Ingest keys', async () => {
+  it('places Attributes right after Events, before Ingest keys', async () => {
     renderAt('/projects/4/settings')
-    await screen.findByRole('region', { name: 'Breakdowns' })
+    await screen.findByRole('region', { name: 'Attributes' })
     const names = screen.getAllByRole('region').map((r) => r.getAttribute('aria-label'))
+    expect(names).not.toContain('Breakdowns')
     expect(names.indexOf('Allowed origins')).toBeGreaterThan(-1)
-    expect(names.indexOf('Allowed origins')).toBeLessThan(names.indexOf('Breakdowns'))
-    expect(names.indexOf('Breakdowns')).toBeLessThan(names.indexOf('Ingest keys'))
+    expect(names.indexOf('Allowed origins')).toBeLessThan(names.indexOf('Events'))
+    expect(names.indexOf('Attributes')).toBe(names.indexOf('Events') + 1)
+    expect(names.indexOf('Attributes')).toBeLessThan(names.indexOf('Ingest keys'))
   })
 
-  it('lists the breakdowns and removes one through PATCH after confirming', async () => {
+  it('switches a breakdown off through PATCH after confirming', async () => {
     const user = userEvent.setup()
     actions.update.mockResolvedValue(true)
     renderAt('/projects/4/settings')
-    const section = await screen.findByRole('region', { name: 'Breakdowns' })
-    expect(await within(section).findByText('900 events · 3 values')).toBeInTheDocument()
-    await user.click(within(section).getByRole('button', { name: 'Remove plan' }))
+    const section = await screen.findByRole('region', { name: 'Attributes' })
+    expect(await within(section).findAllByText('900 events · 3 values')).not.toHaveLength(0)
+    await user.click(within(section).getByRole('switch', { name: 'Break down plan' }))
     expect(actions.update).not.toHaveBeenCalled()
     await user.click(screen.getByRole('button', { name: 'Remove breakdown' }))
     expect(actions.update).toHaveBeenCalledWith(4, { attributes: [] })
   })
 
-  it('adds a breakdown through PATCH with the full new list', async () => {
+  it('switches a breakdown on through PATCH with the full new list', async () => {
     const user = userEvent.setup()
     actions.update.mockResolvedValue(true)
-    vi.spyOn(endpoints, 'receivedAttributes').mockResolvedValue({
-      project_id: 4, from: 'a', to: 'b', values_cap: 50, breakdowns_used: 1, breakdowns_max: 50, keys_total: 2,
-      keys: [
-        { key: 'plan', events: 900, max_values: 3, received: true, declared: true },
-        { key: 'tier', events: 20, max_values: 2, received: true, declared: false },
-      ],
-    })
     renderAt('/projects/4/settings')
-    const section = await screen.findByRole('region', { name: 'Breakdowns' })
-    await user.click(within(section).getByRole('button', { name: 'Add breakdown' }))
-    await user.click(await screen.findByRole('radio', { name: /tier/ }))
-    await user.click(screen.getByRole('button', { name: 'Add' }))
+    const section = await screen.findByRole('region', { name: 'Attributes' })
+    await user.click(await within(section).findByRole('switch', { name: 'Break down tier' }))
     expect(actions.update).toHaveBeenCalledWith(4, { attributes: ['plan', 'tier'] })
+  })
+
+  it('blocks an attribute naming the raw retention days', async () => {
+    const user = userEvent.setup()
+    actions.blockAttribute.mockResolvedValue(true)
+    renderAt('/projects/4/settings')
+    const section = await screen.findByRole('region', { name: 'Attributes' })
+    await user.click(await within(section).findByRole('button', { name: 'Actions for tier' }))
+    await user.click(await screen.findByRole('menuitem', { name: 'Block…' }))
+    expect(await screen.findByText(/expire within 9 days/)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Block attribute' }))
+    expect(actions.blockAttribute).toHaveBeenCalledWith(4, { key: 'tier' })
   })
 
   it('lists keys and disables one after confirming', async () => {
@@ -182,14 +191,14 @@ describe('Project', () => {
     expect(actions.enableKey).toHaveBeenCalledWith(4, 'old')
   })
 
-  it('lists the events between Breakdowns and the keys, and blocks one naming the raw retention days', async () => {
+  it('lists the events before Attributes and the keys, and blocks one naming the raw retention days', async () => {
     const user = userEvent.setup()
     actions.blockEvent.mockResolvedValue(true)
     actions.removeEventRule.mockResolvedValue(true)
     renderAt('/projects/4/settings')
     const events = await screen.findByRole('region', { name: 'Events' })
     const regions = screen.getAllByRole('region').map((r) => r.getAttribute('aria-label'))
-    expect(regions.indexOf('Events')).toBe(regions.indexOf('Breakdowns') + 1)
+    expect(regions.indexOf('Events')).toBe(regions.indexOf('Attributes') - 1)
     expect(regions.indexOf('Events')).toBeLessThan(regions.indexOf('Ingest keys'))
     await user.click(await within(events).findByRole('button', { name: 'Actions for checkout (product)' }))
     await user.click(await screen.findByRole('menuitem', { name: 'Block…' }))

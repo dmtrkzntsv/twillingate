@@ -11,24 +11,10 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
-// withReceivedAttributes creates received_attributes on a database pinned
-// below migration 028, for a test that writes events through WriteEvents
-// before migrating further (never through 28, which would create it again).
-func withReceivedAttributes(t *testing.T, db *DB) {
-	t.Helper()
-	body, err := migrationFS.ReadFile("migrations/028_received_attributes.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.db.Exec(string(body)); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// receivedRows reads received_attributes as "project/day/key=events" lines, sorted.
+// receivedRows reads usage_attributes as "project/day/key=events" lines, sorted.
 func receivedRows(t *testing.T, db *DB) []string {
 	t.Helper()
-	rows, err := db.db.Query(`SELECT project_id, day, attr_key, events FROM received_attributes`)
+	rows, err := db.db.Query(`SELECT project_id, day, attr_key, events FROM usage_attributes`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +97,7 @@ func TestWriteEventsWritesOnlyNewReceivedKeys(t *testing.T) {
 	if err := db.WriteEvents(ctx, first); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.db.Exec(`DELETE FROM received_attributes`); err != nil {
+	if _, err := db.db.Exec(`DELETE FROM usage_attributes`); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.WriteEvents(ctx, []store.Event{
@@ -140,18 +126,18 @@ func TestWriteEventsWritesOnlyNewReceivedKeys(t *testing.T) {
 func TestReceivedSeenKeepsTheNewestTwoDays(t *testing.T) {
 	var s receivedSeen
 	k := func(day, key string) receivedKey { return receivedKey{1, day, key} }
-	s.remember([]receivedKey{k("2026-08-01", "a"), k("2026-08-02", "b")})
-	if got := s.unseen(receivedKeys{k("2026-08-01", "a"): {}, k("2026-08-02", "b"): {}}); len(got) != 0 {
+	s.remember([]receivedKey{k("2026-08-01", "a"), k("2026-08-02", "b")}, 0)
+	if got, _ := s.unseen(receivedKeys{k("2026-08-01", "a"): {}, k("2026-08-02", "b"): {}}); len(got) != 0 {
 		t.Fatalf("unseen = %v, want none", got)
 	}
-	s.remember([]receivedKey{k("2026-08-03", "c")})
-	got := s.unseen(receivedKeys{k("2026-08-01", "a"): {}, k("2026-08-02", "b"): {}, k("2026-08-03", "c"): {}})
+	s.remember([]receivedKey{k("2026-08-03", "c")}, 0)
+	got, _ := s.unseen(receivedKeys{k("2026-08-01", "a"): {}, k("2026-08-02", "b"): {}, k("2026-08-03", "c"): {}})
 	if !reflect.DeepEqual(got, []receivedKey{k("2026-08-01", "a")}) {
 		t.Fatalf("unseen after the newest day moved = %v, want only 08-01's key", got)
 	}
 	// An older day's key is not remembered at all.
-	s.remember([]receivedKey{k("2026-07-30", "old")})
-	if got := s.unseen(receivedKeys{k("2026-07-30", "old"): {}}); len(got) != 1 {
+	s.remember([]receivedKey{k("2026-07-30", "old")}, 0)
+	if got, _ := s.unseen(receivedKeys{k("2026-07-30", "old"): {}}); len(got) != 1 {
 		t.Fatalf("an old day's key was remembered: unseen = %v", got)
 	}
 }
@@ -179,17 +165,17 @@ func TestRecordUsageHistoryRecountsReceivedAttributes(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A stale row for a day with no raw rows left (rolled up): pruned.
-	if _, err := db.db.Exec(`INSERT INTO received_attributes VALUES (1, '2026-07-01', 'plan', 9, 2)`); err != nil {
+	if _, err := db.db.Exec(`INSERT INTO usage_attributes VALUES (1, '2026-07-01', 'plan', 9, 2)`); err != nil {
 		t.Fatal(err)
 	}
 	// Ingest's events 0 (here a stray number) for a raw day: counted.
-	if _, err := db.db.Exec(`UPDATE received_attributes SET events = 99 WHERE day = '2026-08-02'`); err != nil {
+	if _, err := db.db.Exec(`UPDATE usage_attributes SET events = 99 WHERE day = '2026-08-02'`); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.RecordUsageHistory(ctx, ts("2026-08-04T03:00:00Z")); err != nil {
 		t.Fatal(err)
 	}
-	rows, err := db.db.Query(`SELECT day, attr_key, events, max_values FROM received_attributes ORDER BY day, attr_key`)
+	rows, err := db.db.Query(`SELECT day, attr_key, events, max_values FROM usage_attributes ORDER BY day, attr_key`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -245,7 +231,7 @@ func TestRecordUsageHistoryRecountsPartitionsAndReservedColumns(t *testing.T) {
 	if err := db.RecordUsageHistory(ctx, ts("2026-08-04T03:00:00Z")); err != nil {
 		t.Fatal(err)
 	}
-	rows, err := db.db.Query(`SELECT attr_key, events, max_values FROM received_attributes
+	rows, err := db.db.Query(`SELECT attr_key, events, max_values FROM usage_attributes
 		WHERE project_id = 1 AND day = '2026-08-02' ORDER BY attr_key`)
 	if err != nil {
 		t.Fatal(err)
@@ -267,6 +253,84 @@ func TestRecordUsageHistoryRecountsPartitionsAndReservedColumns(t *testing.T) {
 	// measures together) and $device_model 2.
 	want := []string{"$device_model=5/1", "$path=3/2", "build=6/3"}
 	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v\nwant %v", got, want)
+	}
+}
+
+// catalogRows reads project_attributes as "project/key=breakdown" lines, sorted.
+func catalogRows(t *testing.T, db *DB) []string {
+	t.Helper()
+	rows, err := db.db.Query(`SELECT project_id, key, breakdown FROM project_attributes`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var p, b int64
+		var key string
+		if err := rows.Scan(&p, &key, &b); err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, fmt.Sprintf("%d/%s=%d", p, key, b))
+	}
+	sort.Strings(out)
+	return out
+}
+
+// Ingest adds a catalog row for each key a product or measure row carried,
+// declarable reserved keys included; views add none.
+func TestWriteEventsAddsCatalogRows(t *testing.T) {
+	db := newTestDB(t)
+	if id := seedDeclaredProject(t, db, nil); id != 1 {
+		t.Fatalf("project id %d, want 1", id)
+	}
+	evs := []store.Event{
+		{ID: "p1", ProjectID: 1, Family: store.FamilyProduct, EventName: "signup", TS: ts("2026-08-02T10:00:00Z"),
+			ActorID: "a", Host: "example.com", Attributes: map[string]string{"plan": "pro"}},
+		{ID: "v1", ProjectID: 1, Family: store.FamilyViews, TS: ts("2026-08-02T10:00:00Z"), Kind: "web",
+			ActorID: "a", Path: "/", Attributes: map[string]string{"x": "yes"}},
+	}
+	if err := db.WriteEvents(context.Background(), evs); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"1/$host=0", "1/plan=0"}
+	if got := catalogRows(t, db); !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v\nwant %v", got, want)
+	}
+}
+
+// The daily pass adds the keys usage_attributes holds that the catalog
+// misses (never for a project that no longer exists), and drops the
+// non-breakdown rows with no usage row; a breakdown row stays. Each
+// project's prune reads its own usage rows only: project 2's a goes,
+// though project 1 received an a.
+func TestCountReceivedHealsAndPrunesCatalog(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	if id := seedDeclaredProject(t, db, nil); id != 1 {
+		t.Fatalf("project id %d, want 1", id)
+	}
+	if id := seedDeclaredProject(t, db, nil); id != 2 {
+		t.Fatalf("project id %d, want 2", id)
+	}
+	for _, q := range []string{
+		`INSERT INTO project_attributes (project_id, key, breakdown) VALUES (2, 'a', 0)`,
+		`INSERT INTO usage_attributes (project_id, day, attr_key, events) VALUES (1, '2026-08-04', 'a', 0)`,
+		// A project deleted since: usage_attributes has no foreign key.
+		`INSERT INTO usage_attributes (project_id, day, attr_key, events) VALUES (9999, '2026-08-04', 'orphan', 0)`,
+		`INSERT INTO project_attributes (project_id, key, breakdown) VALUES (1, 'gone', 0)`,
+		`INSERT INTO project_attributes (project_id, key, breakdown) VALUES (1, 'kept', 1)`,
+	} {
+		if _, err := db.db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.RecordUsageHistory(ctx, ts("2026-08-04T03:00:00Z")); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"1/a=0", "1/kept=1"}
+	if got := catalogRows(t, db); !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v\nwant %v", got, want)
 	}
 }

@@ -13,7 +13,7 @@ import (
 
 var ruleAudit = store.AuditEntry{Actor: "cli", Action: "event.rename", Subject: "1/a"}
 
-// ruleDB is a test database with projects 1 and 2 present (event_rules
+// ruleDB is a test database with projects 1 and 2 present (rules
 // references projects).
 func ruleDB(t *testing.T) *DB {
 	t.Helper()
@@ -364,12 +364,12 @@ func TestBlockEventIsIdempotentAndReplacesRename(t *testing.T) {
 	if err := db.BlockEvent(ctx, 1, p, "N", ruleAudit); err != nil {
 		t.Fatal(err)
 	}
-	execAll(t, db, `UPDATE event_rules SET created_at='2026-01-01T00:00:00Z'`)
+	execAll(t, db, `UPDATE rules SET created_at='2026-01-01T00:00:00Z'`)
 	if err := db.BlockEvent(ctx, 1, p, "N", ruleAudit); err != nil {
 		t.Fatal(err)
 	}
 	var created string
-	if err := db.db.QueryRow(`SELECT created_at FROM event_rules WHERE name='N'`).Scan(&created); err != nil {
+	if err := db.db.QueryRow(`SELECT created_at FROM rules WHERE kind='event' AND name='N'`).Scan(&created); err != nil {
 		t.Fatal(err)
 	}
 	if n := len(loadRules(t, db)); n != 1 || created != "2026-01-01T00:00:00Z" {

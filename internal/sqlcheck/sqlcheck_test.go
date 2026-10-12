@@ -42,10 +42,10 @@ var dynamic = map[string]string{
 	"store/sqlite/identities.go:AggregateIdentityDay":      "the raw column (user_id or group_id) is filled in with Sprintf",
 	"store/sqlite/migrate.go:migrateThrough":               "runs each embedded migration file as read; every test that migrates runs them",
 	"store/sqlite/prune.go:PruneAggregates":                "the aggregate table is filled in with Sprintf",
-	"store/sqlite/received_attributes.go:countReceived":    "receivedSQL is assembled once at startup by a function",
 	"store/sqlite/reporting.go:ListWidgets":                "the WHERE and ORDER BY are appended depending on whether a dashboard is given",
 	"store/sqlite/reporting.go:UpdateWidget":               "the SET list holds only the columns being written",
 	"store/sqlite/retention.go:UpsertActors":               "the source table is filled in with Sprintf",
+	"store/sqlite/usage_attributes.go:countReceived":       "receivedSQL is assembled once at startup by a function",
 	"store/sqlite/usage_history.go:countAttributes":        "foldedSQL is assembled once at startup by a function",
 	"store/sqlite/usage_history.go:measureSizes":           "the table names come from the database",
 }

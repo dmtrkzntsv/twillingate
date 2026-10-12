@@ -193,7 +193,18 @@ func TestPurgeArchivedDeletesProjectData(t *testing.T) {
 		{Family: store.FamilyViews, ID: "e1", ProjectID: id,
 			TS: time.Now(), ReceivedAt: time.Now(),
 			Kind: "web", ActorID: "a", ActorKind: store.ActorConnection, Path: "/"},
+		{Family: store.FamilyProduct, ID: "p1", ProjectID: id, EventName: "signup",
+			TS: time.Now(), ReceivedAt: time.Now(),
+			Kind: "app", ActorID: "a", ActorKind: store.ActorConnection,
+			Attributes: map[string]string{"plan": "pro"}},
 	}); err != nil {
+		t.Fatal(err)
+	}
+	audit := store.AuditEntry{Actor: "test", Action: "attribute.block"}
+	if err := db.BlockAttribute(ctx, id, "email", audit); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.RenameAttribute(ctx, id, "tier", "plan", true, audit); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.ExecForTest(
@@ -215,6 +226,9 @@ func TestPurgeArchivedDeletesProjectData(t *testing.T) {
 		`SELECT COUNT(*) FROM events WHERE project_id=?`,
 		`SELECT COUNT(*) FROM agg_views_daily WHERE project_id=?`,
 		`SELECT COUNT(*) FROM ingest_keys WHERE project_id=?`,
+		`SELECT COUNT(*) FROM rules WHERE project_id=?`,
+		`SELECT COUNT(*) FROM project_attributes WHERE project_id=?`,
+		`SELECT COUNT(*) FROM usage_attributes WHERE project_id=?`,
 		`SELECT COUNT(*) FROM projects WHERE id=?`,
 	} {
 		var n int

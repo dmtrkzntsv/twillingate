@@ -555,7 +555,7 @@ func TestRunDailyPassReloadsRegistryDespiteAPartialPurgeError(t *testing.T) {
 	// registry's initial load: only a reload picks it up, so it is the
 	// probe for whether RunDailyPass reloaded despite the error below.
 	if _, err := rawExec(t,
-		`INSERT INTO projects (id, name, allowed_origins, attributes) VALUES (7, 'Late', '[]', '[]')`); err != nil {
+		`INSERT INTO projects (id, name, allowed_origins) VALUES (7, 'Late', '[]')`); err != nil {
 		t.Fatal(err)
 	}
 	if p := reg.Snapshot(ctx).Project(7); p != nil {
@@ -1098,5 +1098,29 @@ func TestDailyPassDropsBlockedAggregates(t *testing.T) {
 	want := []string{"drop 1", "product 1 2026-08-10", "drop 2", "product 2 2026-08-10"}
 	if !slices.Equal(rec.calls, want) {
 		t.Errorf("calls = %v, want %v", rec.calls, want)
+	}
+}
+
+// The daily pass drops the aggregates of a blocked attribute key through
+// the same DropBlockedAggregates call, and keeps the other keys' rows
+// (project attributes D11).
+func TestDailyPassDropsBlockedAttributeAggregates(t *testing.T) {
+	ctx := context.Background()
+	st, reg, r := setup(t, jobsVars, jobsProjectSpecs)
+	pid := reg.Snapshot(ctx).Projects()[0].ID
+	for _, key := range []string{"x", "y"} {
+		if _, err := rawExec(t, `INSERT INTO agg_product_attrs (project_id, day, event_name, attr_key, attr_value, count, unique_users) VALUES (?, '2026-08-01', 'e', ?, 'v', 4, 2)`, pid, key); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := manage.NewOps(reg, st).BlockAttribute(ctx, "test", pid, "x"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.RunDailyPass(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got := queryDays(t, `SELECT attr_key FROM agg_product_attrs WHERE project_id = ? ORDER BY attr_key`, pid)
+	if !slices.Equal(got, []string{"y"}) {
+		t.Errorf("attribute aggregate keys after the pass = %v, want [y]", got)
 	}
 }

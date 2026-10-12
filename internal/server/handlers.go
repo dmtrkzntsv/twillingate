@@ -106,6 +106,10 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		}
 		names = append(names, identityNames(rv)...)
 	}
+	// Attribute rules (spec 2026-10-11, D9): one lookup per batch; a project
+	// without rules pays nothing more per event than an emptiness check.
+	attrRules := snap.AttributeRules(p.ID)
+	var warnedBlocked map[string]bool
 	for i, ev := range env.Events {
 		rv, unknown, overlong := resolveAttributes(mergeAttributes(env.Attributes, ev.Attributes))
 		for _, k := range unknown {
@@ -245,6 +249,23 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		// explicit: $os, $platform, then $browser and $device.
 		browser := res.declared(i, "$browser", rv.Browser, enrich.NormalizeBrowser)
 		device := res.declared(i, "$device", rv.Device, enrich.NormalizeDevice)
+		// Rules cover product and measures rows, never views. A renamed key
+		// is stored under its target, a blocked one is stripped and warned
+		// about once per key per batch.
+		custom := rv.Custom
+		if family != store.FamilyViews && !attrRules.Empty() {
+			var dropped []string
+			custom, dropped = store.MapAttributes(custom, attrRules)
+			for _, k := range dropped {
+				if !warnedBlocked[k] {
+					if warnedBlocked == nil {
+						warnedBlocked = map[string]bool{}
+					}
+					warnedBlocked[k] = true
+					res.warn(i, "attribute %q is blocked in this project, dropped", k)
+				}
+			}
+		}
 		e := store.Event{
 			ID: id, ProjectID: p.ID, Family: family, EventName: name,
 			TS: ts, ReceivedAt: received, Kind: kind,
@@ -255,7 +276,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			Browser: browser, BrowserVersion: rv.BrowserVersion,
 			Device: device, DeviceModel: rv.DeviceModel,
 			AppVersion: rv.AppVersion, AppLocale: rv.AppLocale, BrowserLocale: rv.BrowserLocale,
-			Country: country, Consent: consent, Attributes: rv.Custom,
+			Country: country, Consent: consent, Attributes: custom,
 			Value: value, Measure: measure, SampleRate: sampleRate,
 		}
 		// Bot filtering is the one thing still read off the User-Agent,

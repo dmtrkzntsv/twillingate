@@ -71,10 +71,10 @@ export const usageQuery = (q: RangeQuery & { project_id?: number }) => ({
   queryFn: () => endpoints.usage({ project_id: q.project_id, from: q.from, to: q.to }),
 })
 
-/** The attribute keys a project (or none: just the budget) received over a range. */
-export const receivedAttributesQuery = (q: RangeQuery & { project_id?: number }) => ({
-  queryKey: ['received-attributes', q.project_id ?? 'none', q.from ?? '', q.to ?? ''],
-  queryFn: () => endpoints.receivedAttributes({ project_id: q.project_id, from: q.from, to: q.to }),
+/** A project's attribute keys over a range, busiest first, with their rules and the breakdown budget. */
+export const attributesQuery = (id: number, q: RangeQuery) => ({
+  queryKey: ['attributes', id, q.from ?? '', q.to ?? ''],
+  queryFn: () => endpoints.listAttributes(id, { from: q.from, to: q.to }),
 })
 
 /** A project's event rules: the renames and blocks in force. */

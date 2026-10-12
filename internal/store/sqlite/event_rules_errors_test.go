@@ -19,7 +19,7 @@ func TestEventRuleOperationsReportStoreErrors(t *testing.T) {
 		breaks []string
 		run    func(db *DB) error
 	}{
-		{"load without the table", []string{`DROP TABLE event_rules`}, func(db *DB) error {
+		{"load without the table", []string{`DROP TABLE rules`}, func(db *DB) error {
 			_, err := db.LoadEventRules(ctx)
 			return err
 		}},
@@ -50,25 +50,25 @@ func TestEventRuleOperationsReportStoreErrors(t *testing.T) {
 			_, err := db.RenameEvent(ctx, 1, store.FamilyProduct, "a", "b", true, ruleAudit)
 			return err
 		}},
-		{"rename clears the target's rule", []string{`DROP TABLE event_rules`}, func(db *DB) error {
+		{"rename clears the target's rule", []string{`DROP TABLE rules`}, func(db *DB) error {
 			_, err := db.RenameEvent(ctx, 1, store.FamilyProduct, "a", "b", true, ruleAudit)
 			return err
 		}},
 		{"rename repoints the rules that pointed at it", []string{
-			`INSERT INTO event_rules (project_id, family, name, action, to_name) VALUES (1, 'product', 'x', 'rename', 'a')`,
-			abort("BEFORE UPDATE", "event_rules"),
+			`INSERT INTO rules (project_id, kind, family, name, action, to_name) VALUES (1, 'event', 'product', 'x', 'rename', 'a')`,
+			abort("BEFORE UPDATE", "rules"),
 		}, func(db *DB) error {
 			_, err := db.RenameEvent(ctx, 1, store.FamilyProduct, "a", "b", true, ruleAudit)
 			return err
 		}},
-		{"rename keeps its rule", []string{abort("BEFORE INSERT", "event_rules")}, func(db *DB) error {
+		{"rename keeps its rule", []string{abort("BEFORE INSERT", "rules")}, func(db *DB) error {
 			_, err := db.RenameEvent(ctx, 1, store.FamilyProduct, "a", "b", true, ruleAudit)
 			return err
 		}},
-		{"block keeps its rule", []string{abort("BEFORE INSERT", "event_rules")}, func(db *DB) error {
+		{"block keeps its rule", []string{abort("BEFORE INSERT", "rules")}, func(db *DB) error {
 			return db.BlockEvent(ctx, 1, store.FamilyProduct, "a", ruleAudit)
 		}},
-		{"remove deletes the rule", []string{`DROP TABLE event_rules`}, func(db *DB) error {
+		{"remove deletes the rule", []string{`DROP TABLE rules`}, func(db *DB) error {
 			return db.RemoveEventRule(ctx, 1, store.FamilyProduct, "a", ruleAudit)
 		}},
 		{"drop blocked aggregates", []string{`DROP TABLE agg_product_daily`}, func(db *DB) error {

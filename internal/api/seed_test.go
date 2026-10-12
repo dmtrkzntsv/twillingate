@@ -117,7 +117,7 @@ func hostTemplate(t *testing.T) string {
 		// attributes declared for blog only: docs stays at the default (no
 		// attributes declared), which TestProductAttributesReturnsEmptyForUndeclared
 		// depends on. Rollups are unconditional now (no enabled flag).
-		seed(`UPDATE projects SET attributes = '["plan"]' WHERE id=1`)
+		seed(`INSERT INTO project_attributes (project_id, key, breakdown) VALUES (1, 'plan', 1)`)
 		seed(`UPDATE projects SET allowed_origins = '["https://blog.example.com"]' WHERE id=1`)
 		// One row rolled up before migration 016 (unique_groups NULL, "not
 		// measured") and one after, so the tool is seen to carry both.

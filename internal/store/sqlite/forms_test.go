@@ -218,8 +218,8 @@ func TestWriteSubmissionApprovedKeepsExpectedAndWritesEvent(t *testing.T) {
 		t.Fatalf("received_at %q != event ts %q", recv, ts)
 	}
 	// ingest recorded that the form key arrived.
-	if c := countRows(t, db, `SELECT COUNT(*) FROM received_attributes WHERE project_id=1 AND attr_key='form'`); c != 1 {
-		t.Fatalf("received_attributes rows for form = %d", c)
+	if c := countRows(t, db, `SELECT COUNT(*) FROM usage_attributes WHERE project_id=1 AND attr_key='form'`); c != 1 {
+		t.Fatalf("usage_attributes rows for form = %d", c)
 	}
 
 	// A retry after the first succeeded writes no second event.

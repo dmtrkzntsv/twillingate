@@ -220,8 +220,9 @@ func (h *host) viewsBreakdown(ctx context.Context, in breakdownIn) (tableOut, er
 func (h *host) register(r *registrar) {
 	ro := &mcp.ToolAnnotations{ReadOnlyHint: true}
 	// DestructiveHint is *bool in the SDK. Nothing here is destructive but
-	// merge_event (a merge cannot be split again) and block_event (the next
-	// daily pass deletes the name's aggregates), which ask the operator.
+	// merge_event and merge_attribute (a merge cannot be split again) and
+	// block_event and block_attribute (the next daily pass deletes the
+	// aggregates), which ask the operator.
 	no, yes := false, true
 	write := &mcp.ToolAnnotations{DestructiveHint: &no}
 	idem := &mcp.ToolAnnotations{DestructiveHint: &no, IdempotentHint: true}
@@ -241,9 +242,9 @@ func (h *host) register(r *registrar) {
 	expose(r, spec{Name: "cap_usage", Annotations: ro, Method: "GET", Path: p + "/cap-usage",
 		Description: "How a project's data meets the caps over a range (default the last 30 days, at most 400): per views breakdown, attribute key, and users/groups, the busiest day's values against the cap, days with data, days folded into (other) (users and groups: days that reached the cap), and the share of views, counts or samples folded. Days already rolled up keep only the kept values and their (other) rows, so values per day stay near the cap there (cap + 1 for single-key breakdowns and attributes, cap plus one per leading key for two-key breakdowns)."},
 		h.capUsage)
-	expose(r, spec{Name: "received_attributes", Annotations: ro, Method: "GET", Path: "/api/received-attributes",
-		Description: "The attribute keys a project's product events and measures carried over a range (default the last 30 days, at most 400; only the raw window is kept, RETENTION_RAW_DAYS): per key the events that carried it and max_values (the most distinct values one event (or measure) had on one day, which ATTRIBUTE_VALUES_TOP_N caps), both as the daily pass counted them, so today's arrive the night after (a key first received today has events 0 and max_values null); whether any event carried it (received) and whether the project declares it as a breakdown. Lists the 500 busiest keys plus every declared key (declared keys none carried with received false); keys_total counts the distinct keys received. Also values_cap (ATTRIBUTE_VALUES_TOP_N), breakdowns_used (attributes declared across active projects) and breakdowns_max (ATTRIBUTE_BREAKDOWNS_MAX, 0 = no limit). Without project_id, only the budget. Declare a breakdown with update_project's attributes."},
-		h.receivedAttributes)
+	expose(r, spec{Name: "list_attributes", Annotations: ro, Method: "GET", Path: p + "/attributes",
+		Description: "A project's attributes: the keys its product events and measures carried over a range (default the last 30 days, at most 400; only the raw window is kept, RETENTION_RAW_DAYS), with its breakdowns and attribute rules. Per key the events that carried it and max_values (the most distinct values one event (or measure) had on one day, which ATTRIBUTE_VALUES_TOP_N caps), both as the daily pass counted them, so today's arrive the night after (a key first received today has events 0 and max_values null); whether any event carried it (received), whether the project breaks it down (breakdown), whether block_attribute strips it (blocked), and its aliases, the keys renamed or merged into it. Lists the 500 busiest keys plus every breakdown key, every blocked key and every key others are renamed to (received false when none carried it); a key renamed away is listed only in its target's aliases. keys_total counts the distinct keys received. Also values_cap (ATTRIBUTE_VALUES_TOP_N), breakdowns_used (breakdown keys across active projects) and breakdowns_max (ATTRIBUTE_BREAKDOWNS_MAX, 0 = no limit). Switch a breakdown with update_project's attributes."},
+		h.listAttributes)
 	expose(r, spec{Name: "usage", Annotations: ro, Method: "GET", Path: "/api/usage",
 		Description: "Usage per project over a range (default the last 30 days, at most 400): views, product events and measure samples per day (every day, zeros included) and in total, when the newest raw row arrived, the oldest day with data, raw and rolled-up day counts, an estimate of the disk the project's rows take (measured daily by the daily pass, which also runs at start: size is the latest, with the day it was measured_at, null until the first measurement; each series day carries that day's total_bytes, null on days not measured), and, with project_id only (null otherwise), declared attributes no event carried. Days before the newest daily pass read the counts it stored, which outlive the aggregates' retention; later days are counted live. Without project_id, every project. Each series day also carries the project's declared_attributes and, counted the night after while the day's rows are raw and kept once rolled up, the distinct attribute_keys and attribute_values received and the attribute_values_folded into (other); null on days not stored. Also the database's size now and per day (database_series, null on days not measured)."},
 		h.usage)
@@ -273,10 +274,10 @@ func (h *host) register(r *registrar) {
 		h.runQuery)
 
 	expose(r, spec{Name: "create_project", Annotations: write, Method: "POST", Path: "/api/projects", Status: http.StatusCreated,
-		Description: "Create a project and (by default) its first ingest key; returns a paste-ready embed snippet (confirm the collector hostname with the user). Set skip_key to suppress the key. Each declared attribute is a breakdown, counted against ATTRIBUTE_BREAKDOWNS_MAX across active projects; pick keys from received_attributes."},
+		Description: "Create a project and (by default) its first ingest key; returns a paste-ready embed snippet (confirm the collector hostname with the user). Set skip_key to suppress the key. Each declared attribute is a breakdown, counted against ATTRIBUTE_BREAKDOWNS_MAX across active projects; pick keys from list_attributes."},
 		h.createProject)
 	expose(r, spec{Name: "update_project", Annotations: write, Method: "PATCH", Path: "/api/projects/{project_id}",
-		Description: "Update a project's name, allowed origins and/or declared product-event attributes (breakdown keys for flat-view columns and attribute rollups). Fields you omit are left unchanged; allowed_origins and attributes replace the whole list when given, and an explicit empty allowed_origins clears it. Each declared attribute is a breakdown, counted against ATTRIBUTE_BREAKDOWNS_MAX across active projects; pick keys from received_attributes."},
+		Description: "Update a project's name, allowed origins and/or declared product-event attributes (breakdown keys for flat-view columns and attribute rollups). Fields you omit are left unchanged; allowed_origins and attributes replace the whole list when given, and an explicit empty allowed_origins clears it. Each declared attribute is a breakdown, counted against ATTRIBUTE_BREAKDOWNS_MAX across active projects; pick keys from list_attributes."},
 		h.updateProject)
 	expose(r, spec{Name: "move_project", Annotations: idem, Method: "POST", Path: "/api/projects/{project_id}/move",
 		Description: "Put a project right after another (after: a project id, archived ones included; 0 first) in the order list_projects, the console and the CLI show. A new project comes last."},
@@ -314,6 +315,18 @@ func (h *host) register(r *registrar) {
 	expose(r, spec{Name: "remove_event_rule", Annotations: idem, Method: "POST", Path: p + "/event-rules/remove",
 		Description: "Remove a project's rule for an event name: a rename stops mapping (history stays renamed), a block lets the event be stored again."},
 		h.removeEventRule)
+	expose(r, spec{Name: "rename_attribute", Annotations: write, Method: "POST", Path: p + "/attribute-rules/rename",
+		Description: "Rename a custom attribute key of a project's product and measures events to a key not in use: rewrites its stored events, aggregates and usage, keeps its breakdown, and stores later events sent with the old key under the new one (the new key's value wins when an event carries both). Refused onto a key with data (merge_attribute folds one key into another) or a blocked key, and for $ keys. Widget SQL naming the old key is not rewritten."},
+		h.renameAttribute)
+	expose(r, spec{Name: "merge_attribute", Annotations: destroy, Method: "POST", Path: p + "/attribute-rules/merge",
+		Description: "Merge a custom attribute key into another: rewrites its stored events (the target's value wins where an event carries both), aggregates and usage under the target, and stores later events sent with the old key under the target. Cannot be undone; merged days' unique counts become an upper bound. The old key need not have data (an alias for an app version still in the field). Refused onto a blocked key, and for $ keys. Widget SQL naming the old key is not rewritten."},
+		h.mergeAttribute)
+	expose(r, spec{Name: "block_attribute", Annotations: destroyIdem, Method: "POST", Path: p + "/attribute-rules/block",
+		Description: "Block a custom attribute key: ingest strips it from events (with a warning) and stores the events without it, it stops being a breakdown, and the next daily pass deletes its aggregates; stored raw events keep it until their day leaves the raw window. Nothing else is deleted. remove_attribute_rule unblocks."},
+		h.blockAttribute)
+	expose(r, spec{Name: "remove_attribute_rule", Annotations: idem, Method: "POST", Path: p + "/attribute-rules/remove",
+		Description: "Remove a project's rule for an attribute key: a rename stops mapping (history stays renamed), a block lets the key be stored again."},
+		h.removeAttributeRule)
 	restOnly(r, spec{Name: "event_names", Method: "GET", Path: p + "/event-names",
 		Description: "A project's product and measures event names in a range with their event counts, the busiest 200, busiest first. For the console's Settings page; not an MCP tool (product_events and measures answer agents)."},
 		h.eventNames)

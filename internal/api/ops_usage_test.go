@@ -116,7 +116,7 @@ func TestUsageUnusedAttributesMixed(t *testing.T) {
 }
 
 // A key carried only on a raw day counts as carried: ingest records it in
-// received_attributes (the seed writes raw rows directly, so this writes
+// usage_attributes (the seed writes raw rows directly, so this writes
 // the row ingest would have), before any rollup has seen it.
 func TestUsageUnusedAttributesReadsRawDays(t *testing.T) {
 	h, cs := newTestHost(t)
@@ -124,7 +124,7 @@ func TestUsageUnusedAttributesReadsRawDays(t *testing.T) {
 	if res.IsError {
 		t.Fatal(textOf(res))
 	}
-	if _, err := rawExec(h.ops.St, `INSERT INTO received_attributes (project_id, day, attr_key, events) VALUES (1, '2026-08-26', 'tier', 0)`); err != nil {
+	if _, err := rawExec(h.ops.St, `INSERT INTO usage_attributes (project_id, day, attr_key, events) VALUES (1, '2026-08-26', 'tier', 0)`); err != nil {
 		t.Fatal(err)
 	}
 	out, err := h.usage(context.Background(), usageIn{ProjectID: 1,

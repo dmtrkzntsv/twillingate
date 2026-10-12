@@ -555,10 +555,11 @@ func TestStitchViewIdentityDailyCapsLikeTheAggregate(t *testing.T) {
 	}
 }
 
-// seedDeclaredProject registers a project row with a declared attribute
-// list and returns its id. v_product_attrs' live half reads
-// projects.attributes by project_id, so the row must exist or the declared
-// half of the view is empty.
+// seedDeclaredProject registers a project row with declared attributes
+// (breakdown keys) and returns its id. v_product_attrs' live half reads
+// them by project_id, so the rows must exist or the declared half of the
+// view is empty. From 040 they are project_attributes rows; before it, the
+// projects.attributes list.
 func seedDeclaredProject(t *testing.T, db *DB, attrs []string) int64 {
 	t.Helper()
 	if attrs == nil {
@@ -568,15 +569,32 @@ func seedDeclaredProject(t *testing.T, db *DB, attrs []string) int64 {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var listed bool
+	if err := db.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM pragma_table_info('projects') WHERE name = 'attributes')`).
+		Scan(&listed); err != nil {
+		t.Fatal(err)
+	}
 	// Plain SQL, not CreateProject: the migration tests call this on
 	// schemas before 034's sort_key, which the store now writes.
-	res, err := db.db.Exec(`INSERT INTO projects (name, allowed_origins, attributes) VALUES ('Blog', '[]', ?)`, string(b))
+	q := `INSERT INTO projects (name, allowed_origins) VALUES ('Blog', '[]')`
+	args := []any{}
+	if listed {
+		q = `INSERT INTO projects (name, allowed_origins, attributes) VALUES ('Blog', '[]', ?)`
+		args = append(args, string(b))
+	}
+	res, err := db.db.Exec(q, args...)
 	if err != nil {
 		t.Fatal(err)
 	}
 	id, err := res.LastInsertId()
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !listed {
+		if _, err := db.db.Exec(`INSERT INTO project_attributes (project_id, key, breakdown)
+			SELECT ?1, value, 1 FROM json_each(?2)`, id, string(b)); err != nil {
+			t.Fatal(err)
+		}
 	}
 	return id
 }

@@ -295,9 +295,10 @@ func TestSnapshotPollErrorKeepsServingPreviousSnapshot(t *testing.T) {
 // A malformed JSON blob in a registry column (which the exported API can
 // never write, but a hand-edited database or a future bug could produce)
 // must surface as an error from Reload rather than a panic or a silently
-// empty field.
+// empty field. attributes is not a column: the store builds the list from
+// project_attributes.
 func TestReloadRejectsCorruptRegistryJSON(t *testing.T) {
-	for _, column := range []string{"allowed_origins", "attributes"} {
+	for _, column := range []string{"allowed_origins"} {
 		t.Run(column, func(t *testing.T) {
 			st := testStore(t)
 			ctx := context.Background()

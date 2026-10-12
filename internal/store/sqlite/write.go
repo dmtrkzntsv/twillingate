@@ -27,14 +27,15 @@ const tsFormat = "2006-01-02T15:04:05Z"
 // so it would never be read, rolled up or pruned.
 //
 // A product or measures name with a rename rule is stored under its new
-// name (D7 of the event rules spec), so rows queued before a rename are
-// mapped too.
+// name (D7 of the event rules spec), and its custom attribute keys go
+// through the project's attribute rules (D9 of the project attributes
+// spec), so rows queued before a rename or block are mapped too.
 //
 // value is NULL outside measures (a nil Value), and a SampleRate of 0
 // means unset and is stored as 1.
 //
 // The attribute keys the inserted product and measure rows carried are
-// recorded in received_attributes in the same transaction, only those
+// recorded in usage_attributes in the same transaction, only those
 // ingest has not written yet (receivedSeen); the daily pass counts them.
 func (d *DB) WriteEvents(ctx context.Context, evs []store.Event) error {
 	if len(evs) == 0 {
@@ -49,17 +50,18 @@ func (d *DB) WriteEvents(ctx context.Context, evs []store.Event) error {
 		}
 	}
 	var fresh []receivedKey
+	var gen uint64
 	err := d.tx(ctx, func(tx *sql.Tx) error {
 		received, err := insertEvents(ctx, tx, evs)
 		if err != nil {
 			return err
 		}
-		fresh = d.seen.unseen(received)
+		fresh, gen = d.seen.unseen(received)
 		return writeReceived(ctx, tx, fresh)
 	})
 	// Remembered only once committed: a rolled-back batch wrote nothing.
 	if err == nil {
-		d.seen.remember(fresh)
+		d.seen.remember(fresh, gen)
 	}
 	return err
 }
@@ -69,7 +71,7 @@ func (d *DB) WriteEvents(ctx context.Context, evs []store.Event) error {
 // has checked the families, and records the keys (writeReceived) in the
 // same transaction: WriteEvents and WriteSubmission share this body.
 //
-// The event name goes through event_rules here, not only at ingest (which
+// The event name goes through the event rules here, not only at ingest (which
 // maps from the registry snapshot), so a row queued before a rename
 // commits is stored under the new name: the lookup runs in the flush's own
 // transaction, after or before the rename's, never between its rewrite and
@@ -77,6 +79,12 @@ func (d *DB) WriteEvents(ctx context.Context, evs []store.Event) error {
 // It is a primary-key seek per row; BenchmarkWriteEvents showed no time
 // difference without it (2026-10-11), only ~0.8 KB and 3 allocations per
 // row for the four extra arguments.
+//
+// The custom attribute keys go through the attribute rules here for the
+// same reason (spec D9), before the insert and before the received keys
+// are recorded, so usage_attributes and the catalog see the mapped keys.
+// The rules are read once per product or measures project in the batch
+// (attributeRules); a project without any costs one map lookup per event.
 func insertEvents(ctx context.Context, tx *sql.Tx, evs []store.Event) (receivedKeys, error) {
 	stmt, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO events
 		(id, project_id, family, event_name, ts, day, received_at, kind,
@@ -86,14 +94,23 @@ func insertEvents(ctx context.Context, tx *sql.Tx, evs []store.Event) (receivedK
 		 app_version, app_locale, device, device_model, display_width, display_height,
 		 country, consent, attributes, value, measure, sample_rate)
 		VALUES (?,?,?,
-		 COALESCE((SELECT to_name FROM event_rules WHERE project_id=? AND family=? AND name=? AND action='rename'), ?),
+		 COALESCE((SELECT to_name FROM rules WHERE project_id=? AND kind='event' AND family=? AND name=? AND action='rename'), ?),
 		 ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
 	if err != nil {
 		return nil, err
 	}
 	defer stmt.Close()
+	rules, err := attributeRules(ctx, tx, evs)
+	if err != nil {
+		return nil, err
+	}
 	received := receivedKeys{}
 	for _, e := range evs {
+		if rs, ok := rules[e.ProjectID]; ok && e.Family != store.FamilyViews {
+			// e is the loop's copy: the caller's event keeps its map, and
+			// received.add below records the mapped keys.
+			e.Attributes, _ = store.MapAttributes(e.Attributes, rs)
+		}
 		attrs := e.Attributes
 		if attrs == nil {
 			attrs = map[string]string{}

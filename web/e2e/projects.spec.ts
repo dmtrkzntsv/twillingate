@@ -119,7 +119,7 @@ test('lists Projects first in the sidebar, with the projects under it, closed st
   await expect(projects).toHaveCount(0)
 })
 
-test('adds a breakdown from the attributes the seeded project received, then removes it', async ({ page }) => {
+test('switches a breakdown on for an attribute the seeded project received, then off', async ({ page }) => {
   // Login, the wait below and the cleanup share one test limit, which must
   // outlast the wait's own 90s or the default 30s would cut it short.
   test.setTimeout(120_000)
@@ -127,30 +127,31 @@ test('adds a breakdown from the attributes the seeded project received, then rem
   await page.goto('/app/projects')
   await page.getByRole('article', { name: 'dev' }).getByRole('link', { name: 'dev' }).click()
   await page.getByRole('link', { name: 'Settings', exact: true }).click()
-  const breakdowns = page.getByRole('region', { name: 'Breakdowns' })
+  const attributes = page.getByRole('region', { name: 'Attributes' })
+  const row = attributes.getByRole('row', { name: /Break down plan\b/ })
   // The pass that counts the seeded days runs after the server starts listening
-  // (about 20s on a loaded host), so reopen the dialog, which refetches the keys,
-  // until `plan` is listed. The wait is bounded by the toPass timeout (90s),
-  // inside the test's 120s limit set above.
-  const plan = page.getByRole('radio', { name: /plan/ })
+  // (about 20s on a loaded host), so reload, which refetches the keys, until
+  // `plan` is listed. The wait is bounded by the toPass timeout (90s), inside
+  // the test's 120s limit set above.
   await expect(async () => {
-    await breakdowns.getByRole('button', { name: 'Add breakdown' }).click()
     try {
-      await expect(plan).toBeVisible({ timeout: 3_000 })
+      await expect(row).toBeVisible({ timeout: 3_000 })
     } catch (e) {
-      await page.keyboard.press('Escape')
+      await page.reload()
       throw e
     }
   }).toPass({ timeout: 90_000, intervals: [2_000] })
-  await plan.check()
-  await page.getByRole('button', { name: 'Add', exact: true }).click()
-  const row = breakdowns.getByRole('row', { name: /plan/ })
-  await expect(row.getByText('plan', { exact: true })).toBeVisible()
-  await expect(row.getByText(/events · \d+ values?/)).toBeVisible()
+  await expect(row.getByRole('cell', { name: /events · \d+ values?/ })).toBeVisible()
+  // plan stays undeclared in the seed; the switch declares it. It turns on
+  // once the attributes are fetched again, so wait for it.
+  const plan = attributes.getByRole('switch', { name: 'Break down plan', exact: true })
+  await expect(plan).not.toBeChecked()
+  await plan.click()
+  await expect(plan).toBeChecked()
   // Leave the seed as it was for the other tests.
-  await breakdowns.getByRole('button', { name: 'Remove plan' }).click()
+  await plan.click()
   await page.getByRole('button', { name: 'Remove breakdown' }).click()
-  await expect(breakdowns.getByRole('row', { name: /plan/ })).toHaveCount(0)
+  await expect(plan).not.toBeChecked()
 })
 
 /** Creates a project over REST, archived afterwards so it leaves the grid to the other specs. */

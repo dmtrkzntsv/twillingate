@@ -115,12 +115,14 @@ func TestKeyToolsLifecycle(t *testing.T) {
 
 // destructiveWriters are the write tools announcing DestructiveHint true
 // besides delete_submissions.
-var destructiveWriters = map[string]bool{"merge_event": true, "block_event": true}
+var destructiveWriters = map[string]bool{"merge_event": true, "block_event": true,
+	"merge_attribute": true, "block_attribute": true}
 
 // TestNoDeleteToolExists: nothing over MCP deletes, except
 // delete_submissions, which an erasure request needs (spec D8); it and the
-// two event-rule tools that lose data (merge_event, which cannot be split,
-// and block_event, whose daily pass deletes aggregates) are the
+// rule tools that lose data (merge_event and merge_attribute, which cannot
+// be split, and block_event and block_attribute, whose daily pass deletes
+// aggregates) are the
 // tools announcing DestructiveHint true, so a client asks the operator.
 func TestNoDeleteToolExists(t *testing.T) {
 	_, cs := newTestHost(t)
@@ -178,14 +180,16 @@ func TestManagementToolsAnnotatedNonReadOnly(t *testing.T) {
 		"add_project_tab": true, "remove_project_tab": true, "move_project_tab": true,
 		"update_widget_share": true, "archive_widget_share": true, "restore_widget_share": true,
 		"approve_form": true, "update_form": true, "archive_form": true, "restore_form": true,
-		"rename_event": true, "merge_event": true, "block_event": true, "remove_event_rule": true}
+		"rename_event": true, "merge_event": true, "block_event": true, "remove_event_rule": true,
+		"rename_attribute": true, "merge_attribute": true, "block_attribute": true, "remove_attribute_rule": true}
 	idempotent := map[string]bool{"archive_project": true, "restore_project": true, "move_project": true,
 		"disable_ingest_key": true, "enable_ingest_key": true,
 		"archive_dashboard": true, "restore_dashboard": true, "archive_widget": true, "restore_widget": true,
 		"remove_project_tab": true,
 		"update_widget_share": true, "archive_widget_share": true, "restore_widget_share": true,
 		"archive_form": true, "restore_form": true,
-		"block_event": true, "remove_event_rule": true}
+		"block_event": true, "remove_event_rule": true,
+		"block_attribute": true, "remove_attribute_rule": true}
 	for _, tool := range tools.Tools {
 		if tool.Name == "delete_submissions" { // destructive by design: TestNoDeleteToolExists
 			if tool.Annotations.ReadOnlyHint {

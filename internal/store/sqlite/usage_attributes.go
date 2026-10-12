@@ -47,20 +47,27 @@ func (c receivedKeys) add(e store.Event, day string) {
 }
 
 // receivedSeen remembers the triples ingest has already written to
-// received_attributes, so a batch whose keys are all known writes nothing
+// usage_attributes, so a batch whose keys are all known writes nothing
 // more: ingest records that a key arrived, and the daily pass counts it.
 // It holds the newest day a batch carried and the day before; older days
 // leave it as the newest day moves on, and a late event for one falls back
 // to INSERT OR IGNORE, which writes nothing when the row exists. Empty
 // after a restart, when each key costs one ignored insert per day.
+//
+// An attribute rename moves usage rows to another key, so it forgets the
+// project's triples (forget). gen counts the forgets: a batch remembers
+// only if none happened since it listed its unseen triples, since a rename
+// can commit between the batch's commit and its remember.
 type receivedSeen struct {
 	mu     sync.Mutex
 	keys   map[receivedKey]struct{}
 	newest string
+	gen    uint64
 }
 
-// unseen lists the batch's triples not yet remembered.
-func (s *receivedSeen) unseen(batch receivedKeys) []receivedKey {
+// unseen lists the batch's triples not yet remembered, and the generation
+// to remember them at.
+func (s *receivedSeen) unseen(batch receivedKeys) ([]receivedKey, uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var out []receivedKey
@@ -69,14 +76,18 @@ func (s *receivedSeen) unseen(batch receivedKeys) []receivedKey {
 			out = append(out, k)
 		}
 	}
-	return out
+	return out, s.gen
 }
 
 // remember records the triples a committed batch wrote, then drops the
-// days before the newest day's eve.
-func (s *receivedSeen) remember(written []receivedKey) {
+// days before the newest day's eve. A batch listed before a forget
+// (gen behind) remembers nothing: its rows may have been moved.
+func (s *receivedSeen) remember(written []receivedKey, gen uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if gen != s.gen {
+		return
+	}
 	if s.keys == nil {
 		s.keys = map[receivedKey]struct{}{}
 	}
@@ -104,21 +115,48 @@ func (s *receivedSeen) remember(written []receivedKey) {
 	}
 }
 
+// forget drops the project's triples, after a rename moved its usage rows
+// (spec D7): the next batch that carries one of its keys inserts the row
+// again, or finds it there.
+func (s *receivedSeen) forget(projectID int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.gen++
+	for k := range s.keys {
+		if k.project == projectID {
+			delete(s.keys, k)
+		}
+	}
+}
+
 // writeReceived inserts the triples ingest has not seen yet, with events 0
 // until the daily pass counts their day; a row already there (a restart,
-// or a late event for an older day) is left as it is.
+// or a late event for an older day) is left as it is. Each key also gets
+// its catalog row (project_attributes), added only here, for the triples
+// the cache has not seen, so a known key costs nothing more. The catalog
+// row is skipped for a project that no longer exists (purged while its
+// events were buffered): the foreign key would otherwise fail the batch.
 func writeReceived(ctx context.Context, tx *sql.Tx, keys []receivedKey) error {
 	if len(keys) == 0 {
 		return nil
 	}
-	stmt, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO received_attributes (project_id, day, attr_key, events)
+	stmt, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO usage_attributes (project_id, day, attr_key, events)
 		VALUES (?, ?, ?, 0)`)
 	if err != nil {
 		return err
 	}
 	defer stmt.Close()
+	catalog, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO project_attributes (project_id, key)
+		SELECT ?1, ?2 WHERE EXISTS (SELECT 1 FROM projects WHERE id = ?1)`)
+	if err != nil {
+		return err
+	}
+	defer catalog.Close()
 	for _, k := range keys {
 		if _, err := stmt.ExecContext(ctx, k.project, k.day, k.key); err != nil {
+			return err
+		}
+		if _, err := catalog.ExecContext(ctx, k.project, k.key); err != nil {
 			return err
 		}
 	}
@@ -156,23 +194,77 @@ var receivedSQL = func() string {
 	UNION ALL ` + arm("raw_measures")
 }()
 
-// countReceived rewrites received_attributes for every day before today:
+// countReceived rewrites usage_attributes for every day before today:
 // the days whose raw product or measure rows remain get exact counts and
 // max_values (the most distinct values in one (family, event, measure)
 // partition, the partition ATTRIBUTE_VALUES_TOP_N caps); the rest, days
 // already rolled up, are dropped. Today stays as ingest counts it.
 func countReceived(ctx context.Context, tx *sql.Tx, today string) error {
-	if _, err := tx.ExecContext(ctx, `DELETE FROM received_attributes WHERE day < ?1`, today); err != nil {
-		return fmt.Errorf("received attributes: %w", err)
+	if _, err := tx.ExecContext(ctx, `DELETE FROM usage_attributes WHERE day < ?1`, today); err != nil {
+		return fmt.Errorf("usage attributes: %w", err)
 	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO received_attributes (project_id, day, attr_key, events, max_values)
+	_, err := tx.ExecContext(ctx, `INSERT INTO usage_attributes (project_id, day, attr_key, events, max_values)
 		SELECT project_id, day, k, SUM(n), MAX(vals) FROM (
 		  SELECT project_id, day, k, COUNT(*) AS n, COUNT(DISTINCT v) AS vals
 		  FROM (`+receivedSQL+`)
 		  GROUP BY project_id, day, family, event_name, measure, k
 		) GROUP BY project_id, day, k`, today)
 	if err != nil {
-		return fmt.Errorf("received attributes: %w", err)
+		return fmt.Errorf("usage attributes: %w", err)
+	}
+	// The catalog follows usage_attributes: heal a key whose catalog row
+	// was lost (only for projects that still exist: usage_attributes has no
+	// foreign key, so it can hold a deleted project's rows), then drop the
+	// rows that are no breakdown and have no usage row left (spec D3).
+	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO project_attributes (project_id, key)
+		SELECT DISTINCT project_id, attr_key FROM usage_attributes
+		WHERE project_id IN (SELECT id FROM projects)`); err != nil {
+		return fmt.Errorf("attribute catalog: %w", err)
+	}
+	if err := pruneCatalogs(ctx, tx); err != nil {
+		return fmt.Errorf("attribute catalog: %w", err)
 	}
 	return nil
+}
+
+// pruneCatalogs runs pruneCatalog for every project. The ids are read
+// first: the transaction's one connection cannot run the deletes while a
+// result set is open on it.
+func pruneCatalogs(ctx context.Context, tx *sql.Tx) error {
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM projects`)
+	if err != nil {
+		return err
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if err := pruneCatalog(ctx, tx, id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// pruneCatalog drops the project's catalog rows that are no breakdown and
+// that no usage_attributes row holds any more (spec D3). The subquery is
+// uncorrelated: SQLite reads the project's usage keys once into a set,
+// where a correlated NOT EXISTS probes usage_attributes per catalog row by
+// its project_id prefix alone (the key comes after day in its primary
+// key), which is quadratic in the key count on a database never analyzed.
+func pruneCatalog(ctx context.Context, tx *sql.Tx, projectID int64) error {
+	_, err := tx.ExecContext(ctx, `DELETE FROM project_attributes
+		WHERE project_id = ?1 AND breakdown = 0
+		AND key NOT IN (SELECT attr_key FROM usage_attributes WHERE project_id = ?1)`, projectID)
+	return err
 }

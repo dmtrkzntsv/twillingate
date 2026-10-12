@@ -24,7 +24,7 @@ import (
 //     them; a rolled-up day keeps what was counted while it was raw.
 //   - received attribute keys, for every day before now's still raw: each
 //     key's events and its busiest partition's distinct values
-//     (received_attributes); days already rolled up are dropped, today is
+//     (usage_attributes); days already rolled up are dropped, today is
 //     left to ingest.
 //   - counts, for every day before now's: each project's views, product
 //     events and measure samples per day, from the same rows the views
@@ -140,12 +140,12 @@ func countDays(ctx context.Context, tx *sql.Tx, today string) error {
 	return nil
 }
 
-// countDeclared writes each project's declared attribute count for day,
-// archived projects included.
+// countDeclared writes each project's declared attribute count (its
+// catalog's breakdown keys) for day, archived projects included, 0 for a
+// project with none.
 func countDeclared(ctx context.Context, tx *sql.Tx, day string) error {
 	_, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO usage_history (key, project_id, measured_at, value)
-		SELECT ?1, p.id, ?2, (SELECT COUNT(*) FROM json_each(CASE WHEN json_valid(p.attributes) THEN p.attributes ELSE '[]' END) j
-		                      WHERE j.type = 'text')
+		SELECT ?1, p.id, ?2, (SELECT COUNT(*) FROM project_attributes a WHERE a.project_id = p.id AND a.breakdown = 1)
 		FROM projects p`, store.StatDeclaredAttributes, day)
 	if err != nil {
 		return fmt.Errorf("count declared attributes: %w", err)
@@ -216,9 +216,7 @@ var foldedSQL = func() string {
 		                   FROM meta WHERE key='attributes_top_n'
 		                     AND (CAST(value AS INTEGER) > 0 OR value = '0')), 100) AS n
 		), keys AS (
-		  SELECT p.id AS project_id, j.value AS attr_key
-		  FROM projects p, json_each(CASE WHEN json_valid(p.attributes) THEN p.attributes ELSE '[]' END) j
-		  WHERE j.type = 'text'
+		  SELECT project_id, key AS attr_key FROM project_attributes WHERE breakdown = 1
 		  UNION
 		  SELECT p.id, s.column1 FROM projects p, (VALUES ` + defaults.String() + `) s
 		), parts AS (

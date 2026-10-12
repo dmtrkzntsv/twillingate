@@ -5,21 +5,6 @@ import (
 	"testing"
 )
 
-// withEventRules creates event_rules on a database pinned below migration
-// 039, for a test that writes events through WriteEvents (which maps names
-// through the table) before migrating further (never through 39, which
-// would create it again).
-func withEventRules(t *testing.T, db *DB) {
-	t.Helper()
-	body, err := migrationFS.ReadFile("migrations/039_event_rules.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.db.Exec(string(body)); err != nil {
-		t.Fatal(err)
-	}
-}
-
 // TestMigration039EventRulesChecks checks the table exists after the
 // migration and its CHECKs refuse the rows the store never writes.
 func TestMigration039EventRulesChecks(t *testing.T) {
