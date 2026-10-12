@@ -87,7 +87,7 @@ func TestAggregateIdentityDayFailsOnMissingAggTable(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	tstamp := at(10, 0)
-	if err := db.WriteEvents(ctx, []store.Event{
+	if err := db.writeTestEvents(ctx, []store.Event{
 		{Family: store.FamilyViews, ID: "1", ProjectID: 1, TS: tstamp, ReceivedAt: tstamp, Kind: "app",
 			ActorKind: store.ActorInstall, ActorID: "a", UserID: "u1", Path: "/x"},
 	}); err != nil {
@@ -106,7 +106,7 @@ func TestAggregateIdentityDayFailsUpdatingLastSeen(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	tstamp := at(10, 0)
-	if err := db.WriteEvents(ctx, []store.Event{
+	if err := db.writeTestEvents(ctx, []store.Event{
 		{Family: store.FamilyViews, ID: "1", ProjectID: 1, TS: tstamp, ReceivedAt: tstamp, Kind: "app",
 			ActorKind: store.ActorInstall, ActorID: "a", UserID: "u1", Path: "/x"},
 	}); err != nil {
@@ -153,7 +153,7 @@ func TestUpsertActorsFailsOnMissingActorsTable(t *testing.T) {
 	if _, err := db.db.ExecContext(ctx, `DROP TABLE actors`); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.WriteEvents(ctx, []store.Event{
+	if err := db.writeTestEvents(ctx, []store.Event{
 		{Family: store.FamilyViews, ID: "1", ProjectID: 1, TS: ts("2026-08-10T10:00:00Z"), Kind: "web",
 			ActorKind: store.ActorConnection, ActorID: "v1", Path: "/"},
 	}); err != nil {
@@ -221,7 +221,7 @@ func TestAggregateProductDayFailsOnDailyRollup(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	tstamp := ts("2026-08-10T10:00:00Z")
-	if err := db.WriteEvents(ctx, []store.Event{
+	if err := db.writeTestEvents(ctx, []store.Event{
 		{Family: store.FamilyProduct, ID: "e1", ProjectID: 1, EventName: "signup", ActorID: "u1", TS: tstamp},
 	}); err != nil {
 		t.Fatal(err)
@@ -239,7 +239,7 @@ func TestAggregateProductDayFailsOnTotalsRollup(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	tstamp := ts("2026-08-10T10:00:00Z")
-	if err := db.WriteEvents(ctx, []store.Event{
+	if err := db.writeTestEvents(ctx, []store.Event{
 		{Family: store.FamilyProduct, ID: "e1", ProjectID: 1, EventName: "signup", ActorID: "u1", TS: tstamp},
 	}); err != nil {
 		t.Fatal(err)
@@ -257,7 +257,7 @@ func TestAggregateProductDayFailsOnAttrRollup(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	tstamp := ts("2026-08-10T10:00:00Z")
-	if err := db.WriteEvents(ctx, []store.Event{
+	if err := db.writeTestEvents(ctx, []store.Event{
 		{Family: store.FamilyProduct, ID: "e1", ProjectID: 1, EventName: "signup", ActorID: "u1", TS: tstamp,
 			Attributes: map[string]string{"plan": "pro"}},
 	}); err != nil {
@@ -276,7 +276,7 @@ func TestAggregateProductDayFailsOnRawDeleteBlocked(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	tstamp := ts("2026-08-10T10:00:00Z")
-	if err := db.WriteEvents(ctx, []store.Event{
+	if err := db.writeTestEvents(ctx, []store.Event{
 		{Family: store.FamilyProduct, ID: "e1", ProjectID: 1, EventName: "signup", ActorID: "u1", TS: tstamp},
 	}); err != nil {
 		t.Fatal(err)
@@ -312,7 +312,7 @@ func seedMeasureFailure(t *testing.T, db *DB, breaking string) {
 	ctx := context.Background()
 	ev := measureEvent("checkout_api", 340, "time")
 	ev.Attributes, ev.Browser = map[string]string{"plan": "pro"}, "Chrome"
-	if err := db.WriteEvents(ctx, []store.Event{ev}); err != nil {
+	if err := db.writeTestEvents(ctx, []store.Event{ev}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.db.ExecContext(ctx, breaking); err != nil {
@@ -357,7 +357,7 @@ WHEN NEW.attr_value = '(other)' BEGIN SELECT RAISE(ABORT, 'tail blocked'); END`)
 	ctx := context.Background()
 	extra := measureEvent("checkout_api", 100, "time")
 	extra.Attributes = map[string]string{"plan": "free"}
-	if err := db.WriteEvents(ctx, []store.Event{extra}); err != nil {
+	if err := db.writeTestEvents(ctx, []store.Event{extra}); err != nil {
 		t.Fatal(err)
 	}
 	err := db.AggregateMeasureDay(ctx, 1, day("2026-09-01"), []string{"plan"}, 1)
@@ -642,7 +642,7 @@ func TestWriteViewsFailsOnMissingTable(t *testing.T) {
 	if _, err := db.db.ExecContext(ctx, `DROP TABLE events`); err != nil {
 		t.Fatal(err)
 	}
-	err := db.WriteEvents(ctx, []store.Event{{Family: store.FamilyViews, ID: "1", ProjectID: 1, Kind: "web",
+	err := db.writeTestEvents(ctx, []store.Event{{Family: store.FamilyViews, ID: "1", ProjectID: 1, Kind: "web",
 		ActorKind: store.ActorConnection, TS: ts("2026-08-10T10:00:00Z"), ActorID: "v", Path: "/"}})
 	if err == nil {
 		t.Error("want error preparing an insert against a missing table")
@@ -658,7 +658,7 @@ WHEN NEW.id = 'blocked'
 BEGIN SELECT RAISE(ABORT, 'blocked by trigger'); END`); err != nil {
 		t.Fatal(err)
 	}
-	err := db.WriteEvents(ctx, []store.Event{{Family: store.FamilyViews, ID: "blocked", ProjectID: 1, Kind: "web",
+	err := db.writeTestEvents(ctx, []store.Event{{Family: store.FamilyViews, ID: "blocked", ProjectID: 1, Kind: "web",
 		ActorKind: store.ActorConnection, TS: ts("2026-08-10T10:00:00Z"), ActorID: "v", Path: "/"}})
 	if err == nil || !strings.Contains(err.Error(), "event blocked") {
 		t.Errorf("err = %v, want mention of event blocked", err)
@@ -671,7 +671,7 @@ func TestWriteProductEventsFailsOnMissingTable(t *testing.T) {
 	if _, err := db.db.ExecContext(ctx, `DROP TABLE events`); err != nil {
 		t.Fatal(err)
 	}
-	err := db.WriteEvents(ctx, []store.Event{
+	err := db.writeTestEvents(ctx, []store.Event{
 		{Family: store.FamilyProduct, ID: "e1", ProjectID: 1, EventName: "signup", ActorID: "u", TS: ts("2026-08-10T10:00:00Z")}})
 	if err == nil {
 		t.Error("want error preparing an insert against a missing table")
@@ -687,7 +687,7 @@ WHEN NEW.id = 'blocked'
 BEGIN SELECT RAISE(ABORT, 'blocked by trigger'); END`); err != nil {
 		t.Fatal(err)
 	}
-	err := db.WriteEvents(ctx, []store.Event{
+	err := db.writeTestEvents(ctx, []store.Event{
 		{Family: store.FamilyProduct, ID: "blocked", ProjectID: 1, EventName: "signup", ActorID: "u", TS: ts("2026-08-10T10:00:00Z")}})
 	if err == nil || !strings.Contains(err.Error(), "event blocked") {
 		t.Errorf("err = %v, want mention of event blocked", err)

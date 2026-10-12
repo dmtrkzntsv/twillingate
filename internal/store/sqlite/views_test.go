@@ -28,7 +28,7 @@ import (
 func TestLiveHalvesReadOnlyTheRange(t *testing.T) {
 	db := newTestDB(t)
 	rows, err := db.db.Query(`SELECT name FROM sqlite_schema WHERE type='view'
-		AND name LIKE 'v\_%' ESCAPE '\' AND name NOT IN ('v_events_flat', 'v_retention')
+		AND name LIKE 'v\_%' ESCAPE '\' AND name NOT IN ('v_events_flat', 'v_retention', 'v_identities')
 		ORDER BY name`)
 	if err != nil {
 		t.Fatal(err)
@@ -361,7 +361,7 @@ func TestStitchViewsMixedAggregatedAndRawDays(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	seedViewDay(t, db) // 2026-08-10
-	if err := db.WriteEvents(ctx, []store.Event{
+	if err := db.writeTestEvents(ctx, []store.Event{
 		{Family: store.FamilyViews, ID: "9", ProjectID: 1, TS: ts("2026-08-11T10:00:00Z"), Kind: "web",
 			ActorKind: store.ActorConnection, ActorID: "v9", Path: "/a"},
 	}); err != nil {
@@ -404,7 +404,7 @@ func TestStitchViewIdentityDailyCoversRawDays(t *testing.T) {
 	ctx := context.Background()
 	tsV := time.Date(2026, 8, 23, 10, 0, 0, 0, time.UTC)
 
-	if err := db.WriteEvents(ctx, []store.Event{
+	if err := db.writeTestEvents(ctx, []store.Event{
 		{Family: store.FamilyViews, ID: "1", ProjectID: 1, TS: tsV, ReceivedAt: tsV, Kind: "app", ActorKind: store.ActorInstall, ActorID: "a",
 			UserID: "u1", GroupID: "org9", Path: "/x"},
 		{Family: store.FamilyViews, ID: "2", ProjectID: 1, TS: tsV, ReceivedAt: tsV, Kind: "app", ActorKind: store.ActorInstall, ActorID: "b",
@@ -460,7 +460,7 @@ func TestStitchViewIdentityDailyDoesNotDoubleCountRetainedRawDays(t *testing.T) 
 	ctx := context.Background()
 	ts := time.Date(2026, 8, 23, 10, 0, 0, 0, time.UTC)
 
-	if err := db.WriteEvents(ctx, []store.Event{
+	if err := db.writeTestEvents(ctx, []store.Event{
 		{Family: store.FamilyViews, ID: "1", ProjectID: 1, TS: ts, ReceivedAt: ts, Kind: "web",
 			ActorKind: store.ActorUser, ActorID: "a", UserID: "u1", GroupID: "org9", Path: "/x"},
 		{Family: store.FamilyViews, ID: "2", ProjectID: 1, TS: ts, ReceivedAt: ts, Kind: "web",
@@ -509,10 +509,10 @@ func TestStitchViewIdentityDailyCapsLikeTheAggregate(t *testing.T) {
 				TS: ts, ReceivedAt: ts, ActorID: u, ActorKind: store.ActorUser, UserID: u, GroupID: g})
 		}
 	}
-	if err := db.WriteEvents(ctx, views); err != nil {
+	if err := db.writeTestEvents(ctx, views); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.WriteEvents(ctx, events); err != nil {
+	if err := db.writeTestEvents(ctx, events); err != nil {
 		t.Fatal(err)
 	}
 
@@ -677,7 +677,7 @@ func seedAttrDay(t *testing.T, db *DB, projectID int64) {
 		TS: ts("2026-08-01T11:00:00Z"), Attributes: map[string]string{"plan": "pro"},
 		OS: "web", AppVersion: "1.0",
 	})
-	if err := db.WriteEvents(context.Background(), evs); err != nil {
+	if err := db.writeTestEvents(context.Background(), evs); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -816,7 +816,7 @@ func TestProductAttrsDeclaredSystemKeysAcrossBoundary(t *testing.T) {
 			})
 		}
 	}
-	if err := db.WriteEvents(ctx, evs); err != nil {
+	if err := db.writeTestEvents(ctx, evs); err != nil {
 		t.Fatal(err)
 	}
 	before := readAttrs(t, db, id, "2026-08-01")

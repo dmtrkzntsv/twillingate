@@ -484,7 +484,7 @@ func BenchmarkPruneCatalog(b *testing.B) {
 		b.StopTimer()
 		plant()
 		b.StartTimer()
-		if err := db.tx(ctx, func(tx *sql.Tx) error { return pruneCatalogs(ctx, tx) }); err != nil {
+		if err := db.tx(ctx, func(tx *sql.Tx) error { return pruneCatalogs(ctx, tx, todayUTC()) }); err != nil {
 			b.Fatal(err)
 		}
 		b.StopTimer()

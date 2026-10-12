@@ -14,6 +14,16 @@ import (
 var formsNow = time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
 
 // newSub is a submission to "contact" on project 1, received at formsNow.
+// newFormsDB is a test database with projects 1 and 2 registered: an
+// approved form's event is stored only for a project that exists
+// (insertEvents).
+func newFormsDB(t *testing.T) *DB {
+	t.Helper()
+	db := newTestDB(t)
+	execAll(t, db, `INSERT INTO projects (id, name) VALUES (1, 'p1'), (2, 'p2')`)
+	return db
+}
+
 func newSub(id string, fields map[string]string) store.NewSubmission {
 	return store.NewSubmission{
 		Submission: store.Submission{
@@ -72,7 +82,7 @@ func approve(t *testing.T, db *DB, expected string) {
 }
 
 func TestWriteSubmissionFirstCreatesDraft(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	ctx := context.Background()
 	form, inserted, err := db.WriteSubmission(ctx, newSub("s1", map[string]string{"name": "Ann", "email": "a@x.io"}))
 	if err != nil || !inserted {
@@ -113,7 +123,7 @@ func TestWriteSubmissionFirstCreatesDraft(t *testing.T) {
 // TestWriteSubmissionStoresAttribution: the attribution is a JSON object
 // that leaves empty values out.
 func TestWriteSubmissionStoresAttribution(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	n := newSub("s1", map[string]string{"a": "1"})
 	n.Submission.Attribution = store.Attribution{Referrer: "google", UTMSource: "x", UTMCampaign: "oct"}
 	if _, _, err := db.WriteSubmission(context.Background(), n); err != nil {
@@ -129,7 +139,7 @@ func TestWriteSubmissionStoresAttribution(t *testing.T) {
 }
 
 func TestWriteSubmissionMergesFieldNames(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	ctx := context.Background()
 	if _, _, err := db.WriteSubmission(ctx, newSub("s1", map[string]string{"name": "Ann"})); err != nil {
 		t.Fatal(err)
@@ -154,7 +164,7 @@ func TestWriteSubmissionMergesFieldNames(t *testing.T) {
 }
 
 func TestWriteSubmissionDuplicateIDIsNoOp(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	ctx := context.Background()
 	if _, inserted, err := db.WriteSubmission(ctx, newSub("s1", map[string]string{"a": "1"})); err != nil || !inserted {
 		t.Fatalf("first: inserted=%v err=%v", inserted, err)
@@ -176,7 +186,7 @@ func TestWriteSubmissionDuplicateIDIsNoOp(t *testing.T) {
 }
 
 func TestWriteSubmissionApprovedKeepsExpectedAndWritesEvent(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	ctx := context.Background()
 	if _, _, err := db.WriteSubmission(ctx, newSub("s0", map[string]string{"name": "Ann"})); err != nil {
 		t.Fatal(err)
@@ -200,7 +210,7 @@ func TestWriteSubmissionApprovedKeepsExpectedAndWritesEvent(t *testing.T) {
 	}
 	var id, family, name, ts, day, kind, actorKind, actorID, host, path, attrs string
 	if err := db.db.QueryRow(`SELECT id, family, event_name, ts, day, kind, actor_kind, actor_id, host, path, attributes
-		FROM events`).Scan(&id, &family, &name, &ts, &day, &kind, &actorKind, &actorID, &host, &path, &attrs); err != nil {
+		FROM raw_product`).Scan(&id, &family, &name, &ts, &day, &kind, &actorKind, &actorID, &host, &path, &attrs); err != nil {
 		t.Fatal(err)
 	}
 	if id != "s1" || family != "product" || name != "$form_submit" || ts != "2026-10-06T12:00:00Z" ||
@@ -234,7 +244,7 @@ func TestWriteSubmissionApprovedKeepsExpectedAndWritesEvent(t *testing.T) {
 // TestWriteSubmissionRetryAfterApprovalWritesNoEvent covers a JSON retry
 // whose first attempt was stored as a draft: one row, still no event.
 func TestWriteSubmissionRetryAfterApprovalWritesNoEvent(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	ctx := context.Background()
 	n := newSub("s1", map[string]string{"name": "Ann"})
 	if _, _, err := db.WriteSubmission(ctx, n); err != nil {
@@ -261,7 +271,7 @@ func TestWriteSubmissionRefusedWhenClosed(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			db := newTestDB(t)
+			db := newFormsDB(t)
 			ctx := context.Background()
 			if _, _, err := db.WriteSubmission(ctx, newSub("s0", map[string]string{"a": "1"})); err != nil {
 				t.Fatal(err)
@@ -303,7 +313,7 @@ func TestWriteSubmissionRefusedWhenClosed(t *testing.T) {
 // is never refused (its draft_until is in the future), but a refusal must
 // not leave a half-created row either way: the transaction rolls back.
 func TestWriteSubmissionDraftUntilInPastRefusesAndRollsBack(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	n := newSub("s1", map[string]string{"a": "1"})
 	n.DraftUntil = formsNow.Add(-time.Hour)
 	_, _, err := db.WriteSubmission(context.Background(), n)
@@ -316,7 +326,7 @@ func TestWriteSubmissionDraftUntilInPastRefusesAndRollsBack(t *testing.T) {
 }
 
 func TestWriteSubmissionIsPerProject(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	ctx := context.Background()
 	other := newSub("s1", map[string]string{"a": "1"})
 	other.Submission.ProjectID = 2
@@ -334,7 +344,7 @@ func TestWriteSubmissionIsPerProject(t *testing.T) {
 
 func addView(t *testing.T, db *DB, id string, project int64, actor string, at time.Time, path, ref, src, med, camp string) {
 	t.Helper()
-	err := db.WriteEvents(context.Background(), []store.Event{{
+	err := db.writeTestEvents(context.Background(), []store.Event{{
 		ID: id, ProjectID: project, Family: store.FamilyViews, TS: at, ReceivedAt: at,
 		ActorKind: "user", ActorID: actor, Path: path, ReferrerSource: ref,
 		UTMSource: src, UTMMedium: med, UTMCampaign: camp,
@@ -345,14 +355,14 @@ func addView(t *testing.T, db *DB, id string, project int64, actor string, at ti
 }
 
 func TestSessionAt(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	ctx := context.Background()
 	at := formsNow
 	// t-60m is a session of its own (40 minutes before the next view);
 	// t-20m and t-5m are one session.
 	addView(t, db, "v1", 1, "a1", at.Add(-60*time.Minute), "/old", "old", "", "", "")
 	addView(t, db, "v2", 1, "a1", at.Add(-20*time.Minute), "/landing", "google", "news", "email", "launch")
-	if err := db.WriteEvents(ctx, []store.Event{{
+	if err := db.writeTestEvents(ctx, []store.Event{{
 		ID: "v3", ProjectID: 1, Family: store.FamilyViews, TS: at.Add(-5 * time.Minute), ReceivedAt: at,
 		Kind: "web", ActorKind: "user", ActorID: "a1", GroupID: "g1", SessionID: "s1", Path: "/contact",
 		ReferrerSource: "example.com", Platform: "web", OS: "macos", OSVersion: "15", OSName: "macOS",
@@ -391,7 +401,7 @@ func TestSessionAt(t *testing.T) {
 }
 
 func TestSessionAtReachesBackAcrossMidnight(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	at := time.Date(2026, 10, 6, 0, 10, 0, 0, time.UTC)
 	addView(t, db, "v1", 1, "a1", at.Add(-20*time.Minute), "/late", "late", "", "", "")
 	addView(t, db, "v2", 1, "a1", at.Add(-5*time.Minute), "/later", "later", "", "", "")
@@ -404,7 +414,7 @@ func TestSessionAtReachesBackAcrossMidnight(t *testing.T) {
 // TestSessionAtGapIsInclusive: a view exactly 30 minutes before the next
 // is the same session; one second more starts another.
 func TestSessionAtGapIsInclusive(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	ctx := context.Background()
 	addView(t, db, "v1", 1, "a1", formsNow.Add(-40*time.Minute-time.Second), "/first", "first", "", "", "")
 	addView(t, db, "v2", 1, "a1", formsNow.Add(-10*time.Minute), "/second", "second", "", "", "")
@@ -421,7 +431,7 @@ func TestSessionAtGapIsInclusive(t *testing.T) {
 }
 
 func TestWriteSubmissionNilFieldsStoreAnObject(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	if _, _, err := db.WriteSubmission(context.Background(), newSub("s1", nil)); err != nil {
 		t.Fatal(err)
 	}
@@ -441,7 +451,7 @@ func TestWriteSubmissionNilFieldsStoreAnObject(t *testing.T) {
 // attributes, id, project and ts the caller put on the event, the one
 // written is the submission's $form_submit.
 func TestWriteSubmissionEventShapeIsTheStores(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	ctx := context.Background()
 	if _, _, err := db.WriteSubmission(ctx, newSub("s0", map[string]string{"name": "Ann"})); err != nil {
 		t.Fatal(err)
@@ -472,7 +482,7 @@ func TestWriteSubmissionEventShapeIsTheStores(t *testing.T) {
 // TestWriteSubmissionRetryOfStoredIDSucceedsAfterClose: the retry of an
 // id already stored is a success, not a refusal, once the form has closed.
 func TestWriteSubmissionRetryOfStoredIDSucceedsAfterClose(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	ctx := context.Background()
 	n := newSub("s1", map[string]string{"a": "1"})
 	if _, _, err := db.WriteSubmission(ctx, n); err != nil {
@@ -501,7 +511,7 @@ func TestWriteSubmissionRetryOfStoredIDSucceedsAfterClose(t *testing.T) {
 // TestSessionAtNeedsACurrentSession: the newest view must be within
 // 30 minutes of `at`, the gap rule's own boundary.
 func TestSessionAtNeedsACurrentSession(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	ctx := context.Background()
 	addView(t, db, "v1", 1, "a1", formsNow.Add(-31*time.Minute), "/old", "old", "", "", "")
 	addView(t, db, "v2", 1, "a2", formsNow.Add(-30*time.Minute), "/edge", "edge", "", "", "")
@@ -525,7 +535,7 @@ func mustWrite(t *testing.T, db *DB, n store.NewSubmission) {
 }
 
 func TestApproveForm(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	ctx := context.Background()
 	mustWrite(t, db, newSub("s1", map[string]string{"name": "Ann", "email": "a@x.io"}))
 
@@ -558,14 +568,14 @@ func TestApproveForm(t *testing.T) {
 }
 
 func TestGetFormUnknown(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	if _, err := db.GetForm(context.Background(), 1, "nope"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("err = %v", err)
 	}
 }
 
 func TestListFormsOrderCountsAndArchivedSplit(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	ctx := context.Background()
 	for _, name := range []string{"zeta", "alpha", "mid", "gone"} {
 		n := newSub("s-"+name, map[string]string{"k": "v"})
@@ -620,7 +630,7 @@ func TestListFormsOrderCountsAndArchivedSplit(t *testing.T) {
 }
 
 func TestUpdateFormWritesAsGiven(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	ctx := context.Background()
 	mustWrite(t, db, newSub("s1", map[string]string{"email": "a@x.io"}))
 	if err := db.ApproveForm(ctx, 1, "contact", []string{"email"}, formsNow, formAudit); err != nil {
@@ -664,7 +674,7 @@ func TestUpdateFormWritesAsGiven(t *testing.T) {
 }
 
 func TestUpdateFormNilExpectedKeepsList(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	ctx := context.Background()
 	mustWrite(t, db, newSub("s1", map[string]string{"email": "a@x.io"}))
 	if err := db.ApproveForm(ctx, 1, "contact", []string{"email"}, formsNow, formAudit); err != nil {
@@ -685,7 +695,7 @@ func TestUpdateFormNilExpectedKeepsList(t *testing.T) {
 }
 
 func TestSetFormArchived(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	ctx := context.Background()
 	mustWrite(t, db, newSub("s1", map[string]string{"email": "a@x.io"}))
 	fresh := formsNow.Add(30 * 24 * time.Hour)
@@ -740,7 +750,7 @@ func TestSetFormArchived(t *testing.T) {
 }
 
 func TestExpireDrafts(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	ctx := context.Background()
 	mk := func(name string, created time.Time, draftDays int) {
 		n := newSub("s-"+name, map[string]string{"k": "v"})
@@ -811,7 +821,7 @@ func rawProductIDs(t *testing.T, db *DB) map[string]bool {
 }
 
 func TestDeleteSubmissionsRemovesRowAndRawEvent(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	ctx := context.Background()
 	mustWrite(t, db, newSub("s0", map[string]string{"email": "draft@x.io"})) // draft: no event
 	if err := db.ApproveForm(ctx, 1, "contact", []string{"email"}, formsNow, formAudit); err != nil {
@@ -857,10 +867,10 @@ func TestDeleteSubmissionsRemovesRowAndRawEvent(t *testing.T) {
 	if c := countRows(t, db, `SELECT COUNT(*) FROM events`); c != 2 {
 		t.Fatalf("%d events left, want 2", c)
 	}
-	if c := countRows(t, db, `SELECT COUNT(*) FROM events WHERE project_id=1 AND id='s2'`); c != 1 {
+	if c := countRows(t, db, `SELECT COUNT(*) FROM raw_product WHERE project_id=1 AND id='s2'`); c != 1 {
 		t.Fatal("s2's event was deleted")
 	}
-	if c := countRows(t, db, `SELECT COUNT(*) FROM events WHERE project_id=2 AND id='s1'`); c != 1 {
+	if c := countRows(t, db, `SELECT COUNT(*) FROM raw_product WHERE project_id=2 AND id='s1'`); c != 1 {
 		t.Fatal("another project's event was deleted")
 	}
 	if c := countRows(t, db, `SELECT COUNT(*) FROM submissions WHERE project_id=2`); c != 2 {
@@ -902,7 +912,7 @@ func TestDeleteSubmissionsRemovesRowAndRawEvent(t *testing.T) {
 }
 
 func TestFindSubmissions(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	ctx := context.Background()
 	add := func(form, id string, at time.Time, fields map[string]string) {
 		n := newSub(id, fields)
@@ -985,7 +995,7 @@ func TestFindSubmissions(t *testing.T) {
 }
 
 func TestGetSubmission(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	ctx := context.Background()
 	n := newSub("s1", map[string]string{"email": "a@x.io", "note": "hi"})
 	n.Submission.Attribution = store.Attribution{Referrer: "news.example", UTMSource: "nl"}
@@ -1029,7 +1039,7 @@ func submitAt(t *testing.T, db *DB, id string, at time.Time) {
 }
 
 func TestListFormsNewSubmissions(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	ctx := context.Background()
 	t0 := time.Date(2026, 10, 8, 10, 0, 0, 0, time.UTC)
 	submitAt(t, db, "s1", t0)
@@ -1051,7 +1061,7 @@ func TestListFormsNewSubmissions(t *testing.T) {
 }
 
 func TestMarkFormSeenNeverMovesBack(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	ctx := context.Background()
 	t0 := time.Date(2026, 10, 8, 10, 0, 0, 0, time.UTC)
 	submitAt(t, db, "s1", t0)
@@ -1071,7 +1081,7 @@ func TestMarkFormSeenNeverMovesBack(t *testing.T) {
 }
 
 func TestMarkFormSeenOnClosedDB(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -1081,7 +1091,7 @@ func TestMarkFormSeenOnClosedDB(t *testing.T) {
 }
 
 func TestMarkFormSeenUnknownForm(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	err := db.MarkFormSeen(context.Background(), 1, "nope", time.Now())
 	if !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)

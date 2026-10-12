@@ -3,7 +3,10 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/dmtrkzntsv/twillingate/internal/store"
@@ -45,9 +48,9 @@ func (d *DB) LoadAttributeRules(ctx context.Context) ([]store.AttributeRule, err
 }
 
 // RenameAttribute renames an attribute key of one project's product and
-// measures events (spec D6, D7): in one transaction the raw rows, the
-// attribute aggregates, usage_attributes, the catalog and the rules move
-// from `from` to `to`. A raw row carrying both keeps `to`'s value (the
+// measures events (spec D6, D7): in one transaction the raw rows
+// (renameRawAttributes), the attribute aggregates, usage_attributes, the
+// catalog's breakdown flag and the rules move from `from` to `to`. A raw row carrying both keeps `to`'s value (the
 // target wins). A `to` that is blocked is store.ErrConflict, merge or not;
 // a `to` with stored data is store.ErrConflict unless merge is set, and
 // merged rows are summed (D8). It returns the rows rewritten per table.
@@ -83,18 +86,11 @@ func (d *DB) RenameAttribute(ctx context.Context, projectID int64, from, to stri
 					from, to, to, from, store.ErrConflict)
 			}
 		}
-		res, err := tx.ExecContext(ctx, `UPDATE events SET attributes = CASE
-			  WHEN json_type(attributes, ?3) IS NULL
-			    THEN json_set(json_remove(attributes, ?2), ?3, json_extract(attributes, ?2))
-			  ELSE json_remove(attributes, ?2) END
-			WHERE project_id = ?1 AND family IN ('product', 'measures') AND json_type(attributes, ?2) IS NOT NULL`,
-			projectID, jsonPath(from), jsonPath(to))
+		n, err := renameRawAttributes(ctx, tx, projectID, from, to)
 		if err != nil {
 			return fmt.Errorf("rename attribute events: %w", err)
 		}
-		if rewritten["events"], err = res.RowsAffected(); err != nil {
-			return err
-		}
+		rewritten["events"] = n
 		for _, m := range attributeMoves {
 			res, err := tx.ExecContext(ctx, m.upsert, projectID, from, to)
 			if err != nil {
@@ -173,10 +169,89 @@ var attributeMoves = []struct{ table, upsert, remove string }{
 		`DELETE FROM usage_attributes WHERE project_id=?1 AND attr_key=?2`},
 }
 
-// renameCatalog moves `from`'s catalog row to `to` (D7): `to` is a
+// renameRawAttributes moves `from` to `to` on the project's raw product
+// and measure rows and returns how many it rewrote; view rows keep their
+// attributes as sent (events encoding spec D9). The rows hold catalog ids
+// and value numbers (D6): a `from` with no catalog row is on no row.
+// Otherwise `to` is resolved through the dictionary's upsert, and each
+// value the rewritten rows carry gets its number under `to` the same way
+// (added when missing, so the attribute_values_next trigger numbers it),
+// each with the newest day it rewrote as last_seen_day (D7.5). The
+// numbers' map rides along as a JSON parameter ({"<old n>": <new n>}),
+// and a row carrying both keys keeps `to`'s value, as before the encoding.
+func renameRawAttributes(ctx context.Context, tx *sql.Tx, projectID int64, from, to string) (int64, error) {
+	var fromID int64
+	switch err := tx.QueryRowContext(ctx, `SELECT id FROM project_attributes WHERE project_id=? AND key=?`,
+		projectID, from).Scan(&fromID); {
+	case errors.Is(err, sql.ErrNoRows):
+		return 0, nil
+	case err != nil:
+		return 0, err
+	}
+	fromPath := jsonPath(strconv.FormatInt(fromID, 10))
+	type carried struct {
+		n          int64
+		value, day string
+	}
+	var values []carried
+	newest := ""
+	rows, err := tx.QueryContext(ctx, `SELECT v.n, v.value, MAX(e.day) FROM events e
+		JOIN attribute_values v ON v.key_id = ?2 AND v.n = json_extract(e.attributes, ?3)
+		WHERE e.project_id = ?1 AND e.family IN (2, 3) AND json_type(e.attributes, ?3) IS NOT NULL
+		GROUP BY v.n, v.value`, projectID, fromID, fromPath)
+	if err != nil {
+		return 0, err
+	}
+	for rows.Next() {
+		var c carried
+		if err := rows.Scan(&c.n, &c.value, &c.day); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		values = append(values, c)
+		newest = max(newest, c.day)
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return 0, err
+	}
+	if len(values) == 0 {
+		return 0, nil
+	}
+	var toID int64
+	if err := tx.QueryRowContext(ctx, dictKeySQL, projectID, to, newest).Scan(&toID); err != nil {
+		return 0, err
+	}
+	numbers := make(map[string]int64, len(values))
+	for _, c := range values {
+		var n int64
+		if err := tx.QueryRowContext(ctx, dictValSQL, toID, c.value, c.day).Scan(&n); err != nil {
+			return 0, err
+		}
+		numbers[strconv.FormatInt(c.n, 10)] = n
+	}
+	mapping, err := json.Marshal(numbers)
+	if err != nil {
+		return 0, err
+	}
+	res, err := tx.ExecContext(ctx, `UPDATE events SET attributes = CASE
+		  WHEN json_type(attributes, ?3) IS NULL
+		    THEN json_set(json_remove(attributes, ?2), ?3,
+		                  json_extract(?4, '$."' || json_extract(attributes, ?2) || '"'))
+		  ELSE json_remove(attributes, ?2) END
+		WHERE project_id = ?1 AND family IN (2, 3) AND json_type(attributes, ?2) IS NOT NULL`,
+		projectID, fromPath, jsonPath(strconv.FormatInt(toID, 10)), string(mapping))
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+// renameCatalog moves `from`'s breakdown flag to `to` (D7): `to` is a
 // breakdown after if either was, so a rename or merge never adds to the
-// breakdown budget. A `from` with no row (an alias for keys not sent yet)
-// adds nothing.
+// breakdown budget, and `to` gets its catalog row. `from` keeps its row,
+// no longer a breakdown: view rows may still carry its id (events encoding
+// spec D9), and it ages out with them (pruneCatalog). A `from` with no row
+// (an alias for keys not sent yet) adds nothing.
 func renameCatalog(ctx context.Context, tx *sql.Tx, projectID int64, from, to string) error {
 	var had, breakdown bool
 	if err := tx.QueryRowContext(ctx,
@@ -187,8 +262,11 @@ func renameCatalog(ctx context.Context, tx *sql.Tx, projectID int64, from, to st
 	if !had {
 		return nil
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM project_attributes WHERE project_id=? AND key=?`, projectID, from); err != nil {
-		return fmt.Errorf("rename attribute catalog: %w", err)
+	if breakdown {
+		if _, err := tx.ExecContext(ctx, `UPDATE project_attributes SET breakdown = 0 WHERE project_id=? AND key=?`,
+			projectID, from); err != nil {
+			return fmt.Errorf("rename attribute catalog: %w", err)
+		}
 	}
 	q := `INSERT OR IGNORE INTO project_attributes (project_id, key) VALUES (?, ?)`
 	if breakdown {

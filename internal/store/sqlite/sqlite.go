@@ -17,6 +17,8 @@ type DB struct {
 	db *sql.DB
 	// seen is the received attribute keys ingest has written (WriteEvents).
 	seen receivedSeen
+	// dict caches the dictionary ids ingest has resolved (WriteEvents).
+	dict *dict
 }
 
 func open(dsn string) (store.Store, error) {
@@ -68,7 +70,7 @@ func openAt(path string) (*DB, error) {
 		db.Close()
 		return nil, fmt.Errorf("sqlite: journal_mode: %w", err)
 	}
-	return &DB{db: db}, nil
+	return &DB{db: db, dict: newDict()}, nil
 }
 
 func (d *DB) Close() error { return d.db.Close() }

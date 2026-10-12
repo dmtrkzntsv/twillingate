@@ -30,6 +30,11 @@ Facts you cannot infer from the DDL:
    actors, not a sum. v_identity_daily keeps the busiest
    IDENTITIES_TOP_N ids per kind per day (default 500) and drops the rest:
    there is no '(other)' row, so do not sum it for totals.
+5. The raw table events is stored encoded (ids and dictionary numbers):
+   read raw rows through raw_views, raw_product, raw_measures and
+   v_events_flat, which decode it. Read a declared attribute through its
+   attr_<key> column of v_events_flat: json_extract(attributes, ...) on
+   raw_* rebuilds each row's JSON first and is several times slower.
 
 Views (all carry a 'project_id' column — always filter on it; ids come from list_projects):
 
@@ -54,7 +59,7 @@ Views (all carry a 'project_id' column — always filter on it; ids come from li
   v_product_attrs(project_id, day, event_name, attr_key, attr_value, count, unique_users, unique_groups)  -- attr_key '$platform', '$os', '$app_version', '$app_locale', '$kind', '$browser', '$device', '$browser_locale', '$country' always present; unique_groups is NULL for days rolled up before it was measured (0 = measured, none)
   v_measures_daily(project_id, day, event_name, measure, bucket, approx_value, samples, weight, sum)  -- measure: 'time' (ms)|'size' (bytes)|'number'; weight = estimated count; percentile: order by bucket, first bucket whose running weight reaches q × total
   v_measures_attrs(project_id, day, event_name, measure, attr_key, attr_value, bucket, approx_value, samples, weight, sum)  -- same keys and top-N as v_product_attrs
-  identities(project_id, kind, id, name)  -- display names, joinable to v_identity_daily
+  v_identities(project_id, kind, id, name, last_seen_day, updated_at)  -- display names, joinable to v_identity_daily
 
 Cost note: the views' live halves sessionize raw rows with window
 functions; a WHERE on day may not prune that work. Narrow ranges and the

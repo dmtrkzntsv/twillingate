@@ -27,15 +27,17 @@ func TestEventRuleOperationsReportStoreErrors(t *testing.T) {
 			_, err := db.RenameEvent(ctx, 1, store.FamilyProduct, "a", "a", false, ruleAudit)
 			return err
 		}},
-		{"rename looks for product rows", []string{`DROP VIEW raw_product`}, func(db *DB) error {
+		{"rename looks for product rows", []string{`DROP TABLE events`}, func(db *DB) error {
 			_, err := db.RenameEvent(ctx, 1, store.FamilyProduct, "a", "b", false, ruleAudit)
 			return err
 		}},
-		{"rename looks for measures rows", []string{`DROP VIEW raw_measures`}, func(db *DB) error {
+		{"rename looks for measures rows", []string{`DROP TABLE events`}, func(db *DB) error {
 			_, err := db.RenameEvent(ctx, 1, store.FamilyMeasures, "a", "b", false, ruleAudit)
 			return err
 		}},
-		{"rename rewrites raw rows", []string{`DROP TABLE events`}, func(db *DB) error {
+		{"rename rewrites raw rows", []string{
+			`INSERT INTO strings (value, last_seen_day) VALUES ('a', '2026-10-10')`, `DROP TABLE events`,
+		}, func(db *DB) error {
 			_, err := db.RenameEvent(ctx, 1, store.FamilyProduct, "a", "b", true, ruleAudit)
 			return err
 		}},

@@ -80,7 +80,7 @@ func TestBucketColumn(t *testing.T) {
 	}{{340, 149}, {0.08, -64}, {1, 0}, {0, -1000}, {1e-18, -1000}} {
 		v := c.value
 		ev := measureEvent("m", v, "time")
-		if err := db.WriteEvents(ctx, []store.Event{ev}); err != nil {
+		if err := db.writeTestEvents(ctx, []store.Event{ev}); err != nil {
 			t.Fatal(err)
 		}
 		var got int
@@ -93,11 +93,11 @@ func TestBucketColumn(t *testing.T) {
 	}
 	p := store.Event{ID: uuidFor(t), ProjectID: 1, Family: store.FamilyProduct, EventName: "signup",
 		TS: time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC), ActorID: "a"}
-	if err := db.WriteEvents(ctx, []store.Event{p}); err != nil {
+	if err := db.writeTestEvents(ctx, []store.Event{p}); err != nil {
 		t.Fatal(err)
 	}
 	var n int
-	if err := db.db.QueryRow(`SELECT COUNT(*) FROM events WHERE family<>'measures' AND bucket IS NOT NULL`).Scan(&n); err != nil {
+	if err := db.db.QueryRow(`SELECT COUNT(*) FROM events WHERE family<>3 AND bucket IS NOT NULL`).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	if n != 0 {
@@ -109,7 +109,7 @@ func TestWriteMeasureRoundTrip(t *testing.T) {
 	db := newTestDB(t)
 	ev := measureEvent("checkout_api", 340, "time")
 	ev.SampleRate = 0.25
-	if err := db.WriteEvents(context.Background(), []store.Event{ev}); err != nil {
+	if err := db.writeTestEvents(context.Background(), []store.Event{ev}); err != nil {
 		t.Fatal(err)
 	}
 	var value, rate float64
@@ -124,7 +124,7 @@ func TestWriteMeasureRoundTrip(t *testing.T) {
 	// A measure sent with no rate is stored at rate 1.
 	unset := measureEvent("checkout_api", 12, "time")
 	unset.SampleRate = 0
-	if err := db.WriteEvents(context.Background(), []store.Event{unset}); err != nil {
+	if err := db.writeTestEvents(context.Background(), []store.Event{unset}); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.db.QueryRow(`SELECT sample_rate FROM raw_measures WHERE id=?`, unset.ID).Scan(&rate); err != nil {
@@ -136,7 +136,7 @@ func TestWriteMeasureRoundTrip(t *testing.T) {
 	// A product event stores NULL value and sample_rate 1.
 	p := store.Event{ID: uuidFor(t), ProjectID: 1, Family: store.FamilyProduct, EventName: "signup",
 		TS: time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC), ActorID: "a"}
-	if err := db.WriteEvents(context.Background(), []store.Event{p}); err != nil {
+	if err := db.writeTestEvents(context.Background(), []store.Event{p}); err != nil {
 		t.Fatal(err)
 	}
 	var isNull bool
@@ -153,7 +153,7 @@ func TestWriteMeasureRoundTrip(t *testing.T) {
 func TestMeasuresAreTheirOwnFamily(t *testing.T) {
 	db := newTestDB(t)
 	ev := measureEvent("m", 5, "size")
-	if err := db.WriteEvents(context.Background(), []store.Event{ev}); err != nil {
+	if err := db.writeTestEvents(context.Background(), []store.Event{ev}); err != nil {
 		t.Fatal(err)
 	}
 	for _, v := range []string{"raw_views", "raw_product"} {
@@ -184,7 +184,7 @@ func TestMeasureDaysBefore(t *testing.T) {
 	b.TS = time.Date(2026, 9, 3, 10, 0, 0, 0, time.UTC)
 	p := store.Event{ID: uuidFor(t), ProjectID: 1, Family: store.FamilyProduct, EventName: "signup",
 		TS: time.Date(2026, 8, 30, 10, 0, 0, 0, time.UTC), ActorID: "a"}
-	if err := db.WriteEvents(ctx, []store.Event{a, b, p}); err != nil {
+	if err := db.writeTestEvents(ctx, []store.Event{a, b, p}); err != nil {
 		t.Fatal(err)
 	}
 	got, err := db.MeasureDaysBefore(ctx, 1, day("2026-09-03"))
@@ -211,7 +211,7 @@ func TestMeasuresDailyView(t *testing.T) {
 	ctx := context.Background()
 	a, b, z := measureEvent("api", 340, "time"), measureEvent("api", 341, "time"), measureEvent("api", 0, "time")
 	z.SampleRate = 0.5
-	if err := db.WriteEvents(ctx, []store.Event{a, b, z}); err != nil {
+	if err := db.writeTestEvents(ctx, []store.Event{a, b, z}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.db.Exec(`INSERT INTO agg_measures_daily
@@ -286,7 +286,7 @@ func TestMeasuresAttrsView(t *testing.T) {
 		ev.Attributes = map[string]string{"plan": c.plan}
 		evs = append(evs, ev)
 	}
-	if err := db.WriteEvents(ctx, evs); err != nil {
+	if err := db.writeTestEvents(ctx, evs); err != nil {
 		t.Fatal(err)
 	}
 	rows, err := db.db.Query(`SELECT day, attr_key, attr_value, bucket, approx_value, samples, weight, sum

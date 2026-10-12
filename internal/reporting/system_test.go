@@ -692,22 +692,43 @@ func TestVitalsStatsBlankWithoutSamples(t *testing.T) {
 // id), plus agg_views_daily rows for every older day.
 func seedNeighbour(t *testing.T, st store.Store, projectID int64, today civil.Date) {
 	t.Helper()
-	var views, agg []string
+	var views []store.Event
+	var agg []string
 	for back := 0; back < 3; back++ {
 		day := today.AddDays(-back).String()
 		for i := 0; i < 5; i++ {
 			for v, minute := range []int{0, 10, 60} {
-				ts := fmt.Sprintf("%sT%02d:%02d:00Z", day, 2+i+minute/60, minute%60)
-				views = append(views, fmt.Sprintf("('n-%d-%d-%d', %d, 'views', '$page_view', '%s', '%s', '%s', 'web', 'n%d', 'user', '/')",
-					back, i, v, projectID, ts, day, ts, i))
+				at := seedTS(t, fmt.Sprintf("%sT%02d:%02d:00Z", day, 2+i+minute/60, minute%60))
+				views = append(views, store.Event{ID: fmt.Sprintf("n-%d-%d-%d", back, i, v), ProjectID: projectID,
+					Family: store.FamilyViews, EventName: "$page_view", TS: at, ReceivedAt: at, Kind: "web",
+					ActorID: fmt.Sprintf("n%d", i), ActorKind: "user", Path: "/"})
 			}
 		}
 	}
-	valuesInsert(t, st, "events", "id, project_id, family, event_name, ts, day, received_at, kind, actor_id, actor_kind, path", views)
+	writeSeedEvents(t, st, views)
 	for back := 3; back < 100; back++ {
 		agg = append(agg, fmt.Sprintf("(%d, '%s', 'web', 7, 30, 9, 4, 700)", projectID, today.AddDays(-back)))
 	}
 	valuesInsert(t, st, "agg_views_daily", "project_id, day, kind, visitors, views, sessions, bounces, duration_sec", agg)
+}
+
+// seedTS parses a seed's ISO timestamp.
+func seedTS(t *testing.T, s string) time.Time {
+	t.Helper()
+	at, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return at
+}
+
+// writeSeedEvents stores raw rows through ingest's write path: events is
+// stored encoded (migration 041), so the seed cannot INSERT them as text.
+func writeSeedEvents(t *testing.T, st store.Store, evs []store.Event) {
+	t.Helper()
+	if err := st.WriteEvents(context.Background(), evs); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // valuesInsert runs INSERT INTO table (cols) VALUES rows in chunks,
@@ -747,7 +768,7 @@ func seedSystemData(t *testing.T, st store.Store, projectID int64, today civil.D
 	// (a new id splits even without a gap); actors 4 and 8 send no id and
 	// a second view 40 minutes after the first (two sessions, both
 	// bounces).
-	var events []string
+	var events []store.Event
 	for back := 0; back < 3; back++ {
 		day := today.AddDays(-back).String()
 		for i := 0; i < 12; i++ {
@@ -759,7 +780,7 @@ func seedSystemData(t *testing.T, st store.Store, projectID int64, today civil.D
 			if i < 9 {
 				groupID = fmt.Sprintf("g%d", i%3)
 			}
-			consent := []string{"1", "0", "NULL"}[i%3]
+			consent := []store.Consent{store.ConsentGiven, store.ConsentNone, store.ConsentUnknown}[i%3]
 			country := []string{"US", "DE", "FR", "GB"}[i%4]
 			app := i%3 == 0
 			kind, name, platform, os, osVersion := "web", "$page_view", "web", "macos", "14"
@@ -790,33 +811,36 @@ func seedSystemData(t *testing.T, st store.Store, projectID int64, today civil.D
 				if v < len(sessions) {
 					sessionID = sessions[v]
 				}
-				ts := fmt.Sprintf("%sT%02d:%02d:00Z", day, 1+i, minute)
-				events = append(events, fmt.Sprintf("(%s, %d, 'views', %s, %s, %s, %s, %s, %s, 'user', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'en-US', %s, %s, %s, %s, %d, %d, %s, %s, '{}')",
-					q(fmt.Sprintf("v-%s-%d", actor, v)), p, q(name), q(ts), q(day), q(ts), q(kind), q(actor),
-					q(userID), q(groupID), q(sessionID), q(host), q(path), q(ref), q(utmSource), q(utmMedium), q(utmCampaign),
-					q(platform), q(os), q(osVersion), q(browser), q(browserVersion),
-					q(appVersion), q(appLocale), q(device), q(model), width, height, q(country), consent))
+				at := seedTS(t, fmt.Sprintf("%sT%02d:%02d:00Z", day, 1+i, minute))
+				events = append(events, store.Event{ID: fmt.Sprintf("v-%s-%d", actor, v), ProjectID: p,
+					Family: store.FamilyViews, EventName: name, TS: at, ReceivedAt: at, Kind: kind,
+					ActorID: actor, ActorKind: "user", UserID: userID, GroupID: groupID, SessionID: sessionID,
+					Host: host, Path: path, ReferrerSource: ref,
+					UTMSource: utmSource, UTMMedium: utmMedium, UTMCampaign: utmCampaign,
+					Platform: platform, OS: os, OSVersion: osVersion, Browser: browser, BrowserVersion: browserVersion,
+					BrowserLocale: "en-US", AppVersion: appVersion, AppLocale: appLocale,
+					Device: device, DeviceModel: model, DisplayWidth: width, DisplayHeight: height,
+					Country: country, Consent: consent})
 			}
 			for e, event := range []string{"signup", "click"} {
-				ts := fmt.Sprintf("%sT%02d:%02d:30Z", day, 1+i, e)
-				events = append(events, fmt.Sprintf("(%s, %d, 'product', %s, %s, %s, %s, %s, %s, 'user', %s, %s, '', '', '', '', '', '', '', %s, %s, %s, %s, %s, 'en-US', %s, 'en', %s, '', 0, 0, %s, %s, %s)",
-					q(fmt.Sprintf("e-%s-%d", actor, e)), p, q(event), q(ts), q(day), q(ts), q(kind), q(actor),
-					q(userID), q(groupID), q(platform), q(os), q(osVersion), q(browser), q(browserVersion),
-					q([]string{"2.4.1", "2.5.0"}[i%2]), q(device), q(country), consent,
-					q(fmt.Sprintf(`{"plan":"%s"}`, []string{"free", "pro"}[i%2]))))
+				at := seedTS(t, fmt.Sprintf("%sT%02d:%02d:30Z", day, 1+i, e))
+				events = append(events, store.Event{ID: fmt.Sprintf("e-%s-%d", actor, e), ProjectID: p,
+					Family: store.FamilyProduct, EventName: event, TS: at, ReceivedAt: at, Kind: kind,
+					ActorID: actor, ActorKind: "user", UserID: userID, GroupID: groupID,
+					Platform: platform, OS: os, OSVersion: osVersion, Browser: browser, BrowserVersion: browserVersion,
+					BrowserLocale: "en-US", AppVersion: []string{"2.4.1", "2.5.0"}[i%2], AppLocale: "en",
+					Device: device, Country: country, Consent: consent,
+					Attributes: map[string]string{"plan": []string{"free", "pro"}[i%2]}})
 			}
 		}
 	}
-	valuesInsert(t, st, "events", `id, project_id, family, event_name, ts, day, received_at, kind, actor_id, actor_kind,
-		user_id, group_id, session_id, host, path, referrer_source, utm_source, utm_medium, utm_campaign,
-		platform, os, os_version, browser, browser_version, browser_locale, app_version, app_locale,
-		device, device_model, display_width, display_height, country, consent, attributes`, events)
+	writeSeedEvents(t, st, events)
 
 	// Raw measures on the same three days: each web actor's page load
 	// reports the five Web Vitals (CLS often exactly 0, the zero bucket),
 	// a backend reports a custom checkout_api timing, and every third
 	// actor samples at half rate so weight differs from samples.
-	var measures []string
+	var measures []store.Event
 	for back := 0; back < 3; back++ {
 		day := today.AddDays(-back).String()
 		for i := 0; i < 12; i++ {
@@ -829,7 +853,7 @@ func seedSystemData(t *testing.T, st store.Store, projectID int64, today civil.D
 			}
 			path := []string{"/", "/pricing", "/docs", "/"}[i%4]
 			browser, device := []string{"chrome", "safari"}[i%2], []string{"desktop", "mobile"}[i%4/2]
-			ts := fmt.Sprintf("%sT%02d:00:10Z", day, 1+i)
+			at := seedTS(t, fmt.Sprintf("%sT%02d:00:10Z", day, 1+i))
 			for _, m := range []struct {
 				name, measure string
 				value         float64
@@ -845,14 +869,15 @@ func seedSystemData(t *testing.T, st store.Store, projectID int64, today civil.D
 				if m.name == "checkout_api" {
 					pth, br, dv = "", "", ""
 				}
-				measures = append(measures, fmt.Sprintf("(%s, %d, 'measures', %s, %s, %s, %s, 'web', %s, 'user', 'web', %s, %s, %s, %g, %s, %g)",
-					q(fmt.Sprintf("m-%d-%d-%s", back, i, m.name)), projectID, q(m.name), q(ts), q(day), q(ts),
-					q(fmt.Sprintf("a%d-%d", back, i)), q(pth), q(br), q(dv), m.value, q(m.measure), rate))
+				value := m.value
+				measures = append(measures, store.Event{ID: fmt.Sprintf("m-%d-%d-%s", back, i, m.name), ProjectID: projectID,
+					Family: store.FamilyMeasures, EventName: m.name, TS: at, ReceivedAt: at, Kind: "web",
+					ActorID: fmt.Sprintf("a%d-%d", back, i), ActorKind: "user", Platform: "web",
+					Path: pth, Browser: br, Device: dv, Value: &value, Measure: m.measure, SampleRate: rate})
 			}
 		}
 	}
-	valuesInsert(t, st, "events", `id, project_id, family, event_name, ts, day, received_at, kind, actor_id, actor_kind,
-		platform, path, browser, device, value, measure, sample_rate`, measures)
+	writeSeedEvents(t, st, measures)
 
 	// Aggregates: every older day back to today-99, as the daily pass
 	// would have left them.

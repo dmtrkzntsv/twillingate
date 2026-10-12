@@ -39,14 +39,15 @@ func writeNamed(t *testing.T, db *DB, project int64, family store.Family, name s
 		}
 		evs = append(evs, e)
 	}
-	if err := db.WriteEvents(context.Background(), evs); err != nil {
+	if err := db.writeTestEvents(context.Background(), evs); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func rawNames(t *testing.T, db *DB, project int64, family store.Family) map[string]int {
 	t.Helper()
-	rows, err := db.db.Query(`SELECT event_name, COUNT(*) FROM events WHERE project_id=? AND family=? GROUP BY event_name`, project, string(family))
+	rows, err := db.db.Query(`SELECT event_name, COUNT(*) FROM (SELECT * FROM raw_views UNION ALL SELECT * FROM raw_product
+		UNION ALL SELECT * FROM raw_measures) WHERE project_id=? AND family=? GROUP BY event_name`, project, string(family))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -473,7 +474,7 @@ func writeWithAttr(t *testing.T, db *DB, family store.Family, name string, n int
 		}
 		evs = append(evs, e)
 	}
-	if err := db.WriteEvents(context.Background(), evs); err != nil {
+	if err := db.writeTestEvents(context.Background(), evs); err != nil {
 		t.Fatal(err)
 	}
 }

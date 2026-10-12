@@ -48,9 +48,9 @@ func TestMigrationsNeverNameProcessOwnedObjects(t *testing.T) {
 func TestMigrateDropsProcessOwnedViews(t *testing.T) {
 	db := newTestDBAt(t, 36)
 	ctx := context.Background()
-	if err := db.RebuildFlatView(ctx, []string{"plan"}); err != nil {
-		t.Fatal(err)
-	}
+	// The view as an older process built it: today's RebuildFlatView
+	// decodes through 041's dictionaries, which this schema lacks.
+	execAll(t, db, `CREATE VIEW v_events_flat AS SELECT id, json_extract(attributes, '$."plan"') AS attr_plan FROM events`)
 	if !viewColumns(t, db, "v_events_flat")["attr_plan"] {
 		t.Fatal("fixture: no attr_plan before migrating")
 	}

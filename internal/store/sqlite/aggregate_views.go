@@ -202,7 +202,7 @@ FROM spans s GROUP BY s.kind`, named...); err != nil {
 			}
 		}
 		if _, err := tx.ExecContext(ctx,
-			`DELETE FROM events WHERE family='views' AND project_id=? AND day=?`, projectID, day.String()); err != nil {
+			`DELETE FROM events WHERE family=1 AND project_id=? AND day=?`, projectID, day.String()); err != nil {
 			return fmt.Errorf("prune raw views: %w", err)
 		}
 		return nil

@@ -131,11 +131,9 @@ func (s *receivedSeen) forget(projectID int64) {
 
 // writeReceived inserts the triples ingest has not seen yet, with events 0
 // until the daily pass counts their day; a row already there (a restart,
-// or a late event for an older day) is left as it is. Each key also gets
-// its catalog row (project_attributes), added only here, for the triples
-// the cache has not seen, so a known key costs nothing more. The catalog
-// row is skipped for a project that no longer exists (purged while its
-// events were buffered): the foreign key would otherwise fail the batch.
+// or a late event for an older day) is left as it is. Each key's catalog
+// row (project_attributes) is not written here: insertEvents resolved it,
+// with its id, before the row that carries it (events encoding spec D8).
 func writeReceived(ctx context.Context, tx *sql.Tx, keys []receivedKey) error {
 	if len(keys) == 0 {
 		return nil
@@ -146,17 +144,8 @@ func writeReceived(ctx context.Context, tx *sql.Tx, keys []receivedKey) error {
 		return err
 	}
 	defer stmt.Close()
-	catalog, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO project_attributes (project_id, key)
-		SELECT ?1, ?2 WHERE EXISTS (SELECT 1 FROM projects WHERE id = ?1)`)
-	if err != nil {
-		return err
-	}
-	defer catalog.Close()
 	for _, k := range keys {
 		if _, err := stmt.ExecContext(ctx, k.project, k.day, k.key); err != nil {
-			return err
-		}
-		if _, err := catalog.ExecContext(ctx, k.project, k.key); err != nil {
 			return err
 		}
 	}
@@ -221,7 +210,7 @@ func countReceived(ctx context.Context, tx *sql.Tx, today string) error {
 		WHERE project_id IN (SELECT id FROM projects)`); err != nil {
 		return fmt.Errorf("attribute catalog: %w", err)
 	}
-	if err := pruneCatalogs(ctx, tx); err != nil {
+	if err := pruneCatalogs(ctx, tx, today); err != nil {
 		return fmt.Errorf("attribute catalog: %w", err)
 	}
 	return nil
@@ -230,7 +219,7 @@ func countReceived(ctx context.Context, tx *sql.Tx, today string) error {
 // pruneCatalogs runs pruneCatalog for every project. The ids are read
 // first: the transaction's one connection cannot run the deletes while a
 // result set is open on it.
-func pruneCatalogs(ctx context.Context, tx *sql.Tx) error {
+func pruneCatalogs(ctx context.Context, tx *sql.Tx, today string) error {
 	rows, err := tx.QueryContext(ctx, `SELECT id FROM projects`)
 	if err != nil {
 		return err
@@ -249,22 +238,33 @@ func pruneCatalogs(ctx context.Context, tx *sql.Tx) error {
 		return err
 	}
 	for _, id := range ids {
-		if err := pruneCatalog(ctx, tx, id); err != nil {
+		if err := pruneCatalog(ctx, tx, id, today); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// pruneCatalog drops the project's catalog rows that are no breakdown and
-// that no usage_attributes row holds any more (spec D3). The subquery is
-// uncorrelated: SQLite reads the project's usage keys once into a set,
-// where a correlated NOT EXISTS probes usage_attributes per catalog row by
-// its project_id prefix alone (the key comes after day in its primary
-// key), which is quadratic in the key count on a database never analyzed.
-func pruneCatalog(ctx context.Context, tx *sql.Tx, projectID int64) error {
+// pruneCatalog drops the project's catalog rows that are no breakdown,
+// that no usage_attributes row holds any more (spec D3), and that no raw
+// row can still carry: the catalog is the encoded attributes' key
+// dictionary (events encoding spec D8), and a key seen only on views has
+// no usage row. A raw row raises its keys' last_seen_day to its day, so a
+// key last seen before the project's oldest raw day (or before today,
+// when it has none) is on no row. The oldest day reads each family's key
+// prefix. The usage subquery is uncorrelated: SQLite reads the project's
+// usage keys once into a set, where a correlated NOT EXISTS probes
+// usage_attributes per catalog row by its project_id prefix alone (the key
+// comes after day in its primary key), which is quadratic in the key count
+// on a database never analyzed.
+func pruneCatalog(ctx context.Context, tx *sql.Tx, projectID int64, today string) error {
 	_, err := tx.ExecContext(ctx, `DELETE FROM project_attributes
 		WHERE project_id = ?1 AND breakdown = 0
-		AND key NOT IN (SELECT attr_key FROM usage_attributes WHERE project_id = ?1)`, projectID)
+		AND key NOT IN (SELECT attr_key FROM usage_attributes WHERE project_id = ?1)
+		AND last_seen_day < min(?2, COALESCE((SELECT MIN(d) FROM (
+		      SELECT MIN(day) AS d FROM events WHERE family = 1 AND project_id = ?1
+		      UNION ALL SELECT MIN(day) FROM events WHERE family = 2 AND project_id = ?1
+		      UNION ALL SELECT MIN(day) FROM events WHERE family = 3 AND project_id = ?1)), ?2))`,
+		projectID, today)
 	return err
 }

@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 
 	"github.com/dmtrkzntsv/twillingate/internal/store"
@@ -38,7 +39,8 @@ func (d *DB) LoadEventRules(ctx context.Context) ([]store.EventRule, error) {
 // that is blocked is store.ErrConflict: a rename or merge never drops what
 // it moves. A `to` that already has rows is store.ErrConflict unless merge
 // is set; merged aggregate rows are summed (D6). It returns the rows
-// rewritten per table ("events" and the aggregate tables of the family).
+// rewritten per table ("events" and the aggregate tables of the family);
+// the raw rows are rewritten on their encoded names (renameRawEvents).
 func (d *DB) RenameEvent(ctx context.Context, projectID int64, family store.Family,
 	from, to string, merge bool, a store.AuditEntry) (map[string]int64, error) {
 	if from == to {
@@ -66,15 +68,11 @@ func (d *DB) RenameEvent(ctx context.Context, projectID int64, family store.Fami
 					from, to, to, from, store.ErrConflict)
 			}
 		}
-		res, err := tx.ExecContext(ctx,
-			`UPDATE events SET event_name=?3 WHERE family=?4 AND project_id=?1 AND event_name=?2`,
-			projectID, from, to, string(family))
+		n, err := renameRawEvents(ctx, tx, projectID, family, from, to)
 		if err != nil {
-			return fmt.Errorf("rename events: %w", err)
-		}
-		if rewritten["events"], err = res.RowsAffected(); err != nil {
 			return err
 		}
+		rewritten["events"] = n
 		if err := renameAggregates(ctx, tx, projectID, family, from, to, rewritten); err != nil {
 			return err
 		}
@@ -105,13 +103,51 @@ func (d *DB) RenameEvent(ctx context.Context, projectID int64, family store.Fami
 	return rewritten, nil
 }
 
+// renameRawEvents rewrites the family's raw rows of the project from one
+// name to another and returns how many it rewrote. The rows hold the
+// names' strings ids (events encoding spec D9): a `from` with no strings
+// row is on no row; otherwise `to` is resolved through the dictionary's
+// upsert with the newest day it rewrote as last_seen_day (D7.5), so the
+// cleanup keeps it while those rows exist.
+func renameRawEvents(ctx context.Context, tx *sql.Tx, projectID int64, family store.Family, from, to string) (int64, error) {
+	code := familyCode(family)
+	var fromID int64
+	var newest sql.NullString
+	switch err := tx.QueryRowContext(ctx, `SELECT id FROM strings WHERE value=?`, from).Scan(&fromID); {
+	case errors.Is(err, sql.ErrNoRows):
+		return 0, nil
+	case err != nil:
+		return 0, fmt.Errorf("rename events: %w", err)
+	}
+	if err := tx.QueryRowContext(ctx, `SELECT MAX(day) FROM events WHERE family=? AND project_id=? AND event_name=?`,
+		code, projectID, fromID).Scan(&newest); err != nil {
+		return 0, fmt.Errorf("rename events: %w", err)
+	}
+	if !newest.Valid {
+		return 0, nil
+	}
+	var toID int64
+	if err := tx.QueryRowContext(ctx, dictStrSQL, to, newest.String).Scan(&toID); err != nil {
+		return 0, fmt.Errorf("rename events: %w", err)
+	}
+	res, err := tx.ExecContext(ctx, `UPDATE events SET event_name=?3 WHERE family=?4 AND project_id=?1 AND event_name=?2`,
+		projectID, fromID, toID, code)
+	if err != nil {
+		return 0, fmt.Errorf("rename events: %w", err)
+	}
+	return res.RowsAffected()
+}
+
 // hasEventRows reports whether name has raw or aggregated rows in the
-// family of the project.
+// family of the project. The raw rows hold the name's strings id: a name
+// with no strings row is on none.
 func hasEventRows(ctx context.Context, tx *sql.Tx, projectID int64, family store.Family, name string) (bool, error) {
-	const product = `SELECT EXISTS(SELECT 1 FROM raw_product WHERE project_id=?1 AND event_name=?2)
+	const product = `SELECT EXISTS(SELECT 1 FROM events WHERE family=2 AND project_id=?1
+		  AND event_name=(SELECT id FROM strings WHERE value=?2))
 		OR EXISTS(SELECT 1 FROM agg_product_daily WHERE project_id=?1 AND event_name=?2)
 		OR EXISTS(SELECT 1 FROM agg_product_attrs WHERE project_id=?1 AND event_name=?2)`
-	const measures = `SELECT EXISTS(SELECT 1 FROM raw_measures WHERE project_id=?1 AND event_name=?2)
+	const measures = `SELECT EXISTS(SELECT 1 FROM events WHERE family=3 AND project_id=?1
+		  AND event_name=(SELECT id FROM strings WHERE value=?2))
 		OR EXISTS(SELECT 1 FROM agg_measures_daily WHERE project_id=?1 AND event_name=?2)
 		OR EXISTS(SELECT 1 FROM agg_measures_attrs WHERE project_id=?1 AND event_name=?2)`
 	q := product

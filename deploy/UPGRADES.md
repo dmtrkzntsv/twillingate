@@ -727,3 +727,58 @@ scripts naming any of the old names must follow.
 Rollback: an older binary cannot run on schema 040, since it reads the
 old table names and the dropped column. Roll back by restoring the
 backup taken before the upgrade; events ingested since are lost.
+
+### Upgrading to the encoded events table (migration 041)
+
+The raw `events` table is rebuilt encoded: UUIDs and hex ids as bytes,
+timestamps as Unix seconds, every text column as an id into a shared
+`strings` dictionary, and attributes as numbers into each project's
+catalog (`project_attributes`, which gains an `id`) and its values
+(`attribute_values`). A raw row takes well under half the space it did.
+`raw_views`, `raw_product`, `raw_measures` and `v_events_flat` decode it to
+the same columns and text as before, and every `v_*` view, tool and
+dashboard answers as before; `v_identities` is new.
+
+Back up first. The rebuild writes a full new copy of the raw window, and
+the WAL holds that copy too until it is checkpointed: keep free disk of
+about twice the size of `events` while it runs. It takes seconds at tens of
+thousands of raw rows and about a minute at 1.3 million. The file shrinks
+afterwards as the incremental vacuum reclaims the free pages, a few MB each
+daily pass (or run `VACUUM` once with the service stopped, as for 023).
+
+Before upgrading, run these against the live database:
+
+```sql
+-- 1. Attributes the encoding cannot carry. Ingest only ever stores a JSON
+--    object of strings; any hit here aborts migration 041 with the counts
+--    and leaves the database at 040.
+SELECT COUNT(*) FROM events WHERE NOT json_valid(attributes) OR json_type(attributes) <> 'object';
+SELECT COUNT(*) FROM events e, json_each(e.attributes) j
+WHERE json_valid(e.attributes) AND j.type <> 'text';
+
+-- 2. Raw rows of projects that are gone (a purge that raced a buffered
+--    write). The migration deletes them: no view scoped to a project reads
+--    them.
+SELECT project_id, COUNT(*) FROM events
+WHERE project_id NOT IN (SELECT id FROM projects) GROUP BY project_id;
+```
+
+A hit in the first check is fixed by hand before upgrading, for example by
+storing the values as strings:
+`UPDATE events SET attributes = (SELECT json_group_object(key, CAST(value AS TEXT)) FROM json_each(events.attributes)) WHERE json_valid(attributes) AND json_type(attributes) = 'object' AND EXISTS (SELECT 1 FROM json_each(events.attributes) WHERE type <> 'text')`
+(a JSON `null` value stays a hit: remove the key or the row).
+
+What changes on the day:
+
+- SQL reading `events` directly, through `query` or the `sqlite3` shell,
+  sees the encoded values: read the `raw_*` views or `v_events_flat`
+  instead, or decode by hand (docs/twillingate.md, "Reading `events`
+  directly").
+- The decoded `attributes` JSON lists its keys in the order of their ids,
+  no longer alphabetically.
+- An attribute rename no longer deletes the old key's catalog row: view
+  rows keep their attributes as sent and may still carry it, and it ages
+  out with them.
+
+There is no down migration. Rolling back means restoring the pre-upgrade
+copy or Litestream snapshot; events ingested since are lost.

@@ -87,7 +87,7 @@ func TestRebuildFlatView(t *testing.T) {
 		{Family: store.FamilyProduct, ID: "1", ProjectID: 1, EventName: "e", ActorID: "u1", TS: ts("2026-08-10T10:00:00Z"),
 			Attributes: map[string]string{"plan": "pro"}},
 	}
-	if err := db.WriteEvents(ctx, evs); err != nil {
+	if err := db.writeTestEvents(ctx, evs); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.RebuildFlatView(ctx, []string{"plan"}); err != nil {
@@ -139,7 +139,7 @@ func TestRebuildFlatView(t *testing.T) {
 func TestFlatViewHoldsBothFamilies(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	if err := db.WriteEvents(ctx, []store.Event{
+	if err := db.writeTestEvents(ctx, []store.Event{
 		{Family: store.FamilyViews, ID: "v", ProjectID: 1, EventName: "$page_view", Kind: "web",
 			ActorID: "a", Path: "/", TS: ts("2026-08-10T10:00:00Z")},
 		{Family: store.FamilyProduct, ID: "e", ProjectID: 1, EventName: "signup", ActorID: "a",
@@ -208,7 +208,7 @@ func TestRebuildFlatViewHostileKeys(t *testing.T) {
 func TestRebuildFlatViewQuotedKeys(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	if err := db.WriteEvents(ctx, []store.Event{
+	if err := db.writeTestEvents(ctx, []store.Event{
 		{Family: store.FamilyProduct, ID: "1", ProjectID: 1, EventName: "e", ActorID: "u", TS: ts("2026-08-10T10:00:00Z"),
 			Attributes: map[string]string{"it's": "apostrophe", `say"hi`: "doublequote"}},
 	}); err != nil {

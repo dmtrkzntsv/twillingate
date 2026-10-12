@@ -189,7 +189,7 @@ func TestPurgeArchivedDeletesProjectData(t *testing.T) {
 	ctx := context.Background()
 	id := createPurgeableProject(t, db, "app")
 
-	if err := db.WriteEvents(ctx, []store.Event{
+	if err := db.writeTestEvents(ctx, []store.Event{
 		{Family: store.FamilyViews, ID: "e1", ProjectID: id,
 			TS: time.Now(), ReceivedAt: time.Now(),
 			Kind: "web", ActorID: "a", ActorKind: store.ActorConnection, Path: "/"},
@@ -395,7 +395,7 @@ func TestPurgeArchivedContinuesPastAFailedItem(t *testing.T) {
 	good := createPurgeableProject(t, db, "good")
 	archiveProjectDaysAgo(t, db, good, 31)
 
-	if err := db.WriteEvents(ctx, []store.Event{
+	if err := db.writeTestEvents(ctx, []store.Event{
 		{Family: store.FamilyViews, ID: "e1", ProjectID: bad, TS: time.Now(), ReceivedAt: time.Now(),
 			Kind: "web", ActorID: "a", ActorKind: store.ActorConnection, Path: "/"},
 	}); err != nil {
@@ -472,7 +472,7 @@ func TestPurgeArchivedDeletesGroupNameWithLastDashboard(t *testing.T) {
 }
 
 func TestPurgeArchivedDeletesAgedFormsWithSubmissionsAndRawEvents(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	ctx := context.Background()
 	mk := func(projectID int64, form, id string) {
 		n := newSub(id, map[string]string{"email": id + "@x.io"})
@@ -520,10 +520,10 @@ func TestPurgeArchivedDeletesAgedFormsWithSubmissionsAndRawEvents(t *testing.T) 
 		t.Fatalf("%d submissions left, want 4", c)
 	}
 	// The purged forms' raw events went too; the other two forms' stay.
-	if c := countRows(t, db, `SELECT COUNT(*) FROM events WHERE event_name='$form_submit'`); c != 2 {
+	if c := countRows(t, db, `SELECT COUNT(*) FROM raw_product WHERE event_name='$form_submit'`); c != 2 {
 		t.Fatalf("%d form events left, want 2", c)
 	}
-	if c := countRows(t, db, `SELECT COUNT(*) FROM events WHERE id LIKE '%-old%'`); c != 0 {
+	if c := countRows(t, db, `SELECT COUNT(*) FROM raw_product WHERE id LIKE '%-old%'`); c != 0 {
 		t.Fatalf("%d events of purged forms left", c)
 	}
 	rows := auditRows(t, db, "form.purge")

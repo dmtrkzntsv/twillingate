@@ -39,7 +39,7 @@ func TestCapsAgreeAcrossRollup(t *testing.T) {
 					Path: fmt.Sprintf("/p/%d", i%600), UserID: fmt.Sprintf("u%d", i%600),
 					GroupID: fmt.Sprintf("g%d", i%600)})
 			}
-			if err := db.WriteEvents(ctx, views); err != nil {
+			if err := db.writeTestEvents(ctx, views); err != nil {
 				t.Fatal(err)
 			}
 

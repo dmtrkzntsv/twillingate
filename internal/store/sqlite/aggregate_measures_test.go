@@ -28,7 +28,7 @@ func TestAggregateMeasureDayHistogram(t *testing.T) {
 		evs = append(evs, ev)
 	}
 	evs = append(evs, measureEvent("$cls", 0.08, "number"))
-	if err := db.WriteEvents(ctx, evs); err != nil {
+	if err := db.writeTestEvents(ctx, evs); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.AggregateMeasureDay(ctx, 1, day("2026-09-01"), nil, defaultAttrsTopN); err != nil {
@@ -85,7 +85,7 @@ func TestAggregateMeasureDayDefaultsAndNoOp(t *testing.T) {
 		ev.Attributes = map[string]string{"plan": fmt.Sprintf("p%d", i)}
 		evs = append(evs, ev)
 	}
-	if err := db.WriteEvents(ctx, evs); err != nil {
+	if err := db.writeTestEvents(ctx, evs); err != nil {
 		t.Fatal(err)
 	}
 	attrs := []string{"plan", "$bogus"}
@@ -208,7 +208,7 @@ func TestMeasuresViewsSameAcrossRollup(t *testing.T) {
 	next.ProjectID, next.TS = id, time.Date(2026, 9, 2, 10, 0, 0, 0, time.UTC)
 	next.Attributes = map[string]string{"endpoint": "b"}
 	evs = append(evs, next)
-	if err := db.WriteEvents(ctx, evs); err != nil {
+	if err := db.writeTestEvents(ctx, evs); err != nil {
 		t.Fatal(err)
 	}
 
@@ -335,7 +335,7 @@ func TestMeasurePercentilesWithinTwoPercent(t *testing.T) {
 		}
 		sort.Float64s(exact[name])
 	}
-	if err := db.WriteEvents(ctx, evs); err != nil {
+	if err := db.writeTestEvents(ctx, evs); err != nil {
 		t.Fatal(err)
 	}
 	check := func(stage string) {
@@ -370,7 +370,7 @@ func TestAllZeroMetricPercentileIsZero(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		evs = append(evs, measureEvent("$cls", 0, "number"))
 	}
-	if err := db.WriteEvents(ctx, evs); err != nil {
+	if err := db.writeTestEvents(ctx, evs); err != nil {
 		t.Fatal(err)
 	}
 	for _, stage := range []string{"live", "rolled up"} {
@@ -423,7 +423,7 @@ func TestSampledMeasuresMatchUnsampled(t *testing.T) {
 			add("mixed", v, 0.25)
 		}
 	}
-	if err := db.WriteEvents(ctx, evs); err != nil {
+	if err := db.writeTestEvents(ctx, evs); err != nil {
 		t.Fatal(err)
 	}
 	within := func(got, want float64) bool { return math.Abs(got-want) <= 0.10*want }

@@ -125,12 +125,12 @@ func TestMigration023ReplayIsIgnored(t *testing.T) {
 	ev := store.Event{ID: "0190aaaa-0000-7000-8000-000000000001", ProjectID: 1, Family: store.FamilyProduct,
 		EventName: "signup", TS: time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC), ActorID: "a"}
 	for i := 0; i < 2; i++ {
-		if err := db.WriteEvents(context.Background(), []store.Event{ev}); err != nil {
+		if err := db.writeTestEvents(context.Background(), []store.Event{ev}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	var n int
-	if err := db.db.QueryRow(`SELECT COUNT(*) FROM events WHERE id=?`, ev.ID).Scan(&n); err != nil {
+	if err := db.db.QueryRow(`SELECT COUNT(*) FROM raw_product WHERE id=?`, ev.ID).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	if n != 1 {

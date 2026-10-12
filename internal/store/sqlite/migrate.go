@@ -23,6 +23,13 @@ var dataSteps = map[int]func(context.Context, *sql.Tx) error{
 	15: foldEnvironment,
 }
 
+// preSteps run before their version's SQL, in the same transaction: checks
+// that must refuse a migration before it changes anything, and repairs the
+// SQL relies on (041 adds the catalog rows its encoding joins on).
+var preSteps = map[int]func(context.Context, *sql.Tx) error{
+	41: prepareEncoding,
+}
+
 // processOwned are the schema objects the running process builds, not
 // the migrations: their shape follows the data (v_events_flat has one
 // column per declared attribute, RebuildFlatView), so a migration's fixed
@@ -120,6 +127,12 @@ func (d *DB) migrateThrough(ctx context.Context, maxVersion int) (err error) {
 			if _, err := tx.ExecContext(ctx, `DROP VIEW IF EXISTS `+view); err != nil {
 				tx.Rollback()
 				return fmt.Errorf("sqlite: migration %s: drop %s: %w", name, view, err)
+			}
+		}
+		if step, ok := preSteps[version]; ok {
+			if err := step(ctx, tx); err != nil {
+				tx.Rollback()
+				return fmt.Errorf("sqlite: migration %s pre-step: %w", name, err)
 			}
 		}
 		if _, err := tx.ExecContext(ctx, string(body)); err != nil {

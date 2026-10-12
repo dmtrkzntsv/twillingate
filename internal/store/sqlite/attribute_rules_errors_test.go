@@ -37,14 +37,17 @@ func TestAttributeRuleOperationsReportStoreErrors(t *testing.T) {
 			_, err := db.RenameAttribute(ctx, 1, "a", "b", false, attrAudit)
 			return err
 		}},
-		{"rename rewrites raw rows", []string{`DROP TABLE events`}, merge},
+		{"rename rewrites raw rows", []string{catalogA, `DROP TABLE events`}, merge},
 		{"rename moves aggregates", []string{`DROP TABLE agg_product_attrs`}, merge},
 		{"rename removes the old aggregates", []string{
 			`INSERT INTO agg_product_attrs (project_id, day, event_name, attr_key, attr_value, count, unique_users) VALUES (1, '2026-10-01', 'e', 'a', 'v', 1, 1)`,
 			abort("BEFORE DELETE", "agg_product_attrs"),
 		}, merge},
 		{"rename reads the catalog", []string{`DROP TABLE project_attributes`}, merge},
-		{"rename removes the old catalog row", []string{catalogA, abort("BEFORE DELETE", "project_attributes")}, merge},
+		{"rename clears the old key's breakdown", []string{
+			`INSERT INTO project_attributes (project_id, key, breakdown) VALUES (1, 'a', 1)`,
+			abort("BEFORE UPDATE", "project_attributes"),
+		}, merge},
 		{"rename adds the new catalog row", []string{catalogA, abort("BEFORE INSERT", "project_attributes")}, merge},
 		{"rename clears the target's rule", []string{
 			`INSERT INTO rules (project_id, kind, family, name, action, to_name) VALUES (1, 'attribute', 'event', 'b', 'rename', 'c')`,

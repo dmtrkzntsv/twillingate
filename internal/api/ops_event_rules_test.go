@@ -6,8 +6,10 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
+	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
 type ruleRow struct {
@@ -200,6 +202,13 @@ func TestEventRulesRefusalsOverREST(t *testing.T) {
 	}
 }
 
+// rawNamed is one product event of project 3 named name, on 2026-09-10.
+func rawNamed(id, name string) store.Event {
+	at := time.Date(2026, 9, 10, 10, 0, 0, 0, time.UTC)
+	return store.Event{ID: id, ProjectID: 3, Family: store.FamilyProduct, EventName: name, TS: at, ReceivedAt: at,
+		Kind: "web", ActorID: "a1", ActorKind: "user", Path: "/"}
+}
+
 type nameRow struct {
 	Family string `json:"family"`
 	Name   string `json:"name"`
@@ -213,23 +222,23 @@ func TestEventNames(t *testing.T) {
 		t.Fatal(err)
 	}
 	const pid = "3"
-	seed := func(id, family, name, extra string) {
+	seed := func(id string, family store.Family, name string, value float64) {
 		t.Helper()
-		q := `INSERT INTO events (id, project_id, ts, day, received_at, kind, actor_id, actor_kind, path, family, event_name, value, measure, sample_rate)
-			VALUES (?, 3, '2026-09-10T10:00:00Z', '2026-09-10', '2026-09-10T10:00:00Z', 'web', 'a1', 'user', '/', ?, ?, ` + extra + `)`
-		if _, err := rawExec(h.ops.St, q, id, family, name); err != nil {
-			t.Fatal(err)
+		e := rawNamed(id, name)
+		if e.Family = family; family == store.FamilyMeasures {
+			e.Value, e.Measure = &value, "time"
 		}
+		writeEvents(t, h.ops.St, e)
 	}
-	seed("n1", "product", "a", "NULL, '', 1")
-	seed("n2", "product", "a", "NULL, '', 1")
-	seed("n3", "product", "b", "NULL, '', 1")
+	seed("n1", store.FamilyProduct, "a", 0)
+	seed("n2", store.FamilyProduct, "a", 0)
+	seed("n3", store.FamilyProduct, "b", 0)
 	for _, id := range []string{"m1", "m2", "m3"} {
-		seed(id, "measures", "m", "120.0, 'time', 1")
+		seed(id, store.FamilyMeasures, "m", 120)
 	}
 	// $ names belong to the server and take no rule: left out.
-	seed("s1", "product", "$form_submit", "NULL, '', 1")
-	seed("s2", "measures", "$lcp", "900.0, 'time', 1")
+	seed("s1", store.FamilyProduct, "$form_submit", 0)
+	seed("s2", store.FamilyMeasures, "$lcp", 900)
 
 	rec := serveREST(t, r, "GET", "/api/projects/"+pid+"/event-names?from=2026-09-01&to=2026-09-30", "")
 	if rec.Code != http.StatusOK {
@@ -279,20 +288,12 @@ func TestEventNamesKeepsTheBusiest200(t *testing.T) {
 	const pid = "3"
 	// 201 names with one event each, plus a second event for "n000" so the
 	// order has a head; "n200" sorts last and is the one left out.
-	var rows []string
-	var args []any
-	add := func(id, name string) {
-		rows = append(rows, `(?, 3, '2026-09-10T10:00:00Z', '2026-09-10', '2026-09-10T10:00:00Z', 'web', 'a1', 'user', '/', 'product', ?, NULL, '', 1)`)
-		args = append(args, id, name)
-	}
+	var evs []store.Event
 	for i := 0; i <= 200; i++ {
-		add(fmt.Sprintf("e%d", i), fmt.Sprintf("n%03d", i))
+		evs = append(evs, rawNamed(fmt.Sprintf("e%d", i), fmt.Sprintf("n%03d", i)))
 	}
-	add("extra", "n000")
-	q := `INSERT INTO events (id, project_id, ts, day, received_at, kind, actor_id, actor_kind, path, family, event_name, value, measure, sample_rate) VALUES ` + strings.Join(rows, ",")
-	if _, err := rawExec(h.ops.St, q, args...); err != nil {
-		t.Fatal(err)
-	}
+	evs = append(evs, rawNamed("extra", "n000"))
+	writeEvents(t, h.ops.St, evs...)
 	rec := serveREST(t, r, "GET", "/api/projects/"+pid+"/event-names?from=2026-09-01&to=2026-09-30", "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("event-names = %d %s", rec.Code, rec.Body)

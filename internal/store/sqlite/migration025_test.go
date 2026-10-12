@@ -82,7 +82,7 @@ func TestMigration025KeepsProductAttrsAnswer(t *testing.T) {
 			}
 		}
 	}
-	if err := db.WriteEvents(ctx, evs); err != nil {
+	if err := db.writeTextEvents(ctx, evs); err != nil {
 		t.Fatal(err)
 	}
 	// Values the SDK never sends but a hand-written row can hold: a JSON
@@ -104,9 +104,10 @@ func TestMigration025KeepsProductAttrsAnswer(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := db.AggregateProductDay(ctx, id, civil.DateOf(ts("2026-08-01T00:00:00Z")), keys, 3); err != nil {
-		t.Fatal(err)
-	}
+	rolled := civil.DateOf(ts("2026-08-01T00:00:00Z"))
+	textRollup(t, db, store.FamilyProduct, id, rolled, func() error {
+		return db.AggregateProductDay(ctx, id, rolled, keys, 3)
+	})
 
 	before := productAttrsRows(t, db)
 	var others, raw int
@@ -164,12 +165,12 @@ func TestMigration025KeepsMeasuresAttrsAnswer(t *testing.T) {
 			}
 		}
 	}
-	if err := db.WriteEvents(ctx, evs); err != nil {
+	if err := db.writeTextEvents(ctx, evs); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AggregateMeasureDay(ctx, id, day("2026-09-01"), keys, 2); err != nil {
-		t.Fatal(err)
-	}
+	textRollup(t, db, store.FamilyMeasures, id, day("2026-09-01"), func() error {
+		return db.AggregateMeasureDay(ctx, id, day("2026-09-01"), keys, 2)
+	})
 
 	const q = `SELECT * FROM v_measures_attrs ORDER BY 1,2,3,4,5,6,7`
 	before := snapshotRows(t, db, q)
@@ -287,15 +288,15 @@ func TestMigration025KeepsViewsAnswers(t *testing.T) {
 			UTMSource: "hn", UTMMedium: "social", UTMCampaign: fmt.Sprintf("c%d", i%600),
 			UserID: fmt.Sprintf("u%d", i%520), GroupID: fmt.Sprintf("g%d", i%520)})
 	}
-	if err := db.WriteEvents(ctx, evs); err != nil {
+	if err := db.writeTextEvents(ctx, evs); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.AggregateIdentityDay(ctx, p1, day("2026-08-01"), 500); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AggregateViewDay(ctx, p1, day("2026-08-01"), 500); err != nil {
-		t.Fatal(err)
-	}
+	textRollup(t, db, store.FamilyViews, p1, day("2026-08-01"), func() error {
+		return db.AggregateViewDay(ctx, p1, day("2026-08-01"), 500)
+	})
 
 	before := typedViews(t, db)
 	for _, v := range []string{"v_identity_daily", "v_views_app_versions", "v_views_browsers", "v_views_countries",

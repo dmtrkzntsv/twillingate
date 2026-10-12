@@ -31,7 +31,7 @@ func TestMigration027MovesTheAttributeCap(t *testing.T) {
 				TS: ts("2026-08-02T11:00:00Z"), ActorID: "c", Measure: store.MeasureTime, Value: &boot,
 				Attributes: map[string]string{"plan": plan}})
 	}
-	if err := db.WriteEvents(ctx, evs); err != nil {
+	if err := db.writeTextEvents(ctx, evs); err != nil {
 		t.Fatal(err)
 	}
 	measures := func() []string {

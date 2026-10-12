@@ -100,8 +100,14 @@ func hostTemplate(t *testing.T) string {
 		      VALUES (1,'2026-08-20','de-DE','en',2,4)`)
 		seed(`INSERT INTO agg_views_consent (project_id, day, consent, visitors, views)
 		      VALUES (1,'2026-08-20','given',3,6)`)
-		seed(`INSERT INTO events (id, project_id, ts, day, received_at, kind, actor_id, actor_kind, user_id, path, consent, family, event_name)
-		      VALUES ('h1',1,'2026-08-26T10:00:00Z','2026-08-26','2026-08-26T10:00:00Z','web','a1','user','u1','/live',1,'views','$page_view')`)
+		// The raw row goes through ingest's write path: events is stored
+		// encoded (migration 041).
+		live := time.Date(2026, 8, 26, 10, 0, 0, 0, time.UTC)
+		if err := st.WriteEvents(ctx, []store.Event{{ID: "h1", ProjectID: 1, Family: store.FamilyViews,
+			EventName: "$page_view", TS: live, ReceivedAt: live, Kind: "web", ActorID: "a1", ActorKind: "user",
+			UserID: "u1", Path: "/live", Consent: store.ConsentGiven}}); err != nil {
+			t.Fatal(err)
+		}
 		seed(`INSERT INTO agg_product_daily (project_id, day, event_name, count, unique_users)
 		      VALUES (1,'2026-08-20','signup',5,4)`)
 		seed(`INSERT INTO agg_product_totals (project_id, day, total_events, active_users)
@@ -296,6 +302,18 @@ func newTestRegistrar(t *testing.T, h *host) *registrar {
 // test-only accessor added to internal/store/sqlite/sqlite.go.
 func rawExec(st any, q string, args ...any) (sql.Result, error) {
 	return st.(execForTest).ExecForTest(q, args...)
+}
+
+// writeEvents stores evs through the store's ingest write path: events is
+// stored encoded (migration 041), so a test seeds raw rows this way, not
+// with an INSERT. st is asserted down as rawExec does.
+func writeEvents(t *testing.T, st any, evs ...store.Event) {
+	t.Helper()
+	if err := st.(interface {
+		WriteEvents(context.Context, []store.Event) error
+	}).WriteEvents(context.Background(), evs); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // execForTest is the sqlite store's test-only Exec, which neither

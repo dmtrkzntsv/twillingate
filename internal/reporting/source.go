@@ -288,17 +288,20 @@ func refuseSQLErr(db *readsql.DB, err error) error {
 
 // sampleProject picks the project with the most recent data (views,
 // product or measures), for a sample run of a widget's SQL when no dashboard
-// selection exists yet. It reads projects and events directly — trusted
-// Go SQL, not checked custom SQL — which is why it may read a table
-// widget SQL itself may not. Its own errors are not store refusals (the
+// selection exists yet. It reads projects directly — trusted Go SQL, not
+// checked custom SQL — which is why it may read a table widget SQL itself
+// may not, and the raw rows through raw_views, raw_product and
+// raw_measures, which decode the encoded events table; project_id and day
+// pass through as stored, so each MAX still reads the key's last entry for
+// the project. Its own errors are not store refusals (the
 // caller decides: a timeout still becomes one, anything else is this
 // package's own infrastructure failing, not a problem with the widget).
 func sampleProject(ctx context.Context, db *readsql.DB) (int64, error) {
 	res, err := db.Run(ctx, `
 SELECT p.id FROM projects p WHERE p.archived_at IS NULL
-ORDER BY MAX(COALESCE((SELECT MAX(day) FROM events WHERE family='views' AND project_id=p.id),''),
-             COALESCE((SELECT MAX(day) FROM events WHERE family='product' AND project_id=p.id),''),
-             COALESCE((SELECT MAX(day) FROM events WHERE family='measures' AND project_id=p.id),'')) DESC, p.id
+ORDER BY MAX(COALESCE((SELECT MAX(day) FROM raw_views WHERE project_id=p.id),''),
+             COALESCE((SELECT MAX(day) FROM raw_product WHERE project_id=p.id),''),
+             COALESCE((SELECT MAX(day) FROM raw_measures WHERE project_id=p.id),'')) DESC, p.id
 LIMIT 1`)
 	if err != nil {
 		return 0, err

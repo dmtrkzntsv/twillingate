@@ -248,9 +248,11 @@ returns the rule with `rewritten`, the rows changed in `events`,
   rows for `to`.
 - **Usage**: the per-day key counts `list_attributes` reads
   (`usage_attributes`).
-- **The catalog** (not counted in `rewritten`): `from`'s row goes, and `to`
-  is a breakdown if either was, so the `attr_*` column follows the key and the
-  breakdown budget never grows.
+- **The catalog** (not counted in `rewritten`): `to` is a breakdown if
+  either was, so the `attr_*` column follows the key and the breakdown budget
+  never grows. `from` keeps its row, no longer a breakdown: raw view rows,
+  which keep their attributes as sent, may still carry it, and it goes once
+  none does.
 
 A rename or a merge rewrites the project's raw product and measures rows in
 that one transaction, so its time grows with them: about 20 µs a raw row on
@@ -903,9 +905,12 @@ decides instead:
 | `$form_submit` | product | — | written by the collector beside an approved form's submission ([Form submissions](#form-submissions)); a client sending it is rejected |
 | any name, with `family: "measures"` | measures | — | `measures`, the Web Vitals and Measures dashboards |
 
-All three families are stored in one raw table, `events`, whose `family`
-column is `views`, `product` or `measures`; the aggregates, views and tools
-of each family read only its own rows.
+All three families are stored in one raw table, `events`, read through
+`raw_views`, `raw_product` and `raw_measures` (and `v_events_flat`), whose
+`family` column is `views`, `product` or `measures`; the aggregates, views
+and tools of each family read only its own rows. The table itself is stored
+encoded, ids and dictionary numbers in place of text ([Reading `events`
+directly](#reading-events-directly)); those views decode it.
 
 The `$` prefix is reserved for the system. An unrecognized `$` **name** is
 stored as an ordinary custom event with a warning; an unrecognized `$`
@@ -1585,8 +1590,8 @@ and `v_measures_attrs` (keyed the same way as `v_product_daily` /
 `v_product_attrs`, plus `measure` — `time`, `size` or `number` — and
 `bucket`/`approx_value` from the log-scale histogram; the `measures` tool
 does the percentile math over them). `raw_views`, `raw_product`,
-`raw_measures` and `v_events_flat` are all views over the one raw table, so
-each now carries every family's columns: `value`, `measure` and
+`raw_measures` and `v_events_flat` are all views over the one raw table,
+decoding it, so each carries every family's columns: `value`, `measure` and
 `sample_rate` are NULL, `''` and `1` on `raw_views`/`raw_product` rows (they
 only mean something on a measure), and `raw_*` additionally carries `bucket`,
 the log-scale bucket `value` falls in (NULL outside measures). `v_events_flat`
@@ -1594,11 +1599,17 @@ holds every raw row of every family (views, product events and measures)
 with every typed column of the raw row: its `family` column — filter
 `family = 'product'` for product events alone, `family = 'measures'` for
 measures — `kind`, the identity, location and environment columns (`path`,
-`os`, `country`, …), its `consent` column (1, 0 or NULL), the raw
+`os`, `country`, …), its `consent` column (1, 0 or NULL), the
 `attributes` JSON, `value`, `measure`, `sample_rate`, and one `attr_*` column
-per declared custom attribute.
-`v_identity_daily` and `identities` join user and group activity to display
-names; `v_identity_daily` keeps the busiest `IDENTITIES_TOP_N` users and as
+per declared custom attribute. Read a declared attribute through its
+`attr_*` column: it reads the stored value directly, where
+`json_extract(attributes, …)` on `raw_product` rebuilds every row's JSON
+first and is several times slower over a long range. A text filter on a
+decoded column (`WHERE path = '/x'` on `raw_views`) decodes every row of the
+range too; the `v_*` breakdowns are cheaper.
+`v_identity_daily` and `v_identities` (`project_id`, `kind`, `id`, `name`,
+`last_seen_day`, `updated_at`: the `identities` table as stored) join user
+and group activity to display names; `v_identity_daily` keeps the busiest `IDENTITIES_TOP_N` users and as
 many groups per day (default 1000, 0 for all) and drops the rest with no
 `(other)` row, so do not sum it for totals.
 `v_retention` is keyed by `actor_kind`.
@@ -1606,3 +1617,28 @@ many groups per day (default 1000, 0 for all) and drops the rest with no
 Cost note: the views' live halves compute from raw rows, but only for the raw
 days the `WHERE` on `project_id` and `day` covers. Narrow ranges and the
 `agg_*` tables are cheaper.
+
+#### Reading `events` directly
+
+`query` reads every table, the raw `events` table included, but `events`
+stores ids and dictionary numbers, not text (migration 041): read it through
+`raw_views`, `raw_product`, `raw_measures` or `v_events_flat`, which decode
+every column to the text above. To decode a row by hand:
+
+| Column | Stored as | Decodes with |
+| --- | --- | --- |
+| `family` | `1` views, `2` product, `3` measures | |
+| `project_id`, `day`, `display_width`, `display_height`, `consent`, `value`, `sample_rate`, `bucket` | as `raw_*` shows them | |
+| `id` | the UUID's 16 bytes; text if it was not a lowercase UUID | `lower(hex(id))`, dashes after characters 8, 12, 16 and 20 |
+| `actor_id`, `user_id`, `group_id`, `session_id` | `x'01'` and 16 bytes for a lowercase UUID, `x'02'` and the bytes for even-length lowercase hex, text otherwise (`''` included) | `lower(hex(substr(actor_id, 2)))`, with dashes after `x'01'` |
+| `ts`, `received_at` | Unix seconds; `received_at` 0 is `''` (not recorded) | `strftime('%Y-%m-%dT%H:%M:%SZ', ts, 'unixepoch')` |
+| `event_name`, `measure`, `kind`, `actor_kind`, `host`, `path`, `referrer_source`, `utm_source`, `utm_medium`, `utm_campaign`, `platform`, `os`, `os_version`, `os_name`, `browser`, `browser_version`, `browser_locale`, `app_version`, `app_locale`, `device`, `device_model`, `country` | an id in `strings`; `0` is `''` and has no row | `(SELECT value FROM strings WHERE id = path)` |
+| `attributes` | `{"<project_attributes.id>": <attribute_values.n>}` | the key from `project_attributes` by `id`, the value from `attribute_values` by `(key_id, n)` |
+
+`strings` is shared by every column and project; `project_attributes` is
+each project's catalog of keys (with the `breakdown` flag), and
+`attribute_values` numbers each key's values. Each keeps a `last_seen_day`,
+the newest day a raw row used it. The order of
+keys in the decoded `attributes` follows the stored ids: no query should
+depend on it. A filter on `project_id` and `day` reaches the table's key
+through every view, as both are stored as they are filtered.

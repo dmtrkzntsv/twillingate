@@ -21,9 +21,11 @@ func (d *DB) AggregateMeasureDay(ctx context.Context, projectID int64, day civil
 	return d.tx(ctx, func(tx *sql.Tx) error {
 		// Blocked names (event rules D10) leave with the day before it is
 		// rolled up: the same transaction deletes every raw row of the day
-		// below, so this deletes nothing that would have stayed.
-		if _, err := tx.ExecContext(ctx, `DELETE FROM events WHERE family='measures' AND project_id=? AND day=?
-			AND event_name IN (SELECT name FROM rules WHERE project_id=? AND kind='event' AND family='measures' AND action='block')`,
+		// below, so this deletes nothing that would have stayed. The rows
+		// hold the names' strings ids (events encoding spec D2).
+		if _, err := tx.ExecContext(ctx, `DELETE FROM events WHERE family=3 AND project_id=? AND day=?
+			AND event_name IN (SELECT s.id FROM strings s JOIN rules r ON r.name = s.value
+			  WHERE r.project_id=? AND r.kind='event' AND r.family='measures' AND r.action='block')`,
 			projectID, day.String(), projectID); err != nil {
 			return err
 		}
@@ -40,7 +42,7 @@ func (d *DB) AggregateMeasureDay(ctx context.Context, projectID int64, day civil
 			return err
 		}
 		_, err := tx.ExecContext(ctx,
-			`DELETE FROM events WHERE family='measures' AND project_id=? AND day=?`, projectID, day.String())
+			`DELETE FROM events WHERE family=3 AND project_id=? AND day=?`, projectID, day.String())
 		return err
 	})
 }

@@ -28,15 +28,16 @@ func writeAttrs(t *testing.T, db *DB, project int64, family store.Family, id str
 	case store.FamilyViews:
 		e.Kind, e.Path = "web", "/"
 	}
-	if err := db.WriteEvents(context.Background(), []store.Event{e}); err != nil {
+	if err := db.writeTestEvents(context.Background(), []store.Event{e}); err != nil {
 		t.Fatal(err)
 	}
 }
 
-// rawAttrs reads every stored row's attributes by id.
+// rawAttrs reads every stored row's attributes by id, decoded.
 func rawAttrs(t *testing.T, db *DB) map[string]map[string]any {
 	t.Helper()
-	rows, err := db.db.Query(`SELECT id, attributes FROM events`)
+	rows, err := db.db.Query(`SELECT id, attributes FROM raw_views UNION ALL SELECT id, attributes FROM raw_product
+		UNION ALL SELECT id, attributes FROM raw_measures`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +141,9 @@ func TestRenameAttributeRewritesEverything(t *testing.T) {
 	}; !reflect.DeepEqual(got, want) {
 		t.Errorf("usage_attributes = %v, want %v", got, want)
 	}
-	if got, want := catalogRows(t, db), []string{"1/b=0", "1/c=1", "2/a=0"}; !reflect.DeepEqual(got, want) {
+	// a keeps its catalog row, no longer a breakdown: the view row still
+	// carries it (events encoding spec D9).
+	if got, want := catalogRows(t, db), []string{"1/a=0", "1/b=0", "1/c=1", "2/a=0"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("catalog = %v, want %v", got, want)
 	}
 	if got, want := loadAttrRules(t, db), []store.AttributeRule{attrRule(1, "a", store.EventRuleRename, "c")}; !reflect.DeepEqual(got, want) {
@@ -241,14 +244,16 @@ func TestMergeAttributeSumsAggregates(t *testing.T) {
 	}; !reflect.DeepEqual(got, want) {
 		t.Errorf("usage_attributes = %v, want %v", got, want)
 	}
-	if got, want := catalogRows(t, db), []string{"1/b=1"}; !reflect.DeepEqual(got, want) {
+	// The breakdown moves to b; a keeps its row until it ages out
+	// (events encoding spec D9).
+	if got, want := catalogRows(t, db), []string{"1/a=0", "1/b=1"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("catalog = %v, want %v", got, want)
 	}
 
 	// Merging a key that is no breakdown into one that is keeps it.
 	execAll(t, db, `INSERT INTO project_attributes (project_id, key, breakdown) VALUES (1, 'z', 0)`)
 	renameAttr(t, db, 1, "z", "b", true)
-	if got, want := catalogRows(t, db), []string{"1/b=1"}; !reflect.DeepEqual(got, want) {
+	if got, want := catalogRows(t, db), []string{"1/a=0", "1/b=1", "1/z=0"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("catalog after z>b = %v, want %v", got, want)
 	}
 }
@@ -311,13 +316,15 @@ func TestAttributeRuleChains(t *testing.T) {
 }
 
 // A key is addressed as itself, never as a path: a dot does not reach
-// into a nested object, and slashes, spaces and accents rename as they are.
+// key a's value, and slashes, spaces and accents rename as they are.
+// Stored rows hold catalog ids, so the key's text is never a JSON path in
+// them (events encoding spec D6); the catalog and the rules hold it as
+// sent.
 func TestAttributeKeyWithDotAndSlash(t *testing.T) {
 	db := ruleDB(t)
 	writeAttrs(t, db, 1, store.FamilyProduct, "dot", map[string]string{"a.b": "1", "x/y": "2", "plan type": "3", "é": "4",
 		`a\b`: "5", `q"r`: "6"})
-	writeAttrs(t, db, 1, store.FamilyProduct, "nested", map[string]string{"k": "v"})
-	execAll(t, db, `UPDATE events SET attributes = '{"a":{"b":"z"}}' WHERE id = 'nested'`)
+	writeAttrs(t, db, 1, store.FamilyProduct, "nested", map[string]string{"a": "z"})
 
 	if got := renameAttr(t, db, 1, "a.b", "c", false); got["events"] != 1 {
 		t.Errorf("a.b>c rewrote %d rows, want 1", got["events"])
@@ -336,7 +343,7 @@ func TestAttributeKeyWithDotAndSlash(t *testing.T) {
 	want := map[string]map[string]any{
 		"dot": {"c": "1", "checkout/v2": "2", "é2": "3", "e acute": "4",
 			`back\slash`: "5", `quote"d`: "6"},
-		"nested": {"a": map[string]any{"b": "z"}},
+		"nested": {"a": "z"},
 	}
 	if got := rawAttrs(t, db); !reflect.DeepEqual(got, want) {
 		t.Errorf("raw = %v, want %v", got, want)
@@ -433,7 +440,9 @@ func TestWriteEventsMapsAttributes(t *testing.T) {
 	}; !reflect.DeepEqual(got, want) {
 		t.Errorf("usage_attributes = %v, want %v", got, want)
 	}
-	if got, want := catalogRows(t, db), []string{"1/b=0", "1/y=0", "2/a=0", "2/x=0"}; !reflect.DeepEqual(got, want) {
+	// The view row's keys get catalog rows too, as sent (events encoding
+	// spec D8): its encoded attributes name them.
+	if got, want := catalogRows(t, db), []string{"1/a=0", "1/b=0", "1/x=0", "1/y=0", "2/a=0", "2/x=0"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("catalog = %v, want %v", got, want)
 	}
 }

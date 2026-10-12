@@ -15,13 +15,14 @@ import (
 // reserved key is one of these, never an attr_ column) but day (ts's
 // date), received_at and actor_kind (bookkeeping);
 // TestFlatViewCoversEveryEventsColumn makes a new events column join one
-// side or the other. attributes carries the raw JSON, so a
+// side or the other. attributes carries the decoded JSON, so a
 // key that isn't declared (and so gets no attr_ column) stays reachable via
 // json_extract — the view is never a downgrade from the base table. Every
 // attribute column carries an attr_ prefix, so none can collide with these.
 //
 // The process owns the view (processOwned in migrate.go): no migration
-// creates it, so this list is its only definition.
+// creates it, so this list is its only definition. Each column decodes the
+// stored encoding as raw_* do (flatColumn, events encoding spec D12).
 var flatViewBaseColumns = []string{
 	"id", "project_id", "family", "event_name", "actor_id",
 	"kind", "session_id", "user_id", "group_id", "host", "path", "referrer_source",
@@ -29,6 +30,31 @@ var flatViewBaseColumns = []string{
 	"browser", "browser_version", "browser_locale", "app_version", "app_locale",
 	"device", "device_model", "display_width", "display_height", "country",
 	"consent", "ts", "attributes", "value", "measure", "sample_rate",
+}
+
+// flatColumn is the decoded expression of an events column, named as the
+// column: the sql* fragments raw_* carry (encode.go), and the plain
+// columns as stored.
+func flatColumn(name string) string {
+	col := "e." + name
+	var expr string
+	switch name {
+	case "id":
+		expr = sqlEventID(col)
+	case "family":
+		expr = sqlFamily(col)
+	case "actor_id", "session_id", "user_id", "group_id":
+		expr = sqlID(col)
+	case "ts":
+		expr = sqlTS(col)
+	case "attributes":
+		expr = sqlAttributes(col)
+	case "project_id", "display_width", "display_height", "consent", "value", "sample_rate":
+		expr = col
+	default:
+		expr = sqlString(col)
+	}
+	return expr + " AS " + name
 }
 
 // sanitizeAlias strips everything outside [A-Za-z0-9_] from an attribute key.
@@ -49,10 +75,10 @@ func sanitizeAlias(key string) string {
 // tools see a plain wide table instead of JSON.
 //
 // Attribute keys are operator-declared config now rather than raw
-// client-supplied data, but the alias and the JSON path are still handled
+// client-supplied data, but the alias and the key lookup are still handled
 // separately as defence in depth: the alias is sanitized down to a safe
-// identifier, while the path keeps the ORIGINAL key (quotes escaped) so
-// lookups still match. Keys that sanitize to nothing are skipped; keys
+// identifier, while the lookup keeps the ORIGINAL key (quotes escaped) so
+// it still matches the catalog. Keys that sanitize to nothing are skipped; keys
 // that sanitize to the same alias get _2, _3 ... suffixes.
 //
 // A rebuild whose CREATE VIEW text matches the view already in place is a
@@ -63,12 +89,15 @@ func sanitizeAlias(key string) string {
 // just the column names: sanitizeAlias is lossy and many-to-one, so two
 // declared-key sets that differ only in a hostile/unsanitized key (e.g.
 // "plan!" -> "plan") can produce the SAME column names while needing
-// different json_extract paths. Comparing names alone would falsely treat
-// that as unchanged and leave the view extracting the stale key forever.
+// different key lookups. Comparing names alone would falsely treat that
+// as unchanged and leave the view reading the stale key forever.
 func (d *DB) RebuildFlatView(ctx context.Context, keys []string) error {
 	sorted := append([]string(nil), keys...)
 	sort.Strings(sorted) // deterministic column order across rebuilds
-	exprs := append([]string(nil), flatViewBaseColumns...)
+	exprs := make([]string, 0, len(flatViewBaseColumns)+len(sorted))
+	for _, c := range flatViewBaseColumns {
+		exprs = append(exprs, flatColumn(c))
+	}
 	used := map[string]bool{}
 	for _, key := range sorted {
 		if strings.HasPrefix(key, "$") {
@@ -90,16 +119,20 @@ func (d *DB) RebuildFlatView(ctx context.Context, keys []string) error {
 			}
 		}
 		used[alias] = true
-		// The original key sits inside a JSON path literal, where only " is
-		// special; the whole path then sits inside a SQL string literal,
-		// where ' must be doubled.
-		path := `$."` + strings.ReplaceAll(key, `"`, `\"`) + `"`
-		pathLit := strings.ReplaceAll(path, `'`, `''`)
-		exprs = append(exprs, fmt.Sprintf(`json_extract(attributes, '%s') AS %s`, pathLit, alias))
+		// The row stores {"<catalog id>": <value number>} (events encoding
+		// spec D6): the value is read by the key's catalog row, found by
+		// its original key inside a SQL string literal, where ' must be
+		// doubled. Looking the id up per row, rather than writing it into
+		// the view, keeps the view right when a key gets a new id (pruned
+		// and seen again) without a rebuild.
+		keyLit := strings.ReplaceAll(key, `'`, `''`)
+		exprs = append(exprs, fmt.Sprintf(`(SELECT v.value FROM project_attributes k JOIN attribute_values v ON v.key_id = k.id
+  AND v.n = json_extract(e.attributes, '$."' || k.id || '"') WHERE k.project_id = e.project_id AND k.key = '%s') AS %s`, keyLit, alias))
 	}
-	// The one documented reader of the raw table outside raw_views and
-	// raw_product: v_events_flat holds both families on purpose.
-	stmt := fmt.Sprintf(`CREATE VIEW v_events_flat AS SELECT %s FROM events`,
+	// The one documented reader of the raw table outside raw_views,
+	// raw_product and raw_measures: v_events_flat holds every family on
+	// purpose.
+	stmt := fmt.Sprintf(`CREATE VIEW v_events_flat AS SELECT %s FROM events e`,
 		strings.Join(exprs, ", "))
 
 	if current, err := d.flatViewDefinition(ctx); err == nil && current == stmt {

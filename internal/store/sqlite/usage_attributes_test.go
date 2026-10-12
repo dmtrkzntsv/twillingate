@@ -53,7 +53,7 @@ func TestWriteEventsRecordsReceivedAttributes(t *testing.T) {
 		{ID: "v1", ProjectID: 1, Family: store.FamilyViews, TS: ts("2026-08-02T10:00:00Z"), Kind: "web",
 			ActorID: "a", Path: "/", Attributes: map[string]string{"ignored": "yes"}},
 	}
-	if err := db.WriteEvents(ctx, evs); err != nil {
+	if err := db.writeTestEvents(ctx, evs); err != nil {
 		t.Fatal(err)
 	}
 	want := []string{
@@ -94,13 +94,13 @@ func TestWriteEventsWritesOnlyNewReceivedKeys(t *testing.T) {
 			TS: ts(day + "T10:00:00Z"), ActorID: "a", Attributes: attrs}
 	}
 	first := []store.Event{ev("a1", "2026-08-02", map[string]string{"plan": "pro", "seats": "3"})}
-	if err := db.WriteEvents(ctx, first); err != nil {
+	if err := db.writeTestEvents(ctx, first); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.db.Exec(`DELETE FROM usage_attributes`); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.WriteEvents(ctx, []store.Event{
+	if err := db.writeTestEvents(ctx, []store.Event{
 		first[0], // a retried id: inserts nothing, records nothing
 		ev("a2", "2026-08-02", map[string]string{"plan": "free", "region": "eu"}),
 	}); err != nil {
@@ -111,7 +111,7 @@ func TestWriteEventsWritesOnlyNewReceivedKeys(t *testing.T) {
 	}
 	// A restart forgets what was written; the next batch records its keys again.
 	db.seen = receivedSeen{}
-	if err := db.WriteEvents(ctx, []store.Event{ev("a3", "2026-08-02", map[string]string{"plan": "pro"})}); err != nil {
+	if err := db.writeTestEvents(ctx, []store.Event{ev("a3", "2026-08-02", map[string]string{"plan": "pro"})}); err != nil {
 		t.Fatal(err)
 	}
 	if got, want := receivedRows(t, db), []string{"1/2026-08-02/plan=0", "1/2026-08-02/region=0"}; !reflect.DeepEqual(got, want) {
@@ -161,7 +161,7 @@ func TestRecordUsageHistoryRecountsReceivedAttributes(t *testing.T) {
 	// 2026-08-04 is "today" for the pass: recorded by ingest only.
 	evs = append(evs, store.Event{ID: "t1", ProjectID: 1, Family: store.FamilyProduct, EventName: "signup",
 		TS: ts("2026-08-04T09:00:00Z"), ActorID: "a", Attributes: map[string]string{"plan": "pro"}})
-	if err := db.WriteEvents(ctx, evs); err != nil {
+	if err := db.writeTestEvents(ctx, evs); err != nil {
 		t.Fatal(err)
 	}
 	// A stale row for a day with no raw rows left (rolled up): pruned.
@@ -225,7 +225,7 @@ func TestRecordUsageHistoryRecountsPartitionsAndReservedColumns(t *testing.T) {
 		// measure boot/size: build {e}, $path {/home}, $device_model {Pixel 8}
 		measure("m4", store.MeasureSize, "e", "/home", "Pixel 8"),
 	}
-	if err := db.WriteEvents(ctx, evs); err != nil {
+	if err := db.writeTestEvents(ctx, evs); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.RecordUsageHistory(ctx, ts("2026-08-04T03:00:00Z")); err != nil {
@@ -279,7 +279,8 @@ func catalogRows(t *testing.T, db *DB) []string {
 }
 
 // Ingest adds a catalog row for each key a product or measure row carried,
-// declarable reserved keys included; views add none.
+// declarable reserved keys included, and for each custom key a view row
+// carried (events encoding spec D8: its encoded attributes name them).
 func TestWriteEventsAddsCatalogRows(t *testing.T) {
 	db := newTestDB(t)
 	if id := seedDeclaredProject(t, db, nil); id != 1 {
@@ -291,10 +292,10 @@ func TestWriteEventsAddsCatalogRows(t *testing.T) {
 		{ID: "v1", ProjectID: 1, Family: store.FamilyViews, TS: ts("2026-08-02T10:00:00Z"), Kind: "web",
 			ActorID: "a", Path: "/", Attributes: map[string]string{"x": "yes"}},
 	}
-	if err := db.WriteEvents(context.Background(), evs); err != nil {
+	if err := db.writeTestEvents(context.Background(), evs); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"1/$host=0", "1/plan=0"}
+	want := []string{"1/$host=0", "1/plan=0", "1/x=0"}
 	if got := catalogRows(t, db); !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v\nwant %v", got, want)
 	}

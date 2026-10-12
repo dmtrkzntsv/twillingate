@@ -17,7 +17,7 @@ import (
 func seedProductEvent(t *testing.T, db *DB, projectID int64, event, at string,
 	attrs map[string]string, os, appVersion string) {
 	t.Helper()
-	if err := db.WriteEvents(context.Background(), []store.Event{{Family: store.FamilyProduct,
+	if err := db.writeTestEvents(context.Background(), []store.Event{{Family: store.FamilyProduct,
 		ID: uuid.NewString(), ProjectID: projectID, EventName: event,
 		ActorID: "u1", TS: ts(at), Attributes: attrs,
 		OS: os, AppVersion: appVersion,
@@ -41,7 +41,7 @@ func seedProductDay(t *testing.T, db *DB) {
 			Attributes: map[string]string{"plan": "free"}},
 		{Family: store.FamilyProduct, ID: "p4", ProjectID: 1, EventName: "ping", ActorID: "u1", TS: ts("2026-08-10T13:00:00Z")},
 	}
-	if err := db.WriteEvents(context.Background(), evs); err != nil {
+	if err := db.writeTestEvents(context.Background(), evs); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -143,7 +143,7 @@ func TestAggregateProductTopNCollapsesTail(t *testing.T) {
 	add("u1", "v2")
 	add("u2", "v3")
 	add("u3", "v4")
-	if err := db.WriteEvents(ctx, evs); err != nil {
+	if err := db.writeTestEvents(ctx, evs); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.AggregateProductDay(ctx, 1, day("2026-08-10"), []string{"button"}, 2); err != nil {
@@ -244,7 +244,7 @@ func TestRollupWritesCountry(t *testing.T) {
 		evs = append(evs, store.Event{Family: store.FamilyProduct, ID: fmt.Sprintf("c%d", i), ProjectID: 1,
 			EventName: "signup", ActorID: fmt.Sprintf("u%d", i), TS: ts("2026-08-01T10:00:00Z"), Country: c})
 	}
-	if err := db.WriteEvents(ctx, evs); err != nil {
+	if err := db.writeTestEvents(ctx, evs); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.AggregateProductDay(ctx, 1,
@@ -326,7 +326,7 @@ func TestRollupSystemDimensionsSurviveRawDeletion(t *testing.T) {
 func TestRollupWritesPlatformSystemDimension(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	if err := db.WriteEvents(ctx, []store.Event{{Family: store.FamilyProduct,
+	if err := db.writeTestEvents(ctx, []store.Event{{Family: store.FamilyProduct,
 		ID: uuid.NewString(), ProjectID: 1, EventName: "signup", ActorID: "u1",
 		TS: ts("2026-08-01T10:00:00Z"), Platform: "electron", OS: "macos", AppVersion: "1.2.0",
 	}}); err != nil {
@@ -373,7 +373,7 @@ func TestAggregateProductGroupsAreDistinctPerEvent(t *testing.T) {
 	ctx := context.Background()
 	at := func(m int) string { return fmt.Sprintf("2026-08-10T10:%02d:00Z", m) }
 	pro := map[string]string{"plan": "pro"}
-	if err := db.WriteEvents(ctx, []store.Event{
+	if err := db.writeTestEvents(ctx, []store.Event{
 		{Family: store.FamilyProduct, ID: "g1", ProjectID: 1, EventName: "signup", ActorID: "u1", GroupID: "acme", TS: ts(at(0)), Attributes: pro},
 		{Family: store.FamilyProduct, ID: "g2", ProjectID: 1, EventName: "signup", ActorID: "u2", GroupID: "acme", TS: ts(at(1)), Attributes: pro},
 		{Family: store.FamilyProduct, ID: "g3", ProjectID: 1, EventName: "signup", ActorID: "u3", GroupID: "acme", TS: ts(at(2)), Attributes: pro},
@@ -417,7 +417,7 @@ func TestAggregateProductGroupsInTail(t *testing.T) {
 	add("u2", "acme", "v2")
 	add("u3", "globex", "v3")
 	add("u4", "", "v4")
-	if err := db.WriteEvents(ctx, evs); err != nil {
+	if err := db.writeTestEvents(ctx, evs); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.AggregateProductDay(ctx, 1, day("2026-08-10"), []string{"button"}, 1); err != nil {

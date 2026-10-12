@@ -85,6 +85,7 @@ func (d *DB) WriteSubmission(ctx context.Context, n store.NewSubmission) (store.
 	var inserted bool
 	var fresh []receivedKey
 	var gen uint64
+	var td *txDict
 	err := d.tx(ctx, func(tx *sql.Tx) error {
 		// A retry of a stored id is a success whatever the form's state now:
 		// the first attempt already got its answer. It changes nothing.
@@ -174,7 +175,8 @@ func (d *DB) WriteSubmission(ctx context.Context, n store.NewSubmission) (store.
 		if ev.ReceivedAt.IsZero() {
 			ev.ReceivedAt = sub.ReceivedAt
 		}
-		keys, err := insertEvents(ctx, tx, []store.Event{ev})
+		td = d.dict.begin(tx)
+		keys, err := insertEvents(ctx, tx, td, []store.Event{ev})
 		if err != nil {
 			return err
 		}
@@ -191,6 +193,9 @@ func (d *DB) WriteSubmission(ctx context.Context, n store.NewSubmission) (store.
 		return store.Form{}, false, err
 	}
 	d.seen.remember(fresh, gen)
+	if td != nil {
+		td.commit()
+	}
 	return form, inserted, nil
 }
 
@@ -485,11 +490,14 @@ func (d *DB) ExpireDrafts(ctx context.Context, now time.Time) (int, error) {
 
 // deleteEvent deletes the raw $form_submit event of the submission id
 // received on day (its key is family, project, day, id), if it is still
-// raw: a day already rolled up keeps its aggregates.
+// raw: a day already rolled up keeps its aggregates. The row is stored
+// encoded (events encoding spec D9): the id as ingest encodes it, the name
+// as its strings id (none: no such row either).
 func deleteEvent(ctx context.Context, tx *sql.Tx, projectID int64, day, id string) error {
 	_, err := tx.ExecContext(ctx,
-		`DELETE FROM events WHERE family='product' AND project_id=? AND day=? AND id=? AND event_name=?`,
-		projectID, day, id, store.FormSubmitEvent)
+		`DELETE FROM events WHERE family=? AND project_id=? AND day=? AND id=?
+		 AND event_name=(SELECT id FROM strings WHERE value=?)`,
+		familyCode(store.FamilyProduct), projectID, day, encodeEventID(id), store.FormSubmitEvent)
 	return err
 }
 

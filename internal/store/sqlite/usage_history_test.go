@@ -68,7 +68,7 @@ func seedStatsDB(t *testing.T) *DB {
 		{Family: store.FamilyViews, ID: uuid.NewString(), ProjectID: 2, Kind: "web", ActorKind: store.ActorConnection,
 			TS: ts("2026-08-10T10:00:00Z"), ActorID: "w", Path: "/"},
 	}
-	if err := db.WriteEvents(context.Background(), evs); err != nil {
+	if err := db.writeTestEvents(context.Background(), evs); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.db.Exec(`INSERT INTO agg_views_daily VALUES (1,'2026-07-01','web',1,1,1,0,0), (1,'2026-07-02','web',2,2,2,0,0)`); err != nil {
@@ -180,7 +180,7 @@ func TestRecordUsageHistoryKeepsEarlierDays(t *testing.T) {
 // growProject2 gives project 2 two more raw rows: three of six.
 func growProject2(t *testing.T, db *DB) {
 	t.Helper()
-	if err := db.WriteEvents(context.Background(), []store.Event{
+	if err := db.writeTestEvents(context.Background(), []store.Event{
 		{Family: store.FamilyProduct, ID: uuid.NewString(), ProjectID: 2, EventName: "a", ActorID: "u", TS: ts("2026-08-10T13:00:00Z")},
 		{Family: store.FamilyProduct, ID: uuid.NewString(), ProjectID: 2, EventName: "b", ActorID: "u", TS: ts("2026-08-10T14:00:00Z")},
 	}); err != nil {
@@ -304,7 +304,7 @@ func TestShareOfBytesDoesNotOverflow(t *testing.T) {
 func TestRecordUsageHistoryCountsDays(t *testing.T) {
 	db := seedStatsDB(t)
 	ctx := context.Background()
-	if err := db.WriteEvents(ctx, []store.Event{{Family: store.FamilyViews, ID: uuid.NewString(), ProjectID: 1, Kind: "web",
+	if err := db.writeTestEvents(ctx, []store.Event{{Family: store.FamilyViews, ID: uuid.NewString(), ProjectID: 1, Kind: "web",
 		ActorKind: store.ActorConnection, TS: ts("2026-08-22T01:00:00Z"), ActorID: "v", Path: "/"}}); err != nil {
 		t.Fatal(err)
 	}
@@ -343,7 +343,7 @@ func TestRecordUsageHistoryRecountsAndOutlivesTheAggregates(t *testing.T) {
 	if err := db.RecordUsageHistory(ctx, now); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.WriteEvents(ctx, []store.Event{{Family: store.FamilyViews, ID: uuid.NewString(), ProjectID: 1, Kind: "web",
+	if err := db.writeTestEvents(ctx, []store.Event{{Family: store.FamilyViews, ID: uuid.NewString(), ProjectID: 1, Kind: "web",
 		ActorKind: store.ActorConnection, TS: ts("2026-08-10T23:00:00Z"), ActorID: "late", Path: "/"}}); err != nil {
 		t.Fatal(err)
 	}
@@ -389,7 +389,7 @@ func attrsDB(t *testing.T, cap string) (*DB, int64) {
 			ActorID: "c", TS: ts("2026-08-10T12:00:00Z").Add(time.Duration(i) * time.Minute), Measure: store.MeasureTime, Value: &boot,
 			Attributes: map[string]string{"plan": plan}})
 	}
-	if err := db.WriteEvents(ctx, evs); err != nil {
+	if err := db.writeTestEvents(ctx, evs); err != nil {
 		t.Fatal(err)
 	}
 	return db, id

@@ -26,7 +26,7 @@ func TestDaysBefore(t *testing.T) {
 		{Family: store.FamilyViews, ID: "4", ProjectID: 1, Kind: "web", ActorKind: store.ActorConnection, TS: ts("2026-08-20T10:00:00Z"), ActorID: "v1", Path: "/"},
 		{Family: store.FamilyViews, ID: "5", ProjectID: 2, Kind: "web", ActorKind: store.ActorConnection, TS: ts("2026-08-10T10:00:00Z"), ActorID: "v1", Path: "/"},
 	}
-	if err := db.WriteEvents(ctx, views); err != nil {
+	if err := db.writeTestEvents(ctx, views); err != nil {
 		t.Fatal(err)
 	}
 	events := []store.Event{
@@ -34,7 +34,7 @@ func TestDaysBefore(t *testing.T) {
 		{Family: store.FamilyProduct, ID: "e2", ProjectID: 1, EventName: "signup", ActorID: "u2", TS: ts("2026-08-12T11:00:00Z")},
 		{Family: store.FamilyProduct, ID: "e3", ProjectID: 1, EventName: "signup", ActorID: "u1", TS: ts("2026-08-20T10:00:00Z")},
 	}
-	if err := db.WriteEvents(ctx, events); err != nil {
+	if err := db.writeTestEvents(ctx, events); err != nil {
 		t.Fatal(err)
 	}
 
@@ -76,8 +76,8 @@ func TestDaysBeforeRejectsCorruptTimestamp(t *testing.T) {
 	// Must sort before the cutoff so the WHERE clause admits it, yet be an
 	// impossible calendar date so civil.Parse rejects it.
 	if _, err := db.db.Exec(
-		`INSERT INTO events (id, project_id, ts, day, received_at, kind, actor_id, actor_kind, path, family, event_name)
-		 VALUES ('x',1,'2026-02-30T00:00:00Z','2026-02-30','2026-02-30T00:00:00Z','web','v','connection','/','views','$page_view')`,
+		`INSERT INTO events (id, project_id, ts, day, received_at, actor_id, family)
+		 VALUES ('x', 1, 0, '2026-02-30', 0, 'v', 1)`,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -135,11 +135,11 @@ func TestOperationsOnClosedDB(t *testing.T) {
 		"AggregateViewDay":   func() error { return db.AggregateViewDay(ctx, 1, day("2026-01-01"), defaultAttrsTopN) },
 		"Migrate":            func() error { return db.Migrate(ctx) },
 		"WriteEvents(views)": func() error {
-			return db.WriteEvents(ctx, []store.Event{{Family: store.FamilyViews, ID: "1", ProjectID: 1, Kind: "web",
+			return db.writeTestEvents(ctx, []store.Event{{Family: store.FamilyViews, ID: "1", ProjectID: 1, Kind: "web",
 				ActorKind: store.ActorConnection, TS: ts("2026-08-10T10:00:00Z"), ActorID: "v", Path: "/"}})
 		},
 		"WriteEvents(product)": func() error {
-			return db.WriteEvents(ctx, []store.Event{{Family: store.FamilyProduct, ID: "e", ProjectID: 1, EventName: "n", ActorID: "u", TS: ts("2026-08-10T10:00:00Z")}})
+			return db.writeTestEvents(ctx, []store.Event{{Family: store.FamilyProduct, ID: "e", ProjectID: 1, EventName: "n", ActorID: "u", TS: ts("2026-08-10T10:00:00Z")}})
 		},
 		"CreateProject": func() error {
 			_, err := db.CreateProject(ctx, store.RegistryProject{Name: "App", AllowedOrigins: "[]"},
@@ -251,13 +251,13 @@ func TestOpenRelativeDSN(t *testing.T) {
 func TestWriteEmptyBatchIsNoOp(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	if err := db.WriteEvents(ctx, nil); err != nil {
+	if err := db.writeTestEvents(ctx, nil); err != nil {
 		t.Errorf("WriteEvents(nil) = %v", err)
 	}
-	if err := db.WriteEvents(ctx, nil); err != nil {
+	if err := db.writeTestEvents(ctx, nil); err != nil {
 		t.Errorf("WriteEvents(nil) = %v", err)
 	}
-	if err := db.WriteEvents(ctx, []store.Event{}); err != nil {
+	if err := db.writeTestEvents(ctx, []store.Event{}); err != nil {
 		t.Errorf("WriteEvents(empty) = %v", err)
 	}
 }

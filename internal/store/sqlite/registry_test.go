@@ -467,8 +467,10 @@ func TestDeleteProjectDataCascades(t *testing.T) {
 		t.Fatal(err)
 	}
 	// one row in a raw table and one in an aggregate table
-	if _, err := d.db.Exec(`INSERT INTO events (id, project_id, ts, day, received_at, kind, actor_id, actor_kind, path, family, event_name)
-		VALUES ('h1',?,'2026-08-01T10:00:00Z','2026-08-01','2026-08-01T10:00:00Z','web','a','connection','/x','views','$page_view')`, id); err != nil {
+	at := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
+	if err := d.WriteEvents(ctx, []store.Event{{ID: "h1", ProjectID: id, Family: store.FamilyViews, EventName: "$page_view",
+		TS: at, ReceivedAt: at, Kind: "web", ActorID: "a", ActorKind: "connection", Path: "/x",
+		Attributes: map[string]string{"k": "v"}}}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := d.db.Exec(`INSERT INTO agg_views_daily (project_id, day, kind, visitors, views,
@@ -488,6 +490,14 @@ func TestDeleteProjectDataCascades(t *testing.T) {
 		if c != 0 {
 			t.Errorf("%s still has %d rows", table, c)
 		}
+	}
+	// the catalog rows went, and their values with them (ON DELETE CASCADE)
+	var values int
+	if err := d.db.QueryRow(`SELECT COUNT(*) FROM attribute_values`).Scan(&values); err != nil {
+		t.Fatal(err)
+	}
+	if values != 0 {
+		t.Errorf("attribute_values still has %d rows", values)
 	}
 	// the audit row survives the deletion — that is the point of it
 	var c int

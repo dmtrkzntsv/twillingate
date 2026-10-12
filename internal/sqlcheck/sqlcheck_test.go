@@ -55,12 +55,14 @@ var dynamic = map[string]string{
 const minSites = 150
 
 // migrationSteps lists the files, relative to internal/, that hold Go
-// migration steps (dataSteps in store/sqlite/migrate.go). Their SQL runs
-// inside its migration, against that version's schema rather than the
-// current one (migration 015's step reads a table the same migration
-// drops), so it is not checked here: every test that migrates runs it.
+// migration steps (dataSteps and preSteps in store/sqlite/migrate.go).
+// Their SQL runs inside its migration, against that version's schema
+// rather than the current one (migration 015's step reads a table the
+// same migration drops, 041's reads events before it is encoded), so it
+// is not checked here: every test that migrates runs it.
 var migrationSteps = map[string]bool{
 	"store/sqlite/migration015.go": true,
+	"store/sqlite/migration041.go": true,
 }
 
 // migrationFile matches a Go migration step's file name.

@@ -32,7 +32,7 @@ func TestMigration029ViewsReadTheAttributeCap(t *testing.T) {
 			ActorID: fmt.Sprintf("a%d", i), ActorKind: store.ActorConnection,
 			Host: "a.example", Path: path})
 	}
-	if err := db.WriteEvents(ctx, evs); err != nil {
+	if err := db.writeTextEvents(ctx, evs); err != nil {
 		t.Fatal(err)
 	}
 	paths := func() []string {

@@ -37,7 +37,7 @@ func seedViews(t *testing.T, db *DB, views ...store.Event) {
 			views[i].ActorKind = store.ActorConnection
 		}
 	}
-	if err := db.WriteEvents(context.Background(), views); err != nil {
+	if err := db.writeTestEvents(context.Background(), views); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 }
