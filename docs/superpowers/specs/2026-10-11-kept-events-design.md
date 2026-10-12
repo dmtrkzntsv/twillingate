@@ -32,10 +32,10 @@ numbers reads.
 
 ### The rule
 
-- **D1. `keep` is a third rule action.** The rules table (`event_rules` on
-  main; `rules` once #172 lands, whichever merges first) gains
-  `action = 'keep'` with `to_name` NULL. SQLite cannot alter a CHECK, so the
-  migration rebuilds the table. A name has at most one rule, as before:
+- **D1. `keep` is a third rule action.** `rules` (migration 040, #172)
+  gains `action = 'keep'` with `to_name` NULL, for `kind = 'event'` only:
+  an attribute rule keeps nothing. SQLite cannot alter a CHECK, so
+  migration 041 rebuilds the table. A name has at most one rule, as before:
   keep, block and rename are exclusive on a name.
 - **D2. Scope is the other rules' scope.** `family` is `product` or
   `measures`; never views, never a `$` name (`$form_submit` included: it is
@@ -70,8 +70,8 @@ numbers reads.
   blocked rows, roll the rest up and delete them in one transaction. Between
   the rollup and the delete they now run
   `INSERT OR IGNORE INTO events_kept SELECT * FROM events WHERE family=?
-  AND project_id=? AND day=? AND event_name IN (SELECT name FROM
-  event_rules WHERE project_id=? AND family=? AND action='keep')`. Same
+  AND project_id=? AND day=? AND event_name IN (SELECT name FROM rules
+  WHERE project_id=? AND kind='event' AND family=? AND action='keep')`. Same
   transaction as the delete, so a crash leaves the day either raw or rolled
   up with its kept rows; `OR IGNORE` keeps a re-run idempotent. The kept
   rows were rolled up with the rest, so the aggregates count them as they
@@ -167,7 +167,7 @@ numbers reads.
   history query, `raw_*` unchanged), `limits` (`kept_events`) and `usage`
   (`kept_bytes`).
 - `docs/deployment.md`: `RETENTION_AGGREGATE_DAYS` also bounds kept rows.
-- `deploy/UPGRADES.md`: the migration rebuilds the rules table and adds
+- `deploy/UPGRADES.md`: migration 041 rebuilds `rules` and adds
   `events_kept`; no pre-checks, nothing visible on upgrade day.
 - `internal/api/docs_sync_test.go` binds the tool name and route.
 
