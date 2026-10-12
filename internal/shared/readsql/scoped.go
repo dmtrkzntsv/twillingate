@@ -41,9 +41,10 @@ const scopedDSN = "file::memory:?_pragma=busy_timeout(5000)&_defensive=1"
 //     is the qualified tw_store.x, which Check refuses.
 //
 // SQLite's own tables (sqlite_*) cannot be shadowed and are refused by
-// Check by name, as on every handle. An object added to the file after a
-// connection opened is seen only by connections opened after it;
-// migrations run before serving.
+// Check by name, as on every handle. A pooled connection whose file
+// schema changed since it was scoped (a table or view created, dropped or
+// rebuilt, by this process or another) is retired before its next use and
+// a fresh one scoped (scopedConn), so a new private table is shadowed too.
 //
 // refused names further tables this handle's Check refuses, as Open's
 // does; ScopedSchema is always among them.
@@ -72,23 +73,84 @@ type scopedConnector struct {
 	path string
 }
 
+// sqliteConn is the driver connection's methods database/sql uses, so
+// scopedConn can wrap one without hiding any of them.
+type sqliteConn interface {
+	driver.Conn
+	driver.ConnBeginTx
+	driver.ConnPrepareContext
+	driver.ExecerContext
+	driver.QueryerContext
+	driver.Pinger
+	driver.SessionResetter
+	driver.Validator
+}
+
+// scopedConn is a scoped connection and the file's schema version its
+// views were made against. The shadows are made per connection, so a table
+// created in the file afterwards (another process's migration, a CLI run)
+// would resolve straight to the file on it: ResetSession, which
+// database/sql calls before reusing a pooled connection, retires one whose
+// file schema changed, and the next Connect scopes a fresh one. A change
+// that lands while a statement is already running is seen at the next
+// reuse.
+type scopedConn struct {
+	sqliteConn
+	version int64
+}
+
+func (c *scopedConn) ResetSession(ctx context.Context) error {
+	if err := c.sqliteConn.ResetSession(ctx); err != nil {
+		return err
+	}
+	v, err := schemaVersion(ctx, c.sqliteConn)
+	if err != nil || v != c.version {
+		return driver.ErrBadConn
+	}
+	return nil
+}
+
 func (c *scopedConnector) Connect(ctx context.Context) (driver.Conn, error) {
-	conn, err := c.Connector.Connect(ctx)
+	raw, err := c.Connector.Connect(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if err := c.scope(ctx, conn); err != nil {
+	conn, ok := raw.(sqliteConn)
+	if !ok {
+		raw.Close()
+		return nil, fmt.Errorf("readsql: driver connection %T lacks a method database/sql uses", raw)
+	}
+	version, err := c.scope(ctx, conn)
+	if err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("readsql: scope %s: %w", c.path, err)
 	}
-	return conn, nil
+	return &scopedConn{sqliteConn: conn, version: version}, nil
 }
 
-func (c *scopedConnector) scope(ctx context.Context, conn driver.Conn) error {
-	eq, ok := conn.(sqlite.ExecQuerierContext)
-	if !ok {
-		return fmt.Errorf("driver connection %T runs no statements", conn)
+// schemaVersion is the attached file's schema cookie, which SQLite bumps
+// on every CREATE, DROP or ALTER in it.
+func schemaVersion(ctx context.Context, q driver.QueryerContext) (int64, error) {
+	rows, err := q.QueryContext(ctx, fmt.Sprintf(`PRAGMA %s.schema_version`, ScopedSchema), nil)
+	if err != nil {
+		return 0, err
 	}
+	defer rows.Close()
+	vals := make([]driver.Value, 1)
+	if err := rows.Next(vals); err != nil {
+		return 0, err
+	}
+	v, ok := vals[0].(int64)
+	if !ok {
+		return 0, fmt.Errorf("schema_version is %T", vals[0])
+	}
+	return v, nil
+}
+
+// scope attaches the file and makes the temporary views, returning the
+// file's schema version read before the objects were listed: a change
+// between the two then retires the connection at its first reuse.
+func (c *scopedConnector) scope(ctx context.Context, eq sqliteConn) (int64, error) {
 	run := func(q string, args ...driver.NamedValue) error {
 		_, err := eq.ExecContext(ctx, q, args)
 		return err
@@ -97,17 +159,21 @@ func (c *scopedConnector) scope(ctx context.Context, conn driver.Conn) error {
 	// URI filenames on, so mode=ro applies to the attached file.
 	if err := run(`ATTACH DATABASE ? AS `+ScopedSchema,
 		driver.NamedValue{Ordinal: 1, Value: "file:" + c.path + "?mode=ro"}); err != nil {
-		return err
+		return 0, err
 	}
-	// Every table, view and virtual table of the file but SQLite's own
-	// (which Check refuses by name, and which no temporary object may
-	// shadow). The query names no schema, so sqlcheck prepares it.
+	version, err := schemaVersion(ctx, eq)
+	if err != nil {
+		return 0, err
+	}
+	// Every object of the file whatever its type (table, view, virtual,
+	// or a virtual table's shadow tables) but SQLite's own, which Check
+	// refuses by name and no temporary object may shadow. The query
+	// names no schema, so sqlcheck prepares it.
 	rows, err := eq.QueryContext(ctx, `SELECT name FROM pragma_table_list
-		WHERE schema = ? AND type IN ('table', 'view', 'virtual')
-		  AND name NOT LIKE 'sqlite\_%' ESCAPE '\'
+		WHERE schema = ? AND name NOT LIKE 'sqlite\_%' ESCAPE '\'
 		ORDER BY name`, []driver.NamedValue{{Ordinal: 1, Value: ScopedSchema}})
 	if err != nil {
-		return err
+		return 0, err
 	}
 	var names []string
 	vals := make([]driver.Value, 1)
@@ -118,12 +184,12 @@ func (c *scopedConnector) scope(ctx context.Context, conn driver.Conn) error {
 		}
 		if err != nil {
 			rows.Close()
-			return err
+			return 0, err
 		}
 		names = append(names, fmt.Sprint(vals[0]))
 	}
 	if err := rows.Close(); err != nil {
-		return err
+		return 0, err
 	}
 	var hidden []string
 	for _, n := range names {
@@ -131,11 +197,11 @@ func (c *scopedConnector) scope(ctx context.Context, conn driver.Conn) error {
 		// RebuildFlatView, all [a-z0-9_]; anything else is refused rather
 		// than escaped, so the quoting below is only against keywords.
 		if !plainName(n) {
-			return fmt.Errorf("object name %q is not [a-z0-9_]", n)
+			return 0, fmt.Errorf("object name %q is not [a-z0-9_]", n)
 		}
 		if scopedAllowed(n) {
 			if err := run(fmt.Sprintf(`CREATE TEMP VIEW "%s" AS SELECT * FROM %s."%s"`, n, ScopedSchema, n)); err != nil {
-				return err
+				return 0, err
 			}
 			continue
 		}
@@ -144,19 +210,19 @@ func (c *scopedConnector) scope(ctx context.Context, conn driver.Conn) error {
 		// does not check the views that read one, so the view stays and
 		// fails to prepare.
 		if err := run(fmt.Sprintf(`CREATE TABLE main."%s" (x)`, n)); err != nil {
-			return err
+			return 0, err
 		}
 		if err := run(fmt.Sprintf(`CREATE TEMP VIEW "%s" AS SELECT * FROM main."%s"`, n, n)); err != nil {
-			return err
+			return 0, err
 		}
 		hidden = append(hidden, n)
 	}
 	for _, n := range hidden {
 		if err := run(fmt.Sprintf(`DROP TABLE main."%s"`, n)); err != nil {
-			return err
+			return 0, err
 		}
 	}
-	return run(`PRAGMA query_only = 1`)
+	return version, run(`PRAGMA query_only = 1`)
 }
 
 // scopedAllowed reports whether widget SQL may read the file's object n.

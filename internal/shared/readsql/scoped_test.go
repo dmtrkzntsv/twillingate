@@ -14,6 +14,18 @@ import (
 
 func scopedFixture(t *testing.T) *DB {
 	t.Helper()
+	db, err := OpenScoped(scopedFixturePath(t), 5*time.Second, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	return db
+}
+
+// scopedFixturePath writes the toy schema the scoped tests read: an events
+// table, two private tables, an aggregate and two views.
+func scopedFixturePath(t *testing.T) string {
+	t.Helper()
 	path := filepath.Join(t.TempDir(), "s.db")
 	w, err := sql.Open("sqlite", path)
 	if err != nil {
@@ -33,12 +45,75 @@ func scopedFixture(t *testing.T) *DB {
 		}
 	}
 	w.Close()
+	return path
+}
+
+// writeFile runs statements on path through a connection of its own, as
+// another process (a migration, a CLI run) would.
+func writeFile(t *testing.T, path string, stmts ...string) {
+	t.Helper()
+	w, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	for _, q := range stmts {
+		if _, err := w.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// TestScopedReconnectsWhenTheFileSchemaChanges: a table created in the
+// file after a pooled connection was scoped must not be readable on it
+// (no shadow was made for it). The single pooled connection is reused, so
+// only a reconnect re-scoping it gives "no such table".
+func TestScopedReconnectsWhenTheFileSchemaChanges(t *testing.T) {
+	path := scopedFixturePath(t)
 	db, err := OpenScoped(path, 5*time.Second, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { db.Close() })
-	return db
+	defer db.Close()
+	db.db.SetMaxOpenConns(1)
+	ctx := context.Background()
+	if _, err := db.Query(ctx, `SELECT path FROM raw_views`); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, path,
+		`CREATE TABLE audit_new (x TEXT)`, `INSERT INTO audit_new VALUES ('secret')`,
+		`CREATE VIEW v_new AS SELECT 7 AS n`)
+	if _, err := db.Query(ctx, `SELECT * FROM audit_new`); err == nil || !strings.Contains(err.Error(), "no such table") {
+		t.Errorf("audit_new: err = %v, want no such table", err)
+	}
+	res, err := db.Query(ctx, `SELECT n FROM v_new`)
+	if err != nil || len(res.Rows) != 1 || res.Rows[0][0] != "7" {
+		t.Errorf("v_new = %v, %v; want the view created after the connection opened", res.Rows, err)
+	}
+}
+
+// TestScopedFollowsAViewRebuild: SELECT * through the temporary view sees
+// a column a DROP/CREATE of the file's view adds, as v_events_flat's
+// rebuild does, on the same pooled connection's handle.
+func TestScopedFollowsAViewRebuild(t *testing.T) {
+	path := scopedFixturePath(t)
+	writeFile(t, path, `CREATE VIEW v_flat AS SELECT project_id, day FROM events`)
+	db, err := OpenScoped(path, 5*time.Second, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	db.db.SetMaxOpenConns(1)
+	ctx := context.Background()
+	res, err := db.Query(ctx, `SELECT * FROM v_flat`)
+	if err != nil || strings.Join(res.Columns, ",") != "project_id,day" {
+		t.Fatalf("before: columns %v, %v", res.Columns, err)
+	}
+	writeFile(t, path, `DROP VIEW v_flat`, `CREATE VIEW v_flat AS SELECT project_id, day, path AS attr_plan FROM events`)
+	res, err = db.Query(ctx, `SELECT * FROM v_flat`)
+	if err != nil || strings.Join(res.Columns, ",") != "project_id,day,attr_plan" {
+		t.Errorf("after: columns %v, %v; want the added attr_plan", res.Columns, err)
+	}
 }
 
 func TestScopedAllowsOnlyViewsAndAggregates(t *testing.T) {

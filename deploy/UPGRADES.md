@@ -766,15 +766,20 @@ WHERE json_valid(e.attributes) AND j.type <> 'text';
 SELECT project_id, COUNT(*) FROM events
 WHERE project_id NOT IN (SELECT id FROM projects) GROUP BY project_id;
 
--- 3. Your widgets whose SQL may read a table other than raw_*, v_* and
---    agg_*, which widget SQL can no longer read (below). A hit may only
---    name a view or a column: read it. System widgets are replaced by the
---    upgrade.
-SELECT w.id, w.dashboard_id, w.name FROM widgets w
+-- 3. Your widgets whose SQL names a table or view other than raw_*, v_*
+--    and agg_*, which widget SQL can no longer read (below); reads lists
+--    the names found. A name may also be a column or part of a longer
+--    word (v_identity_daily has a column events): read the widget. System
+--    widgets are replaced by the upgrade.
+SELECT w.id, w.dashboard_id, w.name, group_concat(s.name, ', ') AS reads
+FROM widgets w
 JOIN dashboards d ON d.id = w.dashboard_id
+JOIN sqlite_schema s ON s.type IN ('table', 'view')
+  AND s.name NOT GLOB 'raw_*' AND s.name NOT GLOB 'v_*' AND s.name NOT GLOB 'agg_*'
+  AND s.name NOT LIKE 'sqlite%'
+  AND instr(lower(w.source), s.name) > 0
 WHERE d.owner = 'user' AND w.archived_at IS NULL AND w.source_type = 'sql'
-  AND (w.source LIKE '%events%' OR w.source LIKE '%identities%'
-       OR w.source LIKE '%projects%' OR w.source LIKE '%strings%');
+GROUP BY w.id;
 ```
 
 A hit in the first check is fixed by hand before upgrading, for example by

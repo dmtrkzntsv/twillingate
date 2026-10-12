@@ -1,11 +1,14 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/dmtrkzntsv/twillingate/internal/reporting"
 )
 
 func TestQueryToolSelects(t *testing.T) {
@@ -17,6 +20,33 @@ func TestQueryToolSelects(t *testing.T) {
 	}
 	if out := textOf(res); !strings.Contains(out, "2026-08-20") {
 		t.Errorf("missing data: %s", out)
+	}
+}
+
+// TestQueryToolReadsEventsWidgetsDoNot pins spec D15 on one host: the
+// query tool reads the encoded events table (ts stored as Unix seconds),
+// while widget SQL, on its own scoped handle, gets "no such table" for it
+// and still reads the views.
+func TestQueryToolReadsEventsWidgetsDoNot(t *testing.T) {
+	h, cs := newTestHost(t)
+	res := callTool(t, cs, "query", map[string]any{
+		"sql": "SELECT COUNT(*) AS n, typeof(MIN(ts)) AS ts_type FROM events WHERE project_id = 1"})
+	if res.IsError {
+		t.Fatalf("query on events: %s", textOf(res))
+	}
+	if out := textOf(res); !strings.Contains(out, "integer") {
+		t.Errorf("query on events = %s, want the encoded rows (integer ts)", out)
+	}
+
+	ctx := context.Background()
+	in := reporting.PreviewIn{Component: "table", ProjectID: 1,
+		Source: reporting.Source{Type: "sql", Content: "SELECT COUNT(*) AS n FROM events WHERE project_id = :project"}}
+	if _, err := h.rep.Preview(ctx, in); err == nil || !strings.Contains(err.Error(), "no such table") {
+		t.Errorf("widget preview on events: err = %v, want no such table", err)
+	}
+	in.Source.Content = "SELECT COUNT(*) AS n FROM raw_views WHERE project_id = :project"
+	if _, err := h.rep.Preview(ctx, in); err != nil {
+		t.Errorf("widget preview on raw_views: %v", err)
 	}
 }
 
