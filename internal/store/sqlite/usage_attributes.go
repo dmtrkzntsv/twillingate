@@ -106,7 +106,11 @@ func (s *receivedSeen) remember(written []receivedKey) {
 
 // writeReceived inserts the triples ingest has not seen yet, with events 0
 // until the daily pass counts their day; a row already there (a restart,
-// or a late event for an older day) is left as it is.
+// or a late event for an older day) is left as it is. Each key also gets
+// its catalog row (project_attributes), added only here, for the triples
+// the cache has not seen, so a known key costs nothing more. The catalog
+// row is skipped for a project that no longer exists (purged while its
+// events were buffered): the foreign key would otherwise fail the batch.
 func writeReceived(ctx context.Context, tx *sql.Tx, keys []receivedKey) error {
 	if len(keys) == 0 {
 		return nil
@@ -117,8 +121,17 @@ func writeReceived(ctx context.Context, tx *sql.Tx, keys []receivedKey) error {
 		return err
 	}
 	defer stmt.Close()
+	catalog, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO project_attributes (project_id, key)
+		SELECT ?1, ?2 WHERE EXISTS (SELECT 1 FROM projects WHERE id = ?1)`)
+	if err != nil {
+		return err
+	}
+	defer catalog.Close()
 	for _, k := range keys {
 		if _, err := stmt.ExecContext(ctx, k.project, k.day, k.key); err != nil {
+			return err
+		}
+		if _, err := catalog.ExecContext(ctx, k.project, k.key); err != nil {
 			return err
 		}
 	}
@@ -173,6 +186,20 @@ func countReceived(ctx context.Context, tx *sql.Tx, today string) error {
 		) GROUP BY project_id, day, k`, today)
 	if err != nil {
 		return fmt.Errorf("usage attributes: %w", err)
+	}
+	// The catalog follows usage_attributes: heal a key whose catalog row
+	// was lost (only for projects that still exist: usage_attributes has no
+	// foreign key, so it can hold a deleted project's rows), then drop the
+	// rows that are no breakdown and have no usage row left (spec D3).
+	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO project_attributes (project_id, key)
+		SELECT DISTINCT project_id, attr_key FROM usage_attributes
+		WHERE project_id IN (SELECT id FROM projects)`); err != nil {
+		return fmt.Errorf("attribute catalog: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM project_attributes WHERE breakdown = 0
+		AND NOT EXISTS (SELECT 1 FROM usage_attributes u
+		                WHERE u.project_id = project_attributes.project_id AND u.attr_key = project_attributes.key)`); err != nil {
+		return fmt.Errorf("attribute catalog: %w", err)
 	}
 	return nil
 }

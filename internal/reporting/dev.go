@@ -396,8 +396,8 @@ type devProjectsOut struct {
 func devListProjects(ctx context.Context, db *readsql.DB) (devProjectsOut, error) {
 	rows, err := db.Run(ctx,
 		`SELECT p.id, p.name, p.allowed_origins,
-			COALESCE((SELECT json_group_array(key) FROM (SELECT key FROM project_attributes a
-				WHERE a.project_id = p.id AND a.breakdown = 1 ORDER BY key)), '[]'),
+			COALESCE((SELECT json_group_array(key ORDER BY key) FROM project_attributes a
+				WHERE a.project_id = p.id AND a.breakdown = 1), '[]'),
 			p.archived_at IS NOT NULL,
 			COALESCE(strftime('%Y-%m-%dT%H:%M:%SZ', p.archived_at), '') FROM projects p ORDER BY p.id`)
 	if err != nil {

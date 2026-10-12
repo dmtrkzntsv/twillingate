@@ -9,8 +9,8 @@ import (
 
 // withWriteTables creates, on a database pinned below migration 040, the
 // tables today's WriteEvents names that the schema lacks: rules (the
-// rename lookup) and usage_attributes (the keys received), as 040 leaves
-// them. For a test that writes events through WriteEvents before migrating
+// rename lookup), usage_attributes (the keys received) and
+// project_attributes (the catalog ingest adds to), as 040 leaves them. For a test that writes events through WriteEvents before migrating
 // further, never through 40, which would create them again.
 func withWriteTables(t *testing.T, db *DB) {
 	t.Helper()
@@ -33,6 +33,12 @@ func withWriteTables(t *testing.T, db *DB) {
 		events     INTEGER NOT NULL,
 		max_values INTEGER,
 		PRIMARY KEY (project_id, day, attr_key)
+	) WITHOUT ROWID`, `CREATE TABLE project_attributes (
+		project_id INTEGER NOT NULL REFERENCES projects(id),
+		key        TEXT    NOT NULL,
+		breakdown  INTEGER NOT NULL DEFAULT 0 CHECK (breakdown IN (0, 1)),
+		created_at TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+		PRIMARY KEY (project_id, key)
 	) WITHOUT ROWID`)
 }
 

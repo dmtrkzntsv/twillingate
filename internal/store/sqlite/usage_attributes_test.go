@@ -256,3 +256,75 @@ func TestRecordUsageHistoryRecountsPartitionsAndReservedColumns(t *testing.T) {
 		t.Fatalf("got %v\nwant %v", got, want)
 	}
 }
+
+// catalogRows reads project_attributes as "project/key=breakdown" lines, sorted.
+func catalogRows(t *testing.T, db *DB) []string {
+	t.Helper()
+	rows, err := db.db.Query(`SELECT project_id, key, breakdown FROM project_attributes`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var p, b int64
+		var key string
+		if err := rows.Scan(&p, &key, &b); err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, fmt.Sprintf("%d/%s=%d", p, key, b))
+	}
+	sort.Strings(out)
+	return out
+}
+
+// Ingest adds a catalog row for each key a product or measure row carried,
+// declarable reserved keys included; views add none.
+func TestWriteEventsAddsCatalogRows(t *testing.T) {
+	db := newTestDB(t)
+	if id := seedDeclaredProject(t, db, nil); id != 1 {
+		t.Fatalf("project id %d, want 1", id)
+	}
+	evs := []store.Event{
+		{ID: "p1", ProjectID: 1, Family: store.FamilyProduct, EventName: "signup", TS: ts("2026-08-02T10:00:00Z"),
+			ActorID: "a", Host: "example.com", Attributes: map[string]string{"plan": "pro"}},
+		{ID: "v1", ProjectID: 1, Family: store.FamilyViews, TS: ts("2026-08-02T10:00:00Z"), Kind: "web",
+			ActorID: "a", Path: "/", Attributes: map[string]string{"x": "yes"}},
+	}
+	if err := db.WriteEvents(context.Background(), evs); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"1/$host=0", "1/plan=0"}
+	if got := catalogRows(t, db); !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v\nwant %v", got, want)
+	}
+}
+
+// The daily pass adds the keys usage_attributes holds that the catalog
+// misses (never for a project that no longer exists), and drops the
+// non-breakdown rows with no usage row; a breakdown row stays.
+func TestCountReceivedHealsAndPrunesCatalog(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	if id := seedDeclaredProject(t, db, nil); id != 1 {
+		t.Fatalf("project id %d, want 1", id)
+	}
+	for _, q := range []string{
+		`INSERT INTO usage_attributes (project_id, day, attr_key, events) VALUES (1, '2026-08-04', 'a', 0)`,
+		// A project deleted since: usage_attributes has no foreign key.
+		`INSERT INTO usage_attributes (project_id, day, attr_key, events) VALUES (9999, '2026-08-04', 'orphan', 0)`,
+		`INSERT INTO project_attributes (project_id, key, breakdown) VALUES (1, 'gone', 0)`,
+		`INSERT INTO project_attributes (project_id, key, breakdown) VALUES (1, 'kept', 1)`,
+	} {
+		if _, err := db.db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.RecordUsageHistory(ctx, ts("2026-08-04T03:00:00Z")); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"1/a=0", "1/kept=1"}
+	if got := catalogRows(t, db); !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v\nwant %v", got, want)
+	}
+}

@@ -44,8 +44,8 @@ func (d *DB) LoadRegistry(ctx context.Context) ([]store.RegistryProject, []store
 	// JSON array the registry has always carried.
 	rows, err := d.db.QueryContext(ctx, `SELECT p.id, p.name,
 		p.allowed_origins,
-		COALESCE((SELECT json_group_array(key) FROM (SELECT key FROM project_attributes a
-			WHERE a.project_id = p.id AND a.breakdown = 1 ORDER BY key)), '[]'),
+		COALESCE((SELECT json_group_array(key ORDER BY key) FROM project_attributes a
+			WHERE a.project_id = p.id AND a.breakdown = 1), '[]'),
 		p.archived_at IS NOT NULL,
 		COALESCE(strftime('%Y-%m-%dT%H:%M:%SZ', p.archived_at), ''), p.sort_key
 		FROM projects p ORDER BY p.sort_key, p.id`)
@@ -183,7 +183,10 @@ func syncBreakdowns(ctx context.Context, tx *sql.Tx, projectID int64, list strin
 	}
 	_, err := tx.ExecContext(ctx, `DELETE FROM project_attributes WHERE project_id = ?1 AND breakdown = 0
 		AND NOT EXISTS (SELECT 1 FROM usage_attributes u WHERE u.project_id = ?1 AND u.attr_key = project_attributes.key)`, projectID)
-	return err
+	if err != nil {
+		return fmt.Errorf("breakdowns: %w", err)
+	}
+	return nil
 }
 
 func (d *DB) UpdateProject(ctx context.Context, p store.RegistryProject, a store.AuditEntry) error {
