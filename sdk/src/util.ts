@@ -90,3 +90,29 @@ export function withQuery(path: string, url: string, keys: string[]): string {
   }
   return picked.length ? `${path}?${picked.join("&")}` : path;
 }
+
+/**
+ * A UUID v7 (RFC 9562): 48 bits of Unix milliseconds, then 74 random bits.
+ *
+ * Ids made in order sort in order, so the collector's events table, keyed
+ * by (family, project, day, id), appends each new row after the last
+ * instead of landing it at a random spot in the day. crypto.randomUUID
+ * only makes v4, hence our own; Math.random is the fallback for a context
+ * with no WebCrypto (an old WebView), where the ids still work, just with
+ * weaker randomness.
+ */
+export function uuid7(now: number = Date.now()): string {
+  const b = new Uint8Array(16);
+  if (typeof crypto !== "undefined" && crypto.getRandomValues) crypto.getRandomValues(b);
+  else for (let i = 0; i < 16; i++) b[i] = (Math.random() * 256) | 0;
+  let ms = Math.max(0, Math.floor(now));
+  for (let i = 5; i >= 0; i--) {
+    b[i] = ms % 256;
+    ms = Math.floor(ms / 256);
+  }
+  b[6] = (b[6] & 0x0f) | 0x70;
+  b[8] = (b[8] & 0x3f) | 0x80;
+  let h = "";
+  for (let i = 0; i < 16; i++) h += (b[i] + 256).toString(16).slice(1);
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}

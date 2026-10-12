@@ -23,7 +23,7 @@ import { resolveConsent, type ConsentSpec } from "./consent";
 import { collectorOrigin } from "./origin";
 import { DEBUG_FLAG, IGNORE_FLAG, readFlag, resolveStorage, writeFlag, type StorageDriver, type StorageSpec } from "./storage";
 import { runtime, type NavigationSource, type Subscriber } from "./runtime";
-import { maskIds, withQuery } from "./util";
+import { maskIds, uuid7, withQuery } from "./util";
 import { requestVitals } from "./vitals-loader";
 import {
   detectAll, detectBrowser as detectBrowserFrom, detectDevice as detectDeviceFrom,
@@ -321,14 +321,6 @@ function navigable(redirect: string, fragment: string): string | null {
   } catch {
     return null;
   }
-}
-
-function uuid(): string {
-  if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
-  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0;
-    return (c === "x" ? r : (r & 0x3) | 0x8).toString(16);
-  });
 }
 
 // The optOut option, resolved once: true is always out, a function is
@@ -932,7 +924,7 @@ export class Twillingate implements Subscriber {
       return Promise.reject(new Error(`twillingate: form name ${JSON.stringify(name)} must match ${FORM_NAME_RE.source}`));
     }
     if (this.retired) return Promise.reject(new Error("twillingate: this instance is retired"));
-    const id = uuid();
+    const id = uuid7();
     if (made) made(id);
     const body = JSON.stringify({ key: this.key, id, fields, attributes: this.formAttributes() });
     // The key goes in the URL as well as the body, so the collector
@@ -1069,7 +1061,7 @@ export class Twillingate implements Subscriber {
       if (v !== undefined) attributes[key] = v;
     }
     this.log(name, attributes);
-    this.queue.push({ id: uuid(), ts: new Date().toISOString(), family, name, ...(m ?? {}), attributes });
+    this.queue.push({ id: uuid7(), ts: new Date().toISOString(), family, name, ...(m ?? {}), attributes });
     if (this.queue.length >= FLUSH_AT) {
       this.drain(false);
       return attributes;
@@ -1108,7 +1100,7 @@ export class Twillingate implements Subscriber {
     if (!this.identified || !this.mayStore()) return null;
     let v = this.driver.get(this.k.visitor);
     if (!v) {
-      v = uuid();
+      v = uuid7();
       this.driver.set(this.k.visitor, v);
     }
     return v;
