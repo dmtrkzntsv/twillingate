@@ -204,6 +204,15 @@ One server takes up to **1M events a month** and keeps raw events for up to
   Settings: `memory_limit=512MB` (at 256 MB a `COUNT(DISTINCT)` over 3
   years fails, at 128 MB from 1 year), `threads` equal to the CPUs, a
   spill directory. Unmeasured: the child's time from spawn to first result.
+  - **A machine-wide cap on engine children.** Each child can reach ~700 MB
+    for a few seconds, and nothing else bounds how many run at once: ten
+    projects' dashboards opening together on one install, or fifty
+    customers' on one host. A semaphore of lock files in a shared directory
+    (`flock`, a handful of lines) holds the count under a configured
+    maximum across processes; a `systemd` slice with `MemoryMax` is the
+    backstop that turns the worst case into one killed child.
+  - **Jitter in the daily pass.** The dumps and merges of every process on
+    a host spread over a window rather than all starting at 03:00.
 - **D9. Aggregates become a cache, if the engine needs one.** If the engine
   is not fast enough at the cap (D10's targets), closed days' results are
   cached per widget query and per day:
@@ -260,6 +269,30 @@ One server takes up to **1M events a month** and keeps raw events for up to
   retention by deleting files, backups by copying files that never change,
   and no process lock (a DuckDB file admits one process, which breaks the
   CLI against a live server and the split install). D2–D8 describe it.
+
+### Hosting
+
+- **D14. One process per customer stays.** The event side (D2) makes a
+  tenant a directory, so one process could serve many, but it would need a
+  router from hostname or ingest key to tenant, a tenant lifecycle and
+  multi-tenant tests, and what it saves is idle RAM: a process idles at
+  ~17–35 MB (Go runtime, SQLite's page cache as it fills, buffers; the
+  binary's pages are shared by the OS), so 100 customers on a host idle at
+  2–3.5 GB, 1,000 at 20–35 GB. Everything else costs the same either way:
+  a dashboard load is one engine child, the OS caches each Parquet file
+  once, the daily pass is seconds. The per-customer process keeps the
+  isolation the OS gives (a crash, a leak, `MemoryMax`, `CPUQuota` and
+  metrics per unit, no path from one customer's data to another's),
+  independent upgrades, and the `twillingate@<name>` unit that exists.
+  The two things it lacks, D8's cap on engine children and the daily-pass
+  jitter, are small and wanted by a single install too. Revisit at hundreds
+  of customers per host; nothing in the layout prevents it then.
+- **D15. No second database for metadata.** Postgres for all tenants'
+  settings would mean porting or duplicating 40 migrations, 8 triggers and
+  every metadata query, and a server for self-hosters to run, in exchange
+  for concurrent writers and several app servers on one database, which
+  the envelope does not need. One SQLite file per customer already
+  isolates tenants.
 
 ### What goes away
 
