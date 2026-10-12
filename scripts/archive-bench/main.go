@@ -1,5 +1,5 @@
-// Command archive-bench measures the raw archive design
-// (docs/superpowers/specs/2026-10-12-raw-archive-design.md). Its own module,
+// Command archive-bench measures the raw-first design
+// (docs/superpowers/specs/2026-10-12-raw-first-design.md). Its own module,
 // so the main module's go.mod and CI never see its dependencies. Scratch:
 // delete it once the spec's numbers are filled in.
 //
