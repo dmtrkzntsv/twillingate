@@ -301,6 +301,12 @@ type Store interface {
 	RenameEvent(ctx context.Context, projectID int64, family Family, from, to string, merge bool, a AuditEntry) (map[string]int64, error)
 	BlockEvent(ctx context.Context, projectID int64, family Family, name string, a AuditEntry) error
 	RemoveEventRule(ctx context.Context, projectID int64, family Family, name string, a AuditEntry) error
+	// Attribute rules: the same two actions on custom attribute keys,
+	// audited the same way.
+	LoadAttributeRules(ctx context.Context) ([]AttributeRule, error)
+	RenameAttribute(ctx context.Context, projectID int64, from, to string, merge bool, a AuditEntry) (map[string]int64, error)
+	BlockAttribute(ctx context.Context, projectID int64, key string, a AuditEntry) error
+	RemoveAttributeRule(ctx context.Context, projectID int64, key string, a AuditEntry) error
 	UpsertActors(ctx context.Context, projectID int64, day civil.Date) error
 	AggregateRetentionDay(ctx context.Context, projectID int64, day civil.Date) error
 	PruneActors(ctx context.Context, projectID int64, before civil.Date) error

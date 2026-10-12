@@ -247,6 +247,9 @@ func (o *Ops) UpdateProject(ctx context.Context, actor string, spec ProjectSpec)
 	if err := spec.validate(); err != nil {
 		return nil, err
 	}
+	if err := o.checkRuledBreakdowns(ctx, spec.ID, spec.Attributes); err != nil {
+		return nil, err
+	}
 	if err := o.checkBreakdowns(ctx, cur, spec.Attributes); err != nil {
 		return nil, err
 	}
