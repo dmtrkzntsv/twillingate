@@ -103,6 +103,8 @@ func seedRollupDay(t *testing.T, db *DB, p1 int64) {
 		}
 		evs = append(evs, e)
 	}
+	// Exact binary fractions, as are their sample rates: float sums are the
+	// same in any order the two rollups add them.
 	values := []float64{100, 340, 0, 5000, 12.5}
 	for i := 0; i < 24; i++ {
 		attrs := map[string]string{"step": fmt.Sprint(i % 5)}
@@ -369,5 +371,91 @@ func TestViewsDailySameAcrossRollupWithADigitSessionID(t *testing.T) {
 	}
 	if after := snapshotRows(t, db, q); !reflect.DeepEqual(before, after) {
 		t.Errorf("v_views_daily changed across the rollup:\nbefore %v\nafter  %v", before, after)
+	}
+}
+
+// A stored value the dictionaries cannot decode must roll up as the raw_*
+// views read it, never fail the day: an attribute value number with no
+// attribute_values row reads as the number, a value stored as a string
+// (not a number) as that string, and a strings id with no strings row as
+// the empty string, which the breakdowns skip as unset. Under a cap that
+// keeps them and one that folds them, the aggregates match the frozen
+// raw_* rollups.
+func TestRollupsReadUndecodableValuesAsRawDoes(t *testing.T) {
+	ctx := context.Background()
+	for _, capN := range []int{100, 2} {
+		t.Run(fmt.Sprint(capN), func(t *testing.T) {
+			open := func() (*DB, int64) {
+				db := newTestDB(t)
+				p := seedDeclaredProject(t, db, []string{"plan", "$path"})
+				base := time.Date(2026, 8, 10, 10, 0, 0, 0, time.UTC)
+				var evs []store.Event
+				for i, plan := range []string{"pro", "pro", "pro", "free", "free", "x", "x", "x"} {
+					v := float64(100 * (i + 1))
+					at := base.Add(time.Duration(i) * time.Minute)
+					evs = append(evs,
+						store.Event{Family: store.FamilyProduct, ID: fmt.Sprintf("0192f1a2-7c3b-7d4e-800b-%012x", i),
+							ProjectID: p, EventName: "signup", TS: at, ReceivedAt: at, ActorID: fmt.Sprint("a", i%3),
+							ActorKind: store.ActorConnection, Platform: "web", Path: "/p",
+							Attributes: map[string]string{"plan": plan}},
+						store.Event{Family: store.FamilyMeasures, ID: fmt.Sprintf("0192f1a2-7c3b-7d4e-800c-%012x", i),
+							ProjectID: p, EventName: "checkout", Measure: store.MeasureTime, Value: &v, SampleRate: 1,
+							TS: at, ReceivedAt: at, ActorID: fmt.Sprint("a", i%3), ActorKind: store.ActorConnection,
+							Platform: "web", Path: "/p", Attributes: map[string]string{"plan": plan}})
+				}
+				if err := db.writeTestEvents(ctx, evs); err != nil {
+					t.Fatal(err)
+				}
+				// The rows sent with "x" (the 6th to 8th minute) now hold a
+				// number with no value row, a string, and a platform id with
+				// no strings row.
+				for _, q := range []string{
+					`UPDATE events SET attributes = json_set(attributes, '$."' || (SELECT id FROM project_attributes WHERE key = 'plan') || '"', 999)
+					 WHERE ts = unixepoch('2026-08-10T10:05:00Z')`,
+					`UPDATE events SET attributes = json_set(attributes, '$."' || (SELECT id FROM project_attributes WHERE key = 'plan') || '"', 'loose')
+					 WHERE ts = unixepoch('2026-08-10T10:06:00Z')`,
+					`UPDATE events SET platform = 999999 WHERE ts = unixepoch('2026-08-10T10:07:00Z')`,
+				} {
+					if _, err := db.db.ExecContext(ctx, q); err != nil {
+						t.Fatal(err)
+					}
+				}
+				return db, p
+			}
+			a, p := open()
+			b, _ := open()
+			d := day("2026-08-10")
+			keys := []string{"plan", "$path"}
+			if err := legacyAggregateProductDay(ctx, a, p, d, keys, capN); err != nil {
+				t.Fatal(err)
+			}
+			if err := legacyAggregateMeasureDay(ctx, a, p, d, keys, capN); err != nil {
+				t.Fatal(err)
+			}
+			if err := b.AggregateProductDay(ctx, p, d, keys, capN); err != nil {
+				t.Fatalf("product rollup: %v", err)
+			}
+			if err := b.AggregateMeasureDay(ctx, p, d, keys, capN); err != nil {
+				t.Fatalf("measures rollup: %v", err)
+			}
+			want, got := rollupTables(t, a), rollupTables(t, b)
+			for table := range want {
+				if !strings.HasPrefix(table, "agg_") {
+					delete(want, table)
+					delete(got, table)
+				}
+			}
+			diffTables(t, "rollup", want, got)
+			if capN == 100 {
+				var n int
+				if err := b.db.QueryRow(`SELECT COUNT(*) FROM agg_product_attrs
+					WHERE attr_key = 'plan' AND attr_value IN ('999', 'loose')`).Scan(&n); err != nil {
+					t.Fatal(err)
+				}
+				if n != 2 {
+					t.Errorf("agg_product_attrs holds %d of the values 999 and loose, want both", n)
+				}
+			}
+		})
 	}
 }

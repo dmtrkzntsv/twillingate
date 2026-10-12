@@ -14,20 +14,26 @@ import (
 // attrSource is how a rollup reads one attribute key from a raw row on its
 // stored ids (events encoding spec D14): value yields the row's stored
 // value, NULL where the row does not carry the key, and text decodes a
-// grouped stored value, named v, into what the aggregate writes.
+// grouped stored value, named v, into what the raw_* views read for it,
+// NULL where they read the key as unset. The rollups skip a value whose
+// text is NULL, as the raw_* rollups skipped an unset one.
 type attrSource struct{ value, text string }
 
 // columnSource reads a reserved key from its strings column, where 0, the
-// empty string, is unset.
+// empty string, is unset. An id with no strings row decodes as the empty
+// string in the raw_* views, so it is unset too.
 func columnSource(col string) attrSource {
 	return attrSource{value: `NULLIF(` + col + `, 0)`, text: `(SELECT value FROM strings WHERE id = v)`}
 }
 
 // declaredSource reads a declared custom key by its catalog id: :path is
 // '$."<id>"' into the encoded attributes, whose value is the number of
-// the value (attribute_values) under :kid.
+// the value (attribute_values) under :kid. A value the catalog cannot
+// decode (a number with no value row, or a value not stored as a number)
+// reads as itself, as the raw_* views pass it through; the aggregate's
+// TEXT column stores it as text.
 var declaredSource = attrSource{value: `json_extract(attributes, :path)`,
-	text: `(SELECT value FROM attribute_values WHERE key_id = :kid AND n = v)`}
+	text: `COALESCE((SELECT value FROM attribute_values WHERE key_id = :kid AND n = v), v)`}
 
 // attrKey is one declared key a rollup breaks down, and how to read it.
 type attrKey struct {
@@ -202,9 +208,10 @@ func (d *DB) rollupProduct(ctx context.Context, tx *sql.Tx, projectID int64, day
 
 // rollupAttrValue writes the ranked top-N breakdown plus the "(other)"
 // tail for one (event, attr_key) pair into agg_product_attrs. src reads
-// the key's stored value from a raw row and decodes a grouped one: the
-// values group and count on their stored ids, rank by count with ties by
-// their text, as the live half ranks, and only the written ones decode.
+// the key's stored value from a raw row and decodes a grouped one: the raw
+// rows never decode; the values group and count on their stored ids, each
+// distinct value decodes once to rank (by count, ties by its text, as the
+// live half ranks), and the written ones once more.
 // named must supply :p, :day, :event (the name's strings id), :name (its
 // text), :key, :n, and whatever src references (:path and :kid for a
 // declared custom key).
@@ -226,7 +233,7 @@ func (d *DB) rollupAttrValue(ctx context.Context, tx *sql.Tx, src attrSource, na
 		  GROUP BY v
 		),
 		ranked AS (SELECT t, c, u, g, ROW_NUMBER() OVER (ORDER BY c DESC, t) AS rn
-		           FROM (SELECT `+src.text+` AS t, c, u, g FROM counted))
+		           FROM (SELECT `+src.text+` AS t, c, u, g FROM counted) WHERE t IS NOT NULL)
 		INSERT OR REPLACE INTO agg_product_attrs
 		  (project_id, day, event_name, attr_key, attr_value, count, unique_users, unique_groups)
 		SELECT :p, :day, :name, :key, t, c, u, g FROM ranked WHERE rn <= :n`, named...); err != nil {
@@ -241,6 +248,7 @@ func (d *DB) rollupAttrValue(ctx context.Context, tx *sql.Tx, src attrSource, na
 		        WHERE family = 2 AND project_id = :p AND day = :day AND event_name = :event)
 		  WHERE v IS NOT NULL
 		  GROUP BY v
+		  HAVING `+src.text+` IS NOT NULL
 		),
 		ranked AS (SELECT v, ROW_NUMBER() OVER (ORDER BY c DESC, `+src.text+`) AS rn FROM counted),
 		keep AS (SELECT v FROM ranked WHERE rn <= :n)
@@ -250,7 +258,7 @@ func (d *DB) rollupAttrValue(ctx context.Context, tx *sql.Tx, src attrSource, na
 		       COUNT(DISTINCT NULLIF(group_id, ''))
 		FROM (SELECT `+src.value+` AS v, actor_id, group_id FROM events
 		      WHERE family = 2 AND project_id = :p AND day = :day AND event_name = :event)
-		WHERE v IS NOT NULL AND v NOT IN (SELECT v FROM keep)
+		WHERE v IN (SELECT v FROM counted) AND v NOT IN (SELECT v FROM keep)
 		HAVING COUNT(*) > 0`, named...)
 	return err
 }

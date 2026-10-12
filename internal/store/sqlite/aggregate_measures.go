@@ -121,8 +121,10 @@ func (d *DB) rollupMeasures(ctx context.Context, tx *sql.Tx, projectID int64, da
 // values by samples (ties by value text ascending, as the live half
 // ranks), and a row per bucket for the rest under '(other)'. Histogram
 // rows add up, so the tail is a plain sum. src reads the key's stored
-// value from a raw row and decodes a grouped one: the values group on
-// their stored ids, and only the kept ones decode. named supplies :p,
+// value from a raw row and decodes a grouped one: the raw rows never
+// decode; the values group on their stored ids, each distinct value
+// decodes once to rank, and the kept ones once more as they are written.
+// A value whose text is NULL is unset (attrSource) and counts nowhere. named supplies :p,
 // :day, :event and :measure (strings ids), :name and :mname (their text),
 // :key, :n and whatever src references (:path and :kid).
 func rollupMeasureAttr(ctx context.Context, tx *sql.Tx, src attrSource, named []any) error {
@@ -131,7 +133,8 @@ func rollupMeasureAttr(ctx context.Context, tx *sql.Tx, src attrSource, named []
 		  SELECT v, COUNT(*) AS c
 		  FROM (SELECT ` + src.value + ` AS v FROM events WHERE family = 3 AND ` + scope + `)
 		  WHERE v IS NOT NULL
-		  GROUP BY v),
+		  GROUP BY v
+		  HAVING ` + src.text + ` IS NOT NULL),
 		ranked AS (SELECT v, ROW_NUMBER() OVER (ORDER BY c DESC, ` + src.text + `) AS rn FROM counted),
 		keep AS (SELECT v FROM ranked WHERE rn <= :n)`
 	if _, err := tx.ExecContext(ctx, keep+`
@@ -153,7 +156,7 @@ func rollupMeasureAttr(ctx context.Context, tx *sql.Tx, src attrSource, named []
 		SELECT :p, :day, :name, :mname, :key, '(other)', bucket,
 		       COUNT(*), SUM(1.0 / sample_rate), SUM(value / sample_rate)
 		FROM (SELECT `+src.value+` AS v, bucket, sample_rate, value FROM events WHERE family = 3 AND `+scope+`)
-		WHERE v IS NOT NULL AND v NOT IN (SELECT v FROM keep)
+		WHERE v IN (SELECT v FROM counted) AND v NOT IN (SELECT v FROM keep)
 		GROUP BY bucket
 		ON CONFLICT (project_id, day, event_name, measure, attr_key, attr_value, bucket) DO UPDATE SET
 		  samples = samples + excluded.samples,

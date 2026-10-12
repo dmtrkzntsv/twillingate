@@ -1,12 +1,27 @@
 package sqlite
 
 // The rollups and the usage counts as they were before they read events on
-// ids (events encoding spec D14): every statement reads the decoding raw_*
-// views, as written at 922b6f8. They are the reference the id-based code
-// must match (TestRollupsOnIDsMatchTheDecodedRollups), and the rollup
-// textRollup runs on a database pinned below 041, where events stores
-// text and only the raw_* views read it. Frozen: never edit them to
-// follow the code.
+// ids (events encoding spec D14): every statement that read raw rows reads
+// the decoding raw_* views, as written at 922b6f8. They serve two
+// purposes:
+//
+//   - the oracle the id-based code must match
+//     (TestRollupsOnIDsMatchTheDecodedRollups,
+//     TestRollupsReadUndecodableValuesAsRawDoes);
+//   - the rollup textRollup runs on a database pinned below 041, where
+//     events stores text and only the raw_* views read it (the migration
+//     025 tests).
+//
+// They share these live symbols with the store's code: store.SystemAttributes,
+// store.DeclarableAttributes, capRows, defaultAttrsTopN, otherBucket,
+// countDeclared, recordCaps, tableBytes, dataTables, rowsPerProject,
+// putStat and shareOfBytes. Edit this file only to follow a change to the
+// schema or to one of those symbols that both sides need; never to make it
+// agree with a change in how the store's rollups read the raw rows, which
+// is what it checks. It can go once no migration test below 041 needs
+// textRollup and the parity tests have served their purpose (the id-based
+// rollups have shipped, and views_test.go's parity with the live halves
+// guards them).
 
 import (
 	"context"

@@ -43,8 +43,8 @@ const consentSQL = `CASE consent WHEN 1 THEN 'given' WHEN 0 THEN 'none' ELSE 'un
 // events table (041_events_encoding.sql) that the identity and retention
 // passes read. Every other read of events names its family code in the
 // statement (TestRawTableIsReadOnlyThroughFamilyViews): the v_* live
-// halves and the rollups group on the stored ids and decode only what they
-// write (events encoding spec D13, D14).
+// halves and the rollups group on the stored ids and never decode a raw
+// row, only the grouped values (events encoding spec D13, D14).
 const (
 	rawViews   = "raw_views"
 	rawProduct = "raw_product"
@@ -229,8 +229,9 @@ FROM spans GROUP BY kind`, named...); err != nil {
 // by views desc (ties by their text, in key order, as the text was ranked)
 // and buckets each: the last value's id when it is kept, NULL for the
 // tail, which a kept value spelled "(other)" joins. The day's rows are then
-// grouped by the leading values and the bucket, and only the written rows
-// decode. One statement rather than a top-N insert plus a tail insert
+// grouped by the leading values and the bucket. The raw rows never decode:
+// each distinct value decodes once to rank, and the written rows once
+// more. One statement rather than a top-N insert plus a tail insert
 // keeps visitors honest: it is always COUNT(DISTINCT actor_id) over the
 // grouped raw rows (the stored ids: the encoding is one-to-one), never a
 // sum that double-counts an actor who saw two collapsed values.
