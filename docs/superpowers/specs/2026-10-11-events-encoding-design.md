@@ -160,29 +160,37 @@ system widgets read `v_*`. The two slow rows are custom SQL only.
 
      Once `events_kept` (#173) exists, the oldest day is taken across both
      tables.
+
+     The cutoff is also never later than the day before the raw window
+     starts (`today − RETENTION_RAW_DAYS − 1`). Ingest clamps `ts` to the
+     raw window, so rows can still arrive for any day from there on, even
+     when no row of that day is held (a project's oldest rows were deleted
+     by a form deletion, or it had none yet). An id cached for such a day
+     must survive.
   3. **It cannot delete an id a row still uses.** A raw row exists only
      while its day is at or after the cutoff, and every id it uses has a
      `last_seen_day` at or after that day. There is no JSON scan and no
      column scan.
   4. **No lock between ingest and the cleanup.** The touch in step 1 is
-     `UPDATE … SET last_seen_day = max(last_seen_day, ?) WHERE id = ? AND
-     value = ?` (`key_id, n, value` for values; `id, project_id, key` for
-     the catalog), in the transaction that writes the row.
-     - If it changes no row, the cleanup deleted the id after ingest cached
-       it. Ingest drops the id from the cache and resolves the string
-       again, which inserts it under a new id. A stale id is never written.
+     one upsert keyed on the text, in the transaction that writes the row:
+     `INSERT … ON CONFLICT (value) DO UPDATE SET last_seen_day =
+     max(last_seen_day, excluded.last_seen_day) RETURNING id` (on
+     `(key_id, value)` for values, `(project_id, key)` for the catalog).
+     Ingest always writes the id the upsert returns, never a cached one
+     from an earlier day.
+     - If the cleanup deleted the row after ingest cached it, the upsert
+       inserts the text again under a new id. A stale id is never written.
      - SQLite runs one writer at a time, so the cleanup either ran before
-       (the touch finds nothing) or runs after (the touch set
+       (the upsert re-inserts) or runs after (the upsert set
        `last_seen_day` to a day the cleanup's cutoff, computed in its own
        transaction, does not pass).
-     - An id cached as touched for a day needs no touch for further rows of
-       that day: its rows of that day exist until the day is rolled up, and
-       rows of a rolled-up day are not written again (ingest clamps `ts`
-       into the raw window).
-     - Ids are never reused (`AUTOINCREMENT`, and `values_next` only grows),
-       and the `value =` condition guards the touch even if one were. A key
-       pruned and seen again gets a new catalog id and numbers its values
-       from 1.
+     - An id cached as touched for a day needs no upsert for further rows
+       of that day: its rows of that day exist until the day is rolled up,
+       and rows of a rolled-up day are not written again (ingest clamps
+       `ts` into the raw window).
+     - Ids are never reused (`AUTOINCREMENT`, and `values_next` only
+       grows). A key pruned and seen again gets a new catalog id and
+       numbers its values from 1.
   5. Rewrites that move rows to other ids (rename and merge, D9) raise the
      targets' `last_seen_day` to the newest day they rewrote.
 - **D8. The catalog becomes the key dictionary.** `project_attributes` is
@@ -335,27 +343,33 @@ system widgets read `v_*`. The two slow rows are custom SQL only.
 
   The event rename that `write.go` resolves in SQL today
   (`COALESCE((SELECT to_name FROM rules …))`) resolves in Go from the same
-  rules before interning. A retried batch is still ignored: the same UUID
-  gives the same blob, so the key matches.
+  rules, read in the same transaction, before interning. A retried batch is
+  still ignored: the same UUID gives the same blob, so the key matches.
+  Rows of a project that no longer exists (purged while they were
+  buffered) are dropped, since their keys cannot get catalog rows.
 
 ### Migration
 
-- **D17. One migration** (042, or 041 if it lands before #173):
-  1. **Pre-checks:**
-     - every `attributes` is valid JSON whose values are all strings;
-     - every key a raw row carries has a catalog row, adding the missing
-       ones.
+- **D17. One migration** (041, or 042 if #173 lands first):
+  1. **A Go pre-step** (the migrator gains `preSteps`, run before the
+     version's SQL in the same transaction):
+     - checks that every `attributes` is valid JSON whose values are all
+       strings, and stops the migration with the counts otherwise;
+     - deletes raw rows whose project no longer exists (a purge that raced
+       a buffered write): their keys cannot get catalog rows, and no view
+       scoped to a project reads them;
+     - adds a catalog row for every key a raw row carries that has none.
 
-     A failed check stops the migration with the count, before anything
-     changes.
+     The pre-step's file goes into `sqlcheck`'s `migrationSteps` list.
   2. **Rebuild `project_attributes`** with `id`, `last_seen_day`
      (the newest day a raw row carries the key) and `values_next`.
   3. **Create `strings`** from the distinct values of D1's columns, most
      frequent first, and **`attribute_values`** from the distinct values of
      each key, most frequent first.
-  4. **Rewrite `events` into the new shape** through a Go migration step:
-     the tag rules and the per-row attribute rewrite are clearer and
-     testable in Go. The step goes into `sqlcheck`'s `migrationSteps` list.
+  4. **Rewrite `events` into the new shape in SQL** (`unhex`, `unixepoch`,
+     a correlated lookup per column). A test runs the same inputs through
+     the migration's expressions and through ingest's Go encoder and
+     requires equal bytes.
   5. **Drop and recreate every view** reading `events`, in D10 and D13's
      definitions, and add `v_identities`.
   6. Irreversible, like 012 and 020.
@@ -432,8 +446,8 @@ system widgets read `v_*`. The two slow rows are custom SQL only.
 - **Cleanup (D7).**
   - The daily pass deletes only ids below the cutoff.
   - An id still in the cache after the cleanup deleted its row is never
-    written: the next row's touch finds nothing, and the string gets a new
-    id.
+    written: the next day's upsert re-inserts the text under a new id, and
+    the row carries that one.
   - A key pruned and seen again gets a new catalog id; its values start
     at 1.
   - A catalog key carried only by view rows survives the prune while those
