@@ -737,9 +737,9 @@ catalog (`project_attributes`, which gains an `id`) and its values
 (`attribute_values`). A raw row takes well under half the space it did.
 `raw_views`, `raw_product`, `raw_measures` and `v_events_flat` decode it to
 the same columns and text as before, and every `v_*` view, tool and
-dashboard answers as before, the days not yet rolled up two to five times
-faster (their live halves group on the stored ids and decode only the
-grouped rows); `v_identities` is new.
+dashboard answers as before, the days not yet rolled up a little faster
+(their live halves group on the stored ids and decode only the grouped
+rows); `v_identities` is new.
 
 Back up first. The rebuild writes a full new copy of the raw window, and
 the WAL holds that copy too until it is checkpointed: keep free disk of

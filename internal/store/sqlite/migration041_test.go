@@ -274,9 +274,23 @@ func TestMigration041KeepsEveryViewRow(t *testing.T) {
 		}
 	}
 	// The cap folds: each capped view holds an (other) row.
-	for _, n := range []string{"v_views_paths", "v_views_browsers", "v_views_utm", "v_views_daily", "v_product_attrs", "v_measures_attrs"} {
+	for _, n := range []string{"v_views_browsers", "v_views_utm", "v_product_attrs", "v_measures_attrs"} {
 		if !strings.Contains(strings.Join(before[n], "\n"), ":(other)|") {
 			t.Errorf("%s has no (other) row: the seed does not reach its cap", n)
+		}
+	}
+	// The seed also sends a path and a kind spelled "(other)", so there a
+	// folded row is one on a raw day that holds no such literal.
+	for _, c := range []struct{ view, col string }{{"v_views_paths", "path"}, {"v_views_daily", "kind"}} {
+		var folded int
+		if err := db.db.QueryRow(`SELECT COUNT(*) FROM ` + c.view + ` v WHERE v.` + c.col + ` = '(other)'
+			AND EXISTS (SELECT 1 FROM raw_views r WHERE r.project_id = v.project_id AND r.day = v.day)
+			AND NOT EXISTS (SELECT 1 FROM raw_views r WHERE r.project_id = v.project_id AND r.day = v.day
+			                AND r.` + c.col + ` = '(other)')`).Scan(&folded); err != nil {
+			t.Fatal(err)
+		}
+		if folded == 0 {
+			t.Errorf("%s has no folded (other) row: the seed does not reach its cap", c.view)
 		}
 	}
 }
