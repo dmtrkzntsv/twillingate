@@ -21,11 +21,11 @@ import (
 func TestAggregateViewDayFailsOnCountQuery(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	if _, err := db.db.ExecContext(ctx, `DROP VIEW raw_views`); err != nil {
+	if _, err := db.db.ExecContext(ctx, `DROP TABLE events`); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.AggregateViewDay(ctx, 1, day("2026-08-10"), defaultAttrsTopN); err == nil {
-		t.Error("want error counting through a missing raw_views")
+		t.Error("want error looking for the day's rows in a missing events table")
 	}
 }
 
@@ -73,11 +73,11 @@ BEGIN SELECT RAISE(ABORT, 'blocked'); END`); err != nil {
 func TestViewDaysBeforeFailsOnMissingTable(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	if _, err := db.db.ExecContext(ctx, `DROP VIEW raw_views`); err != nil {
+	if _, err := db.db.ExecContext(ctx, `DROP TABLE events`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.ViewDaysBefore(ctx, 1, day("2026-08-10")); err == nil {
-		t.Error("want error querying days from a missing raw_views")
+		t.Error("want error querying days from a missing events table")
 	}
 }
 

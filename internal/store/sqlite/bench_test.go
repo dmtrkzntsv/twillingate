@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -505,14 +506,12 @@ func BenchmarkCleanDictionaries(b *testing.B) {
 	}
 }
 
-// BenchmarkLiveHalvesOnIDs times the v_* live halves on a raw table of
-// 345,000 rows written through WriteEvents (30 days of 10,000 views, 1,000
-// product events and 500 measures), with UUID event, actor, user and
-// session ids as the SDK sends them, 300 paths and two breakdown keys: the
-// views over a 7-day range, the product and measure views over all 30
-// days. The seed is written once; each sub-benchmark runs one query.
-func BenchmarkLiveHalvesOnIDs(b *testing.B) {
-	db := setupBenchDB(b)
+// seedBenchIDs writes days of rows through WriteEvents for benchProject,
+// from 2026-08-01: 10,000 views, 1,000 product events and 500 measures a
+// day, with UUID event, actor, user and session ids as the SDK sends them,
+// 300 paths, and two breakdown keys (plan, color) declared.
+func seedBenchIDs(b *testing.B, db *DB, days int) {
+	b.Helper()
 	ctx := context.Background()
 	if _, err := db.db.ExecContext(ctx, `INSERT INTO project_attributes (project_id, key, breakdown)
 		VALUES (1, 'plan', 1), (1, 'color', 1) ON CONFLICT (project_id, key) DO UPDATE SET breakdown = 1`); err != nil {
@@ -522,7 +521,7 @@ func BenchmarkLiveHalvesOnIDs(b *testing.B) {
 	pick := func(xs []string, i int) string { return xs[i%len(xs)] }
 	start := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
 	seq := 0
-	for d := 0; d < 30; d++ {
+	for d := 0; d < days; d++ {
 		day := start.AddDate(0, 0, d)
 		var batch []store.Event
 		add := func(e store.Event, i, n int) {
@@ -581,6 +580,16 @@ func BenchmarkLiveHalvesOnIDs(b *testing.B) {
 			b.Fatalf("seed day %d: %v", d, err)
 		}
 	}
+}
+
+// BenchmarkLiveHalvesOnIDs times the v_* live halves on a raw table of
+// 345,000 rows written through WriteEvents (seedBenchIDs, 30 days): the
+// views over a 7-day range, the product and measure views over all 30
+// days. The seed is written once; each sub-benchmark runs one query.
+func BenchmarkLiveHalvesOnIDs(b *testing.B) {
+	db := setupBenchDB(b)
+	ctx := context.Background()
+	seedBenchIDs(b, db, 30)
 	queries := []struct{ name, q, to string }{
 		{"views_paths_7d", `SELECT path, SUM(visitors), SUM(views) FROM v_views_paths WHERE project_id = ? AND day BETWEEN ? AND ? GROUP BY 1`, "2026-08-07"},
 		{"views_daily_7d", `SELECT kind, SUM(visitors), SUM(sessions) FROM v_views_daily WHERE project_id = ? AND day BETWEEN ? AND ? GROUP BY 1`, "2026-08-07"},
@@ -611,6 +620,92 @@ func BenchmarkLiveHalvesOnIDs(b *testing.B) {
 				rows.Close()
 				if n == 0 {
 					b.Fatal("query returned no rows")
+				}
+			}
+		})
+	}
+}
+
+// BenchmarkRollupDay times the daily pass's readers of the raw rows on a
+// table of 7 days written through WriteEvents (seedBenchIDs: 80,500 rows):
+// each family's rollup of the first day (one transaction, while ingest
+// waits), and the usage pass (RecordUsageHistory) over the seven raw days.
+// Each run starts from a copy of the seeded file, since a rollup deletes
+// the day it reads.
+func BenchmarkRollupDay(b *testing.B) {
+	ctx := context.Background()
+	dir := b.TempDir()
+	seeded := filepath.Join(dir, "seeded.db")
+	db, err := openAt(seeded)
+	if err != nil {
+		b.Fatal(err)
+	}
+	if err := db.Migrate(ctx); err != nil {
+		b.Fatal(err)
+	}
+	if _, err := db.CreateProject(ctx, store.RegistryProject{Name: "bench", AllowedOrigins: "[]", Attributes: "[]"},
+		store.AuditEntry{Actor: "bench", Action: "project.create"}); err != nil {
+		b.Fatal(err)
+	}
+	seedBenchIDs(b, db, 7)
+	if _, err := db.db.ExecContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
+		b.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		b.Fatal(err)
+	}
+	src, err := os.ReadFile(seeded)
+	if err != nil {
+		b.Fatal(err)
+	}
+	first := civil.Date{Year: 2026, Month: 8, Day: 1}
+	keys := []string{"plan", "color"}
+	// Each case names a table it must have filled, so a broken pass
+	// cannot benchmark as fast.
+	for _, c := range []struct {
+		name, wrote string
+		run         func(db *DB) error
+	}{
+		{"views", "agg_views_paths", func(db *DB) error {
+			return db.AggregateViewDay(ctx, benchProject, first, defaultAttrsTopN)
+		}},
+		{"product", "agg_product_attrs", func(db *DB) error {
+			return db.AggregateProductDay(ctx, benchProject, first, keys, defaultAttrsTopN)
+		}},
+		{"measures", "agg_measures_attrs", func(db *DB) error {
+			return db.AggregateMeasureDay(ctx, benchProject, first, keys, defaultAttrsTopN)
+		}},
+		{"usage", "usage_attributes", func(db *DB) error {
+			return db.RecordUsageHistory(ctx, time.Date(2026, 8, 8, 3, 0, 0, 0, time.UTC))
+		}},
+	} {
+		b.Run(c.name, func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				b.StopTimer()
+				path := filepath.Join(dir, fmt.Sprintf("%s-%d.db", c.name, i))
+				if err := os.WriteFile(path, src, 0o600); err != nil {
+					b.Fatal(err)
+				}
+				db, err := openAt(path)
+				if err != nil {
+					b.Fatal(err)
+				}
+				b.StartTimer()
+				if err := c.run(db); err != nil {
+					b.Fatal(err)
+				}
+				b.StopTimer()
+				var n int
+				if err := db.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+c.wrote).Scan(&n); err != nil || n == 0 {
+					b.Fatalf("%s holds %d rows (%v)", c.wrote, n, err)
+				}
+				if err := db.Close(); err != nil {
+					b.Fatal(err)
+				}
+				for _, f := range []string{path, path + "-wal", path + "-shm"} {
+					if err := os.Remove(f); err != nil && !os.IsNotExist(err) {
+						b.Fatal(err)
+					}
 				}
 			}
 		})

@@ -739,7 +739,9 @@ catalog (`project_attributes`, which gains an `id`) and its values
 the same columns and text as before, and every `v_*` view, tool and
 dashboard answers as before, the days not yet rolled up a little faster
 (their live halves group on the stored ids and decode only the grouped
-rows); `v_identities` is new.
+rows); `v_identities` is new. The daily pass rolls a day up and counts
+attribute usage in about half the time or less, reading the stored ids
+too; the `agg_*` and `usage_*` tables keep their text.
 
 Back up first. The rebuild writes a full new copy of the raw window, and
 the WAL holds that copy too until it is checkpointed: keep free disk of
@@ -781,6 +783,10 @@ What changes on the day:
 - An attribute rename no longer deletes the old key's catalog row: view
   rows keep their attributes as sent and may still carry it, and it ages
   out with them.
+- A view's client session id made of an even number of digits (such as
+  `12`) is always its own session in `v_views_daily` and `agg_views_daily`.
+  Before, it merged with the actor's session of the same number among
+  those split by the 30-minute gap (the twelfth that day, for `12`).
 
 There is no down migration. Rolling back means restoring the pre-upgrade
 copy or Litestream snapshot; events ingested since are lost.

@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"strings"
 
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
@@ -13,9 +12,10 @@ import (
 // AggregateMeasureDay rolls one raw day of measures into histograms, then
 // deletes the day's raw rows, in one transaction. Dimensions and the top-N
 // cap follow the product rules: the system attributes always, plus the
-// project's declared keys. The rows written are exactly what the live
-// halves of v_measures_daily (024_measures.sql) and v_measures_attrs
-// (025_live_halves.sql) compute over the same raw rows.
+// project's declared keys. It reads the rows on their stored ids and
+// writes text (events encoding spec D14); the rows written are exactly
+// what the live halves of v_measures_daily and v_measures_attrs
+// (041_events_encoding.sql) compute over the same raw rows.
 func (d *DB) AggregateMeasureDay(ctx context.Context, projectID int64, day civil.Date, attrs []string, topN int) error {
 	keep := capRows(topN, defaultAttrsTopN)
 	return d.tx(ctx, func(tx *sql.Tx) error {
@@ -29,13 +29,13 @@ func (d *DB) AggregateMeasureDay(ctx context.Context, projectID int64, day civil
 			projectID, day.String(), projectID); err != nil {
 			return err
 		}
-		var n int
+		var raw bool
 		if err := tx.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM raw_measures WHERE project_id=? AND day=?`,
-			projectID, day.String()).Scan(&n); err != nil {
+			`SELECT EXISTS (SELECT 1 FROM events WHERE family = 3 AND project_id = ? AND day = ?)`,
+			projectID, day.String()).Scan(&raw); err != nil {
 			return err
 		}
-		if n == 0 {
+		if !raw {
 			return nil
 		}
 		if err := d.rollupMeasures(ctx, tx, projectID, day, attrs, keep); err != nil {
@@ -47,26 +47,36 @@ func (d *DB) AggregateMeasureDay(ctx context.Context, projectID int64, day civil
 	})
 }
 
-type measureMetric struct{ event, measure string }
+// measureMetric is one metric of a raw day: its event name and measure.
+type measureMetric struct{ event, measure storedName }
 
 func (d *DB) rollupMeasures(ctx context.Context, tx *sql.Tx, projectID int64, day civil.Date, attrs []string, topN int64) error {
+	// A row per bucket, so many grouped rows: the names decode through a
+	// join, as in v_measures_daily.
 	if _, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO agg_measures_daily
 		(project_id, day, event_name, measure, bucket, samples, weight, sum)
-		SELECT project_id, ?, event_name, measure, bucket,
-		       COUNT(*), SUM(1.0 / sample_rate), SUM(value / sample_rate)
-		FROM raw_measures WHERE project_id=? AND day=?
-		GROUP BY event_name, measure, bucket`, day.String(), projectID, day.String()); err != nil {
+		SELECT ?1, ?2, COALESCE(se.value, ''), COALESCE(sm.value, ''), g.bucket, g.samples, g.weight, g.sum
+		FROM (
+		  SELECT event_name, measure, bucket,
+		         COUNT(*) AS samples, SUM(1.0 / sample_rate) AS weight, SUM(value / sample_rate) AS sum
+		  FROM events WHERE family = 3 AND project_id = ?1 AND day = ?2
+		  GROUP BY event_name, measure, bucket
+		) g
+		LEFT JOIN strings se ON se.id = g.event_name
+		LEFT JOIN strings sm ON sm.id = g.measure`, projectID, day.String()); err != nil {
 		return fmt.Errorf("agg_measures_daily: %w", err)
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT event_name, measure FROM raw_measures
-		WHERE project_id=? AND day=?`, projectID, day.String())
+	rows, err := tx.QueryContext(ctx, `SELECT event_name, COALESCE((SELECT value FROM strings WHERE id = event_name), ''),
+		       measure, COALESCE((SELECT value FROM strings WHERE id = measure), '')
+		FROM events WHERE family = 3 AND project_id = ? AND day = ? GROUP BY event_name, measure`,
+		projectID, day.String())
 	if err != nil {
 		return err
 	}
 	var metrics []measureMetric
 	for rows.Next() {
 		var m measureMetric
-		if err := rows.Scan(&m.event, &m.measure); err != nil {
+		if err := rows.Scan(&m.event.id, &m.event.text, &m.measure.id, &m.measure.text); err != nil {
 			rows.Close()
 			return err
 		}
@@ -76,48 +86,30 @@ func (d *DB) rollupMeasures(ctx context.Context, tx *sql.Tx, projectID int64, da
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	// Declared keys, each once: the tail statement adds to what is
-	// already there, so a key listed twice would count its tail twice.
-	// The live half reads the declaration through SELECT DISTINCT too.
-	var keys []string
-	seen := map[string]bool{}
-	for _, key := range attrs {
-		if !seen[key] {
-			seen[key] = true
-			keys = append(keys, key)
-		}
+	// Declared keys, each once (declaredKeys): the tail statement adds to
+	// what is already there, so a key listed twice would count its tail
+	// twice.
+	keys, err := declaredKeys(ctx, tx, projectID, attrs)
+	if err != nil {
+		return err
 	}
 	for _, m := range metrics {
-		for _, key := range keys {
-			expr, present := `json_extract(attributes, :path)`, `json_extract(attributes, :path) IS NOT NULL`
-			if strings.HasPrefix(key, "$") {
-				// As in rollupProduct: a declared reserved key reads its
-				// column, and one the store does not map has nothing to
-				// break down (the live half's CASE yields NULL for it).
-				col, ok := store.DeclarableAttributes[key]
-				if !ok {
-					continue
-				}
-				expr, present = col, col+` <> ''`
-			}
-			named := []any{
-				sql.Named("p", projectID), sql.Named("day", day.String()),
-				sql.Named("event", m.event), sql.Named("measure", m.measure),
-				sql.Named("key", key), sql.Named("path", attrPath(key)), sql.Named("n", topN),
-			}
-			if err := rollupMeasureAttr(ctx, tx, expr, present, named); err != nil {
-				return fmt.Errorf("attr %s/%s/%s: %w", m.event, m.measure, key, err)
+		metric := []any{
+			sql.Named("p", projectID), sql.Named("day", day.String()), sql.Named("n", topN),
+			sql.Named("event", m.event.id), sql.Named("name", m.event.text),
+			sql.Named("measure", m.measure.id), sql.Named("mname", m.measure.text),
+		}
+		for _, k := range keys {
+			named := append(append([]any{}, metric...), k.named()...)
+			if err := rollupMeasureAttr(ctx, tx, k.src, named); err != nil {
+				return fmt.Errorf("attr %s/%s/%s: %w", m.event.text, m.measure.text, k.key, err)
 			}
 		}
 		// System dimensions roll up for every project (store.SystemAttributes).
 		for _, dim := range store.SystemAttributes {
-			named := []any{
-				sql.Named("p", projectID), sql.Named("day", day.String()),
-				sql.Named("event", m.event), sql.Named("measure", m.measure),
-				sql.Named("key", dim.Key), sql.Named("n", topN),
-			}
-			if err := rollupMeasureAttr(ctx, tx, dim.Column, dim.Column+` <> ''`, named); err != nil {
-				return fmt.Errorf("system dim %s/%s/%s: %w", m.event, m.measure, dim.Key, err)
+			named := append(append([]any{}, metric...), sql.Named("key", dim.Key))
+			if err := rollupMeasureAttr(ctx, tx, columnSource(dim.Column), named); err != nil {
+				return fmt.Errorf("system dim %s/%s/%s: %w", m.event.text, m.measure.text, dim.Key, err)
 			}
 		}
 	}
@@ -126,27 +118,30 @@ func (d *DB) rollupMeasures(ctx context.Context, tx *sql.Tx, projectID int64, da
 
 // rollupMeasureAttr writes the histogram of one metric broken down by one
 // key into agg_measures_attrs: a row per (kept value, bucket) for the top n
-// values by samples (ties by value ascending, as the live half ranks), and
-// a row per bucket for the rest under '(other)'. Histogram rows add up, so
-// the tail is a plain sum. expr yields the value, present filters the rows
-// where it is set; named supplies :p, :day, :event, :measure, :key, :n and
-// whatever expr references (:path).
-func rollupMeasureAttr(ctx context.Context, tx *sql.Tx, expr, present string, named []any) error {
-	const scope = `project_id=:p AND day=:day AND event_name=:event AND measure=:measure`
+// values by samples (ties by value text ascending, as the live half
+// ranks), and a row per bucket for the rest under '(other)'. Histogram
+// rows add up, so the tail is a plain sum. src reads the key's stored
+// value from a raw row and decodes a grouped one: the values group on
+// their stored ids, and only the kept ones decode. named supplies :p,
+// :day, :event and :measure (strings ids), :name and :mname (their text),
+// :key, :n and whatever src references (:path and :kid).
+func rollupMeasureAttr(ctx context.Context, tx *sql.Tx, src attrSource, named []any) error {
+	const scope = `project_id = :p AND day = :day AND event_name = :event AND measure = :measure`
 	keep := `WITH counted AS (
-		  SELECT ` + expr + ` AS v, COUNT(*) AS c FROM raw_measures
-		  WHERE ` + scope + ` AND ` + present + `
+		  SELECT v, COUNT(*) AS c
+		  FROM (SELECT ` + src.value + ` AS v FROM events WHERE family = 3 AND ` + scope + `)
+		  WHERE v IS NOT NULL
 		  GROUP BY v),
-		ranked AS (SELECT v, ROW_NUMBER() OVER (ORDER BY c DESC, v) AS rn FROM counted),
+		ranked AS (SELECT v, ROW_NUMBER() OVER (ORDER BY c DESC, ` + src.text + `) AS rn FROM counted),
 		keep AS (SELECT v FROM ranked WHERE rn <= :n)`
 	if _, err := tx.ExecContext(ctx, keep+`
 		INSERT OR REPLACE INTO agg_measures_attrs
 		  (project_id, day, event_name, measure, attr_key, attr_value, bucket, samples, weight, sum)
-		SELECT :p, :day, :event, :measure, :key, `+expr+`, bucket,
+		SELECT :p, :day, :name, :mname, :key, `+src.text+`, bucket,
 		       COUNT(*), SUM(1.0 / sample_rate), SUM(value / sample_rate)
-		FROM raw_measures
-		WHERE `+scope+` AND `+present+` AND `+expr+` IN (SELECT v FROM keep)
-		GROUP BY `+expr+`, bucket`, named...); err != nil {
+		FROM (SELECT `+src.value+` AS v, bucket, sample_rate, value FROM events WHERE family = 3 AND `+scope+`)
+		WHERE v IN (SELECT v FROM keep)
+		GROUP BY v, bucket`, named...); err != nil {
 		return err
 	}
 	// The tail adds to an existing row rather than replacing it: a kept
@@ -155,10 +150,10 @@ func rollupMeasureAttr(ctx context.Context, tx *sql.Tx, expr, present string, na
 	_, err := tx.ExecContext(ctx, keep+`
 		INSERT INTO agg_measures_attrs
 		  (project_id, day, event_name, measure, attr_key, attr_value, bucket, samples, weight, sum)
-		SELECT :p, :day, :event, :measure, :key, '(other)', bucket,
+		SELECT :p, :day, :name, :mname, :key, '(other)', bucket,
 		       COUNT(*), SUM(1.0 / sample_rate), SUM(value / sample_rate)
-		FROM raw_measures
-		WHERE `+scope+` AND `+present+` AND `+expr+` NOT IN (SELECT v FROM keep)
+		FROM (SELECT `+src.value+` AS v, bucket, sample_rate, value FROM events WHERE family = 3 AND `+scope+`)
+		WHERE v IS NOT NULL AND v NOT IN (SELECT v FROM keep)
 		GROUP BY bucket
 		ON CONFLICT (project_id, day, event_name, measure, attr_key, attr_value, bucket) DO UPDATE SET
 		  samples = samples + excluded.samples,

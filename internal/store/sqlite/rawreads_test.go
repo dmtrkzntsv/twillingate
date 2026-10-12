@@ -26,8 +26,9 @@ var migrationStep = regexp.MustCompile(`^migration\d+\.go$`)
 // raw_* views, and the v_* live halves, which group on the stored ids
 // (events encoding spec D13; v_identity_daily groups views and product
 // rows together, once for users and once for groups, and names both). Go reads it only in a statement
-// that names its family (the rewrites and lookups on encoded ids, spec D9),
-// or in a migration step, which runs against its own version's schema.
+// that names its family (the rewrites and lookups on encoded ids, spec D9,
+// and the daily pass's rollups and usage counts, D14), or in a migration
+// step, which runs against its own version's schema.
 // Widget SQL reads the family views.
 func TestRawTableIsReadOnlyThroughFamilyViews(t *testing.T) {
 	db := newTestDB(t)

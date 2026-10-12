@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
+	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
 // noCap is the cap 0 stands for: a rank no day reaches. The views read the
@@ -33,40 +34,40 @@ const otherBucket = "(other)"
 // aggregator and the live half of v_views_displays so the two cannot drift.
 const displaySQL = `display_width || 'x' || display_height`
 
-// consentSQL maps the raw consent flag onto the breakdown value, one
-// expression shared by the aggregator and the live half of v_views_consent
-// (018_consent.sql) so the two cannot drift.
+// consentSQL maps the raw consent flag onto the breakdown value: 1 given,
+// 0 none, anything else unknown, the three answers the live half of
+// v_views_consent (041_events_encoding.sql) counts side by side.
 const consentSQL = `CASE consent WHEN 1 THEN 'given' WHEN 0 THEN 'none' ELSE 'unknown' END`
 
-// rawViews, rawProduct and rawMeasures are the only read path into the
-// raw events table (020_one_events_table.sql, 024_measures.sql): each is a
-// view carrying one family's filter, so no query can forget it. Writes and
-// deletes go to events with an explicit family, and so do the two views
-// that read more than one family: v_events_flat, and v_identity_daily
-// (025_live_halves.sql), whose live half groups views and product rows in
-// one aggregate over the table so a query's day filter reaches them.
+// rawViews and rawProduct are the decoding family views over the raw
+// events table (041_events_encoding.sql) that the identity and retention
+// passes read. Every other read of events names its family code in the
+// statement (TestRawTableIsReadOnlyThroughFamilyViews): the v_* live
+// halves and the rollups group on the stored ids and decode only what they
+// write (events encoding spec D13, D14).
 const (
-	rawViews    = "raw_views"
-	rawProduct  = "raw_product"
-	rawMeasures = "raw_measures"
+	rawViews   = "raw_views"
+	rawProduct = "raw_product"
 )
 
 func (d *DB) ViewDaysBefore(ctx context.Context, projectID int64, before civil.Date) ([]civil.Date, error) {
-	return d.daysBefore(ctx, rawViews, projectID, before)
+	return d.daysBefore(ctx, familyCode(store.FamilyViews), projectID, before)
 }
 
 func (d *DB) ProductDaysBefore(ctx context.Context, projectID int64, before civil.Date) ([]civil.Date, error) {
-	return d.daysBefore(ctx, rawProduct, projectID, before)
+	return d.daysBefore(ctx, familyCode(store.FamilyProduct), projectID, before)
 }
 
 func (d *DB) MeasureDaysBefore(ctx context.Context, projectID int64, before civil.Date) ([]civil.Date, error) {
-	return d.daysBefore(ctx, rawMeasures, projectID, before)
+	return d.daysBefore(ctx, familyCode(store.FamilyMeasures), projectID, before)
 }
 
-func (d *DB) daysBefore(ctx context.Context, source string, projectID int64, before civil.Date) ([]civil.Date, error) {
+// daysBefore lists the project's raw days of one family before before:
+// the key's (family, project_id, day) prefix, read in order.
+func (d *DB) daysBefore(ctx context.Context, family, projectID int64, before civil.Date) ([]civil.Date, error) {
 	rows, err := d.db.QueryContext(ctx,
-		fmt.Sprintf(`SELECT DISTINCT day FROM %s WHERE project_id=? AND day < ? ORDER BY 1`, source),
-		projectID, before.String())
+		`SELECT DISTINCT day FROM events WHERE family = ? AND project_id = ? AND day < ? ORDER BY 1`,
+		family, projectID, before.String())
 	if err != nil {
 		return nil, err
 	}
@@ -86,25 +87,30 @@ func (d *DB) daysBefore(ctx context.Context, source string, projectID int64, bef
 	return out, rows.Err()
 }
 
-// viewSessionsCTE sessionizes one project-day. Kinds past the cap fold into
-// "(other)" first, so a hostile client cannot grow agg_views_daily. A
-// client-declared session_id is authoritative (the app knows its own
-// foreground/background transitions); otherwise a gap over 30 minutes per
-// actor splits sessions. The live half of v_views_daily
-// (025_live_halves.sql) runs the same per raw day; views_test.go enforces
-// the parity.
+// viewSessionsCTE sessionizes one project-day on the stored ids, as the
+// live half of v_views_daily (041_events_encoding.sql) does per raw day;
+// views_test.go and rollup_ids_test.go enforce the parity. Kinds past the
+// cap fold into "(other)" first, so a hostile client cannot grow
+// agg_views_daily: kinds ranks the day's kinds by views, ties by their
+// text, and buckets each under its strings id, or NULL for "(other)" (a
+// kind spelled "(other)" joins it). A client-declared session_id is
+// authoritative (the app knows its own foreground/background transitions);
+// otherwise a gap over 30 minutes (t is the stored Unix seconds) per actor
+// splits sessions. A session id
+// is the stored value, a tagged blob or text (spec D3), so a client id of
+// even-length digits ("12", a blob) is never the gap counter's text "12".
 const viewSessionsCTE = `
-WITH src AS (
-  SELECT kind, actor_id, session_id, CAST(strftime('%s', ts) AS INTEGER) AS t
-  FROM raw_views WHERE project_id = :p AND day = :day
-),
-kinds AS (
-  SELECT kind, ROW_NUMBER() OVER (ORDER BY COUNT(*) DESC, kind) AS rn FROM src GROUP BY kind
+WITH kinds AS (
+  SELECT kind AS k,
+         CASE WHEN ROW_NUMBER() OVER (ORDER BY COUNT(*) DESC, ` + kindText + `) <= :n
+                   AND ` + kindText + ` <> '(other)' THEN kind END AS b
+  FROM events WHERE family = 1 AND project_id = :p AND day = :day
+  GROUP BY kind
 ),
 bucketed AS (
-  SELECT CASE WHEN k.rn <= :n THEN src.kind ELSE '(other)' END AS kind,
-         src.actor_id, src.session_id, src.t
-  FROM src JOIN kinds k ON k.kind = src.kind
+  SELECT k.b AS kind, e.actor_id, e.session_id, e.ts AS t
+  FROM events e CROSS JOIN kinds k ON k.k = e.kind
+  WHERE e.family = 1 AND e.project_id = :p AND e.day = :day
 ),
 marked AS (
   SELECT kind, actor_id, session_id, t,
@@ -125,14 +131,20 @@ spans AS (
   FROM keyed GROUP BY kind, actor_id, skey
 )`
 
-// viewDimension is one rollup. keys are the result columns; exprs the SQL
-// producing them (defaults to the key names). The last key is the one
-// whose tail collapses into "(other)"; a leading key stays intact, so a
-// collapsed os_version row still says which os it belongs to.
+// kindText decodes a stored kind: a kinds row's, or a span's bucket.
+const kindText = `COALESCE((SELECT value FROM strings WHERE id = kind), '')`
+
+// viewDimension is one rollup. keys are the result columns; cols the
+// stored expressions grouped on (defaults to the key names, each a strings
+// id). The last key is the one whose tail collapses into "(other)"; a
+// leading key stays intact, so a collapsed os_version row still says which
+// os it belongs to. plain marks a dimension whose one expression is
+// already its text (display, consent). where filters the stored columns.
 type viewDimension struct {
 	table string
 	keys  []string
-	exprs []string
+	cols  []string
+	plain bool
 	where string
 }
 
@@ -141,9 +153,9 @@ var viewDimensions = []viewDimension{
 	// No where clause: unlike utm, an empty host is a real bucket (rows
 	// predating migration 008, and every non-web kind).
 	{table: "agg_views_hosts", keys: []string{"host"}},
-	{table: "agg_views_referrers", keys: []string{"source"}, exprs: []string{"referrer_source"}},
+	{table: "agg_views_referrers", keys: []string{"source"}, cols: []string{"referrer_source"}},
 	{table: "agg_views_utm", keys: []string{"utm_source", "utm_medium", "utm_campaign"},
-		where: "AND NOT (utm_source='' AND utm_medium='' AND utm_campaign='')"},
+		where: "AND NOT (utm_source = 0 AND utm_medium = 0 AND utm_campaign = 0)"},
 	{table: "agg_views_countries", keys: []string{"country"}},
 	{table: "agg_views_platforms", keys: []string{"platform"}},
 	{table: "agg_views_os", keys: []string{"os", "os_version"}},
@@ -151,16 +163,16 @@ var viewDimensions = []viewDimension{
 	// Keyed on platform, not os: 2.4.1 means unrelated things across the
 	// iOS and Android builds of one product, and a web build has no os
 	// of its own to key on.
-	{table: "agg_views_app_versions", keys: []string{"platform", "app_version"}, where: "AND app_version <> ''"},
+	{table: "agg_views_app_versions", keys: []string{"platform", "app_version"}, where: "AND app_version <> 0"},
 	{table: "agg_views_devices", keys: []string{"device", "device_model"}},
-	{table: "agg_views_displays", keys: []string{"display"}, exprs: []string{displaySQL},
+	{table: "agg_views_displays", keys: []string{"display"}, cols: []string{displaySQL}, plain: true,
 		where: "AND display_width > 0 AND display_height > 0"},
-	{table: "agg_views_consent", keys: []string{"consent"}, exprs: []string{consentSQL}},
+	{table: "agg_views_consent", keys: []string{"consent"}, cols: []string{consentSQL}, plain: true},
 	// Keyed on the pair: a browser in German showing the product in
-	// English is the row worth seeing. v_views_locales (025_live_halves.sql)
+	// English is the row worth seeing. v_views_locales (041_events_encoding.sql)
 	// is the live half.
 	{table: "agg_views_locales", keys: []string{"browser_locale", "app_locale"},
-		where: "AND NOT (browser_locale='' AND app_locale='')"},
+		where: "AND NOT (browser_locale = 0 AND app_locale = 0)"},
 }
 
 // AggregateViewDay rolls one day of views into agg_views_* and deletes the
@@ -170,30 +182,33 @@ var viewDimensions = []viewDimension{
 // and day, 0 for all of them. It applies to every breakdown, paths
 // included: an unbounded one is the wrong default on the SD-card hardware
 // target (a path carrying record ids would grow the aggregate without
-// limit).
+// limit). It reads the raw rows on their stored ids and writes text
+// (events encoding spec D14).
 func (d *DB) AggregateViewDay(ctx context.Context, projectID int64, day civil.Date, topN int) error {
 	return d.tx(ctx, func(tx *sql.Tx) error {
-		var n int
+		var raw bool
 		if err := tx.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM raw_views WHERE project_id=? AND day=?`,
-			projectID, day.String()).Scan(&n); err != nil {
+			`SELECT EXISTS (SELECT 1 FROM events WHERE family = 1 AND project_id = ? AND day = ?)`,
+			projectID, day.String()).Scan(&raw); err != nil {
 			return err
 		}
-		if n == 0 {
+		if !raw {
 			return nil // already aggregated (or empty day): no-op keeps idempotency
 		}
 		named := []any{sql.Named("p", projectID), sql.Named("day", day.String()),
 			sql.Named("n", capRows(topN, defaultAttrsTopN))}
+		// Every view is in exactly one span, so the spans give the views
+		// and the visitors too.
 		if _, err := tx.ExecContext(ctx, viewSessionsCTE+`
 INSERT OR REPLACE INTO agg_views_daily
   (project_id, day, kind, visitors, views, sessions, bounces, duration_sec)
-SELECT :p, :day, s.kind,
-  (SELECT COUNT(DISTINCT actor_id) FROM bucketed b WHERE b.kind = s.kind),
-  (SELECT COUNT(*) FROM bucketed b WHERE b.kind = s.kind),
+SELECT :p, :day, CASE WHEN kind IS NULL THEN '(other)' ELSE `+kindText+` END,
+  COUNT(DISTINCT actor_id),
+  SUM(view_count),
   COUNT(*),
   SUM(CASE WHEN view_count = 1 THEN 1 ELSE 0 END),
   COALESCE(SUM(dur), 0)
-FROM spans s GROUP BY s.kind`, named...); err != nil {
+FROM spans GROUP BY kind`, named...); err != nil {
 			return fmt.Errorf("agg_views_daily: %w", err)
 		}
 		for _, dim := range viewDimensions {
@@ -209,41 +224,65 @@ FROM spans s GROUP BY s.kind`, named...); err != nil {
 	})
 }
 
-// aggregateSQL builds the one-statement rollup: rank values by views desc,
-// keep the top N, map the rest onto "(other)". One statement rather than a
-// top-N insert plus a tail insert keeps visitors honest: it is always
-// COUNT(DISTINCT actor_id) over the grouped raw rows, never a sum that
-// double-counts an actor who saw two collapsed values.
+// aggregateSQL builds the one-statement rollup on the stored ids. ranked
+// groups the day's rows by the dimension's stored values, ranks the groups
+// by views desc (ties by their text, in key order, as the text was ranked)
+// and buckets each: the last value's id when it is kept, NULL for the
+// tail, which a kept value spelled "(other)" joins. The day's rows are then
+// grouped by the leading values and the bucket, and only the written rows
+// decode. One statement rather than a top-N insert plus a tail insert
+// keeps visitors honest: it is always COUNT(DISTINCT actor_id) over the
+// grouped raw rows (the stored ids: the encoding is one-to-one), never a
+// sum that double-counts an actor who saw two collapsed values.
 func (dim viewDimension) aggregateSQL() string {
-	exprs := dim.exprs
-	if exprs == nil {
-		exprs = dim.keys
+	cols := dim.cols
+	if cols == nil {
+		cols = dim.keys
 	}
-	var sel, lead, join []string
-	for i, k := range dim.keys {
-		sel = append(sel, exprs[i]+" AS "+k)
-		join = append(join, "r."+k+" = s."+k)
-		if i < len(dim.keys)-1 {
-			lead = append(lead, "s."+k)
+	text := func(c string) string {
+		if dim.plain {
+			return c
+		}
+		return `COALESCE((SELECT value FROM strings WHERE id = ` + c + `), '')`
+	}
+	last := len(cols) - 1
+	var groups, order, join, lead, leadText []string
+	for i, c := range cols {
+		g := fmt.Sprintf("g%d", i)
+		groups = append(groups, c+" AS "+g)
+		order = append(order, text(c))
+		join = append(join, "r."+g+" = "+c)
+		if i < last {
+			lead = append(lead, "r."+g)
+			leadText = append(leadText, text("r."+g))
 		}
 	}
-	last := dim.keys[len(dim.keys)-1]
-	bucket := fmt.Sprintf("CASE WHEN r.rn <= :n THEN s.%s ELSE '%s' END", last, otherBucket)
-	cols := strings.Join(dim.keys, ", ")
-	group := strings.Join(append(append([]string{}, lead...), bucket), ", ")
 	return fmt.Sprintf(`
-INSERT OR REPLACE INTO %s (project_id, day, %s, visitors, views)
-WITH src AS (
-  SELECT %s, actor_id FROM raw_views
-  WHERE project_id = :p AND day = :day %s
-),
-ranked AS (
-  SELECT %s, ROW_NUMBER() OVER (ORDER BY COUNT(*) DESC, %s) AS rn FROM src GROUP BY %s
+INSERT OR REPLACE INTO %[1]s (project_id, day, %[2]s, visitors, views)
+WITH ranked AS (
+  SELECT %[3]s,
+         CASE WHEN ROW_NUMBER() OVER (ORDER BY COUNT(*) DESC, %[4]s) <= :n
+                   AND %[5]s <> '%[6]s' THEN %[7]s END AS b
+  FROM events
+  WHERE family = 1 AND project_id = :p AND day = :day %[8]s
+  GROUP BY %[9]s
 )
-SELECT :p, :day, %s, COUNT(DISTINCT s.actor_id), COUNT(*)
-FROM src s JOIN ranked r ON %s
-GROUP BY %s`,
-		dim.table, cols, strings.Join(sel, ", "), dim.where,
-		cols, cols, cols,
-		group, strings.Join(join, " AND "), group)
+SELECT :p, :day, %[10]sCASE WHEN r.b IS NULL THEN '%[6]s' ELSE %[11]s END,
+       COUNT(DISTINCT actor_id), COUNT(*)
+FROM events CROSS JOIN ranked r ON %[12]s
+WHERE family = 1 AND project_id = :p AND day = :day %[8]s
+GROUP BY %[13]s`,
+		dim.table, strings.Join(dim.keys, ", "), strings.Join(groups, ", "), strings.Join(order, ", "),
+		text(cols[last]), otherBucket, cols[last], dim.where, strings.Join(cols, ", "),
+		prefixed(leadText), text("r.b"), strings.Join(join, " AND "),
+		strings.Join(append(lead, "r.b"), ", "))
+}
+
+// prefixed joins exprs, each followed by a comma and a space.
+func prefixed(exprs []string) string {
+	var b strings.Builder
+	for _, e := range exprs {
+		b.WriteString(e + ", ")
+	}
+	return b.String()
 }

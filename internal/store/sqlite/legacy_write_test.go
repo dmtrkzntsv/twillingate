@@ -105,12 +105,14 @@ func (d *DB) writeTestEvents(ctx context.Context, evs []store.Event) error {
 	return d.WriteEvents(ctx, evs)
 }
 
-// textRollup runs rollup, today's code for one family's day, on a
-// database pinned below 41, where events stores the family as text: its
-// own delete of the day's raw rows names the family's code and so matches
-// nothing there, and its delete of blocked names reads strings, which 041
-// creates (added here empty: no row is encoded). It then deletes the day's
-// raw rows as the rollup did before 041.
+// textRollup runs rollup, one family's day rolled up by the frozen code
+// that reads the raw_* views (rollup_legacy_test.go; today's rollups read
+// the encoded events, which a database pinned below 41 does not hold), on
+// such a database, where events stores the family as text: its own delete
+// of the day's raw rows names the family's code and so matches nothing
+// there, and its delete of blocked names reads strings, which 041 creates
+// (added here empty: no row is encoded). It then deletes the day's raw
+// rows as the rollup did before 041.
 func textRollup(t *testing.T, db *DB, family store.Family, projectID int64, day civil.Date, rollup func() error) {
 	t.Helper()
 	execAll(t, db, `CREATE TABLE IF NOT EXISTS strings (

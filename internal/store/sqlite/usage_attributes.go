@@ -153,51 +153,59 @@ func writeReceived(ctx context.Context, tx *sql.Tx, keys []receivedKey) error {
 }
 
 // receivedSQL lists every (project, day, family, event, measure, key,
-// value) the raw product and measure rows before ?1 carry: their JSON
-// attributes and the declarable reserved columns that are set. Each raw row
-// is read once: jsonb_patch lays the set columns over the attributes as one
-// object (a null in a merge patch removes the key, so an empty column adds
+// value) the raw product and measure rows before ?1 carry, on their stored
+// ids (events encoding spec D14): their encoded attributes, keyed by
+// catalog id with value numbers, and the declarable reserved columns that
+// are set, keyed by their reserved key with strings ids. Each raw row is
+// read once: jsonb_patch lays the set columns over the attributes as one
+// object (a null in a merge patch removes the key, so an unset column adds
 // nothing) and json_each walks it; one arm per column instead re-read every
 // raw page ten times (the JSONB forms skip rendering the merged text). r.
 // qualifies the row's columns, since json_each has a path column too. A
-// custom key cannot shadow a reserved one: ingest drops every `$` key it
-// does not route to a column (server.resolveAttributes), so stored
-// attributes hold no `$` key.
+// catalog id never collides with a reserved key: ids are digits, and
+// ingest drops every `$` key it does not route to a column
+// (server.resolveAttributes).
 var receivedSQL = func() string {
 	cols := []struct{ key, col string }{
 		{"$host", "host"}, {"$path", "path"}, {"$referrer", "referrer_source"},
 		{"$utm_source", "utm_source"}, {"$utm_medium", "utm_medium"}, {"$utm_campaign", "utm_campaign"},
 		{"$os_version", "os_version"}, {"$browser_version", "browser_version"}, {"$device_model", "device_model"},
 	}
-	var pairs []string
+	var names, pairs []string
 	for _, c := range cols {
-		pairs = append(pairs, "'"+c.key+"', NULLIF(r."+c.col+", '')")
+		names = append(names, c.col)
+		pairs = append(pairs, "'"+c.key+"', NULLIF(r."+c.col+", 0)")
 	}
-	keyed := `json_each(jsonb_patch(CASE WHEN json_valid(r.attributes) THEN r.attributes ELSE '{}' END,
-		jsonb_object(` + strings.Join(pairs, ", ") + `))) j`
-	arm := func(view string) string {
-		return `SELECT r.project_id, r.day, r.family, r.event_name, r.measure, j.key AS k, j.value AS v
-		FROM ` + view + ` r, ` + keyed + ` WHERE r.day < ?1`
-	}
-	return arm("raw_product") + `
-	UNION ALL ` + arm("raw_measures")
+	return `SELECT r.project_id, r.day, r.family, r.event_name, r.measure, j.key AS k, j.value AS v
+		FROM (SELECT project_id, day, family, event_name, measure, attributes, ` + strings.Join(names, ", ") + `
+		      FROM events WHERE family IN (2, 3) AND day < ?1) r,
+		     json_each(jsonb_patch(r.attributes, jsonb_object(` + strings.Join(pairs, ", ") + `))) j`
 }()
 
 // countReceived rewrites usage_attributes for every day before today:
 // the days whose raw product or measure rows remain get exact counts and
 // max_values (the most distinct values in one (family, event, measure)
 // partition, the partition ATTRIBUTE_VALUES_TOP_N caps); the rest, days
-// already rolled up, are dropped. Today stays as ingest counts it.
+// already rolled up, are dropped. Today stays as ingest counts it. The
+// partitions count on the stored ids, which are one-to-one with the text,
+// and each partition's key decodes once: a catalog id to its key (one with
+// no catalog row is dropped, as the raw_* views drop it), a reserved key
+// as it is.
 func countReceived(ctx context.Context, tx *sql.Tx, today string) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM usage_attributes WHERE day < ?1`, today); err != nil {
 		return fmt.Errorf("usage attributes: %w", err)
 	}
 	_, err := tx.ExecContext(ctx, `INSERT INTO usage_attributes (project_id, day, attr_key, events, max_values)
-		SELECT project_id, day, k, SUM(n), MAX(vals) FROM (
-		  SELECT project_id, day, k, COUNT(*) AS n, COUNT(DISTINCT v) AS vals
-		  FROM (`+receivedSQL+`)
-		  GROUP BY project_id, day, family, event_name, measure, k
-		) GROUP BY project_id, day, k`, today)
+		SELECT project_id, day, key, SUM(n), MAX(vals) FROM (
+		  SELECT project_id, day, n, vals,
+		         CASE WHEN k LIKE '$%' THEN k
+		              ELSE (SELECT key FROM project_attributes WHERE id = CAST(k AS INTEGER)) END AS key
+		  FROM (
+		    SELECT project_id, day, k, COUNT(*) AS n, COUNT(DISTINCT v) AS vals
+		    FROM (`+receivedSQL+`)
+		    GROUP BY project_id, day, family, event_name, measure, k
+		  )
+		) WHERE key IS NOT NULL GROUP BY project_id, day, key`, today)
 	if err != nil {
 		return fmt.Errorf("usage attributes: %w", err)
 	}

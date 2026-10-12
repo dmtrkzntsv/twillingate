@@ -106,7 +106,7 @@ func TestMigration025KeepsProductAttrsAnswer(t *testing.T) {
 	}
 	rolled := civil.DateOf(ts("2026-08-01T00:00:00Z"))
 	textRollup(t, db, store.FamilyProduct, id, rolled, func() error {
-		return db.AggregateProductDay(ctx, id, rolled, keys, 3)
+		return legacyAggregateProductDay(ctx, db, id, rolled, keys, 3)
 	})
 
 	before := productAttrsRows(t, db)
@@ -169,7 +169,7 @@ func TestMigration025KeepsMeasuresAttrsAnswer(t *testing.T) {
 		t.Fatal(err)
 	}
 	textRollup(t, db, store.FamilyMeasures, id, day("2026-09-01"), func() error {
-		return db.AggregateMeasureDay(ctx, id, day("2026-09-01"), keys, 2)
+		return legacyAggregateMeasureDay(ctx, db, id, day("2026-09-01"), keys, 2)
 	})
 
 	const q = `SELECT * FROM v_measures_attrs ORDER BY 1,2,3,4,5,6,7`
@@ -295,7 +295,7 @@ func TestMigration025KeepsViewsAnswers(t *testing.T) {
 		t.Fatal(err)
 	}
 	textRollup(t, db, store.FamilyViews, p1, day("2026-08-01"), func() error {
-		return db.AggregateViewDay(ctx, p1, day("2026-08-01"), 500)
+		return legacyAggregateViewDay(ctx, db, p1, day("2026-08-01"), 500)
 	})
 
 	before := typedViews(t, db)

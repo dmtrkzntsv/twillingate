@@ -75,16 +75,12 @@ func measureSizes(ctx context.Context, tx *sql.Tx, day string) error {
 	raw, aggregate := map[int64]int64{}, map[int64]int64{}
 	hasRows := map[int64]bool{}
 	for _, table := range tables {
-		// The raw rows are read through the family views (never the
-		// events table itself, see TestRawTableIsReadOnlyThroughFamilyViews).
 		q := `SELECT project_id, COUNT(*) FROM "` + table + `" GROUP BY project_id`
 		into := aggregate
 		if table == "events" {
-			q = `SELECT project_id, SUM(n) FROM (
-				SELECT project_id, COUNT(*) AS n FROM raw_views GROUP BY project_id
-				UNION ALL SELECT project_id, COUNT(*) FROM raw_product GROUP BY project_id
-				UNION ALL SELECT project_id, COUNT(*) FROM raw_measures GROUP BY project_id
-			) GROUP BY project_id`
+			// Every family's raw rows, named as every read of the raw
+			// table names them (TestRawTableIsReadOnlyThroughFamilyViews).
+			q = `SELECT project_id, COUNT(*) FROM events WHERE family IN (1, 2, 3) GROUP BY project_id`
 			into = raw
 		}
 		per, total, err := rowsPerProject(ctx, tx, q)
@@ -116,14 +112,14 @@ func measureSizes(ctx context.Context, tx *sql.Tx, day string) error {
 
 // dailyCounts are the per-day counts, each the same sum usage and
 // the v_* views make: a day is rolled up or raw, never both, and each row
-// counts once either way.
+// counts once either way. The raw rows count by their family code.
 var dailyCounts = []struct{ key, agg, raw string }{
 	{store.StatViews, `SELECT project_id, day, SUM(views) AS n FROM agg_views_daily WHERE day < ?1 GROUP BY project_id, day`,
-		`SELECT project_id, day, COUNT(*) FROM raw_views WHERE day < ?1 GROUP BY project_id, day`},
+		`SELECT project_id, day, COUNT(*) FROM events WHERE family = 1 AND day < ?1 GROUP BY project_id, day`},
 	{store.StatEvents, `SELECT project_id, day, SUM(total_events) AS n FROM agg_product_totals WHERE day < ?1 GROUP BY project_id, day`,
-		`SELECT project_id, day, COUNT(*) FROM raw_product WHERE day < ?1 GROUP BY project_id, day`},
+		`SELECT project_id, day, COUNT(*) FROM events WHERE family = 2 AND day < ?1 GROUP BY project_id, day`},
 	{store.StatMeasures, `SELECT project_id, day, SUM(samples) AS n FROM agg_measures_daily WHERE day < ?1 GROUP BY project_id, day`,
-		`SELECT project_id, day, COUNT(*) FROM raw_measures WHERE day < ?1 GROUP BY project_id, day`},
+		`SELECT project_id, day, COUNT(*) FROM events WHERE family = 3 AND day < ?1 GROUP BY project_id, day`},
 }
 
 // countDays writes each project's counts for every day before today that
@@ -195,15 +191,18 @@ const attrDefaultKeys = 9
 // the views read it. Every project and day with an aggregated value gets a
 // row, 0 included, so a missing day means "not counted while raw". The
 // views keep exactly the cap for product events; measures rank with ties
-// sharing a place, so there the count is an upper bound.
+// sharing a place, so there the count is an upper bound. It reads the
+// stored ids as the views' live halves do (041_events_encoding.sql): a
+// declared custom key by its catalog id, a system or declarable $ key from
+// its strings column, any other declared $ key as nothing; the ids are
+// one-to-one with the text, so the distinct counts are the same.
 var foldedSQL = func() string {
 	var value, defaults strings.Builder
 	value.WriteString("CASE k.attr_key")
 	for _, c := range attrColumns {
-		fmt.Fprintf(&value, " WHEN '%s' THEN NULLIF(e.%s, '')", c.key, c.col)
+		fmt.Fprintf(&value, " WHEN '%s' THEN NULLIF(e.%s, 0)", c.key, c.col)
 	}
-	value.WriteString(` ELSE CASE WHEN k.attr_key LIKE '$%' THEN NULL
-		ELSE json_extract(e.attributes, '$."' || replace(k.attr_key,'"','\"') || '"') END END`)
+	value.WriteString(` ELSE json_extract(e.attributes, '$."' || k.kid || '"') END`)
 	for i, c := range attrColumns[:attrDefaultKeys] {
 		if i > 0 {
 			defaults.WriteString(", ")
@@ -216,36 +215,39 @@ var foldedSQL = func() string {
 		                   FROM meta WHERE key='attributes_top_n'
 		                     AND (CAST(value AS INTEGER) > 0 OR value = '0')), 100) AS n
 		), keys AS (
-		  SELECT project_id, key AS attr_key FROM project_attributes WHERE breakdown = 1
+		  SELECT project_id, key AS attr_key, CASE WHEN key LIKE '$%' THEN NULL ELSE id END AS kid
+		  FROM project_attributes WHERE breakdown = 1
 		  UNION
-		  SELECT p.id, s.column1 FROM projects p, (VALUES ` + defaults.String() + `) s
+		  SELECT p.id, s.column1, NULL FROM projects p, (VALUES ` + defaults.String() + `) s
 		), parts AS (
 		  SELECT project_id, day, COUNT(DISTINCT v) AS n FROM (
-		    SELECT e.project_id, e.day, 'p' AS fam, e.event_name AS ev, '' AS measure, k.attr_key AS attr_key,
+		    SELECT e.project_id, e.day, e.family, e.event_name, e.measure, k.attr_key AS attr_key,
 		           ` + value.String() + ` AS v
-		    FROM raw_product e JOIN keys k ON k.project_id = e.project_id WHERE e.day < ?1
-		    UNION ALL
-		    SELECT e.project_id, e.day, 'm', e.event_name, e.measure, k.attr_key,
-		           ` + value.String() + `
-		    FROM raw_measures e JOIN keys k ON k.project_id = e.project_id WHERE e.day < ?1
+		    FROM (SELECT * FROM events WHERE family IN (2, 3) AND day < ?1) e
+		    JOIN keys k ON k.project_id = e.project_id
 		  ) WHERE v IS NOT NULL
-		  GROUP BY project_id, day, fam, ev, measure, attr_key
+		  GROUP BY project_id, day, family, event_name, measure, attr_key
 		)
 		SELECT project_id, day, SUM(MAX(n - (SELECT n FROM cap), 0)) FROM parts GROUP BY project_id, day`
 }()
+
+// receivedPairs lists every (project, day, key, value) the raw product and
+// measure rows before ?1 carry in their encoded attributes: the catalog id
+// and the value number, one-to-one with the key and value text. A key with
+// no catalog row is dropped, as the raw_* views drop it.
+const receivedPairs = `SELECT e.project_id AS project_id, e.day AS day, j.key AS k, j.value AS v
+		FROM events e, json_each(e.attributes) j
+		WHERE e.family IN (2, 3) AND e.day < ?1
+		  AND EXISTS (SELECT 1 FROM project_attributes a WHERE a.id = CAST(j.key AS INTEGER))`
 
 // countAttributes writes, for every raw day before today, each project's
 // distinct custom attribute keys and key/value pairs received (product and
 // measure events, declared or not) and the values folded into (other).
 // Only raw days: a rolled-up day keeps what was counted while it was raw.
 func countAttributes(ctx context.Context, tx *sql.Tx, today string) error {
-	received := `SELECT e.project_id AS project_id, e.day AS day, j.key AS k, j.value AS v
-		FROM (SELECT project_id, day, attributes FROM raw_product WHERE day < ?1
-		      UNION ALL SELECT project_id, day, attributes FROM raw_measures WHERE day < ?1) e,
-		     json_each(CASE WHEN json_valid(e.attributes) THEN e.attributes ELSE '{}' END) j`
 	for _, q := range []struct{ key, sql string }{
-		{store.StatAttributeKeys, `SELECT project_id, day, COUNT(DISTINCT k) FROM (` + received + `) GROUP BY project_id, day`},
-		{store.StatAttributeValues, `SELECT project_id, day, COUNT(*) FROM (SELECT DISTINCT project_id, day, k, v FROM (` + received + `)) GROUP BY project_id, day`},
+		{store.StatAttributeKeys, `SELECT project_id, day, COUNT(DISTINCT k) FROM (` + receivedPairs + `) GROUP BY project_id, day`},
+		{store.StatAttributeValues, `SELECT project_id, day, COUNT(*) FROM (SELECT DISTINCT project_id, day, k, v FROM (` + receivedPairs + `)) GROUP BY project_id, day`},
 		{store.StatAttributeValuesFolded, foldedSQL},
 	} {
 		if _, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO usage_history (key, project_id, measured_at, value)
