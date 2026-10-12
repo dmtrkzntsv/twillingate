@@ -6,6 +6,7 @@ import (
 	"errors"
 	"reflect"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -41,6 +42,8 @@ func TestAttributeRuleRefusals(t *testing.T) {
 		"dollar to":   {"a", "$host"},
 		"quote to":    {"a", `a"b`},
 		"same key":    {"a", "a"},
+		"long from":   {strings.Repeat("k", 65), "b"},
+		"long to":     {"a", strings.Repeat("k", 65)},
 	} {
 		t.Run("rename "+name, func(t *testing.T) {
 			if _, _, err := ops.RenameAttribute(ctx, "t", p, c.from, c.to); !errors.Is(err, ErrInvalid) {
@@ -51,7 +54,8 @@ func TestAttributeRuleRefusals(t *testing.T) {
 			}
 		})
 	}
-	for name, k := range map[string]string{"empty": "", "blank": " ", "dollar": "$host", "quote": `a"b`} {
+	for name, k := range map[string]string{"empty": "", "blank": " ", "dollar": "$host", "quote": `a"b`,
+		"long": strings.Repeat("k", 65), "long unicode": strings.Repeat("é", 33)} {
 		t.Run("block "+name, func(t *testing.T) {
 			if _, err := ops.BlockAttribute(ctx, "t", p, k); !errors.Is(err, ErrInvalid) {
 				t.Fatalf("block err = %v, want ErrInvalid", err)
@@ -60,6 +64,14 @@ func TestAttributeRuleRefusals(t *testing.T) {
 				t.Fatalf("remove err = %v, want ErrInvalid", err)
 			}
 		})
+	}
+
+	// The ingest limit itself is fine: such a key can arrive.
+	if _, err := ops.BlockAttribute(ctx, "t", p, strings.Repeat("k", 64)); err != nil {
+		t.Errorf("block a key of exactly the ingest limit: %v", err)
+	}
+	if err := ops.RemoveAttributeRule(ctx, "t", p, strings.Repeat("k", 64)); err != nil {
+		t.Fatal(err)
 	}
 
 	if _, _, err := ops.RenameAttribute(ctx, "t", 999, "a", "b"); !errors.Is(err, ErrNotFound) {

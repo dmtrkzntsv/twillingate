@@ -6,11 +6,13 @@ import (
 	"strings"
 
 	"github.com/dmtrkzntsv/twillingate/internal/store"
+	"github.com/dmtrkzntsv/twillingate/internal/wire"
 )
 
 // attrKey refuses a key no attribute rule may carry: empty, reserved ($
-// belongs to the server), or holding a double quote (project attributes
-// D5). Rules cover custom keys only.
+// belongs to the server), holding a double quote (project attributes D5),
+// or longer than ingest keeps (wire.MaxAttrKey bytes, the limit ingest
+// counts in), which no event can carry. Rules cover custom keys only.
 func attrKey(k string) error {
 	switch {
 	case strings.TrimSpace(k) == "":
@@ -19,6 +21,8 @@ func attrKey(k string) error {
 		return fmt.Errorf("attribute %q: $ keys are reserved: %w", k, ErrInvalid)
 	case strings.ContainsRune(k, '"'):
 		return fmt.Errorf("attribute %q: a key may not contain a double quote: %w", k, ErrInvalid)
+	case len(k) > wire.MaxAttrKey:
+		return fmt.Errorf("attribute key is longer than %d bytes: %w", wire.MaxAttrKey, ErrInvalid)
 	}
 	return nil
 }

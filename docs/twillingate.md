@@ -227,8 +227,9 @@ alias is `merge_event` from the alias to the event.
 A project can rename an attribute key, merge it into another, or block it.
 Rules cover the custom keys of the `product` and `measures` families, per
 project, on both sides of a rule: an empty key, a `$` key (a typed column, not
-a key of `attributes`) and a key containing `"` are refused (`invalid`), as is
-a rename or merge onto itself. Views keep their attributes as sent. An unknown
+a key of `attributes`), a key containing `"` and one longer than ingest's key
+limit ([Limits](#limits)) are refused (`invalid`), as is a rename or merge onto
+itself. Views keep their attributes as sent. An unknown
 project or removing a rule that does not exist is `not_found`; renaming onto a
 key that already has data, or renaming or merging onto a blocked one, is
 `conflict`. A key has at most one rule: blocking a renamed key replaces the
