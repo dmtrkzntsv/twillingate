@@ -126,18 +126,18 @@ func TestWriteEventsWritesOnlyNewReceivedKeys(t *testing.T) {
 func TestReceivedSeenKeepsTheNewestTwoDays(t *testing.T) {
 	var s receivedSeen
 	k := func(day, key string) receivedKey { return receivedKey{1, day, key} }
-	s.remember([]receivedKey{k("2026-08-01", "a"), k("2026-08-02", "b")})
-	if got := s.unseen(receivedKeys{k("2026-08-01", "a"): {}, k("2026-08-02", "b"): {}}); len(got) != 0 {
+	s.remember([]receivedKey{k("2026-08-01", "a"), k("2026-08-02", "b")}, 0)
+	if got, _ := s.unseen(receivedKeys{k("2026-08-01", "a"): {}, k("2026-08-02", "b"): {}}); len(got) != 0 {
 		t.Fatalf("unseen = %v, want none", got)
 	}
-	s.remember([]receivedKey{k("2026-08-03", "c")})
-	got := s.unseen(receivedKeys{k("2026-08-01", "a"): {}, k("2026-08-02", "b"): {}, k("2026-08-03", "c"): {}})
+	s.remember([]receivedKey{k("2026-08-03", "c")}, 0)
+	got, _ := s.unseen(receivedKeys{k("2026-08-01", "a"): {}, k("2026-08-02", "b"): {}, k("2026-08-03", "c"): {}})
 	if !reflect.DeepEqual(got, []receivedKey{k("2026-08-01", "a")}) {
 		t.Fatalf("unseen after the newest day moved = %v, want only 08-01's key", got)
 	}
 	// An older day's key is not remembered at all.
-	s.remember([]receivedKey{k("2026-07-30", "old")})
-	if got := s.unseen(receivedKeys{k("2026-07-30", "old"): {}}); len(got) != 1 {
+	s.remember([]receivedKey{k("2026-07-30", "old")}, 0)
+	if got, _ := s.unseen(receivedKeys{k("2026-07-30", "old"): {}}); len(got) != 1 {
 		t.Fatalf("an old day's key was remembered: unseen = %v", got)
 	}
 }

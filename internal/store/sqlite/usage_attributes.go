@@ -53,14 +53,21 @@ func (c receivedKeys) add(e store.Event, day string) {
 // leave it as the newest day moves on, and a late event for one falls back
 // to INSERT OR IGNORE, which writes nothing when the row exists. Empty
 // after a restart, when each key costs one ignored insert per day.
+//
+// An attribute rename moves usage rows to another key, so it forgets the
+// project's triples (forget). gen counts the forgets: a batch remembers
+// only if none happened since it listed its unseen triples, since a rename
+// can commit between the batch's commit and its remember.
 type receivedSeen struct {
 	mu     sync.Mutex
 	keys   map[receivedKey]struct{}
 	newest string
+	gen    uint64
 }
 
-// unseen lists the batch's triples not yet remembered.
-func (s *receivedSeen) unseen(batch receivedKeys) []receivedKey {
+// unseen lists the batch's triples not yet remembered, and the generation
+// to remember them at.
+func (s *receivedSeen) unseen(batch receivedKeys) ([]receivedKey, uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var out []receivedKey
@@ -69,14 +76,18 @@ func (s *receivedSeen) unseen(batch receivedKeys) []receivedKey {
 			out = append(out, k)
 		}
 	}
-	return out
+	return out, s.gen
 }
 
 // remember records the triples a committed batch wrote, then drops the
-// days before the newest day's eve.
-func (s *receivedSeen) remember(written []receivedKey) {
+// days before the newest day's eve. A batch listed before a forget
+// (gen behind) remembers nothing: its rows may have been moved.
+func (s *receivedSeen) remember(written []receivedKey, gen uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if gen != s.gen {
+		return
+	}
 	if s.keys == nil {
 		s.keys = map[receivedKey]struct{}{}
 	}
@@ -100,6 +111,20 @@ func (s *receivedSeen) remember(written []receivedKey) {
 	for _, k := range written {
 		if k.day >= floor {
 			s.keys[k] = struct{}{}
+		}
+	}
+}
+
+// forget drops the project's triples, after a rename moved its usage rows
+// (spec D7): the next batch that carries one of its keys inserts the row
+// again, or finds it there.
+func (s *receivedSeen) forget(projectID int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.gen++
+	for k := range s.keys {
+		if k.project == projectID {
+			delete(s.keys, k)
 		}
 	}
 }

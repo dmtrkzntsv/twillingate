@@ -84,6 +84,7 @@ func (d *DB) WriteSubmission(ctx context.Context, n store.NewSubmission) (store.
 	var form store.Form
 	var inserted bool
 	var fresh []receivedKey
+	var gen uint64
 	err := d.tx(ctx, func(tx *sql.Tx) error {
 		// A retry of a stored id is a success whatever the form's state now:
 		// the first attempt already got its answer. It changes nothing.
@@ -177,7 +178,7 @@ func (d *DB) WriteSubmission(ctx context.Context, n store.NewSubmission) (store.
 		if err != nil {
 			return err
 		}
-		fresh = d.seen.unseen(keys)
+		fresh, gen = d.seen.unseen(keys)
 		return writeReceived(ctx, tx, fresh)
 	})
 	if errors.Is(err, store.ErrFormClosed) {
@@ -189,7 +190,7 @@ func (d *DB) WriteSubmission(ctx context.Context, n store.NewSubmission) (store.
 	if err != nil {
 		return store.Form{}, false, err
 	}
-	d.seen.remember(fresh)
+	d.seen.remember(fresh, gen)
 	return form, inserted, nil
 }
 

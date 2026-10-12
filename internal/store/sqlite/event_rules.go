@@ -230,9 +230,10 @@ func (d *DB) RemoveEventRule(ctx context.Context, projectID int64, family store.
 }
 
 // dropBlockedAggregates delete, from each per-event aggregate table, the
-// rows of the names the family blocks. agg_product_totals is left out on
-// purpose (D11): it is the day's true DAU and total, which a name cannot be
-// subtracted from.
+// rows of the names the family blocks, and from the attribute aggregate
+// tables the rows of the blocked attribute keys (project attributes D12).
+// agg_product_totals is left out on purpose (D11): it is the day's true DAU
+// and total, which a name cannot be subtracted from.
 var dropBlockedAggregates = [...]string{
 	`DELETE FROM agg_product_daily WHERE project_id=?1 AND event_name IN
 		(SELECT name FROM rules WHERE project_id=?1 AND kind='event' AND family='product' AND action='block')`,
@@ -242,13 +243,17 @@ var dropBlockedAggregates = [...]string{
 		(SELECT name FROM rules WHERE project_id=?1 AND kind='event' AND family='measures' AND action='block')`,
 	`DELETE FROM agg_measures_attrs WHERE project_id=?1 AND event_name IN
 		(SELECT name FROM rules WHERE project_id=?1 AND kind='event' AND family='measures' AND action='block')`,
+	`DELETE FROM agg_product_attrs WHERE project_id=?1 AND attr_key IN
+		(SELECT name FROM rules WHERE project_id=?1 AND kind='attribute' AND family='event' AND action='block')`,
+	`DELETE FROM agg_measures_attrs WHERE project_id=?1 AND attr_key IN
+		(SELECT name FROM rules WHERE project_id=?1 AND kind='attribute' AND family='event' AND action='block')`,
 }
 
 // DropBlockedAggregates deletes the project's aggregate rows of every
-// blocked name (D11), for the daily pass: a block set after a day was
-// rolled up takes the name out of the aggregates at the next pass. The
-// totals keep the day's true counts (see dropBlockedAggregates). Nothing
-// to drop is a no-op.
+// blocked name (D11) and blocked attribute key, for the daily pass: a block
+// set after a day was rolled up takes the name or key out of the
+// aggregates at the next pass. The totals keep the day's true counts (see
+// dropBlockedAggregates). Nothing to drop is a no-op.
 func (d *DB) DropBlockedAggregates(ctx context.Context, projectID int64) error {
 	return d.tx(ctx, func(tx *sql.Tx) error {
 		for _, q := range dropBlockedAggregates {

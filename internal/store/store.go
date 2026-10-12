@@ -240,6 +240,27 @@ const (
 	EventRuleBlock  = "block"
 )
 
+// AttributeRule is an attribute rule (rules.kind = 'attribute', family
+// 'event'): a rename of Key to To, or a block of Key (To "").
+type AttributeRule struct {
+	ProjectID int64
+	Key       string
+	Action    string // EventRuleRename or EventRuleBlock: the same two actions
+	To        string
+	CreatedAt string // RFC 3339 UTC
+}
+
+// AttributeRuleSet is one project's attribute rules as the write path
+// applies them: Renamed maps a key to its target, Blocked holds the
+// blocked keys. The zero value maps nothing.
+type AttributeRuleSet struct {
+	Renamed map[string]string
+	Blocked map[string]bool
+}
+
+// Empty reports whether the set maps nothing, the fast path.
+func (r AttributeRuleSet) Empty() bool { return len(r.Renamed) == 0 && len(r.Blocked) == 0 }
+
 // ProjectSortKey is one project's place in the order (migration 034).
 type ProjectSortKey struct {
 	ID      int64
@@ -271,7 +292,8 @@ type Store interface {
 	AggregateProductDay(ctx context.Context, projectID int64, day civil.Date, attrs []string, topN int) error
 	AggregateMeasureDay(ctx context.Context, projectID int64, day civil.Date, attrs []string, topN int) error
 	// DropBlockedAggregates deletes the project's per-event aggregates of
-	// every blocked event name (event rules D11).
+	// every blocked event name (event rules D11), and the attribute
+	// aggregates of every blocked attribute key (project attributes D12).
 	DropBlockedAggregates(ctx context.Context, projectID int64) error
 	// Event rules (migration 039): LoadEventRules reads them all; the
 	// three mutations are audited from a in the same transaction.

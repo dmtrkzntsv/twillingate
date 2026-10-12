@@ -279,12 +279,26 @@ func BenchmarkViewsDailyLiveHalf(b *testing.B) {
 // attributes per event, into a fresh database per sub-benchmark. Event ids
 // are unique across iterations so every row is inserted, never ignored.
 // It guards the write path's cost: usage_attributes counting (spec D3)
-// may add at most 10% to attrs=5.
+// may add at most 10% to attrs=5. attrs=0/5/20 have no attribute rules:
+// they may pay one rules query per batch and nothing per event (project
+// attributes D9). attrs=5/rules adds 10 attribute rules, one of which
+// renames key01, so every event's attributes are mapped.
 func BenchmarkWriteEvents(b *testing.B) {
-	for _, n := range []int{0, 5, 20} {
-		b.Run(fmt.Sprintf("attrs=%d", n), func(b *testing.B) {
+	for _, c := range []struct {
+		attrs int
+		rules bool
+	}{{0, false}, {5, false}, {20, false}, {5, true}} {
+		name := fmt.Sprintf("attrs=%d", c.attrs)
+		if c.rules {
+			name += "/rules"
+		}
+		b.Run(name, func(b *testing.B) {
+			n := c.attrs
 			db := setupBenchDB(b) // the file's helper: a fresh migrated database
 			ctx := context.Background()
+			if c.rules {
+				seedBenchAttributeRules(b, db)
+			}
 			start := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
 			batch := make([]store.Event, 500)
 			b.ReportAllocs()
@@ -309,6 +323,53 @@ func BenchmarkWriteEvents(b *testing.B) {
 	}
 }
 
+// seedBenchAttributeRules gives benchProject 10 attribute rules: renames
+// and blocks of keys BenchmarkWriteEvents never sends, and a rename of
+// key01, which every event of attrs>=2 carries.
+func seedBenchAttributeRules(b *testing.B, db *DB) {
+	b.Helper()
+	ctx := context.Background()
+	a := store.AuditEntry{Actor: "bench", Action: "attribute.rename"}
+	for _, r := range [][2]string{
+		{"old_plan", "plan"}, {"tier", "plan"}, {"ver", "version"}, {"lang", "locale"}, {"key01", "key01_renamed"},
+	} {
+		if _, err := db.RenameAttribute(ctx, benchProject, r[0], r[1], false, a); err != nil {
+			b.Fatal(err)
+		}
+	}
+	for _, k := range []string{"email", "ssn", "phone", "ip", "token"} {
+		if err := db.BlockAttribute(ctx, benchProject, k, a); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// BenchmarkRenameAttribute times one RenameAttribute of key0, which every
+// event of the BenchmarkCountReceived window carries (30 days x 2,000
+// product events and 200 measure samples): the raw rewrite of 66,000 rows
+// and the usage rows, in one transaction while ingest waits. Iterations
+// rename key0 to keyX and back.
+func BenchmarkRenameAttribute(b *testing.B) {
+	db := setupBenchDB(b)
+	seedReceivedWindow(b, db)
+	ctx := context.Background()
+	a := store.AuditEntry{Actor: "bench", Action: "attribute.rename"}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		from, to := "key0", "keyX"
+		if i%2 == 1 {
+			from, to = to, from
+		}
+		got, err := db.RenameAttribute(ctx, benchProject, from, to, false, a)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if got["events"] != 30*2200 {
+			b.Fatalf("rewrote %d rows, want %d", got["events"], 30*2200)
+		}
+	}
+}
+
 // BenchmarkCountReceived runs the nightly received-attributes recount
 // (countReceived, inside RecordUsageHistory' transaction, while ingest
 // waits) over a raw window of 30 days x 2,000 web product events as the SDK
@@ -317,6 +378,32 @@ func BenchmarkWriteEvents(b *testing.B) {
 // measure samples. It guards the one-pass shape of receivedSQL.
 func BenchmarkCountReceived(b *testing.B) {
 	db := setupBenchDB(b)
+	ctx := context.Background()
+	start, days := seedReceivedWindow(b, db)
+	today := start.AddDate(0, 0, days).Format("2006-01-02")
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := db.tx(ctx, func(tx *sql.Tx) error { return countReceived(ctx, tx, today) }); err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.StopTimer()
+	var n int
+	if err := db.db.QueryRow(`SELECT COUNT(*) FROM usage_attributes WHERE max_values IS NOT NULL`).Scan(&n); err != nil {
+		b.Fatal(err)
+	}
+	if n != days*10 { // key0..key4, $host, $path, $os_version, $browser_version, $device_model
+		b.Fatalf("recount wrote %d rows, want %d", n, days*10)
+	}
+}
+
+// seedReceivedWindow writes 30 days x 2,000 web product events as the SDK
+// sends them (5 custom attributes key0..key4, host, path, OS and browser
+// versions, and the other environment columns that widen a row), plus 30
+// days x 200 measure samples carrying key0, for benchProject. It returns
+// the first day and the number of days.
+func seedReceivedWindow(b *testing.B, db *DB) (time.Time, int) {
+	b.Helper()
 	ctx := context.Background()
 	const (
 		days     = 30
@@ -357,19 +444,5 @@ func BenchmarkCountReceived(b *testing.B) {
 			b.Fatalf("seed day %d: %v", d, err)
 		}
 	}
-	today := start.AddDate(0, 0, days).Format("2006-01-02")
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		if err := db.tx(ctx, func(tx *sql.Tx) error { return countReceived(ctx, tx, today) }); err != nil {
-			b.Fatal(err)
-		}
-	}
-	b.StopTimer()
-	var n int
-	if err := db.db.QueryRow(`SELECT COUNT(*) FROM usage_attributes WHERE max_values IS NOT NULL`).Scan(&n); err != nil {
-		b.Fatal(err)
-	}
-	if n != days*10 { // key0..key4, $host, $path, $os_version, $browser_version, $device_model
-		b.Fatalf("recount wrote %d rows, want %d", n, days*10)
-	}
+	return start, days
 }
