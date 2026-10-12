@@ -309,7 +309,7 @@ raw-first.
 | A user's or group's timeline | `query` over the raw window, full scan | query over 3 years; Parquet sorted to suit (Q3) |
 | First event of an actor or an event name | `actors` day; `MIN(day)` from aggregates; the event itself only in the window | query |
 | "When did user X unsubscribe", combinations, undeclared keys | raw window only | query |
-| Ad hoc SQL (`query`, widget SQL) | anything, `events` included | D4's tables over Hot + Parquet |
+| Ad hoc SQL (`query`, widget SQL) | anything, `events` included | D4's tables over the files and the open log (D8) |
 | Form submission → visit linking (`forms.go:SessionAt`) | raw views of today and yesterday | today's and yesterday's day files or log, or linked lazily (Q9) |
 
 ### Writes and maintenance
