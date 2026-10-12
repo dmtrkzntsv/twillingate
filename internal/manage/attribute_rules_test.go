@@ -266,3 +266,52 @@ func TestMergingBreakdownsFreesBudget(t *testing.T) {
 		t.Errorf("attributes = %v, want [tier]", got)
 	}
 }
+
+// An update that does not send attributes leaves the catalog alone, even
+// when the snapshot it merges over is stale: here it still lists plan as
+// a breakdown although plan was just blocked, and writing that list back
+// would mark plan again.
+func TestUpdateWithoutAttributesLeavesTheCatalog(t *testing.T) {
+	ops, st, reg, p, _ := ruleOps(t)
+	ctx := context.Background()
+	if _, err := ops.UpdateProject(ctx, "t", ProjectSpec{ID: p, Attributes: []string{"plan", "tier"}}); err != nil {
+		t.Fatal(err)
+	}
+	stale := reg.snap.Load()
+	if err := st.BlockAttribute(ctx, p, "plan", store.AuditEntry{Actor: "t", Action: "attribute.block"}); err != nil {
+		t.Fatal(err)
+	}
+	v, err := st.ConfigVersion(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg.snap.Store(stale) // the block has not reached this process yet
+	reg.version.Store(v)
+	breakdowns := func() string {
+		t.Helper()
+		ps, _, err := st.LoadRegistry(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, row := range ps {
+			if row.ID == p {
+				return row.Attributes
+			}
+		}
+		t.Fatalf("project %d not loaded", p)
+		return ""
+	}
+	if got := breakdowns(); got != `["tier"]` {
+		t.Fatalf("breakdowns after the block = %s, want [\"tier\"]", got)
+	}
+	got, err := ops.UpdateProject(ctx, "t", ProjectSpec{ID: p, Name: "renamed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Name != "renamed" {
+		t.Errorf("name = %q, want renamed", got.Name)
+	}
+	if got := breakdowns(); got != `["tier"]` {
+		t.Errorf("breakdowns after a name-only update = %s, want [\"tier\"]: the stale list was written back", got)
+	}
+}

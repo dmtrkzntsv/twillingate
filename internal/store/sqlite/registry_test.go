@@ -773,3 +773,31 @@ func TestProjectBreakdownsLiveInTheCatalog(t *testing.T) {
 		t.Errorf("project_attributes after clearing = %q, want %q", got, want)
 	}
 }
+
+// KeepBreakdowns (an update that did not send attributes) leaves the
+// catalog as it is: Attributes is ignored, and a row the sync would prune
+// (no breakdown, no usage row) stays.
+func TestUpdateKeepingBreakdownsLeavesTheCatalog(t *testing.T) {
+	d := openRegistryDB(t)
+	ctx := context.Background()
+	audit := store.AuditEntry{Actor: "cli", Action: "project.update"}
+	id, err := d.CreateProject(ctx, store.RegistryProject{Name: "Blog", AllowedOrigins: `[]`,
+		Attributes: `["plan"]`}, audit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.db.Exec(`INSERT INTO project_attributes (project_id, key) VALUES (?, 'orphan')`, id); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.UpdateProject(ctx, store.RegistryProject{ID: id, Name: "Renamed", AllowedOrigins: `[]`,
+		Attributes: `["stale"]`, KeepBreakdowns: true}, audit); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := queryStrings(t, d, `SELECT key, breakdown FROM project_attributes ORDER BY key`),
+		[]string{"orphan|0", "plan|1"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("project_attributes = %q, want %q", got, want)
+	}
+	if got := queryStrings(t, d, `SELECT name FROM projects`); !reflect.DeepEqual(got, []string{"Renamed"}) {
+		t.Errorf("name = %q, want Renamed", got)
+	}
+}

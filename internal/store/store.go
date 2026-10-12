@@ -222,6 +222,11 @@ type RegistryProject struct {
 	Archived       bool
 	ArchivedAt     string // RFC 3339 UTC, "" = live
 	SortKey        string // its place in the order (migration 034)
+	// KeepBreakdowns tells UpdateProject to leave the catalog's breakdown
+	// flags as they are and ignore Attributes: the caller did not send a
+	// list, so a stale copy of the current one must not be written back
+	// over a rule that changed it since. Never set on a loaded row.
+	KeepBreakdowns bool
 }
 
 // EventRule is one event rule (rules with kind 'event', migration 040): a rename (To set)

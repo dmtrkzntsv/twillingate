@@ -241,22 +241,29 @@ func (o *Ops) UpdateProject(ctx context.Context, actor string, spec ProjectSpec)
 	if spec.AllowedOrigins == nil {
 		spec.AllowedOrigins = cur.AllowedOrigins
 	}
-	if spec.Attributes == nil {
+	// Without attributes the update leaves the catalog alone: the snapshot's
+	// list may predate a rule that just changed it (a block or rename), and
+	// writing it back would re-mark the key.
+	keep := spec.Attributes == nil
+	if keep {
 		spec.Attributes = cur.Attributes
 	}
 	if err := spec.validate(); err != nil {
 		return nil, err
 	}
-	if err := o.checkRuledBreakdowns(ctx, spec.ID, spec.Attributes); err != nil {
-		return nil, err
-	}
-	if err := o.checkBreakdowns(ctx, cur, spec.Attributes); err != nil {
-		return nil, err
+	if !keep {
+		if err := o.checkRuledBreakdowns(ctx, spec.ID, spec.Attributes); err != nil {
+			return nil, err
+		}
+		if err := o.checkBreakdowns(ctx, cur, spec.Attributes); err != nil {
+			return nil, err
+		}
 	}
 	row, err := spec.row()
 	if err != nil {
 		return nil, err
 	}
+	row.KeepBreakdowns = keep
 	if err := o.St.UpdateProject(ctx, row, store.AuditEntry{
 		Actor: actor, Action: "project.update", Subject: idSubject(spec.ID)}); err != nil {
 		return nil, err

@@ -199,8 +199,10 @@ func (d *DB) UpdateProject(ctx context.Context, p store.RegistryProject, a store
 		if n, _ := res.RowsAffected(); n == 0 {
 			return fmt.Errorf("update project: unknown id %d: %w", p.ID, store.ErrNotFound)
 		}
-		if err := syncBreakdowns(ctx, tx, p.ID, p.Attributes); err != nil {
-			return fmt.Errorf("update project %d: %w", p.ID, err)
+		if !p.KeepBreakdowns {
+			if err := syncBreakdowns(ctx, tx, p.ID, p.Attributes); err != nil {
+				return fmt.Errorf("update project %d: %w", p.ID, err)
+			}
 		}
 		return auditAndBump(ctx, tx, a)
 	})
