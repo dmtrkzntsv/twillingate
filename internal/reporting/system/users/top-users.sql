@@ -14,7 +14,7 @@ SELECT COALESCE(i.name, d.id) AS "User",
        MAX(d.day) AS "Last seen"
 FROM v_identity_daily d
 JOIN firsts f ON f.id = d.id
-LEFT JOIN identities i
+LEFT JOIN v_identities i
   ON i.project_id = d.project_id AND i.kind = 'user' AND i.id = d.id
 WHERE d.project_id = :project AND d.kind = 'user' AND d.id != ''
   AND d.day BETWEEN :from AND :to

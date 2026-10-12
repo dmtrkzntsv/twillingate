@@ -165,6 +165,37 @@ func TestSampleProject(t *testing.T) {
 	}
 }
 
+// TestSQLValidateOnTheWidgetHandle: on the scoped handle production
+// gives widget SQL, a widget reads raw_*, v_* and agg_* and nothing else,
+// while the sample project is still found through the trusted handle,
+// and the shape check alone (Migrate's) needs no trusted handle at all.
+func TestSQLValidateOnTheWidgetHandle(t *testing.T) {
+	st, widgets, trusted := newTestStoreAndWidgetDBs(t)
+	pid := mustCreateProject(t, st, "blog")
+	mustWriteEvent(t, st, "e1", pid, store.FamilyViews, "2026-08-01")
+	ctx := context.Background()
+	stat := testComponents(t)["stat"]
+	s := &sqlSource{db: widgets, trusted: trusted, sampleRows: true}
+
+	if err := s.Validate(ctx, `SELECT COUNT(*) AS value FROM raw_views WHERE project_id = :project`, stat); err != nil {
+		t.Errorf("raw_views: %v", err)
+	}
+	for _, q := range []string{
+		`SELECT COUNT(*) AS value FROM projects`,
+		`SELECT COUNT(*) AS value FROM events WHERE project_id = :project`,
+		`SELECT COUNT(*) AS value FROM tw_store.events`,
+	} {
+		if err := s.Validate(ctx, q, stat); !errors.Is(err, store.ErrInvalid) {
+			t.Errorf("%s: err = %v, want ErrInvalid", q, err)
+		}
+	}
+
+	shape := &sqlSource{db: widgets}
+	if err := shape.Validate(ctx, `SELECT COUNT(*) AS value FROM v_views_daily WHERE project_id = :project`, stat); err != nil {
+		t.Errorf("shape check: %v", err)
+	}
+}
+
 func TestSQLValidateChecksColumnsViaLimitZero(t *testing.T) {
 	db := newTestReadDB(t)
 	s := &sqlSource{db: db}

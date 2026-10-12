@@ -18,6 +18,10 @@
 //     extends the same wrap with filters, an order and counts, after the
 //     same Check);
 //  4. Run enforces a deadline on every query, custom or not.
+//
+// Open's handle reads every table but the refused ones; OpenScoped's
+// (scoped.go), for widget SQL, reads only the raw_*, v_* and agg_* objects
+// and is query_only and _defensive the same way.
 package readsql
 
 import (

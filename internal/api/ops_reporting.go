@@ -350,10 +350,10 @@ func (h *host) registerReporting(r *registrar) {
 		Description: "Move any tab of a project's page, built-in or your own, after another tab of it (`after`; 0 first)."},
 		h.moveProjectTab)
 	expose(r, spec{Name: "add_widget", Annotations: write, Method: "POST", Path: d + "/widgets", Status: http.StatusCreated, constrain: widget(self),
-		Description: "Call reporting_guide first. Add a widget to a user dashboard: a component, a source ({type: sql|md, content}), optional title, props, width and height (default from the component), name (derived from the title when omitted) and after (a widget id; 0 first; omitted, last). The SQL is run once to check its columns against the component's inputs."},
+		Description: "Call reporting_guide first. Add a widget to a user dashboard: a component, a source ({type: sql|md, content}), optional title, props, width and height (default from the component), name (derived from the title when omitted) and after (a widget id; 0 first; omitted, last). The SQL reads only the raw_*, v_* and agg_* views and tables (any other table is \"no such table\"; query reads more) and is run once to check its columns against the component's inputs."},
 		h.addWidget)
 	expose(r, spec{Name: "update_widget", Annotations: write, Method: "PATCH", Path: w, constrain: widget(self),
-		Description: "Call reporting_guide first. Change a widget on a user dashboard: name, component, title, props, source, width or height, or move it with after (a widget id there; 0 first). Fields you omit are kept; the result is validated whole, but a change of only width, height, after, title or name runs no query."},
+		Description: "Call reporting_guide first. Change a widget on a user dashboard: name, component, title, props, source, width or height, or move it with after (a widget id there; 0 first). Fields you omit are kept; the result is validated whole, but a change of only width, height, after, title or name runs no query. A widget's SQL reads only the raw_*, v_* and agg_* views and tables."},
 		h.updateWidget)
 	expose(r, spec{Name: "copy_widget", Annotations: write, Method: "POST", Path: w + "/copy", Status: http.StatusCreated,
 		Description: "Call reporting_guide first. Copy a widget, a system one included, onto a user dashboard (dashboard_id), keeping its size; optional after (a widget id there; 0 first; omitted, last). The copy is independent of the original."},
@@ -369,7 +369,7 @@ func (h *host) registerReporting(r *registrar) {
 		Description: "Store the viewer's project and range selection for a dashboard."},
 		h.setView)
 	restOnly(r, spec{Name: "preview_widget", Method: "POST", Path: "/api/widgets/preview",
-		Description: "The console editor's Run query: run an unsaved widget's sql with the given project and range, uncached and saving nothing. Answers the rows and, in problem, the first way they do not fit the component; agents call add_widget, which validates."},
+		Description: "The console editor's Run query: run an unsaved widget's sql (which reads only the raw_*, v_* and agg_* views and tables) with the given project and range, uncached and saving nothing. Answers the rows and, in problem, the first way they do not fit the component; agents call add_widget, which validates."},
 		h.previewWidget)
 	h.registerWidgetShares(r)
 }

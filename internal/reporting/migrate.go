@@ -37,7 +37,9 @@ import (
 var systemFS embed.FS
 
 // Migrate syncs this release's embedded system definition (systemFS,
-// Manifest()) into st, using db to validate every system widget's SQL.
+// Manifest()) into st, using db to validate every system widget's SQL:
+// the widget handle (readsql.OpenScoped), so a system widget reading a
+// table widget SQL may not read fails the boot as it would fail to run.
 func Migrate(ctx context.Context, st Store, db *readsql.DB) error {
 	system, err := fs.Sub(systemFS, "system")
 	if err != nil {
@@ -84,8 +86,9 @@ func migrateFrom(ctx context.Context, st Store, db *readsql.DB, system fs.FS, ma
 	// an agent's, and a young install may have no rows yet to sample.
 	// now is the real clock rather than nil: a widget whose SQL follows
 	// :from/:to still needs sample dates bound before the LIMIT 0 query,
-	// or SQLite errors "missing named argument".
-	svc := &Service{st: st, db: db, sources: newSources(db, false, time.Now), now: time.Now}
+	// or SQLite errors "missing named argument". No trusted handle: the
+	// shape check binds project 0 rather than look a project up.
+	svc := &Service{st: st, db: db, sources: newSources(db, nil, false, time.Now), now: time.Now}
 
 	dashboards := make([]store.SystemDashboard, 0, len(files))
 	if len(files) > 0 {

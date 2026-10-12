@@ -195,11 +195,18 @@ func newSystemFixture(t *testing.T) systemFixture {
 	st, path := newTestStore(t)
 	// A generous timeout: this runs under -race in make test, where the
 	// pure-Go SQLite driver is several times slower than in production.
-	db, err := readsql.Open(path, 60*time.Second, 1000)
+	// The widget handle is the scoped one production gives widget SQL, so
+	// a system widget reading a table it may not read fails here.
+	db, err := readsql.OpenScoped(path, 60*time.Second, 1000)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
+	trusted, err := readsql.Open(path, 60*time.Second, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { trusted.Close() })
 	if err := Migrate(ctx, st, db); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
@@ -208,7 +215,7 @@ func newSystemFixture(t *testing.T) systemFixture {
 	seedSystemData(t, st, pid, today)
 	other := mustCreateProject(t, st, "neighbour")
 	seedNeighbour(t, st, other, today)
-	return systemFixture{svc: New(st, db, Options{}), st: st, db: db, project: pid, neighbour: other, today: today}
+	return systemFixture{svc: New(st, db, Options{Trusted: trusted}), st: st, db: db, project: pid, neighbour: other, today: today}
 }
 
 // column returns row i's value in res's column name, failing the test

@@ -50,16 +50,18 @@ type Markdown struct {
 	Markdown string `json:"markdown"`
 }
 
-// newSources builds the registered source types against db and clock
-// now. sampleRows controls whether sql's Validate also runs a sample
-// query and checks its rows' types (true for a widget actually being
-// saved; false where only the query's shape matters). db and now may be
-// nil when the result is only used to enumerate or check registered
-// names (validSourceType, sortedSourceNames) — no method that touches
-// either is called in that case.
-func newSources(db *readsql.DB, sampleRows bool, now func() time.Time) map[string]SourceType {
+// newSources builds the registered source types against db (the widget
+// handle, readsql.OpenScoped in production), trusted (the full handle for
+// SQL this package writes itself; nil means db) and clock now. sampleRows
+// controls whether sql's Validate also runs a sample query and checks its
+// rows' types (true for a widget actually being saved; false where only
+// the query's shape matters). db, trusted and now may be nil when the
+// result is only used to enumerate or check registered names
+// (validSourceType, sortedSourceNames) — no method that touches them is
+// called in that case.
+func newSources(db, trusted *readsql.DB, sampleRows bool, now func() time.Time) map[string]SourceType {
 	return map[string]SourceType{
-		"sql": &sqlSource{db: db, sampleRows: sampleRows, now: now},
+		"sql": &sqlSource{db: db, trusted: trusted, sampleRows: sampleRows, now: now},
 		"md":  mdSource{},
 	}
 }
@@ -68,7 +70,7 @@ func newSources(db *readsql.DB, sampleRows bool, now func() time.Time) map[strin
 // asks the same registry newSources builds, rather than keeping a second
 // list of names that could drift from it.
 func validSourceType(name string) bool {
-	_, ok := newSources(nil, false, nil)[name]
+	_, ok := newSources(nil, nil, false, nil)[name]
 	return ok
 }
 
@@ -105,9 +107,12 @@ func (mdSource) Load(_ context.Context, content string, _ Params) (any, error) {
 // sqlSource is the sql SourceType: a SELECT run read-only through
 // readsql, parameterized on at most :project, :from and :to.
 type sqlSource struct {
-	db         *readsql.DB
-	sampleRows bool
-	now        func() time.Time // stands in for time.Now in tests; nil means time.Now
+	// db runs the widget's own SQL; trusted runs SQL this package writes
+	// itself (sampleProject), which reads tables db may not have; nil
+	// means db.
+	db, trusted *readsql.DB
+	sampleRows  bool
+	now         func() time.Time // stands in for time.Now in tests; nil means time.Now
 }
 
 func (s *sqlSource) Name() string    { return "sql" }
@@ -165,16 +170,18 @@ func (s *sqlSource) Validate(ctx context.Context, content string, c Component) e
 		return err
 	}
 
-	// The sample values must be computed — and bound — before the very
-	// first run: SQLite errors "missing named argument" for a named
-	// parameter the statement mentions but no argument was given for, so
-	// even the LIMIT 0 shape check needs them whenever content uses
-	// :project, :from or :to, not only the sampleRows path below.
+	// The sample values must be bound before the very first run: SQLite
+	// errors "missing named argument" for a named parameter the statement
+	// mentions but no argument was given for, so even the LIMIT 0 shape
+	// check needs them whenever content uses :project, :from or :to. Only
+	// the sample rows read a row, so only they need a real project: the
+	// shape check alone (sampleRows false, the release's system widgets
+	// at boot) binds project 0 rather than look one up.
 	needsProject, needsRange := s.Follows(content)
 	var projectID int64
 	var from, to string
-	if needsProject {
-		projectID, err = sampleProject(ctx, s.db)
+	if needsProject && s.sampleRows {
+		projectID, err = sampleProject(ctx, s.trustedDB())
 		if err != nil {
 			if errors.Is(err, readsql.ErrTimeout) {
 				return refuseSQLErr(s.db, err)
@@ -208,6 +215,14 @@ func (s *sqlSource) Validate(ctx context.Context, content string, c Component) e
 		return nil
 	}
 	return c.checkRows(sample)
+}
+
+// trustedDB is the handle for SQL this package writes itself.
+func (s *sqlSource) trustedDB() *readsql.DB {
+	if s.trusted != nil {
+		return s.trusted
+	}
+	return s.db
 }
 
 func (s *sqlSource) Load(ctx context.Context, content string, p Params) (any, error) {
@@ -289,13 +304,14 @@ func refuseSQLErr(db *readsql.DB, err error) error {
 // sampleProject picks the project with the most recent data (views,
 // product or measures), for a sample run of a widget's SQL when no dashboard
 // selection exists yet. It reads projects directly — trusted Go SQL, not
-// checked custom SQL — which is why it may read a table widget SQL itself
-// may not, and the raw rows through raw_views, raw_product and
-// raw_measures, which decode the encoded events table; project_id and day
-// pass through as stored, so each MAX still reads the key's last entry for
-// the project. Its own errors are not store refusals (the
-// caller decides: a timeout still becomes one, anything else is this
-// package's own infrastructure failing, not a problem with the widget).
+// checked custom SQL, so db is the full handle (Options.Trusted), since
+// the widget handle has no projects table — and the raw rows through
+// raw_views, raw_product and raw_measures, which decode the encoded events
+// table; project_id and day pass through as stored, so each MAX still
+// reads the key's last entry for the project. Its own errors are not store
+// refusals (the caller decides: a timeout still becomes one, anything else
+// is this package's own infrastructure failing, not a problem with the
+// widget).
 func sampleProject(ctx context.Context, db *readsql.DB) (int64, error) {
 	res, err := db.Run(ctx, `
 SELECT p.id FROM projects p WHERE p.archived_at IS NULL

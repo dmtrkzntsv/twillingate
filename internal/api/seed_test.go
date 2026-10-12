@@ -209,13 +209,20 @@ func newTestHost(t *testing.T) (*host, *mcp.ClientSession) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { subs.Close() })
+	// Widget SQL's own scoped handle, as Build opens it.
+	widgets, err := readsql.OpenScoped(path, 5*time.Second, 1000, CustomSQLRefused()...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { widgets.Close() })
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	reg := manage.New(st, logger)
 	if err := reg.Reload(ctx); err != nil {
 		t.Fatal(err)
 	}
 	h := &host{db: db, subs: subs, reg: reg, ops: manage.NewOps(reg, st),
-		rep:       reporting.New(st, db, reporting.Options{CacheAge: time.Minute, RefreshAge: time.Second, ShareBaseURL: "https://c.example"}),
+		rep: reporting.New(st, widgets, reporting.Options{CacheAge: time.Minute, RefreshAge: time.Second,
+			ShareBaseURL: "https://c.example", Trusted: db}),
 		ingestURL: "https://collector.test", logger: logger, rawDays: config.DefaultRawDays,
 		limits: limitsFrom(&config.Config{AttributeValuesTopN: config.DefaultAttributeValuesTopN, IdentitiesTopN: config.DefaultIdentitiesTopN})}
 	// host itself carries no path (production has no need for one once

@@ -282,7 +282,7 @@ func TestDevWidgetDataPagesRemoteTables(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "ok", "t.json"), []byte(cfg), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	h := DevHandler([]string{root}, newTestReadDB(t))
+	h := DevHandler([]string{root}, newTestReadDB(t), nil)
 	path := "/api/widgets/" + strconv.FormatInt(firstDevDashboardID*1000+1, 10) + "/data"
 
 	var got struct {

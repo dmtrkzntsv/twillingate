@@ -1620,10 +1620,12 @@ days the `WHERE` on `project_id` and `day` covers. Narrow ranges and the
 
 #### Reading `events` directly
 
-`query` reads every table, the raw `events` table included, but `events`
-stores ids and dictionary numbers, not text (migration 041): read it through
-`raw_views`, `raw_product`, `raw_measures` or `v_events_flat`, which decode
-every column to the text above. To decode a row by hand:
+`query` reads every table but `meta`, SQLite's internals and `submissions`,
+the raw `events` table included (widget SQL reads only `raw_*`, `v_*` and
+`agg_*`: see docs://reporting). `events` stores ids and dictionary numbers,
+not text (migration 041): read it through `raw_views`, `raw_product`,
+`raw_measures` or `v_events_flat`, which decode every column to the text
+above. To decode a row by hand:
 
 | Column | Stored as | Decodes with |
 | --- | --- | --- |

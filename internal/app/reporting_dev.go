@@ -21,21 +21,27 @@ const (
 	devQueryMaxRows = 1000
 )
 
-// ReportingDev runs `twillingate reporting dev`: a read-only handle on
-// dbPath (the same sql widgets in the real console run against) and
+// ReportingDev runs `twillingate reporting dev`: two read-only handles on
+// dbPath, the scoped one widget SQL runs on (as in the real console) and
+// the full one reporting's own SQL reads projects through, and
 // reporting.DevHandler, serving addr until ctx is cancelled. There is no
 // store, no registry and no auth here — cmd/twillingate/reporting.go has
 // already refused a non-loopback addr before this is called.
 func ReportingDev(ctx context.Context, dirs []string, dbPath, addr string, logger *slog.Logger) error {
 	// Widget SQL here is as custom as in the console: it may not read
-	// what the console's custom SQL may not.
-	db, err := readsql.Open(dbPath, devQueryTimeout, devQueryMaxRows, api.CustomSQLRefused()...)
+	// what the console's widget SQL may not.
+	db, err := readsql.OpenScoped(dbPath, devQueryTimeout, devQueryMaxRows, api.CustomSQLRefused()...)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
+	trusted, err := readsql.Open(dbPath, devQueryTimeout, devQueryMaxRows)
+	if err != nil {
+		return err
+	}
+	defer trusted.Close()
 
-	srv := &http.Server{Addr: addr, Handler: reporting.DevHandler(dirs, db), ReadHeaderTimeout: 5 * time.Second}
+	srv := &http.Server{Addr: addr, Handler: reporting.DevHandler(dirs, db, trusted), ReadHeaderTimeout: 5 * time.Second}
 	errCh := make(chan error, 1)
 	go func() { errCh <- srv.ListenAndServe() }()
 	logger.Info("reporting dev serving", "addr", addr, "dirs", dirs)

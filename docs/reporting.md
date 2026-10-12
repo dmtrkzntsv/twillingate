@@ -124,8 +124,9 @@ reuses one only up to `REPORTING_REFRESH_MAX_AGE` old (default `1m`), and
 can turn on auto-refresh from a dashboard's top-right "…" menu: the page
 then reloads it every `auto_refresh_seconds` (the longer of the two, so
 each reload runs the queries again), only while its window has focus. Changing a
-widget's source starts it on new entries. Widget queries run under the same
-guards as `query`: read-only, `CONSOLE_QUERY_TIMEOUT` and `CONSOLE_QUERY_ROWS_MAX`.
+widget's source starts it on new entries. Widget queries run read-only under
+the same `CONSOLE_QUERY_TIMEOUT` and `CONSOLE_QUERY_ROWS_MAX` as `query`, but
+read fewer tables (see [Rules](#rules)).
 
 ### Filtering and paging a table
 
@@ -234,11 +235,17 @@ widget_data {"widget_id": 42, "project_id": 7, "from": "2026-09-01", "to": "2026
   column marked optional may be left out, and only `table` takes any columns.
 - The only parameters are `:project`, `:from` and `:to`. `day` is text,
   `YYYY-MM-DD` in UTC: compare it as a string (`day BETWEEN :from AND :to`).
-- Read the `v_*` views. Custom SQL may read any table except `meta` and
-  SQLite's own (`sqlite_*`, `pragma_*`, `dbstat`), and only reads. SQLite
-  takes a quoted string as a name, so a single-quoted string that is one
-  of those names (`'meta'`, `'sqlite_master'`) is refused too; `'metadata'`
-  and `'%meta%'` pass.
+- Read the `v_*` views. Widget SQL reads only the `raw_*`, `v_*` and `agg_*`
+  views and tables, and only reads: any other table (`events`, `identities`,
+  `projects`…) is "no such table", even though `query` reads it. Raw rows
+  are in `raw_views`, `raw_product`, `raw_measures` and `v_events_flat`;
+  user and group display names in `v_identities`. CTE names and column
+  names are free (`v_identity_daily` has columns `events` and `actors`).
+- `meta`, SQLite's own tables (`sqlite_*`, `pragma_*`, `dbstat`), `ATTACH`
+  and `tw_store` (the name the database is attached under) are refused
+  outright, quoted or not. SQLite takes a quoted string as a name, so a
+  single-quoted string that is one of those names (`'meta'`,
+  `'sqlite_master'`) is refused too; `'metadata'` and `'%meta%'` pass.
 - Unquoted names are ASCII: quote any other (`"визиты"`). Strings and
   comments may hold any text.
 - Group in SQL: a widget gets at most `CONSOLE_QUERY_ROWS_MAX` rows (default
@@ -1072,7 +1079,8 @@ widget's name (`widget visitors: …`), and nothing is created.
 | line needs y (number); columns are x, visitors | Alias the column to the input: `visitors AS y`. |
 | visitors is not an input of line | Drop the column, or alias it to an input; only `table` takes any columns. |
 | line.y: "n/a" is not number | Return a number, a `YYYY-MM-DD` day or text as the input asks; `CAST(… AS REAL)` where needed. An empty value (SQL `NULL`) always passes. |
-| refused: sql reads meta, which custom SQL may not read | Read the `v_*` views instead. The same holds for `sqlite_*`, `pragma_*` and `dbstat`, as a name or as a single-quoted string equal to one (`'meta'`, `'sqlite_master'`), and for `ATTACH`. |
+| refused: sql reads meta, which custom SQL may not read | Read the `v_*` views instead. The same holds for `sqlite_*`, `pragma_*`, `dbstat` and `tw_store`, as a name or as a single-quoted string equal to one (`'meta'`, `'sqlite_master'`), and for `ATTACH`. |
+| no such table: main.events | Widget SQL reads only `raw_*`, `v_*` and `agg_*`: raw rows through `raw_views`, `raw_product`, `raw_measures` or `v_events_flat`, names through `v_identities`. |
 | refused: sql may use non-ASCII characters only inside quotes or comments | Quote the name: `"визиты"`. |
 | query exceeded CONSOLE_QUERY_TIMEOUT (10s); narrow the range or group the query | Group in SQL or read fewer days; the operator can raise `CONSOLE_QUERY_TIMEOUT`. |
 | SQLite's own error, such as a column that does not exist | Fix the query; try it with `query` first. |
@@ -1163,8 +1171,9 @@ Open `http://127.0.0.1:3100/`, which redirects to the dashboards at `/app/`.
   upgrade (see [Project tabs and the sidebar](#project-tabs-and-the-sidebar)).
   A preview ignores `sidebar`: every previewed dashboard is in the sidebar,
   since `reporting dev` has no project pages.
-- `-db` defaults to `DATABASE_DSN`'s path. The database is opened read-only
-  and never written: the view route answers but stores nothing, and the page
+- `-db` defaults to `DATABASE_DSN`'s path. The database is opened read-only,
+  widget SQL reading only `raw_*`, `v_*` and `agg_*` as in the console, and
+  never written: the view route answers but stores nothing, and the page
   offers no writes (no "…" menus, dragging or Restore buttons).
 - `-addr` is refused unless it is a loopback address, and a request naming
   any other host (`Host:`) gets `403`, so a page elsewhere cannot reach it

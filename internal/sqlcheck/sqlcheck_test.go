@@ -32,6 +32,7 @@ var dynamic = map[string]string{
 	"shared/readsql/page.go:QueryPage":                     "wraps the caller's query in the page's filters, sort and window",
 	"shared/readsql/page.go:countWhenEmpty":                "wraps the caller's query to count its rows",
 	"shared/readsql/readsql.go:QueryLimit":                 "wraps the caller's query to cap its rows",
+	"shared/readsql/scoped.go:scope":                       "makes a view named after each object the attached file holds",
 	"store/sqlite/aggregate_measures.go:rollupMeasureAttr": "the attribute's stored value and its decoding are passed in",
 	"store/sqlite/aggregate_product.go:rollupAttrValue":    "the attribute's stored value and its decoding are passed in",
 	"store/sqlite/aggregate_views.go:AggregateViewDay":     "each dimension builds its own rollup statement",

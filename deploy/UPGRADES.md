@@ -765,6 +765,16 @@ WHERE json_valid(e.attributes) AND j.type <> 'text';
 --    them.
 SELECT project_id, COUNT(*) FROM events
 WHERE project_id NOT IN (SELECT id FROM projects) GROUP BY project_id;
+
+-- 3. Your widgets whose SQL may read a table other than raw_*, v_* and
+--    agg_*, which widget SQL can no longer read (below). A hit may only
+--    name a view or a column: read it. System widgets are replaced by the
+--    upgrade.
+SELECT w.id, w.dashboard_id, w.name FROM widgets w
+JOIN dashboards d ON d.id = w.dashboard_id
+WHERE d.owner = 'user' AND w.archived_at IS NULL AND w.source_type = 'sql'
+  AND (w.source LIKE '%events%' OR w.source LIKE '%identities%'
+       OR w.source LIKE '%projects%' OR w.source LIKE '%strings%');
 ```
 
 A hit in the first check is fixed by hand before upgrading, for example by
@@ -778,6 +788,11 @@ What changes on the day:
   sees the encoded values: read the `raw_*` views or `v_events_flat`
   instead, or decode by hand (docs/twillingate.md, "Reading `events`
   directly").
+- **Breaking:** widget SQL reads only the `raw_*`, `v_*` and `agg_*` views
+  and tables. A user widget that reads any other table (`events`,
+  `identities`, `projects`…) fails when it runs with "no such table";
+  rewrite it on the views (`v_identities` for display names); check 3
+  above lists the candidates. `query` still reads every table.
 - The decoded `attributes` JSON lists its keys in the order of their ids,
   no longer alphabetically.
 - An attribute rename no longer deletes the old key's catalog row: view

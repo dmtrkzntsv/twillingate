@@ -25,6 +25,9 @@ var _ reporting.Store = store.Store(nil)
 // The reporting migrator gets its own read-only handle on the writer's
 // own database file (DatabasePath(cfg.Database)), not CONSOLE_DATABASE_DSN, which
 // may point at a copy that lags the write this migration itself just made.
+// It is the scoped handle widget SQL runs on (readsql.OpenScoped), so a
+// system widget reading a table widget SQL may not read stops the boot
+// rather than failing on every dashboard load.
 func Migrate(ctx context.Context, cfg *config.Config, st store.Store) error {
 	if err := st.Migrate(ctx); err != nil {
 		return err
@@ -39,7 +42,7 @@ func Migrate(ctx context.Context, cfg *config.Config, st store.Store) error {
 	if err := st.RebuildFlatView(ctx, reg.Snapshot(ctx).DeclaredAttributeKeys()); err != nil {
 		return fmt.Errorf("rebuild v_events_flat: %w", err)
 	}
-	db, err := readsql.Open(DatabasePath(cfg.Database), cfg.Console.QueryTimeout, cfg.Console.QueryMaxRows)
+	db, err := readsql.OpenScoped(DatabasePath(cfg.Database), cfg.Console.QueryTimeout, cfg.Console.QueryMaxRows)
 	if err != nil {
 		return err
 	}

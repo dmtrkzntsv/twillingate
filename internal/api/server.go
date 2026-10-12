@@ -28,7 +28,9 @@ const (
 // CustomSQLRefused names the tables every handle that runs custom SQL (the
 // query tool, widget SQL, and `reporting dev`'s previews) refuses to read:
 // submissions hold what visitors typed into forms, and only the server's
-// own SQL, on the second handle, reads them. A fresh slice each call.
+// own SQL, on a handle opened without them, reads them. Widget SQL's
+// scoped handle has no such table anyway; the name stays refused there
+// too. A fresh slice each call.
 func CustomSQLRefused() []string { return []string{"submissions"} }
 
 // Build assembles the tool host, both transports and the auth middleware,
@@ -41,8 +43,11 @@ func CustomSQLRefused() []string { return []string{"submissions"} }
 // mounts nothing itself: NewHandler wraps it with its own mux for the
 // standalone listener, and app calls it directly to mount on the ingest
 // surface's mux via RegisterOn. rst is the store reporting reads and
-// writes; widget queries run on the same read-only handle, and so under the
-// same CONSOLE_QUERY_TIMEOUT and CONSOLE_QUERY_ROWS_MAX, as the query tool.
+// writes. Widget queries run on their own read-only handle, scoped to the
+// raw_*, v_* and agg_* objects (readsql.OpenScoped), under the same
+// CONSOLE_QUERY_TIMEOUT and CONSOLE_QUERY_ROWS_MAX as the query tool, whose
+// handle reads every table but the refused ones; reporting's own SQL
+// (sampleProject) runs on the query tool's.
 func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *manage.Ops, rst reporting.Store, logger *slog.Logger) (http.Handler, func() error, error) {
 	db, err := readsql.Open(cfg.Console.DBPath, cfg.Console.QueryTimeout, cfg.Console.QueryMaxRows, CustomSQLRefused()...)
 	if err != nil {
@@ -53,9 +58,15 @@ func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *m
 		db.Close()
 		return nil, nil, err
 	}
-	closeAll := func() error { return errors.Join(db.Close(), subs.Close()) }
-	rep := reporting.New(rst, db, reporting.Options{CacheAge: cfg.Reporting.CacheAge, RefreshAge: cfg.Reporting.RefreshAge,
-		ArchivedDays: cfg.Retention.ArchivedDays, ShareBaseURL: cfg.Console.URL})
+	widgets, err := readsql.OpenScoped(cfg.Console.DBPath, cfg.Console.QueryTimeout, cfg.Console.QueryMaxRows, CustomSQLRefused()...)
+	if err != nil {
+		db.Close()
+		subs.Close()
+		return nil, nil, err
+	}
+	closeAll := func() error { return errors.Join(db.Close(), subs.Close(), widgets.Close()) }
+	rep := reporting.New(rst, widgets, reporting.Options{CacheAge: cfg.Reporting.CacheAge, RefreshAge: cfg.Reporting.RefreshAge,
+		ArchivedDays: cfg.Retention.ArchivedDays, ShareBaseURL: cfg.Console.URL, Trusted: db})
 	h := &host{db: db, subs: subs, reg: reg, ops: ops, rep: rep,
 		ingestURL: cfg.IngestURL, logger: logger, limits: limitsFrom(cfg), rawDays: cfg.Retention.Events.RawDays,
 		ingestDisabled: cfg.IngestDisabled}

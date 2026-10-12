@@ -78,6 +78,11 @@ type Options struct {
 	ShareBaseURL string
 	// Now stands in for time.Now in tests; nil means time.Now.
 	Now func() time.Time
+	// Trusted is the full read-only handle for SQL this package writes
+	// itself (sampleProject reads projects), which the widget handle
+	// passed to New, readsql.OpenScoped's, does not have. nil means the
+	// widget handle.
+	Trusted *readsql.DB
 }
 
 // Service is the reporting surface's composition root: the store slice
@@ -109,8 +114,9 @@ type Service struct {
 }
 
 // New builds a Service. db is the read-only handle sql widgets run
-// against (internal/shared/readsql); widgets are validated with a sample
-// query, so New always registers sql with sampleRows true.
+// against (readsql.OpenScoped, which reads only raw_*, v_* and agg_*);
+// widgets are validated with a sample query, so New always registers sql
+// with sampleRows true.
 func New(st Store, db *readsql.DB, opt Options) *Service {
 	now := opt.Now
 	if now == nil {
@@ -119,7 +125,7 @@ func New(st Store, db *readsql.DB, opt Options) *Service {
 	return &Service{
 		st:           st,
 		db:           db,
-		sources:      newSources(db, true, now),
+		sources:      newSources(db, opt.Trusted, true, now),
 		now:          now,
 		cache:        newCache(opt.CacheAge, opt.RefreshAge, now),
 		archivedDays: opt.ArchivedDays,

@@ -89,6 +89,26 @@ func newTestStoreAndReadDBMaxRows(t *testing.T, maxRows int) (store.Store, *read
 	return st, db
 }
 
+// newTestStoreAndWidgetDBs opens a migrated store and the two read-only
+// handles production gives reporting on the same file: the scoped one
+// widget SQL runs on (readsql.OpenScoped) and the full one for SQL the
+// package writes itself (Options.Trusted).
+func newTestStoreAndWidgetDBs(t *testing.T) (st store.Store, widgets, trusted *readsql.DB) {
+	t.Helper()
+	st, path := newTestStore(t)
+	widgets, err := readsql.OpenScoped(path, 2*time.Second, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { widgets.Close() })
+	trusted, err = readsql.Open(path, 2*time.Second, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { trusted.Close() })
+	return st, widgets, trusted
+}
+
 // rawExec reaches the underlying *sql.DB of the sqlite store, for
 // seeding rows (agg_views_daily) or breaking them (dropping a table,
 // writing a row that no longer fits a component) that no Store method
