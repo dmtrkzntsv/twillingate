@@ -127,7 +127,8 @@ func TestAttributesDeduplicated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := b.Attributes; len(got) != 3 || got[0] != "y" || got[1] != "x" || got[2] != "z" {
-		t.Fatalf("attributes = %v, want [y x z]", got)
+	// Read back from the catalog, ordered by key (project attributes spec D4).
+	if got := b.Attributes; len(got) != 3 || got[0] != "x" || got[1] != "y" || got[2] != "z" {
+		t.Fatalf("attributes = %v, want [x y z]", got)
 	}
 }

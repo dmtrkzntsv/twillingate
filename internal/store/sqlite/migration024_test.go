@@ -264,7 +264,8 @@ func TestMeasuresAttrsView(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	for _, q := range []string{
-		`INSERT INTO projects (id, name, attributes) VALUES (1, 'Site', '["plan", "$path"]')`,
+		`INSERT INTO projects (id, name) VALUES (1, 'Site')`,
+		`INSERT INTO project_attributes (project_id, key, breakdown) VALUES (1, 'plan', 1), (1, '$path', 1)`,
 		`INSERT OR REPLACE INTO meta (key, value) VALUES ('attributes_top_n', '1')`,
 		`INSERT INTO agg_measures_attrs (project_id, day, event_name, measure, attr_key, attr_value, bucket, samples, weight, sum)
 		 VALUES (1, '2026-08-01', 'api', 'time', 'plan', 'pro', 10, 3, 4, 5)`,

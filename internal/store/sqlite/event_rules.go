@@ -8,11 +8,12 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
-// LoadEventRules is every event rule (migration 039), for the registry
+// LoadEventRules is every event rule (rules with kind 'event', migration
+// 040), for the registry
 // snapshot and list_event_rules.
 func (d *DB) LoadEventRules(ctx context.Context) ([]store.EventRule, error) {
 	rows, err := d.db.QueryContext(ctx, `SELECT project_id, family, name, action,
-		COALESCE(to_name, ''), created_at FROM event_rules ORDER BY project_id, family, name`)
+		COALESCE(to_name, ''), created_at FROM rules WHERE kind='event' ORDER BY project_id, family, name`)
 	if err != nil {
 		return nil, err
 	}
@@ -47,7 +48,7 @@ func (d *DB) RenameEvent(ctx context.Context, projectID int64, family store.Fami
 	err := d.tx(ctx, func(tx *sql.Tx) error {
 		var blocked bool
 		if err := tx.QueryRowContext(ctx,
-			`SELECT EXISTS(SELECT 1 FROM event_rules WHERE project_id=?1 AND family=?2 AND name=?3 AND action='block')`,
+			`SELECT EXISTS(SELECT 1 FROM rules WHERE project_id=?1 AND kind='event' AND family=?2 AND name=?3 AND action='block')`,
 			projectID, string(family), to).Scan(&blocked); err != nil {
 			return fmt.Errorf("rename: look for a block on %s: %w", to, err)
 		}
@@ -80,18 +81,18 @@ func (d *DB) RenameEvent(ctx context.Context, projectID int64, family store.Fami
 		// D5: the target is no longer mapped away (a block on it stays);
 		// every rule that pointed at `from` now points at `to`.
 		if _, err := tx.ExecContext(ctx,
-			`DELETE FROM event_rules WHERE project_id=?1 AND family=?2 AND name=?3 AND action='rename'`,
+			`DELETE FROM rules WHERE project_id=?1 AND kind='event' AND family=?2 AND name=?3 AND action='rename'`,
 			projectID, string(family), to); err != nil {
 			return fmt.Errorf("rename rules: %w", err)
 		}
 		if _, err := tx.ExecContext(ctx,
-			`UPDATE event_rules SET to_name=?4 WHERE project_id=?1 AND family=?2 AND action='rename' AND to_name=?3`,
+			`UPDATE rules SET to_name=?4 WHERE project_id=?1 AND kind='event' AND family=?2 AND action='rename' AND to_name=?3`,
 			projectID, string(family), from, to); err != nil {
 			return fmt.Errorf("rename rules: %w", err)
 		}
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO event_rules (project_id, family, name, action, to_name) VALUES (?1, ?2, ?3, 'rename', ?4)
-			 ON CONFLICT (project_id, family, name) DO UPDATE SET
+			`INSERT INTO rules (project_id, kind, family, name, action, to_name) VALUES (?1, 'event', ?2, ?3, 'rename', ?4)
+			 ON CONFLICT (project_id, kind, family, name) DO UPDATE SET
 			   action='rename', to_name=excluded.to_name, created_at=excluded.created_at`,
 			projectID, string(family), from, to); err != nil {
 			return fmt.Errorf("rename rules: %w", err)
@@ -196,8 +197,8 @@ func renameAggregates(ctx context.Context, tx *sql.Tx, projectID int64, family s
 func (d *DB) BlockEvent(ctx context.Context, projectID int64, family store.Family, name string, a store.AuditEntry) error {
 	return d.tx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO event_rules (project_id, family, name, action) VALUES (?,?,?,'block')
-			 ON CONFLICT (project_id, family, name) DO UPDATE SET
+			`INSERT INTO rules (project_id, kind, family, name, action) VALUES (?,'event',?,?,'block')
+			 ON CONFLICT (project_id, kind, family, name) DO UPDATE SET
 			   action='block', to_name=NULL, created_at=excluded.created_at WHERE action <> 'block'`,
 			projectID, string(family), name); err != nil {
 			return fmt.Errorf("block %s: %w", name, err)
@@ -212,7 +213,7 @@ func (d *DB) BlockEvent(ctx context.Context, projectID int64, family store.Famil
 func (d *DB) RemoveEventRule(ctx context.Context, projectID int64, family store.Family, name string, a store.AuditEntry) error {
 	return d.tx(ctx, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx,
-			`DELETE FROM event_rules WHERE project_id=? AND family=? AND name=?`,
+			`DELETE FROM rules WHERE project_id=? AND kind='event' AND family=? AND name=?`,
 			projectID, string(family), name)
 		if err != nil {
 			return fmt.Errorf("remove event rule %s: %w", name, err)
@@ -234,13 +235,13 @@ func (d *DB) RemoveEventRule(ctx context.Context, projectID int64, family store.
 // subtracted from.
 var dropBlockedAggregates = [...]string{
 	`DELETE FROM agg_product_daily WHERE project_id=?1 AND event_name IN
-		(SELECT name FROM event_rules WHERE project_id=?1 AND family='product' AND action='block')`,
+		(SELECT name FROM rules WHERE project_id=?1 AND kind='event' AND family='product' AND action='block')`,
 	`DELETE FROM agg_product_attrs WHERE project_id=?1 AND event_name IN
-		(SELECT name FROM event_rules WHERE project_id=?1 AND family='product' AND action='block')`,
+		(SELECT name FROM rules WHERE project_id=?1 AND kind='event' AND family='product' AND action='block')`,
 	`DELETE FROM agg_measures_daily WHERE project_id=?1 AND event_name IN
-		(SELECT name FROM event_rules WHERE project_id=?1 AND family='measures' AND action='block')`,
+		(SELECT name FROM rules WHERE project_id=?1 AND kind='event' AND family='measures' AND action='block')`,
 	`DELETE FROM agg_measures_attrs WHERE project_id=?1 AND event_name IN
-		(SELECT name FROM event_rules WHERE project_id=?1 AND family='measures' AND action='block')`,
+		(SELECT name FROM rules WHERE project_id=?1 AND kind='event' AND family='measures' AND action='block')`,
 }
 
 // DropBlockedAggregates deletes the project's aggregate rows of every

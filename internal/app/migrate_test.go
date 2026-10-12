@@ -98,7 +98,8 @@ func migratedWith(t *testing.T, stmts ...string) (store.Store, *config.Config) {
 // columns before anything serves, from serve and the CLI alike.
 func TestMigrateRebuildsTheFlatView(t *testing.T) {
 	st, cfg := migratedWith(t,
-		`INSERT INTO projects (name, allowed_origins, attributes) VALUES ('blog', '[]', '["plan"]')`,
+		`INSERT INTO projects (name, allowed_origins) VALUES ('blog', '[]')`,
+		`INSERT INTO project_attributes (project_id, key, breakdown) SELECT id, 'plan', 1 FROM projects WHERE name = 'blog'`,
 		`DROP VIEW v_events_flat`)
 	if err := Migrate(context.Background(), cfg, st); err != nil {
 		t.Fatal(err)

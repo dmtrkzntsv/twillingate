@@ -278,7 +278,7 @@ func BenchmarkViewsDailyLiveHalf(b *testing.B) {
 // request carries (wire.MaxBatchEvents), with 0, 5 and 20 custom
 // attributes per event, into a fresh database per sub-benchmark. Event ids
 // are unique across iterations so every row is inserted, never ignored.
-// It guards the write path's cost: received_attributes counting (spec D3)
+// It guards the write path's cost: usage_attributes counting (spec D3)
 // may add at most 10% to attrs=5.
 func BenchmarkWriteEvents(b *testing.B) {
 	for _, n := range []int{0, 5, 20} {
@@ -366,7 +366,7 @@ func BenchmarkCountReceived(b *testing.B) {
 	}
 	b.StopTimer()
 	var n int
-	if err := db.db.QueryRow(`SELECT COUNT(*) FROM received_attributes WHERE max_values IS NOT NULL`).Scan(&n); err != nil {
+	if err := db.db.QueryRow(`SELECT COUNT(*) FROM usage_attributes WHERE max_values IS NOT NULL`).Scan(&n); err != nil {
 		b.Fatal(err)
 	}
 	if n != days*10 { // key0..key4, $host, $path, $os_version, $browser_version, $device_model

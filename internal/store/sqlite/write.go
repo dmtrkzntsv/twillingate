@@ -34,7 +34,7 @@ const tsFormat = "2006-01-02T15:04:05Z"
 // means unset and is stored as 1.
 //
 // The attribute keys the inserted product and measure rows carried are
-// recorded in received_attributes in the same transaction, only those
+// recorded in usage_attributes in the same transaction, only those
 // ingest has not written yet (receivedSeen); the daily pass counts them.
 func (d *DB) WriteEvents(ctx context.Context, evs []store.Event) error {
 	if len(evs) == 0 {
@@ -69,7 +69,7 @@ func (d *DB) WriteEvents(ctx context.Context, evs []store.Event) error {
 // has checked the families, and records the keys (writeReceived) in the
 // same transaction: WriteEvents and WriteSubmission share this body.
 //
-// The event name goes through event_rules here, not only at ingest (which
+// The event name goes through the event rules here, not only at ingest (which
 // maps from the registry snapshot), so a row queued before a rename
 // commits is stored under the new name: the lookup runs in the flush's own
 // transaction, after or before the rename's, never between its rewrite and
@@ -86,7 +86,7 @@ func insertEvents(ctx context.Context, tx *sql.Tx, evs []store.Event) (receivedK
 		 app_version, app_locale, device, device_model, display_width, display_height,
 		 country, consent, attributes, value, measure, sample_rate)
 		VALUES (?,?,?,
-		 COALESCE((SELECT to_name FROM event_rules WHERE project_id=? AND family=? AND name=? AND action='rename'), ?),
+		 COALESCE((SELECT to_name FROM rules WHERE project_id=? AND kind='event' AND family=? AND name=? AND action='rename'), ?),
 		 ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
 	if err != nil {
 		return nil, err

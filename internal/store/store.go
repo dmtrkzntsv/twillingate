@@ -218,13 +218,13 @@ type RegistryProject struct {
 	ID             int64 // 0 on create; assigned by the store
 	Name           string
 	AllowedOrigins string // JSON array, "[]" if none
-	Attributes     string // JSON array, "[]" if none declared
+	Attributes     string // JSON array of the breakdown keys (project_attributes), by key; "[]" if none
 	Archived       bool
 	ArchivedAt     string // RFC 3339 UTC, "" = live
 	SortKey        string // its place in the order (migration 034)
 }
 
-// EventRule is one row of event_rules (migration 039): a rename (To set)
+// EventRule is one event rule (rules with kind 'event', migration 040): a rename (To set)
 // or a block of one event name in one project and family.
 type EventRule struct {
 	ProjectID int64

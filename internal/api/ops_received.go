@@ -59,7 +59,7 @@ func (h *host) receivedAttributes(ctx context.Context, in receivedIn) (receivedO
 	// The busiest keys only, so a project with more keys than the row cap
 	// still answers (h.run refuses a truncated result); keys_total says
 	// how many there are.
-	where := `FROM received_attributes WHERE project_id = ? AND day BETWEEN ? AND ?`
+	where := `FROM usage_attributes WHERE project_id = ? AND day BETWEEN ? AND ?`
 	total, err := h.run(ctx, `SELECT COUNT(DISTINCT attr_key) `+where, in.ProjectID, out.From, out.To)
 	if err != nil {
 		return receivedOut{}, err

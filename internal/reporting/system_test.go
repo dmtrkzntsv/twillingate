@@ -733,7 +733,7 @@ func valuesInsert(t *testing.T, st store.Store, table, cols string, rows []strin
 // measures: the five Web Vitals and one custom timing.
 func seedSystemData(t *testing.T, st store.Store, projectID int64, today civil.Date) {
 	t.Helper()
-	rawExec(t, st, `UPDATE projects SET attributes = '["plan"]' WHERE id = ?`, projectID)
+	rawExec(t, st, `INSERT OR REPLACE INTO project_attributes (project_id, key, breakdown) VALUES (?, 'plan', 1)`, projectID)
 	p := projectID
 	q := func(s string) string { return "'" + strings.ReplaceAll(s, "'", "''") + "'" }
 

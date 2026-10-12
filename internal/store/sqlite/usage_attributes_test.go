@@ -11,24 +11,10 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
-// withReceivedAttributes creates received_attributes on a database pinned
-// below migration 028, for a test that writes events through WriteEvents
-// before migrating further (never through 28, which would create it again).
-func withReceivedAttributes(t *testing.T, db *DB) {
-	t.Helper()
-	body, err := migrationFS.ReadFile("migrations/028_received_attributes.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.db.Exec(string(body)); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// receivedRows reads received_attributes as "project/day/key=events" lines, sorted.
+// receivedRows reads usage_attributes as "project/day/key=events" lines, sorted.
 func receivedRows(t *testing.T, db *DB) []string {
 	t.Helper()
-	rows, err := db.db.Query(`SELECT project_id, day, attr_key, events FROM received_attributes`)
+	rows, err := db.db.Query(`SELECT project_id, day, attr_key, events FROM usage_attributes`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +97,7 @@ func TestWriteEventsWritesOnlyNewReceivedKeys(t *testing.T) {
 	if err := db.WriteEvents(ctx, first); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.db.Exec(`DELETE FROM received_attributes`); err != nil {
+	if _, err := db.db.Exec(`DELETE FROM usage_attributes`); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.WriteEvents(ctx, []store.Event{
@@ -179,17 +165,17 @@ func TestRecordUsageHistoryRecountsReceivedAttributes(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A stale row for a day with no raw rows left (rolled up): pruned.
-	if _, err := db.db.Exec(`INSERT INTO received_attributes VALUES (1, '2026-07-01', 'plan', 9, 2)`); err != nil {
+	if _, err := db.db.Exec(`INSERT INTO usage_attributes VALUES (1, '2026-07-01', 'plan', 9, 2)`); err != nil {
 		t.Fatal(err)
 	}
 	// Ingest's events 0 (here a stray number) for a raw day: counted.
-	if _, err := db.db.Exec(`UPDATE received_attributes SET events = 99 WHERE day = '2026-08-02'`); err != nil {
+	if _, err := db.db.Exec(`UPDATE usage_attributes SET events = 99 WHERE day = '2026-08-02'`); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.RecordUsageHistory(ctx, ts("2026-08-04T03:00:00Z")); err != nil {
 		t.Fatal(err)
 	}
-	rows, err := db.db.Query(`SELECT day, attr_key, events, max_values FROM received_attributes ORDER BY day, attr_key`)
+	rows, err := db.db.Query(`SELECT day, attr_key, events, max_values FROM usage_attributes ORDER BY day, attr_key`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -245,7 +231,7 @@ func TestRecordUsageHistoryRecountsPartitionsAndReservedColumns(t *testing.T) {
 	if err := db.RecordUsageHistory(ctx, ts("2026-08-04T03:00:00Z")); err != nil {
 		t.Fatal(err)
 	}
-	rows, err := db.db.Query(`SELECT attr_key, events, max_values FROM received_attributes
+	rows, err := db.db.Query(`SELECT attr_key, events, max_values FROM usage_attributes
 		WHERE project_id = 1 AND day = '2026-08-02' ORDER BY attr_key`)
 	if err != nil {
 		t.Fatal(err)

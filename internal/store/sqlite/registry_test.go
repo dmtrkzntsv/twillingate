@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"errors"
+	"reflect"
 	"sort"
 	"testing"
 	"time"
@@ -319,8 +320,9 @@ func TestMigrationBackfillsAttributesFromLegacyMap(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Run every remaining migration (006 and 007) for real.
-	if err := d.Migrate(ctx); err != nil {
+	// Run migration 006 for real, and no further: 040 moves the column
+	// into project_attributes.
+	if err := d.migrateThrough(ctx, 6); err != nil {
 		t.Fatal(err)
 	}
 
@@ -366,7 +368,8 @@ func TestMigrationBackfillSkipsMalformedProductAggregation(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if err := d.Migrate(ctx); err != nil {
+			// Through 006 only: 040 moves the column into project_attributes.
+			if err := d.migrateThrough(ctx, 6); err != nil {
 				t.Fatalf("migration aborted on malformed product_aggregation %q: %v", tc.value, err)
 			}
 
@@ -709,5 +712,64 @@ func TestProjectIDsAscending(t *testing.T) {
 	}
 	if len(ids) != 3 || ids[0] != 1 || ids[1] != 2 || ids[2] != 3 {
 		t.Fatalf("ids = %v, want [1 2 3]", ids)
+	}
+}
+
+// A project's attributes are its catalog's breakdown keys (spec D3, D4):
+// create and update set breakdown 1 on the listed keys and 0 on the rest,
+// a key no longer listed stays in the catalog while usage_attributes holds
+// it and goes otherwise, and the registry reads the list back by key.
+func TestProjectBreakdownsLiveInTheCatalog(t *testing.T) {
+	d := openRegistryDB(t)
+	ctx := context.Background()
+	audit := store.AuditEntry{Actor: "cli", Action: "project.update"}
+	id, err := d.CreateProject(ctx, store.RegistryProject{Name: "Blog", AllowedOrigins: `[]`,
+		Attributes: `["plan","$host","tier"]`}, audit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attrs := func() string {
+		t.Helper()
+		ps, _, err := d.LoadRegistry(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, p := range ps {
+			if p.ID == id {
+				return p.Attributes
+			}
+		}
+		t.Fatalf("project %d not loaded", id)
+		return ""
+	}
+	if got, want := attrs(), `["$host","plan","tier"]`; got != want {
+		t.Errorf("attributes after create = %s, want %s (by key)", got, want)
+	}
+	// tier was received, $host was not: dropping both from the list keeps
+	// tier's catalog row without a breakdown and removes $host's.
+	if _, err := d.db.Exec(`INSERT INTO usage_attributes (project_id, day, attr_key, events) VALUES (?, '2026-10-01', 'tier', 0)`, id); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.UpdateProject(ctx, store.RegistryProject{ID: id, Name: "Blog", AllowedOrigins: `[]`,
+		Attributes: `["plan","seats"]`}, audit); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := attrs(), `["plan","seats"]`; got != want {
+		t.Errorf("attributes after update = %s, want %s", got, want)
+	}
+	if got, want := queryStrings(t, d, `SELECT key, breakdown FROM project_attributes ORDER BY key`),
+		[]string{"plan|1", "seats|1", "tier|0"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("project_attributes = %q, want %q", got, want)
+	}
+	if err := d.UpdateProject(ctx, store.RegistryProject{ID: id, Name: "Blog", AllowedOrigins: `[]`,
+		Attributes: `[]`}, audit); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := attrs(), `[]`; got != want {
+		t.Errorf("attributes after clearing = %s, want %s", got, want)
+	}
+	if got, want := queryStrings(t, d, `SELECT key, breakdown FROM project_attributes ORDER BY key`),
+		[]string{"tier|0"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("project_attributes after clearing = %q, want %q", got, want)
 	}
 }

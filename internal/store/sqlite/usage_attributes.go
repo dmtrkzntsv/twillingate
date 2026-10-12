@@ -47,7 +47,7 @@ func (c receivedKeys) add(e store.Event, day string) {
 }
 
 // receivedSeen remembers the triples ingest has already written to
-// received_attributes, so a batch whose keys are all known writes nothing
+// usage_attributes, so a batch whose keys are all known writes nothing
 // more: ingest records that a key arrived, and the daily pass counts it.
 // It holds the newest day a batch carried and the day before; older days
 // leave it as the newest day moves on, and a late event for one falls back
@@ -111,7 +111,7 @@ func writeReceived(ctx context.Context, tx *sql.Tx, keys []receivedKey) error {
 	if len(keys) == 0 {
 		return nil
 	}
-	stmt, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO received_attributes (project_id, day, attr_key, events)
+	stmt, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO usage_attributes (project_id, day, attr_key, events)
 		VALUES (?, ?, ?, 0)`)
 	if err != nil {
 		return err
@@ -156,23 +156,23 @@ var receivedSQL = func() string {
 	UNION ALL ` + arm("raw_measures")
 }()
 
-// countReceived rewrites received_attributes for every day before today:
+// countReceived rewrites usage_attributes for every day before today:
 // the days whose raw product or measure rows remain get exact counts and
 // max_values (the most distinct values in one (family, event, measure)
 // partition, the partition ATTRIBUTE_VALUES_TOP_N caps); the rest, days
 // already rolled up, are dropped. Today stays as ingest counts it.
 func countReceived(ctx context.Context, tx *sql.Tx, today string) error {
-	if _, err := tx.ExecContext(ctx, `DELETE FROM received_attributes WHERE day < ?1`, today); err != nil {
-		return fmt.Errorf("received attributes: %w", err)
+	if _, err := tx.ExecContext(ctx, `DELETE FROM usage_attributes WHERE day < ?1`, today); err != nil {
+		return fmt.Errorf("usage attributes: %w", err)
 	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO received_attributes (project_id, day, attr_key, events, max_values)
+	_, err := tx.ExecContext(ctx, `INSERT INTO usage_attributes (project_id, day, attr_key, events, max_values)
 		SELECT project_id, day, k, SUM(n), MAX(vals) FROM (
 		  SELECT project_id, day, k, COUNT(*) AS n, COUNT(DISTINCT v) AS vals
 		  FROM (`+receivedSQL+`)
 		  GROUP BY project_id, day, family, event_name, measure, k
 		) GROUP BY project_id, day, k`, today)
 	if err != nil {
-		return fmt.Errorf("received attributes: %w", err)
+		return fmt.Errorf("usage attributes: %w", err)
 	}
 	return nil
 }

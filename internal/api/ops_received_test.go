@@ -19,8 +19,8 @@ func TestReceivedAttributes(t *testing.T) {
 	// Project 1 declares plan (the fixture's) and never_sent; plan was
 	// received on two days, order_id on one day not yet counted (today's).
 	for _, q := range []string{
-		`UPDATE projects SET attributes = '["plan","never_sent"]' WHERE id = 1`,
-		`INSERT INTO received_attributes (project_id, day, attr_key, events, max_values) VALUES
+		`INSERT OR REPLACE INTO project_attributes (project_id, key, breakdown) VALUES (1, 'plan', 1), (1, 'never_sent', 1)`,
+		`INSERT INTO usage_attributes (project_id, day, attr_key, events, max_values) VALUES
 		 (1,'2026-10-01','plan',5,3), (1,'2026-10-02','plan',2,4), (1,'2026-10-02','order_id',9,NULL), (1,'2026-10-02','zz_new_today',0,NULL),
 		 (1,'2026-09-30','old_key',1,1), (2,'2026-10-02','other_project',4,1)`,
 	} {
@@ -84,8 +84,8 @@ func TestReceivedAttributesCapsTheKeys(t *testing.T) {
 	defer func(n int) { receivedKeysLimit = n }(receivedKeysLimit)
 	receivedKeysLimit = 2
 	for _, q := range []string{
-		`UPDATE projects SET attributes = '["plan","never_sent"]' WHERE id = 1`,
-		`INSERT INTO received_attributes (project_id, day, attr_key, events, max_values) VALUES
+		`INSERT OR REPLACE INTO project_attributes (project_id, key, breakdown) VALUES (1, 'plan', 1), (1, 'never_sent', 1)`,
+		`INSERT INTO usage_attributes (project_id, day, attr_key, events, max_values) VALUES
 		 (1,'2026-10-01','id_1',9,1), (1,'2026-10-02','id_1',1,1), (1,'2026-10-01','id_2',8,1),
 		 (1,'2026-10-01','id_3',8,1), (1,'2026-10-01','plan',3,2), (1,'2026-10-01','id_4',5,1)`,
 	} {

@@ -555,7 +555,7 @@ func TestRunDailyPassReloadsRegistryDespiteAPartialPurgeError(t *testing.T) {
 	// registry's initial load: only a reload picks it up, so it is the
 	// probe for whether RunDailyPass reloaded despite the error below.
 	if _, err := rawExec(t,
-		`INSERT INTO projects (id, name, allowed_origins, attributes) VALUES (7, 'Late', '[]', '[]')`); err != nil {
+		`INSERT INTO projects (id, name, allowed_origins) VALUES (7, 'Late', '[]')`); err != nil {
 		t.Fatal(err)
 	}
 	if p := reg.Snapshot(ctx).Project(7); p != nil {
