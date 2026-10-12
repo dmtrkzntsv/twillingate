@@ -4,15 +4,23 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
 // jsonPath is the SQLite JSON path of one top-level key, quoted so that a
 // dot, a slash or a space in the key is part of its name, never a step
-// into a nested object. manage refuses a key containing `"` (spec D5),
-// which the quoting cannot carry. The path is always bound as a parameter.
-func jsonPath(key string) string { return `$."` + key + `"` }
+// into a nested object. SQLite reads a quoted label as a JSON string, so a
+// backslash and a double quote are escaped: unescaped, `a\b` would read as
+// "a" and a backspace, and match nothing. manage refuses a key containing
+// `"` (spec D5); escaping it here is defensive. The path is always bound as
+// a parameter.
+func jsonPath(key string) string {
+	return `$."` + jsonPathEscaper.Replace(key) + `"`
+}
+
+var jsonPathEscaper = strings.NewReplacer(`\`, `\\`, `"`, `\"`)
 
 // LoadAttributeRules is every attribute rule (rules with kind 'attribute'),
 // for the registry snapshot and list_attribute_rules, by project and key.

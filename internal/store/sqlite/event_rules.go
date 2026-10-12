@@ -230,10 +230,9 @@ func (d *DB) RemoveEventRule(ctx context.Context, projectID int64, family store.
 }
 
 // dropBlockedAggregates delete, from each per-event aggregate table, the
-// rows of the names the family blocks, and from the attribute aggregate
-// tables the rows of the blocked attribute keys (project attributes D12).
-// agg_product_totals is left out on purpose (D11): it is the day's true DAU
-// and total, which a name cannot be subtracted from.
+// rows of the names the family blocks. agg_product_totals is left out on
+// purpose (D11): it is the day's true DAU and total, which a name cannot be
+// subtracted from.
 var dropBlockedAggregates = [...]string{
 	`DELETE FROM agg_product_daily WHERE project_id=?1 AND event_name IN
 		(SELECT name FROM rules WHERE project_id=?1 AND kind='event' AND family='product' AND action='block')`,
@@ -243,17 +242,35 @@ var dropBlockedAggregates = [...]string{
 		(SELECT name FROM rules WHERE project_id=?1 AND kind='event' AND family='measures' AND action='block')`,
 	`DELETE FROM agg_measures_attrs WHERE project_id=?1 AND event_name IN
 		(SELECT name FROM rules WHERE project_id=?1 AND kind='event' AND family='measures' AND action='block')`,
+}
+
+// dropBlockedAttributeAggregates delete, from the attribute aggregate
+// tables, the rows of the blocked attribute keys (project attributes D12).
+// attr_key has no index, so each is a scan of the project's rows: they run
+// only when the project blocks a key (hasAttributeBlocks).
+var dropBlockedAttributeAggregates = [...]string{
 	`DELETE FROM agg_product_attrs WHERE project_id=?1 AND attr_key IN
 		(SELECT name FROM rules WHERE project_id=?1 AND kind='attribute' AND family='event' AND action='block')`,
 	`DELETE FROM agg_measures_attrs WHERE project_id=?1 AND attr_key IN
 		(SELECT name FROM rules WHERE project_id=?1 AND kind='attribute' AND family='event' AND action='block')`,
 }
 
+// hasAttributeBlocks reports whether the project blocks an attribute key:
+// a primary-key range lookup on rules.
+func hasAttributeBlocks(ctx context.Context, tx *sql.Tx, projectID int64) (bool, error) {
+	var blocks bool
+	err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM rules
+		WHERE project_id=? AND kind='attribute' AND family='event' AND action='block')`, projectID).Scan(&blocks)
+	return blocks, err
+}
+
 // DropBlockedAggregates deletes the project's aggregate rows of every
 // blocked name (D11) and blocked attribute key, for the daily pass: a block
 // set after a day was rolled up takes the name or key out of the
 // aggregates at the next pass. The totals keep the day's true counts (see
-// dropBlockedAggregates). Nothing to drop is a no-op.
+// dropBlockedAggregates). Nothing to drop is a no-op, and a project with no
+// attribute block pays one primary-key lookup for the attribute tables, not
+// a scan of them.
 func (d *DB) DropBlockedAggregates(ctx context.Context, projectID int64) error {
 	return d.tx(ctx, func(tx *sql.Tx) error {
 		for _, q := range dropBlockedAggregates {
@@ -261,6 +278,24 @@ func (d *DB) DropBlockedAggregates(ctx context.Context, projectID int64) error {
 				return fmt.Errorf("drop blocked aggregates: %w", err)
 			}
 		}
-		return nil
+		return dropBlockedAttributeRows(ctx, tx, projectID)
 	})
+}
+
+// dropBlockedAttributeRows runs dropBlockedAttributeAggregates when the
+// project blocks an attribute key, and nothing else otherwise.
+func dropBlockedAttributeRows(ctx context.Context, tx *sql.Tx, projectID int64) error {
+	blocks, err := hasAttributeBlocks(ctx, tx, projectID)
+	if err != nil {
+		return fmt.Errorf("drop blocked attribute aggregates: %w", err)
+	}
+	if !blocks {
+		return nil
+	}
+	for _, q := range dropBlockedAttributeAggregates {
+		if _, err := tx.ExecContext(ctx, q, projectID); err != nil {
+			return fmt.Errorf("drop blocked attribute aggregates: %w", err)
+		}
+	}
+	return nil
 }

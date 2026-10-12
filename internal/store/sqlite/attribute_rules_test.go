@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -313,7 +314,8 @@ func TestAttributeRuleChains(t *testing.T) {
 // into a nested object, and slashes, spaces and accents rename as they are.
 func TestAttributeKeyWithDotAndSlash(t *testing.T) {
 	db := ruleDB(t)
-	writeAttrs(t, db, 1, store.FamilyProduct, "dot", map[string]string{"a.b": "1", "x/y": "2", "plan type": "3", "é": "4"})
+	writeAttrs(t, db, 1, store.FamilyProduct, "dot", map[string]string{"a.b": "1", "x/y": "2", "plan type": "3", "é": "4",
+		`a\b`: "5", `q"r`: "6"})
 	writeAttrs(t, db, 1, store.FamilyProduct, "nested", map[string]string{"k": "v"})
 	execAll(t, db, `UPDATE events SET attributes = '{"a":{"b":"z"}}' WHERE id = 'nested'`)
 
@@ -323,16 +325,25 @@ func TestAttributeKeyWithDotAndSlash(t *testing.T) {
 	renameAttr(t, db, 1, "x/y", "checkout/v2", false)
 	renameAttr(t, db, 1, "plan type", "é2", false)
 	renameAttr(t, db, 1, "é", "e acute", false)
+	// A backslash and a double quote are escaped in the path, on both
+	// sides: unescaped, `\b` reads as an escape and matches nothing.
+	if got := renameAttr(t, db, 1, `a\b`, `back\slash`, false); got["events"] != 1 {
+		t.Errorf(`a\b>back\slash rewrote %d rows, want 1`, got["events"])
+	}
+	if got := renameAttr(t, db, 1, `q"r`, `quote"d`, false); got["events"] != 1 {
+		t.Errorf(`q"r>quote"d rewrote %d rows, want 1`, got["events"])
+	}
 	want := map[string]map[string]any{
-		"dot":    {"c": "1", "checkout/v2": "2", "é2": "3", "e acute": "4"},
+		"dot": {"c": "1", "checkout/v2": "2", "é2": "3", "e acute": "4",
+			`back\slash`: "5", `quote"d`: "6"},
 		"nested": {"a": map[string]any{"b": "z"}},
 	}
 	if got := rawAttrs(t, db); !reflect.DeepEqual(got, want) {
 		t.Errorf("raw = %v, want %v", got, want)
 	}
 	// The mapping at insert reads the same rules.
-	writeAttrs(t, db, 1, store.FamilyProduct, "later", map[string]string{"a.b": "5", "x/y": "6"})
-	if got, want := rawAttrs(t, db)["later"], map[string]any{"c": "5", "checkout/v2": "6"}; !reflect.DeepEqual(got, want) {
+	writeAttrs(t, db, 1, store.FamilyProduct, "later", map[string]string{"a.b": "5", "x/y": "6", `a\b`: "7"})
+	if got, want := rawAttrs(t, db)["later"], map[string]any{"c": "5", "checkout/v2": "6", `back\slash`: "7"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("later = %v, want %v", got, want)
 	}
 }
@@ -482,6 +493,13 @@ func TestDropBlockedAggregatesDropsBlockedKeys(t *testing.T) {
 			fmt.Sprintf(`INSERT INTO agg_product_daily (project_id, day, event_name, count, unique_users) VALUES (%d, '2026-10-01', 'x', 4, 2)`, p),
 			fmt.Sprintf(`INSERT INTO agg_measures_daily (project_id, day, event_name, measure, bucket, samples, weight, sum) VALUES (%d, '2026-10-01', 'x', 'm', 1, 4, 4, 6)`, p))
 	}
+	// No attribute block yet: the pass leaves every attribute row.
+	if err := db.DropBlockedAggregates(ctx, 1); err != nil {
+		t.Fatal(err)
+	}
+	if got := countOf(t, db, `SELECT COUNT(*) FROM agg_product_attrs`) + countOf(t, db, `SELECT COUNT(*) FROM agg_measures_attrs`); got != 8 {
+		t.Fatalf("attribute rows before the block = %d, want 8", got)
+	}
 	blockAttr(t, db, 1, "x")
 	for i := 0; i < 2; i++ {
 		if err := db.DropBlockedAggregates(ctx, 1); err != nil {
@@ -506,6 +524,57 @@ func TestDropBlockedAggregatesDropsBlockedKeys(t *testing.T) {
 			if got := countOf(t, db, `SELECT COUNT(*) FROM `+table+` WHERE event_name='x'`); got != 2 {
 				t.Errorf("pass %d: %s rows named x = %d, want 2", i+1, table, got)
 			}
+		}
+	}
+}
+
+// The attribute-key deletes scan the project's attribute aggregates
+// (attr_key has no index), so DropBlockedAggregates runs them only when
+// hasAttributeBlocks says the project blocks a key: an event block or an
+// attribute rename is no attribute block, and another project's block
+// does not count.
+func TestHasAttributeBlocks(t *testing.T) {
+	db := ruleDB(t)
+	ctx := context.Background()
+	check := func(project int64, want bool) {
+		t.Helper()
+		var got bool
+		if err := db.tx(ctx, func(tx *sql.Tx) error {
+			var err error
+			got, err = hasAttributeBlocks(ctx, tx, project)
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if got != want {
+			t.Errorf("project %d: hasAttributeBlocks = %v, want %v", project, got, want)
+		}
+	}
+	check(1, false)
+	if err := db.BlockEvent(ctx, 1, store.FamilyProduct, "x", ruleAudit); err != nil {
+		t.Fatal(err)
+	}
+	renameAttr(t, db, 1, "a", "b", false)
+	check(1, false)
+	blockAttr(t, db, 1, "x")
+	check(1, true)
+	check(2, false)
+	if err := db.RemoveAttributeRule(ctx, 1, "x", attrAudit); err != nil {
+		t.Fatal(err)
+	}
+	check(1, false)
+}
+
+func TestJSONPathEscapes(t *testing.T) {
+	for key, want := range map[string]string{
+		"a.b":     `$."a.b"`,
+		`a\b`:     `$."a\\b"`,
+		`q"r`:     `$."q\"r"`,
+		`x\"y`:    `$."x\\\"y"`,
+		"plain é": `$."plain é"`,
+	} {
+		if got := jsonPath(key); got != want {
+			t.Errorf("jsonPath(%q) = %s, want %s", key, got, want)
 		}
 	}
 }
