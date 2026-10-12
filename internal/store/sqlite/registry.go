@@ -165,10 +165,11 @@ func insertProject(ctx context.Context, tx *sql.Tx, p store.RegistryProject) (in
 
 // syncBreakdowns makes the catalog's breakdown flags match list (a JSON
 // array of keys): listed keys get a row with breakdown 1, the project's
-// other rows get 0. Rows left with no breakdown stay while usage_attributes
-// still holds the key or a raw row may carry it; the rest go now, as the
-// daily pass would prune them (spec D3, pruneCatalog). An empty string is no list, as the column's '[]' default had
-// it.
+// other rows get 0. It deletes no row: a row left with no breakdown may be
+// the key dictionary of raw rows (events encoding spec D8), and only the
+// daily pass's CleanDictionaries knows when none can carry it, so a key
+// unmarked here, and never received, goes at the next pass. An empty string
+// is no list, as the column's '[]' default had it.
 func syncBreakdowns(ctx context.Context, tx *sql.Tx, projectID int64, list string) error {
 	if list == "" {
 		list = "[]"
@@ -180,9 +181,6 @@ func syncBreakdowns(ctx context.Context, tx *sql.Tx, projectID int64, list strin
 	if _, err := tx.ExecContext(ctx, `INSERT INTO project_attributes (project_id, key, breakdown)
 		SELECT ?1, value, 1 FROM json_each(?2) WHERE type = 'text' AND true
 		ON CONFLICT (project_id, key) DO UPDATE SET breakdown = 1`, projectID, list); err != nil {
-		return fmt.Errorf("breakdowns: %w", err)
-	}
-	if err := pruneCatalog(ctx, tx, projectID, todayUTC()); err != nil {
 		return fmt.Errorf("breakdowns: %w", err)
 	}
 	return nil

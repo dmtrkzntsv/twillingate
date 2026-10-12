@@ -250,7 +250,7 @@ func renameRawAttributes(ctx context.Context, tx *sql.Tx, projectID int64, from,
 // breakdown after if either was, so a rename or merge never adds to the
 // breakdown budget, and `to` gets its catalog row. `from` keeps its row,
 // no longer a breakdown: view rows may still carry its id (events encoding
-// spec D9), and it ages out with them (pruneCatalog). A `from` with no row
+// spec D9), and it ages out with them (CleanDictionaries). A `from` with no row
 // (an alias for keys not sent yet) adds nothing.
 func renameCatalog(ctx context.Context, tx *sql.Tx, projectID int64, from, to string) error {
 	var had, breakdown bool

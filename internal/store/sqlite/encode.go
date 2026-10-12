@@ -101,11 +101,6 @@ func decodeID(v any) string {
 
 func unixSeconds(t time.Time) int64 { return t.UTC().Unix() }
 
-// todayUTC is the current day as events.day spells it, for the writes
-// outside ingest that raise a dictionary row's last_seen_day (D7) or ask
-// which rows a raw row may still carry.
-func todayUTC() string { return time.Now().UTC().Format("2006-01-02") }
-
 // sqlUUIDText formats a 32-character lowercase hex expression with dashes.
 func sqlUUIDText(h string) string {
 	return fmt.Sprintf(`substr(%[1]s, 1, 8) || '-' || substr(%[1]s, 9, 4) || '-' || substr(%[1]s, 13, 4) || '-' || substr(%[1]s, 17, 4) || '-' || substr(%[1]s, 21, 12)`, h)

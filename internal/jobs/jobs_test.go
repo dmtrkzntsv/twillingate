@@ -1056,6 +1056,42 @@ func TestRunDailyPassExpiresDraftsBeforePurge(t *testing.T) {
 	}
 }
 
+// cleanRecorder records the order of the calls the dictionary cleanup
+// cares about, around a real store.
+type cleanRecorder struct {
+	store.Store
+	calls []string
+}
+
+func (c *cleanRecorder) RecordUsageHistory(ctx context.Context, now time.Time) error {
+	c.calls = append(c.calls, "usage")
+	return c.Store.RecordUsageHistory(ctx, now)
+}
+
+func (c *cleanRecorder) CleanDictionaries(ctx context.Context, before civil.Date) error {
+	c.calls = append(c.calls, "clean "+before.String())
+	return c.Store.CleanDictionaries(ctx, before)
+}
+
+// The pass cleans the dictionaries once, after the usage recount, with the
+// day ahead of the raw window as the cutoff (events encoding spec D7):
+// 2026-08-22 less RETENTION_RAW_DAYS (7, in jobsVars) and one.
+func TestDailyPassCleansDictionariesAfterTheUsageRecount(t *testing.T) {
+	cfg := configtest.Load(t, jobsVars)
+	raw, _ := openStoreAt(t)
+	reg := newRegistry(t, raw, cfg, jobsProjectSpecs)
+	rec := &cleanRecorder{Store: raw}
+	now := func() time.Time { return time.Date(2026, 8, 22, 4, 0, 0, 0, time.UTC) }
+	r := New(rec, cfg, reg, identity.NewSalter(raw, now), slog.Default(), now)
+	if err := r.RunDailyPass(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"usage", "clean 2026-08-14"}
+	if !slices.Equal(rec.calls, want) {
+		t.Errorf("calls = %v, want %v", rec.calls, want)
+	}
+}
+
 // dropRecorder records the order of the calls the blocked-name rules care
 // about, around a real store.
 type dropRecorder struct {

@@ -207,3 +207,45 @@ func TestRenamesRaiseTargetsLastSeenDay(t *testing.T) {
 		t.Errorf("rows = %v", got)
 	}
 }
+
+// A catalog row deleted behind the cache (the cleanup's cutoff makes it
+// impossible, but a hand edit or a bug must not fail every batch for the
+// project): the value upsert finds no row for the cached key id, so ingest
+// forgets the key, resolves it again under a new id and writes the batch.
+func TestWriteEventsSurvivesACatalogRowDeletedBehindTheCache(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	execAll(t, db, `INSERT INTO projects (id, name, allowed_origins) VALUES (1, 'p', '[]')`)
+	ts := time.Date(2026, 10, 11, 9, 0, 0, 0, time.UTC)
+	ev := store.Event{ID: "0192f1a2-7c3b-7d4e-8f90-a1b2c3d4e5b1", ProjectID: 1, Family: store.FamilyProduct,
+		EventName: "signup", TS: ts, ReceivedAt: ts, ActorID: "a", Attributes: map[string]string{"plan": "pro"}}
+	if err := db.WriteEvents(ctx, []store.Event{ev}); err != nil {
+		t.Fatal(err)
+	}
+	var oldID int64
+	db.db.QueryRow(`SELECT id FROM project_attributes WHERE key = 'plan'`).Scan(&oldID)
+	execAll(t, db, `DELETE FROM project_attributes WHERE key = 'plan'`) // its values cascade
+	ev.ID, ev.Attributes = "0192f1a2-7c3b-7d4e-8f90-a1b2c3d4e5b2", map[string]string{"plan": "team"}
+	if err := db.WriteEvents(ctx, []store.Event{ev}); err != nil {
+		t.Fatalf("write after the catalog row vanished: %v", err)
+	}
+	var attrs string
+	db.db.QueryRow(`SELECT attributes FROM raw_product WHERE id = ?`, ev.ID).Scan(&attrs)
+	if attrs != `{"plan":"team"}` {
+		t.Errorf("attributes = %s, want plan=team", attrs)
+	}
+	var newID int64
+	db.db.QueryRow(`SELECT id FROM project_attributes WHERE key = 'plan'`).Scan(&newID)
+	if newID == 0 || newID == oldID {
+		t.Errorf("catalog id = %d (was %d), want a new row", newID, oldID)
+	}
+	// The cache holds the new id: a third write of the same key reads back too.
+	ev.ID, ev.Attributes = "0192f1a2-7c3b-7d4e-8f90-a1b2c3d4e5b3", map[string]string{"plan": "pro"}
+	if err := db.WriteEvents(ctx, []store.Event{ev}); err != nil {
+		t.Fatal(err)
+	}
+	db.db.QueryRow(`SELECT attributes FROM raw_product WHERE id = ?`, ev.ID).Scan(&attrs)
+	if attrs != `{"plan":"pro"}` {
+		t.Errorf("attributes = %s, want plan=pro", attrs)
+	}
+}

@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"sync"
 )
 
@@ -128,7 +129,42 @@ func (t *txDict) key(ctx context.Context, projectID int64, key, day string) (int
 	return id, nil
 }
 
-// value is value's number within the key keyID, numbering it when new.
+// attribute is the catalog id of the project's key and value's number
+// within it, for an attribute stored in an event's JSON.
+//
+// A cached key id whose catalog row is gone leaves the value upsert with
+// no row to number the value under (dictValSQL). The cleanup's cutoff
+// keeps a key cached for a day a row may still be written for, so this
+// means the row was removed some other way; the batch must not fail for it
+// every time. The key is forgotten, resolved once more through its upsert
+// (a new row, a new id) and the value retried.
+func (t *txDict) attribute(ctx context.Context, projectID int64, key, value, day string) (keyID, n int64, err error) {
+	if keyID, err = t.key(ctx, projectID, key, day); err != nil {
+		return 0, 0, err
+	}
+	n, err = t.value(ctx, keyID, value, day)
+	if !errors.Is(err, sql.ErrNoRows) {
+		return keyID, n, err
+	}
+	t.forgetKey(keyRef{projectID, key})
+	if keyID, err = t.key(ctx, projectID, key, day); err != nil {
+		return 0, 0, err
+	}
+	n, err = t.value(ctx, keyID, value, day)
+	return keyID, n, err
+}
+
+// forgetKey drops ref from this transaction's map and the shared one. The
+// values cached under its old id stay: nothing looks them up any more.
+func (t *txDict) forgetKey(ref keyRef) {
+	delete(t.keys, ref)
+	t.d.mu.Lock()
+	delete(t.d.keys, ref)
+	t.d.mu.Unlock()
+}
+
+// value is value's number within the key keyID, numbering it when new. It
+// fails with sql.ErrNoRows when keyID has no catalog row.
 func (t *txDict) value(ctx context.Context, keyID int64, value, day string) (int64, error) {
 	ref := valRef{keyID, value}
 	if n, ok := cached(t.vals, t.d.vals, &t.d.mu, ref, day); ok {

@@ -203,68 +203,14 @@ func countReceived(ctx context.Context, tx *sql.Tx, today string) error {
 	}
 	// The catalog follows usage_attributes: heal a key whose catalog row
 	// was lost (only for projects that still exist: usage_attributes has no
-	// foreign key, so it can hold a deleted project's rows), then drop the
-	// rows that are no breakdown and have no usage row left (spec D3).
+	// foreign key, so it can hold a deleted project's rows). Dropping the
+	// rows that are no breakdown and have no usage row left is the daily
+	// pass's CleanDictionaries, which also waits for the raw rows that may
+	// still carry the key (events encoding spec D7, D8).
 	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO project_attributes (project_id, key)
 		SELECT DISTINCT project_id, attr_key FROM usage_attributes
 		WHERE project_id IN (SELECT id FROM projects)`); err != nil {
 		return fmt.Errorf("attribute catalog: %w", err)
 	}
-	if err := pruneCatalogs(ctx, tx, today); err != nil {
-		return fmt.Errorf("attribute catalog: %w", err)
-	}
 	return nil
-}
-
-// pruneCatalogs runs pruneCatalog for every project. The ids are read
-// first: the transaction's one connection cannot run the deletes while a
-// result set is open on it.
-func pruneCatalogs(ctx context.Context, tx *sql.Tx, today string) error {
-	rows, err := tx.QueryContext(ctx, `SELECT id FROM projects`)
-	if err != nil {
-		return err
-	}
-	var ids []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			rows.Close()
-			return err
-		}
-		ids = append(ids, id)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	for _, id := range ids {
-		if err := pruneCatalog(ctx, tx, id, today); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// pruneCatalog drops the project's catalog rows that are no breakdown,
-// that no usage_attributes row holds any more (spec D3), and that no raw
-// row can still carry: the catalog is the encoded attributes' key
-// dictionary (events encoding spec D8), and a key seen only on views has
-// no usage row. A raw row raises its keys' last_seen_day to its day, so a
-// key last seen before the project's oldest raw day (or before today,
-// when it has none) is on no row. The oldest day reads each family's key
-// prefix. The usage subquery is uncorrelated: SQLite reads the project's
-// usage keys once into a set, where a correlated NOT EXISTS probes
-// usage_attributes per catalog row by its project_id prefix alone (the key
-// comes after day in its primary key), which is quadratic in the key count
-// on a database never analyzed.
-func pruneCatalog(ctx context.Context, tx *sql.Tx, projectID int64, today string) error {
-	_, err := tx.ExecContext(ctx, `DELETE FROM project_attributes
-		WHERE project_id = ?1 AND breakdown = 0
-		AND key NOT IN (SELECT attr_key FROM usage_attributes WHERE project_id = ?1)
-		AND last_seen_day < min(?2, COALESCE((SELECT MIN(d) FROM (
-		      SELECT MIN(day) AS d FROM events WHERE family = 1 AND project_id = ?1
-		      UNION ALL SELECT MIN(day) FROM events WHERE family = 2 AND project_id = ?1
-		      UNION ALL SELECT MIN(day) FROM events WHERE family = 3 AND project_id = ?1)), ?2))`,
-		projectID, today)
-	return err
 }

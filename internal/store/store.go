@@ -322,6 +322,11 @@ type Store interface {
 	// RecordUsageHistory writes now's UTC day of usage_history, replacing
 	// that day's rows and keeping earlier days as history.
 	RecordUsageHistory(ctx context.Context, now time.Time) error
+	// CleanDictionaries deletes the dictionary rows (strings, attribute
+	// values, the attribute catalog) no raw row can still use: those last
+	// seen before the oldest day still held raw, and never later than
+	// before, the day ahead of the raw window (events encoding spec D7).
+	CleanDictionaries(ctx context.Context, before civil.Date) error
 	ProjectIDs(ctx context.Context) ([]int64, error) // all rows incl. archived, ascending
 	RebuildFlatView(ctx context.Context, keys []string) error
 	GetMeta(ctx context.Context, key string) (string, error) // "" if absent

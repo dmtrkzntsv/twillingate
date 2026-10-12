@@ -301,12 +301,11 @@ func TestWriteEventsAddsCatalogRows(t *testing.T) {
 	}
 }
 
-// The daily pass adds the keys usage_attributes holds that the catalog
-// misses (never for a project that no longer exists), and drops the
-// non-breakdown rows with no usage row; a breakdown row stays. Each
-// project's prune reads its own usage rows only: project 2's a goes,
-// though project 1 received an a.
-func TestCountReceivedHealsAndPrunesCatalog(t *testing.T) {
+// The usage recount adds the keys usage_attributes holds that the catalog
+// misses (never for a project that no longer exists) and deletes no catalog
+// row: dropping the rows no usage row and no raw row holds is
+// CleanDictionaries' (TestCleanDictionariesCatalogRules).
+func TestCountReceivedHealsTheCatalogOnly(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	if id := seedDeclaredProject(t, db, nil); id != 1 {
@@ -330,7 +329,7 @@ func TestCountReceivedHealsAndPrunesCatalog(t *testing.T) {
 	if err := db.RecordUsageHistory(ctx, ts("2026-08-04T03:00:00Z")); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"1/a=0", "1/kept=1"}
+	want := []string{"1/a=0", "1/gone=0", "1/kept=1", "2/a=0"}
 	if got := catalogRows(t, db); !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v\nwant %v", got, want)
 	}

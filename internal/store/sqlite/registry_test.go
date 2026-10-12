@@ -727,8 +727,9 @@ func TestProjectIDsAscending(t *testing.T) {
 
 // A project's attributes are its catalog's breakdown keys (spec D3, D4):
 // create and update set breakdown 1 on the listed keys and 0 on the rest,
-// a key no longer listed stays in the catalog while usage_attributes holds
-// it and goes otherwise, and the registry reads the list back by key.
+// a key no longer listed stays in the catalog (only the daily pass's
+// CleanDictionaries deletes a row), and the registry reads the list back
+// by key.
 func TestProjectBreakdownsLiveInTheCatalog(t *testing.T) {
 	d := openRegistryDB(t)
 	ctx := context.Background()
@@ -755,11 +756,8 @@ func TestProjectBreakdownsLiveInTheCatalog(t *testing.T) {
 	if got, want := attrs(), `["$host","plan","tier"]`; got != want {
 		t.Errorf("attributes after create = %s, want %s (by key)", got, want)
 	}
-	// tier was received, $host was not: dropping both from the list keeps
-	// tier's catalog row without a breakdown and removes $host's.
-	if _, err := d.db.Exec(`INSERT INTO usage_attributes (project_id, day, attr_key, events) VALUES (?, '2026-10-01', 'tier', 0)`, id); err != nil {
-		t.Fatal(err)
-	}
+	// Dropping a key from the list unmarks it and keeps its row, received
+	// or not: a raw row may still carry it.
 	if err := d.UpdateProject(ctx, store.RegistryProject{ID: id, Name: "Blog", AllowedOrigins: `[]`,
 		Attributes: `["plan","seats"]`}, audit); err != nil {
 		t.Fatal(err)
@@ -768,7 +766,7 @@ func TestProjectBreakdownsLiveInTheCatalog(t *testing.T) {
 		t.Errorf("attributes after update = %s, want %s", got, want)
 	}
 	if got, want := queryStrings(t, d, `SELECT key, breakdown FROM project_attributes ORDER BY key`),
-		[]string{"plan|1", "seats|1", "tier|0"}; !reflect.DeepEqual(got, want) {
+		[]string{"$host|0", "plan|1", "seats|1", "tier|0"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("project_attributes = %q, want %q", got, want)
 	}
 	if err := d.UpdateProject(ctx, store.RegistryProject{ID: id, Name: "Blog", AllowedOrigins: `[]`,
@@ -779,14 +777,13 @@ func TestProjectBreakdownsLiveInTheCatalog(t *testing.T) {
 		t.Errorf("attributes after clearing = %s, want %s", got, want)
 	}
 	if got, want := queryStrings(t, d, `SELECT key, breakdown FROM project_attributes ORDER BY key`),
-		[]string{"tier|0"}; !reflect.DeepEqual(got, want) {
+		[]string{"$host|0", "plan|0", "seats|0", "tier|0"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("project_attributes after clearing = %q, want %q", got, want)
 	}
 }
 
 // KeepBreakdowns (an update that did not send attributes) leaves the
-// catalog as it is: Attributes is ignored, and a row the sync would prune
-// (no breakdown, no usage row) stays.
+// catalog as it is: Attributes is ignored, breakdowns included.
 func TestUpdateKeepingBreakdownsLeavesTheCatalog(t *testing.T) {
 	d := openRegistryDB(t)
 	ctx := context.Background()

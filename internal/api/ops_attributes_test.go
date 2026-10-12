@@ -6,6 +6,9 @@ import (
 	"net/http"
 	"reflect"
 	"testing"
+	"time"
+
+	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
 func ptr[T any](v T) *T { return &v }
@@ -98,6 +101,51 @@ func TestListAttributes(t *testing.T) {
 		if tool.Name == "received_attributes" {
 			t.Error("received_attributes is still an MCP tool")
 		}
+	}
+}
+
+// A key carried only by view rows has a catalog row, because the encoded
+// attributes of a view row name their keys by catalog id (events encoding
+// spec D8), and it decodes in raw_views, but list_attributes reads
+// usage_attributes and the rules, which count product and measure keys
+// only: it lists the key neither with nor without a breakdown elsewhere,
+// and keys_total does not count it.
+func TestListAttributesIgnoresViewKeys(t *testing.T) {
+	h, _ := newTestHost(t)
+	ctx := context.Background()
+	at := time.Date(2026, 10, 2, 9, 0, 0, 0, time.UTC)
+	writeEvents(t, h.ops.St,
+		store.Event{ID: "0192f1a2-7c3b-7d4e-8f90-a1b2c3d4e601", ProjectID: 1, Family: store.FamilyProduct,
+			EventName: "signup", TS: at, ReceivedAt: at, ActorID: "a", Attributes: map[string]string{"plan": "pro"}},
+		store.Event{ID: "0192f1a2-7c3b-7d4e-8f90-a1b2c3d4e602", ProjectID: 1, Family: store.FamilyViews,
+			Kind: "web", TS: at, ReceivedAt: at, ActorID: "a", Path: "/", Attributes: map[string]string{"view_only": "x"}})
+	if err := h.reg.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	cell := func(q string) string {
+		t.Helper()
+		res, err := h.subs.Run(ctx, q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res.Rows[0][0]
+	}
+	if got := cell(`SELECT COUNT(*) FROM project_attributes WHERE project_id = 1 AND key = 'view_only'`); got != "1" {
+		t.Errorf("catalog rows for the view-only key = %s, want 1", got)
+	}
+	if got := cell(`SELECT attributes FROM raw_views WHERE id = '0192f1a2-7c3b-7d4e-8f90-a1b2c3d4e602'`); got != `{"view_only":"x"}` {
+		t.Errorf("raw_views attributes = %s, want the view-only key decoded", got)
+	}
+	out, err := h.listAttributes(ctx, attributesIn{ProjectID: 1, usageRangeIn: usageRangeIn{From: "2026-10-01", To: "2026-10-02"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var keys []string
+	for _, a := range out.Attributes {
+		keys = append(keys, a.Key)
+	}
+	if !reflect.DeepEqual(keys, []string{"plan"}) || out.KeysTotal != 1 {
+		t.Errorf("listed %v, keys_total %d; want [plan] and 1 (the view-only key is not listed or counted)", keys, out.KeysTotal)
 	}
 }
 

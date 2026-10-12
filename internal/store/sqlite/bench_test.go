@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
@@ -447,13 +448,14 @@ func seedReceivedWindow(b *testing.B, db *DB) (time.Time, int) {
 	return start, days
 }
 
-// BenchmarkPruneCatalog times the nightly catalog prune (pruneCatalogs,
-// inside RecordUsageHistory's transaction, while ingest waits) for a
-// project with 10,000 keys received on each of 30 days (300,000
-// usage_attributes rows) and 1,000 catalog rows no usage row holds any
-// more, which it deletes. No ANALYZE runs, as none does in production: the
-// prune must not be quadratic in the key count on an un-analyzed database.
-func BenchmarkPruneCatalog(b *testing.B) {
+// BenchmarkCleanDictionaries times the nightly dictionary cleanup
+// (CleanDictionaries, one transaction, while ingest waits) for a project
+// with 10,000 keys received on each of 30 days (300,000 usage_attributes
+// rows) and 1,000 catalog rows, each with a value, that no usage row holds
+// and no raw row can carry, which it deletes. No ANALYZE runs, as none does
+// in production: the cleanup must not be quadratic in the key count on an
+// un-analyzed database.
+func BenchmarkCleanDictionaries(b *testing.B) {
 	db := setupBenchDB(b)
 	ctx := context.Background()
 	const keys, days, stale = 10000, 30, 1000
@@ -469,27 +471,35 @@ func BenchmarkPruneCatalog(b *testing.B) {
 	}
 	plant := func() {
 		if _, err := db.db.ExecContext(ctx, `WITH RECURSIVE k(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM k WHERE i + 1 < ?1)
-			INSERT INTO project_attributes (project_id, key) SELECT ?2, 'gone' || i FROM k`, stale, benchProject); err != nil {
+			INSERT INTO project_attributes (project_id, key, last_seen_day) SELECT ?2, 'gone' || i, '2026-01-01' FROM k`, stale, benchProject); err != nil {
+			b.Fatal(err)
+		}
+		if _, err := db.db.ExecContext(ctx, `INSERT INTO attribute_values (key_id, n, value, last_seen_day)
+			SELECT id, 1, 'v', '2026-01-01' FROM project_attributes WHERE key LIKE 'gone%'`); err != nil {
 			b.Fatal(err)
 		}
 	}
-	count := func() (n int) {
-		if err := db.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM project_attributes`).Scan(&n); err != nil {
+	count := func(table string) (n int) {
+		if err := db.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+table).Scan(&n); err != nil {
 			b.Fatal(err)
 		}
 		return n
 	}
+	before := civil.Date{Year: 2026, Month: 10, Day: 1}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		b.StopTimer()
 		plant()
 		b.StartTimer()
-		if err := db.tx(ctx, func(tx *sql.Tx) error { return pruneCatalogs(ctx, tx, todayUTC()) }); err != nil {
+		if err := db.CleanDictionaries(ctx, before); err != nil {
 			b.Fatal(err)
 		}
 		b.StopTimer()
-		if n := count(); n != keys {
-			b.Fatalf("catalog holds %d rows after the prune, want %d", n, keys)
+		if n := count("project_attributes"); n != keys {
+			b.Fatalf("catalog holds %d rows after the cleanup, want %d", n, keys)
+		}
+		if n := count("attribute_values"); n != 0 {
+			b.Fatalf("attribute_values holds %d rows after the cleanup, want 0", n)
 		}
 		b.StartTimer()
 	}

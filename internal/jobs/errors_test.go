@@ -164,6 +164,13 @@ func (f *faultyStore) IncrementalVacuum(ctx context.Context) error {
 	return f.Store.IncrementalVacuum(ctx)
 }
 
+func (f *faultyStore) CleanDictionaries(ctx context.Context, before civil.Date) error {
+	if f.shouldFail("CleanDictionaries") {
+		return errBoom
+	}
+	return f.Store.CleanDictionaries(ctx, before)
+}
+
 func (f *faultyStore) RecordUsageHistory(ctx context.Context, now time.Time) error {
 	if f.shouldFail("RecordUsageHistory") {
 		return errBoom
@@ -411,6 +418,19 @@ func TestRunDailyPassLogsRecordUsageHistoryFailure(t *testing.T) {
 	}
 	if !logged(buf, "record usage history") || !logged(buf, "boom") {
 		t.Errorf("log output = %q, want mention of record usage history and boom", buf.String())
+	}
+}
+
+// The dictionary cleanup is the very last step: a failure is logged and the
+// pass still succeeds.
+func TestRunDailyPassLogsCleanDictionariesFailure(t *testing.T) {
+	_, fst, r, buf := setupFaulty(t, jobsVars, jobsProjectSpecs)
+	fst.failing("CleanDictionaries")
+	if err := r.RunDailyPass(context.Background()); err != nil {
+		t.Fatalf("RunDailyPass = %v, want nil", err)
+	}
+	if !logged(buf, "clean dictionaries") || !logged(buf, "boom") {
+		t.Errorf("log output = %q, want mention of clean dictionaries and boom", buf.String())
 	}
 }
 

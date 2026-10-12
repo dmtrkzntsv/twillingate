@@ -179,13 +179,9 @@ func encodeEvent(ctx context.Context, td *txDict, e store.Event, day string, arg
 	}
 	attrs := make(map[string]int64, len(e.Attributes))
 	for k, v := range e.Attributes {
-		keyID, err := td.key(ctx, e.ProjectID, k, day)
+		keyID, n, err := td.attribute(ctx, e.ProjectID, k, v, day)
 		if err != nil {
-			return fmt.Errorf("attribute key %q: %w", k, err)
-		}
-		n, err := td.value(ctx, keyID, v, day)
-		if err != nil {
-			return fmt.Errorf("attribute %q value: %w", k, err)
+			return fmt.Errorf("attribute %q: %w", k, err)
 		}
 		attrs[strconv.FormatInt(keyID, 10)] = n
 	}

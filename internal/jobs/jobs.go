@@ -46,6 +46,9 @@ type Store interface {
 	// RecordUsageHistory stores the usage_history measurements (each
 	// project's disk use) as of now.
 	RecordUsageHistory(ctx context.Context, now time.Time) error
+	// CleanDictionaries deletes the dictionary rows no raw row can still
+	// use; before is the day ahead of the raw window.
+	CleanDictionaries(ctx context.Context, before civil.Date) error
 	// PurgeArchived deletes every project, dashboard, widget and widget
 	// share archived more than days ago. days <= 0 purges nothing.
 	PurgeArchived(ctx context.Context, days int) (store.PurgeResult, error)
@@ -234,11 +237,20 @@ func (r *Runner) RunDailyPass(ctx context.Context) error {
 	if err := r.store.IncrementalVacuum(ctx); err != nil {
 		r.logger.Error("incremental vacuum failed", "error", err)
 	}
-	// Last, so the sizes are those left after the pruning and the vacuum.
+	// Measured after the pruning and the vacuum; only the dictionary
+	// cleanup below follows (its rows are a sliver of the file, and the
+	// pages it frees are reclaimed by the next pass's vacuum).
 	// Run calls this pass at boot, in the background, so sizes exist shortly
 	// after every start, not only after the first 03:00.
 	if err := r.store.RecordUsageHistory(ctx, r.now()); err != nil {
 		r.logger.Error("record usage history", "error", err)
+	}
+	// Dictionary rows no raw row can still use (events encoding spec D7):
+	// after the rollups deleted the expired days and the recount dropped
+	// the usage rows of those days. The cutoff is the day ahead of the raw
+	// window, which ingest can still write to.
+	if err := r.store.CleanDictionaries(ctx, today.AddDays(-ret.Events.RawDays-1)); err != nil {
+		r.logger.Error("clean dictionaries", "error", err)
 	}
 	return nil
 }

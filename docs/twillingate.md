@@ -1638,7 +1638,10 @@ every column to the text above. To decode a row by hand:
 `strings` is shared by every column and project; `project_attributes` is
 each project's catalog of keys (with the `breakdown` flag), and
 `attribute_values` numbers each key's values. Each keeps a `last_seen_day`,
-the newest day a raw row used it. The order of
+the newest day a raw row used it, and the daily pass deletes a row last seen
+before the oldest day still held raw (a key also stays while it is a breakdown or
+`usage_attributes` counts it). A text or key that comes back after that gets a
+new id, never an old one. The order of
 keys in the decoded `attributes` follows the stored ids: no query should
 depend on it. A filter on `project_id` and `day` reaches the table's key
 through every view, as both are stored as they are filtered.
