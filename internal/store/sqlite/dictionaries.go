@@ -33,12 +33,15 @@ const oldestRawDaySQL = `SELECT MIN(d) FROM (
 // Ingest needs no lock against this: it resolves every id through an upsert
 // in its own transaction, which re-inserts a deleted text under a new id
 // and raises last_seen_day to the row's day, a day this cutoff does not
-// pass. Run it after the rollups deleted the expired days, so it sees the
+// pass. It also drops the cached ids of the pruned days (dict.evict). Run it after the rollups deleted the expired days, so it sees the
 // oldest day left.
 func (d *DB) CleanDictionaries(ctx context.Context, before civil.Date) error {
 	b := before.String()
-	return d.tx(ctx, func(tx *sql.Tx) error {
-		cutoffs, oldest, err := projectCutoffs(ctx, tx, b)
+	var cutoffs []projectCutoff
+	var oldest string
+	err := d.tx(ctx, func(tx *sql.Tx) error {
+		var err error
+		cutoffs, oldest, err = projectCutoffs(ctx, tx, b)
 		if err != nil {
 			return err
 		}
@@ -63,6 +66,18 @@ func (d *DB) CleanDictionaries(ctx context.Context, before civil.Date) error {
 		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	// Once the deletes committed: the ids ingest cached for the days they
+	// pruned cannot be hit again, and the maps would otherwise keep every
+	// text, key and value written since the process started.
+	byProject := make(map[int64]string, len(cutoffs))
+	for _, c := range cutoffs {
+		byProject[c.project] = c.day
+	}
+	d.dict.evict(oldest, byProject)
+	return nil
 }
 
 type projectCutoff struct {

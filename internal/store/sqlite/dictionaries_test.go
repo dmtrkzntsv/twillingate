@@ -104,6 +104,18 @@ func TestDeletedStringComesBackWithANewID(t *testing.T) {
 	if err := db.WriteEvents(ctx, []store.Event{ev}); err != nil {
 		t.Fatal(err)
 	}
+	// A second value, so the key's counter has moved past 1.
+	ev2 := ev
+	ev2.ID, ev2.Attributes = "0192f1a2-7c3b-7d4e-8f90-a1b2c3d4e507", map[string]string{"k": "v2"}
+	if err := db.WriteEvents(ctx, []store.Event{ev2}); err != nil {
+		t.Fatal(err)
+	}
+	var oldString, oldKey, oldNext int64
+	db.db.QueryRow(`SELECT id FROM strings WHERE value = 'again'`).Scan(&oldString)
+	db.db.QueryRow(`SELECT id, values_next FROM project_attributes WHERE key = 'k'`).Scan(&oldKey, &oldNext)
+	if oldNext < 3 {
+		t.Fatalf("values_next = %d after two values, want at least 3", oldNext)
+	}
 	// The rollup took the day and the usage recount dropped its usage rows.
 	execAll(t, db, `DELETE FROM events`, `DELETE FROM usage_attributes`)
 	if err := db.CleanDictionaries(ctx, civilDate(t, "2026-10-01")); err != nil {
@@ -121,6 +133,80 @@ func TestDeletedStringComesBackWithANewID(t *testing.T) {
 	db.db.QueryRow(`SELECT event_name, attributes FROM raw_product WHERE id = ?`, ev.ID).Scan(&name, &attrs)
 	if name != "again" || attrs != `{"k":"v"}` {
 		t.Errorf("row decodes to %q %s", name, attrs)
+	}
+	// Pruned and seen again: a new string id, a new catalog row, and its
+	// values numbered from 1 again (the old key's counter went with it).
+	var newString, newKey, n int64
+	db.db.QueryRow(`SELECT id FROM strings WHERE value = 'again'`).Scan(&newString)
+	db.db.QueryRow(`SELECT id FROM project_attributes WHERE key = 'k'`).Scan(&newKey)
+	db.db.QueryRow(`SELECT n FROM attribute_values WHERE key_id = ? AND value = 'v'`, newKey).Scan(&n)
+	if newString == oldString || newKey == oldKey || n != 1 {
+		t.Errorf("string id %d (was %d), key id %d (was %d), value n = %d; want new ids and n = 1",
+			newString, oldString, newKey, oldKey, n)
+	}
+	if count(t, db, `SELECT COUNT(*) FROM attribute_values`) != 1 {
+		t.Error("the pruned key's other value came back")
+	}
+}
+
+// The ingest cache shrinks with the cleanup: an entry for a day before the
+// cutoff can never be hit again, so it goes; one the raw window can still
+// reach stays, and a write after the eviction resolves correctly.
+func TestCleanDictionariesEvictsTheIngestCache(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	execAll(t, db, `INSERT INTO projects (id, name, allowed_origins) VALUES (1, 'p', '[]')`)
+	write := func(id, d, name, val string) store.Event {
+		t.Helper()
+		ev := store.Event{ID: id, ProjectID: 1, Family: store.FamilyProduct, EventName: name,
+			TS: dayAt(t, d), ReceivedAt: dayAt(t, d), ActorID: "a", Attributes: map[string]string{"old-key": val}}
+		if d >= "2026-10" {
+			ev.Attributes = map[string]string{"new-key": val}
+		}
+		if err := db.WriteEvents(ctx, []store.Event{ev}); err != nil {
+			t.Fatal(err)
+		}
+		return ev
+	}
+	write("0192f1a2-7c3b-7d4e-8f90-a1b2c3d4e511", "2026-09-01", "old-name", "old-value")
+	keep := write("0192f1a2-7c3b-7d4e-8f90-a1b2c3d4e512", "2026-10-10", "new-name", "new-value")
+	execAll(t, db, `DELETE FROM events WHERE day = '2026-09-01'`, `DELETE FROM usage_attributes`)
+	size := func() (strs, keys, vals int) {
+		db.dict.mu.Lock()
+		defer db.dict.mu.Unlock()
+		return len(db.dict.strs), len(db.dict.keys), len(db.dict.vals)
+	}
+	if s, k, v := size(); s != 2 || k != 2 || v != 2 {
+		t.Fatalf("cache before the cleanup = %d strings, %d keys, %d values, want 2 each", s, k, v)
+	}
+	if err := db.CleanDictionaries(ctx, civilDate(t, "2026-10-01")); err != nil {
+		t.Fatal(err)
+	}
+	if s, k, v := size(); s != 1 || k != 1 || v != 1 {
+		t.Errorf("cache after the cleanup = %d strings, %d keys, %d values, want 1 each (the old day's gone)", s, k, v)
+	}
+	db.dict.mu.Lock()
+	_, oldStr := db.dict.strs["old-name"]
+	_, newStr := db.dict.strs["new-name"]
+	db.dict.mu.Unlock()
+	if oldStr || !newStr {
+		t.Errorf("cached old-name = %v, new-name = %v, want false and true", oldStr, newStr)
+	}
+	// Both resolve correctly afterwards: the evicted ones through the upsert.
+	write("0192f1a2-7c3b-7d4e-8f90-a1b2c3d4e513", "2026-10-11", "old-name", "old-value")
+	keep.ID = "0192f1a2-7c3b-7d4e-8f90-a1b2c3d4e514"
+	if err := db.WriteEvents(ctx, []store.Event{keep}); err != nil {
+		t.Fatal(err)
+	}
+	for id, want := range map[string]string{
+		"0192f1a2-7c3b-7d4e-8f90-a1b2c3d4e513": "old-name",
+		keep.ID:                                "new-name",
+	} {
+		var name string
+		db.db.QueryRow(`SELECT event_name FROM raw_product WHERE id = ?`, id).Scan(&name)
+		if name != want {
+			t.Errorf("row %s decodes to %q, want %q", id, name, want)
+		}
 	}
 }
 

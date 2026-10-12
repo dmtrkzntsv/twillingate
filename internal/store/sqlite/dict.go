@@ -14,9 +14,10 @@ import (
 // maps only after that transaction committed (txDict.commit): a
 // rolled-back insert would otherwise leave a cached id with no row.
 //
-// The maps only grow while the process runs: one entry per distinct text,
-// key and value ingest has written, which the raw window bounds as it
-// bounds the dictionaries themselves (on prod, a few thousand entries).
+// The maps grow with every distinct text, key and value ingest writes, and
+// the nightly CleanDictionaries shrinks them (evict): an entry whose day is
+// before the cleanup cutoff can never be hit again, since ingest writes
+// only days at or after the raw window start, which is after every cutoff.
 type dict struct {
 	mu   sync.Mutex
 	strs map[string]seenID
@@ -176,6 +177,49 @@ func (t *txDict) value(ctx context.Context, keyID int64, value, day string) (int
 	}
 	t.vals[ref] = seenID{n, day}
 	return n, nil
+}
+
+// evict drops the entries no later write can hit (spec D7: a hit needs the
+// cached day to be at least the row's day, and ingest writes no day before
+// the raw window start, which is later than any cleanup cutoff). oldest is
+// the earliest cutoff of all; cutoffs holds each project's own, which a key
+// is held to and a value is held to through its key's project. An entry
+// whose project is unknown is held to oldest. A dropped entry costs its
+// next write one upsert, no more, so a catalog row that stays (a breakdown,
+// a key a usage row holds) is dropped from here too.
+func (d *dict) evict(oldest string, cutoffs map[int64]string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	cutoff := func(project int64) string {
+		if c, ok := cutoffs[project]; ok {
+			return c
+		}
+		return oldest
+	}
+	// Read before the keys go: a value maps to its project through them.
+	keyProject := make(map[int64]int64, len(d.keys))
+	for ref, s := range d.keys {
+		keyProject[s.id] = ref.project
+	}
+	for v, s := range d.strs {
+		if s.day < oldest {
+			delete(d.strs, v)
+		}
+	}
+	for ref, s := range d.keys {
+		if s.day < cutoff(ref.project) {
+			delete(d.keys, ref)
+		}
+	}
+	for ref, s := range d.vals {
+		c := oldest
+		if p, ok := keyProject[ref.key]; ok {
+			c = cutoff(p)
+		}
+		if s.day < c {
+			delete(d.vals, ref)
+		}
+	}
 }
 
 // commit merges what the committed transaction learned. Where both know
