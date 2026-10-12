@@ -1644,6 +1644,6 @@ the newest day a raw row used it, and the daily pass deletes a row last seen
 before the oldest day still held raw (a key also stays while it is a breakdown or
 `usage_attributes` counts it). A text or key that comes back after that gets a
 new id, never an old one. The order of
-keys in the decoded `attributes` follows the stored ids: no query should
-depend on it. A filter on `project_id` and `day` reaches the table's key
+keys in the decoded `attributes` is not guaranteed (it is neither
+alphabetical nor the order sent): no query should depend on it. A filter on `project_id` and `day` reaches the table's key
 through every view, as both are stored as they are filtered.

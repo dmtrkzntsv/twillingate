@@ -746,7 +746,9 @@ too; the `agg_*` and `usage_*` tables keep their text.
 Back up first. The rebuild writes a full new copy of the raw window, and
 the WAL holds that copy too until it is checkpointed: keep free disk of
 about twice the size of `events` while it runs. It takes seconds at tens of
-thousands of raw rows and about a minute at 1.3 million. The file shrinks
+thousands of raw rows and about a minute and a half at 1.3 million (measured
+on generated page views, 14,000 rows a second); the time grows with the
+table, so on a larger one try it on a copy first. The file shrinks
 afterwards as the incremental vacuum reclaims the free pages, a few MB each
 daily pass (or run `VACUUM` once with the service stopped, as for 023).
 
@@ -774,7 +776,7 @@ WHERE project_id NOT IN (SELECT id FROM projects) GROUP BY project_id;
 SELECT w.id, w.dashboard_id, w.name, group_concat(s.name, ', ') AS reads
 FROM widgets w
 JOIN dashboards d ON d.id = w.dashboard_id
-JOIN sqlite_schema s ON s.type IN ('table', 'view')
+JOIN sqlite_master s ON s.type IN ('table', 'view')
   AND s.name NOT GLOB 'raw_*' AND s.name NOT GLOB 'v_*' AND s.name NOT GLOB 'agg_*'
   AND s.name NOT LIKE 'sqlite%'
   AND instr(lower(w.source), s.name) > 0
@@ -798,8 +800,8 @@ What changes on the day:
   `identities`, `projects`…) fails when it runs with "no such table";
   rewrite it on the views (`v_identities` for display names); check 3
   above lists the candidates. `query` still reads every table.
-- The decoded `attributes` JSON lists its keys in the order of their ids,
-  no longer alphabetically.
+- The key order of the decoded `attributes` JSON is not guaranteed: it was
+  alphabetical before, and no query should depend on it now.
 - An attribute rename no longer deletes the old key's catalog row: view
   rows keep their attributes as sent and may still carry it, and it ages
   out with them.
