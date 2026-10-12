@@ -504,3 +504,115 @@ func BenchmarkCleanDictionaries(b *testing.B) {
 		b.StartTimer()
 	}
 }
+
+// BenchmarkLiveHalvesOnIDs times the v_* live halves on a raw table of
+// 345,000 rows written through WriteEvents (30 days of 10,000 views, 1,000
+// product events and 500 measures), with UUID event, actor, user and
+// session ids as the SDK sends them, 300 paths and two breakdown keys: the
+// views over a 7-day range, the product and measure views over all 30
+// days. The seed is written once; each sub-benchmark runs one query.
+func BenchmarkLiveHalvesOnIDs(b *testing.B) {
+	db := setupBenchDB(b)
+	ctx := context.Background()
+	if _, err := db.db.ExecContext(ctx, `INSERT INTO project_attributes (project_id, key, breakdown)
+		VALUES (1, 'plan', 1), (1, 'color', 1) ON CONFLICT (project_id, key) DO UPDATE SET breakdown = 1`); err != nil {
+		b.Fatal(err)
+	}
+	uuid := func(kind, n int) string { return fmt.Sprintf("0192f1a2-7c3b-7d4e-%04x-%012x", kind, n) }
+	pick := func(xs []string, i int) string { return xs[i%len(xs)] }
+	start := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	seq := 0
+	for d := 0; d < 30; d++ {
+		day := start.AddDate(0, 0, d)
+		var batch []store.Event
+		add := func(e store.Event, i, n int) {
+			seq++
+			e.ID = uuid(1, seq)
+			e.ProjectID = benchProject
+			e.TS = day.Add(time.Duration(i) * (24 * time.Hour / time.Duration(n)))
+			e.ReceivedAt = e.TS
+			a := (i*7919 + d*31) % 5000
+			e.ActorID = uuid(2, a)
+			e.Kind = pick([]string{"web", "web", "web", "app"}, i)
+			e.Platform = pick([]string{"web", "web", "ios", "android"}, a)
+			e.OS = pick([]string{"Windows", "macOS", "Linux", "iOS", "Android"}, a)
+			e.OSVersion = pick([]string{"10", "11", "14", "17.1", "13"}, a/5)
+			e.Browser = pick([]string{"Chrome", "Firefox", "Safari", "Edge"}, a)
+			e.BrowserVersion = fmt.Sprintf("%d", 118+a%6)
+			e.BrowserLocale = pick([]string{"en-US", "de-DE", "fr-FR", "es-ES", "ja-JP"}, a)
+			e.AppVersion = pick([]string{"", "1.0", "1.1", "2.0"}, a)
+			e.Device = pick([]string{"desktop", "mobile", "tablet"}, a)
+			e.Country = pick([]string{"US", "DE", "FR", "GB", "JP", "BR", "IN", "CA", "ES", "IT"}, a)
+			batch = append(batch, e)
+		}
+		for i := 0; i < 10000; i++ {
+			add(store.Event{Family: store.FamilyViews, ActorKind: store.ActorConnection,
+				SessionID:      uuid(3, (i*7919+d*31)%5000*100+d),
+				Host:           pick([]string{"example.com", "www.example.com", "docs.example.com"}, i),
+				Path:           fmt.Sprintf("/path-%03d", (i*31)%300),
+				ReferrerSource: pick([]string{"", "", "google", "bing", "news.ycombinator.com", "t.co"}, i),
+				UTMSource:      pick([]string{"", "", "", "newsletter", "ads"}, i),
+				UTMMedium:      pick([]string{"", "email", "cpc"}, i/5),
+				UTMCampaign:    pick([]string{"", "fall", "spring", "launch"}, i/7),
+				DisplayWidth:   []int{1920, 1440, 390, 412}[i%4],
+				DisplayHeight:  []int{1080, 900, 844, 915}[i%4],
+				Consent:        []store.Consent{store.ConsentGiven, store.ConsentNone, store.ConsentUnknown}[i%3],
+			}, i, 10000)
+		}
+		for i := 0; i < 1000; i++ {
+			add(store.Event{Family: store.FamilyProduct, ActorKind: store.ActorUser,
+				EventName: pick([]string{"signup", "activated", "export", "invite_sent", "subscribed"}, i),
+				UserID:    uuid(4, (i*7919+d*31)%5000),
+				GroupID:   fmt.Sprintf("org-%02d", i%40),
+				Attributes: map[string]string{
+					"plan": pick([]string{"free", "pro", "team"}, i), "color": fmt.Sprintf("c%02d", (i*13)%20),
+					"source": pick([]string{"a", "b"}, i), "step": fmt.Sprint(i % 9), "ref": fmt.Sprint(i % 50),
+				},
+			}, i, 1000)
+		}
+		for i := 0; i < 500; i++ {
+			v := float64(200 + (i*37)%4000)
+			add(store.Event{Family: store.FamilyMeasures, ActorKind: store.ActorConnection,
+				EventName: pick([]string{"$lcp", "$inp", "$cls"}, i), Measure: "time", Value: &v, SampleRate: 1,
+				Attributes: map[string]string{"plan": pick([]string{"free", "pro", "team"}, i), "color": fmt.Sprintf("c%02d", (i*13)%20)},
+			}, i, 500)
+		}
+		if err := db.WriteEvents(ctx, batch); err != nil {
+			b.Fatalf("seed day %d: %v", d, err)
+		}
+	}
+	queries := []struct{ name, q, to string }{
+		{"views_paths_7d", `SELECT path, SUM(visitors), SUM(views) FROM v_views_paths WHERE project_id = ? AND day BETWEEN ? AND ? GROUP BY 1`, "2026-08-07"},
+		{"views_daily_7d", `SELECT kind, SUM(visitors), SUM(sessions) FROM v_views_daily WHERE project_id = ? AND day BETWEEN ? AND ? GROUP BY 1`, "2026-08-07"},
+		{"views_browsers_7d", `SELECT browser, browser_version, SUM(views) FROM v_views_browsers WHERE project_id = ? AND day BETWEEN ? AND ? GROUP BY 1, 2`, "2026-08-07"},
+		{"views_utm_7d", `SELECT utm_source, utm_campaign, SUM(views) FROM v_views_utm WHERE project_id = ? AND day BETWEEN ? AND ? GROUP BY 1, 2`, "2026-08-07"},
+		{"views_consent_7d", `SELECT consent, SUM(views) FROM v_views_consent WHERE project_id = ? AND day BETWEEN ? AND ? GROUP BY 1`, "2026-08-07"},
+		{"product_attrs_30d", `SELECT attr_key, attr_value, SUM(count) FROM v_product_attrs WHERE project_id = ? AND day BETWEEN ? AND ? GROUP BY 1, 2`, "2026-08-30"},
+		{"product_daily_30d", `SELECT event_name, SUM(count) FROM v_product_daily WHERE project_id = ? AND day BETWEEN ? AND ? GROUP BY 1`, "2026-08-30"},
+		{"product_totals_30d", `SELECT SUM(total_events), SUM(active_users) FROM v_product_totals WHERE project_id = ? AND day BETWEEN ? AND ?`, "2026-08-30"},
+		{"identity_daily_30d", `SELECT kind, COUNT(*) FROM v_identity_daily WHERE project_id = ? AND day BETWEEN ? AND ? GROUP BY 1`, "2026-08-30"},
+		{"measures_daily_30d", `SELECT event_name, SUM(samples) FROM v_measures_daily WHERE project_id = ? AND day BETWEEN ? AND ? GROUP BY 1`, "2026-08-30"},
+		{"measures_attrs_30d", `SELECT attr_key, attr_value, SUM(samples) FROM v_measures_attrs WHERE project_id = ? AND day BETWEEN ? AND ? GROUP BY 1, 2`, "2026-08-30"},
+	}
+	for _, c := range queries {
+		b.Run(c.name, func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				rows, err := db.db.QueryContext(ctx, c.q, benchProject, "2026-08-01", c.to)
+				if err != nil {
+					b.Fatal(err)
+				}
+				n := 0
+				for rows.Next() {
+					n++
+				}
+				if err := rows.Err(); err != nil {
+					b.Fatal(err)
+				}
+				rows.Close()
+				if n == 0 {
+					b.Fatal("query returned no rows")
+				}
+			}
+		})
+	}
+}

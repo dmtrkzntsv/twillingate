@@ -15,9 +15,9 @@
 --   - attributes is {"<project_attributes.id>": <attribute_values.n>} (D6).
 --
 -- raw_views, raw_product and raw_measures decode every column back to
--- today's names and text (D10), so the v_* views read them unchanged and
--- are recreated below byte-for-byte from the schema 040 left, except
--- v_identity_daily, the one view that read events itself. The expressions
+-- today's names and text (D10), for widget SQL. The v_* views keep their
+-- names, columns and rows, but their live halves read events and group on
+-- the stored ids, decoding only the grouped rows (D13). The expressions
 -- below are ingest's encoding (encode.go) written in SQL;
 -- TestMigrationEncodesLikeIngest requires equal bytes from both.
 --
@@ -395,10 +395,14 @@ SELECT 'measures' AS family,
        events.bucket AS bucket
 FROM events WHERE events.family = 3;
 
--- v_identity_daily: 025's text on the encoded rows. Families are their
--- codes; the ids group as stored (the encoding is one-to-one, so the
--- counts are unchanged), the rank's tie-break orders by the decoded id as
--- it ordered by the text, and the id decodes once per grouped row.
+-- v_identity_daily: 025's text on the encoded rows, a live arm per kind
+-- (each aggregate groups one column's stored ids directly, cheaper than
+-- 025's join to both kinds; each arm is its own compound term, since a
+-- project and day filter cannot reach a compound subquery whose terms
+-- rank). Families are their codes; the ids group as stored (the encoding
+-- is one-to-one, so the counts are unchanged), the rank's tie-break
+-- orders by the decoded id as it ordered by the text, and the id decodes
+-- once per kept row.
 CREATE VIEW v_identity_daily AS
 WITH cap AS (
   SELECT COALESCE((SELECT CASE CAST(value AS INTEGER) WHEN 0 THEN 4611686018427387904
@@ -409,28 +413,62 @@ WITH cap AS (
 SELECT project_id, day, kind, id, actors, users, views, events
 FROM agg_identity_daily
 UNION ALL
-SELECT project_id, day, kind, CASE WHEN typeof(sid) <> 'blob' THEN sid WHEN substr(sid, 1, 1) = x'01' THEN substr(lower(hex(substr(sid, 2))), 1, 8) || '-' || substr(lower(hex(substr(sid, 2))), 9, 4) || '-' || substr(lower(hex(substr(sid, 2))), 13, 4) || '-' || substr(lower(hex(substr(sid, 2))), 17, 4) || '-' || substr(lower(hex(substr(sid, 2))), 21, 12) ELSE lower(hex(substr(sid, 2))) END AS id, actors, users, views, events
+SELECT project_id, day, 'user', CASE WHEN typeof(sid) <> 'blob' THEN sid WHEN substr(sid, 1, 1) = x'01' THEN substr(lower(hex(substr(sid, 2))), 1, 8) || '-' || substr(lower(hex(substr(sid, 2))), 9, 4) || '-' || substr(lower(hex(substr(sid, 2))), 13, 4) || '-' || substr(lower(hex(substr(sid, 2))), 17, 4) || '-' || substr(lower(hex(substr(sid, 2))), 21, 12) ELSE lower(hex(substr(sid, 2))) END, actors, users, views, events
 FROM (
-  SELECT project_id, day, k.kind AS kind,
-         CASE k.kind WHEN 'user' THEN user_id ELSE group_id END AS sid,
-         COUNT(DISTINCT actor_id) AS actors,
-         CASE WHEN k.kind = 'user' THEN 1 ELSE COUNT(DISTINCT NULLIF(user_id, '')) END AS users,
+  SELECT project_id, day, user_id AS sid,
+         COUNT(DISTINCT actor_id) AS actors, 1 AS users,
          SUM(family = 1) AS views, SUM(family = 2) AS events,
-         ROW_NUMBER() OVER (PARTITION BY project_id, day, k.kind
-                            ORDER BY COUNT(*) DESC, CASE WHEN typeof(CASE k.kind WHEN 'user' THEN user_id ELSE group_id END) <> 'blob' THEN CASE k.kind WHEN 'user' THEN user_id ELSE group_id END WHEN substr(CASE k.kind WHEN 'user' THEN user_id ELSE group_id END, 1, 1) = x'01' THEN substr(lower(hex(substr(CASE k.kind WHEN 'user' THEN user_id ELSE group_id END, 2))), 1, 8) || '-' || substr(lower(hex(substr(CASE k.kind WHEN 'user' THEN user_id ELSE group_id END, 2))), 9, 4) || '-' || substr(lower(hex(substr(CASE k.kind WHEN 'user' THEN user_id ELSE group_id END, 2))), 13, 4) || '-' || substr(lower(hex(substr(CASE k.kind WHEN 'user' THEN user_id ELSE group_id END, 2))), 17, 4) || '-' || substr(lower(hex(substr(CASE k.kind WHEN 'user' THEN user_id ELSE group_id END, 2))), 21, 12) ELSE lower(hex(substr(CASE k.kind WHEN 'user' THEN user_id ELSE group_id END, 2))) END) AS rn
+         ROW_NUMBER() OVER (PARTITION BY project_id, day
+                            ORDER BY COUNT(*) DESC, CASE WHEN typeof(user_id) <> 'blob' THEN user_id WHEN substr(user_id, 1, 1) = x'01' THEN substr(lower(hex(substr(user_id, 2))), 1, 8) || '-' || substr(lower(hex(substr(user_id, 2))), 9, 4) || '-' || substr(lower(hex(substr(user_id, 2))), 13, 4) || '-' || substr(lower(hex(substr(user_id, 2))), 17, 4) || '-' || substr(lower(hex(substr(user_id, 2))), 21, 12) ELSE lower(hex(substr(user_id, 2))) END) AS rn
   FROM events
-  JOIN (SELECT 'user' AS kind UNION ALL SELECT 'group') k
-  WHERE family IN (1, 2)
-    AND CASE k.kind WHEN 'user' THEN user_id ELSE group_id END <> ''
-  GROUP BY project_id, day, k.kind, CASE k.kind WHEN 'user' THEN user_id ELSE group_id END
+  WHERE family IN (1, 2) AND user_id <> ''
+  GROUP BY project_id, day, user_id
+) live
+WHERE rn <= (SELECT n FROM cap)
+  AND NOT EXISTS (
+    SELECT 1 FROM agg_identity_daily g
+    WHERE g.project_id = live.project_id AND g.day = live.day)
+UNION ALL
+SELECT project_id, day, 'group', CASE WHEN typeof(sid) <> 'blob' THEN sid WHEN substr(sid, 1, 1) = x'01' THEN substr(lower(hex(substr(sid, 2))), 1, 8) || '-' || substr(lower(hex(substr(sid, 2))), 9, 4) || '-' || substr(lower(hex(substr(sid, 2))), 13, 4) || '-' || substr(lower(hex(substr(sid, 2))), 17, 4) || '-' || substr(lower(hex(substr(sid, 2))), 21, 12) ELSE lower(hex(substr(sid, 2))) END, actors, users, views, events
+FROM (
+  SELECT project_id, day, group_id AS sid,
+         COUNT(DISTINCT actor_id) AS actors, COUNT(DISTINCT NULLIF(user_id, '')) AS users,
+         SUM(family = 1) AS views, SUM(family = 2) AS events,
+         ROW_NUMBER() OVER (PARTITION BY project_id, day
+                            ORDER BY COUNT(*) DESC, CASE WHEN typeof(group_id) <> 'blob' THEN group_id WHEN substr(group_id, 1, 1) = x'01' THEN substr(lower(hex(substr(group_id, 2))), 1, 8) || '-' || substr(lower(hex(substr(group_id, 2))), 9, 4) || '-' || substr(lower(hex(substr(group_id, 2))), 13, 4) || '-' || substr(lower(hex(substr(group_id, 2))), 17, 4) || '-' || substr(lower(hex(substr(group_id, 2))), 21, 12) ELSE lower(hex(substr(group_id, 2))) END) AS rn
+  FROM events
+  WHERE family IN (1, 2) AND group_id <> ''
+  GROUP BY project_id, day, group_id
 ) live
 WHERE rn <= (SELECT n FROM cap)
   AND NOT EXISTS (
     SELECT 1 FROM agg_identity_daily g
     WHERE g.project_id = live.project_id AND g.day = live.day);
 
--- Every other view as 040 left it, byte-for-byte: it reads raw_*, which
--- keep their columns.
+-- Every other view as 040 left it, its agg half unchanged and its live half
+-- reading events on ids (D13), with the same rows (pinned by
+-- TestMigration041KeepsEveryViewRow):
+--
+--   - each live half reads events under its family code, and groups and
+--     counts on the stored ids: the encoding is one-to-one, and a blob
+--     never equals a text, so COUNT(DISTINCT actor_id) is unchanged;
+--   - a strings column decodes once per grouped row, '' for id 0
+--     (COALESCE((SELECT value FROM strings WHERE id = c), ''), or a join
+--     to strings where the grouped rows are many, as in v_measures_daily);
+--   - a rank's tie-break orders by the decoded text, as it ordered by the
+--     text; (other) stays the literal, and the cap's kept value is decoded
+--     text, so a value spelled "(other)" still folds into that row;
+--   - actor and group lists hold quote(id), an injective text per id (a
+--     JSON array cannot hold a blob), and are only counted distinct;
+--   - v_views_daily splits sessions on the integer ts, and decodes kind per
+--     row, since every row is bucketed under its kind's text;
+--   - v_views_consent counts each answer side by side in one pass per day,
+--     in key order, instead of sorting the rows by answer;
+--   - v_product_attrs and v_measures_attrs read a declared key by its
+--     catalog id, its value number by json_extract(attributes, '$."<id>"'),
+--     grouped by (key, number) and decoded through attribute_values; a
+--     system or declarable $ key reads its strings column, and any other
+--     declared $ key has no id and reads nothing, as before.
 CREATE VIEW v_measures_attrs AS
 WITH cap AS (
   SELECT COALESCE((SELECT CASE CAST(value AS INTEGER) WHEN 0 THEN 4611686018427387904
@@ -443,7 +481,7 @@ SELECT project_id, day, event_name, measure, attr_key, attr_value, bucket,
        samples, weight, sum
 FROM agg_measures_attrs
 UNION ALL
-SELECT project_id, day, event_name, measure, attr_key, kept, bucket,
+SELECT project_id, day, COALESCE((SELECT value FROM strings WHERE id = event_name), ''), COALESCE((SELECT value FROM strings WHERE id = measure), ''), attr_key, kept, bucket,
        CASE WHEN bucket = -1000 THEN 0 ELSE 2 * pow(1.04, bucket) / 2.04 END,
        samples, weight, sum
 FROM (
@@ -453,52 +491,59 @@ FROM (
   FROM (
     SELECT project_id, day, event_name, measure, attr_key, bucket, samples, weight, sum,
            CASE WHEN DENSE_RANK() OVER (PARTITION BY project_id, day, event_name, measure, attr_key
-                                        ORDER BY value_samples DESC, attr_value) <= (SELECT n FROM cap)
-                THEN attr_value ELSE '(other)' END AS kept
+                                        ORDER BY value_samples DESC, attr_text) <= (SELECT n FROM cap)
+                THEN attr_text ELSE '(other)' END AS kept
     FROM (
-      SELECT project_id, day, event_name, measure, attr_key, attr_value, bucket,
-             COUNT(*) AS samples, SUM(1.0 / sample_rate) AS weight, SUM(value / sample_rate) AS sum,
-             SUM(COUNT(*)) OVER (PARTITION BY project_id, day, event_name, measure, attr_key, attr_value)
-               AS value_samples
+      -- The value decodes here, once per grouped row.
+      SELECT project_id, day, event_name, measure, attr_key, bucket, samples, weight, sum, value_samples,
+             CASE WHEN kid IS NULL THEN (SELECT value FROM strings WHERE id = attr_value)
+                  ELSE (SELECT value FROM attribute_values WHERE key_id = kid AND n = attr_value) END AS attr_text
       FROM (
-        SELECT e.project_id AS project_id, e.day AS day, e.event_name AS event_name,
-               e.measure AS measure, e.bucket AS bucket, e.sample_rate AS sample_rate,
-               e.value AS value, k.attr_key AS attr_key,
-               CASE k.attr_key
-                 WHEN '$platform'        THEN NULLIF(e.platform, '')
-                 WHEN '$os'              THEN NULLIF(e.os, '')
-                 WHEN '$app_version'     THEN NULLIF(e.app_version, '')
-                 WHEN '$app_locale'      THEN NULLIF(e.app_locale, '')
-                 WHEN '$kind'            THEN NULLIF(e.kind, '')
-                 WHEN '$browser'         THEN NULLIF(e.browser, '')
-                 WHEN '$device'          THEN NULLIF(e.device, '')
-                 WHEN '$browser_locale'  THEN NULLIF(e.browser_locale, '')
-                 WHEN '$country'         THEN NULLIF(e.country, '')
-                 WHEN '$host'            THEN NULLIF(e.host, '')
-                 WHEN '$path'            THEN NULLIF(e.path, '')
-                 WHEN '$referrer'        THEN NULLIF(e.referrer_source, '')
-                 WHEN '$utm_source'      THEN NULLIF(e.utm_source, '')
-                 WHEN '$utm_medium'      THEN NULLIF(e.utm_medium, '')
-                 WHEN '$utm_campaign'    THEN NULLIF(e.utm_campaign, '')
-                 WHEN '$os_version'      THEN NULLIF(e.os_version, '')
-                 WHEN '$browser_version' THEN NULLIF(e.browser_version, '')
-                 WHEN '$device_model'    THEN NULLIF(e.device_model, '')
-                 ELSE CASE WHEN k.attr_key LIKE '$%' THEN NULL
-                           ELSE json_extract(e.attributes, '$."' || replace(k.attr_key,'"','\"') || '"') END
-               END AS attr_value
-        FROM raw_measures e
-        JOIN (
-          SELECT project_id, key AS attr_key FROM project_attributes WHERE breakdown = 1
-          UNION
-          SELECT p.id, s.column1
-          FROM projects p,
-               (VALUES ('$platform'), ('$os'), ('$app_version'), ('$app_locale'),
-                       ('$kind'), ('$browser'), ('$device'), ('$browser_locale'),
-                       ('$country')) s
-        ) k ON k.project_id = e.project_id
+        SELECT project_id, day, event_name, measure, attr_key, kid, attr_value, bucket,
+               COUNT(*) AS samples, SUM(1.0 / sample_rate) AS weight, SUM(value / sample_rate) AS sum,
+               SUM(COUNT(*)) OVER (PARTITION BY project_id, day, event_name, measure, attr_key, attr_value)
+                 AS value_samples
+        FROM (
+          SELECT events.project_id AS project_id, events.day AS day, events.event_name AS event_name,
+                 events.measure AS measure, events.bucket AS bucket, events.sample_rate AS sample_rate,
+                 events.value AS value, k.attr_key AS attr_key, k.kid AS kid,
+                 CASE k.attr_key
+                   WHEN '$platform'        THEN NULLIF(events.platform, 0)
+                   WHEN '$os'              THEN NULLIF(events.os, 0)
+                   WHEN '$app_version'     THEN NULLIF(events.app_version, 0)
+                   WHEN '$app_locale'      THEN NULLIF(events.app_locale, 0)
+                   WHEN '$kind'            THEN NULLIF(events.kind, 0)
+                   WHEN '$browser'         THEN NULLIF(events.browser, 0)
+                   WHEN '$device'          THEN NULLIF(events.device, 0)
+                   WHEN '$browser_locale'  THEN NULLIF(events.browser_locale, 0)
+                   WHEN '$country'         THEN NULLIF(events.country, 0)
+                   WHEN '$host'            THEN NULLIF(events.host, 0)
+                   WHEN '$path'            THEN NULLIF(events.path, 0)
+                   WHEN '$referrer'        THEN NULLIF(events.referrer_source, 0)
+                   WHEN '$utm_source'      THEN NULLIF(events.utm_source, 0)
+                   WHEN '$utm_medium'      THEN NULLIF(events.utm_medium, 0)
+                   WHEN '$utm_campaign'    THEN NULLIF(events.utm_campaign, 0)
+                   WHEN '$os_version'      THEN NULLIF(events.os_version, 0)
+                   WHEN '$browser_version' THEN NULLIF(events.browser_version, 0)
+                   WHEN '$device_model'    THEN NULLIF(events.device_model, 0)
+                   ELSE json_extract(events.attributes, '$."' || k.kid || '"')
+                 END AS attr_value
+          FROM events
+          JOIN (
+            SELECT project_id, key AS attr_key, CASE WHEN key LIKE '$%' THEN NULL ELSE id END AS kid
+            FROM project_attributes WHERE breakdown = 1
+            UNION
+            SELECT p.id, s.column1, NULL
+            FROM projects p,
+                 (VALUES ('$platform'), ('$os'), ('$app_version'), ('$app_locale'),
+                         ('$kind'), ('$browser'), ('$device'), ('$browser_locale'),
+                         ('$country')) s
+          ) k ON k.project_id = events.project_id
+          WHERE events.family = 3
+        )
+        WHERE attr_value IS NOT NULL
+        GROUP BY project_id, day, event_name, measure, attr_key, kid, attr_value, bucket
       )
-      WHERE attr_value IS NOT NULL
-      GROUP BY project_id, day, event_name, measure, attr_key, attr_value, bucket
     )
   )
   WINDOW f AS (PARTITION BY project_id, day, event_name, measure, attr_key, kept, bucket)
@@ -511,11 +556,20 @@ SELECT project_id, day, event_name, measure, bucket,
        samples, weight, sum
 FROM agg_measures_daily
 UNION ALL
-SELECT project_id, day, event_name, measure, bucket,
-       CASE WHEN bucket = -1000 THEN 0 ELSE 2 * pow(1.04, bucket) / 2.04 END,
-       COUNT(*), SUM(1.0 / sample_rate), SUM(value / sample_rate)
-FROM raw_measures
-GROUP BY project_id, day, event_name, measure, bucket;
+-- A row per bucket, so many grouped rows: the names decode through a join,
+-- cheaper here than a subquery per row.
+SELECT g.project_id, g.day, COALESCE(se.value, ''), COALESCE(sm.value, ''), g.bucket,
+       CASE WHEN g.bucket = -1000 THEN 0 ELSE 2 * pow(1.04, g.bucket) / 2.04 END,
+       g.samples, g.weight, g.sum
+FROM (
+  SELECT project_id, day, event_name, measure, bucket,
+         COUNT(*) AS samples, SUM(1.0 / sample_rate) AS weight, SUM(value / sample_rate) AS sum
+  FROM events
+  WHERE family = 3
+  GROUP BY project_id, day, event_name, measure, bucket
+) g
+LEFT JOIN strings se ON se.id = g.event_name
+LEFT JOIN strings sm ON sm.id = g.measure;
 
 CREATE VIEW v_product_attrs AS
 WITH cap AS (
@@ -527,8 +581,8 @@ WITH cap AS (
 SELECT project_id, day, event_name, attr_key, attr_value, count, unique_users, unique_groups
 FROM agg_product_attrs
 UNION ALL
-SELECT project_id, day, event_name, attr_key,
-       CASE WHEN rn <= (SELECT n FROM cap) THEN attr_value ELSE '(other)' END,
+SELECT project_id, day, COALESCE((SELECT value FROM strings WHERE id = event_name), ''), attr_key,
+       CASE WHEN rn <= (SELECT n FROM cap) THEN attr_text ELSE '(other)' END,
        CASE WHEN rn <= (SELECT n FROM cap) THEN c ELSE tail_c END,
        CASE WHEN rn <= (SELECT n FROM cap) THEN u
             ELSE (SELECT COUNT(DISTINCT value) FROM json_each(tail_actors)) END,
@@ -538,61 +592,72 @@ FROM (
   -- Whole-partition aggregates over the values past the cap; NULL where
   -- there are none. Each array loses its brackets, is joined and wrapped
   -- again: one array of every tail row's actor (or group, null for none).
-  SELECT project_id, day, event_name, attr_key, attr_value, c, u, g, rn,
+  SELECT project_id, day, event_name, attr_key, attr_text, c, u, g, rn,
          SUM(c) FILTER (WHERE rn > (SELECT n FROM cap)) OVER w AS tail_c,
          '[' || group_concat(substr(actors, 2, length(actors) - 2), ',')
                 FILTER (WHERE rn > (SELECT n FROM cap)) OVER w || ']' AS tail_actors,
          '[' || group_concat(substr(groups, 2, length(groups) - 2), ',')
                 FILTER (WHERE rn > (SELECT n FROM cap)) OVER w || ']' AS tail_groups
   FROM (
-    SELECT project_id, day, event_name, attr_key, attr_value,
-           COUNT(*) AS c, COUNT(DISTINCT actor_id) AS u,
-           COUNT(DISTINCT NULLIF(group_id, '')) AS g,
-           json_group_array(actor_id) FILTER (WHERE (SELECT n FROM cap) < 4611686018427387904) AS actors,
-           json_group_array(NULLIF(group_id, '')) FILTER (WHERE (SELECT n FROM cap) < 4611686018427387904) AS groups,
+    SELECT project_id, day, event_name, attr_key, attr_text, c, u, g, actors, groups,
            ROW_NUMBER() OVER (PARTITION BY project_id, day, event_name, attr_key
-                              ORDER BY COUNT(*) DESC, attr_value) AS rn
+                              ORDER BY c DESC, attr_text) AS rn
     FROM (
-      SELECT e.project_id AS project_id, e.day AS day, e.event_name AS event_name,
-             e.actor_id AS actor_id, e.group_id AS group_id, k.attr_key AS attr_key,
-             CASE k.attr_key
-               WHEN '$platform'        THEN NULLIF(e.platform, '')
-               WHEN '$os'              THEN NULLIF(e.os, '')
-               WHEN '$app_version'     THEN NULLIF(e.app_version, '')
-               WHEN '$app_locale'      THEN NULLIF(e.app_locale, '')
-               WHEN '$kind'            THEN NULLIF(e.kind, '')
-               WHEN '$browser'         THEN NULLIF(e.browser, '')
-               WHEN '$device'          THEN NULLIF(e.device, '')
-               WHEN '$browser_locale'  THEN NULLIF(e.browser_locale, '')
-               WHEN '$country'         THEN NULLIF(e.country, '')
-               WHEN '$host'            THEN NULLIF(e.host, '')
-               WHEN '$path'            THEN NULLIF(e.path, '')
-               WHEN '$referrer'        THEN NULLIF(e.referrer_source, '')
-               WHEN '$utm_source'      THEN NULLIF(e.utm_source, '')
-               WHEN '$utm_medium'      THEN NULLIF(e.utm_medium, '')
-               WHEN '$utm_campaign'    THEN NULLIF(e.utm_campaign, '')
-               WHEN '$os_version'      THEN NULLIF(e.os_version, '')
-               WHEN '$browser_version' THEN NULLIF(e.browser_version, '')
-               WHEN '$device_model'    THEN NULLIF(e.device_model, '')
-               ELSE CASE WHEN k.attr_key LIKE '$%' THEN NULL
-                         ELSE json_extract(e.attributes, '$."' || replace(k.attr_key,'"','\"') || '"') END
-             END AS attr_value
-      FROM raw_product e
-      -- Each project's keys: what it declares, and every system key. UNION
-      -- drops a system key a project also declares (manage refuses that
-      -- today; older registries may hold one).
-      JOIN (
-        SELECT project_id, key AS attr_key FROM project_attributes WHERE breakdown = 1
-        UNION
-        SELECT p.id, s.column1
-        FROM projects p,
-             (VALUES ('$platform'), ('$os'), ('$app_version'), ('$app_locale'),
-                     ('$kind'), ('$browser'), ('$device'), ('$browser_locale'),
-                     ('$country')) s
-      ) k ON k.project_id = e.project_id
+      -- One row per (key, value number or strings id); the value decodes
+      -- here, once per grouped row.
+      SELECT project_id, day, event_name, attr_key,
+             CASE WHEN kid IS NULL THEN (SELECT value FROM strings WHERE id = attr_value)
+                  ELSE (SELECT value FROM attribute_values WHERE key_id = kid AND n = attr_value) END AS attr_text,
+             COUNT(*) AS c, COUNT(DISTINCT actor_id) AS u,
+             COUNT(DISTINCT NULLIF(group_id, '')) AS g,
+             json_group_array(quote(actor_id)) FILTER (WHERE (SELECT n FROM cap) < 4611686018427387904) AS actors,
+             json_group_array(CASE WHEN group_id <> '' THEN quote(group_id) END)
+               FILTER (WHERE (SELECT n FROM cap) < 4611686018427387904) AS groups
+      FROM (
+        SELECT events.project_id AS project_id, events.day AS day, events.event_name AS event_name,
+               events.actor_id AS actor_id, events.group_id AS group_id,
+               k.attr_key AS attr_key, k.kid AS kid,
+               CASE k.attr_key
+                 WHEN '$platform'        THEN NULLIF(events.platform, 0)
+                 WHEN '$os'              THEN NULLIF(events.os, 0)
+                 WHEN '$app_version'     THEN NULLIF(events.app_version, 0)
+                 WHEN '$app_locale'      THEN NULLIF(events.app_locale, 0)
+                 WHEN '$kind'            THEN NULLIF(events.kind, 0)
+                 WHEN '$browser'         THEN NULLIF(events.browser, 0)
+                 WHEN '$device'          THEN NULLIF(events.device, 0)
+                 WHEN '$browser_locale'  THEN NULLIF(events.browser_locale, 0)
+                 WHEN '$country'         THEN NULLIF(events.country, 0)
+                 WHEN '$host'            THEN NULLIF(events.host, 0)
+                 WHEN '$path'            THEN NULLIF(events.path, 0)
+                 WHEN '$referrer'        THEN NULLIF(events.referrer_source, 0)
+                 WHEN '$utm_source'      THEN NULLIF(events.utm_source, 0)
+                 WHEN '$utm_medium'      THEN NULLIF(events.utm_medium, 0)
+                 WHEN '$utm_campaign'    THEN NULLIF(events.utm_campaign, 0)
+                 WHEN '$os_version'      THEN NULLIF(events.os_version, 0)
+                 WHEN '$browser_version' THEN NULLIF(events.browser_version, 0)
+                 WHEN '$device_model'    THEN NULLIF(events.device_model, 0)
+                 ELSE json_extract(events.attributes, '$."' || k.kid || '"')
+               END AS attr_value
+        FROM events
+        -- Each project's keys: what it declares (by id; a declared $ key
+        -- has none, so it reads its column or nothing), and every system
+        -- key. UNION drops a system key a project also declares (manage
+        -- refuses that today; older registries may hold one).
+        JOIN (
+          SELECT project_id, key AS attr_key, CASE WHEN key LIKE '$%' THEN NULL ELSE id END AS kid
+          FROM project_attributes WHERE breakdown = 1
+          UNION
+          SELECT p.id, s.column1, NULL
+          FROM projects p,
+               (VALUES ('$platform'), ('$os'), ('$app_version'), ('$app_locale'),
+                       ('$kind'), ('$browser'), ('$device'), ('$browser_locale'),
+                       ('$country')) s
+        ) k ON k.project_id = events.project_id
+        WHERE events.family = 2
+      )
+      WHERE attr_value IS NOT NULL
+      GROUP BY project_id, day, event_name, attr_key, kid, attr_value
     )
-    WHERE attr_value IS NOT NULL
-    GROUP BY project_id, day, event_name, attr_key, attr_value
   )
   WINDOW w AS (PARTITION BY project_id, day, event_name, attr_key)
 )
@@ -601,14 +666,14 @@ WHERE rn <= (SELECT n FROM cap) + 1;
 CREATE VIEW v_product_daily AS
 SELECT project_id, day, event_name, count, unique_users FROM agg_product_daily
 UNION ALL
-SELECT project_id, day, event_name, COUNT(*), COUNT(DISTINCT actor_id)
-FROM raw_product GROUP BY project_id, day, event_name;
+SELECT project_id, day, COALESCE((SELECT value FROM strings WHERE id = event_name), ''), COUNT(*), COUNT(DISTINCT actor_id)
+FROM events WHERE family = 2 GROUP BY project_id, day, event_name;
 
 CREATE VIEW v_product_totals AS
 SELECT project_id, day, total_events, active_users FROM agg_product_totals
 UNION ALL
 SELECT project_id, day, COUNT(*), COUNT(DISTINCT actor_id)
-FROM raw_product GROUP BY project_id, day;
+FROM events WHERE family = 2 GROUP BY project_id, day;
 
 CREATE VIEW v_views_app_versions AS
 WITH cap AS (
@@ -619,7 +684,7 @@ WITH cap AS (
 )
 SELECT project_id, day, platform, app_version, visitors, views FROM agg_views_app_versions
 UNION ALL
-SELECT project_id, day, platform, kept,
+SELECT project_id, day, COALESCE((SELECT value FROM strings WHERE id = platform), ''), kept,
        CASE WHEN keys = 1 THEN u
             ELSE (SELECT COUNT(DISTINCT value) FROM json_each(merged)) END,
        views
@@ -631,12 +696,14 @@ FROM (
   FROM (
     SELECT project_id, day, platform,
            CASE WHEN ROW_NUMBER() OVER (PARTITION BY project_id, day
-                                        ORDER BY COUNT(*) DESC, platform, app_version) <= (SELECT n FROM cap)
-                THEN app_version ELSE '(other)' END AS kept,
+                                        ORDER BY COUNT(*) DESC,
+                                                 (SELECT value FROM strings WHERE id = platform),
+                                                 (SELECT value FROM strings WHERE id = app_version)) <= (SELECT n FROM cap)
+                THEN COALESCE((SELECT value FROM strings WHERE id = app_version), '') ELSE '(other)' END AS kept,
            COUNT(*) AS c, COUNT(DISTINCT actor_id) AS u,
-           json_group_array(actor_id) FILTER (WHERE (SELECT n FROM cap) < 4611686018427387904) AS actors
-    FROM raw_views
-    WHERE app_version <> ''
+           json_group_array(quote(actor_id)) FILTER (WHERE (SELECT n FROM cap) < 4611686018427387904) AS actors
+    FROM events
+    WHERE family = 1 AND app_version <> 0
     GROUP BY project_id, day, platform, app_version
   )
   WINDOW f AS (PARTITION BY project_id, day, platform, kept)
@@ -652,7 +719,7 @@ WITH cap AS (
 )
 SELECT project_id, day, browser, browser_version, visitors, views FROM agg_views_browsers
 UNION ALL
-SELECT project_id, day, browser, kept,
+SELECT project_id, day, COALESCE((SELECT value FROM strings WHERE id = browser), ''), kept,
        CASE WHEN keys = 1 THEN u
             ELSE (SELECT COUNT(DISTINCT value) FROM json_each(merged)) END,
        views
@@ -664,11 +731,14 @@ FROM (
   FROM (
     SELECT project_id, day, browser,
            CASE WHEN ROW_NUMBER() OVER (PARTITION BY project_id, day
-                                        ORDER BY COUNT(*) DESC, browser, browser_version) <= (SELECT n FROM cap)
-                THEN browser_version ELSE '(other)' END AS kept,
+                                        ORDER BY COUNT(*) DESC,
+                                                 (SELECT value FROM strings WHERE id = browser),
+                                                 (SELECT value FROM strings WHERE id = browser_version)) <= (SELECT n FROM cap)
+                THEN COALESCE((SELECT value FROM strings WHERE id = browser_version), '') ELSE '(other)' END AS kept,
            COUNT(*) AS c, COUNT(DISTINCT actor_id) AS u,
-           json_group_array(actor_id) FILTER (WHERE (SELECT n FROM cap) < 4611686018427387904) AS actors
-    FROM raw_views
+           json_group_array(quote(actor_id)) FILTER (WHERE (SELECT n FROM cap) < 4611686018427387904) AS actors
+    FROM events
+    WHERE family = 1
     GROUP BY project_id, day, browser, browser_version
   )
   WINDOW f AS (PARTITION BY project_id, day, browser, kept)
@@ -678,11 +748,24 @@ WHERE rf = 1;
 CREATE VIEW v_views_consent AS
 SELECT project_id, day, consent, visitors, views FROM agg_views_consent
 UNION ALL
-SELECT project_id, day,
-       CASE consent WHEN 1 THEN 'given' WHEN 0 THEN 'none' ELSE 'unknown' END,
-       COUNT(DISTINCT actor_id), COUNT(*)
-FROM raw_views v
-GROUP BY project_id, day, CASE consent WHEN 1 THEN 'given' WHEN 0 THEN 'none' ELSE 'unknown' END;
+-- One pass per day in key order (no sort): each answer's visitors and
+-- views side by side, then a row per answer the day holds. "unknown" is
+-- every row that is neither 1 nor 0, as CASE consent ... ELSE was.
+SELECT project_id, day, a.consent,
+       CASE a.consent WHEN 'given' THEN given_v WHEN 'none' THEN none_v ELSE unknown_v END,
+       CASE a.consent WHEN 'given' THEN given_n WHEN 'none' THEN none_n ELSE unknown_n END
+FROM (
+  SELECT project_id, day,
+         COUNT(DISTINCT CASE WHEN consent IS 1 THEN actor_id END) AS given_v, SUM(consent IS 1) AS given_n,
+         COUNT(DISTINCT CASE WHEN consent IS 0 THEN actor_id END) AS none_v, SUM(consent IS 0) AS none_n,
+         COUNT(DISTINCT CASE WHEN consent IS NOT 1 AND consent IS NOT 0 THEN actor_id END) AS unknown_v,
+         SUM(consent IS NOT 1 AND consent IS NOT 0) AS unknown_n
+  FROM events
+  WHERE family = 1
+  GROUP BY project_id, day
+) d
+JOIN (SELECT 'given' AS consent UNION ALL SELECT 'none' UNION ALL SELECT 'unknown') a
+  ON CASE a.consent WHEN 'given' THEN given_n WHEN 'none' THEN none_n ELSE unknown_n END > 0;
 
 CREATE VIEW v_views_countries AS
 WITH cap AS (
@@ -705,11 +788,12 @@ FROM (
   FROM (
     SELECT project_id, day,
            CASE WHEN ROW_NUMBER() OVER (PARTITION BY project_id, day
-                                        ORDER BY COUNT(*) DESC, country) <= (SELECT n FROM cap)
-                THEN country ELSE '(other)' END AS kept,
+                                        ORDER BY COUNT(*) DESC, (SELECT value FROM strings WHERE id = country)) <= (SELECT n FROM cap)
+                THEN COALESCE((SELECT value FROM strings WHERE id = country), '') ELSE '(other)' END AS kept,
            COUNT(*) AS c, COUNT(DISTINCT actor_id) AS u,
-           json_group_array(actor_id) FILTER (WHERE (SELECT n FROM cap) < 4611686018427387904) AS actors
-    FROM raw_views
+           json_group_array(quote(actor_id)) FILTER (WHERE (SELECT n FROM cap) < 4611686018427387904) AS actors
+    FROM events
+    WHERE family = 1
     GROUP BY project_id, day, country
   )
   WINDOW f AS (PARTITION BY project_id, day, kept)
@@ -727,7 +811,7 @@ SELECT project_id, day, kind, visitors, views, sessions, bounces, duration_sec F
 UNION ALL
 SELECT pd.project_id, pd.day, r.value ->> 0, r.value ->> 1, r.value ->> 2,
        r.value ->> 3, r.value ->> 4, r.value ->> 5
-FROM (SELECT project_id, day FROM raw_views GROUP BY project_id, day) pd,
+FROM (SELECT project_id, day FROM events WHERE family = 1 GROUP BY project_id, day) pd,
      json_each((
   SELECT json_group_array(json_array(kind, visitors, views, sessions, bounces, duration_sec))
   FROM (
@@ -756,10 +840,10 @@ FROM (SELECT project_id, day FROM raw_views GROUP BY project_id, day) pd,
                         THEN kind ELSE '(other)' END AS kind,
                    actor_id, session_id, t
             FROM (
-              SELECT kind, actor_id, session_id, CAST(strftime('%s', ts) AS INTEGER) AS t,
-                     COUNT(*) OVER (PARTITION BY kind) AS kind_views
-              FROM raw_views
-              WHERE project_id = pd.project_id AND day = pd.day
+              SELECT COALESCE((SELECT value FROM strings WHERE id = events.kind), '') AS kind, actor_id, session_id, ts AS t,
+                     COUNT(*) OVER (PARTITION BY events.kind) AS kind_views
+              FROM events
+              WHERE family = 1 AND project_id = pd.project_id AND day = pd.day
             )
           )
           WINDOW w AS (PARTITION BY kind, actor_id ORDER BY t)
@@ -780,7 +864,7 @@ WITH cap AS (
 )
 SELECT project_id, day, device, device_model, visitors, views FROM agg_views_devices
 UNION ALL
-SELECT project_id, day, device, kept,
+SELECT project_id, day, COALESCE((SELECT value FROM strings WHERE id = device), ''), kept,
        CASE WHEN keys = 1 THEN u
             ELSE (SELECT COUNT(DISTINCT value) FROM json_each(merged)) END,
        views
@@ -792,11 +876,14 @@ FROM (
   FROM (
     SELECT project_id, day, device,
            CASE WHEN ROW_NUMBER() OVER (PARTITION BY project_id, day
-                                        ORDER BY COUNT(*) DESC, device, device_model) <= (SELECT n FROM cap)
-                THEN device_model ELSE '(other)' END AS kept,
+                                        ORDER BY COUNT(*) DESC,
+                                                 (SELECT value FROM strings WHERE id = device),
+                                                 (SELECT value FROM strings WHERE id = device_model)) <= (SELECT n FROM cap)
+                THEN COALESCE((SELECT value FROM strings WHERE id = device_model), '') ELSE '(other)' END AS kept,
            COUNT(*) AS c, COUNT(DISTINCT actor_id) AS u,
-           json_group_array(actor_id) FILTER (WHERE (SELECT n FROM cap) < 4611686018427387904) AS actors
-    FROM raw_views
+           json_group_array(quote(actor_id)) FILTER (WHERE (SELECT n FROM cap) < 4611686018427387904) AS actors
+    FROM events
+    WHERE family = 1
     GROUP BY project_id, day, device, device_model
   )
   WINDOW f AS (PARTITION BY project_id, day, device, kept)
@@ -827,9 +914,9 @@ FROM (
                                         ORDER BY COUNT(*) DESC, display_width || 'x' || display_height) <= (SELECT n FROM cap)
                 THEN display_width || 'x' || display_height ELSE '(other)' END AS kept,
            COUNT(*) AS c, COUNT(DISTINCT actor_id) AS u,
-           json_group_array(actor_id) FILTER (WHERE (SELECT n FROM cap) < 4611686018427387904) AS actors
-    FROM raw_views
-    WHERE display_width > 0 AND display_height > 0
+           json_group_array(quote(actor_id)) FILTER (WHERE (SELECT n FROM cap) < 4611686018427387904) AS actors
+    FROM events
+    WHERE family = 1 AND display_width > 0 AND display_height > 0
     GROUP BY project_id, day, display_width || 'x' || display_height
   )
   WINDOW f AS (PARTITION BY project_id, day, kept)
@@ -857,11 +944,12 @@ FROM (
   FROM (
     SELECT project_id, day,
            CASE WHEN ROW_NUMBER() OVER (PARTITION BY project_id, day
-                                        ORDER BY COUNT(*) DESC, host) <= (SELECT n FROM cap)
-                THEN host ELSE '(other)' END AS kept,
+                                        ORDER BY COUNT(*) DESC, (SELECT value FROM strings WHERE id = host)) <= (SELECT n FROM cap)
+                THEN COALESCE((SELECT value FROM strings WHERE id = host), '') ELSE '(other)' END AS kept,
            COUNT(*) AS c, COUNT(DISTINCT actor_id) AS u,
-           json_group_array(actor_id) FILTER (WHERE (SELECT n FROM cap) < 4611686018427387904) AS actors
-    FROM raw_views
+           json_group_array(quote(actor_id)) FILTER (WHERE (SELECT n FROM cap) < 4611686018427387904) AS actors
+    FROM events
+    WHERE family = 1
     GROUP BY project_id, day, host
   )
   WINDOW f AS (PARTITION BY project_id, day, kept)
@@ -877,7 +965,7 @@ WITH cap AS (
 )
 SELECT project_id, day, browser_locale, app_locale, visitors, views FROM agg_views_locales
 UNION ALL
-SELECT project_id, day, browser_locale, kept,
+SELECT project_id, day, COALESCE((SELECT value FROM strings WHERE id = browser_locale), ''), kept,
        CASE WHEN keys = 1 THEN u
             ELSE (SELECT COUNT(DISTINCT value) FROM json_each(merged)) END,
        views
@@ -889,12 +977,14 @@ FROM (
   FROM (
     SELECT project_id, day, browser_locale,
            CASE WHEN ROW_NUMBER() OVER (PARTITION BY project_id, day
-                                        ORDER BY COUNT(*) DESC, browser_locale, app_locale) <= (SELECT n FROM cap)
-                THEN app_locale ELSE '(other)' END AS kept,
+                                        ORDER BY COUNT(*) DESC,
+                                                 (SELECT value FROM strings WHERE id = browser_locale),
+                                                 (SELECT value FROM strings WHERE id = app_locale)) <= (SELECT n FROM cap)
+                THEN COALESCE((SELECT value FROM strings WHERE id = app_locale), '') ELSE '(other)' END AS kept,
            COUNT(*) AS c, COUNT(DISTINCT actor_id) AS u,
-           json_group_array(actor_id) FILTER (WHERE (SELECT n FROM cap) < 4611686018427387904) AS actors
-    FROM raw_views
-    WHERE NOT (browser_locale = '' AND app_locale = '')
+           json_group_array(quote(actor_id)) FILTER (WHERE (SELECT n FROM cap) < 4611686018427387904) AS actors
+    FROM events
+    WHERE family = 1 AND NOT (browser_locale = 0 AND app_locale = 0)
     GROUP BY project_id, day, browser_locale, app_locale
   )
   WINDOW f AS (PARTITION BY project_id, day, browser_locale, kept)
@@ -910,7 +1000,7 @@ WITH cap AS (
 )
 SELECT project_id, day, os, os_version, visitors, views FROM agg_views_os
 UNION ALL
-SELECT project_id, day, os, kept,
+SELECT project_id, day, COALESCE((SELECT value FROM strings WHERE id = os), ''), kept,
        CASE WHEN keys = 1 THEN u
             ELSE (SELECT COUNT(DISTINCT value) FROM json_each(merged)) END,
        views
@@ -922,11 +1012,14 @@ FROM (
   FROM (
     SELECT project_id, day, os,
            CASE WHEN ROW_NUMBER() OVER (PARTITION BY project_id, day
-                                        ORDER BY COUNT(*) DESC, os, os_version) <= (SELECT n FROM cap)
-                THEN os_version ELSE '(other)' END AS kept,
+                                        ORDER BY COUNT(*) DESC,
+                                                 (SELECT value FROM strings WHERE id = os),
+                                                 (SELECT value FROM strings WHERE id = os_version)) <= (SELECT n FROM cap)
+                THEN COALESCE((SELECT value FROM strings WHERE id = os_version), '') ELSE '(other)' END AS kept,
            COUNT(*) AS c, COUNT(DISTINCT actor_id) AS u,
-           json_group_array(actor_id) FILTER (WHERE (SELECT n FROM cap) < 4611686018427387904) AS actors
-    FROM raw_views
+           json_group_array(quote(actor_id)) FILTER (WHERE (SELECT n FROM cap) < 4611686018427387904) AS actors
+    FROM events
+    WHERE family = 1
     GROUP BY project_id, day, os, os_version
   )
   WINDOW f AS (PARTITION BY project_id, day, os, kept)
@@ -954,11 +1047,12 @@ FROM (
   FROM (
     SELECT project_id, day,
            CASE WHEN ROW_NUMBER() OVER (PARTITION BY project_id, day
-                                        ORDER BY COUNT(*) DESC, path) <= (SELECT n FROM cap)
-                THEN path ELSE '(other)' END AS kept,
+                                        ORDER BY COUNT(*) DESC, (SELECT value FROM strings WHERE id = path)) <= (SELECT n FROM cap)
+                THEN COALESCE((SELECT value FROM strings WHERE id = path), '') ELSE '(other)' END AS kept,
            COUNT(*) AS c, COUNT(DISTINCT actor_id) AS u,
-           json_group_array(actor_id) FILTER (WHERE (SELECT n FROM cap) < 4611686018427387904) AS actors
-    FROM raw_views
+           json_group_array(quote(actor_id)) FILTER (WHERE (SELECT n FROM cap) < 4611686018427387904) AS actors
+    FROM events
+    WHERE family = 1
     GROUP BY project_id, day, path
   )
   WINDOW f AS (PARTITION BY project_id, day, kept)
@@ -986,11 +1080,12 @@ FROM (
   FROM (
     SELECT project_id, day,
            CASE WHEN ROW_NUMBER() OVER (PARTITION BY project_id, day
-                                        ORDER BY COUNT(*) DESC, platform) <= (SELECT n FROM cap)
-                THEN platform ELSE '(other)' END AS kept,
+                                        ORDER BY COUNT(*) DESC, (SELECT value FROM strings WHERE id = platform)) <= (SELECT n FROM cap)
+                THEN COALESCE((SELECT value FROM strings WHERE id = platform), '') ELSE '(other)' END AS kept,
            COUNT(*) AS c, COUNT(DISTINCT actor_id) AS u,
-           json_group_array(actor_id) FILTER (WHERE (SELECT n FROM cap) < 4611686018427387904) AS actors
-    FROM raw_views
+           json_group_array(quote(actor_id)) FILTER (WHERE (SELECT n FROM cap) < 4611686018427387904) AS actors
+    FROM events
+    WHERE family = 1
     GROUP BY project_id, day, platform
   )
   WINDOW f AS (PARTITION BY project_id, day, kept)
@@ -1018,11 +1113,12 @@ FROM (
   FROM (
     SELECT project_id, day,
            CASE WHEN ROW_NUMBER() OVER (PARTITION BY project_id, day
-                                        ORDER BY COUNT(*) DESC, referrer_source) <= (SELECT n FROM cap)
-                THEN referrer_source ELSE '(other)' END AS kept,
+                                        ORDER BY COUNT(*) DESC, (SELECT value FROM strings WHERE id = referrer_source)) <= (SELECT n FROM cap)
+                THEN COALESCE((SELECT value FROM strings WHERE id = referrer_source), '') ELSE '(other)' END AS kept,
            COUNT(*) AS c, COUNT(DISTINCT actor_id) AS u,
-           json_group_array(actor_id) FILTER (WHERE (SELECT n FROM cap) < 4611686018427387904) AS actors
-    FROM raw_views
+           json_group_array(quote(actor_id)) FILTER (WHERE (SELECT n FROM cap) < 4611686018427387904) AS actors
+    FROM events
+    WHERE family = 1
     GROUP BY project_id, day, referrer_source
   )
   WINDOW f AS (PARTITION BY project_id, day, kept)
@@ -1038,7 +1134,7 @@ WITH cap AS (
 )
 SELECT project_id, day, utm_source, utm_medium, utm_campaign, visitors, views FROM agg_views_utm
 UNION ALL
-SELECT project_id, day, utm_source, utm_medium, kept,
+SELECT project_id, day, COALESCE((SELECT value FROM strings WHERE id = utm_source), ''), COALESCE((SELECT value FROM strings WHERE id = utm_medium), ''), kept,
        CASE WHEN keys = 1 THEN u
             ELSE (SELECT COUNT(DISTINCT value) FROM json_each(merged)) END,
        views
@@ -1050,12 +1146,15 @@ FROM (
   FROM (
     SELECT project_id, day, utm_source, utm_medium,
            CASE WHEN ROW_NUMBER() OVER (PARTITION BY project_id, day
-                                        ORDER BY COUNT(*) DESC, utm_source, utm_medium, utm_campaign) <= (SELECT n FROM cap)
-                THEN utm_campaign ELSE '(other)' END AS kept,
+                                        ORDER BY COUNT(*) DESC,
+                                                 (SELECT value FROM strings WHERE id = utm_source),
+                                                 (SELECT value FROM strings WHERE id = utm_medium),
+                                                 (SELECT value FROM strings WHERE id = utm_campaign)) <= (SELECT n FROM cap)
+                THEN COALESCE((SELECT value FROM strings WHERE id = utm_campaign), '') ELSE '(other)' END AS kept,
            COUNT(*) AS c, COUNT(DISTINCT actor_id) AS u,
-           json_group_array(actor_id) FILTER (WHERE (SELECT n FROM cap) < 4611686018427387904) AS actors
-    FROM raw_views
-    WHERE NOT (utm_source = '' AND utm_medium = '' AND utm_campaign = '')
+           json_group_array(quote(actor_id)) FILTER (WHERE (SELECT n FROM cap) < 4611686018427387904) AS actors
+    FROM events
+    WHERE family = 1 AND NOT (utm_source = 0 AND utm_medium = 0 AND utm_campaign = 0)
     GROUP BY project_id, day, utm_source, utm_medium, utm_campaign
   )
   WINDOW f AS (PARTITION BY project_id, day, utm_source, utm_medium, kept)
