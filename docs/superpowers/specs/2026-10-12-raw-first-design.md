@@ -338,6 +338,32 @@ Over 30 days A takes 0.14–1.8 s per query, C 3–120 ms. C's DuckDB file at
   file does not shrink, `VACUUM` included; space comes back only by
   rewriting the file (37 s at 2.5 GB). Retention by deleting monthly
   Parquet files has no such cost (Q9).
+- **Backups (DuckDB file):** from inside the process holding it, `COPY
+  FROM DATABASE` to a new file takes 151 s at 2 threads; `EXPORT DATABASE`
+  to Parquet runs out of memory at 256 MB. A second process cannot open the
+  file at all while one holds it, not even read-only.
+
+CPU and memory in one Go process (`scripts/archive-bench/probe`: duckdb-go
+v2.10506.0 and modernc side by side), the 13 queries once warm, Linux arm64
+in a container capped at 2 CPUs and 1 GB (glibc; macOS's allocator never
+returns DuckDB's memory, even after closing):
+
+| | wall | CPU | peak RSS | RSS 20 s after | after `SET memory_limit='16MB'` |
+|---|---|---|---|---|---|
+| SQLite (twillingate's pragmas: `temp_store` memory), 30 days | 10.1 s | 10.2 s | 401 MB | 55 MB | — |
+| SQLite, 1 year (macOS) | 111 s | 110 s | 4,263 MB | 59 MB | — |
+| DuckDB file, 30 days, 2 threads, 256 MB | 0.27 s | 0.53 s | 211 MB | 211 MB | 65 MB |
+| DuckDB file, 1 year, 1 thread, 128 MB | 9.5 s | 7.3 s | 344 MB | 234 MB | 76 MB |
+| DuckDB file, 1 year, 2 threads, 256 MB | 4.9 s | 8.2 s | 421 MB | 366 MB | 81 MB |
+| DuckDB file, 3 years, 2 threads, 512 MB | 23 s | 29 s | 686 MB | 555 MB | 71 MB |
+| Monthly Parquet, 3 years, 2 threads, 512 MB | 22 s | 25 s | 676 MB | 128 MB | 76 MB |
+
+DuckDB loaded and open, before any query: 37 MB RSS. The DuckDB file's
+buffer pool holds its pages until the limit is lowered or the database
+closed; Parquet reads are not kept, so RSS falls back on its own. At 128 MB
+`top_pages` fails from 1 year. Build: the Linux binary needs cgo and g++,
+links glibc dynamically (no Alpine/musl), and adds ~50 MB (63 MB for an
+empty program with the driver).
 
 ## Options considered
 
