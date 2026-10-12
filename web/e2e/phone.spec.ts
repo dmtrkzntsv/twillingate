@@ -1,4 +1,5 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test'
+import { attributesListed } from './attributes'
 import { submitJSON } from './forms'
 import { createShare } from './png'
 
@@ -97,7 +98,7 @@ async function dialogOverflow(page: Page): Promise<string[]> {
   return page.evaluate(() => {
     const out: string[] = []
     const vw = document.documentElement.clientWidth
-    for (const d of Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"]'))) {
+    for (const d of Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"], [role="alertdialog"]'))) {
       const r = d.getBoundingClientRect()
       const name = d.getAttribute('aria-label') ?? d.querySelector('h2')?.textContent ?? 'dialog'
       if (r.left < -0.5 || r.right > vw + 0.5) out.push(`"${name}": ${r.left}..${r.right} in ${vw}px`)
@@ -144,10 +145,21 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
   const longEvent = 'an_event_whose_name_is_longer_than_a_phone_is_wide_on_one_line'
   const renamedEvent = 'the_new_name_of_that_event_which_is_longer_than_a_phone_is_wide'
   const blockedEvent = 'another_event_that_is_blocked_with_a_name_longer_than_a_phone'
+  // The events carry attribute keys longer than a phone is wide too, one
+  // renamed and one blocked: the Attributes section's rows and chips wrap.
+  const longAttribute = 'an_attribute_key_longer_than_a_phone_is_wide_on_one_line'
+  const renamedAttribute = 'the_new_name_of_that_attribute_longer_than_a_phone_is_wide'
+  const blockedAttribute = 'another_attribute_that_is_blocked_with_a_key_longer_than_a_phone'
   const ingested = await request.post('/ingest/events', {
     headers: { 'X-Analytics-Key': key },
     data: {
-      events: [longEvent, blockedEvent].map((name) => ({ id: crypto.randomUUID(), ts: new Date().toISOString(), name, family: 'product' })),
+      events: [longEvent, blockedEvent].map((name) => ({
+        id: crypto.randomUUID(),
+        ts: new Date().toISOString(),
+        name,
+        family: 'product',
+        attributes: { [longAttribute]: 'a-value', [blockedAttribute]: 'another-value' },
+      })),
     },
   })
   expect(ingested.status(), await ingested.text()).toBe(202)
@@ -159,11 +171,14 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
       return ((await res.json()) as { events: unknown[] }).events.length
     }, { timeout: 30_000 })
     .toBe(2)
-  for (const [action, body] of [
-    ['rename', { family: 'product', from: longEvent, to: renamedEvent }],
-    ['block', { family: 'product', name: blockedEvent }],
+  await attributesListed(request, id, [longAttribute, blockedAttribute])
+  for (const [kind, action, body] of [
+    ['event', 'rename', { family: 'product', from: longEvent, to: renamedEvent }],
+    ['event', 'block', { family: 'product', name: blockedEvent }],
+    ['attribute', 'rename', { from: longAttribute, to: renamedAttribute }],
+    ['attribute', 'block', { key: blockedAttribute }],
   ] as const) {
-    const rule = await request.post(`/api/projects/${id}/event-rules/${action}`, { headers: authHeaders(), data: body })
+    const rule = await request.post(`/api/projects/${id}/${kind}-rules/${action}`, { headers: authHeaders(), data: body })
     expect(rule.ok(), await rule.text()).toBeTruthy()
   }
 
@@ -228,13 +243,32 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
     `/app/projects/${id}/dashboards/999999`,
   ]) {
     await check(page, path)
-    // The check above means nothing for the Events section unless it is drawn.
+    // The check above means nothing for the Events and Attributes sections unless they are drawn.
     if (path.endsWith('?range=today')) {
-      await expect(page.getByRole('button', { name: `Remove alias ${longEvent}` })).toBeVisible()
-      await expect(page.getByText('Blocked', { exact: true })).toBeVisible()
+      for (const [section, alias] of [['Events', longEvent], ['Attributes', longAttribute]]) {
+        const region = page.getByRole('region', { name: section })
+        await expect(region.getByRole('button', { name: `Remove alias ${alias}` })).toBeVisible()
+        await expect(region.getByText('Blocked', { exact: true })).toBeVisible()
+      }
     }
   }
   for (const d of await dashboardIds(request)) await check(page, `/app/dashboards/${d}`)
+
+  // The Attributes section's dialogs, over its long keys, fit the phone.
+  await check(page, `/app/projects/${id}/settings?range=today`)
+  const attributes = page.getByRole('region', { name: 'Attributes' })
+  await attributes.getByRole('button', { name: `Actions for ${renamedAttribute}` }).click()
+  await page.getByRole('menuitem', { name: 'Merge into…' }).click()
+  await expect(page.getByRole('dialog', { name: `Merge ${renamedAttribute} into…` })).toBeVisible()
+  await expect.poll(() => dialogOverflow(page), { message: 'merge attribute dialog' }).toEqual([])
+  expect(await sidewaysScroll(page), 'merge attribute dialog').toEqual([])
+  await page.keyboard.press('Escape')
+  await attributes.getByRole('button', { name: `Actions for ${renamedAttribute}` }).click()
+  await page.getByRole('menuitem', { name: 'Block…' }).click()
+  await expect(page.getByRole('alertdialog', { name: `Block ${renamedAttribute}?` })).toBeVisible()
+  await expect.poll(() => dialogOverflow(page), { message: 'block attribute dialog' }).toEqual([])
+  expect(await sidewaysScroll(page), 'block attribute dialog').toEqual([])
+  await page.keyboard.press('Escape')
 
   // A form's Approve dialog and a submission's drawer fit the phone.
   await check(page, `/app/projects/${id}/forms/${formName}`)

@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
+import { attributesListed, trackWithAttributes } from './attributes'
 import { createProject, submitJSON } from './forms'
 import { createShare } from './png'
 
@@ -11,7 +12,9 @@ const TOKEN = 'e2e-token'
 // that ends up with another cursor. A deliberate exception goes in ALLOWED
 // with the reason: a drag handle's grab, the sidebar's edge rail, whose
 // resize cursor says it toggles the sidebar by its edge, and a widget's
-// resize corner, whose cursor says it drags the corner.
+// resize corner, whose cursor says it drags the corner. A disabled control
+// (a blocked attribute's breakdown switch) is not clickable and shows
+// not-allowed.
 const CLICKABLE = [
   "button:not(:disabled):not([aria-disabled='true'])",
   "a[href]:not([aria-disabled='true'])",
@@ -24,7 +27,7 @@ const CLICKABLE = [
   "[role='tab']:not([aria-disabled='true'])",
   "[role='menuitem']:not([data-disabled])",
   "[role='option']:not([data-disabled])",
-  "[role='switch']:not([aria-disabled='true'])",
+  "[role='switch']:not([aria-disabled='true']):not(:disabled)",
   "[role='checkbox']:not([aria-disabled='true'])",
   "[role='combobox']:not([aria-disabled='true'])",
 ].join(', ')
@@ -72,10 +75,25 @@ test('every link and button shows the pointer', async ({ page, request }) => {
   const forms = await createProject(request, `cursor-forms-${Date.now()}`, [])
   await submitJSON(request, forms.key, 'contact', { email: 'ann@example.com', message: 'Hello' })
 
+  // A project whose attributes show every control: a renamed key with its
+  // alias chip, a blocked one, and a plain one for the menus and dialogs.
+  const attrs = await createProject(request, `cursor-attrs-${Date.now()}`, [])
+  await trackWithAttributes(request, attrs.key, [{ name: 'signup', attributes: { planType: 'pro', plan: 'team', debug: '1' } }])
+  await attributesListed(request, attrs.id, ['planType', 'plan', 'debug'])
+  for (const [action, body] of [
+    ['rename', { from: 'planType', to: 'plan_type' }],
+    ['block', { key: 'debug' }],
+  ] as const) {
+    const rule = await request.post(`/api/projects/${attrs.id}/attribute-rules/${action}`, { headers, data: body })
+    expect(rule.ok(), await rule.text()).toBeTruthy()
+  }
+
   await login(page)
   for (const path of [
     '/app/projects',
     '/app/projects/1/settings',
+    // Today, where the attributes above were received (the default range ends yesterday).
+    `/app/projects/${attrs.id}/settings?range=today`,
     `/app/projects/${forms.id}/forms`,
     `/app/projects/${forms.id}/forms/contact`,
     '/app/dashboards',
@@ -89,6 +107,33 @@ test('every link and button shows the pointer', async ({ page, request }) => {
     await expect(page.locator('main, [data-slot="sidebar-inset"]').first()).toBeVisible()
     expect(await withoutPointer(page), path).toEqual([])
   }
+
+  // The Attributes section's row menu (a blocked key offers Unblock), its
+  // alias remove and add buttons, and its merge, rename and confirm dialogs.
+  await page.goto(`/app/projects/${attrs.id}/settings?range=today`)
+  const attributes = page.getByRole('region', { name: 'Attributes' })
+  await expect(attributes.getByRole('button', { name: 'Remove alias planType' })).toBeVisible()
+  await expect(attributes.getByRole('button', { name: 'Add alias to plan_type' })).toBeVisible()
+  await attributes.getByRole('button', { name: 'Actions for plan', exact: true }).click()
+  await expect(page.getByRole('menuitem', { name: 'Merge into…' })).toBeVisible()
+  expect(await withoutPointer(page), 'attribute menu').toEqual([])
+  await page.getByRole('menuitem', { name: 'Merge into…' }).click()
+  await expect(page.getByRole('dialog', { name: 'Merge plan into…' }).getByRole('option', { name: /plan_type/ })).toBeVisible()
+  expect(await withoutPointer(page), 'merge attribute dialog').toEqual([])
+  await page.keyboard.press('Escape')
+  await attributes.getByRole('button', { name: 'Actions for plan', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Rename…' }).click()
+  await expect(page.getByLabel('New name')).toBeVisible()
+  expect(await withoutPointer(page), 'rename attribute dialog').toEqual([])
+  await page.keyboard.press('Escape')
+  await attributes.getByRole('button', { name: 'Remove alias planType' }).click()
+  await expect(page.getByRole('alertdialog', { name: 'Remove alias planType?' })).toBeVisible()
+  expect(await withoutPointer(page), 'remove alias dialog').toEqual([])
+  await page.keyboard.press('Escape')
+  await attributes.getByRole('button', { name: 'Actions for debug' }).click()
+  await expect(page.getByRole('menuitem', { name: 'Unblock' })).toBeVisible()
+  expect(await withoutPointer(page), 'blocked attribute menu').toEqual([])
+  await page.keyboard.press('Escape')
 
   // The empty Forms tab's copy buttons, a form row's menu, the Approve
   // dialog's checkboxes, and a submission's drawer.
@@ -148,5 +193,6 @@ test('every link and button shows the pointer', async ({ page, request }) => {
     expect(await withoutPointer(page), 'visualization options').toEqual([])
   } finally {
     await request.post(`/api/dashboards/${id}/archive`, { headers, data: {} })
+    await request.post(`/api/projects/${attrs.id}/archive`, { headers })
   }
 })
