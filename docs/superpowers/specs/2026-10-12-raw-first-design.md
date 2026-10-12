@@ -174,10 +174,10 @@ One server takes up to **1M events a month** and keeps raw events for up to
   | | A. SQLite only, raw kept | B. SQLite + Parquet, pure Go | C. SQLite for metadata + DuckDB for events |
   |---|---|---|---|
   | Multi-attribute queries | yes, every filter a `json_extract` per row | yes, through our own Parquet reader + in-memory SQLite | yes, real columns, any combination |
-  | Dashboard over 30 days (~1M rows) | ~1–2 s per widget *estimate* | needs D9's cache | well under 1 s *estimate* |
-  | Dashboard over 1 year (~12M rows) | 10–25 s per widget *estimate*; needs D9's cache | needs D9's cache | ~1 s or less *estimate* |
-  | Complex query over 3 years | minutes | minutes; loading into SQLite is the bottleneck *estimate* | seconds |
-  | Size at 36M events | 16–22 GB (7.6 GB with #175) | ~1–2 GB *estimate* | ~1–2 GB *estimate* |
+  | Dashboard over 30 days (~1M rows) | 0.1–1.8 s per widget (measured) | needs D9's cache | 3–120 ms per widget (measured) |
+  | Dashboard over 1 year (~12M rows) | 1.7–23 s per widget (measured); needs D9's cache | needs D9's cache | 0.02–1.8 s per widget, 2 threads (measured) |
+  | Complex query over 3 years | 29–166 s (measured) | minutes; loading into SQLite is the bottleneck *estimate* | 0.06–7.9 s, 2 threads (measured) |
+  | Size at 36M events | 22.1 GB (measured; 7.6 GB with #175) | ~1.5 GB *estimate* | 2.55 GB as a DuckDB file, 1.45 GB as monthly Parquet (measured) |
   | Install | one binary, one file | one binary, a file + a directory of Parquet | one binary, two files (or a file + Parquet, Q9) |
   | Backups | Litestream | Litestream + uploading files | Litestream for metadata; events need their own (Q9) |
   | Code we maintain | D9's cache | the most: Parquet writer, compaction, pushdown, cache | the least: SQL straight on the data, likely no aggregates |
@@ -190,8 +190,9 @@ One server takes up to **1M events a month** and keeps raw events for up to
     positioned as simple.
   - **C** fits the Requirements most directly. DuckDB is to analytics what
     SQLite is to transactions: embedded, one file, no server. At 36M rows it
-    should answer dashboards and combinations straight from raw, with no
-    aggregates, caps or declarations. Users still download one binary.
+    answers dashboards and combinations straight from raw, with no
+    aggregates, caps or declarations (Measurements). Users still download
+    one binary.
   - **Decided 2026-10-12: 32-bit ARM (`linux/arm`) can be dropped.** Its
     users are Raspberry Pi Zero/1/2, Pis on the 32-bit OS (the 64-bit OS
     is recommended), older ARMv7 NAS boxes, cheap boards and OpenWrt
@@ -202,7 +203,10 @@ One server takes up to **1M events a month** and keeps raw events for up to
 
   Targets at the cap, warm: a system dashboard over 1 year loads in under
   2 s; an agent's question over 3 years answers in under 30 s; a
-  timeline over 3 years in under 1 s. Settle the targets with the numbers.
+  timeline over 3 years in under 1 s. Measured (Measurements): C meets
+  the last two at 2 threads and 256 MB; a 1-year Views dashboard is ~3 s
+  of widgets run one after another (sessions alone 1.75 s), under 1 s at 10
+  threads. A meets none.
 
   D2–D7 describe B's storage (and C's, if C reads Parquet: Q9). Under A,
   raw stays in `events` and D2, D5–D7 don't apply.
@@ -273,18 +277,67 @@ raw-first.
 |---|---|---|
 | Raw row in SQLite, today's format | 444 B prod; 615 B synthetic (45% product events with ~15 attributes) | prod 2026-10-04; `scripts/archive-bench`, 985,500 rows → 606 MB |
 | Raw row in SQLite, #175 encoding | 211 B | #175 benchmark, 1.32M prod-shaped rows |
-| Raw row in Parquet | 20–50 B | *estimate* |
+| Raw row in Parquet | 40 B monthly files, 44 B one file (zstd) | `scripts/archive-bench`, 36M rows |
+| Raw row in a DuckDB file | 71 B | `scripts/archive-bench`, 36M rows |
 | Aggregates | ~27 B per event | seeded measurement, 2026-10-04 |
 | Report CPU, today | ~65 µs per raw event in range, per Views dashboard load | prod, 2026-10-04 |
-| Ingest | ~5,200 rows/s, one writer, 500-row batches (laptop, 4 cores) | `scripts/archive-bench`; the need at the cap is 0.4/s on average |
+| Ingest | 27,000 rows/s into SQLite, one writer, 500-row batches (M4); a 500-row DuckDB append takes 15 ms (max 37 ms) while queries run | `scripts/archive-bench`; the need at the cap is 0.4/s on average |
 
 At the cap (1M a month, 3 years):
 
 | | Today, 3-year raw window | Raw-first |
 |---|---|---|
-| SQLite | 16–22 GB | Hot ~8 days (~0.2 GB) + metadata, flat |
-| Parquet | — | 0.7–1.8 GB *estimate* |
-| Views dashboard, 1-year range | ~13 min CPU | D10's target: under 2 s |
+| SQLite | 22.1 GB (measured) | Hot ~8 days (~0.2 GB) + metadata, flat |
+| Parquet | — | 1.45 GB (measured) |
+| Views dashboard, 1-year range | ~13 min CPU | ~3 s at 2 threads, measured (C) |
+
+## Measurements (2026-10-12)
+
+`scripts/archive-bench` on 36,003,600 rows (1M a month, 2023-10-13 →
+2026-10-12; 45% product events with ~19 attributes), Apple M4, 32 GB RAM.
+A: modernc SQLite (twillingate's driver), one thread, file warm in the OS
+cache, one run. C: DuckDB 1.5.6, `threads=2`, `memory_limit=256MB`, best of
+3 warm runs. Row counts checked equal across engines.
+
+| | A. SQLite | C. DuckDB file | C. monthly Parquet | C. one Parquet file |
+|---|---|---|---|---|
+| Size | 22.1 GB | 2.55 GB | 1.45 GB (268 files) | 1.60 GB |
+| Built in | 22 min (generator) | 412 s from SQLite | 39 s from DuckDB | 31 s from DuckDB |
+
+Seconds per query, 1 year (12M rows) / 3 years (36M rows):
+
+| Query | A | C file | C monthly | C one file |
+|---|---|---|---|---|
+| views and visitors per day | 3.9 / 30 | 0.20 / 0.73 | 0.21 / 0.68 | 0.34 / 1.10 |
+| sessions and bounce | 22.8 / 68 | 1.75 / 7.3 | 1.81 / 7.5 | 1.97 / 7.9 |
+| top pages, distinct visitors | 8.5 / 35 | 0.73 / OOM | 0.80 / OOM | 0.84 / OOM |
+| product events per name per day | 6.0 / 46 | 0.07 / 0.21 | 0.06 / 0.15 | 0.12 / 0.33 |
+| DAU | 4.1 / 29 | 0.12 / 0.38 | 0.11 / 0.34 | 0.19 / 0.54 |
+| exact distinct users, range | 3.9 / 29 | 0.04 / 0.13 | 0.03 / 0.06 | 0.10 / 0.27 |
+| two attributes | 20.7 / 166 | 0.19 / 0.62 | 0.10 / 0.28 | 0.19 / 0.52 |
+| two attributes as a filter | 8.9 / 108 | 0.14 / 0.44 | 0.06 / 0.16 | 0.15 / 0.42 |
+| attribute × country | 19.2 / 138 | 0.16 / 0.53 | 0.10 / 0.29 | 0.18 / 0.51 |
+| weekly retention cohorts | 6.0 / 94 | 0.10 / 0.33 | 0.09 / 0.29 | 0.17 / 0.49 |
+| one actor's timeline | 1.9 / 81 | 0.12 / 0.29 | 0.09 / 0.09 | 0.30 / 0.64 |
+| first common / rare event | 1.7 / 69 | 0.03 / 0.10 | 0.05 / 0.13 | 0.14 / 0.37 |
+
+Over 30 days A takes 0.14–1.8 s per query, C 3–120 ms. C's DuckDB file at
+10 threads and no memory limit: every 3-year query under 1.5 s, RSS 4.4 GB.
+
+- **OOM:** `COUNT(DISTINCT actor_id) … GROUP BY path` over 3 years (~300k
+  paths) fails at 256 MB in every C layout; DuckDB does not spill distinct
+  aggregates, even with `temp_directory`. Written as `GROUP BY path,
+  actor_id` then `GROUP BY path` it runs in 2.2 s at 256 MB; at 512 MB the
+  original runs in 2.5 s. Widget SQL needs a limit above 256 MB or this
+  rewrite.
+- **Memory:** RSS peaks ~420 MB at `memory_limit=256MB`; the limit covers
+  DuckDB's buffer manager only.
+- **Writes (DuckDB file):** a 500-row append every 0.2 s while 1-year
+  queries run: 15 ms median, 37 ms max; queries not slowed. Deleting the
+  oldest month (1M rows) takes 0.05 s and one actor's rows 0.32 s, but the
+  file does not shrink, `VACUUM` included; space comes back only by
+  rewriting the file (37 s at 2.5 GB). Retention by deleting monthly
+  Parquet files has no such cost (Q9).
 
 ## Options considered
 
@@ -387,8 +440,8 @@ meets D10's targets:
    day, age it out, and compare the day's aggregates. If confirmed, check
    prod (days whose aggregates dropped after the raise) and decide whether
    to lower the window until D3 ships. Independent of everything else.
-1. **Measure A against C first** (about an hour) with
-   `scripts/archive-bench` (generator done; write the rest) on 36M rows
+1. **Measure A against C first.** Done 2026-10-12 (Measurements):
+   `scripts/archive-bench` on 36M rows
    (1M a month × 36 months, 2023-10-13 → 2026-10-12):
    - generate the rows into SQLite (A's data);
    - load the same rows into DuckDB with D4's wide attribute columns, both
