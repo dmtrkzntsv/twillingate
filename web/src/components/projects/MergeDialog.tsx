@@ -2,29 +2,31 @@ import { useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Combobox, ComboboxEmpty, ComboboxInput, ComboboxItem, ComboboxList } from '@/components/ui/combobox'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import type { EventFamily, EventName } from '@/lib/api'
 import { formatExact } from '@/lib/format'
+import { ruleCopy, type RuleNoun, type RuleTarget } from './rule-copy'
 
 interface Props {
   open: boolean
   onOpenChange: (open: boolean) => void
-  /** The event merged away; kept by the caller through the close animation. */
-  target: { family: EventFamily; name: string } | null
-  /** The events it may merge into: its family's, without itself and the blocked ones. */
-  into: EventName[]
+  noun: RuleNoun
+  /** The event or key merged away; kept by the caller through the close animation. */
+  target: RuleTarget | null
+  /** What it may merge into, with its count: never itself or a blocked one (and, for events, its family's only). */
+  into: { name: string; count: number }[]
   pending?: boolean
   /** Resolves true when done, so the dialog closes; false keeps it open (the refusal is already toasted). */
   onMerge: (to: string) => Promise<boolean>
 }
 
-/** Pick the event to fold the target into, said to be final before it is confirmed. */
-export default function MergeEventDialog({ open, onOpenChange, target, into, pending, onMerge }: Props) {
+/** Pick what to fold the target into, said to be final before it is confirmed. */
+export default function MergeDialog({ open, onOpenChange, noun, target, into, pending, onMerge }: Props) {
+  const copy = ruleCopy(noun)
   const [to, setTo] = useState<string | null>(null)
   // Start from nothing each time it opens.
   useEffect(() => {
     if (open) setTo(null)
   }, [open])
-  const counts = new Map(into.map((e) => [e.name, e.events]))
+  const counts = new Map(into.map((e) => [e.name, e.count]))
   const submit = async () => {
     if (to !== null && (await onMerge(to))) onOpenChange(false)
   }
@@ -39,18 +41,14 @@ export default function MergeEventDialog({ open, onOpenChange, target, into, pen
           }}
         >
           <DialogHeader>
-            <DialogTitle className="wrap-anywhere">Merge {target?.name} into…</DialogTitle>
-            <DialogDescription className="wrap-anywhere">
-              {target?.name}&apos;s stored events ({target?.family}) move to the event you pick, and events sent later as {target?.name} are stored
-              under it. A merge cannot be undone, and on merged days unique users and groups become an upper bound. Widgets whose SQL names{' '}
-              {target?.name} are not changed.
-            </DialogDescription>
+            <DialogTitle className="wrap-anywhere">{target && copy.merge.title(target)}</DialogTitle>
+            <DialogDescription className="wrap-anywhere">{target && copy.merge.description(target)}</DialogDescription>
           </DialogHeader>
           {into.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No other {target?.family} events.</p>
+            <p className="text-sm text-muted-foreground">{target && copy.merge.none(target)}</p>
           ) : (
             <Combobox items={into.map((e) => e.name)} value={to} onValueChange={(v: string | null) => setTo(v)} inline open>
-              <ComboboxInput aria-label="Search events" placeholder="Search events" showTrigger={false} className="h-8" />
+              <ComboboxInput aria-label={copy.merge.search} placeholder={copy.merge.search} showTrigger={false} className="h-8" />
               <div className="max-h-56 overflow-y-auto">
                 <ComboboxList>
                   {(name: string) => (

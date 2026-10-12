@@ -24,16 +24,31 @@ export interface ProjectActions {
   removeEventRule(id: number, body: { family: EventFamily; name: string }): Promise<boolean>
   /** Maps `alias` to the event `to`: a merge, so the alias's stored events (if any) join it. */
   addEventAlias(id: number, body: { family: EventFamily; alias: string; to: string }): Promise<boolean>
+  /**
+   * Renames an attribute key as it arrives and in what is stored; resolves true when done. A 409 (the new key already
+   * has data, or is blocked) is not toasted: it resolves 'conflict' so the caller can point to merging.
+   */
+  renameAttribute(id: number, body: { from: string; to: string }): Promise<boolean | 'conflict'>
+  /** Merges key `from` into key `to`, as it arrives and in what is stored; resolves true when done. */
+  mergeAttribute(id: number, body: { from: string; to: string }): Promise<boolean>
+  /** Strips a key from events as they arrive; the daily pass deletes its aggregates. */
+  blockAttribute(id: number, body: { key: string }): Promise<boolean>
+  /** Removes a key's rename or block rule. */
+  removeAttributeRule(id: number, body: { key: string }): Promise<boolean>
+  /** Maps `alias` to the key `to`: a merge, so the alias's stored values (if any) join it. */
+  addAttributeAlias(id: number, body: { alias: string; to: string }): Promise<boolean>
   /** Puts project `id` right after project `after` (0 first); no toast unless refused. Resolves true once the list has the new order. */
   move(id: number, after: number): Promise<boolean>
   /** True while an action runs; buttons wait on it. */
   pending: boolean
 }
 
-/** What a project write changes: the list, its keys, the usage cards, and the declared flags and budget of received attributes. */
-const PROJECT_WRITE = ['projects', 'keys', 'usage', 'received-attributes']
+/** What a project write changes: the list, its keys, the usage cards, and the attributes' breakdown switches and budget. */
+const PROJECT_WRITE = ['projects', 'keys', 'usage', 'attributes']
 /** What an event rule changes: the rules, the names listed, and the usage counts. */
 const EVENT_WRITE = ['event-rules', 'event-names', 'usage']
+/** What an attribute rule changes: the attributes listed, the project's breakdowns (a rename moves one), and the usage counts. */
+const ATTRIBUTE_WRITE = ['attributes', 'projects', 'usage']
 /** What a key write changes. */
 const KEY_WRITE = ['keys']
 
@@ -117,6 +132,22 @@ export function useProjectActions(): ProjectActions {
       (await run(() => endpoints.removeEventRule(id, body), `Removed the rule for ${body.name}`, EVENT_WRITE)) !== undefined,
     addEventAlias: async (id, { family, alias, to }) =>
       (await run(() => endpoints.mergeEvent(id, { family, from: alias, to }), `Added alias ${alias} to ${to}`, EVENT_WRITE)) !== undefined,
+    renameAttribute: async (id, body) => {
+      const out = await run(
+        () => endpoints.renameAttribute(id, body),
+        `Renamed ${body.from} to ${body.to}`,
+        ATTRIBUTE_WRITE,
+        (err) => (err instanceof ApiError && err.status === 409 ? ('conflict' as const) : undefined)
+      )
+      return out === 'conflict' ? out : out !== undefined
+    },
+    mergeAttribute: async (id, body) =>
+      (await run(() => endpoints.mergeAttribute(id, body), `Merged ${body.from} into ${body.to}`, ATTRIBUTE_WRITE)) !== undefined,
+    blockAttribute: async (id, body) => (await run(() => endpoints.blockAttribute(id, body), `Blocked ${body.key}`, ATTRIBUTE_WRITE)) !== undefined,
+    removeAttributeRule: async (id, body) =>
+      (await run(() => endpoints.removeAttributeRule(id, body), `Removed the rule for ${body.key}`, ATTRIBUTE_WRITE)) !== undefined,
+    addAttributeAlias: async (id, { alias, to }) =>
+      (await run(() => endpoints.mergeAttribute(id, { from: alias, to }), `Added alias ${alias} to ${to}`, ATTRIBUTE_WRITE)) !== undefined,
     move,
   }
 }

@@ -423,30 +423,47 @@ export interface EventName {
   events: number
 }
 
-/** One attribute key a project received in a range (or declared without receiving). `max_values` is null before the nightly count. */
-export interface ReceivedKey {
+/**
+ * One attribute key of a project over a range, with the rules on it. `max_values` is null before the nightly count.
+ * `$` keys are listed too: they take a breakdown, never a rule.
+ */
+export interface ProjectAttribute {
   key: string
   /** As the daily pass counted them: today's arrive the night after, so a key first received today has 0. */
   events: number
   max_values: number | null
-  /** Whether any event in the range carried it; false for a declared key none carried. */
+  /** Whether any event in the range carried it; false for a breakdown, blocked key or rename target none carried. */
   received: boolean
-  declared: boolean
+  /** Whether the project breaks the key down (its `attributes`). */
+  breakdown: boolean
+  /** Whether a block rule strips it from events as they arrive. */
+  blocked: boolean
+  /** The keys renamed or merged into this one; absent when there are none. */
+  aliases?: string[]
 }
 
 /**
- * The keys a project received over a range, with the breakdown budget (`breakdowns_max` 0 is no limit).
- * `keys` holds the 500 busiest received keys and every declared one; `keys_total` counts every key received.
+ * A project's attribute keys over a range, busiest first, with the breakdown budget (`breakdowns_max` 0 is no limit).
+ * `attributes` holds the 500 busiest received keys, every breakdown, every blocked key and every rename target;
+ * `keys_total` counts every key received, keys renamed away left out.
  */
-export interface ReceivedAttributes {
-  project_id?: number
+export interface ProjectAttributes {
+  project_id: number
   from: string
   to: string
-  keys: ReceivedKey[]
+  attributes: ProjectAttribute[]
   keys_total: number
   values_cap: number
   breakdowns_used: number
   breakdowns_max: number
+}
+
+/** An attribute rule: `key` is stored as `to` as it arrives, or (a block, no `to`) stripped from events. */
+export interface AttributeRule {
+  key: string
+  action: 'rename' | 'block'
+  to?: string
+  created_at?: string
 }
 
 export interface ProjectsResponse {
@@ -666,8 +683,6 @@ export const endpoints = {
     api<{ status: string }>(`/api/projects/${id}/keys/${encodeURIComponent(label)}/enable`, json('POST', {})),
   limits: () => api<LimitsResponse>('/api/limits'),
   usage: (q: RangeQuery & { project_id?: number }) => api<UsageResponse>(`/api/usage${toQuery(q)}`),
-  receivedAttributes: (q: RangeQuery & { project_id?: number }) =>
-    api<ReceivedAttributes>(`/api/received-attributes${toQuery(q)}`),
   eventRules: (id: number) => api<{ rules: EventRule[] }>(`/api/projects/${id}/event-rules`),
   eventNames: (id: number, q: RangeQuery) => api<{ events: EventName[] }>(`/api/projects/${id}/event-names${toQuery(q)}`),
   renameEvent: (id: number, body: { family: EventFamily; from: string; to: string }) =>
@@ -678,6 +693,15 @@ export const endpoints = {
     api<{ rule: EventRule }>(`/api/projects/${id}/event-rules/block`, json('POST', body)),
   removeEventRule: (id: number, body: { family: EventFamily; name: string }) =>
     api<{ status: string }>(`/api/projects/${id}/event-rules/remove`, json('POST', body)),
+  listAttributes: (id: number, q: RangeQuery) => api<ProjectAttributes>(`/api/projects/${id}/attributes${toQuery(q)}`),
+  renameAttribute: (id: number, body: { from: string; to: string }) =>
+    api<{ rule: AttributeRule; rewritten: Record<string, number> }>(`/api/projects/${id}/attribute-rules/rename`, json('POST', body)),
+  mergeAttribute: (id: number, body: { from: string; to: string }) =>
+    api<{ rule: AttributeRule; rewritten: Record<string, number> }>(`/api/projects/${id}/attribute-rules/merge`, json('POST', body)),
+  blockAttribute: (id: number, body: { key: string }) =>
+    api<{ rule: AttributeRule }>(`/api/projects/${id}/attribute-rules/block`, json('POST', body)),
+  removeAttributeRule: (id: number, body: { key: string }) =>
+    api<{ status: string }>(`/api/projects/${id}/attribute-rules/remove`, json('POST', body)),
   capUsage: (id: number, q: RangeQuery) => api<CapUsage>(`/api/projects/${id}/cap-usage${toQuery(q)}`),
   widgetShares: (q: { widget_id?: number; state?: ShareState }) => api<{ shares: WidgetShare[] }>(`/api/widget-shares${toQuery(q)}`),
   // No Content-Type here: the browser sets multipart/form-data with its boundary for a FormData body.

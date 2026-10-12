@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router'
 import DashboardHeader from '@/components/DashboardHeader'
 import RangeSwitcher from '@/components/RangeSwitcher'
-import BreakdownsSection from '@/components/projects/BreakdownsSection'
+import AttributesSection from '@/components/projects/AttributesSection'
 import CapImpactSection from '@/components/projects/CapImpactSection'
 import EventsSection from '@/components/projects/EventsSection'
 import KeysSection from '@/components/projects/KeysSection'
@@ -31,8 +31,9 @@ interface Props {
 
 /**
  * A project's Settings page (project landing D4): its usage, allowed origins,
- * breakdowns, events, keys and cap impact, with Archive or Restore. The range is
- * the URL's, which every tab of the project shares (D8), else 7 days.
+ * events, attributes (with their breakdown switches), keys and cap impact,
+ * with Archive or Restore. The range is the URL's, which every tab of the
+ * project shares (D8), else 7 days.
  */
 export default function SetupTab({ project, dash, actions }: Props) {
   const id = project.project_id
@@ -59,7 +60,6 @@ export default function SetupTab({ project, dash, actions }: Props) {
       </DashboardHeader>
       <UsageSection projectId={id} range={range} />
       <OriginsSection project={project} pending={actions.pending} onSave={(body) => actions.update(id, body)} />
-      <BreakdownsSection project={project} range={range} pending={actions.pending} onSave={(attributes) => actions.update(id, { attributes })} />
       <EventsSection
         project={project}
         range={range}
@@ -70,6 +70,18 @@ export default function SetupTab({ project, dash, actions }: Props) {
         onBlock={(body) => actions.blockEvent(id, body)}
         onRemove={(body) => actions.removeEventRule(id, body)}
         onAddAlias={(body) => actions.addEventAlias(id, body)}
+      />
+      <AttributesSection
+        project={project}
+        range={range}
+        rawDays={limits.data?.raw_events?.window_days}
+        pending={actions.pending}
+        onSaveBreakdowns={(attributes) => actions.update(id, { attributes })}
+        onRename={(body) => actions.renameAttribute(id, body)}
+        onMerge={(body) => actions.mergeAttribute(id, body)}
+        onBlock={(body) => actions.blockAttribute(id, body)}
+        onRemove={(body) => actions.removeAttributeRule(id, body)}
+        onAddAlias={(body) => actions.addAttributeAlias(id, body)}
       />
       <KeysSection
         keys={keysQ.data?.keys}

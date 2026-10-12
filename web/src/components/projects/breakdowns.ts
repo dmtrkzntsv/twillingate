@@ -1,7 +1,7 @@
-import type { ReceivedKey } from '@/lib/api'
+import type { ProjectAttribute } from '@/lib/api'
 
 /** What a key received: its events and its most distinct values in a day, or "not received". `valuesCap` 0 is no cap. */
-export function describeKey(r: ReceivedKey, valuesCap: number): string {
+export function describeKey(r: ProjectAttribute, valuesCap: number): string {
   if (!r.received) return 'not received'
   // Recorded at ingest, counted by the daily pass: a key first seen today has no counts yet.
   if (r.events === 0) return 'received today · counted tonight'

@@ -33,7 +33,7 @@ describe('useProjectActions', () => {
     expect(invalidate.mock.calls.map((c) => (c[0] as { queryKey: string[] }).queryKey[0])).toEqual(['keys'])
   })
 
-  it('refetches projects, keys, stats and received attributes after a project write, never cap usage', async () => {
+  it('refetches projects, keys, stats and attributes after a project write, never cap usage', async () => {
     vi.spyOn(endpoints, 'archiveProject').mockResolvedValue({ status: 'archived' } as never)
     const { client, wrapper: w } = wrapper()
     const invalidate = vi.spyOn(client, 'invalidateQueries')
@@ -42,7 +42,7 @@ describe('useProjectActions', () => {
       await result.current.archive(7)
     })
     const keys = invalidate.mock.calls.map((c) => (c[0] as { queryKey: string[] }).queryKey[0])
-    expect(keys.sort()).toEqual(['keys', 'projects', 'received-attributes', 'usage'])
+    expect(keys.sort()).toEqual(['attributes', 'keys', 'projects', 'usage'])
   })
 
   it('stays pending until the project list has refetched, so a next write builds on the saved list', async () => {
@@ -168,5 +168,52 @@ describe('useProjectActions', () => {
     })
     expect(ok).toBe(false)
     expect(toast.error).toHaveBeenCalledWith('$b is reserved')
+  })
+
+  it('renames, merges, blocks and removes attribute rules with their toasts, refetching attributes, projects and usage', async () => {
+    vi.spyOn(endpoints, 'renameAttribute').mockResolvedValue({ rule: { key: 'a', action: 'rename', to: 'b' }, rewritten: {} })
+    vi.spyOn(endpoints, 'mergeAttribute').mockResolvedValue({ rule: { key: 'a', action: 'rename', to: 'b' }, rewritten: {} })
+    vi.spyOn(endpoints, 'blockAttribute').mockResolvedValue({ rule: { key: 'x', action: 'block' } })
+    vi.spyOn(endpoints, 'removeAttributeRule').mockResolvedValue({ status: 'removed' })
+    const { client, wrapper: w } = wrapper()
+    const invalidate = vi.spyOn(client, 'invalidateQueries')
+    const { result } = renderHook(() => useProjectActions(), { wrapper: w })
+    const out: (boolean | string)[] = []
+    await act(async () => {
+      out.push(await result.current.renameAttribute(7, { from: 'a', to: 'b' }))
+      out.push(await result.current.mergeAttribute(7, { from: 'a', to: 'b' }))
+      out.push(await result.current.blockAttribute(7, { key: 'x' }))
+      out.push(await result.current.removeAttributeRule(7, { key: 'a' }))
+      out.push(await result.current.addAttributeAlias(7, { alias: 'c', to: 'b' }))
+    })
+    expect(out).toEqual([true, true, true, true, true])
+    expect(vi.mocked(toast.success).mock.calls.map((c) => c[0])).toEqual([
+      'Renamed a to b', 'Merged a into b', 'Blocked x', 'Removed the rule for a', 'Added alias c to b',
+    ])
+    expect(endpoints.renameAttribute).toHaveBeenCalledWith(7, { from: 'a', to: 'b' })
+    expect(endpoints.blockAttribute).toHaveBeenCalledWith(7, { key: 'x' })
+    expect(endpoints.removeAttributeRule).toHaveBeenCalledWith(7, { key: 'a' })
+    expect(endpoints.mergeAttribute).toHaveBeenLastCalledWith(7, { from: 'c', to: 'b' })
+    expect(invalidate.mock.calls.slice(0, 3).map((c) => (c[0] as { queryKey: string[] }).queryKey[0])).toEqual(['attributes', 'projects', 'usage'])
+  })
+
+  it('resolves conflict without a toast or a refetch on a 409 attribute rename, and toasts a 409 merge', async () => {
+    vi.spyOn(endpoints, 'renameAttribute').mockRejectedValue(new ApiError(409, 'b has data', 'conflict'))
+    vi.spyOn(endpoints, 'mergeAttribute').mockRejectedValue(new ApiError(409, 'b is blocked', 'conflict'))
+    const { client, wrapper: w } = wrapper()
+    const invalidate = vi.spyOn(client, 'invalidateQueries')
+    const { result } = renderHook(() => useProjectActions(), { wrapper: w })
+    let out: unknown
+    await act(async () => {
+      out = await result.current.renameAttribute(7, { from: 'a', to: 'b' })
+    })
+    expect(out).toBe('conflict')
+    expect(toast.error).not.toHaveBeenCalled()
+    expect(invalidate).not.toHaveBeenCalled()
+    await act(async () => {
+      out = await result.current.mergeAttribute(7, { from: 'a', to: 'b' })
+    })
+    expect(out).toBe(false)
+    expect(toast.error).toHaveBeenCalledWith('b is blocked')
   })
 })

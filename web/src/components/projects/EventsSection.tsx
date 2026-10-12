@@ -14,9 +14,10 @@ import { formatExact } from '@/lib/format'
 import { eventNamesQuery, eventRulesQuery } from '@/lib/queries'
 import { cn } from '@/lib/utils'
 import LoadError from './LoadError'
-import AddAliasDialog from './AddAliasDialog'
-import MergeEventDialog from './MergeEventDialog'
-import RenameEventDialog from './RenameEventDialog'
+import AliasDialog from './AliasDialog'
+import MergeDialog from './MergeDialog'
+import RenameDialog from './RenameDialog'
+import { ruleCopy } from './rule-copy'
 
 interface Props {
   project: Project
@@ -34,6 +35,10 @@ interface Props {
 }
 
 type Target = { family: EventFamily; name: string }
+
+const copy = ruleCopy('event')
+/** A dialog's target: the name, with its family after it. */
+const asRuleTarget = (t: Target | undefined) => (t ? { name: t.name, context: t.family } : null)
 
 /** A listed event with the rules on it: blocked, and the old names renamed to it. */
 type Row = EventName & { blocked: boolean; aliases: string[] }
@@ -80,6 +85,9 @@ export default function EventsSection({ project, range, rawDays, pending, onRena
   const rules = useQuery(eventRulesQuery(id))
   const list = names.data?.events ?? []
   const rows = names.data ? eventRows(list, rules.data?.rules ?? []) : []
+  // The names with events, and the blocked ones, in a family: what a rename or alias in it must know.
+  const takenIn = (family?: EventFamily) => list.filter((e) => e.family === family).map((e) => e.name)
+  const blockedIn = (family?: EventFamily) => (rules.data?.rules ?? []).filter((r) => r.action === 'block' && r.family === family).map((r) => r.name)
   return (
     <section aria-label="Events" className="flex flex-col gap-3 rounded-lg border p-4">
       <header>
@@ -151,28 +159,33 @@ export default function EventsSection({ project, range, rawDays, pending, onRena
       )}
       {names.error && !names.data && <LoadError what="event names" error={names.error} onRetry={() => void names.refetch()} />}
       {rules.error && !rules.data && <LoadError what="event rules" error={rules.error} onRetry={() => void rules.refetch()} />}
-      <RenameEventDialog
+      <RenameDialog
         open={renaming?.open === true}
         onOpenChange={(o) => !o && setRenaming((d) => d && { ...d, open: false })}
-        target={renaming?.target ?? null}
-        names={list}
-        blockedNames={(rules.data?.rules ?? []).filter((r) => r.action === 'block' && r.family === renaming?.target.family).map((r) => r.name)}
+        noun="event"
+        target={asRuleTarget(renaming?.target)}
+        taken={takenIn(renaming?.target.family)}
+        blocked={blockedIn(renaming?.target.family)}
         pending={pending}
         onRename={(to) => onRename({ family: renaming!.target.family, from: renaming!.target.name, to })}
       />
-      <MergeEventDialog
+      <MergeDialog
         open={merging?.open === true}
         onOpenChange={(o) => !o && setMerging((d) => d && { ...d, open: false })}
-        target={merging?.target ?? null}
-        into={rows.filter((r) => r.family === merging?.target.family && r.name !== merging?.target.name && !r.blocked)}
+        noun="event"
+        target={asRuleTarget(merging?.target)}
+        into={rows
+          .filter((r) => r.family === merging?.target.family && r.name !== merging?.target.name && !r.blocked)
+          .map((r) => ({ name: r.name, count: r.events }))}
         pending={pending}
         onMerge={(to) => onMerge({ family: merging!.target.family, from: merging!.target.name, to })}
       />
-      <AddAliasDialog
+      <AliasDialog
         open={aliasing?.open === true}
         onOpenChange={(o) => !o && setAliasing((d) => d && { ...d, open: false })}
-        target={aliasing?.target ?? null}
-        names={list}
+        noun="event"
+        target={asRuleTarget(aliasing?.target)}
+        taken={takenIn(aliasing?.target.family)}
         aliases={rows.find((r) => r.family === aliasing?.target.family && r.name === aliasing?.target.name)?.aliases ?? []}
         pending={pending}
         onAdd={(alias) => onAddAlias({ family: aliasing!.target.family, alias, to: aliasing!.target.name })}
@@ -180,10 +193,8 @@ export default function EventsSection({ project, range, rawDays, pending, onRena
       <AlertDialog open={unaliasing?.open === true} onOpenChange={(o) => !o && setUnaliasing((d) => d && { ...d, open: false })}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle className="wrap-anywhere">Remove alias {unaliasing?.target.name}?</AlertDialogTitle>
-            <AlertDialogDescription className="wrap-anywhere">
-              Events sent as {unaliasing?.target.name} arrive under their own name again; the ones already renamed stay under {unaliasing?.target.to}.
-            </AlertDialogDescription>
+            <AlertDialogTitle className="wrap-anywhere">{unaliasing && copy.unalias.title(unaliasing.target.name)}</AlertDialogTitle>
+            <AlertDialogDescription className="wrap-anywhere">{unaliasing && copy.unalias.description(unaliasing.target.name, unaliasing.target.to)}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
@@ -194,15 +205,12 @@ export default function EventsSection({ project, range, rawDays, pending, onRena
       <AlertDialog open={blocking?.open === true} onOpenChange={(o) => !o && setBlocking((d) => d && { ...d, open: false })}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle className="wrap-anywhere">Block {blocking?.target.name}?</AlertDialogTitle>
-            <AlertDialogDescription className="wrap-anywhere">
-              Events named {blocking?.target.name} ({blocking?.target.family}) are dropped when they arrive. The next daily pass (03:00 UTC) deletes its aggregated history;
-              stored raw events expire within {rawDays ? `${rawDays} days` : 'the raw retention window'}. Remove the rule to receive it again.
-            </AlertDialogDescription>
+            <AlertDialogTitle className="wrap-anywhere">{blocking && copy.block.title(blocking.target)}</AlertDialogTitle>
+            <AlertDialogDescription className="wrap-anywhere">{blocking && copy.block.description(asRuleTarget(blocking.target)!, rawDays)}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={() => { const t = blocking!.target; setBlocking({ target: t, open: false }); void onBlock(t) }}>Block event</AlertDialogAction>
+            <AlertDialogAction onClick={() => { const t = blocking!.target; setBlocking({ target: t, open: false }); void onBlock(t) }}>{copy.block.action}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

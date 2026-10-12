@@ -8,7 +8,7 @@ import ProjectFormDialog from './ProjectFormDialog'
 describe('ProjectFormDialog', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
-    vi.spyOn(endpoints, 'receivedAttributes')
+    vi.spyOn(endpoints, 'listAttributes')
   })
 
   it('trims origins and drops empty rows on save, sending the name and origins only', async () => {
@@ -35,14 +35,14 @@ describe('ProjectFormDialog', () => {
     await vi.waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false))
   })
 
-  it('has no breakdowns to pick, and asks for no received attributes', () => {
+  it('has no breakdowns to pick, and asks for no attributes', () => {
     renderWithProviders(
       <ProjectFormDialog open onOpenChange={vi.fn()} title="Edit" submitLabel="Save" onSubmit={vi.fn()} initial={{ name: 'dev', allowed_origins: [] }} />,
     )
     expect(screen.queryByText('Breakdowns')).not.toBeInTheDocument()
     expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
     expect(screen.queryByRole('textbox', { name: 'Key not received yet' })).not.toBeInTheDocument()
-    expect(endpoints.receivedAttributes).not.toHaveBeenCalled()
+    expect(endpoints.listAttributes).not.toHaveBeenCalled()
   })
 
   it('keeps Save disabled without a name, and while pending', () => {
