@@ -911,6 +911,37 @@ func TestDeleteSubmissionsRemovesRowAndRawEvent(t *testing.T) {
 	}
 }
 
+// A UUID submission id is what prod stores: the event's id is its 16 bytes
+// (events encoding D3), the case deleteEvent has to encode the same way.
+func TestDeleteSubmissionsRemovesAUUIDEvent(t *testing.T) {
+	db := newFormsDB(t)
+	ctx := context.Background()
+	const gone, kept = "0192f1a2-7c3b-7d4e-8f90-a1b2c3d4e5f6", "0192f1a2-7c3b-7d4e-8f90-a1b2c3d4e5f7"
+	mustWrite(t, db, newSub("draft", map[string]string{"email": "d@x.io"}))
+	if err := db.ApproveForm(ctx, 1, "contact", []string{"email"}, formsNow, formAudit); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, db, newSub(gone, map[string]string{"email": "a@x.io"}))
+	mustWrite(t, db, newSub(kept, map[string]string{"email": "b@x.io"}))
+	if c := countRows(t, db, `SELECT COUNT(*) FROM events WHERE typeof(id) = 'blob'`); c != 2 {
+		t.Fatalf("setup: %d events with a blob id, want 2 (the UUID path)", c)
+	}
+	n, err := db.DeleteSubmissions(ctx, 1, []string{gone},
+		store.AuditEntry{Actor: "agent", Action: "submission.delete", Subject: "project/1", Detail: "ids"})
+	if err != nil || n != 1 {
+		t.Fatalf("deleted %d, err %v", n, err)
+	}
+	if c := countRows(t, db, `SELECT COUNT(*) FROM raw_product WHERE id = ?`, gone); c != 0 {
+		t.Errorf("the deleted submission's event is still raw (%d rows)", c)
+	}
+	if c := countRows(t, db, `SELECT COUNT(*) FROM raw_product WHERE id = ?`, kept); c != 1 {
+		t.Errorf("the other submission's event: %d rows, want 1", c)
+	}
+	if c := countRows(t, db, `SELECT COUNT(*) FROM submissions WHERE id = ?`, gone); c != 0 {
+		t.Error("the submission row is still there")
+	}
+}
+
 func TestFindSubmissions(t *testing.T) {
 	db := newFormsDB(t)
 	ctx := context.Background()
