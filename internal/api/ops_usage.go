@@ -59,7 +59,7 @@ type projectUsage struct {
 	RawDays          int         `json:"raw_days"`
 	RolledUpDays     int         `json:"rolled_up_days"`
 	Size             *usageSize  `json:"size" jsonschema:"the latest estimate the daily pass measured, with the day it was measured_at; null until the first measurement"`
-	UnusedAttributes *[]string   `json:"unused_attributes" jsonschema:"declared keys no event carried in the range; computed only when project_id is given, null otherwise"`
+	UnusedAttributes *[]string   `json:"unused_attributes" jsonschema:"breakdown keys no event carried in the range; computed only when project_id is given, null otherwise"`
 }
 
 // dbDay is the database file's size as the daily pass measured it on a
