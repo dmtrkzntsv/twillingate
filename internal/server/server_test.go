@@ -747,7 +747,7 @@ func TestMissingIDIsGenerated(t *testing.T) {
 
 func TestClientTimestampIsUsedAndClamped(t *testing.T) {
 	q, h := testServer(t)
-	// Relative to now: a fixed date would age out of the raw window and
+	// Relative to now: a fixed date would age out of the late window and
 	// turn this into a time bomb.
 	recent := time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Second)
 	post(h, envelopeOf(`{"name":"recent","ts":"`+recent.Format(time.RFC3339)+`"},
@@ -758,20 +758,19 @@ func TestClientTimestampIsUsedAndClamped(t *testing.T) {
 	if !q.events[0].TS.Equal(recent) {
 		t.Errorf("in-range ts = %v, want the client value", q.events[0].TS)
 	}
-	// Clamped, not dropped, and never older than the global raw window
-	// (RETENTION_RAW_DAYS, 30 days by default).
-	if q.events[1].TS.Before(q.events[1].ReceivedAt.Add(-31 * 24 * time.Hour)) {
-		t.Errorf("clamped ts = %v, older than the raw window", q.events[1].TS)
+	// Clamped, not dropped, and never older than the late window
+	// (INGEST_LATE_DAYS, 1 day by default).
+	if q.events[1].TS.Before(q.events[1].ReceivedAt.Add(-2 * 24 * time.Hour)) {
+		t.Errorf("clamped ts = %v, older than the late window", q.events[1].TS)
 	}
 }
 
-// TestEventAgeClampUsesGlobalRawWindow verifies the clamp follows the
-// configured raw window rather than a hard-coded default: retention is
-// global, so an operator who shortens RETENTION_RAW_DAYS must also
-// shorten how far back a clock-skewed late event can land, or it could
-// target a day the daily pass already aggregated and deleted.
-func TestEventAgeClampUsesGlobalRawWindow(t *testing.T) {
-	cfg := configtest.Load(t, map[string]string{"RETENTION_RAW_DAYS": "3"})
+// TestEventAgeClampUsesLateWindow verifies the clamp follows the configured
+// late window rather than a hard-coded default or the raw window: an
+// operator who shortens INGEST_LATE_DAYS shortens how far back a
+// clock-skewed late event can land.
+func TestEventAgeClampUsesLateWindow(t *testing.T) {
+	cfg := configtest.Load(t, map[string]string{"INGEST_LATE_DAYS": "3"})
 	reg := newTestRegistry(t,
 		[]manage.ProjectSpec{
 			{Name: "Clamped", AllowedOrigins: []string{testOrigin}},
@@ -785,8 +784,8 @@ func TestEventAgeClampUsesGlobalRawWindow(t *testing.T) {
 	oldTS := time.Now().UTC().AddDate(0, 0, -10).Format(time.RFC3339)
 	recentTS := time.Now().UTC().AddDate(0, 0, -1).Format(time.RFC3339)
 
-	// A 10-day-old event must clamp to the 3-day window, not the 30-day
-	// default.
+	// A 10-day-old event must clamp to the 3-day window, not the 1-day
+	// default and not the 30-day raw window.
 	w := post(h, `{"key":"ak_clamped","events":[{"name":"$page_view","ts":"`+oldTS+`","attributes":{"$path":"/x"}}]}`, nil)
 	res := decodeResult(t, w)
 	if len(res.Warnings) != 1 || !strings.Contains(res.Warnings[0].Reason, "clamped") {
@@ -797,7 +796,7 @@ func TestEventAgeClampUsesGlobalRawWindow(t *testing.T) {
 	}
 	age := time.Since(q.views[0].TS)
 	if age < 3*24*time.Hour || age > 3*24*time.Hour+time.Minute {
-		t.Errorf("clamped view age = %v, want ~3 days (the configured raw window)", age)
+		t.Errorf("clamped view age = %v, want ~3 days (the configured late window)", age)
 	}
 
 	// Control: the window applies to every project alike, and a timestamp
@@ -816,6 +815,34 @@ func TestEventAgeClampUsesGlobalRawWindow(t *testing.T) {
 	}
 	if !q.views[1].TS.Equal(got) {
 		t.Errorf("unclamped ts = %v, want the client value %v", q.views[1].TS, got)
+	}
+}
+
+// TestRaisedRawWindowDoesNotMoveTheClamp is the raw-first spec's step 0 at
+// the ingest boundary: with RETENTION_RAW_DAYS raised to 400 after days
+// were rolled up, a 40-day-old event must still clamp to the late window
+// (1 day by default), never into a rolled-up day.
+func TestRaisedRawWindowDoesNotMoveTheClamp(t *testing.T) {
+	cfg := configtest.Load(t, map[string]string{"RETENTION_RAW_DAYS": "400"})
+	reg := newTestRegistry(t,
+		[]manage.ProjectSpec{{Name: "Raised", AllowedOrigins: []string{testOrigin}}},
+		map[int][2]string{0: {"ak_raised", "web"}})
+	g, _ := geo.New("cloudflare://", t.TempDir(), slog.Default())
+	q := &fakeQueue{}
+	h := New(cfg, reg, q, g, fixedSalt{}, q, newFakeForms(), slog.Default())
+
+	oldTS := time.Now().UTC().AddDate(0, 0, -40).Format(time.RFC3339)
+	w := post(h, `{"key":"ak_raised","events":[{"name":"$page_view","ts":"`+oldTS+`","attributes":{"$path":"/x"}}]}`, nil)
+	res := decodeResult(t, w)
+	if len(res.Warnings) != 1 || !strings.Contains(res.Warnings[0].Reason, "clamped") {
+		t.Fatalf("warnings = %+v, want a clamp warning", res.Warnings)
+	}
+	if len(q.views) != 1 {
+		t.Fatalf("views = %+v", q.views)
+	}
+	age := time.Since(q.views[0].TS)
+	if age < 24*time.Hour || age > 24*time.Hour+time.Minute {
+		t.Errorf("clamped view age = %v, want ~1 day (INGEST_LATE_DAYS), not the 400-day raw window", age)
 	}
 }
 
