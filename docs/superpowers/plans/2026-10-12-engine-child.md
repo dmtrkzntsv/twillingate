@@ -48,7 +48,7 @@
 2. **The semaphore spans the data directory, not the host.** The roadmap puts the lock files in the data directory. D8's "fifty customers on one host" would need one directory shared by every install, and D23 allows no variable to name it. This plan follows the roadmap. A split install (ingest and console processes on one data directory) shares one cap. A host running many installs relies on D8's backstop, a `systemd` slice with `MemoryMax`. If you want the host-wide cap, it needs one more variable (or a fixed path such as `/run/twillingate`), plus the permission scheme for several service users. Say so and Task 2 gains it.
 3. **The child exits when its stdin closes.** It exits there even with queries in flight, cancelling them. That is how a dead server never leaves a child running: the kernel closes the pipe. No `Pdeathsig`: it is tied to the spawning OS thread in Go, and stdin EOF already covers it.
 4. **`engine -check`** is hidden from the usage line, documented in `docs/deployment.md`, and run by the smoke test, the Dockerfile and the release workflow.
-5. **Release builds run on `ubuntu-22.04` and `ubuntu-22.04-arm` runners,** for the glibc 2.35 floor (Debian 12, Ubuntu 22.04, RHEL 9 and later). The image builds per architecture on a native runner from `golang:1.25-bookworm` into `debian:bookworm-slim`. The two image digests are joined into one index at release.
+5. **Release builds run on `ubuntu-22.04` and `ubuntu-22.04-arm` runners,** for the glibc 2.35 floor (Debian 12, Ubuntu 22.04 and later). The image builds per architecture on a native runner from `golang:1.25-bookworm` into `debian:bookworm-slim`. The two image digests are joined into one index at release.
 6. **`release.yml` gains a `dry_run` input.** It runs every job except the tag and publish job, so this PR can prove the workflow before a real release.
 
 ## Review Focus
@@ -1994,7 +1994,7 @@ Expected: the build passes its `engine -check` step; the run prints `engine ok: 
     *) die "unsupported architecture: $(uname -m)" ;;
   esac
   # The binary links glibc 2.35 or newer (DuckDB, cgo): Debian 12, Ubuntu
-  # 22.04, RHEL 9 or later. Alpine (musl) has none.
+  # 22.04 or later. Alpine (musl) has none.
   glibc="$(getconf GNU_LIBC_VERSION 2>/dev/null | awk '{print $2}')"
   [ -n "$glibc" ] || die "needs glibc 2.35 or newer; this system has none (Alpine? use the Docker image)"
   [ "$(printf '%s\n2.35\n' "$glibc" | sort -V | head -n1)" = 2.35 ] ||
@@ -2027,8 +2027,8 @@ Expected: the install test passes; the Alpine line prints `none`, the condition 
 - At the top of `## Install`, before `### docker compose`, add:
 
 ```markdown
-Linux on amd64 or arm64 with glibc 2.35 or newer (Debian 12, Ubuntu 22.04,
-RHEL 9 or later), or Docker anywhere. 32-bit ARM is not built. Plan on 1 GB
+Linux on amd64 or arm64 with glibc 2.35 or newer (Debian 12, Ubuntu 22.04 or
+later), or Docker anywhere. 32-bit ARM is not built. Plan on 1 GB
 of memory: the server stays small (`GOMEMLIMIT` bounds it), and each engine
 child, the process that answers analytics queries, may take up to
 `ENGINE_MEMORY_LIMIT` (512 MB by default) for a few seconds; at most
@@ -2050,7 +2050,7 @@ operators:
   the 64-bit OS first (a Pi 3, 4, 5 or Zero 2 W runs it); the installer
   refuses `armv7l` and `armv6l`. ARMv7 NAS boxes and boards stay on the
   previous release.
-- **glibc 2.35 or newer** (Debian 12, Ubuntu 22.04, RHEL 9 or later); the
+- **glibc 2.35 or newer** (Debian 12, Ubuntu 22.04 or later); the
   installer checks. Check first: `getconf GNU_LIBC_VERSION`.
 - **The image is Debian-based** (`debian:bookworm-slim`, from Alpine), same
   user and ids (10001), same volume; `docker compose pull` as usual.
@@ -2115,7 +2115,7 @@ newer, and the image is Debian-based."
       matrix:
         include:
           # Ubuntu 22.04: its glibc 2.35 is the release's floor (Debian 12,
-          # Ubuntu 22.04, RHEL 9). The binary links it through cgo.
+          # Ubuntu 22.04). The binary links it through cgo.
           - { arch: amd64, runner: ubuntu-22.04 }
           - { arch: arm64, runner: ubuntu-22.04-arm }
     runs-on: ${{ matrix.runner }}
