@@ -330,3 +330,43 @@ func TestIdleChildYieldsItsSlotToAWaiter(t *testing.T) {
 	}
 	eventually(t, "the idle child retired", func() bool { return a.pid() == 0 })
 }
+
+// TestStaleIdleCallbackNeitherRetiresNorRearms: a callback armed before a
+// request ran (its generation is old) must leave the child alone, even
+// with its deadline long past; one of the current generation retires it.
+func TestStaleIdleCallbackNeitherRetiresNorRearms(t *testing.T) {
+	e := newEngine(t, testOptions(t))
+	query := func() {
+		t.Helper()
+		if _, err := e.Query(context.Background(), "SELECT 1", 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	query()
+	e.mu.Lock()
+	c, stale := e.child, e.child.gen
+	e.mu.Unlock()
+	query() // a request in the gap: the callback armed at `stale` is now old
+
+	past := time.Now().Add(-time.Second)
+	e.idleCheck(c, past, stale) // deadline passed: would retire
+	if e.pid() == 0 {
+		t.Fatal("a stale callback retired the child")
+	}
+	future := time.Now().Add(time.Hour)
+	e.mu.Lock()
+	timer := c.idle
+	e.mu.Unlock()
+	e.idleCheck(c, future, stale) // deadline ahead: would re-arm
+	e.mu.Lock()
+	rearmed := c.idle != timer
+	cur := c.gen
+	e.mu.Unlock()
+	if rearmed {
+		t.Fatal("a stale callback replaced the child's idle timer")
+	}
+	e.idleCheck(c, past, cur)
+	if e.pid() != 0 {
+		t.Fatal("a current callback past its deadline did not retire the child")
+	}
+}

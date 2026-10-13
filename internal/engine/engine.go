@@ -90,6 +90,7 @@ type child struct {
 	pending map[uint64]chan reply
 	busy    int
 	idle    *time.Timer
+	gen     uint64 // bumped when a request starts or ends: an idle callback armed before it is stale
 	slot    *slot
 	spill   string
 	done    chan struct{} // closed after exit, once the slot and spill are released
@@ -229,6 +230,7 @@ func (e *Engine) start(ctx context.Context) (*child, error) {
 	}
 	if c := e.child; c != nil {
 		c.busy++
+		c.gen++
 		if c.idle != nil {
 			c.idle.Stop()
 			c.idle = nil
@@ -262,36 +264,44 @@ func (e *Engine) finish(c *child, id uint64) {
 	defer e.mu.Unlock()
 	delete(c.pending, id)
 	c.busy--
+	c.gen++
 	if c.busy == 0 && e.child == c {
 		e.armIdle(c, time.Now().Add(e.o.IdleExit))
 	}
 }
 
 // armIdle (e.mu held) schedules the idle check: the child retires at
-// deadline, or as soon as another engine waits for a slot.
+// deadline, or as soon as another engine waits for a slot. The check
+// belongs to the child's current generation and does nothing once a
+// request has started or ended since.
 func (e *Engine) armIdle(c *child, deadline time.Time) {
 	wait := time.Until(deadline)
 	if wait > yieldPoll {
 		wait = yieldPoll
 	}
-	c.idle = time.AfterFunc(wait, func() {
-		if time.Now().Before(deadline) && !waiting(e.o.SlotDir) {
-			e.mu.Lock()
-			if e.child == c && c.busy == 0 && c.idle != nil {
-				e.armIdle(c, deadline)
-			}
-			e.mu.Unlock()
-			return
+	gen := c.gen
+	c.idle = time.AfterFunc(wait, func() { e.idleCheck(c, deadline, gen) })
+}
+
+// idleCheck is the timer's callback: re-arm while the deadline is ahead
+// and nobody waits, else retire.
+func (e *Engine) idleCheck(c *child, deadline time.Time, gen uint64) {
+	if time.Now().Before(deadline) && !waiting(e.o.SlotDir) {
+		e.mu.Lock()
+		if e.child == c && c.busy == 0 && c.gen == gen {
+			e.armIdle(c, deadline)
 		}
-		e.retire(c)
-	})
+		e.mu.Unlock()
+		return
+	}
+	e.retire(c, gen)
 }
 
 // retire tells an idle child to exit by closing its stdin, unless a
-// request arrived since the timer fired.
-func (e *Engine) retire(c *child) {
+// request started or ended since the timer was armed (gen).
+func (e *Engine) retire(c *child, gen uint64) {
 	e.mu.Lock()
-	if e.child != c || c.busy > 0 {
+	if e.child != c || c.busy > 0 || c.gen != gen {
 		e.mu.Unlock()
 		return
 	}
