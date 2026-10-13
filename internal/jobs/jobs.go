@@ -62,6 +62,8 @@ type Store interface {
 // Archive is the file side of the pass (internal/archive): it runs only in
 // a process that ingests, which owns the log.
 type Archive interface {
+	// Projects lists the projects with a directory under raw/.
+	Projects() ([]int64, error)
 	Maintain(ctx context.Context, today civil.Date, lateDays, retentionDays int) error
 	RemoveProject(id int64) error
 }
@@ -171,6 +173,7 @@ func (r *Runner) RunDailyPass(ctx context.Context) error {
 			}
 		}
 	}
+	r.removeOrphanedArchives(ctx)
 
 	// store.ProjectIDs (all rows, including archived) is the complete list.
 	ids, err := r.store.ProjectIDs(ctx)
@@ -283,6 +286,43 @@ func (r *Runner) RunDailyPass(ctx context.Context) error {
 	return nil
 }
 
+// removeOrphanedArchives removes the raw/ directory of every project the
+// store no longer has. The purge above runs in every process's pass but the
+// files belong to the ingest process, so a purge made by another process
+// (the console's) is found here by what is left on disk. Archived projects
+// keep their files until they are purged.
+//
+// The directories are listed before the registry is reloaded: a directory
+// seen here was created for a project the ingest registry knew, so the
+// reload that follows knows it too. With no fresh registry nothing is
+// removed.
+func (r *Runner) removeOrphanedArchives(ctx context.Context) {
+	if r.archive == nil {
+		return
+	}
+	dirs, err := r.archive.Projects()
+	if err != nil {
+		r.logger.Error("archive: list projects", "error", err)
+		return
+	}
+	if len(dirs) == 0 {
+		return
+	}
+	if err := r.reg.Reload(ctx); err != nil {
+		r.logger.Error("registry reload before the archive sweep failed", "error", err)
+		return
+	}
+	snap := r.reg.Snapshot(ctx)
+	for _, id := range dirs {
+		if snap.Project(id) != nil {
+			continue
+		}
+		if err := r.archive.RemoveProject(id); err != nil {
+			r.logger.Error("archive: remove purged project", "project", id, "error", err)
+		}
+	}
+}
+
 // allRawDays merges the days present in both raw tables, deduplicated
 // and sorted, so a project is covered whatever mix of surfaces it uses.
 func (r *Runner) allRawDays(ctx context.Context, projectID int64, before civil.Date) ([]civil.Date, error) {
@@ -321,14 +361,19 @@ func (r *Runner) runScheduled(ctx context.Context) {
 		}
 	}
 	if now.Hour() == 3 && r.lastAggDay != day {
-		r.lastAggDay = day
 		// Every process on a host runs its pass at 03:00; the file work
 		// moves to a random point in the following half hour. The pass is
 		// one unit, so the SQLite work waits too, and so does the loop
 		// (the salt rotation is at 00:xx, so nothing is missed).
 		if r.archive != nil {
 			r.sleep(ctx, r.jitter())
+			// A shutdown cut the wait short: nothing runs on a dead
+			// context, and the day stays open for the next boot's pass.
+			if ctx.Err() != nil {
+				return
+			}
 		}
+		r.lastAggDay = day
 		if err := r.RunDailyPass(ctx); err != nil {
 			r.logger.Error("daily pass", "error", err)
 		}

@@ -232,6 +232,24 @@ func TestRemoveProjectDeletesItsDirectory(t *testing.T) {
 	f.write(t, evOf(1, "c", "2026-10-12T11:00:00Z")) // an event queued before the purge must not fail the pipeline
 }
 
+func TestProjectsListsTheNumericDirectories(t *testing.T) {
+	f := newFixture(t)
+	f.write(t, evOf(7, "a", "2026-10-12T10:00:00Z"), evOf(2, "b", "2026-10-12T10:00:00Z"))
+	if err := os.WriteFile(filepath.Join(f.log.Dir(), "9"), nil, 0o640); err != nil { // a file, not a directory
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(f.log.Dir(), "scratch"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	got, err := f.a.Projects()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0] != 2 || got[1] != 7 {
+		t.Fatalf("Projects = %v, want [2 7]", got)
+	}
+}
+
 // project1 is the path of a file in project 1's directory.
 func (f fixture) project1(name string) string { return filepath.Join(f.log.Dir(), "1", name) }
 

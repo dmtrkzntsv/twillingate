@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -48,15 +49,11 @@ var (
 // one goes on (the daily pass's rule); only failing to list the projects
 // is returned.
 func (a *Archive) Maintain(ctx context.Context, today civil.Date, lateDays, retentionDays int) error {
-	entries, err := os.ReadDir(a.log.Dir())
+	projects, err := a.Projects()
 	if err != nil {
-		return fmt.Errorf("archive: %w", err)
+		return err
 	}
-	for _, e := range entries {
-		project, err := strconv.ParseInt(e.Name(), 10, 64)
-		if err != nil || !e.IsDir() {
-			continue
-		}
+	for _, project := range projects {
 		if err := a.maintainProject(ctx, project, today, lateDays, retentionDays); err != nil {
 			a.logger.Error("archive: maintenance", "project", project, "error", err)
 		}
@@ -65,6 +62,23 @@ func (a *Archive) Maintain(ctx context.Context, today civil.Date, lateDays, rete
 		}
 	}
 	return nil
+}
+
+// Projects lists, in ascending order, the ids of the projects with a
+// directory under raw/.
+func (a *Archive) Projects() ([]int64, error) {
+	entries, err := os.ReadDir(a.log.Dir())
+	if err != nil {
+		return nil, fmt.Errorf("archive: %w", err)
+	}
+	var ids []int64
+	for _, e := range entries {
+		if id, err := strconv.ParseInt(e.Name(), 10, 64); err == nil && e.IsDir() {
+			ids = append(ids, id)
+		}
+	}
+	slices.Sort(ids)
+	return ids, nil
 }
 
 func (a *Archive) maintainProject(ctx context.Context, project int64, today civil.Date, lateDays, retentionDays int) error {
