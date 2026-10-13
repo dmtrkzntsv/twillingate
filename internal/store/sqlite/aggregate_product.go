@@ -36,6 +36,11 @@ func (d *DB) AggregateProductDay(ctx context.Context, projectID int64, day civil
 			projectID, day.String(), projectID); err != nil {
 			return err
 		}
+		// A day older than the raw window receives no new rows: ingest clamps
+		// client timestamps to INGEST_LATE_DAYS, which config keeps within
+		// RETENTION_RAW_DAYS. So "no raw rows" is the only "already done" this
+		// rollup needs; a row arriving here after a rollup would otherwise
+		// replace the day's aggregates with its own counts.
 		var n int
 		if err := tx.QueryRowContext(ctx,
 			`SELECT COUNT(*) FROM raw_product WHERE project_id=? AND day=?`,
