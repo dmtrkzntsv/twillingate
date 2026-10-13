@@ -234,17 +234,11 @@ One server takes up to **1M events a month** and keeps raw events for up to
     backstop that turns the worst case into one killed child.
   - **Jitter in the daily pass.** The dumps and merges of every process on
     a host spread over a window rather than all starting at 03:00.
-- **D9. Aggregates become a cache, if the engine needs one.** If the engine
-  is not fast enough at the cap (D10's targets), closed days' results are
-  cached per widget query and per day:
-  - the first load computes each day and stores it; later loads read the
-    stored days and compute only today's log;
-  - only days in Parquet are cached, and they are final (D3), so the cache
-    is invalidated only by rules changes and erasure;
-  - it works for anything that adds up across days (counts, sums,
-    histograms); distinct users over a range are recomputed from raw, shown
-    per day, or estimated with a per-day HyperLogLog sketch (Q5).
-  Nothing is declared: the widget's own query defines what is cached.
+- **D9. No cache, no estimates.** Removed 2026-10-12: measured, every
+  question answers from raw within the targets except sessionization
+  (D16), so there is no per-day cache of widget results and no HyperLogLog;
+  distinct users over any range are exact. (The cache design is kept in
+  "Options considered".)
 - **D10. Three designs, chosen by measurement: C, over Parquet files.** Go
   has no columnar SQL engine without cgo. Against the Requirements:
 
@@ -290,6 +284,18 @@ One server takes up to **1M events a month** and keeps raw events for up to
   retention by deleting files, backups by copying files that never change,
   and no process lock (a DuckDB file admits one process, which breaks the
   CLI against a live server and the split install). D2–D8 describe it.
+
+- **D16. One derived table: sessions.** Sessionization (a visitor's views
+  ordered in time, a new session after a 30-minute gap) is the only query
+  that misses the targets at 2 threads: 1.75 s over a year, 7 s over 3
+  years, because every view in the range is sorted per visitor. At day
+  close the dump also writes `sessions/<YYYY-MM-DD>.parquet`, one row per
+  session (actor, kind, start, end, views, entry and exit path), ~50 ms a
+  day and a third the rows of the views; today's sessions come live from
+  the log. Sessions cut at midnight as today's live half does. The Views
+  dashboard's sessions, bounce, duration and entry/exit widgets read it
+  instead of sorting views. Derived, rebuildable from raw at any time,
+  deleted and merged with the day's files.
 
 ### Hosting
 
@@ -550,8 +556,9 @@ meets D10's targets:
 | Aggregate every combination of every declared key | rejected: rows multiply per key; with per-user numbers (accounts, payees) nearly every user is a unique tuple, so the aggregate is as big as raw |
 | Declared combinations (a project declares `[status, reason]`; top-N tuples + `(other)` per day) | rejected: predefining tuples complicates the user journey |
 | Answer combinations from raw | kept (D8) |
-| Per-day cache of each widget's own query, no declarations | kept as D9, if the engine needs it |
-| HyperLogLog sketches for distinct users over ranges | open (Q5) |
+| Per-day cache of each widget's own query, no declarations | rejected (D9): not needed by measurement; the first load would compute each closed day per widget and store it, later loads read the stored days and compute only today, invalidated by rules and erasure; distinct users would need recompute or sketches |
+| HyperLogLog sketches for distinct users over ranges | rejected (Q5): distinct users are exact from raw in 0.06–0.27 s over 3 years |
+| A derived sessions table written at day close | kept (D16) |
 
 ## Open questions
 
@@ -566,8 +573,8 @@ meets D10's targets:
 - **Q4.** Settled 2026-10-12: `INGEST_LATE_DAYS`, default 1, configurable
   (D3). A day file is final a day after the day closes; a month merges a
   day after it ends.
-- **Q5.** Distinct users over a range with D9's cache: recompute, per-day
-  only, or HyperLogLog sketches (our own code in `internal/shared/`)?
+- **Q5.** Settled 2026-10-12: moot without D9's cache; exact from raw. The
+  sessions table (D16) takes the one slow query.
 - **Q6.** Upgrade path. Existing servers hold only aggregates for days
   older than their raw window: those days have no raw rows to move. Either
   dashboards keep reading `agg_*` for days before the switch (two code paths
