@@ -2,7 +2,7 @@ BIN := twillingate
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X github.com/dmtrkzntsv/twillingate/internal/shared/version.Version=$(VERSION)
 
-.PHONY: build ui test check vet build-all dist docker run smoke test-install test-compose seed-demo clean
+.PHONY: build ui test check vet dist docker run smoke test-install test-compose seed-demo clean
 
 # The dashboards app (web/) builds into internal/reporting/ui, which the
 # binary embeds. Only its components.json is committed, so every Go build
@@ -19,8 +19,12 @@ $(UI): web/node_modules/.package-lock.json $(WEB_SRC)
 web/node_modules/.package-lock.json: web/package-lock.json
 	cd web && npm ci
 
+# cgo: internal/engine links DuckDB's static library (raw-first spec D13),
+# so a build needs a C toolchain and targets the host. Release binaries come
+# from ubuntu-22.04 runners, one per architecture, for a glibc 2.35 floor
+# (release.yml); a binary built here needs this host's glibc.
 build: $(UI)
-	CGO_ENABLED=0 go build -trimpath -ldflags '$(LDFLAGS)' -o $(BIN) ./cmd/twillingate
+	CGO_ENABLED=1 go build -trimpath -ldflags '$(LDFLAGS)' -o $(BIN) ./cmd/twillingate
 
 # GOPKGS excludes node_modules: some npm packages ship Go source that
 # go list ./... would otherwise treat as part of this module.
@@ -51,25 +55,19 @@ check: vet $(UI)
 	./scripts/coverage.sh
 	go test -race $(RACE_PKGS)
 
-build-all: $(UI)
-	for target in linux/amd64 linux/arm64 linux/arm; do \
-		GOOS=$${target%/*} GOARCH=$${target#*/} CGO_ENABLED=0 \
-		go build -trimpath -ldflags '$(LDFLAGS)' -o dist/$(BIN)-$${target%/*}-$${target#*/} ./cmd/twillingate || exit 1; \
-	done
-
-# Release tarballs: binary + deploy/ (installer, units, configs) per arch,
-# with a SHA256SUMS the installer verifies. This is what release.yml publishes.
-dist: build-all
-	@set -e; for arch in amd64 arm64 arm; do \
-		stage=dist/stage-$$arch; rm -rf $$stage; mkdir -p $$stage; \
-		cp dist/$(BIN)-linux-$$arch $$stage/$(BIN); \
-		cp -r deploy $$stage/deploy; \
-		cp .env.example LICENSE $$stage/; \
-		tar -czf dist/$(BIN)-linux-$$arch.tar.gz -C $$stage .; \
-		rm -rf $$stage; \
-		echo "packaged dist/$(BIN)-linux-$$arch.tar.gz"; \
-	done
-	cd dist && sha256sum $(BIN)-linux-*.tar.gz > SHA256SUMS
+# A release tarball for this host's architecture: binary + deploy/
+# (installer, units, configs). release.yml runs it on an amd64 and an arm64
+# runner and writes the SHA256SUMS the installer verifies over both.
+ARCH = $(shell go env GOARCH)
+dist: $(UI)
+	@set -e; [ "$$(go env GOOS)" = linux ] || { echo "dist builds the Linux release, on Linux"; exit 1; }; \
+	stage=dist/stage-$(ARCH); rm -rf $$stage; mkdir -p $$stage; \
+	CGO_ENABLED=1 go build -trimpath -ldflags '$(LDFLAGS)' -o $$stage/$(BIN) ./cmd/twillingate; \
+	cp -r deploy $$stage/deploy; \
+	cp .env.example LICENSE $$stage/; \
+	tar -czf dist/$(BIN)-linux-$(ARCH).tar.gz -C $$stage .; \
+	rm -rf $$stage; \
+	echo "packaged dist/$(BIN)-linux-$(ARCH).tar.gz"
 
 docker:
 	docker build --target runtime -t twillingate:$(VERSION) .

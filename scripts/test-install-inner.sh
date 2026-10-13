@@ -40,7 +40,7 @@ mkdir -p /etc/logrotate.d
 # Copy out of the read-only mount, mimicking an unpacked checkout: the
 # installer resolves the examples and binary relative to its own directory.
 cp -r /src/deploy /tmp/deploy
-cp /src/twillingate /src/.env.example /tmp/
+cp /src-bin/twillingate /src/.env.example /tmp/
 
 /tmp/deploy/systemd/install.sh --yes
 fresh_log="$(cat /tmp/systemctl.log)"

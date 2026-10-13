@@ -765,3 +765,25 @@ widen both back.
 
 Rollback: an older binary ignores `INGEST_LATE_DAYS` and clamps to the raw
 window again; nothing else changes.
+
+### Upgrading to the engine build (no migration)
+
+The binary now carries DuckDB (cgo) for the raw-first analytics engine;
+nothing uses it yet, and nothing changes for users. What changes for
+operators:
+
+- **32-bit ARM is no longer built.** A Raspberry Pi on the 32-bit OS needs
+  the 64-bit OS first (a Pi 3, 4, 5 or Zero 2 W runs it); the installer
+  refuses `armv7l` and `armv6l`. ARMv7 NAS boxes and boards stay on the
+  previous release.
+- **glibc 2.35 or newer** (Debian 12, Ubuntu 22.04, RHEL 9 or later); the
+  installer checks. Check first: `getconf GNU_LIBC_VERSION`.
+- **The image is Debian-based** (`debian:bookworm-slim`, from Alpine), same
+  user and ids (10001), same volume; `docker compose pull` as usual.
+- The binary grows from about 15 MB to about 60 MB.
+- Two settings, `ENGINE_MEMORY_LIMIT` and `ENGINE_MAX_CHILDREN`, and an
+  `engine/` directory beside the database once an engine child has run
+  (`twillingate engine -check` runs one). It holds spill files and lock
+  files; Litestream replicates only the database, so nothing to change.
+
+Rollback: the previous release's binary or image; nothing on disk differs.

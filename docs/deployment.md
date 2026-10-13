@@ -15,6 +15,13 @@ widgets at `/share/`) — and its whole state is one SQLite file.
 
 ## Install
 
+Linux on amd64 or arm64 with glibc 2.35 or newer (Debian 12, Ubuntu 22.04,
+RHEL 9 or later), or Docker anywhere. 32-bit ARM is not built. Plan on 1 GB
+of memory: the server stays small (`GOMEMLIMIT` bounds it), and each engine
+child, the process that answers analytics queries, may take up to
+`ENGINE_MEMORY_LIMIT` (512 MB by default) for a few seconds; at most
+`ENGINE_MAX_CHILDREN` run at once. `GOMEMLIMIT` does not cover them.
+
 ### docker compose
 
 Ingestion, the SDK and — once `CONSOLE_AUTH_DSN` is set — the console: MCP,
@@ -133,6 +140,7 @@ leftover one is ignored, so rename any still in `twillingate.env`.
 
 ### Raspberry Pi and low-resource hosts
 
+- A 64-bit OS (Raspberry Pi OS 64-bit on a Pi 3, 4, 5 or Zero 2 W); 32-bit ARM is not built. On 1 GB, set `ENGINE_MAX_CHILDREN=1`.
 - Raise `BUFFER_FLUSH_INTERVAL` (say `30s`): fewer, larger writes.
 - Set `GOMEMLIMIT` (unit and compose files ship `128MiB`) and keep `GEO_DSN` off `maxmind://`, which holds a database in memory.
 - Lower `RETENTION_RAW_DAYS` (say `7`): raw events are the largest table in the file, and the live halves of the `v_*` views scan the raw days each query's range covers.

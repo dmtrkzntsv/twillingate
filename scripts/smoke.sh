@@ -19,6 +19,9 @@ fail() { echo "SMOKE FAIL: $*" >&2; sed 's/^/  server: /' "$dir/log" >&2 || true
 
 export DATABASE_DSN="sqlite://$dir/smoke.db"
 
+# The engine child (DuckDB, cgo) starts from this binary and answers.
+./twillingate engine -check | grep -q '^engine ok: 42 ' || fail "engine -check failed"
+
 # Project configuration is registry-first now: create the project and issue
 # an ingest key via the CLI (against the same DATABASE_DSN) before the
 # server ever boots, instead of writing a local projects.json. A fresh
