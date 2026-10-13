@@ -727,3 +727,32 @@ scripts naming any of the old names must follow.
 Rollback: an older binary cannot run on schema 040, since it reads the
 old table names and the dropped column. Roll back by restoring the
 backup taken before the upgrade; events ingested since are lost.
+
+### Upgrading to the late window (no migration)
+
+The oldest client timestamp ingest accepts is now `INGEST_LATE_DAYS` (default
+1 day), no longer `RETENTION_RAW_DAYS`. Older timestamps are clamped to that
+edge as before. `INGEST_LATE_DAYS` must be at least 1 and at most
+`RETENTION_RAW_DAYS`, so `RETENTION_RAW_DAYS=0` is refused: set it to 1 or
+more.
+
+Why: raising `RETENTION_RAW_DAYS` on a running server moved the clamp back
+over days already rolled up. A late event landing in such a day became its
+only raw row, and the next daily pass rewrote that day's aggregates from
+that one row. If your raw window was ever raised, find the damaged days
+before upgrading (nothing can rebuild them; raw rows are gone):
+
+```sh
+sqlite3 -readonly /var/lib/twillingate/twillingate.db \
+  "SELECT day, SUM(count) FROM agg_product_daily GROUP BY day ORDER BY day;"
+sqlite3 -readonly /var/lib/twillingate/twillingate.db \
+  "SELECT day, SUM(views) FROM agg_views_daily GROUP BY day ORDER BY day;"
+```
+
+A day with a handful of events between full days, after the date the window
+was raised, is one that was rewritten. The raw-first design replaces
+aggregates with raw history; until then, keep `RETENTION_RAW_DAYS` where it
+is.
+
+Rollback: an older binary ignores `INGEST_LATE_DAYS` and clamps to the raw
+window again; nothing else changes.
