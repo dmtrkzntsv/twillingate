@@ -100,7 +100,8 @@ to it.
 | `BUFFER_FLUSH_MAX_EVENTS` | Flush once this many events are buffered. Default 1000. |
 | `BUFFER_FLUSH_INTERVAL` | Flush at least this often. Default `5s`. |
 | `BUFFER_CAPACITY` | Bounded queue size; excess is dropped rather than growing memory. Default 10000. |
-| `RETENTION_RAW_DAYS` | Days raw events of every family are kept before rollup. Also the oldest client timestamp accepted: older events are clamped to this edge. Default 30. |
+| `INGEST_LATE_DAYS` | Days back a client timestamp may lie; an older one is clamped to this edge, counted, never dropped. At least 1 and at most `RETENTION_RAW_DAYS`, so a late event never lands in a day already rolled up. Default 1. |
+| `RETENTION_RAW_DAYS` | Days raw events of every family are kept before rollup. At least `INGEST_LATE_DAYS`. Default 30. |
 | `RETENTION_AGGREGATE_DAYS` | Days aggregates of every family (and actors, cohorts, identities) are kept. Default 400. |
 | `RETENTION_FORMS_DRAFT_DAYS` | Days a form created by its first submission accepts submissions as a draft; unless approved by then, it refuses them and the daily pass archives it. Read when a draft is created or restored, so a change moves no existing draft's window. At least 1. Default 7. |
 | `RETENTION_ARCHIVED_DAYS` | Days after archiving that a project (with all its data and its widget shares), a dashboard, a widget or a widget share is deleted by the daily pass. 0 keeps archived items forever. Default 30. |

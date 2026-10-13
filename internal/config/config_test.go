@@ -38,6 +38,9 @@ func TestDefaultsApplied(t *testing.T) {
 	if c.Retention.Events.RawDays != 30 || c.Retention.Events.AggregateDays != 400 {
 		t.Errorf("Retention = %+v", c.Retention)
 	}
+	if c.IngestLateDays != 1 {
+		t.Errorf("IngestLateDays = %d, want 1", c.IngestLateDays)
+	}
 	if c.Retention.ArchivedDays != 30 {
 		t.Errorf("Retention.ArchivedDays = %d, want 30", c.Retention.ArchivedDays)
 	}
@@ -142,20 +145,24 @@ func TestValidationErrors(t *testing.T) {
 		return vars
 	}
 	cases := map[string]map[string]string{
-		"no database":              {"DATABASE_DSN": ""},
-		"bad geo scheme":           base(map[string]string{"GEO_DSN": "???"}),
-		"negative raw_days":        base(map[string]string{"RETENTION_RAW_DAYS": "-1"}),
-		"negative archived_days":   base(map[string]string{"RETENTION_ARCHIVED_DAYS": "-1"}),
-		"negative attributes cap":  base(map[string]string{"ATTRIBUTE_VALUES_TOP_N": "-1"}),
-		"negative identities cap":  base(map[string]string{"IDENTITIES_TOP_N": "-1"}),
-		"negative breakdowns max":  base(map[string]string{"ATTRIBUTE_BREAKDOWNS_MAX": "-1"}),
-		"zero form draft days":     base(map[string]string{"RETENTION_FORMS_DRAFT_DAYS": "0"}),
-		"negative form draft days": base(map[string]string{"RETENTION_FORMS_DRAFT_DAYS": "-3"}),
-		"bad integer":              base(map[string]string{"BUFFER_CAPACITY": "many"}),
-		"invalid duration":         base(map[string]string{"BUFFER_FLUSH_INTERVAL": "fast"}),
-		"negative cache age":       base(map[string]string{"REPORTING_CACHE_MAX_AGE": "-1s"}),
-		"negative refresh age":     base(map[string]string{"REPORTING_REFRESH_MAX_AGE": "-1s"}),
-		"cache age without a unit": base(map[string]string{"REPORTING_CACHE_MAX_AGE": "900"}),
+		"no database":                           {"DATABASE_DSN": ""},
+		"bad geo scheme":                        base(map[string]string{"GEO_DSN": "???"}),
+		"negative raw_days":                     base(map[string]string{"RETENTION_RAW_DAYS": "-1"}),
+		"zero late days":                        base(map[string]string{"INGEST_LATE_DAYS": "0"}),
+		"negative late days":                    base(map[string]string{"INGEST_LATE_DAYS": "-1"}),
+		"late days exceed the raw window":       base(map[string]string{"RETENTION_RAW_DAYS": "3", "INGEST_LATE_DAYS": "4"}),
+		"zero raw window under the late window": base(map[string]string{"RETENTION_RAW_DAYS": "0"}),
+		"negative archived_days":                base(map[string]string{"RETENTION_ARCHIVED_DAYS": "-1"}),
+		"negative attributes cap":               base(map[string]string{"ATTRIBUTE_VALUES_TOP_N": "-1"}),
+		"negative identities cap":               base(map[string]string{"IDENTITIES_TOP_N": "-1"}),
+		"negative breakdowns max":               base(map[string]string{"ATTRIBUTE_BREAKDOWNS_MAX": "-1"}),
+		"zero form draft days":                  base(map[string]string{"RETENTION_FORMS_DRAFT_DAYS": "0"}),
+		"negative form draft days":              base(map[string]string{"RETENTION_FORMS_DRAFT_DAYS": "-3"}),
+		"bad integer":                           base(map[string]string{"BUFFER_CAPACITY": "many"}),
+		"invalid duration":                      base(map[string]string{"BUFFER_FLUSH_INTERVAL": "fast"}),
+		"negative cache age":                    base(map[string]string{"REPORTING_CACHE_MAX_AGE": "-1s"}),
+		"negative refresh age":                  base(map[string]string{"REPORTING_REFRESH_MAX_AGE": "-1s"}),
+		"cache age without a unit":              base(map[string]string{"REPORTING_CACHE_MAX_AGE": "900"}),
 		"refresh exceeds cache": base(map[string]string{
 			"REPORTING_CACHE_MAX_AGE": "1m", "REPORTING_REFRESH_MAX_AGE": "2m"}),
 		"console database not sqlite": base(map[string]string{"CONSOLE_DATABASE_DSN": "/tmp/x.db"}),
@@ -227,8 +234,8 @@ func TestEventsRetentionDefaultsAndMaxEventAge(t *testing.T) {
 	if c.Retention.Events.RawDays != 30 || c.Retention.Events.AggregateDays != 400 {
 		t.Fatalf("events retention = %+v, want 30/400", c.Retention.Events)
 	}
-	if got := c.MaxEventAge(); got != 30*24*time.Hour {
-		t.Fatalf("MaxEventAge = %v", got)
+	if got := c.MaxEventAge(); got != 24*time.Hour {
+		t.Fatalf("MaxEventAge = %v, want the 1-day late window", got)
 	}
 }
 
@@ -241,8 +248,8 @@ func TestEventsRetentionFromEnv(t *testing.T) {
 	if c.Retention.Events.RawDays != 14 || c.Retention.Events.AggregateDays != 90 {
 		t.Fatalf("events retention = %+v", c.Retention.Events)
 	}
-	if got := c.MaxEventAge(); got != 14*24*time.Hour {
-		t.Fatalf("MaxEventAge = %v, want 14 days", got)
+	if got := c.MaxEventAge(); got != 24*time.Hour {
+		t.Fatalf("MaxEventAge = %v, want the 1-day late window, not the raw window", got)
 	}
 }
 
@@ -727,5 +734,40 @@ func TestConsoleURLIsTheResourceDefault(t *testing.T) {
 	if _, err := load(map[string]string{"INGEST_URL": "https://t.example.com/site",
 		"CONSOLE_AUTH_DSN": "token://ar_x?password=pw"}); err == nil || !strings.Contains(err.Error(), "INGEST_URL (CONSOLE_URL's default)") {
 		t.Errorf("INGEST_URL with a path: %v, want a refusal naming INGEST_URL as CONSOLE_URL's default", err)
+	}
+}
+
+// TestLateDaysWithinDefaultRawWindow: the late window alone is set, the
+// raw window keeps its default 30, so any value from 1 to 30 loads.
+func TestLateDaysWithinDefaultRawWindow(t *testing.T) {
+	for _, v := range []string{"1", "7", "30"} {
+		c, err := load(t, map[string]string{"INGEST_LATE_DAYS": v})
+		if err != nil {
+			t.Fatalf("INGEST_LATE_DAYS=%s: %v", v, err)
+		}
+		if c.Retention.Events.RawDays != 30 {
+			t.Errorf("RawDays = %d, want the default 30", c.Retention.Events.RawDays)
+		}
+	}
+}
+
+// TestLateDaysMessageNamesBothVariables: a window larger than the raw
+// window is refused by name, so the operator knows which to change.
+func TestLateDaysMessageNamesBothVariables(t *testing.T) {
+	_, err := load(t, map[string]string{"RETENTION_RAW_DAYS": "3", "INGEST_LATE_DAYS": "4"})
+	if err == nil || !strings.Contains(err.Error(), "INGEST_LATE_DAYS") || !strings.Contains(err.Error(), "RETENTION_RAW_DAYS") {
+		t.Errorf("err = %v, want a refusal naming INGEST_LATE_DAYS and RETENTION_RAW_DAYS", err)
+	}
+}
+
+// TestMaxEventAgeIsTheLateWindow: the clamp follows the late window, not
+// the raw window, so raising RETENTION_RAW_DAYS moves no clamp.
+func TestMaxEventAgeIsTheLateWindow(t *testing.T) {
+	c, err := load(t, map[string]string{"INGEST_LATE_DAYS": "2", "RETENTION_RAW_DAYS": "400"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.MaxEventAge() != 48*time.Hour {
+		t.Errorf("MaxEventAge = %v, want 48h", c.MaxEventAge())
 	}
 }
