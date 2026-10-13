@@ -86,6 +86,8 @@ jobs:
       - run: make dist VERSION=${{ needs.version.outputs.tag }}
       # The roadmap's measurement: spawn to ready on each release runner.
       - name: engine check
+        # shell: bash adds pipefail, so a failing check is not masked by tee.
+        shell: bash
         run: |
           mkdir -p "$RUNNER_TEMP/check"
           tar -xzf dist/twillingate-linux-${{ matrix.arch }}.tar.gz -C "$RUNNER_TEMP/check" ./twillingate
