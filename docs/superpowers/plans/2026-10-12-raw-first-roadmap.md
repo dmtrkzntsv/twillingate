@@ -36,6 +36,8 @@ place. Runbook in `deploy/UPGRADES.md` with the prod check for damaged days.
 
 ## PR 2. cgo, the engine child, the build
 
+Plan: `2026-10-12-engine-child.md`.
+
 - New package `internal/engine` (rank: a leaf above `shared`; `app` and
   `jobs` import it): spawns `twillingate engine` as a child of the same
   binary, speaks one JSON object per line each way, `Exec(sql) error` and
