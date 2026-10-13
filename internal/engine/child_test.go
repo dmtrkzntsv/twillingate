@@ -3,6 +3,7 @@ package engine
 import (
 	"encoding/json"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -88,6 +89,34 @@ func TestChildKeepsTypes(t *testing.T) {
 		if rep.Rows[0][i] != w {
 			t.Errorf("column %d = %#v, want %#v", i, rep.Rows[0][i], w)
 		}
+	}
+}
+
+// TestChildSendsNonFiniteFloats: encoding/json refuses NaN and the
+// infinities, so they travel as text rather than costing the request its reply.
+func TestChildSendsNonFiniteFloats(t *testing.T) {
+	c := startChild(t, childArgs(t.TempDir()))
+	rep := c.ask(t, request{ID: 1, SQL: "SELECT 'NaN'::DOUBLE, 'inf'::DOUBLE, '-inf'::DOUBLE, 1.5::DOUBLE"})
+	if rep.Err != "" {
+		t.Fatal(rep.Err)
+	}
+	want := []any{"NaN", "Infinity", "-Infinity", json.Number("1.5")}
+	for i, w := range want {
+		if rep.Rows[0][i] != w {
+			t.Errorf("column %d = %#v, want %#v", i, rep.Rows[0][i], w)
+		}
+	}
+}
+
+// TestReplySendAnswersWhatItCannotEncode: a reply JSON refuses still becomes
+// a reply, an error one, for its request.
+func TestReplySendAnswersWhatItCannotEncode(t *testing.T) {
+	var out strings.Builder
+	w := &replyWriter{enc: json.NewEncoder(&out)}
+	w.send(reply{ID: 9, Rows: [][]any{{math.NaN()}}})
+	var rep reply
+	if err := json.Unmarshal([]byte(out.String()), &rep); err != nil || rep.ID != 9 || !strings.Contains(rep.Err, "cannot be sent") {
+		t.Fatalf("output = %q, want an error reply for id 9", out.String())
 	}
 }
 

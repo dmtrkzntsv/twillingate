@@ -206,7 +206,11 @@ type replyWriter struct {
 func (w *replyWriter) send(r reply) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	_ = w.enc.Encode(r)
+	if err := w.enc.Encode(r); err != nil && r.ID != 0 {
+		// encoding/json writes nothing when it refuses a value: answer with
+		// an error instead, so the request is never left without a reply.
+		_ = w.enc.Encode(reply{ID: r.ID, Err: "engine: the result cannot be sent: " + err.Error()})
+	}
 }
 
 func (w *replyWriter) fail(err error) error {

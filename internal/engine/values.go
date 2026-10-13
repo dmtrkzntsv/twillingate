@@ -3,6 +3,7 @@ package engine
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"math/big"
 	"time"
 
@@ -13,11 +14,16 @@ import (
 // jsonValue turns what DuckDB scans into a value JSON carries faithfully:
 // exact numbers stay numbers (json.Number, so an int64, a DECIMAL or a
 // HUGEINT is never rounded through float64), dates and times become text,
-// a UUID its usual text form. dbType is the column's DatabaseTypeName;
+// a UUID its usual text form, NaN and the infinities (which JSON cannot
+// carry) the text "NaN", "Infinity" and "-Infinity". dbType is the column's DatabaseTypeName;
 // values nested in a list or struct pass "" and keep the generic forms.
 func jsonValue(v any, dbType string) any {
 	switch x := v.(type) {
-	case nil, bool, string, float32, float64, int8, int16, int32, int64, uint8, uint16, uint32, uint64:
+	case float32:
+		return nonFinite(float64(x), x)
+	case float64:
+		return nonFinite(x, x)
+	case nil, bool, string, int8, int16, int32, int64, uint8, uint16, uint32, uint64:
 		return x
 	case time.Time:
 		switch dbType {
@@ -51,4 +57,17 @@ func jsonValue(v any, dbType string) any {
 	default:
 		return fmt.Sprint(x) // MAP, INTERVAL, UNION: their text form
 	}
+}
+
+// nonFinite returns the text for a NaN or infinity f, else v unchanged.
+func nonFinite(f float64, v any) any {
+	switch {
+	case math.IsNaN(f):
+		return "NaN"
+	case math.IsInf(f, 1):
+		return "Infinity"
+	case math.IsInf(f, -1):
+		return "-Infinity"
+	}
+	return v
 }
