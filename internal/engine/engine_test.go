@@ -128,6 +128,36 @@ func TestIdleChildExits(t *testing.T) {
 	}
 }
 
+// TestIdleTimeCountsFromTheLastQuery: the idle period starts when the last
+// request finishes, so a query running longer than IdleExit is never cut
+// off, and the child stays for IdleExit after it.
+func TestIdleTimeCountsFromTheLastQuery(t *testing.T) {
+	o := testOptions(t)
+	o.IdleExit = 300 * time.Millisecond
+	e := newEngine(t, o)
+	if _, err := e.Query(context.Background(), "SELECT 1", 0); err != nil {
+		t.Fatal(err)
+	}
+	pid := e.pid()
+	start := time.Now()
+	res, err := e.Query(context.Background(), "SELECT count(*) FROM range(150000000) t(i) WHERE i % 7 = 3", 0)
+	took := time.Since(start)
+	if err != nil || len(res.Rows) != 1 {
+		t.Fatalf("long query: %+v, %v", res, err)
+	}
+	if took < 2*o.IdleExit {
+		t.Fatalf("the long query took %v, under twice IdleExit (%v): lengthen it, or this test proves nothing", took, o.IdleExit)
+	}
+	if e.pid() != pid {
+		t.Fatalf("pid %d → %d: the child was replaced during a query longer than IdleExit", pid, e.pid())
+	}
+	time.Sleep(o.IdleExit / 3)
+	if e.pid() != pid {
+		t.Fatalf("child gone %v after the last query, before IdleExit (%v)", o.IdleExit/3, o.IdleExit)
+	}
+	eventually(t, "the idle child gone after IdleExit", func() bool { return e.pid() == 0 })
+}
+
 // TestCrashedChildIsReplaced is Review Focus 2.
 func TestCrashedChildIsReplaced(t *testing.T) {
 	e := newEngine(t, testOptions(t))
