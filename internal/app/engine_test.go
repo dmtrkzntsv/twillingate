@@ -2,6 +2,7 @@ package app
 
 import (
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -27,6 +28,9 @@ func TestEngineOptionsKeepTheDatabaseOutOfReach(t *testing.T) {
 		if rel, err := filepath.Rel(a, db); err == nil && !strings.HasPrefix(rel, "..") {
 			t.Errorf("allowed %s holds the database %s", a, db)
 		}
+	}
+	if runtime.GOOS == "linux" && o.Path != "/proc/self/exe" {
+		t.Errorf("Path = %q, want /proc/self/exe: os.Executable names the new binary after an in-place upgrade", o.Path)
 	}
 	if o.MemoryLimit != "768MB" || o.MaxChildren != 3 || o.Path == "" ||
 		len(o.Args) != 1 || o.Args[0] != "engine" ||

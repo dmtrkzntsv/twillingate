@@ -24,6 +24,9 @@ const DefaultIdleExit = 3 * time.Minute
 // shares (DuckDB's own default is 90% of the free space).
 const DefaultMaxTempSize = "4GB"
 
+// yieldPoll is how often an idle child checks whether another process waits for its slot.
+const yieldPoll = time.Second
+
 var (
 	// ErrSpawn: the child could not be started or did not get ready.
 	ErrSpawn = errors.New("engine: the child did not start")
@@ -173,12 +176,15 @@ func (e *Engine) do(ctx context.Context, r request) (reply, error) {
 	}
 	select {
 	case rep := <-ch:
-		return answer(rep)
+		return e.outcome(rep)
 	case <-c.done:
 		select {
 		case rep := <-ch:
-			return answer(rep)
+			return e.outcome(rep)
 		default:
+			if e.isClosed() {
+				return reply{}, ErrClosed
+			}
 			return reply{}, ErrChildExited
 		}
 	case <-ctx.Done():
@@ -189,11 +195,22 @@ func (e *Engine) do(ctx context.Context, r request) (reply, error) {
 	}
 }
 
-func answer(rep reply) (reply, error) {
+// outcome turns a reply into the caller's result; a failure on an engine
+// that is closed reads as ErrClosed, since Close is what cut the request short.
+func (e *Engine) outcome(rep reply) (reply, error) {
 	if rep.Err != "" {
+		if e.isClosed() {
+			return reply{}, ErrClosed
+		}
 		return reply{}, &QueryError{Msg: rep.Err}
 	}
 	return rep, nil
+}
+
+func (e *Engine) isClosed() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.closed
 }
 
 // start returns the running child with one more request counted on it,
@@ -246,8 +263,28 @@ func (e *Engine) finish(c *child, id uint64) {
 	delete(c.pending, id)
 	c.busy--
 	if c.busy == 0 && e.child == c {
-		c.idle = time.AfterFunc(e.o.IdleExit, func() { e.retire(c) })
+		e.armIdle(c, time.Now().Add(e.o.IdleExit))
 	}
+}
+
+// armIdle (e.mu held) schedules the idle check: the child retires at
+// deadline, or as soon as another engine waits for a slot.
+func (e *Engine) armIdle(c *child, deadline time.Time) {
+	wait := time.Until(deadline)
+	if wait > yieldPoll {
+		wait = yieldPoll
+	}
+	c.idle = time.AfterFunc(wait, func() {
+		if time.Now().Before(deadline) && !waiting(e.o.SlotDir) {
+			e.mu.Lock()
+			if e.child == c && c.busy == 0 && c.idle != nil {
+				e.armIdle(c, deadline)
+			}
+			e.mu.Unlock()
+			return
+		}
+		e.retire(c)
+	})
 }
 
 // retire tells an idle child to exit by closing its stdin, unless a

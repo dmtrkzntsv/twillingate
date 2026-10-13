@@ -32,10 +32,32 @@ func acquireSlot(ctx context.Context, dir string, max int) (*slot, error) {
 			}
 			f.Close()
 		}
+		markWaiting(dir)
 		select {
 		case <-ctx.Done():
 			return nil, fmt.Errorf("engine: all %d slots busy (ENGINE_MAX_CHILDREN): %w", max, ctx.Err())
 		case <-time.After(50 * time.Millisecond):
+		}
+	}
+}
+
+// waitingFile is touched by a process waiting for a slot; an engine whose
+// child is idle sees it and retires the child (yieldPoll).
+const waitingFile = "waiting"
+
+// waiting reports whether some process waited for a slot in the last 2 s.
+func waiting(dir string) bool {
+	st, err := os.Stat(filepath.Join(dir, waitingFile))
+	return err == nil && time.Since(st.ModTime()) < 2*time.Second
+}
+
+// markWaiting records that this process is waiting for a slot.
+func markWaiting(dir string) {
+	p := filepath.Join(dir, waitingFile)
+	now := time.Now()
+	if os.Chtimes(p, now, now) != nil {
+		if f, err := os.OpenFile(p, os.O_CREATE|os.O_WRONLY, 0o600); err == nil {
+			f.Close()
 		}
 	}
 }

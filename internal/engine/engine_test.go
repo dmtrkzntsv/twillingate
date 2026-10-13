@@ -294,3 +294,39 @@ func TestEndedContextSpawnsNothing(t *testing.T) {
 		t.Fatalf("pid %d, want no child", e.pid())
 	}
 }
+
+func TestCloseFailsInFlightRequestsWithErrClosed(t *testing.T) {
+	e := newEngine(t, testOptions(t))
+	errc := make(chan error, 1)
+	go func() {
+		_, err := e.Query(context.Background(), slowSQL, 0)
+		errc <- err
+	}()
+	time.Sleep(300 * time.Millisecond)
+	if err := e.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-errc; !errors.Is(err, ErrClosed) {
+		t.Fatalf("in-flight query at Close = %v, want ErrClosed", err)
+	}
+}
+
+// TestIdleChildYieldsItsSlotToAWaiter: an idle child gives its slot up
+// when another engine waits for one, rather than holding it for IdleExit.
+func TestIdleChildYieldsItsSlotToAWaiter(t *testing.T) {
+	o := testOptions(t) // MaxChildren 1, IdleExit 1 minute
+	a, b := newEngine(t, o), newEngine(t, o)
+	if _, err := a.Query(context.Background(), "SELECT 1", 0); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	start := time.Now()
+	if _, err := b.Query(ctx, "SELECT 1", 0); err != nil {
+		t.Fatalf("waiting engine: %v", err)
+	}
+	if took := time.Since(start); took > 5*time.Second {
+		t.Errorf("the waiter got a slot after %v; the idle child held it", took)
+	}
+	eventually(t, "the idle child retired", func() bool { return a.pid() == 0 })
+}
