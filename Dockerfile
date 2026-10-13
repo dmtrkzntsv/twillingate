@@ -22,15 +22,17 @@ RUN npm run build
 # locally runs under QEMU, slowly.
 FROM golang:1.25-bookworm AS go-build
 WORKDIR /src
-COPY go.mod go.sum ./
-RUN go mod download
 COPY . .
 COPY --from=web-build /src/internal/reporting/ui ./internal/reporting/ui
 ARG VERSION=dev
 # `COPY . .` changes on every commit, so this layer never comes from the layer
 # cache; the build cache mount is what makes it incremental, and release.yml
-# carries it between runs, since a CI builder starts empty.
+# carries it between runs, since a CI builder starts empty. The module cache
+# is a mount too, not a `go mod download` layer: the DuckDB libraries of all
+# five platforms are large and would land in the image layers and the layer
+# cache. CI downloads the modules afresh each run.
 RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/go/pkg/mod \
     CGO_ENABLED=1 go build -trimpath -ldflags "-s -w -X github.com/dmtrkzntsv/twillingate/internal/shared/version.Version=${VERSION}" \
     -o /out/twillingate ./cmd/twillingate
 

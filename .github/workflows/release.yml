@@ -70,7 +70,7 @@ jobs:
       matrix:
         include:
           # Ubuntu 22.04: its glibc 2.35 is the release's floor (Debian 12,
-          # Ubuntu 22.04, RHEL 9). The binary links it through cgo.
+          # Ubuntu 22.04). The binary links it through cgo.
           - { arch: amd64, runner: ubuntu-22.04 }
           - { arch: arm64, runner: ubuntu-22.04-arm }
     runs-on: ${{ matrix.runner }}
@@ -93,6 +93,15 @@ jobs:
           tar -xzf dist/twillingate-linux-${{ matrix.arch }}.tar.gz -C "$RUNNER_TEMP/check" ./twillingate
           DATABASE_DSN="sqlite://$RUNNER_TEMP/check/t.db" "$RUNNER_TEMP/check/twillingate" engine -check | tee -a "$GITHUB_STEP_SUMMARY"
           ls -l "$RUNNER_TEMP/check/twillingate" | tee -a "$GITHUB_STEP_SUMMARY"
+      # The supported hosts are Debian 12 and Ubuntu 22.04 and later: the binary
+      # must start on both with their glibc and libstdc++, on each architecture.
+      - name: engine check on the glibc floor
+        shell: bash
+        run: |
+          for image in debian:bookworm-slim ubuntu:22.04; do
+            echo "== $image" | tee -a "$GITHUB_STEP_SUMMARY"
+            docker run --rm -v "$RUNNER_TEMP/check:/c" -e DATABASE_DSN=sqlite:///tmp/t/t.db "$image" /c/twillingate engine -check | tee -a "$GITHUB_STEP_SUMMARY"
+          done
       # The release job publishes these exact files.
       - uses: actions/upload-artifact@v4
         with:
