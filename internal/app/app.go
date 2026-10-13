@@ -16,6 +16,7 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/api"
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
 	"github.com/dmtrkzntsv/twillingate/internal/config"
+	"github.com/dmtrkzntsv/twillingate/internal/engine"
 	"github.com/dmtrkzntsv/twillingate/internal/geo"
 	"github.com/dmtrkzntsv/twillingate/internal/identity"
 	"github.com/dmtrkzntsv/twillingate/internal/jobs"
@@ -141,7 +142,6 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 		sink = pipeline.Sinks{st, archiveLog}
 		forms = archivedForms{FormStore: st, log: archiveLog, logger: logger}
 	}
-	_ = archiveLog // used by the raw-log dump (Task 7)
 
 	// The pipeline and jobs runner get their own contexts rather than ctx,
 	// so cancelling ctx does not tear them down before HTTP has drained.
@@ -157,6 +157,24 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 	}
 
 	runner := jobs.New(st, cfg, reg, salter, logger, time.Now)
+	if archiveLog != nil {
+		opts, err := EngineOptions(cfg)
+		if err != nil {
+			stopPipe()
+			<-pipeDone
+			return err
+		}
+		eng, err := engine.New(opts)
+		if err != nil {
+			stopPipe()
+			<-pipeDone
+			return err
+		}
+		// Closed after the jobs runner returns (Serve waits for it), which
+		// is the last user of the engine.
+		defer eng.Close()
+		runner.WithArchive(archive.New(archiveLog, eng, logger))
+	}
 	jobsCtx, stopJobs := context.WithCancel(context.Background())
 	jobsDone := make(chan struct{})
 	go func() { runner.Run(jobsCtx); close(jobsDone) }()

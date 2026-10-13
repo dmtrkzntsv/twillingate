@@ -429,6 +429,39 @@ func TestRunDailyPassPurgesArchivedAndReloadsRegistryOnProjectPurge(t *testing.T
 	}
 }
 
+// A purged project's archive directory goes with it.
+func TestRunDailyPassRemovesPurgedProjectsFromTheArchive(t *testing.T) {
+	vars := map[string]string{}
+	for k, v := range jobsVars {
+		vars[k] = v
+	}
+	vars["RETENTION_ARCHIVED_DAYS"] = "30"
+	cfg := configtest.Load(t, vars)
+	raw, path := openStoreAt(t)
+	t.Setenv("JOBS_TEST_DB", path)
+	reg := newRegistry(t, raw, cfg, jobsProjectSpecs)
+	ctx := context.Background()
+	ops := manage.NewOps(reg, raw)
+	if _, err := ops.CreateProject(ctx, "test", manage.ProjectSpec{Name: "Gone"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ops.ArchiveProject(ctx, "test", 2); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rawExec(t, `UPDATE projects SET archived_at = datetime('now', '-31 days') WHERE id=2`); err != nil {
+		t.Fatal(err)
+	}
+	now := func() time.Time { return time.Date(2026, 8, 22, 4, 0, 0, 0, time.UTC) }
+	a := &fakeArchive{}
+	r := New(raw, cfg, reg, identity.NewSalter(raw, now), slog.Default(), now).WithArchive(a)
+	if err := r.RunDailyPass(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(a.removed, []int64{2}) {
+		t.Fatalf("RemoveProject calls = %v, want [2]", a.removed)
+	}
+}
+
 // RETENTION_ARCHIVED_DAYS=0 must keep archived items forever: the pass
 // must not even call PurgeArchived.
 func TestRunDailyPassSkipsPurgeWhenArchivedDaysIsZero(t *testing.T) {
@@ -1122,5 +1155,61 @@ func TestDailyPassDropsBlockedAttributeAggregates(t *testing.T) {
 	got := queryDays(t, `SELECT attr_key FROM agg_product_attrs WHERE project_id = ? ORDER BY attr_key`, pid)
 	if !slices.Equal(got, []string{"y"}) {
 		t.Errorf("attribute aggregate keys after the pass = %v, want [y]", got)
+	}
+}
+
+type fakeArchive struct {
+	calls   []string
+	removed []int64
+}
+
+func (f *fakeArchive) Maintain(ctx context.Context, today civil.Date, lateDays, retentionDays int) error {
+	f.calls = append(f.calls, fmt.Sprintf("%s late=%d keep=%d", today, lateDays, retentionDays))
+	return nil
+}
+
+func (f *fakeArchive) RemoveProject(id int64) error {
+	f.removed = append(f.removed, id)
+	return nil
+}
+
+func TestDailyPassMaintainsTheArchive(t *testing.T) {
+	vars := map[string]string{"RETENTION_RAW_DAYS": "7", "RETENTION_AGGREGATE_DAYS": "365", "INGEST_LATE_DAYS": "2", "RETENTION_DAYS": "500"}
+	_, _, r := setup(t, vars, jobsProjectSpecs)
+	a := &fakeArchive{}
+	r.WithArchive(a)
+	if err := r.RunDailyPass(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(a.calls) != 1 || a.calls[0] != "2026-08-22 late=2 keep=500" {
+		t.Fatalf("Maintain calls = %v", a.calls)
+	}
+}
+
+func TestScheduledPassWaitsItsJitterBeforeTheArchive(t *testing.T) {
+	_, _, r := setup(t, jobsVars, jobsProjectSpecs)
+	a := &fakeArchive{}
+	r.WithArchive(a)
+	var waited time.Duration
+	r.jitter = func() time.Duration { return 7 * time.Minute }
+	r.sleep = func(ctx context.Context, d time.Duration) { waited = d }
+	r.now = func() time.Time { return time.Date(2026, 8, 22, 3, 0, 0, 0, time.UTC) }
+	r.runScheduled(context.Background())
+	if waited != 7*time.Minute || len(a.calls) != 1 {
+		t.Fatalf("waited %v, Maintain calls %d; want 7m then one call", waited, len(a.calls))
+	}
+}
+
+// The boot catch-up pass never waits: the jitter is for the 03:00 pass.
+func TestBootPassDoesNotWaitTheJitter(t *testing.T) {
+	_, _, r := setup(t, jobsVars, jobsProjectSpecs)
+	r.WithArchive(&fakeArchive{})
+	waited := false
+	r.sleep = func(ctx context.Context, d time.Duration) { waited = true }
+	if err := r.RunDailyPass(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if waited {
+		t.Fatal("RunDailyPass slept; only the scheduled pass is jittered")
 	}
 }

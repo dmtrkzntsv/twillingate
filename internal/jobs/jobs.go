@@ -6,6 +6,7 @@ package jobs
 import (
 	"context"
 	"log/slog"
+	"math/rand/v2"
 	"sort"
 	"time"
 
@@ -58,6 +59,17 @@ type Store interface {
 	ExpireDrafts(ctx context.Context, now time.Time) (int, error)
 }
 
+// Archive is the file side of the pass (internal/archive): it runs only in
+// a process that ingests, which owns the log.
+type Archive interface {
+	Maintain(ctx context.Context, today civil.Date, lateDays, retentionDays int) error
+	RemoveProject(id int64) error
+}
+
+// archiveJitter spreads the file work of every process on a host over half
+// an hour rather than all at 03:00 (raw-first D8).
+const archiveJitter = 30 * time.Minute
+
 type Runner struct {
 	store  Store
 	cfg    *config.Config
@@ -65,6 +77,12 @@ type Runner struct {
 	salt   Rotator
 	logger *slog.Logger
 	now    func() time.Time
+
+	// archive is nil in a process that does not ingest.
+	archive Archive
+	// jitter and sleep delay a scheduled pass; fields so a test need not wait.
+	jitter func() time.Duration
+	sleep  func(context.Context, time.Duration)
 
 	// Last UTC day on which each job fired, so a job runs at most once per
 	// day however often the ticker lands inside its hour.
@@ -80,8 +98,18 @@ type Runner struct {
 
 func New(st Store, cfg *config.Config, reg *manage.Registry, salt Rotator, logger *slog.Logger, now func() time.Time) *Runner {
 	return &Runner{store: st, cfg: cfg, reg: reg, salt: salt, logger: logger, now: now,
-		topN: cfg.AttributeValuesTopN}
+		topN:   cfg.AttributeValuesTopN,
+		jitter: func() time.Duration { return rand.N(archiveJitter) },
+		sleep: func(ctx context.Context, d time.Duration) {
+			select {
+			case <-time.After(d):
+			case <-ctx.Done():
+			}
+		}}
 }
+
+// WithArchive makes the pass maintain the archive's files.
+func (r *Runner) WithArchive(a Archive) *Runner { r.archive = a; return r }
 
 // RunDailyPass rolls up every day that has aged out of the raw window,
 // prunes aggregates past their retention, refreshes the flat view,
@@ -133,6 +161,13 @@ func (r *Runner) RunDailyPass(ctx context.Context) error {
 		if len(purged.Projects) > 0 {
 			if err := r.reg.Reload(ctx); err != nil {
 				r.logger.Error("registry reload after purge failed", "error", err)
+			}
+			if r.archive != nil {
+				for _, id := range purged.Projects {
+					if err := r.archive.RemoveProject(id); err != nil {
+						r.logger.Error("archive: remove purged project", "project", id, "error", err)
+					}
+				}
 			}
 		}
 	}
@@ -240,6 +275,11 @@ func (r *Runner) RunDailyPass(ctx context.Context) error {
 	if err := r.store.RecordUsageHistory(ctx, r.now()); err != nil {
 		r.logger.Error("record usage history", "error", err)
 	}
+	if r.archive != nil {
+		if err := r.archive.Maintain(ctx, today, r.cfg.IngestLateDays, r.cfg.Retention.Days); err != nil {
+			r.logger.Error("archive maintenance", "error", err)
+		}
+	}
 	return nil
 }
 
@@ -282,6 +322,13 @@ func (r *Runner) runScheduled(ctx context.Context) {
 	}
 	if now.Hour() == 3 && r.lastAggDay != day {
 		r.lastAggDay = day
+		// Every process on a host runs its pass at 03:00; the file work
+		// moves to a random point in the following half hour. The pass is
+		// one unit, so the SQLite work waits too, and so does the loop
+		// (the salt rotation is at 00:xx, so nothing is missed).
+		if r.archive != nil {
+			r.sleep(ctx, r.jitter())
+		}
 		if err := r.RunDailyPass(ctx); err != nil {
 			r.logger.Error("daily pass", "error", err)
 		}
