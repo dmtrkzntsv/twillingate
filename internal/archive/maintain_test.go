@@ -482,3 +482,22 @@ func TestMergeKeepsAnIDsFirstRow(t *testing.T) {
 		t.Fatalf("rows = %v, want %v", got, want)
 	}
 }
+
+// TestMergeFailsOnAnUnmatchedInput: a row whose file name is not in the
+// key's list fails the query, so the merge renames and deletes nothing,
+// where a NULL key would silently drop the row.
+func TestMergeFailsOnAnUnmatchedInput(t *testing.T) {
+	f := newFixture(t)
+	f.write(t, evOf(1, "a", "2026-09-01T10:00:00Z"))
+	f.maintain(t, "2026-09-02")
+	day := f.project1("2026-09-01.parquet")
+	out := f.project1("out.parquet")
+	q := mergeSelect([]string{day}, []string{filepath.Dir(day) + "/./" + filepath.Base(day)}) // the same file, another spelling
+	err := f.eng.Exec(context.Background(), "COPY ("+q+") TO "+quote(out)+" (FORMAT parquet)")
+	if err == nil || !strings.Contains(err.Error(), "archive: merge input not matched") {
+		t.Fatalf("err = %v, want the unmatched input refused", err)
+	}
+	if exists(out) {
+		t.Fatal("the failed query left a file")
+	}
+}

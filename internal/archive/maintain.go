@@ -176,8 +176,8 @@ func (a *Archive) claim(dir, closed, day string) error {
 }
 
 // dump writes a claimed log (<target>.dumping) as its target unless the
-// target exists already, then deletes the log. DISTINCT ON (id) drops what
-// the recent-ids window let through.
+// target exists already, then deletes the log. Of an id the recent-ids
+// window let through twice, the line appended first is kept (dumpQuery).
 func (a *Archive) dump(ctx context.Context, dir, pending string) error {
 	src := filepath.Join(dir, pending)
 	out := strings.TrimSuffix(src, ".dumping")
@@ -379,14 +379,23 @@ func segment(dotN string) int {
 // an id once), ordered by family and ts. As in the dump, the first row
 // per id is found over the ids and a row key alone, and the sort, which
 // spills, carries the rows.
-func mergeQuery(files []string) string {
-	list := make([]string, len(files))
-	for i, f := range files {
-		list[i] = quote(f)
+func mergeQuery(files []string) string { return mergeSelect(files, files) }
+
+// mergeSelect reads files and keys each row by the position in order of
+// its file's name, as read_parquet reports it (the path as given, today).
+// A name that order does not hold would key the row NULL and the IN would
+// drop it, then the merge would delete its day: it fails the query instead.
+func mergeSelect(files, order []string) string {
+	list := func(paths []string) string {
+		q := make([]string, len(paths))
+		for i, p := range paths {
+			q[i] = quote(p)
+		}
+		return "[" + strings.Join(q, ", ") + "]"
 	}
-	paths := "[" + strings.Join(list, ", ") + "]"
-	rows := "read_parquet(" + paths + ", union_by_name=true, filename=true, file_row_number=true)"
-	key := "list_position(" + paths + ", filename) * 4294967296 + file_row_number"
+	rows := "read_parquet(" + list(files) + ", union_by_name=true, filename=true, file_row_number=true)"
+	key := "coalesce(list_position(" + list(order) + ", filename), error('archive: merge input not matched: ' || filename))" +
+		" * 4294967296 + file_row_number"
 	firsts := "SELECT min(k) FROM (SELECT id, " + key + " AS k FROM " + rows + ") GROUP BY id"
 	return "SELECT * EXCLUDE (filename, file_row_number, k) FROM (SELECT *, " + key + " AS k FROM " + rows +
 		") WHERE k IN (" + firsts + ") ORDER BY family, ts"
