@@ -1,9 +1,12 @@
 package archive
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -174,13 +177,16 @@ func (a *Archive) claim(dir, closed, day string) error {
 
 // dump writes a claimed log (<target>.dumping) as its target unless the
 // target exists already, then deletes the log. DISTINCT ON (id) drops what
-// the recent-ids window let through; DuckDB infers the columns from every
-// line (raw-first D2).
+// the recent-ids window let through.
 func (a *Archive) dump(ctx context.Context, dir, pending string) error {
 	src := filepath.Join(dir, pending)
 	out := strings.TrimSuffix(src, ".dumping")
 	if !exists(out) {
-		q := "COPY (SELECT DISTINCT ON (id) * FROM read_ndjson(" + quote(src) + ", sample_size=-1) ORDER BY family, ts) TO "
+		rows, err := typedRows(src)
+		if err != nil {
+			return err
+		}
+		q := "COPY (SELECT DISTINCT ON (id) * FROM (" + rows + ") ORDER BY family, ts) TO "
 		if err := a.write(ctx, q, out); err != nil {
 			return err
 		}
@@ -189,6 +195,91 @@ func (a *Archive) dump(ctx context.Context, dir, pending string) error {
 		return fmt.Errorf("archive: %w", err)
 	}
 	return syncFile(dir)
+}
+
+// typedRows is a SELECT of a log's rows with every column's type spelled
+// out: DuckDB inferring them from one day's values would rewrite a value
+// for good ("ABCDEF01-…" read as a UUID comes back lower case, "12:30" as a
+// TIME comes back "12:30:00") and leave a month whose days inferred
+// different types unable to merge. The fixed keys take their type from
+// fields, every other key (attr_<key>, the key as stored) is VARCHAR, and
+// every fixed column is there even when no line has it.
+//
+// Each key is extracted by JSON pointer, so its case is kept; DuckDB's
+// column names are not case-sensitive, though (read_ndjson's columns={…}
+// refuses attr_Plan beside attr_plan as a duplicate). Of keys equal but for
+// case, the first in byte order keeps its name and each next one is named
+// <key>_<n>, the first n free: attr_Plan, attr_plan_1. Which column such a
+// key lands in can differ between days; no value is dropped.
+func typedRows(path string) (string, error) {
+	keys, err := logKeys(path)
+	if err != nil {
+		return "", err
+	}
+	taken := map[string]bool{}
+	var cols, names, types []string
+	add := func(key, name, typ string) {
+		taken[strings.ToLower(name)] = true
+		cols, names, types = append(cols, key), append(names, name), append(types, typ)
+	}
+	for _, f := range fields {
+		add(f.name, f.name, f.typ)
+		delete(keys, f.name)
+	}
+	var rest, later []string
+	for k := range keys {
+		rest = append(rest, k)
+	}
+	slices.Sort(rest)
+	for _, k := range rest {
+		if taken[strings.ToLower(k)] {
+			later = append(later, k)
+			continue
+		}
+		add(k, k, "VARCHAR")
+	}
+	for _, k := range later {
+		name := k
+		for n := 1; taken[strings.ToLower(name)]; n++ {
+			name = k + "_" + strconv.Itoa(n)
+		}
+		add(k, name, "VARCHAR")
+	}
+	pointer := strings.NewReplacer("~", "~0", "/", "~1")
+	paths := make([]string, len(cols))
+	sel := make([]string, len(cols))
+	for i, k := range cols {
+		paths[i] = quote("/" + pointer.Replace(k))
+		sel[i] = "CAST(f[" + strconv.Itoa(i+1) + "] AS " + types[i] + `) AS "` + strings.ReplaceAll(names[i], `"`, `""`) + `"`
+	}
+	return "SELECT " + strings.Join(sel, ", ") + " FROM (SELECT json_extract_string(json, [" + strings.Join(paths, ", ") +
+		"]) AS f FROM read_json_objects(" + quote(path) + ", format='newline_delimited'))", nil
+}
+
+// logKeys returns every key of a log's lines. A line that is not a JSON
+// object fails it, as DuckDB would.
+func logKeys(path string) (map[string]bool, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("archive: %w", err)
+	}
+	defer f.Close()
+	keys := map[string]bool{}
+	dec := json.NewDecoder(bufio.NewReader(f))
+	for {
+		var m map[string]json.RawMessage
+		if err := dec.Decode(&m); errors.Is(err, io.EOF) {
+			return keys, nil
+		} else if err != nil {
+			return nil, fmt.Errorf("archive: %s: %w", filepath.Base(path), err)
+		}
+		if m == nil {
+			return nil, fmt.Errorf("archive: %s: a line is not an object", filepath.Base(path))
+		}
+		for k := range m {
+			keys[k] = true
+		}
+	}
 }
 
 // merge writes every day file and segment of month, with the month file

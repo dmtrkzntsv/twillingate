@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -324,5 +325,93 @@ func TestOneFailingDumpStopsNothingElse(t *testing.T) {
 	want := []string{"2026-08-30.parquet", "2026-08-31.parquet.dumping", "2026-10-11.parquet"}
 	if got := f.files(t); !eq(got, want) {
 		t.Fatalf("files = %v, want %v: the good days dumped, August 2025 deleted, August 2026 not merged", got, want)
+	}
+}
+
+// values reads sql's rows from the engine, each row printed as fmt.Sprint.
+func (f fixture) values(t *testing.T, sql string) []string {
+	t.Helper()
+	res, err := f.eng.Query(context.Background(), sql, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, r := range res.Rows {
+		out = append(out, fmt.Sprint(r))
+	}
+	return out
+}
+
+func withAttrs(e store.Event, user string, attrs map[string]string) store.Event {
+	e.UserID, e.Attributes = user, attrs
+	return e
+}
+
+// TestMonthMergesWhenDaysDisagreeOnTypes: a value is read back exactly as
+// written, whatever it looks like, and days whose values would infer
+// different types (UUID, DATE, TIME against plain words) merge.
+func TestMonthMergesWhenDaysDisagreeOnTypes(t *testing.T) {
+	f := newFixture(t)
+	const id = "ABCDEF01-2345-6789-ABCD-EF0123456789"
+	f.write(t,
+		withAttrs(evOf(1, "a", "2026-09-01T10:00:00Z"), id, map[string]string{"d": "2026-10-12", "t": "12:30"}),
+		withAttrs(evOf(1, "b", "2026-09-01T11:00:00Z"), id, map[string]string{"d": "2026-10-13", "t": "12:31"}),
+		withAttrs(evOf(1, "c", "2026-09-02T10:00:00Z"), "hello", map[string]string{"d": "word", "t": "word"}))
+	f.maintain(t, "2026-09-03")
+	f.maintain(t, "2026-10-05")
+	if got := f.files(t); !eq(got, []string{"2026-09.parquet"}) {
+		t.Fatalf("files = %v, want the month merged", got)
+	}
+	month := f.project1("2026-09.parquet")
+	got := f.values(t, "SELECT id, user_id::VARCHAR, attr_d::VARCHAR, attr_t::VARCHAR, typeof(user_id), typeof(attr_d), typeof(attr_t) FROM read_parquet('"+month+"') ORDER BY id")
+	want := []string{
+		"[a " + id + " 2026-10-12 12:30 VARCHAR VARCHAR VARCHAR]",
+		"[b " + id + " 2026-10-13 12:31 VARCHAR VARCHAR VARCHAR]",
+		"[c hello word word VARCHAR VARCHAR VARCHAR]",
+	}
+	if !eq(got, want) {
+		t.Fatalf("rows = %v, want %v", got, want)
+	}
+	types := map[string]string{}
+	for _, r := range f.values(t, "SELECT column_name, column_type FROM (DESCRIBE SELECT * FROM read_parquet('"+month+"'))") {
+		var name, typ string
+		fmt.Sscan(strings.Trim(r, "[]"), &name, &typ)
+		types[name] = typ
+	}
+	for _, fd := range fields {
+		if types[fd.name] != fd.typ {
+			t.Errorf("%s: %q, want %q", fd.name, types[fd.name], fd.typ)
+		}
+	}
+}
+
+// TestDumpKeepsKeysEqualButForCase: DuckDB's names are case-insensitive, so
+// attr_Plan and attr_plan cannot both be columns; the first of them in byte
+// order keeps its name and the next takes the first free _<n> suffix. Which
+// column holds which key is a known gap; no value is dropped.
+func TestDumpKeepsKeysEqualButForCase(t *testing.T) {
+	f := newFixture(t)
+	f.write(t,
+		withAttrs(evOf(1, "a", "2026-10-11T10:00:00Z"), "", map[string]string{"Plan": "A", "plan": "b"}),
+		withAttrs(evOf(1, "b", "2026-10-11T11:00:00Z"), "", map[string]string{"plan": "c", "plan_1": "z"}))
+	f.maintain(t, "2026-10-12")
+	if got := f.files(t); !eq(got, []string{"2026-10-11.parquet"}) {
+		t.Fatalf("files = %v, want the day dumped", got)
+	}
+	got := f.values(t, `SELECT id, "attr_Plan", attr_plan_2, attr_plan_1 FROM read_parquet('`+f.project1("2026-10-11.parquet")+`') ORDER BY id`)
+	if want := []string{"[a A b <nil>]", "[b <nil> c z]"}; !eq(got, want) {
+		t.Fatalf("rows = %v, want %v", got, want)
+	}
+}
+
+// TestDumpReadsAnyKey: a key is a JSON pointer and a column name, whatever
+// characters it holds.
+func TestDumpReadsAnyKey(t *testing.T) {
+	f := newFixture(t)
+	f.write(t, withAttrs(evOf(1, "a", "2026-10-11T10:00:00Z"), "", map[string]string{"a-b c": "1", `q"u'o`: "2", "x/y~z": "3", "a$.[0]": "4"}))
+	f.maintain(t, "2026-10-12")
+	got := f.values(t, `SELECT "attr_a-b c", "attr_q""u'o", "attr_x/y~z", "attr_a$.[0]" FROM read_parquet('`+f.project1("2026-10-11.parquet")+`')`)
+	if want := []string{"[1 2 3 4]"}; !eq(got, want) {
+		t.Fatalf("rows = %v, want %v", got, want)
 	}
 }

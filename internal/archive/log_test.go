@@ -7,6 +7,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -84,6 +86,47 @@ func TestLineHasTheRowShape(t *testing.T) {
 		if m[k] != w {
 			t.Errorf("%s = %#v, want %#v", k, m[k], w)
 		}
+	}
+}
+
+// TestLineWritesTheFields: a fully populated event's line holds exactly the
+// keys of fields plus its attributes, so the dump types every fixed key.
+func TestLineWritesTheFields(t *testing.T) {
+	v := 2.5
+	e := store.Event{ID: "i", ProjectID: 1, Family: store.FamilyProduct, EventName: "n",
+		TS: ts("2026-10-12T10:00:00Z"), ReceivedAt: ts("2026-10-12T10:00:01Z"), Kind: "web",
+		ActorID: "a", ActorKind: store.ActorConnection, UserID: "u", GroupID: "g", SessionID: "s",
+		Host: "h", Path: "/p", ReferrerSource: "r", UTMSource: "us", UTMMedium: "um", UTMCampaign: "uc",
+		Platform: "pl", OS: "o", OSVersion: "ov", OSName: "on", Browser: "b", BrowserVersion: "bv",
+		AppVersion: "av", AppLocale: "al", BrowserLocale: "bl", Device: "d", DeviceModel: "dm",
+		DisplayWidth: 1, DisplayHeight: 2, Country: "c", Consent: store.ConsentGiven,
+		Attributes: map[string]string{"plan": "pro"}, Value: &v, Measure: store.MeasureTime, SampleRate: 0.5}
+	rv := reflect.ValueOf(e)
+	for i := 0; i < rv.NumField(); i++ {
+		if rv.Field(i).IsZero() {
+			t.Fatalf("store.Event.%s is not set: populate every field", rv.Type().Field(i).Name)
+		}
+	}
+	b, err := line(e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatal(err)
+	}
+	var got, want []string
+	for k := range m {
+		got = append(got, k)
+	}
+	for _, f := range fields {
+		want = append(want, f.name)
+	}
+	want = append(want, "attr_plan")
+	slices.Sort(got)
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Fatalf("line keys = %v, want fields plus attr_plan: %v", got, want)
 	}
 }
 

@@ -279,6 +279,23 @@ func (l *Log) Close() error {
 	return errors.Join(errs...)
 }
 
+// fields are the log line's fixed keys, in the row's column order, with the
+// DuckDB type the dump reads each as; line writes no other key but
+// attr_<key>, which the dump reads as VARCHAR (TestLineWritesTheFields).
+var fields = []struct{ name, typ string }{
+	{"v", "BIGINT"}, {"id", "VARCHAR"}, {"project_id", "BIGINT"}, {"family", "VARCHAR"},
+	{"event_name", "VARCHAR"}, {"ts", "TIMESTAMP"}, {"day", "DATE"}, {"received_at", "TIMESTAMP"},
+	{"kind", "VARCHAR"}, {"actor_id", "VARCHAR"}, {"actor_kind", "VARCHAR"}, {"user_id", "VARCHAR"},
+	{"group_id", "VARCHAR"}, {"session_id", "VARCHAR"}, {"host", "VARCHAR"}, {"path", "VARCHAR"},
+	{"referrer_source", "VARCHAR"}, {"utm_source", "VARCHAR"}, {"utm_medium", "VARCHAR"},
+	{"utm_campaign", "VARCHAR"}, {"platform", "VARCHAR"}, {"os", "VARCHAR"}, {"os_version", "VARCHAR"},
+	{"os_name", "VARCHAR"}, {"browser", "VARCHAR"}, {"browser_version", "VARCHAR"},
+	{"browser_locale", "VARCHAR"}, {"app_version", "VARCHAR"}, {"app_locale", "VARCHAR"},
+	{"device", "VARCHAR"}, {"device_model", "VARCHAR"}, {"display_width", "BIGINT"},
+	{"display_height", "BIGINT"}, {"country", "VARCHAR"}, {"consent", "BIGINT"}, {"value", "DOUBLE"},
+	{"measure", "VARCHAR"}, {"sample_rate", "DOUBLE"},
+}
+
 // line is e as one NDJSON line shaped like its Parquet row (raw-first Q10):
 // the events table's column names, attributes flat as attr_<key> (the key
 // as stored, unsanitized), empty fields left out, v the format.
