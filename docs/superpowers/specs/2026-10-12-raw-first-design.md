@@ -1,8 +1,9 @@
 # Raw first: raw events as the only source of truth
 
-Status: draft. D10 is settled by measurement (C, over Parquet files);
-the storage and ingest design (D2–D3, D7–D8) was rewritten 2026-10-12 after
-it. Numbers marked *estimate* are unmeasured.
+Status: decisions settled (D1–D23, Q1–Q11), measurements done, plans
+started: `docs/superpowers/plans/2026-10-12-raw-first-roadmap.md` (six
+releases) and `2026-10-12-late-window.md` (the first). Numbers marked
+*estimate* are unmeasured.
 Date: 2026-10-12
 
 ## Requirements
