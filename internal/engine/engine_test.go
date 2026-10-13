@@ -133,14 +133,16 @@ func TestIdleChildExits(t *testing.T) {
 // off, and the child stays for IdleExit after it.
 func TestIdleTimeCountsFromTheLastQuery(t *testing.T) {
 	o := testOptions(t)
-	o.IdleExit = 300 * time.Millisecond
+	// Short beside the query (about 1.3 s on a CI runner, 3 s on a laptop),
+	// so the query outlasts it many times over on any machine.
+	o.IdleExit = 100 * time.Millisecond
 	e := newEngine(t, o)
 	if _, err := e.Query(context.Background(), "SELECT 1", 0); err != nil {
 		t.Fatal(err)
 	}
 	pid := e.pid()
 	start := time.Now()
-	res, err := e.Query(context.Background(), "SELECT count(*) FROM range(150000000) t(i) WHERE i % 7 = 3", 0)
+	res, err := e.Query(context.Background(), "SELECT count(*) FROM range(400000000) t(i) WHERE i % 7 = 3", 0)
 	took := time.Since(start)
 	if err != nil || len(res.Rows) != 1 {
 		t.Fatalf("long query: %+v, %v", res, err)
