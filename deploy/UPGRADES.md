@@ -754,5 +754,11 @@ was raised, is one that was rewritten. The raw-first design replaces
 aggregates with raw history; until then, keep `RETENTION_RAW_DAYS` where it
 is.
 
+Events 2 or more days late now land on yesterday rather than their own day.
+And the duplicate check is per day: a copy of an event the SDK replays from
+its stored queue more than `INGEST_LATE_DAYS` after the event clamps to a
+new day and is stored twice, where the 30-day window kept it on one day.
+Raise `INGEST_LATE_DAYS` (up to `RETENTION_RAW_DAYS`) to widen both back.
+
 Rollback: an older binary ignores `INGEST_LATE_DAYS` and clamps to the raw
 window again; nothing else changes.
