@@ -95,6 +95,25 @@ files yet.
   same row count as SQLite's; a month merges; retention deletes; the
   reproduction tests cover a torn last line and a duplicate id.
 
+### Entry conditions from PR 2's review
+
+Before the engine has a caller:
+
+- Query and widget requests run only read-only statements. DuckDB's allowed
+  directory is read-write, so `COPY ... TO` could overwrite or delete files
+  in `raw/`. Only the dump writes, ideally from its own child; set
+  `max_temp_directory_size` too.
+- A request cut short by `Close` gets `ErrClosed`, not a `QueryError` (the
+  child is fine).
+- An idle child holds its slot for `IdleExit` (3 minutes). On a split
+  install with `ENGINE_MAX_CHILDREN=1` the other process waits for it, so
+  release or retire the child early.
+- Spawn `/proc/self/exe`, or check a protocol version in the ready line:
+  `os.Executable` names the new binary after an in-place upgrade, before
+  the restart.
+- The installer refusal test runs only by hand (`make test-install`);
+  consider running it in CI.
+
 ## PR 4. The tables, the engine's view, `query` on the files (D4, D8, D21)
 
 - `engine.View(project, from, to)`: `events` = `read_parquet(files,
