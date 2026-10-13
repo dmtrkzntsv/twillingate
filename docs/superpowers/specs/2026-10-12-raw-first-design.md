@@ -119,13 +119,30 @@ One server takes up to **1M events a month** and keeps raw events for up to
   - **Log:** ingest appends each event as one NDJSON line to
     `<data dir>/raw/<project_id>/<YYYY-MM-DD>.log` and fsyncs at every
     pipeline flush (~10 s, the window the in-memory buffer already has
-    today). Rules (rename, merge, block) are applied in Go from the
-    registry snapshot before the write, dedup by id against an in-memory
-    set for the day, rebuilt from the log and the day's files at boot.
-    About 1.3 KB a line, ~40 MB a day at the cap, deleted once dumped.
+    today). **The line has the shape of the Parquet row** (settled
+    2026-10-12, Q10): the column names as fields, attributes flat as
+    `attr_<key>` with string values, fields omitted when absent, a `v`
+    field for the format. Rules (rename, merge, block) and the key
+    sanitizing of `flatview.go` are applied in Go from the registry
+    snapshot before the write, the only place names are decided. Appends
+    go through one `O_APPEND` descriptor; at boot a log is truncated to its
+    last newline, so a line torn by a crash never reaches a reader. About
+    1.3 KB a line as DuckDB exports it, less with absent fields omitted,
+    ~40 MB a day at the cap, deleted once dumped.
+  - **Dedup** belongs to the merges, not to ingest: the dump writes
+    `DISTINCT ON (id)` over the day's log and the month merge over the day
+    file and its late segments, so every duplicate is gone once a file is
+    final, with no state. Ingest keeps a small set of the ids of the last
+    ~10 minutes to keep SDK retries out of the log; what slips through is a
+    duplicate visible in a dashboard until the next dump.
   - **Dump:** at day close the engine (D8) writes the day's log as
-    `<YYYY-MM-DD>.parquet` (one `COPY … ORDER BY family, ts`; 0.2 s for a
-    cap day) and deletes the log. Until then queries read the log directly
+    `<YYYY-MM-DD>.parquet` with one statement and no schema of its own:
+    `COPY (SELECT DISTINCT ON (id) * FROM read_ndjson(log, sample_size=-1)
+    ORDER BY family, ts)`; DuckDB infers the columns from the whole file
+    (measured: no slower than sampling) and types the built-ins from JSON
+    (`ts` TIMESTAMP, `day` DATE, `id` UUID); every `attr_*` is VARCHAR
+    because the log writes them as strings, so no two files can disagree
+    on a type. 0.2 s for a cap day; then the log is deleted. Until then queries read the log directly
     (`read_ndjson`): 150 ms per query for a full cap day of one project
     (25 MB), proportionally less below the cap. If that shows in a
     project's dashboards, the same dump can run earlier, on a size or time
@@ -569,8 +586,9 @@ meets D10's targets:
   `forms.go:SessionAt` link from a submission to a visit, which read
   today's and yesterday's views in SQLite: a query over two day files, or
   linking lazily when the submission is viewed.
-- **Q10.** The log's exact line format and whether the dedup set needs a
-  ceiling above the envelope (a cap day's ids are ~1 MB).
+- **Q10.** Settled 2026-10-12: flat NDJSON in the Parquet row's shape,
+  `attr_<key>` string values, dedup at dump and merge, a time-bounded
+  recent-ids set at ingest (D2).
 - **Q11.** Whether widget SQL sees any SQLite table at all. Metadata lives
   in SQLite and events in the engine, so a widget cannot join them unless a
   few small tables (projects) are handed to the child.
