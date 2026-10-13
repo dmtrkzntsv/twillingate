@@ -36,8 +36,9 @@ func New(log *Log, eng Execer, logger *slog.Logger) *Archive {
 var (
 	logName     = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2})\.log$`)
 	closedName  = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2})\.\d+\.closed$`)
+	dumpingName = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2})(\.\d+)?\.parquet\.dumping$`)
+	anyMonth    = regexp.MustCompile(`^(\d{4}-\d{2})(-\d{2})?\.`)
 	dayFileName = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2})(\.\d+)?\.parquet$`)
-	monthName   = regexp.MustCompile(`^(\d{4}-\d{2})\.parquet$`)
 )
 
 // Maintain runs the file side of the daily pass for every project
@@ -72,54 +73,69 @@ func (a *Archive) maintainProject(ctx context.Context, project int64, today civi
 	if err != nil {
 		return err
 	}
+	// A failing step is collected and the rest still run: one bad day must
+	// not hold back the project's other dumps, merges or retention.
+	var errs []error
 	// 1. Close every log of a day before today.
 	for _, n := range names {
 		if m := logName.FindStringSubmatch(n); m != nil && m[1] < today.String() {
 			if _, err := a.log.Rotate(project, m[1]); err != nil {
-				return err
+				errs = append(errs, err)
 			}
 		}
 	}
-	// 2. Dump every closed log, the ones a crashed pass left included.
+	// 2. Claim every closed log (the ones a crashed pass left included) for
+	// its target file, then dump every claimed log.
 	if names, err = list(dir); err != nil {
-		return err
+		return errors.Join(append(errs, err)...)
 	}
 	for _, n := range names {
 		if m := closedName.FindStringSubmatch(n); m != nil {
-			if err := a.dump(ctx, dir, n, m[1]); err != nil {
-				return err
+			if err := a.claim(dir, n, m[1]); err != nil {
+				errs = append(errs, err)
 			}
 		}
 	}
-	// 3. Merge every final month; 4. delete the expired ones.
 	if names, err = list(dir); err != nil {
-		return err
+		return errors.Join(append(errs, err)...)
 	}
-	// A month goes once its last day is at least retentionDays old (D5:
-	// entirely older than the window).
+	for _, n := range names {
+		if dumpingName.MatchString(n) {
+			if err := a.dump(ctx, dir, n); err != nil {
+				errs = append(errs, err)
+			}
+		}
+	}
+	// 3. Delete the expired months; 4. merge every final month. A month goes
+	// once its last day is at least retentionDays old (D5: entirely older
+	// than the window), whatever the dumps did.
+	if names, err = list(dir); err != nil {
+		return errors.Join(append(errs, err)...)
+	}
 	keep := today.AddDays(-retentionDays)
 	for _, month := range months(names) {
 		last := lastDay(month)
 		if !keep.Before(last) {
 			if err := removeMonth(dir, names, month); err != nil {
-				return err
+				errs = append(errs, err)
 			}
 			continue
 		}
 		if last.AddDays(lateDays).Before(today) && !open(names, month) {
 			if err := a.merge(ctx, dir, names, month); err != nil {
-				return err
+				errs = append(errs, err)
 			}
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
-// dump writes a closed log as the day's file, or as its next segment when
-// the day file exists, then deletes the log. DISTINCT ON (id) drops what
-// the recent-ids window let through; DuckDB infers the columns from every
-// line (raw-first D2).
-func (a *Archive) dump(ctx context.Context, dir, closed, day string) error {
+// claim ties a closed log to the file its dump will write: it picks the
+// day's file, or the next free segment, and renames the log to
+// <target>.dumping, so a dump that stops after writing the target is never
+// repeated into another segment (dump finds the target and only removes the
+// log). A log with nothing to dump is removed.
+func (a *Archive) claim(dir, closed, day string) error {
 	src := filepath.Join(dir, closed)
 	// A log rotated after a failed cut-back can end in a torn line, which
 	// read_ndjson would fail on every pass.
@@ -127,17 +143,38 @@ func (a *Archive) dump(ctx context.Context, dir, closed, day string) error {
 		return err
 	}
 	if st, err := os.Stat(src); err == nil && st.Size() == 0 {
-		return os.Remove(src)
+		if err := os.Remove(src); err != nil {
+			return fmt.Errorf("archive: %w", err)
+		}
+		return nil
 	}
 	out := filepath.Join(dir, day+".parquet")
-	for n := 1; exists(out); n++ {
+	for n := 1; exists(out) || exists(out+".dumping"); n++ {
 		out = filepath.Join(dir, day+"."+strconv.Itoa(n)+".parquet")
 	}
-	q := "COPY (SELECT DISTINCT ON (id) * FROM read_ndjson(" + quote(src) + ", sample_size=-1) ORDER BY family, ts) TO "
-	if err := a.write(ctx, q, out); err != nil {
-		return err
+	if err := os.Rename(src, out+".dumping"); err != nil {
+		return fmt.Errorf("archive: %w", err)
 	}
-	return os.Remove(src)
+	return syncFile(dir)
+}
+
+// dump writes a claimed log (<target>.dumping) as its target unless the
+// target exists already, then deletes the log. DISTINCT ON (id) drops what
+// the recent-ids window let through; DuckDB infers the columns from every
+// line (raw-first D2).
+func (a *Archive) dump(ctx context.Context, dir, pending string) error {
+	src := filepath.Join(dir, pending)
+	out := strings.TrimSuffix(src, ".dumping")
+	if !exists(out) {
+		q := "COPY (SELECT DISTINCT ON (id) * FROM read_ndjson(" + quote(src) + ", sample_size=-1) ORDER BY family, ts) TO "
+		if err := a.write(ctx, q, out); err != nil {
+			return err
+		}
+	}
+	if err := os.Remove(src); err != nil {
+		return fmt.Errorf("archive: %w", err)
+	}
+	return syncFile(dir)
 }
 
 // merge writes every day file and segment of month, with the month file
@@ -209,13 +246,11 @@ func list(dir string) ([]string, error) {
 	return names, nil
 }
 
-// months lists the months any day or month file of names belongs to.
+// months lists the months any file of names belongs to.
 func months(names []string) []string {
 	set := map[string]bool{}
 	for _, n := range names {
-		if m := dayFileName.FindStringSubmatch(n); m != nil {
-			set[m[1][:7]] = true
-		} else if m := monthName.FindStringSubmatch(n); m != nil {
+		if m := anyMonth.FindStringSubmatch(n); m != nil {
 			set[m[1]] = true
 		}
 	}
@@ -232,11 +267,11 @@ func lastDay(month string) civil.Date {
 	return civil.DateOf(first.AddDate(0, 1, -1))
 }
 
-// open reports whether month still has a log or a closed log (a dump that
-// failed): it is not final yet.
+// open reports whether month still has a log, a closed log or a claimed one
+// whose dump is pending: it is not final yet.
 func open(names []string, month string) bool {
 	for _, n := range names {
-		if (logName.MatchString(n) || closedName.MatchString(n)) && strings.HasPrefix(n, month+"-") {
+		if (logName.MatchString(n) || closedName.MatchString(n) || dumpingName.MatchString(n)) && strings.HasPrefix(n, month+"-") {
 			return true
 		}
 	}

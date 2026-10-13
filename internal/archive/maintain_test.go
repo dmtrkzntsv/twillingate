@@ -231,3 +231,80 @@ func TestRemoveProjectDeletesItsDirectory(t *testing.T) {
 	}
 	f.write(t, evOf(1, "c", "2026-10-12T11:00:00Z")) // an event queued before the purge must not fail the pipeline
 }
+
+// project1 is the path of a file in project 1's directory.
+func (f fixture) project1(name string) string { return filepath.Join(f.log.Dir(), "1", name) }
+
+func (f fixture) writeFile(t *testing.T, name, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(f.log.Dir(), "1"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(f.project1(name), []byte(content), 0o640); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestInterruptedDumpNeverRepeats: a dump stopped after its target was
+// written leaves <target>.dumping; the next pass removes it and makes no
+// segment (an exact copy would double the day until its month merges).
+func TestInterruptedDumpNeverRepeats(t *testing.T) {
+	f := newFixture(t)
+	f.write(t, evOf(1, "a", "2026-10-11T10:00:00Z"))
+	f.maintain(t, "2026-10-12")
+	b, err := line(evOf(1, "a", "2026-10-11T10:00:00Z"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.writeFile(t, "2026-10-11.parquet.dumping", string(b))
+	f.maintain(t, "2026-10-12")
+	if got := f.files(t); !eq(got, []string{"2026-10-11.parquet"}) {
+		t.Fatalf("files = %v, want the pending log removed and no segment", got)
+	}
+	if n, ids := f.rows(t, "2026-10-11.parquet"); n != 1 || ids != 1 {
+		t.Fatalf("day file: %d rows, %d ids; want 1 and 1", n, ids)
+	}
+}
+
+// TestPendingDumpIsDumpedIntoItsTarget: a claimed log whose target was not
+// written is dumped into exactly that target, and a closed log of the same
+// day takes the next free segment around it.
+func TestPendingDumpIsDumpedIntoItsTarget(t *testing.T) {
+	f := newFixture(t)
+	b, err := line(evOf(1, "a", "2026-10-11T10:00:00Z"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.writeFile(t, "2026-10-11.parquet.dumping", string(b))
+	f.maintain(t, "2026-10-12")
+	if got := f.files(t); !eq(got, []string{"2026-10-11.parquet"}) {
+		t.Fatalf("files = %v, want the pending log dumped into the day file", got)
+	}
+	if n, ids := f.rows(t, "2026-10-11.parquet"); n != 1 || ids != 1 {
+		t.Fatalf("day file: %d rows, %d ids; want 1 and 1", n, ids)
+	}
+	f.writeFile(t, "2026-10-13.parquet.dumping", string(b))
+	b2, _ := line(evOf(1, "b", "2026-10-13T10:00:00Z"))
+	f.writeFile(t, "2026-10-13.1.closed", string(b2))
+	f.maintain(t, "2026-10-14")
+	if got := f.files(t); !eq(got, []string{"2026-10-11.parquet", "2026-10-13.1.parquet", "2026-10-13.parquet"}) {
+		t.Fatalf("files = %v, want the closed log in the next free segment", got)
+	}
+}
+
+// TestOneFailingDumpStopsNothingElse: a log DuckDB cannot read stays pending
+// and holds its month back; the project's other dumps and its retention
+// still run, and the error is returned.
+func TestOneFailingDumpStopsNothingElse(t *testing.T) {
+	f := newFixture(t)
+	f.write(t, evOf(1, "old", "2025-08-15T10:00:00Z"), evOf(1, "a", "2026-08-30T10:00:00Z"), evOf(1, "c", "2026-10-11T10:00:00Z"))
+	f.writeFile(t, "2026-08-31.1.closed", "[1]\n") // valid JSON, not an object
+	d, _ := civil.Parse("2026-10-12")
+	if err := f.a.maintainProject(context.Background(), 1, d, 1, 400); err == nil {
+		t.Fatal("maintainProject returned nil with a log it cannot read")
+	}
+	want := []string{"2026-08-30.parquet", "2026-08-31.parquet.dumping", "2026-10-11.parquet"}
+	if got := f.files(t); !eq(got, want) {
+		t.Fatalf("files = %v, want %v: the good days dumped, August 2025 deleted, August 2026 not merged", got, want)
+	}
+}
