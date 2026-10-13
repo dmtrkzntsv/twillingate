@@ -185,37 +185,97 @@ func TestChildConfinedToAllowedDirs(t *testing.T) {
 	}
 	c := startChild(t, childArgs(dir))
 	id := uint64(0)
-	run := func(sql string) string {
+	// The sandbox under test is the dump's: its writes go as Exec, since a
+	// query is refused before it reaches the sandbox or the lock.
+	run := func(sql string, exec bool) string {
 		id++
-		return c.ask(t, request{ID: id, SQL: sql}).Err
+		return c.ask(t, request{ID: id, SQL: sql, Exec: exec}).Err
 	}
-	if err := run("SELECT * FROM read_csv('" + filepath.Join(dir, "raw/in.csv") + "')"); err != "" {
+	if err := run("SELECT * FROM read_csv('"+filepath.Join(dir, "raw/in.csv")+"')", false); err != "" {
 		t.Errorf("reading inside raw: %s", err)
 	}
-	if err := run("COPY (SELECT 1 AS a) TO '" + filepath.Join(dir, "raw/out.parquet") + "' (FORMAT parquet)"); err != "" {
+	if err := run("COPY (SELECT 1 AS a) TO '"+filepath.Join(dir, "raw/out.parquet")+"' (FORMAT parquet)", true); err != "" {
 		t.Errorf("writing inside raw: %s", err)
 	}
 	// The spill directory is writable too: per child, removed at exit.
-	if err := run("COPY (SELECT 1 AS a) TO '" + filepath.Join(dir, "spill/x.csv") + "' (FORMAT csv)"); err != "" {
+	if err := run("COPY (SELECT 1 AS a) TO '"+filepath.Join(dir, "spill/x.csv")+"' (FORMAT csv)", true); err != "" {
 		t.Errorf("writing into the spill directory: %s", err)
 	}
-	for _, sql := range []string{
-		"SELECT * FROM read_text('" + filepath.Join(dir, "raw/../twillingate.db") + "')",
-		"SELECT * FROM read_csv('" + filepath.Join(dir, "rawx/in.csv") + "')",
-		"SELECT * FROM read_text('" + filepath.Join(dir, "twillingate.db") + "')",
-		"COPY (SELECT 1 AS a) TO '" + filepath.Join(dir, "twillingate.db") + "' (FORMAT csv)",
-		"ATTACH '" + filepath.Join(dir, "twillingate.db") + "' AS meta",
-		"SELECT * FROM read_text('/etc/hostname')",
-		"INSTALL httpfs",
+	for _, c := range []struct {
+		sql  string
+		exec bool
+	}{
+		{"SELECT * FROM read_text('" + filepath.Join(dir, "raw/../twillingate.db") + "')", false},
+		{"SELECT * FROM read_csv('" + filepath.Join(dir, "rawx/in.csv") + "')", false},
+		{"SELECT * FROM read_text('" + filepath.Join(dir, "twillingate.db") + "')", false},
+		{"COPY (SELECT 1 AS a) TO '" + filepath.Join(dir, "twillingate.db") + "' (FORMAT csv)", true},
+		{"ATTACH '" + filepath.Join(dir, "twillingate.db") + "' AS meta", true},
+		{"SELECT * FROM read_text('/etc/hostname')", false},
+		{"INSTALL httpfs", true},
 	} {
-		if err := run(sql); !strings.Contains(err, "Permission Error") {
-			t.Errorf("%s: err = %q, want a permission error", sql, err)
+		if err := run(c.sql, c.exec); !strings.Contains(err, "Permission Error") {
+			t.Errorf("%s: err = %q, want a permission error", c.sql, err)
 		}
 	}
 	for _, sql := range []string{"SET enable_external_access = true", "SET memory_limit = '4GB'"} {
-		if err := run(sql); !strings.Contains(err, "locked") {
+		if err := run(sql, true); !strings.Contains(err, "locked") {
 			t.Errorf("%s: err = %q, want the configuration locked", sql, err)
 		}
+	}
+}
+
+// TestChildQueriesAreReadOnly is Review Focus 5: a query is one SELECT and
+// nothing else, refused before anything runs; Exec (the archive's dump)
+// still writes.
+func TestChildQueriesAreReadOnly(t *testing.T) {
+	dir := t.TempDir()
+	raw := filepath.Join(dir, "raw")
+	if err := os.MkdirAll(raw, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	c := startChild(t, childArgs(dir))
+	out := filepath.Join(raw, "out.csv")
+	id := uint64(0)
+	ask := func(sql string, exec bool) string {
+		id++
+		return c.ask(t, request{ID: id, SQL: sql, Exec: exec}).Err
+	}
+	for _, sql := range []string{
+		"COPY (SELECT 1 AS a) TO '" + out + "' (FORMAT csv)",
+		"COPY (SELECT 1 AS a) TO '" + out + "' (FORMAT csv); SELECT 1",
+		"SELECT 1; SELECT 2",
+		"CREATE TABLE t AS SELECT 1",
+		"ATTACH ':memory:' AS m",
+		"PRAGMA version",
+	} {
+		if err := ask(sql, false); !strings.Contains(err, "one SELECT") {
+			t.Errorf("%s: err = %q, want a refusal naming one SELECT", sql, err)
+		}
+	}
+	if _, err := os.Stat(out); !os.IsNotExist(err) {
+		t.Fatalf("%s exists after refused queries: a refused statement ran", out)
+	}
+	if err := ask("SELECT nope FROM", false); !strings.Contains(err, "syntax error") {
+		t.Errorf("syntax error: err = %q, want DuckDB's parser message", err)
+	}
+	for _, sql := range []string{"SELECT 1", "WITH a AS (SELECT 1 AS x) SELECT x FROM a", "FROM range(3)", "DESCRIBE SELECT 1", "VALUES (1)"} {
+		if err := ask(sql, false); err != "" {
+			t.Errorf("%s: %s", sql, err)
+		}
+	}
+	if err := ask("COPY (SELECT 1 AS a) TO '"+out+"' (FORMAT csv)", true); err != "" {
+		t.Fatalf("Exec of a COPY into raw: %s", err)
+	}
+	if _, err := os.Stat(out); err != nil {
+		t.Fatalf("Exec wrote nothing: %v", err)
+	}
+}
+
+func TestChildCapsItsSpill(t *testing.T) {
+	c := startChild(t, append(childArgs(t.TempDir()), "-temp-max", "4GB"))
+	rep := c.ask(t, request{ID: 1, SQL: "SELECT current_setting('max_temp_directory_size') AS s"})
+	if rep.Err != "" || rep.Rows[0][0] != "3.7 GiB" {
+		t.Fatalf("max_temp_directory_size = %+v, want 3.7 GiB", rep)
 	}
 }
 

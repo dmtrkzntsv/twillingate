@@ -20,6 +20,10 @@ import (
 // exits and gives its memory back (D8: "a few idle minutes").
 const DefaultIdleExit = 3 * time.Minute
 
+// DefaultMaxTempSize bounds a child's spill on the disk the SQLite file
+// shares (DuckDB's own default is 90% of the free space).
+const DefaultMaxTempSize = "4GB"
+
 var (
 	// ErrSpawn: the child could not be started or did not get ready.
 	ErrSpawn = errors.New("engine: the child did not start")
@@ -57,6 +61,8 @@ type Options struct {
 	SlotDir     string
 	MaxChildren int
 	MemoryLimit string
+	// DuckDB max_temp_directory_size: the spill a child may write. "": DefaultMaxTempSize.
+	MaxTempSize string
 	Threads     int
 	Parallel    int
 	IdleExit    time.Duration
@@ -107,6 +113,9 @@ func New(o Options) (*Engine, error) {
 	if o.MemoryLimit == "" {
 		o.MemoryLimit = DefaultMemoryLimit
 	}
+	if o.MaxTempSize == "" {
+		o.MaxTempSize = DefaultMaxTempSize
+	}
 	if o.IdleExit <= 0 {
 		o.IdleExit = DefaultIdleExit
 	}
@@ -138,7 +147,9 @@ func (e *Engine) Query(ctx context.Context, sql string, maxRows int) (Result, er
 }
 
 // Exec runs sql for its effect on the child, such as a table later
-// queries read; the effect lasts as long as the child.
+// queries read; the effect lasts as long as the child. Exec runs any
+// statement; only the archive calls it. Queries from users go through
+// Query, which refuses writes.
 func (e *Engine) Exec(ctx context.Context, sql string) error {
 	_, err := e.do(ctx, request{SQL: sql, Exec: true})
 	return err
@@ -280,7 +291,7 @@ func (e *Engine) spawn(ctx context.Context) (*child, error) {
 	}()
 	args := append(slices.Clone(e.o.Args),
 		"-threads", strconv.Itoa(e.o.Threads), "-memory", e.o.MemoryLimit,
-		"-spill", spill, "-parallel", strconv.Itoa(e.o.Parallel))
+		"-spill", spill, "-temp-max", e.o.MaxTempSize, "-parallel", strconv.Itoa(e.o.Parallel))
 	for _, d := range e.o.AllowedDirs {
 		args = append(args, "-allow", d)
 	}

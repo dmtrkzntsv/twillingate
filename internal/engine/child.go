@@ -41,6 +41,7 @@ func ServeChild(args []string, in io.Reader, out io.Writer) error {
 	threads := fs.Int("threads", 1, "DuckDB threads")
 	memory := fs.String("memory", DefaultMemoryLimit, "DuckDB memory_limit")
 	spill := fs.String("spill", "", "DuckDB temp_directory")
+	tempMax := fs.String("temp-max", "", "DuckDB max_temp_directory_size")
 	parallel := fs.Int("parallel", 1, "requests run at once")
 	var allow dirList
 	fs.Var(&allow, "allow", "a directory SQL may read and write (repeatable)")
@@ -50,7 +51,7 @@ func ServeChild(args []string, in io.Reader, out io.Writer) error {
 	if *parallel < 1 {
 		*parallel = 1
 	}
-	db, err := open(*threads, *memory, *spill, allow, *parallel)
+	db, err := open(*threads, *memory, *spill, *tempMax, allow, *parallel)
 	if err != nil {
 		return w.fail(err)
 	}
@@ -63,7 +64,7 @@ func ServeChild(args []string, in io.Reader, out io.Writer) error {
 // GLOBAL, so it holds on each connection the pool opens later, and
 // lock_configuration stops SQL from changing any of them back. Directories
 // get a trailing slash, so allowing raw does not allow rawx.
-func open(threads int, memory, spill string, allow []string, parallel int) (*sql.DB, error) {
+func open(threads int, memory, spill, tempMax string, allow []string, parallel int) (*sql.DB, error) {
 	db, err := sql.Open("duckdb", "")
 	if err != nil {
 		return nil, fmt.Errorf("engine: %w", err)
@@ -79,6 +80,9 @@ func open(threads int, memory, spill string, allow []string, parallel int) (*sql
 	}
 	if spill != "" {
 		setup = append(setup, "SET GLOBAL temp_directory = "+sqlString(spill))
+	}
+	if tempMax != "" {
+		setup = append(setup, "SET GLOBAL max_temp_directory_size = "+sqlString(tempMax))
 	}
 	setup = append(setup,
 		"SET GLOBAL allowed_directories = ["+strings.Join(dirs, ", ")+"]",
@@ -164,6 +168,10 @@ func run(ctx context.Context, db *sql.DB, r request) reply {
 		}
 		return rep
 	}
+	if err := readOnly(ctx, db, r.SQL); err != nil {
+		rep.Err = err.Error()
+		return rep
+	}
 	rows, err := db.QueryContext(ctx, r.SQL)
 	if err != nil {
 		rep.Err = err.Error()
@@ -199,6 +207,34 @@ func run(ctx context.Context, db *sql.DB, r request) reply {
 		return reply{ID: r.ID, Err: err.Error()}
 	}
 	return rep
+}
+
+// readOnly lets one SELECT through (DESCRIBE, SHOW, SUMMARIZE, FROM and
+// VALUES parse as one) and nothing else: DuckDB's allowed directory is
+// read-write, so a query must not COPY, CREATE or ATTACH. It parses with
+// json_serialize_sql, which runs nothing; preparing would run every
+// statement of a multi-statement string but the last.
+func readOnly(ctx context.Context, db *sql.DB, q string) error {
+	var out string
+	if err := db.QueryRowContext(ctx, "SELECT json_serialize_sql(CAST(? AS VARCHAR))::VARCHAR", q).Scan(&out); err != nil {
+		return fmt.Errorf("engine: %w", err)
+	}
+	var parsed struct {
+		Error      bool              `json:"error"`
+		Type       string            `json:"error_type"`
+		Message    string            `json:"error_message"`
+		Statements []json.RawMessage `json:"statements"`
+	}
+	if err := json.Unmarshal([]byte(out), &parsed); err != nil {
+		return fmt.Errorf("engine: %w", err)
+	}
+	if parsed.Error && parsed.Type == "parser" {
+		return errors.New("engine: " + parsed.Message)
+	}
+	if parsed.Error || len(parsed.Statements) != 1 {
+		return errors.New("engine: a query must be one SELECT statement")
+	}
+	return nil
 }
 
 // replyWriter serializes lines from concurrent requests. A write error
