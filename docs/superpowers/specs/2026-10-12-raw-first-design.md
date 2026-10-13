@@ -642,9 +642,11 @@ meets D10's targets:
 - **Q10.** Settled 2026-10-12: flat NDJSON in the Parquet row's shape,
   `attr_<key>` string values, dedup at dump and merge, a time-bounded
   recent-ids set at ingest (D2).
-- **Q11.** Whether widget SQL sees any SQLite table at all. Metadata lives
-  in SQLite and events in the engine, so a widget cannot join them unless a
-  few small tables (projects) are handed to the child.
+- **Q11.** Settled 2026-10-12: no. Widget SQL sees the files only:
+  `events`, `sessions` (D16), `identities` (D17), `aliases` (D18). The
+  rules the engine applies on read (D6, D18) reach the child as mapping
+  rows, not as a table widgets query; project names and the like are the
+  renderer's.
 
 ## Next steps
 
