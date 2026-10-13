@@ -29,6 +29,7 @@ var rank = map[string]int{
 	"internal/config/configtest": 0,
 	"internal/enrich":            0,
 	"internal/engine":            0,
+	"internal/archive":           0,
 	"internal/identity":          0,
 	"internal/geo":               0,
 	"internal/shared/civil":      0,
