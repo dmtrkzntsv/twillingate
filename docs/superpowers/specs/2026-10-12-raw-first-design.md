@@ -148,16 +148,17 @@ One server takes up to **1M events a month** and keeps raw events for up to
     every flush, considered first, costs up to 14 GB a day at the cap and
     is rejected.
 - **D3. A late window, separate from retention.** `clampTS`'s lower bound
-  becomes a late window (proposed 7 days; name to settle, e.g.
-  `INGEST_LATE_DAYS`), no longer `RETENTION_RAW_DAYS`. An event older than
+  becomes a late window, `INGEST_LATE_DAYS`, default 1 day, configurable
+  (settled 2026-10-12), no longer `RETENTION_RAW_DAYS`. An event older than
   that is clamped into the window's first day, as today. A late event for a
   closed day is appended to that day's log (reopened, or a new one) and
   dumped as a new segment of that day; nothing is rewritten. A month merges
   only after its last day's late window has passed, so a month file is
   final.
 - **D4. One wide table per project, with every attribute.** Each project
-  exposes `events` (and `views`, `product`, `measures` as views on it, names
-  to settle, Q1): today's typed columns plus **one column per attribute key
+  exposes `events` (and `views`, `product`, `measures` as views on it):
+  today's typed columns, `project_id` included so a file says where it
+  belongs wherever it is copied, plus **one column per attribute key
   the project's catalog has seen**, declared or not. Parquet stores each key
   as a real, dictionary-encoded column, so a wide, sparse table costs
   little; a column that is null for a whole family costs bytes. A file
@@ -175,11 +176,14 @@ One server takes up to **1M events a month** and keeps raw events for up to
   rewritten. Data that must really go (a user's erasure, a submission, a
   project) is removed by rewriting the affected files: copy without the
   rows, fsync, rename. A purged project deletes its directory.
-- **D7. Backups.** Litestream keeps covering the SQLite file. Day and month
-  files are written once (D6's rewrites aside) and uploaded once next to
-  the Litestream replica; today's log is exposed until its dump unless it
-  is uploaded on a timer too. Restore copies the files back; there is nothing
-  else to restore. `docs/litestream.md` and `docs/deployment.md` describe
+- **D7. Backups are the operator's, by hand.** twillingate ships no backup
+  code and the design no longer counts on Litestream (settled 2026-10-12).
+  The data directory is the backup unit: the SQLite file (copied with
+  `sqlite3 .backup` or with the service stopped), the Parquet files (final
+  once written, so a plain copy at any time is correct) and the open logs
+  (append-only; a torn last line is dropped on replay). Restore copies the
+  directory back; nothing else to restore. `docs/deployment.md` says what
+  to copy and in which order. `docs/litestream.md` and `docs/deployment.md` describe
   it.
 
 ### Reports and queries
@@ -429,8 +433,13 @@ Over 30 days A takes 0.14–1.8 s per query, C 3–120 ms. C's DuckDB file at
   files) against 1.45 GB for per-family files (268 files) and the same
   speed on every query (two attributes 0.31 vs 0.28 s). Ordered by time
   alone it is 1.43 GB and ~1.3× slower on product queries (0.38 s), since
-  a family filter cannot skip row groups. One file for everything is
-  1.60 GB and 1.3–4× slower.
+  a family filter cannot skip row groups. One file per month holding
+  every project, ordered by project, family and time (37 files, 1.34 GB),
+  is the same speed on every query at every range: row-group statistics
+  prune by project as directories would. One file for everything is
+  1.60 GB and 1.3–4× slower. Per project stays (D2) for operational
+  reasons: a project is a directory to delete, back up or hand over, and
+  the dump writes one log into one file.
 - **Log and dump (one project's cap day, ~20k events):** the NDJSON log is
   25 MB and DuckDB aggregates it in 0.15 s (CSV: 7.5 MB, 0.25 s); `COPY`
   of the log to a 1.0 MB day file takes 0.20 s; a full day's rows rewrite
@@ -529,14 +538,17 @@ meets D10's targets:
 
 ## Open questions
 
-- **Q1.** Names of D4's tables, and whether a widget sees only its own
-  project's tables or every project's with a `project_id` column.
+- **Q1.** Settled 2026-10-12: the table is `events`; every file carries a
+  `project_id` column and files are stored per project (D2, D4). A widget
+  sees its own project, scoped by the file list.
 - **Q2.** Settled: day files, merged into one file per project and month
   (D2).
 - **Q3.** Settled for the file order: `(family, ts)` (Measurements).
   Row-group size and `(actor_id, ts)` for timelines are unmeasured; the
   timeline already meets its target at `(family, ts)`.
-- **Q4.** Late window length (7 days?) and its variable name.
+- **Q4.** Settled 2026-10-12: `INGEST_LATE_DAYS`, default 1, configurable
+  (D3). A day file is final a day after the day closes; a month merges a
+  day after it ends.
 - **Q5.** Distinct users over a range with D9's cache: recompute, per-day
   only, or HyperLogLog sketches (our own code in `internal/shared/`)?
 - **Q6.** Upgrade path. Existing servers hold only aggregates for days
@@ -552,8 +564,8 @@ meets D10's targets:
 - **Q8.** Should `query` allow an unfiltered 3-year scan, or require a range
   or a filter, under its timeout?
 
-- **Q9.** Settled by measurement: Parquet files, not a DuckDB file (D10).
-  Still open from it: how the event files are backed up (D7), and the
+- **Q9.** Settled: Parquet files, not a DuckDB file (D10, measured);
+  backups by hand, no Litestream (D7, 2026-10-12). Still open from it: the
   `forms.go:SessionAt` link from a submission to a visit, which read
   today's and yesterday's views in SQLite: a query over two day files, or
   linking lazily when the submission is viewed.
