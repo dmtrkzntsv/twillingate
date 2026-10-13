@@ -47,6 +47,9 @@ func TestDefaultsApplied(t *testing.T) {
 	if c.Retention.ArchivedDays != 30 {
 		t.Errorf("Retention.ArchivedDays = %d, want 30", c.Retention.ArchivedDays)
 	}
+	if c.Retention.Days != 400 {
+		t.Errorf("Retention.Days = %d, want 400", c.Retention.Days)
+	}
 	if c.Forms.DraftDays != DefaultFormDraftDays || DefaultFormDraftDays != 7 {
 		t.Errorf("Forms.DraftDays = %d (default %d), want 7", c.Forms.DraftDays, DefaultFormDraftDays)
 	}
@@ -151,6 +154,7 @@ func TestValidationErrors(t *testing.T) {
 		"no database":                           {"DATABASE_DSN": ""},
 		"bad geo scheme":                        base(map[string]string{"GEO_DSN": "???"}),
 		"negative raw_days":                     base(map[string]string{"RETENTION_RAW_DAYS": "-1"}),
+		"zero retention days":                   base(map[string]string{"RETENTION_DAYS": "0"}),
 		"zero engine children":                  base(map[string]string{"ENGINE_MAX_CHILDREN": "0"}),
 		"engine memory not a size":              base(map[string]string{"ENGINE_MEMORY_LIMIT": "lots"}),
 		"engine memory no unit":                 base(map[string]string{"ENGINE_MEMORY_LIMIT": "512"}),
@@ -177,6 +181,13 @@ func TestValidationErrors(t *testing.T) {
 		if _, err := FromEnv(func(k string) (string, bool) { v, ok := vars[k]; return v, ok }); err == nil {
 			t.Errorf("%s: expected error", name)
 		}
+	}
+}
+
+func TestRetentionDaysFromEnv(t *testing.T) {
+	c, err := load(t, map[string]string{"RETENTION_DAYS": "1095"})
+	if err != nil || c.Retention.Days != 1095 {
+		t.Fatalf("Retention.Days = %v, %v; want 1095", c, err)
 	}
 }
 

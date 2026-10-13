@@ -27,6 +27,7 @@ func TestLimitsReportsTheLimitsInForce(t *testing.T) {
 	cfg := &config.Config{AttributeValuesTopN: 7, IdentitiesTopN: 2000, AttributeBreakdownsMax: 12,
 		IngestLateDays: 2, Forms: config.FormsConfig{DraftDays: 3}}
 	cfg.Retention.Events = config.RetentionClass{RawDays: 7, AggregateDays: 90}
+	cfg.Retention.Days = 730
 	h.limits = limitsFrom(cfg)
 	out, err := h.listLimits(context.Background(), struct{}{})
 	if err != nil {
@@ -39,6 +40,7 @@ func TestLimitsReportsTheLimitsInForce(t *testing.T) {
 	settings := []want{
 		{groupRetention, "RETENTION_RAW_DAYS", 7, config.DefaultRawDays},
 		{groupRetention, "RETENTION_AGGREGATE_DAYS", 90, config.DefaultAggregateDays},
+		{groupRetention, "RETENTION_DAYS", 730, config.DefaultRetentionDays},
 		{groupRetention, "RETENTION_ARCHIVED_DAYS", 0, config.DefaultArchivedDays},
 		{groupRetention, "RETENTION_FORMS_DRAFT_DAYS", 3, config.DefaultFormDraftDays},
 		{groupCaps, "ATTRIBUTE_VALUES_TOP_N", 7, config.DefaultAttributeValuesTopN},

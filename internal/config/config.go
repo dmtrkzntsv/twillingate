@@ -33,6 +33,10 @@ type RetentionClass struct {
 }
 
 type Retention struct {
+	// Days (RETENTION_DAYS) is how long the event files under raw/ are kept:
+	// a month file is deleted once its last day is older (raw-first D5).
+	// RawDays and AggregateDays govern SQLite until the files replace it.
+	Days int `json:"days"`
 	// Events is every family's window: raw rows are rolled up and deleted
 	// after RawDays; aggregates, actors, cohorts and identities are kept
 	// AggregateDays.
@@ -144,15 +148,15 @@ const (
 	DefaultIdentitiesTopN         = 500
 )
 
-// The retention defaults (RETENTION_RAW_DAYS,
-// RETENTION_AGGREGATE_DAYS, RETENTION_ARCHIVED_DAYS), reported by the
-// limits tool beside the values in force like the caps'. Aggregates keep
-// a little over a year, so a year-on-year comparison still has last
-// year's day.
+// The retention defaults (RETENTION_RAW_DAYS, RETENTION_AGGREGATE_DAYS,
+// RETENTION_ARCHIVED_DAYS, RETENTION_DAYS), reported by the limits tool
+// beside the values in force like the caps'. Aggregates keep a little
+// over a year, so a year-on-year comparison still has last year's day.
 const (
 	DefaultRawDays       = 30
 	DefaultAggregateDays = 400
 	DefaultArchivedDays  = 30
+	DefaultRetentionDays = 400
 )
 
 // DefaultIngestLateDays is INGEST_LATE_DAYS's default: a day's grace for
@@ -285,6 +289,7 @@ func FromEnv(lookup func(string) (string, bool)) (*Config, error) {
 			Capacity:       e.num("BUFFER_CAPACITY", 10000),
 		},
 		Retention: Retention{
+			Days: e.num("RETENTION_DAYS", DefaultRetentionDays),
 			Events: RetentionClass{
 				RawDays:       e.num("RETENTION_RAW_DAYS", DefaultRawDays),
 				AggregateDays: e.num("RETENTION_AGGREGATE_DAYS", DefaultAggregateDays),
@@ -409,6 +414,9 @@ func (c *Config) validate() error {
 	}
 	if c.Retention.ArchivedDays < 0 {
 		return fmt.Errorf("config: RETENTION_ARCHIVED_DAYS must not be negative: %d", c.Retention.ArchivedDays)
+	}
+	if c.Retention.Days < 1 {
+		return fmt.Errorf("config: RETENTION_DAYS must be at least 1: %d", c.Retention.Days)
 	}
 	if c.Forms.DraftDays < 1 {
 		return fmt.Errorf("config: RETENTION_FORMS_DRAFT_DAYS must be at least 1: %d", c.Forms.DraftDays)

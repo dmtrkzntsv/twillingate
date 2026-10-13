@@ -113,6 +113,7 @@ to it.
 | `INGEST_LATE_DAYS` | Days back a client timestamp may lie; an older one is clamped to this edge, counted, never dropped. At least 1 and at most `RETENTION_RAW_DAYS`, so a late event never lands in a day already rolled up. Default 1. |
 | `RETENTION_RAW_DAYS` | Days raw events of every family are kept before rollup. At least `INGEST_LATE_DAYS`. Default 30. |
 | `RETENTION_AGGREGATE_DAYS` | Days aggregates of every family (and actors, cohorts, identities) are kept. Default 400. |
+| `RETENTION_DAYS` | Days the raw event files under `raw/` in the data directory are kept, in whole months: a month file is deleted once its last day is older. At least 1. Default 400. |
 | `RETENTION_FORMS_DRAFT_DAYS` | Days a form created by its first submission accepts submissions as a draft; unless approved by then, it refuses them and the daily pass archives it. Read when a draft is created or restored, so a change moves no existing draft's window. At least 1. Default 7. |
 | `RETENTION_ARCHIVED_DAYS` | Days after archiving that a project (with all its data and its widget shares), a dashboard, a widget or a widget share is deleted by the daily pass. 0 keeps archived items forever. Default 30. |
 | `ATTRIBUTE_VALUES_TOP_N` | Values kept per (project, day) in each views breakdown (paths, referrers, browsers, …) and kinds in `v_views_daily`, and distinct attribute values per (project, day, event, key), before the rest collapse into `(other)`. 0 keeps every value. Default 100. |
