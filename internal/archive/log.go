@@ -334,3 +334,15 @@ func line(e store.Event) ([]byte, error) {
 	}
 	return append(b, '\n'), nil
 }
+
+// forget closes and drops a project's open logs (RemoveProject).
+func (l *Log) forget(project int64) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for k, f := range l.files {
+		if k.project == project {
+			f.Close()
+			delete(l.files, k)
+		}
+	}
+}
