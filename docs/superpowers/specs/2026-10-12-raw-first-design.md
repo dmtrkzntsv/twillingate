@@ -297,6 +297,26 @@ One server takes up to **1M events a month** and keeps raw events for up to
   instead of sorting views. Derived, rebuildable from raw at any time,
   deleted and merged with the day's files.
 
+- **D17. Everything is on the event; identities are derived.** Ingest
+  stops stripping `$user_name` and `$group_name` into the `identities`
+  table: they stay on the row as `user_name` and `group_name` (the SDK
+  sends them with every event once `identify()` has run; dictionary
+  encoding makes a name repeated per user nearly free). The dump rebuilds
+  one derived table per project at day close from the whole archive,
+  `identities/<project>.parquet`: `kind` (user, group), `id`, `name`
+  (`arg_max(name, ts)`), `first_seen`, `last_seen`, `events`; one `GROUP BY`
+  over 3 years, ~0.5 s by the measured attribute queries, no incremental
+  state; today's part live from the log. Top users, new users, last seen,
+  retention cohorts' first-seen, the `identities` tool and route read it.
+  A rename arrives with the next event; erasure rewrites the user's files
+  and the next rebuild drops the row. `actors`, `agg_identity_daily`,
+  `v_identity_daily`, `agg_retention`, `identities` in SQLite,
+  `IDENTITIES_TOP_N` and the nightly actor, cohort and identity recomputes
+  go (D11). Anonymous visitors stay a daily-salted hash, stored only as
+  `actor_id` on their own day's events. Names now live in the archive, so
+  the docs' personal-data warning applies to the files, and erasure covers
+  them by rewrite.
+
 ### Hosting
 
 - **D14. One process per customer stays.** The event side (D2) makes a
@@ -323,13 +343,14 @@ One server takes up to **1M events a month** and keeps raw events for up to
 
 ### What goes away
 
-- **D11. Candidates to remove** once dashboards run on raw (each needs its
-  own check against D10's numbers): the `agg_*` tables and rollups; the
-  `v_*` live halves; declared breakdowns (the catalog's `breakdown` flag)
-  and `ATTRIBUTE_BREAKDOWNS_MAX`; `ATTRIBUTE_VALUES_TOP_N` and `(other)`
-  rows; `IDENTITIES_TOP_N`; the nightly whole-window recomputes (actors,
-  cohorts, identities, `usage_attributes`, attribute stats), replaced by
-  queries or by D9's cache; `RETENTION_AGGREGATE_DAYS` (Q6).
+- **D11. Removed** once dashboards run on raw (measured, D9 and D17): the
+  `agg_*` tables and rollups; the `v_*` live halves; declared breakdowns
+  (the catalog's `breakdown` flag) and `ATTRIBUTE_BREAKDOWNS_MAX`;
+  `ATTRIBUTE_VALUES_TOP_N` and `(other)` rows; `IDENTITIES_TOP_N`;
+  `actors`, `identities` and `agg_retention`; the nightly whole-window
+  recomputes (actors, cohorts, identities, `usage_attributes`, attribute
+  stats), replaced by queries and the two derived tables (D16, D17);
+  `RETENTION_AGGREGATE_DAYS` once Q6's old path expires.
 - **D12. Superseded work.** #175's encoding is dropped; its widget-SQL
   allowlist becomes its own change, adjusted to D4's tables. #173 (kept
   events) is closed: every event is kept.
