@@ -780,7 +780,7 @@ operators:
   installer checks. Check first: `getconf GNU_LIBC_VERSION`.
 - **The image is Debian-based** (`debian:bookworm-slim`, from Alpine), same
   user and ids (10001), same volume; `docker compose pull` as usual.
-- The binary grows from about 15 MB to about 60 MB.
+- The binary grows from about 15 MB to about 80 MB.
 - Two settings, `ENGINE_MEMORY_LIMIT` and `ENGINE_MAX_CHILDREN`, and an
   `engine/` directory beside the database once an engine child has run
   (`twillingate engine -check` runs one). It holds spill files and lock

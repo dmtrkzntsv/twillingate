@@ -40,7 +40,7 @@ docker compose exec twillingate twillingate key issue -project-id 1 -label web
 ```bash
 # From a published release (no checkout needed):
 curl -fsSL https://raw.githubusercontent.com/dmtrkzntsv/twillingate/main/deploy/systemd/install.sh | sudo bash
-# Or from a checkout (Go and Node 22 on the host): git clone, make build, then
+# Or from a checkout (Go, Node 22 and a C toolchain on the host): git clone, make build, then
 sudo ./deploy/systemd/install.sh          # --user NAME to skip the prompt, --yes for defaults
 ```
 
