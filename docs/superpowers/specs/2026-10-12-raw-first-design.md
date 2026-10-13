@@ -63,8 +63,10 @@ One server takes up to **1M events a month** and keeps raw events for up to
 - **The nightly pass recomputes the whole raw window every night**: actors,
   retention cohorts, identities, `usage_attributes` and `usage_history`'s
   counts and attribute stats.
-- **Raising `RETENTION_RAW_DAYS` is probably unsafe today** (inferred from
-  the code, not tested; Next steps, step 0). `clampTS`
+- **Raising `RETENTION_RAW_DAYS` is unsafe today** (confirmed by test
+  2026-10-12, Next steps, step 0: a day with 3 `subscribed` events rolled
+  up, one late event accepted into it, rolled up again: `agg_product_daily`
+  says count 1, unique users 1). `clampTS`
   (`internal/server/ingest.go`) bounds a timestamp to `received −
   RETENTION_RAW_DAYS`, which is what keeps a late event out of an
   already-rolled-up day. Raising the window moves that bound back over days
@@ -224,7 +226,15 @@ One server takes up to **1M events a month** and keeps raw events for up to
   ingest process never initializes DuckDB and stays at today's footprint.
   Settings: `memory_limit=512MB` (at 256 MB a `COUNT(DISTINCT)` over 3
   years fails, at 128 MB from 1 year), `threads` equal to the CPUs, a
-  spill directory. Unmeasured: the child's time from spawn to first result.
+  spill directory. Measured (Measurements, "Child engine"): spawn to ready
+  is 23 ms (55–100 ms on the 2-CPU Linux container), so a child per
+  dashboard load is fine and nothing needs to stay alive. Two rules from
+  the numbers: **the child loads the open log into an in-memory table once
+  at spawn** (350–420 ms for a cap day's log) rather than parsing it in
+  every widget's query, which took a 30-day dashboard from 2.5 s to 0.35 s;
+  and **widgets run one or two at a time per child on small servers**: on
+  2 CPUs, 8 widgets at once took 9.6 s against 4.5 s one after another, as
+  the queries fought for the same two cores and spilled.
   - **A machine-wide cap on engine children.** Each child can reach ~700 MB
     for a few seconds, and nothing else bounds how many run at once: ten
     projects' dashboards opening together on one install, or fifty
@@ -555,6 +565,24 @@ Over 30 days A takes 0.14–1.8 s per query, C 3–120 ms. C's DuckDB file at
   of the log to a 1.0 MB day file takes 0.20 s; a full day's rows rewrite
   as Parquet in 52 ms. A 30-day query over month files takes 9 ms alone,
   162 ms with the whole day's log unioned in.
+- **Child engine (D8), 2 threads, 512 MB, per-project month files, 8
+  widgets (views, sessions, top pages, product events, DAU, distinct users,
+  two attributes, retention), `scripts/archive-bench/engine`:**
+
+  | | macOS M4 | Linux, 2 CPUs, 1 GB (container) |
+  |---|---|---|
+  | spawn → ready, files only | 23 ms | 55–100 ms |
+  | spawn → first result, 1 year | 245 ms | 430–590 ms |
+  | spawn → ready, a cap day's log loaded into memory | 350 ms | 420 ms |
+  | 30 days, log loaded once: widgets in sequence / all at once | 0.35 / 0.17 s | 0.75 / 0.47 s |
+  | 30 days, log parsed in every query | 2.5 / 0.58 s | 3.3 / 2.8 s |
+  | 1 year, no log | 2.5 / 1.8 s | 4.5 / 9.6 s |
+  | 1 year, log loaded once | 2.4 / 1.7 s | 4.3 / 6.3 s |
+  | 3 years, no log | 9.6 / 6.4 s | 20.8 / 19.9 s |
+
+  Sessionization is about half of the 1-year dashboard and most of the
+  3-year one; D16 takes it out. The container reads the files over a
+  shared-folder mount, slower than a server's own disk.
 - **Backups (DuckDB file):** from inside the process holding it, `COPY
   FROM DATABASE` to a new file takes 151 s at 2 threads; `EXPORT DATABASE`
   to Parquet runs out of memory at 256 MB. A second process cannot open the
@@ -683,11 +711,13 @@ meets D10's targets:
 
 ## Next steps
 
-0. **Verify the raw-window risk** (Problem, last item) with a test: raise
-   `RETENTION_RAW_DAYS` after a rollup, ingest a late event into a rolled-up
-   day, age it out, and compare the day's aggregates. If confirmed, check
-   prod (days whose aggregates dropped after the raise) and decide whether
-   to lower the window until D3 ships. Independent of everything else.
+0. **Verify the raw-window risk.** Confirmed 2026-10-12 by
+   `TestAggregateProductLateRowAfterRollupRewritesDay` (store test, not
+   committed while it fails). Left: check prod for days whose aggregates
+   dropped after the window was raised (`SELECT day, SUM(count) FROM
+   agg_product_daily GROUP BY day`, the same on `agg_views_daily`), and
+   decide whether to lower the window until D3 ships. Independent of
+   everything else.
 1. **Measure A against C first.** Done 2026-10-12 (Measurements):
    `scripts/archive-bench` on 36M rows
    (1M a month × 36 months, 2023-10-13 → 2026-10-12):
@@ -708,9 +738,8 @@ meets D10's targets:
      and the file size after.
    Fill the *estimates* and compare against D10's targets. Measure B (the
    pure-Go path) only if C is ruled out.
-2. **Measure the child engine** (D8): spawn to first result, and a
-   dashboard of 8 widgets through it at 2 threads. Then settle Q1, Q4–Q8,
-   Q10–Q11 and write the implementation plan.
+2. **Measure the child engine.** Done 2026-10-12 (Measurements, "Child
+   engine"); the questions are settled. Write the implementation plan.
 3. **Implementation order** (each its own PR; detail after step 2):
    1. Late window (D3). Fixes step 0's risk on its own.
    2. The log and the dump beside today's ingest: events written to both
