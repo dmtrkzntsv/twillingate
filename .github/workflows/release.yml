@@ -8,6 +8,11 @@ on:
         description: 'Version to release, e.g. 0.9.2 or v0.9.2. Blank bumps the patch.'
         required: false
         type: string
+      dry_run:
+        description: 'Build, check and push untagged image digests, but tag and publish nothing.'
+        required: false
+        type: boolean
+        default: false
 # Each job widens this to what it needs; only the last one writes anything
 # a user can see.
 permissions:
@@ -15,12 +20,14 @@ permissions:
 # Serialize runs so releases are published in commit order.
 concurrency:
   group: release
-# Four stages. build settles the version and compiles the tarballs; test and
-# the image then run side by side; release publishes only once all three have
-# passed, so a failure anywhere leaves no tag, no release and no tagged image.
+# Four stages. version settles the tag; build compiles and checks the tarballs
+# once per architecture, while test and the image (also once per architecture)
+# run side by side with it; release publishes only once all of them have
+# passed, so a failure anywhere leaves no tag, no release and no tagged image,
+# and only when dry_run is off.
 jobs:
-  build:
-    name: build
+  version:
+    name: version
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
@@ -53,39 +60,48 @@ jobs:
             echo "::error::$next already exists"; exit 1
           fi
           echo "tag=$next" >> "$GITHUB_OUTPUT"
+
+  # The binary links DuckDB through cgo, so it cannot be cross-compiled: each
+  # architecture builds on its own runner.
+  build:
+    name: build (${{ matrix.arch }})
+    needs: version
+    strategy:
+      matrix:
+        include:
+          # Ubuntu 22.04: its glibc 2.35 is the release's floor (Debian 12,
+          # Ubuntu 22.04, RHEL 9). The binary links it through cgo.
+          - { arch: amd64, runner: ubuntu-22.04 }
+          - { arch: arm64, runner: ubuntu-22.04-arm }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with: { go-version-file: go.mod, cache: false }
-      # The Go cache the test job saves (see there). Restore only: the three
-      # cross-compiles are not what pull requests build, so this job's
-      # entries would serve nobody.
-      - uses: actions/cache/restore@v4
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: go-${{ hashFiles('go.sum') }}-${{ github.sha }}
-          restore-keys: |
-            go-${{ hashFiles('go.sum') }}-
-            go-
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: npm, cache-dependency-path: web/package-lock.json }
       # VERSION explicitly: the Makefile default is `git describe`, and the
       # tag does not exist yet, so the binaries would report the previous
       # tag plus a commit suffix (v0.9.1-1-gd76e64b in v0.9.2).
-      - run: make dist VERSION=${{ steps.tag.outputs.tag }}
+      - run: make dist VERSION=${{ needs.version.outputs.tag }}
+      # The roadmap's measurement: spawn to ready on each release runner.
+      - name: engine check
+        run: |
+          mkdir -p "$RUNNER_TEMP/check"
+          tar -xzf dist/twillingate-linux-${{ matrix.arch }}.tar.gz -C "$RUNNER_TEMP/check" ./twillingate
+          DATABASE_DSN="sqlite://$RUNNER_TEMP/check/t.db" "$RUNNER_TEMP/check/twillingate" engine -check | tee -a "$GITHUB_STEP_SUMMARY"
+          ls -l "$RUNNER_TEMP/check/twillingate" | tee -a "$GITHUB_STEP_SUMMARY"
       # The release job publishes these exact files.
       - uses: actions/upload-artifact@v4
         with:
-          name: dist
-          path: |
-            dist/*.tar.gz
-            dist/SHA256SUMS
+          name: dist-${{ matrix.arch }}
+          path: dist/*.tar.gz
           if-no-files-found: error
           retention-days: 7
 
   test:
     name: test
-    needs: build
+    needs: version
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -117,8 +133,8 @@ jobs:
       # it to here: nothing is tagged until it passes.
       - run: make check
       - run: make test
-      # Saved here and not from build: this cache holds what make check
-      # compiles, which is what the pull request jobs run.
+      # Saved here: this cache holds what make check compiles, which is what
+      # the pull request jobs run. The build jobs keep none.
       - uses: actions/cache/save@v4
         with:
           path: |
@@ -136,21 +152,24 @@ jobs:
             --jq '.[] | select(.key != env.KEEP) | .id' |
             xargs -r -n1 gh cache delete
 
-  # Builds and pushes the image untagged, by digest; the release job names it
-  # with the version once everything has passed. It runs alongside the tests
-  # rather than after them, since the tests take several times as long.
+  # Builds and pushes the image untagged, by digest, once per architecture on
+  # a native runner; the release job joins the digests under the version once
+  # everything has passed. It runs alongside the tests rather than after them,
+  # since the tests take several times as long.
   image:
-    name: build docker image
-    needs: build
-    runs-on: ubuntu-latest
+    name: build docker image (${{ matrix.arch }})
+    needs: version
+    strategy:
+      matrix:
+        include:
+          - { arch: amd64, runner: ubuntu-24.04 }
+          - { arch: arm64, runner: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
       packages: write
-    outputs:
-      digest: ${{ steps.push.outputs.digest }}
     steps:
       - uses: actions/checkout@v4
-      - uses: docker/setup-qemu-action@v3
       - id: buildx
         uses: docker/setup-buildx-action@v3
       # The gha layer cache below skips everything up to `COPY . .`, but the
@@ -159,15 +178,16 @@ jobs:
       # pair restores that mount from the previous release before the build
       # and saves it back afterwards (post steps run in reverse, so the dance
       # extracts before actions/cache uploads). Not the test job's Go
-      # cache: setup-go and golang:1.25-alpine resolve different patch
+      # cache: setup-go and golang:1.25-bookworm resolve different patch
       # toolchains, so none of its entries would match. Keyed on the sha like
-      # the Go caches, so every release saves and restores the newest.
+      # the Go caches, so every release saves and restores the newest; per
+      # architecture, since each compiles its own objects.
       - id: go-build-cache
         uses: actions/cache@v4
         with:
           path: docker-go-build
-          key: docker-go-build-${{ github.sha }}
-          restore-keys: docker-go-build-
+          key: docker-go-build-${{ matrix.arch }}-${{ github.sha }}
+          restore-keys: docker-go-build-${{ matrix.arch }}-
       - uses: reproducible-containers/buildkit-cache-dance@5422eac04292c961a382e0f584ea0f03ad9da723 # v3.4.0
         with:
           builder: ${{ steps.buildx.outputs.name }}
@@ -186,21 +206,33 @@ jobs:
         with:
           context: .
           target: runtime
-          platforms: linux/amd64,linux/arm64,linux/arm/v7
-          build-args: VERSION=${{ needs.build.outputs.tag }}
+          platforms: linux/${{ matrix.arch }}
+          build-args: VERSION=${{ needs.version.outputs.tag }}
           outputs: type=image,name=ghcr.io/${{ github.repository_owner }}/twillingate,push-by-digest=true,name-canonical=true,push=true
-          cache-from: type=gha,scope=twillingate
-          cache-to: type=gha,mode=max,scope=twillingate
+          cache-from: type=gha,scope=twillingate-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=twillingate-${{ matrix.arch }}
+      # Matrix jobs cannot each set an output; the digests travel as files.
+      - run: |
+          mkdir -p "$RUNNER_TEMP/digests"
+          d='${{ steps.push.outputs.digest }}'
+          touch "$RUNNER_TEMP/digests/${d#sha256:}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
 
   release:
     name: build and publish release
-    needs: [build, test, image]
+    needs: [version, build, test, image]
+    if: ${{ !inputs.dry_run }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
       packages: write
     env:
-      TAG: ${{ needs.build.outputs.tag }}
+      TAG: ${{ needs.version.outputs.tag }}
       IMAGE: ghcr.io/${{ github.repository_owner }}/twillingate
     steps:
       # Full history: changelogithub derives the previous tag from the log to
@@ -209,7 +241,11 @@ jobs:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
       - uses: actions/download-artifact@v4
-        with: { name: dist, path: dist }
+        with: { pattern: dist-*, path: dist, merge-multiple: true }
+      - name: checksums
+        run: cd dist && sha256sum twillingate-linux-*.tar.gz > SHA256SUMS
+      - uses: actions/download-artifact@v4
+        with: { pattern: digest-*, path: digests, merge-multiple: true }
       # The tag has to exist on the remote before the release points at it.
       - name: tag
         run: |
@@ -225,16 +261,15 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
       # After the release, so the binaries never wait on the registry. Names
-      # the multi-arch index the image job pushed; nothing is rebuilt.
+      # the per-architecture images the image jobs pushed by digest into one
+      # multi-arch index; nothing is rebuilt.
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: tag the image
-        env:
-          DIGEST: ${{ needs.image.outputs.digest }}
         run: |
-          docker buildx imagetools create \
-            -t "$IMAGE:$TAG" -t "$IMAGE:latest" "$IMAGE@$DIGEST"
+          docker buildx imagetools create -t "$IMAGE:$TAG" -t "$IMAGE:latest" \
+            $(for d in digests/*; do printf '%s@sha256:%s ' "$IMAGE" "$(basename "$d")"; done)
           docker buildx imagetools inspect "$IMAGE:$TAG"
