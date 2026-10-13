@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -206,5 +207,152 @@ func TestRotateClosesTheDayAndANewLogStarts(t *testing.T) {
 	}
 	if none, err := l.Rotate(1, "2026-10-12"); err != nil || none != "" {
 		t.Fatalf("Rotate with no log = %q, %v; want \"\"", none, err)
+	}
+}
+
+func ev(id string, project int64, at string) store.Event {
+	return store.Event{ID: id, ProjectID: project, Family: store.FamilyProduct, EventName: "x", TS: ts(at)}
+}
+
+// TestFailedSyncRemembersNoID: a flush whose fsync failed is retried by the
+// pipeline; the retry must write and sync again, not pass as already done.
+func TestFailedSyncRemembersNoID(t *testing.T) {
+	l := openLog(t)
+	l.failSync = func(*os.File) error { return errors.New("disk on fire") }
+	e := ev("a", 1, "2026-10-12T10:00:00Z")
+	if err := l.WriteEvents(context.Background(), []store.Event{e}); err == nil {
+		t.Fatal("WriteEvents = nil, want the fsync error")
+	}
+	if len(l.seen) != 0 {
+		t.Fatalf("seen = %v after a failed flush, want none", l.seen)
+	}
+	synced := 0
+	l.failSync = func(f *os.File) error { synced++; return f.Sync() }
+	if err := l.WriteEvents(context.Background(), []store.Event{e}); err != nil {
+		t.Fatal(err)
+	}
+	if synced != 1 {
+		t.Fatalf("the retry synced %d files, want 1", synced)
+	}
+	if len(l.seen) != 1 {
+		t.Fatalf("seen = %v after the retry, want the id", l.seen)
+	}
+	// The first attempt's bytes were appended too: a duplicate line the
+	// dump's DISTINCT ON drops.
+	if n := len(lines(t, filepath.Join(l.Dir(), "1", "2026-10-12.log"))); n != 2 {
+		t.Fatalf("%d lines, want 2", n)
+	}
+}
+
+// TestFailedSecondFileSyncsTheFirstOnRetry: a batch spanning two logs whose
+// second append fails leaves the first unsynced; the retry must sync it.
+func TestFailedSecondFileSyncsTheFirstOnRetry(t *testing.T) {
+	l := openLog(t)
+	sep := string(os.PathSeparator)
+	l.failWrite = func(f *os.File, b []byte) (int, error) {
+		if strings.Contains(f.Name(), sep+"2"+sep) {
+			return f.Write(b[:len(b)/2])
+		}
+		return f.Write(b)
+	}
+	batch := []store.Event{ev("a", 1, "2026-10-12T10:00:00Z"), ev("b", 2, "2026-10-12T10:00:00Z")}
+	if err := l.WriteEvents(context.Background(), batch); err == nil {
+		t.Fatal("WriteEvents = nil, want the short write's error")
+	}
+	if len(l.seen) != 0 {
+		t.Fatalf("seen = %v after a failed batch, want none (file 1 was never synced)", l.seen)
+	}
+	l.failWrite = nil
+	var synced []string
+	l.failSync = func(f *os.File) error { synced = append(synced, f.Name()); return f.Sync() }
+	if err := l.WriteEvents(context.Background(), batch); err != nil {
+		t.Fatal(err)
+	}
+	if len(synced) != 2 {
+		t.Fatalf("the retry synced %v, want both logs", synced)
+	}
+	if n := len(lines(t, filepath.Join(l.Dir(), "2", "2026-10-12.log"))); n != 1 {
+		t.Fatalf("project 2: %d lines, want 1 (the failed write was cut back)", n)
+	}
+}
+
+// TestFailedCutBackReopensAndCutsTheTail: when the cut-back itself fails the
+// half line stays on disk; the descriptor is dropped, and the next append
+// reopens the file and cuts the tail before writing.
+func TestFailedCutBackReopensAndCutsTheTail(t *testing.T) {
+	l := openLog(t)
+	path := filepath.Join(l.Dir(), "1", "2026-10-12.log")
+	if err := l.WriteEvents(context.Background(), []store.Event{ev("a", 1, "2026-10-12T10:00:00Z")}); err != nil {
+		t.Fatal(err)
+	}
+	l.failWrite = func(f *os.File, b []byte) (int, error) { return f.Write(b[:len(b)/2]) }
+	l.failTruncate = func(*os.File, int64) error { return errors.New("cannot truncate") }
+	if err := l.WriteEvents(context.Background(), []store.Event{ev("b", 1, "2026-10-12T11:00:00Z")}); err == nil {
+		t.Fatal("WriteEvents = nil, want an error")
+	}
+	if b, _ := os.ReadFile(path); bytes.HasSuffix(b, []byte("\n")) {
+		t.Fatalf("log = %q, want the half line still on disk (the cut-back failed)", b)
+	}
+	if len(l.files) != 0 {
+		t.Fatalf("%d descriptors kept after a failed cut-back, want none", len(l.files))
+	}
+	l.failWrite, l.failTruncate = nil, nil
+	if err := l.WriteEvents(context.Background(), []store.Event{ev("b", 1, "2026-10-12T11:00:00Z")}); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(lines(t, path)); n != 2 { // lines fails the test on a torn line
+		t.Fatalf("%d lines, want 2", n)
+	}
+}
+
+// TestCutTornLineReadsOnlyTheTail covers a torn tail longer than a read
+// chunk, a log with no newline at all, and a clean log.
+func TestCutTornLineReadsOnlyTheTail(t *testing.T) {
+	dir := t.TempDir()
+	good := strings.Repeat("{\"id\":\"a\"}\n", 3)
+	for name, tc := range map[string]struct{ in, want string }{
+		"long tail":  {good + strings.Repeat("x", 10000), good},
+		"no newline": {strings.Repeat("x", 5000), ""},
+		"clean":      {good, good},
+		"empty":      {"", ""},
+	} {
+		p := filepath.Join(dir, strings.ReplaceAll(name, " ", "_")+".log")
+		if err := os.WriteFile(p, []byte(tc.in), 0o640); err != nil {
+			t.Fatal(err)
+		}
+		if err := cutTornLine(p); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if b, _ := os.ReadFile(p); string(b) != tc.want {
+			t.Errorf("%s: log = %d bytes, want %d", name, len(b), len(tc.want))
+		}
+	}
+}
+
+// TestRotateReturnsStatErrors: a Stat error other than "not there" ends
+// Rotate (and releases the lock) instead of looping on it. Needs a directory
+// the process cannot search, so it is skipped as root.
+func TestRotateReturnsStatErrors(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root searches any directory")
+	}
+	l := openLog(t)
+	if err := l.WriteEvents(context.Background(), []store.Event{ev("a", 1, "2026-10-12T10:00:00Z")}); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(l.Dir(), "1")
+	if err := os.Chmod(dir, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0o750) })
+	done := make(chan error, 1)
+	go func() { _, err := l.Rotate(1, "2026-10-12"); done <- err }()
+	select {
+	case err := <-done:
+		if err == nil || !errors.Is(err, os.ErrPermission) {
+			t.Fatalf("Rotate error = %v, want a permission error", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Rotate hangs on a Stat error")
 	}
 }

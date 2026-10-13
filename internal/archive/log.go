@@ -35,8 +35,10 @@ type Log struct {
 	files map[logKey]*os.File
 	seen  map[string]time.Time
 	now   func() time.Time
-	// failWrite, when set, replaces the file write (tests).
-	failWrite func(f *os.File, b []byte) (int, error)
+	// Test hooks: when set, each replaces the file operation it names.
+	failWrite    func(f *os.File, b []byte) (int, error)
+	failTruncate func(f *os.File, size int64) error
+	failSync     func(f *os.File) error
 }
 
 type logKey struct {
@@ -62,28 +64,59 @@ func OpenLog(dir string) (*Log, error) {
 	return &Log{dir: dir, files: map[logKey]*os.File{}, seen: map[string]time.Time{}, now: time.Now}, nil
 }
 
-// cutTornLine truncates path after its last newline.
+// cutTornLine truncates path after its last newline. It reads the file
+// from the end, so a long log costs one chunk, not a full read.
 func cutTornLine(path string) error {
-	b, err := os.ReadFile(path)
+	f, err := os.OpenFile(path, os.O_RDWR, 0)
 	if err != nil {
 		return fmt.Errorf("archive: %w", err)
 	}
-	keep := bytes.LastIndexByte(b, '\n') + 1
-	if keep == len(b) {
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return fmt.Errorf("archive: %w", err)
+	}
+	keep, err := afterLastNewline(f, st.Size())
+	if err != nil {
+		return fmt.Errorf("archive: %w", err)
+	}
+	if keep == st.Size() {
 		return nil
 	}
-	if err := os.Truncate(path, int64(keep)); err != nil {
+	if err := f.Truncate(keep); err != nil {
 		return fmt.Errorf("archive: %w", err)
 	}
 	return nil
 }
 
+// afterLastNewline returns the offset just past the last newline in the
+// first size bytes of f, or 0 when there is none.
+func afterLastNewline(f *os.File, size int64) (int64, error) {
+	buf := make([]byte, 4096)
+	for pos := size; pos > 0; {
+		n := int64(len(buf))
+		if n > pos {
+			n = pos
+		}
+		pos -= n
+		if got, err := f.ReadAt(buf[:n], pos); err != nil && !(errors.Is(err, io.EOF) && int64(got) == n) {
+			return 0, err
+		}
+		if i := bytes.LastIndexByte(buf[:n], '\n'); i >= 0 {
+			return pos + int64(i) + 1, nil
+		}
+	}
+	return 0, nil
+}
+
 func (l *Log) Dir() string { return l.dir }
 
 // WriteEvents appends each event not written in the last recentIDs to its
-// project and day's log, then fsyncs every log it touched. A write that
-// fails is cut back to the file's previous size and its ids are not
-// remembered, so the pipeline's retry writes them again.
+// project and day's log, then fsyncs every log it touched. Ids are
+// remembered only once every touched log has synced: on any error none is,
+// so the pipeline's retry writes the batch again (a line may then appear
+// twice, which the dump's DISTINCT ON drops) and syncs it again. A write
+// that fails is cut back to the file's previous size.
 func (l *Log) WriteEvents(ctx context.Context, evs []store.Event) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -94,8 +127,8 @@ func (l *Log) WriteEvents(ctx context.Context, evs []store.Event) error {
 		}
 	}
 	batch := map[logKey]*bytes.Buffer{}
-	ids := map[logKey][]string{}
 	var order []logKey
+	var written []string
 	inBatch := map[string]bool{}
 	for _, e := range evs {
 		if _, ok := l.seen[e.ID]; ok || inBatch[e.ID] {
@@ -112,7 +145,7 @@ func (l *Log) WriteEvents(ctx context.Context, evs []store.Event) error {
 			order = append(order, k)
 		}
 		batch[k].Write(b)
-		ids[k] = append(ids[k], e.ID)
+		written = append(written, e.ID)
 	}
 	var touched []*os.File
 	for _, k := range order {
@@ -120,26 +153,35 @@ func (l *Log) WriteEvents(ctx context.Context, evs []store.Event) error {
 		if err != nil {
 			return err
 		}
-		if err := l.append(f, batch[k].Bytes()); err != nil {
+		if err := l.append(k, f, batch[k].Bytes()); err != nil {
 			return err
-		}
-		for _, id := range ids[k] {
-			l.seen[id] = now
 		}
 		touched = append(touched, f)
 	}
 	var errs []error
 	for _, f := range touched {
-		if err := f.Sync(); err != nil {
+		sync := f.Sync
+		if l.failSync != nil {
+			sync = func() error { return l.failSync(f) }
+		}
+		if err := sync(); err != nil {
 			errs = append(errs, fmt.Errorf("archive: %w", err))
 		}
 	}
-	return errors.Join(errs...)
+	if err := errors.Join(errs...); err != nil {
+		return err
+	}
+	for _, id := range written {
+		l.seen[id] = now
+	}
+	return nil
 }
 
 // append writes b at the end of f in one write, cutting f back to its
-// previous size if the write fails or falls short.
-func (l *Log) append(f *os.File, b []byte) error {
+// previous size if the write fails or falls short. If the cut-back fails
+// too, f is closed and forgotten: the next append reopens the file and
+// cuts its torn tail first, so no line is ever appended after one.
+func (l *Log) append(k logKey, f *os.File, b []byte) error {
 	st, err := f.Stat()
 	if err != nil {
 		return fmt.Errorf("archive: %w", err)
@@ -153,7 +195,13 @@ func (l *Log) append(f *os.File, b []byte) error {
 		err = io.ErrShortWrite
 	}
 	if err != nil {
-		if terr := f.Truncate(st.Size()); terr != nil {
+		cut := f.Truncate
+		if l.failTruncate != nil {
+			cut = func(size int64) error { return l.failTruncate(f, size) }
+		}
+		if terr := cut(st.Size()); terr != nil {
+			delete(l.files, k)
+			f.Close()
 			return fmt.Errorf("archive: %w (and cutting it back: %v)", err, terr)
 		}
 		return fmt.Errorf("archive: %w", err)
@@ -170,7 +218,11 @@ func (l *Log) file(k logKey) (*os.File, error) {
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return nil, fmt.Errorf("archive: %w", err)
 	}
-	f, err := os.OpenFile(filepath.Join(dir, k.day+".log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o640)
+	path := filepath.Join(dir, k.day+".log")
+	if err := cutTornLine(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o640)
 	if err != nil {
 		return nil, fmt.Errorf("archive: %w", err)
 	}
@@ -196,15 +248,22 @@ func (l *Log) Rotate(project int64, day string) (string, error) {
 	src := filepath.Join(dir, day+".log")
 	if _, err := os.Stat(src); errors.Is(err, os.ErrNotExist) {
 		return "", nil
+	} else if err != nil {
+		return "", fmt.Errorf("archive: %w", err)
 	}
 	for n := 1; ; n++ {
 		dst := filepath.Join(dir, day+"."+strconv.Itoa(n)+".closed")
-		if _, err := os.Stat(dst); errors.Is(err, os.ErrNotExist) {
-			if err := os.Rename(src, dst); err != nil {
-				return "", fmt.Errorf("archive: %w", err)
-			}
-			return dst, nil
+		_, err := os.Stat(dst)
+		if err == nil {
+			continue
 		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", fmt.Errorf("archive: %w", err)
+		}
+		if err := os.Rename(src, dst); err != nil {
+			return "", fmt.Errorf("archive: %w", err)
+		}
+		return dst, nil
 	}
 }
 
