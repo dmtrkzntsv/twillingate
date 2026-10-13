@@ -317,6 +317,31 @@ One server takes up to **1M events a month** and keeps raw events for up to
   the docs' personal-data warning applies to the files, and erasure covers
   them by rewrite.
 
+- **D18. Identity stitching on read.** The log keeps every identifier the
+  client sent, unresolved: `visitor_id` (the persisted id the SDK makes
+  with consent, or the daily-salted hash without it), `install_id`,
+  `user_id`, `group_id`, `session_id`, beside `actor_id` as ingest resolves
+  it today, so nothing changes meaning on upgrade. The dump derives a third
+  small table at day close, `aliases/<project>.parquet`: every distinct
+  `(user_id, visitor_id)` and `(user_id, install_id)` pair seen on one
+  event, with first and last seen; rebuilt from the archive like D16 and
+  D17. A person's events are then one join: `user_id = U OR visitor_id IN
+  (…) OR install_id IN (…)`, which attributes pre-login events, several
+  devices and a web visitor who signs up in the app, retroactively and only
+  at read. Explicit merges (two accounts become one; a client's
+  `alias(old, new)`) are rules in SQLite like event and attribute renames,
+  applied on read by the engine's views (D6), never by rewriting files;
+  the child receives the mapping rows with the file list. Extra
+  identifiers a client has (an email hash, a CRM id) are attributes, so
+  columns, and the same derivation covers them if needed. The anonymous
+  daily hash is never stitched: its salt is destroyed daily so no two days
+  join, and `aliases` holds only persisted ids, which exist only with
+  consent. **Default off in dashboards:** DAU and top users count by
+  `user_id` and visitors by `actor_id` as today, so no number moves on
+  upgrade; the timeline, the `identities` tool and any widget that joins
+  `aliases` use stitching. Making it the default is a later flag; the data
+  supports both.
+
 ### Hosting
 
 - **D14. One process per customer stays.** The event side (D2) makes a
