@@ -185,8 +185,9 @@ One server takes up to **1M events a month** and keeps raw events for up to
   mapping from the log's JSON to the columns is one SQL statement in the
   dump (D2), the only place the schema is spelled out. Key sanitizing and
   collisions follow `flatview.go`'s rules.
-- **D5. Retention deletes whole files.** `RETENTION_RAW_DAYS` keeps its
-  name, means raw kept, and goes up to 1095 days. The pass
+- **D5. Retention deletes whole files.** One variable, `RETENTION_DAYS`
+  (D23), default 400, replaces the raw and aggregate pair: there is one
+  kind of event data now. The pass
   deletes month files entirely older than it. No `DELETE` over millions of
   rows, no free pages, no `VACUUM`.
 - **D6. Files are immutable; rules apply when read.** Event and attribute
@@ -372,7 +373,7 @@ One server takes up to **1M events a month** and keeps raw events for up to
   reports the events received in the last 30 days, the sum of the day
   files' footer row counts plus the open logs' line counts for those days
   (a few KB and ~10 ms a day; the 5-minute cache stays). Retention is a
-  plan term, 13 months or more, applied as `RETENTION_RAW_DAYS`. Derived
+  plan term, 13 months or more, applied as `RETENTION_DAYS`. Derived
   tables (D16–D18) count for nothing.
 - **D21. `query` may scan everything.** No range or filter is required: a
   3-year question is the point, and the worst measured is 8 s at 2
@@ -392,6 +393,33 @@ One server takes up to **1M events a month** and keeps raw events for up to
   looks nothing up at ingest. A client that sends nothing (the Plausible
   shim, a server-side sender) gets a submission without attribution.
   `docs/twillingate.md` documents the fields.
+
+- **D23. Configuration.** The caps and the raw/aggregate split leave with
+  the data they governed (settled 2026-10-12).
+  - **Removed:** `RETENTION_RAW_DAYS` and `RETENTION_AGGREGATE_DAYS` with
+    their deprecated aliases (`RETENTION_EVENTS_*`, `RETENTION_VIEWS_*`,
+    `RETENTION_PRODUCT_*`, `RETENTION_WEB_RAW_DAYS`,
+    `RETENTION_APP_AGGREGATE_DAYS`); `ATTRIBUTE_VALUES_TOP_N`,
+    `ATTRIBUTE_BREAKDOWNS_MAX`, `IDENTITIES_TOP_N` (D11). A set value is
+    reported at boot and ignored for one release, then refused.
+  - **New:** `RETENTION_DAYS` (default 400: days of events kept, as month
+    files, D5); `INGEST_LATE_DAYS` (default 1, D3);
+    `ENGINE_MEMORY_LIMIT` (default `512MB`, D8); `ENGINE_MAX_CHILDREN` (the
+    machine-wide cap, default 2, D8). Threads follow the CPUs, the raw
+    directory sits beside the SQLite file, the dump runs at day close: no
+    variable for any of them.
+  - **Unchanged:** `BUFFER_FLUSH_INTERVAL`, `BUFFER_FLUSH_MAX_EVENTS` and
+    `BUFFER_CAPACITY` (the flush is now the log's fsync);
+    `RETENTION_FORMS_DRAFT_DAYS`, `RETENTION_ARCHIVED_DAYS`;
+    `CONSOLE_QUERY_TIMEOUT` and `CONSOLE_QUERY_ROWS_MAX` (D21);
+    `REPORTING_CACHE_MAX_AGE` and `REPORTING_REFRESH_MAX_AGE`, which now
+    spare the engine rather than SQLite and are the first candidates to
+    drop once dashboards are measured in production; the addresses, URLs,
+    auth, geo and logging variables.
+  - `docs/deployment.md` loses its "keep the caps on" and "lower the raw
+    window" advice and gains the memory guidance from the Measurements
+    (1 GB, the child's limit, `GOMEMLIMIT` not covering it);
+    `internal/api/docs_sync_test.go` binds the new list.
 
 ### Hosting
 
