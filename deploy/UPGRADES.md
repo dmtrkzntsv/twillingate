@@ -789,3 +789,13 @@ operators:
   files; Litestream replicates only the database, so nothing to change.
 
 Rollback: the previous release's binary or image; nothing on disk differs.
+
+### Upgrading to the event files (no migration)
+
+Ingest now also writes every event under `raw/` in the data directory: a log per project and day, a Parquet file per day after it ends, a file per month once the month is final. Nothing reads them yet; SQLite still answers every query. Expect, at the cap of 1M events a month, about 40 MB of logs a day before the dump and about 50 MB of Parquet a month after it.
+
+- New setting `RETENTION_DAYS` (default 400): months of files older than it are deleted.
+- Back up `raw/` with the database from now on (`docs/deployment.md`, "Back up and restore"); Litestream does not cover it.
+- The engine child runs once a day for the dump and merge (`twillingate engine -check` shows it starts).
+
+Rollback: an older binary ignores `raw/`; delete it if you go back for good.
