@@ -73,7 +73,7 @@ type EngineConfig struct {
 }
 
 // The engine defaults: 512 MB is the least a COUNT(DISTINCT) over three
-// years at the cap runs in, and two children fit a 2 GB host.
+// years at the cap runs in, and two children are for a split install's two processes.
 const (
 	DefaultEngineMemoryLimit = "512MB"
 	DefaultEngineMaxChildren = 2

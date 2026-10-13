@@ -17,8 +17,9 @@ chmod +x "$bin/twillingate"
 docker run --rm -v "$PWD:/src:ro" -v "$bin/twillingate:/src-bin/twillingate:ro" debian:bookworm-slim \
   bash /src/scripts/test-install-inner.sh
 
-# The glibc refusal names its reason (remote mode, before any download): a
-# getconf that fails is a musl host, one that prints 2.31 is too old.
+# The refusals name their reason, before any download or install, in remote
+# mode and in local mode (a hand-unpacked tarball): a getconf that fails is a
+# musl host, one that prints 2.31 is too old, armv7l is 32-bit ARM.
 docker run --rm -v "$PWD/deploy/systemd/install.sh:/opt/a/b/install.sh:ro" debian:bookworm-slim bash -c '
   mkdir /fake && printf "#!/bin/sh\nexit 0\n" > /fake/curl && chmod +x /fake/curl
   refuses() { # <getconf script body> <expected text>
@@ -28,4 +29,17 @@ docker run --rm -v "$PWD/deploy/systemd/install.sh:/opt/a/b/install.sh:ro" debia
   }
   refuses "exit 1" "needs glibc 2.35 or newer; this system has none"
   refuses "echo glibc 2.31" "found 2.31"
+  printf "#!/bin/sh\nexit 0\n" > /fake/getconf && chmod +x /fake/getconf
+  printf "#!/bin/sh\n[ \"\$1\" = -m ] && echo armv7l || echo Linux\n" > /fake/uname && chmod +x /fake/uname
+  out="$(PATH=/fake:$PATH bash /opt/a/b/install.sh --yes 2>&1)" && { echo "FAIL: installer did not refuse armv7l"; exit 1; }
+  case "$out" in *"32-bit ARM is no longer built"*) echo "ok: refuses 32-bit ARM" ;; *) echo "FAIL: got: $out"; exit 1 ;; esac
+  rm /fake/uname
+  # Local mode: the layout of an unpacked release tarball.
+  mkdir -p /opt/pkg/deploy/systemd
+  cp /opt/a/b/install.sh /opt/pkg/deploy/systemd/install.sh
+  touch /opt/pkg/deploy/systemd/twillingate.service
+  printf "#!/bin/sh\n" > /opt/pkg/twillingate && chmod +x /opt/pkg/twillingate
+  printf "#!/bin/sh\nexit 1\n" > /fake/getconf
+  out="$(PATH=/fake:$PATH bash /opt/pkg/deploy/systemd/install.sh --yes 2>&1)" && { echo "FAIL: local mode did not refuse"; exit 1; }
+  case "$out" in *"needs glibc 2.35 or newer; this system has none"*) echo "ok: local mode refuses too" ;; *) echo "FAIL: got: $out"; exit 1 ;; esac
 '

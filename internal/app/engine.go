@@ -12,7 +12,10 @@ import (
 // EngineOptions lays the engine out beside the database: raw/ is the one
 // directory its SQL reaches (PR 3 keeps the events there), engine/ holds
 // the spill directories and the slot locks. The SQLite file stays outside
-// raw/, so widget SQL never has a path to it (raw-first spec D8).
+// raw/, so widget SQL never has a path to it (raw-first spec D8). The child's
+// SQL can write and delete inside raw/ (DuckDB's allowed directory is
+// read-write): before the engine has a caller (roadmap PR 3), requests other
+// than the dump must be refused unless they are read-only.
 func EngineOptions(cfg *config.Config) (engine.Options, error) {
 	self, err := os.Executable()
 	if err != nil {

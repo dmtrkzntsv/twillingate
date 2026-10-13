@@ -105,7 +105,7 @@ install too.
 ```bash
 make check       # what PR CI runs: vet + coverage gate
 make test        # the full suite under -race (slow; the release runs it)
-make build       # single binary (needs Go and Node 22: it builds web/ first)
+make build       # single binary (needs Go, Node 22 and a C toolchain: it builds web/ first, and DuckDB links through cgo)
 make run         # local server on 127.0.0.1:8080 with a dev project
 make smoke       # boot the real binary, POST a batch, verify rows land
 make seed-demo   # 180 days of demo traffic in local/twillingate.db

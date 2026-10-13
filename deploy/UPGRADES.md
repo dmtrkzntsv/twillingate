@@ -776,10 +776,12 @@ operators:
   the 64-bit OS first (a Pi 3, 4, 5 or Zero 2 W runs it); the installer
   refuses `armv7l` and `armv6l`. ARMv7 NAS boxes and boards stay on the
   previous release.
-- **glibc 2.35 or newer** (Debian 12, Ubuntu 22.04, RHEL 9 or later); the
+- **glibc 2.35 or newer** (Debian 12, Ubuntu 22.04 or later); the
   installer checks. Check first: `getconf GNU_LIBC_VERSION`.
 - **The image is Debian-based** (`debian:bookworm-slim`, from Alpine), same
-  user and ids (10001), same volume; `docker compose pull` as usual.
+  user and ids (10001), same volume; `docker compose pull` as usual. It has
+  no `linux/arm/v7` any more: a 32-bit ARM Docker host pins the previous
+  release's tag (`TWILLINGATE_VERSION=` in `.env`).
 - The binary grows from about 15 MB to about 80 MB.
 - Two settings, `ENGINE_MEMORY_LIMIT` and `ENGINE_MAX_CHILDREN`, and an
   `engine/` directory beside the database once an engine child has run
