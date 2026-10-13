@@ -18,6 +18,21 @@ type Sink interface {
 	WriteEvents(ctx context.Context, evs []store.Event) error
 }
 
+// Sinks writes a batch to each sink in order and stops at the first
+// error. The buffer then retries the whole batch, so each sink must ignore
+// what it already holds: SQLite by primary key, the archive log by its
+// recent ids.
+type Sinks []Sink
+
+func (s Sinks) WriteEvents(ctx context.Context, evs []store.Event) error {
+	for _, k := range s {
+		if err := k.WriteEvents(ctx, evs); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 var retryDelays = []time.Duration{time.Second, 5 * time.Second, 25 * time.Second}
 
 type Buffer struct {

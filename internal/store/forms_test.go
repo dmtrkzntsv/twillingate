@@ -42,3 +42,17 @@ func TestKeepFields(t *testing.T) {
 		t.Errorf("approved keeps expected only: got %v, want %v", got, want)
 	}
 }
+
+func TestStoredEventIsTheSubmissionsShape(t *testing.T) {
+	at := time.Date(2026, 10, 12, 9, 0, 0, 0, time.UTC)
+	n := NewSubmission{
+		Submission: Submission{ProjectID: 4, ID: "sub-1", Form: "contact", ReceivedAt: at},
+		Event:      Event{ID: "other", ProjectID: 9, EventName: "x", Path: "/contact", Attributes: map[string]string{"a": "b"}},
+	}
+	e := n.StoredEvent()
+	if e.ID != "sub-1" || e.ProjectID != 4 || !e.TS.Equal(at) || !e.ReceivedAt.Equal(at) ||
+		e.Family != FamilyProduct || e.EventName != FormSubmitEvent || e.Path != "/contact" ||
+		len(e.Attributes) != 1 || e.Attributes["form"] != "contact" {
+		t.Fatalf("StoredEvent = %+v", e)
+	}
+}

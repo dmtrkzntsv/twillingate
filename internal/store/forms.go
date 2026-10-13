@@ -101,3 +101,18 @@ type NewSubmission struct {
 	DraftUntil time.Time
 	Event      Event
 }
+
+// StoredEvent is the $form_submit event an approved form's submission is
+// stored as: the submission's id, project and instant (a later delete
+// finds the event by them), the product family, and the form's name as
+// its only attribute; the rest (session, environment) as ingest set it.
+func (n NewSubmission) StoredEvent() Event {
+	ev, sub := n.Event, n.Submission
+	ev.ID, ev.ProjectID, ev.TS = sub.ID, sub.ProjectID, sub.ReceivedAt
+	ev.Family, ev.EventName = FamilyProduct, FormSubmitEvent
+	ev.Attributes = map[string]string{"form": sub.Form}
+	if ev.ReceivedAt.IsZero() {
+		ev.ReceivedAt = sub.ReceivedAt
+	}
+	return ev
+}

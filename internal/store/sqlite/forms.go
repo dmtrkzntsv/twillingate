@@ -164,16 +164,8 @@ func (d *DB) WriteSubmission(ctx context.Context, n store.NewSubmission) (store.
 		if form.Status != store.FormApproved {
 			return nil
 		}
-		ev := n.Event
-		// The event's shape is the store's, not the caller's: the same id,
-		// project and instant as the submission (a later delete finds it
-		// by them), and nothing but the form's name as attribute.
-		ev.ID, ev.ProjectID, ev.TS = sub.ID, sub.ProjectID, sub.ReceivedAt
-		ev.Family, ev.EventName = store.FamilyProduct, store.FormSubmitEvent
-		ev.Attributes = map[string]string{"form": sub.Form}
-		if ev.ReceivedAt.IsZero() {
-			ev.ReceivedAt = sub.ReceivedAt
-		}
+		// The event's shape is the store's (store.NewSubmission.StoredEvent).
+		ev := n.StoredEvent()
 		keys, err := insertEvents(ctx, tx, []store.Event{ev})
 		if err != nil {
 			return err
