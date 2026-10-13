@@ -118,6 +118,20 @@ func TestMaintainDumpsClosedDaysOnly(t *testing.T) {
 	}
 }
 
+// TestDumpOrdersByFamilyAndTS: the day file's rows are in (family, ts)
+// order, whatever order the log holds them in.
+func TestDumpOrdersByFamilyAndTS(t *testing.T) {
+	f := newFixture(t)
+	view := evOf(1, "v", "2026-10-11T09:00:00Z")
+	view.Family = store.FamilyViews
+	f.write(t, evOf(1, "late", "2026-10-11T23:00:00Z"), view, evOf(1, "early", "2026-10-11T01:00:00Z"), evOf(1, "mid", "2026-10-11T12:00:00Z"))
+	f.maintain(t, "2026-10-12")
+	got := f.values(t, "SELECT id FROM read_parquet('"+f.project1("2026-10-11.parquet")+"')")
+	if want := []string{"[early]", "[mid]", "[late]", "[v]"}; !eq(got, want) {
+		t.Fatalf("rows = %v, want %v (product before views, each by ts)", got, want)
+	}
+}
+
 func TestDumpDropsDuplicateIDs(t *testing.T) {
 	f := newFixture(t)
 	f.write(t, evOf(1, "a", "2026-10-11T10:00:00Z"))
@@ -405,13 +419,20 @@ func TestDumpKeepsKeysEqualButForCase(t *testing.T) {
 }
 
 // TestDumpReadsAnyKey: a key is a JSON pointer and a column name, whatever
-// characters it holds.
+// characters it holds. NUL cannot be in the SQL text (DuckDB reads it as a
+// C string), so its column is named with the visible \u0000, which a key
+// holding that text then collides with.
 func TestDumpReadsAnyKey(t *testing.T) {
 	f := newFixture(t)
-	f.write(t, withAttrs(evOf(1, "a", "2026-10-11T10:00:00Z"), "", map[string]string{"a-b c": "1", `q"u'o`: "2", "x/y~z": "3", "a$.[0]": "4"}))
+	f.write(t, withAttrs(evOf(1, "a", "2026-10-11T10:00:00Z"), "", map[string]string{"a-b c": "1", `q"u'o`: "2",
+		"x/y~z": "3", "a$.[0]": "4", "nul\x00k": "5", `nul\u0000k`: "6", "t\tb\nc\x01\x7f": "7"}))
 	f.maintain(t, "2026-10-12")
-	got := f.values(t, `SELECT "attr_a-b c", "attr_q""u'o", "attr_x/y~z", "attr_a$.[0]" FROM read_parquet('`+f.project1("2026-10-11.parquet")+`')`)
-	if want := []string{"[1 2 3 4]"}; !eq(got, want) {
+	if got := f.files(t); !eq(got, []string{"2026-10-11.parquet"}) {
+		t.Fatalf("files = %v, want the day dumped", got)
+	}
+	got := f.values(t, `SELECT "attr_a-b c", "attr_q""u'o", "attr_x/y~z", "attr_a$.[0]", "attr_nul\u0000k", "attr_nul\u0000k_1", `+
+		"\"attr_t\tb\nc\x01\x7f\" FROM read_parquet('"+f.project1("2026-10-11.parquet")+"')")
+	if want := []string{"[1 2 3 4 5 6 7]"}; !eq(got, want) {
 		t.Fatalf("rows = %v, want %v", got, want)
 	}
 }

@@ -182,11 +182,11 @@ func (a *Archive) dump(ctx context.Context, dir, pending string) error {
 	src := filepath.Join(dir, pending)
 	out := strings.TrimSuffix(src, ".dumping")
 	if !exists(out) {
-		rows, err := typedRows(src)
+		q, err := dumpQuery(src)
 		if err != nil {
 			return err
 		}
-		q := "COPY (SELECT DISTINCT ON (id) * FROM (" + rows + ") ORDER BY family, ts) TO "
+		q = "COPY (" + q + ") TO "
 		if err := a.write(ctx, q, out); err != nil {
 			return err
 		}
@@ -197,13 +197,22 @@ func (a *Archive) dump(ctx context.Context, dir, pending string) error {
 	return syncFile(dir)
 }
 
-// typedRows is a SELECT of a log's rows with every column's type spelled
-// out: DuckDB inferring them from one day's values would rewrite a value
-// for good ("ABCDEF01-…" read as a UUID comes back lower case, "12:30" as a
-// TIME comes back "12:30:00") and leave a month whose days inferred
-// different types unable to merge. The fixed keys take their type from
-// fields, every other key (attr_<key>, the key as stored) is VARCHAR, and
-// every fixed column is there even when no line has it.
+// dumpQuery is the dump's SELECT of a log: every line once per id, ordered
+// by family and ts, with every column's type spelled out. DuckDB inferring
+// the types from one day's values would rewrite a value for good
+// ("ABCDEF01-…" read as a UUID comes back lower case, "12:30" as a TIME
+// comes back "12:30:00") and leave a month whose days inferred different
+// types unable to merge. The fixed keys take their type from fields, every
+// other key (attr_<key>, the key as stored) is VARCHAR, and every fixed
+// column is there even when no line has it.
+//
+// The de-duplication and the sort carry each line's text with only the
+// three keys they need, and the columns are extracted after, as the rows
+// stream into the file; the sort is a query of its own around the
+// DISTINCT ON, which keeps any one line of a repeated id (the same event,
+// written twice). Carrying the ~50 extracted values through them, or one
+// DISTINCT ON … ORDER BY, runs out of memory on a log half the size
+// (measure_test.go).
 //
 // Each key is extracted by JSON pointer, so its case is kept; DuckDB's
 // column names are not case-sensitive, though (read_ndjson's columns={…}
@@ -211,16 +220,38 @@ func (a *Archive) dump(ctx context.Context, dir, pending string) error {
 // case, the first in byte order keeps its name and each next one is named
 // <key>_<n>, the first n free: attr_Plan, attr_plan_1. Which column such a
 // key lands in can differ between days; no value is dropped.
-func typedRows(path string) (string, error) {
-	keys, err := logKeys(path)
+func dumpQuery(path string) (string, error) {
+	cols, err := columns(path)
 	if err != nil {
 		return "", err
 	}
+	paths := make([]string, len(cols))
+	sel := make([]string, len(cols))
+	for i, c := range cols {
+		paths[i] = c.pointer()
+		sel[i] = "CAST(f[" + strconv.Itoa(i+1) + "] AS " + c.typ + ") AS " + c.ident()
+	}
+	lines := "SELECT json, json_extract_string(json, '/id') AS id, json_extract_string(json, '/family') AS family, " +
+		"CAST(json_extract_string(json, '/ts') AS TIMESTAMP) AS ts FROM read_json_objects(" + quote(path) + ", format='newline_delimited')"
+	unique := "SELECT json FROM (SELECT DISTINCT ON (id) json, family, ts FROM (" + lines + ")) ORDER BY family, ts"
+	return "SELECT " + strings.Join(sel, ", ") + " FROM (SELECT json_extract_string(json, [" + strings.Join(paths, ", ") +
+		"]) AS f FROM (" + unique + "))", nil
+}
+
+// column is a key of a log and the column the dump reads it into.
+type column struct{ key, name, typ string }
+
+// columns lists the columns of a log's dump: fields, then every other key.
+func columns(path string) ([]column, error) {
+	keys, err := logKeys(path)
+	if err != nil {
+		return nil, err
+	}
 	taken := map[string]bool{}
-	var cols, names, types []string
+	var cols []column
 	add := func(key, name, typ string) {
 		taken[strings.ToLower(name)] = true
-		cols, names, types = append(cols, key), append(names, name), append(types, typ)
+		cols = append(cols, column{key, name, typ})
 	}
 	for _, f := range fields {
 		add(f.name, f.name, f.typ)
@@ -232,29 +263,41 @@ func typedRows(path string) (string, error) {
 	}
 	slices.Sort(rest)
 	for _, k := range rest {
-		if taken[strings.ToLower(k)] {
+		if taken[strings.ToLower(visible(k))] {
 			later = append(later, k)
 			continue
 		}
-		add(k, k, "VARCHAR")
+		add(k, visible(k), "VARCHAR")
 	}
 	for _, k := range later {
-		name := k
+		name := visible(k)
 		for n := 1; taken[strings.ToLower(name)]; n++ {
-			name = k + "_" + strconv.Itoa(n)
+			name = visible(k) + "_" + strconv.Itoa(n)
 		}
 		add(k, name, "VARCHAR")
 	}
-	pointer := strings.NewReplacer("~", "~0", "/", "~1")
-	paths := make([]string, len(cols))
-	sel := make([]string, len(cols))
-	for i, k := range cols {
-		paths[i] = quote("/" + pointer.Replace(k))
-		sel[i] = "CAST(f[" + strconv.Itoa(i+1) + "] AS " + types[i] + `) AS "` + strings.ReplaceAll(names[i], `"`, `""`) + `"`
-	}
-	return "SELECT " + strings.Join(sel, ", ") + " FROM (SELECT json_extract_string(json, [" + strings.Join(paths, ", ") +
-		"]) AS f FROM read_json_objects(" + quote(path) + ", format='newline_delimited'))", nil
+	return cols, nil
 }
+
+// visible is key as a column name: NUL, which SQL text cannot hold (DuckDB
+// reads it as a C string, cut at the first NUL), becomes the text \u0000.
+// Every other character, control ones included, is kept as stored.
+func visible(key string) string { return strings.ReplaceAll(key, "\x00", `\u0000`) }
+
+// pointer is the column's key as a JSON pointer, in SQL: a string
+// literal, with each NUL spelled chr(0).
+func (c column) pointer() string {
+	parts := strings.Split("/"+jsonPointer.Replace(c.key), "\x00")
+	for i, p := range parts {
+		parts[i] = quote(p)
+	}
+	return strings.Join(parts, " || chr(0) || ")
+}
+
+var jsonPointer = strings.NewReplacer("~", "~0", "/", "~1")
+
+// ident is the column's name as a quoted SQL identifier.
+func (c column) ident() string { return `"` + strings.ReplaceAll(c.name, `"`, `""`) + `"` }
 
 // logKeys returns every key of a log's lines. A line that is not a JSON
 // object fails it, as DuckDB would.
