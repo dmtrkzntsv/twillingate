@@ -3,7 +3,7 @@ import type { Limit, RawEvents } from '@/lib/api'
 const GROUPS: { group: Limit['group']; title: string; note: string }[] = [
   { group: 'retention', title: 'Retention', note: 'How long data is kept.' },
   { group: 'caps', title: 'Caps', note: 'Values kept per day before the rest fold into (other).' },
-  { group: 'ingest', title: 'Ingest', note: 'Fixed by the wire format, the same on every server.' },
+  { group: 'ingest', title: 'Ingest', note: 'The late window, set in the environment, then the wire format’s limits, the same on every server.' },
 ]
 
 const plural = (n: number, one: string, many: string) => `${n.toLocaleString()} ${n === 1 ? one : many}`

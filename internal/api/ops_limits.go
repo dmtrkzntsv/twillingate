@@ -68,13 +68,13 @@ func fixed(name string, value float64, unit, description string) limitOut {
 }
 
 // limitsFrom reads the limits in force from the running config, in the
-// order the console shows them: retention, the caps, then the wire
-// format's fixed limits.
+// order the console shows them: retention, the caps, the late window, then
+// the wire format's fixed limits.
 func limitsFrom(cfg *config.Config) []limitOut {
 	ret := cfg.Retention
 	return []limitOut{
 		setting(groupRetention, "Raw events", "RETENTION_RAW_DAYS", ret.Events.RawDays, config.DefaultRawDays, "days", "",
-			"raw events are kept this long, then rolled up into aggregates; also the oldest client timestamp accepted, older ones are clamped to it"),
+			"raw events are kept this long, then rolled up into aggregates"),
 		setting(groupRetention, "Aggregates", "RETENTION_AGGREGATE_DAYS", ret.Events.AggregateDays, config.DefaultAggregateDays, "days", "",
 			"aggregates, actors, cohorts and identities are kept this long, then deleted"),
 		setting(groupRetention, "Archived items", "RETENTION_ARCHIVED_DAYS", ret.ArchivedDays, config.DefaultArchivedDays, "days", "kept forever",
@@ -87,6 +87,8 @@ func limitsFrom(cfg *config.Config) []limitOut {
 			"attributes declared across every active project, each a breakdown with its own aggregate rows; a save that adds more is refused"),
 		setting(groupCaps, "Users and groups", settingIdentities, cfg.IdentitiesTopN, config.DefaultIdentitiesTopN, "", "no cap",
 			"users, and groups, per project and day; the rest are dropped"),
+		setting(groupIngest, "Late events", "INGEST_LATE_DAYS", cfg.IngestLateDays, config.DefaultIngestLateDays, "days", "",
+			"days back a client timestamp may lie; an older one is clamped to this edge, so no event lands in a day already rolled up"),
 		fixed("Request body", wire.MaxBody, "bytes", "a larger request is refused with 413"),
 		fixed("Events per batch", wire.MaxBatchEvents, "", "a larger batch is refused with 413; split it and retry"),
 		fixed("Attribute key length", wire.MaxAttrKey, "characters", "a custom attribute with a longer key is dropped, with a warning; the number of attributes has no limit"),
