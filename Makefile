@@ -39,12 +39,11 @@ test: $(UI)
 # `make test` only.
 RACE_PKGS = ./internal/pipeline/... ./internal/identity/... ./internal/geo/...
 
-# vet also type-checks for linux/arm, the 32-bit release target: a
-# constant past 32 bits (an int holding 1<<62) compiles on amd64 and
-# breaks only the release build.
+# vet covers the two release targets' code paths alike: both are 64-bit,
+# and 32-bit ARM is no longer built (DuckDB has no build for it, raw-first
+# spec D10).
 vet:
 	go vet $(GOPKGS)
-	GOOS=linux GOARCH=arm go vet $(GOPKGS)
 
 # What pull request CI runs: vet, the coverage gate without -race, and the
 # SQLite-free packages with it.
