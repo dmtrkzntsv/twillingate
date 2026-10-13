@@ -342,6 +342,47 @@ One server takes up to **1M events a month** and keeps raw events for up to
   `aliases` use stitching. Making it the default is a later flag; the data
   supports both.
 
+### Migration, limits, queries, forms
+
+- **D19. Only raw rows migrate.** On the first boot of the new version,
+  `migrate` streams each raw day of each project out of `events` as log
+  lines, the format ingest writes, and the engine dumps them into day files
+  like any other day; nothing new is written for it. About 30 s for 1M rows
+  plus 0.2 s a day. Then `events` is dropped and the runbook says to
+  `VACUUM` once. Aggregates do not migrate: they cannot become rows, and
+  neither synthesizing events from them nor combining the two sources in
+  widgets is acceptable. History older than the raw window is gone on
+  upgrade day, which `deploy/UPGRADES.md` says plainly, with the advice to
+  raise `RETENTION_RAW_DAYS` ahead of the upgrade where that history
+  matters; the `agg_*` tables are dropped with the rest of D11. A day that
+  has raw rows is raw, so a day damaged by the raised window (Problem, last
+  item) migrates from its rows.
+- **D20. The allowance is events in the last 30 days; the plan sets
+  retention.** Supersedes the 2026-10-09 spec's "raw events held": `limits`
+  reports the events received in the last 30 days, the sum of the day
+  files' footer row counts plus the open logs' line counts for those days
+  (a few KB and ~10 ms a day; the 5-minute cache stays). Retention is a
+  plan term, 13 months or more, applied as `RETENTION_RAW_DAYS`. Derived
+  tables (D16–D18) count for nothing.
+- **D21. `query` may scan everything.** No range or filter is required: a
+  3-year question is the point, and the worst measured is 8 s at 2
+  threads. Its bounds are the timeout (30 s), the engine's memory limit
+  (512 MB) and D8's cap on engine children, so a heavy scan queues behind
+  nothing and starves nothing. The timeout message loses its `agg_*`
+  advice; a DuckDB out-of-memory error, which only `COUNT(DISTINCT)` over a
+  high-cardinality group has produced, gets its own message: rewrite as a
+  two-step `GROUP BY` or narrow the range.
+- **D22. A form submission carries its visit.** `forms.go:SessionAt`
+  attributed a submission to its visit by walking the visitor's views of
+  the day and the day before (the landing view's referrer and UTMs, the
+  newest view's kind, group, session and consent), which needs raw views
+  in SQLite. Instead the SDK sends the visit's context with
+  `$form_submit`: entry page, referrer and UTMs it already knows, beside
+  the fields every event carries. Everything is on the event; the server
+  looks nothing up at ingest. A client that sends nothing (the Plausible
+  shim, a server-side sender) gets a submission without attribution.
+  `docs/twillingate.md` documents the fields.
+
 ### Hosting
 
 - **D14. One process per customer stays.** The event side (D2) makes a
@@ -621,24 +662,16 @@ meets D10's targets:
   day after it ends.
 - **Q5.** Settled 2026-10-12: moot without D9's cache; exact from raw. The
   sessions table (D16) takes the one slow query.
-- **Q6.** Upgrade path. Existing servers hold only aggregates for days
-  older than their raw window: those days have no raw rows to move. Either
-  dashboards keep reading `agg_*` for days before the switch (two code paths
-  for as long as those aggregates are retained), or history before the
-  switch is reduced to what a migration can express from aggregates. On a
-  server whose raw window was raised, check step 0's damage first.
-  `deploy/UPGRADES.md` gets the runbook.
-- **Q7.** Does the "raw events held" allowance (2026-10-09 spec, hosted
-  plans) count the archive's footer row counts plus the open logs' lines?
-  (Hot no longer exists.)
-- **Q8.** Should `query` allow an unfiltered 3-year scan, or require a range
-  or a filter, under its timeout?
+- **Q6.** Settled 2026-10-12: only raw rows migrate; aggregates are
+  dropped (D19). `deploy/UPGRADES.md` gets the runbook.
+- **Q7.** Settled 2026-10-12: events in the last 30 days; retention is a
+  plan term (D20).
+- **Q8.** Settled 2026-10-12: yes, under the timeout, the memory limit and
+  the cap on children (D21).
 
 - **Q9.** Settled: Parquet files, not a DuckDB file (D10, measured);
-  backups by hand, no Litestream (D7, 2026-10-12). Still open from it: the
-  `forms.go:SessionAt` link from a submission to a visit, which read
-  today's and yesterday's views in SQLite: a query over two day files, or
-  linking lazily when the submission is viewed.
+  backups by hand, no Litestream (D7); the submission carries its visit
+  (D22).
 - **Q10.** Settled 2026-10-12: flat NDJSON in the Parquet row's shape,
   `attr_<key>` string values, dedup at dump and merge, a time-bounded
   recent-ids set at ingest (D2).
@@ -685,8 +718,8 @@ meets D10's targets:
       file, backups (D2, D5, D7). With today's aggregates
       untouched, this alone gives 3 years of raw history.
    3. D4's tables, the engine child, `query` on them (D8, D10).
-   4. Dashboards on raw, the sessions table or D9's cache if needed, the
-      upgrade path (Q6).
+   4. Dashboards on raw, the derived tables (D16–D18), the migration of
+      raw rows (D19), the SDK's visit context on submissions (D22).
    5. Stop writing events to SQLite; remove what D11 lists; close #173;
       reduce #175 to the allowlist (D12).
 
