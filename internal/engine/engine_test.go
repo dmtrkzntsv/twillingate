@@ -220,3 +220,45 @@ func TestClosedEngineRefuses(t *testing.T) {
 		t.Fatalf("err = %v, want ErrClosed", err)
 	}
 }
+
+// TestRequestAfterACrashIsNotRefused: a request that starts once the dead
+// child is no longer the engine's child must get a new one, not
+// ErrChildExited. The window between the child's death and its removal is
+// hard to hit deterministically; this documents the intent and catches the
+// gross case.
+func TestRequestAfterACrashIsNotRefused(t *testing.T) {
+	e := newEngine(t, testOptions(t))
+	if _, err := e.Query(context.Background(), "SELECT 1", 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Kill(e.pid(), syscall.SIGKILL); err != nil {
+		t.Fatal(err)
+	}
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
+		gone := e.pid() == 0
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_, err := e.Query(ctx, "SELECT 1", 0)
+		cancel()
+		if err == nil {
+			return
+		}
+		if gone || !errors.Is(err, ErrChildExited) {
+			t.Fatalf("Query = %v (child already cleared: %v); want a new child or the dead one's ErrChildExited only before it was cleared", err, gone)
+		}
+	}
+	t.Fatal("no query succeeded within 5s of the crash")
+}
+
+// TestEndedContextSpawnsNothing: a context that has ended starts no child.
+func TestEndedContextSpawnsNothing(t *testing.T) {
+	e := newEngine(t, testOptions(t))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := e.Query(ctx, "SELECT 1", 0)
+	if !errors.Is(err, context.Canceled) || errors.Is(err, ErrSpawn) {
+		t.Fatalf("err = %v, want context.Canceled and not ErrSpawn", err)
+	}
+	if e.pid() != 0 {
+		t.Fatalf("pid %d, want no child", e.pid())
+	}
+}

@@ -64,12 +64,12 @@ type Options struct {
 // request, kept while requests come, and told to exit after IdleExit
 // without one.
 type Engine struct {
-	o       Options
-	spawnMu sync.Mutex // one spawn at a time
-	mu      sync.Mutex // guards everything below and each child's mutable fields
-	next    uint64
-	child   *child
-	closed  bool
+	o         Options
+	spawnGate chan struct{} // capacity 1: one spawn at a time, and a waiter can give up
+	mu        sync.Mutex    // guards everything below and each child's mutable fields
+	next      uint64
+	child     *child
+	closed    bool
 }
 
 type child struct {
@@ -121,7 +121,7 @@ func New(o Options) (*Engine, error) {
 		}
 		*p = abs
 	}
-	return &Engine{o: o}, nil
+	return &Engine{o: o, spawnGate: make(chan struct{}, 1)}, nil
 }
 
 // Query runs sql and returns at most maxRows rows (all when maxRows ≤ 0).
@@ -184,8 +184,12 @@ func answer(rep reply) (reply, error) {
 // start returns the running child with one more request counted on it,
 // spawning one when there is none.
 func (e *Engine) start(ctx context.Context) (*child, error) {
-	e.spawnMu.Lock()
-	defer e.spawnMu.Unlock()
+	select {
+	case e.spawnGate <- struct{}{}:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	defer func() { <-e.spawnGate }()
 	e.mu.Lock()
 	if e.closed {
 		e.mu.Unlock()
@@ -201,6 +205,9 @@ func (e *Engine) start(ctx context.Context) (*child, error) {
 		return c, nil
 	}
 	e.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	c, err := e.spawn(ctx)
 	if err != nil {
 		return nil, err
@@ -327,10 +334,8 @@ func (e *Engine) read(c *child, dec *json.Decoder) {
 			ch <- rep
 		}
 	}
-	c.stdin.Close()
-	c.cmd.Wait()
-	c.slot.release()
-	os.RemoveAll(c.spill)
+	// Drop the dead child first: a request arriving while it is reaped
+	// (a big spill directory takes a while) must get a new one.
 	e.mu.Lock()
 	if e.child == c {
 		e.child = nil
@@ -339,6 +344,10 @@ func (e *Engine) read(c *child, dec *json.Decoder) {
 		c.idle.Stop()
 	}
 	e.mu.Unlock()
+	c.stdin.Close()
+	c.cmd.Wait()
+	c.slot.release()
+	os.RemoveAll(c.spill)
 	close(c.done)
 }
 
