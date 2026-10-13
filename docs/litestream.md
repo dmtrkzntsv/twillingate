@@ -1,6 +1,6 @@
 # Backing up with litestream
 
-Everything twillingate keeps is in one SQLite file,
+Everything twillingate needs to run is in one SQLite file,
 `/var/lib/twillingate/twillingate.db`. [Litestream](https://litestream.io)
 streams that file's write-ahead log to S3-compatible storage as it is
 written, so the off-host copy is seconds behind. It runs beside the
@@ -163,11 +163,21 @@ litestream stopped uploading (`journalctl -u litestream` or `docker compose
 logs litestream`); `no matching backups found` against a bucket you know is
 written means a version mismatch.
 
+Your copy of `raw/` is not in the bucket; check it the same day: its newest
+day files should be a day or two old.
+
 ## Restore after losing the host
 
 > **Restore before the collector starts, always.** Started against an empty
 > data directory, twillingate creates a fresh database, and litestream then
 > uploads that empty database beside the good backup.
+
+Litestream brings back the database only. Before the collector starts, put
+`raw/` back too, from your newest copy of it. As with any backup
+(`docs/deployment.md`, "Back up and restore"), the database must be no older
+than that copy: the daily pass deletes the files of any project the database
+does not know. A restore to the latest state never is; one to an earlier
+`-timestamp` needs a `raw/` copy taken before that time.
 
 **systemd.** Install twillingate (`install.sh`), put the same credentials in
 `/etc/twillingate/twillingate.env`, and set litestream up as
