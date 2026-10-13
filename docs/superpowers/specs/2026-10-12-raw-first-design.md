@@ -411,7 +411,8 @@ One server takes up to **1M events a month** and keeps raw events for up to
   - **Unchanged:** `BUFFER_FLUSH_INTERVAL`, `BUFFER_FLUSH_MAX_EVENTS` and
     `BUFFER_CAPACITY` (the flush is now the log's fsync);
     `RETENTION_FORMS_DRAFT_DAYS`, `RETENTION_ARCHIVED_DAYS`;
-    `CONSOLE_QUERY_TIMEOUT` and `CONSOLE_QUERY_ROWS_MAX` (D21);
+    `CONSOLE_QUERY_TIMEOUT` (its default rises from 10 s to 30 s, D21) and
+    `CONSOLE_QUERY_ROWS_MAX`;
     `REPORTING_CACHE_MAX_AGE` and `REPORTING_REFRESH_MAX_AGE`, which now
     spare the engine rather than SQLite and are the first candidates to
     drop once dashboards are measured in production; the addresses, URLs,
