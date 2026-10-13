@@ -114,6 +114,8 @@ to it.
 | `CONSOLE_DATABASE_DSN` | Database the console reads for queries, as `sqlite://<path>` (a copy or replica of the store, say). Defaults to `DATABASE_DSN`. |
 | `CONSOLE_QUERY_TIMEOUT` | Per-query guard on reads and the `query` operation; also bounds a reporting widget's sql. Default `10s`. |
 | `CONSOLE_QUERY_ROWS_MAX` | Row cap on the `query` operation; also bounds a reporting widget's sql. Default 1000. |
+| `ENGINE_MEMORY_LIMIT` | DuckDB's memory limit for each engine child, the process that answers analytics queries: `512MB`, `1GB`, `2GiB` (DuckDB's MB is 10^6 bytes). Outside GOMEMLIMIT, which bounds only the server. Default `512MB`. |
+| `ENGINE_MAX_CHILDREN` | Engine children running at once, across every process on the data directory; a query waits for a free one. Default 2. |
 | `REPORTING_CACHE_MAX_AGE` | How long an ordinary widget data request reuses a sql widget's loaded value before loading again. 0 turns the cache off: every request loads again. Default `15m`. |
 | `REPORTING_REFRESH_MAX_AGE` | A `fresh=true` request reuses a result younger than this instead of `REPORTING_CACHE_MAX_AGE`; must not exceed it when that is non-zero. Default `1m`. A dashboard with auto-refresh on reloads every max(`REPORTING_CACHE_MAX_AGE`, `REPORTING_REFRESH_MAX_AGE`) while its window has focus; both 0 removes the option. |
 
@@ -391,6 +393,7 @@ a loopback address, without a login; its usage is in
 | Upgrade (systemd) | `curl -fsSL …/install.sh \| sudo bash` — restarts the running service and reports the old and new version |
 | Upgrade (compose) | `docker compose pull && docker compose up -d`. Never `down -v`: the database lives in the named volume. Pin with `TWILLINGATE_VERSION=v0.9.2` in `.env`. |
 | Apply migrations only | `twillingate migrate` |
+| Check the engine | `twillingate engine -check`, with the service's environment, starts an engine child the way the server does and runs one query: `engine ok: 42 in 63 ms (spawn and first query), DuckDB v1.5.6`. A failure names what stopped it (a missing library, `ENGINE_MEMORY_LIMIT`, all `ENGINE_MAX_CHILDREN` slots busy for 30 s). |
 | Upgrade across a schema change | [Back up](#back-up-and-restore) first: migrations 012, 014, 015 and 016 are irreversible. Pre-checks and what changes on the day: <https://github.com/dmtrkzntsv/twillingate/blob/main/deploy/UPGRADES.md> (not served over MCP; open it in the repository) |
 | Database size | `du -h /var/lib/twillingate/twillingate.db` |
 | Recent config changes | `sqlite3 …/twillingate.db "SELECT * FROM audit_log ORDER BY ts DESC LIMIT 20"` |
