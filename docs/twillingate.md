@@ -770,9 +770,11 @@ down, 5xx) is kept for retry — in memory, or with
 [consent](#consent-and-storage) in a bounded stored queue (`twillingate_queue`
 or `<instance>_queue`, 50 batches) — and replays on `online`, once more via
 `sendBeacon` on unload, and from storage on the next load. Replays dedupe
-server-side by event id, except a copy replayed more than `INGEST_LATE_DAYS`
-after the event, which [clamps](#timestamps-and-idempotency) to another day
-and counts twice; a 4xx drops the batch instead.
+server-side by event id; a 4xx drops the batch instead. A batch `sendBeacon`
+accepted stays stored, since an accepted beacon can still be lost, and
+replays only while its oldest event is under 20 hours old: past the server's
+late window a copy would [clamp](#timestamps-and-idempotency) to another day
+and count twice, so an older one is dropped.
 
 ### Debugging
 
@@ -1209,7 +1211,9 @@ the write ignores a duplicate primary key, so a batch retried after a timeout
 that actually succeeded is a no-op. **Omit `id` and a replayed batch
 double-counts.** The duplicate check is per day of the stored (clamped)
 timestamp: a copy of an event older than `INGEST_LATE_DAYS` replayed on a
-later day clamps to a later day and is stored twice.
+later day clamps to a later day and is stored twice. The SDK never sends
+such a copy; a client of the wire format should resend only within the
+window.
 
 ### Responses and retry
 

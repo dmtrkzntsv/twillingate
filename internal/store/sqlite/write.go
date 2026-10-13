@@ -21,7 +21,8 @@ const tsFormat = "2006-01-02T15:04:05Z"
 // unchanged. The one gap: a retry of an event whose ts was clamped, landing
 // on the other side of midnight, clamps to a different day and is stored
 // twice (deploy/UPGRADES.md). With the late window at its 1-day default,
-// that is any copy of an event replayed more than a day after it happened.
+// that is any copy of an event resent more than a day after it happened;
+// the SDK sends none (it replays a beaconed batch only within 20 hours).
 //
 // A row whose family is none of views, product and measures refuses the
 // whole batch before anything is written: every raw_* view would miss it,

@@ -214,6 +214,7 @@ describe("storage under consent", () => {
     const stored = JSON.parse(localStorage.getItem("twillingate_queue")!);
     expect(stored).toHaveLength(1);
     expect(stored[0].events[0].name).toBe("third");
+    expect(typeof stored[0].beaconedAt).toBe("number"); // replayed only while the server can still deduplicate it
 
     // pending was retired by the first beacon, so a second pagehide must
     // not re-beacon it.
@@ -241,6 +242,33 @@ describe("storage under consent", () => {
     await drain();
     expect(sent).toHaveLength(1);
     expect(sent[0].body.events[0].name).toBe("unwritable");
+  });
+
+  it("replays a beaconed batch only while the server can still deduplicate it", async () => {
+    // A batch sendBeacon accepted has probably arrived. Replaying it is safe
+    // only while its events are younger than the server's late window
+    // (INGEST_LATE_DAYS, at least a day), where a repeated id is ignored;
+    // older, the server clamps it to another day and counts it twice.
+    const at = (hoursAgo: number) => new Date(Date.now() - hoursAgo * 3_600_000).toISOString().replace(/\.\d{3}Z$/, "Z");
+    const batch = (name: string, hoursAgo: number, beaconed: boolean) => ({
+      key: "ak_test",
+      attributes: {},
+      ...(beaconed ? { beaconedAt: Date.now() } : {}),
+      events: [{ id: `id-${name}`, name, ts: at(hoursAgo) }],
+    });
+    localStorage.setItem(
+      "twillingate_queue",
+      JSON.stringify([batch("never-sent", 72, false), batch("beaconed-recent", 2, true), batch("beaconed-old", 30, true)]),
+    );
+    fetchImpl = okFetch;
+    tg({ consent: true });
+    await drain();
+    const names = sent.map((s) => s.body.events[0].name);
+    expect(names).toContain("never-sent");
+    expect(names).toContain("beaconed-recent");
+    expect(names).not.toContain("beaconed-old");
+    for (const s of sent) expect(s.body).not.toHaveProperty("beaconedAt");
+    expect(localStorage.getItem("twillingate_queue")).toBeNull();
   });
 
   it("bounds the memory retry queue at 50 batches, oldest dropped first", async () => {

@@ -167,6 +167,21 @@ interface Batch {
   key: string;
   attributes: Record<string, unknown>;
   events: Event[];
+  /** When sendBeacon accepted it (ms): stored, never sent on the wire. */
+  beaconedAt?: number;
+}
+
+// A beaconed batch may already have arrived. The server ignores a repeated
+// id only while the event is inside its late window (INGEST_LATE_DAYS, at
+// least a day); older, it clamps the event to another day and counts it
+// twice. So a beaconed batch replays only while its oldest event is younger
+// than this: a day, less four hours for a client clock running behind.
+const BEACON_REPLAY_MAX_AGE_MS = 20 * 3_600_000;
+
+function replaySafe(b: Batch, now: number): boolean {
+  if (b.beaconedAt === undefined) return true;
+  const oldest = Math.min(...b.events.map((e) => Date.parse(e.ts)));
+  return !(now - oldest > BEACON_REPLAY_MAX_AGE_MS);
 }
 
 /**
@@ -1086,9 +1101,15 @@ export class Twillingate implements Subscriber {
     }
     // Unloading is the last chance for batches whose delivery failed: try
     // each once more through sendBeacon. A batch the beacon accepts is
-    // retired from pending; the stored copy stays until a replay lands it.
+    // retired from pending. Its stored copy stays, since an accepted beacon
+    // can still be dropped (offline), but is marked: the next load replays
+    // it only while the server can still deduplicate it (replaySafe).
     if (unloading) {
-      this.pending = this.pending.filter((batch) => !this.send(batch, true));
+      const beaconed = this.pending.filter((batch) => this.send(batch, true));
+      if (beaconed.length) {
+        this.pending = this.pending.filter((batch) => !beaconed.includes(batch));
+        this.markBeaconed(beaconed);
+      }
     }
   }
 
@@ -1146,7 +1167,7 @@ export class Twillingate implements Subscriber {
   // Returns whether sendBeacon accepted the batch.
   private send(batch: Batch, unloading: boolean): boolean {
     const endpoint = this.url + "/ingest/events";
-    const body = JSON.stringify(batch);
+    const body = JSON.stringify({ key: batch.key, attributes: batch.attributes, events: batch.events });
     if (unloading && typeof navigator !== "undefined" && typeof navigator.sendBeacon === "function" && navigator.sendBeacon(endpoint, body)) {
       this.log(`beaconed ${batch.events.length} event(s)`);
       return true;
@@ -1211,6 +1232,14 @@ export class Twillingate implements Subscriber {
     else this.driver.remove(this.k.queue);
   }
 
+  private markBeaconed(batches: Batch[]): void {
+    if (!this.mayStore()) return;
+    const ids = new Set(batches.map((b) => b.events[0].id));
+    const now = Date.now();
+    const stored = this.storedBatches().map((b) => (ids.has(b.events[0].id) ? { ...b, beaconedAt: now } : b));
+    if (stored.length) this.driver.set(this.k.queue, JSON.stringify(stored));
+  }
+
   private storedBatches(): Batch[] {
     const raw = this.driver.get(this.k.queue);
     if (!raw) return [];
@@ -1223,7 +1252,8 @@ export class Twillingate implements Subscriber {
   }
 
   private replay(): void {
-    const batches = this.mayStore() ? mergeBatches(this.storedBatches(), this.pending) : this.pending;
+    const now = Date.now();
+    const batches = (this.mayStore() ? mergeBatches(this.storedBatches(), this.pending) : this.pending).filter((b) => replaySafe(b, now));
     this.pending = [];
     this.saveQueue();
     for (const batch of batches) this.send(batch, false); // a failure re-stores itself
