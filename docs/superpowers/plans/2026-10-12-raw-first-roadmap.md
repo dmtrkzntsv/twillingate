@@ -60,6 +60,8 @@ Plan: `2026-10-12-engine-child.md`.
 
 ## PR 3. The log, the dump, the merge, retention by file (D2, D5, D6, D7)
 
+Plan: `2026-10-12-raw-log.md`.
+
 Events are written to SQLite as today **and** to the log; nothing reads the
 files yet.
 
