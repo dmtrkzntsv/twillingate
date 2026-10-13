@@ -2,11 +2,13 @@
 // spec D8): the ingest process never initializes DuckDB, a crash or an
 // out-of-memory error in widget SQL takes down only the child, a child
 // that exits gives its memory back, and the child can reach one directory
-// and nothing else. ServeChild is the child's end of the pipe; Engine
+// and nothing else but its own spill directory (DuckDB's temp_directory,
+// writable, per child, removed at exit). ServeChild is the child's end of the pipe; Engine
 // (engine.go) is the parent's.
 package engine
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -24,13 +26,16 @@ import (
 // COUNT(DISTINCT) over 3 years fails.
 const DefaultMemoryLimit = "512MB"
 
+// maxReplyBytes caps one reply line, so a huge value cannot flood the parent's decoder.
+const maxReplyBytes = 32 << 20
+
 // ServeChild is `twillingate engine`: it opens an in-memory DuckDB locked
 // to the -allow directories, writes {"ready":true}, then answers one
 // request per line until stdin closes, when it cancels what is in flight
 // and returns nil. A setup failure is written as one {"err":…} line and
 // returned.
 func ServeChild(args []string, in io.Reader, out io.Writer) error {
-	w := &replyWriter{enc: json.NewEncoder(out)}
+	w := &replyWriter{out: out}
 	fs := flag.NewFlagSet("engine", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	threads := fs.Int("threads", 1, "DuckDB threads")
@@ -200,17 +205,38 @@ func run(ctx context.Context, db *sql.DB, r request) reply {
 // means the parent is gone; stdin's EOF ends the child right after.
 type replyWriter struct {
 	mu  sync.Mutex
-	enc *json.Encoder
+	out io.Writer
 }
 
 func (w *replyWriter) send(r reply) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if err := w.enc.Encode(r); err != nil && r.ID != 0 {
-		// encoding/json writes nothing when it refuses a value: answer with
-		// an error instead, so the request is never left without a reply.
-		_ = w.enc.Encode(reply{ID: r.ID, Err: "engine: the result cannot be sent: " + err.Error()})
+	// Marshal first: encoding/json writes nothing when it refuses a value,
+	// and a reply past the cap is replaced before any byte is sent. Either
+	// way the request is answered with an error, never left without a reply.
+	line, err := encodeLine(r)
+	if err == nil && len(line) > maxReplyBytes {
+		err = fmt.Errorf("the result is larger than %d MiB; select fewer rows or columns", maxReplyBytes>>20)
+		line = nil
+	} else if err != nil {
+		err = fmt.Errorf("the result cannot be sent: %w", err)
 	}
+	if err != nil {
+		if r.ID == 0 {
+			return
+		}
+		line, _ = encodeLine(reply{ID: r.ID, Err: "engine: " + err.Error()})
+	}
+	_, _ = w.out.Write(line)
+}
+
+// encodeLine is one reply as a JSON line.
+func encodeLine(r reply) ([]byte, error) {
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(r); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
 
 func (w *replyWriter) fail(err error) error {

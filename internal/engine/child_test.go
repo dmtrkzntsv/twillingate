@@ -112,11 +112,24 @@ func TestChildSendsNonFiniteFloats(t *testing.T) {
 // a reply, an error one, for its request.
 func TestReplySendAnswersWhatItCannotEncode(t *testing.T) {
 	var out strings.Builder
-	w := &replyWriter{enc: json.NewEncoder(&out)}
+	w := &replyWriter{out: &out}
 	w.send(reply{ID: 9, Rows: [][]any{{math.NaN()}}})
 	var rep reply
 	if err := json.Unmarshal([]byte(out.String()), &rep); err != nil || rep.ID != 9 || !strings.Contains(rep.Err, "cannot be sent") {
 		t.Fatalf("output = %q, want an error reply for id 9", out.String())
+	}
+}
+
+// TestChildCapsReplySize: one reply past maxReplyBytes becomes an error, so a
+// huge value cannot flood the parent's decoder; the child carries on.
+func TestChildCapsReplySize(t *testing.T) {
+	c := startChild(t, childArgs(t.TempDir()))
+	rep := c.ask(t, request{ID: 1, SQL: "SELECT repeat('x', 40000000) AS s"})
+	if !strings.Contains(rep.Err, "larger than") || len(rep.Rows) != 0 {
+		t.Fatalf("reply: err = %q, rows = %d; want a size error and no rows", rep.Err, len(rep.Rows))
+	}
+	if rep := c.ask(t, request{ID: 2, SQL: "SELECT 1"}); rep.Err != "" {
+		t.Fatalf("after the oversized reply: %q", rep.Err)
 	}
 }
 
@@ -167,6 +180,9 @@ func TestChildConfinedToAllowedDirs(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	if err := os.Mkdir(filepath.Join(dir, "spill"), 0o750); err != nil { // the parent makes it per child
+		t.Fatal(err)
+	}
 	c := startChild(t, childArgs(dir))
 	id := uint64(0)
 	run := func(sql string) string {
@@ -179,7 +195,12 @@ func TestChildConfinedToAllowedDirs(t *testing.T) {
 	if err := run("COPY (SELECT 1 AS a) TO '" + filepath.Join(dir, "raw/out.parquet") + "' (FORMAT parquet)"); err != "" {
 		t.Errorf("writing inside raw: %s", err)
 	}
+	// The spill directory is writable too: per child, removed at exit.
+	if err := run("COPY (SELECT 1 AS a) TO '" + filepath.Join(dir, "spill/x.csv") + "' (FORMAT csv)"); err != "" {
+		t.Errorf("writing into the spill directory: %s", err)
+	}
 	for _, sql := range []string{
+		"SELECT * FROM read_text('" + filepath.Join(dir, "raw/../twillingate.db") + "')",
 		"SELECT * FROM read_csv('" + filepath.Join(dir, "rawx/in.csv") + "')",
 		"SELECT * FROM read_text('" + filepath.Join(dir, "twillingate.db") + "')",
 		"COPY (SELECT 1 AS a) TO '" + filepath.Join(dir, "twillingate.db") + "' (FORMAT csv)",

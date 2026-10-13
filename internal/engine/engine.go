@@ -46,6 +46,8 @@ type Result struct {
 // Options configure the children an Engine spawns. AllowedDirs must not
 // hold the SQLite file or anything else widget SQL must not reach: SQL in
 // the child can read and write there (app.EngineOptions allows raw/ only).
+// Besides AllowedDirs the child can write its own spill directory (DuckDB's
+// temp_directory, under SpillRoot, removed when the child exits).
 type Options struct {
 	Path        string
 	Args        []string
@@ -89,7 +91,9 @@ type child struct {
 // needs them whole.
 func New(o Options) (*Engine, error) {
 	if o.Threads <= 0 {
-		o.Threads = runtime.NumCPU()
+		// GOMAXPROCS follows the cgroup CPU quota (Go 1.25), NumCPU does not:
+		// a container or a systemd CPUQuota must not be oversubscribed.
+		o.Threads = runtime.GOMAXPROCS(0)
 	}
 	if o.Parallel <= 0 {
 		o.Parallel = 1
