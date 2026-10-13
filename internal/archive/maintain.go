@@ -206,13 +206,16 @@ func (a *Archive) dump(ctx context.Context, dir, pending string) error {
 // other key (attr_<key>, the key as stored) is VARCHAR, and every fixed
 // column is there even when no line has it.
 //
-// The de-duplication and the sort carry each line's text with only the
-// three keys they need, and the columns are extracted after, as the rows
-// stream into the file; the sort is a query of its own around the
-// DISTINCT ON, which keeps any one line of a repeated id (the same event,
-// written twice). Carrying the ~50 extracted values through them, or one
-// DISTINCT ON … ORDER BY, runs out of memory on a log half the size
-// (measure_test.go).
+// A repeated id keeps the line appended first, as SQLite keeps the first
+// row it receives: a repeat need not be the same event (the server does
+// not check), so a later one can differ in received_at, actor_id,
+// country or attributes. The lines are numbered in file order (WITH
+// ORDINALITY), the first number per id is found over the ids and numbers
+// alone, and only then are the lines it names sorted (a sort spills to
+// disk; a hash table of whole lines does not) and their columns extracted
+// as they stream into the file. A DISTINCT ON over the lines held them all
+// in a hash table and ran out of memory on smaller logs, worst with more
+// threads; measure_test.go compares this with the first release's dump.
 //
 // Each key is extracted by JSON pointer, so its case is kept; DuckDB's
 // column names are not case-sensitive, though (read_ndjson's columns={…}
@@ -231,9 +234,10 @@ func dumpQuery(path string) (string, error) {
 		paths[i] = c.pointer()
 		sel[i] = "CAST(f[" + strconv.Itoa(i+1) + "] AS " + c.typ + ") AS " + c.ident()
 	}
-	lines := "SELECT json, json_extract_string(json, '/id') AS id, json_extract_string(json, '/family') AS family, " +
-		"CAST(json_extract_string(json, '/ts') AS TIMESTAMP) AS ts FROM read_json_objects(" + quote(path) + ", format='newline_delimited')"
-	unique := "SELECT json FROM (SELECT DISTINCT ON (id) json, family, ts FROM (" + lines + ")) ORDER BY family, ts"
+	lines := "read_json_objects(" + quote(path) + ", format='newline_delimited') WITH ORDINALITY"
+	firsts := "SELECT min(ordinality) FROM (SELECT json_extract_string(json, '/id') AS id, ordinality FROM " + lines + ") GROUP BY id"
+	unique := "SELECT json FROM (SELECT json, ordinality, json_extract_string(json, '/family') AS family, " +
+		"CAST(json_extract_string(json, '/ts') AS TIMESTAMP) AS ts FROM " + lines + ") WHERE ordinality IN (" + firsts + ") ORDER BY family, ts"
 	return "SELECT " + strings.Join(sel, ", ") + " FROM (SELECT json_extract_string(json, [" + strings.Join(paths, ", ") +
 		"]) AS f FROM (" + unique + "))", nil
 }
@@ -328,21 +332,30 @@ func logKeys(path string) (map[string]bool, error) {
 // merge writes every day file and segment of month, with the month file
 // if a crashed merge left one, as the month file, then deletes the days.
 func (a *Archive) merge(ctx context.Context, dir string, names []string, month string) error {
-	var inputs, days []string
+	var days []string
 	for _, n := range names {
 		if m := dayFileName.FindStringSubmatch(n); m != nil && strings.HasPrefix(m[1], month+"-") {
-			inputs = append(inputs, quote(filepath.Join(dir, n)))
 			days = append(days, n)
 		}
 	}
 	if len(days) == 0 {
 		return nil
 	}
+	slices.SortFunc(days, func(x, y string) int {
+		mx, my := dayFileName.FindStringSubmatch(x), dayFileName.FindStringSubmatch(y)
+		if c := strings.Compare(mx[1], my[1]); c != 0 {
+			return c
+		}
+		return segment(mx[2]) - segment(my[2])
+	})
+	var inputs []string
 	if exists(filepath.Join(dir, month+".parquet")) {
-		inputs = append(inputs, quote(filepath.Join(dir, month+".parquet")))
+		inputs = append(inputs, filepath.Join(dir, month+".parquet"))
 	}
-	q := "COPY (SELECT DISTINCT ON (id) * FROM read_parquet([" + strings.Join(inputs, ", ") + "], union_by_name=true) ORDER BY family, ts) TO "
-	if err := a.write(ctx, q, filepath.Join(dir, month+".parquet")); err != nil {
+	for _, n := range days {
+		inputs = append(inputs, filepath.Join(dir, n))
+	}
+	if err := a.write(ctx, "COPY ("+mergeQuery(inputs)+") TO ", filepath.Join(dir, month+".parquet")); err != nil {
 		return err
 	}
 	for _, n := range days {
@@ -351,6 +364,32 @@ func (a *Archive) merge(ctx context.Context, dir string, names []string, month s
 		}
 	}
 	return nil
+}
+
+// segment is a day file's segment number from its ".<n>" (0 for the day
+// file itself, dumped first).
+func segment(dotN string) int {
+	n, _ := strconv.Atoi(strings.TrimPrefix(dotN, "."))
+	return n
+}
+
+// mergeQuery is the merge's SELECT of files, given oldest first (a month
+// file a crashed merge left, then each day's file and its segments in
+// order): every id once, from the first file that holds it (a file holds
+// an id once), ordered by family and ts. As in the dump, the first row
+// per id is found over the ids and a row key alone, and the sort, which
+// spills, carries the rows.
+func mergeQuery(files []string) string {
+	list := make([]string, len(files))
+	for i, f := range files {
+		list[i] = quote(f)
+	}
+	paths := "[" + strings.Join(list, ", ") + "]"
+	rows := "read_parquet(" + paths + ", union_by_name=true, filename=true, file_row_number=true)"
+	key := "list_position(" + paths + ", filename) * 4294967296 + file_row_number"
+	firsts := "SELECT min(k) FROM (SELECT id, " + key + " AS k FROM " + rows + ") GROUP BY id"
+	return "SELECT * EXCLUDE (filename, file_row_number, k) FROM (SELECT *, " + key + " AS k FROM " + rows +
+		") WHERE k IN (" + firsts + ") ORDER BY family, ts"
 }
 
 // write runs copyTo (a COPY … TO, missing its target) into out.tmp, fsyncs

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -35,7 +36,9 @@ type fixture struct {
 	a   *Archive
 }
 
-func newFixture(t *testing.T) fixture {
+func newFixture(t *testing.T) fixture { t.Helper(); return newFixtureWith(t, 1, "256MB") }
+
+func newFixtureWith(t *testing.T, threads int, memory string) fixture {
 	t.Helper()
 	data := t.TempDir()
 	l, err := OpenLog(filepath.Join(data, "raw"))
@@ -45,7 +48,7 @@ func newFixture(t *testing.T) fixture {
 	self, _ := os.Executable()
 	eng, err := engine.New(engine.Options{Path: self, Env: []string{childEnv + "=1"},
 		AllowedDirs: []string{l.Dir()}, SpillRoot: filepath.Join(data, "spill"), SlotDir: filepath.Join(data, "slots"),
-		MaxChildren: 1, MemoryLimit: "256MB", Threads: 1})
+		MaxChildren: 1, MemoryLimit: memory, Threads: threads})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -433,6 +436,49 @@ func TestDumpReadsAnyKey(t *testing.T) {
 	got := f.values(t, `SELECT "attr_a-b c", "attr_q""u'o", "attr_x/y~z", "attr_a$.[0]", "attr_nul\u0000k", "attr_nul\u0000k_1", `+
 		"\"attr_t\tb\nc\x01\x7f\" FROM read_parquet('"+f.project1("2026-10-11.parquet")+"')")
 	if want := []string{"[1 2 3 4 5 6 7]"}; !eq(got, want) {
+		t.Fatalf("rows = %v, want %v", got, want)
+	}
+}
+
+// TestDumpKeepsAnIDsFirstLine: of a repeated id the dump keeps the line
+// appended first, as SQLite keeps the first row, at any thread count. The
+// log is about 45 MB, so DuckDB reads it in more than one piece.
+func TestDumpKeepsAnIDsFirstLine(t *testing.T) {
+	f := newFixtureWith(t, 4, "512MB")
+	const ids = 6000
+	pad := strings.Repeat("x", 2400)
+	now := time.Now()
+	for copy := 1; copy <= 3; copy++ {
+		f.log.now = func() time.Time { return now.Add(time.Duration(copy) * (recentIDs + time.Minute)) }
+		var evs []store.Event
+		for i := 0; i < ids; i++ {
+			evs = append(evs, withAttrs(evOf(1, fmt.Sprintf("id-%05d", i), "2026-10-11T10:00:00Z"), "", map[string]string{"copy": strconv.Itoa(copy), "pad": pad}))
+		}
+		f.write(t, evs...)
+	}
+	f.maintain(t, "2026-10-12")
+	got := f.values(t, "SELECT count(*), count(*) FILTER (WHERE attr_copy <> '1') FROM read_parquet('"+f.project1("2026-10-11.parquet")+"')")
+	if want := []string{fmt.Sprintf("[%d 0]", ids)}; !eq(got, want) {
+		t.Fatalf("rows, later copies kept = %v, want %v", got, want)
+	}
+}
+
+// TestMergeKeepsAnIDsFirstRow: an id in the day file and again in a later
+// segment (a repeat past the recent-ids window, after the day's dump) keeps
+// the day file's row, though the segment's name sorts first.
+func TestMergeKeepsAnIDsFirstRow(t *testing.T) {
+	f := newFixtureWith(t, 4, "256MB")
+	f.write(t, withAttrs(evOf(1, "a", "2026-09-30T10:00:00Z"), "", map[string]string{"copy": "1"}))
+	f.maintain(t, "2026-10-01")
+	f.log.now = func() time.Time { return time.Now().Add(recentIDs + time.Minute) }
+	f.write(t, withAttrs(evOf(1, "a", "2026-09-30T10:00:00Z"), "", map[string]string{"copy": "2"}))
+	f.maintain(t, "2026-10-01")
+	if got := f.files(t); !eq(got, []string{"2026-09-30.1.parquet", "2026-09-30.parquet"}) {
+		t.Fatalf("files = %v, want the day file and a segment", got)
+	}
+	f.maintain(t, "2026-10-02")
+	got := f.values(t, "SELECT id, attr_copy FROM read_parquet('"+f.project1("2026-09.parquet")+"')")
+	if want := []string{"[a 1]"}; !eq(got, want) {
 		t.Fatalf("rows = %v, want %v", got, want)
 	}
 }
