@@ -54,6 +54,21 @@ func TestImportFillsTheFilesFromSQLite(t *testing.T) {
 	}
 	defer eng.Close()
 	a := archive.New(log, eng, slog.Default())
+	eventsFiles := func() []string {
+		t.Helper()
+		entries, err := os.ReadDir(filepath.Join(log.Dir(), "1"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var names []string
+		for _, e := range entries {
+			if !e.IsDir() && e.Name() != "identities.parquet" && e.Name() != "aliases.parquet" {
+				names = append(names, e.Name())
+			}
+		}
+		slices.Sort(names)
+		return names
+	}
 	pass := func(day string) {
 		t.Helper()
 		d, _ := civil.Parse(day)
@@ -78,6 +93,10 @@ func TestImportFillsTheFilesFromSQLite(t *testing.T) {
 		t.Fatal(err)
 	}
 	pass("2026-10-05")
+	// September is already one month file, without s1 (Review Focus 1).
+	if got, want := eventsFiles(), []string{"2026-09.parquet"}; !slices.Equal(got, want) {
+		t.Fatalf("files after the first pass = %v, want %v", got, want)
+	}
 	// October 1 and 11 are split: one row in both stores, one only in SQLite.
 	if err := both.WriteEvents(ctx, []store.Event{row("o2", "2026-10-01T11:00:00Z"), row("t2", "2026-10-11T02:00:00Z")}); err != nil {
 		t.Fatal(err)
@@ -149,21 +168,6 @@ func TestImportFillsTheFilesFromSQLite(t *testing.T) {
 		t.Fatalf("u1's name = %s, want Ada", got)
 	}
 
-	eventsFiles := func() []string {
-		t.Helper()
-		entries, err := os.ReadDir(filepath.Join(log.Dir(), "1"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		var names []string
-		for _, e := range entries {
-			if !e.IsDir() && e.Name() != "identities.parquet" && e.Name() != "aliases.parquet" {
-				names = append(names, e.Name())
-			}
-		}
-		slices.Sort(names)
-		return names
-	}
 	wantFiles := []string{"2026-09.parquet", "2026-10-01.1.parquet", "2026-10-01.parquet", "2026-10-11.log", "2026-10-11.parquet"}
 	if got := eventsFiles(); !slices.Equal(got, wantFiles) {
 		t.Fatalf("files = %v, want %v", got, wantFiles)
