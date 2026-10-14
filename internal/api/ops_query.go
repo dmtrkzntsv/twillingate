@@ -98,7 +98,7 @@ func (h *host) runFilesQuery(ctx context.Context, sql string) (tableOut, error) 
 
 // sqliteTable matches DuckDB's missing-table message for a name that is
 // SQLite's: the files have none of these.
-var sqliteTable = regexp.MustCompile(`Table with name (v_|raw_|agg_)\w* does not exist`)
+var sqliteTable = regexp.MustCompile(`(?i)Table with name (v_|raw_|agg_)\w* does not exist`)
 
 // filesError turns a failed files query into a message a model can act
 // on (raw-first D21); anything else (the child could not start) passes
@@ -108,6 +108,8 @@ func filesError(err error, timeout time.Duration) error {
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
 		return invalidf("query exceeded %s (CONSOLE_QUERY_TIMEOUT); narrow it with a WHERE on project_id and day, or aggregate", timeout)
+	case errors.Is(err, archive.ErrLoadingLogs) && errors.As(err, &qe) && strings.HasPrefix(qe.Msg, "Out of Memory Error"):
+		return invalidf("the open logs do not fit the engine's memory (ENGINE_MEMORY_LIMIT) while they are loaded for a query, whatever the query is: raise ENGINE_MEMORY_LIMIT")
 	case errors.As(err, &qe) && strings.HasPrefix(qe.Msg, "Out of Memory Error"):
 		return invalidf("the query ran out of the engine's memory (ENGINE_MEMORY_LIMIT). A COUNT(DISTINCT …) over a large group is the usual cause: " +
 			"select the distinct values with a GROUP BY in a subquery, then count its rows; or narrow the range")

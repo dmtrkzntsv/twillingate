@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -94,6 +95,10 @@ func TestQueryFilesSourceErrors(t *testing.T) {
 			[]string{"ENGINE_MEMORY_LIMIT", "GROUP BY"}},
 		{"sqlite table", &engine.QueryError{Msg: "Catalog Error: Table with name v_views_daily does not exist!\nDid you mean \"pg_views\"?"},
 			[]string{"v_views_daily", `source "sqlite"`}},
+		{"sqlite table upper case", &engine.QueryError{Msg: "Catalog Error: Table with name V_VIEWS_DAILY does not exist!"},
+			[]string{"V_VIEWS_DAILY", `source "sqlite"`}},
+		{"memory loading the logs", fmt.Errorf("%w: %w", archive.ErrLoadingLogs, &engine.QueryError{Msg: "Out of Memory Error: failed to allocate data of size 16.0 MiB"}),
+			[]string{"open logs", "ENGINE_MEMORY_LIMIT", "raise"}},
 		{"child died", engine.ErrChildExited, []string{"stopped", "ENGINE_MEMORY_LIMIT"}},
 		{"sql", &engine.QueryError{Msg: `Binder Error: Referenced column "nope" not found`}, []string{"DuckDB", `"nope"`}},
 	} {
@@ -107,6 +112,9 @@ func TestQueryFilesSourceErrors(t *testing.T) {
 			if !strings.Contains(msg, w) {
 				t.Errorf("%s: message %q lacks %q", c.name, msg, w)
 			}
+		}
+		if c.name == "memory loading the logs" && strings.Contains(msg, "COUNT(DISTINCT") {
+			t.Errorf("%s: message %q advises on a query the logs' load was not", c.name, msg)
 		}
 	}
 }

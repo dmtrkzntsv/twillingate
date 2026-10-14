@@ -1675,3 +1675,5 @@ the error says to pass `source: "sqlite"`. A query that runs out of the
 engine's memory (`ENGINE_MEMORY_LIMIT`) is refused with that cause: a
 `COUNT(DISTINCT …)` over a large group is the usual one, rewritten as a
 `GROUP BY` in a subquery whose rows are then counted.
+When the open logs themselves do not fit that limit, whatever the query,
+the error says so: raise `ENGINE_MEMORY_LIMIT`.
