@@ -811,3 +811,26 @@ No migration, nothing to run. Two visible changes:
   began writing `raw/`.
 - `CONSOLE_QUERY_TIMEOUT` defaults to `30s` (was `10s`), for `query` and
   widget SQL alike. Set `CONSOLE_QUERY_TIMEOUT=10s` to keep the old bound.
+
+### Upgrading to the derived tables (no migration)
+
+No migration, nothing to run. What changes:
+
+- The event files keep three more fields on every event: `install_id`,
+  `user_name` and `group_name`. The names your clients send beside
+  `$user_id` and `$group_id` now stay with each event under `raw/` for
+  `RETENTION_DAYS`, not only as the latest name in the database: count
+  them as personal data in the files too.
+- The daily pass derives `sessions/`, `identities.parquet` and
+  `aliases.parquet` in each project's directory under `raw/`. The first
+  pass after the upgrade derives them for every file already there, a few
+  seconds per month of events at the cap. They need no backup: a pass
+  rebuilds what is missing.
+- `query` with `source: "files"` reads three more tables, `sessions`,
+  `identities` and `aliases` (`docs/twillingate.md`, "Writing SQL against
+  the event files"). Events stored before the upgrade have no install id
+  or names, so `aliases` and the names in `identities` start from the
+  upgrade.
+
+Rollback: an older binary ignores the derived files and reads the new
+fields as extra columns; delete the derived files if you go back for good.
