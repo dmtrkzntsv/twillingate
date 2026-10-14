@@ -88,13 +88,36 @@ func (r *Reader) Attribute(ctx context.Context, ls []Lookup, days int, rules Rul
 // attributionSQL is Attribute's query. Every value from a lookup is a
 // literal; every column it returns is VARCHAR, NULL when nothing matched.
 func attributionSQL(ls []Lookup, days int) string {
+	tsLiteral := func(t time.Time) string {
+		return "CAST(" + literal(t.UTC().Format("2006-01-02 15:04:05")) + " AS TIMESTAMP)"
+	}
 	rows := make([]string, len(ls))
+	projects := make([]string, 0, len(ls))
+	seen := map[int64]bool{}
+	first, last := ls[0].At, ls[0].At
 	for i, l := range ls {
-		rows[i] = fmt.Sprintf("(%d, %s, %s, %s, %s, %s, CAST(%s AS TIMESTAMP))", l.ProjectID, literal(l.ID),
-			literal(l.ActorKind), literal(l.ActorID), literal(l.InstallID), literal(l.ConnectionID),
-			literal(l.At.UTC().Format("2006-01-02 15:04:05")))
+		if !seen[l.ProjectID] {
+			seen[l.ProjectID] = true
+			projects = append(projects, strconv.FormatInt(l.ProjectID, 10))
+		}
+		if l.At.Before(first) {
+			first = l.At
+		}
+		if l.At.After(last) {
+			last = l.At
+		}
+		rows[i] = fmt.Sprintf("(%d, %s, %s, %s, %s, %s, %s)", l.ProjectID, literal(l.ID),
+			literal(l.ActorKind), literal(l.ActorID), literal(l.InstallID), literal(l.ConnectionID), tsLiteral(l.At))
 	}
 	window := fmt.Sprintf("INTERVAL %d DAY", days)
+	// The per-row join predicates decide what matches; these constant ones
+	// (the batch's projects and its whole time span) repeat them as
+	// literals so DuckDB can skip files and row groups by their stats
+	// before the join, which it cannot do from the join's columns alone.
+	inBatch := func(alias, col string) string {
+		return fmt.Sprintf("%s.project_id IN (%s) AND %s.%s >= %s AND %s.%s <= %s", alias, strings.Join(projects, ", "),
+			alias, col, tsLiteral(first.AddDate(0, 0, -days)), alias, col, tsLiteral(last))
+	}
 	as := func(alias string, cols []string) string {
 		out := make([]string, len(cols))
 		for i, c := range cols {
@@ -129,7 +152,7 @@ src AS (
   FROM who w JOIN sessions s ON s.project_id = w.project_id
     AND s.actor_kind = w.actor_kind AND s.actor_id = w.actor_id
     AND s.started_at <= w.arrived AND s.started_at >= w.arrived - ` + window + `
-  WHERE ` + strings.Join(hasSource, " OR ") + `
+  WHERE ` + inBatch("s", "started_at") + ` AND (` + strings.Join(hasSource, " OR ") + `)
 ),
 newest AS (
   SELECT w.project_id, w.id, ` + as("v", newestColumns) + `,
@@ -137,6 +160,7 @@ newest AS (
   FROM who w JOIN views v ON v.project_id = w.project_id
     AND v.actor_kind = w.actor_kind AND v.actor_id = w.actor_id
     AND v.ts <= w.arrived AND v.ts >= w.arrived - ` + window + `
+  WHERE ` + inBatch("v", "ts") + `
 )
 SELECT CAST(l.project_id AS VARCHAR), l.id, ` + pick("src", sourceColumns) + `, ` + pick("newest", newestColumns) + `
 FROM l

@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"time"
 
@@ -84,10 +85,14 @@ func (r *Runner) attributeSubmissions(ctx context.Context) {
 		byKey[key(f.ProjectID, f.ID)] = f
 	}
 	var written []store.Event
+	givenUp := 0
 	for _, p := range pending {
 		f, ok := byKey[key(p.ProjectID, p.ID)]
 		if !ok && now.Sub(p.ReceivedAt) < attributionGiveUp {
 			continue
+		}
+		if !ok {
+			givenUp++
 		}
 		ev := attributed(p.Event, f)
 		wrote, err := r.store.AttributeSubmission(ctx, p, ev)
@@ -98,6 +103,10 @@ func (r *Runner) attributeSubmissions(ctx context.Context) {
 		if wrote {
 			written = append(written, ev)
 		}
+	}
+	if givenUp > 0 {
+		r.logger.Error(fmt.Sprintf("form attribution: %d submissions given up after an hour without a lookup; attributed with what their clients sent", givenUp),
+			"submissions", givenUp)
 	}
 	if len(written) > 0 && r.eventLog != nil {
 		if err := r.eventLog.WriteEvents(ctx, written); err != nil {

@@ -1,9 +1,11 @@
 package jobs
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -115,15 +117,22 @@ func TestAttributeSubmissions(t *testing.T) {
 }
 
 // A failed lookup leaves submissions pending; past an hour they are
-// attributed with what the client sent, so the conversion is not lost.
+// attributed with what the client sent, so the conversion is not lost,
+// and one error line counts them.
 func TestAttributeSubmissionsGivesUpAfterAnHour(t *testing.T) {
 	now := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
 	st := &pendingStore{pending: []store.PendingSubmission{
 		pendingAt("young", now.Add(-2*time.Minute), nil),
 		pendingAt("old", now.Add(-attributionGiveUp), func(e *store.Event) { e.UTMSource = "nl" }),
+		pendingAt("older", now.Add(-2*attributionGiveUp), nil),
 	}}
 	r := attributionRunner(t, st, now).WithAttribution(&fakeAttributor{err: errors.New("engine down")}, &loggedEvents{})
+	var buf bytes.Buffer
+	r.logger = slog.New(slog.NewTextHandler(&buf, nil))
 	r.attributeSubmissions(context.Background())
+	if lines := strings.Count(buf.String(), "level=ERROR msg=\"form attribution: 2 submissions given up"); lines != 1 {
+		t.Errorf("%d give-up error lines, want 1:\n%s", lines, buf.String())
+	}
 	if _, ok := st.attributed["young"]; ok {
 		t.Error("a young submission was attributed despite the failed lookup")
 	}

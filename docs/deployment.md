@@ -23,7 +23,9 @@ child, the process that answers analytics queries, may take up to
 process runs one child at a time; `ENGINE_MAX_CHILDREN` bounds the children
 across every process on one data directory, so it matters for a split
 install (ingest and console as separate processes), where the default 2 lets
-each have one. `GOMEMLIMIT` does not cover them.
+each have one. The ingest process's child also answers the form-attribution
+lookup each minute while submissions are pending. `GOMEMLIMIT` does not
+cover the children.
 
 ### docker compose
 
