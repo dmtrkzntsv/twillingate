@@ -43,9 +43,9 @@ type Rules struct {
 // Reader answers SQL over every project's files and open logs as the
 // tables events, views, product and measures (raw-first D4, D8), and
 // sessions, identities and aliases (D16–D18): the derived files that are
-// current, the rest derived on read. The tables live in the engine's child: the logs loaded into _tw_hot, the
-// Parquet files read through the view _tw_all, the rules applied by the
-// view events. They are built on the first query and again whenever a
+// current, the rest derived on read. The tables live in the engine's child:
+// the logs loaded into _tw_hot, the Parquet files read through the view
+// _tw_all, the rules applied by the view events. They are built on the first query and again whenever a
 // file, a log's size or the rules changed since: _tw_state records the
 // signature they were built from.
 type Reader struct {

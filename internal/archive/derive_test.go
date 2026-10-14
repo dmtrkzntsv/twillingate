@@ -272,6 +272,33 @@ func TestRetentionTakesTheDerivedFilesAlong(t *testing.T) {
 	}
 }
 
+// TestAFailedRewriteDropsTheStaleIdentities: when retention deleted a month
+// and the identities rewrite then fails, the old file (which still names the
+// expired users and is newer than every events file left) is removed, so it
+// reads as missing instead of current.
+func TestAFailedRewriteDropsTheStaleIdentities(t *testing.T) {
+	f := newFixture(t)
+	f.write(t, named(pageView("a1", "u1", "2026-07-10T10:00:00Z", "/"), "u1", "Ada", "", ""),
+		named(pageView("b1", "u2", "2026-10-10T10:00:00Z", "/"), "u2", "", "", ""))
+	f.maintain(t, "2026-10-12")
+	// A non-empty directory where the temporary file goes fails the write.
+	block := f.project1(identitiesFile + ".tmp")
+	if err := os.MkdirAll(block+"/x", 0o750); err != nil {
+		t.Fatal(err)
+	}
+	d, _ := civil.Parse("2026-10-12")
+	// A project's failure is logged, not returned.
+	if err := f.a.Maintain(context.Background(), d, 1, 60); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(f.project1(identitiesFile)); !os.IsNotExist(err) {
+		t.Fatalf("stat identities = %v, want the stale file removed", err)
+	}
+	if _, err := os.Stat(f.project1(aliasesFile)); err != nil {
+		t.Fatalf("aliases = %v, want the rewritten file", err)
+	}
+}
+
 // TestNoEventsFileNoDerivedFile: a project whose every month retention
 // deleted keeps no derived file.
 func TestNoEventsFileNoDerivedFile(t *testing.T) {

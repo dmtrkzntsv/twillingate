@@ -423,7 +423,7 @@ which `usage` reads and which outlive the aggregates' retention) run daily at
 across those times skips no day. With `LOG_FILE` set, install
 `deploy/logrotate/twillingate` into `/etc/logrotate.d/`.
 
-The ingest process also keeps every event as files under `EVENTS_DIR` (`raw/` in the data directory unless set): a log per project and day, written as events arrive, turned into a Parquet day file after the day ends and into a month file once the month is final. The same pass derives three small tables from them in each project's directory, `sessions/`, `identities.parquet` and `aliases.parquet`, rewritten when the events under them change. A month file is deleted once the month's last day is `RETENTION_DAYS` old. That file work runs in the daily pass: the scheduled 03:00 UTC pass waits a random delay of up to 30 minutes first, the pass at start does not. Nothing reads the files yet; SQLite still answers every query.
+The ingest process also keeps every event as files under `EVENTS_DIR` (`raw/` in the data directory unless set): a log per project and day, written as events arrive, turned into a Parquet day file after the day ends and into a month file once the month is final. The same pass derives three small tables from them in each project's directory, `sessions/`, `identities.parquet` and `aliases.parquet`, rewritten when the events under them change. A month file is deleted once the month's last day is `RETENTION_DAYS` old. That file work runs in the daily pass: the scheduled 03:00 UTC pass waits a random delay of up to 30 minutes first, the pass at start does not. `query` with `source: "files"` reads them and the tables derived from them; widgets and every other tool still read SQLite.
 
 ### Back up and restore
 

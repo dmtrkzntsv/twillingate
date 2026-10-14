@@ -1057,7 +1057,8 @@ and read retention from the `user` cohort. `$group_id` is stored raw because it
 identifies an organization, not a natural person; single-person groups are
 personal data. `$user_name` is kept only beside a `$user_id`.
 In the event files every event also keeps the `$install_id`, `$user_name`
-and `$group_name` it was sent with, for as long as `RETENTION_DAYS` keeps the
+and `$group_name` it was sent with (each name only beside its id:
+`$user_name` beside `$user_id`, `$group_name` beside `$group_id`), for as long as `RETENTION_DAYS` keeps the
 event (`query` with `source: "files"`): the names are personal data there
 too.
 **The collector stores what it is sent.** What reaches it is decided by the tag's
@@ -1695,7 +1696,9 @@ you query. They describe the events as stored: rules do not apply to them.
 
 A view with a `session_id` belongs to that session; any other starts a
 new one after 30 minutes without a view by the same actor, as the Views
-dashboard counts them.
+dashboard counts them, except that the dashboard folds the kinds past its cap
+into `(other)` first and the files do not. A view resent into a late file can
+count twice until its month merges, as for events.
 
 `identities`, one row per user (`kind` `user`, from `user_id`) and per
 group (`kind` `group`, from `group_id`): `project_id`, `kind`, `id`,

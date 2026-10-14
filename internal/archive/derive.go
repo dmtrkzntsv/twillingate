@@ -34,7 +34,10 @@ const sessionGapSeconds = 1800
 // of the key, so midnight UTC cuts a session. One row per session: its
 // first and last view, the whole seconds between them, its views, the
 // entry view's host, path, referrer and UTMs and the exit view's path,
-// views at the same second ordered by id.
+// views at the same second ordered by id. The 'id:' and 'gap:' prefixes of
+// the session keys deliberately differ from viewSessionsCTE, which keys a
+// declared session id and a gap counter in one namespace (a declared id "2"
+// would merge with gap session 2 there, not here).
 func sessionsSelect(src string) string {
 	return fmt.Sprintf(`WITH v AS (
   SELECT project_id, day, kind, actor_id, actor_kind, session_id, id, ts, host, path,

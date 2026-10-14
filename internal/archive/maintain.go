@@ -197,11 +197,18 @@ func (a *Archive) derive(ctx context.Context, dir string, force bool) error {
 	}
 	if len(pf.Parquet) > 0 && (force || pf.identitiesDue) {
 		src := eventsOf(pf.Parquet)
-		if err := a.write(ctx, "COPY ("+identitiesSelect(src)+") TO ", filepath.Join(dir, identitiesFile)); err != nil {
-			errs = append(errs, err)
-		}
-		if err := a.write(ctx, "COPY ("+aliasesSelect(src)+") TO ", filepath.Join(dir, aliasesFile)); err != nil {
-			errs = append(errs, err)
+		for _, d := range []struct{ sel, file string }{{identitiesSelect(src), identitiesFile}, {aliasesSelect(src), aliasesFile}} {
+			out := filepath.Join(dir, d.file)
+			if err := a.write(ctx, "COPY ("+d.sel+") TO ", out); err != nil {
+				errs = append(errs, err)
+				// The old file is newer than every events file left after
+				// retention, so it would keep reading as current and keep
+				// expired users' names; missing, it is derived on read and
+				// rewritten by the next pass.
+				if err := os.Remove(out); err != nil && !errors.Is(err, os.ErrNotExist) {
+					errs = append(errs, fmt.Errorf("archive: %w", err))
+				}
+			}
 		}
 	}
 	return errors.Join(errs...)
