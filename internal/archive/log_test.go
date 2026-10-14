@@ -96,6 +96,7 @@ func TestLineWritesTheFields(t *testing.T) {
 	e := store.Event{ID: "i", ProjectID: 1, Family: store.FamilyProduct, EventName: "n",
 		TS: ts("2026-10-12T10:00:00Z"), ReceivedAt: ts("2026-10-12T10:00:01Z"), Kind: "web",
 		ActorID: "a", ActorKind: store.ActorConnection, UserID: "u", GroupID: "g", SessionID: "s",
+		InstallID: "in", UserName: "un", GroupName: "gn",
 		Host: "h", Path: "/p", ReferrerSource: "r", UTMSource: "us", UTMMedium: "um", UTMCampaign: "uc",
 		Platform: "pl", OS: "o", OSVersion: "ov", OSName: "on", Browser: "b", BrowserVersion: "bv",
 		AppVersion: "av", AppLocale: "al", BrowserLocale: "bl", Device: "d", DeviceModel: "dm",

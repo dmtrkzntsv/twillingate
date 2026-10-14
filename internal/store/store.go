@@ -71,19 +71,25 @@ type Event struct {
 	TS, ReceivedAt                                 time.Time
 	Kind                                           string
 	ActorID, ActorKind, UserID, GroupID, SessionID string
-	Host, Path, ReferrerSource                     string
-	UTMSource, UTMMedium, UTMCampaign              string
-	Platform, OS, OSVersion, OSName                string
-	Browser, BrowserVersion                        string
-	AppVersion, AppLocale, BrowserLocale           string
-	Device, DeviceModel                            string
-	DisplayWidth, DisplayHeight                    int
-	Country                                        string
-	Consent                                        Consent
-	Attributes                                     map[string]string
-	Value                                          *float64
-	Measure                                        string
-	SampleRate                                     float64
+	// InstallID is the client's $install_id, also when a $user_id outranks
+	// it as the actor; UserName and GroupName name UserID and GroupID, each
+	// kept only beside its id. SQLite's events table does not store them
+	// (its identities table holds the latest names); the event files do
+	// (raw-first D17, D18).
+	InstallID, UserName, GroupName       string
+	Host, Path, ReferrerSource           string
+	UTMSource, UTMMedium, UTMCampaign    string
+	Platform, OS, OSVersion, OSName      string
+	Browser, BrowserVersion              string
+	AppVersion, AppLocale, BrowserLocale string
+	Device, DeviceModel                  string
+	DisplayWidth, DisplayHeight          int
+	Country                              string
+	Consent                              Consent
+	Attributes                           map[string]string
+	Value                                *float64
+	Measure                              string
+	SampleRate                           float64
 }
 
 // SystemAttribute is a reserved key that product_attributes always breaks

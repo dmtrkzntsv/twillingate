@@ -1055,8 +1055,12 @@ that never returns, inflating active counts and dragging retention toward zero,
 so leave it out — the connection hash then gives one actor per device per day —
 and read retention from the `user` cohort. `$group_id` is stored raw because it
 identifies an organization, not a natural person; single-person groups are
-personal data. `$user_name` is kept only beside a `$user_id`. **The collector
-stores what it is sent.** What reaches it is decided by the tag's
+personal data. `$user_name` is kept only beside a `$user_id`.
+In the event files every event also keeps the `$install_id`, `$user_name`
+and `$group_name` it was sent with, for as long as `RETENTION_DAYS` keeps the
+event (`query` with `source: "files"`): the names are personal data there
+too.
+**The collector stores what it is sent.** What reaches it is decided by the tag's
 `data-identity` (or `identity` in code), so a project's privacy posture is the
 posture of its clients. The collector logs `project receives ids` the first
 time a project stores a `$user_id` or `$install_id` (once per kind per process),
@@ -1639,6 +1643,8 @@ table has:
 | `ts`, `received_at` | TIMESTAMP (UTC) | |
 | `day` | DATE | `ts`'s UTC day |
 | `kind`, `actor_id`, `actor_kind`, `user_id`, `group_id`, `session_id` | VARCHAR | |
+| `install_id` | VARCHAR | the client's `$install_id`, also when a `$user_id` is the actor |
+| `user_name`, `group_name` | VARCHAR | the names sent beside `user_id` and `group_id` (see [Identity](#identity)) |
 | `host`, `path`, `referrer_source`, `utm_source`, `utm_medium`, `utm_campaign` | VARCHAR | |
 | `platform`, `os`, `os_version`, `os_name`, `browser`, `browser_version`, `browser_locale`, `app_version`, `app_locale`, `device`, `device_model`, `country` | VARCHAR | as on the views (see [The event model](#the-event-model)) |
 | `display_width`, `display_height` | BIGINT | |

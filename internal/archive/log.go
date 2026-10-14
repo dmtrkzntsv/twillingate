@@ -286,8 +286,9 @@ var fields = []struct{ name, typ string }{
 	{"v", "BIGINT"}, {"id", "VARCHAR"}, {"project_id", "BIGINT"}, {"family", "VARCHAR"},
 	{"event_name", "VARCHAR"}, {"ts", "TIMESTAMP"}, {"day", "DATE"}, {"received_at", "TIMESTAMP"},
 	{"kind", "VARCHAR"}, {"actor_id", "VARCHAR"}, {"actor_kind", "VARCHAR"}, {"user_id", "VARCHAR"},
-	{"group_id", "VARCHAR"}, {"session_id", "VARCHAR"}, {"host", "VARCHAR"}, {"path", "VARCHAR"},
-	{"referrer_source", "VARCHAR"}, {"utm_source", "VARCHAR"}, {"utm_medium", "VARCHAR"},
+	{"group_id", "VARCHAR"}, {"session_id", "VARCHAR"}, {"install_id", "VARCHAR"}, {"user_name", "VARCHAR"},
+	{"group_name", "VARCHAR"}, {"host", "VARCHAR"}, {"path", "VARCHAR"}, {"referrer_source", "VARCHAR"},
+	{"utm_source", "VARCHAR"}, {"utm_medium", "VARCHAR"},
 	{"utm_campaign", "VARCHAR"}, {"platform", "VARCHAR"}, {"os", "VARCHAR"}, {"os_version", "VARCHAR"},
 	{"os_name", "VARCHAR"}, {"browser", "VARCHAR"}, {"browser_version", "VARCHAR"},
 	{"browser_locale", "VARCHAR"}, {"app_version", "VARCHAR"}, {"app_locale", "VARCHAR"},
@@ -309,7 +310,8 @@ func line(e store.Event) ([]byte, error) {
 	}
 	for k, v := range map[string]string{
 		"kind": e.Kind, "actor_id": e.ActorID, "actor_kind": e.ActorKind, "user_id": e.UserID,
-		"group_id": e.GroupID, "session_id": e.SessionID, "host": e.Host, "path": e.Path,
+		"group_id": e.GroupID, "session_id": e.SessionID, "install_id": e.InstallID,
+		"user_name": e.UserName, "group_name": e.GroupName, "host": e.Host, "path": e.Path,
 		"referrer_source": e.ReferrerSource, "utm_source": e.UTMSource, "utm_medium": e.UTMMedium,
 		"utm_campaign": e.UTMCampaign, "platform": e.Platform, "os": e.OS, "os_version": e.OSVersion,
 		"os_name": e.OSName, "browser": e.Browser, "browser_version": e.BrowserVersion,
