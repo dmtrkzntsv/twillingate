@@ -197,9 +197,9 @@ func (a *Archive) dump(ctx context.Context, dir, pending string) error {
 	return syncFile(dir)
 }
 
-// dumpQuery is the dump's SELECT of a log (logSelect, strict): every line once
-// per id, ordered
-// by family and ts, with every column's type spelled out. DuckDB inferring
+// dumpQuery is the dump's SELECT of a log (logSelect, strict): every line
+// once per id, ordered by family and ts, with every column's type spelled
+// out. DuckDB inferring
 // the types from one day's values would rewrite a value for good
 // ("ABCDEF01-…" read as a UUID comes back lower case, "12:30" as a TIME
 // comes back "12:30:00") and leave a month whose days inferred different

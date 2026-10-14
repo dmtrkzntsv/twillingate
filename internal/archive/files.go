@@ -63,6 +63,8 @@ func ListFiles(dir string) (map[int64]Files, error) {
 			case monthFileName.MatchString(n):
 				f.Parquet = append(f.Parquet, p)
 			case dayFileName.MatchString(n):
+				// A month merges only once all its days are dumped and past the
+				// late window, so its file holds every day file beside it.
 				if !have[dayFileName.FindStringSubmatch(n)[1][:7]+".parquet"] {
 					f.Parquet = append(f.Parquet, p)
 				}
