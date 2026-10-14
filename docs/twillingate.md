@@ -770,7 +770,11 @@ down, 5xx) is kept for retry — in memory, or with
 [consent](#consent-and-storage) in a bounded stored queue (`twillingate_queue`
 or `<instance>_queue`, 50 batches) — and replays on `online`, once more via
 `sendBeacon` on unload, and from storage on the next load. Replays dedupe
-server-side by event id; a 4xx drops the batch instead.
+server-side by event id; a 4xx drops the batch instead. A batch `sendBeacon`
+accepted stays stored, since an accepted beacon can still be lost, and
+replays only while its oldest event is under 20 hours old: past the server's
+late window a copy would [clamp](#timestamps-and-idempotency) to another day
+and count twice, so an older one is dropped.
 
 ### Debugging
 
@@ -1199,13 +1203,17 @@ User-Agent is read only to drop crawlers, and both are discarded.
 **`ts`** is RFC 3339, UTC: the client's own clock reading when the event
 happened, not at flush time. The server clamps it to `[received − max_event_age,
 received + 5 minutes]`, records the server clock separately, and **clamps and
-counts, never drops**, out-of-range values; `max_event_age` equals
-`RETENTION_RAW_DAYS` (30 days by default), so a clamped event can never
-target a day already rolled up. **`id`** is a client-generated UUID (the SDK
+counts, never drops**, out-of-range values; `max_event_age` is
+`INGEST_LATE_DAYS` (1 day by default, at most `RETENTION_RAW_DAYS`), so a
+clamped event can never target a day already rolled up. **`id`** is a client-generated UUID (the SDK
 makes v7, so ids sort by time; any version is accepted) and is what makes at-least-once delivery safe:
 the write ignores a duplicate primary key, so a batch retried after a timeout
 that actually succeeded is a no-op. **Omit `id` and a replayed batch
-double-counts.**
+double-counts.** The duplicate check is per day of the stored (clamped)
+timestamp: a copy of an event older than `INGEST_LATE_DAYS` replayed on a
+later day clamps to a later day and is stored twice. The SDK never sends
+such a copy; a client of the wire format should resend only within the
+window.
 
 ### Responses and retry
 
@@ -1422,7 +1430,7 @@ take `project_id`, `from` and `to` as `YYYY-MM-DD` unless noted.
 | Tool | Extra parameters | Returns |
 | --- | --- | --- |
 | `list_projects` | none | Every project with its `project_id`, name, `archived` and `archived_at` (RFC 3339, only when archived), `allowed_origins` and `attributes` (its breakdown keys, ordered by key), in the order `move_project` sets. Call this first — every other tool needs a `project_id` |
-| `limits` | none (no `project_id`) | The limits in force, each with a `group`, `name`, `value`, `unit` (`days`, `bytes`, `characters`, `seconds`; absent for a count) and `description`, in three groups: `retention` (`RETENTION_RAW_DAYS`, `RETENTION_AGGREGATE_DAYS`, `RETENTION_ARCHIVED_DAYS`, `RETENTION_FORMS_DRAFT_DAYS`), `caps` (`ATTRIBUTE_VALUES_TOP_N`, which caps views breakdowns and attribute values alike, `ATTRIBUTE_BREAKDOWNS_MAX`, `IDENTITIES_TOP_N`) and `ingest`, the wire format's fixed [limits](#limits) and [form limits](#form-submissions). A setting carries its `setting` and `default`; a fixed limit neither. `zero` says what 0 means where it is not the number (`no cap`, `kept forever`). The output also carries `raw_events`, `{held, window_days}`: the raw events stored, of every family and project (what the server's disk and its dashboards' scans of the raw window follow), counted at most every 5 minutes (a full scan of the raw rows, seconds on a server holding millions): a call past the 5 minutes answers the previous count and starts the next, one past 10 waits for it, so the count is never more than 10 minutes old; and `window_days`, `RETENTION_RAW_DAYS` (0 keeps only today's rows raw). Absent when the last count failed, `CONSOLE_QUERY_TIMEOUT` included; a failure is logged once and kept for the same 5 minutes. And `ingest_disabled`, `true` when `INGEST_DISABLED` is set and every ingest route refuses with `429` |
+| `limits` | none (no `project_id`) | The limits in force, each with a `group`, `name`, `value`, `unit` (`days`, `bytes`, `characters`, `seconds`; absent for a count) and `description`, in three groups: `retention` (`RETENTION_RAW_DAYS`, `RETENTION_AGGREGATE_DAYS`, `RETENTION_ARCHIVED_DAYS`, `RETENTION_FORMS_DRAFT_DAYS`), `caps` (`ATTRIBUTE_VALUES_TOP_N`, which caps views breakdowns and attribute values alike, `ATTRIBUTE_BREAKDOWNS_MAX`, `IDENTITIES_TOP_N`) and `ingest`: `INGEST_LATE_DAYS`, then the wire format's fixed [limits](#limits) and [form limits](#form-submissions). A setting carries its `setting` and `default`; a fixed limit neither. `zero` says what 0 means where it is not the number (`no cap`, `kept forever`). The output also carries `raw_events`, `{held, window_days}`: the raw events stored, of every family and project (what the server's disk and its dashboards' scans of the raw window follow), counted at most every 5 minutes (a full scan of the raw rows, seconds on a server holding millions): a call past the 5 minutes answers the previous count and starts the next, one past 10 waits for it, so the count is never more than 10 minutes old; and `window_days`, `RETENTION_RAW_DAYS`. Absent when the last count failed, `CONSOLE_QUERY_TIMEOUT` included; a failure is logged once and kept for the same 5 minutes. And `ingest_disabled`, `true` when `INGEST_DISABLED` is set and every ingest route refuses with `429` |
 | `cap_usage` | `from`, `to` (optional: the last 30 days) | Per capped dimension — views breakdowns and kinds, attribute keys, `users`/`groups` — the busiest day's values against the `cap`, `days` with data, `days_capped` (an `(other)` row; for users and groups, the cap reached) and `folded_share` |
 | `list_attributes` | `from`, `to` (optional: the last 30 days) | The project's attributes, busiest first: each key's `events` and `max_values` (the busiest event's distinct values on one day, against `ATTRIBUTE_VALUES_TOP_N`), counted by the daily pass so today's arrive the night after (a key first received today has `events` 0 and `max_values` `null`), `received`, `breakdown`, `blocked` and `aliases` (the keys renamed or merged into it; absent when none) — for the 500 busiest keys plus every breakdown key, every blocked key and every key with aliases (`received` false when none carried it); a key renamed away is listed only in its target's `aliases`. Also `keys_total` (the distinct keys received, keys renamed away left out), `values_cap`, `breakdowns_used` and `breakdowns_max` (`ATTRIBUTE_BREAKDOWNS_MAX`). Kept for the raw window only |
 | `usage` | `project_id` (optional: every project), `from`, `to` (optional: the last 30 days) | Per project: `views`, product `events` and measure `samples` per day and in total, `last_received_at`, `first_day` (the oldest day with data, stored counts included), `raw_days`, `rolled_up_days`, an estimated `size` (raw rows and aggregates, measured daily by the daily pass, which also runs at start: the newest, with the day it was `measured_at`; `null` until the first measurement) and each day's measured `total_bytes` in the series (`null` on days not measured), `unused_attributes` (breakdown keys no event carried; computed only with `project_id`, `null` for the all-projects answer); plus the database's size on disk now and per day (`database_series`). Days before the newest daily pass read the counts it stored, which outlive the aggregates' retention. Each series day also carries `declared_attributes` and, counted the night after while the day's rows are raw and kept once rolled up, the distinct `attribute_keys` and `attribute_values` received and the `attribute_values_folded` into `(other)` (`null` on days not stored) |

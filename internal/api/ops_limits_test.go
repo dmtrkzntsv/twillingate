@@ -19,13 +19,13 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/wire"
 )
 
-// limits reports retention, the caps and the wire format's fixed limits, in
-// that order: settings with their value in force (0 included) and default,
+// limits reports retention, the caps, the late window and the wire format's
+// fixed limits, in that order: settings with their value in force (0 included) and default,
 // fixed limits from internal/wire with neither setting nor default.
 func TestLimitsReportsTheLimitsInForce(t *testing.T) {
 	h, cs := newTestHost(t)
 	cfg := &config.Config{AttributeValuesTopN: 7, IdentitiesTopN: 2000, AttributeBreakdownsMax: 12,
-		Forms: config.FormsConfig{DraftDays: 3}}
+		IngestLateDays: 2, Forms: config.FormsConfig{DraftDays: 3}}
 	cfg.Retention.Events = config.RetentionClass{RawDays: 7, AggregateDays: 90}
 	h.limits = limitsFrom(cfg)
 	out, err := h.listLimits(context.Background(), struct{}{})
@@ -44,6 +44,7 @@ func TestLimitsReportsTheLimitsInForce(t *testing.T) {
 		{groupCaps, "ATTRIBUTE_VALUES_TOP_N", 7, config.DefaultAttributeValuesTopN},
 		{groupCaps, "ATTRIBUTE_BREAKDOWNS_MAX", 12, config.DefaultAttributeBreakdownsMax},
 		{groupCaps, "IDENTITIES_TOP_N", 2000, config.DefaultIdentitiesTopN},
+		{groupIngest, "INGEST_LATE_DAYS", 2, config.DefaultIngestLateDays},
 	}
 	if len(out.Limits) <= len(settings) {
 		t.Fatalf("limits = %+v", out.Limits)

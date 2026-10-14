@@ -483,31 +483,3 @@ func TestAggregateDayDeletesOnlyItsFamily(t *testing.T) {
 		}
 	})
 }
-
-// TestAggregateProductLateRowAfterRollupRewritesDay reproduces the raised
-// raw window risk of the raw-first spec (step 0): a day rolled up and its
-// raw rows deleted, then a late event for that day accepted because
-// RETENTION_RAW_DAYS was raised, then the day rolled up again. Nothing
-// records that the day was done, so the rollup recomputes it from the one
-// late row and INSERT OR REPLACE overwrites the full aggregates.
-func TestAggregateProductLateRowAfterRollupRewritesDay(t *testing.T) {
-	t.Skip("fails until the late window (raw-first plan, task 1) keeps a late row out of a rolled-up day")
-	db := newTestDB(t)
-	ctx := context.Background()
-	seedProductDay(t, db) // subscribed: 3 events by u1, u2, u2
-	must := func(err error) {
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
-	must(db.AggregateProductDay(ctx, 1, day("2026-08-10"), nil, defaultAttrsTopN))
-	// A late subscribed event by u3 lands in the rolled-up day: with the
-	// window raised, clampTS no longer keeps it out.
-	seedProductEvent(t, db, 1, "subscribed", "2026-08-10T23:00:00Z", nil, "", "")
-	must(db.AggregateProductDay(ctx, 1, day("2026-08-10"), nil, defaultAttrsTopN))
-	var c, u int
-	must(db.db.QueryRow(`SELECT count, unique_users FROM agg_product_daily WHERE event_name='subscribed'`).Scan(&c, &u))
-	if c != 4 || u != 3 {
-		t.Fatalf("subscribed after the late row: count=%d unique_users=%d, want 4 and 3 (the day's 3 events plus the late one); the rollup rewrote the day from the late row alone", c, u)
-	}
-}

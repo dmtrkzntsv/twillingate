@@ -134,6 +134,10 @@ const (
 	DefaultArchivedDays  = 30
 )
 
+// DefaultIngestLateDays is INGEST_LATE_DAYS's default: a day's grace for
+// a late event, the most a phone offline overnight needs.
+const DefaultIngestLateDays = 1
+
 // DefaultFormDraftDays is RETENTION_FORMS_DRAFT_DAYS's default: a week to
 // see what a new form sends and approve it.
 const DefaultFormDraftDays = 7
@@ -141,7 +145,12 @@ const DefaultFormDraftDays = 7
 type Config struct {
 	IngestAddr string
 	// IngestDisabled (INGEST_DISABLED) refuses every ingest route.
-	IngestDisabled      bool
+	IngestDisabled bool
+	// IngestLateDays (INGEST_LATE_DAYS) is how far back a client timestamp
+	// may lie: older ones are clamped to received − IngestLateDays. At most
+	// Retention.Events.RawDays, so a late event never reaches a day the
+	// daily pass has rolled up (raw-first spec, D3).
+	IngestLateDays      int
 	Database            string
 	Geo                 string
 	IngestURL           string
@@ -236,6 +245,7 @@ func FromEnv(lookup func(string) (string, bool)) (*Config, error) {
 		// A complete stop of ingest: every route that takes events or
 		// form submissions refuses with 429; the console is unaffected.
 		IngestDisabled: e.bool("INGEST_DISABLED", false),
+		IngestLateDays: e.num("INGEST_LATE_DAYS", DefaultIngestLateDays),
 		Database:       e.str("DATABASE_DSN", ""),
 		Geo:            e.str("GEO_DSN", "cloudflare://"),
 		// The collector's public base URL (https://twillingate.example.com).
@@ -350,6 +360,13 @@ func (c *Config) validate() error {
 	if rc := c.Retention.Events; rc.RawDays < 0 || rc.AggregateDays < 0 {
 		return fmt.Errorf("config: retention days must not be negative: %+v", rc)
 	}
+	if c.IngestLateDays < 1 {
+		return fmt.Errorf("config: INGEST_LATE_DAYS must be at least 1: %d", c.IngestLateDays)
+	}
+	if c.IngestLateDays > c.Retention.Events.RawDays {
+		return fmt.Errorf("config: INGEST_LATE_DAYS (%d) exceeds RETENTION_RAW_DAYS (%d): a late event could land in a day already rolled up",
+			c.IngestLateDays, c.Retention.Events.RawDays)
+	}
 	for _, v := range []struct {
 		name string
 		n    int
@@ -383,10 +400,11 @@ func (c *Config) validate() error {
 	return nil
 }
 
-// MaxEventAge is the raw window: a clamped timestamp can never land in a
-// day already rolled up.
+// MaxEventAge is the late window (INGEST_LATE_DAYS): how far back a client
+// timestamp may lie before it is clamped. Validation keeps it within the raw
+// window, so a clamped timestamp never lands in a day already rolled up.
 func (c *Config) MaxEventAge() time.Duration {
-	return time.Duration(c.Retention.Events.RawDays) * 24 * time.Hour
+	return time.Duration(c.IngestLateDays) * 24 * time.Hour
 }
 
 // parseConsoleAuthDSN fans CONSOLE_AUTH_DSN out into the mode-specific ConsoleConfig
