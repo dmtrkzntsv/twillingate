@@ -43,7 +43,7 @@ func CustomSQLRefused() []string { return []string{"submissions"} }
 // surface's mux via RegisterOn. rst is the store reporting reads and
 // writes; widget queries run on the same read-only handle, and so under the
 // same CONSOLE_QUERY_TIMEOUT and CONSOLE_QUERY_ROWS_MAX, as the query tool.
-func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *manage.Ops, rst reporting.Store, logger *slog.Logger) (http.Handler, func() error, error) {
+func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *manage.Ops, rst reporting.Store, logger *slog.Logger, files Files) (http.Handler, func() error, error) {
 	db, err := readsql.Open(cfg.Console.DBPath, cfg.Console.QueryTimeout, cfg.Console.QueryMaxRows, CustomSQLRefused()...)
 	if err != nil {
 		return nil, nil, err
@@ -58,7 +58,7 @@ func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *m
 		ArchivedDays: cfg.Retention.ArchivedDays, ShareBaseURL: cfg.Console.URL})
 	h := &host{db: db, subs: subs, reg: reg, ops: ops, rep: rep,
 		ingestURL: cfg.IngestURL, logger: logger, limits: limitsFrom(cfg), rawDays: cfg.Retention.Events.RawDays,
-		ingestDisabled: cfg.IngestDisabled}
+		ingestDisabled: cfg.IngestDisabled, files: files}
 	h.raw = h.newHostRawCount()
 	// Counted from the start, so the first limits read (the Projects
 	// page) does not wait for a scan of every raw row.
@@ -113,8 +113,8 @@ func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *m
 // server's routes in token mode with a password configured; a browser
 // opening any other address gets the console's 404 page (NotFoundPages).
 // The func() error closes the read DB.
-func NewHandler(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *manage.Ops, rst reporting.Store, logger *slog.Logger) (http.Handler, func() error, error) {
-	protected, closeDB, err := Build(ctx, cfg, reg, ops, rst, logger)
+func NewHandler(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *manage.Ops, rst reporting.Store, logger *slog.Logger, files Files) (http.Handler, func() error, error) {
+	protected, closeDB, err := Build(ctx, cfg, reg, ops, rst, logger, files)
 	if err != nil {
 		return nil, nil, err
 	}

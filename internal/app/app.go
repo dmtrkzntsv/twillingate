@@ -205,7 +205,7 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 	var apiClose func() error
 	switch {
 	case runConsole && runIngest && cfg.Console.Addr == cfg.IngestAddr:
-		protected, closeDB, err := api.Build(ctx, cfg, reg, ops, st, logger)
+		protected, closeDB, err := api.Build(ctx, cfg, reg, ops, st, logger, nil)
 		if err != nil {
 			stopBackground()
 			return err
@@ -216,7 +216,7 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 		api.RegisterOn(mux, protected, cfg, false, logger)
 		surfaces = append(surfaces, httpSurface{cfg.IngestAddr, api.NotFoundPages(mux), "ingest,console"})
 	case runConsole:
-		h, closeDB, err := api.NewHandler(ctx, cfg, reg, ops, st, logger)
+		h, closeDB, err := api.NewHandler(ctx, cfg, reg, ops, st, logger, nil)
 		if err != nil {
 			stopBackground()
 			return err
