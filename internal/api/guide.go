@@ -135,5 +135,5 @@ func writeFormsGuide(b *strings.Builder, platform, base, key string) {
 			"           \"attributes\":{\"$user_id\":\"u_123\"}}'\n\n"+
 			"It answers 201 {\"id\"}; retry on 5xx with the same id, which is stored once.\n\n", base, key)
 	}
-	b.WriteString("Submissions hold personal data. The first one creates the form as a draft:\nit keeps every field for RETENTION_FORMS_DRAFT_DAYS, then is archived unless\napproved, and draft submissions never count as conversions. Review what\narrived with list_forms and list_submissions, then call approve_form with\nexpected_fields (the fields to keep): from then on each submission writes a\n$form_submit product event (attribute form). docs://twillingate, Collect\nform submissions, has the rest.\n\n")
+	b.WriteString("Submissions hold personal data. The first one creates the form as a draft:\nit keeps every field for RETENTION_FORMS_DRAFT_DAYS, then is archived unless\napproved, and draft submissions never count as conversions. Review what\narrived with list_forms and list_submissions, then call approve_form with\nexpected_fields (the fields to keep): from then on each submission writes a\n$form_submit product event (attribute form) about a minute after it arrives. docs://twillingate, Collect\nform submissions, has the rest.\n\n")
 }
