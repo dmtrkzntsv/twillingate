@@ -38,6 +38,9 @@ func TestDefaultsApplied(t *testing.T) {
 	if c.Retention.Events.RawDays != 30 || c.Retention.Events.AggregateDays != 400 {
 		t.Errorf("Retention = %+v", c.Retention)
 	}
+	if c.Engine.MemoryLimit != "512MB" || c.Engine.MaxChildren != 2 {
+		t.Errorf("Engine = %+v, want 512MB and 2", c.Engine)
+	}
 	if c.IngestLateDays != 1 {
 		t.Errorf("IngestLateDays = %d, want 1", c.IngestLateDays)
 	}
@@ -148,6 +151,9 @@ func TestValidationErrors(t *testing.T) {
 		"no database":                           {"DATABASE_DSN": ""},
 		"bad geo scheme":                        base(map[string]string{"GEO_DSN": "???"}),
 		"negative raw_days":                     base(map[string]string{"RETENTION_RAW_DAYS": "-1"}),
+		"zero engine children":                  base(map[string]string{"ENGINE_MAX_CHILDREN": "0"}),
+		"engine memory not a size":              base(map[string]string{"ENGINE_MEMORY_LIMIT": "lots"}),
+		"engine memory no unit":                 base(map[string]string{"ENGINE_MEMORY_LIMIT": "512"}),
 		"zero late days":                        base(map[string]string{"INGEST_LATE_DAYS": "0"}),
 		"negative late days":                    base(map[string]string{"INGEST_LATE_DAYS": "-1"}),
 		"late days exceed the raw window":       base(map[string]string{"RETENTION_RAW_DAYS": "3", "INGEST_LATE_DAYS": "4"}),
@@ -769,5 +775,17 @@ func TestMaxEventAgeIsTheLateWindow(t *testing.T) {
 	}
 	if c.MaxEventAge() != 48*time.Hour {
 		t.Errorf("MaxEventAge = %v, want 48h", c.MaxEventAge())
+	}
+}
+
+func TestEngineFromEnv(t *testing.T) {
+	for _, v := range []string{"1GB", "768MB", "1.5GB", "2GiB", "512mb"} {
+		c, err := load(t, map[string]string{"ENGINE_MEMORY_LIMIT": v, "ENGINE_MAX_CHILDREN": "4"})
+		if err != nil {
+			t.Fatalf("ENGINE_MEMORY_LIMIT=%s: %v", v, err)
+		}
+		if c.Engine.MemoryLimit != v || c.Engine.MaxChildren != 4 {
+			t.Errorf("Engine = %+v", c.Engine)
+		}
 	}
 }

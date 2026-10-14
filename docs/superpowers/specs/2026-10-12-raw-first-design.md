@@ -219,12 +219,19 @@ One server takes up to **1M events a month** and keeps raw events for up to
   directory for the project and range. Exact distinct users over any range,
   combinations of any keys and keys nobody declared all come from the same
   rows. The child, not the driver in-process, because the measurements
-  showed: DuckDB open and idle holds 37 MB and keeps what it used up to its
-  limit until the limit is lowered (never returned on macOS), so a process
-  that exits gives everything back, which matters to a hosting operator
-  with many idle customers; a crash or out-of-memory error in a user's
-  widget SQL cannot take ingest down; and the child can read the files and
-  nothing else, so widget SQL never has a path to the SQLite file. The
+  showed (Measurements, "In-process against a child"): a 1-year dashboard
+  peaks at 600–800 MB resident, past a 512 MB `memory_limit`, which bounds
+  only DuckDB's buffer manager, so an out-of-memory kill (the kernel's, or
+  a `systemd` `MemoryMax`) takes whatever process DuckDB runs in: in the
+  server, ingest with up to `BUFFER_CAPACITY` unflushed events; in a
+  child, the child, and the next query spawns another. A crash in a user's
+  widget SQL is contained the same way. Memory return is the smaller
+  reason: closing DuckDB in-process and calling `malloc_trim` gives most
+  of it back but settles ~64 MB above a server that never loaded it
+  (macOS never returns it), while a child that exits returns everything,
+  which matters to a hosting operator with many idle customers. And the
+  child can read the files and nothing else, so widget SQL never has a
+  path to the SQLite file. The
   ingest process never initializes DuckDB and stays at today's footprint.
   Settings: `memory_limit=512MB` (at 256 MB a `COUNT(DISTINCT)` over 3
   years fails, at 128 MB from 1 year), `threads` equal to the CPUs, a
@@ -639,6 +646,27 @@ closed; Parquet reads are not kept, so RSS falls back on its own. At 128 MB
 `top_pages` fails from 1 year. Build: the Linux binary needs cgo and g++,
 links glibc dynamically (no Alpine/musl), and adds ~50 MB (63 MB for an
 empty program with the driver).
+
+- **In-process against a child (2026-10-12, PR 2's question: could a
+  goroutine do?):** 12M rows (1 year at the cap) in monthly Parquet files,
+  the 8-widget dashboard over the year, 2 threads, `memory_limit` 512 MB,
+  duckdb-go v2.10506.0, Linux amd64 with 4 shared CPUs, glibc 2.43.
+  Resident memory:
+
+  | | in-process | child process |
+  |---|---|---|
+  | Go process, DuckDB not loaded | 16 MB | 16 MB (the server) |
+  | DuckDB opened | 36 MB, in 12–16 ms | — |
+  | peak during the dashboard | 600–780 MB, in the server | 600–810 MB, in the child |
+  | after it, still open | 160–416 MB | — |
+  | still open, `memory_limit` lowered to 32 MB | 59 MB | — |
+  | closed, Go GC, `malloc_trim(0)` | 49 MB after 1 cycle, rising (59, 62, 69 …) to ~80 MB from cycle 10 | 16 MB: the child exited |
+
+  The dashboard took 9–12 s either way on this shared machine. A
+  goroutine cannot be stopped from outside, but cancelling its query
+  interrupts DuckDB in-process as in the child, so cancellation is no
+  reason for the process; the peak past the limit, which an out-of-memory
+  kill turns into a dead server, is (D8).
 
 ## Options considered
 

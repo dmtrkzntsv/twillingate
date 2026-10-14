@@ -1,15 +1,9 @@
 # syntax=docker/dockerfile:1
 #
-# The published image (--target runtime): the binary on alpine and nothing
-# else. Node is a build-time dependency only, for the dashboards app the
-# binary embeds.
+# The published image (--target runtime): the binary on debian:bookworm-slim.
+# The binary links glibc and libstdc++ (DuckDB, cgo), so no Alpine. Node is a
+# build-time dependency only, for the dashboards app the binary embeds.
 
-# Build stage must satisfy the toolchain floor in go.mod; bumping go.mod
-# without bumping this tag fails the build rather than silently degrading.
-# --platform=$BUILDPLATFORM pins this stage to the native runner and lets Go
-# cross-compile to TARGET*, instead of QEMU emulating the compiler itself. The
-# binary is CGO_ENABLED=0, so there is no C toolchain to cross-target. Building
-# arm64/arm under emulation cost ~11 min per release against ~80s natively.
 # The dashboards app the binary embeds (internal/reporting/ui): only its
 # components.json is in the repository. Built once on the native platform;
 # the output is the same for every target arch.
@@ -20,30 +14,38 @@ RUN npm ci
 COPY web/ ./
 RUN npm run build
 
-FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS go-build
+# Build stage must satisfy the toolchain floor in go.mod; bumping go.mod
+# without bumping this tag fails the build rather than silently degrading.
+# No --platform=$BUILDPLATFORM: cgo does not cross-compile here, so this
+# stage runs on the target's own platform. release.yml builds each
+# architecture on a runner of that architecture; building the other one
+# locally runs under QEMU, slowly.
+FROM golang:1.25-bookworm AS go-build
 WORKDIR /src
-COPY go.mod go.sum ./
-RUN go mod download
 COPY . .
 COPY --from=web-build /src/internal/reporting/ui ./internal/reporting/ui
 ARG VERSION=dev
-ARG TARGETOS
-ARG TARGETARCH
-ARG TARGETVARIANT
-# GOARM takes the bare number ("7"), TARGETVARIANT the tag form ("v7").
 # `COPY . .` changes on every commit, so this layer never comes from the layer
-# cache; the build cache mount is what makes it incremental. One mount serves
-# every target arch (the cache is keyed by GOARCH and safe to share), and
-# release.yml carries it between runs, since a CI builder starts empty.
+# cache; the build cache mount is what makes it incremental, and release.yml
+# carries it between runs, since a CI builder starts empty. The module cache
+# is a mount too, not a `go mod download` layer: the DuckDB libraries of all
+# five platforms are large and would land in the image layers and the layer
+# cache. CI downloads the modules afresh each run.
 RUN --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} GOARM=${TARGETVARIANT#v} \
-    go build -trimpath -ldflags "-s -w -X github.com/dmtrkzntsv/twillingate/internal/shared/version.Version=${VERSION}" \
+    --mount=type=cache,target=/go/pkg/mod \
+    CGO_ENABLED=1 go build -trimpath -ldflags "-s -w -X github.com/dmtrkzntsv/twillingate/internal/shared/version.Version=${VERSION}" \
     -o /out/twillingate ./cmd/twillingate
 
-FROM alpine:3.20 AS runtime
+FROM debian:bookworm-slim AS runtime
 LABEL org.opencontainers.image.licenses="AGPL-3.0-only"
-RUN apk add --no-cache ca-certificates tzdata && adduser -D -H -u 10001 twillingate
+# uid and gid 10001 as in the Alpine image, so existing volumes stay owned.
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates tzdata \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --system --gid 10001 twillingate \
+    && useradd --system --no-create-home --uid 10001 --gid 10001 twillingate
 COPY --from=go-build /out/twillingate /usr/local/bin/twillingate
+# The engine child must start in this image before it ships.
+RUN DATABASE_DSN=sqlite:///tmp/engine-check/check.db twillingate engine -check && rm -rf /tmp/engine-check
 # Docker seeds a fresh named volume from the image directory, ownership
 # included. Without this the volume mounts root-owned and the non-root
 # process cannot create the database file on first boot.

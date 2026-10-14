@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -60,6 +61,26 @@ type FormsConfig struct {
 type ReportingConfig struct {
 	CacheAge, RefreshAge time.Duration
 }
+
+// EngineConfig sizes the DuckDB children (raw-first spec D8, D23).
+type EngineConfig struct {
+	// MemoryLimit (ENGINE_MEMORY_LIMIT) is each child's DuckDB
+	// memory_limit, in DuckDB's units (MB is 10^6 bytes, MiB 2^20).
+	MemoryLimit string
+	// MaxChildren (ENGINE_MAX_CHILDREN) bounds the children running at
+	// once across every process on the data directory.
+	MaxChildren int
+}
+
+// The engine defaults: 512 MB is the least a COUNT(DISTINCT) over three
+// years at the cap runs in, and two children are for a split install's two processes.
+const (
+	DefaultEngineMemoryLimit = "512MB"
+	DefaultEngineMaxChildren = 2
+)
+
+// engineMemory is the memory_limit forms DuckDB takes, a unit required.
+var engineMemory = regexp.MustCompile(`(?i)^[0-9]+(\.[0-9]+)?\s*(KB|MB|GB|TB|KiB|MiB|GiB|TiB)$`)
 
 // ConsoleConfig carries the console surface settings (serve -console). Authentication comes from
 // the single CONSOLE_AUTH_DSN; parsing fans it out into the mode-specific
@@ -164,6 +185,7 @@ type Config struct {
 	IdentitiesTopN         int
 	Forms                  FormsConfig
 	Reporting              ReportingConfig
+	Engine                 EngineConfig
 	Console                ConsoleConfig
 }
 
@@ -283,6 +305,10 @@ func FromEnv(lookup func(string) (string, bool)) (*Config, error) {
 			CacheAge:   e.dur("REPORTING_CACHE_MAX_AGE", 15*time.Minute),
 			RefreshAge: e.dur("REPORTING_REFRESH_MAX_AGE", time.Minute),
 		},
+		Engine: EngineConfig{
+			MemoryLimit: e.str("ENGINE_MEMORY_LIMIT", DefaultEngineMemoryLimit),
+			MaxChildren: e.num("ENGINE_MAX_CHILDREN", DefaultEngineMaxChildren),
+		},
 	}
 	c.Console = ConsoleConfig{
 		Addr: e.str("CONSOLE_ADDR", c.IngestAddr),
@@ -396,6 +422,12 @@ func (c *Config) validate() error {
 	if c.Reporting.CacheAge > 0 && c.Reporting.RefreshAge > c.Reporting.CacheAge {
 		return fmt.Errorf("config: REPORTING_REFRESH_MAX_AGE (%s) exceeds REPORTING_CACHE_MAX_AGE (%s)",
 			c.Reporting.RefreshAge, c.Reporting.CacheAge)
+	}
+	if !engineMemory.MatchString(c.Engine.MemoryLimit) {
+		return fmt.Errorf("config: ENGINE_MEMORY_LIMIT must be a size with a unit, like 512MB or 1GiB: %q", c.Engine.MemoryLimit)
+	}
+	if c.Engine.MaxChildren < 1 {
+		return fmt.Errorf("config: ENGINE_MAX_CHILDREN must be at least 1: %d", c.Engine.MaxChildren)
 	}
 	return nil
 }

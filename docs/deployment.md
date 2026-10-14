@@ -15,6 +15,16 @@ widgets at `/share/`) — and its whole state is one SQLite file.
 
 ## Install
 
+Linux on amd64 or arm64 with glibc 2.35 or newer (Debian 12, Ubuntu 22.04 or
+later), or Docker on amd64 or arm64. 32-bit ARM is not built. Plan on 1 GB
+of memory: the server stays small (`GOMEMLIMIT` bounds it), and each engine
+child, the process that answers analytics queries, may take up to
+`ENGINE_MEMORY_LIMIT` (512 MB by default) for a few seconds. One `serve`
+process runs one child at a time; `ENGINE_MAX_CHILDREN` bounds the children
+across every process on one data directory, so it matters for a split
+install (ingest and console as separate processes), where the default 2 lets
+each have one. `GOMEMLIMIT` does not cover them.
+
 ### docker compose
 
 Ingestion, the SDK and — once `CONSOLE_AUTH_DSN` is set — the console: MCP,
@@ -33,7 +43,7 @@ docker compose exec twillingate twillingate key issue -project-id 1 -label web
 ```bash
 # From a published release (no checkout needed):
 curl -fsSL https://raw.githubusercontent.com/dmtrkzntsv/twillingate/main/deploy/systemd/install.sh | sudo bash
-# Or from a checkout (Go and Node 22 on the host): git clone, make build, then
+# Or from a checkout (Go, Node 22 and a C toolchain on the host): git clone, make build, then
 sudo ./deploy/systemd/install.sh          # --user NAME to skip the prompt, --yes for defaults
 ```
 
@@ -114,6 +124,8 @@ to it.
 | `CONSOLE_DATABASE_DSN` | Database the console reads for queries, as `sqlite://<path>` (a copy or replica of the store, say). Defaults to `DATABASE_DSN`. |
 | `CONSOLE_QUERY_TIMEOUT` | Per-query guard on reads and the `query` operation; also bounds a reporting widget's sql. Default `10s`. |
 | `CONSOLE_QUERY_ROWS_MAX` | Row cap on the `query` operation; also bounds a reporting widget's sql. Default 1000. |
+| `ENGINE_MEMORY_LIMIT` | DuckDB's memory limit for each engine child, the process that answers analytics queries: `512MB`, `1GB`, `2GiB` (DuckDB's MB is 10^6 bytes). Outside GOMEMLIMIT, which bounds only the server. Default `512MB`. |
+| `ENGINE_MAX_CHILDREN` | Engine children running at once, across every process on one data directory. One `serve` process runs one child at a time, so this matters for a split install (ingest and console as two processes); a process waits for a free slot. Default 2. |
 | `REPORTING_CACHE_MAX_AGE` | How long an ordinary widget data request reuses a sql widget's loaded value before loading again. 0 turns the cache off: every request loads again. Default `15m`. |
 | `REPORTING_REFRESH_MAX_AGE` | A `fresh=true` request reuses a result younger than this instead of `REPORTING_CACHE_MAX_AGE`; must not exceed it when that is non-zero. Default `1m`. A dashboard with auto-refresh on reloads every max(`REPORTING_CACHE_MAX_AGE`, `REPORTING_REFRESH_MAX_AGE`) while its window has focus; both 0 removes the option. |
 
@@ -131,6 +143,7 @@ leftover one is ignored, so rename any still in `twillingate.env`.
 
 ### Raspberry Pi and low-resource hosts
 
+- A 64-bit OS (Raspberry Pi OS 64-bit on a Pi 3, 4, 5 or Zero 2 W); 32-bit ARM is not built. One `serve` process runs one child at a time; on a split install, lower `ENGINE_MEMORY_LIMIT` rather than raise `ENGINE_MAX_CHILDREN`.
 - Raise `BUFFER_FLUSH_INTERVAL` (say `30s`): fewer, larger writes.
 - Set `GOMEMLIMIT` (unit and compose files ship `128MiB`) and keep `GEO_DSN` off `maxmind://`, which holds a database in memory.
 - Lower `RETENTION_RAW_DAYS` (say `7`): raw events are the largest table in the file, and the live halves of the `v_*` views scan the raw days each query's range covers.
@@ -391,6 +404,7 @@ a loopback address, without a login; its usage is in
 | Upgrade (systemd) | `curl -fsSL …/install.sh \| sudo bash` — restarts the running service and reports the old and new version |
 | Upgrade (compose) | `docker compose pull && docker compose up -d`. Never `down -v`: the database lives in the named volume. Pin with `TWILLINGATE_VERSION=v0.9.2` in `.env`. |
 | Apply migrations only | `twillingate migrate` |
+| Check the engine | `sudo -u twillingate sh -ac '. /etc/twillingate/twillingate.env; twillingate engine -check'` (the service user and its environment: as root it creates a root-owned `raw/` and `engine/` the service cannot write) starts an engine child the way the server does and runs one query: `engine ok: 42 in 63 ms (spawn and first query), DuckDB v1.5.6`. A failure names what stopped it (a missing library, `ENGINE_MEMORY_LIMIT`, all `ENGINE_MAX_CHILDREN` slots busy for 30 s). |
 | Upgrade across a schema change | [Back up](#back-up-and-restore) first: migrations 012, 014, 015 and 016 are irreversible. Pre-checks and what changes on the day: <https://github.com/dmtrkzntsv/twillingate/blob/main/deploy/UPGRADES.md> (not served over MCP; open it in the repository) |
 | Database size | `du -h /var/lib/twillingate/twillingate.db` |
 | Recent config changes | `sqlite3 …/twillingate.db "SELECT * FROM audit_log ORDER BY ts DESC LIMIT 20"` |

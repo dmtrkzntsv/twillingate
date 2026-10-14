@@ -19,6 +19,7 @@ internal/config/     environment loading
 internal/identity/   actor hashing and salt rotation
 internal/enrich/     User-Agent and URL parsing for web hits
 internal/geo/        MaxMind lookup
+internal/engine/     DuckDB in a child process of the binary (`twillingate engine`): the pipe's two ends, the slot semaphore
 internal/shared/     small generic leaf packages: civil (calendar dates), readsql, sortkey, version
 docs/                the three contract pages, embedded and served over MCP
 sdk/                 browser SDK source (TypeScript); the built file is embedded by internal/server
@@ -71,7 +72,7 @@ entry. Only `feat`, `fix` and `perf` appear in the notes; `docs`, `refactor`,
 appear in the notes, so anything a user should read about needs one of the
 three published types. `!` before the colon (or a `BREAKING CHANGE:` footer)
 marks a breaking change. Scopes match the tree: `store`, `server`, `jobs`,
-`config`, `api`, `manage`, `pipeline`, `geo`, `reporting`,
+`config`, `api`, `manage`, `pipeline`, `engine`, `geo`, `reporting`,
 `shared`, `sdk`, `web`, `cmd`, `deploy`, `ci`; omit for repo-wide changes.
 
 Releases are cut by hand with `gh workflow run release.yml` (optional `version`
@@ -88,7 +89,8 @@ can ship under one version; notes are not hand-edited.
 
 `make check` (vet, the coverage gate without `-race`, the SQLite-free packages
 with it) is what pull request CI runs; run it before pushing.
-`make build` compiles; `make test` runs the whole suite under `-race`, about
+`make build` compiles, with cgo (DuckDB, `internal/engine`), so it needs a C
+toolchain; `make test` runs the whole suite under `-race`, about
 ten times slower because modernc SQLite is instrumented too, so CI runs it only
 in the release workflow. Each package must stay under go test's 10-minute
 default there: a test that needs a migrated database copies one from
