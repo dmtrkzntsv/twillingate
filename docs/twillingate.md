@@ -1629,7 +1629,9 @@ close to Postgres: `date_trunc('month', ts)`, `count(DISTINCT user_id)`,
 `DESCRIBE events` for the columns.
 
 Four tables: `events`, every event of every family, and `views`, `product`
-and `measures`, its rows of one family each. Every table has:
+and `measures`, its rows of one family each. The `_tw_*` tables are the
+reader's own and hold rows before the rules apply: query these four. Every
+table has:
 
 | Column | Type | |
 | --- | --- | --- |
@@ -1647,8 +1649,9 @@ and `measures`, its rows of one family each. Every table has:
 - **A field the event did not send is NULL,** not `''` (`value` and
   `measure` are NULL outside measures; `sample_rate` is the exception,
   1 unless the event was sampled), and an `attr_*` column is NULL on every
-  event without that key. `query` shows NULL as
-  an empty string: test `IS NULL`, not `= ''`.
+  event without that key. `received_at` is NULL too on an event stored
+  without it. `query` shows NULL as an empty string: test `IS NULL`, not
+  `= ''`.
 - **Every key is a column, declared or not.** A key with characters other
   than letters, digits and `_` needs double quotes: `"attr_plan type"`.
   Column names are not case-sensitive: `attr_Plan` and `attr_plan` are one
@@ -1659,8 +1662,9 @@ and `measures`, its rows of one family each. Every table has:
   attribute renamed or merged reads in its target's column (the target's
   own value first) and a blocked key reads NULL, on product and measures
   events. Removing a rule brings the stored names and values back.
-- **A retried event can show twice** until its day closes (the day's file
-  keeps each id once).
+- **An event sent twice can show twice** when the copies landed in
+  different files (a resend after its day's log was closed), until its
+  month's files merge.
 - **Filter on `project_id` and `day` or `ts`:** the files are ordered by
   family and time, and DuckDB skips what a filter excludes.
 
