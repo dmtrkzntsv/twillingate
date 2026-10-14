@@ -374,3 +374,31 @@ func TestReaderRuleBetweenKeysThatDifferInCase(t *testing.T) {
 		})
 	}
 }
+
+// failingEngine answers every query with a missing _tw_state (a new
+// child) and fails the load of the logs with err.
+type failingEngine struct{ err error }
+
+func (e failingEngine) Exec(context.Context, string) error { return e.err }
+func (failingEngine) Query(context.Context, string, int) (engine.Result, error) {
+	return engine.Result{}, &engine.QueryError{Msg: "Catalog Error: Table with name _tw_state does not exist"}
+}
+
+// TestReaderNamesTheLoadOfTheLogs: a build that fails while loading the
+// open logs (out of memory, usually) is recognisable as that, and still
+// carries the engine's error.
+func TestReaderNamesTheLoadOfTheLogs(t *testing.T) {
+	cause := &engine.QueryError{Msg: "Out of Memory Error: could not allocate block"}
+	r, err := NewReader(t.TempDir(), failingEngine{err: cause})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = r.Query(context.Background(), "SELECT 1", 0, Rules{})
+	if !errors.Is(err, ErrLoadingLogs) {
+		t.Fatalf("err = %v, want ErrLoadingLogs", err)
+	}
+	var qe *engine.QueryError
+	if !errors.As(err, &qe) || qe != cause {
+		t.Fatalf("err = %v, want the engine's *QueryError inside", err)
+	}
+}

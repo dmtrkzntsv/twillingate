@@ -25,6 +25,12 @@ type Engine interface {
 	Query(ctx context.Context, sql string, maxRows int) (engine.Result, error)
 }
 
+// ErrLoadingLogs marks a failure to load the open logs into the child's
+// memory. The engine's error is wrapped with it (errors.As finds the
+// *engine.QueryError): the logs that do not fit ENGINE_MEMORY_LIMIT are
+// not a query's own doing.
+var ErrLoadingLogs = errors.New("archive: loading the open logs")
+
 // Rules are the event and attribute rules the tables apply on read
 // (raw-first D6): the files keep events as they were written, and a rule
 // made later renames, merges or blocks them in every query.
@@ -182,7 +188,7 @@ func (r *Reader) build(ctx context.Context, files map[int64]Files, rules Rules, 
 		return "SELECT * EXCLUDE (v) FROM (" + strings.Join(union, " UNION ALL BY NAME ") + ")"
 	}
 	if err := r.eng.Exec(ctx, "CREATE OR REPLACE TABLE _tw_hot_next AS "+strings.Join(hot, " UNION ALL BY NAME ")); err != nil {
-		return err
+		return fmt.Errorf("%w: %w", ErrLoadingLogs, err)
 	}
 	res, err := r.eng.Query(ctx, "SELECT column_name FROM (DESCRIBE "+all("_tw_hot_next")+")", 0)
 	if err != nil {
