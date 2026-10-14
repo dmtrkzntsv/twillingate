@@ -197,7 +197,8 @@ func (a *Archive) dump(ctx context.Context, dir, pending string) error {
 	return syncFile(dir)
 }
 
-// dumpQuery is the dump's SELECT of a log: every line once per id, ordered
+// dumpQuery is the dump's SELECT of a log (logSelect, strict): every line once
+// per id, ordered
 // by family and ts, with every column's type spelled out. DuckDB inferring
 // the types from one day's values would rewrite a value for good
 // ("ABCDEF01-…" read as a UUID comes back lower case, "12:30" as a TIME
@@ -224,46 +225,60 @@ func (a *Archive) dump(ctx context.Context, dir, pending string) error {
 // <key>_<n>, the first n free: attr_Plan, attr_plan_1. Which column such a
 // key lands in can differ between days; no value is dropped.
 func dumpQuery(path string) (string, error) {
-	cols, err := columns(path)
+	keys, err := logKeys(path)
 	if err != nil {
 		return "", err
 	}
+	return logSelect(path, columnsOf(keys), false), nil
+}
+
+// logSelect is a log's lines as typed rows (see dumpQuery): cols, every
+// id once, the line appended first kept, ordered by family and ts. A
+// strict select fails on a line that is not JSON; a tolerant one skips it,
+// for a reader that may meet the torn last line of a log ingest is still
+// writing (read_json_objects with ignore_errors reads such a line as a
+// NULL object).
+func logSelect(path string, cols []column, tolerant bool) string {
 	paths := make([]string, len(cols))
 	sel := make([]string, len(cols))
 	for i, c := range cols {
 		paths[i] = c.pointer()
 		sel[i] = "CAST(f[" + strconv.Itoa(i+1) + "] AS " + c.typ + ") AS " + c.ident()
 	}
-	lines := "read_json_objects(" + quote(path) + ", format='newline_delimited') WITH ORDINALITY"
+	src := "read_json_objects(" + quote(path) + ", format='newline_delimited'"
+	if tolerant {
+		src += ", ignore_errors=true"
+	}
+	lines := "(SELECT json, ordinality FROM " + src + ") WITH ORDINALITY WHERE json IS NOT NULL)"
 	firsts := "SELECT min(ordinality) FROM (SELECT json_extract_string(json, '/id') AS id, ordinality FROM " + lines + ") GROUP BY id"
 	unique := "SELECT json FROM (SELECT json, ordinality, json_extract_string(json, '/family') AS family, " +
 		"CAST(json_extract_string(json, '/ts') AS TIMESTAMP) AS ts FROM " + lines + ") WHERE ordinality IN (" + firsts + ") ORDER BY family, ts"
 	return "SELECT " + strings.Join(sel, ", ") + " FROM (SELECT json_extract_string(json, [" + strings.Join(paths, ", ") +
-		"]) AS f FROM (" + unique + "))", nil
+		"]) AS f FROM (" + unique + "))"
 }
 
 // column is a key of a log and the column the dump reads it into.
 type column struct{ key, name, typ string }
 
-// columns lists the columns of a log's dump: fields, then every other key.
-func columns(path string) ([]column, error) {
-	keys, err := logKeys(path)
-	if err != nil {
-		return nil, err
-	}
+// columnsOf lists the columns of a log whose lines hold keys: fields,
+// then every other key. keys is not modified.
+func columnsOf(keys map[string]bool) []column {
 	taken := map[string]bool{}
 	var cols []column
 	add := func(key, name, typ string) {
 		taken[strings.ToLower(name)] = true
 		cols = append(cols, column{key, name, typ})
 	}
+	fixed := map[string]bool{}
 	for _, f := range fields {
 		add(f.name, f.name, f.typ)
-		delete(keys, f.name)
+		fixed[f.name] = true
 	}
 	var rest, later []string
 	for k := range keys {
-		rest = append(rest, k)
+		if !fixed[k] {
+			rest = append(rest, k)
+		}
 	}
 	slices.Sort(rest)
 	for _, k := range rest {
@@ -280,7 +295,7 @@ func columns(path string) ([]column, error) {
 		}
 		add(k, name, "VARCHAR")
 	}
-	return cols, nil
+	return cols
 }
 
 // visible is key as a column name: NUL, which SQL text cannot hold (DuckDB
@@ -300,8 +315,10 @@ func (c column) pointer() string {
 
 var jsonPointer = strings.NewReplacer("~", "~0", "/", "~1")
 
-// ident is the column's name as a quoted SQL identifier.
-func (c column) ident() string { return `"` + strings.ReplaceAll(c.name, `"`, `""`) + `"` }
+// ident is name as a quoted SQL identifier.
+func ident(name string) string { return `"` + strings.ReplaceAll(name, `"`, `""`) + `"` }
+
+func (c column) ident() string { return ident(c.name) }
 
 // logKeys returns every key of a log's lines. A line that is not a JSON
 // object fails it, as DuckDB would.
