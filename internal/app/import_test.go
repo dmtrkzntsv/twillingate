@@ -204,6 +204,49 @@ func TestImportEventsRefusesWhileTheServerRuns(t *testing.T) {
 	}
 }
 
+// TestImportEventsRefusesAnotherUserBeforeTouchingRaw: run as anyone but
+// the database file's owner (sudo), the import is refused before it creates
+// raw/ or raw/.lock, which a root-owned copy would lock the service user
+// out of, and before it migrates or marks the database.
+func TestImportEventsRefusesAnotherUserBeforeTouchingRaw(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "twillingate.db")
+	st := storetest.Open(t, dbPath)
+	if err := st.WriteEvents(context.Background(), []store.Event{importRow("a", store.FamilyProduct, "2026-08-20T10:00:00Z")}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	if _, err := raw.Exec(`DROP VIEW v_events_flat`); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(t.TempDir(), "raw")
+	cfg := configtest.Load(t, map[string]string{"EVENTS_DIR": dir, "DATABASE_DSN": "sqlite://" + dbPath})
+	prev := geteuid
+	geteuid = func() int { return os.Geteuid() + 1 }
+	t.Cleanup(func() { geteuid = prev })
+
+	err = ImportEvents(context.Background(), cfg, st, true, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "service user") {
+		t.Fatalf("err = %v, want a refusal naming the service user", err)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatalf("stat %s: %v, want it not to exist: a refused run created raw/", dir, err)
+	}
+	if got, _ := st.GetMeta(context.Background(), "events_imported"); got != "" {
+		t.Fatalf("meta = %q, want unset", got)
+	}
+	var views int
+	if err := raw.QueryRow(`SELECT count(*) FROM sqlite_master WHERE name = 'v_events_flat'`).Scan(&views); err != nil {
+		t.Fatal(err)
+	}
+	if views != 0 {
+		t.Fatal("a refused import migrated the database (v_events_flat rebuilt)")
+	}
+}
+
 // TestCheckOwner: the database file's owner may run the import; anyone
 // else is refused with the owner's uid and the service user named.
 func TestCheckOwner(t *testing.T) {

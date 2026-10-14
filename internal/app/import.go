@@ -18,6 +18,10 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
+// geteuid is the effective uid ImportEvents checks against the database
+// file's owner; a test replaces it.
+var geteuid = os.Geteuid
+
 // eventsImportedKey is the meta row ImportEvents writes when done: the
 // time it finished (RFC 3339, UTC).
 const eventsImportedKey = "events_imported"
@@ -42,19 +46,25 @@ type dayImporter interface {
 // ImportEvents is `twillingate events import` (raw-first D19, PR 5c): it
 // copies into the event files every raw row SQLite holds that they do not,
 // once. With events_imported set it says when that was and returns, unless
-// force. It takes the events directory as the ingest server does, so it
-// refuses (archive.ErrLocked) while the server runs: nothing else may
-// write events or raw/ while it reads. It refuses too when run as anyone
-// but the database file's owner: files it wrote as root would lock the
-// service user out of raw/. Only then does it migrate the schema, as
-// `migrate` does, so it can run before the new binary's first start and a
-// refused run leaves the database as it was. The closed logs it leaves are
-// the next start's pass to dump.
+// force. Otherwise it goes in this order. First it refuses when run as
+// anyone but the database file's owner: files it wrote as root would lock
+// the service user out of raw/. Then it takes the events directory as the
+// ingest server does, so it refuses (archive.ErrLocked) while the server
+// runs: nothing else may write events or raw/ while it reads. Only then does
+// it migrate the schema, as `migrate` does, so it can run before the new
+// binary's first start. A run refused for either reason has written nothing
+// to raw/ (not even the directory or its lock) or to the database. The
+// closed logs it leaves are the next start's pass to dump.
 func ImportEvents(ctx context.Context, cfg *config.Config, st store.Store, force bool, out io.Writer) error {
 	// A database older than the meta table cannot answer yet; the check
 	// after the migration does.
 	if done, err := st.GetMeta(ctx, eventsImportedKey); err == nil && imported(done, force, out) {
 		return nil
+	}
+	// Before OpenLog, which creates raw/ and raw/.lock: a run checkOwner
+	// refuses must not leave files the service user cannot open.
+	if err := checkOwner(DatabasePath(cfg.Database), geteuid()); err != nil {
+		return err
 	}
 	log, err := archive.OpenLog(cfg.EventsDir)
 	if errors.Is(err, archive.ErrLocked) {
@@ -64,9 +74,6 @@ func ImportEvents(ctx context.Context, cfg *config.Config, st store.Store, force
 		return err
 	}
 	defer log.Close()
-	if err := checkOwner(DatabasePath(cfg.Database), os.Geteuid()); err != nil {
-		return err
-	}
 	if err := Migrate(ctx, cfg, st); err != nil {
 		return err
 	}
