@@ -21,21 +21,17 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
 )
 
-// Execer runs a statement in the engine (engine.Engine.Exec): the archive
-// is the one caller allowed to write through it.
-type Execer interface {
-	Exec(ctx context.Context, sql string) error
-}
-
-// Archive maintains the files the Log fills and derives the sessions,
-// identities and aliases from them.
+// Archive maintains the files the Log fills, derives the sessions,
+// identities and aliases from them, and imports rows that never went
+// through ingest (import.go). It is the one caller allowed to write
+// through the engine's Exec.
 type Archive struct {
 	log    *Log
-	eng    Execer
+	eng    Engine
 	logger *slog.Logger
 }
 
-func New(log *Log, eng Execer, logger *slog.Logger) *Archive {
+func New(log *Log, eng Engine, logger *slog.Logger) *Archive {
 	return &Archive{log: log, eng: eng, logger: logger}
 }
 
