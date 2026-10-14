@@ -31,6 +31,12 @@ const attributionDelay = time.Minute
 // broken engine costs attribution, never the conversion.
 const attributionGiveUp = time.Hour
 
+// attributionTimeout bounds one lookup: the minute tick also runs the
+// hour-0 salt rotation and the hour-3 daily pass, so a hung engine, or
+// engine slots all held by console queries, must not hold it. A timeout is
+// a failed lookup: retried next minute, given up after attributionGiveUp.
+const attributionTimeout = 30 * time.Second
+
 // attributionBatch bounds the submissions one lookup asks about; the
 // rest wait for the next minute.
 const attributionBatch = 100
@@ -66,7 +72,9 @@ func (r *Runner) attributeSubmissions(ctx context.Context) {
 			ActorID: p.Event.ActorID, InstallID: p.Event.InstallID, At: p.ReceivedAt}
 	}
 	events, attrs := r.reg.Snapshot(ctx).RuleLists()
-	found, err := r.attributor.Attribute(ctx, ls, r.cfg.Forms.AttributionDays, archive.Rules{Events: events, Attributes: attrs})
+	lookupCtx, cancel := context.WithTimeout(ctx, r.attributionTimeout)
+	found, err := r.attributor.Attribute(lookupCtx, ls, r.cfg.Forms.AttributionDays, archive.Rules{Events: events, Attributes: attrs})
+	cancel()
 	if err != nil {
 		r.logger.Warn("form attribution: lookup failed, retrying next minute", "submissions", len(pending), "error", err)
 	}

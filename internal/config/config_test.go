@@ -242,6 +242,22 @@ func TestFormsAttributionDaysDefault(t *testing.T) {
 	}
 }
 
+// Unset, ATTRIBUTION_DAYS follows a RETENTION_DAYS below its default, so
+// such an install still boots; set explicitly past RETENTION_DAYS, it is
+// refused.
+func TestAttributionDaysWithinShortRetention(t *testing.T) {
+	c, err := load(t, map[string]string{"RETENTION_DAYS": "3"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Forms.AttributionDays != 3 {
+		t.Errorf("AttributionDays = %d, want 3", c.Forms.AttributionDays)
+	}
+	if _, err := load(t, map[string]string{"RETENTION_DAYS": "3", "ATTRIBUTION_DAYS": "5"}); err == nil {
+		t.Error("ATTRIBUTION_DAYS=5 past RETENTION_DAYS=3 was accepted")
+	}
+}
+
 // A draft needs a window of at least a day: 0 would archive every new
 // form on the next pass, so it is refused, naming the variable.
 func TestFormDraftDaysMessage(t *testing.T) {

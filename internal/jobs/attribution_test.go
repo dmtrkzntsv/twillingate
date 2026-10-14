@@ -139,3 +139,31 @@ func TestAttributeSubmissionsWithoutAnAttributorDoesNothing(t *testing.T) {
 		t.Error("a runner without an attributor read the pending submissions")
 	}
 }
+
+// blockingAttributor waits for its context, as a hung engine would.
+type blockingAttributor struct{}
+
+func (blockingAttributor) Attribute(ctx context.Context, _ []archive.Lookup, _ int, _ archive.Rules) ([]archive.Found, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+// A lookup that never answers is cut off at the timeout, so the minute tick
+// (which also rotates the salt and runs the daily pass) goes on; the
+// submission stays pending for the next minute.
+func TestAttributeSubmissionsBoundsTheLookup(t *testing.T) {
+	now := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
+	st := &pendingStore{pending: []store.PendingSubmission{pendingAt("young", now.Add(-2*time.Minute), nil)}}
+	r := attributionRunner(t, st, now).WithAttribution(blockingAttributor{}, &loggedEvents{})
+	r.attributionTimeout = 20 * time.Millisecond
+	done := make(chan struct{})
+	go func() { r.attributeSubmissions(context.Background()); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("attributeSubmissions did not return: the lookup is not bounded")
+	}
+	if _, ok := st.attributed["young"]; ok {
+		t.Error("a young submission was attributed despite the timed-out lookup")
+	}
+}

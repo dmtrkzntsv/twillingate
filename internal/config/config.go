@@ -172,7 +172,10 @@ const DefaultIngestLateDays = 1
 const DefaultFormDraftDays = 7
 
 // DefaultFormAttributionDays is ATTRIBUTION_DAYS's default: a week back
-// from a submission to the visit that brought its submitter.
+// from a submission to the visit that brought its submitter. Unset, the
+// default is RETENTION_DAYS when that is smaller, so an install that keeps
+// fewer days still boots; a value set explicitly past RETENTION_DAYS is
+// refused.
 const DefaultFormAttributionDays = 7
 
 type Config struct {
@@ -278,6 +281,7 @@ func FromEnv(lookup func(string) (string, bool)) (*Config, error) {
 		return nil, err
 	}
 	e := &env{lookup: lookup}
+	retentionDays := e.num("RETENTION_DAYS", DefaultRetentionDays)
 	c := &Config{
 		IngestAddr: e.str("INGEST_ADDR", "127.0.0.1:8080"),
 		// A complete stop of ingest: every route that takes events or
@@ -301,7 +305,7 @@ func FromEnv(lookup func(string) (string, bool)) (*Config, error) {
 			Capacity:       e.num("BUFFER_CAPACITY", 10000),
 		},
 		Retention: Retention{
-			Days: e.num("RETENTION_DAYS", DefaultRetentionDays),
+			Days: retentionDays,
 			Events: RetentionClass{
 				RawDays:       e.num("RETENTION_RAW_DAYS", DefaultRawDays),
 				AggregateDays: e.num("RETENTION_AGGREGATE_DAYS", DefaultAggregateDays),
@@ -318,7 +322,7 @@ func FromEnv(lookup func(string) (string, bool)) (*Config, error) {
 		AttributeBreakdownsMax: e.num("ATTRIBUTE_BREAKDOWNS_MAX", DefaultAttributeBreakdownsMax),
 		IdentitiesTopN:         e.num("IDENTITIES_TOP_N", DefaultIdentitiesTopN),
 		Forms: FormsConfig{DraftDays: e.num("RETENTION_FORMS_DRAFT_DAYS", DefaultFormDraftDays),
-			AttributionDays: e.num("ATTRIBUTION_DAYS", DefaultFormAttributionDays)},
+			AttributionDays: e.num("ATTRIBUTION_DAYS", min(DefaultFormAttributionDays, retentionDays))},
 		Reporting: ReportingConfig{
 			CacheAge:   e.dur("REPORTING_CACHE_MAX_AGE", 15*time.Minute),
 			RefreshAge: e.dur("REPORTING_REFRESH_MAX_AGE", time.Minute),
