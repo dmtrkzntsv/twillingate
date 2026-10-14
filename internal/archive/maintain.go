@@ -199,13 +199,12 @@ func (a *Archive) dump(ctx context.Context, dir, pending string) error {
 
 // dumpQuery is the dump's SELECT of a log (logSelect, strict): every line
 // once per id, ordered by family and ts, with every column's type spelled
-// out. DuckDB inferring
-// the types from one day's values would rewrite a value for good
-// ("ABCDEF01-…" read as a UUID comes back lower case, "12:30" as a TIME
-// comes back "12:30:00") and leave a month whose days inferred different
-// types unable to merge. The fixed keys take their type from fields, every
-// other key (attr_<key>, the key as stored) is VARCHAR, and every fixed
-// column is there even when no line has it.
+// out. DuckDB inferring the types from one day's values would rewrite a
+// value for good ("ABCDEF01-…" read as a UUID comes back lower case,
+// "12:30" as a TIME comes back "12:30:00") and leave a month whose days
+// inferred different types unable to merge. The fixed keys take their type
+// from fields, every other key (attr_<key>, the key as stored) is VARCHAR,
+// and every fixed column is there even when no line has it.
 //
 // A repeated id keeps the line appended first, as SQLite keeps the first
 // row it receives: a repeat need not be the same event (the server does
