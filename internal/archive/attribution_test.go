@@ -113,6 +113,29 @@ func TestAttributeFollowsTheConnectionHash(t *testing.T) {
 	}
 }
 
+// Aliases are per project: user u1 signing in with install i1 on project
+// 2 does not make project 1's i1 visits u1's.
+func TestAttributeAliasesStayInTheirProject(t *testing.T) {
+	f := newFixture(t)
+	at := ts("2026-10-14T12:00:00Z")
+	f.write(t,
+		viewOf("v1", store.ActorInstall, "i1", at.Add(-time.Hour), func(e *store.Event) { e.ReferrerSource = "google" }),
+		store.Event{ID: "p1", ProjectID: 2, Family: store.FamilyProduct, EventName: "login",
+			TS: at.Add(-30 * time.Minute), ReceivedAt: at.Add(-30 * time.Minute),
+			ActorKind: store.ActorUser, ActorID: "u1", UserID: "u1", InstallID: "i1"},
+	)
+	got := attribute(t, f.reader(t), 7,
+		Lookup{ProjectID: 1, ID: "user", ActorKind: store.ActorUser, ActorID: "u1", At: at},
+		Lookup{ProjectID: 1, ID: "install", ActorKind: store.ActorInstall, ActorID: "i1", At: at},
+	)
+	if s := got["user"].Source; !reflect.DeepEqual(s, store.Event{}) {
+		t.Errorf("project 1's u1: source = %+v, want direct (the alias is project 2's)", s)
+	}
+	if s := got["install"].Source; s.ReferrerSource != "google" {
+		t.Errorf("project 1's i1: source = %+v, want google", s)
+	}
+}
+
 // Ids are the client's: a quote or a NUL in one is data, never SQL.
 func TestAttributeQuotesIDs(t *testing.T) {
 	f := newFixture(t)

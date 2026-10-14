@@ -257,3 +257,20 @@ func TestAttributeSubmissionsLogsUnreadableRows(t *testing.T) {
 		t.Errorf("log %q does not name the unreadable submission", buf.String())
 	}
 }
+
+// A draft's submission (WriteEvent false) is attributed, and its event is
+// neither written nor logged.
+func TestAttributeSubmissionsLogsOnlyWrittenEvents(t *testing.T) {
+	now := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
+	draft := pendingAt("draft", now.Add(-2*time.Minute), nil)
+	draft.WriteEvent = false
+	st := &pendingStore{pending: []store.PendingSubmission{draft, pendingAt("approved", now.Add(-2*time.Minute), nil)}}
+	log := &loggedEvents{}
+	attributionRunner(t, st, now).WithAttribution(&echoAttributor{}, log).attributeSubmissions(context.Background())
+	if ev, ok := st.attributed["draft"]; !ok || ev.ReferrerSource != "google" {
+		t.Errorf("draft = %+v, %v; want attributed", ev, ok)
+	}
+	if len(log.evs) != 1 || log.evs[0].ID != "approved" {
+		t.Errorf("logged %+v, want only the approved submission's event", log.evs)
+	}
+}
