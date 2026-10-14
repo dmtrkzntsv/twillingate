@@ -402,6 +402,29 @@ func TestSubmissionWaitsForItsAttribution(t *testing.T) {
 	}
 }
 
+// The connection hash ingest computed waits with the submission; a
+// submission without one reads back "".
+func TestPendingSubmissionKeepsItsConnection(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	n := newSub("s0", nil)
+	n.ConnectionID = "h1"
+	if _, _, err := db.WriteSubmission(ctx, n); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := db.WriteSubmission(ctx, newSub("s1", nil)); err != nil {
+		t.Fatal(err)
+	}
+	ps, err := db.PendingSubmissions(ctx, formsNow, 10)
+	if err != nil || len(ps) != 2 || ps[0].ConnectionID != "h1" || ps[1].ConnectionID != "" {
+		t.Fatalf("pending = %+v, %v", ps, err)
+	}
+	attributeAll(t, db, nil)
+	if c := countRows(t, db, `SELECT COUNT(*) FROM submissions WHERE pending_connection IS NOT NULL`); c != 0 {
+		t.Fatalf("%d attributed submissions keep their connection hash", c)
+	}
+}
+
 // Erasure before the job: the submission is gone, and its event is never
 // written.
 func TestAttributeSubmissionAfterDeleteWritesNothing(t *testing.T) {

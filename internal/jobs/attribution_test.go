@@ -76,7 +76,7 @@ func pendingAt(id string, at time.Time, f func(*store.Event)) store.PendingSubmi
 	if f != nil {
 		f(&ev)
 	}
-	return store.PendingSubmission{ProjectID: 1, ID: id, ReceivedAt: at, Event: ev, WriteEvent: true}
+	return store.PendingSubmission{ProjectID: 1, ID: id, ReceivedAt: at, Event: ev, WriteEvent: true, ConnectionID: "h1"}
 }
 
 // Submissions a minute old are looked up with their actor and install id
@@ -100,7 +100,7 @@ func TestAttributeSubmissions(t *testing.T) {
 		t.Errorf("asked for submissions before %v", st.before)
 	}
 	if len(a.asked) != 1 || len(a.asked[0]) != 2 || a.days != 7 || a.asked[0][0].ActorID != "u1" ||
-		a.asked[0][0].InstallID != "i1" || !a.asked[0][0].At.Equal(now.Add(-2*time.Minute)) {
+		a.asked[0][0].InstallID != "i1" || a.asked[0][0].ConnectionID != "h1" || !a.asked[0][0].At.Equal(now.Add(-2*time.Minute)) {
 		t.Fatalf("asked = %+v over %d days", a.asked, a.days)
 	}
 	if ev := st.attributed["plain"]; ev.ReferrerSource != "google" || ev.OS != "macos" || ev.Kind != "web" || ev.Host != "app.com" {
@@ -110,7 +110,7 @@ func TestAttributeSubmissions(t *testing.T) {
 		t.Errorf("sent = %+v: the client's source wins, the newest view still applies", ev)
 	}
 	if len(log.evs) != 2 {
-		t.Errorf("%d events loggedEvents, want 2", len(log.evs))
+		t.Errorf("%d events logged, want 2", len(log.evs))
 	}
 }
 

@@ -590,6 +590,33 @@ func TestFormConnectionActorMatchesViews(t *testing.T) {
 	if ev.ActorKind != store.ActorConnection || ev.ActorID != q.views[0].ActorID {
 		t.Errorf("event actor %s/%s, view actor %s/%s", ev.ActorKind, ev.ActorID, q.views[0].ActorKind, q.views[0].ActorID)
 	}
+	if forms.calls[0].ConnectionID != q.views[0].ActorID {
+		t.Errorf("connection id %q, view actor %q", forms.calls[0].ConnectionID, q.views[0].ActorID)
+	}
+}
+
+// A submission sent with an install id still carries the connection hash,
+// so its lookup also finds the views sent before consent gave them one.
+func TestFormWithAnInstallIDKeepsTheConnectionHash(t *testing.T) {
+	forms := newFakeForms()
+	cfg := configtest.Load(t, nil)
+	reg := newTestRegistry(t, []manage.ProjectSpec{{Name: "App", AllowedOrigins: []string{testOrigin}}},
+		map[int][2]string{0: {testKey, "web"}})
+	g, _ := geo.New("cloudflare://", t.TempDir(), slog.Default())
+	q := &fakeQueue{}
+	h := New(cfg, reg, q, g, fixedSalt{}, q, forms, slog.Default())
+	post(h, envelopeOf(`{"name":"$page_view","attributes":{"$path":"/"}}`), nil)
+	postURLEncoded(h, "contact", url.Values{"email": {"a"}, "$install_id": {"i1"}, "$redirect": {"https://app.com/"}}, nil)
+	if len(q.views) != 1 || len(forms.calls) != 1 {
+		t.Fatalf("views %d, submissions %d", len(q.views), len(forms.calls))
+	}
+	n := forms.calls[0]
+	if n.Event.ActorKind != store.ActorInstall || n.Event.ActorID != "i1" {
+		t.Errorf("event actor %s/%s, want install/i1", n.Event.ActorKind, n.Event.ActorID)
+	}
+	if q.views[0].ActorKind != store.ActorConnection || n.ConnectionID != q.views[0].ActorID {
+		t.Errorf("connection id %q, view actor %s/%s", n.ConnectionID, q.views[0].ActorKind, q.views[0].ActorID)
+	}
 }
 
 // A store failure is a 500, and the log names neither a field's value nor

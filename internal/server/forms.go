@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/dmtrkzntsv/twillingate/internal/enrich"
+	"github.com/dmtrkzntsv/twillingate/internal/identity"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 	"github.com/dmtrkzntsv/twillingate/internal/wire"
@@ -394,6 +395,9 @@ func (s *Server) handleForm(w http.ResponseWriter, r *http.Request) {
 	ip := clientIP(r)
 	actor, actorKind, user, _ := resolveIdentity(resolved{UserID: fc.UserID, InstallID: fc.InstallID},
 		salt, ip, r.UserAgent(), strconv.FormatInt(p.ID, 10))
+	// The actor a view sent without an id gets, whatever this one is: the
+	// lookup follows it to the views sent before consent gave an id.
+	connection := identity.VisitorHash(salt, ip, r.UserAgent(), strconv.FormatInt(p.ID, 10))
 	// Only a plain form falls back to the Referer: the SDK leaves $host
 	// and $path out on purpose (masking failed, autoAttributes off), and
 	// the Referer would put back the URL it kept out.
@@ -418,8 +422,9 @@ func (s *Server) handleForm(w http.ResponseWriter, r *http.Request) {
 		Submission: store.Submission{
 			ProjectID: p.ID, ID: id, Form: name, ReceivedAt: received, Fields: body.fields,
 		},
-		DraftUntil: received.AddDate(0, 0, s.cfg.Forms.DraftDays),
-		Event:      ev, // pending until the jobs runner attributes it (store.PendingSubmission)
+		DraftUntil:   received.AddDate(0, 0, s.cfg.Forms.DraftDays),
+		Event:        ev, // pending until the jobs runner attributes it (store.PendingSubmission)
+		ConnectionID: connection,
 	})
 	switch {
 	case errors.Is(err, store.ErrFormClosed):

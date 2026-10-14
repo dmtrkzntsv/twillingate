@@ -100,6 +100,10 @@ type NewSubmission struct {
 	Submission Submission
 	DraftUntil time.Time
 	Event      Event
+	// ConnectionID is the connection hash of the request (the actor a
+	// view sent without an id gets), whatever actor Event has: the lookup
+	// follows it to the views sent before consent gave the visitor an id.
+	ConnectionID string
 }
 
 // StoredEvent is the $form_submit event an approved form's submission is
@@ -122,9 +126,10 @@ func (n NewSubmission) StoredEvent() Event {
 // the page, the country, what the client sent of its source), and
 // whether to write it, decided by the form being approved on arrival.
 type PendingSubmission struct {
-	ProjectID  int64
-	ID         string
-	ReceivedAt time.Time
-	Event      Event
-	WriteEvent bool
+	ProjectID    int64
+	ID           string
+	ReceivedAt   time.Time
+	Event        Event
+	WriteEvent   bool
+	ConnectionID string // NewSubmission.ConnectionID, "" if none
 }

@@ -88,6 +88,31 @@ func TestAttributeFollowsAliasesAndTheWindow(t *testing.T) {
 	}
 }
 
+// Consent after landing: the landing's views went out as the connection
+// hash, the later ones with an install id. The lookup follows the
+// submission's connection hash too, so the landing's source is found.
+func TestAttributeFollowsTheConnectionHash(t *testing.T) {
+	f := newFixture(t)
+	at := ts("2026-10-14T12:00:00Z")
+	f.write(t,
+		viewOf("v1", store.ActorConnection, "h", at.Add(-20*time.Minute), func(e *store.Event) { e.UTMSource = "newsletter" }),
+		viewOf("v2", store.ActorInstall, "i1", at.Add(-10*time.Minute), func(e *store.Event) { e.OS = "macos" }),
+	)
+	got := attribute(t, f.reader(t), 7,
+		Lookup{ProjectID: 1, ID: "consented", ActorKind: store.ActorInstall, ActorID: "i1", InstallID: "i1", ConnectionID: "h", At: at},
+		Lookup{ProjectID: 1, ID: "no-hash", ActorKind: store.ActorInstall, ActorID: "i1", InstallID: "i1", At: at},
+	)
+	if s := got["consented"].Source; s.UTMSource != "newsletter" {
+		t.Errorf("consented: source = %+v, want the landing's newsletter", s)
+	}
+	if n := got["consented"].Newest; n.OS != "macos" {
+		t.Errorf("consented: newest = %+v, want v2's", n)
+	}
+	if s := got["no-hash"].Source; !reflect.DeepEqual(s, store.Event{}) {
+		t.Errorf("no-hash: source = %+v, want direct", s)
+	}
+}
+
 // Ids are the client's: a quote or a NUL in one is data, never SQL.
 func TestAttributeQuotesIDs(t *testing.T) {
 	f := newFixture(t)

@@ -652,8 +652,9 @@ conversion once the form is approved). `taggedEvents: false` does not turn it
 off. The SDK reads the form like the browser would: a `File` entry and every
 name starting with `$` are left out, and a repeated name is joined with `", "`.
 The body carries a fresh `id`, the page's `$host` and `$path` (as the
-instance's `maskUrl` and routing have it for events) and, on an identified
-instance, the `$user_id` and `$install_id` events carry. An opted-out visitor
+instance's `maskUrl` and routing have it for events), `$user_id` on an
+identified instance, and `$install_id` whenever the instance sends one
+(identified, or anonymous with consent), as events carry them. An opted-out visitor
 (`optOut`, `twillingate_ignore`) still sends the submission, which they asked
 for, without those two keys.
 
@@ -1322,7 +1323,9 @@ left out when empty, `{}` when the visit was direct. About a minute after
 the submission arrives the collector looks the source up in the event
 files: the last visit with a referrer or a UTM (last non-direct) that
 started within `ATTRIBUTION_DAYS` (default 7) before it, of the
-submission's actor, of the `$install_id` it was sent with, and, for a
+submission's actor, of the `$install_id` it was sent with, of the
+request's connection hash (so the views a visitor sent before consent
+gave them an id count, the same UTC day), and, for a
 `$user_id`, of every install id seen on one event with it (`aliases`), so
 a visit made before signing in counts. Until then `attribution` is `{}`.
 A submission that sends `$referrer` or a `$utm_*` key gives those four
@@ -1374,7 +1377,7 @@ what they mean on events:
 | Key | Meaning |
 | --- | --- |
 | `$id` | The submission's UUID. A retry with the same id is stored once and answered as a success, even if the form closed in between; omitted, the collector makes one |
-| `$user_id`, `$install_id` | The event's actor, resolved as on events: `$user_id`, else `$install_id`, else the connection hash, so a JS-free post from the browser that sent the visit's views gets the same actor as those views, and their visits |
+| `$user_id`, `$install_id` | The event's actor, resolved as on events: `$user_id`, else `$install_id`, else the connection hash. A JS-free post is matched to the visit's views through the connection hash, which covers the views sent without an id (no consent) and, on a consented anonymous or identified site, the views sent before consent, the same UTC day; for full coverage on such a site use a tagged form (`data-twillingate-form`) or send `$install_id` (a hidden field filled from `twillingate.installId()`) |
 | `$host`, `$path` | The page the form is on, the event's; on a plain form each defaults to the `Referer`'s, on JSON an absent one stays empty |
 | `$referrer`, `$utm_source`, `$utm_medium`, `$utm_campaign` | The visit's source: a referrer URL (cleaned as on views, so one from the form's own `$host` is no source) and campaign. Any of them makes the four the submission's attribution instead of the lookup's; a site that copies UTMs into hidden fields names them `$utm_*` |
 | `$redirect` | Plain form only: where to send the visitor back |

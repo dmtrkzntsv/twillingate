@@ -69,7 +69,7 @@ func (r *Runner) attributeSubmissions(ctx context.Context) {
 	ls := make([]archive.Lookup, len(pending))
 	for i, p := range pending {
 		ls[i] = archive.Lookup{ProjectID: p.ProjectID, ID: p.ID, ActorKind: p.Event.ActorKind,
-			ActorID: p.Event.ActorID, InstallID: p.Event.InstallID, At: p.ReceivedAt}
+			ActorID: p.Event.ActorID, InstallID: p.Event.InstallID, ConnectionID: p.ConnectionID, At: p.ReceivedAt}
 	}
 	events, attrs := r.reg.Snapshot(ctx).RuleLists()
 	lookupCtx, cancel := context.WithTimeout(ctx, r.attributionTimeout)

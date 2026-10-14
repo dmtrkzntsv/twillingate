@@ -16,6 +16,7 @@ type Lookup struct {
 	ID                 string    // the submission's id
 	ActorKind, ActorID string    // its actor
 	InstallID          string    // the $install_id it was sent with, "" if none
+	ConnectionID       string    // its request's connection hash, "" if none
 	At                 time.Time // its arrival
 }
 
@@ -42,8 +43,9 @@ var (
 // Attribute answers ls in one query over the tables Query reads (so rules
 // is the full rule set, as for Query). For each lookup it reads the
 // sessions and views from `days` days before At up to At, of the
-// lookup's actor, of the install id it was sent with and, for a user, of
-// every install id aliases pairs with the user. One Found per lookup, in
+// lookup's actor, of the install id it was sent with, of its connection
+// hash (the views sent before consent gave the visitor an id) and, for a
+// user, of every install id aliases pairs with the user. One Found per lookup, in
 // no particular order.
 func (r *Reader) Attribute(ctx context.Context, ls []Lookup, days int, rules Rules) ([]Found, error) {
 	if len(ls) == 0 {
@@ -88,8 +90,9 @@ func (r *Reader) Attribute(ctx context.Context, ls []Lookup, days int, rules Rul
 func attributionSQL(ls []Lookup, days int) string {
 	rows := make([]string, len(ls))
 	for i, l := range ls {
-		rows[i] = fmt.Sprintf("(%d, %s, %s, %s, %s, CAST(%s AS TIMESTAMP))", l.ProjectID, literal(l.ID),
-			literal(l.ActorKind), literal(l.ActorID), literal(l.InstallID), literal(l.At.UTC().Format("2006-01-02 15:04:05")))
+		rows[i] = fmt.Sprintf("(%d, %s, %s, %s, %s, %s, CAST(%s AS TIMESTAMP))", l.ProjectID, literal(l.ID),
+			literal(l.ActorKind), literal(l.ActorID), literal(l.InstallID), literal(l.ConnectionID),
+			literal(l.At.UTC().Format("2006-01-02 15:04:05")))
 	}
 	window := fmt.Sprintf("INTERVAL %d DAY", days)
 	as := func(alias string, cols []string) string {
@@ -110,11 +113,12 @@ func attributionSQL(ls []Lookup, days int) string {
 	for i, c := range sourceColumns {
 		hasSource[i] = "coalesce(s." + c + ", '') <> ''"
 	}
-	install, user := literal(store.ActorInstall), literal(store.ActorUser)
-	return `WITH l(project_id, id, actor_kind, actor_id, install_id, arrived) AS (VALUES ` + strings.Join(rows, ", ") + `),
+	install, user, connection := literal(store.ActorInstall), literal(store.ActorUser), literal(store.ActorConnection)
+	return `WITH l(project_id, id, actor_kind, actor_id, install_id, connection_id, arrived) AS (VALUES ` + strings.Join(rows, ", ") + `),
 who AS (
   SELECT project_id, id, actor_kind, actor_id, arrived FROM l
   UNION SELECT project_id, id, ` + install + `, install_id, arrived FROM l WHERE install_id <> ''
+  UNION SELECT project_id, id, ` + connection + `, connection_id, arrived FROM l WHERE connection_id <> ''
   UNION SELECT l.project_id, l.id, ` + install + `, a.install_id, l.arrived FROM l
     JOIN aliases a ON a.project_id = l.project_id AND a.user_id = l.actor_id
     WHERE l.actor_kind = ` + user + `

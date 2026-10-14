@@ -132,11 +132,15 @@ func (d *DB) WriteSubmission(ctx context.Context, n store.NewSubmission) (store.
 		if err != nil {
 			return fmt.Errorf("submission %s event: %w", sub.ID, err)
 		}
+		var connection any // NULL when ingest had none
+		if n.ConnectionID != "" {
+			connection = n.ConnectionID
+		}
 		res, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO submissions
-			(project_id, id, form, received_at, fields, attribution, pending_event, pending_write)
-			VALUES (?,?,?,?,?,?,?,?)`,
+			(project_id, id, form, received_at, fields, attribution, pending_event, pending_write, pending_connection)
+			VALUES (?,?,?,?,?,?,?,?,?)`,
 			sub.ProjectID, sub.ID, sub.Form, received, string(blob), attribution, string(pending),
-			form.Status == store.FormApproved)
+			form.Status == store.FormApproved, connection)
 		if err != nil {
 			return fmt.Errorf("submission %s: %w", sub.ID, err)
 		}
@@ -182,7 +186,7 @@ func (d *DB) WriteSubmission(ctx context.Context, n store.NewSubmission) (store.
 // PendingSubmissions lists up to limit submissions received at or before
 // `before` and not yet attributed, oldest first.
 func (d *DB) PendingSubmissions(ctx context.Context, before time.Time, limit int) ([]store.PendingSubmission, error) {
-	rows, err := d.db.QueryContext(ctx, `SELECT project_id, id, received_at, pending_event, pending_write
+	rows, err := d.db.QueryContext(ctx, `SELECT project_id, id, received_at, pending_event, pending_write, pending_connection
 		FROM submissions WHERE pending_event IS NOT NULL AND received_at <= ?
 		ORDER BY received_at, project_id, id LIMIT ?`, fmtTime(before), limit)
 	if err != nil {
@@ -194,7 +198,8 @@ func (d *DB) PendingSubmissions(ctx context.Context, before time.Time, limit int
 		var p store.PendingSubmission
 		var received, ev string
 		var write int64
-		if err := rows.Scan(&p.ProjectID, &p.ID, &received, &ev, &write); err != nil {
+		var connection sql.NullString
+		if err := rows.Scan(&p.ProjectID, &p.ID, &received, &ev, &write, &connection); err != nil {
 			return nil, err
 		}
 		if p.ReceivedAt, err = time.Parse(tsFormat, received); err != nil {
@@ -203,7 +208,7 @@ func (d *DB) PendingSubmissions(ctx context.Context, before time.Time, limit int
 		if err := json.Unmarshal([]byte(ev), &p.Event); err != nil {
 			return nil, fmt.Errorf("submission %s pending event: %w", p.ID, err)
 		}
-		p.WriteEvent = write == 1
+		p.WriteEvent, p.ConnectionID = write == 1, connection.String
 		out = append(out, p)
 	}
 	return out, rows.Err()
@@ -226,8 +231,8 @@ func (d *DB) AttributeSubmission(ctx context.Context, p store.PendingSubmission,
 	var fresh []receivedKey
 	var gen uint64
 	err := d.tx(ctx, func(tx *sql.Tx) error {
-		res, err := tx.ExecContext(ctx, `UPDATE submissions SET attribution=?, pending_event=NULL, pending_write=NULL
-			WHERE project_id=? AND id=? AND pending_event IS NOT NULL`, attribution, p.ProjectID, p.ID)
+		res, err := tx.ExecContext(ctx, `UPDATE submissions SET attribution=?, pending_event=NULL, pending_write=NULL,
+			pending_connection=NULL WHERE project_id=? AND id=? AND pending_event IS NOT NULL`, attribution, p.ProjectID, p.ID)
 		if err != nil {
 			return err
 		}
