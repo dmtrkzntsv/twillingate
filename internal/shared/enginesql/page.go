@@ -24,11 +24,11 @@ type Stmt struct {
 // statement's Args are those and then the page's own filter values,
 // bound as $tw_pN, so the caller passes the list on unchanged.
 //
-// The statement's rows are the page's rows as text (Text's cells, NULL
-// kept), then the matched and total counts as two BIGINT columns. For a
-// Distinct page the rows are the value (NULL as the empty string), its
-// row count as text and the same two counts, matched counting values. A
-// page with no row carries no counts: Count builds them.
+// The statement's rows are the page's rows as Text's cells, then the
+// matched and total counts as two BIGINT columns. For a Distinct page the
+// rows are the value (a cell, so NULL is the empty string), its row count
+// as text and the same two counts, matched counting values. A page with
+// no row carries no counts: Count builds them.
 //
 // Comparisons go through the child's tw_cell and tw_num macros, so they
 // mean what the cells show; tw_cell compares VARCHAR byte-wise, which is

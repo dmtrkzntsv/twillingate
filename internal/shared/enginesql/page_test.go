@@ -50,20 +50,18 @@ func newEngine(t testing.TB) *engine.Engine {
 	return e
 }
 
-// cells renders an engine row as text, NULL as "". The page's own
-// columns must come back as text already: a number here means a column
-// skipped Text's cast.
+// cells reads an engine row of text. Text's cells and the page's own
+// columns are tw_cell's text, NULL included as "": a number or a NULL here
+// means a column skipped it.
 func cells(t testing.TB, row []any) []string {
 	t.Helper()
 	out := make([]string, len(row))
 	for i, v := range row {
-		switch v := v.(type) {
-		case nil:
-		case string:
-			out[i] = v
-		default:
+		s, ok := v.(string)
+		if !ok {
 			t.Fatalf("cell %d is %T %v, not text", i, v, v)
 		}
+		out[i] = s
 	}
 	return out
 }
@@ -163,11 +161,9 @@ func loadPageCases(t *testing.T) pageCases {
 
 // valuesSQL renders the cases' rows as a VALUES relation named by the
 // cases' columns. A DuckDB column has one type, so each takes the type of
-// its values: all text is VARCHAR, all integers BIGINT. A column mixing
-// integers and reals (Count: 1069 and 12.5) has no DuckDB number type
-// whose text is both "1069" and "12.5" (DOUBLE shows "1069.0"), so it is
-// VARCHAR holding the cells' text, which tw_num reads as numbers all
-// the same; TestPageNumbersCompareByTheirText covers a DOUBLE column.
+// its values: all text is VARCHAR, all integers BIGINT, integers and
+// reals together DOUBLE (Count: 1069 and 12.5, which tw_cell reads as
+// SQLite showed them).
 func valuesSQL(t *testing.T, c pageCases) string {
 	t.Helper()
 	types := make([]string, len(c.Columns))
@@ -185,9 +181,15 @@ func valuesSQL(t *testing.T, c pageCases) string {
 				num = true
 			}
 		}
-		types[ci] = "VARCHAR"
-		if num && !str && !real {
+		switch {
+		case str:
+			types[ci] = "VARCHAR"
+		case real:
+			types[ci] = "DOUBLE"
+		case num:
 			types[ci] = "BIGINT"
+		default:
+			types[ci] = "VARCHAR"
 		}
 	}
 	var rows, names []string
@@ -397,21 +399,23 @@ func TestPageSortKeysDoNotCollide(t *testing.T) {
 	}
 }
 
-// A cell is DuckDB's text of its value, so a DOUBLE shows "100.0": "="
-// compares that text, while "<" and ">" with a number compare numbers.
-// A value past DOUBLE's range is an infinity, which still orders.
-func TestPageNumbersCompareByTheirText(t *testing.T) {
+// A DOUBLE reads as SQLite showed it, 100 rather than 100.0, so "="
+// matches the text a viewer sees; "<" and ">" with a number compare
+// numbers. A value past DOUBLE's range is an infinity, which still orders.
+func TestPageNumbersReadAsTheyDidOnSQLite(t *testing.T) {
 	e := newEngine(t)
-	q := `SELECT * FROM (VALUES (CAST(100 AS DOUBLE)), (12.5::DOUBLE), (1e20::DOUBLE), (NULL)) AS t(n)`
+	q := `SELECT * FROM (VALUES (CAST(100 AS DOUBLE)), (12.5::DOUBLE), (3.50::DECIMAL(5,2)), (1e20::DOUBLE), (NULL)) AS t(n)`
 	for _, c := range []struct {
 		op, value string
 		want      [][]string
 	}{
-		{"=", "100.0", [][]string{{"100.0"}}},
-		{"=", "100", [][]string{}},
-		{">", "99", [][]string{{"100.0"}, {"1e+20"}}},
-		{"<", "1e400", [][]string{{"100.0"}, {"12.5"}, {"1e+20"}}},
+		{"=", "100", [][]string{{"100"}}},
+		{"=", "100.0", [][]string{}},
+		{"=", "3.5", [][]string{{"3.5"}}},
+		{">", "99", [][]string{{"100"}, {"1e+20"}}},
+		{"<", "1e400", [][]string{{"100"}, {"12.5"}, {"3.5"}, {"1e+20"}}},
 		{">", "1e400", [][]string{}},
+		{"!=", "100", [][]string{{"12.5"}, {"3.5"}, {"1e+20"}, {""}}},
 	} {
 		got, err := runPage(t, e, q, nil, readsql.Page{Filters: []readsql.Filter{{Column: "n", Op: c.op, Values: []string{c.value}}}}, 1000)
 		if err != nil {

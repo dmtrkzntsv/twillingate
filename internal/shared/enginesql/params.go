@@ -36,9 +36,12 @@ var ErrRefused = errors.New("refused")
 //     :name, and the $ names belong to Bind and the page.
 //
 // It never reads a parameter inside '…', E'…', $tag$…$tag$, "…" or a
-// comment (block comments nest, as in DuckDB), nor in '::' (a cast) or
-// ':=' (a named argument). Any other ':' before a letter starts one, so
-// a slice list[a:b] reads :b; list[a : b] does not.
+// comment (block comments nest and a line comment ends at '\n' or '\r',
+// as in DuckDB), nor in '::' (a cast) or ':=' (a named argument). Any
+// other ':' before a letter starts one, so three DuckDB forms read as
+// parameters: the slice list[a:b] reads :b, the Python-style lambda
+// lambda x:x+1 reads :x, and the struct literal {'k':v} reads :v. A space
+// after the colon avoids it: list[a: b], lambda x: x+1, {'k': v}.
 func Params(q string) ([]string, error) {
 	occ, err := scan(q, false)
 	if err != nil {
@@ -152,7 +155,8 @@ func scan(q string, bound bool) ([]occurrence, error) {
 		case c == '\'' || c == '"':
 			i, err = skipString(q, i, false)
 		case c == '-' && strings.HasPrefix(q[i:], "--"):
-			if j := strings.IndexByte(q[i:], '\n'); j >= 0 {
+			// DuckDB ends one at a carriage return as well as a newline.
+			if j := strings.IndexAny(q[i:], "\n\r"); j >= 0 {
 				i += j + 1
 			} else {
 				i = len(q)
