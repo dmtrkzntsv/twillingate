@@ -1328,6 +1328,8 @@ request's connection hash (so the views a visitor sent before consent
 gave them an id count, the same UTC day), and, for a
 `$user_id`, of every install id seen on one event with it (`aliases`), so
 a visit made before signing in counts. Until then `attribution` is `{}`.
+Around 03:00 UTC the daily pass can hold the lookup back by up to about
+half an hour.
 A submission that sends `$referrer` or a `$utm_*` key gives those four
 itself and the lookup none. An anonymous visitor without consent is a
 connection hash that changes at midnight UTC, so for them the lookup ends
