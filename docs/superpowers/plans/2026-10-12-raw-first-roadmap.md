@@ -184,7 +184,7 @@ and a plain HTML form has no SDK. The user chose, on 2026-10-14:
 
 - A job in the ingest process attributes each submission about a minute
   after it arrives: the submitter's last non-direct session within
-  `FORMS_ATTRIBUTION_DAYS` (default 7), read from `sessions`, `views` and
+  `ATTRIBUTION_DAYS` (default 7), read from `sessions`, `views` and
   `aliases` (5a) in one engine query; the event takes the newest view's
   kind, group, session, environment and consent. The `$form_submit`
   event is written by the job. Migration 041 queues submissions in
