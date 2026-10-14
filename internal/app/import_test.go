@@ -3,12 +3,15 @@ package app
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -162,21 +165,65 @@ func TestImportEventsRunsOnce(t *testing.T) {
 
 // TestImportEventsRefusesWhileTheServerRuns: while a Log holds the events
 // directory (the ingest server), the import fails with ErrLocked and says
-// to stop the service, before it writes anything.
+// to stop the service, before it writes anything: not meta, and no
+// migration either (app.Migrate would rebuild the dropped flat view).
 func TestImportEventsRefusesWhileTheServerRuns(t *testing.T) {
-	st := importDB(t, importRow("a", store.FamilyProduct, "2026-08-20T10:00:00Z"))
+	dbPath := filepath.Join(t.TempDir(), "twillingate.db")
+	st := storetest.Open(t, dbPath)
+	if err := st.WriteEvents(context.Background(), []store.Event{importRow("a", store.FamilyProduct, "2026-08-20T10:00:00Z")}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	if _, err := raw.Exec(`DROP VIEW v_events_flat`); err != nil {
+		t.Fatal(err)
+	}
 	dir := filepath.Join(t.TempDir(), "raw")
 	held, err := archive.OpenLog(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer held.Close()
-	cfg := configtest.Load(t, map[string]string{"EVENTS_DIR": dir})
+	cfg := configtest.Load(t, map[string]string{"EVENTS_DIR": dir, "DATABASE_DSN": "sqlite://" + dbPath})
 	err = ImportEvents(context.Background(), cfg, st, true, &bytes.Buffer{})
 	if !errors.Is(err, archive.ErrLocked) || !strings.Contains(err.Error(), "stop the ingest service") {
 		t.Fatalf("err = %v, want ErrLocked telling to stop the ingest service", err)
 	}
 	if got, _ := st.GetMeta(context.Background(), "events_imported"); got != "" {
 		t.Fatalf("meta = %q, want unset", got)
+	}
+	var views int
+	if err := raw.QueryRow(`SELECT count(*) FROM sqlite_master WHERE name = 'v_events_flat'`).Scan(&views); err != nil {
+		t.Fatal(err)
+	}
+	if views != 0 {
+		t.Fatal("a refused import migrated the database (v_events_flat rebuilt)")
+	}
+}
+
+// TestCheckOwner: the database file's owner may run the import; anyone
+// else is refused with the owner's uid and the service user named.
+func TestCheckOwner(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "twillingate.db")
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := int(info.Sys().(*syscall.Stat_t).Uid)
+	if err := checkOwner(path, owner); err != nil {
+		t.Fatalf("the owner: %v, want nil", err)
+	}
+	err = checkOwner(path, owner+1)
+	if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("uid %d", owner)) || !strings.Contains(err.Error(), "service user") {
+		t.Fatalf("another uid: %v, want a refusal naming uid %d and the service user", err, owner)
+	}
+	if err := checkOwner(filepath.Join(t.TempDir(), "missing.db"), owner); err == nil {
+		t.Fatal("a missing database file passed")
 	}
 }

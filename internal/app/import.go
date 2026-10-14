@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"sort"
+	"syscall"
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
@@ -42,13 +44,16 @@ type dayImporter interface {
 // once. With events_imported set it says when that was and returns, unless
 // force. It takes the events directory as the ingest server does, so it
 // refuses (archive.ErrLocked) while the server runs: nothing else may
-// write events or raw/ while it reads. The closed logs it leaves are the
-// next start's pass to dump.
+// write events or raw/ while it reads. It refuses too when run as anyone
+// but the database file's owner: files it wrote as root would lock the
+// service user out of raw/. Only then does it migrate the schema, as
+// `migrate` does, so it can run before the new binary's first start and a
+// refused run leaves the database as it was. The closed logs it leaves are
+// the next start's pass to dump.
 func ImportEvents(ctx context.Context, cfg *config.Config, st store.Store, force bool, out io.Writer) error {
-	if done, err := st.GetMeta(ctx, eventsImportedKey); err != nil {
-		return err
-	} else if done != "" && !force {
-		fmt.Fprintf(out, "events already imported on %s; -force imports again (what the files hold is skipped)\n", done)
+	// A database older than the meta table cannot answer yet; the check
+	// after the migration does.
+	if done, err := st.GetMeta(ctx, eventsImportedKey); err == nil && imported(done, force, out) {
 		return nil
 	}
 	log, err := archive.OpenLog(cfg.EventsDir)
@@ -59,6 +64,17 @@ func ImportEvents(ctx context.Context, cfg *config.Config, st store.Store, force
 		return err
 	}
 	defer log.Close()
+	if err := checkOwner(DatabasePath(cfg.Database), os.Geteuid()); err != nil {
+		return err
+	}
+	if err := Migrate(ctx, cfg, st); err != nil {
+		return err
+	}
+	if done, err := st.GetMeta(ctx, eventsImportedKey); err != nil {
+		return err
+	} else if imported(done, force, out) {
+		return nil
+	}
 	opts, err := EngineOptions(cfg)
 	if err != nil {
 		return err
@@ -70,6 +86,32 @@ func ImportEvents(ctx context.Context, cfg *config.Config, st store.Store, force
 	defer eng.Close()
 	a := archive.New(log, eng, slog.New(slog.NewTextHandler(out, nil)))
 	return importEvents(ctx, st, a, cfg.Retention.Days, time.Now(), out)
+}
+
+// imported says, when done holds the time an import finished and force is
+// off, when that was and how to run it again, and reports true.
+func imported(done string, force bool, out io.Writer) bool {
+	if done == "" || force {
+		return false
+	}
+	fmt.Fprintf(out, "events already imported on %s; -force imports again (what the files hold is skipped)\n", done)
+	return true
+}
+
+// checkOwner refuses a run whose effective uid is not the owner of the
+// database file at path: the closed logs, project directories and engine
+// directories the import creates would belong to that user, and the
+// service user could not write them afterwards.
+func checkOwner(path string, euid int) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || int(st.Uid) == euid {
+		return nil
+	}
+	return fmt.Errorf("%s belongs to uid %d, not %d: run it as the service user, as in sudo -u twillingate twillingate events import", path, st.Uid, euid)
 }
 
 // importEvents hands every project's days of raw rows to imp, in order,
