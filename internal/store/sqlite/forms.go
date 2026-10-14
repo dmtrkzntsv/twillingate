@@ -73,18 +73,17 @@ func closedReason(f store.Form, now time.Time) string {
 }
 
 // WriteSubmission records a submission, creating its form as a draft, and
-// on an approved form its $form_submit event, in one transaction. The
-// refusal and the duplicate id are decided before anything else is
-// written, so neither changes the form; a refusal returns the form beside
-// ErrFormClosed. The event's id, ts and project
-// are the submission's, whatever n.Event carries, so a later delete finds
-// it by (family product, project_id, day, id).
+// the $form_submit event it will be written as, in one transaction. The
+// event waits with the submission (pending_event) until AttributeSubmission
+// writes it, on an approved form. The refusal and the duplicate id are
+// decided before anything else is written, so neither changes the form; a
+// refusal returns the form beside ErrFormClosed. The event's id, ts and
+// project are the submission's, whatever n.Event carries, so a later delete
+// finds it by (family product, project_id, day, id).
 func (d *DB) WriteSubmission(ctx context.Context, n store.NewSubmission) (store.Form, bool, error) {
 	sub := n.Submission
 	var form store.Form
 	var inserted bool
-	var fresh []receivedKey
-	var gen uint64
 	err := d.tx(ctx, func(tx *sql.Tx) error {
 		// A retry of a stored id is a success whatever the form's state now:
 		// the first attempt already got its answer. It changes nothing.
@@ -129,10 +128,15 @@ func (d *DB) WriteSubmission(ctx context.Context, n store.NewSubmission) (store.
 			attribution = string(a)
 		}
 		received := sub.ReceivedAt.UTC().Format(tsFormat)
+		pending, err := json.Marshal(n.StoredEvent())
+		if err != nil {
+			return fmt.Errorf("submission %s event: %w", sub.ID, err)
+		}
 		res, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO submissions
-			(project_id, id, form, received_at, fields, attribution)
-			VALUES (?,?,?,?,?,?)`,
-			sub.ProjectID, sub.ID, sub.Form, received, string(blob), attribution)
+			(project_id, id, form, received_at, fields, attribution, pending_event, pending_write)
+			VALUES (?,?,?,?,?,?,?,?)`,
+			sub.ProjectID, sub.ID, sub.Form, received, string(blob), attribution, string(pending),
+			form.Status == store.FormApproved)
 		if err != nil {
 			return fmt.Errorf("submission %s: %w", sub.ID, err)
 		}
@@ -161,17 +165,7 @@ func (d *DB) WriteSubmission(ctx context.Context, n store.NewSubmission) (store.
 		last := sub.ReceivedAt.UTC().Truncate(time.Second)
 		form.LastSubmittedAt = &last
 
-		if form.Status != store.FormApproved {
-			return nil
-		}
-		// The event's shape is the store's (store.NewSubmission.StoredEvent).
-		ev := n.StoredEvent()
-		keys, err := insertEvents(ctx, tx, []store.Event{ev})
-		if err != nil {
-			return err
-		}
-		fresh, gen = d.seen.unseen(keys)
-		return writeReceived(ctx, tx, fresh)
+		return nil
 	})
 	if errors.Is(err, store.ErrFormClosed) {
 		// The form as the transaction read it (a row it created is
@@ -182,76 +176,82 @@ func (d *DB) WriteSubmission(ctx context.Context, n store.NewSubmission) (store.
 	if err != nil {
 		return store.Form{}, false, err
 	}
-	d.seen.remember(fresh, gen)
 	return form, inserted, nil
 }
 
-// sessionGap is the idle time that ends a session, as in the session views.
-const sessionGap = 30 * time.Minute
-
-// SessionAt reads the actor's current session at `at` from the raw views
-// of at's day and the day before: the views, newest first, are walked
-// back while each is within sessionGap of the next newer one. The newest
-// gives the event its kind, group, session id, environment and consent;
-// the oldest reached, the landing view, its referrer and UTMs. A session
-// whose newest view is more than sessionGap before `at` has ended and is
-// nil.
-func (d *DB) SessionAt(ctx context.Context, projectID int64, actorKind, actorID string, at time.Time) (*store.Event, error) {
-	at = at.UTC()
-	rows, err := d.db.QueryContext(ctx, `SELECT ts, kind, group_id, session_id,
-		  platform, os, os_version, os_name, browser, browser_version, browser_locale,
-		  app_version, app_locale, device, device_model, display_width, display_height, consent,
-		  referrer_source, utm_source, utm_medium, utm_campaign
-		FROM raw_views
-		WHERE project_id=? AND actor_kind=? AND actor_id=?
-		  AND day IN (?, ?) AND ts <= ?
-		ORDER BY ts DESC`,
-		projectID, actorKind, actorID,
-		at.Format("2006-01-02"), at.AddDate(0, 0, -1).Format("2006-01-02"), at.Format(tsFormat))
+// PendingSubmissions lists up to limit submissions received at or before
+// `before` and not yet attributed, oldest first.
+func (d *DB) PendingSubmissions(ctx context.Context, before time.Time, limit int) ([]store.PendingSubmission, error) {
+	rows, err := d.db.QueryContext(ctx, `SELECT project_id, id, received_at, pending_event, pending_write
+		FROM submissions WHERE pending_event IS NOT NULL AND received_at <= ?
+		ORDER BY received_at, project_id, id LIMIT ?`, fmtTime(before), limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var e *store.Event
-	newer := at // the newest view must be within the gap of `at` too
+	var out []store.PendingSubmission
 	for rows.Next() {
-		var v store.Event
-		var ts string
-		var consent sql.NullInt64
-		if err := rows.Scan(&ts, &v.Kind, &v.GroupID, &v.SessionID,
-			&v.Platform, &v.OS, &v.OSVersion, &v.OSName, &v.Browser, &v.BrowserVersion, &v.BrowserLocale,
-			&v.AppVersion, &v.AppLocale, &v.Device, &v.DeviceModel, &v.DisplayWidth, &v.DisplayHeight, &consent,
-			&v.ReferrerSource, &v.UTMSource, &v.UTMMedium, &v.UTMCampaign); err != nil {
+		var p store.PendingSubmission
+		var received, ev string
+		var write int64
+		if err := rows.Scan(&p.ProjectID, &p.ID, &received, &ev, &write); err != nil {
 			return nil, err
 		}
-		t, err := time.Parse(tsFormat, ts)
-		if err != nil {
-			return nil, fmt.Errorf("view ts %q: %w", ts, err)
+		if p.ReceivedAt, err = time.Parse(tsFormat, received); err != nil {
+			return nil, fmt.Errorf("submission %s received_at %q: %w", p.ID, received, err)
 		}
-		if newer.Sub(t) > sessionGap {
-			break
+		if err := json.Unmarshal([]byte(ev), &p.Event); err != nil {
+			return nil, fmt.Errorf("submission %s pending event: %w", p.ID, err)
 		}
-		newer = t
-		if e == nil {
-			v.Consent = scanConsent(consent)
-			e = &v
-		}
-		e.ReferrerSource, e.UTMSource, e.UTMMedium, e.UTMCampaign = v.ReferrerSource, v.UTMSource, v.UTMMedium, v.UTMCampaign
+		p.WriteEvent = write == 1
+		out = append(out, p)
 	}
-	return e, rows.Err()
+	return out, rows.Err()
 }
 
-// scanConsent is the store.Consent a consent column holds: NULL is
-// unknown, 1 given and 0 none.
-func scanConsent(c sql.NullInt64) store.Consent {
-	switch {
-	case !c.Valid:
-		return store.ConsentUnknown
-	case c.Int64 == 1:
-		return store.ConsentGiven
-	default:
-		return store.ConsentNone
+// AttributeSubmission stores ev's referrer and UTMs as p's attribution
+// and, when p.WriteEvent, writes ev, in one transaction; wrote reports
+// the event written. A submission no longer pending changes nothing.
+func (d *DB) AttributeSubmission(ctx context.Context, p store.PendingSubmission, ev store.Event) (bool, error) {
+	var attribution any // NULL: nothing found
+	if a := (store.Attribution{Referrer: ev.ReferrerSource, UTMSource: ev.UTMSource,
+		UTMMedium: ev.UTMMedium, UTMCampaign: ev.UTMCampaign}); a != (store.Attribution{}) {
+		b, err := json.Marshal(a)
+		if err != nil {
+			return false, err
+		}
+		attribution = string(b)
 	}
+	var wrote bool
+	var fresh []receivedKey
+	var gen uint64
+	err := d.tx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx, `UPDATE submissions SET attribution=?, pending_event=NULL, pending_write=NULL
+			WHERE project_id=? AND id=? AND pending_event IS NOT NULL`, attribution, p.ProjectID, p.ID)
+		if err != nil {
+			return err
+		}
+		if n, err := res.RowsAffected(); err != nil || n != 1 {
+			return err // deleted or attributed already
+		}
+		if !p.WriteEvent {
+			return nil
+		}
+		keys, err := insertEvents(ctx, tx, []store.Event{ev})
+		if err != nil {
+			return err
+		}
+		fresh, gen = d.seen.unseen(keys)
+		wrote = true
+		return writeReceived(ctx, tx, fresh)
+	})
+	if err != nil {
+		return false, err
+	}
+	if wrote {
+		d.seen.remember(fresh, gen)
+	}
+	return wrote, nil
 }
 
 // fmtTime is t as the text the forms tables store.

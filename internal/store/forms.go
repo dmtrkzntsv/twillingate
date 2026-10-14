@@ -92,10 +92,10 @@ type Submission struct {
 }
 
 // NewSubmission is what ingest hands the store: the submission, the
-// draft_until a newly created form gets, and the event to write when the
-// form turns out approved (its ID, TS, ProjectID, Family product,
-// EventName "$form_submit", Attributes {"form": name} already set; the
-// store writes it only on an approved form).
+// draft_until a newly created form gets, and the event as the request
+// knows it (StoredEvent gives its final shape). The store keeps it with
+// the submission, pending, and AttributeSubmission writes it once the
+// source is found, only on a form approved on arrival.
 type NewSubmission struct {
 	Submission Submission
 	DraftUntil time.Time
@@ -115,4 +115,16 @@ func (n NewSubmission) StoredEvent() Event {
 		ev.ReceivedAt = sub.ReceivedAt
 	}
 	return ev
+}
+
+// PendingSubmission is a submission waiting for its attribution: the
+// $form_submit event the request built (StoredEvent's shape: the actor,
+// the page, the country, what the client sent of its source), and
+// whether to write it, decided by the form being approved on arrival.
+type PendingSubmission struct {
+	ProjectID  int64
+	ID         string
+	ReceivedAt time.Time
+	Event      Event
+	WriteEvent bool
 }

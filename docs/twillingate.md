@@ -809,9 +809,9 @@ tools below do.
    name submissions sent.
 3. **Approve it** with the fields to keep: `approve_form {project_id, name,
    expected_fields}`. From then on a field outside the list is dropped on
-   arrival, and every submission writes a `$form_submit` product event with
-   the attribute `form` (the form's name): count conversions with
-   `product_events`, and per form with `product_attributes` once `form` is
+   arrival, and every submission writes a `$form_submit` product event about
+   a minute after it arrives, with the attribute `form` (the form's name):
+   count conversions with `product_events`, and per form with `product_attributes` once `form` is
    declared in the project's `attributes`. The event carries what is known
    about the visitor (the page, the visit's referrer and UTMs, its session
    and environment), so declaring `$utm_source` and the rest breaks
@@ -1307,18 +1307,28 @@ submissions for `RETENTION_FORMS_DRAFT_DAYS` (default 7) and keeps every field t
 send. An approved form keeps only its expected fields and writes, beside each
 submission, a `$form_submit` product event with the submission's `id`, its
 time as `ts` and the form's name as its one attribute, `form`; a draft's
-submissions write none. Both are written before the answer, never buffered.
+submissions write none. The submission is written before the answer, never
+buffered; its attribution and its event follow about a minute later (below).
 
 **A submission and its event.** The submission keeps what the visitor
 typed, when it arrived and where the visit came from: its `attribution`,
-a JSON object of the referrer and UTM source, medium and campaign of the
-first view of the visitor's current session (views at most 30 minutes
-apart, looking back a day), each left out when empty, `{}` when no view of
-the actor matches. Everything else is on the event, which has the
-submission's id: the actor, the page (`$host`, `$path`), the country, the
-same referrer and UTMs, and the newest view's `$kind`, group, session id,
-environment and consent. So the submission's attribution outlives the raw
-window, and the event's details are counted like any product event's.
+a JSON object of the referrer and UTM source, medium and campaign, each
+left out when empty, `{}` when the visit was direct. About a minute after
+the submission arrives the collector looks the source up in the event
+files: the last visit with a referrer or a UTM (last non-direct) that
+started within `ATTRIBUTION_DAYS` (default 7) before it, of the
+submission's actor, of the `$install_id` it was sent with, and, for a
+`$user_id`, of every install id seen on one event with it (`aliases`), so
+a visit made before signing in counts. Until then `attribution` is `{}`.
+A submission that sends `$referrer` or a `$utm_*` key gives those four
+itself and the lookup none. An anonymous visitor without consent is a
+connection hash that changes at midnight UTC, so for them the lookup ends
+there. Everything else is on the event, which has the submission's id and
+its arrival as `ts`: the actor, the page (`$host`, `$path`), the country,
+the same referrer and UTMs, and the `$kind`, group, session id,
+environment and consent of the actor's newest view in the window. So the
+submission's attribution outlives the raw window, and the event's details
+are counted like any product event's.
 
 Two body styles, chosen by `Content-Type`:
 
@@ -1359,8 +1369,9 @@ what they mean on events:
 | Key | Meaning |
 | --- | --- |
 | `$id` | The submission's UUID. A retry with the same id is stored once and answered as a success, even if the form closed in between; omitted, the collector makes one |
-| `$user_id`, `$install_id` | The event's actor, resolved as on events: `$user_id`, else `$install_id`, else the connection hash, so a JS-free post from the browser that sent the visit's views gets the same actor as those views, and their session |
+| `$user_id`, `$install_id` | The event's actor, resolved as on events: `$user_id`, else `$install_id`, else the connection hash, so a JS-free post from the browser that sent the visit's views gets the same actor as those views, and their visits |
 | `$host`, `$path` | The page the form is on, the event's; on a plain form each defaults to the `Referer`'s, on JSON an absent one stays empty |
+| `$referrer`, `$utm_source`, `$utm_medium`, `$utm_campaign` | The visit's source: a referrer URL (cleaned as on views, so one from the form's own `$host` is no source) and campaign. Any of them makes the four the submission's attribution instead of the lookup's; a site that copies UTMs into hidden fields names them `$utm_*` |
 | `$redirect` | Plain form only: where to send the visitor back |
 
 Any other `$` key is dropped, and a field named like a context key without

@@ -492,6 +492,7 @@ func TestPurgeArchivedDeletesAgedFormsWithSubmissionsAndRawEvents(t *testing.T) 
 		}
 		mk(f.project, f.form, fmt.Sprintf("%d-%s-2", f.project, f.form))
 	}
+	attributeAll(t, db, nil)
 	archive := func(project int64, form string, days int) {
 		if _, err := db.ExecForTest(
 			`UPDATE forms SET archived_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ?) WHERE project_id=? AND name=?`,

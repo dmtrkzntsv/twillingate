@@ -198,6 +198,7 @@ func TestWriteSubmissionApprovedKeepsExpectedAndWritesEvent(t *testing.T) {
 	if want := []string{"name", "tracking"}; !reflect.DeepEqual(formFieldNames(t, db), want) {
 		t.Fatalf("fields = %v, want %v (dropped names stay recorded)", formFieldNames(t, db), want)
 	}
+	attributeAll(t, db, nil)
 	var id, family, name, ts, day, kind, actorKind, actorID, host, path, attrs string
 	if err := db.db.QueryRow(`SELECT id, family, event_name, ts, day, kind, actor_kind, actor_id, host, path, attributes
 		FROM events`).Scan(&id, &family, &name, &ts, &day, &kind, &actorKind, &actorID, &host, &path, &attrs); err != nil {
@@ -332,91 +333,107 @@ func TestWriteSubmissionIsPerProject(t *testing.T) {
 	}
 }
 
-func addView(t *testing.T, db *DB, id string, project int64, actor string, at time.Time, path, ref, src, med, camp string) {
+// attributeAll runs what the jobs runner does for every pending
+// submission, with the event as found returns it (nil: as it waits).
+func attributeAll(t *testing.T, db *DB, found func(store.Event) store.Event) {
 	t.Helper()
-	err := db.WriteEvents(context.Background(), []store.Event{{
-		ID: id, ProjectID: project, Family: store.FamilyViews, TS: at, ReceivedAt: at,
-		ActorKind: "user", ActorID: actor, Path: path, ReferrerSource: ref,
-		UTMSource: src, UTMMedium: med, UTMCampaign: camp,
-	}})
+	ps, err := db.PendingSubmissions(context.Background(), formsNow.Add(100*24*time.Hour), 100)
 	if err != nil {
 		t.Fatal(err)
 	}
+	for _, p := range ps {
+		ev := p.Event
+		if found != nil {
+			ev = found(ev)
+		}
+		if _, err := db.AttributeSubmission(context.Background(), p, ev); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
 
-func TestSessionAt(t *testing.T) {
+// A submission waits with the event the request built; an approved
+// form's gets written by AttributeSubmission, with the attribution, and
+// only once.
+func TestSubmissionWaitsForItsAttribution(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	at := formsNow
-	// t-60m is a session of its own (40 minutes before the next view);
-	// t-20m and t-5m are one session.
-	addView(t, db, "v1", 1, "a1", at.Add(-60*time.Minute), "/old", "old", "", "", "")
-	addView(t, db, "v2", 1, "a1", at.Add(-20*time.Minute), "/landing", "google", "news", "email", "launch")
-	if err := db.WriteEvents(ctx, []store.Event{{
-		ID: "v3", ProjectID: 1, Family: store.FamilyViews, TS: at.Add(-5 * time.Minute), ReceivedAt: at,
-		Kind: "web", ActorKind: "user", ActorID: "a1", GroupID: "g1", SessionID: "s1", Path: "/contact",
-		ReferrerSource: "example.com", Platform: "web", OS: "macos", OSVersion: "15", OSName: "macOS",
-		Browser: "safari", BrowserVersion: "18", BrowserLocale: "en-US", AppVersion: "1.2", AppLocale: "en",
-		Device: "desktop", DeviceModel: "mac", DisplayWidth: 1440, DisplayHeight: 900, Consent: store.ConsentGiven,
-	}}); err != nil {
+	if _, _, err := db.WriteSubmission(ctx, newSub("s0", map[string]string{"name": "Ann"})); err != nil {
 		t.Fatal(err)
 	}
-	addView(t, db, "v4", 1, "other", at.Add(-10*time.Minute), "/elsewhere", "", "", "", "")
-	addView(t, db, "v5", 2, "a1", at.Add(-10*time.Minute), "/project2", "", "", "", "")
-
-	got, err := db.SessionAt(ctx, 1, "user", "a1", at)
-	if err != nil {
+	approve(t, db, `["name"]`)
+	if _, _, err := db.WriteSubmission(ctx, newSub("s1", map[string]string{"name": "Bob"})); err != nil {
 		t.Fatal(err)
 	}
-	// The newest view's environment, the landing view's attribution.
-	want := &store.Event{Kind: "web", GroupID: "g1", SessionID: "s1",
-		ReferrerSource: "google", UTMSource: "news", UTMMedium: "email", UTMCampaign: "launch",
-		Platform: "web", OS: "macos", OSVersion: "15", OSName: "macOS",
-		Browser: "safari", BrowserVersion: "18", BrowserLocale: "en-US", AppVersion: "1.2", AppLocale: "en",
-		Device: "desktop", DeviceModel: "mac", DisplayWidth: 1440, DisplayHeight: 900, Consent: store.ConsentGiven}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("session = %+v\nwant %+v", got, want)
+	if c := countRows(t, db, `SELECT COUNT(*) FROM raw_product`); c != 0 {
+		t.Fatalf("%d events written before attribution", c)
 	}
-
-	// A view after `at` is not part of the session so far.
-	addView(t, db, "v6", 1, "a1", at.Add(time.Minute), "/later", "later", "", "", "")
-	if got, _ = db.SessionAt(ctx, 1, "user", "a1", at); got == nil || got.SessionID != "s1" || got.ReferrerSource != "google" {
-		t.Fatalf("session = %+v", got)
+	ps, err := db.PendingSubmissions(ctx, formsNow, 10)
+	if err != nil || len(ps) != 2 {
+		t.Fatalf("pending = %+v, %v", ps, err)
 	}
-
-	got, err = db.SessionAt(ctx, 1, "user", "nobody", at)
-	if err != nil || got != nil {
-		t.Fatalf("no views: %+v, %v", got, err)
+	if ps[0].ID != "s0" || ps[0].WriteEvent || ps[1].ID != "s1" || !ps[1].WriteEvent ||
+		ps[1].Event.ActorID != "a1" || ps[1].Event.EventName != store.FormSubmitEvent || !ps[1].ReceivedAt.Equal(formsNow) {
+		t.Fatalf("pending = %+v", ps)
+	}
+	if early, _ := db.PendingSubmissions(ctx, formsNow.Add(-time.Second), 10); len(early) != 0 {
+		t.Fatalf("pending before its arrival = %+v", early)
+	}
+	attributeAll(t, db, func(ev store.Event) store.Event { ev.ReferrerSource, ev.UTMSource = "google", "cpc"; return ev })
+	var attr string
+	if err := db.db.QueryRow(`SELECT attribution FROM submissions WHERE id='s1'`).Scan(&attr); err != nil ||
+		attr != `{"referrer":"google","utm_source":"cpc"}` {
+		t.Fatalf("attribution = %q, %v", attr, err)
+	}
+	if c := countRows(t, db, `SELECT COUNT(*) FROM raw_product WHERE id='s1' AND referrer_source='google'`); c != 1 {
+		t.Fatalf("%d attributed events for s1", c)
+	}
+	if c := countRows(t, db, `SELECT COUNT(*) FROM raw_product WHERE id='s0'`); c != 0 {
+		t.Fatal("a draft's submission wrote an event")
+	}
+	if left, _ := db.PendingSubmissions(ctx, formsNow.Add(time.Hour), 10); len(left) != 0 {
+		t.Fatalf("still pending: %+v", left)
+	}
+	if wrote, err := db.AttributeSubmission(ctx, ps[1], ps[1].Event); err != nil || wrote {
+		t.Fatalf("second AttributeSubmission wrote=%v err=%v", wrote, err)
+	}
+	if c := countRows(t, db, `SELECT COUNT(*) FROM raw_product WHERE id='s1'`); c != 1 {
+		t.Fatalf("%d events for s1 after a second attribution", c)
 	}
 }
 
-func TestSessionAtReachesBackAcrossMidnight(t *testing.T) {
-	db := newTestDB(t)
-	at := time.Date(2026, 10, 6, 0, 10, 0, 0, time.UTC)
-	addView(t, db, "v1", 1, "a1", at.Add(-20*time.Minute), "/late", "late", "", "", "")
-	addView(t, db, "v2", 1, "a1", at.Add(-5*time.Minute), "/later", "later", "", "", "")
-	got, err := db.SessionAt(context.Background(), 1, "user", "a1", at)
-	if err != nil || got == nil || got.ReferrerSource != "late" {
-		t.Fatalf("session = %+v, %v", got, err)
-	}
-}
-
-// TestSessionAtGapIsInclusive: a view exactly 30 minutes before the next
-// is the same session; one second more starts another.
-func TestSessionAtGapIsInclusive(t *testing.T) {
+// Erasure before the job: the submission is gone, and its event is never
+// written.
+func TestAttributeSubmissionAfterDeleteWritesNothing(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	addView(t, db, "v1", 1, "a1", formsNow.Add(-40*time.Minute-time.Second), "/first", "first", "", "", "")
-	addView(t, db, "v2", 1, "a1", formsNow.Add(-10*time.Minute), "/second", "second", "", "", "")
-	got, err := db.SessionAt(ctx, 1, "user", "a1", formsNow)
-	if err != nil || got == nil || got.ReferrerSource != "second" {
-		t.Fatalf("31m gap: %+v, %v", got, err)
+	if _, _, err := db.WriteSubmission(ctx, newSub("s0", nil)); err != nil {
+		t.Fatal(err)
 	}
-	addView(t, db, "v0", 1, "a2", formsNow.Add(-40*time.Minute), "/edge", "edge", "", "", "")
-	addView(t, db, "v3", 1, "a2", formsNow.Add(-10*time.Minute), "/second", "second", "", "", "")
-	got, err = db.SessionAt(ctx, 1, "user", "a2", formsNow)
-	if err != nil || got == nil || got.ReferrerSource != "edge" {
-		t.Fatalf("30m gap: %+v, %v", got, err)
+	approve(t, db, `[]`)
+	if _, _, err := db.WriteSubmission(ctx, newSub("s1", nil)); err != nil {
+		t.Fatal(err)
+	}
+	ps, _ := db.PendingSubmissions(ctx, formsNow, 10)
+	execAll(t, db, `DELETE FROM submissions WHERE id='s1'`)
+	wrote, err := db.AttributeSubmission(ctx, ps[1], ps[1].Event)
+	if err != nil || wrote {
+		t.Fatalf("wrote=%v err=%v", wrote, err)
+	}
+	if c := countRows(t, db, `SELECT COUNT(*) FROM raw_product`); c != 0 {
+		t.Fatalf("%d events for a deleted submission", c)
+	}
+}
+
+// A row as migration 041 finds it (pending_event NULL) is attributed.
+func TestSubmissionsFromBeforeTheMigrationAreNotPending(t *testing.T) {
+	db := newTestDB(t)
+	if _, _, err := db.WriteSubmission(context.Background(), newSub("old", nil)); err != nil {
+		t.Fatal(err)
+	}
+	execAll(t, db, `UPDATE submissions SET pending_event=NULL, pending_write=NULL`)
+	if ps, err := db.PendingSubmissions(context.Background(), formsNow.Add(time.Hour), 10); err != nil || len(ps) != 0 {
+		t.Fatalf("pending = %+v, %v", ps, err)
 	}
 }
 
@@ -455,6 +472,7 @@ func TestWriteSubmissionEventShapeIsTheStores(t *testing.T) {
 	if _, _, err := db.WriteSubmission(ctx, n); err != nil {
 		t.Fatal(err)
 	}
+	attributeAll(t, db, nil)
 	var id, name, ts, attrs string
 	var project int64
 	if err := db.db.QueryRow(`SELECT id, project_id, event_name, ts, attributes FROM raw_product`).
@@ -495,23 +513,6 @@ func TestWriteSubmissionRetryOfStoredIDSucceedsAfterClose(t *testing.T) {
 	}
 	if c := countRows(t, db, `SELECT COUNT(*) FROM submissions`); c != 1 {
 		t.Fatalf("%d submissions", c)
-	}
-}
-
-// TestSessionAtNeedsACurrentSession: the newest view must be within
-// 30 minutes of `at`, the gap rule's own boundary.
-func TestSessionAtNeedsACurrentSession(t *testing.T) {
-	db := newTestDB(t)
-	ctx := context.Background()
-	addView(t, db, "v1", 1, "a1", formsNow.Add(-31*time.Minute), "/old", "old", "", "", "")
-	addView(t, db, "v2", 1, "a2", formsNow.Add(-30*time.Minute), "/edge", "edge", "", "", "")
-	got, err := db.SessionAt(ctx, 1, "user", "a1", formsNow)
-	if err != nil || got != nil {
-		t.Fatalf("31m: %+v, %v", got, err)
-	}
-	got, err = db.SessionAt(ctx, 1, "user", "a2", formsNow)
-	if err != nil || got == nil || got.ReferrerSource != "edge" {
-		t.Fatalf("30m: %+v, %v", got, err)
 	}
 }
 
@@ -835,6 +836,7 @@ func TestDeleteSubmissionsRemovesRowAndRawEvent(t *testing.T) {
 	other = newSub("s1", map[string]string{"email": "o@x.io"})
 	other.Submission.ProjectID, other.Event.ProjectID = 2, 2
 	mustWrite(t, db, other)
+	attributeAll(t, db, nil)
 	if c := countRows(t, db, `SELECT COUNT(*) FROM events`); c != 4 {
 		t.Fatalf("setup: %d events, want 4", c)
 	}

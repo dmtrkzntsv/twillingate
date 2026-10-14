@@ -107,6 +107,17 @@ func TestFilesHoldWhatSQLiteHolds(t *testing.T) {
 	if _, _, err := forms.WriteSubmission(ctx, sub("00000000-0000-4000-a000-000000000002", day.Add(4*time.Hour))); err != nil {
 		t.Fatal(err)
 	}
+	// SQLite writes the event when the submission is attributed (the jobs
+	// runner); the log has it from arrival.
+	pending, err := st.PendingSubmissions(ctx, day.AddDate(0, 0, 1), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range pending {
+		if _, err := st.AttributeSubmission(ctx, p, p.Event); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	self, _ := os.Executable()
 	eng, err := engine.New(engine.Options{Path: self, Env: []string{appEngineChild + "=1"},

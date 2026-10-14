@@ -477,12 +477,14 @@ type Store interface {
 	// SubmissionIDsMatching returns every id FindSubmissions would, newest
 	// first, for delete-by-search.
 	SubmissionIDsMatching(ctx context.Context, projectID int64, search string) ([]string, error)
-	// SessionAt reads the actor's session at `at` (views gapped by at most
-	// 30 minutes, looking back at most a day) as the event a form
-	// submission writes: the newest view's kind, group, session id,
-	// environment and consent, with the session's first view's referrer and
-	// UTMs. Only those are set; nil when no view matches.
-	SessionAt(ctx context.Context, projectID int64, actorKind, actorID string, at time.Time) (*Event, error)
+	// PendingSubmissions lists up to limit submissions received at or
+	// before `before` and not yet attributed, oldest first.
+	PendingSubmissions(ctx context.Context, before time.Time, limit int) ([]PendingSubmission, error)
+	// AttributeSubmission stores ev's referrer and UTMs as p's attribution
+	// and, when p.WriteEvent, writes ev, all in one transaction; wrote
+	// reports the event written. A submission no longer pending (deleted,
+	// or attributed already) changes nothing.
+	AttributeSubmission(ctx context.Context, p PendingSubmission, ev Event) (wrote bool, err error)
 	// ReportingHash is the hash of the latest reporting_migrations row, ""
 	// if none has run yet. SyncReporting makes components and system
 	// dashboards (with their widgets) match s in one transaction.

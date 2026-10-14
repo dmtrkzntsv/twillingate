@@ -21,10 +21,6 @@ func (f fakeForms) WriteSubmission(ctx context.Context, n store.NewSubmission) (
 	return f.form, f.inserted, nil
 }
 
-func (f fakeForms) SessionAt(ctx context.Context, projectID int64, actorKind, actorID string, at time.Time) (*store.Event, error) {
-	return nil, nil
-}
-
 type logSink struct{ got []store.Event }
 
 func (s *logSink) WriteEvents(ctx context.Context, evs []store.Event) error {
