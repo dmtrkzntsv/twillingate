@@ -70,9 +70,6 @@ func TestChildAnswers(t *testing.T) {
 	}
 }
 
-// TestChildKeepsTypes: what DuckDB scans into Go values reaches the parent
-// as JSON a reader can trust: integers whole, decimals exact, dates and
-// times as text, UUIDs as text, NULL as null.
 // TestChildCachesParquetFooters: every query binds every file of the
 // reader's union, so the child keeps the footers it read (archive files
 // never change in place: a merge replaces the month file by rename).
@@ -84,6 +81,9 @@ func TestChildCachesParquetFooters(t *testing.T) {
 	}
 }
 
+// TestChildKeepsTypes: what DuckDB scans into Go values reaches the parent
+// as JSON a reader can trust: integers whole, decimals exact, dates and
+// times as text, UUIDs as text, NULL as null.
 func TestChildKeepsTypes(t *testing.T) {
 	c := startChild(t, childArgs(t.TempDir()))
 	rep := c.ask(t, request{ID: 1, SQL: `SELECT 9007199254740993::BIGINT, 12.34::DECIMAL(10,2),
