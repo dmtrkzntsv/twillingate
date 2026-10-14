@@ -624,6 +624,28 @@ Over 30 days A takes 0.14–1.8 s per query, C 3–120 ms. C's DuckDB file at
   FROM DATABASE` to a new file takes 151 s at 2 threads; `EXPORT DATABASE`
   to Parquet runs out of memory at 256 MB. A second process cannot open the
   file at all while one holds it, not even read-only.
+- **The reader over the files (PR 4, 2026-10-13):** `TestMeasureQueries`
+  (`go test -tags measure`) generates 36 months of one project, 1M rows a
+  month (36M rows, 978 MB of zstd Parquet in 36 month files; 50% views, 40%
+  product events with 8 attributes, 10% measures), and asks the `query`
+  tool's `Reader` eight questions through the child at 2 threads and 512 MB
+  on an Intel N150 (4 CPUs, 30 GB RAM, local NVMe), one cold run, the
+  child's footer cache warm after the first question. Targets: 30 s for a
+  3-year question, 1 s for a timeline. All met.
+
+  | Question (3 years) | Time | Rows |
+  |---|---|---|
+  | build (first query, `count(*)` over `events`) | 117 ms | 1 |
+  | views and visitors per day | 2.65 s | 1,096 |
+  | distinct users | 243 ms | 1 |
+  | plan × variant | 156 ms | 6 |
+  | plan × country | 142 ms | 12 |
+  | events per name per month | 523 ms | 289 |
+  | first rare event | 21 ms | 1 |
+  | one user's timeline | 306 ms | 252 |
+
+  Generating a month takes 3.0–3.9 s. The slowest is the per-day distinct
+  count over 18M view rows.
 
 CPU and memory in one Go process (`scripts/archive-bench/probe`: duckdb-go
 v2.10506.0 and modernc side by side), the 13 queries once warm, Linux arm64
