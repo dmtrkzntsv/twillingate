@@ -57,6 +57,14 @@ type Store interface {
 	// ExpireDrafts archives every active draft form whose draft_until is
 	// at or before now and returns how many.
 	ExpireDrafts(ctx context.Context, now time.Time) (int, error)
+	// PendingSubmissions lists up to limit submissions received at or
+	// before `before` and not yet attributed, oldest first.
+	PendingSubmissions(ctx context.Context, before time.Time, limit int) ([]store.PendingSubmission, error)
+	// AttributeSubmission stores ev's referrer and UTMs as p's attribution
+	// and, when p.WriteEvent, writes ev, all in one transaction; wrote
+	// reports the event written. A submission no longer pending (deleted,
+	// or attributed already) changes nothing.
+	AttributeSubmission(ctx context.Context, p store.PendingSubmission, ev store.Event) (wrote bool, err error)
 }
 
 // Archive is the file side of the pass (internal/archive): it runs only in
@@ -82,6 +90,10 @@ type Runner struct {
 
 	// archive is nil in a process that does not ingest.
 	archive Archive
+	// attributor and eventLog attribute form submissions; nil in a
+	// process that does not ingest (attribution.go).
+	attributor Attributor
+	eventLog   EventLog
 	// jitter and sleep delay a scheduled pass; fields so a test need not wait.
 	jitter func() time.Duration
 	sleep  func(context.Context, time.Duration)
@@ -352,6 +364,8 @@ func (r *Runner) allRawDays(ctx context.Context, projectID int64, before civil.D
 // runScheduled fires whichever jobs are due at the current time. Split out
 // from Run so the day-boundary guards are testable without a real clock.
 func (r *Runner) runScheduled(ctx context.Context) {
+	// Form attribution runs on every tick (each minute).
+	r.attributeSubmissions(ctx)
 	now := r.now().UTC()
 	day := civil.Today(now).String()
 	if now.Hour() == 0 && r.lastSaltDay != day {

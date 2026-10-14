@@ -52,9 +52,12 @@ type Retention struct {
 // (RETENTION_FORMS_DRAFT_DAYS) is how long a form created by its first
 // submission accepts submissions as a draft before the daily pass archives
 // it unapproved; it is read when a draft is created or restored, so a
-// change moves no existing window.
+// change moves no existing window. AttributionDays (ATTRIBUTION_DAYS) is
+// how far before a submission its source is looked for: its submitter's
+// last non-direct visit that started within that many days.
 type FormsConfig struct {
-	DraftDays int
+	DraftDays       int
+	AttributionDays int
 }
 
 // ReportingConfig sizes the two-age cache a sql widget's loaded value is
@@ -167,6 +170,10 @@ const DefaultIngestLateDays = 1
 // DefaultFormDraftDays is RETENTION_FORMS_DRAFT_DAYS's default: a week to
 // see what a new form sends and approve it.
 const DefaultFormDraftDays = 7
+
+// DefaultFormAttributionDays is ATTRIBUTION_DAYS's default: a week back
+// from a submission to the visit that brought its submitter.
+const DefaultFormAttributionDays = 7
 
 type Config struct {
 	IngestAddr string
@@ -310,7 +317,8 @@ func FromEnv(lookup func(string) (string, bool)) (*Config, error) {
 		AttributeValuesTopN:    e.num("ATTRIBUTE_VALUES_TOP_N", DefaultAttributeValuesTopN),
 		AttributeBreakdownsMax: e.num("ATTRIBUTE_BREAKDOWNS_MAX", DefaultAttributeBreakdownsMax),
 		IdentitiesTopN:         e.num("IDENTITIES_TOP_N", DefaultIdentitiesTopN),
-		Forms:                  FormsConfig{DraftDays: e.num("RETENTION_FORMS_DRAFT_DAYS", DefaultFormDraftDays)},
+		Forms: FormsConfig{DraftDays: e.num("RETENTION_FORMS_DRAFT_DAYS", DefaultFormDraftDays),
+			AttributionDays: e.num("ATTRIBUTION_DAYS", DefaultFormAttributionDays)},
 		Reporting: ReportingConfig{
 			CacheAge:   e.dur("REPORTING_CACHE_MAX_AGE", 15*time.Minute),
 			RefreshAge: e.dur("REPORTING_REFRESH_MAX_AGE", time.Minute),
@@ -440,6 +448,10 @@ func (c *Config) validate() error {
 	}
 	if c.Forms.DraftDays < 1 {
 		return fmt.Errorf("config: RETENTION_FORMS_DRAFT_DAYS must be at least 1: %d", c.Forms.DraftDays)
+	}
+	if c.Forms.AttributionDays < 1 || c.Forms.AttributionDays > c.Retention.Days {
+		return fmt.Errorf("config: ATTRIBUTION_DAYS must be from 1 to RETENTION_DAYS (%d): %d",
+			c.Retention.Days, c.Forms.AttributionDays)
 	}
 	if c.Reporting.CacheAge < 0 {
 		return fmt.Errorf("config: REPORTING_CACHE_MAX_AGE must not be negative")
