@@ -834,3 +834,53 @@ No migration, nothing to run. What changes:
 
 Rollback: an older binary ignores the derived files and reads the new
 fields as extra columns; delete the derived files if you go back for good.
+
+### Upgrading to imported event files (no migration, one command)
+
+No schema migration. After upgrading, run one command once, with the
+ingest service stopped: it copies into `raw/` every raw row the database
+holds that the files do not.
+
+- The rows it copies are the events from before the upgrade that began
+  writing `raw/`, back to the oldest day the raw window
+  (`RETENTION_RAW_DAYS`) still holds, and any batch the log missed since.
+- It takes about 30 s per million rows. The next start's pass turns what
+  it copied into day files, about 0.2 s a day.
+
+```sh
+# systemd
+sudo systemctl stop twillingate
+sudo -u twillingate sh -ac '. /etc/twillingate/twillingate.env; twillingate events import'
+sudo systemctl start twillingate
+
+# compose
+docker compose stop twillingate
+docker compose run --rm twillingate events import
+docker compose start twillingate
+```
+
+On a split install, stop the ingest process; the console may keep
+running. While the ingest server runs, the command refuses: the server
+now holds `raw/.lock`. The command prints one line per project and
+`imported N of M rows` when done. If a day fails, it says which and exits
+1; run it again, and what is already copied is skipped. Once it has
+succeeded, the `meta` row `events_imported` records when, and the command
+only says so. `-force` copies again, for example after restoring an older
+`raw/`.
+
+- History older than the raw window exists in the database only as daily
+  aggregates (`agg_*`). They cannot become events, so they are not
+  imported. Nothing changes today: dashboards still read the database.
+  Once a later release moves the dashboards onto the files, they start at
+  the oldest raw day the database holds now:
+  `sqlite3 twillingate.db "SELECT min(day) FROM events"`.
+- An imported row has an install id only where the install was the actor
+  (an `$install_id` outranked by a `$user_id` was never stored). It has the
+  latest name the database holds for its user and group, not the name sent
+  with it.
+- Check it per project: `query` with `source: "files"`,
+  `SELECT day, count(*) FROM events WHERE project_id = 1 GROUP BY ALL ORDER BY day`,
+  against `sqlite3 twillingate.db "SELECT day, count(*) FROM events WHERE project_id = 1 GROUP BY day"`.
+
+Rollback: an older binary reads the imported days like any other day
+file, and ignores `raw/.lock`; nothing to undo.

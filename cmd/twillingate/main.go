@@ -1,6 +1,7 @@
 // Command analytics is the single binary for the ultra-lite analytics
 // system: `serve` (ingestion server), `reporting dev` (a local preview
-// server for dashboard files), `migrate`, `keygen`, and `version`.
+// server for dashboard files), `migrate`, `events import`, `keygen`, and
+// `version`.
 package main
 
 import (
@@ -14,7 +15,7 @@ import (
 
 var version = internalversion.Version
 
-const usage = "usage: twillingate <serve|reporting|migrate|keygen|project|key|form|version> [flags]"
+const usage = "usage: twillingate <serve|reporting|migrate|events|keygen|project|key|form|version> [flags]"
 
 var commands = map[string]func(args []string, stdout io.Writer) int{}
 

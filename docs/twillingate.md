@@ -39,6 +39,7 @@ discarded.
 | `twillingate serve` | Both, on one listener unless `CONSOLE_ADDR` says otherwise |
 | `twillingate project`, `key`, `form`, `config` | Registry management |
 | `twillingate migrate` | Applies schema migrations and exits |
+| `twillingate events import` | Once, with the ingest service stopped: copies the raw rows the database holds into the event files (`deploy/UPGRADES.md`) |
 
 Which of those run, and how, is the operator's choice — see [Configure the
 collector](deployment.md#configure-the-collector).
@@ -1061,6 +1062,9 @@ and `$group_name` it was sent with (each name only beside its id:
 `$user_name` beside `$user_id`, `$group_name` beside `$group_id`), for as long as `RETENTION_DAYS` keeps the
 event (`query` with `source: "files"`): the names are personal data there
 too.
+Events imported from the database (`twillingate events import`), which
+kept no names per event, carry the latest name it held, and an
+`$install_id` only where the install was the actor.
 **The collector stores what it is sent.** What reaches it is decided by the tag's
 `data-identity` (or `identity` in code), so a project's privacy posture is the
 posture of its clients. The collector logs `project receives ids` the first
@@ -1625,8 +1629,10 @@ days the `WHERE` on `project_id` and `day` covers. Narrow ranges and the
 
 `query` with `source: "files"` runs one read-only `SELECT` through DuckDB
 over the raw events twillingate keeps as files beside its database: every
-project's, received since the upgrade that began writing them, today's
-included (each `BUFFER_FLUSH_INTERVAL`). Same row cap and timeout as above;
+project's, from the oldest raw day the database held when
+`twillingate events import` copied it into them (older history exists only
+as the `agg_*` tables; before that import, since the upgrade that began
+writing them), today's included (each `BUFFER_FLUSH_INTERVAL`). Same row cap and timeout as above;
 a query cannot write and cannot reach any other file. The dialect is
 DuckDB's ([duckdb.org/docs/sql](https://duckdb.org/docs/stable/sql/introduction)),
 close to Postgres: `date_trunc('month', ts)`, `count(DISTINCT user_id)`,
@@ -1645,8 +1651,8 @@ the reader's own and hold rows before the rules apply: query these seven.
 | `ts`, `received_at` | TIMESTAMP (UTC) | |
 | `day` | DATE | `ts`'s UTC day |
 | `kind`, `actor_id`, `actor_kind`, `user_id`, `group_id`, `session_id` | VARCHAR | |
-| `install_id` | VARCHAR | the client's `$install_id`, also when a `$user_id` is the actor |
-| `user_name`, `group_name` | VARCHAR | the names sent beside `user_id` and `group_id` (see [Identity](#identity)) |
+| `install_id` | VARCHAR | the client's `$install_id`, also when a `$user_id` is the actor; on events imported from the database, only when the install was the actor |
+| `user_name`, `group_name` | VARCHAR | the names sent beside `user_id` and `group_id` (see [Identity](#identity)); on events imported from the database, the latest name it held |
 | `host`, `path`, `referrer_source`, `utm_source`, `utm_medium`, `utm_campaign` | VARCHAR | |
 | `platform`, `os`, `os_version`, `os_name`, `browser`, `browser_version`, `browser_locale`, `app_version`, `app_locale`, `device`, `device_model`, `country` | VARCHAR | as on the views (see [The event model](#the-event-model)) |
 | `display_width`, `display_height` | BIGINT | |
