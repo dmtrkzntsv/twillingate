@@ -85,6 +85,7 @@ func open(threads int, memory, spill, tempMax string, allow []string, parallel i
 		setup = append(setup, "SET GLOBAL max_temp_directory_size = "+sqlString(tempMax))
 	}
 	setup = append(setup,
+		"SET GLOBAL parquet_metadata_cache = true",
 		"SET GLOBAL allowed_directories = ["+strings.Join(dirs, ", ")+"]",
 		"SET GLOBAL autoinstall_known_extensions = false",
 		"SET GLOBAL autoload_known_extensions = false",
