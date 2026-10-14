@@ -11,6 +11,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -18,10 +19,11 @@ import (
 	"io"
 	"maps"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 
-	_ "github.com/duckdb/duckdb-go/v2" // registers the "duckdb" driver
+	duckdb "github.com/duckdb/duckdb-go/v2" // registers the "duckdb" driver
 )
 
 // DefaultMemoryLimit is ENGINE_MEMORY_LIMIT's default (D8): at 256 MB a
@@ -208,7 +210,19 @@ func run(ctx context.Context, db *sql.DB, r request) reply {
 		rep.Err = err.Error()
 		return rep
 	}
-	rows, err := db.QueryContext(ctx, r.SQL, namedArgs(r.Args)...)
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		rep.Err = err.Error()
+		return rep
+	}
+	defer conn.Close()
+	if len(r.Args) > 0 {
+		if err := checkParams(ctx, conn, r.SQL, r.Args); err != nil {
+			rep.Err = err.Error()
+			return rep
+		}
+	}
+	rows, err := conn.QueryContext(ctx, r.SQL, namedArgs(r.Args)...)
 	if err != nil {
 		rep.Err = err.Error()
 		return rep
@@ -243,6 +257,57 @@ func run(ctx context.Context, db *sql.DB, r request) reply {
 		return reply{ID: r.ID, Err: err.Error()}
 	}
 	return rep
+}
+
+// checkParams refuses a query whose parameters are not exactly the args.
+// duckdb-go binds an argument whose name matches no parameter by its
+// position instead, so a typo ($tw_form for $tw_from) would silently take
+// another argument's value. The names come from preparing the statement
+// (duckdb-go's Stmt.ParamName, reached through conn.Raw), which is how
+// DuckDB itself parsed them; a positional ? or $1 is named "1" there.
+// A query without args is not checked: the driver refuses a missing one.
+func checkParams(ctx context.Context, conn *sql.Conn, q string, args map[string]string) error {
+	var names []string
+	err := conn.Raw(func(dc any) error {
+		p, ok := dc.(driver.ConnPrepareContext)
+		if !ok {
+			return errors.New("the driver cannot prepare")
+		}
+		st, err := p.PrepareContext(ctx, q)
+		if err != nil {
+			return err
+		}
+		defer st.Close()
+		s, ok := st.(*duckdb.Stmt)
+		if !ok {
+			return errors.New("the driver returned another statement type")
+		}
+		for i := 1; i <= s.NumInput(); i++ {
+			name, err := s.ParamName(i)
+			if err != nil {
+				return err
+			}
+			names = append(names, name)
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("engine: %w", err)
+	}
+	for _, n := range names {
+		if _, err := strconv.Atoi(n); err == nil {
+			return errors.New("engine: a query binds named parameters only ($name), not ? or $1")
+		}
+		if _, ok := args[n]; !ok {
+			return fmt.Errorf("engine: the query uses $%s, which no argument binds", n)
+		}
+	}
+	for _, k := range slices.Sorted(maps.Keys(args)) {
+		if !slices.Contains(names, k) {
+			return fmt.Errorf("engine: the argument %s is not a parameter of the query", k)
+		}
+	}
+	return nil
 }
 
 // namedArgs is args as sql.Named values, in name order.

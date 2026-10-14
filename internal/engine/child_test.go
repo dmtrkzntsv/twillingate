@@ -156,8 +156,13 @@ func TestCellMacros(t *testing.T) {
 		t.Fatalf("reply = %+v", rep)
 	}
 	want := []any{"", "1.5", json.Number("12"), nil, nil, nil, "[1, 2]"}
-	if fmt.Sprint(rep.Rows[0]) != fmt.Sprint(want) {
+	if len(rep.Rows[0]) != len(want) {
 		t.Fatalf("row = %#v, want %#v", rep.Rows[0], want)
+	}
+	for i, w := range want {
+		if rep.Rows[0][i] != w {
+			t.Errorf("column %d = %#v, want %#v", i, rep.Rows[0][i], w)
+		}
 	}
 }
 

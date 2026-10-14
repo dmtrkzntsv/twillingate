@@ -109,12 +109,35 @@ func TestQueryBindsNamedArguments(t *testing.T) {
 	}
 }
 
-func TestQueryMissingArgumentIsAQueryError(t *testing.T) {
+// TestQueryArgumentsMustMatchTheParameters: duckdb-go binds an argument
+// whose name matches no parameter by position, so the child checks the
+// names itself; each of these is the caller's bug and a *QueryError.
+func TestQueryArgumentsMustMatchTheParameters(t *testing.T) {
 	e := newEngine(t, testOptions(t))
-	_, err := e.Query(context.Background(), "SELECT CAST($a AS BIGINT)", 0)
-	var qe *QueryError
-	if !errors.As(err, &qe) {
-		t.Fatalf("err = %v, want a *QueryError", err)
+	for name, c := range map[string]struct {
+		sql  string
+		args []Arg
+	}{
+		"missing":     {"SELECT CAST($a AS BIGINT)", nil},
+		"missing one": {"SELECT CAST($a AS BIGINT), CAST($b AS BIGINT)", []Arg{{"a", "1"}}},
+		"misnamed":    {"SELECT CAST($a AS BIGINT) AS n", []Arg{{"b", "7"}}},
+		"extra":       {"SELECT CAST($a AS BIGINT) AS n", []Arg{{"a", "7"}, {"b", "8"}}},
+		"unused":      {"SELECT 1", []Arg{{"a", "7"}}},
+		"positional":  {"SELECT CAST(? AS BIGINT)", []Arg{{"a", "7"}}},
+		"dollar one":  {"SELECT CAST($1 AS BIGINT)", []Arg{{"1", "7"}}},
+		"twice":       {"SELECT CAST($a AS BIGINT)", []Arg{{"a", "7"}, {"a", "8"}}},
+	} {
+		res, err := e.Query(context.Background(), c.sql, 0, c.args...)
+		var qe *QueryError
+		if !errors.As(err, &qe) {
+			t.Errorf("%s: Query = %+v, %v; want a *QueryError", name, res, err)
+		}
+	}
+	// The same names, in any order and used more than once, bind.
+	res, err := e.Query(context.Background(),
+		"SELECT CAST($b AS BIGINT) - CAST($a AS BIGINT) + CAST($a AS BIGINT)", 0, Arg{"a", "1"}, Arg{"b", "9"})
+	if err != nil || fmt.Sprint(res.Rows) != "[[9]]" {
+		t.Fatalf("Query = %+v, %v; want [[9]]", res, err)
 	}
 }
 

@@ -146,13 +146,17 @@ func New(o Options) (*Engine, error) {
 type Arg struct{ Name, Value string }
 
 // Query runs sql and returns at most maxRows rows (all when maxRows ≤ 0).
-// The args are bound to the $names in sql; a name the SQL uses and no arg
-// binds is a *QueryError.
+// The args are bound to the $names in sql, and the two must match exactly:
+// a $name no arg binds, an arg the SQL does not use, a repeated arg name and
+// a positional ? or $1 beside args are each a *QueryError.
 func (e *Engine) Query(ctx context.Context, sql string, maxRows int, args ...Arg) (Result, error) {
 	var named map[string]string
 	if len(args) > 0 {
 		named = make(map[string]string, len(args))
 		for _, a := range args {
+			if _, dup := named[a.Name]; dup {
+				return Result{}, &QueryError{Msg: "engine: the argument " + a.Name + " is given twice"}
+			}
 			named[a.Name] = a.Value
 		}
 	}
