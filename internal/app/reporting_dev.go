@@ -17,7 +17,7 @@ import (
 // config of its own to read them from, and is a local preview tool
 // rather than something an operator tunes.
 const (
-	devQueryTimeout = 10 * time.Second
+	devQueryTimeout = 30 * time.Second
 	devQueryMaxRows = 1000
 )
 

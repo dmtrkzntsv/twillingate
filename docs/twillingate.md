@@ -1548,7 +1548,7 @@ given twice are all 400: a filter is never dropped silently.
 
 The `query` tool takes read-only SQL against the views below; it is
 row-capped (`CONSOLE_QUERY_ROWS_MAX`, default 1000) and time-limited
-(`CONSOLE_QUERY_TIMEOUT`, default `10s`). Read `schema://views` for the
+(`CONSOLE_QUERY_TIMEOUT`, default `30s`). Read `schema://views` for the
 authoritative column list; it is kept in step with the migrations and
 carries the caveats the DDL cannot express. Three matter most:
 

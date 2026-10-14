@@ -477,7 +477,7 @@ func TestMCPDefaults(t *testing.T) {
 	if cfg.Console.DBPath != "/tmp/x.db" {
 		t.Errorf("DBPath = %q", cfg.Console.DBPath)
 	}
-	if cfg.Console.QueryTimeout != 10*time.Second || cfg.Console.QueryMaxRows != 1000 {
+	if cfg.Console.QueryTimeout != 30*time.Second || cfg.Console.QueryMaxRows != 1000 {
 		t.Errorf("guards = %v %d", cfg.Console.QueryTimeout, cfg.Console.QueryMaxRows)
 	}
 }
@@ -630,7 +630,7 @@ func TestConsoleDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	if c.IngestAddr != "127.0.0.1:9" || c.Console.Addr != "127.0.0.1:9" || c.Console.DBPath != "/tmp/x.db" ||
-		c.Console.QueryTimeout != 10*time.Second || c.Console.QueryMaxRows != 1000 {
+		c.Console.QueryTimeout != 30*time.Second || c.Console.QueryMaxRows != 1000 {
 		t.Errorf("defaults = %+v / %+v", c.IngestAddr, c.Console)
 	}
 	if err := c.ValidateConsole(); err == nil || !strings.Contains(err.Error(), "CONSOLE_AUTH_DSN") {

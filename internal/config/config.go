@@ -113,7 +113,7 @@ type ConsoleConfig struct {
 	Token         string
 	RedirectHosts []string      // token:// redirect=, callback hosts beyond loopback, claude.ai and chatgpt.com
 	Password      string        // token:// password=; set, it turns on the login server
-	QueryTimeout  time.Duration // CONSOLE_QUERY_TIMEOUT, default 10s
+	QueryTimeout  time.Duration // CONSOLE_QUERY_TIMEOUT, default 30s
 	QueryMaxRows  int           // CONSOLE_QUERY_ROWS_MAX, default 1000
 
 	// Insecure is token:// insecure=1: the console origin (resource) may
@@ -324,7 +324,7 @@ func FromEnv(lookup func(string) (string, bool)) (*Config, error) {
 		URL:          strings.TrimSuffix(e.str("CONSOLE_URL", c.IngestURL), "/"),
 		Database:     e.str("CONSOLE_DATABASE_DSN", c.Database),
 		AuthDSN:      e.str("CONSOLE_AUTH_DSN", ""),
-		QueryTimeout: e.dur("CONSOLE_QUERY_TIMEOUT", 10*time.Second),
+		QueryTimeout: e.dur("CONSOLE_QUERY_TIMEOUT", 30*time.Second),
 		QueryMaxRows: e.num("CONSOLE_QUERY_ROWS_MAX", 1000),
 	}
 	c.Console.DBPath = strings.TrimPrefix(c.Console.Database, "sqlite://")
