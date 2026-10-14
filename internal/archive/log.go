@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/store"
@@ -27,6 +28,11 @@ const recentIDs = 10 * time.Minute
 
 const tsFormat = "2006-01-02T15:04:05Z"
 
+// ErrLocked: another Log, in this process or another, holds the directory.
+// One process at a time writes raw/: the ingest server, or the import
+// command while the server is stopped.
+var ErrLocked = errors.New("archive: the events directory is in use by another process")
+
 // Log appends events to raw/<project>/<day>.log, one descriptor per open
 // log, fsynced once per WriteEvents (the pipeline's flush).
 type Log struct {
@@ -35,6 +41,8 @@ type Log struct {
 	files map[logKey]*os.File
 	seen  map[string]time.Time
 	now   func() time.Time
+	// lock is <dir>/.lock, held with flock until Close.
+	lock *os.File
 	// Test hooks: when set, each replaces the file operation it names.
 	failWrite    func(f *os.File, b []byte) (int, error)
 	failTruncate func(f *os.File, size int64) error
@@ -46,22 +54,36 @@ type logKey struct {
 	day     string
 }
 
-// OpenLog opens the log under dir, cutting every open log back to its last
-// newline: a line torn by a crash never reaches an append or a dump.
+// OpenLog opens the log under dir, taking its lock (ErrLocked while another
+// Log holds it) and cutting every open log back to its last newline: a line
+// torn by a crash never reaches an append or a dump.
 func OpenLog(dir string) (*Log, error) {
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return nil, fmt.Errorf("archive: %w", err)
 	}
+	lock, err := os.OpenFile(filepath.Join(dir, ".lock"), os.O_CREATE|os.O_RDWR, 0o640)
+	if err != nil {
+		return nil, fmt.Errorf("archive: %w", err)
+	}
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		lock.Close()
+		if errors.Is(err, syscall.EWOULDBLOCK) {
+			return nil, fmt.Errorf("%w (%s)", ErrLocked, dir)
+		}
+		return nil, fmt.Errorf("archive: lock %s: %w", dir, err)
+	}
 	logs, err := filepath.Glob(filepath.Join(dir, "*", "*.log"))
 	if err != nil {
+		lock.Close()
 		return nil, fmt.Errorf("archive: %w", err)
 	}
 	for _, p := range logs {
 		if err := cutTornLine(p); err != nil {
+			lock.Close()
 			return nil, err
 		}
 	}
-	return &Log{dir: dir, files: map[logKey]*os.File{}, seen: map[string]time.Time{}, now: time.Now}, nil
+	return &Log{dir: dir, files: map[logKey]*os.File{}, seen: map[string]time.Time{}, now: time.Now, lock: lock}, nil
 }
 
 // cutTornLine truncates path after its last newline. It reads the file
@@ -251,6 +273,20 @@ func (l *Log) Rotate(project int64, day string) (string, error) {
 	} else if err != nil {
 		return "", fmt.Errorf("archive: %w", err)
 	}
+	dst, err := nextClosed(dir, day)
+	if err != nil {
+		return "", err
+	}
+	if err := os.Rename(src, dst); err != nil {
+		return "", fmt.Errorf("archive: %w", err)
+	}
+	return dst, nil
+}
+
+// nextClosed is dir's first free <day>.<n>.closed, n from 1. The caller
+// holds l.mu, so no other rotation or WriteClosed takes the name between
+// the look and the rename.
+func nextClosed(dir, day string) (string, error) {
 	for n := 1; ; n++ {
 		dst := filepath.Join(dir, day+"."+strconv.Itoa(n)+".closed")
 		_, err := os.Stat(dst)
@@ -260,14 +296,57 @@ func (l *Log) Rotate(project int64, day string) (string, error) {
 		if !errors.Is(err, os.ErrNotExist) {
 			return "", fmt.Errorf("archive: %w", err)
 		}
-		if err := os.Rename(src, dst); err != nil {
-			return "", fmt.Errorf("archive: %w", err)
-		}
 		return dst, nil
 	}
 }
 
-// Close closes every open log.
+// WriteClosed writes evs, every one the project's and of day, as a closed
+// log of that day, named as Rotate names one, for the next pass to claim
+// and dump: the way rows that never went through ingest get into the files
+// (raw-first D19, the migration). The lines are line's. They go to
+// <day>.import first, which no reader or pass looks at, are fsynced, and
+// the file is renamed under the log's lock: a reader or a pass sees the
+// whole closed log or none. The recent ids are not touched: these are not
+// ingest's. No events write nothing and return "".
+func (l *Log) WriteClosed(project int64, day string, evs []store.Event) (string, error) {
+	if len(evs) == 0 {
+		return "", nil
+	}
+	var buf bytes.Buffer
+	for _, e := range evs {
+		if e.ProjectID != project || Day(e.TS) != day {
+			return "", fmt.Errorf("archive: event %s is project %d's %s, not project %d's %s", e.ID, e.ProjectID, Day(e.TS), project, day)
+		}
+		b, err := line(e)
+		if err != nil {
+			return "", fmt.Errorf("archive: event %s: %w", e.ID, err)
+		}
+		buf.Write(b)
+	}
+	dir := filepath.Join(l.dir, strconv.FormatInt(project, 10))
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return "", fmt.Errorf("archive: %w", err)
+	}
+	tmp := filepath.Join(dir, day+".import")
+	if err := os.WriteFile(tmp, buf.Bytes(), 0o640); err != nil {
+		return "", fmt.Errorf("archive: %w", err)
+	}
+	if err := syncFile(tmp); err != nil {
+		return "", err
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	dst, err := nextClosed(dir, day)
+	if err != nil {
+		return "", err
+	}
+	if err := os.Rename(tmp, dst); err != nil {
+		return "", fmt.Errorf("archive: %w", err)
+	}
+	return dst, syncFile(dir)
+}
+
+// Close closes every open log and releases the directory's lock.
 func (l *Log) Close() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -275,6 +354,10 @@ func (l *Log) Close() error {
 	for k, f := range l.files {
 		errs = append(errs, f.Close())
 		delete(l.files, k)
+	}
+	if l.lock != nil {
+		errs = append(errs, l.lock.Close())
+		l.lock = nil
 	}
 	return errors.Join(errs...)
 }

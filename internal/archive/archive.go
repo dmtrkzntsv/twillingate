@@ -11,6 +11,7 @@
 //
 //	<YYYY-MM-DD>.log          the day's open log (Log)
 //	<YYYY-MM-DD>.<n>.closed   a log rotated for its dump
+//	<YYYY-MM-DD>.import       a closed log being written (Log.WriteClosed)
 //	<YYYY-MM-DD>.parquet      the day file
 //	<YYYY-MM-DD>.<n>.parquet  a segment of the day, from events that came late
 //	<YYYY-MM>.parquet         the month file
@@ -18,6 +19,8 @@
 //	                          the sessions of a day or month file
 //	identities.parquet        one row per user and group
 //	aliases.parquet           one row per user_id and install_id pair
+//
+// raw/.lock is held (flock) by the one Log open on the directory.
 package archive
 
 import "time"
