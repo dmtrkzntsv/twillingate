@@ -25,9 +25,10 @@ screen views from apps and CLIs) and custom product events through one endpoint,
 rolls them up nightly, and exposes the result as dashboards at `/app/`, a
 read-only SQL surface, and an API (MCP or HTTP). It is cookieless by default:
 the served SDK's `anonymous` default writes nothing to a visitor's device
-unless the tag declares consent, and then only its retry queue, never an
-identifier. The collector stores the identifiers it is sent; a visitor who
-sends none is a hash of the connection under a key that rotates at midnight.
+unless the tag declares consent, and then a visitor id (pseudonymous, never
+a user) and its retry queue. The collector stores the identifiers it is sent;
+a visitor who sends none is a hash of the connection under a key that rotates
+at midnight.
 IP addresses and User-Agent strings are never stored — the IP becomes a
 country at ingest, the User-Agent is checked for crawlers, and both are then
 discarded.
@@ -337,7 +338,7 @@ whichever hostname loaded it.
 | Attribute | `init()` option | Meaning |
 | --- | --- | --- |
 | `data-key` | `key` | The project's ingest key. Required to auto-init; without it the tag loads dormant for `init()` from code. Public by design. |
-| `data-identity` | `identity` | `anonymous` (default) or `identified`. Decides what the instance **sends**: anonymous never sends `$user_id`, `$user_name` or `$install_id`, and `identify()` is inert; identified sends them and, with [consent](#consent-and-storage), persists the visitor id, user and group. |
+| `data-identity` | `identity` | `anonymous` (default) or `identified`. Decides what the instance **sends**: anonymous never sends `$user_id` or `$user_name`, and `identify()` is inert; with [consent](#consent-and-storage) it keeps a visitor id and sends it as `$install_id` (pseudonymous). identified sends the user and a declared install id and, with consent, persists the visitor id, user and group. |
 | `data-auto="off"` | `autoPageviews` | Disable automatic pageviews; drive them with `twillingate.page()`. Both default on. |
 | `data-mask-url` | `maskUrl` | Rewrite the URL before it is sent. See [Masking](#masking-urls). |
 | `data-routing` | `routing` | `history` (default) or `hash`. See [Routing](#routing). |
@@ -419,7 +420,7 @@ twillingate.measure("checkout_api", 340, "time", { endpoint: "/api/checkout" });
 | `attrs(obj)` | Default attributes under every event. Successive calls merge; `attrs(null)` clears. |
 | `identify(user, name?)` | Sets `$user_id` and the optional `$user_name`. Inert on an anonymous instance, with one warning; persisted on an identified instance with consent. Events already sent stay unattributed. |
 | `group(id, name?)` | Sets `$group_id` and the optional `$group_name` in every mode; persisted with consent on an identified instance. |
-| `installId(id?)` | The stable per-install id an app supplies as `$install_id`. With no argument returns what would be sent: the declared id, else the persisted visitor id, else `null`. Inert on an anonymous instance. |
+| `installId(id?)` | The stable per-install id an app supplies as `$install_id`. With no argument returns what would be sent: the declared id (identified only), else the visitor id kept with consent, else `null`. Setting one is inert on an anonymous instance. |
 | `reset()` | **Required on logout.** Clears user, group, names, the visitor id and the retry queue. |
 | `flush()` | Force-send the queue. |
 | `consent(granted?)` | `true` / `false` pins storage consent over whatever was declared, `null` hands control back, no argument reads it. See [Consent and storage](#consent-and-storage). |
@@ -491,10 +492,12 @@ Default `false`: records live in memory, nothing is read or written except the
 `twillingate_ignore` and `twillingate_debug` flags, anything an earlier session
 stored under this instance's keys is deleted, and a failed batch is retried from
 memory (on `online`, once more via `sendBeacon` when the page hides or unloads)
-and lost if the tab closes first. With consent an `identified` instance persists
-the visitor id, user and group in `twillingate_visitor` (or
-`<instance>_visitor`), and any instance persists the retry queue; an `anonymous`
-instance sends no identifier, so consent only unlocks its queue.
+and lost if the tab closes first. With consent any instance persists a visitor id in `twillingate_visitor` (or
+`<instance>_visitor`) and sends it as `$install_id`, so a returning visitor's
+visits connect (and a form submission finds its source across days); an
+`identified` instance also persists the user and group, and any instance the
+retry queue. An `anonymous` instance with consent is pseudonymous: it never
+sends a user, and its visitor id names no one.
 
 | `data-consent` / `consent` | Meaning |
 | --- | --- |
@@ -1042,7 +1045,7 @@ declare no kind and are never filtered.
 
 | The tag says | `$user_id`, `$install_id`, `$user_name` | `$group_id`, `$group_name` |
 | --- | --- | --- |
-| `anonymous` (default) | never sent | sent, stored raw |
+| `anonymous` (default) | `$user_id`, `$user_name` never sent; `$install_id` sent only with [consent](#consent-and-storage): a visitor id the SDK keeps on the device, pseudonymous | sent, stored raw |
 | `identified` | sent, stored as given | sent, stored raw |
 | a client posting by hand | stored as given, whatever it sends | stored raw |
 
@@ -1065,7 +1068,7 @@ too.
 `data-identity` (or `identity` in code), so a project's privacy posture is the
 posture of its clients. The collector logs `project receives ids` the first
 time a project stores a `$user_id` or `$install_id` (once per kind per process),
-which is how to confirm a marketing site's tag sends nothing.
+which is how to confirm a marketing site's tag sends nothing. An anonymous tag with consent sends its visitor id, so that line appears for it too.
 
 ---
 
@@ -1172,7 +1175,7 @@ sending measures must upgrade the server first.
 
 | Group | Keys | Sent automatically by the JS SDK |
 | --- | --- | --- |
-| Identity | `$install_id` `$user_id` `$user_name` `$group_id` `$group_name` `$session_id` `$consent` | `$install_id` (identified instance with consent), `$consent` |
+| Identity | `$install_id` `$user_id` `$user_name` `$group_id` `$group_name` `$session_id` `$consent` | `$install_id` (instance with consent), `$consent` |
 | Environment | `$kind` `$platform` `$os` `$os_version` `$os_name` `$browser` `$browser_version` `$device` `$device_model` `$app_version` `$app_locale` `$browser_locale` `$display_width` `$display_height` | `$kind`, `$platform` (`web` for the web kind), `$os` `$os_version` `$os_name` `$browser` `$browser_version` `$browser_locale` `$device` `$display_width` `$display_height` |
 | Location | `$host` `$path` `$screen` `$utm_source` `$utm_medium` `$utm_campaign` `$referrer` | `$host` `$path` (web kind) or `$screen` (app kind) on views and, from the last view, on product events; `$referrer` `$utm_source` `$utm_medium` `$utm_campaign` on web views only |
 | Sampling | `$sample_rate` | on every Web Vital: the `vitals` rate, `1` included |

@@ -852,6 +852,14 @@ changes:
 - Forms accept `$referrer`, `$utm_source`, `$utm_medium` and
   `$utm_campaign`; any of them makes the submission's own the source.
 - Submissions from before the upgrade keep their attribution and events.
+- **Anonymous tags with consent now send a visitor id.** An instance
+  with `identity` anonymous (the default) and consent given persists a
+  visitor id and sends it as `$install_id`: pseudonymous, never a user.
+  Such a site's returning visitors become one actor across days, so its
+  unique visitors over more than a day drop from the upgrade on, and the
+  collector logs `project receives ids` for it. A site whose privacy
+  notice promises no identifier under consent should update it or keep
+  consent off.
 
 Rollback: an older binary ignores the new columns and attributes on
 arrival again. Submissions still pending at the rollback keep `{}` and
