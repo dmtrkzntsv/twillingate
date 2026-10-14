@@ -492,12 +492,13 @@ Default `false`: records live in memory, nothing is read or written except the
 `twillingate_ignore` and `twillingate_debug` flags, anything an earlier session
 stored under this instance's keys is deleted, and a failed batch is retried from
 memory (on `online`, once more via `sendBeacon` when the page hides or unloads)
-and lost if the tab closes first. With consent any instance persists a visitor id in `twillingate_visitor` (or
-`<instance>_visitor`) and sends it as `$install_id`, so a returning visitor's
-visits connect (and a form submission finds its source across days); an
-`identified` instance also persists the user and group, and any instance the
-retry queue. An `anonymous` instance with consent is pseudonymous: it never
-sends a user, and its visitor id names no one.
+and lost if the tab closes first. With consent any instance persists a visitor
+id in `twillingate_visitor` (or `<instance>_visitor`) and sends it as
+`$install_id`, so a returning visitor's visits connect (and a form submission
+finds its source across days); an `identified` instance also persists the user
+and group, and any instance the retry queue. An `anonymous` instance with
+consent is pseudonymous: it never sends a user, and its visitor id names no
+one.
 
 | `data-consent` / `consent` | Meaning |
 | --- | --- |
@@ -1068,7 +1069,8 @@ too.
 `data-identity` (or `identity` in code), so a project's privacy posture is the
 posture of its clients. The collector logs `project receives ids` the first
 time a project stores a `$user_id` or `$install_id` (once per kind per process),
-which is how to confirm a marketing site's tag sends nothing. An anonymous tag with consent sends its visitor id, so that line appears for it too.
+which is how to confirm a marketing site's tag sends nothing. An anonymous tag
+with consent sends its visitor id, so that line appears for it too.
 
 ---
 
