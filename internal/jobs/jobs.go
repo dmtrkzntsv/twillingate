@@ -94,8 +94,10 @@ type Runner struct {
 	// process that does not ingest (attribution.go).
 	attributor Attributor
 	eventLog   EventLog
-	// attributionTimeout bounds one lookup; a field so a test can shorten it.
-	attributionTimeout time.Duration
+	// attributionTimeout bounds one lookup and attributionTickBudget one
+	// minute's batches; fields so a test can shorten them.
+	attributionTimeout    time.Duration
+	attributionTickBudget time.Duration
 	// jitter and sleep delay a scheduled pass; fields so a test need not wait.
 	jitter func() time.Duration
 	sleep  func(context.Context, time.Duration)
@@ -114,9 +116,10 @@ type Runner struct {
 
 func New(st Store, cfg *config.Config, reg *manage.Registry, salt Rotator, logger *slog.Logger, now func() time.Time) *Runner {
 	return &Runner{store: st, cfg: cfg, reg: reg, salt: salt, logger: logger, now: now,
-		topN:               cfg.AttributeValuesTopN,
-		attributionTimeout: attributionTimeout,
-		jitter:             func() time.Duration { return rand.N(archiveJitter) },
+		topN:                  cfg.AttributeValuesTopN,
+		attributionTimeout:    attributionTimeout,
+		attributionTickBudget: attributionTickBudget,
+		jitter:                func() time.Duration { return rand.N(archiveJitter) },
 		sleep: func(ctx context.Context, d time.Duration) {
 			select {
 			case <-time.After(d):

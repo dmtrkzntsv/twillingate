@@ -38,9 +38,15 @@ const attributionGiveUp = time.Hour
 // a failed lookup: retried next minute, given up after attributionGiveUp.
 const attributionTimeout = 30 * time.Second
 
-// attributionBatch bounds the submissions one lookup asks about; the
-// rest wait for the next minute.
+// attributionBatch bounds the submissions one lookup asks about.
 const attributionBatch = 100
+
+// attributionTickBudget bounds one minute's attribution: batch after batch
+// while full ones keep coming, so a flood of submissions drains in a few
+// minutes without holding the tick (which also runs the salt rotation
+// and the daily pass). The batch it runs out in is finished; the rest
+// wait for the next minute.
+const attributionTickBudget = 30 * time.Second
 
 // WithAttribution makes the runner attribute form submissions each
 // minute, looking them up through a and writing their events to log too.
@@ -51,21 +57,44 @@ func (r *Runner) WithAttribution(a Attributor, log EventLog) *Runner {
 }
 
 // attributeSubmissions attributes the submissions at least
-// attributionDelay old: one lookup for all of them, one transaction each,
-// then the written events to the log. A failed lookup is retried the next
-// minute; a submission past attributionGiveUp is attributed without it.
+// attributionDelay old, a batch at a time (attributeBatch) while full
+// batches keep coming and attributionTickBudget lasts. A failed lookup
+// ends the tick and is retried the next minute; the submissions past
+// attributionGiveUp are attributed without it, counted in one error line.
 func (r *Runner) attributeSubmissions(ctx context.Context) {
 	if r.attributor == nil {
 		return
 	}
 	now := r.now().UTC()
+	started := time.Now()
+	givenUp := 0
+	for {
+		n, more := r.attributeBatch(ctx, now, &givenUp)
+		if !more || n < attributionBatch || time.Since(started) >= r.attributionTickBudget || ctx.Err() != nil {
+			break
+		}
+	}
+	if givenUp > 0 {
+		r.logger.Error(fmt.Sprintf("form attribution: %d submissions given up after an hour without a lookup; attributed with what their clients sent", givenUp),
+			"submissions", givenUp)
+	}
+}
+
+// attributeBatch attributes up to attributionBatch pending submissions:
+// one lookup for all of them, one transaction each, then the written
+// events to the log. n is how many were pending; more is false when the
+// next batch would not move on: the read or the lookup failed, or a
+// submission stayed pending (its write failed), so the next read would
+// return it again. givenUp counts the submissions attributed without a
+// lookup.
+func (r *Runner) attributeBatch(ctx context.Context, now time.Time, givenUp *int) (n int, more bool) {
 	pending, err := r.store.PendingSubmissions(ctx, now.Add(-attributionDelay), attributionBatch)
 	if err != nil {
 		r.logger.Error("form attribution: pending submissions", "error", err)
-		return
+		return 0, false
 	}
 	if len(pending) == 0 {
-		return
+		return 0, false
 	}
 	ls := make([]archive.Lookup, len(pending))
 	for i, p := range pending {
@@ -76,6 +105,7 @@ func (r *Runner) attributeSubmissions(ctx context.Context) {
 	lookupCtx, cancel := context.WithTimeout(ctx, r.attributionTimeout)
 	found, err := r.attributor.Attribute(lookupCtx, ls, r.cfg.Forms.AttributionDays, archive.Rules{Events: events, Attributes: attrs})
 	cancel()
+	more = err == nil
 	if err != nil {
 		r.logger.Warn("form attribution: lookup failed, retrying next minute", "submissions", len(pending), "error", err)
 	}
@@ -85,34 +115,32 @@ func (r *Runner) attributeSubmissions(ctx context.Context) {
 		byKey[key(f.ProjectID, f.ID)] = f
 	}
 	var written []store.Event
-	givenUp := 0
 	for _, p := range pending {
 		f, ok := byKey[key(p.ProjectID, p.ID)]
 		if !ok && now.Sub(p.ReceivedAt) < attributionGiveUp {
+			more = false
 			continue
-		}
-		if !ok {
-			givenUp++
 		}
 		ev := attributed(p.Event, f)
 		wrote, err := r.store.AttributeSubmission(ctx, p, ev)
 		if err != nil {
 			r.logger.Error("form attribution: write", "project", p.ProjectID, "submission", p.ID, "error", err)
+			more = false
 			continue
+		}
+		if !ok {
+			*givenUp++
 		}
 		if wrote {
 			written = append(written, ev)
 		}
-	}
-	if givenUp > 0 {
-		r.logger.Error(fmt.Sprintf("form attribution: %d submissions given up after an hour without a lookup; attributed with what their clients sent", givenUp),
-			"submissions", givenUp)
 	}
 	if len(written) > 0 && r.eventLog != nil {
 		if err := r.eventLog.WriteEvents(ctx, written); err != nil {
 			r.logger.Error("form attribution: events not logged", "events", len(written), "error", err)
 		}
 	}
+	return len(pending), more
 }
 
 // attributed is a submission's event with what the files found: the

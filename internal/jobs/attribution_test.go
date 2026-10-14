@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -47,7 +49,7 @@ func (s *pendingStore) PendingSubmissions(_ context.Context, before time.Time, l
 	s.before = before
 	var out []store.PendingSubmission
 	for _, p := range s.pending {
-		if _, done := s.attributed[p.ID]; !done && !p.ReceivedAt.After(before) {
+		if _, done := s.attributed[p.ID]; !done && !p.ReceivedAt.After(before) && len(out) < limit {
 			out = append(out, p)
 		}
 	}
@@ -174,5 +176,65 @@ func TestAttributeSubmissionsBoundsTheLookup(t *testing.T) {
 	}
 	if _, ok := st.attributed["young"]; ok {
 		t.Error("a young submission was attributed despite the timed-out lookup")
+	}
+}
+
+// echoAttributor finds a source for every lookup it is asked about.
+type echoAttributor struct{ asked []int }
+
+func (e *echoAttributor) Attribute(_ context.Context, ls []archive.Lookup, _ int, _ archive.Rules) ([]archive.Found, error) {
+	e.asked = append(e.asked, len(ls))
+	out := make([]archive.Found, len(ls))
+	for i, l := range ls {
+		out[i] = archive.Found{ProjectID: l.ProjectID, ID: l.ID, Source: store.Event{ReferrerSource: "google"}}
+	}
+	return out, nil
+}
+
+func manyPending(n int, at time.Time) []store.PendingSubmission {
+	out := make([]store.PendingSubmission, n)
+	for i := range out {
+		out[i] = pendingAt(fmt.Sprintf("s%03d", i), at, nil)
+	}
+	return out
+}
+
+// A backlog drains in one tick, a batch at a time, while full batches
+// keep coming and the tick's budget lasts.
+func TestAttributeSubmissionsDrainsABacklogInOneTick(t *testing.T) {
+	now := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
+	st := &pendingStore{pending: manyPending(250, now.Add(-2*time.Minute))}
+	a := &echoAttributor{}
+	log := &loggedEvents{}
+	attributionRunner(t, st, now).WithAttribution(a, log).attributeSubmissions(context.Background())
+	if len(st.attributed) != 250 || !slices.Equal(a.asked, []int{100, 100, 50}) {
+		t.Fatalf("attributed %d in lookups of %v, want 250 in 100, 100, 50", len(st.attributed), a.asked)
+	}
+	if len(log.evs) != 250 {
+		t.Errorf("%d events logged, want 250", len(log.evs))
+	}
+}
+
+// A spent budget ends the tick after the batch it is in; the rest wait.
+func TestAttributeSubmissionsStopsAtTheTickBudget(t *testing.T) {
+	now := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
+	st := &pendingStore{pending: manyPending(250, now.Add(-2*time.Minute))}
+	a := &echoAttributor{}
+	r := attributionRunner(t, st, now).WithAttribution(a, &loggedEvents{})
+	r.attributionTickBudget = time.Nanosecond
+	r.attributeSubmissions(context.Background())
+	if len(st.attributed) != attributionBatch || len(a.asked) != 1 {
+		t.Fatalf("attributed %d in %d lookups, want one batch", len(st.attributed), len(a.asked))
+	}
+}
+
+// A failed lookup ends the tick: the next batch would be the same one.
+func TestAttributeSubmissionsFailedLookupEndsTheTick(t *testing.T) {
+	now := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
+	st := &pendingStore{pending: manyPending(250, now.Add(-2*time.Minute))}
+	a := &fakeAttributor{err: errors.New("engine down")}
+	attributionRunner(t, st, now).WithAttribution(a, &loggedEvents{}).attributeSubmissions(context.Background())
+	if len(a.asked) != 1 || len(st.attributed) != 0 {
+		t.Fatalf("%d lookups, %d attributed; want one failed lookup", len(a.asked), len(st.attributed))
 	}
 }
