@@ -4,9 +4,8 @@
 // manifest; when that hash matches what was last recorded (ReportingHash),
 // it does nothing — the common case, every boot after the first on a
 // given release. Otherwise it parses the manifest, loads the system
-// directories, validates every widget against a read-only handle on the
-// database, and hands the result to store.SyncReporting in one
-// transaction.
+// directories, validates every widget's SQL on the event files, and
+// hands the result to store.SyncReporting in one transaction.
 //
 // Unlike create_dashboard (which defaults an omitted range to "7d"), a
 // system dashboard.json must give one explicitly: the release is
@@ -27,7 +26,6 @@ import (
 	"sort"
 	"time"
 
-	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/sortkey"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/version"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
@@ -37,19 +35,19 @@ import (
 var systemFS embed.FS
 
 // Migrate syncs this release's embedded system definition (systemFS,
-// Manifest()) into st, using db to validate every system widget's SQL.
-func Migrate(ctx context.Context, st Store, db *readsql.DB) error {
+// Manifest()) into st, validating every system widget's SQL on files.
+func Migrate(ctx context.Context, st Store, files Files) error {
 	system, err := fs.Sub(systemFS, "system")
 	if err != nil {
 		return fmt.Errorf("reporting: system fs: %w", err)
 	}
-	return migrateFrom(ctx, st, db, system, Manifest())
+	return migrateFrom(ctx, st, files, system, Manifest())
 }
 
 // migrateFrom is Migrate's logic against an arbitrary system directory
 // and manifest, so a test can exercise it without the embedded release
 // definition.
-func migrateFrom(ctx context.Context, st Store, db *readsql.DB, system fs.FS, manifest []byte) error {
+func migrateFrom(ctx context.Context, st Store, files Files, system fs.FS, manifest []byte) error {
 	hash, err := hashSystem(system, manifest)
 	if err != nil {
 		return err
@@ -71,11 +69,11 @@ func migrateFrom(ctx context.Context, st Store, db *readsql.DB, system fs.FS, ma
 		compsByName[c.Name] = c
 	}
 
-	files, err := LoadDashboards(system)
+	fds, err := LoadDashboards(system)
 	if err != nil {
 		return err
 	}
-	if err := checkGroups(files); err != nil {
+	if err := checkGroups(fds); err != nil {
 		return err
 	}
 
@@ -84,16 +82,16 @@ func migrateFrom(ctx context.Context, st Store, db *readsql.DB, system fs.FS, ma
 	// an agent's, and a young install may have no rows yet to sample.
 	// now is the real clock rather than nil: a widget whose SQL follows
 	// :from/:to still needs sample dates bound before the LIMIT 0 query,
-	// or SQLite errors "missing named argument".
-	svc := &Service{st: st, db: db, sources: newSources(db, false, time.Now), now: time.Now}
+	// or the engine refuses a parameter with no argument.
+	svc := &Service{st: st, files: files, sources: newSources(files, false, time.Now), now: time.Now}
 
-	dashboards := make([]store.SystemDashboard, 0, len(files))
-	if len(files) > 0 {
-		dashKeys, err := sortkey.Spread("", "", len(files))
+	dashboards := make([]store.SystemDashboard, 0, len(fds))
+	if len(fds) > 0 {
+		dashKeys, err := sortkey.Spread("", "", len(fds))
 		if err != nil {
 			return fmt.Errorf("reporting: %w", err)
 		}
-		for i, fd := range files {
+		for i, fd := range fds {
 			if fd.Range == "" {
 				return fmt.Errorf("reporting: system dashboard %d: dashboard.json needs range", fd.ID)
 			}

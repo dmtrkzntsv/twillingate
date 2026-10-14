@@ -22,16 +22,16 @@ func sqlPreview(component, content string) PreviewIn {
 }
 
 func TestPreviewBindsTheGivenValues(t *testing.T) {
-	svc, st := previewService(t, 1000)
-	seedViewsDaily(t, st, 1, "2026-09-01", "2026-09-02", "2026-09-10")
-	seedViewsDaily(t, st, 2, "2026-09-02")
-	in := sqlPreview("line", "SELECT day AS x, views AS y FROM agg_views_daily WHERE project_id=:project AND day BETWEEN :from AND :to ORDER BY day")
+	svc, _ := previewService(t, 1000)
+	seedViews(t, svc, 1, "2026-09-01", "2026-09-02", "2026-09-10")
+	seedViews(t, svc, 2, "2026-09-02")
+	in := sqlPreview("line", "SELECT day AS x, count(*) AS y FROM views WHERE project_id = :project AND day BETWEEN :from AND :to GROUP BY day ORDER BY day")
 	in.ProjectID, in.From, in.To = 1, "2026-09-01", "2026-09-02"
 	got, err := svc.Preview(context.Background(), in)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Problem != "" || len(got.Rows) != 2 || got.Rows[0][0] != "2026-09-01" || got.Columns[1] != "y" {
+	if got.Problem != "" || len(got.Rows) != 2 || got.Rows[0][0] != "2026-09-01" || got.Rows[1][1] != "2" || got.Columns[1] != "y" {
 		t.Errorf("preview = %+v", got)
 	}
 }
@@ -69,7 +69,7 @@ func TestPreviewReturnsRowsWithAProblem(t *testing.T) {
 
 func TestPreviewNoRowsIsNoProblem(t *testing.T) {
 	svc, _ := previewService(t, 1000)
-	got, err := svc.Preview(context.Background(), sqlPreview("line", "SELECT day AS x, views AS y FROM agg_views_daily WHERE 0"))
+	got, err := svc.Preview(context.Background(), sqlPreview("line", "SELECT day AS x, count(*) AS y FROM views WHERE false GROUP BY day"))
 	if err != nil || got.Problem != "" || len(got.Rows) != 0 || len(got.Columns) != 2 {
 		t.Errorf("preview = %+v, %v", got, err)
 	}
@@ -78,7 +78,7 @@ func TestPreviewNoRowsIsNoProblem(t *testing.T) {
 func TestPreviewTruncates(t *testing.T) {
 	svc, _ := previewService(t, 2)
 	got, err := svc.Preview(context.Background(), sqlPreview("table",
-		"WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<5) SELECT i FROM n"))
+		"SELECT i FROM range(1, 6) t(i)"))
 	if err != nil || !got.Truncated || len(got.Rows) != 2 {
 		t.Errorf("preview = %+v, %v", got, err)
 	}
@@ -99,7 +99,7 @@ func TestPreviewRefusals(t *testing.T) {
 		"no project":        {sqlPreview("table", "SELECT :project AS p"), "the sql uses :project; pass project_id"},
 		"no range":          {sqlPreview("table", "SELECT :from AS f"), "the sql uses :from or :to; pass from and to"},
 		"bad range":         {withRange(sqlPreview("table", "SELECT :from AS f"), "2026-09-10", "2026-09-01"), ""},
-		"sqlite error":      {sqlPreview("table", "SELECT nope FROM nowhere"), ""},
+		"duckdb error":      {sqlPreview("table", "SELECT nope FROM nowhere"), ""},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := svc.Preview(ctx, tc.in)

@@ -2,6 +2,7 @@ package reporting
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"io/fs"
 	"math"
@@ -12,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dmtrkzntsv/twillingate/internal/archive/archivetest"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
@@ -200,7 +202,8 @@ func newSystemFixture(t *testing.T) systemFixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	if err := Migrate(ctx, st, db); err != nil {
+	files := &testFiles{Files: archivetest.New(t), st: st, timeout: 60 * time.Second, maxRows: 1000}
+	if err := Migrate(ctx, st, files); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 	today := civil.Today(time.Now().UTC())
@@ -208,7 +211,7 @@ func newSystemFixture(t *testing.T) systemFixture {
 	seedSystemData(t, st, pid, today)
 	other := mustCreateProject(t, st, "neighbour")
 	seedNeighbour(t, st, other, today)
-	return systemFixture{svc: New(st, db, Options{}), st: st, db: db, project: pid, neighbour: other, today: today}
+	return systemFixture{svc: New(st, files, Options{}), st: st, db: db, project: pid, neighbour: other, today: today}
 }
 
 // column returns row i's value in res's column name, failing the test
@@ -310,7 +313,11 @@ func TestViewsDailyEquivalence(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		res, err := f.db.Query(ctx, q, bindArgs(params, p.ProjectID, p.From, p.To)...)
+		var args []any
+		for _, name := range params {
+			args = append(args, sql.Named(name[1:], map[string]any{":project": p.ProjectID, ":from": p.From, ":to": p.To}[name]))
+		}
+		res, err := f.db.Query(ctx, q, args...)
 		if err != nil {
 			t.Fatal(err)
 		}

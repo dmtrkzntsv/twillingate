@@ -83,8 +83,7 @@ func TestCheckSize(t *testing.T) {
 }
 
 func TestValidateWidget(t *testing.T) {
-	db := newTestReadDB(t)
-	svc := New(nil, db, Options{})
+	svc := New(nil, nil, Options{}) // each refusal comes before a query
 	comps := testComponents(t)
 
 	w := store.Widget{Component: "gauge", SourceType: "sql", Source: "select 1", Width: 3, Height: 3, Props: "{}"}

@@ -22,8 +22,9 @@ const (
 )
 
 // ReportingDev runs `twillingate reporting dev`: a read-only handle on
-// dbPath (the same sql widgets in the real console run against) and
-// reporting.DevHandler, serving addr until ctx is cancelled. There is no
+// dbPath, for the project switcher, and reporting.DevHandler, serving
+// addr until ctx is cancelled. Its sql widgets get no event files yet,
+// so they fail until the engine is wired in. There is no
 // store, no registry and no auth here — cmd/twillingate/reporting.go has
 // already refused a non-loopback addr before this is called.
 func ReportingDev(ctx context.Context, dirs []string, dbPath, addr string, logger *slog.Logger) error {
@@ -35,7 +36,7 @@ func ReportingDev(ctx context.Context, dirs []string, dbPath, addr string, logge
 	}
 	defer db.Close()
 
-	srv := &http.Server{Addr: addr, Handler: reporting.DevHandler(dirs, db), ReadHeaderTimeout: 5 * time.Second}
+	srv := &http.Server{Addr: addr, Handler: reporting.DevHandler(dirs, nil, db), ReadHeaderTimeout: 5 * time.Second}
 	errCh := make(chan error, 1)
 	go func() { errCh <- srv.ListenAndServe() }()
 	logger.Info("reporting dev serving", "addr", addr, "dirs", dirs)

@@ -12,6 +12,7 @@ import (
 
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
 	"github.com/dmtrkzntsv/twillingate/internal/engine"
+	"github.com/dmtrkzntsv/twillingate/internal/shared/enginesql"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
 )
 
@@ -108,18 +109,17 @@ func filesError(err error, timeout time.Duration) error {
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
 		return invalidf("query exceeded %s (CONSOLE_QUERY_TIMEOUT); narrow it with a WHERE on project_id and day, or aggregate", timeout)
-	case errors.Is(err, archive.ErrLoadingLogs) && errors.As(err, &qe) && strings.HasPrefix(qe.Msg, "Out of Memory Error"):
-		return invalidf("the open logs do not fit the engine's memory (ENGINE_MEMORY_LIMIT) while they are loaded for a query, whatever the query is: raise ENGINE_MEMORY_LIMIT")
-	case errors.As(err, &qe) && strings.HasPrefix(qe.Msg, "Out of Memory Error"):
-		return invalidf("the query ran out of the engine's memory (ENGINE_MEMORY_LIMIT). A COUNT(DISTINCT …) over a large group is the usual cause: " +
-			"select the distinct values with a GROUP BY in a subquery, then count its rows; or narrow the range")
+	case errors.Is(err, archive.ErrLoadingLogs) && errors.As(err, &qe) && enginesql.IsOutOfMemory(qe.Msg):
+		return invalidf("%s", enginesql.LogsOutOfMemory)
+	case errors.As(err, &qe) && enginesql.IsOutOfMemory(qe.Msg):
+		return invalidf("%s", enginesql.OutOfMemory)
 	case errors.As(err, &qe) && sqliteTable.MatchString(qe.Msg):
 		return invalidf(`%s; the v_*, raw_* and agg_* tables are SQLite's: pass source "sqlite" for them. The files hold events, views, product and measures`,
 			strings.SplitN(qe.Msg, "\n", 2)[0])
 	case errors.As(err, &qe):
 		return invalidf("SQL error (DuckDB): %s", qe.Msg)
 	case errors.Is(err, engine.ErrChildExited):
-		return invalidf("the query engine stopped while running the query, most likely out of memory (ENGINE_MEMORY_LIMIT); narrow the query")
+		return invalidf("%s", enginesql.ChildExited)
 	}
 	return err
 }

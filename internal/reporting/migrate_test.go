@@ -89,11 +89,12 @@ func systemDashboardsOf(ds []store.Dashboard) []store.Dashboard {
 }
 
 func TestMigrateFromFirstRunInsertsDashboards(t *testing.T) {
-	st, db := newTestStoreAndReadDB(t)
+	st, files := newTestStoreAndFiles(t, 1000)
+	db := storeDB(t, st)
 	ctx := context.Background()
 	system, _ := systemFSCopy(t)
 
-	if err := migrateFrom(ctx, st, db, system, testManifest(t)); err != nil {
+	if err := migrateFrom(ctx, st, files, system, testManifest(t)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -137,9 +138,9 @@ func TestMigrateFromFirstRunInsertsDashboards(t *testing.T) {
 // The release's own system directory lands every built-in in the sidebar
 // and on new projects' tabs (spec 2026-10-05 D6).
 func TestMigrateReleaseBuiltinsInSidebarAndProjectTabs(t *testing.T) {
-	st, db := newTestStoreAndReadDB(t)
+	st, files := newTestStoreAndFiles(t, 1000)
 	ctx := context.Background()
-	if err := Migrate(ctx, st, db); err != nil {
+	if err := Migrate(ctx, st, files); err != nil {
 		t.Fatal(err)
 	}
 	ds, err := st.ListDashboards(ctx)
@@ -158,17 +159,18 @@ func TestMigrateReleaseBuiltinsInSidebarAndProjectTabs(t *testing.T) {
 }
 
 func TestMigrateFromSecondRunWithSameInputsWritesNothing(t *testing.T) {
-	st, db := newTestStoreAndReadDB(t)
+	st, files := newTestStoreAndFiles(t, 1000)
+	db := storeDB(t, st)
 	ctx := context.Background()
 	system, _ := systemFSCopy(t)
 	manifest := testManifest(t)
 
-	if err := migrateFrom(ctx, st, db, system, manifest); err != nil {
+	if err := migrateFrom(ctx, st, files, system, manifest); err != nil {
 		t.Fatal(err)
 	}
 	before := reportingMigrationCount(t, db)
 
-	if err := migrateFrom(ctx, st, db, system, manifest); err != nil {
+	if err := migrateFrom(ctx, st, files, system, manifest); err != nil {
 		t.Fatal(err)
 	}
 	after := reportingMigrationCount(t, db)
@@ -179,12 +181,13 @@ func TestMigrateFromSecondRunWithSameInputsWritesNothing(t *testing.T) {
 }
 
 func TestMigrateFromChangedWidgetKeepsIDBumpsCountKeepsView(t *testing.T) {
-	st, db := newTestStoreAndReadDB(t)
+	st, files := newTestStoreAndFiles(t, 1000)
+	db := storeDB(t, st)
 	ctx := context.Background()
 	system, dir := systemFSCopy(t)
 	manifest := testManifest(t)
 
-	if err := migrateFrom(ctx, st, db, system, manifest); err != nil {
+	if err := migrateFrom(ctx, st, files, system, manifest); err != nil {
 		t.Fatal(err)
 	}
 	before := reportingMigrationCount(t, db)
@@ -214,7 +217,7 @@ func TestMigrateFromChangedWidgetKeepsIDBumpsCountKeepsView(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := migrateFrom(ctx, st, db, system, manifest); err != nil {
+	if err := migrateFrom(ctx, st, files, system, manifest); err != nil {
 		t.Fatal(err)
 	}
 	after := reportingMigrationCount(t, db)
@@ -250,11 +253,11 @@ func TestMigrateFromChangedWidgetKeepsIDBumpsCountKeepsView(t *testing.T) {
 }
 
 func TestMigrateFromRemovedComponentNullsUserWidget(t *testing.T) {
-	st, db := newTestStoreAndReadDB(t)
+	st, files := newTestStoreAndFiles(t, 1000)
 	ctx := context.Background()
 	system, _ := systemFSCopy(t)
 
-	if err := migrateFrom(ctx, st, db, system, testManifest(t)); err != nil {
+	if err := migrateFrom(ctx, st, files, system, testManifest(t)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -269,7 +272,7 @@ func TestMigrateFromRemovedComponentNullsUserWidget(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := migrateFrom(ctx, st, db, system, manifestWithout(t, "pie")); err != nil {
+	if err := migrateFrom(ctx, st, files, system, manifestWithout(t, "pie")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -283,12 +286,13 @@ func TestMigrateFromRemovedComponentNullsUserWidget(t *testing.T) {
 }
 
 func TestMigrateFromInvalidSystemWidgetFailsAndWritesNothing(t *testing.T) {
-	st, db := newTestStoreAndReadDB(t)
+	st, files := newTestStoreAndFiles(t, 1000)
+	db := storeDB(t, st)
 	ctx := context.Background()
 	system, dir := systemFSCopy(t)
 	manifest := testManifest(t)
 
-	if err := migrateFrom(ctx, st, db, system, manifest); err != nil {
+	if err := migrateFrom(ctx, st, files, system, manifest); err != nil {
 		t.Fatal(err)
 	}
 	goodHash, err := st.ReportingHash(ctx)
@@ -302,7 +306,7 @@ func TestMigrateFromInvalidSystemWidgetFailsAndWritesNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = migrateFrom(ctx, st, db, system, manifest)
+	err = migrateFrom(ctx, st, files, system, manifest)
 	if err == nil {
 		t.Fatal("want error: system widget missing a required column")
 	}
@@ -334,11 +338,11 @@ func TestMigrateFromInvalidSystemWidgetFailsAndWritesNothing(t *testing.T) {
 }
 
 func TestMigrateFromSystemDashboardsSortByID(t *testing.T) {
-	st, db := newTestStoreAndReadDB(t)
+	st, files := newTestStoreAndFiles(t, 1000)
 	ctx := context.Background()
 	system, _ := systemFSCopy(t)
 
-	if err := migrateFrom(ctx, st, db, system, testManifest(t)); err != nil {
+	if err := migrateFrom(ctx, st, files, system, testManifest(t)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -362,7 +366,7 @@ func TestMigrateFromSystemDashboardsSortByID(t *testing.T) {
 }
 
 func TestMigrateFromAcceptsUnregisteredTypeFails(t *testing.T) {
-	st, db := newTestStoreAndReadDB(t)
+	st, files := newTestStoreAndFiles(t, 1000)
 	ctx := context.Background()
 	system, _ := systemFSCopy(t)
 
@@ -380,7 +384,7 @@ func TestMigrateFromAcceptsUnregisteredTypeFails(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := migrateFrom(ctx, st, db, system, bad); err == nil {
+	if err := migrateFrom(ctx, st, files, system, bad); err == nil {
 		t.Fatal("want error: accepts names an unregistered source type")
 	}
 
@@ -418,7 +422,7 @@ func TestHashSystemFramesFieldsAgainstCollision(t *testing.T) {
 // TestMigrateFromGroupNamingMissingIDFails is D16: a file's "group" must
 // name a dashboard in the same release.
 func TestMigrateFromGroupNamingMissingIDFails(t *testing.T) {
-	st, db := newTestStoreAndReadDB(t)
+	st, files := newTestStoreAndFiles(t, 1000)
 	ctx := context.Background()
 	system, dir := systemFSCopy(t)
 
@@ -427,7 +431,7 @@ func TestMigrateFromGroupNamingMissingIDFails(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := migrateFrom(ctx, st, db, system, testManifest(t))
+	err := migrateFrom(ctx, st, files, system, testManifest(t))
 	if err == nil {
 		t.Fatal("want error: group names a dashboard not in the release")
 	}
@@ -440,7 +444,7 @@ func TestMigrateFromGroupNamingMissingIDFails(t *testing.T) {
 // is not itself in another group (D16: "a group names its first
 // dashboard, which is not itself in another group").
 func TestMigrateFromGroupNamingATabFails(t *testing.T) {
-	st, db := newTestStoreAndReadDB(t)
+	st, files := newTestStoreAndFiles(t, 1000)
 	ctx := context.Background()
 	system, dir := systemFSCopy(t)
 
@@ -456,7 +460,7 @@ func TestMigrateFromGroupNamingATabFails(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := migrateFrom(ctx, st, db, system, testManifest(t))
+	err := migrateFrom(ctx, st, files, system, testManifest(t))
 	if err == nil {
 		t.Fatal("want error: group names a dashboard that is itself in another group")
 	}
@@ -471,7 +475,7 @@ func TestMigrateFromGroupNamingATabFails(t *testing.T) {
 // breaks it up, and migrateFrom refuses rather than silently splitting
 // the group's tabs apart in sort key order.
 func TestMigrateFromNonContiguousGroupFails(t *testing.T) {
-	st, db := newTestStoreAndReadDB(t)
+	st, files := newTestStoreAndFiles(t, 1000)
 	ctx := context.Background()
 	system, dir := systemFSCopy(t)
 
@@ -487,7 +491,7 @@ func TestMigrateFromNonContiguousGroupFails(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := migrateFrom(ctx, st, db, system, testManifest(t))
+	err := migrateFrom(ctx, st, files, system, testManifest(t))
 	if err == nil {
 		t.Fatal("want error: group 1 is not contiguous")
 	}
@@ -501,7 +505,7 @@ func TestMigrateFromNonContiguousGroupFails(t *testing.T) {
 // create_dashboard's "7d"), and the refusal should name the problem
 // plainly rather than reuse checkPreset's "range must be one of ...".
 func TestMigrateFromRefusesEmptyRange(t *testing.T) {
-	st, db := newTestStoreAndReadDB(t)
+	st, files := newTestStoreAndFiles(t, 1000)
 	ctx := context.Background()
 	system, dir := systemFSCopy(t)
 
@@ -510,7 +514,7 @@ func TestMigrateFromRefusesEmptyRange(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := migrateFrom(ctx, st, db, system, testManifest(t))
+	err := migrateFrom(ctx, st, files, system, testManifest(t))
 	if err == nil {
 		t.Fatal("want error: dashboard.json with no range")
 	}

@@ -54,7 +54,7 @@ func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *m
 		return nil, nil, err
 	}
 	closeAll := func() error { return errors.Join(db.Close(), subs.Close()) }
-	rep := reporting.New(rst, db, reporting.Options{CacheAge: cfg.Reporting.CacheAge, RefreshAge: cfg.Reporting.RefreshAge,
+	rep := reporting.New(rst, nil, reporting.Options{CacheAge: cfg.Reporting.CacheAge, RefreshAge: cfg.Reporting.RefreshAge,
 		ArchivedDays: cfg.Retention.ArchivedDays, ShareBaseURL: cfg.Console.URL})
 	h := &host{db: db, subs: subs, reg: reg, ops: ops, rep: rep,
 		ingestURL: cfg.IngestURL, logger: logger, limits: limitsFrom(cfg), rawDays: cfg.Retention.Events.RawDays,

@@ -153,7 +153,7 @@ func hostTemplate(t *testing.T) string {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := reporting.Migrate(ctx, st, db); err != nil {
+		if err := reporting.Migrate(ctx, st, nil); err != nil {
 			t.Fatal(err)
 		}
 		// Closing checkpoints the WAL into the main file, so copying that
@@ -209,7 +209,7 @@ func newTestHost(t *testing.T) (*host, *mcp.ClientSession) {
 		t.Fatal(err)
 	}
 	h := &host{db: db, subs: subs, reg: reg, ops: manage.NewOps(reg, st),
-		rep:       reporting.New(st, db, reporting.Options{CacheAge: time.Minute, RefreshAge: time.Second, ShareBaseURL: "https://c.example"}),
+		rep:       reporting.New(st, nil, reporting.Options{CacheAge: time.Minute, RefreshAge: time.Second, ShareBaseURL: "https://c.example"}),
 		ingestURL: "https://collector.test", logger: logger, rawDays: config.DefaultRawDays,
 		limits: limitsFrom(&config.Config{AttributeValuesTopN: config.DefaultAttributeValuesTopN, IdentitiesTopN: config.DefaultIdentitiesTopN})}
 	// host itself carries no path (production has no need for one once

@@ -43,14 +43,21 @@ type DevError struct {
 // against a database that has real system dashboards migrated into it.
 const firstDevDashboardID = 1001
 
+// DevProjects runs devListProjects' query on the SQLite file, where the
+// projects are; *readsql.DB is one. Widget SQL never goes through it.
+type DevProjects interface {
+	Run(ctx context.Context, q string, args ...any) (readsql.Result, error)
+}
+
 // DevHandler serves twillingate reporting dev: the routes a preview
 // needs, without auth, over dirs (each either a dashboard directory —
-// one holding dashboard.json — or a parent of several) and db, a
-// read-only handle sql widgets run against. The component manifest is
-// this build's own (ui/components.json, embedded, same as the real
-// server); only dirs is re-read on every request.
-func DevHandler(dirs []string, db *readsql.DB) http.Handler {
-	svc := &Service{db: db, sources: newSources(db, true, time.Now), now: time.Now}
+// one holding dashboard.json — or a parent of several), files, where sql
+// widgets run, and projects, which lists the project switcher's choices.
+// The component manifest is this build's own (ui/components.json,
+// embedded, same as the real server); only dirs is re-read on every
+// request.
+func DevHandler(dirs []string, files Files, projects DevProjects) http.Handler {
+	svc := &Service{files: files, sources: newSources(files, true, time.Now), now: time.Now}
 	comps, err := ParseManifest(Manifest())
 	if err != nil {
 		// Embedded at build time: broken here means this build is broken,
@@ -65,7 +72,7 @@ func DevHandler(dirs []string, db *readsql.DB) http.Handler {
 	mux.HandleFunc("GET /api/widgets/{id}/data", devWidgetData(dirs, svc, compsByName))
 	mux.HandleFunc("GET /api/components", devComponents(svc, comps))
 	mux.HandleFunc("PUT /api/dashboards/{id}/view", devSetView)
-	mux.HandleFunc("GET /api/projects", devProjects(db))
+	mux.HandleFunc("GET /api/projects", devProjects(projects))
 	mux.HandleFunc("GET /api/dev/version", devVersion(dirs))
 	mux.Handle("/app/", UI())
 	// As on the console's listener: the preview's address opens the app, which in a preview opens the dashboards.
@@ -391,9 +398,8 @@ type devProjectsOut struct {
 // devListProjects lists every project, archived ones flagged, as
 // list_projects does, straight off the projects table and its catalog's
 // breakdown keys (project_attributes, ordered by key) — trusted Go SQL
-// against db, the same way sampleProject (source.go) reads projects and
-// events directly, not a widget's checked custom SQL.
-func devListProjects(ctx context.Context, db *readsql.DB) (devProjectsOut, error) {
+// on SQLite, not a widget's checked custom SQL.
+func devListProjects(ctx context.Context, db DevProjects) (devProjectsOut, error) {
 	rows, err := db.Run(ctx,
 		`SELECT p.id, p.name, p.allowed_origins,
 			COALESCE((SELECT json_group_array(key ORDER BY key) FROM project_attributes a
@@ -425,7 +431,7 @@ func devListProjects(ctx context.Context, db *readsql.DB) (devProjectsOut, error
 	return out, nil
 }
 
-func devProjects(db *readsql.DB) http.HandlerFunc {
+func devProjects(db DevProjects) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		out, err := devListProjects(r.Context(), db)
 		if err != nil {

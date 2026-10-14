@@ -7,7 +7,6 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/config"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
 	"github.com/dmtrkzntsv/twillingate/internal/reporting"
-	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
@@ -22,9 +21,9 @@ var _ reporting.Store = store.Store(nil)
 // (serve, migrate, project) calls this rather than st.Migrate directly, so
 // a CLI-only install stays in sync with the release too.
 //
-// The reporting migrator gets its own read-only handle on the writer's
-// own database file (DatabasePath(cfg.Database)), not CONSOLE_DATABASE_DSN, which
-// may point at a copy that lags the write this migration itself just made.
+// The reporting migrator validates the system widgets on the event
+// files; it is given none yet, so a release whose system definition
+// changed fails here until the engine is wired in.
 func Migrate(ctx context.Context, cfg *config.Config, st store.Store) error {
 	if err := st.Migrate(ctx); err != nil {
 		return err
@@ -39,10 +38,5 @@ func Migrate(ctx context.Context, cfg *config.Config, st store.Store) error {
 	if err := st.RebuildFlatView(ctx, reg.Snapshot(ctx).DeclaredAttributeKeys()); err != nil {
 		return fmt.Errorf("rebuild v_events_flat: %w", err)
 	}
-	db, err := readsql.Open(DatabasePath(cfg.Database), cfg.Console.QueryTimeout, cfg.Console.QueryMaxRows)
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-	return reporting.Migrate(ctx, st, db)
+	return reporting.Migrate(ctx, st, nil)
 }
