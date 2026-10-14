@@ -179,6 +179,22 @@ func TestChildExecKeepsState(t *testing.T) {
 	}
 }
 
+// TestChildExecRollsBackAFailedScript: a script that fails after its BEGIN
+// leaves nothing of it behind, and no transaction open on the connection
+// the pool hands the next request.
+func TestChildExecRollsBackAFailedScript(t *testing.T) {
+	c := startChild(t, childArgs(t.TempDir()))
+	if rep := c.ask(t, request{ID: 1, SQL: "BEGIN TRANSACTION; CREATE TABLE half(a INT); SELECT * FROM nowhere; COMMIT", Exec: true}); rep.Err == "" {
+		t.Fatal("the script failed to fail")
+	}
+	if rep := c.ask(t, request{ID: 2, SQL: "BEGIN TRANSACTION; COMMIT", Exec: true}); rep.Err != "" {
+		t.Fatalf("a transaction after the failed script: %s", rep.Err)
+	}
+	if rep := c.ask(t, request{ID: 3, SQL: "SELECT count(*) FROM half"}); rep.Err == "" {
+		t.Fatalf("the failed script's table survived: %+v", rep)
+	}
+}
+
 // TestChildConfinedToAllowedDirs is Review Focus 1: SQL reads and writes
 // inside the allowed directory and nowhere else, a sibling whose name
 // starts the same included, and cannot lift the lock.

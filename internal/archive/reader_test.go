@@ -243,3 +243,104 @@ func TestReaderBuildsOnlyWhenSomethingChanged(t *testing.T) {
 		t.Fatalf("a grown log: count %s after %d statements; want 2 after one more build", got, eng.execs)
 	}
 }
+
+// retired fails the first user query as a fresh child fails it, after the
+// engine retired the one that held the tables: it drops them, as the new
+// child never had them, and answers with the catalog's message for name.
+type retired struct {
+	Engine
+	msg   string
+	fails int
+	calls int
+}
+
+func (e *retired) Query(ctx context.Context, sql string, maxRows int) (engine.Result, error) {
+	if strings.Contains(sql, "FROM events") {
+		e.calls++
+		if e.fails > 0 {
+			e.fails--
+			if err := e.Engine.Exec(ctx, "DROP VIEW events; DROP VIEW views; DROP VIEW product; DROP VIEW measures; DROP VIEW _tw_all; DROP TABLE _tw_hot; DROP TABLE _tw_state"); err != nil {
+				return engine.Result{}, err
+			}
+			return engine.Result{}, &engine.QueryError{Msg: e.msg}
+		}
+	}
+	return e.Engine.Query(ctx, sql, maxRows)
+}
+
+func TestReaderRebuildsAndRetriesOnAFreshChild(t *testing.T) {
+	f := newFixture(t)
+	f.write(t, evOf(1, "a", "2026-10-11T10:00:00Z"))
+	for _, name := range []string{"events", "views", "product", "measures", "_tw_all", "_tw_hot"} {
+		eng := &retired{Engine: f.eng, msg: "Catalog Error: Table with name " + name + " does not exist!\nDid you mean \"pg_tables\"?", fails: 1}
+		r, err := NewReader(f.log.Dir(), eng)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := ask(t, r, Rules{}, "SELECT count(*) FROM events"); got != "[[1]]" {
+			t.Fatalf("%s: after the child was replaced: %s, want the retry to rebuild and answer 1", name, got)
+		}
+	}
+}
+
+func TestReaderDoesNotRetryAUsersTypo(t *testing.T) {
+	f := newFixture(t)
+	eng := &retired{Engine: f.eng, msg: "Catalog Error: Table with name eventz does not exist!\nDid you mean \"events\"?", fails: 1}
+	r, err := NewReader(f.log.Dir(), eng)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var qe *engine.QueryError
+	if _, err := r.Query(context.Background(), "SELECT count(*) FROM events", 0, Rules{}); !errors.As(err, &qe) || eng.calls != 1 {
+		t.Fatalf("err = %v after %d tries; want the typo's error after one", err, eng.calls)
+	}
+}
+
+// TestReaderAppliesRulesOnKeysAndNamesWithNUL: SQL text is cut at a NUL, so
+// a rule naming one is spelled in the statement without it.
+func TestReaderAppliesRulesOnKeysAndNamesWithNUL(t *testing.T) {
+	f := newFixture(t)
+	ev := evOf(1, "1", "2026-10-12T10:00:00Z")
+	ev.EventName, ev.Attributes = "n\x00m", map[string]string{"a\x00b": "v"}
+	f.write(t, ev)
+	rules := Rules{
+		Events:     []store.EventRule{{ProjectID: 1, Family: store.FamilyProduct, Name: "n\x00m", Action: store.EventRuleRename, To: "z\x00"}},
+		Attributes: []store.AttributeRule{{ProjectID: 1, Key: "a\x00b", Action: store.EventRuleRename, To: "c\x00d"}},
+	}
+	r := f.reader(t)
+	if got := ask(t, r, rules, `SELECT id, event_name = 'z' || chr(0), "attr_c\u0000d", "attr_a\u0000b" FROM events`); got != "[[1 true v <nil>]]" {
+		t.Fatalf("with the rules: %s", got)
+	}
+	if got := ask(t, r, Rules{}, `SELECT event_name = 'n' || chr(0) || 'm', "attr_a\u0000b" FROM events`); got != "[[true v]]" {
+		t.Fatalf("without them: %s", got)
+	}
+}
+
+func TestReaderAppliesRulesOnKeysThatMeetOrCollide(t *testing.T) {
+	f := newFixture(t)
+	at := "2026-10-12T10:00:00Z"
+	e := func(id string, attrs map[string]string) store.Event {
+		ev := evOf(1, id, at)
+		ev.Attributes = attrs
+		return ev
+	}
+	f.write(t,
+		e("1", map[string]string{"a": "1", "b": "2"}),
+		e("2", map[string]string{"a": "x"}),
+		e("3", map[string]string{"k1": "first", "k2": "second"}),
+		e("4", map[string]string{"k2": "only"}),
+	)
+	rules := Rules{Attributes: []store.AttributeRule{
+		{ProjectID: 1, Key: "a", Action: store.EventRuleRename, To: "b"}, // onto a blocked key
+		{ProjectID: 1, Key: "b", Action: store.EventRuleBlock},
+		{ProjectID: 1, Key: "k2", Action: store.EventRuleRename, To: "t"}, // two keys into a target no file has
+		{ProjectID: 1, Key: "k1", Action: store.EventRuleRename, To: "t"},
+	}}
+	r := f.reader(t)
+	if got := ask(t, r, rules, "SELECT id, attr_a, attr_b FROM events WHERE id IN ('1', '2') ORDER BY id"); got != "[[1 <nil> <nil>] [2 <nil> <nil>]]" {
+		t.Fatalf("a renamed onto a blocked b: %s, want both NULL", got)
+	}
+	if got := ask(t, r, rules, "SELECT id, attr_k1, attr_k2, attr_t FROM events WHERE id IN ('3', '4') ORDER BY id"); got != "[[3 <nil> <nil> first] [4 <nil> <nil> only]]" {
+		t.Fatalf("k1 and k2 renamed into t: %s, want the first key's value, else the second's", got)
+	}
+}

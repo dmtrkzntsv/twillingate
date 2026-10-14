@@ -5,10 +5,12 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -56,13 +58,21 @@ func NewReader(dir string, eng Engine) (*Reader, error) {
 }
 
 // Query runs one SELECT over the tables (engine.Query refuses anything
-// else) and returns at most maxRows rows (all when maxRows ≤ 0). A file
-// the daily pass removed between the listing and the query (a dump
-// deletes its log, a merge its days) fails the attempt; the query is
-// retried once, on a fresh listing.
+// else) and returns at most maxRows rows (all when maxRows ≤ 0).
+//
+// rules is the full rule set of every project, not the caller's share of
+// it: the tables live in the child, which every caller of the engine
+// shares, so a subset would apply to (and be read by) the other callers'
+// queries too.
+//
+// A file the daily pass removed between the listing and the query (a dump
+// deletes its log, a merge its days) fails the attempt, and so does a
+// child the engine retired in between (the query lands on a fresh one,
+// which has no tables); the query is retried once, on a fresh listing and
+// a rebuild if need be.
 func (r *Reader) Query(ctx context.Context, sql string, maxRows int, rules Rules) (engine.Result, error) {
 	res, err := r.query(ctx, sql, maxRows, rules)
-	if vanished(err) {
+	if vanished(err) || lostTables(err) {
 		res, err = r.query(ctx, sql, maxRows, rules)
 	}
 	return res, err
@@ -73,6 +83,18 @@ func (r *Reader) query(ctx context.Context, sql string, maxRows int, rules Rules
 		return engine.Result{}, err
 	}
 	return r.eng.Query(ctx, sql, maxRows)
+}
+
+// missingTable matches the error of a query naming one of the reader's own
+// tables or views that the child does not have. A user's typo in a table
+// name is not one: only the names the reader defines.
+var missingTable = regexp.MustCompile(`(?:Table|View) with name "?(?:events|views|product|measures|_tw_[A-Za-z0-9_]*)"? does not exist`)
+
+// lostTables reports an error saying the reader's tables are not there:
+// the child was replaced since they were built.
+func lostTables(err error) bool {
+	var qe *engine.QueryError
+	return errors.As(err, &qe) && missingTable.MatchString(qe.Msg)
 }
 
 // vanished reports an error naming a file that is gone.
@@ -124,14 +146,19 @@ func signature(files map[int64]Files, rules Rules) (string, error) {
 			fmt.Fprintf(h, "%s\x00%d\x00%d\n", p, st.Size(), st.ModTime().UnixNano())
 		}
 	}
-	fmt.Fprintf(h, "%v\n%v\n", rules.Events, rules.Attributes)
+	if err := json.NewEncoder(h).Encode(rules); err != nil {
+		return "", fmt.Errorf("archive: %w", err)
+	}
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// build loads the logs into _tw_hot, defines _tw_all over the Parquet
-// files and _tw_hot, then events (with the rules), views, product and
-// measures, and records sig. Every fixed column is there at its type even
-// with no file and no log (emptyRow); v, the line format's version, is not.
+// build loads the logs into _tw_hot_next, then, in one transaction, makes
+// it _tw_hot and defines _tw_all over the Parquet files and _tw_hot, then
+// events (with the rules), views, product and measures, and records sig.
+// A query that runs meanwhile on another connection of the child sees the
+// tables as they were or as they are now, never the new logs through the
+// old file list. Every fixed column is there at its type even with no file
+// and no log (emptyRow); v, the line format's version, is not.
 func (r *Reader) build(ctx context.Context, files map[int64]Files, rules Rules, sig string) error {
 	var parquet, logs []string
 	for _, id := range sortedIDs(files) {
@@ -147,15 +174,17 @@ func (r *Reader) build(ctx context.Context, files map[int64]Files, rules Rules, 
 		hot = append(hot, "SELECT * FROM ("+logSelect(p, columnsOf(keys), true)+")")
 	}
 	r.keys.keep(logs)
-	all := []string{emptyRow(), "SELECT * FROM _tw_hot"}
-	if len(parquet) > 0 {
-		all = append(all, "SELECT * FROM read_parquet("+sqlList(parquet)+", union_by_name=true)")
+	all := func(hot string) string {
+		union := []string{emptyRow(), "SELECT * FROM " + hot}
+		if len(parquet) > 0 {
+			union = append(union, "SELECT * FROM read_parquet("+sqlList(parquet)+", union_by_name=true)")
+		}
+		return "SELECT * EXCLUDE (v) FROM (" + strings.Join(union, " UNION ALL BY NAME ") + ")"
 	}
-	if err := r.eng.Exec(ctx, "CREATE OR REPLACE TABLE _tw_hot AS "+strings.Join(hot, " UNION ALL BY NAME ")+";\n"+
-		"CREATE OR REPLACE VIEW _tw_all AS SELECT * EXCLUDE (v) FROM ("+strings.Join(all, " UNION ALL BY NAME ")+")"); err != nil {
+	if err := r.eng.Exec(ctx, "CREATE OR REPLACE TABLE _tw_hot_next AS "+strings.Join(hot, " UNION ALL BY NAME ")); err != nil {
 		return err
 	}
-	res, err := r.eng.Query(ctx, "SELECT column_name FROM (DESCRIBE _tw_all)", 0)
+	res, err := r.eng.Query(ctx, "SELECT column_name FROM (DESCRIBE "+all("_tw_hot_next")+")", 0)
 	if err != nil {
 		return err
 	}
@@ -163,11 +192,26 @@ func (r *Reader) build(ctx context.Context, files map[int64]Files, rules Rules, 
 	for i, row := range res.Rows {
 		cols[i], _ = row[0].(string)
 	}
-	return r.eng.Exec(ctx, "CREATE OR REPLACE VIEW events AS "+eventsView(cols, rules)+";\n"+
+	return r.eng.Exec(ctx, "BEGIN TRANSACTION;\n"+
+		"DROP TABLE IF EXISTS _tw_hot;\n"+
+		"ALTER TABLE _tw_hot_next RENAME TO _tw_hot;\n"+
+		"CREATE OR REPLACE VIEW _tw_all AS "+all("_tw_hot")+";\n"+
+		"CREATE OR REPLACE VIEW events AS "+eventsView(cols, rules)+";\n"+
 		"CREATE OR REPLACE VIEW views AS SELECT * FROM events WHERE family = 'views';\n"+
 		"CREATE OR REPLACE VIEW product AS SELECT * FROM events WHERE family = 'product';\n"+
 		"CREATE OR REPLACE VIEW measures AS SELECT * FROM events WHERE family = 'measures';\n"+
-		"CREATE OR REPLACE TABLE _tw_state AS SELECT "+quote(sig)+" AS sig")
+		"CREATE OR REPLACE TABLE _tw_state AS SELECT "+quote(sig)+" AS sig;\n"+
+		"COMMIT")
+}
+
+// literal is s as a SQL string literal, with each NUL spelled chr(0): SQL
+// text is cut at a NUL.
+func literal(s string) string {
+	parts := strings.Split(s, "\x00")
+	for i, p := range parts {
+		parts[i] = quote(p)
+	}
+	return strings.Join(parts, " || chr(0) || ")
 }
 
 // emptyRow is a SELECT of no rows with every fixed column at its type.
@@ -209,11 +253,11 @@ func eventsView(cols []string, rules Rules) string {
 	}
 	var renames, drops []string
 	for _, r := range rules.Events {
-		cond := fmt.Sprintf("project_id = %d AND family = %s AND event_name = %s", r.ProjectID, quote(string(r.Family)), quote(r.Name))
+		cond := fmt.Sprintf("project_id = %d AND family = %s AND event_name = %s", r.ProjectID, quote(string(r.Family)), literal(r.Name))
 		if r.Action == store.EventRuleBlock || blocked[nameKey{r.ProjectID, r.Family, r.To}] {
 			drops = append(drops, "("+cond+")")
 		} else {
-			renames = append(renames, "WHEN "+cond+" THEN "+quote(r.To))
+			renames = append(renames, "WHEN "+cond+" THEN "+literal(r.To))
 		}
 	}
 	var replace, add []string
@@ -248,7 +292,7 @@ func eventsView(cols []string, rules Rules) string {
 	sources := map[keyKey][]string{} // the columns renamed into a target, in key order
 	var targets []keyKey
 	for _, r := range rules.Attributes {
-		col, ok := have[strings.ToLower("attr_"+r.Key)]
+		col, ok := have[strings.ToLower(visible("attr_"+r.Key))]
 		if !ok {
 			continue
 		}
@@ -263,7 +307,7 @@ func eventsView(cols []string, rules Rules) string {
 		sources[t] = append(sources[t], ident(col))
 	}
 	for _, t := range targets {
-		name, vals := "attr_"+t.key, sources[t]
+		name, vals := visible("attr_"+t.key), sources[t]
 		if col, ok := have[strings.ToLower(name)]; ok {
 			name, vals = col, append([]string{ident(col)}, vals...)
 		}
