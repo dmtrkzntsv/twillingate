@@ -66,11 +66,18 @@ func ServeChild(args []string, in io.Reader, out io.Writer) error {
 
 // cellMacros are the SQL twins of readsql's cell and decimal, so a
 // widget's SQL and the Go code that reads its result agree on what a cell
-// is and what a number is. They live in the one in-memory database the
-// pool shares, so every connection sees them; a query cannot replace them,
-// since readOnly refuses anything but a SELECT.
+// is and what a number is. tw_cell reads a number as SQLite's cells read
+// it: a DOUBLE, FLOAT or DECIMAL goes through DOUBLE's text and loses a
+// trailing ".0" (100, not 100.0; 3.5, not 3.50), so the cells and the
+// filters on them match what users saw before the files. They live in the
+// one in-memory database the pool shares, so every connection sees them;
+// a query cannot replace them, since readOnly refuses anything but a
+// SELECT.
 var cellMacros = []string{
-	`CREATE MACRO tw_cell(x) AS coalesce(CAST(x AS VARCHAR), '')`,
+	`CREATE MACRO tw_cell(x) AS coalesce(CASE
+		WHEN typeof(x) IN ('DOUBLE', 'FLOAT') OR typeof(x) LIKE 'DECIMAL%'
+		THEN regexp_replace(CAST(TRY_CAST(x AS DOUBLE) AS VARCHAR), '\.0$', '')
+		ELSE CAST(x AS VARCHAR) END, '')`,
 	`CREATE MACRO tw_num(x) AS CASE
 		WHEN regexp_full_match(tw_cell(x), '-?[0-9]+(\.[0-9]+)?([eE][-+]?[0-9]+)?')
 		 AND isfinite(TRY_CAST(tw_cell(x) AS DOUBLE))

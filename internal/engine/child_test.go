@@ -146,22 +146,41 @@ func TestChildCapsReplySize(t *testing.T) {
 }
 
 // TestCellMacros: tw_cell and tw_num are the SQL twins of readsql's
-// cell and decimal: a NULL is "", a number is read only from text that
-// is one, and a value past a double is not a number.
+// cell and decimal: a NULL is "", a number reads as SQLite's cells read
+// it (100, not 100.0), a number is read only from text that is one, and a
+// value past a double is not a number.
 func TestCellMacros(t *testing.T) {
 	c := startChild(t, childArgs(t.TempDir()))
-	rep := c.ask(t, request{ID: 1, SQL: `SELECT tw_cell(NULL), tw_cell(1.5::DOUBLE), tw_num('12'),
-		tw_num('abc'), tw_num('1e400'), tw_num(DATE '2026-01-01'), tw_cell([1,2])`})
-	if rep.Err != "" || len(rep.Rows) != 1 {
-		t.Fatalf("reply = %+v", rep)
-	}
-	want := []any{"", "1.5", json.Number("12"), nil, nil, nil, "[1, 2]"}
-	if len(rep.Rows[0]) != len(want) {
-		t.Fatalf("row = %#v, want %#v", rep.Rows[0], want)
-	}
-	for i, w := range want {
-		if rep.Rows[0][i] != w {
-			t.Errorf("column %d = %#v, want %#v", i, rep.Rows[0][i], w)
+	for i, tc := range []struct {
+		expr string
+		want any
+	}{
+		{"tw_cell(NULL)", ""},
+		{"tw_cell(1.5::DOUBLE)", "1.5"},
+		{"tw_cell(100.0::DOUBLE)", "100"},
+		{"tw_cell(12.5::DOUBLE)", "12.5"},
+		{"tw_cell(1.5::FLOAT)", "1.5"},
+		{"tw_cell(3.50::DECIMAL(5,2))", "3.5"},
+		{"tw_cell(1e21::DOUBLE)", "1e+21"},
+		{"tw_cell(2.0e-7::DOUBLE)", "2e-07"},
+		{"tw_cell(5::BIGINT)", "5"},
+		{"tw_cell('x.0')", "x.0"},
+		{"tw_cell(DATE '2026-01-01')", "2026-01-01"},
+		{"tw_cell([1,2])", "[1, 2]"},
+		{"tw_cell({'a': 1})", "{'a': 1}"},
+		{"tw_num('12')", json.Number("12")},
+		{"tw_num(100.0::DOUBLE)", json.Number("100")},
+		{"tw_num('abc')", nil},
+		{"tw_num('1e400')", nil},
+		{"tw_num(DATE '2026-01-01')", nil},
+	} {
+		rep := c.ask(t, request{ID: uint64(i + 1), SQL: "SELECT " + tc.expr})
+		if rep.Err != "" || len(rep.Rows) != 1 || len(rep.Rows[0]) != 1 {
+			t.Errorf("%s: reply = %+v", tc.expr, rep)
+			continue
+		}
+		if got := rep.Rows[0][0]; got != tc.want {
+			t.Errorf("%s = %#v, want %#v", tc.expr, rep.Rows[0][0], tc.want)
 		}
 	}
 }
