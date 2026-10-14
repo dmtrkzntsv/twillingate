@@ -23,7 +23,7 @@ import (
 // Engine is the slice of engine.Engine a Reader uses.
 type Engine interface {
 	Exec(ctx context.Context, sql string) error
-	Query(ctx context.Context, sql string, maxRows int) (engine.Result, error)
+	Query(ctx context.Context, sql string, maxRows int, args ...engine.Arg) (engine.Result, error)
 }
 
 // ErrLoadingLogs marks a failure to load the open logs into the child's

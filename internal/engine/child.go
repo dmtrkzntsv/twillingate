@@ -16,6 +16,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
+	"slices"
 	"strings"
 	"sync"
 
@@ -60,6 +62,19 @@ func ServeChild(args []string, in io.Reader, out io.Writer) error {
 	return serve(db, in, w, *parallel)
 }
 
+// cellMacros are the SQL twins of readsql's cell and decimal, so a
+// widget's SQL and the Go code that reads its result agree on what a cell
+// is and what a number is. They live in the one in-memory database the
+// pool shares, so every connection sees them; a query cannot replace them,
+// since readOnly refuses anything but a SELECT.
+var cellMacros = []string{
+	`CREATE MACRO tw_cell(x) AS coalesce(CAST(x AS VARCHAR), '')`,
+	`CREATE MACRO tw_num(x) AS CASE
+		WHEN regexp_full_match(tw_cell(x), '-?[0-9]+(\.[0-9]+)?([eE][-+]?[0-9]+)?')
+		 AND isfinite(TRY_CAST(tw_cell(x) AS DOUBLE))
+		THEN TRY_CAST(tw_cell(x) AS DOUBLE) END`,
+}
+
 // open starts an in-memory DuckDB and locks it down. Every setting is
 // GLOBAL, so it holds on each connection the pool opens later, and
 // lock_configuration stops SQL from changing any of them back. Directories
@@ -84,6 +99,10 @@ func open(threads int, memory, spill, tempMax string, allow []string, parallel i
 	if tempMax != "" {
 		setup = append(setup, "SET GLOBAL max_temp_directory_size = "+sqlString(tempMax))
 	}
+	// UTC, whatever TZ the process has: a date and the instants it spans
+	// mean the same on every host.
+	setup = append(setup, "SET GLOBAL TimeZone = 'UTC'")
+	setup = append(setup, cellMacros...)
 	setup = append(setup,
 		"SET GLOBAL parquet_metadata_cache = true",
 		"SET GLOBAL allowed_directories = ["+strings.Join(dirs, ", ")+"]",
@@ -189,7 +208,7 @@ func run(ctx context.Context, db *sql.DB, r request) reply {
 		rep.Err = err.Error()
 		return rep
 	}
-	rows, err := db.QueryContext(ctx, r.SQL)
+	rows, err := db.QueryContext(ctx, r.SQL, namedArgs(r.Args)...)
 	if err != nil {
 		rep.Err = err.Error()
 		return rep
@@ -224,6 +243,15 @@ func run(ctx context.Context, db *sql.DB, r request) reply {
 		return reply{ID: r.ID, Err: err.Error()}
 	}
 	return rep
+}
+
+// namedArgs is args as sql.Named values, in name order.
+func namedArgs(args map[string]string) []any {
+	out := make([]any, 0, len(args))
+	for _, k := range slices.Sorted(maps.Keys(args)) {
+		out = append(out, sql.Named(k, args[k]))
+	}
+	return out
 }
 
 // readOnly lets one SELECT through (DESCRIBE, SHOW, SUMMARIZE, FROM and

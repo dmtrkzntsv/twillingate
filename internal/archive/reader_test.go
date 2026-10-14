@@ -85,7 +85,7 @@ type vanishing struct {
 	fails int
 }
 
-func (e *vanishing) Query(ctx context.Context, sql string, maxRows int) (engine.Result, error) {
+func (e *vanishing) Query(ctx context.Context, sql string, maxRows int, args ...engine.Arg) (engine.Result, error) {
 	if strings.Contains(sql, "FROM events") && e.fails > 0 {
 		e.fails--
 		return engine.Result{}, &engine.QueryError{Msg: `IO Error: No files found that match the pattern "/raw/1/2026-10-11.parquet"`}
@@ -255,7 +255,7 @@ type retired struct {
 	calls int
 }
 
-func (e *retired) Query(ctx context.Context, sql string, maxRows int) (engine.Result, error) {
+func (e *retired) Query(ctx context.Context, sql string, maxRows int, args ...engine.Arg) (engine.Result, error) {
 	if strings.Contains(sql, "FROM events") {
 		e.calls++
 		if e.fails > 0 {
@@ -381,7 +381,7 @@ func TestReaderRuleBetweenKeysThatDifferInCase(t *testing.T) {
 type failingEngine struct{ err error }
 
 func (e failingEngine) Exec(context.Context, string) error { return e.err }
-func (failingEngine) Query(context.Context, string, int) (engine.Result, error) {
+func (failingEngine) Query(context.Context, string, int, ...engine.Arg) (engine.Result, error) {
 	return engine.Result{}, &engine.QueryError{Msg: "Catalog Error: Table with name _tw_state does not exist"}
 }
 

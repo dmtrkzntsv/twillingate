@@ -145,6 +145,45 @@ func TestChildCapsReplySize(t *testing.T) {
 	}
 }
 
+// TestCellMacros: tw_cell and tw_num are the SQL twins of readsql's
+// cell and decimal: a NULL is "", a number is read only from text that
+// is one, and a value past a double is not a number.
+func TestCellMacros(t *testing.T) {
+	c := startChild(t, childArgs(t.TempDir()))
+	rep := c.ask(t, request{ID: 1, SQL: `SELECT tw_cell(NULL), tw_cell(1.5::DOUBLE), tw_num('12'),
+		tw_num('abc'), tw_num('1e400'), tw_num(DATE '2026-01-01'), tw_cell([1,2])`})
+	if rep.Err != "" || len(rep.Rows) != 1 {
+		t.Fatalf("reply = %+v", rep)
+	}
+	want := []any{"", "1.5", json.Number("12"), nil, nil, nil, "[1, 2]"}
+	if fmt.Sprint(rep.Rows[0]) != fmt.Sprint(want) {
+		t.Fatalf("row = %#v, want %#v", rep.Rows[0], want)
+	}
+}
+
+func TestChildBindsArguments(t *testing.T) {
+	c := startChild(t, childArgs(t.TempDir()))
+	rep := c.ask(t, request{ID: 1, SQL: "SELECT $b || $a", Args: map[string]string{"a": "x", "b": "y"}})
+	if rep.Err != "" || fmt.Sprint(rep.Rows) != "[[yx]]" {
+		t.Fatalf("reply = %+v", rep)
+	}
+}
+
+// TestChildCannotRedefineTheMacros: a query is one SELECT, so the macros
+// are the ones the child defined.
+func TestChildCannotRedefineTheMacros(t *testing.T) {
+	c := startChild(t, childArgs(t.TempDir()))
+	for i, sql := range []string{
+		"CREATE MACRO tw_num(x) AS 0",
+		"CREATE OR REPLACE MACRO tw_cell(x) AS ''",
+		"DROP MACRO tw_num",
+	} {
+		if err := c.ask(t, request{ID: uint64(i + 1), SQL: sql}).Err; !strings.Contains(err, "one SELECT") {
+			t.Errorf("%s: err = %q, want a refusal naming one SELECT", sql, err)
+		}
+	}
+}
+
 func TestChildReportsSQLErrorsAndCarriesOn(t *testing.T) {
 	c := startChild(t, childArgs(t.TempDir()))
 	if rep := c.ask(t, request{ID: 1, SQL: "SELECT nope"}); !strings.Contains(rep.Err, "nope") {

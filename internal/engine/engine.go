@@ -141,9 +141,22 @@ func New(o Options) (*Engine, error) {
 	return &Engine{o: o, spawnGate: make(chan struct{}, 1)}, nil
 }
 
+// Arg is a named argument a query binds as $Name: a string, which the
+// SQL casts to the type it needs (CAST($tw_from AS DATE)).
+type Arg struct{ Name, Value string }
+
 // Query runs sql and returns at most maxRows rows (all when maxRows ≤ 0).
-func (e *Engine) Query(ctx context.Context, sql string, maxRows int) (Result, error) {
-	rep, err := e.do(ctx, request{SQL: sql, MaxRows: maxRows})
+// The args are bound to the $names in sql; a name the SQL uses and no arg
+// binds is a *QueryError.
+func (e *Engine) Query(ctx context.Context, sql string, maxRows int, args ...Arg) (Result, error) {
+	var named map[string]string
+	if len(args) > 0 {
+		named = make(map[string]string, len(args))
+		for _, a := range args {
+			named[a.Name] = a.Value
+		}
+	}
+	rep, err := e.do(ctx, request{SQL: sql, MaxRows: maxRows, Args: named})
 	if err != nil {
 		return Result{}, err
 	}

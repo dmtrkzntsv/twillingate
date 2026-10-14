@@ -99,6 +99,38 @@ func TestExecThenQuery(t *testing.T) {
 	}
 }
 
+func TestQueryBindsNamedArguments(t *testing.T) {
+	e := newEngine(t, testOptions(t))
+	res, err := e.Query(context.Background(),
+		"SELECT CAST($a AS BIGINT) + 1 AS n, CAST($d AS DATE) AS d", 0,
+		Arg{"a", "41"}, Arg{"d", "2026-01-02"})
+	if err != nil || len(res.Rows) != 1 || fmt.Sprint(res.Rows[0]) != "[42 2026-01-02]" {
+		t.Fatalf("Query = %+v, %v; want [[42 2026-01-02]]", res, err)
+	}
+}
+
+func TestQueryMissingArgumentIsAQueryError(t *testing.T) {
+	e := newEngine(t, testOptions(t))
+	_, err := e.Query(context.Background(), "SELECT CAST($a AS BIGINT)", 0)
+	var qe *QueryError
+	if !errors.As(err, &qe) {
+		t.Fatalf("err = %v, want a *QueryError", err)
+	}
+}
+
+// TestChildRunsInUTC: the process's own zone (TZ) must not reach the
+// SQL, or the same date would mean different instants on different hosts.
+func TestChildRunsInUTC(t *testing.T) {
+	o := testOptions(t)
+	o.Env = append(o.Env, "TZ=America/Los_Angeles")
+	e := newEngine(t, o)
+	res, err := e.Query(context.Background(),
+		"SELECT current_setting('TimeZone'), CAST(TIMESTAMPTZ '2026-01-02 00:00:00+00' AS VARCHAR)", 0)
+	if err != nil || fmt.Sprint(res.Rows[0]) != "[UTC 2026-01-02 00:00:00+00]" {
+		t.Fatalf("Query = %+v, %v; want UTC", res, err)
+	}
+}
+
 // TestIdleChildExits: an idle child leaves, freeing its slot and its spill
 // directory, and the next query starts another.
 func TestIdleChildExits(t *testing.T) {
